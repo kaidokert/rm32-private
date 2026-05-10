@@ -226,7 +226,7 @@ fn main() -> ! {
     let mut log_counter: u32 = 0;
     loop {
         log_counter = log_counter.wrapping_add(1);
-        if log_counter % 100_000 == 0 {
+        if log_counter.is_multiple_of(100_000) {
             rtt_target::rprintln!(
                 "[loop] input_set={} servo_pwm={} dshot={} newinput={} armed={} running={} sig_to={}",
                 shared.input_set(),

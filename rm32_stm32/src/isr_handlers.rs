@@ -52,8 +52,8 @@ impl IsrCell {
         // No concurrent access possible (see struct-level safety doc).
         let opt = unsafe { &mut *self.0.get() };
         let needed_init = opt.is_none();
-        let state = opt
-            .get_or_insert_with(|| isr::take_isr_state().expect("ISR state not initialized"));
+        let state =
+            opt.get_or_insert_with(|| isr::take_isr_state().expect("ISR state not initialized"));
         if needed_init {
             // First-time init: state was just moved from ISR_STATE into this
             // ISR_LOCAL cell, so any DMA pointer set up in main against the
@@ -141,7 +141,8 @@ pub fn handle_dma_tc() {
 }
 
 /// Software-triggered frame processing (EXTI ISR body).
-pub fn handle_exti_frame() {
+/// Returns the capture size for the next DMA cycle.
+pub fn handle_exti_frame() -> rm32::transfer::CaptureSize {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
 
@@ -160,7 +161,14 @@ pub fn handle_exti_frame() {
     if count % 200 == 1 {
         rtt_target::rprintln!(
             "[exti] frame#{} pin_high={} input_set={} servo_pwm={} buf[0..4]={} {} {} {}",
-            count, pin_high, i_set, s_pwm, buf[0], buf[1], buf[2], buf[3]
+            count,
+            pin_high,
+            i_set,
+            s_pwm,
+            buf[0],
+            buf[1],
+            buf[2],
+            buf[3]
         );
     }
 
@@ -253,6 +261,8 @@ pub fn handle_exti_frame() {
         state.frametime_low = low;
         state.frametime_high = high;
     }
+
+    actions.next_capture
 }
 
 /// CRSF UART RX byte handler. Call from UART RX interrupt with each received byte.

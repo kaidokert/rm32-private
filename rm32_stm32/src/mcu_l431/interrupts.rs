@@ -58,11 +58,10 @@ fn EXTI15_10() {
     unsafe {
         exti.pr1.write(|w| w.bits(1 << 15));
     }
-    isr_handlers::handle_exti_frame();
+    let next_capture = isr_handlers::handle_exti_frame();
 
     // Re-enable DMA CH5 for next frame
-    let shared = crate::isr::shared();
-    let sz = if shared.servo_pwm() { 2u32 } else { 32 };
+    let sz = next_capture.ndtr();
     let dma = unsafe { &*pac::DMA1::PTR };
     unsafe {
         dma.cndtr5.write(|w| w.bits(sz));

@@ -55,15 +55,13 @@ fn EXTI15_10() {
     unsafe {
         exti.pr1().write(|w| w.bits(1 << 15));
     }
-    isr_handlers::handle_exti_frame();
+    let next_capture = isr_handlers::handle_exti_frame();
 
     // Re-enable DMA CH1 for next frame
-    let shared = crate::isr::shared();
-    let sz = if shared.servo_pwm() { 2u32 } else { 32 };
     let dma = unsafe { &*pac::DMA1::PTR };
     let ch1 = dma.ch1();
     unsafe {
-        ch1.ndtr().write(|w| w.bits(sz));
+        ch1.ndtr().write(|w| w.bits(next_capture.ndtr()));
         ch1.cr().modify(|r, w| w.bits(r.bits() | 1)); // Enable CH1
     }
     // TIM15 CR1.CEN

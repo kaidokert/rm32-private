@@ -40,21 +40,13 @@ fn EXTI4_15() {
     let exti = unsafe { &*stm32g0xx_hal::stm32::EXTI::ptr() };
     exti.rpr1().write(|w| unsafe { w.bits(1 << 15) });
     exti.fpr1().write(|w| unsafe { w.bits(1 << 15) });
-    isr_handlers::handle_exti_frame();
+    let next_capture = isr_handlers::handle_exti_frame();
 
     // Re-enable DMA
     let dma = unsafe { &*stm32g0xx_hal::stm32::DMA1::ptr() };
-    let shared = crate::isr::shared();
-    let gpiob = unsafe { &*stm32g0xx_hal::stm32::GPIOB::ptr() };
-    let pin_high = gpiob.idr().read().bits() & (1 << 4) != 0;
-    let sz = if shared.servo_pwm() && pin_high {
-        3u32
-    } else if shared.servo_pwm() {
-        2
-    } else {
-        32
-    };
-    dma.ch(0).ndtr().write(|w| unsafe { w.bits(sz) });
+    dma.ch(0)
+        .ndtr()
+        .write(|w| unsafe { w.bits(next_capture.ndtr()) });
     dma.ch(0).cr().modify(|_, w| w.en().set_bit());
     unsafe { &*stm32g0xx_hal::stm32::TIM3::ptr() }
         .cr1()

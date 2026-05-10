@@ -45,10 +45,38 @@ pub enum TransferAction {
     ServoCalibrating,
 }
 
+/// How many DMA edges to capture on the next cycle.
+///
+/// Mirrors AM32's `buffersize` global — the decoder tells the HAL how
+/// to arm the next DMA capture. This is the feedback loop that was
+/// lost in the original Rust port (see BRINGUP_NOTES_L431.md).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CaptureSize {
+    /// DShot: 32 edges (16 bit-pairs)
+    Dshot,
+    /// Servo aligned: 2 edges [rise, fall] — ready to decode
+    Servo,
+    /// Servo misaligned: 3 edges [fall, rise, fall] — re-align next cycle
+    ServoRealign,
+}
+
+impl CaptureSize {
+    /// DMA NDTR value for this capture size.
+    pub fn ndtr(self) -> u32 {
+        match self {
+            CaptureSize::Dshot => 32,
+            CaptureSize::Servo => 2,
+            CaptureSize::ServoRealign => 3,
+        }
+    }
+}
+
 /// Actions the caller (ISR) should take after transfer complete.
 pub struct TransferActions {
     /// Primary action
     pub action: TransferAction,
+    /// How many edges to capture next cycle (HAL re-arm directive)
+    pub next_capture: CaptureSize,
     /// DShot frame timing update (from unarmed averaging)
     pub frametime: Option<(u16, u16)>,
 }
@@ -102,7 +130,11 @@ impl TransferState {
                 }
                 _ => TransferAction::None,
             };
-            return TransferActions { action, frametime };
+            return TransferActions {
+                action,
+                next_capture: CaptureSize::Dshot, // detection uses 32-edge captures
+                frametime,
+            };
         }
 
         // --- DShot processing ---
@@ -183,6 +215,77 @@ impl TransferState {
             }
         }
 
-        TransferActions { action, frametime }
+        // Compute next capture size — mirrors AM32's buffersize global.
+        // Servo + pin_high means [fall,rise] alignment: request 3 edges to realign.
+        let next_capture = if servo_mode && input_pin_high {
+            CaptureSize::ServoRealign
+        } else if servo_mode {
+            CaptureSize::Servo
+        } else {
+            CaptureSize::Dshot
+        };
+
+        TransferActions {
+            action,
+            next_capture,
+            frametime,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_size_ndtr_values() {
+        assert_eq!(CaptureSize::Dshot.ndtr(), 32);
+        assert_eq!(CaptureSize::Servo.ndtr(), 2);
+        assert_eq!(CaptureSize::ServoRealign.ndtr(), 3);
+    }
+
+    #[test]
+    fn servo_pin_high_requests_realign() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 2];
+        let mut zic = 0u16;
+        let actions = state.process(
+            &buf, true, false, true, false, false,
+            true, // input_pin_high — the key condition
+            0, 0, false, false, &mut zic, 400, 600,
+        );
+        assert_eq!(
+            actions.next_capture,
+            CaptureSize::ServoRealign,
+            "servo + pin_high should request 3-edge realignment"
+        );
+    }
+
+    #[test]
+    fn servo_pin_low_requests_normal() {
+        let mut state = TransferState::default();
+        let buf = [1000u32, 2500];
+        state.servo.set_calibration(1100, 1900, 1500, 100);
+        let mut zic = 0u16;
+        let actions = state.process(
+            &buf, true, false, true, false, false, false, // input_pin_low — aligned
+            0, 0, false, false, &mut zic, 400, 600,
+        );
+        assert_eq!(
+            actions.next_capture,
+            CaptureSize::Servo,
+            "servo + pin_low should request 2-edge capture"
+        );
+    }
+
+    #[test]
+    fn dshot_mode_requests_32() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+        let actions = state.process(
+            &buf, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 400, 600,
+        );
+        assert_eq!(actions.next_capture, CaptureSize::Dshot);
     }
 }
