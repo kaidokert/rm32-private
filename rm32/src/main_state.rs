@@ -755,4 +755,52 @@ mod tests {
             "BUG: mode 2 not implemented — motor stays armed when it shouldn't"
         );
     }
+
+    // --- Signal timeout tests ---
+    // REQ-SAFE-SIGNAL_TIMEOUT
+
+    #[test]
+    fn signal_timeout_disarms_when_armed() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::OldRoutine);
+        shared.set_input_set(true);
+        // Push signal timeout past armed threshold
+        for _ in 0..=crate::constants::SIGNAL_TIMEOUT_DISARM {
+            shared.increment_signal_timeout();
+        }
+
+        let mut main = make_test_main_state();
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert!(!shared.armed(), "should disarm after signal timeout");
+        assert!(!shared.input_set(), "should clear input_set");
+    }
+
+    #[test]
+    fn signal_timeout_unarmed_not_implemented() {
+        // C firmware has a 2-second unarmed timeout that resets the ESC.
+        // Rust only handles the armed timeout. This test documents the gap.
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::Disarmed);
+        shared.set_input_set(true);
+        // Push signal timeout way past unarmed threshold (40000)
+        for _ in 0..45000u32 {
+            shared.increment_signal_timeout();
+        }
+
+        let mut main = make_test_main_state();
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        // BUG: Rust doesn't implement unarmed timeout.
+        // C would reset inputSet=0 and NVIC_SystemReset().
+        // When implemented, this should assert !shared.input_set()
+        assert!(
+            shared.input_set(),
+            "BUG: unarmed signal timeout not implemented — inputSet stays true"
+        );
+    }
 }
