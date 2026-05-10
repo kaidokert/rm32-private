@@ -1,0 +1,25 @@
+# Low voltage cutoff — absolute mode (mode 2)
+# XFAIL: C harness lacks eeprom.absolute_voltage_cutoff config key
+# and ADC processing doesn't update battery_voltage reliably in mode 2.
+# This vector documents the EXPECTED behavior for when the harness is fixed.
+#
+# REQ-PROT-LVC (mode 2): absolute voltage cutoff
+# When low_voltage_cut_off=2, battery_voltage is compared directly
+# against absolute_voltage_cutoff (raw EEPROM value, unit unclear in C).
+#
+# MISSING IN RUST: mode 2 not implemented at all.
+# Rust treats low_voltage_cut_off != 0 as mode 1 (per-cell).
+
+@config
+armed=1
+inputSet=1
+dshot=1
+EDT_ARMED=1
+eeprom.low_voltage_cut_off=2
+running=1
+old_routine=1
+
+@sequence
+# TODO: needs harness support for eeprom.absolute_voltage_cutoff
+# and reliable ADC mock to drive battery_voltage below threshold
+tick 1  | throttle=500 | armed=1

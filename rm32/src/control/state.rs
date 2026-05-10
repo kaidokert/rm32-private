@@ -591,6 +591,11 @@ impl Default for PidState {
 }
 
 impl ProtectionState {
+    /// Read low voltage count.
+    pub fn low_voltage_count(&self) -> u16 {
+        self.low_voltage_count
+    }
+
     /// Set low voltage count (for testing/harness).
     pub fn set_low_voltage_count(&mut self, v: u16) {
         self.low_voltage_count = v;
