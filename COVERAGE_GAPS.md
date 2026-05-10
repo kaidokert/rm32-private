@@ -41,18 +41,18 @@ regions, 74% branches. **373 lines (22%) covered by neither test suite.**
 
 | # | File | Lines | Function/Block | What It Does | Risk If Missing | Coverage |
 |---|------|-------|---------------|-------------|----------------|----------|
-| 17 | main.c | 1909-1918 | Variable PWM mode 2 | Computes `tim1_arr` from `average_interval` — auto PWM frequency | Duty overflow at high RPM → FET overheating | Neither |
-| 18 | main.c | 1687-1716 | `checkDeviceInfo()` | Reads bootloader device info for EEPROM address selection | Wrong EEPROM address → reads garbage settings | Neither |
-| 19 | main.c | 1490-1492 | Active brake on stop (mode 2) | `comStep(2)` + active brake power duty when stopped + armed | Motor freewheels instead of holding position | Neither |
-| 20 | main.c | 1344-1350 | LVC cell count at arming | `cell_count = voltage / 370`, beep per cell | Wrong cell count → wrong cutoff voltage | Neither |
-| 21 | main.c | 1037-1064 | DShot RC-car wrong-direction braking | Sets `adjusted_input=0`, activates prop brake, checks `return_to_center` | Power applied in wrong direction during rapid reversal | Partial |
-| 22 | dshot.c | 261-266 | EDT voltage/temperature frames | Encodes `battery_voltage/25` and `degrees_celsius` into EDT packets | FC displays garbage voltage/temperature | Neither |
-| 23 | signal.c | 183 | Calibration jitter rejection | Resets `enter_calibration_count` when stick jitters > 50 | Noisy servo signal accidentally triggers calibration | Neither |
-| 24 | signal.c | 255-260 | Protocol re-confirmation in detectInput | `checkDshot()`/`checkServo()` re-validation on second frame | False protocol lock from single noisy capture | Neither |
-| 25 | main.c | 629-632 | PWM frequency from EEPROM | Custom `pwm_frequency` 8-144 → timer divider | Audible noise or FET heating at wrong frequency | Neither |
-| 26 | main.c | 760-763 | Slow ramp (`max_ramp < 10`) | Sets `ramp_divider=9`, uses raw EEPROM ramp values | Missing slow-ramp mode for specialized applications | Neither |
-| 27 | main.c | 785-787 | Bidir polling changeover halving | Halves `polling_mode_changeover` for bidirectional mode | Later mode transition → missed zero-crosses during direction change | Neither |
-| 28 | dshot.c | 173-183 | Beacon tones 2-5 | `play_tone_flag` for DShot commands 2-5 | Missing beep patterns for lost-drone locator | Neither |
+| 17 | main.c | 1909-1918 | Variable PWM mode 2 | Computes `tim1_arr` from `average_interval` — auto PWM frequency | Duty overflow at high RPM → FET overheating | Neither | Present — variable_pwm_mode2() in main_state.rs, tested |
+| 18 | main.c | 1687-1716 | `checkDeviceInfo()` | Reads bootloader device info for EEPROM address selection | Wrong EEPROM address → reads garbage settings | Neither | Present — DEVINFO magic + device_code in firmware main.rs |
+| 19 | main.c | 1490-1492 | Active brake on stop (mode 2) | `comStep(2)` + active brake power duty when stopped + armed | Motor freewheels instead of holding position | Neither | Present — brake_on_stop==2 in isr_logic.rs |
+| 20 | main.c | 1344-1350 | LVC cell count at arming | `cell_count = voltage / 370`, beep per cell | Wrong cell count → wrong cutoff voltage | Neither | Present — cell_count computed + per-cell beep loop in main.rs |
+| 21 | main.c | 1037-1064 | DShot RC-car wrong-direction braking | Sets `adjusted_input=0`, activates prop brake, checks `return_to_center` | Power applied in wrong direction during rapid reversal | Partial | Present — dshot_rc_car() in input_mapping.rs |
+| 22 | dshot.c | 261-266 | EDT voltage/temperature frames | Encodes `battery_voltage/25` and `degrees_celsius` into EDT packets | FC displays garbage voltage/temperature | Neither | Present — edt.rs voltage/temp frames, tested |
+| 23 | signal.c | 183 | Calibration jitter rejection | Resets `enter_calibration_count` when stick jitters > 50 | Noisy servo signal accidentally triggers calibration | Neither | Present — CALIBRATION_MAX_JITTER in transfer.rs |
+| 24 | signal.c | 255-260 | Protocol re-confirmation in detectInput | `checkDshot()`/`checkServo()` re-validation on second frame | False protocol lock from single noisy capture | Neither | **MISSING** — single-shot detection, no re-validation |
+| 25 | main.c | 629-632 | PWM frequency from EEPROM | Custom `pwm_frequency` 8-144 → timer divider | Audible noise or FET heating at wrong frequency | Neither | Present — config.rs PWM frequency derivation, tested |
+| 26 | main.c | 760-763 | Slow ramp (`max_ramp < 10`) | Sets `ramp_divider=9`, uses raw EEPROM ramp values | Missing slow-ramp mode for specialized applications | Neither | **MISSING** — max_ramp<10 path absent |
+| 27 | main.c | 785-787 | Bidir polling changeover halving | Halves `polling_mode_changeover` for bidirectional mode | Later mode transition → missed zero-crosses during direction change | Neither | **MISSING** — no changeover threshold halving for bidir |
+| 28 | dshot.c | 173-183 | Beacon tones 2-5 | `play_tone_flag` for DShot commands 2-5 | Missing beep patterns for lost-drone locator | Neither | Present — commands 1-5 → PlayTone, all map to beacon sweep |
 
 ## Coverage Delta: Unit vs Blackbox
 
