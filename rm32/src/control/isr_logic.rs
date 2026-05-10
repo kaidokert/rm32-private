@@ -173,6 +173,7 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     com_timer: &mut T,
     comp: &mut C,
     phase: &mut Ph,
+    bidirectional: bool,
 ) where
     S: SharedComm,
     C: hal::Comparator,
@@ -199,7 +200,14 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
 
     let zc = shared.zero_crosses();
     let ci = shared.commutation_interval();
-    if shared.old_routine() && zc >= OLD_ROUTINE_EXIT_ZC && ci <= OLD_ROUTINE_EXIT_INTERVAL {
+    // Bidir mode halves the changeover threshold for faster mode transition
+    // during direction changes (C: polling_mode_changeover / 2)
+    let exit_interval = if bidirectional {
+        OLD_ROUTINE_EXIT_INTERVAL / 2
+    } else {
+        OLD_ROUTINE_EXIT_INTERVAL
+    };
+    if shared.old_routine() && zc >= OLD_ROUTINE_EXIT_ZC && ci <= exit_interval {
         shared.transition(MotorEvent::BemfLocked);
     }
 }

@@ -96,6 +96,7 @@ pub fn handle_tim14() {
         &mut state.hal.com_timer,
         &mut state.hal.comp,
         &mut state.hal.phase,
+        state.config.bi_direction != 0,
     );
 }
 

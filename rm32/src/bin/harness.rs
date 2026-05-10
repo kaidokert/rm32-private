@@ -485,6 +485,7 @@ impl Harness {
                         &mut self.hal.com_timer,
                         &mut self.hal.comp,
                         &mut self.hal.phase,
+                        self.config.bi_direction != 0,
                     );
                 }
             }

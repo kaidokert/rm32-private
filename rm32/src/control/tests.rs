@@ -299,6 +299,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
+            false, // not bidirectional
         );
 
         assert_ne!(comm.step, step_before);

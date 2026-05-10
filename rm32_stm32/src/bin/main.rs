@@ -264,11 +264,30 @@ fn main() -> ! {
                 }
                 SineStepResult::Changeover {
                     commutation_interval,
-                    ..
+                    step,
                 } => {
                     shared.transition(rm32::motor_mode::MotorEvent::ExitSine);
                     shared.set_commutation_interval(commutation_interval);
                     shared.set_zero_crosses(20);
+                    shared.set_prop_brake_active(false);
+                    // Set main-loop timing for BLDC mode entry
+                    main_state
+                        .timing_mut()
+                        .set_average_interval(commutation_interval);
+                    main_state
+                        .timing_mut()
+                        .set_last_average_interval(commutation_interval);
+                    // Set ISR state: commutation step + immediate commutation
+                    isr::with_isr_state(|isr| {
+                        isr.commutation.set_step(step);
+                        use rm32::hal::{ComTimer, Comparator, PhaseOutput, PwmOutput};
+                        isr.hal.phase.com_step(step);
+                        isr.hal.pwm.generate_update_event();
+                        isr.hal
+                            .com_timer
+                            .set_and_enable(commutation_interval as u16);
+                        isr.hal.comp.enable_interrupts();
+                    });
                 }
                 SineStepResult::Idle => {}
             }
