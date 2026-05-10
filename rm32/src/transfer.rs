@@ -19,6 +19,9 @@ pub struct TransferState {
     // Calibration entry
     enter_calibration_count: u8,
     last_input: u16,
+    // Bidirectional DShot auto-detection: counts consecutive frames where
+    // input pin is HIGH at idle (inverted signaling). >100 → bidir detected.
+    high_pin_count: u8,
 }
 
 /// Detected input protocol during auto-detection.
@@ -110,6 +113,8 @@ pub struct TransferActions {
     pub next_capture: CaptureConfig,
     /// DShot frame timing update (from unarmed averaging)
     pub frametime: Option<(u16, u16)>,
+    /// Bidirectional DShot auto-detected (caller should set dshot_telemetry=true)
+    pub bidir_detected: bool,
 }
 
 impl TransferState {
@@ -172,6 +177,7 @@ impl TransferState {
                 action: detected_action,
                 next_capture: detect_capture,
                 frametime,
+                bidir_detected: false,
             };
         }
 
@@ -213,7 +219,18 @@ impl TransferState {
         }
 
         // --- Unarmed housekeeping ---
+        let mut bidir_detected = false;
         if !armed {
+            // Bidirectional DShot auto-detection: when idle pin is HIGH
+            // for 100+ consecutive frames while unarmed, the FC is using
+            // inverted (bidir) signaling. Set dshot_telemetry to invert CRC.
+            if dshot_mode && !dshot_telemetry && input_pin_high {
+                self.high_pin_count = self.high_pin_count.saturating_add(1);
+                if self.high_pin_count > 100 {
+                    bidir_detected = true;
+                }
+            }
+
             // DShot frame averaging (for dshot_frametime calibration)
             if dshot_mode && self.average_count < 8 && *zero_input_count > 5 {
                 self.average_count += 1;
@@ -267,6 +284,7 @@ impl TransferState {
             action,
             next_capture,
             frametime,
+            bidir_detected,
         }
     }
 }
@@ -339,5 +357,78 @@ mod tests {
         }
         // (If detection doesn't trigger with this buffer, the test is inconclusive
         // but won't fail — detection depends on signal timing heuristics)
+    }
+
+    #[test]
+    fn bidir_auto_detect_after_100_frames() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+
+        // Simulate 100 unarmed DShot frames with pin HIGH — not yet detected
+        for _ in 0..100 {
+            let actions = state.process(
+                &buf, true, true, false, false, // dshot_telemetry=false
+                false, // armed=false
+                true,  // input_pin_high=true (bidir idle)
+                0, 0, false, false, &mut zic, 400, 600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+
+        // Frame 101 — should trigger detection
+        let actions = state.process(
+            &buf, true, true, false, false, false, true, 0, 0, false, false, &mut zic, 400, 600, 64,
+        );
+        assert!(actions.bidir_detected);
+    }
+
+    #[test]
+    fn bidir_not_detected_when_pin_low() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+
+        // 200 frames with pin LOW — no detection
+        for _ in 0..200 {
+            let actions = state.process(
+                &buf, true, true, false, false, false, false, // pin LOW
+                0, 0, false, false, &mut zic, 400, 600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+    }
+
+    #[test]
+    fn bidir_not_detected_when_armed() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+
+        // 200 frames with pin HIGH but armed — no detection
+        for _ in 0..200 {
+            let actions = state.process(
+                &buf, true, true, false, false, true, // armed=true
+                true, 0, 0, false, false, &mut zic, 400, 600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+    }
+
+    #[test]
+    fn bidir_not_detected_when_already_set() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+
+        // 200 frames with pin HIGH and dshot_telemetry already true
+        for _ in 0..200 {
+            let actions = state.process(
+                &buf, true, true, false, true, // dshot_telemetry=true
+                false, true, 0, 0, false, false, &mut zic, 400, 600, 64,
+            );
+            // Counter shouldn't increment when already detected
+            assert!(!actions.bidir_detected);
+        }
     }
 }

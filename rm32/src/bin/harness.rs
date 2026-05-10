@@ -339,6 +339,9 @@ impl Harness {
             self.frametime_low = low;
             self.frametime_high = high;
         }
+        if actions.bidir_detected {
+            self.shared.set_dshot_telemetry(true);
+        }
     }
 
     fn do_tick(&mut self) {

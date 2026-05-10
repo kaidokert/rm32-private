@@ -262,6 +262,9 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
         state.frametime_low = low;
         state.frametime_high = high;
     }
+    if actions.bidir_detected {
+        shared.set_dshot_telemetry(true);
+    }
 
     actions.next_capture
 }
