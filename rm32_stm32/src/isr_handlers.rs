@@ -212,6 +212,10 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
             if state.edt_armed || value == 0 {
                 shared.set_newinput(value);
             }
+            // EDT disarm: zero throttle with EDT_ARM_ENABLE clears EDT_ARMED
+            if value == 0 && state.edt_arm_enable {
+                state.edt_armed = false;
+            }
             if telemetry {
                 shared.set_send_telemetry(true);
             }
@@ -230,7 +234,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 &mut state.config,
                 &mut state.forward,
                 &mut state.edt_armed,
-                state.cmd.extended_telemetry(),
+                state.edt_arm_enable,
             );
             match result {
                 rm32::dshot_commands::CommandResult::SaveSettings => {

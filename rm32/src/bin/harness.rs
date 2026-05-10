@@ -170,6 +170,7 @@ struct Harness {
     dshot: bool,
     servo_pwm: bool,
     edt_armed: bool,
+    edt_arm_enable: bool,
     frametime_low: u16,
     frametime_high: u16,
     zero_input_count: u16,
@@ -206,6 +207,7 @@ impl Harness {
             dshot: false,
             servo_pwm: false,
             edt_armed: false,
+            edt_arm_enable: false,
             frametime_low: 400,
             frametime_high: 600,
             zero_input_count: 0,
@@ -292,6 +294,10 @@ impl Harness {
                 if self.edt_armed || value == 0 {
                     self.shared.set_newinput(value);
                 }
+                // EDT disarm: zero throttle with EDT_ARM_ENABLE clears EDT_ARMED
+                if value == 0 && self.edt_arm_enable {
+                    self.edt_armed = false;
+                }
                 if telemetry {
                     self.shared.set_send_telemetry(true);
                 }
@@ -312,7 +318,7 @@ impl Harness {
                     &mut self.config,
                     &mut fwd,
                     &mut self.edt_armed,
-                    false,
+                    self.edt_arm_enable,
                 );
                 self.commutation.set_forward(fwd);
                 match result {
@@ -537,7 +543,7 @@ impl Harness {
             "commutation_interval" => self.shared.set_commutation_interval(v as u32),
             "zero_input_count" => self.zero_input_count = v as u16,
             "EDT_ARMED" => self.edt_armed = v != 0,
-            "EDT_ARM_ENABLE" => {}
+            "EDT_ARM_ENABLE" => self.edt_arm_enable = v != 0,
             "dshot_telemetry" => self.shared.set_dshot_telemetry(v != 0),
             "signaltimeout" => self.shared.set_signal_timeout(v as u16),
             "cell_count" => self.main.cell_count = v as u8, // pub field
