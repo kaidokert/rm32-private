@@ -803,4 +803,28 @@ mod tests {
             "BUG: unarmed signal timeout not implemented — inputSet stays true"
         );
     }
+
+    // --- Sine-to-BLDC changeover tests ---
+    // REQ-MOTOR-SINE_STEPPER_CONTROL
+    //
+    // The changeover from sine mode to sensorless BLDC is handled in the
+    // firmware main loop (rm32_stm32/src/bin/main.rs), not in MainState::tick().
+    // These tests document what the changeover MUST set, based on C code
+    // (main.c lines 2238-2255). The firmware handler currently misses 8 of 13
+    // state assignments.
+    //
+    // Missing in Rust firmware changeover handler:
+    //   - average_interval = 9000
+    //   - last_average_interval = average_interval
+    //   - SET_INTERVAL_TIMER_COUNT(9000)
+    //   - prop_brake_active = 0
+    //   - step = changeover_step (ignored via `..`)
+    //   - commutate() — first commutation step
+    //   - generatePwmTimerEvent()
+    //   - stall_protect_minimum_duty applied if stall_protection ON
+    //
+    // These can't be unit-tested here because they're firmware-specific
+    // (HAL calls like commutate() and generatePwmTimerEvent() have no
+    // platform-independent equivalent). They need a hardware smoke test
+    // or a firmware-level integration test.
 }
