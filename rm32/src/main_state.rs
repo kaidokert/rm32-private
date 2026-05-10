@@ -827,4 +827,25 @@ mod tests {
     // (HAL calls like commutate() and generatePwmTimerEvent() have no
     // platform-independent equivalent). They need a hardware smoke test
     // or a firmware-level integration test.
+
+    // --- EDT arming/disarming tests ---
+    // Coverage gap #5: EDT disarm on zero-throttle
+    //
+    // Three bugs found:
+    //
+    // 1. EDT disarm on zero throttle NOT IMPLEMENTED:
+    //    C: if (tocheck==0 && EDT_ARM_ENABLE) EDT_ARMED=0
+    //    Rust: zero throttle sets newinput=0 but doesn't clear edt_armed
+    //
+    // 2. EDT_ARM_ENABLE not derived from EEPROM config:
+    //    C: input_type == EDTARM_IN (4) → EDT_ARM_ENABLE=1
+    //    Rust: EdtArm enum variant exists but nobody checks it
+    //
+    // 3. edt_arm_enable parameter sourced wrong:
+    //    C: separate global from EEPROM config
+    //    Rust firmware: passes extended_telemetry() (wrong — that's
+    //    "EDT currently active", not "EDT arming enabled by config")
+    //
+    // The EDT throttle gate test (edt_armed_throttle_gate.txt) covers
+    // the gate itself but not the disarm-on-zero path.
 }

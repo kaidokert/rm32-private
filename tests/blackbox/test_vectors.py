@@ -39,6 +39,7 @@ def get_vector_files():
 # Vectors with known Rust vs C behavioral differences (pending investigation)
 XFAIL_VECTORS = {
     "desync_recovery",  # Rust doesn't reset zero_crosses on desync (different main_loop ordering)
+    "edt_disarm_on_zero",  # Rust doesn't disarm EDT on zero throttle (3 bugs: missing disarm, wrong edt_arm_enable source, EdtArm config unused)
 }
 
 
