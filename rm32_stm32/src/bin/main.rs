@@ -41,7 +41,7 @@ fn main() -> ! {
         mut sys,
         mut adc,
         mut telem,
-    } = rm32_stm32::init::init(BOARD.dead_time);
+    } = rm32_stm32::init::init(BOARD.dead_time, BOARD.bemf_pins);
     rtt_target::rprintln!("[rm32] init done");
 
     // --- WS2812 LED: boot indicator (dim red) ---

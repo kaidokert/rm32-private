@@ -2,3 +2,7 @@ name: "G071 PWM_EN"
 mcu: stm32g071
 dead_time: 60
 bridge_enable: true
+bemf_pins:
+  phase_a: PB3   # COMP2 INM IO1
+  phase_b: PB7   # COMP2 INM IO2
+  phase_c: PA2   # COMP2 INM IO3
