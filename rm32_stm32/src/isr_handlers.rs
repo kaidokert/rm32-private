@@ -72,6 +72,24 @@ static ISR_LOCAL: IsrCell = IsrCell::new();
 pub fn handle_tim6() {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
+
+    // Heartbeat: log every 20000 calls (~1 sec at 20 kHz)
+    static mut TIM6_COUNT: u32 = 0;
+    let n = unsafe {
+        TIM6_COUNT = TIM6_COUNT.wrapping_add(1);
+        TIM6_COUNT
+    };
+    if n % 20000 == 1 {
+        rtt_target::rprintln!(
+            "[tim6] n={} mode={:?} duty_set={} duty={} comint={}",
+            n,
+            shared.motor_mode(),
+            shared.duty_cycle_setpoint(),
+            shared.duty_cycle(),
+            shared.commutation_interval(),
+        );
+    }
+
     let mut ctx = rm32::control::context::MotorContext {
         commutation: &mut state.commutation,
         bemf: &mut state.bemf,

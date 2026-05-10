@@ -33,7 +33,9 @@ fn main() -> ! {
     cortex_m::interrupt::disable();
 
     rtt_target::rtt_init_print!();
-    rtt_target::rprintln!("[rm32] boot");
+    #[cfg(feature = "debuguart")]
+    rm32_stm32::debug_uart::init();
+    rm32_stm32::dprintln!("[rm32] boot");
 
     // --- MCU-specific init (clocks, GPIO, peripherals, NVIC) ---
     let InitResult {
@@ -71,8 +73,10 @@ fn main() -> ! {
     }
 
     // --- Start IWDG watchdog (after startup tune, matching C sequencing) ---
-    sys.start_watchdog(Chip::WDG_PRESCALER, Chip::WDG_RELOAD);
-    rtt_target::rprintln!("[rm32] wdg started");
+    // Bench-debug: IWDG disabled so the chip can sit idle without resetting
+    // itself between test runs. Re-enable for production.
+    // sys.start_watchdog(Chip::WDG_PRESCALER, Chip::WDG_RELOAD);
+    rtt_target::rprintln!("[rm32] wdg DISABLED (bench debug)");
 
     // --- Configure input capture inversion before moving to ISR ---
     // NOTE: `receive_dshot_dma()` deferred until after `init_isr_state` —
@@ -159,6 +163,10 @@ fn main() -> ! {
         main_state.config = EepromConfig::default();
     }
     main_state.config.apply_version_defaults();
+    // Bench-debug: disable stuck-rotor latch so we can observe startup behavior
+    // without adjusted_input being clamped to 0 on the first BEMF timeout.
+    main_state.config.stuck_rotor_protection = 0;
+    rtt_target::rprintln!("[rm32] stuck_rotor_protection FORCED OFF (bench debug)");
 
     // Derive motor configuration from EEPROM + board (all math now in rm32, host-testable)
     let motor_cfg = main_state.config.derive_motor_config(
@@ -228,14 +236,18 @@ fn main() -> ! {
         log_counter = log_counter.wrapping_add(1);
         if log_counter.is_multiple_of(100_000) {
             rtt_target::rprintln!(
-                "[loop] input_set={} servo_pwm={} dshot={} newinput={} armed={} running={} sig_to={}",
-                shared.input_set(),
-                shared.servo_pwm(),
-                shared.dshot(),
+                "[loop] mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={}",
+                shared.motor_mode(),
                 shared.newinput(),
-                shared.armed(),
-                shared.running(),
+                shared.adjusted_input(),
+                shared.duty_cycle_setpoint(),
+                shared.duty_cycle(),
                 shared.signal_timeout(),
+                main_state.protection.bemf_timeout_happened(),
+                main_state.protection.bemf_timeout(),
+                shared.zero_crosses(),
+                shared.interval_timer_count(),
+                main_state.config.stuck_rotor_protection,
             );
         }
         // Sine mode: step phases when stepper_sine is active

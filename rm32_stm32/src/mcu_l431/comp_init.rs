@@ -28,6 +28,10 @@ pub fn init_comp2(initial_phase: u32) {
         rcc.ahb2enr
             .modify(|_, w| w.gpioaen().set_bit().gpioben().set_bit());
 
+        // L4: COMP shares its register clock with SYSCFG. Without SYSCFGEN,
+        // writes to COMP_CSR are silently dropped (readback = 0).
+        rcc.apb2enr.modify(|_, w| w.syscfgen().set_bit());
+
         // PA4, PA5 as analog (INM inputs)
         gpioa
             .moder
@@ -44,7 +48,13 @@ pub fn init_comp2(initial_phase: u32) {
             | (0b00u32) << 2                   // PWRMODE=high-speed at bits 3:2
             | (1u32) << 0                      // EN
             | (inmesel as u32) << 25; // INMESEL[1:0] at bits 26:25
+        rtt_target::rprintln!(
+            "[comp_init] writing COMP2_CSR={:#010x} (inmsel={} inmesel={})",
+            csr_val, inmsel, inmesel
+        );
         comp.comp2_csr.write(|w| w.bits(csr_val));
+        let readback = comp.comp2_csr.read().bits();
+        rtt_target::rprintln!("[comp_init] readback COMP2_CSR={:#010x}", readback);
 
         // Wait for startup (~5us at 80MHz)
         cortex_m::asm::delay(400);
