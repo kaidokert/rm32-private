@@ -42,13 +42,18 @@ fn EXTI4_15() {
     exti.fpr1().write(|w| unsafe { w.bits(1 << 15) });
     let next_capture = isr_handlers::handle_exti_frame();
 
+    // Apply prescaler change if requested (protocol detection)
+    let tim3 = unsafe { &*stm32g0xx_hal::stm32::TIM3::ptr() };
+    if let Some(psc) = next_capture.prescaler {
+        tim3.psc().write(|w| unsafe { w.bits(psc as u32) });
+        tim3.egr().write(|w| w.ug().set_bit());
+    }
+
     // Re-enable DMA
     let dma = unsafe { &*stm32g0xx_hal::stm32::DMA1::ptr() };
     dma.ch(0)
         .ndtr()
-        .write(|w| unsafe { w.bits(next_capture.ndtr()) });
+        .write(|w| unsafe { w.bits(next_capture.ndtr) });
     dma.ch(0).cr().modify(|_, w| w.en().set_bit());
-    unsafe { &*stm32g0xx_hal::stm32::TIM3::ptr() }
-        .cr1()
-        .modify(|_, w| w.cen().set_bit());
+    tim3.cr1().modify(|_, w| w.cen().set_bit());
 }

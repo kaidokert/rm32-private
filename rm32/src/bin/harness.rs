@@ -269,6 +269,7 @@ impl Harness {
             &mut self.zero_input_count,
             self.frametime_low,
             self.frametime_high,
+            64, // harness cpu_mhz
         );
 
         // Apply transfer actions

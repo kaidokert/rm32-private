@@ -142,7 +142,7 @@ pub fn handle_dma_tc() {
 
 /// Software-triggered frame processing (EXTI ISR body).
 /// Returns the capture size for the next DMA cycle.
-pub fn handle_exti_frame() -> rm32::transfer::CaptureSize {
+pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
 
@@ -188,6 +188,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureSize {
         &mut zic,
         state.frametime_low,
         state.frametime_high,
+        crate::mcu::Chip::CPU_FREQUENCY_MHZ as u8,
     );
     shared.set_zero_input_count(zic);
 
