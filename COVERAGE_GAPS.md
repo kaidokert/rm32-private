@@ -21,8 +21,8 @@ regions, 74% branches. **373 lines (22%) covered by neither test suite.**
 | 4 | main.c | 2212-2285 | Sine-to-BLDC changeover | Sets ~10 state vars (`stepper_sine=0`, `running=1`, `commutation_interval=9000`, etc.) for mode transition | Immediate desync on every sine-mode motor start | Neither | Needs audit |
 | 5 | dshot.c | 144 | EDT disarm on zero-throttle | When `EDT_ARM_ENABLE=1` and throttle=0, sets `EDT_ARMED=0` | Motor cannot be stopped via DShot zero command | Neither | Needs audit |
 | 6 | dshot.c | 129-136 | Throttle gate when EDT not armed | Throttle values >47 silently dropped when `EDT_ARMED=0` | Motor spins when flight controller hasn't armed it | Neither | **CONFIRMED BUG** — fixed (EDT_ARMED guard) |
-| 7 | main.c | 1723-1862 | `main()/init()` — RC-car overrides | Disables `stuck_rotor_protection`, forces `bi_direction=1`, adjusts duty for RC-car mode | RC-car ESC with stuck_rotor_protection ON fights direction changes | Neither | **MISSING** — all 11 init-time overrides absent |
-| 8 | signal.c | 63-85 | Servo calibration pipeline | High threshold averaging (50+ samples), low threshold (75+ samples), `saveEEpromSettings()` | Calibration appears to work but never persists to flash | Neither | Pipeline present (12/13 steps); **EEPROM save missing** |
+| 7 | main.c | 1723-1862 | `main()/init()` — RC-car overrides | Disables `stuck_rotor_protection`, forces `bi_direction=1`, adjusts duty for RC-car mode | RC-car ESC with stuck_rotor_protection ON fights direction changes | Neither | **FIXED** — apply_rc_car_overrides() + duty +50 boost |
+| 8 | signal.c | 63-85 | Servo calibration pipeline | High threshold averaging (50+ samples), low threshold (75+ samples), `saveEEpromSettings()` | Calibration appears to work but never persists to flash | Neither | **FIXED** — ServoCalibrationDone propagated to EEPROM save |
 
 ## Tier 2 — High Risk (ISR path, motor protection, protocol)
 
@@ -48,9 +48,9 @@ regions, 74% branches. **373 lines (22%) covered by neither test suite.**
 | 21 | main.c | 1037-1064 | DShot RC-car wrong-direction braking | Sets `adjusted_input=0`, activates prop brake, checks `return_to_center` | Power applied in wrong direction during rapid reversal | Partial | Present — dshot_rc_car() in input_mapping.rs |
 | 22 | dshot.c | 261-266 | EDT voltage/temperature frames | Encodes `battery_voltage/25` and `degrees_celsius` into EDT packets | FC displays garbage voltage/temperature | Neither | Present — edt.rs voltage/temp frames, tested |
 | 23 | signal.c | 183 | Calibration jitter rejection | Resets `enter_calibration_count` when stick jitters > 50 | Noisy servo signal accidentally triggers calibration | Neither | Present — CALIBRATION_MAX_JITTER in transfer.rs |
-| 24 | signal.c | 255-260 | Protocol re-confirmation in detectInput | `checkDshot()`/`checkServo()` re-validation on second frame | False protocol lock from single noisy capture | Neither | **MISSING** — single-shot detection, no re-validation |
+| 24 | signal.c | 255-260 | Protocol re-confirmation in detectInput | `checkDshot()`/`checkServo()` re-validation on second frame | False protocol lock from single noisy capture | Neither | **FIXED** — pending_protocol requires 2 consecutive matches |
 | 25 | main.c | 629-632 | PWM frequency from EEPROM | Custom `pwm_frequency` 8-144 → timer divider | Audible noise or FET heating at wrong frequency | Neither | Present — config.rs PWM frequency derivation, tested |
-| 26 | main.c | 760-763 | Slow ramp (`max_ramp < 10`) | Sets `ramp_divider=9`, uses raw EEPROM ramp values | Missing slow-ramp mode for specialized applications | Neither | **MISSING** — max_ramp<10 path absent |
+| 26 | main.c | 760-763 | Slow ramp (`max_ramp < 10`) | Sets `ramp_divider=9`, uses raw EEPROM ramp values | Missing slow-ramp mode for specialized applications | Neither | **FIXED** — DutyState::apply_max_ramp() |
 | 27 | main.c | 785-787 | Bidir polling changeover halving | Halves `polling_mode_changeover` for bidirectional mode | Later mode transition → missed zero-crosses during direction change | Neither | **MISSING** — no changeover threshold halving for bidir |
 | 28 | dshot.c | 173-183 | Beacon tones 2-5 | `play_tone_flag` for DShot commands 2-5 | Missing beep patterns for lost-drone locator | Neither | Present — commands 1-5 → PlayTone, all map to beacon sweep |
 

@@ -339,6 +339,15 @@ impl Harness {
             TransferAction::ServoCalibrating => {
                 self.shared.set_signal_timeout(0);
             }
+            TransferAction::ServoCalibrationDone {
+                low_threshold,
+                high_threshold,
+            } => {
+                self.config.servo_low_threshold = low_threshold;
+                self.config.servo_high_threshold = high_threshold;
+                self.shared.set_save_settings_flag(true);
+                self.shared.set_signal_timeout(0);
+            }
             TransferAction::None => {}
         }
         if let Some((low, high)) = actions.frametime {

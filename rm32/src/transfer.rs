@@ -22,6 +22,9 @@ pub struct TransferState {
     // Bidirectional DShot auto-detection: counts consecutive frames where
     // input pin is HIGH at idle (inverted signaling). >100 → bidir detected.
     high_pin_count: u8,
+    // Protocol re-confirmation: require 2 consecutive matching detections
+    // before locking protocol. Prevents false lock from single noisy frame.
+    pending_protocol: Option<DetectedProtocol>,
 }
 
 /// Detected input protocol during auto-detection.
@@ -46,6 +49,11 @@ pub enum TransferAction {
     ServoThrottle(u16),
     /// Servo calibration in progress (signal alive, no throttle value)
     ServoCalibrating,
+    /// Servo calibration complete — persist thresholds to EEPROM
+    ServoCalibrationDone {
+        low_threshold: u8,
+        high_threshold: u8,
+    },
 }
 
 /// DMA capture configuration — buffer size + timer prescaler.
@@ -155,27 +163,48 @@ impl TransferState {
         let mut action = TransferAction::None;
         let mut frametime = None;
 
-        // --- Input detection ---
+        // --- Input detection (requires 2 consecutive matching detections) ---
         if !input_set {
             let sig = signal::detect_input(dma_buffer, cpu_mhz);
-            let (detected_action, detect_capture) = match sig {
+            let (proto, capture) = match sig {
                 signal::SignalType::Dshot600 => (
-                    TransferAction::InputDetected(DetectedProtocol::Dshot),
+                    Some(DetectedProtocol::Dshot),
                     CaptureConfig::DSHOT600_DETECTED,
                 ),
                 signal::SignalType::Dshot300 => (
-                    TransferAction::InputDetected(DetectedProtocol::Dshot),
+                    Some(DetectedProtocol::Dshot),
                     CaptureConfig::DSHOT300_DETECTED,
                 ),
                 signal::SignalType::ServoPwm => (
-                    TransferAction::InputDetected(DetectedProtocol::Servo),
+                    Some(DetectedProtocol::Servo),
                     CaptureConfig::servo_detected(cpu_mhz),
                 ),
-                _ => (TransferAction::None, CaptureConfig::DSHOT),
+                _ => (None, CaptureConfig::DSHOT),
+            };
+            // Re-confirmation: first detection is tentative; second matching
+            // detection confirms. Mismatched or None resets pending state.
+            let confirmed = match (proto, self.pending_protocol) {
+                (Some(p), Some(pending)) if p == pending => {
+                    self.pending_protocol = None;
+                    true
+                }
+                (Some(p), _) => {
+                    self.pending_protocol = Some(p);
+                    false
+                }
+                (None, _) => {
+                    self.pending_protocol = None;
+                    false
+                }
+            };
+            let action = if confirmed {
+                TransferAction::InputDetected(proto.unwrap())
+            } else {
+                TransferAction::None
             };
             return TransferActions {
-                action: detected_action,
-                next_capture: detect_capture,
+                action,
+                next_capture: capture,
                 frametime,
                 bidir_detected: false,
             };
@@ -211,9 +240,16 @@ impl TransferState {
                         *zero_input_count = 0;
                         TransferAction::None
                     }
-                    ServoResult::Calibrating
-                    | ServoResult::CalibrationHighDone
-                    | ServoResult::CalibrationDone { .. } => TransferAction::ServoCalibrating,
+                    ServoResult::Calibrating | ServoResult::CalibrationHighDone => {
+                        TransferAction::ServoCalibrating
+                    }
+                    ServoResult::CalibrationDone {
+                        low_threshold_eeprom,
+                        high_threshold_eeprom,
+                    } => TransferAction::ServoCalibrationDone {
+                        low_threshold: low_threshold_eeprom,
+                        high_threshold: high_threshold_eeprom,
+                    },
                 };
             }
         }

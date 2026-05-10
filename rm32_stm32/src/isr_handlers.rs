@@ -261,6 +261,16 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
         TransferAction::ServoCalibrating => {
             shared.set_signal_timeout(0);
         }
+        TransferAction::ServoCalibrationDone {
+            low_threshold,
+            high_threshold,
+        } => {
+            // Persist calibration to EEPROM config; main loop will save to flash
+            state.config.servo_low_threshold = low_threshold;
+            state.config.servo_high_threshold = high_threshold;
+            shared.set_save_settings_flag(true);
+            shared.set_signal_timeout(0);
+        }
         TransferAction::None => {}
     }
     if let Some((low, high)) = actions.frametime {

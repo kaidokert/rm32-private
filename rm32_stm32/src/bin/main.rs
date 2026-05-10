@@ -160,6 +160,8 @@ fn main() -> ! {
         main_state.config = EepromConfig::default();
     }
     main_state.config.apply_version_defaults();
+    main_state.config.apply_comp_pwm_guard();
+    main_state.config.apply_rc_car_overrides();
 
     // Derive motor configuration from EEPROM + board (all math now in rm32, host-testable)
     let motor_cfg = main_state.config.derive_motor_config(
