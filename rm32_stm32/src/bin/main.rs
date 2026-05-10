@@ -28,6 +28,13 @@ include!(concat!(env!("OUT_DIR"), "/board_config.rs"));
 
 #[entry]
 fn main() -> ! {
+    // Cortex-M PRIMASK is 0 after reset (IRQs enabled). Disable until ISR state
+    // is installed and the explicit enable below at the bottom of main.
+    cortex_m::interrupt::disable();
+
+    rtt_target::rtt_init_print!();
+    rtt_target::rprintln!("[rm32] boot");
+
     // --- MCU-specific init (clocks, GPIO, peripherals, NVIC) ---
     let InitResult {
         mut hal,
@@ -35,6 +42,7 @@ fn main() -> ! {
         mut adc,
         mut telem,
     } = rm32_stm32::init::init(BOARD.dead_time);
+    rtt_target::rprintln!("[rm32] init done");
 
     // --- WS2812 LED: boot indicator (dim red) ---
     let led_pin = rm32_stm32::ws2812_hal::GpioBPin::new(BOARD.led_pin.unwrap_or(8));
@@ -43,6 +51,7 @@ fn main() -> ! {
         use rm32::ws2812::{LedStatus, send_status};
         cortex_m::interrupt::free(|_| send_status(&mut led, LedStatus::Boot));
     }
+    rtt_target::rprintln!("[rm32] led done");
 
     // --- Startup tune (before peripherals move to ISR) ---
     if BOARD.bridge_enable {
@@ -53,6 +62,7 @@ fn main() -> ! {
         let sounds = Sounds::new(Chip::TIM1_AUTORELOAD);
         sounds.play_startup(&mut hal.pwm, &mut hal.phase, &mut sys);
     }
+    rtt_target::rprintln!("[rm32] tone done");
 
     // --- RPM pulse output (debug): configure GPIO before phase moves to ISR ---
     if BOARD.pulse_output {
@@ -62,12 +72,16 @@ fn main() -> ! {
 
     // --- Start IWDG watchdog (after startup tune, matching C sequencing) ---
     sys.start_watchdog(Chip::WDG_PRESCALER, Chip::WDG_RELOAD);
+    rtt_target::rprintln!("[rm32] wdg started");
 
     // --- Configure input capture inversion before moving to ISR ---
+    // NOTE: `receive_dshot_dma()` deferred until after `init_isr_state` —
+    // GenericCapture's `dma_buf` is inside the struct, so its address changes
+    // when `hal` is moved into IsrState. Arming DMA before the move sets
+    // CMAR to a stack address that becomes stale after the move.
     {
         use rm32::hal::InputCapture;
         hal.input.set_inverted(BOARD.inverted_input);
-        hal.input.receive_dshot_dma();
     }
 
     // --- Build ISR state and move to global ---
@@ -89,6 +103,14 @@ fn main() -> ! {
         voltage_based_ramp: BOARD.voltage_based_ramp,
     };
     isr::init_isr_state(isr_state);
+    rtt_target::rprintln!("[rm32] isr state installed");
+
+    // Now arm DMA capture with the buffer at its final static address.
+    isr::with_isr_state(|isr| {
+        use rm32::hal::InputCapture;
+        isr.hal.input.receive_dshot_dma();
+    });
+    rtt_target::rprintln!("[rm32] input dma armed (post-move)");
 
     // --- Build main loop state ---
     let mut main_state = MainState::new(
@@ -196,11 +218,26 @@ fn main() -> ! {
     // SAFETY: All ISR state has been initialized and moved to globals above.
     // NVIC priorities are configured. It is now safe to take interrupts.
     unsafe { cortex_m::interrupt::enable() };
+    rtt_target::rprintln!("[rm32] irqs enabled, entering main loop");
 
     // --- Main loop ---
     let shared = isr::shared();
     let mut system = rm32::system::SystemTick::new();
+    let mut log_counter: u32 = 0;
     loop {
+        log_counter = log_counter.wrapping_add(1);
+        if log_counter % 100_000 == 0 {
+            rtt_target::rprintln!(
+                "[loop] input_set={} servo_pwm={} dshot={} newinput={} armed={} running={} sig_to={}",
+                shared.input_set(),
+                shared.servo_pwm(),
+                shared.dshot(),
+                shared.newinput(),
+                shared.armed(),
+                shared.running(),
+                shared.signal_timeout(),
+            );
+        }
         // Sine mode: step phases when stepper_sine is active
         if shared.stepper_sine() {
             use rm32::sine::{SineStepResult, sine_step};

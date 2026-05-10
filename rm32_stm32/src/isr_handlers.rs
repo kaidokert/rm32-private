@@ -51,7 +51,18 @@ impl IsrCell {
         // SAFETY: Called only from ISR context at a single priority level.
         // No concurrent access possible (see struct-level safety doc).
         let opt = unsafe { &mut *self.0.get() };
-        opt.get_or_insert_with(|| isr::take_isr_state().expect("ISR state not initialized"))
+        let needed_init = opt.is_none();
+        let state = opt
+            .get_or_insert_with(|| isr::take_isr_state().expect("ISR state not initialized"));
+        if needed_init {
+            // First-time init: state was just moved from ISR_STATE into this
+            // ISR_LOCAL cell, so any DMA pointer set up in main against the
+            // ISR_STATE address is now stale. Re-arm DMA at the new address.
+            use rm32::hal::InputCapture;
+            state.hal.input.receive_dshot_dma();
+            rtt_target::rprintln!("[isr] state moved to ISR_LOCAL, DMA re-armed");
+        }
+        state
     }
 }
 
@@ -138,6 +149,21 @@ pub fn handle_exti_frame() {
 
     let pin_high = state.hal.input.input_pin_state();
 
+    // Debug: emit a sample of the buffer once per ~50 frames
+    static mut FRAME_COUNT: u32 = 0;
+    let count = unsafe {
+        FRAME_COUNT = FRAME_COUNT.wrapping_add(1);
+        FRAME_COUNT
+    };
+    let i_set = shared.input_set();
+    let s_pwm = shared.servo_pwm();
+    if count % 200 == 1 {
+        rtt_target::rprintln!(
+            "[exti] frame#{} pin_high={} input_set={} servo_pwm={} buf[0..4]={} {} {} {}",
+            count, pin_high, i_set, s_pwm, buf[0], buf[1], buf[2], buf[3]
+        );
+    }
+
     let mut zic = shared.zero_input_count();
     let actions = state.transfer.process(
         buf,
@@ -162,8 +188,14 @@ pub fn handle_exti_frame() {
         TransferAction::InputDetected(proto) => {
             shared.set_input_set(true);
             match proto {
-                DetectedProtocol::Dshot => shared.set_dshot(true),
-                DetectedProtocol::Servo => shared.set_servo_pwm(true),
+                DetectedProtocol::Dshot => {
+                    rtt_target::rprintln!("[exti] DETECTED DShot");
+                    shared.set_dshot(true);
+                }
+                DetectedProtocol::Servo => {
+                    rtt_target::rprintln!("[exti] DETECTED Servo PWM");
+                    shared.set_servo_pwm(true);
+                }
             }
         }
         TransferAction::DshotThrottle { value, telemetry } => {
