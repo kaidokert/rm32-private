@@ -5,6 +5,21 @@
 
 #![no_std]
 
+/// Bench-debug print: always RTT-prints, and when `feature = "debuguart"`
+/// is enabled, also pushes the same text out USART1 (PB6 on L431). Gives a
+/// persistent log that survives panics/resets via a tail'd USB-serial port.
+#[macro_export]
+macro_rules! dprintln {
+    ($($arg:tt)*) => {{
+        rtt_target::rprintln!($($arg)*);
+        #[cfg(feature = "debuguart")]
+        {
+            use core::fmt::Write as _;
+            let _ = writeln!($crate::debug_uart::DebugUart, $($arg)*);
+        }
+    }};
+}
+
 pub mod mcu;
 pub use mcu::pac;
 
@@ -15,6 +30,8 @@ pub mod capture_generic;
 pub mod capture_hal;
 pub mod comp_hal;
 pub mod comparator;
+#[cfg(feature = "debuguart")]
+pub mod debug_uart;
 pub mod dma_buf;
 pub mod emergency;
 pub mod flash;

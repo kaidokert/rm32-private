@@ -72,6 +72,24 @@ static ISR_LOCAL: IsrCell = IsrCell::new();
 pub fn handle_tim6() {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
+
+    // Heartbeat: log every 20000 calls (~1 sec at 20 kHz)
+    static mut TIM6_COUNT: u32 = 0;
+    let n = unsafe {
+        TIM6_COUNT = TIM6_COUNT.wrapping_add(1);
+        TIM6_COUNT
+    };
+    if n % 20000 == 1 {
+        rtt_target::rprintln!(
+            "[tim6] n={} mode={:?} duty_set={} duty={} comint={}",
+            n,
+            shared.motor_mode(),
+            shared.duty_cycle_setpoint(),
+            shared.duty_cycle(),
+            shared.commutation_interval(),
+        );
+    }
+
     let mut ctx = rm32::control::context::MotorContext {
         commutation: &mut state.commutation,
         bemf: &mut state.bemf,
@@ -159,6 +177,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     };
     let i_set = shared.input_set();
     let s_pwm = shared.servo_pwm();
+    // exti diagnostic — RTT only, not UART (UART log gets drowned otherwise).
     if count % 200 == 1 {
         rtt_target::rprintln!(
             "[exti] frame#{} pin_high={} input_set={} servo_pwm={} buf[0..4]={} {} {} {}",
@@ -209,9 +228,12 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
             }
         }
         TransferAction::DshotThrottle { value, telemetry } => {
-            if state.edt_armed || value == 0 {
-                shared.set_newinput(value);
-            }
+            // Standard DSHOT throttle is always valid; EDT (Extended DSHOT
+            // Telemetry, BF cmd 13) is an *extension*, not a precondition for
+            // throttle acceptance. The previous `if edt_armed || value == 0`
+            // gate silently dropped every non-zero throttle from vanilla
+            // DSHOT300/600 because BF never sends EDT_ENABLE in those modes.
+            shared.set_newinput(value);
             // EDT disarm: zero throttle with EDT_ARM_ENABLE clears EDT_ARMED
             if value == 0 && state.edt_arm_enable {
                 state.edt_armed = false;

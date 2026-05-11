@@ -28,6 +28,11 @@ stm32f051 = ["dep:stm32f0xx-hal"]
 stm32l431 = ["dep:stm32l4xx-hal"]
 stm32g431 = ["dep:stm32g4xx-hal"]
 
+# Bench-debug: hijack the AM32 KISS telemetry pin (PB6 / USART1 TX on L431)
+# for a plaintext debug log at 115200 8N1. Wire a USB-serial dongle to PB6
+# and tail the port. Persistent across resets, survives panics.
+debuguart = []
+
 [build-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"

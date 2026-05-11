@@ -33,7 +33,46 @@ fn main() -> ! {
     cortex_m::interrupt::disable();
 
     rtt_target::rtt_init_print!();
-    rtt_target::rprintln!("[rm32] boot");
+    #[cfg(feature = "debuguart")]
+    rm32_stm32::debug_uart::init();
+
+    // Snapshot reset-cause flags before anything clears them. RCC_CSR keeps
+    // these sticky until RMVF is written, and the AM32 bootloader does not
+    // clear them, so we get a clean picture of why the chip restarted.
+    // L431-specific: field-style CSR access; other PACs use method syntax.
+    #[cfg(feature = "stm32l431")]
+    {
+        let csr_bits = unsafe { (*rm32_stm32::pac::RCC::ptr()).csr.read().bits() };
+        let causes = [
+            (1u32 << 31, "low-power"),
+            (1u32 << 30, "window-watchdog"),
+            (1u32 << 29, "indep-watchdog"),
+            (1u32 << 28, "software-reset"),
+            (1u32 << 27, "brownout"),
+            (1u32 << 26, "NRST-pin"),
+            (1u32 << 25, "option-byte-loader"),
+        ];
+
+        rm32_stm32::dprintln!("[rm32] last reset (RCC_CSR=0x{:08x}):", csr_bits);
+        for (mask, label) in causes.iter() {
+            if csr_bits & mask != 0 {
+                rm32_stm32::dprintln!("[rm32]   - {}", label);
+            }
+        }
+        // Clear sticky flags so next boot reflects the *next* reset reason only.
+        unsafe {
+            (*rm32_stm32::pac::RCC::ptr())
+                .csr
+                .modify(|_, w| w.rmvf().set_bit());
+        }
+    }
+    rm32_stm32::dprintln!("[rm32] boot");
+
+    // Drain UART shift register before init::init() reconfigures the clock
+    // tree — otherwise an in-flight byte ships at the wrong baud and the next
+    // line shows up as garbage on the receiver.
+    #[cfg(feature = "debuguart")]
+    rm32_stm32::debug_uart::flush();
 
     // --- MCU-specific init (clocks, GPIO, peripherals, NVIC) ---
     let InitResult {
@@ -42,7 +81,12 @@ fn main() -> ! {
         mut adc,
         mut telem,
     } = rm32_stm32::init::init(BOARD.dead_time, BOARD.bemf_pins);
-    rtt_target::rprintln!("[rm32] init done");
+
+    // Re-arm USART1 after the clock tree shuffle (and in case any peripheral
+    // init touched USART1 even with telem disabled). Cheap, idempotent.
+    #[cfg(feature = "debuguart")]
+    rm32_stm32::debug_uart::init();
+    rm32_stm32::dprintln!("[rm32] init done");
 
     // --- WS2812 LED: boot indicator (dim red) ---
     let led_pin = rm32_stm32::ws2812_hal::GpioBPin::new(BOARD.led_pin.unwrap_or(8));
@@ -51,7 +95,7 @@ fn main() -> ! {
         use rm32::ws2812::{LedStatus, send_status};
         cortex_m::interrupt::free(|_| send_status(&mut led, LedStatus::Boot));
     }
-    rtt_target::rprintln!("[rm32] led done");
+    rm32_stm32::dprintln!("[rm32] led done");
 
     // --- Startup tune (before peripherals move to ISR) ---
     if BOARD.bridge_enable {
@@ -62,7 +106,7 @@ fn main() -> ! {
         let sounds = Sounds::new(Chip::TIM1_AUTORELOAD);
         sounds.play_startup(&mut hal.pwm, &mut hal.phase, &mut sys);
     }
-    rtt_target::rprintln!("[rm32] tone done");
+    rm32_stm32::dprintln!("[rm32] tone done");
 
     // --- RPM pulse output (debug): configure GPIO before phase moves to ISR ---
     if BOARD.pulse_output {
@@ -71,8 +115,10 @@ fn main() -> ! {
     }
 
     // --- Start IWDG watchdog (after startup tune, matching C sequencing) ---
-    sys.start_watchdog(Chip::WDG_PRESCALER, Chip::WDG_RELOAD);
-    rtt_target::rprintln!("[rm32] wdg started");
+    // Bench-debug: IWDG disabled so the chip can sit idle without resetting
+    // itself between test runs. Re-enable for production.
+    // sys.start_watchdog(Chip::WDG_PRESCALER, Chip::WDG_RELOAD);
+    rm32_stm32::dprintln!("[rm32] wdg DISABLED (bench debug)");
 
     // --- Configure input capture inversion before moving to ISR ---
     // NOTE: `receive_dshot_dma()` deferred until after `init_isr_state` —
@@ -104,14 +150,14 @@ fn main() -> ! {
         voltage_based_ramp: BOARD.voltage_based_ramp,
     };
     isr::init_isr_state(isr_state);
-    rtt_target::rprintln!("[rm32] isr state installed");
+    rm32_stm32::dprintln!("[rm32] isr state installed");
 
     // Now arm DMA capture with the buffer at its final static address.
     isr::with_isr_state(|isr| {
         use rm32::hal::InputCapture;
         isr.hal.input.receive_dshot_dma();
     });
-    rtt_target::rprintln!("[rm32] input dma armed (post-move)");
+    rm32_stm32::dprintln!("[rm32] input dma armed (post-move)");
 
     // --- Build main loop state ---
     let mut main_state = MainState::new(
@@ -162,6 +208,10 @@ fn main() -> ! {
     main_state.config.apply_version_defaults();
     main_state.config.apply_comp_pwm_guard();
     main_state.config.apply_rc_car_overrides();
+    // Bench-debug: disable stuck-rotor latch so we can observe startup behavior
+    // without adjusted_input being clamped to 0 on the first BEMF timeout.
+    main_state.config.stuck_rotor_protection = 0;
+    rm32_stm32::dprintln!("[rm32] stuck_rotor_protection FORCED OFF (bench debug)");
 
     // Derive motor configuration from EEPROM + board (all math now in rm32, host-testable)
     let motor_cfg = main_state.config.derive_motor_config(
@@ -223,7 +273,7 @@ fn main() -> ! {
     // SAFETY: All ISR state has been initialized and moved to globals above.
     // NVIC priorities are configured. It is now safe to take interrupts.
     unsafe { cortex_m::interrupt::enable() };
-    rtt_target::rprintln!("[rm32] irqs enabled, entering main loop");
+    rm32_stm32::dprintln!("[rm32] irqs enabled, entering main loop");
 
     // --- Main loop ---
     let shared = isr::shared();
@@ -232,15 +282,30 @@ fn main() -> ! {
     loop {
         log_counter = log_counter.wrapping_add(1);
         if log_counter.is_multiple_of(100_000) {
-            rtt_target::rprintln!(
-                "[loop] input_set={} servo_pwm={} dshot={} newinput={} armed={} running={} sig_to={}",
-                shared.input_set(),
-                shared.servo_pwm(),
-                shared.dshot(),
+            // Decode detected input protocol from the three shared flags into
+            // a single short tag for the log line. `dshot_telemetry` is
+            // bidirectional DShot (RPM feedback), set independently of the
+            // detection flags by the bidir-DShot handshake.
+            let proto = match (shared.dshot(), shared.servo_pwm(), shared.dshot_telemetry()) {
+                (true, _, true) => "BiDShot",
+                (true, _, false) => "DShot",
+                (false, true, _) => "PWM",
+                (false, false, _) => "none",
+            };
+            rm32_stm32::dprintln!(
+                "[loop] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={}",
+                proto,
+                shared.motor_mode(),
                 shared.newinput(),
-                shared.armed(),
-                shared.running(),
+                shared.adjusted_input(),
+                shared.duty_cycle_setpoint(),
+                shared.duty_cycle(),
                 shared.signal_timeout(),
+                main_state.protection.bemf_timeout_happened(),
+                main_state.protection.bemf_timeout(),
+                shared.zero_crosses(),
+                shared.interval_timer_count(),
+                main_state.config.stuck_rotor_protection,
             );
         }
         // Sine mode: step phases when stepper_sine is active
