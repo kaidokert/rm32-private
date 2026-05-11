@@ -1,5 +1,44 @@
 //! System control (IRQ, watchdog, reset) for STM32L431.
 
+/// Snapshot reset-cause flags and clear them. Sticky in RCC_CSR (RM0394
+/// §6.4.27) across resets; AM32 bootloader doesn't clear them. Calling this
+/// once early in main reflects the *current* boot's cause; after the call,
+/// flags are cleared so the next reset reflects only its own cause.
+pub fn read_and_clear_reset_cause() -> rm32::reset_cause::ResetCause {
+    use rm32::reset_cause::ResetCause;
+    let rcc = unsafe { &*crate::pac::RCC::PTR };
+    let csr = rcc.csr.read();
+    let mut r = ResetCause::empty();
+    if csr.lpwrstf().bit_is_set() {
+        r |= ResetCause::LOW_POWER;
+    }
+    if csr.wwdgrstf().bit_is_set() {
+        r |= ResetCause::WINDOW_WATCHDOG;
+    }
+    if csr.iwdgrstf().bit_is_set() {
+        r |= ResetCause::INDEP_WATCHDOG;
+    }
+    if csr.sftrstf().bit_is_set() {
+        r |= ResetCause::SOFTWARE;
+    }
+    if csr.borrstf().bit_is_set() {
+        r |= ResetCause::BROWNOUT;
+    }
+    if csr.pinrstf().bit_is_set() {
+        r |= ResetCause::PIN;
+    }
+    if csr.oblrstf().bit_is_set() {
+        r |= ResetCause::OPTION_BYTE;
+    }
+    if csr.firewallrstf().bit_is_set() {
+        r |= ResetCause::FIREWALL;
+    }
+    // RMVF=1 commands the hardware to clear bits 31..24. modify() preserves
+    // LSE/LSI control bits in the low half via read-modify-write.
+    rcc.csr.modify(|_, w| w.rmvf().set_bit());
+    r
+}
+
 pub struct System {
     _private: (),
 }

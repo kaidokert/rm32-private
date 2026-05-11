@@ -36,35 +36,17 @@ fn main() -> ! {
     #[cfg(feature = "debuguart")]
     rm32_stm32::debug_uart::init();
 
-    // Snapshot reset-cause flags before anything clears them. RCC_CSR keeps
-    // these sticky until RMVF is written, and the AM32 bootloader does not
-    // clear them, so we get a clean picture of why the chip restarted.
-    // L431-specific: field-style CSR access; other PACs use method syntax.
-    #[cfg(feature = "stm32l431")]
-    {
-        let csr_bits = unsafe { (*rm32_stm32::pac::RCC::ptr()).csr.read().bits() };
-        let causes = [
-            (1u32 << 31, "low-power"),
-            (1u32 << 30, "window-watchdog"),
-            (1u32 << 29, "indep-watchdog"),
-            (1u32 << 28, "software-reset"),
-            (1u32 << 27, "brownout"),
-            (1u32 << 26, "NRST-pin"),
-            (1u32 << 25, "option-byte-loader"),
-        ];
-
-        rm32_stm32::dprintln!("[rm32] last reset (RCC_CSR=0x{:08x}):", csr_bits);
-        for (mask, label) in causes.iter() {
-            if csr_bits & mask != 0 {
-                rm32_stm32::dprintln!("[rm32]   - {}", label);
-            }
-        }
-        // Clear sticky flags so next boot reflects the *next* reset reason only.
-        unsafe {
-            (*rm32_stm32::pac::RCC::ptr())
-                .csr
-                .modify(|_, w| w.rmvf().set_bit());
-        }
+    // Snapshot reset-cause flags before anything clears them. Sticky in
+    // RCC_CSR (or its analog) across resets; AM32 bootloader doesn't clear,
+    // so we see exactly why this boot happened. Implementation lives in
+    // `mcu::read_and_clear_reset_cause()` per-MCU — main.rs stays portable.
+    let reset_cause = rm32_stm32::mcu::read_and_clear_reset_cause();
+    rm32_stm32::dprintln!("[rm32] last reset:");
+    for label in reset_cause.iter_labels() {
+        rm32_stm32::dprintln!("[rm32]   - {}", label);
+    }
+    if reset_cause.is_empty() {
+        rm32_stm32::dprintln!("[rm32]   - (no flags — already cleared)");
     }
     rm32_stm32::dprintln!("[rm32] boot");
 
