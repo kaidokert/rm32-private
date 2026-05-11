@@ -177,6 +177,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     };
     let i_set = shared.input_set();
     let s_pwm = shared.servo_pwm();
+    // exti diagnostic — RTT only, not UART (UART log gets drowned otherwise).
     if count % 200 == 1 {
         rtt_target::rprintln!(
             "[exti] frame#{} pin_high={} input_set={} servo_pwm={} buf[0..4]={} {} {} {}",

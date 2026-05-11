@@ -79,6 +79,20 @@ impl CaptureConfig {
         prescaler: None,
     };
 
+    /// DShot detection (re-entry): 32 edges + slow prescaler so DShot pulses
+    /// fit `signal::detect_input()`'s `smallest 1-8 ticks` heuristic
+    /// thresholds. Must be applied any time we re-enter detection mode after
+    /// a prior successful detection (which fast-tracked the prescaler to 0/1
+    /// for max resolution). `cpu_mhz/6` gives ~5.7 MHz tick at 80 MHz CPU →
+    /// DShot300 "0" pulse = ~7 ticks (in the 4-8 range), DShot600 "0" =
+    /// ~3.6 ticks (in 1-4 range).
+    pub fn dshot_detection(cpu_mhz: u8) -> Self {
+        Self {
+            ndtr: 32,
+            prescaler: Some((cpu_mhz / 6) as u16),
+        }
+    }
+
     /// Servo aligned: 2 edges, no prescaler change (already set on detection).
     pub const SERVO: Self = Self {
         ndtr: 2,
@@ -166,23 +180,19 @@ impl TransferState {
         // --- Input detection (requires 2 consecutive matching detections) ---
         if !input_set {
             let sig = signal::detect_input(dma_buffer, cpu_mhz);
-            let (proto, capture) = match sig {
-                signal::SignalType::Dshot600 => (
-                    Some(DetectedProtocol::Dshot),
-                    CaptureConfig::DSHOT600_DETECTED,
-                ),
-                signal::SignalType::Dshot300 => (
-                    Some(DetectedProtocol::Dshot),
-                    CaptureConfig::DSHOT300_DETECTED,
-                ),
-                signal::SignalType::ServoPwm => (
-                    Some(DetectedProtocol::Servo),
-                    CaptureConfig::servo_detected(cpu_mhz),
-                ),
-                _ => (None, CaptureConfig::DSHOT),
+            let proto = match sig {
+                signal::SignalType::Dshot600 | signal::SignalType::Dshot300 => {
+                    Some(DetectedProtocol::Dshot)
+                }
+                signal::SignalType::ServoPwm => Some(DetectedProtocol::Servo),
+                signal::SignalType::None => None,
             };
             // Re-confirmation: first detection is tentative; second matching
-            // detection confirms. Mismatched or None resets pending state.
+            // detection confirms. A single `None` frame between two valid
+            // detections is treated as transient noise — only a *different*
+            // protocol detection resets pending state. Otherwise marginal
+            // capture timing (DMA window grabbing mid-edge) can produce
+            // alternating Some/None and the chain never reaches 2-in-a-row.
             let confirmed = match (proto, self.pending_protocol) {
                 (Some(p), Some(pending)) if p == pending => {
                     self.pending_protocol = None;
@@ -192,15 +202,24 @@ impl TransferState {
                     self.pending_protocol = Some(p);
                     false
                 }
-                (None, _) => {
-                    self.pending_protocol = None;
-                    false
-                }
+                (None, _) => false,
             };
-            let action = if confirmed {
-                TransferAction::InputDetected(proto.unwrap())
+            // Only switch to the protocol's fast capture config once
+            // *confirmed*. Until then keep the slow detection prescaler so
+            // the heuristic's `smallest 1-8 ticks` ranges keep matching on
+            // the next frame — otherwise a single detect_input() hit drops
+            // the prescaler to 0/1 and the next frame's deltas blow past
+            // the detection thresholds, locking us out.
+            let (action, capture) = if confirmed {
+                let cap = match sig {
+                    signal::SignalType::Dshot600 => CaptureConfig::DSHOT600_DETECTED,
+                    signal::SignalType::Dshot300 => CaptureConfig::DSHOT300_DETECTED,
+                    signal::SignalType::ServoPwm => CaptureConfig::servo_detected(cpu_mhz),
+                    signal::SignalType::None => CaptureConfig::dshot_detection(cpu_mhz),
+                };
+                (TransferAction::InputDetected(proto.unwrap()), cap)
             } else {
-                TransferAction::None
+                (TransferAction::None, CaptureConfig::dshot_detection(cpu_mhz))
             };
             return TransferActions {
                 action,
