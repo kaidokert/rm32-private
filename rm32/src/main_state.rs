@@ -172,6 +172,11 @@ impl<LED: OutputPin> MainState<LED> {
         &self.timing
     }
 
+    /// Mutable access to timing state.
+    pub fn timing_mut(&mut self) -> &mut TimingState {
+        &mut self.timing
+    }
+
     /// Read-only access to PID state.
     pub fn pid(&self) -> &PidState {
         &self.pid
@@ -341,8 +346,14 @@ impl<LED: OutputPin> MainState<LED> {
         }
 
         // Signal timeout
-        if shared.signal_timeout() > crate::constants::SIGNAL_TIMEOUT_DISARM && shared.armed() {
-            shared.transition(crate::motor_mode::MotorEvent::Disarm);
+        // Armed: 0.5s (10000 ticks @ 20kHz) → disarm + reset input
+        // Unarmed: 2s (40000 ticks) → reset input detection to allow re-detect
+        if shared.armed() {
+            if shared.signal_timeout() > crate::constants::SIGNAL_TIMEOUT_DISARM {
+                shared.transition(crate::motor_mode::MotorEvent::Disarm);
+                shared.set_input_set(false);
+            }
+        } else if shared.signal_timeout() > crate::constants::SIGNAL_TIMEOUT_UNARMED {
             shared.set_input_set(false);
         }
 
@@ -356,9 +367,19 @@ impl<LED: OutputPin> MainState<LED> {
         }
 
         // Low voltage cutoff
+        // Mode 1: per-cell threshold (cell_count * low_cell_volt_cutoff)
+        // Mode 2: absolute threshold (absolute_voltage_cutoff in 0.5V increments)
         // Stepper sine (startup) uses fast 0.1s timeout; normal uses 10s
         if self.config.low_voltage_cut_off != 0 {
-            let threshold = self.cell_count as u16 * self.low_cell_volt_cutoff;
+            let threshold = if self.config.low_voltage_cut_off == 2 {
+                // Absolute cutoff: EEPROM value in 0.5V increments → raw ADC-scale units
+                // C compares raw battery_voltage against raw EEPROM value directly,
+                // but both are in the same ADC-derived scale.
+                self.config.absolute_voltage_cutoff as u16
+            } else {
+                // Per-cell cutoff
+                self.cell_count as u16 * self.low_cell_volt_cutoff
+            };
             if self.measurements.battery_voltage.0 < threshold && threshold > 0 {
                 self.protection.low_voltage_count += 1;
             } else if !self.protection.low_voltage_cutoff {
@@ -730,9 +751,8 @@ mod tests {
     }
 
     #[test]
-    fn lvc_mode2_absolute_cutoff_not_implemented() {
-        // This test documents the MISSING mode 2 implementation.
-        // When mode 2 is implemented, change this test to verify it works.
+    fn lvc_mode2_absolute_cutoff() {
+        // Mode 2: absolute voltage cutoff using EEPROM threshold directly.
         use crate::motor_mode::MotorMode;
         use crate::shared_state::SharedState;
         let shared = SharedState::new();
@@ -740,19 +760,36 @@ mod tests {
 
         let mut main = make_test_main_state();
         main.config.low_voltage_cut_off = 2; // absolute mode
-        main.config.absolute_voltage_cutoff = 100; // threshold
-        main.cell_count = 0; // no cells — per-cell threshold = 0
+        main.config.absolute_voltage_cutoff = 100; // threshold (raw EEPROM value)
+        main.cell_count = 0; // no cells — doesn't matter for mode 2
         main.set_battery_voltage(crate::units::MilliVolts(50)); // below threshold
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
-        // BUG: mode 2 falls into mode 1 path (low_voltage_cut_off != 0)
-        // but threshold = cell_count * low_cell_volt_cutoff = 0 * 330 = 0
-        // so battery (50) is NOT < threshold (0) → LVC never triggers.
-        // When mode 2 is implemented, this assert should flip to !shared.armed()
+        // Mode 2: battery (50) < absolute_voltage_cutoff (100) → LVC triggers
+        assert!(
+            !shared.armed(),
+            "mode 2 should disarm when voltage below absolute threshold"
+        );
+    }
+
+    #[test]
+    fn lvc_mode2_above_threshold_no_disarm() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::OldRoutine);
+
+        let mut main = make_test_main_state();
+        main.config.low_voltage_cut_off = 2;
+        main.config.absolute_voltage_cutoff = 100;
+        main.set_battery_voltage(crate::units::MilliVolts(150)); // above threshold
+        main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
         assert!(
             shared.armed(),
-            "BUG: mode 2 not implemented — motor stays armed when it shouldn't"
+            "mode 2 should not disarm when voltage above threshold"
         );
     }
 
@@ -779,15 +816,14 @@ mod tests {
     }
 
     #[test]
-    fn signal_timeout_unarmed_not_implemented() {
-        // C firmware has a 2-second unarmed timeout that resets the ESC.
-        // Rust only handles the armed timeout. This test documents the gap.
+    fn signal_timeout_unarmed_resets_input() {
+        // C firmware has a 2-second unarmed timeout that resets input detection.
         use crate::motor_mode::MotorMode;
         use crate::shared_state::SharedState;
         let shared = SharedState::new();
         shared.set_motor_mode(MotorMode::Disarmed);
         shared.set_input_set(true);
-        // Push signal timeout way past unarmed threshold (40000)
+        // Push signal timeout past unarmed threshold (40000)
         for _ in 0..45000u32 {
             shared.increment_signal_timeout();
         }
@@ -795,12 +831,10 @@ mod tests {
         let mut main = make_test_main_state();
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
-        // BUG: Rust doesn't implement unarmed timeout.
-        // C would reset inputSet=0 and NVIC_SystemReset().
-        // When implemented, this should assert !shared.input_set()
+        // Unarmed timeout resets input_set so protocol can be re-detected
         assert!(
-            shared.input_set(),
-            "BUG: unarmed signal timeout not implemented — inputSet stays true"
+            !shared.input_set(),
+            "unarmed signal timeout should reset input_set"
         );
     }
 

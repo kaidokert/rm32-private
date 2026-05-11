@@ -114,6 +114,7 @@ pub fn handle_tim14() {
         &mut state.hal.com_timer,
         &mut state.hal.comp,
         &mut state.hal.phase,
+        state.config.bi_direction != 0,
     );
 }
 
@@ -232,6 +233,10 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
             // gate silently dropped every non-zero throttle from vanilla
             // DSHOT300/600 because BF never sends EDT_ENABLE in those modes.
             shared.set_newinput(value);
+            // EDT disarm: zero throttle with EDT_ARM_ENABLE clears EDT_ARMED
+            if value == 0 && state.edt_arm_enable {
+                state.edt_armed = false;
+            }
             if telemetry {
                 shared.set_send_telemetry(true);
             }
@@ -250,7 +255,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 &mut state.config,
                 &mut state.forward,
                 &mut state.edt_armed,
-                state.cmd.extended_telemetry(),
+                state.edt_arm_enable,
             );
             match result {
                 rm32::dshot_commands::CommandResult::SaveSettings => {
@@ -277,11 +282,24 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
         TransferAction::ServoCalibrating => {
             shared.set_signal_timeout(0);
         }
+        TransferAction::ServoCalibrationDone {
+            low_threshold,
+            high_threshold,
+        } => {
+            // Persist calibration to EEPROM config; main loop will save to flash
+            state.config.servo_low_threshold = low_threshold;
+            state.config.servo_high_threshold = high_threshold;
+            shared.set_save_settings_flag(true);
+            shared.set_signal_timeout(0);
+        }
         TransferAction::None => {}
     }
     if let Some((low, high)) = actions.frametime {
         state.frametime_low = low;
         state.frametime_high = high;
+    }
+    if actions.bidir_detected {
+        shared.set_dshot_telemetry(true);
     }
 
     actions.next_capture

@@ -19,6 +19,12 @@ pub struct TransferState {
     // Calibration entry
     enter_calibration_count: u8,
     last_input: u16,
+    // Bidirectional DShot auto-detection: counts consecutive frames where
+    // input pin is HIGH at idle (inverted signaling). >100 → bidir detected.
+    high_pin_count: u8,
+    // Protocol re-confirmation: require 2 consecutive matching detections
+    // before locking protocol. Prevents false lock from single noisy frame.
+    pending_protocol: Option<DetectedProtocol>,
 }
 
 /// Detected input protocol during auto-detection.
@@ -43,6 +49,11 @@ pub enum TransferAction {
     ServoThrottle(u16),
     /// Servo calibration in progress (signal alive, no throttle value)
     ServoCalibrating,
+    /// Servo calibration complete — persist thresholds to EEPROM
+    ServoCalibrationDone {
+        low_threshold: u8,
+        high_threshold: u8,
+    },
 }
 
 /// DMA capture configuration — buffer size + timer prescaler.
@@ -110,6 +121,8 @@ pub struct TransferActions {
     pub next_capture: CaptureConfig,
     /// DShot frame timing update (from unarmed averaging)
     pub frametime: Option<(u16, u16)>,
+    /// Bidirectional DShot auto-detected (caller should set dshot_telemetry=true)
+    pub bidir_detected: bool,
 }
 
 impl TransferState {
@@ -150,28 +163,50 @@ impl TransferState {
         let mut action = TransferAction::None;
         let mut frametime = None;
 
-        // --- Input detection ---
+        // --- Input detection (requires 2 consecutive matching detections) ---
         if !input_set {
             let sig = signal::detect_input(dma_buffer, cpu_mhz);
-            let (detected_action, detect_capture) = match sig {
+            let (proto, capture) = match sig {
                 signal::SignalType::Dshot600 => (
-                    TransferAction::InputDetected(DetectedProtocol::Dshot),
+                    Some(DetectedProtocol::Dshot),
                     CaptureConfig::DSHOT600_DETECTED,
                 ),
                 signal::SignalType::Dshot300 => (
-                    TransferAction::InputDetected(DetectedProtocol::Dshot),
+                    Some(DetectedProtocol::Dshot),
                     CaptureConfig::DSHOT300_DETECTED,
                 ),
                 signal::SignalType::ServoPwm => (
-                    TransferAction::InputDetected(DetectedProtocol::Servo),
+                    Some(DetectedProtocol::Servo),
                     CaptureConfig::servo_detected(cpu_mhz),
                 ),
-                _ => (TransferAction::None, CaptureConfig::DSHOT),
+                _ => (None, CaptureConfig::DSHOT),
+            };
+            // Re-confirmation: first detection is tentative; second matching
+            // detection confirms. Mismatched or None resets pending state.
+            let confirmed = match (proto, self.pending_protocol) {
+                (Some(p), Some(pending)) if p == pending => {
+                    self.pending_protocol = None;
+                    true
+                }
+                (Some(p), _) => {
+                    self.pending_protocol = Some(p);
+                    false
+                }
+                (None, _) => {
+                    self.pending_protocol = None;
+                    false
+                }
+            };
+            let action = if confirmed {
+                TransferAction::InputDetected(proto.unwrap())
+            } else {
+                TransferAction::None
             };
             return TransferActions {
-                action: detected_action,
-                next_capture: detect_capture,
+                action,
+                next_capture: capture,
                 frametime,
+                bidir_detected: false,
             };
         }
 
@@ -205,15 +240,33 @@ impl TransferState {
                         *zero_input_count = 0;
                         TransferAction::None
                     }
-                    ServoResult::Calibrating
-                    | ServoResult::CalibrationHighDone
-                    | ServoResult::CalibrationDone { .. } => TransferAction::ServoCalibrating,
+                    ServoResult::Calibrating | ServoResult::CalibrationHighDone => {
+                        TransferAction::ServoCalibrating
+                    }
+                    ServoResult::CalibrationDone {
+                        low_threshold_eeprom,
+                        high_threshold_eeprom,
+                    } => TransferAction::ServoCalibrationDone {
+                        low_threshold: low_threshold_eeprom,
+                        high_threshold: high_threshold_eeprom,
+                    },
                 };
             }
         }
 
         // --- Unarmed housekeeping ---
+        let mut bidir_detected = false;
         if !armed {
+            // Bidirectional DShot auto-detection: when idle pin is HIGH
+            // for 100+ consecutive frames while unarmed, the FC is using
+            // inverted (bidir) signaling. Set dshot_telemetry to invert CRC.
+            if dshot_mode && !dshot_telemetry && input_pin_high {
+                self.high_pin_count = self.high_pin_count.saturating_add(1);
+                if self.high_pin_count > 100 {
+                    bidir_detected = true;
+                }
+            }
+
             // DShot frame averaging (for dshot_frametime calibration)
             if dshot_mode && self.average_count < 8 && *zero_input_count > 5 {
                 self.average_count += 1;
@@ -267,6 +320,7 @@ impl TransferState {
             action,
             next_capture,
             frametime,
+            bidir_detected,
         }
     }
 }
@@ -339,5 +393,78 @@ mod tests {
         }
         // (If detection doesn't trigger with this buffer, the test is inconclusive
         // but won't fail — detection depends on signal timing heuristics)
+    }
+
+    #[test]
+    fn bidir_auto_detect_after_100_frames() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+
+        // Simulate 100 unarmed DShot frames with pin HIGH — not yet detected
+        for _ in 0..100 {
+            let actions = state.process(
+                &buf, true, true, false, false, // dshot_telemetry=false
+                false, // armed=false
+                true,  // input_pin_high=true (bidir idle)
+                0, 0, false, false, &mut zic, 400, 600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+
+        // Frame 101 — should trigger detection
+        let actions = state.process(
+            &buf, true, true, false, false, false, true, 0, 0, false, false, &mut zic, 400, 600, 64,
+        );
+        assert!(actions.bidir_detected);
+    }
+
+    #[test]
+    fn bidir_not_detected_when_pin_low() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+
+        // 200 frames with pin LOW — no detection
+        for _ in 0..200 {
+            let actions = state.process(
+                &buf, true, true, false, false, false, false, // pin LOW
+                0, 0, false, false, &mut zic, 400, 600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+    }
+
+    #[test]
+    fn bidir_not_detected_when_armed() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+
+        // 200 frames with pin HIGH but armed — no detection
+        for _ in 0..200 {
+            let actions = state.process(
+                &buf, true, true, false, false, true, // armed=true
+                true, 0, 0, false, false, &mut zic, 400, 600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+    }
+
+    #[test]
+    fn bidir_not_detected_when_already_set() {
+        let mut state = TransferState::default();
+        let buf = [0u32; 32];
+        let mut zic = 0u16;
+
+        // 200 frames with pin HIGH and dshot_telemetry already true
+        for _ in 0..200 {
+            let actions = state.process(
+                &buf, true, true, false, true, // dshot_telemetry=true
+                false, true, 0, 0, false, false, &mut zic, 400, 600, 64,
+            );
+            // Counter shouldn't increment when already detected
+            assert!(!actions.bidir_detected);
+        }
     }
 }

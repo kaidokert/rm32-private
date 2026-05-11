@@ -149,6 +149,7 @@ fn main() -> ! {
         config: EepromConfig::default(),
         forward: true,
         edt_armed: false,
+        edt_arm_enable: false, // set from EEPROM after config load
         armed_timeout_count: 0,
         frametime_low: 400,
         frametime_high: 600,
@@ -211,6 +212,8 @@ fn main() -> ! {
         main_state.config = EepromConfig::default();
     }
     main_state.config.apply_version_defaults();
+    main_state.config.apply_comp_pwm_guard();
+    main_state.config.apply_rc_car_overrides();
     // Bench-debug: disable stuck-rotor latch so we can observe startup behavior
     // without adjusted_input being clamped to 0 on the first BEMF timeout.
     main_state.config.stuck_rotor_protection = 0;
@@ -236,10 +239,12 @@ fn main() -> ! {
     isr::with_isr_state(|isr| {
         isr.config = main_state.config;
         isr.forward = main_state.config.dir_reversed == 0;
+        isr.edt_arm_enable = main_state.config.input_type() == rm32::config::InputType::EdtArm;
         // Apply timer1_max_arr from pwm_frequency config (ISR reads from SharedComm)
         // Apply startup duty from EEPROM
         isr.duty
             .set_duty_limits(minimum_duty_cycle, min_startup_duty, startup_max_duty);
+        isr.duty.apply_max_ramp(main_state.config.max_ramp);
         // Apply servo EEPROM calibration to transfer state
         if isr.config.eeprom_version > 0 {
             isr.transfer.servo.set_calibration(
@@ -339,11 +344,30 @@ fn main() -> ! {
                 }
                 SineStepResult::Changeover {
                     commutation_interval,
-                    ..
+                    step,
                 } => {
                     shared.transition(rm32::motor_mode::MotorEvent::ExitSine);
                     shared.set_commutation_interval(commutation_interval);
                     shared.set_zero_crosses(20);
+                    shared.set_prop_brake_active(false);
+                    // Set main-loop timing for BLDC mode entry
+                    main_state
+                        .timing_mut()
+                        .set_average_interval(commutation_interval);
+                    main_state
+                        .timing_mut()
+                        .set_last_average_interval(commutation_interval);
+                    // Set ISR state: commutation step + immediate commutation
+                    isr::with_isr_state(|isr| {
+                        isr.commutation.set_step(step);
+                        use rm32::hal::{ComTimer, Comparator, PhaseOutput, PwmOutput};
+                        isr.hal.phase.com_step(step);
+                        isr.hal.pwm.generate_update_event();
+                        isr.hal
+                            .com_timer
+                            .set_and_enable(commutation_interval as u16);
+                        isr.hal.comp.enable_interrupts();
+                    });
                 }
                 SineStepResult::Idle => {}
             }

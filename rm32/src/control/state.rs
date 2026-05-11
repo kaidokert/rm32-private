@@ -149,6 +149,32 @@ impl DutyState {
         self.ramp_divider = v;
     }
 
+    /// Apply EEPROM max_ramp to ramp rate profiles.
+    ///
+    /// C logic: when `max_ramp < 10`, uses raw value for all profiles with
+    /// ramp_divider=9 (slow ramp mode). Otherwise clamps each profile to
+    /// max_ramp/10 (conditional minimum — only reduces, never increases).
+    pub fn apply_max_ramp(&mut self, max_ramp: u8) {
+        if max_ramp < 10 {
+            self.ramp_divider = 9;
+            self.max_ramp_startup = max_ramp;
+            self.max_ramp_low_rpm = max_ramp;
+            self.max_ramp_high_rpm = max_ramp;
+        } else {
+            self.ramp_divider = 0;
+            let scaled = max_ramp / 10;
+            if scaled < self.max_ramp_startup {
+                self.max_ramp_startup = scaled;
+            }
+            if scaled < self.max_ramp_low_rpm {
+                self.max_ramp_low_rpm = scaled;
+            }
+            if scaled < self.max_ramp_high_rpm {
+                self.max_ramp_high_rpm = scaled;
+            }
+        }
+    }
+
     /// Compute PWM compare value from duty cycle and timer auto-reload.
     pub(crate) fn pwm_compare(&self, tim1_arr: u16) -> u16 {
         ((self.cycle as u32 * tim1_arr as u32) / crate::constants::DUTY_SCALE_MAX as u32 + 1) as u16
