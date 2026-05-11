@@ -412,6 +412,18 @@ fn main() -> ! {
             telem.send_dma(&info_pkt);
         }
 
+        // Self-reset when signal_timeout fires (AM32 main.c:1892-1918 behavior).
+        // Drains debug UART first so any in-flight banner / log byte lands
+        // before the chip restarts. SCB::sys_reset sets SFTRSTF → bootloader
+        // skips first-chance signal-pin check → DFU loop activates → BF
+        // passthrough / AM32 Configurator BLHeli protocol can connect.
+        if shared.needs_reset() {
+            rm32_stm32::dprintln!("[rm32] signal_timeout → sys_reset");
+            #[cfg(feature = "debuguart")]
+            rm32_stm32::debug_uart::flush();
+            sys.reset();
+        }
+
         sys.reload_watchdog();
         cortex_m::asm::wfi();
     }

@@ -27,6 +27,12 @@ pub struct SharedState {
     dshot_telemetry: AtomicBool,
     save_settings_flag: AtomicBool,
     send_esc_info_flag: AtomicBool,
+    /// Set by main_state when signal_timeout exceeds threshold (matching AM32's
+    /// behavior at Src/main.c:1892-1918). Main loop polls and calls
+    /// `System::reset()`, which sets RCC_CSR.SFTRSTF; the bootloader sees that
+    /// flag and skips its first-chance signal-pin check, dropping into the DFU
+    /// loop so the AM32 Configurator passthrough / BLHeli protocol can talk.
+    needs_reset: AtomicBool,
 
     // Timing (ISR writes, main reads)
     zero_crosses: AtomicU32,
@@ -84,6 +90,7 @@ impl SharedState {
             dshot_telemetry: AtomicBool::new(false),
             save_settings_flag: AtomicBool::new(false),
             send_esc_info_flag: AtomicBool::new(false),
+            needs_reset: AtomicBool::new(false),
             zero_crosses: AtomicU32::new(0),
             commutation_interval: AtomicU32::new(12500),
             newinput: AtomicU16::new(0),
@@ -252,6 +259,13 @@ impl SharedState {
     }
     pub fn set_send_esc_info_flag(&self, v: bool) {
         self.send_esc_info_flag.store(v, REL);
+    }
+
+    pub fn needs_reset(&self) -> bool {
+        self.needs_reset.load(ACQ)
+    }
+    pub fn set_needs_reset(&self, v: bool) {
+        self.needs_reset.store(v, REL);
     }
 
     // --- U32 accessors ---
@@ -616,5 +630,11 @@ impl crate::shared_comm::SharedComm for SharedState {
     }
     fn set_send_esc_info_flag(&self, v: bool) {
         SharedState::set_send_esc_info_flag(self, v);
+    }
+    fn needs_reset(&self) -> bool {
+        SharedState::needs_reset(self)
+    }
+    fn set_needs_reset(&self, v: bool) {
+        SharedState::set_needs_reset(self, v);
     }
 }

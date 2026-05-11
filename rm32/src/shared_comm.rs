@@ -196,4 +196,8 @@ pub trait SharedComm: MotorState + IsrTiming + MainControl {
         false
     }
     fn set_send_esc_info_flag(&self, _v: bool) {}
+    fn needs_reset(&self) -> bool {
+        false
+    }
+    fn set_needs_reset(&self, _v: bool) {}
 }

@@ -345,16 +345,29 @@ impl<LED: OutputPin> MainState<LED> {
             self.timing.last_average_interval = self.timing.average_interval;
         }
 
-        // Signal timeout
-        // Armed: 0.5s (10000 ticks @ 20kHz) → disarm + reset input
-        // Unarmed: 2s (40000 ticks) → reset input detection to allow re-detect
+        // Signal timeout — matches AM32 C `Src/main.c:1892-1918`:
+        //   Armed: 0.5s (10000 ticks @ 20kHz) → disarm + request system reset
+        //   Unarmed: 2s (40000 ticks)        → request system reset
+        // The reset (NVIC_SystemReset on the C side, `SCB::sys_reset` here)
+        // sets SFTRSTF; the AM32 bootloader sees that and skips its
+        // first-chance signal-pin check, falling into the DFU loop. That's
+        // what makes the BF-passthrough → AM32 Configurator flow work — BF
+        // stops sending DSHOT during passthrough, the ESC times out, resets
+        // into bootloader DFU, and the Configurator's BLHeli protocol talks
+        // to the bootloader, not the running firmware.
+        //
+        // Also clear input_set so re-detection runs if the reset doesn't
+        // actually fire for some reason (host-test path, IWDG-disabled bench
+        // build that polls the flag from a stuck main loop, etc).
         if shared.armed() {
             if shared.signal_timeout() > crate::constants::SIGNAL_TIMEOUT_DISARM {
                 shared.transition(crate::motor_mode::MotorEvent::Disarm);
                 shared.set_input_set(false);
+                shared.set_needs_reset(true);
             }
         } else if shared.signal_timeout() > crate::constants::SIGNAL_TIMEOUT_UNARMED {
             shared.set_input_set(false);
+            shared.set_needs_reset(true);
         }
 
         // eRPM
@@ -835,6 +848,50 @@ mod tests {
         assert!(
             !shared.input_set(),
             "unarmed signal timeout should reset input_set"
+        );
+    }
+
+    /// REQ-RESET-ON-TIMEOUT: When signal_timeout fires (armed >0.5s or
+    /// unarmed >2s), MainState::tick must request a system reset via
+    /// `set_needs_reset(true)`. Matches AM32's NVIC_SystemReset() at
+    /// Src/main.c:1904 and :1917 — the only way the AM32 bootloader DFU
+    /// loop ever activates from a running firmware, which is what BF's
+    /// passthrough mode and the AM32 Configurator depend on.
+    #[test]
+    fn signal_timeout_armed_requests_reset() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::OldRoutine);
+        shared.set_input_set(true);
+        assert!(!shared.needs_reset(), "starts not requesting reset");
+        for _ in 0..=crate::constants::SIGNAL_TIMEOUT_DISARM {
+            shared.increment_signal_timeout();
+        }
+        let mut main = make_test_main_state();
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+        assert!(
+            shared.needs_reset(),
+            "armed timeout (>0.5s) must request system reset"
+        );
+    }
+
+    #[test]
+    fn signal_timeout_unarmed_requests_reset() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::Disarmed);
+        shared.set_input_set(true);
+        assert!(!shared.needs_reset(), "starts not requesting reset");
+        for _ in 0..45000u32 {
+            shared.increment_signal_timeout();
+        }
+        let mut main = make_test_main_state();
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+        assert!(
+            shared.needs_reset(),
+            "unarmed timeout (>2s) must request system reset"
         );
     }
 
