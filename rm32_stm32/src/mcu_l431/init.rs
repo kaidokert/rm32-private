@@ -78,7 +78,13 @@ pub fn init(
     let adc = super::adc::new_adc();
     let _ = adc.init();
 
-    // UART telemetry
+    // UART telemetry. `debuguart` feature steals USART1+PB6 for debug logging,
+    // so skip the telemetry hardware init in that build — leaves the wrapper
+    // in place (so main.rs still compiles + can call send_dma, which becomes
+    // a harmless no-op on uninitialized DMA) without stomping on debug_uart.
+    #[cfg(feature = "debuguart")]
+    let telem = super::telemetry_uart::L431TelemUart::post_init();
+    #[cfg(not(feature = "debuguart"))]
     let telem = super::telemetry_uart::L431TelemUart::init()
         .unwrap_or_else(|_| super::telemetry_uart::L431TelemUart::post_init());
 

@@ -226,9 +226,12 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
             }
         }
         TransferAction::DshotThrottle { value, telemetry } => {
-            if state.edt_armed || value == 0 {
-                shared.set_newinput(value);
-            }
+            // Standard DSHOT throttle is always valid; EDT (Extended DSHOT
+            // Telemetry, BF cmd 13) is an *extension*, not a precondition for
+            // throttle acceptance. The previous `if edt_armed || value == 0`
+            // gate silently dropped every non-zero throttle from vanilla
+            // DSHOT300/600 because BF never sends EDT_ENABLE in those modes.
+            shared.set_newinput(value);
             if telemetry {
                 shared.set_send_telemetry(true);
             }

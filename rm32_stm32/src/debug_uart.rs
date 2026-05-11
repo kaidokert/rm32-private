@@ -59,6 +59,14 @@ fn putc(b: u8) {
     usart.tdr.write(|w| unsafe { w.bits(b as u32) });
 }
 
+/// Wait for the transmit shift register to drain. Call before any operation
+/// that changes SYSCLK or USART1 config, otherwise the in-flight byte is
+/// transmitted at the new (wrong) clock and shows up as garbage.
+pub fn flush() {
+    let usart = unsafe { &*USART1::ptr() };
+    while usart.isr.read().tc().bit_is_clear() {}
+}
+
 pub fn write_str(s: &str) {
     for b in s.bytes() {
         putc(b);
