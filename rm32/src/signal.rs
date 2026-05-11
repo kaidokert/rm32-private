@@ -13,17 +13,18 @@ pub enum SignalType {
 pub fn detect_input(dma_buffer: &[u32], _cpu_mhz: u8) -> SignalType {
     let mut smallest = 20000u16;
     let mut average_pulse = 0u32;
-    let mut last = dma_buffer[0];
+    let mut last = dma_buffer[0] as u16;
 
     for sample in &dma_buffer[1..31] {
-        let diff = sample.wrapping_sub(last);
+        // 16-bit wraparound: timer is 16-bit, stored as u32
+        let diff = (*sample as u16).wrapping_sub(last);
         if diff > 0 {
-            if (diff as u16) < smallest {
-                smallest = diff as u16;
+            if diff < smallest {
+                smallest = diff;
             }
-            average_pulse += diff;
+            average_pulse += diff as u32;
         }
-        last = *sample;
+        last = *sample as u16;
     }
     average_pulse /= 32;
 
@@ -155,5 +156,42 @@ mod tests {
         // Exactly at low threshold: map returns out_min=47, then 47 <= 48 -> 0
         let val = compute_servo_unidirectional(1100, 1100, 1900);
         assert_eq!(val, 0);
+    }
+
+    // --- Timer wraparound tests ---
+    // DMA captures 16-bit timer values stored as u32. The timer wraps at 65535.
+    // detect_input must handle a wrap within the 32-edge capture window.
+
+    #[test]
+    fn detect_dshot600_wraparound() {
+        // DShot600 with timer wrapping mid-capture
+        let mut buf = [0u32; 32];
+        let start = 65520u32; // near u16 max
+        for i in 0..32 {
+            buf[i] = (start + i as u32 * 3) & 0xFFFF; // wraps at 65536
+        }
+        // e.g. 65520, 65523, 65526, 65529, 65532, 65535, 2, 5, 8, ...
+        assert_eq!(detect_input(&buf, 48), SignalType::Dshot600);
+    }
+
+    #[test]
+    fn detect_dshot300_wraparound() {
+        let mut buf = [0u32; 32];
+        let start = 65500u32;
+        for i in 0..32 {
+            buf[i] = (start + i as u32 * 5) & 0xFFFF;
+        }
+        assert_eq!(detect_input(&buf, 48), SignalType::Dshot300);
+    }
+
+    #[test]
+    fn detect_servo_wraparound() {
+        // Servo with timer wrapping: large intervals that cross the 16-bit boundary
+        let mut buf = [0u32; 32];
+        let start = 60000u32;
+        for i in 0..32 {
+            buf[i] = (start + i as u32 * 1000) & 0xFFFF;
+        }
+        assert_eq!(detect_input(&buf, 48), SignalType::ServoPwm);
     }
 }
