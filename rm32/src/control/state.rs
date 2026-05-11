@@ -536,7 +536,7 @@ impl BemfState {
             if current_state {
                 self.counter += 1;
             } else {
-                self.bad_count += 1;
+                self.bad_count = self.bad_count.saturating_add(1);
                 if self.bad_count > self.bad_count_threshold {
                     self.counter = 0;
                 }
@@ -544,7 +544,7 @@ impl BemfState {
         } else if !current_state {
             self.counter += 1;
         } else {
-            self.bad_count += 1;
+            self.bad_count = self.bad_count.saturating_add(1);
             if self.bad_count > self.bad_count_threshold {
                 self.counter = 0;
             }
