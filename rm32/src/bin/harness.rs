@@ -41,6 +41,7 @@ impl hal::PwmOutput for MockPwm {
 
 struct MockComp {
     level: bool,
+    counts: *mut HalCounts,
 }
 impl hal::Comparator for MockComp {
     fn output_level(&self) -> bool {
@@ -49,14 +50,30 @@ impl hal::Comparator for MockComp {
     fn set_step(&mut self, _: u8, _: bool) {}
     fn change_input(&mut self) {}
     fn enable_interrupts(&mut self) {}
-    fn mask_interrupts(&mut self) {}
+    fn mask_interrupts(&mut self) {
+        unsafe { (*self.counts).mask_interrupts += 1 };
+    }
 }
 
-struct MockPhase;
+/// HAL call counters — records every safety-relevant HAL call for test assertions.
+#[derive(Default)]
+struct HalCounts {
+    all_off: u32,
+    full_brake: u32,
+    mask_interrupts: u32,
+}
+
+struct MockPhase {
+    counts: *mut HalCounts,
+}
 impl hal::PhaseOutput for MockPhase {
     fn com_step(&mut self, _: u8) {}
-    fn all_off(&mut self) {}
-    fn full_brake(&mut self) {}
+    fn all_off(&mut self) {
+        unsafe { (*self.counts).all_off += 1 };
+    }
+    fn full_brake(&mut self) {
+        unsafe { (*self.counts).full_brake += 1 };
+    }
     fn all_pwm(&mut self) {}
     fn proportional_brake(&mut self) {}
 }
@@ -149,6 +166,7 @@ struct Harness {
     duty: DutyState,
     config: EepromConfig,
     armed_timeout_count: u32,
+    hal_counts: HalCounts,
     hal: MockMotorHal,
     adc: MockAdc,
     telem: MockTelem,
@@ -178,21 +196,27 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        Self {
+        let mut h = Self {
             shared: SharedState::new(),
             commutation: Commutation::new(),
             bemf: BemfState::default(),
             duty: DutyState::default(),
             config: EepromConfig::default(),
             armed_timeout_count: 0,
+            hal_counts: HalCounts::default(),
             hal: MockMotorHal {
                 pwm: MockPwm {
                     duty: 0,
                     arr: 0,
                     duty_count: 0,
                 },
-                comp: MockComp { level: false },
-                phase: MockPhase,
+                comp: MockComp {
+                    level: false,
+                    counts: core::ptr::null_mut(),
+                },
+                phase: MockPhase {
+                    counts: core::ptr::null_mut(),
+                },
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer,
             },
@@ -224,7 +248,13 @@ impl Harness {
                     cpu_mhz: 64,
                 },
             ),
-        }
+        };
+        // Wire up HAL count pointers (self-referential, safe because Harness
+        // is stack-pinned and never moved after construction)
+        let counts_ptr = &mut h.hal_counts as *mut HalCounts;
+        h.hal.comp.counts = counts_ptr;
+        h.hal.phase.counts = counts_ptr;
+        h
     }
 
     fn reset(&mut self) {
@@ -423,7 +453,8 @@ impl Harness {
              inputSet={} dshot={} servoPwm={} \
              pwm_duty={} pwm_arr={} pwm_duty_count={} \
              duty_cycle_maximum={} filter_level={} \
-             send_telemetry={} send_esc_info_flag={}",
+             send_telemetry={} send_esc_info_flag={} \
+             alloff_count={} fullbrake_count={} mask_interrupts_count={}",
             self.tick_count,
             self.shared.armed() as i32,
             self.shared.running() as i32,
@@ -462,6 +493,9 @@ impl Harness {
             self.bemf.filter_level(),
             self.shared.send_telemetry() as i32,
             self.shared.send_esc_info_flag() as i32,
+            self.hal_counts.all_off,
+            self.hal_counts.full_brake,
+            self.hal_counts.mask_interrupts,
         );
         io::stdout().flush().unwrap();
     }
