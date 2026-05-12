@@ -13,4 +13,5 @@ commutation_interval=0
 
 @sequence
 # Throttle above threshold with motor stopped should restart
-tick 1  | throttle=500 | running=1
+# allOff called before startMotor to clear phase outputs
+tick 1  | throttle=500 | running=1 alloff_count>0
