@@ -405,6 +405,7 @@ impl<LED: OutputPin> MainState<LED> {
             };
             if self.protection.low_voltage_count > lvc_limit {
                 self.protection.low_voltage_cutoff = true;
+                shared.set_all_off_requested(true); // cut FETs immediately
                 shared.transition(crate::motor_mode::MotorEvent::Disarm);
             }
         }

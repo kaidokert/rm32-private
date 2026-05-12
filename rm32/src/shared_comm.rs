@@ -129,6 +129,14 @@ pub trait MainControl {
     }
     fn set_prop_brake_active(&self, _v: bool) {}
 
+    /// Safety latch: request allOff + maskPhaseInterrupts from ISR context.
+    /// Set by main-loop code (LVC, stuck rotor) that lacks HAL access.
+    /// Cleared by ISR after executing the HAL calls.
+    fn all_off_requested(&self) -> bool {
+        false
+    }
+    fn set_all_off_requested(&self, _v: bool) {}
+
     /// TIM1 auto-reload value (variable PWM). Main publishes, ISR applies.
     fn tim1_arr(&self) -> u16 {
         1999

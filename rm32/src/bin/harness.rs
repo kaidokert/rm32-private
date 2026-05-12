@@ -259,6 +259,10 @@ impl Harness {
 
     fn reset(&mut self) {
         *self = Self::new();
+        // Re-wire HAL count pointers after move
+        let counts_ptr = &mut self.hal_counts as *mut HalCounts;
+        self.hal.comp.counts = counts_ptr;
+        self.hal.phase.counts = counts_ptr;
     }
 
     fn build_dshot_frame(&mut self, value: u16) {
