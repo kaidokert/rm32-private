@@ -9,6 +9,7 @@ use crate::control::state::{Measurements, PidState, ProtectionState, TimingState
 use crate::functions::get_abs_dif;
 use crate::hal::{Adc, TelemetryUart};
 use crate::telemetry;
+use crate::units::AdcCount;
 use embedded_hal::digital::OutputPin;
 
 use crate::shared_state::SharedState;
@@ -422,7 +423,6 @@ impl<LED: OutputPin> MainState<LED> {
         }
 
         // ADC measurements — typed conversions via AdcCount
-        use crate::units::AdcCount;
         let smoothed_v = AdcCount(self.measurements.voltage_filter.update(adc.raw_voltage()));
         let smoothed_c = AdcCount(self.measurements.current_filter.update(adc.raw_current()));
         self.measurements.battery_voltage = smoothed_v.to_millivolts(self.voltage_divider);

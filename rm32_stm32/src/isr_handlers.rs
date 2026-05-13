@@ -7,6 +7,7 @@
 use crate::isr::{self, TargetIsrState};
 use crate::mcu::ChipConfig;
 use rm32::hal::InputCapture;
+use rm32::transfer::{DetectedProtocol, TransferAction};
 
 /// Single-core ISR-local cell for zero-overhead mutable ISR state.
 ///
@@ -58,7 +59,6 @@ impl IsrCell {
             // First-time init: state was just moved from ISR_STATE into this
             // ISR_LOCAL cell, so any DMA pointer set up in main against the
             // ISR_STATE address is now stale. Re-arm DMA at the new address.
-            use rm32::hal::InputCapture;
             state.hal.input.receive_dshot_dma();
             rtt_target::rprintln!("[isr] state moved to ISR_LOCAL, DMA re-armed");
         }
@@ -212,7 +212,6 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     );
     shared.set_zero_input_count(zic);
 
-    use rm32::transfer::{DetectedProtocol, TransferAction};
     match actions.action {
         TransferAction::InputDetected(proto) => {
             shared.set_input_set(true);
@@ -222,7 +221,6 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                     shared.set_dshot(true);
                     // Store output prescaler for bidir DShot response timing
                     if let Some(psc) = actions.next_capture.prescaler {
-                        use rm32::hal::InputCapture;
                         state.hal.input.set_output_prescaler(psc);
                     }
                 }

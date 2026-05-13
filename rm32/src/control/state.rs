@@ -2,6 +2,7 @@
 //!
 //! Decomposed into focused sub-structs that each own a coherent slice of state.
 
+use crate::constants::*;
 use crate::pid::Pid;
 
 /// BEMF zero-cross detection state.
@@ -85,7 +86,6 @@ impl DutyState {
         average_interval: u32,
         voltage_based: bool,
     ) {
-        use crate::constants::*;
         if self.ramp_count > self.ramp_divider as u16 {
             self.ramp_count = 0;
             if voltage_based {
