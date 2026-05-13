@@ -11,7 +11,7 @@ use cortex_m_rt::entry;
 use rm32::commutation::Commutation;
 use rm32::config::EepromConfig;
 use rm32::control::state::{BemfState, DutyState};
-use rm32::hal::{PwmOutput, System, TelemetryUart as _};
+use rm32::hal::{System, TelemetryUart as _};
 use rm32::ws2812::LedStatus;
 
 use rm32::main_state::MainState;
@@ -112,8 +112,8 @@ fn main() -> ! {
         hal.input.set_inverted(BOARD.inverted_input);
     }
 
-    // --- Build ISR state and move to global ---
-    let isr_state = IsrState {
+    // --- Build ISR state locally (all config applied before move) ---
+    let mut isr_state = IsrState {
         commutation: Commutation::new(),
         bemf: BemfState::default(),
         duty: DutyState::default(),
@@ -125,21 +125,12 @@ fn main() -> ! {
         config: EepromConfig::default(),
         forward: true,
         edt_armed: false,
-        edt_arm_enable: false, // set from EEPROM after config load
+        edt_arm_enable: false,
         armed_timeout_count: 0,
         frametime_low: 400,
         frametime_high: 600,
         voltage_based_ramp: BOARD.voltage_based_ramp,
     };
-    isr::init_isr_state(isr_state);
-    rm32_stm32::dprintln!("[rm32] isr state installed");
-
-    // Now arm DMA capture with the buffer at its final static address.
-    isr::with_isr_state_boot(|isr| {
-        use rm32::hal::InputCapture;
-        isr.hal.input.receive_dshot_dma();
-    });
-    rm32_stm32::dprintln!("[rm32] input dma armed (post-move)");
 
     // --- Build main loop state ---
     let mut main_state = MainState::new(
@@ -207,37 +198,35 @@ fn main() -> ! {
     // Apply derived motor config to main state and PID controllers
     main_state.apply_motor_config(&motor_cfg);
 
-    // Propagate loaded config to ISR state (before interrupts enabled)
-    isr::with_isr_state_boot(|isr| {
-        isr.config = main_state.config;
-        isr.forward = main_state.config.dir_reversed == 0;
-        isr.edt_arm_enable = main_state.config.input_type() == rm32::config::InputType::EdtArm;
-        // Apply timer1_max_arr from pwm_frequency config (ISR reads from SharedComm)
-        // Apply startup duty from EEPROM
-        isr.duty
-            .set_duty_limits(minimum_duty_cycle, min_startup_duty, startup_max_duty);
-        isr.duty.apply_max_ramp(main_state.config.max_ramp);
-        // Apply servo EEPROM calibration to transfer state
-        if isr.config.eeprom_version > 0 {
-            isr.transfer.servo.set_calibration(
-                motor_cfg.servo_low,
-                motor_cfg.servo_high,
-                motor_cfg.servo_neutral,
-                isr.config.servo_dead_band,
-            );
-        }
-        // Apply dead-time override to duty thresholds
-        if dead_time_override > 0 {
-            isr.duty.apply_dead_time_override(dead_time_override);
-        }
-    });
-
-    // Apply dead-time override via PwmOutput trait
-    if dead_time_override > 0 {
-        isr::with_isr_state_boot(|isr| {
-            isr.hal.pwm.set_dead_time_override(dead_time_override);
-        });
+    // Propagate loaded config to ISR state (still on stack, before move)
+    isr_state.config = main_state.config;
+    isr_state.forward = main_state.config.dir_reversed == 0;
+    isr_state.edt_arm_enable = main_state.config.input_type() == rm32::config::InputType::EdtArm;
+    isr_state
+        .duty
+        .set_duty_limits(minimum_duty_cycle, min_startup_duty, startup_max_duty);
+    isr_state.duty.apply_max_ramp(main_state.config.max_ramp);
+    if isr_state.config.eeprom_version > 0 {
+        isr_state.transfer.servo.set_calibration(
+            motor_cfg.servo_low,
+            motor_cfg.servo_high,
+            motor_cfg.servo_neutral,
+            isr_state.config.servo_dead_band,
+        );
     }
+    if dead_time_override > 0 {
+        isr_state.duty.apply_dead_time_override(dead_time_override);
+        use rm32::hal::PwmOutput;
+        isr_state.hal.pwm.set_dead_time_override(dead_time_override);
+    }
+
+    // Move to static, then arm DMA (buffer address must be final).
+    isr::init_isr_state(isr_state);
+    isr::with_isr_state_boot(|isr| {
+        use rm32::hal::InputCapture;
+        isr.hal.input.receive_dshot_dma();
+    });
+    rm32_stm32::dprintln!("[rm32] isr state installed, DMA armed");
 
     // --- ADC + Telemetry (returned from init()) ---
 
