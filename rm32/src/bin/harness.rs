@@ -41,7 +41,7 @@ impl hal::PwmOutput for MockPwm {
 
 struct MockComp {
     level: bool,
-    counts: *mut HalCounts,
+    mask_interrupts: HalCounter,
 }
 impl hal::Comparator for MockComp {
     fn output_level(&self) -> bool {
@@ -51,28 +51,49 @@ impl hal::Comparator for MockComp {
     fn change_input(&mut self) {}
     fn enable_interrupts(&mut self) {}
     fn mask_interrupts(&mut self) {
-        unsafe { (*self.counts).mask_interrupts += 1 };
+        self.mask_interrupts.set(self.mask_interrupts.get() + 1);
     }
 }
 
+use std::cell::Cell;
+use std::rc::Rc;
+
+/// Shared HAL call counter — cloneable, interior-mutable, no unsafe.
+type HalCounter = Rc<Cell<u32>>;
+
+fn new_counter() -> HalCounter {
+    Rc::new(Cell::new(0))
+}
+
 /// HAL call counters — records every safety-relevant HAL call for test assertions.
-#[derive(Default)]
+#[derive(Clone)]
 struct HalCounts {
-    all_off: u32,
-    full_brake: u32,
-    mask_interrupts: u32,
+    all_off: HalCounter,
+    full_brake: HalCounter,
+    mask_interrupts: HalCounter,
+}
+
+impl HalCounts {
+    fn new() -> Self {
+        Self {
+            all_off: new_counter(),
+            full_brake: new_counter(),
+            mask_interrupts: new_counter(),
+        }
+    }
 }
 
 struct MockPhase {
-    counts: *mut HalCounts,
+    all_off: HalCounter,
+    full_brake: HalCounter,
 }
 impl hal::PhaseOutput for MockPhase {
     fn com_step(&mut self, _: u8) {}
     fn all_off(&mut self) {
-        unsafe { (*self.counts).all_off += 1 };
+        self.all_off.set(self.all_off.get() + 1);
     }
     fn full_brake(&mut self) {
-        unsafe { (*self.counts).full_brake += 1 };
+        self.full_brake.set(self.full_brake.get() + 1);
     }
     fn all_pwm(&mut self) {}
     fn proportional_brake(&mut self) {}
@@ -196,14 +217,14 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let mut h = Self {
+        let counts = HalCounts::new();
+        Self {
             shared: SharedState::new(),
             commutation: Commutation::new(),
             bemf: BemfState::default(),
             duty: DutyState::default(),
             config: EepromConfig::default(),
             armed_timeout_count: 0,
-            hal_counts: HalCounts::default(),
             hal: MockMotorHal {
                 pwm: MockPwm {
                     duty: 0,
@@ -212,14 +233,16 @@ impl Harness {
                 },
                 comp: MockComp {
                     level: false,
-                    counts: core::ptr::null_mut(),
+                    mask_interrupts: counts.mask_interrupts.clone(),
                 },
                 phase: MockPhase {
-                    counts: core::ptr::null_mut(),
+                    all_off: counts.all_off.clone(),
+                    full_brake: counts.full_brake.clone(),
                 },
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer,
             },
+            hal_counts: counts,
             tick_count: 0,
             has_throttle: false,
             throttle_value: 0,
@@ -248,21 +271,11 @@ impl Harness {
                     cpu_mhz: 64,
                 },
             ),
-        };
-        // Wire up HAL count pointers (self-referential, safe because Harness
-        // is stack-pinned and never moved after construction)
-        let counts_ptr = &mut h.hal_counts as *mut HalCounts;
-        h.hal.comp.counts = counts_ptr;
-        h.hal.phase.counts = counts_ptr;
-        h
+        }
     }
 
     fn reset(&mut self) {
         *self = Self::new();
-        // Re-wire HAL count pointers after move
-        let counts_ptr = &mut self.hal_counts as *mut HalCounts;
-        self.hal.comp.counts = counts_ptr;
-        self.hal.phase.counts = counts_ptr;
     }
 
     fn build_dshot_frame(&mut self, value: u16) {
@@ -506,9 +519,9 @@ impl Harness {
             self.bemf.filter_level(),
             self.shared.send_telemetry() as i32,
             self.shared.send_esc_info_flag() as i32,
-            self.hal_counts.all_off,
-            self.hal_counts.full_brake,
-            self.hal_counts.mask_interrupts,
+            self.hal_counts.all_off.get(),
+            self.hal_counts.full_brake.get(),
+            self.hal_counts.mask_interrupts.get(),
         );
         io::stdout().flush().unwrap();
     }
