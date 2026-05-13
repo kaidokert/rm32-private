@@ -104,30 +104,26 @@ pub fn shared() -> &'static SharedState {
     &SHARED
 }
 
-pub fn init_isr_state(state: TargetIsrState) {
+/// Move ISR state into the global static and return a mutable reference.
+///
+/// The reference is valid until `cortex_m::interrupt::enable()` — after that,
+/// the first ISR takes ownership via `take_isr_state()`. Use the returned
+/// reference for any final setup that needs the state at its static address
+/// (e.g. arming DMA whose CMAR register stores the buffer pointer).
+pub fn init_isr_state(state: TargetIsrState) -> &'static mut TargetIsrState {
     cortex_m::interrupt::free(|cs| {
         ISR_STATE.borrow(cs).replace(Some(state));
     });
+    // SAFETY: interrupts are disabled (caller's invariant — boot code only),
+    // so no ISR can take the state between replace and this borrow.
+    cortex_m::interrupt::free(|cs| {
+        let mut opt = ISR_STATE.borrow(cs).borrow_mut();
+        // SAFETY: we just placed Some(...) above, and interrupts are off.
+        let ptr: *mut TargetIsrState = opt.as_mut().unwrap() as *mut _;
+        unsafe { &mut *ptr }
+    })
 }
 
 pub fn take_isr_state() -> Option<TargetIsrState> {
     cortex_m::interrupt::free(|cs| ISR_STATE.borrow(cs).borrow_mut().take())
-}
-
-/// Access ISR state during boot ONLY — before `cortex_m::interrupt::enable()`.
-///
-/// After the first ISR fires, `ISR_LOCAL.get()` takes ownership of the state
-/// from `ISR_STATE` and this function becomes a silent no-op. DO NOT call
-/// from the main loop. Use SharedState atomics for all post-enable
-/// cross-context communication.
-///
-/// Panics if state has already been taken (catches misuse immediately).
-pub fn with_isr_state_boot(f: impl FnOnce(&mut TargetIsrState)) {
-    cortex_m::interrupt::free(|cs| {
-        let mut opt = ISR_STATE.borrow(cs).borrow_mut();
-        let state = opt
-            .as_mut()
-            .expect("with_isr_state_boot called after ISR took ownership — use SharedState");
-        f(state);
-    });
 }

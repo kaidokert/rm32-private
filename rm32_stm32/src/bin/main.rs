@@ -20,6 +20,11 @@ use rm32_stm32::isr::{self, IsrState};
 use rm32_stm32::mcu::FlashStorage;
 use rm32_stm32::mcu::{Chip, ChipConfig};
 
+use rm32::hal::Flash as _;
+use rm32::hal::InputCapture;
+use rm32::hal::PwmOutput;
+use rm32::sounds::Sounds;
+
 // Board configuration generated from YAML by build.rs.
 // Override with: BOARD=boards/my_board.yaml cargo build
 include!(concat!(env!("OUT_DIR"), "/board_config.rs"));
@@ -84,7 +89,6 @@ fn main() -> ! {
         hal.phase = rm32_stm32::phase::G0APhaseDriver::new_bridge(false);
     }
     {
-        use rm32::sounds::Sounds;
         let sounds = Sounds::new(Chip::TIM1_AUTORELOAD);
         sounds.play_startup(&mut hal.pwm, &mut hal.phase, &mut sys);
     }
@@ -108,7 +112,6 @@ fn main() -> ! {
     // when `hal` is moved into IsrState. Arming DMA before the move sets
     // CMAR to a stack address that becomes stale after the move.
     {
-        use rm32::hal::InputCapture;
         hal.input.set_inverted(BOARD.inverted_input);
     }
 
@@ -171,7 +174,6 @@ fn main() -> ! {
     // --- Load EEPROM settings from flash ---
     let flash = FlashStorage::new();
     {
-        use rm32::hal::Flash as _;
         flash.read(eeprom_address, main_state.config.as_bytes_mut());
     }
     // Validate and apply version migration
@@ -216,16 +218,12 @@ fn main() -> ! {
     }
     if dead_time_override > 0 {
         isr_state.duty.apply_dead_time_override(dead_time_override);
-        use rm32::hal::PwmOutput;
         isr_state.hal.pwm.set_dead_time_override(dead_time_override);
     }
 
     // Move to static, then arm DMA (buffer address must be final).
-    isr::init_isr_state(isr_state);
-    isr::with_isr_state_boot(|isr| {
-        use rm32::hal::InputCapture;
-        isr.hal.input.receive_dshot_dma();
-    });
+    let isr = isr::init_isr_state(isr_state);
+    isr.hal.input.receive_dshot_dma();
     rm32_stm32::dprintln!("[rm32] isr state installed, DMA armed");
 
     // --- ADC + Telemetry (returned from init()) ---
@@ -333,7 +331,6 @@ fn main() -> ! {
         if shared.save_settings_flag() {
             shared.set_save_settings_flag(false);
             let mut flash = FlashStorage::new();
-            use rm32::hal::Flash as _;
             flash.write(eeprom_address, main_state.config.as_bytes());
         }
 
