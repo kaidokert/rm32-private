@@ -17,11 +17,16 @@ use crate::shared_comm::SharedComm;
 /// Handles: throttle→setpoint mapping, arming, BEMF polling (old_routine),
 /// ramp rate limiting, PWM output.
 pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
-    // Safety: if main loop requested allOff (LVC, stuck rotor), execute immediately
-    if ctx.shared.all_off_requested() {
-        ctx.hal.phase().all_off();
-        ctx.hal.comp().mask_interrupts();
-        ctx.shared.set_all_off_requested(false);
+    // Process main→ISR action request (priority-ordered enum)
+    match ctx.shared.isr_action() {
+        crate::shared_comm::IsrAction::AllOff => {
+            ctx.hal.phase().all_off();
+            ctx.hal.comp().mask_interrupts();
+        }
+        crate::shared_comm::IsrAction::ResetIntervalTimer => {
+            // Handled at the end of this function (after publish)
+        }
+        crate::shared_comm::IsrAction::None => {}
     }
     // Sync direction from shared (main loop may flip for bidirectional)
     ctx.commutation.forward = ctx.shared.forward();
@@ -136,14 +141,13 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     ctx.shared.set_forward(ctx.commutation.forward);
     ctx.shared
         .set_interval_timer_count(ctx.hal.interval().count());
-    // Stall handler in tick_main sets interval_timer_reset — reset HAL timer
-    // AFTER publishing so the publish doesn't overwrite the reset. The reset
-    // takes effect on the NEXT tick's publish: HAL starts from 0, needs
-    // 45000+ ticks (~22.5ms) to reach stall threshold again.
-    if ctx.shared.interval_timer_reset() {
+    // Handle ResetIntervalTimer AFTER publish so the published value isn't
+    // immediately overwritten. AllOff is handled at the top (before tick).
+    if ctx.shared.isr_action() == crate::shared_comm::IsrAction::ResetIntervalTimer {
         ctx.hal.interval().set_count(0);
-        ctx.shared.set_interval_timer_reset(false);
     }
+    // Clear any pending action (AllOff was already executed at top)
+    ctx.shared.clear_isr_action();
 }
 
 /// BEMF polling (old_routine path).

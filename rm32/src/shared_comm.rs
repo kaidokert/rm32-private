@@ -10,6 +10,23 @@
 
 use crate::motor_mode::{MotorEvent, MotorMode};
 
+/// Action requested from main loop to ISR context.
+///
+/// Priority-ordered: AllOff supersedes ResetIntervalTimer (if both are
+/// needed, the motor is being killed so the timer reset is moot).
+/// Stored as AtomicU8 in SharedState. Main writes via `request_isr_action`;
+/// ISR reads via `isr_action`, executes, and clears to None.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum IsrAction {
+    /// No pending action.
+    None = 0,
+    /// Reset interval timer to 0 (stall handler, matches C's zcfoundroutine).
+    ResetIntervalTimer = 1,
+    /// Kill all FETs + mask comparator interrupts (LVC, stuck rotor).
+    AllOff = 2,
+}
+
 /// Motor mode state machine — bidirectional ISR↔main.
 ///
 /// Only two methods require implementation: `motor_mode()` and `set_motor_mode()`.
@@ -129,18 +146,14 @@ pub trait MainControl {
     }
     fn set_prop_brake_active(&self, _v: bool) {}
 
-    /// Interval timer reset: main requests ISR to zero the HAL timer.
-    /// Set by stall handler; ISR clears after resetting.
-    fn interval_timer_reset(&self) -> bool {
-        false
+    /// ISR action request from main loop. Main writes the highest-priority
+    /// action; ISR reads, executes, and clears to None.
+    /// AllOff supersedes ResetIntervalTimer (motor is dead, timer moot).
+    fn isr_action(&self) -> IsrAction {
+        IsrAction::None
     }
-    fn set_interval_timer_reset(&self, _v: bool) {}
-
-    /// Safety latch: request allOff + maskPhaseInterrupts from ISR context.
-    fn all_off_requested(&self) -> bool {
-        false
-    }
-    fn set_all_off_requested(&self, _v: bool) {}
+    fn request_isr_action(&self, _action: IsrAction) {}
+    fn clear_isr_action(&self) {}
 
     /// TIM1 auto-reload value (variable PWM). Main publishes, ISR applies.
     fn tim1_arr(&self) -> u16 {
@@ -209,8 +222,4 @@ pub trait SharedComm: MotorState + IsrTiming + MainControl {
         false
     }
     fn set_send_esc_info_flag(&self, _v: bool) {}
-    fn needs_reset(&self) -> bool {
-        false
-    }
-    fn set_needs_reset(&self, _v: bool) {}
 }

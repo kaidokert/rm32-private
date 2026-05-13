@@ -32,8 +32,6 @@ pub struct SharedState {
     /// `System::reset()`, which sets RCC_CSR.SFTRSTF; the bootloader sees that
     /// flag and skips its first-chance signal-pin check, dropping into the DFU
     /// loop so the AM32 Configurator passthrough / BLHeli protocol can talk.
-    needs_reset: AtomicBool,
-
     // Timing (ISR writes, main reads)
     zero_crosses: AtomicU32,
     commutation_interval: AtomicU32,
@@ -65,14 +63,13 @@ pub struct SharedState {
     interval_timer_count: AtomicU32,
 
     // Main→ISR published control (main computes, ISR applies)
-    tim1_arr: AtomicU16,              // variable PWM auto-reload
-    duty_maximum: AtomicU16,          // eRPM/temperature throttle restriction
-    filter_level: AtomicU8,           // BEMF comparator filter samples
-    min_bemf_counts: AtomicU8,        // min zero-cross detection threshold
-    auto_advance: AtomicU8,           // commutation timing advance level
-    prop_brake_active: AtomicBool,    // proportional brake engaged (main sets, ISR reads)
-    interval_timer_reset: AtomicBool, // stall handler requests HAL timer zero
-    all_off_requested: AtomicBool,    // safety: main requests allOff+maskPhaseInterrupts from ISR
+    tim1_arr: AtomicU16,           // variable PWM auto-reload
+    duty_maximum: AtomicU16,       // eRPM/temperature throttle restriction
+    filter_level: AtomicU8,        // BEMF comparator filter samples
+    min_bemf_counts: AtomicU8,     // min zero-cross detection threshold
+    auto_advance: AtomicU8,        // commutation timing advance level
+    prop_brake_active: AtomicBool, // proportional brake engaged (main sets, ISR reads)
+    isr_action: AtomicU8,          // main→ISR action request (IsrAction enum)
 }
 
 impl Default for SharedState {
@@ -92,7 +89,6 @@ impl SharedState {
             dshot_telemetry: AtomicBool::new(false),
             save_settings_flag: AtomicBool::new(false),
             send_esc_info_flag: AtomicBool::new(false),
-            needs_reset: AtomicBool::new(false),
             zero_crosses: AtomicU32::new(0),
             commutation_interval: AtomicU32::new(12500),
             newinput: AtomicU16::new(0),
@@ -115,8 +111,7 @@ impl SharedState {
             min_bemf_counts: AtomicU8::new(2),
             auto_advance: AtomicU8::new(0),
             prop_brake_active: AtomicBool::new(false),
-            interval_timer_reset: AtomicBool::new(false),
-            all_off_requested: AtomicBool::new(false),
+            isr_action: AtomicU8::new(0), // IsrAction::None
         }
     }
 
@@ -263,13 +258,6 @@ impl SharedState {
     }
     pub fn set_send_esc_info_flag(&self, v: bool) {
         self.send_esc_info_flag.store(v, REL);
-    }
-
-    pub fn needs_reset(&self) -> bool {
-        self.needs_reset.load(ACQ)
-    }
-    pub fn set_needs_reset(&self, v: bool) {
-        self.needs_reset.store(v, REL);
     }
 
     // --- U32 accessors ---
@@ -444,17 +432,20 @@ impl SharedState {
     pub fn set_prop_brake_active(&self, v: bool) {
         self.prop_brake_active.store(v, REL);
     }
-    pub fn interval_timer_reset(&self) -> bool {
-        self.interval_timer_reset.load(ACQ)
+    pub fn isr_action(&self) -> crate::shared_comm::IsrAction {
+        match self.isr_action.load(ACQ) {
+            1 => crate::shared_comm::IsrAction::ResetIntervalTimer,
+            2 => crate::shared_comm::IsrAction::AllOff,
+            _ => crate::shared_comm::IsrAction::None,
+        }
     }
-    pub fn set_interval_timer_reset(&self, v: bool) {
-        self.interval_timer_reset.store(v, REL);
+    pub fn request_isr_action(&self, action: crate::shared_comm::IsrAction) {
+        // Only upgrade priority — don't downgrade AllOff to ResetIntervalTimer
+        let new = action as u8;
+        let _ = self.isr_action.fetch_max(new, REL);
     }
-    pub fn all_off_requested(&self) -> bool {
-        self.all_off_requested.load(ACQ)
-    }
-    pub fn set_all_off_requested(&self, v: bool) {
-        self.all_off_requested.store(v, REL);
+    pub fn clear_isr_action(&self) {
+        self.isr_action.store(0, REL);
     }
 }
 
@@ -563,17 +554,14 @@ impl crate::shared_comm::MainControl for SharedState {
     fn set_prop_brake_active(&self, v: bool) {
         SharedState::set_prop_brake_active(self, v);
     }
-    fn interval_timer_reset(&self) -> bool {
-        SharedState::interval_timer_reset(self)
+    fn isr_action(&self) -> crate::shared_comm::IsrAction {
+        SharedState::isr_action(self)
     }
-    fn set_interval_timer_reset(&self, v: bool) {
-        SharedState::set_interval_timer_reset(self, v);
+    fn request_isr_action(&self, action: crate::shared_comm::IsrAction) {
+        SharedState::request_isr_action(self, action);
     }
-    fn all_off_requested(&self) -> bool {
-        SharedState::all_off_requested(self)
-    }
-    fn set_all_off_requested(&self, v: bool) {
-        SharedState::set_all_off_requested(self, v);
+    fn clear_isr_action(&self) {
+        SharedState::clear_isr_action(self);
     }
     fn tim1_arr(&self) -> u16 {
         SharedState::tim1_arr(self)
@@ -658,11 +646,5 @@ impl crate::shared_comm::SharedComm for SharedState {
     }
     fn set_send_esc_info_flag(&self, v: bool) {
         SharedState::set_send_esc_info_flag(self, v);
-    }
-    fn needs_reset(&self) -> bool {
-        SharedState::needs_reset(self)
-    }
-    fn set_needs_reset(&self, v: bool) {
-        SharedState::set_needs_reset(self, v);
     }
 }
