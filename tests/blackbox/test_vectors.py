@@ -38,7 +38,6 @@ def get_vector_files():
 
 # Vectors with known Rust vs C behavioral differences (pending investigation)
 XFAIL_VECTORS = {
-    "desync_recovery",  # Rust doesn't reset zero_crosses on desync (different main_loop ordering)
     "sine_stepping",  # Sine stepper runs in firmware main loop, not harness
     "sine_changeover",  # Sine stepper runs in firmware main loop, not harness
     "sine_brake_on_stop",  # Sine brake runs in firmware main loop, not harness

@@ -341,12 +341,16 @@ impl<LED: OutputPin> MainState<LED> {
                     self.timing.average_interval = DESYNC_RESET_INTERVAL;
                 }
                 shared.set_zero_crosses(0);
+                // DesyncFallback first: Running→OldRoutine (sets old_routine=1).
+                // Then StopMotor conditionally: OldRoutine→Armed (sets running=0).
+                // Order matters: StopMotor before DesyncFallback would go
+                // Running→Armed, blocking DesyncFallback (Armed has no transition).
+                shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
                 if (self.config.bi_direction == 0 && shared.adjusted_input() > 47)
                     || shared.commutation_interval() > 1000
                 {
                     shared.transition(crate::motor_mode::MotorEvent::StopMotor);
                 }
-                shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
             }
             self.desync_check = false;
             self.timing.last_average_interval = self.timing.average_interval;
