@@ -112,14 +112,11 @@ pub fn shared() -> &'static SharedState {
 /// (e.g. arming DMA whose CMAR register stores the buffer pointer).
 pub fn init_isr_state(state: TargetIsrState) -> &'static mut TargetIsrState {
     cortex_m::interrupt::free(|cs| {
-        ISR_STATE.borrow(cs).replace(Some(state));
-    });
-    // SAFETY: interrupts are disabled (caller's invariant — boot code only),
-    // so no ISR can take the state between replace and this borrow.
-    cortex_m::interrupt::free(|cs| {
-        let mut opt = ISR_STATE.borrow(cs).borrow_mut();
-        // SAFETY: we just placed Some(...) above, and interrupts are off.
-        let ptr: *mut TargetIsrState = opt.as_mut().unwrap() as *mut _;
+        let cell = ISR_STATE.borrow(cs);
+        cell.replace(Some(state));
+        // SAFETY: we just placed Some, interrupts are off (boot code only),
+        // and the RefCell borrow is released by replace() above.
+        let ptr: *mut TargetIsrState = cell.borrow_mut().as_mut().unwrap() as *mut _;
         unsafe { &mut *ptr }
     })
 }
