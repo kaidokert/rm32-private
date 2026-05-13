@@ -220,6 +220,11 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 DetectedProtocol::Dshot => {
                     rtt_target::rprintln!("[exti] DETECTED DShot");
                     shared.set_dshot(true);
+                    // Store output prescaler for bidir DShot response timing
+                    if let Some(psc) = actions.next_capture.prescaler {
+                        use rm32::hal::InputCapture;
+                        state.hal.input.set_output_prescaler(psc);
+                    }
                 }
                 DetectedProtocol::Servo => {
                     rtt_target::rprintln!("[exti] DETECTED Servo PWM");
