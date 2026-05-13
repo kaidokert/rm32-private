@@ -129,9 +129,14 @@ pub trait MainControl {
     }
     fn set_prop_brake_active(&self, _v: bool) {}
 
+    /// Interval timer reset: main requests ISR to zero the HAL timer.
+    /// Set by stall handler; ISR clears after resetting.
+    fn interval_timer_reset(&self) -> bool {
+        false
+    }
+    fn set_interval_timer_reset(&self, _v: bool) {}
+
     /// Safety latch: request allOff + maskPhaseInterrupts from ISR context.
-    /// Set by main-loop code (LVC, stuck rotor) that lacks HAL access.
-    /// Cleared by ISR after executing the HAL calls.
     fn all_off_requested(&self) -> bool {
         false
     }

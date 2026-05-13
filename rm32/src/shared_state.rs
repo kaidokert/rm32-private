@@ -65,13 +65,14 @@ pub struct SharedState {
     interval_timer_count: AtomicU32,
 
     // Main→ISR published control (main computes, ISR applies)
-    tim1_arr: AtomicU16,           // variable PWM auto-reload
-    duty_maximum: AtomicU16,       // eRPM/temperature throttle restriction
-    filter_level: AtomicU8,        // BEMF comparator filter samples
-    min_bemf_counts: AtomicU8,     // min zero-cross detection threshold
-    auto_advance: AtomicU8,        // commutation timing advance level
-    prop_brake_active: AtomicBool, // proportional brake engaged (main sets, ISR reads)
-    all_off_requested: AtomicBool, // safety: main requests allOff+maskPhaseInterrupts from ISR
+    tim1_arr: AtomicU16,              // variable PWM auto-reload
+    duty_maximum: AtomicU16,          // eRPM/temperature throttle restriction
+    filter_level: AtomicU8,           // BEMF comparator filter samples
+    min_bemf_counts: AtomicU8,        // min zero-cross detection threshold
+    auto_advance: AtomicU8,           // commutation timing advance level
+    prop_brake_active: AtomicBool,    // proportional brake engaged (main sets, ISR reads)
+    interval_timer_reset: AtomicBool, // stall handler requests HAL timer zero
+    all_off_requested: AtomicBool,    // safety: main requests allOff+maskPhaseInterrupts from ISR
 }
 
 impl Default for SharedState {
@@ -114,6 +115,7 @@ impl SharedState {
             min_bemf_counts: AtomicU8::new(2),
             auto_advance: AtomicU8::new(0),
             prop_brake_active: AtomicBool::new(false),
+            interval_timer_reset: AtomicBool::new(false),
             all_off_requested: AtomicBool::new(false),
         }
     }
@@ -442,6 +444,12 @@ impl SharedState {
     pub fn set_prop_brake_active(&self, v: bool) {
         self.prop_brake_active.store(v, REL);
     }
+    pub fn interval_timer_reset(&self) -> bool {
+        self.interval_timer_reset.load(ACQ)
+    }
+    pub fn set_interval_timer_reset(&self, v: bool) {
+        self.interval_timer_reset.store(v, REL);
+    }
     pub fn all_off_requested(&self) -> bool {
         self.all_off_requested.load(ACQ)
     }
@@ -554,6 +562,12 @@ impl crate::shared_comm::MainControl for SharedState {
     }
     fn set_prop_brake_active(&self, v: bool) {
         SharedState::set_prop_brake_active(self, v);
+    }
+    fn interval_timer_reset(&self) -> bool {
+        SharedState::interval_timer_reset(self)
+    }
+    fn set_interval_timer_reset(&self, v: bool) {
+        SharedState::set_interval_timer_reset(self, v);
     }
     fn all_off_requested(&self) -> bool {
         SharedState::all_off_requested(self)

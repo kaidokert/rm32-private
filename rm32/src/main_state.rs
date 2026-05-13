@@ -310,6 +310,10 @@ impl<LED: OutputPin> MainState<LED> {
                 shared.set_commutation_interval(DESYNC_RESET_INTERVAL);
             }
             shared.set_zero_crosses(0);
+            // Request HAL interval timer reset — matches C's zcfoundroutine()
+            // calling SET_INTERVAL_TIMER_COUNT(0). The ISR owns the HAL timer;
+            // main sets a flag that the ISR picks up before the next publish.
+            shared.set_interval_timer_reset(true);
         }
 
         // Dynamic BEMF timeout threshold: lenient at low throttle

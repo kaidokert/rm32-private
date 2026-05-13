@@ -23,7 +23,6 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         ctx.hal.comp().mask_interrupts();
         ctx.shared.set_all_off_requested(false);
     }
-
     // Sync direction from shared (main loop may flip for bidirectional)
     ctx.commutation.forward = ctx.shared.forward();
     let tim1_arr = ctx.shared.tim1_arr();
@@ -137,6 +136,14 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     ctx.shared.set_forward(ctx.commutation.forward);
     ctx.shared
         .set_interval_timer_count(ctx.hal.interval().count());
+    // Stall handler in tick_main sets interval_timer_reset — reset HAL timer
+    // AFTER publishing so the publish doesn't overwrite the reset. The reset
+    // takes effect on the NEXT tick's publish: HAL starts from 0, needs
+    // 45000+ ticks (~22.5ms) to reach stall threshold again.
+    if ctx.shared.interval_timer_reset() {
+        ctx.hal.interval().set_count(0);
+        ctx.shared.set_interval_timer_reset(false);
+    }
 }
 
 /// BEMF polling (old_routine path).

@@ -451,7 +451,7 @@ impl Harness {
              input={} adjusted_input={} newinput={} \
              bemfcounter={} zcfound={} rising={} \
              old_routine={} stepper_sine={} \
-             signaltimeout={} armed_timeout_count={} \
+             signaltimeout={} armed_timeout_count={} interval_timer_count={} \
              battery_voltage={} actual_current={} degrees_celsius={} \
              last_duty_cycle={} prop_brake_active={} \
              inputSet={} dshot={} servoPwm={} \
@@ -482,6 +482,7 @@ impl Harness {
             self.shared.stepper_sine() as i32,
             self.shared.signal_timeout(),
             self.armed_timeout_count,
+            self.shared.interval_timer_count(),
             self.main.measurements().battery_voltage().0,
             self.main.measurements().actual_current().0,
             self.main.measurements().degrees_celsius().0,
