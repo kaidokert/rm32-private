@@ -241,9 +241,6 @@ fn main() -> ! {
 
     // --- ADC + Telemetry (returned from init()) ---
 
-    // --- Sine mode state ---
-    let mut sine_positions = rm32::sine::PhasePositions::new();
-
     // Publish initial tim1_arr to SharedComm before ISR starts
     isr::shared().set_tim1_arr(timer1_max_arr);
 
@@ -286,46 +283,27 @@ fn main() -> ! {
                 main_state.config.stuck_rotor_protection,
             );
         }
-        // Sine mode: step phases when stepper_sine is active
-        if shared.stepper_sine() {
-            use rm32::sine::{SineStepResult, sine_step};
-            let (result, (ch1, ch2, ch3)) = sine_step(
-                &mut sine_positions,
-                shared.newinput(),
-                shared.armed(),
-                true, // forward — TODO: use ISR state forward flag
-                main_state.config.motor_poles,
-                5, // changeover_step
-                BOARD.dead_time as i16,
-                Chip::TIM1_AUTORELOAD,
-                main_state.config.sine_mode_power,
-            );
-            // Apply PWM via PwmOutput trait (through ISR state)
+        // Sine mode stepping (shared with harness via SystemTick)
+        if let Some((result, (ch1, ch2, ch3))) = system.tick_sine(
+            shared,
+            &main_state.config,
+            BOARD.dead_time as i16,
+            Chip::TIM1_AUTORELOAD,
+        ) {
             isr::with_isr_state(|isr| {
                 isr.hal.pwm.set_compare1(ch1);
                 isr.hal.pwm.set_compare2(ch2);
                 isr.hal.pwm.set_compare3(ch3);
             });
             match result {
-                SineStepResult::Continue(delay_us) => {
+                rm32::sine::SineStepResult::Continue(delay_us) => {
                     sys.delay_micros(delay_us as u32);
                 }
-                SineStepResult::Changeover {
+                rm32::sine::SineStepResult::Changeover {
                     commutation_interval,
                     step,
                 } => {
-                    shared.transition(rm32::motor_mode::MotorEvent::ExitSine);
-                    shared.set_commutation_interval(commutation_interval);
-                    shared.set_zero_crosses(20);
-                    shared.set_prop_brake_active(false);
-                    // Set main-loop timing for BLDC mode entry
-                    main_state
-                        .timing_mut()
-                        .set_average_interval(commutation_interval);
-                    main_state
-                        .timing_mut()
-                        .set_last_average_interval(commutation_interval);
-                    // Set ISR state: commutation step + immediate commutation
+                    system.apply_sine_changeover(shared, &mut main_state, commutation_interval);
                     isr::with_isr_state(|isr| {
                         isr.commutation.set_step(step);
                         use rm32::hal::{ComTimer, Comparator, PhaseOutput, PwmOutput};
@@ -337,7 +315,7 @@ fn main() -> ! {
                         isr.hal.comp.enable_interrupts();
                     });
                 }
-                SineStepResult::Idle => {}
+                rm32::sine::SineStepResult::Idle => {}
             }
         }
 

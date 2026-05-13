@@ -416,6 +416,41 @@ impl Harness {
             self.shared.set_signal_timeout(0);
         }
 
+        // Sine mode stepping (same logic as firmware main loop)
+        if let Some((result, (ch1, ch2, ch3))) =
+            self.system.tick_sine(&self.shared, &self.config, 60, 1999)
+        {
+            use rm32::hal::PwmOutput;
+            self.hal.pwm.set_compare1(ch1);
+            self.hal.pwm.set_compare2(ch2);
+            self.hal.pwm.set_compare3(ch3);
+            match result {
+                rm32::sine::SineStepResult::Continue(_) => {}
+                rm32::sine::SineStepResult::Changeover {
+                    commutation_interval,
+                    step,
+                } => {
+                    self.system.apply_sine_changeover(
+                        &self.shared,
+                        &mut self.main,
+                        commutation_interval,
+                    );
+                    self.commutation.set_step(step);
+                    use rm32::hal::PhaseOutput;
+                    self.hal.phase.com_step(step);
+                }
+                rm32::sine::SineStepResult::Idle => {
+                    let brake = rm32::system::SystemTick::handle_sine_idle(
+                        &self.shared,
+                        &self.config,
+                        1999,
+                    );
+                    self.system.input_state.set_prop_brake_active(brake);
+                    self.shared.set_prop_brake_active(brake);
+                }
+            }
+        }
+
         // Advance interval timer
         self.hal.interval.count += 1;
 

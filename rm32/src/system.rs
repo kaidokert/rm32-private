@@ -9,21 +9,23 @@ use crate::control::input::{self, InputState};
 use crate::hal::{Adc, TelemetryUart};
 use crate::main_state::MainState;
 use crate::shared_state::SharedState;
+use crate::sine::PhasePositions;
 use embedded_hal::digital::OutputPin;
 
 /// Main-loop system tick state.
 ///
-/// Owns the `InputState` that was previously duplicated between
-/// harness and firmware. Both call the same `tick_input()` and
-/// `tick_main()` methods.
+/// Owns the `InputState` and `PhasePositions` (sine mode) that were
+/// previously duplicated or missing between harness and firmware.
 pub struct SystemTick {
     pub input_state: InputState,
+    sine_positions: PhasePositions,
 }
 
 impl SystemTick {
     pub fn new() -> Self {
         Self {
             input_state: InputState::new(),
+            sine_positions: PhasePositions::new(),
         }
     }
 
@@ -93,6 +95,71 @@ impl SystemTick {
     ///
     /// Using a single closure avoids borrow conflicts between ISR state
     /// (commutation, bemf, etc.) and the sync step that reads commutation.
+    /// Process sine mode stepping.
+    ///
+    /// Returns the SineStepResult and PWM values. The caller applies
+    /// PWM output and handles changeover via platform-specific HAL calls.
+    pub fn tick_sine(
+        &mut self,
+        shared: &SharedState,
+        config: &crate::config::EepromConfig,
+        dead_time: i16,
+        tim1_autoreload: u16,
+    ) -> Option<(crate::sine::SineStepResult, (u16, u16, u16))> {
+        if !shared.stepper_sine() {
+            return None;
+        }
+        Some(crate::sine::sine_step(
+            &mut self.sine_positions,
+            shared.newinput(),
+            shared.armed(),
+            shared.forward(),
+            config.motor_poles,
+            5, // changeover_step
+            dead_time,
+            tim1_autoreload,
+            config.sine_mode_power,
+        ))
+    }
+
+    /// Apply sine changeover state transitions.
+    ///
+    /// Called when `tick_sine` returns `Changeover`. Sets shared state
+    /// and main-loop timing. The caller handles ISR HAL calls
+    /// (com_step, generate_update_event, etc.) via platform-specific code.
+    pub fn apply_sine_changeover<LED: OutputPin>(
+        &mut self,
+        shared: &SharedState,
+        main: &mut MainState<LED>,
+        commutation_interval: u32,
+    ) {
+        shared.transition(crate::motor_mode::MotorEvent::ExitSine);
+        shared.set_commutation_interval(commutation_interval);
+        shared.set_zero_crosses(20);
+        shared.set_prop_brake_active(false);
+        main.timing_mut().set_average_interval(commutation_interval);
+        main.timing_mut()
+            .set_last_average_interval(commutation_interval);
+    }
+
+    /// Handle sine mode idle (throttle=0 or !armed) brake logic.
+    ///
+    /// Matches C main.c lines 2258-2282. Returns true if prop_brake_active
+    /// should be set (brake_on_stop==1 with sufficient drag_brake_strength).
+    pub fn handle_sine_idle(
+        _shared: &SharedState,
+        config: &crate::config::EepromConfig,
+        tim1_arr: u16,
+    ) -> bool {
+        if config.brake_on_stop == 1 {
+            let prop_brake_duty = config.drag_brake_strength as u32 * 200;
+            let adjusted = tim1_arr as u32 - ((prop_brake_duty * tim1_arr as u32) / 2000);
+            adjusted >= 100 // below 100 → fullBrake instead (handled by caller)
+        } else {
+            false
+        }
+    }
+
     pub fn run_tick<LED: OutputPin>(
         &mut self,
         shared: &SharedState,

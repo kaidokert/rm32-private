@@ -37,13 +37,7 @@ def get_vector_files():
 
 
 # Vectors with known Rust vs C behavioral differences (pending investigation)
-XFAIL_VECTORS = {
-    "sine_stepping",  # Sine stepper runs in firmware main loop, not harness
-    "sine_changeover",  # Sine stepper runs in firmware main loop, not harness
-    "sine_brake_on_stop",  # Sine brake runs in firmware main loop, not harness
-    "sine_brake_mode2",  # Sine brake runs in firmware main loop, not harness
-    "sine_brake_off",  # Sine brake runs in firmware main loop, not harness
-}
+XFAIL_VECTORS: set[str] = set()  # No known xfails — all vectors pass
 
 
 @pytest.mark.parametrize(
