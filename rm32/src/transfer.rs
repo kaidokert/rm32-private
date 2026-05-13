@@ -125,6 +125,12 @@ impl CaptureConfig {
         ndtr: 32,
         prescaler: Some(1),
     };
+
+    /// DShot150 detected: 32 edges + prescaler to 3 (quarter resolution).
+    pub const DSHOT150_DETECTED: Self = Self {
+        ndtr: 32,
+        prescaler: Some(3),
+    };
 }
 
 /// Actions the caller (ISR) should take after transfer complete.
@@ -181,9 +187,9 @@ impl TransferState {
         if !input_set {
             let sig = signal::detect_input(dma_buffer, cpu_mhz);
             let proto = match sig {
-                signal::SignalType::Dshot600 | signal::SignalType::Dshot300 => {
-                    Some(DetectedProtocol::Dshot)
-                }
+                signal::SignalType::Dshot600
+                | signal::SignalType::Dshot300
+                | signal::SignalType::Dshot150 => Some(DetectedProtocol::Dshot),
                 signal::SignalType::ServoPwm => Some(DetectedProtocol::Servo),
                 signal::SignalType::None => None,
             };
@@ -214,6 +220,7 @@ impl TransferState {
                 let cap = match sig {
                     signal::SignalType::Dshot600 => CaptureConfig::DSHOT600_DETECTED,
                     signal::SignalType::Dshot300 => CaptureConfig::DSHOT300_DETECTED,
+                    signal::SignalType::Dshot150 => CaptureConfig::DSHOT150_DETECTED,
                     signal::SignalType::ServoPwm => CaptureConfig::servo_detected(cpu_mhz),
                     signal::SignalType::None => CaptureConfig::dshot_detection(cpu_mhz),
                 };
