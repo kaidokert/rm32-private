@@ -114,11 +114,20 @@ pub fn take_isr_state() -> Option<TargetIsrState> {
     cortex_m::interrupt::free(|cs| ISR_STATE.borrow(cs).borrow_mut().take())
 }
 
-/// Access ISR state in a critical section (before interrupts take it).
-pub fn with_isr_state(f: impl FnOnce(&mut TargetIsrState)) {
+/// Access ISR state during boot ONLY — before `cortex_m::interrupt::enable()`.
+///
+/// After the first ISR fires, `ISR_LOCAL.get()` takes ownership of the state
+/// from `ISR_STATE` and this function becomes a silent no-op. DO NOT call
+/// from the main loop. Use SharedState atomics for all post-enable
+/// cross-context communication.
+///
+/// Panics if state has already been taken (catches misuse immediately).
+pub fn with_isr_state_boot(f: impl FnOnce(&mut TargetIsrState)) {
     cortex_m::interrupt::free(|cs| {
-        if let Some(ref mut state) = *ISR_STATE.borrow(cs).borrow_mut() {
-            f(state);
-        }
+        let mut opt = ISR_STATE.borrow(cs).borrow_mut();
+        let state = opt
+            .as_mut()
+            .expect("with_isr_state_boot called after ISR took ownership — use SharedState");
+        f(state);
     });
 }

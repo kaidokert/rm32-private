@@ -10,10 +10,14 @@ use rm32::control::context::MotorContext;
 use rm32::control::isr_logic;
 use rm32::control::state::{BemfState, DutyState};
 use rm32::dshot;
+use rm32::dshot_commands::CommandResult;
 use rm32::hal;
+use rm32::hal::PhaseOutput;
+use rm32::hal::PwmOutput;
 use rm32::motor_mode::MotorMode;
 use rm32::shared_state::SharedState;
 use rm32::system::SystemTick;
+use rm32::transfer::{DetectedProtocol, TransferAction};
 use std::io::{self, BufRead, Write};
 
 // --- Mock HAL (same as harness.rs) ---
@@ -322,7 +326,6 @@ impl Harness {
         );
 
         // Apply transfer actions
-        use rm32::transfer::{DetectedProtocol, TransferAction};
         match actions.action {
             TransferAction::InputDetected(proto) => {
                 self.shared.set_input_set(true);
@@ -356,7 +359,6 @@ impl Harness {
                     self.shared.set_send_telemetry(true);
                 }
                 self.shared.set_signal_timeout(0);
-                use rm32::dshot_commands::CommandResult;
                 let mut fwd = self.commutation.forward();
                 let result = self.cmd_proc.process(
                     cmd,
@@ -420,7 +422,6 @@ impl Harness {
         if let Some((result, (ch1, ch2, ch3))) =
             self.system.tick_sine(&self.shared, &self.config, 60, 1999)
         {
-            use rm32::hal::PwmOutput;
             self.hal.pwm.set_compare1(ch1);
             self.hal.pwm.set_compare2(ch2);
             self.hal.pwm.set_compare3(ch3);
@@ -436,7 +437,6 @@ impl Harness {
                         commutation_interval,
                     );
                     self.commutation.set_step(step);
-                    use rm32::hal::PhaseOutput;
                     self.hal.phase.com_step(step);
                 }
                 rm32::sine::SineStepResult::Idle => {
@@ -477,7 +477,7 @@ impl Harness {
             &mut self.main,
             &mut self.adc,
             &mut self.telem,
-            |sys, main| {
+            || {
                 // ISR tick (harness runs inline)
                 let mut ctx = MotorContext {
                     commutation,
@@ -490,8 +490,6 @@ impl Harness {
                     hal,
                 };
                 isr_logic::ten_khz_tick(&mut ctx);
-                // Sync ISR→main one-shot flags
-                sys.sync_isr_to_main(ctx.commutation, main);
             },
         );
 

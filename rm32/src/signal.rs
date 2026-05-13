@@ -1,5 +1,7 @@
 //! Input signal detection and processing (DShot/Servo/auto-detect).
 
+use crate::functions::map;
+
 /// Signal detection result
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SignalType {
@@ -66,7 +68,6 @@ pub fn detect_input(dma_buffer: &[u32], _cpu_mhz: u8) -> SignalType {
 /// Compute MultiShot input from DMA buffer.
 /// MultiShot uses a single pulse width (243-1200µs → 0-2000 throttle).
 pub fn compute_multishot(dma_buffer: &[u32]) -> Option<u16> {
-    use crate::functions::map;
     if dma_buffer.len() < 2 {
         return None;
     }
@@ -85,7 +86,6 @@ pub fn compute_servo_unidirectional(
     low_threshold: u16,
     high_threshold: u16,
 ) -> u16 {
-    use crate::functions::map;
     let raw = map(
         pulse_width as i32,
         low_threshold as i32,

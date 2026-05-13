@@ -28,6 +28,17 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         }
         crate::shared_comm::IsrAction::None => {}
     }
+    // Sine changeover: main published a step for ISR to execute
+    let changeover = ctx.shared.changeover_step();
+    if changeover > 0 {
+        ctx.commutation.set_step(changeover);
+        ctx.hal.phase().com_step(changeover);
+        ctx.hal.pwm().generate_update_event();
+        let ci = ctx.shared.commutation_interval();
+        ctx.hal.com_timer().set_and_enable(ci as u16);
+        ctx.hal.comp().enable_interrupts();
+        ctx.shared.set_changeover_step(0);
+    }
     // Sync direction from shared (main loop may flip for bidirectional)
     ctx.commutation.forward = ctx.shared.forward();
     let tim1_arr = ctx.shared.tim1_arr();
@@ -201,6 +212,11 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
 {
     com_timer.disable_interrupt();
     let step = commutation.advance();
+    // Publish desync_check flag to SharedState (main reads it for desync detection)
+    if commutation.desync_check() {
+        shared.set_desync_check_pending(true);
+        commutation.set_desync_check(false);
+    }
     let e_com = commutation.record_interval(shared.commutation_interval() as u16);
     shared.set_e_com_time(e_com);
     phase.com_step(step);

@@ -155,6 +155,19 @@ pub trait MainControl {
     fn request_isr_action(&self, _action: IsrAction) {}
     fn clear_isr_action(&self) {}
 
+    /// Sine changeover step request (0 = none, 1-6 = execute changeover with step).
+    /// Main sets during sine changeover; ISR applies com_step + enables interrupts.
+    fn changeover_step(&self) -> u8 {
+        0
+    }
+    fn set_changeover_step(&self, _step: u8) {}
+
+    /// Desync check flag (ISR sets on BEMF zero-cross, main clears after processing).
+    fn desync_check_pending(&self) -> bool {
+        false
+    }
+    fn set_desync_check_pending(&self, _v: bool) {}
+
     /// TIM1 auto-reload value (variable PWM). Main publishes, ISR applies.
     fn tim1_arr(&self) -> u16 {
         1999

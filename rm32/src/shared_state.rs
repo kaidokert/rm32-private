@@ -63,13 +63,15 @@ pub struct SharedState {
     interval_timer_count: AtomicU32,
 
     // Main→ISR published control (main computes, ISR applies)
-    tim1_arr: AtomicU16,           // variable PWM auto-reload
-    duty_maximum: AtomicU16,       // eRPM/temperature throttle restriction
-    filter_level: AtomicU8,        // BEMF comparator filter samples
-    min_bemf_counts: AtomicU8,     // min zero-cross detection threshold
-    auto_advance: AtomicU8,        // commutation timing advance level
-    prop_brake_active: AtomicBool, // proportional brake engaged (main sets, ISR reads)
-    isr_action: AtomicU8,          // main→ISR action request (IsrAction enum)
+    tim1_arr: AtomicU16,              // variable PWM auto-reload
+    duty_maximum: AtomicU16,          // eRPM/temperature throttle restriction
+    filter_level: AtomicU8,           // BEMF comparator filter samples
+    min_bemf_counts: AtomicU8,        // min zero-cross detection threshold
+    auto_advance: AtomicU8,           // commutation timing advance level
+    prop_brake_active: AtomicBool,    // proportional brake engaged (main sets, ISR reads)
+    isr_action: AtomicU8,             // main→ISR action request (IsrAction enum)
+    changeover_step: AtomicU8,        // sine changeover step (0=none, 1-6=pending)
+    desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
 }
 
 impl Default for SharedState {
@@ -112,6 +114,8 @@ impl SharedState {
             auto_advance: AtomicU8::new(0),
             prop_brake_active: AtomicBool::new(false),
             isr_action: AtomicU8::new(0), // IsrAction::None
+            changeover_step: AtomicU8::new(0),
+            desync_check_pending: AtomicBool::new(false),
         }
     }
 
@@ -447,6 +451,18 @@ impl SharedState {
     pub fn clear_isr_action(&self) {
         self.isr_action.store(0, REL);
     }
+    pub fn changeover_step(&self) -> u8 {
+        self.changeover_step.load(ACQ)
+    }
+    pub fn set_changeover_step(&self, step: u8) {
+        self.changeover_step.store(step, REL);
+    }
+    pub fn desync_check_pending(&self) -> bool {
+        self.desync_check_pending.load(ACQ)
+    }
+    pub fn set_desync_check_pending(&self, v: bool) {
+        self.desync_check_pending.store(v, REL);
+    }
 }
 
 impl crate::shared_comm::MotorState for SharedState {
@@ -562,6 +578,18 @@ impl crate::shared_comm::MainControl for SharedState {
     }
     fn clear_isr_action(&self) {
         SharedState::clear_isr_action(self);
+    }
+    fn changeover_step(&self) -> u8 {
+        SharedState::changeover_step(self)
+    }
+    fn set_changeover_step(&self, step: u8) {
+        SharedState::set_changeover_step(self, step);
+    }
+    fn desync_check_pending(&self) -> bool {
+        SharedState::desync_check_pending(self)
+    }
+    fn set_desync_check_pending(&self, v: bool) {
+        SharedState::set_desync_check_pending(self, v);
     }
     fn tim1_arr(&self) -> u16 {
         SharedState::tim1_arr(self)

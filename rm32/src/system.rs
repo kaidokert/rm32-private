@@ -59,28 +59,18 @@ impl SystemTick {
         main.tick(shared, adc, telem);
     }
 
-    /// Sync per-cycle flags from ISR-owned `Commutation` into `MainState`.
+    /// Sync ISR→main one-shot flags via SharedState atomics.
     ///
-    /// Call between the ISR tick and `tick_main()`. The ISR sets one-shot
-    /// flags on `Commutation` (e.g. `desync_check` on each BEMF zero-cross at
-    /// `commutation.rs:43,50`); the main loop consumes them on the next pass
-    /// (e.g. desync detection in `MainState::tick`, mirroring AM32
-    /// `Src/main.c:1969-1985`).
-    ///
-    /// This used to be inline in `harness.rs::do_tick` and missing from the
-    /// firmware main loop, so blackbox tests passed but on real hardware
-    /// stalled-motor false-sync went undetected — `MainState.desync_check`
-    /// stayed permanently false because nobody transferred the flag from
-    /// `Commutation`. Centralising the transfer here means both paths
-    /// automatically pick up future ISR→main one-shots in the same place.
+    /// ISR publishes `desync_check_pending` to SharedState; main reads and
+    /// clears it here. No `with_isr_state` needed — all through atomics.
     pub fn sync_isr_to_main<LED: OutputPin>(
         &self,
-        commutation: &mut crate::commutation::Commutation,
+        shared: &SharedState,
         main: &mut MainState<LED>,
     ) {
-        if commutation.desync_check() {
+        if shared.desync_check_pending() {
+            shared.set_desync_check_pending(false);
             main.set_desync_check(true);
-            commutation.set_desync_check(false);
         }
     }
 }
@@ -166,15 +156,18 @@ impl SystemTick {
         main: &mut MainState<LED>,
         adc: &mut dyn Adc,
         telem: &mut dyn TelemetryUart,
-        isr_and_sync: impl FnOnce(&Self, &mut MainState<LED>),
+        isr_tick: impl FnOnce(),
     ) {
         // 1. Input processing
         self.tick_input(shared, main);
 
-        // 2. ISR tick + sync ISR→main flags (platform-specific)
-        isr_and_sync(self, main);
+        // 2. ISR tick (harness runs inline, firmware is a no-op — ISR runs async)
+        isr_tick();
 
-        // 3. Main-loop pipeline
+        // 3. Sync ISR→main flags via SharedState atomics (no with_isr_state)
+        self.sync_isr_to_main(shared, main);
+
+        // 4. Main-loop pipeline
         self.tick_main(shared, main, adc, telem);
     }
 }
@@ -205,33 +198,33 @@ mod tests {
     #[test]
     fn sync_isr_to_main_transfers_desync_check() {
         let sys = SystemTick::new();
-        let mut commutation = Commutation::new();
+        let shared = SharedState::new();
         let mut main = make_main();
 
-        commutation.set_desync_check(true);
+        shared.set_desync_check_pending(true);
         assert!(!main.desync_check(), "main starts clear");
-        sys.sync_isr_to_main(&mut commutation, &mut main);
+        sys.sync_isr_to_main(&shared, &mut main);
         assert!(
             main.desync_check(),
             "main.desync_check should be set after transfer"
         );
         assert!(
-            !commutation.desync_check(),
-            "commutation.desync_check should be cleared after transfer"
+            !shared.desync_check_pending(),
+            "shared.desync_check_pending should be cleared after transfer"
         );
     }
 
     #[test]
     fn sync_isr_to_main_noop_when_flag_clear() {
         let sys = SystemTick::new();
-        let mut commutation = Commutation::new();
+        let shared = SharedState::new();
         let mut main = make_main();
-        // Pre-set main.desync_check; commutation flag is clear → main should be untouched.
+        // Pre-set main.desync_check; shared flag is clear → main should be untouched.
         main.set_desync_check(true);
-        sys.sync_isr_to_main(&mut commutation, &mut main);
+        sys.sync_isr_to_main(&shared, &mut main);
         assert!(
             main.desync_check(),
-            "main.desync_check unchanged when commutation flag is false"
+            "main.desync_check unchanged when shared flag is false"
         );
     }
 }

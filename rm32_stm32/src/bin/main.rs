@@ -135,7 +135,7 @@ fn main() -> ! {
     rm32_stm32::dprintln!("[rm32] isr state installed");
 
     // Now arm DMA capture with the buffer at its final static address.
-    isr::with_isr_state(|isr| {
+    isr::with_isr_state_boot(|isr| {
         use rm32::hal::InputCapture;
         isr.hal.input.receive_dshot_dma();
     });
@@ -208,7 +208,7 @@ fn main() -> ! {
     main_state.apply_motor_config(&motor_cfg);
 
     // Propagate loaded config to ISR state (before interrupts enabled)
-    isr::with_isr_state(|isr| {
+    isr::with_isr_state_boot(|isr| {
         isr.config = main_state.config;
         isr.forward = main_state.config.dir_reversed == 0;
         isr.edt_arm_enable = main_state.config.input_type() == rm32::config::InputType::EdtArm;
@@ -234,7 +234,7 @@ fn main() -> ! {
 
     // Apply dead-time override via PwmOutput trait
     if dead_time_override > 0 {
-        isr::with_isr_state(|isr| {
+        isr::with_isr_state_boot(|isr| {
             isr.hal.pwm.set_dead_time_override(dead_time_override);
         });
     }
@@ -283,18 +283,17 @@ fn main() -> ! {
                 main_state.config.stuck_rotor_protection,
             );
         }
-        // Sine mode stepping (shared with harness via SystemTick)
+        // Sine mode stepping (shared with harness via SystemTick).
+        // TIM1 CCR writes go directly to MMIO — no ISR state access needed.
         if let Some((result, (ch1, ch2, ch3))) = system.tick_sine(
             shared,
             &main_state.config,
             BOARD.dead_time as i16,
             Chip::TIM1_AUTORELOAD,
         ) {
-            isr::with_isr_state(|isr| {
-                isr.hal.pwm.set_compare1(ch1);
-                isr.hal.pwm.set_compare2(ch2);
-                isr.hal.pwm.set_compare3(ch3);
-            });
+            // Sine PWM: direct TIM1 CCR writes — safe from main context
+            // (atomic register writes, no ISR state access needed).
+            rm32_stm32::mcu::write_tim1_ccr(ch1, ch2, ch3);
             match result {
                 rm32::sine::SineStepResult::Continue(delay_us) => {
                     sys.delay_micros(delay_us as u32);
@@ -304,55 +303,19 @@ fn main() -> ! {
                     step,
                 } => {
                     system.apply_sine_changeover(shared, &mut main_state, commutation_interval);
-                    isr::with_isr_state(|isr| {
-                        isr.commutation.set_step(step);
-                        use rm32::hal::{ComTimer, Comparator, PhaseOutput, PwmOutput};
-                        isr.hal.phase.com_step(step);
-                        isr.hal.pwm.generate_update_event();
-                        isr.hal
-                            .com_timer
-                            .set_and_enable(commutation_interval as u16);
-                        isr.hal.comp.enable_interrupts();
-                    });
+                    // Publish changeover step — ISR applies com_step + enables interrupts
+                    shared.set_changeover_step(step);
                 }
                 rm32::sine::SineStepResult::Idle => {}
             }
         }
 
-        // Shared pipeline via run_tick — same orchestration as harness.
-        system.run_tick(
-            shared,
-            &mut main_state,
-            &mut adc,
-            &mut telem,
-            |sys, main| {
-                // ISR runs asynchronously on firmware — no inline tick needed.
-                // Sync ISR→main flags via with_isr_state (commutation is ISR-owned).
-                isr::with_isr_state(|isr| {
-                    sys.sync_isr_to_main(&mut isr.commutation, main);
-                });
-            },
-        );
+        // Shared pipeline — ISR runs async, sync via SharedState atomics.
+        system.run_tick(shared, &mut main_state, &mut adc, &mut telem, || {});
 
-        // Arming feedback: cell count beeps + LED
-        if main_state.just_armed {
-            // Play motor beeps for cell count (or single beep if no LVC)
-            isr::with_isr_state(|isr| {
-                let sounds = rm32::sounds::Sounds::new(Chip::TIM1_AUTORELOAD);
-                if main_state.cell_count > 0 {
-                    for _ in 0..main_state.cell_count {
-                        sounds.play_input(&mut isr.hal.pwm, &mut isr.hal.phase, &mut sys);
-                        sys.delay_millis(100);
-                        sys.reload_watchdog();
-                    }
-                } else {
-                    sounds.play_input(&mut isr.hal.pwm, &mut isr.hal.phase, &mut sys);
-                }
-            });
-
-            if BOARD.has_led {
-                led.set_status(LedStatus::Armed);
-            }
+        // Arming feedback: LED only (beeps need HAL access — TODO: tone request via SharedState)
+        if main_state.just_armed && BOARD.has_led {
+            led.set_status(LedStatus::Armed);
         }
 
         // WS2812 LED error indicator
@@ -375,12 +338,11 @@ fn main() -> ! {
         );
 
         // EEPROM save on DShot command
+        // TODO: ISR command processor mutates its own config copy. Need to
+        // publish changed fields via SharedState for main to persist correctly.
+        // For now, saves main_state.config (synced from EEPROM at boot).
         if shared.save_settings_flag() {
             shared.set_save_settings_flag(false);
-            // Copy ISR config back and write to flash
-            isr::with_isr_state(|isr| {
-                main_state.config = isr.config;
-            });
             let mut flash = FlashStorage::new();
             use rm32::hal::Flash as _;
             flash.write(eeprom_address, main_state.config.as_bytes());

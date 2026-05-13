@@ -59,3 +59,12 @@ crate::define_port!(method, PortA, crate::pac::GPIOA);
 crate::define_port!(method, PortB, crate::pac::GPIOB);
 crate::define_raw_timer!(method, Tim2Raw, crate::pac::TIM2);
 crate::define_raw_timer!(method, ComTimerRaw, crate::pac::TIM14);
+/// Direct TIM1 CCR write for sine PWM — no ISR state needed, safe from main.
+pub fn write_tim1_ccr(ch1: u16, ch2: u16, ch3: u16) {
+    let tim1 = unsafe { &*crate::pac::TIM1::ptr() };
+    unsafe {
+        tim1.ccr1().write(|w| w.bits(ch1 as u32));
+        tim1.ccr2().write(|w| w.bits(ch2 as u32));
+        tim1.ccr3().write(|w| w.bits(ch3 as u32));
+    }
+}
