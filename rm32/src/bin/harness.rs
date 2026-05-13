@@ -412,30 +412,40 @@ impl Harness {
             self.do_transfer = false;
         }
 
-        // --- Input processing (shared library function) ---
+        // --- Shared pipeline via run_tick (same orchestration as firmware) ---
         self.main.config = self.config;
-        self.system.tick_input(&self.shared, &mut self.main);
 
-        // --- ISR tick (harness runs inline, firmware runs in actual ISR) ---
-        let mut ctx = MotorContext {
-            commutation: &mut self.commutation,
-            bemf: &mut self.bemf,
-            duty: &mut self.duty,
-            config: &self.config,
-            armed_timeout_count: &mut self.armed_timeout_count,
-            voltage_based_ramp: false,
-            shared: &self.shared,
-            hal: &mut self.hal,
-        };
-        isr_logic::ten_khz_tick(&mut ctx);
+        // Borrow ISR-owned fields for the closure
+        let commutation = &mut self.commutation;
+        let bemf = &mut self.bemf;
+        let duty = &mut self.duty;
+        let config = &self.config;
+        let armed_timeout_count = &mut self.armed_timeout_count;
+        let shared = &self.shared;
+        let hal = &mut self.hal;
 
-        // Sync ISR-owned per-cycle flags into MainState. Same call as firmware.
-        self.system
-            .sync_isr_to_main(&mut self.commutation, &mut self.main);
-
-        // --- Main loop (shared library function) ---
-        self.system
-            .tick_main(&self.shared, &mut self.main, &mut self.adc, &mut self.telem);
+        self.system.run_tick(
+            shared,
+            &mut self.main,
+            &mut self.adc,
+            &mut self.telem,
+            |sys, main| {
+                // ISR tick (harness runs inline)
+                let mut ctx = MotorContext {
+                    commutation,
+                    bemf,
+                    duty,
+                    config,
+                    armed_timeout_count,
+                    voltage_based_ramp: false,
+                    shared,
+                    hal,
+                };
+                isr_logic::ten_khz_tick(&mut ctx);
+                // Sync ISR→main one-shot flags
+                sys.sync_isr_to_main(ctx.commutation, main);
+            },
+        );
 
         self.tick_count += 1;
     }

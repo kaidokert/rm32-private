@@ -83,6 +83,35 @@ impl SystemTick {
     }
 }
 
+impl SystemTick {
+    /// Canonical main-loop tick with platform callback.
+    ///
+    /// Captures the exact orchestration order that both harness and firmware
+    /// must follow. The single `isr_and_sync` closure handles:
+    /// 1. Running the ISR tick (inline for harness, no-op for firmware)
+    /// 2. Syncing ISR→main one-shot flags (calls `sync_isr_to_main`)
+    ///
+    /// Using a single closure avoids borrow conflicts between ISR state
+    /// (commutation, bemf, etc.) and the sync step that reads commutation.
+    pub fn run_tick<LED: OutputPin>(
+        &mut self,
+        shared: &SharedState,
+        main: &mut MainState<LED>,
+        adc: &mut dyn Adc,
+        telem: &mut dyn TelemetryUart,
+        isr_and_sync: impl FnOnce(&Self, &mut MainState<LED>),
+    ) {
+        // 1. Input processing
+        self.tick_input(shared, main);
+
+        // 2. ISR tick + sync ISR→main flags (platform-specific)
+        isr_and_sync(self, main);
+
+        // 3. Main-loop pipeline
+        self.tick_main(shared, main, adc, telem);
+    }
+}
+
 impl Default for SystemTick {
     fn default() -> Self {
         Self::new()

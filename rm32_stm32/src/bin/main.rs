@@ -341,16 +341,20 @@ fn main() -> ! {
             }
         }
 
-        // Shared system tick: input processing + main loop pipeline.
-        // Same function called by harness — eliminates divergence.
-        system.tick_input(shared, &mut main_state);
-        // ISR→main one-shot flag transfer (currently: desync_check). Must
-        // mirror harness's call to `sync_isr_to_main`. Wrapped in
-        // `with_isr_state` because `commutation` lives in `ISR_LOCAL`.
-        isr::with_isr_state(|isr| {
-            system.sync_isr_to_main(&mut isr.commutation, &mut main_state);
-        });
-        system.tick_main(shared, &mut main_state, &mut adc, &mut telem);
+        // Shared pipeline via run_tick — same orchestration as harness.
+        system.run_tick(
+            shared,
+            &mut main_state,
+            &mut adc,
+            &mut telem,
+            |sys, main| {
+                // ISR runs asynchronously on firmware — no inline tick needed.
+                // Sync ISR→main flags via with_isr_state (commutation is ISR-owned).
+                isr::with_isr_state(|isr| {
+                    sys.sync_isr_to_main(&mut isr.commutation, main);
+                });
+            },
+        );
 
         // Arming feedback: cell count beeps + LED
         if main_state.just_armed {
