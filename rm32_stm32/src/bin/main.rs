@@ -190,10 +190,6 @@ fn main() -> ! {
     main_state.config.apply_version_defaults();
     main_state.config.apply_comp_pwm_guard();
     main_state.config.apply_rc_car_overrides();
-    // Bench-debug: disable stuck-rotor latch so we can observe startup behavior
-    // without adjusted_input being clamped to 0 on the first BEMF timeout.
-    main_state.config.stuck_rotor_protection = 0;
-    rm32_stm32::dprintln!("[rm32] stuck_rotor_protection FORCED OFF (bench debug)");
 
     // Derive motor configuration from EEPROM + board (all math now in rm32, host-testable)
     let motor_cfg = main_state.config.derive_motor_config(
@@ -348,6 +344,12 @@ fn main() -> ! {
         // Shared system tick: input processing + main loop pipeline.
         // Same function called by harness — eliminates divergence.
         system.tick_input(shared, &mut main_state);
+        // ISR→main one-shot flag transfer (currently: desync_check). Must
+        // mirror harness's call to `sync_isr_to_main`. Wrapped in
+        // `with_isr_state` because `commutation` lives in `ISR_LOCAL`.
+        isr::with_isr_state(|isr| {
+            system.sync_isr_to_main(&mut isr.commutation, &mut main_state);
+        });
         system.tick_main(shared, &mut main_state, &mut adc, &mut telem);
 
         // Arming feedback: cell count beeps + LED

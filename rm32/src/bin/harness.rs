@@ -429,11 +429,9 @@ impl Harness {
         };
         isr_logic::ten_khz_tick(&mut ctx);
 
-        // Sync desync_check from commutation before main.tick()
-        if self.commutation.desync_check() {
-            self.main.set_desync_check(true);
-            self.commutation.set_desync_check(false);
-        }
+        // Sync ISR-owned per-cycle flags into MainState. Same call as firmware.
+        self.system
+            .sync_isr_to_main(&mut self.commutation, &mut self.main);
 
         // --- Main loop (shared library function) ---
         self.system
