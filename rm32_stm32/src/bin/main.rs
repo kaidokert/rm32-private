@@ -193,6 +193,17 @@ fn main() -> ! {
     main_state.config.apply_comp_pwm_guard();
     main_state.config.apply_rc_car_overrides();
 
+    // --- BENCH-DEBUG: clean baseline matching AM32 Configurator with all
+    // "complex" features disabled. Mirrors the test setup used to compare
+    // register-level parity with AM32 during smooth PWM motor operation.
+    // Remove these overrides for production / EEPROM-respecting builds.
+    main_state.config.stuck_rotor_protection = 0;
+    main_state.config.stall_protection = 0;
+    main_state.config.bi_direction = 0;
+    main_state.config.use_sine_start = 0;
+    main_state.config.brake_on_stop = 0;
+    rm32_stm32::dprintln!("[rm32] BENCH: cleared stuck/stall/bidir/sine/brake");
+
     // Derive motor configuration from EEPROM + board (all math now in rm32, host-testable)
     let motor_cfg = main_state.config.derive_motor_config(
         Chip::TIM1_AUTORELOAD,

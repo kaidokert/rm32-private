@@ -176,7 +176,11 @@ impl Tim2Interval {
         let raw = Tim2Raw;
         raw.modify_cr1(|v| v & !(1 << 0)); // CEN=0
         raw.write_psc(crate::mcu::Chip::TIMER_PSC as u32);
-        raw.write_arr(0xFFFF_FFFF);
+        // ARR = 0xFFFF (16-bit wrap, AM32-matched). TIM2 is 32-bit on L4/G4,
+        // but AM32's HAL_TIM_Base_Init writes only the low 16 bits, leaving
+        // the upper half at 0. Commutation interval measurement uses u16
+        // anyway. Matching this avoids any cross-wrap arithmetic surprises.
+        raw.write_arr(0xFFFF);
         raw.write_egr(1); // UG
         raw.write_cnt(0);
         raw.modify_cr1(|v| v | (1 << 0)); // CEN=1
@@ -194,12 +198,18 @@ impl IntervalTimer for Tim2Interval {
     }
 }
 
-/// One-shot commutation timer (TIM14 on G071/F051, TIM16 on L431/G431).
+/// Free-running commutation timer with ARPE (AM32 pattern).
 ///
-/// Reverted from a brief AM32-parity attempt at free-running + ARPE — that
-/// broke motor startup on bench. The one-shot pattern (disable, set ARR,
-/// re-enable per commutation) gives clean timing and works reliably.
-/// TIM16.CR1 will read as 0 at boot (vs AM32's 0x81); accepted divergence.
+/// TIM14 on G071/F051, TIM16 on L431/G431. Timer runs continuously from
+/// boot with CR1 = ARPE | CEN. set_and_enable() writes the new ARR (which
+/// goes to the preload register because ARPE=1) and force-loads it via UG,
+/// resetting CNT to 0. The timer never stops, so commutation timing has no
+/// disable→enable jitter gap.
+///
+/// Previous one-shot pattern (disable CEN, set ARR, re-enable CEN per
+/// commutation) introduced enough timing jitter to make motor control
+/// visibly choppy. Captured AM32 register dumps during motor spin show
+/// TIM16.CR1=0x81 (ARPE+CEN) which is what this matches.
 pub struct Tim14Com {
     raw: ComTimerRaw,
 }
@@ -217,19 +227,23 @@ impl Tim14Com {
         let raw = ComTimerRaw;
         raw.write_psc(crate::mcu::Chip::TIMER_PSC as u32);
         raw.write_arr(0xFFFF);
-        raw.write_egr(1);
+        raw.write_egr(1); // UG — latch PSC + ARR into active registers
+        // CR1 = ARPE | CEN. Bit 7 = ARPE (auto-reload preload), bit 0 = CEN.
+        raw.modify_cr1(|v| v | (1 << 7) | (1 << 0));
         Self { raw }
     }
 }
 
 impl ComTimer for Tim14Com {
     fn set_and_enable(&mut self, timeout: u16) {
-        self.raw.modify_cr1(|v| v & !(1 << 0));
-        self.raw.write_cnt(0);
+        // Timer is running (CR1=ARPE+CEN). Write new ARR (goes to preload),
+        // issue UG to force-load it into active and reset CNT. UG also sets
+        // UIF — clear SR before re-arming UIE so the ISR fires on the next
+        // real update event, not on the UG-induced flag.
         self.raw.write_arr(timeout as u32);
+        self.raw.write_egr(1); // UG
         self.raw.write_sr(0);
-        self.raw.modify_dier(|v| v | 1);
-        self.raw.modify_cr1(|v| v | (1 << 0));
+        self.raw.modify_dier(|v| v | 1); // UIE
     }
 
     fn disable_interrupt(&mut self) {
