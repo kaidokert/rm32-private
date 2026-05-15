@@ -35,3 +35,7 @@ pub use crate::mcu_l431 as active;
 pub use active::chip::*;
 // Portable reset-cause reader (chip-specific RCC_CSR decode → ResetCause).
 pub use active::system::read_and_clear_reset_cause;
+
+// Bench-debug short-circuit init (L431 only — feature-gated module).
+#[cfg(feature = "bringup")]
+pub use active::bringup;

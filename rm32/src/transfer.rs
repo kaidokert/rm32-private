@@ -143,6 +143,11 @@ pub struct TransferActions {
     pub frametime: Option<(u16, u16)>,
     /// Bidirectional DShot auto-detected (caller should set dshot_telemetry=true)
     pub bidir_detected: bool,
+    /// Bench-debug snapshot of `high_pin_count` for the bidir auto-detect path.
+    /// Exposed via TransferActions so the ISR handler can publish it to a
+    /// SharedState counter for main-loop heartbeat dumps. Capped at u8 (the
+    /// internal counter is u8 saturating).
+    pub high_pin_count: u8,
 }
 
 impl TransferState {
@@ -236,6 +241,7 @@ impl TransferState {
                 next_capture: capture,
                 frametime,
                 bidir_detected: false,
+                high_pin_count: self.high_pin_count,
             };
         }
 
@@ -350,6 +356,7 @@ impl TransferState {
             next_capture,
             frametime,
             bidir_detected,
+            high_pin_count: self.high_pin_count,
         }
     }
 }

@@ -1,4 +1,6 @@
 pub mod adc;
+#[cfg(feature = "bringup")]
+pub mod bringup;
 pub mod chip;
 pub mod comp_init;
 pub mod comparator;

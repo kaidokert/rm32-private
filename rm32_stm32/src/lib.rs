@@ -31,6 +31,8 @@ pub mod capture_hal;
 pub mod comp_hal;
 pub mod comparator;
 #[cfg(feature = "debuguart")]
+pub mod dbg_frame_history;
+#[cfg(feature = "debuguart")]
 pub mod debug_uart;
 pub mod dma_buf;
 pub mod emergency;

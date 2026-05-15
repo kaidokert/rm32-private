@@ -72,6 +72,11 @@ pub struct SharedState {
     isr_action: AtomicU8,             // main→ISR action request (IsrAction enum)
     changeover_step: AtomicU8,        // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
+    // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
+    dbg_crc_pass: AtomicU32,  // successful decode_frame CRC
+    dbg_crc_fail: AtomicU32,  // BadCrc / InvalidTiming returns
+    dbg_bidir_evt: AtomicU16, // monotonic count of bidir_detected=true returns
+    dbg_high_pin_n: AtomicU8, // snapshot of transfer.high_pin_count after process()
 }
 
 impl Default for SharedState {
@@ -116,7 +121,37 @@ impl SharedState {
             isr_action: AtomicU8::new(0), // IsrAction::None
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
+            dbg_crc_pass: AtomicU32::new(0),
+            dbg_crc_fail: AtomicU32::new(0),
+            dbg_bidir_evt: AtomicU16::new(0),
+            dbg_high_pin_n: AtomicU8::new(0),
         }
+    }
+
+    // --- Bench debug counters (bidir DSHOT investigation) ---
+    pub fn dbg_crc_pass(&self) -> u32 {
+        self.dbg_crc_pass.load(ACQ)
+    }
+    pub fn dbg_crc_pass_inc(&self) {
+        self.dbg_crc_pass.fetch_add(1, REL);
+    }
+    pub fn dbg_crc_fail(&self) -> u32 {
+        self.dbg_crc_fail.load(ACQ)
+    }
+    pub fn dbg_crc_fail_inc(&self) {
+        self.dbg_crc_fail.fetch_add(1, REL);
+    }
+    pub fn dbg_bidir_evt(&self) -> u16 {
+        self.dbg_bidir_evt.load(ACQ)
+    }
+    pub fn dbg_bidir_evt_inc(&self) {
+        self.dbg_bidir_evt.fetch_add(1, REL);
+    }
+    pub fn dbg_high_pin_n(&self) -> u8 {
+        self.dbg_high_pin_n.load(ACQ)
+    }
+    pub fn dbg_set_high_pin_n(&self, v: u8) {
+        self.dbg_high_pin_n.store(v, REL);
     }
 
     // --- Motor mode ---

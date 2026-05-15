@@ -167,6 +167,18 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
 
     let buf = state.hal.input.dma_buffer();
 
+    // Snapshot the first 8 edges for the debug ring buffer; the borrow on
+    // `buf` outlives the function and would conflict with later
+    // `state.hal.input.set_output_prescaler(...)` mutable borrow. Cheap copy.
+    #[cfg(feature = "debuguart")]
+    let buf_snap_first8: [u32; 8] = {
+        let mut a = [0u32; 8];
+        for (i, slot) in a.iter_mut().enumerate() {
+            *slot = buf[i];
+        }
+        a
+    };
+
     let pin_high = state.hal.input.input_pin_state();
 
     // Debug: emit a sample of the buffer once per ~50 frames
@@ -304,6 +316,36 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     }
     if actions.bidir_detected {
         shared.set_dshot_telemetry(true);
+        shared.dbg_bidir_evt_inc();
+    }
+    // Bench-debug counters for bidir-DSHOT investigation.
+    // crc_pass: a Throttle/Command return means decode_frame produced a valid
+    //   frame (CRC matched, fields parsed). crc_fail: dshot mode active but
+    //   action came back None (BadCrc or InvalidTiming inside decode_frame).
+    shared.dbg_set_high_pin_n(actions.high_pin_count);
+    let crc_pass = matches!(
+        actions.action,
+        rm32::transfer::TransferAction::DshotThrottle { .. }
+            | rm32::transfer::TransferAction::DshotCommand { .. }
+    );
+    let is_dshot_none =
+        matches!(actions.action, rm32::transfer::TransferAction::None) && shared.dshot();
+    if crc_pass {
+        shared.dbg_crc_pass_inc();
+    } else if is_dshot_none {
+        shared.dbg_crc_fail_inc();
+    }
+    // Push frame snapshot to ring buffer for main-loop dump (debuguart only).
+    // Only push when dshot mode is set, otherwise the buffer fills with pre-
+    // detection garbage. Cheap critical section, ~52 bytes copied.
+    #[cfg(feature = "debuguart")]
+    if shared.dshot() {
+        crate::dbg_frame_history::push(crate::dbg_frame_history::FrameSnap {
+            n: count,
+            buf: buf_snap_first8,
+            crc_pass,
+            bidir: shared.dshot_telemetry(),
+        });
     }
 
     actions.next_capture

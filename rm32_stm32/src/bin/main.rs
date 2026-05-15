@@ -38,6 +38,11 @@ fn main() -> ! {
     // is installed and the explicit enable below at the bottom of main.
     cortex_m::interrupt::disable();
 
+    // Bench-debug short-circuit: drop into AM32-matching register init and
+    // spin. Never returns. See mcu::bringup module for context.
+    #[cfg(feature = "bringup")]
+    rm32_stm32::mcu::bringup::run_and_spin();
+
     rtt_target::rtt_init_print!();
     #[cfg(feature = "debuguart")]
     rm32_stm32::debug_uart::init();
@@ -130,8 +135,12 @@ fn main() -> ! {
         edt_armed: false,
         edt_arm_enable: false,
         armed_timeout_count: 0,
-        frametime_low: 400,
-        frametime_high: 600,
+        // Wide initial bounds — accept any plausible DSHOT frame until the
+        // unarmed-idle averaging in transfer.rs:305 narrows the window.
+        // Original 400/600 was too tight; rejected all real frames at any
+        // reasonable PSC. See decode_frame at transfer.rs:255.
+        frametime_low: 100,
+        frametime_high: 60_000,
         voltage_based_ramp: BOARD.voltage_based_ramp,
     };
 
@@ -255,7 +264,8 @@ fn main() -> ! {
                 (false, false, _) => "none",
             };
             rm32_stm32::dprintln!(
-                "[loop] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={}",
+                "[loop n={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={}",
+                log_counter / 100_000,
                 proto,
                 shared.motor_mode(),
                 shared.newinput(),
@@ -268,7 +278,44 @@ fn main() -> ! {
                 shared.zero_crosses(),
                 shared.interval_timer_count(),
                 main_state.config.stuck_rotor_protection,
+                shared.dbg_high_pin_n(),
+                shared.dbg_bidir_evt(),
+                shared.dbg_crc_pass(),
+                shared.dbg_crc_fail(),
             );
+            // Dump recent frame snapshots (mix of pass + fail). Useful for
+            // catching DMA buffer alignment / edge polarity issues in bidir.
+            #[cfg(feature = "debuguart")]
+            for snap in rm32_stm32::dbg_frame_history::take().iter() {
+                let d1 = (snap.buf[1] as u16).wrapping_sub(snap.buf[0] as u16);
+                let d2 = (snap.buf[2] as u16).wrapping_sub(snap.buf[1] as u16);
+                let d3 = (snap.buf[3] as u16).wrapping_sub(snap.buf[2] as u16);
+                let d4 = (snap.buf[4] as u16).wrapping_sub(snap.buf[3] as u16);
+                let d5 = (snap.buf[5] as u16).wrapping_sub(snap.buf[4] as u16);
+                let d6 = (snap.buf[6] as u16).wrapping_sub(snap.buf[5] as u16);
+                let d7 = (snap.buf[7] as u16).wrapping_sub(snap.buf[6] as u16);
+                rm32_stm32::dprintln!(
+                    "[snap n={} pass={} bidir={}] buf={} {} {} {} {} {} {} {} | d= {} {} {} {} {} {} {}",
+                    snap.n,
+                    snap.crc_pass as u8,
+                    snap.bidir as u8,
+                    snap.buf[0],
+                    snap.buf[1],
+                    snap.buf[2],
+                    snap.buf[3],
+                    snap.buf[4],
+                    snap.buf[5],
+                    snap.buf[6],
+                    snap.buf[7],
+                    d1,
+                    d2,
+                    d3,
+                    d4,
+                    d5,
+                    d6,
+                    d7,
+                );
+            }
         }
         // Sine mode stepping (shared with harness via SystemTick).
         // TIM1 CCR writes go directly to MMIO — no ISR state access needed.
@@ -347,11 +394,16 @@ fn main() -> ! {
         // before the chip restarts. SCB::sys_reset sets SFTRSTF → bootloader
         // skips first-chance signal-pin check → DFU loop activates → BF
         // passthrough / AM32 Configurator BLHeli protocol can connect.
+        // BENCH DEBUG: self-reset on signal_timeout is neutered here so the
+        // chip stays alive during bidir-DSHOT detection investigation.
+        // Print rate-limited (every 200k iters) so the UART doesn't choke the
+        // main loop. Restore `sys.reset();` to re-enable Configurator passthrough.
         if main_state.needs_reset {
-            rm32_stm32::dprintln!("[rm32] signal_timeout → sys_reset");
-            #[cfg(feature = "debuguart")]
-            rm32_stm32::debug_uart::flush();
-            sys.reset();
+            main_state.needs_reset = false;
+            if log_counter.is_multiple_of(200_000) {
+                rm32_stm32::dprintln!("[rm32] signal_timeout sticky (RESET SUPPRESSED)");
+            }
+            // sys.reset();
         }
 
         sys.reload_watchdog();

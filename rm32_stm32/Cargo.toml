@@ -10,6 +10,7 @@ cortex-m-rt = "0.7"
 embedded-hal = "1.0"
 portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
 rtt-target = "0.5"
+heapless = "0.8"
 
 # MCU-specific HAL crates (only one active at a time)
 stm32g0xx-hal = { git = "https://github.com/stm32-rs/stm32g0xx-hal", features = ["stm32g071"], optional = true }
@@ -20,6 +21,19 @@ stm32g4xx-hal = { version = "0.1", features = ["stm32g431", "rt"], optional = tr
 [[bin]]
 name = "rm32_firmware"
 path = "src/bin/main.rs"
+
+# Minimal clock-tree bring-up — used for bit-for-bit register parity vs AM32.
+# Builds standalone (no rm32_stm32 lib linkage), L431-only.
+[[example]]
+name = "bringup"
+path = "examples/bringup.rs"
+required-features = ["stm32l431"]
+
+# Same bring-up but written with typed PAC field accessors (firmware style).
+[[example]]
+name = "bringup_pac"
+path = "examples/bringup_pac.rs"
+required-features = ["stm32l431"]
 
 [features]
 default = ["stm32g071"]
@@ -32,6 +46,11 @@ stm32g431 = ["dep:stm32g4xx-hal"]
 # for a plaintext debug log at 115200 8N1. Wire a USB-serial dongle to PB6
 # and tail the port. Persistent across resets, survives panics.
 debuguart = []
+
+# Bench-debug: when on, main() bypasses normal startup and runs ONLY the
+# AM32-matching register init from `mcu::bringup::run_and_spin()`. Lets us
+# diff the firmware's register state against AM32's directly. L431-only.
+bringup = []
 
 [build-dependencies]
 serde = { version = "1", features = ["derive"] }
