@@ -25,17 +25,24 @@ fn panic(info: &PanicInfo) -> ! {
     // 2. Disable all interrupts to prevent further ISR triggers
     cortex_m::interrupt::disable();
 
-    // 3. Log via RTT if initialized in main; ignored otherwise.
-    // Avoid full info formatting (Display impl pulls in heavy formatting code
-    // and risks stack overflow when called from a deep ISR stack). Just emit
-    // file:line so we can identify the panic site.
+    // 3. Log via dprintln — goes to RTT always, and to USART1/PB6 when
+    // `debuguart` feature is on, so panics show up in port_41.log even with
+    // probe-rs detached. Avoid full info formatting (Display impl pulls in
+    // heavy formatting code and risks stack overflow when called from a
+    // deep ISR stack). Just emit file:line so we can identify the panic site.
     if let Some(loc) = info.location() {
-        rtt_target::rprintln!("PANIC at {}:{}", loc.file(), loc.line());
+        crate::dprintln!("PANIC at {}:{}", loc.file(), loc.line());
     } else {
-        rtt_target::rprintln!("PANIC (no location)");
+        crate::dprintln!("PANIC (no location)");
     }
 
-    // 4. Halt — CPU stops here, motor is safe
+    // 4. Flush UART so the panic line actually ships out PB6 before we halt.
+    //    Without this, the last bytes sit in the shift register and never
+    //    arrive on the serial-USB capture side.
+    #[cfg(feature = "debuguart")]
+    crate::debug_uart::flush();
+
+    // 5. Halt — CPU stops here, motor is safe
     loop {
         cortex_m::asm::nop();
     }
@@ -48,8 +55,8 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     crate::emergency::G0AEmergencyOff::emergency_off();
     cortex_m::interrupt::disable();
 
-    rtt_target::rprintln!("=== HardFault ===");
-    rtt_target::rprintln!(
+    crate::dprintln!("=== HardFault ===");
+    crate::dprintln!(
         "PC={:#010x} LR={:#010x} PSR={:#010x}",
         ef.pc(),
         ef.lr(),
@@ -63,9 +70,12 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
         let hfsr = scb.hfsr.read();
         let mmfar = scb.mmfar.read();
         let bfar = scb.bfar.read();
-        rtt_target::rprintln!("CFSR={:#010x} HFSR={:#010x}", cfsr, hfsr);
-        rtt_target::rprintln!("MMFAR={:#010x} BFAR={:#010x}", mmfar, bfar);
+        crate::dprintln!("CFSR={:#010x} HFSR={:#010x}", cfsr, hfsr);
+        crate::dprintln!("MMFAR={:#010x} BFAR={:#010x}", mmfar, bfar);
     }
+
+    #[cfg(feature = "debuguart")]
+    crate::debug_uart::flush();
 
     loop {
         cortex_m::asm::nop();
