@@ -195,6 +195,11 @@ impl IntervalTimer for Tim2Interval {
 }
 
 /// One-shot commutation timer (TIM14 on G071/F051, TIM16 on L431/G431).
+///
+/// Reverted from a brief AM32-parity attempt at free-running + ARPE — that
+/// broke motor startup on bench. The one-shot pattern (disable, set ARR,
+/// re-enable per commutation) gives clean timing and works reliably.
+/// TIM16.CR1 will read as 0 at boot (vs AM32's 0x81); accepted divergence.
 pub struct Tim14Com {
     raw: ComTimerRaw,
 }

@@ -1,6 +1,6 @@
 name: "L431 Neutron"
 mcu: stm32l431
-dead_time: 60
+dead_time: 45  # AM32 default for L431 Vimdrones (0x2D, ~562 ns @ 80 MHz)
 voltage_divider: 210
 millivolt_per_amp: 16
 current_offset: 498
