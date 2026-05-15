@@ -73,13 +73,17 @@ pub struct CaptureConfig {
 }
 
 impl CaptureConfig {
-    /// DShot detection / normal operation: 32 edges, no prescaler change.
+    /// DShot detection / normal operation: 33 edges, no prescaler change.
+    /// NDTR is 33 (not 32) so the decoder can skip buf[0] — see
+    /// `dshot::decode_frame` and `signal::detect_input`. Both skip buf[0]
+    /// because it's racily stale (last edge of the previous frame's tail
+    /// from before the DMA channel was disabled+rearmed at TC).
     pub const DSHOT: Self = Self {
-        ndtr: 32,
+        ndtr: 33,
         prescaler: None,
     };
 
-    /// DShot detection (re-entry): 32 edges + slow prescaler so DShot pulses
+    /// DShot detection (re-entry): 33 edges + slow prescaler so DShot pulses
     /// fit `signal::detect_input()`'s `smallest 1-8 ticks` heuristic
     /// thresholds. Must be applied any time we re-enter detection mode after
     /// a prior successful detection (which fast-tracked the prescaler to 0/1
@@ -88,7 +92,7 @@ impl CaptureConfig {
     /// ~3.6 ticks (in 1-4 range).
     pub fn dshot_detection(cpu_mhz: u8) -> Self {
         Self {
-            ndtr: 32,
+            ndtr: 33,
             prescaler: Some((cpu_mhz / 6) as u16),
         }
     }
@@ -114,21 +118,21 @@ impl CaptureConfig {
         }
     }
 
-    /// DShot600 detected: 32 edges + prescaler to 0 (max resolution).
+    /// DShot600 detected: 33 edges + prescaler to 0 (max resolution).
     pub const DSHOT600_DETECTED: Self = Self {
-        ndtr: 32,
+        ndtr: 33,
         prescaler: Some(0),
     };
 
-    /// DShot300 detected: 32 edges + prescaler to 1 (half resolution).
+    /// DShot300 detected: 33 edges + prescaler to 1 (half resolution).
     pub const DSHOT300_DETECTED: Self = Self {
-        ndtr: 32,
+        ndtr: 33,
         prescaler: Some(1),
     };
 
-    /// DShot150 detected: 32 edges + prescaler to 3 (quarter resolution).
+    /// DShot150 detected: 33 edges + prescaler to 3 (quarter resolution).
     pub const DSHOT150_DETECTED: Self = Self {
-        ndtr: 32,
+        ndtr: 33,
         prescaler: Some(3),
     };
 }
@@ -246,10 +250,22 @@ impl TransferState {
         }
 
         // --- DShot processing ---
-        if dshot_mode && dma_buffer.len() >= 32 {
+        // We capture 33 edges. The DMA isn't synchronized to frame boundaries,
+        // so the FIRST captured edge is either:
+        //   (A) stale from the previous frame's tail (buf[0]→buf[1] is the
+        //       inter-frame gap), or
+        //   (B) the first valid edge of the current frame (buf[31]→buf[32] is
+        //       the gap to the next frame).
+        // Whichever case we're in, the OTHER end has a large gap and the
+        // aligned 32-edge window has a small `buf[31]-buf[0]` frametime.
+        // Compute both options and pick the smaller — that's the real frame.
+        if dshot_mode && dma_buffer.len() >= 33 {
             let buf: [u32; 32] = {
+                let ft_keep = dma_buffer[31].wrapping_sub(dma_buffer[0]) as u16;
+                let ft_skip = dma_buffer[32].wrapping_sub(dma_buffer[1]) as u16;
+                let offset = if ft_skip < ft_keep { 1 } else { 0 };
                 let mut b = [0u32; 32];
-                b.copy_from_slice(&dma_buffer[..32]);
+                b.copy_from_slice(&dma_buffer[offset..offset + 32]);
                 b
             };
             let frame = dshot::decode_frame(&buf, frametime_low, frametime_high, dshot_telemetry);
@@ -302,12 +318,16 @@ impl TransferState {
                 }
             }
 
-            // DShot frame averaging (for dshot_frametime calibration)
+            // DShot frame averaging (for dshot_frametime calibration).
+            // Same alignment-detection logic as the decode path: smaller of
+            // the two candidate frametimes is the real frame.
             if dshot_mode && self.average_count < 8 && *zero_input_count > 5 {
                 self.average_count += 1;
-                if dma_buffer.len() >= 32 {
-                    self.average_packet_length +=
-                        (dma_buffer[31].wrapping_sub(dma_buffer[0])) as u16 as u32;
+                if dma_buffer.len() >= 33 {
+                    let ft_keep = dma_buffer[31].wrapping_sub(dma_buffer[0]) as u16;
+                    let ft_skip = dma_buffer[32].wrapping_sub(dma_buffer[1]) as u16;
+                    let frametime = ft_keep.min(ft_skip);
+                    self.average_packet_length += frametime as u32;
                 }
                 if self.average_count == 8 {
                     let avg = self.average_packet_length >> 3;
@@ -367,7 +387,9 @@ mod tests {
 
     #[test]
     fn capture_config_ndtr_values() {
-        assert_eq!(CaptureConfig::DSHOT.ndtr, 32);
+        // DSHOT NDTR is 33 (not 32) — see CaptureConfig::DSHOT docs:
+        // captures one extra edge so the decoder can skip the stale buf[0].
+        assert_eq!(CaptureConfig::DSHOT.ndtr, 33);
         assert_eq!(CaptureConfig::SERVO.ndtr, 2);
         assert_eq!(CaptureConfig::SERVO_REALIGN.ndtr, 3);
     }
@@ -400,22 +422,24 @@ mod tests {
     }
 
     #[test]
-    fn dshot_mode_requests_32() {
+    fn dshot_mode_requests_33() {
         let mut state = TransferState::default();
-        let buf = [0u32; 32];
+        let buf = [0u32; 33];
         let mut zic = 0u16;
         let actions = state.process(
             &buf, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 400, 600,
             64,
         );
-        assert_eq!(actions.next_capture.ndtr, 32);
+        // NDTR=33 (32 valid frame edges + 1 leading slot that gets skipped).
+        assert_eq!(actions.next_capture.ndtr, 33);
     }
 
     #[test]
     fn servo_detection_sets_prescaler() {
         let mut state = TransferState::default();
-        // Servo-like pulse timing in detection buffer
-        let mut buf = [0u32; 32];
+        // Servo-like pulse timing in detection buffer (33-edge layout — see
+        // CaptureConfig::DSHOT.ndtr).
+        let mut buf = [0u32; 33];
         buf[0] = 100;
         buf[1] = 5000; // large gap = servo-like
         let mut zic = 0u16;
