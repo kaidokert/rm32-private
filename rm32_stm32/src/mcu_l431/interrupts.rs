@@ -52,6 +52,7 @@ fn COMP() {
 // DMA1 Channel 5: input capture transfer complete
 #[interrupt]
 fn DMA1_CH5() {
+    let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
     let dma = unsafe { &*pac::DMA1::PTR };
     let dma_isr = dma.isr.read().bits();
     // Acknowledge ALL CH5 flags up front (CGIF5 = bit 16 in IFCR clears
@@ -76,10 +77,13 @@ fn DMA1_CH5() {
             exti.swier1.write(|w| w.bits(1 << 15));
         }
     }
+    let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+    crate::isr::shared().dbg_dma_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
 }
 
 #[interrupt]
 fn EXTI15_10() {
+    let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
     let exti = unsafe { &*pac::EXTI::PTR };
     unsafe {
         exti.pr1.write(|w| w.bits(1 << 15));
@@ -104,4 +108,6 @@ fn EXTI15_10() {
     unsafe {
         tim15.cr1.modify(|r, w| w.bits(r.bits() | 1));
     }
+    let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+    crate::isr::shared().dbg_exti_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
 }

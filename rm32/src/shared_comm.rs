@@ -117,6 +117,16 @@ pub trait IsrTiming {
         true
     }
     fn set_forward(&self, _v: bool) {}
+
+    /// Increment 1 kHz dispatch counter (TIM6 ISR side, 20 kHz). Matches
+    /// AM32's `one_khz_loop_counter++` at main.c:1317.
+    fn one_khz_counter_inc(&self) {}
+    /// Main-side: returns true and resets counter if it has exceeded
+    /// `divider` (typically PID_LOOP_DIVIDER = 20). Matches AM32's check
+    /// at main.c:1397.
+    fn one_khz_counter_check_and_reset(&self, _divider: u8) -> bool {
+        false
+    }
 }
 
 /// Main-loop-produced control data consumed by the ISR.

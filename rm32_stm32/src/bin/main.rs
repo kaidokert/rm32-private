@@ -275,6 +275,12 @@ fn main() -> ! {
     let mut system = rm32::system::SystemTick::new();
     let mut log_counter: u32 = 0;
     loop {
+        // Bracket the per-iter main-loop body so we can measure how much of
+        // the 50 µs TIM6 period is spent doing main work vs sleeping in wfi.
+        // Excludes wfi (DWT keeps counting but main is asleep — that delta
+        // is "until next IRQ", not work).
+        #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+        let main_cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         log_counter = log_counter.wrapping_add(1);
         if log_counter.is_multiple_of(100_000) {
             // Decode detected input protocol from the three shared flags into
@@ -305,14 +311,20 @@ fn main() -> ! {
             let t6_last = shared.dbg_tim6_last_cyc();
             let t14_last = shared.dbg_tim14_last_cyc();
             let comp_last = shared.dbg_comp_last_cyc();
+            let dma_last = shared.dbg_dma_last_cyc();
+            let exti_last = shared.dbg_exti_last_cyc();
+            let main_last = shared.dbg_main_last_cyc();
             rm32_stm32::dprintln!(
-                "[loop n={} cyc_k={} isr_tick={} t6_last={} t14_last={} comp_last={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={}",
+                "[loop n={} cyc_k={} isr_tick={} t6={} t14={} comp={} dma={} exti={} main={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={}",
                 log_counter / 100_000,
                 cyc_k,
                 isr_tick,
                 t6_last,
                 t14_last,
                 comp_last,
+                dma_last,
+                exti_last,
+                main_last,
                 proto,
                 shared.motor_mode(),
                 shared.newinput(),
@@ -454,6 +466,18 @@ fn main() -> ! {
         }
 
         sys.reload_watchdog();
-        cortex_m::asm::wfi();
+        #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+        {
+            let main_cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+            shared.dbg_main_last_cyc_set(main_cyc_end.wrapping_sub(main_cyc_start));
+        }
+        // Spin instead of wfi — matches AM32's free-running main loop
+        // (main.c:1843, no sleep). wfi was an invented Rust-embedded
+        // idiom that gated main rate to the ISR rate, which (a) created
+        // a divergence from AM32's architecture and (b) sometimes
+        // interferes with SWD attach + RTT. 1 kHz dispatch correctness
+        // no longer depends on main rate — the counter is incremented
+        // in ten_khz_tick (TIM6 ISR) at 20 kHz.
+        cortex_m::asm::nop();
     }
 }

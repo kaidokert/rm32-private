@@ -25,6 +25,11 @@ pub const TIM1_DEFAULT_ARR: u16 = 1999;
 /// ESC arms after receiving zero throttle for this duration.
 pub const ARMING_TIMEOUT_TICKS: u32 = 20000;
 
+/// PID dispatch divider — fires the 1 kHz PID/ADC block once every N TIM6
+/// ticks. AM32 uses `LOOP_FREQUENCY_HZ / 1000` = 20 at 20 kHz TIM6
+/// (`Inc/targets.h:5318`). Set per-MCU there; for our 20 kHz TIM6 it's 20.
+pub const PID_LOOP_DIVIDER: u8 = 20;
+
 /// Default initial commutation interval in timer ticks (0.5µs each).
 /// 10000 ticks = 5ms between commutations = very slow startup.
 pub const INITIAL_COMMUTATION_INTERVAL: u32 = 10000;

@@ -121,6 +121,9 @@ pub struct MainState<LED: OutputPin = NoLed> {
     pub(crate) timer1_max_arr: u16,
     /// Main-loop tick counter for consumed current accumulation
     pub(crate) ten_khz_counter: u32,
+    // 1 kHz dispatch counter lives on SharedState (ISR increments at 20 kHz,
+    // main reads + resets), matching AM32's `one_khz_loop_counter` placement
+    // in `tenKhzRoutine` at main.c:1317.
 }
 
 /// MCU-specific constants — properties of the silicon, not the board PCB.
@@ -422,25 +425,11 @@ impl<LED: OutputPin> MainState<LED> {
             }
         }
 
-        // ADC measurements — typed conversions via AdcCount
-        let smoothed_v = AdcCount(self.measurements.voltage_filter.update(adc.raw_voltage()));
-        let smoothed_c = AdcCount(self.measurements.current_filter.update(adc.raw_current()));
-        self.measurements.battery_voltage = smoothed_v.to_millivolts(self.voltage_divider);
-        self.measurements.actual_current =
-            smoothed_c.to_milliamps(self.current_offset, self.millivolt_per_amp);
-        self.measurements.degrees_celsius = if self.use_ntc {
-            crate::ntc::ntc_degrees(adc.raw_temperature())
-        } else {
-            adc.calc_temperature(adc.raw_temperature())
-        };
-        adc.start_conversion();
-
-        // Publish measurements to shared state (ISR reads for EDT)
-        shared.set_actual_current(self.measurements.actual_current.0);
-        shared.set_battery_voltage(self.measurements.battery_voltage.0);
-        shared.set_degrees_celsius(self.measurements.degrees_celsius.0);
-
-        // Cell count auto-detection on arming transition
+        // Armed-transition detection stays at 20 kHz so we don't miss the
+        // edge by up to 1 ms. battery_voltage used inside is updated by the
+        // 1 kHz block below; on the first armed transition, battery_voltage
+        // is already populated because the firmware runs for seconds before
+        // BF starts sending PWM.
         let armed = shared.armed();
         self.just_armed = armed && !self.last_armed;
         if self.just_armed && self.cell_count == 0 && self.config.low_voltage_cut_off == 1 {
@@ -448,31 +437,62 @@ impl<LED: OutputPin> MainState<LED> {
         }
         self.last_armed = armed;
 
-        // Stall protection PID — boosts duty at low RPM for crawlers/RC cars
-        if self.config.stall_protection != 0 && shared.running() {
-            let boost = self.pid.tick_stall(shared.commutation_interval() as i32);
-            shared.set_stall_protection_adjust(boost);
-        }
+        // 1 kHz dispatch: ADC + filtering + 3 PIDs. Matches AM32 main.c:1397
+        // and main.c:2010 — PID_LOOP_DIVIDER=20 means this block runs every
+        // 20th 20 kHz TIM6 tick = once per millisecond. Previously these all
+        // ran at 20 kHz (20× AM32 rate) which consumed ~700 cyc per period
+        // for no benefit — filtered values were over-sampled, PID integrals
+        // accumulated 20× too fast. See RATE_DIVERGENCE_REPORT.md.
+        //
+        // Counter increment lives in `ten_khz_tick` (TIM6 ISR), matching
+        // AM32 main.c:1317. Main reads + resets here. This way the 1 kHz
+        // rate is correct regardless of main-loop iteration rate (no longer
+        // gated by wfi — matches AM32's spinning while(1) at main.c:1843).
+        if shared.one_khz_counter_check_and_reset(crate::constants::PID_LOOP_DIVIDER) {
+            // ADC measurements — typed conversions via AdcCount
+            let smoothed_v = AdcCount(self.measurements.voltage_filter.update(adc.raw_voltage()));
+            let smoothed_c = AdcCount(self.measurements.current_filter.update(adc.raw_current()));
+            self.measurements.battery_voltage = smoothed_v.to_millivolts(self.voltage_divider);
+            self.measurements.actual_current =
+                smoothed_c.to_milliamps(self.current_offset, self.millivolt_per_amp);
+            self.measurements.degrees_celsius = if self.use_ntc {
+                crate::ntc::ntc_degrees(adc.raw_temperature())
+            } else {
+                adc.calc_temperature(adc.raw_temperature())
+            };
+            adc.start_conversion();
 
-        // Current limit PID — reduces duty when current exceeds limit
-        {
-            let target = self.config.current_limit as i32 * 200;
-            let min_duty = (self.config.minimum_duty_cycle.min(50) as i16) * 10;
-            let ceiling = self.pid.tick_current_limit(
-                self.measurements.actual_current.0,
-                target,
-                min_duty,
-                shared.running(),
-            );
-            shared.set_current_limit_adjust(ceiling);
-        }
+            // Publish measurements to shared state (ISR reads for EDT)
+            shared.set_actual_current(self.measurements.actual_current.0);
+            shared.set_battery_voltage(self.measurements.battery_voltage.0);
+            shared.set_degrees_celsius(self.measurements.degrees_celsius.0);
 
-        // Speed control PID — closed-loop RPM control
-        if let Some(override_input) =
-            self.pid
-                .tick_speed_control(shared.e_com_time(), zc, shared.running())
-        {
-            shared.set_newinput(override_input.clamp(48, 2047));
+            // Stall protection PID — boosts duty at low RPM for crawlers/RC cars
+            if self.config.stall_protection != 0 && shared.running() {
+                let boost = self.pid.tick_stall(shared.commutation_interval() as i32);
+                shared.set_stall_protection_adjust(boost);
+            }
+
+            // Current limit PID — reduces duty when current exceeds limit
+            {
+                let target = self.config.current_limit as i32 * 200;
+                let min_duty = (self.config.minimum_duty_cycle.min(50) as i16) * 10;
+                let ceiling = self.pid.tick_current_limit(
+                    self.measurements.actual_current.0,
+                    target,
+                    min_duty,
+                    shared.running(),
+                );
+                shared.set_current_limit_adjust(ceiling);
+            }
+
+            // Speed control PID — closed-loop RPM control
+            if let Some(override_input) =
+                self.pid
+                    .tick_speed_control(shared.e_com_time(), zc, shared.running())
+            {
+                shared.set_newinput(override_input.clamp(48, 2047));
+            }
         }
 
         // Telemetry send

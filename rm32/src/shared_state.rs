@@ -92,6 +92,15 @@ pub struct SharedState {
     dbg_tim6_last_cyc: AtomicU32,  // ten_khz_tick (20 kHz)
     dbg_tim14_last_cyc: AtomicU32, // commutation_timer_expired
     dbg_comp_last_cyc: AtomicU32,  // bemf_zero_cross
+    dbg_dma_last_cyc: AtomicU32,   // DMA1_CH5 wrapper (input capture TC)
+    dbg_exti_last_cyc: AtomicU32,  // EXTI15_10 wrapper (frame processing)
+    dbg_main_last_cyc: AtomicU32,  // main-loop iter body (excludes wfi)
+    // 1 kHz dispatch counter — incremented by TIM6 ISR (20 kHz), read +
+    // reset by main loop when >= PID_LOOP_DIVIDER (20). Matches AM32's
+    // placement (uint16_t one_khz_loop_counter, ++'d in tenKhzRoutine at
+    // main.c:1317, checked at main.c:1397). Was on MainState until we
+    // decoupled main-loop rate from ISR rate (removed wfi).
+    one_khz_counter: AtomicU8,
 }
 
 impl Default for SharedState {
@@ -144,6 +153,10 @@ impl SharedState {
             dbg_tim6_last_cyc: AtomicU32::new(0),
             dbg_tim14_last_cyc: AtomicU32::new(0),
             dbg_comp_last_cyc: AtomicU32::new(0),
+            dbg_dma_last_cyc: AtomicU32::new(0),
+            dbg_exti_last_cyc: AtomicU32::new(0),
+            dbg_main_last_cyc: AtomicU32::new(0),
+            one_khz_counter: AtomicU8::new(0),
         }
     }
 
@@ -195,6 +208,39 @@ impl SharedState {
     }
     pub fn dbg_comp_last_cyc_set(&self, cycles: u32) {
         self.dbg_comp_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_dma_last_cyc(&self) -> u32 {
+        self.dbg_dma_last_cyc.load(ACQ)
+    }
+    pub fn dbg_dma_last_cyc_set(&self, cycles: u32) {
+        self.dbg_dma_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_exti_last_cyc(&self) -> u32 {
+        self.dbg_exti_last_cyc.load(ACQ)
+    }
+    pub fn dbg_exti_last_cyc_set(&self, cycles: u32) {
+        self.dbg_exti_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_main_last_cyc(&self) -> u32 {
+        self.dbg_main_last_cyc.load(ACQ)
+    }
+    pub fn dbg_main_last_cyc_set(&self, cycles: u32) {
+        self.dbg_main_last_cyc.store(cycles, REL);
+    }
+    /// Increment 1 kHz dispatch counter (TIM6 ISR side, 20 kHz).
+    pub fn one_khz_counter_inc(&self) {
+        self.one_khz_counter.fetch_add(1, REL);
+    }
+    /// Read the 1 kHz dispatch counter and reset to 0 if it has reached
+    /// `divider`. Returns true if the 1 kHz block should fire this iter.
+    /// Main-loop side. Matches AM32 main.c:1397 `> PID_LOOP_DIVIDER`.
+    pub fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
+        if self.one_khz_counter.load(ACQ) > divider {
+            self.one_khz_counter.store(0, REL);
+            true
+        } else {
+            false
+        }
     }
 
     // --- Motor mode ---
@@ -614,6 +660,12 @@ impl crate::shared_comm::IsrTiming for SharedState {
     }
     fn set_forward(&self, v: bool) {
         SharedState::set_forward(self, v);
+    }
+    fn one_khz_counter_inc(&self) {
+        SharedState::one_khz_counter_inc(self);
+    }
+    fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
+        SharedState::one_khz_counter_check_and_reset(self, divider)
     }
 }
 

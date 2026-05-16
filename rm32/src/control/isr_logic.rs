@@ -17,6 +17,13 @@ use crate::shared_comm::SharedComm;
 /// Handles: throttle→setpoint mapping, arming, BEMF polling (old_routine),
 /// ramp rate limiting, PWM output.
 pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
+    // 1 kHz dispatch counter — ISR-side increment, matches AM32 main.c:1317
+    // (`one_khz_loop_counter++` inside tenKhzRoutine at 20 kHz). Main reads
+    // and resets when it exceeds PID_LOOP_DIVIDER, firing the 1 kHz block
+    // (ADC + PIDs). Placing the increment in the ISR makes the 1 kHz rate
+    // correct regardless of main-loop iteration rate (main no longer wfi's
+    // every iter — matches AM32's spinning while(1) at main.c:1843).
+    ctx.shared.one_khz_counter_inc();
     // Defensive COMP-IRQ mask while not commutating. AM32 mirrors this by
     // calling maskPhaseInterrupts() at every stop/timeout site (~15 places
     // in main.c). We only mask on the AllOff path below, so StopMotor /
