@@ -73,6 +73,11 @@ pub fn handle_tim6() {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
 
+    // Bench-debug: bump ISR-side progress counter so main-loop log can
+    // distinguish "main loop stalled but ISRs running" from "everything
+    // frozen". Read via `shared.dbg_isr_tick()` in main.
+    shared.dbg_isr_tick_inc();
+
     // Heartbeat: log every 20000 calls (~1 sec at 20 kHz)
     static mut TIM6_COUNT: u32 = 0;
     let n = unsafe {

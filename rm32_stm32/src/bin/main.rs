@@ -43,6 +43,19 @@ fn main() -> ! {
     #[cfg(feature = "bringup")]
     rm32_stm32::mcu::bringup::run_and_spin();
 
+    // Enable DWT cycle counter for lockup detection in main-loop log.
+    // Direct register access (DEMCR.TRCENA bit 24 + DWT.CTRL.CYCCNTENA bit 0)
+    // — avoids fighting cortex_m::Peripherals::take() which init::init also
+    // calls. CYCCNT then auto-increments at SYSCLK rate, wrapping every ~53 s
+    // at 80 MHz / u32. M0/M0+ (G071, F051) have no DWT cycle counter — skip.
+    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    unsafe {
+        let demcr = &(*cortex_m::peripheral::DCB::PTR).demcr;
+        demcr.write(demcr.read() | (1 << 24));
+        let ctrl = &(*cortex_m::peripheral::DWT::PTR).ctrl;
+        ctrl.write(ctrl.read() | 1);
+    }
+
     rtt_target::rtt_init_print!();
     #[cfg(feature = "debuguart")]
     rm32_stm32::debug_uart::init();
@@ -274,9 +287,23 @@ fn main() -> ! {
                 (false, true, _) => "PWM",
                 (false, false, _) => "none",
             };
+            // DWT cycle counter ÷ 1000 — readable monotonic timestamp that
+            // confirms the main loop is still executing. Stalled if cyc_k
+            // stops advancing between consecutive [loop n=] entries.
+            // isr_tick — TIM6-ISR-driven counter (20 kHz). Compare its delta
+            // to cyc_k delta to distinguish ISR-storm-starves-main from
+            // total chip freeze. ~20 ISR ticks per ms of wall time expected.
+            // DWT.CYCCNT only exists on Cortex-M3+ (not the M0/M0+ chips).
+            #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+            let cyc_k = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() } / 1000;
+            #[cfg(not(any(feature = "stm32l431", feature = "stm32g431")))]
+            let cyc_k: u32 = 0;
+            let isr_tick = shared.dbg_isr_tick();
             rm32_stm32::dprintln!(
-                "[loop n={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={}",
+                "[loop n={} cyc_k={} isr_tick={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={}",
                 log_counter / 100_000,
+                cyc_k,
+                isr_tick,
                 proto,
                 shared.motor_mode(),
                 shared.newinput(),

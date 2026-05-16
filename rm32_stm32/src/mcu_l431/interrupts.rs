@@ -26,6 +26,16 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP() {
+    // Acknowledge EXTI line 22 (COMP2) FIRST. Otherwise if the inner filter
+    // logic in `bemf_zero_cross` decides the edge is noise and early-returns
+    // *before* calling `comp.mask_interrupts()` (the only path that clears
+    // EXTI.PR1), NVIC sees the bit still set and re-enters this ISR forever.
+    // Observed on bench: PR1 stuck at 0x400000, NVIC ISPR2 bit 0 set,
+    // 100% CPU in COMP+TIM6 tail-chain, main loop starved.
+    let exti = unsafe { &*pac::EXTI::PTR };
+    unsafe {
+        exti.pr1.write(|w| w.bits(1 << 22));
+    }
     isr_handlers::handle_comp();
 }
 
@@ -34,11 +44,17 @@ fn COMP() {
 fn DMA1_CH5() {
     let dma = unsafe { &*pac::DMA1::PTR };
     let dma_isr = dma.isr.read().bits();
-    // Channel 5 TC flag = bit 17
+    // Acknowledge ALL CH5 flags up front (CGIF5 = bit 16 in IFCR clears
+    // TCIF5/HTIF5/TEIF5/GIF5 in one shot). Without this, if a transfer
+    // error (TEIF, bit 19) fires alone without TC, the ISR would return
+    // without clearing anything → NVIC re-fires forever (same class of
+    // bug as the COMP ISR pre-fix). TEIE is enabled in our CCR5=0x098B,
+    // so this path is reachable in principle.
+    unsafe {
+        dma.ifcr.write(|w| w.bits(1 << 16));
+    }
+    // Channel 5 TC flag = bit 17 — only process actual transfer complete
     if dma_isr & (1 << 17) != 0 {
-        unsafe {
-            dma.ifcr.write(|w| w.bits(1 << 16));
-        } // CGIF5
         // Disable DMA CH5
         unsafe {
             dma.ccr5.modify(|r, w| w.bits(r.bits() & !1));

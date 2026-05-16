@@ -77,6 +77,12 @@ pub struct SharedState {
     dbg_crc_fail: AtomicU32,  // BadCrc / InvalidTiming returns
     dbg_bidir_evt: AtomicU16, // monotonic count of bidir_detected=true returns
     dbg_high_pin_n: AtomicU8, // snapshot of transfer.high_pin_count after process()
+    // Monotonic counter incremented from TIM6 ISR (20 kHz) — used to detect
+    // ISR-vs-main-loop stalls. If this advances normally between two main-
+    // loop log entries but main-loop counters don't, the main loop stalled
+    // while ISRs ran (likely ISR storm starving main). If this stalls too,
+    // the whole chip is frozen.
+    dbg_isr_tick: AtomicU32,
 }
 
 impl Default for SharedState {
@@ -125,6 +131,7 @@ impl SharedState {
             dbg_crc_fail: AtomicU32::new(0),
             dbg_bidir_evt: AtomicU16::new(0),
             dbg_high_pin_n: AtomicU8::new(0),
+            dbg_isr_tick: AtomicU32::new(0),
         }
     }
 
@@ -152,6 +159,12 @@ impl SharedState {
     }
     pub fn dbg_set_high_pin_n(&self, v: u8) {
         self.dbg_high_pin_n.store(v, REL);
+    }
+    pub fn dbg_isr_tick(&self) -> u32 {
+        self.dbg_isr_tick.load(ACQ)
+    }
+    pub fn dbg_isr_tick_inc(&self) {
+        self.dbg_isr_tick.fetch_add(1, REL);
     }
 
     // --- Motor mode ---
