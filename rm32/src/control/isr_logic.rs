@@ -248,6 +248,18 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
 }
 
 /// BEMF zero-cross detected (COMP ISR body).
+///
+/// **IMPORTANT for porting**: the noise-filter loop below early-returns
+/// BEFORE `comp.mask_interrupts()` (which is the only path that clears the
+/// EXTI pending bit on most MCUs). If the platform ISR wrapper relies on
+/// this function to ack the EXTI line, the early-return causes NVIC to
+/// re-fire the COMP ISR forever → ISR storm → main-loop starvation.
+///
+/// Mitigation: the platform-specific COMP ISR wrapper must ack EXTI.PR1
+/// (or the equivalent rising/falling pending registers) at ISR entry,
+/// BEFORE calling `handle_comp`. L431 does this; F051/G071/G431 do NOT
+/// (as of this writing — same latent bug exists there, just hasn't been
+/// observed yet). See `mcu_l431/interrupts.rs::COMP()` for the pattern.
 pub fn bemf_zero_cross<C: hal::Comparator, I: hal::IntervalTimer, T: hal::ComTimer>(
     commutation: &Commutation,
     bemf: &mut BemfState,
