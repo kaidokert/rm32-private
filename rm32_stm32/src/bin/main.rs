@@ -299,11 +299,20 @@ fn main() -> ! {
             #[cfg(not(any(feature = "stm32l431", feature = "stm32g431")))]
             let cyc_k: u32 = 0;
             let isr_tick = shared.dbg_isr_tick();
+            // Last-tick ISR duration (cycles). /80 ≈ µs at 80 MHz. A SAMPLE
+            // from the most recent ISR, not a max — read at random points
+            // across many ticks to see typical-vs-spike distribution.
+            let t6_last = shared.dbg_tim6_last_cyc();
+            let t14_last = shared.dbg_tim14_last_cyc();
+            let comp_last = shared.dbg_comp_last_cyc();
             rm32_stm32::dprintln!(
-                "[loop n={} cyc_k={} isr_tick={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={}",
+                "[loop n={} cyc_k={} isr_tick={} t6_last={} t14_last={} comp_last={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={}",
                 log_counter / 100_000,
                 cyc_k,
                 isr_tick,
+                t6_last,
+                t14_last,
+                comp_last,
                 proto,
                 shared.motor_mode(),
                 shared.newinput(),

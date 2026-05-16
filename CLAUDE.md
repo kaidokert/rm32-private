@@ -1,5 +1,140 @@
 # Claude Code working notes — rm32 / Vimdrones L431 bench
 
+## Active investigation (May 2026)
+
+**Strategy**: rm32 must reach **1:1 parity with AM32** at three levels — exact register state during operation, identical computational architecture (don't move work between ISR and main loop), and same NVIC priority structure. If rm32 does more work than C, reduce it; never relocate it.
+
+**Current branch**: `bisect_init_changes`. Sequenced commits below.
+
+### Symptom timeline
+1. Original rm32 (`main` baseline): motor runs but choppy on the bench. Bidir DSHOT broken — ~50% CRC fail rate. AM32 Configurator passthrough broken.
+2. Discovered massive register divergences vs AM32 (clock tree, TIM1/TIM6/TIM16, GPIO, DMA, COMP) and fixed them piece-by-piece — see "AM32 register parity" below.
+3. Smooth PWM motor running once TIM16 + register parity + clean bench config were applied.
+4. **Currently investigating**: motor chops 100–200 ms at ~40% throttle. Root cause: TIM6 ISR (`ten_khz_tick`) takes ~42–69 µs out of its 50 µs budget; without NVIC priorities, it blocks COMP/TIM16 → commutation timing decays during ISR overrun → BEMF re-lock fails → mode falls back to OldRoutine → chop.
+
+### Diagnostic infra added to firmware (bench-debug only)
+
+All gated on `feature = "debuguart"` (and M4 features where DWT is needed):
+
+| Tool | Purpose | Files |
+|---|---|---|
+| `dprintln!` macro | RTT + USART1/PB6 mirror | `lib.rs` |
+| `[loop n=]` periodic log | every 100k main iters; one line per ~5 s | `bin/main.rs` |
+| `cyc_k` (DWT.CYCCNT/1000) | wall-clock timestamp; stalls visible | `bin/main.rs` |
+| `dbg_isr_tick` | TIM6-ISR counter (20 kHz); distinguishes "main stalled" from "chip frozen" | `shared_state.rs` |
+| `dbg_tim6_last_cyc` / `dbg_tim14_last_cyc` / `dbg_comp_last_cyc` | per-ISR cycle duration of the most recent tick; plain store, single-sample. (Was `*_max_cyc` with `fetch_max`; the LDREX/STREX loop + rprintln heartbeat inflated measurements ~10×.) | `shared_state.rs`, `isr_handlers.rs` |
+| `dbg_crc_pass` / `dbg_crc_fail` | DSHOT decode success/fail counters | `shared_state.rs` |
+| `dbg_bidir_evt` / `dbg_high_pin_n` | bidir auto-detect telemetry | `shared_state.rs` |
+| `dbg_frame_history` ring buffer | last N DSHOT frame buffers with pass/fail flag | `dbg_frame_history.rs` |
+| Panic/HardFault → debuguart | crashes now visible in `port_41.log`, with `debug_uart::flush()` before halt | `panic.rs` |
+| `feature = "bringup"` | early-jump to `mcu_l431::bringup::run_and_spin()` — AM32-register-parity init then spin loop with IWDG refresh. For dumping/diffing register state. | `bin/main.rs`, `mcu_l431/bringup.rs` |
+| Bench-clean config overrides | clears `stuck_rotor_protection`/`stall_protection`/`bi_direction`/`use_sine_start`/`brake_on_stop` after EEPROM load to mirror AM32 Configurator "all complex features off" baseline | `bin/main.rs` |
+
+Reading rate from `[loop n=]`: `Δcyc_k = 410k` → ~5.12 s wall time → main loop iter rate = 20 kHz (== TIM6 ISR rate, since `wfi()` at the bottom of the loop wakes per ISR). Anything significantly larger than that means main is starved by ISRs.
+
+### AM32 register parity (mostly complete)
+
+Captured via `scripts/dump_l431_regs.py` (probe-rs reads ~118 peripheral registers without halting the core) and `scripts/dump_motor_running.py` (6 snapshots while motor spinning, comparing AM32 hex vs rm32 build).
+
+- **Clock tree**: PLLM=2/N=20/R=2 from HSI16 (not HAL's M=1/N=10/R=2). FLASH.ACR = 0x0604 (LATENCY=4, ICEN+DCEN, **PRFTEN intentionally OFF on AM32**). Direct register writes in `mcu_l431/init.rs`, bypasses stm32l4xx-hal `freeze()`.
+- **NVIC PRIGROUP=3** (4 preempt / 0 sub bits). Set in init.rs via direct write to SCB.AIRCR.
+- **TIM6**: PSC=79, ARR=50 (1 MHz tick → 19.6 kHz update event). NOT PSC=0/ARR=3999.
+- **TIM1**: CR1=ARPE+CEN (0x81), CCMR1/2=0x6868 (PWM mode 1 + OCxPE on all 4 channels), CCER=0x1555 (CC1E/2E/3E + complementary N + CC4E), CCR4=0x64 (TRGO trigger), BDTR=DTG|BKP|MOE (0xA02D with `dead_time=45`).
+- **TIM16** (commutation): CR1=ARPE+CEN (0x81) free-running from boot. `Tim14Com::set_and_enable()` writes ARR (→ preload via ARPE) then EGR.UG to force-load. Was previously one-shot (disable→reset→enable per commutation); free-running matches AM32 and removes the disable→reload gap that caused choppy commutation.
+- **TIM2** (interval timer): ARR=0xFFFF (16-bit wrap, AM32-matched). Was 0xFFFFFFFF.
+- **TIM7, TIM15, TIM16, COMP2, DMA1_CH4/CH5, USART1**: per-register parity confirmed via `bringup.rs`.
+- **GPIOA/B pin config**: PA2 pull-up + medium-speed + AF14 (TIM15_CH1, DSHOT signal — pull-up matters for bidir telemetry slot when line is undriven). PA7 + PB0/PB1 AFRL=1 (motor PWM-N alternates, MODER stays output for safety idle until armed). PB6 USART1 half-duplex AF7 + pull-up. PB4 PUPDR cleared (was NJTRST reset default 0b01 pull-up).
+- **`dead_time` 60 → 45** in `boards/neutron_l431.yaml` (AM32 default for this hardware).
+- **TIM16 ISR pattern**: `Tim14Com::new()` writes CR1=ARPE+CEN at boot, so timer is always running. The free-run is what gives smooth motor.
+
+### NVIC priorities — CRITICAL: rm32 was buggy (all 0)
+
+**Bug**: cortex-m's `NVIC::set_priority(irq, n)` writes the raw byte `n` to NVIC IPR. STM32L4 NVIC has **4 priority bits in the UPPER nibble** of each IPR byte. Writing `1` → reg byte `0x01` → effective priority **0** (lower nibble ignored). So all rm32 priorities collapsed to level 0 regardless of the passed value. **AM32 uses CMSIS `NVIC_SetPriority` which automatically shifts `level << 4`**.
+
+**Fix**: pass `level << 4` to `set_priority`. Applied in `mcu_l431/init.rs` (boot priorities) and `mcu_l431/chip.rs::adjust_irq_priorities` (dynamic swap).
+
+**Companion fix (latent bug exposed by the priority change)**: with all IRQs at level 0, same-priority ARM tail-chaining serialized COMP and TIM6 — no preemption, so even an unmasked-and-bouncing comparator output couldn't starve TIM6. Once COMP→0/TIM6→3 priorities are honored, the latent bug surfaces: rm32 leaves `EXTI.IMR1[22]` unmasked outside active commutation. Comparator noise on undriven BEMF pins (Armed-idle, between commutation phases, after a failed startup) storms COMP_IRQ and freezes the firmware in seconds. **AM32 vs rm32 divergence**: AM32 calls `maskPhaseInterrupts()` at *every* stop/timeout site (~15 places in `main.c`); rm32 only masks on the LVC/`IsrAction::AllOff` path. StopMotor/Disarm via stuck-rotor, desync, signal_timeout all left COMP unmasked. **Mitigation applied**: `mcu_l431/interrupts.rs::COMP()` now masks `EXTI.IMR1[22]` on every ISR entry alongside the existing PR1 clear; `commutation_timer_expired` re-unmasks for the next BEMF window. Plus belt-and-suspenders: `control::isr_logic::ten_khz_tick` calls `comp.mask_interrupts()` when `!running`. Other MCU families (G071/F051/G431) have the same latent bug — same fix needed when porting the priority change.
+
+AM32 priorities on L431 (mirror exactly):
+
+| IRQ | Level | Why |
+|---|---|---|
+| `COMP` | **0** (highest) | BEMF zero-cross — must preempt `tenKhzRoutine` |
+| `TIM1_UP_TIM16` | 0 | Commutation timer — same urgency as COMP |
+| `DMA1_CH5` | 1 | DSHOT/PWM input capture |
+| `EXTI15_10` | 2 | SW-triggered DSHOT frame processing |
+| `DMA1_CH4` | 2 | USART1_TX (bench: telemetry off; matters when on) |
+| **`TIM6_DACUNDER`** | **3** (lowest) | `tenKhzRoutine` runs long; **must be preempted** by motor-critical IRQs |
+
+Without these priorities, `ten_khz_tick` blocks all motor-critical ISRs for its entire ~45 µs duration. Commutation/BEMF cannot fire mid-tick. Under load (BEMF re-lock cycles), commutation timing degrades → 100–200 ms motor chops.
+
+Verified in hardware via `probe-rs read 0xE000E418` etc. — IPR bytes now show `0x00`/`0x10`/`0x20`/`0x30`.
+
+### ISR pending-bit-clear audit (L431 done, others TODO)
+
+Latent bug class: ISR body has a path that returns without clearing the IRQ source bit. NVIC sees the bit still pending → re-fires the ISR forever → 100% CPU in ISR storm → main starved.
+
+| ISR | Bug | Status |
+|---|---|---|
+| `COMP` (L431) | `bemf_zero_cross` noise-filter early-return bypasses `comp.mask_interrupts()` which is the only path that clears `EXTI.PR1[22]`. | **Fixed** — ack EXTI line AND mask `IMR1[22]` at ISR entry (next `commutation_timer_expired` re-unmasks). `mcu_l431/interrupts.rs::COMP()`. |
+| `DMA1_CH5` (L431) | Only cleared `CGIF5` inside the `if TCIF==1` branch. TEIE is enabled (`CCR5=0x098B`), so a transfer error alone would storm. | **Fixed** — clear `CGIF5` unconditionally at ISR entry. |
+| `TIM6_DACUNDER` | Clears SR=0 at top. | OK |
+| `TIM1_UP_TIM16` | Clears TIM16.SR at top. (TIM1.UIE is never enabled in our setup, so TIM1.SR doesn't matter.) | OK |
+| `EXTI15_10` | Clears `EXTI.PR1[15]` at top. | OK |
+| **F051 / G071 / G431** | Same `bemf_zero_cross` early-return path exists; their COMP ISR wrappers don't pre-ack the EXTI line. **Latent bug — same fix needed.** | **Pending** (task #39). |
+
+The contract is documented at the top of `rm32::control::isr_logic::bemf_zero_cross`.
+
+### Current investigation: 100–200 ms motor chops at ~40 % throttle
+
+**The previous "TIM6 overruns its budget" diagnosis was a measurement artifact**. Earlier instrumentation read DWT.CYCCNT at TIM6 entry, called `dbg_isr_tick_inc` (atomic fetch_add) + a `rprintln!` heartbeat every 20000 ticks (with closure formatting + RTT byte writes), built MotorContext, ran `ten_khz_tick`, then called `dbg_tim6_max_cyc_update` (fetch_max LDREX/STREX). The heartbeat ran the timing bracket for 5000+ cycles when it fired, and `fetch_max` retained it as the sticky maximum. So `t6_max` reported 43–96 µs, looking like a budget overrun.
+
+After stripping (rprintln removed; `fetch_max` → `store`; `dbg_isr_tick_inc` moved AFTER the bracket), the actual single-sample TIM6 cost (read as `t6_last` now, not `t6_max`):
+
+```
+mode=Armed (idle):    t6_last ≈ 546 cyc =  6.8 µs   (14 % of budget)
+mode=Running:         t6_last ≈ 628 cyc =  7.9 µs   (16 % of budget)
+mode=OldRoutine:      t6_last ≈ 743 cyc =  9.3 µs   typical
+mode=OldRoutine:      t6_last ≈ 1526 cyc = 19.1 µs  occasional spike (ZC detection path)
+
+TIM14 (commutation_timer_expired): 614–651 cyc = 7.7–8.1 µs
+COMP  (bemf_zero_cross):           20–75 cyc   = 0.25–0.94 µs
+```
+
+**TIM6 has ~40 µs of headroom in every mode.** The motor chop is NOT caused by ISR overrun. The NVIC priority fix and COMP-mask compensating fix remain valid (they kept the firmware alive once COMP could preempt TIM6), but the chop root cause is something else — likely BEMF lock dynamics in `bemf_zero_cross` / `BemfState`, commutation timing in `commutation_timer_expired`, or motor mechanics. After the timing-instrumentation strip, motor visibly reaches Running mode multiple times per sweep where it previously barely flickered Running once.
+
+Next: investigate why Running ↔ OldRoutine ↔ Armed oscillation happens at low/mid throttle. Compare BEMF timing parameters (filter_level, min_bemf_counts, com_timer_delay) against AM32 defaults and bemf_zero_cross arithmetic against C.
+
+### Backlogged DSHOT/bidir work
+
+| Item | Status |
+|---|---|
+| DSHOT decode buf[0] alignment | **WIP** (commit `2b92824`). NDTR bumped 32→33, decoder picks alignment dynamically (`ft_keep = buf[31]-buf[0]` vs `ft_skip = buf[32]-buf[1]`, smaller = real frame). Not fully validated. |
+| DSHOT150 detection | Missing — `signal::detect_input` has buckets for DSHOT600/300, no 150. Fallback path used. |
+| Bidir DSHOT auto-detect | Triggers on `hi_pin_n > 100` but spuriously hits non-bidir frames where line idles high briefly → applies CRC inversion to non-bidir frames → all fail. Needs self-validating detection (only commit after N successful inverted-CRC decodes). |
+| Bidir GCR response | Encoded but unverified at high success rate. PA2 pull-up fix improved signal stability. |
+
+### Reading port_41.log
+
+Each `[loop n=X cyc_k=Y isr_tick=Z t6_last=A t14_last=B comp_last=C] ...` line:
+- `n` increments every 100k main iters
+- `cyc_k = CYCCNT/1000`, /80 → µs; wraps every ~53 s at 80 MHz
+- `isr_tick` monotonic TIM6 ISR count (20 kHz)
+- `t6/t14/comp_last` cycles (`/80` → µs) — SAMPLE from the most recently completed ISR at the time main read the field; plain store, no fetch_max. Read frequently to see distribution; one-off spikes won't be retained.
+- normal `Δcyc_k ≈ 410k`, `Δisr_tick ≈ 100k` ; bigger deltas = main loop starved
+
+If `[loop n=]` stops printing AND `dbg_isr_tick` still grows via `probe-rs read 0x200006a8` → main starved by ISRs. If neither grows → chip frozen.
+
+Probe-rs gdb attach workflow (read PC + isr_tick without resetting):
+```bash
+probe-rs gdb --chip STM32L431KCUx --probe 0483:374f:0037002F3234510836303532 &
+arm-none-eabi-gdb -batch \
+  -ex "target remote localhost:1337" -ex "monitor halt" \
+  -ex "p/x \$pc" -ex "x/wx 0x200006a8" \
+  -ex "monitor resume" -ex "quit" \
+  rm32_stm32/target/thumbv7em-none-eabihf/release/rm32_firmware
+```
+
 ## Repo layout
 
 - `rm32/` — portable, host-testable core (motor control, DSHOT/PWM decode, EEPROM config, state machines). No-std, no MCU deps.

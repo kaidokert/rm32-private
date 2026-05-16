@@ -26,15 +26,25 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP() {
-    // Acknowledge EXTI line 22 (COMP2) FIRST. Otherwise if the inner filter
-    // logic in `bemf_zero_cross` decides the edge is noise and early-returns
-    // *before* calling `comp.mask_interrupts()` (the only path that clears
-    // EXTI.PR1), NVIC sees the bit still set and re-enters this ISR forever.
-    // Observed on bench: PR1 stuck at 0x400000, NVIC ISPR2 bit 0 set,
-    // 100% CPU in COMP+TIM6 tail-chain, main loop starved.
+    // AM32 pattern: COMP fires once per commutation phase, the handler
+    // masks itself, and the next commutation_timer_expired re-unmasks for
+    // the next BEMF detection window. AM32 enforces this implicitly via
+    // maskPhaseInterrupts() being called at every motor-stop site (~15
+    // places in main.c) plus inside the inner handler on a successful
+    // zero-cross detection. rm32 only masked on the zero-cross-detected
+    // path; the noise-filter early-return and the various Stop/Disarm
+    // transitions left COMP unmasked. With NVIC priorities applied
+    // (COMP=0 preempts TIM6=3), an unmasked comparator bouncing on noise
+    // (motor coasting on undriven phases, or armed-idle) storms COMP_IRQ
+    // and starves TIM6 → firmware freezes.
+    //
+    // Fix: clear EXTI.PR1[22] AND mask EXTI.IMR1[22] at every ISR exit.
+    // commutation_timer_expired re-unmasks when it's time to expect the
+    // next zero-cross. The noise-filter early-return is now safe.
     let exti = unsafe { &*pac::EXTI::PTR };
     unsafe {
         exti.pr1.write(|w| w.bits(1 << 22));
+        exti.imr1.modify(|r, w| w.bits(r.bits() & !(1 << 22)));
     }
     isr_handlers::handle_comp();
 }

@@ -43,6 +43,11 @@ pub fn enable_com_timer_clock() {
 /// Adjust IRQ priorities based on motor speed.
 /// Low eRPM: DShot DMA > commutation (don't drop input frames)
 /// High eRPM: commutation > DShot (don't miss commutation steps)
+///
+/// NOTE: STM32L4 NVIC has 4 priority bits in the UPPER nibble of each IPR
+/// byte. cortex_m's `set_priority` writes the raw byte, so priority levels
+/// must be passed as `level << 4`. Prior versions of this function passed
+/// raw 0/1 which both collapsed to level 0 — the priority swap was a no-op.
 pub fn adjust_irq_priorities(interval: u32, dshot_telem: bool) {
     use pac::Interrupt;
     const DSHOT_PRIORITY_THRESHOLD: u32 = 60;
@@ -51,19 +56,19 @@ pub fn adjust_irq_priorities(interval: u32, dshot_telem: bool) {
     let nvic =
         unsafe { &mut *(cortex_m::peripheral::NVIC::PTR as *mut cortex_m::peripheral::NVIC) };
     if dshot_telem && interval > DSHOT_PRIORITY_THRESHOLD {
-        // SAFETY: Setting valid priority values (0-1) for valid interrupt numbers.
-        // Priority changes take effect atomically per-interrupt in the NVIC.
+        // SAFETY: Setting valid priority values (level 0-1, shifted into the
+        // top 4 bits of the priority byte). Atomic per-IRQ in the NVIC.
         unsafe {
-            nvic.set_priority(Interrupt::DMA1_CH5, 0);
-            nvic.set_priority(Interrupt::TIM1_UP_TIM16, 1);
-            nvic.set_priority(Interrupt::COMP, 1);
+            nvic.set_priority(Interrupt::DMA1_CH5, 0 << 4);
+            nvic.set_priority(Interrupt::TIM1_UP_TIM16, 1 << 4);
+            nvic.set_priority(Interrupt::COMP, 1 << 4);
         }
     } else {
-        // SAFETY: Same as above — valid priority values for valid interrupt numbers.
+        // SAFETY: Same as above — valid shifted priority levels.
         unsafe {
-            nvic.set_priority(Interrupt::DMA1_CH5, 1);
-            nvic.set_priority(Interrupt::TIM1_UP_TIM16, 0);
-            nvic.set_priority(Interrupt::COMP, 0);
+            nvic.set_priority(Interrupt::DMA1_CH5, 1 << 4);
+            nvic.set_priority(Interrupt::TIM1_UP_TIM16, 0 << 4);
+            nvic.set_priority(Interrupt::COMP, 0 << 4);
         }
     }
 }

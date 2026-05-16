@@ -17,6 +17,17 @@ use crate::shared_comm::SharedComm;
 /// Handles: throttle→setpoint mapping, arming, BEMF polling (old_routine),
 /// ramp rate limiting, PWM output.
 pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
+    // Defensive COMP-IRQ mask while not commutating. AM32 mirrors this by
+    // calling maskPhaseInterrupts() at every stop/timeout site (~15 places
+    // in main.c). We only mask on the AllOff path below, so StopMotor /
+    // Disarm transitions (stuck rotor, desync, signal_timeout) can leak an
+    // unmasked COMP into Armed-idle. With COMP at NVIC level 0 and TIM6 at
+    // level 3, a comparator output bouncing on an undriven BEMF pin storms
+    // COMP_IRQ and starves TIM6 indefinitely. Re-masking here every tick
+    // when !running closes the leak from any of those paths.
+    if !ctx.shared.running() {
+        ctx.hal.comp().mask_interrupts();
+    }
     // Process main→ISR action request (priority-ordered enum)
     match ctx.shared.isr_action() {
         crate::shared_comm::IsrAction::AllOff => {

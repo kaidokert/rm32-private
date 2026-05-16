@@ -83,6 +83,15 @@ pub struct SharedState {
     // while ISRs ran (likely ISR storm starving main). If this stalls too,
     // the whole chip is frozen.
     dbg_isr_tick: AtomicU32,
+    // Last-tick ISR duration (cycles). Each ISR brackets its body with
+    // DWT.CYCCNT reads and STORES the delta into the appropriate field.
+    // Single-writer per ISR; main loop READS the value (snapshot of most
+    // recent tick). Was fetch_max which adds an LDREX/STREX loop into the
+    // measurement window — store is a single STR, cheaper and produces a
+    // sample rather than a sticky maximum.
+    dbg_tim6_last_cyc: AtomicU32,  // ten_khz_tick (20 kHz)
+    dbg_tim14_last_cyc: AtomicU32, // commutation_timer_expired
+    dbg_comp_last_cyc: AtomicU32,  // bemf_zero_cross
 }
 
 impl Default for SharedState {
@@ -132,6 +141,9 @@ impl SharedState {
             dbg_bidir_evt: AtomicU16::new(0),
             dbg_high_pin_n: AtomicU8::new(0),
             dbg_isr_tick: AtomicU32::new(0),
+            dbg_tim6_last_cyc: AtomicU32::new(0),
+            dbg_tim14_last_cyc: AtomicU32::new(0),
+            dbg_comp_last_cyc: AtomicU32::new(0),
         }
     }
 
@@ -165,6 +177,24 @@ impl SharedState {
     }
     pub fn dbg_isr_tick_inc(&self) {
         self.dbg_isr_tick.fetch_add(1, REL);
+    }
+    pub fn dbg_tim6_last_cyc(&self) -> u32 {
+        self.dbg_tim6_last_cyc.load(ACQ)
+    }
+    pub fn dbg_tim6_last_cyc_set(&self, cycles: u32) {
+        self.dbg_tim6_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_tim14_last_cyc(&self) -> u32 {
+        self.dbg_tim14_last_cyc.load(ACQ)
+    }
+    pub fn dbg_tim14_last_cyc_set(&self, cycles: u32) {
+        self.dbg_tim14_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_comp_last_cyc(&self) -> u32 {
+        self.dbg_comp_last_cyc.load(ACQ)
+    }
+    pub fn dbg_comp_last_cyc_set(&self, cycles: u32) {
+        self.dbg_comp_last_cyc.store(cycles, REL);
     }
 
     // --- Motor mode ---

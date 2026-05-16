@@ -216,7 +216,24 @@ pub fn init(
         tim7.cr1.write(|w| w.cen().set_bit());
     }
 
-    // NVIC
+    // NVIC priorities — AM32-matched. On STM32L4 the NVIC has 4 priority bits
+    // stored in the UPPER nibble of each IPR byte (PRIGROUP=3 from clock init
+    // = 4 preempt bits, 0 sub bits). cortex_m's `set_priority` writes the raw
+    // byte, so to use priority level N we must pass `N << 4` (AM32 uses the
+    // CMSIS NVIC_SetPriority macro which does this shift internally).
+    //
+    // Priorities (lower number = higher priority, can preempt higher numbers):
+    //   COMP             0  — BEMF zero-cross, must preempt tenKhzRoutine
+    //   TIM1_UP_TIM16    0  — commutation timer, same urgency as COMP
+    //   DMA1_CH5         1  — DSHOT/PWM input capture
+    //   EXTI15_10        2  — SW-triggered frame processing
+    //   TIM6_DACUNDER    3  — 20 kHz control loop (LOWEST: tenKhzRoutine can
+    //                          run long and be preempted by motor-critical IRQs)
+    //
+    // Without these priorities, all IRQs default to 0 and TIM6 ISR blocks
+    // commutation/BEMF until it returns. tenKhzRoutine can take ~45 µs of the
+    // 50 µs TIM6 budget; without preemption, commutation timing decays under
+    // load → motor chops.
     unsafe {
         use pac::{Interrupt, NVIC};
         NVIC::unmask(Interrupt::TIM6_DACUNDER);
@@ -224,6 +241,12 @@ pub fn init(
         NVIC::unmask(Interrupt::COMP);
         NVIC::unmask(Interrupt::DMA1_CH5);
         NVIC::unmask(Interrupt::EXTI15_10);
+        let mut nvic = cortex_m::Peripherals::steal().NVIC;
+        nvic.set_priority(Interrupt::COMP, 0 << 4);
+        nvic.set_priority(Interrupt::TIM1_UP_TIM16, 0 << 4);
+        nvic.set_priority(Interrupt::DMA1_CH5, 1 << 4);
+        nvic.set_priority(Interrupt::EXTI15_10, 2 << 4);
+        nvic.set_priority(Interrupt::TIM6_DACUNDER, 3 << 4);
     }
 
     // Enable EXTI line 15 (software-triggered by DMA TC)

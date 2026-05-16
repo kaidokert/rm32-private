@@ -70,30 +70,17 @@ static ISR_LOCAL: IsrCell = IsrCell::new();
 
 /// 20kHz control loop tick (TIM6 ISR body).
 pub fn handle_tim6() {
+    // Minimal-overhead timing bracket: DWT.CYCCNT delta written to a plain
+    // store (single-writer, no fetch_max LDREX/STREX). Liveness counter
+    // (dbg_isr_tick_inc) moved AFTER the bracket so it doesn't bias the
+    // measurement. Previously: rprintln heartbeat every 20000 ticks +
+    // fetch_max CAS + dbg_isr_tick_inc inside the bracket added ~30-50
+    // cycles of measurement overhead per tick.
+    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
-
-    // Bench-debug: bump ISR-side progress counter so main-loop log can
-    // distinguish "main loop stalled but ISRs running" from "everything
-    // frozen". Read via `shared.dbg_isr_tick()` in main.
-    shared.dbg_isr_tick_inc();
-
-    // Heartbeat: log every 20000 calls (~1 sec at 20 kHz)
-    static mut TIM6_COUNT: u32 = 0;
-    let n = unsafe {
-        TIM6_COUNT = TIM6_COUNT.wrapping_add(1);
-        TIM6_COUNT
-    };
-    if n % 20000 == 1 {
-        rtt_target::rprintln!(
-            "[tim6] n={} mode={:?} duty_set={} duty={} comint={}",
-            n,
-            shared.motor_mode(),
-            shared.duty_cycle_setpoint(),
-            shared.duty_cycle(),
-            shared.commutation_interval(),
-        );
-    }
 
     let mut ctx = rm32::control::context::MotorContext {
         commutation: &mut state.commutation,
@@ -106,12 +93,21 @@ pub fn handle_tim6() {
         hal: &mut state.hal,
     };
     rm32::control::isr_logic::ten_khz_tick(&mut ctx);
+
+    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    {
+        let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+        shared.dbg_tim6_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+    }
+    shared.dbg_isr_tick_inc();
 }
 
 /// Commutation timer expired (TIM14 ISR body).
 pub fn handle_tim14() {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
+    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
     rm32::control::isr_logic::commutation_timer_expired(
         &mut state.commutation,
         &mut state.bemf,
@@ -121,11 +117,20 @@ pub fn handle_tim14() {
         &mut state.hal.phase,
         state.config.bi_direction != 0,
     );
+    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    {
+        let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+        shared.dbg_tim14_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+    }
 }
 
 /// BEMF zero-cross detected (COMP ISR body).
 pub fn handle_comp() {
     let state = ISR_LOCAL.get();
+    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    let (shared, cyc_start) = (isr::shared(), unsafe {
+        (*cortex_m::peripheral::DWT::PTR).cyccnt.read()
+    });
     rm32::control::isr_logic::bemf_zero_cross(
         &state.commutation,
         &mut state.bemf,
@@ -133,6 +138,11 @@ pub fn handle_comp() {
         &mut state.hal.interval,
         &mut state.hal.com_timer,
     );
+    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    {
+        let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+        shared.dbg_comp_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+    }
 }
 
 /// DMA transfer complete (input capture ISR body).
