@@ -26,23 +26,27 @@
 //!   `BAUD` so 12 bit times round to a non-trivial integer.
 //! - `OVERSAMPLE` — samples per bit. 4 or 8 are typical. Affects voting
 //!   threshold.
-//! - `RX_BUF_LEN` — depth of the RX byte FIFO.
 //!
 //! ## What this crate is NOT responsible for
 //!
 //! - Owning the GPIO pin, EXTI config, or sample timer. The caller wires
 //!   the ISRs, reads the pin, and starts/stops the sample timer.
+//! - **Owning the RX byte FIFO.** [`SoftUart::on_sample`] hands a decoded
+//!   byte back via [`FrameStep::Byte`]; the caller pushes it to whatever
+//!   queue/storage it prefers (e.g. `heapless::spsc::Queue` for
+//!   lock-free producer/consumer split between ISR and main loop).
 //! - Picking the sample timer phase. Half a sample period is typical; the
 //!   caller computes the timer's initial CNT value.
-//! - Tracking framing errors *per byte*. Errors bump a counter; the byte
-//!   in flight is dropped and the decoder resyncs on the next start bit.
 
 use core::convert::Infallible;
 
-use heapless::Deque;
-
 use crate::hal::gpio::ExtiPin;
-use crate::hal::prelude::*; // brings `InputPin` (digital::v2) into scope
+// `stm32l4xx_hal::hal` is its re-export of `embedded-hal` 0.2 (see
+// `stm32l4xx-hal/src/lib.rs`: `pub use embedded_hal as hal;`). Going via
+// the alias keeps the version pinned to whatever the HAL itself uses,
+// which is the v2 `InputPin` trait — not the unrelated `embedded-hal` 1.0
+// we depend on directly.
+use crate::hal::hal::digital::v2::InputPin;
 
 // ---------------------------------------------------------------------------
 // HAL adapter traits + struct
@@ -77,16 +81,13 @@ pub trait IrqAck {
 /// EXTI and TIM ISRs. Wrap in `Mutex<RefCell<Option<RxHw<P, T>>>>` for
 /// cross-ISR access.
 ///
-/// `rx_active` is the gate flag that says "are we currently in the middle
-/// of receiving a frame?" — EXTI flips it true on a qualifying start edge,
-/// the timer ISR flips it false on `FrameStep::Complete`. It lives here
-/// (not as a separate `AtomicBool`) because it's only ever touched while
-/// the caller already holds `&mut RxHw` inside `free(|cs| ...)`, so the
-/// critical section already serializes access.
+/// `overrun_count` is bumped by the timer ISR when the caller's RX queue
+/// is full. Only touched with `&mut RxHw` held inside `free(|cs|)`, so no
+/// atomics are needed.
 pub struct RxHw<P: SoftUartPin, T: IrqAck> {
     pub pin: P,
     pub timer: T,
-    pub rx_active: bool,
+    pub overrun_count: u32,
 }
 
 impl<P: SoftUartPin, T: IrqAck> RxHw<P, T> {
@@ -94,46 +95,34 @@ impl<P: SoftUartPin, T: IrqAck> RxHw<P, T> {
         Self {
             pin,
             timer,
-            rx_active: false,
+            overrun_count: 0,
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Pure decoder state machine + FIFO
+// Pure decoder state machine
 // ---------------------------------------------------------------------------
 
-/// Result of feeding one sample into the decoder.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum FrameStep {
-    /// More samples needed for this frame. Caller should keep the sample
-    /// timer running.
-    Continue,
-    /// Frame ended this sample — either a byte was pushed to the FIFO or
-    /// a framing error was recorded. Caller should pause the sample timer
-    /// until the next start edge.
-    Complete,
-}
-
-pub struct SoftUart<
-    const BAUD: u32,
-    const TICK_HZ: u32,
-    const OVERSAMPLE: usize,
-    const RX_BUF_LEN: usize,
-> {
+pub struct SoftUart<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize> {
     bit_index: u32,
     oversample_idx: u32,
     accum: u32,
     byte_build: u8,
     last_edge_ticks: u32,
-    rx_buf: Deque<u8, RX_BUF_LEN>,
     framing_errors: u32,
     frame_count: u32,
-    overrun_count: u32,
+    /// True iff we're currently sampling the middle of a frame. Set true
+    /// when `on_falling_edge` qualifies a start bit; set false when the
+    /// frame finishes (success or framing error). Lets callers feed every
+    /// timer-ISR sample blindly into [`on_sample`] without an external
+    /// "are we receiving" gate flag — when this is false `on_sample` is a
+    /// cheap no-op that returns `None`.
+    is_receiving: bool,
 }
 
-impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize, const RX_BUF_LEN: usize>
-    SoftUart<BAUD, TICK_HZ, OVERSAMPLE, RX_BUF_LEN>
+impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
+    SoftUart<BAUD, TICK_HZ, OVERSAMPLE>
 {
     /// 12 bit times in ticks of `TICK_HZ`. A falling edge that arrives at
     /// least this long after the previous falling edge is treated as the
@@ -150,36 +139,46 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize, const RX_BUF_
             accum: 0,
             byte_build: 0,
             last_edge_ticks: 0,
-            rx_buf: Deque::new(),
             framing_errors: 0,
             frame_count: 0,
-            overrun_count: 0,
+            is_receiving: false,
         }
     }
 
     /// Feed a falling-edge event into the decoder. Returns `true` iff this
-    /// edge qualifies as a frame start — the caller should then arm the
-    /// bit-sample timer (with a half-period CNT seed to land samples near
-    /// bit centres).
+    /// edge qualifies as a frame start; in that case `is_receiving` is also
+    /// flipped on internally so subsequent [`on_sample`] calls do real work
+    /// instead of returning `None`.
     pub fn on_falling_edge(&mut self, now_ticks: u32) -> bool {
         let elapsed = now_ticks.wrapping_sub(self.last_edge_ticks);
         self.last_edge_ticks = now_ticks;
         if elapsed >= Self::FRAME_GAP_TICKS {
             self.frame_count = self.frame_count.wrapping_add(1);
             self.reset_decoder();
+            self.is_receiving = true;
             true
         } else {
             false
         }
     }
 
-    /// Feed one bit-sample-time pin read into the decoder. Caller pauses
-    /// the sample timer when this returns [`FrameStep::Complete`].
-    pub fn on_sample(&mut self, pin_high: bool) -> FrameStep {
+    /// Feed one bit-sample-time pin read into the decoder. Returns
+    /// `Some(byte)` when a clean byte has been decoded this call, and
+    /// `None` otherwise — either we're in the middle of a frame, between
+    /// frames, or the frame just ended with a framing error (in which
+    /// case the internal `framing_errors` counter is incremented and the
+    /// decoder is ready for the next start edge).
+    ///
+    /// Callers can blindly feed every timer-ISR sample in; this method is
+    /// a cheap no-op until `on_falling_edge` qualifies a start.
+    pub fn on_sample(&mut self, pin_high: bool) -> Option<u8> {
+        if !self.is_receiving {
+            return None;
+        }
         self.accum += pin_high as u32;
         self.oversample_idx += 1;
         if (self.oversample_idx as usize) < OVERSAMPLE {
-            return FrameStep::Continue;
+            return None;
         }
         // Bit complete — majority vote across OVERSAMPLE samples.
         let bit: u8 = if (self.accum as usize) * 2 >= OVERSAMPLE {
@@ -195,26 +194,28 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize, const RX_BUF_
                 if bit != 0 {
                     self.framing_errors = self.framing_errors.wrapping_add(1);
                     self.reset_decoder();
-                    return FrameStep::Complete;
+                    self.is_receiving = false;
+                    return None;
                 }
             }
             1..=8 => {
                 self.byte_build |= bit << (self.bit_index - 1);
             }
             _ => {
-                if bit == 1 {
-                    if self.rx_buf.push_back(self.byte_build).is_err() {
-                        self.overrun_count = self.overrun_count.wrapping_add(1);
-                    }
+                let byte = self.byte_build;
+                let stop_ok = bit == 1;
+                self.reset_decoder();
+                self.is_receiving = false;
+                if stop_ok {
+                    return Some(byte);
                 } else {
                     self.framing_errors = self.framing_errors.wrapping_add(1);
+                    return None;
                 }
-                self.reset_decoder();
-                return FrameStep::Complete;
             }
         }
         self.bit_index += 1;
-        FrameStep::Continue
+        None
     }
 
     fn reset_decoder(&mut self) {
@@ -224,20 +225,6 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize, const RX_BUF_
         self.byte_build = 0;
     }
 
-    /// Look at the oldest pending byte without removing it.
-    pub fn peek(&self) -> Option<u8> {
-        self.rx_buf.front().copied()
-    }
-
-    /// Remove and return the oldest pending byte.
-    pub fn pop(&mut self) -> Option<u8> {
-        self.rx_buf.pop_front()
-    }
-
-    pub fn bytes_available(&self) -> usize {
-        self.rx_buf.len()
-    }
-
     pub fn framing_errors(&self) -> u32 {
         self.framing_errors
     }
@@ -245,15 +232,10 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize, const RX_BUF_
     pub fn frame_count(&self) -> u32 {
         self.frame_count
     }
-
-    /// Count of bytes dropped because the FIFO was full when they decoded.
-    pub fn overrun_count(&self) -> u32 {
-        self.overrun_count
-    }
 }
 
-impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize, const RX_BUF_LEN: usize> Default
-    for SoftUart<BAUD, TICK_HZ, OVERSAMPLE, RX_BUF_LEN>
+impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize> Default
+    for SoftUart<BAUD, TICK_HZ, OVERSAMPLE>
 {
     fn default() -> Self {
         Self::new()

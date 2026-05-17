@@ -23,6 +23,7 @@ use cortex_m::interrupt::{Mutex, free};
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::{entry, exception};
 use fugit::HertzU32 as Hertz;
+use heapless::spsc::{Consumer, Producer, Queue};
 use minz::SYSTICK;
 use minz::board_init::{BoardInit, configure_systick, init};
 use minz::hal::gpio::gpioa::PA0;
@@ -32,7 +33,7 @@ use minz::hal::pac::{LPTIM1, interrupt};
 use minz::hal::prelude::*;
 use minz::hal::stm32;
 use minz::hal::stm32::Interrupt;
-use minz::softuart::{FrameStep, IrqAck, RxHw, SoftUart};
+use minz::softuart::{IrqAck, RxHw, SoftUart};
 use portable_atomic::{AtomicU32, Ordering};
 use rtt_target::rprintln;
 
@@ -41,7 +42,10 @@ const OVERSAMPLE: usize = 4;
 const SAMPLE: Hertz = Hertz::Hz(BAUD.raw() * OVERSAMPLE as u32); // 38400
 const RX_BUF_LEN: usize = 16;
 
-type Uart = SoftUart<{ BAUD.raw() }, { SYSTICK.raw() }, OVERSAMPLE, RX_BUF_LEN>;
+type Uart = SoftUart<{ BAUD.raw() }, { SYSTICK.raw() }, OVERSAMPLE>;
+type RxQueue = Queue<u8, RX_BUF_LEN>;
+type RxProducer = Producer<'static, u8>;
+type RxConsumer = Consumer<'static, u8>;
 
 static TICKS_10US: AtomicU32 = AtomicU32::new(0);
 
@@ -50,14 +54,17 @@ type RxTimer = LowPowerTimer<LPTIM1>;
 
 static RX_HW: Mutex<RefCell<Option<RxHw<RxPin, RxTimer>>>> = Mutex::new(RefCell::new(None));
 static UART: Mutex<RefCell<Uart>> = Mutex::new(RefCell::new(SoftUart::new()));
+/// Producer half of the RX byte queue (Consumer is local to `main`).
+static RX_PRODUCER: Mutex<RefCell<Option<RxProducer>>> = Mutex::new(RefCell::new(None));
 
 fn ticks_10us() -> u32 {
     TICKS_10US.load(Ordering::Relaxed)
 }
 
-fn wait_until(deadline: u32) {
+/// Drain the SPSC queue without entering a critical section.
+fn wait_until(deadline: u32, rx: &mut RxConsumer) {
     while ticks_10us().wrapping_sub(deadline) > u32::MAX / 2 {
-        while let Some(b) = free(|cs| UART.borrow(cs).borrow_mut().pop()) {
+        while let Some(b) = rx.dequeue() {
             let ch = if (0x20..=0x7e).contains(&b) {
                 b as char
             } else {
@@ -127,12 +134,16 @@ fn main() -> ! {
     timer.listen(Event::CompareMatch);
     timer.set_autoreload(arr);
     timer.set_compare_match(cmp);
+    static mut RX_QUEUE: RxQueue = Queue::new();
+    let (producer, mut consumer) = unsafe { (&mut *core::ptr::addr_of_mut!(RX_QUEUE)).split() };
+
     free(|cs| {
         RX_HW.borrow(cs).replace(Some(RxHw::new(rx_pin, timer)));
+        RX_PRODUCER.borrow(cs).replace(Some(producer));
     });
 
     // LPTIM1 runs continuously; the ISR also fires continuously but the
-    // `RX_ACTIVE` flag gates whether it actually advances the decoder.
+    // `rx_active` flag gates whether it actually advances the decoder.
     unsafe {
         NVIC::unmask(Interrupt::LPTIM1);
         NVIC::unmask(Interrupt::EXTI0);
@@ -142,23 +153,28 @@ fn main() -> ! {
     let mut loop_n: u32 = 0;
     let mut prev_frame: u32 = 0;
     let mut prev_err: u32 = 0;
+    let mut prev_overrun: u32 = 0;
     let mut next_deadline = ticks_10us().wrapping_add(SYSTICK.raw());
     loop {
         loop_n = loop_n.wrapping_add(1);
-        let (frame, errs) = free(|cs| {
+        let (frame, errs, overrun) = free(|cs| {
             let uart = UART.borrow(cs).borrow();
-            (uart.frame_count(), uart.framing_errors())
+            let hw = RX_HW.borrow(cs).borrow();
+            let overrun = hw.as_ref().map_or(0, |h| h.overrun_count);
+            (uart.frame_count(), uart.framing_errors(), overrun)
         });
         rprintln!(
-            "loop={} frame_delta={} err_delta={}",
+            "loop={} frame_delta={} err_delta={} overrun_delta={}",
             loop_n,
             frame.wrapping_sub(prev_frame),
             errs.wrapping_sub(prev_err),
+            overrun.wrapping_sub(prev_overrun),
         );
         prev_frame = frame;
         prev_err = errs;
+        prev_overrun = overrun;
 
-        wait_until(next_deadline);
+        wait_until(next_deadline, &mut consumer);
         next_deadline = next_deadline.wrapping_add(SYSTICK.raw());
     }
 }
@@ -174,14 +190,9 @@ fn EXTI0() {
         let mut hw_borrow = RX_HW.borrow(cs).borrow_mut();
         let hw = hw_borrow.as_mut().expect("RX_HW is not None");
         hw.pin.clear_interrupt_pending_bit();
-        if UART.borrow(cs).borrow_mut().on_falling_edge(ticks_10us()) {
-            // LPTIM is free-running; just open the gate so the LPTIM ISR
-            // starts feeding samples to the decoder. Phase relative to the
-            // start edge is uncontrolled (0..1 sample period), but at
-            // OVERSAMPLE=4 all four samples per bit still land inside the
-            // bit so majority voting is unaffected.
-            hw.rx_active = true;
-        }
+        // SoftUart flips its own `is_receiving` flag internally on a
+        // qualifying falling edge.
+        UART.borrow(cs).borrow_mut().on_falling_edge(ticks_10us());
     });
 }
 
@@ -191,12 +202,11 @@ fn LPTIM1() {
         let mut hw_borrow = RX_HW.borrow(cs).borrow_mut();
         let hw = hw_borrow.as_mut().expect("RX_HW is not None");
         hw.timer.ack();
-        if !hw.rx_active {
-            return;
-        }
-        let step = UART.borrow(cs).borrow_mut().on_sample(hw.pin.is_high());
-        if step == FrameStep::Complete {
-            hw.rx_active = false;
+        if let Some(b) = UART.borrow(cs).borrow_mut().on_sample(hw.pin.is_high())
+            && let Some(p) = RX_PRODUCER.borrow(cs).borrow_mut().as_mut()
+            && p.enqueue(b).is_err()
+        {
+            hw.overrun_count = hw.overrun_count.wrapping_add(1);
         }
     });
 }
