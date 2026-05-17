@@ -5,6 +5,7 @@ pub mod nvic;
 pub mod open_loop;
 pub mod panic;
 pub mod softuart;
+pub mod softuart_lptim1;
 pub mod softuart_tim2;
 pub mod tim1_motor_pwm;
 pub mod timer_ext;

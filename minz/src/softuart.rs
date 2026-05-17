@@ -4,8 +4,8 @@
 //! The pure state machine (`SoftUart<...>`, `FrameStep`) has no HAL deps —
 //! it's a hardware-agnostic decoder.
 //!
-//! The L4-specific glue (`SoftUartPin`, `BitSampleTimer`, `RxHw`) lives in
-//! the same module for convenience since the rest of `minz` is already
+//! The L4-specific glue (`SoftUartPin`, `IrqAck`, `RxHw`) lives in the
+//! same module for convenience since the rest of `minz` is already
 //! stm32l4xx-hal-bound. Binaries pick the concrete `P` and `T` via type
 //! aliases and the wiring code in `main`.
 //!
@@ -54,40 +54,48 @@ use crate::hal::prelude::*; // brings `InputPin` (digital::v2) into scope
 pub trait SoftUartPin: InputPin<Error = Infallible> + ExtiPin {}
 impl<T> SoftUartPin for T where T: InputPin<Error = Infallible> + ExtiPin {}
 
-/// What the soft-UART RX driver needs from its bit-sample timer. Binaries
-/// pick which `Timer<TIMx>` (or other type) plays this role; the only impl
-/// shipped in `minz` is for `Timer<TIM2>` (see `softuart_tim2.rs`).
-pub trait BitSampleTimer {
-    /// Re-arm the timer with `cnt` as the initial counter value. Impl is
-    /// expected to do whatever is needed atomically from the caller's POV —
-    /// typically pause + set CNT + clear pending flags + resume — so the
-    /// next update event fires `(ARR - cnt + 1)` ticks later. Used by the
-    /// EXTI ISR to seed half-period phase at a qualifying start bit.
-    fn reload(&mut self, cnt: u32);
-
-    /// Stop the counter until the next `reload`. Used by the bit-sample ISR
-    /// at the end of a frame.
-    fn pause(&mut self);
-
-    /// Clear the timer's update-event pending flag. Called at the top of the
-    /// bit-sample ISR. Concrete `Timer<TIM2>` exposes this as an inherent
-    /// HAL method which wins method resolution; generic `T: BitSampleTimer`
-    /// consumers reach the same operation through this trait method.
-    #[allow(dead_code)]
-    fn clear_update_interrupt_flag(&mut self);
+/// Tiny "ack the peripheral's pending IRQ flag" trait.
+///
+/// Neither `embedded-hal` nor `stm32l4xx-hal` defines a generic version of
+/// this even though every interrupt handler needs it — the register and
+/// bit are wildly per-peripheral, but the *operation* (clear the flag so
+/// the ISR doesn't immediately re-fire) is universal.
+///
+/// In this crate the soft-UART RX path uses it on its bit-sample timer:
+/// binaries wire that timer as always-running at `OVERSAMPLE × BAUD`,
+/// gate "are we currently receiving" with a software flag, and the ISR
+/// just needs to ack the timer flag on every entry. Constant WCET, no
+/// surprises when traffic starts/stops, and the trait stays portable
+/// across timer types that don't support pausing / CNT-phase tricks
+/// (e.g. LPTIM).
+pub trait IrqAck {
+    /// Clear the peripheral's pending interrupt flag.
+    fn ack(&mut self);
 }
 
 /// Pin + bit-sample timer pair owned by the binary and shared between the
 /// EXTI and TIM ISRs. Wrap in `Mutex<RefCell<Option<RxHw<P, T>>>>` for
 /// cross-ISR access.
-pub struct RxHw<P: SoftUartPin, T: BitSampleTimer> {
+///
+/// `rx_active` is the gate flag that says "are we currently in the middle
+/// of receiving a frame?" — EXTI flips it true on a qualifying start edge,
+/// the timer ISR flips it false on `FrameStep::Complete`. It lives here
+/// (not as a separate `AtomicBool`) because it's only ever touched while
+/// the caller already holds `&mut RxHw` inside `free(|cs| ...)`, so the
+/// critical section already serializes access.
+pub struct RxHw<P: SoftUartPin, T: IrqAck> {
     pub pin: P,
     pub timer: T,
+    pub rx_active: bool,
 }
 
-impl<P: SoftUartPin, T: BitSampleTimer> RxHw<P, T> {
+impl<P: SoftUartPin, T: IrqAck> RxHw<P, T> {
     pub const fn new(pin: P, timer: T) -> Self {
-        Self { pin, timer }
+        Self {
+            pin,
+            timer,
+            rx_active: false,
+        }
     }
 }
 
