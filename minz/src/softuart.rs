@@ -40,6 +40,8 @@
 
 use core::convert::Infallible;
 
+use heapless::spsc::Producer;
+
 use crate::hal::gpio::ExtiPin;
 // `stm32l4xx_hal::hal` is its re-export of `embedded-hal` 0.2 (see
 // `stm32l4xx-hal/src/lib.rs`: `pub use embedded_hal as hal;`). Going via
@@ -80,23 +82,14 @@ pub trait IrqAck {
 /// Pin + bit-sample timer pair owned by the binary and shared between the
 /// EXTI and TIM ISRs. Wrap in `Mutex<RefCell<Option<RxHw<P, T>>>>` for
 /// cross-ISR access.
-///
-/// `overrun_count` is bumped by the timer ISR when the caller's RX queue
-/// is full. Only touched with `&mut RxHw` held inside `free(|cs|)`, so no
-/// atomics are needed.
 pub struct RxHw<P: SoftUartPin, T: IrqAck> {
     pub pin: P,
     pub timer: T,
-    pub overrun_count: u32,
 }
 
 impl<P: SoftUartPin, T: IrqAck> RxHw<P, T> {
     pub const fn new(pin: P, timer: T) -> Self {
-        Self {
-            pin,
-            timer,
-            overrun_count: 0,
-        }
+        Self { pin, timer }
     }
 }
 
@@ -104,7 +97,14 @@ impl<P: SoftUartPin, T: IrqAck> RxHw<P, T> {
 // Pure decoder state machine
 // ---------------------------------------------------------------------------
 
-pub struct SoftUart<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize> {
+/// SoftUart owns the RX-byte queue producer half (the consumer stays in
+/// `main` for lock-free `dequeue`). The `'a` lifetime is the lifetime of
+/// the underlying queue's storage — usually `'static` when the queue is
+/// in a `static mut`. Lifting it as a parameter avoids hardcoding to one
+/// queue layout while keeping the API trivial: callers feed every sample
+/// blindly into [`on_sample`] and SoftUart enqueues internally when a
+/// byte is ready.
+pub struct SoftUart<'a, const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize> {
     bit_index: u32,
     oversample_idx: u32,
     accum: u32,
@@ -112,17 +112,18 @@ pub struct SoftUart<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize
     last_edge_ticks: u32,
     framing_errors: u32,
     frame_count: u32,
-    /// True iff we're currently sampling the middle of a frame. Set true
-    /// when `on_falling_edge` qualifies a start bit; set false when the
-    /// frame finishes (success or framing error). Lets callers feed every
-    /// timer-ISR sample blindly into [`on_sample`] without an external
-    /// "are we receiving" gate flag — when this is false `on_sample` is a
-    /// cheap no-op that returns `None`.
+    overrun_count: u32,
+    /// See [`Self::on_falling_edge`] / [`Self::on_sample`]. When false the
+    /// timer ISR's blind `on_sample` calls return immediately.
     is_receiving: bool,
+    /// Producer half of the caller's SPSC RX queue. SoftUart pushes
+    /// decoded bytes here; the consumer half lives in `main` and is
+    /// drained lock-free.
+    producer: Producer<'a, u8>,
 }
 
-impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
-    SoftUart<BAUD, TICK_HZ, OVERSAMPLE>
+impl<'a, const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
+    SoftUart<'a, BAUD, TICK_HZ, OVERSAMPLE>
 {
     /// 12 bit times in ticks of `TICK_HZ`. A falling edge that arrives at
     /// least this long after the previous falling edge is treated as the
@@ -132,7 +133,11 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
     /// no-edge stretch (e.g. data `0xFF`), with margin.
     pub const FRAME_GAP_TICKS: u32 = (12 * TICK_HZ).div_ceil(BAUD);
 
-    pub const fn new() -> Self {
+    /// Build a SoftUart from the producer half of a caller-owned SPSC
+    /// queue. Not `const fn` because `producer` is constructed at runtime
+    /// from `Queue::split()` — store the result in
+    /// `Mutex<RefCell<Option<SoftUart<...>>>>` and initialize once in main.
+    pub fn new(producer: Producer<'a, u8>) -> Self {
         Self {
             bit_index: 0,
             oversample_idx: 0,
@@ -141,7 +146,9 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
             last_edge_ticks: 0,
             framing_errors: 0,
             frame_count: 0,
+            overrun_count: 0,
             is_receiving: false,
+            producer,
         }
     }
 
@@ -162,23 +169,19 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
         }
     }
 
-    /// Feed one bit-sample-time pin read into the decoder. Returns
-    /// `Some(byte)` when a clean byte has been decoded this call, and
-    /// `None` otherwise — either we're in the middle of a frame, between
-    /// frames, or the frame just ended with a framing error (in which
-    /// case the internal `framing_errors` counter is incremented and the
-    /// decoder is ready for the next start edge).
-    ///
-    /// Callers can blindly feed every timer-ISR sample in; this method is
-    /// a cheap no-op until `on_falling_edge` qualifies a start.
-    pub fn on_sample(&mut self, pin_high: bool) -> Option<u8> {
+    /// Feed one bit-sample-time pin read into the decoder. Cheap no-op
+    /// until `on_falling_edge` qualifies a start, after which it walks
+    /// the bit-shift state machine and pushes the decoded byte to the
+    /// caller's RX queue on success. Bumps `framing_errors` on a bad
+    /// start/stop bit and `overrun_count` if the queue is full.
+    pub fn on_sample(&mut self, pin_high: bool) {
         if !self.is_receiving {
-            return None;
+            return;
         }
         self.accum += pin_high as u32;
         self.oversample_idx += 1;
         if (self.oversample_idx as usize) < OVERSAMPLE {
-            return None;
+            return;
         }
         // Bit complete — majority vote across OVERSAMPLE samples.
         let bit: u8 = if (self.accum as usize) * 2 >= OVERSAMPLE {
@@ -195,7 +198,7 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
                     self.framing_errors = self.framing_errors.wrapping_add(1);
                     self.reset_decoder();
                     self.is_receiving = false;
-                    return None;
+                    return;
                 }
             }
             1..=8 => {
@@ -207,15 +210,16 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
                 self.reset_decoder();
                 self.is_receiving = false;
                 if stop_ok {
-                    return Some(byte);
+                    if self.producer.enqueue(byte).is_err() {
+                        self.overrun_count = self.overrun_count.wrapping_add(1);
+                    }
                 } else {
                     self.framing_errors = self.framing_errors.wrapping_add(1);
-                    return None;
                 }
+                return;
             }
         }
         self.bit_index += 1;
-        None
     }
 
     fn reset_decoder(&mut self) {
@@ -232,12 +236,10 @@ impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
     pub fn frame_count(&self) -> u32 {
         self.frame_count
     }
-}
 
-impl<const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize> Default
-    for SoftUart<BAUD, TICK_HZ, OVERSAMPLE>
-{
-    fn default() -> Self {
-        Self::new()
+    /// Bytes the decoder produced but couldn't push because the caller's
+    /// RX queue was full.
+    pub fn overrun_count(&self) -> u32 {
+        self.overrun_count
     }
 }

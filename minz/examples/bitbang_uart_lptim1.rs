@@ -23,7 +23,7 @@ use cortex_m::interrupt::{Mutex, free};
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::{entry, exception};
 use fugit::HertzU32 as Hertz;
-use heapless::spsc::{Consumer, Producer, Queue};
+use heapless::spsc::{Consumer, Queue};
 use minz::SYSTICK;
 use minz::board_init::{BoardInit, configure_systick, init};
 use minz::hal::gpio::gpioa::PA0;
@@ -42,9 +42,8 @@ const OVERSAMPLE: usize = 4;
 const SAMPLE: Hertz = Hertz::Hz(BAUD.raw() * OVERSAMPLE as u32); // 38400
 const RX_BUF_LEN: usize = 16;
 
-type Uart = SoftUart<{ BAUD.raw() }, { SYSTICK.raw() }, OVERSAMPLE>;
+type Uart = SoftUart<'static, { BAUD.raw() }, { SYSTICK.raw() }, OVERSAMPLE>;
 type RxQueue = Queue<u8, RX_BUF_LEN>;
-type RxProducer = Producer<'static, u8>;
 type RxConsumer = Consumer<'static, u8>;
 
 static TICKS_10US: AtomicU32 = AtomicU32::new(0);
@@ -53,9 +52,9 @@ type RxPin = PA0<Input<PullUp>>;
 type RxTimer = LowPowerTimer<LPTIM1>;
 
 static RX_HW: Mutex<RefCell<Option<RxHw<RxPin, RxTimer>>>> = Mutex::new(RefCell::new(None));
-static UART: Mutex<RefCell<Uart>> = Mutex::new(RefCell::new(SoftUart::new()));
-/// Producer half of the RX byte queue (Consumer is local to `main`).
-static RX_PRODUCER: Mutex<RefCell<Option<RxProducer>>> = Mutex::new(RefCell::new(None));
+/// SoftUart owns the producer half of the RX queue, so it can only be
+/// constructed at runtime after `Queue::split()`.
+static UART: Mutex<RefCell<Option<Uart>>> = Mutex::new(RefCell::new(None));
 
 fn ticks_10us() -> u32 {
     TICKS_10US.load(Ordering::Relaxed)
@@ -139,7 +138,7 @@ fn main() -> ! {
 
     free(|cs| {
         RX_HW.borrow(cs).replace(Some(RxHw::new(rx_pin, timer)));
-        RX_PRODUCER.borrow(cs).replace(Some(producer));
+        UART.borrow(cs).replace(Some(SoftUart::new(producer)));
     });
 
     // LPTIM1 runs continuously; the ISR also fires continuously but the
@@ -159,9 +158,9 @@ fn main() -> ! {
         loop_n = loop_n.wrapping_add(1);
         let (frame, errs, overrun) = free(|cs| {
             let uart = UART.borrow(cs).borrow();
-            let hw = RX_HW.borrow(cs).borrow();
-            let overrun = hw.as_ref().map_or(0, |h| h.overrun_count);
-            (uart.frame_count(), uart.framing_errors(), overrun)
+            uart.as_ref().map_or((0, 0, 0), |u| {
+                (u.frame_count(), u.framing_errors(), u.overrun_count())
+            })
         });
         rprintln!(
             "loop={} frame_delta={} err_delta={} overrun_delta={}",
@@ -190,9 +189,9 @@ fn EXTI0() {
         let mut hw_borrow = RX_HW.borrow(cs).borrow_mut();
         let hw = hw_borrow.as_mut().expect("RX_HW is not None");
         hw.pin.clear_interrupt_pending_bit();
-        // SoftUart flips its own `is_receiving` flag internally on a
-        // qualifying falling edge.
-        UART.borrow(cs).borrow_mut().on_falling_edge(ticks_10us());
+        if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+            uart.on_falling_edge(ticks_10us());
+        }
     });
 }
 
@@ -202,11 +201,8 @@ fn LPTIM1() {
         let mut hw_borrow = RX_HW.borrow(cs).borrow_mut();
         let hw = hw_borrow.as_mut().expect("RX_HW is not None");
         hw.timer.ack();
-        if let Some(b) = UART.borrow(cs).borrow_mut().on_sample(hw.pin.is_high())
-            && let Some(p) = RX_PRODUCER.borrow(cs).borrow_mut().as_mut()
-            && p.enqueue(b).is_err()
-        {
-            hw.overrun_count = hw.overrun_count.wrapping_add(1);
+        if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+            uart.on_sample(hw.pin.is_high());
         }
     });
 }
