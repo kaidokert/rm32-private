@@ -394,37 +394,6 @@ impl<LED: OutputPin> MainState<LED> {
             };
         }
 
-        // Low voltage cutoff
-        // Mode 1: per-cell threshold (cell_count * low_cell_volt_cutoff)
-        // Mode 2: absolute threshold (absolute_voltage_cutoff in 0.5V increments)
-        // Stepper sine (startup) uses fast 0.1s timeout; normal uses 10s
-        if self.config.low_voltage_cut_off != 0 {
-            let threshold = if self.config.low_voltage_cut_off == 2 {
-                // Absolute cutoff: EEPROM value in 0.5V increments → raw ADC-scale units
-                // C compares raw battery_voltage against raw EEPROM value directly,
-                // but both are in the same ADC-derived scale.
-                self.config.absolute_voltage_cutoff as u16
-            } else {
-                // Per-cell cutoff
-                self.cell_count as u16 * self.low_cell_volt_cutoff
-            };
-            if self.measurements.battery_voltage.0 < threshold && threshold > 0 {
-                self.protection.low_voltage_count += 1;
-            } else if !self.protection.low_voltage_cutoff {
-                self.protection.low_voltage_count = 0;
-            }
-            let lvc_limit = if shared.stepper_sine() {
-                LVC_STARTUP_THRESHOLD
-            } else {
-                LVC_NORMAL_THRESHOLD
-            };
-            if self.protection.low_voltage_count > lvc_limit {
-                self.protection.low_voltage_cutoff = true;
-                shared.request_isr_action(crate::shared_comm::IsrAction::AllOff);
-                shared.transition(crate::motor_mode::MotorEvent::Disarm);
-            }
-        }
-
         // Armed-transition detection stays at 20 kHz so we don't miss the
         // edge by up to 1 ms. battery_voltage used inside is updated by the
         // 1 kHz block below; on the first armed transition, battery_voltage
@@ -437,17 +406,22 @@ impl<LED: OutputPin> MainState<LED> {
         }
         self.last_armed = armed;
 
-        // 1 kHz dispatch: ADC + filtering + 3 PIDs. Matches AM32 main.c:1397
-        // and main.c:2010 — PID_LOOP_DIVIDER=20 means this block runs every
-        // 20th 20 kHz TIM6 tick = once per millisecond. Previously these all
-        // ran at 20 kHz (20× AM32 rate) which consumed ~700 cyc per period
-        // for no benefit — filtered values were over-sampled, PID integrals
-        // accumulated 20× too fast. See RATE_DIVERGENCE_REPORT.md.
+        // 1 kHz dispatch: ADC + 3 PIDs + LVC. Matches AM32 main.c:2010-2081
+        // (the PROCESS_ADC_FLAG block) plus the PID block at main.c:1397.
+        // PID_LOOP_DIVIDER=20 means this block runs every 20th 20 kHz TIM6
+        // tick = once per millisecond. Previously these all ran at 20 kHz
+        // (20× AM32 rate); see RATE_DIVERGENCE_REPORT.md.
         //
         // Counter increment lives in `ten_khz_tick` (TIM6 ISR), matching
         // AM32 main.c:1317. Main reads + resets here. This way the 1 kHz
         // rate is correct regardless of main-loop iteration rate (no longer
         // gated by wfi — matches AM32's spinning while(1) at main.c:1843).
+        //
+        // NOT in this block (matches AM32, which runs them every main iter
+        // OUTSIDE the PROCESS_ADC_FLAG block): duty_ceiling (main.c:2096),
+        // filter_level (main.c:2112), auto_advance (main.c:2121),
+        // min_bemf_counts (main.c:1862), variable_pwm (main.c:1877). They
+        // run at our main-loop rate (~75 kHz post-wfi-removal).
         if shared.one_khz_counter_check_and_reset(crate::constants::PID_LOOP_DIVIDER) {
             // ADC measurements — typed conversions via AdcCount
             let smoothed_v = AdcCount(self.measurements.voltage_filter.update(adc.raw_voltage()));
@@ -466,6 +440,35 @@ impl<LED: OutputPin> MainState<LED> {
             shared.set_actual_current(self.measurements.actual_current.0);
             shared.set_battery_voltage(self.measurements.battery_voltage.0);
             shared.set_degrees_celsius(self.measurements.degrees_celsius.0);
+
+            // Low voltage cutoff (AM32 main.c:2045-2071). Counter increments
+            // at 1 kHz now → LVC_NORMAL_THRESHOLD=10000 = 10 sec sustained
+            // low voltage (was previously 10000/20kHz = 0.5 sec — 20× faster
+            // than AM32 design).
+            // Mode 1: per-cell threshold (cell_count * low_cell_volt_cutoff)
+            // Mode 2: absolute threshold (absolute_voltage_cutoff in 0.5V)
+            if self.config.low_voltage_cut_off != 0 {
+                let threshold = if self.config.low_voltage_cut_off == 2 {
+                    self.config.absolute_voltage_cutoff as u16
+                } else {
+                    self.cell_count as u16 * self.low_cell_volt_cutoff
+                };
+                if self.measurements.battery_voltage.0 < threshold && threshold > 0 {
+                    self.protection.low_voltage_count += 1;
+                } else if !self.protection.low_voltage_cutoff {
+                    self.protection.low_voltage_count = 0;
+                }
+                let lvc_limit = if shared.stepper_sine() {
+                    LVC_STARTUP_THRESHOLD
+                } else {
+                    LVC_NORMAL_THRESHOLD
+                };
+                if self.protection.low_voltage_count > lvc_limit {
+                    self.protection.low_voltage_cutoff = true;
+                    shared.request_isr_action(crate::shared_comm::IsrAction::AllOff);
+                    shared.transition(crate::motor_mode::MotorEvent::Disarm);
+                }
+            }
 
             // Stall protection PID — boosts duty at low RPM for crawlers/RC cars
             if self.config.stall_protection != 0 && shared.running() {
@@ -757,6 +760,11 @@ mod tests {
         main.set_battery_voltage(crate::units::MilliVolts(500));
         // Pre-fill count near threshold
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
+        // LVC now runs inside the 1 kHz block — tick the counter past
+        // PID_LOOP_DIVIDER so the block fires this tick.
+        for _ in 0..=crate::constants::PID_LOOP_DIVIDER {
+            shared.one_khz_counter_inc();
+        }
 
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
@@ -809,6 +817,11 @@ mod tests {
         main.cell_count = 0; // no cells — doesn't matter for mode 2
         main.set_battery_voltage(crate::units::MilliVolts(50)); // below threshold
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
+        // LVC now runs inside the 1 kHz block — tick the counter past
+        // PID_LOOP_DIVIDER so the block fires this tick.
+        for _ in 0..=crate::constants::PID_LOOP_DIVIDER {
+            shared.one_khz_counter_inc();
+        }
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
         // Mode 2: battery (50) < absolute_voltage_cutoff (100) → LVC triggers

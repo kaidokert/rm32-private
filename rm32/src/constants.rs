@@ -54,12 +54,16 @@ pub const SERVO_CENTER: u16 = 1000;
 pub const BIDIR_MIDPOINT: u16 = 1048;
 
 /// Low voltage cutoff counter threshold (normal mode).
-/// At 10kHz main loop rate: 10000 counts = 1.0 second sustained low voltage.
+/// Counter increments at 1 kHz (inside the PID_LOOP_DIVIDER block); 10000
+/// counts = 10 sec sustained low voltage before cutoff. Matches AM32's
+/// threshold at main.c:2063.
 pub const LVC_NORMAL_THRESHOLD: u16 = 10000;
 
 /// Low voltage cutoff counter threshold during stepper_sine startup.
-/// Fast cutoff (0.1s) to protect batteries under heavy startup current draw.
-pub const LVC_STARTUP_THRESHOLD: u16 = 1000;
+/// At 1 kHz: 100 counts = 0.1 sec — fast cutoff to protect batteries under
+/// heavy startup current draw. AM32's stepper_sine override at main.c:2063
+/// uses `(10000 - (stepper_sine * 9900))` = 100.
+pub const LVC_STARTUP_THRESHOLD: u16 = 100;
 
 /// Desync recovery: average_interval is reset to this value (5ms between commutations).
 /// Provides a safe slow-speed starting point after desync event.

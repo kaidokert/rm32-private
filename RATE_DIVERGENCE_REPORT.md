@@ -64,7 +64,8 @@ No `if (...)` gate. Every call lives at the top level of `main_state.tick`, whic
 |---|---|---|---|
 | ADC reads + 3× IIR filter + unit conv + 3 atomic publish | ~400 | 20 kHz | 1 kHz |
 | Stall + current + speed PIDs (3 PID ticks) | ~300 | 20 kHz | 1 kHz |
-| `duty_ceiling()` + dynamic `filter_level` map + `auto_advance` map + `min_bemf_counts` | ~150 | 20 kHz | 1 kHz |
+| LVC counter increment + threshold check | ~50 | 20 kHz | 1 kHz |
+| `duty_ceiling()` + dynamic `filter_level` map + `auto_advance` map + `min_bemf_counts` | ~150 | 20 kHz | every main iter (correct after wfi removal) |
 | `adjust_irq_priorities` (3× NVIC IPR writes) | ~50 | 20 kHz | on state change |
 | `process_input` + BEMF housekeeping + signal_timeout + stall detect + desync | ~300 | 20 kHz | 20 kHz (correct) |
 | LED blink + watchdog reload | ~100 | 20 kHz | 20 kHz (correct) |
@@ -75,14 +76,18 @@ No `if (...)` gate. Every call lives at the top level of `main_state.tick`, whic
 
 Note: cycle attribution is estimated by inspection. The aggregate `main_last_cyc = 1390` is DWT-measured; the row-by-row breakdown is not separately bracketed.
 
+**Correction to the original report**: an earlier version of this table incorrectly listed `duty_ceiling`, `filter_level`, `auto_advance`, and `min_bemf_counts` as belonging in the 1 kHz block. On closer reading of `main.c:2010-2123`, only ADC + LVC + the 3 PIDs (`main.c:1397-1434`) are inside `PROCESS_ADC_FLAG`; the rest run every main iter in AM32 (outside the gate). Post-wfi-removal our main runs at ~75 kHz, which matches AM32's "every main iter" pattern. LVC moved into the 1 kHz block as a follow-up; the rest stay where they are.
+
 ## Fix
 
-1. Add `one_khz_counter: u8` field on `MainState` (or `u16` to match AM32's int).
-2. In `main_state.tick`, wrap the ADC + PID + `duty_ceiling` + `filter_level` + `auto_advance` + `min_bemf_counts` blocks in `if self.one_khz_counter >= 20 { ... self.one_khz_counter = 0; } else { self.one_khz_counter += 1; }`.
-3. Keep at 20 kHz: `process_input`, BEMF timeout housekeeping, stall detection, desync detection, signal_timeout, LED blink, `consumed_current` accumulation. These are what AM32 also runs at 20 kHz.
-4. Move `adjust_irq_priorities` out of the main loop entirely — call only on commutation_interval state transitions, not every iter. (It writes NVIC IPR every iter even when nothing changed.)
+1. Add an atomic `one_khz_counter` on `SharedState` (matches AM32's `uint16_t one_khz_loop_counter` — global, accessed from both ISR and main).
+2. Increment in `ten_khz_tick` (TIM6 ISR), matching AM32's `main.c:1317`.
+3. In `main_state.tick`, gate the ADC + 3 PID + LVC blocks behind `if shared.one_khz_counter_check_and_reset(PID_LOOP_DIVIDER) { ... }`. `PID_LOOP_DIVIDER = 20` (AM32's `targets.h:5318`).
+4. Keep at 20 kHz (every main iter): `process_input`, BEMF timeout housekeeping, stall detection, desync detection, signal_timeout, LED blink, `consumed_current` accumulation, `duty_ceiling`, `filter_level`, `auto_advance`, `min_bemf_counts`, `variable_pwm`. These are all what AM32 also runs every main iter (some inside `if(stepper_sine == 0)` outside the `PROCESS_ADC_FLAG` gate).
+5. Remove `wfi()` from main loop to match AM32's spinning `while(1)` (separate concern, but tangled — see commit `5b69dc6`).
+6. (Future) Move `adjust_irq_priorities` out of every-iter — call only on commutation_interval state transitions, not every iter. It writes NVIC IPR every iter even when nothing changed.
 
-Verification target: `main_last_cyc` should drop to ~600–700 cyc / ~7–9 µs typical, with a once-per-20-iters spike to ~1400 cyc / ~17 µs on the iter that runs the 1 kHz block. Aggregate CPU utilization on main side drops from ~35% to ~14%.
+Verification: `main_last_cyc` drops from ~1390 to ~1000-1100 cyc per iter (savings: ADC + 3 PIDs + LVC ≈ 300 cyc/iter on the 19-of-20 skip iters). The 1-in-20 "work iter" runs the gated block plus everything else (~1400 cyc), so the average across iters is ~1050 cyc.
 
 ## How this slipped through testing
 
