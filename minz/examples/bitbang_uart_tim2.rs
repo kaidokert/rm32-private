@@ -27,7 +27,7 @@ use minz::hal::prelude::*;
 use minz::hal::stm32;
 use minz::hal::stm32::Interrupt;
 use minz::hal::timer::{Event, Timer};
-use minz::softuart::{IrqAck, RxHw, SoftUart};
+use minz::softuart::{IrqAck, Rx, SoftUart};
 use portable_atomic::{AtomicU32, Ordering};
 use rtt_target::rprintln;
 
@@ -46,12 +46,9 @@ static TICKS_10US: AtomicU32 = AtomicU32::new(0);
 
 type RxPin = PA0<Input<PullUp>>;
 type RxTimer = Timer<TIM2>;
+type RxBundle = Rx<RxPin, RxTimer, Uart>;
 
-static RX_HW: Mutex<RefCell<Option<RxHw<RxPin, RxTimer>>>> = Mutex::new(RefCell::new(None));
-/// SoftUart owns the producer half of the RX queue, so it can only be
-/// constructed at runtime after `Queue::split()`. Lives behind `Option`
-/// here just like `RX_HW` does.
-static UART: Mutex<RefCell<Option<Uart>>> = Mutex::new(RefCell::new(None));
+static RX: Mutex<RefCell<Option<RxBundle>>> = Mutex::new(RefCell::new(None));
 
 fn ticks_10us() -> u32 {
     TICKS_10US.load(Ordering::Relaxed)
@@ -76,6 +73,7 @@ fn wait_until(deadline: u32, rx: &mut RxConsumer) {
 
 #[entry]
 fn main() -> ! {
+    static mut RX_QUEUE: RxQueue = Queue::new();
     let cp = cortex_m::Peripherals::take().unwrap();
     let mut dp = stm32::Peripherals::take().unwrap();
     let BoardInit {
@@ -112,20 +110,17 @@ fn main() -> ! {
     rx_pin.enable_interrupt(&mut dp.EXTI);
 
     // TIM2 runs continuously at SAMPLE rate (no pause/resume). The ISR
-    // is gated by RX_ACTIVE so it does nothing between frames — constant
-    // WCET, no surprises when traffic starts/stops.
+    // is gated by SoftUart's internal `is_receiving` flag so it does
+    // nothing between frames — constant WCET, no surprises when traffic
+    // starts/stops.
     let mut timer = Timer::tim2(dp.TIM2, SAMPLE, clocks, &mut apb1r1);
     timer.clear_update_interrupt_flag();
     timer.listen(Event::TimeOut);
-    // Static SPSC RX queue. `Queue::new()` is const, but `split` needs
-    // `&mut`, so the queue lives in a `static mut` and is split exactly
-    // once here.
-    static mut RX_QUEUE: RxQueue = Queue::new();
-    let (producer, mut consumer) = unsafe { (&mut *core::ptr::addr_of_mut!(RX_QUEUE)).split() };
+    let (producer, mut consumer) = RX_QUEUE.split();
 
     free(|cs| {
-        RX_HW.borrow(cs).replace(Some(RxHw::new(rx_pin, timer)));
-        UART.borrow(cs).replace(Some(SoftUart::new(producer)));
+        RX.borrow(cs)
+            .replace(Some(Rx::new(rx_pin, timer, SoftUart::new(producer))));
     });
 
     unsafe {
@@ -142,9 +137,13 @@ fn main() -> ! {
     loop {
         loop_n = loop_n.wrapping_add(1);
         let (frame, errs, overrun) = free(|cs| {
-            let uart = UART.borrow(cs).borrow();
-            uart.as_ref().map_or((0, 0, 0), |u| {
-                (u.frame_count(), u.framing_errors(), u.overrun_count())
+            let rx = RX.borrow(cs).borrow();
+            rx.as_ref().map_or((0, 0, 0), |r| {
+                (
+                    r.uart.frame_count(),
+                    r.uart.framing_errors(),
+                    r.uart.overrun_count(),
+                )
             })
         });
         rprintln!(
@@ -171,23 +170,19 @@ fn SysTick() {
 #[interrupt]
 fn EXTI0() {
     free(|cs| {
-        let mut hw_borrow = RX_HW.borrow(cs).borrow_mut();
-        let hw = hw_borrow.as_mut().expect("RX_HW is not None");
-        hw.pin.clear_interrupt_pending_bit();
-        if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-            uart.on_falling_edge(ticks_10us());
-        }
+        let mut rx_borrow = RX.borrow(cs).borrow_mut();
+        let rx = rx_borrow.as_mut().expect("RX is None");
+        rx.pin.clear_interrupt_pending_bit();
+        rx.uart.on_falling_edge(ticks_10us());
     });
 }
 
 #[interrupt]
 fn TIM2() {
     free(|cs| {
-        let mut hw_borrow = RX_HW.borrow(cs).borrow_mut();
-        let hw = hw_borrow.as_mut().expect("RX_HW is not None");
-        hw.timer.ack();
-        if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-            uart.on_sample(hw.pin.is_high());
-        }
+        let mut rx_borrow = RX.borrow(cs).borrow_mut();
+        let rx = rx_borrow.as_mut().expect("RX is None");
+        rx.timer.ack();
+        rx.uart.on_sample(rx.pin.is_high());
     });
 }

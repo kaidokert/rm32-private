@@ -4,10 +4,10 @@
 //! The pure state machine (`SoftUart<...>`, `FrameStep`) has no HAL deps —
 //! it's a hardware-agnostic decoder.
 //!
-//! The L4-specific glue (`SoftUartPin`, `IrqAck`, `RxHw`) lives in the
-//! same module for convenience since the rest of `minz` is already
-//! stm32l4xx-hal-bound. Binaries pick the concrete `P` and `T` via type
-//! aliases and the wiring code in `main`.
+//! The L4-specific glue (`SoftUartPin`, `IrqAck`, `Rx`) lives in the same
+//! module for convenience since the rest of `minz` is already
+//! stm32l4xx-hal-bound. Binaries pick the concrete `P` / `T` / `U` via
+//! type aliases and the wiring code in `main`.
 //!
 //! The driver is split into two callback entry points and a poll API:
 //!
@@ -79,17 +79,28 @@ pub trait IrqAck {
     fn ack(&mut self);
 }
 
-/// Pin + bit-sample timer pair owned by the binary and shared between the
-/// EXTI and TIM ISRs. Wrap in `Mutex<RefCell<Option<RxHw<P, T>>>>` for
-/// cross-ISR access.
-pub struct RxHw<P: SoftUartPin, T: IrqAck> {
+/// Bundle of the three things an EXTI / bit-sample ISR pair needs to
+/// share: the RX pin, the sample timer, and the [`SoftUart`] decoder
+/// itself. Wrap in `Mutex<RefCell<Option<Rx<P, T, U>>>>` for cross-ISR
+/// access — both ISRs always borrow all three together, so collapsing
+/// them avoids two `borrow_mut()` calls per ISR entry and lets the
+/// sample call read pin and write uart in one disjoint-field borrow
+/// (`rx.uart.on_sample(rx.pin.is_high())`).
+///
+/// No trait bounds on the type parameters: the struct itself only holds
+/// the fields, and the calls that actually require [`SoftUartPin`] /
+/// [`IrqAck`] happen at the binding's use site where the concrete types
+/// are known. Keeps the type signature minimal at the static-declaration
+/// position.
+pub struct Rx<P, T, U> {
     pub pin: P,
     pub timer: T,
+    pub uart: U,
 }
 
-impl<P: SoftUartPin, T: IrqAck> RxHw<P, T> {
-    pub const fn new(pin: P, timer: T) -> Self {
-        Self { pin, timer }
+impl<P, T, U> Rx<P, T, U> {
+    pub const fn new(pin: P, timer: T, uart: U) -> Self {
+        Self { pin, timer, uart }
     }
 }
 
