@@ -2,67 +2,37 @@
 #![no_main]
 
 use cortex_m_rt::entry;
+use minz::SYSCLK;
+use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
+use minz::hal;
 use minz::hal::time::MonoTimer;
-use minz::hal::{self, prelude::*};
 use minz::open_loop::{self, OPEN_LOOP_STEP_CYCLES, Waveform};
 use minz::tim1_motor_pwm::{self, max_duty};
-use minz::{SYSCLK_HZ, panic};
 use rtt_target::rprintln;
-
-// PB1  = LIN1  (TIM1_CH3N)   phase C low
-// PA10 = HIN1  (TIM1_CH3)    phase C high
-// PB0  = LIN2  (TIM1_CH2N)   phase B low
-// PA9  = HIN2  (TIM1_CH2)    phase B high
-// PA7  = LIN3  (TIM1_CH1N)   phase A low
-// PA8  = HIN3  (TIM1_CH1)    phase A high
 
 /// Peak-to-peak swing as % of ARR (centered sine). Start low — open-loop slip heats fast.
 const AMPLITUDE_PCT: u16 = 12;
 
 #[entry]
 fn main() -> ! {
-    let mut cp = cortex_m::Peripherals::take().unwrap();
+    let cp = cortex_m::Peripherals::take().unwrap();
     let dp = hal::stm32::Peripherals::take().unwrap();
-
-    let mut flash = dp.FLASH.constrain();
-    let mut rcc = dp.RCC.constrain();
-    let mut pwr = dp.PWR.constrain(&mut rcc.apb1r1);
-    let clocks = rcc
-        .cfgr
-        .sysclk(SYSCLK_HZ.Hz())
-        .freeze(&mut flash.acr, &mut pwr);
-
-    panic::ensure_rtt();
+    let BoardInit {
+        mut cp,
+        clocks,
+        mut ahb2,
+        mut apb2,
+        ..
+    } = init(cp, dp.FLASH, dp.RCC, dp.PWR);
     rprintln!(
         "open-loop: {} MHz, TIM1 {} kHz, {} Hz elec, sine 120°",
-        SYSCLK_HZ / 1_000_000,
+        SYSCLK.to_MHz(),
         minz::PWM_FREQUENCY_HZ / 1000,
         open_loop::OPEN_LOOP_ELECTRICAL_HZ,
     );
 
-    let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
-    let mut gpiob = dp.GPIOB.split(&mut rcc.ahb2);
-    let _lin1 = gpiob
-        .pb1
-        .into_alternate::<1>(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
-    let _hin1 =
-        gpioa
-            .pa10
-            .into_alternate::<1>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrh);
-    let _lin2 = gpiob
-        .pb0
-        .into_alternate::<1>(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
-    let _hin2 = gpioa
-        .pa9
-        .into_alternate::<1>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrh);
-    let _lin3 = gpioa
-        .pa7
-        .into_alternate::<1>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrl);
-    let _hin3 = gpioa
-        .pa8
-        .into_alternate::<1>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrh);
-
-    tim1_motor_pwm::init(dp.TIM1, &mut rcc.apb2);
+    configure_motor_pwm_pins(dp.GPIOA, dp.GPIOB, &mut ahb2);
+    tim1_motor_pwm::init(dp.TIM1, &mut apb2);
 
     cp.DCB.enable_trace();
     let mono = MonoTimer::new(cp.DWT, clocks);

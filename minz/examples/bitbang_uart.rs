@@ -17,6 +17,7 @@ use cortex_m::interrupt::{Mutex, free};
 use cortex_m::peripheral::{NVIC, syst::SystClkSource};
 use cortex_m_rt::{entry, exception};
 use fugit::HertzU32 as Hertz;
+use minz::board_init::{BoardInit, init};
 use minz::hal::gpio::gpioa::PA0;
 use minz::hal::gpio::{Edge, ExtiPin, Input, PullUp};
 use minz::hal::pac::{TIM2, interrupt};
@@ -24,19 +25,17 @@ use minz::hal::prelude::*;
 use minz::hal::stm32;
 use minz::hal::stm32::Interrupt;
 use minz::hal::timer::{Event, Timer};
-use minz::panic;
 use minz::softuart::{BitSampleTimer, FrameStep, RxHw, SoftUart};
+use minz::{SYSCLK, SYSTICK};
 use portable_atomic::{AtomicU32, Ordering};
 use rtt_target::rprintln;
 
 const BAUD: Hertz = Hertz::Hz(9600);
 const OVERSAMPLE: usize = 4;
 const SAMPLE: Hertz = Hertz::Hz(BAUD.raw() * OVERSAMPLE as u32); // 38400
-const SYSCLK: Hertz = Hertz::MHz(80);
-const TICK: Hertz = Hertz::kHz(100); // SysTick = 10 µs / tick
 const RX_BUF_LEN: usize = 16;
 
-type Uart = SoftUart<{ BAUD.raw() }, { TICK.raw() }, OVERSAMPLE, RX_BUF_LEN>;
+type Uart = SoftUart<{ BAUD.raw() }, { SYSTICK.raw() }, OVERSAMPLE, RX_BUF_LEN>;
 
 static TICKS_10US: AtomicU32 = AtomicU32::new(0);
 
@@ -69,14 +68,14 @@ fn wait_until(deadline: u32) {
 fn main() -> ! {
     let cp = cortex_m::Peripherals::take().unwrap();
     let mut dp = stm32::Peripherals::take().unwrap();
-
-    let mut flash = dp.FLASH.constrain();
-    let mut rcc = dp.RCC.constrain();
-    let mut pwr = dp.PWR.constrain(&mut rcc.apb1r1);
-
-    let clocks = rcc.cfgr.sysclk(SYSCLK).freeze(&mut flash.acr, &mut pwr);
-
-    panic::ensure_rtt();
+    let BoardInit {
+        cp,
+        clocks,
+        mut ahb2,
+        mut apb1r1,
+        mut apb2,
+        ..
+    } = init(cp, dp.FLASH, dp.RCC, dp.PWR);
     rprintln!(
         "bitbang_uart_decode_hal: PA0 RX, TIM2 @ {} Hz ({}x {} baud), FRAME_GAP_TICKS={}",
         SAMPLE.raw(),
@@ -91,23 +90,23 @@ fn main() -> ! {
         clocks.pclk1().raw(),
     );
 
-    let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
+    let mut gpioa = dp.GPIOA.split(&mut ahb2);
     let mut rx_pin = gpioa
         .pa0
         .into_pull_up_input(&mut gpioa.moder, &mut gpioa.pupdr);
 
-    rx_pin.make_interrupt_source(&mut dp.SYSCFG, &mut rcc.apb2);
+    rx_pin.make_interrupt_source(&mut dp.SYSCFG, &mut apb2);
     rx_pin.trigger_on_edge(&mut dp.EXTI, Edge::Falling);
     rx_pin.enable_interrupt(&mut dp.EXTI);
 
-    let mut timer = Timer::tim2(dp.TIM2, SAMPLE, clocks, &mut rcc.apb1r1);
+    let mut timer = Timer::tim2(dp.TIM2, SAMPLE, clocks, &mut apb1r1);
     timer.clear_update_interrupt_flag();
     timer.listen(Event::TimeOut);
     timer.pause(); // EXTI ISR turns it back on at the right phase.
 
     let mut syst = cp.SYST;
     syst.set_clock_source(SystClkSource::Core);
-    syst.set_reload(clocks.hclk().raw() / TICK.raw() - 1);
+    syst.set_reload(clocks.hclk().raw() / SYSTICK.raw() - 1);
     syst.clear_current();
     syst.enable_interrupt();
     syst.enable_counter();
@@ -125,7 +124,7 @@ fn main() -> ! {
     let mut loop_n: u32 = 0;
     let mut prev_frame: u32 = 0;
     let mut prev_err: u32 = 0;
-    let mut next_deadline = ticks_10us().wrapping_add(TICK.raw());
+    let mut next_deadline = ticks_10us().wrapping_add(SYSTICK.raw());
     loop {
         loop_n = loop_n.wrapping_add(1);
         let (frame, errs) = free(|cs| {
@@ -142,7 +141,7 @@ fn main() -> ! {
         prev_err = errs;
 
         wait_until(next_deadline);
-        next_deadline = next_deadline.wrapping_add(TICK.raw());
+        next_deadline = next_deadline.wrapping_add(SYSTICK.raw());
     }
 }
 

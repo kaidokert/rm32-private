@@ -1,6 +1,6 @@
 //! Open-loop three-phase waveforms (120° apart) for bench motor spin-up.
 
-use crate::SYSCLK_HZ;
+use crate::SYSCLK;
 
 /// Electrical frequency for `open_loop_step_cycles` (Hz). Keep low open-loop to limit slip loss.
 pub const OPEN_LOOP_ELECTRICAL_HZ: u32 = 60;
@@ -10,7 +10,7 @@ pub const OPEN_LOOP_STEPS_PER_REV: u32 = 360;
 
 /// DWT cycles between angle steps at `OPEN_LOOP_ELECTRICAL_HZ`.
 pub const OPEN_LOOP_STEP_CYCLES: u32 =
-    SYSCLK_HZ / (OPEN_LOOP_ELECTRICAL_HZ * OPEN_LOOP_STEPS_PER_REV);
+    SYSCLK.raw() / (OPEN_LOOP_ELECTRICAL_HZ * OPEN_LOOP_STEPS_PER_REV);
 
 /// 360-entry sine table (0–360° → 0–360 duty units). Matches AM32 / rm32 `pwmSin[]`.
 static PWM_SIN: [i16; 360] = [
@@ -56,7 +56,7 @@ pub fn advance_angle(angle: u16, forward: bool) -> u16 {
 #[inline]
 fn table_duty(table_val: i16, arr: u16, amplitude_pct: u16) -> u16 {
     let half = arr as u32 * amplitude_pct as u32 / 100 / 2;
-    let centered = (table_val as i32 - 180) as i32 * half as i32 / 180;
+    let centered = (table_val as i32 - 180) * half as i32 / 180;
     (half as i32 + centered).clamp(0, arr as i32) as u16
 }
 
