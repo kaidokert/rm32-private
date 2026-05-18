@@ -38,17 +38,21 @@ fn main() -> ! {
         clocks.pclk2().raw(),
     );
 
+    // Half-duplex USART1: PB6 only, AF7 open-drain + internal pull-up.
+    // Frees PB7 for other uses (analog / comparator). Half-duplex
+    // needs the line idle-high — the pull-up keeps it there when
+    // the L431 isn't actively driving a start bit.
     let mut gpiob = dp.GPIOB.split(&mut rcc.ahb2);
-    let tx = gpiob
-        .pb6
-        .into_alternate(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
-    let rx = gpiob
-        .pb7
-        .into_alternate(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
+    let mut tx = gpiob.pb6.into_alternate_open_drain::<7>(
+        &mut gpiob.moder,
+        &mut gpiob.otyper,
+        &mut gpiob.afrl,
+    );
+    tx.internal_pull_up(&mut gpiob.pupdr, true);
 
     let serial = Serial::usart1(
         dp.USART1,
-        (tx, rx),
+        (tx,),
         Config::default().baudrate(9_600.bps()),
         clocks,
         &mut rcc.apb2,

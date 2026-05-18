@@ -245,17 +245,24 @@ fn main() -> ! {
         &mut gpiob.afrl,
     );
 
-    // USART1 TX/RX on PB6/PB7 (alternate function). We only use TX, but
-    // the HAL's `Serial::usart1` wants both pins.
-    let usart_tx = gpiob
-        .pb6
-        .into_alternate(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
-    let usart_rx = gpiob
-        .pb7
-        .into_alternate(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
+    // USART1 in half-duplex mode: PB6 only, open-drain alternate
+    // function. The HAL's `Serial::usart1` accepts a 1-tuple `(tx,)`
+    // when `tx` implements `TxHalfDuplexPin` (= AF + OpenDrain), so
+    // PB7 stays unclaimed and is available for the COMP2 INM input.
+    //
+    // Internal pull-up is enabled because half-duplex relies on the
+    // line idling high — the L431 only drives it low for start bits.
+    // Most USB-TTL adapters also have an internal pull-up on RX, but
+    // this keeps it working without that assumption.
+    let mut usart_tx = gpiob.pb6.into_alternate_open_drain::<7>(
+        &mut gpiob.moder,
+        &mut gpiob.otyper,
+        &mut gpiob.afrl,
+    );
+    usart_tx.internal_pull_up(&mut gpiob.pupdr, true);
     let serial = Serial::usart1(
         dp.USART1,
-        (usart_tx, usart_rx),
+        (usart_tx,),
         Config::default().baudrate(BAUD.raw().bps()),
         clocks,
         &mut apb2,
