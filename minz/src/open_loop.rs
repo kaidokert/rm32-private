@@ -38,6 +38,10 @@ static PWM_SIN: [i16; 360] = [
 pub enum Waveform {
     Sine,
     Trapezoid,
+    /// True 6-step BLDC: 2 phases driven, 1 floating (Hi-Z) per sector.
+    /// Not a continuous 3-phase waveform like the other variants — use
+    /// [`six_step_sector`] + a timer driver that can tri-state channels.
+    SixStep,
 }
 
 /// Advance electrical angle (0–359°), forward = decreasing index (rm32 motor convention).
@@ -98,5 +102,25 @@ pub fn duties(waveform: Waveform, angle: u16, arr: u16, amplitude_pct: u16) -> (
     match waveform {
         Waveform::Sine => sine_duties(angle, arr, amplitude_pct),
         Waveform::Trapezoid => trapezoid_duties(angle, arr, amplitude_pct),
+        // SixStep is not a continuous duty triple — caller handles it.
+        Waveform::SixStep => (0, 0, 0),
     }
+}
+
+/// Map electrical angle (0..360) → 6-step BLDC sector index (0..5).
+/// 60° per sector; `(angle / 60) clamped to 0..5`.
+#[inline]
+pub fn six_step_sector(angle: u16) -> u8 {
+    (angle / 60).min(5) as u8
+}
+
+/// 6-step high-side PWM compare value: `amplitude_pct` percent of `arr`.
+/// Unlike sine where amplitude is half-swing around `arr/2`, in 6-step
+/// the high-side FET PWMs from 0% (off) to `amplitude_pct`% (on),
+/// while the low-side phase sits at 0 (low FET always on via the
+/// complementary), so the line-to-line average is `amplitude_pct`% of
+/// the bus directly.
+#[inline]
+pub fn six_step_duty(arr: u16, amplitude_pct: u16) -> u16 {
+    (arr as u32 * amplitude_pct as u32 / 100).min(arr as u32) as u16
 }

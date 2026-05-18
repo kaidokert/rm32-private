@@ -31,9 +31,12 @@ use cortex_m::peripheral::syst::SystClkSource;
 use fugit::HertzU32 as Hertz;
 
 use crate::SYSCLK;
+use crate::hal::gpio::gpioa::{PA7, PA8, PA9, PA10};
+use crate::hal::gpio::gpiob::{PB0, PB1};
+use crate::hal::gpio::{Afr, H8, L8, MODER, OTYPER};
 use crate::hal::prelude::*;
 use crate::hal::rcc::{AHB1, AHB2, AHB3, APB1R1, APB1R2, APB2, CCIPR, Clocks, Rcc};
-use crate::hal::stm32::{FLASH, GPIOA, GPIOB, PWR, RCC};
+use crate::hal::stm32::{FLASH, PWR, RCC};
 use crate::panic;
 
 /// What `init()` hands back. We can't return the whole `Rcc` because
@@ -66,32 +69,38 @@ pub struct BoardInit {
 /// | LIN3 | PA7  | TIM1_CH1N     |
 /// | HIN3 | PA8  | TIM1_CH1      |
 ///
-/// Takes raw PAC handles plus `&mut AHB2` (from `BoardInit`) and does the
-/// split internally so the caller doesn't repeat 6 `into_alternate(...)`
-/// lines verbatim. Consumes `GPIOA`/`GPIOB`; if a caller also wants other
-/// pins from those ports, configure them before calling this.
-pub fn configure_motor_pwm_pins(gpioa: GPIOA, gpiob: GPIOB, ahb2: &mut AHB2) {
-    let mut gpioa = gpioa.split(ahb2);
-    let mut gpiob = gpiob.split(ahb2);
-    let _lin1 = gpiob
-        .pb1
-        .into_alternate::<1>(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
-    let _hin1 =
-        gpioa
-            .pa10
-            .into_alternate::<1>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrh);
-    let _lin2 = gpiob
-        .pb0
-        .into_alternate::<1>(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
-    let _hin2 = gpioa
-        .pa9
-        .into_alternate::<1>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrh);
-    let _lin3 = gpioa
-        .pa7
-        .into_alternate::<1>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrl);
-    let _hin3 = gpioa
-        .pa8
-        .into_alternate::<1>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrh);
+/// Takes the already-split pins plus the four GPIOA register handles
+/// and three GPIOB register handles. Generic over each pin's current
+/// mode so callers can pass pins straight out of `split()` (default
+/// `Analog`) or pins that have already been touched. The configured
+/// pins are dropped — TIM1 drives the AF, so the typestate guard isn't
+/// needed at the call site.
+///
+/// Split-friendly variant: the caller does its own
+/// `GPIOA.split(...)` / `GPIOB.split(...)` first so other pins on
+/// those ports (UART TX/RX, soft-UART RX, etc.) remain available.
+#[allow(clippy::too_many_arguments)]
+pub fn configure_motor_pwm_pins<M0, M1, M2, M3, M4, M5>(
+    pa7: PA7<M0>,
+    pa8: PA8<M1>,
+    pa9: PA9<M2>,
+    pa10: PA10<M3>,
+    pb0: PB0<M4>,
+    pb1: PB1<M5>,
+    a_moder: &mut MODER<'A'>,
+    a_otyper: &mut OTYPER<'A'>,
+    a_afrl: &mut Afr<L8, 'A'>,
+    a_afrh: &mut Afr<H8, 'A'>,
+    b_moder: &mut MODER<'B'>,
+    b_otyper: &mut OTYPER<'B'>,
+    b_afrl: &mut Afr<L8, 'B'>,
+) {
+    let _lin1 = pb1.into_alternate::<1>(b_moder, b_otyper, b_afrl);
+    let _hin1 = pa10.into_alternate::<1>(a_moder, a_otyper, a_afrh);
+    let _lin2 = pb0.into_alternate::<1>(b_moder, b_otyper, b_afrl);
+    let _hin2 = pa9.into_alternate::<1>(a_moder, a_otyper, a_afrh);
+    let _lin3 = pa7.into_alternate::<1>(a_moder, a_otyper, a_afrl);
+    let _hin3 = pa8.into_alternate::<1>(a_moder, a_otyper, a_afrh);
 }
 
 /// Configure Cortex-M SysTick as a periodic tick at `rate`, sourced from

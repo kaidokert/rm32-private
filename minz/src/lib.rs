@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod board_init;
+pub mod current_adc;
 pub mod nvic;
 pub mod open_loop;
 pub mod panic;

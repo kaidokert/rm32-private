@@ -5,13 +5,21 @@ use cortex_m_rt::entry;
 use minz::SYSCLK;
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
 use minz::hal;
+use minz::hal::prelude::*;
 use minz::hal::time::MonoTimer;
 use minz::open_loop::{self, OPEN_LOOP_STEP_CYCLES, Waveform};
 use minz::tim1_motor_pwm::{self, max_duty};
 use rtt_target::rprintln;
 
-/// Peak-to-peak swing as % of ARR (centered sine). Start low — open-loop slip heats fast.
-const AMPLITUDE_PCT: u16 = 12;
+/// Peak-to-peak swing as % of ARR (centered sine).
+///
+/// Open-loop sine has no rotor sync and no current limit, so the applied
+/// voltage divides across the milliohm winding resistance and dumps into
+/// I²R heat (cost us one motor on this bench at 12% / 14 V). 8 % at 5 V
+/// bench supply ≈ 0.4 V / 0.05 Ω ≈ 8 A peak per phase — already plenty
+/// for an open-loop demo. Bump it back up only when the bench supply is
+/// turned down.
+const AMPLITUDE_PCT: u16 = 8;
 
 #[entry]
 fn main() -> ! {
@@ -31,7 +39,23 @@ fn main() -> ! {
         open_loop::OPEN_LOOP_ELECTRICAL_HZ,
     );
 
-    configure_motor_pwm_pins(dp.GPIOA, dp.GPIOB, &mut ahb2);
+    let mut gpioa = dp.GPIOA.split(&mut ahb2);
+    let mut gpiob = dp.GPIOB.split(&mut ahb2);
+    configure_motor_pwm_pins(
+        gpioa.pa7,
+        gpioa.pa8,
+        gpioa.pa9,
+        gpioa.pa10,
+        gpiob.pb0,
+        gpiob.pb1,
+        &mut gpioa.moder,
+        &mut gpioa.otyper,
+        &mut gpioa.afrl,
+        &mut gpioa.afrh,
+        &mut gpiob.moder,
+        &mut gpiob.otyper,
+        &mut gpiob.afrl,
+    );
     tim1_motor_pwm::init(dp.TIM1, &mut apb2);
 
     cp.DCB.enable_trace();
