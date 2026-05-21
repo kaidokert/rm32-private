@@ -1,14 +1,18 @@
 #![no_std]
 
 pub mod board_init;
+pub mod comp2;
 pub mod current_adc;
+pub mod idle_loop;
 pub mod nvic;
 pub mod open_loop;
 pub mod panic;
+pub mod priority;
 pub mod softuart;
 pub mod softuart_lptim1;
 pub mod softuart_tim2;
 pub mod tim1_motor_pwm;
+pub mod tim7_drive;
 pub mod timer_ext;
 
 pub use stm32l4xx_hal as hal;

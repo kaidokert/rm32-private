@@ -1,7 +1,7 @@
 //! TIM1 triple complementary PWM — register setup matched to AM32 / rm32 L431.
 
 use crate::hal::rcc::{APB2, Enable, Reset};
-use crate::hal::stm32::TIM1;
+use crate::hal::stm32::{GPIOA, GPIOB, TIM1};
 use crate::{TIM1_AUTORELOAD, TIM1_CCR4_TRGO, TIM1_DEAD_TIME};
 
 /// Configure TIM1: 24 kHz PWM, CH1–3 + CH1N–3N, CH4 TRGO, dead-time, MOE.
@@ -58,26 +58,96 @@ pub fn init(tim1: TIM1, apb2: &mut APB2) {
     let _ = tim1;
 }
 
-/// Phase A/B/C duty (CCR1/2/3). Complementary outputs follow in hardware.
-#[inline]
-pub fn set_duties(ch1: u16, ch2: u16, ch3: u16) {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.ccr1.write(|w| w.ccr().bits(ch1));
-    tim1.ccr2.write(|w| w.ccr().bits(ch2));
-    tim1.ccr3.write(|w| w.ccr().bits(ch3));
+/// Set each of the 6 PWM pins to either `ALTERNATE` (TIM1-driven) or
+/// general-purpose `OUTPUT`, and drive the OUTPUT pins low via BSRR.
+/// This is how AM32 / rm32 firmware "float" a phase — the floating
+/// phase's pins go to OUTPUT-LOW so the gate driver IC sees a clean
+/// 0 V on both H and L inputs and holds both FETs OFF. Leaving the
+/// pins in ALTERNATE mode with `CCxE=0` (`BDTR.OSSR=0` releases them
+/// to Hi-Z) is **not** sufficient: the gate driver's input then
+/// floats and the FETs end up partially conducting under capacitive
+/// pickup from neighboring PWM traces.
+///
+/// Per AM32 `phaseAFLOAT` (`AM32/Mcu/l431/Src/phaseouts.c:150-158`):
+/// MODER goes to OUTPUT first, then the pin is reset low via the
+/// BR half of BSRR. TIM1's `CCER` bits stay enabled throughout (the
+/// channel keeps toggling internally, just isolated from the pad).
+fn set_phase_pin_modes(float_a: bool, float_b: bool, float_c: bool) {
+    const AF: u32 = 0b10;
+    const OUT: u32 = 0b01;
+    let gpioa = unsafe { &*GPIOA::ptr() };
+    let gpiob = unsafe { &*GPIOB::ptr() };
+
+    // GPIOA: PA7 (A low), PA8 (A high), PA9 (B high), PA10 (C high).
+    let m_al = if float_a { OUT } else { AF };
+    let m_ah = if float_a { OUT } else { AF };
+    let m_bh = if float_b { OUT } else { AF };
+    let m_ch = if float_c { OUT } else { AF };
+    let a_mask = (0b11u32 << 14) | (0b11 << 16) | (0b11 << 18) | (0b11 << 20);
+    let a_val = (m_al << 14) | (m_ah << 16) | (m_bh << 18) | (m_ch << 20);
+
+    // GPIOB: PB0 (B low), PB1 (C low).
+    let m_bl = if float_b { OUT } else { AF };
+    let m_cl = if float_c { OUT } else { AF };
+    let b_mask = (0b11u32 << 0) | (0b11 << 2);
+    let b_val = (m_bl << 0) | (m_cl << 2);
+
+    // MODER first (per AM32 order), then BSRR.BR to drive ODR=0 for
+    // the floating phase's pins. BSRR.BR[N] sits at bit (16 + N).
+    gpioa
+        .moder
+        .modify(|r, w| unsafe { w.bits((r.bits() & !a_mask) | a_val) });
+    gpiob
+        .moder
+        .modify(|r, w| unsafe { w.bits((r.bits() & !b_mask) | b_val) });
+
+    let mut bsrr_a = 0u32;
+    let mut bsrr_b = 0u32;
+    if float_a {
+        bsrr_a |= (1 << (16 + 7)) | (1 << (16 + 8));
+    }
+    if float_b {
+        bsrr_a |= 1 << (16 + 9);
+        bsrr_b |= 1 << (16 + 0);
+    }
+    if float_c {
+        bsrr_a |= 1 << (16 + 10);
+        bsrr_b |= 1 << (16 + 1);
+    }
+    if bsrr_a != 0 {
+        gpioa.bsrr.write(|w| unsafe { w.bits(bsrr_a) });
+    }
+    if bsrr_b != 0 {
+        gpiob.bsrr.write(|w| unsafe { w.bits(bsrr_b) });
+    }
 }
 
-/// Six-step BLDC commutation: 2 phases driven, 1 floating (Hi-Z) per sector.
+/// Phase A/B/C duty (CCR1/2/3) for continuous 3-phase drive (sine).
+/// All six PWM pins are restored to ALTERNATE so TIM1 drives them;
+/// `CCER` stays at its init value (all channels enabled).
+#[inline]
+pub fn set_duties(ch1: u16, ch2: u16, ch3: u16) {
+    cortex_m::interrupt::free(|_| {
+        let tim1 = unsafe { &*TIM1::ptr() };
+        tim1.ccr1.write(|w| w.ccr().bits(ch1));
+        tim1.ccr2.write(|w| w.ccr().bits(ch2));
+        tim1.ccr3.write(|w| w.ccr().bits(ch3));
+        set_phase_pin_modes(false, false, false);
+    });
+}
+
+/// Six-step BLDC commutation: 2 phases driven, 1 floating per sector.
+/// `step ∈ 0..5` picks the (Hi, Lo, Float) mapping below. `duty` is
+/// the PWM compare value applied to the **high-side** channel; the
+/// **low-side** phase gets `CCR=0` (its complementary FET stays on
+/// solid → terminal at GND); the **floating** phase has its GPIO pins
+/// switched to OUTPUT and driven low (per AM32's behaviour — see
+/// [`set_phase_pin_modes`] for why this differs from "let `CCxE=0`
+/// release the pad to Hi-Z").
 ///
-/// `step ∈ 0..5` picks the (high, low, float) phase mapping. `duty` is
-/// the PWM compare value applied to the **high-side** complementary
-/// channel; the **low-side** phase gets CCR=0 (low FET held on solid
-/// via the complementary output), and the **floating** phase has both
-/// CCxE and CCxNE cleared — with `OSSR=0` in BDTR (set by `init()`),
-/// the timer releases that pad and AF-mode Hi-Z gives a true float
-/// window. CC4E (TRGO) is preserved.
-///
-/// Sector → (Hi, Lo, Float) mapping:
+/// CCER never changes after `init()` — it stays at all-enabled.
+/// TIM1's channels keep toggling internally for the floating phase;
+/// the MODER override is what isolates them from the pad.
 ///
 /// | Step | Hi | Lo | Float |
 /// |------|----|----|-------|
@@ -99,76 +169,66 @@ pub fn set_six_step(step: u8, duty: u16) {
 
     let mut ccrs = [0u16; 3];
     ccrs[hi] = duty;
-    // ccrs[lo] stays 0 → complementary low FET on solid.
 
-    let cc1_on = hi == 0 || lo == 0;
-    let cc2_on = hi == 1 || lo == 1;
-    let cc3_on = hi == 2 || lo == 2;
+    let float_a = hi != 0 && lo != 0;
+    let float_b = hi != 1 && lo != 1;
+    let float_c = hi != 2 && lo != 2;
 
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.ccr1.write(|w| w.ccr().bits(ccrs[0]));
-    tim1.ccr2.write(|w| w.ccr().bits(ccrs[1]));
-    tim1.ccr3.write(|w| w.ccr().bits(ccrs[2]));
-    tim1.ccer.write(|w| {
-        w.cc1e()
-            .bit(cc1_on)
-            .cc1ne()
-            .bit(cc1_on)
-            .cc2e()
-            .bit(cc2_on)
-            .cc2ne()
-            .bit(cc2_on)
-            .cc3e()
-            .bit(cc3_on)
-            .cc3ne()
-            .bit(cc3_on)
-            .cc4e()
-            .set_bit()
+    cortex_m::interrupt::free(|_| {
+        let tim1 = unsafe { &*TIM1::ptr() };
+        tim1.ccr1.write(|w| w.ccr().bits(ccrs[0]));
+        tim1.ccr2.write(|w| w.ccr().bits(ccrs[1]));
+        tim1.ccr3.write(|w| w.ccr().bits(ccrs[2]));
+        set_phase_pin_modes(float_a, float_b, float_c);
     });
 }
 
-/// Re-enable CCxE + CCxNE for all three motor channels (and CC4E
-/// TRGO). Call this when switching back from `set_six_step` to
-/// continuous 3-phase drive (`set_duties`) so the previously floating
-/// phase isn't left Hi-Z mid-sine.
-#[inline]
-pub fn enable_all_phases() {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.ccer.write(|w| {
-        w.cc1e()
-            .set_bit()
-            .cc1ne()
-            .set_bit()
-            .cc2e()
-            .set_bit()
-            .cc2ne()
-            .set_bit()
-            .cc3e()
-            .set_bit()
-            .cc3ne()
-            .set_bit()
-            .cc4e()
-            .set_bit()
-    });
-}
-
-/// Hard kill: clear `MOE` in BDTR. All TIM1 outputs immediately stop
-/// driving — with `OSSI=0` (the value `init()` programs), the AF
-/// block releases every gate-driver pad → no FETs conducting.
-/// `CCRx` / `CCER` are left intact, so `arm_output()` resumes from
-/// the same waveform state without re-programming anything.
+/// Hard kill: force all six motor-control pins to GPIO OUTPUT-LOW.
+/// Each gate-driver's HIN and LIN see a commanded `0` → top FET off,
+/// bottom FET off, motor terminal high-Z. This reaches the same
+/// "no FETs conducting" outcome the old MOE-clear path did, but by
+/// **actively commanding** the gate-driver inputs rather than
+/// releasing the pads to Hi-Z. Per the bench rule: the MCU always
+/// drives the gate-driver inputs, never leaves them floating.
+///
+/// MOE stays set (the init value); the TIM1 output stage is never
+/// shut down. Pin direction (AF vs OUTPUT) is what selects whether
+/// TIM1 or this command holds the line — same mechanism
+/// [`set_six_step`] already uses for the per-sector float phase.
 #[inline]
 pub fn all_off() {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.bdtr.modify(|_, w| w.moe().clear_bit());
+    set_phase_pin_modes(true, true, true);
 }
 
-/// Re-arm after `all_off`: set `MOE` in BDTR. The timer resumes
-/// driving whatever waveform `CCRx` / `CCER` currently describe.
+/// Re-arm after [`all_off`]: restore all six pins to ALTERNATE
+/// function so TIM1 drives them per the current CCR / CCER state.
+/// The next TIM7 commutation tick (within ≤167 µs at 6 kHz) calls
+/// [`set_six_step`] which re-sets the correct AF/OUTPUT split for
+/// the active sector. MOE was never cleared — see [`all_off`].
 #[inline]
 pub fn arm_output() {
+    set_phase_pin_modes(false, false, false);
+}
+
+/// Enable the TIM1 update-event interrupt (DIER.UIE). Fires the
+/// `TIM1_UP_TIM16` IRQ once per PWM period (24 kHz @ ARR=3332). The
+/// IRQ vector is shared with TIM16, but TIM16 isn't initialised on
+/// this bench — so the handler can assume every fire is TIM1.UIF.
+///
+/// The ISR is responsible for acking `TIM1.SR.UIF`.
+#[inline]
+pub fn enable_update_interrupt() {
     let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.bdtr.modify(|_, w| w.moe().set_bit());
+    tim1.dier.modify(|_, w| w.uie().set_bit());
+}
+
+/// Ack the TIM1 update-event flag (`SR.UIF`). Call this at the top
+/// of the `TIM1_UP_TIM16` ISR before doing anything else, so the
+/// IRQ doesn't re-fire on return.
+#[inline]
+pub fn clear_update_flag() {
+    let tim1 = unsafe { &*TIM1::ptr() };
+    tim1.sr.modify(|_, w| w.uif().clear_bit());
 }
 
 #[inline]

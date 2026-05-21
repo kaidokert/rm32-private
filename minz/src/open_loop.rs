@@ -37,7 +37,6 @@ static PWM_SIN: [i16; 360] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Waveform {
     Sine,
-    Trapezoid,
     /// True 6-step BLDC: 2 phases driven, 1 floating (Hi-Z) per sector.
     /// Not a continuous 3-phase waveform like the other variants — use
     /// [`six_step_sector`] + a timer driver that can tri-state channels.
@@ -76,32 +75,9 @@ pub fn sine_duties(angle: u16, arr: u16, amplitude_pct: u16) -> (u16, u16, u16) 
     )
 }
 
-/// Trapezoidal PWM: 60° rise, 60° flat high, 60° fall per phase (120° separation), centered.
-fn trapezoid_phase(angle: u16, arr: u16, amplitude_pct: u16) -> u16 {
-    let half = arr as u32 * amplitude_pct as u32 / 100 / 2;
-    let swing = match angle {
-        0..=59 => half * angle as u32 / 60,
-        60..=119 => half,
-        120..=179 => half * (180 - angle as u32) / 60,
-        180..=239 => half * (240 - angle as u32) / 60,
-        240..=299 => 0,
-        _ => half * (angle as u32 - 300) / 60,
-    };
-    (half + swing).min(arr as u32) as u16
-}
-
-pub fn trapezoid_duties(angle: u16, arr: u16, amplitude_pct: u16) -> (u16, u16, u16) {
-    (
-        trapezoid_phase(angle, arr, amplitude_pct),
-        trapezoid_phase((angle + 120) % 360, arr, amplitude_pct),
-        trapezoid_phase((angle + 240) % 360, arr, amplitude_pct),
-    )
-}
-
 pub fn duties(waveform: Waveform, angle: u16, arr: u16, amplitude_pct: u16) -> (u16, u16, u16) {
     match waveform {
         Waveform::Sine => sine_duties(angle, arr, amplitude_pct),
-        Waveform::Trapezoid => trapezoid_duties(angle, arr, amplitude_pct),
         // SixStep is not a continuous duty triple — caller handles it.
         Waveform::SixStep => (0, 0, 0),
     }
