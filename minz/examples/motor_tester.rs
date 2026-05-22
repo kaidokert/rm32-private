@@ -41,6 +41,7 @@
 //! - `h`       : cycle COMP2 hysteresis level
 //! - `k`       : cycle COMP2 EXTI edge selection
 //! - `t`       : cycle commutation advance (0/20/40/-40/-20°)
+//! - `n`       : cycle COMP2 blanking pulse width (TIM15 OC1 ticks)
 
 #![no_std]
 #![no_main]
@@ -70,8 +71,8 @@ use minz::open_loop::{self, Waveform};
 use minz::priority;
 use minz::softuart::{IrqAck, Rx, SoftUart};
 use minz::tim1_motor_pwm::{self, max_duty};
-use minz::{SYSTICK, tim7_drive};
-use portable_atomic::{AtomicBool, AtomicI8, AtomicU8, AtomicU32, Ordering};
+use minz::{SYSTICK, TIM1_AUTORELOAD, tim7_drive, tim15_blank};
+use portable_atomic::{AtomicBool, AtomicI8, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use rtt_target::rprintln;
 
 const BAUD: Hertz = Hertz::Hz(9600);
@@ -155,6 +156,19 @@ static LPTIM1_COUNT: AtomicU32 = AtomicU32::new(0);
 static EXTI0_COUNT: AtomicU32 = AtomicU32::new(0);
 static TIM7_COUNT: AtomicU32 = AtomicU32::new(0);
 static TIM1_UP_COUNT: AtomicU32 = AtomicU32::new(0);
+static TIM15_COUNT: AtomicU32 = AtomicU32::new(0);
+static TIM15_CC1_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// COMP2 blanking-pulse width in 12.5 ns TIM15 ticks. `0` disables
+/// blanking, positive values gate the comparator output for the
+/// first N ticks of each PWM period. Cycled by the `n` key.
+static BLANK_TICKS: AtomicU16 = AtomicU16::new(0);
+
+/// COMP2 CSR.BLANKING field value (3 bits, 0..=7). Cycled by the `g`
+/// key for empirical sweep — the RM only documents `0b100` for L431
+/// COMP2 (= TIM15 OC1), but if that's wrong, sweeping reveals which
+/// encoding actually drives the comparator's blanking input.
+static BLANKING_SRC: AtomicU8 = AtomicU8::new(0b100);
 
 /// COMP2 transition rate in events/sec, computed in the main loop
 /// over rolling ~1-second windows. Read by the `b` key handler.
@@ -375,6 +389,14 @@ static HYST_LEVEL: AtomicU8 = AtomicU8::new(0);
 ///   2 = falling only
 ///   3 = rising sec 0–2 / falling sec 3–5
 ///   4 = falling sec 0–2 / rising sec 3–5
+///   5 = both edges, COMP ISR only writes EDGE_BUF / SECTOR_EDGE_COUNT
+///       when `COMP2.VALUE == 1` at the moment of ISR entry. Combined
+///       with hardware blanking (BLANKING field gating VALUE — see
+///       `tim15_blank`), edges that fired during the blanking window
+///       read VALUE=0 and are dropped; edges that survived blanking
+///       read VALUE=1 and are recorded. The EXTI config stays
+///       both-edges so any toggle reaches the ISR; the gating is
+///       purely in software via the VALUE check.
 /// Modes 3 / 4 are applied per-sector inside the TIM7 ISR.
 static EDGE_MODE: AtomicU8 = AtomicU8::new(0);
 
@@ -438,13 +460,16 @@ fn edges_for(mode: u8, sector: u8) -> (bool, bool) {
                 (false, true)
             }
         }
-        _ => {
+        4 => {
             if (sector & 1) == 0 {
                 (false, true)
             } else {
                 (true, false)
             }
         }
+        // Mode 5: both edges enabled at EXTI; the COMP ISR filters in
+        // software based on `COMP2.VALUE`.
+        _ => (true, true),
     }
 }
 
@@ -624,10 +649,10 @@ fn main() -> ! {
     // Empirical readback of COMP2_CSR after init.
     // Expected (observe phase A under textbook convention):
     //   EN=1, PWRMODE=00, INMSEL=0b111, INPSEL=00, INMESEL=0b10,
-    //   HYST=00, POLARITY=0 → 0x04000071.
+    //   HYST=00, POLARITY=0, BLANKING=0b100 (TIM15 OC1) → 0x04100071.
     let comp2_csr = unsafe { (*minz::hal::stm32::COMP::ptr()).comp2_csr.read().bits() };
     rprintln!(
-        "COMP2_CSR = 0x{:08x}  (expect 0x04000071 for phase A)",
+        "COMP2_CSR = 0x{:08x}  (expect 0x04100071 for phase A + TIM15 blanking)",
         comp2_csr,
     );
 
@@ -643,6 +668,42 @@ fn main() -> ! {
     // writes TIM1's CCRs (sine path) or commutates (six-step path).
     // Main loop never touches TIM1 directly anymore.
     tim7_drive::init(dp.TIM7, &mut apb1r1, MOTOR_DRIVE_HZ);
+
+    // TIM15 in slave-reset mode (slaved to TIM1's TRGO = update
+    // event). CH1 PWM-output mode 1 with CCR1 = N → OC1 is HIGH for
+    // the first N ticks after each PWM-period boundary, routed
+    // internally to COMP2's BLANKING input (CSR.BLANKING = 0b100).
+    // No interrupt; the gating is pure hardware. Live-tune via the
+    // `n` key.
+    tim15_blank::init(dp.TIM15, &mut apb2, 0);
+
+    // Readback the TIM15 + COMP2 wiring so we can verify the blanking
+    // chain is plumbed end-to-end. Expected after init:
+    //   TIM15.CR1   CEN=1                          → 0x0001
+    //   TIM15.SMCR  SMS=0b100 (reset) TS=0 (TIM1)  → 0x0000_0004
+    //   TIM15.CCMR1 OC1M=0b110, OC1PE=1            → 0x0068
+    //   TIM15.CCER  CC1E=1                          → 0x0001
+    //   TIM15.CCR1  initial blank ticks            → 0x0000 (boots at 0)
+    //   TIM15.BDTR  MOE=1                          → 0x0000_8000
+    unsafe {
+        let tim15 = &*minz::hal::stm32::TIM15::ptr();
+        let cr1 = tim15.cr1.read().bits();
+        let ccmr1 = tim15.ccmr1_output().read().bits();
+        let ccer = tim15.ccer.read().bits();
+        let ccr1 = tim15.ccr1.read().bits();
+        let bdtr = tim15.bdtr.read().bits();
+        let smcr = core::ptr::read_volatile(0x4001_4008 as *const u32);
+        rprintln!(
+            "TIM15: CR1=0x{:04x} SMCR=0x{:08x} CCMR1=0x{:08x} CCER=0x{:04x} \
+             CCR1=0x{:04x} BDTR=0x{:08x}",
+            cr1,
+            smcr,
+            ccmr1,
+            ccer,
+            ccr1,
+            bdtr,
+        );
+    }
 
     // LPTIM1 for soft-UART sample rate (= OVERSAMPLE × BAUD).
     let lptim_ticks_per_sample = clocks.pclk1().raw() / SAMPLE.raw();
@@ -748,12 +809,22 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
-        "Cycle EXTI edges:     k   (both / raw_rise / raw_fall / phys_ZC / phys_anti)\r"
+        "Cycle EXTI edges:     k   (both / raw_rise / raw_fall / phys_ZC / phys_anti / val_gated)\r"
     )
     .ok();
     writeln!(
         &mut tx,
         "Cycle commut advance: t   (0 / 20 / 40 / -40 / -20 deg)\r"
+    )
+    .ok();
+    writeln!(
+        &mut tx,
+        "Cycle COMP blanking:  n   (0 / 16 / 32 / 64 / 128 / 256 TIM15 ticks @12.5ns)\r"
+    )
+    .ok();
+    writeln!(
+        &mut tx,
+        "Sweep BLANKING field: g   (0..=7 → COMP2_CSR.BLANKING bits 20:18)\r"
     )
     .ok();
     writeln!(
@@ -804,6 +875,7 @@ fn main() -> ! {
     unsafe {
         priority::set_irq_prios();
         priority::set_irq_prio(Interrupt::EXTI0, priority::PRIO_LPTIM1);
+        priority::set_irq_prio(Interrupt::TIM1_BRK_TIM15, priority::PRIO_TIM1);
     }
 
     unsafe {
@@ -812,6 +884,7 @@ fn main() -> ! {
         NVIC::unmask(Interrupt::COMP);
         NVIC::unmask(Interrupt::TIM1_UP_TIM16);
         NVIC::unmask(Interrupt::TIM7);
+        NVIC::unmask(Interrupt::TIM1_BRK_TIM15);
     }
 
     // Main-loop mirrors of motor state held in atomics. We keep
@@ -848,6 +921,8 @@ fn main() -> ! {
     let mut last_i_exti0: u32 = EXTI0_COUNT.load(Ordering::Relaxed);
     let mut last_i_tim7: u32 = TIM7_COUNT.load(Ordering::Relaxed);
     let mut last_i_tim1: u32 = TIM1_UP_COUNT.load(Ordering::Relaxed);
+    let mut last_i_tim15: u32 = TIM15_COUNT.load(Ordering::Relaxed);
+    let mut last_i_tim15_cc1: u32 = TIM15_CC1_COUNT.load(Ordering::Relaxed);
 
     // Which phase we're routing through COMP2 INM− right now. The
     // float-sector mapping below depends on this. `p` cycles A→B→C.
@@ -1061,11 +1136,12 @@ fn main() -> ! {
                             write!(
                                 &mut tx_writer,
                                 "pwm_samples last 2 revs aligned to sec 0 \
-                                 ({} samples, hyst={}, obs={}, advance={}deg):\r\n",
+                                 ({} samples, hyst={}, obs={}, advance={}deg, blank={}):\r\n",
                                 length,
                                 HYST_LEVEL.load(Ordering::Relaxed),
                                 observed_phase.name(),
                                 ADVANCE_DEG.load(Ordering::Relaxed),
+                                BLANK_TICKS.load(Ordering::Relaxed),
                             )
                             .ok();
                             let mut rev_label = 0u8;
@@ -1175,7 +1251,8 @@ fn main() -> ! {
                             1 => "raw_rise",
                             2 => "raw_fall",
                             3 => "phys_ZC",
-                            _ => "phys_anti",
+                            4 => "phys_anti",
+                            _ => "val_gated",
                         };
 
                         // Validity: all 12 slots filled (non-zero) and
@@ -1198,11 +1275,12 @@ fn main() -> ! {
                             write!(
                                 &mut tx_writer,
                                 "edges last 2 revs aligned to sec 0 \
-                                 (window={}us, hyst={}, edges={}, advance={}deg):\r\n",
+                                 (window={}us, hyst={}, edges={}, advance={}deg, blank={}):\r\n",
                                 window_ticks.wrapping_mul(10),
                                 HYST_LEVEL.load(Ordering::Relaxed),
                                 edge_name,
                                 ADVANCE_DEG.load(Ordering::Relaxed),
+                                BLANK_TICKS.load(Ordering::Relaxed),
                             )
                             .ok();
                             // One cell per character: `#` if any edge
@@ -1301,20 +1379,26 @@ fn main() -> ! {
                         let now_exti0 = EXTI0_COUNT.load(Ordering::Relaxed);
                         let now_tim7 = TIM7_COUNT.load(Ordering::Relaxed);
                         let now_tim1 = TIM1_UP_COUNT.load(Ordering::Relaxed);
+                        let now_tim15 = TIM15_COUNT.load(Ordering::Relaxed);
+                        let now_tim15_cc1 = TIM15_CC1_COUNT.load(Ordering::Relaxed);
                         let dtick = now_tick.wrapping_sub(last_i_tick);
                         if dtick > 0 {
                             let rate =
                                 |dc: u32| -> u32 { ((dc as u64) * 100_000 / dtick as u64) as u32 };
                             write!(
                                 &mut tx_writer,
-                                "irq/s: comp={} tim1_up={} tim7={} lptim1={} exti0={} (dt={}.{:02}s)\r\n",
+                                "irq/s: comp={} tim1_up={} tim15={} tim15_cc1={} tim7={} \
+                                 lptim1={} exti0={} (dt={}.{:02}s)  blank_ccr1={}\r\n",
                                 rate(now_comp.wrapping_sub(last_i_comp)),
                                 rate(now_tim1.wrapping_sub(last_i_tim1)),
+                                rate(now_tim15.wrapping_sub(last_i_tim15)),
+                                rate(now_tim15_cc1.wrapping_sub(last_i_tim15_cc1)),
                                 rate(now_tim7.wrapping_sub(last_i_tim7)),
                                 rate(now_lptim.wrapping_sub(last_i_lptim)),
                                 rate(now_exti0.wrapping_sub(last_i_exti0)),
                                 dtick / 100_000,
                                 (dtick % 100_000) / 1000,
+                                tim15_blank::ccr1(),
                             )
                             .ok();
                         }
@@ -1324,6 +1408,8 @@ fn main() -> ! {
                         last_i_exti0 = now_exti0;
                         last_i_tim7 = now_tim7;
                         last_i_tim1 = now_tim1;
+                        last_i_tim15 = now_tim15;
+                        last_i_tim15_cc1 = now_tim15_cc1;
                     }
                     b'h' => {
                         // Cycle COMP2 hysteresis: 0 → 1 → 3 → 0 (skip
@@ -1349,6 +1435,56 @@ fn main() -> ! {
                         write!(&mut tx_writer, "hyst = {}\r\n", name).ok();
                         tx_writer.write_blocking(&[]);
                     }
+                    b'g' => {
+                        // Sweep COMP2 CSR.BLANKING field 0..=7. The
+                        // RM lists only 0b100 (TIM15 OC1) as defined
+                        // on L431, but the documented value
+                        // empirically doesn't gate the comparator;
+                        // sweep to see if a different encoding works.
+                        let cur = BLANKING_SRC.load(Ordering::Relaxed);
+                        let next = (cur + 1) & 0b111;
+                        BLANKING_SRC.store(next, Ordering::Relaxed);
+                        free(|_| comp2::set_blanking(next));
+                        write!(
+                            &mut tx_writer,
+                            "blanking src = 0b{:03b} ({})\r\n",
+                            next, next,
+                        )
+                        .ok();
+                        tx_writer.write_blocking(&[]);
+                    }
+                    b'n' => {
+                        // Cycle COMP2 blanking width (TIM15 OC1 pulse
+                        // width in 12.5 ns ticks). PWM period = 3332
+                        // ticks (41.66 µs) so a meaningful sweep needs
+                        // values from "small fraction" up to "most of
+                        // the cycle":
+                        //   0 → 64 → 256 → 1024 → 2048 → 3000 → 0
+                        // = 0 / 0.8 / 3.2 / 12.8 / 25.6 / 37.5 µs.
+                        // 3000 covers 90 % of the PWM period and is
+                        // basically "comparator off"; useful as a
+                        // sanity check that blanking is wired at all.
+                        let cur = BLANK_TICKS.load(Ordering::Relaxed);
+                        let next: u16 = match cur {
+                            0 => 64,
+                            64 => 256,
+                            256 => 1024,
+                            1024 => 2048,
+                            2048 => 3000,
+                            _ => 0,
+                        };
+                        BLANK_TICKS.store(next, Ordering::Relaxed);
+                        tim15_blank::set_blank_ticks(next);
+                        write!(
+                            &mut tx_writer,
+                            "blank N = {} ticks ({} ns, {}% of PWM)\r\n",
+                            next,
+                            (next as u32) * 1000 / 80,
+                            (next as u32) * 100 / (TIM1_AUTORELOAD as u32 + 1),
+                        )
+                        .ok();
+                        tx_writer.write_blocking(&[]);
+                    }
                     b't' => {
                         // Cycle commutation advance: 0 → 20 → 40 → -40 → -20 → 0.
                         // Positive = float window earlier in raw-angle
@@ -1368,14 +1504,14 @@ fn main() -> ! {
                         tx_writer.write_blocking(&[]);
                     }
                     b'k' => {
-                        // Cycle COMP2 EXTI edge mode 0..=4. Read
+                        // Cycle COMP2 EXTI edge mode 0..=5. Read
                         // current sector and apply for that sector
                         // immediately so the bits are correct even
                         // with motor off. Wrapped in `free` so the
                         // .modify() race with TIM7's per-fire
                         // `set_exti_edges` is closed.
                         let cur = EDGE_MODE.load(Ordering::Relaxed);
-                        let next = if cur >= 4 { 0 } else { cur + 1 };
+                        let next = if cur >= 5 { 0 } else { cur + 1 };
                         free(|_| {
                             EDGE_MODE.store(next, Ordering::Relaxed);
                             let sector = CURRENT_SECTOR.load(Ordering::Relaxed);
@@ -1387,7 +1523,8 @@ fn main() -> ! {
                             1 => "raw rise",
                             2 => "raw fall",
                             3 => "phys ZC (rise even / fall odd)",
-                            _ => "phys anti-ZC (fall even / rise odd)",
+                            4 => "phys anti-ZC (fall even / rise odd)",
+                            _ => "value-gated (both edges, VALUE=1 only)",
                         };
                         write!(&mut tx_writer, "edges = {}\r\n", name).ok();
                         tx_writer.write_blocking(&[]);
@@ -1644,6 +1781,22 @@ fn TIM7() {
 }
 
 #[interrupt]
+fn TIM1_BRK_TIM15() {
+    // TIM15 events (UIF + CC1IF). UIF = slave-reset by TIM1's TRGO;
+    // CC1IF = TIM15.CNT matched CCR1 (= OC1 compare event, edge of
+    // OC1REF). Counting both lets the `i` key prove that OC1's
+    // compare circuit is firing — if `tim15_cc1` is 0 while
+    // `blank_ccr1` > 0, OC1 isn't compare-matching at all.
+    let (uif, cc1if) = tim15_blank::clear_flags();
+    if uif {
+        TIM15_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+    if cc1if {
+        TIM15_CC1_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[interrupt]
 fn TIM1_UP_TIM16() {
     // One-byte COMP2 + sector sample per PWM period. UIF must be
     // cleared first or the IRQ re-fires immediately on return.
@@ -1666,6 +1819,28 @@ fn COMP() {
     // Ack the pending bit first so the IRQ doesn't immediately re-fire.
     comp2::clear_pending();
     COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // Mode 5: value-gated recording. EXTI line 22 fires off the *raw*
+    // comparator output (not gated by BLANKING), so an edge during the
+    // blanking window still reaches us here. But `COMP2.VALUE` IS
+    // gated by BLANKING — so reading it now tells us "did this edge
+    // survive blanking" (VALUE=1) or "was it suppressed" (VALUE=0).
+    // The remaining writes (EDGE_BUF + SECTOR_EDGE_COUNT) only happen
+    // for surviving edges, so the dot/hash density and per-sector
+    // counts reflect post-blanking edges only.
+    // COMP_COUNT and VALID_COMP_COUNT stay unfiltered so the raw
+    // EXTI rate is still visible.
+    if EDGE_MODE.load(Ordering::Relaxed) == 5 && !comp2::value() {
+        // Also still run the time-window gate so VALID_COMP_COUNT
+        // tracks the same denominator across modes.
+        let elapsed = TICKS_10US
+            .load(Ordering::Relaxed)
+            .wrapping_sub(SECTOR_START_TICK.load(Ordering::Relaxed));
+        if elapsed >= SECTOR_HALF_TICKS.load(Ordering::Relaxed) {
+            VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        return;
+    }
 
     // Edge-buffer write: mark "an edge happened in this 10 µs bin"
     // at the current offset from the start of the current 2-rev

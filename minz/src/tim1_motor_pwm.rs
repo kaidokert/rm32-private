@@ -52,6 +52,10 @@ pub fn init(tim1: TIM1, apb2: &mut APB2) {
         tim1.ccr4.write(|w| w.ccr().bits(TIM1_CCR4_TRGO));
         tim1.bdtr
             .write(|w| w.moe().set_bit().bkp().set_bit().dtg().bits(TIM1_DEAD_TIME));
+        // CR2.MMS = 010 → TRGO fires on TIM1's update event (once per
+        // PWM period). Used by TIM15 in slave-reset mode to align its
+        // blanking-pulse generator with the PWM cycle wrap.
+        tim1.cr2.write(|w| w.mms().bits(0b010));
         tim1.cr1.write(|w| w.arpe().set_bit().cen().set_bit());
     }
 
