@@ -235,6 +235,40 @@ pub fn clear_update_flag() {
     tim1.sr.modify(|_, w| w.uif().clear_bit());
 }
 
+/// Enable the capture/compare interrupts for CH1/CH2/CH3. CC4 is
+/// intentionally left disabled — its compare value is the fixed
+/// ADC-TRGO point (`TIM1_CCR4_TRGO = 0x64`), not a PWM transition,
+/// so it would just be noise on the `TIM1_CC` vector.
+///
+/// Each enabled CCxIE fires `Interrupt::TIM1_CC` when `TIM1.CNT`
+/// matches the corresponding `CCRx` value — i.e. exactly when that
+/// channel's output transitions (high-to-low in PWM mode 1). The
+/// bench uses this to timestamp every PWM edge for the software
+/// COMP-blanking gate. The ISR is responsible for clearing the
+/// matched flags via [`clear_cc_flags`].
+#[inline]
+pub fn enable_cc_interrupts() {
+    let tim1 = unsafe { &*TIM1::ptr() };
+    tim1.dier
+        .modify(|_, w| w.cc1ie().set_bit().cc2ie().set_bit().cc3ie().set_bit());
+}
+
+/// Ack TIM1's CC1IF / CC2IF / CC3IF in one shot. Call at the top of
+/// the `TIM1_CC` ISR — leaving any of these set after return causes
+/// an immediate re-fire of the vector.
+#[inline]
+pub fn clear_cc_flags() {
+    let tim1 = unsafe { &*TIM1::ptr() };
+    tim1.sr.modify(|_, w| {
+        w.cc1if()
+            .clear_bit()
+            .cc2if()
+            .clear_bit()
+            .cc3if()
+            .clear_bit()
+    });
+}
+
 #[inline]
 pub const fn max_duty() -> u16 {
     TIM1_AUTORELOAD

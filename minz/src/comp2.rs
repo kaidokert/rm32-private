@@ -119,12 +119,15 @@ pub fn init(
             .bits(0b00)
             .comp2_polarity()
             .clear_bit()
-            // BLANKING = 0b100 → TIM15 OC1 gates the comparator output.
-            // While TIM15_OC1 is HIGH, the comparator's VALUE bit is
-            // held (no edges propagate to EXTI). See `tim15_blank` for
-            // the pulse-width control.
+            // BLANKING = 0b000 (off). We investigated routing TIM15
+            // OC1 here (0b100) and found that on L4 it gates only
+            // COMP_CSR.VALUE — *not* the EXTI line — so it doesn't
+            // suppress the COMP IRQ rate. Bench now uses pure software
+            // blanking in the COMP ISR (latch a timestamp at every
+            // PWM falling edge in TIM1_CC, suppress events within
+            // BLANK_US of that timestamp). See `CLAUDE.md`.
             .comp2_blanking()
-            .bits(0b100)
+            .bits(0b000)
             .comp2_winmode()
             .clear_bit()
     });
@@ -160,17 +163,6 @@ pub fn set_observed_phase(phase: ObservedPhase) {
 pub fn value() -> bool {
     let comp = unsafe { &*COMP::ptr() };
     comp.comp2_csr.read().comp2_value().bit_is_set()
-}
-
-/// Live-set the COMP2_CSR.BLANKING field (3 bits). RM0394 22.7.3 lists
-/// only `0b000` (none) and `0b100` (TIM15 OC1) as defined for COMP2 on
-/// L431, with `0b001` / `0b010` marked Reserved. Use this for empirical
-/// sweep when the documented `0b100` value doesn't appear to work.
-#[inline]
-pub fn set_blanking(value: u8) {
-    let comp = unsafe { &*COMP::ptr() };
-    comp.comp2_csr
-        .modify(|_, w| unsafe { w.comp2_blanking().bits(value & 0b111) });
 }
 
 /// Live-set the COMP2_CSR.HYST field (2 bits):

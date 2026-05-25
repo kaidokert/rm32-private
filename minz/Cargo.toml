@@ -13,3 +13,4 @@ portable-atomic = { version = "1.13.1", default-features = false, features = ["c
 
 rtt-target = "0.6.2"
 stm32l4xx-hal = { version = "0.7.1", features = ["stm32l431"] }
+systick-timer = "0.2.3"

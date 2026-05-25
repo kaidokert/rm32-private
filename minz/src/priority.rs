@@ -116,6 +116,7 @@ pub unsafe fn set_irq_prios() {
         set_irq_prio(Interrupt::COMP, PRIO_COMP);
         set_irq_prio(Interrupt::TIM7, PRIO_TIM7);
         set_irq_prio(Interrupt::TIM1_UP_TIM16, PRIO_TIM1);
+        set_irq_prio(Interrupt::TIM1_CC, PRIO_TIM1);
         set_irq_prio(Interrupt::LPTIM1, PRIO_LPTIM1);
     }
 }
@@ -135,11 +136,13 @@ pub fn dump_irq_prios() {
     let comp = NVIC::get_priority(Interrupt::COMP);
     let tim7 = NVIC::get_priority(Interrupt::TIM7);
     let tim1 = NVIC::get_priority(Interrupt::TIM1_UP_TIM16);
+    let tim1_cc = NVIC::get_priority(Interrupt::TIM1_CC);
     let lptim1 = NVIC::get_priority(Interrupt::LPTIM1);
     let syst = SCB::get_priority(SystemHandler::SysTick);
     rprintln!("SHPR SysTick     = 0x{:02X} (expect 0x00)", syst);
     rprintln!("NVIC COMP        = 0x{:02X} (expect 0x10)", comp);
     rprintln!("NVIC TIM7        = 0x{:02X} (expect 0x20)", tim7);
     rprintln!("NVIC TIM1_UP_T16 = 0x{:02X} (expect 0x30)", tim1);
+    rprintln!("NVIC TIM1_CC     = 0x{:02X} (expect 0x30)", tim1_cc);
     rprintln!("NVIC LPTIM1      = 0x{:02X} (expect 0x40)", lptim1);
 }

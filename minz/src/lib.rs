@@ -11,7 +11,6 @@ pub mod priority;
 pub mod softuart;
 pub mod softuart_lptim1;
 pub mod softuart_tim2;
-pub mod tim15_blank;
 pub mod tim1_motor_pwm;
 pub mod tim7_drive;
 pub mod timer_ext;
