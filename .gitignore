@@ -5,3 +5,6 @@ ref/
 minz/.antigravitycli/
 minz/.claude/
 .claude/
+minz/*.JPG
+minz/*.png
+minz/*.pdf
