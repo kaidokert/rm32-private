@@ -9,8 +9,9 @@
 //!   f / v   electrical frequency  +10 / -10 Hz
 //!   d / c   electrical frequency   +1 /  -1 Hz
 //!   a / z   amplitude              +1 /  -1  (0..20)
+//!   m       toggle waveform: sine ↔ 6-step BLDC
 //!   w       kill — duties to midpoint, no current
-//!   q       reset — re-enable at defaults (60 Hz, amp 15)
+//!   q       reset — re-enable at defaults (60 Hz, amp 15, sine)
 //!   i       VBUS + phase-U current proxy + NTC temperature + CPU busy %
 //!           (no bus-current shunt; OPAMP1/PA1 is the only single-channel proxy)
 
@@ -61,16 +62,21 @@ static SINE48: [u8; 48] = [
     37, 50, 64, 79, 94, 110,
 ];
 
-const AMP_MAX: u32 = 20;
-const AMP_START: u32 = 15;
+/// Safety ceiling: user cannot push amplitude above this percentage.
+const AMP_CAP: u32 = 30;
+const AMP_START: u32 = 7;
 const FREQ_MIN: u32 = 1;
 const FREQ_MAX: u32 = 600;
 const FREQ_START: u32 = 60;
+/// Initial waveform mode. true = six-step, false = sine. Used at boot and on 'q' reset.
+const SIX_STEP_START: bool = false;
 
 // Shared state written by main, read by TIM7 ISR.
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static AMPLITUDE: AtomicU32 = AtomicU32::new(AMP_START);
 static ELECTRICAL_HZ: AtomicU32 = AtomicU32::new(FREQ_START);
+/// false = sine, true = 6-step BLDC
+static SIX_STEP: AtomicBool = AtomicBool::new(SIX_STEP_START);
 
 /// Busy-wait delay that doesn't need SYST (taken by systick-timer).
 struct AsmDelay;
@@ -98,6 +104,110 @@ fn read_adc1_ch5(adc1: &mut hal::adc::Adc<stm32::ADC1, Configured>) -> u16 {
         while r.isr().read().eoc().bit_is_clear() {}
     }
     adc1.current_sample()
+}
+
+// ---------------------------------------------------------------------------
+// 6-step BLDC helpers — B-G431B-ESC1 pin layout
+//
+// Phase A = TIM1 CH1/CH1N : PA8 (hi, AF6)  + PC13 (lo, AF4)
+// Phase B = TIM1 CH2/CH2N : PA9 (hi, AF6)  + PA12 (lo, AF6)
+// Phase C = TIM1 CH3/CH3N : PA10 (hi, AF6) + PB15 (lo, AF4)
+//
+// Floating a phase: switch both its pins from AF(0b10) → OUTPUT(0b01),
+// then drive ODR=0 via BSRR.BR. TIM1 channels keep toggling internally
+// but the MODER override isolates them from the pad — same mechanism as
+// AM32 `phaseXFLOAT`.
+// ---------------------------------------------------------------------------
+
+/// Set MODER for all six motor pins. AF=0b10, OUTPUT=0b01.
+/// Also resets ODR to 0 for any floated pins via BSRR.
+unsafe fn set_phase_modes(float_a: bool, float_b: bool, float_c: bool) {
+    const AF: u32 = 0b10;
+    const OUT: u32 = 0b01;
+
+    unsafe {
+        // GPIOA: PA8(17:16)=CH1H, PA9(19:18)=CH2H, PA10(21:20)=CH3H, PA12(25:24)=CH2N
+        let ga = &*stm32::GPIOA::ptr();
+        let (ma8, ma9, ma10, ma12) = (
+            if float_a { OUT } else { AF },
+            if float_b { OUT } else { AF },
+            if float_c { OUT } else { AF },
+            if float_b { OUT } else { AF },
+        );
+        ga.moder().modify(|r, w| {
+            w.bits(
+                r.bits() & !(3 << 16 | 3 << 18 | 3 << 20 | 3 << 24)
+                    | ma8 << 16
+                    | ma9 << 18
+                    | ma10 << 20
+                    | ma12 << 24,
+            )
+        });
+
+        // GPIOB: PB15(31:30)=CH3N
+        let gb = &*stm32::GPIOB::ptr();
+        let mb15 = if float_c { OUT } else { AF };
+        gb.moder()
+            .modify(|r, w| w.bits((r.bits() & !(3 << 30)) | mb15 << 30));
+
+        // GPIOC: PC13(27:26)=CH1N
+        let gc = &*stm32::GPIOC::ptr();
+        let mc13 = if float_a { OUT } else { AF };
+        gc.moder()
+            .modify(|r, w| w.bits((r.bits() & !(3 << 26)) | mc13 << 26));
+
+        // Drive floated pins LOW via BSRR bit-reset (BSRR.BR[n] = bit 16+n)
+        let mut ba = 0u32;
+        let mut bb = 0u32;
+        let mut bc = 0u32;
+        if float_a {
+            ba |= 1 << (16 + 8);
+            bc |= 1 << (16 + 13);
+        }
+        if float_b {
+            ba |= 1 << (16 + 9) | 1 << (16 + 12);
+        }
+        if float_c {
+            ba |= 1 << (16 + 10);
+            bb |= 1 << (16 + 15);
+        }
+        if ba != 0 {
+            ga.bsrr().write(|w| w.bits(ba));
+        }
+        if bb != 0 {
+            gb.bsrr().write(|w| w.bits(bb));
+        }
+        if bc != 0 {
+            gc.bsrr().write(|w| w.bits(bc));
+        }
+    }
+}
+
+/// Restore all six pins to AF so TIM1 drives them. Safe to call from main.
+fn restore_all_af() {
+    unsafe { set_phase_modes(false, false, false) }
+}
+
+/// 6-step commutation: two phases driven, one floating.
+/// `sector` 0..5; `duty` is raw CCR value (0..ARR).
+/// Standard BLDC table: sector → (high, low, float).
+unsafe fn set_six_step(sector: u8, duty: u32) {
+    const HIGH: [usize; 6] = [0, 0, 1, 1, 2, 2];
+    const LOW: [usize; 6] = [1, 2, 2, 0, 0, 1];
+    let s = (sector % 6) as usize;
+    let hi = HIGH[s];
+    let lo = LOW[s];
+
+    unsafe {
+        let t1 = &*stm32::TIM1::ptr();
+        t1.ccr1()
+            .write(|w| w.ccr().bits(if hi == 0 { duty } else { 0 }));
+        t1.ccr2()
+            .write(|w| w.ccr().bits(if hi == 1 { duty } else { 0 }));
+        t1.ccr3()
+            .write(|w| w.ccr().bits(if hi == 2 { duty } else { 0 }));
+        set_phase_modes(hi != 0 && lo != 0, hi != 1 && lo != 1, hi != 2 && lo != 2);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -224,7 +334,7 @@ fn main() -> ! {
     let _ = c3.set_duty_cycle(half as u16);
 
     // TIM7: sinewave heartbeat at DRIVE_HZ.
-    rinz::tim7_drive::init(dp.TIM7, DRIVE_HZ, SYSCLK_HZ);
+    rinz::tim7_drive::init(dp.TIM7, DRIVE_HZ, &clocks);
     unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
 
     TIMER.start(&mut cp.SYST);
@@ -275,17 +385,28 @@ fn main() -> ! {
                             writeln!(tx, "freq={}Hz\r", hz).ok();
                         }
                         b'a' => {
-                            let amp = (AMPLITUDE.load(Ordering::Relaxed) + 1).min(AMP_MAX);
+                            let amp = (AMPLITUDE.load(Ordering::Relaxed) + 1).min(AMP_CAP);
                             AMPLITUDE.store(amp, Ordering::Relaxed);
-                            writeln!(tx, "amp={}\r", amp).ok();
+                            writeln!(tx, "amp={}%\r", amp).ok();
                         }
                         b'z' => {
                             let amp = AMPLITUDE.load(Ordering::Relaxed).saturating_sub(1);
                             AMPLITUDE.store(amp, Ordering::Relaxed);
-                            writeln!(tx, "amp={}\r", amp).ok();
+                            writeln!(tx, "amp={}%\r", amp).ok();
+                        }
+                        b'm' => {
+                            let was = SIX_STEP.load(Ordering::Relaxed);
+                            if was {
+                                // returning to sine: restore AF so all three phases are driven
+                                restore_all_af();
+                            }
+                            SIX_STEP.store(!was, Ordering::Relaxed);
+                            let name = if was { "sine" } else { "six-step" };
+                            writeln!(tx, "mode={}\r", name).ok();
                         }
                         b'w' => {
                             RUNNING.store(false, Ordering::Relaxed);
+                            restore_all_af(); // un-float any phase left by six-step
                             let _ = c1.set_duty_cycle(half as u16);
                             let _ = c2.set_duty_cycle(half as u16);
                             let _ = c3.set_duty_cycle(half as u16);
@@ -293,10 +414,18 @@ fn main() -> ! {
                             rprintln!("KILL");
                         }
                         b'q' => {
+                            restore_all_af();
+                            SIX_STEP.store(SIX_STEP_START, Ordering::Relaxed);
                             ELECTRICAL_HZ.store(FREQ_START, Ordering::Relaxed);
                             AMPLITUDE.store(AMP_START, Ordering::Relaxed);
                             RUNNING.store(true, Ordering::Relaxed);
-                            writeln!(tx, "reset: freq={}Hz amp={}\r", FREQ_START, AMP_START).ok();
+                            let mode = if SIX_STEP_START { "six-step" } else { "sine" };
+                            writeln!(
+                                tx,
+                                "reset: freq={}Hz amp={}% mode={}\r",
+                                FREQ_START, AMP_START, mode
+                            )
+                            .ok();
                             rprintln!("reset");
                         }
                         b'i' => {
@@ -310,8 +439,9 @@ fn main() -> ! {
 
                             let raw_t = read_adc1_ch5(&mut adc1);
                             let temp_mv = adc1.sample_to_millivolts(raw_t) as i32;
-                            // NTC: V@25°C=1400mV, dV/dT=+19mV/°C → T = 25 + (V_mV - 1400) / 19
-                            let temp_c = 25 + (temp_mv - 1400) / 19;
+                            // NTC pull-down: V decreases with T.
+                            // MC SDK: T = T0 + (V0 - V_out) / dV_dT = 25 + (1400 - V_mV) / 19
+                            let temp_c = 25 + (1400 - temp_mv) / 19;
 
                             writeln!(
                                 tx,
@@ -356,7 +486,7 @@ fn main() -> ! {
 }
 
 // ---------------------------------------------------------------------------
-// TIM7 ISR — sinewave commutation heartbeat at DRIVE_HZ
+// TIM7 ISR — motor commutation heartbeat at DRIVE_HZ
 // ---------------------------------------------------------------------------
 
 #[allow(non_snake_case)]
@@ -373,6 +503,7 @@ extern "C" fn TIM7() {
 
     let electrical_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
     let amplitude = AMPLITUDE.load(Ordering::Relaxed);
+    let six_step = SIX_STEP.load(Ordering::Relaxed);
 
     // Fractional phase accumulator: advances electrical_hz×48 sub-steps per
     // tick, draining DRIVE_HZ sub-steps per integer step.
@@ -382,22 +513,35 @@ extern "C" fn TIM7() {
         PHASE_FRAC %= DRIVE_HZ;
         STEP = (STEP + advance) % 48;
 
-        let va = SINE48[STEP as usize] as u32;
-        let vb = SINE48[(STEP + 16) as usize % 48] as u32;
-        let vc = SINE48[(STEP + 32) as usize % 48] as u32;
-
-        // Read ARR from TIM1 to get half-duty (avoids a shared static).
         let arr = (*stm32::TIM1::ptr()).arr().read().arr().bits() as u32;
-        let half = arr / 2;
 
-        let duty_a = half + va * amplitude * half / (255 * 128);
-        let duty_b = half + vb * amplitude * half / (255 * 128);
-        let duty_c = half + vc * amplitude * half / (255 * 128);
-
-        let t1 = &*stm32::TIM1::ptr();
-        t1.ccr1().write(|w| w.ccr().bits(duty_a));
-        t1.ccr2().write(|w| w.ccr().bits(duty_b));
-        t1.ccr3().write(|w| w.ccr().bits(duty_c));
+        if six_step {
+            // 48 steps / 6 sectors = 8 steps per sector.
+            // Scale duty by 2/3 (~0.667). Pure peak-matching gives 3/4, but six-step's
+            // discrete commutation has an inherent open-loop sync advantage; 2/3 partially
+            // compensates so the modes feel closer at the same amplitude setting.
+            let sector = (STEP / 8) as u8;
+            let duty = arr * amplitude * 2 / (100 * 3);
+            set_six_step(sector, duty);
+        } else {
+            // Sine: CCR = half + (val−127)/127 * amplitude/100 * half
+            // At amplitude=100 the swing reaches 0..ARR (peak LL = 0.75×Vbus).
+            // +4 step offset shifts A's peak from 90° → 60°, aligning with the centre
+            // of the six-step FWD plateau (0°–120°, centre at 60°).
+            let half = (arr / 2) as i32;
+            let amp = amplitude as i32;
+            let va = SINE48[(STEP + 4) as usize % 48] as i32 - 127; // peak at 60°
+            let vb = SINE48[(STEP + 36) as usize % 48] as i32 - 127; // B lags A 120°
+            let vc = SINE48[(STEP + 20) as usize % 48] as i32 - 127; // C lags A 240°
+            let scale = 127 * 100_i32;
+            let duty_a = (half + va * amp * half / scale) as u32;
+            let duty_b = (half + vb * amp * half / scale) as u32;
+            let duty_c = (half + vc * amp * half / scale) as u32;
+            let t1 = &*stm32::TIM1::ptr();
+            t1.ccr1().write(|w| w.ccr().bits(duty_a));
+            t1.ccr2().write(|w| w.ccr().bits(duty_b));
+            t1.ccr3().write(|w| w.ccr().bits(duty_c));
+        }
     }
 }
 
