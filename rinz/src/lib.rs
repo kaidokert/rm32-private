@@ -1,6 +1,9 @@
 #![cfg_attr(not(test), no_std)]
 
+pub mod ewma_pow2;
+pub mod filter;
 pub mod idle_loop;
+pub mod signed_calc;
 
 #[cfg(target_arch = "arm")]
 pub use stm32g4xx_hal as hal;
