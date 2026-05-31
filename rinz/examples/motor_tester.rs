@@ -13,6 +13,9 @@
 //!   m       dump last 2-rev raw ADC ring, full 16-bit hex (4-char + space per sample)
 //!   p       cycle raw ring observed phase: A (ch17) → B (ch5) → C (ch14) → A …
 //!   l       dump last 2-rev ADC-level waveform (dense ring-buffer, per-PWM-tick sample)
+//!   e       de-staircased sector view: 6 sectors × unique triggered steps, role-labelled
+//!           (most useful in triggered-triplet mode; compresses 4.8× repeats to 1 per step)
+//!   s       toggle ADC capture mode: async-legacy (fresh 96kHz) ↔ triggered-triplet (TIM1_TRGO)
 //!   w       kill — duties to midpoint, no current
 //!   q       reset — re-enable at defaults
 //!   i       VBUS + phase-U current proxy + NTC temperature + CPU busy %
@@ -85,6 +88,9 @@ static SIX_STEP: AtomicBool = AtomicBool::new(SIX_STEP_START);
 /// Main loop requests a clean restart of raw ring diagnostics by setting this.
 /// TIM7 owns the hot-path state and performs the actual reset in one place.
 static RAW_RING_RESET: AtomicBool = AtomicBool::new(true);
+
+/// ADC capture mode: false = async continuous (default), true = TIM1-triggered.
+static ADC_TRIGGERED: AtomicBool = AtomicBool::new(false);
 
 // ---------------------------------------------------------------------------
 // Raw BEMF sample ring — 96 kHz, enabled when electrical_hz > 100 ('l' dump)
@@ -207,6 +213,84 @@ unsafe fn start_adc2_scan_dma() {
         // Enable DMA then start ADC
         ch.cr().modify(|r, w| w.bits(r.bits() | 1));
         adc2.cr().modify(|_, w| w.adstart().set_bit());
+    }
+}
+
+/// Switch ADC2 between two genuinely different acquisition backends.
+///
+/// triggered=false — Async legacy (UNFUCK2):
+///   ADC2 is idle; TIM7 ISR performs a fresh single-channel SW conversion every tick.
+///   Produces true 96 kHz independent samples. DMA channel stays disabled.
+///   The ring shows the real aliasing/clamping pattern for observability.
+///
+/// triggered=true — Triggered triplet:
+///   TIM1_TRGO (CCR4=1 → OC4REF pulse at CNT=0) triggers one 3-channel ADC2 scan per
+///   20 kHz PWM period. DMA fills ADC2_DMA_BUF[B,C,A]. TIM7 reads the latest triggered
+///   sample, producing a 96 kHz-rate staircase (same value ~4.8× per trigger).
+///
+/// Bit positions follow RM0440 G4 ADC CFGR (UNFUCK1):
+///   EXTSEL[4:0] = bits [9:5],  EXTEN[1:0] = bits [11:10],  CONT = bit 13
+unsafe fn configure_adc_capture(triggered: bool) {
+    unsafe {
+        let adc2 = &*stm32::ADC2::ptr();
+        let dma = &*stm32::DMA1::ptr();
+        let ch = dma.ch1();
+        let t1 = &*stm32::TIM1::ptr();
+
+        // Stop any in-progress conversion
+        if adc2.cr().read().adstart().bit_is_set() {
+            adc2.cr().modify(|_, w| w.adstp().set_bit());
+            while adc2.cr().read().adstp().bit_is_set() {}
+        }
+        // Disable DMA channel and clear flags in all paths
+        ch.cr().modify(|r, w| w.bits(r.bits() & !1));
+        dma.ifcr().write(|w| w.bits(0x0F));
+        adc2.isr().write(|w| w.bits(0xFFFF_FFFF));
+
+        if triggered {
+            // --- Triggered-triplet backend ---
+            // TIM1 CC4: CCR4=1 so OC4REF pulses HIGH for exactly CNT=0 (one counter
+            // tick ≈ 6 ns). Produces one TRGO rising edge per 20 kHz PWM period.
+            // CCR4=0 makes OC4REF always LOW (CNT < 0 never true) → no TRGO.
+            t1.ccr4().write(|w| w.ccr().bits(1));
+            // CCMR2 output: CC4S=00 (output mode), OC4M=0b110 (PWM mode 1)
+            t1.ccmr2_output()
+                .modify(|r, w| w.bits((r.bits() & !(0x7000 | 0x300)) | (0b110u32 << 12)));
+            // CR2 MMS[6:4] = 0b111 → OC4REF as TRGO
+            t1.cr2()
+                .modify(|r, w| w.bits((r.bits() & !0x70) | (0b111u32 << 4)));
+
+            // SQR1: 3-channel sequence ch5(B)→ch14(C)→ch17(A), L=2 (3 conversions)
+            adc2.sqr1()
+                .write(|w| w.bits((2u32 << 0) | (5u32 << 6) | (14u32 << 12) | (17u32 << 18)));
+
+            // CFGR: CONT=0, EXTEN=0b01 (rising), EXTSEL=9 (TIM1_TRGO), DMAEN|DMACFG
+            // RM0440 G4: EXTSEL[4:0] at bits[9:5]=0x3E0, EXTEN[1:0] at bits[11:10]=0xC00
+            adc2.cfgr().modify(|r, w| {
+                w.bits(
+                    (r.bits() & !(1u32 << 13 | 0xC00 | 0x3E0 | 0x3)) // clear CONT,EXTEN,EXTSEL,DMAEN/CFG
+                        | (0b01u32 << 10)  // EXTEN = rising edge
+                        | (9u32 << 5)      // EXTSEL = TIM1_TRGO
+                        | (1u32 << 0)      // DMAEN
+                        | (1u32 << 1), // DMACFG (circular)
+                )
+            });
+
+            // Reset DMA transfer count, re-enable channel, arm ADC for first trigger
+            ch.ndtr().write(|w| w.bits(3));
+            ch.cr().modify(|r, w| w.bits(r.bits() | 1));
+            adc2.cr().modify(|_, w| w.adstart().set_bit());
+        } else {
+            // --- Async-legacy backend ---
+            // Restore MMS to 0b000 (no TRGO source from CC4)
+            t1.cr2().modify(|r, w| w.bits(r.bits() & !0x70));
+
+            // CFGR: CONT=0, EXTEN=0 (SW only), EXTSEL=0, DMAEN=0, DMACFG=0
+            // TIM7 ISR will drive fresh per-tick SW conversions; no DMA needed.
+            adc2.cfgr()
+                .modify(|r, w| w.bits(r.bits() & !(1u32 << 13 | 0xC00 | 0x3E0 | 0x3)));
+            // ADC2 stays enabled (ADEN=1); ISR will write SQR1 and fire ADSTART each tick
+        }
     }
 }
 
@@ -394,7 +478,8 @@ fn main() -> ! {
         hal::adc::config::AdcConfig::default(),
         &mut AsmDelay,
     );
-    unsafe { start_adc2_scan_dma() };
+    unsafe { start_adc2_scan_dma() }; // one-time DMA routing init (DMAMUX, PAR, MAR, CIRC)
+    unsafe { configure_adc_capture(false) }; // start in async-legacy mode
 
     // USART2: PB3=TX, PB4=RX, 115200 8N1
     let usart = dp
@@ -747,6 +832,19 @@ fn main() -> ! {
                                 temp_c,
                             );
                         }
+                        b's' => {
+                            let was = ADC_TRIGGERED.load(Ordering::Relaxed);
+                            let now = !was;
+                            ADC_TRIGGERED.store(now, Ordering::Relaxed);
+                            unsafe { configure_adc_capture(now) };
+                            RAW_RING_RESET.store(true, Ordering::Relaxed);
+                            let name = if now {
+                                "triggered-triplet (TIM1_TRGO DMA staircase)"
+                            } else {
+                                "async-legacy (fresh 96kHz direct samples)"
+                            };
+                            writeln!(tx, "adc_mode={}\r", name).ok();
+                        }
                         b'n' => {
                             // Register state dump: ADC2 + DMA1_CH1 + DMAMUX + live DR.
                             // Use this to diagnose DMA/ADC2 config issues.
@@ -798,6 +896,132 @@ fn main() -> ! {
                                     mux_ccr0, buf_addr, buf0, buf1, buf2
                                 )
                                 .ok();
+                            }
+                        }
+                        b'e' => {
+                            let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
+                            if f_hz <= 100 {
+                                writeln!(tx, "e: disabled below 100 Hz (current {} Hz)\r", f_hz)
+                                    .ok();
+                            } else {
+                                let starts: [[u32; 6]; 3];
+                                let hist_head: usize;
+                                let hist_count: usize;
+                                NVIC::mask(stm32::Interrupt::TIM7);
+                                unsafe {
+                                    starts = REV_SECTOR_STARTS;
+                                    hist_head = REV_HIST_HEAD;
+                                    hist_count = REV_HIST_COUNT;
+                                }
+                                if hist_count < 3 {
+                                    unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
+                                    writeln!(tx, "e: only {} complete revs (need 3)\r", hist_count)
+                                        .ok();
+                                } else {
+                                    let idx1 = (hist_head + 1) % 3;
+                                    let idx2 = (hist_head + 2) % 3;
+                                    let win_start = starts[idx1][0];
+                                    let win_len = starts[idx2][0].wrapping_sub(win_start) as usize;
+                                    if win_len == 0 || win_len > SNAP_LEN {
+                                        unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
+                                        writeln!(tx, "e: window {} out of range\r", win_len).ok();
+                                    } else {
+                                        unsafe {
+                                            for i in 0..win_len {
+                                                let src = (win_start as usize).wrapping_add(i)
+                                                    & RAW_SAMPLE_MASK;
+                                                SNAP_BUF[i] = RAW_SAMPLE_BUF[src];
+                                            }
+                                            NVIC::unmask(stm32::Interrupt::TIM7);
+                                        }
+
+                                        let triggered = ADC_TRIGGERED.load(Ordering::Relaxed);
+                                        let chan = RING_CHAN_FIXED.load(Ordering::Relaxed);
+                                        let phase_idx: usize = match chan {
+                                            5 => 1,
+                                            14 => 2,
+                                            _ => 0,
+                                        };
+                                        let mode_name =
+                                            if triggered { "triggered" } else { "async" };
+                                        let phase_name = match chan {
+                                            5 => "B",
+                                            14 => "C",
+                                            _ => "A",
+                                        };
+                                        let chan_name = match chan {
+                                            5 => "ch5",
+                                            14 => "ch14",
+                                            _ => "ch17",
+                                        };
+
+                                        writeln!(
+                                            tx,
+                                            "e: {} 1 rev @ {} Hz ({} {})\r",
+                                            mode_name, f_hz, phase_name, chan_name
+                                        )
+                                        .ok();
+
+                                        // Six-step phase-role table: A=0 B=1 C=2
+                                        const HIGH_T: [usize; 6] = [0, 0, 1, 1, 2, 2];
+                                        const LOW_T: [usize; 6] = [1, 2, 2, 0, 0, 1];
+                                        const PNAME: [&str; 3] = ["A", "B", "C"];
+                                        let hex = b"0123456789abcdef";
+
+                                        for sec in 0..6usize {
+                                            let row_start = starts[idx1][sec];
+                                            let row_end = if sec < 5 {
+                                                starts[idx1][sec + 1]
+                                            } else {
+                                                starts[idx2][0]
+                                            };
+                                            let n = row_end.wrapping_sub(row_start) as usize;
+                                            let rel = row_start.wrapping_sub(win_start) as usize;
+
+                                            let role = if HIGH_T[sec] == phase_idx {
+                                                "hi"
+                                            } else if LOW_T[sec] == phase_idx {
+                                                "lo"
+                                            } else {
+                                                "fl"
+                                            };
+
+                                            write!(
+                                                tx,
+                                                "[s{} {}={}]: ",
+                                                sec, PNAME[phase_idx], role
+                                            )
+                                            .ok();
+
+                                            if n == 0 || rel + n > win_len {
+                                                writeln!(tx, "(invalid)\r").ok();
+                                                continue;
+                                            }
+
+                                            // De-staircase: print only on value change.
+                                            // Compresses ~4.8× triggered repeats to 1 per step.
+                                            let mut prev = u16::MAX; // 0xFFFF never in 12-bit ADC data
+                                            unsafe {
+                                                for i in 0..n {
+                                                    let v = SNAP_BUF[rel + i];
+                                                    if v != prev {
+                                                        write!(
+                                                            tx,
+                                                            "{}{}{}{} ",
+                                                            hex[((v >> 12) & 0xF) as usize] as char,
+                                                            hex[((v >> 8) & 0xF) as usize] as char,
+                                                            hex[((v >> 4) & 0xF) as usize] as char,
+                                                            hex[(v & 0xF) as usize] as char,
+                                                        )
+                                                        .ok();
+                                                        prev = v;
+                                                    }
+                                                }
+                                            }
+                                            writeln!(tx, "\r").ok();
+                                        }
+                                    }
+                                }
                             }
                         }
                         _ => {}
@@ -899,15 +1123,30 @@ extern "C" fn TIM7() {
                 let s = (sector % 6) as usize;
                 let fixed = RING_CHAN_FIXED.load(Ordering::Relaxed);
                 let chan = if fixed != 0 { fixed } else { FLOAT_CHAN[s] };
-                let idx = match chan {
-                    5 => 0usize,
-                    14 => 1,
-                    _ => 2,
+
+                let raw: u16 = if ADC_TRIGGERED.load(Ordering::Relaxed) {
+                    // Triggered-triplet: read latest DMA sample for this channel.
+                    // DMA updates at 20 kHz; same value held for ~4.8 TIM7 ticks.
+                    let idx = match chan {
+                        5 => 0usize,
+                        14 => 1,
+                        _ => 2,
+                    };
+                    core::ptr::addr_of!(ADC2_DMA_BUF)
+                        .cast::<u16>()
+                        .add(idx)
+                        .read_volatile()
+                } else {
+                    // Async-legacy: fresh single-channel SW conversion every TIM7 tick.
+                    // ~37 ADC clocks @ 42.5 MHz ≈ 0.87 µs; well within 10.4 µs budget.
+                    let adc2 = &*stm32::ADC2::ptr();
+                    // SQR1: L=0 (1 conversion), SQ1=chan
+                    adc2.sqr1().write(|w| w.bits(chan << 6));
+                    adc2.cr().modify(|_, w| w.adstart().set_bit());
+                    while adc2.isr().read().eoc().bit_is_clear() {}
+                    adc2.dr().read().rdata().bits() // reading DR clears EOC
                 };
-                let raw = core::ptr::addr_of!(ADC2_DMA_BUF)
-                    .cast::<u16>()
-                    .add(idx)
-                    .read_volatile();
+
                 let wr = RAW_SAMPLE_WR.load(Ordering::Relaxed);
                 RAW_SAMPLE_BUF[wr as usize & RAW_SAMPLE_MASK] = raw;
                 RAW_SAMPLE_WR.store(wr.wrapping_add(1), Ordering::Relaxed);
