@@ -296,3 +296,45 @@ All 28 coverage gaps from `COVERAGE_GAPS.md` audited and closed or confirmed pre
 | Firewall | `firewallrstf` | *(absent)* | *(absent)* | *(absent)* |
 
 L4's single-r `lpwrstf` is an ST SVD quirk; G0/G4/F0 all use double-r `lpwrrstf`. PAC accessor names captured in each MCU's `system.rs::read_and_clear_reset_cause()`.
+
+## AM32 reference architecture (verified against `E:/m/robot/esc/AM32`)
+
+Facts established when cross-checking rm32 behavior against AM32. All claims have file:line citations — re-verify before acting on them if a long time has passed.
+
+### Four independent rate domains
+AM32 deliberately decouples PWM, the control ISR, commutation, and BEMF sensing — they are *not* synchronized. Conflating them causes "where should this work live?" mistakes during parity work.
+
+| Domain | Rate | Mechanism |
+|---|---|---|
+| Motor PWM carrier | **24 kHz** | TIM1 hardware-only. `TIM1.UIE` is never enabled — CPU never sees the 24 kHz tick. ARR computed per-MCU from `CPU_FREQUENCY_MHZ * 1e6 / NOMINAL_PWM - 1`. |
+| Control / housekeeping ISR (`tenKhzRoutine`) | **20 kHz** | TIM6 update IRQ on L431 (`Mcu/l431/Src/peripherals.c:452-453` → `PSC=79`, `ARR = 1000000/LOOP_FREQUENCY_HZ = 50`). `LOOP_FREQUENCY_HZ` default = 20000 (`Inc/targets.h:5315`). |
+| Commutation steps | RPM-dependent | TIM16 (`COM_TIMER`) reloaded with next interval at each BEMF ZC. |
+| BEMF zero-cross detection | async, edge-triggered | COMP2 output → EXTI line 22, no PWM-phase gating. |
+
+### `tenKhzRoutine` is misnamed — it's 20 kHz
+`Src/main.c:1311-1312`:
+```c
+void tenKhzRoutine()
+{ // 20khz as of 2.00 to be renamed
+```
+Vestigial name from AM32 1.x. All "10 kHz" references in our code and notes should be read as "the slow control-loop ISR @ 20 kHz". Throttle ramp, arming, LVC, stuck-rotor, signal timeout, telemetry counters, sine stepper, polling-mode startup commutation all live here.
+
+### PWM frequency is 24 kHz uniformly
+- `Inc/targets.h:5329-5337` — global default: `NOMINAL_PWM 24000U`, `TIM1_AUTORELOAD = CPU_FREQUENCY_MHZ * 1e6 / NOMINAL_PWM - 1`. Both `#ifndef`-guarded.
+- **No board in upstream AM32 overrides `NOMINAL_PWM`.** Grepped — only occurrence is the default itself. All Vimdrones L431 variants (`VIMDRONES_L431`, `_CAN`, `_NANO_L431`, `_NANO_L431_CAN`, `_S50_L431`, `_S50_L431_CAN` at `targets.h:89-160`) inherit 24 kHz.
+- Per-MCU ARR values (because CPU clock differs): F051/F031=1999, G071/G031=2665, **L431=3332**, F421=4999, G431=5999, CH32V203=1999 (hardcoded). All evaluate to ~24 kHz PWM.
+- During slow-ramp startup `Src/main.c:627,630` temporarily divides ARR down then restores; brief, only at spin-up.
+- **rm32 implication:** TIM1.ARR should be 3332 on L431 for parity. Existing CLAUDE.md register-parity section covers TIM1 CR1/CCMR/CCER/BDTR but not ARR — confirm `bringup.rs` writes 3332.
+
+### COMP is fully async to PWM on L431
+- `Mcu/l431/Src/peripherals.c:202` (COMP1) and `:260` (COMP2): `OutputBlankingSource = LL_COMP_BLANKINGSRC_NONE`. STM32 supports TIM1_OC4/OC5/TIM15_OC1 blanking but AM32 explicitly disables it.
+- `Mcu/l431/Src/comparator.c::changeCompInput()` only switches floating-phase input and EXTI edge polarity per step. No TIM1 cross-trigger.
+- `Mcu/l431/Src/stm32l4xx_it.c:276` (`COMP_IRQHandler`): the only filter is a software time gate — `INTERVAL_TIMER->CNT > average_interval/2` (elapsed-since-last-ZC), nothing to do with PWM phase. Early edges are swallowed by clearing the EXTI flag only if `getCompOutputLevel() == rising`.
+- **Other AM32 MCU ports differ** — e.g. f421 *does* use OutputBlankingSource tied to TIM1. L431 does not.
+
+### BEMF is sensed in all 6 floating windows (not half-rate)
+- `Src/main.c:840-856` (`commutate()`): `rising = step % 2` (forward) / `!(step % 2)` (reverse), alternating polarity each step.
+- `Mcu/l431/Src/comparator.c::changeCompInput()` phase mapping: step 1/4 → C floating, step 2/5 → A floating, step 3/6 → B floating.
+- Result: each of the 3 phases is sensed twice per electrical period — once rising, once falling. 6 ZCs per electrical revolution. Standard "every floating window" scheme, not a half-rate scheme.
+- Per single commutation step there is **exactly one** floating phase — two carry current, one is open and routed to COMP_INM. COMP_INP is COMMON_COMP (PB4, star-point virtual neutral).
+- `#ifdef INVERTED_EXTI` flips `rising` polarity globally — board-level signal inversion compensation.

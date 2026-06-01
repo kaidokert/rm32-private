@@ -56,6 +56,10 @@ const MICROLOOP_TICKS: u64 = TICK_HZ / 1_000; // 1 ms
 /// two ADC reads → hard ceiling ~150 kHz). At 96 kHz: 57 samples/sector at 280 Hz.
 const DRIVE_HZ: u32 = 96_000;
 
+/// Triplet buffer: max samples per sector. 340 × 6 = 2040 ≤ 2048.
+/// Covers ~10 Hz electrical floor (20000/(340×6)≈9.8 Hz).
+const MAX_TRIP_SPS: usize = 340;
+
 static TIMER: Timer = Timer::new(TICK_HZ, SYSTICK_RELOAD, SYSCLK_HZ as u64);
 
 fn now_u64() -> u64 {
@@ -144,6 +148,19 @@ static mut SNAP_BUF: [u16; SNAP_LEN] = [0u16; SNAP_LEN];
 static mut SNAP_NEUT_BUF: [u16; SNAP_LEN] = [0u16; SNAP_LEN];
 /// V_neut = (V_hi + V_lo)/2 per ring slot. Written by TIM7 in triggered mode; 0 in async.
 static mut RAW_NEUT_BUF: [u16; RAW_SAMPLE_LEN] = [0u16; RAW_SAMPLE_LEN];
+
+/// Per-sector sample count for triplet buffer. TIM7-only writer; read under TIM7 mask or when frozen.
+static mut TRIP_COUNTS: [usize; 6] = [0usize; 6];
+/// Snapshot of TRIP_COUNTS taken at rev-wrap before s0 counter is reset. Main reads this.
+static mut TRIP_COUNTS_SNAP: [usize; 6] = [0usize; 6];
+/// Main sets to request freeze at next rev boundary; ISR sets TRIP_FROZEN and clears this.
+static TRIP_FREEZE_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// When set, ISR stops writing triplet buffers. Main reads freely. Clear to resume.
+static TRIP_FROZEN: AtomicBool = AtomicBool::new(false);
+/// Fractional accumulator for 20 kHz triplet write cadence inside the 96 kHz TIM7 ISR.
+/// Advances by 20000 each tick; when it reaches DRIVE_HZ one triplet is written and
+/// DRIVE_HZ is subtracted. Gives exactly 20000 writes/sec, one per TIM1 trigger on average.
+static mut TRIP_FRAC: u32 = 0;
 
 /// Busy-wait delay that doesn't need SYST (taken by systick-timer).
 struct AsmDelay;
@@ -634,157 +651,187 @@ fn main() -> ! {
                             writeln!(tx, "amp={}%\r", amp).ok();
                         }
                         b'l' => {
-                            let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
-                            if f_hz <= 100 {
-                                writeln!(tx, "l: disabled below 100 Hz (current {} Hz)\r", f_hz)
-                                    .ok();
+                            if ADC_TRIGGERED.load(Ordering::Relaxed) {
+                                writeln!(tx, "l: only in async mode ('s' to switch)\r").ok();
                             } else {
-                                let starts: [[u32; 6]; 3];
-                                let hist_head: usize;
-                                let hist_count: usize;
-                                NVIC::mask(stm32::Interrupt::TIM7);
-                                unsafe {
-                                    starts = REV_SECTOR_STARTS;
-                                    hist_head = REV_HIST_HEAD;
-                                    hist_count = REV_HIST_COUNT;
-                                }
-                                if hist_count < 3 {
-                                    unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                    writeln!(tx, "l: only {} complete revs (need 3)\r", hist_count)
-                                        .ok();
+                                let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
+                                if f_hz <= 100 {
+                                    writeln!(
+                                        tx,
+                                        "l: disabled below 100 Hz (current {} Hz)\r",
+                                        f_hz
+                                    )
+                                    .ok();
                                 } else {
-                                    let idx0 = hist_head;
-                                    let idx1 = (hist_head + 1) % 3;
-                                    let idx2 = (hist_head + 2) % 3;
-                                    let win_start = starts[idx0][0];
-                                    let win_len = starts[idx2][0].wrapping_sub(win_start) as usize;
-                                    if win_len == 0 || win_len > SNAP_LEN {
+                                    let starts: [[u32; 6]; 3];
+                                    let hist_head: usize;
+                                    let hist_count: usize;
+                                    NVIC::mask(stm32::Interrupt::TIM7);
+                                    unsafe {
+                                        starts = REV_SECTOR_STARTS;
+                                        hist_head = REV_HIST_HEAD;
+                                        hist_count = REV_HIST_COUNT;
+                                    }
+                                    if hist_count < 3 {
                                         unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                        writeln!(tx, "l: window {} out of range\r", win_len).ok();
+                                        writeln!(
+                                            tx,
+                                            "l: only {} complete revs (need 3)\r",
+                                            hist_count
+                                        )
+                                        .ok();
                                     } else {
-                                        unsafe {
-                                            for i in 0..win_len {
-                                                let src = (win_start as usize).wrapping_add(i)
-                                                    & RAW_SAMPLE_MASK;
-                                                SNAP_BUF[i] = RAW_SAMPLE_BUF[src];
-                                            }
-                                            NVIC::unmask(stm32::Interrupt::TIM7);
-                                        }
-                                        writeln!(tx, "l: 2 revs @ {} Hz\r", f_hz).ok();
-                                        for row in 0..12usize {
-                                            let rev = row / 6;
-                                            let sec = row % 6;
-                                            let rev_idx = if rev == 0 { idx0 } else { idx1 };
-                                            let nxt_idx = if rev == 0 { idx1 } else { idx2 };
-                                            let row_start = starts[rev_idx][sec];
-                                            let row_end = if sec < 5 {
-                                                starts[rev_idx][sec + 1]
-                                            } else {
-                                                starts[nxt_idx][0]
-                                            };
-                                            let n = row_end.wrapping_sub(row_start) as usize;
-                                            let rel = row_start.wrapping_sub(win_start) as usize;
-                                            write!(tx, "[r{} s{}]: ", rev, sec).ok();
-                                            if n == 0 || rel + n > win_len {
-                                                writeln!(tx, "(invalid)\r").ok();
-                                                continue;
-                                            }
+                                        let idx0 = hist_head;
+                                        let idx1 = (hist_head + 1) % 3;
+                                        let idx2 = (hist_head + 2) % 3;
+                                        let win_start = starts[idx0][0];
+                                        let win_len =
+                                            starts[idx2][0].wrapping_sub(win_start) as usize;
+                                        if win_len == 0 || win_len > SNAP_LEN {
+                                            unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
+                                            writeln!(tx, "l: window {} out of range\r", win_len)
+                                                .ok();
+                                        } else {
                                             unsafe {
-                                                for i in 0..n {
-                                                    let v = SNAP_BUF[rel + i];
-                                                    write!(
-                                                        tx,
-                                                        "{}{}",
-                                                        b"0123456789abcdef"
-                                                            [((v >> 8) & 0xF) as usize]
-                                                            as char,
-                                                        b"0123456789abcdef"
-                                                            [((v >> 4) & 0xF) as usize]
-                                                            as char,
-                                                    )
-                                                    .ok();
+                                                for i in 0..win_len {
+                                                    let src = (win_start as usize).wrapping_add(i)
+                                                        & RAW_SAMPLE_MASK;
+                                                    SNAP_BUF[i] = RAW_SAMPLE_BUF[src];
                                                 }
+                                                NVIC::unmask(stm32::Interrupt::TIM7);
                                             }
-                                            writeln!(tx, "\r").ok();
+                                            writeln!(tx, "l: 2 revs @ {} Hz\r", f_hz).ok();
+                                            for row in 0..12usize {
+                                                let rev = row / 6;
+                                                let sec = row % 6;
+                                                let rev_idx = if rev == 0 { idx0 } else { idx1 };
+                                                let nxt_idx = if rev == 0 { idx1 } else { idx2 };
+                                                let row_start = starts[rev_idx][sec];
+                                                let row_end = if sec < 5 {
+                                                    starts[rev_idx][sec + 1]
+                                                } else {
+                                                    starts[nxt_idx][0]
+                                                };
+                                                let n = row_end.wrapping_sub(row_start) as usize;
+                                                let rel =
+                                                    row_start.wrapping_sub(win_start) as usize;
+                                                write!(tx, "[r{} s{}]: ", rev, sec).ok();
+                                                if n == 0 || rel + n > win_len {
+                                                    writeln!(tx, "(invalid)\r").ok();
+                                                    continue;
+                                                }
+                                                unsafe {
+                                                    for i in 0..n {
+                                                        let v = SNAP_BUF[rel + i];
+                                                        write!(
+                                                            tx,
+                                                            "{}{}",
+                                                            b"0123456789abcdef"
+                                                                [((v >> 8) & 0xF) as usize]
+                                                                as char,
+                                                            b"0123456789abcdef"
+                                                                [((v >> 4) & 0xF) as usize]
+                                                                as char,
+                                                        )
+                                                        .ok();
+                                                    }
+                                                }
+                                                writeln!(tx, "\r").ok();
+                                            }
                                         }
                                     }
                                 }
-                            }
+                            } // end async-only else
                         }
                         b'm' => {
-                            let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
-                            if f_hz <= 100 {
-                                writeln!(tx, "m: disabled below 100 Hz (current {} Hz)\r", f_hz)
-                                    .ok();
+                            if ADC_TRIGGERED.load(Ordering::Relaxed) {
+                                writeln!(tx, "m: only in async mode ('s' to switch)\r").ok();
                             } else {
-                                let starts: [[u32; 6]; 3];
-                                let hist_head: usize;
-                                let hist_count: usize;
-                                NVIC::mask(stm32::Interrupt::TIM7);
-                                unsafe {
-                                    starts = REV_SECTOR_STARTS;
-                                    hist_head = REV_HIST_HEAD;
-                                    hist_count = REV_HIST_COUNT;
-                                }
-                                if hist_count < 3 {
-                                    unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                    writeln!(tx, "m: only {} complete revs (need 3)\r", hist_count)
-                                        .ok();
+                                let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
+                                if f_hz <= 100 {
+                                    writeln!(
+                                        tx,
+                                        "m: disabled below 100 Hz (current {} Hz)\r",
+                                        f_hz
+                                    )
+                                    .ok();
                                 } else {
-                                    let idx0 = hist_head;
-                                    let idx1 = (hist_head + 1) % 3;
-                                    let idx2 = (hist_head + 2) % 3;
-                                    let win_start = starts[idx0][0];
-                                    let win_len = starts[idx2][0].wrapping_sub(win_start) as usize;
-                                    if win_len == 0 || win_len > SNAP_LEN {
+                                    let starts: [[u32; 6]; 3];
+                                    let hist_head: usize;
+                                    let hist_count: usize;
+                                    NVIC::mask(stm32::Interrupt::TIM7);
+                                    unsafe {
+                                        starts = REV_SECTOR_STARTS;
+                                        hist_head = REV_HIST_HEAD;
+                                        hist_count = REV_HIST_COUNT;
+                                    }
+                                    if hist_count < 3 {
                                         unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                        writeln!(tx, "m: window {} out of range\r", win_len).ok();
+                                        writeln!(
+                                            tx,
+                                            "m: only {} complete revs (need 3)\r",
+                                            hist_count
+                                        )
+                                        .ok();
                                     } else {
-                                        unsafe {
-                                            for i in 0..win_len {
-                                                let src = (win_start as usize).wrapping_add(i)
-                                                    & RAW_SAMPLE_MASK;
-                                                SNAP_BUF[i] = RAW_SAMPLE_BUF[src];
-                                            }
-                                            NVIC::unmask(stm32::Interrupt::TIM7);
-                                        }
-                                        writeln!(tx, "m: 2 revs @ {} Hz\r", f_hz).ok();
-                                        let hex = b"0123456789abcdef";
-                                        for row in 0..12usize {
-                                            let rev = row / 6;
-                                            let sec = row % 6;
-                                            let rev_idx = if rev == 0 { idx0 } else { idx1 };
-                                            let nxt_idx = if rev == 0 { idx1 } else { idx2 };
-                                            let row_start = starts[rev_idx][sec];
-                                            let row_end = if sec < 5 {
-                                                starts[rev_idx][sec + 1]
-                                            } else {
-                                                starts[nxt_idx][0]
-                                            };
-                                            let n = row_end.wrapping_sub(row_start) as usize;
-                                            let rel = row_start.wrapping_sub(win_start) as usize;
-                                            write!(tx, "[r{} s{}]: ", rev, sec).ok();
-                                            if n == 0 || rel + n > win_len {
-                                                writeln!(tx, "(invalid)\r").ok();
-                                                continue;
-                                            }
+                                        let idx0 = hist_head;
+                                        let idx1 = (hist_head + 1) % 3;
+                                        let idx2 = (hist_head + 2) % 3;
+                                        let win_start = starts[idx0][0];
+                                        let win_len =
+                                            starts[idx2][0].wrapping_sub(win_start) as usize;
+                                        if win_len == 0 || win_len > SNAP_LEN {
+                                            unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
+                                            writeln!(tx, "m: window {} out of range\r", win_len)
+                                                .ok();
+                                        } else {
                                             unsafe {
-                                                for i in 0..n {
-                                                    let v = SNAP_BUF[rel + i];
-                                                    write!(
-                                                        tx,
-                                                        "{}{} ",
-                                                        hex[((v >> 8) & 0xF) as usize] as char,
-                                                        hex[((v >> 4) & 0xF) as usize] as char,
-                                                    )
-                                                    .ok();
+                                                for i in 0..win_len {
+                                                    let src = (win_start as usize).wrapping_add(i)
+                                                        & RAW_SAMPLE_MASK;
+                                                    SNAP_BUF[i] = RAW_SAMPLE_BUF[src];
                                                 }
+                                                NVIC::unmask(stm32::Interrupt::TIM7);
                                             }
-                                            writeln!(tx, "\r").ok();
+                                            writeln!(tx, "m: 2 revs @ {} Hz\r", f_hz).ok();
+                                            let hex = b"0123456789abcdef";
+                                            for row in 0..12usize {
+                                                let rev = row / 6;
+                                                let sec = row % 6;
+                                                let rev_idx = if rev == 0 { idx0 } else { idx1 };
+                                                let nxt_idx = if rev == 0 { idx1 } else { idx2 };
+                                                let row_start = starts[rev_idx][sec];
+                                                let row_end = if sec < 5 {
+                                                    starts[rev_idx][sec + 1]
+                                                } else {
+                                                    starts[nxt_idx][0]
+                                                };
+                                                let n = row_end.wrapping_sub(row_start) as usize;
+                                                let rel =
+                                                    row_start.wrapping_sub(win_start) as usize;
+                                                write!(tx, "[r{} s{}]: ", rev, sec).ok();
+                                                if n == 0 || rel + n > win_len {
+                                                    writeln!(tx, "(invalid)\r").ok();
+                                                    continue;
+                                                }
+                                                unsafe {
+                                                    for i in 0..n {
+                                                        let v = SNAP_BUF[rel + i];
+                                                        write!(
+                                                            tx,
+                                                            "{}{} ",
+                                                            hex[((v >> 8) & 0xF) as usize] as char,
+                                                            hex[((v >> 4) & 0xF) as usize] as char,
+                                                        )
+                                                        .ok();
+                                                    }
+                                                }
+                                                writeln!(tx, "\r").ok();
+                                            }
                                         }
                                     }
                                 }
-                            }
+                            } // end async-only else
                         }
                         b'p' => {
                             let cur = RING_CHAN_FIXED.load(Ordering::Relaxed);
@@ -817,6 +864,8 @@ fn main() -> ! {
                             RUNNING.store(false, Ordering::Relaxed);
                             restore_all_af(); // un-float any phase left by six-step
                             RAW_RING_RESET.store(true, Ordering::Relaxed);
+                            TRIP_FROZEN.store(false, Ordering::Relaxed);
+                            TRIP_FREEZE_REQUESTED.store(false, Ordering::Relaxed);
                             let _ = c1.set_duty_cycle(half as u16);
                             let _ = c2.set_duty_cycle(half as u16);
                             let _ = c3.set_duty_cycle(half as u16);
@@ -879,6 +928,8 @@ fn main() -> ! {
                             ADC_TRIGGERED.store(now, Ordering::Relaxed);
                             unsafe { configure_adc_capture(now) };
                             RAW_RING_RESET.store(true, Ordering::Relaxed);
+                            TRIP_FROZEN.store(false, Ordering::Relaxed);
+                            TRIP_FREEZE_REQUESTED.store(false, Ordering::Relaxed);
                             let name = if now {
                                 "triggered-triplet (TIM1_TRGO DMA staircase)"
                             } else {
@@ -940,218 +991,135 @@ fn main() -> ! {
                             }
                         }
                         b'e' => {
-                            let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
-                            if f_hz <= 100 {
-                                writeln!(tx, "e: disabled below 100 Hz (current {} Hz)\r", f_hz)
-                                    .ok();
+                            let triggered = ADC_TRIGGERED.load(Ordering::Relaxed);
+                            if !triggered {
+                                writeln!(tx, "e: only in triggered mode ('s' to switch)\r").ok();
+                            } else if !RUNNING.load(Ordering::Relaxed) {
+                                writeln!(tx, "e: motor not running\r").ok();
                             } else {
-                                let starts: [[u32; 6]; 3];
-                                let hist_head: usize;
-                                let hist_count: usize;
-                                NVIC::mask(stm32::Interrupt::TIM7);
-                                unsafe {
-                                    starts = REV_SECTOR_STARTS;
-                                    hist_head = REV_HIST_HEAD;
-                                    hist_count = REV_HIST_COUNT;
+                                let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
+                                // Request freeze at next rev boundary, wait for ISR to honour it.
+                                TRIP_FROZEN.store(false, Ordering::Relaxed);
+                                TRIP_FREEZE_REQUESTED.store(true, Ordering::Relaxed);
+                                while !TRIP_FROZEN.load(Ordering::Relaxed) {
+                                    cortex_m::asm::nop();
                                 }
-                                if hist_count < 3 {
-                                    unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                    writeln!(tx, "e: only {} complete revs (need 3)\r", hist_count)
-                                        .ok();
-                                } else {
-                                    let idx1 = (hist_head + 1) % 3;
-                                    let idx2 = (hist_head + 2) % 3;
-                                    let win_start = starts[idx1][0];
-                                    let win_len = starts[idx2][0].wrapping_sub(win_start) as usize;
-                                    if win_len == 0 || win_len > SNAP_LEN {
-                                        unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                        writeln!(tx, "e: window {} out of range\r", win_len).ok();
-                                    } else {
+                                // Buffers frozen; ISR will not write until we clear TRIP_FROZEN.
+                                let counts: [usize; 6] = unsafe { TRIP_COUNTS_SNAP };
+                                let avg_sps = counts.iter().sum::<usize>() / 6;
+                                writeln!(
+                                    tx,
+                                    "e: trip 1 rev @ {} Hz  ~{} samp/sec\r",
+                                    f_hz, avg_sps
+                                )
+                                .ok();
+
+                                const PNAME: [&str; 3] = ["A", "B", "C"];
+                                const RAMP_FALLING: [bool; 6] =
+                                    [true, false, true, false, true, false];
+                                const BLANK: usize = 2; // 2 × 50 µs = 100 µs at 20 kHz
+                                const ZC_CONFIRM: usize = 2;
+                                const ZC_LATE: usize = usize::MAX;
+                                const ZC_EARLY: usize = usize::MAX - 1;
+                                let hex = b"0123456789abcdef";
+
+                                for sec in 0..6usize {
+                                    let n = counts[sec];
+                                    let base = sec * MAX_TRIP_SPS;
+                                    let hi = SIX_STEP_HIGH[sec];
+                                    let lo = SIX_STEP_LOW[sec];
+                                    let fl = 3 - hi - lo; // float phase: A=0,B=1,C=2
+
+                                    // Float-phase BEMF from the appropriate buffer.
+                                    let get_fl = |i: usize| -> u16 {
                                         unsafe {
-                                            for i in 0..win_len {
-                                                let src = (win_start as usize).wrapping_add(i)
-                                                    & RAW_SAMPLE_MASK;
-                                                SNAP_BUF[i] = RAW_SAMPLE_BUF[src];
-                                                SNAP_NEUT_BUF[i] = RAW_NEUT_BUF[src];
+                                            match fl {
+                                                0 => RAW_SAMPLE_BUF[base + i],
+                                                2 => SNAP_BUF[base + i],
+                                                _ => RAW_NEUT_BUF[base + i],
                                             }
-                                            NVIC::unmask(stm32::Interrupt::TIM7);
                                         }
+                                    };
+                                    let get_n =
+                                        |i: usize| -> u16 { unsafe { SNAP_NEUT_BUF[base + i] } };
 
-                                        let triggered = ADC_TRIGGERED.load(Ordering::Relaxed);
-                                        let chan = RING_CHAN_FIXED.load(Ordering::Relaxed);
-                                        let phase_idx: usize = match chan {
-                                            5 => 1,
-                                            14 => 2,
-                                            _ => 0,
+                                    // ZC scan on float phase.
+                                    let rf = RAMP_FALLING[sec];
+                                    let zc_i: usize = if n > BLANK + ZC_CONFIRM {
+                                        let xd = |i: usize| -> bool {
+                                            let vb = get_fl(i);
+                                            let vn = get_n(i);
+                                            if vn == 0 || vb == 0 {
+                                                return false;
+                                            }
+                                            if rf { vb <= vn } else { vb >= vn }
                                         };
-                                        let mode_name =
-                                            if triggered { "triggered" } else { "async" };
-                                        let phase_name = match chan {
-                                            5 => "B",
-                                            14 => "C",
-                                            _ => "A",
-                                        };
-                                        let chan_name = match chan {
-                                            5 => "ch5",
-                                            14 => "ch14",
-                                            _ => "ch17",
-                                        };
+                                        if (BLANK..(BLANK + ZC_CONFIRM)).all(xd) {
+                                            ZC_LATE
+                                        } else {
+                                            let mut found = ZC_EARLY;
+                                            'scan: for i in BLANK..n.saturating_sub(ZC_CONFIRM - 1)
+                                            {
+                                                if (i..(i + ZC_CONFIRM)).all(xd) {
+                                                    found = i;
+                                                    break 'scan;
+                                                }
+                                            }
+                                            found
+                                        }
+                                    } else {
+                                        ZC_EARLY
+                                    };
 
-                                        writeln!(
+                                    // Header line.
+                                    write!(
+                                        tx,
+                                        "[s{} {}=hi {}=lo {}=fl ",
+                                        sec, PNAME[hi], PNAME[lo], PNAME[fl]
+                                    )
+                                    .ok();
+                                    if zc_i == ZC_LATE {
+                                        writeln!(tx, "ZC<0]:\r").ok();
+                                    } else if zc_i < ZC_EARLY {
+                                        writeln!(tx, "ZC@{}/{}]:\r", zc_i, n).ok();
+                                    } else {
+                                        writeln!(tx, "ZC>{}]:\r", n).ok();
+                                    }
+
+                                    // Float BEMF row.
+                                    write!(tx, "  {}: ", PNAME[fl]).ok();
+                                    for i in 0..n {
+                                        if i == zc_i {
+                                            write!(tx, "*").ok();
+                                        }
+                                        let v = get_fl(i);
+                                        write!(
                                             tx,
-                                            "e: {} 1 rev @ {} Hz ({} {})\r",
-                                            mode_name, f_hz, phase_name, chan_name
+                                            "{}{} ",
+                                            hex[((v >> 8) & 0xF) as usize] as char,
+                                            hex[((v >> 4) & 0xF) as usize] as char,
                                         )
                                         .ok();
-
-                                        const PNAME: [&str; 3] = ["A", "B", "C"];
-                                        const RAMP_FALLING: [bool; 6] =
-                                            [true, false, true, false, true, false];
-                                        const BLANK: usize = 5;
-                                        const ZC_CONFIRM: usize = 2;
-                                        const ZC_LATE: usize = usize::MAX;
-                                        const ZC_EARLY: usize = usize::MAX - 1;
-                                        let hex = b"0123456789abcdef";
-
-                                        for sec in 0..6usize {
-                                            let row_start = starts[idx1][sec];
-                                            let row_end = if sec < 5 {
-                                                starts[idx1][sec + 1]
-                                            } else {
-                                                starts[idx2][0]
-                                            };
-                                            let n = row_end.wrapping_sub(row_start) as usize;
-                                            let rel = row_start.wrapping_sub(win_start) as usize;
-                                            let is_float = SIX_STEP_HIGH[sec] != phase_idx
-                                                && SIX_STEP_LOW[sec] != phase_idx;
-                                            let role = if SIX_STEP_HIGH[sec] == phase_idx {
-                                                "hi"
-                                            } else if SIX_STEP_LOW[sec] == phase_idx {
-                                                "lo"
-                                            } else {
-                                                "fl"
-                                            };
-
-                                            if n == 0 || rel + n > win_len {
-                                                writeln!(
-                                                    tx,
-                                                    "[s{} {}={}]: (invalid)\r",
-                                                    sec, PNAME[phase_idx], role
-                                                )
-                                                .ok();
-                                                continue;
-                                            }
-
-                                            let zc_i: usize = if triggered
-                                                && is_float
-                                                && n > BLANK + ZC_CONFIRM
-                                            {
-                                                let rf = RAMP_FALLING[sec];
-                                                let xd = |i: usize| -> bool {
-                                                    let vb = unsafe { SNAP_BUF[rel + i] };
-                                                    let vn = unsafe { SNAP_NEUT_BUF[rel + i] };
-                                                    if rf { vb <= vn } else { vb >= vn }
-                                                };
-                                                if (BLANK..(BLANK + ZC_CONFIRM)).all(xd) {
-                                                    ZC_LATE
-                                                } else {
-                                                    let mut found = ZC_EARLY;
-                                                    'scan: for i in
-                                                        BLANK..n.saturating_sub(ZC_CONFIRM - 1)
-                                                    {
-                                                        if (i..(i + ZC_CONFIRM)).all(xd) {
-                                                            found = i;
-                                                            break 'scan;
-                                                        }
-                                                    }
-                                                    found
-                                                }
-                                            } else {
-                                                ZC_EARLY
-                                            };
-
-                                            if is_float && triggered {
-                                                if zc_i == ZC_LATE {
-                                                    write!(
-                                                        tx,
-                                                        "[s{} {}=fl ZC<0]: ",
-                                                        sec, PNAME[phase_idx]
-                                                    )
-                                                    .ok();
-                                                } else if zc_i < ZC_EARLY {
-                                                    write!(
-                                                        tx,
-                                                        "[s{} {}=fl ZC@{}/{}]: ",
-                                                        sec, PNAME[phase_idx], zc_i, n
-                                                    )
-                                                    .ok();
-                                                } else {
-                                                    write!(
-                                                        tx,
-                                                        "[s{} {}=fl ZC>{}]: ",
-                                                        sec, PNAME[phase_idx], n
-                                                    )
-                                                    .ok();
-                                                }
-                                            } else {
-                                                write!(
-                                                    tx,
-                                                    "[s{} {}={}]: ",
-                                                    sec, PNAME[phase_idx], role
-                                                )
-                                                .ok();
-                                            }
-
-                                            // BEMF row: de-staircase; * before ZC crossing sample
-                                            unsafe {
-                                                let mut prev = u16::MAX;
-                                                for i in 0..n {
-                                                    let v = SNAP_BUF[rel + i];
-                                                    if v != prev {
-                                                        if i == zc_i {
-                                                            write!(tx, "*").ok();
-                                                        }
-                                                        write!(
-                                                            tx,
-                                                            "{}{} ",
-                                                            hex[((v >> 8) & 0xF) as usize] as char,
-                                                            hex[((v >> 4) & 0xF) as usize] as char,
-                                                        )
-                                                        .ok();
-                                                        prev = v;
-                                                    }
-                                                }
-                                            }
-                                            writeln!(tx, "\r").ok();
-
-                                            // Neut row: triggered + float sectors only.
-                                            // Gated by BEMF de-staircase → same i → columns aligned.
-                                            if is_float && triggered {
-                                                write!(tx, "[neut s{}]: ", sec).ok();
-                                                unsafe {
-                                                    let mut prev_b = u16::MAX;
-                                                    for i in 0..n {
-                                                        let vb = SNAP_BUF[rel + i];
-                                                        if vb != prev_b {
-                                                            let vn = SNAP_NEUT_BUF[rel + i];
-                                                            write!(
-                                                                tx,
-                                                                "{}{} ",
-                                                                hex[((vn >> 8) & 0xF) as usize]
-                                                                    as char,
-                                                                hex[((vn >> 4) & 0xF) as usize]
-                                                                    as char,
-                                                            )
-                                                            .ok();
-                                                            prev_b = vb;
-                                                        }
-                                                    }
-                                                }
-                                                writeln!(tx, "\r").ok();
-                                            }
-                                        }
                                     }
+                                    writeln!(tx, "\r").ok();
+
+                                    // Neutral row.
+                                    write!(tx, "  N: ").ok();
+                                    for i in 0..n {
+                                        let v = get_n(i);
+                                        write!(
+                                            tx,
+                                            "{}{} ",
+                                            hex[((v >> 8) & 0xF) as usize] as char,
+                                            hex[((v >> 4) & 0xF) as usize] as char,
+                                        )
+                                        .ok();
+                                    }
+                                    writeln!(tx, "\r").ok();
                                 }
+
+                                // Unfreeze: ISR resumes writing on next tick.
+                                TRIP_FROZEN.store(false, Ordering::Relaxed);
                             }
                         }
                         _ => {}
@@ -1206,6 +1174,9 @@ extern "C" fn TIM7() {
             CUR_REV_SECTOR_STARTS = [u32::MAX; 6];
             REV_HIST_HEAD = 0;
             REV_HIST_COUNT = 0;
+            TRIP_COUNTS = [0usize; 6];
+            TRIP_COUNTS_SNAP = [0usize; 6];
+            TRIP_FRAC = 0;
         }
 
         PHASE_FRAC += electrical_hz * 48;
@@ -1245,50 +1216,63 @@ extern "C" fn TIM7() {
                 }
                 let _ = now_t;
                 PREV_SECTOR = sector;
+                // Triplet buffer: reset per-sector counter on sector entry.
+                if ADC_TRIGGERED.load(Ordering::Relaxed) {
+                    if rev_wrapped && TRIP_FREEZE_REQUESTED.load(Ordering::Relaxed) {
+                        TRIP_COUNTS_SNAP = TRIP_COUNTS; // snapshot complete rev before reset
+                        TRIP_FROZEN.store(true, Ordering::Relaxed);
+                        TRIP_FREEZE_REQUESTED.store(false, Ordering::Relaxed);
+                    }
+                    TRIP_COUNTS[sector as usize] = 0;
+                }
             }
 
             // ADC sampling for raw ring ('l'/'m'/'e' dumps).
             if electrical_hz > 100 {
-                const FLOAT_CHAN: [u32; 6] = [14, 5, 17, 14, 5, 17];
                 let s = (sector % 6) as usize;
-                let fixed = RING_CHAN_FIXED.load(Ordering::Relaxed);
-                let chan = if fixed != 0 { fixed } else { FLOAT_CHAN[s] };
                 let triggered = ADC_TRIGGERED.load(Ordering::Relaxed);
 
-                let raw: u16 = if triggered {
-                    // Triggered-triplet: read latest DMA sample for this channel.
-                    let idx = match chan {
-                        17 => 0usize,
-                        14 => 1,
-                        _ => 2,
-                    };
-                    core::ptr::addr_of!(ADC2_DMA_BUF)
-                        .cast::<u16>()
-                        .add(idx)
-                        .read_volatile()
+                if triggered {
+                    if !TRIP_FROZEN.load(Ordering::Relaxed) {
+                        // Fractional accumulator: fires once per TIM1 trigger on average
+                        // (DRIVE_HZ/20000 = 4.8 TIM7 ticks per write). Carry-over between
+                        // sectors keeps the cadence uniform across sector boundaries.
+                        TRIP_FRAC += 20_000;
+                        if TRIP_FRAC >= DRIVE_HZ {
+                            TRIP_FRAC -= DRIVE_HZ;
+                            let cnt = TRIP_COUNTS[s];
+                            if cnt < MAX_TRIP_SPS {
+                                let dma = core::ptr::addr_of!(ADC2_DMA_BUF).cast::<u16>();
+                                let idx = s * MAX_TRIP_SPS + cnt;
+                                let va = dma.add(0).read_volatile(); // ch17 / A
+                                let vc = dma.add(1).read_volatile(); // ch14 / C
+                                let vb = dma.add(2).read_volatile(); // ch5  / B
+                                let v_hi = dma.add(PHASE_TO_DMA[SIX_STEP_HIGH[s]]).read_volatile();
+                                let v_lo = dma.add(PHASE_TO_DMA[SIX_STEP_LOW[s]]).read_volatile();
+                                let vn = ((v_hi as u32 + v_lo as u32) >> 1) as u16;
+                                RAW_SAMPLE_BUF[idx] = va;
+                                SNAP_BUF[idx] = vc;
+                                RAW_NEUT_BUF[idx] = vb;
+                                SNAP_NEUT_BUF[idx] = vn;
+                                TRIP_COUNTS[s] = cnt + 1;
+                            }
+                        }
+                    }
                 } else {
-                    // Async-legacy: fresh single-channel SW conversion every TIM7 tick.
+                    // Async-legacy: fresh single-channel SW conversion → rolling ring.
+                    let fixed = RING_CHAN_FIXED.load(Ordering::Relaxed);
+                    const FLOAT_CHAN: [u32; 6] = [14, 5, 17, 14, 5, 17];
+                    let chan = if fixed != 0 { fixed } else { FLOAT_CHAN[s] };
                     let adc2 = &*stm32::ADC2::ptr();
                     adc2.sqr1().write(|w| w.bits(chan << 6));
                     adc2.cr().modify(|_, w| w.adstart().set_bit());
                     while adc2.isr().read().eoc().bit_is_clear() {}
-                    adc2.dr().read().rdata().bits()
-                };
-
-                // V_neut = (V_hi + V_lo) / 2 from same DMA triplet (triggered only).
-                let v_neut: u16 = if triggered {
-                    let dma = core::ptr::addr_of!(ADC2_DMA_BUF).cast::<u16>();
-                    let v_hi = dma.add(PHASE_TO_DMA[SIX_STEP_HIGH[s]]).read_volatile();
-                    let v_lo = dma.add(PHASE_TO_DMA[SIX_STEP_LOW[s]]).read_volatile();
-                    ((v_hi as u32 + v_lo as u32) >> 1) as u16
-                } else {
-                    0
-                };
-
-                let wr = RAW_SAMPLE_WR.load(Ordering::Relaxed);
-                RAW_SAMPLE_BUF[wr as usize & RAW_SAMPLE_MASK] = raw;
-                RAW_NEUT_BUF[wr as usize & RAW_SAMPLE_MASK] = v_neut;
-                RAW_SAMPLE_WR.store(wr.wrapping_add(1), Ordering::Relaxed);
+                    let raw = adc2.dr().read().rdata().bits();
+                    let wr = RAW_SAMPLE_WR.load(Ordering::Relaxed);
+                    RAW_SAMPLE_BUF[wr as usize & RAW_SAMPLE_MASK] = raw;
+                    RAW_NEUT_BUF[wr as usize & RAW_SAMPLE_MASK] = 0;
+                    RAW_SAMPLE_WR.store(wr.wrapping_add(1), Ordering::Relaxed);
+                }
             }
         } else {
             // Sine: CCR = half + (val−127)/127 * amplitude/100 * half

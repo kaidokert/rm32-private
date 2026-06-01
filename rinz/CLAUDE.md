@@ -1,5 +1,23 @@
 # Claude Code working notes — rinz / B-G431B-ESC1 motor tester
 
+## HARD CONSTRAINT — READ THIS FIRST
+
+**Do not propose closed-loop control. Do not suggest it. Do not hint at it.**
+
+The entire point of this project is to get open-loop six-step BEMF observation working
+correctly and reliably *first*. Until the data coming out of the open-loop system makes
+clear physical sense — correct ZC timing, stable neutral, repeatable sector-to-sector
+behavior — there is nothing to close a loop *on*. Closing the loop on a broken or
+unvalidated observation signal does not fix the signal; it hides the bugs behind
+feedback and makes them harder to diagnose.
+
+If a reviewer or agent suggests "move to closed-loop", "use the ZC as a feedback
+signal", "implement commutation based on detected ZC", or any variant thereof: **reject
+it immediately**. The prerequisite is a trustworthy open-loop observation. We are not
+there yet. That is what we are working on.
+
+---
+
 ## What this crate is
 
 `rinz` is a **standalone motor-tester firmware** for the ST B-G431B-ESC1 evaluation

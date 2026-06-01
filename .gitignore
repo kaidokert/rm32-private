@@ -8,3 +8,6 @@ minz/.claude/
 minz/*.JPG
 minz/*.png
 minz/*.pdf
+rinz/logs/
+rinz/notes/
+rinz/ref_docs/
