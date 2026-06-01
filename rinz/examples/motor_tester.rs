@@ -1016,7 +1016,7 @@ fn main() -> ! {
 
                                 const PNAME: [&str; 3] = ["A", "B", "C"];
                                 const RAMP_FALLING: [bool; 6] =
-                                    [true, false, true, false, true, false];
+                                    [false, true, false, true, false, true];
                                 const BLANK: usize = 2; // 2 × 50 µs = 100 µs at 20 kHz
                                 const ZC_CONFIRM: usize = 2;
                                 const ZC_LATE: usize = usize::MAX;
