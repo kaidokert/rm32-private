@@ -90,14 +90,14 @@ static SIX_STEP: AtomicBool = AtomicBool::new(SIX_STEP_START);
 static RAW_RING_RESET: AtomicBool = AtomicBool::new(true);
 
 /// ADC capture mode: false = async continuous (default), true = TIM1-triggered.
-static ADC_TRIGGERED: AtomicBool = AtomicBool::new(false);
+static ADC_TRIGGERED: AtomicBool = AtomicBool::new(true);
 
 // ---------------------------------------------------------------------------
 // Raw BEMF sample ring — 96 kHz, enabled when electrical_hz > 100 ('l' dump)
 // ---------------------------------------------------------------------------
 
-/// 4096 × (1/96000 s) ≈ 42.7 ms ≈ 4.3 revs at the 100 Hz floor.
-const RAW_SAMPLE_LEN: usize = 4096;
+/// 2048 × (1/96000 s) ≈ 21.3 ms ≈ 2.1 revs at the 100 Hz floor.
+const RAW_SAMPLE_LEN: usize = 2048;
 const RAW_SAMPLE_MASK: usize = RAW_SAMPLE_LEN - 1;
 
 /// Raw ADC2 u16 samples written by TIM7 ISR at 96 kHz.
@@ -113,7 +113,13 @@ static RAW_SAMPLE_WR: AtomicU32 = AtomicU32::new(0);
 ///   17 = phase A (PA4/IN17), 5 = phase B (PC4/IN5), 14 = phase C (PB11/IN14).
 static RING_CHAN_FIXED: AtomicU32 = AtomicU32::new(17);
 
-/// Circular DMA destination for ADC2 continuous scan: [ch5/B, ch14/C, ch17/A].
+/// Driven-high / driven-low phase index per six-step sector (A=0, B=1, C=2).
+const SIX_STEP_HIGH: [usize; 6] = [0, 0, 1, 1, 2, 2];
+const SIX_STEP_LOW: [usize; 6] = [1, 2, 2, 0, 0, 1];
+/// phase_idx (0=A,1=B,2=C) → ADC2_DMA_BUF slot [ch17/A=0, ch14/C=1, ch5/B=2].
+const PHASE_TO_DMA: [usize; 3] = [0, 2, 1];
+
+/// Circular DMA destination for ADC2 continuous scan: [ch17/A, ch14/C, ch5/B].
 /// Written continuously by DMA1_CH1; ISR reads latest value by channel index.
 static mut ADC2_DMA_BUF: [u16; 3] = [0u16; 3];
 
@@ -130,10 +136,14 @@ static mut REV_SECTOR_STARTS: [[u32; 6]; 3] = [[0u32; 6]; 3];
 static mut REV_HIST_HEAD: usize = 0;
 static mut REV_HIST_COUNT: usize = 0;
 
-/// Snapshot buffer for 'l'/'m' dumps. Filled under TIM7 mask, printed after unmask.
-/// Sized for worst-case 2 revs at the 101 Hz floor: 2×96000/101 ≈ 1901 samples.
+/// Snapshot buffer for 'l'/'m'/'e' dumps. Filled under TIM7 mask, printed after unmask.
+/// Sized for worst-case 1 rev at the 101 Hz floor: 96000/101 ≈ 951 samples; 2048 is ample.
 const SNAP_LEN: usize = 2048;
 static mut SNAP_BUF: [u16; SNAP_LEN] = [0u16; SNAP_LEN];
+/// Parallel V_neut snapshot for 'e' dump. Same index space as SNAP_BUF.
+static mut SNAP_NEUT_BUF: [u16; SNAP_LEN] = [0u16; SNAP_LEN];
+/// V_neut = (V_hi + V_lo)/2 per ring slot. Written by TIM7 in triggered mode; 0 in async.
+static mut RAW_NEUT_BUF: [u16; RAW_SAMPLE_LEN] = [0u16; RAW_SAMPLE_LEN];
 
 /// Busy-wait delay that doesn't need SYST (taken by systick-timer).
 struct AsmDelay;
@@ -179,15 +189,15 @@ unsafe fn start_adc2_scan_dma() {
             while adc2.cr().read().adstp().bit_is_set() {}
         }
 
-        // 3-channel sequence: SQ1=ch5(B) SQ2=ch14(C) SQ3=ch17(A), L=2 (3 conversions)
+        // 3-channel sequence: SQ1=ch17(A) SQ2=ch14(C) SQ3=ch5(B), L=2 (3 conversions)
+        // A sampled first so its conversion completes within the low-duty ON-window.
         adc2.sqr1()
-            .write(|w| w.bits((2u32 << 0) | (5u32 << 6) | (14u32 << 12) | (17u32 << 18)));
+            .write(|w| w.l().bits(2).sq1().bits(17).sq2().bits(14).sq3().bits(5));
 
-        // Sample time 24.5 cycles (value 3): ch5 SMPR1[17:15], ch14/ch17 SMPR2[14:12]/[23:21]
-        adc2.smpr1()
-            .modify(|r, w| w.bits((r.bits() & !(7 << 15)) | (3 << 15)));
+        // Sample time 6.5 cycles: fits all 3 channels within ~8% duty ON-window.
+        adc2.smpr1().modify(|_, w| w.smp5().cycles6_5());
         adc2.smpr2()
-            .modify(|r, w| w.bits((r.bits() & !(7 << 12 | 7 << 21)) | (3 << 12) | (3 << 21)));
+            .modify(|_, w| w.smp14().cycles6_5().smp17().cycles6_5());
 
         // CFGR: add continuous + DMA circular (keep existing resolution/alignment)
         adc2.cfgr()
@@ -260,9 +270,9 @@ unsafe fn configure_adc_capture(triggered: bool) {
             t1.cr2()
                 .modify(|r, w| w.bits((r.bits() & !0x70) | (0b111u32 << 4)));
 
-            // SQR1: 3-channel sequence ch5(B)→ch14(C)→ch17(A), L=2 (3 conversions)
+            // SQR1: 3-channel sequence ch17(A)→ch14(C)→ch5(B), L=2 (3 conversions)
             adc2.sqr1()
-                .write(|w| w.bits((2u32 << 0) | (5u32 << 6) | (14u32 << 12) | (17u32 << 18)));
+                .write(|w| w.l().bits(2).sq1().bits(17).sq2().bits(14).sq3().bits(5));
 
             // CFGR: CONT=0, EXTEN=0b01 (rising), EXTSEL=9 (TIM1_TRGO), DMAEN|DMACFG
             // RM0440 G4: EXTSEL[4:0] at bits[9:5]=0x3E0, EXTEN[1:0] at bits[11:10]=0xC00
@@ -479,7 +489,7 @@ fn main() -> ! {
         &mut AsmDelay,
     );
     unsafe { start_adc2_scan_dma() }; // one-time DMA routing init (DMAMUX, PAR, MAR, CIRC)
-    unsafe { configure_adc_capture(false) }; // start in async-legacy mode
+    unsafe { configure_adc_capture(false) }; // async until TIM1 is running
 
     // USART2: PB3=TX, PB4=RX, 115200 8N1
     let usart = dp
@@ -526,6 +536,36 @@ fn main() -> ! {
     c1.enable();
     c2.enable();
     c3.enable();
+    unsafe { configure_adc_capture(true) }; // TIM1 running — switch to triggered-triplet
+
+    // Print ADC timing so we know what clock/sample-time is actually configured.
+    // All values derived from HAL clocks so they stay correct if PLL or div changes.
+    {
+        // HCLK = SYSCLK (AHB prescaler=1); ADC clock = HCLK/4 (AdcHclkDiv4).
+        let cpu_hz = clocks.sys_clk.raw() as u64;
+        let adc_hz = cpu_hz / 4;
+        // SMPR=1 → 6.5 sample + 12.5 conversion = 19 cycles per channel.
+        let ns_per_ch = 19_000_000_000u64 / adc_hz;
+        let samp_ns = 6_500_000_000u64 / adc_hz;
+        // 3rd channel's sample ends 2 full conversions after TRGO plus one sample hold.
+        let third_end_ns = 2 * ns_per_ch + samp_ns;
+        // Minimum amp% so the 3rd-channel sample ends before the PWM half-window closes.
+        // half_window_ns = (arr * amp * 2 / 300) / cpu_hz * 1e9
+        // → min_amp = ceil(third_end_ns * 300 * cpu_hz / (arr * 2 * 1e9))
+        let arr = max_duty as u64;
+        let min_amp =
+            (third_end_ns * 300 * cpu_hz + arr * 2_000_000_000 - 1) / (arr * 2_000_000_000);
+        writeln!(
+            tx,
+            "ADC: clk={}.{}MHz samp=6.5cy {}ns/ch 3ch-end={}ns min_amp={}%\r",
+            adc_hz / 1_000_000,
+            (adc_hz % 1_000_000) / 100_000,
+            ns_per_ch,
+            third_end_ns,
+            min_amp,
+        )
+        .ok();
+    }
 
     // Park duties at midpoint — no current while stopped.
     let _ = c1.set_duty_cycle(half as u16);
@@ -651,13 +691,16 @@ fn main() -> ! {
                                             }
                                             unsafe {
                                                 for i in 0..n {
-                                                    let nibble =
-                                                        (SNAP_BUF[rel + i] >> 8) as u8 & 0xF;
+                                                    let v = SNAP_BUF[rel + i];
                                                     write!(
                                                         tx,
-                                                        "{}",
-                                                        b"0123456789abcdef"[nibble as usize]
-                                                            as char
+                                                        "{}{}",
+                                                        b"0123456789abcdef"
+                                                            [((v >> 8) & 0xF) as usize]
+                                                            as char,
+                                                        b"0123456789abcdef"
+                                                            [((v >> 4) & 0xF) as usize]
+                                                            as char,
                                                     )
                                                     .ok();
                                                 }
@@ -730,11 +773,9 @@ fn main() -> ! {
                                                     let v = SNAP_BUF[rel + i];
                                                     write!(
                                                         tx,
-                                                        "{}{}{}{} ",
-                                                        hex[((v >> 12) & 0xF) as usize] as char,
+                                                        "{}{} ",
                                                         hex[((v >> 8) & 0xF) as usize] as char,
                                                         hex[((v >> 4) & 0xF) as usize] as char,
-                                                        hex[(v & 0xF) as usize] as char,
                                                     )
                                                     .ok();
                                                 }
@@ -931,6 +972,7 @@ fn main() -> ! {
                                                 let src = (win_start as usize).wrapping_add(i)
                                                     & RAW_SAMPLE_MASK;
                                                 SNAP_BUF[i] = RAW_SAMPLE_BUF[src];
+                                                SNAP_NEUT_BUF[i] = RAW_NEUT_BUF[src];
                                             }
                                             NVIC::unmask(stm32::Interrupt::TIM7);
                                         }
@@ -962,10 +1004,13 @@ fn main() -> ! {
                                         )
                                         .ok();
 
-                                        // Six-step phase-role table: A=0 B=1 C=2
-                                        const HIGH_T: [usize; 6] = [0, 0, 1, 1, 2, 2];
-                                        const LOW_T: [usize; 6] = [1, 2, 2, 0, 0, 1];
                                         const PNAME: [&str; 3] = ["A", "B", "C"];
+                                        const RAMP_FALLING: [bool; 6] =
+                                            [true, false, true, false, true, false];
+                                        const BLANK: usize = 5;
+                                        const ZC_CONFIRM: usize = 2;
+                                        const ZC_LATE: usize = usize::MAX;
+                                        const ZC_EARLY: usize = usize::MAX - 1;
                                         let hex = b"0123456789abcdef";
 
                                         for sec in 0..6usize {
@@ -977,41 +1022,100 @@ fn main() -> ! {
                                             };
                                             let n = row_end.wrapping_sub(row_start) as usize;
                                             let rel = row_start.wrapping_sub(win_start) as usize;
-
-                                            let role = if HIGH_T[sec] == phase_idx {
+                                            let is_float = SIX_STEP_HIGH[sec] != phase_idx
+                                                && SIX_STEP_LOW[sec] != phase_idx;
+                                            let role = if SIX_STEP_HIGH[sec] == phase_idx {
                                                 "hi"
-                                            } else if LOW_T[sec] == phase_idx {
+                                            } else if SIX_STEP_LOW[sec] == phase_idx {
                                                 "lo"
                                             } else {
                                                 "fl"
                                             };
 
-                                            write!(
-                                                tx,
-                                                "[s{} {}={}]: ",
-                                                sec, PNAME[phase_idx], role
-                                            )
-                                            .ok();
-
                                             if n == 0 || rel + n > win_len {
-                                                writeln!(tx, "(invalid)\r").ok();
+                                                writeln!(
+                                                    tx,
+                                                    "[s{} {}={}]: (invalid)\r",
+                                                    sec, PNAME[phase_idx], role
+                                                )
+                                                .ok();
                                                 continue;
                                             }
 
-                                            // De-staircase: print only on value change.
-                                            // Compresses ~4.8× triggered repeats to 1 per step.
-                                            let mut prev = u16::MAX; // 0xFFFF never in 12-bit ADC data
+                                            let zc_i: usize = if triggered
+                                                && is_float
+                                                && n > BLANK + ZC_CONFIRM
+                                            {
+                                                let rf = RAMP_FALLING[sec];
+                                                let xd = |i: usize| -> bool {
+                                                    let vb = unsafe { SNAP_BUF[rel + i] };
+                                                    let vn = unsafe { SNAP_NEUT_BUF[rel + i] };
+                                                    if rf { vb <= vn } else { vb >= vn }
+                                                };
+                                                if (BLANK..(BLANK + ZC_CONFIRM)).all(xd) {
+                                                    ZC_LATE
+                                                } else {
+                                                    let mut found = ZC_EARLY;
+                                                    'scan: for i in
+                                                        BLANK..n.saturating_sub(ZC_CONFIRM - 1)
+                                                    {
+                                                        if (i..(i + ZC_CONFIRM)).all(xd) {
+                                                            found = i;
+                                                            break 'scan;
+                                                        }
+                                                    }
+                                                    found
+                                                }
+                                            } else {
+                                                ZC_EARLY
+                                            };
+
+                                            if is_float && triggered {
+                                                if zc_i == ZC_LATE {
+                                                    write!(
+                                                        tx,
+                                                        "[s{} {}=fl ZC<0]: ",
+                                                        sec, PNAME[phase_idx]
+                                                    )
+                                                    .ok();
+                                                } else if zc_i < ZC_EARLY {
+                                                    write!(
+                                                        tx,
+                                                        "[s{} {}=fl ZC@{}/{}]: ",
+                                                        sec, PNAME[phase_idx], zc_i, n
+                                                    )
+                                                    .ok();
+                                                } else {
+                                                    write!(
+                                                        tx,
+                                                        "[s{} {}=fl ZC>{}]: ",
+                                                        sec, PNAME[phase_idx], n
+                                                    )
+                                                    .ok();
+                                                }
+                                            } else {
+                                                write!(
+                                                    tx,
+                                                    "[s{} {}={}]: ",
+                                                    sec, PNAME[phase_idx], role
+                                                )
+                                                .ok();
+                                            }
+
+                                            // BEMF row: de-staircase; * before ZC crossing sample
                                             unsafe {
+                                                let mut prev = u16::MAX;
                                                 for i in 0..n {
                                                     let v = SNAP_BUF[rel + i];
                                                     if v != prev {
+                                                        if i == zc_i {
+                                                            write!(tx, "*").ok();
+                                                        }
                                                         write!(
                                                             tx,
-                                                            "{}{}{}{} ",
-                                                            hex[((v >> 12) & 0xF) as usize] as char,
+                                                            "{}{} ",
                                                             hex[((v >> 8) & 0xF) as usize] as char,
                                                             hex[((v >> 4) & 0xF) as usize] as char,
-                                                            hex[(v & 0xF) as usize] as char,
                                                         )
                                                         .ok();
                                                         prev = v;
@@ -1019,6 +1123,32 @@ fn main() -> ! {
                                                 }
                                             }
                                             writeln!(tx, "\r").ok();
+
+                                            // Neut row: triggered + float sectors only.
+                                            // Gated by BEMF de-staircase → same i → columns aligned.
+                                            if is_float && triggered {
+                                                write!(tx, "[neut s{}]: ", sec).ok();
+                                                unsafe {
+                                                    let mut prev_b = u16::MAX;
+                                                    for i in 0..n {
+                                                        let vb = SNAP_BUF[rel + i];
+                                                        if vb != prev_b {
+                                                            let vn = SNAP_NEUT_BUF[rel + i];
+                                                            write!(
+                                                                tx,
+                                                                "{}{} ",
+                                                                hex[((vn >> 8) & 0xF) as usize]
+                                                                    as char,
+                                                                hex[((vn >> 4) & 0xF) as usize]
+                                                                    as char,
+                                                            )
+                                                            .ok();
+                                                            prev_b = vb;
+                                                        }
+                                                    }
+                                                }
+                                                writeln!(tx, "\r").ok();
+                                            }
                                         }
                                     }
                                 }
@@ -1117,18 +1247,18 @@ extern "C" fn TIM7() {
                 PREV_SECTOR = sector;
             }
 
-            // ADC sampling for raw ring ('l'/'m' dumps).
+            // ADC sampling for raw ring ('l'/'m'/'e' dumps).
             if electrical_hz > 100 {
                 const FLOAT_CHAN: [u32; 6] = [14, 5, 17, 14, 5, 17];
                 let s = (sector % 6) as usize;
                 let fixed = RING_CHAN_FIXED.load(Ordering::Relaxed);
                 let chan = if fixed != 0 { fixed } else { FLOAT_CHAN[s] };
+                let triggered = ADC_TRIGGERED.load(Ordering::Relaxed);
 
-                let raw: u16 = if ADC_TRIGGERED.load(Ordering::Relaxed) {
+                let raw: u16 = if triggered {
                     // Triggered-triplet: read latest DMA sample for this channel.
-                    // DMA updates at 20 kHz; same value held for ~4.8 TIM7 ticks.
                     let idx = match chan {
-                        5 => 0usize,
+                        17 => 0usize,
                         14 => 1,
                         _ => 2,
                     };
@@ -1138,17 +1268,26 @@ extern "C" fn TIM7() {
                         .read_volatile()
                 } else {
                     // Async-legacy: fresh single-channel SW conversion every TIM7 tick.
-                    // ~37 ADC clocks @ 42.5 MHz ≈ 0.87 µs; well within 10.4 µs budget.
                     let adc2 = &*stm32::ADC2::ptr();
-                    // SQR1: L=0 (1 conversion), SQ1=chan
                     adc2.sqr1().write(|w| w.bits(chan << 6));
                     adc2.cr().modify(|_, w| w.adstart().set_bit());
                     while adc2.isr().read().eoc().bit_is_clear() {}
-                    adc2.dr().read().rdata().bits() // reading DR clears EOC
+                    adc2.dr().read().rdata().bits()
+                };
+
+                // V_neut = (V_hi + V_lo) / 2 from same DMA triplet (triggered only).
+                let v_neut: u16 = if triggered {
+                    let dma = core::ptr::addr_of!(ADC2_DMA_BUF).cast::<u16>();
+                    let v_hi = dma.add(PHASE_TO_DMA[SIX_STEP_HIGH[s]]).read_volatile();
+                    let v_lo = dma.add(PHASE_TO_DMA[SIX_STEP_LOW[s]]).read_volatile();
+                    ((v_hi as u32 + v_lo as u32) >> 1) as u16
+                } else {
+                    0
                 };
 
                 let wr = RAW_SAMPLE_WR.load(Ordering::Relaxed);
                 RAW_SAMPLE_BUF[wr as usize & RAW_SAMPLE_MASK] = raw;
+                RAW_NEUT_BUF[wr as usize & RAW_SAMPLE_MASK] = v_neut;
                 RAW_SAMPLE_WR.store(wr.wrapping_add(1), Ordering::Relaxed);
             }
         } else {
