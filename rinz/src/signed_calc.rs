@@ -1,7 +1,9 @@
 use core::ops::{Add, AddAssign, Mul, Neg, Sub};
 
+c0nst::c0nst! {
+
 // ---- Single-source "0" ----
-pub trait CustomZero {
+pub c0nst trait CustomZero {
     fn zero() -> Self;
 }
 
@@ -15,8 +17,9 @@ where
     }
 }
 
+
 // ---- Single-source "1" ----
-pub trait CustomOne {
+pub c0nst trait CustomOne {
     fn one() -> Self;
 }
 
@@ -28,6 +31,8 @@ where
     fn one() -> Self {
         1i8.into()
     }
+}
+
 }
 
 // ---- Signed math bound for your filter ----

@@ -8,9 +8,15 @@ pub struct PLLState<T: SignedCalc> {
 }
 
 impl<T: SignedCalc> PLLState<T> {
+    /// Construct with a known starting frequency.
+    ///
+    /// `pi.integral` is initialized to `frequency` so that `update(0)` holds
+    /// the starting frequency rather than decaying toward zero. `frequency` is
+    /// the authoritative initial state; the `frequency` field is a readout
+    /// cache and is kept consistent with it.
     pub fn new(phase: T, frequency: T) -> Self {
         Self {
-            pi: PIControllerState::from(T::zero(), T::zero()),
+            pi: PIControllerState::from(frequency, T::zero()),
             phase,
             frequency,
         }

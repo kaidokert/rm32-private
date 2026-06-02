@@ -24,9 +24,20 @@ impl<T: SignedCalc + Copy, P: PLLParamsProvider<T>> PLL<T, P> {
 
     /// Update the PLL with a new phase error measurement.
     ///
-    /// phase_error = measured_zc_time − predicted_zc_time (state.phase).
+    /// `phase_error` is the signed difference between the measured event time
+    /// and the predicted event time (`state.phase`). Units are caller-defined;
+    /// `kp`/`ki`/`freq_min`/`freq_max` must be scaled to match.
+    ///
+    /// Assumes dt = 1 (one call per period). Callers that run at variable
+    /// intervals must scale `phase_error` or `ki` externally before calling.
+    ///
+    /// Phase wrapping (e.g. mod 2π) is the caller's responsibility; this
+    /// function does not wrap `state.phase`.
+    ///
     /// The loop filter (PI with anti-windup) converts phase error to a
-    /// frequency estimate, which is then integrated into state.phase.
+    /// frequency estimate, which is then integrated into `state.phase`.
+    /// `state.pi.integral` is the authoritative frequency state;
+    /// `state.frequency` is a read-out cache of the value returned here.
     ///
     /// Returns the updated frequency estimate.
     pub fn update(&self, phase_error: T, state: &mut PLLState<T>) -> T {
@@ -215,6 +226,19 @@ mod tests {
         // Zero error — integral should not change
         pll.update(0.0, &mut state);
         assert_eq!(state.pi.integral, integral_before);
+    }
+
+    #[test]
+    fn test_pll_holds_nonzero_frequency_at_zero_error() {
+        // PLLState initialized with a known starting frequency.
+        // Feeding zero error should hold that frequency, not decay toward zero.
+        let params = PLLParamsPlain::new(1.0f32, 1.0f32, -100.0f32, 100.0f32);
+        let pll = PLL::new(params);
+        let mut state = PLLState::new(0.0f32, 10.0f32);
+
+        let freq = pll.update(0.0, &mut state);
+        assert_eq!(freq, 10.0, "frequency should be held at starting value");
+        assert_eq!(state.pi.integral, 10.0, "integral should not decay");
     }
 
     #[test]
