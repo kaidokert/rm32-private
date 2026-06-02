@@ -6,6 +6,8 @@ pub mod filter;
 pub mod idle_loop;
 pub mod more_atomic_pid;
 pub mod pi_controller_state;
+pub mod pll_controller;
+pub mod pll_state;
 pub mod signed_calc;
 
 #[cfg(target_arch = "arm")]
