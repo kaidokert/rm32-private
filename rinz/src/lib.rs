@@ -1,8 +1,11 @@
 #![cfg_attr(not(test), no_std)]
 
+pub mod algorithm_params;
 pub mod ewma_pow2;
 pub mod filter;
 pub mod idle_loop;
+pub mod more_atomic_pid;
+pub mod pi_controller_state;
 pub mod signed_calc;
 
 #[cfg(target_arch = "arm")]
