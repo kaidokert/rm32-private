@@ -8,7 +8,8 @@
 //! Keys (QWERTY vertical pairs — top adds, bottom subtracts):
 //!   f / v   electrical frequency  +10 / -10 Hz
 //!   d / c   electrical frequency   +1 /  -1 Hz
-//!   a / z   amplitude              +1 /  -1 % (capped at AMP_CAP)
+//!   a / z   amplitude              +1.0 / -1.0 % (capped at AMP_CAP)
+//!   + / -   amplitude (fine)       +0.1 / -0.1 %
 //!   M       toggle waveform: sine ↔ 6-step BLDC
 //!   m       dump last 2-rev raw ADC ring, full 16-bit hex (4-char + space per sample)
 //!   p       cycle raw ring observed phase: A (ch17) → B (ch5) → C (ch14) → A …
@@ -73,9 +74,9 @@ static SINE48: [u8; 48] = [
     37, 50, 64, 79, 94, 110,
 ];
 
-/// Safety ceiling: user cannot push amplitude above this percentage.
-const AMP_CAP: u32 = 30;
-const AMP_START: u32 = 8;
+/// Safety ceiling: user cannot push amplitude above this value (tenths-of-percent).
+const AMP_CAP: u32 = 300; // 30.0 %
+const AMP_START: u32 = 80; //  8.0 %
 const FREQ_MIN: u32 = 1;
 const FREQ_MAX: u32 = 600;
 const FREQ_START: u32 = 60;
@@ -521,7 +522,7 @@ fn main() -> ! {
     let (mut tx, mut rx) = usart.split();
     writeln!(
         tx,
-        "motor_tester ready  f/v=±10Hz d/c=±1Hz a/z=±1amp w=off q=reset i=info\r"
+        "motor_tester ready  f/v=±10Hz d/c=±1Hz a/z=±1% +/-=±0.1% w=off q=reset i=info\r"
     )
     .ok();
 
@@ -574,7 +575,7 @@ fn main() -> ! {
             (third_end_ns * 300 * cpu_hz + arr * 2_000_000_000 - 1) / (arr * 2_000_000_000);
         writeln!(
             tx,
-            "ADC: clk={}.{}MHz samp=6.5cy {}ns/ch 3ch-end={}ns min_amp={}%\r",
+            "ADC: clk={}.{}MHz samp=6.5cy {}ns/ch 3ch-end={}ns min_amp={}.0%\r",
             adc_hz / 1_000_000,
             (adc_hz % 1_000_000) / 100_000,
             ns_per_ch,
@@ -641,14 +642,24 @@ fn main() -> ! {
                             writeln!(tx, "freq={}Hz\r", hz).ok();
                         }
                         b'a' => {
-                            let amp = (AMPLITUDE.load(Ordering::Relaxed) + 1).min(AMP_CAP);
+                            let amp = (AMPLITUDE.load(Ordering::Relaxed) + 10).min(AMP_CAP);
                             AMPLITUDE.store(amp, Ordering::Relaxed);
-                            writeln!(tx, "amp={}%\r", amp).ok();
+                            writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
                         }
                         b'z' => {
+                            let amp = AMPLITUDE.load(Ordering::Relaxed).saturating_sub(10);
+                            AMPLITUDE.store(amp, Ordering::Relaxed);
+                            writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
+                        }
+                        b'+' => {
+                            let amp = (AMPLITUDE.load(Ordering::Relaxed) + 1).min(AMP_CAP);
+                            AMPLITUDE.store(amp, Ordering::Relaxed);
+                            writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
+                        }
+                        b'-' => {
                             let amp = AMPLITUDE.load(Ordering::Relaxed).saturating_sub(1);
                             AMPLITUDE.store(amp, Ordering::Relaxed);
-                            writeln!(tx, "amp={}%\r", amp).ok();
+                            writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
                         }
                         b'l' => {
                             if ADC_TRIGGERED.load(Ordering::Relaxed) {
@@ -882,8 +893,11 @@ fn main() -> ! {
                             let mode = if SIX_STEP_START { "six-step" } else { "sine" };
                             writeln!(
                                 tx,
-                                "reset: freq={}Hz amp={}% mode={}\r",
-                                FREQ_START, AMP_START, mode
+                                "reset: freq={}Hz amp={}.{}% mode={}\r",
+                                FREQ_START,
+                                AMP_START / 10,
+                                AMP_START % 10,
+                                mode
                             )
                             .ok();
                             rprintln!("reset");
@@ -1133,11 +1147,12 @@ fn main() -> ! {
         last_busy = idle.busy_percentage(idle.latch());
         led.toggle();
         rprintln!(
-            "epoch={} busy={}% f={}Hz amp={} run={}",
+            "epoch={} busy={}% f={}Hz amp={}.{} run={}",
             epoch,
             last_busy,
             ELECTRICAL_HZ.load(Ordering::Relaxed),
-            AMPLITUDE.load(Ordering::Relaxed),
+            AMPLITUDE.load(Ordering::Relaxed) / 10,
+            AMPLITUDE.load(Ordering::Relaxed) % 10,
             RUNNING.load(Ordering::Relaxed) as u8,
         );
         epoch = epoch.wrapping_add(1);
@@ -1192,7 +1207,7 @@ extern "C" fn TIM7() {
             // discrete commutation has an inherent open-loop sync advantage; 2/3 partially
             // compensates so the modes feel closer at the same amplitude setting.
             let sector = (STEP / 8) as u8;
-            let duty = arr * amplitude * 2 / (100 * 3);
+            let duty = arr * amplitude * 2 / (1000 * 3);
             set_six_step(sector, duty);
 
             if PREV_SECTOR != sector {
@@ -1284,7 +1299,7 @@ extern "C" fn TIM7() {
             let va = SINE48[(STEP + 4) as usize % 48] as i32 - 127; // peak at 60°
             let vb = SINE48[(STEP + 36) as usize % 48] as i32 - 127; // B lags A 120°
             let vc = SINE48[(STEP + 20) as usize % 48] as i32 - 127; // C lags A 240°
-            let scale = 127 * 100_i32;
+            let scale = 127 * 1000_i32;
             let duty_a = (half + va * amp * half / scale) as u32;
             let duty_b = (half + vb * amp * half / scale) as u32;
             let duty_c = (half + vc * amp * half / scale) as u32;
