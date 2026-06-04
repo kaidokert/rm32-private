@@ -1,5 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
+pub mod accumulator;
+pub mod accumulator_state;
 pub mod algorithm_params;
 pub mod ewma_pow2;
 pub mod filter;

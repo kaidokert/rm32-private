@@ -22,20 +22,17 @@ impl<T: SignedCalc + Copy, P: PLLParamsProvider<T>> PLL<T, P> {
         }
     }
 
-    /// Update the PLL with a new phase error measurement.
+    /// Update the frequency estimate from a phase error measurement.
     ///
-    /// `phase_error` is the signed difference between the measured event time
-    /// and the predicted event time (`state.phase`). Units are caller-defined;
-    /// `kp`/`ki`/`freq_min`/`freq_max` must be scaled to match.
+    /// `phase_error` is the signed difference between the measured event
+    /// and the predicted event, in caller-defined units. `kp`/`ki`/
+    /// `freq_min`/`freq_max` must be in consistent units.
     ///
-    /// Assumes dt = 1 (one call per period). Callers that run at variable
-    /// intervals must scale `phase_error` or `ki` externally before calling.
+    /// This block is a pure frequency estimator. It does not integrate phase;
+    /// that is `PhaseAccumulator::step`'s job. Callers compute phase error
+    /// externally (e.g., measured ZC time minus predicted ZC time from the
+    /// phase accumulator) and pass it here.
     ///
-    /// Phase wrapping (e.g. mod 2π) is the caller's responsibility; this
-    /// function does not wrap `state.phase`.
-    ///
-    /// The loop filter (PI with anti-windup) converts phase error to a
-    /// frequency estimate, which is then integrated into `state.phase`.
     /// `state.pi.integral` is the authoritative frequency state;
     /// `state.frequency` is a read-out cache of the value returned here.
     ///
@@ -70,7 +67,6 @@ impl<T: SignedCalc + Copy, P: PLLParamsProvider<T>> PLL<T, P> {
 
             // VCO: integrate frequency into phase
             state.frequency = freq;
-            state.phase = state.phase + freq;
 
             freq
         })
@@ -88,35 +84,9 @@ mod tests {
     #[test]
     fn test_pll_default_state() {
         let state = PLLState::<f32>::default();
-        assert_eq!(state.phase, 0.0);
         assert_eq!(state.frequency, 0.0);
         assert_eq!(state.pi.integral, 0.0);
         assert_eq!(state.pi.last_error, 0.0);
-    }
-
-    #[test]
-    fn test_pll_phase_advances_by_frequency() {
-        let params = PLLParamsPlain::new(1.0f32, 0.0f32, -100.0f32, 100.0f32);
-        let pll = PLL::new(params);
-        let mut state = PLLState::default();
-
-        // With ki=0, output = kp * error = 1.0 * 2.0 = 2.0
-        pll.update(2.0, &mut state);
-        assert_eq!(state.frequency, 2.0);
-        assert_eq!(state.phase, 2.0); // phase += frequency
-    }
-
-    #[test]
-    fn test_pll_phase_accumulates() {
-        let params = PLLParamsPlain::new(1.0f32, 0.0f32, -100.0f32, 100.0f32);
-        let pll = PLL::new(params);
-        let mut state = PLLState::default();
-
-        pll.update(3.0, &mut state); // freq=3.0, phase=3.0
-        pll.update(3.0, &mut state); // freq=3.0, phase=6.0
-        pll.update(3.0, &mut state); // freq=3.0, phase=9.0
-
-        assert_eq!(state.phase, 9.0);
     }
 
     #[test]
@@ -234,7 +204,7 @@ mod tests {
         // Feeding zero error should hold that frequency, not decay toward zero.
         let params = PLLParamsPlain::new(1.0f32, 1.0f32, -100.0f32, 100.0f32);
         let pll = PLL::new(params);
-        let mut state = PLLState::new(0.0f32, 10.0f32);
+        let mut state = PLLState::new(10.0f32);
 
         let freq = pll.update(0.0, &mut state);
         assert_eq!(freq, 10.0, "frequency should be held at starting value");
