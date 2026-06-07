@@ -4,7 +4,10 @@
 //!   f / v   electrical frequency  +10 / -10 Hz
 //!   a / z   amplitude              +1.0 / -1.0 %
 //!   + / -   amplitude              +0.1 / -0.1 %
+//!   m       toggle commutation mode (six-step / sine)
+//!   0 / 1 / 2 / 3  notch off / A / B / C
 //!   w       kill
+//!   d       capture 2 electrical revs from phase zero, then dump 8-bit hex (sample >> 4)
 //!   q       reset to defaults and run
 
 #![no_std]
@@ -21,7 +24,9 @@ use rtt_target::rprintln;
 use rinz::hal;
 use rinz::hal::adc::{
     AdcClaim, AdcCommonExt,
-    config::{ClockMode, Continuous, Dma as AdcDma, SampleTime, Sequence},
+    config::{
+        ClockMode, Continuous, Dma as AdcDma, ExternalTrigger12, SampleTime, Sequence, TriggerMode,
+    },
 };
 use rinz::hal::dma::{TransferExt, channel::DMAExt, config::DmaConfig};
 use rinz::hal::prelude::*;
@@ -32,10 +37,25 @@ use rinz::hal::serial::FullConfig;
 use rinz::hal::time::{ExtU32, Hertz, RateExtU32};
 use rinz::hal::{rcc, stm32};
 
-const DRIVE_HZ: u32 = 96_000;
+const PWM_HZ: u32 = 20_000;
+const DRIVE_HZ: u32 = PWM_HZ;
 const LOGICAL_SECTORS: u32 = 24;
 const ELEC_STEPS_PER_REV: u32 = 48;
 const STEPS_PER_LOGICAL_SECTOR: u32 = ELEC_STEPS_PER_REV / LOGICAL_SECTORS;
+const MODE_SIX_STEP: u32 = 0;
+const MODE_SINE: u32 = 1;
+const SINE_SCALE: i32 = 1000;
+const NOTCH_OFF: u32 = 0;
+const NOTCH_A: u32 = 1;
+const NOTCH_B: u32 = 2;
+const NOTCH_C: u32 = 3;
+// Positive-side diagnostic notch width: 5 table slots * 7.5° = 37.5°.
+const SINE_NOTCH_HALF_WIDTH_STEPS: usize = 2;
+const SINE_TABLE: [i16; ELEC_STEPS_PER_REV as usize] = [
+    0, 131, 259, 383, 500, 609, 707, 793, 866, 924, 966, 991, 1000, 991, 966, 924, 866, 793, 707,
+    609, 500, 383, 259, 131, 0, -131, -259, -383, -500, -609, -707, -793, -866, -924, -966, -991,
+    -1000, -991, -966, -924, -866, -793, -707, -609, -500, -383, -259, -131,
+];
 
 const AMP_CAP: u32 = 300; // 30.0 %
 const AMP_START: u32 = 80; // 8.0 %
@@ -43,28 +63,48 @@ const FREQ_MIN: u32 = 1;
 const FREQ_MAX: u32 = 600;
 const FREQ_START: u32 = 60;
 
-// Free-running ADC2 sampling of one BEMF phase.
+// TIM1_TRGO-triggered ADC2 scan of the three BEMF phases:
+// ch17/PA4, ch5/PC4, ch14/PB11. One 3-channel scan is captured per PWM period.
 // ADC clock = synchronous HCLK/4 = 42.5 MHz (proven on this board, always present
-// — async-from-SYSCLK doesn't deliver a live kernel clock). Conversion at the
-// 640.5-cycle sample time = 640.5 + 12.5 = 653 cyc → ~65 kSa/s (~15.4 µs each).
-const ADC_SAMPLE_HZ: u32 = 42_500_000 / 653; // ≈ 65_084
+// — async-from-SYSCLK doesn't deliver a live kernel clock). Each channel conversion
+// at the 6.5-cycle sample time is 6.5 + 12.5 = 19 cyc; a full 3-channel scan is
+// ~1.34 us, safely inside the 20 kHz PWM period.
+const ADC_CHANNELS: usize = 3;
+const ADC_FRAME_HZ: u32 = PWM_HZ;
 // Buffer must hold this many revolutions at the lowest supported electrical freq.
 const CAPTURE_REVS: u32 = 2;
 const CAPTURE_MIN_HZ: u32 = 60;
-// +1 to round up the partial sample; fits comfortably in 32 KB SRAM (~7.3 KB).
-const ADC_BUF_LEN: usize = (ADC_SAMPLE_HZ * CAPTURE_REVS / CAPTURE_MIN_HZ + 1) as usize;
+// +1 to round up the partial frame; total buffer fits comfortably in 32 KB SRAM.
+const ADC_FRAME_COUNT: usize = (ADC_FRAME_HZ * CAPTURE_REVS / CAPTURE_MIN_HZ + 1) as usize;
+const ADC_BUF_LEN: usize = ADC_FRAME_COUNT * ADC_CHANNELS;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static AMPLITUDE: AtomicU32 = AtomicU32::new(AMP_START);
 static ELECTRICAL_HZ: AtomicU32 = AtomicU32::new(FREQ_START);
+static COMMUTATION_MODE: AtomicU32 = AtomicU32::new(MODE_SIX_STEP);
+static NOTCH_PHASE: AtomicU32 = AtomicU32::new(NOTCH_OFF);
+static CAPTURE_REQUEST: AtomicBool = AtomicBool::new(false);
+static CAPTURE_DONE: AtomicBool = AtomicBool::new(false);
+static CAPTURE_FRAMES: AtomicU32 = AtomicU32::new(0);
+static CAPTURE_BUF_ADDR: AtomicU32 = AtomicU32::new(0);
 
 /// Driven-high / driven-low phase index per logical sector (A=0, B=1, C=2).
 /// Each physical six-step state is repeated 4 times.
 const SIX_STEP_HIGH: [usize; LOGICAL_SECTORS as usize] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
+    /*0*/ 0, 0, 0, 0, /*1*/ 0, 0, 0, 0, /*2*/ 1, 1, 1, 1, /*3*/ 1, 1, 1, 1,
+    /*4*/ 2, 2, 2, 2, /*5*/ 2, 2, 2, 2,
 ];
 const SIX_STEP_LOW: [usize; LOGICAL_SECTORS as usize] = [
-    1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
+    /*0*/ 1, 1, 1, 1, /*1*/ 2, 2, 2, 2, /*2*/ 2, 2, 2, 2, /*3*/ 0, 0, 2, 0,
+    /*4*/ 0, 0, 0, 0, /*5*/ 1, 1, 1, 1,
+];
+/// Per-logical-sector marker mode:
+///   0 = none
+///   1 = hit the high-driven side by forcing the nominal high phase LOW
+///   2 = hit the low-driven side by floating the nominal low phase
+const MARKER_MODE: [u8; LOGICAL_SECTORS as usize] = [
+    /*0*/ 0, 0, 0, 0, /*1*/ 0, 0, 0, 0, /*2*/ 0, 0, 0, 0, /*3*/ 0, 0, 0, 0,
+    /*4*/ 0, 0, 0, 0, /*5*/ 0, 0, 0, 0,
 ];
 
 /// Set MODER for all six motor pins. AF=0b10, OUTPUT=0b01.
@@ -130,20 +170,118 @@ fn restore_all_af() {
     unsafe { set_phase_modes(false, false, false) }
 }
 
-/// 6-step commutation: two phases driven, one floating.
+/// TIM1_TRGO = OC4REF. CCR4=ARR/2 puts the sample point in the middle of the
+/// center-aligned PWM period. CCR4=1 samples at CNT=0, where sine mode has all
+/// three phases "on" because every duty is nonzero, producing all-rail ADC reads.
+fn configure_tim1_adc_trgo() {
+    let t1 = unsafe { &*stm32::TIM1::ptr() };
+    let mid = t1.arr().read().arr().bits() as u32 / 2;
+    t1.ccr4().write(|w| unsafe { w.ccr().bits(mid) });
+    t1.ccmr2_output()
+        .modify(|r, w| unsafe { w.bits((r.bits() & !(0x7000 | 0x300)) | (0b110u32 << 12)) });
+    t1.cr2()
+        .modify(|r, w| unsafe { w.bits((r.bits() & !0x70) | (0b111u32 << 4)) });
+}
+
+fn two_rev_frame_count(electrical_hz: u32) -> u32 {
+    let hz = electrical_hz.max(1);
+    let frames = (PWM_HZ * CAPTURE_REVS).div_ceil(hz);
+    frames.min(ADC_FRAME_COUNT as u32).max(1)
+}
+
+unsafe fn restart_capture_dma(buf_addr: u32) {
+    if buf_addr == 0 {
+        return;
+    }
+
+    let dma = unsafe { &*stm32::DMA1::ptr() };
+    let ch = dma.ch1();
+    let cr = ch.cr().read().bits();
+
+    ch.cr().write(|w| unsafe { w.bits(cr & !1) });
+    dma.ifcr().write(|w| unsafe { w.bits(0x0f) });
+    ch.mar().write(|w| unsafe { w.bits(buf_addr) });
+    ch.ndtr().write(|w| unsafe { w.bits(ADC_BUF_LEN as u32) });
+    ch.cr().write(|w| unsafe { w.bits(cr | 1) });
+}
+
+unsafe fn pause_capture_dma() {
+    let dma = unsafe { &*stm32::DMA1::ptr() };
+    let ch = dma.ch1();
+    let cr = ch.cr().read().bits();
+    ch.cr().write(|w| unsafe { w.bits(cr & !1) });
+}
+
+/// Logical-sector commutation: two phases driven, one floating.
 unsafe fn set_six_step(sector: u8, duty: u32) {
     let s = (sector as usize) % LOGICAL_SECTORS as usize;
     let hi = SIX_STEP_HIGH[s];
     let lo = SIX_STEP_LOW[s];
+    let marker_mode = MARKER_MODE[s];
+    let marker_hit_hi = marker_mode == 1;
+    let marker_hit_lo = marker_mode == 2;
     let t1 = unsafe { &*stm32::TIM1::ptr() };
 
-    t1.ccr1()
-        .write(|w| unsafe { w.ccr().bits(if hi == 0 { duty } else { 0 }) });
-    t1.ccr2()
-        .write(|w| unsafe { w.ccr().bits(if hi == 1 { duty } else { 0 }) });
-    t1.ccr3()
-        .write(|w| unsafe { w.ccr().bits(if hi == 2 { duty } else { 0 }) });
-    unsafe { set_phase_modes(hi != 0 && lo != 0, hi != 1 && lo != 1, hi != 2 && lo != 2) };
+    t1.ccr1().write(|w| unsafe {
+        w.ccr()
+            .bits(if hi == 0 && !marker_hit_hi { duty } else { 0 })
+    });
+    t1.ccr2().write(|w| unsafe {
+        w.ccr()
+            .bits(if hi == 1 && !marker_hit_hi { duty } else { 0 })
+    });
+    t1.ccr3().write(|w| unsafe {
+        w.ccr()
+            .bits(if hi == 2 && !marker_hit_hi { duty } else { 0 })
+    });
+
+    // Normally one phase is high, one is low, one floats.
+    // Marker mode 1: take the nominal high phase out of AF and drive it low.
+    // Marker mode 2: float the nominal low phase instead of actively pulling it low.
+    let float_a = (hi != 0 && lo != 0) || (marker_hit_hi && hi == 0) || (marker_hit_lo && lo == 0);
+    let float_b = (hi != 1 && lo != 1) || (marker_hit_hi && hi == 1) || (marker_hit_lo && lo == 1);
+    let float_c = (hi != 2 && lo != 2) || (marker_hit_hi && hi == 2) || (marker_hit_lo && lo == 2);
+    unsafe { set_phase_modes(float_a, float_b, float_c) };
+}
+
+unsafe fn set_sine(step: u32, arr: u32, amplitude: u32) {
+    let phase = (step as usize) % SINE_TABLE.len();
+    let amp = arr as i32 * amplitude as i32 / (1000 * 2);
+    let center = arr as i32 / 2;
+
+    let notch = NOTCH_PHASE.load(Ordering::Relaxed);
+    let fault_center = match notch {
+        NOTCH_A => Some(12),
+        NOTCH_B => Some(44),
+        NOTCH_C => Some(28),
+        _ => None,
+    };
+    let fault_active = fault_center
+        .map(|center_step: usize| phase.abs_diff(center_step) <= SINE_NOTCH_HALF_WIDTH_STEPS)
+        .unwrap_or(false);
+
+    let duty_a = if notch == NOTCH_A && fault_active {
+        center - amp
+    } else {
+        center + amp * SINE_TABLE[phase] as i32 / SINE_SCALE
+    };
+    let duty_b = if notch == NOTCH_B && fault_active {
+        center - amp
+    } else {
+        center + amp * SINE_TABLE[(phase + 16) % SINE_TABLE.len()] as i32 / SINE_SCALE
+    };
+    let duty_c = if notch == NOTCH_C && fault_active {
+        center - amp
+    } else {
+        center + amp * SINE_TABLE[(phase + 32) % SINE_TABLE.len()] as i32 / SINE_SCALE
+    };
+    let clamp = |d: i32| d.clamp(0, arr as i32) as u32;
+
+    let t1 = unsafe { &*stm32::TIM1::ptr() };
+    t1.ccr1().write(|w| unsafe { w.ccr().bits(clamp(duty_a)) });
+    t1.ccr2().write(|w| unsafe { w.ccr().bits(clamp(duty_b)) });
+    t1.ccr3().write(|w| unsafe { w.ccr().bits(clamp(duty_c)) });
+    restore_all_af();
 }
 
 struct BoardInit {
@@ -220,6 +358,36 @@ fn handle_command<TX, C1, C2, C3>(
             AMPLITUDE.store(amp, Ordering::Relaxed);
             writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
         }
+        b'm' => {
+            let next = if COMMUTATION_MODE.load(Ordering::Relaxed) == MODE_SIX_STEP {
+                MODE_SINE
+            } else {
+                MODE_SIX_STEP
+            };
+            COMMUTATION_MODE.store(next, Ordering::Relaxed);
+            let name = if next == MODE_SINE {
+                "sine"
+            } else {
+                "six-step"
+            };
+            writeln!(tx, "mode={}\r", name).ok();
+        }
+        b'0' => {
+            NOTCH_PHASE.store(NOTCH_OFF, Ordering::Relaxed);
+            writeln!(tx, "notch=off\r").ok();
+        }
+        b'1' => {
+            NOTCH_PHASE.store(NOTCH_A, Ordering::Relaxed);
+            writeln!(tx, "notch=A\r").ok();
+        }
+        b'2' => {
+            NOTCH_PHASE.store(NOTCH_B, Ordering::Relaxed);
+            writeln!(tx, "notch=B\r").ok();
+        }
+        b'3' => {
+            NOTCH_PHASE.store(NOTCH_C, Ordering::Relaxed);
+            writeln!(tx, "notch=C\r").ok();
+        }
         b'w' => {
             RUNNING.store(false, Ordering::Relaxed);
             restore_all_af();
@@ -232,6 +400,8 @@ fn handle_command<TX, C1, C2, C3>(
             restore_all_af();
             ELECTRICAL_HZ.store(FREQ_START, Ordering::Relaxed);
             AMPLITUDE.store(AMP_START, Ordering::Relaxed);
+            COMMUTATION_MODE.store(MODE_SIX_STEP, Ordering::Relaxed);
+            NOTCH_PHASE.store(NOTCH_OFF, Ordering::Relaxed);
             RUNNING.store(true, Ordering::Relaxed);
             writeln!(
                 tx,
@@ -277,7 +447,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope ready  f/v=±10Hz a/z=±1% +/-=±0.1% w=off q=reset\r"
+        "scope ready  f/v=±10Hz a/z=±1% +/-=±0.1% m=mode 0/1/2/3=notch w=off d=dump q=reset\r"
     )
     .ok();
 
@@ -291,7 +461,7 @@ fn main() -> ! {
             ),
             &mut rcc,
         )
-        .frequency(20_000u32.Hz())
+        .frequency(PWM_HZ.Hz())
         .with_deadtime(100u32.nanos())
         .center_aligned()
         .finalize();
@@ -307,10 +477,13 @@ fn main() -> ! {
     let _ = c1.set_duty_cycle(half as u16);
     let _ = c2.set_duty_cycle(half as u16);
     let _ = c3.set_duty_cycle(half as u16);
+    configure_tim1_adc_trgo();
 
-    // ADC2 ch17 (PA4) — continuous, circular DMA (mirrors HAL adc-continious-dma example)
+    // ADC2 ch17/ch5/ch14 (PA4/PC4/PB11) — TIM1_TRGO-triggered circular DMA scan.
     writeln!(tx, "dbg: pwm ok, adc setup\r").ok();
     let pa4 = gpioa.pa4.into_analog();
+    let pc4 = gpioc.pc4.into_analog();
+    let pb11 = gpiob.pb11.into_analog();
     let dma_channels = dp.DMA1.split(&rcc);
     let dma_config = DmaConfig::default()
         .transfer_complete_interrupt(false)
@@ -328,12 +501,19 @@ fn main() -> ! {
     let mut adc = adc12_common.claim(dp.ADC2, &mut delay);
 
     writeln!(tx, "dbg: configure channel\r").ok();
-    adc.set_continuous(Continuous::Continuous);
+    adc.set_continuous(Continuous::Single);
+    adc.set_external_trigger((TriggerMode::RisingEdge, ExternalTrigger12::Tim_1_trgo));
     adc.reset_sequence();
-    adc.configure_channel(&pa4, Sequence::One, SampleTime::Cycles_640_5);
+    adc.configure_channel(&pa4, Sequence::One, SampleTime::Cycles_6_5);
+    adc.configure_channel(&pc4, Sequence::Two, SampleTime::Cycles_6_5);
+    adc.configure_channel(&pb11, Sequence::Three, SampleTime::Cycles_6_5);
 
     writeln!(tx, "dbg: dma transfer ({} samples)\r", ADC_BUF_LEN).ok();
     let adc_buffer = cortex_m::singleton!(: [u16; ADC_BUF_LEN] = [0; ADC_BUF_LEN]).unwrap();
+    // Raw pointer to the capture buffer for the 'd' dump. The buffer itself is moved
+    // into the DMA transfer below; we only read it (volatile) after pausing the DMA.
+    let buf_ptr: *const u16 = adc_buffer.as_ptr();
+    CAPTURE_BUF_ADDR.store(buf_ptr as u32, Ordering::Relaxed);
     let mut adc_transfer = dma_channels.ch1.into_circ_peripheral_to_memory_transfer(
         adc.enable_dma(AdcDma::Continuous),
         &mut adc_buffer[..],
@@ -359,9 +539,51 @@ fn main() -> ! {
     loop {
         let mut buf = [0u8; 1];
         if rx.read(&mut buf).is_ok() {
-            handle_command(buf[0], &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
+            if buf[0] == b'd' {
+                CAPTURE_DONE.store(false, Ordering::Relaxed);
+                CAPTURE_FRAMES.store(0, Ordering::Relaxed);
+                CAPTURE_REQUEST.store(true, Ordering::Relaxed);
+                RUNNING.store(true, Ordering::Relaxed);
+                writeln!(tx, "capture: wait zero, 2 electrical revs\r").ok();
+
+                while !CAPTURE_DONE.load(Ordering::Relaxed) {
+                    cortex_m::asm::nop();
+                }
+
+                let frames = CAPTURE_FRAMES.load(Ordering::Relaxed) as usize;
+                handle_command(b'w', &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
+                adc_transfer.pause(|adc| adc.cancel_conversion());
+                dump_buffer(&mut tx, buf_ptr, frames);
+                adc_transfer.clear_overrun_flag();
+                adc_transfer.start(|adc| adc.start_conversion());
+            } else {
+                handle_command(buf[0], &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
+            }
         }
     }
+}
+
+/// Dump the (paused) ADC capture buffer as 8-bit hex. Each 12-bit sample is shifted
+/// right by 4 so only the top 8 bits remain. One line is one ch17/ch5/ch14 frame.
+fn dump_buffer<TX: Write>(tx: &mut TX, ptr: *const u16, frames: usize) {
+    writeln!(
+        tx,
+        "dump3: {} frames x 3 channels (ch17 ch5 ch14, 8-bit, sample>>4)\r",
+        frames
+    )
+    .ok();
+    for frame in 0..frames {
+        for ch in 0..ADC_CHANNELS {
+            let i = frame * ADC_CHANNELS + ch;
+            let v = unsafe { core::ptr::read_volatile(ptr.add(i)) };
+            write!(tx, "{:02x}", (v >> 4) as u8).ok();
+            if ch + 1 < ADC_CHANNELS {
+                write!(tx, " ").ok();
+            }
+        }
+        writeln!(tx, "\r").ok();
+    }
+    writeln!(tx, "\rend\r").ok();
 }
 
 #[allow(non_snake_case)]
@@ -371,6 +593,9 @@ extern "C" fn TIM7() {
 
     static mut STEP: u32 = 0;
     static mut PHASE_FRAC: u32 = 0;
+    static mut CAPTURE_WAIT_ZERO: bool = false;
+    static mut CAPTURE_ACTIVE: bool = false;
+    static mut CAPTURE_TICKS: u32 = 0;
 
     if !RUNNING.load(Ordering::Relaxed) {
         return;
@@ -380,14 +605,47 @@ extern "C" fn TIM7() {
     let amplitude = AMPLITUDE.load(Ordering::Relaxed);
 
     unsafe {
+        if CAPTURE_REQUEST.swap(false, Ordering::Relaxed) {
+            CAPTURE_WAIT_ZERO = true;
+            CAPTURE_ACTIVE = false;
+            CAPTURE_TICKS = 0;
+        }
+
+        let prev_step = STEP;
         PHASE_FRAC += electrical_hz * ELEC_STEPS_PER_REV;
         let advance = PHASE_FRAC / DRIVE_HZ;
         PHASE_FRAC %= DRIVE_HZ;
         STEP = (STEP + advance) % ELEC_STEPS_PER_REV;
+        let wrapped_to_zero = advance != 0 && STEP < prev_step;
 
         let arr = (*stm32::TIM1::ptr()).arr().read().arr().bits() as u32;
-        let sector = (STEP / STEPS_PER_LOGICAL_SECTOR) as u8;
-        let duty = arr * amplitude * 2 / (1000 * 3);
-        set_six_step(sector, duty);
+        if COMMUTATION_MODE.load(Ordering::Relaxed) == MODE_SINE {
+            set_sine(STEP, arr, amplitude);
+        } else {
+            let sector = (STEP / STEPS_PER_LOGICAL_SECTOR) as u8;
+            let duty = arr * amplitude * 2 / (1000 * 3);
+            set_six_step(sector, duty);
+        }
+
+        let mut capture_started = false;
+        if CAPTURE_WAIT_ZERO && wrapped_to_zero {
+            let frames = two_rev_frame_count(electrical_hz);
+            CAPTURE_FRAMES.store(frames, Ordering::Relaxed);
+            CAPTURE_TICKS = 0;
+            restart_capture_dma(CAPTURE_BUF_ADDR.load(Ordering::Relaxed));
+            CAPTURE_WAIT_ZERO = false;
+            CAPTURE_ACTIVE = true;
+            capture_started = true;
+        }
+
+        if CAPTURE_ACTIVE && !capture_started {
+            CAPTURE_TICKS += 1;
+            if CAPTURE_TICKS >= CAPTURE_FRAMES.load(Ordering::Relaxed) {
+                pause_capture_dma();
+                RUNNING.store(false, Ordering::Relaxed);
+                CAPTURE_ACTIVE = false;
+                CAPTURE_DONE.store(true, Ordering::Relaxed);
+            }
+        }
     }
 }
