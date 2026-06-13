@@ -134,40 +134,222 @@ Fix: `SampleTime::Cycles_6_5` (19 cyc, 447 ns/ch) → 3rd sample ends at 1.047µ
 const SIX_STEP_HIGH: [usize; 6] = [0, 0, 1, 1, 2, 2]; // phase idx driven high per sector
 const SIX_STEP_LOW:  [usize; 6] = [1, 2, 2, 0, 0, 1]; // phase idx driven low per sector
 const PHASE_TO_DMA:  [usize; 3] = [0, 2, 1];           // A→buf[0], B→buf[2], C→buf[1]
-const RAMP_FALLING:  [bool; 6]  = [true, false, true, false, true, false]; // s-indexed
-const BLANK:      usize = 5;   // skip first N de-staircased points before ZC scan
-const ZC_CONFIRM: usize = 2;   // consecutive samples required to confirm ZC
+const RAMP_FALLING:  [bool; 6]  = [false, true, false, false, false, false]; // current state — under investigation, see PHASE_MAPPING.md
+const ZC_BLANK:   usize = 2;   // ISR: skip first N triggered samples (~100 µs)
+const ZC_CONFIRM: usize = 2;   // consecutive samples required to confirm ZC (ISR and 'e' matched)
 const ADC_BEMF_SAMP: SampleTime = SampleTime::Cycles_6_5; // in start_adc2_scan_dma
 ```
 
+### ZC detection — ISR vs 'e' command (as of June 2026)
+
+Both now use the **same definition** of in-window ZC:
+- `v_fl != 0` and `vn != 0`
+- `ZC_CONFIRM = 2` consecutive samples satisfy the crossing condition
+- Early (ZC<0): condition already met at samples [BLANK] **and** [BLANK+1] → suppressed, does not count toward lock or PLL
+- In-window: condition first satisfied at sample > BLANK+1
+
+The lock counter (`LOCK_COUNTS`, reported as `lock sN=` in `i` output) is driven by
+`ZC_IN_WINDOW_S` — set only for genuine in-window crossings. Early ZCs do **not**
+increment the lock counter. This makes `i` and `e` semantically consistent.
+
+Three ISR statics per sector: `ZC_DETECTED_S` (any crossing seen, suppresses re-fire),
+`ZC_IN_WINDOW_S` (genuine in-window, drives lock), `ZC_PREV_CROSSED_S` (previous
+sample state, implements the 2-consecutive requirement).
+
 ---
 
-## Active investigation (May 2026)
+## Active investigation (June 2026) — finding the missing ZC sectors
 
-We are implementing `BEMF_50_DESIGN_v2.md`. The `e` command shows per-sector BEMF
-vs virtual neutral with ZC annotations. See `notes/BEMF_50_DESIGN_WIP1.md` for
-implementation state.
+**Current state**: 2 out of 6 sectors show genuine in-window BEMF zero crossings:
+- **s0** (A=hi, B=lo, C=float): C rises through neutral, ZC@~5/18. ✓
+- **s4** (C=hi, A=lo, B=float): B rises through neutral, ZC@~10/18. ✓
 
-### Immediate pending work
+The other 4 sectors all show ZC<0 (float phase enters the sector already on the crossed
+side of neutral) or ZC>n (never crosses). See `PHASE_MAPPING.md` for the full
+investigation log and the commutation-direction hypothesis.
 
-1. **SMPR register write cleanup**: currently raw bit manipulation in
-   `start_adc2_scan_dma`. Should use PAC typed calls:
-   ```rust
-   adc2.smpr1().modify(|_, w| w.smp5().cycles6_5());
-   adc2.smpr2().modify(|_, w| w.smp14().cycles6_5().smp17().cycles6_5());
-   ```
+**Next step**: try reversing the drive commutation direction (swap phase indices 1↔2 in
+`SIX_STEP_HIGH`/`SIX_STEP_LOW`). This is a drive-only change; `PHASE_TO_DMA` stays
+`[0,2,1]`.
 
-2. **Startup ADC info print**: add after `configure_adc_capture(true)` + TIM1 enable:
-   ```rust
-   let adc_clk = rcc.clocks.ahb_clk.raw() / 4; // AdcHclkDiv4
-   // compute per-channel ns and min_amp, print once
-   ```
+---
 
-3. **Update `BEMF_50_DESIGN_v2.md`**: fix PHASE_TO_DMA table and scan order to match
-   current implementation [A, C, B].
+## scope_l — peak-sampling BEMF capture (June 2026)
 
-4. **obs_test4**: flash current firmware (SMPR=Cycles_6_5, scan=[A,C,B]) and verify
-   all phases read correctly at amp=8%.
+`examples/scope_l.rs` is a new capture firmware focused on clean BEMF waveform
+observation. It differs from `scope8.rs` in one key way: it samples **at the PWM peak
+(CNT=ARR)** rather than during the ON window.
+
+### Why peak sampling
+
+In center-aligned PWM mode 1, at CNT=ARR (peak):
+- HIGH phase: high-side FET OFF, low-side FET ON → phase pulled to GND via low-side
+- LOW  phase: low-side FET ON → GND
+- FLOAT phase: both FETs OFF → reads pure BEMF with no switching noise
+
+With both driven phases at GND, virtual neutral = GND by construction. Zero crossing
+(e_C = 0) occurs at V_FLOAT = 0. No V_hi/V_lo estimation needed.
+
+Clamping: negative BEMF reads as 0 (ADC hardware clamp). Only positive half visible.
+ZC is detectable as the edge where the float phase transitions from/to 0.
+
+### Trigger mechanism
+
+`configure_adc_peak_trgo()` sets CCR4 = ARR-1 with PWM mode 1. OC4REF goes
+LOW→HIGH on the downcount at CNT=ARR-1 (one count past the peak). This rising edge
+feeds TIM1_TRGO → ADC2 EXTSEL. No TIM3 needed. ADC_FRAME_HZ = PWM_HZ = 20 kHz.
+
+### 12-bit ADC (implemented, not yet captured)
+
+scope_l uses `Resolution::Twelve` (0–4095), `u16` DMA buffer, 4-digit hex dump.
+Previous 8-bit captures showed only 0–10 counts at the float phase peak — 16× too
+coarse to see fine ZC structure. 12-bit gives 0–160 count range for the same signal.
+
+**Dump format**: `dump3: N frames x 3 channels (ch17 ch5 ch14, 12-bit ADC, 20000 Hz)`
+followed by 4-digit hex triples, e.g. `00a0 00b1 00c2`. `scope_common.py` detects
+"12-bit" in the header and uses a `{4}`-char hex regex; 8-bit captures ("8-bit ADC")
+still use the `{2}` regex. `Capture.full_scale` = 4095 or 255 accordingly.
+
+**12-bit capture confirmed (June 2026)** — but via `scope1.rs` (valley sampling), not
+scope_l. See the scope1 section below.
+
+### ON-time sampling — next investigation
+
+An LLM survey (5 models, with topology clarification addenda) converged 4/5 to the same
+conclusion: for this topology (complementary center-aligned PWM, all phases resistor-
+divided to ADC, 90–95% duty target), **sample at the counter valley (CNT=0)**, not the
+peak. Reasoning:
+
+- With complementary PWM the virtual neutral is stable in BOTH windows (no body-diode
+  collapse as in asymmetric chopping). ON vs OFF choice is purely geometric.
+- At 95% duty: ON window = 47.5 µs, OFF window = 2.5 µs split into two 1.25 µs
+  slivers. The peak (CNT=ARR) sits in the middle of the OFF sliver; the valley (CNT=0)
+  sits in the middle of the ON window.
+- Valley sampling gives the **full bipolar BEMF** signal riding around Vbus/2.
+  Peak sampling gives only the positive half (negative half clamps at ADC floor = 0).
+  Zero crossing with valley sampling is a real bipolar crossing through Vbus/2; with
+  peak sampling it is just the signal approaching zero.
+- For ZC detection and future commutation timing, the full bipolar signal at valley is
+  more useful.
+
+Survey files: `notes/bemf_sampling_survey/` (original) and `addendum/` (after topology
+clarification). Synthesis in each directory.
+
+**Done — implemented as `scope1.rs`** (see next section). scope_l (peak sampling)
+remains available as a diagnostic but valley sampling is the path forward.
+
+---
+
+## scope1 — valley-sampling 12-bit BEMF capture (June 2026, CURRENT)
+
+`examples/scope1.rs` is the survey-recommended configuration: **one 12-bit 3-channel
+scan per PWM period, triggered at the counter valley (CNT=0) — the exact middle of the
+ON window**. CCR4=1 with PWM mode 1 in center-aligned mode pulses OC4REF at the valley;
+CR2.MMS=0b111 routes OC4REF → TRGO → ADC2 EXTSEL. No TIM3.
+
+### First good capture (window=2, 180 Hz, 223 frames = 2 elec revs)
+
+`logs/latest_snapshot.png`. Each phase shows the textbook six-step terminal-voltage
+staircase sampled mid-ON-window:
+
+| Segment | Counts | Meaning |
+|---|---|---|
+| High plateau | ~1660–1680 | 2 sectors driven HIGH → Vbus via divider (1670/4095 ≈ 1.35 V at pin) |
+| Low plateau | ~30–100 | 2 sectors driven LOW → GND |
+| Mid-level ramps | ~550–1080 | 2 float sectors — bipolar BEMF riding around Vbus/2 ≈ 835 counts |
+
+Timing: ~18.6 frames/sector at 180 Hz. BEMF excursion in the float windows is only
+~±200 counts about neutral — this is why 12-bit was required (would be ~12 counts
+in 8-bit).
+
+**Filtering caveat**: snapshot moving-average window must be << sector length
+(18 frames). `--snapshot-window 31` smears the staircase into fake sinusoidal humps —
+that artifact was initially misread as a peak-sampling capture. Use window 2–5.
+(`--lowpass-window` is a dead arg in scope_live_ui.py — parsed, never used;
+`--snapshot-window` is the real one.)
+
+### Observations to chase
+
+- Float-window levels are asymmetric about Vbus/2 (phase A floats at ~900 and
+  ~1010–1080, both above 835). Same "enters sector already crossed" signature as the
+  motor_tester ZC investigation, now directly visible in voltage.
+- Post-commutation demagnetization step visible (e.g. B: 1660 → 550 → settles 640).
+  ZC logic must blank this.
+- Virtual neutral for ZC should be computed as (Va+Vb+Vc)/3 per frame — all three
+  phases are sampled in the same scan.
+
+### scope1 serial commands (June 2026 additions)
+
+- `r` — toggle drive direction fwd (A→B→C) / rev (A→C→B). Sticky across `q`.
+- `[` / `]` — duty trim ±1 raw CCR count (~0.035% amp; 3× finer than `+`/`-`).
+  Reset by `q`.
+- `e` / `c` — capture length ±1 electrical rev (default 2, max 24; clamped at
+  capture time to the 668-frame buffer: 6 revs @ 180 Hz, 10 @ 300 Hz). Sticky.
+- Debug line now carries `dir= trim= revs=`; analysis scripts read them via
+  `capture.debug` (reversed drive switches the hi/lo tables in
+  `analyze_zero_crossings` automatically).
+
+### ZC-vs-window investigation status (June 2026)
+
+Tooling: `zc_chase.py` (per-hz amp search with repeats + fine sweep, `--dir`,
+`--revs`), `zc_sector_stats.py` (per-sector-type offsets with linear
+extrapolation from d_start/d_end; `--per-rev` drift matrix).
+
+Findings so far, all at 120/180 Hz open loop:
+1. **No amp equilibrium exists** — pooled mean ZC is bimodal across sector
+   types; amp slides the whole pattern, can't compress it.
+2. **Drive reversal helped materially** (best 18/36 in-window vs 10/36 fwd;
+   3 consecutive good sector types) but did NOT collapse the spread → not a
+   pure sequence/labeling mismatch.
+3. **Dominant residual**: per-sector offsets follow a smooth ±0.8-window
+   (≈±48° elec) wave, period exactly 1 electrical rev, repeatable across
+   spin-ups, survives drive reversal.
+4. **Elliptical-field (fixed drive asymmetry, e.g. PC13 weak CH1N) ruled
+   out**: modulation amplitude unchanged from amp 13.7%→20%, and the wave's
+   sector-phase flipped ~half a period between operating points.
+5. **Rotor hunting also ruled out.** 6-rev capture (chase_20260612_200550)
+   `--per-rev`: pattern is locked, not walking — s2 nailed at +0.38..+0.43
+   (sd 0.05) across 6 consecutive electrical revs. Rev 0 is a startup transient
+   (exclude it). Electrical-angle-locked, not slow oscillation.
+6. **Divider mismatch measured and ruled out quantitatively.** Per-phase driven
+   rail plateaus: high A=1660/B=1663/C=1645 (spread 1.1%), low A=32/B=87/C=84.
+   A sector-dependent neutral bias of 18–55 counts against a BEMF slope of
+   ~45 counts/frame → only 2–6% window shift. Order of magnitude too small.
+
+### `zc_fit.py` — honest ZC angle by sinusoid fit (supersedes extrapolation)
+
+The "spread 7.7 / structural divergence" verdict from `zc_sector_stats` was
+largely an **artifact**: 4 of 6 sectors never cross in-window, and their offset
+was a *linear* extrapolation of a *sine* from >1 window away (s0 read −8 logical
+sectors — absurd). `zc_fit.py` instead fits each phase's floating-window samples
+to `a·cos+b·sin+c` (note: `v_float − (Va+Vb+Vc)/3 == e_float` exactly, so this
+is a direct BEMF fit) and solves for the true crossing angle whether or not it
+lands in a window. Validated: agrees with the 2 in-window direct measurements.
+
+**Decomposition of the per-sector "divergence" (the real finding):**
+1. **Phase A sense anomaly.** Fitted BEMF amplitude R: A≈half of B,C
+   (A 53/108, B 80/143, C 74/154 at 120/180 Hz). A's DC offset c/R = +2.4 at
+   120 Hz (exceeds its own amplitude → no crossing). B, C healthy and
+   reproducible across runs. A reads wrong ONLY when floating (driven plateaus
+   fine), so it is the **sense path** (PA4 / ADC2 ch17), not drive. A floats in
+   s2 and s5 — the perennially-pathological sectors. Motor/circuit symmetric as
+   expected; phase A sense is the lone exception.
+2. **Speed-dependent lag.** Healthy phases' crossings move with frequency
+   (C-fall 212°→243°, B-fall 283°→315° over 120→180 Hz) → ordinary load angle,
+   not a fixed geometric offset.
+
+**Next: isolate the phase-A anomaly.** Swap motor leads so a different winding
+feeds the PA4-sensed terminal. If the anomaly stays on channel A → sense divider
+(PA4 path); if it follows the winding → motor. Also worth: bench ratiometric
+check of all three dividers at rest with a known applied voltage.
+
+### Planned: live streaming capture (not yet implemented)
+
+Continuous UART streaming with firmware double buffering: split the 668-frame
+buffer in halves, dump the first N revs that fit the per-second byte budget.
+At 115200 baud ≈ 11.5 kB/s: hex text frame ≈ 17 B → ~670 frames/s; binary
+(3×u16 + sync) ≈ 6–8 B → ~1500–1900 frames/s. At 180 Hz (111 frames/rev)
+that's ~6 revs/s text or ~15 revs/s binary.
 
 ---
 

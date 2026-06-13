@@ -29,7 +29,7 @@ use core::fmt::Write;
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::{entry, exception};
 use embedded_io::{Read, ReadReady};
-use portable_atomic::{AtomicBool, AtomicU32, Ordering};
+use portable_atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use rtt_target::rprintln;
 use systick_timer::Timer;
 
@@ -44,6 +44,9 @@ use rinz::hal::serial::FullConfig;
 use rinz::hal::time::{ExtU32, Hertz, RateExtU32};
 use rinz::hal::{rcc, stm32};
 use rinz::idle_loop::IdleLoop;
+use rinz::pi_controller_state::PIControllerState;
+use rinz::pll_controller::{PLL, PLLParamsPlain};
+use rinz::pll_state::PLLState;
 
 // 170 MHz from 8 MHz HSE: M=2 N=85 R=2
 const SYSCLK_HZ: u32 = 170_000_000;
@@ -65,6 +68,17 @@ static TIMER: Timer = Timer::new(TICK_HZ, SYSTICK_RELOAD, SYSCLK_HZ as u64);
 
 fn now_u64() -> u64 {
     TIMER.now()
+}
+
+/// Prefix every UART line with a fixed-width `[SSSSSS.T] ` timestamp (seconds since
+/// boot, one decimal place).  Width is fixed — Python scripts can strip it with
+/// `line[10:]` or by splitting on `] `.
+macro_rules! tprintln {
+    ($tx:expr, $($arg:tt)*) => {{
+        let _ts = now_u64();
+        write!($tx, "[{:6}.{}] ", _ts / TICK_HZ, (_ts % TICK_HZ) / (TICK_HZ / 10)).ok();
+        writeln!($tx, $($arg)*)
+    }};
 }
 
 /// 48-step sine table centred at 127 (0 = trough, 254 = peak).
@@ -97,6 +111,59 @@ static RAW_RING_RESET: AtomicBool = AtomicBool::new(true);
 /// ADC capture mode: false = async continuous (default), true = TIM1-triggered.
 static ADC_TRIGGERED: AtomicBool = AtomicBool::new(true);
 
+// Inter-ZC period estimator: feeds normalized period error into the PLL loop
+// filter to produce a frequency estimate. This is NOT a phase-accumulator PLL
+// (Accumulator is not wired in yet); it is a period-locked frequency tracker.
+// Phase error is normalized: (actual_interval - expected) / expected, so loop
+// gains are dimensionless and speed-independent.
+// kp=5.0 → 5 Hz correction per 100% period error; ki=0.01 for slow integral.
+// PLLParamsPlain::new is const fn → zero-cost static init.
+// Only the TIM7 ISR writes PLL_CTL/PLL_STATE; main reads PLL_FREQ_BITS.
+static mut PLL_CTL: PLL<f32, PLLParamsPlain<f32>> =
+    PLL::new(PLLParamsPlain::new(50.0f32, 0.1f32, 5.0f32, 600.0f32));
+// Struct literal required: PLLState::new() is not const fn (generic trait bounds).
+// This zero init is safe — ISR seeds properly on first ZC via PLLState::new().
+static mut PLL_STATE: PLLState<f32> = PLLState {
+    pi: PIControllerState {
+        integral: 0.0,
+        last_error: 0.0,
+    },
+    frequency: 0.0,
+};
+/// Latest PLL frequency estimate, stored as f32 bits. Written by TIM7 ISR.
+static PLL_FREQ_BITS: AtomicU32 = AtomicU32::new(0);
+/// Per-sector ZC detection event counters. Written by TIM7 ISR; monotonically increasing.
+/// Print with 'i' to see which sectors are active at the current operating point.
+static ZC_HITS: [AtomicU32; 6] = [
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+];
+
+/// Per-sector ZC lock counters (indices 0..5) plus global (index 6).
+/// Incremented at each sector exit if ZC was detected; decremented if not.
+/// Saturates 0..=LOCK_MAX. State: ≥LOCK_STEADY → LOCKED; ≤LOCK_BROKEN → lost.
+const LOCK_MAX: u8 = 18;
+const LOCK_STEADY: u8 = 12;
+const LOCK_BROKEN: u8 = 6;
+static LOCK_COUNTS: [AtomicU8; 7] = [
+    AtomicU8::new(0),
+    AtomicU8::new(0),
+    AtomicU8::new(0),
+    AtomicU8::new(0),
+    AtomicU8::new(0),
+    AtomicU8::new(0),
+    AtomicU8::new(0), // index 6 = global
+];
+
+/// ZC polarity per sector: true = float phase is falling toward neutral.
+/// Reverse-rotation values (motor spins opposite to drive direction at low amplitude).
+/// s0(C-rise) and s4(B-rise) are LOCKED; s1,s2,s3,s5 show ZC<0 (cross before window).
+const RAMP_FALLING: [bool; 6] = [false, true, false, false, false, false];
+
 // ---------------------------------------------------------------------------
 // Raw BEMF sample ring — 96 kHz, enabled when electrical_hz > 100 ('l' dump)
 // ---------------------------------------------------------------------------
@@ -117,6 +184,8 @@ static RAW_SAMPLE_WR: AtomicU32 = AtomicU32::new(0);
 /// Nonzero = always sample this fixed channel regardless of sector:
 ///   17 = phase A (PA4/IN17), 5 = phase B (PC4/IN5), 14 = phase C (PB11/IN14).
 static RING_CHAN_FIXED: AtomicU32 = AtomicU32::new(17);
+/// Sine-mode phase marker: 0=none, 1=A flatlined, 2=B flatlined, 3=C flatlined.
+static MARK_PHASE: AtomicU8 = AtomicU8::new(0);
 
 /// Driven-high / driven-low phase index per six-step sector (A=0, B=1, C=2).
 const SIX_STEP_HIGH: [usize; 6] = [0, 0, 1, 1, 2, 2];
@@ -408,11 +477,9 @@ fn restore_all_af() {
 /// `sector` 0..5; `duty` is raw CCR value (0..ARR).
 /// Standard BLDC table: sector → (high, low, float).
 unsafe fn set_six_step(sector: u8, duty: u32) {
-    const HIGH: [usize; 6] = [0, 0, 1, 1, 2, 2];
-    const LOW: [usize; 6] = [1, 2, 2, 0, 0, 1];
     let s = (sector % 6) as usize;
-    let hi = HIGH[s];
-    let lo = LOW[s];
+    let hi = SIX_STEP_HIGH[s];
+    let lo = SIX_STEP_LOW[s];
 
     unsafe {
         let t1 = &*stm32::TIM1::ptr();
@@ -520,7 +587,7 @@ fn main() -> ! {
         )
         .unwrap();
     let (mut tx, mut rx) = usart.split();
-    writeln!(
+    tprintln!(
         tx,
         "motor_tester ready  f/v=±10Hz d/c=±1Hz a/z=±1% +/-=±0.1% w=off q=reset i=info\r"
     )
@@ -573,7 +640,7 @@ fn main() -> ! {
         let arr = max_duty as u64;
         let min_amp =
             (third_end_ns * 300 * cpu_hz + arr * 2_000_000_000 - 1) / (arr * 2_000_000_000);
-        writeln!(
+        tprintln!(
             tx,
             "ADC: clk={}.{}MHz samp=6.5cy {}ns/ch 3ch-end={}ns min_amp={}.0%\r",
             adc_hz / 1_000_000,
@@ -618,7 +685,7 @@ fn main() -> ! {
                         b'f' => {
                             let hz = (ELECTRICAL_HZ.load(Ordering::Relaxed) + 10).min(FREQ_MAX);
                             ELECTRICAL_HZ.store(hz, Ordering::Relaxed);
-                            writeln!(tx, "freq={}Hz\r", hz).ok();
+                            tprintln!(tx, "freq={}Hz\r", hz).ok();
                         }
                         b'v' => {
                             let hz = ELECTRICAL_HZ
@@ -626,12 +693,12 @@ fn main() -> ! {
                                 .saturating_sub(10)
                                 .max(FREQ_MIN);
                             ELECTRICAL_HZ.store(hz, Ordering::Relaxed);
-                            writeln!(tx, "freq={}Hz\r", hz).ok();
+                            tprintln!(tx, "freq={}Hz\r", hz).ok();
                         }
                         b'd' => {
                             let hz = (ELECTRICAL_HZ.load(Ordering::Relaxed) + 1).min(FREQ_MAX);
                             ELECTRICAL_HZ.store(hz, Ordering::Relaxed);
-                            writeln!(tx, "freq={}Hz\r", hz).ok();
+                            tprintln!(tx, "freq={}Hz\r", hz).ok();
                         }
                         b'c' => {
                             let hz = ELECTRICAL_HZ
@@ -639,35 +706,35 @@ fn main() -> ! {
                                 .saturating_sub(1)
                                 .max(FREQ_MIN);
                             ELECTRICAL_HZ.store(hz, Ordering::Relaxed);
-                            writeln!(tx, "freq={}Hz\r", hz).ok();
+                            tprintln!(tx, "freq={}Hz\r", hz).ok();
                         }
                         b'a' => {
                             let amp = (AMPLITUDE.load(Ordering::Relaxed) + 10).min(AMP_CAP);
                             AMPLITUDE.store(amp, Ordering::Relaxed);
-                            writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
+                            tprintln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
                         }
                         b'z' => {
                             let amp = AMPLITUDE.load(Ordering::Relaxed).saturating_sub(10);
                             AMPLITUDE.store(amp, Ordering::Relaxed);
-                            writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
+                            tprintln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
                         }
                         b'+' => {
                             let amp = (AMPLITUDE.load(Ordering::Relaxed) + 1).min(AMP_CAP);
                             AMPLITUDE.store(amp, Ordering::Relaxed);
-                            writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
+                            tprintln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
                         }
                         b'-' => {
                             let amp = AMPLITUDE.load(Ordering::Relaxed).saturating_sub(1);
                             AMPLITUDE.store(amp, Ordering::Relaxed);
-                            writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
+                            tprintln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
                         }
                         b'l' => {
                             if ADC_TRIGGERED.load(Ordering::Relaxed) {
-                                writeln!(tx, "l: only in async mode ('s' to switch)\r").ok();
+                                tprintln!(tx, "l: only in async mode ('s' to switch)\r").ok();
                             } else {
                                 let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
                                 if f_hz <= 100 {
-                                    writeln!(
+                                    tprintln!(
                                         tx,
                                         "l: disabled below 100 Hz (current {} Hz)\r",
                                         f_hz
@@ -685,7 +752,7 @@ fn main() -> ! {
                                     }
                                     if hist_count < 3 {
                                         unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                        writeln!(
+                                        tprintln!(
                                             tx,
                                             "l: only {} complete revs (need 3)\r",
                                             hist_count
@@ -700,7 +767,7 @@ fn main() -> ! {
                                             starts[idx2][0].wrapping_sub(win_start) as usize;
                                         if win_len == 0 || win_len > SNAP_LEN {
                                             unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                            writeln!(tx, "l: window {} out of range\r", win_len)
+                                            tprintln!(tx, "l: window {} out of range\r", win_len)
                                                 .ok();
                                         } else {
                                             unsafe {
@@ -711,7 +778,7 @@ fn main() -> ! {
                                                 }
                                                 NVIC::unmask(stm32::Interrupt::TIM7);
                                             }
-                                            writeln!(tx, "l: 2 revs @ {} Hz\r", f_hz).ok();
+                                            tprintln!(tx, "l: 2 revs @ {} Hz\r", f_hz).ok();
                                             for row in 0..12usize {
                                                 let rev = row / 6;
                                                 let sec = row % 6;
@@ -754,13 +821,112 @@ fn main() -> ! {
                                 }
                             } // end async-only else
                         }
-                        b'm' => {
-                            if ADC_TRIGGERED.load(Ordering::Relaxed) {
-                                writeln!(tx, "m: only in async mode ('s' to switch)\r").ok();
+                        b't' => {
+                            // 3-channel dump: A(ch17) C(ch14) B(ch5), 1 rev.
+                            // Works in async mode and sine-sync triggered mode (b'S').
+                            // Not valid in six-step triggered mode (ring layout differs).
+                            if ADC_TRIGGERED.load(Ordering::Relaxed)
+                                && SIX_STEP.load(Ordering::Relaxed)
+                            {
+                                tprintln!(tx, "t: not available in six-step triggered mode\r").ok();
                             } else {
                                 let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
                                 if f_hz <= 100 {
-                                    writeln!(
+                                    tprintln!(tx, "t: disabled below 100 Hz\r").ok();
+                                } else {
+                                    let starts: [[u32; 6]; 3];
+                                    let hist_head: usize;
+                                    let hist_count: usize;
+                                    unsafe {
+                                        NVIC::mask(stm32::Interrupt::TIM7);
+                                        starts = REV_SECTOR_STARTS;
+                                        hist_head = REV_HIST_HEAD;
+                                        hist_count = REV_HIST_COUNT;
+                                    }
+                                    if hist_count < 3 {
+                                        unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
+                                        tprintln!(
+                                            tx,
+                                            "t: only {} complete revs (need 3)\r",
+                                            hist_count
+                                        )
+                                        .ok();
+                                    } else {
+                                        let idx0 = hist_head;
+                                        let idx1 = (hist_head + 1) % 3;
+                                        let win_start = starts[idx0][0];
+                                        let win_len =
+                                            starts[idx1][0].wrapping_sub(win_start) as usize;
+                                        if win_len == 0 || win_len * 3 > SNAP_LEN {
+                                            unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
+                                            tprintln!(tx, "t: window {} out of range\r", win_len)
+                                                .ok();
+                                        } else {
+                                            // Snapshot all 3 channels into SNAP_NEUT_BUF while TIM7 is
+                                            // masked. TIM7 never writes SNAP_NEUT_BUF, so unmask can
+                                            // happen before the print loop without corrupting the data.
+                                            //   SNAP_NEUT_BUF[0          .. win_len]   = A (ch17)
+                                            //   SNAP_NEUT_BUF[win_len    .. 2*win_len] = C (ch14)
+                                            //   SNAP_NEUT_BUF[2*win_len  .. 3*win_len] = B (ch5)
+                                            unsafe {
+                                                for i in 0..win_len {
+                                                    let src = (win_start as usize).wrapping_add(i)
+                                                        & RAW_SAMPLE_MASK;
+                                                    SNAP_NEUT_BUF[i] = RAW_SAMPLE_BUF[src];
+                                                    SNAP_NEUT_BUF[win_len + i] = SNAP_BUF[src];
+                                                    SNAP_NEUT_BUF[2 * win_len + i] =
+                                                        RAW_NEUT_BUF[src];
+                                                }
+                                                NVIC::unmask(stm32::Interrupt::TIM7);
+                                            }
+                                            tprintln!(
+                                                tx,
+                                                "t: 1 rev @ {} Hz  A(ch17) C(ch14) B(ch5) 8b\r",
+                                                f_hz
+                                            )
+                                            .ok();
+                                            for sec in 0..6usize {
+                                                let row_start = starts[idx0][sec];
+                                                let row_end = if sec < 5 {
+                                                    starts[idx0][sec + 1]
+                                                } else {
+                                                    starts[idx1][0]
+                                                };
+                                                let n = row_end.wrapping_sub(row_start) as usize;
+                                                let rel =
+                                                    row_start.wrapping_sub(win_start) as usize;
+                                                write!(tx, "[s{}]: ", sec).ok();
+                                                if n == 0 || rel + n > win_len {
+                                                    writeln!(tx, "(invalid)\r").ok();
+                                                    continue;
+                                                }
+                                                unsafe {
+                                                    for i in 0..n {
+                                                        write!(
+                                                            tx,
+                                                            "{:02x}{:02x}{:02x} ",
+                                                            SNAP_NEUT_BUF[rel + i] >> 4,
+                                                            SNAP_NEUT_BUF[win_len + rel + i] >> 4,
+                                                            SNAP_NEUT_BUF[2 * win_len + rel + i]
+                                                                >> 4,
+                                                        )
+                                                        .ok();
+                                                    }
+                                                }
+                                                writeln!(tx, "\r").ok();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        b'm' => {
+                            if ADC_TRIGGERED.load(Ordering::Relaxed) {
+                                tprintln!(tx, "m: only in async mode ('s' to switch)\r").ok();
+                            } else {
+                                let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
+                                if f_hz <= 100 {
+                                    tprintln!(
                                         tx,
                                         "m: disabled below 100 Hz (current {} Hz)\r",
                                         f_hz
@@ -778,7 +944,7 @@ fn main() -> ! {
                                     }
                                     if hist_count < 3 {
                                         unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                        writeln!(
+                                        tprintln!(
                                             tx,
                                             "m: only {} complete revs (need 3)\r",
                                             hist_count
@@ -793,7 +959,7 @@ fn main() -> ! {
                                             starts[idx2][0].wrapping_sub(win_start) as usize;
                                         if win_len == 0 || win_len > SNAP_LEN {
                                             unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
-                                            writeln!(tx, "m: window {} out of range\r", win_len)
+                                            tprintln!(tx, "m: window {} out of range\r", win_len)
                                                 .ok();
                                         } else {
                                             unsafe {
@@ -804,7 +970,7 @@ fn main() -> ! {
                                                 }
                                                 NVIC::unmask(stm32::Interrupt::TIM7);
                                             }
-                                            writeln!(tx, "m: 2 revs @ {} Hz\r", f_hz).ok();
+                                            tprintln!(tx, "m: 2 revs @ {} Hz\r", f_hz).ok();
                                             let hex = b"0123456789abcdef";
                                             for row in 0..12usize {
                                                 let rev = row / 6;
@@ -858,7 +1024,19 @@ fn main() -> ! {
                                 14 => "C (ch14/PB11)",
                                 _ => "A (ch17/PA4)",
                             };
-                            writeln!(tx, "ring_chan={}\r", name).ok();
+                            tprintln!(tx, "ring_chan={}\r", name).ok();
+                        }
+                        b'n' => {
+                            // Cycle sine-mode phase marker: 0=none → 1=A → 2=B → 3=C → 0
+                            let m = (MARK_PHASE.load(Ordering::Relaxed) + 1) % 4;
+                            MARK_PHASE.store(m, Ordering::Relaxed);
+                            let name = match m {
+                                1 => "A(ch17)",
+                                2 => "B(ch5)",
+                                3 => "C(ch14)",
+                                _ => "none",
+                            };
+                            tprintln!(tx, "mark={}\r", name).ok();
                         }
                         b'M' => {
                             let was = SIX_STEP.load(Ordering::Relaxed);
@@ -869,7 +1047,7 @@ fn main() -> ! {
                             SIX_STEP.store(!was, Ordering::Relaxed);
                             RAW_RING_RESET.store(true, Ordering::Relaxed);
                             let name = if was { "sine" } else { "six-step" };
-                            writeln!(tx, "mode={}\r", name).ok();
+                            tprintln!(tx, "mode={}\r", name).ok();
                         }
                         b'w' => {
                             RUNNING.store(false, Ordering::Relaxed);
@@ -880,7 +1058,7 @@ fn main() -> ! {
                             let _ = c1.set_duty_cycle(half as u16);
                             let _ = c2.set_duty_cycle(half as u16);
                             let _ = c3.set_duty_cycle(half as u16);
-                            writeln!(tx, "kill\r").ok();
+                            tprintln!(tx, "kill\r").ok();
                             rprintln!("KILL");
                         }
                         b'q' => {
@@ -890,8 +1068,14 @@ fn main() -> ! {
                             AMPLITUDE.store(AMP_START, Ordering::Relaxed);
                             RUNNING.store(true, Ordering::Relaxed);
                             RAW_RING_RESET.store(true, Ordering::Relaxed);
+                            for c in &ZC_HITS {
+                                c.store(0, Ordering::Relaxed);
+                            }
+                            for c in &LOCK_COUNTS {
+                                c.store(0, Ordering::Relaxed);
+                            }
                             let mode = if SIX_STEP_START { "six-step" } else { "sine" };
-                            writeln!(
+                            tprintln!(
                                 tx,
                                 "reset: freq={}Hz amp={}.{}% mode={}\r",
                                 FREQ_START,
@@ -917,7 +1101,7 @@ fn main() -> ! {
                             // MC SDK: T = T0 + (V0 - V_out) / dV_dT = 25 + (1400 - V_mV) / 19
                             let temp_c = 25 + (1400 - temp_mv) / 19;
 
-                            writeln!(
+                            tprintln!(
                                 tx,
                                 "vbus={}.{}V  iu={}mA (phase-U proxy)  temp={}°C  busy={}%\r",
                                 vbus_mv / 1000,
@@ -935,6 +1119,55 @@ fn main() -> ! {
                                 temp_mv,
                                 temp_c,
                             );
+                            let pll_hz = f32::from_bits(PLL_FREQ_BITS.load(Ordering::Relaxed));
+                            let cmd_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
+                            if pll_hz > 1.0 {
+                                tprintln!(
+                                    tx,
+                                    "pll_est={}.{}Hz  cmd={}Hz\r",
+                                    pll_hz as u32,
+                                    (pll_hz * 10.0) as u32 % 10,
+                                    cmd_hz,
+                                )
+                                .ok();
+                            } else {
+                                tprintln!(tx, "pll_est=-- (no ZC yet)\r").ok();
+                            }
+                            let h: [u32; 6] =
+                                core::array::from_fn(|i| ZC_HITS[i].load(Ordering::Relaxed));
+                            tprintln!(
+                                tx,
+                                "zc_hits s0={} s1={} s2={} s3={} s4={} s5={}\r",
+                                h[0],
+                                h[1],
+                                h[2],
+                                h[3],
+                                h[4],
+                                h[5]
+                            )
+                            .ok();
+                            let lc: [u8; 7] =
+                                core::array::from_fn(|i| LOCK_COUNTS[i].load(Ordering::Relaxed));
+                            let gstate = if lc[6] >= LOCK_STEADY {
+                                "LOCKED"
+                            } else if lc[6] <= LOCK_BROKEN {
+                                "lost"
+                            } else {
+                                "mid"
+                            };
+                            tprintln!(
+                                tx,
+                                "lock g={}({}) s0={} s1={} s2={} s3={} s4={} s5={}\r",
+                                lc[6],
+                                gstate,
+                                lc[0],
+                                lc[1],
+                                lc[2],
+                                lc[3],
+                                lc[4],
+                                lc[5]
+                            )
+                            .ok();
                         }
                         b's' => {
                             let was = ADC_TRIGGERED.load(Ordering::Relaxed);
@@ -949,9 +1182,27 @@ fn main() -> ! {
                             } else {
                                 "async-legacy (fresh 96kHz direct samples)"
                             };
-                            writeln!(tx, "adc_mode={}\r", name).ok();
+                            tprintln!(tx, "adc_mode={}\r", name).ok();
                         }
-                        b'n' => {
+                        b'S' => {
+                            // Sine-sync triggered: CCR4=ARR/2 so the DMA fires at the
+                            // duty-cycle midpoint crossing. Phases above 50% duty read
+                            // HIGH; phases below 50% read LOW; marked (exactly 50%) reads
+                            // HIGH. One clean binary sample per 20 kHz PWM period.
+                            let arr =
+                                unsafe { (*stm32::TIM1::ptr()).arr().read().arr().bits() as u32 };
+                            let half = arr / 2;
+                            ADC_TRIGGERED.store(true, Ordering::Relaxed);
+                            unsafe {
+                                configure_adc_capture(true);
+                                (*stm32::TIM1::ptr()).ccr4().write(|w| w.ccr().bits(half));
+                            }
+                            RAW_RING_RESET.store(true, Ordering::Relaxed);
+                            TRIP_FROZEN.store(false, Ordering::Relaxed);
+                            TRIP_FREEZE_REQUESTED.store(false, Ordering::Relaxed);
+                            tprintln!(tx, "adc_mode=sine-sync CCR4={} (ARR/2)\r", half).ok();
+                        }
+                        b'R' => {
                             // Register state dump: ADC2 + DMA1_CH1 + DMAMUX + live DR.
                             // Use this to diagnose DMA/ADC2 config issues.
                             unsafe {
@@ -1007,9 +1258,9 @@ fn main() -> ! {
                         b'e' => {
                             let triggered = ADC_TRIGGERED.load(Ordering::Relaxed);
                             if !triggered {
-                                writeln!(tx, "e: only in triggered mode ('s' to switch)\r").ok();
+                                tprintln!(tx, "e: only in triggered mode ('s' to switch)\r").ok();
                             } else if !RUNNING.load(Ordering::Relaxed) {
-                                writeln!(tx, "e: motor not running\r").ok();
+                                tprintln!(tx, "e: motor not running\r").ok();
                             } else {
                                 let f_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
                                 // Request freeze at next rev boundary, wait for ISR to honour it.
@@ -1021,16 +1272,18 @@ fn main() -> ! {
                                 // Buffers frozen; ISR will not write until we clear TRIP_FROZEN.
                                 let counts: [usize; 6] = unsafe { TRIP_COUNTS_SNAP };
                                 let avg_sps = counts.iter().sum::<usize>() / 6;
-                                writeln!(
+                                let pll_hz = f32::from_bits(PLL_FREQ_BITS.load(Ordering::Relaxed));
+                                tprintln!(
                                     tx,
-                                    "e: trip 1 rev @ {} Hz  ~{} samp/sec\r",
-                                    f_hz, avg_sps
+                                    "e: trip 1 rev @ {} Hz  ~{} samp/sec  pll={}.{}Hz\r",
+                                    f_hz,
+                                    avg_sps,
+                                    pll_hz as u32,
+                                    (pll_hz * 10.0) as u32 % 10,
                                 )
                                 .ok();
 
                                 const PNAME: [&str; 3] = ["A", "B", "C"];
-                                const RAMP_FALLING: [bool; 6] =
-                                    [false, true, false, true, false, true];
                                 const BLANK: usize = 2; // 2 × 50 µs = 100 µs at 20 kHz
                                 const ZC_CONFIRM: usize = 2;
                                 const ZC_LATE: usize = usize::MAX;
@@ -1047,9 +1300,9 @@ fn main() -> ! {
                                     // Float-phase BEMF from the appropriate buffer.
                                     let get_fl = |i: usize| -> u16 {
                                         unsafe {
-                                            match fl {
+                                            match PHASE_TO_DMA[fl] {
                                                 0 => RAW_SAMPLE_BUF[base + i],
-                                                2 => SNAP_BUF[base + i],
+                                                1 => SNAP_BUF[base + i],
                                                 _ => RAW_NEUT_BUF[base + i],
                                             }
                                         }
@@ -1086,18 +1339,39 @@ fn main() -> ! {
                                     };
 
                                     // Header line.
-                                    write!(
-                                        tx,
-                                        "[s{} {}=hi {}=lo {}=fl ",
-                                        sec, PNAME[hi], PNAME[lo], PNAME[fl]
-                                    )
-                                    .ok();
                                     if zc_i == ZC_LATE {
-                                        writeln!(tx, "ZC<0]:\r").ok();
+                                        tprintln!(
+                                            tx,
+                                            "[s{} {}=hi {}=lo {}=fl ZC<0]:\r",
+                                            sec,
+                                            PNAME[hi],
+                                            PNAME[lo],
+                                            PNAME[fl]
+                                        )
+                                        .ok();
                                     } else if zc_i < ZC_EARLY {
-                                        writeln!(tx, "ZC@{}/{}]:\r", zc_i, n).ok();
+                                        tprintln!(
+                                            tx,
+                                            "[s{} {}=hi {}=lo {}=fl ZC@{}/{}]:\r",
+                                            sec,
+                                            PNAME[hi],
+                                            PNAME[lo],
+                                            PNAME[fl],
+                                            zc_i,
+                                            n
+                                        )
+                                        .ok();
                                     } else {
-                                        writeln!(tx, "ZC>{}]:\r", n).ok();
+                                        tprintln!(
+                                            tx,
+                                            "[s{} {}=hi {}=lo {}=fl ZC>{}]:\r",
+                                            sec,
+                                            PNAME[hi],
+                                            PNAME[lo],
+                                            PNAME[fl],
+                                            n
+                                        )
+                                        .ok();
                                     }
 
                                     // Float BEMF row.
@@ -1172,6 +1446,14 @@ extern "C" fn TIM7() {
     static mut STEP: u32 = 0;
     static mut PHASE_FRAC: u32 = 0;
     static mut PREV_SECTOR: u8 = 255; // 255 = uninitialized sentinel
+    static mut ZC_DETECTED_S: [bool; 6] = [false; 6];
+    static mut ZC_IN_WINDOW_S: [bool; 6] = [false; 6];
+    static mut ZC_PREV_CROSSED_S: [bool; 6] = [false; 6];
+    // Per-sector last-ZC tick: measures same-sector revolution period (= 1 full
+    // electrical cycle) so partial ZC coverage (not all 6 sectors crossing) does
+    // not corrupt the frequency estimate.
+    static mut ZC_TICK_PER_SEC: [u64; 6] = [0u64; 6];
+    static mut ZC_SEC_VALID: [bool; 6] = [false; 6];
 
     if !RUNNING.load(Ordering::Relaxed) {
         return;
@@ -1192,6 +1474,15 @@ extern "C" fn TIM7() {
             TRIP_COUNTS = [0usize; 6];
             TRIP_COUNTS_SNAP = [0usize; 6];
             TRIP_FRAC = 0;
+            ZC_DETECTED_S = [false; 6];
+            ZC_IN_WINDOW_S = [false; 6];
+            ZC_PREV_CROSSED_S = [false; 6];
+            ZC_TICK_PER_SEC = [0u64; 6];
+            ZC_SEC_VALID = [false; 6];
+            for c in &LOCK_COUNTS {
+                c.store(0, Ordering::Relaxed);
+            }
+            core::ptr::addr_of_mut!(PLL_STATE).write(PLLState::new(electrical_hz as f32));
         }
 
         PHASE_FRAC += electrical_hz * 48;
@@ -1230,7 +1521,26 @@ extern "C" fn TIM7() {
                     CUR_REV_SECTOR_STARTS[sector as usize] = wr;
                 }
                 let _ = now_t;
+                // Update lock counters for the sector that just ended.
+                if PREV_SECTOR != 255 {
+                    let prev = PREV_SECTOR as usize;
+                    let det = ZC_IN_WINDOW_S[prev];
+                    for &idx in &[prev, 6usize] {
+                        let v = LOCK_COUNTS[idx].load(Ordering::Relaxed);
+                        LOCK_COUNTS[idx].store(
+                            if det {
+                                v.saturating_add(1).min(LOCK_MAX)
+                            } else {
+                                v.saturating_sub(1)
+                            },
+                            Ordering::Relaxed,
+                        );
+                    }
+                }
                 PREV_SECTOR = sector;
+                ZC_DETECTED_S[sector as usize] = false;
+                ZC_IN_WINDOW_S[sector as usize] = false;
+                ZC_PREV_CROSSED_S[sector as usize] = false;
                 // Triplet buffer: reset per-sector counter on sector entry.
                 if ADC_TRIGGERED.load(Ordering::Relaxed) {
                     if rev_wrapped && TRIP_FREEZE_REQUESTED.load(Ordering::Relaxed) {
@@ -1270,6 +1580,59 @@ extern "C" fn TIM7() {
                                 RAW_NEUT_BUF[idx] = vb;
                                 SNAP_NEUT_BUF[idx] = vn;
                                 TRIP_COUNTS[s] = cnt + 1;
+
+                                // ZC detection — matches 'e' command semantics exactly:
+                                //   v_fl != 0, vn != 0, ZC_CONFIRM=2 consecutive samples,
+                                //   early = condition already met at [BLANK,BLANK+1].
+                                const ZC_BLANK: usize = 2;
+                                const ZC_CONFIRM: usize = 2;
+                                let fl = 3 - SIX_STEP_HIGH[s] - SIX_STEP_LOW[s];
+                                if cnt >= ZC_BLANK && !ZC_DETECTED_S[s] {
+                                    let v_fl = dma.add(PHASE_TO_DMA[fl]).read_volatile();
+                                    let current_crossed = v_fl != 0
+                                        && vn > 0
+                                        && if RAMP_FALLING[s] {
+                                            v_fl <= vn
+                                        } else {
+                                            v_fl >= vn
+                                        };
+                                    if ZC_PREV_CROSSED_S[s] && current_crossed {
+                                        ZC_DETECTED_S[s] = true;
+                                        // cnt == ZC_BLANK+ZC_CONFIRM-1 means the
+                                        // condition was already met at both BLANK and
+                                        // BLANK+1: matches 'e' ZC<0, suppress.
+                                        if cnt > ZC_BLANK + ZC_CONFIRM - 1 {
+                                            ZC_IN_WINDOW_S[s] = true;
+                                            ZC_HITS[s].fetch_add(1, Ordering::Relaxed);
+                                            let zc_t = now_u64();
+                                            if ZC_SEC_VALID[s] {
+                                                let interval =
+                                                    zc_t.wrapping_sub(ZC_TICK_PER_SEC[s]) as f32;
+                                                let cur_freq = (*core::ptr::addr_of!(PLL_STATE))
+                                                    .frequency
+                                                    .max(1.0);
+                                                let expected = TICK_HZ as f32 / cur_freq;
+                                                let phase_error = (expected - interval) / expected;
+                                                let state =
+                                                    &mut *core::ptr::addr_of_mut!(PLL_STATE);
+                                                let pll = &*core::ptr::addr_of!(PLL_CTL);
+                                                let freq = pll.update(phase_error, state);
+                                                PLL_FREQ_BITS
+                                                    .store(freq.to_bits(), Ordering::Relaxed);
+                                            } else {
+                                                let init_freq =
+                                                    ELECTRICAL_HZ.load(Ordering::Relaxed) as f32;
+                                                core::ptr::addr_of_mut!(PLL_STATE)
+                                                    .write(PLLState::new(init_freq));
+                                                PLL_FREQ_BITS
+                                                    .store(init_freq.to_bits(), Ordering::Relaxed);
+                                            }
+                                            ZC_TICK_PER_SEC[s] = zc_t;
+                                            ZC_SEC_VALID[s] = true;
+                                        }
+                                    }
+                                    ZC_PREV_CROSSED_S[s] = current_crossed;
+                                }
                             }
                         }
                     }
@@ -1300,13 +1663,80 @@ extern "C" fn TIM7() {
             let vb = SINE48[(STEP + 36) as usize % 48] as i32 - 127; // B lags A 120°
             let vc = SINE48[(STEP + 20) as usize % 48] as i32 - 127; // C lags A 240°
             let scale = 127 * 1000_i32;
-            let duty_a = (half + va * amp * half / scale) as u32;
-            let duty_b = (half + vb * amp * half / scale) as u32;
-            let duty_c = (half + vc * amp * half / scale) as u32;
+            let mark = MARK_PHASE.load(Ordering::Relaxed);
+            let duty_a = if mark == 1 {
+                half as u32
+            } else {
+                (half + va * amp * half / scale) as u32
+            };
+            let duty_b = if mark == 2 {
+                half as u32
+            } else {
+                (half + vb * amp * half / scale) as u32
+            };
+            let duty_c = if mark == 3 {
+                half as u32
+            } else {
+                (half + vc * amp * half / scale) as u32
+            };
             let t1 = &*stm32::TIM1::ptr();
             t1.ccr1().write(|w| w.ccr().bits(duty_a));
             t1.ccr2().write(|w| w.ccr().bits(duty_b));
             t1.ccr3().write(|w| w.ccr().bits(duty_c));
+            // Sine ring: capture all 3 channels + rev history for 't' dump.
+            // Works in both async (96 kHz SW conversions) and sine-sync triggered
+            // (20 kHz DMA reads, CCR4=ARR/2 fires at duty-cycle midpoint crossing).
+            if electrical_hz > 100 {
+                let sine_sector = (STEP / 8) as u8;
+                // Sector tracking is the same regardless of capture mode.
+                if PREV_SECTOR != sine_sector {
+                    let wr = RAW_SAMPLE_WR.load(Ordering::Relaxed);
+                    let rev_wrapped = PREV_SECTOR != 255 && PREV_SECTOR == 5 && sine_sector == 0;
+                    if rev_wrapped {
+                        let tail = (REV_HIST_HEAD + REV_HIST_COUNT) % 3;
+                        REV_SECTOR_STARTS[tail] = CUR_REV_SECTOR_STARTS;
+                        if REV_HIST_COUNT < 3 {
+                            REV_HIST_COUNT += 1;
+                        } else {
+                            REV_HIST_HEAD = (REV_HIST_HEAD + 1) % 3;
+                        }
+                        CUR_REV_SECTOR_STARTS = [u32::MAX; 6];
+                    }
+                    CUR_REV_SECTOR_STARTS[sine_sector as usize] = wr;
+                    PREV_SECTOR = sine_sector;
+                }
+                let wr = RAW_SAMPLE_WR.load(Ordering::Relaxed);
+                let slot = wr as usize & RAW_SAMPLE_MASK;
+                if ADC_TRIGGERED.load(Ordering::Relaxed) {
+                    // 20 kHz sine-sync: DMA wrote [A,C,B] when CCR4=ARR/2 fired.
+                    // Rate-limit to one ring write per TIM1 period (20 kHz).
+                    TRIP_FRAC += 20_000;
+                    if TRIP_FRAC >= DRIVE_HZ {
+                        TRIP_FRAC -= DRIVE_HZ;
+                        let dma = core::ptr::addr_of!(ADC2_DMA_BUF).cast::<u16>();
+                        RAW_SAMPLE_BUF[slot] = dma.add(0).read_volatile(); // A ch17
+                        SNAP_BUF[slot] = dma.add(1).read_volatile(); // C ch14
+                        RAW_NEUT_BUF[slot] = dma.add(2).read_volatile(); // B ch5
+                        RAW_SAMPLE_WR.store(wr.wrapping_add(1), Ordering::Relaxed);
+                    }
+                } else {
+                    // Async 96 kHz: sequential SW-triggered single conversions.
+                    let adc2 = &*stm32::ADC2::ptr();
+                    adc2.sqr1().write(|w| w.bits(17 << 6));
+                    adc2.cr().modify(|_, w| w.adstart().set_bit());
+                    while adc2.isr().read().eoc().bit_is_clear() {}
+                    RAW_SAMPLE_BUF[slot] = adc2.dr().read().rdata().bits();
+                    adc2.sqr1().write(|w| w.bits(14 << 6));
+                    adc2.cr().modify(|_, w| w.adstart().set_bit());
+                    while adc2.isr().read().eoc().bit_is_clear() {}
+                    SNAP_BUF[slot] = adc2.dr().read().rdata().bits();
+                    adc2.sqr1().write(|w| w.bits(5 << 6));
+                    adc2.cr().modify(|_, w| w.adstart().set_bit());
+                    while adc2.isr().read().eoc().bit_is_clear() {}
+                    RAW_NEUT_BUF[slot] = adc2.dr().read().rdata().bits();
+                    RAW_SAMPLE_WR.store(wr.wrapping_add(1), Ordering::Relaxed);
+                }
+            }
         }
     }
 }
