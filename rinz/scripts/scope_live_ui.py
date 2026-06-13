@@ -87,6 +87,7 @@ class UiState:
     snapshot_ymax: float | None = SNAPSHOT_YMAX
     zc_path: Path = Path("logs/latest_zc.png")
     zc_log_path: Path = Path("logs/latest_zc.txt")
+    zc_window: int = 3
     zc_summary: str = "no ZC analysis yet"
     archive_dir: Path = Path("logs/captures")
 
@@ -324,9 +325,12 @@ def _finish_capture_worker(state: UiState, log: CommLog, capture_text: str) -> N
         log.event(f"snapshot failed: {exc}")
 
     with_zc = False
-    if capture.debug.get("mode") == "six-step" and capture.debug.get("hz"):
+    # Firmware is six-step only now (sine removed), so its debug line no longer
+    # carries mode=. Gate the ZC overlay on hz alone; default mode for the title.
+    if capture.debug.get("hz"):
+        capture.debug.setdefault("mode", "six-step")
         try:
-            sectors = plot_zc_snapshot(capture, state.zc_path)
+            sectors = plot_zc_snapshot(capture, state.zc_path, smooth_window=state.zc_window)
             state.zc_log_path.parent.mkdir(parents=True, exist_ok=True)
             state.zc_log_path.write_text(format_zc_report(sectors), encoding="ascii")
             with_zc = True
@@ -628,6 +632,12 @@ def parse_args() -> argparse.Namespace:
         help="per-sector ZC table overwritten after every six-step capture",
     )
     parser.add_argument(
+        "--zc-window",
+        type=int,
+        default=3,
+        help="smoothing window for the ZC plot/detection (default: 3)",
+    )
+    parser.add_argument(
         "--archive-dir",
         type=Path,
         default=Path("logs/captures"),
@@ -661,6 +671,7 @@ def main() -> int:
         snapshot_ymax=args.snapshot_ymax,
         zc_path=args.zc_path,
         zc_log_path=args.zc_log_path,
+        zc_window=args.zc_window,
         archive_dir=args.archive_dir,
     )
 

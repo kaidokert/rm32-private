@@ -78,7 +78,7 @@ const ADC_SAMPLES_PER_PWM: u32 = 1;
 const ADC_FRAME_HZ: u32 = PWM_HZ * ADC_SAMPLES_PER_PWM;
 // Buffer must hold this many revolutions at the lowest supported electrical freq.
 const CAPTURE_REVS: u32 = 2;
-const CAPTURE_MIN_HZ: u32 = 20;
+const CAPTURE_MIN_HZ: u32 = 60;
 // +1 to round up the partial frame; total buffer fits comfortably in 32 KB SRAM.
 const ADC_FRAME_COUNT: usize = (ADC_FRAME_HZ * CAPTURE_REVS / CAPTURE_MIN_HZ + 1) as usize;
 const ADC_BUF_LEN: usize = ADC_FRAME_COUNT * ADC_CHANNELS;
@@ -119,6 +119,9 @@ static CAPTURE_DONE: AtomicBool = AtomicBool::new(false);
 static CAPTURE_FRAMES: AtomicU32 = AtomicU32::new(0);
 static CAPTURE_TICKS_TARGET: AtomicU32 = AtomicU32::new(0);
 static CAPTURE_BUF_ADDR: AtomicU32 = AtomicU32::new(0);
+// false = buffer 0, true = buffer 1. Flipped on every 'd' so a new capture lands
+// in the back buffer while the previous one stays intact in the front buffer.
+static BUF_SEL: AtomicBool = AtomicBool::new(false);
 static DBG_TIM7_TICKS: AtomicU32 = AtomicU32::new(0);
 static DBG_DMA_TC: AtomicU32 = AtomicU32::new(0);
 static DBG_DMA_HT: AtomicU32 = AtomicU32::new(0);
@@ -490,14 +493,17 @@ fn main() -> ! {
     adc.configure_channel(&pb11, Sequence::Three, SampleTime::Cycles_6_5);
 
     writeln!(tx, "dbg: dma transfer ({} samples)\r", ADC_BUF_LEN).ok();
-    let adc_buffer = cortex_m::singleton!(: [u16; ADC_BUF_LEN] = [0; ADC_BUF_LEN]).unwrap();
-    // Raw pointer to the capture buffer for the 'd' dump. The buffer itself is moved
-    // into the DMA transfer below; we only read it (volatile) after pausing the DMA.
-    let buf_ptr: *const u16 = adc_buffer.as_ptr();
-    CAPTURE_BUF_ADDR.store(buf_ptr as u32, Ordering::Relaxed);
+    let adc_buffer0 = cortex_m::singleton!(BUF0: [u16; ADC_BUF_LEN] = [0; ADC_BUF_LEN]).unwrap();
+    let adc_buffer1 = cortex_m::singleton!(BUF1: [u16; ADC_BUF_LEN] = [0; ADC_BUF_LEN]).unwrap();
+    // Raw pointers to both capture buffers for the 'd' dump. Buffer 0 is moved into the
+    // DMA transfer below; the ISR re-points the DMA (via CAPTURE_BUF_ADDR) at the
+    // selected buffer on each capture. We only read (volatile) after pausing the DMA.
+    let buf_ptr0: *const u16 = adc_buffer0.as_ptr();
+    let buf_ptr1: *const u16 = adc_buffer1.as_ptr();
+    CAPTURE_BUF_ADDR.store(buf_ptr0 as u32, Ordering::Relaxed);
     let mut adc_transfer = dma_channels.ch1.into_circ_peripheral_to_memory_transfer(
         AdcDma12(adc.enable_dma(AdcDma::Continuous)),
-        &mut adc_buffer[..],
+        &mut adc_buffer0[..],
         dma_config,
     );
     writeln!(tx, "dbg: adc start\r").ok();
@@ -522,6 +528,13 @@ fn main() -> ! {
         let mut buf = [0u8; 1];
         if rx.read(&mut buf).is_ok() {
             if buf[0] == b'd' {
+                // Flip to the other buffer; the previous capture stays intact in the
+                // one we just left. The ISR reads CAPTURE_BUF_ADDR to aim the DMA.
+                let sel = !BUF_SEL.load(Ordering::Relaxed);
+                BUF_SEL.store(sel, Ordering::Relaxed);
+                let cap_ptr = if sel { buf_ptr1 } else { buf_ptr0 };
+                CAPTURE_BUF_ADDR.store(cap_ptr as u32, Ordering::Relaxed);
+
                 CAPTURE_DONE.store(false, Ordering::Relaxed);
                 CAPTURE_FRAMES.store(0, Ordering::Relaxed);
                 CAPTURE_TICKS_TARGET.store(0, Ordering::Relaxed);
@@ -549,7 +562,7 @@ fn main() -> ! {
                 dump_debug_registers(&mut tx);
                 handle_command(b'w', &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
                 adc_transfer.pause(|adc| adc.cancel_conversion());
-                dump_buffer(&mut tx, buf_ptr, frames);
+                dump_buffer(&mut tx, cap_ptr, frames);
                 adc_transfer.start(|adc| {
                     adc.clear_overrun_flag();
                     adc.start_conversion();
