@@ -224,6 +224,22 @@ def parse_capture(text: str) -> Capture:
     )
 
 
+def split_complete_dumps(buffer: str) -> tuple[list[str], str]:
+    """Split streamed UART text on the 'end' terminator.
+
+    Returns (segments, remainder): each segment is one complete dump
+    (debug + regs + dump3 + hex), parseable by parse_capture; remainder is the
+    trailing partial dump still being received. The firmware emits 'end' only as
+    the dump terminator, so splitting on it isolates whole dumps.
+    """
+    segments = []
+    while "end" in buffer:
+        seg, buffer = buffer.split("end", 1)
+        if "dump3:" in seg:
+            segments.append(seg)
+    return segments, buffer
+
+
 def lowpass_channels(channels: list[list[int]], window: int = LOWPASS_WINDOW) -> list[list[float]]:
     """Centered moving-average view. Does not modify the captured samples."""
     window = max(1, int(window))
@@ -591,15 +607,17 @@ def analyze_zero_crossings(
     return sectors, smooth, neutral
 
 
-def plot_zc_snapshot(
+def render_zc_figure(
     capture: Capture,
-    out_png: Path,
+    fig,
     *,
     smooth_window: int = 5,
     blank_frames: int = 2,
     confirm: int = 2,
 ) -> list[SectorZc]:
-    """Render the three phases with virtual neutral, sector grid and exact ZC marks."""
+    """Draw the 3-phase ZC plot onto an existing figure (cleared first) and return
+    the per-sector ZC list. Shared by plot_zc_snapshot (Agg -> PNG) and the live
+    streaming viewer (interactive backend -> on-screen window)."""
     sectors, smooth, neutral = analyze_zero_crossings(
         capture,
         smooth_window=smooth_window,
@@ -611,8 +629,8 @@ def plot_zc_snapshot(
     t_ms = [i / capture.sample_hz * 1000.0 for i in range(frames)]
     y_min, y_max = auto_snapshot_ylim(smooth + [neutral])
 
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(3, 1, figsize=(14, 9), sharex=True)
+    fig.clf()
+    axes = fig.subplots(3, 1, sharex=True)
     colors = {"A": "tab:green", "B": "tab:blue", "C": "tab:red"}
 
     for phase_idx, ax in enumerate(axes):
@@ -680,9 +698,30 @@ def plot_zc_snapshot(
     )
 
     fig.tight_layout()
+    return sectors
+
+
+def plot_zc_snapshot(
+    capture: Capture,
+    out_png: Path,
+    *,
+    smooth_window: int = 5,
+    blank_frames: int = 2,
+    confirm: int = 2,
+) -> list[SectorZc]:
+    """Render the three phases with virtual neutral, sector grid and exact ZC marks
+    into a PNG."""
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig = plt.figure(figsize=(14, 9))
+    sectors = render_zc_figure(
+        capture,
+        fig,
+        smooth_window=smooth_window,
+        blank_frames=blank_frames,
+        confirm=confirm,
+    )
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
-
     return sectors
 
 

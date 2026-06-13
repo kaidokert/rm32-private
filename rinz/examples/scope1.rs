@@ -15,10 +15,13 @@
 //!
 //! Commands:
 //!   f / v   electrical frequency  +10 / -10 Hz
+//!   g / b   electrical frequency  +1 / -1 Hz
 //!   a / z   amplitude              +1.0 / -1.0 %
 //!   + / -   amplitude              +0.1 / -0.1 %
+//!   ] / [   duty trim              +1 / -1 raw CCR count
 //!   w       kill
 //!   d       capture 2 electrical revs from phase zero, then dump 12-bit hex
+//!   l / k   start / stop continuous live streaming (other commands work as normal)
 //!   q       reset to defaults and run
 
 #![no_std]
@@ -29,7 +32,7 @@ use core::fmt::Write;
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::entry;
 use embedded_io::{Read, ReadReady};
-use portable_atomic::{AtomicBool, AtomicU32, Ordering};
+use portable_atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use rtt_target::rprintln;
 
 use rinz::hal;
@@ -106,6 +109,12 @@ unsafe impl<ADC: Instance> TargetAddress<PeripheralToMemory> for AdcDma12<ADC> {
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static AMPLITUDE: AtomicU32 = AtomicU32::new(AMP_START);
 static ELECTRICAL_HZ: AtomicU32 = AtomicU32::new(FREQ_START);
+// Signed fine offset added to the computed six-step duty, in raw CCR counts.
+// '[' / ']' nudge it by 1 (finer than '+' /'-', which step ~2.8 counts); reset by 'q'.
+static DUTY_TRIM: AtomicI32 = AtomicI32::new(0);
+// Live-stream toggle: 'l' sets it, 'k'/'w' clear it. The main idle loop services
+// one back-to-back dump per pass while set; all other commands stay unchanged.
+static STREAMING: AtomicBool = AtomicBool::new(false);
 static CAPTURE_REQUEST: AtomicBool = AtomicBool::new(false);
 static CAPTURE_DONE: AtomicBool = AtomicBool::new(false);
 static CAPTURE_FRAMES: AtomicU32 = AtomicU32::new(0);
@@ -354,6 +363,29 @@ fn handle_command<TX, C1, C2, C3>(
             AMPLITUDE.store(amp, Ordering::Relaxed);
             writeln!(tx, "amp={}.{}%\r", amp / 10, amp % 10).ok();
         }
+        b'g' => {
+            let hz = (ELECTRICAL_HZ.load(Ordering::Relaxed) + 1).min(FREQ_MAX);
+            ELECTRICAL_HZ.store(hz, Ordering::Relaxed);
+            writeln!(tx, "freq={}Hz\r", hz).ok();
+        }
+        b'b' => {
+            let hz = ELECTRICAL_HZ
+                .load(Ordering::Relaxed)
+                .saturating_sub(1)
+                .max(FREQ_MIN);
+            ELECTRICAL_HZ.store(hz, Ordering::Relaxed);
+            writeln!(tx, "freq={}Hz\r", hz).ok();
+        }
+        b']' => {
+            let trim = (DUTY_TRIM.load(Ordering::Relaxed) + 1).clamp(-5000, 5000);
+            DUTY_TRIM.store(trim, Ordering::Relaxed);
+            writeln!(tx, "trim={}\r", trim).ok();
+        }
+        b'[' => {
+            let trim = (DUTY_TRIM.load(Ordering::Relaxed) - 1).clamp(-5000, 5000);
+            DUTY_TRIM.store(trim, Ordering::Relaxed);
+            writeln!(tx, "trim={}\r", trim).ok();
+        }
         b'w' => {
             RUNNING.store(false, Ordering::Relaxed);
             restore_all_af();
@@ -366,6 +398,7 @@ fn handle_command<TX, C1, C2, C3>(
             restore_all_af();
             ELECTRICAL_HZ.store(FREQ_START, Ordering::Relaxed);
             AMPLITUDE.store(AMP_START, Ordering::Relaxed);
+            DUTY_TRIM.store(0, Ordering::Relaxed);
             RUNNING.store(true, Ordering::Relaxed);
             writeln!(
                 tx,
@@ -411,7 +444,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope1 ready 1x ADC valley 12-bit  f/v=±10Hz a/z=±1% +/-=±0.1% w=off d=dump q=reset\r"
+        "scope1 ready  f/v=±10Hz g/b=±1Hz a/z=±1% +/-=±0.1% [/]=±1ct w=off d=dump l/k=stream q=reset\r"
     )
     .ok();
 
@@ -513,58 +546,104 @@ fn main() -> ! {
     .ok();
 
     loop {
-        let mut buf = [0u8; 1];
-        if rx.read(&mut buf).is_ok() {
-            if buf[0] == b'd' {
-                // Flip to the other buffer; the previous capture stays intact in the
-                // one we just left. The ISR aims the DMA at CAPTURE_BUF_ADDR for this
-                // capture, then flips it onto CAPTURE_BUF_ALT when the window closes.
-                let sel = !BUF_SEL.load(Ordering::Relaxed);
-                BUF_SEL.store(sel, Ordering::Relaxed);
-                let cap_ptr = if sel { buf_ptr1 } else { buf_ptr0 };
-                let alt_ptr = if sel { buf_ptr0 } else { buf_ptr1 };
-                CAPTURE_BUF_ADDR.store(cap_ptr as u32, Ordering::Relaxed);
-                CAPTURE_BUF_ALT.store(alt_ptr as u32, Ordering::Relaxed);
+        // Service the live stream: one back-to-back dump per idle pass while the
+        // STREAMING flag is set. 'l' sets it, 'k' (or 'w') clears it; everything
+        // else is the normal command set, processed unchanged below.
+        let streaming = STREAMING.load(Ordering::Relaxed);
+        if streaming {
+            run_capture(&mut tx, buf_ptr0, buf_ptr1);
+        }
 
-                CAPTURE_DONE.store(false, Ordering::Relaxed);
-                CAPTURE_FRAMES.store(0, Ordering::Relaxed);
-                CAPTURE_TICKS_TARGET.store(0, Ordering::Relaxed);
-                CAPTURE_REQUEST.store(true, Ordering::Relaxed);
-                RUNNING.store(true, Ordering::Relaxed);
-                writeln!(tx, "capture: wait zero, 2 electrical revs\r").ok();
-
-                while !CAPTURE_DONE.load(Ordering::Relaxed) {
-                    cortex_m::asm::nop();
-                }
-
-                let frames = CAPTURE_FRAMES.load(Ordering::Relaxed) as usize;
-                writeln!(
-                    tx,
-                    "debug: hz={} amp={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
-                    DBG_CAPTURE_HZ.load(Ordering::Relaxed),
-                    DBG_CAPTURE_AMP.load(Ordering::Relaxed),
-                    DBG_TIM7_TICKS.load(Ordering::Relaxed),
-                    DBG_SIX_STEP_TICKS.load(Ordering::Relaxed),
-                    DBG_DMA_TC.load(Ordering::Relaxed),
-                    DBG_DMA_HT.load(Ordering::Relaxed),
-                    DBG_DMA_TE.load(Ordering::Relaxed)
-                )
-                .ok();
-                dump_debug_registers(&mut tx);
-                // No motor kill, no DMA pause: the DMA is already streaming into the
-                // alt buffer (flipped by the ISR), so dump the frozen buffer in place
-                // while capture and commutation keep running.
-                dump_buffer(&mut tx, cap_ptr, frames);
-                // Reject re-triggers: drain any keys (notably another 'd') that landed
-                // in the RDR during the long dump. read_ready() keeps this non-blocking
-                // (rx.read() itself blocks until a byte arrives).
-                let mut drain = [0u8; 1];
-                while rx.read_ready().unwrap_or(false) && rx.read(&mut drain).is_ok() {}
+        // Fetch the next command key. Block for one only when idle, so streaming
+        // stays gap-free; while streaming, just take whatever is already pending.
+        let key = if streaming {
+            let mut buf = [0u8; 1];
+            if rx.read_ready().unwrap_or(false) && rx.read(&mut buf).is_ok() {
+                Some(buf[0])
             } else {
-                handle_command(buf[0], &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
+                None
+            }
+        } else {
+            let mut buf = [0u8; 1];
+            if rx.read(&mut buf).is_ok() {
+                Some(buf[0])
+            } else {
+                None
+            }
+        };
+
+        if let Some(k) = key {
+            match k {
+                b'l' => {
+                    STREAMING.store(true, Ordering::Relaxed);
+                    writeln!(tx, "stream: start (k stops)\r").ok();
+                }
+                b'k' => {
+                    STREAMING.store(false, Ordering::Relaxed);
+                    writeln!(tx, "stream: stop\r").ok();
+                }
+                b'd' => {
+                    writeln!(tx, "capture: wait zero, 2 electrical revs\r").ok();
+                    run_capture(&mut tx, buf_ptr0, buf_ptr1);
+                    // Reject re-triggers: drain keys that landed in the RDR during
+                    // the long dump (read_ready keeps this non-blocking).
+                    let mut drain = [0u8; 1];
+                    while rx.read_ready().unwrap_or(false) && rx.read(&mut drain).is_ok() {}
+                }
+                b'w' => {
+                    // Kill also leaves stream mode (a streaming run_capture would
+                    // otherwise re-assert RUNNING on the next pass).
+                    STREAMING.store(false, Ordering::Relaxed);
+                    handle_command(b'w', &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
+                }
+                other => handle_command(other, &mut tx, &mut c1, &mut c2, &mut c3, half as u16),
             }
         }
     }
+}
+
+/// Run one capture+dump cycle: arm the back/front flip, wait for the phase-aligned
+/// window to close, then emit the debug line, register snapshot and hex frame dump.
+/// Shared by the single-shot `d` command and the continuous `l` stream.
+fn run_capture<TX: Write>(tx: &mut TX, buf_ptr0: *const u16, buf_ptr1: *const u16) {
+    // Flip to the other buffer; the ISR aims the DMA at CAPTURE_BUF_ADDR for this
+    // capture, then flips it onto CAPTURE_BUF_ALT when the window closes.
+    let sel = !BUF_SEL.load(Ordering::Relaxed);
+    BUF_SEL.store(sel, Ordering::Relaxed);
+    let cap_ptr = if sel { buf_ptr1 } else { buf_ptr0 };
+    let alt_ptr = if sel { buf_ptr0 } else { buf_ptr1 };
+    CAPTURE_BUF_ADDR.store(cap_ptr as u32, Ordering::Relaxed);
+    CAPTURE_BUF_ALT.store(alt_ptr as u32, Ordering::Relaxed);
+
+    CAPTURE_DONE.store(false, Ordering::Relaxed);
+    CAPTURE_FRAMES.store(0, Ordering::Relaxed);
+    CAPTURE_TICKS_TARGET.store(0, Ordering::Relaxed);
+    CAPTURE_REQUEST.store(true, Ordering::Relaxed);
+    RUNNING.store(true, Ordering::Relaxed);
+
+    while !CAPTURE_DONE.load(Ordering::Relaxed) {
+        cortex_m::asm::nop();
+    }
+
+    let frames = CAPTURE_FRAMES.load(Ordering::Relaxed) as usize;
+    writeln!(
+        tx,
+        "debug: hz={} amp={} trim={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
+        DBG_CAPTURE_HZ.load(Ordering::Relaxed),
+        DBG_CAPTURE_AMP.load(Ordering::Relaxed),
+        DUTY_TRIM.load(Ordering::Relaxed),
+        DBG_TIM7_TICKS.load(Ordering::Relaxed),
+        DBG_SIX_STEP_TICKS.load(Ordering::Relaxed),
+        DBG_DMA_TC.load(Ordering::Relaxed),
+        DBG_DMA_HT.load(Ordering::Relaxed),
+        DBG_DMA_TE.load(Ordering::Relaxed)
+    )
+    .ok();
+    dump_debug_registers(tx);
+    // No motor kill, no DMA pause: the DMA is already streaming into the alt buffer
+    // (flipped by the ISR), so dump the frozen buffer in place while capture and
+    // commutation keep running.
+    dump_buffer(tx, cap_ptr, frames);
 }
 
 /// Dump the (paused) ADC capture buffer as 12-bit hex (4-digit). One line is
@@ -672,7 +751,8 @@ extern "C" fn TIM7() {
             DBG_SIX_STEP_TICKS.fetch_add(1, Ordering::Relaxed);
         }
         let sector = (STEP / STEPS_PER_LOGICAL_SECTOR) as u8;
-        let duty = arr * amplitude * 2 / (1000 * 3);
+        let base = (arr * amplitude * 2 / (1000 * 3)) as i32;
+        let duty = (base + DUTY_TRIM.load(Ordering::Relaxed)).clamp(0, arr as i32) as u32;
         set_six_step(sector, duty);
 
         let mut capture_started = false;

@@ -7,6 +7,7 @@ import argparse
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 from pathlib import Path
 import re
 import shutil
@@ -30,6 +31,7 @@ from scope_common import (
     Capture,
     FREQ_START_HZ,
     FREQ_STEP_HZ,
+    analyze_zero_crossings,
     append_event,
     format_zc_report,
     parse_capture,
@@ -37,6 +39,7 @@ from scope_common import (
     plot_zc_snapshot,
     read_available,
     send_capture_udp,
+    split_complete_dumps,
 )
 
 
@@ -57,6 +60,7 @@ class UiState:
     mode: str = "six-step"
     hz: int = 60
     amp: float = 8.0
+    trim: int = 0  # raw CCR duty trim (firmware '[' / ']'), reported via 'trim=' echo
     connected: bool = False
     running: bool = True
     capturing: bool = False
@@ -90,6 +94,15 @@ class UiState:
     zc_window: int = 3
     zc_summary: str = "no ZC analysis yet"
     archive_dir: Path = Path("logs/captures")
+    # Live streaming ('l' start / 'k' stop): firmware dumps back-to-back and we
+    # regenerate zc_path continuously for a passive viewer (scope_view.py).
+    streaming: bool = False
+    stream_buffer: str = ""
+    stream_dumps: int = 0
+    stream_last_render: float = 0.0
+    stream_rendering: bool = False
+    stream_refresh: float = 1.0
+    exploration_path: Path = Path("logs/exploration.json")
 
 
 class CommLog:
@@ -144,6 +157,11 @@ def parse_status_line(state: UiState, line: str) -> None:
 
     if stripped.startswith("mode="):
         state.mode = normalize_mode(stripped.split("=", 1)[1])
+    elif stripped.startswith("trim="):
+        try:
+            state.trim = int(stripped.split("=", 1)[1].split()[0])
+        except (ValueError, IndexError):
+            pass
     elif stripped.startswith("freq=") and stripped.endswith("Hz"):
         try:
             state.hz = int(stripped.split("=", 1)[1].removesuffix("Hz"))
@@ -373,6 +391,132 @@ def finish_capture(state: UiState, log: CommLog) -> None:
     threading.Thread(target=worker, daemon=True, name="capture-postprocess").start()
 
 
+def _render_stream(state: UiState, log: CommLog, dump_text: str) -> None:
+    """Regenerate zc_path from one streamed dump, off the UI thread. Writes via a
+    temp file + atomic replace so a passive viewer never reads a half-written PNG."""
+    state.stream_rendering = True
+
+    def worker() -> None:
+        try:
+            capture = parse_capture(dump_text)
+            capture.debug.setdefault("mode", "six-step")
+            state.last_capture = capture
+            if capture.debug:
+                state.debug = capture.debug
+            tmp = state.zc_path.with_suffix(".tmp.png")
+            sectors = plot_zc_snapshot(capture, tmp, smooth_window=state.zc_window)
+            tmp.replace(state.zc_path)
+            in_window = sum(1 for s in sectors if s.status == "zc")
+            state.zc_summary = f"stream ZC {in_window}/{len(sectors)} in-window (dump {state.stream_dumps})"
+        except Exception as exc:
+            log.event(f"stream render failed: {exc}")
+        finally:
+            state.stream_rendering = False
+
+    threading.Thread(target=worker, daemon=True, name="stream-render").start()
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _arr_from_regs(regs: list[str]):
+    """Pull TIM1 ARR (hex) out of the firmware 'regs:' lines, or None."""
+    for line in regs:
+        m = re.search(r"t1_arr=([0-9a-fA-F]+)", line)
+        if m:
+            return int(m.group(1), 16)
+    return None
+
+
+def log_exploration_point(state: UiState, log: CommLog) -> None:
+    """Append the current operating point + ZC analysis to exploration.json."""
+    capture = state.last_capture
+    if capture is None:
+        state.status = "No capture yet to log (run 'd' or start streaming with 'l')"
+        append_event(state.events, state.status)
+        return
+    try:
+        sectors, _smooth, _neutral = analyze_zero_crossings(capture, smooth_window=state.zc_window)
+    except Exception as exc:
+        state.status = f"Exploration analysis failed: {exc}"
+        append_event(state.events, state.status)
+        log.event(state.status)
+        return
+
+    amp_tenths = _int_or_none(capture.debug.get("amp"))
+    trim = _int_or_none(capture.debug.get("trim", state.trim))
+    # Effective six-step duty in raw CCR counts: matches the firmware exactly --
+    # base = arr*amp*2/(1000*3) (integer div), then + trim, clamped to [0, arr].
+    arr = _arr_from_regs(capture.regs)
+    duty_ct = None
+    duty_pct = None
+    if isinstance(amp_tenths, int) and arr is not None:
+        base = arr * amp_tenths * 2 // (1000 * 3)
+        duty_ct = max(0, min(base + (trim if isinstance(trim, int) else 0), arr))
+        duty_pct = round(duty_ct / arr * 100.0, 2)
+    record = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "hz": _int_or_none(capture.debug.get("hz")),
+        "amp_tenths": amp_tenths,
+        "amp_pct": (amp_tenths / 10.0) if isinstance(amp_tenths, int) else None,
+        "trim": trim,
+        "arr": arr,
+        "duty_ct": duty_ct,
+        "duty_pct": duty_pct,
+        "frames": capture.frames,
+        "sample_hz": capture.sample_hz,
+        "zc_window": state.zc_window,
+        "mode": capture.debug.get("mode", "six-step"),
+        "in_window_zc": sum(1 for s in sectors if s.status == "zc"),
+        "total_sectors": len(sectors),
+        "sectors": [
+            {
+                "index": s.index,
+                "sector_type": s.index % 6,
+                "phase": s.phase,
+                "status": s.status,
+                "zc_pct": round(s.zc_pct, 2) if s.zc_pct is not None else None,
+                "zc_frame": round(s.zc_frame, 3) if s.zc_frame is not None else None,
+                "direction": s.direction,
+                "d_start": round(s.d_start, 1) if s.d_start is not None else None,
+                "d_end": round(s.d_end, 1) if s.d_end is not None else None,
+            }
+            for s in sectors
+        ],
+        "debug": capture.debug,
+        "regs": capture.regs,
+    }
+
+    path = state.exploration_path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        records = []
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                records = loaded if isinstance(loaded, list) else [loaded]
+            except Exception:
+                records = []
+        record["n"] = len(records) + 1
+        records.append(record)
+        path.write_text(json.dumps(records, indent=2), encoding="utf-8")
+        state.status = (
+            f"Logged point #{record['n']} -> {path.name}: hz={record['hz']} "
+            f"amp={record['amp_pct']}% trim={record['trim']} duty={record['duty_ct']}ct "
+            f"ZC {record['in_window_zc']}/{record['total_sectors']}"
+        )
+        append_event(state.events, state.status)
+        log.event(state.status)
+    except Exception as exc:
+        state.status = f"Exploration write failed: {exc}"
+        append_event(state.events, state.status)
+        log.event(state.status)
+
+
 def poll_serial(ser: serial.Serial, state: UiState, log: CommLog) -> None:
     n = ser.in_waiting
     if not n:
@@ -390,6 +534,21 @@ def poll_serial(ser: serial.Serial, state: UiState, log: CommLog) -> None:
         if "end" in state.capture_text or "CAP_END" in state.capture_text:
             state.capturing = False
             finish_capture(state, log)
+        return
+
+    if state.streaming:
+        state.stream_buffer += data
+        segments, state.stream_buffer = split_complete_dumps(state.stream_buffer)
+        if segments:
+            state.stream_dumps += len(segments)
+            now = time.time()
+            # Keep only the latest dump; redraw at most once per stream_refresh and
+            # never while a previous render is still in flight (keeps the UI snappy).
+            if not state.stream_rendering and now - state.stream_last_render >= state.stream_refresh:
+                state.stream_last_render = now
+                _render_stream(state, log, segments[-1])
+        if len(state.stream_buffer) > 1_000_000:
+            state.stream_buffer = state.stream_buffer[-100_000:]
         return
 
     log.write("RX", data)
@@ -489,7 +648,9 @@ def clear_line(row: int, text: str = "") -> None:
 
 def draw(state: UiState) -> None:
     capture_state = "idle"
-    if state.capturing:
+    if state.streaming:
+        capture_state = f"STREAMING ({state.stream_dumps} dumps, redraw {state.stream_refresh:g}s)"
+    elif state.capturing:
         elapsed = time.time() - (state.capture_started_at or time.time())
         capture_state = f"active {elapsed:.1f}s, {len(state.capture_text)} bytes"
     elif state.postprocessing:
@@ -506,7 +667,7 @@ def draw(state: UiState) -> None:
     )
     clear_line(
         4,
-        f"Drive mode={state.mode} hz={state.hz} amp={state.amp:g}% | "
+        f"Drive mode={state.mode} hz={state.hz} amp={state.amp:g}% trim={state.trim:+d} | "
         f"capture={capture_state}",
     )
     clear_line(
@@ -534,8 +695,8 @@ def draw(state: UiState) -> None:
     clear_line(12, state.regs[-1] if state.regs else "")
 
     clear_line(14, term.bold("Controls:"))
-    clear_line(15, "F/V hz +/-10 | A/Z amp +/-1 | +/- amp +/-0.1 | M mode | Q reset | W kill | D capture")
-    clear_line(16, "U UDP replay | O loop replay | 0/1/2/3 notch | X quit")
+    clear_line(15, "F/V hz +/-10 | G/B hz +/-1 | A/Z amp +/-1 | +/- amp +/-0.1 | [/] duty +/-1ct | Q reset | W kill")
+    clear_line(16, "D capture | L/K stream start/stop | S log point | U UDP replay | O loop replay | X quit")
     clear_line(17, f"ZC: {state.zc_summary} | {state.zc_path}")
 
     clear_line(18, term.bold("Events:"))
@@ -551,10 +712,12 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
     k = key.lower()
     if k == "x":
         return False
-    if k == "d" and not state.capturing and not state.postprocessing:
+    if k == "d" and not state.capturing and not state.postprocessing and not state.streaming:
         start_capture(ser, state, log)
     elif k == "d":
-        if state.capturing:
+        if state.streaming:
+            state.status = "Streaming active; press k to stop before a single capture"
+        elif state.capturing:
             state.status = f"Capture already active; got {len(state.capture_text)} bytes"
         elif state.postprocessing:
             state.status = "Capture still processing snapshot"
@@ -562,6 +725,27 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
             state.status = "Capture unavailable"
         append_event(state.events, state.status)
         log.event(state.status)
+    elif k == "l":
+        send_raw_key(ser, state, log, "l", "stream start")
+        state.streaming = True
+        state.stream_buffer = ""
+        state.stream_dumps = 0
+    elif k == "k":
+        send_raw_key(ser, state, log, "k", "stream stop")
+        state.streaming = False
+    elif k == "s":
+        log_exploration_point(state, log)
+    elif k in {"g", "b", "[", "]"}:
+        # Fine firmware trims: g/b = freq +/-1Hz, ]/[ = duty +/-1 raw CCR count.
+        send_raw_key(ser, state, log, k, f"sent {k}")
+        if k == "g":
+            state.hz += 1
+        elif k == "b":
+            state.hz = max(1, state.hz - 1)
+        elif k == "]":
+            state.trim += 1
+        elif k == "[":
+            state.trim -= 1
     elif k == "u":
         replay_capture(state, log)
     elif k == "o":
@@ -573,6 +757,7 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
         state.mode = "six-step"
         state.hz = 60
         state.amp = 8.0
+        state.trim = 0
     elif k in {"f", "v", "a", "z", "+", "-", "m", "w", "0", "1", "2", "3"}:
         send_raw_key(ser, state, log, k, f"sent {k}")
         if k == "f":
@@ -589,6 +774,9 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
             state.amp = max(0.0, state.amp - 0.1)
         if k == "m":
             state.mode = "sine" if state.mode == "six-step" else "six-step"
+        if k == "w":
+            # Firmware 'w' clears its STREAMING flag too; keep the UI in sync.
+            state.streaming = False
     return True
 
 
@@ -638,6 +826,12 @@ def parse_args() -> argparse.Namespace:
         help="smoothing window for the ZC plot/detection (default: 3)",
     )
     parser.add_argument(
+        "--exploration-path",
+        type=Path,
+        default=Path("logs/exploration.json"),
+        help="JSON file appended with an operating-point record on each 's' keypress",
+    )
+    parser.add_argument(
         "--archive-dir",
         type=Path,
         default=Path("logs/captures"),
@@ -673,6 +867,7 @@ def main() -> int:
         zc_log_path=args.zc_log_path,
         zc_window=args.zc_window,
         archive_dir=args.archive_dir,
+        exploration_path=args.exploration_path,
     )
 
     log = CommLog(comm_log_path)

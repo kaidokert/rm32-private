@@ -278,16 +278,23 @@ that artifact was initially misread as a peak-sampling capture. Use window 2–5
 - Virtual neutral for ZC should be computed as (Va+Vb+Vc)/3 per frame — all three
   phases are sampled in the same scan.
 
-### scope1 serial commands (June 2026 additions)
+### scope1 serial commands (current)
 
-- `r` — toggle drive direction fwd (A→B→C) / rev (A→C→B). Sticky across `q`.
-- `[` / `]` — duty trim ±1 raw CCR count (~0.035% amp; 3× finer than `+`/`-`).
-  Reset by `q`.
-- `e` / `c` — capture length ±1 electrical rev (default 2, max 24; clamped at
-  capture time to the 668-frame buffer: 6 revs @ 180 Hz, 10 @ 300 Hz). Sticky.
-- Debug line now carries `dir= trim= revs=`; analysis scripts read them via
-  `capture.debug` (reversed drive switches the hi/lo tables in
-  `analyze_zero_crossings` automatically).
+Drive: `f`/`v` freq ±10 Hz, `g`/`b` freq ±1 Hz, `a`/`z` amp ±1.0 %, `+`/`-` amp
+±0.1 %, `]`/`[` duty trim ±1 raw CCR count (signed `DUTY_TRIM`, added to the
+computed six-step duty; finer than `+`/`-` which step ~2.8 counts), `w` kill,
+`q` reset (also zeroes the trim). Capture: `d` single dump, `l`/`k` start/stop
+continuous streaming. The debug line carries `hz= amp= trim=`; analysis scripts
+read them via `capture.debug`. (`amp` is 0.1 % units; the true operating duty is
+`amp`-derived base + `trim`, so log both.)
+
+Host `scope_live_ui.py` mirrors all of these (`G/B`, `[`/`]` forwarded to the
+firmware; `state.trim` tracked from the `trim=` echo) and adds `s` =
+**log exploration point**: appends a record to `logs/exploration.json`
+(`--exploration-path`) with ts, hz, amp_tenths/amp_pct, trim, frames, sample_hz,
+zc_window, and the full per-sector ZC analysis (phase, status, zc_pct, zc_frame,
+direction, d_start, d_end) plus raw `debug`/`regs`. Works after a single `d` or
+mid-stream (uses `state.last_capture`).
 
 ### ZC-vs-window investigation status (June 2026)
 
@@ -343,13 +350,47 @@ feeds the PA4-sensed terminal. If the anomaly stays on channel A → sense divid
 (PA4 path); if it follows the winding → motor. Also worth: bench ratiometric
 check of all three dividers at rest with a known applied voltage.
 
-### Planned: live streaming capture (not yet implemented)
+### Live streaming capture (implemented June 2026)
 
-Continuous UART streaming with firmware double buffering: split the 668-frame
-buffer in halves, dump the first N revs that fit the per-second byte budget.
-At 115200 baud ≈ 11.5 kB/s: hex text frame ≈ 17 B → ~670 frames/s; binary
-(3×u16 + sync) ≈ 6–8 B → ~1500–1900 frames/s. At 180 Hz (111 frames/rev)
-that's ~6 revs/s text or ~15 revs/s binary.
+Firmware `l`/`k` (scope1.rs): `l` sets a `STREAMING` flag, `k` clears it. The main
+idle loop services **one back-to-back `d`-format dump per pass** while the flag is
+set (`run_capture()` — flip front/back at electrical zero, dump the frozen buffer
+while ADC→DMA keeps filling the alt buffer and the motor keeps spinning). All other
+commands are unchanged: while streaming the loop fetches pending keys non-blocking
+(blocking only when idle), so `f/v a/z +/-/q` adjust **live between dumps without
+stopping the stream**. `w` clears the flag and kills the motor (must clear it, else
+the next `run_capture` re-asserts RUNNING). This keeps command handling in one place
+— the only change vs. single-shot is the flag-gated dump service in the idle loop.
+
+Host (recommended, two terminals — keeps input in the snappy blessed UI and the
+plot a passive, focus-free display):
+- `scripts/scope_live_ui.py` (control): blessed text-UI owns the serial port and
+  is the input path (responsive `term.inkey`). `l`/`k` toggle `state.streaming`;
+  while streaming, `poll_serial` accumulates UART text, `split_complete_dumps()`
+  isolates whole dumps on the `end` terminator, and a throttled (`stream_refresh`,
+  ~1 s) background thread regenerates `latest_zc.png` via `plot_zc_snapshot` —
+  written to a `.tmp.png` then atomically `replace()`d so a reader never sees a
+  half-written file. `f/v a/z +/-` adjust live (sent straight to the firmware,
+  applied between dumps); `w` kills + clears streaming; `d` is blocked while
+  streaming. Input stays responsive because rendering is off-thread.
+- `scripts/scope_view.py` (display only): a passive matplotlib window that reloads
+  `latest_zc.png` on mtime change. Reads NO keyboard, never needs focus — keep the
+  terminal focused for control.
+
+`split_complete_dumps()` lives in scope_common.py (shared with scope_stream.py).
+`render_zc_figure(capture, fig, ...)` was split out of `plot_zc_snapshot` so the
+PNG path and any live figure share one renderer.
+
+Standalone alternative `scripts/scope_stream.py`: single all-in-one window that
+owns serial, resets+ramps (`--hz/--amp`), streams, renders live via
+`render_zc_figure()`, and forwards control keys from the (focused) plot window.
+Simpler to launch but input goes through the matplotlib window — laggier than the
+blessed UI, which is why the two-terminal split above is preferred.
+
+Throughput today: hex text ≈ 16 B/frame; a 2-rev dump (~333 frames at 120 Hz) is
+~0.5 s at 115200 baud → ~2 dumps/s, redrawn at ~1 Hz (intermediate dumps dropped).
+A binary/packed mode (3×u16 + sync ≈ 6–8 B/frame) would roughly triple that and
+is the next step if higher refresh is wanted.
 
 ---
 
