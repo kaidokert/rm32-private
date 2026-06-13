@@ -613,29 +613,39 @@ def classify_rotor_state(
     capture: Capture,
     *,
     smooth_window: int = 5,
-    blank_frames: int = 2,
-    stall_swing: float = 8.0,
-    lock_amp: float = 40.0,
+    plateau_spread_max: float = 5.0,
+    lock_swing: float = 30.0,
 ) -> dict:
-    """Decide stalled / slipping / locked from a phase-zero-aligned capture WITHOUT
+    """Decide locked / stalled / uncertain from a phase-zero-aligned capture WITHOUT
     needing any in-window zero crossing.
 
-    BEMF is proportional to rotor speed, and a *synchronous* BEMF (locked rotor)
-    is a sinusoid at the drive electrical frequency in the floating windows. Two
-    offset-immune metrics over the healthy phases (B, C -- A is skipped for its
-    known sense anomaly):
-      bemf_swing = mean per-window line-fit excursion -> motion (≈0 when stalled,
-                   immune to static divider offsets which the line intercept eats)
-      bemf_amp   = fitted amplitude R = sqrt(a^2+b^2) of a*cosθ+b*sinθ+c at the
-                   drive frequency -> the synchronous component
-    A large R requires motion AND lock, so it is the headline. Thresholds are in
-    raw 12-bit counts (this firmware is 12-bit only); empirically ~150-270 spinning
-    vs ~2-3 flat, so the split is ~50x and the thresholds are not delicate.
+    Two stages, both validated on real labeled captures:
+
+    1. SENSING GATE (plateau_spread). The three driven-high plateaus agree to <1%
+       when the BEMF divider has time to settle (duty high enough), but diverge to
+       25-30% at low duty where the ON pulse is too brief to settle. If the spread
+       exceeds plateau_spread_max the float reads (and the (A+B+C)/3 neutral) are
+       not trustworthy -> state="uncertain" (low-duty sensing). This is what stops
+       the false "locked" calls in the <~6% duty range.
+
+    2. In the trustworthy regime, classify on late_swing: the line-fit excursion of
+       (float - neutral) over the LAST ~45% of each window (demag transient
+       excluded), median over healthy phases B,C (A skipped for its sense anomaly).
+       Rotation keeps ramping to the end of the window; a frozen rotor goes flat
+       once demag decays. Spinning measured 82-359; de-energized flat ~1.4.
+       late_swing >= lock_swing -> locked, else stalled.
+
+    Thresholds are raw 12-bit counts / percent. The stall cutoff is provisional
+    (no clean >6%-duty stalled capture yet); LOCKED and UNCERTAIN are validated.
+    bemf_amp (drive-freq sinusoid fit R) is kept as an advisory column only -- it is
+    NOT used to classify, because it false-positives on energized stall.
     """
     out = {
         "state": "unknown",
+        "sensing": "unknown",
+        "plateau_spread": None,
+        "late_swing": None,
         "bemf_amp": None,
-        "bemf_swing": None,
         "per_phase": {},
         "hz": None,
     }
@@ -646,6 +656,13 @@ def classify_rotor_state(
     if hz <= 0 or len(capture.channels) < 3:
         return out
     out["hz"] = hz
+
+    # Stage 1: sensing-quality gate from driven-high plateau agreement.
+    highs = [float(np.percentile(np.array(capture.channels[i]), 92)) for i in range(3)]
+    mean_high = sum(highs) / 3.0
+    spread = (max(highs) - min(highs)) / mean_high * 100.0 if mean_high else 100.0
+    out["plateau_spread"] = round(spread, 1)
+    out["sensing"] = "ok" if spread <= plateau_spread_max else "poor"
 
     smooth = lowpass_channels(capture.channels, smooth_window)
     frames = min(len(c) for c in smooth)
@@ -658,13 +675,13 @@ def classify_rotor_state(
     per: dict[str, dict | None] = {}
     for ph in range(3):
         ch = PHASE_TO_CHANNEL[ph]
-        thetas, evals, swings = [], [], []
+        thetas, evals, late_swings = [], [], []
         k = 0
         while (k + 1) * fps <= frames:
             s = k % 6
             fl = 3 - SIX_STEP_HIGH[s] - SIX_STEP_LOW[s]
             if fl == ph:
-                i0 = int(round(k * fps)) + blank_frames
+                i0 = int(round(k * fps))
                 i1 = int(round((k + 1) * fps))
                 idx = list(range(i0, min(i1, frames)))
                 if len(idx) >= 3:
@@ -672,9 +689,11 @@ def classify_rotor_state(
                     for i, v in zip(idx, ev):
                         thetas.append(2.0 * math.pi * (i / fpr))
                         evals.append(v)
-                    xs = np.array(idx, dtype=float)
-                    slope = np.polyfit(xs - xs.mean(), np.array(ev), 1)[0]
-                    swings.append(abs(slope) * (idx[-1] - idx[0]))
+                    a0 = int(len(idx) * 0.55)  # last ~45%, demag excluded
+                    if len(idx) - a0 >= 3:
+                        xs = np.array(idx[a0:], dtype=float)
+                        slope = np.polyfit(xs - xs.mean(), np.array(ev[a0:]), 1)[0]
+                        late_swings.append(abs(slope) * (xs[-1] - xs[0]))
             k += 1
         if len(evals) < 4:
             per[PHASE_NAMES[ph]] = None
@@ -682,11 +701,10 @@ def classify_rotor_state(
         th = np.array(thetas)
         e = np.array(evals)
         design = np.column_stack([np.cos(th), np.sin(th), np.ones_like(th)])
-        a, b, c = np.linalg.lstsq(design, e, rcond=None)[0]
+        a, b, _ = np.linalg.lstsq(design, e, rcond=None)[0]
         per[PHASE_NAMES[ph]] = {
             "R": round(float(np.hypot(a, b)), 1),
-            "swing": round(float(np.mean(swings)) if swings else 0.0, 1),
-            "dc": round(float(c), 1),
+            "late_swing": round(float(np.mean(late_swings)) if late_swings else 0.0, 1),
         }
     out["per_phase"] = per
 
@@ -697,14 +715,14 @@ def classify_rotor_state(
         return out
 
     out["bemf_amp"] = round(statistics.median(r["R"] for r in healthy), 1)
-    out["bemf_swing"] = round(statistics.median(r["swing"] for r in healthy), 1)
+    out["late_swing"] = round(statistics.median(r["late_swing"] for r in healthy), 1)
 
-    if out["bemf_swing"] < stall_swing:
-        out["state"] = "stalled"
-    elif out["bemf_amp"] >= lock_amp:
+    if out["sensing"] != "ok":
+        out["state"] = "uncertain"  # low-duty: float reads / neutral not trustworthy
+    elif out["late_swing"] >= lock_swing:
         out["state"] = "locked"
     else:
-        out["state"] = "slipping"
+        out["state"] = "stalled"
     return out
 
 
@@ -793,15 +811,16 @@ def render_zc_figure(
     mode = capture.debug.get("mode", "?")
     fps = capture.sample_hz / (float(hz) * 6.0) if hz not in ("?", "0") else 0.0
     in_window = sum(1 for s in sectors if s.status == "zc")
-    rotor = classify_rotor_state(capture, smooth_window=smooth_window, blank_frames=blank_frames)
+    rotor = classify_rotor_state(capture, smooth_window=smooth_window)
     state = rotor["state"].upper()
     state_color = {
         "LOCKED": "tab:green",
-        "SLIPPING": "tab:orange",
         "STALLED": "tab:red",
+        "UNCERTAIN": "tab:gray",
     }.get(state, "black")
     fig.suptitle(
-        f"rotor={state}  (BEMF amp={rotor['bemf_amp']} swing={rotor['bemf_swing']})   |   "
+        f"rotor={state}  (late_swing={rotor['late_swing']} plateau_spread={rotor['plateau_spread']}% "
+        f"sensing={rotor['sensing']})   |   "
         f"mode={mode} hz={hz} amp={amp} | {frames} frames, {fps:.1f} frames/sector | "
         f"in-window ZC {in_window}/{len(sectors)} sectors",
         color=state_color,

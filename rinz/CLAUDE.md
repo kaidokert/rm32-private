@@ -298,28 +298,41 @@ mid-stream (uses `state.last_capture`).
 
 ### Rotor lock/stall detection (host, ZC-free)
 
-`scope_common.classify_rotor_state(capture)` decides **stalled / slipping /
-locked WITHOUT needing any in-window zero crossing** — critical because over much
-of the operating range no sector crosses in-window, yet the rotor is clearly
-locked. BEMF ∝ rotor speed, and a *synchronous* BEMF (locked) is a sinusoid at the
-drive electrical frequency in the floating windows. Two offset-immune metrics over
-the healthy phases (B, C; A skipped for its sense anomaly):
-- `bemf_swing` = mean per-window line-fit excursion → motion (≈0 stalled; the line
-  intercept absorbs static divider offsets, so it's immune to them).
-- `bemf_amp` = fitted `R = √(a²+b²)` of `a·cosθ + b·sinθ + c` at the drive
-  frequency → the synchronous component (the headline: large R needs motion AND
-  lock). Same fit family as `zc_fit.py`.
+`scope_common.classify_rotor_state(capture)` decides **locked / stalled /
+uncertain WITHOUT needing any in-window zero crossing**. Two stages:
 
-Classify: `swing < 8` → stalled; else `amp ≥ 40` → locked; else slipping (raw
-12-bit counts; this firmware is 12-bit only). **Calibrated on real captures**:
-spinning `amp≈150-270 swing≈90-160` vs flat `amp≈3 swing≈1` — a ~50× split, so
-thresholds are not delicate. Note `coherence`/fit-quality is NOT a discriminator
-(a sinusoid fits tiny noise *better*) — amplitude/swing is.
+1. **Sensing gate (`plateau_spread`).** The three driven-high plateaus (92nd pct
+   per channel) agree to <1% when the BEMF divider settles (duty high enough) but
+   diverge to 25-30% at low duty where the ON pulse is too brief to settle — then
+   the float reads and the (A+B+C)/3 neutral are not trustworthy. `spread >
+   plateau_spread_max` (5%) → **`uncertain`**. This stops false "locked" calls in
+   the <~6% duty range.
+2. In the trustworthy regime, classify on **`late_swing`**: line-fit excursion of
+   `float-neutral` over the LAST ~45% of each window (demag excluded), median over
+   B,C (A skipped for its sense anomaly). Rotation keeps ramping to the window end;
+   a frozen rotor goes flat once demag decays. `late_swing >= lock_swing` (30) →
+   `locked`, else `stalled`.
+
+**Hard-won calibration history (don't repeat the mistake):** the original version
+classified on the drive-frequency sinusoid amplitude `R`. That **fails at low
+duty** — on real ground-truth captures (cap076-079) a 4.3% *stalled* rotor read
+`R=83` > a clean 8% *spinning* `R=57`, because energized-stall static offsets +
+demag project onto the fundamental, and the divider doesn't settle. Six metrics
+(R, swing, late_swing-on-(float-neutral), rev-to-rev RMS, raw-float late slope,
+window-mean spread) were tested against labeled captures and **none separate
+barely-spinning from stalled at 4.3-4.4%** — that regime is a genuine sensing +
+mechanics limit, hence `uncertain`. `bemf_amp` (R) is kept as an advisory output
+column only, NOT used to classify.
+
+**Validated**: LOCKED (clean spin 82-359) and UNCERTAIN (the 4.3/4.4% captures,
+spread 26-31%). **Provisional**: the STALLED `late_swing<30` cutoff — no clean
+>6%-duty stalled capture yet; grab one (hold the rotor at ~8-10%, hit `d`) to nail
+it. Calibration tool: `scripts/zc_rotor_calib.py label:rawlog ...`.
 
 Shown in the rendered view: `render_zc_figure` suptitle reads
-`rotor=LOCKED/SLIPPING/STALLED (BEMF amp= swing=)`, color-coded
-green/orange/red. The blessed UI Drive line shows the same; each `s` exploration
-record embeds the full `rotor` dict (state + bemf_amp/swing + per-phase R/swing/dc).
+`rotor=LOCKED/STALLED/UNCERTAIN (late_swing= plateau_spread=% sensing=)`,
+color-coded green/red/gray. The blessed UI Drive line shows the same; each `s`
+exploration record embeds the full `rotor` dict.
 
 ### ZC-vs-window investigation status (June 2026)
 

@@ -359,7 +359,8 @@ def _finish_capture_worker(state: UiState, log: CommLog, capture_text: str) -> N
             state.zc_summary = f"ZC {in_window}/{len(sectors)} in-window | {first_rev}"
             rotor = classify_rotor_state(capture, smooth_window=state.zc_window)
             state.rotor_summary = (
-                f"rotor={rotor['state'].upper()} amp={rotor['bemf_amp']} swing={rotor['bemf_swing']}"
+                f"rotor={rotor['state'].upper()} late_swing={rotor['late_swing']} "
+                f"spread={rotor['plateau_spread']}% sensing={rotor['sensing']}"
             )
             snapshot_msg += f"; zc {state.zc_path}"
             append_event(state.events, state.zc_summary)
@@ -416,7 +417,8 @@ def _render_stream(state: UiState, log: CommLog, dump_text: str) -> None:
             state.zc_summary = f"stream ZC {in_window}/{len(sectors)} in-window (dump {state.stream_dumps})"
             rotor = classify_rotor_state(capture, smooth_window=state.zc_window)
             state.rotor_summary = (
-                f"rotor={rotor['state'].upper()} amp={rotor['bemf_amp']} swing={rotor['bemf_swing']}"
+                f"rotor={rotor['state'].upper()} late_swing={rotor['late_swing']} "
+                f"spread={rotor['plateau_spread']}% sensing={rotor['sensing']}"
             )
         except Exception as exc:
             log.event(f"stream render failed: {exc}")
