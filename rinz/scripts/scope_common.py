@@ -8,12 +8,14 @@ import json
 import math
 import re
 import socket
+import statistics
 import time
 from collections import deque
 from pathlib import Path
 from typing import Iterable
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -607,6 +609,105 @@ def analyze_zero_crossings(
     return sectors, smooth, neutral
 
 
+def classify_rotor_state(
+    capture: Capture,
+    *,
+    smooth_window: int = 5,
+    blank_frames: int = 2,
+    stall_swing: float = 8.0,
+    lock_amp: float = 40.0,
+) -> dict:
+    """Decide stalled / slipping / locked from a phase-zero-aligned capture WITHOUT
+    needing any in-window zero crossing.
+
+    BEMF is proportional to rotor speed, and a *synchronous* BEMF (locked rotor)
+    is a sinusoid at the drive electrical frequency in the floating windows. Two
+    offset-immune metrics over the healthy phases (B, C -- A is skipped for its
+    known sense anomaly):
+      bemf_swing = mean per-window line-fit excursion -> motion (≈0 when stalled,
+                   immune to static divider offsets which the line intercept eats)
+      bemf_amp   = fitted amplitude R = sqrt(a^2+b^2) of a*cosθ+b*sinθ+c at the
+                   drive frequency -> the synchronous component
+    A large R requires motion AND lock, so it is the headline. Thresholds are in
+    raw 12-bit counts (this firmware is 12-bit only); empirically ~150-270 spinning
+    vs ~2-3 flat, so the split is ~50x and the thresholds are not delicate.
+    """
+    out = {
+        "state": "unknown",
+        "bemf_amp": None,
+        "bemf_swing": None,
+        "per_phase": {},
+        "hz": None,
+    }
+    try:
+        hz = float(capture.debug.get("hz", "0") or 0)
+    except ValueError:
+        return out
+    if hz <= 0 or len(capture.channels) < 3:
+        return out
+    out["hz"] = hz
+
+    smooth = lowpass_channels(capture.channels, smooth_window)
+    frames = min(len(c) for c in smooth)
+    if frames < 6:
+        return out
+    neutral = [(smooth[0][i] + smooth[1][i] + smooth[2][i]) / 3.0 for i in range(frames)]
+    fps = capture.sample_hz / (hz * 6.0)
+    fpr = capture.sample_hz / hz  # frames per electrical rev
+
+    per: dict[str, dict | None] = {}
+    for ph in range(3):
+        ch = PHASE_TO_CHANNEL[ph]
+        thetas, evals, swings = [], [], []
+        k = 0
+        while (k + 1) * fps <= frames:
+            s = k % 6
+            fl = 3 - SIX_STEP_HIGH[s] - SIX_STEP_LOW[s]
+            if fl == ph:
+                i0 = int(round(k * fps)) + blank_frames
+                i1 = int(round((k + 1) * fps))
+                idx = list(range(i0, min(i1, frames)))
+                if len(idx) >= 3:
+                    ev = [smooth[ch][i] - neutral[i] for i in idx]
+                    for i, v in zip(idx, ev):
+                        thetas.append(2.0 * math.pi * (i / fpr))
+                        evals.append(v)
+                    xs = np.array(idx, dtype=float)
+                    slope = np.polyfit(xs - xs.mean(), np.array(ev), 1)[0]
+                    swings.append(abs(slope) * (idx[-1] - idx[0]))
+            k += 1
+        if len(evals) < 4:
+            per[PHASE_NAMES[ph]] = None
+            continue
+        th = np.array(thetas)
+        e = np.array(evals)
+        design = np.column_stack([np.cos(th), np.sin(th), np.ones_like(th)])
+        a, b, c = np.linalg.lstsq(design, e, rcond=None)[0]
+        per[PHASE_NAMES[ph]] = {
+            "R": round(float(np.hypot(a, b)), 1),
+            "swing": round(float(np.mean(swings)) if swings else 0.0, 1),
+            "dc": round(float(c), 1),
+        }
+    out["per_phase"] = per
+
+    healthy = [per[p] for p in ("B", "C") if per.get(p)]
+    if not healthy:
+        healthy = [per[p] for p in ("A", "B", "C") if per.get(p)]
+    if not healthy:
+        return out
+
+    out["bemf_amp"] = round(statistics.median(r["R"] for r in healthy), 1)
+    out["bemf_swing"] = round(statistics.median(r["swing"] for r in healthy), 1)
+
+    if out["bemf_swing"] < stall_swing:
+        out["state"] = "stalled"
+    elif out["bemf_amp"] >= lock_amp:
+        out["state"] = "locked"
+    else:
+        out["state"] = "slipping"
+    return out
+
+
 def render_zc_figure(
     capture: Capture,
     fig,
@@ -692,9 +793,19 @@ def render_zc_figure(
     mode = capture.debug.get("mode", "?")
     fps = capture.sample_hz / (float(hz) * 6.0) if hz not in ("?", "0") else 0.0
     in_window = sum(1 for s in sectors if s.status == "zc")
+    rotor = classify_rotor_state(capture, smooth_window=smooth_window, blank_frames=blank_frames)
+    state = rotor["state"].upper()
+    state_color = {
+        "LOCKED": "tab:green",
+        "SLIPPING": "tab:orange",
+        "STALLED": "tab:red",
+    }.get(state, "black")
     fig.suptitle(
-        f"zero crossings: mode={mode} hz={hz} amp={amp} | {frames} frames, "
-        f"{fps:.1f} frames/sector | in-window ZC {in_window}/{len(sectors)} sectors"
+        f"rotor={state}  (BEMF amp={rotor['bemf_amp']} swing={rotor['bemf_swing']})   |   "
+        f"mode={mode} hz={hz} amp={amp} | {frames} frames, {fps:.1f} frames/sector | "
+        f"in-window ZC {in_window}/{len(sectors)} sectors",
+        color=state_color,
+        fontweight="bold",
     )
 
     fig.tight_layout()

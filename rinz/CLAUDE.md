@@ -296,6 +296,31 @@ zc_window, and the full per-sector ZC analysis (phase, status, zc_pct, zc_frame,
 direction, d_start, d_end) plus raw `debug`/`regs`. Works after a single `d` or
 mid-stream (uses `state.last_capture`).
 
+### Rotor lock/stall detection (host, ZC-free)
+
+`scope_common.classify_rotor_state(capture)` decides **stalled / slipping /
+locked WITHOUT needing any in-window zero crossing** — critical because over much
+of the operating range no sector crosses in-window, yet the rotor is clearly
+locked. BEMF ∝ rotor speed, and a *synchronous* BEMF (locked) is a sinusoid at the
+drive electrical frequency in the floating windows. Two offset-immune metrics over
+the healthy phases (B, C; A skipped for its sense anomaly):
+- `bemf_swing` = mean per-window line-fit excursion → motion (≈0 stalled; the line
+  intercept absorbs static divider offsets, so it's immune to them).
+- `bemf_amp` = fitted `R = √(a²+b²)` of `a·cosθ + b·sinθ + c` at the drive
+  frequency → the synchronous component (the headline: large R needs motion AND
+  lock). Same fit family as `zc_fit.py`.
+
+Classify: `swing < 8` → stalled; else `amp ≥ 40` → locked; else slipping (raw
+12-bit counts; this firmware is 12-bit only). **Calibrated on real captures**:
+spinning `amp≈150-270 swing≈90-160` vs flat `amp≈3 swing≈1` — a ~50× split, so
+thresholds are not delicate. Note `coherence`/fit-quality is NOT a discriminator
+(a sinusoid fits tiny noise *better*) — amplitude/swing is.
+
+Shown in the rendered view: `render_zc_figure` suptitle reads
+`rotor=LOCKED/SLIPPING/STALLED (BEMF amp= swing=)`, color-coded
+green/orange/red. The blessed UI Drive line shows the same; each `s` exploration
+record embeds the full `rotor` dict (state + bemf_amp/swing + per-phase R/swing/dc).
+
 ### ZC-vs-window investigation status (June 2026)
 
 Tooling: `zc_chase.py` (per-hz amp search with repeats + fine sweep, `--dir`,

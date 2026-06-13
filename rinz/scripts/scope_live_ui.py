@@ -33,6 +33,7 @@ from scope_common import (
     FREQ_STEP_HZ,
     analyze_zero_crossings,
     append_event,
+    classify_rotor_state,
     format_zc_report,
     parse_capture,
     plot_phase_snapshot,
@@ -103,6 +104,7 @@ class UiState:
     stream_rendering: bool = False
     stream_refresh: float = 1.0
     exploration_path: Path = Path("logs/exploration.json")
+    rotor_summary: str = "rotor=?"
 
 
 class CommLog:
@@ -355,6 +357,10 @@ def _finish_capture_worker(state: UiState, log: CommLog, capture_text: str) -> N
             in_window = sum(1 for s in sectors if s.status == "zc")
             first_rev = " ".join(s.label() for s in sectors[:6])
             state.zc_summary = f"ZC {in_window}/{len(sectors)} in-window | {first_rev}"
+            rotor = classify_rotor_state(capture, smooth_window=state.zc_window)
+            state.rotor_summary = (
+                f"rotor={rotor['state'].upper()} amp={rotor['bemf_amp']} swing={rotor['bemf_swing']}"
+            )
             snapshot_msg += f"; zc {state.zc_path}"
             append_event(state.events, state.zc_summary)
             log.event(state.zc_summary)
@@ -408,6 +414,10 @@ def _render_stream(state: UiState, log: CommLog, dump_text: str) -> None:
             tmp.replace(state.zc_path)
             in_window = sum(1 for s in sectors if s.status == "zc")
             state.zc_summary = f"stream ZC {in_window}/{len(sectors)} in-window (dump {state.stream_dumps})"
+            rotor = classify_rotor_state(capture, smooth_window=state.zc_window)
+            state.rotor_summary = (
+                f"rotor={rotor['state'].upper()} amp={rotor['bemf_amp']} swing={rotor['bemf_swing']}"
+            )
         except Exception as exc:
             log.event(f"stream render failed: {exc}")
         finally:
@@ -473,6 +483,7 @@ def log_exploration_point(state: UiState, log: CommLog) -> None:
         "mode": capture.debug.get("mode", "six-step"),
         "in_window_zc": sum(1 for s in sectors if s.status == "zc"),
         "total_sectors": len(sectors),
+        "rotor": classify_rotor_state(capture, smooth_window=state.zc_window),
         "sectors": [
             {
                 "index": s.index,
@@ -668,7 +679,7 @@ def draw(state: UiState) -> None:
     clear_line(
         4,
         f"Drive mode={state.mode} hz={state.hz} amp={state.amp:g}% trim={state.trim:+d} | "
-        f"capture={capture_state}",
+        f"capture={capture_state} | {state.rotor_summary}",
     )
     clear_line(
         5,
