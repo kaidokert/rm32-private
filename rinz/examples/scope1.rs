@@ -53,8 +53,8 @@ use rinz::hal::{rcc, stm32};
 
 const PWM_HZ: u32 = 20_000;
 const DRIVE_HZ: u32 = PWM_HZ;
-const LOGICAL_SECTORS: u32 = 24;
-const ELEC_STEPS_PER_REV: u32 = 48;
+const LOGICAL_SECTORS: u32 = 72;
+const ELEC_STEPS_PER_REV: u32 = 144;
 const STEPS_PER_LOGICAL_SECTOR: u32 = ELEC_STEPS_PER_REV / LOGICAL_SECTORS;
 
 // amp is in 0.1% units of the drive scale; six-step duty = amp * 2/3.
@@ -127,16 +127,38 @@ static DBG_CAPTURE_AMP: AtomicU32 = AtomicU32::new(0);
 static DBG_CAPTURE_HZ: AtomicU32 = AtomicU32::new(0);
 static DBG_SIX_STEP_TICKS: AtomicU32 = AtomicU32::new(0);
 
-/// Driven-high / driven-low phase index per logical sector (A=0, B=1, C=2).
-/// Each physical six-step state is repeated 4 times.
-const SIX_STEP_HIGH: [usize; LOGICAL_SECTORS as usize] = [
-    /*0*/ 0, 0, 0, 0, /*1*/ 0, 0, 0, 0, /*2*/ 1, 1, 1, 1, /*3*/ 1, 1, 1, 1,
-    /*4*/ 2, 2, 2, 2, /*5*/ 2, 2, 2, 2,
+/// Per-phase output-stage mode per logical sector (one array each for A/B/C).
+/// Each physical six-step state is repeated 12 times across the 72 sectors.
+/// F = Forward (high), R = Reverse (low), O = Floating (BEMF sense).
+const F: Drive = Drive::Forward;
+const R: Drive = Drive::Reverse;
+const O: Drive = Drive::Floating;
+const DRIVE_A: [Drive; LOGICAL_SECTORS as usize] = [
+    /*0*/ F, F, F, F, F, F, F, F, F, F, F, F, /*1*/ F, F, F, F, F, F, F, F, F, F, F, F,
+    /*2*/ O, O, O, O, O, O, O, O, O, O, O, O, /*3*/ R, R, R, R, R, R, R, R, R, R, R, R,
+    /*4*/ R, R, R, R, R, R, R, R, R, R, R, R, /*5*/ O, O, O, O, O, O, O, O, O, O, O, O,
 ];
-const SIX_STEP_LOW: [usize; LOGICAL_SECTORS as usize] = [
-    /*0*/ 1, 1, 1, 1, /*1*/ 2, 2, 2, 2, /*2*/ 2, 2, 2, 2, /*3*/ 0, 0, 0, 0,
-    /*4*/ 0, 0, 0, 0, /*5*/ 1, 1, 1, 1,
+const DRIVE_B: [Drive; LOGICAL_SECTORS as usize] = [
+    /*0*/ R, R, R, R, R, R, R, R, R, R, R, R, /*1*/ O, O, O, O, O, O, O, O, O, O, O, O,
+    /*2*/ F, F, F, F, F, F, F, F, F, F, F, F, /*3*/ F, F, F, F, F, F, F, F, F, F, F, F,
+    /*4*/ O, O, O, O, O, O, O, O, O, O, O, O, /*5*/ R, R, R, R, R, R, R, R, R, R, R, R,
 ];
+const DRIVE_C: [Drive; LOGICAL_SECTORS as usize] = [
+    /*0*/ O, O, O, O, O, O, O, O, O, O, O, O, /*1*/ R, R, R, R, R, R, R, R, R, R, R, R,
+    /*2*/ R, R, R, R, R, R, R, R, R, R, R, R, /*3*/ O, O, O, O, O, O, O, O, O, O, O, O,
+    /*4*/ F, F, F, F, F, F, F, F, F, F, F, F, /*5*/ F, F, F, F, F, F, F, F, F, F, F, F,
+];
+
+/// Output-stage mode for one phase half-bridge.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Drive {
+    /// High-side PWM active — terminal driven toward Vbus at `duty`.
+    Forward,
+    /// Low-side held on — terminal pulled to GND (CCR=0).
+    Reverse,
+    /// Both FETs off — terminal floats so BEMF can be sensed.
+    Floating,
+}
 
 /// Set MODER for all six motor pins. AF=0b10, OUTPUT=0b01.
 /// Also resets ODR to 0 for any floated pins via BSRR.
@@ -254,22 +276,17 @@ unsafe fn pause_capture_dma() {
 /// Logical-sector commutation: two phases driven, one floating.
 unsafe fn set_six_step(sector: u8, duty: u32) {
     let s = (sector as usize) % LOGICAL_SECTORS as usize;
-    let hi = SIX_STEP_HIGH[s];
-    let lo = SIX_STEP_LOW[s];
+    let (da, db, dc) = (DRIVE_A[s], DRIVE_B[s], DRIVE_C[s]);
     let t1 = unsafe { &*stm32::TIM1::ptr() };
 
-    t1.ccr1()
-        .write(|w| unsafe { w.ccr().bits(if hi == 0 { duty } else { 0 }) });
-    t1.ccr2()
-        .write(|w| unsafe { w.ccr().bits(if hi == 1 { duty } else { 0 }) });
-    t1.ccr3()
-        .write(|w| unsafe { w.ccr().bits(if hi == 2 { duty } else { 0 }) });
+    // Forward = high-side PWM at `duty`; Reverse/Floating leave CCR at 0.
+    let ccr = |d: Drive| if matches!(d, Drive::Forward) { duty } else { 0 };
+    t1.ccr1().write(|w| unsafe { w.ccr().bits(ccr(da)) });
+    t1.ccr2().write(|w| unsafe { w.ccr().bits(ccr(db)) });
+    t1.ccr3().write(|w| unsafe { w.ccr().bits(ccr(dc)) });
 
-    // One phase is high, one is low, the third floats.
-    let float_a = hi != 0 && lo != 0;
-    let float_b = hi != 1 && lo != 1;
-    let float_c = hi != 2 && lo != 2;
-    unsafe { set_phase_modes(float_a, float_b, float_c) };
+    let floating = |d: Drive| matches!(d, Drive::Floating);
+    unsafe { set_phase_modes(floating(da), floating(db), floating(dc)) };
 }
 
 struct BoardInit {
