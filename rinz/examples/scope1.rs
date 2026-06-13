@@ -28,7 +28,7 @@ use core::fmt::Write;
 
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::entry;
-use embedded_io::Read;
+use embedded_io::{Read, ReadReady};
 use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 use rtt_target::rprintln;
 
@@ -89,14 +89,6 @@ impl<ADC: Instance> AdcDma12<ADC> {
     fn start_conversion(&mut self) {
         self.0.start_conversion();
     }
-
-    fn cancel_conversion(&mut self) {
-        self.0.cancel_conversion();
-    }
-
-    fn clear_overrun_flag(&mut self) {
-        self.0.clear_overrun_flag();
-    }
 }
 
 unsafe impl<ADC: Instance> TargetAddress<PeripheralToMemory> for AdcDma12<ADC> {
@@ -119,6 +111,9 @@ static CAPTURE_DONE: AtomicBool = AtomicBool::new(false);
 static CAPTURE_FRAMES: AtomicU32 = AtomicU32::new(0);
 static CAPTURE_TICKS_TARGET: AtomicU32 = AtomicU32::new(0);
 static CAPTURE_BUF_ADDR: AtomicU32 = AtomicU32::new(0);
+// The other buffer: where the ISR re-points the DMA the instant the capture window
+// closes, so ADC->DMA keeps streaming while main drains the frozen buffer over UART.
+static CAPTURE_BUF_ALT: AtomicU32 = AtomicU32::new(0);
 // false = buffer 0, true = buffer 1. Flipped on every 'd' so a new capture lands
 // in the back buffer while the previous one stays intact in the front buffer.
 static BUF_SEL: AtomicBool = AtomicBool::new(false);
@@ -267,13 +262,6 @@ unsafe fn restart_capture_dma(buf_addr: u32) {
     ch.mar().write(|w| unsafe { w.bits(buf_addr) });
     ch.ndtr().write(|w| unsafe { w.bits(ADC_BUF_LEN as u32) });
     ch.cr().write(|w| unsafe { w.bits(cr | 1) });
-}
-
-unsafe fn pause_capture_dma() {
-    let dma = unsafe { &*stm32::DMA1::ptr() };
-    let ch = dma.ch1();
-    let cr = ch.cr().read().bits();
-    ch.cr().write(|w| unsafe { w.bits(cr & !1) });
 }
 
 /// Logical-sector commutation: two phases driven, one floating.
@@ -529,11 +517,14 @@ fn main() -> ! {
         if rx.read(&mut buf).is_ok() {
             if buf[0] == b'd' {
                 // Flip to the other buffer; the previous capture stays intact in the
-                // one we just left. The ISR reads CAPTURE_BUF_ADDR to aim the DMA.
+                // one we just left. The ISR aims the DMA at CAPTURE_BUF_ADDR for this
+                // capture, then flips it onto CAPTURE_BUF_ALT when the window closes.
                 let sel = !BUF_SEL.load(Ordering::Relaxed);
                 BUF_SEL.store(sel, Ordering::Relaxed);
                 let cap_ptr = if sel { buf_ptr1 } else { buf_ptr0 };
+                let alt_ptr = if sel { buf_ptr0 } else { buf_ptr1 };
                 CAPTURE_BUF_ADDR.store(cap_ptr as u32, Ordering::Relaxed);
+                CAPTURE_BUF_ALT.store(alt_ptr as u32, Ordering::Relaxed);
 
                 CAPTURE_DONE.store(false, Ordering::Relaxed);
                 CAPTURE_FRAMES.store(0, Ordering::Relaxed);
@@ -560,13 +551,15 @@ fn main() -> ! {
                 )
                 .ok();
                 dump_debug_registers(&mut tx);
-                handle_command(b'w', &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
-                adc_transfer.pause(|adc| adc.cancel_conversion());
+                // No motor kill, no DMA pause: the DMA is already streaming into the
+                // alt buffer (flipped by the ISR), so dump the frozen buffer in place
+                // while capture and commutation keep running.
                 dump_buffer(&mut tx, cap_ptr, frames);
-                adc_transfer.start(|adc| {
-                    adc.clear_overrun_flag();
-                    adc.start_conversion();
-                });
+                // Reject re-triggers: drain any keys (notably another 'd') that landed
+                // in the RDR during the long dump. read_ready() keeps this non-blocking
+                // (rx.read() itself blocks until a byte arrives).
+                let mut drain = [0u8; 1];
+                while rx.read_ready().unwrap_or(false) && rx.read(&mut drain).is_ok() {}
             } else {
                 handle_command(buf[0], &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
             }
@@ -705,8 +698,11 @@ extern "C" fn TIM7() {
         if CAPTURE_ACTIVE && !capture_started {
             CAPTURE_TICKS += 1;
             if CAPTURE_TICKS >= CAPTURE_TICKS_TARGET.load(Ordering::Relaxed) {
-                pause_capture_dma();
-                RUNNING.store(false, Ordering::Relaxed);
+                // Flip the DMA onto the alt buffer so ADC capture continues with NO gap
+                // while main slowly dumps the just-frozen buffer over UART (UART is far
+                // slower than the ADC->DMA rate). RUNNING stays set: commutation lives
+                // here in the ISR, so the motor keeps spinning through the blocking dump.
+                restart_capture_dma(CAPTURE_BUF_ALT.load(Ordering::Relaxed));
                 CAPTURE_ACTIVE = false;
                 CAPTURE_DONE.store(true, Ordering::Relaxed);
             }
