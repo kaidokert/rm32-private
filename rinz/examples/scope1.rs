@@ -581,14 +581,18 @@ fn main() -> ! {
     let mut read_power = || {
         let vraw = adc1.convert(&pa0_vbus, SampleTime::Cycles_640_5);
         let vbus_mv = adc1.sample_to_millivolts(vraw) as u32 * 1039 / 100;
-        // Average (not peak -- peak catches switching spikes) then subtract the
-        // zero-current bias; /48 = gain16 * shunt to get mA. Single-phase-U proxy.
+        // Phase current is AC (averages to ~0), so take the mean RECTIFIED swing
+        // about the zero-current bias over a ~1 ms window (≈ half an electrical
+        // cycle at 500 Hz). /48 = gain16 * shunt -> mA. Single-phase-U proxy: it
+        // tracks current magnitude and jumps at the lock-catch, not a calibrated bus
+        // amp (sector-dependent, noisier at low freq where 1 ms is a small arc).
         let mut iacc = 0u32;
-        for _ in 0..16 {
+        for _ in 0..64 {
             let r = adc1.convert(&opamp1_pga, SampleTime::Cycles_640_5);
-            iacc += adc1.sample_to_millivolts(r) as u32;
+            let mv = adc1.sample_to_millivolts(r) as i32;
+            iacc += (mv - iu_offset_mv as i32).unsigned_abs();
         }
-        let iu_ma = (iacc / 16).saturating_sub(iu_offset_mv) * 1000 / 48;
+        let iu_ma = (iacc / 64) * 1000 / 48;
         (vbus_mv, iu_ma)
     };
 
