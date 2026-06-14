@@ -127,27 +127,48 @@ def ramp_freq_to(ser: serial.Serial, sp: Setpoint, target_hz: int) -> None:
         press(ser, sp, "b", ones)
 
 
-def reset_and_lock(ser: serial.Serial, sp: Setpoint, settle: float) -> None:
-    send(ser, "q")
-    time.sleep(settle)
-    sp.hz, sp.amp_tenths = 60, 80
-    sp.update(drain(ser))
+def reset_and_lock(ser: serial.Serial, sp: Setpoint, qsettle: float) -> bool:
+    """Send 'q' and CONFIRM the firmware echoed 'reset:' before trusting it; retry
+    if not (a dropped 'q' is what desyncs the setpoint tracking and wanders). Then
+    wait qsettle for the rotor to actually spin up and lock from rest."""
+    for _ in range(3):
+        drain(ser)
+        send(ser, "q")
+        echo = read_until(ser, "reset:", 1.5)
+        if "reset:" in echo:
+            sp.hz, sp.amp_tenths = 60, 90
+            sp.update(echo)
+            time.sleep(qsettle)
+            return True
+    return False
 
 
-def position(ser: serial.Serial, sp: Setpoint, hz: int, amp_tenths: int, settle: float) -> None:
-    """Re-lock then walk up to (hz, amp), keeping amp just above stall in transit."""
-    reset_and_lock(ser, sp, settle)
-    # Co-ramp frequency up in 20 Hz steps, holding amp ~ stall(step)+3% so current
-    # stays low at the low-frequency end.
+def position(
+    ser: serial.Serial,
+    sp: Setpoint,
+    hz: int,
+    amp_tenths: int,
+    *,
+    qsettle: float,
+    ramp_step: int,
+    ramp_dwell: float,
+    transit_margin: float,
+    settle: float,
+) -> None:
+    """Re-lock then walk frequency up to the target SLOWLY (the rotor has to
+    physically accelerate to follow), holding amp ~ stall(step)+margin so there's
+    accelerating headroom without cooking current at the low-freq end."""
+    if not reset_and_lock(ser, sp, qsettle):
+        reset_and_lock(ser, sp, qsettle)  # one more try; proceed regardless
     step_hz = 60
     while step_hz < hz:
-        step_hz = min(step_hz + 20, hz)
-        transit = int(round((stall_amp(step_hz) + 3.0) * 10))
+        step_hz = min(step_hz + ramp_step, hz)
+        transit = int(round((stall_amp(step_hz) + transit_margin) * 10))
         ramp_amp_to(ser, sp, max(transit, sp.amp_tenths))  # raise only, never dip
         ramp_freq_to(ser, sp, step_hz)
-        time.sleep(0.05)
+        time.sleep(ramp_dwell)
     ramp_amp_to(ser, sp, amp_tenths)
-    time.sleep(settle)
+    time.sleep(max(settle, 0.3))
 
 
 def capture(ser: serial.Serial, timeout: float) -> str:
@@ -184,6 +205,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--amp-max", type=float, default=None, help="override ceiling (targeted fine pass)")
     p.add_argument("--snaps", type=int, default=2, help="captures per (freq,amp) point")
     p.add_argument("--settle", type=float, default=0.2, help="seconds to settle after an amp change")
+    p.add_argument("--qsettle", type=float, default=0.8, help="spin-up wait after 'q' reset")
+    p.add_argument("--ramp-step", type=int, default=20, help="freq ramp step Hz while positioning")
+    p.add_argument("--ramp-dwell", type=float, default=0.3,
+                   help="dwell s per freq ramp step (20Hz/0.3s = ~67Hz/s; lower=faster, slip risk)")
+    p.add_argument("--transit-margin", type=float, default=4.0, help="amp %% above stall held during freq ramp")
     p.add_argument("--capture-timeout", type=float, default=4.0)
     p.add_argument("--outdir", type=Path, default=None)
     return p.parse_args()
@@ -200,12 +226,15 @@ def main() -> int:
 
     # Estimate before committing.
     total = 0
+    pos_s = 0.0
     for f in freqs:
         ceil_pct = args.amp_max if args.amp_max is not None else ceiling_amp(f, args.ceiling_lo, args.ceiling_hi)
         floor_pct = args.amp_min if args.amp_min is not None else max(3.0, stall_amp(f) - args.floor_margin)
         steps = max(1, int(round((ceil_pct - floor_pct) / args.amp_step)) + 1)
         total += steps * args.snaps
-    est_s = total * 0.6 + len(freqs) * 6  # ~0.6 s/capture + ~6 s/freq positioning
+        # positioning: ~2.3 s for q+spin-up, plus the slow freq ramp up from 60
+        pos_s += 2.3 + max(0, (f - 60)) / max(1, args.ramp_step) * (args.ramp_dwell + 0.15) + 0.4
+    est_s = total * 0.6 + pos_s
     print(f"sweep: {len(freqs)} freqs, ~{total} captures -> est {est_s/60:.0f} min, out={outdir}")
     print("Ctrl-C to abort; partial data is kept.")
 
@@ -218,7 +247,8 @@ def main() -> int:
                 ceil_pct = args.amp_max if args.amp_max is not None else ceiling_amp(f, args.ceiling_lo, args.ceiling_hi)
                 floor_pct = args.amp_min if args.amp_min is not None else max(3.0, stall_amp(f) - args.floor_margin)
                 ceil_t, floor_t, step_t = int(round(ceil_pct * 10)), int(round(floor_pct * 10)), max(1, int(round(args.amp_step * 10)))
-                position(ser, sp, f, ceil_t, args.settle)
+                position(ser, sp, f, ceil_t, qsettle=args.qsettle, ramp_step=args.ramp_step,
+                         ramp_dwell=args.ramp_dwell, transit_margin=args.transit_margin, settle=args.settle)
                 fpath = outdir / f"f{f:03d}hz.log"
                 with fpath.open("a", encoding="ascii", errors="replace") as fh:
                     amp_t = ceil_t
