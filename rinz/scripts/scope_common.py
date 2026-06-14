@@ -557,12 +557,36 @@ def _driven_pair_neutral(smooth, frames, fps):
     return neutral
 
 
+def _neutral_settled_mask(neutral, smooth, frames, tol_frac):
+    """True where the driven-pair neutral sits at its steady Vbus/2 level.
+
+    At each sector boundary the just-switched driven terminal rings/demagnetizes
+    before settling, so the neutral (its average with the other driven phase)
+    departs sharply from the flat ~Vbus/2 baseline -- visible as the spikes/craters
+    in the neutral trace. Those frames carry no usable BEMF. Rather than blank a
+    fixed N frames (a guess that over-blanks at high RPM and under-blanks at low),
+    blank exactly the frames where the neutral is out of band.
+
+    Center = median neutral (the flat baseline dominates). Band = tol_frac of the
+    driven rail separation (per-frame max-min of the three terminals), so it scales
+    with bus voltage automatically.
+    """
+    if frames == 0:
+        return []
+    n0 = statistics.median(neutral[:frames])
+    spans = [max(smooth[c][i] for c in range(3)) - min(smooth[c][i] for c in range(3)) for i in range(frames)]
+    span = statistics.median(spans) if spans else 0.0
+    tol = max(tol_frac * span, 1.0)
+    return [abs(neutral[i] - n0) <= tol for i in range(frames)]
+
+
 def analyze_zero_crossings(
     capture: Capture,
     *,
     smooth_window: int = 5,
     blank_frames: int = 2,
     confirm: int = 2,
+    neutral_tol_frac: float = 0.15,
 ) -> tuple[list[SectorZc], list[list[float]], list[float]]:
     """Locate the float-phase vs virtual-neutral crossing in every sector.
 
@@ -582,6 +606,7 @@ def analyze_zero_crossings(
     frames = min(len(ch) for ch in smooth)
     fps = capture.sample_hz / (hz * 6.0)
     neutral = _driven_pair_neutral(smooth, frames, fps)
+    settled = _neutral_settled_mask(neutral, smooth, frames, neutral_tol_frac)
     sectors: list[SectorZc] = []
     k = 0
     while (k + 1) * fps <= frames:
@@ -593,8 +618,14 @@ def analyze_zero_crossings(
         fl = 3 - hi - lo
         ch = PHASE_TO_CHANNEL[fl]
 
+        i_hi = int(math.floor(end))
+        # Leading blank: at least blank_frames, extended until the neutral has
+        # settled out of the boundary transient (data-driven, not a fixed count).
         i0 = int(math.ceil(start)) + blank_frames
-        i1 = int(math.floor(end))
+        while i0 < i_hi and not settled[i0]:
+            i0 += 1
+        # Usable frames = the settled ones in [i0, i_hi); interior glitches dropped.
+        idxs = [i for i in range(i0, i_hi) if settled[i]]
         zc = SectorZc(
             index=k,
             phase=PHASE_NAMES[fl],
@@ -602,8 +633,8 @@ def analyze_zero_crossings(
             end_frame=end,
             status="none",
         )
-        if i1 - i0 >= 2:
-            diff = [smooth[ch][i] - neutral[i] for i in range(i0, i1)]
+        if len(idxs) >= 3:
+            diff = [smooth[ch][i] - neutral[i] for i in idxs]
             zc.d_start = diff[0]
             zc.d_end = diff[-1]
             for j in range(1, len(diff)):
@@ -619,10 +650,13 @@ def analyze_zero_crossings(
                 if len(tail) < confirm or any((v > 0) if falling else (v < 0) for v in tail):
                     continue
                 frac = prev / (prev - cur)
-                zc.zc_frame = (i0 + j - 1) + frac
+                # Interpolate in real frame coords across the (usually adjacent)
+                # settled samples idxs[j-1]..idxs[j].
+                zc.zc_frame = idxs[j - 1] + frac * (idxs[j] - idxs[j - 1])
                 zc.zc_pct = (zc.zc_frame - start) / fps * 100.0
                 zc.direction = "rise" if rising else "fall"
-                # Crossings inside the blanking shadow count as early.
+                # Crossings on the very first usable pair count as early (still in
+                # the settling shadow).
                 zc.status = "zc" if j > 1 else "early"
                 break
         sectors.append(zc)
@@ -767,6 +801,7 @@ def render_zc_figure(
     )
 
     frames = len(neutral)
+    settled = _neutral_settled_mask(neutral, smooth, frames, 0.15)
     t_ms = [i / capture.sample_hz * 1000.0 for i in range(frames)]
     y_min, y_max = auto_snapshot_ylim(smooth + [neutral])
 
@@ -780,6 +815,17 @@ def render_zc_figure(
         color = colors[phase]
         ax.plot(t_ms, smooth[ch][:frames], lw=1.2, color=color, label=f"{phase} (smoothed {smooth_window})")
         ax.plot(t_ms, neutral, lw=0.9, ls="--", color="gray", label="virtual neutral (driven pair)")
+        # Mark frames the neutral flags as unsettled (boundary transient) -> blanked.
+        i = 0
+        while i < frames:
+            if not settled[i]:
+                j = i
+                while j < frames and not settled[j]:
+                    j += 1
+                ax.axvspan(t_ms[i], t_ms[min(j, frames - 1)], color="0.5", alpha=0.18, lw=0)
+                i = j
+            else:
+                i += 1
 
         zc_count = 0
         for sec in sectors:
