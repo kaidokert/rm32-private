@@ -51,8 +51,10 @@ def capture_metrics(cap) -> dict:
     }
 
 
-def collect(sweep_dir: Path):
-    """Return per-(hz,amp) aggregated metrics. amp from the dump's debug line."""
+def collect(sweep_dir: Path, amp_bin: float = 1.0):
+    """Return per-(hz, amp_binned) aggregated metrics. amp from the dump's debug
+    line, rounded to amp_bin %% so the per-freq fractional ceilings line up into
+    clean grid rows."""
     groups: dict[tuple[int, float], list[dict]] = defaultdict(list)
     for f in sorted(sweep_dir.glob("f*hz.log")):
         text = f.read_text(encoding="ascii", errors="replace")
@@ -67,7 +69,8 @@ def collect(sweep_dir: Path):
             if not hz or not amp:
                 continue
             try:
-                key = (int(hz), int(amp) / 10.0)
+                amp_pct = round(round(int(amp) / 10.0 / amp_bin) * amp_bin, 2)
+                key = (int(hz), amp_pct)
             except ValueError:
                 continue
             groups[key].append(capture_metrics(cap))
@@ -101,10 +104,11 @@ def main() -> int:
     ap.add_argument("sweep_dir", type=Path)
     ap.add_argument("--render", action="store_true", help="render ZC images for flagged points")
     ap.add_argument("--top", type=int, default=30, help="how many interesting points to flag")
+    ap.add_argument("--amp-bin", type=float, default=1.0, help="round amps to this %% for the grid (match the sweep step)")
     ap.add_argument("--zc-window", type=int, default=3)
     args = ap.parse_args()
 
-    groups = collect(args.sweep_dir)
+    groups = collect(args.sweep_dir, args.amp_bin)
     if not groups:
         print("no captures parsed")
         return 1
@@ -181,7 +185,11 @@ def main() -> int:
                         cap = parse_capture(seg)
                     except Exception:
                         continue
-                    if cap.debug.get("hz") == str(hz) and cap.debug.get("amp") == str(int(round(amp * 10))):
+                    try:
+                        cap_amp = round(int(cap.debug.get("amp", "-1")) / 10.0 / args.amp_bin) * args.amp_bin
+                    except ValueError:
+                        continue
+                    if cap.debug.get("hz") == str(hz) and abs(cap_amp - amp) < args.amp_bin / 2 + 0.01:
                         hit = cap
                         break
                 if hit is not None:

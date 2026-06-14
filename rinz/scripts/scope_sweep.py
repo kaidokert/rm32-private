@@ -228,8 +228,8 @@ def main() -> int:
     total = 0
     pos_s = 0.0
     for f in freqs:
-        ceil_pct = args.amp_max if args.amp_max is not None else ceiling_amp(f, args.ceiling_lo, args.ceiling_hi)
-        floor_pct = args.amp_min if args.amp_min is not None else max(3.0, stall_amp(f) - args.floor_margin)
+        ceil_pct = args.amp_max if args.amp_max is not None else round(ceiling_amp(f, args.ceiling_lo, args.ceiling_hi))
+        floor_pct = args.amp_min if args.amp_min is not None else round(max(3.0, stall_amp(f) - args.floor_margin))
         steps = max(1, int(round((ceil_pct - floor_pct) / args.amp_step)) + 1)
         total += steps * args.snaps
         # positioning: ~2.3 s for q+spin-up, plus the slow freq ramp up from 60
