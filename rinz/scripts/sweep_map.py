@@ -43,11 +43,20 @@ def capture_metrics(cap) -> dict:
         zc = sum(1 for s in sectors if s.status == "zc")
     except Exception:
         zc = 0
+
+    def _int(key):
+        try:
+            return int(cap.debug.get(key))
+        except (TypeError, ValueError):
+            return None
+
     return {
         "late_swing": rotor.get("late_swing"),
         "bemf_amp": rotor.get("bemf_amp"),
         "plateau_spread": rotor.get("plateau_spread"),
         "zc": zc,
+        "vbus_mv": _int("vbus_mv"),  # clean bus voltage
+        "iu_ma": _int("iu_ma"),  # phase-U current proxy (catch shows as a jump)
     }
 
 
@@ -119,12 +128,12 @@ def main() -> int:
     # and snapshot spread of late_swing (bistability / marginal lock).
     fig, axes = plt.subplots(2, 3, figsize=(18, 9))
     for ax, (key, red, ttl, cmap) in zip(axes.flat, [
-        ("late_swing", np.mean, "late_swing (mean)", "viridis"),
-        ("bemf_amp", np.mean, "bemf_amp (mean)", "viridis"),
+        ("iu_ma", np.mean, "phase-U current mA (lock-catch = sharp jump)", "plasma"),
+        ("vbus_mv", np.mean, "VBUS mV (sag under load)", "viridis"),
         ("zc", np.mean, "in-window ZC count (mean)", "plasma"),
         ("plateau_spread", np.mean, "sensing spread % (low=good)", "viridis_r"),
+        ("late_swing", np.mean, "late_swing (mean)", "viridis"),
         ("late_swing", np.std, "late_swing SPREAD across snaps (bistability)", "inferno"),
-        ("bemf_amp", np.std, "bemf_amp spread across snaps", "inferno"),
     ]):
         hzs, amps, z = grid(groups, red, key)
         heatmap(ax, hzs, amps, z, ttl, cmap)

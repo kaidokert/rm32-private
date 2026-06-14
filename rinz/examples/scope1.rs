@@ -13,6 +13,10 @@
 //! OC4REF to TRGO straight into ADC2 EXTSEL — no TIM3 needed. 12-bit samples,
 //! 20 kHz frame rate (1 frame = ch17/PA4, ch5/PC4, ch14/PB11).
 //!
+//! Each dump's `debug:` line also carries `vbus_mv=` (clean, PA0/ADC1 ×10.39) and
+//! `iu_ma=` (phase-U current, OPAMP1 PGA gain-16, peak of 8 samples ≈ bus current;
+//! single-phase proxy, the lock-catch shows as a sharp jump).
+//!
 //! Commands:
 //!   f / v   electrical frequency  +10 / -10 Hz
 //!   g / b   electrical frequency  +1 / -1 Hz
@@ -46,6 +50,7 @@ use rinz::hal::adc::{
 use rinz::hal::dma::{
     PeripheralToMemory, TransferExt, channel::DMAExt, config::DmaConfig, traits::TargetAddress,
 };
+use rinz::hal::opamp::Gain;
 use rinz::hal::prelude::*;
 use rinz::hal::pwm::PwmAdvExt;
 use rinz::hal::pwr::{PwrExt, VoltageScale};
@@ -501,6 +506,22 @@ fn main() -> ! {
     let adc_clock = ClockMode::AdcHclkDiv4;
     writeln!(tx, "dbg: claim common\r").ok();
     let adc12_common = dp.ADC12_COMMON.claim(adc_clock, &mut rcc);
+
+    // ADC1: VBUS (PA0/IN1) and phase-U current via OPAMP1 PGA gain-16 (PA1). The
+    // board has no bus shunt -- iu is a single-phase-U proxy (read as peak-of-8
+    // below, so it catches the driven-sector current ~= bus current). VBUS is the
+    // clean one. Same wiring/scaling as examples/motor_tester.rs.
+    writeln!(tx, "dbg: opamp1 + claim adc1\r").ok();
+    let pa0_vbus = gpioa.pa0.into_analog();
+    let pa1_isns = gpioa.pa1.into_analog();
+    let (opamp1, ..) = dp.OPAMP.split(&mut rcc);
+    let opamp1_pga = opamp1.pga(pa1_isns, Gain::Gain16);
+    let mut adc1 = adc12_common.claim_and_configure(
+        dp.ADC1,
+        hal::adc::config::AdcConfig::default(),
+        &mut delay,
+    );
+
     writeln!(tx, "dbg: claim adc2 (vreg+calib)\r").ok();
     let mut adc = adc12_common.claim(dp.ADC2, &mut delay);
 
@@ -545,13 +566,30 @@ fn main() -> ! {
     )
     .ok();
 
+    // Sample VBUS (clean, 10.39x divider) and phase-U current (OPAMP1 PGA, peak of
+    // 8 samples ~= the driven-sector current ~= bus current) for each dump's debug
+    // line. Borrows adc1/pins for the loop's lifetime; nothing else touches them.
+    let mut read_power = || {
+        let vraw = adc1.convert(&pa0_vbus, SampleTime::Cycles_640_5);
+        let vbus_mv = adc1.sample_to_millivolts(vraw) as u32 * 1039 / 100;
+        let mut iraw = 0u16;
+        for _ in 0..8 {
+            let r = adc1.convert(&opamp1_pga, SampleTime::Cycles_640_5);
+            if r > iraw {
+                iraw = r;
+            }
+        }
+        let iu_ma = adc1.sample_to_millivolts(iraw) as u32 * 1000 / 48;
+        (vbus_mv, iu_ma)
+    };
+
     loop {
         // Service the live stream: one back-to-back dump per idle pass while the
         // STREAMING flag is set. 'l' sets it, 'k' (or 'w') clears it; everything
         // else is the normal command set, processed unchanged below.
         let streaming = STREAMING.load(Ordering::Relaxed);
         if streaming {
-            run_capture(&mut tx, buf_ptr0, buf_ptr1);
+            run_capture(&mut tx, buf_ptr0, buf_ptr1, &mut read_power);
         }
 
         // Fetch the next command key. Block for one only when idle, so streaming
@@ -584,7 +622,7 @@ fn main() -> ! {
                 }
                 b'd' => {
                     writeln!(tx, "capture: wait zero, 2 electrical revs\r").ok();
-                    run_capture(&mut tx, buf_ptr0, buf_ptr1);
+                    run_capture(&mut tx, buf_ptr0, buf_ptr1, &mut read_power);
                     // Reject re-triggers: drain keys that landed in the RDR during
                     // the long dump (read_ready keeps this non-blocking).
                     let mut drain = [0u8; 1];
@@ -604,8 +642,14 @@ fn main() -> ! {
 
 /// Run one capture+dump cycle: arm the back/front flip, wait for the phase-aligned
 /// window to close, then emit the debug line, register snapshot and hex frame dump.
-/// Shared by the single-shot `d` command and the continuous `l` stream.
-fn run_capture<TX: Write>(tx: &mut TX, buf_ptr0: *const u16, buf_ptr1: *const u16) {
+/// Shared by the single-shot `d` command and the continuous `l` stream. `read_power`
+/// returns (vbus_mV, iu_mA) sampled after the capture for the debug line.
+fn run_capture<TX: Write>(
+    tx: &mut TX,
+    buf_ptr0: *const u16,
+    buf_ptr1: *const u16,
+    read_power: &mut impl FnMut() -> (u32, u32),
+) {
     // Flip to the other buffer; the ISR aims the DMA at CAPTURE_BUF_ADDR for this
     // capture, then flips it onto CAPTURE_BUF_ALT when the window closes.
     let sel = !BUF_SEL.load(Ordering::Relaxed);
@@ -626,12 +670,15 @@ fn run_capture<TX: Write>(tx: &mut TX, buf_ptr0: *const u16, buf_ptr1: *const u1
     }
 
     let frames = CAPTURE_FRAMES.load(Ordering::Relaxed) as usize;
+    let (vbus_mv, iu_ma) = read_power();
     writeln!(
         tx,
-        "debug: hz={} amp={} trim={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
+        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
         DBG_CAPTURE_HZ.load(Ordering::Relaxed),
         DBG_CAPTURE_AMP.load(Ordering::Relaxed),
         DUTY_TRIM.load(Ordering::Relaxed),
+        vbus_mv,
+        iu_ma,
         DBG_TIM7_TICKS.load(Ordering::Relaxed),
         DBG_SIX_STEP_TICKS.load(Ordering::Relaxed),
         DBG_DMA_TC.load(Ordering::Relaxed),
