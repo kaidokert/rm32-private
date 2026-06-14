@@ -105,6 +105,10 @@ class UiState:
     stream_refresh: float = 1.0
     exploration_path: Path = Path("logs/exploration.json")
     rotor_summary: str = "rotor=?"
+    # Every streamed dump is appended here (a fresh timestamped file per 'l') so a
+    # ramp-through-dropout sequence can be analyzed offline.
+    stream_archive_path: Path | None = None
+    stream_archive_idx: int = 0
 
 
 class CommLog:
@@ -554,6 +558,17 @@ def poll_serial(ser: serial.Serial, state: UiState, log: CommLog) -> None:
         segments, state.stream_buffer = split_complete_dumps(state.stream_buffer)
         if segments:
             state.stream_dumps += len(segments)
+            # Persist every dump (self-describing: each carries hz/amp/trim in its
+            # debug line) so a ramp-through-dropout sequence is recoverable offline.
+            if state.stream_archive_path is not None:
+                try:
+                    with state.stream_archive_path.open("a", encoding="ascii", errors="replace") as fh:
+                        for seg in segments:
+                            ts = datetime.now().isoformat(timespec="milliseconds")
+                            fh.write(f"# dump n={state.stream_archive_idx} t={ts}\n{seg}end\n")
+                            state.stream_archive_idx += 1
+                except Exception as exc:
+                    log.event(f"stream archive failed: {exc}")
             now = time.time()
             # Keep only the latest dump; redraw at most once per stream_refresh and
             # never while a previous render is still in flight (keeps the UI snappy).
@@ -662,7 +677,8 @@ def clear_line(row: int, text: str = "") -> None:
 def draw(state: UiState) -> None:
     capture_state = "idle"
     if state.streaming:
-        capture_state = f"STREAMING ({state.stream_dumps} dumps, redraw {state.stream_refresh:g}s)"
+        arch = state.stream_archive_path.name if state.stream_archive_path else "?"
+        capture_state = f"STREAMING ({state.stream_dumps} dumps -> {arch})"
     elif state.capturing:
         elapsed = time.time() - (state.capture_started_at or time.time())
         capture_state = f"active {elapsed:.1f}s, {len(state.capture_text)} bytes"
@@ -743,6 +759,10 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
         state.streaming = True
         state.stream_buffer = ""
         state.stream_dumps = 0
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        state.stream_archive_path = Path("logs") / f"stream_{stamp}.log"
+        state.stream_archive_idx = 0
+        append_event(state.events, f"stream archive {state.stream_archive_path}")
     elif k == "k":
         send_raw_key(ser, state, log, "k", "stream stop")
         state.streaming = False
