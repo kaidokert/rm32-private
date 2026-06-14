@@ -156,8 +156,11 @@ def position(
     settle: float,
 ) -> None:
     """Re-lock then walk frequency up to the target SLOWLY (the rotor has to
-    physically accelerate to follow), holding amp ~ stall(step)+margin so there's
-    accelerating headroom without cooking current at the low-freq end."""
+    physically accelerate to follow), holding amp ~ stall(step)+margin. The margin
+    must clear the lock-catch (~stall+6%, measured at 440/500 Hz) so the rotor
+    engages TRUE synchronous lock rather than the low-current below-catch (slip /
+    subharmonic) branch -- the catch is hysteretic, so once engaged from above it
+    rides down the locked branch into the sweep range."""
     if not reset_and_lock(ser, sp, qsettle):
         reset_and_lock(ser, sp, qsettle)  # one more try; proceed regardless
     step_hz = 60
@@ -209,7 +212,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ramp-step", type=int, default=20, help="freq ramp step Hz while positioning")
     p.add_argument("--ramp-dwell", type=float, default=0.3,
                    help="dwell s per freq ramp step (20Hz/0.3s = ~67Hz/s; lower=faster, slip risk)")
-    p.add_argument("--transit-margin", type=float, default=4.0, help="amp %% above stall held during freq ramp")
+    p.add_argument("--transit-margin", type=float, default=8.0,
+                   help="amp %% above stall held during freq ramp. MUST clear the lock-catch "
+                        "(~stall+6%%) or the rotor rides the below-catch slip branch, not true lock.")
     p.add_argument("--capture-timeout", type=float, default=4.0)
     p.add_argument("--outdir", type=Path, default=None)
     return p.parse_args()
