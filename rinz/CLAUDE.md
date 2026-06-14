@@ -334,6 +334,38 @@ Shown in the rendered view: `render_zc_figure` suptitle reads
 color-coded green/red/gray. The blessed UI Drive line shows the same; each `s`
 exploration record embeds the full `rotor` dict.
 
+### Automated (freq, amp) sweep (June 2026)
+
+Two-pass characterization of the lock landscape (`scripts/scope_sweep.py` collector
++ `scripts/sweep_map.py` offline analysis). Brute max-res over the whole plane is
+~8-12 h; the smart two-pass is <1 h: coarse (1% amp, 2 snaps, ~9 min) maps the
+landscape, then re-run fine (0.1% amp, 5 snaps, `--freq-jitter 1`) **only** on the
+transition bands `sweep_map` flags.
+
+`scope_sweep.py` (standalone, owns serial): per frequency, `q`-reset → co-ramp
+freq+amp up tracking just above the measured stall curve `0.035·hz+2.6` (keeps
+current low in transit) → up to a frequency-dependent ceiling (default 25% @100 Hz
+→ 30% @500 Hz, sized to keep supply current under the ~1.4 A/100 Hz limit) → sweep
+amp DOWN to `stall-margin`. Self-bounds with the stall curve (no live stall
+detector — we don't have a reliable one). Reads firmware `amp=`/`freq=` echoes for
+setpoint tracking; **every dump is labeled by its own debug line**, so imperfect
+ramps/desync don't corrupt the data (the offline grid uses actual reported hz/amp,
+not the intended setpoint). Raw hex to `logs/sweep_<ts>/f<hz>.log` + `manifest.csv`;
+NO images during capture.
+
+`sweep_map.py` (offline): per-capture metrics (late_swing, bemf_amp, in-window ZC
+count, sensing plateau_spread) → 6-panel (freq, amp) heatmaps. Crucially it also
+maps the **snapshot-to-snapshot spread** of late_swing/bemf_amp — that's the
+marginal/bistable zone ("a tiny amp change flips lock") quantified as variance
+across repeats at the *same* setpoint. Flags top-N interesting points (high snap
+spread + sharp amp-gradient) to `interesting.csv`; `--render` batch-generates ZC
+images for just those. Does NOT assert binary lock (unreliable); maps the
+observables and lets the structure show itself.
+
+NOTE: `scope_sweep.py` is logic-validated (planning math, ramp arithmetic) but the
+serial timing/echo handling is UNTESTED against live firmware — shake it out on a
+short `--freq 180 --amp-max 14 --amp-min 8` run before a full sweep.
+
 ### ZC-vs-window investigation status (June 2026)
 
 Tooling: `zc_chase.py` (per-hz amp search with repeats + fine sweep, `--dir`,
