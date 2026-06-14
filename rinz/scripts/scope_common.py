@@ -534,6 +534,29 @@ def sector_grid(capture: Capture, frames: int) -> list[tuple[float, int]]:
     return out
 
 
+def _driven_pair_neutral(smooth, frames, fps):
+    """Per-sector virtual neutral = the two DRIVEN phase terminals averaged (the
+    floating phase EXCLUDED). The float phase carries no current, so the star point
+    is set by the driven pair ~= (rail_hi + rail_lo)/2 ~= Vbus/2 at the divider --
+    and computed per-frame it tracks bus ripple and divider scale for free.
+
+    Using (A+B+C)/3 instead folds ~1/3 of the floating phase's OWN BEMF into its
+    reference (shrinking the measured BEMF to ~2/3) and adds that channel's noise --
+    measured ~30% jumpier with ~1.5x smaller BEMF on a locked capture.
+    """
+    neutral = [0.0] * frames
+    k = 0
+    while k * fps < frames:
+        s = k % 6
+        hi_ch = PHASE_TO_CHANNEL[SIX_STEP_HIGH[s]]
+        lo_ch = PHASE_TO_CHANNEL[SIX_STEP_LOW[s]]
+        i1 = min(int(round((k + 1) * fps)), frames)
+        for i in range(int(round(k * fps)), i1):
+            neutral[i] = (smooth[hi_ch][i] + smooth[lo_ch][i]) / 2.0
+        k += 1
+    return neutral
+
+
 def analyze_zero_crossings(
     capture: Capture,
     *,
@@ -557,9 +580,8 @@ def analyze_zero_crossings(
 
     smooth = lowpass_channels(capture.channels, smooth_window)
     frames = min(len(ch) for ch in smooth)
-    neutral = [(smooth[0][i] + smooth[1][i] + smooth[2][i]) / 3.0 for i in range(frames)]
-
     fps = capture.sample_hz / (hz * 6.0)
+    neutral = _driven_pair_neutral(smooth, frames, fps)
     sectors: list[SectorZc] = []
     k = 0
     while (k + 1) * fps <= frames:
@@ -668,9 +690,9 @@ def classify_rotor_state(
     frames = min(len(c) for c in smooth)
     if frames < 6:
         return out
-    neutral = [(smooth[0][i] + smooth[1][i] + smooth[2][i]) / 3.0 for i in range(frames)]
     fps = capture.sample_hz / (hz * 6.0)
     fpr = capture.sample_hz / hz  # frames per electrical rev
+    neutral = _driven_pair_neutral(smooth, frames, fps)
 
     per: dict[str, dict | None] = {}
     for ph in range(3):
@@ -757,7 +779,7 @@ def render_zc_figure(
         ch = PHASE_TO_CHANNEL[phase_idx]
         color = colors[phase]
         ax.plot(t_ms, smooth[ch][:frames], lw=1.2, color=color, label=f"{phase} (smoothed {smooth_window})")
-        ax.plot(t_ms, neutral, lw=0.9, ls="--", color="gray", label="virtual neutral (A+B+C)/3")
+        ax.plot(t_ms, neutral, lw=0.9, ls="--", color="gray", label="virtual neutral (driven pair)")
 
         zc_count = 0
         for sec in sectors:
