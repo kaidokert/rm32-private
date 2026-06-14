@@ -521,6 +521,15 @@ fn main() -> ! {
         hal::adc::config::AdcConfig::default(),
         &mut delay,
     );
+    // Zero-current OPAMP1 baseline: the shunt amp is bidirectional and idles near
+    // mid-rail, so iu must subtract this bias. Sampled now while the motor is idle
+    // (phases at 50% duty, commutation not started) = no current.
+    let mut iu_offset_mv = 0u32;
+    for _ in 0..16 {
+        let r = adc1.convert(&opamp1_pga, SampleTime::Cycles_640_5);
+        iu_offset_mv += adc1.sample_to_millivolts(r) as u32;
+    }
+    let iu_offset_mv = iu_offset_mv / 16;
 
     writeln!(tx, "dbg: claim adc2 (vreg+calib)\r").ok();
     let mut adc = adc12_common.claim(dp.ADC2, &mut delay);
@@ -572,14 +581,14 @@ fn main() -> ! {
     let mut read_power = || {
         let vraw = adc1.convert(&pa0_vbus, SampleTime::Cycles_640_5);
         let vbus_mv = adc1.sample_to_millivolts(vraw) as u32 * 1039 / 100;
-        let mut iraw = 0u16;
-        for _ in 0..8 {
+        // Average (not peak -- peak catches switching spikes) then subtract the
+        // zero-current bias; /48 = gain16 * shunt to get mA. Single-phase-U proxy.
+        let mut iacc = 0u32;
+        for _ in 0..16 {
             let r = adc1.convert(&opamp1_pga, SampleTime::Cycles_640_5);
-            if r > iraw {
-                iraw = r;
-            }
+            iacc += adc1.sample_to_millivolts(r) as u32;
         }
-        let iu_ma = adc1.sample_to_millivolts(iraw) as u32 * 1000 / 48;
+        let iu_ma = (iacc / 16).saturating_sub(iu_offset_mv) * 1000 / 48;
         (vbus_mv, iu_ma)
     };
 
