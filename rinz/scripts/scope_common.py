@@ -162,9 +162,7 @@ def parse_capture(text: str) -> Capture:
         start = next(
             i
             for i, line in enumerate(lines)
-            if line.lstrip().startswith("dump:")
-            or line.lstrip().startswith("dump3:")
-            or line.lstrip().startswith("dump5:")
+            if re.match(r"dump\d*:", line.lstrip())
             or line.lstrip().startswith("CAP_BEGIN")
         )
     except StopIteration:
@@ -184,7 +182,7 @@ def parse_capture(text: str) -> Capture:
     # Multi-channel framed dump (dump3:/dump5:/CAP_BEGIN). The channel list in the
     # header ("... 5 channels (ch17 ch5 ch14 ch16 ch18, ...)") is self-describing:
     # channels 0-2 are the BEMF voltages, any extras (ch16/ch18) are phase currents.
-    is_multi = header.startswith(("dump3:", "dump5:")) or is_cap
+    is_multi = bool(re.match(r"dump\d+:", header)) or is_cap
     hdr_chans = re.findall(r"ch\d+", header)
     m = re.search(r"dump\d*:\s*(\d+)", header)
     if m is None and is_cap:
@@ -245,7 +243,7 @@ def split_complete_dumps(buffer: str) -> tuple[list[str], str]:
     segments = []
     while "end" in buffer:
         seg, buffer = buffer.split("end", 1)
-        if "dump3:" in seg or "dump5:" in seg:
+        if re.search(r"dump\d+:", seg):
             segments.append(seg)
     return segments, buffer
 

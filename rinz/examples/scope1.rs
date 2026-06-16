@@ -94,6 +94,10 @@ const CAPTURE_MIN_HZ: u32 = 60;
 // +1 to round up the partial frame; total buffer fits comfortably in 32 KB SRAM.
 const ADC_FRAME_COUNT: usize = (ADC_FRAME_HZ * CAPTURE_REVS / CAPTURE_MIN_HZ + 1) as usize;
 const ADC_BUF_LEN: usize = ADC_FRAME_COUNT * ADC_CHANNELS;
+// ADC1 ring: phase-A current (OPAMP1 ch13) + VBUS (PA0 ch1), 2 values per frame,
+// co-triggered with the ADC2 scan so ADC1 frame i aligns with ADC2 frame i.
+const ADC1_CHANNELS: usize = 2;
+const ADC1_BUF_LEN: usize = ADC_FRAME_COUNT * ADC1_CHANNELS;
 
 struct AdcDma12<ADC: Instance>(Adc<ADC, AdcDmaStatus>);
 
@@ -132,6 +136,10 @@ static CAPTURE_BUF_ADDR: AtomicU32 = AtomicU32::new(0);
 // The other buffer: where the ISR re-points the DMA the instant the capture window
 // closes, so ADC->DMA keeps streaming while main drains the frozen buffer over UART.
 static CAPTURE_BUF_ALT: AtomicU32 = AtomicU32::new(0);
+// ADC1 (phase-A current + VBUS) capture ring -- same double-buffer flip as the
+// ADC2 ring, re-pointed in lockstep by the TIM7 ISR at window open/close.
+static CAPTURE_BUF1_ADDR: AtomicU32 = AtomicU32::new(0);
+static CAPTURE_BUF1_ALT: AtomicU32 = AtomicU32::new(0);
 // false = buffer 0, true = buffer 1. Flipped on every 'd' so a new capture lands
 // in the back buffer while the previous one stays intact in the front buffer.
 static BUF_SEL: AtomicBool = AtomicBool::new(false);
@@ -279,6 +287,24 @@ unsafe fn restart_capture_dma(buf_addr: u32) {
     dma.ifcr().write(|w| unsafe { w.bits(0x0f) });
     ch.mar().write(|w| unsafe { w.bits(buf_addr) });
     ch.ndtr().write(|w| unsafe { w.bits(ADC_BUF_LEN as u32) });
+    ch.cr().write(|w| unsafe { w.bits(cr | 1) });
+}
+
+/// Re-point the ADC1 capture ring (DMA1 ch2) the same way restart_capture_dma does
+/// for the ADC2 ring (ch1). Called in lockstep so the two rings stay frame-aligned.
+unsafe fn restart_capture_dma1(buf_addr: u32) {
+    if buf_addr == 0 {
+        return;
+    }
+
+    let dma = unsafe { &*stm32::DMA1::ptr() };
+    let ch = dma.ch2();
+    let cr = ch.cr().read().bits();
+
+    ch.cr().write(|w| unsafe { w.bits(cr & !1) });
+    dma.ifcr().write(|w| unsafe { w.bits(0xf0) }); // clear ch2 flags (bits 4-7)
+    ch.mar().write(|w| unsafe { w.bits(buf_addr) });
+    ch.ndtr().write(|w| unsafe { w.bits(ADC1_BUF_LEN as u32) });
     ch.cr().write(|w| unsafe { w.bits(cr | 1) });
 }
 
@@ -529,20 +555,19 @@ fn main() -> ! {
     // frame-aligned with the three BEMF voltages.
     let opamp2_pga = opamp2.pga(pa7_isns, Gain::Gain16);
     let opamp3_pga = opamp3.pga(pb0_isns, Gain::Gain16);
-    let mut adc1 = adc12_common.claim_and_configure(
-        dp.ADC1,
-        hal::adc::config::AdcConfig::default(),
-        &mut delay,
-    );
-    // Zero-current OPAMP1 baseline: the shunt amp is bidirectional and idles near
-    // mid-rail, so iu must subtract this bias. Sampled now while the motor is idle
-    // (phases at 50% duty, commutation not started) = no current.
-    let mut iu_offset_mv = 0u32;
-    for _ in 0..16 {
-        let r = adc1.convert(&opamp1_pga, SampleTime::Cycles_640_5);
-        iu_offset_mv += adc1.sample_to_millivolts(r) as u32;
-    }
-    let iu_offset_mv = iu_offset_mv / 16;
+    // ADC1: phase-A current (OPAMP1 ch13, valley-fast 6.5cyc) + VBUS (PA0 ch1,
+    // 640.5cyc to settle the high-impedance divider; VBUS is DC so its later sample
+    // instant in the 2-channel scan is harmless). TIM1_TRGO-triggered like ADC2;
+    // the circular DMA on ch2 is set up after ADC2's below, co-triggered so frames
+    // align. No boot zero-current loop: the bias is derived per-capture from the
+    // buffer (the float/high-driven sectors sit at the zero-current bias).
+    let mut adc1 = adc12_common.claim(dp.ADC1, &mut delay);
+    adc1.set_resolution(Resolution::Twelve);
+    adc1.set_continuous(Continuous::Single);
+    adc1.set_external_trigger((TriggerMode::RisingEdge, ExternalTrigger12::Tim_1_trgo));
+    adc1.reset_sequence();
+    adc1.configure_channel(&opamp1_pga, Sequence::One, SampleTime::Cycles_6_5);
+    adc1.configure_channel(&pa0_vbus, Sequence::Two, SampleTime::Cycles_640_5);
 
     writeln!(tx, "dbg: claim adc2 (vreg+calib)\r").ok();
     let mut adc = adc12_common.claim(dp.ADC2, &mut delay);
@@ -576,6 +601,25 @@ fn main() -> ! {
     adc_transfer.start(|adc| adc.start_conversion());
     writeln!(tx, "dbg: adc ok\r").ok();
 
+    // ADC1 ring (phase-A current + VBUS) on DMA ch2, circular, NO DMA IRQ -- the
+    // TIM7 ISR flips it via restart_capture_dma1 in lockstep with the ADC2 ring.
+    let adc1_buffer0 =
+        cortex_m::singleton!(A1BUF0: [u16; ADC1_BUF_LEN] = [0; ADC1_BUF_LEN]).unwrap();
+    let adc1_buffer1 =
+        cortex_m::singleton!(A1BUF1: [u16; ADC1_BUF_LEN] = [0; ADC1_BUF_LEN]).unwrap();
+    let buf1_ptr0: *const u16 = adc1_buffer0.as_ptr();
+    let buf1_ptr1: *const u16 = adc1_buffer1.as_ptr();
+    CAPTURE_BUF1_ADDR.store(buf1_ptr0 as u32, Ordering::Relaxed);
+    let dma_config_a1 = DmaConfig::default()
+        .circular_buffer(true)
+        .memory_increment(true);
+    let mut adc1_transfer = dma_channels.ch2.into_circ_peripheral_to_memory_transfer(
+        AdcDma12(adc1.enable_dma(AdcDma::Continuous)),
+        &mut adc1_buffer0[..],
+        dma_config_a1,
+    );
+    adc1_transfer.start(|adc| adc.start_conversion());
+
     rinz::tim7_drive::init(dp.TIM7, DRIVE_HZ, &clocks);
     unsafe { NVIC::unmask(stm32::Interrupt::DMA1_CH1) };
     unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
@@ -590,26 +634,9 @@ fn main() -> ! {
     )
     .ok();
 
-    // Sample VBUS (clean, 10.39x divider) and phase-U current (OPAMP1 PGA, peak of
-    // 8 samples ~= the driven-sector current ~= bus current) for each dump's debug
-    // line. Borrows adc1/pins for the loop's lifetime; nothing else touches them.
-    let mut read_power = || {
-        let vraw = adc1.convert(&pa0_vbus, SampleTime::Cycles_640_5);
-        let vbus_mv = adc1.sample_to_millivolts(vraw) as u32 * 1039 / 100;
-        // Phase current is AC (averages to ~0), so take the mean RECTIFIED swing
-        // about the zero-current bias over a ~1 ms window (≈ half an electrical
-        // cycle at 500 Hz). /48 = gain16 * shunt -> mA. Single-phase-U proxy: it
-        // tracks current magnitude and jumps at the lock-catch, not a calibrated bus
-        // amp (sector-dependent, noisier at low freq where 1 ms is a small arc).
-        let mut iacc = 0u32;
-        for _ in 0..64 {
-            let r = adc1.convert(&opamp1_pga, SampleTime::Cycles_640_5);
-            let mv = adc1.sample_to_millivolts(r) as i32;
-            iacc += (mv - iu_offset_mv as i32).unsigned_abs();
-        }
-        let iu_ma = (iacc / 64) * 1000 / 48;
-        (vbus_mv, iu_ma)
-    };
+    // VBUS + phase-A current for each dump's debug line now come from the frozen
+    // ADC1 capture buffer (power_from_buffer), not ad-hoc convert()s -- ADC1 is a
+    // DMA scanner now. Computed in run_capture after the window closes.
 
     loop {
         // Service the live stream: one back-to-back dump per idle pass while the
@@ -617,7 +644,7 @@ fn main() -> ! {
         // else is the normal command set, processed unchanged below.
         let streaming = STREAMING.load(Ordering::Relaxed);
         if streaming {
-            run_capture(&mut tx, buf_ptr0, buf_ptr1, &mut read_power);
+            run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1);
         }
 
         // Fetch the next command key. Block for one only when idle, so streaming
@@ -650,7 +677,7 @@ fn main() -> ! {
                 }
                 b'd' => {
                     writeln!(tx, "capture: wait zero, 2 electrical revs\r").ok();
-                    run_capture(&mut tx, buf_ptr0, buf_ptr1, &mut read_power);
+                    run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1);
                     // Reject re-triggers: drain keys that landed in the RDR during
                     // the long dump (read_ready keeps this non-blocking).
                     let mut drain = [0u8; 1];
@@ -668,15 +695,45 @@ fn main() -> ! {
     }
 }
 
+/// VBUS (mV) and phase-A current proxy (mA) from a frozen ADC1 ring (2 vals/frame:
+/// [I_A ch13, VBUS ch1], 12-bit). VBUS = mean (counts -> mV at 3.3V ref, x10.39
+/// divider). iu = mean-rectified swing of I_A about its window mean, /48 = gain16 *
+/// shunt -> mA (magnitude proxy, jumps at lock-catch; not a calibrated bus amp).
+fn power_from_buffer(ptr1: *const u16, frames: usize) -> (u32, u32) {
+    if frames == 0 {
+        return (0, 0);
+    }
+    let read = |f: usize, ch: usize| -> u32 {
+        unsafe { core::ptr::read_volatile(ptr1.add(f * ADC1_CHANNELS + ch)) as u32 }
+    };
+    let mut isum = 0u32;
+    let mut vsum = 0u32;
+    for f in 0..frames {
+        isum += read(f, 0);
+        vsum += read(f, 1);
+    }
+    let n = frames as u32;
+    let imean = isum / n;
+    let vbus_mv = (vsum / n) * 3300 / 4095 * 1039 / 100;
+    let mut iacc = 0u32;
+    for f in 0..frames {
+        iacc += (read(f, 0) as i32 - imean as i32).unsigned_abs();
+    }
+    let iu_ma = (iacc / n) * 3300 / 4095 * 1000 / 48;
+    (vbus_mv, iu_ma)
+}
+
 /// Run one capture+dump cycle: arm the back/front flip, wait for the phase-aligned
 /// window to close, then emit the debug line, register snapshot and hex frame dump.
-/// Shared by the single-shot `d` command and the continuous `l` stream. `read_power`
-/// returns (vbus_mV, iu_mA) sampled after the capture for the debug line.
+/// Shared by the single-shot `d` command and the continuous `l` stream. Both the
+/// ADC2 ring (buf_ptr*) and the co-triggered ADC1 ring (buf1_ptr*) are flipped in
+/// lockstep; VBUS/iu_mA come from the frozen ADC1 ring.
 fn run_capture<TX: Write>(
     tx: &mut TX,
     buf_ptr0: *const u16,
     buf_ptr1: *const u16,
-    read_power: &mut impl FnMut() -> (u32, u32),
+    buf1_ptr0: *const u16,
+    buf1_ptr1: *const u16,
 ) {
     // Flip to the other buffer; the ISR aims the DMA at CAPTURE_BUF_ADDR for this
     // capture, then flips it onto CAPTURE_BUF_ALT when the window closes.
@@ -684,8 +741,12 @@ fn run_capture<TX: Write>(
     BUF_SEL.store(sel, Ordering::Relaxed);
     let cap_ptr = if sel { buf_ptr1 } else { buf_ptr0 };
     let alt_ptr = if sel { buf_ptr0 } else { buf_ptr1 };
+    let cap_ptr1 = if sel { buf1_ptr1 } else { buf1_ptr0 };
+    let alt_ptr1 = if sel { buf1_ptr0 } else { buf1_ptr1 };
     CAPTURE_BUF_ADDR.store(cap_ptr as u32, Ordering::Relaxed);
     CAPTURE_BUF_ALT.store(alt_ptr as u32, Ordering::Relaxed);
+    CAPTURE_BUF1_ADDR.store(cap_ptr1 as u32, Ordering::Relaxed);
+    CAPTURE_BUF1_ALT.store(alt_ptr1 as u32, Ordering::Relaxed);
 
     CAPTURE_DONE.store(false, Ordering::Relaxed);
     CAPTURE_FRAMES.store(0, Ordering::Relaxed);
@@ -698,7 +759,7 @@ fn run_capture<TX: Write>(
     }
 
     let frames = CAPTURE_FRAMES.load(Ordering::Relaxed) as usize;
-    let (vbus_mv, iu_ma) = read_power();
+    let (vbus_mv, iu_ma) = power_from_buffer(cap_ptr1, frames);
     writeln!(
         tx,
         "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
@@ -718,24 +779,29 @@ fn run_capture<TX: Write>(
     // No motor kill, no DMA pause: the DMA is already streaming into the alt buffer
     // (flipped by the ISR), so dump the frozen buffer in place while capture and
     // commutation keep running.
-    dump_buffer(tx, cap_ptr, frames);
+    dump_buffer(tx, cap_ptr, cap_ptr1, frames);
 }
 
-/// Dump the (paused) ADC capture buffer as 12-bit hex (4-digit). One line is one
-/// frame: ch17/ch5/ch14 (BEMF A/B/C voltages) then ch16/ch18 (phase-B/C currents).
-fn dump_buffer<TX: Write>(tx: &mut TX, ptr: *const u16, frames: usize) {
+/// Dump the (frozen) capture as 12-bit hex (4-digit). One line is one frame:
+/// ch17/ch5/ch14 (BEMF A/B/C voltages), ch16/ch18 (phase-B/C currents) from the
+/// ADC2 ring, then ch13/ch1 (phase-A current, VBUS) from the ADC1 ring -- frame i
+/// aligns across both since they share the TIM1_TRGO valley trigger.
+fn dump_buffer<TX: Write>(tx: &mut TX, ptr: *const u16, ptr1: *const u16, frames: usize) {
     writeln!(
         tx,
-        "dump5: {} frames x 5 channels (ch17 ch5 ch14 ch16 ch18, 12-bit ADC, {} Hz)\r",
+        "dump7: {} frames x 7 channels (ch17 ch5 ch14 ch16 ch18 ch13 ch1, 12-bit ADC, {} Hz)\r",
         frames, ADC_FRAME_HZ
     )
     .ok();
     for frame in 0..frames {
         for ch in 0..ADC_CHANNELS {
-            let i = frame * ADC_CHANNELS + ch;
-            let v = unsafe { core::ptr::read_volatile(ptr.add(i)) };
+            let v = unsafe { core::ptr::read_volatile(ptr.add(frame * ADC_CHANNELS + ch)) };
+            write!(tx, "{:04x} ", v).ok();
+        }
+        for ch in 0..ADC1_CHANNELS {
+            let v = unsafe { core::ptr::read_volatile(ptr1.add(frame * ADC1_CHANNELS + ch)) };
             write!(tx, "{:04x}", v).ok();
-            if ch + 1 < ADC_CHANNELS {
+            if ch + 1 < ADC1_CHANNELS {
                 write!(tx, " ").ok();
             }
         }
@@ -845,6 +911,7 @@ extern "C" fn TIM7() {
             CAPTURE_TICKS_TARGET.store(ticks, Ordering::Relaxed);
             CAPTURE_TICKS = 0;
             restart_capture_dma(CAPTURE_BUF_ADDR.load(Ordering::Relaxed));
+            restart_capture_dma1(CAPTURE_BUF1_ADDR.load(Ordering::Relaxed));
             CAPTURE_WAIT_ZERO = false;
             CAPTURE_ACTIVE = true;
             capture_started = true;
@@ -858,6 +925,7 @@ extern "C" fn TIM7() {
                 // slower than the ADC->DMA rate). RUNNING stays set: commutation lives
                 // here in the ISR, so the motor keeps spinning through the blocking dump.
                 restart_capture_dma(CAPTURE_BUF_ALT.load(Ordering::Relaxed));
+                restart_capture_dma1(CAPTURE_BUF1_ALT.load(Ordering::Relaxed));
                 CAPTURE_ACTIVE = false;
                 CAPTURE_DONE.store(true, Ordering::Relaxed);
             }
