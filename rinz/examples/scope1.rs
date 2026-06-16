@@ -70,7 +70,7 @@ const STEPS_PER_LOGICAL_SECTOR: u32 = ELEC_STEPS_PER_REV / LOGICAL_SECTORS;
 const AMP_CAP: u32 = 1425;
 const AMP_START: u32 = 90; // 9.0 % (6.0 % actual duty)
 const FREQ_MIN: u32 = 1;
-const FREQ_MAX: u32 = 600;
+const FREQ_MAX: u32 = 1200;
 const FREQ_START: u32 = 60;
 
 // TIM1_TRGO-triggered ADC2 scan of the three BEMF phases:
