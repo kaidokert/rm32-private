@@ -164,6 +164,7 @@ def parse_capture(text: str) -> Capture:
             for i, line in enumerate(lines)
             if line.lstrip().startswith("dump:")
             or line.lstrip().startswith("dump3:")
+            or line.lstrip().startswith("dump5:")
             or line.lstrip().startswith("CAP_BEGIN")
         )
     except StopIteration:
@@ -180,8 +181,12 @@ def parse_capture(text: str) -> Capture:
 
     header = lines[start].lstrip()
     is_cap = header.startswith("CAP_BEGIN")
-    is_dump3 = header.startswith("dump3:") or is_cap
-    m = re.search(r"dump3?:\s*(\d+)", header)
+    # Multi-channel framed dump (dump3:/dump5:/CAP_BEGIN). The channel list in the
+    # header ("... 5 channels (ch17 ch5 ch14 ch16 ch18, ...)") is self-describing:
+    # channels 0-2 are the BEMF voltages, any extras (ch16/ch18) are phase currents.
+    is_multi = header.startswith(("dump3:", "dump5:")) or is_cap
+    hdr_chans = re.findall(r"ch\d+", header)
+    m = re.search(r"dump\d*:\s*(\d+)", header)
     if m is None and is_cap:
         m = re.search(r"\bframes=(\d+)", header)
     expected = int(m.group(1)) if m else None
@@ -203,15 +208,18 @@ def parse_capture(text: str) -> Capture:
     blob = " ".join(body).replace("CAP_DATA", " ").replace("CAP_END", " ").replace("end", " ")
     vals = [int(tok, 16) for tok in blob.split() if re.fullmatch(hex_pat, tok)]
 
-    if not is_dump3:
+    if not is_multi:
         channels = [vals]
         labels = ["ch17"]
         sample_hz = header_sample_hz or SAMPLE_HZ
     else:
-        usable = len(vals) - len(vals) % 3
+        n_chan = len(hdr_chans) if hdr_chans else 3
+        usable = len(vals) - len(vals) % n_chan
         frames = vals[:usable]
-        channels = [frames[i::3] for i in range(3)]
-        labels = DEFAULT_LABELS.copy()
+        channels = [frames[i::n_chan] for i in range(n_chan)]
+        # Channels 0-2 keep the BEMF voltage labels (ZC analysis indexes them via
+        # PHASE_TO_CHANNEL); extras carry their raw ch-name from the header.
+        labels = (DEFAULT_LABELS + hdr_chans[len(DEFAULT_LABELS):])[:n_chan]
         sample_hz = header_sample_hz or FRAME_HZ
 
     return Capture(
@@ -237,7 +245,7 @@ def split_complete_dumps(buffer: str) -> tuple[list[str], str]:
     segments = []
     while "end" in buffer:
         seg, buffer = buffer.split("end", 1)
-        if "dump3:" in seg:
+        if "dump3:" in seg or "dump5:" in seg:
             segments.append(seg)
     return segments, buffer
 
@@ -803,7 +811,9 @@ def render_zc_figure(
     frames = len(neutral)
     settled = _neutral_settled_mask(neutral, smooth, frames, 0.15)
     t_ms = [i / capture.sample_hz * 1000.0 for i in range(frames)]
-    y_min, y_max = auto_snapshot_ylim(smooth + [neutral])
+    # Scale to the three BEMF voltages only; any extra channels (phase currents,
+    # ch16/ch18) ride mid-rail and would skew the voltage plot's y-range.
+    y_min, y_max = auto_snapshot_ylim(smooth[:3] + [neutral])
 
     fig.clf()
     axes = fig.subplots(3, 1, sharex=True)

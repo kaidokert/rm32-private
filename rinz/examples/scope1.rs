@@ -11,7 +11,8 @@
 //!
 //! TIM1 CC4 (CCR4=1, PWM mode 1) pulses OC4REF at the valley; CR2.MMS routes
 //! OC4REF to TRGO straight into ADC2 EXTSEL — no TIM3 needed. 12-bit samples,
-//! 20 kHz frame rate (1 frame = ch17/PA4, ch5/PC4, ch14/PB11).
+//! 20 kHz frame rate (1 frame = ch17/PA4, ch5/PC4, ch14/PB11 BEMF voltages +
+//! ch16/OPAMP2 phase-B current + ch18/OPAMP3 phase-C current).
 //!
 //! Each dump's `debug:` line also carries `vbus_mv=` (clean, PA0/ADC1 ×10.39) and
 //! `iu_ma=` (phase-U current, OPAMP1 PGA gain-16, peak of 8 samples ≈ bus current;
@@ -81,7 +82,10 @@ const FREQ_START: u32 = 60;
 // sampling aperture ends 2*447 + 153 = 1047 ns after TRGO, inside the half-ON
 // window (1250 ns) down to 5% duty. 12-bit resolution: bench BEMF swings are a
 // few tens of mV at the pin, far below 8-bit LSB.
-const ADC_CHANNELS: usize = 3;
+// 5 channels: 3 BEMF voltages (ch17/ch5/ch14) + 2 phase currents (OPAMP2 ch16 =
+// phase-B shunt, OPAMP3 ch18 = phase-C shunt), all in one ADC2 valley scan so
+// current and voltage are frame-aligned. Phase-A current is OPAMP1->ADC1 (Phase 2).
+const ADC_CHANNELS: usize = 5;
 const ADC_SAMPLES_PER_PWM: u32 = 1;
 const ADC_FRAME_HZ: u32 = PWM_HZ * ADC_SAMPLES_PER_PWM;
 // Buffer must hold this many revolutions at the lowest supported electrical freq.
@@ -514,8 +518,17 @@ fn main() -> ! {
     writeln!(tx, "dbg: opamp1 + claim adc1\r").ok();
     let pa0_vbus = gpioa.pa0.into_analog();
     let pa1_isns = gpioa.pa1.into_analog();
-    let (opamp1, ..) = dp.OPAMP.split(&mut rcc);
+    let pa7_isns = gpioa.pa7.into_analog();
+    let pb0_isns = gpiob.pb0.into_analog();
+    let (opamp1, opamp2, opamp3, ..) = dp.OPAMP.split(&mut rcc);
     let opamp1_pga = opamp1.pga(pa1_isns, Gain::Gain16);
+    // Phase-B/C shunt currents via OPAMP2 (PA7 -> ADC2 ch16) and OPAMP3 (PB0 ->
+    // ADC2 ch18), same internal PGA gain-16 as OPAMP1 (board OP_OUT pins are N/C,
+    // so internal PGA -- no external feedback network). Their InternalOutput is
+    // added to the ADC2 valley scan below, so they land in the capture buffer
+    // frame-aligned with the three BEMF voltages.
+    let opamp2_pga = opamp2.pga(pa7_isns, Gain::Gain16);
+    let opamp3_pga = opamp3.pga(pb0_isns, Gain::Gain16);
     let mut adc1 = adc12_common.claim_and_configure(
         dp.ADC1,
         hal::adc::config::AdcConfig::default(),
@@ -542,6 +555,8 @@ fn main() -> ! {
     adc.configure_channel(&pa4, Sequence::One, SampleTime::Cycles_6_5);
     adc.configure_channel(&pc4, Sequence::Two, SampleTime::Cycles_6_5);
     adc.configure_channel(&pb11, Sequence::Three, SampleTime::Cycles_6_5);
+    adc.configure_channel(&opamp2_pga, Sequence::Four, SampleTime::Cycles_6_5);
+    adc.configure_channel(&opamp3_pga, Sequence::Five, SampleTime::Cycles_6_5);
 
     writeln!(tx, "dbg: dma transfer ({} samples)\r", ADC_BUF_LEN).ok();
     let adc_buffer0 = cortex_m::singleton!(BUF0: [u16; ADC_BUF_LEN] = [0; ADC_BUF_LEN]).unwrap();
@@ -706,12 +721,12 @@ fn run_capture<TX: Write>(
     dump_buffer(tx, cap_ptr, frames);
 }
 
-/// Dump the (paused) ADC capture buffer as 12-bit hex (4-digit). One line is
-/// one ch17/ch5/ch14 frame.
+/// Dump the (paused) ADC capture buffer as 12-bit hex (4-digit). One line is one
+/// frame: ch17/ch5/ch14 (BEMF A/B/C voltages) then ch16/ch18 (phase-B/C currents).
 fn dump_buffer<TX: Write>(tx: &mut TX, ptr: *const u16, frames: usize) {
     writeln!(
         tx,
-        "dump3: {} frames x 3 channels (ch17 ch5 ch14, 12-bit ADC, {} Hz)\r",
+        "dump5: {} frames x 5 channels (ch17 ch5 ch14 ch16 ch18, 12-bit ADC, {} Hz)\r",
         frames, ADC_FRAME_HZ
     )
     .ok();
