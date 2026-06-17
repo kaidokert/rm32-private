@@ -297,15 +297,27 @@ unsafe fn restart_capture_dma1(buf_addr: u32) {
         return;
     }
 
+    let adc1 = unsafe { &*stm32::ADC1::ptr() };
     let dma = unsafe { &*stm32::DMA1::ptr() };
     let ch = dma.ch2();
-    let cr = ch.cr().read().bits();
 
+    // Stop ADC1, re-point the DMA, then re-arm -- so the next TRGO starts a FRESH
+    // scan from rank 1 (ch13) into slot 0. Without this, re-pointing the DMA while a
+    // scan is in flight offsets the [I_A, VBUS] pair by one (the channels swap) on
+    // ~2% of captures, timing-dependent and NOT eliminated by a short sample time
+    // alone. ADSTP makes slot 0 = I_A deterministically. (ADC2's all-fast scan
+    // happens to align without this; ADC1's longer scan does not.)
+    adc1.cr().modify(|_, w| w.adstp().set_bit());
+    while adc1.cr().read().adstart().bit_is_set() {}
+
+    let cr = ch.cr().read().bits();
     ch.cr().write(|w| unsafe { w.bits(cr & !1) });
     dma.ifcr().write(|w| unsafe { w.bits(0xf0) }); // clear ch2 flags (bits 4-7)
     ch.mar().write(|w| unsafe { w.bits(buf_addr) });
     ch.ndtr().write(|w| unsafe { w.bits(ADC1_BUF_LEN as u32) });
     ch.cr().write(|w| unsafe { w.bits(cr | 1) });
+
+    adc1.cr().modify(|_, w| w.adstart().set_bit()); // re-arm for the next TRGO
 }
 
 /// Logical-sector commutation: two phases driven, one floating.
@@ -555,19 +567,22 @@ fn main() -> ! {
     // frame-aligned with the three BEMF voltages.
     let opamp2_pga = opamp2.pga(pa7_isns, Gain::Gain16);
     let opamp3_pga = opamp3.pga(pb0_isns, Gain::Gain16);
-    // ADC1: phase-A current (OPAMP1 ch13, valley-fast 6.5cyc) + VBUS (PA0 ch1,
-    // 640.5cyc to settle the high-impedance divider; VBUS is DC so its later sample
-    // instant in the 2-channel scan is harmless). TIM1_TRGO-triggered like ADC2;
-    // the circular DMA on ch2 is set up after ADC2's below, co-triggered so frames
-    // align. No boot zero-current loop: the bias is derived per-capture from the
-    // buffer (the float/high-driven sectors sit at the zero-current bias).
+    // ADC1: phase-A current (OPAMP1 ch13) + VBUS (PA0 ch1), both at 47.5cyc.
+    // VBUS MUST stay short: a long sample (640.5cyc ~= 15us) stretches the 2-channel
+    // ADC1 scan to ~1/3 of the 50us PWM period, so the ISR's DMA re-point can land
+    // mid-scan and offset the [I_A, VBUS] pair by one -> the two channels swap
+    // intermittently. 47.5cyc keeps the scan ~1.5us, so the restart lands in the idle
+    // gap (like ADC2's all-fast scan, which never offsets). VBUS settles fine at
+    // 47.5cyc thanks to the divider's filter cap (C70 ~0.1uF). TIM1_TRGO-triggered
+    // like ADC2; circular DMA on ch2 set up below, co-triggered so frames align. No
+    // boot zero-current loop: bias is derived per-capture from the buffer.
     let mut adc1 = adc12_common.claim(dp.ADC1, &mut delay);
     adc1.set_resolution(Resolution::Twelve);
     adc1.set_continuous(Continuous::Single);
     adc1.set_external_trigger((TriggerMode::RisingEdge, ExternalTrigger12::Tim_1_trgo));
     adc1.reset_sequence();
     adc1.configure_channel(&opamp1_pga, Sequence::One, SampleTime::Cycles_6_5);
-    adc1.configure_channel(&pa0_vbus, Sequence::Two, SampleTime::Cycles_640_5);
+    adc1.configure_channel(&pa0_vbus, Sequence::Two, SampleTime::Cycles_47_5);
 
     writeln!(tx, "dbg: claim adc2 (vreg+calib)\r").ok();
     let mut adc = adc12_common.claim(dp.ADC2, &mut delay);
