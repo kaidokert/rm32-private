@@ -27,7 +27,7 @@
 //!   w       kill
 //!   d       capture 2 electrical revs from phase zero, then dump 12-bit hex
 //!   c       same capture, Ascii85-packed binary (cdump:, ~2x faster than hex)
-//!   l / k   start / stop continuous live streaming (other commands work as normal)
+//!   l / k   start / stop continuous live streaming (binary, like 'c'; other cmds work)
 //!   q       reset to defaults and run
 
 #![no_std]
@@ -660,7 +660,9 @@ fn main() -> ! {
         // else is the normal command set, processed unchanged below.
         let streaming = STREAMING.load(Ordering::Relaxed);
         if streaming {
-            run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1, false);
+            // Binary (Ascii85) dumps: streaming is throughput-bound, so the ~2x
+            // smaller payload roughly doubles the live refresh rate.
+            run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1, true);
         }
 
         // Fetch the next command key. Block for one only when idle, so streaming
