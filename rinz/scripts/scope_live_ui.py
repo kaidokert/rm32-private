@@ -279,12 +279,13 @@ def ramp_frequency_logged(ser: serial.Serial, state: UiState, log: CommLog, targ
     return send_keys_logged(ser, state, log, "f" if delta >= 0 else "v", steps)
 
 
-def start_capture(ser: serial.Serial, state: UiState, log: CommLog) -> None:
+def start_capture(ser: serial.Serial, state: UiState, log: CommLog, key: str = "d") -> None:
     state.capturing = True
     state.capture_text = ""
     state.capture_started_at = time.time()
-    state.status = "Capture requested; waiting for dump bytes"
-    send_raw_key(ser, state, log, "d", "capture requested; waiting for dump bytes")
+    fmt = "binary" if key == "c" else "hex"
+    state.status = f"Capture requested ({fmt}); waiting for dump bytes"
+    send_raw_key(ser, state, log, key, f"capture requested ({fmt})")
 
 
 def _archive_capture(state: UiState, log: CommLog, capture: Capture, with_zc: bool) -> str:
@@ -548,7 +549,8 @@ def poll_serial(ser: serial.Serial, state: UiState, log: CommLog) -> None:
             "RX",
             f"<capture chunk {len(data)} bytes, total {len(state.capture_text)} bytes>",
         )
-        if "end" in state.capture_text or "CAP_END" in state.capture_text:
+        # Line-anchored terminator: b85 (cdump) payload can contain "end" mid-stream.
+        if re.search(r"[\r\n]end\b", state.capture_text) or "CAP_END" in state.capture_text:
             state.capturing = False
             finish_capture(state, log)
         return
@@ -741,9 +743,9 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
     k = key.lower()
     if k == "x":
         return False
-    if k == "d" and not state.capturing and not state.postprocessing and not state.streaming:
-        start_capture(ser, state, log)
-    elif k == "d":
+    if k in ("d", "c") and not state.capturing and not state.postprocessing and not state.streaming:
+        start_capture(ser, state, log, key=k)
+    elif k in ("d", "c"):
         if state.streaming:
             state.status = "Streaming active; press k to stop before a single capture"
         elif state.capturing:
@@ -791,7 +793,7 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
         state.hz = 60
         state.amp = 8.0
         state.trim = 0
-    elif k in {"f", "v", "a", "z", "+", "-", "m", "w", "0", "1", "2", "3"}:
+    elif k in {"f", "v", "a", "z", "+", "-", "m", "w", "y", "0", "1", "2", "3"}:
         send_raw_key(ser, state, log, k, f"sent {k}")
         if k == "f":
             state.hz += 10
