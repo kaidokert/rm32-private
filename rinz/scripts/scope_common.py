@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import base64
 import json
 import math
 import re
 import socket
 import statistics
+import struct
 import time
 from collections import deque
 from pathlib import Path
@@ -162,7 +164,7 @@ def parse_capture(text: str) -> Capture:
         start = next(
             i
             for i, line in enumerate(lines)
-            if re.match(r"dump\d*:", line.lstrip())
+            if re.match(r"c?dump\d*:", line.lstrip())
             or line.lstrip().startswith("CAP_BEGIN")
         )
     except StopIteration:
@@ -179,12 +181,13 @@ def parse_capture(text: str) -> Capture:
 
     header = lines[start].lstrip()
     is_cap = header.startswith("CAP_BEGIN")
-    # Multi-channel framed dump (dump3:/dump5:/CAP_BEGIN). The channel list in the
-    # header ("... 5 channels (ch17 ch5 ch14 ch16 ch18, ...)") is self-describing:
-    # channels 0-2 are the BEMF voltages, any extras (ch16/ch18) are phase currents.
-    is_multi = bool(re.match(r"dump\d+:", header)) or is_cap
+    # b85 = Ascii85-packed u16 payload (cdump:); otherwise hex. Either way the channel
+    # list in the header ("... 7 channels (ch17 ch5 ch14 ch16 ch18 ch13 ch1, ...)") is
+    # self-describing: channels 0-2 are the BEMF voltages, extras are currents/VBUS.
+    is_b85 = "b85" in header
+    is_multi = bool(re.match(r"dump\d+:", header)) or header.startswith("cdump:") or is_cap
     hdr_chans = re.findall(r"ch\d+", header)
-    m = re.search(r"dump\d*:\s*(\d+)", header)
+    m = re.search(r"c?dump\d*:\s*(\d+)", header)
     if m is None and is_cap:
         m = re.search(r"\bframes=(\d+)", header)
     expected = int(m.group(1)) if m else None
@@ -195,16 +198,25 @@ def parse_capture(text: str) -> Capture:
 
     body = []
     for line in lines[start + 1 :]:
+        # Whole-line "end" is the terminator; b85 payload may contain it as a
+        # substring mid-line, so don't break on substring.
+        if line.strip() == "end":
+            break
         body.append(line)
-        if "end" in line or "CAP_END" in line:
+        if "CAP_END" in line:
             break
 
     is_12bit = "12-bit" in header
-    hex_pat = "[0-9a-fA-F]{4}" if is_12bit else "[0-9a-fA-F]{2}"
     full_scale = 4095 if is_12bit else FULL_SCALE
 
-    blob = " ".join(body).replace("CAP_DATA", " ").replace("CAP_END", " ").replace("end", " ")
-    vals = [int(tok, 16) for tok in blob.split() if re.fullmatch(hex_pat, tok)]
+    if is_b85:
+        # Ascii85-packed u16 little-endian samples; a85decode ignores the newlines.
+        raw = base64.a85decode("".join(body).encode("ascii"))
+        vals = list(struct.unpack(f"<{len(raw) // 2}H", raw[: len(raw) // 2 * 2]))
+    else:
+        hex_pat = "[0-9a-fA-F]{4}" if is_12bit else "[0-9a-fA-F]{2}"
+        blob = " ".join(body).replace("CAP_DATA", " ").replace("CAP_END", " ").replace("end", " ")
+        vals = [int(tok, 16) for tok in blob.split() if re.fullmatch(hex_pat, tok)]
 
     if not is_multi:
         channels = [vals]
@@ -241,9 +253,15 @@ def split_complete_dumps(buffer: str) -> tuple[list[str], str]:
     the dump terminator, so splitting on it isolates whole dumps.
     """
     segments = []
-    while "end" in buffer:
-        seg, buffer = buffer.split("end", 1)
-        if re.search(r"dump\d+:", seg):
+    # Terminator is "end" on its own line. b85 (Ascii85) payload can contain "end" as
+    # a mid-line substring, so anchor the split to a preceding CR/LF.
+    term = re.compile(r"[\r\n]end\b")
+    while True:
+        m = term.search(buffer)
+        if not m:
+            break
+        seg, buffer = buffer[: m.start()], buffer[m.end() :]
+        if re.search(r"c?dump\d*:", seg):
             segments.append(seg)
     return segments, buffer
 
@@ -795,6 +813,7 @@ def render_zc_figure(
     smooth_window: int = 5,
     blank_frames: int = 2,
     confirm: int = 2,
+    show_current: bool = True,
 ) -> list[SectorZc]:
     """Draw the 3-phase ZC plot onto an existing figure (cleared first) and return
     the per-sector ZC list. Shared by plot_zc_snapshot (Agg -> PNG) and the live
@@ -816,11 +835,34 @@ def render_zc_figure(
     fig.clf()
     axes = fig.subplots(3, 1, sharex=True)
     colors = {"A": "tab:green", "B": "tab:blue", "C": "tab:red"}
+    # Phase -> its current channel (by self-describing header label) for the overlay.
+    current_labels = {"A": "ch13", "B": "ch16", "C": "ch18"}
+    cur_color = "#7d5ba6"  # muted purple: distinct from the RGB voltages, gray, orange
 
     for phase_idx, ax in enumerate(axes):
         phase = PHASE_NAMES[phase_idx]
         ch = PHASE_TO_CHANNEL[phase_idx]
         color = colors[phase]
+
+        # Gentle current overlay: the matching phase current on a behind-the-voltage
+        # twinx, pushed into the lower third (generous top padding) so it never
+        # competes with the neutral/ZC story mid-plot. Only for captures carrying the
+        # current channels (7-ch dumps); 3-ch dumps skip it untouched.
+        if show_current:
+            cur_lbl = current_labels.get(phase)
+            ci = capture.labels.index(cur_lbl) if cur_lbl in capture.labels else None
+            if ci is not None and ci < len(smooth):
+                cur = smooth[ci][:frames]
+                cmin, cmax = min(cur), max(cur)
+                span = max(cmax - cmin, 1.0)
+                axc = ax.twinx()
+                axc.plot(t_ms, cur, lw=0.9, color=cur_color, alpha=0.55, zorder=1)
+                axc.set_ylim(cmin - 0.3 * span, cmax + 2.4 * span)
+                axc.set_zorder(ax.get_zorder() - 1)  # behind the voltage axis
+                ax.patch.set_visible(False)  # let the current show through
+                axc.tick_params(axis="y", labelsize=6, colors=cur_color)
+                axc.set_ylabel(f"I_{phase}", fontsize=7, color=cur_color)
+
         ax.plot(t_ms, smooth[ch][:frames], lw=1.2, color=color, label=f"{phase} (smoothed {smooth_window})")
         ax.plot(t_ms, neutral, lw=0.9, ls="--", color="gray", label="virtual neutral (driven pair)")
         # Mark frames the neutral flags as unsettled (boundary transient) -> blanked.
@@ -914,6 +956,7 @@ def plot_zc_snapshot(
     smooth_window: int = 5,
     blank_frames: int = 2,
     confirm: int = 2,
+    show_current: bool = True,
 ) -> list[SectorZc]:
     """Render the three phases with virtual neutral, sector grid and exact ZC marks
     into a PNG."""
@@ -925,6 +968,7 @@ def plot_zc_snapshot(
         smooth_window=smooth_window,
         blank_frames=blank_frames,
         confirm=confirm,
+        show_current=show_current,
     )
     fig.savefig(out_png, dpi=120)
     plt.close(fig)

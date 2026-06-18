@@ -26,6 +26,7 @@
 //!   ] / [   duty trim              +1 / -1 raw CCR count
 //!   w       kill
 //!   d       capture 2 electrical revs from phase zero, then dump 12-bit hex
+//!   c       same capture, Ascii85-packed binary (cdump:, ~2x faster than hex)
 //!   l / k   start / stop continuous live streaming (other commands work as normal)
 //!   q       reset to defaults and run
 
@@ -659,7 +660,7 @@ fn main() -> ! {
         // else is the normal command set, processed unchanged below.
         let streaming = STREAMING.load(Ordering::Relaxed);
         if streaming {
-            run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1);
+            run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1, false);
         }
 
         // Fetch the next command key. Block for one only when idle, so streaming
@@ -692,9 +693,16 @@ fn main() -> ! {
                 }
                 b'd' => {
                     writeln!(tx, "capture: wait zero, 2 electrical revs\r").ok();
-                    run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1);
+                    run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1, false);
                     // Reject re-triggers: drain keys that landed in the RDR during
                     // the long dump (read_ready keeps this non-blocking).
+                    let mut drain = [0u8; 1];
+                    while rx.read_ready().unwrap_or(false) && rx.read(&mut drain).is_ok() {}
+                }
+                b'c' => {
+                    // Same capture as 'd', but Ascii85-packed binary (~2x faster).
+                    writeln!(tx, "capture: wait zero, 2 electrical revs (binary)\r").ok();
+                    run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1, true);
                     let mut drain = [0u8; 1];
                     while rx.read_ready().unwrap_or(false) && rx.read(&mut drain).is_ok() {}
                 }
@@ -749,6 +757,7 @@ fn run_capture<TX: Write>(
     buf_ptr1: *const u16,
     buf1_ptr0: *const u16,
     buf1_ptr1: *const u16,
+    binary: bool,
 ) {
     // Flip to the other buffer; the ISR aims the DMA at CAPTURE_BUF_ADDR for this
     // capture, then flips it onto CAPTURE_BUF_ALT when the window closes.
@@ -793,8 +802,12 @@ fn run_capture<TX: Write>(
     dump_debug_registers(tx);
     // No motor kill, no DMA pause: the DMA is already streaming into the alt buffer
     // (flipped by the ISR), so dump the frozen buffer in place while capture and
-    // commutation keep running.
-    dump_buffer(tx, cap_ptr, cap_ptr1, frames);
+    // commutation keep running. `binary` picks Ascii85-packed (c) vs hex (d).
+    if binary {
+        dump_buffer_b85(tx, cap_ptr, cap_ptr1, frames);
+    } else {
+        dump_buffer(tx, cap_ptr, cap_ptr1, frames);
+    }
 }
 
 /// Dump the (frozen) capture as 12-bit hex (4-digit). One line is one frame:
@@ -823,6 +836,76 @@ fn dump_buffer<TX: Write>(tx: &mut TX, ptr: *const u16, ptr1: *const u16, frames
         writeln!(tx, "\r").ok();
     }
     writeln!(tx, "\rend\r").ok();
+}
+
+/// Encode one 4-byte group (big-endian) as standard Ascii85: 5 base-85 digits, each
+/// +33 ('!'..='u'). For the final short group of `valid` bytes (1..=3, rest zero-
+/// padded) only `valid + 1` chars are emitted. Wraps lines at ~80 chars. Decodes
+/// with Python `base64.a85decode` (which ignores the newlines).
+fn emit_a85_group<TX: Write>(tx: &mut TX, group: &[u8; 4], valid: usize, col: &mut usize) {
+    let num = ((group[0] as u32) << 24)
+        | ((group[1] as u32) << 16)
+        | ((group[2] as u32) << 8)
+        | (group[3] as u32);
+    let mut digits = [0u8; 5];
+    let mut v = num;
+    for d in digits.iter_mut().rev() {
+        *d = (v % 85) as u8 + 33;
+        v /= 85;
+    }
+    let emit = if valid == 4 { 5 } else { valid + 1 };
+    for &d in digits.iter().take(emit) {
+        write!(tx, "{}", d as char).ok();
+        *col += 1;
+        if *col >= 80 {
+            writeln!(tx, "\r").ok();
+            *col = 0;
+        }
+    }
+}
+
+/// Binary counterpart to dump_buffer: the same 7 channels/frame as raw u16
+/// little-endian samples, Ascii85-packed (~1.25x vs 2x for hex -> ~2x faster). The
+/// `cdump:` header mirrors dump7 so the host auto-detects channels/scale; only the
+/// payload codec differs (b85 vs hex).
+fn dump_buffer_b85<TX: Write>(tx: &mut TX, ptr: *const u16, ptr1: *const u16, frames: usize) {
+    writeln!(
+        tx,
+        "cdump: {} frames x 7 channels (ch17 ch5 ch14 ch16 ch18 ch13 ch1, 12-bit, b85, {} Hz)\r",
+        frames, ADC_FRAME_HZ
+    )
+    .ok();
+    let mut group = [0u8; 4];
+    let mut gi = 0usize;
+    let mut col = 0usize;
+    let mut push = |tx: &mut TX, byte: u8| {
+        group[gi] = byte;
+        gi += 1;
+        if gi == 4 {
+            emit_a85_group(tx, &group, 4, &mut col);
+            gi = 0;
+            group = [0u8; 4];
+        }
+    };
+    for frame in 0..frames {
+        for ch in 0..ADC_CHANNELS {
+            let v = unsafe { core::ptr::read_volatile(ptr.add(frame * ADC_CHANNELS + ch)) };
+            push(tx, v as u8);
+            push(tx, (v >> 8) as u8);
+        }
+        for ch in 0..ADC1_CHANNELS {
+            let v = unsafe { core::ptr::read_volatile(ptr1.add(frame * ADC1_CHANNELS + ch)) };
+            push(tx, v as u8);
+            push(tx, (v >> 8) as u8);
+        }
+    }
+    if gi > 0 {
+        emit_a85_group(tx, &group, gi, &mut col); // final short group (zero-padded)
+    }
+    if col > 0 {
+        writeln!(tx, "\r").ok();
+    }
+    writeln!(tx, "end\r").ok();
 }
 
 fn dump_debug_registers<TX: Write>(tx: &mut TX) {
