@@ -43,8 +43,8 @@ pub fn detect_input(dma_buffer: &[u32], _cpu_mhz: u8) -> SignalType {
         }
         last = s;
     }
-    if count > 0 {
-        average_pulse /= count;
+    if let Some(avg) = average_pulse.checked_div(count) {
+        average_pulse = avg;
     }
 
     // Check DShot600: smallest 1-4, average < 60
