@@ -126,6 +126,39 @@ exist (now including deep lock in the mid-band), with the honest reconstruction-
 corner explicitly flagged by the residual map. This is the prerequisite the project was
 built around: the observation is now trustworthy.
 
+## Phase-A anomaly — resolved (not a sense-path gain error)
+
+Earlier per-sector analysis flagged phase A (PA4 / ADC2 ch17) as anomalous: its
+fitted float-window BEMF amplitude read ~half of B/C and it carried a large DC
+offset (`c/R ≈ +2.4`), so A never produced an in-window crossing. The standing
+hypothesis was a linear sense-path error `V_meas = g_A·V_true + o_A`, to be
+confirmed by adding a free gain `g_A` to the fit. The closeout (`scripts/zc_phase_a.py`,
+1500+ solidly-locked mid-band captures) **refutes** that hypothesis on three
+independent lines, all from existing data — no hardware lead-swap needed:
+
+1. **The sense divider is matched.** The driven-rail high plateaus, which pass
+   through the *same* resistor divider as the float read, agree to **1.2%**
+   (A=1658, B=1663, C=1643). A per-channel divider gain error would scale the
+   plateau and the BEMF identically; matched plateaus ⇒ matched sense gain ⇒ no
+   gain error to correct.
+2. **The low float amplitude is operating-point dependent, not fixed.** `R_A/R_C`
+   is not constant: it swings **0.87 → 0.25 → back** as commanded amplitude
+   (= duty = load angle) rises, while the fixed-gain prediction (divider gain
+   A/C ≈ 1.0) is flat. A fixed gain is amplitude-independent by definition;
+   this is a load-angle effect. It is the amplitude-domain face of the
+   electrical-angle-locked per-sector wave (A floats in sectors s2/s5, whose
+   60° windows land on the flatter trapezoid top at the deep-lock load angle).
+3. **The offset half was a neutral-method artifact.** The `c/R ≈ +2.4` was
+   measured against the old `(A+B+C)/3` neutral. Against the validated
+   driven-pair neutral the per-bin median `|c/R| ≤ 0.21` for all three phases.
+
+**Conclusion:** a host-side `g_A` would absorb a real load-angle-dependent
+amplitude swing into a single constant — masking physics, not fixing a
+calibration error. The validated detector is correct to rely on B/C and the
+harmonic *crossing* (amplitude-robust) rather than A's amplitude. The Phase-A
+question is closed. (Figure: `logs/.../phase_a_closeout.png`, regenerate with
+`scripts/zc_phase_a.py <sweep_dir> --render`.)
+
 ## Honest limits
 
 - **The crossing recovered is the fundamental-plus-harmonics crossing of the
@@ -144,6 +177,8 @@ built around: the observation is now trustworthy.
 
 - `scripts/zc_validate.py` — multi-harmonic fit vs direct in-window ZC; the validator.
 - `scripts/zc_map.py` — the (Hz, amp) load-angle / residual surface.
+- `scripts/zc_phase_a.py` — Phase-A sense-gain closeout (driven-rail gain vs
+  amplitude-dependent float ratio vs offset); refutes the gain hypothesis.
 - `scripts/scope_common.py` — driven-pair neutral, settling blank, rotor classifier.
 - `examples/scope1.rs` — valley-sampled 7-channel capture (`dump7` / Ascii85 `cdump`).
 - Controlled validation set and comprehensive sweep under `logs/` (gitignored).

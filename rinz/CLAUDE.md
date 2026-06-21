@@ -415,10 +415,19 @@ lands in a window. Validated: agrees with the 2 in-window direct measurements.
    (C-fall 212°→243°, B-fall 283°→315° over 120→180 Hz) → ordinary load angle,
    not a fixed geometric offset.
 
-**Next: isolate the phase-A anomaly.** Swap motor leads so a different winding
-feeds the PA4-sensed terminal. If the anomaly stays on channel A → sense divider
-(PA4 path); if it follows the winding → motor. Also worth: bench ratiometric
-check of all three dividers at rest with a known applied voltage.
+**Phase-A anomaly — RESOLVED (June 21 2026), no lead-swap needed.** The
+sense-path gain hypothesis is refuted by three data lines (`scripts/zc_phase_a.py`,
+1500+ locked mid-band captures; see the "Phase-A anomaly — resolved" section of
+`BEMF_ZC_DETECTOR.md`): (1) driven-rail plateaus — same divider as the float read
+— match to 1.2% (A=1658/B=1663/C=1643), so the divider gain is not mismatched;
+(2) `R_A/R_C` swings 0.87→0.25→back with commanded amp, i.e. it is load-angle
+dependent, not the constant a fixed gain would give; (3) the old `c/R ≈ +2.4`
+offset was a `(A+B+C)/3` neutral artifact — against the driven-pair neutral the
+per-bin median `|c/R| ≤ 0.21`. The residual A behaviour is the amplitude-domain
+face of the electrical-angle-locked per-sector wave (A floats in s2/s5). A
+host-side `g_A` would mask a real effect, not fix a calibration error. The
+detector relies on B/C + the harmonic crossing and is unaffected. Book closed on
+the observation phase.
 
 ### Live streaming capture (implemented June 2026)
 
