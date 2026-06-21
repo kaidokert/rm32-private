@@ -37,7 +37,7 @@ except ImportError as exc:
     raise SystemExit("missing dependency: pip install pyserial") from exc
 
 sys.path.insert(0, str(Path(__file__).parent))
-from scope_common import BAUD
+from scope_common import BAUD, classify_rotor_state, parse_capture
 
 # Measured stall boundary (min running amp% before dropout) ~ 0.035*hz + 2.6.
 STALL_A = 0.035
@@ -221,6 +221,20 @@ def dump_iu_ma(dump: str):
     return int(m.group(1)) if m else None
 
 
+def rotor_state(ser: serial.Serial, args) -> str:
+    """One capture -> rotor state: 'locked' / 'stalled' / 'uncertain' / '?' (capture
+    or parse failed = firmware not dumping). Used to verify a frequency actually
+    spun up before sweeping its amps -- so an unlockable freq is SKIPPED, not dwelt
+    on (which crawls on timeouts and cooks the rotor)."""
+    dump = capture(ser, args.capture_timeout, "d" if args.hex else "c")
+    try:
+        cap = parse_capture(dump)
+        cap.debug.setdefault("mode", "six-step")
+        return classify_rotor_state(cap).get("state", "?")
+    except Exception:
+        return "?"
+
+
 # --- sweep -------------------------------------------------------------------
 
 
@@ -296,12 +310,32 @@ def main() -> int:
         else:
             print("WARNING: watchdog did NOT arm -- do NOT leave this run unattended")
         try:
+            consec_skips = 0
             for f in freqs:
                 ceil_pct = args.amp_max if args.amp_max is not None else ceiling_amp(f, args.ceiling_lo, args.ceiling_hi)
                 floor_pct = args.amp_min if args.amp_min is not None else max(3.0, stall_amp(f) - args.floor_margin)
                 ceil_t, floor_t, step_t = int(round(ceil_pct * 10)), int(round(floor_pct * 10)), max(1, int(round(args.amp_step * 10)))
-                position(ser, sp, f, ceil_t, qsettle=args.qsettle, ramp_step=args.ramp_step,
-                         ramp_dwell=args.ramp_dwell, transit_margin=args.transit_margin, settle=args.settle)
+                pos_kw = dict(qsettle=args.qsettle, ramp_step=args.ramp_step,
+                              ramp_dwell=args.ramp_dwell, transit_margin=args.transit_margin, settle=args.settle)
+                position(ser, sp, f, ceil_t, **pos_kw)
+                # Verify the rotor actually spun up before sweeping amps. An unlockable
+                # frequency is SKIPPED (kill + next freq), not dwelt on -- dwelling is
+                # what crawled on timeouts and cooked the rotor in the wedged runs.
+                st = rotor_state(ser, args)
+                if st in ("stalled", "?"):
+                    position(ser, sp, f, ceil_t, **pos_kw)  # one more lock attempt
+                    st = rotor_state(ser, args)
+                if st in ("stalled", "?"):
+                    send(ser, "w")
+                    consec_skips += 1
+                    print(f"  SKIP {f}Hz: rotor not spinning ({st} x2) -- can't lock "
+                          f"[{consec_skips} in a row]")
+                    if consec_skips >= 8:
+                        print("  ABORT: 8 frequencies failed in a row -- firmware/motor "
+                              "likely dead (check the bench / power-cycle)")
+                        break
+                    continue
+                consec_skips = 0  # this freq locked -> reset the run
                 fpath = outdir / f"f{f:03d}hz.log"
                 with fpath.open("a", encoding="ascii", errors="replace") as fh:
                     amp_t = ceil_t
