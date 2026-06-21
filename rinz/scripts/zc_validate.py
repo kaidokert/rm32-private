@@ -49,33 +49,38 @@ from scope_common import (
 TWO_PI = 2.0 * math.pi
 
 
-def fit_sinusoid(angles, vals):
-    """Least-squares a*cos+b*sin+c; returns (a, b, c, rms_residual). (from zc_fit)"""
+SECTOR = TWO_PI / 6.0
+
+
+def fit_harmonics(angles, vals, n):
+    """Least-squares fit c0 + sum_{h=1..n} a_h*cos(h t) + b_h*sin(h t). The BEMF is
+    NOT a pure sinusoid (trapezoidal-ish), so the fundamental-only fit (n=1) crosses
+    at a different angle than the real waveform -- n=2..3 captures the distortion and
+    matches the direct ZC. Returns the coefficient vector [c0, a1, b1, a2, b2, ...]."""
     t = np.asarray(angles)
     y = np.asarray(vals)
-    A = np.column_stack([np.cos(t), np.sin(t), np.ones_like(t)])
-    coef, *_ = np.linalg.lstsq(A, y, rcond=None)
-    a, b, c = coef
-    resid = y - A @ coef
-    rms = float(np.sqrt(np.mean(resid**2))) if len(resid) else float("nan")
-    return float(a), float(b), float(c), rms
+    cols = [np.ones_like(t)]
+    for h in range(1, n + 1):
+        cols += [np.cos(h * t), np.sin(h * t)]
+    coef, *_ = np.linalg.lstsq(np.column_stack(cols), y, rcond=None)
+    return coef
 
 
-def zero_crossings(a, b, c):
-    """Angles in [0, 2pi) where a*cos t + b*sin t + c = 0, with direction."""
-    r = math.hypot(a, b)
-    if r < 1e-9 or abs(c) > r:
-        return []
-    psi = math.atan2(a, b)
-    base = math.asin(-c / r)
-    out = []
-    for theta_shift in (base, math.pi - base):
-        t = (theta_shift - psi) % TWO_PI
-        deriv = -a * math.sin(t) + b * math.cos(t)
-        out.append((t, "rise" if deriv > 0 else "fall"))
-    return sorted(out)
-
-SECTOR = TWO_PI / 6.0
+def crossing_pct(coef, n, sector):
+    """% position within `sector`'s float window where the fitted BEMF crosses zero
+    (no closed form for n>1 -> dense eval + linear interp). None if no crossing."""
+    center = (sector + 0.5) * SECTOR
+    ts = np.linspace(center - SECTOR / 2, center + SECTOR / 2, 400)
+    f = np.full_like(ts, coef[0])
+    for h in range(1, n + 1):
+        f += coef[2 * h - 1] * np.cos(h * ts) + coef[2 * h] * np.sin(h * ts)
+    idx = np.where(np.diff(np.sign(f)) != 0)[0]
+    if len(idx) == 0:
+        return None
+    j = idx[np.argmin(np.abs(ts[idx] - center))]
+    t0, t1, f0, f1 = ts[j], ts[j + 1], f[j], f[j + 1]
+    tc = t0 - f0 * (t1 - t0) / (f1 - f0)  # linear interp to the zero
+    return ((tc - center) / SECTOR + 0.5) * 100.0
 # Phase -> its current channel label (self-describing dump7 header).
 CUR_LABEL = {0: "ch13", 1: "ch16", 2: "ch18"}
 
@@ -89,84 +94,47 @@ def _low_phase(sector: int) -> int:
     return SIX_STEP_LOW[sector % 6]
 
 
-def analyze_one(cap, *, smooth: int = 3, blank: int = 2):
-    """Return per-physical-sector estimates for one capture, or None if unusable.
-
-    Each entry: sector -> dict(float_phase, zc_in (list of %), zc_fit_pct,
-    i_slope (current ramp slope of the low-driven phase, counts/frame)).
+def analyze_one(cap, *, smooth: int = 3, blank: int = 2, harmonics=(1, 3)):
+    """Compare the direct in-window ZC against the harmonic fit for each harmonic
+    count in `harmonics` (pooled over the capture). Returns a list of comparison
+    records (one per in-window crossing), each with a "h{n}" key per harmonic count.
     """
     hz = float(cap.debug.get("hz", "0") or 0)
     if hz <= 0 or len(cap.channels) < 3:
-        return None
+        return []
     sm = lowpass_channels(cap.channels, smooth)
     frames = min(len(c) for c in sm)
     fps = cap.sample_hz / (hz * 6.0)
     fpr = cap.sample_hz / hz
     neutral = _driven_pair_neutral(sm, frames, fps)
-
-    # 1. in-window ZC (analyze_zero_crossings already uses the driven-pair neutral)
     sectors, _, _ = analyze_zero_crossings(cap, smooth_window=smooth, blank_frames=blank)
-    zc_in = defaultdict(list)
-    for sec in sectors:
-        if sec.status == "zc" and sec.zc_pct is not None:
-            zc_in[sec.index % 6].append(sec.zc_pct)
 
-    # 2. zc_fit: pool this capture's float-window samples per phase, fit sinusoid.
-    samp = {p: ([], []) for p in range(3)}
-    cur_by_sec = defaultdict(list)  # physical sector -> [(pos_in_sector, current)]
-    labels = cap.labels
+    samp = defaultdict(lambda: ([], []))  # phase -> (angles, e=v_float-neutral)
     for i in range(frames):
         k = int(i / fps)
-        frac = (i - k * fps) / fps  # 0..1 within the sector
-        if frac < blank / fps:
+        if (i - k * fps) < blank:
             continue
-        s = k % 6
-        fl = _float_phase(s)
-        theta = (i / fpr) * TWO_PI
-        samp[fl][0].append(theta)
+        fl = _float_phase(k % 6)
+        samp[fl][0].append((i / fpr) * TWO_PI)
         samp[fl][1].append(sm[PHASE_TO_CHANNEL[fl]][i] - neutral[i])
-        # current of the LOW-driven phase (the one carrying shunt current here)
-        lp = _low_phase(s)
-        clab = CUR_LABEL[lp]
-        if clab in labels:
-            cur_by_sec[s].append((frac, sm[labels.index(clab)][i]))
+    # coef[(n, phase)] for each harmonic count and phase with enough samples
+    coef = {}
+    for fl, (ang, val) in samp.items():
+        if len(ang) >= 2 * max(harmonics) + 4:
+            for n in harmonics:
+                coef[(n, fl)] = fit_harmonics(ang, val, n)
 
-    fits = {p: fit_sinusoid(*samp[p]) for p in range(3) if len(samp[p][0]) >= 8}
-    zc_fit_cross = {p: zero_crossings(*fits[p][:3]) for p in fits}
-
-    out = {}
-    for k in range(6):
-        fl = _float_phase(k)
-        entry = {"float_phase": fl, "zc_in": zc_in.get(k, [])}
-        # zc_fit: crossing nearest this window's centre -> % of window
-        if fl in zc_fit_cross and zc_fit_cross[fl]:
-            center = (k + 0.5) * SECTOR
-            t, _d = min(
-                zc_fit_cross[fl],
-                key=lambda td: abs(((td[0] - center + math.pi) % TWO_PI) - math.pi),
-            )
-            off = (((t - center + math.pi) % TWO_PI) - math.pi) / SECTOR  # -0.5..+0.5 in window
-            entry["zc_fit_pct"] = (off + 0.5) * 100.0
-            entry["zc_fit_inwin"] = abs(off) <= 0.5
-        else:
-            entry["zc_fit_pct"] = None
-            entry["zc_fit_inwin"] = False
-        # current ramp slope of the low-driven phase (counts per fractional sector)
-        pts = cur_by_sec.get(k, [])
-        if len(pts) >= 4:
-            xs = [p[0] for p in pts]
-            ys = [p[1] for p in pts]
-            n = len(xs)
-            mx = sum(xs) / n
-            my = sum(ys) / n
-            denom = sum((x - mx) ** 2 for x in xs)
-            entry["i_slope"] = (
-                sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom if denom else 0.0
-            )
-        else:
-            entry["i_slope"] = None
-        out[k] = entry
-    return out
+    comps = []
+    for sec in sectors:
+        if sec.status != "zc" or sec.zc_pct is None:
+            continue
+        s = sec.index % 6
+        fl = _float_phase(s)
+        rec = {"hz": int(hz), "amp": int(cap.debug.get("amp", 0)), "sector": s, "zc_in": sec.zc_pct}
+        for n in harmonics:
+            rec[f"h{n}"] = crossing_pct(coef[(n, fl)], n, s) if (n, fl) in coef else None
+        comps.append(rec)
+    return comps
 
 
 def load_captures(paths):
@@ -185,82 +153,82 @@ def load_captures(paths):
     return caps
 
 
+def _stats(diffs):
+    d = sorted(diffs)
+    if not d:
+        return None
+    n = len(d)
+    return {
+        "n": n,
+        "median": d[n // 2],
+        "mean": sum(d) / n,
+        "max": max(d),
+        "lt5": sum(1 for x in d if x < 5),
+        "lt10": sum(1 for x in d if x < 10),
+        "gt20": sum(1 for x in d if x > 20),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", type=Path)
     ap.add_argument("--smooth", type=int, default=3)
     ap.add_argument("--blank", type=int, default=2)
-    ap.add_argument("--per-capture", action="store_true", help="dump every capture, not the aggregate")
+    ap.add_argument("--harmonics", type=int, nargs="+", default=[1, 2, 3],
+                    help="harmonic counts to compare (default 1 2 3)")
+    ap.add_argument("--by-hz", action="store_true", help="break the comparison down per frequency")
     args = ap.parse_args()
 
     caps = load_captures(args.paths)
     if not caps:
         raise SystemExit("no parsable captures")
-    print(f"loaded {len(caps)} captures")
 
-    # Aggregate per (hz, amp) -> per sector lists.
-    agg = defaultdict(lambda: defaultdict(lambda: {"zc_in": [], "zc_fit": [], "i_slope": [], "inwin": 0}))
-    pooled = {"diff": [], "n_inwin": 0}
+    harm = tuple(args.harmonics)
+    comps = []
     for cap in caps:
-        res = analyze_one(cap, smooth=args.smooth, blank=args.blank)
-        if res is None:
-            continue
-        hz = int(float(cap.debug.get("hz", 0)))
-        amp = int(cap.debug.get("amp", 0))
-        for k, e in res.items():
-            a = agg[(hz, amp)][k]
-            a["zc_in"].extend(e["zc_in"])
-            if e["zc_fit_pct"] is not None:
-                a["zc_fit"].append(e["zc_fit_pct"])
-            if e["i_slope"] is not None:
-                a["i_slope"].append(e["i_slope"])
-            # the validation: where an in-window ZC exists, compare to zc_fit
-            if e["zc_in"] and e["zc_fit_pct"] is not None:
-                a["inwin"] += len(e["zc_in"])
-                for z in e["zc_in"]:
-                    pooled["diff"].append(abs(z - e["zc_fit_pct"]))
-                    pooled["n_inwin"] += 1
+        comps.extend(analyze_one(cap, smooth=args.smooth, blank=args.blank, harmonics=harm))
+    print(f"loaded {len(caps)} captures, {len(comps)} in-window crossings to validate")
+    if not comps:
+        print("no in-window crossings -> no ground truth here (need catch-boundary captures).")
+        return 0
 
-    mean = lambda xs: sum(xs) / len(xs) if xs else float("nan")
-    for (hz, amp), secs in sorted(agg.items()):
-        print(f"\n=== hz={hz} amp={amp/10:.1f}% ===")
-        print("sec float | zc_in%   zc_fit%  |diff|  inwin | i_slope(low-drv)")
-        for k in range(6):
-            e = secs[k]
-            zi = mean(e["zc_in"]) if e["zc_in"] else None
-            zf = mean(e["zc_fit"]) if e["zc_fit"] else None
-            islope = mean(e["i_slope"]) if e["i_slope"] else None
-            diff = abs(zi - zf) if (zi is not None and zf is not None) else None
-            zi_s = f"{zi:6.1f}" if zi is not None else "   -- "
-            zf_s = f"{zf:6.1f}" if zf is not None else "   -- "
-            df_s = f"{diff:5.1f}" if diff is not None else "  -- "
-            is_s = f"{islope:+7.1f}" if islope is not None else "   -- "
-            print(
-                f" {k}   {PHASE_NAMES[_float_phase(k)]}   "
-                f"{zi_s}  {zf_s}  {df_s}  {e['inwin']:4d}  | {is_s}"
+    def diffs(n, recs):
+        return [abs(c["zc_in"] - c[f"h{n}"]) for c in recs if c.get(f"h{n}") is not None]
+
+    if args.by_hz:
+        by_hz = defaultdict(list)
+        for c in comps:
+            by_hz[c["hz"]].append(c)
+        head = "  ".join(f"{n}h-med" for n in harm)
+        print(f"\nhz  |   n   {head}   (median % of 60deg window)")
+        for hz in sorted(by_hz):
+            recs = by_hz[hz]
+            cells = "  ".join(
+                f"{(_stats(diffs(n, recs)) or {'median': float('nan')})['median']:5.1f}%" for n in harm
             )
+            print(f"{hz} | {len(recs):3d}   {cells}")
 
-    print("\n=== VALIDATION (where in-window ZC exists, does zc_fit match?) ===")
-    if pooled["n_inwin"]:
-        d = sorted(pooled["diff"])
-        med = d[len(d) // 2]
-        # A window is 60 deg electrical, so 1% of window = 0.6 deg.
-        print(f"  {pooled['n_inwin']} in-window crossings compared to zc_fit (1% window = 0.6 deg elec)")
-        print(f"  |zc_in - zc_fit|: median {med:.1f}% (~{med*0.6:.1f} deg)  mean {mean(d):.1f}%  max {max(d):.1f}%")
-        print(f"  agreement <5%: {sum(1 for x in d if x < 5)}/{len(d)}   "
-              f"<10%: {sum(1 for x in d if x < 10)}/{len(d)}   "
-              f">20% (outliers): {sum(1 for x in d if x > 20)}/{len(d)}")
-        outlier_frac = sum(1 for x in d if x > 20) / len(d)
-        if med < 10 and outlier_frac < 0.15:
-            print("  -> zc_fit TRACKS the direct ZC (tight median, few outliers) -> trust it in deep lock.")
-        elif med < 10:
-            print(f"  -> zc_fit tracks the BULK (median {med:.1f}%) but has a {outlier_frac:.0%} outlier tail")
-            print("     (likely wrong-crossing association or noisy/marginal fits) -> diagnose the tail.")
+    print("\n=== HARMONIC fit vs direct in-window ZC (1% window = 0.6 deg elec) ===")
+    best = None
+    for n in harm:
+        s = _stats(diffs(n, comps))
+        if not s:
+            continue
+        print(
+            f"  {n} harmonic{'s' if n > 1 else ' '}: median {s['median']:4.1f}% (~{s['median']*0.6:.1f} deg)  "
+            f"mean {s['mean']:4.1f}%  max {s['max']:5.1f}%  "
+            f"<10%: {s['lt10']}/{s['n']}  >20% (outliers): {s['gt20']}/{s['n']}"
+        )
+        if best is None or s["gt20"] < best[1]["gt20"]:
+            best = (n, s)
+    if best:
+        n, s = best
+        if s["gt20"] == 0:
+            print(f"\n  -> {n}-harmonic fit ELIMINATES the outlier tail (0 >20%): the reconstruction")
+            print("     matches the direct ZC across every regime with ground truth. The 1-harmonic")
+            print("     gap was BEMF harmonic distortion, not speed/hunting/sensing.")
         else:
-            print("  -> zc_fit does NOT track the direct ZC -> reconstruction suspect even in the bulk.")
-    else:
-        print("  no in-window crossings in this set -> no ground truth to validate against here.")
-        print("  (need captures near the catch boundary where the ZC lands in-window.)")
+            print(f"\n  -> {n}-harmonic fit is the tightest ({s['gt20']} outliers remain).")
     return 0
 
 
