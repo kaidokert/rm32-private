@@ -195,6 +195,32 @@ def capture(ser: serial.Serial, timeout: float, key: str = "c") -> str:
     return buf
 
 
+def set_watchdog(ser: serial.Serial, want_armed: bool) -> bool:
+    """Drive the firmware command-watchdog to a known state. 'p' TOGGLES it, so we
+    send + read the echo and retry if it went the wrong way. Armed = the firmware
+    kills the motor itself after ~10 s of no serial activity (protects unattended
+    runs against a host hang -- the thing that cooks a stalled motor)."""
+    target = "ARMED" if want_armed else "disarmed"
+    other = "disarmed" if want_armed else "ARMED"
+    for _ in range(3):
+        send(ser, "p")
+        time.sleep(0.2)
+        echo = drain(ser)
+        if target in echo:
+            return True
+        if other not in echo:  # no echo at all -> firmware busy; brief wait, retry
+            time.sleep(0.2)
+    return False
+
+
+_IU_RE = re.compile(r"iu_ma=(\d+)")
+
+
+def dump_iu_ma(dump: str):
+    m = _IU_RE.search(dump)
+    return int(m.group(1)) if m else None
+
+
 # --- sweep -------------------------------------------------------------------
 
 
@@ -232,6 +258,7 @@ def parse_args() -> argparse.Namespace:
                         "(~stall+6%%) or the rotor rides the below-catch slip branch, not true lock.")
     p.add_argument("--capture-timeout", type=float, default=4.0)
     p.add_argument("--hex", action="store_true", help="hex dumps ('d') instead of binary Ascii85 ('c', default, ~2x faster)")
+    p.add_argument("--current-limit", type=int, default=3500, help="iu_ma over this for 2 consecutive captures -> kill + skip freq (host-alive stall guard)")
     p.add_argument("--outdir", type=Path, default=None)
     return p.parse_args()
 
@@ -263,6 +290,11 @@ def main() -> int:
         ser.reset_input_buffer()
         sp = Setpoint()
         done = 0
+        if set_watchdog(ser, True):
+            print("watchdog ARMED -- firmware self-kills the motor after ~10s of no serial "
+                  "(a host hang can't cook the motor); disarmed on clean exit/Ctrl-C")
+        else:
+            print("WARNING: watchdog did NOT arm -- do NOT leave this run unattended")
         try:
             for f in freqs:
                 ceil_pct = args.amp_max if args.amp_max is not None else ceiling_amp(f, args.ceiling_lo, args.ceiling_hi)
@@ -273,11 +305,26 @@ def main() -> int:
                 fpath = outdir / f"f{f:03d}hz.log"
                 with fpath.open("a", encoding="ascii", errors="replace") as fh:
                     amp_t = ceil_t
-                    while amp_t >= floor_t:
+                    over = 0
+                    aborted = False
+                    while amp_t >= floor_t and not aborted:
                         ramp_amp_to(ser, sp, amp_t)
                         time.sleep(args.settle)
                         for snap in range(args.snaps):
                             dump = capture(ser, args.capture_timeout, "d" if args.hex else "c")
+                            # Host-alive stall guard: sustained over-current = likely a
+                            # stalled rotor cooking. Kill and skip the rest of this freq.
+                            iu = dump_iu_ma(dump)
+                            if iu is not None and iu > args.current_limit:
+                                over += 1
+                                if over >= 2:
+                                    send(ser, "w")
+                                    print(f"  CURRENT ABORT: iu_ma={iu} > {args.current_limit} "
+                                          f"at {f}Hz/{amp_t/10:.1f}% -- killed, skipping this freq")
+                                    aborted = True
+                                    break
+                            else:
+                                over = 0
                             fh.write(f"# hz_set={f} amp_set={amp_t/10:.1f} snap={snap} t={datetime.now().isoformat(timespec='milliseconds')}\n")
                             fh.write(dump if dump.endswith("\n") else dump + "\n")
                             manifest.write(f"{f},{amp_t/10:.1f},{snap},{fpath.name}\n")
@@ -294,6 +341,12 @@ def main() -> int:
             except Exception:
                 pass
         finally:
+            # Clean exit / Ctrl-C disarms. A HANG never reaches here -> watchdog stays
+            # armed -> firmware fires -> motor safe.
+            try:
+                set_watchdog(ser, False)
+            except Exception:
+                pass
             manifest.close()
     print(f"sweep complete: {done} captures in {outdir}")
     return 0

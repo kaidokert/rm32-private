@@ -28,6 +28,8 @@
 //!   d       capture 2 electrical revs from phase zero, then dump 12-bit hex
 //!   c       same capture, Ascii85-packed binary (cdump:, ~2x faster than hex)
 //!   l / k   start / stop continuous live streaming (binary, like 'c'; other cmds work)
+//!   p       toggle the command watchdog (default off): armed -> ISR kills the motor
+//!           after 10 s of no serial activity (a hung host can't cook a stalled rotor)
 //!   q       reset to defaults and run
 
 #![no_std]
@@ -74,6 +76,9 @@ const AMP_START: u32 = 90; // 9.0 % (6.0 % actual duty)
 const FREQ_MIN: u32 = 1;
 const FREQ_MAX: u32 = 1200;
 const FREQ_START: u32 = 60;
+// Command-watchdog timeout: 10 s at the TIM7 drive rate (long enough never to
+// false-trip between captures, short enough to limit damage on a host hang).
+const WATCHDOG_TIMEOUT_TICKS: u32 = 10 * DRIVE_HZ;
 
 // TIM1_TRGO-triggered ADC2 scan of the three BEMF phases:
 // ch17/PA4, ch5/PC4, ch14/PB11 — one 3-channel scan per PWM period at the valley.
@@ -129,6 +134,16 @@ static DUTY_TRIM: AtomicI32 = AtomicI32::new(0);
 // Live-stream toggle: 'l' sets it, 'k'/'w' clear it. The main idle loop services
 // one back-to-back dump per pass while set; all other commands stay unchanged.
 static STREAMING: AtomicBool = AtomicBool::new(false);
+// Opt-in command watchdog ('p' toggles; default OFF). While armed, the TIM7 ISR
+// kills the motor if there's been no serial activity (pet) for WATCHDOG_TIMEOUT_TICKS
+// -- protects against a hung host leaving the rotor energized (which cooks a stalled
+// motor). Petted on every received byte and at each run_capture (so streaming stays
+// alive). The sweep arms it at start and disarms in a finally, so a clean exit or
+// Ctrl-C disarms but a HANG (finally never runs) leaves it armed -> fires -> safe.
+static WATCHDOG_ARMED: AtomicBool = AtomicBool::new(false);
+static WATCHDOG_FIRED: AtomicBool = AtomicBool::new(false);
+static WATCHDOG_TICKS: AtomicU32 = AtomicU32::new(0);
+static IDLE_DUTY: AtomicU32 = AtomicU32::new(0); // CCR for the killed/idle state (half ARR)
 static CAPTURE_REQUEST: AtomicBool = AtomicBool::new(false);
 static CAPTURE_DONE: AtomicBool = AtomicBool::new(false);
 static CAPTURE_FRAMES: AtomicU32 = AtomicU32::new(0);
@@ -248,6 +263,20 @@ fn restore_all_af() {
     unsafe { set_phase_modes(false, false, false) }
 }
 
+/// De-energize the motor: all phases driven to the idle half duty -> no inter-phase
+/// voltage -> no current. The single kill path, shared by the 'w' command and the
+/// watchdog ISR -- raw registers only (no HAL handles), so it's callable from the ISR.
+fn kill_motor() {
+    restore_all_af();
+    let t1 = unsafe { &*stm32::TIM1::ptr() };
+    let half = IDLE_DUTY.load(Ordering::Relaxed);
+    t1.ccr1().write(|w| unsafe { w.ccr().bits(half) });
+    t1.ccr2().write(|w| unsafe { w.ccr().bits(half) });
+    t1.ccr3().write(|w| unsafe { w.ccr().bits(half) });
+    RUNNING.store(false, Ordering::Relaxed);
+    STREAMING.store(false, Ordering::Relaxed);
+}
+
 /// Route TIM1_TRGO directly to ADC2 — one trigger per PWM period at the valley.
 ///
 /// CCR4=1 with PWM mode 1 in center-aligned mode: OC4REF is HIGH only while
@@ -362,20 +391,11 @@ fn board_init(dp_rcc: stm32::RCC, dp_pwr: stm32::PWR) -> BoardInit {
     }
 }
 
-/// Handle one serial command byte. Generic over the USART tx and the three PWM
-/// channels.
-fn handle_command<TX, C1, C2, C3>(
-    cmd: u8,
-    tx: &mut TX,
-    c1: &mut C1,
-    c2: &mut C2,
-    c3: &mut C3,
-    half: u16,
-) where
+/// Handle one serial command byte (drive is set from atomics in the ISR; the kill
+/// goes through the shared kill_motor()).
+fn handle_command<TX>(cmd: u8, tx: &mut TX)
+where
     TX: Write,
-    C1: SetDutyCycle,
-    C2: SetDutyCycle,
-    C3: SetDutyCycle,
 {
     match cmd {
         b'f' => {
@@ -435,11 +455,7 @@ fn handle_command<TX, C1, C2, C3>(
             writeln!(tx, "trim={}\r", trim).ok();
         }
         b'w' => {
-            RUNNING.store(false, Ordering::Relaxed);
-            restore_all_af();
-            let _ = c1.set_duty_cycle(half);
-            let _ = c2.set_duty_cycle(half);
-            let _ = c3.set_duty_cycle(half);
+            kill_motor();
             writeln!(tx, "kill\r").ok();
         }
         b'q' => {
@@ -516,6 +532,7 @@ fn main() -> ! {
     let mut c3 = c3.into_complementary(gpiob.pb15.into_alternate::<4>());
 
     let half = c1.max_duty_cycle() as u32 / 2;
+    IDLE_DUTY.store(half, Ordering::Relaxed); // watchdog_kill drives all phases here
     c1.enable();
     c2.enable();
     c3.enable();
@@ -684,7 +701,26 @@ fn main() -> ! {
         };
 
         if let Some(k) = key {
+            WATCHDOG_TICKS.store(0, Ordering::Relaxed); // pet: any serial activity
+            if WATCHDOG_FIRED.swap(false, Ordering::Relaxed) {
+                writeln!(tx, "watchdog: FIRED -- motor was killed (host stall)\r").ok();
+            }
             match k {
+                b'p' => {
+                    let armed = !WATCHDOG_ARMED.load(Ordering::Relaxed);
+                    WATCHDOG_ARMED.store(armed, Ordering::Relaxed);
+                    WATCHDOG_TICKS.store(0, Ordering::Relaxed);
+                    if armed {
+                        writeln!(
+                            tx,
+                            "watchdog: ARMED ({}s)\r",
+                            WATCHDOG_TIMEOUT_TICKS / DRIVE_HZ
+                        )
+                        .ok();
+                    } else {
+                        writeln!(tx, "watchdog: disarmed\r").ok();
+                    }
+                }
                 b'l' => {
                     STREAMING.store(true, Ordering::Relaxed);
                     writeln!(tx, "stream: start (k stops)\r").ok();
@@ -712,9 +748,9 @@ fn main() -> ! {
                     // Kill also leaves stream mode (a streaming run_capture would
                     // otherwise re-assert RUNNING on the next pass).
                     STREAMING.store(false, Ordering::Relaxed);
-                    handle_command(b'w', &mut tx, &mut c1, &mut c2, &mut c3, half as u16);
+                    handle_command(b'w', &mut tx);
                 }
-                other => handle_command(other, &mut tx, &mut c1, &mut c2, &mut c3, half as u16),
+                other => handle_command(other, &mut tx),
             }
         }
     }
@@ -761,6 +797,7 @@ fn run_capture<TX: Write>(
     buf1_ptr1: *const u16,
     binary: bool,
 ) {
+    WATCHDOG_TICKS.store(0, Ordering::Relaxed); // pet: keeps the watchdog fed while streaming
     // Flip to the other buffer; the ISR aims the DMA at CAPTURE_BUF_ADDR for this
     // capture, then flips it onto CAPTURE_BUF_ALT when the window closes.
     let sel = !BUF_SEL.load(Ordering::Relaxed);
@@ -968,6 +1005,18 @@ extern "C" fn TIM7() {
 
     if !RUNNING.load(Ordering::Relaxed) {
         return;
+    }
+
+    // Command watchdog: while armed (and not already fired), count up; if no serial
+    // pet for the timeout, kill the motor here in the ISR -- independent of the main
+    // loop, so a hung host can't keep a stalled rotor energized.
+    if WATCHDOG_ARMED.load(Ordering::Relaxed) && !WATCHDOG_FIRED.load(Ordering::Relaxed) {
+        let t = WATCHDOG_TICKS.fetch_add(1, Ordering::Relaxed) + 1;
+        if t >= WATCHDOG_TIMEOUT_TICKS {
+            kill_motor();
+            WATCHDOG_FIRED.store(true, Ordering::Relaxed);
+            return;
+        }
     }
 
     let electrical_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
