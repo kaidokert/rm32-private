@@ -174,10 +174,25 @@ def position(
     time.sleep(max(settle, 0.3))
 
 
-def capture(ser: serial.Serial, timeout: float) -> str:
+_TERM_RE = re.compile(r"[\r\n]end\b")
+
+
+def capture(ser: serial.Serial, timeout: float, key: str = "c") -> str:
+    """Trigger one capture ('c' = binary Ascii85, ~2x faster than 'd' = hex) and read
+    until the line-anchored 'end' -- b85 payload can contain 'end' as a substring, so
+    a bare `marker in buf` would stop early."""
     drain(ser)
-    send(ser, "d")
-    return read_until(ser, "end", timeout)
+    send(ser, key)
+    buf = ""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        n = ser.in_waiting
+        chunk = ser.read(n) if n else ser.read(1)
+        if chunk:
+            buf += chunk.decode("ascii", errors="replace")
+            if _TERM_RE.search(buf):
+                break
+    return buf
 
 
 # --- sweep -------------------------------------------------------------------
@@ -216,6 +231,7 @@ def parse_args() -> argparse.Namespace:
                    help="amp %% above stall held during freq ramp. MUST clear the lock-catch "
                         "(~stall+6%%) or the rotor rides the below-catch slip branch, not true lock.")
     p.add_argument("--capture-timeout", type=float, default=4.0)
+    p.add_argument("--hex", action="store_true", help="hex dumps ('d') instead of binary Ascii85 ('c', default, ~2x faster)")
     p.add_argument("--outdir", type=Path, default=None)
     return p.parse_args()
 
@@ -261,7 +277,7 @@ def main() -> int:
                         ramp_amp_to(ser, sp, amp_t)
                         time.sleep(args.settle)
                         for snap in range(args.snaps):
-                            dump = capture(ser, args.capture_timeout)
+                            dump = capture(ser, args.capture_timeout, "d" if args.hex else "c")
                             fh.write(f"# hz_set={f} amp_set={amp_t/10:.1f} snap={snap} t={datetime.now().isoformat(timespec='milliseconds')}\n")
                             fh.write(dump if dump.endswith("\n") else dump + "\n")
                             manifest.write(f"{f},{amp_t/10:.1f},{snap},{fpath.name}\n")
