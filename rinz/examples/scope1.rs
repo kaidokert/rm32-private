@@ -72,7 +72,7 @@ const STEPS_PER_LOGICAL_SECTOR: u32 = ELEC_STEPS_PER_REV / LOGICAL_SECTORS;
 // amp is in 0.1% units of the drive scale; six-step duty = amp * 2/3.
 // 1425 (142.5%) maps to 95% actual PWM duty — the design ceiling.
 const AMP_CAP: u32 = 1425;
-const AMP_START: u32 = 90; // 9.0 % (6.0 % actual duty)
+const AMP_START: u32 = 110; // 11.0 % (7.3 % actual duty)
 const FREQ_MIN: u32 = 1;
 const FREQ_MAX: u32 = 1200;
 const FREQ_START: u32 = 60;
