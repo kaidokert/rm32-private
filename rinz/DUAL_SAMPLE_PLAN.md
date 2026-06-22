@@ -127,16 +127,24 @@ on valley, ≈ 0 on peak). Then `scope_pv.py` tested the actual payoff:
     swings 34–97% with load angle) → not a usable ZC indicator;
   - **naive dual-pooling degrades the fit to ~9%** (vs valley-only 1.5%).
   So wins #1 (2× density) and #3 (comparator cross-check) do **not** materialize.
-  Win #2 (low-duty rescue) is untested and now doubtful given the peak's poor BEMF
-  fidelity even at a comfortable 15% duty — needs a low-duty capture to settle.
 
-**Net:** the firmware + infra are sound and backward-compatible (valley sub-stream).
-The envelope figure is a useful diagnostic that *shows* the peak's compression/offset
-directly. But the headline dual-sampling wins didn't pan out: for routine observation
-`scope1` (valley-only, half the data, same BEMF) is the leaner choice; `scope2` is the
-diagnostic/experimental path. Don't invest further in peak-as-BEMF unless a low-duty
-capture proves the rescue. *(One operating point — the valley result is solid; confirm
-the peak verdict across duty/RPM before discarding the OFF-window scan for good.)*
+- ❌ **Win #2 (low-duty rescue) FALSIFIED** by a targeted probe (100 Hz, amp swept
+  15%→4% into the valley-pinch zone; `logs/sweep_20260621_182510`, `rescue_test_100hz.png`).
+  As duty falls the peak/valley ratio *falls* (0.27 → ~0.08), the **opposite** of a
+  rescue; in the actual pinch zone (4–5%, where valley spread jumps to 22–55% and the
+  rotor goes uncertain) the peak is either negligible (~0.03) or pure noise (>50).
+  The peak never becomes usable at any duty. Bonus finding: the **valley is more robust
+  than the premise assumed** — it stays well-sensed (spread ~2%, locked) down to ~5–6%,
+  so the "pinch zone needing rescue" is tiny and the peak fails there too. Pooling peak
+  always degrades the fit (valley-only median 4.0% vs +peak 6.1%, frequent blowups).
+
+**Net (all three wins falsified):** the OFF-window peak scan adds nothing on this
+topology — forcing both driven terminals to GND destroys the star reference the
+valley's {Vbus,GND} pair provides. The firmware + infra are sound and backward-
+compatible (valley sub-stream == scope1), and the envelope figure is a useful
+diagnostic, but **for observation use `scope1`** (valley-only, half the data, same
+BEMF). `scope2` is the diagnostic/experimental path. Book closed on dual sampling
+as a BEMF-observation improvement.
 
 ⚠️ Do NOT feed raw interleaved captures to `zc_validate.py` / `zc_map.py` / `zc_fit.py`
 (the alternating frames zigzag) — `deinterleave(cap)[0]` first, then analyze the valley
