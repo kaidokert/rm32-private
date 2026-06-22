@@ -2,7 +2,8 @@
 //! `rinz::cl::ClLoop` controller (detector → ZC-to-ZC period PI filter → commutate
 //! ~30° after the ZC) drives commutation, alpha-blended with the open-loop schedule:
 //!   target = ol_period + alpha·clamp(loop_target − ol_period, ±CL_SLEW_FRAC·ol_period)
-//! `alpha` (keys u/i, slam to 0 with o; also zeroed by w/q/watchdog) ranges 0..1:
+//! `alpha` (keys 0/1/2/3 = 0.0/0.2/0.5/1.0; 0 = instant fallback; also zeroed by
+//! w/q/watchdog) ranges 0..1:
 //!   alpha=0  → commutate exactly on the open-loop schedule = the governor / instant
 //!             fallback (spin up here, then raise alpha);
 //!   alpha=1  → the loop may nudge commutation within ±CL_SLEW_FRAC of the open-loop
@@ -564,7 +565,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp u/i=alpha-/+ o=alpha0(fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -806,20 +807,26 @@ fn main() -> ! {
                     STREAMING.store(false, Ordering::Relaxed);
                     handle_command(b'w', &mut tx);
                 }
-                // ---- Path B closed-loop authority (alpha) ----
-                b'i' => {
-                    let a = (CL_ALPHA_X1000.load(Ordering::Relaxed) + 50).min(1000);
+                // ---- Path B closed-loop authority (alpha) as direct levels ----
+                // 0/1/2/3 = alpha 0.0/0.2/0.5/1.0. These pass straight through
+                // scope_live_ui (u/i/o collide with its replay/loop bindings). '0' is
+                // the instant open-loop fallback.
+                b'0' | b'1' | b'2' | b'3' => {
+                    let a = match k {
+                        b'1' => 200,
+                        b'2' => 500,
+                        b'3' => 1000,
+                        _ => 0,
+                    };
                     CL_ALPHA_X1000.store(a, Ordering::Relaxed);
-                    writeln!(tx, "alpha={}.{:02}\r", a / 1000, (a % 1000) / 10).ok();
-                }
-                b'u' => {
-                    let a = CL_ALPHA_X1000.load(Ordering::Relaxed).saturating_sub(50);
-                    CL_ALPHA_X1000.store(a, Ordering::Relaxed);
-                    writeln!(tx, "alpha={}.{:02}\r", a / 1000, (a % 1000) / 10).ok();
-                }
-                b'o' => {
-                    CL_ALPHA_X1000.store(0, Ordering::Relaxed); // instant fallback to open-loop
-                    writeln!(tx, "alpha=0.00 (open-loop fallback)\r").ok();
+                    writeln!(
+                        tx,
+                        "alpha={}.{:02}{}\r",
+                        a / 1000,
+                        (a % 1000) / 10,
+                        if a == 0 { " (open-loop fallback)" } else { "" }
+                    )
+                    .ok();
                 }
                 other => handle_command(other, &mut tx),
             }
@@ -1211,7 +1218,7 @@ extern "C" fn TIM7() {
             let prev = ((step.sector + 5) % 6) as u32; // the sector that just ended
             let n = CL_CAP_N.load(Ordering::Relaxed) as usize;
             if n < CL_MAXCOMM {
-                let zcb = CL_LAST_ZC.min(100);
+                let zcb = if CL_LAST_ZC > 100 { 255 } else { CL_LAST_ZC }; // 255 = no in-window ZC
                 let co = u32::from(step.coasted);
                 CL_CAP[n].store((prev << 16) | (zcb << 8) | co, Ordering::Relaxed);
                 CL_CAP_N.store((n + 1) as u32, Ordering::Relaxed);
