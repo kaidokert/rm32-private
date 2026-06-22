@@ -50,6 +50,11 @@ class Capture:
     regs: list[str] = field(default_factory=list)
     captured_at: float = field(default_factory=time.time)
     full_scale: int = FULL_SCALE
+    # True for scope2 dual peak+valley captures: frames alternate a valley scan
+    # (neutral ~Vbus/2, bipolar BEMF) and a peak scan (neutral ~GND, clamped BEMF).
+    # The raw frame-to-frame signal zigzags, so deinterleave() before any analysis
+    # that assumes a coherent stream (lowpass, analyze_zero_crossings, slope fits).
+    interleaved: bool = False
 
     @property
     def frames(self) -> int:
@@ -185,6 +190,8 @@ def parse_capture(text: str) -> Capture:
     # list in the header ("... 7 channels (ch17 ch5 ch14 ch16 ch18 ch13 ch1, ...)") is
     # self-describing: channels 0-2 are the BEMF voltages, extras are currents/VBUS.
     is_b85 = "b85" in header
+    # scope2 marks dual peak+valley dumps; frames alternate valley/peak (see Capture).
+    is_interleaved = "interleaved" in header
     is_multi = bool(re.match(r"dump\d+:", header)) or header.startswith("cdump:") or is_cap
     hdr_chans = re.findall(r"ch\d+", header)
     m = re.search(r"c?dump\d*:\s*(\d+)", header)
@@ -241,6 +248,7 @@ def parse_capture(text: str) -> Capture:
         debug=debug,
         regs=regs,
         full_scale=full_scale,
+        interleaved=is_interleaved,
     )
 
 
@@ -515,6 +523,69 @@ SIX_STEP_LOW = [1, 2, 2, 0, 0, 1]
 PHASE_NAMES = ["A", "B", "C"]
 # capture.channels index per phase: A=ch17/PA4, B=ch5/PC4, C=ch14/PB11.
 PHASE_TO_CHANNEL = [0, 1, 2]
+
+
+def frame_is_valley(capture: Capture) -> np.ndarray:
+    """Per-frame valley(True)/peak(False) mask for a dual interleaved capture, by
+    the per-sector driven-high terminal level. A valley frame drives the high phase
+    to ~Vbus; a peak frame collapses it to ~GND. Classify on (high - low) so any
+    common offset cancels; the separation is large in either regime down to low duty.
+    Returns all-True for a non-interleaved capture (every frame is a valley scan)."""
+    n = capture.frames
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+    if not capture.interleaved:
+        return np.ones(n, dtype=bool)
+    try:
+        hz = float(capture.debug.get("hz", "0") or 0)
+    except ValueError:
+        hz = 0.0
+    if hz <= 0:
+        return np.ones(n, dtype=bool)
+    fps = capture.sample_hz / (hz * 6.0)
+    ch = capture.channels
+    thr = 0.2 * capture.full_scale
+    out = np.empty(n, dtype=bool)
+    for i in range(n):
+        s = int(i / fps) % 6
+        hi, lo = SIX_STEP_HIGH[s], SIX_STEP_LOW[s]
+        out[i] = (ch[hi][i] - ch[lo][i]) > thr
+    return out
+
+
+def deinterleave(capture: Capture) -> tuple[Capture, Capture | None]:
+    """Split a dual interleaved capture into (valley, peak) sub-captures, each a
+    coherent half-rate (20 kHz) stream the normal pipeline (lowpass /
+    analyze_zero_crossings / classify_rotor_state) can consume directly. sample_hz
+    halves; interleaved=False on both. A non-interleaved capture is returned as
+    (capture, None).
+
+    Note: the sub-capture is renumbered from frame 0, so its electrical-zero
+    alignment can be off by up to one source frame (≤ half a sub-frame, a few degrees
+    at mid band). That is fine for the offset-tolerant consumers above (plateau
+    spread, late-swing, qualitative plots). For precise crossing angles, pool the
+    float-window samples from the *interleaved* capture using their original frame
+    index (frame_is_valley + θ = i/fpr·2π) -- see scope_pv.py."""
+    if not capture.interleaved:
+        return capture, None
+    valley = frame_is_valley(capture)
+    vi = [i for i in range(capture.frames) if valley[i]]
+    pi = [i for i in range(capture.frames) if not valley[i]]
+
+    def sub(idx: list[int]) -> Capture:
+        return Capture(
+            channels=[[ch[i] for i in idx] for ch in capture.channels],
+            expected=len(idx),
+            labels=list(capture.labels),
+            sample_hz=capture.sample_hz / 2.0,
+            text=capture.text,
+            debug=dict(capture.debug),
+            regs=list(capture.regs),
+            full_scale=capture.full_scale,
+            interleaved=False,
+        )
+
+    return sub(vi), sub(pi)
 
 
 @dataclass
@@ -973,6 +1044,77 @@ def plot_zc_snapshot(
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
     return sectors
+
+
+def render_envelope_figure(capture: Capture, fig, *, blank_frames: int = 2):
+    """Dual peak+valley per-channel envelope (the scope2-only diagram). For each
+    BEMF channel, overlay the valley samples (ON sub-period, ~Vbus rail, full
+    bipolar BEMF) and the peak samples (OFF sub-period, ~GND rail, clamped BEMF),
+    plus the driven-pair virtual neutral evaluated on each population -- the valley
+    neutral (~Vbus/2) is the ZC datum the valley trace crosses; the peak neutral
+    (~GND) is the floor the clamped trace lifts off. Green shading = sectors where
+    that phase floats; the first `blank_frames` of each sector (commutation/demag)
+    are greyed. Returns the axes. Intended for interleaved captures."""
+    axes = fig.subplots(3, 1, sharex=True)
+    n = capture.frames
+    try:
+        hz = float(capture.debug.get("hz", "0") or 0)
+    except ValueError:
+        hz = 0.0
+    if n == 0 or hz <= 0:
+        return axes
+    fps = capture.sample_hz / (hz * 6.0)
+    fpr = capture.sample_hz / hz
+    ch = capture.channels
+    valley = frame_is_valley(capture)
+    idx = np.arange(n)
+    ang = idx / fpr * 360.0
+    sec = (idx / fps).astype(int) % 6
+    neut = np.array(
+        [(ch[SIX_STEP_HIGH[sec[i]]][i] + ch[SIX_STEP_LOW[sec[i]]][i]) / 2.0 for i in range(n)]
+    )
+    demag = (idx - (idx / fps).astype(int) * fps) < blank_frames
+    full = capture.full_scale
+    nsec = int(np.ceil(ang[-1] / 60.0)) + 1 if n else 0
+    for cidx, ax in enumerate(axes):
+        chan = np.array(ch[cidx])
+        v = valley & ~demag
+        p = ~valley & ~demag
+        ax.plot(ang[v], chan[v], ".-", ms=4, lw=0.8, color="tab:red", label="valley (ON / ~Vbus)")
+        ax.plot(ang[p], chan[p], ".-", ms=4, lw=0.8, color="tab:blue", label="peak (OFF / ~GND)")
+        ax.plot(ang[v], neut[v], "--", lw=1.3, color="darkred", alpha=0.9, label="valley neutral")
+        ax.plot(ang[p], neut[p], "--", lw=1.0, color="navy", alpha=0.7, label="peak neutral")
+        if demag.any():
+            ax.plot(ang[demag], chan[demag], ".", ms=3, color="0.6", alpha=0.5)
+        ax.set_ylabel(f"{PHASE_NAMES[cidx]} / {capture.labels[cidx]}", fontsize=9)
+        ax.grid(alpha=0.3)
+        ax.set_ylim(-0.03 * full, 1.05 * full)
+        if cidx == 0:
+            ax.legend(fontsize=7, loc="center right", ncol=2)
+        for k in range(nsec):
+            s = k % 6
+            if 3 - SIX_STEP_HIGH[s] - SIX_STEP_LOW[s] == cidx:
+                ax.axvspan(k * 60, (k + 1) * 60, color="green", alpha=0.06)
+    amp = capture.debug.get("amp", "?")
+    axes[-1].set_xlabel(
+        "electrical angle (deg) — green = phase floating; ZC = valley trace ∩ valley neutral"
+    )
+    fig.suptitle(
+        f"Dual peak+valley envelope — {int(hz)} Hz amp={amp} "
+        f"({capture.sample_hz:.0f} Hz, {n} frames)\n"
+        "red=valley  blue=peak  dark-red dashed=valley neutral (Vbus/2)  navy dashed=peak neutral"
+    )
+    fig.tight_layout()
+    return axes
+
+
+def plot_envelope_snapshot(capture: Capture, out_png: Path, *, blank_frames: int = 2):
+    """Render the dual envelope figure to a PNG."""
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig = plt.figure(figsize=(11, 8.5))
+    render_envelope_figure(capture, fig, blank_frames=blank_frames)
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
 
 
 def format_zc_report(sectors: list[SectorZc]) -> str:

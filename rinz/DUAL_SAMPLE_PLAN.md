@@ -98,32 +98,49 @@ Everything else (commands, watchdog, streaming, double-buffer flip, ADC1
 current+VBUS ring, b85 codec) is unchanged. `scope1.rs` stays as the valley-only
 baseline for A/B comparison (flash one or the other).
 
-## Host changes (STEP 2 — specified, not yet built)
+## Host support (STEP 2 — BUILT)
 
-⚠️ **Until this is done, do NOT run `zc_validate.py` / `zc_map.py` / `zc_fit.py`
-on scope2 captures** — they'd pool the clamped peak frames into the fit and bias
-it toward zero. scope2 data is raw-inspectable (`d` dump) but not yet analysis-ready.
+Added to `scope_common.py`: `Capture.interleaved` (set when the header says
+`interleaved`), `frame_is_valley()` (per-sector driven-high classification),
+`deinterleave()` (→ clean 20 kHz valley + peak sub-captures), and
+`render_envelope_figure()` / `plot_envelope_snapshot()` (the per-channel envelope
+diagram). New `scripts/scope_pv.py` is the dual-aware analyzer/validator.
 
-The good news (from the review): the host change is *small*, because our existing
-machinery already does most of it:
+## Validation outcome (step 2) — valley validated, peak does NOT add a BEMF view
 
-- **Parser:** in `scope_common.parse_capture`, detect `interleaved` in the header
-  and set a `Capture.interleaved` flag (additive, default False).
-- **Neutral is free.** `_driven_pair_neutral` computes `(driven_hi+driven_lo)/2`
-  from the *actual* driven-channel values per frame. On a valley frame that's
-  ≈ Vbus/2; on a peak frame both driven channels read ≈ GND so it's ≈ 0 —
-  **automatically correct per frame, no peak/valley special-casing.**
-- **Angle is free.** Treat the capture as a uniform 40 kHz stream; `fps =
-  sample_hz/(hz·6)` and `θ = i/fpr·2π` already double correctly.
-- **The one real change — drop clamped points before fitting.** After computing
-  `e = v_float − neutral` per frame, discard samples where the raw float channel
-  is near the ADC floor (e.g. `< ~10–20` counts, the clamped peak negative half).
-  Feed the rest (all valley points + the unclamped positive peak points) into the
-  same linear `fit_harmonics`. This is plain truncation, not Tobit — the censored
-  points carry no info the valley fit lacks.
-- **Optional:** a `scope_pv.py` that splits a capture into valley-only and
-  peak-only substreams (by driven-channel level) for side-by-side plots and the
-  two-method ZC cross-check (bipolar fit vs clamp-edge).
+Bench capture `logs/dual.log` (300 Hz / 15%, locked): trigger/rate/alternation all
+correct (268 = 2×134 frames; MMS=update; ~50/50 V/P; driven-pair neutral ≈ Vbus/2
+on valley, ≈ 0 on peak). Then `scope_pv.py` tested the actual payoff:
+
+- ✅ **Valley stream validated.** Valley-only float-window fit matches the direct
+  in-window ZC to **median 1.5%** (~0.9° elec). scope2's valley path == scope1
+  quality; `deinterleave(cap)[0]` is a clean 20 kHz scope1-equivalent that feeds the
+  *entire* existing toolchain unchanged. So scope2 is a safe superset of scope1.
+- ❌ **Peak stream is NOT a clean second BEMF on this topology.** The optimistic
+  "neutral is free / pool for free / 2× density" premise (and the comparator
+  cross-check) **failed in data**:
+  - peak BEMF reads only **~0.36×** the valley amplitude (robust p10–p90, all three
+    phases) with a spurious positive offset — forcing both driven terminals to GND
+    in the OFF window destroys the star reference the valley's {Vbus, GND} pair
+    provides, and the OFF window sits in post-commutation demag/freewheel;
+  - the peak **clamp-edge sits ~75%** of the window regardless of the true ZC (which
+    swings 34–97% with load angle) → not a usable ZC indicator;
+  - **naive dual-pooling degrades the fit to ~9%** (vs valley-only 1.5%).
+  So wins #1 (2× density) and #3 (comparator cross-check) do **not** materialize.
+  Win #2 (low-duty rescue) is untested and now doubtful given the peak's poor BEMF
+  fidelity even at a comfortable 15% duty — needs a low-duty capture to settle.
+
+**Net:** the firmware + infra are sound and backward-compatible (valley sub-stream).
+The envelope figure is a useful diagnostic that *shows* the peak's compression/offset
+directly. But the headline dual-sampling wins didn't pan out: for routine observation
+`scope1` (valley-only, half the data, same BEMF) is the leaner choice; `scope2` is the
+diagnostic/experimental path. Don't invest further in peak-as-BEMF unless a low-duty
+capture proves the rescue. *(One operating point — the valley result is solid; confirm
+the peak verdict across duty/RPM before discarding the OFF-window scan for good.)*
+
+⚠️ Do NOT feed raw interleaved captures to `zc_validate.py` / `zc_map.py` / `zc_fit.py`
+(the alternating frames zigzag) — `deinterleave(cap)[0]` first, then analyze the valley
+sub-stream as usual.
 
 ## Validation plan (on the bench)
 
