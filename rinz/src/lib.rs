@@ -3,6 +3,7 @@
 pub mod accumulator;
 pub mod accumulator_state;
 pub mod algorithm_params;
+pub mod cl;
 pub mod ewma_pow2;
 pub mod filter;
 pub mod idle_loop;
