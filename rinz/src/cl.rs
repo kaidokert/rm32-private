@@ -240,9 +240,10 @@ impl ClLoop {
         self.state.frequency
     }
 
-    /// Feed one valley frame (3 BEMF channels for the current drive sector). Returns
-    /// the step result; if `commutate` is set, the caller advances the drive to `sector`.
-    pub fn on_frame(&mut self, bemf: [i32; 3]) -> ClStep {
+    /// Detector + ZC-to-ZC period update for one frame. Returns `(zc_ticks, cl_target)`
+    /// where `cl_target` is the loop's OWN desired commutation tick (since commutation).
+    /// Does not commutate.
+    fn observe(&mut self, bemf: [i32; 3]) -> (Option<f32>, f32) {
         self.ticks += 1.0;
         self.abs += 1.0;
         let e = float_minus_neutral(bemf, self.sector as usize);
@@ -264,14 +265,16 @@ impl ClLoop {
                 self.scheduled = Some(t_zc + self.state.frequency * 0.5); // 30 deg after ZC
             }
         }
+        let cl_target = self.scheduled.unwrap_or(self.state.frequency * self.coast);
+        (zc_ticks, cl_target)
+    }
 
-        let scheduled = self.scheduled;
-        let target = scheduled.unwrap_or(self.state.frequency * self.coast);
+    /// Commutate if `ticks` reached `target`; build the step result.
+    fn fire(&mut self, target: f32, zc_ticks: Option<f32>) -> ClStep {
+        let coasted = self.scheduled.is_none();
         let mut commutate = false;
-        let mut coasted = false;
         if self.ticks >= target {
             commutate = true;
-            coasted = scheduled.is_none();
             self.sector = (self.sector + 1) % 6;
             self.ticks = 0.0;
             self.scheduled = None;
@@ -282,8 +285,48 @@ impl ClLoop {
             sector: self.sector,
             period_est: self.state.frequency,
             zc_ticks,
-            coasted,
+            coasted: commutate && coasted,
         }
+    }
+
+    /// Pure closed-loop frame (host sim): commutate on the loop's own ZC-driven schedule.
+    pub fn on_frame(&mut self, bemf: [i32; 3]) -> ClStep {
+        let (zc, ct) = self.observe(bemf);
+        self.fire(ct, zc)
+    }
+
+    /// alpha-BLENDED frame for bounded hardware (Stage 2). Commutate at the open-loop
+    /// target `ol_period` (commanded ticks/sector) nudged toward the loop's own target
+    /// by `alpha` in [0,1], the nudge clamped to +/- `slew_frac * ol_period`:
+    ///   target = ol_period + alpha * clamp(cl_target - ol_period, +/- slew_frac*ol_period)
+    /// alpha=0 == pure open-loop (the governor); alpha=1 == loop authority within the
+    /// slew band. The frequency stays governed by `ol_period`, so it CANNOT run away --
+    /// dropping alpha to 0 is the instant fallback to open-loop.
+    pub fn on_frame_blend(
+        &mut self,
+        bemf: [i32; 3],
+        ol_period: f32,
+        alpha: f32,
+        slew_frac: f32,
+    ) -> ClStep {
+        let (zc, ct) = self.observe(bemf);
+        let lim = slew_frac * ol_period;
+        let nudge = (ct - ol_period).clamp(-lim, lim);
+        let target = ol_period + alpha.clamp(0.0, 1.0) * nudge;
+        self.fire(target, zc)
+    }
+
+    /// Force the drive sector (used at handover so the loop's sector matches the
+    /// open-loop sector before alpha is raised).
+    pub fn set_sector(&mut self, sector: u8) {
+        self.sector = sector % 6;
+    }
+
+    /// Set the period estimate directly (ticks/sector). Used at alpha=0 to keep the
+    /// estimate pinned to the commanded open-loop period, so raising alpha later starts
+    /// the loop from a correct period rather than a stale warm-start.
+    pub fn set_period(&mut self, period: f32) {
+        self.state = PLLState::new(period);
     }
 }
 
