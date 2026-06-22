@@ -13,3 +13,4 @@ runner = "probe-rs run --chip STM32G431CB --probe 0483:374b:066CFF51515282718715
 [alias]
 test-host = "test --lib --target x86_64-pc-windows-msvc"
 cl-replay = "test --test cl_replay --target x86_64-pc-windows-msvc -- --nocapture"
+cl-sim = "test --test cl_sim --target x86_64-pc-windows-msvc -- --nocapture"

@@ -149,3 +149,39 @@ would actually use, and it stays oracle-anchored.
 4. Only then Stage 2 (let it steer, bounded α-blend).
 
 Still observe-only throughout. The PLL must **track the oracle**, not merely be smooth.
+
+### Replay ceiling, and the A→B path (chosen)
+
+Building the host pipeline surfaced a hard limit: **observe-only replay cannot validate
+the closed loop.** The captured BEMF was produced by *open-loop* commutation and won't
+respond to *different* (closed-loop) timing. Replay validated the *observer* as far as
+physics allows (the detector is ~3.5% within-cell where the ZC is in-window; it fires on
+only ~15% of open-loop commutations because deep-lock pushes the ZC out of the window —
+an open-loop artifact, not a closed-loop predictor). Testing the *loop* needs a model or
+hardware. Chosen path: **A) cheap host motor-model sim to shake out the loop logic, then
+B) bounded hardware.**
+
+### Path A result — loop logic validated in simulation (`tests/cl_sim.rs`, `cargo cl-sim`)
+
+The real `cl::ClLoop` controller (detector → ZC-to-ZC period PI filter → commutate ~30°
+after the ZC, dead-reckon on the filtered period when a ZC is missed) runs against a
+simple rotor+BEMF model whose BEMF *responds* to the loop's commutation. With demag
+spikes, noise, and a trapezoidal flat-top:
+
+- ✅ **`cl_sim_locks`** — acquires and holds lock, stays synced 1:1 with the rotor, and
+  **tracks a mid-run load step** (rotor speed change) with post-step period error **1.7%**,
+  coasting through ~36% missed detections.
+- ✅ **`cl_sim_needs_zc`** (negative control) — starve the detector (no ZC) and the loop
+  can only dead-reckon: it then **fails the same load step** (stalls, desyncs 3.3:1). This
+  proves `cl_sim_locks` passes because of genuine ZC feedback, not a dead-reckonable
+  constant-speed rotor.
+- **Bug caught (the point of A):** the no-ZC fallback originally commutated at
+  `period*1.4` (late → overshoot → miss-next-ZC coast spiral → stall). Fixed to
+  dead-reckon at `period_est` (`coast`≈1.0).
+
+**Honest caveats:** idealized model — sinusoid+trapezoid BEMF, simple torque, no
+per-sector load-angle texture or Phase-A anomaly, demag is a clean exponential. It
+catches gross logic bugs (and did); it is *not* a fidelity claim. The real anti-`skunk`
+test (G3: locked to the rotor, not a demag artifact) is only decisive on hardware, where
+real demag/artifacts exist. **Ready for path B (bounded hardware, α-blend + governor +
+fallback).**

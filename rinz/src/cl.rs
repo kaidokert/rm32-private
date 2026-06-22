@@ -44,7 +44,8 @@ pub struct Detector {
     entry_sign: i32,
     prev_e: i32,
     prev_frame: u32,
-    found: Option<f32>,
+    found: Option<f32>,       // crossing as % of the window
+    found_frame: Option<f32>, // crossing as a sub-frame index (ticks since sector start)
 }
 
 impl Detector {
@@ -56,6 +57,7 @@ impl Detector {
             prev_e: 0,
             prev_frame: 0,
             found: None,
+            found_frame: None,
         }
     }
 
@@ -65,6 +67,7 @@ impl Detector {
         self.prev_e = 0;
         self.prev_frame = 0;
         self.found = None;
+        self.found_frame = None;
     }
 
     /// Push one frame's `float - neutral`. `fps` = frames per 60-degree window.
@@ -91,14 +94,22 @@ impl Detector {
             let denom = pe + ce;
             let sub = if denom > 0.0 { pe / denom } else { 0.0 };
             let zero_frame = self.prev_frame as f32 + sub * (self.frame - self.prev_frame) as f32;
+            self.found_frame = Some(zero_frame);
             self.found = Some((zero_frame / fps * 100.0).clamp(0.0, 100.0));
         }
         self.prev_e = e;
         self.prev_frame = self.frame;
     }
 
+    /// Crossing as a percentage of the 60-degree window (0..100), or None.
     pub fn finish(&self) -> Option<f32> {
         self.found
+    }
+
+    /// Crossing as a sub-frame index (ticks since the sector began), or None.
+    /// Used by the closed loop for commutation timing (no %-of-window conversion).
+    pub fn finish_frame(&self) -> Option<f32> {
+        self.found_frame
     }
 }
 
@@ -170,6 +181,110 @@ impl ClTracker {
 #[inline]
 fn abs_f32(x: f32) -> f32 {
     if x < 0.0 { -x } else { x }
+}
+
+/// One closed-loop frame result.
+#[derive(Clone, Copy, Debug)]
+pub struct ClStep {
+    pub commutate: bool, // commutation fired this frame (advance the drive sector)
+    pub sector: u8,      // current drive sector (0..5)
+    pub period_est: f32, // filtered sector period, ticks (omega proxy)
+    pub zc_ticks: Option<f32>, // ZC detected this frame at this many ticks since commutation
+    pub coasted: bool,   // commutation was forced (no ZC) -- coasting on period_est
+}
+
+/// Closed-loop six-step commutation controller -- the steering logic Stage 2 will run
+/// on hardware, validated first against the host motor model (tests/cl_sim.rs).
+///
+/// Per valley frame it detects the BEMF zero crossing, PI-filters the period measured
+/// **ZC-to-ZC** (load-angle-independent, unlike a `2*t_zc` estimate), and schedules
+/// the next commutation ~30 deg after the ZC. If a ZC is missed it COASTS: commutate
+/// at `period_est * coast` so a dropped detection can't stall the loop. The period is
+/// warm-started (handover from open-loop at a known frequency).
+pub struct ClLoop {
+    detector: Detector,
+    pll: PLL<f32, PLLParamsPlain<f32>>,
+    state: PLLState<f32>, // state.frequency = period estimate (ticks per sector)
+    sector: u8,
+    ticks: f32, // ticks since the last commutation
+    abs: f32,   // monotonic tick counter (for ZC-to-ZC period)
+    last_zc_abs: Option<f32>,
+    scheduled: Option<f32>, // commutate-at tick (since commutation) once a ZC is seen
+    gate_frac: f32,         // reject a period measurement deviating more than this fraction
+    coast: f32,             // force commutation at period_est*coast when no ZC is seen
+}
+
+impl ClLoop {
+    /// `period0` = warm-start sector period in ticks (= sample_hz/(hz*6)). `kp`/`ki`
+    /// tune the period PI filter; `gate_frac` rejects wild period measurements;
+    /// `coast` (e.g. 1.3) is the missed-ZC timeout; `blank` = demag skip frames.
+    pub fn new(period0: f32, kp: f32, ki: f32, gate_frac: f32, coast: f32, blank: u32) -> Self {
+        Self {
+            detector: Detector::new(blank),
+            pll: PLL::new(PLLParamsPlain::new(kp, ki, 2.0, 100_000.0)),
+            state: PLLState::new(period0),
+            sector: 0,
+            ticks: 0.0,
+            abs: 0.0,
+            last_zc_abs: None,
+            scheduled: None,
+            gate_frac,
+            coast,
+        }
+    }
+
+    pub fn sector(&self) -> u8 {
+        self.sector
+    }
+    pub fn period_est(&self) -> f32 {
+        self.state.frequency
+    }
+
+    /// Feed one valley frame (3 BEMF channels for the current drive sector). Returns
+    /// the step result; if `commutate` is set, the caller advances the drive to `sector`.
+    pub fn on_frame(&mut self, bemf: [i32; 3]) -> ClStep {
+        self.ticks += 1.0;
+        self.abs += 1.0;
+        let e = float_minus_neutral(bemf, self.sector as usize);
+        self.detector.push(e, self.state.frequency.max(1.0));
+
+        let mut zc_ticks = None;
+        if self.scheduled.is_none() {
+            if let Some(t_zc) = self.detector.finish_frame() {
+                zc_ticks = Some(t_zc);
+                let zc_abs = self.abs - self.ticks + t_zc; // absolute time of the crossing
+                if let Some(last) = self.last_zc_abs {
+                    let meas = zc_abs - last; // ZC-to-ZC = one sector period
+                    let err = meas - self.state.frequency;
+                    if abs_f32(err) <= self.gate_frac * self.state.frequency {
+                        self.pll.update(err, &mut self.state);
+                    }
+                }
+                self.last_zc_abs = Some(zc_abs);
+                self.scheduled = Some(t_zc + self.state.frequency * 0.5); // 30 deg after ZC
+            }
+        }
+
+        let scheduled = self.scheduled;
+        let target = scheduled.unwrap_or(self.state.frequency * self.coast);
+        let mut commutate = false;
+        let mut coasted = false;
+        if self.ticks >= target {
+            commutate = true;
+            coasted = scheduled.is_none();
+            self.sector = (self.sector + 1) % 6;
+            self.ticks = 0.0;
+            self.scheduled = None;
+            self.detector.reset();
+        }
+        ClStep {
+            commutate,
+            sector: self.sector,
+            period_est: self.state.frequency,
+            zc_ticks,
+            coasted,
+        }
+    }
 }
 
 #[cfg(test)]
