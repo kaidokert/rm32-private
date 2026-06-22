@@ -97,3 +97,55 @@ D1/D3/T and the D2 constants are provisional, to be calibrated in Stage 1 agains
 oracle's *own* spread (the oracle matches direct in-window ground truth at ~1.5–5.7 %,
 so the real-time detector should land in that band). Once calibrated, they are written
 here and **only ratcheted tighter, never loosened to pass a run.**
+
+---
+
+## Stage 1b — shadow PLL, gated on tracking the oracle (added after D1 failed)
+
+**Why:** D1 failed on the *raw* per-commutation detector — median 21.6 % vs oracle,
+~40 % mis-lock rate (p90 ~19 %): it latches onto demag / noise / a second crossing.
+That is `skunk`'s exact disease. A raw crossing was never meant to be trusted
+unfiltered; a real loop filters them. Stage 1b asks the right question: **can a PLL,
+fed this noisy detector, track the oracle's load-angle trajectory despite the
+outliers?** This is *not* loosening D1 — it gates on the *filtered* estimate the loop
+would actually use, and it stays oracle-anchored.
+
+### Architecture — shared host/firmware Rust (already scaffolded in this crate)
+
+- `rinz` is `#![cfg_attr(not(test), no_std)]`: pure modules build and `cargo test` on
+  host; firmware-only modules are `cfg(target_arch="arm")`. Building blocks already
+  present and unit-tested: `PLL` (PI loop filter, anti-windup), `Accumulator`
+  (phase/VCO), `filter` / `ewma_pow2`, `signed_calc` (numeric abstraction),
+  `algorithm_params` (live-tunable).
+- **New portable `cl` module:** interpolated ZC detector (+ demag/outlier robustness)
+  → phase error → existing `PLL` + `Accumulator` → per-commutation tracking state.
+  Pure, deterministic, no_std, unit-tested. **STEERS NOTHING.**
+- **Host harness** replays captured frames through `cl` exactly as the ISR would
+  (causal, frame-by-frame), emits the tracker trajectory; Python compares it to the
+  oracle. Iterate the detector/PLL on the **host** — no firmware flash per change.
+- The firmware ISR calls the **identical** `cl` module. No host/firmware divergence
+  (the rm32 `run_tick` lesson): the thing we validate on host *is* the firmware code.
+
+### The Stage-1b gate (oracle-anchored)
+
+- **G1 Tracking:** PLL filtered load-angle residual vs the oracle trajectory ≤ **5 %**
+  median, after convergence.
+- **G2 Outlier rejection:** PLL output variance ≪ raw-detector variance **and** the
+  filtered value sits on the oracle (it filters toward truth, not an artifact).
+- **G3 Anti-`skunk` (== D2):** the PLL's locked period equals the oracle's electrical
+  period — the rotor — **not** a self-consistent multiple of the detector's
+  blank/confirm constants. Smoothness alone is `skunk`; this is the check that we're
+  locked to the rotor.
+
+### Process
+
+1. Build `cl` (detector + compose `PLL`/`Accumulator`), host unit tests.
+2. Replay the existing sweep segments (12 commutations each) → iterate on host until
+   G1–G3 hold. Then a **longer continuous capture** at solid lock for a definitive run
+   (the 2-rev dump is short for PLL convergence; sweet spot ~350–450 Hz solid lock —
+   clean BEMF and still ~7–9 samples/sector, vs ~5 at 600 Hz).
+3. Firmware uses the identical `cl` (still shadow / observe-only); re-capture; confirm
+   host == firmware on the same data.
+4. Only then Stage 2 (let it steer, bounded α-blend).
+
+Still observe-only throughout. The PLL must **track the oracle**, not merely be smooth.
