@@ -37,7 +37,7 @@ except ImportError as exc:
     raise SystemExit("missing dependency: pip install pyserial") from exc
 
 sys.path.insert(0, str(Path(__file__).parent))
-from scope_common import BAUD, classify_rotor_state, parse_capture
+from scope_common import BAUD, classify_rotor_state, deinterleave, parse_capture
 
 # Measured stall boundary (min running amp% before dropout) ~ 0.035*hz + 2.6.
 STALL_A = 0.035
@@ -230,6 +230,11 @@ def rotor_state(ser: serial.Serial, args) -> str:
     try:
         cap = parse_capture(dump)
         cap.debug.setdefault("mode", "six-step")
+        # scope2 dual captures interleave valley/peak frames -- they zigzag, so the
+        # raw lowpass smears late_swing to 0 and FALSELY reads "stalled". Classify the
+        # clean valley sub-stream instead.
+        if cap.interleaved:
+            cap = deinterleave(cap)[0]
         return classify_rotor_state(cap).get("state", "?")
     except Exception:
         return "?"
@@ -273,6 +278,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--capture-timeout", type=float, default=4.0)
     p.add_argument("--hex", action="store_true", help="hex dumps ('d') instead of binary Ascii85 ('c', default, ~2x faster)")
     p.add_argument("--current-limit", type=int, default=3500, help="iu_ma over this for 2 consecutive captures -> kill + skip freq (host-alive stall guard)")
+    p.add_argument("--no-verify", action="store_true",
+                   help="skip the spin-verify gate -- capture every amp regardless of the stall "
+                        "heuristic (for attended single-freq probes; classify offline). The "
+                        "--current-limit guard still protects against a cooking stall.")
     p.add_argument("--outdir", type=Path, default=None)
     return p.parse_args()
 
@@ -321,7 +330,8 @@ def main() -> int:
                 # Verify the rotor actually spun up before sweeping amps. An unlockable
                 # frequency is SKIPPED (kill + next freq), not dwelt on -- dwelling is
                 # what crawled on timeouts and cooked the rotor in the wedged runs.
-                st = rotor_state(ser, args)
+                # --no-verify bypasses this for attended single-freq probes.
+                st = rotor_state(ser, args) if not args.no_verify else "locked"
                 if st in ("stalled", "?"):
                     position(ser, sp, f, ceil_t, **pos_kw)  # one more lock attempt
                     st = rotor_state(ser, args)
