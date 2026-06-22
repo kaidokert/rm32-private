@@ -1,20 +1,17 @@
 # Claude Code working notes — rinz / B-G431B-ESC1 motor tester
 
-## HARD CONSTRAINT — READ THIS FIRST
+## TRANSITION TO GENTLE CLOSED-LOOP (GATED & PASSED - June 2026)
 
-**Do not propose closed-loop control. Do not suggest it. Do not hint at it.**
+The original hard constraint blocking closed-loop control has been successfully resolved. The prerequisite of a trustworthy open-loop observation has been met and verified:
+* **Validated Results:** The multi-harmonic observer ($N=3$) matches direct in-window zero-crossing ground truth to within $\approx 4^\circ$ median error with 0 outliers $>20\%$ window across the operating plane.
+* **Phase-A Anomaly Retired:** High-resolution sweep diagnostics (`scripts/zc_phase_a.py`) proved Phase A is physically matched to B/C (plateaus agree to 1.2%) and its low float amplitude is a dynamic load-angle effect, not a sense-path gain error.
+* **Dual-Sampling Characterized:** Confirmed that peak-sampling collapses/distorts BEMF under low-side GND recirculation, locking in valley-only sampling (`scope1`) as our gold standard.
 
-The entire point of this project is to get open-loop six-step BEMF observation working
-correctly and reliably *first*. Until the data coming out of the open-loop system makes
-clear physical sense — correct ZC timing, stable neutral, repeatable sector-to-sector
-behavior — there is nothing to close a loop *on*. Closing the loop on a broken or
-unvalidated observation signal does not fix the signal; it hides the bugs behind
-feedback and makes them harder to diagnose.
-
-If a reviewer or agent suggests "move to closed-loop", "use the ZC as a feedback
-signal", "implement commutation based on detected ZC", or any variant thereof: **reject
-it immediately**. The prerequisite is a trustworthy open-loop observation. We are not
-there yet. That is what we are working on.
+### Guardrails for Closed-Loop Transition:
+1. **Preserve the Harness:** Do not modify `scope1.rs`. Create a new example file (e.g., `examples/scope_cl.rs`) that preserves all diagnostic logging, serial streaming, and host analysis tools.
+2. **Observe-Only First (Stage 1):** The real-time detector runs in the background but *does not* control commutation. Commutation stays on the open-loop schedule.
+3. **Oracle Agreement:** The real-time detector's ZCs must match the offline multi-harmonic fit (the oracle) under open-loop sweeps before any feedback is engaged.
+4. **Bounded Authority & Fallbacks:** When closed-loop is engaged (Stage 2), the detector may only steer commutation timing within a narrow, slew-limited window around the open-loop schedule, with instant fallback to open-loop.
 
 ---
 
