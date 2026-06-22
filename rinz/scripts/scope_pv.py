@@ -172,6 +172,7 @@ def main() -> int:
         raise SystemExit("no interleaved captures -- is this scope2 data? (header needs 'interleaved')")
 
     all_v, all_d = [], []
+    summary = []
     for cap in inter:
         r = analyze(cap, harmonics=args.harmonics, blank=args.blank)
         if r is None:
@@ -206,11 +207,42 @@ def main() -> int:
                 print(f"    {'ABC'[fl]}     {Rv:7.0f}  {Rp:6.0f}    {ratio:5.2f}     "
                       f"{c0v:+8.0f}  {c0p:+7.0f}{flag}")
 
+        try:
+            amp_t = int(r["amp"])
+        except (TypeError, ValueError):
+            amp_t = 0
+        pv = [ratio for (_, _, ratio, _, _) in r["pdiag"].values()]
+        summary.append({
+            "hz": int(r["hz"]),
+            "amp": amp_t / 10.0,
+            "duty": amp_t / 10.0 * 2 / 3,  # actual PWM duty ~= amp * 2/3
+            "state": rot.get("state"),
+            "spread": rot.get("plateau_spread"),
+            "pv": statistics.median(pv) if pv else None,
+            "vres": statistics.median(vr) if vr else None,
+            "dres": statistics.median(dr) if dr else None,
+            "ninwin": len(r["res"]),
+        })
+
         if args.render:
             out = (cap_path := args.paths[0])
-            out = (out if out.is_dir() else out.parent) / f"envelope_{int(r['hz'])}hz.png"
+            out = (out if out.is_dir() else out.parent) / f"envelope_{int(r['hz'])}hz_{amp_t}.png"
             plot_envelope_snapshot(cap, out)
             print(f"  wrote {out}")
+
+    if len(summary) > 1:
+        print("\n=== DUTY SWEEP SUMMARY (the low-duty rescue test) ===")
+        print("  as amp drops, the valley pinches (sensing 'spread' rises, rotor -> uncertain).")
+        print("  RESCUE would show: peak/valley ratio -> ~1 and a usable peak exactly there.\n")
+        print(f"  {'hz':>4} {'amp%':>5} {'duty%':>5}  {'rotor':>9} {'v_spread%':>9}  "
+              f"{'peak/val':>8}  {'valley_res':>10} {'+peak_res':>9}  inwin")
+        for s in sorted(summary, key=lambda x: (x["hz"], -x["amp"])):
+            sp = f"{s['spread']:.0f}" if s["spread"] is not None else "-"
+            pv = f"{s['pv']:.2f}" if s["pv"] is not None else "-"
+            vr = f"{s['vres']:.1f}%" if s["vres"] is not None else "-"
+            dr = f"{s['dres']:.1f}%" if s["dres"] is not None else "-"
+            print(f"  {s['hz']:>4} {s['amp']:>5.1f} {s['duty']:>5.1f}  {str(s['state']):>9} "
+                  f"{sp:>9}  {pv:>8}  {vr:>10} {dr:>9}  {s['ninwin']}")
 
     if all_v and all_d:
         mv, md = statistics.median(all_v), statistics.median(all_d)
