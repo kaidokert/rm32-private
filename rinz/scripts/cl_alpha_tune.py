@@ -50,6 +50,18 @@ ALPHA_VALUE = {"0": 0.0, "1": 0.2, "2": 0.5, "3": 1.0}
 _CL_RE = re.compile(r"cl i=\d+ phys=\d+ zc=(-?\d+) coast=(\d)")
 
 
+def set_beta(ser, target_x1000: int) -> None:
+    """Set the per-sector ZC smoothing weight deterministically: floor it to 0 with a
+    burst of ',' (each -0.05, clamps at 0), then step up to target with '.'. Lets the
+    tuner A/B beta=0 vs beta>0 regardless of the firmware's current value."""
+    for _ in range(20):  # 20 * 0.05 = 1.0 -> guaranteed floor
+        send(ser, ",")
+        time.sleep(0.01)
+    for _ in range(round(max(0, min(950, target_x1000)) / 50)):
+        send(ser, ".")
+        time.sleep(0.01)
+
+
 def ramp_alpha(ser, cur_x1000: int, tgt_x1000: int, dwell: float = 0.05) -> int:
     """Gradually walk alpha from cur to tgt via fine +/-0.05 firmware steps (m/n), so
     engaging/disengaging the loop never jumps the commutation. Returns the new alpha."""
@@ -62,17 +74,25 @@ def ramp_alpha(ser, cur_x1000: int, tgt_x1000: int, dwell: float = 0.05) -> int:
     return cur_x1000
 
 
-def parse_loop(dump: str):
-    """(alpha_x1000, period_est_x100, iu_ma, n_comm, n_coast0, n_zc, isr_cyc) from a dump."""
+def parse_loop(dump: str) -> dict:
+    """Per-dump loop health: counts from the `cl ...` log + the debug-line fields."""
     def grab(key):
         m = re.search(rf"\b{key}=(\d+)", dump)
         return int(m.group(1)) if m else None
 
     cl = _CL_RE.findall(dump)
     n = len(cl)
-    coast0 = sum(1 for _zc, co in cl if co == "0")
-    zc = sum(1 for z, _co in cl if z != "-1")
-    return grab("alpha"), grab("period_est"), dump_iu_ma(dump), n, coast0, zc, grab("isr_cyc")
+    return {
+        "n": n,
+        "coast0": sum(1 for _zc, co in cl if co == "0"),
+        "zc": sum(1 for z, _co in cl if z != "-1"),
+        "iu_ma": dump_iu_ma(dump),
+        "period_est": grab("period_est"),  # x100 ticks
+        "isr_cyc": grab("isr_cyc"),
+        "lock_slow": grab("lock_slow"),  # x1000 (hit fraction)
+        "jit_fast": grab("jit_fast"),    # x1000 ticks
+        "jit_slow": grab("jit_slow"),    # x1000 ticks
+    }
 
 
 def main() -> int:
@@ -83,6 +103,8 @@ def main() -> int:
     p.add_argument("--amp", type=float, default=13.0, help="catch-boundary amp %% (open-loop spin-up)")
     p.add_argument("--alpha-step", type=float, default=0.1, help="alpha increment per level (mult of 0.05)")
     p.add_argument("--alpha-max", type=float, default=1.0, help="highest alpha to ramp to")
+    p.add_argument("--zc-beta", type=float, default=None,
+                   help="set per-sector ZC smoothing weight (0..0.95); default = firmware's")
     p.add_argument("--snaps", type=int, default=4)
     p.add_argument("--settle", type=float, default=0.5, help="dwell after an alpha change")
     p.add_argument("--current-limit", type=int, default=3000)
@@ -110,42 +132,50 @@ def main() -> int:
             position(ser, sp, args.hz, int(round(args.amp * 10)),
                      qsettle=0.8, ramp_step=20, ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
             send(ser, "0")  # ensure alpha=0 after positioning
+            if args.zc_beta is not None:
+                set_beta(ser, int(round(args.zc_beta * 1000)))
+                print(f"zc_beta set to {args.zc_beta}")
             time.sleep(args.settle)
 
-            print(f"\n  {'alpha':>5} {'fire%':>6} {'period_est':>10} {'(ol)':>6} {'zc%':>5} "
-                  f"{'iu_ma':>6} {'isr_cyc':>7} {'%bud':>5}")
+            print(f"\n  {'alpha':>5} {'fire%':>6} {'lockS%':>6} {'jitF':>5} {'jitS':>5} "
+                  f"{'period':>7} {'iu_ma':>6} {'%bud':>5}   (ol={ol_period:.2f}, jit in ticks)")
             cur = 0  # alpha x1000; firmware is at 0 after positioning's q-reset
             send(ser, "0")
             for tgt in targets:
                 cur = ramp_alpha(ser, cur, int(round(tgt * 1000)))  # gradual, no jump
                 time.sleep(args.settle)
-                fires, periods, zcs, ius, cycs = [], [], [], [], []
+                fires, periods, ius, cycs, locks, jitfs, jitss = [], [], [], [], [], [], []
                 aborted = False
                 for snap in range(args.snaps):
                     dump = capture(ser, args.capture_timeout, "c")
                     tag = f"{int(round(tgt * 100)):03d}"
                     (outdir / f"a{tag}_s{snap}.log").write_text(dump, encoding="ascii", errors="replace")
-                    _a, per, iu, n, c0, zc, cyc = parse_loop(dump)
-                    if n:
-                        fires.append(c0 / n * 100)
-                        zcs.append(zc / n * 100)
-                    if per:
-                        periods.append(per / 100.0)
-                    if cyc is not None:
-                        cycs.append(cyc)
-                    if iu is not None:
-                        ius.append(iu)
-                        if iu > args.current_limit:
+                    d = parse_loop(dump)
+                    if d["n"]:
+                        fires.append(d["coast0"] / d["n"] * 100)
+                    if d["period_est"]:
+                        periods.append(d["period_est"] / 100.0)
+                    if d["isr_cyc"] is not None:
+                        cycs.append(d["isr_cyc"])
+                    if d["lock_slow"] is not None:
+                        locks.append(d["lock_slow"] / 10.0)  # x1000 -> %
+                    if d["jit_fast"] is not None:
+                        jitfs.append(d["jit_fast"] / 1000.0)  # x1000 -> ticks
+                    if d["jit_slow"] is not None:
+                        jitss.append(d["jit_slow"] / 1000.0)
+                    if d["iu_ma"] is not None:
+                        ius.append(d["iu_ma"])
+                        if d["iu_ma"] > args.current_limit:
                             send(ser, "0")  # immediate alpha -> open-loop
                             send(ser, "w")  # and kill
-                            print(f"  CURRENT ABORT: iu_ma={iu} > {args.current_limit} at alpha {tgt}")
+                            print(f"  CURRENT ABORT: iu_ma={d['iu_ma']} > {args.current_limit} at alpha {tgt}")
                             aborted = True
                             break
                 med = lambda xs: (sorted(xs)[len(xs) // 2] if xs else float("nan"))
                 cyc_max = max(cycs) if cycs else float("nan")  # worst-case is what matters
-                print(f"  {tgt:>5.2f} {med(fires):5.0f}% {med(periods):10.2f} "
-                      f"{ol_period:6.2f} {med(zcs):4.0f}% {med(ius):6.0f} "
-                      f"{cyc_max:7.0f} {cyc_max / 8500 * 100:4.0f}%")
+                print(f"  {tgt:>5.2f} {med(fires):5.0f}% {med(locks):5.0f}% "
+                      f"{med(jitfs):5.2f} {med(jitss):5.2f} {med(periods):7.2f} "
+                      f"{med(ius):6.0f} {cyc_max / 8500 * 100:4.0f}%")
                 if aborted:
                     cur = 0
                     break

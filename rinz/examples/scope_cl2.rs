@@ -190,6 +190,14 @@ static DBG_ISR_CYC: AtomicU32 = AtomicU32::new(0);
 // run away. 'u'/'i' step alpha; 'o' (and 'w'/'q') slam it to 0.
 static CL_ALPHA_X1000: AtomicU32 = AtomicU32::new(0); // default OFF (open-loop)
 static CL_PERIOD_X100: AtomicU32 = AtomicU32::new(0); // loop period_est x100, for telemetry
+// Per-sector ZC smoothing weight x1000 (live-tunable via ','/'.'); sim says ~0.6 cuts
+// commutation jitter ~40% without lagging. Applied to the loop every frame.
+static CL_ZC_BETA_X1000: AtomicU32 = AtomicU32::new(600);
+// Lock-quality IIRs (x1000) read from the loop into telemetry: hit fraction + ZC jitter.
+static CL_LOCK_FAST_X1000: AtomicU32 = AtomicU32::new(0);
+static CL_LOCK_SLOW_X1000: AtomicU32 = AtomicU32::new(0);
+static CL_JIT_FAST_X1000: AtomicU32 = AtomicU32::new(0); // ticks x1000
+static CL_JIT_SLOW_X1000: AtomicU32 = AtomicU32::new(0);
 const CL_SLEW_FRAC: f32 = 0.15; // max nudge as a fraction of the open-loop period at alpha=1
 const CL_KP: f32 = 0.3; // period PI gains (validated in the host sim)
 const CL_KI: f32 = 0.2;
@@ -570,7 +578,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -841,6 +849,13 @@ fn main() -> ! {
                     CL_ALPHA_X1000.store(a, Ordering::Relaxed);
                     writeln!(tx, "alpha={}.{:02}\r", a / 1000, (a % 1000) / 10).ok();
                 }
+                // per-sector ZC smoothing weight (','=down '.'=up, +/-0.05)
+                b',' | b'.' => {
+                    let cur = CL_ZC_BETA_X1000.load(Ordering::Relaxed) as i32;
+                    let v = (cur + if k == b'.' { 50 } else { -50 }).clamp(0, 950) as u32;
+                    CL_ZC_BETA_X1000.store(v, Ordering::Relaxed);
+                    writeln!(tx, "zc_beta={}.{:02}\r", v / 1000, (v % 1000) / 10).ok();
+                }
                 other => handle_command(other, &mut tx),
             }
         }
@@ -916,14 +931,19 @@ fn run_capture<TX: Write>(
     let (vbus_mv, iu_ma) = power_from_buffer(cap_ptr1, frames);
     writeln!(
         tx,
-        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} period_est={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
+        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
         DBG_CAPTURE_HZ.load(Ordering::Relaxed),
         DBG_CAPTURE_AMP.load(Ordering::Relaxed),
         DUTY_TRIM.load(Ordering::Relaxed),
         vbus_mv,
         iu_ma,
         CL_ALPHA_X1000.load(Ordering::Relaxed),
+        CL_ZC_BETA_X1000.load(Ordering::Relaxed),
         CL_PERIOD_X100.load(Ordering::Relaxed),
+        CL_LOCK_FAST_X1000.load(Ordering::Relaxed),
+        CL_LOCK_SLOW_X1000.load(Ordering::Relaxed),
+        CL_JIT_FAST_X1000.load(Ordering::Relaxed),
+        CL_JIT_SLOW_X1000.load(Ordering::Relaxed),
         DBG_ISR_CYC.load(Ordering::Relaxed),
         DBG_TIM7_TICKS.load(Ordering::Relaxed),
         DBG_SIX_STEP_TICKS.load(Ordering::Relaxed),
@@ -1169,6 +1189,7 @@ extern "C" fn TIM7() {
             ));
         }
         let cl = (*cl_ptr).as_mut().unwrap();
+        cl.set_zc_beta(CL_ZC_BETA_X1000.load(Ordering::Relaxed) as f32 / 1000.0); // live-tunable
         if alpha <= 0.0 {
             cl.set_period(ol_period); // keep period_est current so a later alpha>0 is sane
         }
@@ -1181,6 +1202,10 @@ extern "C" fn TIM7() {
             CL_SLEW_FRAC,
         );
         CL_PERIOD_X100.store((step.period_est * 100.0) as u32, Ordering::Relaxed);
+        CL_LOCK_FAST_X1000.store((cl.lock_fast() * 1000.0) as u32, Ordering::Relaxed);
+        CL_LOCK_SLOW_X1000.store((cl.lock_slow() * 1000.0) as u32, Ordering::Relaxed);
+        CL_JIT_FAST_X1000.store((cl.jit_fast() * 1000.0) as u32, Ordering::Relaxed);
+        CL_JIT_SLOW_X1000.store((cl.jit_slow() * 1000.0) as u32, Ordering::Relaxed);
         if let Some(t) = step.zc_ticks {
             CL_LAST_ZC = ((t / ol_period) * 100.0) as u32; // ZC % of window (telemetry)
         }

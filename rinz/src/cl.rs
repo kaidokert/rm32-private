@@ -258,6 +258,19 @@ pub struct ClLoop {
     scheduled: Option<f32>, // commutate-at tick (since commutation) once a ZC is seen
     gate_frac: f32,         // reject a period measurement deviating more than this fraction
     coast: f32,             // force commutation at period_est*coast when no ZC is seen
+    zc_filt: [Option<f32>; 6], // per-sector EMA of the ZC position (ticks since commutation)
+    zc_beta: f32,           // EMA weight on history; 0.0 = no filtering (raw per-sector ZC)
+    // Lock-quality telemetry (updated once per commutation). Two IIR time constants so the
+    // host can SEE how marginal the lock is rather than relying on the ear: lock_* = ZC-hit
+    // fraction (0..1), jit_* = |ZC - per-sector-smoothed| residual in ticks (jitter even
+    // when the hit rate is 100%). k_fast ~ a few revs, k_slow ~ a couple seconds.
+    last_residual: Option<f32>,
+    lock_fast: f32,
+    lock_slow: f32,
+    jit_fast: f32,
+    jit_slow: f32,
+    k_fast: f32,
+    k_slow: f32,
 }
 
 impl ClLoop {
@@ -276,7 +289,46 @@ impl ClLoop {
             scheduled: None,
             gate_frac,
             coast,
+            zc_filt: [None; 6],
+            zc_beta: 0.0,
+            last_residual: None,
+            lock_fast: 0.0,
+            lock_slow: 0.0,
+            jit_fast: 0.0,
+            jit_slow: 0.0,
+            k_fast: 0.08,   // ~ 2 electrical revs (12 commutations)
+            k_slow: 0.0007, // ~ 2 s at 250 Hz (1500 commutations/s)
         }
+    }
+
+    /// Set the per-sector ZC EMA weight (0.0 = raw, no filtering; higher = smoother but
+    /// laggier). Smooths each sector's rev-to-rev linfit noise -> less commutation jitter.
+    pub fn set_zc_beta(&mut self, beta: f32) {
+        self.zc_beta = beta.clamp(0.0, 0.95);
+    }
+
+    /// Override the lock-quality IIR coefficients (per commutation). `k_fast` ~ few revs,
+    /// `k_slow` ~ a couple seconds. Smaller k = longer averaging window.
+    pub fn set_lock_filt(&mut self, k_fast: f32, k_slow: f32) {
+        self.k_fast = k_fast;
+        self.k_slow = k_slow;
+    }
+
+    /// Lock-hit fraction (0..1): fraction of recent commutations that found an in-window
+    /// ZC (vs dead-reckoned coast). `fast` ~ few revs, slow ~ a couple seconds.
+    pub fn lock_fast(&self) -> f32 {
+        self.lock_fast
+    }
+    pub fn lock_slow(&self) -> f32 {
+        self.lock_slow
+    }
+    /// ZC jitter (ticks): smoothed |ZC - per-sector-smoothed-ZC| residual. Nonzero even at
+    /// 100% lock when the crossing bounces around -- the marginal-but-firing signature.
+    pub fn jit_fast(&self) -> f32 {
+        self.jit_fast
+    }
+    pub fn jit_slow(&self) -> f32 {
+        self.jit_slow
     }
 
     pub fn sector(&self) -> u8 {
@@ -313,7 +365,21 @@ impl ClLoop {
                         }
                     }
                     self.last_zc_abs = Some(zc_abs);
-                    self.scheduled = Some(t_zc + self.state.frequency * 0.5); // 30 deg after ZC
+                    // Per-sector EMA on the ZC position: each sector has its own real ZC
+                    // offset (the electrical-angle-locked per-sector wave), so we smooth
+                    // each sector against ITS OWN history -- killing rev-to-rev linfit
+                    // noise (the audible commutation jitter) without blurring the genuine
+                    // sector-to-sector structure a global filter would average away.
+                    let s = self.sector as usize;
+                    let zc_f = match self.zc_filt[s] {
+                        Some(p) => {
+                            self.last_residual = Some(t_zc - p); // deviation from smoothed
+                            self.zc_beta * p + (1.0 - self.zc_beta) * t_zc
+                        }
+                        None => t_zc,
+                    };
+                    self.zc_filt[s] = Some(zc_f);
+                    self.scheduled = Some(zc_f + self.state.frequency * 0.5); // 30 deg after ZC
                 }
             }
         }
@@ -327,6 +393,15 @@ impl ClLoop {
         let mut commutate = false;
         if self.ticks >= target {
             commutate = true;
+            // Lock-quality IIRs (once per commutation): hit rate + ZC jitter.
+            let hit = if coasted { 0.0 } else { 1.0 };
+            self.lock_fast += self.k_fast * (hit - self.lock_fast);
+            self.lock_slow += self.k_slow * (hit - self.lock_slow);
+            if let Some(r) = self.last_residual.take() {
+                let a = abs_f32(r);
+                self.jit_fast += self.k_fast * (a - self.jit_fast);
+                self.jit_slow += self.k_slow * (a - self.jit_slow);
+            }
             self.sector = (self.sector + 1) % 6;
             self.ticks = 0.0;
             self.scheduled = None;

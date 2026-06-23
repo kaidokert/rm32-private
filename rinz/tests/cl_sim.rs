@@ -116,6 +116,8 @@ struct SimResult {
     sync: f32, // commutations / rotor_sectors (1.0 = perfectly synced)
     coast_frac: f32,
     post_perr: f32, // median |period_est - true| after the load step
+    lock_slow: f32, // firmware lock-hit IIR (should be ~1.0 when locked)
+    jit_slow: f32,  // firmware ZC-jitter IIR in ticks (lower = smoother commutation)
 }
 
 /// Run the closed loop against the model with the given demag-blank. `trace` (if Some)
@@ -131,6 +133,7 @@ fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
         envf("CL_COAST", 1.0), // dead-reckon at period_est when a ZC is missed
         blank,
     );
+    lp.set_zc_beta(envf("CL_ZC_BETA", 0.0)); // per-sector ZC smoothing (0 = off)
     let (n, warm, step_tick) = (6000usize, 4500usize, 3000usize);
     let load_step = envf("SIM_LOAD_STEP", 0.15);
 
@@ -179,6 +182,8 @@ fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
         sync: commutations as f32 / (m.total / 60.0),
         coast_frac: coasts as f32 / commutations.max(1) as f32,
         post_perr: perr[perr.len() / 2],
+        lock_slow: lp.lock_slow(),
+        jit_slow: lp.jit_slow(),
     }
 }
 
@@ -190,11 +195,14 @@ fn cl_sim_locks() {
         Some(&std::env::var("CL_SIM_TRACE").unwrap_or_else(|_| "logs/cl_sim.txt".into())),
     );
     eprintln!(
-        "cl_sim_locks: omega->{:.2}, sync {:.2}, coast {:.0}%, post-step period err {:.1}%",
+        "cl_sim_locks: omega->{:.2}, sync {:.2}, coast {:.0}%, post-step period err {:.1}%, \
+         lock_slow {:.2}, jit_slow {:.2} ticks",
         r.omega_end,
         r.sync,
         r.coast_frac * 100.0,
-        r.post_perr * 100.0
+        r.post_perr * 100.0,
+        r.lock_slow,
+        r.jit_slow
     );
     assert!(
         r.omega_end > 1.0 && r.omega_end < 30.0,
