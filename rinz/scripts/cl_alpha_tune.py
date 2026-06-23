@@ -50,6 +50,18 @@ ALPHA_VALUE = {"0": 0.0, "1": 0.2, "2": 0.5, "3": 1.0}
 _CL_RE = re.compile(r"cl i=\d+ phys=\d+ zc=(-?\d+) coast=(\d)")
 
 
+def ramp_alpha(ser, cur_x1000: int, tgt_x1000: int, dwell: float = 0.05) -> int:
+    """Gradually walk alpha from cur to tgt via fine +/-0.05 firmware steps (m/n), so
+    engaging/disengaging the loop never jumps the commutation. Returns the new alpha."""
+    tgt = max(0, min(1000, round(tgt_x1000 / 50) * 50))
+    while cur_x1000 != tgt:
+        step = 50 if tgt > cur_x1000 else -50
+        send(ser, "m" if step > 0 else "n")
+        cur_x1000 += step
+        time.sleep(dwell)
+    return cur_x1000
+
+
 def parse_loop(dump: str):
     """(alpha_x1000, period_est_x100, iu_ma, n_comm, n_coast0, n_zc) from one dump."""
     def grab(key):
@@ -69,7 +81,8 @@ def main() -> int:
     p.add_argument("--baud", type=int, default=BAUD)
     p.add_argument("--hz", type=int, default=250)
     p.add_argument("--amp", type=float, default=13.0, help="catch-boundary amp %% (open-loop spin-up)")
-    p.add_argument("--alphas", nargs="+", default=["0", "1", "2", "3"], help="firmware alpha keys to step")
+    p.add_argument("--alpha-step", type=float, default=0.1, help="alpha increment per level (mult of 0.05)")
+    p.add_argument("--alpha-max", type=float, default=1.0, help="highest alpha to ramp to")
     p.add_argument("--snaps", type=int, default=4)
     p.add_argument("--settle", type=float, default=0.5, help="dwell after an alpha change")
     p.add_argument("--current-limit", type=int, default=3000)
@@ -81,8 +94,9 @@ def main() -> int:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = args.outdir or Path("logs") / f"alpha_{stamp}"
     outdir.mkdir(parents=True, exist_ok=True)
+    targets = [round(i * args.alpha_step, 3) for i in range(int(args.alpha_max / args.alpha_step) + 1)]
     print(f"alpha tune: {args.hz} Hz / {args.amp}% (ol_period={ol_period:.2f} ticks), "
-          f"alphas={[ALPHA_VALUE.get(a, a) for a in args.alphas]} -> {outdir}")
+          f"alphas={targets} -> {outdir}")
 
     with serial.Serial(args.port, args.baud, timeout=0.05) as ser:
         ser.reset_input_buffer()
@@ -99,15 +113,18 @@ def main() -> int:
             time.sleep(args.settle)
 
             print(f"\n  {'alpha':>5} {'fire%':>6} {'period_est':>10} {'(ol)':>6} {'zc%':>5} {'iu_ma':>6}")
-            for akey in args.alphas:
-                send(ser, akey)
+            cur = 0  # alpha x1000; firmware is at 0 after positioning's q-reset
+            send(ser, "0")
+            for tgt in targets:
+                cur = ramp_alpha(ser, cur, int(round(tgt * 1000)))  # gradual, no jump
                 time.sleep(args.settle)
                 fires, periods, zcs, ius = [], [], [], []
                 aborted = False
                 for snap in range(args.snaps):
                     dump = capture(ser, args.capture_timeout, "c")
-                    (outdir / f"a{akey}_s{snap}.log").write_text(dump, encoding="ascii", errors="replace")
-                    a, per, iu, n, c0, zc = parse_loop(dump)
+                    tag = f"{int(round(tgt * 100)):03d}"
+                    (outdir / f"a{tag}_s{snap}.log").write_text(dump, encoding="ascii", errors="replace")
+                    _a, per, iu, n, c0, zc = parse_loop(dump)
                     if n:
                         fires.append(c0 / n * 100)
                         zcs.append(zc / n * 100)
@@ -116,17 +133,18 @@ def main() -> int:
                     if iu is not None:
                         ius.append(iu)
                         if iu > args.current_limit:
-                            send(ser, "0")  # alpha -> open-loop
+                            send(ser, "0")  # immediate alpha -> open-loop
                             send(ser, "w")  # and kill
-                            print(f"  CURRENT ABORT: iu_ma={iu} > {args.current_limit} at alpha key {akey}")
+                            print(f"  CURRENT ABORT: iu_ma={iu} > {args.current_limit} at alpha {tgt}")
                             aborted = True
                             break
                 med = lambda xs: (sorted(xs)[len(xs) // 2] if xs else float("nan"))
-                print(f"  {ALPHA_VALUE.get(akey, akey):>5} {med(fires):5.0f}% {med(periods):10.2f} "
+                print(f"  {tgt:>5.2f} {med(fires):5.0f}% {med(periods):10.2f} "
                       f"{ol_period:6.2f} {med(zcs):4.0f}% {med(ius):6.0f}")
                 if aborted:
+                    cur = 0
                     break
-            send(ser, "0")  # back to open-loop before parking
+            cur = ramp_alpha(ser, cur, 0)  # gentle ramp-down avoids the teardown stall
             send(ser, "w")
         except KeyboardInterrupt:
             print("\naborted; parking")

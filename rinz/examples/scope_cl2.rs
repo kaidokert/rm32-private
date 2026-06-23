@@ -828,6 +828,14 @@ fn main() -> ! {
                     )
                     .ok();
                 }
+                // fine alpha steps (relative +/-0.05) for gradual ramps -- used by
+                // cl_alpha_tune over raw serial (no scope_live_ui conflict).
+                b'n' | b'm' => {
+                    let cur = CL_ALPHA_X1000.load(Ordering::Relaxed) as i32;
+                    let a = (cur + if k == b'm' { 50 } else { -50 }).clamp(0, 1000) as u32;
+                    CL_ALPHA_X1000.store(a, Ordering::Relaxed);
+                    writeln!(tx, "alpha={}.{:02}\r", a / 1000, (a % 1000) / 10).ok();
+                }
                 other => handle_command(other, &mut tx),
             }
         }
