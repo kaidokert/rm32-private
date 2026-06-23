@@ -63,7 +63,7 @@ def ramp_alpha(ser, cur_x1000: int, tgt_x1000: int, dwell: float = 0.05) -> int:
 
 
 def parse_loop(dump: str):
-    """(alpha_x1000, period_est_x100, iu_ma, n_comm, n_coast0, n_zc) from one dump."""
+    """(alpha_x1000, period_est_x100, iu_ma, n_comm, n_coast0, n_zc, isr_cyc) from a dump."""
     def grab(key):
         m = re.search(rf"\b{key}=(\d+)", dump)
         return int(m.group(1)) if m else None
@@ -72,7 +72,7 @@ def parse_loop(dump: str):
     n = len(cl)
     coast0 = sum(1 for _zc, co in cl if co == "0")
     zc = sum(1 for z, _co in cl if z != "-1")
-    return grab("alpha"), grab("period_est"), dump_iu_ma(dump), n, coast0, zc
+    return grab("alpha"), grab("period_est"), dump_iu_ma(dump), n, coast0, zc, grab("isr_cyc")
 
 
 def main() -> int:
@@ -112,24 +112,27 @@ def main() -> int:
             send(ser, "0")  # ensure alpha=0 after positioning
             time.sleep(args.settle)
 
-            print(f"\n  {'alpha':>5} {'fire%':>6} {'period_est':>10} {'(ol)':>6} {'zc%':>5} {'iu_ma':>6}")
+            print(f"\n  {'alpha':>5} {'fire%':>6} {'period_est':>10} {'(ol)':>6} {'zc%':>5} "
+                  f"{'iu_ma':>6} {'isr_cyc':>7} {'%bud':>5}")
             cur = 0  # alpha x1000; firmware is at 0 after positioning's q-reset
             send(ser, "0")
             for tgt in targets:
                 cur = ramp_alpha(ser, cur, int(round(tgt * 1000)))  # gradual, no jump
                 time.sleep(args.settle)
-                fires, periods, zcs, ius = [], [], [], []
+                fires, periods, zcs, ius, cycs = [], [], [], [], []
                 aborted = False
                 for snap in range(args.snaps):
                     dump = capture(ser, args.capture_timeout, "c")
                     tag = f"{int(round(tgt * 100)):03d}"
                     (outdir / f"a{tag}_s{snap}.log").write_text(dump, encoding="ascii", errors="replace")
-                    _a, per, iu, n, c0, zc = parse_loop(dump)
+                    _a, per, iu, n, c0, zc, cyc = parse_loop(dump)
                     if n:
                         fires.append(c0 / n * 100)
                         zcs.append(zc / n * 100)
                     if per:
                         periods.append(per / 100.0)
+                    if cyc is not None:
+                        cycs.append(cyc)
                     if iu is not None:
                         ius.append(iu)
                         if iu > args.current_limit:
@@ -139,8 +142,10 @@ def main() -> int:
                             aborted = True
                             break
                 med = lambda xs: (sorted(xs)[len(xs) // 2] if xs else float("nan"))
+                cyc_max = max(cycs) if cycs else float("nan")  # worst-case is what matters
                 print(f"  {tgt:>5.2f} {med(fires):5.0f}% {med(periods):10.2f} "
-                      f"{ol_period:6.2f} {med(zcs):4.0f}% {med(ius):6.0f}")
+                      f"{ol_period:6.2f} {med(zcs):4.0f}% {med(ius):6.0f} "
+                      f"{cyc_max:7.0f} {cyc_max / 8500 * 100:4.0f}%")
                 if aborted:
                     cur = 0
                     break

@@ -179,6 +179,9 @@ static DBG_DMA_TE: AtomicU32 = AtomicU32::new(0);
 static DBG_CAPTURE_AMP: AtomicU32 = AtomicU32::new(0);
 static DBG_CAPTURE_HZ: AtomicU32 = AtomicU32::new(0);
 static DBG_SIX_STEP_TICKS: AtomicU32 = AtomicU32::new(0);
+// Worst-case TIM7 ISR duration in CPU cycles (DWT.CYCCNT), to settle "are we hitting an
+// MCU bottleneck": budget is 170MHz/20kHz = 8500 cyc/tick. Reset at each capture start.
+static DBG_ISR_CYC: AtomicU32 = AtomicU32::new(0);
 
 // ---- Path B: bounded closed-loop steering via the validated cl::ClLoop ----
 // alpha in 0.000..1.000 (stored x1000). alpha=0 == pure open-loop (the governor /
@@ -538,7 +541,9 @@ where
 fn main() -> ! {
     rinz::panic::ensure_rtt();
 
-    let cp = cortex_m::Peripherals::take().unwrap();
+    let mut cp = cortex_m::Peripherals::take().unwrap();
+    cp.DCB.enable_trace(); // DEMCR.TRCENA -- gate DWT
+    cp.DWT.enable_cycle_counter(); // free-running CYCCNT for ISR-duration measurement
     let dp = stm32::Peripherals::take().unwrap();
     let BoardInit { clocks, mut rcc } = board_init(dp.RCC, dp.PWR);
 
@@ -911,7 +916,7 @@ fn run_capture<TX: Write>(
     let (vbus_mv, iu_ma) = power_from_buffer(cap_ptr1, frames);
     writeln!(
         tx,
-        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} period_est={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
+        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} period_est={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
         DBG_CAPTURE_HZ.load(Ordering::Relaxed),
         DBG_CAPTURE_AMP.load(Ordering::Relaxed),
         DUTY_TRIM.load(Ordering::Relaxed),
@@ -919,6 +924,7 @@ fn run_capture<TX: Write>(
         iu_ma,
         CL_ALPHA_X1000.load(Ordering::Relaxed),
         CL_PERIOD_X100.load(Ordering::Relaxed),
+        DBG_ISR_CYC.load(Ordering::Relaxed),
         DBG_TIM7_TICKS.load(Ordering::Relaxed),
         DBG_SIX_STEP_TICKS.load(Ordering::Relaxed),
         DBG_DMA_TC.load(Ordering::Relaxed),
@@ -1135,6 +1141,10 @@ extern "C" fn TIM7() {
     let electrical_hz = ELECTRICAL_HZ.load(Ordering::Relaxed);
     let amplitude = AMPLITUDE.load(Ordering::Relaxed);
 
+    // Settle the MCU-bottleneck question: worst-case active-path ISR duration in cycles.
+    // Budget = 170MHz / 20kHz = 8500 cyc. fetch_max keeps the spike; reset at capture start.
+    let isr_t0 = cortex_m::peripheral::DWT::cycle_count();
+
     unsafe {
         if CAPTURE_REQUEST.swap(false, Ordering::Relaxed) {
             CAPTURE_WAIT_ZERO = true;
@@ -1193,6 +1203,7 @@ extern "C" fn TIM7() {
             DBG_CAPTURE_AMP.store(amplitude, Ordering::Relaxed);
             DBG_CAPTURE_HZ.store(electrical_hz, Ordering::Relaxed);
             DBG_SIX_STEP_TICKS.store(0, Ordering::Relaxed);
+            DBG_ISR_CYC.store(0, Ordering::Relaxed); // reset worst-case ISR timer for this capture
             CL_CAP_N.store(0, Ordering::Relaxed); // restart the per-commutation ZC log
             CAPTURE_FRAMES.store(frames, Ordering::Relaxed);
             CAPTURE_TICKS_TARGET.store(ticks, Ordering::Relaxed);
@@ -1234,4 +1245,7 @@ extern "C" fn TIM7() {
             CL_LAST_ZC = 255; // reset for the next sector
         }
     }
+
+    let isr_dt = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(isr_t0);
+    DBG_ISR_CYC.fetch_max(isr_dt, Ordering::Relaxed);
 }
