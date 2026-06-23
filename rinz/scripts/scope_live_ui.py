@@ -258,8 +258,11 @@ def send_keys_logged(ser: serial.Serial, state: UiState, log: CommLog, key: str,
 
 
 def ramp_amplitude_logged(ser: serial.Serial, state: UiState, log: CommLog, target_percent: float) -> str:
+    # Ramp from the firmware's ACTUAL current amp (parsed from its reset/amp echoes into
+    # state.amp), not a hardcoded assumption -- the firmware's reset amp (AMP_START) is
+    # 11.0%, not AMP_START_TENTHS (8.0%), which silently added +3% to every --amp target.
     target = int(round(target_percent * 10))
-    delta = target - AMP_START_TENTHS
+    delta = target - int(round(state.amp * 10))
     out = []
 
     full_steps, tenths = divmod(abs(delta), 10)
@@ -274,7 +277,7 @@ def ramp_amplitude_logged(ser: serial.Serial, state: UiState, log: CommLog, targ
 
 
 def ramp_frequency_logged(ser: serial.Serial, state: UiState, log: CommLog, target_hz: int) -> str:
-    delta = target_hz - FREQ_START_HZ
+    delta = target_hz - int(round(state.hz)) # ramp from the actual parsed hz, not a constant
     steps = abs(delta) // FREQ_STEP_HZ
     return send_keys_logged(ser, state, log, "f" if delta >= 0 else "v", steps)
 
@@ -791,7 +794,7 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
         send_raw_key(ser, state, log, "q", "reset requested")
         state.mode = "six-step"
         state.hz = 60
-        state.amp = 8.0
+        state.amp = 11.0 # firmware AMP_START (the "reset:" echo confirms it)
         state.trim = 0
     elif k in {"f", "v", "a", "z", "+", "-", "m", "w", "y", "0", "1", "2", "3"}:
         send_raw_key(ser, state, log, k, f"sent {k}")

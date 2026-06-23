@@ -184,7 +184,7 @@ fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
 
 #[test]
 fn cl_sim_locks() {
-    let blank = envf("CL_BLANK", 2.0) as u32;
+    let blank = envf("CL_BLANK", 4.0) as u32; // skip the demag tail before the line fit
     let r = run_sim(
         blank,
         Some(&std::env::var("CL_SIM_TRACE").unwrap_or_else(|_| "logs/cl_sim.txt".into())),

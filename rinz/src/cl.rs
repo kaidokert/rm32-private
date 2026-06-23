@@ -46,6 +46,14 @@ pub struct Detector {
     prev_frame: u32,
     found: Option<f32>,       // crossing as % of the window
     found_frame: Option<f32>, // crossing as a sub-frame index (ticks since sector start)
+    // running least-squares of post-blank (frame, e): lets finish_linfit() SOLVE for the
+    // zero by extrapolating the slope, even when the float window sits on a shallow part
+    // of the BEMF and the raw signal never crosses (the common case -- see cl notes).
+    fn_n: f32,
+    fn_sx: f32,
+    fn_sy: f32,
+    fn_sxy: f32,
+    fn_sxx: f32,
 }
 
 impl Detector {
@@ -58,6 +66,11 @@ impl Detector {
             prev_frame: 0,
             found: None,
             found_frame: None,
+            fn_n: 0.0,
+            fn_sx: 0.0,
+            fn_sy: 0.0,
+            fn_sxy: 0.0,
+            fn_sxx: 0.0,
         }
     }
 
@@ -68,6 +81,11 @@ impl Detector {
         self.prev_frame = 0;
         self.found = None;
         self.found_frame = None;
+        self.fn_n = 0.0;
+        self.fn_sx = 0.0;
+        self.fn_sy = 0.0;
+        self.fn_sxy = 0.0;
+        self.fn_sxx = 0.0;
     }
 
     /// Push one frame's `float - neutral`. `fps` = frames per 60-degree window.
@@ -78,6 +96,14 @@ impl Detector {
             self.prev_frame = self.frame;
             return;
         }
+        // running least-squares accumulation of post-blank (frame, e)
+        let fx = self.frame as f32;
+        let fy = e as f32;
+        self.fn_n += 1.0;
+        self.fn_sx += fx;
+        self.fn_sy += fy;
+        self.fn_sxy += fx * fy;
+        self.fn_sxx += fx * fx;
         let s = e.signum();
         if self.entry_sign == 0 {
             if s != 0 {
@@ -110,6 +136,26 @@ impl Detector {
     /// Used by the closed loop for commutation timing (no %-of-window conversion).
     pub fn finish_frame(&self) -> Option<f32> {
         self.found_frame
+    }
+
+    /// Crossing SOLVED from a least-squares line through the post-blank samples
+    /// (ticks since sector start), extrapolating the slope so it works even when the
+    /// float window sits on a shallow part of the BEMF and never actually crosses.
+    /// None if too few points or a flat slope. The caller gates on plausible position.
+    pub fn finish_linfit(&self) -> Option<f32> {
+        if self.fn_n < 4.0 {
+            return None;
+        }
+        let denom = self.fn_n * self.fn_sxx - self.fn_sx * self.fn_sx;
+        if abs_f32(denom) < 1e-3 {
+            return None;
+        }
+        let m = (self.fn_n * self.fn_sxy - self.fn_sx * self.fn_sy) / denom;
+        if abs_f32(m) < 1e-3 {
+            return None;
+        }
+        let b = (self.fn_sy - m * self.fn_sx) / self.fn_n;
+        Some(-b / m) // zero-crossing frame (may lie outside [0, window])
     }
 }
 
@@ -249,20 +295,26 @@ impl ClLoop {
         let e = float_minus_neutral(bemf, self.sector as usize);
         self.detector.push(e, self.state.frequency.max(1.0));
 
+        // Solve the crossing from the line fit (handles windows that never actually
+        // cross). Wait until ~half the window so the fit is stable; gate on a plausible
+        // position so a wild extrapolation can't hijack the schedule.
         let mut zc_ticks = None;
-        if self.scheduled.is_none() {
-            if let Some(t_zc) = self.detector.finish_frame() {
-                zc_ticks = Some(t_zc);
-                let zc_abs = self.abs - self.ticks + t_zc; // absolute time of the crossing
-                if let Some(last) = self.last_zc_abs {
-                    let meas = zc_abs - last; // ZC-to-ZC = one sector period
-                    let err = meas - self.state.frequency;
-                    if abs_f32(err) <= self.gate_frac * self.state.frequency {
-                        self.pll.update(err, &mut self.state);
+        if self.scheduled.is_none() && self.ticks >= 0.5 * self.state.frequency {
+            if let Some(t_zc) = self.detector.finish_linfit() {
+                let win = self.state.frequency;
+                if t_zc >= -0.3 * win && t_zc <= 1.3 * win {
+                    zc_ticks = Some(t_zc);
+                    let zc_abs = self.abs - self.ticks + t_zc; // absolute time of the crossing
+                    if let Some(last) = self.last_zc_abs {
+                        let meas = zc_abs - last; // ZC-to-ZC = one sector period
+                        let err = meas - self.state.frequency;
+                        if abs_f32(err) <= self.gate_frac * self.state.frequency {
+                            self.pll.update(err, &mut self.state);
+                        }
                     }
+                    self.last_zc_abs = Some(zc_abs);
+                    self.scheduled = Some(t_zc + self.state.frequency * 0.5); // 30 deg after ZC
                 }
-                self.last_zc_abs = Some(zc_abs);
-                self.scheduled = Some(t_zc + self.state.frequency * 0.5); // 30 deg after ZC
             }
         }
         let cl_target = self.scheduled.unwrap_or(self.state.frequency * self.coast);

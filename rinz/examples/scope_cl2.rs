@@ -198,7 +198,7 @@ const CL_LOOP_COAST: f32 = 1.0; // dead-reckon at period_est when a ZC is missed
 // SIX_HIGH/SIX_LOW give the driven channels per physical sector (channel idx == phase
 // idx: 0=A/ch17, 1=B/ch5, 2=C/ch14); the third is the floating phase. These match
 // scope_common.SIX_STEP_HIGH/LOW (verified against the DRIVE_A/B/C tables).
-const CL_BLANK: u32 = 2; // demag skip frames for the ZC detector (passed to ClLoop)
+const CL_BLANK: u32 = 4; // demag skip frames before the line fit (demag tail corrupts it)
 const CL_MAXCOMM: usize = 24; // per-capture commutation-log capacity (2 revs = 12)
 // Per-commutation log filled DURING a capture window, dumped before the frame dump.
 // Packed u32: byte2=phys(0..5), byte1=zc_pct(0..100, 255=no in-window ZC), byte0=
