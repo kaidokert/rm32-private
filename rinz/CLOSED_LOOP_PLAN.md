@@ -150,6 +150,63 @@ would actually use, and it stays oracle-anchored.
 
 Still observe-only throughout. The PLL must **track the oracle**, not merely be smooth.
 
+---
+
+## PATH B RESULT — working bounded closed loop on hardware (June 2026)
+
+**It works.** A bounded α-blend closed loop (`examples/scope_cl2.rs`, the validated
+`cl::ClLoop`) acquires lock and runs sensorless at 250 Hz / 13 %. Auto-tuned with
+`scripts/cl_alpha_tune.py` (ramps α 0→1, logs loop health):
+
+```
+ α 0.0–0.4 : fire ~33%, iu_ma ~625–730   (nudge too weak to capture the ZC)
+ α 0.5     : fire 58%,  iu_ma 854         (transition)
+ α 0.6     : fire 100%, iu_ma 166         (SNAP to lock)
+ α 0.7–1.0 : fire 100%, iu_ma 145         (rock-solid)   period_est pinned 13.33 throughout
+```
+
+Clean bistable lock acquisition at α≈0.6, **−79 % current** (687→145) at the same
+commanded speed.
+
+### Why it's real, not `skunk` (the anti-skunk trio)
+
+- **fire% → 100%**: the ZC is found every sector (consistently in the window once the
+  loop centers it).
+- **period_est governed** at the commanded `ol_period` (pinned in the α-blend) — the
+  self-consistent-artifact failure mode is structurally impossible.
+- **Current −79 %**: decisive. An artifact lock *raises* current; only commutation
+  truly synchronized to the rotor BEMF cuts it. Same speed, far less current = optimal
+  timing = locked to the real rotor.
+
+(The `scope_cl_validate` "D1 FAIL vs oracle" is a stale yardstick: the multi-harmonic
+oracle pools both arcs over revs and *averages out* per-sector variation, so it's not
+valid per-sector ground truth for a locked loop. The operational trio above is the
+validation.)
+
+### What made it work (after the false "wall")
+
+1. **The wall was a misdiagnosis.** The float windows aren't crossing-free; they hold a
+   *slope heading to a zero outside the window*. A least-squares **line fit that
+   extrapolates** the crossing (`cl::Detector::finish_linfit`) recovers it — fire rate
+   18 %→50 % on captures, →100 % once the loop centers the ZC. The sign-change detector
+   and the multi-harmonic "oracle" were both the wrong tools.
+2. **Demag blanking** `blank=4` (the post-commutation demag tail corrupts the line fit).
+3. **Governed-mode period pin**: in the α-blend the frequency is governed by the
+   commanded period; the loop only adjusts *phase*. Pinning `period_est = ol_period`
+   killed a positive-feedback runaway (`cl_alpha_tune` caught it: period 13→32, fire→0).
+4. **Gradual α ramp up/down** (fine `n`/`m` keys) — abrupt α=1→0 teardown stalled it.
+
+### Honest scope — what is and isn't done
+
+- **Done:** bounded closed loop at **one operating point** (250 Hz / 13 %), validated on
+  the host motor model *and* hardware, with the same `cl::ClLoop` code; lock acquires at
+  α≥0.6; efficiency improves 79 %.
+- **Bounded, not full sensorless:** the *frequency* is still governed by the commanded
+  `ol_period` (the loop adjusts phase within ±15 %). Letting the loop set the speed,
+  the broader (freq, amp) envelope, higher RPM, and **startup from rest** are the next
+  frontiers — not done.
+- ST MCWB remains worth running as a *reference/ceiling* comparison, no longer a rescue.
+
 ### Replay ceiling, and the A→B path (chosen)
 
 Building the host pipeline surfaced a hard limit: **observe-only replay cannot validate

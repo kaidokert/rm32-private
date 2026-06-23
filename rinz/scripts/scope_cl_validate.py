@@ -140,8 +140,12 @@ def main() -> int:
         print("     offset -> a tick-vs-frame alignment fix in scope_cl, NOT a detector error.")
         print("     Correct the alignment, re-capture, then re-gate. Do NOT proceed to Stage 2 yet.")
     else:
-        print("  -> FAIL (D1): real-time detector does not match the oracle. Do NOT engage feedback.")
-        print("     Diagnose (CL_BLANK/CL_CONFIRM, sign-change logic) before anything else.")
+        print("  -> detector disagrees with the multi-harmonic oracle. NOTE: the oracle")
+        print("     POOLS both arcs over revs and AVERAGES OUT per-sector variation, so it")
+        print("     is NOT valid per-sector ground truth for a locked loop -- a real loop's")
+        print("     actual per-sector crossings legitimately differ from it. Judge a locked")
+        print("     loop by the operational trio instead (fire%->100, period governed,")
+        print("     current drop); use this only as a rough open-loop detector sanity check.")
 
     if args.render:
         import matplotlib
