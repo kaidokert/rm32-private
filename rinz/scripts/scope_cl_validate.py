@@ -28,7 +28,7 @@ from pathlib import Path
 from scope_common import PHASE_TO_CHANNEL, _driven_pair_neutral, lowpass_channels
 from zc_validate import TWO_PI, _float_phase, crossing_pct, fit_harmonics, load_captures
 
-_CL_RE = re.compile(r"\bcl i=(\d+)\s+phys=(\d+)\s+zc=(-?\d+)\s+per=(\d+)")
+_CL_RE = re.compile(r"\bcl i=(\d+)\s+phys=(\d+)\s+zc=(-?\d+)\s+\w+=(\d+)")  # per= (old) or coast= (new)
 
 
 def parse_cl(text: str):
