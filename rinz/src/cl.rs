@@ -289,7 +289,7 @@ impl ClLoop {
     /// Detector + ZC-to-ZC period update for one frame. Returns `(zc_ticks, cl_target)`
     /// where `cl_target` is the loop's OWN desired commutation tick (since commutation).
     /// Does not commutate.
-    fn observe(&mut self, bemf: [i32; 3]) -> (Option<f32>, f32) {
+    fn observe(&mut self, bemf: [i32; 3], update_pll: bool) -> (Option<f32>, f32) {
         self.ticks += 1.0;
         self.abs += 1.0;
         let e = float_minus_neutral(bemf, self.sector as usize);
@@ -308,7 +308,7 @@ impl ClLoop {
                     if let Some(last) = self.last_zc_abs {
                         let meas = zc_abs - last; // ZC-to-ZC = one sector period
                         let err = meas - self.state.frequency;
-                        if abs_f32(err) <= self.gate_frac * self.state.frequency {
+                        if update_pll && abs_f32(err) <= self.gate_frac * self.state.frequency {
                             self.pll.update(err, &mut self.state);
                         }
                     }
@@ -341,9 +341,10 @@ impl ClLoop {
         }
     }
 
-    /// Pure closed-loop frame (host sim): commutate on the loop's own ZC-driven schedule.
+    /// Pure closed-loop frame (host sim): commutate on the loop's own ZC-driven schedule,
+    /// with period_est free-running (the PLL tracks the rotor speed).
     pub fn on_frame(&mut self, bemf: [i32; 3]) -> ClStep {
-        let (zc, ct) = self.observe(bemf);
+        let (zc, ct) = self.observe(bemf, true);
         self.fire(ct, zc)
     }
 
@@ -361,7 +362,13 @@ impl ClLoop {
         alpha: f32,
         slew_frac: f32,
     ) -> ClStep {
-        let (zc, ct) = self.observe(bemf);
+        // Governed mode: the frequency IS the commanded ol_period; the ZC only adjusts
+        // PHASE. Pin period_est to ol_period (and don't run the period PLL) so a biased
+        // ZC can't run the estimate away -- the runaway that broke the detector window
+        // and desynced the loop as alpha rose (caught by cl_alpha_tune).
+        self.state.frequency = ol_period;
+        self.state.pi.integral = ol_period;
+        let (zc, ct) = self.observe(bemf, false);
         let lim = slew_frac * ol_period;
         let nudge = (ct - ol_period).clamp(-lim, lim);
         let target = ol_period + alpha.clamp(0.0, 1.0) * nudge;
