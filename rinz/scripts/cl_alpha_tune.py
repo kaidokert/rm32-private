@@ -105,7 +105,10 @@ def main() -> int:
     p.add_argument("--alpha-max", type=float, default=1.0, help="highest alpha to ramp to")
     p.add_argument("--zc-beta", type=float, default=None,
                    help="set per-sector ZC smoothing weight (0..0.95); default = firmware's")
-    p.add_argument("--snaps", type=int, default=4)
+    p.add_argument("--snaps", type=int, default=4, help="minimum captures per alpha level")
+    p.add_argument("--hold", type=float, default=0.0,
+                   help="min seconds to dwell+capture at each alpha level (lets the ~2 s "
+                        "slow IIRs settle past the setting-change notch; in addition to --snaps)")
     p.add_argument("--settle", type=float, default=0.5, help="dwell after an alpha change")
     p.add_argument("--current-limit", type=int, default=3000)
     p.add_argument("--capture-timeout", type=float, default=4.0)
@@ -146,10 +149,15 @@ def main() -> int:
                 time.sleep(args.settle)
                 fires, periods, ius, cycs, locks, jitfs, jitss = [], [], [], [], [], [], []
                 aborted = False
-                for snap in range(args.snaps):
+                # Hold each setting for at least --snaps captures AND --hold seconds, so the
+                # ~2 s slow IIRs converge past the setting-change notch into true steady state.
+                snap = 0
+                t_hold = time.monotonic()
+                while True:
                     dump = capture(ser, args.capture_timeout, "c")
                     tag = f"{int(round(tgt * 100)):03d}"
                     (outdir / f"a{tag}_s{snap}.log").write_text(dump, encoding="ascii", errors="replace")
+                    snap += 1
                     d = parse_loop(dump)
                     if d["n"]:
                         fires.append(d["coast0"] / d["n"] * 100)
@@ -171,11 +179,13 @@ def main() -> int:
                             print(f"  CURRENT ABORT: iu_ma={d['iu_ma']} > {args.current_limit} at alpha {tgt}")
                             aborted = True
                             break
+                    if snap >= args.snaps and (time.monotonic() - t_hold) >= args.hold:
+                        break
                 med = lambda xs: (sorted(xs)[len(xs) // 2] if xs else float("nan"))
                 cyc_max = max(cycs) if cycs else float("nan")  # worst-case is what matters
                 print(f"  {tgt:>5.2f} {med(fires):5.0f}% {med(locks):5.0f}% "
                       f"{med(jitfs):5.2f} {med(jitss):5.2f} {med(periods):7.2f} "
-                      f"{med(ius):6.0f} {cyc_max / 8500 * 100:4.0f}%")
+                      f"{med(ius):6.0f} {cyc_max / 8500 * 100:4.0f}%  (n={snap})")
                 if aborted:
                     cur = 0
                     break
