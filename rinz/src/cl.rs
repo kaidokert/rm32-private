@@ -258,6 +258,7 @@ pub struct ClLoop {
     scheduled: Option<f32>, // commutate-at tick (since commutation) once a ZC is seen
     gate_frac: f32,         // reject a period measurement deviating more than this fraction
     coast: f32,             // force commutation at period_est*coast when no ZC is seen
+    predict_coast: bool,    // on a miss, schedule from per-sector ZC memory vs generic timeout
     zc_filt: [Option<f32>; 6], // per-sector EMA of the ZC position (ticks since commutation)
     zc_beta: f32,           // EMA weight on history; 0.0 = no filtering (raw per-sector ZC)
     // Lock-quality telemetry (updated once per commutation). Two IIR time constants so the
@@ -289,6 +290,7 @@ impl ClLoop {
             scheduled: None,
             gate_frac,
             coast,
+            predict_coast: true,
             zc_filt: [None; 6],
             zc_beta: 0.0,
             last_residual: None,
@@ -305,6 +307,13 @@ impl ClLoop {
     /// laggier). Smooths each sector's rev-to-rev linfit noise -> less commutation jitter.
     pub fn set_zc_beta(&mut self, beta: f32) {
         self.zc_beta = beta.clamp(0.0, 0.95);
+    }
+
+    /// Predictive coast: on a missed detection, schedule from this sector's smoothed ZC
+    /// memory instead of the generic open-loop timeout (true = on). Off restores the
+    /// dead-reckon-at-period behavior, for an A/B of the residual commutation clips.
+    pub fn set_predict_coast(&mut self, on: bool) {
+        self.predict_coast = on;
     }
 
     /// Override the lock-quality IIR coefficients (per commutation). `k_fast` ~ few revs,
@@ -383,7 +392,18 @@ impl ClLoop {
                 }
             }
         }
-        let cl_target = self.scheduled.unwrap_or(self.state.frequency * self.coast);
+        // No ZC scheduled yet (still searching, or this sector will miss). Prefer this
+        // sector's smoothed ZC memory so a missed detection fires near its historically-
+        // correct phase rather than a generic timeout (which is the right average period
+        // but the wrong phase -> the audible per-miss clip). Fall back to the open-loop
+        // coast only with no memory yet (acquisition) or when predictive coast is off.
+        let cl_target = match self.scheduled {
+            Some(t) => t,
+            None => match (self.predict_coast, self.zc_filt[self.sector as usize]) {
+                (true, Some(zc)) => zc + self.state.frequency * 0.5,
+                _ => self.state.frequency * self.coast,
+            },
+        };
         (zc_ticks, cl_target)
     }
 

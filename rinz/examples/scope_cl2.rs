@@ -193,6 +193,9 @@ static CL_PERIOD_X100: AtomicU32 = AtomicU32::new(0); // loop period_est x100, f
 // Per-sector ZC smoothing weight x1000 (live-tunable via ','/'.'); sim says ~0.6 cuts
 // commutation jitter ~40% without lagging. Applied to the loop every frame.
 static CL_ZC_BETA_X1000: AtomicU32 = AtomicU32::new(600);
+// Predictive coast (1=on): on a missed ZC, schedule from per-sector memory vs open-loop
+// timeout. Targets the residual ~4% per-miss commutation clips. Live A/B via 'y'.
+static CL_PREDICT_COAST: AtomicU32 = AtomicU32::new(1);
 // Lock-quality IIRs (x1000) read from the loop into telemetry: hit fraction + ZC jitter.
 static CL_LOCK_FAST_X1000: AtomicU32 = AtomicU32::new(0);
 static CL_LOCK_SLOW_X1000: AtomicU32 = AtomicU32::new(0);
@@ -578,7 +581,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -856,6 +859,12 @@ fn main() -> ! {
                     CL_ZC_BETA_X1000.store(v, Ordering::Relaxed);
                     writeln!(tx, "zc_beta={}.{:02}\r", v / 1000, (v % 1000) / 10).ok();
                 }
+                // toggle predictive coast (per-sector-memory schedule on a missed ZC)
+                b'y' => {
+                    let v = (CL_PREDICT_COAST.load(Ordering::Relaxed) == 0) as u32;
+                    CL_PREDICT_COAST.store(v, Ordering::Relaxed);
+                    writeln!(tx, "predict_coast={}\r", v).ok();
+                }
                 other => handle_command(other, &mut tx),
             }
         }
@@ -931,7 +940,7 @@ fn run_capture<TX: Write>(
     let (vbus_mv, iu_ma) = power_from_buffer(cap_ptr1, frames);
     writeln!(
         tx,
-        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
+        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} predict={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
         DBG_CAPTURE_HZ.load(Ordering::Relaxed),
         DBG_CAPTURE_AMP.load(Ordering::Relaxed),
         DUTY_TRIM.load(Ordering::Relaxed),
@@ -939,6 +948,7 @@ fn run_capture<TX: Write>(
         iu_ma,
         CL_ALPHA_X1000.load(Ordering::Relaxed),
         CL_ZC_BETA_X1000.load(Ordering::Relaxed),
+        CL_PREDICT_COAST.load(Ordering::Relaxed),
         CL_PERIOD_X100.load(Ordering::Relaxed),
         CL_LOCK_FAST_X1000.load(Ordering::Relaxed),
         CL_LOCK_SLOW_X1000.load(Ordering::Relaxed),
@@ -1190,6 +1200,7 @@ extern "C" fn TIM7() {
         }
         let cl = (*cl_ptr).as_mut().unwrap();
         cl.set_zc_beta(CL_ZC_BETA_X1000.load(Ordering::Relaxed) as f32 / 1000.0); // live-tunable
+        cl.set_predict_coast(CL_PREDICT_COAST.load(Ordering::Relaxed) != 0);
         if alpha <= 0.0 {
             cl.set_period(ol_period); // keep period_est current so a later alpha>0 is sane
         }

@@ -134,6 +134,7 @@ fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
         blank,
     );
     lp.set_zc_beta(envf("CL_ZC_BETA", 0.0)); // per-sector ZC smoothing (0 = off)
+    lp.set_predict_coast(envf("CL_PREDICT", 1.0) > 0.5); // predictive coast on missed ZC
     let (n, warm, step_tick) = (6000usize, 4500usize, 3000usize);
     let load_step = envf("SIM_LOAD_STEP", 0.15);
 
