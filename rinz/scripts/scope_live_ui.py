@@ -62,6 +62,9 @@ class UiState:
     hz: int = 60
     amp: float = 8.0
     trim: int = 0  # raw CCR duty trim (firmware '[' / ']'), reported via 'trim=' echo
+    alpha: float = 0.0  # closed-loop authority (scope_cl2 'alpha=' echo)
+    zc_beta: float = 0.6  # per-sector ZC smoothing (scope_cl2 'zc_beta=' echo)
+    predict: bool = True  # predictive coast on/off (scope_cl2 'predict_coast=' echo)
     connected: bool = False
     running: bool = True
     capturing: bool = False
@@ -168,6 +171,18 @@ def parse_status_line(state: UiState, line: str) -> None:
             state.trim = int(stripped.split("=", 1)[1].split()[0])
         except (ValueError, IndexError):
             pass
+    elif stripped.startswith("alpha="):
+        try:
+            state.alpha = float(stripped.split("=", 1)[1].split()[0])
+        except (ValueError, IndexError):
+            pass
+    elif stripped.startswith("zc_beta="):
+        try:
+            state.zc_beta = float(stripped.split("=", 1)[1].split()[0])
+        except (ValueError, IndexError):
+            pass
+    elif stripped.startswith("predict_coast="):
+        state.predict = stripped.split("=", 1)[1].strip().startswith("1")
     elif stripped.startswith("freq=") and stripped.endswith("Hz"):
         try:
             state.hz = int(stripped.split("=", 1)[1].removesuffix("Hz"))
@@ -653,9 +668,7 @@ def setup_firmware(ser: serial.Serial, state: UiState, log: CommLog, mode: str, 
     for chunk in (send_key_logged(ser, state, log, "q"),):
         for line in chunk.splitlines():
             parse_status_line(state, line)
-    if mode == "sine":
-        for line in send_key_logged(ser, state, log, "m").splitlines():
-            parse_status_line(state, line)
+    # (No sine mode in current firmware; 'm' is now an alpha step, so never send it here.)
     for chunk in (ramp_amplitude_logged(ser, state, log, amp), ramp_frequency_logged(ser, state, log, hz)):
         for line in chunk.splitlines():
             parse_status_line(state, line)
@@ -701,7 +714,8 @@ def draw(state: UiState) -> None:
     )
     clear_line(
         4,
-        f"Drive mode={state.mode} hz={state.hz} amp={state.amp:g}% trim={state.trim:+d} | "
+        f"Drive hz={state.hz} amp={state.amp:g}% trim={state.trim:+d} "
+        f"alpha={state.alpha:.2f} zcb={state.zc_beta:.2f} pc={'on' if state.predict else 'off'} | "
         f"capture={capture_state} | {state.rotor_summary}",
     )
     clear_line(
@@ -796,7 +810,7 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
         state.hz = 60
         state.amp = 11.0 # firmware AMP_START (the "reset:" echo confirms it)
         state.trim = 0
-    elif k in {"f", "v", "a", "z", "+", "-", "m", "w", "y", "0", "1", "2", "3"}:
+    elif k in {"f", "v", "a", "z", "+", "-", "m", "n", ",", ".", "w", "y", "0", "1", "2", "3"}:
         send_raw_key(ser, state, log, k, f"sent {k}")
         if k == "f":
             state.hz += 10
@@ -810,8 +824,9 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
             state.amp += 0.1
         elif k == "-":
             state.amp = max(0.0, state.amp - 0.1)
-        if k == "m":
-            state.mode = "sine" if state.mode == "six-step" else "six-step"
+        # 'm'/'n' are scope_cl2 alpha fine-steps (+/-0.05); the firmware echoes alpha=,
+        # parsed above. (Historically 'm' was the sine/six-step switch -- that firmware
+        # mode is gone, so do NOT flip a local mode label here.)
         if k == "w":
             # Firmware 'w' clears its STREAMING flag too; keep the UI in sync.
             state.streaming = False
@@ -824,7 +839,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baud", type=int, default=BAUD, help=f"UART baud (default: {BAUD})")
     parser.add_argument("--udp-address", default="127.0.0.1", help="UDP address for PlotJuggler")
     parser.add_argument("--udp-port", type=int, default=9870, help="UDP port for PlotJuggler")
-    parser.add_argument("--mode", choices=("sine", "six-step"), default="sine")
+    parser.add_argument("--mode", choices=("sine", "six-step"), default="six-step")
     parser.add_argument("--hz", type=float, default=120)
     parser.add_argument("--amp", type=float, default=15)
     parser.add_argument("--lowpass-window", type=int, default=9, help="reserved for future UI plot views")
