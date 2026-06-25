@@ -70,6 +70,20 @@ def set_beta(ser, beta: float) -> None:
         time.sleep(0.01)
 
 
+def current_pc(ser, timeout: float = 3.0) -> int | None:
+    """Read the firmware's current predict-coast state (0/1) from a `glitch:` line.
+    Needed because predict state PERSISTS across runs -- the script must not assume it."""
+    buf = ""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        buf += ser.read(256).decode("ascii", errors="replace")
+        for line in buf.splitlines():
+            m = _G_RE.search(line)
+            if m:
+                return int(m[10])
+    return None
+
+
 def run_window(ser, secs: float) -> dict | None:
     """Reset counters, run for `secs` (petting the watchdog), return the last glitch line's
     totals (counters are cumulative since reset = window totals). Assumes the monitor is
@@ -160,28 +174,43 @@ def main() -> int:
             set_alpha(ser, args.alpha)
             send(ser, "i")  # monitor on
             time.sleep(1.0)  # let it settle into lock before the window
+            # Predict state PERSISTS across runs and 'y' only toggles, so establish a known
+            # baseline (predict ON) before window 1 -- else the previous run's final toggle
+            # silently inverts the A/B. Label/compare by the actual pc= field regardless.
+            pc = current_pc(ser)
+            if pc == 0:
+                send(ser, "y")
+                time.sleep(0.5)
+
+            def tag(d: dict) -> str:
+                return f"predict {'ON' if d['pc'] else 'OFF'}" if args.ab else "window"
 
             d_on = run_window(ser, args.secs)
             if d_on is None:
                 print("no glitch data (did the loop lock? check hz/amp/alpha)")
             else:
-                emit(fmt_report("predict ON" if args.ab else "window", args.secs, d_on))
+                emit(fmt_report(tag(d_on), args.secs, d_on))
 
             if args.ab and d_on is not None:
-                send(ser, "y")  # toggle predict OFF
+                send(ser, "y")  # toggle predict to the other state
                 time.sleep(1.0)
                 d_off = run_window(ser, args.secs)
                 if d_off is not None:
-                    emit(fmt_report("predict OFF", args.secs, d_off))
-                    db, dr = d_off["burst"] - d_on["burst"], d_off["resid"] - d_on["resid"]
-                    deep_on = sum(d_on["run_hist"][3:]) if d_on.get("run_hist") else None
-                    deep_off = sum(d_off["run_hist"][3:]) if d_off.get("run_hist") else None
-                    verdict = ("predict ON has FEWER glitch events" if (db > 0 or dr > 0)
-                               else "no clear glitch reduction from predict")
-                    deep = (f", deep(run>=4) {deep_on}->{deep_off}"
-                            if deep_on is not None else "")
-                    emit(f"ON vs OFF: bursts {d_on['burst']}->{d_off['burst']}, "
-                         f"big-resid {d_on['resid']}->{d_off['resid']}{deep}  <- {verdict}")
+                    emit(fmt_report(tag(d_off), args.secs, d_off))
+                    if d_on["pc"] == d_off["pc"]:
+                        emit(f"WARNING: both windows ran pc={d_on['pc']} (predict toggle "
+                             "failed) -- A/B invalid")
+                    else:  # label by the ACTUAL pc, not run order
+                        on_d, off_d = (d_on, d_off) if d_on["pc"] else (d_off, d_on)
+                        db = off_d["burst"] - on_d["burst"]
+                        deep_on = sum(on_d["run_hist"][3:]) if on_d.get("run_hist") else None
+                        deep_off = sum(off_d["run_hist"][3:]) if off_d.get("run_hist") else None
+                        verdict = ("predict ON has FEWER glitch events" if db > 0
+                                   else "no clear glitch reduction from predict")
+                        deep = (f", deep(run>=4) {deep_on}->{deep_off}"
+                                if deep_on is not None else "")
+                        emit(f"ON vs OFF: bursts {on_d['burst']}->{off_d['burst']}, "
+                             f"big-resid {on_d['resid']}->{off_d['resid']}{deep}  <- {verdict}")
         finally:
             # Kill the motor FIRST (safety), then persist the summary -- a log-write
             # failure must never leave the motor energized.
