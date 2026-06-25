@@ -37,6 +37,18 @@ _G_RE = re.compile(
     r"glitch:\s*comm=(\d+)\s+coast=(\d+)\s+burst=(\d+)\s+resid=(\d+)\s+"
     r"maxrun=(\d+)\s+since=(\d+)\s+lockS=(\d+)\s+alpha=(\d+)\s+beta=(\d+)\s+pc=(\d+)"
 )
+_H_RE = re.compile(r"hist:\s*runlen=([\d,]+)\s+resid=([\d,]+)")
+RUN_LABELS = ["1", "2", "3", "4", "5", "6", "7", "8+"]
+RESID_LABELS = ["<0.5", "0.5-1", "1-2", "2-4", "4-8", ">=8"]
+
+
+def render_hist(title: str, labels: list[str], bins: list[int]) -> None:
+    total = sum(bins) or 1
+    peak = max(bins) or 1
+    print(f"  {title}:")
+    for lab, c in zip(labels, bins):
+        bar = "#" * int(round(c / peak * 34))
+        print(f"    {lab:>5} | {bar:<34} {c}  ({c / total * 100:.1f}%)")
 
 
 def set_alpha(ser, alpha: float) -> None:
@@ -63,6 +75,7 @@ def run_window(ser, secs: float) -> dict | None:
     send(ser, "x")  # reset glitch counters
     ser.reset_input_buffer()
     last = None
+    last_run = last_resid = None
     buf = ""
     t0 = time.monotonic()
     t_pet = t0
@@ -78,10 +91,17 @@ def run_window(ser, secs: float) -> dict | None:
                     "lockS": int(m[7]) / 10.0, "alpha": int(m[8]) / 1000.0,
                     "beta": int(m[9]) / 1000.0, "pc": int(m[10]),
                 }
+            h = _H_RE.search(line)
+            if h:
+                last_run = [int(v) for v in h[1].split(",")]
+                last_resid = [int(v) for v in h[2].split(",")]
         now = time.monotonic()
         if now - t_pet >= 3.0:
             send(ser, "\n")  # pet the watchdog without issuing a command
             t_pet = now
+    if last is not None:
+        last["run_hist"] = last_run
+        last["resid_hist"] = last_resid
     return last
 
 
@@ -94,6 +114,10 @@ def report(tag: str, secs: float, d: dict) -> None:
     print(f"  coast bursts : {d['burst']}  (>=2 consec)  -> {d['burst'] / secs:.2f}/s")
     print(f"  big-resid    : {d['resid']}  (ZC jump >thr) -> {d['resid'] / secs:.2f}/s")
     print(f"  max coast run: {d['maxrun']}")
+    if d.get("run_hist"):
+        render_hist("coast run lengths (lock-loss depth)", RUN_LABELS, d["run_hist"])
+    if d.get("resid_hist"):
+        render_hist("ZC residual magnitude, ticks (jitter shape)", RESID_LABELS, d["resid_hist"])
 
 
 def main() -> int:

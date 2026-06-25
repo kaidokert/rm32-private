@@ -286,6 +286,12 @@ pub struct ClLoop {
     last_event_comm: u32,  // comm_total at the last glitch event (for spacing)
     glitch_run: u32,       // burst length that counts as a glitch
     glitch_resid: f32,     // residual (ticks) that counts as a phase glitch
+    // Histograms compress the high-rate distributions into shape. run_hist[i] = count of
+    // completed coast runs of length i+1 (last bin = 8+): separates harmless single misses
+    // from the rare deep bursts that are the audible clicks. resid_hist = |ZC residual|
+    // buckets over every hit (<0.5, <1, <2, <4, <8, >=8 ticks): tight cluster vs heavy tail.
+    run_hist: [u32; 8],
+    resid_hist: [u32; 6],
 }
 
 impl ClLoop {
@@ -323,6 +329,8 @@ impl ClLoop {
             last_event_comm: 0,
             glitch_run: 2,
             glitch_resid: 2.0,
+            run_hist: [0; 8],
+            resid_hist: [0; 6],
         }
     }
 
@@ -379,6 +387,8 @@ impl ClLoop {
         self.coast_bursts = 0;
         self.big_resid_events = 0;
         self.last_event_comm = 0;
+        self.run_hist = [0; 8];
+        self.resid_hist = [0; 6];
     }
 
     /// Glitch-monitor snapshot: (commutations, coasts, coast-burst events, big-residual
@@ -392,6 +402,17 @@ impl ClLoop {
             self.max_run,
             self.comm_total.wrapping_sub(self.last_event_comm),
         )
+    }
+
+    /// Coast-run-length histogram: index i = count of completed runs of length i+1
+    /// (last bin = 8+). Separates harmless single misses from the rare deep bursts.
+    pub fn run_hist(&self) -> [u32; 8] {
+        self.run_hist
+    }
+
+    /// ZC-residual magnitude histogram over hits: buckets <0.5, <1, <2, <4, <8, >=8 ticks.
+    pub fn resid_hist(&self) -> [u32; 6] {
+        self.resid_hist
     }
 
     pub fn sector(&self) -> u8 {
@@ -488,12 +509,31 @@ impl ClLoop {
                     self.last_event_comm = self.comm_total;
                 }
             } else {
+                if self.cur_run > 0 {
+                    // a coast run just ended on this hit -- bin its length (1..8+)
+                    self.run_hist[(self.cur_run as usize - 1).min(7)] += 1;
+                }
                 self.cur_run = 0;
             }
             if let Some(r) = self.last_residual.take() {
                 let a = abs_f32(r);
                 self.jit_fast += self.k_fast * (a - self.jit_fast);
                 self.jit_slow += self.k_slow * (a - self.jit_slow);
+                // bucket |residual| (ticks): <0.5, <1, <2, <4, <8, >=8
+                let b = if a < 0.5 {
+                    0
+                } else if a < 1.0 {
+                    1
+                } else if a < 2.0 {
+                    2
+                } else if a < 4.0 {
+                    3
+                } else if a < 8.0 {
+                    4
+                } else {
+                    5
+                };
+                self.resid_hist[b] += 1;
                 if a > self.glitch_resid {
                     self.big_resid_events = self.big_resid_events.wrapping_add(1);
                     self.last_event_comm = self.comm_total;

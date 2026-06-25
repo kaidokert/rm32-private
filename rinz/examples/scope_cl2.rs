@@ -210,6 +210,10 @@ static CL_GLITCH_BURSTS: AtomicU32 = AtomicU32::new(0);
 static CL_GLITCH_BIGRES: AtomicU32 = AtomicU32::new(0);
 static CL_GLITCH_MAXRUN: AtomicU32 = AtomicU32::new(0);
 static CL_GLITCH_SINCE: AtomicU32 = AtomicU32::new(0);
+// Histograms: coast-run lengths (1..8+) and |ZC residual| buckets, emitted as a `hist:`
+// line so the rare-event distribution shape shows (deep bursts vs harmless singles).
+static CL_RUN_HIST: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
+static CL_RESID_HIST: [AtomicU32; 6] = [const { AtomicU32::new(0) }; 6];
 static CL_GLITCH_RESET: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static MONITOR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 const CL_SLEW_FRAC: f32 = 0.15; // max nudge as a fraction of the open-loop period at alpha=1
@@ -793,6 +797,27 @@ fn main() -> ! {
                     CL_PREDICT_COAST.load(Ordering::Relaxed),
                 )
                 .ok();
+                let r = |i: usize| CL_RUN_HIST[i].load(Ordering::Relaxed);
+                let x = |i: usize| CL_RESID_HIST[i].load(Ordering::Relaxed);
+                writeln!(
+                    tx,
+                    "hist: runlen={},{},{},{},{},{},{},{} resid={},{},{},{},{},{}\r",
+                    r(0),
+                    r(1),
+                    r(2),
+                    r(3),
+                    r(4),
+                    r(5),
+                    r(6),
+                    r(7),
+                    x(0),
+                    x(1),
+                    x(2),
+                    x(3),
+                    x(4),
+                    x(5),
+                )
+                .ok();
             }
         }
 
@@ -1278,6 +1303,14 @@ extern "C" fn TIM7() {
         CL_GLITCH_BIGRES.store(g_resid, Ordering::Relaxed);
         CL_GLITCH_MAXRUN.store(g_maxrun, Ordering::Relaxed);
         CL_GLITCH_SINCE.store(g_since, Ordering::Relaxed);
+        let rh = cl.run_hist();
+        for (i, v) in rh.iter().enumerate() {
+            CL_RUN_HIST[i].store(*v, Ordering::Relaxed);
+        }
+        let xh = cl.resid_hist();
+        for (i, v) in xh.iter().enumerate() {
+            CL_RESID_HIST[i].store(*v, Ordering::Relaxed);
+        }
         if let Some(t) = step.zc_ticks {
             CL_LAST_ZC = ((t / ol_period) * 100.0) as u32; // ZC % of window (telemetry)
         }
