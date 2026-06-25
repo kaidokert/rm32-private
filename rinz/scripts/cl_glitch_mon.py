@@ -22,6 +22,7 @@ import argparse
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -42,13 +43,14 @@ RUN_LABELS = ["1", "2", "3", "4", "5", "6", "7", "8+"]
 RESID_LABELS = ["<0.5", "0.5-1", "1-2", "2-4", "4-8", ">=8"]
 
 
-def render_hist(title: str, labels: list[str], bins: list[int]) -> None:
+def fmt_hist(title: str, labels: list[str], bins: list[int]) -> list[str]:
     total = sum(bins) or 1
     peak = max(bins) or 1
-    print(f"  {title}:")
+    out = [f"  {title}:"]
     for lab, c in zip(labels, bins):
         bar = "#" * int(round(c / peak * 34))
-        print(f"    {lab:>5} | {bar:<34} {c}  ({c / total * 100:.1f}%)")
+        out.append(f"    {lab:>5} | {bar:<34} {c}  ({c / total * 100:.1f}%)")
+    return out
 
 
 def set_alpha(ser, alpha: float) -> None:
@@ -105,19 +107,22 @@ def run_window(ser, secs: float) -> dict | None:
     return last
 
 
-def report(tag: str, secs: float, d: dict) -> None:
+def fmt_report(tag: str, secs: float, d: dict) -> str:
     coast_pct = d["coast"] / d["comm"] * 100 if d["comm"] else float("nan")
-    print(f"\n=== {tag}  ({secs:.0f}s, alpha={d['alpha']:.2f} beta={d['beta']:.2f} "
-          f"pc={'on' if d['pc'] else 'off'}) ===")
-    print(f"  commutations : {d['comm']}")
-    print(f"  coasts       : {d['coast']}  ({coast_pct:.1f}%)   lockS {d['lockS']:.1f}%")
-    print(f"  coast bursts : {d['burst']}  (>=2 consec)  -> {d['burst'] / secs:.2f}/s")
-    print(f"  big-resid    : {d['resid']}  (ZC jump >thr) -> {d['resid'] / secs:.2f}/s")
-    print(f"  max coast run: {d['maxrun']}")
+    out = [
+        f"=== {tag}  ({secs:.0f}s, alpha={d['alpha']:.2f} beta={d['beta']:.2f} "
+        f"pc={'on' if d['pc'] else 'off'}) ===",
+        f"  commutations : {d['comm']}",
+        f"  coasts       : {d['coast']}  ({coast_pct:.1f}%)   lockS {d['lockS']:.1f}%",
+        f"  coast bursts : {d['burst']}  (>=2 consec)  -> {d['burst'] / secs:.2f}/s",
+        f"  big-resid    : {d['resid']}  (ZC jump >thr) -> {d['resid'] / secs:.2f}/s",
+        f"  max coast run: {d['maxrun']}",
+    ]
     if d.get("run_hist"):
-        render_hist("coast run lengths (lock-loss depth)", RUN_LABELS, d["run_hist"])
+        out += fmt_hist("coast run lengths (lock-loss depth)", RUN_LABELS, d["run_hist"])
     if d.get("resid_hist"):
-        render_hist("ZC residual magnitude, ticks (jitter shape)", RESID_LABELS, d["resid_hist"])
+        out += fmt_hist("ZC residual magnitude, ticks (jitter shape)", RESID_LABELS, d["resid_hist"])
+    return "\n".join(out)
 
 
 def main() -> int:
@@ -130,7 +135,19 @@ def main() -> int:
     p.add_argument("--beta", type=float, default=0.6)
     p.add_argument("--secs", type=float, default=30.0)
     p.add_argument("--ab", action="store_true", help="compare predict-coast ON vs OFF")
+    p.add_argument("--log", type=Path, default=None,
+                   help="summary log path (default logs/glitch_<timestamp>.log)")
     args = p.parse_args()
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = args.log or Path("logs") / f"glitch_{stamp}.log"
+    blocks = [f"# glitch monitor {datetime.now().isoformat(timespec='seconds')}  "
+              f"hz={args.hz} amp={args.amp} alpha={args.alpha} beta={args.beta} "
+              f"secs={args.secs} ab={args.ab}"]
+
+    def emit(text: str) -> None:  # to stdout AND the summary log buffer
+        print(text)
+        blocks.append(text)
 
     with serial.Serial(args.port, args.baud, timeout=0.1) as ser:
         ser.reset_input_buffer()
@@ -148,20 +165,26 @@ def main() -> int:
             if d_on is None:
                 print("no glitch data (did the loop lock? check hz/amp/alpha)")
             else:
-                report("predict ON" if args.ab else "window", args.secs, d_on)
+                emit(fmt_report("predict ON" if args.ab else "window", args.secs, d_on))
 
             if args.ab and d_on is not None:
                 send(ser, "y")  # toggle predict OFF
                 time.sleep(1.0)
                 d_off = run_window(ser, args.secs)
                 if d_off is not None:
-                    report("predict OFF", args.secs, d_off)
+                    emit(fmt_report("predict OFF", args.secs, d_off))
                     db, dr = d_off["burst"] - d_on["burst"], d_off["resid"] - d_on["resid"]
+                    deep_on = sum(d_on["run_hist"][3:]) if d_on.get("run_hist") else None
+                    deep_off = sum(d_off["run_hist"][3:]) if d_off.get("run_hist") else None
                     verdict = ("predict ON has FEWER glitch events" if (db > 0 or dr > 0)
                                else "no clear glitch reduction from predict")
-                    print(f"\nON vs OFF: bursts {d_on['burst']}->{d_off['burst']}, "
-                          f"big-resid {d_on['resid']}->{d_off['resid']}  <- {verdict}")
+                    deep = (f", deep(run>=4) {deep_on}->{deep_off}"
+                            if deep_on is not None else "")
+                    emit(f"ON vs OFF: bursts {d_on['burst']}->{d_off['burst']}, "
+                         f"big-resid {d_on['resid']}->{d_off['resid']}{deep}  <- {verdict}")
         finally:
+            # Kill the motor FIRST (safety), then persist the summary -- a log-write
+            # failure must never leave the motor energized.
             send(ser, "i")  # monitor off (best effort)
             send(ser, "0")
             send(ser, "w")
@@ -169,6 +192,9 @@ def main() -> int:
                 set_watchdog(ser, False)
             except Exception:
                 pass
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("\n\n".join(blocks) + "\n", encoding="ascii", errors="replace")
+            print(f"\nsummary -> {log_path}")
     return 0
 
 
