@@ -115,9 +115,11 @@ struct SimResult {
     omega_end: f32,
     sync: f32, // commutations / rotor_sectors (1.0 = perfectly synced)
     coast_frac: f32,
-    post_perr: f32, // median |period_est - true| after the load step
-    lock_slow: f32, // firmware lock-hit IIR (should be ~1.0 when locked)
-    jit_slow: f32,  // firmware ZC-jitter IIR in ticks (lower = smoother commutation)
+    post_perr: f32,    // median |period_est - true| after the load step
+    lock_slow: f32,    // firmware lock-hit IIR (should be ~1.0 when locked)
+    jit_slow: f32,     // firmware ZC-jitter IIR in ticks (lower = smoother commutation)
+    coast_bursts: u32, // glitch monitor: runs of >=2 consecutive missed ZCs
+    max_run: u32,      // glitch monitor: longest consecutive-coast run
 }
 
 /// Run the closed loop against the model with the given demag-blank. `trace` (if Some)
@@ -133,7 +135,10 @@ fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
         envf("CL_COAST", 1.0), // dead-reckon at period_est when a ZC is missed
         blank,
     );
-    lp.set_zc_beta(envf("CL_ZC_BETA", 0.0)); // per-sector ZC smoothing (0 = off)
+    // Shipping config: beta=0.6 (the firmware default) + predict on. NOTE: beta=0 + predict
+    // is fragile in ACQUISITION (the per-sector memory is single-sample noise, and the two
+    // features are coupled) -- an A/B-only mode, not deployed. Override via CL_ZC_BETA.
+    lp.set_zc_beta(envf("CL_ZC_BETA", 0.6));
     lp.set_predict_coast(envf("CL_PREDICT", 1.0) > 0.5); // predictive coast on missed ZC
     let (n, warm, step_tick) = (6000usize, 4500usize, 3000usize);
     let load_step = envf("SIM_LOAD_STEP", 0.15);
@@ -185,6 +190,8 @@ fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
         post_perr: perr[perr.len() / 2],
         lock_slow: lp.lock_slow(),
         jit_slow: lp.jit_slow(),
+        coast_bursts: lp.glitch_stats().2,
+        max_run: lp.glitch_stats().4,
     }
 }
 
@@ -216,6 +223,13 @@ fn cl_sim_locks() {
         "period not tracked through the load step: {:.1}%",
         r.post_perr * 100.0
     );
+    // Glitch monitor: a clean lock should produce no coast bursts and a short max run.
+    assert!(
+        r.coast_bursts == 0 && r.max_run <= 1,
+        "glitch monitor flagged a clean lock: bursts={}, max_run={}",
+        r.coast_bursts,
+        r.max_run
+    );
 }
 
 #[test]
@@ -225,16 +239,26 @@ fn cl_sim_needs_zc() {
     // passes because of genuine ZC feedback, not because the rotor is dead-reckonable.
     let r = run_sim(99, None);
     eprintln!(
-        "cl_sim_needs_zc (dead-reckon): omega->{:.2}, sync {:.2}, coast {:.0}%, period err {:.1}%",
+        "cl_sim_needs_zc (dead-reckon): omega->{:.2}, sync {:.2}, coast {:.0}%, period err {:.1}%, \
+         bursts {}, max_run {}",
         r.omega_end,
         r.sync,
         r.coast_frac * 100.0,
-        r.post_perr * 100.0
+        r.post_perr * 100.0,
+        r.coast_bursts,
+        r.max_run
     );
     assert!(
         r.coast_frac > 0.95,
         "expected near-total coasting, got {:.0}%",
         r.coast_frac * 100.0
+    );
+    // Glitch monitor must light up on the all-coast control: many bursts, a long run.
+    assert!(
+        r.coast_bursts > 0 && r.max_run >= 3,
+        "glitch monitor missed the all-coast control: bursts={}, max_run={}",
+        r.coast_bursts,
+        r.max_run
     );
     let desynced = !(0.9..=1.1).contains(&r.sync) || r.post_perr > 0.10 || r.omega_end < 1.0;
     assert!(

@@ -272,6 +272,20 @@ pub struct ClLoop {
     jit_slow: f32,
     k_fast: f32,
     k_slow: f32,
+    // Long-running glitch monitor (cumulative since reset_glitch). The steady ~4% misses
+    // are inaudible; the audible clicks are RARE (seconds apart) larger events. So count
+    // two event classes that a single capture can't catch: coast BURSTS (>= glitch_run
+    // consecutive missed ZCs = a momentary lock loss) and big-RESIDUAL hits (a found ZC
+    // that jumped > glitch_resid ticks from its smoothed position = a phase glitch).
+    comm_total: u32,       // commutations since reset
+    coast_total: u32,      // missed-ZC commutations
+    cur_run: u32,          // current consecutive-coast run length
+    max_run: u32,          // longest consecutive-coast run seen
+    coast_bursts: u32,     // runs that reached glitch_run (counted once per run)
+    big_resid_events: u32, // hits with |residual| > glitch_resid
+    last_event_comm: u32,  // comm_total at the last glitch event (for spacing)
+    glitch_run: u32,       // burst length that counts as a glitch
+    glitch_resid: f32,     // residual (ticks) that counts as a phase glitch
 }
 
 impl ClLoop {
@@ -300,6 +314,15 @@ impl ClLoop {
             jit_slow: 0.0,
             k_fast: 0.08,   // ~ 2 electrical revs (12 commutations)
             k_slow: 0.0007, // ~ 2 s at 250 Hz (1500 commutations/s)
+            comm_total: 0,
+            coast_total: 0,
+            cur_run: 0,
+            max_run: 0,
+            coast_bursts: 0,
+            big_resid_events: 0,
+            last_event_comm: 0,
+            glitch_run: 2,
+            glitch_resid: 2.0,
         }
     }
 
@@ -338,6 +361,37 @@ impl ClLoop {
     }
     pub fn jit_slow(&self) -> f32 {
         self.jit_slow
+    }
+
+    /// Set the glitch-monitor thresholds: `run` = consecutive coasts that count as a burst
+    /// event; `resid` = ZC jump (ticks) that counts as a phase-glitch event.
+    pub fn set_glitch_thresholds(&mut self, run: u32, resid: f32) {
+        self.glitch_run = run.max(1);
+        self.glitch_resid = resid;
+    }
+
+    /// Zero the long-running glitch counters (start a fresh measurement window).
+    pub fn reset_glitch(&mut self) {
+        self.comm_total = 0;
+        self.coast_total = 0;
+        self.cur_run = 0;
+        self.max_run = 0;
+        self.coast_bursts = 0;
+        self.big_resid_events = 0;
+        self.last_event_comm = 0;
+    }
+
+    /// Glitch-monitor snapshot: (commutations, coasts, coast-burst events, big-residual
+    /// events, longest coast run, commutations since the last glitch event).
+    pub fn glitch_stats(&self) -> (u32, u32, u32, u32, u32, u32) {
+        (
+            self.comm_total,
+            self.coast_total,
+            self.coast_bursts,
+            self.big_resid_events,
+            self.max_run,
+            self.comm_total.wrapping_sub(self.last_event_comm),
+        )
     }
 
     pub fn sector(&self) -> u8 {
@@ -397,9 +451,13 @@ impl ClLoop {
         // correct phase rather than a generic timeout (which is the right average period
         // but the wrong phase -> the audible per-miss clip). Fall back to the open-loop
         // coast only with no memory yet (acquisition) or when predictive coast is off.
+        // Gate predictive coast on being locked (lock_fast > 0.5): only then is the
+        // per-sector memory trustworthy. During acquisition the memory is noise, and
+        // predicting off it prevents lock -- so fall back to the open-loop coast there.
+        let predict = self.predict_coast && self.lock_fast > 0.5;
         let cl_target = match self.scheduled {
             Some(t) => t,
-            None => match (self.predict_coast, self.zc_filt[self.sector as usize]) {
+            None => match (predict, self.zc_filt[self.sector as usize]) {
                 (true, Some(zc)) => zc + self.state.frequency * 0.5,
                 _ => self.state.frequency * self.coast,
             },
@@ -417,10 +475,29 @@ impl ClLoop {
             let hit = if coasted { 0.0 } else { 1.0 };
             self.lock_fast += self.k_fast * (hit - self.lock_fast);
             self.lock_slow += self.k_slow * (hit - self.lock_slow);
+            // Long-running glitch monitor (cumulative): coast bursts + big-residual hits.
+            self.comm_total = self.comm_total.wrapping_add(1);
+            if coasted {
+                self.coast_total = self.coast_total.wrapping_add(1);
+                self.cur_run += 1;
+                if self.cur_run > self.max_run {
+                    self.max_run = self.cur_run;
+                }
+                if self.cur_run == self.glitch_run {
+                    self.coast_bursts = self.coast_bursts.wrapping_add(1);
+                    self.last_event_comm = self.comm_total;
+                }
+            } else {
+                self.cur_run = 0;
+            }
             if let Some(r) = self.last_residual.take() {
                 let a = abs_f32(r);
                 self.jit_fast += self.k_fast * (a - self.jit_fast);
                 self.jit_slow += self.k_slow * (a - self.jit_slow);
+                if a > self.glitch_resid {
+                    self.big_resid_events = self.big_resid_events.wrapping_add(1);
+                    self.last_event_comm = self.comm_total;
+                }
             }
             self.sector = (self.sector + 1) % 6;
             self.ticks = 0.0;

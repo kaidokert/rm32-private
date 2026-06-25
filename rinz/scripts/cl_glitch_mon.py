@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Long-running glitch monitor for the Path-B closed loop (examples/scope_cl2.rs).
+
+The audible clicks are RARE (seconds apart) -- far rarer than the steady ~4% ZC misses
+and impossible to catch in a single 2-rev capture. The firmware now counts them over a
+long window (coast BURSTS = >=2 consecutive missed ZCs = a momentary lock loss; big-
+RESIDUAL hits = a found ZC that jumped far from its smoothed position) and self-emits a
+`glitch:` line each second. This script spins up, parks at the operating point, runs a
+timed window, and reports the totals -- the honest replacement for listening.
+
+  python scripts/cl_glitch_mon.py COM41 --hz 250 --amp 13 --alpha 0.75 --secs 30
+  python scripts/cl_glitch_mon.py COM41 --hz 250 --amp 13 --alpha 0.75 --secs 60 --ab
+
+--ab runs the window twice (predict-coast ON then OFF) and compares, so you finally get
+numbers on whether predictive coast reduces the rare events. ATTENDED use (watchdog
+armed; the script pets it with newlines and parks at alpha=0 + kill on exit).
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+try:
+    import serial
+except ImportError as exc:
+    raise SystemExit("missing dependency: pip install pyserial") from exc
+
+from scope_common import BAUD
+from scope_sweep import Setpoint, position, send, set_watchdog
+
+_G_RE = re.compile(
+    r"glitch:\s*comm=(\d+)\s+coast=(\d+)\s+burst=(\d+)\s+resid=(\d+)\s+"
+    r"maxrun=(\d+)\s+since=(\d+)\s+lockS=(\d+)\s+alpha=(\d+)\s+beta=(\d+)\s+pc=(\d+)"
+)
+
+
+def set_alpha(ser, alpha: float) -> None:
+    """Park alpha deterministically: '0' (=0.0) then 'm' (+0.05) steps up to target."""
+    send(ser, "0")
+    for _ in range(int(round(max(0.0, min(1.0, alpha)) / 0.05))):
+        send(ser, "m")
+        time.sleep(0.02)
+
+
+def set_beta(ser, beta: float) -> None:
+    for _ in range(20):  # floor to 0 (each ',' = -0.05, clamps)
+        send(ser, ",")
+        time.sleep(0.01)
+    for _ in range(int(round(max(0.0, min(0.95, beta)) / 0.05))):
+        send(ser, ".")
+        time.sleep(0.01)
+
+
+def run_window(ser, secs: float) -> dict | None:
+    """Reset counters, run for `secs` (petting the watchdog), return the last glitch line's
+    totals (counters are cumulative since reset = window totals). Assumes the monitor is
+    already on (toggled once in main). None if no data (loop never locked)."""
+    send(ser, "x")  # reset glitch counters
+    ser.reset_input_buffer()
+    last = None
+    buf = ""
+    t0 = time.monotonic()
+    t_pet = t0
+    while time.monotonic() - t0 < secs:
+        buf += ser.read(256).decode("ascii", errors="replace")
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            m = _G_RE.search(line)
+            if m:
+                last = {
+                    "comm": int(m[1]), "coast": int(m[2]), "burst": int(m[3]),
+                    "resid": int(m[4]), "maxrun": int(m[5]), "since": int(m[6]),
+                    "lockS": int(m[7]) / 10.0, "alpha": int(m[8]) / 1000.0,
+                    "beta": int(m[9]) / 1000.0, "pc": int(m[10]),
+                }
+        now = time.monotonic()
+        if now - t_pet >= 3.0:
+            send(ser, "\n")  # pet the watchdog without issuing a command
+            t_pet = now
+    return last
+
+
+def report(tag: str, secs: float, d: dict) -> None:
+    coast_pct = d["coast"] / d["comm"] * 100 if d["comm"] else float("nan")
+    print(f"\n=== {tag}  ({secs:.0f}s, alpha={d['alpha']:.2f} beta={d['beta']:.2f} "
+          f"pc={'on' if d['pc'] else 'off'}) ===")
+    print(f"  commutations : {d['comm']}")
+    print(f"  coasts       : {d['coast']}  ({coast_pct:.1f}%)   lockS {d['lockS']:.1f}%")
+    print(f"  coast bursts : {d['burst']}  (>=2 consec)  -> {d['burst'] / secs:.2f}/s")
+    print(f"  big-resid    : {d['resid']}  (ZC jump >thr) -> {d['resid'] / secs:.2f}/s")
+    print(f"  max coast run: {d['maxrun']}")
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("port")
+    p.add_argument("--baud", type=int, default=BAUD)
+    p.add_argument("--hz", type=int, default=250)
+    p.add_argument("--amp", type=float, default=13.0)
+    p.add_argument("--alpha", type=float, default=0.75)
+    p.add_argument("--beta", type=float, default=0.6)
+    p.add_argument("--secs", type=float, default=30.0)
+    p.add_argument("--ab", action="store_true", help="compare predict-coast ON vs OFF")
+    args = p.parse_args()
+
+    with serial.Serial(args.port, args.baud, timeout=0.1) as ser:
+        ser.reset_input_buffer()
+        if set_watchdog(ser, True):
+            print("watchdog ARMED (script pets it; parks at alpha=0 + kill on exit)")
+        try:
+            position(ser, Setpoint(), args.hz, int(round(args.amp * 10)),
+                     qsettle=0.8, ramp_step=20, ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
+            set_beta(ser, args.beta)
+            set_alpha(ser, args.alpha)
+            send(ser, "i")  # monitor on
+            time.sleep(1.0)  # let it settle into lock before the window
+
+            d_on = run_window(ser, args.secs)
+            if d_on is None:
+                print("no glitch data (did the loop lock? check hz/amp/alpha)")
+            else:
+                report("predict ON" if args.ab else "window", args.secs, d_on)
+
+            if args.ab and d_on is not None:
+                send(ser, "y")  # toggle predict OFF
+                time.sleep(1.0)
+                d_off = run_window(ser, args.secs)
+                if d_off is not None:
+                    report("predict OFF", args.secs, d_off)
+                    db, dr = d_off["burst"] - d_on["burst"], d_off["resid"] - d_on["resid"]
+                    verdict = ("predict ON has FEWER glitch events" if (db > 0 or dr > 0)
+                               else "no clear glitch reduction from predict")
+                    print(f"\nON vs OFF: bursts {d_on['burst']}->{d_off['burst']}, "
+                          f"big-resid {d_on['resid']}->{d_off['resid']}  <- {verdict}")
+        finally:
+            send(ser, "i")  # monitor off (best effort)
+            send(ser, "0")
+            send(ser, "w")
+            try:
+                set_watchdog(ser, False)
+            except Exception:
+                pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

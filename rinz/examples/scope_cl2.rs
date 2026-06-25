@@ -201,6 +201,17 @@ static CL_LOCK_FAST_X1000: AtomicU32 = AtomicU32::new(0);
 static CL_LOCK_SLOW_X1000: AtomicU32 = AtomicU32::new(0);
 static CL_JIT_FAST_X1000: AtomicU32 = AtomicU32::new(0); // ticks x1000
 static CL_JIT_SLOW_X1000: AtomicU32 = AtomicU32::new(0);
+// Long-running glitch monitor: cumulative counters mirrored from the loop each frame,
+// emitted as a periodic `glitch:` line while MONITOR is set ('i' toggles, 'x' resets).
+// Catches the rare seconds-apart events a single 2-rev capture can't.
+static CL_GLITCH_COMM: AtomicU32 = AtomicU32::new(0);
+static CL_GLITCH_COAST: AtomicU32 = AtomicU32::new(0);
+static CL_GLITCH_BURSTS: AtomicU32 = AtomicU32::new(0);
+static CL_GLITCH_BIGRES: AtomicU32 = AtomicU32::new(0);
+static CL_GLITCH_MAXRUN: AtomicU32 = AtomicU32::new(0);
+static CL_GLITCH_SINCE: AtomicU32 = AtomicU32::new(0);
+static CL_GLITCH_RESET: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static MONITOR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 const CL_SLEW_FRAC: f32 = 0.15; // max nudge as a fraction of the open-loop period at alpha=1
 const CL_KP: f32 = 0.3; // period PI gains (validated in the host sim)
 const CL_KI: f32 = 0.2;
@@ -581,7 +592,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast i=monitor x=glitch_reset (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -744,6 +755,10 @@ fn main() -> ! {
     // ADC1 capture buffer (power_from_buffer), not ad-hoc convert()s -- ADC1 is a
     // DMA scanner now. Computed in run_capture after the window closes.
 
+    // Glitch-monitor emit cadence: ~1 s of the free-running DWT cycle counter (170 MHz).
+    const MON_PERIOD_CYC: u32 = 170_000_000;
+    let mut last_mon = cortex_m::peripheral::DWT::cycle_count();
+
     loop {
         // Service the live stream: one back-to-back dump per idle pass while the
         // STREAMING flag is set. 'l' sets it, 'k' (or 'w') clears it; everything
@@ -755,9 +770,35 @@ fn main() -> ! {
             run_capture(&mut tx, buf_ptr0, buf_ptr1, buf1_ptr0, buf1_ptr1, true);
         }
 
+        // Long-running glitch monitor: while MONITOR is set (and not streaming), emit one
+        // self-describing `glitch:` line per ~1 s without needing a capture. This is the
+        // honest way to catch the rare, seconds-apart events: run a window, compare counts.
+        let monitoring = MONITOR.load(Ordering::Relaxed);
+        if monitoring && !streaming {
+            let now = cortex_m::peripheral::DWT::cycle_count();
+            if now.wrapping_sub(last_mon) >= MON_PERIOD_CYC {
+                last_mon = now;
+                writeln!(
+                    tx,
+                    "glitch: comm={} coast={} burst={} resid={} maxrun={} since={} lockS={} alpha={} beta={} pc={}\r",
+                    CL_GLITCH_COMM.load(Ordering::Relaxed),
+                    CL_GLITCH_COAST.load(Ordering::Relaxed),
+                    CL_GLITCH_BURSTS.load(Ordering::Relaxed),
+                    CL_GLITCH_BIGRES.load(Ordering::Relaxed),
+                    CL_GLITCH_MAXRUN.load(Ordering::Relaxed),
+                    CL_GLITCH_SINCE.load(Ordering::Relaxed),
+                    CL_LOCK_SLOW_X1000.load(Ordering::Relaxed),
+                    CL_ALPHA_X1000.load(Ordering::Relaxed),
+                    CL_ZC_BETA_X1000.load(Ordering::Relaxed),
+                    CL_PREDICT_COAST.load(Ordering::Relaxed),
+                )
+                .ok();
+            }
+        }
+
         // Fetch the next command key. Block for one only when idle, so streaming
-        // stays gap-free; while streaming, just take whatever is already pending.
-        let key = if streaming {
+        // stays gap-free; while streaming or monitoring, just take what's pending.
+        let key = if streaming || monitoring {
             let mut buf = [0u8; 1];
             if rx.read_ready().unwrap_or(false) && rx.read(&mut buf).is_ok() {
                 Some(buf[0])
@@ -801,6 +842,16 @@ fn main() -> ! {
                 b'k' => {
                     STREAMING.store(false, Ordering::Relaxed);
                     writeln!(tx, "stream: stop\r").ok();
+                }
+                // glitch monitor: 'i' toggles the periodic `glitch:` line, 'x' zeroes counters
+                b'i' => {
+                    let on = !MONITOR.load(Ordering::Relaxed);
+                    MONITOR.store(on, Ordering::Relaxed);
+                    writeln!(tx, "monitor: {}\r", if on { "on" } else { "off" }).ok();
+                }
+                b'x' => {
+                    CL_GLITCH_RESET.store(true, Ordering::Relaxed);
+                    writeln!(tx, "glitch: reset\r").ok();
                 }
                 b'd' => {
                     writeln!(tx, "capture: wait zero, 2 electrical revs\r").ok();
@@ -1201,6 +1252,9 @@ extern "C" fn TIM7() {
         let cl = (*cl_ptr).as_mut().unwrap();
         cl.set_zc_beta(CL_ZC_BETA_X1000.load(Ordering::Relaxed) as f32 / 1000.0); // live-tunable
         cl.set_predict_coast(CL_PREDICT_COAST.load(Ordering::Relaxed) != 0);
+        if CL_GLITCH_RESET.swap(false, Ordering::Relaxed) {
+            cl.reset_glitch();
+        }
         if alpha <= 0.0 {
             cl.set_period(ol_period); // keep period_est current so a later alpha>0 is sane
         }
@@ -1217,6 +1271,13 @@ extern "C" fn TIM7() {
         CL_LOCK_SLOW_X1000.store((cl.lock_slow() * 1000.0) as u32, Ordering::Relaxed);
         CL_JIT_FAST_X1000.store((cl.jit_fast() * 1000.0) as u32, Ordering::Relaxed);
         CL_JIT_SLOW_X1000.store((cl.jit_slow() * 1000.0) as u32, Ordering::Relaxed);
+        let (g_comm, g_coast, g_burst, g_resid, g_maxrun, g_since) = cl.glitch_stats();
+        CL_GLITCH_COMM.store(g_comm, Ordering::Relaxed);
+        CL_GLITCH_COAST.store(g_coast, Ordering::Relaxed);
+        CL_GLITCH_BURSTS.store(g_burst, Ordering::Relaxed);
+        CL_GLITCH_BIGRES.store(g_resid, Ordering::Relaxed);
+        CL_GLITCH_MAXRUN.store(g_maxrun, Ordering::Relaxed);
+        CL_GLITCH_SINCE.store(g_since, Ordering::Relaxed);
         if let Some(t) = step.zc_ticks {
             CL_LAST_ZC = ((t / ol_period) * 100.0) as u32; // ZC % of window (telemetry)
         }
