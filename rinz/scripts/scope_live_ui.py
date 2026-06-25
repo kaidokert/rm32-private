@@ -810,7 +810,7 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
         state.hz = 60
         state.amp = 11.0 # firmware AMP_START (the "reset:" echo confirms it)
         state.trim = 0
-    elif k in {"f", "v", "a", "z", "+", "-", "m", "n", ",", ".", "w", "y", "0", "1", "2", "3"}:
+    elif k in {"f", "v", "a", "z", "+", "-", "m", "n", ",", ".", "w", "y", "i", "x", "0", "1", "2", "3"}:
         send_raw_key(ser, state, log, k, f"sent {k}")
         if k == "f":
             state.hz += 10
