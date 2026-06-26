@@ -12,7 +12,7 @@ import socket
 import statistics
 import struct
 import time
-from collections import deque
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Iterable
 
@@ -877,6 +877,45 @@ def classify_rotor_state(
     return out
 
 
+_CL_LF_RE = re.compile(r"cl i=\d+ phys=(\d+) zc=-?\d+ coast=\d+ lf=(-?\d+)")
+CL_LINFIT_BLANK = 4  # must match scope_cl2 CL_BLANK (the loop detector's demag skip)
+
+
+def linfit_zc_pct(e_vals: list[float], fps: float, blank: int = CL_LINFIT_BLANK) -> float | None:
+    """Python port of cl.rs Detector::finish_linfit -- least-squares line through the
+    post-blank (firmware-frame, e) samples, solved for the zero (-b/m), as % of window.
+    `e_vals[j]` is float-minus-neutral at the j-th post-commutation frame (firmware-frame
+    = j+1). Returns the (possibly out-of-window) crossing %, or None. Identical math to
+    the firmware so the two overlaid markers coincide iff the firmware matches."""
+    pts = [(j + 1, e) for j, e in enumerate(e_vals) if (j + 1) > blank]
+    n = len(pts)
+    if n < 4 or fps <= 0:
+        return None
+    sx = sum(p[0] for p in pts)
+    sy = sum(p[1] for p in pts)
+    sxy = sum(p[0] * p[1] for p in pts)
+    sxx = sum(p[0] * p[0] for p in pts)
+    denom = n * sxx - sx * sx
+    if abs(denom) < 1e-3:
+        return None
+    m = (n * sxy - sx * sy) / denom
+    if abs(m) < 1e-3:
+        return None
+    b = (sy - m * sx) / n
+    return (-b / m) / fps * 100.0  # firmware-frame of zero -> % of window
+
+
+def parse_cl_lf(text: str) -> dict[int, list[float]]:
+    """phys sector -> list of firmware raw-linfit ZC% from the dump's `cl ... lf=` log
+    (9999 sentinel = no detection, dropped)."""
+    out: dict[int, list[float]] = defaultdict(list)
+    for m in _CL_LF_RE.finditer(text):
+        phys, lf = int(m[1]), int(m[2])
+        if lf != 9999:
+            out[phys].append(float(lf))
+    return out
+
+
 def render_zc_figure(
     capture: Capture,
     fig,
@@ -899,6 +938,10 @@ def render_zc_figure(
     frames = len(neutral)
     settled = _neutral_settled_mask(neutral, smooth, frames, 0.15)
     t_ms = [i / capture.sample_hz * 1000.0 for i in range(frames)]
+    # frames/sector and the firmware's raw-linfit ZC per sector, for the 3-marker overlay.
+    _hz = capture.debug.get("hz", "0")
+    fps = capture.sample_hz / (float(_hz) * 6.0) if _hz not in ("?", "0") else 0.0
+    cl_lf = parse_cl_lf(capture.text)
     # Scale to the three BEMF voltages only; any extra channels (phase currents,
     # ch16/ch18) ride mid-rail and would skew the voltage plot's y-range.
     y_min, y_max = auto_snapshot_ylim(smooth[:3] + [neutral])
@@ -985,6 +1028,23 @@ def render_zc_figure(
                     fontsize=7,
                     color=marker_color,
                 )
+            # Overlay the two linfit detectors for a 3-way comparison: the sign-change ZC
+            # above ("o"), the Python linfit ("^"), and the firmware's own linfit ("x").
+            # Out-of-window linfit lands OUTSIDE the sector shade -- that's the point.
+            if fps > 0:
+                s0e, s1e = int(round(sec.start_frame)), min(int(round(sec.end_frame)), frames)
+                e_vals = [smooth[ch][f] - neutral[f] for f in range(s0e, s1e)]
+                fw = cl_lf.get(sec.index % 6)
+                for pct, mk, mc in (
+                    (linfit_zc_pct(e_vals, fps), "^", "tab:blue"),
+                    (statistics.median(fw) if fw else None, "x", "magenta"),
+                ):
+                    if pct is None:
+                        continue
+                    fpos = sec.start_frame + pct / 100.0 * fps
+                    tt = fpos / capture.sample_hz * 1000.0
+                    yy = neutral[min(max(int(round(fpos)), 0), frames - 1)]
+                    ax.plot([tt], [yy], mk, ms=8, mec=mc, mfc="none", mew=1.6, zorder=6)
 
         found = sum(1 for s in sectors if s.phase == phase and s.status == "zc")
         total = sum(1 for s in sectors if s.phase == phase)
@@ -1015,8 +1075,14 @@ def render_zc_figure(
         color=state_color,
         fontweight="bold",
     )
+    fig.text(
+        0.5, 0.005,
+        "ZC markers:  o sign-change (in-window)    ^ python linfit    x firmware linfit "
+        "(blue/magenta coincide => firmware matches reference)",
+        ha="center", fontsize=8, color="0.3",
+    )
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.02, 1, 1))
     return sectors
 
 
