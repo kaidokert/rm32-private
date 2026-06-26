@@ -202,15 +202,24 @@ def main() -> int:
                              "failed) -- A/B invalid")
                     else:  # label by the ACTUAL pc, not run order
                         on_d, off_d = (d_on, d_off) if d_on["pc"] else (d_off, d_on)
-                        db = off_d["burst"] - on_d["burst"]
+
+                        def pct(a, b):  # negative % = ON lower = predict reduces it
+                            return (a - b) / b * 100 if b else 0.0
+
                         deep_on = sum(on_d["run_hist"][3:]) if on_d.get("run_hist") else None
                         deep_off = sum(off_d["run_hist"][3:]) if off_d.get("run_hist") else None
-                        verdict = ("predict ON has FEWER glitch events" if db > 0
-                                   else "no clear glitch reduction from predict")
-                        deep = (f", deep(run>=4) {deep_on}->{deep_off}"
-                                if deep_on is not None else "")
-                        emit(f"ON vs OFF: bursts {on_d['burst']}->{off_d['burst']}, "
-                             f"big-resid {on_d['resid']}->{off_d['resid']}{deep}  <- {verdict}")
+                        rows = [
+                            "predict ON vs OFF (negative % = predict reduces it; deep run>=4 "
+                            "= the rare audible-class events, judge those separately):",
+                            f"  total bursts : {on_d['burst']} vs {off_d['burst']}  "
+                            f"({pct(on_d['burst'], off_d['burst']):+.0f}%)",
+                            f"  big-resid    : {on_d['resid']} vs {off_d['resid']}  "
+                            f"({pct(on_d['resid'], off_d['resid']):+.0f}%)",
+                        ]
+                        if deep_on is not None:
+                            rows.append(f"  deep run>=4  : {deep_on} vs {deep_off}  "
+                                        f"({pct(deep_on, deep_off):+.0f}%)")
+                        emit("\n".join(rows))
         finally:
             # Kill the motor FIRST (safety), then persist the summary -- a log-write
             # failure must never leave the motor energized.
