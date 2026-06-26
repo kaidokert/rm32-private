@@ -629,7 +629,24 @@ def sector_grid(capture: Capture, frames: int) -> list[tuple[float, int]]:
     return out
 
 
-def _driven_pair_neutral(smooth, frames, fps):
+def _sector_spans(frames, fps, bounds=None):
+    """Yield (start_frame, end_frame, k) for each complete six-step sector. `bounds` =
+    explicit cumulative frame boundaries (the firmware's ACTUAL nudged commutations from
+    the cl-log bnd=); when absent, the uniform fps grid. phys sector is k % 6 either way
+    (the capture is zero-aligned, so it always starts at sector 0)."""
+    if bounds and len(bounds) >= 2:
+        for k in range(len(bounds) - 1):
+            s, e = float(bounds[k]), float(bounds[k + 1])
+            if e > s and s < frames:
+                yield s, min(e, float(frames)), k
+    else:
+        k = 0
+        while (k + 1) * fps <= frames:
+            yield k * fps, (k + 1) * fps, k
+            k += 1
+
+
+def _driven_pair_neutral(smooth, frames, fps, bounds=None):
     """Per-sector virtual neutral = the two DRIVEN phase terminals averaged (the
     floating phase EXCLUDED). The float phase carries no current, so the star point
     is set by the driven pair ~= (rail_hi + rail_lo)/2 ~= Vbus/2 at the divider --
@@ -640,15 +657,22 @@ def _driven_pair_neutral(smooth, frames, fps):
     measured ~30% jumpier with ~1.5x smaller BEMF on a locked capture.
     """
     neutral = [0.0] * frames
-    k = 0
-    while k * fps < frames:
+    last_end, last_k = 0, 0
+    for start, end, k in _sector_spans(frames, fps, bounds):
         s = k % 6
         hi_ch = PHASE_TO_CHANNEL[SIX_STEP_HIGH[s]]
         lo_ch = PHASE_TO_CHANNEL[SIX_STEP_LOW[s]]
-        i1 = min(int(round((k + 1) * fps)), frames)
-        for i in range(int(round(k * fps)), i1):
+        i1 = min(int(round(end)), frames)
+        for i in range(max(int(round(start)), 0), i1):
             neutral[i] = (smooth[hi_ch][i] + smooth[lo_ch][i]) / 2.0
-        k += 1
+        last_end, last_k = i1, k
+    # Fill any tail past the last boundary with the next sector's driven pair.
+    if last_end < frames:
+        s = (last_k + 1) % 6
+        hi_ch = PHASE_TO_CHANNEL[SIX_STEP_HIGH[s]]
+        lo_ch = PHASE_TO_CHANNEL[SIX_STEP_LOW[s]]
+        for i in range(last_end, frames):
+            neutral[i] = (smooth[hi_ch][i] + smooth[lo_ch][i]) / 2.0
     return neutral
 
 
@@ -682,6 +706,7 @@ def analyze_zero_crossings(
     blank_frames: int = 2,
     confirm: int = 2,
     neutral_tol_frac: float = 0.15,
+    sector_bounds: list[float] | None = None,
 ) -> tuple[list[SectorZc], list[list[float]], list[float]]:
     """Locate the float-phase vs virtual-neutral crossing in every sector.
 
@@ -700,13 +725,10 @@ def analyze_zero_crossings(
     smooth = lowpass_channels(capture.channels, smooth_window)
     frames = min(len(ch) for ch in smooth)
     fps = capture.sample_hz / (hz * 6.0)
-    neutral = _driven_pair_neutral(smooth, frames, fps)
+    neutral = _driven_pair_neutral(smooth, frames, fps, sector_bounds)
     settled = _neutral_settled_mask(neutral, smooth, frames, neutral_tol_frac)
     sectors: list[SectorZc] = []
-    k = 0
-    while (k + 1) * fps <= frames:
-        start = k * fps
-        end = (k + 1) * fps
+    for start, end, k in _sector_spans(frames, fps, sector_bounds):
         s = k % 6
         hi = SIX_STEP_HIGH[s]
         lo = SIX_STEP_LOW[s]
@@ -755,7 +777,6 @@ def analyze_zero_crossings(
                 zc.status = "zc" if j > 1 else "early"
                 break
         sectors.append(zc)
-        k += 1
 
     return sectors, smooth, neutral
 
@@ -907,13 +928,36 @@ def linfit_zc_pct(e_vals: list[float], fps: float, blank: int = CL_LINFIT_BLANK)
 
 def parse_cl_lf(text: str) -> dict[int, list[float]]:
     """phys sector -> list of firmware raw-linfit ZC% from the dump's `cl ... lf=` log
-    (9999 sentinel = no detection, dropped)."""
+    (9999 sentinel = no detection, dropped). Fallback for logs without bnd=."""
     out: dict[int, list[float]] = defaultdict(list)
     for m in _CL_LF_RE.finditer(text):
         phys, lf = int(m[1]), int(m[2])
         if lf != 9999:
             out[phys].append(float(lf))
     return out
+
+
+_CL_FULL_RE = re.compile(r"cl i=\d+ phys=\d+ zc=-?\d+ coast=\d+ lf=(-?\d+) bnd=(\d+)")
+
+
+def parse_cl_bounds(text: str) -> tuple[list[int] | None, dict[int, float]]:
+    """(bounds, lf_by_sector) from the cl-log bnd=/lf= fields, or (None, {}) if the log
+    predates bnd=. bounds[k] = capture frame of the k-th commutation; captured sector k =
+    [bounds[k], bounds[k+1]] (phys k%6), and lf_by_sector[k] is the firmware linfit % from
+    the commutation that ENDED sector k (the next cl entry). Lets the host place sectors on
+    the loop's ACTUAL nudged boundaries so firmware and python linfit windows coincide."""
+    entries = [(int(m[2]), int(m[1])) for m in _CL_FULL_RE.finditer(text)]  # (bnd, lf)
+    if len(entries) < 3:
+        return None, {}
+    bounds = [e[0] for e in entries]
+    if bounds[0] > 5 or any(bounds[i + 1] < bounds[i] for i in range(len(bounds) - 1)):
+        return None, {}  # not monotonic / not zero-aligned -> distrust, fall back
+    lf_by_sector = {
+        k: float(entries[k + 1][1])
+        for k in range(len(entries) - 1)
+        if entries[k + 1][1] != 9999
+    }
+    return bounds, lf_by_sector
 
 
 def render_zc_figure(
@@ -928,11 +972,15 @@ def render_zc_figure(
     """Draw the 3-phase ZC plot onto an existing figure (cleared first) and return
     the per-sector ZC list. Shared by plot_zc_snapshot (Agg -> PNG) and the live
     streaming viewer (interactive backend -> on-screen window)."""
+    # Place sectors on the loop's ACTUAL nudged boundaries (cl-log bnd=) when available,
+    # so in closed loop the firmware/python linfit windows -- and the neutral -- coincide.
+    bounds, lf_by_sector = parse_cl_bounds(capture.text)
     sectors, smooth, neutral = analyze_zero_crossings(
         capture,
         smooth_window=smooth_window,
         blank_frames=blank_frames,
         confirm=confirm,
+        sector_bounds=bounds,
     )
 
     frames = len(neutral)
@@ -941,7 +989,7 @@ def render_zc_figure(
     # frames/sector and the firmware's raw-linfit ZC per sector, for the 3-marker overlay.
     _hz = capture.debug.get("hz", "0")
     fps = capture.sample_hz / (float(_hz) * 6.0) if _hz not in ("?", "0") else 0.0
-    cl_lf = parse_cl_lf(capture.text)
+    cl_lf_fallback = parse_cl_lf(capture.text) if bounds is None else {}  # old-fw median/phys
     # Scale to the three BEMF voltages only; any extra channels (phase currents,
     # ch16/ch18) ride mid-rail and would skew the voltage plot's y-range.
     y_min, y_max = auto_snapshot_ylim(smooth[:3] + [neutral])
@@ -1032,12 +1080,20 @@ def render_zc_figure(
             # above ("o"), the Python linfit ("^"), and the firmware's own linfit ("x").
             # Out-of-window linfit lands OUTSIDE the sector shade -- that's the point.
             if fps > 0:
-                s0e, s1e = int(round(sec.start_frame)), min(int(round(sec.end_frame)), frames)
+                # Samples since the commutation: firmware-frame 1 = the first sample AFTER
+                # the boundary, so start at start_frame+1 to match the firmware's indexing.
+                s0e = int(round(sec.start_frame)) + 1
+                s1e = min(int(round(sec.end_frame)), frames)
                 e_vals = [smooth[ch][f] - neutral[f] for f in range(s0e, s1e)]
-                fw = cl_lf.get(sec.index % 6)
+                # Firmware linfit for THIS sector (actual boundaries) or, for pre-bnd logs,
+                # the per-phys median fallback.
+                fw_lf = lf_by_sector.get(sec.index)
+                if fw_lf is None and cl_lf_fallback:
+                    vals = cl_lf_fallback.get(sec.index % 6)
+                    fw_lf = statistics.median(vals) if vals else None
                 for pct, mk, mc in (
                     (linfit_zc_pct(e_vals, fps), "^", "tab:blue"),
-                    (statistics.median(fw) if fw else None, "x", "magenta"),
+                    (fw_lf, "x", "magenta"),
                 ):
                     if pct is None:
                         continue

@@ -237,6 +237,10 @@ static CL_CAP: [AtomicU32; CL_MAXCOMM] = [const { AtomicU32::new(0) }; CL_MAXCOM
 // on), un-clamped so out-of-window extrapolations (-30..130, gate-bounded) survive. zcb
 // above is the clamped in-window subset; lf is the full linfit point. 9999 = none.
 static CL_CAP_LF: [AtomicI32; CL_MAXCOMM] = [const { AtomicI32::new(9999) }; CL_MAXCOMM];
+// Capture-buffer frame index at each commutation = the ACTUAL (nudged) sector boundary.
+// Lets the host place sectors where the loop really commutated instead of on a uniform
+// grid -- so in closed loop the firmware and python linfit windows coincide.
+static CL_CAP_BND: [AtomicU32; CL_MAXCOMM] = [const { AtomicU32::new(0) }; CL_MAXCOMM];
 static CL_CAP_N: AtomicU32 = AtomicU32::new(0);
 
 /// Per-phase output-stage mode per logical sector (one array each for A/B/C).
@@ -1162,7 +1166,7 @@ fn dump_cl_log<TX: Write>(tx: &mut TX) {
     let n = (CL_CAP_N.load(Ordering::Relaxed) as usize).min(CL_MAXCOMM);
     writeln!(
         tx,
-        "cl: {} commutations CLOSED-LOOP (i phys zc_pct coasted lf=raw_linfit_pct)\r",
+        "cl: {} commutations CLOSED-LOOP (i phys zc_pct coasted lf=raw_linfit_pct bnd=cap_frame)\r",
         n
     )
     .ok();
@@ -1173,10 +1177,11 @@ fn dump_cl_log<TX: Write>(tx: &mut TX) {
         let coast = v & 0xff;
         let zc: i32 = if zcb == 255 { -1 } else { zcb as i32 };
         let lf = CL_CAP_LF[i].load(Ordering::Relaxed); // raw signed linfit %, 9999 = none
+        let bnd = CL_CAP_BND[i].load(Ordering::Relaxed); // capture-frame of this commutation
         writeln!(
             tx,
-            "cl i={} phys={} zc={} coast={} lf={}\r",
-            i, phys, zc, coast, lf
+            "cl i={} phys={} zc={} coast={} lf={} bnd={}\r",
+            i, phys, zc, coast, lf, bnd
         )
         .ok();
     }
@@ -1383,6 +1388,7 @@ extern "C" fn TIM7() {
                 let co = u32::from(step.coasted);
                 CL_CAP[n].store((prev << 16) | (zcb << 8) | co, Ordering::Relaxed);
                 CL_CAP_LF[n].store(CL_LAST_LF, Ordering::Relaxed);
+                CL_CAP_BND[n].store(CAPTURE_TICKS, Ordering::Relaxed); // capture-frame of this commutation
                 CL_CAP_N.store((n + 1) as u32, Ordering::Relaxed);
             }
             CL_LAST_ZC = 255; // reset for the next sector
