@@ -902,15 +902,14 @@ _CL_LF_RE = re.compile(r"cl i=\d+ phys=(\d+) zc=-?\d+ coast=\d+ lf=(-?\d+)")
 CL_LINFIT_BLANK = 4  # must match scope_cl2 CL_BLANK (the loop detector's demag skip)
 
 
-def linfit_zc_pct(e_vals: list[float], fps: float, blank: int = CL_LINFIT_BLANK) -> float | None:
-    """Python port of cl.rs Detector::finish_linfit -- least-squares line through the
-    post-blank (firmware-frame, e) samples, solved for the zero (-b/m), as % of window.
-    `e_vals[j]` is float-minus-neutral at the j-th post-commutation frame (firmware-frame
-    = j+1). Returns the (possibly out-of-window) crossing %, or None. Identical math to
-    the firmware so the two overlaid markers coincide iff the firmware matches."""
+def linfit_mb(e_vals: list[float], blank: int = CL_LINFIT_BLANK) -> tuple[float, float] | None:
+    """Least-squares line e = m*frame + b through the post-blank (firmware-frame, e)
+    samples (firmware-frame = j+1; the first `blank` are dropped as demag chaff). Returns
+    (m, b) or None if too few points / degenerate. The shared core of the linfit detector
+    -- linfit_zc_pct reads off its zero, the render plots the line itself."""
     pts = [(j + 1, e) for j, e in enumerate(e_vals) if (j + 1) > blank]
     n = len(pts)
-    if n < 4 or fps <= 0:
+    if n < 4:
         return None
     sx = sum(p[0] for p in pts)
     sy = sum(p[1] for p in pts)
@@ -920,9 +919,22 @@ def linfit_zc_pct(e_vals: list[float], fps: float, blank: int = CL_LINFIT_BLANK)
     if abs(denom) < 1e-3:
         return None
     m = (n * sxy - sx * sy) / denom
+    b = (sy - m * sx) / n
+    return m, b
+
+
+def linfit_zc_pct(e_vals: list[float], fps: float, blank: int = CL_LINFIT_BLANK) -> float | None:
+    """Python port of cl.rs Detector::finish_linfit -- fit a line through the post-blank
+    BEMF samples and solve for its zero (-b/m), as % of the window. `e_vals[j]` is
+    float-minus-neutral at the j-th post-commutation frame. Returns the (possibly
+    out-of-window) crossing %, or None. Identical math to the firmware so the two overlaid
+    markers coincide iff the firmware matches."""
+    mb = linfit_mb(e_vals, blank)
+    if mb is None or fps <= 0:
+        return None
+    m, b = mb
     if abs(m) < 1e-3:
         return None
-    b = (sy - m * sx) / n
     return (-b / m) / fps * 100.0  # firmware-frame of zero -> % of window
 
 
@@ -1085,6 +1097,20 @@ def render_zc_figure(
                 s0e = int(round(sec.start_frame)) + 1
                 s1e = min(int(round(sec.end_frame)), frames)
                 e_vals = [smooth[ch][f] - neutral[f] for f in range(s0e, s1e)]
+                # Plot the fitted line itself (faint) so the linfit is legible: it rides on
+                # the neutral as neutral + (m*frame + b) and crosses the neutral exactly at
+                # the python "^" zero. Extended a little past the window so the crossing
+                # shows even when it projects just outside.
+                mb = linfit_mb(e_vals)
+                if mb is not None and fps > 0:
+                    m, b = mb
+                    fz = sec.start_frame + (-b / m if abs(m) > 1e-9 else 0.0)
+                    lo = max(0.0, min(sec.start_frame, fz) - 1.0, sec.start_frame - 1.5 * fps)
+                    hi = min(frames - 1.0, max(sec.end_frame, fz) + 1.0, sec.end_frame + 1.5 * fps)
+                    fa = [lo + i for i in range(int(hi - lo) + 1)]
+                    yl = [neutral[min(max(int(round(f)), 0), frames - 1)] + m * (f - sec.start_frame) + b for f in fa]
+                    ax.plot([f / capture.sample_hz * 1000.0 for f in fa], yl,
+                            color="tab:blue", lw=0.8, alpha=0.4, zorder=3)
                 # Firmware linfit for THIS sector (actual boundaries) or, for pre-bnd logs,
                 # the per-phys median fallback.
                 fw_lf = lf_by_sector.get(sec.index)
@@ -1133,8 +1159,8 @@ def render_zc_figure(
     )
     fig.text(
         0.5, 0.005,
-        "ZC markers:  o sign-change (in-window)    ^ python linfit    x firmware linfit "
-        "(blue/magenta coincide => firmware matches reference)",
+        "ZC markers:  o sign-change (in-window)    ^ python linfit    x firmware linfit    "
+        "faint blue line = the least-squares fit (crosses neutral at ^)",
         ha="center", fontsize=8, color="0.3",
     )
 
