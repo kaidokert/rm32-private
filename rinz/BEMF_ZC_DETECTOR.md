@@ -118,7 +118,7 @@ along the catch-boundary diagonal. The surface is smooth at ±1 Hz frequency res
 (jitter captures), i.e. it is the rotor genuinely sitting at a well-defined angle vs
 commutation — not aliasing.
 
-### 4. The per-sector wave tracks load angle, not geometry — PROVISIONAL (June 2026)
+### 4. The per-sector wave tracks load angle, not geometry — SUPPORTED across 250–400 Hz (June 2026)
 
 The float-window crossing carries a repeatable **per-sector offset** (the "per-sector
 wave"): across the six sectors of one electrical rev the ZC sits at different
@@ -169,37 +169,47 @@ Phase-A `R_A/R_C` swing with amplitude, §"Phase-A anomaly"). It is also consist
 the earlier exclusions: drive-asymmetry/elliptical-field, rotor-hunting, and divider
 mismatch were all ruled out previously; load angle is what remained.
 
-**Follow-up — the frequency axis (partial, June 2026).** A partial larger sweep adds the
-orthogonal knob: **at 350 Hz the wave is offset higher (later crossings, `s0` ~48–58 vs
-~3–35 at 250 Hz) and still flattens with amp.** Frequency moves the wave just as torque
-does — consistent with it being the second load-angle knob. (`150 Hz` did not spin
-open-loop and `450 Hz` stalled past the envelope, so the clean open-loop band is roughly
-250–400 Hz; data in `wave_sweep_250hz_20260626.json` → `followup_multifreq_partial`.) This
-strengthens the load-angle reading but does not yet complete the plane.
+**Follow-up — the frequency axis (lock-gated, June 27 2026).** A clean 250–400 Hz × 12–20 %
+sweep adds the orthogonal knob. This run is **gate-hardened**: every below-stall-curve
+point (`amp < 0.035·hz + 2.6 + margin`) is skipped rather than measured stuck, and every
+recorded point must light **≥4 of 6 linfit sectors** (a synchronously spinning rotor has
+structured per-sector BEMF; a stuck/slipping one does not). The gate matched the eye on
+19/20 on the first run (the one miss a *conservative reject* of a flaky high-amp catch),
+and an immediate re-run reproduced **20/20** with that point locking — i.e. the lone
+disagreement was rig catch-flakiness, not a missed wave, and no contaminated data is ever
+admitted. Both load-angle signatures hold **across all four frequencies**:
 
-> **CAVEAT (data quality).** A later high→low sweep revealed that the open-loop motor goes
-> STUCK/stuttering in the *low-amp* second half of the higher-frequency runs, and a stuck
-> rotor's demag transient fools the linfit into producing plausible-but-fake in-range
-> numbers. The 350 Hz follow-up above (and any low-amp open-loop point) may be partly
-> contaminated. `cl_wave_sweep.py` now gates every capture on `classify_rotor_state ==
-> LOCKED` (stuck points → honest `nan`); the multi-frequency claim must be re-run under
-> that gate before it stands. The 250 Hz §4 result (where the motor stayed locked) is the
-> trustworthy part. Treat the frequency-axis offset as suggestive, not established.
+```
+  flattening with amp (peak-trough spread, % of window):
+    250 Hz:  12% → 179      20% →  24
+    300 Hz:  14% →  69      20% →  28
+    350 Hz:  16% →  43      20% →  11
+    400 Hz:  ...            20% →  13   (very flat)
+
+  offset with frequency (mean sector level at fixed 20 %):
+    250 → 27    300 → 30    350 → 42    400 → 52   (monotonic up)
+```
+
+At **every** frequency, adding amp collapses the per-sector spread toward a flat,
+window-centred wave; at fixed amp, raising frequency shifts the *whole* wave to later
+crossings. Torque margin and speed are the two load-angle knobs, and both move the wave
+the way load angle predicts — fixed geometry would do neither. `150 Hz` did not spin
+open-loop and `450 Hz` stalled past the envelope, so the clean open-loop band is ~250–400 Hz.
 
 **Corollary (observability knob).** The ~50 % in-window ZC coverage at the low-amp
 operating point is itself a *low-load-angle / low-amp* consequence; loading the motor
-harder pulls more sectors in-window (≈6/6 at 19 % open loop) — at the usual current cost.
+harder pulls more sectors in-window (≈6/6 at 18–20 % open loop) — at the usual current cost.
 
-> **STATUS: PROVISIONAL — strongly supported, not yet proven.** This is **one frequency
-> (250 Hz), four amps, open loop, one motor/board**. The load-angle reading is the clear
-> best explanation of these data, but it is a hypothesis pending a **larger sweep**:
-> (a) the orthogonal **frequency** axis at fixed amp (speed moves load angle a different
-> way than torque); (b) the full **(Hz, amp)** plane; (c) **closed-loop** confirmation
-> once the amp-step instability is handled; (d) ideally a **second motor** to separate
-> motor-specific from universal behaviour. Until then treat "per-sector wave = load
-> angle" as the leading hypothesis, not settled fact.
-> Raw data: `wave_sweep_250hz_20260626.json`. Figure: `logs/wave_20260626_190957.png`
-> (regenerate / extend with `scripts/cl_wave_sweep.py`).
+> **STATUS: SUPPORTED across 250–400 Hz on lock-gated data — not yet airtight.** Both
+> load-angle signatures (amp-flatten, freq-offset) now reproduce on a hardened rig that
+> rejects stuck/slipping captures, across four frequencies and four amps, open loop. This
+> is materially stronger than the original single-frequency result. Remaining caveats
+> before it is *settled*: (a) a few **high-frequency outliers** persist (e.g. 400/18 `s5`
+> = 159, an out-of-window projection); (b) **one motor/board** — a second would separate
+> motor-specific from universal behaviour; (c) **closed-loop** confirmation still pending.
+> Treat "per-sector wave = load angle" as well-supported but single-motor.
+> Raw data: `wave_sweep_multifreq_20260627.json` (and `wave_sweep_250hz_20260626.json`).
+> Figure: `logs/wave_20260627_151148.png` (regenerate / extend with `scripts/cl_wave_sweep.py`).
 
 ## What this gives us
 
@@ -255,9 +265,10 @@ question is closed. (Figure: `logs/.../phase_a_closeout.png`, regenerate with
   samples per PWM period (a firmware change), not a host-side change.
 - **This is observation, not control.** Per the standing constraint, the detector is a
   measurement/diagnostic; nothing here closes a loop.
-- **The "per-sector wave = load angle" result (§4) is PROVISIONAL** — one frequency, four
-  amps, open loop, one board. Strongly supported (slides + flattens with amp) but pending
-  a larger (Hz, amp) sweep and a second motor before it is settled.
+- **The "per-sector wave = load angle" result (§4) is SUPPORTED, not airtight** — both
+  signatures (amp-flatten, freq-offset) reproduce on a lock-gated rig across 250–400 Hz ×
+  12–20 %, open loop. Remaining gaps before settled: a few high-freq out-of-window
+  outliers, closed-loop confirmation, and a second motor (still one board).
 
 ## Tools and provenance
 
