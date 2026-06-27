@@ -16,8 +16,8 @@ median per physical sector across snaps. Writes logs/wave_<ts>.png + .json. ATTE
 Every point is measured INDEPENDENTLY -- no state carried between setpoints, so a stall at
 one can't poison the next. Per (hz, amp):
   1. q/w/q/w (with pauses) -- aggressive clear of any latched / half-stuck state to idle.
-  2. q   -- reset to base (inside position()).
-  3. ramp fresh up to (hz, amp).
+  2. spin up SOLID at a high catch amp (max(amps)+3), then ride amp DOWN to the target --
+     descending stays on the hysteretic locked branch; up-ramps near the stall edge drop it.
   4. VERIFY: each capture's debug line must report the target hz AND amp, else it's rejected
      (the ramp didn't land / firmware isn't where we asked).
   5. LOCKED: the host rotor classifier must certify the rotor genuinely spinning, else
@@ -198,19 +198,37 @@ def reset_cycles(ser, pause, cycles=2):
     ser.reset_input_buffer()  # discard the reset/kill echoes
 
 
-def measure_point(ser, hz, amp_t, alpha, snaps, timeout, settle, reset_pause):
-    """Independent measurement of ONE (hz, amp): clear -> ramp fresh -> verify the firmware
-    echoed the target -> measure. NOTHING is carried from any prior point, so a stall at one
-    setpoint can't poison the next. Returns (wave, n_locked, n_verified)."""
+def ramp_amp_down(ser, cur_t, tgt_t, step_pause=0.08):
+    """Ramp amp from cur DOWN to tgt (0.1% units) via z (-1%) / - (-0.1%), gently. Descending
+    rides the hysteretic locked branch; up-ramps near the stall edge are what drop lock."""
+    d = cur_t - tgt_t
+    if d <= 0:
+        return  # catch should be >= target, so this is a no-op
+    for _ in range(d // 10):
+        send(ser, "z")
+        time.sleep(step_pause)
+    for _ in range(d % 10):
+        send(ser, "-")
+        time.sleep(step_pause)
+
+
+def measure_point(ser, hz, amp_t, catch_t, alpha, snaps, timeout, settle, reset_pause):
+    """Independent measurement of ONE (hz, amp): clear -> catch SOLID at a high amp -> ride
+    DOWN to the target -> verify -> measure. Catch-then-descend keeps the rotor on the locked
+    branch (vs ramping up into the target near the stall edge). Nothing carried between
+    points. Returns (wave, n_locked, n_verified)."""
     _clear_stall(ser)
     reset_cycles(ser, reset_pause)  # q,w,q,w -- aggressive clear before ramping
-    # position() sends 'q' (reset to base) then ramps freq+amp up to the target.
-    position(ser, Setpoint(), hz, amp_t, qsettle=0.8, ramp_step=20,
+    # Spin up SOLID at the high catch amp (position sends 'q' then ramps freq+amp up).
+    position(ser, Setpoint(), hz, catch_t, qsettle=0.8, ramp_step=20,
              ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
-    drain(ser)  # flush ramp echoes so a STALL the firmware reported during the ramp is seen
+    drain(ser)
+    if not _stalled(ser):
+        ramp_amp_down(ser, catch_t, amp_t)  # ride DOWN to the target (stable branch)
+        drain(ser)
     if _stalled(ser):
-        # Firmware killed the motor mid-ramp -- this setpoint can't hold lock. Don't measure
-        # a dead motor; the next point's reset_cycles ('q') re-arms it.
+        # Firmware killed the motor during spin-up/descent -- can't hold lock here. Don't
+        # measure a dead motor; the next point's reset_cycles ('q') re-arms it.
         send(ser, "w")
         return {}, 0, 0
     if alpha > 0:
@@ -234,6 +252,9 @@ def main() -> int:
     p.add_argument("--min-lock", type=int, default=3,
                    help="stop the amp descent when fewer than this many snaps verify LOCKED "
                         "(stay in the solid regime; below this the motor stalls hard / OCP)")
+    p.add_argument("--catch-amp", type=float, default=None,
+                   help="amp %% to spin up SOLID at before descending to each target "
+                        "(default max(amps)+3); catch high, ride down the locked branch")
     p.add_argument("--settle", type=float, default=1.0)
     p.add_argument("--reset-pause", type=float, default=0.4,
                    help="pause (s) between each q/w in the pre-ramp clear cycle")
@@ -248,6 +269,7 @@ def main() -> int:
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     freqs = args.freqs or [args.hz]
+    catch_t = int(round((args.catch_amp if args.catch_amp is not None else max(args.amps) + 3) * 10))
     grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
     with serial.Serial(args.port, args.baud, timeout=0.1) as raw_ser:
@@ -261,9 +283,10 @@ def main() -> int:
             for hz in freqs:
                 for amp in args.amps:
                     amp_t = int(round(amp * 10))
-                    # FULL independent measurement -- kill, reset, ramp fresh, verify, measure.
-                    w, nl, nv = measure_point(ser, hz, amp_t, args.alpha, args.snaps,
-                                              args.capture_timeout, args.settle, args.reset_pause)
+                    # FULL independent measurement -- reset, catch high, descend, verify.
+                    w, nl, nv = measure_point(ser, hz, amp_t, max(catch_t, amp_t), args.alpha,
+                                              args.snaps, args.capture_timeout, args.settle,
+                                              args.reset_pause)
                     if _stalled(ser):
                         status = "FW STALL-KILL (motor killed; reset next point)"
                     elif nv == 0:
