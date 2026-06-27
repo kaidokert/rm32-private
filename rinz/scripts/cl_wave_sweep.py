@@ -33,12 +33,17 @@ one can't poison the next. Per (hz, amp):
 
   python scripts/cl_wave_sweep.py COM41 --hz 250 --amps 13 15 17 19          # open loop (default)
   python scripts/cl_wave_sweep.py COM41 --freqs 150 250 350 --amps 12 15 18  # the larger (Hz, amp) plane
+  python scripts/cl_wave_sweep.py COM41 --freqs 250 300 350 400 --amp-track  # amp window rides up with hz
+
+Each measured setpoint also gets a per-point zc_<hz>_<amp>.png (the same 3-phase ZC render
+as latest_zc) under logs/zc_<ts>/ -- so you can eyeball what a 6/6/6 vs 6/5/6 actually looks like.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import statistics as st
 import sys
@@ -54,8 +59,21 @@ except ImportError as exc:
     raise SystemExit("missing dependency: pip install pyserial") from exc
 
 from scope_common import (BAUD, PHASE_NAMES, PHASE_TO_CHANNEL, analyze_zero_crossings,
-                          linfit_mb, parse_capture, parse_cl_bounds)
+                          linfit_mb, parse_capture, parse_cl_bounds, plot_zc_snapshot)
 from scope_sweep import Setpoint, capture, drain, position, send, set_watchdog, stall_amp
+
+
+def amps_for(hz, base_amps, track, step, span, margin):
+    """The amp list to sweep at `hz`. With --amp-track the window RIDES UP with frequency:
+    it starts at the first step-aligned amp at/above the stall edge (stall_amp(hz)+margin) and
+    runs `span` points up by `step` -- so every point is above the stall curve by construction
+    (no skips) and the higher-freq runs reach correspondingly higher amps. e.g. step 2 span 5
+    margin 0.5 gives 250:12-20, 300:14-22, 350:16-24, 400:18-26. Without --amp-track every
+    frequency uses the flat --amps list and the curve-skip handles the below-curve points."""
+    if not track:
+        return list(base_amps)
+    start = math.ceil((stall_amp(hz) + margin) / step) * step
+    return [start + i * step for i in range(span)]
 
 
 def _stalled(ser):
@@ -178,7 +196,9 @@ def set_alpha(ser, alpha: float) -> None:
 
 
 def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0, min_sectors=4):
-    """Take `snaps` captures at a setpoint; return (median linfit wave, n_locked, n_verified).
+    """Take `snaps` captures at a setpoint; return (median linfit wave, n_locked, n_verified,
+    rep_cap) -- rep_cap is the last LOCKED capture (a representative raw frame for rendering a
+    per-setpoint zc_<hz>_<amp>.png), or the last verified one if none locked, or None.
 
     Each capture must pass two gates before it feeds the wave:
       VERIFIED -- the firmware's debug line reports the target hz AND amp (else the ramp didn't
@@ -192,6 +212,7 @@ def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0, min_s
     flat windows (|slope| < slope_min) and bonkers extrapolations ([-100,200]%) are dropped."""
     acc: dict[int, list[float]] = defaultdict(list)
     n_locked = n_verified = 0
+    rep_cap = None  # last locked capture (preferred) else last verified -- for rendering
     for _ in range(snaps):
         if _stalled(ser):
             break  # firmware killed the motor mid-sequence -- stop capturing a corpse
@@ -206,6 +227,8 @@ def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0, min_s
         if chz != want_hz or abs(camp - want_amp_t) > 2:
             continue  # firmware NOT at the requested setpoint -> not a valid measurement
         n_verified += 1
+        if rep_cap is None:
+            rep_cap = cap  # at least a verified frame to render if nothing ends up locked
         fps = cap.sample_hz / (chz * 6.0)
         bounds, _ = parse_cl_bounds(cap.text)
         secs, smooth, neutral = analyze_zero_crossings(cap, smooth_window=3, sector_bounds=bounds)
@@ -223,9 +246,10 @@ def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0, min_s
                 cap_z[s.index % 6] = z
         if len(cap_z) >= min_sectors:  # enough structured BEMF -> rotor is genuinely spinning
             n_locked += 1
+            rep_cap = cap  # prefer a locked frame for the rendered image
             for k, v in cap_z.items():
                 acc[k].append(v)
-    return {s: st.median(v) for s, v in acc.items() if v}, n_locked, n_verified
+    return {s: st.median(v) for s, v in acc.items() if v}, n_locked, n_verified, rep_cap
 
 
 def reset_cycles(ser, pause, cycles=2):
@@ -259,7 +283,7 @@ def measure_point(ser, hz, amp_t, catch_t, alpha, snaps, timeout, settle, reset_
     DOWN to the target -> verify -> measure -> POST-CHECK it still holds. Catch-then-descend
     keeps the rotor on the locked branch; the post-check catches rotors that pass the snaps
     but "stall at the end" (the false-positives the manual-vs-script cross-check exposed).
-    Nothing carried between points. Returns (wave, n_locked, n_verified, held)."""
+    Nothing carried between points. Returns (wave, n_locked, n_verified, held, rep_cap)."""
     _clear_stall(ser)
     reset_cycles(ser, reset_pause)  # q,w,q,w -- aggressive clear before ramping
     # Spin up SOLID at the high catch amp (position sends 'q' then ramps freq+amp up).
@@ -273,22 +297,22 @@ def measure_point(ser, hz, amp_t, catch_t, alpha, snaps, timeout, settle, reset_
         # Firmware killed the motor during spin-up/descent -- can't hold lock here. Don't
         # measure a dead motor; the next point's reset_cycles ('q') re-arms it.
         send(ser, "w")
-        return {}, 0, 0, None
+        return {}, 0, 0, None, None
     if alpha > 0:
         set_alpha(ser, alpha)  # 'q' already set open-loop alpha=0
     time.sleep(settle)
-    w, nl, nv = collect_wave(ser, snaps, timeout, hz, amp_t)
+    w, nl, nv, rep_cap = collect_wave(ser, snaps, timeout, hz, amp_t)
     # POST-CHECK: one more capture after the snaps. A rotor that "stalls at the end" passes
     # the snaps but is gone now -- if it's still AT the setpoint but no longer locked, the
     # point didn't hold, so reject it (this is the manual-labelled false-positive class).
     held = None
     if nl > 0 and not _stalled(ser):
-        _, post_nl, post_nv = collect_wave(ser, 1, timeout, hz, amp_t)
+        _, post_nl, post_nv, _ = collect_wave(ser, 1, timeout, hz, amp_t)
         if post_nv > 0:
             held = post_nl > 0
             if not held:
-                return {}, 0, nv, False
-    return w, nl, nv, held
+                return {}, 0, nv, False, rep_cap
+    return w, nl, nv, held, rep_cap
 
 
 def main() -> int:
@@ -299,7 +323,16 @@ def main() -> int:
     p.add_argument("--freqs", type=int, nargs="+", default=None,
                    help="frequencies to sweep (the ORTHOGONAL load-angle axis); re-spins per freq")
     p.add_argument("--amps", type=float, nargs="+", default=[13, 15, 17, 19],
-                   help="amp %% values to sweep (the load-angle knob)")
+                   help="amp %% values to sweep (the load-angle knob); flat across freqs "
+                        "unless --amp-track")
+    p.add_argument("--amp-track", action="store_true",
+                   help="ride the amp window UP with frequency instead of a flat --amps list: "
+                        "each freq starts at the first --amp-step above the stall edge and runs "
+                        "--amp-span points up. e.g. 250:12-20, 300:14-22, 350:16-24, 400:18-26")
+    p.add_argument("--amp-span", type=int, default=5,
+                   help="number of amp points per frequency when --amp-track (default 5)")
+    p.add_argument("--amp-step", type=float, default=2.0,
+                   help="amp %% step between points when --amp-track (default 2)")
     p.add_argument("--alpha", type=float, default=0.0,
                    help="0 = open loop (the clean probe; cannot desync). >0 = closed loop")
     p.add_argument("--stall-kill", action="store_true",
@@ -328,16 +361,33 @@ def main() -> int:
     p.add_argument("--logfile", type=Path, default=None,
                    help="timestamped TX/RX + status log (default logs/sweep_<ts>.log; "
                         "'' to disable). Control lines only -- no binary payload.")
+    p.add_argument("--zc-dir", type=Path, default=None,
+                   help="directory for per-setpoint zc_<hz>_<amp>.png renders "
+                        "(default logs/zc_<ts>/). '' to disable rendering.")
     args = p.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     freqs = args.freqs or [args.hz]
-    catch_t = int(round((args.catch_amp if args.catch_amp is not None else max(args.amps) + 3) * 10))
+    # Per-frequency amp list: flat --amps, or (with --amp-track) a window that rides up with hz.
+    freq_amps = {hz: amps_for(hz, args.amps, args.amp_track, args.amp_step, args.amp_span,
+                              args.stall_margin) for hz in freqs}
     grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
     Path("logs").mkdir(exist_ok=True)
     log_path = args.logfile if args.logfile is not None else Path("logs") / f"sweep_{stamp}.log"
     logf = open(log_path, "w", encoding="utf-8") if str(log_path) else None
+    zc_dir = args.zc_dir if args.zc_dir is not None else Path("logs") / f"zc_{stamp}"
+    if str(zc_dir):
+        zc_dir.mkdir(parents=True, exist_ok=True)
+
+    def render_point(hz, amp, cap):  # one zc_<hz>_<amp>.png like latest_zc, named by setpoint
+        if not str(zc_dir) or cap is None:
+            return
+        out = zc_dir / f"zc_{hz}_{amp:g}.png"
+        try:
+            plot_zc_snapshot(cap, out, smooth_window=3)
+        except Exception as exc:
+            both(f"    (render {out.name} skipped: {exc})")
 
     def both(text):  # print to console AND the timestamped logfile
         print(text)
@@ -360,20 +410,25 @@ def main() -> int:
              + "   ver/lock  status   (every point: w->q->ramp->verify->measure)")
         try:
             for hz in freqs:
-                for amp in args.amps:
+                amps = freq_amps[hz]
+                # Catch SOLID above the top of this freq's window, then ride down to each target.
+                catch_t = int(round((args.catch_amp if args.catch_amp is not None
+                                     else max(amps) + 3) * 10))
+                for amp in amps:
                     amp_t = int(round(amp * 10))
                     edge = stall_amp(hz) + args.stall_margin
                     if args.stall_margin and amp < edge:
                         # Below the stall curve: the open-loop rotor slips/stalls here (the
                         # curve predicts it cleanly). Don't measure -- it only yields slip
-                        # contamination the classifier can't catch.
+                        # contamination the classifier can't catch. (With --amp-track every
+                        # point is above the edge by construction, so this never fires.)
                         both(f"  {hz:>4} {amp:>5.1f} | {' '.join(['  .'] * 6)}   ----  "
                              f"BELOW STALL CURVE (edge ~{edge:.1f}%) -- skipped")
                         continue
                     # FULL independent measurement -- reset, catch high, descend, verify, hold.
-                    w, nl, nv, held = measure_point(ser, hz, amp_t, max(catch_t, amp_t),
-                                                    args.alpha, args.snaps, args.capture_timeout,
-                                                    args.settle, args.reset_pause)
+                    w, nl, nv, held, rep_cap = measure_point(
+                        ser, hz, amp_t, max(catch_t, amp_t), args.alpha, args.snaps,
+                        args.capture_timeout, args.settle, args.reset_pause)
                     if _stalled(ser):
                         status = "FW STALL-KILL (motor killed; reset next point)"
                     elif held is False:
@@ -389,6 +444,7 @@ def main() -> int:
                         grid[(hz, amp)] = w  # only trust a solidly-locked point that HELD
                     row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
                     both(f"  {hz:>4} {amp:>5.1f} | {row}   {nv}/{nl}/{args.snaps}  {status}")
+                    render_point(hz, amp, rep_cap)  # zc_<hz>_<amp>.png from a representative frame
         finally:
             send(ser, "w")  # leave the motor killed
             if not args.stall_kill:
@@ -413,7 +469,7 @@ def main() -> int:
         fig, axes = plt.subplots(1, n, figsize=(5 * n, 5), squeeze=False)
         for col, hz in enumerate(freqs):
             ax = axes[0][col]
-            for amp in args.amps:
+            for amp in freq_amps[hz]:
                 w = grid.get((hz, amp), {})
                 ys = [w.get(s, float("nan")) for s in range(6)]
                 ax.plot(range(6), ys, "-o", label=f"{amp:.1f}%")
@@ -433,6 +489,8 @@ def main() -> int:
         both(f"\nwave plot -> {png}\njson -> {jpath}")
     except Exception as exc:
         both(f"(plot skipped: {exc}); json -> {jpath}")
+    if str(zc_dir):
+        both(f"per-setpoint zc renders -> {zc_dir}/zc_<hz>_<amp>.png")
     if logf:
         both(f"log -> {log_path}")
         logf.close()
