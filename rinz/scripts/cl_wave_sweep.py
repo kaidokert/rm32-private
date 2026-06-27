@@ -136,6 +136,12 @@ def main() -> int:
                 set_beta(ser, args.beta)
                 set_alpha(ser, args.alpha)
                 time.sleep(args.settle)
+                # Spin check: if the motor isn't producing valid BEMF here (too slow/fast
+                # for the open-loop envelope), skip this frequency rather than nan-spam.
+                probe = collect_wave(ser, 1, args.capture_timeout)
+                if len(probe) < 3:
+                    print(f"\n  {hz} Hz: not spinning open-loop ({len(probe)}/6 sectors) -- skipping")
+                    continue
                 print(f"\n  {hz} Hz   {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
                       + "   (linfit ZC % per sector)")
                 for amp in args.amps:

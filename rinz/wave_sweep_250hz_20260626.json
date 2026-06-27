@@ -22,5 +22,20 @@
   "signatures": [
     "SLIDE: sectors move in opposite directions as amp rises (s0 4->33, s5 -57->26 climb; s2 83->17 falls); peak walks s2->s1, trough s5->s4. Fixed geometry would scale, not slide.",
     "FLATTEN: peak-to-trough spread collapses 140->26 over 13->19%; at 19% all sectors sit at +17..+43% (near window centre, in-window)."
-  ]
+  ],
+  "followup_multifreq_partial_20260626": {
+    "note": "Partial larger sweep (run cut short; 150 Hz did not spin open-loop, 450 Hz stalled past the envelope). 250 Hz (5-amp) reconfirms slide+flatten; 350 Hz confirms the FREQUENCY axis: the wave is offset HIGHER (later crossings) and still flattens with amp -> frequency is the orthogonal load-angle knob, as predicted.",
+    "wave_by_hz_amp_pct": {
+      "250/12": {"s0": 3, "s1": -20, "s2": 92, "s3": 24, "s4": 88, "s5": -96},
+      "250/14": {"s0": 5, "s1": 44, "s2": 72, "s3": 30, "s4": 23, "s5": -32},
+      "250/16": {"s0": 18, "s1": 67, "s2": 40, "s3": 28, "s4": -22, "s5": 13},
+      "250/18": {"s0": 30, "s1": 58, "s2": 21, "s3": 22, "s4": -6, "s5": 27},
+      "250/20": {"s0": 35, "s1": 31, "s2": 16, "s3": 17, "s4": 38, "s5": 23},
+      "350/12": {"s0": 48, "s1": 52, "s2": 90, "s3": 73, "s4": 84, "s5": -20},
+      "350/14": {"s0": 49, "s1": 72, "s2": 81, "s3": 74, "s4": 59, "s5": 26},
+      "350/16": {"s0": 55, "s1": 105, "s2": 68, "s3": 72, "s4": 47, "s5": 50},
+      "350/18": {"s0": 58, "s1": 118, "s2": 61, "s3": 70, "s4": 59, "s5": 54},
+      "350/20": {"s0": 56, "s1": 66, "s2": 61, "s3": 70, "s4": 78, "s5": 46}
+    }
+  }
 }

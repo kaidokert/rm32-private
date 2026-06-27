@@ -169,6 +169,14 @@ Phase-A `R_A/R_C` swing with amplitude, §"Phase-A anomaly"). It is also consist
 the earlier exclusions: drive-asymmetry/elliptical-field, rotor-hunting, and divider
 mismatch were all ruled out previously; load angle is what remained.
 
+**Follow-up — the frequency axis (partial, June 2026).** A partial larger sweep adds the
+orthogonal knob: **at 350 Hz the wave is offset higher (later crossings, `s0` ~48–58 vs
+~3–35 at 250 Hz) and still flattens with amp.** Frequency moves the wave just as torque
+does — consistent with it being the second load-angle knob. (`150 Hz` did not spin
+open-loop and `450 Hz` stalled past the envelope, so the clean open-loop band is roughly
+250–400 Hz; data in `wave_sweep_250hz_20260626.json` → `followup_multifreq_partial`.) This
+strengthens the load-angle reading but does not yet complete the plane.
+
 **Corollary (observability knob).** The ~50 % in-window ZC coverage at the low-amp
 operating point is itself a *low-load-angle / low-amp* consequence; loading the motor
 harder pulls more sectors in-window (≈6/6 at 19 % open loop) — at the usual current cost.
