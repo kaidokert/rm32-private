@@ -118,6 +118,72 @@ along the catch-boundary diagonal. The surface is smooth at ±1 Hz frequency res
 (jitter captures), i.e. it is the rotor genuinely sitting at a well-defined angle vs
 commutation — not aliasing.
 
+### 4. The per-sector wave tracks load angle, not geometry — PROVISIONAL (June 2026)
+
+The float-window crossing carries a repeatable **per-sector offset** (the "per-sector
+wave"): across the six sectors of one electrical rev the ZC sits at different
+%-of-window positions. The live closed-loop overlay (`scope_live_ui` → `latest_zc.png`,
+3-marker linfit overlay) shows it as a **left/right asymmetry per phase** — phase A
+near-symmetric, phases B and C strongly asymmetric (left window much later than right).
+The long-standing open question: is this a **fixed motor/sense geometry** asymmetry, or a
+**load-angle** effect?
+
+**Direct test (`scripts/cl_wave_sweep.py`).** Sweep amp — the load-angle knob at fixed
+speed — and watch the per-sector wave. **Open loop is the clean probe:** the commutation
+is a fixed uniform schedule that cannot desync (a *closed*-loop amp sweep was unreadable —
+the lock destabilized at every amp step), so the linfit position is the raw load angle.
+Measured with the **ungated** Python linfit (`linfit_zc_pct`): the firmware `lf` is gated
+to `[-30,130]%` and rejects the far-out-of-window sectors to `nan`, whereas the ungated
+fit projects every sector, with a `|slope| ≥ 15` filter to drop genuinely flat /
+unobservable windows.
+
+**Evidence — 250 Hz, open loop, amp 13 → 19 % (linfit ZC, % of window):**
+
+```
+ sector:  s0   s1   s2   s3   s4   s5  | peak-trough range
+   13%     4   21   83   29   50  -57  |  140   (peak s2, trough s5)
+   15%    14   60   54   29   -9   -1  |   69
+   17%    25   65   27   24  -17   24  |   82   (peak s1, trough s4)
+   19%    33   43   17   19   19   26  |   26   (nearly flat, all mid-window)
+```
+
+Two signatures, both **inconsistent with fixed geometry**:
+
+1. **The wave SLIDES.** Sectors move in *opposite* directions as amp rises — `s0` 4→33
+   and `s5` −57→26 climb while `s2` 83→17 falls. The peak walks `s2 → s1`; the trough
+   `s5 → s4`. A fixed-geometry asymmetry would keep its shape pinned to the same sectors
+   and merely scale.
+2. **The wave FLATTENS.** Peak-to-trough spread collapses **140 → 26** over 13→19 %. At
+   19 % every sector sits at +17…+43 % — clustered near window centre (in-window).
+
+**Mechanism.** More amp at fixed speed = more torque margin = the rotor lags the forced
+commutation less = **smaller load angle**. As the load angle shrinks the crossings pull
+toward window centre and the per-sector spread collapses. The asymmetry is *where BEMF
+crosses at a working lead angle* — not a defect in the motor or the sense path.
+
+**Consistency with prior findings.** This *refines* §2's "the per-sector asymmetry
+collapses to 0–10° in deep lock" into a continuous load-angle dependence (deeper lock /
+higher amp = lower load angle = flatter wave), and it is the **angle-domain partner** of
+the Phase-A closeout — the amplitude-domain face of the same load-angle-locked wave (the
+Phase-A `R_A/R_C` swing with amplitude, §"Phase-A anomaly"). It is also consistent with
+the earlier exclusions: drive-asymmetry/elliptical-field, rotor-hunting, and divider
+mismatch were all ruled out previously; load angle is what remained.
+
+**Corollary (observability knob).** The ~50 % in-window ZC coverage at the low-amp
+operating point is itself a *low-load-angle / low-amp* consequence; loading the motor
+harder pulls more sectors in-window (≈6/6 at 19 % open loop) — at the usual current cost.
+
+> **STATUS: PROVISIONAL — strongly supported, not yet proven.** This is **one frequency
+> (250 Hz), four amps, open loop, one motor/board**. The load-angle reading is the clear
+> best explanation of these data, but it is a hypothesis pending a **larger sweep**:
+> (a) the orthogonal **frequency** axis at fixed amp (speed moves load angle a different
+> way than torque); (b) the full **(Hz, amp)** plane; (c) **closed-loop** confirmation
+> once the amp-step instability is handled; (d) ideally a **second motor** to separate
+> motor-specific from universal behaviour. Until then treat "per-sector wave = load
+> angle" as the leading hypothesis, not settled fact.
+> Raw data: `wave_sweep_250hz_20260626.json`. Figure: `logs/wave_20260626_190957.png`
+> (regenerate / extend with `scripts/cl_wave_sweep.py`).
+
 ## What this gives us
 
 A **trustworthy open-loop ZC / load-angle observation across every regime where the
@@ -172,6 +238,9 @@ question is closed. (Figure: `logs/.../phase_a_closeout.png`, regenerate with
   samples per PWM period (a firmware change), not a host-side change.
 - **This is observation, not control.** Per the standing constraint, the detector is a
   measurement/diagnostic; nothing here closes a loop.
+- **The "per-sector wave = load angle" result (§4) is PROVISIONAL** — one frequency, four
+  amps, open loop, one board. Strongly supported (slides + flattens with amp) but pending
+  a larger (Hz, amp) sweep and a second motor before it is settled.
 
 ## Tools and provenance
 
@@ -179,6 +248,9 @@ question is closed. (Figure: `logs/.../phase_a_closeout.png`, regenerate with
 - `scripts/zc_map.py` — the (Hz, amp) load-angle / residual surface.
 - `scripts/zc_phase_a.py` — Phase-A sense-gain closeout (driven-rail gain vs
   amplitude-dependent float ratio vs offset); refutes the gain hypothesis.
+- `scripts/cl_wave_sweep.py` — per-sector ZC wave vs amp (§4): the load-angle-vs-geometry
+  test. Open loop = clean probe; ungated python linfit for full coverage. Raw run:
+  `wave_sweep_250hz_20260626.json`.
 - `scripts/scope_common.py` — driven-pair neutral, settling blank, rotor classifier.
 - `examples/scope1.rs` — valley-sampled 7-channel capture (`dump7` / Ascii85 `cdump`).
 - Controlled validation set and comprehensive sweep under `logs/` (gitignored).

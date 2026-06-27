@@ -13,7 +13,8 @@ Amp is the load-angle knob at fixed speed (more torque margin -> different rotor
 Each capture's `cl ... lf=` log gives the raw linfit % per sector; we aggregate the
 median per physical sector across snaps. Writes logs/wave_<ts>.png + .json. ATTENDED.
 
-  python scripts/cl_wave_sweep.py COM41 --hz 250 --amps 13 15 17 19 --alpha 0.75
+  python scripts/cl_wave_sweep.py COM41 --hz 250 --amps 13 15 17 19          # open loop (default)
+  python scripts/cl_wave_sweep.py COM41 --freqs 150 250 350 --amps 12 15 18  # the larger (Hz, amp) plane
 """
 
 from __future__ import annotations
@@ -105,10 +106,13 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("port")
     p.add_argument("--baud", type=int, default=BAUD)
-    p.add_argument("--hz", type=int, default=250)
+    p.add_argument("--hz", type=int, default=250, help="single frequency (if --freqs unset)")
+    p.add_argument("--freqs", type=int, nargs="+", default=None,
+                   help="frequencies to sweep (the ORTHOGONAL load-angle axis); re-spins per freq")
     p.add_argument("--amps", type=float, nargs="+", default=[13, 15, 17, 19],
                    help="amp %% values to sweep (the load-angle knob)")
-    p.add_argument("--alpha", type=float, default=0.75)
+    p.add_argument("--alpha", type=float, default=0.0,
+                   help="0 = open loop (the clean probe; cannot desync). >0 = closed loop")
     p.add_argument("--beta", type=float, default=0.6)
     p.add_argument("--snaps", type=int, default=6)
     p.add_argument("--settle", type=float, default=1.0)
@@ -116,27 +120,32 @@ def main() -> int:
     args = p.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    waves: dict[float, dict[int, float]] = {}
+    freqs = args.freqs or [args.hz]
+    grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
     with serial.Serial(args.port, args.baud, timeout=0.1) as ser:
         ser.reset_input_buffer()
         if set_watchdog(ser, True):
             print("watchdog ARMED")
-        cur = int(round(args.amps[0] * 10))
         try:
-            position(ser, Setpoint(), args.hz, cur, qsettle=0.8, ramp_step=20,
-                     ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
-            set_beta(ser, args.beta)
-            set_alpha(ser, args.alpha)
-            time.sleep(args.settle)
-            print(f"\n  {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6)) + "   (linfit ZC % per sector)")
-            for amp in args.amps:
-                cur = set_amp(ser, cur, int(round(amp * 10)))
+            for hz in freqs:
+                cur = int(round(args.amps[0] * 10))
+                # Re-spin at each frequency (a big open-loop freq jump would lose sync).
+                position(ser, Setpoint(), hz, cur, qsettle=0.8, ramp_step=20,
+                         ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
+                set_beta(ser, args.beta)
+                set_alpha(ser, args.alpha)
                 time.sleep(args.settle)
-                w = collect_wave(ser, args.snaps, args.capture_timeout)
-                waves[amp] = w
-                row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
-                print(f"  {amp:>5.1f} | {row}")
+                print(f"\n  {hz} Hz   {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
+                      + "   (linfit ZC % per sector)")
+                for amp in args.amps:
+                    cur = set_amp(ser, cur, int(round(amp * 10)))
+                    time.sleep(args.settle)
+                    w = collect_wave(ser, args.snaps, args.capture_timeout)
+                    grid[(hz, amp)] = w
+                    row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
+                    print(f"  {hz:>5} Hz {amp:>5.1f} | {row}")
+                set_alpha(ser, 0.0)  # park between frequencies
         finally:
             set_alpha(ser, 0.0)
             send(ser, "w")
@@ -147,31 +156,39 @@ def main() -> int:
 
     outdir = Path("logs")
     outdir.mkdir(exist_ok=True)
-    (outdir / f"wave_{stamp}.json").write_text(
-        json.dumps({str(a): w for a, w in waves.items()}, indent=2), encoding="ascii")
+    jpath = outdir / f"wave_{stamp}.json"
+    jpath.write_text(json.dumps({f"{hz}/{amp}": w for (hz, amp), w in grid.items()}, indent=2),
+                     encoding="ascii")
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        fig, ax = plt.subplots(figsize=(9, 5))
-        for amp, w in sorted(waves.items()):
-            ys = [w.get(s, float("nan")) for s in range(6)]
-            ax.plot(range(6), ys, "-o", label=f"{amp:.1f}%")
-        ax.axhline(50, color="0.7", ls="--", lw=0.8, label="mid-window")
-        ax.set_xlabel("physical sector (0..5 = one electrical rev)")
-        ax.set_ylabel("firmware linfit ZC (% of window)")
-        ax.set_title(f"Per-sector ZC wave vs amp @ {args.hz} Hz  "
-                     f"(phase shifts with amp => load-angle; fixed => geometry)")
-        ax.set_xticks(range(6))
-        ax.grid(alpha=0.3)
-        ax.legend(title="amp", fontsize=8)
+        # One panel per frequency: the per-sector wave vs amp (look for slide + flatten).
+        n = len(freqs)
+        fig, axes = plt.subplots(1, n, figsize=(5 * n, 5), squeeze=False)
+        for col, hz in enumerate(freqs):
+            ax = axes[0][col]
+            for amp in args.amps:
+                w = grid.get((hz, amp), {})
+                ys = [w.get(s, float("nan")) for s in range(6)]
+                ax.plot(range(6), ys, "-o", label=f"{amp:.1f}%")
+            ax.axhline(50, color="0.7", ls="--", lw=0.8)
+            ax.set_title(f"{hz} Hz")
+            ax.set_xlabel("physical sector (0..5)")
+            ax.set_xticks(range(6))
+            ax.grid(alpha=0.3)
+            if col == 0:
+                ax.set_ylabel("linfit ZC (% of window)")
+            ax.legend(title="amp", fontsize=7)
+        fig.suptitle("Per-sector ZC wave vs (amp, freq)  "
+                     "(slides/flattens with load => load-angle; fixed => geometry)")
         png = outdir / f"wave_{stamp}.png"
         fig.tight_layout()
         fig.savefig(png, dpi=110)
-        print(f"\nwave plot -> {png}\njson -> {outdir / f'wave_{stamp}.json'}")
+        print(f"\nwave plot -> {png}\njson -> {jpath}")
     except Exception as exc:
-        print(f"(plot skipped: {exc}); json -> {outdir / f'wave_{stamp}.json'}")
+        print(f"(plot skipped: {exc}); json -> {jpath}")
     return 0
 
 
