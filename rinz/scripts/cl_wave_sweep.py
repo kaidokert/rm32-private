@@ -91,19 +91,25 @@ def _is_control(line: str) -> bool:
     return len(s) < 50 or s.startswith(_CTRL_PREFIXES)
 
 
+def _ts():
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+
 class PacedSerial:
     """Transparent Serial wrapper that (1) PACES commands -- a small sleep after every write
     so the firmware has time to finish echoing its response before the next command, else
     back-to-back bytes overrun its 1-byte RX register and the link wedges (the bug that only
-    appeared WITHOUT -v, because the print()s were accidentally pacing it); and (2) optionally
-    logs the conversation. Everything else proxies through __getattr__ so position()/
-    capture()/send() get pacing + logging for free. level 1 = control lines; level 2 = also
-    the binary capture payload."""
+    appeared WITHOUT -v, because the print()s were accidentally pacing it); (2) optionally
+    ECHOES the conversation to the console (-v/-vv); and (3) always LOGS the TX/RX control
+    conversation (timestamped, no binary payload) to `logf` if given, so an unexpected
+    stall/choke is easy to pin down after the fact. Everything else proxies through
+    __getattr__ so position()/capture()/send() get all three for free."""
 
-    def __init__(self, ser, level=0, write_delay=0.02):
+    def __init__(self, ser, level=0, write_delay=0.02, logf=None):
         self._ser = ser
         self._level = level
         self._wd = write_delay
+        self._logf = logf
         self._rx = ""
         self._stall = False  # set when the firmware reports a STALL kill
 
@@ -113,9 +119,16 @@ class PacedSerial:
     def clear_stall(self):
         self._stall = False
 
+    def _log(self, s):
+        if self._logf:
+            self._logf.write(f"{_ts()} {s}\n")
+            self._logf.flush()  # keep the log current even if the script then hangs
+
     def write(self, data):
+        s = data.decode("ascii", errors="replace")
+        self._log(f"TX> {s!r}")
         if self._level:
-            print(f"  TX> {data.decode('ascii', errors='replace')!r}", flush=True)
+            print(f"  TX> {s!r}", flush=True)
         n = self._ser.write(data)
         try:
             self._ser.flush()
@@ -135,10 +148,13 @@ class PacedSerial:
                     continue
                 if line.lstrip().startswith("STALL"):
                     self._stall = True  # firmware killed the motor -- caller must react
-                if self._level < 2 and not _is_control(line):
-                    continue  # -v: skip the binary capture payload
-                disp = line if len(line) <= 160 else line[:150] + f"...(+{len(line) - 150}B)"
-                print(f"  RX< {disp}", flush=True)
+                is_ctrl = _is_control(line)
+                if is_ctrl:
+                    self._log(f"RX< {line[:200]}")  # logfile: control lines only, no payload
+                # console: -v shows control lines, -vv adds the binary payload, plain is quiet
+                if self._level >= 2 or (self._level and is_ctrl):
+                    disp = line if len(line) <= 160 else line[:150] + f"...(+{len(line) - 150}B)"
+                    print(f"  RX< {disp}", flush=True)
             self._rx = parts[-1]
             if len(self._rx) > 300:  # binary payload streaming without a newline
                 if self._level >= 2:
@@ -287,6 +303,9 @@ def main() -> int:
     p.add_argument("--cmd-delay", type=float, default=0.02,
                    help="pause (s) after every command so the firmware can read+echo before "
                         "the next -- prevents RX-overrun lockups (0 to disable)")
+    p.add_argument("--logfile", type=Path, default=None,
+                   help="timestamped TX/RX + status log (default logs/sweep_<ts>.log; "
+                        "'' to disable). Control lines only -- no binary payload.")
     args = p.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -294,17 +313,29 @@ def main() -> int:
     catch_t = int(round((args.catch_amp if args.catch_amp is not None else max(args.amps) + 3) * 10))
     grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
+    Path("logs").mkdir(exist_ok=True)
+    log_path = args.logfile if args.logfile is not None else Path("logs") / f"sweep_{stamp}.log"
+    logf = open(log_path, "w", encoding="utf-8") if str(log_path) else None
+
+    def both(text):  # print to console AND the timestamped logfile
+        print(text)
+        if logf:
+            logf.write(f"{_ts()} {text}\n")
+            logf.flush()
+
+    if logf:
+        print(f"logging TX/RX + status to {log_path}")
     with serial.Serial(args.port, args.baud, timeout=0.1) as raw_ser:
-        ser = PacedSerial(raw_ser, args.verbose, args.cmd_delay)  # ALWAYS pace; verbose layers on
+        ser = PacedSerial(raw_ser, args.verbose, args.cmd_delay, logf)  # pace + log; verbose layers on
         ser.reset_input_buffer()
         if set_watchdog(ser, True):
-            print("watchdog ARMED")
+            both("watchdog ARMED")
         sk = set_stall_kill(ser, args.stall_kill)
-        print(f"firmware stall-kill: {'on' if sk else 'off'}"
-              + ("" if args.stall_kill else "  (off -- it false-fires on the open-loop spin-up; "
-                 "host verify+lock gate guarantees data quality)"))
-        print(f"\n  {'hz':>4} {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
-              + "   ver/lock  status   (every point: w->q->ramp->verify->measure)")
+        both(f"firmware stall-kill: {'on' if sk else 'off'}"
+             + ("" if args.stall_kill else "  (off -- it false-fires on the open-loop spin-up; "
+                "host verify+lock gate guarantees data quality)"))
+        both(f"\n  {'hz':>4} {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
+             + "   ver/lock  status   (every point: w->q->ramp->verify->measure)")
         try:
             for hz in freqs:
                 for amp in args.amps:
@@ -325,7 +356,7 @@ def main() -> int:
                         status = "ok"
                         grid[(hz, amp)] = w  # only trust a solidly-locked point
                     row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
-                    print(f"  {hz:>4} {amp:>5.1f} | {row}   {nv}/{nl}/{args.snaps}  {status}")
+                    both(f"  {hz:>4} {amp:>5.1f} | {row}   {nv}/{nl}/{args.snaps}  {status}")
         finally:
             send(ser, "w")  # leave the motor killed
             if not args.stall_kill:
@@ -367,9 +398,12 @@ def main() -> int:
         png = outdir / f"wave_{stamp}.png"
         fig.tight_layout()
         fig.savefig(png, dpi=110)
-        print(f"\nwave plot -> {png}\njson -> {jpath}")
+        both(f"\nwave plot -> {png}\njson -> {jpath}")
     except Exception as exc:
-        print(f"(plot skipped: {exc}); json -> {jpath}")
+        both(f"(plot skipped: {exc}); json -> {jpath}")
+    if logf:
+        both(f"log -> {log_path}")
+        logf.close()
     return 0
 
 
