@@ -62,6 +62,24 @@ def _clear_stall(ser):
     if hasattr(ser, "clear_stall"):
         ser.clear_stall()
 
+
+def set_stall_kill(ser, want):
+    """Drive the firmware stall-kill to `want` (the 'h' key toggles, so send + read the echo
+    and retry if it went the wrong way). Returns the resulting state or None. The coast-run
+    stall detector FALSE-FIRES during the open-loop freq-ramp spin-up (the changing frequency
+    makes it miscount), killing the motor before it reaches the target -- so sweeps disable
+    it and rely on the host verify+lock gate instead."""
+    for _ in range(5):
+        drain(ser)
+        send(ser, "h")
+        time.sleep(0.15)
+        mo = re.search(r"stall_kill:\s*(on|off)", drain(ser))
+        if mo:
+            is_on = mo.group(1) == "on"
+            if is_on == want:
+                return is_on
+    return None
+
 # Firmware text-response prefixes -- everything else read is the binary capture payload.
 _CTRL_PREFIXES = ("debug:", "reset:", "freq=", "amp=", "trim=", "dump", "end", "cl",
                   "glitch:", "hist:", "regs:", "watchdog", "monitor", "stall", "zc_beta=",
@@ -248,6 +266,10 @@ def main() -> int:
                    help="amp %% values to sweep (the load-angle knob)")
     p.add_argument("--alpha", type=float, default=0.0,
                    help="0 = open loop (the clean probe; cannot desync). >0 = closed loop")
+    p.add_argument("--stall-kill", action="store_true",
+                   help="keep the firmware stall-kill ON during the sweep (default OFF -- it "
+                        "false-fires during the open-loop freq-ramp spin-up and kills the "
+                        "motor before it reaches the target)")
     p.add_argument("--snaps", type=int, default=6)
     p.add_argument("--min-lock", type=int, default=3,
                    help="stop the amp descent when fewer than this many snaps verify LOCKED "
@@ -277,6 +299,10 @@ def main() -> int:
         ser.reset_input_buffer()
         if set_watchdog(ser, True):
             print("watchdog ARMED")
+        sk = set_stall_kill(ser, args.stall_kill)
+        print(f"firmware stall-kill: {'on' if sk else 'off'}"
+              + ("" if args.stall_kill else "  (off -- it false-fires on the open-loop spin-up; "
+                 "host verify+lock gate guarantees data quality)"))
         print(f"\n  {'hz':>4} {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
               + "   ver/lock  status   (every point: w->q->ramp->verify->measure)")
         try:
@@ -302,6 +328,8 @@ def main() -> int:
                     print(f"  {hz:>4} {amp:>5.1f} | {row}   {nv}/{nl}/{args.snaps}  {status}")
         finally:
             send(ser, "w")  # leave the motor killed
+            if not args.stall_kill:
+                set_stall_kill(ser, True)  # restore the firmware default for other tools
             try:
                 set_watchdog(ser, False)
             except Exception:
