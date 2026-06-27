@@ -248,9 +248,10 @@ def ramp_amp_down(ser, cur_t, tgt_t, step_pause=0.08):
 
 def measure_point(ser, hz, amp_t, catch_t, alpha, snaps, timeout, settle, reset_pause):
     """Independent measurement of ONE (hz, amp): clear -> catch SOLID at a high amp -> ride
-    DOWN to the target -> verify -> measure. Catch-then-descend keeps the rotor on the locked
-    branch (vs ramping up into the target near the stall edge). Nothing carried between
-    points. Returns (wave, n_locked, n_verified)."""
+    DOWN to the target -> verify -> measure -> POST-CHECK it still holds. Catch-then-descend
+    keeps the rotor on the locked branch; the post-check catches rotors that pass the snaps
+    but "stall at the end" (the false-positives the manual-vs-script cross-check exposed).
+    Nothing carried between points. Returns (wave, n_locked, n_verified, held)."""
     _clear_stall(ser)
     reset_cycles(ser, reset_pause)  # q,w,q,w -- aggressive clear before ramping
     # Spin up SOLID at the high catch amp (position sends 'q' then ramps freq+amp up).
@@ -264,11 +265,22 @@ def measure_point(ser, hz, amp_t, catch_t, alpha, snaps, timeout, settle, reset_
         # Firmware killed the motor during spin-up/descent -- can't hold lock here. Don't
         # measure a dead motor; the next point's reset_cycles ('q') re-arms it.
         send(ser, "w")
-        return {}, 0, 0
+        return {}, 0, 0, None
     if alpha > 0:
         set_alpha(ser, alpha)  # 'q' already set open-loop alpha=0
     time.sleep(settle)
-    return collect_wave(ser, snaps, timeout, hz, amp_t)
+    w, nl, nv = collect_wave(ser, snaps, timeout, hz, amp_t)
+    # POST-CHECK: one more capture after the snaps. A rotor that "stalls at the end" passes
+    # the snaps but is gone now -- if it's still AT the setpoint but no longer locked, the
+    # point didn't hold, so reject it (this is the manual-labelled false-positive class).
+    held = None
+    if nl > 0 and not _stalled(ser):
+        _, post_nl, post_nv = collect_wave(ser, 1, timeout, hz, amp_t)
+        if post_nv > 0:
+            held = post_nl > 0
+            if not held:
+                return {}, 0, nv, False
+    return w, nl, nv, held
 
 
 def main() -> int:
@@ -340,12 +352,14 @@ def main() -> int:
             for hz in freqs:
                 for amp in args.amps:
                     amp_t = int(round(amp * 10))
-                    # FULL independent measurement -- reset, catch high, descend, verify.
-                    w, nl, nv = measure_point(ser, hz, amp_t, max(catch_t, amp_t), args.alpha,
-                                              args.snaps, args.capture_timeout, args.settle,
-                                              args.reset_pause)
+                    # FULL independent measurement -- reset, catch high, descend, verify, hold.
+                    w, nl, nv, held = measure_point(ser, hz, amp_t, max(catch_t, amp_t),
+                                                    args.alpha, args.snaps, args.capture_timeout,
+                                                    args.settle, args.reset_pause)
                     if _stalled(ser):
                         status = "FW STALL-KILL (motor killed; reset next point)"
+                    elif held is False:
+                        status = "STALLED-AT-END (passed snaps, lost lock on re-check)"
                     elif nv == 0:
                         status = "NOT-AT-SETPOINT (ramp/echo failed)"
                     elif nl == 0:
@@ -354,7 +368,7 @@ def main() -> int:
                         status = f"MARGINAL (lock {nl})"
                     else:
                         status = "ok"
-                        grid[(hz, amp)] = w  # only trust a solidly-locked point
+                        grid[(hz, amp)] = w  # only trust a solidly-locked point that HELD
                     row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
                     both(f"  {hz:>4} {amp:>5.1f} | {row}   {nv}/{nl}/{args.snaps}  {status}")
         finally:
