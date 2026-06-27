@@ -15,7 +15,7 @@ median per physical sector across snaps. Writes logs/wave_<ts>.png + .json. ATTE
 
 Every point is measured INDEPENDENTLY -- no state carried between setpoints, so a stall at
 one can't poison the next. Per (hz, amp):
-  1. w   -- kill the motor (clean idle).
+  1. q/w/q/w (with pauses) -- aggressive clear of any latched / half-stuck state to idle.
   2. q   -- reset to base (inside position()).
   3. ramp fresh up to (hz, amp).
   4. VERIFY: each capture's debug line must report the target hz AND amp, else it's rejected
@@ -102,12 +102,23 @@ def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0):
     return {s: st.median(v) for s, v in acc.items() if v}, n_locked, n_verified
 
 
-def measure_point(ser, hz, amp_t, alpha, snaps, timeout, settle):
-    """Independent measurement of ONE (hz, amp): kill -> reset -> ramp fresh -> verify the
-    firmware echoed the target -> measure. NOTHING is carried from any prior point, so a
-    stall at one setpoint can't poison the next. Returns (wave, n_locked, n_verified)."""
-    send(ser, "w")          # clean kill -> known idle state
-    time.sleep(0.3)
+def reset_cycles(ser, pause, cycles=2):
+    """Thoroughly clear firmware + motor state before a fresh ramp: cycle q (reset) /
+    w (kill) with pauses, `cycles` times, so any latched / half-stuck condition settles to a
+    known idle before we spin up. Ends killed; the following ramp re-arms via its own 'q'."""
+    for _ in range(cycles):
+        send(ser, "q")
+        time.sleep(pause)
+        send(ser, "w")
+        time.sleep(pause)
+    ser.reset_input_buffer()  # discard the reset/kill echoes
+
+
+def measure_point(ser, hz, amp_t, alpha, snaps, timeout, settle, reset_pause):
+    """Independent measurement of ONE (hz, amp): clear -> ramp fresh -> verify the firmware
+    echoed the target -> measure. NOTHING is carried from any prior point, so a stall at one
+    setpoint can't poison the next. Returns (wave, n_locked, n_verified)."""
+    reset_cycles(ser, reset_pause)  # q,w,q,w -- aggressive clear before ramping
     # position() sends 'q' (reset to base) then ramps freq+amp up to the target.
     position(ser, Setpoint(), hz, amp_t, qsettle=0.8, ramp_step=20,
              ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
@@ -133,6 +144,8 @@ def main() -> int:
                    help="stop the amp descent when fewer than this many snaps verify LOCKED "
                         "(stay in the solid regime; below this the motor stalls hard / OCP)")
     p.add_argument("--settle", type=float, default=1.0)
+    p.add_argument("--reset-pause", type=float, default=0.4,
+                   help="pause (s) between each q/w in the pre-ramp clear cycle")
     p.add_argument("--capture-timeout", type=float, default=4.0)
     args = p.parse_args()
 
@@ -151,8 +164,8 @@ def main() -> int:
                 for amp in args.amps:
                     amp_t = int(round(amp * 10))
                     # FULL independent measurement -- kill, reset, ramp fresh, verify, measure.
-                    w, nl, nv = measure_point(ser, hz, amp_t, args.alpha,
-                                              args.snaps, args.capture_timeout, args.settle)
+                    w, nl, nv = measure_point(ser, hz, amp_t, args.alpha, args.snaps,
+                                              args.capture_timeout, args.settle, args.reset_pause)
                     if nv == 0:
                         status = "NOT-AT-SETPOINT (ramp/echo failed)"
                     elif nl == 0:
