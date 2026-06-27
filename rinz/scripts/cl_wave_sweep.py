@@ -13,6 +13,12 @@ Amp is the load-angle knob at fixed speed (more torque margin -> different rotor
 Each capture's `cl ... lf=` log gives the raw linfit % per sector; we aggregate the
 median per physical sector across snaps. Writes logs/wave_<ts>.png + .json. ATTENDED.
 
+Amp is swept HIGH -> LOW per frequency: the lock is hysteretic, so catching solidly at the
+top amp and riding down keeps the rotor on the locked branch. (Low -> high starts near the
+catch/slip boundary and drags through transient dropouts the settled captures hide.) Riding
+down also maps the LOW-amp stall edge cleanly -- the firmware stall-kill stops the motor
+when the rotor finally drops out near the bottom.
+
   python scripts/cl_wave_sweep.py COM41 --hz 250 --amps 13 15 17 19          # open loop (default)
   python scripts/cl_wave_sweep.py COM41 --freqs 150 250 350 --amps 12 15 18  # the larger (Hz, amp) plane
 """
@@ -121,6 +127,12 @@ def main() -> int:
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     freqs = args.freqs or [args.hz]
+    # Sweep amp HIGH -> LOW. The lock is hysteretic: catching solidly at the top amp then
+    # riding DOWN keeps the rotor on the locked branch. Starting low (near the catch/slip
+    # boundary) and ramping up drags it through dropouts -- transient, so the settled
+    # captures hide them and the sustained-coast stall detector won't fire on them.
+    amps_desc = sorted(args.amps, reverse=True)
+    top_tenths = int(round(amps_desc[0] * 10))
     grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
     with serial.Serial(args.port, args.baud, timeout=0.1) as ser:
@@ -129,8 +141,9 @@ def main() -> int:
             print("watchdog ARMED")
         try:
             for hz in freqs:
-                cur = int(round(args.amps[0] * 10))
-                # Re-spin at each frequency (a big open-loop freq jump would lose sync).
+                cur = top_tenths
+                # Re-spin at each frequency and catch at the TOP amp (solid lock), then ride
+                # down. A big open-loop freq jump would lose sync, hence the per-freq re-spin.
                 position(ser, Setpoint(), hz, cur, qsettle=0.8, ramp_step=20,
                          ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
                 set_beta(ser, args.beta)
@@ -143,8 +156,8 @@ def main() -> int:
                     print(f"\n  {hz} Hz: not spinning open-loop ({len(probe)}/6 sectors) -- skipping")
                     continue
                 print(f"\n  {hz} Hz   {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
-                      + "   (linfit ZC % per sector)")
-                for amp in args.amps:
+                      + "   (linfit ZC % per sector, amp HIGH->LOW)")
+                for amp in amps_desc:
                     cur = set_amp(ser, cur, int(round(amp * 10)))
                     time.sleep(args.settle)
                     w = collect_wave(ser, args.snaps, args.capture_timeout)
