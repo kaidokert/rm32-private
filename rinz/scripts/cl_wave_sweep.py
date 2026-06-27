@@ -41,7 +41,7 @@ except ImportError as exc:
     raise SystemExit("missing dependency: pip install pyserial") from exc
 
 from scope_common import (BAUD, PHASE_NAMES, PHASE_TO_CHANNEL, analyze_zero_crossings,
-                          linfit_mb, parse_capture, parse_cl_bounds)
+                          classify_rotor_state, linfit_mb, parse_capture, parse_cl_bounds)
 from scope_sweep import Setpoint, capture, position, send, set_watchdog
 
 FLOAT_SECTOR = {"A": (2, 5), "B": (1, 4), "C": (0, 3)}  # each phase's two float sectors
@@ -76,21 +76,28 @@ def set_amp(ser, cur_tenths: int, tgt_tenths: int) -> int:
     return tgt_tenths
 
 
-def collect_wave(ser, snaps: int, timeout: float, slope_min: float = 15.0) -> dict[int, float]:
-    """Median UNGATED python-linfit ZC% per physical sector (0..5) over `snaps` captures.
+def collect_wave(ser, snaps: int, timeout: float, slope_min: float = 15.0):
+    """(median ungated python-linfit ZC% per sector, n_locked) over `snaps` captures.
 
-    We use the python linfit (not the firmware lf) because the firmware lf is gated to
-    [-30,130]% -- in open loop the crossings sit far out-of-window and would all reject to
-    nan. The ungated fit projects a crossing for every sector with a real slope; only
-    genuinely FLAT windows (|slope| < slope_min, e.g. on the BEMF flat-top or a driven
-    rail) are dropped as unobservable. Closed-loop captures get the actual bnd= boundaries;
-    open-loop ones fall back to the uniform grid."""
+    CRITICAL: only captures the host rotor classifier certifies as LOCKED are trusted. A
+    stuck/stuttering rotor still has a demag transient in each float window, and the linfit
+    fits THAT and projects in-range "crossings" -- so without the lock gate a stuck point
+    yields fake data instead of nan (this bit us: stuck low-amp rows looked like real
+    waves). STALLED/UNCERTAIN snaps are dropped; if none lock, the point is honest nan.
+
+    The linfit is ungated by the firmware [-30,130]% (open-loop crossings sit far out-of-
+    window); only genuinely FLAT windows (|slope| < slope_min) are dropped as unobservable.
+    Closed-loop captures use the actual bnd= boundaries; open-loop ones the uniform grid."""
     acc: dict[int, list[float]] = defaultdict(list)
+    n_locked = 0
     for _ in range(snaps):
         cap = parse_capture(capture(ser, timeout, "c"))
         hz = float(cap.debug.get("hz", "0") or 0)
         if hz <= 0:
             continue
+        if classify_rotor_state(cap, smooth_window=3).get("state") != "locked":
+            continue  # rotor not verified spinning -> don't trust this capture
+        n_locked += 1
         fps = cap.sample_hz / (hz * 6.0)
         bounds, _ = parse_cl_bounds(cap.text)
         secs, smooth, neutral = analyze_zero_crossings(cap, smooth_window=3, sector_bounds=bounds)
@@ -105,7 +112,7 @@ def collect_wave(ser, snaps: int, timeout: float, slope_min: float = 15.0) -> di
             z = (-mb[1] / mb[0]) / fps * 100.0
             if -100.0 <= z <= 200.0:  # sane range (drops bonkers extrapolations)
                 acc[s.index % 6].append(z)
-    return {s: st.median(v) for s, v in acc.items() if v}
+    return {s: st.median(v) for s, v in acc.items() if v}, n_locked
 
 
 def main() -> int:
@@ -151,19 +158,20 @@ def main() -> int:
                 time.sleep(args.settle)
                 # Spin check: if the motor isn't producing valid BEMF here (too slow/fast
                 # for the open-loop envelope), skip this frequency rather than nan-spam.
-                probe = collect_wave(ser, 1, args.capture_timeout)
-                if len(probe) < 3:
-                    print(f"\n  {hz} Hz: not spinning open-loop ({len(probe)}/6 sectors) -- skipping")
+                probe, nl = collect_wave(ser, 2, args.capture_timeout)
+                if nl == 0 or len(probe) < 3:
+                    print(f"\n  {hz} Hz: not locked open-loop (lock {nl}/2) -- skipping")
                     continue
                 print(f"\n  {hz} Hz   {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
-                      + "   (linfit ZC % per sector, amp HIGH->LOW)")
+                      + "   (linfit ZC %, amp HIGH->LOW; lock=snaps the rotor was verified spinning)")
                 for amp in amps_desc:
                     cur = set_amp(ser, cur, int(round(amp * 10)))
                     time.sleep(args.settle)
-                    w = collect_wave(ser, args.snaps, args.capture_timeout)
+                    w, nl = collect_wave(ser, args.snaps, args.capture_timeout)
                     grid[(hz, amp)] = w
                     row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
-                    print(f"  {hz:>5} Hz {amp:>5.1f} | {row}")
+                    flag = "  <- STUCK (not trusted)" if nl == 0 else ""
+                    print(f"  {hz:>5} Hz {amp:>5.1f} | {row}  lock {nl}/{args.snaps}{flag}")
                 set_alpha(ser, 0.0)  # park between frequencies
         finally:
             set_alpha(ser, 0.0)
