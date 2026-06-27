@@ -13,11 +13,17 @@ Amp is the load-angle knob at fixed speed (more torque margin -> different rotor
 Each capture's `cl ... lf=` log gives the raw linfit % per sector; we aggregate the
 median per physical sector across snaps. Writes logs/wave_<ts>.png + .json. ATTENDED.
 
-Amp is swept HIGH -> LOW per frequency: the lock is hysteretic, so catching solidly at the
-top amp and riding down keeps the rotor on the locked branch. (Low -> high starts near the
-catch/slip boundary and drags through transient dropouts the settled captures hide.) Riding
-down also maps the LOW-amp stall edge cleanly -- the firmware stall-kill stops the motor
-when the rotor finally drops out near the bottom.
+Clean-sweep recipe (the low-amp stall edge RISES with frequency, so a fixed amp range goes
+below it at high freq and the motor stalls):
+  1. OPEN loop -- the clean load-angle probe (closed loop re-times and masks it).
+  2. amp HIGH -> LOW -- the lock is hysteretic; catch solidly at the top amp and ride down
+     the locked branch (low->high drags through dropouts the settled captures hide).
+  3. trust only LOCKED captures (collect_wave's classify gate) -- a stuck rotor's demag
+     transient fools the linfit into fake numbers; those become honest nan.
+  4. STOP the descent at the first stalled amp -- the stall edge is monotonic in amp, so
+     every lower amp stalls too. Each frequency is thus measured over ITS OWN valid range
+     (top down to its stall edge), all locked. The plane is ragged, not rectangular --
+     that's the real open-loop envelope, not a tooling gap.
 
   python scripts/cl_wave_sweep.py COM41 --hz 250 --amps 13 15 17 19          # open loop (default)
   python scripts/cl_wave_sweep.py COM41 --freqs 150 250 350 --amps 12 15 18  # the larger (Hz, amp) plane
@@ -168,10 +174,16 @@ def main() -> int:
                     cur = set_amp(ser, cur, int(round(amp * 10)))
                     time.sleep(args.settle)
                     w, nl = collect_wave(ser, args.snaps, args.capture_timeout)
-                    grid[(hz, amp)] = w
                     row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
-                    flag = "  <- STUCK (not trusted)" if nl == 0 else ""
-                    print(f"  {hz:>5} Hz {amp:>5.1f} | {row}  lock {nl}/{args.snaps}{flag}")
+                    if nl == 0:
+                        # Hit this frequency's low-amp stall edge. The edge is monotonic in
+                        # amp, so every lower amp stalls too -- stop descending, don't record
+                        # the garbage, and move to the next frequency (which re-spins).
+                        print(f"  {hz:>5} Hz {amp:>5.1f} | -- STALL EDGE (lock 0/{args.snaps}); "
+                              "stopping descent for this freq")
+                        break
+                    grid[(hz, amp)] = w
+                    print(f"  {hz:>5} Hz {amp:>5.1f} | {row}  lock {nl}/{args.snaps}")
                 set_alpha(ser, 0.0)  # park between frequencies
         finally:
             set_alpha(ser, 0.0)
