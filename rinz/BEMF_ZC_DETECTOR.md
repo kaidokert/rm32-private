@@ -177,6 +177,15 @@ open-loop and `450 Hz` stalled past the envelope, so the clean open-loop band is
 250–400 Hz; data in `wave_sweep_250hz_20260626.json` → `followup_multifreq_partial`.) This
 strengthens the load-angle reading but does not yet complete the plane.
 
+> **CAVEAT (data quality).** A later high→low sweep revealed that the open-loop motor goes
+> STUCK/stuttering in the *low-amp* second half of the higher-frequency runs, and a stuck
+> rotor's demag transient fools the linfit into producing plausible-but-fake in-range
+> numbers. The 350 Hz follow-up above (and any low-amp open-loop point) may be partly
+> contaminated. `cl_wave_sweep.py` now gates every capture on `classify_rotor_state ==
+> LOCKED` (stuck points → honest `nan`); the multi-frequency claim must be re-run under
+> that gate before it stands. The 250 Hz §4 result (where the motor stayed locked) is the
+> trustworthy part. Treat the frequency-axis offset as suggestive, not established.
+
 **Corollary (observability knob).** The ~50 % in-window ZC coverage at the low-amp
 operating point is itself a *low-load-angle / low-amp* consequence; loading the motor
 harder pulls more sectors in-window (≈6/6 at 19 % open loop) — at the usual current cost.
