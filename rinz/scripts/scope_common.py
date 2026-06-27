@@ -1097,18 +1097,21 @@ def render_zc_figure(
                 s0e = int(round(sec.start_frame)) + 1
                 s1e = min(int(round(sec.end_frame)), frames)
                 e_vals = [smooth[ch][f] - neutral[f] for f in range(s0e, s1e)]
-                # Plot the fitted line itself (faint) so the linfit is legible: it rides on
-                # the neutral as neutral + (m*frame + b) and crosses the neutral exactly at
-                # the python "^" zero. Extended a little past the window so the crossing
-                # shows even when it projects just outside.
                 mb = linfit_mb(e_vals)
-                if mb is not None and fps > 0 and abs(mb[0]) > 1e-9:
+                py_pct = (-mb[1] / mb[0]) / fps * 100.0 if mb and abs(mb[0]) > 1e-9 else None
+                # Apply the firmware's gate: reject crossings outside [-0.3, 1.3]*window. A
+                # flat float window (e.g. a momentary glitch where the "float" phase reads a
+                # driven rail at +/-Vbus/2) gives a near-zero slope and a wild extrapolation;
+                # the loop never commutates on it (lf=9999) so the render must not draw it.
+                def _gate(p):
+                    return p is not None and -30.0 <= p <= 130.0
+
+                # Plot the fitted line itself (faint) so the linfit is legible: a straight
+                # segment through (zero_frame, neutral@zero) with the fit slope, crossing the
+                # neutral exactly at the python "^" zero. Only when the zero is plausible.
+                if mb is not None and _gate(py_pct):
                     m, b = mb
                     fz = sec.start_frame + (-b / m)  # absolute frame of the fitted zero
-                    # A TRUE straight line through (fz, neutral@fz) with the fit slope -- so
-                    # it crosses the neutral exactly at the "^" zero. (Anchoring on a constant
-                    # neutral keeps it straight; adding the per-frame neutral would re-inject
-                    # the ripple and it would not look like a line.)
                     y0 = neutral[min(max(int(round(fz)), 0), frames - 1)]
                     lo = max(0.0, min(sec.start_frame, fz) - 1.0, sec.start_frame - 1.5 * fps)
                     hi = min(frames - 1.0, max(sec.end_frame, fz) + 1.0, sec.end_frame + 1.5 * fps)
@@ -1123,10 +1126,10 @@ def render_zc_figure(
                     vals = cl_lf_fallback.get(sec.index % 6)
                     fw_lf = statistics.median(vals) if vals else None
                 for pct, mk, mc in (
-                    (linfit_zc_pct(e_vals, fps), "^", "tab:blue"),
+                    (py_pct, "^", "tab:blue"),
                     (fw_lf, "x", "magenta"),
                 ):
-                    if pct is None:
+                    if not _gate(pct):
                         continue
                     fpos = sec.start_frame + pct / 100.0 * fps
                     tt = fpos / capture.sample_hz * 1000.0
