@@ -134,6 +134,9 @@ def main() -> int:
                    help="0 = open loop (the clean probe; cannot desync). >0 = closed loop")
     p.add_argument("--beta", type=float, default=0.6)
     p.add_argument("--snaps", type=int, default=6)
+    p.add_argument("--min-lock", type=int, default=3,
+                   help="stop the amp descent when fewer than this many snaps verify LOCKED "
+                        "(stay in the solid regime; below this the motor stalls hard / OCP)")
     p.add_argument("--settle", type=float, default=1.0)
     p.add_argument("--capture-timeout", type=float, default=4.0)
     args = p.parse_args()
@@ -175,12 +178,13 @@ def main() -> int:
                     time.sleep(args.settle)
                     w, nl = collect_wave(ser, args.snaps, args.capture_timeout)
                     row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
-                    if nl == 0:
-                        # Hit this frequency's low-amp stall edge. The edge is monotonic in
-                        # amp, so every lower amp stalls too -- stop descending, don't record
-                        # the garbage, and move to the next frequency (which re-spins).
-                        print(f"  {hz:>5} Hz {amp:>5.1f} | -- STALL EDGE (lock 0/{args.snaps}); "
-                              "stopping descent for this freq")
+                    if nl < args.min_lock:
+                        # MARGINAL edge: fewer than min_lock of the snaps verified locked.
+                        # Stop BEFORE the hard stall (which trips OCP and hangs the run) --
+                        # the edge is monotonic in amp, so lower amps are worse. Don't record
+                        # the marginal data; re-spin handles the next frequency.
+                        print(f"  {hz:>5} Hz {amp:>5.1f} | -- MARGINAL EDGE (lock {nl}/{args.snaps} "
+                              f"< {args.min_lock}); stopping descent for this freq")
                         break
                     grid[(hz, amp)] = w
                     print(f"  {hz:>5} Hz {amp:>5.1f} | {row}  lock {nl}/{args.snaps}")
