@@ -64,21 +64,32 @@ def _is_control(line: str) -> bool:
     return len(s) < 50 or s.startswith(_CTRL_PREFIXES)
 
 
-class VerboseSerial:
-    """Transparent wrapper that logs TX bytes and RX lines LIVE so the command/ack
-    conversation is visible. Wraps the real Serial (everything proxies through __getattr__),
-    so position()/capture()/send() log without changes. level 1 (-v) = control lines only
-    (commands + firmware text responses incl. the debug line); level 2 (-vv) = also the full
-    binary capture payload."""
+class PacedSerial:
+    """Transparent Serial wrapper that (1) PACES commands -- a small sleep after every write
+    so the firmware has time to finish echoing its response before the next command, else
+    back-to-back bytes overrun its 1-byte RX register and the link wedges (the bug that only
+    appeared WITHOUT -v, because the print()s were accidentally pacing it); and (2) optionally
+    logs the conversation. Everything else proxies through __getattr__ so position()/
+    capture()/send() get pacing + logging for free. level 1 = control lines; level 2 = also
+    the binary capture payload."""
 
-    def __init__(self, ser, level=1):
+    def __init__(self, ser, level=0, write_delay=0.02):
         self._ser = ser
         self._level = level
+        self._wd = write_delay
         self._rx = ""
 
     def write(self, data):
-        print(f"  TX> {data.decode('ascii', errors='replace')!r}", flush=True)
-        return self._ser.write(data)
+        if self._level:
+            print(f"  TX> {data.decode('ascii', errors='replace')!r}", flush=True)
+        n = self._ser.write(data)
+        try:
+            self._ser.flush()
+        except Exception:
+            pass
+        if self._wd:
+            time.sleep(self._wd)  # let the firmware read+echo before the next command
+        return n
 
     def read(self, n=1):
         data = self._ser.read(n)
@@ -201,6 +212,9 @@ def main() -> int:
     p.add_argument("-v", "--verbose", action="count", default=0,
                    help="-v: log commands (TX) + firmware text responses (RX) live; "
                         "-vv: also dump the full binary capture payload")
+    p.add_argument("--cmd-delay", type=float, default=0.02,
+                   help="pause (s) after every command so the firmware can read+echo before "
+                        "the next -- prevents RX-overrun lockups (0 to disable)")
     args = p.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -208,7 +222,7 @@ def main() -> int:
     grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
     with serial.Serial(args.port, args.baud, timeout=0.1) as raw_ser:
-        ser = VerboseSerial(raw_ser, args.verbose) if args.verbose else raw_ser
+        ser = PacedSerial(raw_ser, args.verbose, args.cmd_delay)  # ALWAYS pace; verbose layers on
         ser.reset_input_buffer()
         if set_watchdog(ser, True):
             print("watchdog ARMED")
