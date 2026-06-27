@@ -53,15 +53,27 @@ from scope_common import (BAUD, PHASE_NAMES, PHASE_TO_CHANNEL, analyze_zero_cros
                           classify_rotor_state, linfit_mb, parse_capture, parse_cl_bounds)
 from scope_sweep import Setpoint, capture, position, send, set_watchdog
 
-class VerboseSerial:
-    """Transparent wrapper that logs every byte written (TX) and every line read (RX) LIVE,
-    so the full command/ack conversation is visible. Wraps the real Serial; all other
-    attributes (in_waiting, flush, reset_input_buffer, timeout, ...) proxy through, so
-    position()/capture()/send() log automatically without changes. Long binary capture
-    payloads are summarised, not dumped."""
+# Firmware text-response prefixes -- everything else read is the binary capture payload.
+_CTRL_PREFIXES = ("debug:", "reset:", "freq=", "amp=", "trim=", "dump", "end", "cl",
+                  "glitch:", "hist:", "regs:", "watchdog", "monitor", "stall", "zc_beta=",
+                  "alpha=", "predict_coast=", "kill", "scope_cl2", "STALL")
 
-    def __init__(self, ser):
+
+def _is_control(line: str) -> bool:
+    s = line.lstrip()
+    return len(s) < 50 or s.startswith(_CTRL_PREFIXES)
+
+
+class VerboseSerial:
+    """Transparent wrapper that logs TX bytes and RX lines LIVE so the command/ack
+    conversation is visible. Wraps the real Serial (everything proxies through __getattr__),
+    so position()/capture()/send() log without changes. level 1 (-v) = control lines only
+    (commands + firmware text responses incl. the debug line); level 2 (-vv) = also the full
+    binary capture payload."""
+
+    def __init__(self, ser, level=1):
         self._ser = ser
+        self._level = level
         self._rx = ""
 
     def write(self, data):
@@ -74,12 +86,16 @@ class VerboseSerial:
             self._rx += data.decode("ascii", errors="replace")
             parts = re.split(r"[\r\n]+", self._rx)
             for line in parts[:-1]:
-                if line.strip():
-                    disp = line if len(line) <= 100 else line[:90] + f"...(+{len(line) - 90}B)"
-                    print(f"  RX< {disp}", flush=True)
+                if not line.strip():
+                    continue
+                if self._level < 2 and not _is_control(line):
+                    continue  # -v: skip the binary capture payload
+                disp = line if len(line) <= 160 else line[:150] + f"...(+{len(line) - 150}B)"
+                print(f"  RX< {disp}", flush=True)
             self._rx = parts[-1]
-            if len(self._rx) > 300:  # binary payload w/o newline -> summarise, keep the tail
-                print(f"  RX< ...{len(self._rx)}B binary...", flush=True)
+            if len(self._rx) > 300:  # binary payload streaming without a newline
+                if self._level >= 2:
+                    print(f"  RX< ...{len(self._rx)}B binary...", flush=True)
                 self._rx = self._rx[-40:]
         return data
 
@@ -182,8 +198,9 @@ def main() -> int:
     p.add_argument("--reset-pause", type=float, default=0.4,
                    help="pause (s) between each q/w in the pre-ramp clear cycle")
     p.add_argument("--capture-timeout", type=float, default=4.0)
-    p.add_argument("-v", "--verbose", action="store_true",
-                   help="log every command sent (TX) and firmware line received (RX), live")
+    p.add_argument("-v", "--verbose", action="count", default=0,
+                   help="-v: log commands (TX) + firmware text responses (RX) live; "
+                        "-vv: also dump the full binary capture payload")
     args = p.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -191,7 +208,7 @@ def main() -> int:
     grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
     with serial.Serial(args.port, args.baud, timeout=0.1) as raw_ser:
-        ser = VerboseSerial(raw_ser) if args.verbose else raw_ser
+        ser = VerboseSerial(raw_ser, args.verbose) if args.verbose else raw_ser
         ser.reset_input_buffer()
         if set_watchdog(ser, True):
             print("watchdog ARMED")
