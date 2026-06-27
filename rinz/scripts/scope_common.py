@@ -1102,15 +1102,20 @@ def render_zc_figure(
                 # the python "^" zero. Extended a little past the window so the crossing
                 # shows even when it projects just outside.
                 mb = linfit_mb(e_vals)
-                if mb is not None and fps > 0:
+                if mb is not None and fps > 0 and abs(mb[0]) > 1e-9:
                     m, b = mb
-                    fz = sec.start_frame + (-b / m if abs(m) > 1e-9 else 0.0)
+                    fz = sec.start_frame + (-b / m)  # absolute frame of the fitted zero
+                    # A TRUE straight line through (fz, neutral@fz) with the fit slope -- so
+                    # it crosses the neutral exactly at the "^" zero. (Anchoring on a constant
+                    # neutral keeps it straight; adding the per-frame neutral would re-inject
+                    # the ripple and it would not look like a line.)
+                    y0 = neutral[min(max(int(round(fz)), 0), frames - 1)]
                     lo = max(0.0, min(sec.start_frame, fz) - 1.0, sec.start_frame - 1.5 * fps)
                     hi = min(frames - 1.0, max(sec.end_frame, fz) + 1.0, sec.end_frame + 1.5 * fps)
-                    fa = [lo + i for i in range(int(hi - lo) + 1)]
-                    yl = [neutral[min(max(int(round(f)), 0), frames - 1)] + m * (f - sec.start_frame) + b for f in fa]
+                    fa = [lo, hi]  # a straight segment needs only its endpoints
+                    yl = [y0 + m * (f - fz) for f in fa]
                     ax.plot([f / capture.sample_hz * 1000.0 for f in fa], yl,
-                            color="tab:blue", lw=0.8, alpha=0.4, zorder=3)
+                            color="tab:blue", lw=0.9, alpha=0.5, zorder=3)
                 # Firmware linfit for THIS sector (actual boundaries) or, for pre-bnd logs,
                 # the per-phys median fallback.
                 fw_lf = lf_by_sector.get(sec.index)
