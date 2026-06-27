@@ -135,11 +135,13 @@ def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0):
     acc: dict[int, list[float]] = defaultdict(list)
     n_locked = n_verified = 0
     for _ in range(snaps):
-        cap = parse_capture(capture(ser, timeout, "c"))
         try:
+            cap = parse_capture(capture(ser, timeout, "c"))
             chz = int(float(cap.debug.get("hz", "x")))
             camp = int(float(cap.debug.get("amp", "x")))  # 0.1% units, e.g. 200 = 20.0%
-        except (TypeError, ValueError):
+        except Exception:
+            # Malformed / incomplete dump (no dump3 header, truncated, missing debug) --
+            # almost always a stall corrupting the capture. Skip the snap, don't crash.
             continue
         if chz != want_hz or abs(camp - want_amp_t) > 2:
             continue  # firmware NOT at the requested setpoint -> not a valid measurement
