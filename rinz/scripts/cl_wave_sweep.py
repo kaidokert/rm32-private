@@ -33,7 +33,8 @@ try:
 except ImportError as exc:
     raise SystemExit("missing dependency: pip install pyserial") from exc
 
-from scope_common import BAUD, parse_cl_lf
+from scope_common import (BAUD, PHASE_NAMES, PHASE_TO_CHANNEL, analyze_zero_crossings,
+                          linfit_mb, parse_capture, parse_cl_bounds)
 from scope_sweep import Setpoint, capture, position, send, set_watchdog
 
 FLOAT_SECTOR = {"A": (2, 5), "B": (1, 4), "C": (0, 3)}  # each phase's two float sectors
@@ -68,13 +69,35 @@ def set_amp(ser, cur_tenths: int, tgt_tenths: int) -> int:
     return tgt_tenths
 
 
-def collect_wave(ser, snaps: int, timeout: float) -> dict[int, float]:
-    """Median firmware-linfit ZC% per physical sector (0..5) over `snaps` captures."""
+def collect_wave(ser, snaps: int, timeout: float, slope_min: float = 15.0) -> dict[int, float]:
+    """Median UNGATED python-linfit ZC% per physical sector (0..5) over `snaps` captures.
+
+    We use the python linfit (not the firmware lf) because the firmware lf is gated to
+    [-30,130]% -- in open loop the crossings sit far out-of-window and would all reject to
+    nan. The ungated fit projects a crossing for every sector with a real slope; only
+    genuinely FLAT windows (|slope| < slope_min, e.g. on the BEMF flat-top or a driven
+    rail) are dropped as unobservable. Closed-loop captures get the actual bnd= boundaries;
+    open-loop ones fall back to the uniform grid."""
     acc: dict[int, list[float]] = defaultdict(list)
     for _ in range(snaps):
-        dump = capture(ser, timeout, "c")
-        for phys, vals in parse_cl_lf(dump).items():
-            acc[phys].extend(vals)
+        cap = parse_capture(capture(ser, timeout, "c"))
+        hz = float(cap.debug.get("hz", "0") or 0)
+        if hz <= 0:
+            continue
+        fps = cap.sample_hz / (hz * 6.0)
+        bounds, _ = parse_cl_bounds(cap.text)
+        secs, smooth, neutral = analyze_zero_crossings(cap, smooth_window=3, sector_bounds=bounds)
+        frames = len(neutral)
+        for s in secs:
+            ch = PHASE_TO_CHANNEL[PHASE_NAMES.index(s.phase)]
+            s0 = int(round(s.start_frame)) + 1
+            s1 = min(int(round(s.end_frame)), frames)
+            mb = linfit_mb([smooth[ch][f] - neutral[f] for f in range(s0, s1)])
+            if mb is None or abs(mb[0]) < slope_min:
+                continue  # flat window -> no observable crossing
+            z = (-mb[1] / mb[0]) / fps * 100.0
+            if -100.0 <= z <= 200.0:  # sane range (drops bonkers extrapolations)
+                acc[s.index % 6].append(z)
     return {s: st.median(v) for s, v in acc.items() if v}
 
 
