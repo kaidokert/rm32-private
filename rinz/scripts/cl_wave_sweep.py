@@ -13,17 +13,19 @@ Amp is the load-angle knob at fixed speed (more torque margin -> different rotor
 Each capture's `cl ... lf=` log gives the raw linfit % per sector; we aggregate the
 median per physical sector across snaps. Writes logs/wave_<ts>.png + .json. ATTENDED.
 
-Clean-sweep recipe (the low-amp stall edge RISES with frequency, so a fixed amp range goes
-below it at high freq and the motor stalls):
-  1. OPEN loop -- the clean load-angle probe (closed loop re-times and masks it).
-  2. amp HIGH -> LOW -- the lock is hysteretic; catch solidly at the top amp and ride down
-     the locked branch (low->high drags through dropouts the settled captures hide).
-  3. trust only LOCKED captures (collect_wave's classify gate) -- a stuck rotor's demag
-     transient fools the linfit into fake numbers; those become honest nan.
-  4. STOP the descent at the first stalled amp -- the stall edge is monotonic in amp, so
-     every lower amp stalls too. Each frequency is thus measured over ITS OWN valid range
-     (top down to its stall edge), all locked. The plane is ragged, not rectangular --
-     that's the real open-loop envelope, not a tooling gap.
+Every point is measured INDEPENDENTLY -- no state carried between setpoints, so a stall at
+one can't poison the next. Per (hz, amp):
+  1. w   -- kill the motor (clean idle).
+  2. q   -- reset to base (inside position()).
+  3. ramp fresh up to (hz, amp).
+  4. VERIFY: each capture's debug line must report the target hz AND amp, else it's rejected
+     (the ramp didn't land / firmware isn't where we asked).
+  5. LOCKED: the host rotor classifier must certify the rotor genuinely spinning, else
+     rejected (a stuck rotor's demag transient otherwise fools the linfit into fake data).
+  6. Only verified+locked captures feed the wave; a point that never satisfies both is
+     honest nan, flagged STALLED / NOT-AT-SETPOINT. Slower (a full re-spin per point) but
+     the data is trustworthy, not garbage carried over from a prior stall. OPEN loop is the
+     clean probe (closed loop re-times the commutation and masks the wave).
 
   python scripts/cl_wave_sweep.py COM41 --hz 250 --amps 13 15 17 19          # open loop (default)
   python scripts/cl_wave_sweep.py COM41 --freqs 150 250 350 --amps 12 15 18  # the larger (Hz, amp) plane
@@ -50,9 +52,6 @@ from scope_common import (BAUD, PHASE_NAMES, PHASE_TO_CHANNEL, analyze_zero_cros
                           classify_rotor_state, linfit_mb, parse_capture, parse_cl_bounds)
 from scope_sweep import Setpoint, capture, position, send, set_watchdog
 
-FLOAT_SECTOR = {"A": (2, 5), "B": (1, 4), "C": (0, 3)}  # each phase's two float sectors
-
-
 def set_alpha(ser, alpha: float) -> None:
     send(ser, "0")
     for _ in range(int(round(max(0.0, min(1.0, alpha)) / 0.05))):
@@ -60,51 +59,33 @@ def set_alpha(ser, alpha: float) -> None:
         time.sleep(0.02)
 
 
-def set_beta(ser, beta: float) -> None:
-    for _ in range(20):
-        send(ser, ",")
-        time.sleep(0.01)
-    for _ in range(int(round(max(0.0, min(0.95, beta)) / 0.05))):
-        send(ser, ".")
-        time.sleep(0.01)
+def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0):
+    """Take `snaps` captures at a setpoint; return (median linfit wave, n_locked, n_verified).
 
-
-def set_amp(ser, cur_tenths: int, tgt_tenths: int) -> int:
-    """Ramp amp from cur to tgt (0.1%% units) via a/z (+/-1%%) then +/- (+/-0.1%%)."""
-    d = tgt_tenths - cur_tenths
-    full, tenths = abs(d) // 10, abs(d) % 10
-    for _ in range(full):
-        send(ser, "a" if d > 0 else "z")
-        time.sleep(0.05)
-    for _ in range(tenths):
-        send(ser, "+" if d > 0 else "-")
-        time.sleep(0.03)
-    return tgt_tenths
-
-
-def collect_wave(ser, snaps: int, timeout: float, slope_min: float = 15.0):
-    """(median ungated python-linfit ZC% per sector, n_locked) over `snaps` captures.
-
-    CRITICAL: only captures the host rotor classifier certifies as LOCKED are trusted. A
-    stuck/stuttering rotor still has a demag transient in each float window, and the linfit
-    fits THAT and projects in-range "crossings" -- so without the lock gate a stuck point
-    yields fake data instead of nan (this bit us: stuck low-amp rows looked like real
-    waves). STALLED/UNCERTAIN snaps are dropped; if none lock, the point is honest nan.
-
-    The linfit is ungated by the firmware [-30,130]% (open-loop crossings sit far out-of-
-    window); only genuinely FLAT windows (|slope| < slope_min) are dropped as unobservable.
-    Closed-loop captures use the actual bnd= boundaries; open-loop ones the uniform grid."""
+    Each capture must pass TWO gates before it feeds the wave:
+      VERIFIED -- the firmware's own debug line reports the target hz AND amp (else the ramp
+                  didn't land where we asked / the firmware is in some other state -> reject).
+      LOCKED   -- the host rotor classifier certifies the rotor is genuinely spinning (a
+                  stuck rotor's demag transient otherwise fools the linfit into fake numbers).
+    Only verified+locked captures are measured; everything else is dropped so a point that
+    never satisfies both comes back honest nan. Linfit is ungated by the firmware [-30,130]%
+    (open-loop crossings sit far out-of-window); flat windows (|slope| < slope_min) dropped."""
     acc: dict[int, list[float]] = defaultdict(list)
-    n_locked = 0
+    n_locked = n_verified = 0
     for _ in range(snaps):
         cap = parse_capture(capture(ser, timeout, "c"))
-        hz = float(cap.debug.get("hz", "0") or 0)
-        if hz <= 0:
+        try:
+            chz = int(float(cap.debug.get("hz", "x")))
+            camp = int(float(cap.debug.get("amp", "x")))  # 0.1% units, e.g. 200 = 20.0%
+        except (TypeError, ValueError):
             continue
+        if chz != want_hz or abs(camp - want_amp_t) > 2:
+            continue  # firmware NOT at the requested setpoint -> not a valid measurement
+        n_verified += 1
         if classify_rotor_state(cap, smooth_window=3).get("state") != "locked":
-            continue  # rotor not verified spinning -> don't trust this capture
+            continue  # at setpoint but not spinning (stalled) -> don't trust
         n_locked += 1
-        fps = cap.sample_hz / (hz * 6.0)
+        fps = cap.sample_hz / (chz * 6.0)
         bounds, _ = parse_cl_bounds(cap.text)
         secs, smooth, neutral = analyze_zero_crossings(cap, smooth_window=3, sector_bounds=bounds)
         frames = len(neutral)
@@ -118,7 +99,22 @@ def collect_wave(ser, snaps: int, timeout: float, slope_min: float = 15.0):
             z = (-mb[1] / mb[0]) / fps * 100.0
             if -100.0 <= z <= 200.0:  # sane range (drops bonkers extrapolations)
                 acc[s.index % 6].append(z)
-    return {s: st.median(v) for s, v in acc.items() if v}, n_locked
+    return {s: st.median(v) for s, v in acc.items() if v}, n_locked, n_verified
+
+
+def measure_point(ser, hz, amp_t, alpha, snaps, timeout, settle):
+    """Independent measurement of ONE (hz, amp): kill -> reset -> ramp fresh -> verify the
+    firmware echoed the target -> measure. NOTHING is carried from any prior point, so a
+    stall at one setpoint can't poison the next. Returns (wave, n_locked, n_verified)."""
+    send(ser, "w")          # clean kill -> known idle state
+    time.sleep(0.3)
+    # position() sends 'q' (reset to base) then ramps freq+amp up to the target.
+    position(ser, Setpoint(), hz, amp_t, qsettle=0.8, ramp_step=20,
+             ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
+    if alpha > 0:
+        set_alpha(ser, alpha)  # 'q' already set open-loop alpha=0
+    time.sleep(settle)
+    return collect_wave(ser, snaps, timeout, hz, amp_t)
 
 
 def main() -> int:
@@ -132,7 +128,6 @@ def main() -> int:
                    help="amp %% values to sweep (the load-angle knob)")
     p.add_argument("--alpha", type=float, default=0.0,
                    help="0 = open loop (the clean probe; cannot desync). >0 = closed loop")
-    p.add_argument("--beta", type=float, default=0.6)
     p.add_argument("--snaps", type=int, default=6)
     p.add_argument("--min-lock", type=int, default=3,
                    help="stop the amp descent when fewer than this many snaps verify LOCKED "
@@ -143,55 +138,34 @@ def main() -> int:
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     freqs = args.freqs or [args.hz]
-    # Sweep amp HIGH -> LOW. The lock is hysteretic: catching solidly at the top amp then
-    # riding DOWN keeps the rotor on the locked branch. Starting low (near the catch/slip
-    # boundary) and ramping up drags it through dropouts -- transient, so the settled
-    # captures hide them and the sustained-coast stall detector won't fire on them.
-    amps_desc = sorted(args.amps, reverse=True)
-    top_tenths = int(round(amps_desc[0] * 10))
     grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
     with serial.Serial(args.port, args.baud, timeout=0.1) as ser:
         ser.reset_input_buffer()
         if set_watchdog(ser, True):
             print("watchdog ARMED")
+        print(f"\n  {'hz':>4} {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
+              + "   ver/lock  status   (every point: w->q->ramp->verify->measure)")
         try:
             for hz in freqs:
-                cur = top_tenths
-                # Re-spin at each frequency and catch at the TOP amp (solid lock), then ride
-                # down. A big open-loop freq jump would lose sync, hence the per-freq re-spin.
-                position(ser, Setpoint(), hz, cur, qsettle=0.8, ramp_step=20,
-                         ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
-                set_beta(ser, args.beta)
-                set_alpha(ser, args.alpha)
-                time.sleep(args.settle)
-                # Spin check: if the motor isn't producing valid BEMF here (too slow/fast
-                # for the open-loop envelope), skip this frequency rather than nan-spam.
-                probe, nl = collect_wave(ser, 2, args.capture_timeout)
-                if nl == 0 or len(probe) < 3:
-                    print(f"\n  {hz} Hz: not locked open-loop (lock {nl}/2) -- skipping")
-                    continue
-                print(f"\n  {hz} Hz   {'amp%':>5} | " + " ".join(f"s{s}" for s in range(6))
-                      + "   (linfit ZC %, amp HIGH->LOW; lock=snaps the rotor was verified spinning)")
-                for amp in amps_desc:
-                    cur = set_amp(ser, cur, int(round(amp * 10)))
-                    time.sleep(args.settle)
-                    w, nl = collect_wave(ser, args.snaps, args.capture_timeout)
+                for amp in args.amps:
+                    amp_t = int(round(amp * 10))
+                    # FULL independent measurement -- kill, reset, ramp fresh, verify, measure.
+                    w, nl, nv = measure_point(ser, hz, amp_t, args.alpha,
+                                              args.snaps, args.capture_timeout, args.settle)
+                    if nv == 0:
+                        status = "NOT-AT-SETPOINT (ramp/echo failed)"
+                    elif nl == 0:
+                        status = "STALLED (at setpoint, not spinning)"
+                    elif nl < args.min_lock:
+                        status = f"MARGINAL (lock {nl})"
+                    else:
+                        status = "ok"
+                        grid[(hz, amp)] = w  # only trust a solidly-locked point
                     row = " ".join(f"{w.get(s, float('nan')):3.0f}" for s in range(6))
-                    if nl < args.min_lock:
-                        # MARGINAL edge: fewer than min_lock of the snaps verified locked.
-                        # Stop BEFORE the hard stall (which trips OCP and hangs the run) --
-                        # the edge is monotonic in amp, so lower amps are worse. Don't record
-                        # the marginal data; re-spin handles the next frequency.
-                        print(f"  {hz:>5} Hz {amp:>5.1f} | -- MARGINAL EDGE (lock {nl}/{args.snaps} "
-                              f"< {args.min_lock}); stopping descent for this freq")
-                        break
-                    grid[(hz, amp)] = w
-                    print(f"  {hz:>5} Hz {amp:>5.1f} | {row}  lock {nl}/{args.snaps}")
-                set_alpha(ser, 0.0)  # park between frequencies
+                    print(f"  {hz:>4} {amp:>5.1f} | {row}   {nv}/{nl}/{args.snaps}  {status}")
         finally:
-            set_alpha(ser, 0.0)
-            send(ser, "w")
+            send(ser, "w")  # leave the motor killed
             try:
                 set_watchdog(ser, False)
             except Exception:
