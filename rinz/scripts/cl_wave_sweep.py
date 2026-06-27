@@ -36,7 +36,8 @@ one can't poison the next. Per (hz, amp):
   python scripts/cl_wave_sweep.py COM41 --freqs 250 300 350 400 --amp-track  # amp window rides up with hz
 
 Each measured setpoint also gets a per-point zc_<hz>_<amp>.png (the same 3-phase ZC render
-as latest_zc) under logs/zc_<ts>/ -- so you can eyeball what a 6/6/6 vs 6/5/6 actually looks like.
+as latest_zc) AND its raw zc_<hz>_<amp>.log dump text under logs/zc_<ts>/ -- so you can eyeball
+what a 6/6/6 vs 6/5/6 looks like AND re-parse the actual samples to audit the line fits.
 """
 
 from __future__ import annotations
@@ -362,8 +363,9 @@ def main() -> int:
                    help="timestamped TX/RX + status log (default logs/sweep_<ts>.log; "
                         "'' to disable). Control lines only -- no binary payload.")
     p.add_argument("--zc-dir", type=Path, default=None,
-                   help="directory for per-setpoint zc_<hz>_<amp>.png renders "
-                        "(default logs/zc_<ts>/). '' to disable rendering.")
+                   help="directory for per-setpoint zc_<hz>_<amp>.png renders AND the raw "
+                        "zc_<hz>_<amp>.log dump text (re-parseable for offline audit) "
+                        "(default logs/zc_<ts>/). '' to disable both.")
     args = p.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -384,6 +386,11 @@ def main() -> int:
         if not str(zc_dir) or cap is None:
             return
         out = zc_dir / f"zc_{hz}_{amp:g}.png"
+        # ALWAYS preserve the raw dump text first -- the PNG is lossy and the TX/RX log strips
+        # the binary payload, so without this the samples are gone and the fit can't be audited.
+        raw = getattr(cap, "text", None)
+        if raw:
+            (zc_dir / f"zc_{hz}_{amp:g}.log").write_text(raw, encoding="utf-8", errors="replace")
         try:
             plot_zc_snapshot(cap, out, smooth_window=3)
         except Exception as exc:
@@ -490,7 +497,7 @@ def main() -> int:
     except Exception as exc:
         both(f"(plot skipped: {exc}); json -> {jpath}")
     if str(zc_dir):
-        both(f"per-setpoint zc renders -> {zc_dir}/zc_<hz>_<amp>.png")
+        both(f"per-setpoint zc renders + raw dumps -> {zc_dir}/zc_<hz>_<amp>.{{png,log}}")
     if logf:
         both(f"log -> {log_path}")
         logf.close()
