@@ -15,17 +15,21 @@ median per physical sector across snaps. Writes logs/wave_<ts>.png + .json. ATTE
 
 Every point is measured INDEPENDENTLY -- no state carried between setpoints, so a stall at
 one can't poison the next. Per (hz, amp):
+  0. SKIP if below the stall curve (amp < stall_amp(hz)+margin) -- the open-loop rotor slips
+     there and the curve predicts it cleanly (verified against manual rotor labels).
   1. q/w/q/w (with pauses) -- aggressive clear of any latched / half-stuck state to idle.
   2. spin up SOLID at a high catch amp (max(amps)+3), then ride amp DOWN to the target --
      descending stays on the hysteretic locked branch; up-ramps near the stall edge drop it.
-  4. VERIFY: each capture's debug line must report the target hz AND amp, else it's rejected
+  3. VERIFY: each capture's debug line must report the target hz AND amp, else it's rejected
      (the ramp didn't land / firmware isn't where we asked).
-  5. LOCKED: the host rotor classifier must certify the rotor genuinely spinning, else
-     rejected (a stuck rotor's demag transient otherwise fools the linfit into fake data).
-  6. Only verified+locked captures feed the wave; a point that never satisfies both is
-     honest nan, flagged STALLED / NOT-AT-SETPOINT. Slower (a full re-spin per point) but
-     the data is trustworthy, not garbage carried over from a prior stall. OPEN loop is the
-     clean probe (closed loop re-times the commutation and masks the wave).
+  4. LOCKED: the linfit must light up >= min_sectors of the 6 sectors -- a synchronously
+     spinning rotor produces structured per-sector BEMF; a stalled/slipping one doesn't.
+     (Replaces classify_rotor_state, which was unreliable open-loop: false +ve on slip,
+     false -ve on lowish duty.)
+  5. HOLD: one more capture after the snaps; if it no longer locks, the point didn't hold
+     (STALLED-AT-END) and is rejected. Only points that verify, lock, AND hold are recorded;
+     everything else is honest nan. Slower (a full re-spin per point) but trustworthy. OPEN
+     loop is the clean probe (closed loop re-times the commutation and masks the wave).
 
   python scripts/cl_wave_sweep.py COM41 --hz 250 --amps 13 15 17 19          # open loop (default)
   python scripts/cl_wave_sweep.py COM41 --freqs 150 250 350 --amps 12 15 18  # the larger (Hz, amp) plane
@@ -50,8 +54,8 @@ except ImportError as exc:
     raise SystemExit("missing dependency: pip install pyserial") from exc
 
 from scope_common import (BAUD, PHASE_NAMES, PHASE_TO_CHANNEL, analyze_zero_crossings,
-                          classify_rotor_state, linfit_mb, parse_capture, parse_cl_bounds)
-from scope_sweep import Setpoint, capture, drain, position, send, set_watchdog
+                          linfit_mb, parse_capture, parse_cl_bounds)
+from scope_sweep import Setpoint, capture, drain, position, send, set_watchdog, stall_amp
 
 
 def _stalled(ser):
@@ -173,17 +177,19 @@ def set_alpha(ser, alpha: float) -> None:
         time.sleep(0.02)
 
 
-def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0):
+def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0, min_sectors=4):
     """Take `snaps` captures at a setpoint; return (median linfit wave, n_locked, n_verified).
 
-    Each capture must pass TWO gates before it feeds the wave:
-      VERIFIED -- the firmware's own debug line reports the target hz AND amp (else the ramp
-                  didn't land where we asked / the firmware is in some other state -> reject).
-      LOCKED   -- the host rotor classifier certifies the rotor is genuinely spinning (a
-                  stuck rotor's demag transient otherwise fools the linfit into fake numbers).
-    Only verified+locked captures are measured; everything else is dropped so a point that
-    never satisfies both comes back honest nan. Linfit is ungated by the firmware [-30,130]%
-    (open-loop crossings sit far out-of-window); flat windows (|slope| < slope_min) dropped."""
+    Each capture must pass two gates before it feeds the wave:
+      VERIFIED -- the firmware's debug line reports the target hz AND amp (else the ramp didn't
+                  land where we asked -> reject).
+      LOCKED   -- the linfit lights up >= min_sectors of the 6 sectors. A synchronously
+                  spinning rotor produces structured per-sector BEMF in most sectors; a
+                  stalled/flat/slipping one lights up few. This REPLACES classify_rotor_state,
+                  which was unreliable open-loop (false +ve on slip, false -ve on lowish duty).
+    Only verified+locked captures feed the wave; a point that never passes both is honest nan.
+    Linfit is ungated by the firmware [-30,130]% (open-loop crossings sit far out-of-window);
+    flat windows (|slope| < slope_min) and bonkers extrapolations ([-100,200]%) are dropped."""
     acc: dict[int, list[float]] = defaultdict(list)
     n_locked = n_verified = 0
     for _ in range(snaps):
@@ -200,13 +206,11 @@ def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0):
         if chz != want_hz or abs(camp - want_amp_t) > 2:
             continue  # firmware NOT at the requested setpoint -> not a valid measurement
         n_verified += 1
-        if classify_rotor_state(cap, smooth_window=3).get("state") != "locked":
-            continue  # at setpoint but not spinning (stalled) -> don't trust
-        n_locked += 1
         fps = cap.sample_hz / (chz * 6.0)
         bounds, _ = parse_cl_bounds(cap.text)
         secs, smooth, neutral = analyze_zero_crossings(cap, smooth_window=3, sector_bounds=bounds)
         frames = len(neutral)
+        cap_z: dict[int, float] = {}  # this capture's per-sector linfit ZC
         for s in secs:
             ch = PHASE_TO_CHANNEL[PHASE_NAMES.index(s.phase)]
             s0 = int(round(s.start_frame)) + 1
@@ -215,8 +219,12 @@ def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0):
             if mb is None or abs(mb[0]) < slope_min:
                 continue  # flat window -> no observable crossing
             z = (-mb[1] / mb[0]) / fps * 100.0
-            if -100.0 <= z <= 200.0:  # sane range (drops bonkers extrapolations)
-                acc[s.index % 6].append(z)
+            if -100.0 <= z <= 200.0:
+                cap_z[s.index % 6] = z
+        if len(cap_z) >= min_sectors:  # enough structured BEMF -> rotor is genuinely spinning
+            n_locked += 1
+            for k, v in cap_z.items():
+                acc[k].append(v)
     return {s: st.median(v) for s, v in acc.items() if v}, n_locked, n_verified
 
 
@@ -300,8 +308,10 @@ def main() -> int:
                         "motor before it reaches the target)")
     p.add_argument("--snaps", type=int, default=6)
     p.add_argument("--min-lock", type=int, default=3,
-                   help="stop the amp descent when fewer than this many snaps verify LOCKED "
-                        "(stay in the solid regime; below this the motor stalls hard / OCP)")
+                   help="a point needs at least this many of --snaps captures LOCKED to record")
+    p.add_argument("--stall-margin", type=float, default=0.5,
+                   help="skip any (hz, amp) below stall_amp(hz)+margin %% -- those slip/stall "
+                        "open-loop (the curve predicts it cleanly). 0 disables the skip.")
     p.add_argument("--catch-amp", type=float, default=None,
                    help="amp %% to spin up SOLID at before descending to each target "
                         "(default max(amps)+3); catch high, ride down the locked branch")
@@ -352,6 +362,14 @@ def main() -> int:
             for hz in freqs:
                 for amp in args.amps:
                     amp_t = int(round(amp * 10))
+                    edge = stall_amp(hz) + args.stall_margin
+                    if args.stall_margin and amp < edge:
+                        # Below the stall curve: the open-loop rotor slips/stalls here (the
+                        # curve predicts it cleanly). Don't measure -- it only yields slip
+                        # contamination the classifier can't catch.
+                        both(f"  {hz:>4} {amp:>5.1f} | {' '.join(['  .'] * 6)}   ----  "
+                             f"BELOW STALL CURVE (edge ~{edge:.1f}%) -- skipped")
+                        continue
                     # FULL independent measurement -- reset, catch high, descend, verify, hold.
                     w, nl, nv, held = measure_point(ser, hz, amp_t, max(catch_t, amp_t),
                                                     args.alpha, args.snaps, args.capture_timeout,
