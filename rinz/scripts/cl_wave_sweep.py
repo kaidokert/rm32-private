@@ -51,7 +51,16 @@ except ImportError as exc:
 
 from scope_common import (BAUD, PHASE_NAMES, PHASE_TO_CHANNEL, analyze_zero_crossings,
                           classify_rotor_state, linfit_mb, parse_capture, parse_cl_bounds)
-from scope_sweep import Setpoint, capture, position, send, set_watchdog
+from scope_sweep import Setpoint, capture, drain, position, send, set_watchdog
+
+
+def _stalled(ser):
+    return getattr(ser, "stalled", lambda: False)()
+
+
+def _clear_stall(ser):
+    if hasattr(ser, "clear_stall"):
+        ser.clear_stall()
 
 # Firmware text-response prefixes -- everything else read is the binary capture payload.
 _CTRL_PREFIXES = ("debug:", "reset:", "freq=", "amp=", "trim=", "dump", "end", "cl",
@@ -78,6 +87,13 @@ class PacedSerial:
         self._level = level
         self._wd = write_delay
         self._rx = ""
+        self._stall = False  # set when the firmware reports a STALL kill
+
+    def stalled(self):
+        return self._stall
+
+    def clear_stall(self):
+        self._stall = False
 
     def write(self, data):
         if self._level:
@@ -99,6 +115,8 @@ class PacedSerial:
             for line in parts[:-1]:
                 if not line.strip():
                     continue
+                if line.lstrip().startswith("STALL"):
+                    self._stall = True  # firmware killed the motor -- caller must react
                 if self._level < 2 and not _is_control(line):
                     continue  # -v: skip the binary capture payload
                 disp = line if len(line) <= 160 else line[:150] + f"...(+{len(line) - 150}B)"
@@ -135,6 +153,8 @@ def collect_wave(ser, snaps, timeout, want_hz, want_amp_t, slope_min=15.0):
     acc: dict[int, list[float]] = defaultdict(list)
     n_locked = n_verified = 0
     for _ in range(snaps):
+        if _stalled(ser):
+            break  # firmware killed the motor mid-sequence -- stop capturing a corpse
         try:
             cap = parse_capture(capture(ser, timeout, "c"))
             chz = int(float(cap.debug.get("hz", "x")))
@@ -182,10 +202,17 @@ def measure_point(ser, hz, amp_t, alpha, snaps, timeout, settle, reset_pause):
     """Independent measurement of ONE (hz, amp): clear -> ramp fresh -> verify the firmware
     echoed the target -> measure. NOTHING is carried from any prior point, so a stall at one
     setpoint can't poison the next. Returns (wave, n_locked, n_verified)."""
+    _clear_stall(ser)
     reset_cycles(ser, reset_pause)  # q,w,q,w -- aggressive clear before ramping
     # position() sends 'q' (reset to base) then ramps freq+amp up to the target.
     position(ser, Setpoint(), hz, amp_t, qsettle=0.8, ramp_step=20,
              ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
+    drain(ser)  # flush ramp echoes so a STALL the firmware reported during the ramp is seen
+    if _stalled(ser):
+        # Firmware killed the motor mid-ramp -- this setpoint can't hold lock. Don't measure
+        # a dead motor; the next point's reset_cycles ('q') re-arms it.
+        send(ser, "w")
+        return {}, 0, 0
     if alpha > 0:
         set_alpha(ser, alpha)  # 'q' already set open-loop alpha=0
     time.sleep(settle)
@@ -237,7 +264,9 @@ def main() -> int:
                     # FULL independent measurement -- kill, reset, ramp fresh, verify, measure.
                     w, nl, nv = measure_point(ser, hz, amp_t, args.alpha, args.snaps,
                                               args.capture_timeout, args.settle, args.reset_pause)
-                    if nv == 0:
+                    if _stalled(ser):
+                        status = "FW STALL-KILL (motor killed; reset next point)"
+                    elif nv == 0:
                         status = "NOT-AT-SETPOINT (ramp/echo failed)"
                     elif nl == 0:
                         status = "STALLED (at setpoint, not spinning)"
