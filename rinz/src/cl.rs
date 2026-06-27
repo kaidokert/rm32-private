@@ -292,6 +292,14 @@ pub struct ClLoop {
     // buckets over every hit (<0.5, <1, <2, <4, <8, >=8 ticks): tight cluster vs heavy tail.
     run_hist: [u32; 8],
     resid_hist: [u32; 6],
+    // Stall detector: latches once the loop has LOST a lock it previously held. Armed only
+    // after lock_fast crosses `stall_arm` (so a failure-to-start or the steady ~half-out-of-
+    // window per-sector wave -- max ~3 consecutive coasts -- can't trip it); fires when the
+    // consecutive-coast run reaches `stall_run` (a sustained loss = rotor stopped / desync).
+    stall_armed: bool,
+    stalled: bool,
+    stall_run: u32,
+    stall_arm: f32,
 }
 
 impl ClLoop {
@@ -331,6 +339,10 @@ impl ClLoop {
             glitch_resid: 2.0,
             run_hist: [0; 8],
             resid_hist: [0; 6],
+            stall_armed: false,
+            stalled: false,
+            stall_run: 10,   // ~1.6 electrical revs of all-coast
+            stall_arm: 0.30, // arm once lock_fast exceeds this (open loop settles ~0.5)
         }
     }
 
@@ -413,6 +425,25 @@ impl ClLoop {
     /// ZC-residual magnitude histogram over hits: buckets <0.5, <1, <2, <4, <8, >=8 ticks.
     pub fn resid_hist(&self) -> [u32; 6] {
         self.resid_hist
+    }
+
+    /// True once the loop has LOST a lock it previously held (sustained coast run). Latches
+    /// until `reset_stall`. The firmware kills the motor on this edge.
+    pub fn stalled(&self) -> bool {
+        self.stalled
+    }
+
+    /// Set the stall-trip consecutive-coast threshold (commutations). Default 10.
+    pub fn set_stall_run(&mut self, run: u32) {
+        self.stall_run = run.max(1);
+    }
+
+    /// Clear the stall latch and re-disarm (re-arms on the next genuine lock). Call on a
+    /// re-spin / restart so the detector starts fresh.
+    pub fn reset_stall(&mut self) {
+        self.stalled = false;
+        self.stall_armed = false;
+        self.cur_run = 0;
     }
 
     pub fn sector(&self) -> u8 {
@@ -538,6 +569,14 @@ impl ClLoop {
                     self.big_resid_events = self.big_resid_events.wrapping_add(1);
                     self.last_event_comm = self.comm_total;
                 }
+            }
+            // Stall detector: arm once the loop has genuinely locked, then latch a stall
+            // when it loses that lock for a sustained run (rotor stopped / hard desync).
+            if self.lock_fast > self.stall_arm {
+                self.stall_armed = true;
+            }
+            if self.stall_armed && self.cur_run >= self.stall_run {
+                self.stalled = true;
             }
             self.sector = (self.sector + 1) % 6;
             self.ticks = 0.0;

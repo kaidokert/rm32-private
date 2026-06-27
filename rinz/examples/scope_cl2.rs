@@ -216,6 +216,13 @@ static CL_RUN_HIST: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
 static CL_RESID_HIST: [AtomicU32; 6] = [const { AtomicU32::new(0) }; 6];
 static CL_GLITCH_RESET: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static MONITOR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+// Stall-kill: when enabled (default), the ISR kills the motor the moment the cl loop
+// reports a stall (lost a lock it held). 'h' toggles; STALL_FIRED is the one-shot event
+// (main loop reports it); CL_STALL_RESET re-arms the detector on a re-spin ('q').
+static STALL_KILL_EN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+static STALL_FIRED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static CL_STALL_RESET: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+const CL_STALL_RUN: u32 = 10; // consecutive coasts that count as a stall (~1.6 elec revs)
 const CL_SLEW_FRAC: f32 = 0.15; // max nudge as a fraction of the open-loop period at alpha=1
 const CL_KP: f32 = 0.3; // period PI gains (validated in the host sim)
 const CL_KI: f32 = 0.2;
@@ -557,6 +564,8 @@ where
             AMPLITUDE.store(AMP_START, Ordering::Relaxed);
             DUTY_TRIM.store(0, Ordering::Relaxed);
             CL_ALPHA_X1000.store(0, Ordering::Relaxed); // reset to open-loop
+            STALL_FIRED.store(false, Ordering::Relaxed); // re-arm the stall detector
+            CL_STALL_RESET.store(true, Ordering::Relaxed);
             RUNNING.store(true, Ordering::Relaxed);
             writeln!(
                 tx,
@@ -604,7 +613,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast i=monitor x=glitch_reset (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2 ready (Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -770,8 +779,23 @@ fn main() -> ! {
     // Glitch-monitor emit cadence: ~1 s of the free-running DWT cycle counter (170 MHz).
     const MON_PERIOD_CYC: u32 = 170_000_000;
     let mut last_mon = cortex_m::peripheral::DWT::cycle_count();
+    let mut stall_announced = false;
 
     loop {
+        // Announce a stall-kill once (the ISR latches STALL_FIRED + already killed the
+        // motor); cleared on a re-spin ('q'). The host sees the motor stop too.
+        let fired = STALL_FIRED.load(Ordering::Relaxed);
+        if fired && !stall_announced {
+            stall_announced = true;
+            writeln!(
+                tx,
+                "STALL: lock lost -- motor killed (h toggles, q re-arms)\r"
+            )
+            .ok();
+        } else if !fired {
+            stall_announced = false;
+        }
+
         // Service the live stream: one back-to-back dump per idle pass while the
         // STREAMING flag is set. 'l' sets it, 'k' (or 'w') clears it; everything
         // else is the normal command set, processed unchanged below.
@@ -885,6 +909,12 @@ fn main() -> ! {
                 b'x' => {
                     CL_GLITCH_RESET.store(true, Ordering::Relaxed);
                     writeln!(tx, "glitch: reset\r").ok();
+                }
+                // toggle stall-kill (kill the motor on a detected stall)
+                b'h' => {
+                    let on = !STALL_KILL_EN.load(Ordering::Relaxed);
+                    STALL_KILL_EN.store(on, Ordering::Relaxed);
+                    writeln!(tx, "stall_kill: {}\r", if on { "on" } else { "off" }).ok();
                 }
                 b'd' => {
                     writeln!(tx, "capture: wait zero, 2 electrical revs\r").ok();
@@ -1293,8 +1323,12 @@ extern "C" fn TIM7() {
         let cl = (*cl_ptr).as_mut().unwrap();
         cl.set_zc_beta(CL_ZC_BETA_X1000.load(Ordering::Relaxed) as f32 / 1000.0); // live-tunable
         cl.set_predict_coast(CL_PREDICT_COAST.load(Ordering::Relaxed) != 0);
+        cl.set_stall_run(CL_STALL_RUN);
         if CL_GLITCH_RESET.swap(false, Ordering::Relaxed) {
             cl.reset_glitch();
+        }
+        if CL_STALL_RESET.swap(false, Ordering::Relaxed) {
+            cl.reset_stall(); // re-arm after a re-spin / restart
         }
         if alpha <= 0.0 {
             cl.set_period(ol_period); // keep period_est current so a later alpha>0 is sane
@@ -1326,6 +1360,15 @@ extern "C" fn TIM7() {
         let xh = cl.resid_hist();
         for (i, v) in xh.iter().enumerate() {
             CL_RESID_HIST[i].store(*v, Ordering::Relaxed);
+        }
+        // Stall -> kill (rising edge). The loop lost a lock it held -> stop the motor.
+        // kill_motor() drops RUNNING, so this ISR early-returns next pass; the main loop
+        // reports STALL_FIRED; a re-spin ('q') re-arms via CL_STALL_RESET.
+        if cl.stalled()
+            && STALL_KILL_EN.load(Ordering::Relaxed)
+            && !STALL_FIRED.swap(true, Ordering::Relaxed)
+        {
+            kill_motor();
         }
         if let Some(t) = step.zc_ticks {
             CL_LAST_ZC = ((t / ol_period) * 100.0) as u32; // ZC % of window (telemetry)

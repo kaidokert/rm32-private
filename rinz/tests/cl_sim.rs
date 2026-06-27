@@ -120,11 +120,13 @@ struct SimResult {
     jit_slow: f32,     // firmware ZC-jitter IIR in ticks (lower = smoother commutation)
     coast_bursts: u32, // glitch monitor: runs of >=2 consecutive missed ZCs
     max_run: u32,      // glitch monitor: longest consecutive-coast run
+    stalled: bool,     // stall detector latched (lost a lock it had held)
 }
 
 /// Run the closed loop against the model with the given demag-blank. `trace` (if Some)
-/// writes the per-tick trajectory for plotting.
-fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
+/// writes the per-tick trajectory for plotting. `stall_at` (if Some) FREEZES the rotor at
+/// that tick (BEMF dies) to exercise the stall detector.
+fn run_sim_ex(blank: u32, trace: Option<&str>, stall_at: Option<usize>) -> SimResult {
     let omega0 = envf("SIM_OMEGA", 5.4);
     let mut m = Motor::new(omega0);
     let mut lp = ClLoop::new(
@@ -151,7 +153,10 @@ fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
         if tick == step_tick {
             m.load += load_step;
         }
-        m.step(lp.sector());
+        let frozen = stall_at.is_some_and(|t| tick >= t);
+        if !frozen {
+            m.step(lp.sector()); // a frozen rotor stops advancing -> BEMF dies (stall)
+        }
         let bemf = m.bemf(lp.sector());
         let step = lp.on_frame(bemf);
         if step.commutate {
@@ -192,7 +197,13 @@ fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
         jit_slow: lp.jit_slow(),
         coast_bursts: lp.glitch_stats().2,
         max_run: lp.glitch_stats().4,
+        stalled: lp.stalled(),
     }
+}
+
+/// Backward-compatible wrapper: no stall injection.
+fn run_sim(blank: u32, trace: Option<&str>) -> SimResult {
+    run_sim_ex(blank, trace, None)
 }
 
 #[test]
@@ -230,6 +241,24 @@ fn cl_sim_locks() {
         r.coast_bursts,
         r.max_run
     );
+    // Stall detector must NOT fire on a healthy, continuously-locked run.
+    assert!(!r.stalled, "stall detector false-tripped on a clean lock");
+}
+
+#[test]
+fn cl_sim_stall_detected() {
+    // Lock first, then FREEZE the rotor (BEMF dies). The stall detector -- armed by the
+    // genuine lock -- must latch once the coast run goes sustained.
+    let r = run_sim_ex(envf("CL_BLANK", 4.0) as u32, None, Some(4800));
+    eprintln!(
+        "cl_sim_stall_detected: stalled={}, max_run={}, lock_slow={:.2}",
+        r.stalled, r.max_run, r.lock_slow
+    );
+    assert!(
+        r.stalled,
+        "stall after a held lock was not detected (max_run={})",
+        r.max_run
+    );
 }
 
 #[test]
@@ -259,6 +288,12 @@ fn cl_sim_needs_zc() {
         "glitch monitor missed the all-coast control: bursts={}, max_run={}",
         r.coast_bursts,
         r.max_run
+    );
+    // Stall detector must NOT fire here: it never armed (the loop never held a lock).
+    // A failure-to-START is not a stall -- only LOSING a held lock is.
+    assert!(
+        !r.stalled,
+        "stall detector false-tripped on a never-locked run (failure-to-start != stall)"
     );
     let desynced = !(0.9..=1.1).contains(&r.sync) || r.post_perr > 0.10 || r.omega_end < 1.0;
     assert!(
