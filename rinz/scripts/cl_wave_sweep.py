@@ -52,6 +52,40 @@ from scope_common import (BAUD, PHASE_NAMES, PHASE_TO_CHANNEL, analyze_zero_cros
                           classify_rotor_state, linfit_mb, parse_capture, parse_cl_bounds)
 from scope_sweep import Setpoint, capture, position, send, set_watchdog
 
+class VerboseSerial:
+    """Transparent wrapper that logs every byte written (TX) and every line read (RX) LIVE,
+    so the full command/ack conversation is visible. Wraps the real Serial; all other
+    attributes (in_waiting, flush, reset_input_buffer, timeout, ...) proxy through, so
+    position()/capture()/send() log automatically without changes. Long binary capture
+    payloads are summarised, not dumped."""
+
+    def __init__(self, ser):
+        self._ser = ser
+        self._rx = ""
+
+    def write(self, data):
+        print(f"  TX> {data.decode('ascii', errors='replace')!r}", flush=True)
+        return self._ser.write(data)
+
+    def read(self, n=1):
+        data = self._ser.read(n)
+        if data:
+            self._rx += data.decode("ascii", errors="replace")
+            parts = re.split(r"[\r\n]+", self._rx)
+            for line in parts[:-1]:
+                if line.strip():
+                    disp = line if len(line) <= 100 else line[:90] + f"...(+{len(line) - 90}B)"
+                    print(f"  RX< {disp}", flush=True)
+            self._rx = parts[-1]
+            if len(self._rx) > 300:  # binary payload w/o newline -> summarise, keep the tail
+                print(f"  RX< ...{len(self._rx)}B binary...", flush=True)
+                self._rx = self._rx[-40:]
+        return data
+
+    def __getattr__(self, name):
+        return getattr(self._ser, name)
+
+
 def set_alpha(ser, alpha: float) -> None:
     send(ser, "0")
     for _ in range(int(round(max(0.0, min(1.0, alpha)) / 0.05))):
@@ -147,13 +181,16 @@ def main() -> int:
     p.add_argument("--reset-pause", type=float, default=0.4,
                    help="pause (s) between each q/w in the pre-ramp clear cycle")
     p.add_argument("--capture-timeout", type=float, default=4.0)
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="log every command sent (TX) and firmware line received (RX), live")
     args = p.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     freqs = args.freqs or [args.hz]
     grid: dict[tuple[int, float], dict[int, float]] = {}  # (hz, amp) -> wave
 
-    with serial.Serial(args.port, args.baud, timeout=0.1) as ser:
+    with serial.Serial(args.port, args.baud, timeout=0.1) as raw_ser:
+        ser = VerboseSerial(raw_ser) if args.verbose else raw_ser
         ser.reset_input_buffer()
         if set_watchdog(ser, True):
             print("watchdog ARMED")
