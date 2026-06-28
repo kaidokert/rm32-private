@@ -6,6 +6,7 @@ pub mod algorithm_params;
 pub mod cl;
 pub mod ewma_pow2;
 pub mod filter;
+pub mod harmonic;
 pub mod idle_loop;
 pub mod more_atomic_pid;
 pub mod pi_controller_state;
