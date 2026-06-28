@@ -106,7 +106,7 @@ def set_stall_kill(ser, want):
 # Firmware text-response prefixes -- everything else read is the binary capture payload.
 _CTRL_PREFIXES = ("debug:", "reset:", "freq=", "amp=", "trim=", "dump", "end", "cl",
                   "glitch:", "hist:", "regs:", "watchdog", "monitor", "stall", "zc_beta=",
-                  "alpha=", "predict_coast=", "kill", "scope_cl2", "STALL")
+                  "alpha=", "predict_coast=", "kill", "scope_cl2", "STALL", "FAULT")
 
 
 def _is_control(line: str) -> bool:
@@ -169,8 +169,16 @@ class PacedSerial:
             for line in parts[:-1]:
                 if not line.strip():
                     continue
-                if line.lstrip().startswith("STALL"):
-                    self._stall = True  # firmware killed the motor -- caller must react
+                s = line.lstrip()
+                # Phase-2 fault telemetry: surface every `FAULT:` line ALWAYS (it's the whole
+                # point -- catch the precise failure mode), and treat a STALL fault as the
+                # motor-killed signal the caller reacts to. (Firmware now emits "FAULT: STALL"
+                # / "FAULT: COAST_BURST"; the bare "STALL" prefix is the legacy build.)
+                if s.startswith("FAULT:") or s.startswith("STALL"):
+                    if s.startswith("STALL") or s.startswith("FAULT: STALL"):
+                        self._stall = True  # sustained lock loss -> caller aborts the step
+                    print(f"  !! {s[:160]}", flush=True)
+                    self._log(f"FAULT-LINE {s[:200]}")
                 is_ctrl = _is_control(line)
                 if is_ctrl:
                     self._log(f"RX< {line[:200]}")  # logfile: control lines only, no payload

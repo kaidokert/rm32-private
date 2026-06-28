@@ -246,6 +246,11 @@ static STALL_KILL_EN: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 static STALL_FIRED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static CL_STALL_RESET: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 const CL_STALL_RUN: u32 = 10; // consecutive coasts that count as a stall (~1.6 elec revs)
+// Phase-2 fault telemetry: an always-on watcher emits a classified `FAULT:` line on each
+// fault EDGE over UART (no 'i' monitor needed), so control failures are caught the moment
+// they happen. A coast run reaching this length (but below CL_STALL_RUN) is a momentary
+// lock wobble worth flagging; above the normal per-sector-wave coast (~3) so it doesn't flood.
+const CL_FAULT_RUN_MIN: u32 = 5;
 const CL_SLEW_FRAC: f32 = 0.15; // max nudge as a fraction of the open-loop period at alpha=1
 const CL_KP: f32 = 0.3; // period PI gains (validated in the host sim)
 const CL_KI: f32 = 0.2;
@@ -807,20 +812,49 @@ fn main() -> ! {
     const MON_PERIOD_CYC: u32 = 170_000_000;
     let mut last_mon = cortex_m::peripheral::DWT::cycle_count();
     let mut stall_announced = false;
+    let mut last_maxrun = 0u32; // for the always-on fault watcher (new coast-run highs)
 
     loop {
-        // Announce a stall-kill once (the ISR latches STALL_FIRED + already killed the
-        // motor); cleared on a re-spin ('q'). The host sees the motor stop too.
+        // -------- Phase-2 always-on fault watcher (no 'i' monitor needed) --------
+        // Emit ONE classified `FAULT:` line per fault EDGE with the context needed to tell
+        // the precise mode apart: STALL (sustained lock loss, motor killed) vs COAST_BURST (a
+        // momentary >=CL_FAULT_RUN_MIN-coast wobble that recovered). Throttled by construction:
+        // STALL fires once per latch, COAST_BURST only on a NEW maxrun high (monotonic).
         let fired = STALL_FIRED.load(Ordering::Relaxed);
-        if fired && !stall_announced {
+        let maxrun = CL_GLITCH_MAXRUN.load(Ordering::Relaxed);
+        let fault_mode = if fired && !stall_announced {
+            Some("STALL")
+        } else if !fired && maxrun > last_maxrun && maxrun >= CL_FAULT_RUN_MIN {
+            Some("COAST_BURST")
+        } else {
+            None
+        };
+        last_maxrun = maxrun;
+        if fired {
             stall_announced = true;
+        } else {
+            stall_announced = false;
+        }
+        if let Some(mode) = fault_mode {
             writeln!(
                 tx,
-                "STALL: lock lost -- motor killed (h toggles, q re-arms)\r"
+                "FAULT: {} comm={} coast={} burst={} bigres={} maxrun={} lockS={} jitS={} period={} hz={} amp={} alpha={} beta={} det={}\r",
+                mode,
+                CL_GLITCH_COMM.load(Ordering::Relaxed),
+                CL_GLITCH_COAST.load(Ordering::Relaxed),
+                CL_GLITCH_BURSTS.load(Ordering::Relaxed),
+                CL_GLITCH_BIGRES.load(Ordering::Relaxed),
+                maxrun,
+                CL_LOCK_SLOW_X1000.load(Ordering::Relaxed),
+                CL_JIT_SLOW_X1000.load(Ordering::Relaxed),
+                CL_PERIOD_X100.load(Ordering::Relaxed),
+                ELECTRICAL_HZ.load(Ordering::Relaxed),
+                AMPLITUDE.load(Ordering::Relaxed),
+                CL_ALPHA_X1000.load(Ordering::Relaxed),
+                CL_ZC_BETA_X1000.load(Ordering::Relaxed),
+                if CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0 { "sc" } else { "lf" },
             )
             .ok();
-        } else if !fired {
-            stall_announced = false;
         }
 
         // Service the live stream: one back-to-back dump per idle pass while the
