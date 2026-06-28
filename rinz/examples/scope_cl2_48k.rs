@@ -948,7 +948,7 @@ fn main() -> ! {
                 last_mon = now;
                 writeln!(
                     tx,
-                    "glitch: comm={} coast={} burst={} resid={} maxrun={} since={} lockS={} alpha={} beta={} pc={} cpu_busy={} isr_util={}\r",
+                    "glitch: comm={} coast={} burst={} resid={} maxrun={} since={} lockS={} mode={} det={} alpha={} beta={} pc={} cpu_busy={} isr_util={}\r",
                     CL_GLITCH_COMM.load(Ordering::Relaxed),
                     CL_GLITCH_COAST.load(Ordering::Relaxed),
                     CL_GLITCH_BURSTS.load(Ordering::Relaxed),
@@ -956,6 +956,8 @@ fn main() -> ! {
                     CL_GLITCH_MAXRUN.load(Ordering::Relaxed),
                     CL_GLITCH_SINCE.load(Ordering::Relaxed),
                     CL_LOCK_SLOW_X1000.load(Ordering::Relaxed),
+                    if CL_DRIVING_FLAG.load(Ordering::Relaxed) { "drive" } else { "gov" },
+                    if CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0 { "sc" } else { "lf" },
                     CL_ALPHA_X1000.load(Ordering::Relaxed),
                     CL_ZC_BETA_X1000.load(Ordering::Relaxed),
                     CL_PREDICT_COAST.load(Ordering::Relaxed),
