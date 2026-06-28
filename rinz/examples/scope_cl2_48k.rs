@@ -300,6 +300,10 @@ static CL_CAP_LF: [AtomicI32; CL_MAXCOMM] = [const { AtomicI32::new(9999) }; CL_
 // Lets the host place sectors where the loop really commutated instead of on a uniform
 // grid -- so in closed loop the firmware and python linfit windows coincide.
 static CL_CAP_BND: [AtomicU32; CL_MAXCOMM] = [const { AtomicU32::new(0) }; CL_MAXCOMM];
+// Per-commutation streaming-harmonic crossing (% of window, signed; 9999 = no fit/crossing).
+// OBSERVE-ONLY -- the harmonic does not steer yet; this is for comparing its coverage to the
+// sign-change (zcb) and the offline oracle on real hardware before letting it drive.
+static CL_CAP_HARM: [AtomicI32; CL_MAXCOMM] = [const { AtomicI32::new(9999) }; CL_MAXCOMM];
 static CL_CAP_N: AtomicU32 = AtomicU32::new(0);
 
 /// Per-phase output-stage mode per logical sector (one array each for A/B/C).
@@ -1372,7 +1376,7 @@ fn dump_cl_log<TX: Write>(tx: &mut TX) {
     let n = (CL_CAP_N.load(Ordering::Relaxed) as usize).min(CL_MAXCOMM);
     writeln!(
         tx,
-        "cl: {} commutations CLOSED-LOOP (i phys zc_pct coasted lf=raw_linfit_pct bnd=cap_frame)\r",
+        "cl: {} commutations CLOSED-LOOP (i phys zc_pct coasted lf=raw_linfit_pct harm=harmonic_pct bnd=cap_frame)\r",
         n
     )
     .ok();
@@ -1384,10 +1388,11 @@ fn dump_cl_log<TX: Write>(tx: &mut TX) {
         let zc: i32 = if zcb == 255 { -1 } else { zcb as i32 };
         let lf = CL_CAP_LF[i].load(Ordering::Relaxed); // raw signed linfit %, 9999 = none
         let bnd = CL_CAP_BND[i].load(Ordering::Relaxed); // capture-frame of this commutation
+        let harm = CL_CAP_HARM[i].load(Ordering::Relaxed); // observe-only harmonic %, 9999 = none
         writeln!(
             tx,
-            "cl i={} phys={} zc={} coast={} lf={} bnd={}\r",
-            i, phys, zc, coast, lf, bnd
+            "cl i={} phys={} zc={} coast={} lf={} harm={} bnd={}\r",
+            i, phys, zc, coast, lf, harm, bnd
         )
         .ok();
     }
@@ -1636,6 +1641,12 @@ extern "C" fn TIM7() {
                 CL_CAP[n].store((prev << 16) | (zcb << 8) | co, Ordering::Relaxed);
                 CL_CAP_LF[n].store(CL_LAST_LF, Ordering::Relaxed);
                 CL_CAP_BND[n].store(CAPTURE_TICKS, Ordering::Relaxed); // capture-frame of this commutation
+                // Observe-only harmonic crossing for the just-ended sector, as % of window.
+                let harm = match cl.harm_zc() {
+                    Some(t) => (t / step.period_est.max(1.0) * 100.0) as i32,
+                    None => 9999,
+                };
+                CL_CAP_HARM[n].store(harm, Ordering::Relaxed);
                 CL_CAP_N.store((n + 1) as u32, Ordering::Relaxed);
             }
             CL_LAST_ZC = 255; // reset for the next sector

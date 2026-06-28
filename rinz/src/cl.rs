@@ -15,8 +15,14 @@
 //! %-position) gated by an outlier check, so a single bad detection can't move the
 //! estimate. Numeric type is f32 (the G431 has an FPU).
 
+use crate::harmonic::{Harmonic, wrap_pm_pi};
 use crate::pll_controller::{PLL, PLLParamsPlain};
 use crate::pll_state::PLLState;
+use micromath::F32Ext;
+
+/// Decay for the streaming harmonic detector (≈1/e over ~12 float samples ≈ 1 rev/phase).
+const CL_HARM_LAM: f32 = 0.92;
+const PI_3: f32 = core::f32::consts::PI / 3.0; // 60° = one sector, in electrical radians
 
 /// Driven-high / driven-low channel index per physical six-step sector (channel idx
 /// == phase idx: 0=A, 1=B, 2=C; the third is the floating phase). Matches scope1/
@@ -263,6 +269,12 @@ pub struct ClStep {
 /// warm-started (handover from open-loop at a known frequency).
 pub struct ClLoop {
     detector: Detector,
+    // Streaming harmonic detector -- OBSERVE-ONLY for now: it accumulates each tick and its
+    // crossing is exposed via harm_zc() for telemetry/vetting on hardware, but it does NOT yet
+    // drive commutation (the per-sector sign-change/linfit still does). Per the project's
+    // observe-before-control rule: prove it recovers crossings on real BEMF before it steers.
+    harmonic: Harmonic,
+    harm_zc: Option<f32>, // last harmonic crossing, ticks since this sector's commutation
     pll: PLL<f32, PLLParamsPlain<f32>>,
     state: PLLState<f32>, // state.frequency = period estimate (ticks per sector)
     sector: u8,
@@ -333,6 +345,8 @@ impl ClLoop {
     pub fn new(period0: f32, kp: f32, ki: f32, gate_frac: f32, coast: f32, blank: u32) -> Self {
         Self {
             detector: Detector::new(blank),
+            harmonic: Harmonic::new(CL_HARM_LAM),
+            harm_zc: None,
             pll: PLL::new(PLLParamsPlain::new(kp, ki, 2.0, 100_000.0)),
             state: PLLState::new(period0),
             sector: 0,
@@ -500,6 +514,11 @@ impl ClLoop {
     pub fn period_est(&self) -> f32 {
         self.state.frequency
     }
+    /// Last streaming-harmonic crossing for the current sector's float phase, in ticks since
+    /// this sector's commutation (observe-only telemetry; None if the fit has no crossing yet).
+    pub fn harm_zc(&self) -> Option<f32> {
+        self.harm_zc
+    }
 
     /// Detector + ZC-to-ZC period update for one frame. Returns `(zc_ticks, cl_target)`
     /// where `cl_target` is the loop's OWN desired commutation tick (since commutation).
@@ -508,13 +527,29 @@ impl ClLoop {
         self.ticks += 1.0;
         self.abs += 1.0;
         let e = float_minus_neutral(bemf, self.sector as usize);
-        self.detector.push(e, self.state.frequency.max(1.0));
+        let period = self.state.frequency.max(1.0);
+        self.detector.push(e, period);
+
+        // Streaming harmonic (OBSERVE-ONLY): accumulate this float sample at its electrical
+        // angle theta = (sector + ticks/period)*60deg. cos/sin per tick via micromath (cost is
+        // measured by isr_util in the observe-only run; swap to a rotation recurrence if heavy).
+        let fl =
+            (3 - SIX_HIGH[self.sector as usize % 6] - SIX_LOW[self.sector as usize % 6]) as usize;
+        let theta = (self.sector as f32 + self.ticks / period) * PI_3;
+        self.harmonic.push(fl, theta.cos(), theta.sin(), e as f32);
 
         // Solve the crossing from the line fit (handles windows that never actually
         // cross). Wait until ~half the window so the fit is stable; gate on a plausible
         // position so a wild extrapolation can't hijack the schedule.
         let mut zc_ticks = None;
         if self.scheduled.is_none() && self.ticks >= 0.5 * self.state.frequency {
+            // Harmonic crossing for THIS sector's float phase (telemetry only): the fitted
+            // crossing nearest the sector centre, converted to ticks since this commutation.
+            let center = (self.sector as f32 + 0.5) * PI_3;
+            self.harm_zc = self
+                .harmonic
+                .cross_near(fl, center)
+                .map(|tc| wrap_pm_pi(tc - self.sector as f32 * PI_3) / PI_3 * period);
             // Sign-change (finish_frame) fires ONLY on a real in-window crossing -> None when
             // the window never crosses, so the loop coasts cleanly instead of chasing a
             // fabricated linfit extrapolation. linfit is the legacy default (sim-validated).
@@ -693,6 +728,8 @@ impl ClLoop {
     /// the loop from a correct period rather than a stale warm-start.
     pub fn set_period(&mut self, period: f32) {
         self.state = PLLState::new(period);
+        self.harmonic.reset(); // fresh accumulators on a re-spin / period reseed
+        self.harm_zc = None;
     }
 
     /// Hard-clamp the period estimate (ticks/sector) to [min, max] -- runaway protection for

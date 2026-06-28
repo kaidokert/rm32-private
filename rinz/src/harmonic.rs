@@ -98,10 +98,59 @@ impl Harmonic {
         None
     }
 
+    /// The fitted zero crossing (rad) NEAREST `target` (circular distance), either edge, or
+    /// None. Used to pick the crossing belonging to a given sector's float window — each phase
+    /// crosses twice per rev (once per its two float sectors); we want the one near this sector.
+    pub fn cross_near(&self, phase: usize, target: f32) -> Option<f32> {
+        let (a, b, c) = self.solve(phase)?;
+        let r = (a * a + b * b).sqrt();
+        if r < 1e-6 || c.abs() > r {
+            return None;
+        }
+        let psi = a.atan2(b);
+        let base = asin_safe(-c / r);
+        let mut best: Option<f32> = None;
+        let mut best_d = f32::MAX;
+        for &shift in &[base, core::f32::consts::PI - base] {
+            let t = wrap_2pi(shift - psi);
+            let d = ang_dist(t, target);
+            if d < best_d {
+                best_d = d;
+                best = Some(t);
+            }
+        }
+        best
+    }
+
     /// Effective (decayed) sample count for `phase` — a confidence proxy for the fit.
     pub fn weight(&self, phase: usize) -> f32 {
         self.s[phase % 3][5]
     }
+}
+
+/// Smallest absolute circular distance between two angles (rad), in [0, π].
+pub fn ang_dist(a: f32, b: f32) -> f32 {
+    let mut d = (a - b) % TWO_PI;
+    if d < 0.0 {
+        d += TWO_PI;
+    }
+    if d > core::f32::consts::PI {
+        TWO_PI - d
+    } else {
+        d
+    }
+}
+
+/// Signed (a - b) wrapped to (-π, π].
+pub fn wrap_pm_pi(x: f32) -> f32 {
+    let mut d = x % TWO_PI;
+    if d <= -core::f32::consts::PI {
+        d += TWO_PI;
+    }
+    if d > core::f32::consts::PI {
+        d -= TWO_PI;
+    }
+    d
 }
 
 fn det3(m: &[[f32; 3]; 3]) -> f32 {
