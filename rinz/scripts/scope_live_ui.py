@@ -743,8 +743,8 @@ def draw(state: UiState) -> None:
     clear_line(12, state.regs[-1] if state.regs else "")
 
     clear_line(14, term.bold("Controls:"))
-    clear_line(15, "F/V hz +/-10 | G/B hz +/-1 | A/Z amp +/-1 | +/- amp +/-0.1 | [/] duty +/-1ct | Q reset | W kill")
-    clear_line(16, "D capture | L/K stream start/stop | S log point | U UDP replay | O loop replay | X quit")
+    clear_line(15, "F/V hz | A/Z amp | j det(lf/sc) | o drive | e/r pgate | h stallkill | i mon | x glitchrst | 0-3/n/m alpha | y pcoast | w kill")
+    clear_line(16, "D/C capture | L/K stream | S logpt | U replay | T loop-replay | Q reset | ESC quit")
     clear_line(17, f"ZC: {state.zc_summary} | {state.zc_path}")
 
     clear_line(18, term.bold("Events:"))
@@ -758,7 +758,8 @@ def draw(state: UiState) -> None:
 
 def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bool:
     k = key.lower()
-    if k == "x":
+    # Quit on Esc -- 'x' is now a firmware key (glitch-reset) and must pass through.
+    if key == "\x1b" or (getattr(key, "name", None) == "KEY_ESCAPE"):
         return False
     if k in ("d", "c") and not state.capturing and not state.postprocessing and not state.streaming:
         start_capture(ser, state, log, key=k)
@@ -800,7 +801,8 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
             state.trim -= 1
     elif k == "u":
         replay_capture(state, log)
-    elif k == "o":
+    elif k == "t":
+        # UI loop-replay moved off 'o' (firmware now uses 'o' for the drive toggle).
         state.loop_replay = not state.loop_replay
         append_event(state.events, f"loop replay {'enabled' if state.loop_replay else 'disabled'}")
         log.event(f"loop replay {'enabled' if state.loop_replay else 'disabled'}")
@@ -830,6 +832,12 @@ def handle_key(key: str, ser: serial.Serial, state: UiState, log: CommLog) -> bo
         if k == "w":
             # Firmware 'w' clears its STREAMING flag too; keep the UI in sync.
             state.streaming = False
+    elif len(k) == 1 and k.isprintable():
+        # Passthrough: any other SINGLE printable key is a firmware command not needing UI
+        # state tracking -- j=detector(lf/sc), o=drive, e/r=predict_gate, h=stall_kill,
+        # p=watchdog, and any future key. (Guarded to single chars so an arrow/function-key
+        # escape sequence like '\x1b[A' can't decode to a stray firmware key.)
+        send_raw_key(ser, state, log, k, f"-> fw {k}")
     return True
 
 
