@@ -1450,6 +1450,11 @@ extern "C" fn TIM7() {
         }
         if alpha <= 0.0 {
             cl.set_period(ol_period); // keep period_est current so a later alpha>0 is sane
+            // Open loop: the governor spins the motor regardless of the ZC, so a detector
+            // "stall" is meaningless -- don't let it kill the motor. Resetting here keeps
+            // stalled/armed/cur_run clear (no silent stall-kill on a plain 'q' run), and
+            // leaves the detector fresh to arm the moment alpha>0 engages closed loop.
+            cl.reset_stall();
         }
         let arr = (*stm32::TIM1::ptr()).arr().read().arr().bits() as u32;
         let frame = read_latest_adc2_frame();
