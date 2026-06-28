@@ -90,6 +90,7 @@ use rinz::hal::rcc::{PllConfig, PllMDiv, PllNMul, PllRDiv, PllSrc};
 use rinz::hal::serial::FullConfig;
 use rinz::hal::time::{ExtU32, Hertz, RateExtU32};
 use rinz::hal::{rcc, stm32};
+use rinz::idle_loop::IdleLoop;
 
 const PWM_HZ: u32 = 48_000; // 48k variant (scope_cl2 is 20_000). Valley ADC frame rate follows.
 const DRIVE_HZ: u32 = PWM_HZ;
@@ -200,7 +201,7 @@ static DBG_CAPTURE_AMP: AtomicU32 = AtomicU32::new(0);
 static DBG_CAPTURE_HZ: AtomicU32 = AtomicU32::new(0);
 static DBG_SIX_STEP_TICKS: AtomicU32 = AtomicU32::new(0);
 // Worst-case TIM7 ISR duration in CPU cycles (DWT.CYCCNT), to settle "are we hitting an
-// MCU bottleneck": budget is 170MHz/20kHz = 8500 cyc/tick. Reset at each capture start.
+// MCU bottleneck": budget is 170MHz/DRIVE_HZ = 170M/48k = 3541 cyc/tick. Reset each capture.
 static DBG_ISR_CYC: AtomicU32 = AtomicU32::new(0);
 
 // ---- Path B: bounded closed-loop steering via the validated cl::ClLoop ----
@@ -794,6 +795,23 @@ fn main() -> ! {
     adc1_transfer.start(|adc| adc.start_conversion());
 
     rinz::tim7_drive::init(dp.TIM7, DRIVE_HZ, &clocks);
+
+    // CPU headroom profiler (minz idle-loop pattern): calibrate the idle spin rate BEFORE the
+    // app ISRs (TIM7/DMA1) are unmasked, so the baseline is the full-idle rate. Monotonic u64
+    // wall-clock from the wrapping DWT cycle counter via two Cells (single-threaded main ctx).
+    let mono_hi = core::cell::Cell::new(0u32);
+    let mono_last = core::cell::Cell::new(0u32);
+    let now64 = || {
+        let c = cortex_m::peripheral::DWT::cycle_count();
+        if c < mono_last.get() {
+            mono_hi.set(mono_hi.get().wrapping_add(1));
+        }
+        mono_last.set(c);
+        ((mono_hi.get() as u64) << 32) | (c as u64)
+    };
+    let mut idle = IdleLoop::new();
+    idle.calibrate(170_000_000, &now64); // 1 s window == the glitch/latch cadence below
+
     unsafe { NVIC::unmask(stm32::Interrupt::DMA1_CH1) };
     unsafe { NVIC::unmask(stm32::Interrupt::TIM7) };
 
@@ -882,7 +900,7 @@ fn main() -> ! {
                 last_mon = now;
                 writeln!(
                     tx,
-                    "glitch: comm={} coast={} burst={} resid={} maxrun={} since={} lockS={} alpha={} beta={} pc={}\r",
+                    "glitch: comm={} coast={} burst={} resid={} maxrun={} since={} lockS={} alpha={} beta={} pc={} cpu_busy={} isr_util={}\r",
                     CL_GLITCH_COMM.load(Ordering::Relaxed),
                     CL_GLITCH_COAST.load(Ordering::Relaxed),
                     CL_GLITCH_BURSTS.load(Ordering::Relaxed),
@@ -893,6 +911,10 @@ fn main() -> ! {
                     CL_ALPHA_X1000.load(Ordering::Relaxed),
                     CL_ZC_BETA_X1000.load(Ordering::Relaxed),
                     CL_PREDICT_COAST.load(Ordering::Relaxed),
+                    // total CPU busy% (idle-loop: 100 - idle spin vs calibration) and the TIM7
+                    // ISR's share of its own 48 kHz budget (cyc / (170MHz/DRIVE_HZ)).
+                    idle.busy_percentage(idle.latch()),
+                    DBG_ISR_CYC.load(Ordering::Relaxed) * 100 / (170_000_000 / DRIVE_HZ).max(1),
                 )
                 .ok();
                 let r = |i: usize| CL_RUN_HIST[i].load(Ordering::Relaxed);
@@ -1065,6 +1087,14 @@ fn main() -> ! {
                 }
                 other => handle_command(other, &mut tx),
             }
+        }
+
+        // CPU headroom: while monitoring (and not streaming, which is its own busy work), spin
+        // the idle counter for a ~250 us slice. Active work + ISR steal both reduce it vs the
+        // boot calibration -> busy_percentage. Only meaningful when monitoring spins the loop
+        // (the idle path otherwise blocks on rx.read, so there is no slack to count).
+        if monitoring && !streaming {
+            idle.run_until(now64() + 42_500, &now64); // 42_500 cyc / 170 MHz = 250 us
         }
     }
 }
@@ -1380,7 +1410,7 @@ extern "C" fn TIM7() {
     let amplitude = AMPLITUDE.load(Ordering::Relaxed);
 
     // Settle the MCU-bottleneck question: worst-case active-path ISR duration in cycles.
-    // Budget = 170MHz / 20kHz = 8500 cyc. fetch_max keeps the spike; reset at capture start.
+    // Budget = 170MHz / DRIVE_HZ = 170M/48k = 3541 cyc. fetch_max keeps the spike; reset at capture.
     let isr_t0 = cortex_m::peripheral::DWT::cycle_count();
 
     unsafe {
