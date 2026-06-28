@@ -728,8 +728,9 @@ impl ClLoop {
     /// the loop from a correct period rather than a stale warm-start.
     pub fn set_period(&mut self, period: f32) {
         self.state = PLLState::new(period);
-        self.harmonic.reset(); // fresh accumulators on a re-spin / period reseed
-        self.harm_zc = None;
+        // NOTE: do NOT reset the harmonic here -- set_period is called EVERY tick at alpha=0
+        // (governed) to pin period_est, so resetting would wipe the accumulators each tick and
+        // the fit could never build. The exponential decay handles stale data on a re-spin.
     }
 
     /// Hard-clamp the period estimate (ticks/sector) to [min, max] -- runaway protection for
