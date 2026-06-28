@@ -50,12 +50,12 @@ from scope_common import (BAUD, analyze_zero_crossings, parse_capture,  # noqa: 
                           parse_cl_bounds)
 from scope_sweep import Setpoint, capture, drain, position, send, set_watchdog  # noqa: E402
 from cl_wave_sweep import (PacedSerial, _clear_stall, _stalled, reset_cycles,  # noqa: E402
-                           set_stall_kill)
+                           set_alpha, set_stall_kill)
 
 TWO_PI = 2.0 * math.pi
 SECTOR_RAD = TWO_PI / 6.0
-# alpha value -> firmware key (0/1/2/3 = 0.0/0.2/0.5/1.0 per the scope_cl2 banner).
-ALPHA_KEY = {0.0: "0", 0.2: "1", 0.5: "2", 1.0: "3"}
+# alpha is set finely via set_alpha() (firmware '0' then n/m +-0.05 steps), so any value in
+# [0,1] is reachable -- not just the 4 preset keys. Quantized to 0.05 by the firmware step.
 
 
 def oracle_offsets(cap):
@@ -123,8 +123,9 @@ def main() -> int:
     p.add_argument("--baud", type=int, default=BAUD)
     p.add_argument("--hz", type=int, default=250, help="electrical frequency to hold (open-loop governed)")
     p.add_argument("--amp", type=float, default=28.0, help="amp %% (>=24 for valid BEMF on the 48k tool)")
-    p.add_argument("--alphas", type=float, nargs="+", default=[0.0, 0.2, 0.5, 1.0],
-                   help="alpha steps to engage (must be in {0,0.2,0.5,1.0})")
+    p.add_argument("--alphas", type=float, nargs="+",
+                   default=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0],
+                   help="alpha steps to engage (any value in [0,1]; firmware quantizes to 0.05)")
     p.add_argument("--detector", choices=["linfit", "signchange"], default="signchange",
                    help="loop detector source: signchange (straddle-gated, clean) or linfit "
                         "(legacy extrapolator). Needs the 'j'-toggle firmware; ignored on old builds.")
@@ -137,9 +138,8 @@ def main() -> int:
     p.add_argument("-v", "--verbose", action="count", default=0)
     args = p.parse_args()
 
-    for a in args.alphas:
-        if a not in ALPHA_KEY:
-            raise SystemExit(f"alpha {a} not in {sorted(ALPHA_KEY)} (firmware keys 0/1/2/3)")
+    if any(a < 0.0 or a > 1.0 for a in args.alphas):
+        raise SystemExit("alpha values must be in [0, 1]")
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = Path("logs") / f"engage_{stamp}"
@@ -185,7 +185,7 @@ def main() -> int:
         both(f"\n  alpha | in-win ZC | oracle|off|% | lock_fast |  jit  |  iu_ma  | note")
         try:
             for ai, a in enumerate(args.alphas):
-                send(ser, ALPHA_KEY[a])           # engage / change loop authority
+                set_alpha(ser, a)                 # engage / change loop authority (fine, n/m steps)
                 time.sleep(args.dwell)
                 if _stalled(ser):
                     both(f"  {a:5.1f} |  --       |   --        |    --     |   --  |   --    | STALL/lock-loss")
