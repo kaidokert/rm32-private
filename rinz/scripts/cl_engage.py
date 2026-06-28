@@ -182,6 +182,10 @@ def main() -> int:
         got_det = set_detector(ser, args.detector)
         both(f"  loop detector: {args.detector}" +
              ("" if got_det == args.detector else "  (WARNING: firmware did not confirm -- old build without 'j'?)"))
+        # Discard any spin-up stall flag: the open-loop freq-ramp can false-trip the stall
+        # detector (the firmware now gates FAULT emission on alpha>0, but the host may have
+        # latched a STALL from a pre-gate build or a ramp transient). Start the sweep clean.
+        _clear_stall(ser)
         both(f"\n  alpha | in-win ZC | oracle|off|% | lock_fast |  jit  |  iu_ma  | note")
         try:
             for ai, a in enumerate(args.alphas):

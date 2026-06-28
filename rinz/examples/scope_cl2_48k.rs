@@ -820,9 +820,15 @@ fn main() -> ! {
         // the precise mode apart: STALL (sustained lock loss, motor killed) vs COAST_BURST (a
         // momentary >=CL_FAULT_RUN_MIN-coast wobble that recovered). Throttled by construction:
         // STALL fires once per latch, COAST_BURST only on a NEW maxrun high (monotonic).
+        // Only a CLOSED-LOOP fault is real: at alpha=0 the drive is the open-loop governor
+        // (it doesn't depend on the ZC), so the stall detector's spin-up false-fires aren't
+        // faults. Gate the emit on alpha>0; still track state so engaging doesn't re-fire stale.
+        let alpha_on = CL_ALPHA_X1000.load(Ordering::Relaxed) > 0;
         let fired = STALL_FIRED.load(Ordering::Relaxed);
         let maxrun = CL_GLITCH_MAXRUN.load(Ordering::Relaxed);
-        let fault_mode = if fired && !stall_announced {
+        let fault_mode = if !alpha_on {
+            None
+        } else if fired && !stall_announced {
             Some("STALL")
         } else if !fired && maxrun > last_maxrun && maxrun >= CL_FAULT_RUN_MIN {
             Some("COAST_BURST")
@@ -830,11 +836,7 @@ fn main() -> ! {
             None
         };
         last_maxrun = maxrun;
-        if fired {
-            stall_announced = true;
-        } else {
-            stall_announced = false;
-        }
+        stall_announced = fired;
         if let Some(mode) = fault_mode {
             writeln!(
                 tx,
