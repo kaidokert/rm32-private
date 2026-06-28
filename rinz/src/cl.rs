@@ -54,6 +54,10 @@ pub struct Detector {
     fn_sy: f32,
     fn_sxy: f32,
     fn_sxx: f32,
+    // Run the least-squares accumulation (for finish_linfit) or skip it. Skipped when the
+    // loop uses the sign-change crossing (finish_frame) -- the LSQ work is then dead weight,
+    // and dropping it shaves the SAME few cycles off EVERY tick (uniform, no spike).
+    lsq: bool,
 }
 
 impl Detector {
@@ -71,7 +75,14 @@ impl Detector {
             fn_sy: 0.0,
             fn_sxy: 0.0,
             fn_sxx: 0.0,
+            lsq: true,
         }
+    }
+
+    /// Enable/disable the least-squares accumulation. Off when the loop uses the sign-change
+    /// detector (finish_frame), so the unused LSQ math is dropped uniformly from every tick.
+    pub fn set_lsq(&mut self, on: bool) {
+        self.lsq = on;
     }
 
     pub fn reset(&mut self) {
@@ -96,14 +107,17 @@ impl Detector {
             self.prev_frame = self.frame;
             return;
         }
-        // running least-squares accumulation of post-blank (frame, e)
-        let fx = self.frame as f32;
-        let fy = e as f32;
-        self.fn_n += 1.0;
-        self.fn_sx += fx;
-        self.fn_sy += fy;
-        self.fn_sxy += fx * fy;
-        self.fn_sxx += fx * fx;
+        // running least-squares accumulation of post-blank (frame, e) -- only when the linfit
+        // detector is in use; skipped uniformly (every tick) under the sign-change detector.
+        if self.lsq {
+            let fx = self.frame as f32;
+            let fy = e as f32;
+            self.fn_n += 1.0;
+            self.fn_sx += fx;
+            self.fn_sy += fy;
+            self.fn_sxy += fx * fy;
+            self.fn_sxx += fx * fx;
+        }
         let s = e.signum();
         if self.entry_sign == 0 {
             if s != 0 {
@@ -364,6 +378,7 @@ impl ClLoop {
     /// whether honest-sparse beats noisy-dense for closed-loop jitter.
     pub fn set_use_signchange(&mut self, on: bool) {
         self.use_signchange = on;
+        self.detector.set_lsq(!on); // sign-change -> drop the unused LSQ math from every tick
     }
 
     /// Whether the loop is using the sign-change detector (true) or the linfit (false).
