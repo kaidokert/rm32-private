@@ -47,12 +47,19 @@ operating range to 90–95 % duty (~1300–1400 elec Hz)._
   startup + fallback; `ELECTRICAL_HZ` slews to follow `period_est` (readout + smooth revert);
   `mode=gov/drive` in debug. Speed is an OUTPUT (set by amp) — climb by raising amp, not freq.
   Constant per-tick cost preserved. Sim 3/3.
-- **Next (bench bring-up of Step 3):** reflash, spin governed to ~300 Hz (lock_slow >0.40),
-  `o` to hand off (watch `mode=drive`), then raise amp in small steps and watch `period_est`/hz
-  climb past 450 — gated by `FAULT: CPU_HIGH`, `FAULT: STALL`, and the auto-revert. If it holds
-  toward ~800–1400 Hz, the high-speed path is open and detection (not the governor) is the next
-  wall → then path 1 (streaming harmonic detector). If detection or CPU bites first, that's the
-  evidence for which lever comes next.
+- **Step 3 bench result (June 28): DRIVE engages but is DETECTION-LIMITED.** Careful settled
+  bring-up (`cl_drive_bringup`) at 380 Hz, sign-change: lock_slow caps ~0.27 (alpha-blend does
+  NOT build it — alpha 0.5-0.7 *destabilizes*, maxrun 776/905 desync bursts). Lowered handoff to
+  0.25; drive engaged (`mode=drive`) but **lock_slow crashed to 0.136** and speed drifted 380→363
+  — it only dead-reckons on `period_est` between the ~14-30% of commutations that detect a ZC.
+  Not a sensorless lock; an open-loop coast with sparse nudges. **70-86% coast starves the PLL.**
+- **VERDICT: detection coverage is THE wall.** Loop tuning is exhausted (predict-gate, alpha,
+  drive all tested, all detection-limited). The control machinery works; it has nothing to track.
+- **Next = PATH 1: streaming harmonic detector.** The firmware version of the validated oracle
+  (recovers OUT-OF-WINDOW crossings to ~4° offline) to lift in-window coverage above ~30% and
+  actually feed the loop. Everything downstream (drive, climb to 1300 Hz) is gated on it. Design
+  it under the constant-per-tick ISR constraint and watch `cpu_busy`/`isr_util` (harmonic fit is
+  heavier than sign-change).
 
 ## Two facts that frame everything
 
