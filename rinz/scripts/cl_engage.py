@@ -98,6 +98,25 @@ def render(cap, path):
         print(f"  (render {path.name} skipped: {exc})")
 
 
+def set_detector(ser, want):
+    """Drive the firmware loop detector to `want` ('linfit' | 'signchange'). The 'j' key
+    toggles; send + read the "detector=..." echo and retry until it matches. Returns the
+    resulting name or None. (Old firmware without 'j' just won't echo -> returns None.)"""
+    import re
+    for _ in range(4):
+        from scope_sweep import drain
+        from scope_sweep import send as _send
+        cur = re.search(r"detector=(linfit|signchange)", drain(ser))
+        if cur and cur.group(1) == want:
+            return want
+        _send(ser, "j")
+        time.sleep(0.15)
+        mo = re.search(r"detector=(linfit|signchange)", drain(ser))
+        if mo and mo.group(1) == want:
+            return want
+    return None
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("port")
@@ -106,6 +125,9 @@ def main() -> int:
     p.add_argument("--amp", type=float, default=28.0, help="amp %% (>=24 for valid BEMF on the 48k tool)")
     p.add_argument("--alphas", type=float, nargs="+", default=[0.0, 0.2, 0.5, 1.0],
                    help="alpha steps to engage (must be in {0,0.2,0.5,1.0})")
+    p.add_argument("--detector", choices=["linfit", "signchange"], default="signchange",
+                   help="loop detector source: signchange (straddle-gated, clean) or linfit "
+                        "(legacy extrapolator). Needs the 'j'-toggle firmware; ignored on old builds.")
     p.add_argument("--snaps", type=int, default=4, help="captures averaged per alpha step")
     p.add_argument("--dwell", type=float, default=1.5, help="settle (s) after each alpha change")
     p.add_argument("--capture-timeout", type=float, default=4.0)
@@ -156,6 +178,10 @@ def main() -> int:
         position(ser, Setpoint(), args.hz, amp_t, qsettle=0.8, ramp_step=20,
                  ramp_dwell=0.3, transit_margin=8.0, settle=0.3)
         drain(ser)
+        # Set the loop detector AFTER all the q/reset spin-up so it sticks for the alpha sweep.
+        got_det = set_detector(ser, args.detector)
+        both(f"  loop detector: {args.detector}" +
+             ("" if got_det == args.detector else "  (WARNING: firmware did not confirm -- old build without 'j'?)"))
         both(f"\n  alpha | in-win ZC | oracle|off|% | lock_fast |  jit  |  iu_ma  | note")
         try:
             for ai, a in enumerate(args.alphas):

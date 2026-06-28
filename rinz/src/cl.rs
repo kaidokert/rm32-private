@@ -300,6 +300,13 @@ pub struct ClLoop {
     stalled: bool,
     stall_run: u32,
     stall_arm: f32,
+    // Detector source for the loop: false = finish_linfit() (extrapolates a crossing even when
+    // the window never crosses -- fabricates one from demag/commutation transients in the
+    // out-of-window sectors, the source of the Phase-3 jitter), true = finish_frame() (the
+    // straddle-gated sign-change: a crossing ONLY when the float window actually crosses
+    // neutral; otherwise None -> the loop coasts cleanly on its per-sector memory). Default
+    // false to preserve the sim-validated behaviour; the bench A/B toggles it on to measure.
+    use_signchange: bool,
 }
 
 impl ClLoop {
@@ -341,9 +348,23 @@ impl ClLoop {
             resid_hist: [0; 6],
             stall_armed: false,
             stalled: false,
-            stall_run: 10,   // ~1.6 electrical revs of all-coast
-            stall_arm: 0.30, // arm once lock_fast exceeds this (open loop settles ~0.5)
+            stall_run: 10,         // ~1.6 electrical revs of all-coast
+            stall_arm: 0.30,       // arm once lock_fast exceeds this (open loop settles ~0.5)
+            use_signchange: false, // default = linfit (sim-validated); bench toggles sign-change
         }
+    }
+
+    /// Detector source for the loop. false = extrapolating linfit (fabricates a crossing in
+    /// out-of-window sectors), true = straddle-gated sign-change (clean crossing only when the
+    /// window actually crosses; else coast). The bench A/B (cl_engage) toggles this to measure
+    /// whether honest-sparse beats noisy-dense for closed-loop jitter.
+    pub fn set_use_signchange(&mut self, on: bool) {
+        self.use_signchange = on;
+    }
+
+    /// Whether the loop is using the sign-change detector (true) or the linfit (false).
+    pub fn use_signchange(&self) -> bool {
+        self.use_signchange
     }
 
     /// Set the per-sector ZC EMA weight (0.0 = raw, no filtering; higher = smoother but
@@ -467,7 +488,15 @@ impl ClLoop {
         // position so a wild extrapolation can't hijack the schedule.
         let mut zc_ticks = None;
         if self.scheduled.is_none() && self.ticks >= 0.5 * self.state.frequency {
-            if let Some(t_zc) = self.detector.finish_linfit() {
+            // Sign-change (finish_frame) fires ONLY on a real in-window crossing -> None when
+            // the window never crosses, so the loop coasts cleanly instead of chasing a
+            // fabricated linfit extrapolation. linfit is the legacy default (sim-validated).
+            let detected = if self.use_signchange {
+                self.detector.finish_frame()
+            } else {
+                self.detector.finish_linfit()
+            };
+            if let Some(t_zc) = detected {
                 let win = self.state.frequency;
                 if t_zc >= -0.3 * win && t_zc <= 1.3 * win {
                     zc_ticks = Some(t_zc);

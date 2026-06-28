@@ -216,6 +216,9 @@ static CL_ZC_BETA_X1000: AtomicU32 = AtomicU32::new(600);
 // Predictive coast (1=on): on a missed ZC, schedule from per-sector memory vs open-loop
 // timeout. Targets the residual ~4% per-miss commutation clips. Live A/B via 'y'.
 static CL_PREDICT_COAST: AtomicU32 = AtomicU32::new(1);
+// Loop detector source: 0 = linfit (extrapolates a crossing even out-of-window -> Phase-3
+// jitter), 1 = sign-change (clean in-window crossing only, else coast). Toggle with 'j'.
+static CL_USE_SIGNCHANGE: AtomicU32 = AtomicU32::new(0);
 // Lock-quality IIRs (x1000) read from the loop into telemetry: hit fraction + ZC jitter.
 static CL_LOCK_FAST_X1000: AtomicU32 = AtomicU32::new(0);
 static CL_LOCK_SLOW_X1000: AtomicU32 = AtomicU32::new(0);
@@ -633,7 +636,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast j=detector(lf/sc) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -1003,6 +1006,17 @@ fn main() -> ! {
                     CL_PREDICT_COAST.store(v, Ordering::Relaxed);
                     writeln!(tx, "predict_coast={}\r", v).ok();
                 }
+                // toggle the loop's detector source: linfit (fabricates out-of-window) <-> sign-change
+                b'j' => {
+                    let v = (CL_USE_SIGNCHANGE.load(Ordering::Relaxed) == 0) as u32;
+                    CL_USE_SIGNCHANGE.store(v, Ordering::Relaxed);
+                    writeln!(
+                        tx,
+                        "detector={}\r",
+                        if v != 0 { "signchange" } else { "linfit" }
+                    )
+                    .ok();
+                }
                 other => handle_command(other, &mut tx),
             }
         }
@@ -1078,7 +1092,7 @@ fn run_capture<TX: Write>(
     let (vbus_mv, iu_ma) = power_from_buffer(cap_ptr1, frames);
     writeln!(
         tx,
-        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} predict={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
+        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} predict={} det={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
         DBG_CAPTURE_HZ.load(Ordering::Relaxed),
         DBG_CAPTURE_AMP.load(Ordering::Relaxed),
         DUTY_TRIM.load(Ordering::Relaxed),
@@ -1087,6 +1101,7 @@ fn run_capture<TX: Write>(
         CL_ALPHA_X1000.load(Ordering::Relaxed),
         CL_ZC_BETA_X1000.load(Ordering::Relaxed),
         CL_PREDICT_COAST.load(Ordering::Relaxed),
+        if CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0 { "sc" } else { "lf" },
         CL_PERIOD_X100.load(Ordering::Relaxed),
         CL_LOCK_FAST_X1000.load(Ordering::Relaxed),
         CL_LOCK_SLOW_X1000.load(Ordering::Relaxed),
@@ -1347,6 +1362,7 @@ extern "C" fn TIM7() {
         let cl = (*cl_ptr).as_mut().unwrap();
         cl.set_zc_beta(CL_ZC_BETA_X1000.load(Ordering::Relaxed) as f32 / 1000.0); // live-tunable
         cl.set_predict_coast(CL_PREDICT_COAST.load(Ordering::Relaxed) != 0);
+        cl.set_use_signchange(CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0);
         cl.set_stall_run(CL_STALL_RUN);
         if CL_GLITCH_RESET.swap(false, Ordering::Relaxed) {
             cl.reset_glitch();
