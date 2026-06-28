@@ -255,6 +255,11 @@ const CL_STALL_RUN: u32 = 10; // consecutive coasts that count as a stall (~1.6 
 // they happen. A coast run reaching this length (but below CL_STALL_RUN) is a momentary
 // lock wobble worth flagging; above the normal per-sector-wave coast (~3) so it doesn't flood.
 const CL_FAULT_RUN_MIN: u32 = 5;
+// CPU-starvation guard: emit FAULT: CPU_HIGH when the worst-case TIM7 ISR exceeds this % of
+// its per-tick budget (170MHz/DRIVE_HZ) -- so ISR overrun surfaces as a labelled fault in any
+// mode, never mistaken for a control desync. Hysteresis re-arm at -10%; DBG_ISR_CYC (fetch_max)
+// is cleared by each capture, so the guard re-arms naturally between captures.
+const CL_CPU_HIGH_PCT: u32 = 88;
 const CL_SLEW_FRAC: f32 = 0.15; // max nudge as a fraction of the open-loop period at alpha=1
 const CL_KP: f32 = 0.3; // period PI gains (validated in the host sim)
 const CL_KI: f32 = 0.2;
@@ -834,6 +839,8 @@ fn main() -> ! {
     let mut last_mon = cortex_m::peripheral::DWT::cycle_count();
     let mut stall_announced = false;
     let mut last_maxrun = 0u32; // for the always-on fault watcher (new coast-run highs)
+    let mut prev_monitoring = false; // edge-detect 'i' enable to start cpu_busy on a full window
+    let mut cpu_warned = false; // hysteresis for the FAULT: CPU_HIGH edge
 
     loop {
         // -------- Phase-2 always-on fault watcher (no 'i' monitor needed) --------
@@ -880,6 +887,28 @@ fn main() -> ! {
             .ok();
         }
 
+        // CPU-starvation guard (always-on, any mode): worst-case TIM7 ISR vs its tick budget.
+        let isr_util = DBG_ISR_CYC.load(Ordering::Relaxed) * 100 / (170_000_000 / DRIVE_HZ).max(1);
+        if isr_util >= CL_CPU_HIGH_PCT && !cpu_warned {
+            cpu_warned = true;
+            writeln!(
+                tx,
+                "FAULT: CPU_HIGH isr_util={} budget_cyc={} hz={} alpha={} det={}\r",
+                isr_util,
+                170_000_000 / DRIVE_HZ,
+                ELECTRICAL_HZ.load(Ordering::Relaxed),
+                CL_ALPHA_X1000.load(Ordering::Relaxed),
+                if CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0 {
+                    "sc"
+                } else {
+                    "lf"
+                },
+            )
+            .ok();
+        } else if isr_util + 10 < CL_CPU_HIGH_PCT {
+            cpu_warned = false;
+        }
+
         // Service the live stream: one back-to-back dump per idle pass while the
         // STREAMING flag is set. 'l' sets it, 'k' (or 'w') clears it; everything
         // else is the normal command set, processed unchanged below.
@@ -894,6 +923,13 @@ fn main() -> ! {
         // self-describing `glitch:` line per ~1 s without needing a capture. This is the
         // honest way to catch the rare, seconds-apart events: run a window, compare counts.
         let monitoring = MONITOR.load(Ordering::Relaxed);
+        if monitoring && !prev_monitoring {
+            // 'i' just enabled: start the cpu_busy window fresh so the first reading isn't a
+            // partial-window artifact (the inflated 100/76/.. the user saw on each re-enable).
+            last_mon = cortex_m::peripheral::DWT::cycle_count();
+            idle.latch();
+        }
+        prev_monitoring = monitoring;
         if monitoring && !streaming {
             let now = cortex_m::peripheral::DWT::cycle_count();
             if now.wrapping_sub(last_mon) >= MON_PERIOD_CYC {
