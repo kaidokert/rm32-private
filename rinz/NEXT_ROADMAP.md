@@ -40,11 +40,19 @@ operating range to 90–95 % duty (~1300–1400 elec Hz)._
   AND injects timing variance that reads as unexplained glitches. The per-tick telemetry stores
   stay (uniform); optimizations must be uniform (like the LSQ skip). The full-sensorless step
   must compute the commutation rate with bounded, ideally constant, per-tick cost.
-- **Next:** Step 3 = **full-sensorless loop drive** (loop `period_est` drives commutation,
-  governor demoted to startup/fallback) — the path past the ~450 Hz governor cap toward 1300 Hz.
-  Build it incrementally under the CONSTANT-per-tick constraint, gated on `cpu_busy`/`isr_util`/
-  `FAULT: CPU_HIGH`. The streaming harmonic detector (path 1) is the lever if/when detection —
-  not the spin envelope or CPU — becomes the wall.
+- **Step 3 — full-sensorless DRIVE implemented (untested on HW).** Wired the sim-validated
+  `on_frame()` (period PLL tracks rotor speed) into the firmware behind safety scaffolding:
+  `'o'` toggles `CL_DRIVE`; hysteretic lock_slow-gated handoff (enter >0.40, revert <0.20);
+  `clamp_period` bounds the rate to [~1400, ~80] Hz every tick; governor (`on_frame_blend`) is
+  startup + fallback; `ELECTRICAL_HZ` slews to follow `period_est` (readout + smooth revert);
+  `mode=gov/drive` in debug. Speed is an OUTPUT (set by amp) — climb by raising amp, not freq.
+  Constant per-tick cost preserved. Sim 3/3.
+- **Next (bench bring-up of Step 3):** reflash, spin governed to ~300 Hz (lock_slow >0.40),
+  `o` to hand off (watch `mode=drive`), then raise amp in small steps and watch `period_est`/hz
+  climb past 450 — gated by `FAULT: CPU_HIGH`, `FAULT: STALL`, and the auto-revert. If it holds
+  toward ~800–1400 Hz, the high-speed path is open and detection (not the governor) is the next
+  wall → then path 1 (streaming harmonic detector). If detection or CPU bites first, that's the
+  evidence for which lever comes next.
 
 ## Two facts that frame everything
 
