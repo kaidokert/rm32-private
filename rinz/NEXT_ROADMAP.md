@@ -28,10 +28,23 @@ operating range to 90–95 % duty (~1300–1400 elec Hz)._
   frequency; only 25% amp at 500 Hz → rotor mechanically stalls), not a detection wall. The
   predict-gate A/B refuted lowering the gate (gate 0.25 → 100% coast, never acquires — the gate
   exists for good reason).
-- **Next:** re-climb with **more amp** (push the open-loop spin envelope past ~450 Hz) to find
-  the TRUE detection ceiling; then more loop authority (alpha→1, needs jitter work) to let the
-  loop drive speed instead of the governor. The streaming harmonic detector (path 1) is the
-  lever if/when detection — not the spin envelope — becomes the wall.
+- **CPU headroom (June 28).** Wired the minz `idle_loop` profiler into scope_cl2_48k: `glitch:`
+  now carries `cpu_busy=` (total, idle-loop) and `isr_util=` (TIM7 worst-case / its 48k budget).
+  Measured: **~60% busy / ~67% worst-case ISR at 48 kHz = ~40% margin** — real but finite. Added
+  an always-on `FAULT: CPU_HIGH` guard (worst-case isr_util ≥ 88%) so starvation surfaces as a
+  labelled fault, never a phantom desync. Fixed the open-loop silent stall-kill (a plain `q` run
+  no longer dies — `reset_stall()` in the alpha=0 branch). Trimmed the linfit LSQ accumulation
+  under sign-change (uniform per-tick saving).
+- **DESIGN CONSTRAINT (user, load-bearing): keep ISR cost CONSTANT per tick.** Do NOT move work
+  into a commutation-only branch — a heavier tick raises the worst-case you must budget against
+  AND injects timing variance that reads as unexplained glitches. The per-tick telemetry stores
+  stay (uniform); optimizations must be uniform (like the LSQ skip). The full-sensorless step
+  must compute the commutation rate with bounded, ideally constant, per-tick cost.
+- **Next:** Step 3 = **full-sensorless loop drive** (loop `period_est` drives commutation,
+  governor demoted to startup/fallback) — the path past the ~450 Hz governor cap toward 1300 Hz.
+  Build it incrementally under the CONSTANT-per-tick constraint, gated on `cpu_busy`/`isr_util`/
+  `FAULT: CPU_HIGH`. The streaming harmonic detector (path 1) is the lever if/when detection —
+  not the spin envelope or CPU — becomes the wall.
 
 ## Two facts that frame everything
 
