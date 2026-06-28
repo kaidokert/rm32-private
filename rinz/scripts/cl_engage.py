@@ -98,6 +98,20 @@ def render(cap, path):
         print(f"  (render {path.name} skipped: {exc})")
 
 
+def set_predict_gate(ser, target):
+    """Set the firmware predictive-coast engage gate to `target` (lock_fast threshold). The
+    'e'/'r' keys step it -0.05/+0.05; floor to 0 then raise to target. None leaves the default."""
+    if target is None:
+        return None
+    from scope_sweep import send as _send
+    for _ in range(22):           # floor to 0.00
+        _send(ser, "e")
+    for _ in range(int(round(max(0.0, min(1.0, target)) / 0.05))):
+        _send(ser, "r")
+        time.sleep(0.02)
+    return target
+
+
 def set_detector(ser, want):
     """Drive the firmware loop detector to `want` ('linfit' | 'signchange'). The 'j' key
     toggles; send + read the "detector=..." echo and retry until it matches. Returns the
@@ -129,6 +143,10 @@ def main() -> int:
     p.add_argument("--detector", choices=["linfit", "signchange"], default="signchange",
                    help="loop detector source: signchange (straddle-gated, clean) or linfit "
                         "(legacy extrapolator). Needs the 'j'-toggle firmware; ignored on old builds.")
+    p.add_argument("--predict-gate", type=float, default=None,
+                   help="predictive-coast engage gate (lock_fast threshold, default fw 0.5). "
+                        "Lower (e.g. 0.25) lets predict bridge gaps in the sparse-detection "
+                        "regime where lock_fast ceilings ~0.33. Needs the 'e/r' firmware.")
     p.add_argument("--snaps", type=int, default=4, help="captures averaged per alpha step")
     p.add_argument("--dwell", type=float, default=1.5, help="settle (s) after each alpha change")
     p.add_argument("--capture-timeout", type=float, default=4.0)
@@ -182,6 +200,9 @@ def main() -> int:
         got_det = set_detector(ser, args.detector)
         both(f"  loop detector: {args.detector}" +
              ("" if got_det == args.detector else "  (WARNING: firmware did not confirm -- old build without 'j'?)"))
+        if args.predict_gate is not None:
+            set_predict_gate(ser, args.predict_gate)
+            both(f"  predict-coast gate: {args.predict_gate:.2f}")
         # Discard any spin-up stall flag: the open-loop freq-ramp can false-trip the stall
         # detector (the firmware now gates FAULT emission on alpha>0, but the host may have
         # latched a STALL from a pre-gate build or a ramp transient). Start the sweep clean.

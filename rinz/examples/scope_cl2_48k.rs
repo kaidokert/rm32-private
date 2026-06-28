@@ -219,6 +219,9 @@ static CL_PREDICT_COAST: AtomicU32 = AtomicU32::new(1);
 // Loop detector source: 0 = linfit (extrapolates a crossing even out-of-window -> Phase-3
 // jitter), 1 = sign-change (clean in-window crossing only, else coast). Toggle with 'j'.
 static CL_USE_SIGNCHANGE: AtomicU32 = AtomicU32::new(0);
+// Predictive-coast engage gate x100 (lock_fast threshold). Default 50 = 0.50. Sign-change
+// ceilings lock_fast at ~0.33, so 0.50 never engages predict -> lower with 'e', raise 'r'.
+static CL_PREDICT_GATE_X100: AtomicU32 = AtomicU32::new(50);
 // Lock-quality IIRs (x1000) read from the loop into telemetry: hit fraction + ZC jitter.
 static CL_LOCK_FAST_X1000: AtomicU32 = AtomicU32::new(0);
 static CL_LOCK_SLOW_X1000: AtomicU32 = AtomicU32::new(0);
@@ -641,7 +644,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast j=detector(lf/sc) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -1053,6 +1056,13 @@ fn main() -> ! {
                     )
                     .ok();
                 }
+                // predictive-coast engage gate (lock_fast threshold) -0.05 / +0.05
+                b'e' | b'r' => {
+                    let cur = CL_PREDICT_GATE_X100.load(Ordering::Relaxed) as i32;
+                    let v = (cur + if k == b'r' { 5 } else { -5 }).clamp(0, 100) as u32;
+                    CL_PREDICT_GATE_X100.store(v, Ordering::Relaxed);
+                    writeln!(tx, "predict_gate={}.{:02}\r", v / 100, v % 100).ok();
+                }
                 other => handle_command(other, &mut tx),
             }
         }
@@ -1128,7 +1138,7 @@ fn run_capture<TX: Write>(
     let (vbus_mv, iu_ma) = power_from_buffer(cap_ptr1, frames);
     writeln!(
         tx,
-        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} predict={} det={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
+        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} predict={} det={} pgate={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
         DBG_CAPTURE_HZ.load(Ordering::Relaxed),
         DBG_CAPTURE_AMP.load(Ordering::Relaxed),
         DUTY_TRIM.load(Ordering::Relaxed),
@@ -1138,6 +1148,7 @@ fn run_capture<TX: Write>(
         CL_ZC_BETA_X1000.load(Ordering::Relaxed),
         CL_PREDICT_COAST.load(Ordering::Relaxed),
         if CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0 { "sc" } else { "lf" },
+        CL_PREDICT_GATE_X100.load(Ordering::Relaxed),
         CL_PERIOD_X100.load(Ordering::Relaxed),
         CL_LOCK_FAST_X1000.load(Ordering::Relaxed),
         CL_LOCK_SLOW_X1000.load(Ordering::Relaxed),
@@ -1399,6 +1410,7 @@ extern "C" fn TIM7() {
         cl.set_zc_beta(CL_ZC_BETA_X1000.load(Ordering::Relaxed) as f32 / 1000.0); // live-tunable
         cl.set_predict_coast(CL_PREDICT_COAST.load(Ordering::Relaxed) != 0);
         cl.set_use_signchange(CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0);
+        cl.set_predict_gate(CL_PREDICT_GATE_X100.load(Ordering::Relaxed) as f32 / 100.0);
         cl.set_stall_run(CL_STALL_RUN);
         if CL_GLITCH_RESET.swap(false, Ordering::Relaxed) {
             cl.reset_glitch();

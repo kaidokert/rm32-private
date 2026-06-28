@@ -259,8 +259,11 @@ pub struct ClLoop {
     gate_frac: f32,         // reject a period measurement deviating more than this fraction
     coast: f32,             // force commutation at period_est*coast when no ZC is seen
     predict_coast: bool,    // on a miss, schedule from per-sector ZC memory vs generic timeout
+    predict_gate: f32,      // engage predictive coast only once lock_fast exceeds this. Default
+    // 0.5, but the sparse sign-change detector ceilings lock_fast at
+    // ~2/6 = 0.33, so 0.5 never engages -> tunable to test lower gates.
     zc_filt: [Option<f32>; 6], // per-sector EMA of the ZC position (ticks since commutation)
-    zc_beta: f32,           // EMA weight on history; 0.0 = no filtering (raw per-sector ZC)
+    zc_beta: f32,              // EMA weight on history; 0.0 = no filtering (raw per-sector ZC)
     // Lock-quality telemetry (updated once per commutation). Two IIR time constants so the
     // host can SEE how marginal the lock is rather than relying on the ear: lock_* = ZC-hit
     // fraction (0..1), jit_* = |ZC - per-sector-smoothed| residual in ticks (jitter even
@@ -326,6 +329,7 @@ impl ClLoop {
             gate_frac,
             coast,
             predict_coast: true,
+            predict_gate: 0.5,
             zc_filt: [None; 6],
             zc_beta: 0.0,
             last_residual: None,
@@ -376,6 +380,14 @@ impl ClLoop {
     /// Predictive coast: on a missed detection, schedule from this sector's smoothed ZC
     /// memory instead of the generic open-loop timeout (true = on). Off restores the
     /// dead-reckon-at-period behavior, for an A/B of the residual commutation clips.
+    /// Lock-quality threshold above which predictive coast engages (default 0.5). Lower it
+    /// to let the per-sector ZC memory bridge gaps in the sparse-detection regime where
+    /// lock_fast ceilings below 0.5; too low risks predicting off noisy memory during cold
+    /// acquisition. Clamped to [0, 1].
+    pub fn set_predict_gate(&mut self, gate: f32) {
+        self.predict_gate = gate.clamp(0.0, 1.0);
+    }
+
     pub fn set_predict_coast(&mut self, on: bool) {
         self.predict_coast = on;
     }
@@ -532,10 +544,10 @@ impl ClLoop {
         // correct phase rather than a generic timeout (which is the right average period
         // but the wrong phase -> the audible per-miss clip). Fall back to the open-loop
         // coast only with no memory yet (acquisition) or when predictive coast is off.
-        // Gate predictive coast on being locked (lock_fast > 0.5): only then is the
+        // Gate predictive coast on being locked (lock_fast > predict_gate): only then is the
         // per-sector memory trustworthy. During acquisition the memory is noise, and
         // predicting off it prevents lock -- so fall back to the open-loop coast there.
-        let predict = self.predict_coast && self.lock_fast > 0.5;
+        let predict = self.predict_coast && self.lock_fast > self.predict_gate;
         let cl_target = match self.scheduled {
             Some(t) => t,
             None => match (predict, self.zc_filt[self.sector as usize]) {
