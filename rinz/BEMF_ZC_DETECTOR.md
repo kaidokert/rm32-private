@@ -118,98 +118,82 @@ along the catch-boundary diagonal. The surface is smooth at ±1 Hz frequency res
 (jitter captures), i.e. it is the rotor genuinely sitting at a well-defined angle vs
 commutation — not aliasing.
 
-### 4. The per-sector wave tracks load angle, not geometry — SUPPORTED across 250–400 Hz (June 2026)
+### 4. The per-sector wave — load angle vs geometry — RETRACTED & RE-DERIVED (June 27 2026)
 
-The float-window crossing carries a repeatable **per-sector offset** (the "per-sector
-wave"): across the six sectors of one electrical rev the ZC sits at different
-%-of-window positions. The live closed-loop overlay (`scope_live_ui` → `latest_zc.png`,
-3-marker linfit overlay) shows it as a **left/right asymmetry per phase** — phase A
-near-symmetric, phases B and C strongly asymmetric (left window much later than right).
-The long-standing open question: is this a **fixed motor/sense geometry** asymmetry, or a
-**load-angle** effect?
+> **This section previously claimed "the per-sector wave tracks load angle, not geometry —
+> SUPPORTED across 250–400 Hz." That claim was wrong, built on a detector artifact. It is
+> retracted below and replaced with the validated-oracle re-derivation. Kept in full as a
+> worked example of trusting a detector's plausible numbers before validating the rig.**
 
-**Direct test (`scripts/cl_wave_sweep.py`).** Sweep amp — the load-angle knob at fixed
-speed — and watch the per-sector wave. **Open loop is the clean probe:** the commutation
-is a fixed uniform schedule that cannot desync (a *closed*-loop amp sweep was unreadable —
-the lock destabilized at every amp step), so the linfit position is the raw load angle.
-Measured with the **ungated** Python linfit (`linfit_zc_pct`): the firmware `lf` is gated
-to `[-30,130]%` and rejects the far-out-of-window sectors to `nan`, whereas the ungated
-fit projects every sector, with a `|slope| ≥ 15` filter to drop genuinely flat /
-unobservable windows.
+**What was claimed.** A `cl_wave_sweep.py` amp×freq sweep reported a per-sector ZC "wave"
+whose peak-to-trough spread **collapsed dramatically with amplitude** (e.g. 250 Hz 179→24,
+350 Hz 37→10) and **offset upward with frequency** — read as the two orthogonal knobs of
+a load-angle effect, and promoted to "SUPPORTED."
 
-**Evidence — 250 Hz, open loop, amp 13 → 19 % (linfit ZC, % of window):**
+**Why it was wrong.** The sweep measured each sector with an **ungated least-squares linfit
+over the whole float window**. Raw captures (preserved only after the user insisted —
+`logs/zc_<ts>/zc_<hz>_<amp>.log`) show that at these operating points the float-window BEMF
+is usually a **one-sided plateau** — the real zero crossing falls at or outside the 60°
+window edge — and the only excursions through neutral are the **demag transient** at the
+window start and the **next-commutation edge** at its end. The whole-window linfit fit
+*those two transients*, not a BEMF ramp, and fabricated a "crossing." Direct check on
+`zc_250_12` s4: clean middle rises through zero at ~20 % (rising), but the linfit reported
+**slope −24.8, z = 84 %** because the `−335` demag and `−390` commutation endpoints flipped
+the least-squares slope. The directly-observed sign-change detector (`analyze_zero_crossings`,
+`status=='zc'`) confirms the problem: across the whole 250–400 Hz sweep it finds only
+**0–2 genuine in-window crossings per capture** (≈12 windows each) — consistent with the
+long-known "**2 of 6 sectors cross in-window**" (`motor_tester`). The "clean flat wave at
+high amp" was the *artifact* being consistent (the linfit fits the same two transient shapes
+in every window), not crossings converging — e.g. `400/22`, the supposed flattest/best
+point, has **no in-window crossing in any sector**.
 
-```
- sector:  s0   s1   s2   s3   s4   s5  | peak-trough range
-   13%     4   21   83   29   50  -57  |  140   (peak s2, trough s5)
-   15%    14   60   54   29   -9   -1  |   69
-   17%    25   65   27   24  -17   24  |   82   (peak s1, trough s4)
-   19%    33   43   17   19   19   26  |   26   (nearly flat, all mid-window)
-```
-
-Two signatures, both **inconsistent with fixed geometry**:
-
-1. **The wave SLIDES.** Sectors move in *opposite* directions as amp rises — `s0` 4→33
-   and `s5` −57→26 climb while `s2` 83→17 falls. The peak walks `s2 → s1`; the trough
-   `s5 → s4`. A fixed-geometry asymmetry would keep its shape pinned to the same sectors
-   and merely scale.
-2. **The wave FLATTENS.** Peak-to-trough spread collapses **140 → 26** over 13→19 %. At
-   19 % every sector sits at +17…+43 % — clustered near window centre (in-window).
-
-**Mechanism.** More amp at fixed speed = more torque margin = the rotor lags the forced
-commutation less = **smaller load angle**. As the load angle shrinks the crossings pull
-toward window centre and the per-sector spread collapses. The asymmetry is *where BEMF
-crosses at a working lead angle* — not a defect in the motor or the sense path.
-
-**Consistency with prior findings.** This *refines* §2's "the per-sector asymmetry
-collapses to 0–10° in deep lock" into a continuous load-angle dependence (deeper lock /
-higher amp = lower load angle = flatter wave), and it is the **angle-domain partner** of
-the Phase-A closeout — the amplitude-domain face of the same load-angle-locked wave (the
-Phase-A `R_A/R_C` swing with amplitude, §"Phase-A anomaly"). It is also consistent with
-the earlier exclusions: drive-asymmetry/elliptical-field, rotor-hunting, and divider
-mismatch were all ruled out previously; load angle is what remained.
-
-**Follow-up — the frequency axis (lock-gated, June 27 2026).** A clean 250–400 Hz × 12–20 %
-sweep adds the orthogonal knob. This run is **gate-hardened**: every below-stall-curve
-point (`amp < 0.035·hz + 2.6 + margin`) is skipped rather than measured stuck, and every
-recorded point must light **≥4 of 6 linfit sectors** (a synchronously spinning rotor has
-structured per-sector BEMF; a stuck/slipping one does not). The gate matched the eye on
-19/20 on the first run (the one miss a *conservative reject* of a flaky high-amp catch),
-and an immediate re-run reproduced **20/20** with that point locking — i.e. the lone
-disagreement was rig catch-flakiness, not a missed wave, and no contaminated data is ever
-admitted. Both load-angle signatures hold **across all four frequencies**:
+**Re-derivation with the validated oracle (`zc_fit.py` sinusoid fit).** The oracle fits each
+phase's pooled float-arc BEMF to `a·cos+b·sin+c` (transients blanked) and solves
+analytically for the crossing — recovering out-of-window crossings *legitimately* (it was
+validated to ~4° vs in-window ground truth). Run per capture on the same 20 setpoints
+(`oracle_wave_20260627.json`), all fits clean (`|c/R| ≤ 0.23`, i.e. real crossings):
 
 ```
-  flattening with amp (peak-trough spread, % of window):
-    250 Hz:  12% → 179      20% →  24
-    300 Hz:  14% →  69      20% →  28
-    350 Hz:  16% →  43      20% →  11
-    400 Hz:  ...            20% →  13   (very flat)
-
-  offset with frequency (mean sector level at fixed 20 %):
-    250 → 27    300 → 30    350 → 42    400 → 52   (monotonic up)
+per-sector crossing-offset spread (% of window)    LS-linfit (artifact) vs ORACLE (validated)
+  250 Hz, amp 12→20:   LS 171 → 25                 ORACLE  28 22 22 22 19   (≈flat)
+  300 Hz, amp 14→22:   LS  70 → 24                 ORACLE  35 32 37 30 38   (≈flat)
+  350 Hz, amp 16→24:   LS  37 → 10                 ORACLE  24 23 31 33 42   (INCREASES)
+  400 Hz, amp 18→26:   LS  17 →  8                 ORACLE  53 50 52 55 51   (≈flat)
 ```
 
-At **every** frequency, adding amp collapses the per-sector spread toward a flat,
-window-centred wave; at fixed amp, raising frequency shifts the *whole* wave to later
-crossings. Torque margin and speed are the two load-angle knobs, and both move the wave
-the way load angle predicts — fixed geometry would do neither. `150 Hz` did not spin
-open-loop and `450 Hz` stalled past the envelope, so the clean open-loop band is ~250–400 Hz.
+**The amp-flatten does not exist.** The validated per-sector spread is **roughly constant
+with amplitude** (at 350 Hz it grows). The collapse, the "minimum that moves with frequency,"
+and the clean amp-flatten were all LS-linfit transient artifacts.
 
-**Corollary (observability knob).** The ~50 % in-window ZC coverage at the low-amp
-operating point is itself a *low-load-angle / low-amp* consequence; loading the motor
-harder pulls more sectors in-window (≈6/6 at 18–20 % open loop) — at the usual current cost.
+**What the evidence actually supports now:**
+1. **A stable per-sector offset pattern** (~±0.3 window; `s0` consistently low, `s5` high)
+   that **does not collapse with torque margin** — i.e. it behaves like a **fixed
+   geometric/sequence offset**, the opposite of the retracted claim. The "geometry vs load
+   angle" question is **re-opened, leaning geometry** for the amplitude axis.
+2. **Load angle is real but minor here** — it shows mainly on the **frequency** axis (the
+   earlier 120–180 Hz oracle run moved C-fall 212→243°, B-fall 283→315°), with only a small
+   amp-dependent slide at 350 Hz. Over 250–400 Hz the amplitude knob barely moves the true
+   crossings.
+3. **In-window ZC coverage is intrinsically sparse** at the open-loop schedule (commutation
+   isn't timed to land ZC inside the float window). A trustworthy detector must combine the
+   **observed** sign-change crossings with the **harmonic-oracle** out-of-window recovery —
+   never a whole-window linfit.
 
-> **STATUS: SUPPORTED across 250–400 Hz on lock-gated data — not yet airtight.** Both
-> load-angle signatures (amp-flatten, freq-offset) now reproduce on a hardened rig that
-> rejects stuck/slipping captures, across four frequencies and four amps, open loop. This
-> is materially stronger than the original single-frequency result. Remaining caveats
-> before it is *settled*: (a) a few **high-frequency outliers** persist (e.g. 400/18 `s5`
-> = 159, an out-of-window projection); (b) **one motor/board** — a second would separate
-> motor-specific from universal behaviour; (c) **closed-loop** confirmation still pending.
-> Treat "per-sector wave = load angle" as well-supported but single-motor.
-> Raw data: `wave_sweep_multifreq_20260627.json` (and `wave_sweep_250hz_20260626.json`).
-> Figure: `logs/wave_20260627_151148.png` (regenerate / extend with `scripts/cl_wave_sweep.py`).
+**Method consequences (carried forward):**
+- `cl_wave_sweep.py`'s linfit wave is **not a measurement** of the crossing; do not quote its
+  magnitudes. Its lock gate also must not depend on crossing count (there often are none) —
+  judge lock on BEMF *structure* (plateau spread, ramp presence) instead.
+- The Phase-A "amplitude-domain face of the load-angle wave" reading (§"Phase-A anomaly")
+  leaned on this section; revisit it under the oracle.
+
+> **STATUS: the load-angle *wave* claim is RETRACTED.** Validated re-derivation shows the
+> per-sector crossing pattern is largely **amplitude-invariant** (geometry-like) with only a
+> small, mainly-frequency-axis load-angle component. Root cause of the error: a whole-window
+> LS linfit fitting commutation/demag transients in out-of-window sectors, trusted before the
+> raw captures were preserved and the rig validated. Lesson logged in
+> `feedback_dont_declare_walls_prematurely`.
+> Evidence: `oracle_wave_20260627.json` (validated), raw captures `logs/zc_20260627_164752/`,
+> the discredited LS wave `wave_sweep_multifreq_20260627.json`.
 
 ## What this gives us
 
@@ -265,10 +249,12 @@ question is closed. (Figure: `logs/.../phase_a_closeout.png`, regenerate with
   samples per PWM period (a firmware change), not a host-side change.
 - **This is observation, not control.** Per the standing constraint, the detector is a
   measurement/diagnostic; nothing here closes a loop.
-- **The "per-sector wave = load angle" result (§4) is SUPPORTED, not airtight** — both
-  signatures (amp-flatten, freq-offset) reproduce on a lock-gated rig across 250–400 Hz ×
-  12–20 %, open loop. Remaining gaps before settled: a few high-freq out-of-window
-  outliers, closed-loop confirmation, and a second motor (still one board).
+- **The "per-sector wave = load angle" result (§4) is RETRACTED.** The amp-flatten /
+  freq-offset "wave" was a whole-window LS-linfit artifact (fitting demag + commutation
+  transients in out-of-window sectors). The validated harmonic oracle shows the per-sector
+  crossing pattern is largely **amplitude-invariant** (geometry-like), with only a small,
+  mainly-frequency-axis load-angle component. Real in-window crossings are sparse (0–2 per
+  capture). See §4 for the full retraction and re-derivation.
 
 ## Tools and provenance
 
