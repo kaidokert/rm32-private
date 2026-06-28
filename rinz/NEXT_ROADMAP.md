@@ -4,6 +4,25 @@ _Written June 27 2026, after the §4 retraction (see `BEMF_ZC_DETECTOR.md`). Goa
 trustworthy ZC detector, a closed loop (PLL + PI), and validated performance across the
 operating range to 90–95 % duty (~1300–1400 elec Hz)._
 
+## Progress log
+
+- **Phase 0 — done.** Harmonic oracle + `zc_oracle_render` is the offline ground-truth tool.
+- **Phase 1 — done & bench-validated.** `ClLoop` now consumes the straddle-gated sign-change
+  ZC (`finish_frame()`) instead of the fabricating `finish_linfit()` (runtime toggle `j`,
+  default still linfit so the sim is unchanged). Bench A/B @210 Hz: sign-change ~halved jitter
+  (7.7k vs 14.8k), tripled the current drop (−20–28% vs −2%), and centred the crossings 2×
+  better (offset 30 vs 62). Honest-sparse beats noisy-dense, as predicted.
+- **Phase 3 — engaged & measured.** Fine alpha sweep (`cl_engage --detector signchange`,
+  n/m steps) located a **sweet spot at alpha ≈ 0.5–0.7**: ~20–28% current reduction at the
+  lowest engaged jitter; alpha=1.0 overshoots (worse on both). Residual jitter is still ~6×
+  open-loop — the loop coasts ~half the cycles (only 2–3 of 6 sectors cross in-window).
+- **Phase 2 — v1 done.** Always-on classified `FAULT:` line over UART (STALL / COAST_BURST,
+  no monitor needed). **Remaining:** flight-recorder ring dump (last N commutations frozen on
+  a fault), a continuous low-rate health heartbeat (always-on, not `i`-gated), and an
+  overcurrent trigger (needs a continuous current proxy in the ISR).
+- **Next:** finish Phase 2 (flight recorder) OR cut residual jitter (zc_beta/PI at the sweet
+  spot) OR start the speed climb (Phase 4) — gated on the user's call.
+
 ## Two facts that frame everything
 
 **1. The loop is already half-built.** `cl.rs` uses the crate's tested `PLL` block as a
