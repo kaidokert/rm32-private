@@ -268,8 +268,11 @@ const CL_CPU_HIGH_PCT: u32 = 88;
 // once solidly locked, and revert below the drop threshold (hysteresis on lock_slow). The period
 // estimate is hard-clamped to a safe speed band (ticks/sector) so a detector glitch can't run the
 // rate away -- on top of on_frame's already-gated PLL. PMIN = max speed, PMAX = min speed.
-const CL_DRIVE_HANDOFF_LOCK: f32 = 0.40;
-const CL_DRIVE_DROP_LOCK: f32 = 0.20;
+// Measured: sign-change lock_slow caps ~0.29 at 380 Hz (settled), so 0.40 was unreachable.
+// Set the handoff to the achievable lock and test whether drive HOLDS off sparse (~30%) detection
+// -- the gated PLL + clamp_period are the protection. Revisit if drive can't hold the rate.
+const CL_DRIVE_HANDOFF_LOCK: f32 = 0.25;
+const CL_DRIVE_DROP_LOCK: f32 = 0.12;
 const CL_DRIVE_PMIN: f32 = DRIVE_HZ as f32 / (1400.0 * 6.0); // ~1400 Hz elec ceiling
 const CL_DRIVE_PMAX: f32 = DRIVE_HZ as f32 / (80.0 * 6.0); //   ~80 Hz elec floor
 const CL_SLEW_FRAC: f32 = 0.15; // max nudge as a fraction of the open-loop period at alpha=1
