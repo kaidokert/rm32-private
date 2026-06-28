@@ -20,8 +20,18 @@ operating range to 90–95 % duty (~1300–1400 elec Hz)._
   no monitor needed). **Remaining:** flight-recorder ring dump (last N commutations frozen on
   a fault), a continuous low-rate health heartbeat (always-on, not `i`-gated), and an
   overcurrent trigger (needs a continuous current proxy in the ISR).
-- **Next:** finish Phase 2 (flight recorder) OR cut residual jitter (zc_beta/PI at the sweet
-  spot) OR start the speed climb (Phase 4) — gated on the user's call.
+- **Phase 4 — climb started (path 2).** `cl_climb.py` ramps frequency under closed loop and
+  measures if lock holds. Key result (210→500 Hz, alpha 0.5): the 2/6 loop **scales UP** —
+  lock_slow improves 0.16 (210 Hz) → **0.45 (400 Hz, best)** as the larger BEMF cleans the
+  sparse detector; coast bursts drop to ~10. **Detection is not the limiter in the mid-band.**
+  Hard stall at ~450–500 Hz, but that's the **open-loop spin envelope** (alpha=0.5 governs the
+  frequency; only 25% amp at 500 Hz → rotor mechanically stalls), not a detection wall. The
+  predict-gate A/B refuted lowering the gate (gate 0.25 → 100% coast, never acquires — the gate
+  exists for good reason).
+- **Next:** re-climb with **more amp** (push the open-loop spin envelope past ~450 Hz) to find
+  the TRUE detection ceiling; then more loop authority (alpha→1, needs jitter work) to let the
+  loop drive speed instead of the governor. The streaming harmonic detector (path 1) is the
+  lever if/when detection — not the spin envelope — becomes the wall.
 
 ## Two facts that frame everything
 
