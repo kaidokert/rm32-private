@@ -186,11 +186,20 @@ def main() -> int:
         # detector (the firmware now gates FAULT emission on alpha>0, but the host may have
         # latched a STALL from a pre-gate build or a ramp transient). Start the sweep clean.
         _clear_stall(ser)
+        # Reset the glitch/coast counters ('x') so maxrun/coast/burst reflect ONLY the
+        # closed-loop sweep -- they are cumulative-since-boot otherwise (contaminated by every
+        # prior open-loop spin-up), which makes the FAULT context unreadable.
+        send(ser, "x")
+        time.sleep(0.2)
+        drain(ser)
         both(f"\n  alpha | in-win ZC | oracle|off|% | lock_fast |  jit  |  iu_ma  | note")
         try:
             for ai, a in enumerate(args.alphas):
                 set_alpha(ser, a)                 # engage / change loop authority (fine, n/m steps)
-                time.sleep(args.dwell)
+                time.sleep(args.dwell)            # let the engage transient settle FIRST...
+                send(ser, "x")                    # ...THEN reset glitch/coast counters, so each
+                time.sleep(0.3)                   # step's maxrun/coast reflect ITS steady state,
+                drain(ser)                        # not the engage transient or prior steps.
                 if _stalled(ser):
                     both(f"  {a:5.1f} |  --       |   --        |    --     |   --  |   --    | STALL/lock-loss")
                     _clear_stall(ser)
