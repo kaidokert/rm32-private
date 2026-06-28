@@ -694,6 +694,15 @@ impl ClLoop {
     pub fn set_period(&mut self, period: f32) {
         self.state = PLLState::new(period);
     }
+
+    /// Hard-clamp the period estimate (ticks/sector) to [min, max] -- runaway protection for
+    /// the full-drive path (`on_frame`). Caps the commanded speed regardless of what the ZC
+    /// PLL tracks, and stops PI wind-up past the bound. Cheap: safe to call EVERY tick (uniform
+    /// per-tick cost). `on_frame_blend` does not need it (it re-pins period_est = ol_period).
+    pub fn clamp_period(&mut self, min: f32, max: f32) {
+        self.state.frequency = self.state.frequency.clamp(min, max);
+        self.state.pi.integral = self.state.pi.integral.clamp(min, max);
+    }
 }
 
 #[cfg(test)]

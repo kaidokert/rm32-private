@@ -223,6 +223,10 @@ static CL_USE_SIGNCHANGE: AtomicU32 = AtomicU32::new(0);
 // Predictive-coast engage gate x100 (lock_fast threshold). Default 50 = 0.50. Sign-change
 // ceilings lock_fast at ~0.33, so 0.50 never engages predict -> lower with 'e', raise 'r'.
 static CL_PREDICT_GATE_X100: AtomicU32 = AtomicU32::new(50);
+// Full-sensorless drive: 0 = governed (on_frame_blend), 1 = drive when locked (on_frame, the
+// PLL sets the rate). Toggle with 'o'. CL_DRIVING_FLAG mirrors the ISR's live mode for telemetry.
+static CL_DRIVE: AtomicU32 = AtomicU32::new(0);
+static CL_DRIVING_FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // Lock-quality IIRs (x1000) read from the loop into telemetry: hit fraction + ZC jitter.
 static CL_LOCK_FAST_X1000: AtomicU32 = AtomicU32::new(0);
 static CL_LOCK_SLOW_X1000: AtomicU32 = AtomicU32::new(0);
@@ -260,6 +264,14 @@ const CL_FAULT_RUN_MIN: u32 = 5;
 // mode, never mistaken for a control desync. Hysteresis re-arm at -10%; DBG_ISR_CYC (fetch_max)
 // is cleared by each capture, so the guard re-arms naturally between captures.
 const CL_CPU_HIGH_PCT: u32 = 88;
+// Full-sensorless DRIVE (Step 3): hand from the governor to on_frame (PLL drives the rate) only
+// once solidly locked, and revert below the drop threshold (hysteresis on lock_slow). The period
+// estimate is hard-clamped to a safe speed band (ticks/sector) so a detector glitch can't run the
+// rate away -- on top of on_frame's already-gated PLL. PMIN = max speed, PMAX = min speed.
+const CL_DRIVE_HANDOFF_LOCK: f32 = 0.40;
+const CL_DRIVE_DROP_LOCK: f32 = 0.20;
+const CL_DRIVE_PMIN: f32 = DRIVE_HZ as f32 / (1400.0 * 6.0); // ~1400 Hz elec ceiling
+const CL_DRIVE_PMAX: f32 = DRIVE_HZ as f32 / (80.0 * 6.0); //   ~80 Hz elec floor
 const CL_SLEW_FRAC: f32 = 0.15; // max nudge as a fraction of the open-loop period at alpha=1
 const CL_KP: f32 = 0.3; // period PI gains (validated in the host sim)
 const CL_KI: f32 = 0.2;
@@ -650,7 +662,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) o=drive(sensorless) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -1114,6 +1126,12 @@ fn main() -> ! {
                     )
                     .ok();
                 }
+                // full-sensorless drive: governor <-> on_frame (PLL drives the rate when locked)
+                b'o' => {
+                    let v = (CL_DRIVE.load(Ordering::Relaxed) == 0) as u32;
+                    CL_DRIVE.store(v, Ordering::Relaxed);
+                    writeln!(tx, "drive={}\r", if v != 0 { "on" } else { "off" }).ok();
+                }
                 // predictive-coast engage gate (lock_fast threshold) -0.05 / +0.05
                 b'e' | b'r' => {
                     let cur = CL_PREDICT_GATE_X100.load(Ordering::Relaxed) as i32;
@@ -1204,7 +1222,7 @@ fn run_capture<TX: Write>(
     let (vbus_mv, iu_ma) = power_from_buffer(cap_ptr1, frames);
     writeln!(
         tx,
-        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} predict={} det={} pgate={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
+        "debug: hz={} amp={} trim={} vbus_mv={} iu_ma={} alpha={} zc_beta={} predict={} det={} pgate={} mode={} period_est={} lock_fast={} lock_slow={} jit_fast={} jit_slow={} isr_cyc={} tim7={} six_ticks={} dma_tc={} dma_ht={} dma_te={}\r",
         DBG_CAPTURE_HZ.load(Ordering::Relaxed),
         DBG_CAPTURE_AMP.load(Ordering::Relaxed),
         DUTY_TRIM.load(Ordering::Relaxed),
@@ -1215,6 +1233,7 @@ fn run_capture<TX: Write>(
         CL_PREDICT_COAST.load(Ordering::Relaxed),
         if CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0 { "sc" } else { "lf" },
         CL_PREDICT_GATE_X100.load(Ordering::Relaxed),
+        if CL_DRIVING_FLAG.load(Ordering::Relaxed) { "drive" } else { "gov" },
         CL_PERIOD_X100.load(Ordering::Relaxed),
         CL_LOCK_FAST_X1000.load(Ordering::Relaxed),
         CL_LOCK_SLOW_X1000.load(Ordering::Relaxed),
@@ -1420,6 +1439,7 @@ extern "C" fn TIM7() {
     DBG_TIM7_TICKS.fetch_add(1, Ordering::Relaxed);
 
     static mut CL: Option<ClLoop> = None;
+    static mut CL_DRIVING: bool = false; // full-sensorless drive engaged (hysteretic, lock-gated)
     static mut CL_LAST_ZC: u32 = 255;
     static mut CL_LAST_LF: i32 = 9999; // raw signed linfit ZC% this sector (9999 = none)
     static mut CAPTURE_WAIT_ZERO: bool = false;
@@ -1484,22 +1504,42 @@ extern "C" fn TIM7() {
         if CL_STALL_RESET.swap(false, Ordering::Relaxed) {
             cl.reset_stall(); // re-arm after a re-spin / restart
         }
-        if alpha <= 0.0 {
-            cl.set_period(ol_period); // keep period_est current so a later alpha>0 is sane
+        // --- Full-sensorless DRIVE handoff (Step 3) -----------------------------------
+        // In drive mode on_frame's period PLL sets the COMMUTATION RATE from the BEMF ZC, so
+        // rotor speed is an OUTPUT (set by amp/load), free to exceed the governor's ~450 Hz
+        // open-loop spin envelope. Governed mode (on_frame_blend) is the startup ramp AND the
+        // fallback. Hysteretic, lock_slow-gated so we only ever drive off a genuine lock.
+        let want_drive = CL_DRIVE.load(Ordering::Relaxed) != 0;
+        let lock = cl.lock_slow();
+        CL_DRIVING = want_drive
+            && if CL_DRIVING {
+                lock > CL_DRIVE_DROP_LOCK // stay until lock drops well below (hysteresis)
+            } else {
+                lock > CL_DRIVE_HANDOFF_LOCK // enter only once solidly locked
+            };
+        CL_DRIVING_FLAG.store(CL_DRIVING, Ordering::Relaxed);
+
+        if !CL_DRIVING && alpha <= 0.0 {
+            cl.set_period(ol_period); // governed open loop: pin period for a sane later handoff
             // Open loop: the governor spins the motor regardless of the ZC, so a detector
-            // "stall" is meaningless -- don't let it kill the motor. Resetting here keeps
-            // stalled/armed/cur_run clear (no silent stall-kill on a plain 'q' run), and
-            // leaves the detector fresh to arm the moment alpha>0 engages closed loop.
+            // "stall" is meaningless -- don't let it kill the motor (no silent kill on 'q').
             cl.reset_stall();
         }
         let arr = (*stm32::TIM1::ptr()).arr().read().arr().bits() as u32;
         let frame = read_latest_adc2_frame();
-        let step = cl.on_frame_blend(
-            [frame[0] as i32, frame[1] as i32, frame[2] as i32],
-            ol_period,
-            alpha,
-            CL_SLEW_FRAC,
-        );
+        let bemf = [frame[0] as i32, frame[1] as i32, frame[2] as i32];
+        let step = if CL_DRIVING {
+            cl.clamp_period(CL_DRIVE_PMIN, CL_DRIVE_PMAX); // runaway bound, every tick (uniform)
+            cl.on_frame(bemf) // PLL drives the rate -- full sensorless, past the governor cap
+        } else {
+            cl.on_frame_blend(bemf, ol_period, alpha, CL_SLEW_FRAC)
+        };
+        // While driving, slew the commanded freq toward period_est so (a) the readout follows
+        // the rotor and (b) the governor fallback is already at rotor speed -> smooth revert.
+        if CL_DRIVING {
+            let hz = (DRIVE_HZ as f32 / (6.0 * step.period_est.max(1.0))) as u32;
+            ELECTRICAL_HZ.store(hz.clamp(1, 2000), Ordering::Relaxed);
+        }
         CL_PERIOD_X100.store((step.period_est * 100.0) as u32, Ordering::Relaxed);
         CL_LOCK_FAST_X1000.store((cl.lock_fast() * 1000.0) as u32, Ordering::Relaxed);
         CL_LOCK_SLOW_X1000.store((cl.lock_slow() * 1000.0) as u32, Ordering::Relaxed);
