@@ -303,16 +303,20 @@ def measure_point(ser, hz, amp_t, catch_t, alpha, snaps, timeout, settle, reset_
         set_alpha(ser, alpha)  # 'q' already set open-loop alpha=0
     time.sleep(settle)
     w, nl, nv, rep_cap = collect_wave(ser, snaps, timeout, hz, amp_t)
-    # POST-CHECK: one more capture after the snaps. A rotor that "stalls at the end" passes
-    # the snaps but is gone now -- if it's still AT the setpoint but no longer locked, the
-    # point didn't hold, so reject it (this is the manual-labelled false-positive class).
+    # POST-CHECK: re-capture after the snaps to catch a rotor that "stalls at the end" (passes
+    # the snaps then loses sync). Use TWO captures and require BOTH to fail to lock before
+    # rejecting -- a single post-capture is too fragile: at mid/high freq the per-capture lit-
+    # sector count hovers right at the threshold (the load-angle wave parks crossings on the
+    # in/out-of-window edge), so one noisy frame would false-flag a genuinely spinning rotor
+    # (the 300/16, 300/22 false STALLED-AT-END). A real late stall fails BOTH. Keep the real
+    # nl/w in the return so the row still shows what the snaps measured.
     held = None
     if nl > 0 and not _stalled(ser):
-        _, post_nl, post_nv, _ = collect_wave(ser, 1, timeout, hz, amp_t)
-        if post_nv > 0:
-            held = post_nl > 0
+        _, post_nl, post_nv, _ = collect_wave(ser, 2, timeout, hz, amp_t)
+        if post_nv > 0:  # at least one post-capture landed at the setpoint to judge
+            held = post_nl > 0  # held if EITHER post-capture still locks
             if not held:
-                return {}, 0, nv, False, rep_cap
+                return w, nl, nv, False, rep_cap
     return w, nl, nv, held, rep_cap
 
 
