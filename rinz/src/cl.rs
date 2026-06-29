@@ -543,13 +543,6 @@ impl ClLoop {
         // position so a wild extrapolation can't hijack the schedule.
         let mut zc_ticks = None;
         if self.scheduled.is_none() && self.ticks >= 0.5 * self.state.frequency {
-            // Harmonic crossing for THIS sector's float phase (telemetry only): the fitted
-            // crossing nearest the sector centre, converted to ticks since this commutation.
-            let center = (self.sector as f32 + 0.5) * PI_3;
-            self.harm_zc = self
-                .harmonic
-                .cross_near(fl, center)
-                .map(|tc| wrap_pm_pi(tc - self.sector as f32 * PI_3) / PI_3 * period);
             // Sign-change (finish_frame) fires ONLY on a real in-window crossing -> None when
             // the window never crosses, so the loop coasts cleanly instead of chasing a
             // fabricated linfit extrapolation. linfit is the legacy default (sim-validated).
@@ -669,6 +662,17 @@ impl ClLoop {
             if self.stall_armed && self.cur_run >= self.stall_run {
                 self.stalled = true;
             }
+            // Harmonic crossing for the JUST-ENDED sector's float phase (observe-only), computed
+            // ONCE per commutation -- the 3x3 solve + atan2/asin is far too costly per tick (it
+            // overran the ISR budget when run every tick in the detection window). Crossing
+            // nearest the sector centre, as ticks since this sector's commutation.
+            let fl = (3 - SIX_HIGH[self.sector as usize % 6] - SIX_LOW[self.sector as usize % 6])
+                as usize;
+            let center = (self.sector as f32 + 0.5) * PI_3;
+            self.harm_zc = self
+                .harmonic
+                .cross_near(fl, center)
+                .map(|tc| wrap_pm_pi(tc - self.sector as f32 * PI_3) / PI_3 * self.state.frequency);
             self.sector = (self.sector + 1) % 6;
             self.ticks = 0.0;
             self.scheduled = None;
