@@ -23,6 +23,17 @@ use micromath::F32Ext;
 /// Decay for the streaming harmonic detector (≈1/e over ~12 float samples ≈ 1 rev/phase).
 const CL_HARM_LAM: f32 = 0.92;
 const PI_3: f32 = core::f32::consts::PI / 3.0; // 60° = one sector, in electrical radians
+// cos/sin of each sector's start angle (sector*60°) -- a LUT so the per-commutation recurrence
+// reseed needs no trig for the angle (only the per-tick-rotation cos_d/sin_d do, 2 trig/comm).
+const SECTOR_COS: [f32; 6] = [1.0, 0.5, -0.5, -1.0, -0.5, 0.5];
+const SECTOR_SIN: [f32; 6] = [
+    0.0,
+    0.866_025_4,
+    0.866_025_4,
+    0.0,
+    -0.866_025_4,
+    -0.866_025_4,
+];
 
 /// Driven-high / driven-low channel index per physical six-step sector (channel idx
 /// == phase idx: 0=A, 1=B, 2=C; the third is the floating phase). Matches scope1/
@@ -275,6 +286,13 @@ pub struct ClLoop {
     // observe-before-control rule: prove it recovers crossings on real BEMF before it steers.
     harmonic: Harmonic,
     harm_zc: Option<f32>, // last harmonic crossing, ticks since this sector's commutation
+    // Incremental rotation for the electrical angle's cos/sin -- avoids 2 micromath trig calls
+    // EVERY tick (which overran the ISR). cos_t/sin_t advance by (cos_d, sin_d) per tick (4 mul
+    // + 2 add); the trig is recomputed only once per commutation (fire()).
+    cos_t: f32,
+    sin_t: f32,
+    cos_d: f32,
+    sin_d: f32,
     pll: PLL<f32, PLLParamsPlain<f32>>,
     state: PLLState<f32>, // state.frequency = period estimate (ticks per sector)
     sector: u8,
@@ -347,6 +365,10 @@ impl ClLoop {
             detector: Detector::new(blank),
             harmonic: Harmonic::new(CL_HARM_LAM),
             harm_zc: None,
+            cos_t: 1.0,
+            sin_t: 0.0,
+            cos_d: (PI_3 / period0.max(1.0)).cos(),
+            sin_d: (PI_3 / period0.max(1.0)).sin(),
             pll: PLL::new(PLLParamsPlain::new(kp, ki, 2.0, 100_000.0)),
             state: PLLState::new(period0),
             sector: 0,
@@ -531,12 +553,15 @@ impl ClLoop {
         self.detector.push(e, period);
 
         // Streaming harmonic (OBSERVE-ONLY): accumulate this float sample at its electrical
-        // angle theta = (sector + ticks/period)*60deg. cos/sin per tick via micromath (cost is
-        // measured by isr_util in the observe-only run; swap to a rotation recurrence if heavy).
+        // angle. cos/sin advance by the per-tick rotation (cos_d, sin_d) -- 4 mul + 2 add, NO
+        // per-tick trig (that overran the ISR). fire() reseeds cos_t/sin_t to the sector start
+        // and cos_d/sin_d from the period each commutation.
         let fl =
             (3 - SIX_HIGH[self.sector as usize % 6] - SIX_LOW[self.sector as usize % 6]) as usize;
-        let theta = (self.sector as f32 + self.ticks / period) * PI_3;
-        self.harmonic.push(fl, theta.cos(), theta.sin(), e as f32);
+        let (c, s) = (self.cos_t, self.sin_t);
+        self.cos_t = c * self.cos_d - s * self.sin_d;
+        self.sin_t = s * self.cos_d + c * self.sin_d;
+        self.harmonic.push(fl, self.cos_t, self.sin_t, e as f32);
 
         // Solve the crossing from the line fit (handles windows that never actually
         // cross). Wait until ~half the window so the fit is stable; gate on a plausible
@@ -677,6 +702,14 @@ impl ClLoop {
             self.ticks = 0.0;
             self.scheduled = None;
             self.detector.reset();
+            // Reseed the rotation recurrence: cos_t/sin_t to the new sector's start angle from the
+            // LUT (exact, no trig, kills accumulated drift); cos_d/sin_d from the current period
+            // (2 trig, once per commutation -- not per tick).
+            self.cos_t = SECTOR_COS[self.sector as usize];
+            self.sin_t = SECTOR_SIN[self.sector as usize];
+            let dt = PI_3 / self.state.frequency.max(1.0);
+            self.cos_d = dt.cos();
+            self.sin_d = dt.sin();
         }
         ClStep {
             commutate,
