@@ -138,10 +138,15 @@ impl Harmonic {
 }
 
 /// Smallest absolute circular distance between two angles (rad), in [0, π].
+/// Range-reduce by conditional subtraction, NOT `%` -- f32 `%` is an `fmodf` libcall
+/// (~200 cyc, no hardware float-remainder on ARMv7E-M) and this runs in the ISR.
 pub fn ang_dist(a: f32, b: f32) -> f32 {
-    let mut d = (a - b) % TWO_PI;
-    if d < 0.0 {
+    let mut d = a - b;
+    while d < 0.0 {
         d += TWO_PI;
+    }
+    while d >= TWO_PI {
+        d -= TWO_PI;
     }
     if d > core::f32::consts::PI {
         TWO_PI - d
@@ -150,16 +155,15 @@ pub fn ang_dist(a: f32, b: f32) -> f32 {
     }
 }
 
-/// Signed (a - b) wrapped to (-π, π].
-pub fn wrap_pm_pi(x: f32) -> f32 {
-    let mut d = x % TWO_PI;
-    if d <= -core::f32::consts::PI {
-        d += TWO_PI;
+/// Signed `x` wrapped to (-π, π]. Conditional subtraction, NOT `%` (see `ang_dist`).
+pub fn wrap_pm_pi(mut x: f32) -> f32 {
+    while x <= -core::f32::consts::PI {
+        x += TWO_PI;
     }
-    if d > core::f32::consts::PI {
-        d -= TWO_PI;
+    while x > core::f32::consts::PI {
+        x -= TWO_PI;
     }
-    d
+    x
 }
 
 /// asin via a polynomial (Abramowitz-Stegun 4.4.45, ~1e-4 rad) -- NO atan2. The crossing solve
