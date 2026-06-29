@@ -293,6 +293,7 @@ pub struct ClLoop {
     sin_t: f32,
     cos_d: f32,
     sin_d: f32,
+    harm_period: f32, // period cos_d/sin_d were computed for -- recompute only when it changes
     pll: PLL<f32, PLLParamsPlain<f32>>,
     state: PLLState<f32>, // state.frequency = period estimate (ticks per sector)
     sector: u8,
@@ -369,6 +370,7 @@ impl ClLoop {
             sin_t: 0.0,
             cos_d: (PI_3 / period0.max(1.0)).cos(),
             sin_d: (PI_3 / period0.max(1.0)).sin(),
+            harm_period: period0.max(1.0),
             pll: PLL::new(PLLParamsPlain::new(kp, ki, 2.0, 100_000.0)),
             state: PLLState::new(period0),
             sector: 0,
@@ -707,9 +709,15 @@ impl ClLoop {
             // (2 trig, once per commutation -- not per tick).
             self.cos_t = SECTOR_COS[self.sector as usize];
             self.sin_t = SECTOR_SIN[self.sector as usize];
-            let dt = PI_3 / self.state.frequency.max(1.0);
-            self.cos_d = dt.cos();
-            self.sin_d = dt.sin();
+            // cos_d/sin_d depend only on the period; recompute (2 trig) ONLY when it changes --
+            // at alpha=0 the period is pinned, so this is a no-op most commutations.
+            let p = self.state.frequency.max(1.0);
+            if abs_f32(p - self.harm_period) > 0.05 {
+                let dt = PI_3 / p;
+                self.cos_d = dt.cos();
+                self.sin_d = dt.sin();
+                self.harm_period = p;
+            }
         }
         ClStep {
             commutate,
