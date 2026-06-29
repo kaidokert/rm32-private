@@ -224,6 +224,9 @@ static CL_USE_SIGNCHANGE: AtomicU32 = AtomicU32::new(0);
 // per-commutation crossing). Splits the harmonic's ISR cost into per-tick vs per-commutation.
 // 0 falls back to the cheap per-sector detector. ';' cycles 2 -> 1 -> 0 -> 2.
 static CL_HARM_EN: AtomicU32 = AtomicU32::new(2);
+// Stage-2 experiment: drive commutation from the harmonic crossing (1) vs the per-sector
+// sign-change (0). Authority stays bounded by on_frame_blend (slew clamp + alpha). Toggle "'".
+static CL_HARM_DRIVE: AtomicU32 = AtomicU32::new(0);
 // Predictive-coast engage gate x100 (lock_fast threshold). Default 50 = 0.50. Sign-change
 // ceilings lock_fast at ~0.33, so 0.50 never engages predict -> lower with 'e', raise 'r'.
 static CL_PREDICT_GATE_X100: AtomicU32 = AtomicU32::new(50);
@@ -673,7 +676,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) ;=harm(full/push/off) o=drive(sensorless) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) ;=harm(full/push/off) '=harm_drive o=drive(sensorless) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -1151,6 +1154,12 @@ fn main() -> ! {
                     };
                     writeln!(tx, "harm_en={}\r", name).ok();
                 }
+                // Stage-2: harmonic drives commutation (vs sign-change). Bounded by alpha/slew.
+                b'\'' => {
+                    let v = (CL_HARM_DRIVE.load(Ordering::Relaxed) == 0) as u32;
+                    CL_HARM_DRIVE.store(v, Ordering::Relaxed);
+                    writeln!(tx, "harm_drive={}\r", if v != 0 { "on" } else { "off" }).ok();
+                }
                 // full-sensorless drive: governor <-> on_frame (PLL drives the rate when locked)
                 b'o' => {
                     let v = (CL_DRIVE.load(Ordering::Relaxed) == 0) as u32;
@@ -1523,6 +1532,7 @@ extern "C" fn TIM7() {
         cl.set_predict_coast(CL_PREDICT_COAST.load(Ordering::Relaxed) != 0);
         cl.set_use_signchange(CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0);
         cl.set_harm_mode(CL_HARM_EN.load(Ordering::Relaxed) as u8);
+        cl.set_harm_drive(CL_HARM_DRIVE.load(Ordering::Relaxed) != 0);
         cl.set_predict_gate(CL_PREDICT_GATE_X100.load(Ordering::Relaxed) as f32 / 100.0);
         cl.set_stall_run(CL_STALL_RUN);
         if CL_GLITCH_RESET.swap(false, Ordering::Relaxed) {
@@ -1653,7 +1663,19 @@ extern "C" fn TIM7() {
             let prev = ((step.sector + 5) % 6) as u32; // the sector that just ended
             let n = CL_CAP_N.load(Ordering::Relaxed) as usize;
             if n < CL_MAXCOMM {
-                let zcb = if CL_LAST_ZC > 100 { 255 } else { CL_LAST_ZC }; // 255 = no in-window ZC
+                // zc= is the honest in-window SIGN-CHANGE crossing (cl.sc_zc()), captured every
+                // commutation independent of what drove it -- the 2/6 measurement. 255 = none.
+                let zcb = match cl.sc_zc() {
+                    Some(t) => {
+                        let p = (t / step.period_est.max(1.0) * 100.0) as i32;
+                        if (0..=100).contains(&p) {
+                            p as u32
+                        } else {
+                            255
+                        }
+                    }
+                    None => 255,
+                };
                 let co = u32::from(step.coasted);
                 CL_CAP[n].store((prev << 16) | (zcb << 8) | co, Ordering::Relaxed);
                 CL_CAP_LF[n].store(CL_LAST_LF, Ordering::Relaxed);

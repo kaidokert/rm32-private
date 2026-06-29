@@ -286,6 +286,9 @@ pub struct ClLoop {
     // observe-before-control rule: prove it recovers crossings on real BEMF before it steers.
     harmonic: Harmonic,
     harm_zc: Option<f32>, // last harmonic crossing, ticks since this sector's commutation
+    // Honest in-window sign-change crossing for the just-ended sector, ALWAYS captured (whatever
+    // drives). This is the 2/6 measurement: while the harmonic drives, does in-window coverage rise?
+    sc_zc: Option<f32>,
     // Incremental rotation for the electrical angle's cos/sin -- avoids 2 micromath trig calls
     // EVERY tick (which overran the ISR). cos_t/sin_t advance by (cos_d, sin_d) per tick (4 mul
     // + 2 add); the trig is recomputed only once per commutation (fire()).
@@ -297,6 +300,9 @@ pub struct ClLoop {
     // 0 = off, 1 = push only (per-tick accumulate, no crossing), 2 = full (push + the amortized
     // crossing pipeline). Splits the harmonic's ISR cost into its per-tick vs per-commutation parts.
     harm_mode: u8,
+    // Drive commutation from the harmonic crossing (Stage 2 experiment) instead of the per-sector
+    // sign-change. Authority is still bounded by on_frame_blend (slew clamp + alpha=0 fallback).
+    harm_drive: bool,
     // AMORTIZED crossing pipeline -- the solve+sqrt+atan2+asin for one float phase costs ~930 cyc,
     // far too much for a single (commutation) tick. Spread it over 3 stages, ONE stage per tick,
     // running continuously for whichever phase is floating. Result lands in harm_cross[phase] as
@@ -379,12 +385,14 @@ impl ClLoop {
             detector: Detector::new(blank),
             harmonic: Harmonic::new(CL_HARM_LAM),
             harm_zc: None,
+            sc_zc: None,
             cos_t: 1.0,
             sin_t: 0.0,
             cos_d: (PI_3 / period0.max(1.0)).cos(),
             sin_d: (PI_3 / period0.max(1.0)).sin(),
             harm_period: period0.max(1.0),
             harm_mode: 2,
+            harm_drive: false,
             xs: 0,
             cx_phase: 0,
             cx: [0.0; 6],
@@ -442,6 +450,35 @@ impl ClLoop {
     /// Splits the ISR cost into per-tick vs per-commutation; 0 falls back to the per-sector path.
     pub fn set_harm_mode(&mut self, mode: u8) {
         self.harm_mode = mode;
+    }
+
+    /// Drive commutation from the harmonic crossing (true) or the per-sector sign-change/linfit
+    /// (false). Stage-2 experiment: authority stays bounded by on_frame_blend's slew clamp.
+    pub fn set_harm_drive(&mut self, on: bool) {
+        self.harm_drive = on;
+    }
+
+    /// The harmonic crossing for the CURRENT sector's float phase (ticks since this sector's
+    /// commutation), from the amortized pipeline's precomputed candidates. This is the live
+    /// driving signal (vs `harm_zc`, the just-ended-sector telemetry snapshot taken at fire()).
+    fn harm_zc_current(&self) -> Option<f32> {
+        let s = self.sector as usize;
+        let fl = 3 - SIX_HIGH[s % 6] - SIX_LOW[s % 6];
+        let center = (s as f32 + 0.5) * PI_3;
+        self.harm_cross[fl].map(|(t0, t1)| {
+            let tc = if ang_dist(t0, center) <= ang_dist(t1, center) {
+                t0
+            } else {
+                t1
+            };
+            wrap_pm_pi(tc - s as f32 * PI_3) / PI_3 * self.state.frequency
+        })
+    }
+
+    /// Honest in-window sign-change crossing for the just-ended sector (ticks since its
+    /// commutation), captured every commutation regardless of what drives -- the 2/6 measurement.
+    pub fn sc_zc(&self) -> Option<f32> {
+        self.sc_zc
     }
 
     /// One stage of the amortized crossing pipeline (once per tick when harm_mode >= 2). The full
@@ -647,7 +684,10 @@ impl ClLoop {
             // Sign-change (finish_frame) fires ONLY on a real in-window crossing -> None when
             // the window never crosses, so the loop coasts cleanly instead of chasing a
             // fabricated linfit extrapolation. linfit is the legacy default (sim-validated).
-            let detected = if self.use_signchange {
+            let detected = if self.harm_drive {
+                // Stage-2 experiment: the harmonic (sees ~81% of crossings) drives the schedule.
+                self.harm_zc_current()
+            } else if self.use_signchange {
                 self.detector.finish_frame()
             } else {
                 self.detector.finish_linfit()
@@ -786,6 +826,9 @@ impl ClLoop {
             } else {
                 None
             };
+            // Snapshot the honest in-window sign-change for the just-ended sector BEFORE reset --
+            // the 2/6 measurement, independent of whatever drove this commutation.
+            self.sc_zc = self.detector.finish_frame();
             self.sector = (self.sector + 1) % 6;
             self.ticks = 0.0;
             self.scheduled = None;
