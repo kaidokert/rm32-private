@@ -58,22 +58,31 @@ impl Harmonic {
         s[8] += e;
     }
 
-    /// Solve the 3×3 normal equations for `(a, b, c)`. None if under-sampled or singular.
+    /// Solve the 3×3 normal equations for `(a, b, c)` via explicit symmetric cofactors (no
+    /// array copies / det3 calls). None if under-sampled or singular.
     pub fn solve(&self, phase: usize) -> Option<(f32, f32, f32)> {
         let s = &self.s[phase % 3];
         if s[5] < 6.0 {
             return None; // not enough effective samples yet
         }
-        // Symmetric normal matrix M and rhs.
-        let m = [[s[0], s[1], s[2]], [s[1], s[3], s[4]], [s[2], s[4], s[5]]];
-        let rhs = [s[6], s[7], s[8]];
-        let det = det3(&m);
+        // M = [[s0,s1,s2],[s1,s3,s4],[s2,s4,s5]] (symmetric), rhs = [s6,s7,s8].
+        let (s0, s1, s2, s3, s4, s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
+        // Symmetric cofactors.
+        let c00 = s3 * s5 - s4 * s4;
+        let c01 = s4 * s2 - s1 * s5;
+        let c02 = s1 * s4 - s3 * s2;
+        let det = s0 * c00 + s1 * c01 + s2 * c02;
         if det.abs() < 1e-6 {
             return None;
         }
-        let a = det3(&replace_col(&m, 0, &rhs)) / det;
-        let b = det3(&replace_col(&m, 1, &rhs)) / det;
-        let c = det3(&replace_col(&m, 2, &rhs)) / det;
+        let c11 = s0 * s5 - s2 * s2;
+        let c12 = s1 * s2 - s0 * s4;
+        let c22 = s0 * s3 - s1 * s1;
+        let inv = 1.0 / det;
+        let (r0, r1, r2) = (s[6], s[7], s[8]);
+        let a = (c00 * r0 + c01 * r1 + c02 * r2) * inv;
+        let b = (c01 * r0 + c11 * r1 + c12 * r2) * inv;
+        let c = (c02 * r0 + c12 * r1 + c22 * r2) * inv;
         Some((a, b, c))
     }
 
@@ -153,20 +162,6 @@ pub fn wrap_pm_pi(x: f32) -> f32 {
     d
 }
 
-fn det3(m: &[[f32; 3]; 3]) -> f32 {
-    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
-}
-
-fn replace_col(m: &[[f32; 3]; 3], col: usize, v: &[f32; 3]) -> [[f32; 3]; 3] {
-    let mut out = *m;
-    for r in 0..3 {
-        out[r][col] = v[r];
-    }
-    out
-}
-
 /// asin via a polynomial (Abramowitz-Stegun 4.4.45, ~1e-4 rad) -- NO atan2. The crossing solve
 /// runs per commutation in the ISR and atan2 is ~450 cyc on the M4; this keeps it to 1 sqrt +
 /// a few muls. Accuracy is ample for a ZC angle.
@@ -174,7 +169,8 @@ fn asin_safe(x: f32) -> f32 {
     let x = x.clamp(-1.0, 1.0);
     let neg = x < 0.0;
     let a = if neg { -x } else { x };
-    let poly = 1.570_796_3 - a * (0.214_512_4 - a * (0.087_417_5 - a * 0.044_894_2));
+    let poly =
+        core::f32::consts::FRAC_PI_2 - a * (0.214_512_4 - a * (0.087_417_5 - a * 0.044_894_2));
     let r = core::f32::consts::FRAC_PI_2 - (1.0 - a).sqrt() * poly;
     if neg { -r } else { r }
 }

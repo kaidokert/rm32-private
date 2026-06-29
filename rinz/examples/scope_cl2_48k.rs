@@ -220,6 +220,9 @@ static CL_PREDICT_COAST: AtomicU32 = AtomicU32::new(1);
 // Loop detector source: 0 = linfit (extrapolates a crossing even out-of-window -> Phase-3
 // jitter), 1 = sign-change (clean in-window crossing only, else coast). Toggle with 'j'.
 static CL_USE_SIGNCHANGE: AtomicU32 = AtomicU32::new(0);
+// Streaming harmonic on (1) / off (0). Off skips push+per-commutation solve -> isolates the
+// harmonic's ISR cost and falls back to the cheap per-sector detector. Toggle with ';'.
+static CL_HARM_EN: AtomicU32 = AtomicU32::new(1);
 // Predictive-coast engage gate x100 (lock_fast threshold). Default 50 = 0.50. Sign-change
 // ceilings lock_fast at ~0.33, so 0.50 never engages predict -> lower with 'e', raise 'r'.
 static CL_PREDICT_GATE_X100: AtomicU32 = AtomicU32::new(50);
@@ -669,7 +672,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) o=drive(sensorless) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) ;=harm_en o=drive(sensorless) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -1135,6 +1138,12 @@ fn main() -> ! {
                     )
                     .ok();
                 }
+                // harmonic detector on/off (measure its ISR cost; fall back to per-sector)
+                b';' => {
+                    let v = (CL_HARM_EN.load(Ordering::Relaxed) == 0) as u32;
+                    CL_HARM_EN.store(v, Ordering::Relaxed);
+                    writeln!(tx, "harm_en={}\r", if v != 0 { "on" } else { "off" }).ok();
+                }
                 // full-sensorless drive: governor <-> on_frame (PLL drives the rate when locked)
                 b'o' => {
                     let v = (CL_DRIVE.load(Ordering::Relaxed) == 0) as u32;
@@ -1506,6 +1515,7 @@ extern "C" fn TIM7() {
         cl.set_zc_beta(CL_ZC_BETA_X1000.load(Ordering::Relaxed) as f32 / 1000.0); // live-tunable
         cl.set_predict_coast(CL_PREDICT_COAST.load(Ordering::Relaxed) != 0);
         cl.set_use_signchange(CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0);
+        cl.set_harm_en(CL_HARM_EN.load(Ordering::Relaxed) != 0);
         cl.set_predict_gate(CL_PREDICT_GATE_X100.load(Ordering::Relaxed) as f32 / 100.0);
         cl.set_stall_run(CL_STALL_RUN);
         if CL_GLITCH_RESET.swap(false, Ordering::Relaxed) {

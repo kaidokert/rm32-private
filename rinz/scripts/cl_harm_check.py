@@ -83,6 +83,7 @@ def main() -> int:
         print(f"\n  {'snap':>4} | det mode hz  | sign-change | harmonic | isr_cyc (util%) | lockS jitS")
         zc_tot = harm_tot = tot = 0
         last_rows = None
+        ic_on = []
         for i in range(args.snaps):
             try:
                 cap = parse_capture(capture(ser, args.capture_timeout, "c"))
@@ -96,6 +97,7 @@ def main() -> int:
             harm_tot += harm
             tot += n
             ic = int(float(d.get("isr_cyc", "0")))
+            ic_on.append(ic)
             util = 100 * ic / BUDGET
             over = "  OVER!" if ic > BUDGET else ""
             print(f"  {i:>4} | {d.get('det','?')} {d.get('mode','?')} {d.get('hz','?')} |   "
@@ -104,6 +106,24 @@ def main() -> int:
         if tot:
             print(f"\n  TOTAL across {args.snaps} snaps: sign-change {zc_tot}/{tot} "
                   f"({100*zc_tot/tot:.0f}%)  vs  harmonic {harm_tot}/{tot} ({100*harm_tot/tot:.0f}%)")
+
+        # Isolate the harmonic's ISR cost: toggle it OFF (';') and re-measure isr_cyc.
+        send(ser, ";")
+        drain(ser)
+        time.sleep(0.8)
+        ic_off = []
+        for i in range(max(2, args.snaps // 2)):
+            try:
+                cap = parse_capture(capture(ser, args.capture_timeout, "c"))
+                ic_off.append(int(float(cap.debug.get("isr_cyc", "0"))))
+            except Exception:
+                pass
+        send(ser, ";")  # restore harmonic ON
+        if ic_on and ic_off:
+            on, off = st.median(ic_on), st.median(ic_off)
+            print(f"\n  ISR cost: harm ON  isr_cyc={on:.0f} ({100*on/BUDGET:.0f}%)  "
+                  f"harm OFF isr_cyc={off:.0f} ({100*off/BUDGET:.0f}%)  "
+                  f"=> harmonic costs {on-off:.0f} cyc;  budget={BUDGET}")
         if last_rows:
             print("\n  last capture per-commutation (i phys zc harm):")
             for (i, ph, zc, harm) in last_rows:
