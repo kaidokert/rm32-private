@@ -55,7 +55,17 @@ operating range to 90–95 % duty (~1300–1400 elec Hz)._
   Not a sensorless lock; an open-loop coast with sparse nudges. **70-86% coast starves the PLL.**
 - **VERDICT: detection coverage is THE wall.** Loop tuning is exhausted (predict-gate, alpha,
   drive all tested, all detection-limited). The control machinery works; it has nothing to track.
-- **Next = PATH 1: streaming harmonic detector.** The firmware version of the validated oracle
+- **PATH 1 DETECTOR — built & HARDWARE-VALIDATED (June 28).** `src/harmonic.rs` (streaming
+  running a*cos+b*sin+c, decaying normal-equation sums, micromath trig, 4/4 unit tests; host
+  streaming form tracks the batch oracle to 2.7°). Wired OBSERVE-ONLY into `ClLoop` with `harm=`
+  in the per-commutation cl-log. **On real BEMF at 380 Hz: harmonic 8/12 vs sign-change 3/12** —
+  it recovers the out-of-window sectors (some `harm` >100%/<0% = genuine out-of-window crossings),
+  exactly the coverage lift path 1 needed. Cost gotchas found+fixed on hardware: per-tick
+  harmonic.reset() (set_period runs every tick at alpha=0) wiped the fit; the 3x3 solve+atan2/asin
+  ran every tick and overran the ISR (isr_cyc 3940>3541) -> moved to once-per-commutation. Open:
+  4/12 still no crossing (phase A anomaly / B-s1, |c|>r); per-tick cos/sin -> rotation recurrence
+  if isr_cyc still tight; then let the harmonic DRIVE (replace sign-change in observe's schedule).
+- **(superseded) Next = PATH 1: streaming harmonic detector.** The firmware version of the validated oracle
   (recovers OUT-OF-WINDOW crossings to ~4° offline) to lift in-window coverage above ~30% and
   actually feed the loop. Everything downstream (drive, climb to 1300 Hz) is gated on it. Design
   it under the constant-per-tick ISR constraint and watch `cpu_busy`/`isr_util` (harmonic fit is
