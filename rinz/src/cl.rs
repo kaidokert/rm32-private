@@ -15,7 +15,7 @@
 //! %-position) gated by an outlier check, so a single bad detection can't move the
 //! estimate. Numeric type is f32 (the G431 has an FPU).
 
-use crate::harmonic::{Harmonic, wrap_pm_pi};
+use crate::harmonic::{Harmonic, ang_dist, asin_safe, wrap_2pi, wrap_pm_pi};
 use crate::pll_controller::{PLL, PLLParamsPlain};
 use crate::pll_state::PLLState;
 use micromath::F32Ext;
@@ -294,9 +294,19 @@ pub struct ClLoop {
     cos_d: f32,
     sin_d: f32,
     harm_period: f32, // period cos_d/sin_d were computed for -- recompute only when it changes
-    // 0 = off, 1 = push only (per-tick accumulate, no crossing), 2 = full (push + per-commutation
-    // crossing). Splits the harmonic's ISR cost into its per-tick vs per-commutation parts.
+    // 0 = off, 1 = push only (per-tick accumulate, no crossing), 2 = full (push + the amortized
+    // crossing pipeline). Splits the harmonic's ISR cost into its per-tick vs per-commutation parts.
     harm_mode: u8,
+    // AMORTIZED crossing pipeline -- the solve+sqrt+atan2+asin for one float phase costs ~930 cyc,
+    // far too much for a single (commutation) tick. Spread it over 3 stages, ONE stage per tick,
+    // running continuously for whichever phase is floating. Result lands in harm_cross[phase] as
+    // the two candidate crossing angles; the commutation tick only does a cheap "pick nearest".
+    // Keeps per-tick cost flat (the constant-ISR rule) instead of a 930-cyc commutation spike.
+    xs: u8,                              // pipeline stage 0/1/2
+    cx_phase: usize,                     // float phase this pass is solving (latched at stage 0)
+    cx: [f32; 6],                        // [a, b, c, r, psi, base] carried across the 3 stages
+    cx_ok: bool,                         // stage-0 validity (fit crosses zero)
+    harm_cross: [Option<(f32, f32)>; 3], // per phase: the two candidate crossing angles (rad)
     pll: PLL<f32, PLLParamsPlain<f32>>,
     state: PLLState<f32>, // state.frequency = period estimate (ticks per sector)
     sector: u8,
@@ -375,6 +385,11 @@ impl ClLoop {
             sin_d: (PI_3 / period0.max(1.0)).sin(),
             harm_period: period0.max(1.0),
             harm_mode: 2,
+            xs: 0,
+            cx_phase: 0,
+            cx: [0.0; 6],
+            cx_ok: false,
+            harm_cross: [None; 3],
             pll: PLL::new(PLLParamsPlain::new(kp, ki, 2.0, 100_000.0)),
             state: PLLState::new(period0),
             sector: 0,
@@ -427,6 +442,50 @@ impl ClLoop {
     /// Splits the ISR cost into per-tick vs per-commutation; 0 falls back to the per-sector path.
     pub fn set_harm_mode(&mut self, mode: u8) {
         self.harm_mode = mode;
+    }
+
+    /// One stage of the amortized crossing pipeline (once per tick when harm_mode >= 2). The full
+    /// solve+sqrt+atan2+asin costs ~930 cyc -- a ruinous spike on a single (commutation) tick --
+    /// so it is split into 3 stages, one per tick, running continuously for the floating phase
+    /// `fl`. The two candidate crossing angles land in harm_cross[fl]; fire() only picks between
+    /// them. Per-tick cost stays flat (the constant-ISR rule) instead of a per-commutation spike.
+    fn advance_cross_pipeline(&mut self, fl: usize) {
+        match self.xs {
+            0 => {
+                // latch the phase, solve the 3x3 fit, compute amplitude r
+                self.cx_phase = fl;
+                if let Some((a, b, c)) = self.harmonic.solve(fl) {
+                    let r = (a * a + b * b).sqrt();
+                    self.cx = [a, b, c, r, 0.0, 0.0];
+                    self.cx_ok = r > 1e-6 && c.abs() <= r;
+                } else {
+                    self.cx_ok = false;
+                }
+                self.xs = 1;
+            }
+            1 => {
+                // the two trig calls (atan2 + asin) -- the bulk of the cost, alone on this tick
+                if self.cx_ok {
+                    let [a, b, c, r, _, _] = self.cx;
+                    self.cx[4] = a.atan2(b);
+                    self.cx[5] = asin_safe(-c / r);
+                }
+                self.xs = 2;
+            }
+            _ => {
+                // form both candidate crossings and publish for this phase
+                self.harm_cross[self.cx_phase] = if self.cx_ok {
+                    let (psi, base) = (self.cx[4], self.cx[5]);
+                    Some((
+                        wrap_2pi(base - psi),
+                        wrap_2pi(core::f32::consts::PI - base - psi),
+                    ))
+                } else {
+                    None
+                };
+                self.xs = 0;
+            }
+        }
     }
 
     /// Whether the loop is using the sign-change detector (true) or the linfit (false).
@@ -575,6 +634,9 @@ impl ClLoop {
             self.cos_t = c * self.cos_d - s * self.sin_d;
             self.sin_t = s * self.cos_d + c * self.sin_d;
             self.harmonic.push(fl, self.cos_t, self.sin_t, e as f32);
+            if self.harm_mode >= 2 {
+                self.advance_cross_pipeline(fl);
+            }
         }
 
         // Solve the crossing from the line fit (handles windows that never actually
@@ -710,7 +772,15 @@ impl ClLoop {
                     - SIX_HIGH[self.sector as usize % 6]
                     - SIX_LOW[self.sector as usize % 6]) as usize;
                 let center = (self.sector as f32 + 0.5) * PI_3;
-                self.harmonic.cross_near(fl, center).map(|tc| {
+                // Cheap pick from the pipeline's precomputed candidates (the expensive
+                // solve+atan2+asin already ran, amortized, over the last few ticks): the crossing
+                // nearest this sector's centre, as ticks since this sector's commutation.
+                self.harm_cross[fl].map(|(t0, t1)| {
+                    let tc = if ang_dist(t0, center) <= ang_dist(t1, center) {
+                        t0
+                    } else {
+                        t1
+                    };
                     wrap_pm_pi(tc - self.sector as f32 * PI_3) / PI_3 * self.state.frequency
                 })
             } else {

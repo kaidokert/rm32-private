@@ -169,7 +169,7 @@ pub fn wrap_pm_pi(mut x: f32) -> f32 {
 /// asin via a polynomial (Abramowitz-Stegun 4.4.45, ~1e-4 rad) -- NO atan2. The crossing solve
 /// runs per commutation in the ISR and atan2 is ~450 cyc on the M4; this keeps it to 1 sqrt +
 /// a few muls. Accuracy is ample for a ZC angle.
-fn asin_safe(x: f32) -> f32 {
+pub fn asin_safe(x: f32) -> f32 {
     let x = x.clamp(-1.0, 1.0);
     let neg = x < 0.0;
     let a = if neg { -x } else { x };
@@ -179,7 +179,7 @@ fn asin_safe(x: f32) -> f32 {
     if neg { -r } else { r }
 }
 
-fn wrap_2pi(mut t: f32) -> f32 {
+pub fn wrap_2pi(mut t: f32) -> f32 {
     while t < 0.0 {
         t += TWO_PI;
     }
