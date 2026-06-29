@@ -294,7 +294,9 @@ pub struct ClLoop {
     cos_d: f32,
     sin_d: f32,
     harm_period: f32, // period cos_d/sin_d were computed for -- recompute only when it changes
-    harm_en: bool,    // run the harmonic at all (off = skip push+solve -> isolates its ISR cost)
+    // 0 = off, 1 = push only (per-tick accumulate, no crossing), 2 = full (push + per-commutation
+    // crossing). Splits the harmonic's ISR cost into its per-tick vs per-commutation parts.
+    harm_mode: u8,
     pll: PLL<f32, PLLParamsPlain<f32>>,
     state: PLLState<f32>, // state.frequency = period estimate (ticks per sector)
     sector: u8,
@@ -372,7 +374,7 @@ impl ClLoop {
             cos_d: (PI_3 / period0.max(1.0)).cos(),
             sin_d: (PI_3 / period0.max(1.0)).sin(),
             harm_period: period0.max(1.0),
-            harm_en: true,
+            harm_mode: 2,
             pll: PLL::new(PLLParamsPlain::new(kp, ki, 2.0, 100_000.0)),
             state: PLLState::new(period0),
             sector: 0,
@@ -421,10 +423,10 @@ impl ClLoop {
         self.detector.set_lsq(!on); // sign-change -> drop the unused LSQ math from every tick
     }
 
-    /// Enable/disable the streaming harmonic entirely (push + per-commutation solve). Off lets
-    /// us measure its exact ISR cost on hardware and is a fallback to the cheap per-sector path.
-    pub fn set_harm_en(&mut self, on: bool) {
-        self.harm_en = on;
+    /// Harmonic mode: 0 = off, 1 = push only (per-tick accumulate), 2 = full (push + crossing).
+    /// Splits the ISR cost into per-tick vs per-commutation; 0 falls back to the per-sector path.
+    pub fn set_harm_mode(&mut self, mode: u8) {
+        self.harm_mode = mode;
     }
 
     /// Whether the loop is using the sign-change detector (true) or the linfit (false).
@@ -566,7 +568,7 @@ impl ClLoop {
         // angle. cos/sin advance by the per-tick rotation (cos_d, sin_d) -- 4 mul + 2 add, NO
         // per-tick trig (that overran the ISR). fire() reseeds cos_t/sin_t to the sector start
         // and cos_d/sin_d from the period each commutation.
-        if self.harm_en {
+        if self.harm_mode >= 1 {
             let fl = (3 - SIX_HIGH[self.sector as usize % 6] - SIX_LOW[self.sector as usize % 6])
                 as usize;
             let (c, s) = (self.cos_t, self.sin_t);
@@ -703,7 +705,7 @@ impl ClLoop {
             // ONCE per commutation -- the 3x3 solve + atan2/asin is far too costly per tick (it
             // overran the ISR budget when run every tick in the detection window). Crossing
             // nearest the sector centre, as ticks since this sector's commutation.
-            self.harm_zc = if self.harm_en {
+            self.harm_zc = if self.harm_mode >= 2 {
                 let fl = (3
                     - SIX_HIGH[self.sector as usize % 6]
                     - SIX_LOW[self.sector as usize % 6]) as usize;

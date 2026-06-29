@@ -107,23 +107,34 @@ def main() -> int:
             print(f"\n  TOTAL across {args.snaps} snaps: sign-change {zc_tot}/{tot} "
                   f"({100*zc_tot/tot:.0f}%)  vs  harmonic {harm_tot}/{tot} ({100*harm_tot/tot:.0f}%)")
 
-        # Isolate the harmonic's ISR cost: toggle it OFF (';') and re-measure isr_cyc.
-        send(ser, ";")
+        # Split the harmonic's ISR cost: ';' cycles full(2)->push(1)->off(0). Measure each.
+        def meas():
+            vals = []
+            for _ in range(max(2, args.snaps // 2)):
+                try:
+                    cap = parse_capture(capture(ser, args.capture_timeout, "c"))
+                    vals.append(int(float(cap.debug.get("isr_cyc", "0"))))
+                except Exception:
+                    pass
+            return st.median(vals) if vals else None
+
+        send(ser, ";")  # -> push only
         drain(ser)
         time.sleep(0.8)
-        ic_off = []
-        for i in range(max(2, args.snaps // 2)):
-            try:
-                cap = parse_capture(capture(ser, args.capture_timeout, "c"))
-                ic_off.append(int(float(cap.debug.get("isr_cyc", "0"))))
-            except Exception:
-                pass
-        send(ser, ";")  # restore harmonic ON
-        if ic_on and ic_off:
-            on, off = st.median(ic_on), st.median(ic_off)
-            print(f"\n  ISR cost: harm ON  isr_cyc={on:.0f} ({100*on/BUDGET:.0f}%)  "
-                  f"harm OFF isr_cyc={off:.0f} ({100*off/BUDGET:.0f}%)  "
-                  f"=> harmonic costs {on-off:.0f} cyc;  budget={BUDGET}")
+        ic_push = meas()
+        send(ser, ";")  # -> off
+        drain(ser)
+        time.sleep(0.8)
+        ic_off = meas()
+        send(ser, ";")  # -> back to full
+        full = st.median(ic_on) if ic_on else None
+        if full and ic_push and ic_off:
+            print(f"\n  ISR cost breakdown (budget={BUDGET}):")
+            print(f"    full (push+cross) isr_cyc={full:.0f} ({100*full/BUDGET:.0f}%)")
+            print(f"    push only         isr_cyc={ic_push:.0f} ({100*ic_push/BUDGET:.0f}%)")
+            print(f"    off (per-sector)  isr_cyc={ic_off:.0f} ({100*ic_off/BUDGET:.0f}%)")
+            print(f"    => per-tick push = {ic_push-ic_off:.0f} cyc,  "
+                  f"per-commutation cross = {full-ic_push:.0f} cyc")
         if last_rows:
             print("\n  last capture per-commutation (i phys zc harm):")
             for (i, ph, zc, harm) in last_rows:
