@@ -37,6 +37,16 @@ def set_harm_drive(ser, on: bool):
     drain(ser)
 
 
+def set_zc_beta(ser, target: float):
+    """Floor zc_beta to 0 (many ','), then step up to `target` (each '.' = +0.05)."""
+    for _ in range(20):
+        send(ser, ",")
+    drain(ser)
+    for _ in range(int(round(max(0.0, target) / 0.05))):
+        send(ser, ".")
+    drain(ser)
+
+
 def measure(ser, snaps, capture_timeout):
     """Median over `snaps` captures: (sc_cov%, harm_cov%, n_per_snap, lock_slow, jit_slow, isr%)."""
     sc = harm = tot = 0
@@ -70,6 +80,10 @@ def main() -> int:
     p.add_argument("--hz", type=int, default=380)
     p.add_argument("--amp", type=float, default=30.0)
     p.add_argument("--alphas", type=float, nargs="+", default=[0.2, 0.5])
+    p.add_argument("--betas", type=float, nargs="+", default=None,
+                   help="if set, fix alpha=--drive-alpha and sweep zc_beta over these values")
+    p.add_argument("--drive-alpha", type=float, default=0.5,
+                   help="alpha to hold while sweeping --betas")
     p.add_argument("--snaps", type=int, default=5)
     p.add_argument("--dwell", type=float, default=2.0, help="settle (s) after each alpha change")
     p.add_argument("--capture-timeout", type=float, default=4.0)
@@ -118,20 +132,33 @@ def main() -> int:
             rows.append(("open-loop a=0", sc))
 
         set_harm_drive(ser, True)
-        print("  -- harmonic now DRIVES commutation (bounded by alpha/slew) --")
-        for a in args.alphas:
-            set_alpha(ser, a)
+        if args.betas:
+            print(f"  -- harmonic DRIVES at alpha={args.drive_alpha:.2f}; sweeping zc_beta --")
+            set_alpha(ser, args.drive_alpha)
+            conditions = [("beta", b) for b in args.betas]
+        else:
+            print("  -- harmonic now DRIVES commutation (bounded by alpha/slew) --")
+            conditions = [("alpha", a) for a in args.alphas]
+        for kind, val in conditions:
+            if kind == "beta":
+                set_zc_beta(ser, val)
+                label = f"b={val:.2f} a={args.drive_alpha:.1f}"
+            else:
+                set_alpha(ser, val)
+                label = f"harm a={val:.2f}"
             time.sleep(args.dwell)
             m = measure(ser, args.snaps, args.capture_timeout)
             if m:
                 sc, hm, n, lk, jt, ic = m
                 over = " OVER!" if ic > BUDGET else ""
-                print(f"  {'harm a=%.2f' % a:>16} |    {sc:4.0f}%      |  {hm:4.0f}%   | {lk:5.2f}  "
+                print(f"  {label:>16} |    {sc:4.0f}%      |  {hm:4.0f}%   | {lk:5.2f}  "
                       f"| {jt:5.0f} | {100*ic/BUDGET:3.0f}{over}")
-                rows.append((f"harm a={a:.2f}", sc))
+                rows.append((label, sc))
 
-        # restore: alpha 0, harm_drive off, kill
+        # restore: alpha 0, zc_beta default, harm_drive off, kill
         set_alpha(ser, 0.0)
+        if args.betas:
+            set_zc_beta(ser, 0.60)
         set_harm_drive(ser, False)
         send(ser, "w")
         set_stall_kill(ser, True)
