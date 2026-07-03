@@ -889,6 +889,14 @@ def classify_rotor_state(
     out["bemf_amp"] = round(statistics.median(r["R"] for r in healthy), 1)
     out["late_swing"] = round(statistics.median(r["late_swing"] for r in healthy), 1)
 
+    # WARNING: this classifier is NOT reliable for GOVERNED-DRIVE captures. Hardware-verified
+    # (eyeballed 380-860 Hz sweep): a STALLED rotor still shows large late_swing (e.g. 898 counts
+    # while visibly stopped) because the field keeps commutating through the static windings and
+    # that driven pattern mimics a BEMF swing. No captured scalar (late_swing, lockS, iu_ma,
+    # plateau_spread) separated confirmed-spinning (380-620 Hz) from confirmed-stalled (700-860 Hz)
+    # -- they overlap on every column. Treat the output as ADVISORY in closed-loop drive; the only
+    # trustworthy stall detector there is a human watching the motor. The original open-loop
+    # (scope1) calibration below still holds for open-loop captures.
     if out["sensing"] != "ok":
         out["state"] = "uncertain"  # low-duty: float reads / neutral not trustworthy
     elif out["late_swing"] >= lock_swing:

@@ -47,6 +47,8 @@ def main() -> int:
     p.add_argument("--amp-cap", type=float, default=45.0)
     p.add_argument("--signchange", action="store_true", help="cheap 2/6 driver (no harmonic CPU fault)")
     p.add_argument("--settle", type=float, default=1.5, help="settle (s) at each Hz before capture")
+    p.add_argument("--announce-pause", type=float, default=1.5,
+                   help="pause (s) after announcing the next Hz so you can focus before it moves")
     p.add_argument("--capture-timeout", type=float, default=4.0)
     p.add_argument("--stop-on-stall", action="store_true", default=True)
     p.add_argument("--cmd-delay", type=float, default=0.02)
@@ -96,10 +98,15 @@ def main() -> int:
         set_alpha(ser, args.alpha)
         drain(ser)
 
-        print(f"\n  {'Hz':>5} | {'amp%':>4} | ROTOR (truth) | lockS | late_swing | sensing | iu_ma")
+        # NOTE: the classifier column is ADVISORY -- in closed-loop drive it does NOT reliably
+        # separate spinning from stalled (a stalled rotor still shows big late_swing). WATCH the
+        # motor; the announce+pause below is there so you can track which Hz is running live.
+        print(f"\n  {'Hz':>5} | {'amp%':>4} | ROTOR (advisory) | lockS | late_swing | sensing | iu_ma")
         last_turning = None
         for hz in range(args.hz_start, args.hz_end + 1, args.hz_step):
             amp_t = amp_for_hz(hz, args.amp_base, args.amp_slope, args.amp_cap)
+            print(f"  -> NEXT: {hz} Hz {amp_t/10:.0f}%  --  watch the motor now ...", flush=True)
+            time.sleep(args.announce_pause)
             ramp_amp_to(ser, sp, amp_t)
             ramp_freq_to(ser, sp, hz)
             drain(ser)
