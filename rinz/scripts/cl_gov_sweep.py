@@ -54,6 +54,8 @@ def main() -> int:
     p.add_argument("--alpha", type=float, default=0.4)
     p.add_argument("--advance", type=float, default=0.0,
                    help="commutation timing advance, sector fraction 0..0.45 (0.5 sector = 30 deg)")
+    p.add_argument("--adv-sched", action="store_true",
+                   help="speed-proportional advance: ramp 0->--advance near the ceiling ('/' toggle)")
     p.add_argument("--amp-base", type=float, default=26.0)
     p.add_argument("--amp-slope", type=float, default=0.014)
     p.add_argument("--amp-cap", type=float, default=45.0)
@@ -110,7 +112,11 @@ def main() -> int:
         set_alpha(ser, args.alpha)
         if args.advance > 0:
             set_advance(ser, args.advance)
-            print(f"  commutation advance = {args.advance:.3f} sector ({args.advance*60:.0f} deg)")
+            if args.adv_sched:
+                send(ser, "/")  # speed-proportional: ramp 0 -> advance near the ceiling
+                print(f"  advance schedule ON: 0 -> {args.advance:.3f} sector ({args.advance*60:.0f} deg) near ceiling")
+            else:
+                print(f"  commutation advance = {args.advance:.3f} sector ({args.advance*60:.0f} deg), flat")
         drain(ser)
 
         # NOTE: the classifier column is ADVISORY -- in closed-loop drive it does NOT reliably
@@ -146,6 +152,8 @@ def main() -> int:
         set_stall_kill(ser, True)
         if args.advance > 0:
             set_advance(ser, 0.0)
+            if args.adv_sched:
+                send(ser, "/")  # toggle schedule back off
         if not args.signchange:
             send(ser, "'")
         set_alpha(ser, 0.0)

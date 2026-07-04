@@ -218,6 +218,12 @@ static CL_ZC_BETA_X1000: AtomicU32 = AtomicU32::new(600);
 // after ZC (baseline); larger commutates earlier to offset winding-L current lag at speed.
 // 0.45 sector = 27 deg advance max. Testing whether this lifts the ~700 Hz six-step ceiling.
 static CL_ADVANCE_X1000: AtomicU32 = AtomicU32::new(0);
+// Speed-proportional advance schedule (1=on, toggle '/'): effective advance ramps 0 -> the
+// CL_ADVANCE_X1000 cap linearly from ADV_SCHED_HZ0 over ADV_SCHED_RAMP_HZ Hz. Keeps the low end
+// un-advanced (clean catch) and applies full advance only near the six-step ceiling.
+static CL_ADV_SCHED: AtomicU32 = AtomicU32::new(0);
+const ADV_SCHED_HZ0: u32 = 500; // advance stays 0 below this commanded Hz
+const ADV_SCHED_RAMP_HZ: u32 = 400; // Hz above HZ0 over which advance ramps 0 -> cap
 // Predictive coast (1=on): on a missed ZC, schedule from per-sector memory vs open-loop
 // timeout. Targets the residual ~4% per-miss commutation clips. Live A/B via 'y'.
 static CL_PREDICT_COAST: AtomicU32 = AtomicU32::new(1);
@@ -680,7 +686,7 @@ fn main() -> ! {
 
     writeln!(
         tx,
-        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 <,>=advance-/+ y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) ;=harm(full/push/off) '=harm_drive o=drive(sensorless) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
+        "scope_cl2_48k ready (48 kHz PWM; Path B CLOSED-LOOP; alpha=0=open-loop)  f/v=hz g/b=hz a/z=amp +/-=amp 0/1/2/3=alpha 0/.2/.5/1.0 n/m=alpha+/-.05 ,/.=zc_beta+/-.05 <,>=advance-/+ /=adv_sched y=predict_coast e/r=predict_gate-/+ j=detector(lf/sc) ;=harm(full/push/off) '=harm_drive o=drive(sensorless) i=monitor x=glitch_reset h=stall_kill (0=fallback) w=kill d/c=dump l/k=stream p=wd q=reset\r"
     )
     .ok();
 
@@ -1143,6 +1149,12 @@ fn main() -> ! {
                     )
                     .ok();
                 }
+                // toggle speed-proportional advance schedule (ramp 0->cap near the ceiling)
+                b'/' => {
+                    let v = (CL_ADV_SCHED.load(Ordering::Relaxed) == 0) as u32;
+                    CL_ADV_SCHED.store(v, Ordering::Relaxed);
+                    writeln!(tx, "adv_sched={}\r", v).ok();
+                }
                 // toggle predictive coast (per-sector-memory schedule on a missed ZC)
                 b'y' => {
                     let v = (CL_PREDICT_COAST.load(Ordering::Relaxed) == 0) as u32;
@@ -1547,7 +1559,17 @@ extern "C" fn TIM7() {
         }
         let cl = (*cl_ptr).as_mut().unwrap();
         cl.set_zc_beta(CL_ZC_BETA_X1000.load(Ordering::Relaxed) as f32 / 1000.0); // live-tunable
-        cl.set_advance(CL_ADVANCE_X1000.load(Ordering::Relaxed) as f32 / 1000.0);
+        // Commutation advance. CL_ADVANCE_X1000 is the CAP; with the schedule on ('/'), the
+        // effective advance ramps 0 -> cap linearly from ADV_SCHED_HZ0 over ADV_SCHED_RAMP_HZ, so
+        // the low end stays un-advanced (clean catch) and full advance lands only near the ceiling.
+        let adv_cap = CL_ADVANCE_X1000.load(Ordering::Relaxed) as f32 / 1000.0;
+        let adv = if CL_ADV_SCHED.load(Ordering::Relaxed) != 0 {
+            let above = electrical_hz.saturating_sub(ADV_SCHED_HZ0) as f32;
+            (adv_cap * above / ADV_SCHED_RAMP_HZ as f32).min(adv_cap)
+        } else {
+            adv_cap
+        };
+        cl.set_advance(adv);
         cl.set_predict_coast(CL_PREDICT_COAST.load(Ordering::Relaxed) != 0);
         cl.set_use_signchange(CL_USE_SIGNCHANGE.load(Ordering::Relaxed) != 0);
         cl.set_harm_mode(CL_HARM_EN.load(Ordering::Relaxed) as u8);
