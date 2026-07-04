@@ -72,6 +72,11 @@ c) Full validation up to ~1300–1400 elec Hz (90–95% duty).
   (2) keep stall-kill ON in all scripts from now on; (3) cl_gov_sweep must save a raw
   capture per plateau so faults can be dated post-hoc; (4) treat 540/700/780 as probable
   but re-verify on the new board.**
+  **UPDATE (same day, different motor connected): fault FOLLOWS THE BOARD (A still dead,
+  I_A flat) — and the board is DEGRADING: B's voltage SENSE died between two captures an
+  hour apart (I_B conducts fine = leg alive; B voltage no longer staircases, floats at the
+  ~2600 disconnected-input level like A). A-drive dead + B-sense dead + only C healthy =
+  this board is RETIRED for closed-loop work. Swap hardware before anything else.**
 - [ ] **Gate 2 — loop correctness.** Same capture: oracle (`zc_fit`) crossing angles vs
   where the loop actually commutated → real phase-error distribution incl. the ~60%
   coasted commutations. If commutations land tens of degrees off, that IS the chop.
