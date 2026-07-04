@@ -50,10 +50,17 @@ c) Full validation up to ~1300–1400 elec Hz (90–95% duty).
 
 ## Data gates (in order — each one provable/falsifiable)
 
-- [ ] **Gate 1 — grounding datum.** One verified-spinning closed-loop capture at ~420 Hz:
-  bench powered (`vbus_mv`/`iu_ma` sane), rotation confirmed by eye, `cl_spin_look` PNG +
-  per-commutation log. Read: is the staircase clean? where do real crossings land? what did
-  the firmware detect? → Confirms or refutes "not clean even at low Hz".
+- [x] **Gate 1 — grounding datum. DONE 2026-07-04, MAJOR FINDING.** Verified-spinning
+  420 Hz capture (`logs/spin_look_420.log`, vbus 6.7 V, iu 1458 mA): **phases B/C show clean
+  six-step staircases; phase A NEVER participates** — rides 2700–3100 counts (ABOVE the
+  ~1700-count driven rail) the whole capture, never pulls low. Signature of an undriven/
+  floating phase A → motor torques in only 2 of 6 sectors → "runs but never sounds locked"
+  CONFIRMED as a real drive fault, not loop tuning. Oracle found crossings only on C;
+  sign-change 0/12; A float-minus-neutral +1600 in every A window.
+  **Next: (i) multimeter phase-to-phase A–B/B–C/C–A at the pads (disconnected A lead from
+  the motor swap?); (ii) if wiring OK, run known-good scope1 open-loop and compare A.**
+  CAVEAT: if A has been dead since the motor swap, the fresh-motor envelope numbers
+  (540/700/780) were measured on a two-phase drive and need re-running.
 - [ ] **Gate 2 — loop correctness.** Same capture: oracle (`zc_fit`) crossing angles vs
   where the loop actually commutated → real phase-error distribution incl. the ~60%
   coasted commutations. If commutations land tens of degrees off, that IS the chop.
