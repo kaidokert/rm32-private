@@ -57,10 +57,21 @@ c) Full validation up to ~1300–1400 elec Hz (90–95% duty).
   floating phase A → motor torques in only 2 of 6 sectors → "runs but never sounds locked"
   CONFIRMED as a real drive fault, not loop tuning. Oracle found crossings only on C;
   sign-change 0/12; A float-minus-neutral +1600 in every A window.
-  **Next: (i) multimeter phase-to-phase A–B/B–C/C–A at the pads (disconnected A lead from
-  the motor swap?); (ii) if wiring OK, run known-good scope1 open-loop and compare A.**
-  CAVEAT: if A has been dead since the motor swap, the fresh-motor envelope numbers
-  (540/700/780) were measured on a two-phase drive and need re-running.
+  **DIAGNOSIS COMPLETE (2026-07-04), all from existing capture data — no scope needed:**
+  motor coils identical (user-measured) → wiring fine. Firmware verified symmetric (pins,
+  enables, CCR writes, float logic, DRIVE tables). Currents in the same capture: I_A (ch13)
+  flat at bias in ALL 12 sectors; I_B (ch16) saturating rail-to-rail. Voltage: A never
+  driven either direction. → **BOARD FAULT: phase-A half-bridge (gate driver / FETs / leg)
+  is electrically dead.** Dated via archived raw logs: June 28 captures show A with a full
+  healthy staircase (min 0, max 1910) — **A died during this week's stall-heavy sessions**
+  (scripts ran stall_kill OFF; every seizure cooked energized windings until manual power
+  cut). Death likely LATE (after the 540/700/780 envelope runs — those had 0.85–0.98 locks;
+  the erratic 20-Hz-step run afterwards is the plausible break) — but unprovable because
+  cl_gov_sweep didn't save raw captures per plateau.
+  **Consequences: (1) board must be replaced/repaired before ANY further envelope work;
+  (2) keep stall-kill ON in all scripts from now on; (3) cl_gov_sweep must save a raw
+  capture per plateau so faults can be dated post-hoc; (4) treat 540/700/780 as probable
+  but re-verify on the new board.**
 - [ ] **Gate 2 — loop correctness.** Same capture: oracle (`zc_fit`) crossing angles vs
   where the loop actually commutated → real phase-error distribution incl. the ~60%
   coasted commutations. If commutations land tens of degrees off, that IS the chop.
