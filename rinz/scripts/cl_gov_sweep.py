@@ -34,6 +34,16 @@ def amp_for_hz(hz: int, base_pct: float, slope: float, cap_pct: float) -> int:
     return int(round(min(cap_pct, base_pct + slope * hz) * 10))
 
 
+def set_advance(ser, frac: float):
+    """Commutation advance (sector fraction): floor to 0 (many '<'), then step up ('>'=+0.025)."""
+    for _ in range(20):
+        send(ser, "<")
+    drain(ser)
+    for _ in range(int(round(max(0.0, frac) / 0.025))):
+        send(ser, ">")
+    drain(ser)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("port")
@@ -42,6 +52,8 @@ def main() -> int:
     p.add_argument("--hz-end", type=int, default=1300)
     p.add_argument("--hz-step", type=int, default=150)
     p.add_argument("--alpha", type=float, default=0.4)
+    p.add_argument("--advance", type=float, default=0.0,
+                   help="commutation timing advance, sector fraction 0..0.45 (0.5 sector = 30 deg)")
     p.add_argument("--amp-base", type=float, default=26.0)
     p.add_argument("--amp-slope", type=float, default=0.014)
     p.add_argument("--amp-cap", type=float, default=45.0)
@@ -96,6 +108,9 @@ def main() -> int:
             send(ser, "'")  # harm_drive on
         _clear_stall(ser)
         set_alpha(ser, args.alpha)
+        if args.advance > 0:
+            set_advance(ser, args.advance)
+            print(f"  commutation advance = {args.advance:.3f} sector ({args.advance*60:.0f} deg)")
         drain(ser)
 
         # NOTE: the classifier column is ADVISORY -- in closed-loop drive it does NOT reliably
@@ -129,6 +144,8 @@ def main() -> int:
         # cleanup
         send(ser, "w")
         set_stall_kill(ser, True)
+        if args.advance > 0:
+            set_advance(ser, 0.0)
         if not args.signchange:
             send(ser, "'")
         set_alpha(ser, 0.0)

@@ -328,6 +328,10 @@ pub struct ClLoop {
     // ~2/6 = 0.33, so 0.5 never engages -> tunable to test lower gates.
     zc_filt: [Option<f32>; 6], // per-sector EMA of the ZC position (ticks since commutation)
     zc_beta: f32,              // EMA weight on history; 0.0 = no filtering (raw per-sector ZC)
+    // Commutation timing ADVANCE, in fraction of a sector (60 deg). Commutate at
+    // zc + (0.5 - advance)*period: 0.0 = baseline 30 deg after ZC, 0.5 = at the ZC (30 deg
+    // advance). Compensates the winding-L current lag that caps six-step speed. Clamped [0, 0.45].
+    advance: f32,
     // Lock-quality telemetry (updated once per commutation). Two IIR time constants so the
     // host can SEE how marginal the lock is rather than relying on the ear: lock_* = ZC-hit
     // fraction (0..1), jit_* = |ZC - per-sector-smoothed| residual in ticks (jitter even
@@ -411,6 +415,7 @@ impl ClLoop {
             predict_gate: 0.5,
             zc_filt: [None; 6],
             zc_beta: 0.0,
+            advance: 0.0,
             last_residual: None,
             lock_fast: 0.0,
             lock_slow: 0.0,
@@ -534,6 +539,12 @@ impl ClLoop {
     /// laggier). Smooths each sector's rev-to-rev linfit noise -> less commutation jitter.
     pub fn set_zc_beta(&mut self, beta: f32) {
         self.zc_beta = beta.clamp(0.0, 0.95);
+    }
+
+    /// Commutation timing advance in fraction of a sector (60 deg). 0.0 = 30 deg after ZC
+    /// (baseline); larger commutates earlier to offset the winding-L current lag at speed.
+    pub fn set_advance(&mut self, adv: f32) {
+        self.advance = adv.clamp(0.0, 0.45);
     }
 
     /// Predictive coast: on a missed detection, schedule from this sector's smoothed ZC
@@ -719,7 +730,8 @@ impl ClLoop {
                         None => t_zc,
                     };
                     self.zc_filt[s] = Some(zc_f);
-                    self.scheduled = Some(zc_f + self.state.frequency * 0.5); // 30 deg after ZC
+                    // Commutate at (0.5 - advance) of a sector after the ZC (0 advance = 30 deg).
+                    self.scheduled = Some(zc_f + self.state.frequency * (0.5 - self.advance));
                 }
             }
         }
@@ -735,7 +747,7 @@ impl ClLoop {
         let cl_target = match self.scheduled {
             Some(t) => t,
             None => match (predict, self.zc_filt[self.sector as usize]) {
-                (true, Some(zc)) => zc + self.state.frequency * 0.5,
+                (true, Some(zc)) => zc + self.state.frequency * (0.5 - self.advance),
                 _ => self.state.frequency * self.coast,
             },
         };
