@@ -439,6 +439,24 @@ static WINDOW_I_N: AtomicU32 = AtomicU32::new(0);
 static WINDOW_I_MIN: AtomicU16 = AtomicU16::new(0x0FFF);
 static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
 
+/// Overcurrent failsafe (firmware-side, host-independent). The
+/// TIM1_UP ISR accumulates the 24 kHz current samples over
+/// `1 << I_TRIP_SHIFT` PWM cycles (2048 ≈ 85 ms); if the window
+/// average exceeds [`I_TRIP_RAW`] while the drive is armed, the ISR
+/// itself kills the output (same actions as the `w` key) and raises
+/// [`OC_TRIPPED`] so main can report it. Averaging makes it a
+/// stall/heating guard, deliberately blind to sub-window spikes.
+///
+/// 1.5 A × 30 mV/A = 45 mV → 45 / (3300/4095) ≈ 56 counts.
+const I_TRIP_RAW: u32 = 56;
+const I_TRIP_SHIFT: u32 = 11; // 2048 cycles = 85 ms @ 24 kHz
+static I_TRIP_ACC: AtomicU32 = AtomicU32::new(0);
+static I_TRIP_CNT: AtomicU32 = AtomicU32::new(0);
+/// Set by the ISR after a trip; main prints the report, clears the
+/// flag, and drops its local `output_enabled` mirror so `r`/`q`
+/// re-arm works afterwards.
+static OC_TRIPPED: AtomicBool = AtomicBool::new(false);
+
 /// Raw COMP edges in the current window (every EXTI fire).
 static WINDOW_RAW: AtomicU32 = AtomicU32::new(0);
 /// Edges that survived every gate (blanking, mode-5, half-window).
@@ -1116,7 +1134,12 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
-        "Window record stream: g   (binary 16B frames, one per float window)\r"
+        "Window record stream: g   (binary 22B frames, one per float window)\r"
+    )
+    .ok();
+    writeln!(
+        &mut tx,
+        "Failsafe: auto-kill at >1.5 A avg over 85 ms (stall guard, r/q re-arms)\r"
     )
     .ok();
     writeln!(
@@ -1881,6 +1904,17 @@ fn main() -> ! {
                     write!(&mut tx_writer, "mode={}\r\n", mode_name(waveform)).ok();
                 }
             }
+            // Overcurrent trip report: the ISR already killed the
+            // output; sync main's mirror so `r`/`q` re-arm works.
+            if OC_TRIPPED.load(Ordering::Relaxed) {
+                OC_TRIPPED.store(false, Ordering::Relaxed);
+                output_enabled = false;
+                write!(
+                    &mut tx_writer,
+                    "!! OVERCURRENT TRIP: >1500 mA avg over 85 ms - output killed (r/q re-arms)\r\n",
+                )
+                .ok();
+            }
             // MAGPIE drain: emit completed window records as 16-byte
             // frames. Emit all-or-nothing per frame — a partial frame
             // would desync the host parser; a dropped one just shows
@@ -2246,6 +2280,26 @@ fn TIM1_UP_TIM16() {
     }
     if i_raw > WINDOW_I_MAX.load(Ordering::Relaxed) {
         WINDOW_I_MAX.store(i_raw, Ordering::Relaxed);
+    }
+    // Overcurrent failsafe: 85 ms average vs the 1.5 A trip level.
+    // This ISR is the accumulators' sole writer — plain load/store.
+    // Kill directly from here (don't wait for main): all six gate
+    // inputs to OUTPUT-LOW, TIM7 CCR updates off, COMP EXTI masked —
+    // identical to the `w` key path.
+    let acc = I_TRIP_ACC.load(Ordering::Relaxed) + i_raw as u32;
+    let cnt = I_TRIP_CNT.load(Ordering::Relaxed) + 1;
+    if cnt >= (1 << I_TRIP_SHIFT) {
+        if (acc >> I_TRIP_SHIFT) > I_TRIP_RAW && MOTOR_ENABLED.load(Ordering::Relaxed) {
+            MOTOR_ENABLED.store(false, Ordering::Relaxed);
+            tim1_motor_pwm::all_off();
+            comp2::set_exti_enabled(false);
+            OC_TRIPPED.store(true, Ordering::Relaxed);
+        }
+        I_TRIP_ACC.store(0, Ordering::Relaxed);
+        I_TRIP_CNT.store(0, Ordering::Relaxed);
+    } else {
+        I_TRIP_ACC.store(acc, Ordering::Relaxed);
+        I_TRIP_CNT.store(cnt, Ordering::Relaxed);
     }
     let idx = (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
     let value = comp2::value() as u8;

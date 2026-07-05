@@ -127,6 +127,33 @@ Preliminary lock verdict: 3 clean ZCs/rev at σ ≤ 8 % of window on the
 uncapped board — interval-averaging lock looks feasible even before
 the caps; odd sectors are the improvement target.
 
+### Overcurrent failsafe (firmware) + sweep guards (host)
+
+After a stalled unattended sweep drew ~2 A until the user cut power:
+- **Firmware**: TIM1_UP averages the 24 kHz current samples over 2048
+  cycles (85 ms); >1.5 A avg (56 counts nominal — real trip may be
+  ~2 A given the ±25 % sense-cal uncertainty) → ISR-level kill
+  (`w`-key actions) + `!! OVERCURRENT TRIP` print; `r`/`q` re-arms.
+  Validated by temporarily dropping the threshold below running
+  current. Note yesterday's 2 A stall did NOT reproduce under
+  supervision — suspect the damage window was the script dying
+  without sending `w`.
+- **Host** (`sweep_windows.py`): `try/finally` kill on every exit
+  path + `--max-ma` (default 800) per-capture check that aborts the
+  amp row.
+
+### CONDOR map (hz × amp heatmaps, `scripts/plot_zc_map.py`)
+
+`sweep_windows.py --amps a,b,c` runs the 2D grid (re-arms per amp
+row); `plot_zc_map.py --tag X` renders the rinz-`zc_map`-style
+4-panel PNG (load-angle proxy / per-sector spread / zc-found % /
+current). First full map (board 1, no caps, blank=20, phys_ZC,
+f=50-400 × amp=10-18): **low amp wins everywhere** — amp 10-12 rows
+are pristine across the whole f range at 100-250 mA; the trouble
+pocket (zc→84-89 %, spread→6-11°, ZC drifting late) is HIGH amp ×
+f≥300. Sweet-spot shape matches the rinz finding. amp=20 row aborted
+by the 800 mA script guard (811 mA at f=50, not a stall).
+
 ## `examples/motor_tester.rs` — previous bench tool (9600, soft-UART)
 
 Open-loop motor spinner with live UART control. Pins on the Vimdrones L431:
