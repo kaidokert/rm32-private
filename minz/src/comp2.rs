@@ -147,11 +147,26 @@ pub fn init(
 /// allow ~5 µs settling time afterwards (provided by an in-function
 /// `asm::delay`).
 pub fn set_observed_phase(phase: ObservedPhase) {
+    set_inm(phase);
+    cortex_m::asm::delay(400);
+}
+
+/// [`set_observed_phase`] minus the blocking settle delay — for ISR
+/// use (per-sector mux switching à la AM32's `changeCompInput`). The
+/// comparator output is not to be trusted for ~5 µs after the switch;
+/// ISR callers must discard early edges by other means (the bench's
+/// half-sector time gate covers this with three orders of margin).
+///
+/// Register race note: this touches the same `COMP2_CSR` as the
+/// main-context `set_hysteresis` / `set_observed_phase` — main-side
+/// callers must wrap their `modify` in `interrupt::free` once any ISR
+/// starts calling this.
+#[inline]
+pub fn set_inm(phase: ObservedPhase) {
     let comp = unsafe { &*COMP::ptr() };
     let (inmsel, inmesel) = phase.inm_bits();
     comp.comp2_csr
         .modify(|_, w| unsafe { w.comp2_inmsel().bits(inmsel).comp2_inmesel().bits(inmesel) });
-    cortex_m::asm::delay(400);
 }
 
 /// Current COMP2 output bit. Reflects the comparator output with the

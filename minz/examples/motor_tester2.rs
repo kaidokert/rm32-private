@@ -56,7 +56,6 @@ use core::fmt::Write;
 use cortex_m::interrupt::{Mutex, free};
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::{entry, exception};
-use heapless::Deque;
 use heapless::spsc::{Producer, Queue};
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
 use minz::comp2;
@@ -418,6 +417,93 @@ static FLOAT_SECTOR_MASK: AtomicU8 = AtomicU8::new(0b00100100);
 /// phase's float window, so we only mask/unmask EXTI on transitions.
 static WAS_IN_FLOAT_SECTOR: AtomicBool = AtomicBool::new(false);
 
+// ---------------------------------------------------------------
+// MAGPIE — per-float-window record capture + binary streaming.
+//
+// The COMP ISR maintains three per-window accumulators (reset by
+// TIM7 at each sector entry); TIM7 packages the completed window
+// into a `WindowRec` and hands it to main through an SPSC queue;
+// main encodes 16-byte framed records into the FERRET TX ring when
+// streaming is on (`g` key). One record per sector per electrical
+// rev — 3.6 k records/s at f=600 → 57.6 kB/s, ~29 % of the 2 M link.
+// ---------------------------------------------------------------
+
+/// Raw COMP edges in the current window (every EXTI fire).
+static WINDOW_RAW: AtomicU32 = AtomicU32::new(0);
+/// Edges that survived every gate (blanking, mode-5, half-window).
+static WINDOW_VALID: AtomicU32 = AtomicU32::new(0);
+/// `ticks_1us()` of the first gate-surviving edge; `u32::MAX` = none yet.
+static WINDOW_FIRST_ZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
+/// Stream gate for the `g` key.
+static STREAM_ON: AtomicBool = AtomicBool::new(false);
+
+/// One completed float window, packaged by TIM7 at sector exit.
+#[derive(Copy, Clone)]
+struct WindowRec {
+    start_10us: u32,
+    len_10us: u16,
+    /// First valid edge, µs from window start; `0xFFFF` = no valid edge.
+    zc_off_us: u16,
+    raw: u16,
+    valid: u16,
+    sector: u8,
+    seq: u8,
+}
+
+const WREC_SYNC0: u8 = 0x5A;
+const WREC_SYNC1: u8 = 0xA5;
+const WREC_FRAME_LEN: usize = 16;
+
+impl WindowRec {
+    /// Little-endian wire frame: sync(2) seq(1) sector|flags(1)
+    /// start(4) len(2) zc_off(2) raw(2) valid(2). Bit 7 of byte 3 =
+    /// "zc found".
+    fn encode(&self) -> [u8; WREC_FRAME_LEN] {
+        let mut f = [0u8; WREC_FRAME_LEN];
+        f[0] = WREC_SYNC0;
+        f[1] = WREC_SYNC1;
+        f[2] = self.seq;
+        f[3] = (self.sector & 0x0F) | if self.zc_off_us != 0xFFFF { 0x80 } else { 0 };
+        f[4..8].copy_from_slice(&self.start_10us.to_le_bytes());
+        f[8..10].copy_from_slice(&self.len_10us.to_le_bytes());
+        f[10..12].copy_from_slice(&self.zc_off_us.to_le_bytes());
+        f[12..14].copy_from_slice(&self.raw.to_le_bytes());
+        f[14..16].copy_from_slice(&self.valid.to_le_bytes());
+        f
+    }
+}
+
+type WrecQueue = Queue<WindowRec, 64>;
+
+/// SPSC producer half of the window-record queue, owned by the TIM7
+/// ISR (enqueues inside `free`). Main drains the consumer each
+/// microloop and emits frames into the TX ring.
+static WREC_PROD: Mutex<RefCell<Option<Producer<'static, WindowRec>>>> =
+    Mutex::new(RefCell::new(None));
+
+/// Monotonic frame sequence number (wraps at 256) — lets the host
+/// detect dropped records (queue or TX-ring overflow).
+static WREC_SEQ: portable_atomic::AtomicU8 = portable_atomic::AtomicU8::new(0);
+
+/// CHAMELEON: when `true` (default), the TIM7 ISR switches COMP2's
+/// INM− mux at every sector entry so the *actually floating* phase is
+/// observed in all 6 windows per electrical rev — AM32's
+/// `changeCompInput` behaviour. When `false`, legacy single-phase
+/// observation via the `p` key (2 windows per rev). Toggled by `o`.
+static AUTO_MUX: AtomicBool = AtomicBool::new(true);
+
+/// Which phase floats (and is therefore observed under AUTO_MUX) in
+/// each six-step sector. Textbook convention — same table as
+/// [`float_sector_mask`] read the other way around.
+const SECTOR_FLOAT_PHASE: [comp2::ObservedPhase; 6] = [
+    comp2::ObservedPhase::C, // sector 0
+    comp2::ObservedPhase::B, // sector 1
+    comp2::ObservedPhase::A, // sector 2
+    comp2::ObservedPhase::C, // sector 3
+    comp2::ObservedPhase::B, // sector 4
+    comp2::ObservedPhase::A, // sector 5
+];
+
 /// COMP2 hysteresis level — cycled by the `h` key through 0 → 1 → 3
 /// (skipping the 2 / medium step). Snapshotted only so the print
 /// after the key press shows the current state.
@@ -518,55 +604,125 @@ fn edges_for(mode: u8, sector: u8) -> (bool, bool) {
 /// Main owns the consumer half and drains it in the key-dispatch pass.
 static RX_PROD: Mutex<RefCell<Option<Producer<'static, u8>>>> = Mutex::new(RefCell::new(None));
 
-/// Bounded software byte queue + USART1 TX, used only from the main
-/// context (no ISR access → plain `Deque`, not SPSC). `write!` macros
-/// target this via the [`fmt::Write`] impl which just enqueues bytes —
-/// no busy-wait on `TXE`. The motor loop calls [`service`] each idle
-/// `nop` pass; that tries to shift exactly one byte from the queue head
-/// to USART1's TDR via the *non-blocking* `embedded-hal` write. If TXE
-/// isn't set we leave the byte and try again next pass.
+/// DMA-backed UART TX ring. `write!` enqueues into a 4 KiB static ring
+/// (drop-on-overflow, same semantics as the old deque writer); the
+/// motor loop calls [`service`] once per microloop, which hands the
+/// longest contiguous unsent run to **DMA1_CH4** (USART1_TX request,
+/// CSELR C4S = 0b0010) and lets hardware drain it at wire rate. No DMA
+/// interrupt — transfer-complete is polled from `service`, so the whole
+/// TX path stays main-context-only.
 ///
-/// Bytes are dropped if the queue is full — fine for status updates;
-/// not OK if you wanted reliable delivery.
+/// Why: the old writer shifted ONE byte per 1 ms service pass
+/// (~1 kB/s effective) — fine for key echoes at 9600, useless for
+/// streaming at 2 Mbaud (200 kB/s). With 4 KiB chunks kicked per pass
+/// the wire stays >95 % utilised while main spends ~0 CPU on TX.
 ///
-/// [`service`]: UartTxWriter::service
+/// Ownership note: `Tx<USART1>` is held only to keep the HAL from
+/// handing the peripheral to anyone else — after `CR3.DMAT` is set,
+/// data moves ring → TDR entirely by DMA. Never write TDR from the
+/// CPU while a chunk is in flight (interleaved garbage); all output
+/// must go through this ring, including "blocking" dumps.
 struct UartTxWriter {
-    tx: Tx<USART1>,
-    queue: Deque<u8, TX_QUEUE_LEN>,
+    _tx: Tx<USART1>,
+    ring: &'static mut [u8; TX_RING_LEN],
+    /// Next byte to write (main only). Ring is full when advancing
+    /// head would collide with tail (one slot wasted, classic ring).
+    head: usize,
+    /// Oldest unsent byte. Advances only on DMA transfer-complete.
+    tail: usize,
+    /// Bytes handed to the in-flight DMA chunk (0 = DMA idle).
+    inflight: usize,
 }
 
-const TX_QUEUE_LEN: usize = 256;
+const TX_RING_LEN: usize = 4096; // power of two
 
 impl UartTxWriter {
-    fn new(tx: Tx<USART1>) -> Self {
+    fn new(tx: Tx<USART1>, ring: &'static mut [u8; TX_RING_LEN]) -> Self {
+        // One-time plumbing: DMA1 clock, route channel 4 to USART1_TX,
+        // point CPAR at TDR, and let USART1 raise DMA requests.
+        unsafe {
+            (*stm32::RCC::ptr())
+                .ahb1enr
+                .modify(|_, w| w.dma1en().set_bit());
+            let dma = &*stm32::DMA1::ptr();
+            dma.cselr.modify(|_, w| w.c4s().bits(0b0010));
+            dma.cpar4
+                .write(|w| w.bits(&(*stm32::USART1::ptr()).tdr as *const _ as u32));
+            (*stm32::USART1::ptr())
+                .cr3
+                .modify(|_, w| w.dmat().set_bit());
+        }
         Self {
-            tx,
-            queue: Deque::new(),
+            _tx: tx,
+            ring,
+            head: 0,
+            tail: 0,
+            inflight: 0,
         }
     }
 
-    /// Try to push one byte from the queue head to USART1.TDR. No-op if
-    /// the queue is empty or TXE is not yet set.
+    fn pending(&self) -> usize {
+        self.head.wrapping_sub(self.tail) & (TX_RING_LEN - 1)
+    }
+
+    /// Push one byte; `false` (byte dropped) if the ring is full.
+    fn push(&mut self, b: u8) -> bool {
+        let next = (self.head + 1) & (TX_RING_LEN - 1);
+        if next == self.tail {
+            return false;
+        }
+        self.ring[self.head] = b;
+        self.head = next;
+        true
+    }
+
+    /// Reap a completed DMA chunk (if any) and kick the next one.
+    /// Called once per microloop; also spun directly by the blocking
+    /// paths. Worst-case gap between chunk-complete and next kick is
+    /// one microloop (1 ms) — with 4 KiB chunks (20 ms of wire time
+    /// at 2 M) that keeps the line >95 % utilised.
     fn service(&mut self) {
-        if let Some(&b) = self.queue.front()
-            && self.tx.write(b).is_ok()
-        {
-            self.queue.pop_front();
+        let dma = unsafe { &*stm32::DMA1::ptr() };
+        if self.inflight != 0 {
+            if dma.isr.read().tcif4().bit_is_set() {
+                dma.ccr4.modify(|_, w| w.en().clear_bit());
+                dma.ifcr.write(|w| w.cgif4().set_bit());
+                self.tail = (self.tail + self.inflight) & (TX_RING_LEN - 1);
+                self.inflight = 0;
+            } else {
+                return; // chunk still on the wire
+            }
         }
+        let pending = self.pending();
+        if pending == 0 {
+            return;
+        }
+        // Longest contiguous run from tail (a wrap becomes two chunks).
+        let contig = pending.min(TX_RING_LEN - self.tail);
+        unsafe {
+            dma.cmar4
+                .write(|w| w.bits(self.ring.as_ptr().add(self.tail) as u32));
+            dma.cndtr4.write(|w| w.bits(contig as u32));
+            // Ring bytes must be visible to DMA before EN.
+            core::sync::atomic::compiler_fence(Ordering::Release);
+            dma.ccr4
+                .write(|w| w.minc().set_bit().dir().set_bit().en().set_bit());
+        }
+        self.inflight = contig;
     }
 
-    /// Block-write a byte slice straight to USART1, after first
-    /// draining the pending queue so byte order is preserved. Used
-    /// by `L` (PWM sample dump) where the output is ~1 KB — far
-    /// bigger than the 64-byte queue and not worth growing it for.
+    /// Enqueue a byte slice without dropping: spin `service` whenever
+    /// the ring is full. Ordering vs earlier `write!` output is free
+    /// (single ring). Returns once everything is *enqueued* — the tail
+    /// of the data may still be draining by DMA afterwards, which is
+    /// fine because all output goes through the same ring.
     fn write_blocking(&mut self, bytes: &[u8]) {
-        while let Some(&b) = self.queue.front() {
-            while self.tx.write(b).is_err() {}
-            self.queue.pop_front();
-        }
         for &b in bytes {
-            while self.tx.write(b).is_err() {}
+            while !self.push(b) {
+                self.service();
+            }
         }
+        self.service();
     }
 }
 
@@ -574,7 +730,7 @@ impl core::fmt::Write for UartTxWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         for b in s.bytes() {
             // Drop bytes on overflow — status messages aren't critical.
-            let _ = self.queue.push_back(b);
+            let _ = self.push(b);
         }
         Ok(())
     }
@@ -628,6 +784,8 @@ fn ticks_1us() -> u32 {
 #[entry]
 fn main() -> ! {
     static mut RX_QUEUE: RxQueue = Queue::new();
+    static mut TX_RING: [u8; TX_RING_LEN] = [0; TX_RING_LEN];
+    static mut WREC_QUEUE: WrecQueue = Queue::new();
     let cp = cortex_m::Peripherals::take().unwrap();
     let dp = stm32::Peripherals::take().unwrap();
     let BoardInit {
@@ -799,9 +957,11 @@ fn main() -> ! {
         .write(|w| w.re().set_bit().rxneie().set_bit().ue().set_bit());
 
     let (producer, mut consumer) = RX_QUEUE.split();
+    let (wrec_producer, mut wrec_consumer) = WREC_QUEUE.split();
 
     free(|cs| {
         RX_PROD.borrow(cs).replace(Some(producer));
+        WREC_PROD.borrow(cs).replace(Some(wrec_producer));
     });
 
     // Enable DWT cycle counter — used by the rolling 1-second
@@ -883,7 +1043,16 @@ fn main() -> ! {
         "Print BEMF comp:      b   (rate/s + level on observed phase)\r"
     )
     .ok();
-    writeln!(&mut tx, "Cycle observed phase: p   (A=PA4, B=PA5, C=PB7)\r").ok();
+    writeln!(
+        &mut tx,
+        "Cycle observed phase: p   (A=PA4, B=PA5, C=PB7; manual mode only)\r"
+    )
+    .ok();
+    writeln!(
+        &mut tx,
+        "Toggle comp mux:      o   (auto per-sector [default] <-> manual single phase)\r"
+    )
+    .ok();
     writeln!(
         &mut tx,
         "Cycle COMP hyst:      h   (0/none -> 1/low -> 3/high -> 0)\r"
@@ -921,6 +1090,11 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
+        "Window record stream: g   (binary 16B frames, one per float window)\r"
+    )
+    .ok();
+    writeln!(
+        &mut tx,
         "Freeze/dump edge buf: E   (1st press: freeze + dump; 2nd press: resume)\r"
     )
     .ok();
@@ -931,7 +1105,7 @@ fn main() -> ! {
     )
     .ok();
 
-    let mut tx_writer = UartTxWriter::new(tx);
+    let mut tx_writer = UartTxWriter::new(tx, TX_RING);
 
     // ----------------------------------------------------------------
     // Flip PRIMASK now so SysTick can actually deliver its exception
@@ -1123,10 +1297,53 @@ fn main() -> ! {
                         write!(
                             &mut tx_writer,
                             "comp2 phase={} raw={}/s valid={}/s level={}\r\n",
-                            observed_phase.name(),
+                            if AUTO_MUX.load(Ordering::Relaxed) {
+                                "auto"
+                            } else {
+                                observed_phase.name()
+                            },
                             COMP_RATE.load(Ordering::Relaxed),
                             VALID_COMP_RATE.load(Ordering::Relaxed),
                             comp2::value() as u8,
+                        )
+                        .ok();
+                    }
+                    b'o' => {
+                        // CHAMELEON toggle: auto per-sector mux vs
+                        // legacy single-phase observation. Turning
+                        // auto OFF restores the `p`-selected phase's
+                        // mux routing (in `free` — TIM7 modifies the
+                        // same CSR when auto is on).
+                        let was_auto = AUTO_MUX.load(Ordering::Relaxed);
+                        if was_auto {
+                            free(|_| {
+                                AUTO_MUX.store(false, Ordering::Relaxed);
+                                comp2::set_observed_phase(observed_phase);
+                            });
+                            WAS_IN_FLOAT_SECTOR.store(false, Ordering::Relaxed);
+                            write!(
+                                &mut tx_writer,
+                                "mux=manual (observing {} only; 'p' cycles)\r\n",
+                                observed_phase.name(),
+                            )
+                            .ok();
+                        } else {
+                            AUTO_MUX.store(true, Ordering::Relaxed);
+                            write!(
+                                &mut tx_writer,
+                                "mux=auto (per-sector floating phase, 6 windows/rev)\r\n",
+                            )
+                            .ok();
+                        }
+                        rate_start_count = COMP_COUNT.load(Ordering::Relaxed);
+                        rate_start_valid = VALID_COMP_COUNT.load(Ordering::Relaxed);
+                        COMP_RATE.store(0, Ordering::Relaxed);
+                        VALID_COMP_RATE.store(0, Ordering::Relaxed);
+                    }
+                    b'p' if AUTO_MUX.load(Ordering::Relaxed) => {
+                        write!(
+                            &mut tx_writer,
+                            "mux=auto - 'p' is manual-mode only ('o' toggles)\r\n",
                         )
                         .ok();
                     }
@@ -1147,7 +1364,7 @@ fn main() -> ! {
                             comp2::ObservedPhase::B => comp2::ObservedPhase::C,
                             comp2::ObservedPhase::C => comp2::ObservedPhase::A,
                         };
-                        comp2::set_observed_phase(observed_phase);
+                        free(|_| comp2::set_observed_phase(observed_phase));
                         // Only re-arm EXTI22 if the FETs are actually
                         // driving. With the motor off the new INMSEL
                         // pin is just as floating as the old one, and
@@ -1300,6 +1517,19 @@ fn main() -> ! {
                             )
                             .ok();
                         }
+                    }
+                    b'g' => {
+                        // MAGPIE stream toggle. Binary 16-byte frames
+                        // interleave with ASCII key echoes; the host
+                        // parser scans for the 5A A5 sync pair.
+                        let on = !STREAM_ON.load(Ordering::Relaxed);
+                        STREAM_ON.store(on, Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "stream={}\r\n",
+                            if on { "on" } else { "off" },
+                        )
+                        .ok();
                     }
                     b'u' => {
                         // UART throughput / integrity test. Blast 64 KiB
@@ -1623,6 +1853,17 @@ fn main() -> ! {
                     write!(&mut tx_writer, "mode={}\r\n", mode_name(waveform)).ok();
                 }
             }
+            // MAGPIE drain: emit completed window records as 16-byte
+            // frames. Emit all-or-nothing per frame — a partial frame
+            // would desync the host parser; a dropped one just shows
+            // as a seq gap.
+            while let Some(rec) = wrec_consumer.dequeue() {
+                if TX_RING_LEN - 1 - tx_writer.pending() >= WREC_FRAME_LEN {
+                    for b in rec.encode() {
+                        let _ = tx_writer.push(b);
+                    }
+                }
+            }
             tx_writer.service();
 
             next_microloop += MICROLOOP_TICKS;
@@ -1846,18 +2087,68 @@ fn TIM7() {
         let duty = open_loop::six_step_duty(arr, amp);
         tim1_motor_pwm::set_six_step(sector, duty);
 
-        // Track entry into the observed phase's float window so the
-        // COMP-ISR's time-window gate (`valid` rate counter) has a
-        // meaningful `SECTOR_START_TICK` reference. EXTI is not gated
-        // here — edges are recorded into `EDGE_BUF` across the whole
-        // rev.
-        let float_mask = FLOAT_SECTOR_MASK.load(Ordering::Relaxed);
-        let in_float = (float_mask >> sector) & 1 != 0;
-        let was_in_float = WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed);
-        if in_float && !was_in_float {
-            SECTOR_START_TICK.store(ticks_10us(), Ordering::Relaxed);
+        if AUTO_MUX.load(Ordering::Relaxed) {
+            // CHAMELEON: every sector is a float window for *some*
+            // phase — route that phase to COMP2 at each sector entry,
+            // discard whatever edge the switchover latched, and
+            // restart the window clock. The mux settles in <5 µs;
+            // the half-sector time gate (≥139 µs even at f=600)
+            // discards that transient region with orders of margin,
+            // so no blocking delay in this ISR.
+            if sector_changed {
+                comp2::set_inm(SECTOR_FLOAT_PHASE[sector as usize]);
+                comp2::clear_pending();
+                // MAGPIE: package the just-ended window, then reset
+                // the accumulators for the new one. `free` closes the
+                // race with the higher-priority COMP ISR, which would
+                // otherwise smear one edge across the old/new window
+                // during the snapshot-and-reset.
+                free(|cs| {
+                    let now = ticks_10us();
+                    let start = SECTOR_START_TICK.load(Ordering::Relaxed);
+                    if STREAM_ON.load(Ordering::Relaxed) && start != 0 {
+                        let first_zc = WINDOW_FIRST_ZC_US.load(Ordering::Relaxed);
+                        let zc_off_us = if first_zc == u32::MAX {
+                            0xFFFF
+                        } else {
+                            first_zc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
+                        };
+                        let rec = WindowRec {
+                            start_10us: start,
+                            len_10us: now.wrapping_sub(start).min(0xFFFF) as u16,
+                            zc_off_us,
+                            raw: WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
+                            valid: WINDOW_VALID.load(Ordering::Relaxed).min(0xFFFF) as u16,
+                            sector: prev_sector,
+                            seq: WREC_SEQ.fetch_add(1, Ordering::Relaxed),
+                        };
+                        let mut prod = WREC_PROD.borrow(cs).borrow_mut();
+                        if let Some(p) = prod.as_mut() {
+                            // Drop on overflow — host sees the seq gap.
+                            let _ = p.enqueue(rec);
+                        }
+                    }
+                    WINDOW_RAW.store(0, Ordering::Relaxed);
+                    WINDOW_VALID.store(0, Ordering::Relaxed);
+                    WINDOW_FIRST_ZC_US.store(u32::MAX, Ordering::Relaxed);
+                    SECTOR_START_TICK.store(now, Ordering::Relaxed);
+                });
+                WAS_IN_FLOAT_SECTOR.store(true, Ordering::Relaxed);
+            }
+        } else {
+            // Legacy single-phase observation: track entry into the
+            // `p`-selected phase's float window so the COMP-ISR's
+            // time-window gate (`valid` rate counter) has a meaningful
+            // `SECTOR_START_TICK` reference. EXTI is not gated here —
+            // edges are recorded into `EDGE_BUF` across the whole rev.
+            let float_mask = FLOAT_SECTOR_MASK.load(Ordering::Relaxed);
+            let in_float = (float_mask >> sector) & 1 != 0;
+            let was_in_float = WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed);
+            if in_float && !was_in_float {
+                SECTOR_START_TICK.store(ticks_10us(), Ordering::Relaxed);
+            }
+            WAS_IN_FLOAT_SECTOR.store(in_float, Ordering::Relaxed);
         }
-        WAS_IN_FLOAT_SECTOR.store(in_float, Ordering::Relaxed);
     } else {
         // Sine: continuous 3-phase, no float window.
         let (c1, c2, c3) = open_loop::sine_duties(angle, arr, amp);
@@ -1912,6 +2203,7 @@ fn COMP() {
     // Ack the pending bit first so the IRQ doesn't immediately re-fire.
     comp2::clear_pending();
     COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+    WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
 
     // Software PWM-edge blanking. The `TIM1_CC` ISR latches
     // `ticks_1us()` into `LAST_PWM_EDGE_US` at every PWM channel
@@ -2001,4 +2293,11 @@ fn COMP() {
         return;
     }
     VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+    // MAGPIE: per-window valid count + first-survivor timestamp.
+    // This ISR is the sole writer between TIM7's `free`-wrapped
+    // resets, so plain check-then-store is race-free.
+    WINDOW_VALID.fetch_add(1, Ordering::Relaxed);
+    if WINDOW_FIRST_ZC_US.load(Ordering::Relaxed) == u32::MAX {
+        WINDOW_FIRST_ZC_US.store(ticks_1us(), Ordering::Relaxed);
+    }
 }
