@@ -22,6 +22,8 @@ import time
 
 import serial
 
+from magpie import parse_frames, raw_to_ma, seq_gaps
+
 sys.stdout.reconfigure(errors="replace")
 
 ap = argparse.ArgumentParser()
@@ -55,29 +57,6 @@ EDGE_NAMES = {
     4: "edges = phys anti-ZC",
     5: "edges = value-gated",
 }
-
-
-def parse_frames(buf: bytes):
-    frames = []
-    i = 0
-    while i + 16 <= len(buf):
-        if buf[i] == 0x5A and buf[i + 1] == 0xA5 and (buf[i + 3] & 0x0F) < 6:
-            f = buf[i : i + 16]
-            frames.append(
-                dict(
-                    seq=f[2],
-                    zc_found=bool(f[3] & 0x80),
-                    sector=f[3] & 0x0F,
-                    len_us=int.from_bytes(f[8:10], "little") * 10,
-                    zc_off_us=int.from_bytes(f[10:12], "little"),
-                    raw=int.from_bytes(f[12:14], "little"),
-                    valid=int.from_bytes(f[14:16], "little"),
-                )
-            )
-            i += 16
-        else:
-            i += 1
-    return frames
 
 
 class Bench:
@@ -130,7 +109,7 @@ def summarize(label, data):
     if not frames:
         print(f"{label}: NO FRAMES")
         return
-    gaps = sum(1 for a, b in zip(frames, frames[1:]) if (a["seq"] + 1) % 256 != b["seq"])
+    gaps = seq_gaps(frames)
     zc = [f["zc_off_us"] for f in frames if f["zc_found"]]
     lens = [f["len_us"] for f in frames]
     line = (
@@ -143,6 +122,7 @@ def summarize(label, data):
             f", zc_off={statistics.mean(zc):5.0f}us "
             f"(sd {statistics.stdev(zc):4.0f}, gate {statistics.mean(lens) / 2:.0f})"
         )
+    line += f", i={raw_to_ma(statistics.mean([f['i_avg'] for f in frames])):4.0f}mA"
     print(line, flush=True)
 
 

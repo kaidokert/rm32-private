@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod adc_sync;
 pub mod board_init;
 pub mod comp2;
 pub mod current_adc;

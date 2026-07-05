@@ -21,6 +21,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from magpie import parse_frames, raw_to_ma, seq_gaps
+
 ap = argparse.ArgumentParser()
 ap.add_argument("capture")
 ap.add_argument("-o", "--out", default=None, help="output PNG (default: <capture>.png)")
@@ -28,31 +30,6 @@ ap.add_argument("--title", default=None)
 args = ap.parse_args()
 
 raw = pathlib.Path(args.capture).read_bytes()
-
-
-def parse_frames(buf: bytes):
-    frames = []
-    i = 0
-    while i + 16 <= len(buf):
-        if buf[i] == 0x5A and buf[i + 1] == 0xA5 and (buf[i + 3] & 0x0F) < 6:
-            f = buf[i : i + 16]
-            frames.append(
-                dict(
-                    seq=f[2],
-                    zc_found=bool(f[3] & 0x80),
-                    sector=f[3] & 0x0F,
-                    start=int.from_bytes(f[4:8], "little"),
-                    len_us=int.from_bytes(f[8:10], "little") * 10,
-                    zc_off_us=int.from_bytes(f[10:12], "little"),
-                    raw=int.from_bytes(f[12:14], "little"),
-                    valid=int.from_bytes(f[14:16], "little"),
-                )
-            )
-            i += 16
-        else:
-            i += 1
-    return frames
-
 
 frames = parse_frames(raw)
 if not frames:
@@ -63,7 +40,7 @@ for f in frames:
     # 10 us ticks -> seconds since capture start (u32 wrap-safe)
     f["t"] = ((f["start"] - t0) & 0xFFFFFFFF) * 10e-6
 
-gaps = sum(1 for a, b in zip(frames, frames[1:]) if (a["seq"] + 1) % 256 != b["seq"])
+gaps = seq_gaps(frames)
 
 fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=True, sharey=True)
 fig.suptitle(
@@ -103,6 +80,7 @@ for s in range(6):
     stats += (
         f"\nraw {statistics.mean([f['raw'] for f in fs]):.0f}"
         f"  valid {statistics.mean([f['valid'] for f in fs]):.0f}"
+        f"  i {raw_to_ma(statistics.mean([f['i_avg'] for f in fs])):.0f}mA"
     )
     ax.set_title(f"sector {s}   {stats}", fontsize=9)
     ax.grid(True, alpha=0.3)

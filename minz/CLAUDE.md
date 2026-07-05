@@ -73,12 +73,30 @@ one; `motor_tester.rs` stays as the 9600-baud/soft-UART reference.
 
 ## MAGPIE window-record telemetry + MUSTANG baseline (July 2026)
 
-motor_tester2 streams one 16-byte binary record per float window (`g`
-key toggles): sync 5A A5, seq, sector|zc-found flag, window start
+motor_tester2 streams one **22-byte** binary record per float window
+(`g` key toggles): sync 5A A5, seq, sector|zc-found flag, window start
 (10 µs ticks, u32), window len (10 µs, u16), first-valid-ZC offset
-(µs, u16, FFFF=none), raw + gate-surviving edge counts. Per-sector
+(µs, u16, FFFF=none), raw + gate-surviving edge counts, and window
+current min/max/mean (raw 12-bit, GECKO — see below). Per-sector
 COMP2 mux is automatic (CHAMELEON, `o` toggles, AM32 changeCompInput
-style) so all 6 windows per rev are observed.
+style) so all 6 windows per rev are observed. Frame layout lives in
+`scripts/magpie.py`, shared by all host scripts.
+
+### GECKO — PWM-synchronous continuous current sampling
+
+`src/adc_sync.rs`: TIM1 OC4REF (falling edge at CNT=CCR4=250 ≈ 3.1 µs
+into the cycle, inside the high-side ON window) → TRGO2 (CR2.MMS2,
+raw-bits — PAC lacks the field) → ADC1 ch8 (PA3, INA180) hardware
+trigger, EXTSEL=EXT10, one conversion per 24 kHz PWM cycle. No DMA,
+no new IRQs: TIM1_UP_TIM16 reads DR at the cycle wrap and maintains
+per-window sum/min/max. OVRMOD=1 so a slow reader can't stall it.
+**vbat moved to the injected group** (`adc_sync::read_vbat_injected`,
+JQDIS=1, software JADSTART) — the HAL `OneShot::read` must NOT be
+called after `adc_sync::start` (it rewrites SQR/CFGR under the armed
+trigger); `SenseAdc` is kept only for power-up/cal + `adc_to_mv`.
+Verified: 0 mA at idle, ~480 mA avg / 564 mA peak per window at
+f=50 amp=15, visible per-sector ripple, vbat sag 6.52→6.28 V under
+load, tim1_up steady at 24.0 k/s.
 
 Host scripts (all `scripts/`): `uart_cmd.py` (key driver),
 `uart_stream.py` (capture + per-sector stats), `sweep_windows.py`

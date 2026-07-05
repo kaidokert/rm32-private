@@ -57,6 +57,7 @@ use cortex_m::interrupt::{Mutex, free};
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::{entry, exception};
 use heapless::spsc::{Producer, Queue};
+use minz::adc_sync;
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
 use minz::comp2;
 use minz::current_adc::SenseAdc;
@@ -428,6 +429,16 @@ static WAS_IN_FLOAT_SECTOR: AtomicBool = AtomicBool::new(false);
 // rev — 3.6 k records/s at f=600 → 57.6 kB/s, ~29 % of the 2 M link.
 // ---------------------------------------------------------------
 
+/// Latest PWM-synchronous current sample (raw 12-bit, INA180 via
+/// ADC1 ch8), harvested once per PWM cycle by the TIM1_UP ISR.
+static LAST_I_RAW: AtomicU16 = AtomicU16::new(0);
+/// Per-window current accumulators. TIM1_UP writes; TIM7 snapshots
+/// and resets them in the same `free` block as the COMP accumulators.
+static WINDOW_I_SUM: AtomicU32 = AtomicU32::new(0);
+static WINDOW_I_N: AtomicU32 = AtomicU32::new(0);
+static WINDOW_I_MIN: AtomicU16 = AtomicU16::new(0x0FFF);
+static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
+
 /// Raw COMP edges in the current window (every EXTI fire).
 static WINDOW_RAW: AtomicU32 = AtomicU32::new(0);
 /// Edges that survived every gate (blanking, mode-5, half-window).
@@ -446,18 +457,22 @@ struct WindowRec {
     zc_off_us: u16,
     raw: u16,
     valid: u16,
+    /// PWM-synchronous current over the window, raw 12-bit counts.
+    i_min: u16,
+    i_max: u16,
+    i_avg: u16,
     sector: u8,
     seq: u8,
 }
 
 const WREC_SYNC0: u8 = 0x5A;
 const WREC_SYNC1: u8 = 0xA5;
-const WREC_FRAME_LEN: usize = 16;
+const WREC_FRAME_LEN: usize = 22;
 
 impl WindowRec {
     /// Little-endian wire frame: sync(2) seq(1) sector|flags(1)
-    /// start(4) len(2) zc_off(2) raw(2) valid(2). Bit 7 of byte 3 =
-    /// "zc found".
+    /// start(4) len(2) zc_off(2) raw(2) valid(2) i_min(2) i_max(2)
+    /// i_avg(2). Bit 7 of byte 3 = "zc found".
     fn encode(&self) -> [u8; WREC_FRAME_LEN] {
         let mut f = [0u8; WREC_FRAME_LEN];
         f[0] = WREC_SYNC0;
@@ -469,6 +484,9 @@ impl WindowRec {
         f[10..12].copy_from_slice(&self.zc_off_us.to_le_bytes());
         f[12..14].copy_from_slice(&self.raw.to_le_bytes());
         f[14..16].copy_from_slice(&self.valid.to_le_bytes());
+        f[16..18].copy_from_slice(&self.i_min.to_le_bytes());
+        f[18..20].copy_from_slice(&self.i_max.to_le_bytes());
+        f[20..22].copy_from_slice(&self.i_avg.to_le_bytes());
         f
     }
 }
@@ -833,7 +851,7 @@ fn main() -> ! {
     // PA6 = ADC1_IN11 (battery voltage). Oneshot HAL reads, ~16 µs each.
     let pa3 = gpioa.pa3.into_analog(&mut gpioa.moder, &mut gpioa.pupdr);
     let pa6 = gpioa.pa6.into_analog(&mut gpioa.moder, &mut gpioa.pupdr);
-    let mut sense_adc = SenseAdc::new(
+    let sense_adc = SenseAdc::new(
         dp.ADC1,
         dp.ADC_COMMON,
         pa3,
@@ -929,6 +947,14 @@ fn main() -> ! {
     tim1_motor_pwm::init(dp.TIM1, &mut apb2);
     tim1_motor_pwm::enable_update_interrupt();
     tim1_motor_pwm::enable_cc_interrupts();
+
+    // GECKO: continuous PWM-synchronous current sampling. OC4REF
+    // (falling edge at CNT = SAMPLE_TICKS) → TRGO2 → ADC1 ch8, one
+    // conversion per 24 kHz PWM cycle, harvested in TIM1_UP_TIM16.
+    // Needs TIM1 running (init above) and the ADC powered/calibrated
+    // (SenseAdc::new above). From here on the HAL OneShot reads are
+    // off-limits; vbat goes through the injected group instead.
+    adc_sync::start(adc_sync::SAMPLE_TICKS);
 
     // TIM7 motor-drive heartbeat at `MOTOR_DRIVE_HZ` (= 6 kHz). The
     // `TIM7` ISR (below) reads the motor-drive atomics each tick and
@@ -1566,13 +1592,15 @@ fn main() -> ! {
                         }
                     }
                     b'i' => {
-                        // Oneshot reads on both instrumentation pins
-                        // (~16 µs each). Convert to engineering units
-                        // using the empirical bench calibration above.
-                        let i_raw = sense_adc.isns_raw();
+                        // Current comes from the continuous PWM-
+                        // synchronous sampler (GECKO); vbat from an
+                        // on-demand injected conversion. Neither
+                        // touches the HAL OneShot path (which would
+                        // fight the trigger-armed regular channel).
+                        let i_raw = LAST_I_RAW.load(Ordering::Relaxed);
                         let i_mv = sense_adc.adc_to_mv(i_raw);
                         let i_ma = i_mv as u32 * 1000 / ISNS_MV_PER_AMP;
-                        let v_raw = sense_adc.vbat_raw();
+                        let v_raw = adc_sync::read_vbat_injected();
                         let v_mv = sense_adc.adc_to_mv(v_raw);
                         let v_supply_mv = v_mv as u32 * VBAT_DIVIDER_X100 / 100;
                         write!(
@@ -2113,12 +2141,24 @@ fn TIM7() {
                         } else {
                             first_zc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
                         };
+                        let i_n = WINDOW_I_N.load(Ordering::Relaxed);
                         let rec = WindowRec {
                             start_10us: start,
                             len_10us: now.wrapping_sub(start).min(0xFFFF) as u16,
                             zc_off_us,
                             raw: WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
                             valid: WINDOW_VALID.load(Ordering::Relaxed).min(0xFFFF) as u16,
+                            i_min: if i_n == 0 {
+                                0
+                            } else {
+                                WINDOW_I_MIN.load(Ordering::Relaxed)
+                            },
+                            i_max: WINDOW_I_MAX.load(Ordering::Relaxed),
+                            i_avg: if i_n == 0 {
+                                0
+                            } else {
+                                (WINDOW_I_SUM.load(Ordering::Relaxed) / i_n) as u16
+                            },
                             sector: prev_sector,
                             seq: WREC_SEQ.fetch_add(1, Ordering::Relaxed),
                         };
@@ -2131,6 +2171,10 @@ fn TIM7() {
                     WINDOW_RAW.store(0, Ordering::Relaxed);
                     WINDOW_VALID.store(0, Ordering::Relaxed);
                     WINDOW_FIRST_ZC_US.store(u32::MAX, Ordering::Relaxed);
+                    WINDOW_I_SUM.store(0, Ordering::Relaxed);
+                    WINDOW_I_N.store(0, Ordering::Relaxed);
+                    WINDOW_I_MIN.store(0x0FFF, Ordering::Relaxed);
+                    WINDOW_I_MAX.store(0, Ordering::Relaxed);
                     SECTOR_START_TICK.store(now, Ordering::Relaxed);
                 });
                 WAS_IN_FLOAT_SECTOR.store(true, Ordering::Relaxed);
@@ -2187,6 +2231,22 @@ fn TIM1_UP_TIM16() {
     // Byte layout: bit 0 = COMP2 value, bits 1..=3 = sector (0..=5).
     TIM1_UP_COUNT.fetch_add(1, Ordering::Relaxed);
     tim1_motor_pwm::clear_update_flag();
+    // Harvest the PWM-synchronous current sample converted earlier in
+    // this cycle (OC4REF falling edge at CNT=SAMPLE_TICKS triggered
+    // it; by the update event it finished long ago). Sole writer of
+    // the window accumulators between TIM7's `free`-wrapped resets,
+    // and TIM7 (lower priority) can't interrupt us — plain load/store
+    // min/max is race-free.
+    let i_raw = adc_sync::last_raw();
+    LAST_I_RAW.store(i_raw, Ordering::Relaxed);
+    WINDOW_I_SUM.fetch_add(i_raw as u32, Ordering::Relaxed);
+    WINDOW_I_N.fetch_add(1, Ordering::Relaxed);
+    if i_raw < WINDOW_I_MIN.load(Ordering::Relaxed) {
+        WINDOW_I_MIN.store(i_raw, Ordering::Relaxed);
+    }
+    if i_raw > WINDOW_I_MAX.load(Ordering::Relaxed) {
+        WINDOW_I_MAX.store(i_raw, Ordering::Relaxed);
+    }
     let idx = (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
     let value = comp2::value() as u8;
     let sector = CURRENT_SECTOR.load(Ordering::Relaxed) & 0x07;
