@@ -71,6 +71,44 @@ one; `motor_tester.rs` stays as the 9600-baud/soft-UART reference.
 - Everything else (keys, COMP2 pipeline, dumps, ADC cal) identical to
   `motor_tester.rs` below.
 
+## MAGPIE window-record telemetry + MUSTANG baseline (July 2026)
+
+motor_tester2 streams one 16-byte binary record per float window (`g`
+key toggles): sync 5A A5, seq, sector|zc-found flag, window start
+(10 µs ticks, u32), window len (10 µs, u16), first-valid-ZC offset
+(µs, u16, FFFF=none), raw + gate-surviving edge counts. Per-sector
+COMP2 mux is automatic (CHAMELEON, `o` toggles, AM32 changeCompInput
+style) so all 6 windows per rev are observed.
+
+Host scripts (all `scripts/`): `uart_cmd.py` (key driver),
+`uart_stream.py` (capture + per-sector stats), `sweep_windows.py`
+(f-sweep with closed-loop filter-state setting — the blank/edge keys
+are RELATIVE, always set state by reading echoes), `plot_windows.py`
+(PEACOCK 6-panel rinz-style plots). Captures land in `captures/`
+(gitignored).
+
+### Baseline (board 1, NO caps, amp=15, blank=20 µs, phys_ZC edges)
+
+- **Raw config is gate-saturated everywhere**: with no filters the
+  noise density is ~1 edge/10 µs, so "first edge after half-window
+  gate" always fires within ~11 µs of the gate. Meaningless metric.
+- **Filtered, EVEN sectors (rising-BEMF windows) decouple**: first-ZC
+  sits +30..+90 µs past the gate with σ ≈ 50-60 µs, stable f=50→250.
+  σ/window ≈ 2 % (f=50) → 8 % (f=250). These are usable ZCs — 3/rev.
+- **Filtered, ODD sectors (falling-BEMF) stay noise-pinned** (+15 µs,
+  σ 12 = gate echo). Falling windows are ~2× noisier in raw counts
+  too. Needs persistence-run detection and/or the 4.7 nF caps.
+- zc-found dips to 85-92 % at f=300-350 (open-loop slip region).
+- Window-length sd spikes (87 µs at f=150 etc.) are TIM7 sector
+  quantization — commutation is stepped by the 6 kHz TIM7 ISR, so
+  sector timing granularity is 166 µs. Fine for observation; NOT
+  fine as the commutation timebase of a closed loop (AM32 uses a
+  hardware one-shot timer). Design input for the shadow-lock work.
+
+Preliminary lock verdict: 3 clean ZCs/rev at σ ≤ 8 % of window on the
+uncapped board — interval-averaging lock looks feasible even before
+the caps; odd sectors are the improvement target.
+
 ## `examples/motor_tester.rs` — previous bench tool (9600, soft-UART)
 
 Open-loop motor spinner with live UART control. Pins on the Vimdrones L431:
