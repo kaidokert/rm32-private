@@ -43,25 +43,38 @@ The "mystery LPTIM stall" this guarded against WAS the watchdog race
 if a genuine chain stall ever shows in a bb dump (signature would be:
 long gap with no REF/BLD/DRK events before DSY, since ≪ saturated).
 
-## 3. Kill the systematic acceleration lag ⬜ OPTIONAL (perf)
+## 3+4. Acceleration lag + gate relaxation ❌ ATTEMPTED & REVERTED
 
-Not the binding constraint at bench ramp rates — post-fix, amp steps
-of +2 tracked cleanly with the trailing ¾-smoothed estimator and
-2-of-6 dead-reckoned windows. Still real physics for *faster* ramps:
+Tried together 2026-07-06 (ZC-anchored dead-reckon, asymmetric α=½
+on shrinking intervals, gate 30 %→20 %) and produced a **commutation
+runaway**: the loop spun its own field to "3333 Hz" (50 µs windows,
+scheduler floor) while the rotor did no such thing. Neither guard
+fired — commutations never pause (watchdog content) and a field
+detached from the rotor draws little current (no OC trip) — so the
+sweep printed SURVIVED. Reverted to the proven build (verified
+255 Hz lock after revert).
 
-- [ ] Anchor dead-reckoned C windows to the last real ZC
-  (`next = zc + T/2 + n·T`) instead of the previous commutation time.
-- [ ] Slope-aware estimator (track dT, or α=½ while intervals shrink
-  monotonically) to remove the ~3-window group delay.
+**Mechanism (why it ratchets)**: boosting α only in the shrinking
+direction biases the estimator under noise — every junk-short
+interval sample is chased at α=½ while recoveries crawl at ¼; the
+20 % gate shrinks proportionally with the falling interval, admitting
+junk earlier each window; the ZC anchor then propagates the compressed
+phase. A one-way-fast filter + self-referencing gate = positive
+feedback.
 
-Do these when the envelope sweep (item 6) shows where ramps break.
+**If ever retried, the safe version needs**:
+- a physical plausibility clamp on the interval floor (from vbus/Ke:
+  the rotor cannot exceed ~1.2 kHz elec at this voltage);
+- symmetric slope handling (track dT properly, not one-way α);
+- anchored/relaxed behavior gated on lock quality (e.g. ≥3 accepts in
+  the last 6 windows), degrading to the proven plain free-run;
+- `cl_ramp_sweep.py` now flags sub-150 µs windows as **RUNAWAY** so
+  this failure mode can never read as SURVIVED again.
 
-## 4. Relax the gate to ~15–20 % ⬜ OPTIONAL (perf)
-
-Still at 30 % of measured interval. The ADC-sign confirmation's 0 %
-premature rate means the gate's only job is skipping commutation
-flyback; relaxing buys phase-lead budget during catch-up. Pair with
-item 6 to measure the benefit.
+Given item 6's result (steady lock to ~980 Hz, no ramp-rate limit on
+the proven build), the honest cost/benefit says: leave 3/4 unbuilt
+unless HEDGEHOG's A/B or a real load shows mid-ramp coverage
+actually mattering.
 
 ## 5. Throttle slew limiting ⬜ TODO (production hygiene)
 

@@ -115,11 +115,22 @@ def run_ramp(b, p, rate_ms):
     buf += p.read(262144)
 
     broke = b"DESYNC" in buf or b"TRIP" in buf
+    # Plausibility: sub-150 µs windows mean the loop is spinning its
+    # own commutation field far beyond any rotor (seen when estimator
+    # changes ratcheted the interval down) — neither watchdog fires
+    # (commutations never pause; a field detached from the rotor draws
+    # little current), so "no break" alone is NOT success.
+    runaway = False
+    for f in parse_frames(bytes(buf)):
+        if 0 < f["len_us"] < 150:
+            runaway = True
+            break
     # Disengage / make safe.
     if not broke:
         b.send("y", 0.5)
     b.send("w", 0.4)
-    return dict(result="BROKE" if broke else "SURVIVED", data=bytes(buf))
+    result = "BROKE" if broke else ("RUNAWAY" if runaway else "SURVIVED")
+    return dict(result=result, data=bytes(buf))
 
 
 with serial.Serial(args.port, args.baud, timeout=0.05) as p:
