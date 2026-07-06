@@ -471,6 +471,48 @@ static WINDOW_QZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
 /// the ¾-smoothed ZC-to-ZC interval (µs; 0 = no estimate yet).
 static OWL_LAST_QZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
 static OWL_INTERVAL_US: AtomicU32 = AtomicU32::new(0);
+
+// ---------------------------------------------------------------
+// FALCON — closed-loop commutation.
+//
+// `y` arms; the first qualified ZC with a valid OWL interval engages:
+// from then on the COMP ISR schedules LPTIM2 one-shots at
+// interval·(30°−advance)/60° past each qualified ZC, and the LPTIM2
+// ISR commutates (sector step, duty, mux, EXTI re-arm) — TIM7's
+// crystal-driven angle accumulator is frozen. COMP and LPTIM2 share
+// NVIC priority 1, so their state handoffs serialize (no nesting).
+// Desync (no qualified ZC for 3 intervals, checked by TIM7) kills
+// the output — coasting beats a jolting fallback ramp on this bench.
+// ---------------------------------------------------------------
+
+/// `y` pressed while running: engage at the next qualified ZC that
+/// has an interval estimate behind it.
+static CL_ARMED: AtomicBool = AtomicBool::new(false);
+/// Closed loop is driving commutation (TIM7 stepper frozen).
+static CL_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Desync-kill happened in ISR context; main prints + syncs state.
+static CL_DESYNC: AtomicBool = AtomicBool::new(false);
+/// `ticks_10us` of the most recent commutation (either engine) —
+/// desync watchdog reference.
+static LAST_COMM_10US: AtomicU32 = AtomicU32::new(0);
+/// Closed-loop commutation counter (for the `i` readout).
+static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// FALCON v2: deferred ZC confirmation. The COMP ISR's 0.6 µs
+/// persistence check cannot out-wait PWM dwell noise (the comparator
+/// sits still for tens of µs between switching edges), which let the
+/// first closed-loop attempt lock onto its own schedule (interval
+/// frozen regardless of amp). Instead the COMP ISR only records a
+/// *candidate* (time + expected post-ZC level); the TIM1_UP ISR —
+/// already sampling once per PWM cycle at the quiet wrap point —
+/// confirms the level still holds on the next 2 cycles (an ~83 µs
+/// persistence horizon, inherently PWM-blanked, zero extra ISR load)
+/// before accepting it as the window's qualified ZC and running the
+/// estimator/scheduler. Publish order: EXPECTED+CONFIRMS before the
+/// ZC-time store (the store is the publish).
+static CAND_ZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
+static CAND_EXPECTED: AtomicBool = AtomicBool::new(false);
+static CAND_CONFIRMS: AtomicU8 = AtomicU8::new(0);
 /// Stream gate for the `g` key.
 static STREAM_ON: AtomicBool = AtomicBool::new(false);
 
@@ -992,6 +1034,9 @@ fn main() -> ! {
     // off-limits; vbat goes through the injected group instead.
     adc_sync::start(adc_sync::SAMPLE_TICKS);
 
+    // FALCON commutation one-shot (armed only when the loop engages).
+    minz::lptim2_oneshot::init();
+
     // TIM7 motor-drive heartbeat at `MOTOR_DRIVE_HZ` (= 6 kHz). The
     // `TIM7` ISR (below) reads the motor-drive atomics each tick and
     // writes TIM1's CCRs (sine path) or commutates (six-step path).
@@ -1162,6 +1207,11 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
+        "Closed loop:          y   (engage at next qualified ZC; y again = kill; desync auto-kills)\r"
+    )
+    .ok();
+    writeln!(
+        &mut tx,
         "Failsafe: auto-kill at >1.5 A avg over 85 ms (stall guard, r/q re-arms)\r"
     )
     .ok();
@@ -1208,6 +1258,10 @@ fn main() -> ! {
     unsafe {
         priority::set_irq_prios();
         priority::set_irq_prio(Interrupt::USART2, priority::PRIO_LPTIM1);
+        // FALCON: commutation one-shot at COMP's level — same
+        // priority means COMP and LPTIM2 serialize (tail-chain, never
+        // nest), so ZC-accept and commutate can't interleave state.
+        priority::set_irq_prio(Interrupt::LPTIM2, priority::PRIO_COMP);
         // TIM1_CC stays at PRIO_TIM1 = 3 (set by set_irq_prios above).
         // We do NOT promote it to 0 to run before COMP (priority 1):
         // that caused a lockup because priority-0 ISRs block SysTick
@@ -1224,6 +1278,7 @@ fn main() -> ! {
 
     unsafe {
         NVIC::unmask(Interrupt::USART2);
+        NVIC::unmask(Interrupt::LPTIM2);
         NVIC::unmask(Interrupt::COMP);
         NVIC::unmask(Interrupt::TIM1_UP_TIM16);
         NVIC::unmask(Interrupt::TIM7);
@@ -1305,11 +1360,17 @@ fn main() -> ! {
                     b'c' => electrical_hz = clamp_hz(electrical_hz as i32 - 1),
                     b'f' => electrical_hz = clamp_hz(electrical_hz as i32 + 10),
                     b'v' => electrical_hz = clamp_hz(electrical_hz as i32 - 10),
+                    b'm' if CL_ACTIVE.load(Ordering::Relaxed) => {
+                        write!(&mut tx_writer, "CL active - 'y' first\r\n").ok();
+                    }
                     b'm' => {
                         waveform = match waveform {
                             Waveform::Sine => Waveform::SixStep,
                             Waveform::SixStep => Waveform::Sine,
                         };
+                    }
+                    b'r' | b'q' if CL_ACTIVE.load(Ordering::Relaxed) => {
+                        write!(&mut tx_writer, "CL active - 'y' first\r\n").ok();
                     }
                     b'r' => {
                         // Panic reset: back to a known-good idle config.
@@ -1353,6 +1414,8 @@ fn main() -> ! {
                         // resume the previous duty mid-decision, and
                         // mask EXTI22 so the now-floating phases don't
                         // storm the COMP ISR (see boot-time comment).
+                        CL_ACTIVE.store(false, Ordering::Relaxed);
+                        CL_ARMED.store(false, Ordering::Relaxed);
                         if output_enabled {
                             output_enabled = false;
                             MOTOR_ENABLED.store(false, Ordering::Relaxed);
@@ -1590,6 +1653,40 @@ fn main() -> ! {
                             .ok();
                         }
                     }
+                    b'y' => {
+                        // FALCON engage/kill. Engaging waits for the
+                        // next qualified ZC that has an interval
+                        // estimate behind it (OWL runs from arm, so
+                        // that's typically the very next window).
+                        // Pressing again while active = kill + coast
+                        // (no jolty open-loop resume in v1).
+                        if CL_ACTIVE.load(Ordering::Relaxed) {
+                            CL_ACTIVE.store(false, Ordering::Relaxed);
+                            CL_ARMED.store(false, Ordering::Relaxed);
+                            output_enabled = false;
+                            MOTOR_ENABLED.store(false, Ordering::Relaxed);
+                            tim1_motor_pwm::all_off();
+                            comp2::set_exti_enabled(false);
+                            write!(
+                                &mut tx_writer,
+                                "CL off - output killed (r/q re-arms open loop)\r\n"
+                            )
+                            .ok();
+                        } else if output_enabled && matches!(waveform, Waveform::SixStep) {
+                            CL_ARMED.store(true, Ordering::Relaxed);
+                            write!(
+                                &mut tx_writer,
+                                "CL ARMED - engaging at next qualified ZC\r\n"
+                            )
+                            .ok();
+                        } else {
+                            write!(
+                                &mut tx_writer,
+                                "CL needs a running six-step drive first (r/q)\r\n"
+                            )
+                            .ok();
+                        }
+                    }
                     b'g' => {
                         // MAGPIE stream toggle. Binary 16-byte frames
                         // interleave with ASCII key echoes; the host
@@ -1760,6 +1857,19 @@ fn main() -> ! {
                         last_i_tick = now_tick;
                         last_i_comp = now_comp;
                         last_i_usart2 = now_usart2;
+                        if CL_ACTIVE.load(Ordering::Relaxed) {
+                            let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+                            if iv != 0 {
+                                write!(
+                                    &mut tx_writer,
+                                    "cl: ACTIVE f_e={}Hz interval={}us comms={}\r\n",
+                                    1_000_000 / (6 * iv),
+                                    iv,
+                                    CL_COMM_COUNT.load(Ordering::Relaxed),
+                                )
+                                .ok();
+                            }
+                        }
                         last_i_tim7 = now_tim7;
                         last_i_tim1 = now_tim1;
                         last_i_tim1_cc = now_tim1_cc;
@@ -1993,6 +2103,17 @@ fn main() -> ! {
                     write!(&mut tx_writer, "mode={}\r\n", mode_name(waveform)).ok();
                 }
             }
+            // FALCON desync report: the TIM7 watchdog already killed
+            // the output; sync main's mirror and tell the operator.
+            if CL_DESYNC.load(Ordering::Relaxed) {
+                CL_DESYNC.store(false, Ordering::Relaxed);
+                output_enabled = false;
+                write!(
+                    &mut tx_writer,
+                    "!! CL DESYNC - no qualified ZC for 3 intervals - output killed (r/q re-arms)\r\n",
+                )
+                .ok();
+            }
             // Overcurrent trip report: the ISR already killed the
             // output; sync main's mirror so `r`/`q` re-arm works.
             if OC_TRIPPED.load(Ordering::Relaxed) {
@@ -2111,6 +2232,31 @@ fn TIM7() {
     // store observes the matching polarity + edges (not stale ones).
     tim7_drive::clear_update_flag();
     TIM7_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // FALCON: while the closed loop drives, the crystal stepper is
+    // frozen — LPTIM2 owns sector changes, mux, and window close.
+    // TIM7 keeps two jobs: duty refresh (live amp keys) and the
+    // desync watchdog (no qualified ZC for 3 intervals → kill and
+    // coast; a fallback ramp jolt has cost this bench a motor before).
+    if CL_ACTIVE.load(Ordering::Relaxed) {
+        if MOTOR_ENABLED.load(Ordering::Relaxed) {
+            let duty =
+                open_loop::six_step_duty(max_duty(), AMPLITUDE_PCT.load(Ordering::Relaxed) as u16);
+            tim1_motor_pwm::set_six_step(CURRENT_SECTOR.load(Ordering::Relaxed), duty);
+            let interval_us = OWL_INTERVAL_US.load(Ordering::Relaxed);
+            let since_us = ticks_10us()
+                .wrapping_sub(LAST_COMM_10US.load(Ordering::Relaxed))
+                .saturating_mul(10);
+            if interval_us != 0 && since_us > interval_us.max(1_000) * 3 {
+                CL_ACTIVE.store(false, Ordering::Relaxed);
+                MOTOR_ENABLED.store(false, Ordering::Relaxed);
+                tim1_motor_pwm::all_off();
+                comp2::set_exti_enabled(false);
+                CL_DESYNC.store(true, Ordering::Relaxed);
+            }
+        }
+        return;
+    }
 
     let motor_enabled = MOTOR_ENABLED.load(Ordering::Relaxed);
     let prev_sector = CURRENT_SECTOR.load(Ordering::Relaxed);
@@ -2254,95 +2400,7 @@ fn TIM7() {
                 // race with the higher-priority COMP ISR, which would
                 // otherwise smear one edge across the old/new window
                 // during the snapshot-and-reset.
-                free(|cs| {
-                    let now = ticks_10us();
-                    let now_us = ticks_1us();
-                    let start = SECTOR_START_TICK.load(Ordering::Relaxed);
-
-                    // OWL estimator — runs whether or not streaming,
-                    // so lock quality accumulates from arm onward.
-                    // interval = qZC-to-qZC across CONSECUTIVE windows
-                    // (chain breaks on a windowless miss); prediction
-                    // for the boundary happening NOW is qzc +
-                    // interval/2 (ZC sits mid-window at zero advance).
-                    let qzc = WINDOW_QZC_US.load(Ordering::Relaxed);
-                    let mut pred_err: i16 = i16::MIN;
-                    if qzc != u32::MAX {
-                        let last = OWL_LAST_QZC_US.load(Ordering::Relaxed);
-                        if last != u32::MAX {
-                            let new_int = qzc.wrapping_sub(last);
-                            // Sanity: within 2x of a window at f≥25.
-                            if new_int > 100 && new_int < 30_000 {
-                                let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
-                                let smoothed = if old == 0 {
-                                    new_int
-                                } else {
-                                    (3 * old + new_int) / 4
-                                };
-                                OWL_INTERVAL_US.store(smoothed, Ordering::Relaxed);
-                            }
-                        }
-                        let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
-                        if interval != 0 {
-                            let err = now_us.wrapping_sub(qzc) as i64 - (interval / 2) as i64;
-                            pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
-                        }
-                        OWL_LAST_QZC_US.store(qzc, Ordering::Relaxed);
-                    } else {
-                        OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
-                    }
-
-                    if STREAM_ON.load(Ordering::Relaxed) && start != 0 {
-                        let first_zc = WINDOW_FIRST_ZC_US.load(Ordering::Relaxed);
-                        let zc_off_us = if first_zc == u32::MAX {
-                            0xFFFF
-                        } else {
-                            first_zc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
-                        };
-                        let qzc_off_us = if qzc == u32::MAX {
-                            0xFFFF
-                        } else {
-                            qzc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
-                        };
-                        let i_n = WINDOW_I_N.load(Ordering::Relaxed);
-                        let rec = WindowRec {
-                            start_10us: start,
-                            len_10us: now.wrapping_sub(start).min(0xFFFF) as u16,
-                            zc_off_us,
-                            raw: WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
-                            valid: WINDOW_VALID.load(Ordering::Relaxed).min(0xFFFF) as u16,
-                            i_min: if i_n == 0 {
-                                0
-                            } else {
-                                WINDOW_I_MIN.load(Ordering::Relaxed)
-                            },
-                            i_max: WINDOW_I_MAX.load(Ordering::Relaxed),
-                            i_avg: if i_n == 0 {
-                                0
-                            } else {
-                                (WINDOW_I_SUM.load(Ordering::Relaxed) / i_n) as u16
-                            },
-                            qzc_off_us,
-                            pred_err_us: pred_err,
-                            sector: prev_sector,
-                            seq: WREC_SEQ.fetch_add(1, Ordering::Relaxed),
-                        };
-                        let mut prod = WREC_PROD.borrow(cs).borrow_mut();
-                        if let Some(p) = prod.as_mut() {
-                            // Drop on overflow — host sees the seq gap.
-                            let _ = p.enqueue(rec);
-                        }
-                    }
-                    WINDOW_RAW.store(0, Ordering::Relaxed);
-                    WINDOW_VALID.store(0, Ordering::Relaxed);
-                    WINDOW_FIRST_ZC_US.store(u32::MAX, Ordering::Relaxed);
-                    WINDOW_QZC_US.store(u32::MAX, Ordering::Relaxed);
-                    WINDOW_I_SUM.store(0, Ordering::Relaxed);
-                    WINDOW_I_N.store(0, Ordering::Relaxed);
-                    WINDOW_I_MIN.store(0x0FFF, Ordering::Relaxed);
-                    WINDOW_I_MAX.store(0, Ordering::Relaxed);
-                    SECTOR_START_TICK.store(now, Ordering::Relaxed);
-                });
+                free(|cs| close_float_window(cs, prev_sector));
                 WAS_IN_FLOAT_SECTOR.store(true, Ordering::Relaxed);
             }
         } else {
@@ -2365,6 +2423,129 @@ fn TIM7() {
         tim1_motor_pwm::set_duties(c1, c2, c3);
         WAS_IN_FLOAT_SECTOR.store(false, Ordering::Relaxed);
     }
+}
+
+/// MAGPIE/OWL float-window close: package the just-ended window into
+/// a `WindowRec`, then reset the accumulators for the new one. Called
+/// at every commutation, from whichever engine performed it — TIM7
+/// (open loop) or the LPTIM2 one-shot (closed loop) — always inside a
+/// critical section so the higher/equal-priority COMP ISR can't smear
+/// an edge across the old/new window during snapshot-and-reset.
+///
+/// Interval smoothing lives in the COMP ISR (at the qZC itself);
+/// here we only compute the boundary prediction error and break the
+/// qZC chain when a window produced no qualified edge.
+fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
+    let now = ticks_10us();
+    let now_us = ticks_1us();
+    let start = SECTOR_START_TICK.load(Ordering::Relaxed);
+
+    let qzc = WINDOW_QZC_US.load(Ordering::Relaxed);
+    let mut pred_err: i16 = i16::MIN;
+    if qzc != u32::MAX {
+        let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
+        if interval != 0 {
+            let err = now_us.wrapping_sub(qzc) as i64 - (interval / 2) as i64;
+            pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
+        }
+    } else {
+        // Windowless miss: break the estimator's qZC chain.
+        OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
+    }
+
+    if STREAM_ON.load(Ordering::Relaxed) && start != 0 {
+        let first_zc = WINDOW_FIRST_ZC_US.load(Ordering::Relaxed);
+        let zc_off_us = if first_zc == u32::MAX {
+            0xFFFF
+        } else {
+            first_zc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
+        };
+        let qzc_off_us = if qzc == u32::MAX {
+            0xFFFF
+        } else {
+            qzc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
+        };
+        let i_n = WINDOW_I_N.load(Ordering::Relaxed);
+        let rec = WindowRec {
+            start_10us: start,
+            len_10us: now.wrapping_sub(start).min(0xFFFF) as u16,
+            zc_off_us,
+            raw: WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
+            valid: WINDOW_VALID.load(Ordering::Relaxed).min(0xFFFF) as u16,
+            i_min: if i_n == 0 {
+                0
+            } else {
+                WINDOW_I_MIN.load(Ordering::Relaxed)
+            },
+            i_max: WINDOW_I_MAX.load(Ordering::Relaxed),
+            i_avg: if i_n == 0 {
+                0
+            } else {
+                (WINDOW_I_SUM.load(Ordering::Relaxed) / i_n) as u16
+            },
+            qzc_off_us,
+            pred_err_us: pred_err,
+            sector: prev_sector,
+            seq: WREC_SEQ.fetch_add(1, Ordering::Relaxed),
+        };
+        let mut prod = WREC_PROD.borrow(cs).borrow_mut();
+        if let Some(p) = prod.as_mut() {
+            // Drop on overflow — host sees the seq gap.
+            let _ = p.enqueue(rec);
+        }
+    }
+    WINDOW_RAW.store(0, Ordering::Relaxed);
+    WINDOW_VALID.store(0, Ordering::Relaxed);
+    WINDOW_FIRST_ZC_US.store(u32::MAX, Ordering::Relaxed);
+    WINDOW_QZC_US.store(u32::MAX, Ordering::Relaxed);
+    WINDOW_I_SUM.store(0, Ordering::Relaxed);
+    WINDOW_I_N.store(0, Ordering::Relaxed);
+    WINDOW_I_MIN.store(0x0FFF, Ordering::Relaxed);
+    WINDOW_I_MAX.store(0, Ordering::Relaxed);
+    CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
+    SECTOR_START_TICK.store(now, Ordering::Relaxed);
+    LAST_COMM_10US.store(now, Ordering::Relaxed);
+}
+
+/// FALCON commutation ISR — fires `interval·(30°−adv)/60°` after each
+/// qualified ZC (scheduled by the COMP ISR). Shares priority 1 with
+/// COMP so the two never nest.
+#[interrupt]
+fn LPTIM2() {
+    minz::lptim2_oneshot::clear_flag();
+    if !CL_ACTIVE.load(Ordering::Relaxed) || !MOTOR_ENABLED.load(Ordering::Relaxed) {
+        return; // stale one-shot after disengage/kill
+    }
+    CL_COMM_COUNT.fetch_add(1, Ordering::Relaxed);
+    let prev = CURRENT_SECTOR.load(Ordering::Relaxed);
+    let sector = (prev + 1) % 6;
+    let duty = open_loop::six_step_duty(max_duty(), AMPLITUDE_PCT.load(Ordering::Relaxed) as u16);
+    tim1_motor_pwm::set_six_step(sector, duty);
+    comp2::set_inm(SECTOR_FLOAT_PHASE[sector as usize]);
+    let (re, fe) = edges_for(EDGE_MODE.load(Ordering::Relaxed), sector);
+    comp2::set_exti_edges(re, fe);
+    core::sync::atomic::compiler_fence(Ordering::Release);
+    CURRENT_SECTOR.store(sector, Ordering::Relaxed);
+    free(|cs| close_float_window(cs, prev));
+    // Adaptive time gate: earliest acceptable ZC at 40 % of the
+    // MEASURED interval (not the stale commanded-f half-window) so an
+    // accelerating rotor's earlier-arriving ZC stays in bounds while
+    // early-window transients stay out.
+    let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
+    if interval != 0 {
+        SECTOR_HALF_TICKS.store((interval / 25).max(2), Ordering::Relaxed);
+    }
+    // Scope trigger on each electrical rev, same as the open loop.
+    if sector == 0 {
+        let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
+        unsafe {
+            (*stm32::GPIOB::ptr())
+                .bsrr
+                .write(|w| w.bits(if was_high { 1 << (16 + 3) } else { 1 << 3 }));
+        }
+    }
+    // Re-open the ear for the new window (clears any pending edge).
+    comp2::set_exti_enabled(true);
 }
 
 #[interrupt]
@@ -2413,6 +2594,25 @@ fn TIM1_UP_TIM16() {
     if i_raw > WINDOW_I_MAX.load(Ordering::Relaxed) {
         WINDOW_I_MAX.store(i_raw, Ordering::Relaxed);
     }
+    // FALCON v2: confirm or discard the pending ZC candidate. This
+    // sample point is the PWM cycle wrap — the quiet spot — so two
+    // consecutive confirmations here mean the comparator held the
+    // post-ZC level across a full PWM period: dwell noise can't.
+    let cand = CAND_ZC_US.load(Ordering::Relaxed);
+    if cand != u32::MAX {
+        if comp2::value() == CAND_EXPECTED.load(Ordering::Relaxed) {
+            let n = CAND_CONFIRMS.load(Ordering::Relaxed) + 1;
+            if n >= 2 {
+                CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
+                accept_qualified_zc(cand);
+            } else {
+                CAND_CONFIRMS.store(n, Ordering::Relaxed);
+            }
+        } else {
+            CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
+        }
+    }
+
     // Overcurrent failsafe: 85 ms average vs the 1.5 A trip level.
     // This ISR is the accumulators' sole writer — plain load/store.
     // Kill directly from here (don't wait for main): all six gate
@@ -2566,8 +2766,56 @@ fn COMP() {
                 break;
             }
         }
-        if held {
-            WINDOW_QZC_US.store(ticks_1us(), Ordering::Relaxed);
+        if held && CAND_ZC_US.load(Ordering::Relaxed) == u32::MAX {
+            // Record the candidate; TIM1_UP confirms or discards it.
+            CAND_EXPECTED.store(expected, Ordering::Relaxed);
+            CAND_CONFIRMS.store(0, Ordering::Relaxed);
+            CAND_ZC_US.store(ticks_1us(), Ordering::Relaxed);
+        }
+    }
+}
+
+/// FALCON v2 acceptance path — runs in TIM1_UP once a candidate has
+/// held its post-ZC level across 2 PWM-cycle wrap samples: publish
+/// the window's qualified ZC, update the OWL interval estimator, and
+/// (closed loop) schedule the commutation one-shot, compensating the
+/// delay for the confirmation latency.
+fn accept_qualified_zc(zc_us: u32) {
+    if WINDOW_QZC_US.load(Ordering::Relaxed) != u32::MAX {
+        return; // window already has its ZC
+    }
+    WINDOW_QZC_US.store(zc_us, Ordering::Relaxed);
+
+    let last = OWL_LAST_QZC_US.load(Ordering::Relaxed);
+    if last != u32::MAX {
+        let new_int = zc_us.wrapping_sub(last);
+        let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
+        let sane =
+            new_int > 100 && new_int < 30_000 && (old == 0 || new_int < old.saturating_mul(9) / 5);
+        if sane {
+            let smoothed = if old == 0 {
+                new_int
+            } else {
+                (3 * old + new_int) / 4
+            };
+            OWL_INTERVAL_US.store(smoothed, Ordering::Relaxed);
+        }
+    }
+    OWL_LAST_QZC_US.store(zc_us, Ordering::Relaxed);
+
+    let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
+    if interval != 0 {
+        if CL_ARMED.load(Ordering::Relaxed) {
+            CL_ARMED.store(false, Ordering::Relaxed);
+            CL_ACTIVE.store(true, Ordering::Relaxed);
+        }
+        if CL_ACTIVE.load(Ordering::Relaxed) {
+            let adv = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
+            let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
+            let delay = (interval as i32 * (30 - adv) / 60 - elapsed).max(24) as u32;
+            minz::lptim2_oneshot::schedule_us(delay);
+            // Deaf until the commutation (mask-after-accept).
+            comp2::set_exti_enabled(false);
         }
     }
 }

@@ -6,6 +6,7 @@ pub mod board_init;
 pub mod comp2;
 pub mod current_adc;
 pub mod idle_loop;
+pub mod lptim2_oneshot;
 pub mod nvic;
 pub mod open_loop;
 pub mod panic;

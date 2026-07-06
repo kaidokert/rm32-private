@@ -181,6 +181,38 @@ the usable band. FALCON's remaining work is commutation timing (a
 hardware one-shot — LPTIM2 — instead of TIM7's 166 µs-quantized
 stepping) + handoff/desync fallback.
 
+## FALCON closed loop — WIP status (honest)
+
+Machinery all works: `y` engages at the next qualified ZC, the COMP→
+LPTIM2 chain (one-shot at interval·(30°−adv)/60°, 0.8 µs resolution,
+`src/lptim2_oneshot.rs`) commutates, TIM7 freezes its stepper and
+runs the desync watchdog (no qZC for 3 intervals → kill+coast; fired
+correctly when amp dropped to 3), overcurrent failsafe stands.
+Sustained 6+ s / ~4000 commutations at "97 Hz", current LOWER than
+open loop, clean kills.
+
+**But the lock was self-referential**: interval frozen at ±1 µs while
+amp swept 10→15→5 (a true lock must accelerate with volts). The
+first-persistent-edge-past-gate detector reproduces its own schedule:
+commutate at qZC+interval/2 where qZC ≈ gate+ε ⇒ next window
+identical, rotor ignored. The 0.6 µs COMP-ISR persistence check can't
+reject PWM dwell (comparator sits still for tens of µs between
+edges), and a static commanded-f gate also caps any tracking.
+
+FALCON v2 (current code): candidate ZC in COMP ISR, confirmation
+deferred to TIM1_UP wrap samples (2 consecutive PWM cycles must hold
+the post-ZC level), adaptive gate at 40 % of measured interval,
+schedule compensated for confirm latency. Open loop: qzc still flows
+(87-100 %) but σ degrades to 55-190 µs (wrap-point reads discard good
+candidates; later/worse ones win — sector 1 worst). Closed loop:
+engages then desyncs (auto-kill works).
+
+Next session: **WAXWING burst DURING an engaged loop** (`j` works in
+CL) — see exactly what the comparator does in CL windows vs the
+analog truth, then pick the discriminator accordingly (candidates:
+confirm-read at mid-ON instead of wrap; opposite-edge cancellation
+with both-edges mode; or first-edge + analog-slope sanity via ADC).
+
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
 rinz-grade latest_zc view on this board: DMA1_CH1 fills a 2048-frame
