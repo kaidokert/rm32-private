@@ -1,6 +1,6 @@
 """Shared MAGPIE frame definitions/parser for the motor_tester2 stream.
 
-Frame layout v2 (22 bytes, little-endian):
+Frame layout v3 (26 bytes, little-endian):
     [0]  0x5A  sync
     [1]  0xA5  sync
     [2]  seq (u8, wraps)
@@ -13,14 +13,17 @@ Frame layout v2 (22 bytes, little-endian):
     [16:18] window current min, raw 12-bit ADC counts (u16)
     [18:20] window current max (u16)
     [20:22] window current mean (u16)
+    [22:24] OWL first persistence-QUALIFIED ZC offset, µs (u16, 0xFFFF = none)
+    [24:26] OWL prediction error, µs (i16; INT16_MIN = no prediction)
 
 Current conversion: INA180B1 (20 V/V) x 1.5 mOhm shunt = 30 mV/A,
 VDDA nominal 3.3 V, 12-bit.
 """
 
-FRAME_LEN = 22
+FRAME_LEN = 26
 SYNC0 = 0x5A
 SYNC1 = 0xA5
+PRED_NONE = -32768
 
 
 def raw_to_ma(raw: int, vdda_mv: int = 3300) -> float:
@@ -48,6 +51,8 @@ def parse_frames(buf: bytes):
                     i_min=int.from_bytes(f[16:18], "little"),
                     i_max=int.from_bytes(f[18:20], "little"),
                     i_avg=int.from_bytes(f[20:22], "little"),
+                    qzc_off_us=int.from_bytes(f[22:24], "little"),
+                    pred_err_us=int.from_bytes(f[24:26], "little", signed=True),
                 )
             )
             i += FRAME_LEN

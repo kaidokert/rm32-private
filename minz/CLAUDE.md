@@ -154,6 +154,33 @@ pocket (zc→84-89 %, spread→6-11°, ZC drifting late) is HIGH amp ×
 f≥300. Sweet-spot shape matches the rinz finding. amp=20 row aborted
 by the 800 mA script guard (811 mA at f=50, not a stall).
 
+## OWL shadow-lock estimator (observe-only) — FALCON is GO
+
+The COMP ISR now adds AM32's layer-2 **persistence qualification**: an
+edge counts as *the* ZC only if VALUE holds the expected post-ZC level
+(even sectors 1 / odd 0, textbook polarity) for 5 spaced reads
+(~0.6 µs). TIM7 tracks qZC-to-qZC intervals (¾-smoothing), predicts
+each commutation as qZC + interval/2, and streams qzc_off + pred_err
+in MAGPIE frame v3 (26 B). `scripts/owl_report.py` prints the
+per-sector table + FALCON gate (jitter <15 % of window, prediction
+rate >60 %).
+
+Results (board 1, NO caps, amp 15, blank=20, phys_ZC):
+- **The persistence filter rescued the odd sectors completely**:
+  qualified-ZC rate 100 % in ALL six sectors, qzc_off mid-window with
+  σ ≈ 10-12 µs per sector, at f=100 through f=300.
+- f=100: pred err −17±21 µs = 1.3 % of window → **GO**.
+- f=200: 2.6 % → **GO**.
+- f=300: per-window σ still ~15 µs (2.7 %), but between-sector bias
+  spread (+122 µs on sec 5 etc.) blows the aggregate to 21 % — that's
+  the open-loop slip beat itself, i.e. the thing closing the loop
+  removes, not a sensing failure.
+
+Verdict: sensorless lock is supported on the uncapped board across
+the usable band. FALCON's remaining work is commutation timing (a
+hardware one-shot — LPTIM2 — instead of TIM7's 166 µs-quantized
+stepping) + handoff/desync fallback.
+
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
 rinz-grade latest_zc view on this board: DMA1_CH1 fills a 2048-frame

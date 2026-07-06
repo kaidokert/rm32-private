@@ -463,6 +463,14 @@ static WINDOW_RAW: AtomicU32 = AtomicU32::new(0);
 static WINDOW_VALID: AtomicU32 = AtomicU32::new(0);
 /// `ticks_1us()` of the first gate-surviving edge; `u32::MAX` = none yet.
 static WINDOW_FIRST_ZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
+/// OWL: `ticks_1us()` of the first PERSISTENCE-QUALIFIED edge (held
+/// the expected post-ZC level for 5 reads); `u32::MAX` = none yet.
+static WINDOW_QZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
+/// OWL estimator state — touched only inside TIM7's window-close
+/// `free` block. Last qualified ZC (abs µs; MAX = chain broken) and
+/// the ¾-smoothed ZC-to-ZC interval (µs; 0 = no estimate yet).
+static OWL_LAST_QZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
+static OWL_INTERVAL_US: AtomicU32 = AtomicU32::new(0);
 /// Stream gate for the `g` key.
 static STREAM_ON: AtomicBool = AtomicBool::new(false);
 
@@ -479,18 +487,26 @@ struct WindowRec {
     i_min: u16,
     i_max: u16,
     i_avg: u16,
+    /// OWL: first persistence-qualified ZC, µs from window start;
+    /// `0xFFFF` = none.
+    qzc_off_us: u16,
+    /// OWL: (actual boundary − predicted boundary) µs, where predicted
+    /// = qualified ZC + smoothed_interval/2. `i16::MIN` = no
+    /// prediction this window (no qZC or no interval estimate).
+    pred_err_us: i16,
     sector: u8,
     seq: u8,
 }
 
 const WREC_SYNC0: u8 = 0x5A;
 const WREC_SYNC1: u8 = 0xA5;
-const WREC_FRAME_LEN: usize = 22;
+const WREC_FRAME_LEN: usize = 26;
 
 impl WindowRec {
     /// Little-endian wire frame: sync(2) seq(1) sector|flags(1)
     /// start(4) len(2) zc_off(2) raw(2) valid(2) i_min(2) i_max(2)
-    /// i_avg(2). Bit 7 of byte 3 = "zc found".
+    /// i_avg(2) qzc_off(2) pred_err(2,i16). Bit 7 of byte 3 = "zc
+    /// found".
     fn encode(&self) -> [u8; WREC_FRAME_LEN] {
         let mut f = [0u8; WREC_FRAME_LEN];
         f[0] = WREC_SYNC0;
@@ -505,6 +521,8 @@ impl WindowRec {
         f[16..18].copy_from_slice(&self.i_min.to_le_bytes());
         f[18..20].copy_from_slice(&self.i_max.to_le_bytes());
         f[20..22].copy_from_slice(&self.i_avg.to_le_bytes());
+        f[22..24].copy_from_slice(&self.qzc_off_us.to_le_bytes());
+        f[24..26].copy_from_slice(&self.pred_err_us.to_le_bytes());
         f
     }
 }
@@ -2238,13 +2256,53 @@ fn TIM7() {
                 // during the snapshot-and-reset.
                 free(|cs| {
                     let now = ticks_10us();
+                    let now_us = ticks_1us();
                     let start = SECTOR_START_TICK.load(Ordering::Relaxed);
+
+                    // OWL estimator — runs whether or not streaming,
+                    // so lock quality accumulates from arm onward.
+                    // interval = qZC-to-qZC across CONSECUTIVE windows
+                    // (chain breaks on a windowless miss); prediction
+                    // for the boundary happening NOW is qzc +
+                    // interval/2 (ZC sits mid-window at zero advance).
+                    let qzc = WINDOW_QZC_US.load(Ordering::Relaxed);
+                    let mut pred_err: i16 = i16::MIN;
+                    if qzc != u32::MAX {
+                        let last = OWL_LAST_QZC_US.load(Ordering::Relaxed);
+                        if last != u32::MAX {
+                            let new_int = qzc.wrapping_sub(last);
+                            // Sanity: within 2x of a window at f≥25.
+                            if new_int > 100 && new_int < 30_000 {
+                                let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
+                                let smoothed = if old == 0 {
+                                    new_int
+                                } else {
+                                    (3 * old + new_int) / 4
+                                };
+                                OWL_INTERVAL_US.store(smoothed, Ordering::Relaxed);
+                            }
+                        }
+                        let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
+                        if interval != 0 {
+                            let err = now_us.wrapping_sub(qzc) as i64 - (interval / 2) as i64;
+                            pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
+                        }
+                        OWL_LAST_QZC_US.store(qzc, Ordering::Relaxed);
+                    } else {
+                        OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
+                    }
+
                     if STREAM_ON.load(Ordering::Relaxed) && start != 0 {
                         let first_zc = WINDOW_FIRST_ZC_US.load(Ordering::Relaxed);
                         let zc_off_us = if first_zc == u32::MAX {
                             0xFFFF
                         } else {
                             first_zc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
+                        };
+                        let qzc_off_us = if qzc == u32::MAX {
+                            0xFFFF
+                        } else {
+                            qzc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
                         };
                         let i_n = WINDOW_I_N.load(Ordering::Relaxed);
                         let rec = WindowRec {
@@ -2264,6 +2322,8 @@ fn TIM7() {
                             } else {
                                 (WINDOW_I_SUM.load(Ordering::Relaxed) / i_n) as u16
                             },
+                            qzc_off_us,
+                            pred_err_us: pred_err,
                             sector: prev_sector,
                             seq: WREC_SEQ.fetch_add(1, Ordering::Relaxed),
                         };
@@ -2276,6 +2336,7 @@ fn TIM7() {
                     WINDOW_RAW.store(0, Ordering::Relaxed);
                     WINDOW_VALID.store(0, Ordering::Relaxed);
                     WINDOW_FIRST_ZC_US.store(u32::MAX, Ordering::Relaxed);
+                    WINDOW_QZC_US.store(u32::MAX, Ordering::Relaxed);
                     WINDOW_I_SUM.store(0, Ordering::Relaxed);
                     WINDOW_I_N.store(0, Ordering::Relaxed);
                     WINDOW_I_MIN.store(0x0FFF, Ordering::Relaxed);
@@ -2484,5 +2545,29 @@ fn COMP() {
     WINDOW_VALID.fetch_add(1, Ordering::Relaxed);
     if WINDOW_FIRST_ZC_US.load(Ordering::Relaxed) == u32::MAX {
         WINDOW_FIRST_ZC_US.store(ticks_1us(), Ordering::Relaxed);
+    }
+
+    // OWL: persistence qualification — AM32's layer-2 filter. A real
+    // post-ZC comparator level DWELLS; PWM-coupled ringing bounces
+    // back within a few hundred ns. Accept the edge as *the* ZC only
+    // if VALUE holds the expected post-ZC level for 5 spaced reads
+    // (~0.6 µs total — this ISR is priority 1 and stays short).
+    // Expected level under textbook polarity (POLARITY=0, INP=neutral,
+    // INM=floating phase): even sectors ride a falling-BEMF window →
+    // post-ZC the phase is BELOW neutral → VALUE=1; odd sectors the
+    // inverse. Matches `edges_for` mode 3 (rising even / falling odd).
+    if WINDOW_QZC_US.load(Ordering::Relaxed) == u32::MAX {
+        let expected = (CURRENT_SECTOR.load(Ordering::Relaxed) & 1) == 0;
+        let mut held = true;
+        for _ in 0..5 {
+            cortex_m::asm::delay(8);
+            if comp2::value() != expected {
+                held = false;
+                break;
+            }
+        }
+        if held {
+            WINDOW_QZC_US.store(ticks_1us(), Ordering::Relaxed);
+        }
     }
 }
