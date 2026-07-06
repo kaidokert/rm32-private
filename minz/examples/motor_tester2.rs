@@ -513,6 +513,30 @@ static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 static CAND_ZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
 static CAND_EXPECTED: AtomicBool = AtomicBool::new(false);
 static CAND_CONFIRMS: AtomicU8 = AtomicU8::new(0);
+/// Window generation stamp: bumped at every window close. A candidate
+/// carries the generation it was born in; the accept path (TIM1_UP,
+/// prio 3) can be preempted by the commutation ISR (prio 1), so
+/// without this check a resumed accept would re-time the NEXT
+/// window's pending shot using the PREVIOUS window's stale ZC.
+static WINDOW_GEN: AtomicU8 = AtomicU8::new(0);
+static CAND_GEN: AtomicU8 = AtomicU8::new(0);
+
+/// FALCON v3: the discriminator probe showed the wrap-sampled COMP
+/// bit is premature in 25-73 % of windows, while the SIGN of the
+/// mid-ON ADC sample (floating phase vs driven-pair neutral) is 0 %
+/// premature with ~46 µs latency. Confirmation therefore reads the
+/// WAX ring: A/B float windows use the ADC sign; the phase-C float
+/// windows (sectors 0/3, no ADC route on PB7) keep the comp-bit rule
+/// for observation and under CL are DEAD-RECKONED (commutation
+/// scheduled at the estimator interval, no ZC wait).
+///
+/// Decaying max of the driven-high phase reads ≈ vbus in ADC counts,
+/// for the two sectors whose neutral needs the unmeasured high rail.
+static VBUS_EST: AtomicU16 = AtomicU16::new(0);
+/// Window closes since the last accepted qZC — the span the
+/// estimator divides qZC-to-qZC deltas by (a delta across one
+/// dead-reckoned C window is 2 intervals). >3 = chain broken.
+static WINDOWS_SINCE_QZC: AtomicU8 = AtomicU8::new(0);
 /// Stream gate for the `g` key.
 static STREAM_ON: AtomicBool = AtomicBool::new(false);
 
@@ -2448,10 +2472,12 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
             let err = now_us.wrapping_sub(qzc) as i64 - (interval / 2) as i64;
             pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
         }
-    } else {
-        // Windowless miss: break the estimator's qZC chain.
-        OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
     }
+    // Windowless misses no longer hard-break the estimator chain —
+    // dead-reckoned C windows legitimately close without a qZC; the
+    // span counter (divide-by-spans, >3 = broken) handles both cases.
+    let w = WINDOWS_SINCE_QZC.load(Ordering::Relaxed);
+    WINDOWS_SINCE_QZC.store(w.saturating_add(1), Ordering::Relaxed);
 
     if STREAM_ON.load(Ordering::Relaxed) && start != 0 {
         let first_zc = WINDOW_FIRST_ZC_US.load(Ordering::Relaxed);
@@ -2503,6 +2529,10 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
     WINDOW_I_MIN.store(0x0FFF, Ordering::Relaxed);
     WINDOW_I_MAX.store(0, Ordering::Relaxed);
     CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
+    WINDOW_GEN.store(
+        WINDOW_GEN.load(Ordering::Relaxed).wrapping_add(1),
+        Ordering::Relaxed,
+    );
     SECTOR_START_TICK.store(now, Ordering::Relaxed);
     LAST_COMM_10US.store(now, Ordering::Relaxed);
 }
@@ -2533,7 +2563,26 @@ fn LPTIM2() {
     // early-window transients stay out.
     let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
     if interval != 0 {
-        SECTOR_HALF_TICKS.store((interval / 25).max(2), Ordering::Relaxed);
+        // 30 % of measured interval: room for early-arriving ZCs
+        // while the loop is catching up to an accelerating rotor.
+        SECTOR_HALF_TICKS.store((interval / 33).max(2), Ordering::Relaxed);
+    }
+    // Schedule the next commutation unconditionally:
+    // - phase-C float windows (0/3, no ADC confirm): dead-reckon at
+    //   exactly one estimator interval;
+    // - A/B windows: a 1.5×interval FALLBACK shot, overwritten by the
+    //   precise qZC accept when one lands. A missed ZC then costs one
+    //   late commutation instead of a watchdog kill — that's what let
+    //   v3.0 desync mid-acceleration.
+    // AM32 semantics: the loop FREE-RUNS at the estimator interval —
+    // every commutation immediately schedules the next one 1.0×T out
+    // — and an accepted ZC merely RE-TIMES the pending shot to
+    // zc + T·(30−adv)/60. During acceleration the un-refined windows
+    // commutate at the trailing estimate (slightly long) while every
+    // refined one pulls the phase back in; a 1.5×T fallback instead
+    // compounded the lag until the watchdog fired.
+    if interval != 0 {
+        minz::lptim2_oneshot::schedule_us(interval);
     }
     // Scope trigger on each electrical rev, same as the open loop.
     if sector == 0 {
@@ -2584,7 +2633,18 @@ fn TIM1_UP_TIM16() {
     // the window accumulators between TIM7's `free`-wrapped resets,
     // and TIM7 (lower priority) can't interrupt us — plain load/store
     // min/max is race-free.
-    let i_raw = adc_sync::last_raw();
+    let (pa_a, pa_b, i_raw) = adc_sync::last_frame();
+    // Decaying-max vbus estimate (ADC counts through the phase
+    // divider): the driven-high phase reads ≈ vbus in 4 of 6 sectors,
+    // so the max refreshes constantly while spinning; τ ≈ 21 ms decay
+    // tracks supply sag.
+    let m = pa_a.max(pa_b);
+    let est = VBUS_EST.load(Ordering::Relaxed);
+    if m > est {
+        VBUS_EST.store(m, Ordering::Relaxed);
+    } else if est > 0 {
+        VBUS_EST.store(est.saturating_sub((est >> 9).max(1)), Ordering::Relaxed);
+    }
     LAST_I_RAW.store(i_raw, Ordering::Relaxed);
     WINDOW_I_SUM.fetch_add(i_raw as u32, Ordering::Relaxed);
     WINDOW_I_N.fetch_add(1, Ordering::Relaxed);
@@ -2594,17 +2654,36 @@ fn TIM1_UP_TIM16() {
     if i_raw > WINDOW_I_MAX.load(Ordering::Relaxed) {
         WINDOW_I_MAX.store(i_raw, Ordering::Relaxed);
     }
-    // FALCON v2: confirm or discard the pending ZC candidate. This
-    // sample point is the PWM cycle wrap — the quiet spot — so two
-    // consecutive confirmations here mean the comparator held the
-    // post-ZC level across a full PWM period: dwell noise can't.
+    // FALCON v3: confirm or discard the pending ZC candidate using
+    // the mid-ON ADC sign of the floating phase vs the driven-pair
+    // neutral (2× the float value vs 2× the neutral avoids halving).
+    // `true` = phase below neutral = COMP VALUE=1 convention, so
+    // CAND_EXPECTED applies unchanged. Sectors 0/3 float phase C
+    // (no ADC route) — comp-bit fallback, observation only.
     let cand = CAND_ZC_US.load(Ordering::Relaxed);
     if cand != u32::MAX {
-        if comp2::value() == CAND_EXPECTED.load(Ordering::Relaxed) {
+        let vbus = VBUS_EST.load(Ordering::Relaxed) as u32;
+        let observed = match CURRENT_SECTOR.load(Ordering::Relaxed) & 7 {
+            1 => (pa_b as u32) * 2 < pa_a as u32,
+            4 => (pa_b as u32) * 2 < vbus + pa_a as u32,
+            2 => (pa_a as u32) * 2 < pa_b as u32,
+            5 => (pa_a as u32) * 2 < vbus + pa_b as u32,
+            _ => comp2::value(),
+        };
+        if observed == CAND_EXPECTED.load(Ordering::Relaxed) {
             let n = CAND_CONFIRMS.load(Ordering::Relaxed) + 1;
             if n >= 2 {
                 CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
-                accept_qualified_zc(cand);
+                // Atomic accept: `free` excludes the commutation ISR
+                // for the ~10 µs of estimator + re-schedule, and the
+                // generation check drops candidates whose window
+                // already closed (their ZC would re-time the wrong
+                // shot).
+                free(|_| {
+                    if CAND_GEN.load(Ordering::Relaxed) == WINDOW_GEN.load(Ordering::Relaxed) {
+                        accept_qualified_zc(cand);
+                    }
+                });
             } else {
                 CAND_CONFIRMS.store(n, Ordering::Relaxed);
             }
@@ -2770,6 +2849,7 @@ fn COMP() {
             // Record the candidate; TIM1_UP confirms or discards it.
             CAND_EXPECTED.store(expected, Ordering::Relaxed);
             CAND_CONFIRMS.store(0, Ordering::Relaxed);
+            CAND_GEN.store(WINDOW_GEN.load(Ordering::Relaxed), Ordering::Relaxed);
             CAND_ZC_US.store(ticks_1us(), Ordering::Relaxed);
         }
     }
@@ -2786,9 +2866,14 @@ fn accept_qualified_zc(zc_us: u32) {
     }
     WINDOW_QZC_US.store(zc_us, Ordering::Relaxed);
 
+    // Span-divided interval update: a qZC-to-qZC delta that crossed a
+    // dead-reckoned C window covers 2 intervals; >3 window closes
+    // since the last qZC = chain broken (skip update, re-seed last).
     let last = OWL_LAST_QZC_US.load(Ordering::Relaxed);
-    if last != u32::MAX {
-        let new_int = zc_us.wrapping_sub(last);
+    let spans = WINDOWS_SINCE_QZC.load(Ordering::Relaxed) as u32;
+    WINDOWS_SINCE_QZC.store(0, Ordering::Relaxed);
+    if last != u32::MAX && (1..=3).contains(&spans) {
+        let new_int = zc_us.wrapping_sub(last) / spans;
         let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
         let sane =
             new_int > 100 && new_int < 30_000 && (old == 0 || new_int < old.saturating_mul(9) / 5);
@@ -2803,8 +2888,12 @@ fn accept_qualified_zc(zc_us: u32) {
     }
     OWL_LAST_QZC_US.store(zc_us, Ordering::Relaxed);
 
+    // CL scheduling — only from A/B float windows (ADC-confirmed).
+    // C windows (0/3) are dead-reckoned by the LPTIM2 ISR itself, so
+    // a comp-rule qZC there must neither schedule nor engage.
     let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
-    if interval != 0 {
+    let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
+    if interval != 0 && sec != 0 && sec != 3 {
         if CL_ARMED.load(Ordering::Relaxed) {
             CL_ARMED.store(false, Ordering::Relaxed);
             CL_ACTIVE.store(true, Ordering::Relaxed);

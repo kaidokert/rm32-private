@@ -32,12 +32,23 @@ pub fn init() {
     lptim.cr.modify(|_, w| w.enable().set_bit());
 }
 
-/// Arm the one-shot to fire the `LPTIM2` interrupt in `us`
-/// microseconds. Clamped to [16 µs, 52 ms]. Callable from ISR context
-/// (the ARROK poll is a few kernel clocks).
+/// Arm (or RE-arm) the one-shot to fire the `LPTIM2` interrupt in
+/// `us` microseconds. Clamped to [16 µs, 52 ms]. Callable from ISR
+/// context (the ARROK poll is a few kernel clocks).
+///
+/// The disable/enable bounce gives clean restart semantics: in single
+/// mode a running count ignores SNGSTRT, but FALCON needs to
+/// overwrite a pending fallback shot with a precise ZC-derived one.
+/// Disabling resets the counter (and wipes ARR — rewritten anyway).
 pub fn schedule_us(us: u32) {
     let lptim = unsafe { &*stm32::LPTIM2::ptr() };
     let ticks = (us.clamp(16, 52_000) * TICKS_PER_US_X4 / 4).min(0xFFFE) as u16;
+    lptim.cr.modify(|_, w| w.enable().clear_bit());
+    lptim.cr.modify(|_, w| w.enable().set_bit());
+    // RM0394: the LPTIM is actually enabled two counter-clock cycles
+    // (1.6 µs at 1.25 MHz) after ENABLE is set — starting earlier
+    // silently drops SNGSTRT and kills the commutation chain.
+    cortex_m::asm::delay(200);
     lptim
         .icr
         .write(|w| w.arrmcf().set_bit().arrokcf().set_bit());

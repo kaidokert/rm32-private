@@ -184,11 +184,23 @@ pub fn resume_waveform() {
 /// (current stats and the overcurrent trip idle for ~110 ms).
 #[inline]
 pub fn last_raw() -> u16 {
+    last_frame().2
+}
+
+/// Newest complete `(phase_a, phase_b, current)` frame from the DMA
+/// ring — FALCON v3's confirmation source: the mid-ON phase samples
+/// let TIM1_UP compute the floating phase's sign vs the driven-pair
+/// neutral, which the discriminator probe showed is the only clean
+/// post-ZC confirmation (0 % premature vs 25-73 % for the wrap-
+/// sampled COMP bit).
+#[inline]
+pub fn last_frame() -> (u16, u16, u16) {
     let dma = unsafe { &*stm32::DMA1::ptr() };
     let remaining = dma.cndtr1.read().bits() as usize;
     let words = WAX_WORDS - remaining;
     let frame = (words / WAX_CHANS + WAX_FRAMES - 1) % WAX_FRAMES;
-    wax_word(frame * WAX_CHANS + 2)
+    let base = frame * WAX_CHANS;
+    (wax_word(base), wax_word(base + 1), wax_word(base + 2))
 }
 
 /// On-demand vbat read via the injected group (~8.2 µs blocking at

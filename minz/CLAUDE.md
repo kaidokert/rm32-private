@@ -226,12 +226,26 @@ confirmation: in closed-loop conditions 100 % accept, 0 % premature,
 46±29 µs latency. (v2 also held CL ACTIVE ≥1 s in all 3 probe
 episodes — marginal, not dead.)
 
-**FALCON v3 design (next)**: confirm candidates in TIM1_UP with the
-ADC sign from the WAX ring (float phase word vs neutral computed from
-the driven pair; vbus estimate = decaying max of driven-high reads)
-for A/B float windows (4 of 6); sectors 0/3 (phase C, no ADC) get
-dead-reckoned commutation at the estimator interval; interval updates
-span-divided across the C windows.
+**FALCON v3 (LANDED — true lock achieved)**: candidates confirmed in
+TIM1_UP by the ADC sign from the WAX ring (float phase vs driven-pair
+neutral; vbus = decaying max of driven-high reads) for A/B windows;
+sectors 0/3 (phase C, no ADC) dead-reckoned; interval updates
+span-divided; free-run-at-1.0×T + ZC-refine scheduling (AM32
+semantics — a 1.5×T "fallback" compounded lag instead); 30 %
+adaptive gate; window-generation guard + `free` around the accept
+(the commutation ISR can preempt TIM1_UP mid-reschedule); LPTIM
+enable→start needs 2 counter clocks (asm delay in `schedule_us` —
+without it SNGSTRT is silently dropped and the chain dies).
+
+**Result**: engaged at f=100/amp=10, locked at its ~250 Hz
+equilibrium for 8+ s (33-66 mA), and **amp 10→12 drove f_e
+256→309 Hz with lock held** — the throttle-following discriminator
+that self-referential lock cannot pass. Desync (clean auto-kill)
+still occurs under sustained hard acceleration: the trailing
+estimator (¾-smoothing + 2-of-6 dead-reckoned windows) lags until
+ZCs cross the gate. Envelope hardening TODO: capture a stream during
+a climb, then tune gate %, smoothing α, and consider phase-correcting
+the C-window dead-reckon from the preceding qZC.
 
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
