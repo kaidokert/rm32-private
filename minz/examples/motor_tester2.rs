@@ -70,7 +70,7 @@ use minz::idle_loop::IdleLoop;
 use minz::open_loop::{self, Waveform};
 use minz::priority;
 use minz::tim1_motor_pwm::{self, max_duty};
-use minz::{SYSTICK, tim7_drive};
+use minz::{PWM_FREQUENCY_HZ, SYSTICK, a85, tim7_drive};
 use portable_atomic::{AtomicBool, AtomicI8, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use rtt_target::rprintln;
 
@@ -1139,6 +1139,11 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
+        "Waveform dump:        j   (85 ms burst: A/B volts + current + comp/sector, a85)\r"
+    )
+    .ok();
+    writeln!(
+        &mut tx,
         "Failsafe: auto-kill at >1.5 A avg over 85 ms (stall guard, r/q re-arms)\r"
     )
     .ok();
@@ -1599,6 +1604,72 @@ fn main() -> ! {
                         }
                         write!(&mut tx_writer, "\r\nuart_test done\r\n").ok();
                         tx_writer.write_blocking(&[]);
+                    }
+                    b'j' => {
+                        // WAXWING: freeze the DMA waveform ring and
+                        // dump ~85 ms of per-PWM-cycle frames in the
+                        // rinz cdump/Ascii85 format. Channels per
+                        // frame: ch9=A (PA4), ch10=B (PA5), ch8=
+                        // current, ch99=status byte (bit0 COMP value,
+                        // bits1-3 sector) from PWM_SAMPLE_BUF — the
+                        // two rings advance in lockstep at 24 kHz,
+                        // aligned here by their write heads (≤2-frame
+                        // skew). Motor keeps running; the current
+                        // failsafe is blind for the ~110 ms dump.
+                        let adc_idx = adc_sync::freeze_waveform();
+                        let mut status = [0u8; PWM_SAMPLE_LEN];
+                        NVIC::mask(Interrupt::TIM1_UP_TIM16);
+                        let pwm_head =
+                            (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
+                        for (i, s) in status.iter_mut().enumerate() {
+                            *s = PWM_SAMPLE_BUF[i].load(Ordering::Relaxed);
+                        }
+                        unsafe { NVIC::unmask(Interrupt::TIM1_UP_TIM16) };
+
+                        write!(
+                            &mut tx_writer,
+                            "\r\ncdump: {} frames b85 4 channels (ch9 ch10 ch8 ch99) \
+                             12-bit, sample_hz={} Hz\r\n",
+                            adc_sync::WAX_FRAMES,
+                            PWM_FREQUENCY_HZ,
+                        )
+                        .ok();
+                        // 8 payload bytes per frame = 2 Ascii85 groups
+                        // = 10 chars; 8 frames per output line.
+                        let mut line = [0u8; 82];
+                        let mut pos = 0usize;
+                        for k in 0..adc_sync::WAX_FRAMES {
+                            let f = ((adc_idx + k) % adc_sync::WAX_FRAMES) * adc_sync::WAX_CHANS;
+                            let a = adc_sync::wax_word(f);
+                            let b_ph = adc_sync::wax_word(f + 1);
+                            let cur = adc_sync::wax_word(f + 2);
+                            let st = status[(pwm_head + k) & (PWM_SAMPLE_LEN - 1)] as u16;
+                            let w = [a, b_ph, cur, st];
+                            let mut bytes = [0u8; 8];
+                            for (n, v) in w.iter().enumerate() {
+                                bytes[2 * n..2 * n + 2].copy_from_slice(&v.to_le_bytes());
+                            }
+                            line[pos..pos + 5].copy_from_slice(&a85::encode_group(
+                                bytes[0..4].try_into().unwrap(),
+                            ));
+                            line[pos + 5..pos + 10].copy_from_slice(&a85::encode_group(
+                                bytes[4..8].try_into().unwrap(),
+                            ));
+                            pos += 10;
+                            if pos >= 80 {
+                                line[pos] = b'\r';
+                                line[pos + 1] = b'\n';
+                                tx_writer.write_blocking(&line[..pos + 2]);
+                                pos = 0;
+                            }
+                        }
+                        if pos > 0 {
+                            line[pos] = b'\r';
+                            line[pos + 1] = b'\n';
+                            tx_writer.write_blocking(&line[..pos + 2]);
+                        }
+                        tx_writer.write_blocking(b"end\r\n");
+                        adc_sync::resume_waveform();
                     }
                     b'e' => {
                         do_edge_dump = true;
