@@ -63,3 +63,29 @@ def parse_frames(buf: bytes):
 
 def seq_gaps(frames) -> int:
     return sum(1 for a, b in zip(frames, frames[1:]) if (a["seq"] + 1) % 256 != b["seq"])
+
+
+def parse_cdump(text: str):
+    """Parse a WAXWING `cdump:` burst (Ascii85, 4 u16 channels/frame).
+
+    Returns (frames, sample_hz) where each frame is a dict with a, b,
+    i (raw 12-bit), sector, comp (wrap-sampled COMP2 bit).
+    """
+    import base64
+    import struct
+
+    lines = text.splitlines()
+    hdr_i = next(i for i, l in enumerate(lines) if l.lstrip().startswith("cdump:"))
+    sample_hz = float(lines[hdr_i].split("sample_hz=")[1].split()[0])
+    body = []
+    for l in lines[hdr_i + 1 :]:
+        if l.strip() == "end":
+            break
+        body.append(l.strip())
+    raw = base64.a85decode("".join(body).encode("ascii"))
+    vals = struct.unpack(f"<{len(raw) // 2}H", raw[: len(raw) // 2 * 2])
+    frames = []
+    for k in range(len(vals) // 4):
+        a, b, i, st = vals[4 * k : 4 * k + 4]
+        frames.append(dict(a=a, b=b, i=i, sector=(st >> 1) & 7, comp=st & 1))
+    return frames, sample_hz

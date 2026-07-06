@@ -207,11 +207,31 @@ schedule compensated for confirm latency. Open loop: qzc still flows
 candidates; later/worse ones win — sector 1 worst). Closed loop:
 engages then desyncs (auto-kill works).
 
-Next session: **WAXWING burst DURING an engaged loop** (`j` works in
-CL) — see exactly what the comparator does in CL windows vs the
-analog truth, then pick the discriminator accordingly (candidates:
-confirm-read at mid-ON instead of wrap; opposite-edge cancellation
-with both-edges mode; or first-edge + analog-slope sanity via ADC).
+**Discriminator probe verdict** (`falcon_probe.py` bursts at 4
+setpoints + 3 CL episodes, `falcon_stats.py` replays rules against
+the analog linfit ZC of every A/B float window):
+
+| group | rule | accept | premature | latency (frames) |
+|---|---|---|---|---|
+| CL episodes (206 win) | comp-wrap | 100 % | **25 %** | +2.5±2.3 |
+| CL episodes | **adc-sign** | **100 %** | **0 %** | **+1.1±0.7** |
+| open f100/200 | comp-wrap | 94-100 % | **41-73 %** | ~0 |
+| open f100/200 | adc-sign | 89-95 % | 29-41 % | +1..+8 |
+| open f300 | adc-sign | 88 % | 0 % | +3.3±2.5 |
+
+The wrap-sampled COMP bit is premature-prone (dwells at the expected
+level before the true ZC — the self-lock mechanism, quantified). The
+**sign of the mid-ON ADC sample (phase − neutral)** is the clean
+confirmation: in closed-loop conditions 100 % accept, 0 % premature,
+46±29 µs latency. (v2 also held CL ACTIVE ≥1 s in all 3 probe
+episodes — marginal, not dead.)
+
+**FALCON v3 design (next)**: confirm candidates in TIM1_UP with the
+ADC sign from the WAX ring (float phase word vs neutral computed from
+the driven pair; vbus estimate = decaying max of driven-high reads)
+for A/B float windows (4 of 6); sectors 0/3 (phase C, no ADC) get
+dead-reckoned commutation at the estimator interval; interval updates
+span-divided across the C windows.
 
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
