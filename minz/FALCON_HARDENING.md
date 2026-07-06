@@ -69,20 +69,39 @@ Rate-limit amp changes (~1 %/50 ms). Not needed to survive bench key
 presses post-fix, but correct for any real throttle source and it
 bounds the tracking bandwidth the loop must guarantee.
 
-## 6. Measure the envelope ⬜ TODO — the natural next step
+## 6. Measure the envelope ✅ DONE — no breakage found
 
-Scripted CL ramp sweep: engage, ramp amp at increasing rates, record
-where lock breaks → CONDOR-style closed-loop envelope map (max
-trackable acceleration vs speed). **This is HEDGEHOG's new headline
-metric**: "how much wider do the caps make the envelope" beats edge
-counts as the A/B.
+`scripts/cl_ramp_sweep.py`: amp 10→16→10 ramps at 500/250/120/60 ms
+per step **and instant steps**, MAGPIE streamed throughout, black
+box auto-dumps on any break. Results (board 1, no caps, 6.5 V):
+
+- [x] **All five rates SURVIVED** — zero desyncs, zero trips,
+  including the instant amp step. No ramp-rate limit exists in the
+  tested space.
+- [x] Top speed reached **~980 Hz electrical (~8,400 RPM mech)** at
+  the 60 ms ramp — **above the rinz board's ~700 Hz envelope**, on
+  the uncapped board.
+- [x] Speed-resolved coverage (qzc%/pred% bucketed by f_e): **every
+  steady plateau reads ~100 %** (600-699 Hz hold: 100 %; 800-999 Hz:
+  100 %). Coverage dips to ~20-30 % **during accelerating passes**
+  (esp. 400-500 Hz transits) — the free-run + dead-reckon bridge
+  carries those windows. Sector asymmetry at speed: sec 4 stays 93 %
+  while sec 1/2 collapse mid-ramp (worth a WAXWING burst at ~700 Hz
+  if item 3 is ever built).
+
+**Envelope statement**: steady-state lock is clean to ≥980 Hz;
+transient coverage thins mid-ramp but never broke. Items 3/4 now
+have a measurable target (raise mid-ramp coverage from ~20 % —
+robustness margin, not a functional need at bench load).
 
 ---
 
 ## Suggested order from here
 
-1. Item 6 (envelope sweep) — establishes the baseline that decides
-   whether items 3/4 are worth doing at all.
-2. Item 5 (slew limit) — ten lines, do alongside.
-3. Items 3/4 only where the sweep shows breakage.
-4. HEDGEHOG: same sweep on the capped board, overlay.
+1. ~~Item 6 (envelope sweep)~~ — done; baseline banked in
+   `captures/ramp_r*.bin`.
+2. Item 5 (slew limit) — still worthwhile production hygiene.
+3. Items 3/4 — optional; target = mid-ramp qzc coverage, verified by
+   re-running the same sweep.
+4. HEDGEHOG: identical sweep on the capped board, overlay the
+   speed-resolved coverage curves — the headline A/B.
