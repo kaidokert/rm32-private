@@ -513,6 +513,43 @@ static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 static CAND_ZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
 static CAND_EXPECTED: AtomicBool = AtomicBool::new(false);
 static CAND_CONFIRMS: AtomicU8 = AtomicU8::new(0);
+// ---------------------------------------------------------------
+// FALCON black box: a 64-event ring recording the loop's decisions,
+// frozen at the desync instant and dumped (decoded) right after the
+// desync message. Slot race on the shared index is theoretically
+// possible across contexts and acceptable for a diagnostic.
+// Event types:
+//   0 REF  commutation, shot had been re-timed by an accepted ZC
+//   1 BLD  commutation, A/B window but shot was the blind free-run
+//   2 DRK  commutation, dead-reckoned C window
+//   3 ACC  ZC accepted (data = scheduled delay µs)
+//   4 NOZ  window closed with no qZC (data = raw edge count)
+//   5 DIS  candidate discarded by ADC-sign confirm (data = confirms)
+//   6 DSY  desync watchdog fired (data = silence µs/10)
+//   7 ENG  loop engaged (data = interval µs)
+// ---------------------------------------------------------------
+const BB_LEN: usize = 64;
+static BB_T: [AtomicU16; BB_LEN] = [const { AtomicU16::new(0) }; BB_LEN];
+static BB_TYPE: [AtomicU8; BB_LEN] = [const { AtomicU8::new(0xFF) }; BB_LEN];
+static BB_SEC: [AtomicU8; BB_LEN] = [const { AtomicU8::new(0) }; BB_LEN];
+static BB_DATA: [AtomicU16; BB_LEN] = [const { AtomicU16::new(0) }; BB_LEN];
+static BB_IDX: AtomicU32 = AtomicU32::new(0);
+static BB_FROZEN: AtomicBool = AtomicBool::new(false);
+/// Set by an accepted ZC re-time; swapped false at each commutation —
+/// classifies REF vs BLD.
+static SHOT_REFINED: AtomicBool = AtomicBool::new(false);
+
+fn bb_record(ev: u8, sector: u8, data: u16) {
+    if BB_FROZEN.load(Ordering::Relaxed) {
+        return;
+    }
+    let i = (BB_IDX.fetch_add(1, Ordering::Relaxed) as usize) % BB_LEN;
+    BB_T[i].store(ticks_10us() as u16, Ordering::Relaxed);
+    BB_SEC[i].store(sector, Ordering::Relaxed);
+    BB_DATA[i].store(data, Ordering::Relaxed);
+    BB_TYPE[i].store(ev, Ordering::Relaxed);
+}
+
 /// Window generation stamp: bumped at every window close. A candidate
 /// carries the generation it was born in; the accept path (TIM1_UP,
 /// prio 3) can be preempted by the commutation ISR (prio 1), so
@@ -2134,9 +2171,39 @@ fn main() -> ! {
                 output_enabled = false;
                 write!(
                     &mut tx_writer,
-                    "!! CL DESYNC - no qualified ZC for 3 intervals - output killed (r/q re-arms)\r\n",
+                    "!! CL DESYNC - commutation silence > 3 intervals - output killed (r/q re-arms)\r\n",
                 )
                 .ok();
+                // Black-box dump: the 64 events leading to the kill.
+                // dt is µs since the previous recorded event.
+                const BB_NAMES: [&str; 8] =
+                    ["REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG"];
+                let idx = BB_IDX.load(Ordering::Relaxed) as usize;
+                let mut prev_t: Option<u16> = None;
+                for k in 0..BB_LEN {
+                    let i = (idx + k) % BB_LEN;
+                    let ty = BB_TYPE[i].load(Ordering::Relaxed);
+                    if ty == 0xFF {
+                        continue;
+                    }
+                    let t = BB_T[i].load(Ordering::Relaxed);
+                    let dt = prev_t.map(|p| t.wrapping_sub(p) as u32 * 10).unwrap_or(0);
+                    prev_t = Some(t);
+                    write!(
+                        &mut tx_writer,
+                        "bb +{:6}us {} s{} d={}\r\n",
+                        dt,
+                        BB_NAMES.get(ty as usize).copied().unwrap_or("???"),
+                        BB_SEC[i].load(Ordering::Relaxed),
+                        BB_DATA[i].load(Ordering::Relaxed),
+                    )
+                    .ok();
+                    tx_writer.service();
+                }
+                for e in BB_TYPE.iter() {
+                    e.store(0xFF, Ordering::Relaxed);
+                }
+                BB_FROZEN.store(false, Ordering::Relaxed);
             }
             // Overcurrent trip report: the ISR already killed the
             // output; sync main's mirror so `r`/`q` re-arm works.
@@ -2268,10 +2335,27 @@ fn TIM7() {
                 open_loop::six_step_duty(max_duty(), AMPLITUDE_PCT.load(Ordering::Relaxed) as u16);
             tim1_motor_pwm::set_six_step(CURRENT_SECTOR.load(Ordering::Relaxed), duty);
             let interval_us = OWL_INTERVAL_US.load(Ordering::Relaxed);
-            let since_us = ticks_10us()
-                .wrapping_sub(LAST_COMM_10US.load(Ordering::Relaxed))
-                .saturating_mul(10);
+            // Read LAST_COMM *before* now: a commutation preempting us
+            // between the two reads then only makes `since` slightly
+            // stale-large (≤ one TIM7 tick), never underflowed. The
+            // black box caught the original order killing a healthy
+            // 309 Hz lock with since = u32-underflow garbage 20 µs
+            // after a refined commutation. Top-bit clamp for belt and
+            // suspenders.
+            let last = LAST_COMM_10US.load(Ordering::Relaxed);
+            let since_ticks = ticks_10us().wrapping_sub(last);
+            let since_us = if since_ticks < u32::MAX / 2 {
+                since_ticks.saturating_mul(10)
+            } else {
+                0
+            };
             if interval_us != 0 && since_us > interval_us.max(1_000) * 3 {
+                bb_record(
+                    6,
+                    CURRENT_SECTOR.load(Ordering::Relaxed),
+                    (since_us / 10).min(0xFFFF) as u16,
+                );
+                BB_FROZEN.store(true, Ordering::Relaxed);
                 CL_ACTIVE.store(false, Ordering::Relaxed);
                 MOTOR_ENABLED.store(false, Ordering::Relaxed);
                 tim1_motor_pwm::all_off();
@@ -2473,6 +2557,13 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
             pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
         }
     }
+    if qzc == u32::MAX && CL_ACTIVE.load(Ordering::Relaxed) {
+        bb_record(
+            4,
+            prev_sector,
+            WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
+        );
+    }
     // Windowless misses no longer hard-break the estimator chain —
     // dead-reckoned C windows legitimately close without a qZC; the
     // span counter (divide-by-spans, >3 = broken) handles both cases.
@@ -2548,6 +2639,22 @@ fn LPTIM2() {
     }
     CL_COMM_COUNT.fetch_add(1, Ordering::Relaxed);
     let prev = CURRENT_SECTOR.load(Ordering::Relaxed);
+    {
+        // Black box: classify the commutation by the window it ends.
+        let refined = SHOT_REFINED.swap(false, Ordering::Relaxed);
+        let ev = if prev == 0 || prev == 3 {
+            2 // DRK
+        } else if refined {
+            0 // REF
+        } else {
+            1 // BLD — A/B window commutated by the blind free-run
+        };
+        bb_record(
+            ev,
+            prev,
+            OWL_INTERVAL_US.load(Ordering::Relaxed).min(0xFFFF) as u16,
+        );
+    }
     let sector = (prev + 1) % 6;
     let duty = open_loop::six_step_duty(max_duty(), AMPLITUDE_PCT.load(Ordering::Relaxed) as u16);
     tim1_motor_pwm::set_six_step(sector, duty);
@@ -2663,7 +2770,8 @@ fn TIM1_UP_TIM16() {
     let cand = CAND_ZC_US.load(Ordering::Relaxed);
     if cand != u32::MAX {
         let vbus = VBUS_EST.load(Ordering::Relaxed) as u32;
-        let observed = match CURRENT_SECTOR.load(Ordering::Relaxed) & 7 {
+        let cur_sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
+        let observed = match cur_sec {
             1 => (pa_b as u32) * 2 < pa_a as u32,
             4 => (pa_b as u32) * 2 < vbus + pa_a as u32,
             2 => (pa_a as u32) * 2 < pa_b as u32,
@@ -2688,6 +2796,9 @@ fn TIM1_UP_TIM16() {
                 CAND_CONFIRMS.store(n, Ordering::Relaxed);
             }
         } else {
+            if CL_ACTIVE.load(Ordering::Relaxed) {
+                bb_record(5, cur_sec, CAND_CONFIRMS.load(Ordering::Relaxed) as u16);
+            }
             CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
         }
     }
@@ -2897,12 +3008,15 @@ fn accept_qualified_zc(zc_us: u32) {
         if CL_ARMED.load(Ordering::Relaxed) {
             CL_ARMED.store(false, Ordering::Relaxed);
             CL_ACTIVE.store(true, Ordering::Relaxed);
+            bb_record(7, sec as u8, interval.min(0xFFFF) as u16);
         }
         if CL_ACTIVE.load(Ordering::Relaxed) {
             let adv = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
             let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
             let delay = (interval as i32 * (30 - adv) / 60 - elapsed).max(24) as u32;
             minz::lptim2_oneshot::schedule_us(delay);
+            SHOT_REFINED.store(true, Ordering::Relaxed);
+            bb_record(3, sec as u8, delay.min(0xFFFF) as u16);
             // Deaf until the commutation (mask-after-accept).
             comp2::set_exti_enabled(false);
         }

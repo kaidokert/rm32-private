@@ -238,14 +238,29 @@ enable→start needs 2 counter clocks (asm delay in `schedule_us` —
 without it SNGSTRT is silently dropped and the chain dies).
 
 **Result**: engaged at f=100/amp=10, locked at its ~250 Hz
-equilibrium for 8+ s (33-66 mA), and **amp 10→12 drove f_e
-256→309 Hz with lock held** — the throttle-following discriminator
-that self-referential lock cannot pass. Desync (clean auto-kill)
-still occurs under sustained hard acceleration: the trailing
-estimator (¾-smoothing + 2-of-6 dead-reckoned windows) lags until
-ZCs cross the gate. Envelope hardening TODO: capture a stream during
-a climb, then tune gate %, smoothing α, and consider phase-correcting
-the C-window dead-reckon from the preceding qZC.
+equilibrium, and **throttle-following verified in both directions**
+(amp 10→12→10 ⇒ 254→312→249 Hz with lock held, ~37 k commutations /
+25 s, zero desyncs, 33-66 mA).
+
+**The "acceleration envelope limit" was a phantom.** A 64-event
+black-box ring (dumped automatically on desync) caught the real
+killer in one reproduction: the TIM7 desync watchdog computed
+`ticks_10us() − LAST_COMM` with `now` read BEFORE the reference — a
+commutation ISR preempting between the reads updates LAST_COMM to a
+newer tick, the subtraction underflows to ~4×10⁹, and a perfectly
+healthy 309 Hz lock gets killed 20 µs after a refined commutation.
+Probability ∝ commutation rate, which is why it masqueraded as an
+envelope ceiling. Fix: load the cross-ISR reference BEFORE `now` +
+top-bit clamp. **General rule: a wrapping timestamp delta whose
+reference is written by a higher-priority context must read the
+reference first (or clamp) — the false trip looks exactly like the
+fault being guarded.**
+
+Black box stays in the firmware (`bb` lines after any desync):
+REF/BLD/DRK commutation classes, ACC/NOZ/DIS ZC events, ENG/DSY.
+Remaining polish (optional): slope-aware estimator + ZC-anchored
+dead-reckon for faster ramps, gate relaxation, throttle slew limit,
+CL ramp-envelope sweep for the HEDGEHOG A/B.
 
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
