@@ -154,6 +154,33 @@ pocket (zc→84-89 %, spread→6-11°, ZC drifting late) is HIGH amp ×
 f≥300. Sweet-spot shape matches the rinz finding. amp=20 row aborted
 by the 800 mA script guard (811 mA at f=50, not a stall).
 
+## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
+
+rinz-grade latest_zc view on this board: DMA1_CH1 fills a 2048-frame
+ring (85 ms) with per-PWM-cycle ADC triplets ch9/PA4=A, ch10/PA5=B,
+ch8=current (LAST — the cycle-wrap harvest and failsafe read it from
+the ring, never from DR: a CPU DR read races the DMA request and
+shifts all later words a channel). `j` freezes (ADSTP), dumps rinz
+cdump/Ascii85 + a status channel (COMP bit|sector), resumes aligned.
+`waxwing.py` renders 3 panels: A/B analog waveforms + neutral +
+sign-change/linfit ZCs + comparator edges + current; C panel is the
+COMP bit (PB7 has no ADC route — the comparator IS channel C).
+
+**Hard-won timing rule**: the whole ADC sequence must finish inside
+the PWM ON window or late channels read low-side recirculation (~0 V
+on every terminal). Trigger at CCR4=100 (1.25 µs, AM32's point) +
+47.5-cycle sampling → done by ~3.3 µs, OK down to amp ≈ 8. (First
+attempt: trigger 250 + 247.5-cycle sampling put ch10 at ~6.4 µs, past
+the 6.25 µs ON window at amp 15 → phase B read ≈0 everywhere.)
+
+Verified at f=100/amp=15: textbook plateaus + float-window BEMF arcs
+on both phases, comparator edges landing on the analog crossings.
+
+Bench recovery note: SWD flaked mid-erase once → half-erased image →
+core LOCKUP; NRST is NOT wired to the probe, so recovery = board
+powercycle + ST-LINK USB replug + `scripts/flash_watch.ps1` (retries
+erase/download/reset until the probe answers). Consider wiring NRST.
+
 ## `examples/motor_tester.rs` — previous bench tool (9600, soft-UART)
 
 Open-loop motor spinner with live UART control. Pins on the Vimdrones L431:
