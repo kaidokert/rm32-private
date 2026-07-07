@@ -2381,7 +2381,13 @@ fn TIM7() {
             };
             let starved =
                 interval_us != 0 && last_qzc != 0 && starve_us > interval_us.max(500) * 12;
-            if starved || (interval_us != 0 && since_us > interval_us.max(1_000) * 3) {
+            // Runaway floor: no plausible rotor on this bench turns
+            // under ~160 µs/sector (~1 kHz elec). An estimator walked
+            // down there is commutating its own noise — junk accepts
+            // sustain it, so the starvation guard never fires. Kill.
+            let implausible = interval_us != 0 && interval_us < 160;
+            if starved || implausible || (interval_us != 0 && since_us > interval_us.max(1_000) * 3)
+            {
                 bb_record(
                     if starved { 8 } else { 6 },
                     CURRENT_SECTOR.load(Ordering::Relaxed),
@@ -2821,9 +2827,19 @@ fn TIM1_UP_TIM16() {
             // where even amp 10 equilibrates above it). The 1 %
             // premature rate is backstopped by the symmetric interval
             // bound and the ZC-starvation watchdog.
-            const CL_CONFIRMS: u8 = 1;
+            // CONDITIONAL depth: 1-confirm is only clean in locked
+            // closed-loop conditions (probe replay: 1 % premature);
+            // in open-loop/engage conditions it is 52-69 % premature
+            // and seeds the estimator with junk — observed as engage
+            // runaways to 144 µs after shipping unconditional
+            // 1-confirm. So: 2 confirms until CL_ACTIVE, 1 after.
+            let need: u8 = if CL_ACTIVE.load(Ordering::Relaxed) {
+                1
+            } else {
+                2
+            };
             let n = CAND_CONFIRMS.load(Ordering::Relaxed) + 1;
-            if n >= CL_CONFIRMS {
+            if n >= need {
                 CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
                 // Atomic accept: `free` excludes the commutation ISR
                 // for the ~10 µs of estimator + re-schedule, and the

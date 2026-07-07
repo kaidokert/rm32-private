@@ -192,6 +192,30 @@ lock at amp 11-15, 7.5 V.
   qzc over the first ~50 windows, re-engage if <90 %) is now the top
   remaining robustness item.
 
+## 10. Late-session regression + fixes (2026-07-06 evening) — bench needs rest
+
+- [x] **Unconditional 1-confirm was a regression** and produced engage
+  runaways (144 µs "1157 Hz" fields): 1-confirm is only clean in
+  LOCKED conditions; during the open-loop→CL handoff it is 52-69 %
+  premature and seeds the estimator with junk. Fixed: **conditional
+  depth** — 2 confirms until `CL_ACTIVE`, 1 after.
+- [x] **Firmware runaway floor**: interval < 160 µs (~1 kHz elec — no
+  plausible rotor here) → kill. Runaway self-sustains on junk accepts
+  so the starvation guard alone can't catch it.
+- [x] `cl_lock_map.py` engage now VALIDATES lock quality (1.2 s
+  sample, qzc ≥ 90 %, ≤4 retries) — the engagement-lottery TODO,
+  mechanized.
+- **Unresolved at session end**: engagement degraded progressively —
+  early manual engages hit 297/503 Hz clean (503 > the old 480 wall,
+  confirming the CL-phase 1-confirm helps), then ALL engages (script
+  and manual) began insta-desyncing ("commutation silence" right
+  after ARMED — the LPTIM2 chain never starts). Prime suspects, in
+  order: **motor thermals** (hours of runtime incl. stall/crawl/
+  runaway episodes at up to 440 mA), then a wedged LPTIM2 after
+  thousands of rapid re-schedules (powercycle clears). Advance A/B at
+  high amp (the prop-loaded question) remains TODO pending a cool
+  motor + fresh powercycle.
+
 ---
 
 ## Suggested order from here

@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import pathlib
+import re
 import sys
 import time
 
@@ -28,6 +29,13 @@ ap.add_argument("--baud", type=int, default=2_000_000)
 ap.add_argument("--amps", default="9,10,11,12,13,14,15,16")
 ap.add_argument("--secs", type=float, default=4.0)
 ap.add_argument("--settle", type=float, default=3.0)
+ap.add_argument(
+    "--adv",
+    type=int,
+    default=0,
+    help="commutation advance (deg, one of 0/20/40/-40/-20) applied "
+    "UNDER LOCK after engage — engaging itself always happens at 0",
+)
 ap.add_argument("--tag", default="lockmap")
 args = ap.parse_args()
 
@@ -64,6 +72,21 @@ class Bench:
         echo = self.send("i", 1.2)
         return "cl: ACTIVE" in echo, echo
 
+    def set_advance(self, target):
+        """Cycle `t` until the echo confirms the target (≤6 presses)."""
+        adv = getattr(self, "adv", None)
+        for _ in range(6):
+            if adv == target:
+                self.adv = adv
+                return
+            echo = self.send("t", 0.3)
+            m = re.search(r"advance = (-?\d+)", echo)
+            if m:
+                adv = int(m.group(1))
+        self.adv = adv
+        if adv != target:
+            sys.exit(f"advance set failed: wanted {target}, at {adv}")
+
     def set_filters(self):
         last = ""
         for _ in range(6):
@@ -82,16 +105,33 @@ class Bench:
             self.send(key, wait)
 
     def engage(self, cur_amp):
-        """Arm open loop at the engage point and switch to CL.
-        Returns the current amp after engagement (AMP_ENGAGE)."""
-        self.send("q", 3.0)
-        self.steps("z", AMP_START - AMP_ENGAGE)
-        self.steps("f", 5)
-        time.sleep(2.0)
-        echo = self.send("y", 2.5)
-        if "ARMED" not in echo:
-            sys.exit(f"engage failed: {echo!r}")
-        return AMP_ENGAGE
+        """Arm open loop, switch to CL, and VALIDATE the lock quality
+        (the engagement lottery is real: engages land in degraded
+        regimes — harmonic/blind — at random). A 1.2 s stream sample
+        must show qzc ≥ 90 %; otherwise kill and retry, up to 4 times.
+        Advance is forced to 0 first — the open-loop spin-up consumes
+        ADVANCE_DEG too and breaks at nonzero values."""
+        self.set_advance(0)
+        for attempt in range(4):
+            self.send("w", 0.5)
+            self.send("q", 3.0)
+            self.steps("z", AMP_START - AMP_ENGAGE, wait=0.2)
+            self.steps("f", 5, wait=0.2)
+            time.sleep(2.0)
+            echo = self.send("y", 3.0)
+            if "ARMED" not in echo:
+                continue
+            time.sleep(1.0)
+            sample = self.capture(1.2)
+            frames = parse_frames(sample)
+            if frames:
+                q = 100 * sum(1 for f in frames if f["qzc_off_us"] != 0xFFFF) / len(frames)
+                if q >= 90:
+                    return AMP_ENGAGE
+                print(f"  engage attempt {attempt}: qzc {q:.0f}% - retrying", flush=True)
+            else:
+                print(f"  engage attempt {attempt}: no records - retrying", flush=True)
+        sys.exit("engage failed 4x - bench attention needed")
 
     def capture(self, secs):
         self.drain()
@@ -115,6 +155,9 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
         b.set_filters()
         b.send("w", 0.5)
         cur = b.engage(AMP_START)
+        if args.adv:
+            time.sleep(1.0)
+            b.set_advance(args.adv)
 
         for amp in amps:
             if amp >= cur:
