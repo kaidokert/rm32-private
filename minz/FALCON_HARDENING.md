@@ -133,6 +133,19 @@ eye — the rinz lesson again):
 sectors** (62.5 k windows); current 45→99 mA; window jitter 9-13 %
 (speed wander, not lock loss).
 
+**Extended map to amp 20** (`captures/lockmap20_map.png`): clean
+100 % locks through **amp 18 / 467 Hz**; at amp 19 the loop went
+blind (every window NOZ — raw edges present, none confirming) and
+the **ZC-starvation watchdog made its first live catch**: 12 blind
+intervals → controlled kill, ~6 ms of blindness total, script
+stopped itself. The true envelope edge is the 2-wrap confirmation
+latency no longer fitting the ~350 µs windows near 480 Hz. Known
+lever if more speed is wanted: the 1-confirm rule (offline
+falcon_stats replay on existing captures would justify it — halves
+acceptance latency). Also learned: engage ascending (dropping to
+amp 9 immediately after engage lands in a degraded regime — the
+BLIND guard caught that too; sweep amp 9 on the way down).
+
 ---
 
 ## Suggested order from here
