@@ -495,6 +495,15 @@ static CL_DESYNC: AtomicBool = AtomicBool::new(false);
 /// `ticks_10us` of the most recent commutation (either engine) —
 /// desync watchdog reference.
 static LAST_COMM_10US: AtomicU32 = AtomicU32::new(0);
+/// `ticks_10us` of the most recent ACCEPTED qZC. Free-run scheduling
+/// made commutation recency meaningless as a health signal: a stalled
+/// rotor under a self-sustaining rotating field draws little current
+/// (no OC trip) and never stops commutating (no chain watchdog) — a
+/// zombie the operator's eyes caught before the firmware did. The
+/// loop's blindness IS detectable: qualified ZCs stop being accepted.
+static LAST_QZC_10US: AtomicU32 = AtomicU32::new(0);
+/// Selects the starvation message in the shared desync report path.
+static CL_STARVED: AtomicBool = AtomicBool::new(false);
 /// Closed-loop commutation counter (for the `i` readout).
 static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -2169,15 +2178,25 @@ fn main() -> ! {
             if CL_DESYNC.load(Ordering::Relaxed) {
                 CL_DESYNC.store(false, Ordering::Relaxed);
                 output_enabled = false;
-                write!(
-                    &mut tx_writer,
-                    "!! CL DESYNC - commutation silence > 3 intervals - output killed (r/q re-arms)\r\n",
-                )
-                .ok();
+                if CL_STARVED.load(Ordering::Relaxed) {
+                    CL_STARVED.store(false, Ordering::Relaxed);
+                    write!(
+                        &mut tx_writer,
+                        "!! CL ZC-STARVED - no accepted ZC for 12 intervals (stall/blind) - output killed\r\n",
+                    )
+                    .ok();
+                } else {
+                    write!(
+                        &mut tx_writer,
+                        "!! CL DESYNC - commutation silence > 3 intervals - output killed (r/q re-arms)\r\n",
+                    )
+                    .ok();
+                }
                 // Black-box dump: the 64 events leading to the kill.
                 // dt is µs since the previous recorded event.
-                const BB_NAMES: [&str; 8] =
-                    ["REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG"];
+                const BB_NAMES: [&str; 9] = [
+                    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV",
+                ];
                 let idx = BB_IDX.load(Ordering::Relaxed) as usize;
                 let mut prev_t: Option<u16> = None;
                 for k in 0..BB_LEN {
@@ -2349,17 +2368,31 @@ fn TIM7() {
             } else {
                 0
             };
-            if interval_us != 0 && since_us > interval_us.max(1_000) * 3 {
+            // ZC starvation: 12 intervals (2 electrical revs) without
+            // an ACCEPTED qZC = the loop is flying blind (stalled
+            // rotor / zombie field) even though commutations continue.
+            // Same reference-before-now read order as below.
+            let last_qzc = LAST_QZC_10US.load(Ordering::Relaxed);
+            let starve_ticks = ticks_10us().wrapping_sub(last_qzc);
+            let starve_us = if starve_ticks < u32::MAX / 2 {
+                starve_ticks.saturating_mul(10)
+            } else {
+                0
+            };
+            let starved =
+                interval_us != 0 && last_qzc != 0 && starve_us > interval_us.max(500) * 12;
+            if starved || (interval_us != 0 && since_us > interval_us.max(1_000) * 3) {
                 bb_record(
-                    6,
+                    if starved { 8 } else { 6 },
                     CURRENT_SECTOR.load(Ordering::Relaxed),
-                    (since_us / 10).min(0xFFFF) as u16,
+                    ((if starved { starve_us } else { since_us }) / 10).min(0xFFFF) as u16,
                 );
                 BB_FROZEN.store(true, Ordering::Relaxed);
                 CL_ACTIVE.store(false, Ordering::Relaxed);
                 MOTOR_ENABLED.store(false, Ordering::Relaxed);
                 tim1_motor_pwm::all_off();
                 comp2::set_exti_enabled(false);
+                CL_STARVED.store(starved, Ordering::Relaxed);
                 CL_DESYNC.store(true, Ordering::Relaxed);
             }
         }
@@ -2986,8 +3019,17 @@ fn accept_qualified_zc(zc_us: u32) {
     if last != u32::MAX && (1..=3).contains(&spans) {
         let new_int = zc_us.wrapping_sub(last) / spans;
         let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
-        let sane =
-            new_int > 100 && new_int < 30_000 && (old == 0 || new_int < old.saturating_mul(9) / 5);
+        // Symmetric rate-of-change bound: reject samples outside
+        // [0.6×old, 1.8×old]. The old one-sided check only bounded
+        // GROWTH, so half-period junk could walk the interval down —
+        // the loop then locks onto 2× the rotor frequency (observed:
+        // "539 Hz" at amp 10 with qzc 28 % vs the true 257 Hz at
+        // 100 %). Real acceleration never shrinks the interval 40 %
+        // in a single window; a half-period jump always does.
+        let sane = new_int > 100
+            && new_int < 30_000
+            && (old == 0
+                || (new_int < old.saturating_mul(9) / 5 && new_int > old.saturating_mul(3) / 5));
         if sane {
             let smoothed = if old == 0 {
                 new_int
@@ -2998,6 +3040,7 @@ fn accept_qualified_zc(zc_us: u32) {
         }
     }
     OWL_LAST_QZC_US.store(zc_us, Ordering::Relaxed);
+    LAST_QZC_10US.store(ticks_10us(), Ordering::Relaxed);
 
     // CL scheduling — only from A/B float windows (ADC-confirmed).
     // C windows (0/3) are dead-reckoned by the LPTIM2 ISR itself, so

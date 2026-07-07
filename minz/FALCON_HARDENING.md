@@ -107,6 +107,32 @@ transient coverage thins mid-ramp but never broke. Items 3/4 now
 have a measurable target (raise mid-ramp coverage from ~20 % —
 robustness margin, not a functional need at bench load).
 
+## 7. Post-stall hardening (2026-07-06, after the bench stall) ✅
+
+Two real defects found when the rotor stalled during an unguarded
+lock-map sweep and the firmware kept driving (operator caught it by
+eye — the rinz lesson again):
+
+- [x] **ZC-starvation watchdog**: free-run scheduling made the
+  commutation-recency watchdog meaningless (a zombie field never
+  stops commutating and draws little current). New: no ACCEPTED qZC
+  for 12 intervals while CL → kill, `!! CL ZC-STARVED`, bb `STV`
+  event. The loop's blindness is machine-detectable even when the
+  rotor's state isn't.
+- [x] **Harmonic lock killed**: the estimator's sanity band only
+  bounded interval GROWTH, so half-period junk walked it down and the
+  loop could lock at 2× rotor frequency ("539 Hz" qzc 28 % vs true
+  257 Hz qzc 100 % — also explains suspicious ramp-sweep peaks).
+  Fixed with a symmetric rate bound: new ∈ [0.6, 1.8]×old.
+- [x] `cl_lock_map.py`: full session log (no buffer resets eating
+  kill messages), `cl: ACTIVE` check before each point, qzc<50 % =
+  BLIND → abort, breakage stops the sweep (no blind re-engagement).
+
+**Lock map result** (`captures/lockmap_map.png`): amp 9→16 ⇒
+230→416 Hz, ~27 Hz/%, monotone; **qzc 100 % at every point, all
+sectors** (62.5 k windows); current 45→99 mA; window jitter 9-13 %
+(speed wander, not lock loss).
+
 ---
 
 ## Suggested order from here

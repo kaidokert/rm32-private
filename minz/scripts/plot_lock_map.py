@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Render the closed-loop lock map from cl_lock_map.py captures.
+
+Four panels vs throttle (amp %):
+  1. speed: mean electrical frequency ± the window-to-window band
+  2. lock coverage: qualified-ZC % (per-sector spread as error bars)
+  3. timing tightness: σ of window length and of qZC position, as %
+     of the window
+  4. current: window-mean ± the in-window min/max envelope (mA)
+
+Usage:
+    python scripts/plot_lock_map.py --tag lockmap [-o out.png]
+"""
+
+import argparse
+import glob
+import pathlib
+import re
+import statistics
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from magpie import parse_frames, raw_to_ma
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--tag", default="lockmap")
+ap.add_argument("-o", "--out", default=None)
+args = ap.parse_args()
+
+capdir = pathlib.Path(__file__).resolve().parent.parent / "captures"
+rows = []
+for path in sorted(glob.glob(str(capdir / f"{args.tag}_a*.bin"))):
+    m = re.search(rf"{re.escape(args.tag)}_a(\d+)\.bin$", path)
+    if not m:
+        continue
+    amp = int(m.group(1))
+    data = pathlib.Path(path).read_bytes()
+    frames = parse_frames(data)
+    if len(frames) < 100:
+        continue
+    lens = [f["len_us"] for f in frames if f["len_us"] > 0]
+    fe = [1e6 / (6 * l) for l in lens]
+    qzc_pct = 100 * sum(1 for f in frames if f["qzc_off_us"] != 0xFFFF) / len(frames)
+    sec_q = []
+    for s in range(6):
+        fs = [f for f in frames if f["sector"] == s]
+        if fs:
+            sec_q.append(100 * sum(1 for f in fs if f["qzc_off_us"] != 0xFFFF) / len(fs))
+    qz = [f["qzc_off_us"] for f in frames if f["qzc_off_us"] != 0xFFFF]
+    mean_len = statistics.mean(lens)
+    rows.append(
+        dict(
+            amp=amp,
+            fe_mean=statistics.mean(fe),
+            fe_sd=statistics.stdev(fe),
+            qzc=qzc_pct,
+            qzc_lo=min(sec_q) if sec_q else 0,
+            qzc_hi=max(sec_q) if sec_q else 0,
+            len_jit=100 * statistics.stdev(lens) / mean_len,
+            zc_jit=100 * statistics.stdev(qz) / mean_len if len(qz) > 2 else float("nan"),
+            i_avg=raw_to_ma(statistics.mean([f["i_avg"] for f in frames])),
+            i_min=raw_to_ma(statistics.mean([f["i_min"] for f in frames])),
+            i_max=raw_to_ma(statistics.mean([f["i_max"] for f in frames])),
+            broke=b"DESYNC" in data or b"TRIP" in data,
+            n=len(frames),
+        )
+    )
+
+if not rows:
+    raise SystemExit("no captures found")
+rows.sort(key=lambda r: r["amp"])
+A = [r["amp"] for r in rows]
+
+fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+fig.suptitle(
+    "FALCON closed-loop lock map — board 1, no caps, 6.5 V bench "
+    f"({sum(r['n'] for r in rows)} windows total)",
+    fontsize=12,
+)
+
+ax = axes[0][0]
+ax.errorbar(A, [r["fe_mean"] for r in rows], yerr=[r["fe_sd"] for r in rows],
+            marker="o", color="tab:blue", capsize=3)
+for r in rows:
+    if r["broke"]:
+        ax.plot(r["amp"], r["fe_mean"], "x", color="red", ms=12, mew=2)
+ax.set_title("speed vs throttle (± window-to-window σ)", fontsize=10)
+ax.set_ylabel("f_e (Hz)")
+ax.grid(True, alpha=0.3)
+
+ax = axes[0][1]
+ax.errorbar(
+    A,
+    [r["qzc"] for r in rows],
+    yerr=[
+        [r["qzc"] - r["qzc_lo"] for r in rows],
+        [r["qzc_hi"] - r["qzc"] for r in rows],
+    ],
+    marker="s", color="tab:green", capsize=3,
+)
+ax.set_title("qualified-ZC coverage (bars = best/worst sector)", fontsize=10)
+ax.set_ylabel("% of windows")
+ax.set_ylim(0, 105)
+ax.grid(True, alpha=0.3)
+
+ax = axes[1][0]
+ax.plot(A, [r["len_jit"] for r in rows], marker="o", label="window-length σ")
+ax.plot(A, [r["zc_jit"] for r in rows], marker="^", label="qZC position σ")
+ax.set_title("timing jitter (% of window)", fontsize=10)
+ax.set_ylabel("% of window")
+ax.set_xlabel("throttle (amp %)")
+ax.legend(fontsize=8)
+ax.grid(True, alpha=0.3)
+
+ax = axes[1][1]
+ax.plot(A, [r["i_avg"] for r in rows], marker="o", color="tab:purple", label="mean")
+ax.fill_between(A, [r["i_min"] for r in rows], [r["i_max"] for r in rows],
+                color="tab:purple", alpha=0.15, label="in-window min/max")
+ax.set_title("current", fontsize=10)
+ax.set_ylabel("mA")
+ax.set_xlabel("throttle (amp %)")
+ax.legend(fontsize=8)
+ax.grid(True, alpha=0.3)
+
+fig.tight_layout()
+out = args.out or str(capdir / f"{args.tag}_map.png")
+fig.savefig(out, dpi=110)
+print(f"wrote {out}")
