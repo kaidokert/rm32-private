@@ -73,19 +73,20 @@ class Bench:
         return "cl: ACTIVE" in echo, echo
 
     def set_advance(self, target):
-        """Cycle `t` until the echo confirms the target (≤6 presses)."""
+        """Step `t` (+2°) / `T` (−2°) until the echo confirms the
+        target. Firmware clamps 0..28, so walking down always
+        converges even from an unknown start."""
         adv = getattr(self, "adv", None)
-        for _ in range(6):
+        for _ in range(40):
             if adv == target:
                 self.adv = adv
                 return
-            echo = self.send("t", 0.3)
+            key = "t" if (adv is not None and adv < target) else "T"
+            echo = self.send(key, 0.25)
             m = re.search(r"advance = (-?\d+)", echo)
             if m:
                 adv = int(m.group(1))
-        self.adv = adv
-        if adv != target:
-            sys.exit(f"advance set failed: wanted {target}, at {adv}")
+        sys.exit(f"advance set failed: wanted {target}, at {adv}")
 
     def set_filters(self):
         last = ""

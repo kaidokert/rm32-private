@@ -1242,7 +1242,7 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
-        "Cycle commut advance: t   (0 / 20 / 40 / -40 / -20 deg)\r"
+        "Commutation advance:  t +2deg / T -2deg (clamped 0..28)\r"
     )
     .ok();
     writeln!(
@@ -2009,20 +2009,15 @@ fn main() -> ! {
                         .ok();
                         tx_writer.write_blocking(&[]);
                     }
-                    b't' => {
-                        // Cycle commutation advance: 0 → 20 → 40 → -40 → -20 → 0.
-                        // Positive = float window earlier in raw-angle
-                        // terms (compensate rotor lag). Negative =
-                        // float window later (compensate rotor lead, or
-                        // explore the asymmetry of the BEMF response).
+                    b't' | b'T' => {
+                        // Fine-grained commutation advance: t = +2°,
+                        // T = −2°, clamped 0..=28. (Was a coarse
+                        // 0/20/40/−40/−20 cycle from the open-loop
+                        // observation days — useless for CL tuning,
+                        // and negative advance is proven destructive:
+                        // it collapses the rotor to a crawl.)
                         let cur = ADVANCE_DEG.load(Ordering::Relaxed);
-                        let next: i8 = match cur {
-                            0 => 20,
-                            20 => 40,
-                            40 => -40,
-                            -40 => -20,
-                            _ => 0,
-                        };
+                        let next = (cur + if b == b't' { 2 } else { -2 }).clamp(0, 28);
                         ADVANCE_DEG.store(next, Ordering::Relaxed);
                         write!(&mut tx_writer, "advance = {}°\r\n", next).ok();
                         tx_writer.write_blocking(&[]);

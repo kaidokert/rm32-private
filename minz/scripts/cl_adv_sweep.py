@@ -28,7 +28,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--port", default="COM41")
 ap.add_argument("--baud", type=int, default=2_000_000)
 ap.add_argument("--amps", default="11,12,13,14,15")
-ap.add_argument("--advs", default="0,20,40,-40,-20")
+ap.add_argument("--advs", default="0,2,4,6,8,10,12,14,16,18,20")
 ap.add_argument("--secs", type=float, default=3.0)
 ap.add_argument("--settle", type=float, default=1.5)
 ap.add_argument("--tag", default="advmap")
@@ -79,16 +79,18 @@ class Bench:
         sys.exit("edge mode set failed")
 
     def set_advance(self, target):
-        """Cycle `t` until the echo confirms the target (≤6 presses)."""
-        for _ in range(6):
+        """Step `t` (+2°) / `T` (−2°) until the echo confirms the
+        target. Firmware clamps 0..28, so walking down always
+        converges even from an unknown start."""
+        for _ in range(40):
             if self.adv == target:
                 return
-            echo = self.send("t", 0.3)
+            key = "t" if (self.adv is not None and self.adv < target) else "T"
+            echo = self.send(key, 0.25)
             m = re.search(r"advance = (-?\d+)", echo)
             if m:
                 self.adv = int(m.group(1))
-        if self.adv != target:
-            sys.exit(f"advance set failed: wanted {target}, at {self.adv}")
+        sys.exit(f"advance set failed: wanted {target}, at {self.adv}")
 
     def engage(self):
         """Advance must be 0 for the open-loop spin-up."""
