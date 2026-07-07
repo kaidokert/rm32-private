@@ -507,6 +507,23 @@ static CL_STARVED: AtomicBool = AtomicBool::new(false);
 /// Closed-loop commutation counter (for the `i` readout).
 static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 
+// ---------------------------------------------------------------
+// RE-ACQUISITION (the ~475 Hz wall fix). The lockout spiral: a few
+// blind windows accumulate phase lag → the rotor's real ZCs drift
+// toward (then past) the estimate-referenced gate → every rejection
+// makes the next window blind too → starvation. The rotor is healthy
+// throughout (qzc was 98 % moments before every wall death), so the
+// answer is to RE-ACQUIRE, not die: after 2 consecutive ZC-less A/B
+// windows, drop the gate to ~8 % (just past flyback), demand full
+// 2-confirm strictness again, and re-seed the interval directly from
+// the first clean qZC-to-qZC delta. The starvation watchdog (12
+// intervals) remains the backstop if re-acquisition itself fails.
+// ---------------------------------------------------------------
+/// Consecutive A/B (measurable) windows that closed without a qZC.
+static CL_NOZ_RUN: AtomicU8 = AtomicU8::new(0);
+/// Re-acquisition mode active.
+static CL_REACQ: AtomicBool = AtomicBool::new(false);
+
 /// FALCON v2: deferred ZC confirmation. The COMP ISR's 0.6 µs
 /// persistence check cannot out-wait PWM dwell noise (the comparator
 /// sits still for tens of µs between switching edges), which let the
@@ -1756,6 +1773,8 @@ fn main() -> ! {
                             OWL_INTERVAL_US.store(0, Ordering::Relaxed);
                             OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
                             WINDOWS_SINCE_QZC.store(0, Ordering::Relaxed);
+                            CL_REACQ.store(false, Ordering::Relaxed);
+                            CL_NOZ_RUN.store(0, Ordering::Relaxed);
                             CL_ARMED.store(true, Ordering::Relaxed);
                             write!(
                                 &mut tx_writer,
@@ -2202,8 +2221,8 @@ fn main() -> ! {
                 }
                 // Black-box dump: the 64 events leading to the kill.
                 // dt is µs since the previous recorded event.
-                const BB_NAMES: [&str; 9] = [
-                    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV",
+                const BB_NAMES: [&str; 10] = [
+                    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ",
                 ];
                 let idx = BB_IDX.load(Ordering::Relaxed) as usize;
                 let mut prev_t: Option<u16> = None;
@@ -2610,6 +2629,26 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
             prev_sector,
             WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
         );
+        // Re-acquisition trigger: only A/B windows count (phase-C
+        // windows are dead-reckoned and legitimately ZC-less).
+        if prev_sector != 0 && prev_sector != 3 {
+            let run = CL_NOZ_RUN.load(Ordering::Relaxed).saturating_add(1);
+            CL_NOZ_RUN.store(run, Ordering::Relaxed);
+            if run >= 2 && !CL_REACQ.load(Ordering::Relaxed) {
+                CL_REACQ.store(true, Ordering::Relaxed);
+                // Break the qZC chain: recovery must be measured from
+                // TWO fresh strict-confirmed ZCs, not from a stale
+                // pre-spiral timestamp (a stale `last` hands the
+                // re-seed an aliased delta — seen re-seeding 162 µs
+                // and tripping the runaway floor).
+                OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
+                bb_record(
+                    9,
+                    prev_sector,
+                    OWL_INTERVAL_US.load(Ordering::Relaxed).min(0xFFFF) as u16,
+                );
+            }
+        }
     }
     // Windowless misses no longer hard-break the estimator chain —
     // dead-reckoned C windows legitimately close without a qZC; the
@@ -2717,9 +2756,19 @@ fn LPTIM2() {
     // early-window transients stay out.
     let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
     if interval != 0 {
-        // 30 % of measured interval: room for early-arriving ZCs
-        // while the loop is catching up to an accelerating rotor.
-        SECTOR_HALF_TICKS.store((interval / 33).max(2), Ordering::Relaxed);
+        // Adaptive gate: 20 % of the measured interval normally; in
+        // re-acquisition drop to ~8 % (just past the commutation
+        // flyback) so ZCs that drifted early — the lockout-spiral
+        // signature — become acceptable again.
+        let g = if CL_REACQ.load(Ordering::Relaxed) {
+            (interval / 125).max(1)
+        } else {
+            // 30 % — the value every successful ladder ran at. (A
+            // brief excursion to 20 % let early noise edges reach the
+            // 1-confirm fast path and compound into estimator walks.)
+            (interval / 33).max(2)
+        };
+        SECTOR_HALF_TICKS.store(g, Ordering::Relaxed);
     }
     // Schedule the next commutation unconditionally:
     // - phase-C float windows (0/3, no ADC confirm): dead-reckon at
@@ -2841,7 +2890,10 @@ fn TIM1_UP_TIM16() {
             // and seeds the estimator with junk — observed as engage
             // runaways to 144 µs after shipping unconditional
             // 1-confirm. So: 2 confirms until CL_ACTIVE, 1 after.
-            let need: u8 = if CL_ACTIVE.load(Ordering::Relaxed) {
+            // Re-acquisition demands full 2-confirm strictness —
+            // trust is re-earned before the fast path resumes.
+            let need: u8 = if CL_ACTIVE.load(Ordering::Relaxed) && !CL_REACQ.load(Ordering::Relaxed)
+            {
                 1
             } else {
                 2
@@ -3053,26 +3105,47 @@ fn accept_qualified_zc(zc_us: u32) {
     if last != u32::MAX && (1..=3).contains(&spans) {
         let new_int = zc_us.wrapping_sub(last) / spans;
         let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
-        // Symmetric rate-of-change bound: reject samples outside
-        // [0.6×old, 1.8×old]. The old one-sided check only bounded
-        // GROWTH, so half-period junk could walk the interval down —
-        // the loop then locks onto 2× the rotor frequency (observed:
-        // "539 Hz" at amp 10 with qzc 28 % vs the true 257 Hz at
-        // 100 %). Real acceleration never shrinks the interval 40 %
-        // in a single window; a half-period jump always does.
-        let sane = new_int > 100
-            && new_int < 30_000
-            && (old == 0
-                || (new_int < old.saturating_mul(9) / 5 && new_int > old.saturating_mul(3) / 5));
-        if sane {
-            let smoothed = if old == 0 {
-                new_int
-            } else {
-                (3 * old + new_int) / 4
-            };
-            OWL_INTERVAL_US.store(smoothed, Ordering::Relaxed);
+        if CL_REACQ.load(Ordering::Relaxed) && CL_ACTIVE.load(Ordering::Relaxed) {
+            // Re-acquisition re-seed: both ZCs of this delta were
+            // taken under the tiny gate + full 2-confirm strictness
+            // (the chain was broken on entry, so spans==1 means two
+            // FRESH measurements). Bound to [0.5, 2.0]×old — wide
+            // enough to undo any walk-up/down the spiral caused,
+            // narrow enough to reject aliased junk (the unbounded
+            // version re-seeded 162 µs and tripped the runaway
+            // floor).
+            let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
+            if spans == 1
+                && new_int > 100
+                && new_int < 30_000
+                && new_int > old / 2
+                && new_int < old.saturating_mul(2)
+            {
+                OWL_INTERVAL_US.store(new_int, Ordering::Relaxed);
+                CL_REACQ.store(false, Ordering::Relaxed);
+            }
+        } else {
+            // Rate-of-change bounds. Tight under an established lock
+            // (±25 %/window: real acceleration moves the interval a
+            // fraction of a percent per window; the ~1.5× aliased
+            // accept that seeds the lockout spiral cannot pass).
+            // Engagement (old == 0) seeds directly.
+            let sane = new_int > 100
+                && new_int < 30_000
+                && (old == 0
+                    || (new_int < old.saturating_mul(5) / 4
+                        && new_int > old.saturating_mul(4) / 5));
+            if sane {
+                let smoothed = if old == 0 {
+                    new_int
+                } else {
+                    (3 * old + new_int) / 4
+                };
+                OWL_INTERVAL_US.store(smoothed, Ordering::Relaxed);
+            }
         }
     }
+    CL_NOZ_RUN.store(0, Ordering::Relaxed);
     OWL_LAST_QZC_US.store(zc_us, Ordering::Relaxed);
     LAST_QZC_10US.store(ticks_10us(), Ordering::Relaxed);
 
