@@ -1743,6 +1743,19 @@ fn main() -> ! {
                             )
                             .ok();
                         } else if output_enabled && matches!(waveform, Waveform::SixStep) {
+                            // Reset the estimator before arming: a
+                            // stale interval (e.g. 144 µs left by a
+                            // runaway) is otherwise UNRECOVERABLE —
+                            // the runaway floor kills every engage
+                            // instantly while the symmetric bound
+                            // rejects every honest open-loop sample
+                            // (1667 µs ≫ 1.8×144 µs). Engagement
+                            // waits for interval != 0, so this
+                            // re-seeds fresh from open-loop qZCs
+                            // within a few windows.
+                            OWL_INTERVAL_US.store(0, Ordering::Relaxed);
+                            OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
+                            WINDOWS_SINCE_QZC.store(0, Ordering::Relaxed);
                             CL_ARMED.store(true, Ordering::Relaxed);
                             write!(
                                 &mut tx_writer,

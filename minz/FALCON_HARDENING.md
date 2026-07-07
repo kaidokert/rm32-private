@@ -205,16 +205,27 @@ lock at amp 11-15, 7.5 V.
 - [x] `cl_lock_map.py` engage now VALIDATES lock quality (1.2 s
   sample, qzc ≥ 90 %, ≤4 retries) — the engagement-lottery TODO,
   mechanized.
-- **Unresolved at session end**: engagement degraded progressively —
-  early manual engages hit 297/503 Hz clean (503 > the old 480 wall,
-  confirming the CL-phase 1-confirm helps), then ALL engages (script
-  and manual) began insta-desyncing ("commutation silence" right
-  after ARMED — the LPTIM2 chain never starts). Prime suspects, in
-  order: **motor thermals** (hours of runtime incl. stall/crawl/
-  runaway episodes at up to 440 mA), then a wedged LPTIM2 after
-  thousands of rapid re-schedules (powercycle clears). Advance A/B at
-  high amp (the prop-loaded question) remains TODO pending a cool
-  motor + fresh powercycle.
+- ~~Unresolved: progressive engage failure~~ **ROOT-CAUSED & FIXED**
+  (not thermal — motor was stone cold and it persisted): a poisoned
+  `OWL_INTERVAL` (144 µs left by a runaway) was **unrecoverable by
+  design** — the runaway floor killed every engage instantly while
+  the symmetric bound rejected every honest open-loop sample
+  (1667 µs ≫ 1.8×144). Fix: the `y` arm handler resets the estimator
+  (interval=0, chain broken); engagement already waits for a fresh
+  estimate, so it re-seeds from open-loop qZCs in a few windows.
+  Guards that each do their job can still deadlock as a SYSTEM —
+  reset-on-arm is the escape hatch.
+
+**Prop-loaded high-amp results (7.5 V, after the fix)**:
+- adv 0: clean 100 % locks amp 11-15 = 328-442 Hz; wall at amp 16 /
+  474 Hz **with qzc 98 %** — the wall is loop timing/dynamics, NOT
+  sensing (the comparator+ADC pipeline is essentially perfect at the
+  wall).
+- adv +20 under lock at amp 10: ZC-starves within 12 intervals —
+  advance shifts the ZC to ~83 % of the (shortened) window and the
+  current gate/confirm geometry stops accepting; the advance path
+  needs its own geometry pass before the prop-loaded advance question
+  can be answered. TODO with fresh eyes.
 
 ---
 
