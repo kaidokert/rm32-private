@@ -146,6 +146,28 @@ acceptance latency). Also learned: engage ascending (dropping to
 amp 9 immediately after engage lands in a degraded regime — the
 BLIND guard caught that too; sweep amp 9 on the way down).
 
+## 8. Voltage + confirm-depth experiments (2026-07-06, 7.5 V bench)
+
+The ~480 Hz ceiling is **speed-domain, not amplitude**: at 7.5 V the
+same wall appears at lower throttle (even amp 10's engage spin-up
+crossed it and ZC-starved — guard caught it cleanly). The 1-confirm
+rule was then justified offline (`falcon_stats --confirms 1` on the
+probe captures: CL conditions 100 % accept / 1 % premature /
++0.1±0.7 frames) and shipped (`CL_CONFIRMS=1`); at 7.5 V it gives
+clean 100 % locks amp 10-15 = 296-442 Hz
+(`captures/lockmap75_map.png`) — but the wall stayed at ~475 Hz, so
+confirmation depth wasn't the binding constraint either.
+
+Failure anatomy at the wall (bb): one over-long accept walks the
+estimator up (symmetric bound allows ×1.8), the gate — proportional
+to the ESTIMATE — then rejects the rotor's now-"early" real ZCs
+forever, and the starvation guard kills. Prime physical suspect for
+why timing goes bad near 480 Hz: **commutation advance is still 0°**
+(AM32 defaults ~16°; phase lag grows with speed). A quick advance=20°
+try failed at ENGAGE because ADVANCE_DEG also shifts the open-loop
+sector mapping — the proper experiment is engage at 0° then step
+advance under CL, a session of its own.
+
 ---
 
 ## Suggested order from here

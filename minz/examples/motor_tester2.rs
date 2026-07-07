@@ -2812,8 +2812,18 @@ fn TIM1_UP_TIM16() {
             _ => comp2::value(),
         };
         if observed == CAND_EXPECTED.load(Ordering::Relaxed) {
+            // Confirmation depth: the offline falcon_stats replay on
+            // the probe captures showed 1-confirm in CLOSED-LOOP
+            // conditions is 100 % accept / 1 % premature / +0.1±0.7
+            // frames latency (vs 0 % / +1.1 for 2-confirm). The saved
+            // PWM frame (~42 µs) raises the confirmation-latency
+            // speed ceiling (~480 Hz at 2 confirms — hit at 7.5 V
+            // where even amp 10 equilibrates above it). The 1 %
+            // premature rate is backstopped by the symmetric interval
+            // bound and the ZC-starvation watchdog.
+            const CL_CONFIRMS: u8 = 1;
             let n = CAND_CONFIRMS.load(Ordering::Relaxed) + 1;
-            if n >= 2 {
+            if n >= CL_CONFIRMS {
                 CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
                 // Atomic accept: `free` excludes the commutation ISR
                 // for the ~10 µs of estimator + re-schedule, and the

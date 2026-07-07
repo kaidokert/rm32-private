@@ -36,6 +36,12 @@ sys.stdout.reconfigure(errors="replace")
 ap = argparse.ArgumentParser()
 ap.add_argument("patterns", nargs="+")
 ap.add_argument("--blank-frames", type=int, default=2)
+ap.add_argument(
+    "--confirms",
+    type=int,
+    default=2,
+    help="consecutive samples at the expected level required to accept",
+)
 args = ap.parse_args()
 
 files = []
@@ -109,9 +115,10 @@ def analyze(path):
             # below neutral (POLARITY=0, INM=phase). adc sign mapped
             # identically so `expected` applies to both.
             acc = None
-            for k in range(args.blank_frames, len(sig) - 1):
-                if sig[k] == expected and sig[k + 1] == expected:
-                    acc = s0 + k + 1  # accepted at 2nd confirm
+            need = max(args.confirms, 1)
+            for k in range(args.blank_frames, len(sig) - need + 1):
+                if all(sig[k + j] == expected for j in range(need)):
+                    acc = s0 + k + need - 1  # accepted at last confirm
                     break
             row[rule] = acc
         out.append(row)
