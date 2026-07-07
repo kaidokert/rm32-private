@@ -168,6 +168,30 @@ try failed at ENGAGE because ADVANCE_DEG also shifts the open-loop
 sector mapping — the proper experiment is engage at 0° then step
 advance under CL, a session of its own.
 
+## 9. Advance sweep under lock (2026-07-06) — advance is NOT the lever at no-load
+
+`cl_adv_sweep.py` + `plot_adv_map.py` (`captures/advmap_map.png`):
+engage at 0° (open loop consumes ADVANCE_DEG — engaging at 20°
+breaks spin-up), then step advance through 0/20/40/−40/−20 under
+lock at amp 11-15, 7.5 V.
+
+- Healthy rows (amp 12/13/15): **+20°/+40° changed nothing** — speed
+  flat (356/390/445 Hz), current flat (71/81/102 mA), lock coverage
+  mildly down (100 → 84-95 %). At no-load the phase current is tiny,
+  so phase lag — the thing advance compensates — barely exists.
+  Advance becomes interesting under LOAD (prop / HEDGEHOG), not on a
+  bare bell.
+- **Negative advance is destructive**: retard collapses the rotor to
+  a ~5 Hz crawl at 250-440 mA (and the loop *tracked the crawl* at
+  qzc 70-84 % — grimly impressive).
+- The 480 Hz wall therefore stays attributed to loop/estimator
+  dynamics near the ceiling, not to missing advance.
+- Recurring theme in the raw log: the **engagement lottery** — amp 11
+  and 14 rows landed in degraded regimes (qzc 17-39 %) after
+  re-engages. Post-engage quality validation with auto-retry (check
+  qzc over the first ~50 windows, re-engage if <90 %) is now the top
+  remaining robustness item.
+
 ---
 
 ## Suggested order from here
