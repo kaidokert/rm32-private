@@ -227,6 +227,40 @@ lock at amp 11-15, 7.5 V.
   needs its own geometry pass before the prop-loaded advance question
   can be answered. TODO with fresh eyes.
 
+## 11. Re-acquisition + 48 kHz campaign (2026-07-07)
+
+**Re-acquisition mode ✅ (the envelope lever that landed)**: after 2
+consecutive ZC-less A/B windows, gate drops 30 %→8 %, confirm depth
+returns to 2, the qZC chain is broken (recovery measured from two
+FRESH strict ZCs), interval re-seeds bounded [0.5, 2.0]×old. Normal
+accepts tightened to ±25 %/window (blocks the ~1.5× aliased accept
+that seeds the lockout spiral). bb event `RAQ`. **Wall moved: amp
+16/17 (475/500 Hz) now run at qzc 100 %; break relocated to ~amp
+18/522 Hz.** Two hard-won sub-lessons: the direct re-seed MUST be
+bounded (unbounded version re-seeded an aliased 162 µs and tripped
+the runaway floor), and the normal gate is sensitive (a transient
+30 %→20 % change let early noise edges reach the 1-confirm fast path
+and destabilized amp 12).
+
+**48 kHz PWM ❌ implemented, characterized, reverted**: the theory
+(halve the 42 µs confirm quantum) was sound; practice taught:
+1. **ADC trigger floor ≈ 1.0 µs** — dead-time (562 ns) + gate-driver
+   + FET turn-on; a 0.6 µs trigger sampled ch9 while the phase node
+   was still LOW (WAXWING: channel A flatlined 0 —
+   `captures/wax48_083523.png`; textbook again at 88 ticks —
+   `wax48b_191853.png`).
+2. **The comp blank must scale with the carrier** — 20 µs covers an
+   entire 48 kHz period; every edge suppressed, zero candidates,
+   loop self-blinded (bb: 170-300 raw edges/window, all NOZ).
+3. **Noise density doubles and wins** — after both fixes CL engaged
+   and validated (qzc 94-100 %) but the envelope DROPPED to ~260 Hz
+   vs 500 Hz at 24 kHz: ~1.8 noise edges/PWM cycle churns candidates
+   faster than confirms accumulate; blank tuning (8/12 µs) didn't
+   converge. A real 48 kHz campaign needs a candidate-hold policy
+   (don't reset the candidate on churn) and likely HEDGEHOG's caps.
+
+Reverted to 24 kHz; ladder re-verified 100 % through amp 15-17.
+
 ---
 
 ## Suggested order from here
