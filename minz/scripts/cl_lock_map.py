@@ -89,6 +89,10 @@ class Bench:
         sys.exit(f"advance set failed: wanted {target}, at {adv}")
 
     def set_filters(self):
+        # blank = 20 µs, proven at 24 kHz PWM. NOTE: the blank must
+        # scale with the carrier — at 48 kHz, 20 µs covers the whole
+        # period and self-blinds the loop (bb: 170-300 raw edges per
+        # window, zero candidates).
         last = ""
         for _ in range(6):
             last = self.send(",")

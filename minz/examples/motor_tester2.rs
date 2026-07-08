@@ -440,11 +440,11 @@ static WINDOW_I_MIN: AtomicU16 = AtomicU16::new(0x0FFF);
 static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
 
 /// Overcurrent failsafe (firmware-side, host-independent). The
-/// TIM1_UP ISR accumulates the 24 kHz current samples over
-/// `1 << I_TRIP_SHIFT` PWM cycles (2048 ≈ 85 ms); if the window
-/// average exceeds [`I_TRIP_RAW`] while the drive is armed, the ISR
-/// itself kills the output (same actions as the `w` key) and raises
-/// [`OC_TRIPPED`] so main can report it. Averaging makes it a
+/// TIM1_UP ISR accumulates the per-PWM-cycle current samples over
+/// `1 << I_TRIP_SHIFT` PWM cycles (4096 ≈ 85 ms @ 48 kHz); if the
+/// window average exceeds [`I_TRIP_RAW`] while the drive is armed,
+/// the ISR itself kills the output (same actions as the `w` key) and
+/// raises [`OC_TRIPPED`] so main can report it. Averaging makes it a
 /// stall/heating guard, deliberately blind to sub-window spikes.
 ///
 /// 1.5 A × 30 mV/A = 45 mV → 45 / (3300/4095) ≈ 56 counts.

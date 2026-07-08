@@ -66,6 +66,8 @@ class Bench:
             self.send(key, wait)
 
     def set_filters(self):
+        # blank = 20 µs, proven at 24 kHz PWM (must scale with the
+        # carrier — see cl_lock_map.py).
         last = ""
         for _ in range(6):
             last = self.send(",")

@@ -29,11 +29,11 @@ use crate::hal::stm32::{ADC1, TIM1};
 /// the 80 MHz ADC clock) must finish INSIDE the high-side ON window,
 /// or the late channels sample low-side recirculation (~0 V on every
 /// terminal). ON = duty ≥ 333 ticks = 4.2 µs at amp 10 — whole
-/// sequence fits with margin down to amp ≈ 8. This exact failure was
-/// observed: with the old 250-tick trigger + 247.5-cycle sampling,
-/// ch10 (phase B) converted at ~6.4 µs and read ≈0 everywhere at
-/// amp 15 (ON = 6.25 µs). Current deliberately converts LAST: at
-/// ~2.6 µs the INA180 (350 kHz) is well settled.
+/// sequence fits with margin down to amp ≈ 8. Also a hard FLOOR on
+/// the trigger (48 kHz lesson): below ~1.0 µs the first channel
+/// samples during dead-time + FET turn-on and reads 0. Current
+/// deliberately converts LAST: at ~2.6 µs the INA180 (350 kHz) is
+/// well settled.
 pub const SAMPLE_TICKS: u16 = 100;
 
 /// WAXWING waveform ring: frames of `[ch9(A), ch10(B), ch8(current)]`
