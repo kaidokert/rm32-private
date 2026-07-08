@@ -261,6 +261,32 @@ and destabilized amp 12).
 
 Reverted to 24 kHz; ladder re-verified 100 % through amp 15-17.
 
+## 12. Second 48 kHz push (2026-07-08 pre-dawn) — WIP branch `wip_48khz_campaign`
+
+Additional findings, all preserved on the WIP branch:
+- **24.5-cycle sampling minimum** with the 3.3 kΩ sources: 12.5
+  cycles broke sectors 2/4 specifically (S/H inter-channel drag —
+  owl_report per-sector table was the diagnostic); 24.5 restored
+  sector 4 and collapsed the prediction bias +44 % → −0.3 %.
+- **Sector 2 anomaly, unresolved**: qzc 0 % at 48 kHz with healthy
+  raw/valid edge counts AND a healthy analog arc, robust to swapping
+  the confirm rule to VBUS_EST. `wax48s2_074609.png` shows phase A
+  *rising* through neutral in sector 2 where the convention expects
+  falling — the PHASE_MAPPING deep-dive needs redoing with a scope.
+- Wrap-armed candidates (pure ADC-sign arming, no comp edge) built
+  and regime-gated (CL-only + fast-window <700 µs) — the open-loop
+  sign rule is 29-41 % premature, so wrap-arm outside a fast lock
+  poisons the estimator.
+- Commanded-rate estimator seed at arm + ARMED-freeze — has a
+  residual units/order bug (seeds ~278 µs against a 1667 µs rotor);
+  this bug also breaks the consolidated 24 kHz build on the WIP
+  branch. Root not found — fresh-eyes item.
+- **Bench drift is real and repeatable**: at session end even the
+  bit-identical known-good build (amp 17 the previous evening) broke
+  at amp 11-12. Same pattern as the previous night (recovered after
+  rest). Long sessions poison ladder comparisons — calibrate against
+  a known-good control run before trusting any A/B late in a session.
+
 ---
 
 ## Suggested order from here
