@@ -96,7 +96,14 @@ const RX_BUF_LEN: usize = 32;
 /// hangs, or shoot-through during dead-time misconfiguration — there are
 /// other ways to fry the windings that this clamp doesn't cover.
 const AMP_MIN: u16 = 0;
-const AMP_MAX: u16 = 20;
+// Raised 20 → 24 (2026-07-08): under a verified closed loop the
+// applied volts are BEMF-cancelled — amp 20 at 48 kHz/7.5 V ran
+// 555 Hz at 136 mA with the 1.5 A trip nowhere in sight, and every
+// stall/runaway path is guarded (OC trip, ZC-starvation, runaway
+// floor). The conservative cap predates all of that. Open-loop use
+// above ~16 remains a heater risk — the guards, not the cap, are
+// the protection now.
+const AMP_MAX: u16 = 24;
 /// Bench observation: at 5 V supply this motor refuses to start
 /// (synchronise to the commanded field) below ~15 %. Set the default at
 /// the empirical floor so the user doesn't have to ramp up after boot
