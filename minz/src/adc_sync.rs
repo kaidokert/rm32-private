@@ -86,13 +86,16 @@ pub fn start(sample_ticks: u16) {
         while adc.cr.read().adstart().bit_is_set() {}
     }
 
-    // Sample times: 47.5 cycles everywhere on the fast channels. The
-    // 3.3 kΩ divider needs ~280 ns to 12-bit-settle (RC ≈ 25 ns);
-    // 47.5 cycles = 594 ns at the 80 MHz ADC clock — comfortable, and
-    // it keeps the WHOLE sequence inside the PWM ON window (see
-    // SAMPLE_TICKS). ch11 keeps 640.5 for the on-demand vbat read.
+    // Sample times: 47.5 cycles on the phase channels (ch9/ch10) —
+    // REQUIRED with the 3.3 kΩ divider sources; shorter settings
+    // blind sector 2, whose confirm rule has razor margins by
+    // construction (2×A ≈ vbus at the ZC). Proven by A/B at both
+    // carriers. ch8 (current) is the INA180's low-impedance op-amp
+    // output — 12.5 cycles suffices, and the saved 437 ns is what
+    // lets the whole sequence (ends ~3.06 µs) fit a 48 kHz ON window
+    // from amp ≈ 15. ch11 keeps 640.5 for the on-demand vbat read.
     adc.smpr1
-        .modify(|_, w| unsafe { w.smp8().bits(0b100).smp9().bits(0b100) });
+        .modify(|_, w| unsafe { w.smp8().bits(0b010).smp9().bits(0b100) });
     adc.smpr2
         .modify(|_, w| unsafe { w.smp10().bits(0b100).smp11().bits(0b111) });
 

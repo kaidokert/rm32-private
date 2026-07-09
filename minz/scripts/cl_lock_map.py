@@ -43,7 +43,7 @@ amps = [int(a) for a in args.amps.split(",")]
 capdir = pathlib.Path(__file__).resolve().parent.parent / "captures"
 capdir.mkdir(exist_ok=True)
 
-AMP_START, AMP_ENGAGE = 15, 10
+AMP_START, AMP_ENGAGE = 15, 15  # 48 kHz: ADC sequence needs the amp-15 ON window
 
 
 class Bench:
@@ -89,16 +89,14 @@ class Bench:
         sys.exit(f"advance set failed: wanted {target}, at {adv}")
 
     def set_filters(self):
-        # blank = 20 µs, proven at 24 kHz PWM. NOTE: the blank must
-        # scale with the carrier — at 48 kHz, 20 µs covers the whole
-        # period and self-blinds the loop (bb: 170-300 raw edges per
-        # window, zero candidates).
+        # blank = 8 µs, scaled for 48 kHz PWM (20 µs covers a whole
+        # 48 kHz period and self-blinds the loop).
         last = ""
         for _ in range(6):
             last = self.send(",")
-        for _ in range(2):
-            last = self.send(".")
-        if "blank window = 20" not in last:
+        for _ in range(8):
+            last = self.send("n")
+        if "blank window = 8" not in last:
             sys.exit(f"blank set failed: {last!r}")
         for _ in range(7):
             if "phys ZC" in self.send("k"):

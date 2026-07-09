@@ -45,7 +45,7 @@ pub const CYCLES_PER_SECOND: u32 = SYSCLK.raw();
 /// noise-edge density per window (~1.8/cycle vs 0.9) and candidate
 /// churn starves the confirm pipeline. A real 48 kHz campaign needs
 /// a candidate-hold policy redesign and likely the HEDGEHOG caps.
-pub const PWM_FREQUENCY_HZ: u32 = 24_000;
+pub const PWM_FREQUENCY_HZ: u32 = 48_000;
 
 /// TIM1 ARR = SYSCLK / PWM_FREQUENCY_HZ − 1.
 pub const TIM1_AUTORELOAD: u16 = (SYSCLK.raw() / PWM_FREQUENCY_HZ - 1) as u16;
