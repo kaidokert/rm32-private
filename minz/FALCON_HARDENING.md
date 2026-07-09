@@ -287,6 +287,35 @@ Additional findings, all preserved on the WIP branch:
   rest). Long sessions poison ladder comparisons — calibrate against
   a known-good control run before trusting any A/B late in a session.
 
+## 13. 48 kHz ✅ WORKING — the minimal recipe (2026-07-08)
+
+After the bench recovered (control ladder 100 % to amp 17), round 4
+succeeded by combining ALL the hard-won constraints with ZERO logic
+changes — every logic "enabler" from rounds 1-3 had been convicted
+by A/B and reverted; the winning build is the known-good loop
+untouched:
+
+- PWM 48 kHz (ARR 1665);
+- **phase channels keep full 47.5-cycle sampling** (required — the
+  sector-2 razor-margin rule), current channel ch8 drops to 12.5
+  cycles (INA180 is a low-impedance op-amp output) — the saved
+  437 ns brings the sequence end to ~3.06 µs;
+- trigger stays 0x64 = 1.25 µs (the proven point);
+- **engage at amp 15** (the ON window that fits the sequence);
+- comp blank 8 µs (scaled for the carrier).
+
+**Result (`captures/pwm48final_map.png`, 7.5 V, prop): amp 15-20 all
+qzc 100 % — 405 → 555 Hz, 52 800 windows, ZERO breaks.** The old
+~480 Hz confirmation wall is GONE (21 µs confirm quantum), amp 19/20
+— which starved at 24 kHz — run clean, and no new wall was found up
+to the amp cap. qZC position σ ~9 % of window (vs 11-13 % at 24 kHz).
+
+Trade-off: the CL floor is amp 15 (~405 Hz) — below that the ADC
+sequence doesn't fit the ON window, so low-speed closed loop needs
+the 24 kHz build. Carrier choice is one constant + engage amp +
+blank; a runtime carrier switch (engage low at 24 kHz, shift to
+48 kHz at speed) is the obvious future unification.
+
 ---
 
 ## Suggested order from here
