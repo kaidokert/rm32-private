@@ -103,7 +103,7 @@ const AMP_MIN: u16 = 0;
 // floor). The conservative cap predates all of that. Open-loop use
 // above ~16 remains a heater risk — the guards, not the cap, are
 // the protection now.
-const AMP_MAX: u16 = 24;
+const AMP_MAX: u16 = 25;
 /// Bench observation: at 5 V supply this motor refuses to start
 /// (synchronise to the commanded field) below ~15 %. Set the default at
 /// the empirical floor so the user doesn't have to ramp up after boot
