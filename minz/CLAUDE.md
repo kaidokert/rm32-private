@@ -84,10 +84,11 @@ style) so all 6 windows per rev are observed. Frame layout lives in
 
 ### GECKO — PWM-synchronous continuous current sampling
 
-`src/adc_sync.rs`: TIM1 OC4REF (falling edge at CNT=CCR4=250 ≈ 3.1 µs
-into the cycle, inside the high-side ON window) → TRGO2 (CR2.MMS2,
-raw-bits — PAC lacks the field) → ADC1 ch8 (PA3, INA180) hardware
-trigger, EXTSEL=EXT10, one conversion per 24 kHz PWM cycle. No DMA,
+`src/adc_sync.rs`: TIM1 OC4REF (falling edge at CNT=CCR4, inside the
+high-side ON window — see the "FALCON current status" section for
+the trigger/sampling constraints that CCR4 must respect) → TRGO2
+(CR2.MMS2, raw-bits — PAC lacks the field) → ADC1 ch8 (PA3, INA180)
+hardware trigger, EXTSEL=EXT10, one conversion per PWM cycle. No DMA,
 no new IRQs: TIM1_UP_TIM16 reads DR at the cycle wrap and maintains
 per-window sum/min/max. OVRMOD=1 so a slow reader can't stall it.
 **vbat moved to the injected group** (`adc_sync::read_vbat_injected`,
@@ -257,10 +258,108 @@ reference first (or clamp) — the false trip looks exactly like the
 fault being guarded.**
 
 Black box stays in the firmware (`bb` lines after any desync):
-REF/BLD/DRK commutation classes, ACC/NOZ/DIS ZC events, ENG/DSY.
-Remaining polish (optional): slope-aware estimator + ZC-anchored
-dead-reckon for faster ramps, gate relaxation, throttle slew limit,
-CL ramp-envelope sweep for the HEDGEHOG A/B.
+REF/BLD/DRK commutation classes, ACC/NOZ/DIS ZC events, ENG/DSY
+(+ STV starvation, RAQ re-acquisition — see below).
+
+## FALCON current status (2026-07-08) — hardened + 48 kHz landed
+
+Supersedes the older FALCON notes above where they conflict. Full
+chronology and evidence in `FALCON_HARDENING.md` §7–13.
+
+### Protection stack (each live-fire tested on the bench)
+
+- **ZC-starvation watchdog**: no ACCEPTED qZC for 12 intervals under
+  CL → kill (`!! CL ZC-STARVED`, bb `STV`). Catches the stalled-rotor
+  **zombie field** that nothing else can: rotor stalls, free-run keeps
+  commutating (chain watchdog content), detached field draws little
+  current (no OC trip). Operator eyes caught it first; now firmware
+  does.
+- **Runaway floor**: interval < 160 µs → kill. A runaway self-feeds
+  on junk accepts so the starvation guard alone never fires.
+- **Symmetric rate bound** new ∈ [0.6, 1.8]×old per accept — kills
+  harmonic locks (observed 2×-rotor lock: "539 Hz" @ qzc 28 % vs true
+  257 Hz @ 100 %; qzc ≈ 100 % or it isn't a lock).
+- **Estimator reset on arm** (`y`): a poisoned static interval (e.g.
+  144 µs left by a runaway) is otherwise UNRECOVERABLE — the floor
+  kills every engage while the bound rejects every honest sample.
+  Individually-correct guards can deadlock as a system.
+- **Re-acquisition** (bb `RAQ`): 2 consecutive ZC-less A/B windows →
+  gate 30 %→8 %, full 2-confirm, qZC chain broken, interval re-seeds
+  from two fresh ZCs bounded [0.5, 2]×old. Moved the 24 kHz wall
+  474 → ~510 Hz (the lockout spiral: blind windows → phase lag → ZCs
+  drift past the estimate-referenced gate → starve).
+- **Confirm depth**: 2 wraps until CL_ACTIVE, 1 after. Open-loop
+  1-confirm is 52-69 % premature (probe replay) and caused engage
+  runaways when shipped unconditionally.
+
+### Lock maps — the deliverable renders
+
+`cl_lock_map.py` (steady-state throttle ladder; `--adv`; engagement
+is VALIDATED — 1.2 s sample must show qzc ≥ 90 %, ≤4 retries — the
+"engagement lottery" is real) → `plot_lock_map.py` (4-panel PNG).
+- 24 kHz, 7.5 V, prop: amp 11-17 ⇒ 326-500 Hz, qzc 100 % everywhere.
+- **48 kHz: amp 15-20 ⇒ 405-555 Hz, qzc 100 %, 52.8 k windows, zero
+  breaks** (`captures/pwm48final_map.png`). The ~480 Hz confirmation
+  wall is gone (21 µs confirm quantum).
+
+### 48 kHz recipe (currently flashed; `lib.rs::PWM_FREQUENCY_HZ`)
+
+Won with ZERO loop-logic changes — constraints only:
+- **Phase channels keep 47.5-cycle ADC sampling.** Non-negotiable:
+  sector 2's confirm rule (2×float-A vs driven-high B, where 2×A ≈
+  vbus at the ZC by construction) goes to exactly 0 % qZC at
+  24.5/12.5 cycles — at BOTH carriers. Diagnostic: per-sector
+  owl_report table / `scripts/sector_polarity_check.py`.
+- ch8 (current) drops to 12.5 cycles — INA180 output is low-Z —
+  bringing the 3-channel sequence end to ~3.06 µs.
+- Trigger stays 0x64 = 1.25 µs (1.0 µs blinds sector 2 — turn-on
+  ringing tail; 0.6 µs samples during dead-time and flatlines ch9).
+- Comp blank 8 µs (20 µs covers an entire 48 kHz period → the loop
+  self-blinds: 170-300 raw edges/window, zero candidates).
+- **Engage at amp 15** — the smallest ON window (3.125 µs) that fits
+  the sequence. CL floor = amp 15 / ~405 Hz; below that, use the
+  24 kHz build (blank 20, engage 10). Runtime carrier switching is
+  the future unification.
+
+### Convicted — do NOT retry naively (all A/B'd on a healthy bench)
+
+±2 % "physical" slew clamp (locked 46 Hz crawl — under a synchronous
+loop the interval measurement echoes the loop's own field; tight
+clamps remove the convergence signal); commanded-rate estimator seed
+at arm; wrap-armed ADC-sign candidates; asymmetric fast-α smoothing;
+gate at 20 % (early noise edges reach the 1-confirm fast path).
+Estimator meddling under lock is treacherous — the failures live on
+branch `wip_48khz_campaign` with black-box anatomy.
+
+### Advance (`t` +2° / `T` −2°, clamped 0..28)
+
+At bench loads +2..+20° changes nothing (speed and current flat;
+coverage droops above ~14°); negative advance collapses the rotor to
+a ~5 Hz crawl that the loop *tracks* (qzc 70-84 %). Not a lever until
+real load. Engage always at 0° — the open-loop spin-up consumes
+ADVANCE_DEG too.
+
+### Bench drift protocol (bit us twice)
+
+Multi-hour sessions degrade until even bit-identical known-good
+builds fail their own ladders (amp 17 → amp 11); recovers after ~1 h
+rest; motor was cool — cause unknown (driver/FET thermals? supply?).
+**Always re-run the known-good build as a control before trusting a
+late-session A/B.**
+
+### Scripts added this arc (all `scripts/`)
+
+`cl_lock_map.py` / `plot_lock_map.py` (lock maps), `cl_adv_sweep.py`
+/ `plot_adv_map.py` (advance sweeps), `cl_ramp_sweep.py` (ramp
+envelope; classifies sub-150 µs windows as RUNAWAY so a detached
+field can never read as SURVIVED), `sector_polarity_check.py`
+(empirical per-sector BEMF polarity/offset from waxwing cdumps),
+`falcon_stats.py --confirms N`.
+
+Branches: main work on `bisect_init_changes` (48 kHz build flashed,
+84514d2); `wip_48khz_campaign` holds the failed-experiment forensics.
+Remaining polish: throttle slew limit (item 5), runtime carrier
+switch, HEDGEHOG A/B on the capped board.
 
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
