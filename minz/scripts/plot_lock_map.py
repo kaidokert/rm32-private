@@ -119,11 +119,28 @@ ax = axes[1][1]
 ax.plot(A, [r["i_avg"] for r in rows], marker="o", color="tab:purple", label="mean")
 ax.fill_between(A, [r["i_min"] for r in rows], [r["i_max"] for r in rows],
                 color="tab:purple", alpha=0.15, label="in-window min/max")
-ax.set_title("current", fontsize=10)
+ax.set_title("current + supply voltage", fontsize=10)
 ax.set_ylabel("mA")
 ax.set_xlabel("throttle (amp %)")
-ax.legend(fontsize=8)
 ax.grid(True, alpha=0.3)
+# Supply voltage from the per-point health checks (sidecar CSV) —
+# a droop at high amp is the PSU current limit engaging, which
+# masquerades as a motor voltage ceiling.
+meta_path = capdir / f"{args.tag}_meta.csv"
+if meta_path.exists():
+    vb = {}
+    for line in meta_path.read_text().splitlines()[1:]:
+        parts = line.split(",")
+        if len(parts) == 3 and float(parts[1]) > 0:
+            vb[int(parts[0])] = float(parts[1])
+    pts = [(a, vb[a]) for a in A if a in vb]
+    if pts:
+        ax2 = ax.twinx()
+        ax2.plot([p[0] for p in pts], [p[1] for p in pts], marker="s",
+                 color="tab:red", label="vbat (V)")
+        ax2.set_ylabel("vbat (V)", color="tab:red")
+        ax2.tick_params(axis="y", labelcolor="tab:red")
+ax.legend(fontsize=8, loc="upper left")
 
 fig.tight_layout()
 out = args.out or str(capdir / f"{args.tag}_map.png")

@@ -69,8 +69,14 @@ class Bench:
         return self.drain()
 
     def check_active(self):
+        """Returns (active, echo, vbat_V, isns_A) — the supply
+        voltage under load is the tell for a PSU current limit
+        engaging (sag events look exactly like a motor voltage
+        ceiling: speed flattens, jitter climbs, breaks)."""
         echo = self.send("i", 1.2)
-        return "cl: ACTIVE" in echo, echo
+        m = re.search(r"vbat=(\d+\.\d+)V isns=(\d+\.\d+)A", echo)
+        vbat, isns = (float(m.group(1)), float(m.group(2))) if m else (0.0, 0.0)
+        return "cl: ACTIVE" in echo, echo, vbat, isns
 
     def set_advance(self, target):
         """Step `t` (+2°) / `T` (−2°) until the echo confirms the
@@ -162,6 +168,8 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
             time.sleep(1.0)
             b.set_advance(args.adv)
 
+        meta = open(capdir / f"{args.tag}_meta.csv", "w")
+        meta.write("amp,vbat_v,isns_a\n")
         for amp in amps:
             if amp >= cur:
                 b.steps("a", amp - cur)
@@ -169,7 +177,9 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
                 b.steps("z", cur - amp)
             cur = amp
             time.sleep(args.settle)
-            active, echo = b.check_active()
+            active, echo, vbat, isns = b.check_active()
+            meta.write(f"{amp},{vbat},{isns}\n")
+            meta.flush()
             if not active:
                 print(f"amp {amp:2d}: LOOP NOT ACTIVE before capture - aborting"
                       f" (see session log). Last echo:\n{echo.strip()}", flush=True)
@@ -188,7 +198,8 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
                 qzc_pct = 100 * q / len(frames)
                 note += (
                     f"  f_e={1e6 / (6 * statistics.mean(lens)):.0f}Hz"
-                    f"  qzc={qzc_pct:.0f}%  ({len(frames)} win)"
+                    f"  qzc={qzc_pct:.0f}%  vbat={vbat:.2f}V/{isns * 1000:.0f}mA"
+                    f"  ({len(frames)} win)"
                 )
             # A lock that isn't seeing ZCs is a stall/zombie even if
             # nothing tripped (the rotor lies; the coverage doesn't).
