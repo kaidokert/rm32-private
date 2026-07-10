@@ -174,7 +174,11 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
             time.sleep(1.0)
             b.set_advance(args.adv)
         if args.fast:
+            # `M` toggles; if it was already ON from a previous
+            # session the first press turns it off — press again.
             echo = b.send("M", 0.4)
+            if "SWIFT" not in echo:
+                echo = b.send("M", 0.4)
             if "SWIFT" not in echo:
                 sys.exit(f"SWIFT enable failed: {echo!r}")
 
