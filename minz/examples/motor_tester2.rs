@@ -96,14 +96,17 @@ const RX_BUF_LEN: usize = 32;
 /// hangs, or shoot-through during dead-time misconfiguration — there are
 /// other ways to fry the windings that this clamp doesn't cover.
 const AMP_MIN: u16 = 0;
-// Raised 20 → 24 (2026-07-08): under a verified closed loop the
-// applied volts are BEMF-cancelled — amp 20 at 48 kHz/7.5 V ran
-// 555 Hz at 136 mA with the 1.5 A trip nowhere in sight, and every
-// stall/runaway path is guarded (OC trip, ZC-starvation, runaway
-// floor). The conservative cap predates all of that. Open-loop use
-// above ~16 remains a heater risk — the guards, not the cap, are
-// the protection now.
-const AMP_MAX: u16 = 25;
+// Raised progressively 20 → 25 → 50 (2026-07-08/09). Lesson learned
+// the embarrassing way: under a verified closed loop, each amp cap
+// just sets a BEMF equilibrium speed that then masquerades as a
+// "voltage wall" (we characterized our own 25 % cap's equilibrium
+// at ~640 Hz with 76 k-window precision and interrogated the poor
+// power supply twice). AM32 runs this hardware to 100 % duty. The
+// protection is the guard stack (1.5 A OC trip, ZC-starvation,
+// runaway floor, desync), NOT this cap; the cap only bounds how
+// hard a guarded failure can transiently hit. Open-loop use above
+// ~16 remains a heater risk — mind the `q` key at high amp.
+const AMP_MAX: u16 = 50;
 /// Bench observation: at 5 V supply this motor refuses to start
 /// (synchronise to the commanded field) below ~15 %. Set the default at
 /// the empirical floor so the user doesn't have to ramp up after boot
@@ -511,6 +514,23 @@ static LAST_COMM_10US: AtomicU32 = AtomicU32::new(0);
 static LAST_QZC_10US: AtomicU32 = AtomicU32::new(0);
 /// Selects the starvation message in the shared desync report path.
 static CL_STARVED: AtomicBool = AtomicBool::new(false);
+
+/// SWIFT — AM32-style edge-timestamped fast path (`M` key). When ON
+/// and the loop is LOCKED, a comparator edge that passes the gate +
+/// 5-read persistence is ACCEPTED immediately in the COMP ISR
+/// (µs-precision timestamp, zero wrap latency) instead of arming a
+/// candidate for ADC-sign confirmation at TIM1_UP wraps. Rationale:
+/// the deferred-confirm path quantizes acceptance to the PWM wrap
+/// (21 µs @ 48 kHz) + 1-2 confirm wraps — a per-window latency tax
+/// that collapses the schedule margin as windows shrink (~650 Hz
+/// ceiling @ 48 kHz). AM32 has no such quantization, which is why it
+/// reaches full throttle on this same hardware. At speed the BEMF is
+/// large and comp edges are clean — the regime where edge-trust
+/// works. Engage and the ADC-confirm path are UNCHANGED (they own
+/// low speed, where this board's comparator is noise-limited); all
+/// guards (bounds, starvation, runaway floor, desync) apply to both
+/// paths.
+static CL_FAST_PATH: AtomicBool = AtomicBool::new(false);
 /// Closed-loop commutation counter (for the `i` readout).
 static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -1271,6 +1291,11 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
+        "ZC path toggle:       M   (adc-confirm <-> SWIFT am32-edge)\r"
+    )
+    .ok();
+    writeln!(
+        &mut tx,
         "Adjust SW blanking:   n/N (+/- 1 µs)   ./, (+/- 10 µs coarse), clamped 0..50 µs\r"
     )
     .ok();
@@ -1454,6 +1479,21 @@ fn main() -> ! {
                     b'c' => electrical_hz = clamp_hz(electrical_hz as i32 - 1),
                     b'f' => electrical_hz = clamp_hz(electrical_hz as i32 + 10),
                     b'v' => electrical_hz = clamp_hz(electrical_hz as i32 - 10),
+                    b'M' => {
+                        let on = !CL_FAST_PATH.load(Ordering::Relaxed);
+                        CL_FAST_PATH.store(on, Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "zc path = {}\r\n",
+                            if on {
+                                "SWIFT (am32 edge)"
+                            } else {
+                                "adc-confirm"
+                            }
+                        )
+                        .ok();
+                        tx_writer.write_blocking(&[]);
+                    }
                     b'm' if CL_ACTIVE.load(Ordering::Relaxed) => {
                         write!(&mut tx_writer, "CL active - 'y' first\r\n").ok();
                     }
@@ -3082,12 +3122,23 @@ fn COMP() {
                 break;
             }
         }
-        if held && CAND_ZC_US.load(Ordering::Relaxed) == u32::MAX {
-            // Record the candidate; TIM1_UP confirms or discards it.
-            CAND_EXPECTED.store(expected, Ordering::Relaxed);
-            CAND_CONFIRMS.store(0, Ordering::Relaxed);
-            CAND_GEN.store(WINDOW_GEN.load(Ordering::Relaxed), Ordering::Relaxed);
-            CAND_ZC_US.store(ticks_1us(), Ordering::Relaxed);
+        if held {
+            if CL_FAST_PATH.load(Ordering::Relaxed) && CL_ACTIVE.load(Ordering::Relaxed) {
+                // SWIFT: accept right here — edge-timestamped,
+                // AM32-style, zero wrap latency. Safe from this ISR:
+                // LPTIM2 (commutation) shares priority 1 with COMP so
+                // they never preempt each other, and TIM1_UP (prio 3)
+                // is preempted — no `free` needed. WINDOW_QZC caps it
+                // at one accept per window (mask-after-accept), and
+                // all estimator bounds + guards apply unchanged.
+                accept_qualified_zc(ticks_1us());
+            } else if CAND_ZC_US.load(Ordering::Relaxed) == u32::MAX {
+                // Record the candidate; TIM1_UP confirms or discards it.
+                CAND_EXPECTED.store(expected, Ordering::Relaxed);
+                CAND_CONFIRMS.store(0, Ordering::Relaxed);
+                CAND_GEN.store(WINDOW_GEN.load(Ordering::Relaxed), Ordering::Relaxed);
+                CAND_ZC_US.store(ticks_1us(), Ordering::Relaxed);
+            }
         }
     }
 }

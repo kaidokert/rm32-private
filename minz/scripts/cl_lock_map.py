@@ -36,6 +36,12 @@ ap.add_argument(
     help="commutation advance (deg, one of 0/20/40/-40/-20) applied "
     "UNDER LOCK after engage — engaging itself always happens at 0",
 )
+ap.add_argument(
+    "--fast",
+    action="store_true",
+    help="enable SWIFT (AM32-style edge-timestamped accepts) after "
+    "engage — engage itself always uses the proven adc-confirm path",
+)
 ap.add_argument("--tag", default="lockmap")
 args = ap.parse_args()
 
@@ -167,6 +173,10 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
         if args.adv:
             time.sleep(1.0)
             b.set_advance(args.adv)
+        if args.fast:
+            echo = b.send("M", 0.4)
+            if "SWIFT" not in echo:
+                sys.exit(f"SWIFT enable failed: {echo!r}")
 
         meta = open(capdir / f"{args.tag}_meta.csv", "w")
         meta.write("amp,vbat_v,isns_a\n")
