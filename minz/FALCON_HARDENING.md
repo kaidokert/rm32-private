@@ -316,6 +316,42 @@ the 24 kHz build. Carrier choice is one constant + engage amp +
 blank; a runtime carrier switch (engage low at 24 kHz, shift to
 48 kHz at speed) is the obvious future unification.
 
+## 14. SWIFT — AM32-style edge path lands the throttle range (2026-07-09)
+
+Question that drove it: AM32 runs this exact hardware to 100 %
+throttle — why can't we? Answer: our ADC-sign deferred confirmation
+quantizes ZC acceptance to the PWM wrap (21 µs @ 48 kHz) + 1-2
+confirm wraps; that fixed per-window latency collapses the schedule
+margin as windows shrink → the ~620-650 Hz ceiling. AM32 timestamps
+the comparator edge and schedules immediately — nothing in its
+timing scales with speed. (Also: the amp cap was raised 25 → 50
+along the way; the ~640 Hz breaks proved speed-referenced, not
+throttle-referenced, and the PSU was exonerated twice — vbat flat
+under load once per-point voltage logging was added to the lock
+maps.)
+
+**SWIFT** (`M` key; `cl_lock_map.py --fast`): when LOCKED, a comp
+edge that passes the gate + 5-read persistence is accepted
+IMMEDIATELY in the COMP ISR — µs-precision, zero wrap latency,
+AM32's architecture. Engage + low speed keep the adc-confirm path
+unchanged (they own the noise-limited small-BEMF regime — the part
+AM32 is famously rough at and we are not). All guards apply to both
+paths. Same-session A/B (drifted-bench state):
+
+| path | result |
+|---|---|
+| adc-confirm (control) | broke amp 22 / 622 Hz |
+| SWIFT | **qzc 100 % through amp 26 / 739 Hz**, first break amp 28 @ 769 Hz |
+
++117 Hz over control — and qZC position jitter FALLS with speed
+under SWIFT (9.6 → 8.4 % of window), inverse of the adc path: the
+signature of latency-free detection. `captures/swift1_map.png`.
+
+Open: where SWIFT's own ceiling is (769 Hz break was on a drifted
+bench at 97 % coverage — rested-bench ladder pending), and a
+speed-scheduled auto-switch (adc-confirm below ~450 Hz, SWIFT
+above) instead of the manual key.
+
 ---
 
 ## Suggested order from here

@@ -39,8 +39,7 @@ advs = [int(a) for a in args.advs.split(",")]
 capdir = pathlib.Path(__file__).resolve().parent.parent / "captures"
 capdir.mkdir(exist_ok=True)
 
-AMP_START, AMP_ENGAGE = 15, 10
-ADV_CYCLE = [0, 20, 40, -40, -20]  # firmware `t` order
+AMP_START, AMP_ENGAGE = 15, 15  # 48 kHz: ADC sequence needs the amp-15 ON window
 
 
 class Bench:
@@ -66,14 +65,13 @@ class Bench:
             self.send(key, wait)
 
     def set_filters(self):
-        # blank = 20 µs, proven at 24 kHz PWM (must scale with the
-        # carrier — see cl_lock_map.py).
+        # blank = 8 µs, scaled for 48 kHz PWM (see cl_lock_map.py).
         last = ""
         for _ in range(6):
             last = self.send(",")
-        for _ in range(2):
-            last = self.send(".")
-        if "blank window = 20" not in last:
+        for _ in range(8):
+            last = self.send("n")
+        if "blank window = 8" not in last:
             sys.exit(f"blank set failed: {last!r}")
         for _ in range(7):
             if "phys ZC" in self.send("k"):
