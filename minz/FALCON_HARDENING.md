@@ -352,6 +352,37 @@ bench at 97 % coverage — rested-bench ladder pending), and a
 speed-scheduled auto-switch (adc-confirm below ~450 Hz, SWIFT
 above) instead of the manual key.
 
+## 15. Speed-adaptive blanking — the amp-28 wall falls (2026-07-09)
+
+Correction first (user's, and right): AM32 absolutely has stall /
+desync protection (zero_crosses resets, stuck-rotor handling) — the
+§14 "no kill switch" framing was unfair. What it does differently is
+*recover in place* rather than kill-and-report; our kill-and-dump is
+a bench-forensics choice.
+
+The cribbed mechanism (`AM32/Src/main.c:2112-2119`): on L431, AM32
+has **no time-since-PWM-edge blank at all** — its noise defense is
+persistence depth scaled with speed (`filter_level =
+map(average_interval, …)`, 12 reads slow → 3 fast; hardware COMP
+blanking is a G071-only feature). Our fixed 8 µs blank after every
+PWM CC edge (~2 per 20.8 µs cycle at 48 kHz) left us blind ~75 % of
+every window — the real cause of the SWIFT amp-28 break.
+
+**Fix (COMP ISR, both ZC paths)**: effective blank =
+`min(user_blank, interval/75)` µs — shrinks with speed (3 µs at
+740 Hz, 2 µs at 1.1 kHz); once it falls below 5 µs the persistence
+check deepens 5 → 12 reads (AM32's own value for our interval
+range). At low speed the arithmetic yields exactly the proven
+8 µs + 5-read combo — nothing changed below ~600 µs intervals.
+
+**Result (`captures/swiftblank_map.png`)**: the ladder ran off the
+end of the amp list — **first no-break ladder of the project**. amp
+18-32 all qzc 100 %: 512 → **864 Hz** (≈7,400 RPM); amp 34 still
+locked at 99 %/811 Hz with the speed curve bending (real V/f
+saturation at ~2.5 V applied, and vbat starting to dip 7.44→7.35 —
+lead IR at 570 mA). 117 k windows. The remaining envelope above
+~850 Hz is volts and mechanics, not firmware.
+
 ---
 
 ## Suggested order from here

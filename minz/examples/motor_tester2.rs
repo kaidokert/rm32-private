@@ -3024,7 +3024,26 @@ fn COMP() {
     // PWM falling edge as duty grew). We keep `COMP_COUNT` /
     // `VALID_COMP_COUNT` unfiltered so the raw EXTI rate stays
     // visible via the `i` key.
-    let blank_us = BLANK_US.load(Ordering::Relaxed) as u32;
+    // SPEED-ADAPTIVE blanking (cribbed from AM32's actual L431
+    // strategy). AM32 has NO time-since-PWM-edge blank on L431 — its
+    // noise defense is persistence depth scaled with speed
+    // (`filter_level = map(average_interval, ...)`, main.c:2112).
+    // Our fixed blank was strangling high speed: at 8 µs and 48 kHz
+    // PWM (~2 CC edges per 20.8 µs cycle) we were blind ~75 % of
+    // every window, and shrinking windows made the visible slivers
+    // rarer still (the amp-28 SWIFT break). Fix: the effective blank
+    // shrinks with the measured interval (interval/75 → 3 µs at
+    // 740 Hz, 2 µs at 1.1 kHz) and the persistence check deepens to
+    // AM32's 12 reads once the blank falls below 5 µs (AM32 uses 12
+    // for our entire interval range). At low speed the arithmetic
+    // yields exactly the proven 8 µs + 5-read combo — unchanged.
+    let interval_us = OWL_INTERVAL_US.load(Ordering::Relaxed);
+    let user_blank = BLANK_US.load(Ordering::Relaxed) as u32;
+    let blank_us = if interval_us != 0 {
+        user_blank.min(interval_us / 75)
+    } else {
+        user_blank
+    };
     if blank_us > 0 {
         let since_edge = ticks_1us().wrapping_sub(LAST_PWM_EDGE_US.load(Ordering::Relaxed));
         if since_edge < blank_us {
@@ -3035,6 +3054,9 @@ fn COMP() {
             return;
         }
     }
+    // Persistence depth for the qZC filter below: AM32-style
+    // deepening as the time-blank fades.
+    let persist_reads: u32 = if blank_us >= 5 { 5 } else { 12 };
 
     // Mode 5: value-gated recording. EXTI line 22 fires off the *raw*
     // comparator output (not gated by any internal blanking), so an
@@ -3115,7 +3137,7 @@ fn COMP() {
     if WINDOW_QZC_US.load(Ordering::Relaxed) == u32::MAX {
         let expected = (CURRENT_SECTOR.load(Ordering::Relaxed) & 1) == 0;
         let mut held = true;
-        for _ in 0..5 {
+        for _ in 0..persist_reads {
             cortex_m::asm::delay(8);
             if comp2::value() != expected {
                 held = false;
