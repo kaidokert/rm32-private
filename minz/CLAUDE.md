@@ -261,10 +261,54 @@ Black box stays in the firmware (`bb` lines after any desync):
 REF/BLD/DRK commutation classes, ACC/NOZ/DIS ZC events, ENG/DSY
 (+ STV starvation, RAQ re-acquisition — see below).
 
-## FALCON current status (2026-07-08) — hardened + 48 kHz landed
+## FALCON current status (2026-07-09) — SWIFT era, 970 Hz @ 100 %
 
 Supersedes the older FALCON notes above where they conflict. Full
-chronology and evidence in `FALCON_HARDENING.md` §7–13.
+chronology and evidence in `FALCON_HARDENING.md` §7–15.
+
+### The SWIFT arc (2026-07-09) — chasing AM32's full throttle
+
+Driving question: AM32 runs 100 % throttle on this exact unmodified
+board — why couldn't we? Each gap found, cribbed, and A/B-verified:
+
+- **SWIFT edge path** (`M` key toggles; `cl_lock_map.py --fast`, the
+  key is STATEFUL across sessions — script presses twice if needed):
+  under lock, a comp edge that passes gate + persistence is accepted
+  IMMEDIATELY in the COMP ISR (µs timestamp, zero wrap latency) —
+  AM32's architecture. The ADC-confirm path (unchanged, still
+  default) quantizes accepts to PWM wraps + confirm latency; that
+  per-window tax was the ~620-650 Hz ceiling. A/B: +117 Hz same
+  session. Engage/low-speed keep ADC-confirm — our advantage regime.
+- **Speed-adaptive blanking**: AM32-L431 has NO PWM-edge time blank —
+  its filter is persistence depth scaled with speed (main.c:2112).
+  Our fixed 8 µs blank left the comparator blind ~75 % of every
+  48 kHz window. Now: blank = min(user, interval/75) µs; persistence
+  deepens 5 → 12 reads when the blank falls below 5 µs. Low speed
+  degenerates to the proven combo exactly. First no-break ladder
+  ever (117 k windows) immediately after.
+- **Auto-advance ramp**: 0° below ~280 Hz (measured no-op regime) →
+  12° cap by ~1.2 kHz; manual `t`/`T` nonzero overrides. A speed
+  DROP under more throttle = late-commutation braking, NOT V/f
+  saturation (that lesson cost a day: static 8° recovered +108 Hz at
+  amp 34; static 16° kills the engage transit — the ramp gives both
+  regimes their angle automatically).
+- **µs gate** (`SECTOR_START_US`/`SECTOR_GATE_US`, was 10 µs ticks:
+  15 % quantization at 170 µs windows) and **telemetry decimation**
+  (every 5th window above ~925 Hz; 5 coprime with 6 so sectors
+  rotate; host handles seq gaps).
+- **AMP_MAX now 50** (was 20/25 — each raise exposed the next layer:
+  amp-cap equilibria masquerading as "voltage walls", the PSU
+  exonerated TWICE via the per-point vbat logging now in the lock
+  maps/meta CSV, prop ω³ current, then advance).
+
+**Current record: amp 35 = 970 Hz electrical (~8,300 RPM), qzc
+100 %** (`captures/phase1_map.png`); marginal edge amp 36. Roadmap
+(90 %+ throttle ≈ 2.4 kHz elec, 66 µs windows): Phase 2 = prop OFF
++ fresh bench, ladder 36→50→70→90 %; Phase 3 = watchdog-cadence
+audit at sub-166 µs windows + re-acq-at-speed tuning; Phase 4 =
+runtime 24/48 kHz carrier switch + rm32 portback. HEDGEHOG (caps
+A/B) is DELETED — the unmodified board runs 100 % coverage to
+970 Hz; software filtering was always sufficient.
 
 ### Protection stack (each live-fire tested on the bench)
 
