@@ -94,10 +94,21 @@ pub fn start(sample_ticks: u16) {
     // output — 12.5 cycles suffices, and the saved 437 ns is what
     // lets the whole sequence (ends ~3.06 µs) fit a 48 kHz ON window
     // from amp ≈ 15. ch11 keeps 640.5 for the on-demand vbat read.
+    // ch11 (vbat) at 47.5 cycles, NOT 640.5: the injected conversion
+    // PREEMPTS the regular sequence, and an 8.2 µs injected sample
+    // fired at a random phase (the first vbat pump lived in TIM7)
+    // collided with the mid-ON regular window ~40 % of the time —
+    // delaying ch9/ch10 past the ON window and corrupting the
+    // razor-margin sector confirms (two different motors "grew" the
+    // same sector-2/4/5 degradation the day the pump shipped). At
+    // 47.5 cycles the whole injected conversion is 0.75 µs, and the
+    // pump now fires from the TIM1_UP wrap slot (0–0.75 µs into the
+    // cycle; the regular trigger is at 1.25 µs) — zero collisions by
+    // construction.
     adc.smpr1
         .modify(|_, w| unsafe { w.smp8().bits(0b010).smp9().bits(0b100) });
     adc.smpr2
-        .modify(|_, w| unsafe { w.smp10().bits(0b100).smp11().bits(0b111) });
+        .modify(|_, w| unsafe { w.smp10().bits(0b100).smp11().bits(0b100) });
 
     // Regular group: ch9, ch10, ch8 per trigger (L=2 → 3 conversions).
     adc.sqr1

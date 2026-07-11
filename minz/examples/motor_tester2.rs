@@ -2493,44 +2493,6 @@ fn TIM7() {
     tim7_drive::clear_update_flag();
     TIM7_COUNT.fetch_add(1, Ordering::Relaxed);
 
-    // FIRMWARE SAG KILL (6 kHz): harvest the rolling injected vbat
-    // conversion; below ~5.95 V with the drive armed, kill NOW —
-    // sub-6 V bus excursions brown out the 3.3 V rail, which wedges
-    // the MCU with the bridge frozen and every software guard dead.
-    // Host-script sag checks look once per ladder rung; this looks
-    // 6,000 times a second.
-    if let Some(raw) = minz::adc_sync::vbat_pump() {
-        VBAT_RAW_LIVE.store(raw, Ordering::Relaxed);
-        // Kill at −10 % from the arm-time baseline (or the absolute
-        // brownout backstop, whichever is higher) — but only after 8
-        // CONSECUTIVE sub-threshold samples (1.3 ms at 6 kHz). A real
-        // supply sag lasts milliseconds; a single corrupted injected
-        // sample does not (first version had no debounce and false-
-        // tripped at amp 33 — its own kill message read "8130 mV <
-        // 90% of 8107 mV", printing the recovered value because the
-        // trip sample was a one-off glitch; PA6/vbat neighbors the
-        // phase-A pin and switching noise grows with throttle).
-        let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
-        let thresh = (base - base / 10).max(VBAT_KILL_RAW);
-        if raw < thresh && MOTOR_ENABLED.load(Ordering::Relaxed) {
-            let run = VBAT_SAG_RUN.load(Ordering::Relaxed) + 1;
-            if run >= 8 {
-                VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
-                MOTOR_ENABLED.store(false, Ordering::Relaxed);
-                tim1_motor_pwm::all_off();
-                comp2::set_exti_enabled(false);
-                CL_ACTIVE.store(false, Ordering::Relaxed);
-                CL_ARMED.store(false, Ordering::Relaxed);
-                VBAT_SAGGED.store(true, Ordering::Relaxed);
-                VBAT_SAG_RUN.store(0, Ordering::Relaxed);
-            } else {
-                VBAT_SAG_RUN.store(run, Ordering::Relaxed);
-            }
-        } else {
-            VBAT_SAG_RUN.store(0, Ordering::Relaxed);
-        }
-    }
-
     // FALCON: while the closed loop drives, the crystal stepper is
     // frozen — LPTIM2 owns sector changes, mux, and window close.
     // TIM7 keeps two jobs: duty refresh (live amp keys) and the
@@ -3015,6 +2977,38 @@ fn TIM1_UP_TIM16() {
     // and TIM7 (lower priority) can't interrupt us — plain load/store
     // min/max is race-free.
     let (pa_a, pa_b, i_raw) = adc_sync::last_frame();
+
+    // FIRMWARE SAG KILL — pumped from the WRAP SLOT: harvesting +
+    // restarting the injected vbat conversion here means it runs
+    // 0-0.75 µs into the cycle, finished before the 1.25 µs regular
+    // trigger — zero contention with the phase/current sequence
+    // (the TIM7-resident version collided ~40 % of the time and
+    // corrupted the sector confirms on two motors). Kill at −10 %
+    // from the arm baseline (or the brownout backstop), debounced
+    // 64 consecutive samples = 1.3 ms at 48 kHz — real sag is
+    // milliseconds; single-sample glitches false-tripped once.
+    if let Some(raw) = minz::adc_sync::vbat_pump() {
+        VBAT_RAW_LIVE.store(raw, Ordering::Relaxed);
+        let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
+        let thresh = (base - base / 10).max(VBAT_KILL_RAW);
+        if raw < thresh && MOTOR_ENABLED.load(Ordering::Relaxed) {
+            let run = VBAT_SAG_RUN.load(Ordering::Relaxed) + 1;
+            if run >= 64 {
+                VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
+                MOTOR_ENABLED.store(false, Ordering::Relaxed);
+                tim1_motor_pwm::all_off();
+                comp2::set_exti_enabled(false);
+                CL_ACTIVE.store(false, Ordering::Relaxed);
+                CL_ARMED.store(false, Ordering::Relaxed);
+                VBAT_SAGGED.store(true, Ordering::Relaxed);
+                VBAT_SAG_RUN.store(0, Ordering::Relaxed);
+            } else {
+                VBAT_SAG_RUN.store(run, Ordering::Relaxed);
+            }
+        } else {
+            VBAT_SAG_RUN.store(0, Ordering::Relaxed);
+        }
+    }
     // Decaying-max vbus estimate (ADC counts through the phase
     // divider): the driven-high phase reads ≈ vbus in 4 of 6 sectors,
     // so the max refreshes constantly while spinning; τ ≈ 21 ms decay
