@@ -474,6 +474,19 @@ const I_TRIP_RAW: u32 = 75;
 const I_TRIP_SHIFT: u32 = 11; // 2048 cycles = 85 ms @ 24 kHz
 static I_TRIP_ACC: AtomicU32 = AtomicU32::new(0);
 static I_TRIP_CNT: AtomicU32 = AtomicU32::new(0);
+/// ANALOG BLACK BOX (`J` key arms, one-shot): when armed, a single
+/// PWM-cycle shunt sample above [`WAX_TRIG_RAW`] freezes the WAXWING
+/// ring IN THE ISR — preserving ~42 ms of pre-trigger ground truth
+/// (both BEMF phase voltages, current, raw comparator bit, every
+/// PWM cycle) — and main auto-dumps it. Built because every
+/// firmware-side "lock" indicator is self-referential (gate and
+/// polarity positioned by our own schedule): only the wire can
+/// arbitrate what the current-spike events actually are.
+static WAX_TRIG_ARMED: AtomicBool = AtomicBool::new(false);
+static WAX_TRIGGERED: AtomicBool = AtomicBool::new(false);
+/// ~2.4 A instantaneous.
+const WAX_TRIG_RAW: u16 = 90;
+
 /// Set by the ISR after a trip; main prints the report, clears the
 /// flag, and drops its local `output_enabled` mirror so `r`/`q`
 /// re-arm works afterwards.
@@ -1540,8 +1553,22 @@ fn main() -> ! {
             // that's exactly how "busy" gets measured.
             idle_loop.run_until(next_microloop, &now_u64);
 
+            // Analog black-box trigger fired? Inject a `j` so the
+            // frozen ring dumps through the standard WAXWING path
+            // (its own freeze_waveform call on an already-frozen
+            // ring returns the same alignment — idempotent).
+            let mut injected: Option<u8> = None;
+            if WAX_TRIGGERED.swap(false, Ordering::Relaxed) {
+                write!(
+                    &mut tx_writer,
+                    "!! WAX TRIGGER: >2.4 A cycle sample - analog ring frozen, dumping\r\n"
+                )
+                .ok();
+                injected = Some(b'j');
+            }
+
             // Active phase: drain RX queue + dispatch keys.
-            while let Some(b) = consumer.dequeue() {
+            while let Some(b) = injected.take().or_else(|| consumer.dequeue()) {
                 let mut do_edge_dump = false;
                 let prev_amp = amplitude_pct;
                 let prev_hz = electrical_hz;
@@ -1555,6 +1582,17 @@ fn main() -> ! {
                     b'c' => electrical_hz = clamp_hz(electrical_hz as i32 - 1),
                     b'f' => electrical_hz = clamp_hz(electrical_hz as i32 + 10),
                     b'v' => electrical_hz = clamp_hz(electrical_hz as i32 - 10),
+                    b'J' => {
+                        let on = !WAX_TRIG_ARMED.load(Ordering::Relaxed);
+                        WAX_TRIG_ARMED.store(on, Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "wax trigger {}\r\n",
+                            if on { "ARMED (one-shot >2.4A)" } else { "off" }
+                        )
+                        .ok();
+                        tx_writer.write_blocking(&[]);
+                    }
                     b'M' => {
                         let on = !CL_FAST_PATH.load(Ordering::Relaxed);
                         CL_FAST_PATH.store(on, Ordering::Relaxed);
@@ -3103,6 +3141,18 @@ fn TIM1_UP_TIM16() {
         VBUS_EST.store(est.saturating_sub((est >> 9).max(1)), Ordering::Relaxed);
     }
     LAST_I_RAW.store(i_raw, Ordering::Relaxed);
+    // Analog black box trigger — freeze the wire the moment a spike
+    // is seen (one-shot; the ADSTP wait is <1 µs at these sample
+    // times). Frozen means LAST_I_RAW goes stale until the dump
+    // resumes the ring — acceptable for a ~100 ms dump.
+    if i_raw > WAX_TRIG_RAW
+        && WAX_TRIG_ARMED.load(Ordering::Relaxed)
+        && !WAX_TRIGGERED.load(Ordering::Relaxed)
+    {
+        WAX_TRIG_ARMED.store(false, Ordering::Relaxed);
+        minz::adc_sync::freeze_waveform();
+        WAX_TRIGGERED.store(true, Ordering::Relaxed);
+    }
     WINDOW_I_SUM.fetch_add(i_raw as u32, Ordering::Relaxed);
     WINDOW_I_N.fetch_add(1, Ordering::Relaxed);
     if i_raw < WINDOW_I_MIN.load(Ordering::Relaxed) {
