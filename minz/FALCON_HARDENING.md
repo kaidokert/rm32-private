@@ -383,6 +383,33 @@ saturation at ~2.5 V applied, and vbat starting to dip 7.44→7.35 —
 lead IR at 570 mA). 117 k windows. The remaining envelope above
 ~850 Hz is volts and mechanics, not firmware.
 
+## 16. Phase 1 + the amp-cap saga — 970 Hz @ 100 % (2026-07-09/10)
+
+The "reach full throttle" chase, compressed: AMP_MAX raised 25 → 50
+(each cap's BEMF equilibrium had been masquerading as a "voltage
+wall"); the PSU exonerated twice (per-point vbat now logged in the
+lock maps + `<tag>_meta.csv`, plotted red on the current panel);
+prop ω³ current identified; then the amp-34 speed DROOP correctly
+re-read as **late-commutation braking, not V/f saturation** (a
+plateau flattens, a droop means mistimed) — static adv 8° = +108 Hz
+at amp 34.
+
+**Phase 1 shipped** (all A/B-validated in one ladder):
+- auto-advance ramp: 0° below ~280 Hz → 12° cap by ~1.2 kHz,
+  manual t/T overrides; beat static 8° at every rung;
+- µs-resolution gate (SECTOR_START_US / SECTOR_GATE_US);
+- telemetry decimation (every 5th window above ~925 Hz, coprime
+  with the 6 sectors).
+
+**Record: amp 35 = 970 Hz (~8,300 RPM) at qzc 100 %**
+(`captures/phase1_map.png`); marginal edge amp 36.
+
+Meta-lesson worth its own line: **label conclusions with the regime
+they were measured in.** "Advance is not a lever" (§9) was true at
+400 Hz / 90 mA and cost a day when treated as global; same pattern
+as "1-confirm is safe" (true only under lock) and "caps required"
+(true only pre-software-filtering).
+
 ---
 
 ## Suggested order from here
