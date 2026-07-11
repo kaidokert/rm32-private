@@ -223,21 +223,23 @@ static COMP_RATE: AtomicU32 = AtomicU32::new(0);
 static VALID_COMP_COUNT: AtomicU32 = AtomicU32::new(0);
 static VALID_COMP_RATE: AtomicU32 = AtomicU32::new(0);
 
-/// 10 µs tick of TICKS_10US captured at the moment the COMP EXTI line
-/// is unmasked (= start of a float sector). The ISR uses this with
-/// `SECTOR_HALF_TICKS` to gate edge acceptance.
-static SECTOR_START_TICK: AtomicU32 = AtomicU32::new(0);
+/// `ticks_1us()` captured at the start of the current float window.
+/// The COMP ISR uses this with `SECTOR_GATE_US` to gate edge
+/// acceptance. Units changed 10 µs → 1 µs (roadmap Phase 1): at the
+/// high-speed end a window is ~66-200 µs, so 10 µs granularity was
+/// up to 15 % quantization on the gate position.
+static SECTOR_START_US: AtomicU32 = AtomicU32::new(0);
 
-/// Half of one float-sector duration in 10 µs ticks. Computed in
-/// `main` from `electrical_hz`; refreshed when the user changes f.
-static SECTOR_HALF_TICKS: AtomicU32 = AtomicU32::new(0);
+/// Gate position in µs from window start — edges earlier than this
+/// are rejected. Open loop: half the commanded sector (50 %). Closed
+/// loop: 30 % of the measured interval (8 % in re-acquisition).
+static SECTOR_GATE_US: AtomicU32 = AtomicU32::new(0);
 
-/// Half-sector duration in 10 µs ticks at a given electrical
-/// frequency. 6 sectors per electrical rev → full sector duration =
-/// `SYSTICK / (6 × f)`; half is `SYSTICK / (12 × f)`. At f=60 →
-/// 138 ticks ≈ 1.38 ms. At f=600 → 13 ticks ≈ 130 µs.
-const fn sector_half_ticks(electrical_hz: u32) -> u32 {
-    SYSTICK.raw() / (12 * electrical_hz)
+/// Half-sector duration in µs at a given electrical frequency.
+/// 6 sectors per electrical rev → full sector = `1e6 / (6 × f)` µs;
+/// half is `1e6 / (12 × f)`. At f=60 → 1.39 ms. At f=600 → 139 µs.
+const fn sector_gate_us(electrical_hz: u32) -> u32 {
+    1_000_000 / (12 * electrical_hz)
 }
 
 /// Free-running ring buffer of COMP2.VALUE sampled at the TIM1
@@ -1203,7 +1205,7 @@ fn main() -> ! {
         float_sector_mask(comp2::ObservedPhase::A),
         Ordering::Relaxed,
     );
-    SECTOR_HALF_TICKS.store(sector_half_ticks(FREQ_START), Ordering::Relaxed);
+    SECTOR_GATE_US.store(sector_gate_us(FREQ_START), Ordering::Relaxed);
     MOTOR_ENABLED.store(false, Ordering::Relaxed);
     // Kill the h-bridges immediately. `tim1_motor_pwm::init` sets MOE=1
     // as part of register parity with AM32, which would otherwise leave
@@ -2226,7 +2228,7 @@ fn main() -> ! {
                 }
                 if electrical_hz != prev_hz {
                     ANGLE_INC.store(angle_inc_fp(electrical_hz), Ordering::Relaxed);
-                    SECTOR_HALF_TICKS.store(sector_half_ticks(electrical_hz), Ordering::Relaxed);
+                    SECTOR_GATE_US.store(sector_gate_us(electrical_hz), Ordering::Relaxed);
                     write!(&mut tx_writer, "f={}\r\n", electrical_hz).ok();
                 }
                 if waveform != prev_mode {
@@ -2634,7 +2636,7 @@ fn TIM7() {
             let in_float = (float_mask >> sector) & 1 != 0;
             let was_in_float = WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed);
             if in_float && !was_in_float {
-                SECTOR_START_TICK.store(ticks_10us(), Ordering::Relaxed);
+                SECTOR_START_US.store(ticks_1us(), Ordering::Relaxed);
             }
             WAS_IN_FLOAT_SECTOR.store(in_float, Ordering::Relaxed);
         }
@@ -2659,7 +2661,7 @@ fn TIM7() {
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
     let now = ticks_10us();
     let now_us = ticks_1us();
-    let start = SECTOR_START_TICK.load(Ordering::Relaxed);
+    let start_us = SECTOR_START_US.load(Ordering::Relaxed);
 
     let qzc = WINDOW_QZC_US.load(Ordering::Relaxed);
     let mut pred_err: i16 = i16::MIN;
@@ -2703,22 +2705,30 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
     let w = WINDOWS_SINCE_QZC.load(Ordering::Relaxed);
     WINDOWS_SINCE_QZC.store(w.saturating_add(1), Ordering::Relaxed);
 
-    if STREAM_ON.load(Ordering::Relaxed) && start != 0 {
+    // Telemetry decimation (roadmap Phase 1): at 15 k windows/s the
+    // 26 B records exceed the 2 Mbaud link (~200 kB/s). Above ~925 Hz
+    // electrical stream every 5th window — 5 is coprime with 6 so the
+    // sample keeps rotating through all sectors; the host sees the
+    // seq gaps and per-sector stats stay unbiased.
+    let decim_n = WREC_DECIM.fetch_add(1, Ordering::Relaxed);
+    let iv_now = OWL_INTERVAL_US.load(Ordering::Relaxed);
+    let stream_this = iv_now == 0 || iv_now >= 180 || decim_n % 5 == 0;
+    if STREAM_ON.load(Ordering::Relaxed) && start_us != 0 && stream_this {
         let first_zc = WINDOW_FIRST_ZC_US.load(Ordering::Relaxed);
         let zc_off_us = if first_zc == u32::MAX {
             0xFFFF
         } else {
-            first_zc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
+            first_zc.wrapping_sub(start_us).min(0xFFFE) as u16
         };
         let qzc_off_us = if qzc == u32::MAX {
             0xFFFF
         } else {
-            qzc.wrapping_sub(start.wrapping_mul(10)).min(0xFFFE) as u16
+            qzc.wrapping_sub(start_us).min(0xFFFE) as u16
         };
         let i_n = WINDOW_I_N.load(Ordering::Relaxed);
         let rec = WindowRec {
-            start_10us: start,
-            len_10us: now.wrapping_sub(start).min(0xFFFF) as u16,
+            start_10us: start_us / 10,
+            len_10us: (now_us.wrapping_sub(start_us) / 10).min(0xFFFF) as u16,
             zc_off_us,
             raw: WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
             valid: WINDOW_VALID.load(Ordering::Relaxed).min(0xFFFF) as u16,
@@ -2757,9 +2767,12 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
         WINDOW_GEN.load(Ordering::Relaxed).wrapping_add(1),
         Ordering::Relaxed,
     );
-    SECTOR_START_TICK.store(now, Ordering::Relaxed);
+    SECTOR_START_US.store(now_us, Ordering::Relaxed);
     LAST_COMM_10US.store(now, Ordering::Relaxed);
 }
+
+/// Round-robin counter for the high-speed telemetry decimation.
+static WREC_DECIM: AtomicU32 = AtomicU32::new(0);
 
 /// FALCON commutation ISR — fires `interval·(30°−adv)/60°` after each
 /// qualified ZC (scheduled by the COMP ISR). Shares priority 1 with
@@ -2807,15 +2820,17 @@ fn LPTIM2() {
         // re-acquisition drop to ~8 % (just past the commutation
         // flyback) so ZCs that drifted early — the lockout-spiral
         // signature — become acceptable again.
+        // µs units (was 10 µs ticks — 15 % gate quantization at
+        // high-speed window sizes).
         let g = if CL_REACQ.load(Ordering::Relaxed) {
-            (interval / 125).max(1)
+            (interval * 2 / 25).max(10) // 8 %
         } else {
             // 30 % — the value every successful ladder ran at. (A
             // brief excursion to 20 % let early noise edges reach the
             // 1-confirm fast path and compound into estimator walks.)
-            (interval / 33).max(2)
+            (interval * 3 / 10).max(20)
         };
-        SECTOR_HALF_TICKS.store(g, Ordering::Relaxed);
+        SECTOR_GATE_US.store(g, Ordering::Relaxed);
     }
     // Schedule the next commutation unconditionally:
     // - phase-C float windows (0/3, no ADC confirm): dead-reckon at
@@ -3047,8 +3062,8 @@ fn COMP() {
     if blank_us > 0 {
         let since_edge = ticks_1us().wrapping_sub(LAST_PWM_EDGE_US.load(Ordering::Relaxed));
         if since_edge < blank_us {
-            let elapsed = ticks_10us().wrapping_sub(SECTOR_START_TICK.load(Ordering::Relaxed));
-            if elapsed >= SECTOR_HALF_TICKS.load(Ordering::Relaxed) {
+            let elapsed = ticks_1us().wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
+            if elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed) {
                 VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             return;
@@ -3068,8 +3083,8 @@ fn COMP() {
     if EDGE_MODE.load(Ordering::Relaxed) == 5 && !comp2::value() {
         // Also still run the time-window gate so VALID_COMP_COUNT
         // tracks the same denominator across modes.
-        let elapsed = ticks_10us().wrapping_sub(SECTOR_START_TICK.load(Ordering::Relaxed));
-        if elapsed >= SECTOR_HALF_TICKS.load(Ordering::Relaxed) {
+        let elapsed = ticks_1us().wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
+        if elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed) {
             VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
         }
         return;
@@ -3112,8 +3127,8 @@ fn COMP() {
     // first-pass noise gate; the upstream raw `COMP_COUNT` and the
     // per-sector / per-cell EDGE_BUF + counters are the unfiltered
     // diagnostic surface.
-    let elapsed = ticks_10us().wrapping_sub(SECTOR_START_TICK.load(Ordering::Relaxed));
-    if elapsed < SECTOR_HALF_TICKS.load(Ordering::Relaxed) {
+    let elapsed = ticks_1us().wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
+    if elapsed < SECTOR_GATE_US.load(Ordering::Relaxed) {
         return;
     }
     VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -3241,7 +3256,22 @@ fn accept_qualified_zc(zc_us: u32) {
             bb_record(7, sec as u8, interval.min(0xFFFF) as u16);
         }
         if CL_ACTIVE.load(Ordering::Relaxed) {
-            let adv = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
+            // AUTO-ADVANCE ramp (roadmap Phase 1, AM32's auto_advance
+            // cribbed in spirit): with `t`/`T` at 0 (the default),
+            // advance follows measured speed — 0° below ~280 Hz
+            // (where it was measured to do nothing), ramping to a
+            // 12° cap by ~1.2 kHz. Evidence: at 850-950 Hz / 350 mA,
+            // 8° was worth +108 Hz (the amp-34 droop was late-
+            // commutation braking); a STATIC 16° broke the engage
+            // transit — a speed-following ramp gives the transit 0°
+            // and the top its timing automatically. A nonzero manual
+            // setting overrides the ramp entirely.
+            let manual = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
+            let adv = if manual != 0 {
+                manual
+            } else {
+                ((600i32.saturating_sub(interval as i32)).max(0) / 45).min(12)
+            };
             let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
             let delay = (interval as i32 * (30 - adv) / 60 - elapsed).max(24) as u32;
             minz::lptim2_oneshot::schedule_us(delay);
