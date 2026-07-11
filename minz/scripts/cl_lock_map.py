@@ -149,15 +149,28 @@ class Bench:
         sys.exit("engage failed 4x - bench attention needed")
 
     def capture(self, secs):
+        """Echo-verified stream toggling: at high frame rates a `g`
+        keypress can be lost (observed at ~1.2 kHz: the amp-48 close
+        toggle vanished, leaving the stream ON, so the amp-50 capture
+        inverted it OFF and recorded 23 bytes of echoes). Verify each
+        toggle's echo and retry once."""
         self.drain()
-        self.p.write(b"g")
         buf = bytearray()
+        for _ in range(2):
+            self.p.write(b"g")
+            time.sleep(0.15)
+            buf += self.p.read(65536)
+            if b"stream=on" in bytes(buf[-300:]):
+                break
         end = time.monotonic() + secs
         while time.monotonic() < end:
             buf += self.p.read(65536)
-        self.p.write(b"g")
-        time.sleep(0.3)
-        buf += self.p.read(65536)
+        for _ in range(2):
+            self.p.write(b"g")
+            time.sleep(0.3)
+            buf += self.p.read(65536)
+            if b"stream=off" in bytes(buf[-300:]):
+                break
         self.log.write(bytes(buf))
         return bytes(buf)
 

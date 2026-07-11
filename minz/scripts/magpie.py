@@ -32,25 +32,48 @@ def raw_to_ma(raw: int, vdda_mv: int = 3300) -> float:
 
 
 def parse_frames(buf: bytes):
-    """Scan for framed records; tolerates interleaved ASCII output."""
+    """Scan for framed records; tolerates interleaved ASCII output.
+
+    The frame has no checksum, so a sync-pattern hit inside binary
+    garbage (e.g. a capture that opens mid-stream on a partial frame)
+    can mis-lock and decode noise. Field sanity checks reject those:
+    sector 0-5, plausible window length, 12-bit current fields with
+    min <= avg <= max, and valid <= raw edge counts.
+    """
     frames = []
     i = 0
     while i + FRAME_LEN <= len(buf):
         if buf[i] == SYNC0 and buf[i + 1] == SYNC1 and (buf[i + 3] & 0x0F) < 6:
             f = buf[i : i + FRAME_LEN]
+            len_10us = int.from_bytes(f[8:10], "little")
+            raw = int.from_bytes(f[12:14], "little")
+            valid = int.from_bytes(f[14:16], "little")
+            i_min = int.from_bytes(f[16:18], "little")
+            i_max = int.from_bytes(f[18:20], "little")
+            i_avg = int.from_bytes(f[20:22], "little")
+            sane = (
+                0 < len_10us < 3000  # 10 µs .. 30 ms window
+                and valid <= raw
+                and i_min <= 0x0FFF
+                and i_max <= 0x0FFF
+                and i_min <= i_avg <= i_max
+            )
+            if not sane:
+                i += 1
+                continue
             frames.append(
                 dict(
                     seq=f[2],
                     zc_found=bool(f[3] & 0x80),
                     sector=f[3] & 0x0F,
                     start=int.from_bytes(f[4:8], "little"),
-                    len_us=int.from_bytes(f[8:10], "little") * 10,
+                    len_us=len_10us * 10,
                     zc_off_us=int.from_bytes(f[10:12], "little"),
-                    raw=int.from_bytes(f[12:14], "little"),
-                    valid=int.from_bytes(f[14:16], "little"),
-                    i_min=int.from_bytes(f[16:18], "little"),
-                    i_max=int.from_bytes(f[18:20], "little"),
-                    i_avg=int.from_bytes(f[20:22], "little"),
+                    raw=raw,
+                    valid=valid,
+                    i_min=i_min,
+                    i_max=i_max,
+                    i_avg=i_avg,
                     qzc_off_us=int.from_bytes(f[22:24], "little"),
                     pred_err_us=int.from_bytes(f[24:26], "little", signed=True),
                 )
