@@ -3001,7 +3001,31 @@ fn TIM1_UP_TIM16() {
     let acc = I_TRIP_ACC.load(Ordering::Relaxed) + i_raw as u32;
     let cnt = I_TRIP_CNT.load(Ordering::Relaxed) + 1;
     if cnt >= (1 << I_TRIP_SHIFT) {
-        if (acc >> I_TRIP_SHIFT) > I_TRIP_RAW && MOTOR_ENABLED.load(Ordering::Relaxed) {
+        // Semantics matter: GECKO samples the shunt only INSIDE the
+        // ON window, so this average is PHASE current — the battery
+        // sees phase × duty. A phase-referred trip over-reads supply
+        // draw by 1/duty and killed a healthy amp-54 run whose true
+        // battery draw was ~1.6 A (PSU untouched at its 2.5 A
+        // limit). AM32 never meets this bug because at 100 % duty
+        // phase ≈ battery.
+        // Under CL: battery-referred trip at ~2.2 A (the 2.5 A lab
+        // supply in CC mode is the real protection; stall detection
+        // is the ZC-starvation guard's job). Open loop: phase-
+        // referred 2.0 A stays — it's the stall-heater guard and a
+        // stalled drive at low duty IS phase ≈ battery.
+        let avg_raw = acc >> I_TRIP_SHIFT;
+        let tripped = if CL_ACTIVE.load(Ordering::Relaxed) {
+            let duty = AMPLITUDE_PCT.load(Ordering::Relaxed).max(1) as u32;
+            // 2.8 A battery-referred — ABOVE the PSU's 2.5 A CC
+            // limit, so the supply owns the operating boundary (the
+            // amp-54 rung proved the loop rides CC sag at 99 %
+            // coverage: vbat 7.3→5.64 V at 2.4 A, lock held). The
+            // trip only catches sense/wiring anomalies now.
+            avg_raw * duty / 100 > 105
+        } else {
+            avg_raw > I_TRIP_RAW // 2.0 A phase-referred
+        };
+        if tripped && MOTOR_ENABLED.load(Ordering::Relaxed) {
             MOTOR_ENABLED.store(false, Ordering::Relaxed);
             tim1_motor_pwm::all_off();
             comp2::set_exti_enabled(false);
