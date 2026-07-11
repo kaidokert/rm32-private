@@ -216,6 +216,18 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
             active, echo, vbat, isns = b.check_active()
             meta.write(f"{amp},{vbat},{isns}\n")
             meta.flush()
+            # HARD vbat abort. A sagging bus is the supply's current
+            # limit engaging; below ~6.2 V the MCU's 3.3 V rail is one
+            # transient from brownout — which WEDGES the chip with the
+            # bridge in its last state and no software guard alive.
+            # The 2026-07-10 run read 5.94 V at amp 50, had no rule,
+            # kept climbing, and burnt the motor at amp 56.
+            if 0 < vbat < 6.2:
+                print(
+                    f"amp {amp:2d}: vbat {vbat:.2f}V < 6.2V - SUPPLY SAG, killing + aborting",
+                    flush=True,
+                )
+                break
             if not active:
                 print(f"amp {amp:2d}: LOOP NOT ACTIVE before capture - aborting"
                       f" (see session log). Last echo:\n{echo.strip()}", flush=True)
