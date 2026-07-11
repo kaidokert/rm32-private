@@ -479,6 +479,11 @@ static OC_TRIPPED: AtomicBool = AtomicBool::new(false);
 static VBAT_RAW_LIVE: AtomicU16 = AtomicU16::new(0);
 /// Set by the TIM7 SAG KILL; main prints and clears.
 static VBAT_SAGGED: AtomicBool = AtomicBool::new(false);
+/// Consecutive sub-threshold samples (debounce counter).
+static VBAT_SAG_RUN: AtomicU16 = AtomicU16::new(0);
+/// The raw value that actually tripped (for the report — the live
+/// value may have recovered by print time).
+static VBAT_TRIP_RAW_SEEN: AtomicU16 = AtomicU16::new(0);
 /// Unloaded vbat raw captured at each arm (`r`/`q`) — the sag kill
 /// is RELATIVE: −10 % from this baseline. From 8.0 V that kills at
 /// 7.2 V — right as the supply limit starts to engage, with volts of
@@ -2360,11 +2365,11 @@ fn main() -> ! {
             if VBAT_SAGGED.load(Ordering::Relaxed) {
                 VBAT_SAGGED.store(false, Ordering::Relaxed);
                 output_enabled = false;
-                let raw = VBAT_RAW_LIVE.load(Ordering::Relaxed) as u32;
+                let raw = VBAT_TRIP_RAW_SEEN.load(Ordering::Relaxed) as u32;
                 let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed) as u32;
                 write!(
                     &mut tx_writer,
-                    "!! VBAT SAG KILL: bus {} mV < 90% of arm baseline {} mV - output killed (r/q re-arms)\r\n",
+                    "!! VBAT SAG KILL: bus {} mV (1.3 ms sustained) < 90% of arm baseline {} mV - output killed (r/q re-arms)\r\n",
                     raw * 7507 / 1000,
                     base * 7507 / 1000,
                 )
@@ -2497,16 +2502,32 @@ fn TIM7() {
     if let Some(raw) = minz::adc_sync::vbat_pump() {
         VBAT_RAW_LIVE.store(raw, Ordering::Relaxed);
         // Kill at −10 % from the arm-time baseline (or the absolute
-        // brownout backstop, whichever is higher).
+        // brownout backstop, whichever is higher) — but only after 8
+        // CONSECUTIVE sub-threshold samples (1.3 ms at 6 kHz). A real
+        // supply sag lasts milliseconds; a single corrupted injected
+        // sample does not (first version had no debounce and false-
+        // tripped at amp 33 — its own kill message read "8130 mV <
+        // 90% of 8107 mV", printing the recovered value because the
+        // trip sample was a one-off glitch; PA6/vbat neighbors the
+        // phase-A pin and switching noise grows with throttle).
         let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
         let thresh = (base - base / 10).max(VBAT_KILL_RAW);
         if raw < thresh && MOTOR_ENABLED.load(Ordering::Relaxed) {
-            MOTOR_ENABLED.store(false, Ordering::Relaxed);
-            tim1_motor_pwm::all_off();
-            comp2::set_exti_enabled(false);
-            CL_ACTIVE.store(false, Ordering::Relaxed);
-            CL_ARMED.store(false, Ordering::Relaxed);
-            VBAT_SAGGED.store(true, Ordering::Relaxed);
+            let run = VBAT_SAG_RUN.load(Ordering::Relaxed) + 1;
+            if run >= 8 {
+                VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
+                MOTOR_ENABLED.store(false, Ordering::Relaxed);
+                tim1_motor_pwm::all_off();
+                comp2::set_exti_enabled(false);
+                CL_ACTIVE.store(false, Ordering::Relaxed);
+                CL_ARMED.store(false, Ordering::Relaxed);
+                VBAT_SAGGED.store(true, Ordering::Relaxed);
+                VBAT_SAG_RUN.store(0, Ordering::Relaxed);
+            } else {
+                VBAT_SAG_RUN.store(run, Ordering::Relaxed);
+            }
+        } else {
+            VBAT_SAG_RUN.store(0, Ordering::Relaxed);
         }
     }
 
