@@ -75,14 +75,23 @@ class Bench:
         return self.drain()
 
     def check_active(self):
-        """Returns (active, echo, vbat_V, isns_A) — the supply
-        voltage under load is the tell for a PSU current limit
-        engaging (sag events look exactly like a motor voltage
-        ceiling: speed flattens, jitter climbs, breaks)."""
+        """Returns (active, echo, vbat_V, isns_A). Besides the
+        `cl: ACTIVE` text, the commutation counter must ADVANCE
+        between checks — a zombie state (kill path that forgot to
+        clear CL_ACTIVE) prints stale ACTIVE lines with a frozen
+        counter, and one such bug let a ladder sail through ten fake
+        rungs."""
         echo = self.send("i", 1.2)
         m = re.search(r"vbat=(\d+\.\d+)V isns=(\d+\.\d+)A", echo)
         vbat, isns = (float(m.group(1)), float(m.group(2))) if m else (0.0, 0.0)
-        return "cl: ACTIVE" in echo, echo, vbat, isns
+        active = "cl: ACTIVE" in echo
+        c = re.search(r"comms=(\d+)", echo)
+        if active and c:
+            comms = int(c.group(1))
+            if comms == getattr(self, "last_comms", -1):
+                active = False  # frozen counter = zombie
+            self.last_comms = comms
+        return active, echo, vbat, isns
 
     def set_advance(self, target):
         """Step `t` (+2°) / `T` (−2°) until the echo confirms the

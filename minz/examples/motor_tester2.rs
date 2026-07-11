@@ -106,7 +106,7 @@ const AMP_MIN: u16 = 0;
 // runaway floor, desync), NOT this cap; the cap only bounds how
 // hard a guarded failure can transiently hit. Open-loop use above
 // ~16 remains a heater risk — mind the `q` key at high amp.
-const AMP_MAX: u16 = 50;
+const AMP_MAX: u16 = 60;
 /// Bench observation: at 5 V supply this motor refuses to start
 /// (synchronise to the commanded field) below ~15 %. Set the default at
 /// the empirical floor so the user doesn't have to ramp up after boot
@@ -459,8 +459,13 @@ static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
 /// raises [`OC_TRIPPED`] so main can report it. Averaging makes it a
 /// stall/heating guard, deliberately blind to sub-window spikes.
 ///
-/// 1.5 A × 30 mV/A = 45 mV → 45 / (3300/4095) ≈ 56 counts.
-const I_TRIP_RAW: u32 = 56;
+/// 2.0 A × 30 mV/A = 60 mV → 60 / (3300/4095) ≈ 75 counts.
+/// (Raised from 1.5 A for the amp-60 envelope: the prop's ω³ draw is
+/// a legitimate ~1.2 A average at ~1.5 kHz elec. Stall protection is
+/// not weakened — a stalled winding at these duties hits the PSU's
+/// 2.5 A limit and the ZC-starvation guard within milliseconds,
+/// long before an 85 ms average matters.)
+const I_TRIP_RAW: u32 = 75;
 const I_TRIP_SHIFT: u32 = 11; // 2048 cycles = 85 ms @ 24 kHz
 static I_TRIP_ACC: AtomicU32 = AtomicU32::new(0);
 static I_TRIP_CNT: AtomicU32 = AtomicU32::new(0);
@@ -2307,7 +2312,7 @@ fn main() -> ! {
                 output_enabled = false;
                 write!(
                     &mut tx_writer,
-                    "!! OVERCURRENT TRIP: >1500 mA avg over 85 ms - output killed (r/q re-arms)\r\n",
+                    "!! OVERCURRENT TRIP: >2000 mA avg over 85 ms - output killed (r/q re-arms)\r\n",
                 )
                 .ok();
             }
@@ -3000,6 +3005,12 @@ fn TIM1_UP_TIM16() {
             MOTOR_ENABLED.store(false, Ordering::Relaxed);
             tim1_motor_pwm::all_off();
             comp2::set_exti_enabled(false);
+            // Clear the CL flags too: a trip that leaves CL_ACTIVE
+            // set produces a ZOMBIE status — `i` kept printing the
+            // last "cl: ACTIVE f_e=..." line for 60 s of dead motor
+            // and a ladder script sailed through ten fake rungs.
+            CL_ACTIVE.store(false, Ordering::Relaxed);
+            CL_ARMED.store(false, Ordering::Relaxed);
             OC_TRIPPED.store(true, Ordering::Relaxed);
         }
         I_TRIP_ACC.store(0, Ordering::Relaxed);
