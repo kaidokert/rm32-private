@@ -486,6 +486,17 @@ static VBAT_RAW_LIVE: AtomicU16 = AtomicU16::new(0);
 static VBAT_SAGGED: AtomicBool = AtomicBool::new(false);
 /// Consecutive sub-threshold samples (debounce counter).
 static VBAT_SAG_RUN: AtomicU16 = AtomicU16::new(0);
+/// Minimum vbat raw since the last `i` readout — makes between-rung
+/// transits visible (per-rung snapshots twice hid real sag events
+/// from the maps: steady rows read 7.9-8.1 V while the transit
+/// between them collapsed to 5.6 V).
+static VBAT_MIN_RAW: AtomicU16 = AtomicU16::new(u16::MAX);
+/// Minimum vbat raw within the CURRENT float window — harvested
+/// into every v4 window record (firmware-side aggregation of the
+/// 48 kHz pump: the stream carries worst-case supply voltage at
+/// window granularity, so sag transients are directly plottable
+/// from any capture).
+static WINDOW_VBAT_MIN: AtomicU16 = AtomicU16::new(u16::MAX);
 /// The raw value that actually tripped (for the report — the live
 /// value may have recovered by print time).
 static VBAT_TRIP_RAW_SEEN: AtomicU16 = AtomicU16::new(0);
@@ -685,19 +696,24 @@ struct WindowRec {
     /// = qualified ZC + smoothed_interval/2. `i16::MIN` = no
     /// prediction this window (no qZC or no interval estimate).
     pred_err_us: i16,
+    /// Live vbat raw at window close (frame v4) — puts the supply
+    /// voltage INTO the high-rate stream so between-rung transits
+    /// (sag events) are directly visible in captures at window rate.
+    vbat_raw: u16,
     sector: u8,
     seq: u8,
 }
 
 const WREC_SYNC0: u8 = 0x5A;
-const WREC_SYNC1: u8 = 0xA5;
-const WREC_FRAME_LEN: usize = 26;
+/// v4 sync (26-byte v3 used 0xA5; the parser accepts both).
+const WREC_SYNC1: u8 = 0xA6;
+const WREC_FRAME_LEN: usize = 28;
 
 impl WindowRec {
-    /// Little-endian wire frame: sync(2) seq(1) sector|flags(1)
+    /// Little-endian wire frame v4: sync(2) seq(1) sector|flags(1)
     /// start(4) len(2) zc_off(2) raw(2) valid(2) i_min(2) i_max(2)
-    /// i_avg(2) qzc_off(2) pred_err(2,i16). Bit 7 of byte 3 = "zc
-    /// found".
+    /// i_avg(2) qzc_off(2) pred_err(2,i16) vbat_raw(2). Bit 7 of
+    /// byte 3 = "zc found".
     fn encode(&self) -> [u8; WREC_FRAME_LEN] {
         let mut f = [0u8; WREC_FRAME_LEN];
         f[0] = WREC_SYNC0;
@@ -714,6 +730,7 @@ impl WindowRec {
         f[20..22].copy_from_slice(&self.i_avg.to_le_bytes());
         f[22..24].copy_from_slice(&self.qzc_off_us.to_le_bytes());
         f[24..26].copy_from_slice(&self.pred_err_us.to_le_bytes());
+        f[26..28].copy_from_slice(&self.vbat_raw.to_le_bytes());
         f
     }
 }
@@ -2039,11 +2056,23 @@ fn main() -> ! {
                         let v_raw = VBAT_RAW_LIVE.load(Ordering::Relaxed);
                         let v_mv = sense_adc.adc_to_mv(v_raw);
                         let v_supply_mv = v_mv as u32 * VBAT_DIVIDER_X100 / 100;
+                        // Worst vbat since the previous readout —
+                        // makes between-rung transits visible (twice
+                        // a real sag event was invisible to per-rung
+                        // snapshots). Reset on read.
+                        let v_min_raw = VBAT_MIN_RAW.swap(u16::MAX, Ordering::Relaxed);
+                        let v_min_mv = if v_min_raw == u16::MAX {
+                            0
+                        } else {
+                            sense_adc.adc_to_mv(v_min_raw) as u32 * VBAT_DIVIDER_X100 / 100
+                        };
                         write!(
                             &mut tx_writer,
-                            "vbat={}.{:03}V isns={}.{:03}A cpu={}% (raw v={} i={})\r\n",
+                            "vbat={}.{:03}V min={}.{:03}V isns={}.{:03}A cpu={}% (raw v={} i={})\r\n",
                             v_supply_mv / 1000,
                             v_supply_mv % 1000,
+                            v_min_mv / 1000,
+                            v_min_mv % 1000,
                             i_ma / 1000,
                             i_ma % 1000,
                             last_busy_pct,
@@ -2862,6 +2891,14 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
             },
             qzc_off_us,
             pred_err_us: pred_err,
+            vbat_raw: {
+                let m = WINDOW_VBAT_MIN.swap(u16::MAX, Ordering::Relaxed);
+                if m == u16::MAX {
+                    VBAT_RAW_LIVE.load(Ordering::Relaxed)
+                } else {
+                    m
+                }
+            },
             sector: prev_sector,
             seq: WREC_SEQ.fetch_add(1, Ordering::Relaxed),
         };
@@ -3028,6 +3065,12 @@ fn TIM1_UP_TIM16() {
     // milliseconds; single-sample glitches false-tripped once.
     if let Some(raw) = minz::adc_sync::vbat_pump() {
         VBAT_RAW_LIVE.store(raw, Ordering::Relaxed);
+        if raw < VBAT_MIN_RAW.load(Ordering::Relaxed) {
+            VBAT_MIN_RAW.store(raw, Ordering::Relaxed);
+        }
+        if raw < WINDOW_VBAT_MIN.load(Ordering::Relaxed) {
+            WINDOW_VBAT_MIN.store(raw, Ordering::Relaxed);
+        }
         let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
         let thresh = (base - base / 10).max(VBAT_KILL_RAW);
         if raw < thresh && MOTOR_ENABLED.load(Ordering::Relaxed) {
@@ -3165,13 +3208,19 @@ fn TIM1_UP_TIM16() {
             // jumps 5×) trips within one 85 ms window REGARDLESS of
             // throttle. Replaces a flat 2.8 A check that a 3.5 A
             // stall at amp 56 sailed under long enough to matter.
-            // ~45·amp + 400 mA: ≈3.8× the healthy locked curve —
-            // clears legitimate accel-step transients (a 48→50 step
-            // at 1,300 Hz false-tripped the 2× version with the loop
-            // at 100 % coverage) while the 3.5 A+ stall/burn
-            // signature still trips at any throttle.
-            let amp = AMPLITUDE_PCT.load(Ordering::Relaxed) as u32;
-            avg_raw > amp * 27 / 16 + 15
+            // Gross-fault backstop only (~4 A phase average). The
+            // tighter throttle-scaled envelopes (2× then 3.8× the
+            // healthy curve) kept declaring walls in PASSABLE
+            // terrain: AM32 runs this exact board/prop/voltage to
+            // 100 % duty by riding THROUGH high-drag transitional
+            // regions (~2.7 A at the ~1,350 Hz knee) — properly
+            // commutated current in a locked motor is torque, and
+            // the far side of the knee draws less again. Stall
+            // burns are the starvation guard's job (ms), supply
+            // collapse is the sag kill's, a wedged core is the
+            // IWDG's — this trip only catches wiring/sense-level
+            // faults.
+            avg_raw > 150
         } else {
             avg_raw > I_TRIP_RAW // 2.0 A phase-referred
         };

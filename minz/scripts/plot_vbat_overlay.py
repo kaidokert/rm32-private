@@ -26,7 +26,8 @@ for tag in tags:
         continue
     amps, vb, ia = [], [], []
     for line in p.read_text().splitlines()[1:]:
-        a, v, i = line.split(",")
+        parts = line.split(",")  # 3-col (old) or 4-col (with vbat_min)
+        a, v, i = parts[0], parts[1], parts[-1]
         if float(v) > 0 and float(i) > 0:  # skip dead/idle rows
             amps.append(int(a))
             vb.append(float(v))

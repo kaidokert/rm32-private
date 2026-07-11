@@ -82,8 +82,12 @@ class Bench:
         counter, and one such bug let a ladder sail through ten fake
         rungs."""
         echo = self.send("i", 1.2)
-        m = re.search(r"vbat=(\d+\.\d+)V isns=(\d+\.\d+)A", echo)
-        vbat, isns = (float(m.group(1)), float(m.group(2))) if m else (0.0, 0.0)
+        m = re.search(r"vbat=(\d+\.\d+)V min=(\d+\.\d+)V isns=(\d+\.\d+)A", echo)
+        if m:
+            vbat, vmin, isns = float(m.group(1)), float(m.group(2)), float(m.group(3))
+        else:
+            vbat, vmin, isns = 0.0, 0.0, 0.0
+        self.last_vmin = vmin
         active = "cl: ACTIVE" in echo
         c = re.search(r"comms=(\d+)", echo)
         if active and c:
@@ -146,7 +150,9 @@ class Bench:
             if "ARMED" not in echo:
                 continue
             time.sleep(1.0)
-            sample = self.capture(1.2)
+            self.stream(True)
+            sample = self.timed_read(1.2)
+            self.stream(False)
             frames = parse_frames(sample)
             if frames:
                 q = 100 * sum(1 for f in frames if f["qzc_off_us"] != 0xFFFF) / len(frames)
@@ -157,29 +163,33 @@ class Bench:
                 print(f"  engage attempt {attempt}: no records - retrying", flush=True)
         sys.exit("engage failed 4x - bench attention needed")
 
-    def capture(self, secs):
-        """Echo-verified stream toggling: at high frame rates a `g`
-        keypress can be lost (observed at ~1.2 kHz: the amp-48 close
-        toggle vanished, leaving the stream ON, so the amp-50 capture
-        inverted it OFF and recorded 23 bytes of echoes). Verify each
-        toggle's echo and retry once."""
-        self.drain()
+    def stream(self, on):
+        """Echo-verified stream toggle (a `g` keypress can be lost at
+        high frame rates; verify and retry once)."""
+        want = b"stream=on" if on else b"stream=off"
         buf = bytearray()
         for _ in range(2):
             self.p.write(b"g")
-            time.sleep(0.15)
-            buf += self.p.read(65536)
-            if b"stream=on" in bytes(buf[-300:]):
+            time.sleep(0.3)
+            buf += self.p.read(200000)
+            # Search EVERYTHING since the keypress — at 200 kB/s the
+            # echo sits tens of kB before any fixed-size tail (a
+            # tail-300 check here double-pressed and inverted the
+            # stream: the same lost-toggle bug class this helper
+            # exists to prevent).
+            if want in bytes(buf):
                 break
+        self.log.write(bytes(buf))
+
+    def timed_read(self, secs):
+        """Plain timed read — the stream stays ON across rungs and
+        TRANSITS so dropout events are captured at window rate (the
+        old per-rung toggling meant the actual kill moments were
+        never streamed; a 8.17→4.31 V transit sag was invisible)."""
+        buf = bytearray()
         end = time.monotonic() + secs
         while time.monotonic() < end:
             buf += self.p.read(65536)
-        for _ in range(2):
-            self.p.write(b"g")
-            time.sleep(0.3)
-            buf += self.p.read(65536)
-            if b"stream=off" in bytes(buf[-300:]):
-                break
         self.log.write(bytes(buf))
         return bytes(buf)
 
@@ -205,16 +215,22 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
                 sys.exit(f"SWIFT enable failed: {echo!r}")
 
         meta = open(capdir / f"{args.tag}_meta.csv", "w")
-        meta.write("amp,vbat_v,isns_a\n")
+        meta.write("amp,vbat_v,vbat_min_v,isns_a\n")
+        # Stream stays ON for the whole ladder: rung captures AND the
+        # transits between them (where kills live) all land in bins,
+        # with v4 per-window vbat minima plottable via plot_dropout.
+        b.stream(True)
         for amp in amps:
             if amp >= cur:
                 b.steps("a", amp - cur)
             else:
                 b.steps("z", cur - amp)
             cur = amp
-            time.sleep(args.settle)
+            transit = b.timed_read(args.settle)
+            (capdir / f"{args.tag}_t{amp}.bin").write_bytes(transit)
             active, echo, vbat, isns = b.check_active()
-            meta.write(f"{amp},{vbat},{isns}\n")
+            vmin = getattr(b, "last_vmin", 0.0)
+            meta.write(f"{amp},{vbat},{vmin},{isns}\n")
             meta.flush()
             # HARD vbat abort. A sagging bus is the supply's current
             # limit engaging; below ~6.2 V the MCU's 3.3 V rail is one
@@ -232,7 +248,7 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
                 print(f"amp {amp:2d}: LOOP NOT ACTIVE before capture - aborting"
                       f" (see session log). Last echo:\n{echo.strip()}", flush=True)
                 break
-            data = b.capture(args.secs)
+            data = b.timed_read(args.secs)
             (capdir / f"{args.tag}_a{amp}.bin").write_bytes(data)
             broke = b"DESYNC" in data or b"STARVED" in data or b"TRIP" in data
             frames = parse_frames(data)
@@ -261,6 +277,7 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
                 print("   breakage reported by firmware - stopping sweep", flush=True)
                 break
     finally:
+        b.stream(False)
         b.send("y", 0.4)
         b.send("w", 0.5)
 print("lock map sweep done")

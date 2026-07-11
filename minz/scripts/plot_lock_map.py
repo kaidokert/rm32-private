@@ -128,17 +128,24 @@ ax.grid(True, alpha=0.3)
 # masquerades as a motor voltage ceiling.
 meta_path = capdir / f"{args.tag}_meta.csv"
 if meta_path.exists():
-    vb = {}
+    vb, vmin = {}, {}
     for line in meta_path.read_text().splitlines()[1:]:
         parts = line.split(",")
-        if len(parts) == 3 and float(parts[1]) > 0:
+        if len(parts) >= 3 and float(parts[1]) > 0:
             vb[int(parts[0])] = float(parts[1])
+            if len(parts) >= 4 and float(parts[2]) > 0:
+                vmin[int(parts[0])] = float(parts[2])
     pts = [(a, vb[a]) for a in A if a in vb]
     if pts:
         ax2 = ax.twinx()
         ax2.plot([p[0] for p in pts], [p[1] for p in pts], marker="s",
                  color="tab:red", label="vbat (V)")
-        ax2.set_ylabel("vbat (V)", color="tab:red")
+        mpts = [(a, vmin[a]) for a in A if a in vmin]
+        if mpts:
+            # Worst vbat since the PREVIOUS rung — transits included.
+            ax2.plot([p[0] for p in mpts], [p[1] for p in mpts], marker="v",
+                     ls="--", color="tab:red", alpha=0.6, label="vbat min (V)")
+        ax2.set_ylabel("vbat / min (V)", color="tab:red")
         ax2.tick_params(axis="y", labelcolor="tab:red")
 ax.legend(fontsize=8, loc="upper left")
 

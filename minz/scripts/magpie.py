@@ -20,10 +20,18 @@ Current conversion: INA180B1 (20 V/V) x 1.5 mOhm shunt = 30 mV/A,
 VDDA nominal 3.3 V, 12-bit.
 """
 
-FRAME_LEN = 26
+FRAME_LEN = 26  # v3
+FRAME_LEN_V4 = 28  # v4: + vbat_raw u16 (window-min supply voltage)
 SYNC0 = 0x5A
-SYNC1 = 0xA5
+SYNC1 = 0xA5  # v3
+SYNC1_V4 = 0xA6
 PRED_NONE = -32768
+
+VBAT_UV_PER_COUNT = 7507  # divider-scaled: raw 1080 ≈ 8.107 V
+
+
+def vbat_raw_to_v(raw: int) -> float:
+    return raw * VBAT_UV_PER_COUNT / 1e6
 
 
 def raw_to_ma(raw: int, vdda_mv: int = 3300) -> float:
@@ -43,8 +51,14 @@ def parse_frames(buf: bytes):
     frames = []
     i = 0
     while i + FRAME_LEN <= len(buf):
-        if buf[i] == SYNC0 and buf[i + 1] == SYNC1 and (buf[i + 3] & 0x0F) < 6:
-            f = buf[i : i + FRAME_LEN]
+        is_v4 = buf[i] == SYNC0 and buf[i + 1] == SYNC1_V4
+        if is_v4 and i + FRAME_LEN_V4 > len(buf):
+            break
+        if (buf[i] == SYNC0 and buf[i + 1] == SYNC1 and (buf[i + 3] & 0x0F) < 6) or (
+            is_v4 and (buf[i + 3] & 0x0F) < 6
+        ):
+            flen = FRAME_LEN_V4 if is_v4 else FRAME_LEN
+            f = buf[i : i + flen]
             len_10us = int.from_bytes(f[8:10], "little")
             raw = int.from_bytes(f[12:14], "little")
             valid = int.from_bytes(f[14:16], "little")
@@ -76,9 +90,12 @@ def parse_frames(buf: bytes):
                     i_avg=i_avg,
                     qzc_off_us=int.from_bytes(f[22:24], "little"),
                     pred_err_us=int.from_bytes(f[24:26], "little", signed=True),
+                    # v4: worst supply voltage within/since-last-streamed
+                    # window (48 kHz pump, firmware-aggregated min).
+                    vbat_raw=int.from_bytes(f[26:28], "little") if is_v4 else None,
                 )
             )
-            i += FRAME_LEN
+            i += flen
         else:
             i += 1
     return frames
