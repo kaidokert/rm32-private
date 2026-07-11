@@ -2457,11 +2457,15 @@ fn TIM7() {
             };
             let starved =
                 interval_us != 0 && last_qzc != 0 && starve_us > interval_us.max(500) * 12;
-            // Runaway floor: no plausible rotor on this bench turns
-            // under ~160 µs/sector (~1 kHz elec). An estimator walked
-            // down there is commutating its own noise — junk accepts
-            // sustain it, so the starvation guard never fires. Kill.
-            let implausible = interval_us != 0 && interval_us < 160;
+            // Runaway floor. Was 160 µs ("no plausible rotor under
+            // ~1 kHz") — set in the 6.5 V / pre-advance era, and it
+            // EXECUTED a healthy 1,050 Hz lock at amp 38 (bb: clean
+            // ACC/REF chain at interval 158, then DSY d=3). Textbook
+            // regime-expired guard. 60 µs = 2.8 kHz elec, beyond any
+            // reachable speed at this voltage but far above the true
+            // runaway signature (junk walks to the 24-50 µs
+            // scheduler floor).
+            let implausible = interval_us != 0 && interval_us < 60;
             if starved || implausible || (interval_us != 0 && since_us > interval_us.max(1_000) * 3)
             {
                 bb_record(
