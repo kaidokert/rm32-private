@@ -34,15 +34,42 @@ for tok in args.tokens:
         sys.exit(f"bad token {tok!r}: KEY must be one character")
     steps.append((key, float(delay) if delay else 0.5))
 
+
+def safe_print(*a, **kw):
+    """stdout can die mid-run (e.g. a truncating consumer like
+    PowerShell's Select-Object -First closes the pipe). Output loss
+    is acceptable; aborting the KEY SEQUENCE is not — an un-sent
+    trailing 'w' once left the motor spinning unattended
+    (2026-07-11). Swallow pipe errors, keep sending keys."""
+    try:
+        print(*a, **kw)
+    except OSError:
+        pass
+
+
 with serial.Serial(args.port, args.baud, timeout=0.05) as p:
     p.reset_input_buffer()
-    for key, delay in steps:
-        p.write(key.encode())
-        print(f"--- sent {key!r}, capturing {delay}s ---")
-        end = time.monotonic() + delay
-        buf = bytearray()
-        while time.monotonic() < end:
-            buf += p.read(4096)
-        text = buf.decode("ascii", errors="replace")
-        if text.strip():
-            print(text.rstrip())
+    completed = False
+    try:
+        for key, delay in steps:
+            p.write(key.encode())
+            safe_print(f"--- sent {key!r}, capturing {delay}s ---")
+            end = time.monotonic() + delay
+            buf = bytearray()
+            while time.monotonic() < end:
+                buf += p.read(4096)
+            text = buf.decode("ascii", errors="replace")
+            if text.strip():
+                safe_print(text.rstrip())
+        completed = True
+    finally:
+        # Kill guard: if the sequence did not run to completion, the
+        # operator's trailing kill key may never have been sent. 'w'
+        # is idempotent (prints "off" only if armed).
+        if not completed:
+            try:
+                p.write(b"w")
+                time.sleep(0.2)
+                safe_print("!! sequence aborted - sent 'w' kill guard")
+            except Exception:
+                pass
