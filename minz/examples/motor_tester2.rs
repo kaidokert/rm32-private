@@ -3126,8 +3126,13 @@ fn TIM1_UP_TIM16() {
             // jumps 5×) trips within one 85 ms window REGARDLESS of
             // throttle. Replaces a flat 2.8 A check that a 3.5 A
             // stall at amp 56 sailed under long enough to matter.
+            // ~45·amp + 400 mA: ≈3.8× the healthy locked curve —
+            // clears legitimate accel-step transients (a 48→50 step
+            // at 1,300 Hz false-tripped the 2× version with the loop
+            // at 100 % coverage) while the 3.5 A+ stall/burn
+            // signature still trips at any throttle.
             let amp = AMPLITUDE_PCT.load(Ordering::Relaxed) as u32;
-            avg_raw > amp * 9 / 8 + 11
+            avg_raw > amp * 27 / 16 + 15
         } else {
             avg_raw > I_TRIP_RAW // 2.0 A phase-referred
         };
