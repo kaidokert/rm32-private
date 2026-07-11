@@ -412,6 +412,44 @@ as "1-confirm is safe" (true only under lock) and "caps required"
 
 ---
 
+## 17. minz-core extraction — the loop brain moves to host tests (2026-07-11)
+
+Response to the trust audit (§16 aftermath): every low-level bug this
+campaign chased — watchdog underflow, poisoned-estimator deadlock,
+harmonic walk-down, snap-on-arm, sag false trip — lived in pure
+arithmetic that happened to be embedded in ISR bodies. All of it is
+now `minz/core/` (`minz-core`), a no_std crate with zero deps that
+builds and tests on the host:
+
+| module | contents | firmware call sites |
+|---|---|---|
+| `timing` | auto-advance ramp, commutation delay, gate, adaptive blank, persistence depth, confirm depth | COMP ISR, accept path, TIM7 |
+| `estimator` | the full OWL accept: span division, ±25 % bounds, ¾-smoothing, re-acq bounded re-seed, reset-on-arm | `accept_qualified_zc` (load-run-store swap over the atomics) |
+| `guards` | `since_us` (ref-before-now + clamp), CL watchdog, overcurrent, `SagGuard` + floor/debounce consts | TIM7 watchdog, TIM1_UP trip paths |
+| `throttle` | slew stepper + snap-on-arm | TIM7 |
+| `ticks` | `compose_1us` coarse/CVR protocol (equality both sides — the audit's ±10 µs hole, fixed form) | firmware adoption pending |
+| `wire` | MAGPIE v4 `WindowRec` encode/decode + host-parser sanity rules | window-close encode (firmware struct now delegates) |
+| `blackbox` | 64-event ring, freeze/replay | pending adoption |
+
+**49 tests, coverage 98.4 % line / 96.6 % function / 98.9 % region**
+(`cargo llvm-cov` in `core/`). Every historical incident above is a
+named regression test (`regression_poisoned_interval_…`,
+`regression_snap_on_arm_2026_07_11`, `regression_reacq_reseed_bounded
+_2026_07_09`, the watchdog underflow race, the harmonic walk-down).
+
+Gotchas for future extraction work: `core/` needs its own
+`[workspace]` + `.cargo/config.toml` host-target override or tests
+build for ARM; firmware `WINDOWS_SINCE_QZC` is AtomicU8 vs the
+struct's u32 (`.min(255) as u8` on store); `confirm_need` must stay
+the UNSCALED variant (the carrier-scaled one is convicted, §13).
+
+Behavioral equivalence after the rewiring: verified on board 2 —
+3-rung ladder amp 15/20/25 → 465/627/768 Hz, qzc 100 % all rungs,
+linear current 47→175 mA, vbat flat (`captures/refactor_sanity_map
+.png`). Zero loop-logic changes intended, zero observed.
+
+---
+
 ## Suggested order from here
 
 1. ~~Item 6 (envelope sweep)~~ — done; baseline banked in

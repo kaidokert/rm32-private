@@ -70,7 +70,7 @@ use minz::idle_loop::IdleLoop;
 use minz::open_loop::{self, Waveform};
 use minz::priority;
 use minz::tim1_motor_pwm::{self, max_duty};
-use minz::{PWM_FREQUENCY_HZ, SYSTICK, a85, tim7_drive};
+use minz::{PWM_FREQUENCY_HZ, a85, tim7_drive};
 use portable_atomic::{AtomicBool, AtomicI8, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use rtt_target::rprintln;
 
@@ -464,13 +464,8 @@ static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
 /// raises [`OC_TRIPPED`] so main can report it. Averaging makes it a
 /// stall/heating guard, deliberately blind to sub-window spikes.
 ///
-/// 2.0 A × 30 mV/A = 60 mV → 60 / (3300/4095) ≈ 75 counts.
-/// (Raised from 1.5 A for the amp-60 envelope: the prop's ω³ draw is
-/// a legitimate ~1.2 A average at ~1.5 kHz elec. Stall protection is
-/// not weakened — a stalled winding at these duties hits the PSU's
-/// 2.5 A limit and the ZC-starvation guard within milliseconds,
-/// long before an 85 ms average matters.)
-const I_TRIP_RAW: u32 = 75;
+// Overcurrent thresholds live in minz_core::guards::overcurrent
+// (host-tested; the 2.0 A open-loop / 4 A CL history in its docs).
 const I_TRIP_SHIFT: u32 = 11; // 2048 cycles = 85 ms @ 24 kHz
 static I_TRIP_ACC: AtomicU32 = AtomicU32::new(0);
 static I_TRIP_CNT: AtomicU32 = AtomicU32::new(0);
@@ -520,11 +515,7 @@ static VBAT_TRIP_RAW_SEEN: AtomicU16 = AtomicU16::new(0);
 /// automatically. (A fixed near-brownout threshold would only fire
 /// after the bus already collapsed.)
 static VBAT_BASELINE_RAW: AtomicU16 = AtomicU16::new(0);
-/// Absolute backstop ≈ 5.95 V: below this the MCU's 3.3 V rail is
-/// one transient from brownout — which WEDGES the chip with the
-/// bridge frozen and every software guard dead (the 2026-07-10
-/// burnt motor). Applies even if the baseline was low.
-const VBAT_KILL_RAW: u16 = 793;
+// Sag thresholds/debounce live in minz_core::guards (host-tested).
 
 /// Raw COMP edges in the current window (every EXTI fire).
 static WINDOW_RAW: AtomicU32 = AtomicU32::new(0);
@@ -717,34 +708,28 @@ struct WindowRec {
     seq: u8,
 }
 
-const WREC_SYNC0: u8 = 0x5A;
-/// v4 sync (26-byte v3 used 0xA5; the parser accepts both).
-const WREC_SYNC1: u8 = 0xA6;
-const WREC_FRAME_LEN: usize = 28;
-
 impl WindowRec {
-    /// Little-endian wire frame v4: sync(2) seq(1) sector|flags(1)
-    /// start(4) len(2) zc_off(2) raw(2) valid(2) i_min(2) i_max(2)
-    /// i_avg(2) qzc_off(2) pred_err(2,i16) vbat_raw(2). Bit 7 of
-    /// byte 3 = "zc found".
-    fn encode(&self) -> [u8; WREC_FRAME_LEN] {
-        let mut f = [0u8; WREC_FRAME_LEN];
-        f[0] = WREC_SYNC0;
-        f[1] = WREC_SYNC1;
-        f[2] = self.seq;
-        f[3] = (self.sector & 0x0F) | if self.zc_off_us != 0xFFFF { 0x80 } else { 0 };
-        f[4..8].copy_from_slice(&self.start_10us.to_le_bytes());
-        f[8..10].copy_from_slice(&self.len_10us.to_le_bytes());
-        f[10..12].copy_from_slice(&self.zc_off_us.to_le_bytes());
-        f[12..14].copy_from_slice(&self.raw.to_le_bytes());
-        f[14..16].copy_from_slice(&self.valid.to_le_bytes());
-        f[16..18].copy_from_slice(&self.i_min.to_le_bytes());
-        f[18..20].copy_from_slice(&self.i_max.to_le_bytes());
-        f[20..22].copy_from_slice(&self.i_avg.to_le_bytes());
-        f[22..24].copy_from_slice(&self.qzc_off_us.to_le_bytes());
-        f[24..26].copy_from_slice(&self.pred_err_us.to_le_bytes());
-        f[26..28].copy_from_slice(&self.vbat_raw.to_le_bytes());
-        f
+    /// Wire form: host-tested in minz_core::wire (round-trip encode/
+    /// decode + the sync-mislock sanity rules). This local struct
+    /// only exists for the heapless queue's storage; conversion is
+    /// field-for-field.
+    fn encode(&self) -> [u8; minz_core::wire::FRAME_LEN_V4] {
+        minz_core::wire::WindowRec {
+            start_10us: self.start_10us,
+            len_10us: self.len_10us,
+            zc_off_us: self.zc_off_us,
+            raw: self.raw,
+            valid: self.valid,
+            i_min: self.i_min,
+            i_max: self.i_max,
+            i_avg: self.i_avg,
+            qzc_off_us: self.qzc_off_us,
+            pred_err_us: self.pred_err_us,
+            vbat_raw: self.vbat_raw,
+            sector: self.sector,
+            seq: self.seq,
+        }
+        .encode()
     }
 }
 
@@ -2480,7 +2465,7 @@ fn main() -> ! {
             // would desync the host parser; a dropped one just shows
             // as a seq gap.
             while let Some(rec) = wrec_consumer.dequeue() {
-                if TX_RING_LEN - 1 - tx_writer.pending() >= WREC_FRAME_LEN {
+                if TX_RING_LEN - 1 - tx_writer.pending() >= minz_core::wire::FRAME_LEN_V4 {
                     for b in rec.encode() {
                         let _ = tx_writer.push(b);
                     }
@@ -2589,14 +2574,16 @@ fn TIM7() {
     // transients at speed pulled 85 ms current surges past even
     // 3.8× the healthy envelope. Kills (`w`, guards) bypass this
     // entirely via MOTOR_ENABLED/all_off.
-    if tick % 300 == 0 {
-        let cur = AMPLITUDE_PCT.load(Ordering::Relaxed);
-        let tgt = AMP_TARGET_PCT.load(Ordering::Relaxed);
-        if cur < tgt {
-            AMPLITUDE_PCT.store(cur + 1, Ordering::Relaxed);
-        } else if cur > tgt {
-            AMPLITUDE_PCT.store(cur - 1, Ordering::Relaxed);
-        }
+    if tick.is_multiple_of(minz_core::throttle::STEP_TICKS) {
+        // Host-tested: minz_core::throttle (incl. the snap-on-arm
+        // regression that cost 4/4 engages).
+        AMPLITUDE_PCT.store(
+            minz_core::throttle::step(
+                AMPLITUDE_PCT.load(Ordering::Relaxed),
+                AMP_TARGET_PCT.load(Ordering::Relaxed),
+            ),
+            Ordering::Relaxed,
+        );
     }
 
     // FALCON: while the closed loop drives, the crystal stepper is
@@ -2617,37 +2604,17 @@ fn TIM7() {
             // 309 Hz lock with since = u32-underflow garbage 20 µs
             // after a refined commutation. Top-bit clamp for belt and
             // suspenders.
+            // Host-tested: minz_core::guards::{since_us, cl_watchdog}
+            // — read-order rule, starvation, runaway floor, desync
+            // (each constant traces to an incident; see core tests).
             let last = LAST_COMM_10US.load(Ordering::Relaxed);
-            let since_ticks = ticks_10us().wrapping_sub(last);
-            let since_us = if since_ticks < u32::MAX / 2 {
-                since_ticks.saturating_mul(10)
-            } else {
-                0
-            };
-            // ZC starvation: 12 intervals (2 electrical revs) without
-            // an ACCEPTED qZC = the loop is flying blind (stalled
-            // rotor / zombie field) even though commutations continue.
-            // Same reference-before-now read order as below.
+            let since_us = minz_core::guards::since_us(ticks_10us(), last);
             let last_qzc = LAST_QZC_10US.load(Ordering::Relaxed);
-            let starve_ticks = ticks_10us().wrapping_sub(last_qzc);
-            let starve_us = if starve_ticks < u32::MAX / 2 {
-                starve_ticks.saturating_mul(10)
-            } else {
-                0
-            };
-            let starved =
-                interval_us != 0 && last_qzc != 0 && starve_us > interval_us.max(500) * 12;
-            // Runaway floor. Was 160 µs ("no plausible rotor under
-            // ~1 kHz") — set in the 6.5 V / pre-advance era, and it
-            // EXECUTED a healthy 1,050 Hz lock at amp 38 (bb: clean
-            // ACC/REF chain at interval 158, then DSY d=3). Textbook
-            // regime-expired guard. 60 µs = 2.8 kHz elec, beyond any
-            // reachable speed at this voltage but far above the true
-            // runaway signature (junk walks to the 24-50 µs
-            // scheduler floor).
-            let implausible = interval_us != 0 && interval_us < 60;
-            if starved || implausible || (interval_us != 0 && since_us > interval_us.max(1_000) * 3)
-            {
+            let starve_us = minz_core::guards::since_us(ticks_10us(), last_qzc);
+            let kill =
+                minz_core::guards::cl_watchdog(interval_us, starve_us, since_us, last_qzc != 0);
+            if let Some(kind) = kill {
+                let starved = kind == minz_core::guards::Kill::ZcStarved;
                 bb_record(
                     if starved { 8 } else { 6 },
                     CURRENT_SECTOR.load(Ordering::Relaxed),
@@ -2896,7 +2863,7 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
     // seq gaps and per-sector stats stay unbiased.
     let decim_n = WREC_DECIM.fetch_add(1, Ordering::Relaxed);
     let iv_now = OWL_INTERVAL_US.load(Ordering::Relaxed);
-    let stream_this = iv_now == 0 || iv_now >= 180 || decim_n % 5 == 0;
+    let stream_this = iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
     if STREAM_ON.load(Ordering::Relaxed) && start_us != 0 && stream_this {
         let first_zc = WINDOW_FIRST_ZC_US.load(Ordering::Relaxed);
         let zc_off_us = if first_zc == u32::MAX {
@@ -2922,11 +2889,10 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
                 WINDOW_I_MIN.load(Ordering::Relaxed)
             },
             i_max: WINDOW_I_MAX.load(Ordering::Relaxed),
-            i_avg: if i_n == 0 {
-                0
-            } else {
-                (WINDOW_I_SUM.load(Ordering::Relaxed) / i_n) as u16
-            },
+            i_avg: WINDOW_I_SUM
+                .load(Ordering::Relaxed)
+                .checked_div(i_n)
+                .unwrap_or(0) as u16,
             qzc_off_us,
             pred_err_us: pred_err,
             vbat_raw: {
@@ -3012,17 +2978,12 @@ fn LPTIM2() {
         // re-acquisition drop to ~8 % (just past the commutation
         // flyback) so ZCs that drifted early — the lockout-spiral
         // signature — become acceptable again.
-        // µs units (was 10 µs ticks — 15 % gate quantization at
-        // high-speed window sizes).
-        let g = if CL_REACQ.load(Ordering::Relaxed) {
-            (interval * 2 / 25).max(10) // 8 %
-        } else {
-            // 30 % — the value every successful ladder ran at. (A
-            // brief excursion to 20 % let early noise edges reach the
-            // 1-confirm fast path and compound into estimator walks.)
-            (interval * 3 / 10).max(20)
-        };
-        SECTOR_GATE_US.store(g, Ordering::Relaxed);
+        // Host-tested: minz_core::timing::gate_us (30 % normal, 8 %
+        // re-acquisition; history in the core docs + tests).
+        SECTOR_GATE_US.store(
+            minz_core::timing::gate_us(interval, CL_REACQ.load(Ordering::Relaxed)),
+            Ordering::Relaxed,
+        );
     }
     // Schedule the next commutation unconditionally:
     // - phase-C float windows (0/3, no ADC confirm): dead-reckon at
@@ -3109,11 +3070,15 @@ fn TIM1_UP_TIM16() {
         if raw < WINDOW_VBAT_MIN.load(Ordering::Relaxed) {
             WINDOW_VBAT_MIN.store(raw, Ordering::Relaxed);
         }
+        // Host-tested constants/threshold: minz_core::guards (the
+        // −10 % baseline rule, absolute brownout floor, and the
+        // debounce whose absence false-tripped with a report reading
+        // "8130 < 90% of 8107" are all regression-tested there).
         let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
-        let thresh = (base - base / 10).max(VBAT_KILL_RAW);
+        let thresh = (base - base / 10).max(minz_core::guards::VBAT_ABS_FLOOR_RAW);
         if raw < thresh && MOTOR_ENABLED.load(Ordering::Relaxed) {
             let run = VBAT_SAG_RUN.load(Ordering::Relaxed) + 1;
-            if run >= 64 {
+            if run >= minz_core::guards::SAG_DEBOUNCE {
                 VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
                 MOTOR_ENABLED.store(false, Ordering::Relaxed);
                 tim1_motor_pwm::all_off();
@@ -3196,12 +3161,11 @@ fn TIM1_UP_TIM16() {
             // 1-confirm. So: 2 confirms until CL_ACTIVE, 1 after.
             // Re-acquisition demands full 2-confirm strictness —
             // trust is re-earned before the fast path resumes.
-            let need: u8 = if CL_ACTIVE.load(Ordering::Relaxed) && !CL_REACQ.load(Ordering::Relaxed)
-            {
-                1
-            } else {
-                2
-            };
+            // Host-tested: minz_core::timing::confirm_need.
+            let need: u8 = minz_core::timing::confirm_need(
+                CL_ACTIVE.load(Ordering::Relaxed),
+                CL_REACQ.load(Ordering::Relaxed),
+            ) as u8;
             let n = CAND_CONFIRMS.load(Ordering::Relaxed) + 1;
             if n >= need {
                 CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
@@ -3247,33 +3211,11 @@ fn TIM1_UP_TIM16() {
         // referred 2.0 A stays — it's the stall-heater guard and a
         // stalled drive at low duty IS phase ≈ battery.
         let avg_raw = acc >> I_TRIP_SHIFT;
-        let tripped = if CL_ACTIVE.load(Ordering::Relaxed) {
-            // THROTTLE-SCALED envelope (phase-referred, same units as
-            // the lock maps' i_avg). The healthy locked curve is
-            // near-linear in throttle: ~400 mA @ amp 30, ~520 @ 45,
-            // ~780 @ 48. Envelope = 30·amp + 300 mA ≈ (amp·9/8 + 11)
-            // raw counts — 2× above the healthy curve at every
-            // throttle, while a divergence to 3-4 A (the burnt-motor
-            // signature: in-sync current is linear, a stall/desync
-            // jumps 5×) trips within one 85 ms window REGARDLESS of
-            // throttle. Replaces a flat 2.8 A check that a 3.5 A
-            // stall at amp 56 sailed under long enough to matter.
-            // Gross-fault backstop only (~4 A phase average). The
-            // tighter throttle-scaled envelopes (2× then 3.8× the
-            // healthy curve) kept declaring walls in PASSABLE
-            // terrain: AM32 runs this exact board/prop/voltage to
-            // 100 % duty by riding THROUGH high-drag transitional
-            // regions (~2.7 A at the ~1,350 Hz knee) — properly
-            // commutated current in a locked motor is torque, and
-            // the far side of the knee draws less again. Stall
-            // burns are the starvation guard's job (ms), supply
-            // collapse is the sag kill's, a wedged core is the
-            // IWDG's — this trip only catches wiring/sense-level
-            // faults.
-            avg_raw > 150
-        } else {
-            avg_raw > I_TRIP_RAW // 2.0 A phase-referred
-        };
+        // Host-tested: minz_core::guards::overcurrent — phase-vs-
+        // battery semantics, the AM32-rides-the-knee history, and
+        // the open-loop stall-heater guard documented + regression-
+        // tested in the core.
+        let tripped = minz_core::guards::overcurrent(avg_raw, CL_ACTIVE.load(Ordering::Relaxed));
         if tripped && MOTOR_ENABLED.load(Ordering::Relaxed) {
             MOTOR_ENABLED.store(false, Ordering::Relaxed);
             tim1_motor_pwm::all_off();
@@ -3341,12 +3283,9 @@ fn COMP() {
     // for our entire interval range). At low speed the arithmetic
     // yields exactly the proven 8 µs + 5-read combo — unchanged.
     let interval_us = OWL_INTERVAL_US.load(Ordering::Relaxed);
-    let user_blank = BLANK_US.load(Ordering::Relaxed) as u32;
-    let blank_us = if interval_us != 0 {
-        user_blank.min(interval_us / 75)
-    } else {
-        user_blank
-    };
+    // Host-tested: minz_core::timing::{blank_us, persistence_reads}.
+    let blank_us =
+        minz_core::timing::blank_us(BLANK_US.load(Ordering::Relaxed) as u32, interval_us);
     if blank_us > 0 {
         let since_edge = ticks_1us().wrapping_sub(LAST_PWM_EDGE_US.load(Ordering::Relaxed));
         if since_edge < blank_us {
@@ -3359,7 +3298,7 @@ fn COMP() {
     }
     // Persistence depth for the qZC filter below: AM32-style
     // deepening as the time-blank fades.
-    let persist_reads: u32 = if blank_us >= 5 { 5 } else { 12 };
+    let persist_reads: u32 = minz_core::timing::persistence_reads(blank_us);
 
     // Mode 5: value-gated recording. EXTI line 22 fires off the *raw*
     // comparator output (not gated by any internal blanking), so an
@@ -3479,57 +3418,27 @@ fn accept_qualified_zc(zc_us: u32) {
     }
     WINDOW_QZC_US.store(zc_us, Ordering::Relaxed);
 
-    // Span-divided interval update: a qZC-to-qZC delta that crossed a
-    // dead-reckoned C window covers 2 intervals; >3 window closes
-    // since the last qZC = chain broken (skip update, re-seed last).
-    let last = OWL_LAST_QZC_US.load(Ordering::Relaxed);
-    let spans = WINDOWS_SINCE_QZC.load(Ordering::Relaxed) as u32;
-    WINDOWS_SINCE_QZC.store(0, Ordering::Relaxed);
-    if last != u32::MAX && (1..=3).contains(&spans) {
-        let new_int = zc_us.wrapping_sub(last) / spans;
-        let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
-        if CL_REACQ.load(Ordering::Relaxed) && CL_ACTIVE.load(Ordering::Relaxed) {
-            // Re-acquisition re-seed: both ZCs of this delta were
-            // taken under the tiny gate + full 2-confirm strictness
-            // (the chain was broken on entry, so spans==1 means two
-            // FRESH measurements). Bound to [0.5, 2.0]×old — wide
-            // enough to undo any walk-up/down the spiral caused,
-            // narrow enough to reject aliased junk (the unbounded
-            // version re-seeded 162 µs and tripped the runaway
-            // floor).
-            let old = OWL_INTERVAL_US.load(Ordering::Relaxed);
-            if spans == 1
-                && new_int > 100
-                && new_int < 30_000
-                && new_int > old / 2
-                && new_int < old.saturating_mul(2)
-            {
-                OWL_INTERVAL_US.store(new_int, Ordering::Relaxed);
-                CL_REACQ.store(false, Ordering::Relaxed);
-            }
-        } else {
-            // Rate-of-change bounds. Tight under an established lock
-            // (±25 %/window: real acceleration moves the interval a
-            // fraction of a percent per window; the ~1.5× aliased
-            // accept that seeds the lockout spiral cannot pass).
-            // Engagement (old == 0) seeds directly.
-            let sane = new_int > 100
-                && new_int < 30_000
-                && (old == 0
-                    || (new_int < old.saturating_mul(5) / 4
-                        && new_int > old.saturating_mul(4) / 5));
-            if sane {
-                let smoothed = if old == 0 {
-                    new_int
-                } else {
-                    (3 * old + new_int) / 4
-                };
-                OWL_INTERVAL_US.store(smoothed, Ordering::Relaxed);
-            }
-        }
-    }
+    // Host-tested: minz_core::estimator::Estimator — span division,
+    // ±25 % symmetric bounds, ¾ smoothing, bounded re-acq re-seed,
+    // and the full incident regression suite (harmonic lock,
+    // poisoned-interval deadlock, aliased re-seed) live in the core.
+    // Load-run-store keeps the exact same non-transactional atomics
+    // profile the inline version had.
+    let mut est = minz_core::estimator::Estimator {
+        interval_us: OWL_INTERVAL_US.load(Ordering::Relaxed),
+        last_qzc_us: match OWL_LAST_QZC_US.load(Ordering::Relaxed) {
+            u32::MAX => None,
+            v => Some(v),
+        },
+        windows_since_qzc: WINDOWS_SINCE_QZC.load(Ordering::Relaxed) as u32,
+        reacq: CL_REACQ.load(Ordering::Relaxed),
+    };
+    est.on_accept(zc_us, CL_ACTIVE.load(Ordering::Relaxed));
+    OWL_INTERVAL_US.store(est.interval_us, Ordering::Relaxed);
+    OWL_LAST_QZC_US.store(est.last_qzc_us.unwrap_or(u32::MAX), Ordering::Relaxed);
+    WINDOWS_SINCE_QZC.store(est.windows_since_qzc.min(255) as u8, Ordering::Relaxed);
+    CL_REACQ.store(est.reacq, Ordering::Relaxed);
     CL_NOZ_RUN.store(0, Ordering::Relaxed);
-    OWL_LAST_QZC_US.store(zc_us, Ordering::Relaxed);
     LAST_QZC_10US.store(ticks_10us(), Ordering::Relaxed);
 
     // CL scheduling — only from A/B float windows (ADC-confirmed).
@@ -3541,30 +3450,21 @@ fn accept_qualified_zc(zc_us: u32) {
         if CL_ARMED.load(Ordering::Relaxed) {
             CL_ARMED.store(false, Ordering::Relaxed);
             CL_ACTIVE.store(true, Ordering::Relaxed);
-            bb_record(7, sec as u8, interval.min(0xFFFF) as u16);
+            bb_record(7, sec, interval.min(0xFFFF) as u16);
         }
         if CL_ACTIVE.load(Ordering::Relaxed) {
-            // AUTO-ADVANCE ramp (roadmap Phase 1, AM32's auto_advance
-            // cribbed in spirit): with `t`/`T` at 0 (the default),
-            // advance follows measured speed — 0° below ~280 Hz
-            // (where it was measured to do nothing), ramping to a
-            // 12° cap by ~1.2 kHz. Evidence: at 850-950 Hz / 350 mA,
-            // 8° was worth +108 Hz (the amp-34 droop was late-
-            // commutation braking); a STATIC 16° broke the engage
-            // transit — a speed-following ramp gives the transit 0°
-            // and the top its timing automatically. A nonzero manual
-            // setting overrides the ramp entirely.
-            let manual = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
-            let adv = if manual != 0 {
-                manual
-            } else {
-                ((600i32.saturating_sub(interval as i32)).max(0) / 45).min(12)
-            };
+            // Host-tested: auto-advance ramp + scheduling delay
+            // (minz_core::timing — history and regressions in the
+            // core docs + tests).
+            let adv = minz_core::timing::auto_advance_deg(
+                interval,
+                ADVANCE_DEG.load(Ordering::Relaxed) as i32,
+            );
             let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
-            let delay = (interval as i32 * (30 - adv) / 60 - elapsed).max(24) as u32;
+            let delay = minz_core::timing::commutation_delay_us(interval, adv, elapsed);
             minz::lptim2_oneshot::schedule_us(delay);
             SHOT_REFINED.store(true, Ordering::Relaxed);
-            bb_record(3, sec as u8, delay.min(0xFFFF) as u16);
+            bb_record(3, sec, delay.min(0xFFFF) as u16);
             // Deaf until the commutation (mask-after-accept).
             comp2::set_exti_enabled(false);
         }

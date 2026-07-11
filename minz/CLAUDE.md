@@ -405,6 +405,21 @@ Branches: main work on `bisect_init_changes` (48 kHz build flashed,
 Remaining polish: throttle slew limit (item 5), runtime carrier
 switch, HEDGEHOG A/B on the capped board.
 
+## minz-core — host-testable control logic (`core/`, 2026-07-11)
+
+The FALCON loop's pure logic lives in `minz/core/` (`minz-core`,
+no_std, zero deps): `timing` (advance/delay/gate/blank/persistence/
+confirm), `estimator` (the full OWL accept incl. re-acq re-seed),
+`guards` (watchdog/OC/sag + `since_us`), `throttle` (slew+snap),
+`ticks` (`compose_1us`, fixed protocol — firmware adoption pending),
+`wire` (MAGPIE v4 encode/decode), `blackbox`. 49 tests, ~98 % line
+coverage (`cd core; cargo test` / `cargo llvm-cov`); every past
+incident is a named regression test. Firmware (`motor_tester2.rs`)
+calls into it at every corresponding site — change loop behavior in
+core, never inline. `core/` is a detached workspace with its own
+`.cargo/config.toml` (host target) — do not fold it into the parent
+or tests build for ARM. Details: FALCON_HARDENING.md §17.
+
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
 rinz-grade latest_zc view on this board: DMA1_CH1 fills a 2048-frame
