@@ -17,6 +17,7 @@ pub mod softuart_tim2;
 pub mod tim1_motor_pwm;
 pub mod tim7_drive;
 pub mod timer_ext;
+pub mod uart_tx;
 
 pub use stm32l4xx_hal as hal;
 

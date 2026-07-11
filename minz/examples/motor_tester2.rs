@@ -61,16 +61,16 @@ use minz::adc_sync;
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
 use minz::comp2;
 use minz::current_adc::SenseAdc;
-use minz::hal::pac::{USART1, interrupt};
+use minz::hal::pac::interrupt;
 use minz::hal::prelude::*;
-use minz::hal::serial::{Config, Serial, Tx};
+use minz::hal::serial::{Config, Serial};
 use minz::hal::stm32;
 use minz::hal::stm32::Interrupt;
 use minz::idle_loop::IdleLoop;
 use minz::open_loop::{self, Waveform};
 use minz::priority;
 use minz::tim1_motor_pwm::{self, max_duty};
-use minz::{PWM_FREQUENCY_HZ, a85, tim7_drive};
+use minz::{PWM_FREQUENCY_HZ, tim7_drive};
 use portable_atomic::{AtomicBool, AtomicI8, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use rtt_target::rprintln;
 
@@ -235,12 +235,7 @@ static SECTOR_START_US: AtomicU32 = AtomicU32::new(0);
 /// loop: 30 % of the measured interval (8 % in re-acquisition).
 static SECTOR_GATE_US: AtomicU32 = AtomicU32::new(0);
 
-/// Half-sector duration in µs at a given electrical frequency.
-/// 6 sectors per electrical rev → full sector = `1e6 / (6 × f)` µs;
-/// half is `1e6 / (12 × f)`. At f=60 → 1.39 ms. At f=600 → 139 µs.
-const fn sector_gate_us(electrical_hz: u32) -> u32 {
-    1_000_000 / (12 * electrical_hz)
-}
+// Open-loop half-sector gate: minz_core::drive::open_loop_gate_us.
 
 /// Free-running ring buffer of COMP2.VALUE sampled at the TIM1
 /// update event (= once per PWM period, 24 kHz). One byte per
@@ -681,57 +676,9 @@ static WINDOWS_SINCE_QZC: AtomicU8 = AtomicU8::new(0);
 static STREAM_ON: AtomicBool = AtomicBool::new(false);
 
 /// One completed float window, packaged by TIM7 at sector exit.
-#[derive(Copy, Clone)]
-struct WindowRec {
-    start_10us: u32,
-    len_10us: u16,
-    /// First valid edge, µs from window start; `0xFFFF` = no valid edge.
-    zc_off_us: u16,
-    raw: u16,
-    valid: u16,
-    /// PWM-synchronous current over the window, raw 12-bit counts.
-    i_min: u16,
-    i_max: u16,
-    i_avg: u16,
-    /// OWL: first persistence-qualified ZC, µs from window start;
-    /// `0xFFFF` = none.
-    qzc_off_us: u16,
-    /// OWL: (actual boundary − predicted boundary) µs, where predicted
-    /// = qualified ZC + smoothed_interval/2. `i16::MIN` = no
-    /// prediction this window (no qZC or no interval estimate).
-    pred_err_us: i16,
-    /// Live vbat raw at window close (frame v4) — puts the supply
-    /// voltage INTO the high-rate stream so between-rung transits
-    /// (sag events) are directly visible in captures at window rate.
-    vbat_raw: u16,
-    sector: u8,
-    seq: u8,
-}
-
-impl WindowRec {
-    /// Wire form: host-tested in minz_core::wire (round-trip encode/
-    /// decode + the sync-mislock sanity rules). This local struct
-    /// only exists for the heapless queue's storage; conversion is
-    /// field-for-field.
-    fn encode(&self) -> [u8; minz_core::wire::FRAME_LEN_V4] {
-        minz_core::wire::WindowRec {
-            start_10us: self.start_10us,
-            len_10us: self.len_10us,
-            zc_off_us: self.zc_off_us,
-            raw: self.raw,
-            valid: self.valid,
-            i_min: self.i_min,
-            i_max: self.i_max,
-            i_avg: self.i_avg,
-            qzc_off_us: self.qzc_off_us,
-            pred_err_us: self.pred_err_us,
-            vbat_raw: self.vbat_raw,
-            sector: self.sector,
-            seq: self.seq,
-        }
-        .encode()
-    }
-}
+/// Struct AND wire form live in minz-core (round-trip encode/decode
+/// + the sync-mislock sanity rules are host-tested there).
+use minz_core::wire::WindowRec;
 
 type WrecQueue = Queue<WindowRec, 64>;
 
@@ -802,199 +749,27 @@ static ADVANCE_DEG: AtomicI8 = AtomicI8::new(0);
 /// `PWM_FREQUENCY_HZ` for predictable phase alignment. 6 kHz = 24/4,
 /// giving 4 PWM cycles per duty refresh. At f_elec ≤ 500 Hz that's
 /// still ≥ 12 sine samples per electrical period — visually clean.
-const MOTOR_DRIVE_HZ: u32 = 6_000;
+const MOTOR_DRIVE_HZ: u32 = minz_core::drive::MOTOR_DRIVE_HZ;
 
 /// One full electrical revolution in 16.16 fixed point.
 const ANGLE_FULL_REV_FP: u32 = 360u32 << 16;
 
-/// Compute the per-tick `ANGLE_INC` for a given electrical f. Done
-/// in u64 to avoid overflow at high f. Returns 16.16 fixed point.
-const fn angle_inc_fp(electrical_hz: u32) -> u32 {
-    ((360u64 << 16) * electrical_hz as u64 / MOTOR_DRIVE_HZ as u64) as u32
-}
+// Drive geometry/arithmetic (angle_inc_fp, float_sector_mask,
+// float_sectors, edges_for) lives in minz_core::drive — host-tested,
+// phases indexed 0=A/1=B/2=C matching `ObservedPhase as u8`.
+use minz_core::drive::{angle_inc_fp, edges_for, open_loop_gate_us};
 
-/// Bitfield of float-window sectors for a given observed phase.
-/// Textbook 6-step BLDC convention.
+/// Local shim: core's mask fn takes the phase index.
 const fn float_sector_mask(phase: comp2::ObservedPhase) -> u8 {
-    match phase {
-        comp2::ObservedPhase::A => (1 << 2) | (1 << 5),
-        comp2::ObservedPhase::B => (1 << 1) | (1 << 4),
-        comp2::ObservedPhase::C => (1 << 0) | (1 << 3),
-    }
-}
-
-/// Which COMP2 EXTI edges to enable for the given sector + edge-mode.
-/// COMP2 polarity is locked to non-inverted (POLARITY=0); modes 3/4
-/// (phys_ZC / phys_anti) split on sector parity so EXTI fires on the
-/// expected physical V+/V- crossing direction for each sector.
-///
-///   0 (both): rising + falling — every COMP_VALUE transition
-///   1 (raw_rise): rising only
-///   2 (raw_fall): falling only
-///   3 (phys_ZC): rising in even sectors (falling-BEMF ZC),
-///                falling in odd sectors (rising-BEMF ZC)
-///   4 (phys_anti): the opposite of mode 3 (diagnostic)
-#[inline]
-fn edges_for(mode: u8, sector: u8) -> (bool, bool) {
-    match mode {
-        0 => (true, true),
-        1 => (true, false),
-        2 => (false, true),
-        3 => {
-            if (sector & 1) == 0 {
-                (true, false)
-            } else {
-                (false, true)
-            }
-        }
-        4 => {
-            if (sector & 1) == 0 {
-                (false, true)
-            } else {
-                (true, false)
-            }
-        }
-        // Mode 5: both edges enabled at EXTI; the COMP ISR filters in
-        // software based on `COMP2.VALUE`.
-        _ => (true, true),
-    }
+    minz_core::drive::float_sector_mask(phase as u8)
 }
 
 /// SPSC producer half of the RX byte queue, owned by the USART2 ISR.
 /// Main owns the consumer half and drains it in the key-dispatch pass.
 static RX_PROD: Mutex<RefCell<Option<Producer<'static, u8>>>> = Mutex::new(RefCell::new(None));
 
-/// DMA-backed UART TX ring. `write!` enqueues into a 4 KiB static ring
-/// (drop-on-overflow, same semantics as the old deque writer); the
-/// motor loop calls [`service`] once per microloop, which hands the
-/// longest contiguous unsent run to **DMA1_CH4** (USART1_TX request,
-/// CSELR C4S = 0b0010) and lets hardware drain it at wire rate. No DMA
-/// interrupt — transfer-complete is polled from `service`, so the whole
-/// TX path stays main-context-only.
-///
-/// Why: the old writer shifted ONE byte per 1 ms service pass
-/// (~1 kB/s effective) — fine for key echoes at 9600, useless for
-/// streaming at 2 Mbaud (200 kB/s). With 4 KiB chunks kicked per pass
-/// the wire stays >95 % utilised while main spends ~0 CPU on TX.
-///
-/// Ownership note: `Tx<USART1>` is held only to keep the HAL from
-/// handing the peripheral to anyone else — after `CR3.DMAT` is set,
-/// data moves ring → TDR entirely by DMA. Never write TDR from the
-/// CPU while a chunk is in flight (interleaved garbage); all output
-/// must go through this ring, including "blocking" dumps.
-struct UartTxWriter {
-    _tx: Tx<USART1>,
-    ring: &'static mut [u8; TX_RING_LEN],
-    /// Next byte to write (main only). Ring is full when advancing
-    /// head would collide with tail (one slot wasted, classic ring).
-    head: usize,
-    /// Oldest unsent byte. Advances only on DMA transfer-complete.
-    tail: usize,
-    /// Bytes handed to the in-flight DMA chunk (0 = DMA idle).
-    inflight: usize,
-}
-
-const TX_RING_LEN: usize = 4096; // power of two
-
-impl UartTxWriter {
-    fn new(tx: Tx<USART1>, ring: &'static mut [u8; TX_RING_LEN]) -> Self {
-        // One-time plumbing: DMA1 clock, route channel 4 to USART1_TX,
-        // point CPAR at TDR, and let USART1 raise DMA requests.
-        unsafe {
-            (*stm32::RCC::ptr())
-                .ahb1enr
-                .modify(|_, w| w.dma1en().set_bit());
-            let dma = &*stm32::DMA1::ptr();
-            dma.cselr.modify(|_, w| w.c4s().bits(0b0010));
-            dma.cpar4
-                .write(|w| w.bits(&(*stm32::USART1::ptr()).tdr as *const _ as u32));
-            (*stm32::USART1::ptr())
-                .cr3
-                .modify(|_, w| w.dmat().set_bit());
-        }
-        Self {
-            _tx: tx,
-            ring,
-            head: 0,
-            tail: 0,
-            inflight: 0,
-        }
-    }
-
-    fn pending(&self) -> usize {
-        self.head.wrapping_sub(self.tail) & (TX_RING_LEN - 1)
-    }
-
-    /// Push one byte; `false` (byte dropped) if the ring is full.
-    fn push(&mut self, b: u8) -> bool {
-        let next = (self.head + 1) & (TX_RING_LEN - 1);
-        if next == self.tail {
-            return false;
-        }
-        self.ring[self.head] = b;
-        self.head = next;
-        true
-    }
-
-    /// Reap a completed DMA chunk (if any) and kick the next one.
-    /// Called once per microloop; also spun directly by the blocking
-    /// paths. Worst-case gap between chunk-complete and next kick is
-    /// one microloop (1 ms) — with 4 KiB chunks (20 ms of wire time
-    /// at 2 M) that keeps the line >95 % utilised.
-    fn service(&mut self) {
-        let dma = unsafe { &*stm32::DMA1::ptr() };
-        if self.inflight != 0 {
-            if dma.isr.read().tcif4().bit_is_set() {
-                dma.ccr4.modify(|_, w| w.en().clear_bit());
-                dma.ifcr.write(|w| w.cgif4().set_bit());
-                self.tail = (self.tail + self.inflight) & (TX_RING_LEN - 1);
-                self.inflight = 0;
-            } else {
-                return; // chunk still on the wire
-            }
-        }
-        let pending = self.pending();
-        if pending == 0 {
-            return;
-        }
-        // Longest contiguous run from tail (a wrap becomes two chunks).
-        let contig = pending.min(TX_RING_LEN - self.tail);
-        unsafe {
-            dma.cmar4
-                .write(|w| w.bits(self.ring.as_ptr().add(self.tail) as u32));
-            dma.cndtr4.write(|w| w.bits(contig as u32));
-            // Ring bytes must be visible to DMA before EN.
-            core::sync::atomic::compiler_fence(Ordering::Release);
-            dma.ccr4
-                .write(|w| w.minc().set_bit().dir().set_bit().en().set_bit());
-        }
-        self.inflight = contig;
-    }
-
-    /// Enqueue a byte slice without dropping: spin `service` whenever
-    /// the ring is full. Ordering vs earlier `write!` output is free
-    /// (single ring). Returns once everything is *enqueued* — the tail
-    /// of the data may still be draining by DMA afterwards, which is
-    /// fine because all output goes through the same ring.
-    fn write_blocking(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            while !self.push(b) {
-                self.service();
-            }
-        }
-        self.service();
-    }
-}
-
-impl core::fmt::Write for UartTxWriter {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        for b in s.bytes() {
-            // Drop bytes on overflow — status messages aren't critical.
-            let _ = self.push(b);
-        }
-        Ok(())
-    }
-}
+// DMA-backed UART TX ring (DMA1_CH4 → USART1_TX): minz::uart_tx.
+use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
 fn ticks_10us() -> u32 {
     // Cheap atomic read — ~5 cycles, no stable-snapshot loop. The
@@ -1271,7 +1046,7 @@ fn main() -> ! {
         float_sector_mask(comp2::ObservedPhase::A),
         Ordering::Relaxed,
     );
-    SECTOR_GATE_US.store(sector_gate_us(FREQ_START), Ordering::Relaxed);
+    SECTOR_GATE_US.store(open_loop_gate_us(FREQ_START), Ordering::Relaxed);
     MOTOR_ENABLED.store(false, Ordering::Relaxed);
     // Kill the h-bridges immediately. `tim1_motor_pwm::init` sets MOE=1
     // as part of register parity with AM32, which would otherwise leave
@@ -1300,113 +1075,32 @@ fn main() -> ! {
         BAUD,
     )
     .ok();
-    writeln!(
-        &mut tx,
-        "Frequency (Hz):       d   +1, c -1, f +10, v -10\r"
-    )
-    .ok();
-    writeln!(&mut tx, "Amplitude (% of ARR): a +1, z -1, s +10, x -10\r").ok();
-    writeln!(&mut tx, "Mode toggle:          m   (sine <-> six-step)\r").ok();
-    writeln!(
-        &mut tx,
-        "Panic reset:          r   (six-step, f=start, amp=start)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Slow reset:           q   (six-step, f=50, amp=start)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Kill output:          w   (clear MOE, all FETs off)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Print sense:          i   (PA3 IN8 isns, PA6 IN11 vbat)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Print BEMF comp:      b   (rate/s + level on observed phase)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Cycle observed phase: p   (A=PA4, B=PA5, C=PB7; manual mode only)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Toggle comp mux:      o   (auto per-sector [default] <-> manual single phase)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Cycle COMP hyst:      h   (0/none -> 1/low -> 3/high -> 0)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Cycle EXTI edges:     k   (both / raw_rise / raw_fall / phys_ZC / phys_anti / val_gated)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Commutation advance:  t +2deg / T -2deg (clamped 0..28)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "ZC path toggle:       M   (adc-confirm <-> SWIFT am32-edge)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Adjust SW blanking:   n/N (+/- 1 µs)   ./, (+/- 10 µs coarse), clamped 0..50 µs\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Dump PWM samples:     l   (per-60deg chunks: . = 0, # = 1)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Dump edge buffer:     e   (2 revs, 10us bins; f >= 50 Hz)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "UART blast test:      u   (64 KiB counting pattern, blocking)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Window record stream: g   (binary 22B frames, one per float window)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Waveform dump:        j   (85 ms burst: A/B volts + current + comp/sector, a85)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Closed loop:          y   (engage at next qualified ZC; y again = kill; desync auto-kills)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Failsafe: auto-kill at >1.5 A avg over 85 ms (stall guard, r/q re-arms)\r"
-    )
-    .ok();
-    writeln!(
-        &mut tx,
-        "Freeze/dump edge buf: E   (1st press: freeze + dump; 2nd press: resume)\r"
-    )
-    .ok();
+    // Static key reference — one blocking write; only the boot-state
+    // line below interpolates values.
+    const HELP: &str = "Frequency (Hz):       d   +1, c -1, f +10, v -10\r\n\
+        Amplitude (% of ARR): a +1, z -1, s +10, x -10\r\n\
+        Mode toggle:          m   (sine <-> six-step)\r\n\
+        Panic reset:          r   (six-step, f=start, amp=start)\r\n\
+        Slow reset:           q   (six-step, f=50, amp=start)\r\n\
+        Kill output:          w   (clear MOE, all FETs off)\r\n\
+        Print sense:          i   (PA3 IN8 isns, PA6 IN11 vbat)\r\n\
+        Print BEMF comp:      b   (rate/s + level on observed phase)\r\n\
+        Cycle observed phase: p   (A=PA4, B=PA5, C=PB7; manual mode only)\r\n\
+        Toggle comp mux:      o   (auto per-sector [default] <-> manual single phase)\r\n\
+        Cycle COMP hyst:      h   (0/none -> 1/low -> 3/high -> 0)\r\n\
+        Cycle EXTI edges:     k   (both / raw_rise / raw_fall / phys_ZC / phys_anti / val_gated)\r\n\
+        Commutation advance:  t +2deg / T -2deg (clamped 0..28)\r\n\
+        ZC path toggle:       M   (adc-confirm <-> SWIFT am32-edge)\r\n\
+        Adjust SW blanking:   n/N (+/- 1 us)   ./, (+/- 10 us coarse), clamped 0..50 us\r\n\
+        Dump PWM samples:     l   (per-60deg chunks: . = 0, # = 1)\r\n\
+        Dump edge buffer:     e   (2 revs, 10us bins; f >= 50 Hz)\r\n\
+        UART blast test:      u   (64 KiB counting pattern, blocking)\r\n\
+        Window record stream: g   (binary 22B frames, one per float window)\r\n\
+        Waveform dump:        j   (85 ms burst: A/B volts + current + comp/sector, a85)\r\n\
+        Closed loop:          y   (engage at next qualified ZC; y again = kill; desync auto-kills)\r\n\
+        Failsafe: auto-kill at >1.5 A avg over 85 ms (stall guard, r/q re-arms)\r\n\
+        Freeze/dump edge buf: E   (1st press: freeze + dump; 2nd press: resume)\r\n";
+    tx.write_str(HELP).ok();
     writeln!(
         &mut tx,
         "Boot: OUTPUT OFF, f = 0 Hz, amp = {} % (cap {}). Press r/q to arm.\r",
@@ -1784,11 +1478,8 @@ fn main() -> ! {
                         // snapshot. TIM1 PWM and TIM7 commutation run
                         // on their own — the snapshot is the only
                         // thing that needs a consistent view.
-                        let (float_s0, float_s1) = match observed_phase {
-                            comp2::ObservedPhase::A => (2u8, 5u8),
-                            comp2::ObservedPhase::B => (1, 4),
-                            comp2::ObservedPhase::C => (0, 3),
-                        };
+                        let (float_s0, float_s1) =
+                            minz_core::drive::float_sectors(observed_phase as u8);
                         let mut snap = [0u8; PWM_SAMPLE_LEN];
                         NVIC::mask(Interrupt::TIM1_UP_TIM16);
                         let head =
@@ -1797,109 +1488,38 @@ fn main() -> ! {
                             snap[i] = PWM_SAMPLE_BUF[i].load(Ordering::Relaxed);
                         }
                         unsafe { NVIC::unmask(Interrupt::TIM1_UP_TIM16) };
-                        // 2-revs-aligned dump. Walk backwards from
-                        // `head` looking for three 5→0 sector transitions.
-                        // Three transitions enclose exactly two complete
-                        // electrical revs; the oldest is the dump start,
-                        // the newest is one past the end. Always exactly
-                        // 12 chunks (6 sectors × 2 revs), each entered at
-                        // its sector start. Float sectors of the observed
-                        // phase get a `*`/`o` textbook-ZC marker at the
-                        // chunk midpoint.
-                        let mut line = [0u8; 200];
-                        let mut rev_starts: [usize; 3] = [0; 3];
-                        let mut found = 0usize;
-                        let mut newer_sec: u8 =
-                            (snap[(head + PWM_SAMPLE_LEN - 1) & (PWM_SAMPLE_LEN - 1)] >> 1) & 0x07;
-                        for i in 2..=PWM_SAMPLE_LEN {
-                            let cur_idx = (head + PWM_SAMPLE_LEN - i) & (PWM_SAMPLE_LEN - 1);
-                            let cur_sec = (snap[cur_idx] >> 1) & 0x07;
-                            if cur_sec == 5 && newer_sec == 0 {
-                                rev_starts[found] = (cur_idx + 1) & (PWM_SAMPLE_LEN - 1);
-                                found += 1;
-                                if found == 3 {
-                                    break;
-                                }
+                        // Rev alignment + chunk/ZC-marker rendering are
+                        // host-tested in minz_core::dump.
+                        match minz_core::dump::pwm_rev_span(&snap, head) {
+                            Ok((r_start, length)) => {
+                                write!(
+                                    &mut tx_writer,
+                                    "pwm_samples last 2 revs aligned to sec 0 \
+                                     ({} samples, hyst={}, obs={}, advance={}deg, blank={}us):\r\n",
+                                    length,
+                                    HYST_LEVEL.load(Ordering::Relaxed),
+                                    observed_phase.name(),
+                                    ADVANCE_DEG.load(Ordering::Relaxed),
+                                    BLANK_US.load(Ordering::Relaxed),
+                                )
+                                .ok();
+                                minz_core::dump::pwm_sector_dump(
+                                    &snap,
+                                    r_start,
+                                    length,
+                                    float_s0,
+                                    float_s1,
+                                    |b| tx_writer.write_blocking(b),
+                                );
                             }
-                            newer_sec = cur_sec;
-                        }
-                        if found >= 3 {
-                            // rev_starts[0] = newest 5→0 transition,
-                            // rev_starts[2] = oldest. Span [rev_starts[2],
-                            // rev_starts[0]) is exactly 2 complete revs.
-                            let r_start = rev_starts[2];
-                            let r_end = rev_starts[0];
-                            let length = (r_end + PWM_SAMPLE_LEN - r_start) & (PWM_SAMPLE_LEN - 1);
-                            write!(
-                                &mut tx_writer,
-                                "pwm_samples last 2 revs aligned to sec 0 \
-                                 ({} samples, hyst={}, obs={}, advance={}deg, blank={}us):\r\n",
-                                length,
-                                HYST_LEVEL.load(Ordering::Relaxed),
-                                observed_phase.name(),
-                                ADVANCE_DEG.load(Ordering::Relaxed),
-                                BLANK_US.load(Ordering::Relaxed),
-                            )
-                            .ok();
-                            let mut rev_label = 0u8;
-                            let mut chunks_seen = 0u8;
-                            let mut chunk_sec2: u8 = 0xFF;
-                            let mut line_len = 0usize;
-                            for i in 0..length {
-                                let pos = (r_start + i) & (PWM_SAMPLE_LEN - 1);
-                                let byte = snap[pos];
-                                let sec = (byte >> 1) & 0x07;
-                                let val = byte & 1;
-                                if sec != chunk_sec2 {
-                                    if line_len > 0 {
-                                        if (chunk_sec2 == float_s0 || chunk_sec2 == float_s1)
-                                            && line_len >= 2
-                                        {
-                                            let mid = line_len / 2;
-                                            line[mid] = if line[mid] == b'#' { b'*' } else { b'o' };
-                                        }
-                                        line[line_len] = b'\r';
-                                        line[line_len + 1] = b'\n';
-                                        tx_writer.write_blocking(&line[..line_len + 2]);
-                                        line_len = 0;
-                                    }
-                                    // After the first chunk, a new
-                                    // sector-0 entry means we're in
-                                    // rev 1.
-                                    if sec == 0 && chunks_seen > 0 {
-                                        rev_label = 1;
-                                    }
-                                    write!(&mut tx_writer, "[rev {} sec {}]: ", rev_label, sec,)
-                                        .ok();
-                                    tx_writer.write_blocking(&[]);
-                                    chunk_sec2 = sec;
-                                    chunks_seen += 1;
-                                }
-                                if line_len >= line.len() {
-                                    tx_writer.write_blocking(&line);
-                                    line_len = 0;
-                                }
-                                line[line_len] = if val != 0 { b'#' } else { b'.' };
-                                line_len += 1;
+                            Err(found) => {
+                                write!(
+                                    &mut tx_writer,
+                                    "pwm_samples last 2 revs: only {} rev starts in buffer (need 3)\r\n",
+                                    found,
+                                )
+                                .ok();
                             }
-                            if line_len > 0 {
-                                if (chunk_sec2 == float_s0 || chunk_sec2 == float_s1)
-                                    && line_len >= 2
-                                {
-                                    let mid = line_len / 2;
-                                    line[mid] = if line[mid] == b'#' { b'*' } else { b'o' };
-                                }
-                                line[line_len] = b'\r';
-                                line[line_len + 1] = b'\n';
-                                tx_writer.write_blocking(&line[..line_len + 2]);
-                            }
-                        } else {
-                            write!(
-                                &mut tx_writer,
-                                "pwm_samples last 2 revs: only {} rev starts in buffer (need 3)\r\n",
-                                found,
-                            )
-                            .ok();
                         }
                     }
                     b'y' => {
@@ -2013,41 +1633,24 @@ fn main() -> ! {
                             PWM_FREQUENCY_HZ,
                         )
                         .ok();
-                        // 8 payload bytes per frame = 2 Ascii85 groups
-                        // = 10 chars; 8 frames per output line.
-                        let mut line = [0u8; 82];
-                        let mut pos = 0usize;
-                        for k in 0..adc_sync::WAX_FRAMES {
-                            let f = ((adc_idx + k) % adc_sync::WAX_FRAMES) * adc_sync::WAX_CHANS;
-                            let a = adc_sync::wax_word(f);
-                            let b_ph = adc_sync::wax_word(f + 1);
-                            let cur = adc_sync::wax_word(f + 2);
-                            let st = status[(pwm_head + k) & (PWM_SAMPLE_LEN - 1)] as u16;
-                            let w = [a, b_ph, cur, st];
-                            let mut bytes = [0u8; 8];
-                            for (n, v) in w.iter().enumerate() {
-                                bytes[2 * n..2 * n + 2].copy_from_slice(&v.to_le_bytes());
-                            }
-                            line[pos..pos + 5].copy_from_slice(&a85::encode_group(
-                                bytes[0..4].try_into().unwrap(),
-                            ));
-                            line[pos + 5..pos + 10].copy_from_slice(&a85::encode_group(
-                                bytes[4..8].try_into().unwrap(),
-                            ));
-                            pos += 10;
-                            if pos >= 80 {
-                                line[pos] = b'\r';
-                                line[pos + 1] = b'\n';
-                                tx_writer.write_blocking(&line[..pos + 2]);
-                                pos = 0;
-                            }
-                        }
-                        if pos > 0 {
-                            line[pos] = b'\r';
-                            line[pos + 1] = b'\n';
-                            tx_writer.write_blocking(&line[..pos + 2]);
-                        }
-                        tx_writer.write_blocking(b"end\r\n");
+                        // Framing (LE word packing, 2 a85 groups /
+                        // frame, 80-char lines, "end") is host-tested
+                        // in minz_core::dump; this site only supplies
+                        // the ring accessors.
+                        minz_core::dump::wax_cdump(
+                            adc_sync::WAX_FRAMES,
+                            |k| {
+                                let f =
+                                    ((adc_idx + k) % adc_sync::WAX_FRAMES) * adc_sync::WAX_CHANS;
+                                [
+                                    adc_sync::wax_word(f),
+                                    adc_sync::wax_word(f + 1),
+                                    adc_sync::wax_word(f + 2),
+                                    status[(pwm_head + k) & (PWM_SAMPLE_LEN - 1)] as u16,
+                                ]
+                            },
+                            |b| tx_writer.write_blocking(b),
+                        );
                         adc_sync::resume_waveform();
                     }
                     b'e' => {
@@ -2159,22 +1762,17 @@ fn main() -> ! {
                         // none / low / high). Wrapped in `free` so the
                         // .modify() race with TIM7's per-fire polarity
                         // write on the same CSR is closed.
-                        let cur = HYST_LEVEL.load(Ordering::Relaxed);
-                        let next = match cur {
-                            0 => 1,
-                            1 => 3,
-                            _ => 0,
-                        };
+                        let next = minz_core::ui::next_hyst(HYST_LEVEL.load(Ordering::Relaxed));
                         free(|_| {
                             HYST_LEVEL.store(next, Ordering::Relaxed);
                             comp2::set_hysteresis(next);
                         });
-                        let name = match next {
-                            0 => "0/none",
-                            1 => "1/low",
-                            _ => "3/high",
-                        };
-                        write!(&mut tx_writer, "hyst = {}\r\n", name).ok();
+                        write!(
+                            &mut tx_writer,
+                            "hyst = {}\r\n",
+                            minz_core::ui::hyst_name(next)
+                        )
+                        .ok();
                         tx_writer.write_blocking(&[]);
                     }
                     b'n' | b'N' | b'.' | b',' => {
@@ -2188,14 +1786,7 @@ fn main() -> ! {
                         // useful bound (above that we're gating
                         // entire cycles, including legitimate BEMF
                         // edges).
-                        let cur = BLANK_US.load(Ordering::Relaxed) as i32;
-                        let delta: i32 = match b {
-                            b'n' => 1,
-                            b'N' => -1,
-                            b'.' => 10,
-                            _ => -10,
-                        };
-                        let next = (cur + delta).clamp(0, 50) as u16;
+                        let next = minz_core::ui::blank_adjust(BLANK_US.load(Ordering::Relaxed), b);
                         BLANK_US.store(next, Ordering::Relaxed);
                         write!(
                             &mut tx_writer,
@@ -2212,8 +1803,10 @@ fn main() -> ! {
                         // observation days — useless for CL tuning,
                         // and negative advance is proven destructive:
                         // it collapses the rotor to a crawl.)
-                        let cur = ADVANCE_DEG.load(Ordering::Relaxed);
-                        let next = (cur + if b == b't' { 2 } else { -2 }).clamp(0, 28);
+                        let next = minz_core::ui::advance_adjust(
+                            ADVANCE_DEG.load(Ordering::Relaxed),
+                            b == b't',
+                        );
                         ADVANCE_DEG.store(next, Ordering::Relaxed);
                         write!(&mut tx_writer, "advance = {}°\r\n", next).ok();
                         tx_writer.write_blocking(&[]);
@@ -2225,23 +1818,19 @@ fn main() -> ! {
                         // with motor off. Wrapped in `free` so the
                         // .modify() race with TIM7's per-fire
                         // `set_exti_edges` is closed.
-                        let cur = EDGE_MODE.load(Ordering::Relaxed);
-                        let next = if cur >= 5 { 0 } else { cur + 1 };
+                        let next = minz_core::ui::next_edge_mode(EDGE_MODE.load(Ordering::Relaxed));
                         free(|_| {
                             EDGE_MODE.store(next, Ordering::Relaxed);
                             let sector = CURRENT_SECTOR.load(Ordering::Relaxed);
                             let (re, fe) = edges_for(next, sector);
                             comp2::set_exti_edges(re, fe);
                         });
-                        let name = match next {
-                            0 => "both",
-                            1 => "raw rise",
-                            2 => "raw fall",
-                            3 => "phys ZC (rise even / fall odd)",
-                            4 => "phys anti-ZC (fall even / rise odd)",
-                            _ => "value-gated (both edges, VALUE=1 only)",
-                        };
-                        write!(&mut tx_writer, "edges = {}\r\n", name).ok();
+                        write!(
+                            &mut tx_writer,
+                            "edges = {}\r\n",
+                            minz_core::ui::edge_mode_name(next)
+                        )
+                        .ok();
                         tx_writer.write_blocking(&[]);
                     }
                     _ => {}
@@ -2270,15 +1859,8 @@ fn main() -> ! {
                     let buf = &snap;
                     let is_frozen = EDGE_DUMP_FREEZE.load(Ordering::Relaxed);
 
-                    let edge_mode = EDGE_MODE.load(Ordering::Relaxed);
-                    let edge_name = match edge_mode {
-                        0 => "both",
-                        1 => "raw_rise",
-                        2 => "raw_fall",
-                        3 => "phys_ZC",
-                        4 => "phys_anti",
-                        _ => "val_gated",
-                    };
+                    let edge_name =
+                        minz_core::ui::edge_mode_short(EDGE_MODE.load(Ordering::Relaxed));
 
                     let valid = window_end_tick != 0 && sec_starts.iter().all(|&t| t != 0);
                     if !valid {
@@ -2305,46 +1887,15 @@ fn main() -> ! {
                             if is_frozen { ", FROZEN" } else { "" },
                         )
                         .ok();
-                        let mut line2 = [0u8; 256];
-                        for s in 0..12u32 {
-                            let rev = s / 6;
-                            let sec = s % 6;
-                            let start_tick = sec_starts[s as usize];
-                            let end_tick = if s + 1 < 12 {
-                                sec_starts[(s + 1) as usize]
-                            } else {
-                                window_end_tick
-                            };
-                            let start_off = (start_tick.wrapping_sub(window_start_tick)
-                                & HALF_TICK_MASK)
-                                as usize;
-                            let end_off = (end_tick.wrapping_sub(window_start_tick)
-                                & HALF_TICK_MASK)
-                                as usize;
-                            write!(&mut tx_writer, "[rev {} sec {}]: ", rev, sec,).ok();
-                            tx_writer.write_blocking(&[]);
-                            if end_off > HALF_TICKS || end_off < start_off {
-                                tx_writer.write_blocking(b"(range invalid)\r\n");
-                                continue;
-                            }
-                            let mut line_len = 0usize;
-                            for k in start_off..end_off {
-                                if line_len >= line2.len() {
-                                    tx_writer.write_blocking(&line2);
-                                    line_len = 0;
-                                }
-                                line2[line_len] = match buf[k] {
-                                    0 => b'.',
-                                    1 => b'o',
-                                    2 => b'O',
-                                    3 => b'*',
-                                    _ => b'#',
-                                };
-                                line_len += 1;
-                            }
-                            tx_writer.write_blocking(&line2[..line_len]);
-                            write!(&mut tx_writer, " [{}]\r\n", sec_counts[s as usize],).ok();
-                        }
+                        // Sector chunking + glyph rendering are
+                        // host-tested in minz_core::dump.
+                        minz_core::dump::edge_dump_body(
+                            buf,
+                            &sec_starts,
+                            &sec_counts,
+                            window_end_tick,
+                            |b| tx_writer.write_blocking(b),
+                        );
                     }
                 }
                 // Publish any changes to the motor-drive atomics and
@@ -2363,7 +1914,7 @@ fn main() -> ! {
                 }
                 if electrical_hz != prev_hz {
                     ANGLE_INC.store(angle_inc_fp(electrical_hz), Ordering::Relaxed);
-                    SECTOR_GATE_US.store(sector_gate_us(electrical_hz), Ordering::Relaxed);
+                    SECTOR_GATE_US.store(open_loop_gate_us(electrical_hz), Ordering::Relaxed);
                     write!(&mut tx_writer, "f={}\r\n", electrical_hz).ok();
                 }
                 if waveform != prev_mode {
@@ -2403,33 +1954,22 @@ fn main() -> ! {
                     )
                     .ok();
                 }
-                // Black-box dump: the 64 events leading to the kill.
-                // dt is µs since the previous recorded event.
-                const BB_NAMES: [&str; 10] = [
-                    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ",
-                ];
+                // Black-box dump: the 64 events leading to the kill,
+                // dt in µs since the previous recorded event. Line
+                // rendering is host-tested in minz_core::blackbox.
                 let idx = BB_IDX.load(Ordering::Relaxed) as usize;
-                let mut prev_t: Option<u16> = None;
-                for k in 0..BB_LEN {
-                    let i = (idx + k) % BB_LEN;
-                    let ty = BB_TYPE[i].load(Ordering::Relaxed);
-                    if ty == 0xFF {
-                        continue;
-                    }
-                    let t = BB_T[i].load(Ordering::Relaxed);
-                    let dt = prev_t.map(|p| t.wrapping_sub(p) as u32 * 10).unwrap_or(0);
-                    prev_t = Some(t);
-                    write!(
-                        &mut tx_writer,
-                        "bb +{:6}us {} s{} d={}\r\n",
-                        dt,
-                        BB_NAMES.get(ty as usize).copied().unwrap_or("???"),
-                        BB_SEC[i].load(Ordering::Relaxed),
-                        BB_DATA[i].load(Ordering::Relaxed),
-                    )
-                    .ok();
-                    tx_writer.service();
-                }
+                minz_core::blackbox::format_dump(
+                    (0..BB_LEN).map(|k| {
+                        let i = (idx + k) % BB_LEN;
+                        minz_core::blackbox::Event {
+                            t: BB_T[i].load(Ordering::Relaxed),
+                            ty: BB_TYPE[i].load(Ordering::Relaxed),
+                            sector: BB_SEC[i].load(Ordering::Relaxed),
+                            data: BB_DATA[i].load(Ordering::Relaxed),
+                        }
+                    }),
+                    |b| tx_writer.write_blocking(b),
+                );
                 for e in BB_TYPE.iter() {
                     e.store(0xFF, Ordering::Relaxed);
                 }
@@ -2502,12 +2042,12 @@ fn mode_name(w: Waveform) -> &'static str {
 
 #[inline]
 fn clamp_amp(v: i32) -> u16 {
-    v.clamp(AMP_MIN as i32, AMP_MAX as i32) as u16
+    minz_core::ui::clamp_pct(v, AMP_MIN, AMP_MAX)
 }
 
 #[inline]
 fn clamp_hz(v: i32) -> u32 {
-    v.clamp(FREQ_MIN as i32, FREQ_MAX as i32) as u32
+    minz_core::ui::clamp_hz(v, FREQ_MIN, FREQ_MAX)
 }
 
 #[exception]

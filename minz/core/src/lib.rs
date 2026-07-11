@@ -14,10 +14,14 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod a85;
 pub mod blackbox;
+pub mod drive;
+pub mod dump;
 pub mod estimator;
 pub mod guards;
 pub mod throttle;
 pub mod ticks;
 pub mod timing;
+pub mod ui;
 pub mod wire;

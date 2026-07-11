@@ -407,16 +407,23 @@ switch, HEDGEHOG A/B on the capped board.
 
 ## minz-core — host-testable control logic (`core/`, 2026-07-11)
 
-The FALCON loop's pure logic lives in `minz/core/` (`minz-core`,
-no_std, zero deps): `timing` (advance/delay/gate/blank/persistence/
-confirm), `estimator` (the full OWL accept incl. re-acq re-seed),
-`guards` (watchdog/OC/sag + `since_us`), `throttle` (slew+snap),
-`ticks` (`compose_1us`, fixed protocol — firmware adoption pending),
-`wire` (MAGPIE v4 encode/decode), `blackbox`. 49 tests, ~98 % line
-coverage (`cd core; cargo test` / `cargo llvm-cov`); every past
-incident is a named regression test. Firmware (`motor_tester2.rs`)
-calls into it at every corresponding site — change loop behavior in
-core, never inline. `core/` is a detached workspace with its own
+The FALCON loop's pure logic AND every wire/dump serializer live in
+`minz/core/` (`minz-core`, no_std, zero deps): `timing` (advance/
+delay/gate/blank/persistence/confirm), `estimator` (the full OWL
+accept incl. re-acq re-seed), `guards` (watchdog/OC/sag +
+`since_us`), `throttle` (slew+snap), `ticks` (`compose_1us`, fixed
+protocol — firmware adoption pending), `wire` (MAGPIE v4 WindowRec —
+the firmware uses this struct directly), `blackbox` (ring +
+`format_dump`), `drive` (sector geometry: angle_inc_fp, gate,
+float-sector tables, edges_for), `dump` (WAXWING cdump framer,
+`l`/`e` dump renderers — pure data+sink closures), `ui` (key clamps/
+cyclers — the clamps are the envelope bounds), `a85` (lib
+re-exports). 68 tests, 98.5 % line coverage (`cd core; cargo test` /
+`cargo llvm-cov`); every past incident is a named regression test.
+Firmware (`motor_tester2.rs`, ~2,850 lines: ISR glue + statics +
+init) calls into core at every corresponding site — change loop or
+wire behavior in core, never inline. `UartTxWriter` (DMA TX ring) is
+`minz::uart_tx`. `core/` is a detached workspace with its own
 `.cargo/config.toml` (host target) — do not fold it into the parent
 or tests build for ARM. Details: FALCON_HARDENING.md §17.
 

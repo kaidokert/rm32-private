@@ -448,6 +448,28 @@ Behavioral equivalence after the rewiring: verified on board 2 —
 linear current 47→175 mA, vbat flat (`captures/refactor_sanity_map
 .png`). Zero loop-logic changes intended, zero observed.
 
+**Second pass (same day)** — "was 3,300 lines the best you can do?"
+No. Everything serializable moved too: `a85` (core now owns it; the
+lib re-exports), `dump` (WAXWING cdump framer, `l`-dump rev-span
+search + sector chunking + ZC markers, `e`-dump glyph renderer — all
+pure `data + sink closure` functions, byte-exact against fixture
+buffers), `blackbox::format_dump` (the bb desync lines), `drive`
+(angle_inc_fp / open_loop_gate_us / float_sector_mask /
+float_sectors / edges_for / SECTOR_FLOAT_PHASE_IDX — the sector
+geometry that was WRONG once already, now pinned by a
+mask↔pair↔table consistency test), `ui` (key clamps and cyclers —
+the clamps ARE the envelope bounds). `UartTxWriter` moved to
+`minz::uart_tx` (hardware, not host-testable, but out of the
+example); the help banner collapsed to one const; the firmware
+`WindowRec` is now literally `minz_core::wire::WindowRec` (duplicate
+struct deleted). 68 tests, 98.5 % line coverage. motor_tester2.rs:
+3,308 → 2,855 lines, and every byte it emits on the wire is now
+produced by host-tested code. Bench: ladder re-verified (431/603/
+746 Hz, qzc 100 %, `captures/refactor2_sanity_map.png`) AND the
+rewritten `l`/`e`/`j` dumps exercised live — `e` renders 12 chunks,
+`j` streams clean a85, `l` correctly took its too-few-revs path
+(f=50 × 42 ms ring is marginal by design).
+
 ---
 
 ## Suggested order from here

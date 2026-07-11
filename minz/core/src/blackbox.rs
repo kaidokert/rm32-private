@@ -71,6 +71,45 @@ impl Default for BlackBox {
     }
 }
 
+/// Event-type display names, indexed by `Event::ty`.
+pub const EV_NAMES: [&str; 10] = [
+    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ",
+];
+
+/// Render a desync dump: one `bb +<dt>us NAME s<sec> d=<data>` line
+/// per event, dt in µs since the previous event (t is in 10 µs
+/// ticks, wrapping u16). `events` arrive oldest-first (e.g. from
+/// [`BlackBox::replay`], or the firmware's atomic-array ring).
+/// Events with `ty == 0xFF` (empty slots) are skipped.
+pub fn format_dump<S: FnMut(&[u8])>(events: impl Iterator<Item = Event>, mut sink: S) {
+    use core::fmt::Write;
+    struct SinkFmt<'a, S: FnMut(&[u8])> {
+        sink: &'a mut S,
+    }
+    impl<S: FnMut(&[u8])> Write for SinkFmt<'_, S> {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            (self.sink)(s.as_bytes());
+            Ok(())
+        }
+    }
+    let mut prev_t: Option<u16> = None;
+    for e in events {
+        if e.ty == 0xFF {
+            continue;
+        }
+        let dt = prev_t.map(|p| e.t.wrapping_sub(p) as u32 * 10).unwrap_or(0);
+        prev_t = Some(e.t);
+        let _ = write!(
+            SinkFmt { sink: &mut sink },
+            "bb +{:6}us {} s{} d={}\r\n",
+            dt,
+            EV_NAMES.get(e.ty as usize).copied().unwrap_or("???"),
+            e.sector,
+            e.data,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +143,46 @@ mod tests {
         assert_eq!(ts.len(), BB_LEN);
         assert_eq!(ts[0], 100 - BB_LEN as u16);
         assert_eq!(*ts.last().unwrap(), 99);
+    }
+
+    #[test]
+    fn dump_renders_deltas_and_names() {
+        let events = [
+            Event {
+                t: 100,
+                ty: 7,
+                sector: 2,
+                data: 650,
+            }, // ENG
+            Event {
+                t: 165,
+                ty: 3,
+                sector: 3,
+                data: 12,
+            }, // ACC, +650 µs
+            Event {
+                t: 100,
+                ty: 0xFF,
+                sector: 0,
+                data: 0,
+            }, // empty: skipped
+            Event {
+                t: 5,
+                ty: 6,
+                sector: 4,
+                data: 1,
+            }, // DSY, wraps
+        ];
+        let mut out = Vec::new();
+        format_dump(events.into_iter(), |b: &[u8]| out.extend_from_slice(b));
+        let s = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = s.split("\r\n").filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains("ENG s2 d=650"));
+        assert!(lines[0].contains("+     0us"));
+        assert!(lines[1].contains("+   650us ACC"));
+        // 5 - 165 wraps in u16: (5 - 165) mod 65536 = 65376 → ×10 µs.
+        assert!(lines[2].contains("+653760us DSY s4 d=1"), "{}", lines[2]);
     }
 
     #[test]
