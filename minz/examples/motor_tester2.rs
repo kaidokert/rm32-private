@@ -412,7 +412,12 @@ static ANGLE_ACCUM: AtomicU32 = AtomicU32::new(0);
 static ANGLE_INC: AtomicU32 = AtomicU32::new(0);
 
 /// Amplitude as percent of ARR, 0..=`AMP_MAX`. Read each tick.
+/// APPLIED value — slewed by TIM7 toward `AMP_TARGET_PCT` at
+/// 1 %/50 ms so throttle changes never step (item 5: step
+/// transients at speed tripped the current envelope).
 static AMPLITUDE_PCT: AtomicU8 = AtomicU8::new(0);
+/// Where the keys want the amplitude to be.
+static AMP_TARGET_PCT: AtomicU8 = AtomicU8::new(0);
 
 /// Bitfield: bit `s` set iff sector `s` is a float window for the
 /// currently observed phase. Used by the ISR to decide whether to
@@ -1245,6 +1250,7 @@ fn main() -> ! {
     // re-arm publishes a clean delta from a known baseline.
     SIX_STEP_MODE.store(true, Ordering::Relaxed);
     AMPLITUDE_PCT.store(AMP_START as u8, Ordering::Relaxed);
+    AMP_TARGET_PCT.store(AMP_START as u8, Ordering::Relaxed);
     ANGLE_INC.store(angle_inc_fp(FREQ_START), Ordering::Relaxed);
     FLOAT_SECTOR_MASK.store(
         float_sector_mask(comp2::ObservedPhase::A),
@@ -1570,6 +1576,14 @@ fn main() -> ! {
                         waveform = Waveform::SixStep;
                         amplitude_pct = AMP_START;
                         electrical_hz = FREQ_START;
+                        // SNAP applied = target on arm: the slew is
+                        // for changes while RUNNING. An abort at amp
+                        // 50 left the applied duty slewing down for
+                        // 2 s while the next engage's spin-up ran at
+                        // ~45 % — junk estimator seeds, 4/4 failed
+                        // engages.
+                        AMPLITUDE_PCT.store(AMP_START as u8, Ordering::Relaxed);
+                        AMP_TARGET_PCT.store(AMP_START as u8, Ordering::Relaxed);
                         if !output_enabled {
                             output_enabled = true;
                             MOTOR_ENABLED.store(true, Ordering::Relaxed);
@@ -1591,6 +1605,8 @@ fn main() -> ! {
                         waveform = Waveform::SixStep;
                         amplitude_pct = AMP_START;
                         electrical_hz = 50;
+                        AMPLITUDE_PCT.store(AMP_START as u8, Ordering::Relaxed);
+                        AMP_TARGET_PCT.store(AMP_START as u8, Ordering::Relaxed);
                         if !output_enabled {
                             output_enabled = true;
                             MOTOR_ENABLED.store(true, Ordering::Relaxed);
@@ -2283,7 +2299,14 @@ fn main() -> ! {
                 // print a one-line confirmation. The TIM7 ISR picks
                 // these up on its next tick.
                 if amplitude_pct != prev_amp {
-                    AMPLITUDE_PCT.store(amplitude_pct as u8, Ordering::Relaxed);
+                    // Keys set the TARGET; TIM7 slews the applied
+                    // duty toward it at 1 %/50 ms (roadmap item 5).
+                    // Step transients at speed were tripping the
+                    // current envelope (a +3 step at 1,285 Hz pulls
+                    // an 85 ms surge past even 3.8× the healthy
+                    // curve); with the slew the loop never sees a
+                    // step at all.
+                    AMP_TARGET_PCT.store(amplitude_pct as u8, Ordering::Relaxed);
                     write!(&mut tx_writer, "amp={}\r\n", amplitude_pct).ok();
                 }
                 if electrical_hz != prev_hz {
@@ -2491,7 +2514,23 @@ fn TIM7() {
     // them, so a COMP edge that fires immediately after the sector
     // store observes the matching polarity + edges (not stale ones).
     tim7_drive::clear_update_flag();
-    TIM7_COUNT.fetch_add(1, Ordering::Relaxed);
+    let tick = TIM7_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // Throttle slew limiter (roadmap item 5): the APPLIED duty walks
+    // toward the key-set target at 1 % per 50 ms (every 300th tick
+    // at 6 kHz). The loop never sees a throttle STEP — step
+    // transients at speed pulled 85 ms current surges past even
+    // 3.8× the healthy envelope. Kills (`w`, guards) bypass this
+    // entirely via MOTOR_ENABLED/all_off.
+    if tick % 300 == 0 {
+        let cur = AMPLITUDE_PCT.load(Ordering::Relaxed);
+        let tgt = AMP_TARGET_PCT.load(Ordering::Relaxed);
+        if cur < tgt {
+            AMPLITUDE_PCT.store(cur + 1, Ordering::Relaxed);
+        } else if cur > tgt {
+            AMPLITUDE_PCT.store(cur - 1, Ordering::Relaxed);
+        }
+    }
 
     // FALCON: while the closed loop drives, the crystal stepper is
     // frozen — LPTIM2 owns sector changes, mux, and window close.
