@@ -218,3 +218,21 @@ pub fn read_vbat_injected() -> u16 {
     adc.isr.write(|w| w.jeos().set_bit());
     (adc.jdr1.read().bits() & 0x0FFF) as u16
 }
+
+/// Non-blocking injected-vbat pump for a periodic ISR: harvest the
+/// previous conversion if complete (returns `Some(raw)`), then start
+/// the next. Call every tick; the 8.2 µs conversion easily finishes
+/// between 166 µs TIM7 ticks. Built for the firmware SAG KILL — the
+/// 2026-07-10 burnt motor happened because supply-sag detection
+/// lived only in a host script that looked once per ladder rung.
+pub fn vbat_pump() -> Option<u16> {
+    let adc = unsafe { &*ADC1::ptr() };
+    let out = if adc.isr.read().jeos().bit_is_set() {
+        adc.isr.write(|w| w.jeos().set_bit());
+        Some((adc.jdr1.read().bits() & 0x0FFF) as u16)
+    } else {
+        None
+    };
+    adc.cr.modify(|_, w| w.jadstart().set_bit());
+    out
+}

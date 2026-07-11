@@ -474,6 +474,24 @@ static I_TRIP_CNT: AtomicU32 = AtomicU32::new(0);
 /// re-arm works afterwards.
 static OC_TRIPPED: AtomicBool = AtomicBool::new(false);
 
+/// Live vbat raw counts, refreshed at 6 kHz by the TIM7 injected
+/// pump (scale: raw 1080 ≈ 8.11 V → 7.5 mV/count).
+static VBAT_RAW_LIVE: AtomicU16 = AtomicU16::new(0);
+/// Set by the TIM7 SAG KILL; main prints and clears.
+static VBAT_SAGGED: AtomicBool = AtomicBool::new(false);
+/// Unloaded vbat raw captured at each arm (`r`/`q`) — the sag kill
+/// is RELATIVE: −10 % from this baseline. From 8.0 V that kills at
+/// 7.2 V — right as the supply limit starts to engage, with volts of
+/// margin — and re-arming after a bench-dial change re-baselines
+/// automatically. (A fixed near-brownout threshold would only fire
+/// after the bus already collapsed.)
+static VBAT_BASELINE_RAW: AtomicU16 = AtomicU16::new(0);
+/// Absolute backstop ≈ 5.95 V: below this the MCU's 3.3 V rail is
+/// one transient from brownout — which WEDGES the chip with the
+/// bridge frozen and every software guard dead (the 2026-07-10
+/// burnt motor). Applies even if the baseline was low.
+const VBAT_KILL_RAW: u16 = 793;
+
 /// Raw COMP edges in the current window (every EXTI fire).
 static WINDOW_RAW: AtomicU32 = AtomicU32::new(0);
 /// Edges that survived every gate (blanking, mode-5, half-window).
@@ -1155,6 +1173,23 @@ fn main() -> ! {
     // off-limits; vbat goes through the injected group instead.
     adc_sync::start(adc_sync::SAMPLE_TICKS);
 
+    // INDEPENDENT WATCHDOG — the guard that survives the MCU. The
+    // 2026-07-10 burnt motor: deep bus sag browned out the core,
+    // which WEDGED with the bridge frozen in its last state; every
+    // software guard died with it and the PSU poured into a stalled
+    // winding. IWDG (LSI 32 kHz / 32 → 1 kHz, reload 1000 = ~1 s)
+    // resets a wedged chip and releases the bridge no matter what
+    // the firmware was doing. Refreshed once per main-loop pass; the
+    // longest legitimate main-loop stall (waxwing dump ~100 ms) has
+    // 10× margin.
+    unsafe {
+        let iwdg = &*stm32::IWDG::ptr();
+        iwdg.kr.write(|w| w.key().bits(0x5555));
+        iwdg.pr.write(|w| w.pr().bits(0b011));
+        iwdg.rlr.write(|w| w.rl().bits(1000));
+        iwdg.kr.write(|w| w.key().bits(0xCCCC));
+    }
+
     // FALCON commutation one-shot (armed only when the loop engages).
     minz::lptim2_oneshot::init();
 
@@ -1466,6 +1501,12 @@ fn main() -> ! {
         let mut next_microloop = epoch_start + MICROLOOP_TICKS;
 
         while now_u64() < next_epoch {
+            // IWDG refresh — once per microloop (~10 ms cadence,
+            // 100× inside the 1 s window). If the core wedges, this
+            // stops and the watchdog resets the chip, releasing the
+            // bridge.
+            unsafe { (*stm32::IWDG::ptr()).kr.write(|w| w.key().bits(0xAAAA)) };
+
             // Slack: spin idle counter until next microloop boundary.
             // ISRs preempt this naturally and steal counter increments;
             // that's exactly how "busy" gets measured.
@@ -1517,6 +1558,10 @@ fn main() -> ! {
                         // Panic reset: back to a known-good idle config.
                         // The existing prev_amp / prev_hz / prev_mode delta
                         // checks below pick this up and print the changes.
+                        // Arm-time vbat baseline for the −10 % sag kill
+                        // (captured unloaded, before the drive engages).
+                        VBAT_BASELINE_RAW
+                            .store(VBAT_RAW_LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
                         waveform = Waveform::SixStep;
                         amplitude_pct = AMP_START;
                         electrical_hz = FREQ_START;
@@ -1536,6 +1581,8 @@ fn main() -> ! {
                         // is around the floor of where the rotor still
                         // tracks cleanly without cogging — a useful
                         // "watch the waveforms" speed.
+                        VBAT_BASELINE_RAW
+                            .store(VBAT_RAW_LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
                         waveform = Waveform::SixStep;
                         amplitude_pct = AMP_START;
                         electrical_hz = 50;
@@ -1965,7 +2012,10 @@ fn main() -> ! {
                         let i_raw = LAST_I_RAW.load(Ordering::Relaxed);
                         let i_mv = sense_adc.adc_to_mv(i_raw);
                         let i_ma = i_mv as u32 * 1000 / ISNS_MV_PER_AMP;
-                        let v_raw = adc_sync::read_vbat_injected();
+                        // From the 6 kHz TIM7 pump — a blocking
+                        // injected read here would race the pump's
+                        // JADSTART/JEOS handling.
+                        let v_raw = VBAT_RAW_LIVE.load(Ordering::Relaxed);
                         let v_mv = sense_adc.adc_to_mv(v_raw);
                         let v_supply_mv = v_mv as u32 * VBAT_DIVIDER_X100 / 100;
                         write!(
@@ -2307,12 +2357,26 @@ fn main() -> ! {
             }
             // Overcurrent trip report: the ISR already killed the
             // output; sync main's mirror so `r`/`q` re-arm works.
+            if VBAT_SAGGED.load(Ordering::Relaxed) {
+                VBAT_SAGGED.store(false, Ordering::Relaxed);
+                output_enabled = false;
+                let raw = VBAT_RAW_LIVE.load(Ordering::Relaxed) as u32;
+                let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed) as u32;
+                write!(
+                    &mut tx_writer,
+                    "!! VBAT SAG KILL: bus {} mV < 90% of arm baseline {} mV - output killed (r/q re-arms)\r\n",
+                    raw * 7507 / 1000,
+                    base * 7507 / 1000,
+                )
+                .ok();
+                tx_writer.write_blocking(&[]);
+            }
             if OC_TRIPPED.load(Ordering::Relaxed) {
                 OC_TRIPPED.store(false, Ordering::Relaxed);
                 output_enabled = false;
                 write!(
                     &mut tx_writer,
-                    "!! OVERCURRENT TRIP: >2000 mA avg over 85 ms - output killed (r/q re-arms)\r\n",
+                    "!! OVERCURRENT TRIP: current above throttle envelope for 85 ms - output killed (r/q re-arms)\r\n",
                 )
                 .ok();
             }
@@ -2423,6 +2487,28 @@ fn TIM7() {
     // store observes the matching polarity + edges (not stale ones).
     tim7_drive::clear_update_flag();
     TIM7_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // FIRMWARE SAG KILL (6 kHz): harvest the rolling injected vbat
+    // conversion; below ~5.95 V with the drive armed, kill NOW —
+    // sub-6 V bus excursions brown out the 3.3 V rail, which wedges
+    // the MCU with the bridge frozen and every software guard dead.
+    // Host-script sag checks look once per ladder rung; this looks
+    // 6,000 times a second.
+    if let Some(raw) = minz::adc_sync::vbat_pump() {
+        VBAT_RAW_LIVE.store(raw, Ordering::Relaxed);
+        // Kill at −10 % from the arm-time baseline (or the absolute
+        // brownout backstop, whichever is higher).
+        let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
+        let thresh = (base - base / 10).max(VBAT_KILL_RAW);
+        if raw < thresh && MOTOR_ENABLED.load(Ordering::Relaxed) {
+            MOTOR_ENABLED.store(false, Ordering::Relaxed);
+            tim1_motor_pwm::all_off();
+            comp2::set_exti_enabled(false);
+            CL_ACTIVE.store(false, Ordering::Relaxed);
+            CL_ARMED.store(false, Ordering::Relaxed);
+            VBAT_SAGGED.store(true, Ordering::Relaxed);
+        }
+    }
 
     // FALCON: while the closed loop drives, the crystal stepper is
     // frozen — LPTIM2 owns sector changes, mux, and window close.
@@ -3015,13 +3101,18 @@ fn TIM1_UP_TIM16() {
         // stalled drive at low duty IS phase ≈ battery.
         let avg_raw = acc >> I_TRIP_SHIFT;
         let tripped = if CL_ACTIVE.load(Ordering::Relaxed) {
-            let duty = AMPLITUDE_PCT.load(Ordering::Relaxed).max(1) as u32;
-            // 2.8 A battery-referred — ABOVE the PSU's 2.5 A CC
-            // limit, so the supply owns the operating boundary (the
-            // amp-54 rung proved the loop rides CC sag at 99 %
-            // coverage: vbat 7.3→5.64 V at 2.4 A, lock held). The
-            // trip only catches sense/wiring anomalies now.
-            avg_raw * duty / 100 > 105
+            // THROTTLE-SCALED envelope (phase-referred, same units as
+            // the lock maps' i_avg). The healthy locked curve is
+            // near-linear in throttle: ~400 mA @ amp 30, ~520 @ 45,
+            // ~780 @ 48. Envelope = 30·amp + 300 mA ≈ (amp·9/8 + 11)
+            // raw counts — 2× above the healthy curve at every
+            // throttle, while a divergence to 3-4 A (the burnt-motor
+            // signature: in-sync current is linear, a stall/desync
+            // jumps 5×) trips within one 85 ms window REGARDLESS of
+            // throttle. Replaces a flat 2.8 A check that a 3.5 A
+            // stall at amp 56 sailed under long enough to matter.
+            let amp = AMPLITUDE_PCT.load(Ordering::Relaxed) as u32;
+            avg_raw > amp * 9 / 8 + 11
         } else {
             avg_raw > I_TRIP_RAW // 2.0 A phase-referred
         };
