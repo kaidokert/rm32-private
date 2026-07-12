@@ -2577,7 +2577,14 @@ fn LPTIM2() {
         );
     }
     let sector = minz_core::drive::next_sector(prev);
-    let duty = open_loop::six_step_duty(max_duty(), AMPLITUDE_PCT.load(Ordering::Relaxed) as u16);
+    // FIX #2: clamp the commanded amplitude when flying blind (a
+    // sustained ZC-miss cascade) so the monster current ramp can't
+    // sag-kill. Isolated misses ride through at full drive.
+    let amp = minz_core::guards::blind_amp_clamp(
+        AMPLITUDE_PCT.load(Ordering::Relaxed) as u16,
+        CL_NOZ_RUN.load(Ordering::Relaxed),
+    );
+    let duty = open_loop::six_step_duty(max_duty(), amp);
     tim1_motor_pwm::set_six_step(sector, duty);
     comp2::set_inm(SECTOR_FLOAT_PHASE[sector as usize]);
     let (re, fe) = edges_for(EDGE_MODE.load(Ordering::Relaxed), sector);

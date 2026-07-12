@@ -226,11 +226,50 @@ pub fn overcurrent(avg_phase_raw: u32, cl_active: bool) -> bool {
     }
 }
 
+/// FIX #2 — blind-free-run current clamp. During a ZC-miss cascade
+/// (the monster mechanism: `monster1..3` autopsy) the loop commutates
+/// BLIND at the frozen interval while the field drifts off the still-
+/// turning rotor, ramping line-line current 1 A → 4 A+ over ~15
+/// windows until it sags the bus and trips the kill (= the chop).
+///
+/// `noz_run` = consecutive A/B-window ZC misses since the last accept
+/// (`cl_noz_run`, reset on every accept). Isolated misses (run 1–2)
+/// are RIDDEN THROUGH at full drive — that's normal, 0.2–2.2 % of
+/// windows. A sustained cascade (run ≥3) means we're flying blind, so
+/// progressively cut the commanded amplitude: don't pump full current
+/// into a field whose rotor position we've lost. Caps the monster
+/// before it can sag-kill; re-acquisition (fix #1) then re-locks at
+/// the reduced level, and normal drive resumes on the next accept.
+#[inline]
+pub fn blind_amp_clamp(base_amp: u16, noz_run: u8) -> u16 {
+    if noz_run < 3 {
+        base_amp
+    } else if noz_run < 6 {
+        (base_amp * 2 / 3).max(1)
+    } else {
+        (base_amp / 3).max(1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // ---- since_us: the watchdog underflow race ----
+
+    #[test]
+    fn blind_amp_clamp_rides_isolated_misses_caps_cascade() {
+        // Isolated misses (normal, ridden through): full drive.
+        assert_eq!(blind_amp_clamp(30, 0), 30);
+        assert_eq!(blind_amp_clamp(30, 2), 30);
+        // Sustained cascade: progressive cut.
+        assert_eq!(blind_amp_clamp(30, 3), 20); // 2/3
+        assert_eq!(blind_amp_clamp(30, 5), 20);
+        assert_eq!(blind_amp_clamp(30, 6), 10); // 1/3
+        assert_eq!(blind_amp_clamp(30, 20), 10);
+        // Never zero (keep the field alive for re-acq).
+        assert_eq!(blind_amp_clamp(1, 20), 1);
+    }
 
     #[test]
     fn regression_watchdog_underflow_race_v3x() {
