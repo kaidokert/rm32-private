@@ -640,17 +640,6 @@ static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 static CL_NOZ_RUN: AtomicU8 = AtomicU8::new(0);
 /// Re-acquisition mode active.
 static CL_REACQ: AtomicBool = AtomicBool::new(false);
-/// Established-lock gate for fixes #1 and #2: set true only after a
-/// SETTLED lock (`CL_LOCK_ACCEPTS` consecutive accepts), cleared on
-/// arm/kill. Distinguishes a settled lock (where the first-miss gate-
-/// widen and the blind-amp clamp are safe) from the fragile engage +
-/// early-settling transition, where either corrupts/starves the lock
-/// (observed: engage failures). Set on the first accept it fired
-/// during the still-fragile settling, so it needs the accept count.
-static CL_LOCKED: AtomicBool = AtomicBool::new(false);
-/// Consecutive accepts since engage; CL_LOCKED latches at LOCK_SETTLE.
-static CL_LOCK_ACCEPTS: AtomicU8 = AtomicU8::new(0);
-const LOCK_SETTLE: u8 = 12;
 
 /// FALCON v2: deferred ZC confirmation. The COMP ISR's 0.6 µs
 /// persistence check cannot out-wait PWM dwell noise (the comparator
@@ -1354,14 +1343,6 @@ fn main() -> ! {
             // printing success. Draining the flags first makes the
             // mirror honest before any key reads it.
             //
-            // Fix #1 established-lock gate: CL_LOCKED holds only while
-            // CL is active; any disengage (kill/desync/re-arm) clears
-            // it so the next engage starts in the protected regime.
-            if !CL_ACTIVE.load(Ordering::Relaxed) {
-                CL_LOCKED.store(false, Ordering::Relaxed);
-                CL_LOCK_ACCEPTS.store(0, Ordering::Relaxed);
-            }
-
             // FALCON desync report: the TIM7 watchdog already killed
             // the output; sync main's mirror and tell the operator.
             if CL_DESYNC.load(Ordering::Relaxed) {
@@ -2430,7 +2411,6 @@ static WINDOW_STATE: minz_core::window::WindowState<'static> = minz_core::window
     cl_active: &CL_ACTIVE,
     cl_noz_run: &CL_NOZ_RUN,
     cl_reacq: &CL_REACQ,
-    cl_locked: &CL_LOCKED,
     stream_on: &STREAM_ON,
     wrec_decim: &WREC_DECIM,
     wrec_seq: &WREC_SEQ,
@@ -2599,12 +2579,15 @@ fn LPTIM2() {
     let sector = minz_core::drive::next_sector(prev);
     // FIX #2: clamp the commanded amplitude when flying blind (a
     // sustained ZC-miss cascade) so the monster current ramp can't
-    // sag-kill. Isolated misses ride through at full drive. Gated on
-    // CL_LOCKED (established lock): during the fragile ENGAGE transit,
-    // misses are normal and clamping the amp starves the torque needed
-    // to lock (observed: engage failure). Full drive until locked.
+    // sag-kill. Isolated misses ride through at full drive. SPEED-
+    // gated to the high-speed regime where monsters exist (interval <
+    // HIGH_SPEED_US): at engage / low speed, misses are normal and
+    // clamping the amp starves the torque needed to lock (bisected:
+    // the ungated clamp took engage to 1/6 on a healthy bench). Full
+    // drive below the threshold.
     let base_amp = AMPLITUDE_PCT.load(Ordering::Relaxed) as u16;
-    let amp = if CL_LOCKED.load(Ordering::Relaxed) {
+    let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+    let amp = if iv > 0 && iv < minz_core::window::HIGH_SPEED_US {
         minz_core::guards::blind_amp_clamp(base_amp, CL_NOZ_RUN.load(Ordering::Relaxed))
     } else {
         base_amp
@@ -3060,16 +3043,6 @@ fn accept_qualified_zc(zc_us: u32) {
         );
     }
     if plan.schedule {
-        // Fixes #1/#2 established-lock gate: latch CL_LOCKED only after
-        // LOCK_SETTLE consecutive accepts, so neither the first-miss
-        // gate-widen nor the blind-amp clamp fires during the fragile
-        // engage + early-settling transition. Reset off CL_ACTIVE in
-        // the main loop on any disengage.
-        let n = CL_LOCK_ACCEPTS.load(Ordering::Relaxed).saturating_add(1);
-        CL_LOCK_ACCEPTS.store(n, Ordering::Relaxed);
-        if n >= LOCK_SETTLE {
-            CL_LOCKED.store(true, Ordering::Relaxed);
-        }
         // Host-tested: auto-advance ramp + scheduling delay
         // (minz_core::timing).
         let adv = minz_core::timing::auto_advance_deg(
