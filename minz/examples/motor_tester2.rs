@@ -2171,60 +2171,43 @@ fn TIM7() {
 
     // EDGE_BUF rev-pair flip + sector-boundary recording, both inside
     // a critical section so COMP ISR (higher priority) can't snapshot
-    // a torn (ACTIVE_HALF, HALF_START_TICK, REV_PHASE) tuple.
+    // a torn (ACTIVE_HALF, HALF_START_TICK, REV_PHASE) tuple. The
+    // flip state machine (pair cadence, freeze semantics, slot
+    // placement) is host-tested in minz_core::edgebuf (#[inline]);
+    // the buffer clears + boundary stores run here from its plan.
     if rev_wrapped || sector_changed {
         free(|_| {
-            if rev_wrapped {
-                // Two rev wraps = one EDGE_BUF half. XOR REV_PHASE on
-                // every wrap, flip only when prev_phase==1 (= second
-                // rev of the pair just completed).
-                let prev_phase = REV_PHASE.fetch_xor(1, Ordering::Relaxed);
-                if prev_phase == 1 && !EDGE_DUMP_FREEZE.load(Ordering::Relaxed) {
-                    let now = ticks_10us();
-                    let old_active = ACTIVE_HALF.load(Ordering::Relaxed) as usize;
-                    let new_active = old_active ^ 1;
-                    let old_half_start = HALF_START_TICK.load(Ordering::Relaxed);
-                    // Clear new active half; previous pair's data
-                    // stays in the soon-to-be-frozen half.
-                    unsafe {
-                        core::ptr::write_bytes(
-                            EDGE_BUF[new_active].as_ptr() as *mut u8,
-                            0,
-                            HALF_TICKS,
-                        );
-                    }
-                    // Zero the per-sector edge counters for the new
-                    // active half so the next pair starts from 0.
-                    for slot in 0..12 {
-                        SECTOR_EDGE_COUNT[new_active][slot].store(0, Ordering::Relaxed);
-                    }
-                    // Finalize slot 0 of the half we're freezing (=
-                    // start of just-completed pair = old HALF_START_TICK).
-                    // Initialize slot 0 of the new active half to NOW
-                    // (= start of the new pair). Together these
-                    // guarantee slot 0 is always valid for completed
-                    // pairs without depending on a sector-0 entry
-                    // transition being recorded.
-                    SECTOR_BOUNDARIES[old_active][0].store(old_half_start, Ordering::Relaxed);
-                    SECTOR_BOUNDARIES[new_active][0].store(now, Ordering::Relaxed);
-                    HALF_START_TICK.store(now, Ordering::Relaxed);
-                    ACTIVE_HALF.store(new_active as u8, Ordering::Relaxed);
+            if rev_wrapped
+                && let Some(plan) = minz_core::edgebuf::on_rev_wrap(&EDGE_HALVES, ticks_10us())
+            {
+                // Clear the new active half; the previous pair's
+                // data stays in the soon-to-be-frozen half.
+                unsafe {
+                    core::ptr::write_bytes(
+                        EDGE_BUF[plan.new_active].as_ptr() as *mut u8,
+                        0,
+                        HALF_TICKS,
+                    );
                 }
+                for slot in 0..12 {
+                    SECTOR_EDGE_COUNT[plan.new_active][slot].store(0, Ordering::Relaxed);
+                }
+                // Slot-0 validity invariant (see edgebuf docs).
+                SECTOR_BOUNDARIES[plan.old_active][0]
+                    .store(plan.old_half_start, Ordering::Relaxed);
+                SECTOR_BOUNDARIES[plan.new_active][0].store(
+                    HALF_START_TICK.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
             }
-            // Record sector boundary tick into the (now possibly
-            // updated) ACTIVE_HALF / REV_PHASE slot. For non-flip rev
-            // wraps that's slot 6 of the old active half (rev 1
-            // sec 0). For flip rev wraps it's slot 0 of the new
-            // active half (rev 0 sec 0 of the new pair). For
-            // mid-rev sector changes it's slot `phase*6+sector` of
-            // the current active half.
-            if sector_changed {
-                let rev_phase = REV_PHASE.load(Ordering::Relaxed) as usize;
+            // Record the sector-boundary tick into the (now possibly
+            // rotated) half/phase slot.
+            if sector_changed
+                && let Some(slot) =
+                    minz_core::edgebuf::boundary_slot(REV_PHASE.load(Ordering::Relaxed), sector)
+            {
                 let active = ACTIVE_HALF.load(Ordering::Relaxed) as usize;
-                let slot = rev_phase * 6 + sector as usize;
-                if slot < 12 {
-                    SECTOR_BOUNDARIES[active][slot].store(ticks_10us(), Ordering::Relaxed);
-                }
+                SECTOR_BOUNDARIES[active][slot].store(ticks_10us(), Ordering::Relaxed);
             }
         });
     }
@@ -2316,6 +2299,16 @@ static WINDOW_STATE: minz_core::window::WindowState<'static> = minz_core::window
 /// higher/equal-priority COMP ISR can't smear an edge across the
 /// old/new window during snapshot-and-reset. This site supplies the
 /// clocks and performs the two returned side effects.
+/// The EDGE_BUF half-flip state machine's view of this file's
+/// statics (pair cadence, freeze, slot placement host-tested in
+/// minz_core::edgebuf; used inside TIM7's `free` block only).
+static EDGE_HALVES: minz_core::edgebuf::EdgeHalves<'static> = minz_core::edgebuf::EdgeHalves {
+    rev_phase: &REV_PHASE,
+    active_half: &ACTIVE_HALF,
+    half_start_tick: &HALF_START_TICK,
+    freeze: &EDGE_DUMP_FREEZE,
+};
+
 /// The mode state machine's view of this file's statics (arm/kill/
 /// CL transitions host-tested in minz_core::mode).
 static MODE_STATE: minz_core::mode::ModeState<'static> = minz_core::mode::ModeState {
