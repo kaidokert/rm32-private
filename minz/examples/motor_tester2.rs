@@ -910,16 +910,9 @@ fn main() -> ! {
     );
     let (mut tx, _) = serial.split();
 
-    // Flip PB6 to push-pull after the fact — the HAL's half-duplex pin
-    // trait insists on open-drain, but this line is TX-only (nothing
-    // else ever drives it), and the open-drain rise through the 40 kΩ
-    // internal pull-up is ~2-3 µs, which caps the usable baud at about
-    // 115200. Actively driving both levels is what makes ≥921600 work.
-    unsafe {
-        (*stm32::GPIOB::ptr())
-            .otyper
-            .modify(|r, w| w.bits(r.bits() & !(1 << 6)));
-    }
+    // Flip PB6 to push-pull after the fact — the trick that makes
+    // ≥921600 baud work (rationale at minz::uart_tx).
+    minz::uart_tx::usart1_tx_push_pull_pb6();
 
     // COMP2 BEMF sense, switchable INM− input. Textbook convention:
     //   INP+ = PB4 (virtual neutral)
@@ -970,13 +963,7 @@ fn main() -> ! {
     // 2 Mbaud → ~3× margin, NOT the waxwing dump's ~100 ms/10×). A
     // future baud drop would shrink that margin further — refresh
     // mid-blast before slowing the link.
-    unsafe {
-        let iwdg = &*stm32::IWDG::ptr();
-        iwdg.kr.write(|w| w.key().bits(0x5555));
-        iwdg.pr.write(|w| w.pr().bits(0b011));
-        iwdg.rlr.write(|w| w.rl().bits(1000));
-        iwdg.kr.write(|w| w.key().bits(0xCCCC));
-    }
+    minz::iwdg::start_1s();
 
     // FALCON commutation one-shot (armed only when the loop engages).
     minz::lptim2_oneshot::init();
@@ -993,19 +980,7 @@ fn main() -> ! {
     // CR2.SWAP are only writable while UE=0 (true out of reset).
     // TE stays 0: receive-only, we never drive the pin. Kernel clock
     // is the CCIPR reset default (PCLK1 = 80 MHz).
-    unsafe {
-        (*stm32::RCC::ptr())
-            .apb1enr1
-            .modify(|_, w| w.usart2en().set_bit());
-    }
-    let usart2 = dp.USART2;
-    usart2.cr2.write(|w| w.swap().set_bit());
-    usart2
-        .brr
-        .write(|w| unsafe { w.bits((clocks.pclk1().raw() + BAUD / 2) / BAUD) });
-    usart2
-        .cr1
-        .write(|w| w.re().set_bit().rxneie().set_bit().ue().set_bit());
+    minz::usart2_rx::init_pa2_rx(dp.USART2, clocks.pclk1().raw(), BAUD);
 
     let (producer, mut consumer) = RX_QUEUE.split();
     let (wrec_producer, mut wrec_consumer) = WREC_QUEUE.split();
@@ -1215,7 +1190,7 @@ fn main() -> ! {
             // 100× inside the 1 s window). If the core wedges, this
             // stops and the watchdog resets the chip, releasing the
             // bridge.
-            unsafe { (*stm32::IWDG::ptr()).kr.write(|w| w.key().bits(0xAAAA)) };
+            minz::iwdg::refresh();
 
             // Slack: spin idle counter until next microloop boundary.
             // ISRs preempt this naturally and steal counter increments;

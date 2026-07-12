@@ -135,6 +135,18 @@ pub fn init(cp: CortexPeripherals, flash: FLASH, rcc: RCC, pwr: PWR) -> BoardIni
     } = rcc.constrain();
     let mut pwr = pwr.constrain(&mut apb1r1);
     let clocks = cfgr.sysclk(SYSCLK).freeze(&mut flash.acr, &mut pwr);
+    // PRFTEN: flash prefetch ON. The HAL leaves it off (and rm32
+    // keeps it off for AM32 register parity — an rm32 constraint,
+    // not a minz one). With PRFTEN off + 4 wait states, hot-ISR
+    // fetch timing depends on code ALIGNMENT — layout-only changes
+    // (even init-code moves) measurably shifted the marginal
+    // engage regime (2026-07-12 piecewise-rewire evidence: an
+    // init-only E5 step dropped engage@15 from 8/8 to 3-4/8).
+    unsafe {
+        (*crate::hal::stm32::FLASH::ptr())
+            .acr
+            .modify(|_, w| w.prften().set_bit());
+    }
     panic::ensure_rtt();
     BoardInit {
         cp,
