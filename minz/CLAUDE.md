@@ -446,23 +446,22 @@ at low amp (invisible under SWIFT).
 State of the bench and the open question, so the next session starts
 oriented:
 
-**THE 2026-07-11/12 REGRESSION SAGA — RESOLVED, read the epistemics:**
-engage survival collapsed late-session. One narrative said "bench
-drift", the other "code regression" — a drift-controlled ABAB
-(interleaved flashes, 8 attempts/block, alive-at-3.5 s) proved BOTH
-real at once: control cd54ff6 (tag `sweep-good-pass2`) 5/16 vs
-full-extraction HEAD 0/16 (real code deficit, p≈0.02), while the
-control itself had fallen from sweep-clean to 31 % in an hour (real
-environmental factor). Every unpaired single-shot verdict that night
-flip-flopped and was worthless. Fix: `56e30bc` reverts the E1/E5/
-TIM7 example wiring to inline (mechanism unresolved — core logic
-token-identical + host-tested, LTO no effect; suspected marginal-
-timing/layout sensitivity, PRFTEN off); core modules remain the
-tested reference. Fixed build: 15→45 sweep qzc 100 % first-attempt
-(`captures/fixed_fullrange_*`). RULES going forward: engage-quality
-A/Bs are paired-ABAB only, against the TAGGED control; keep a
-`sweep-good-*` tag current; re-wiring E1/E5/TIM7 needs disassembly
-diff + non-marginal engage regime.
+**THE 2026-07-11/12 REGRESSION SAGA — ROOT CAUSE: PRFTEN.** The
+"extraction regression" was flash-layout sensitivity: PRFTEN off
+(AM32 parity — an rm32 constraint, never a minz one) + 4WS makes
+hot-ISR fetch timing depend on code alignment, so ANY build (even
+init-only changes — proven by the E5 piecewise step dropping
+engage@15 from 8/8 to 3-4/8) moves the marginal engage regime;
+token-identical hybrids flip-flopped accordingly. Fix: PRFTEN
+enabled in minz::board_init (8d32e66) — same binary went 3-4/8 →
+8/8. The FULL extraction is re-landed and gated (dfac519): every
+hot core fn #[inline], objdump-verified inlined, 8-attempt gates at
+each step, SWIFT + ADC-confirm both verified, final sweep 15→50 qzc
+100 % (`captures/refactor_complete2_*` — amp 50 held for the first
+time). Also real and separate: a time-varying bench factor
+(drift-controlled ABAB proved both effects at once) — engage-quality
+A/Bs remain paired-ABAB-vs-tagged-control only; keep a
+`sweep-good-*` tag current.
 
 **Firmware**: the flashed build (branch `bisect_init_changes`) is
 the fully-extracted one — the whole extraction roadmap is COMPLETE

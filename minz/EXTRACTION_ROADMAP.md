@@ -1,37 +1,24 @@
-# minz-core extraction roadmap (2026-07-11) — **PARTIALLY ROLLED BACK 2026-07-12**
+# minz-core extraction roadmap (2026-07-11) — **COMPLETE (for real, 2026-07-12)**
 
-**POSTSCRIPT (2026-07-12, read first):** the E1 (zc state machine),
-E5, and TIM7-pass EXAMPLE WIRING was reverted to inline in commit
-`56e30bc` after a drift-controlled ABAB (interleaved flashes, 8
-engage attempts/block): control cd54ff6 (tag `sweep-good-pass2`) =
-5/16 alive-at-3.5 s vs full-wiring HEAD = 0/16 (p≈0.02) — a REAL
-engage-survival deficit, mechanism UNRESOLVED (core logic is
-token-identical and host-tested; fat LTO changed nothing; suspected
-marginal-timing/flash-layout sensitivity of the engage regime,
-PRFTEN off). Simultaneously a REAL time-varying bench factor moved
-the control itself from sweep-clean to 31 % within an hour — which
-is why every unpaired verdict that night flip-flopped. The core
-modules (zc, edgebuf, drive additions, E5 lib modules) REMAIN as the
-host-tested reference (120 tests); the E2/E3/E4/window wiring
-remains live and bench-proven. Re-wiring E1/E5/TIM7 requires: the
-paired-ABAB gate, a disassembly diff vs the inline build, and a
-non-marginal engage regime as the test vehicle. Fixed build swept
-15→45 qzc 100 % first-attempt (`captures/fixed_fullrange_*`).
-
-Original completion state (pre-rollback): F1/F2, E1-E5 landed;
-120 host tests, ~99 % line coverage. Kept for the incident notes
-and seam patterns.
-
-Product of a two-agent review of `examples/motor_tester2.rs` (~2,750
-lines after passes 1–3) against the established minz-core seams:
-`WindowState<'a>`-style atomic-ref structs for read-modify-write
-state webs, plain args/returns for pure arithmetic, data+sink
-closures for serializers, timestamps always as arguments, side
-effects returned as data (`CloseOutcome` pattern), critical sections
-always owned by the firmware caller.
-
-Line numbers are as of commit `cd54ff6`-era layout — re-grep before
-acting; the anchors drift with every edit.
+**FINAL RESOLUTION — the true root cause was FLASH PREFETCH, not any
+extraction.** The 07-11/12 "regression" chased through E1/B/C/TIM7
+hybrids was layout sensitivity: with PRFTEN off (AM32 register
+parity — an rm32 constraint that never applied to minz) and 4 wait
+states, ANY code motion re-aligns the hot ISR loops across flash
+lines and moves the marginal engage regime. Proof chain: piecewise
+re-wire with 8-attempt engage@15 gates — TIM7 trio 8/8, edgebuf 7/8,
+then the E5 step (INIT-ONLY code, zero hot-path changes) dropped the
+gate to 3-4/8 replicated; enabling PRFTEN on the same binary restored
+8/8. With PRFTEN on, ALL extraction wiring re-landed (E1 A/B/C incl.
+the B1 TOCTOU gen-snapshot fix, E5, TIM7), every hot core fn
+#[inline] and objdump-verified inlined, gates 8/8 on both SWIFT and
+ADC-confirm paths. Final sweep: 15→50 qzc 100 % — the best of the
+arc (amp 50 held for the first time), sag-killed on the 50→55 supply
+cliff as always (`captures/refactor_complete2_*`). Secondary factor
+confirmed by drift-controlled ABAB during the hunt: a real
+time-varying bench component also depresses engage survival —
+paired/tagged-control protocol is mandatory for engage A/Bs
+([[bench-drift-control-runs]] memory).
 
 ## Status of completed passes (for context)
 
