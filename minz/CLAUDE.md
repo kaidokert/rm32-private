@@ -402,8 +402,9 @@ field can never read as SURVIVED), `sector_polarity_check.py`
 
 Branches: main work on `bisect_init_changes` (48 kHz build flashed,
 84514d2); `wip_48khz_campaign` holds the failed-experiment forensics.
-Remaining polish: throttle slew limit (item 5), runtime carrier
-switch, HEDGEHOG A/B on the capped board.
+Remaining polish: ~~throttle slew limit~~ (DONE — 1 %/50 ms via
+minz_core::throttle, snap-on-arm), runtime carrier switch, HEDGEHOG
+A/B deleted (unmodified board proven to 970 Hz).
 
 ## minz-core — host-testable control logic (`core/`, 2026-07-11)
 
@@ -439,6 +440,49 @@ story (single-engage bench verdicts are lottery noise; judge engage
 quality only with n≥4 kill/re-arm attempts or the ladder's validated
 engage) and the known pre-existing sector-1/2 ADC-confirm blindness
 at low amp (invisible under SWIFT).
+
+## Where we are (2026-07-11, end of the extraction arc)
+
+State of the bench and the open question, so the next session starts
+oriented:
+
+**Firmware**: the flashed build (branch `bisect_init_changes`) is
+the fully-extracted one — the whole extraction roadmap is COMPLETE
+(see `EXTRACTION_ROADMAP.md`, kept for incident notes). Envelope
+re-verified end-to-end on it: full-range ladder amp 15→45 = 461→
+1,222 Hz, qzc 100 % every rung/sector, 80 k windows
+(`captures/fullrange2_map.png` + `_dropout.png`). Amp 10 rung
+refused sustained CL — that's the documented 48 kHz floor (amp 15
+minimum ON window), not a fault.
+
+**The dropout anatomy is now quantified — and it is NOT throttle
+steps.** Throttle is already a smooth gradient everywhere (keys set
+TARGET; firmware slews 1 %/50 ms; scripts can't produce a real
+step). Steady-dwell test, constant throttle, zero commands in
+flight, 8 s each: amp 44 → 40 events >2 A (~5/s, worst bus dip
+5.26 V — survived); amp 46 → 44; amp 48 → 55 (~7/s). The discrete
+2-8 A phase-agnostic current-spike events are a STEADY-STATE
+phenomenon from ≲amp 44 up, each ~1-15 ms; the lock rides through
+almost all of them. A "dropout" is the unlucky event that is both
+deeper than −10 %-of-baseline AND longer than the sag guard's
+1.3 ms debounce (kill fires, clean, r/q re-arms). The supply cliff
+(PSU-driven collapse) lands wherever one such event snowballs —
+observed anywhere amp ~46-52 depending on PSU state.
+
+**Open investigation (suspended, next lever is concrete):** what
+ARE the spike events. Operator's standing assertion: AM32 runs this
+exact board/prop/supply to 100 % without them ⇒ they are something
+our firmware does (prime suspect: mistimed commutation /
+shoot-through-adjacent). The parked path: fix the WAXWING ring
+frame-integrity issue (channel-slip under event chaos — see trust
+audit), then arm the analog black box (`J` key, >2.4 A one-shot
+trigger) at a SURVIVABLE rung — at amp 46's ~6 events/s a single
+trigger catches one within a second, with 42 ms of pre-trigger
+BEMF/current/comp waveform to autopsy. Also on the shelf: the
+ticks_1us wrap-hole fix (core `ticks::compose_1us` is ready,
+firmware adoption pending), runtime 24/48 kHz carrier switch, rm32
+portback, and the newly-flagged sector-1 ADC-confirm blindness at
+low amp (WAXWING look at the `2B < A` rule's margins).
 
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
