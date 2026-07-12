@@ -524,21 +524,61 @@ time vs ~13 % of legit COMP/SysTick/CC load. Priorities are now
 emitted over UART at boot (`prio:` line, hardware read-back) so
 every session log records them. Boot fw also prints the RTT dumps.
 
+**Carrier A/B — events are electrical, NOT CPU (2026-07-13, commit
+6c7c4a3):** dropped 48→24 kHz to reclaim ISR headroom. It worked for
+scheduling (cpu 75→57 %, tim1_up=24000 exact/zero true losses, old
+~650 Hz ceiling gone → 1,230 Hz @ amp 44) but the spike events got
+**4.5× more frequent and 2.7× deeper** at the same amp (6.4/s, 7.3 A,
+5.0 V dips, audible chops; envelope dies 44→46 vs 50→55). Events
+scale with carrier RIPPLE, not CPU/ISR health — the decisive
+decoupling. **Staying at 24 kHz** for the investigation (CPU
+eliminated as a confound + amplified events = better microscope);
+48 kHz is the perf recipe once the mechanism is fixed.
+
+**24 kHz monster-event anatomy (`hunt24_a44`, window-level):** the
+2–2.8 A single-window events sit in statistically NORMAL context
+(pre-event qzc_off median 66 µs vs 65 global) — benign mistimed
+single commutations. The **6.6–6.9 A monsters all START with a ZC
+failure**: initiator window has qzc_off 143/160 (accept at 89 % of
+window — drastically late), or `--` (no qualified ZC → free-run
+commutation), then current spikes, rotor decelerates (window len
+200→350 µs), usually recovers via a short catch-up sector. Chain =
+lost/late ZC → free-run/late commutation → current spike → sag,
+confirming the operator's cause-before-effect order. Open question:
+why does a healthy window suddenly yield no acceptable ZC (real
+rotor disturbance? comparator edge blanked/gated? early-but-real
+crossing rejected?). Next instrument: raise `WAX_TRIG_RAW` to ~4 A
+so the J-trigger freezes only on a monster — the 85 ms pre-trigger
+ring then holds the initiator window's analog BEMF + comp bit.
+
+**CPU headroom — lever #1 LANDED (systick), stack ranked below.**
+SysTick was firing 100,000/s (reload 799) ≈ 3 % core + biggest ISR-
+rate contributor. Now 5/s (200 ms wrap, systick-timer crate reload
+15,999,999); 10 µs/1 µs clocks composed from wrap-shadow + CVR in
+bare u32 with the crate's wraps-sandwich + PENDSTSET one-wrap comp —
+this ALSO retired the ticks_1us CVR wrap-hole bug class. `ticks_both`
+hoisted to ISR entry (COMP: 1 clock read vs 5-6). Idle cpu 30→23 %;
+ladder + spike census unchanged. **CPU accounting is now the DWT
+`dur cyc:` line in `i`** (per-ISR last-pass cycles; busy% is NOT
+cross-build comparable — the idle loop reads the clock every spin
+and that cost changed, shifting cal 5.20M→2.16M counts/s). Loaded
+@44/comp40k: **lp2=1602 cyc (close_float_window in the commutation
+ISR ≈ 15.7 % CPU — the elephant)**, t1u=351, comp≈270, cc=87, t7≈600;
+SysTick absent. Remaining levers, measured-biggest-first: (2) LPTIM2
+diet — commutation ISR does pins+schedule only, `close_float_window`
+→ raw-snapshot ring drained in main (biggest win, also cuts
+commutation jitter); (3) kill TIM1_CC, COMP reads TIM1.CNT directly
+for the blank test; (4) gate ADC-confirm off under SWIFT-at-speed;
+(5) MAGPIE serialize in main + wider decimation; (6) half-rate vbat/
+sag. Estimated end state ~low-30s % @44.
+
 **Open investigation (residual spike events):** what triggers the
 remaining events. Operator's standing assertion: AM32 runs this
 exact board/prop/supply to 100 % without them ⇒ they are something
-our firmware does. Spike census (`count_spikes.py`): 1.9/s @45,
-4.3/s @50, zero ≤40; the 2.4 A events are ~1 window long; the 8 A
-monsters carry real multi-tick f_e excursions + noZC windows. First
-analog autopsy (`hunt_pr48e`): sector SEQUENCE clean through onset,
-current 0.7→2.9 A in ~5 PWM cycles spanning one commutation, bus
-sags ~12 %, freshly-opened phase's freewheel ends in a GND clamp at
-the peak, full recovery one cycle later ⇒ sub-sector timing/current
-transient, not wrong-sector commutation. Next levers: instrument
-LPTIM2/COMP ISR durations (level-1 tier delays commutation itself —
-a free/level-1 stall shifts the actuation edge), then the LPTIM2
-diet (move close_float_window out of the commutation ISR). The
-parked path: fix the WAXWING ring
+our firmware does. Next levers: the LPTIM2 diet (both a CPU win AND
+removes commutation-edge jitter — a level-1/`free` stall directly
+shifts the actuation edge), then the monster-only J-trigger autopsy.
+The parked path: fix the WAXWING ring
 frame-integrity issue (channel-slip under event chaos — see trust
 audit), then arm the analog black box (`J` key, >2.4 A one-shot
 trigger) at a SURVIVABLE rung — at amp 46's ~6 events/s a single
