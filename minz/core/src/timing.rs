@@ -12,6 +12,7 @@
 /// amp-34 droop was late-commutation braking, not V/f saturation); a
 /// static 16° killed the engage transit. Speed-following gives the
 /// transit 0° and the top its timing automatically.
+#[inline]
 pub fn auto_advance_deg(interval_us: u32, manual_deg: i32) -> i32 {
     if manual_deg != 0 {
         manual_deg
@@ -24,6 +25,7 @@ pub fn auto_advance_deg(interval_us: u32, manual_deg: i32) -> i32 {
 /// `interval·(30−adv)/60 − elapsed`, clamped to the LPTIM2 minimum
 /// (24 µs — enable→start needs 2 counter clocks and the write takes
 /// time).
+#[inline]
 pub fn commutation_delay_us(interval_us: u32, adv_deg: i32, elapsed_us: i32) -> u32 {
     (interval_us as i32 * (30 - adv_deg) / 60 - elapsed_us).max(24) as u32
 }
@@ -35,6 +37,7 @@ pub fn commutation_delay_us(interval_us: u32, adv_deg: i32, elapsed_us: i32) -> 
 /// re-acquisition (just past commutation flyback) so ZCs that
 /// drifted early — the lockout-spiral signature — become acceptable
 /// again.
+#[inline]
 pub fn gate_us(interval_us: u32, reacq: bool) -> u32 {
     if reacq {
         (interval_us * 2 / 25).max(10)
@@ -50,6 +53,7 @@ pub fn gate_us(interval_us: u32, reacq: bool) -> u32 {
 /// and caused the SWIFT amp-28 break. The effective blank shrinks
 /// with the measured interval; at low speed it equals the proven
 /// user setting exactly.
+#[inline]
 pub fn blank_us(user_blank_us: u32, interval_us: u32) -> u32 {
     if interval_us != 0 {
         user_blank_us.min(interval_us / 75)
@@ -61,6 +65,7 @@ pub fn blank_us(user_blank_us: u32, interval_us: u32) -> u32 {
 /// Persistence depth for the ZC qualification read-loop: 5 reads
 /// while the time-blank is doing the filtering; deepen to AM32's 12
 /// once the blank has faded below 5 µs.
+#[inline]
 pub fn persistence_reads(blank_us: u32) -> u32 {
     if blank_us >= 5 { 5 } else { 12 }
 }
@@ -74,6 +79,7 @@ pub fn persistence_reads(blank_us: u32) -> u32 {
 /// 48 kHz was tried during the second 48 kHz push and reverted with
 /// the rest of that branch — the unscaled depths are the proven
 /// configuration at BOTH carriers.)
+#[inline]
 pub fn confirm_need(cl_active: bool, reacq: bool) -> u32 {
     if cl_active && !reacq { 1 } else { 2 }
 }

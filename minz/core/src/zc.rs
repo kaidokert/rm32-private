@@ -53,6 +53,7 @@ use portable_atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 /// construction, so the sample timing constraints (47.5-cycle
 /// sampling, ≥1.25 µs trigger) are hard requirements — enforced in
 /// hardware setup, not here.
+#[inline]
 pub fn adc_sign_observed(
     sector: u8,
     pa_a: u16,
@@ -77,6 +78,7 @@ pub fn adc_sign_observed(
 /// is fast enough to track supply sag, slow enough to ride through
 /// the two sectors with no full-rail read. Feeds
 /// [`adc_sign_observed`]'s sector-4/5 neutrals.
+#[inline]
 pub fn vbus_decay_step(est: u16, pa_a: u16, pa_b: u16) -> u16 {
     let m = pa_a.max(pa_b);
     if m > est {
@@ -92,6 +94,7 @@ pub fn vbus_decay_step(est: u16, pa_a: u16, pa_b: u16) -> u16 {
 /// (POLARITY=0, INP=neutral, INM=floating phase): even sectors ride
 /// a falling-BEMF window → post-ZC the phase is BELOW neutral →
 /// VALUE=1; odd sectors the inverse.
+#[inline]
 pub const fn expected_post_zc(sector: u8) -> bool {
     (sector & 1) == 0
 }
@@ -132,6 +135,7 @@ pub enum HeldEdge {
 /// the candidate is load-bearing: EXPECTED/CONFIRMS/GEN before the
 /// ZC word — TIM1_UP keys on `cand_zc_us != MAX`, so the metadata
 /// must be consistent before the candidate becomes visible.
+#[inline]
 pub fn on_held_edge(zs: &ZcState<'_>, expected: bool, now_us: u32) -> HeldEdge {
     if zs.cl_fast_path.load(Ordering::Relaxed) && zs.cl_active.load(Ordering::Relaxed) {
         HeldEdge::AcceptNow
@@ -183,6 +187,7 @@ pub enum ConfirmAction {
 /// `cand_gen` to the NEW generation (which defeated the original
 /// CAND_GEN-vs-WINDOW_GEN re-check), but the stale LOCAL snapshot
 /// still mismatches `window_gen` inside the CS.
+#[inline]
 pub fn confirm_step(zs: &ZcState<'_>, observed: bool) -> ConfirmAction {
     let cand = zs.cand_zc_us.load(Ordering::Relaxed);
     // Paired generation snapshot. (If a close lands between the two
@@ -235,6 +240,7 @@ pub fn confirm_step(zs: &ZcState<'_>, observed: bool) -> ConfirmAction {
 /// whose window closed between the confirm and the CS — including
 /// the close + fresh-re-arm interleaving that defeats a
 /// `cand_gen`-based re-check (B1).
+#[inline]
 pub fn accept_gen_current(zs: &ZcState<'_>, gen_snap: u8) -> bool {
     gen_snap == zs.window_gen.load(Ordering::Relaxed)
 }
@@ -257,6 +263,7 @@ pub struct AcceptPlan {
 /// non-transactional profile as before), and decide engage/schedule.
 /// C float windows (sectors 0/3, dead-reckoned) must neither
 /// schedule nor engage.
+#[inline]
 pub fn accept_publish(
     zs: &ZcState<'_>,
     sector: u8,

@@ -12,6 +12,7 @@ pub const MOTOR_DRIVE_HZ: u32 = 6_000;
 /// Compute the per-tick angle increment for a given electrical f.
 /// Done in u64 to avoid overflow at high f. Returns 16.16 fixed
 /// point degrees.
+#[inline]
 pub const fn angle_inc_fp(electrical_hz: u32) -> u32 {
     ((360u64 << 16) * electrical_hz as u64 / MOTOR_DRIVE_HZ as u64) as u32
 }
@@ -21,6 +22,7 @@ pub const fn angle_inc_fp(electrical_hz: u32) -> u32 {
 /// interval via [`crate::timing::gate_us`] instead). 6 sectors per
 /// electrical rev → full sector = `1e6 / (6·f)` µs; half is
 /// `1e6 / (12·f)`.
+#[inline]
 pub const fn open_loop_gate_us(electrical_hz: u32) -> u32 {
     1_000_000 / (12 * electrical_hz)
 }
@@ -34,6 +36,7 @@ pub const ANGLE_FULL_REV_FP: u32 = 360u32 << 16;
 /// advance moves sector boundaries earlier in raw-angle terms,
 /// negative later; `rem_euclid` keeps the result in 0..360 either
 /// way. Returns `(new_accum, commutation_angle_deg)`.
+#[inline]
 pub fn angle_tick(accum: u32, inc: u32, adv_deg: i32) -> (u32, u16) {
     let mut accum = accum.wrapping_add(inc);
     while accum >= ANGLE_FULL_REV_FP {
@@ -47,6 +50,7 @@ pub fn angle_tick(accum: u32, inc: u32, adv_deg: i32) -> (u32, u16) {
 /// half-flip and scope-trigger alignment point (auto-aligned with
 /// sector 0 regardless of advance sign, because it keys on the
 /// advance-folded sector).
+#[inline]
 pub const fn is_rev_wrap(prev_sector: u8, sector: u8) -> bool {
     prev_sector == 5 && sector == 0
 }
@@ -54,6 +58,7 @@ pub const fn is_rev_wrap(prev_sector: u8, sector: u8) -> bool {
 /// Legacy single-phase float-window tracking: edge-detect entry into
 /// the observed phase's float sectors. Returns `(entered, in_now)` —
 /// `entered` restarts the window clock (`SECTOR_START_US`).
+#[inline]
 pub fn float_entry(float_mask: u8, sector: u8, was_in: bool) -> (bool, bool) {
     let in_now = (float_mask >> sector) & 1 != 0;
     (in_now && !was_in, in_now)
@@ -62,6 +67,7 @@ pub fn float_entry(float_mask: u8, sector: u8, was_in: bool) -> (bool, bool) {
 /// Bitfield of float-window sectors for a given observed phase
 /// (0=A, 1=B, 2=C). Textbook convention: A floats at sectors 2/5,
 /// B at 1/4, C at 0/3.
+#[inline]
 pub const fn float_sector_mask(phase_idx: u8) -> u8 {
     match phase_idx {
         0 => (1 << 2) | (1 << 5),
@@ -72,6 +78,7 @@ pub const fn float_sector_mask(phase_idx: u8) -> u8 {
 
 /// The two float sectors of a phase as a pair (used by the aligned
 /// PWM-sample dump to place ZC midpoint markers).
+#[inline]
 pub const fn float_sectors(phase_idx: u8) -> (u8, u8) {
     match phase_idx {
         0 => (2, 5),
@@ -96,6 +103,7 @@ pub const SECTOR_FLOAT_PHASE_IDX: [u8; 6] = [2, 1, 0, 2, 1, 0];
 ///                falling in odd sectors (rising-BEMF ZC)
 ///   4 (phys_anti): the opposite of mode 3 (diagnostic)
 ///   5 (val_gated): both edges at EXTI; the COMP ISR filters on VALUE
+#[inline]
 pub fn edges_for(mode: u8, sector: u8) -> (bool, bool) {
     match mode {
         0 => (true, true),
@@ -126,6 +134,7 @@ pub use crate::blackbox::{EV_BLD as BB_BLD, EV_DRK as BB_DRK, EV_REF as BB_REF};
 /// dead-reckoned C windows (sectors 0/3) are DRK; A/B windows are
 /// REF when an accepted ZC re-timed the shot, BLD when the blind
 /// free-run fired.
+#[inline]
 pub fn commutation_class(prev_sector: u8, shot_refined: bool) -> u8 {
     if prev_sector == 0 || prev_sector == 3 {
         BB_DRK
@@ -136,6 +145,7 @@ pub fn commutation_class(prev_sector: u8, shot_refined: bool) -> u8 {
     }
 }
 
+#[inline]
 pub const fn next_sector(prev: u8) -> u8 {
     (prev + 1) % 6
 }
@@ -146,6 +156,7 @@ pub const fn next_sector(prev: u8) -> u8 {
 /// compounded lag during acceleration until the watchdog fired —
 /// that regression is why this trivial function exists as a named
 /// contract.) `None` when the estimator is unseeded.
+#[inline]
 pub const fn freerun_reschedule_us(interval_us: u32) -> Option<u32> {
     if interval_us == 0 {
         None

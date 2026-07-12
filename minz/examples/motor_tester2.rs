@@ -738,8 +738,7 @@ static ADVANCE_DEG: AtomicI8 = AtomicI8::new(0);
 /// still ≥ 12 sine samples per electrical period — visually clean.
 const MOTOR_DRIVE_HZ: u32 = minz_core::drive::MOTOR_DRIVE_HZ;
 
-/// One full electrical revolution in 16.16 fixed point.
-const ANGLE_FULL_REV_FP: u32 = 360u32 << 16;
+// Angle arithmetic: minz_core::drive::{ANGLE_FULL_REV_FP, angle_tick}.
 
 // Drive geometry/arithmetic (angle_inc_fp, float_sector_mask,
 // float_sectors, edges_for) lives in minz_core::drive — host-tested,
@@ -2131,29 +2130,21 @@ fn TIM7() {
     // commutation-advance offset folded in. Disarmed → reuse the last
     // sector so static polarity / edges for modes 2/3 stay sensible.
     let (sector, angle, sector_changed) = if motor_enabled {
-        let inc = ANGLE_INC.load(Ordering::Relaxed);
-        let mut accum = ANGLE_ACCUM.load(Ordering::Relaxed).wrapping_add(inc);
-        while accum >= ANGLE_FULL_REV_FP {
-            accum = accum.wrapping_sub(ANGLE_FULL_REV_FP);
-        }
+        // Accumulator advance + signed-advance folding host-tested in
+        // minz_core::drive::angle_tick (#[inline] — verified to
+        // inline into this ISR; see the piecewise-rewire notes).
+        let (accum, commutation_angle) = minz_core::drive::angle_tick(
+            ANGLE_ACCUM.load(Ordering::Relaxed),
+            ANGLE_INC.load(Ordering::Relaxed),
+            ADVANCE_DEG.load(Ordering::Relaxed) as i32,
+        );
         ANGLE_ACCUM.store(accum, Ordering::Relaxed);
-        let raw_angle = (accum >> 16) as i32;
-        // Commutation angle = (raw + advance) rem-euclid 360. Signed
-        // advance: positive = sector boundaries earlier in raw-angle
-        // terms, negative = later. The rev-wrap point for EDGE_BUF
-        // flipping is the sec 5→0 transition (below), which auto-
-        // aligns with sec 0 regardless of advance sign.
-        let adv = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
-        let commutation_angle = (raw_angle + adv).rem_euclid(360) as u16;
         let new_sector = open_loop::six_step_sector(commutation_angle);
         (new_sector, commutation_angle, new_sector != prev_sector)
     } else {
         (prev_sector, 0, false)
     };
-    // Rev wrap = commutation sector 5 → 0 transition. This is where
-    // sec 0 begins; the EDGE_BUF half-flip is aligned to this point so
-    // each frozen half always starts at sec 0 regardless of advance.
-    let rev_wrapped = sector_changed && prev_sector == 5 && sector == 0;
+    let rev_wrapped = sector_changed && minz_core::drive::is_rev_wrap(prev_sector, sector);
 
     // Apply COMP2 EXTI edges for this sector + edge-mode. COMP2
     // polarity is locked to non-inverted (POLARITY=0); only the EXTI
@@ -2175,11 +2166,7 @@ fn TIM7() {
     // output square wave runs at exactly the commanded frequency F.
     if rev_wrapped {
         let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
-        unsafe {
-            (*stm32::GPIOB::ptr())
-                .bsrr
-                .write(|w| w.bits(if was_high { 1 << (16 + 3) } else { 1 << 3 }));
-        }
+        minz::pb3::set(!was_high);
     }
 
     // EDGE_BUF rev-pair flip + sector-boundary recording, both inside
@@ -2274,10 +2261,13 @@ fn TIM7() {
             // time-window gate (`valid` rate counter) has a meaningful
             // `SECTOR_START_TICK` reference. EXTI is not gated here —
             // edges are recorded into `EDGE_BUF` across the whole rev.
-            let float_mask = FLOAT_SECTOR_MASK.load(Ordering::Relaxed);
-            let in_float = (float_mask >> sector) & 1 != 0;
-            let was_in_float = WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed);
-            if in_float && !was_in_float {
+            // Edge-detect host-tested: minz_core::drive::float_entry.
+            let (entered, in_float) = minz_core::drive::float_entry(
+                FLOAT_SECTOR_MASK.load(Ordering::Relaxed),
+                sector,
+                WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed),
+            );
+            if entered {
                 SECTOR_START_US.store(ticks_1us(), Ordering::Relaxed);
             }
             WAS_IN_FLOAT_SECTOR.store(in_float, Ordering::Relaxed);
@@ -2486,11 +2476,7 @@ fn LPTIM2() {
     // Scope trigger on each electrical rev, same as the open loop.
     if sector == 0 {
         let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
-        unsafe {
-            (*stm32::GPIOB::ptr())
-                .bsrr
-                .write(|w| w.bits(if was_high { 1 << (16 + 3) } else { 1 << 3 }));
-        }
+        minz::pb3::set(!was_high);
     }
     // Re-open the ear for the new window (clears any pending edge).
     comp2::set_exti_enabled(true);

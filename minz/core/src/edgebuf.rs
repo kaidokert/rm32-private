@@ -40,6 +40,7 @@ pub struct FlipPlan {
 /// phase unconditionally; on the second rev of a pair (and not
 /// frozen) rotates the halves — the atomics are updated here, the
 /// buffer work is returned as a [`FlipPlan`].
+#[inline]
 pub fn on_rev_wrap(eh: &EdgeHalves<'_>, now_10us: u32) -> Option<FlipPlan> {
     let prev_phase = eh.rev_phase.fetch_xor(1, Ordering::Relaxed);
     if prev_phase == 1 && !eh.freeze.load(Ordering::Relaxed) {
@@ -62,6 +63,7 @@ pub fn on_rev_wrap(eh: &EdgeHalves<'_>, now_10us: u32) -> Option<FlipPlan> {
 /// `None` out of range. For non-flip rev wraps that's slot 6 of the
 /// old active half (rev 1 sec 0); for flip wraps slot 0 of the new
 /// half; for mid-rev changes `phase*6+sector` of the current half.
+#[inline]
 pub fn boundary_slot(rev_phase: u8, sector: u8) -> Option<usize> {
     let slot = rev_phase as usize * 6 + sector as usize;
     (slot < 12).then_some(slot)
