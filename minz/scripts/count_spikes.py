@@ -33,6 +33,10 @@ ap.add_argument("--ma", type=float, default=2000.0, help="event threshold (mA)")
 ap.add_argument("--dev", type=float, default=3.0,
                 help="f_e-irregularity threshold (%% window-len deviation)")
 ap.add_argument("-v", "--verbose", action="store_true", help="per-event table")
+ap.add_argument("--monster", type=float, default=4000.0,
+                help="monster-event threshold (mA) for the tier split")
+ap.add_argument("--bin-ms", type=float, default=100.0,
+                help="time-bin width for the clustering histogram (ms)")
 args = ap.parse_args()
 
 capdir = pathlib.Path(__file__).resolve().parent.parent / "captures"
@@ -109,6 +113,43 @@ for b in bins:
         print(f"   peaks mA: max {max(peaks):.0f} median "
               f"{statistics.median(peaks):.0f} | dur ms: max {max(durs):.1f} "
               f"median {statistics.median(durs):.1f}")
+
+        # Tier split: small (--ma..--monster) vs monster (>--monster).
+        small = [r for r in rows if r[2] < args.monster]
+        mons = [r for r in rows if r[2] >= args.monster]
+        print(f"   tiers: small {len(small)} ({len(small)/span_s:.2f}/s) | "
+              f"MONSTER≥{args.monster/1000:.0f}A {len(mons)} "
+              f"({len(mons)/span_s:.2f}/s)")
+
+        # Time-binned clustering: bin event START times, report the
+        # per-bin count distribution + Fano factor (var/mean of counts).
+        # Fano ≈ 1 → Poisson/uniform (independent events); Fano ≫ 1 →
+        # clustered/bursty (events arrive in groups). Also report the
+        # per-second series so bursts are visible.
+        def fano(times, width_s):
+            nb = max(1, int(span_s / width_s) + 1)
+            counts = [0] * nb
+            t0 = rows[0][0] if rows else 0.0
+            for t in times:
+                counts[min(nb - 1, int((t - t0) / width_s))] += 1
+            m = statistics.mean(counts)
+            v = statistics.pvariance(counts) if len(counts) > 1 else 0.0
+            return counts, m, v / m if m > 0 else 0.0
+
+        ev_t = [r[0] for r in rows]
+        bw = args.bin_ms / 1000.0
+        c_bin, m_bin, f_bin = fano(ev_t, bw)
+        c_sec, m_sec, f_sec = fano(ev_t, 1.0)
+        occ = sum(1 for c in c_bin if c) / len(c_bin) * 100
+        print(f"   per-{args.bin_ms:.0f}ms bins: mean {m_bin:.2f} ev/bin, "
+              f"Fano {f_bin:.2f} ({'CLUSTERED' if f_bin > 1.5 else 'uniform-ish'}), "
+              f"{occ:.0f}% of bins have ≥1 event")
+        print(f"   per-1s: {c_sec}  Fano {f_sec:.2f}")
+        # Monster-only clustering (the events that matter for chops).
+        if len(mons) >= 3:
+            _, mm, mf = fano([r[0] for r in mons], 1.0)
+            print(f"   MONSTER per-1s Fano {mf:.2f} "
+                  f"({'CLUSTERED' if mf > 1.5 else 'uniform-ish'})")
     if args.verbose:
         print("   t(s)    dur(ms)  peak(mA)  len-dev%%  order      noZC±hood")
         for t_s, dur_ms, peak, wd, tag, noz in rows:
