@@ -20,6 +20,7 @@ pub mod drive;
 pub mod dump;
 pub mod estimator;
 pub mod guards;
+pub mod mode;
 pub mod rates;
 pub mod sense;
 pub mod throttle;

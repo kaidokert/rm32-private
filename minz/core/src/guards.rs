@@ -126,6 +126,85 @@ impl Default for SagGuard {
     }
 }
 
+/// The ISR-kill flag matrix (roadmap E4). Three ISR kill sites used
+/// to hand-maintain slightly different flag sets — the OC
+/// zombie-status incident was exactly one missing `CL_ACTIVE` line,
+/// and the TIM7 watchdog kill was missing `CL_ARMED`. One function,
+/// one matrix, host-pinned.
+pub struct KillFlags<'a> {
+    pub motor_enabled: &'a portable_atomic::AtomicBool,
+    pub cl_active: &'a portable_atomic::AtomicBool,
+    pub cl_armed: &'a portable_atomic::AtomicBool,
+    pub cl_desync: &'a portable_atomic::AtomicBool,
+    pub cl_starved: &'a portable_atomic::AtomicBool,
+    pub oc_tripped: &'a portable_atomic::AtomicBool,
+    pub vbat_sagged: &'a portable_atomic::AtomicBool,
+    pub bb_frozen: &'a portable_atomic::AtomicBool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsrKillKind {
+    Desync,
+    Starved,
+    Overcurrent,
+    Sag,
+}
+
+/// Apply the complete flag set for an ISR kill. The caller performs
+/// the hardware actions (`all_off()`, COMP EXTI mask) immediately
+/// after — a ~µs of flags-before-FETs is harmless (main's microloop
+/// is 1 ms), while flags-after-FETs risks a preempting context
+/// seeing a dead motor with CL alive. The main-notification flag
+/// (`cl_desync`/`oc_tripped`/`vbat_sagged`) is stored LAST so main
+/// never reports before the payload flags are consistent.
+pub fn apply_isr_kill(kf: &KillFlags<'_>, kind: IsrKillKind) {
+    use portable_atomic::Ordering::Relaxed;
+    kf.motor_enabled.store(false, Relaxed);
+    kf.cl_active.store(false, Relaxed);
+    kf.cl_armed.store(false, Relaxed);
+    match kind {
+        IsrKillKind::Desync | IsrKillKind::Starved => {
+            // Freeze the black box so the dump shows the lead-up.
+            kf.bb_frozen.store(true, Relaxed);
+            kf.cl_starved.store(kind == IsrKillKind::Starved, Relaxed);
+            kf.cl_desync.store(true, Relaxed);
+        }
+        IsrKillKind::Overcurrent => kf.oc_tripped.store(true, Relaxed),
+        IsrKillKind::Sag => kf.vbat_sagged.store(true, Relaxed),
+    }
+}
+
+/// Load-run-store form of [`SagGuard::sample`] for the firmware's
+/// atomic-backed state (baseline + run live in atomics; `trip` tells
+/// the caller to latch the raw and kill). Semantics single-sourced
+/// through SagGuard so its regression suite covers this path.
+pub fn sag_step(baseline_raw: u16, run: u16, raw: u16) -> (u16, bool) {
+    let mut g = SagGuard {
+        baseline_raw,
+        run,
+        trip_raw: 0,
+    };
+    let trip = g.sample(raw);
+    (g.run, trip)
+}
+
+/// 2^shift PWM cycles per overcurrent-average window (85 ms at
+/// 24 kHz, 43 ms at 48 kHz).
+pub const TRIP_WINDOW_SHIFT: u32 = 11;
+
+/// One accumulator step for the windowed current average: returns
+/// `(new_acc, new_cnt, Some(avg_raw))` when a window just completed
+/// (acc/cnt reset to zero in the returned pair).
+pub fn trip_accum_step(acc: u32, cnt: u32, sample_raw: u16) -> (u32, u32, Option<u32>) {
+    let acc = acc + sample_raw as u32;
+    let cnt = cnt + 1;
+    if cnt >= (1 << TRIP_WINDOW_SHIFT) {
+        (0, 0, Some(acc >> TRIP_WINDOW_SHIFT))
+    } else {
+        (acc, cnt, None)
+    }
+}
+
 /// Overcurrent decision on the windowed average of ON-window shunt
 /// samples. SEMANTICS MATTER: those samples are PHASE current — the
 /// battery sees phase × duty; a phase-referred trip over-reads
@@ -266,6 +345,133 @@ mod tests {
         for _ in 0..SAG_DEBOUNCE - 1 {
             assert!(!g.sample(900));
         }
+    }
+
+    // ---- ISR kill flag matrix ----
+
+    struct FlagRig {
+        motor_enabled: portable_atomic::AtomicBool,
+        cl_active: portable_atomic::AtomicBool,
+        cl_armed: portable_atomic::AtomicBool,
+        cl_desync: portable_atomic::AtomicBool,
+        cl_starved: portable_atomic::AtomicBool,
+        oc_tripped: portable_atomic::AtomicBool,
+        vbat_sagged: portable_atomic::AtomicBool,
+        bb_frozen: portable_atomic::AtomicBool,
+    }
+
+    impl FlagRig {
+        fn driving_cl() -> Self {
+            use portable_atomic::AtomicBool as B;
+            Self {
+                motor_enabled: B::new(true),
+                cl_active: B::new(true),
+                cl_armed: B::new(true), // worst case: stale arm too
+                cl_desync: B::new(false),
+                cl_starved: B::new(false),
+                oc_tripped: B::new(false),
+                vbat_sagged: B::new(false),
+                bb_frozen: B::new(false),
+            }
+        }
+
+        fn flags(&self) -> KillFlags<'_> {
+            KillFlags {
+                motor_enabled: &self.motor_enabled,
+                cl_active: &self.cl_active,
+                cl_armed: &self.cl_armed,
+                cl_desync: &self.cl_desync,
+                cl_starved: &self.cl_starved,
+                oc_tripped: &self.oc_tripped,
+                vbat_sagged: &self.vbat_sagged,
+                bb_frozen: &self.bb_frozen,
+            }
+        }
+    }
+
+    #[test]
+    fn regression_no_zombie_flags_after_any_kill_kind() {
+        use portable_atomic::Ordering::Relaxed;
+        // The OC zombie-status incident (CL_ACTIVE left set → 10 fake
+        // ladder rungs) and the watchdog kill's missing CL_ARMED:
+        // EVERY kill kind must leave motor + both CL flags false.
+        for kind in [
+            IsrKillKind::Desync,
+            IsrKillKind::Starved,
+            IsrKillKind::Overcurrent,
+            IsrKillKind::Sag,
+        ] {
+            let r = FlagRig::driving_cl();
+            apply_isr_kill(&r.flags(), kind);
+            assert!(!r.motor_enabled.load(Relaxed), "{kind:?}");
+            assert!(!r.cl_active.load(Relaxed), "{kind:?} zombie CL_ACTIVE");
+            assert!(!r.cl_armed.load(Relaxed), "{kind:?} zombie CL_ARMED");
+        }
+    }
+
+    #[test]
+    fn kill_matrix_per_kind_reports() {
+        use portable_atomic::Ordering::Relaxed;
+        let r = FlagRig::driving_cl();
+        apply_isr_kill(&r.flags(), IsrKillKind::Starved);
+        assert!(r.cl_desync.load(Relaxed) && r.cl_starved.load(Relaxed));
+        assert!(r.bb_frozen.load(Relaxed), "bb must freeze the lead-up");
+        assert!(!r.oc_tripped.load(Relaxed) && !r.vbat_sagged.load(Relaxed));
+
+        let r = FlagRig::driving_cl();
+        apply_isr_kill(&r.flags(), IsrKillKind::Desync);
+        assert!(r.cl_desync.load(Relaxed) && !r.cl_starved.load(Relaxed));
+        assert!(r.bb_frozen.load(Relaxed));
+
+        let r = FlagRig::driving_cl();
+        apply_isr_kill(&r.flags(), IsrKillKind::Overcurrent);
+        assert!(r.oc_tripped.load(Relaxed));
+        assert!(!r.cl_desync.load(Relaxed) && !r.bb_frozen.load(Relaxed));
+
+        let r = FlagRig::driving_cl();
+        apply_isr_kill(&r.flags(), IsrKillKind::Sag);
+        assert!(r.vbat_sagged.load(Relaxed));
+        assert!(!r.cl_desync.load(Relaxed) && !r.bb_frozen.load(Relaxed));
+    }
+
+    // ---- sag_step (atomic-backed adoption path) ----
+
+    #[test]
+    fn sag_step_matches_sagguard_semantics() {
+        // Debounce accumulates, recovery resets, trip fires at the
+        // threshold count — same suite as SagGuard, through the
+        // load-run-store form the firmware actually calls.
+        let base = 1080;
+        let mut run = 0;
+        for _ in 0..SAG_DEBOUNCE - 1 {
+            let (r, trip) = sag_step(base, run, 900);
+            assert!(!trip);
+            run = r;
+        }
+        let (_, trip) = sag_step(base, run, 900);
+        assert!(trip, "64th consecutive sub-threshold sample kills");
+        // Recovery resets.
+        let (r, _) = sag_step(base, 50, 1075);
+        assert_eq!(r, 0);
+    }
+
+    // ---- trip accumulator ----
+
+    #[test]
+    fn trip_accum_windows_and_resets() {
+        let mut acc = 0u32;
+        let mut cnt = 0u32;
+        let mut avg = None;
+        for _ in 0..(1 << TRIP_WINDOW_SHIFT) {
+            let (a, c, v) = trip_accum_step(acc, cnt, 100);
+            acc = a;
+            cnt = c;
+            avg = v;
+        }
+        assert_eq!(avg, Some(100), "flat 100-count input averages to 100");
+        assert_eq!((acc, cnt), (0, 0), "window resets");
+        // Mid-window: no verdict.
+        assert_eq!(trip_accum_step(0, 0, 4095).2, None);
     }
 
     // ---- Overcurrent ----

@@ -51,10 +51,9 @@ pub struct WindowState<'a> {
     pub last_comm_10us: &'a AtomicU32,
 }
 
-/// Black-box event codes emitted here (indices into
-/// [`crate::blackbox::EV_NAMES`]).
-pub const EV_NOZ: u8 = 4;
-pub const EV_RAQ: u8 = 9;
+// Black-box event codes emitted here — authority lives in
+// [`crate::blackbox`].
+pub use crate::blackbox::{EV_NOZ, EV_RAQ};
 
 /// What the caller must do after the close: enqueue `rec` (if any)
 /// and record the black-box events (sector = the closed window's).

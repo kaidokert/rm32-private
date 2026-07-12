@@ -448,7 +448,7 @@ static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
 ///
 // Overcurrent thresholds live in minz_core::guards::overcurrent
 // (host-tested; the 2.0 A open-loop / 4 A CL history in its docs).
-const I_TRIP_SHIFT: u32 = 11; // 2048 cycles = 85 ms @ 24 kHz
+// Window size: minz_core::guards::TRIP_WINDOW_SHIFT (2^11 cycles).
 static I_TRIP_ACC: AtomicU32 = AtomicU32::new(0);
 static I_TRIP_CNT: AtomicU32 = AtomicU32::new(0);
 /// ANALOG BLACK BOX (`J` key arms, one-shot): when armed, a single
@@ -1355,93 +1355,52 @@ fn main() -> ! {
                         .ok();
                         tx_writer.write_blocking(&[]);
                     }
-                    b'm' if CL_ACTIVE.load(Ordering::Relaxed) => {
-                        write!(&mut tx_writer, "CL active - 'y' first\r\n").ok();
-                    }
-                    b'm' => {
-                        waveform = match waveform {
-                            Waveform::Sine => Waveform::SixStep,
-                            Waveform::SixStep => Waveform::Sine,
-                        };
-                    }
-                    b'r' | b'q' if CL_ACTIVE.load(Ordering::Relaxed) => {
-                        write!(&mut tx_writer, "CL active - 'y' first\r\n").ok();
-                    }
-                    b'r' => {
-                        // Panic reset: back to a known-good idle config.
-                        // The existing prev_amp / prev_hz / prev_mode delta
-                        // checks below pick this up and print the changes.
-                        // Arm-time vbat baseline for the −10 % sag kill
-                        // (captured unloaded, before the drive engages).
-                        VBAT_BASELINE_RAW
-                            .store(VBAT_RAW_LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
-                        waveform = Waveform::SixStep;
-                        amplitude_pct = AMP_START;
-                        electrical_hz = FREQ_START;
-                        // SNAP applied = target on arm: the slew is
-                        // for changes while RUNNING. An abort at amp
-                        // 50 left the applied duty slewing down for
-                        // 2 s while the next engage's spin-up ran at
-                        // ~45 % — junk estimator seeds, 4/4 failed
-                        // engages.
-                        AMPLITUDE_PCT.store(AMP_START as u8, Ordering::Relaxed);
-                        AMP_TARGET_PCT.store(AMP_START as u8, Ordering::Relaxed);
-                        if !output_enabled {
-                            output_enabled = true;
-                            MOTOR_ENABLED.store(true, Ordering::Relaxed);
-                            tim1_motor_pwm::arm_output();
-                            // Re-arm BEMF EXTI now that the FETs are
-                            // driving — see boot-time comment for why.
-                            comp2::set_exti_enabled(true);
-                            write!(&mut tx_writer, "armed\r\n").ok();
-                        }
-                    }
-                    b'q' => {
-                        // Slow-bench reset: same as `r` but lands at
-                        // 50 Hz instead of `FREQ_START` (60 Hz). 50 Hz
-                        // is around the floor of where the rotor still
-                        // tracks cleanly without cogging — a useful
-                        // "watch the waveforms" speed.
-                        VBAT_BASELINE_RAW
-                            .store(VBAT_RAW_LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
-                        waveform = Waveform::SixStep;
-                        amplitude_pct = AMP_START;
-                        electrical_hz = 50;
-                        AMPLITUDE_PCT.store(AMP_START as u8, Ordering::Relaxed);
-                        AMP_TARGET_PCT.store(AMP_START as u8, Ordering::Relaxed);
-                        if !output_enabled {
-                            output_enabled = true;
-                            MOTOR_ENABLED.store(true, Ordering::Relaxed);
-                            tim1_motor_pwm::arm_output();
-                            comp2::set_exti_enabled(true);
-                            write!(&mut tx_writer, "armed\r\n").ok();
-                        }
-                    }
-                    b'w' => {
-                        // Hard kill: clear MOE → all FETs off immediately.
-                        // CCRs / CCER are preserved so `r` resumes from
-                        // the same waveform state. Also disable the
-                        // TIM7 ISR's CCR updates so a stale arm doesn't
-                        // resume the previous duty mid-decision, and
-                        // mask EXTI22 so the now-floating phases don't
-                        // storm the COMP ISR (see boot-time comment).
-                        //
-                        // UNCONDITIONAL (roadmap F1): the kill actions
-                        // must not depend on the `output_enabled`
-                        // mirror — if it ever desyncs false-while-
-                        // driving, a conditional `w` cannot kill the
-                        // motor. Same lesson as AM32's mask-at-every-
-                        // stop-site; all actions are idempotent.
-                        CL_ACTIVE.store(false, Ordering::Relaxed);
-                        CL_ARMED.store(false, Ordering::Relaxed);
-                        MOTOR_ENABLED.store(false, Ordering::Relaxed);
-                        tim1_motor_pwm::all_off();
-                        comp2::set_exti_enabled(false);
-                        if output_enabled {
-                            output_enabled = false;
-                            write!(&mut tx_writer, "off\r\n").ok();
-                        }
-                    }
+                    // Arm/kill/CL/mode transitions all go through the
+                    // host-tested state machine (minz_core::mode):
+                    // estimator-reset-on-arm, snap-on-arm, EXTI mask
+                    // rules, no-zombie-CL, and the B4 stale-arm gate
+                    // are its regression suite. `r` = panic reset to
+                    // FREQ_START; `q` = slow bench reset at 50 Hz
+                    // (floor of clean no-cog tracking); `w` = hard
+                    // kill (CCR/CCER preserved so `r` resumes).
+                    b'm' => mode_cmd(
+                        minz_core::mode::Cmd::ModeToggle,
+                        &mut output_enabled,
+                        &mut waveform,
+                        &mut electrical_hz,
+                        &mut amplitude_pct,
+                        &mut tx_writer,
+                    ),
+                    b'r' => mode_cmd(
+                        minz_core::mode::Cmd::Arm {
+                            hz: FREQ_START,
+                            amp_pct: AMP_START,
+                        },
+                        &mut output_enabled,
+                        &mut waveform,
+                        &mut electrical_hz,
+                        &mut amplitude_pct,
+                        &mut tx_writer,
+                    ),
+                    b'q' => mode_cmd(
+                        minz_core::mode::Cmd::Arm {
+                            hz: 50,
+                            amp_pct: AMP_START,
+                        },
+                        &mut output_enabled,
+                        &mut waveform,
+                        &mut electrical_hz,
+                        &mut amplitude_pct,
+                        &mut tx_writer,
+                    ),
+                    b'w' => mode_cmd(
+                        minz_core::mode::Cmd::Kill,
+                        &mut output_enabled,
+                        &mut waveform,
+                        &mut electrical_hz,
+                        &mut amplitude_pct,
+                        &mut tx_writer,
+                    ),
                     b'b' => {
                         // COMP2 edge rates: `raw` = every EXTI fire, `valid` =
                         // edges that survive the time-window check (only events
@@ -1597,55 +1556,19 @@ fn main() -> ! {
                             }
                         }
                     }
-                    b'y' => {
-                        // FALCON engage/kill. Engaging waits for the
-                        // next qualified ZC that has an interval
-                        // estimate behind it (OWL runs from arm, so
-                        // that's typically the very next window).
-                        // Pressing again while active = kill + coast
-                        // (no jolty open-loop resume in v1).
-                        if CL_ACTIVE.load(Ordering::Relaxed) {
-                            CL_ACTIVE.store(false, Ordering::Relaxed);
-                            CL_ARMED.store(false, Ordering::Relaxed);
-                            output_enabled = false;
-                            MOTOR_ENABLED.store(false, Ordering::Relaxed);
-                            tim1_motor_pwm::all_off();
-                            comp2::set_exti_enabled(false);
-                            write!(
-                                &mut tx_writer,
-                                "CL off - output killed (r/q re-arms open loop)\r\n"
-                            )
-                            .ok();
-                        } else if output_enabled && matches!(waveform, Waveform::SixStep) {
-                            // Reset the estimator before arming: a
-                            // stale interval (e.g. 144 µs left by a
-                            // runaway) is otherwise UNRECOVERABLE —
-                            // the runaway floor kills every engage
-                            // instantly while the symmetric bound
-                            // rejects every honest open-loop sample
-                            // (1667 µs ≫ 1.8×144 µs). Engagement
-                            // waits for interval != 0, so this
-                            // re-seeds fresh from open-loop qZCs
-                            // within a few windows.
-                            OWL_INTERVAL_US.store(0, Ordering::Relaxed);
-                            OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
-                            WINDOWS_SINCE_QZC.store(0, Ordering::Relaxed);
-                            CL_REACQ.store(false, Ordering::Relaxed);
-                            CL_NOZ_RUN.store(0, Ordering::Relaxed);
-                            CL_ARMED.store(true, Ordering::Relaxed);
-                            write!(
-                                &mut tx_writer,
-                                "CL ARMED - engaging at next qualified ZC\r\n"
-                            )
-                            .ok();
-                        } else {
-                            write!(
-                                &mut tx_writer,
-                                "CL needs a running six-step drive first (r/q)\r\n"
-                            )
-                            .ok();
-                        }
-                    }
+                    // FALCON engage/kill: engaging waits for the next
+                    // qualified ZC with an interval estimate behind it;
+                    // pressing again while active = kill + coast. The
+                    // estimator-reset-on-arm lives in the core state
+                    // machine.
+                    b'y' => mode_cmd(
+                        minz_core::mode::Cmd::ClToggle,
+                        &mut output_enabled,
+                        &mut waveform,
+                        &mut electrical_hz,
+                        &mut amplitude_pct,
+                        &mut tx_writer,
+                    ),
                     b'g' => {
                         // MAGPIE stream toggle. Binary 16-byte frames
                         // interleave with ASCII key echoes; the host
@@ -2175,17 +2098,26 @@ fn TIM7() {
             if let Some(kind) = kill {
                 let starved = kind == minz_core::guards::Kill::ZcStarved;
                 bb_record(
-                    if starved { 8 } else { 6 },
+                    if starved {
+                        minz_core::blackbox::EV_STV
+                    } else {
+                        minz_core::blackbox::EV_DSY
+                    },
                     CURRENT_SECTOR.load(Ordering::Relaxed),
                     ((if starved { starve_us } else { since_us }) / 10).min(0xFFFF) as u16,
                 );
-                BB_FROZEN.store(true, Ordering::Relaxed);
-                CL_ACTIVE.store(false, Ordering::Relaxed);
-                MOTOR_ENABLED.store(false, Ordering::Relaxed);
+                // Flag matrix host-pinned in minz_core::guards (this
+                // site used to miss the CL_ARMED clear).
+                minz_core::guards::apply_isr_kill(
+                    &KILL_FLAGS,
+                    if starved {
+                        minz_core::guards::IsrKillKind::Starved
+                    } else {
+                        minz_core::guards::IsrKillKind::Desync
+                    },
+                );
                 tim1_motor_pwm::all_off();
                 comp2::set_exti_enabled(false);
-                CL_STARVED.store(starved, Ordering::Relaxed);
-                CL_DESYNC.store(true, Ordering::Relaxed);
             }
         }
         return;
@@ -2394,6 +2326,87 @@ static WINDOW_STATE: minz_core::window::WindowState<'static> = minz_core::window
 /// higher/equal-priority COMP ISR can't smear an edge across the
 /// old/new window during snapshot-and-reset. This site supplies the
 /// clocks and performs the two returned side effects.
+/// The mode state machine's view of this file's statics (arm/kill/
+/// CL transitions host-tested in minz_core::mode).
+static MODE_STATE: minz_core::mode::ModeState<'static> = minz_core::mode::ModeState {
+    motor_enabled: &MOTOR_ENABLED,
+    cl_active: &CL_ACTIVE,
+    cl_armed: &CL_ARMED,
+    cl_reacq: &CL_REACQ,
+    cl_noz_run: &CL_NOZ_RUN,
+    interval_us: &OWL_INTERVAL_US,
+    last_qzc_us: &OWL_LAST_QZC_US,
+    windows_since_qzc: &WINDOWS_SINCE_QZC,
+    amplitude_pct: &AMPLITUDE_PCT,
+    amp_target_pct: &AMP_TARGET_PCT,
+    vbat_baseline_raw: &VBAT_BASELINE_RAW,
+    vbat_live: &VBAT_RAW_LIVE,
+};
+
+/// ISR-kill flag matrix (minz_core::guards::apply_isr_kill) — the
+/// zombie-flag class is host-pinned there.
+static KILL_FLAGS: minz_core::guards::KillFlags<'static> = minz_core::guards::KillFlags {
+    motor_enabled: &MOTOR_ENABLED,
+    cl_active: &CL_ACTIVE,
+    cl_armed: &CL_ARMED,
+    cl_desync: &CL_DESYNC,
+    cl_starved: &CL_STARVED,
+    oc_tripped: &OC_TRIPPED,
+    vbat_sagged: &VBAT_SAGGED,
+    bb_frozen: &BB_FROZEN,
+};
+
+/// Shuttle a mode command through the core state machine and apply
+/// its actions (peripheral calls + prints) in the contract order:
+/// arm_output before EXTI-enable, all_off before EXTI-mask.
+fn mode_cmd(
+    cmd: minz_core::mode::Cmd,
+    output_enabled: &mut bool,
+    waveform: &mut Waveform,
+    electrical_hz: &mut u32,
+    amplitude_pct: &mut u16,
+    tx_writer: &mut UartTxWriter,
+) {
+    use minz_core::mode::{Mirror, Msg, step};
+    let mut mir = Mirror {
+        output_enabled: *output_enabled,
+        six_step: matches!(*waveform, Waveform::SixStep),
+        hz: *electrical_hz,
+        amp_pct: *amplitude_pct,
+    };
+    let a = step(&MODE_STATE, &mut mir, cmd);
+    *output_enabled = mir.output_enabled;
+    *waveform = if mir.six_step {
+        Waveform::SixStep
+    } else {
+        Waveform::Sine
+    };
+    *electrical_hz = mir.hz;
+    *amplitude_pct = mir.amp_pct;
+    if a.arm_output {
+        tim1_motor_pwm::arm_output();
+    }
+    if a.all_off {
+        tim1_motor_pwm::all_off();
+    }
+    if let Some(on) = a.exti {
+        comp2::set_exti_enabled(on);
+    }
+    let msg: &str = match a.msg {
+        // hz/amp/mode changes print via the delta-publish block.
+        Msg::None | Msg::ModeToggled => "",
+        Msg::Armed => "armed\r\n",
+        Msg::Off => "off\r\n",
+        Msg::ClBlocked => "CL armed/active - 'y' first\r\n",
+        Msg::ClOffKilled => "CL off - output killed (r/q re-arms open loop)\r\n",
+        Msg::ClArmed => "CL ARMED - engaging at next qualified ZC\r\n",
+        Msg::ClNeedsDrive => "CL needs a running six-step drive first (r/q)\r\n",
+    };
+    if !msg.is_empty() {
+        tx_writer.write_blocking(msg.as_bytes());
+    }
+}
+
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
     let out = minz_core::window::close_float_window(
         &WINDOW_STATE,
@@ -2538,25 +2551,21 @@ fn TIM1_UP_TIM16() {
         if raw < WINDOW_VBAT_MIN.load(Ordering::Relaxed) {
             WINDOW_VBAT_MIN.store(raw, Ordering::Relaxed);
         }
-        // Host-tested constants/threshold: minz_core::guards (the
-        // −10 % baseline rule, absolute brownout floor, and the
-        // debounce whose absence false-tripped with a report reading
-        // "8130 < 90% of 8107" are all regression-tested there).
-        let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
-        let thresh = (base - base / 10).max(minz_core::guards::VBAT_ABS_FLOOR_RAW);
-        if raw < thresh && MOTOR_ENABLED.load(Ordering::Relaxed) {
-            let run = VBAT_SAG_RUN.load(Ordering::Relaxed) + 1;
-            if run >= minz_core::guards::SAG_DEBOUNCE {
+        // Threshold + debounce host-tested through SagGuard's suite
+        // via the load-run-store form (minz_core::guards::sag_step);
+        // flag matrix via apply_isr_kill.
+        if MOTOR_ENABLED.load(Ordering::Relaxed) {
+            let (run, trip) = minz_core::guards::sag_step(
+                VBAT_BASELINE_RAW.load(Ordering::Relaxed),
+                VBAT_SAG_RUN.load(Ordering::Relaxed),
+                raw,
+            );
+            VBAT_SAG_RUN.store(run, Ordering::Relaxed);
+            if trip {
                 VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
-                MOTOR_ENABLED.store(false, Ordering::Relaxed);
+                minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Sag);
                 tim1_motor_pwm::all_off();
                 comp2::set_exti_enabled(false);
-                CL_ACTIVE.store(false, Ordering::Relaxed);
-                CL_ARMED.store(false, Ordering::Relaxed);
-                VBAT_SAGGED.store(true, Ordering::Relaxed);
-                VBAT_SAG_RUN.store(0, Ordering::Relaxed);
-            } else {
-                VBAT_SAG_RUN.store(run, Ordering::Relaxed);
             }
         } else {
             VBAT_SAG_RUN.store(0, Ordering::Relaxed);
@@ -2648,7 +2657,11 @@ fn TIM1_UP_TIM16() {
             }
         } else {
             if CL_ACTIVE.load(Ordering::Relaxed) {
-                bb_record(5, cur_sec, CAND_CONFIRMS.load(Ordering::Relaxed) as u16);
+                bb_record(
+                    minz_core::blackbox::EV_DIS,
+                    cur_sec,
+                    CAND_CONFIRMS.load(Ordering::Relaxed) as u16,
+                );
             }
             CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
         }
@@ -2659,44 +2672,27 @@ fn TIM1_UP_TIM16() {
     // Kill directly from here (don't wait for main): all six gate
     // inputs to OUTPUT-LOW, TIM7 CCR updates off, COMP EXTI masked —
     // identical to the `w` key path.
-    let acc = I_TRIP_ACC.load(Ordering::Relaxed) + i_raw as u32;
-    let cnt = I_TRIP_CNT.load(Ordering::Relaxed) + 1;
-    if cnt >= (1 << I_TRIP_SHIFT) {
-        // Semantics matter: GECKO samples the shunt only INSIDE the
-        // ON window, so this average is PHASE current — the battery
-        // sees phase × duty. A phase-referred trip over-reads supply
-        // draw by 1/duty and killed a healthy amp-54 run whose true
-        // battery draw was ~1.6 A (PSU untouched at its 2.5 A
-        // limit). AM32 never meets this bug because at 100 % duty
-        // phase ≈ battery.
-        // Under CL: battery-referred trip at ~2.2 A (the 2.5 A lab
-        // supply in CC mode is the real protection; stall detection
-        // is the ZC-starvation guard's job). Open loop: phase-
-        // referred 2.0 A stays — it's the stall-heater guard and a
-        // stalled drive at low duty IS phase ≈ battery.
-        let avg_raw = acc >> I_TRIP_SHIFT;
-        // Host-tested: minz_core::guards::overcurrent — phase-vs-
-        // battery semantics, the AM32-rides-the-knee history, and
-        // the open-loop stall-heater guard documented + regression-
-        // tested in the core.
+    // Windowed average (minz_core::guards::trip_accum_step) +
+    // decision (::overcurrent — phase-vs-battery semantics and the
+    // AM32-rides-the-knee history are regression-tested there) +
+    // flag matrix (::apply_isr_kill — the OC zombie-status incident).
+    let (acc, cnt, avg) = minz_core::guards::trip_accum_step(
+        I_TRIP_ACC.load(Ordering::Relaxed),
+        I_TRIP_CNT.load(Ordering::Relaxed),
+        i_raw,
+    );
+    I_TRIP_ACC.store(acc, Ordering::Relaxed);
+    I_TRIP_CNT.store(cnt, Ordering::Relaxed);
+    if let Some(avg_raw) = avg {
         let tripped = minz_core::guards::overcurrent(avg_raw, CL_ACTIVE.load(Ordering::Relaxed));
         if tripped && MOTOR_ENABLED.load(Ordering::Relaxed) {
-            MOTOR_ENABLED.store(false, Ordering::Relaxed);
+            minz_core::guards::apply_isr_kill(
+                &KILL_FLAGS,
+                minz_core::guards::IsrKillKind::Overcurrent,
+            );
             tim1_motor_pwm::all_off();
             comp2::set_exti_enabled(false);
-            // Clear the CL flags too: a trip that leaves CL_ACTIVE
-            // set produces a ZOMBIE status — `i` kept printing the
-            // last "cl: ACTIVE f_e=..." line for 60 s of dead motor
-            // and a ladder script sailed through ten fake rungs.
-            CL_ACTIVE.store(false, Ordering::Relaxed);
-            CL_ARMED.store(false, Ordering::Relaxed);
-            OC_TRIPPED.store(true, Ordering::Relaxed);
         }
-        I_TRIP_ACC.store(0, Ordering::Relaxed);
-        I_TRIP_CNT.store(0, Ordering::Relaxed);
-    } else {
-        I_TRIP_ACC.store(acc, Ordering::Relaxed);
-        I_TRIP_CNT.store(cnt, Ordering::Relaxed);
     }
     let idx = (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
     let value = comp2::value() as u8;
@@ -2914,7 +2910,11 @@ fn accept_qualified_zc(zc_us: u32) {
         if CL_ARMED.load(Ordering::Relaxed) {
             CL_ARMED.store(false, Ordering::Relaxed);
             CL_ACTIVE.store(true, Ordering::Relaxed);
-            bb_record(7, sec, interval.min(0xFFFF) as u16);
+            bb_record(
+                minz_core::blackbox::EV_ENG,
+                sec,
+                interval.min(0xFFFF) as u16,
+            );
         }
         if CL_ACTIVE.load(Ordering::Relaxed) {
             // Host-tested: auto-advance ramp + scheduling delay
@@ -2928,7 +2928,7 @@ fn accept_qualified_zc(zc_us: u32) {
             let delay = minz_core::timing::commutation_delay_us(interval, adv, elapsed);
             minz::lptim2_oneshot::schedule_us(delay);
             SHOT_REFINED.store(true, Ordering::Relaxed);
-            bb_record(3, sec, delay.min(0xFFFF) as u16);
+            bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
             // Deaf until the commutation (mask-after-accept).
             comp2::set_exti_enabled(false);
         }

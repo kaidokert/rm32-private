@@ -79,7 +79,24 @@ Bench check: known-good 48 kHz ladder as A/B control
 `falcon_probe.py`/`falcon_stats.py` premature-rate replay, bb dumps
 on any desync.
 
-### E2. `mode.rs` — arm/kill/CL bench-mode state machine
+### E2. `mode.rs` — arm/kill/CL bench-mode state machine — DONE 2026-07-11
+
+Landed as `core/src/mode.rs` (100 % line coverage): `ModeState<'a>`
+atomic refs + `Mirror` locals + `step(Cmd) -> Actions` exactly as
+sketched below. All five keys (`r`/`q`/`w`/`y`/`m`) now shuttle
+through `mode_cmd()` in the firmware. Regression tests:
+snap-on-arm, estimator-reset-on-CL-arm, unconditional kill (F1 as a
+test now), zombie-flag matrix, EXTI-only-on-dead→driving, the B4
+stale-arm gate (`m` blocked while CL_ARMED — behavior CHANGE, gated
+message "CL armed/active - 'y' first"), and a mirror-convergence
+property test. Bench: ladder 452/757/1003 Hz qzc 100 % + the full
+transition matrix exercised live incl. the B4 gate
+(`captures/modepass_sanity_map.png`). NOT changed: `Arm` while
+CL_ARMED still allowed and does NOT clear the pending arm
+(cl_lock_map's engage-retry flow may rely on it — revisit
+deliberately, with the script, if ever).
+
+Original plan for reference:
 Logic scattered across `r`/`q`/`w`/`y`/`m` keys (~1290–1573), boot
 publication (~1035–1065, "same as `w`"), and the three ISR-kill
 report blocks. Seam: `ModeState<'a>` atomic refs + command-in/
@@ -143,7 +160,17 @@ stomp SECTOR_GATE_US under CL), B7 (IWDG margin comment corrected to
   `edge_dump_status(sec_starts, window_end, hz) -> Invalid | MotorOff
   | Ok{window_us}`.
 
-### E4. Dedup + hardening (batch)
+### E4. Dedup + hardening — DONE 2026-07-11 (same pass as E2)
+
+`guards::apply_isr_kill` + `KillFlags<'a>` now run all three ISR
+kill sites (TIM7 watchdog — which HAD been missing the CL_ARMED
+clear — OC, sag); the zombie-flag matrix is host-pinned for every
+kill kind. `guards::sag_step` adopts SagGuard's tested semantics at
+the firmware's atomic-backed call site (the inline duplicate is
+gone). `guards::trip_accum_step` owns the OC window.
+`blackbox::EV_*` is the single authority for event codes (window.rs
+and drive.rs re-export; all firmware bb_record sites use names, no
+magic numbers). Original plan for reference:
 - **SagGuard adoption**: the tested `guards::SagGuard` is dead code —
   TIM1_UP re-implements the debounce inline (~2530–2561). Wire the
   tested one in (or a pure `sag_step(raw, baseline, run)`).

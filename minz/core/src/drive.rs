@@ -85,11 +85,8 @@ pub fn edges_for(mode: u8, sector: u8) -> (bool, bool) {
     }
 }
 
-/// Black-box commutation classes (indices into
-/// [`crate::blackbox::EV_NAMES`]).
-pub const BB_REF: u8 = 0;
-pub const BB_BLD: u8 = 1;
-pub const BB_DRK: u8 = 2;
+// Black-box commutation classes — authority in [`crate::blackbox`].
+pub use crate::blackbox::{EV_BLD as BB_BLD, EV_DRK as BB_DRK, EV_REF as BB_REF};
 
 /// Classify a closed-loop commutation by the window it ends:
 /// dead-reckoned C windows (sectors 0/3) are DRK; A/B windows are

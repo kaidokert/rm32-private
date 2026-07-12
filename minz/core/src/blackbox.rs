@@ -76,6 +76,30 @@ pub const EV_NAMES: [&str; 10] = [
     "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ",
 ];
 
+// The authoritative event codes (indices into EV_NAMES; the decode
+// table in scripts/owl_report.py must match). Call sites use these,
+// never magic numbers.
+/// Commutation re-timed by an accepted ZC.
+pub const EV_REF: u8 = 0;
+/// A/B window commutated by the blind free-run.
+pub const EV_BLD: u8 = 1;
+/// Dead-reckoned phase-C window commutation.
+pub const EV_DRK: u8 = 2;
+/// Qualified ZC accepted.
+pub const EV_ACC: u8 = 3;
+/// Window closed with no qualified ZC (CL).
+pub const EV_NOZ: u8 = 4;
+/// Candidate discarded by the confirm rule.
+pub const EV_DIS: u8 = 5;
+/// Desync watchdog kill.
+pub const EV_DSY: u8 = 6;
+/// Closed loop engaged.
+pub const EV_ENG: u8 = 7;
+/// ZC-starvation kill.
+pub const EV_STV: u8 = 8;
+/// Re-acquisition entered.
+pub const EV_RAQ: u8 = 9;
+
 /// Render a desync dump: one `bb +<dt>us NAME s<sec> d=<data>` line
 /// per event, dt in µs since the previous event (t is in 10 µs
 /// ticks, wrapping u16). `events` arrive oldest-first (e.g. from

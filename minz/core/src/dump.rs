@@ -170,7 +170,7 @@ pub fn edge_dump_status(
     window_end_tick: u32,
     electrical_hz: u32,
 ) -> EdgeDumpStatus {
-    if window_end_tick == 0 || sec_starts.iter().any(|&t| t == 0) {
+    if window_end_tick == 0 || sec_starts.contains(&0) {
         EdgeDumpStatus::Invalid
     } else if electrical_hz == 0 {
         EdgeDumpStatus::MotorOff
