@@ -1,4 +1,11 @@
-# minz-core extraction roadmap (2026-07-11)
+# minz-core extraction roadmap (2026-07-11) — **COMPLETE**
+
+All items landed (F1/F2, E1-E5, B-flags fixed or dispositioned;
+the one consciously-skipped cosmetic is noted in E5). End state:
+114 host tests, ~99 % line coverage, motor_tester2.rs ≈ 2,700 lines
+of ISR glue + statics + init; every decision and every wire byte is
+host-tested minz-core code. Kept for the incident notes and seam
+patterns.
 
 Product of a two-agent review of `examples/motor_tester2.rs` (~2,750
 lines after passes 1–3) against the established minz-core seams:
@@ -32,7 +39,42 @@ acting; the anchors drift with every edit.
 
 ## Extraction queue (ranked)
 
-### E1. `zc.rs` — ZC candidate/confirm/accept state machine
+### E1. `zc.rs` — ZC candidate/confirm/accept state machine — DONE 2026-07-11
+
+Landed: `on_held_edge` (COMP, no CS by design — the priority
+structure is the lock), `confirm_step` + `accept_gen_current`
+(TIM1_UP; the firmware keeps its `free` envelope), `accept_publish`
+(shared: publish + estimator + engage decision; the scheduling tail
+stays at the call site so the elapsed read keeps its position).
+**B1 TOCTOU closed** via the generation snapshot taken at
+candidate-load time and validated inside the CS (a close + fresh
+re-arm refreshes CAND_GEN — the snapshot doesn't care); consume and
+discard are compare-exchanges so a replaced candidate always
+survives. Candidate lifetime kept EXACTLY as proven (consumed at
+depth, before the CS). 20 zc tests incl. the B1 interleaving
+regression; module 97.8 % lines. Bench: SWIFT ladder 463/763/1004 Hz
+qzc 100 % (`captures/e1_retry_map.png`) + 5/5 ADC-confirm-path
+engages to the amp-10 equilibrium.
+
+**Verification war story (read before trusting single engages):**
+the first E1 ladders failed 8/8 engages and a manual test showed a
+poisoned-231 µs STV kill — hours of bisection later, the same full
+tree passed everything. The "regression" was manufactured by a bad
+repro: single engage attempts with no kill/re-arm discipline judged
+against the DOCUMENTED engagement lottery, plus one capture polluted
+by a leftover CL gate (a failed episode leaves gate_us(reacq) ~20 µs
+latched; `r` at the same hz doesn't re-store it — the delta-publish
+only fires on hz CHANGE). Same-binary contradiction proved it: the
+E5-only build was "sick" single-shot and 5/5 healthy minutes later.
+Bench verdicts about engage quality need n≥4 with w/re-arm between
+attempts — exactly why cl_lock_map's engage() retries. Also
+confirmed pre-existing (NOT a regression): sectors 1 AND 2 are
+ADC-confirm-blind at amp 10/f=100 open loop (66 % overall qzc);
+under SWIFT this is invisible. Candidate lever for the sector-1
+blindness: the sec-1 rule `2B < A` has no vbus margin — worth a
+WAXWING look someday.
+
+Original plan for reference:
 **Highest value, highest risk.** COMP tail (~2844–2872: SWIFT
 immediate accept vs candidate arm, publish order EXPECTED/CONFIRMS/
 GEN before ZC), TIM1_UP wrap-confirm (~2600–2656), and
@@ -184,7 +226,15 @@ magic numbers). Original plan for reference:
 - **OC trip accumulator** (~2663–2701) → `TripAccum::step` around
   the already-extracted `guards::overcurrent`.
 
-### E5. Hardware moves (no host tests; dedup + reuse for a future motor_tester3)
+### E5. Hardware moves — DONE 2026-07-11 (same pass as E1)
+
+`minz::usart2_rx::init_pa2_rx` (SWAP + UE=0 ordering encoded once),
+`minz::iwdg::{start_1s, refresh}` (the burn post-mortem + refresh
+cadence contract moved with it), `minz::uart_tx::
+usart1_tx_push_pull_pb6`. The example-local `bringup()` restructure
+is consciously SKIPPED: pure cosmetics, ~300 lines of borrow-heavy
+init shuffling for zero testability gain — revisit only if a
+motor_tester3 actually materializes. Original plan for reference:
 - USART2-on-PA2 raw init (~1002–1020) → `minz/src/usart2_rx.rs`
   (CR2.SWAP + BRR under UE=0, encoded once).
 - IWDG start/refresh (~985–991, refresh ~1228) → `minz/src/iwdg.rs`

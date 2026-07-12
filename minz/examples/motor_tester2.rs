@@ -911,16 +911,9 @@ fn main() -> ! {
     );
     let (mut tx, _) = serial.split();
 
-    // Flip PB6 to push-pull after the fact — the HAL's half-duplex pin
-    // trait insists on open-drain, but this line is TX-only (nothing
-    // else ever drives it), and the open-drain rise through the 40 kΩ
-    // internal pull-up is ~2-3 µs, which caps the usable baud at about
-    // 115200. Actively driving both levels is what makes ≥921600 work.
-    unsafe {
-        (*stm32::GPIOB::ptr())
-            .otyper
-            .modify(|r, w| w.bits(r.bits() & !(1 << 6)));
-    }
+    // Flip PB6 to push-pull after the fact — the trick that makes
+    // ≥921600 baud work (rationale at minz::uart_tx).
+    minz::uart_tx::usart1_tx_push_pull_pb6();
 
     // COMP2 BEMF sense, switchable INM− input. Textbook convention:
     //   INP+ = PB4 (virtual neutral)
@@ -960,24 +953,9 @@ fn main() -> ! {
     // off-limits; vbat goes through the injected group instead.
     adc_sync::start(adc_sync::SAMPLE_TICKS);
 
-    // INDEPENDENT WATCHDOG — the guard that survives the MCU. The
-    // 2026-07-10 burnt motor: deep bus sag browned out the core,
-    // which WEDGED with the bridge frozen in its last state; every
-    // software guard died with it and the PSU poured into a stalled
-    // winding. IWDG (LSI 32 kHz / 32 → 1 kHz, reload 1000 = ~1 s)
-    // resets a wedged chip and releases the bridge no matter what
-    // the firmware was doing. Refreshed once per main-loop pass; the
-    // longest legitimate main-loop stall is the `u` blast (~0.35 s at
-    // 2 Mbaud → ~3× margin, NOT the waxwing dump's ~100 ms/10×). A
-    // future baud drop would shrink that margin further — refresh
-    // mid-blast before slowing the link.
-    unsafe {
-        let iwdg = &*stm32::IWDG::ptr();
-        iwdg.kr.write(|w| w.key().bits(0x5555));
-        iwdg.pr.write(|w| w.pr().bits(0b011));
-        iwdg.rlr.write(|w| w.rl().bits(1000));
-        iwdg.kr.write(|w| w.key().bits(0xCCCC));
-    }
+    // INDEPENDENT WATCHDOG — the guard that survives the MCU (burn
+    // post-mortem + refresh-cadence contract at minz::iwdg).
+    minz::iwdg::start_1s();
 
     // FALCON commutation one-shot (armed only when the loop engages).
     minz::lptim2_oneshot::init();
@@ -988,25 +966,9 @@ fn main() -> ! {
     // Main loop never touches TIM1 directly anymore.
     tim7_drive::init(dp.TIM7, &mut apb1r1, MOTOR_DRIVE_HZ);
 
-    // USART2 receiver on PA2 via CR2.SWAP. Raw register init — the
-    // HAL's `Serial::usart2` insists on PA3 for RX (no swap support),
-    // and PA3 is our current-sense ADC input. Per RM0394, BRR and
-    // CR2.SWAP are only writable while UE=0 (true out of reset).
-    // TE stays 0: receive-only, we never drive the pin. Kernel clock
-    // is the CCIPR reset default (PCLK1 = 80 MHz).
-    unsafe {
-        (*stm32::RCC::ptr())
-            .apb1enr1
-            .modify(|_, w| w.usart2en().set_bit());
-    }
-    let usart2 = dp.USART2;
-    usart2.cr2.write(|w| w.swap().set_bit());
-    usart2
-        .brr
-        .write(|w| unsafe { w.bits((clocks.pclk1().raw() + BAUD / 2) / BAUD) });
-    usart2
-        .cr1
-        .write(|w| w.re().set_bit().rxneie().set_bit().ue().set_bit());
+    // USART2 receiver on PA2 via CR2.SWAP (why + the UE=0 ordering
+    // constraint: minz::usart2_rx).
+    minz::usart2_rx::init_pa2_rx(dp.USART2, clocks.pclk1().raw(), BAUD);
 
     let (producer, mut consumer) = RX_QUEUE.split();
     let (wrec_producer, mut wrec_consumer) = WREC_QUEUE.split();
@@ -1216,7 +1178,7 @@ fn main() -> ! {
             // 100× inside the 1 s window). If the core wedges, this
             // stops and the watchdog resets the chip, releasing the
             // bridge.
-            unsafe { (*stm32::IWDG::ptr()).kr.write(|w| w.key().bits(0xAAAA)) };
+            minz::iwdg::refresh();
 
             // Slack: spin idle counter until next microloop boundary.
             // ISRs preempt this naturally and steal counter increments;
@@ -2343,6 +2305,26 @@ static MODE_STATE: minz_core::mode::ModeState<'static> = minz_core::mode::ModeSt
     vbat_live: &VBAT_RAW_LIVE,
 };
 
+/// The ZC candidate/confirm/accept state machine's view of this
+/// file's statics (minz_core::zc — incl. the B1 TOCTOU regression).
+static ZC_STATE: minz_core::zc::ZcState<'static> = minz_core::zc::ZcState {
+    cand_zc_us: &CAND_ZC_US,
+    cand_expected: &CAND_EXPECTED,
+    cand_confirms: &CAND_CONFIRMS,
+    cand_gen: &CAND_GEN,
+    window_gen: &WINDOW_GEN,
+    window_qzc_us: &WINDOW_QZC_US,
+    interval_us: &OWL_INTERVAL_US,
+    last_qzc_us: &OWL_LAST_QZC_US,
+    windows_since_qzc: &WINDOWS_SINCE_QZC,
+    last_qzc_10us: &LAST_QZC_10US,
+    cl_active: &CL_ACTIVE,
+    cl_armed: &CL_ARMED,
+    cl_reacq: &CL_REACQ,
+    cl_noz_run: &CL_NOZ_RUN,
+    cl_fast_path: &CL_FAST_PATH,
+};
+
 /// ISR-kill flag matrix (minz_core::guards::apply_isr_kill) — the
 /// zombie-flag class is host-pinned there.
 static KILL_FLAGS: minz_core::guards::KillFlags<'static> = minz_core::guards::KillFlags {
@@ -2604,10 +2586,18 @@ fn TIM1_UP_TIM16() {
     // `true` = phase below neutral = COMP VALUE=1 convention, so
     // CAND_EXPECTED applies unchanged. Sectors 0/3 float phase C
     // (no ADC route) — comp-bit fallback, observation only.
-    let cand = CAND_ZC_US.load(Ordering::Relaxed);
-    if cand != u32::MAX {
+    if CAND_ZC_US.load(Ordering::Relaxed) != u32::MAX {
         // Per-sector float-vs-neutral arithmetic host-tested in
-        // minz_core::zc (incl. the sector-2 ZC-boundary regression).
+        // minz_core::zc (incl. the sector-2 ZC-boundary regression);
+        // the confirm state machine (depth via timing::confirm_need —
+        // 2 until CL_ACTIVE, 1 after, 2 in re-acq; the 1-confirm
+        // engage-runaway and confirmation-latency history live in the
+        // core docs) and the consume + gen-snapshot guard likewise.
+        // The `free` envelope excludes the commutation ISR for the
+        // ~10 µs of estimator + re-schedule; accept_gen_current
+        // inside it validates the LOAD-TIME generation snapshot —
+        // the B1 TOCTOU fix (a close + fresh re-arm between our load
+        // and the CS used to defeat the gen-only re-check).
         let cur_sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
         let observed = minz_core::zc::adc_sign_observed(
             cur_sec,
@@ -2616,54 +2606,23 @@ fn TIM1_UP_TIM16() {
             VBUS_EST.load(Ordering::Relaxed),
             comp2::value(),
         );
-        if observed == CAND_EXPECTED.load(Ordering::Relaxed) {
-            // Confirmation depth: the offline falcon_stats replay on
-            // the probe captures showed 1-confirm in CLOSED-LOOP
-            // conditions is 100 % accept / 1 % premature / +0.1±0.7
-            // frames latency (vs 0 % / +1.1 for 2-confirm). The saved
-            // PWM frame (~42 µs) raises the confirmation-latency
-            // speed ceiling (~480 Hz at 2 confirms — hit at 7.5 V
-            // where even amp 10 equilibrates above it). The 1 %
-            // premature rate is backstopped by the symmetric interval
-            // bound and the ZC-starvation watchdog.
-            // CONDITIONAL depth: 1-confirm is only clean in locked
-            // closed-loop conditions (probe replay: 1 % premature);
-            // in open-loop/engage conditions it is 52-69 % premature
-            // and seeds the estimator with junk — observed as engage
-            // runaways to 144 µs after shipping unconditional
-            // 1-confirm. So: 2 confirms until CL_ACTIVE, 1 after.
-            // Re-acquisition demands full 2-confirm strictness —
-            // trust is re-earned before the fast path resumes.
-            // Host-tested: minz_core::timing::confirm_need.
-            let need: u8 = minz_core::timing::confirm_need(
-                CL_ACTIVE.load(Ordering::Relaxed),
-                CL_REACQ.load(Ordering::Relaxed),
-            ) as u8;
-            let n = CAND_CONFIRMS.load(Ordering::Relaxed) + 1;
-            if n >= need {
-                CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
-                // Atomic accept: `free` excludes the commutation ISR
-                // for the ~10 µs of estimator + re-schedule, and the
-                // generation check drops candidates whose window
-                // already closed (their ZC would re-time the wrong
-                // shot).
+        match minz_core::zc::confirm_step(&ZC_STATE, observed) {
+            minz_core::zc::ConfirmAction::Idle | minz_core::zc::ConfirmAction::Progress => {}
+            minz_core::zc::ConfirmAction::AcceptPending { zc_us, gen_snap } => {
                 free(|_| {
-                    if CAND_GEN.load(Ordering::Relaxed) == WINDOW_GEN.load(Ordering::Relaxed) {
-                        accept_qualified_zc(cand);
+                    if minz_core::zc::accept_gen_current(&ZC_STATE, gen_snap) {
+                        accept_qualified_zc(zc_us);
                     }
                 });
-            } else {
-                CAND_CONFIRMS.store(n, Ordering::Relaxed);
             }
-        } else {
-            if CL_ACTIVE.load(Ordering::Relaxed) {
-                bb_record(
-                    minz_core::blackbox::EV_DIS,
-                    cur_sec,
-                    CAND_CONFIRMS.load(Ordering::Relaxed) as u16,
-                );
+            minz_core::zc::ConfirmAction::Discarded {
+                confirms,
+                cl_active,
+            } => {
+                if cl_active {
+                    bb_record(minz_core::blackbox::EV_DIS, cur_sec, confirms as u16);
+                }
             }
-            CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
         }
     }
 
@@ -2847,90 +2806,56 @@ fn COMP() {
             }
         }
         if held {
-            if CL_FAST_PATH.load(Ordering::Relaxed) && CL_ACTIVE.load(Ordering::Relaxed) {
-                // SWIFT: accept right here — edge-timestamped,
-                // AM32-style, zero wrap latency. Safe from this ISR:
-                // LPTIM2 (commutation) shares priority 1 with COMP so
-                // they never preempt each other, and TIM1_UP (prio 3)
-                // is preempted — no `free` needed. WINDOW_QZC caps it
-                // at one accept per window (mask-after-accept), and
-                // all estimator bounds + guards apply unchanged.
-                accept_qualified_zc(ticks_1us());
-            } else if CAND_ZC_US.load(Ordering::Relaxed) == u32::MAX {
-                // Record the candidate; TIM1_UP confirms or discards it.
-                CAND_EXPECTED.store(expected, Ordering::Relaxed);
-                CAND_CONFIRMS.store(0, Ordering::Relaxed);
-                CAND_GEN.store(WINDOW_GEN.load(Ordering::Relaxed), Ordering::Relaxed);
-                CAND_ZC_US.store(ticks_1us(), Ordering::Relaxed);
+            // Dispatch host-tested in minz_core::zc::on_held_edge:
+            // SWIFT (fast path + active) accepts right here — edge-
+            // timestamped, AM32-style, zero wrap latency. Safe from
+            // this ISR: LPTIM2 (commutation) shares priority 1 with
+            // COMP so they never preempt each other, and TIM1_UP
+            // (prio 3) is preempted — no `free` needed; WINDOW_QZC
+            // caps it at one accept per window. Otherwise a candidate
+            // is armed for TIM1_UP to confirm.
+            let now_us = ticks_1us();
+            if minz_core::zc::on_held_edge(&ZC_STATE, expected, now_us)
+                == minz_core::zc::HeldEdge::AcceptNow
+            {
+                accept_qualified_zc(now_us);
             }
         }
     }
 }
 
-/// FALCON v2 acceptance path — runs in TIM1_UP once a candidate has
-/// held its post-ZC level across 2 PWM-cycle wrap samples: publish
-/// the window's qualified ZC, update the OWL interval estimator, and
-/// (closed loop) schedule the commutation one-shot, compensating the
-/// delay for the confirmation latency.
+/// FALCON acceptance path — publish + estimator + engage decision
+/// are host-tested in minz_core::zc::accept_publish (mask-after-
+/// accept, C-window exclusion, engage transition, the estimator's
+/// full incident suite); this site records the bb events and runs
+/// the scheduling tail, keeping the elapsed-time read in its
+/// original position (after the estimator work) so the confirmation-
+/// latency compensation is unchanged.
 fn accept_qualified_zc(zc_us: u32) {
-    if WINDOW_QZC_US.load(Ordering::Relaxed) != u32::MAX {
-        return; // window already has its ZC
-    }
-    WINDOW_QZC_US.store(zc_us, Ordering::Relaxed);
-
-    // Host-tested: minz_core::estimator::Estimator — span division,
-    // ±25 % symmetric bounds, ¾ smoothing, bounded re-acq re-seed,
-    // and the full incident regression suite (harmonic lock,
-    // poisoned-interval deadlock, aliased re-seed) live in the core.
-    // Load-run-store keeps the exact same non-transactional atomics
-    // profile the inline version had.
-    let mut est = minz_core::estimator::Estimator {
-        interval_us: OWL_INTERVAL_US.load(Ordering::Relaxed),
-        last_qzc_us: match OWL_LAST_QZC_US.load(Ordering::Relaxed) {
-            u32::MAX => None,
-            v => Some(v),
-        },
-        windows_since_qzc: WINDOWS_SINCE_QZC.load(Ordering::Relaxed) as u32,
-        reacq: CL_REACQ.load(Ordering::Relaxed),
-    };
-    est.on_accept(zc_us, CL_ACTIVE.load(Ordering::Relaxed));
-    OWL_INTERVAL_US.store(est.interval_us, Ordering::Relaxed);
-    OWL_LAST_QZC_US.store(est.last_qzc_us.unwrap_or(u32::MAX), Ordering::Relaxed);
-    WINDOWS_SINCE_QZC.store(est.windows_since_qzc.min(255) as u8, Ordering::Relaxed);
-    CL_REACQ.store(est.reacq, Ordering::Relaxed);
-    CL_NOZ_RUN.store(0, Ordering::Relaxed);
-    LAST_QZC_10US.store(ticks_10us(), Ordering::Relaxed);
-
-    // CL scheduling — only from A/B float windows (ADC-confirmed).
-    // C windows (0/3) are dead-reckoned by the LPTIM2 ISR itself, so
-    // a comp-rule qZC there must neither schedule nor engage.
-    let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
     let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
-    if interval != 0 && sec != 0 && sec != 3 {
-        if CL_ARMED.load(Ordering::Relaxed) {
-            CL_ARMED.store(false, Ordering::Relaxed);
-            CL_ACTIVE.store(true, Ordering::Relaxed);
-            bb_record(
-                minz_core::blackbox::EV_ENG,
-                sec,
-                interval.min(0xFFFF) as u16,
-            );
-        }
-        if CL_ACTIVE.load(Ordering::Relaxed) {
-            // Host-tested: auto-advance ramp + scheduling delay
-            // (minz_core::timing — history and regressions in the
-            // core docs + tests).
-            let adv = minz_core::timing::auto_advance_deg(
-                interval,
-                ADVANCE_DEG.load(Ordering::Relaxed) as i32,
-            );
-            let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
-            let delay = minz_core::timing::commutation_delay_us(interval, adv, elapsed);
-            minz::lptim2_oneshot::schedule_us(delay);
-            SHOT_REFINED.store(true, Ordering::Relaxed);
-            bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
-            // Deaf until the commutation (mask-after-accept).
-            comp2::set_exti_enabled(false);
-        }
+    let Some(plan) = minz_core::zc::accept_publish(&ZC_STATE, sec, zc_us, ticks_10us()) else {
+        return; // window already has its ZC
+    };
+    if plan.engaged {
+        bb_record(
+            minz_core::blackbox::EV_ENG,
+            sec,
+            plan.interval_us.min(0xFFFF) as u16,
+        );
+    }
+    if plan.schedule {
+        // Host-tested: auto-advance ramp + scheduling delay
+        // (minz_core::timing).
+        let adv = minz_core::timing::auto_advance_deg(
+            plan.interval_us,
+            ADVANCE_DEG.load(Ordering::Relaxed) as i32,
+        );
+        let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
+        let delay = minz_core::timing::commutation_delay_us(plan.interval_us, adv, elapsed);
+        minz::lptim2_oneshot::schedule_us(delay);
+        SHOT_REFINED.store(true, Ordering::Relaxed);
+        bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
+        // Deaf until the commutation (mask-after-accept).
+        comp2::set_exti_enabled(false);
     }
 }

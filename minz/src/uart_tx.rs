@@ -24,6 +24,20 @@ use core::sync::atomic::Ordering;
 
 pub const TX_RING_LEN: usize = 4096; // power of two
 
+/// Flip PB6 (USART1_TX) to push-pull AFTER HAL init. The HAL's
+/// half-duplex pin trait insists on open-drain, whose rise through
+/// the ~40 kΩ internal pull-up is 2-3 µs and caps the usable baud at
+/// about 115200. This line is TX-only (nothing else ever drives it),
+/// so actively driving both levels is safe — and is the load-bearing
+/// trick that makes ≥921600 work.
+pub fn usart1_tx_push_pull_pb6() {
+    unsafe {
+        (*stm32::GPIOB::ptr())
+            .otyper
+            .modify(|r, w| w.bits(r.bits() & !(1 << 6)));
+    }
+}
+
 pub struct UartTxWriter {
     _tx: Tx<USART1>,
     ring: &'static mut [u8; TX_RING_LEN],

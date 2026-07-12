@@ -1,6 +1,33 @@
-//! Zero-cross discrimination pieces (seed of the future full ZC
-//! candidate/confirm state machine — roadmap E1). Pure arithmetic
-//! extracted from the TIM1_UP confirm path.
+//! The ZC candidate/confirm/accept state machine (roadmap E1) plus
+//! its pure discrimination arithmetic.
+//!
+//! Three entry points mirror the three interrupt contexts, and the
+//! locking model is the firmware's PRIORITY STRUCTURE, not critical
+//! sections — none are opened here:
+//! - [`on_held_edge`] — COMP ISR (prio 1), after the hardware
+//!   persistence loop held. LPTIM2 (commutation) shares prio 1 so
+//!   edge-accept and commutate never nest; TIM1_UP (prio 3) is
+//!   preempted. No CS by design.
+//! - [`confirm_step`] + [`accept_gen_current`] — TIM1_UP (prio 3),
+//!   wrap-confirm. The caller keeps its `free()` envelope and gates
+//!   the accept on `accept_gen_current` INSIDE it.
+//! - [`accept_publish`] — shared accept: publish the window's qZC,
+//!   run the estimator, decide engage/schedule. The scheduling tail
+//!   (advance/delay arithmetic + LPTIM2 write) stays with the caller
+//!   so the elapsed-time read keeps its original position.
+//!
+//! **TOCTOU fix (roadmap B1):** the original gen-guard could be
+//! defeated — a window close PLUS a fresh COMP re-arm between
+//! TIM1_UP's candidate load and its CS refreshed `CAND_GEN` to the
+//! NEW generation, so the CAND_GEN-vs-WINDOW_GEN re-check passed and
+//! a previous window's timestamp was accepted (junk estimator delta,
+//! inflated scheduler elapsed). The fix: `confirm_step` snapshots
+//! the generation AT CANDIDATE-LOAD TIME and `accept_gen_current`
+//! validates that LOCAL snapshot inside the CS — a re-arm can
+//! refresh `CAND_GEN` all it wants. Candidate consume/discard are
+//! compare-exchanges so a replaced candidate always survives.
+
+use portable_atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 /// The FALCON v3 ADC-sign confirm rule: is the floating phase below
 /// the driven-pair neutral? Evaluated from the mid-ON ADC samples of
@@ -59,6 +86,223 @@ pub fn vbus_decay_step(est: u16, pa_a: u16, pa_b: u16) -> u16 {
     } else {
         0
     }
+}
+
+/// Expected post-ZC comparator level under textbook polarity
+/// (POLARITY=0, INP=neutral, INM=floating phase): even sectors ride
+/// a falling-BEMF window → post-ZC the phase is BELOW neutral →
+/// VALUE=1; odd sectors the inverse.
+pub const fn expected_post_zc(sector: u8) -> bool {
+    (sector & 1) == 0
+}
+
+/// The state machine's view of the firmware statics.
+pub struct ZcState<'a> {
+    pub cand_zc_us: &'a AtomicU32,
+    pub cand_expected: &'a AtomicBool,
+    pub cand_confirms: &'a AtomicU8,
+    pub cand_gen: &'a AtomicU8,
+    pub window_gen: &'a AtomicU8,
+    pub window_qzc_us: &'a AtomicU32,
+    // Estimator statics (load-run-store through estimator::Estimator).
+    pub interval_us: &'a AtomicU32,
+    pub last_qzc_us: &'a AtomicU32,
+    pub windows_since_qzc: &'a AtomicU8,
+    pub last_qzc_10us: &'a AtomicU32,
+    // CL flags.
+    pub cl_active: &'a AtomicBool,
+    pub cl_armed: &'a AtomicBool,
+    pub cl_reacq: &'a AtomicBool,
+    pub cl_noz_run: &'a AtomicU8,
+    pub cl_fast_path: &'a AtomicBool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldEdge {
+    /// SWIFT: accept immediately in the COMP ISR (edge-timestamped,
+    /// zero wrap latency) — the caller invokes the accept path now.
+    AcceptNow,
+    /// Candidate armed; TIM1_UP confirms or discards it.
+    Armed,
+    /// A candidate is already pending — one candidate at a time.
+    Ignored,
+}
+
+/// COMP context, after the persistence loop held. Publish order for
+/// the candidate is load-bearing: EXPECTED/CONFIRMS/GEN before the
+/// ZC word — TIM1_UP keys on `cand_zc_us != MAX`, so the metadata
+/// must be consistent before the candidate becomes visible.
+pub fn on_held_edge(zs: &ZcState<'_>, expected: bool, now_us: u32) -> HeldEdge {
+    if zs.cl_fast_path.load(Ordering::Relaxed) && zs.cl_active.load(Ordering::Relaxed) {
+        HeldEdge::AcceptNow
+    } else if zs.cand_zc_us.load(Ordering::Relaxed) == u32::MAX {
+        zs.cand_expected.store(expected, Ordering::Relaxed);
+        zs.cand_confirms.store(0, Ordering::Relaxed);
+        zs.cand_gen
+            .store(zs.window_gen.load(Ordering::Relaxed), Ordering::Relaxed);
+        zs.cand_zc_us.store(now_us, Ordering::Relaxed);
+        HeldEdge::Armed
+    } else {
+        HeldEdge::Ignored
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmAction {
+    /// No candidate pending (or it was replaced under us).
+    Idle,
+    /// Confirmation deepened; not enough yet.
+    Progress,
+    /// Depth reached; the candidate has been consumed (cleared) and
+    /// its generation snapshot captured. The caller enters its
+    /// critical section and gates the accept on
+    /// [`accept_gen_current`]`(zs, gen)`.
+    AcceptPending { zc_us: u32, gen_snap: u8 },
+    /// Observation contradicted the expected level; candidate
+    /// discarded (`cl_active` gates the DIS black-box line).
+    Discarded { confirms: u8, cl_active: bool },
+}
+
+/// TIM1_UP context: one wrap-sample confirmation step. Depth comes
+/// from [`crate::timing::confirm_need`] (2 until CL_ACTIVE, 1 after,
+/// 2 again in re-acquisition — the unconditional-1-confirm engage
+/// runaway is the regression behind it).
+///
+/// Candidate lifetime matches the proven firmware: consumed
+/// (cleared) HERE at depth, BEFORE the caller's critical section, so
+/// a preempting COMP can arm the next window's candidate without
+/// waiting on the accept. (A first cut held the candidate live until
+/// inside the CS; on the bench that starved the accelerating-lock
+/// regime — mid-acceleration losses walked the estimator into
+/// 4-24 ms chaos. Candidate lifetime is load-bearing.)
+///
+/// Both the consume and the discard are compare-exchanges, so a
+/// candidate re-armed between our load and the clear survives. The
+/// TOCTOU (B1) is closed by the generation SNAPSHOT taken at
+/// candidate-load time: a window close + fresh re-arm refreshes
+/// `cand_gen` to the NEW generation (which defeated the original
+/// CAND_GEN-vs-WINDOW_GEN re-check), but the stale LOCAL snapshot
+/// still mismatches `window_gen` inside the CS.
+pub fn confirm_step(zs: &ZcState<'_>, observed: bool) -> ConfirmAction {
+    let cand = zs.cand_zc_us.load(Ordering::Relaxed);
+    // Paired generation snapshot. (If a close lands between the two
+    // loads, the candidate word is already MAX or replaced and the
+    // compare-exchanges below refuse the stale value.)
+    let gen_snap = zs.cand_gen.load(Ordering::Relaxed);
+    if cand == u32::MAX {
+        return ConfirmAction::Idle;
+    }
+    if observed == zs.cand_expected.load(Ordering::Relaxed) {
+        let need = crate::timing::confirm_need(
+            zs.cl_active.load(Ordering::Relaxed),
+            zs.cl_reacq.load(Ordering::Relaxed),
+        ) as u8;
+        let n = zs.cand_confirms.load(Ordering::Relaxed) + 1;
+        if n >= need {
+            if zs
+                .cand_zc_us
+                .compare_exchange(cand, u32::MAX, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                ConfirmAction::AcceptPending {
+                    zc_us: cand,
+                    gen_snap,
+                }
+            } else {
+                // Replaced under us (close + re-arm): the fresh
+                // candidate belongs to the new window — leave it.
+                ConfirmAction::Idle
+            }
+        } else {
+            zs.cand_confirms.store(n, Ordering::Relaxed);
+            ConfirmAction::Progress
+        }
+    } else {
+        let confirms = zs.cand_confirms.load(Ordering::Relaxed);
+        let cl_active = zs.cl_active.load(Ordering::Relaxed);
+        let _ =
+            zs.cand_zc_us
+                .compare_exchange(cand, u32::MAX, Ordering::Relaxed, Ordering::Relaxed);
+        ConfirmAction::Discarded {
+            confirms,
+            cl_active,
+        }
+    }
+}
+
+/// MUST run inside the caller's critical section: is the candidate's
+/// generation snapshot still the live window? Refuses stale accepts
+/// whose window closed between the confirm and the CS — including
+/// the close + fresh-re-arm interleaving that defeats a
+/// `cand_gen`-based re-check (B1).
+pub fn accept_gen_current(zs: &ZcState<'_>, gen_snap: u8) -> bool {
+    gen_snap == zs.window_gen.load(Ordering::Relaxed)
+}
+
+/// What the caller does after a successful publish: record the ENG
+/// event if `engaged`, and when `schedule` is set run the scheduling
+/// tail (auto-advance + delay arithmetic — already host-tested in
+/// `timing` — then the LPTIM2 write, SHOT_REFINED, the ACC event,
+/// and mask-after-accept).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcceptPlan {
+    pub engaged: bool,
+    pub schedule: bool,
+    pub interval_us: u32,
+}
+
+/// Shared accept: publish the window's qualified ZC (mask-after-
+/// accept: `None` when the window already has one), update the OWL
+/// estimator (load-run-store through [`crate::estimator`], same
+/// non-transactional profile as before), and decide engage/schedule.
+/// C float windows (sectors 0/3, dead-reckoned) must neither
+/// schedule nor engage.
+pub fn accept_publish(
+    zs: &ZcState<'_>,
+    sector: u8,
+    zc_us: u32,
+    now_10us: u32,
+) -> Option<AcceptPlan> {
+    if zs.window_qzc_us.load(Ordering::Relaxed) != u32::MAX {
+        return None;
+    }
+    zs.window_qzc_us.store(zc_us, Ordering::Relaxed);
+
+    let mut est = crate::estimator::Estimator {
+        interval_us: zs.interval_us.load(Ordering::Relaxed),
+        last_qzc_us: match zs.last_qzc_us.load(Ordering::Relaxed) {
+            u32::MAX => None,
+            v => Some(v),
+        },
+        windows_since_qzc: zs.windows_since_qzc.load(Ordering::Relaxed) as u32,
+        reacq: zs.cl_reacq.load(Ordering::Relaxed),
+    };
+    est.on_accept(zc_us, zs.cl_active.load(Ordering::Relaxed));
+    zs.interval_us.store(est.interval_us, Ordering::Relaxed);
+    zs.last_qzc_us
+        .store(est.last_qzc_us.unwrap_or(u32::MAX), Ordering::Relaxed);
+    zs.windows_since_qzc
+        .store(est.windows_since_qzc.min(255) as u8, Ordering::Relaxed);
+    zs.cl_reacq.store(est.reacq, Ordering::Relaxed);
+    zs.cl_noz_run.store(0, Ordering::Relaxed);
+    zs.last_qzc_10us.store(now_10us, Ordering::Relaxed);
+
+    let interval_us = zs.interval_us.load(Ordering::Relaxed);
+    let mut engaged = false;
+    let mut schedule = false;
+    if interval_us != 0 && sector != 0 && sector != 3 {
+        if zs.cl_armed.load(Ordering::Relaxed) {
+            zs.cl_armed.store(false, Ordering::Relaxed);
+            zs.cl_active.store(true, Ordering::Relaxed);
+            engaged = true;
+        }
+        schedule = zs.cl_active.load(Ordering::Relaxed);
+    }
+    Some(AcceptPlan {
+        engaged,
+        schedule,
+        interval_us,
+    })
 }
 
 #[cfg(test)]
@@ -121,6 +365,275 @@ mod tests {
         // Floor: zero stays zero (no underflow churn).
         assert_eq!(vbus_decay_step(0, 0, 0), 0);
         assert_eq!(vbus_decay_step(1, 0, 0), 0);
+    }
+
+    // ---- state machine ----
+
+    struct Rig {
+        cand_zc_us: AtomicU32,
+        cand_expected: AtomicBool,
+        cand_confirms: AtomicU8,
+        cand_gen: AtomicU8,
+        window_gen: AtomicU8,
+        window_qzc_us: AtomicU32,
+        interval_us: AtomicU32,
+        last_qzc_us: AtomicU32,
+        windows_since_qzc: AtomicU8,
+        last_qzc_10us: AtomicU32,
+        cl_active: AtomicBool,
+        cl_armed: AtomicBool,
+        cl_reacq: AtomicBool,
+        cl_noz_run: AtomicU8,
+        cl_fast_path: AtomicBool,
+    }
+
+    impl Rig {
+        fn new() -> Self {
+            Self {
+                cand_zc_us: AtomicU32::new(u32::MAX),
+                cand_expected: AtomicBool::new(false),
+                cand_confirms: AtomicU8::new(0),
+                cand_gen: AtomicU8::new(0),
+                window_gen: AtomicU8::new(0),
+                window_qzc_us: AtomicU32::new(u32::MAX),
+                interval_us: AtomicU32::new(600),
+                last_qzc_us: AtomicU32::new(9_400),
+                windows_since_qzc: AtomicU8::new(0),
+                last_qzc_10us: AtomicU32::new(0),
+                cl_active: AtomicBool::new(false),
+                cl_armed: AtomicBool::new(false),
+                cl_reacq: AtomicBool::new(false),
+                cl_noz_run: AtomicU8::new(3),
+                cl_fast_path: AtomicBool::new(false),
+            }
+        }
+
+        fn zs(&self) -> ZcState<'_> {
+            ZcState {
+                cand_zc_us: &self.cand_zc_us,
+                cand_expected: &self.cand_expected,
+                cand_confirms: &self.cand_confirms,
+                cand_gen: &self.cand_gen,
+                window_gen: &self.window_gen,
+                window_qzc_us: &self.window_qzc_us,
+                interval_us: &self.interval_us,
+                last_qzc_us: &self.last_qzc_us,
+                windows_since_qzc: &self.windows_since_qzc,
+                last_qzc_10us: &self.last_qzc_10us,
+                cl_active: &self.cl_active,
+                cl_armed: &self.cl_armed,
+                cl_reacq: &self.cl_reacq,
+                cl_noz_run: &self.cl_noz_run,
+                cl_fast_path: &self.cl_fast_path,
+            }
+        }
+
+        /// What close_float_window does to the candidate/generation
+        /// (window.rs owns the full close; this is the slice relevant
+        /// to the interleavings here).
+        fn close_window(&self) {
+            self.cand_zc_us.store(u32::MAX, Ordering::Relaxed);
+            self.window_gen.store(
+                self.window_gen.load(Ordering::Relaxed).wrapping_add(1),
+                Ordering::Relaxed,
+            );
+            self.window_qzc_us.store(u32::MAX, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn swift_accepts_in_comp_only_under_active_fast_path() {
+        let r = Rig::new();
+        r.cl_fast_path.store(true, Ordering::Relaxed);
+        r.cl_active.store(true, Ordering::Relaxed);
+        assert_eq!(on_held_edge(&r.zs(), true, 10_000), HeldEdge::AcceptNow);
+        // Fast path off, or engage/open-loop: candidate route.
+        r.cl_active.store(false, Ordering::Relaxed);
+        assert_eq!(on_held_edge(&r.zs(), true, 10_000), HeldEdge::Armed);
+        assert_eq!(r.cand_zc_us.load(Ordering::Relaxed), 10_000);
+        assert!(r.cand_expected.load(Ordering::Relaxed));
+        assert_eq!(r.cand_confirms.load(Ordering::Relaxed), 0);
+        // One candidate at a time.
+        assert_eq!(on_held_edge(&r.zs(), false, 10_050), HeldEdge::Ignored);
+        assert_eq!(r.cand_zc_us.load(Ordering::Relaxed), 10_000);
+    }
+
+    #[test]
+    fn confirm_depth_two_open_loop_one_under_lock() {
+        // Open loop / engage: 2 confirms (the unconditional-1-confirm
+        // engage-runaway regression).
+        let r = Rig::new();
+        on_held_edge(&r.zs(), true, 10_000);
+        assert_eq!(confirm_step(&r.zs(), true), ConfirmAction::Progress);
+        assert_eq!(
+            confirm_step(&r.zs(), true),
+            ConfirmAction::AcceptPending {
+                zc_us: 10_000,
+                gen_snap: 0
+            }
+        );
+        // Candidate consumed at depth (proven lifetime: COMP can arm
+        // the next window's candidate without waiting on the accept).
+        assert_eq!(r.cand_zc_us.load(Ordering::Relaxed), u32::MAX);
+        // Under an established lock: 1 confirm.
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        on_held_edge(&r.zs(), true, 10_000);
+        assert_eq!(
+            confirm_step(&r.zs(), true),
+            ConfirmAction::AcceptPending {
+                zc_us: 10_000,
+                gen_snap: 0
+            }
+        );
+        // Re-acquisition: strict 2 again.
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        r.cl_reacq.store(true, Ordering::Relaxed);
+        on_held_edge(&r.zs(), true, 10_000);
+        assert_eq!(confirm_step(&r.zs(), true), ConfirmAction::Progress);
+    }
+
+    #[test]
+    fn discard_logs_and_clears_but_spares_a_fresh_candidate() {
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        on_held_edge(&r.zs(), true, 10_000);
+        let a = confirm_step(&r.zs(), false);
+        assert_eq!(
+            a,
+            ConfirmAction::Discarded {
+                confirms: 0,
+                cl_active: true
+            }
+        );
+        assert_eq!(r.cand_zc_us.load(Ordering::Relaxed), u32::MAX);
+        // Same-family race as B1: candidate replaced between the
+        // step's load and its clear — the compare-exchange must spare
+        // the fresh one. (Simulated by hand-rolling the stale clear.)
+        on_held_edge(&r.zs(), true, 11_000);
+        let stale = 10_000u32;
+        let _ =
+            r.cand_zc_us
+                .compare_exchange(stale, u32::MAX, Ordering::Relaxed, Ordering::Relaxed);
+        assert_eq!(
+            r.cand_zc_us.load(Ordering::Relaxed),
+            11_000,
+            "fresh candidate destroyed by a stale discard"
+        );
+    }
+
+    #[test]
+    fn gen_snapshot_current_on_happy_path() {
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        on_held_edge(&r.zs(), true, 10_000);
+        match confirm_step(&r.zs(), true) {
+            ConfirmAction::AcceptPending { zc_us, gen_snap } => {
+                assert_eq!(zc_us, 10_000);
+                assert!(accept_gen_current(&r.zs(), gen_snap));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn regression_b1_toctou_close_plus_rearm_defeats_gen_guard() {
+        // The exact interleaving from the review: TIM1_UP confirms a
+        // candidate; a window close AND a fresh COMP arm land before
+        // its critical section. The fresh arm refreshes cand_gen to
+        // the NEW generation — the original CAND_GEN-vs-WINDOW_GEN
+        // re-check PASSED and accepted the stale timestamp. The
+        // load-time generation snapshot must refuse it, and the fresh
+        // candidate must survive.
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed); // depth 1
+        on_held_edge(&r.zs(), true, 10_000);
+        let (stale_zc, stale_gen) = match confirm_step(&r.zs(), true) {
+            ConfirmAction::AcceptPending { zc_us, gen_snap } => (zc_us, gen_snap),
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(stale_zc, 10_000);
+        // ... LPTIM2 preempts: closes the window ...
+        r.close_window();
+        // ... COMP preempts: arms a FRESH candidate in the new window
+        // (this is what refreshes cand_gen to the new generation) ...
+        assert_eq!(on_held_edge(&r.zs(), false, 10_640), HeldEdge::Armed);
+        assert_eq!(
+            r.cand_gen.load(Ordering::Relaxed),
+            r.window_gen.load(Ordering::Relaxed),
+            "precondition: a CAND_GEN re-check would pass here"
+        );
+        // ... TIM1_UP resumes inside its CS with the stale snapshot:
+        assert!(
+            !accept_gen_current(&r.zs(), stale_gen),
+            "stale candidate accepted across a window close"
+        );
+        assert_eq!(
+            r.cand_zc_us.load(Ordering::Relaxed),
+            10_640,
+            "fresh candidate must survive"
+        );
+    }
+
+    #[test]
+    fn depth_consume_spares_a_candidate_replaced_under_us() {
+        // Close + re-arm between confirm_step's load and its CAS
+        // clear: the step must return Idle and leave the fresh
+        // candidate alone. (Simulated by replacing the candidate,
+        // then hand-running the stale CAS the step would attempt.)
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        on_held_edge(&r.zs(), true, 10_000);
+        r.close_window();
+        on_held_edge(&r.zs(), true, 10_640);
+        let stale = 10_000u32;
+        assert!(
+            r.cand_zc_us
+                .compare_exchange(stale, u32::MAX, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err(),
+            "stale CAS must fail against the fresh candidate"
+        );
+        assert_eq!(r.cand_zc_us.load(Ordering::Relaxed), 10_640);
+    }
+
+    #[test]
+    fn accept_publish_masks_estimates_and_engages() {
+        let r = Rig::new();
+        r.cl_armed.store(true, Ordering::Relaxed);
+        r.windows_since_qzc.store(1, Ordering::Relaxed);
+        let plan = accept_publish(&r.zs(), 2, 10_000, 1_000).unwrap();
+        assert!(plan.engaged, "armed + A/B sector engages");
+        assert!(plan.schedule);
+        assert!(r.cl_active.load(Ordering::Relaxed));
+        assert!(!r.cl_armed.load(Ordering::Relaxed));
+        assert_eq!(r.window_qzc_us.load(Ordering::Relaxed), 10_000);
+        assert_eq!(r.cl_noz_run.load(Ordering::Relaxed), 0, "NOZ run resets");
+        assert_eq!(r.last_qzc_10us.load(Ordering::Relaxed), 1_000);
+        // Estimator ran: 10 000 − 9 400 = 600 over 1 span → smoothed
+        // stays 600.
+        assert_eq!(plan.interval_us, 600);
+        // Mask-after-accept: a second ZC in the same window is dead.
+        assert_eq!(accept_publish(&r.zs(), 2, 10_050, 1_001), None);
+    }
+
+    #[test]
+    fn accept_publish_c_windows_never_schedule_or_engage() {
+        for sec in [0u8, 3] {
+            let r = Rig::new();
+            r.cl_armed.store(true, Ordering::Relaxed);
+            let plan = accept_publish(&r.zs(), sec, 10_000, 1_000).unwrap();
+            assert!(!plan.engaged, "sector {sec} engaged");
+            assert!(!plan.schedule, "sector {sec} scheduled");
+            assert!(r.cl_armed.load(Ordering::Relaxed), "arm must survive");
+        }
+        // Unseeded estimator: no schedule either.
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        r.interval_us.store(0, Ordering::Relaxed);
+        r.last_qzc_us.store(u32::MAX, Ordering::Relaxed);
+        let plan = accept_publish(&r.zs(), 2, 10_000, 1_000).unwrap();
+        assert!(!plan.schedule);
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub mod board_init;
 pub mod comp2;
 pub mod current_adc;
 pub mod idle_loop;
+pub mod iwdg;
 pub mod lptim2_oneshot;
 pub mod nvic;
 pub mod open_loop;
@@ -18,6 +19,7 @@ pub mod tim1_motor_pwm;
 pub mod tim7_drive;
 pub mod timer_ext;
 pub mod uart_tx;
+pub mod usart2_rx;
 
 pub use stm32l4xx_hal as hal;
 
