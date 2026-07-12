@@ -738,8 +738,8 @@ static ADVANCE_DEG: AtomicI8 = AtomicI8::new(0);
 /// still ≥ 12 sine samples per electrical period — visually clean.
 const MOTOR_DRIVE_HZ: u32 = minz_core::drive::MOTOR_DRIVE_HZ;
 
-// Angle-accumulator arithmetic (16.16 full-rev wrap + advance
-// folding): minz_core::drive::{ANGLE_FULL_REV_FP, angle_tick}.
+/// One full electrical revolution in 16.16 fixed point.
+const ANGLE_FULL_REV_FP: u32 = 360u32 << 16;
 
 // Drive geometry/arithmetic (angle_inc_fp, float_sector_mask,
 // float_sectors, edges_for) lives in minz_core::drive — host-tested,
@@ -911,9 +911,16 @@ fn main() -> ! {
     );
     let (mut tx, _) = serial.split();
 
-    // Flip PB6 to push-pull after the fact — the trick that makes
-    // ≥921600 baud work (rationale at minz::uart_tx).
-    minz::uart_tx::usart1_tx_push_pull_pb6();
+    // Flip PB6 to push-pull after the fact — the HAL's half-duplex pin
+    // trait insists on open-drain, but this line is TX-only (nothing
+    // else ever drives it), and the open-drain rise through the 40 kΩ
+    // internal pull-up is ~2-3 µs, which caps the usable baud at about
+    // 115200. Actively driving both levels is what makes ≥921600 work.
+    unsafe {
+        (*stm32::GPIOB::ptr())
+            .otyper
+            .modify(|r, w| w.bits(r.bits() & !(1 << 6)));
+    }
 
     // COMP2 BEMF sense, switchable INM− input. Textbook convention:
     //   INP+ = PB4 (virtual neutral)
@@ -953,9 +960,24 @@ fn main() -> ! {
     // off-limits; vbat goes through the injected group instead.
     adc_sync::start(adc_sync::SAMPLE_TICKS);
 
-    // INDEPENDENT WATCHDOG — the guard that survives the MCU (burn
-    // post-mortem + refresh-cadence contract at minz::iwdg).
-    minz::iwdg::start_1s();
+    // INDEPENDENT WATCHDOG — the guard that survives the MCU. The
+    // 2026-07-10 burnt motor: deep bus sag browned out the core,
+    // which WEDGED with the bridge frozen in its last state; every
+    // software guard died with it and the PSU poured into a stalled
+    // winding. IWDG (LSI 32 kHz / 32 → 1 kHz, reload 1000 = ~1 s)
+    // resets a wedged chip and releases the bridge no matter what
+    // the firmware was doing. Refreshed once per main-loop pass; the
+    // longest legitimate main-loop stall is the `u` blast (~0.35 s at
+    // 2 Mbaud → ~3× margin, NOT the waxwing dump's ~100 ms/10×). A
+    // future baud drop would shrink that margin further — refresh
+    // mid-blast before slowing the link.
+    unsafe {
+        let iwdg = &*stm32::IWDG::ptr();
+        iwdg.kr.write(|w| w.key().bits(0x5555));
+        iwdg.pr.write(|w| w.pr().bits(0b011));
+        iwdg.rlr.write(|w| w.rl().bits(1000));
+        iwdg.kr.write(|w| w.key().bits(0xCCCC));
+    }
 
     // FALCON commutation one-shot (armed only when the loop engages).
     minz::lptim2_oneshot::init();
@@ -966,9 +988,25 @@ fn main() -> ! {
     // Main loop never touches TIM1 directly anymore.
     tim7_drive::init(dp.TIM7, &mut apb1r1, MOTOR_DRIVE_HZ);
 
-    // USART2 receiver on PA2 via CR2.SWAP (why + the UE=0 ordering
-    // constraint: minz::usart2_rx).
-    minz::usart2_rx::init_pa2_rx(dp.USART2, clocks.pclk1().raw(), BAUD);
+    // USART2 receiver on PA2 via CR2.SWAP. Raw register init — the
+    // HAL's `Serial::usart2` insists on PA3 for RX (no swap support),
+    // and PA3 is our current-sense ADC input. Per RM0394, BRR and
+    // CR2.SWAP are only writable while UE=0 (true out of reset).
+    // TE stays 0: receive-only, we never drive the pin. Kernel clock
+    // is the CCIPR reset default (PCLK1 = 80 MHz).
+    unsafe {
+        (*stm32::RCC::ptr())
+            .apb1enr1
+            .modify(|_, w| w.usart2en().set_bit());
+    }
+    let usart2 = dp.USART2;
+    usart2.cr2.write(|w| w.swap().set_bit());
+    usart2
+        .brr
+        .write(|w| unsafe { w.bits((clocks.pclk1().raw() + BAUD / 2) / BAUD) });
+    usart2
+        .cr1
+        .write(|w| w.re().set_bit().rxneie().set_bit().ue().set_bit());
 
     let (producer, mut consumer) = RX_QUEUE.split();
     let (wrec_producer, mut wrec_consumer) = WREC_QUEUE.split();
@@ -1178,7 +1216,7 @@ fn main() -> ! {
             // 100× inside the 1 s window). If the core wedges, this
             // stops and the watchdog resets the chip, releasing the
             // bridge.
-            minz::iwdg::refresh();
+            unsafe { (*stm32::IWDG::ptr()).kr.write(|w| w.key().bits(0xAAAA)) };
 
             // Slack: spin idle counter until next microloop boundary.
             // ISRs preempt this naturally and steal counter increments;
@@ -2093,21 +2131,29 @@ fn TIM7() {
     // commutation-advance offset folded in. Disarmed → reuse the last
     // sector so static polarity / edges for modes 2/3 stay sensible.
     let (sector, angle, sector_changed) = if motor_enabled {
-        // Accumulator advance + signed-advance folding host-tested in
-        // minz_core::drive::angle_tick (wrap, rem_euclid, the
-        // crawl-collapse negative range).
-        let (accum, commutation_angle) = minz_core::drive::angle_tick(
-            ANGLE_ACCUM.load(Ordering::Relaxed),
-            ANGLE_INC.load(Ordering::Relaxed),
-            ADVANCE_DEG.load(Ordering::Relaxed) as i32,
-        );
+        let inc = ANGLE_INC.load(Ordering::Relaxed);
+        let mut accum = ANGLE_ACCUM.load(Ordering::Relaxed).wrapping_add(inc);
+        while accum >= ANGLE_FULL_REV_FP {
+            accum = accum.wrapping_sub(ANGLE_FULL_REV_FP);
+        }
         ANGLE_ACCUM.store(accum, Ordering::Relaxed);
+        let raw_angle = (accum >> 16) as i32;
+        // Commutation angle = (raw + advance) rem-euclid 360. Signed
+        // advance: positive = sector boundaries earlier in raw-angle
+        // terms, negative = later. The rev-wrap point for EDGE_BUF
+        // flipping is the sec 5→0 transition (below), which auto-
+        // aligns with sec 0 regardless of advance sign.
+        let adv = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
+        let commutation_angle = (raw_angle + adv).rem_euclid(360) as u16;
         let new_sector = open_loop::six_step_sector(commutation_angle);
         (new_sector, commutation_angle, new_sector != prev_sector)
     } else {
         (prev_sector, 0, false)
     };
-    let rev_wrapped = sector_changed && minz_core::drive::is_rev_wrap(prev_sector, sector);
+    // Rev wrap = commutation sector 5 → 0 transition. This is where
+    // sec 0 begins; the EDGE_BUF half-flip is aligned to this point so
+    // each frozen half always starts at sec 0 regardless of advance.
+    let rev_wrapped = sector_changed && prev_sector == 5 && sector == 0;
 
     // Apply COMP2 EXTI edges for this sector + edge-mode. COMP2
     // polarity is locked to non-inverted (POLARITY=0); only the EXTI
@@ -2129,45 +2175,69 @@ fn TIM7() {
     // output square wave runs at exactly the commanded frequency F.
     if rev_wrapped {
         let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
-        minz::pb3::set(!was_high);
+        unsafe {
+            (*stm32::GPIOB::ptr())
+                .bsrr
+                .write(|w| w.bits(if was_high { 1 << (16 + 3) } else { 1 << 3 }));
+        }
     }
 
     // EDGE_BUF rev-pair flip + sector-boundary recording, both inside
     // a critical section so COMP ISR (higher priority) can't snapshot
-    // a torn (ACTIVE_HALF, HALF_START_TICK, REV_PHASE) tuple. The
-    // flip state machine (pair cadence, freeze semantics, slot
-    // placement) is host-tested in minz_core::edgebuf; the buffer
-    // clears and boundary stores are performed here from its plan.
+    // a torn (ACTIVE_HALF, HALF_START_TICK, REV_PHASE) tuple.
     if rev_wrapped || sector_changed {
         free(|_| {
-            if rev_wrapped
-                && let Some(plan) = minz_core::edgebuf::on_rev_wrap(&EDGE_HALVES, ticks_10us())
-            {
-                // Clear the new active half; the previous pair's
-                // data stays in the soon-to-be-frozen half.
-                unsafe {
-                    core::ptr::write_bytes(
-                        EDGE_BUF[plan.new_active].as_ptr() as *mut u8,
-                        0,
-                        HALF_TICKS,
-                    );
+            if rev_wrapped {
+                // Two rev wraps = one EDGE_BUF half. XOR REV_PHASE on
+                // every wrap, flip only when prev_phase==1 (= second
+                // rev of the pair just completed).
+                let prev_phase = REV_PHASE.fetch_xor(1, Ordering::Relaxed);
+                if prev_phase == 1 && !EDGE_DUMP_FREEZE.load(Ordering::Relaxed) {
+                    let now = ticks_10us();
+                    let old_active = ACTIVE_HALF.load(Ordering::Relaxed) as usize;
+                    let new_active = old_active ^ 1;
+                    let old_half_start = HALF_START_TICK.load(Ordering::Relaxed);
+                    // Clear new active half; previous pair's data
+                    // stays in the soon-to-be-frozen half.
+                    unsafe {
+                        core::ptr::write_bytes(
+                            EDGE_BUF[new_active].as_ptr() as *mut u8,
+                            0,
+                            HALF_TICKS,
+                        );
+                    }
+                    // Zero the per-sector edge counters for the new
+                    // active half so the next pair starts from 0.
+                    for slot in 0..12 {
+                        SECTOR_EDGE_COUNT[new_active][slot].store(0, Ordering::Relaxed);
+                    }
+                    // Finalize slot 0 of the half we're freezing (=
+                    // start of just-completed pair = old HALF_START_TICK).
+                    // Initialize slot 0 of the new active half to NOW
+                    // (= start of the new pair). Together these
+                    // guarantee slot 0 is always valid for completed
+                    // pairs without depending on a sector-0 entry
+                    // transition being recorded.
+                    SECTOR_BOUNDARIES[old_active][0].store(old_half_start, Ordering::Relaxed);
+                    SECTOR_BOUNDARIES[new_active][0].store(now, Ordering::Relaxed);
+                    HALF_START_TICK.store(now, Ordering::Relaxed);
+                    ACTIVE_HALF.store(new_active as u8, Ordering::Relaxed);
                 }
-                for slot in 0..12 {
-                    SECTOR_EDGE_COUNT[plan.new_active][slot].store(0, Ordering::Relaxed);
-                }
-                // Slot-0 validity invariant (see edgebuf docs).
-                SECTOR_BOUNDARIES[plan.old_active][0].store(plan.old_half_start, Ordering::Relaxed);
-                SECTOR_BOUNDARIES[plan.new_active][0]
-                    .store(HALF_START_TICK.load(Ordering::Relaxed), Ordering::Relaxed);
             }
-            // Record the sector-boundary tick into the (now possibly
-            // rotated) half/phase slot.
-            if sector_changed
-                && let Some(slot) =
-                    minz_core::edgebuf::boundary_slot(REV_PHASE.load(Ordering::Relaxed), sector)
-            {
+            // Record sector boundary tick into the (now possibly
+            // updated) ACTIVE_HALF / REV_PHASE slot. For non-flip rev
+            // wraps that's slot 6 of the old active half (rev 1
+            // sec 0). For flip rev wraps it's slot 0 of the new
+            // active half (rev 0 sec 0 of the new pair). For
+            // mid-rev sector changes it's slot `phase*6+sector` of
+            // the current active half.
+            if sector_changed {
+                let rev_phase = REV_PHASE.load(Ordering::Relaxed) as usize;
                 let active = ACTIVE_HALF.load(Ordering::Relaxed) as usize;
-                SECTOR_BOUNDARIES[active][slot].store(ticks_10us(), Ordering::Relaxed);
+                let slot = rev_phase * 6 + sector as usize;
+                if slot < 12 {
+                    SECTOR_BOUNDARIES[active][slot].store(ticks_10us(), Ordering::Relaxed);
+                }
             }
         });
     }
@@ -2204,13 +2274,10 @@ fn TIM7() {
             // time-window gate (`valid` rate counter) has a meaningful
             // `SECTOR_START_TICK` reference. EXTI is not gated here —
             // edges are recorded into `EDGE_BUF` across the whole rev.
-            // Edge-detect host-tested: minz_core::drive::float_entry.
-            let (entered, in_float) = minz_core::drive::float_entry(
-                FLOAT_SECTOR_MASK.load(Ordering::Relaxed),
-                sector,
-                WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed),
-            );
-            if entered {
+            let float_mask = FLOAT_SECTOR_MASK.load(Ordering::Relaxed);
+            let in_float = (float_mask >> sector) & 1 != 0;
+            let was_in_float = WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed);
+            if in_float && !was_in_float {
                 SECTOR_START_US.store(ticks_1us(), Ordering::Relaxed);
             }
             WAS_IN_FLOAT_SECTOR.store(in_float, Ordering::Relaxed);
@@ -2253,16 +2320,12 @@ static WINDOW_STATE: minz_core::window::WindowState<'static> = minz_core::window
     last_comm_10us: &LAST_COMM_10US,
 };
 
-/// The EDGE_BUF half-flip state machine's view of this file's
-/// statics (pair cadence, freeze, slot placement host-tested in
-/// minz_core::edgebuf; used inside TIM7's `free` block only).
-static EDGE_HALVES: minz_core::edgebuf::EdgeHalves<'static> = minz_core::edgebuf::EdgeHalves {
-    rev_phase: &REV_PHASE,
-    active_half: &ACTIVE_HALF,
-    half_start_tick: &HALF_START_TICK,
-    freeze: &EDGE_DUMP_FREEZE,
-};
-
+/// MAGPIE/OWL float-window close: called at every commutation, from
+/// whichever engine performed it — TIM7 (open loop) or the LPTIM2
+/// one-shot (closed loop) — always inside a critical section so the
+/// higher/equal-priority COMP ISR can't smear an edge across the
+/// old/new window during snapshot-and-reset. This site supplies the
+/// clocks and performs the two returned side effects.
 /// The mode state machine's view of this file's statics (arm/kill/
 /// CL transitions host-tested in minz_core::mode).
 static MODE_STATE: minz_core::mode::ModeState<'static> = minz_core::mode::ModeState {
@@ -2278,26 +2341,6 @@ static MODE_STATE: minz_core::mode::ModeState<'static> = minz_core::mode::ModeSt
     amp_target_pct: &AMP_TARGET_PCT,
     vbat_baseline_raw: &VBAT_BASELINE_RAW,
     vbat_live: &VBAT_RAW_LIVE,
-};
-
-/// The ZC candidate/confirm/accept state machine's view of this
-/// file's statics (minz_core::zc — incl. the B1 TOCTOU regression).
-static ZC_STATE: minz_core::zc::ZcState<'static> = minz_core::zc::ZcState {
-    cand_zc_us: &CAND_ZC_US,
-    cand_expected: &CAND_EXPECTED,
-    cand_confirms: &CAND_CONFIRMS,
-    cand_gen: &CAND_GEN,
-    window_gen: &WINDOW_GEN,
-    window_qzc_us: &WINDOW_QZC_US,
-    interval_us: &OWL_INTERVAL_US,
-    last_qzc_us: &OWL_LAST_QZC_US,
-    windows_since_qzc: &WINDOWS_SINCE_QZC,
-    last_qzc_10us: &LAST_QZC_10US,
-    cl_active: &CL_ACTIVE,
-    cl_armed: &CL_ARMED,
-    cl_reacq: &CL_REACQ,
-    cl_noz_run: &CL_NOZ_RUN,
-    cl_fast_path: &CL_FAST_PATH,
 };
 
 /// ISR-kill flag matrix (minz_core::guards::apply_isr_kill) — the
@@ -2364,12 +2407,6 @@ fn mode_cmd(
     }
 }
 
-/// MAGPIE/OWL float-window close: called at every commutation, from
-/// whichever engine performed it — TIM7 (open loop) or the LPTIM2
-/// one-shot (closed loop) — always inside a critical section so the
-/// higher/equal-priority COMP ISR can't smear an edge across the
-/// old/new window during snapshot-and-reset. This site supplies the
-/// clocks and performs the two returned side effects.
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
     let out = minz_core::window::close_float_window(
         &WINDOW_STATE,
@@ -2449,7 +2486,11 @@ fn LPTIM2() {
     // Scope trigger on each electrical rev, same as the open loop.
     if sector == 0 {
         let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
-        minz::pb3::set(!was_high);
+        unsafe {
+            (*stm32::GPIOB::ptr())
+                .bsrr
+                .write(|w| w.bits(if was_high { 1 << (16 + 3) } else { 1 << 3 }));
+        }
     }
     // Re-open the ear for the new window (clears any pending edge).
     comp2::set_exti_enabled(true);
@@ -2563,18 +2604,10 @@ fn TIM1_UP_TIM16() {
     // `true` = phase below neutral = COMP VALUE=1 convention, so
     // CAND_EXPECTED applies unchanged. Sectors 0/3 float phase C
     // (no ADC route) — comp-bit fallback, observation only.
-    if CAND_ZC_US.load(Ordering::Relaxed) != u32::MAX {
+    let cand = CAND_ZC_US.load(Ordering::Relaxed);
+    if cand != u32::MAX {
         // Per-sector float-vs-neutral arithmetic host-tested in
-        // minz_core::zc (incl. the sector-2 ZC-boundary regression);
-        // the confirm state machine (depth via timing::confirm_need —
-        // 2 until CL_ACTIVE, 1 after, 2 in re-acq; the 1-confirm
-        // engage-runaway and confirmation-latency history live in the
-        // core docs) and the consume + gen-snapshot guard likewise.
-        // The `free` envelope excludes the commutation ISR for the
-        // ~10 µs of estimator + re-schedule; accept_gen_current
-        // inside it validates the LOAD-TIME generation snapshot —
-        // the B1 TOCTOU fix (a close + fresh re-arm between our load
-        // and the CS used to defeat the gen-only re-check).
+        // minz_core::zc (incl. the sector-2 ZC-boundary regression).
         let cur_sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
         let observed = minz_core::zc::adc_sign_observed(
             cur_sec,
@@ -2583,23 +2616,54 @@ fn TIM1_UP_TIM16() {
             VBUS_EST.load(Ordering::Relaxed),
             comp2::value(),
         );
-        match minz_core::zc::confirm_step(&ZC_STATE, observed) {
-            minz_core::zc::ConfirmAction::Idle | minz_core::zc::ConfirmAction::Progress => {}
-            minz_core::zc::ConfirmAction::AcceptPending { zc_us, gen_snap } => {
+        if observed == CAND_EXPECTED.load(Ordering::Relaxed) {
+            // Confirmation depth: the offline falcon_stats replay on
+            // the probe captures showed 1-confirm in CLOSED-LOOP
+            // conditions is 100 % accept / 1 % premature / +0.1±0.7
+            // frames latency (vs 0 % / +1.1 for 2-confirm). The saved
+            // PWM frame (~42 µs) raises the confirmation-latency
+            // speed ceiling (~480 Hz at 2 confirms — hit at 7.5 V
+            // where even amp 10 equilibrates above it). The 1 %
+            // premature rate is backstopped by the symmetric interval
+            // bound and the ZC-starvation watchdog.
+            // CONDITIONAL depth: 1-confirm is only clean in locked
+            // closed-loop conditions (probe replay: 1 % premature);
+            // in open-loop/engage conditions it is 52-69 % premature
+            // and seeds the estimator with junk — observed as engage
+            // runaways to 144 µs after shipping unconditional
+            // 1-confirm. So: 2 confirms until CL_ACTIVE, 1 after.
+            // Re-acquisition demands full 2-confirm strictness —
+            // trust is re-earned before the fast path resumes.
+            // Host-tested: minz_core::timing::confirm_need.
+            let need: u8 = minz_core::timing::confirm_need(
+                CL_ACTIVE.load(Ordering::Relaxed),
+                CL_REACQ.load(Ordering::Relaxed),
+            ) as u8;
+            let n = CAND_CONFIRMS.load(Ordering::Relaxed) + 1;
+            if n >= need {
+                CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
+                // Atomic accept: `free` excludes the commutation ISR
+                // for the ~10 µs of estimator + re-schedule, and the
+                // generation check drops candidates whose window
+                // already closed (their ZC would re-time the wrong
+                // shot).
                 free(|_| {
-                    if minz_core::zc::accept_gen_current(&ZC_STATE, gen_snap) {
-                        accept_qualified_zc(zc_us);
+                    if CAND_GEN.load(Ordering::Relaxed) == WINDOW_GEN.load(Ordering::Relaxed) {
+                        accept_qualified_zc(cand);
                     }
                 });
+            } else {
+                CAND_CONFIRMS.store(n, Ordering::Relaxed);
             }
-            minz_core::zc::ConfirmAction::Discarded {
-                confirms,
-                cl_active,
-            } => {
-                if cl_active {
-                    bb_record(minz_core::blackbox::EV_DIS, cur_sec, confirms as u16);
-                }
+        } else {
+            if CL_ACTIVE.load(Ordering::Relaxed) {
+                bb_record(
+                    minz_core::blackbox::EV_DIS,
+                    cur_sec,
+                    CAND_CONFIRMS.load(Ordering::Relaxed) as u16,
+                );
             }
+            CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
         }
     }
 
@@ -2783,56 +2847,90 @@ fn COMP() {
             }
         }
         if held {
-            // Dispatch host-tested in minz_core::zc::on_held_edge:
-            // SWIFT (fast path + active) accepts right here — edge-
-            // timestamped, AM32-style, zero wrap latency. Safe from
-            // this ISR: LPTIM2 (commutation) shares priority 1 with
-            // COMP so they never preempt each other, and TIM1_UP
-            // (prio 3) is preempted — no `free` needed; WINDOW_QZC
-            // caps it at one accept per window. Otherwise a candidate
-            // is armed for TIM1_UP to confirm.
-            let now_us = ticks_1us();
-            if minz_core::zc::on_held_edge(&ZC_STATE, expected, now_us)
-                == minz_core::zc::HeldEdge::AcceptNow
-            {
-                accept_qualified_zc(now_us);
+            if CL_FAST_PATH.load(Ordering::Relaxed) && CL_ACTIVE.load(Ordering::Relaxed) {
+                // SWIFT: accept right here — edge-timestamped,
+                // AM32-style, zero wrap latency. Safe from this ISR:
+                // LPTIM2 (commutation) shares priority 1 with COMP so
+                // they never preempt each other, and TIM1_UP (prio 3)
+                // is preempted — no `free` needed. WINDOW_QZC caps it
+                // at one accept per window (mask-after-accept), and
+                // all estimator bounds + guards apply unchanged.
+                accept_qualified_zc(ticks_1us());
+            } else if CAND_ZC_US.load(Ordering::Relaxed) == u32::MAX {
+                // Record the candidate; TIM1_UP confirms or discards it.
+                CAND_EXPECTED.store(expected, Ordering::Relaxed);
+                CAND_CONFIRMS.store(0, Ordering::Relaxed);
+                CAND_GEN.store(WINDOW_GEN.load(Ordering::Relaxed), Ordering::Relaxed);
+                CAND_ZC_US.store(ticks_1us(), Ordering::Relaxed);
             }
         }
     }
 }
 
-/// FALCON acceptance path — publish + estimator + engage decision
-/// are host-tested in minz_core::zc::accept_publish (mask-after-
-/// accept, C-window exclusion, engage transition, the estimator's
-/// full incident suite); this site records the bb events and runs
-/// the scheduling tail, keeping the elapsed-time read in its
-/// original position (after the estimator work) so the confirmation-
-/// latency compensation is unchanged.
+/// FALCON v2 acceptance path — runs in TIM1_UP once a candidate has
+/// held its post-ZC level across 2 PWM-cycle wrap samples: publish
+/// the window's qualified ZC, update the OWL interval estimator, and
+/// (closed loop) schedule the commutation one-shot, compensating the
+/// delay for the confirmation latency.
 fn accept_qualified_zc(zc_us: u32) {
-    let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
-    let Some(plan) = minz_core::zc::accept_publish(&ZC_STATE, sec, zc_us, ticks_10us()) else {
+    if WINDOW_QZC_US.load(Ordering::Relaxed) != u32::MAX {
         return; // window already has its ZC
-    };
-    if plan.engaged {
-        bb_record(
-            minz_core::blackbox::EV_ENG,
-            sec,
-            plan.interval_us.min(0xFFFF) as u16,
-        );
     }
-    if plan.schedule {
-        // Host-tested: auto-advance ramp + scheduling delay
-        // (minz_core::timing).
-        let adv = minz_core::timing::auto_advance_deg(
-            plan.interval_us,
-            ADVANCE_DEG.load(Ordering::Relaxed) as i32,
-        );
-        let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
-        let delay = minz_core::timing::commutation_delay_us(plan.interval_us, adv, elapsed);
-        minz::lptim2_oneshot::schedule_us(delay);
-        SHOT_REFINED.store(true, Ordering::Relaxed);
-        bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
-        // Deaf until the commutation (mask-after-accept).
-        comp2::set_exti_enabled(false);
+    WINDOW_QZC_US.store(zc_us, Ordering::Relaxed);
+
+    // Host-tested: minz_core::estimator::Estimator — span division,
+    // ±25 % symmetric bounds, ¾ smoothing, bounded re-acq re-seed,
+    // and the full incident regression suite (harmonic lock,
+    // poisoned-interval deadlock, aliased re-seed) live in the core.
+    // Load-run-store keeps the exact same non-transactional atomics
+    // profile the inline version had.
+    let mut est = minz_core::estimator::Estimator {
+        interval_us: OWL_INTERVAL_US.load(Ordering::Relaxed),
+        last_qzc_us: match OWL_LAST_QZC_US.load(Ordering::Relaxed) {
+            u32::MAX => None,
+            v => Some(v),
+        },
+        windows_since_qzc: WINDOWS_SINCE_QZC.load(Ordering::Relaxed) as u32,
+        reacq: CL_REACQ.load(Ordering::Relaxed),
+    };
+    est.on_accept(zc_us, CL_ACTIVE.load(Ordering::Relaxed));
+    OWL_INTERVAL_US.store(est.interval_us, Ordering::Relaxed);
+    OWL_LAST_QZC_US.store(est.last_qzc_us.unwrap_or(u32::MAX), Ordering::Relaxed);
+    WINDOWS_SINCE_QZC.store(est.windows_since_qzc.min(255) as u8, Ordering::Relaxed);
+    CL_REACQ.store(est.reacq, Ordering::Relaxed);
+    CL_NOZ_RUN.store(0, Ordering::Relaxed);
+    LAST_QZC_10US.store(ticks_10us(), Ordering::Relaxed);
+
+    // CL scheduling — only from A/B float windows (ADC-confirmed).
+    // C windows (0/3) are dead-reckoned by the LPTIM2 ISR itself, so
+    // a comp-rule qZC there must neither schedule nor engage.
+    let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
+    let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
+    if interval != 0 && sec != 0 && sec != 3 {
+        if CL_ARMED.load(Ordering::Relaxed) {
+            CL_ARMED.store(false, Ordering::Relaxed);
+            CL_ACTIVE.store(true, Ordering::Relaxed);
+            bb_record(
+                minz_core::blackbox::EV_ENG,
+                sec,
+                interval.min(0xFFFF) as u16,
+            );
+        }
+        if CL_ACTIVE.load(Ordering::Relaxed) {
+            // Host-tested: auto-advance ramp + scheduling delay
+            // (minz_core::timing — history and regressions in the
+            // core docs + tests).
+            let adv = minz_core::timing::auto_advance_deg(
+                interval,
+                ADVANCE_DEG.load(Ordering::Relaxed) as i32,
+            );
+            let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
+            let delay = minz_core::timing::commutation_delay_us(interval, adv, elapsed);
+            minz::lptim2_oneshot::schedule_us(delay);
+            SHOT_REFINED.store(true, Ordering::Relaxed);
+            bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
+            // Deaf until the commutation (mask-after-accept).
+            comp2::set_exti_enabled(false);
+        }
     }
 }
