@@ -535,21 +535,53 @@ decoupling. **Staying at 24 kHz** for the investigation (CPU
 eliminated as a confound + amplified events = better microscope);
 48 kHz is the perf recipe once the mechanism is fixed.
 
-**24 kHz monster-event anatomy (`hunt24_a44`, window-level):** the
-2–2.8 A single-window events sit in statistically NORMAL context
-(pre-event qzc_off median 66 µs vs 65 global) — benign mistimed
-single commutations. The **6.6–6.9 A monsters all START with a ZC
-failure**: initiator window has qzc_off 143/160 (accept at 89 % of
-window — drastically late), or `--` (no qualified ZC → free-run
-commutation), then current spikes, rotor decelerates (window len
-200→350 µs), usually recovers via a short catch-up sector. Chain =
-lost/late ZC → free-run/late commutation → current spike → sag,
-confirming the operator's cause-before-effect order. Open question:
-why does a healthy window suddenly yield no acceptable ZC (real
-rotor disturbance? comparator edge blanked/gated? early-but-real
-crossing rejected?). Next instrument: raise `WAX_TRIG_RAW` to ~4 A
-so the J-trigger freezes only on a monster — the 85 ms pre-trigger
-ring then holds the initiator window's analog BEMF + comp bit.
+**Spike census — QUALIFIED (2026-07-13, `count_spikes.py` with
+per-100ms/1s binning + Fano + tier split; 20 s dwells on the
+light-rearm build).** Two populations: **small events (2–4 A,
+single-window)** grow gradually with amp (1.2/s @38 → 1.7/s @40 →
+3.3/s @42 → 3.9/s @44) and are **uniform/Poisson (Fano ~1)** —
+benign independent mistimed commutations. **MONSTERS (≥4 A) have a
+sharp THRESHOLD near amp 41** (0/s at ≤40, 1.85/s @42, 2.65/s @44),
+last 26–32 ms, and are **CLUSTERED/bursty (Fano ~1.9–2.9)** — NOT
+independent. Rate unchanged by the CPU levers (a44 6.5/s vs 6.4/s
+pre-DWT) → the events are electrical, not scheduling.
+
+**Monster autopsy — SOLVED (2026-07-13, monster-only J-trigger,
+`WAX_TRIG_RAW=150`≈4 A, 3 captures `monster1..3`, all identical).**
+The monster is a **cluster of 12–21 consecutive ZC-DETECTION MISSES**
+(the per-PWM-cycle comparator bit stops transitioning in float
+windows), spanning 10–18 ms. Universal facts across all 3:
+- **The rotor keeps turning** — driven-phase BEMF plateaus stay FULL
+  (973/4096) through the cascade. NOT a stall.
+- **Commutation sequence stays clean** (zero wrong-sector) and the
+  interval holds ~125 µs — the loop FREE-RUNS blind at the frozen
+  interval, stepping the field without ZC confirmation.
+- **The current spike FOLLOWS the first cascade miss** (cause-before-
+  effect confirmed at PWM-cycle resolution in all 3) and ramps
+  monotonically 1 A → 4 A+ as the field drifts off the (still
+  turning) rotor → line-line current → bus sag (4.4–5.1 V).
+- **Isolated single misses (0.2–2.2 % of clean windows) are RIDDEN
+  THROUGH**; only the CLUSTER is a monster. This IS the census
+  clustering (Fano ~2).
+- **The loop RECOVERS** (all 3 survived, CL ACTIVE after) — re-acq
+  eventually re-locks, but only after the 10–18 ms current transient.
+
+**Mechanism = window-position runaway** (timing, not mechanical, not
+comparator-hardware, not shoot-through): the BEMF is present but its
+neutral crossing falls OUTSIDE the detection window. One miss → the
+free-run schedule drifts → the next window is mis-positioned → the ZC
+lands outside it → miss → compounds → spiral, aggravated by the
+rising current distorting the BEMF. The amp-41 threshold is where
+windows get short enough (125 µs) that a schedule drift pushes the ZC
+out. **Why the loop can't ride through: the re-acquisition (2
+consecutive A/B misses → widen gate) is too slow at high amp** — 12–21
+misses accumulate before it recovers, letting current ramp to 4 A+.
+Fix directions (control-logic, minz-core, testable): (a) break the
+cascade FASTER — trigger re-acq after 1 miss / immediate wide-window
+search at high amp; (b) CURRENT-CLAMP the duty during blind free-run
+to cap the monster amplitude while re-acquiring; (c) advance/window
+tuning so ZCs sit centrally with drift margin. (`captures/monster1..3
+_zoom.png`.)
 
 **CPU headroom — levers #1 + #1b LANDED. The wall clock is now
 DWT.CYCCNT (commit 4fd43f1, tag `checkpoint-24k-dwt`).** History:
@@ -646,20 +678,14 @@ insight to shrink the COMP-refine full path. **DWT.CYCCNT is
 Cortex-M4 only — absent on F051/G071 M0 rm32 targets; a portback
 there needs a chained hardware timer.**
 
-**Open investigation (residual spike events):** what triggers the
-remaining events. Operator's standing assertion: AM32 runs this
-exact board/prop/supply to 100 % without them ⇒ they are something
-our firmware does. The LPTIM2 light re-arm (lever #2 v2, landed)
-already removed a 2.5 µs busy-wait from the priority-1 commutation
-ISR — worth re-running the amp-44+ envelope to see if the spike/sag
-cliff moved (amp 44 locked on it where the full-path build died).
-Next: the monster-only J-trigger autopsy. The parked path: fix the
-WAXWING ring
-frame-integrity issue (channel-slip under event chaos — see trust
-audit), then arm the analog black box (`J` key, >2.4 A one-shot
-trigger) at a SURVIVABLE rung — at amp 46's ~6 events/s a single
-trigger catches one within a second, with 42 ms of pre-trigger
-BEMF/current/comp waveform to autopsy. Also on the shelf: the
+**Residual spike events — DIAGNOSED (see "Monster autopsy" above).**
+The monsters are a ZC-detection-miss cascade / window-position
+runaway; the loop's re-acquisition is too slow to break it at high
+amp. The next work is a FIX, not more diagnosis: (a) faster cascade
+break, (b) current-clamp during blind free-run, (c) advance/window
+tuning — all minz-core control-logic changes, host-testable. The
+census is fully qualified (Fano/binning, monster threshold amp ~41).
+Also on the shelf: the
 ticks_1us wrap-hole fix (core `ticks::compose_1us` is ready,
 firmware adoption pending), runtime 24/48 kHz carrier switch, rm32
 portback, and the newly-flagged sector-1 ADC-confirm blindness at

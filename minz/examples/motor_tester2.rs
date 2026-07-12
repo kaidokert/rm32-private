@@ -515,8 +515,12 @@ static I_TRIP_CNT: AtomicU32 = AtomicU32::new(0);
 /// arbitrate what the current-spike events actually are.
 static WAX_TRIG_ARMED: AtomicBool = AtomicBool::new(false);
 static WAX_TRIGGERED: AtomicBool = AtomicBool::new(false);
-/// ~2.4 A instantaneous.
-const WAX_TRIG_RAW: u16 = 90;
+/// ~4 A instantaneous (raw 90 ≈ 2.4 A → ~37.5 raw/A). Raised from 90
+/// for the MONSTER-only autopsy (2026-07-13): small events peak
+/// 2.3-3 A, monsters ≥4 A, so this fires only on a monster and the
+/// ~42 ms pre-trigger ring holds the INITIATOR window (where the ZC
+/// vanished) before the current ran away.
+const WAX_TRIG_RAW: u16 = 150;
 
 /// Set by the ISR after a trip; main prints the report, clears the
 /// flag, and drops its local `output_enabled` mirror so `r`/`q`
