@@ -486,11 +486,33 @@ deeper than −10 %-of-baseline AND longer than the sag guard's
 (PSU-driven collapse) lands wherever one such event snowballs —
 observed anywhere amp ~46-52 depending on PSU state.
 
-**Open investigation (suspended, next lever is concrete):** what
-ARE the spike events. Operator's standing assertion: AM32 runs this
+**Spike events — first root cause LANDED (adfad27): the stale-CCR
+brake short.** Old `set_six_step` wrote per-phase CCRs (duty on hi,
+0 elsewhere) with the low leg timer-driven; CCR writes are preloaded
+(OCxPE=1 → land at the next PWM wrap, ≤20.8 µs later at 48 kHz)
+while the MODER role flip is immediate. On every commutation where
+the hi role moved (every other one), the new PWM leg compared
+against its stale CCR=0 → complementary output solid high → its low
+FET on beside the real low leg = BEMF shorted line-line through two
+low FETs for 0–20.8 µs. Phase-agnostic, speed-scaled, and it ends
+exactly at the wrap — 1.25 µs before GECKO's sample point, so
+telemetry only caught the snowballed survivors. Fix = exact AM32
+parity: `SET_DUTY_CYCLE_ALL` (same duty in all three CCRs, always)
++ GPIO-forced low leg via `PhaseRole{Pwm,Low,Float}` in
+`tim1_motor_pwm.rs`, BSRR-before-MODER so old-low-off / new-low-on
+land in one register write. Drift-controlled ABA at amp 44/46/48
+(8 s dwells, >2 A events): fix 69 → old 115 → fix 69 (−40 %, ~4σ;
+the old build also threw a ramp ZC-STARVED kill). Ladder 15→50 all
+qzc 100 %, amp 50 = 1,374 Hz, rungs ~1 % faster — the brake drag is
+gone (`captures/phaseroles1_map.png`). Amp 55 transit still died on
+a real 4.5 V sag: **residual ~2.5 events/s at amp 44-48 remain
+unexplained** — investigation continues below.
+
+**Open investigation (residual spike events):** what triggers the
+remaining events. Operator's standing assertion: AM32 runs this
 exact board/prop/supply to 100 % without them ⇒ they are something
-our firmware does (prime suspect: mistimed commutation /
-shoot-through-adjacent). The parked path: fix the WAXWING ring
+our firmware does (remaining suspects: mistimed commutation, clock
+integrity / ticks_1us wrap hole). The parked path: fix the WAXWING ring
 frame-integrity issue (channel-slip under event chaos — see trust
 audit), then arm the analog black box (`J` key, >2.4 A one-shot
 trigger) at a SURVIVABLE rung — at amp 46's ~6 events/s a single
