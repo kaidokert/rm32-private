@@ -13,9 +13,31 @@
 //! left enabled.
 
 use crate::hal::stm32;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// 1.25 ticks per µs (80 MHz PCLK / 64).
 const TICKS_PER_US_X4: u32 = 5; // ×4 fixed point: 1.25 = 5/4
+
+/// ARROK-poll safety tripwire — the ARR-register write crosses into
+/// the LPTIM kernel clock domain (PCLK/64 = 1.25 MHz), so we poll
+/// ARROK before SNGSTRT. Measured max spin count is ~26 iterations in
+/// BOTH the full and light re-arm paths (2026-07-13 investigation);
+/// the 10 000 guard is a paranoid backstop that must NEVER fire.
+/// A non-zero value here (surfaced in the firmware's `i` output)
+/// means the ARR write failed to sync — the light re-arm's premise
+/// (warm kernel → ARR always syncs) would be broken.
+pub static ARROK_GUARD_HITS: AtomicU32 = AtomicU32::new(0);
+
+#[inline(always)]
+fn poll_arrok(lptim: &stm32::lptim1::RegisterBlock) {
+    let mut guard = 0u32;
+    while lptim.isr.read().arrok().bit_is_clear() && guard < 10_000 {
+        guard += 1;
+    }
+    if guard >= 10_000 {
+        ARROK_GUARD_HITS.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 pub fn init() {
     unsafe {
@@ -53,10 +75,36 @@ pub fn schedule_us(us: u32) {
         .icr
         .write(|w| w.arrmcf().set_bit().arrokcf().set_bit());
     lptim.arr.write(|w| unsafe { w.arr().bits(ticks) });
-    let mut guard = 0u32;
-    while lptim.isr.read().arrok().bit_is_clear() && guard < 10_000 {
-        guard += 1;
-    }
+    poll_arrok(lptim);
+    lptim.cr.modify(|_, w| w.sngstrt().set_bit());
+}
+
+/// LIGHT re-arm (lever #2, validated 2026-07-13): re-arm the one-shot
+/// WITHOUT the disable/enable bounce or the `delay(200)` busy-wait.
+///
+/// Valid ONLY when the counter is already STOPPED — i.e. from inside
+/// the `LPTIM2` ISR, which fires AT the ARR match, at which point
+/// single-counting mode has halted the counter with ENABLE still set
+/// and the kernel clock still warm. No pending count to cancel, so
+/// SNGSTRT restarts cleanly; and because the kernel never went down
+/// the ARR write syncs promptly — the ARROK poll alone suffices
+/// (measured ≤26 spins, guard never hits). The `delay(200)` in
+/// [`schedule_us`] was ONLY for the post-disable kernel warm-up, NOT
+/// the ARR sync, so it isn't needed here. Saves ~310 cyc per
+/// commutation AND removes a 2.5 µs busy-wait from the priority-1
+/// commutation ISR.
+///
+/// Must NOT be used to overwrite a RUNNING count (the COMP ZC-refine
+/// path) — single mode ignores SNGSTRT while counting, so cancelling
+/// a pending shot still needs the full [`schedule_us`] disable/enable.
+pub fn reschedule_light(us: u32) {
+    let lptim = unsafe { &*stm32::LPTIM2::ptr() };
+    let ticks = (us.clamp(16, 52_000) * TICKS_PER_US_X4 / 4).min(0xFFFE) as u16;
+    lptim
+        .icr
+        .write(|w| w.arrmcf().set_bit().arrokcf().set_bit());
+    lptim.arr.write(|w| unsafe { w.arr().bits(ticks) });
+    poll_arrok(lptim);
     lptim.cr.modify(|_, w| w.sngstrt().set_bit());
 }
 

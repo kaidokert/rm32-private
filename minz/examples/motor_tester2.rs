@@ -1850,6 +1850,16 @@ fn main() -> ! {
                                 DUR_MAIN.load(Ordering::Relaxed),
                             )
                             .ok();
+                            // LPTIM2 ARR-sync safety tripwire (lever
+                            // #2): must stay 0 — non-zero means the ARR
+                            // write failed to sync into the kernel
+                            // domain (the light re-arm's premise).
+                            write!(
+                                &mut tx_writer,
+                                "arrok_guard_hits={}\r\n",
+                                minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
+                            )
+                            .ok();
                         }
                         last_i_miss = now_miss;
                         last_i_tick = now_tick;
@@ -2592,8 +2602,12 @@ fn LPTIM2() {
     // semantics — an accepted ZC merely RE-TIMES the pending shot;
     // the 1.5×T-fallback compounded-lag incident is a named
     // regression on minz_core::drive::freerun_reschedule_us).
+    // Lever #2 (validated 2026-07-13): this runs at the ARR match
+    // (counter STOPPED), so the LIGHT re-arm is valid — no pending
+    // count to cancel, kernel warm. Saves ~310 cyc + a 2.5 µs
+    // busy-wait per commutation vs the full disable/enable path.
     if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
-        minz::lptim2_oneshot::schedule_us(t);
+        minz::lptim2_oneshot::reschedule_light(t);
     }
     // Scope trigger on each electrical rev, same as the open loop.
     if sector == 0 {
