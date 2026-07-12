@@ -55,7 +55,7 @@ use core::fmt::Write;
 
 use cortex_m::interrupt::{Mutex, free};
 use cortex_m::peripheral::NVIC;
-use cortex_m_rt::{entry, exception};
+use cortex_m_rt::entry;
 use heapless::spsc::{Producer, Queue};
 use minz::adc_sync;
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
@@ -142,38 +142,47 @@ const MICROLOOP_TICKS: u64 = 100;
 /// latch_window`.
 const SECOND_TICKS: u64 = 100_000;
 
-/// SysTick reload for the 200 ms wrap period. Chosen so the period
-/// is an INTEGER number of µs and 10 µs ticks at 80 MHz:
-/// `RELOAD + 1 = 16_000_000` cycles = 200_000 µs = 20_000 ten-µs
-/// ticks. Fits the 24-bit SYST counter (max 16_777_215).
-const SYSTICK_RELOAD: u32 = 15_999_999;
-/// Whole-period constants for the cheap compose in [`ticks_10us`] /
-/// [`ticks_1us`]. u32 `wrapping_mul` keeps delta semantics across
-/// the derived counters' wraps (~12 h / ~71 min respectively).
-const T10US_PER_WRAP: u32 = 20_000;
-const US_PER_WRAP: u32 = 200_000;
+/// Core cycles per µs / 10 µs at 80 MHz — the DWT.CYCCNT scale
+/// factors. CYCCNT increments once per core clock.
+const CYC_PER_US: u64 = 80;
+const CYC_PER_10US: u64 = 800;
 
-/// SysTick-backed 64-bit timer used as the bench's monotonic clock.
+/// DWT.CYCCNT → 64-bit software extension (lever #1b, 2026-07-13).
 ///
-/// - `tick_hz = 100_000` → `now()` is in 10 µs units (what
-///   `IdleLoop`'s `now_u64` wants).
-/// - `reload_value = 15_999_999` → the SysTick ISR fires every
-///   **200 ms** (5/s). This is the whole point: the previous config
-///   (reload 799) fired it 100,000×/s ≈ 5-6 % of the CPU.
-/// - `systick_freq = 80_000_000` → matches `SYSCLK`.
+/// The wall clock is now DWT.CYCCNT: a free-running 32-bit counter at
+/// the full 80 MHz core clock, single-instruction read, ZERO ISR.
+/// SysTick is retired entirely. CYCCNT wraps every 2³²/80e6 ≈ 53.7 s
+/// — too short for absolute timestamps — so we extend it to 64 bits:
 ///
-/// **Hot-path callers should NOT use `SYSTICK_TIMER.now()`** — each
-/// call costs ~300 cycles (stable-snapshot retry loop, `SeqCst`
-/// barriers, u64/u128 scaling). ISRs use [`ticks_10us`]/[`ticks_1us`],
-/// which run the same wraps-sandwich + PendST algorithm in bare u32
-/// (~15-20 cycles) against the `SYSTICK_WRAPS` shadow counter.
-static SYSTICK_TIMER: systick_timer::Timer =
-    systick_timer::Timer::new(100_000, SYSTICK_RELOAD, 80_000_000);
+/// - `CYC_HIGH` holds the wrap count (upper 32 bits of a 64-bit cycle
+///   count). It is bumped by the **extender** in the 24 kHz TIM1_UP
+///   ISR ([`cyc_extend`]), which runs every ~41 µs and therefore
+///   cannot miss a 53.7 s wrap.
+/// - `CYC_LAST` is the CYCCNT value at the extender's last run.
+///
+/// A reader ([`now_cyc64`]) self-compensates for a wrap that landed
+/// AFTER the extender's last run but before the read: if the current
+/// CYCCNT is below `CYC_LAST`, one wrap has occurred that `CYC_HIGH`
+/// doesn't yet reflect, so the reader adds it locally. This closes the
+/// only race (reader between wrap and catch) WITHOUT a pending-bit —
+/// DWT has none, unlike SysTick. Two AtomicU32 (not one AtomicU64:
+/// thumbv7em has no native 64-bit atomic) with a double-read of
+/// `CYC_HIGH` to reject a torn (HIGH, LAST) pair; `CYC_HIGH` only
+/// changes every 53.7 s so the retry essentially never fires.
+///
+/// The derived [`ticks_1us`]/[`ticks_10us`] therefore keep their
+/// clean power-of-two wrap (71 min / 12 h) — every `wrapping_sub`
+/// consumer and the MAGPIE wire timestamp work UNCHANGED. Absolute
+/// second-scale time (main-loop pacing) reads the full u64 via
+/// [`now_10us_64`] so it never wraps in practice.
+static CYC_HIGH: AtomicU32 = AtomicU32::new(0);
+static CYC_LAST: AtomicU32 = AtomicU32::new(0);
 
-/// Wrap counter bumped in the SysTick handler in lockstep with the
-/// crate's internal state — the cheap-compose shadow of the crate's
-/// `inner_wraps`. One increment per 200 ms.
-static SYSTICK_WRAPS: AtomicU32 = AtomicU32::new(0);
+/// Clock monotonicity tripwire — bumped from the main loop whenever
+/// the 64-bit DWT clock reads lower than the previous sample. Must
+/// stay 0; a non-zero value in `i` means the wrap extension has a
+/// bug. Makes a would-be silent time glitch loud.
+static CLOCK_BACK: AtomicU32 = AtomicU32::new(0);
 
 /// COMP2 transition counter — incremented in the COMP ISR on every
 /// EXTI line-22 edge (both rising and falling).
@@ -802,79 +811,80 @@ static RX_PROD: Mutex<RefCell<Option<Producer<'static, u8>>>> = Mutex::new(RefCe
 // DMA-backed UART TX ring (DMA1_CH4 → USART1_TX): minz::uart_tx.
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
-/// Cheap stable snapshot of `(wraps, cycles_into_period)` — the
-/// systick-timer crate's algorithm in bare u32 (~15-20 cycles):
-///
-/// 1. read `SYSTICK_WRAPS` (w1), CVR, PendST, CVR again, wraps (w2);
-/// 2. retry if an ISR ran during the block (`w1 != w2`) or a wrap
-///    landed mid-block (`cvr_post > cvr_pre` — CVR counts DOWN, so
-///    an increase means it reloaded);
-/// 3. if PendST is set, the counter wrapped BEFORE our block and the
-///    handler hasn't run yet (e.g. we're inside `interrupt::free`) —
-///    compensate with +1 wrap, exactly like the crate's `now()`.
-///
-/// Without step 3 a read inside a masked section just after a wrap
-/// would jump BACKWARD by a full 200 ms period — the same hazard
-/// class as the old 10 µs CVR-compose wrap-hole, but 20,000× larger.
-/// One-wrap compensation is sufficient: nothing masks interrupts for
-/// anywhere near 200 ms (the longest `free` blocks are ~100 µs).
+/// Wrap extender — call at the top of the 24 kHz TIM1_UP ISR (the
+/// SOLE writer of `CYC_HIGH`/`CYC_LAST`). Takes the CYCCNT value the
+/// ISR already read for its miss detector so it costs one compare +
+/// two stores. Bumps `CYC_HIGH` on the ~53.7 s CYCCNT wrap. Ordering:
+/// store HIGH (Release) BEFORE LAST so a reader that sees the new
+/// LAST also sees the new HIGH (its double-HIGH read then agrees).
 #[inline(always)]
-fn systick_snapshot() -> (u32, u32) {
-    // PENDSTSET is ICSR bit 26. Read the register directly — going
-    // through the crate's `is_systick_pending()` is a cross-crate
-    // non-inlined call, and this snapshot sits inside every hot-ISR
-    // time read (first cut cost +13 CPU points / +50 % t1u lateness).
-    #[inline(always)]
-    fn pendst() -> bool {
-        const PENDSTSET: u32 = 1 << 26;
-        unsafe { (*cortex_m::peripheral::SCB::PTR).icsr.read() & PENDSTSET != 0 }
+fn cyc_extend(now_cyc: u32) {
+    if now_cyc < CYC_LAST.load(Ordering::Relaxed) {
+        CYC_HIGH.store(
+            CYC_HIGH.load(Ordering::Relaxed).wrapping_add(1),
+            Ordering::Release,
+        );
     }
+    CYC_LAST.store(now_cyc, Ordering::Relaxed);
+}
+
+/// 64-bit monotonic cycle count from DWT.CYCCNT + the software wrap
+/// extension. Read order: HIGH, LAST, CYCCNT, HIGH again. Retry if
+/// HIGH changed mid-read (the extender bumped it — happens once per
+/// 53.7 s, so this is effectively never). Self-compensate for a wrap
+/// the extender hasn't caught yet: CYCCNT is read AFTER LAST, so if
+/// it is below LAST a wrap landed between them and HIGH is one behind
+/// — add it locally. ~10 cycles, no ISR, no pending-bit.
+#[inline(always)]
+fn now_cyc64() -> u64 {
     loop {
-        let w1 = SYSTICK_WRAPS.load(Ordering::Relaxed);
-        let cvr_pre = cortex_m::peripheral::SYST::get_current();
-        let pend = pendst();
-        let cvr_post = cortex_m::peripheral::SYST::get_current();
-        let w2 = SYSTICK_WRAPS.load(Ordering::Relaxed);
-        if w1 != w2 || cvr_post > cvr_pre {
+        let h1 = CYC_HIGH.load(Ordering::Acquire);
+        let last = CYC_LAST.load(Ordering::Relaxed);
+        let cyc = cortex_m::peripheral::DWT::cycle_count();
+        let h2 = CYC_HIGH.load(Ordering::Acquire);
+        if h1 != h2 {
             continue;
         }
-        let wraps = if pend { w1.wrapping_add(1) } else { w1 };
-        return (wraps, SYSTICK_RELOAD - cvr_post);
+        let high = if cyc < last { h1.wrapping_add(1) } else { h1 };
+        return ((high as u64) << 32) | (cyc as u64);
     }
 }
 
-/// 10 µs wall-clock ticks (u32, wraps ~12 h; deltas via
-/// `wrapping_sub`). Composed from the wrap shadow + CVR — ~15-20
-/// cycles, safe from any ISR / masked section.
+/// 10 µs wall-clock ticks (u32, wraps cleanly at 2³²·10 µs ≈ 12 h;
+/// deltas via `wrapping_sub`). Derived from the 64-bit cycle count so
+/// the u32 truncation wraps on a power-of-two boundary — the property
+/// every `wrapping_sub` consumer and the MAGPIE wire timestamp rely
+/// on. Safe from any ISR / masked section (no shared mutable state
+/// touched on the read path beyond the lock-free `now_cyc64`).
 #[inline]
 fn ticks_10us() -> u32 {
-    let (wraps, cyc) = systick_snapshot();
-    wraps.wrapping_mul(T10US_PER_WRAP).wrapping_add(cyc / 800)
+    (now_cyc64() / CYC_PER_10US) as u32
 }
 
-/// Microsecond wall clock (u32, wraps ~71 min; deltas via
-/// `wrapping_sub`). Same snapshot as [`ticks_10us`], µs scaling.
+/// Microsecond wall clock (u32, wraps cleanly at 2³²·1 µs ≈ 71 min;
+/// deltas via `wrapping_sub`). Same source as [`ticks_10us`].
 #[inline]
 fn ticks_1us() -> u32 {
-    let (wraps, cyc) = systick_snapshot();
-    wraps.wrapping_mul(US_PER_WRAP).wrapping_add(cyc / 80)
+    (now_cyc64() / CYC_PER_US) as u32
 }
 
-/// Both tick units from ONE snapshot — the hot-ISR form. Hoist a
-/// single `ticks_both()` at ISR entry instead of sprinkling
-/// `ticks_10us()`/`ticks_1us()` calls through the body: the first
-/// systick-timer cut left 2-3 snapshots per COMP entry (~90 k
-/// snapshot/s) and measurably raised CPU. Deriving 10 µs ticks as
-/// `us / 10` would break wrap epochs (µs wraps at ~71 min, 10 µs
-/// ticks at ~12 h) — both units must come from the same
-/// `(wraps, cyc)` pair.
+/// Both tick units from ONE 64-bit snapshot — the hot-ISR form, so a
+/// COMP/window pass takes a single `now_cyc64()` instead of several.
+/// Both derive from the same u64 so their wrap epochs stay coherent.
 #[inline(always)]
 fn ticks_both() -> (u32, u32) {
-    let (wraps, cyc) = systick_snapshot();
-    (
-        wraps.wrapping_mul(T10US_PER_WRAP).wrapping_add(cyc / 800),
-        wraps.wrapping_mul(US_PER_WRAP).wrapping_add(cyc / 80),
-    )
+    let c = now_cyc64();
+    ((c / CYC_PER_10US) as u32, (c / CYC_PER_US) as u32)
+}
+
+/// TRUE 64-bit 10 µs clock for absolute second-scale timing (main-
+/// loop epoch pacing / `IdleLoop`). Unlike [`ticks_10us`] this never
+/// wraps in practice (2⁶⁴·10 µs ≈ millennia), so `now < deadline`
+/// comparisons over multi-second windows can never straddle a wrap
+/// and hang — the failure mode a u32 10 µs clock would hit every 12 h.
+#[inline]
+fn now_10us_64() -> u64 {
+    now_cyc64() / CYC_PER_10US
 }
 
 #[entry]
@@ -901,13 +911,22 @@ fn main() -> ! {
         BAUD,
     );
 
-    // SysTick now runs through the systick-timer crate so we can grow
-    // it to 1 µs resolution later without touching the ISR. The crate
-    // owns the SYST peripheral: set clock source, reload, clear CVR,
-    // enable interrupt + counter — same wiring `configure_systick`
-    // did, but with the crate's 64-bit cycle accounting bolted on.
-    let mut syst = cp.SYST;
-    SYSTICK_TIMER.start(&mut syst);
+    // SysTick is RETIRED (lever #1b): the wall clock is DWT.CYCCNT,
+    // extended to 64 bits by `cyc_extend` in the TIM1_UP ISR. No
+    // SysTick reload, no SysTick exception, no periodic tick ISR at
+    // all. Enable the DWT cycle counter HERE, before any peripheral
+    // setup, so every subsequent `ticks_*` read is valid.
+    // `cp.SYST` is simply left unconfigured/idle.
+    let _syst = cp.SYST;
+    cp.DCB.enable_trace();
+    cp.DWT.enable_cycle_counter();
+    // Zero CYCCNT at enable. It powers up with a residual value; if
+    // that value sits within ~1 s of 2³² the counter would wrap
+    // DURING calibration — before TIM1_UP's wrap extender is unmasked
+    // — and the clock would jump backward once. Starting from 0 puts
+    // the first wrap a guaranteed 53.7 s out, long after the extender
+    // is live. (CYCCNT is DWT base + 0x004.)
+    unsafe { core::ptr::write_volatile(0xE000_1004 as *mut u32, 0) };
 
     let mut gpioa = dp.GPIOA.split(&mut ahb2);
     let mut gpiob = dp.GPIOB.split(&mut ahb2);
@@ -1065,11 +1084,6 @@ fn main() -> ! {
         WREC_PROD.borrow(cs).replace(Some(wrec_producer));
     });
 
-    // Enable DWT cycle counter — used by the rolling 1-second
-    // window below for sub-second-precise rate calc.
-    cp.DCB.enable_trace();
-    cp.DWT.enable_cycle_counter();
-
     // Publish initial motor-drive state BEFORE unmasking TIM7 so the
     // first ISR fire sees consistent atomics. Boot lands in the same
     // "off" state as the `w` key: MOE cleared, `MOTOR_ENABLED=false`,
@@ -1149,18 +1163,20 @@ fn main() -> ! {
     let mut tx_writer = UartTxWriter::new(tx, TX_RING);
 
     // ----------------------------------------------------------------
-    // Flip PRIMASK now so SysTick can actually deliver its exception
-    // and increment `TICKS_10US`. `configure_systick` set TICKINT+ENABLE
-    // in SYST_CSR way up top, but `panic::ensure_rtt` (run by `init`)
-    // calls `cortex_m::interrupt::disable()` and never re-enables — so
-    // PRIMASK=1 has been masking SysTick the whole time. NVIC stays
-    // masked for app IRQs so the calibration baseline below sees only
-    // SysTick eating cycles (~1 % at 100 kHz / ~10 µs ISR cost).
+    // Re-enable interrupts globally: `panic::ensure_rtt` (run by
+    // `init`) called `cortex_m::interrupt::disable()` and never
+    // re-enabled, so PRIMASK=1 until here. NVIC still masks all app
+    // IRQs, so the calibration baseline below runs with NOTHING
+    // periodic firing (SysTick is retired) — a clean free-loop
+    // reference. The DWT clock needs no interrupt to advance.
     // ----------------------------------------------------------------
     unsafe { cortex_m::interrupt::enable() };
 
     let mut idle_loop = IdleLoop::new();
-    let now_u64 = || ticks_10us() as u64;
+    // TRUE 64-bit (not u32-widened): the epoch pacing compares
+    // `now < next_epoch` over multi-second windows, which a 12 h-
+    // wrapping u32 clock would eventually straddle → a one-epoch hang.
+    let now_u64 = || now_10us_64();
     let cal = idle_loop.calibrate(SECOND_TICKS, &now_u64);
     rprintln!(
         "idle_loop: calibration = {} counts / s (SysTick-only baseline)",
@@ -1270,6 +1286,10 @@ fn main() -> ! {
     //     active work both reduce the counter relative to the
     //     calibrated baseline, so both show up as "busy" %.
     let mut epoch_start = now_u64();
+    // Clock monotonicity tripwire: the 64-bit DWT clock must never go
+    // backward. If it ever does (a wrap-extension bug), bump a counter
+    // shown in `i` so the failure is LOUD, not a silent time glitch.
+    let mut last_mono: u64 = epoch_start;
     loop {
         let next_epoch = epoch_start + SECOND_TICKS;
         let mut next_microloop = epoch_start + MICROLOOP_TICKS;
@@ -1280,6 +1300,13 @@ fn main() -> ! {
             // stops and the watchdog resets the chip, releasing the
             // bridge.
             minz::iwdg::refresh();
+
+            // Monotonic check (main-loop rate tripwire).
+            let mono = now_10us_64();
+            if mono < last_mono {
+                CLOCK_BACK.fetch_add(1, Ordering::Relaxed);
+            }
+            last_mono = mono;
 
             // Slack: spin idle counter until next microloop boundary.
             // ISRs preempt this naturally and steal counter increments;
@@ -1805,10 +1832,11 @@ fn main() -> ! {
                             // detector at ISR entry) + worst gap.
                             write!(
                                 &mut tx_writer,
-                                "t1u: miss/s={} missed={} maxgap={}us\r\n",
+                                "t1u: miss/s={} missed={} maxgap={}us clkback={}\r\n",
                                 rate(now_miss.wrapping_sub(last_i_miss)),
                                 now_miss,
                                 maxgap_cyc / (minz::SYSCLK.raw() / 1_000_000),
+                                CLOCK_BACK.load(Ordering::Relaxed),
                             )
                             .ok();
                             write!(
@@ -2084,15 +2112,8 @@ fn clamp_hz(v: i32) -> u32 {
     minz_core::ui::clamp_hz(v, FREQ_MIN, FREQ_MAX)
 }
 
-#[exception]
-fn SysTick() {
-    // Fires once per 200 ms wrap (5/s — was 100,000/s at reload 799;
-    // that alone was ~5-6 % of the CPU). Two stores per fire: the
-    // crate's 64-bit wrap accounting and our u32 shadow for the
-    // cheap-compose readers.
-    SYSTICK_WRAPS.fetch_add(1, Ordering::Relaxed);
-    SYSTICK_TIMER.systick_handler();
-}
+// SysTick handler retired (lever #1b): the wall clock is DWT.CYCCNT,
+// extended in `cyc_extend` from the TIM1_UP ISR. No periodic tick ISR.
 
 #[interrupt]
 fn USART2() {
@@ -2620,6 +2641,11 @@ fn TIM1_UP_TIM16() {
     // writer of LAST_CYC is this ISR, so plain load/store is fine.
     {
         let now_cyc = cortex_m::peripheral::DWT::cycle_count();
+        // Wall-clock 64-bit wrap extension (lever #1b): this 24 kHz
+        // ISR is the sole writer of the CYCCNT wrap counter and runs
+        // every ~41 µs, so it never misses a 53.7 s CYCCNT wrap.
+        // Shares the CYCCNT read with the miss detector.
+        cyc_extend(now_cyc);
         let last = TIM1_UP_LAST_CYC.load(Ordering::Relaxed);
         TIM1_UP_LAST_CYC.store(now_cyc, Ordering::Relaxed);
         let gap = now_cyc.wrapping_sub(last);
@@ -2813,9 +2839,9 @@ fn COMP() {
     // ringing rather than a real BEMF event — drop it from the
     // EDGE_BUF / SECTOR_EDGE_COUNT recording.
     //
-    // 1 µs resolution comes from `ticks_1us()` reading SYST.CVR as
-    // the sub-10 µs-tick fraction. PWM cycle at 24 kHz = 41.67 µs,
-    // so a sensible blank window is 1-30 µs.
+    // 1 µs resolution comes from `ticks_1us()` = DWT.CYCCNT / 80.
+    // PWM cycle at 24 kHz = 41.67 µs, so a sensible blank window is
+    // 1-30 µs.
     //
     // This is the duty-independent replacement for the TIM15-OC1
     // hardware blanking we used to do (which was tied to a fixed
