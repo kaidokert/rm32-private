@@ -607,29 +607,54 @@ the Mutex is justified (BOTH TIM7 open-loop AND LPTIM2 CL enqueue
 share the producer), so it needs a lock-free MPSC to remove, not
 worth the risk now.
 
-**The real LPTIM2 target is `schedule_us` (531 cyc):** dominated by
-`cortex_m::asm::delay(200)` + the ARROK poll — the RM0394 SNGSTRT
-quirk workaround (LPTIM enables 2 counter-clocks after ENABLE; early
-SNGSTRT is silently dropped → kills the chain). The free-run reschedule
-runs it every commutation. HYPOTHESIS (untested, HIGH RISK): the
-post-ARR-match re-arm inside the LPTIM2 ISR may not need the
-disable/enable bounce + delay (the single-shot timer already STOPPED
-at the match), so a lighter re-arm could save ~200-330 cyc; only the
-COMP-refine path (overwriting a PENDING shot mid-count) needs the
-full bounce. Touches the commutation chain directly → validate only
-on a RESTED bench with the black box armed. Other levers, unchanged:
-(3) kill TIM1_CC, COMP reads TIM1.CNT directly; (4) gate ADC-confirm
-under SWIFT-at-speed; (5) MAGPIE serialize in main; (6) half-rate
-vbat/sag. **DWT.CYCCNT is Cortex-M4 only — absent on F051/G071 M0
-rm32 targets; a portback there needs a chained hardware timer.**
+**Lever #2 v2 — `schedule_us` LIGHT re-arm: VALIDATED + LANDED
+(commit d431783). The real win.** `schedule_us` (531 cyc) is
+dominated by `cortex_m::asm::delay(200)` (a 2.5 µs busy-wait) + the
+disable/enable bounce + the ARROK poll. The free-run reschedule runs
+it every commutation from the LPTIM2 ISR — which fires AT the ARR
+match, where single-counting mode has HALTED the counter with ENABLE
+still set and the kernel warm. So the bounce+delay are unnecessary
+there: `reschedule_light` skips them (ICR clear → ARR write → ARROK
+poll → SNGSTRT). Measured A/B @amp40: LPTIM2 ISR **1890 → 1570 cyc
+(−310, ~2.8 % CPU at 1200 Hz, more at speed)**, full sweep 15→44 qzc
+100 %, amp 44 LOCKS (the full-path DWT build died at 44 same
+session — plausible top-end gain from removing the busy-wait's COMP
+blocking, mechanism-supported not paired-proven).
+
+**ARROK conundrum SOLVED (instrumented the poll):** it completes in
+**≤26 spins in BOTH paths, guard NEVER hits** (10 000 backstop). The
+ARROK poll is the necessary-and-sufficient sync for the ARR write
+crossing into the LPTIM kernel domain (PCLK/64). The `delay(200)`
+was ONLY the post-disable kernel warm-up, NOT the ARR sync — proof:
+`light_max` (26) slightly EXCEEDS `full_max` (15) because without
+the delay pre-warming, the poll absorbs the few extra sync clocks
+(same total sync, moved from fixed busy-wait into the cheap bounded
+poll). `ARROK_GUARD_HITS` kept as a permanent safety tripwire
+(`arrok_guard_hits=` in `i`; must stay 0). The **COMP ZC-refine
+path keeps the full `schedule_us`** — it overwrites a RUNNING count,
+and single mode ignores SNGSTRT while counting, so cancelling needs
+the disable/enable.
+
+**Lever #2 v1 (defer close_float_window build) — earlier ATTEMPT,
+BACKFIRED, REVERTED** (kept above): don't defer cheap M4 arithmetic
+behind a bigger snapshot struct.
+
+Remaining levers: (3) kill TIM1_CC, COMP reads TIM1.CNT directly;
+(4) gate ADC-confirm under SWIFT-at-speed; (5) MAGPIE serialize in
+main; (6) half-rate vbat/sag; and possibly extend the light-re-arm
+insight to shrink the COMP-refine full path. **DWT.CYCCNT is
+Cortex-M4 only — absent on F051/G071 M0 rm32 targets; a portback
+there needs a chained hardware timer.**
 
 **Open investigation (residual spike events):** what triggers the
 remaining events. Operator's standing assertion: AM32 runs this
 exact board/prop/supply to 100 % without them ⇒ they are something
-our firmware does. Next levers: the LPTIM2 diet (both a CPU win AND
-removes commutation-edge jitter — a level-1/`free` stall directly
-shifts the actuation edge), then the monster-only J-trigger autopsy.
-The parked path: fix the WAXWING ring
+our firmware does. The LPTIM2 light re-arm (lever #2 v2, landed)
+already removed a 2.5 µs busy-wait from the priority-1 commutation
+ISR — worth re-running the amp-44+ envelope to see if the spike/sag
+cliff moved (amp 44 locked on it where the full-path build died).
+Next: the monster-only J-trigger autopsy. The parked path: fix the
+WAXWING ring
 frame-integrity issue (channel-slip under event chaos — see trust
 audit), then arm the analog black box (`J` key, >2.4 A one-shot
 trigger) at a SURVIVABLE rung — at amp 46's ~6 events/s a single
