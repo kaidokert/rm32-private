@@ -49,7 +49,20 @@ pub const CYCLES_PER_SECOND: u32 = SYSCLK.raw();
 /// noise-edge density per window (~1.8/cycle vs 0.9) and candidate
 /// churn starves the confirm pipeline. A real 48 kHz campaign needs
 /// a candidate-hold policy redesign and likely the HEDGEHOG caps.
-pub const PWM_FREQUENCY_HZ: u32 = 48_000;
+// 2026-07-13 carrier A/B (t1u counter live, all fixes in): 24 kHz
+// reclaims real headroom (cpu 75→57 %, tim1_up=24000 exact, zero
+// true losses, old ~650 Hz ceiling GONE — 1,230 Hz at amp 44) but
+// the SPIKE EVENTS get 4.5× more frequent and 2.7× deeper at the
+// same amp (6.4/s, 7.3 A, 5.0 V bus dips, audible chops; envelope
+// dies 44→46 vs 50→55). Events scale with carrier ripple, NOT with
+// CPU/ISR health — the decisive decoupling.
+//
+// STAYING at 24 kHz for the event investigation (operator call):
+// CPU headroom is out of the picture as a confound, and the
+// amplified event rate/depth makes the analog autopsy faster and
+// clearer. 48 kHz remains the performance recipe once the event
+// mechanism is fixed.
+pub const PWM_FREQUENCY_HZ: u32 = 24_000;
 
 /// TIM1 ARR = SYSCLK / PWM_FREQUENCY_HZ − 1.
 pub const TIM1_AUTORELOAD: u16 = (SYSCLK.raw() / PWM_FREQUENCY_HZ - 1) as u16;
