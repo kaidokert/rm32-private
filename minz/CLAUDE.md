@@ -581,18 +581,47 @@ another: its calibration baseline is boot-sensitive (the free-loop
 `cal` gets perturbed at boot), so busy% is neither boot-stable NOR
 cross-build comparable. **The DWT `dur cyc:` line in `i` (per-ISR
 last-pass cycles × rate) is the ONLY trustworthy CPU accounting** —
-it showed identical load here, proving no regression. Loaded @44/comp40k (systick-
-era numbers, re-measure on DWT): **lp2≈1602 cyc (close_float_window
-in the commutation ISR ≈ 15.7 % CPU — the elephant)**, t1u≈350,
-comp≈270-520, cc≈85, t7≈300-600. Remaining levers, measured-
-biggest-first: (2) LPTIM2 diet — commutation ISR does pins+schedule
-only, `close_float_window` → raw-snapshot ring drained in main
-(biggest win, also cuts commutation jitter); (3) kill TIM1_CC, COMP
-reads TIM1.CNT directly for the blank test; (4) gate ADC-confirm off
-under SWIFT-at-speed; (5) MAGPIE serialize in main + wider
-decimation; (6) half-rate vbat/sag. **DWT.CYCCNT is Cortex-M4 only —
-absent on the F051/G071 M0 rm32 targets; a portback there needs a
-chained hardware timer (operator's call, not a bench concern).**
+it showed identical load here, proving no regression.
+
+**LPTIM2 (commutation ISR) — MEASURED breakdown @amp40/1200 Hz
+(2026-07-13), the honest picture that corrects the earlier "15.7 %
+close_float_window elephant" guess.** Whole ISR ≈ 1871 cyc (~17 % CPU
+at this speed). Sub-segments (DWT-timed): entry+commutation-class-bb
+~335, **set_six_step + COMP2 mux/edges (actuation) 380**,
+**close_float_window 579**, **schedule_us 531**, rest ~40. So the
+cost is DISTRIBUTED, not concentrated in close.
+
+**Lever #2 (defer close_float_window's build to main) — ATTEMPTED,
+BACKFIRED, REVERTED.** Split the core so the commutation ISR enqueued
+a raw `RawWindow` snapshot and main did the derived-field arithmetic
+(`from_raw`). Result: close went 579 → **653 cyc (+74, WORSE)**,
+reverted (confirmed back to 579). Why: on Cortex-M4 the "deferred"
+arithmetic is CHEAP (hardware divide, single-cycle min/sub, ~40 cyc),
+while `RawWindow` (44 B) is BIGGER than the `WindowRec` (28 B) it
+replaced, so the extra struct-plumbing + larger queue-copy cost more
+than the arithmetic saved. **Lesson: don't defer cheap M4 arithmetic
+behind a bigger snapshot struct; measure the segment (drift-immune)
+before and after.** The real reducible in close is the atomic
+bookkeeping (~15 resets) + the `Mutex<RefCell>` enqueue borrow — but
+the Mutex is justified (BOTH TIM7 open-loop AND LPTIM2 CL enqueue
+share the producer), so it needs a lock-free MPSC to remove, not
+worth the risk now.
+
+**The real LPTIM2 target is `schedule_us` (531 cyc):** dominated by
+`cortex_m::asm::delay(200)` + the ARROK poll — the RM0394 SNGSTRT
+quirk workaround (LPTIM enables 2 counter-clocks after ENABLE; early
+SNGSTRT is silently dropped → kills the chain). The free-run reschedule
+runs it every commutation. HYPOTHESIS (untested, HIGH RISK): the
+post-ARR-match re-arm inside the LPTIM2 ISR may not need the
+disable/enable bounce + delay (the single-shot timer already STOPPED
+at the match), so a lighter re-arm could save ~200-330 cyc; only the
+COMP-refine path (overwriting a PENDING shot mid-count) needs the
+full bounce. Touches the commutation chain directly → validate only
+on a RESTED bench with the black box armed. Other levers, unchanged:
+(3) kill TIM1_CC, COMP reads TIM1.CNT directly; (4) gate ADC-confirm
+under SWIFT-at-speed; (5) MAGPIE serialize in main; (6) half-rate
+vbat/sag. **DWT.CYCCNT is Cortex-M4 only — absent on F051/G071 M0
+rm32 targets; a portback there needs a chained hardware timer.**
 
 **Open investigation (residual spike events):** what triggers the
 remaining events. Operator's standing assertion: AM32 runs this
