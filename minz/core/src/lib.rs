@@ -18,6 +18,7 @@ pub mod a85;
 pub mod blackbox;
 pub mod drive;
 pub mod dump;
+pub mod edgebuf;
 pub mod estimator;
 pub mod guards;
 pub mod mode;

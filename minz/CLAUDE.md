@@ -446,6 +446,18 @@ at low amp (invisible under SWIFT).
 State of the bench and the open question, so the next session starts
 oriented:
 
+**BENCH DRIFT STOP (2026-07-11 late session)**: after ~5 h of
+continuous benching, engages stopped surviving past ~3 s — on the
+COMMITTED build that passed its own ladder 90 min earlier (control
+run 0/4). Third documented drift occurrence; per protocol all
+late-session verdicts are void until the bench rests ~1 h. The TIM7
+extraction pass (drive::angle_tick/is_rev_wrap/float_entry,
+edgebuf half-flip machine, pb3 lib helper — 120 core tests,
+drive+edgebuf 100 %) is committed HOST-VERIFIED ONLY; **first
+action on a rested bench: sanity ladder + `e`/`E` dump check on the
+TIM7 build.** (Drift also retroactively explains the E1 "8/8 engage
+failure" phantom — the bench was already sliding.)
+
 **Firmware**: the flashed build (branch `bisect_init_changes`) is
 the fully-extracted one — the whole extraction roadmap is COMPLETE
 (see `EXTRACTION_ROADMAP.md`, kept for incident notes). Envelope

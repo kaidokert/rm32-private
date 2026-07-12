@@ -25,6 +25,40 @@ pub const fn open_loop_gate_us(electrical_hz: u32) -> u32 {
     1_000_000 / (12 * electrical_hz)
 }
 
+/// One full electrical revolution in 16.16 fixed-point degrees.
+pub const ANGLE_FULL_REV_FP: u32 = 360u32 << 16;
+
+/// One open-loop stepper tick: advance the 16.16 angle accumulator
+/// by `inc` (wrapping at a full revolution) and fold the signed
+/// commutation advance into the sector-selection angle. Positive
+/// advance moves sector boundaries earlier in raw-angle terms,
+/// negative later; `rem_euclid` keeps the result in 0..360 either
+/// way. Returns `(new_accum, commutation_angle_deg)`.
+pub fn angle_tick(accum: u32, inc: u32, adv_deg: i32) -> (u32, u16) {
+    let mut accum = accum.wrapping_add(inc);
+    while accum >= ANGLE_FULL_REV_FP {
+        accum = accum.wrapping_sub(ANGLE_FULL_REV_FP);
+    }
+    let raw_angle = (accum >> 16) as i32;
+    (accum, (raw_angle + adv_deg).rem_euclid(360) as u16)
+}
+
+/// Rev wrap = commutation sector 5 → 0 transition — the EDGE_BUF
+/// half-flip and scope-trigger alignment point (auto-aligned with
+/// sector 0 regardless of advance sign, because it keys on the
+/// advance-folded sector).
+pub const fn is_rev_wrap(prev_sector: u8, sector: u8) -> bool {
+    prev_sector == 5 && sector == 0
+}
+
+/// Legacy single-phase float-window tracking: edge-detect entry into
+/// the observed phase's float sectors. Returns `(entered, in_now)` —
+/// `entered` restarts the window clock (`SECTOR_START_US`).
+pub fn float_entry(float_mask: u8, sector: u8, was_in: bool) -> (bool, bool) {
+    let in_now = (float_mask >> sector) & 1 != 0;
+    (in_now && !was_in, in_now)
+}
+
 /// Bitfield of float-window sectors for a given observed phase
 /// (0=A, 1=B, 2=C). Textbook convention: A floats at sectors 2/5,
 /// B at 1/4, C at 0/3.
@@ -147,6 +181,46 @@ mod tests {
         // 1.0×T, NOT 1.5×T — the compounded-lag desync incident.
         assert_eq!(freerun_reschedule_us(600), Some(600));
         assert_eq!(freerun_reschedule_us(0), None);
+    }
+
+    #[test]
+    fn angle_tick_wraps_and_folds_advance() {
+        // Plain advance, no wrap.
+        let inc = angle_inc_fp(100); // ~6°/tick at 6 kHz
+        let (a1, ang) = angle_tick(0, inc, 0);
+        assert_eq!(a1, inc);
+        assert_eq!(ang, (inc >> 16) as u16);
+        // Wrap at a full revolution.
+        let near = ANGLE_FULL_REV_FP - 1;
+        let (a2, ang2) = angle_tick(near, 2, 0);
+        assert!(a2 < ANGLE_FULL_REV_FP);
+        assert!(ang2 < 360);
+        // Positive advance shifts the commutation angle forward…
+        let accum_100deg = 100u32 << 16;
+        assert_eq!(angle_tick(accum_100deg, 0, 8).1, 108);
+        // …and wraps through 360.
+        assert_eq!(angle_tick(355u32 << 16, 0, 8).1, 3);
+        // Negative advance wraps through 0 (rem_euclid, never
+        // negative — the crawl-collapse regime is reachable but the
+        // arithmetic must stay in range).
+        assert_eq!(angle_tick(2u32 << 16, 0, -8).1, 354);
+    }
+
+    #[test]
+    fn rev_wrap_is_5_to_0_only() {
+        assert!(is_rev_wrap(5, 0));
+        assert!(!is_rev_wrap(4, 5));
+        assert!(!is_rev_wrap(0, 1));
+        assert!(!is_rev_wrap(5, 4));
+    }
+
+    #[test]
+    fn float_entry_edge_detects() {
+        let mask = float_sector_mask(0); // A: sectors 2 and 5
+        assert_eq!(float_entry(mask, 2, false), (true, true)); // entry
+        assert_eq!(float_entry(mask, 2, true), (false, true)); // dwell
+        assert_eq!(float_entry(mask, 3, true), (false, false)); // exit
+        assert_eq!(float_entry(mask, 3, false), (false, false));
     }
 
     #[test]

@@ -738,8 +738,8 @@ static ADVANCE_DEG: AtomicI8 = AtomicI8::new(0);
 /// still ≥ 12 sine samples per electrical period — visually clean.
 const MOTOR_DRIVE_HZ: u32 = minz_core::drive::MOTOR_DRIVE_HZ;
 
-/// One full electrical revolution in 16.16 fixed point.
-const ANGLE_FULL_REV_FP: u32 = 360u32 << 16;
+// Angle-accumulator arithmetic (16.16 full-rev wrap + advance
+// folding): minz_core::drive::{ANGLE_FULL_REV_FP, angle_tick}.
 
 // Drive geometry/arithmetic (angle_inc_fp, float_sector_mask,
 // float_sectors, edges_for) lives in minz_core::drive — host-tested,
@@ -2093,29 +2093,21 @@ fn TIM7() {
     // commutation-advance offset folded in. Disarmed → reuse the last
     // sector so static polarity / edges for modes 2/3 stay sensible.
     let (sector, angle, sector_changed) = if motor_enabled {
-        let inc = ANGLE_INC.load(Ordering::Relaxed);
-        let mut accum = ANGLE_ACCUM.load(Ordering::Relaxed).wrapping_add(inc);
-        while accum >= ANGLE_FULL_REV_FP {
-            accum = accum.wrapping_sub(ANGLE_FULL_REV_FP);
-        }
+        // Accumulator advance + signed-advance folding host-tested in
+        // minz_core::drive::angle_tick (wrap, rem_euclid, the
+        // crawl-collapse negative range).
+        let (accum, commutation_angle) = minz_core::drive::angle_tick(
+            ANGLE_ACCUM.load(Ordering::Relaxed),
+            ANGLE_INC.load(Ordering::Relaxed),
+            ADVANCE_DEG.load(Ordering::Relaxed) as i32,
+        );
         ANGLE_ACCUM.store(accum, Ordering::Relaxed);
-        let raw_angle = (accum >> 16) as i32;
-        // Commutation angle = (raw + advance) rem-euclid 360. Signed
-        // advance: positive = sector boundaries earlier in raw-angle
-        // terms, negative = later. The rev-wrap point for EDGE_BUF
-        // flipping is the sec 5→0 transition (below), which auto-
-        // aligns with sec 0 regardless of advance sign.
-        let adv = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
-        let commutation_angle = (raw_angle + adv).rem_euclid(360) as u16;
         let new_sector = open_loop::six_step_sector(commutation_angle);
         (new_sector, commutation_angle, new_sector != prev_sector)
     } else {
         (prev_sector, 0, false)
     };
-    // Rev wrap = commutation sector 5 → 0 transition. This is where
-    // sec 0 begins; the EDGE_BUF half-flip is aligned to this point so
-    // each frozen half always starts at sec 0 regardless of advance.
-    let rev_wrapped = sector_changed && prev_sector == 5 && sector == 0;
+    let rev_wrapped = sector_changed && minz_core::drive::is_rev_wrap(prev_sector, sector);
 
     // Apply COMP2 EXTI edges for this sector + edge-mode. COMP2
     // polarity is locked to non-inverted (POLARITY=0); only the EXTI
@@ -2137,69 +2129,45 @@ fn TIM7() {
     // output square wave runs at exactly the commanded frequency F.
     if rev_wrapped {
         let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
-        unsafe {
-            (*stm32::GPIOB::ptr())
-                .bsrr
-                .write(|w| w.bits(if was_high { 1 << (16 + 3) } else { 1 << 3 }));
-        }
+        minz::pb3::set(!was_high);
     }
 
     // EDGE_BUF rev-pair flip + sector-boundary recording, both inside
     // a critical section so COMP ISR (higher priority) can't snapshot
-    // a torn (ACTIVE_HALF, HALF_START_TICK, REV_PHASE) tuple.
+    // a torn (ACTIVE_HALF, HALF_START_TICK, REV_PHASE) tuple. The
+    // flip state machine (pair cadence, freeze semantics, slot
+    // placement) is host-tested in minz_core::edgebuf; the buffer
+    // clears and boundary stores are performed here from its plan.
     if rev_wrapped || sector_changed {
         free(|_| {
-            if rev_wrapped {
-                // Two rev wraps = one EDGE_BUF half. XOR REV_PHASE on
-                // every wrap, flip only when prev_phase==1 (= second
-                // rev of the pair just completed).
-                let prev_phase = REV_PHASE.fetch_xor(1, Ordering::Relaxed);
-                if prev_phase == 1 && !EDGE_DUMP_FREEZE.load(Ordering::Relaxed) {
-                    let now = ticks_10us();
-                    let old_active = ACTIVE_HALF.load(Ordering::Relaxed) as usize;
-                    let new_active = old_active ^ 1;
-                    let old_half_start = HALF_START_TICK.load(Ordering::Relaxed);
-                    // Clear new active half; previous pair's data
-                    // stays in the soon-to-be-frozen half.
-                    unsafe {
-                        core::ptr::write_bytes(
-                            EDGE_BUF[new_active].as_ptr() as *mut u8,
-                            0,
-                            HALF_TICKS,
-                        );
-                    }
-                    // Zero the per-sector edge counters for the new
-                    // active half so the next pair starts from 0.
-                    for slot in 0..12 {
-                        SECTOR_EDGE_COUNT[new_active][slot].store(0, Ordering::Relaxed);
-                    }
-                    // Finalize slot 0 of the half we're freezing (=
-                    // start of just-completed pair = old HALF_START_TICK).
-                    // Initialize slot 0 of the new active half to NOW
-                    // (= start of the new pair). Together these
-                    // guarantee slot 0 is always valid for completed
-                    // pairs without depending on a sector-0 entry
-                    // transition being recorded.
-                    SECTOR_BOUNDARIES[old_active][0].store(old_half_start, Ordering::Relaxed);
-                    SECTOR_BOUNDARIES[new_active][0].store(now, Ordering::Relaxed);
-                    HALF_START_TICK.store(now, Ordering::Relaxed);
-                    ACTIVE_HALF.store(new_active as u8, Ordering::Relaxed);
+            if rev_wrapped
+                && let Some(plan) = minz_core::edgebuf::on_rev_wrap(&EDGE_HALVES, ticks_10us())
+            {
+                // Clear the new active half; the previous pair's
+                // data stays in the soon-to-be-frozen half.
+                unsafe {
+                    core::ptr::write_bytes(
+                        EDGE_BUF[plan.new_active].as_ptr() as *mut u8,
+                        0,
+                        HALF_TICKS,
+                    );
                 }
+                for slot in 0..12 {
+                    SECTOR_EDGE_COUNT[plan.new_active][slot].store(0, Ordering::Relaxed);
+                }
+                // Slot-0 validity invariant (see edgebuf docs).
+                SECTOR_BOUNDARIES[plan.old_active][0].store(plan.old_half_start, Ordering::Relaxed);
+                SECTOR_BOUNDARIES[plan.new_active][0]
+                    .store(HALF_START_TICK.load(Ordering::Relaxed), Ordering::Relaxed);
             }
-            // Record sector boundary tick into the (now possibly
-            // updated) ACTIVE_HALF / REV_PHASE slot. For non-flip rev
-            // wraps that's slot 6 of the old active half (rev 1
-            // sec 0). For flip rev wraps it's slot 0 of the new
-            // active half (rev 0 sec 0 of the new pair). For
-            // mid-rev sector changes it's slot `phase*6+sector` of
-            // the current active half.
-            if sector_changed {
-                let rev_phase = REV_PHASE.load(Ordering::Relaxed) as usize;
+            // Record the sector-boundary tick into the (now possibly
+            // rotated) half/phase slot.
+            if sector_changed
+                && let Some(slot) =
+                    minz_core::edgebuf::boundary_slot(REV_PHASE.load(Ordering::Relaxed), sector)
+            {
                 let active = ACTIVE_HALF.load(Ordering::Relaxed) as usize;
-                let slot = rev_phase * 6 + sector as usize;
-                if slot < 12 {
-                    SECTOR_BOUNDARIES[active][slot].store(ticks_10us(), Ordering::Relaxed);
-                }
+                SECTOR_BOUNDARIES[active][slot].store(ticks_10us(), Ordering::Relaxed);
             }
         });
     }
@@ -2236,10 +2204,13 @@ fn TIM7() {
             // time-window gate (`valid` rate counter) has a meaningful
             // `SECTOR_START_TICK` reference. EXTI is not gated here —
             // edges are recorded into `EDGE_BUF` across the whole rev.
-            let float_mask = FLOAT_SECTOR_MASK.load(Ordering::Relaxed);
-            let in_float = (float_mask >> sector) & 1 != 0;
-            let was_in_float = WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed);
-            if in_float && !was_in_float {
+            // Edge-detect host-tested: minz_core::drive::float_entry.
+            let (entered, in_float) = minz_core::drive::float_entry(
+                FLOAT_SECTOR_MASK.load(Ordering::Relaxed),
+                sector,
+                WAS_IN_FLOAT_SECTOR.load(Ordering::Relaxed),
+            );
+            if entered {
                 SECTOR_START_US.store(ticks_1us(), Ordering::Relaxed);
             }
             WAS_IN_FLOAT_SECTOR.store(in_float, Ordering::Relaxed);
@@ -2282,12 +2253,16 @@ static WINDOW_STATE: minz_core::window::WindowState<'static> = minz_core::window
     last_comm_10us: &LAST_COMM_10US,
 };
 
-/// MAGPIE/OWL float-window close: called at every commutation, from
-/// whichever engine performed it — TIM7 (open loop) or the LPTIM2
-/// one-shot (closed loop) — always inside a critical section so the
-/// higher/equal-priority COMP ISR can't smear an edge across the
-/// old/new window during snapshot-and-reset. This site supplies the
-/// clocks and performs the two returned side effects.
+/// The EDGE_BUF half-flip state machine's view of this file's
+/// statics (pair cadence, freeze, slot placement host-tested in
+/// minz_core::edgebuf; used inside TIM7's `free` block only).
+static EDGE_HALVES: minz_core::edgebuf::EdgeHalves<'static> = minz_core::edgebuf::EdgeHalves {
+    rev_phase: &REV_PHASE,
+    active_half: &ACTIVE_HALF,
+    half_start_tick: &HALF_START_TICK,
+    freeze: &EDGE_DUMP_FREEZE,
+};
+
 /// The mode state machine's view of this file's statics (arm/kill/
 /// CL transitions host-tested in minz_core::mode).
 static MODE_STATE: minz_core::mode::ModeState<'static> = minz_core::mode::ModeState {
@@ -2389,6 +2364,12 @@ fn mode_cmd(
     }
 }
 
+/// MAGPIE/OWL float-window close: called at every commutation, from
+/// whichever engine performed it — TIM7 (open loop) or the LPTIM2
+/// one-shot (closed loop) — always inside a critical section so the
+/// higher/equal-priority COMP ISR can't smear an edge across the
+/// old/new window during snapshot-and-reset. This site supplies the
+/// clocks and performs the two returned side effects.
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
     let out = minz_core::window::close_float_window(
         &WINDOW_STATE,
@@ -2468,11 +2449,7 @@ fn LPTIM2() {
     // Scope trigger on each electrical rev, same as the open loop.
     if sector == 0 {
         let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
-        unsafe {
-            (*stm32::GPIOB::ptr())
-                .bsrr
-                .write(|w| w.bits(if was_high { 1 << (16 + 3) } else { 1 << 3 }));
-        }
+        minz::pb3::set(!was_high);
     }
     // Re-open the ear for the new window (clears any pending edge).
     comp2::set_exti_enabled(true);

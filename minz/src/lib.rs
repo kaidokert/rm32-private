@@ -11,6 +11,7 @@ pub mod lptim2_oneshot;
 pub mod nvic;
 pub mod open_loop;
 pub mod panic;
+pub mod pb3;
 pub mod priority;
 pub mod softuart;
 pub mod softuart_lptim1;
