@@ -421,17 +421,24 @@ adoption pending), `wire` (MAGPIE v4 WindowRec, used directly),
 `blackbox` (ring + `format_dump` + the `EV_*` event-code authority),
 `drive` (sector geometry + commutation_class + freerun 1.0×T rule),
 `dump` (cdump framer, `l`/`e` renderers, edge_dump_status), `sense`
-(the one vbat/isns calibration), `rates`, `ui`, `a85`. 106 tests,
-99.2 % line coverage (`cd core; cargo test` / `cargo llvm-cov`);
-every past incident is a named regression test. Firmware
-(`motor_tester2.rs`, ~2,700 lines: ISR glue + statics + init) calls
-into core at every corresponding site — change loop or wire behavior
-in core, never inline. `UartTxWriter` (DMA TX ring) is
-`minz::uart_tx`. `core/` is a detached workspace with its own
-`.cargo/config.toml` (host target) — do not fold it into the parent
-or tests build for ARM. Details: FALCON_HARDENING.md §17.
-**Remaining passes + open flags (E1 zc state machine with the TOCTOU
-gen-guard fix, E5 hardware moves): `EXTRACTION_ROADMAP.md`.**
+(the one vbat/isns calibration), `rates`, `ui`, `a85`, and `zc` —
+now the FULL candidate/confirm/accept state machine (on_held_edge /
+confirm_step + accept_gen_current / accept_publish; the B1 TOCTOU
+gen-guard hole is closed via a load-time generation snapshot, with
+the interleaving as a named test). 114 tests, 99.2 % line coverage
+(`cd core; cargo test` / `cargo llvm-cov`); every past incident is a
+named regression test. Firmware (`motor_tester2.rs`, ~2,700 lines:
+ISR glue + statics + init) calls into core at every corresponding
+site — change loop or wire behavior in core, never inline. Hardware
+lib modules: `minz::{uart_tx, usart2_rx, iwdg}`. `core/` is a
+detached workspace with its own `.cargo/config.toml` (host target) —
+do not fold it into the parent or tests build for ARM. Details:
+FALCON_HARDENING.md §17; **`EXTRACTION_ROADMAP.md` is COMPLETE** and
+kept for the incident notes — including the E1 verification war
+story (single-engage bench verdicts are lottery noise; judge engage
+quality only with n≥4 kill/re-arm attempts or the ladder's validated
+engage) and the known pre-existing sector-1/2 ADC-confirm blindness
+at low amp (invisible under SWIFT).
 
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
