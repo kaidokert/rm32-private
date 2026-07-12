@@ -41,10 +41,19 @@ bins = sorted(
 )
 if not bins:
     sys.exit("no captures for tag")
-last = bins[-1]
-frames = parse_frames(pathlib.Path(last).read_bytes())
-if len(frames) < 20:
-    sys.exit(f"{last}: only {len(frames)} frames")
+# Walk back from the newest: a kill can land BETWEEN captures,
+# leaving the newest transit bin empty — the last non-empty bin is
+# then the final streamed evidence before the drop.
+last, frames = None, []
+for cand in reversed(bins):
+    frames = parse_frames(pathlib.Path(cand).read_bytes())
+    if len(frames) >= 20:
+        last = cand
+        break
+    print(f"note: {pathlib.Path(cand).name}: only {len(frames)} frames, "
+          "skipping back (kill likely landed between captures)")
+if last is None:
+    sys.exit("no bin with enough frames")
 
 kill = ""
 log = capdir / f"{args.tag}_session.log"
