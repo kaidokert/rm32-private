@@ -551,26 +551,45 @@ crossing rejected?). Next instrument: raise `WAX_TRIG_RAW` to ~4 A
 so the J-trigger freezes only on a monster — the 85 ms pre-trigger
 ring then holds the initiator window's analog BEMF + comp bit.
 
-**CPU headroom — lever #1 LANDED (systick), stack ranked below.**
-SysTick was firing 100,000/s (reload 799) ≈ 3 % core + biggest ISR-
-rate contributor. Now 5/s (200 ms wrap, systick-timer crate reload
-15,999,999); 10 µs/1 µs clocks composed from wrap-shadow + CVR in
-bare u32 with the crate's wraps-sandwich + PENDSTSET one-wrap comp —
-this ALSO retired the ticks_1us CVR wrap-hole bug class. `ticks_both`
-hoisted to ISR entry (COMP: 1 clock read vs 5-6). Idle cpu 30→23 %;
-ladder + spike census unchanged. **CPU accounting is now the DWT
-`dur cyc:` line in `i`** (per-ISR last-pass cycles; busy% is NOT
-cross-build comparable — the idle loop reads the clock every spin
-and that cost changed, shifting cal 5.20M→2.16M counts/s). Loaded
-@44/comp40k: **lp2=1602 cyc (close_float_window in the commutation
-ISR ≈ 15.7 % CPU — the elephant)**, t1u=351, comp≈270, cc=87, t7≈600;
-SysTick absent. Remaining levers, measured-biggest-first: (2) LPTIM2
-diet — commutation ISR does pins+schedule only, `close_float_window`
-→ raw-snapshot ring drained in main (biggest win, also cuts
-commutation jitter); (3) kill TIM1_CC, COMP reads TIM1.CNT directly
-for the blank test; (4) gate ADC-confirm off under SWIFT-at-speed;
-(5) MAGPIE serialize in main + wider decimation; (6) half-rate vbat/
-sag. Estimated end state ~low-30s % @44.
+**CPU headroom — levers #1 + #1b LANDED. The wall clock is now
+DWT.CYCCNT (commit 4fd43f1, tag `checkpoint-24k-dwt`).** History:
+#1 dropped SysTick 100 kHz→5/s (systick-timer 200 ms wrap) — real
+but it traded ISR rate for a heavy 64-bit snapshot cost, the 24-bit
+SysTick tradeoff. #1b escapes it entirely: **DWT.CYCCNT** is a free-
+running 32-bit counter at the full 80 MHz core, single-instruction
+read, ZERO periodic ISR (SysTick fully retired). No-silent-overflow
+design (the hard requirement): CYCCNT wraps every 53.7 s → extended
+to 64 bits by `cyc_extend` in the EXISTING 24 kHz TIM1_UP (sole
+writer, can't miss a 53.7 s wrap; shares the miss-detector's CYCCNT
+read); `now_cyc64` reads HIGH,LAST,CYCCNT,HIGH with double-HIGH
+retry + `cyc<last` self-compensation (DWT has no pending bit, reader
+compensates itself). `ticks_1us`/`ticks_10us` derive from the u64 so
+they keep a CLEAN power-of-two wrap (71 min / 12 h) → every
+`wrapping_sub` consumer AND the MAGPIE wire timestamp UNCHANGED;
+`now_10us_64` (true u64) backs the epoch pacing so it can't straddle
+a wrap and hang; CYCCNT zeroed at enable (a power-up value near 2³²
+could wrap during calibration before the extender is live);
+**`CLOCK_BACK` tripwire** (main-loop monotonic check, `clkback=` in
+`i`) makes any residual glitch LOUD not silent — verified 0 across
+all runs incl. under sustained CL load. Idle cpu 30→23→**20 %**.
+Regression: ladder 15→40 qzc 100 % IDENTICAL to baseline; amp 44
+inconclusive (bench was drifting — the known-good control ALSO broke
+at 44 in a tight A/B, so no DWT-specific regression). **busy% is NOT
+cross-build comparable** — the idle loop reads the clock every spin
+and that read's cost changed each generation (cal 5.20M→2.16M→…),
+shifting the baseline; **use the DWT `dur cyc:` line in `i` for
+absolute cross-build CPU accounting**. Loaded @44/comp40k (systick-
+era numbers, re-measure on DWT): **lp2≈1602 cyc (close_float_window
+in the commutation ISR ≈ 15.7 % CPU — the elephant)**, t1u≈350,
+comp≈270-520, cc≈85, t7≈300-600. Remaining levers, measured-
+biggest-first: (2) LPTIM2 diet — commutation ISR does pins+schedule
+only, `close_float_window` → raw-snapshot ring drained in main
+(biggest win, also cuts commutation jitter); (3) kill TIM1_CC, COMP
+reads TIM1.CNT directly for the blank test; (4) gate ADC-confirm off
+under SWIFT-at-speed; (5) MAGPIE serialize in main + wider
+decimation; (6) half-rate vbat/sag. **DWT.CYCCNT is Cortex-M4 only —
+absent on the F051/G071 M0 rm32 targets; a portback there needs a
+chained hardware timer (operator's call, not a bench concern).**
 
 **Open investigation (residual spike events):** what triggers the
 remaining events. Operator's standing assertion: AM32 runs this
