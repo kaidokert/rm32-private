@@ -1129,6 +1129,14 @@ fn main() -> ! {
         NVIC::unmask(Interrupt::TIM1_CC);
     }
 
+    // Emit the ACTUAL priority configuration (hardware read-back, not
+    // the constants) over UART once at init — every automated-test
+    // session log then permanently records what the run executed
+    // under. Mirrors to RTT via the existing dump helpers.
+    priority::dump_to(&mut tx_writer);
+    priority::dump_prigroup();
+    priority::dump_irq_prios();
+
     // Main-loop mirrors of motor state held in atomics. We keep
     // locals only so the prev-vs-now diff in the key handlers can
     // print `f=` / `amp=` / `mode=` messages cleanly. The actual

@@ -129,6 +129,31 @@ pub fn dump_prigroup() {
     rprintln!("AIRCR=0x{:08x}  PRIGROUP={}", aircr, prigroup);
 }
 
+/// Dump PRIGROUP + every bench-relevant priority byte, read back from
+/// hardware, to any `fmt::Write` sink — one line, host-log friendly.
+/// motor_tester2 calls this with the UART writer at init so every
+/// automated-test session log permanently records the actual IPR
+/// configuration the run executed under (raw bytes: logical level is
+/// the upper nibble, e.g. 0x20 = level 2).
+pub fn dump_to<W: core::fmt::Write>(w: &mut W) {
+    let aircr = unsafe { (*SCB::PTR).aircr.read() };
+    write!(
+        w,
+        "prio: PRIGROUP={} SysTick={:02X} COMP={:02X} LPTIM2={:02X} TIM7={:02X} \
+         TIM1_UP={:02X} TIM1_CC={:02X} LPTIM1={:02X} USART2={:02X}\r\n",
+        (aircr >> 8) & 0x7,
+        SCB::get_priority(SystemHandler::SysTick),
+        NVIC::get_priority(Interrupt::COMP),
+        NVIC::get_priority(Interrupt::LPTIM2),
+        NVIC::get_priority(Interrupt::TIM7),
+        NVIC::get_priority(Interrupt::TIM1_UP_TIM16),
+        NVIC::get_priority(Interrupt::TIM1_CC),
+        NVIC::get_priority(Interrupt::LPTIM1),
+        NVIC::get_priority(Interrupt::USART2),
+    )
+    .ok();
+}
+
 /// Read back every priority byte we programmed and print it. Expected
 /// hex values reflect the `<<4` encoding (logical 0/1/2/3/4 → 0x00 /
 /// 0x10 / 0x20 / 0x30 / 0x40).
