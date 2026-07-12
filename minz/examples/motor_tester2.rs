@@ -142,34 +142,38 @@ const MICROLOOP_TICKS: u64 = 100;
 /// latch_window`.
 const SECOND_TICKS: u64 = 100_000;
 
+/// SysTick reload for the 200 ms wrap period. Chosen so the period
+/// is an INTEGER number of µs and 10 µs ticks at 80 MHz:
+/// `RELOAD + 1 = 16_000_000` cycles = 200_000 µs = 20_000 ten-µs
+/// ticks. Fits the 24-bit SYST counter (max 16_777_215).
+const SYSTICK_RELOAD: u32 = 15_999_999;
+/// Whole-period constants for the cheap compose in [`ticks_10us`] /
+/// [`ticks_1us`]. u32 `wrapping_mul` keeps delta semantics across
+/// the derived counters' wraps (~12 h / ~71 min respectively).
+const T10US_PER_WRAP: u32 = 20_000;
+const US_PER_WRAP: u32 = 200_000;
+
 /// SysTick-backed 64-bit timer used as the bench's monotonic clock.
 ///
-/// - `tick_hz = 100_000` → output ticks are 10 µs each (matching the
-///   `TICKS_10US_FAST` atomic scale below).
-/// - `reload_value = 799` → SysTick fires every 800 cycles = every
-///   10 µs at 80 MHz.
+/// - `tick_hz = 100_000` → `now()` is in 10 µs units (what
+///   `IdleLoop`'s `now_u64` wants).
+/// - `reload_value = 15_999_999` → the SysTick ISR fires every
+///   **200 ms** (5/s). This is the whole point: the previous config
+///   (reload 799) fired it 100,000×/s ≈ 5-6 % of the CPU.
 /// - `systick_freq = 80_000_000` → matches `SYSCLK`.
 ///
 /// **Hot-path callers should NOT use `SYSTICK_TIMER.now()`** — each
-/// call costs ~300 cycles because of the stable-snapshot retry loop
-/// (multiple `SeqCst` atomic loads + SYST.CVR reads + PendST check +
-/// u64 multiply with u128 overflow fallback). That's fine for slow
-/// polling but is too heavy for ISRs that fire at 24 kHz+. The
-/// `TICKS_10US_FAST` atomic below is the cheap hot-path counter
-/// (~5 cycles per read), maintained in lockstep from the SysTick
-/// handler. Use `ticks_10us()` to read it.
-///
-/// The crate's `now()` stays available for future code that needs
-/// 64-bit width or sub-tick resolution (e.g. when we bump `tick_hz`
-/// to `1_000_000` to get 1 µs resolution from `SYST.CVR` reads).
-static SYSTICK_TIMER: systick_timer::Timer = systick_timer::Timer::new(100_000, 799, 80_000_000);
+/// call costs ~300 cycles (stable-snapshot retry loop, `SeqCst`
+/// barriers, u64/u128 scaling). ISRs use [`ticks_10us`]/[`ticks_1us`],
+/// which run the same wraps-sandwich + PendST algorithm in bare u32
+/// (~15-20 cycles) against the `SYSTICK_WRAPS` shadow counter.
+static SYSTICK_TIMER: systick_timer::Timer =
+    systick_timer::Timer::new(100_000, SYSTICK_RELOAD, 80_000_000);
 
-/// Cheap 10 µs tick counter, bumped from the SysTick handler in
-/// lockstep with `SYSTICK_TIMER`'s internal state. Reading it is a
-/// single relaxed atomic load (~5 cycles) — safe to call from any
-/// ISR. Wraps every ~12 h at 10 µs ticks; all callers use
-/// `wrapping_sub` for delta computations so the wrap is benign.
-static TICKS_10US_FAST: AtomicU32 = AtomicU32::new(0);
+/// Wrap counter bumped in the SysTick handler in lockstep with the
+/// crate's internal state — the cheap-compose shadow of the crate's
+/// `inner_wraps`. One increment per 200 ms.
+static SYSTICK_WRAPS: AtomicU32 = AtomicU32::new(0);
 
 /// COMP2 transition counter — incremented in the COMP ISR on every
 /// EXTI line-22 edge (both rising and falling).
@@ -196,6 +200,34 @@ static TIM1_CC_COUNT: AtomicU32 = AtomicU32::new(0);
 static TIM1_UP_MISSED: AtomicU32 = AtomicU32::new(0);
 static TIM1_UP_LAST_CYC: AtomicU32 = AtomicU32::new(0);
 static TIM1_UP_MAXGAP_CYC: AtomicU32 = AtomicU32::new(0);
+
+/// Per-ISR duration sampling (DWT cycles, plain store of the most
+/// recent completed pass — the rm32 `*_last_cyc` pattern; a
+/// `fetch_max` would retain instrumentation spikes). Shown in `i` as
+/// `dur:`. Guard struct stores on Drop so early returns are covered.
+static DUR_T1U: AtomicU32 = AtomicU32::new(0);
+static DUR_T1CC: AtomicU32 = AtomicU32::new(0);
+static DUR_COMP: AtomicU32 = AtomicU32::new(0);
+static DUR_TIM7: AtomicU32 = AtomicU32::new(0);
+static DUR_LPTIM2: AtomicU32 = AtomicU32::new(0);
+static DUR_MAIN: AtomicU32 = AtomicU32::new(0);
+
+struct DurGuard(u32, &'static AtomicU32);
+impl DurGuard {
+    #[inline(always)]
+    fn new(slot: &'static AtomicU32) -> Self {
+        Self(cortex_m::peripheral::DWT::cycle_count(), slot)
+    }
+}
+impl Drop for DurGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.1.store(
+            cortex_m::peripheral::DWT::cycle_count().wrapping_sub(self.0),
+            Ordering::Relaxed,
+        );
+    }
+}
 
 /// Software PWM-edge blanking window in **microseconds**. `0`
 /// disables the gate. Live-tunable via `n`/`N` (±1 µs) and `.`/`,`
@@ -770,49 +802,79 @@ static RX_PROD: Mutex<RefCell<Option<Producer<'static, u8>>>> = Mutex::new(RefCe
 // DMA-backed UART TX ring (DMA1_CH4 → USART1_TX): minz::uart_tx.
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
-fn ticks_10us() -> u32 {
-    // Cheap atomic read — ~5 cycles, no stable-snapshot loop. The
-    // `TICKS_10US_FAST` atomic is bumped from the SysTick handler in
-    // lockstep with the systick-timer crate's 64-bit counter, so all
-    // existing 10 µs-scale call sites work unchanged. u32 wraps every
-    // ~12 h; downstream code uses `wrapping_sub` for deltas.
-    TICKS_10US_FAST.load(Ordering::Relaxed)
+/// Cheap stable snapshot of `(wraps, cycles_into_period)` — the
+/// systick-timer crate's algorithm in bare u32 (~15-20 cycles):
+///
+/// 1. read `SYSTICK_WRAPS` (w1), CVR, PendST, CVR again, wraps (w2);
+/// 2. retry if an ISR ran during the block (`w1 != w2`) or a wrap
+///    landed mid-block (`cvr_post > cvr_pre` — CVR counts DOWN, so
+///    an increase means it reloaded);
+/// 3. if PendST is set, the counter wrapped BEFORE our block and the
+///    handler hasn't run yet (e.g. we're inside `interrupt::free`) —
+///    compensate with +1 wrap, exactly like the crate's `now()`.
+///
+/// Without step 3 a read inside a masked section just after a wrap
+/// would jump BACKWARD by a full 200 ms period — the same hazard
+/// class as the old 10 µs CVR-compose wrap-hole, but 20,000× larger.
+/// One-wrap compensation is sufficient: nothing masks interrupts for
+/// anywhere near 200 ms (the longest `free` blocks are ~100 µs).
+#[inline(always)]
+fn systick_snapshot() -> (u32, u32) {
+    // PENDSTSET is ICSR bit 26. Read the register directly — going
+    // through the crate's `is_systick_pending()` is a cross-crate
+    // non-inlined call, and this snapshot sits inside every hot-ISR
+    // time read (first cut cost +13 CPU points / +50 % t1u lateness).
+    #[inline(always)]
+    fn pendst() -> bool {
+        const PENDSTSET: u32 = 1 << 26;
+        unsafe { (*cortex_m::peripheral::SCB::PTR).icsr.read() & PENDSTSET != 0 }
+    }
+    loop {
+        let w1 = SYSTICK_WRAPS.load(Ordering::Relaxed);
+        let cvr_pre = cortex_m::peripheral::SYST::get_current();
+        let pend = pendst();
+        let cvr_post = cortex_m::peripheral::SYST::get_current();
+        let w2 = SYSTICK_WRAPS.load(Ordering::Relaxed);
+        if w1 != w2 || cvr_post > cvr_pre {
+            continue;
+        }
+        let wraps = if pend { w1.wrapping_add(1) } else { w1 };
+        return (wraps, SYSTICK_RELOAD - cvr_post);
+    }
 }
 
-/// Microsecond-resolution wall clock for the software-blanking math.
-/// Used **only** by the TIM1_CC ISR (latch `LAST_PWM_EDGE_US`) and
-/// the COMP ISR (compute `now - LAST_PWM_EDGE_US`). Everything else
-/// stays on the cheaper `ticks_10us()`.
-///
-/// Implementation: combine the 10 µs base from `TICKS_10US_FAST` with
-/// the sub-tick remainder from `SYST.CVR`. `SYST.CVR` counts DOWN
-/// from `RELOAD = 799` to 0 each 10 µs (at 80 MHz core clock), so
-/// `(799 - CVR)` is "cycles elapsed in current 10 µs tick" and
-/// `/ 80` converts to µs.
-///
-/// Race window: SysTick fires every 800 cycles at the highest NVIC
-/// priority. If it preempts us between the two reads, the wrap
-/// counter and `CVR` go out of sync. We sandwich the atomic read
-/// between two `CVR` reads: if `cvr_post > cvr_pre`, a wrap
-/// happened (CVR jumped back up to 799), so we retry. In the
-/// common case the retry never fires, so cost is ~15 cycles total.
-///
-/// Wraps every ~71 min (u32 / 1 µs); deltas via `wrapping_sub` so
-/// the wrap is benign for the blanking window.
+/// 10 µs wall-clock ticks (u32, wraps ~12 h; deltas via
+/// `wrapping_sub`). Composed from the wrap shadow + CVR — ~15-20
+/// cycles, safe from any ISR / masked section.
+#[inline]
+fn ticks_10us() -> u32 {
+    let (wraps, cyc) = systick_snapshot();
+    wraps.wrapping_mul(T10US_PER_WRAP).wrapping_add(cyc / 800)
+}
+
+/// Microsecond wall clock (u32, wraps ~71 min; deltas via
+/// `wrapping_sub`). Same snapshot as [`ticks_10us`], µs scaling.
 #[inline]
 fn ticks_1us() -> u32 {
-    loop {
-        let cvr_pre = cortex_m::peripheral::SYST::get_current();
-        let coarse = TICKS_10US_FAST.load(Ordering::Relaxed);
-        let cvr_post = cortex_m::peripheral::SYST::get_current();
-        if cvr_post <= cvr_pre {
-            return coarse
-                .wrapping_mul(10)
-                .wrapping_add((799u32.wrapping_sub(cvr_post)) / 80);
-        }
-        // SysTick wrapped between the reads; retry for a consistent
-        // snapshot. The next iteration sees the post-wrap state.
-    }
+    let (wraps, cyc) = systick_snapshot();
+    wraps.wrapping_mul(US_PER_WRAP).wrapping_add(cyc / 80)
+}
+
+/// Both tick units from ONE snapshot — the hot-ISR form. Hoist a
+/// single `ticks_both()` at ISR entry instead of sprinkling
+/// `ticks_10us()`/`ticks_1us()` calls through the body: the first
+/// systick-timer cut left 2-3 snapshots per COMP entry (~90 k
+/// snapshot/s) and measurably raised CPU. Deriving 10 µs ticks as
+/// `us / 10` would break wrap epochs (µs wraps at ~71 min, 10 µs
+/// ticks at ~12 h) — both units must come from the same
+/// `(wraps, cyc)` pair.
+#[inline(always)]
+fn ticks_both() -> (u32, u32) {
+    let (wraps, cyc) = systick_snapshot();
+    (
+        wraps.wrapping_mul(T10US_PER_WRAP).wrapping_add(cyc / 800),
+        wraps.wrapping_mul(US_PER_WRAP).wrapping_add(cyc / 80),
+    )
 }
 
 #[entry]
@@ -1104,6 +1166,9 @@ fn main() -> ! {
         "idle_loop: calibration = {} counts / s (SysTick-only baseline)",
         cal,
     );
+    // Mirror to UART so host logs capture the baseline — needed to
+    // interpret cpu% across builds (the busy math is relative to it).
+    write!(&mut tx_writer, "idle cal = {} counts/s\r\n", cal).ok();
 
     // Program NVIC + SCB priorities BEFORE unmasking the app IRQs so
     // every IRQ comes up at its intended level. PRIGROUP=3 (4 preempt
@@ -1220,6 +1285,10 @@ fn main() -> ! {
             // ISRs preempt this naturally and steal counter increments;
             // that's exactly how "busy" gets measured.
             idle_loop.run_until(next_microloop, &now_u64);
+
+            // Active-phase duration of this microloop pass (to the
+            // end of the loop body) - closes the busy% accounting.
+            let _dur_main = DurGuard::new(&DUR_MAIN);
 
             // Analog black-box trigger fired? Inject a `j` so the
             // frozen ring dumps through the standard WAXWING path
@@ -1742,6 +1811,17 @@ fn main() -> ! {
                                 maxgap_cyc / (minz::SYSCLK.raw() / 1_000_000),
                             )
                             .ok();
+                            write!(
+                                &mut tx_writer,
+                                "dur cyc: t1u={} cc={} comp={} t7={} lp2={} main={}\r\n",
+                                DUR_T1U.load(Ordering::Relaxed),
+                                DUR_T1CC.load(Ordering::Relaxed),
+                                DUR_COMP.load(Ordering::Relaxed),
+                                DUR_TIM7.load(Ordering::Relaxed),
+                                DUR_LPTIM2.load(Ordering::Relaxed),
+                                DUR_MAIN.load(Ordering::Relaxed),
+                            )
+                            .ok();
                         }
                         last_i_miss = now_miss;
                         last_i_tick = now_tick;
@@ -2006,16 +2086,11 @@ fn clamp_hz(v: i32) -> u32 {
 
 #[exception]
 fn SysTick() {
-    // Two tick stores per fire:
-    // 1. The cheap `TICKS_10US_FAST` atomic — read by every hot-path
-    //    `ticks_10us()` caller in the ISRs.
-    // 2. The systick-timer crate's wrap counter — used by code that
-    //    needs the 64-bit `SYSTICK_TIMER.now()` (none currently, but
-    //    the wiring is kept so the crate stays useful for future
-    //    sub-tick resolution work).
-    // Both are ~3 cycles, so the SysTick ISR is still well under 20
-    // cycles total — same load as before the crate was wired in.
-    TICKS_10US_FAST.fetch_add(1, Ordering::Relaxed);
+    // Fires once per 200 ms wrap (5/s — was 100,000/s at reload 799;
+    // that alone was ~5-6 % of the CPU). Two stores per fire: the
+    // crate's 64-bit wrap accounting and our u32 shadow for the
+    // cheap-compose readers.
+    SYSTICK_WRAPS.fetch_add(1, Ordering::Relaxed);
     SYSTICK_TIMER.systick_handler();
 }
 
@@ -2047,6 +2122,7 @@ fn USART2() {
 
 #[interrupt]
 fn TIM7() {
+    let _dur = DurGuard::new(&DUR_TIM7);
     // Motor-drive heartbeat (6 kHz). When armed: advance the electrical
     // angle accumulator, commutate (six-step or sine), update polarity
     // / EXTI-edge config for the new sector, publish CURRENT_SECTOR.
@@ -2101,10 +2177,15 @@ fn TIM7() {
             // Host-tested: minz_core::guards::{since_us, cl_watchdog}
             // — read-order rule, starvation, runaway floor, desync
             // (each constant traces to an incident; see core tests).
+            // One time read for both checks — taken AFTER both
+            // reference loads so the reference-before-now rule holds
+            // for each (hoisting `now` above the references would
+            // reintroduce the underflow race this block documents).
             let last = LAST_COMM_10US.load(Ordering::Relaxed);
-            let since_us = minz_core::guards::since_us(ticks_10us(), last);
             let last_qzc = LAST_QZC_10US.load(Ordering::Relaxed);
-            let starve_us = minz_core::guards::since_us(ticks_10us(), last_qzc);
+            let now_10 = ticks_10us();
+            let since_us = minz_core::guards::since_us(now_10, last);
+            let starve_us = minz_core::guards::since_us(now_10, last_qzc);
             let kill =
                 minz_core::guards::cl_watchdog(interval_us, starve_us, since_us, last_qzc != 0);
             if let Some(kind) = kill {
@@ -2421,12 +2502,8 @@ fn mode_cmd(
 }
 
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
-    let out = minz_core::window::close_float_window(
-        &WINDOW_STATE,
-        prev_sector,
-        ticks_10us(),
-        ticks_1us(),
-    );
+    let (now_10, now_us) = ticks_both();
+    let out = minz_core::window::close_float_window(&WINDOW_STATE, prev_sector, now_10, now_us);
     for (ev, data) in out.bb.iter().flatten() {
         bb_record(*ev, prev_sector, *data);
     }
@@ -2447,6 +2524,7 @@ static WREC_DECIM: AtomicU32 = AtomicU32::new(0);
 /// COMP so the two never nest.
 #[interrupt]
 fn LPTIM2() {
+    let _dur = DurGuard::new(&DUR_LPTIM2);
     minz::lptim2_oneshot::clear_flag();
     if !CL_ACTIVE.load(Ordering::Relaxed) || !MOTOR_ENABLED.load(Ordering::Relaxed) {
         return; // stale one-shot after disengage/kill
@@ -2507,6 +2585,7 @@ fn LPTIM2() {
 
 #[interrupt]
 fn TIM1_CC() {
+    let _dur = DurGuard::new(&DUR_T1CC);
     // Fires whenever TIM1.CNT matches CCR1 / CCR2 / CCR3 (whichever
     // CCxIE we enabled — see `tim1_motor_pwm::enable_cc_interrupts`).
     // CCR4 is intentionally NOT enabled — it's the fixed ADC-TRGO
@@ -2530,6 +2609,7 @@ fn TIM1_CC() {
 
 #[interrupt]
 fn TIM1_UP_TIM16() {
+    let _dur = DurGuard::new(&DUR_T1U);
     // One-byte COMP2 + sector sample per PWM period. UIF must be
     // cleared first or the IRQ re-fires immediately on return.
     // Byte layout: bit 0 = COMP2 value, bits 1..=3 = sector (0..=5).
@@ -2714,11 +2794,17 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP() {
+    let _dur = DurGuard::new(&DUR_COMP);
     // EXTI line 22 is COMP2's output (COMP1 is line 21, unused here).
     // Ack the pending bit first so the IRQ doesn't immediately re-fire.
     comp2::clear_pending();
     COMP_COUNT.fetch_add(1, Ordering::Relaxed);
     WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
+
+    // ONE time snapshot per entry (see `ticks_both`). Entry time is
+    // the honest edge timestamp anyway — the EXTI fired microseconds
+    // before any later in-body read would run.
+    let (now_10, now_us) = ticks_both();
 
     // Software PWM-edge blanking. The `TIM1_CC` ISR latches
     // `ticks_1us()` into `LAST_PWM_EDGE_US` at every PWM channel
@@ -2755,9 +2841,9 @@ fn COMP() {
     let blank_us =
         minz_core::timing::blank_us(BLANK_US.load(Ordering::Relaxed) as u32, interval_us);
     if blank_us > 0 {
-        let since_edge = ticks_1us().wrapping_sub(LAST_PWM_EDGE_US.load(Ordering::Relaxed));
+        let since_edge = now_us.wrapping_sub(LAST_PWM_EDGE_US.load(Ordering::Relaxed));
         if since_edge < blank_us {
-            let elapsed = ticks_1us().wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
+            let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
             if elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed) {
                 VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
             }
@@ -2778,7 +2864,7 @@ fn COMP() {
     if EDGE_MODE.load(Ordering::Relaxed) == 5 && !comp2::value() {
         // Also still run the time-window gate so VALID_COMP_COUNT
         // tracks the same denominator across modes.
-        let elapsed = ticks_1us().wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
+        let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
         if elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed) {
             VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
         }
@@ -2792,8 +2878,8 @@ fn COMP() {
     // state, not the edge direction (see `EDGE_BUF` docs).
     // At f_elec < 50 Hz 2 revs exceeds 4096 ticks and the masked
     // index wraps, overwriting earlier cells — see `HALF_TICKS` docs.
-    let edge_idx = (ticks_10us().wrapping_sub(HALF_START_TICK.load(Ordering::Relaxed))
-        & HALF_TICK_MASK) as usize;
+    let edge_idx =
+        (now_10.wrapping_sub(HALF_START_TICK.load(Ordering::Relaxed)) & HALF_TICK_MASK) as usize;
     let edge_half = (ACTIVE_HALF.load(Ordering::Relaxed) & 1) as usize;
     // Saturating-increment per cell. COMP ISR is the only writer (TIM7
     // memset / E-dump snapshot run with COMP masked or in `free`), so a
@@ -2822,7 +2908,7 @@ fn COMP() {
     // first-pass noise gate; the upstream raw `COMP_COUNT` and the
     // per-sector / per-cell EDGE_BUF + counters are the unfiltered
     // diagnostic surface.
-    let elapsed = ticks_1us().wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
+    let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
     if elapsed < SECTOR_GATE_US.load(Ordering::Relaxed) {
         return;
     }
@@ -2832,7 +2918,7 @@ fn COMP() {
     // resets, so plain check-then-store is race-free.
     WINDOW_VALID.fetch_add(1, Ordering::Relaxed);
     if WINDOW_FIRST_ZC_US.load(Ordering::Relaxed) == u32::MAX {
-        WINDOW_FIRST_ZC_US.store(ticks_1us(), Ordering::Relaxed);
+        WINDOW_FIRST_ZC_US.store(now_us, Ordering::Relaxed);
     }
 
     // OWL: persistence qualification — AM32's layer-2 filter. A real
@@ -2862,8 +2948,13 @@ fn COMP() {
             // COMP so they never preempt each other, and TIM1_UP
             // (prio 3) is preempted — no `free` needed; WINDOW_QZC
             // caps it at one accept per window. Otherwise a candidate
-            // is armed for TIM1_UP to confirm.
-            let now_us = ticks_1us();
+            // is armed for TIM1_UP to confirm. Timestamp = ISR entry
+            // (`now_us` hoisted above): the physical edge fired just
+            // before entry, so entry time is the more honest ZC stamp
+            // than a fresh read taken after the ~1 µs persistence
+            // loop; interval math is differential so a uniform shift
+            // cancels, and the schedule path re-reads elapsed time
+            // fresh for its latency compensation.
             if minz_core::zc::on_held_edge(&ZC_STATE, expected, now_us)
                 == minz_core::zc::HeldEdge::AcceptNow
             {
