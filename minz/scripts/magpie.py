@@ -65,12 +65,25 @@ def parse_frames(buf: bytes):
             i_min = int.from_bytes(f[16:18], "little")
             i_max = int.from_bytes(f[18:20], "little")
             i_avg = int.from_bytes(f[20:22], "little")
+            zc_off = int.from_bytes(f[10:12], "little")
+            qzc_off = int.from_bytes(f[22:24], "little")
+
+            # An offset can never exceed the window length (+10 µs
+            # truncation margin). Catches mislocks whose offset fields
+            # land on stream bytes — one decoded 0x5A04 (the sync
+            # bytes themselves) and blew a map's qZC sigma 25x
+            # (2026-07-11). Mirrored in minz-core wire::decode.
+            def off_ok(off):
+                return off == 0xFFFF or off <= len_10us * 10 + 10
+
             sane = (
                 0 < len_10us < 3000  # 10 µs .. 30 ms window
                 and valid <= raw
                 and i_min <= 0x0FFF
                 and i_max <= 0x0FFF
                 and i_min <= i_avg <= i_max
+                and off_ok(zc_off)
+                and off_ok(qzc_off)
             )
             if not sane:
                 i += 1

@@ -448,6 +448,30 @@ Behavioral equivalence after the rewiring: verified on board 2 —
 linear current 47→175 mA, vbat flat (`captures/refactor_sanity_map
 .png`). Zero loop-logic changes intended, zero observed.
 
+**Third pass — `close_float_window` (2026-07-11)**: the whole
+window-close (reacq trigger, pred_err, decimation policy, the
+accumulator reset list) moved to `minz_core::window` behind the
+`WindowState<'a>` seam: a struct of `&'a Atomic*` refs over the ~23
+firmware statics (minz-core gained a `portable-atomic` dep so the
+types unify), timestamps as arguments, and side effects returned as
+`CloseOutcome { rec, bb }` — the firmware shim supplies clocks and
+does the enqueue + bb_record. No critical-section abstraction
+needed: core never opens one; the caller keeps its `free()`
+envelope. window.rs is 100 % line-covered (12 tests incl. the
+reacq chain-break, the C-window exemption, and the full reset
+list). Bench: ladder 15/25/35 → 449/755/1001 Hz, qzc 100 %;
+the amp-35 rung exercised the extracted decimation live (4,564 of
+~24 k windows streamed ≈ every 5th).
+
+Bonus catch from the equivalence check: the sanity ladder's map
+showed qZC σ 205 % (vs 8.4 % pre-extraction) — A/B of the raw bins
+proved it was ONE host-parser sync-mislock frame carrying the sync
+bytes in its offset fields (qzc_off=0x5A04, pred_err=0xA6A6), not a
+firmware change. New wire sanity rule both in `magpie.py` and
+`minz_core::wire::decode`: offsets must fit the window length
+(0xFFFF sentinel exempt). Named regression test. 80 core tests,
+98.8 % line coverage.
+
 **Second pass (same day)** — "was 3,300 lines the best you can do?"
 No. Everything serializable moved too: `a85` (core now owns it; the
 lib re-exports), `dump` (WAXWING cdump framer, `l`-dump rev-span

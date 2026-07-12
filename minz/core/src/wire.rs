@@ -67,13 +67,21 @@ impl WindowRec {
         let raw = u16le(12);
         let valid = u16le(14);
         let (i_min, i_max, i_avg) = (u16le(16), u16le(18), u16le(20));
+        // A ZC offset can never exceed the window length (+10 µs for
+        // the len truncation). Catches sync-mislocked garbage whose
+        // offset fields land on stream bytes — one such frame put
+        // 0x5A04 in qzc_off (the sync bytes themselves) and blew a
+        // map's σ statistic 25× (2026-07-11).
+        let off_ok = |off: u16| off == 0xFFFF || off as u32 <= len_10us as u32 * 10 + 10;
         let sane = len_10us > 0
             && len_10us < 3000
             && valid <= raw
             && i_min <= 0x0FFF
             && i_max <= 0x0FFF
             && i_min <= i_avg
-            && i_avg <= i_max;
+            && i_avg <= i_max
+            && off_ok(u16le(10))
+            && off_ok(u16le(22));
         if !sane {
             return None;
         }
@@ -142,6 +150,27 @@ mod tests {
         junk[3] = 0x03; // plausible sector
         // len = 0xEEEE > 3000 → insane.
         assert_eq!(WindowRec::decode(&junk), None);
+    }
+
+    #[test]
+    fn regression_offset_beyond_window_rejected_2026_07_11() {
+        // The bench artifact: a mislocked frame decoded with
+        // qzc_off = 0x5A04 (23,044 µs — the next frame's sync bytes)
+        // on a 190 µs window, blowing the map's qZC σ from 8 % to
+        // 205 %. Offsets must fit the window (or be the 0xFFFF
+        // "none" sentinel).
+        let mut r = sample();
+        r.qzc_off_us = 0x5A04;
+        assert_eq!(WindowRec::decode(&r.encode()), None);
+        let mut r = sample();
+        r.zc_off_us = 0x5A04;
+        assert_eq!(WindowRec::decode(&r.encode()), None);
+        // Sentinel and boundary (len 65 → 650 µs, +10 truncation
+        // margin) still pass.
+        let mut r = sample();
+        r.qzc_off_us = 0xFFFF;
+        r.zc_off_us = 660;
+        assert!(WindowRec::decode(&r.encode()).is_some());
     }
 
     #[test]

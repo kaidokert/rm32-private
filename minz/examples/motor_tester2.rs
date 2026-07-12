@@ -2339,134 +2339,59 @@ fn TIM7() {
     }
 }
 
-/// MAGPIE/OWL float-window close: package the just-ended window into
-/// a `WindowRec`, then reset the accumulators for the new one. Called
-/// at every commutation, from whichever engine performed it — TIM7
-/// (open loop) or the LPTIM2 one-shot (closed loop) — always inside a
-/// critical section so the higher/equal-priority COMP ISR can't smear
-/// an edge across the old/new window during snapshot-and-reset.
-///
-/// Interval smoothing lives in the COMP ISR (at the qZC itself);
-/// here we only compute the boundary prediction error and break the
-/// qZC chain when a window produced no qualified edge.
+/// The core close's view of this file's statics — wired once here;
+/// host tests build the same struct over locals. See
+/// `minz_core::window` for the logic (reacq trigger, pred_err,
+/// decimation, accumulator reset list — all host-tested).
+static WINDOW_STATE: minz_core::window::WindowState<'static> = minz_core::window::WindowState {
+    sector_start_us: &SECTOR_START_US,
+    qzc_us: &WINDOW_QZC_US,
+    first_zc_us: &WINDOW_FIRST_ZC_US,
+    raw: &WINDOW_RAW,
+    valid: &WINDOW_VALID,
+    i_sum: &WINDOW_I_SUM,
+    i_n: &WINDOW_I_N,
+    i_min: &WINDOW_I_MIN,
+    i_max: &WINDOW_I_MAX,
+    cand_zc_us: &CAND_ZC_US,
+    window_gen: &WINDOW_GEN,
+    interval_us: &OWL_INTERVAL_US,
+    last_qzc_us: &OWL_LAST_QZC_US,
+    windows_since_qzc: &WINDOWS_SINCE_QZC,
+    cl_active: &CL_ACTIVE,
+    cl_noz_run: &CL_NOZ_RUN,
+    cl_reacq: &CL_REACQ,
+    stream_on: &STREAM_ON,
+    wrec_decim: &WREC_DECIM,
+    wrec_seq: &WREC_SEQ,
+    vbat_min: &WINDOW_VBAT_MIN,
+    vbat_live: &VBAT_RAW_LIVE,
+    last_comm_10us: &LAST_COMM_10US,
+};
+
+/// MAGPIE/OWL float-window close: called at every commutation, from
+/// whichever engine performed it — TIM7 (open loop) or the LPTIM2
+/// one-shot (closed loop) — always inside a critical section so the
+/// higher/equal-priority COMP ISR can't smear an edge across the
+/// old/new window during snapshot-and-reset. This site supplies the
+/// clocks and performs the two returned side effects.
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
-    let now = ticks_10us();
-    let now_us = ticks_1us();
-    let start_us = SECTOR_START_US.load(Ordering::Relaxed);
-
-    let qzc = WINDOW_QZC_US.load(Ordering::Relaxed);
-    let mut pred_err: i16 = i16::MIN;
-    if qzc != u32::MAX {
-        let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
-        if interval != 0 {
-            let err = now_us.wrapping_sub(qzc) as i64 - (interval / 2) as i64;
-            pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
-        }
+    let out = minz_core::window::close_float_window(
+        &WINDOW_STATE,
+        prev_sector,
+        ticks_10us(),
+        ticks_1us(),
+    );
+    for (ev, data) in out.bb.iter().flatten() {
+        bb_record(*ev, prev_sector, *data);
     }
-    if qzc == u32::MAX && CL_ACTIVE.load(Ordering::Relaxed) {
-        bb_record(
-            4,
-            prev_sector,
-            WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
-        );
-        // Re-acquisition trigger: only A/B windows count (phase-C
-        // windows are dead-reckoned and legitimately ZC-less).
-        if prev_sector != 0 && prev_sector != 3 {
-            let run = CL_NOZ_RUN.load(Ordering::Relaxed).saturating_add(1);
-            CL_NOZ_RUN.store(run, Ordering::Relaxed);
-            if run >= 2 && !CL_REACQ.load(Ordering::Relaxed) {
-                CL_REACQ.store(true, Ordering::Relaxed);
-                // Break the qZC chain: recovery must be measured from
-                // TWO fresh strict-confirmed ZCs, not from a stale
-                // pre-spiral timestamp (a stale `last` hands the
-                // re-seed an aliased delta — seen re-seeding 162 µs
-                // and tripping the runaway floor).
-                OWL_LAST_QZC_US.store(u32::MAX, Ordering::Relaxed);
-                bb_record(
-                    9,
-                    prev_sector,
-                    OWL_INTERVAL_US.load(Ordering::Relaxed).min(0xFFFF) as u16,
-                );
-            }
-        }
-    }
-    // Windowless misses no longer hard-break the estimator chain —
-    // dead-reckoned C windows legitimately close without a qZC; the
-    // span counter (divide-by-spans, >3 = broken) handles both cases.
-    let w = WINDOWS_SINCE_QZC.load(Ordering::Relaxed);
-    WINDOWS_SINCE_QZC.store(w.saturating_add(1), Ordering::Relaxed);
-
-    // Telemetry decimation (roadmap Phase 1): at 15 k windows/s the
-    // 26 B records exceed the 2 Mbaud link (~200 kB/s). Above ~925 Hz
-    // electrical stream every 5th window — 5 is coprime with 6 so the
-    // sample keeps rotating through all sectors; the host sees the
-    // seq gaps and per-sector stats stay unbiased.
-    let decim_n = WREC_DECIM.fetch_add(1, Ordering::Relaxed);
-    let iv_now = OWL_INTERVAL_US.load(Ordering::Relaxed);
-    let stream_this = iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
-    if STREAM_ON.load(Ordering::Relaxed) && start_us != 0 && stream_this {
-        let first_zc = WINDOW_FIRST_ZC_US.load(Ordering::Relaxed);
-        let zc_off_us = if first_zc == u32::MAX {
-            0xFFFF
-        } else {
-            first_zc.wrapping_sub(start_us).min(0xFFFE) as u16
-        };
-        let qzc_off_us = if qzc == u32::MAX {
-            0xFFFF
-        } else {
-            qzc.wrapping_sub(start_us).min(0xFFFE) as u16
-        };
-        let i_n = WINDOW_I_N.load(Ordering::Relaxed);
-        let rec = WindowRec {
-            start_10us: start_us / 10,
-            len_10us: (now_us.wrapping_sub(start_us) / 10).min(0xFFFF) as u16,
-            zc_off_us,
-            raw: WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16,
-            valid: WINDOW_VALID.load(Ordering::Relaxed).min(0xFFFF) as u16,
-            i_min: if i_n == 0 {
-                0
-            } else {
-                WINDOW_I_MIN.load(Ordering::Relaxed)
-            },
-            i_max: WINDOW_I_MAX.load(Ordering::Relaxed),
-            i_avg: WINDOW_I_SUM
-                .load(Ordering::Relaxed)
-                .checked_div(i_n)
-                .unwrap_or(0) as u16,
-            qzc_off_us,
-            pred_err_us: pred_err,
-            vbat_raw: {
-                let m = WINDOW_VBAT_MIN.swap(u16::MAX, Ordering::Relaxed);
-                if m == u16::MAX {
-                    VBAT_RAW_LIVE.load(Ordering::Relaxed)
-                } else {
-                    m
-                }
-            },
-            sector: prev_sector,
-            seq: WREC_SEQ.fetch_add(1, Ordering::Relaxed),
-        };
+    if let Some(rec) = out.rec {
         let mut prod = WREC_PROD.borrow(cs).borrow_mut();
         if let Some(p) = prod.as_mut() {
             // Drop on overflow — host sees the seq gap.
             let _ = p.enqueue(rec);
         }
     }
-    WINDOW_RAW.store(0, Ordering::Relaxed);
-    WINDOW_VALID.store(0, Ordering::Relaxed);
-    WINDOW_FIRST_ZC_US.store(u32::MAX, Ordering::Relaxed);
-    WINDOW_QZC_US.store(u32::MAX, Ordering::Relaxed);
-    WINDOW_I_SUM.store(0, Ordering::Relaxed);
-    WINDOW_I_N.store(0, Ordering::Relaxed);
-    WINDOW_I_MIN.store(0x0FFF, Ordering::Relaxed);
-    WINDOW_I_MAX.store(0, Ordering::Relaxed);
-    CAND_ZC_US.store(u32::MAX, Ordering::Relaxed);
-    WINDOW_GEN.store(
-        WINDOW_GEN.load(Ordering::Relaxed).wrapping_add(1),
-        Ordering::Relaxed,
-    );
-    SECTOR_START_US.store(now_us, Ordering::Relaxed);
-    LAST_COMM_10US.store(now, Ordering::Relaxed);
 }
 
 /// Round-robin counter for the high-speed telemetry decimation.

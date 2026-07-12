@@ -9,6 +9,10 @@ description = "Host-testable control/guard/telemetry logic for the minz bench fi
 [workspace]
 
 [dependencies]
+# Same crate the firmware uses for its statics, so the atomic refs in
+# window::WindowState unify across both builds. On thumbv7em and x86
+# it is a zero-cost passthrough to core atomics.
+portable-atomic = { version = "1", default-features = false }
 
 [lib]
 name = "minz_core"

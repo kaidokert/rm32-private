@@ -24,4 +24,5 @@ pub mod throttle;
 pub mod ticks;
 pub mod timing;
 pub mod ui;
+pub mod window;
 pub mod wire;
