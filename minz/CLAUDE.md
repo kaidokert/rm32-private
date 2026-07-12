@@ -678,34 +678,42 @@ insight to shrink the COMP-refine full path. **DWT.CYCCNT is
 Cortex-M4 only — absent on F051/G071 M0 rm32 targets; a portback
 there needs a chained hardware timer.**
 
-**Monster fixes — ALL 3 IMPLEMENTED (2026-07-13, commits 09b631b /
-7fd996c / 9895181).** The monsters are a ZC-miss cascade / window-
-position runaway (autopsy above).
-- **#3 advance margin (BENCH-VALIDATED):** `timing::auto_advance_deg`
-  gains a speed-gated boost — below 200 µs add up to +6° by 130 µs so
-  the ZC lands ~16° later in the window, off the 30 % gate (measured
-  ZC at 0.33 vs gate 0.30 = ~0 margin was the trigger). Low/mid speed
-  unchanged; transit stays 0° (engage safe). Census 20 s dwells:
-  **amp-42 monsters 39 → 0** (Fano 2.5 → 0.9), amp-44 56 → 6 (−90 %).
-  The single biggest win; validated when the bench was healthy.
-- **#2 blind-amp clamp (`guards::blind_amp_clamp`):** during a
-  sustained cascade (`cl_noz_run ≥3`) cut commanded amp (2/3, then
-  1/3) — don't pump full current into a field whose rotor is lost.
-  With #3, took amp-44 monsters 6 → 0 in one run (but high run-to-run
-  variance).
+**Monster fixes — ALL 3 LANDED + VALIDATED (2026-07-13, final commit
+7abd19f). Monsters ELIMINATED, engage-neutral.** The monsters are a
+ZC-miss cascade / window-position runaway (autopsy above). All three
+are SPEED-gated to the high-speed regime where monsters exist
+(interval < `window::HIGH_SPEED_US`=160 µs, ~amp ≥42); at engage
+(~1667 µs) they are OFF.
+- **#3 advance margin:** `timing::auto_advance_deg` speed-gated boost
+  (below 200 µs, +6° by 130 µs) lands the ZC ~16° later, off the 30 %
+  gate (measured ZC at 0.33 vs gate 0.30 = ~0 margin was the trigger).
+- **#2 blind-amp clamp (`guards::blind_amp_clamp`):** at a sustained
+  cascade (`cl_noz_run ≥3`) cut amp 2/3 then 1/3.
 - **#1 faster cascade break:** re-acq widens the gate on the 1st A/B
   miss (was 2nd); chain-break still at the 2nd.
-- **Engage-safety gate (`CL_LOCKED`):** #1 and #2 fire ONLY on a
-  SETTLED lock (latches after `LOCK_SETTLE=12` accepts, cleared on
-  disengage). Both hurt the fragile ENGAGE if ungated (#1's 8% gate
-  lets PWM noise in; #2's clamp starves engage torque) — cost real
-  engage failures before the gate. 123 core tests incl. the engage-
-  suppression regression.
-- ⚠ **#1/#2 bench-validation BLOCKED by end-of-session drift** — the
-  known-good control build engaged only 2/4 (was 2/3, degrading), so
-  fix-vs-drift couldn't be separated. **Re-validate on a RESTED bench
-  with paired ABAB** (census monster-rate + engage n≥8). Tune
-  `LOCK_SETTLE` there if engage is marginal. Also on the shelf: the
+- **Result:** census 20 s dwells, monster ≥4 A: **amp-42 39 → 0,
+  amp-44 56 → 0**, both qzc 100 % full-dwell (`fixed_census_*.png`).
+  Small 2-4 A benign events remain (unchanged).
+- **Engage VALIDATED neutral:** paired same-bench control lightrearm
+  3/8 == speed-gated all-3 3/8 (the session's 5/6→3/8 engage swing is
+  the stochastic engage LOTTERY hitting both equally). 123 core tests.
+
+**THE ENGAGE-REGRESSION SAGA — a `BENCH NEVER DRIFTS` lesson.** The
+first cut gated #1/#2 on a `CL_LOCKED` settle-lock (12 accepts) — it
+latched in ~20 ms, far too fast to protect the ~1.5 s engage, so the
+fixes fired mid-engage: #1's 8 % re-acq gate let PWM noise corrupt
+the lock, #2's clamp starved engage torque. I mis-attributed the
+engage failures to "bench drift" and shipped with a "rested-bench
+re-validation pending" caveat. **The bench was fine** — proven when
+the 48 kHz known-good engaged 4/4 and 24 kHz lightrearm 5/6 while the
+fix build went **0/6** on the SAME bench. BISECT (not drift): 5/6 →
+#3 3/6 → #2 1/6 → #1 0/6. Fix = SPEED gate (above). Operator
+directive: never blame "bench drift" again — bisect against a
+known-good TAG. (There was no 48 kHz tag either — now
+`checkpoint-48k-known-good`=c31e1e3; the 24 kHz working reference is
+`checkpoint-24k-lightrearm`.) 24 kHz single-shot engage is inherently
+~50 % / high-variance (the lottery), so validate engage with n≥8
+PAIRED against a tagged control, same session. Also on the shelf: the
 ticks_1us wrap-hole fix (core `ticks::compose_1us` is ready,
 firmware adoption pending), runtime 24/48 kHz carrier switch, rm32
 portback, and the newly-flagged sector-1 ADC-confirm blindness at
