@@ -27,8 +27,8 @@
 //! |-----|----------------|----------------------------------------------------|
 //! | 0   | SysTick        | 10 µs wall-clock tick; must never be preempted     |
 //! | 1   | COMP (EXTI22)  | BEMF zero-cross — short, latency-critical          |
-//! | 2   | TIM7           | Motor commutation heartbeat — drives the FETs      |
-//! | 3   | TIM1_UP_TIM16  | Per-PWM-period COMP2 sampler                       |
+//! | 2   | TIM1_UP_TIM16  | Per-PWM-cycle confirm/current/failsafe machinery   |
+//! | 3   | TIM7           | 6 kHz housekeeping (stepper, watchdogs, win close) |
 //! | 4   | LPTIM1         | Soft-UART RX sample tick (least time-critical)     |
 //!
 //! `EXTI0` (soft-UART RX start-edge) is **not** assigned here — its
@@ -88,8 +88,20 @@ pub unsafe fn set_irq_prio(irq: Interrupt, logical: u8) {
 // one place.
 pub const PRIO_SYSTICK: u8 = 0;
 pub const PRIO_COMP: u8 = 1;
-pub const PRIO_TIM7: u8 = 2;
-pub const PRIO_TIM1: u8 = 3;
+/// TIM1_UP/TIM1_CC above TIM7 (swapped 2026-07-13). TIM1_UP hosts the
+/// per-PWM-cycle machinery — ADC-confirm, GECKO current, OC/sag
+/// failsafes — which must run EVERY 20.8 µs cycle; TIM7 is the chunky
+/// 6 kHz housekeeping pass (open-loop stepper, watchdogs, window
+/// close). With TIM7 above TIM1 (the original order, rationale "TIM7
+/// drives the FETs" — true only in open loop), long TIM7 passes
+/// coalesced TIM1_UP's pending UIF: measured 12 % of cycles LOST +
+/// 27 % late-or-lost, max 100 µs outages at amp 44-48 CL. The swap
+/// also makes TIM1_UP's documented invariant ("TIM7 can't interrupt
+/// us — plain load/store min/max is race-free") actually true.
+/// TIM7-side is safe: its shared-state sections (edgebuf flip,
+/// close_float_window) run inside `interrupt::free`.
+pub const PRIO_TIM1: u8 = 2;
+pub const PRIO_TIM7: u8 = 3;
 pub const PRIO_LPTIM1: u8 = 4;
 
 /// Program PRIGROUP and the full priority table for the motor-tester
@@ -166,8 +178,8 @@ pub fn dump_irq_prios() {
     let syst = SCB::get_priority(SystemHandler::SysTick);
     rprintln!("SHPR SysTick     = 0x{:02X} (expect 0x00)", syst);
     rprintln!("NVIC COMP        = 0x{:02X} (expect 0x10)", comp);
-    rprintln!("NVIC TIM7        = 0x{:02X} (expect 0x20)", tim7);
-    rprintln!("NVIC TIM1_UP_T16 = 0x{:02X} (expect 0x30)", tim1);
-    rprintln!("NVIC TIM1_CC     = 0x{:02X} (expect 0x30)", tim1_cc);
+    rprintln!("NVIC TIM1_UP_T16 = 0x{:02X} (expect 0x20)", tim1);
+    rprintln!("NVIC TIM1_CC     = 0x{:02X} (expect 0x20)", tim1_cc);
+    rprintln!("NVIC TIM7        = 0x{:02X} (expect 0x30)", tim7);
     rprintln!("NVIC LPTIM1      = 0x{:02X} (expect 0x40)", lptim1);
 }

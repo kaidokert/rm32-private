@@ -184,6 +184,19 @@ static TIM7_COUNT: AtomicU32 = AtomicU32::new(0);
 static TIM1_UP_COUNT: AtomicU32 = AtomicU32::new(0);
 static TIM1_CC_COUNT: AtomicU32 = AtomicU32::new(0);
 
+/// TIM1_UP update-event MISS detector. The ISR reads DWT.CYCCNT at
+/// every entry; a gap of ≥2 PWM periods since the previous entry
+/// means update events were coalesced while the ISR couldn't run
+/// (blocked by higher-priority work) — each such gap adds
+/// `periods − 1` to `TIM1_UP_MISSED`. The confirm rule, GECKO
+/// current, and the OC/sag failsafes all live in this ISR, so a
+/// missed cycle is a blackout of that machinery. Cumulative counter +
+/// max-gap aggregate (µs, swap-reset by the `i` print) per the
+/// no-point-sampling bench rule; both shown in `i`.
+static TIM1_UP_MISSED: AtomicU32 = AtomicU32::new(0);
+static TIM1_UP_LAST_CYC: AtomicU32 = AtomicU32::new(0);
+static TIM1_UP_MAXGAP_CYC: AtomicU32 = AtomicU32::new(0);
+
 /// Software PWM-edge blanking window in **microseconds**. `0`
 /// disables the gate. Live-tunable via `n`/`N` (±1 µs) and `.`/`,`
 /// (±10 µs coarse) keys. Clamped to [0, 50] — one full PWM period
@@ -1094,8 +1107,10 @@ fn main() -> ! {
 
     // Program NVIC + SCB priorities BEFORE unmasking the app IRQs so
     // every IRQ comes up at its intended level. PRIGROUP=3 (4 preempt
-    // / 0 sub bits). Levels: SysTick=0, COMP=1, TIM7=2, TIM1=3,
-    // USART2 RX=4. USART2 isn't in the canonical `set_irq_prios` list
+    // / 0 sub bits). Levels: SysTick=0, COMP=1, TIM1=2, TIM7=3,
+    // USART2 RX=4 (TIM1↔TIM7 swapped 2026-07-13 — see priority.rs:
+    // TIM7 above TIM1 coalesced TIM1_UP's UIF, 12 % of PWM cycles
+    // lost at amp 44-48 CL). USART2 isn't in the canonical `set_irq_prios` list
     // (it replaces the LPTIM1/EXTI0 soft-UART) — set it explicitly at
     // the soft-UART's old level so host RX stays the lowest-priority
     // tier.
@@ -1173,6 +1188,7 @@ fn main() -> ! {
     let mut last_i_tim7: u32 = TIM7_COUNT.load(Ordering::Relaxed);
     let mut last_i_tim1: u32 = TIM1_UP_COUNT.load(Ordering::Relaxed);
     let mut last_i_tim1_cc: u32 = TIM1_CC_COUNT.load(Ordering::Relaxed);
+    let mut last_i_miss: u32 = TIM1_UP_MISSED.load(Ordering::Relaxed);
 
     // Which phase we're routing through COMP2 INM− right now. The
     // float-sector mapping below depends on this. `p` cycles A→B→C.
@@ -1694,6 +1710,8 @@ fn main() -> ! {
                         let now_tim7 = TIM7_COUNT.load(Ordering::Relaxed);
                         let now_tim1 = TIM1_UP_COUNT.load(Ordering::Relaxed);
                         let now_tim1_cc = TIM1_CC_COUNT.load(Ordering::Relaxed);
+                        let now_miss = TIM1_UP_MISSED.load(Ordering::Relaxed);
+                        let maxgap_cyc = TIM1_UP_MAXGAP_CYC.swap(0, Ordering::Relaxed);
                         let dtick = now_tick.wrapping_sub(last_i_tick);
                         if dtick > 0 {
                             let rate = |dc: u32| -> u32 {
@@ -1713,7 +1731,19 @@ fn main() -> ! {
                                 BLANK_US.load(Ordering::Relaxed),
                             )
                             .ok();
+                            // TIM1_UP scheduling health over the same
+                            // window: missed update events (DWT-gap
+                            // detector at ISR entry) + worst gap.
+                            write!(
+                                &mut tx_writer,
+                                "t1u: miss/s={} missed={} maxgap={}us\r\n",
+                                rate(now_miss.wrapping_sub(last_i_miss)),
+                                now_miss,
+                                maxgap_cyc / (minz::SYSCLK.raw() / 1_000_000),
+                            )
+                            .ok();
                         }
+                        last_i_miss = now_miss;
                         last_i_tick = now_tick;
                         last_i_comp = now_comp;
                         last_i_usart2 = now_usart2;
@@ -2505,12 +2535,34 @@ fn TIM1_UP_TIM16() {
     // Byte layout: bit 0 = COMP2 value, bits 1..=3 = sector (0..=5).
     TIM1_UP_COUNT.fetch_add(1, Ordering::Relaxed);
     tim1_motor_pwm::clear_update_flag();
+    // Miss detector: entry-to-entry gap in DWT cycles, rounded to PWM
+    // periods. ≥2 periods = coalesced UIF = missed cycle(s). Sole
+    // writer of LAST_CYC is this ISR, so plain load/store is fine.
+    {
+        let now_cyc = cortex_m::peripheral::DWT::cycle_count();
+        let last = TIM1_UP_LAST_CYC.load(Ordering::Relaxed);
+        TIM1_UP_LAST_CYC.store(now_cyc, Ordering::Relaxed);
+        let gap = now_cyc.wrapping_sub(last);
+        const PERIOD_CYC: u32 = minz::TIM1_AUTORELOAD as u32 + 1;
+        // Ignore the boot-first sample and anything absurd (>50 ms:
+        // a halt/dump artifact, not a scheduling miss).
+        if last != 0 && gap < 4_000_000 {
+            if gap > TIM1_UP_MAXGAP_CYC.load(Ordering::Relaxed) {
+                TIM1_UP_MAXGAP_CYC.store(gap, Ordering::Relaxed);
+            }
+            let periods = (gap + PERIOD_CYC / 2) / PERIOD_CYC;
+            if periods >= 2 {
+                TIM1_UP_MISSED.fetch_add(periods - 1, Ordering::Relaxed);
+            }
+        }
+    }
     // Harvest the PWM-synchronous current sample converted earlier in
     // this cycle (OC4REF falling edge at CNT=SAMPLE_TICKS triggered
     // it; by the update event it finished long ago). Sole writer of
     // the window accumulators between TIM7's `free`-wrapped resets,
-    // and TIM7 (lower priority) can't interrupt us — plain load/store
-    // min/max is race-free.
+    // and TIM7 (lower priority since the 2026-07-13 swap — this
+    // invariant was FALSE while TIM7 sat at level 2) can't interrupt
+    // us — plain load/store min/max is race-free.
     let (pa_a, pa_b, i_raw) = adc_sync::last_frame();
 
     // FIRMWARE SAG KILL — pumped from the WRAP SLOT: harvesting +
