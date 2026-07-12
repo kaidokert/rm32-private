@@ -508,11 +508,37 @@ gone (`captures/phaseroles1_map.png`). Amp 55 transit still died on
 a real 4.5 V sag: **residual ~2.5 events/s at amp 44-48 remain
 unexplained** — investigation continues below.
 
+**TIM1_UP scheduling health (2026-07-13, `t1u:` line in `i`)**: DWT
+gap detector at ISR entry. At amp 44-48 CL, 12 % of 48 kHz cycles
+LOST (counter deficit), 27 % late-or-lost, maxgap 91-100 µs — the
+confirm/GECKO/failsafe machinery has multi-cycle blackouts. The
+TIM7↔TIM1 priority swap (TIM1=2, TIM7=3, commit 63a5697; also fixes
+the previously-FALSE "TIM7 can't interrupt us" invariant in
+TIM1_UP's accumulator writes) improved losses only −20 % (maxgap
+69 µs) and left spike events UNCHANGED (79 vs 82) — TIM7 was a
+minor blocker. The dominant blocker is the LEVEL-1 tier itself:
+LPTIM2's commutation ISR carries `close_float_window` (window
+close + bb + MAGPIE wire serialize) inside `free` at every
+commutation (7.8 k/s at 1300 Hz). Blocking budget ≈ 24 % of wall
+time vs ~13 % of legit COMP/SysTick/CC load. Priorities are now
+emitted over UART at boot (`prio:` line, hardware read-back) so
+every session log records them. Boot fw also prints the RTT dumps.
+
 **Open investigation (residual spike events):** what triggers the
 remaining events. Operator's standing assertion: AM32 runs this
 exact board/prop/supply to 100 % without them ⇒ they are something
-our firmware does (remaining suspects: mistimed commutation, clock
-integrity / ticks_1us wrap hole). The parked path: fix the WAXWING ring
+our firmware does. Spike census (`count_spikes.py`): 1.9/s @45,
+4.3/s @50, zero ≤40; the 2.4 A events are ~1 window long; the 8 A
+monsters carry real multi-tick f_e excursions + noZC windows. First
+analog autopsy (`hunt_pr48e`): sector SEQUENCE clean through onset,
+current 0.7→2.9 A in ~5 PWM cycles spanning one commutation, bus
+sags ~12 %, freshly-opened phase's freewheel ends in a GND clamp at
+the peak, full recovery one cycle later ⇒ sub-sector timing/current
+transient, not wrong-sector commutation. Next levers: instrument
+LPTIM2/COMP ISR durations (level-1 tier delays commutation itself —
+a free/level-1 stall shifts the actuation edge), then the LPTIM2
+diet (move close_float_window out of the commutation ISR). The
+parked path: fix the WAXWING ring
 frame-integrity issue (channel-slip under event chaos — see trust
 audit), then arm the analog black box (`J` key, >2.4 A one-shot
 trigger) at a SURVIVABLE rung — at amp 46's ~6 events/s a single
