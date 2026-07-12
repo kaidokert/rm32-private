@@ -5,8 +5,22 @@
 /// Auto-advance ramp (AM32's `auto_advance` in spirit): with the
 /// manual setting at 0 the advance follows measured speed — 0° below
 /// ~280 Hz electrical (measured no-op regime at bench loads), ramping
-/// to a 12° cap by ~1.2 kHz. A nonzero manual setting overrides the
-/// ramp entirely.
+/// up with speed. A nonzero manual setting overrides the ramp
+/// entirely.
+///
+/// Two components:
+/// - **Base ramp** (`/45`, cap 12): unchanged low/mid speed — 0° at
+///   the ~600 µs transit, ~8° by 850 Hz (the +108 Hz regime), etc.
+/// - **High-speed margin boost** (2026-07-13): below ~200 µs
+///   (>~925 Hz) the ZC crowds the 30 % gate — measured landing at
+///   0.33 of the window vs the 0.30 gate, ~0 early margin. A single
+///   schedule drift then pushes it before the gate and ignites the
+///   monster ZC-miss cascade (`monster1..3` autopsy). The boost adds
+///   up to +6° by 130 µs so the ZC lands ~16° later in the window,
+///   away from the gate. Census @amp 42: monsters 39/20 s → **0**,
+///   events de-clustered (Fano 2.5 → 0.9). The transit (>600 µs)
+///   stays 0°, so engage is unaffected — the `static 16° kills engage`
+///   lesson was about a FLAT advance, not a speed-gated one.
 ///
 /// History: at 850–950 Hz / 350 mA a static 8° was worth +108 Hz (the
 /// amp-34 droop was late-commutation braking, not V/f saturation); a
@@ -15,10 +29,12 @@
 #[inline]
 pub fn auto_advance_deg(interval_us: u32, manual_deg: i32) -> i32 {
     if manual_deg != 0 {
-        manual_deg
-    } else {
-        ((600i32.saturating_sub(interval_us as i32)).max(0) / 45).min(12)
+        return manual_deg;
     }
+    let iv = interval_us as i32;
+    let base = ((600 - iv).max(0) / 45).min(12);
+    let boost = ((200 - iv).max(0) * 6 / 70).min(6);
+    (base + boost).min(20)
 }
 
 /// Delay from an accepted ZC to the commutation instant:
@@ -97,12 +113,26 @@ mod tests {
 
     #[test]
     fn advance_ramps_and_caps() {
-        // ~850 Hz (196 µs): ~9° — the regime where 8° won +108 Hz.
+        // ~850 Hz (196 µs): ~8° — the regime where 8° won +108 Hz.
+        // The high-speed boost hasn't kicked in yet (>200 µs edge).
         let a = auto_advance_deg(196, 0);
-        assert!((8..=10).contains(&a), "got {a}");
-        // Very fast: capped at 12°, never the transit-killing 16.
-        assert_eq!(auto_advance_deg(60, 0), 12);
-        assert_eq!(auto_advance_deg(0, 0), 12);
+        assert!((8..=9).contains(&a), "got {a}");
+        // 300 µs / ~550 Hz: base ramp only, unchanged.
+        assert_eq!(auto_advance_deg(300, 0), 6);
+    }
+
+    #[test]
+    fn advance_high_speed_boost_for_margin() {
+        // The 2026-07-13 monster fix: below 200 µs the boost lands the
+        // ZC later in the window (away from the 30 % gate).
+        // 130 µs (~1.3 kHz, amp 42-44): base 10 + boost 6 = 16° — the
+        // value that zeroed the amp-42 monsters on the bench.
+        assert_eq!(auto_advance_deg(130, 0), 16);
+        // Boost edge: at 200 µs no boost yet; just under, it ramps in.
+        assert_eq!(auto_advance_deg(200, 0), 8);
+        // Very fast: base 12 + boost 6, clamped to 20.
+        assert_eq!(auto_advance_deg(60, 0), 18);
+        assert_eq!(auto_advance_deg(0, 0), 18);
     }
 
     #[test]
