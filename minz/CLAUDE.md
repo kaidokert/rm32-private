@@ -426,6 +426,9 @@ wire behavior in core, never inline. `UartTxWriter` (DMA TX ring) is
 `minz::uart_tx`. `core/` is a detached workspace with its own
 `.cargo/config.toml` (host target) — do not fold it into the parent
 or tests build for ARM. Details: FALCON_HARDENING.md §17.
+**Next passes + open bug flags (TOCTOU gen-guard, conditional-`w`
+kill, trip-flags-after-keys ordering): `EXTRACTION_ROADMAP.md`** —
+fix-first items F1/F2, then zc.rs, mode.rs, pure batches E3–E5.
 
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
