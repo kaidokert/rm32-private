@@ -85,9 +85,72 @@ pub fn edges_for(mode: u8, sector: u8) -> (bool, bool) {
     }
 }
 
+/// Black-box commutation classes (indices into
+/// [`crate::blackbox::EV_NAMES`]).
+pub const BB_REF: u8 = 0;
+pub const BB_BLD: u8 = 1;
+pub const BB_DRK: u8 = 2;
+
+/// Classify a closed-loop commutation by the window it ends:
+/// dead-reckoned C windows (sectors 0/3) are DRK; A/B windows are
+/// REF when an accepted ZC re-timed the shot, BLD when the blind
+/// free-run fired.
+pub fn commutation_class(prev_sector: u8, shot_refined: bool) -> u8 {
+    if prev_sector == 0 || prev_sector == 3 {
+        BB_DRK
+    } else if shot_refined {
+        BB_REF
+    } else {
+        BB_BLD
+    }
+}
+
+pub const fn next_sector(prev: u8) -> u8 {
+    (prev + 1) % 6
+}
+
+/// AM32 free-run semantics: every commutation immediately schedules
+/// the next one at exactly **1.0×** the estimator interval; an
+/// accepted ZC merely RE-TIMES the pending shot. (A 1.5×T "fallback"
+/// compounded lag during acceleration until the watchdog fired —
+/// that regression is why this trivial function exists as a named
+/// contract.) `None` when the estimator is unseeded.
+pub const fn freerun_reschedule_us(interval_us: u32) -> Option<u32> {
+    if interval_us == 0 {
+        None
+    } else {
+        Some(interval_us)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commutation_class_table() {
+        // C windows are DRK regardless of refinement.
+        assert_eq!(commutation_class(0, true), BB_DRK);
+        assert_eq!(commutation_class(3, false), BB_DRK);
+        // A/B windows split on whether the ZC re-timed the shot.
+        for sec in [1u8, 2, 4, 5] {
+            assert_eq!(commutation_class(sec, true), BB_REF);
+            assert_eq!(commutation_class(sec, false), BB_BLD);
+        }
+    }
+
+    #[test]
+    fn sector_advance_wraps() {
+        assert_eq!(next_sector(5), 0);
+        assert_eq!(next_sector(0), 1);
+    }
+
+    #[test]
+    fn regression_freerun_is_exactly_one_interval() {
+        // 1.0×T, NOT 1.5×T — the compounded-lag desync incident.
+        assert_eq!(freerun_reschedule_us(600), Some(600));
+        assert_eq!(freerun_reschedule_us(0), None);
+    }
 
     #[test]
     fn angle_inc_exact_at_reference_points() {

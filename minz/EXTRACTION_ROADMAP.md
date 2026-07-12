@@ -23,18 +23,12 @@ acting; the anchors drift with every edit.
 
 ## Fix-first (independent of extraction)
 
-- [ ] **F1. Make `w` kill unconditional.** Today `w` only calls
-  `all_off()`/`set_exti_enabled(false)` if the `output_enabled`
-  mirror is true (~line 1362); if the mirror ever desyncs
-  false-while-driving, `w` cannot kill the motor. `y`'s kill branch
-  is already unconditional. Same lesson as AM32's
-  maskPhaseInterrupts-at-every-stop-site. Five-minute fix, do first.
-- [ ] **F2. Drain ISR trip flags BEFORE key dispatch.** The
-  desync/sag/OC report blocks (~1940–2002) run after the RX drain, so
-  an ISR kill + `r`/`q` queued in the same pass (guaranteed when main
-  was stalled in a `u` blast or waxwing dump) leaves `output_enabled`
-  stale-true and the arm silently no-ops while printing success.
-  Plausible engagement-lottery contributor.
+- [x] **F1. Make `w` kill unconditional.** DONE 2026-07-11 (easy-wins
+  pass): kill actions run regardless of the `output_enabled` mirror;
+  only the "off" print stays conditional.
+- [x] **F2. Drain ISR trip flags BEFORE key dispatch.** DONE
+  2026-07-11: the desync/sag/OC report blocks moved ahead of the RX
+  drain, so an arm in the same pass sees an honest mirror.
 
 ## Extraction queue (ranked)
 
@@ -110,7 +104,20 @@ value — gate the publish on `!CL_ACTIVE`).
 Bench check: the live-fire drill set (w during CL, lowered-threshold
 OC trip, desync via amp drop, sag via bench dial) + full ladder.
 
-### E3. Pure quick wins (batch, low risk)
+### E3. Pure quick wins — DONE 2026-07-11 (easy-wins pass)
+
+All landed as core modules `zc.rs` (adc_sign_observed + the
+sector-2 boundary regression, vbus_decay_step + timescale test),
+`sense.rs` (one authoritative calibration — fixed B6: the sag report
+now goes through adc_to_mv + vbat_mv instead of ×7507/1000),
+`rates.rs` (RateWindow + rate_per_s, wrap + zero-dt tests), drive.rs
+additions (commutation_class REF/BLD/DRK table, next_sector,
+freerun_reschedule_us with the 1.0×T-not-1.5×T named regression),
+dump.rs `edge_dump_status`. Also fixed: B5 (freq keys no longer
+stomp SECTOR_GATE_US under CL), B7 (IWDG margin comment corrected to
+~3× / `u` blast). 93 core tests, 99.0 % line coverage; bench ladder
+15/25/35 → 452/756/1001 Hz qzc 100 % + live `i`/`e`/`w` key checks
+(`captures/easywins_sanity_map.png`). Original plan for reference:
 - **ADC-sign confirm rule** (~2604–2609) →
   `adc_sign_observed(sector, pa_a, pa_b, vbus_est, comp_value)`.
   Table-driven test pins the sector-2 48 kHz mystery (2×float-A ≈

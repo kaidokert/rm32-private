@@ -152,6 +152,35 @@ pub fn pwm_sector_dump<S: FnMut(&[u8])>(
     flush_chunk(&mut line, &mut line_len, chunk_sec, &mut sink);
 }
 
+/// Pre-flight verdict for the edge-buffer dump (`e`/`E` keys).
+#[derive(Debug, PartialEq, Eq)]
+pub enum EdgeDumpStatus {
+    /// No complete rev-pair captured yet (fresh boot / just re-armed).
+    Invalid,
+    /// Motor off (f = 0) — the frozen half is stale.
+    MotorOff,
+    /// Dumpable; `window_us` is the frozen 2-rev span for the header.
+    Ok { window_us: u32 },
+}
+
+/// Validity + header math for the edge dump: a half is dumpable only
+/// once every sector-start slot and the end tick are populated.
+pub fn edge_dump_status(
+    sec_starts: &[u32; 12],
+    window_end_tick: u32,
+    electrical_hz: u32,
+) -> EdgeDumpStatus {
+    if window_end_tick == 0 || sec_starts.iter().any(|&t| t == 0) {
+        EdgeDumpStatus::Invalid
+    } else if electrical_hz == 0 {
+        EdgeDumpStatus::MotorOff
+    } else {
+        EdgeDumpStatus::Ok {
+            window_us: window_end_tick.wrapping_sub(sec_starts[0]).wrapping_mul(10),
+        }
+    }
+}
+
 /// Glyph for an edge-buffer bin count: 0 → `.`, 1 → `o`, 2 → `O`,
 /// 3 → `*`, ≥4 → `#`.
 pub fn edge_glyph(count: u8) -> u8 {
@@ -315,6 +344,25 @@ mod tests {
         let first = out.split("\r\n").next().unwrap();
         assert_eq!(first, "[rev 0 sec 0]: ..o#...... [2]");
         assert_eq!(out.matches("[rev").count(), 12);
+    }
+
+    #[test]
+    fn edge_dump_status_gates() {
+        let mut starts = [1u32; 12];
+        assert_eq!(
+            edge_dump_status(&starts, 500, 100),
+            EdgeDumpStatus::Ok { window_us: 4990 }
+        );
+        assert_eq!(edge_dump_status(&starts, 500, 0), EdgeDumpStatus::MotorOff);
+        assert_eq!(edge_dump_status(&starts, 0, 100), EdgeDumpStatus::Invalid);
+        starts[7] = 0; // one unpopulated sector slot invalidates
+        assert_eq!(edge_dump_status(&starts, 500, 100), EdgeDumpStatus::Invalid);
+        // Tick-counter wrap mid-window still yields the right span.
+        let starts = [u32::MAX - 9; 12];
+        assert_eq!(
+            edge_dump_status(&starts, 40, 100),
+            EdgeDumpStatus::Ok { window_us: 500 }
+        );
     }
 
     #[test]

@@ -121,23 +121,10 @@ const FREQ_MIN: u32 = 1;
 const FREQ_MAX: u32 = 600;
 const FREQ_START: u32 = 60;
 
-/// PA6 (ADC1_IN11) → bench-supply voltage divider, scaled ×100.
-/// Vimdrones L431 schematic: 30 kΩ from VBat to PA6, 3.6 kΩ from PA6
-/// to GND. `V_bat = V_pa6 × (30 + 3.6) / 3.6 = V_pa6 × 9.333`.
-///
-/// (Bench cal under-read the schematic ratio by ~8 % at 5.39 V —
-/// resistor tolerance; trust the schematic for now and add a fixed
-/// trim if you actually need ±1 % accuracy.)
-const VBAT_DIVIDER_X100: u32 = 933;
-
-/// PA3 (ADC1_IN8) current-sense gain in mV per amp.
-/// Vimdrones L431 uses an INA180B1 (gain **20 V/V**) on a **1.5 mΩ**
-/// shunt: `V_pa3 = I × 1.5 mΩ × 20 = I × 30 mV/A`.
-///
-/// (Bench cal at 0.222 A read 5 mV ≈ 22.5 mV/A — 25 % lower than the
-/// schematic predicts. PSU readout error / INA offset / shunt tol;
-/// schematic is the honest answer until measured otherwise.)
-const ISNS_MV_PER_AMP: u32 = 30;
+// Sense calibration (vbat divider, INA gain) lives in
+// minz_core::sense — ONE authoritative copy, host-anchored; the
+// schematic-vs-bench-cal caveats are documented there and in
+// motor_tester.rs history.
 
 type RxQueue = Queue<u8, RX_BUF_LEN>;
 
@@ -980,8 +967,10 @@ fn main() -> ! {
     // winding. IWDG (LSI 32 kHz / 32 → 1 kHz, reload 1000 = ~1 s)
     // resets a wedged chip and releases the bridge no matter what
     // the firmware was doing. Refreshed once per main-loop pass; the
-    // longest legitimate main-loop stall (waxwing dump ~100 ms) has
-    // 10× margin.
+    // longest legitimate main-loop stall is the `u` blast (~0.35 s at
+    // 2 Mbaud → ~3× margin, NOT the waxwing dump's ~100 ms/10×). A
+    // future baud drop would shrink that margin further — refresh
+    // mid-blast before slowing the link.
     unsafe {
         let iwdg = &*stm32::IWDG::ptr();
         iwdg.kr.write(|w| w.key().bits(0x5555));
@@ -1178,10 +1167,12 @@ fn main() -> ! {
     let mut electrical_hz: u32 = 0;
     let mut output_enabled = false;
 
-    // Per-second snapshot state for the COMP / VALID rates.
-    // Sampled at every 1 s boundary below.
-    let mut rate_start_count: u32 = COMP_COUNT.load(Ordering::Relaxed);
-    let mut rate_start_valid: u32 = VALID_COMP_COUNT.load(Ordering::Relaxed);
+    // Per-second snapshot windows for the COMP / VALID rates
+    // (host-tested wrapping-delta in minz_core::rates). Latched at
+    // every 1 s boundary; restarted by the `o`/`p` mux keys.
+    let mut comp_rate_win = minz_core::rates::RateWindow::new(COMP_COUNT.load(Ordering::Relaxed));
+    let mut valid_rate_win =
+        minz_core::rates::RateWindow::new(VALID_COMP_COUNT.load(Ordering::Relaxed));
 
     // CPU busy% snapshot updated at every 1 s boundary. The `i` key
     // reads this so the figure printed alongside vbat / isns reflects
@@ -1244,6 +1235,83 @@ fn main() -> ! {
                 )
                 .ok();
                 injected = Some(b'j');
+            }
+
+            // ISR trip-flag sync — BEFORE key dispatch (roadmap F2):
+            // when an ISR kill and an `r`/`q` land in the same pass
+            // (guaranteed when main was stalled in a `u` blast or
+            // waxwing dump with keys queued), the arm used to see a
+            // stale `output_enabled == true` and silently no-op while
+            // printing success. Draining the flags first makes the
+            // mirror honest before any key reads it.
+            //
+            // FALCON desync report: the TIM7 watchdog already killed
+            // the output; sync main's mirror and tell the operator.
+            if CL_DESYNC.load(Ordering::Relaxed) {
+                CL_DESYNC.store(false, Ordering::Relaxed);
+                output_enabled = false;
+                if CL_STARVED.load(Ordering::Relaxed) {
+                    CL_STARVED.store(false, Ordering::Relaxed);
+                    write!(
+                        &mut tx_writer,
+                        "!! CL ZC-STARVED - no accepted ZC for 12 intervals (stall/blind) - output killed\r\n",
+                    )
+                    .ok();
+                } else {
+                    write!(
+                        &mut tx_writer,
+                        "!! CL DESYNC - commutation silence > 3 intervals - output killed (r/q re-arms)\r\n",
+                    )
+                    .ok();
+                }
+                // Black-box dump: the 64 events leading to the kill,
+                // dt in µs since the previous recorded event. Line
+                // rendering is host-tested in minz_core::blackbox.
+                let idx = BB_IDX.load(Ordering::Relaxed) as usize;
+                minz_core::blackbox::format_dump(
+                    (0..BB_LEN).map(|k| {
+                        let i = (idx + k) % BB_LEN;
+                        minz_core::blackbox::Event {
+                            t: BB_T[i].load(Ordering::Relaxed),
+                            ty: BB_TYPE[i].load(Ordering::Relaxed),
+                            sector: BB_SEC[i].load(Ordering::Relaxed),
+                            data: BB_DATA[i].load(Ordering::Relaxed),
+                        }
+                    }),
+                    |b| tx_writer.write_blocking(b),
+                );
+                for e in BB_TYPE.iter() {
+                    e.store(0xFF, Ordering::Relaxed);
+                }
+                BB_FROZEN.store(false, Ordering::Relaxed);
+            }
+            // Sag trip report: the ISR already killed the output;
+            // sync main's mirror so `r`/`q` re-arm works. mV via the
+            // calibrated adc_to_mv + the ONE divider constant
+            // (minz_core::sense) — the old hardcoded ×7507/1000 was a
+            // second calibration that could silently diverge.
+            if VBAT_SAGGED.load(Ordering::Relaxed) {
+                VBAT_SAGGED.store(false, Ordering::Relaxed);
+                output_enabled = false;
+                let raw = VBAT_TRIP_RAW_SEEN.load(Ordering::Relaxed);
+                let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
+                write!(
+                    &mut tx_writer,
+                    "!! VBAT SAG KILL: bus {} mV (1.3 ms sustained) < 90% of arm baseline {} mV - output killed (r/q re-arms)\r\n",
+                    minz_core::sense::vbat_mv(sense_adc.adc_to_mv(raw) as u32),
+                    minz_core::sense::vbat_mv(sense_adc.adc_to_mv(base) as u32),
+                )
+                .ok();
+                tx_writer.write_blocking(&[]);
+            }
+            if OC_TRIPPED.load(Ordering::Relaxed) {
+                OC_TRIPPED.store(false, Ordering::Relaxed);
+                output_enabled = false;
+                write!(
+                    &mut tx_writer,
+                    "!! OVERCURRENT TRIP: current above throttle envelope for 85 ms - output killed (r/q re-arms)\r\n",
+                )
+                .ok();
             }
 
             // Active phase: drain RX queue + dispatch keys.
@@ -1357,13 +1425,20 @@ fn main() -> ! {
                         // resume the previous duty mid-decision, and
                         // mask EXTI22 so the now-floating phases don't
                         // storm the COMP ISR (see boot-time comment).
+                        //
+                        // UNCONDITIONAL (roadmap F1): the kill actions
+                        // must not depend on the `output_enabled`
+                        // mirror — if it ever desyncs false-while-
+                        // driving, a conditional `w` cannot kill the
+                        // motor. Same lesson as AM32's mask-at-every-
+                        // stop-site; all actions are idempotent.
                         CL_ACTIVE.store(false, Ordering::Relaxed);
                         CL_ARMED.store(false, Ordering::Relaxed);
+                        MOTOR_ENABLED.store(false, Ordering::Relaxed);
+                        tim1_motor_pwm::all_off();
+                        comp2::set_exti_enabled(false);
                         if output_enabled {
                             output_enabled = false;
-                            MOTOR_ENABLED.store(false, Ordering::Relaxed);
-                            tim1_motor_pwm::all_off();
-                            comp2::set_exti_enabled(false);
                             write!(&mut tx_writer, "off\r\n").ok();
                         }
                     }
@@ -1413,8 +1488,8 @@ fn main() -> ! {
                             )
                             .ok();
                         }
-                        rate_start_count = COMP_COUNT.load(Ordering::Relaxed);
-                        rate_start_valid = VALID_COMP_COUNT.load(Ordering::Relaxed);
+                        comp_rate_win.latch(COMP_COUNT.load(Ordering::Relaxed));
+                        valid_rate_win.latch(VALID_COMP_COUNT.load(Ordering::Relaxed));
                         COMP_RATE.store(0, Ordering::Relaxed);
                         VALID_COMP_RATE.store(0, Ordering::Relaxed);
                     }
@@ -1452,8 +1527,8 @@ fn main() -> ! {
                         }
                         FLOAT_SECTOR_MASK
                             .store(float_sector_mask(observed_phase), Ordering::Relaxed);
-                        rate_start_count = COMP_COUNT.load(Ordering::Relaxed);
-                        rate_start_valid = VALID_COMP_COUNT.load(Ordering::Relaxed);
+                        comp_rate_win.latch(COMP_COUNT.load(Ordering::Relaxed));
+                        valid_rate_win.latch(VALID_COMP_COUNT.load(Ordering::Relaxed));
                         COMP_RATE.store(0, Ordering::Relaxed);
                         VALID_COMP_RATE.store(0, Ordering::Relaxed);
                         write!(
@@ -1674,14 +1749,13 @@ fn main() -> ! {
                         // touches the HAL OneShot path (which would
                         // fight the trigger-armed regular channel).
                         let i_raw = LAST_I_RAW.load(Ordering::Relaxed);
-                        let i_mv = sense_adc.adc_to_mv(i_raw);
-                        let i_ma = i_mv as u32 * 1000 / ISNS_MV_PER_AMP;
+                        let i_ma = minz_core::sense::isns_ma(sense_adc.adc_to_mv(i_raw) as u32);
                         // From the 6 kHz TIM7 pump — a blocking
                         // injected read here would race the pump's
                         // JADSTART/JEOS handling.
                         let v_raw = VBAT_RAW_LIVE.load(Ordering::Relaxed);
-                        let v_mv = sense_adc.adc_to_mv(v_raw);
-                        let v_supply_mv = v_mv as u32 * VBAT_DIVIDER_X100 / 100;
+                        let v_supply_mv =
+                            minz_core::sense::vbat_mv(sense_adc.adc_to_mv(v_raw) as u32);
                         // Worst vbat since the previous readout —
                         // makes between-rung transits visible (twice
                         // a real sag event was invisible to per-rung
@@ -1690,7 +1764,7 @@ fn main() -> ! {
                         let v_min_mv = if v_min_raw == u16::MAX {
                             0
                         } else {
-                            sense_adc.adc_to_mv(v_min_raw) as u32 * VBAT_DIVIDER_X100 / 100
+                            minz_core::sense::vbat_mv(sense_adc.adc_to_mv(v_min_raw) as u32)
                         };
                         write!(
                             &mut tx_writer,
@@ -1706,11 +1780,9 @@ fn main() -> ! {
                             i_raw,
                         )
                         .ok();
-                        // Per-ISR rates since last `i` press. 10 µs
-                        // tick units → multiply by 100 000 / Δticks
-                        // to get events/sec. Skip rate calc if Δticks
-                        // is zero (back-to-back presses inside one
-                        // microloop) to avoid divide-by-zero.
+                        // Per-ISR rates since last `i` press — the
+                        // wrapping-delta + ticks→per-second math is
+                        // host-tested in minz_core::rates.
                         let now_tick = ticks_10us();
                         let now_comp = COMP_COUNT.load(Ordering::Relaxed);
                         let now_usart2 = USART2_COUNT.load(Ordering::Relaxed);
@@ -1719,8 +1791,9 @@ fn main() -> ! {
                         let now_tim1_cc = TIM1_CC_COUNT.load(Ordering::Relaxed);
                         let dtick = now_tick.wrapping_sub(last_i_tick);
                         if dtick > 0 {
-                            let rate =
-                                |dc: u32| -> u32 { ((dc as u64) * 100_000 / dtick as u64) as u32 };
+                            let rate = |dc: u32| -> u32 {
+                                minz_core::rates::rate_per_s(dc, dtick).unwrap_or(0)
+                            };
                             write!(
                                 &mut tx_writer,
                                 "irq/s: comp={} tim1_up={} tim1_cc={} tim7={} \
@@ -1862,40 +1935,47 @@ fn main() -> ! {
                     let edge_name =
                         minz_core::ui::edge_mode_short(EDGE_MODE.load(Ordering::Relaxed));
 
-                    let valid = window_end_tick != 0 && sec_starts.iter().all(|&t| t != 0);
-                    if !valid {
-                        write!(
-                            &mut tx_writer,
-                            "edges last 2 revs: no complete rev-pair captured yet \
-                             (let motor spin a few revs after arm/re-arm)\r\n",
-                        )
-                        .ok();
-                    } else if electrical_hz == 0 {
-                        write!(&mut tx_writer, "edges last 2 revs: motor off (f=0)\r\n",).ok();
-                    } else {
-                        let window_start_tick = sec_starts[0];
-                        let window_ticks = window_end_tick.wrapping_sub(window_start_tick);
-                        write!(
-                            &mut tx_writer,
-                            "edges last 2 revs aligned to sec 0 \
+                    // Validity + header math host-tested in
+                    // minz_core::dump::edge_dump_status.
+                    match minz_core::dump::edge_dump_status(
+                        &sec_starts,
+                        window_end_tick,
+                        electrical_hz,
+                    ) {
+                        minz_core::dump::EdgeDumpStatus::Invalid => {
+                            write!(
+                                &mut tx_writer,
+                                "edges last 2 revs: no complete rev-pair captured yet \
+                                 (let motor spin a few revs after arm/re-arm)\r\n",
+                            )
+                            .ok();
+                        }
+                        minz_core::dump::EdgeDumpStatus::MotorOff => {
+                            write!(&mut tx_writer, "edges last 2 revs: motor off (f=0)\r\n",).ok();
+                        }
+                        minz_core::dump::EdgeDumpStatus::Ok { window_us } => {
+                            write!(
+                                &mut tx_writer,
+                                "edges last 2 revs aligned to sec 0 \
                              (window={}us, hyst={}, edges={}, advance={}deg, blank={}us{}):\r\n",
-                            window_ticks.wrapping_mul(10),
-                            HYST_LEVEL.load(Ordering::Relaxed),
-                            edge_name,
-                            ADVANCE_DEG.load(Ordering::Relaxed),
-                            BLANK_US.load(Ordering::Relaxed),
-                            if is_frozen { ", FROZEN" } else { "" },
-                        )
-                        .ok();
-                        // Sector chunking + glyph rendering are
-                        // host-tested in minz_core::dump.
-                        minz_core::dump::edge_dump_body(
-                            buf,
-                            &sec_starts,
-                            &sec_counts,
-                            window_end_tick,
-                            |b| tx_writer.write_blocking(b),
-                        );
+                                window_us,
+                                HYST_LEVEL.load(Ordering::Relaxed),
+                                edge_name,
+                                ADVANCE_DEG.load(Ordering::Relaxed),
+                                BLANK_US.load(Ordering::Relaxed),
+                                if is_frozen { ", FROZEN" } else { "" },
+                            )
+                            .ok();
+                            // Sector chunking + glyph rendering are
+                            // host-tested in minz_core::dump.
+                            minz_core::dump::edge_dump_body(
+                                buf,
+                                &sec_starts,
+                                &sec_counts,
+                                window_end_tick,
+                                |b| tx_writer.write_blocking(b),
+                            );
+                        }
                     }
                 }
                 // Publish any changes to the motor-drive atomics and
@@ -1914,7 +1994,13 @@ fn main() -> ! {
                 }
                 if electrical_hz != prev_hz {
                     ANGLE_INC.store(angle_inc_fp(electrical_hz), Ordering::Relaxed);
-                    SECTOR_GATE_US.store(open_loop_gate_us(electrical_hz), Ordering::Relaxed);
+                    // Under CL the gate belongs to the loop (30 % of
+                    // the MEASURED interval) — an open-loop half-
+                    // window value here would yank one window's gate
+                    // to a nonsense position mid-lock (roadmap B5).
+                    if !CL_ACTIVE.load(Ordering::Relaxed) {
+                        SECTOR_GATE_US.store(open_loop_gate_us(electrical_hz), Ordering::Relaxed);
+                    }
                     write!(&mut tx_writer, "f={}\r\n", electrical_hz).ok();
                 }
                 if waveform != prev_mode {
@@ -1934,71 +2020,6 @@ fn main() -> ! {
                     );
                     write!(&mut tx_writer, "mode={}\r\n", mode_name(waveform)).ok();
                 }
-            }
-            // FALCON desync report: the TIM7 watchdog already killed
-            // the output; sync main's mirror and tell the operator.
-            if CL_DESYNC.load(Ordering::Relaxed) {
-                CL_DESYNC.store(false, Ordering::Relaxed);
-                output_enabled = false;
-                if CL_STARVED.load(Ordering::Relaxed) {
-                    CL_STARVED.store(false, Ordering::Relaxed);
-                    write!(
-                        &mut tx_writer,
-                        "!! CL ZC-STARVED - no accepted ZC for 12 intervals (stall/blind) - output killed\r\n",
-                    )
-                    .ok();
-                } else {
-                    write!(
-                        &mut tx_writer,
-                        "!! CL DESYNC - commutation silence > 3 intervals - output killed (r/q re-arms)\r\n",
-                    )
-                    .ok();
-                }
-                // Black-box dump: the 64 events leading to the kill,
-                // dt in µs since the previous recorded event. Line
-                // rendering is host-tested in minz_core::blackbox.
-                let idx = BB_IDX.load(Ordering::Relaxed) as usize;
-                minz_core::blackbox::format_dump(
-                    (0..BB_LEN).map(|k| {
-                        let i = (idx + k) % BB_LEN;
-                        minz_core::blackbox::Event {
-                            t: BB_T[i].load(Ordering::Relaxed),
-                            ty: BB_TYPE[i].load(Ordering::Relaxed),
-                            sector: BB_SEC[i].load(Ordering::Relaxed),
-                            data: BB_DATA[i].load(Ordering::Relaxed),
-                        }
-                    }),
-                    |b| tx_writer.write_blocking(b),
-                );
-                for e in BB_TYPE.iter() {
-                    e.store(0xFF, Ordering::Relaxed);
-                }
-                BB_FROZEN.store(false, Ordering::Relaxed);
-            }
-            // Overcurrent trip report: the ISR already killed the
-            // output; sync main's mirror so `r`/`q` re-arm works.
-            if VBAT_SAGGED.load(Ordering::Relaxed) {
-                VBAT_SAGGED.store(false, Ordering::Relaxed);
-                output_enabled = false;
-                let raw = VBAT_TRIP_RAW_SEEN.load(Ordering::Relaxed) as u32;
-                let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed) as u32;
-                write!(
-                    &mut tx_writer,
-                    "!! VBAT SAG KILL: bus {} mV (1.3 ms sustained) < 90% of arm baseline {} mV - output killed (r/q re-arms)\r\n",
-                    raw * 7507 / 1000,
-                    base * 7507 / 1000,
-                )
-                .ok();
-                tx_writer.write_blocking(&[]);
-            }
-            if OC_TRIPPED.load(Ordering::Relaxed) {
-                OC_TRIPPED.store(false, Ordering::Relaxed);
-                output_enabled = false;
-                write!(
-                    &mut tx_writer,
-                    "!! OVERCURRENT TRIP: current above throttle envelope for 85 ms - output killed (r/q re-arms)\r\n",
-                )
-                .ok();
             }
             // MAGPIE drain: emit completed window records as 16-byte
             // frames. Emit all-or-nothing per frame — a partial frame
@@ -2023,10 +2044,8 @@ fn main() -> ! {
 
         let now_count = COMP_COUNT.load(Ordering::Relaxed);
         let now_valid = VALID_COMP_COUNT.load(Ordering::Relaxed);
-        COMP_RATE.store(now_count.wrapping_sub(rate_start_count), Ordering::Relaxed);
-        VALID_COMP_RATE.store(now_valid.wrapping_sub(rate_start_valid), Ordering::Relaxed);
-        rate_start_count = now_count;
-        rate_start_valid = now_valid;
+        COMP_RATE.store(comp_rate_win.latch(now_count), Ordering::Relaxed);
+        VALID_COMP_RATE.store(valid_rate_win.latch(now_valid), Ordering::Relaxed);
 
         epoch_start = next_epoch;
     }
@@ -2409,22 +2428,16 @@ fn LPTIM2() {
     CL_COMM_COUNT.fetch_add(1, Ordering::Relaxed);
     let prev = CURRENT_SECTOR.load(Ordering::Relaxed);
     {
-        // Black box: classify the commutation by the window it ends.
+        // Black box: classify the commutation by the window it ends
+        // (REF/BLD/DRK table host-tested in minz_core::drive).
         let refined = SHOT_REFINED.swap(false, Ordering::Relaxed);
-        let ev = if prev == 0 || prev == 3 {
-            2 // DRK
-        } else if refined {
-            0 // REF
-        } else {
-            1 // BLD — A/B window commutated by the blind free-run
-        };
         bb_record(
-            ev,
+            minz_core::drive::commutation_class(prev, refined),
             prev,
             OWL_INTERVAL_US.load(Ordering::Relaxed).min(0xFFFF) as u16,
         );
     }
-    let sector = (prev + 1) % 6;
+    let sector = minz_core::drive::next_sector(prev);
     let duty = open_loop::six_step_duty(max_duty(), AMPLITUDE_PCT.load(Ordering::Relaxed) as u16);
     tim1_motor_pwm::set_six_step(sector, duty);
     comp2::set_inm(SECTOR_FLOAT_PHASE[sector as usize]);
@@ -2450,22 +2463,12 @@ fn LPTIM2() {
             Ordering::Relaxed,
         );
     }
-    // Schedule the next commutation unconditionally:
-    // - phase-C float windows (0/3, no ADC confirm): dead-reckon at
-    //   exactly one estimator interval;
-    // - A/B windows: a 1.5×interval FALLBACK shot, overwritten by the
-    //   precise qZC accept when one lands. A missed ZC then costs one
-    //   late commutation instead of a watchdog kill — that's what let
-    //   v3.0 desync mid-acceleration.
-    // AM32 semantics: the loop FREE-RUNS at the estimator interval —
-    // every commutation immediately schedules the next one 1.0×T out
-    // — and an accepted ZC merely RE-TIMES the pending shot to
-    // zc + T·(30−adv)/60. During acceleration the un-refined windows
-    // commutate at the trailing estimate (slightly long) while every
-    // refined one pulls the phase back in; a 1.5×T fallback instead
-    // compounded the lag until the watchdog fired.
-    if interval != 0 {
-        minz::lptim2_oneshot::schedule_us(interval);
+    // Free-run schedule: exactly 1.0× the estimator interval (AM32
+    // semantics — an accepted ZC merely RE-TIMES the pending shot;
+    // the 1.5×T-fallback compounded-lag incident is a named
+    // regression on minz_core::drive::freerun_reschedule_us).
+    if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
+        minz::lptim2_oneshot::schedule_us(t);
     }
     // Scope trigger on each electrical rev, same as the open loop.
     if sector == 0 {
@@ -2559,17 +2562,12 @@ fn TIM1_UP_TIM16() {
             VBAT_SAG_RUN.store(0, Ordering::Relaxed);
         }
     }
-    // Decaying-max vbus estimate (ADC counts through the phase
-    // divider): the driven-high phase reads ≈ vbus in 4 of 6 sectors,
-    // so the max refreshes constantly while spinning; τ ≈ 21 ms decay
-    // tracks supply sag.
-    let m = pa_a.max(pa_b);
-    let est = VBUS_EST.load(Ordering::Relaxed);
-    if m > est {
-        VBUS_EST.store(m, Ordering::Relaxed);
-    } else if est > 0 {
-        VBUS_EST.store(est.saturating_sub((est >> 9).max(1)), Ordering::Relaxed);
-    }
+    // Decaying-max vbus estimate — host-tested in minz_core::zc
+    // (timescale + no-rail-sector ride-through pinned there).
+    VBUS_EST.store(
+        minz_core::zc::vbus_decay_step(VBUS_EST.load(Ordering::Relaxed), pa_a, pa_b),
+        Ordering::Relaxed,
+    );
     LAST_I_RAW.store(i_raw, Ordering::Relaxed);
     // Analog black box trigger — freeze the wire the moment a spike
     // is seen (one-shot; the ADSTP wait is <1 µs at these sample
@@ -2599,15 +2597,16 @@ fn TIM1_UP_TIM16() {
     // (no ADC route) — comp-bit fallback, observation only.
     let cand = CAND_ZC_US.load(Ordering::Relaxed);
     if cand != u32::MAX {
-        let vbus = VBUS_EST.load(Ordering::Relaxed) as u32;
+        // Per-sector float-vs-neutral arithmetic host-tested in
+        // minz_core::zc (incl. the sector-2 ZC-boundary regression).
         let cur_sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
-        let observed = match cur_sec {
-            1 => (pa_b as u32) * 2 < pa_a as u32,
-            4 => (pa_b as u32) * 2 < vbus + pa_a as u32,
-            2 => (pa_a as u32) * 2 < pa_b as u32,
-            5 => (pa_a as u32) * 2 < vbus + pa_b as u32,
-            _ => comp2::value(),
-        };
+        let observed = minz_core::zc::adc_sign_observed(
+            cur_sec,
+            pa_a,
+            pa_b,
+            VBUS_EST.load(Ordering::Relaxed),
+            comp2::value(),
+        );
         if observed == CAND_EXPECTED.load(Ordering::Relaxed) {
             // Confirmation depth: the offline falcon_stats replay on
             // the probe captures showed 1-confirm in CLOSED-LOOP
