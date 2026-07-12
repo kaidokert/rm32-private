@@ -571,14 +571,17 @@ a wrap and hang; CYCCNT zeroed at enable (a power-up value near 2³²
 could wrap during calibration before the extender is live);
 **`CLOCK_BACK` tripwire** (main-loop monotonic check, `clkback=` in
 `i`) makes any residual glitch LOUD not silent — verified 0 across
-all runs incl. under sustained CL load. Idle cpu 30→23→**20 %**.
-Regression: ladder 15→40 qzc 100 % IDENTICAL to baseline; amp 44
+all runs incl. under sustained CL load. Regression: ladder 15→40 qzc 100 % IDENTICAL to baseline; amp 44
 inconclusive (bench was drifting — the known-good control ALSO broke
-at 44 in a tight A/B, so no DWT-specific regression). **busy% is NOT
-cross-build comparable** — the idle loop reads the clock every spin
-and that read's cost changed each generation (cal 5.20M→2.16M→…),
-shifting the baseline; **use the DWT `dur cyc:` line in `i` for
-absolute cross-build CPU accounting**. Loaded @44/comp40k (systick-
+at 44 in a tight A/B, so no DWT-specific regression); idle `dur cyc`
+IDENTICAL to the systick build (t1u≈332, cc≈81, t7≈143, comp=0). ⚠
+**The idle-loop `cpu=%` (busy%) is UNRELIABLE — do not quote it.**
+Same binary, same idle ISR load, read 20 % on one boot and 40 % on
+another: its calibration baseline is boot-sensitive (the free-loop
+`cal` gets perturbed at boot), so busy% is neither boot-stable NOR
+cross-build comparable. **The DWT `dur cyc:` line in `i` (per-ISR
+last-pass cycles × rate) is the ONLY trustworthy CPU accounting** —
+it showed identical load here, proving no regression. Loaded @44/comp40k (systick-
 era numbers, re-measure on DWT): **lp2≈1602 cyc (close_float_window
 in the commutation ISR ≈ 15.7 % CPU — the elephant)**, t1u≈350,
 comp≈270-520, cc≈85, t7≈300-600. Remaining levers, measured-
