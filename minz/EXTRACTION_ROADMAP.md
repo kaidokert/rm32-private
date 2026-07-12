@@ -1,11 +1,26 @@
-# minz-core extraction roadmap (2026-07-11) — **COMPLETE**
+# minz-core extraction roadmap (2026-07-11) — **PARTIALLY ROLLED BACK 2026-07-12**
 
-All items landed (F1/F2, E1-E5, B-flags fixed or dispositioned;
-the one consciously-skipped cosmetic is noted in E5). End state:
-114 host tests, ~99 % line coverage, motor_tester2.rs ≈ 2,700 lines
-of ISR glue + statics + init; every decision and every wire byte is
-host-tested minz-core code. Kept for the incident notes and seam
-patterns.
+**POSTSCRIPT (2026-07-12, read first):** the E1 (zc state machine),
+E5, and TIM7-pass EXAMPLE WIRING was reverted to inline in commit
+`56e30bc` after a drift-controlled ABAB (interleaved flashes, 8
+engage attempts/block): control cd54ff6 (tag `sweep-good-pass2`) =
+5/16 alive-at-3.5 s vs full-wiring HEAD = 0/16 (p≈0.02) — a REAL
+engage-survival deficit, mechanism UNRESOLVED (core logic is
+token-identical and host-tested; fat LTO changed nothing; suspected
+marginal-timing/flash-layout sensitivity of the engage regime,
+PRFTEN off). Simultaneously a REAL time-varying bench factor moved
+the control itself from sweep-clean to 31 % within an hour — which
+is why every unpaired verdict that night flip-flopped. The core
+modules (zc, edgebuf, drive additions, E5 lib modules) REMAIN as the
+host-tested reference (120 tests); the E2/E3/E4/window wiring
+remains live and bench-proven. Re-wiring E1/E5/TIM7 requires: the
+paired-ABAB gate, a disassembly diff vs the inline build, and a
+non-marginal engage regime as the test vehicle. Fixed build swept
+15→45 qzc 100 % first-attempt (`captures/fixed_fullrange_*`).
+
+Original completion state (pre-rollback): F1/F2, E1-E5 landed;
+120 host tests, ~99 % line coverage. Kept for the incident notes
+and seam patterns.
 
 Product of a two-agent review of `examples/motor_tester2.rs` (~2,750
 lines after passes 1–3) against the established minz-core seams:

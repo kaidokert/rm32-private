@@ -446,17 +446,23 @@ at low amp (invisible under SWIFT).
 State of the bench and the open question, so the next session starts
 oriented:
 
-**BENCH DRIFT STOP (2026-07-11 late session)**: after ~5 h of
-continuous benching, engages stopped surviving past ~3 s — on the
-COMMITTED build that passed its own ladder 90 min earlier (control
-run 0/4). Third documented drift occurrence; per protocol all
-late-session verdicts are void until the bench rests ~1 h. The TIM7
-extraction pass (drive::angle_tick/is_rev_wrap/float_entry,
-edgebuf half-flip machine, pb3 lib helper — 120 core tests,
-drive+edgebuf 100 %) is committed HOST-VERIFIED ONLY; **first
-action on a rested bench: sanity ladder + `e`/`E` dump check on the
-TIM7 build.** (Drift also retroactively explains the E1 "8/8 engage
-failure" phantom — the bench was already sliding.)
+**THE 2026-07-11/12 REGRESSION SAGA — RESOLVED, read the epistemics:**
+engage survival collapsed late-session. One narrative said "bench
+drift", the other "code regression" — a drift-controlled ABAB
+(interleaved flashes, 8 attempts/block, alive-at-3.5 s) proved BOTH
+real at once: control cd54ff6 (tag `sweep-good-pass2`) 5/16 vs
+full-extraction HEAD 0/16 (real code deficit, p≈0.02), while the
+control itself had fallen from sweep-clean to 31 % in an hour (real
+environmental factor). Every unpaired single-shot verdict that night
+flip-flopped and was worthless. Fix: `56e30bc` reverts the E1/E5/
+TIM7 example wiring to inline (mechanism unresolved — core logic
+token-identical + host-tested, LTO no effect; suspected marginal-
+timing/layout sensitivity, PRFTEN off); core modules remain the
+tested reference. Fixed build: 15→45 sweep qzc 100 % first-attempt
+(`captures/fixed_fullrange_*`). RULES going forward: engage-quality
+A/Bs are paired-ABAB only, against the TAGGED control; keep a
+`sweep-good-*` tag current; re-wiring E1/E5/TIM7 needs disassembly
+diff + non-marginal engage regime.
 
 **Firmware**: the flashed build (branch `bisect_init_changes`) is
 the fully-extracted one — the whole extraction roadmap is COMPLETE
