@@ -678,14 +678,34 @@ insight to shrink the COMP-refine full path. **DWT.CYCCNT is
 Cortex-M4 only — absent on F051/G071 M0 rm32 targets; a portback
 there needs a chained hardware timer.**
 
-**Residual spike events — DIAGNOSED (see "Monster autopsy" above).**
-The monsters are a ZC-detection-miss cascade / window-position
-runaway; the loop's re-acquisition is too slow to break it at high
-amp. The next work is a FIX, not more diagnosis: (a) faster cascade
-break, (b) current-clamp during blind free-run, (c) advance/window
-tuning — all minz-core control-logic changes, host-testable. The
-census is fully qualified (Fano/binning, monster threshold amp ~41).
-Also on the shelf: the
+**Monster fixes — ALL 3 IMPLEMENTED (2026-07-13, commits 09b631b /
+7fd996c / 9895181).** The monsters are a ZC-miss cascade / window-
+position runaway (autopsy above).
+- **#3 advance margin (BENCH-VALIDATED):** `timing::auto_advance_deg`
+  gains a speed-gated boost — below 200 µs add up to +6° by 130 µs so
+  the ZC lands ~16° later in the window, off the 30 % gate (measured
+  ZC at 0.33 vs gate 0.30 = ~0 margin was the trigger). Low/mid speed
+  unchanged; transit stays 0° (engage safe). Census 20 s dwells:
+  **amp-42 monsters 39 → 0** (Fano 2.5 → 0.9), amp-44 56 → 6 (−90 %).
+  The single biggest win; validated when the bench was healthy.
+- **#2 blind-amp clamp (`guards::blind_amp_clamp`):** during a
+  sustained cascade (`cl_noz_run ≥3`) cut commanded amp (2/3, then
+  1/3) — don't pump full current into a field whose rotor is lost.
+  With #3, took amp-44 monsters 6 → 0 in one run (but high run-to-run
+  variance).
+- **#1 faster cascade break:** re-acq widens the gate on the 1st A/B
+  miss (was 2nd); chain-break still at the 2nd.
+- **Engage-safety gate (`CL_LOCKED`):** #1 and #2 fire ONLY on a
+  SETTLED lock (latches after `LOCK_SETTLE=12` accepts, cleared on
+  disengage). Both hurt the fragile ENGAGE if ungated (#1's 8% gate
+  lets PWM noise in; #2's clamp starves engage torque) — cost real
+  engage failures before the gate. 123 core tests incl. the engage-
+  suppression regression.
+- ⚠ **#1/#2 bench-validation BLOCKED by end-of-session drift** — the
+  known-good control build engaged only 2/4 (was 2/3, degrading), so
+  fix-vs-drift couldn't be separated. **Re-validate on a RESTED bench
+  with paired ABAB** (census monster-rate + engage n≥8). Tune
+  `LOCK_SETTLE` there if engage is marginal. Also on the shelf: the
 ticks_1us wrap-hole fix (core `ticks::compose_1us` is ready,
 firmware adoption pending), runtime 24/48 kHz carrier switch, rm32
 portback, and the newly-flagged sector-1 ADC-confirm blindness at
