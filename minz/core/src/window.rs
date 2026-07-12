@@ -41,6 +41,11 @@ pub struct WindowState<'a> {
     pub cl_active: &'a AtomicBool,
     pub cl_noz_run: &'a AtomicU8,
     pub cl_reacq: &'a AtomicBool,
+    /// Set after the first ZC accept under the current engagement,
+    /// cleared on arm/kill — distinguishes an ESTABLISHED lock (where
+    /// the fix-#1 first-miss gate-widen is safe) from the fragile
+    /// engage transition (where it lets noise corrupt the lock).
+    pub cl_locked: &'a AtomicBool,
     // Telemetry.
     pub stream_on: &'a AtomicBool,
     pub wrec_decim: &'a AtomicU32,
@@ -99,13 +104,27 @@ pub fn close_float_window(
         if prev_sector != 0 && prev_sector != 3 {
             let run = ws.cl_noz_run.load(Ordering::Relaxed).saturating_add(1);
             ws.cl_noz_run.store(run, Ordering::Relaxed);
-            if run >= 2 && !ws.cl_reacq.load(Ordering::Relaxed) {
+            // FIX #1 (faster cascade break): widen the gate one window
+            // sooner — but ONLY when a lock is ESTABLISHED (`cl_locked`,
+            // set after the first accept under this engagement). During
+            // the fragile engage transition, widening the gate to 8 %
+            // lets early PWM-transient noise through and corrupts the
+            // lock (observed: 4× engage failure). Under an established
+            // lock, catching the cascade at window 1 (not 2) prevents
+            // the 12–21-miss spiral (monster autopsy); fix #3's advance
+            // margin makes isolated misses rare so it seldom fires.
+            let trip = if ws.cl_locked.load(Ordering::Relaxed) { 1 } else { 2 };
+            if run >= trip && !ws.cl_reacq.load(Ordering::Relaxed) {
                 ws.cl_reacq.store(true, Ordering::Relaxed);
-                // Break the qZC chain: recovery must be measured from
-                // TWO fresh strict-confirmed ZCs, not from a stale
-                // pre-spiral timestamp (a stale `last` hands the
-                // re-seed an aliased delta — seen re-seeding 162 µs
-                // and tripping the runaway floor).
+            }
+            // The disruptive qZC-chain break + re-seed is reserved for
+            // a CONFIRMED cascade (2nd consecutive miss regardless of
+            // lock state): recovery must then be measured from TWO
+            // fresh strict-confirmed ZCs, not a stale pre-spiral
+            // timestamp (a stale `last` hands the re-seed an aliased
+            // delta — seen re-seeding 162 µs and tripping the runaway
+            // floor).
+            if run >= 2 && ws.last_qzc_us.load(Ordering::Relaxed) != u32::MAX {
                 ws.last_qzc_us.store(u32::MAX, Ordering::Relaxed);
                 out.bb[1] = Some((
                     EV_RAQ,
@@ -221,6 +240,7 @@ mod tests {
         cl_active: AtomicBool,
         cl_noz_run: AtomicU8,
         cl_reacq: AtomicBool,
+        cl_locked: AtomicBool,
         stream_on: AtomicBool,
         wrec_decim: AtomicU32,
         wrec_seq: AtomicU8,
@@ -249,6 +269,7 @@ mod tests {
                 cl_active: AtomicBool::new(false),
                 cl_noz_run: AtomicU8::new(0),
                 cl_reacq: AtomicBool::new(false),
+                cl_locked: AtomicBool::new(true), // tests exercise established-lock behavior
                 stream_on: AtomicBool::new(true),
                 wrec_decim: AtomicU32::new(0),
                 wrec_seq: AtomicU8::new(0),
@@ -277,6 +298,7 @@ mod tests {
                 cl_active: &self.cl_active,
                 cl_noz_run: &self.cl_noz_run,
                 cl_reacq: &self.cl_reacq,
+                cl_locked: &self.cl_locked,
                 stream_on: &self.stream_on,
                 wrec_decim: &self.wrec_decim,
                 wrec_seq: &self.wrec_seq,
@@ -351,17 +373,25 @@ mod tests {
     }
 
     #[test]
-    fn reacq_trigger_two_zcless_ab_windows() {
+    fn reacq_gate_widens_on_first_miss_chain_breaks_on_second() {
         let r = Rig::new();
         r.cl_active.store(true, Ordering::Relaxed);
-        // First ZC-less A/B window: NOZ event, run=1, no reacq yet.
+        // FIX #1: first ZC-less A/B window — NOZ, gate WIDENS
+        // (cl_reacq set) immediately, but the chain is NOT yet broken
+        // (no RAQ, last_qzc preserved) so an isolated miss recovers
+        // cheaply.
         r.qzc_us.store(u32::MAX, Ordering::Relaxed);
         let out = r.close(1, 2_000, 10_600);
         assert_eq!(out.bb[0], Some((EV_NOZ, 40)));
-        assert_eq!(out.bb[1], None);
-        assert!(!r.cl_reacq.load(Ordering::Relaxed));
-        // Second: reacq engages, chain broken, RAQ event with the
-        // interval snapshot.
+        assert_eq!(out.bb[1], None, "no chain-break on the first miss");
+        assert!(r.cl_reacq.load(Ordering::Relaxed), "gate widened at once");
+        assert_ne!(
+            r.last_qzc_us.load(Ordering::Relaxed),
+            u32::MAX,
+            "chain intact after a single miss"
+        );
+        // Second consecutive miss = confirmed cascade: chain broken,
+        // RAQ event with the interval snapshot.
         r.qzc_us.store(u32::MAX, Ordering::Relaxed);
         let out = r.close(2, 2_060, 11_200);
         assert_eq!(out.bb[1], Some((EV_RAQ, 600)));
@@ -371,6 +401,29 @@ mod tests {
             u32::MAX,
             "stale pre-spiral timestamp must not survive into the re-seed"
         );
+    }
+
+    #[test]
+    fn fix1_first_miss_widen_suppressed_during_engage() {
+        // cl_locked=false (fragile engage): the first A/B miss must NOT
+        // widen the gate — that let PWM-transient noise corrupt the
+        // engage (4× engage failure on the bench). Widening waits for
+        // the 2nd miss (the original engage-tolerant behavior).
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        r.cl_locked.store(false, Ordering::Relaxed);
+        r.qzc_us.store(u32::MAX, Ordering::Relaxed);
+        let out = r.close(1, 2_000, 10_600);
+        assert_eq!(out.bb[0], Some((EV_NOZ, 40)));
+        assert!(
+            !r.cl_reacq.load(Ordering::Relaxed),
+            "no first-miss widen during engage"
+        );
+        // Second consecutive miss still widens + breaks the chain.
+        r.qzc_us.store(u32::MAX, Ordering::Relaxed);
+        let out = r.close(2, 2_060, 11_200);
+        assert!(r.cl_reacq.load(Ordering::Relaxed));
+        assert_eq!(out.bb[1], Some((EV_RAQ, 600)));
     }
 
     #[test]
