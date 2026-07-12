@@ -62,61 +62,85 @@ pub fn init(tim1: TIM1, apb2: &mut APB2) {
     let _ = tim1;
 }
 
-/// Set each of the 6 PWM pins to either `ALTERNATE` (TIM1-driven) or
-/// general-purpose `OUTPUT`, and drive the OUTPUT pins low via BSRR.
-/// This is how AM32 / rm32 firmware "float" a phase — the floating
-/// phase's pins go to OUTPUT-LOW so the gate driver IC sees a clean
-/// 0 V on both H and L inputs and holds both FETs OFF. Leaving the
-/// pins in ALTERNATE mode with `CCxE=0` (`BDTR.OSSR=0` releases them
-/// to Hi-Z) is **not** sufficient: the gate driver's input then
-/// floats and the FETs end up partially conducting under capacitive
-/// pickup from neighboring PWM traces.
+/// Per-leg drive role, mirroring AM32's `phaseXPWM` / `phaseXLOW` /
+/// `phaseXFLOAT` trio (`AM32/Mcu/l431/Src/phaseouts.c`):
 ///
-/// Per AM32 `phaseAFLOAT` (`AM32/Mcu/l431/Src/phaseouts.c:150-158`):
-/// MODER goes to OUTPUT first, then the pin is reset low via the
-/// BR half of BSRR. TIM1's `CCER` bits stay enabled throughout (the
-/// channel keeps toggling internally, just isolated from the pad).
-fn set_phase_pin_modes(float_a: bool, float_b: bool, float_c: bool) {
+/// - `Pwm` — both pins ALTERNATE, TIM1 complementary PWM drives the
+///   leg (dead-time inserted by DTG).
+/// - `Low` — low FET solid on by **GPIO force**: LIN OUTPUT-high,
+///   HIN OUTPUT-low. The timer compare is irrelevant to this leg,
+///   which is what makes commutation a pure pin-mode flip with no
+///   dependence on preloaded CCR state (see [`set_six_step`]).
+/// - `Float` — both pins OUTPUT-low so the gate driver sees a clean
+///   0 V on both inputs and holds both FETs OFF. Leaving the pins in
+///   ALTERNATE with `CCxE=0` (`BDTR.OSSR=0` releases them to Hi-Z)
+///   is **not** sufficient: the gate driver's input then floats and
+///   the FETs end up partially conducting under capacitive pickup
+///   from neighboring PWM traces.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PhaseRole {
+    Pwm,
+    Low,
+    Float,
+}
+
+/// Apply drive roles to the three legs. Pin map: A = PA8 hi / PA7 lo,
+/// B = PA9 hi / PB0 lo, C = PA10 hi / PB1 lo.
+///
+/// Write order: **BSRR first, then MODER** (one write per port each).
+/// The single BSRR write per port snaps every currently-OUTPUT pin to
+/// its final level at once — the old Low leg's LIN turns off in the
+/// same write the new Low leg's LIN turns on (zero overlap when both
+/// sit on one port), and a leg staying `Low` across a commutation
+/// keeps its LIN set (BS is idempotent — no off-glitch). Pins
+/// currently in ALTERNATE just get their ODR preloaded; the MODER
+/// write then flips them onto the pad. (AM32 orders MODER before BRR
+/// per pin, which briefly drives stale ODR — ours avoids that.)
+fn set_phase_roles(a: PhaseRole, b: PhaseRole, c: PhaseRole) {
     const AF: u32 = 0b10;
-    const OUT: u32 = 0b01;
     let gpioa = unsafe { &*GPIOA::ptr() };
     let gpiob = unsafe { &*GPIOB::ptr() };
 
-    // GPIOA: PA7 (A low), PA8 (A high), PA9 (B high), PA10 (C high).
-    let m_al = if float_a { OUT } else { AF };
-    let m_ah = if float_a { OUT } else { AF };
-    let m_bh = if float_b { OUT } else { AF };
-    let m_ch = if float_c { OUT } else { AF };
+    let m = |r: PhaseRole| if r == PhaseRole::Pwm { AF } else { 0b01 };
+
+    // GPIOA MODER: PA7 (A low), PA8 (A high), PA9 (B high), PA10 (C high).
     let a_mask = (0b11u32 << 14) | (0b11 << 16) | (0b11 << 18) | (0b11 << 20);
-    let a_val = (m_al << 14) | (m_ah << 16) | (m_bh << 18) | (m_ch << 20);
-
-    // GPIOB: PB0 (B low), PB1 (C low).
-    let m_bl = if float_b { OUT } else { AF };
-    let m_cl = if float_c { OUT } else { AF };
+    let a_val = (m(a) << 14) | (m(a) << 16) | (m(b) << 18) | (m(c) << 20);
+    // GPIOB MODER: PB0 (B low), PB1 (C low).
     let b_mask = (0b11u32 << 0) | (0b11 << 2);
-    let b_val = (m_bl << 0) | (m_cl << 2);
+    let b_val = (m(b) << 0) | (m(c) << 2);
 
-    // MODER first (per AM32 order), then BSRR.BR to drive ODR=0 for
-    // the floating phase's pins. BSRR.BR[N] sits at bit (16 + N).
-    gpioa
-        .moder
-        .modify(|r, w| unsafe { w.bits((r.bits() & !a_mask) | a_val) });
-    gpiob
-        .moder
-        .modify(|r, w| unsafe { w.bits((r.bits() & !b_mask) | b_val) });
-
+    // BSRR: BS (bit N) the Low leg's LIN, BR (bit 16+N) every other
+    // pin destined for OUTPUT. Pwm legs get no BSRR bits (ODR is
+    // don't-care under ALTERNATE).
     let mut bsrr_a = 0u32;
     let mut bsrr_b = 0u32;
-    if float_a {
-        bsrr_a |= (1 << (16 + 7)) | (1 << (16 + 8));
+    match a {
+        PhaseRole::Pwm => {}
+        PhaseRole::Low => bsrr_a |= (1 << 7) | (1 << (16 + 8)),
+        PhaseRole::Float => bsrr_a |= (1 << (16 + 7)) | (1 << (16 + 8)),
     }
-    if float_b {
-        bsrr_a |= 1 << (16 + 9);
-        bsrr_b |= 1 << (16 + 0);
+    match b {
+        PhaseRole::Pwm => {}
+        PhaseRole::Low => {
+            bsrr_b |= 1 << 0;
+            bsrr_a |= 1 << (16 + 9);
+        }
+        PhaseRole::Float => {
+            bsrr_b |= 1 << (16 + 0);
+            bsrr_a |= 1 << (16 + 9);
+        }
     }
-    if float_c {
-        bsrr_a |= 1 << (16 + 10);
-        bsrr_b |= 1 << (16 + 1);
+    match c {
+        PhaseRole::Pwm => {}
+        PhaseRole::Low => {
+            bsrr_b |= 1 << 1;
+            bsrr_a |= 1 << (16 + 10);
+        }
+        PhaseRole::Float => {
+            bsrr_b |= 1 << (16 + 1);
+            bsrr_a |= 1 << (16 + 10);
+        }
     }
     if bsrr_a != 0 {
         gpioa.bsrr.write(|w| unsafe { w.bits(bsrr_a) });
@@ -124,6 +148,12 @@ fn set_phase_pin_modes(float_a: bool, float_b: bool, float_c: bool) {
     if bsrr_b != 0 {
         gpiob.bsrr.write(|w| unsafe { w.bits(bsrr_b) });
     }
+    gpioa
+        .moder
+        .modify(|r, w| unsafe { w.bits((r.bits() & !a_mask) | a_val) });
+    gpiob
+        .moder
+        .modify(|r, w| unsafe { w.bits((r.bits() & !b_mask) | b_val) });
 }
 
 /// Phase A/B/C duty (CCR1/2/3) for continuous 3-phase drive (sine).
@@ -136,22 +166,35 @@ pub fn set_duties(ch1: u16, ch2: u16, ch3: u16) {
         tim1.ccr1.write(|w| w.ccr().bits(ch1));
         tim1.ccr2.write(|w| w.ccr().bits(ch2));
         tim1.ccr3.write(|w| w.ccr().bits(ch3));
-        set_phase_pin_modes(false, false, false);
+        set_phase_roles(PhaseRole::Pwm, PhaseRole::Pwm, PhaseRole::Pwm);
     });
 }
 
 /// Six-step BLDC commutation: 2 phases driven, 1 floating per sector.
-/// `step ∈ 0..5` picks the (Hi, Lo, Float) mapping below. `duty` is
-/// the PWM compare value applied to the **high-side** channel; the
-/// **low-side** phase gets `CCR=0` (its complementary FET stays on
-/// solid → terminal at GND); the **floating** phase has its GPIO pins
-/// switched to OUTPUT and driven low (per AM32's behaviour — see
-/// [`set_phase_pin_modes`] for why this differs from "let `CCxE=0`
-/// release the pad to Hi-Z").
+/// `step ∈ 0..5` picks the (Hi, Lo, Float) mapping below.
+///
+/// **AM32 `SET_DUTY_CYCLE_ALL` semantics** (peripherals.h:25): `duty`
+/// is written to ALL THREE CCRs, always, and the low-side leg is
+/// GPIO-forced (LIN OUTPUT-high) instead of relying on the timer
+/// comparing against `CCR=0`. Commutation is therefore a pure
+/// pin-mode flip with zero dependence on CCR preload timing.
+///
+/// Why this matters: CCR writes are preloaded (`OCxPE=1`) — they land
+/// at the next PWM wrap, up to one full carrier period later (20.8 µs
+/// at 48 kHz). The old per-phase-CCR scheme (`duty` on hi, `0`
+/// elsewhere) opened a stale-compare window on every commutation
+/// where the hi role moved: the new PWM leg went AF immediately but
+/// compared against its stale preloaded `CCR=0` → complementary
+/// output solid high → its LOW FET fully on alongside the real low
+/// leg = both motor terminals grounded = the spinning motor's BEMF
+/// shorted line-to-line through two low FETs for 0–20.8 µs. A
+/// multi-amp, phase-agnostic brake pulse every other commutation,
+/// growing with speed/BEMF — and invisible to GECKO, whose sample
+/// point sits just *after* the wrap that ends the pulse.
 ///
 /// CCER never changes after `init()` — it stays at all-enabled.
-/// TIM1's channels keep toggling internally for the floating phase;
-/// the MODER override is what isolates them from the pad.
+/// TIM1's channels keep toggling internally for the floating and low
+/// legs; the MODER override is what isolates them from the pad.
 ///
 /// | Step | Hi | Lo | Float |
 /// |------|----|----|-------|
@@ -168,22 +211,25 @@ pub fn set_six_step(step: u8, duty: u16) {
     const HIGH: [u8; 6] = [0, 0, 1, 1, 2, 2];
     const LOW: [u8; 6] = [1, 2, 2, 0, 0, 1];
     let s = (step % 6) as usize;
-    let hi = HIGH[s] as usize;
-    let lo = LOW[s] as usize;
+    let hi = HIGH[s];
+    let lo = LOW[s];
 
-    let mut ccrs = [0u16; 3];
-    ccrs[hi] = duty;
-
-    let float_a = hi != 0 && lo != 0;
-    let float_b = hi != 1 && lo != 1;
-    let float_c = hi != 2 && lo != 2;
+    let role = |ch: u8| {
+        if ch == hi {
+            PhaseRole::Pwm
+        } else if ch == lo {
+            PhaseRole::Low
+        } else {
+            PhaseRole::Float
+        }
+    };
 
     cortex_m::interrupt::free(|_| {
         let tim1 = unsafe { &*TIM1::ptr() };
-        tim1.ccr1.write(|w| w.ccr().bits(ccrs[0]));
-        tim1.ccr2.write(|w| w.ccr().bits(ccrs[1]));
-        tim1.ccr3.write(|w| w.ccr().bits(ccrs[2]));
-        set_phase_pin_modes(float_a, float_b, float_c);
+        tim1.ccr1.write(|w| w.ccr().bits(duty));
+        tim1.ccr2.write(|w| w.ccr().bits(duty));
+        tim1.ccr3.write(|w| w.ccr().bits(duty));
+        set_phase_roles(role(0), role(1), role(2));
     });
 }
 
@@ -201,7 +247,7 @@ pub fn set_six_step(step: u8, duty: u16) {
 /// [`set_six_step`] already uses for the per-sector float phase.
 #[inline]
 pub fn all_off() {
-    set_phase_pin_modes(true, true, true);
+    set_phase_roles(PhaseRole::Float, PhaseRole::Float, PhaseRole::Float);
 }
 
 /// Re-arm after [`all_off`]: restore all six pins to ALTERNATE
@@ -211,7 +257,7 @@ pub fn all_off() {
 /// the active sector. MOE was never cleared — see [`all_off`].
 #[inline]
 pub fn arm_output() {
-    set_phase_pin_modes(false, false, false);
+    set_phase_roles(PhaseRole::Pwm, PhaseRole::Pwm, PhaseRole::Pwm);
 }
 
 /// Enable the TIM1 update-event interrupt (DIER.UIE). Fires the
