@@ -408,27 +408,30 @@ switch, HEDGEHOG A/B on the capped board.
 ## minz-core — host-testable control logic (`core/`, 2026-07-11)
 
 The FALCON loop's pure logic AND every wire/dump serializer live in
-`minz/core/` (`minz-core`, no_std, zero deps): `timing` (advance/
-delay/gate/blank/persistence/confirm), `estimator` (the full OWL
-accept incl. re-acq re-seed), `guards` (watchdog/OC/sag +
-`since_us`), `throttle` (slew+snap), `ticks` (`compose_1us`, fixed
-protocol — firmware adoption pending), `wire` (MAGPIE v4 WindowRec —
-the firmware uses this struct directly), `blackbox` (ring +
-`format_dump`), `drive` (sector geometry: angle_inc_fp, gate,
-float-sector tables, edges_for), `dump` (WAXWING cdump framer,
-`l`/`e` dump renderers — pure data+sink closures), `ui` (key clamps/
-cyclers — the clamps are the envelope bounds), `a85` (lib
-re-exports). 68 tests, 98.5 % line coverage (`cd core; cargo test` /
-`cargo llvm-cov`); every past incident is a named regression test.
-Firmware (`motor_tester2.rs`, ~2,850 lines: ISR glue + statics +
-init) calls into core at every corresponding site — change loop or
-wire behavior in core, never inline. `UartTxWriter` (DMA TX ring) is
+`minz/core/` (`minz-core`, no_std, sole dep portable-atomic):
+`timing` (advance/delay/gate/blank/persistence/confirm), `estimator`
+(the full OWL accept incl. re-acq re-seed), `guards` (watchdog/OC/
+sag + `since_us`, `apply_isr_kill` flag matrix, `sag_step`,
+`trip_accum_step`), `mode` (arm/kill/CL state machine behind the
+`r`/`q`/`w`/`y`/`m` keys — `step(Cmd)->Actions`), `window`
+(`close_float_window` behind the `WindowState<'a>` atomic-ref seam),
+`zc` (adc-sign confirm rule + vbus decay — seed of the full ZC
+machine), `throttle` (slew+snap), `ticks` (`compose_1us` — firmware
+adoption pending), `wire` (MAGPIE v4 WindowRec, used directly),
+`blackbox` (ring + `format_dump` + the `EV_*` event-code authority),
+`drive` (sector geometry + commutation_class + freerun 1.0×T rule),
+`dump` (cdump framer, `l`/`e` renderers, edge_dump_status), `sense`
+(the one vbat/isns calibration), `rates`, `ui`, `a85`. 106 tests,
+99.2 % line coverage (`cd core; cargo test` / `cargo llvm-cov`);
+every past incident is a named regression test. Firmware
+(`motor_tester2.rs`, ~2,700 lines: ISR glue + statics + init) calls
+into core at every corresponding site — change loop or wire behavior
+in core, never inline. `UartTxWriter` (DMA TX ring) is
 `minz::uart_tx`. `core/` is a detached workspace with its own
 `.cargo/config.toml` (host target) — do not fold it into the parent
 or tests build for ARM. Details: FALCON_HARDENING.md §17.
-**Next passes + open bug flags (TOCTOU gen-guard, conditional-`w`
-kill, trip-flags-after-keys ordering): `EXTRACTION_ROADMAP.md`** —
-fix-first items F1/F2, then zc.rs, mode.rs, pure batches E3–E5.
+**Remaining passes + open flags (E1 zc state machine with the TOCTOU
+gen-guard fix, E5 hardware moves): `EXTRACTION_ROADMAP.md`.**
 
 ## WAXWING waveform scope (`j` key + `scripts/waxwing.py`)
 
