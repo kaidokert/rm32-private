@@ -127,6 +127,7 @@ ax.grid(True, alpha=0.3)
 # a droop at high amp is the PSU current limit engaging, which
 # masquerades as a motor voltage ceiling.
 meta_path = capdir / f"{args.tag}_meta.csv"
+ax2 = None
 if meta_path.exists():
     vb, vmin = {}, {}
     for line in meta_path.read_text().splitlines()[1:]:
@@ -147,7 +148,11 @@ if meta_path.exists():
                      ls="--", color="tab:red", alpha=0.6, label="vbat min (V)")
         ax2.set_ylabel("vbat / min (V)", color="tab:red")
         ax2.tick_params(axis="y", labelcolor="tab:red")
-ax.legend(fontsize=8, loc="upper left")
+# One combined legend — the vbat lines live on the twin axis and
+# ax.legend() alone silently drops them.
+h1, l1 = ax.get_legend_handles_labels()
+h2, l2 = (ax2.get_legend_handles_labels() if ax2 else ([], []))
+ax.legend(h1 + h2, l1 + l2, fontsize=8, loc="upper left")
 
 fig.tight_layout()
 out = args.out or str(capdir / f"{args.tag}_map.png")
