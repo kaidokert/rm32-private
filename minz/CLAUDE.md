@@ -115,22 +115,23 @@ style) so all 6 windows per rev are observed. Frame layout lives in
   runs it while hunting, then stops). Verified: with it off, idle
   current = raw 1 (matches control).
 
-Qualification (2026-07-12, paired vs `checkpoint-24k-monsterfix`) —
-**PASSED; gated hybrid tagged `checkpoint-24k-hybrid`=902c4d7 (new
-24 kHz known-good).** adc-confirm behaviorally EQUIVALENT — lock speeds
-byte-identical (388/451/519 Hz at amp 12/14/16) every run; the one
-regression (free-run ch8 current offset) FIXED by the gate above.
-Robustness settled by **interleaved ABAB** (the session-cumulative
-bench warming — known-good control degraded 16-18 → broke at 14 over 7
-ladders — made block A×n/B×n comparison useless, but tight alternation
-cancels drift): 3 interleaved pairs, hybrid ≥ control in ALL three.
-Microscope validated idle AND under load (`gecko_load.py`). The only
-item left is bench-CAPABILITY-limited, not code: the real >4 A monster
-autopsy needs the amp ~42+ regime (spikes don't exist below ~amp 42),
-so run `gecko.py --wait` at amp 42+/48 kHz on a fully-rested bench.
-(Textbook [[feedback-bench-never-drifts]]: the warming was proven real
-by the KNOWN-GOOD tag also degrading, and defeated by interleaving
-rather than by blaming drift or waiting.)
+Qualification (2026-07-12, paired vs `checkpoint-24k-monsterfix`).
+**The non-gated hybrid HAD a real regression** — the free-run oversample
+interfering with the injected ADC (proven: idle current +300 mA; and it
+degraded lock robustness — the non-gated build broke at amp 14-16 vs the
+control's 16-18, and threw more ZC-STARVED kills). That regression is
+CODE, not "bench warming" — an earlier draft of this note wrongly
+blamed a session-cumulative warming trend; there is NO bench warming
+(see [[feedback-bench-never-drifts]]). Run-to-run break-point spread is
+the engage/lock LOTTERY (a documented stochastic property), NOT a
+trend. **Fix = the gate above** (free-run OFF during lock). Gated build
+evidence: engage first-try on every paired run (both builds), steady
+qzc 100% both, identical lock speeds (388/451/519 Hz), and 3 interleaved
+ABAB pairs with hybrid ≥ control every pair (interleaving is valid
+regardless of any run-to-run factor — it's the honest way to A/B).
+`checkpoint-24k-hybrid`=902c4d7 tags the gated build. Still OPEN: the
+>4 A monster autopsy needs the amp ~42+ regime (spikes don't exist
+below ~amp 42) — run `gecko.py --wait` at amp 42+/48 kHz.
 
 Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
 (`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
