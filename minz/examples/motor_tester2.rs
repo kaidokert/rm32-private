@@ -310,6 +310,13 @@ static CTX_B: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SA
 static CTX_I: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
 static CTX_MARK: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
 
+/// Free-run ring head at the previous `TIM1_UP`, so the WAX trigger can
+/// scan the ~150 intra-cycle current samples added since last cycle for
+/// their PEAK — the mid-ON `i_raw` sees one point per PWM cycle and
+/// misses a spike that doesn't land on it. Only used while armed (the
+/// free-run oversample is gated on then).
+static LAST_CUR_HEAD: AtomicU32 = AtomicU32::new(0);
+
 // ---------------------------------------------------------------
 // Edge-based COMP2 sampling — captures every COMP EXTI fire by its
 // 10 µs timestamp within the current 2-rev window.
@@ -2839,10 +2846,36 @@ fn TIM1_UP_TIM16() {
     // is seen (one-shot; the ADSTP wait is <1 µs at these sample
     // times). Frozen means LAST_I_RAW goes stale until the dump
     // resumes the ring — acceptable for a ~100 ms dump.
-    if i_raw > WAX_TRIG_RAW
-        && WAX_TRIG_ARMED.load(Ordering::Relaxed)
-        && !WAX_TRIGGERED.load(Ordering::Relaxed)
-    {
+    //
+    // Trigger on the INTRA-CYCLE PEAK, not the mid-ON `i_raw`. When
+    // armed the free-run oversample is on (~150 samples added per PWM
+    // cycle); the single mid-ON point misses a spike between samples.
+    // Scan the new free-run samples (stride 4 — a real amp-draw event
+    // is sustained across a whole window, i_avg≈i_max in the sweep
+    // data, so decimating can't miss it) for the max and trigger on
+    // that. This is the fix that lets the microscope catch what the
+    // mid-ON telemetry can't.
+    let armed = WAX_TRIG_ARMED.load(Ordering::Relaxed);
+    let mut trig_raw = i_raw;
+    if armed {
+        let head = adc_sync::cur_head();
+        let last = LAST_CUR_HEAD.load(Ordering::Relaxed) as usize;
+        let n = (head + adc_sync::CUR_FRAMES - last) % adc_sync::CUR_FRAMES;
+        let mut peak = 0u16;
+        let mut k = 0usize;
+        while k < n {
+            let v = adc_sync::cur_word((last + k) % adc_sync::CUR_FRAMES);
+            if v > peak {
+                peak = v;
+            }
+            k += 4;
+        }
+        LAST_CUR_HEAD.store(head as u32, Ordering::Relaxed);
+        if peak > trig_raw {
+            trig_raw = peak;
+        }
+    }
+    if trig_raw > WAX_TRIG_RAW && armed && !WAX_TRIGGERED.load(Ordering::Relaxed) {
         WAX_TRIG_ARMED.store(false, Ordering::Relaxed);
         minz::adc_sync::freeze_current();
         WAX_TRIGGERED.store(true, Ordering::Relaxed);

@@ -102,6 +102,7 @@ def main():
     ap.add_argument("--amp", type=int, default=14)
     ap.add_argument("--fast", action="store_true", help="enable SWIFT after engage (needed above ~amp 20)")
     ap.add_argument("--max-ma", type=float, default=2500, help="abort if isns exceeds this")
+    ap.add_argument("--hunt", type=float, default=0.0, help="arm J and hold N s for a >4A auto-trigger spike capture")
     ap.add_argument("--tag", default="loadshape")
     args = ap.parse_args()
 
@@ -138,19 +139,60 @@ def main():
             if "cl: ACTIVE" not in echo:
                 sys.exit("ABORT: not ACTIVE before G")
             m = re.search(r"isns=(\d+\.\d+)A", echo)
-            print(f"locked+ACTIVE, amp~{args.amp}, isns={m.group(1) if m else '?'}A — firing G", flush=True)
-            # Fire G and capture the gecko dump under load.
+            print(f"locked+ACTIVE, amp~{args.amp}, isns={m.group(1) if m else '?'}A", flush=True)
             b.drain()
-            p.write(b"G")
-            deadline = time.time() + 6.0
-            buf = b""
-            while time.time() < deadline:
-                c = p.read(65536)
-                if c:
-                    buf += c
-                    if b"gecko:" in buf and b"end" in buf:
-                        break
-            text = buf.decode("ascii", errors="replace")
+            if args.hunt:
+                # Arm the >4A peak trigger (J turns on the free-run
+                # oversample + the intra-cycle peak scan) and HOLD,
+                # watching for the firmware's auto-trigger gecko dump on
+                # a real spike. Abort on any kill.
+                print(f"  arming J, hunting {args.hunt:.0f}s for a >4A spike...", flush=True)
+                b.p.write(b"J")
+                deadline = time.time() + args.hunt
+                buf = b""
+                while time.time() < deadline:
+                    c = p.read(65536)
+                    if c:
+                        buf += c
+                        if b"gecko:" in buf and b"end" in buf:
+                            print("  !! SPIKE CAUGHT — auto-trigger fired", flush=True)
+                            break
+                        if b"STARVED" in buf or b"DESYNC" in buf or b"SAG KILL" in buf:
+                            print("  (loop killed during hunt — capturing any dump)", flush=True)
+                            # keep reading briefly for a trailing dump
+                            t2 = time.time() + 1.5
+                            while time.time() < t2:
+                                c = p.read(65536)
+                                if c:
+                                    buf += c
+                            break
+                text = buf.decode("ascii", errors="replace")
+                if "gecko:" not in text:
+                    print("  no spike caught in window; firing manual G", flush=True)
+                    b.drain()
+                    b.p.write(b"G")
+                    d2 = time.time() + 6.0
+                    gb = b""
+                    while time.time() < d2:
+                        c = p.read(65536)
+                        if c:
+                            gb += c
+                            if b"gecko:" in gb and b"end" in gb:
+                                break
+                    text = gb.decode("ascii", errors="replace")
+            else:
+                # Fire G immediately for a baseline shape.
+                print("  firing G", flush=True)
+                p.write(b"G")
+                deadline = time.time() + 6.0
+                buf = b""
+                while time.time() < deadline:
+                    c = p.read(65536)
+                    if c:
+                        buf += c
+                        if b"gecko:" in buf and b"end" in buf:
+                            break
+                text = buf.decode("ascii", errors="replace")
         finally:
             b.send("w", 0.3)  # kill on every exit
 
