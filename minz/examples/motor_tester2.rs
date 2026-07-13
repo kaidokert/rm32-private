@@ -1371,7 +1371,9 @@ fn main() -> ! {
                     },
                     |bb| tx_writer.write_blocking(bb),
                 );
-                adc_sync::resume_current();
+                // The trigger disarmed itself (one-shot) — stop the
+                // oversample, back to inject-only. Re-arm with `J`.
+                adc_sync::oversample_stop();
                 injected = Some(b'j');
             }
 
@@ -1470,10 +1472,24 @@ fn main() -> ! {
                     b'J' => {
                         let on = !WAX_TRIG_ARMED.load(Ordering::Relaxed);
                         WAX_TRIG_ARMED.store(on, Ordering::Relaxed);
+                        // Gate the free-run current oversample on the
+                        // arm: it runs ONLY while hunting, so it fills
+                        // the pre-trigger ring, then stops — normal
+                        // lock keeps the inject-only (pre-hybrid-
+                        // equivalent) ADC activity.
+                        if on {
+                            adc_sync::oversample_start();
+                        } else {
+                            adc_sync::oversample_stop();
+                        }
                         write!(
                             &mut tx_writer,
                             "wax trigger {}\r\n",
-                            if on { "ARMED (one-shot >2.4A)" } else { "off" }
+                            if on {
+                                "ARMED (one-shot >4A, oversample on)"
+                            } else {
+                                "off"
+                            }
                         )
                         .ok();
                         tx_writer.write_blocking(&[]);
@@ -1793,8 +1809,12 @@ fn main() -> ! {
                         // oversampled current ring (~150 samples/PWM
                         // cycle, ~0.55 ms). Same payload as the >4 A
                         // auto-trigger, but manual — for baseline shape
-                        // and format checks. Freeze → flat cdump (4
-                        // samples/frame, oldest-first) → resume.
+                        // and format checks. The oversample is normally
+                        // OFF (inject-only lock), so start it, let it
+                        // fill the ring (>0.55 ms), freeze → flat cdump
+                        // (4 samples/frame, oldest-first) → stop.
+                        adc_sync::oversample_start();
+                        cortex_m::asm::delay(80_000); // ~1 ms at 80 MHz
                         let oldest = adc_sync::freeze_current();
                         write!(
                             &mut tx_writer,
@@ -1815,7 +1835,7 @@ fn main() -> ! {
                             },
                             |bb| tx_writer.write_blocking(bb),
                         );
-                        adc_sync::resume_current();
+                        adc_sync::oversample_stop();
                     }
                     b'e' => {
                         do_edge_dump = true;

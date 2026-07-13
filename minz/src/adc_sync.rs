@@ -165,14 +165,53 @@ pub fn start(sample_ticks: u16) {
     adc.cfgr
         .write(|w| unsafe { w.bits((1 << 0) | (1 << 1) | (1 << 12) | (1 << 13) | (1 << 31)) });
 
-    // Arm both groups. ADSTART starts the regular free-run (CONT
-    // keeps it going). JADSTART ARMS the injected group — a
+    // Arm the INJECTED group only. JADSTART arms it — a
     // hardware-triggered injected group (JEXTEN != 0) still needs
     // JADSTART set once, exactly as the regular group needs ADSTART;
     // it then stays armed and converts on each TRGO2 falling edge
     // until JADSTP. (Omitting it left JDR at 0 — vbat/A/B read 0.)
-    adc.cr
-        .modify(|_, w| w.adstart().set_bit().jadstart().set_bit());
+    //
+    // The REGULAR free-run current oversample is deliberately left
+    // STOPPED. During normal lock the ADC then does ONLY the injected
+    // mid-ON burst — identical activity to the proven pre-hybrid build
+    // — so the free-run's continuous conversions + once-per-cycle
+    // injected preemption can't add jitter to the control path NOR
+    // bias the injected ch8 read. (Measured: with the free-run ON, the
+    // injected current sat +13 counts / +300 mA vs the pre-hybrid
+    // control at idle; with it OFF the injected current matches the
+    // control raw ~1. The free-run<->injected ch8 interaction was
+    // real.) Enable the microscope on demand with [`oversample_start`]
+    // (the `G` key / an armed >4 A trigger) and stop it after the dump.
+    adc.cr.modify(|_, w| w.jadstart().set_bit());
+}
+
+/// Enable the free-run current oversample: reset the ring and ADSTART
+/// the (continuous) regular group. Injected control sampling is
+/// unaffected. Call before a `G` dump (after a short fill delay) or
+/// when arming the >4 A auto-trigger.
+pub fn oversample_start() {
+    let adc = unsafe { &*ADC1::ptr() };
+    let dma = unsafe { &*stm32::DMA1::ptr() };
+    if adc.cr.read().adstart().bit_is_set() {
+        return;
+    }
+    unsafe {
+        dma.ccr1.modify(|r, w| w.bits(r.bits() & !1));
+        dma.cndtr1.write(|w| w.bits(CUR_FRAMES as u32));
+        dma.ccr1.modify(|r, w| w.bits(r.bits() | 1));
+    }
+    adc.cr.modify(|_, w| w.adstart().set_bit());
+}
+
+/// Stop the free-run current oversample (ADSTP the regular group).
+/// Injected control sampling continues. Returns the ADC to the
+/// inject-only, pre-hybrid-equivalent state.
+pub fn oversample_stop() {
+    let adc = unsafe { &*ADC1::ptr() };
+    if adc.cr.read().adstart().bit_is_set() {
+        adc.cr.modify(|_, w| w.adstp().set_bit());
+        while adc.cr.read().adstart().bit_is_set() {}
+    }
 }
 
 /// Newest completed injected burst: `(phase_a, phase_b, current,
