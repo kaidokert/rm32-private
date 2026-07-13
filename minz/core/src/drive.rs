@@ -136,10 +136,14 @@ pub use crate::blackbox::{EV_BLD as BB_BLD, EV_DRK as BB_DRK, EV_REF as BB_REF};
 /// free-run fired.
 #[inline]
 pub fn commutation_class(prev_sector: u8, shot_refined: bool) -> u8 {
-    if prev_sector == 0 || prev_sector == 3 {
-        BB_DRK
-    } else if shot_refined {
+    // A ZC-refined shot is REF for any sector — including C once SWIFT
+    // re-times it from the comparator (was unconditionally DRK). An
+    // unrefined C shot is still DRK (dead-reckoned); an unrefined A/B
+    // shot is BLD (blind free-run).
+    if shot_refined {
         BB_REF
+    } else if prev_sector == 0 || prev_sector == 3 {
+        BB_DRK
     } else {
         BB_BLD
     }
@@ -171,9 +175,11 @@ mod tests {
 
     #[test]
     fn commutation_class_table() {
-        // C windows are DRK regardless of refinement.
-        assert_eq!(commutation_class(0, true), BB_DRK);
+        // C windows: DRK when dead-reckoned, REF once SWIFT re-times.
+        assert_eq!(commutation_class(0, false), BB_DRK);
         assert_eq!(commutation_class(3, false), BB_DRK);
+        assert_eq!(commutation_class(0, true), BB_REF);
+        assert_eq!(commutation_class(3, true), BB_REF);
         // A/B windows split on whether the ZC re-timed the shot.
         for sec in [1u8, 2, 4, 5] {
             assert_eq!(commutation_class(sec, true), BB_REF);
