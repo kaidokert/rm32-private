@@ -1381,6 +1381,24 @@ fn main() -> ! {
                 // The trigger disarmed itself (one-shot) — stop the
                 // oversample, back to inject-only. Re-arm with `J`.
                 adc_sync::oversample_stop();
+                // Dump the frozen black box: the ZC/commutation event
+                // sequence into the spike (EV_NOZ miss, EV_RAQ reacq,
+                // EV_ACC accept w/ qzc offset), then thaw it.
+                write!(&mut tx_writer, "bb (spike onset):\r\n").ok();
+                let bidx = BB_IDX.load(Ordering::Relaxed) as usize;
+                minz_core::blackbox::format_dump(
+                    (0..BB_LEN).map(|k| {
+                        let i = (bidx + k) % BB_LEN;
+                        minz_core::blackbox::Event {
+                            t: BB_T[i].load(Ordering::Relaxed),
+                            ty: BB_TYPE[i].load(Ordering::Relaxed),
+                            sector: BB_SEC[i].load(Ordering::Relaxed),
+                            data: BB_DATA[i].load(Ordering::Relaxed),
+                        }
+                    }),
+                    |b| tx_writer.write_blocking(b),
+                );
+                BB_FROZEN.store(false, Ordering::Relaxed);
                 injected = Some(b'j');
             }
 
@@ -2878,6 +2896,10 @@ fn TIM1_UP_TIM16() {
     if trig_raw > WAX_TRIG_RAW && armed && !WAX_TRIGGERED.load(Ordering::Relaxed) {
         WAX_TRIG_ARMED.store(false, Ordering::Relaxed);
         minz::adc_sync::freeze_current();
+        // Freeze the black box too — the 64 commutation/ZC events
+        // leading into the spike show WHY the amp draw started (the
+        // NOZ → reacq-gate-widen → premature-accept divergence).
+        BB_FROZEN.store(true, Ordering::Relaxed);
         WAX_TRIGGERED.store(true, Ordering::Relaxed);
     }
     WINDOW_I_SUM.fetch_add(i_raw as u32, Ordering::Relaxed);

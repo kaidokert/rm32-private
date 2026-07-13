@@ -156,6 +156,12 @@ def main():
                         buf += c
                         if b"gecko:" in buf and b"end" in buf:
                             print("  !! SPIKE CAUGHT — auto-trigger fired", flush=True)
+                            # keep reading ~2 s for the trailing bb dump
+                            t3 = time.time() + 2.0
+                            while time.time() < t3:
+                                cc = p.read(65536)
+                                if cc:
+                                    buf += cc
                             break
                         if b"STARVED" in buf or b"DESYNC" in buf or b"SAG KILL" in buf:
                             print("  (loop killed during hunt — capturing any dump)", flush=True)
