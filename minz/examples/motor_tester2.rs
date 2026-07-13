@@ -297,6 +297,19 @@ const PWM_SAMPLE_MASK: u32 = (PWM_SAMPLE_LEN - 1) as u32;
 static PWM_SAMPLE_BUF: [AtomicU8; PWM_SAMPLE_LEN] = [const { AtomicU8::new(0) }; PWM_SAMPLE_LEN];
 static PWM_SAMPLE_IDX: AtomicU32 = AtomicU32::new(0);
 
+/// Per-cycle context rings for the GECKO-scope hybrid: the injected
+/// mid-ON `(A, B, current)` triplet plus the free-run current-ring
+/// head at each cycle wrap, all captured in `TIM1_UP` at the SAME
+/// index/cadence as `PWM_SAMPLE_BUF` (status). The `j` WAXWING dump
+/// reads A/B/current from here (the old regular-DMA analog ring is
+/// now repurposed for the oversampled free-run current). `CTX_MARK`
+/// maps each cycle onto its slice of `adc_sync::CUR_RING` for the
+/// oversampled `J` autopsy.
+static CTX_A: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
+static CTX_B: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
+static CTX_I: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
+static CTX_MARK: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
+
 // ---------------------------------------------------------------
 // Edge-based COMP2 sampling — captures every COMP EXTI fire by its
 // 10 µs timestamp within the current 2-rev window.
@@ -1321,17 +1334,44 @@ fn main() -> ! {
             // end of the loop body) - closes the busy% accounting.
             let _dur_main = DurGuard::new(&DUR_MAIN);
 
-            // Analog black-box trigger fired? Inject a `j` so the
-            // frozen ring dumps through the standard WAXWING path
-            // (its own freeze_waveform call on an already-frozen
-            // ring returns the same alignment — idempotent).
+            // Analog black-box trigger fired? The ISR froze the
+            // free-run current ring (adc_sync::CUR_RING) the instant a
+            // >4 A cycle sample was seen; it holds the ~0.55 ms of
+            // oversampled (~150/cycle) current LEADING UP TO the
+            // trigger — the spike ONSET at ~0.27 µs resolution, which
+            // is what distinguishes a smooth winding-limited BEMF-aided
+            // ramp from a sub-µs shoot-through transient at a switching
+            // edge. Dump it flat (4 samples/frame), resume the ring,
+            // then inject a `j` to append the per-cycle analog context
+            // (A/B/comp/sector) for correlation.
             let mut injected: Option<u8> = None;
             if WAX_TRIGGERED.swap(false, Ordering::Relaxed) {
                 write!(
                     &mut tx_writer,
-                    "!! WAX TRIGGER: >2.4 A cycle sample - analog ring frozen, dumping\r\n"
+                    "!! WAX TRIGGER: >4 A cycle sample - free-run current ring frozen\r\n"
                 )
                 .ok();
+                let oldest = adc_sync::freeze_current();
+                write!(
+                    &mut tx_writer,
+                    "gecko: {} samples b85 isns oversampled 12-bit, adc_hz~3700000\r\n",
+                    adc_sync::CUR_FRAMES,
+                )
+                .ok();
+                minz_core::dump::wax_cdump(
+                    adc_sync::CUR_FRAMES / 4,
+                    |k| {
+                        let base = oldest + k * 4;
+                        [
+                            adc_sync::cur_word(base),
+                            adc_sync::cur_word(base + 1),
+                            adc_sync::cur_word(base + 2),
+                            adc_sync::cur_word(base + 3),
+                        ]
+                    },
+                    |bb| tx_writer.write_blocking(bb),
+                );
+                adc_sync::resume_current();
                 injected = Some(b'j');
             }
 
@@ -1701,23 +1741,30 @@ fn main() -> ! {
                         tx_writer.write_blocking(&[]);
                     }
                     b'j' => {
-                        // WAXWING: freeze the DMA waveform ring and
-                        // dump ~85 ms of per-PWM-cycle frames in the
-                        // rinz cdump/Ascii85 format. Channels per
-                        // frame: ch9=A (PA4), ch10=B (PA5), ch8=
-                        // current, ch99=status byte (bit0 COMP value,
-                        // bits1-3 sector) from PWM_SAMPLE_BUF — the
-                        // two rings advance in lockstep at 24 kHz,
-                        // aligned here by their write heads (≤2-frame
-                        // skew). Motor keeps running; the current
-                        // failsafe is blind for the ~110 ms dump.
-                        let adc_idx = adc_sync::freeze_waveform();
+                        // WAXWING: dump ~85 ms of per-PWM-cycle frames
+                        // in the rinz cdump/Ascii85 format. Channels
+                        // per frame: ch9=A (PA4), ch10=B (PA5), ch8=
+                        // current (all mid-ON from the injected burst),
+                        // ch99=status byte (bit0 COMP value, bits1-3
+                        // sector). Under the GECKO-scope hybrid these
+                        // come from the CPU-written CTX rings (the DMA
+                        // ring now carries the oversampled free-run
+                        // current, dumped by `J`) — all four rings
+                        // advance in lockstep at the same TIM1_UP index.
+                        // Snapshot under mask so a wrap can't tear the
+                        // A/B/I/status alignment; motor keeps running.
+                        let mut a = [0u16; PWM_SAMPLE_LEN];
+                        let mut b = [0u16; PWM_SAMPLE_LEN];
+                        let mut ci = [0u16; PWM_SAMPLE_LEN];
                         let mut status = [0u8; PWM_SAMPLE_LEN];
                         NVIC::mask(Interrupt::TIM1_UP_TIM16);
                         let pwm_head =
                             (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
-                        for (i, s) in status.iter_mut().enumerate() {
-                            *s = PWM_SAMPLE_BUF[i].load(Ordering::Relaxed);
+                        for i in 0..PWM_SAMPLE_LEN {
+                            a[i] = CTX_A[i].load(Ordering::Relaxed);
+                            b[i] = CTX_B[i].load(Ordering::Relaxed);
+                            ci[i] = CTX_I[i].load(Ordering::Relaxed);
+                            status[i] = PWM_SAMPLE_BUF[i].load(Ordering::Relaxed);
                         }
                         unsafe { NVIC::unmask(Interrupt::TIM1_UP_TIM16) };
 
@@ -1725,8 +1772,7 @@ fn main() -> ! {
                             &mut tx_writer,
                             "\r\ncdump: {} frames b85 4 channels (ch9 ch10 ch8 ch99) \
                              12-bit, sample_hz={} Hz\r\n",
-                            adc_sync::WAX_FRAMES,
-                            PWM_FREQUENCY_HZ,
+                            PWM_SAMPLE_LEN, PWM_FREQUENCY_HZ,
                         )
                         .ok();
                         // Framing (LE word packing, 2 a85 groups /
@@ -1734,20 +1780,42 @@ fn main() -> ! {
                         // in minz_core::dump; this site only supplies
                         // the ring accessors.
                         minz_core::dump::wax_cdump(
-                            adc_sync::WAX_FRAMES,
+                            PWM_SAMPLE_LEN,
                             |k| {
-                                let f =
-                                    ((adc_idx + k) % adc_sync::WAX_FRAMES) * adc_sync::WAX_CHANS;
+                                let f = (pwm_head + k) & (PWM_SAMPLE_LEN - 1);
+                                [a[f], b[f], ci[f], status[f] as u16]
+                            },
+                            |bb| tx_writer.write_blocking(bb),
+                        );
+                    }
+                    b'G' => {
+                        // GECKO-scope: on-demand dump of the free-run
+                        // oversampled current ring (~150 samples/PWM
+                        // cycle, ~0.55 ms). Same payload as the >4 A
+                        // auto-trigger, but manual — for baseline shape
+                        // and format checks. Freeze → flat cdump (4
+                        // samples/frame, oldest-first) → resume.
+                        let oldest = adc_sync::freeze_current();
+                        write!(
+                            &mut tx_writer,
+                            "\r\ngecko: {} samples b85 isns oversampled 12-bit, adc_hz~3700000\r\n",
+                            adc_sync::CUR_FRAMES,
+                        )
+                        .ok();
+                        minz_core::dump::wax_cdump(
+                            adc_sync::CUR_FRAMES / 4,
+                            |k| {
+                                let base = oldest + k * 4;
                                 [
-                                    adc_sync::wax_word(f),
-                                    adc_sync::wax_word(f + 1),
-                                    adc_sync::wax_word(f + 2),
-                                    status[(pwm_head + k) & (PWM_SAMPLE_LEN - 1)] as u16,
+                                    adc_sync::cur_word(base),
+                                    adc_sync::cur_word(base + 1),
+                                    adc_sync::cur_word(base + 2),
+                                    adc_sync::cur_word(base + 3),
                                 ]
                             },
-                            |b| tx_writer.write_blocking(b),
+                            |bb| tx_writer.write_blocking(bb),
                         );
-                        adc_sync::resume_waveform();
+                        adc_sync::resume_current();
                     }
                     b'e' => {
                         do_edge_dump = true;
@@ -2702,18 +2770,17 @@ fn TIM1_UP_TIM16() {
     // and TIM7 (lower priority since the 2026-07-13 swap — this
     // invariant was FALSE while TIM7 sat at level 2) can't interrupt
     // us — plain load/store min/max is race-free.
-    let (pa_a, pa_b, i_raw) = adc_sync::last_frame();
+    let (pa_a, pa_b, i_raw, vbat_raw) = adc_sync::inj_read();
 
-    // FIRMWARE SAG KILL — pumped from the WRAP SLOT: harvesting +
-    // restarting the injected vbat conversion here means it runs
-    // 0-0.75 µs into the cycle, finished before the 1.25 µs regular
-    // trigger — zero contention with the phase/current sequence
-    // (the TIM7-resident version collided ~40 % of the time and
-    // corrupted the sector confirms on two motors). Kill at −10 %
-    // from the arm baseline (or the brownout backstop), debounced
-    // 64 consecutive samples = 1.3 ms at 48 kHz — real sag is
-    // milliseconds; single-sample glitches false-tripped once.
-    if let Some(raw) = minz::adc_sync::vbat_pump() {
+    // FIRMWARE SAG KILL — vbat is now the 4th injected channel, so it
+    // arrives mid-ON alongside A/B/current every cycle (was a separate
+    // 8.2 µs software pump that collided with the phase sequence ~40 %
+    // of the time and corrupted sector confirms on two motors). Same
+    // one-per-cycle rate as the old wrap-slot pump, so the debounce
+    // timing is unchanged. Kill at −10 % from the arm baseline (or the
+    // brownout backstop), debounced 64 consecutive samples = 1.3 ms.
+    {
+        let raw = vbat_raw;
         VBAT_RAW_LIVE.store(raw, Ordering::Relaxed);
         if raw < VBAT_MIN_RAW.load(Ordering::Relaxed) {
             VBAT_MIN_RAW.store(raw, Ordering::Relaxed);
@@ -2757,7 +2824,7 @@ fn TIM1_UP_TIM16() {
         && !WAX_TRIGGERED.load(Ordering::Relaxed)
     {
         WAX_TRIG_ARMED.store(false, Ordering::Relaxed);
-        minz::adc_sync::freeze_waveform();
+        minz::adc_sync::freeze_current();
         WAX_TRIGGERED.store(true, Ordering::Relaxed);
     }
     WINDOW_I_SUM.fetch_add(i_raw as u32, Ordering::Relaxed);
@@ -2844,6 +2911,14 @@ fn TIM1_UP_TIM16() {
     let idx = (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
     let value = comp2::value() as u8;
     let sector = CURRENT_SECTOR.load(Ordering::Relaxed) & 0x07;
+    // Per-cycle context (GECKO-scope hybrid): mid-ON A/B/current from
+    // this cycle's injected burst + the free-run current-ring head, so
+    // the `j` analog dump and the oversampled `J` autopsy can align
+    // cycles onto the two streams. Same index as the status byte below.
+    CTX_A[idx].store(pa_a, Ordering::Relaxed);
+    CTX_B[idx].store(pa_b, Ordering::Relaxed);
+    CTX_I[idx].store(i_raw, Ordering::Relaxed);
+    CTX_MARK[idx].store(adc_sync::cur_head() as u16, Ordering::Relaxed);
     PWM_SAMPLE_BUF[idx].store(value | (sector << 1), Ordering::Relaxed);
     PWM_SAMPLE_IDX.store(
         (idx as u32).wrapping_add(1) & PWM_SAMPLE_MASK,
