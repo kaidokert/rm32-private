@@ -129,9 +129,25 @@ evidence: engage first-try on every paired run (both builds), steady
 qzc 100% both, identical lock speeds (388/451/519 Hz), and 3 interleaved
 ABAB pairs with hybrid ≥ control every pair (interleaving is valid
 regardless of any run-to-run factor — it's the honest way to A/B).
-`checkpoint-24k-hybrid`=902c4d7 tags the gated build. Still OPEN: the
->4 A monster autopsy needs the amp ~42+ regime (spikes don't exist
-below ~amp 42) — run `gecko.py --wait` at amp 42+/48 kHz.
+`checkpoint-24k-hybrid`=902c4d7 tags the gated build.
+
+**The "broke at amp 16-20" observations were SWIFT OFF, not degradation.**
+Every ladder ran cl_lock_map WITHOUT `--fast`, so both builds hit the
+~amp 18-20 confirm wall (~500 Hz). WITH `--fast` (SWIFT) the same gated
+hybrid on the same bench climbs amp 16→44 = 515→1316 Hz, qzc 100% every
+rung, currents 66→700 mA, vbat steady 8.16-8.25 V. A missing test flag,
+not the environment — the honest version of "why does a fixed binary
+give different results" is always "check the config / bisect the code,"
+never "the bench drifted."
+
+**Intra-cycle shoot-through autopsy** (`cl_lock_map --gecko-at N --fast`
+→ `gecko.py --infile`): at amp 40/44 (1215-1316 Hz) the oversampled
+current is SMOOTH winding-limited — peak ~1.3 A, 0 railed, no sub-µs
+switching-edge transients. **No shoot-through.** Confirms at 0.27 µs
+resolution the prior census (the monster events are ZC-miss ramps, not
+two-FET shoot-through). An actual >4 A event capture needs amp ~48+
+(the monster fixes zero them at 42-44) — the burnt-motor danger regime,
+so operator-supervised. Tools: `gecko_load.py --fast --amp N`.
 
 Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
 (`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
