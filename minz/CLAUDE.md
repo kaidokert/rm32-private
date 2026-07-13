@@ -153,9 +153,25 @@ commutation INTERVAL diverges first (100→70→160 µs at ~1400 Hz, seeded
 by a premature SWIFT accept, qzc_off=13), THEN current ramps; i_avg≈i_max
 (sustained). **Root cause of the amp draw = commutation-timing divergence
 at the speed limit, NOT shoot-through, NOT the supply** — the supply sag
-is downstream of the amp draw, never the cause. Lever: tighten the
-high-speed SWIFT accept / bound the interval jump. Tools: `gecko_load.py
---fast --amp N [--hunt S]`, `onset_probe.py`.
+is downstream of the amp draw, never the cause.
+
+**WHY the divergence** (black-box on WAX-trigger, `af5bdd2`): every `ACC`
+in the bb shows d=**24 µs = the LPTIM2 commutation-delay FLOOR**
+(`commutation_delay_us().max(24)`). At ~124 µs windows / advance 16° the
+ideal delay ≈ 29−elapsed ≤ 24 → clamped, so the loop runs at zero
+scheduling margin; commutations run late; the window after a late (esp.
+always-blind phase-C dead-reckon — sectors 0/3 have no ADC) opens late →
+its ZC is missed (`NOZ`, d=3-4 raw edges) → `BLD` blind mistimed
+commutation → BEMF-aided current spike. Then **FIX #1** (window.rs: at
+interval<160 µs a SINGLE miss widens the gate 30%→8%) **+ SWIFT**
+(`on_held_edge` returns `AcceptNow`, BYPASSING `confirm_step` under lock)
+amplify it — the 8% gate + ~1 µs blank + confirm-free accept take a
+premature edge, misses recur (bb: sec4,sec4,sec2), interval grows
+124→163 µs → runaway; amp 46 recovers, amp 48 compounds. Levers:
+lower/rework the LPTIM2 delay floor (the hard limit); make SWIFT confirm
+(not `AcceptNow`) in reacq; raise the speed blank floor; better phase-C
+dead-reckoning. Tools: `gecko_load.py --fast --amp N [--hunt S]`,
+`onset_probe.py`, bb-on-WAX-trigger.
 
 Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
 (`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
