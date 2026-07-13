@@ -173,6 +173,20 @@ lower/rework the LPTIM2 delay floor (the hard limit); make SWIFT confirm
 dead-reckoning. Tools: `gecko_load.py --fast --amp N [--hunt S]`,
 `onset_probe.py`, bb-on-WAX-trigger.
 
+**DELAY FLOOR REWORKED 24→8 µs** (commit `032faf1`): it was a SOFTWARE
+over-clamp in `commutation_delay_us().max(24)`, not a hardware limit —
+at ~1400 Hz the real delay is ~10 µs so `.max(24)` added 14 µs of
+lateness every commutation. `LPTIM2_MIN_DELAY_US` 24→8 (core/timing.rs) +
+`schedule_us` clamp min 16→4. Envelope amp 45→50, dropout 48→52, 1482 Hz
+@ amp 50, sweep 15→50 qzc 100% (`floor8_full_map.png`). Confirmed
+positively: on-demand bb (`B` key / `gecko_load.py --bb`) at amp 48 shows
+ACC delays **9-13 µs varying**, not floored. The /64→/16 LPTIM2 clock
+speedup FAILED (motor 2× fast — L431 LPTIM2 kernel doesn't scale as
+`/PRESC` predicts; reverted); /64 delivers 8 µs fine. LPTIM2 is still
+suboptimal (bounce + ARROK sync + `delay(200)` = ~3 µs/commutation baked
+into `elapsed`); a GP-timer one-pulse (TIM7, or TIM16 = production rm32's
+COM_TIMER) is the right peripheral if pushing past amp 52.
+
 Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
 (`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
 buffer = the spike ONSET) then appends a `j` context dump.
