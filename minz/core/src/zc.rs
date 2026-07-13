@@ -137,16 +137,20 @@ pub enum HeldEdge {
 /// must be consistent before the candidate becomes visible.
 #[inline]
 pub fn on_held_edge(zs: &ZcState<'_>, expected: bool, now_us: u32) -> HeldEdge {
-    // SWIFT accepts immediately under lock — EXCEPT in re-acquisition.
-    // Reacq means the gate just widened to 8 % after a ZC miss, which
-    // is exactly when a premature/noise edge (the top-end divergence
-    // seed) is most likely; accepting it with zero confirmation
-    // anchors the commutation schedule to junk. In reacq, fall back to
-    // the candidate + wrap-confirm path (confirm_need = 2 there) so the
-    // widened gate can't feed the loop an unconfirmed edge.
+    // SWIFT accepts immediately under lock — EXCEPT in re-acquisition
+    // at the TOP END. Reacq widens the gate to 8 % after a ZC miss;
+    // near the ceiling (interval < TOPEND_US) that widened gate admits
+    // the premature/noise edge that seeds the divergence, so fall back
+    // to the candidate + wrap-confirm path. Gated to the top end: at
+    // mid speed the confirm latency only hurts recovery and the amp
+    // 40-44 climb (bench), so keep the proven immediate accept there.
+    let reacq_topend = zs.cl_reacq.load(Ordering::Relaxed) && {
+        let iv = zs.interval_us.load(Ordering::Relaxed);
+        iv > 0 && iv < crate::window::TOPEND_US
+    };
     if zs.cl_fast_path.load(Ordering::Relaxed)
         && zs.cl_active.load(Ordering::Relaxed)
-        && !zs.cl_reacq.load(Ordering::Relaxed)
+        && !reacq_topend
     {
         HeldEdge::AcceptNow
     } else if zs.cand_zc_us.load(Ordering::Relaxed) == u32::MAX {
@@ -317,13 +321,19 @@ pub fn accept_publish(
         }
         if zs.cl_active.load(Ordering::Relaxed) {
             // A/B always re-time the commutation from the accepted ZC.
-            // C (sectors 0/3) re-times too — but ONLY under SWIFT, where
-            // the comparator supplies a REAL C zero-cross (via the
-            // CHAMELEON mux). The ADC-confirm path has no C route, so C
-            // stays dead-reckoned (free-run 1.0×T) there. Re-timing C
-            // removes the free-run error that opened the following A/B
-            // window late — the top-end ZC-miss cascade initiator.
-            schedule = is_ab || zs.cl_fast_path.load(Ordering::Relaxed);
+            // C (sectors 0/3) re-times too — but ONLY under SWIFT AND at
+            // the TOP END (interval < TOPEND_US). Under SWIFT the
+            // comparator gives a real C ZC (via the CHAMELEON mux; the
+            // ADC-confirm path has no C route). At the ceiling, re-timing
+            // C removes the free-run error that opens the following A/B
+            // window late (the ZC-miss initiator) — worth amp 50→55. But
+            // at mid speed the dead-reckon is more robust than a
+            // possibly-noisy comparator C ZC while accelerating (bench:
+            // re-timing C broke the amp 40-44 climb), so keep dead-reckon
+            // there.
+            let c_retime = zs.cl_fast_path.load(Ordering::Relaxed)
+                && interval_us < crate::window::TOPEND_US;
+            schedule = is_ab || c_retime;
         }
     }
     Some(AcceptPlan {
@@ -475,13 +485,20 @@ mod tests {
         r.cl_fast_path.store(true, Ordering::Relaxed);
         r.cl_active.store(true, Ordering::Relaxed);
         assert_eq!(on_held_edge(&r.zs(), true, 10_000), HeldEdge::AcceptNow);
-        // In re-acquisition, SWIFT must NOT AcceptNow — it arms a
-        // candidate so the widened 8 % gate can't feed an unconfirmed
-        // (premature) edge (the amp-52 divergence seed).
+        // In re-acquisition AT THE TOP END, SWIFT must NOT AcceptNow —
+        // it arms a candidate so the widened 8 % gate can't feed an
+        // unconfirmed (premature) edge (the amp-52 divergence seed).
         r.cl_reacq.store(true, Ordering::Relaxed);
+        r.interval_us.store(110, Ordering::Relaxed); // < TOPEND_US
         assert_eq!(on_held_edge(&r.zs(), true, 10_000), HeldEdge::Armed);
         assert_eq!(r.cand_zc_us.load(Ordering::Relaxed), 10_000);
+        r.close_window();
+        // But at mid speed, reacq still accepts immediately (the
+        // confirm latency there hurts the climb).
+        r.interval_us.store(300, Ordering::Relaxed); // > TOPEND_US
+        assert_eq!(on_held_edge(&r.zs(), true, 10_000), HeldEdge::AcceptNow);
         r.cl_reacq.store(false, Ordering::Relaxed);
+        r.interval_us.store(0, Ordering::Relaxed);
         r.close_window();
         // Fast path off, or engage/open-loop: candidate route.
         r.cl_active.store(false, Ordering::Relaxed);
@@ -677,19 +694,29 @@ mod tests {
     }
 
     #[test]
-    fn accept_publish_c_windows_reschedule_under_swift() {
-        // Under SWIFT the comparator gives a real C ZC, so C re-times
-        // its commutation instead of dead-reckoning — but still never
-        // engages.
+    fn accept_publish_c_windows_reschedule_only_swift_topend() {
+        // SWIFT + TOP END: the comparator gives a real C ZC, so C
+        // re-times its commutation (but still never engages).
         for sec in [0u8, 3] {
             let r = Rig::new();
             r.cl_active.store(true, Ordering::Relaxed);
             r.cl_fast_path.store(true, Ordering::Relaxed);
             r.cl_armed.store(true, Ordering::Relaxed);
+            r.interval_us.store(110, Ordering::Relaxed); // < TOPEND_US
             let plan = accept_publish(&r.zs(), sec, 10_000, 1_000).unwrap();
             assert!(!plan.engaged, "sector {sec} engaged under SWIFT");
-            assert!(plan.schedule, "sector {sec} must re-time under SWIFT");
+            assert!(plan.schedule, "sector {sec} must re-time (SWIFT, top end)");
             assert!(r.cl_armed.load(Ordering::Relaxed), "C must not consume arm");
+        }
+        // SWIFT but MID speed (default interval 600 > TOPEND_US): C
+        // stays dead-reckoned — re-timing there broke the amp 40-44
+        // climb on the bench.
+        for sec in [0u8, 3] {
+            let r = Rig::new();
+            r.cl_active.store(true, Ordering::Relaxed);
+            r.cl_fast_path.store(true, Ordering::Relaxed);
+            let plan = accept_publish(&r.zs(), sec, 10_000, 1_000).unwrap();
+            assert!(!plan.schedule, "sector {sec} must dead-reckon at mid speed");
         }
     }
 

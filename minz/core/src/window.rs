@@ -62,6 +62,18 @@ pub use crate::blackbox::{EV_NOZ, EV_RAQ};
 /// the fragile engage. Monsters onset near 140 µs; 160 gives margin.
 pub const HIGH_SPEED_US: u32 = 160;
 
+/// TOP-END regime threshold (µs interval) for the SWIFT-reacq-confirm
+/// and phase-C re-time changes: below this (~amp ≥48, >~1.4 kHz) those
+/// changes are active. They EXTEND the top (amp 50→55) but, applied at
+/// mid speed, make the amp 40-44 climb-through fragile (bench: the
+/// re-timed C is less robust than the proven dead-reckon while
+/// accelerating). 125 sits ABOVE the amp 40-44 fragile zone
+/// (interval ~140-155 µs) and below amp 48 (~117 µs), so mid-amp keeps
+/// dead-reckon + immediate reacq accept. Distinct from HIGH_SPEED_US
+/// (160, which put the boundary at the amp 38-40 transition and
+/// toggled unstably).
+pub const TOPEND_US: u32 = 125;
+
 /// What the caller must do after the close: enqueue `rec` (if any)
 /// and record the black-box events (sector = the closed window's).
 #[derive(Default)]
