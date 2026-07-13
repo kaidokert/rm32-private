@@ -103,6 +103,7 @@ def main():
     ap.add_argument("--fast", action="store_true", help="enable SWIFT after engage (needed above ~amp 20)")
     ap.add_argument("--max-ma", type=float, default=2500, help="abort if isns exceeds this")
     ap.add_argument("--hunt", type=float, default=0.0, help="arm J and hold N s for a >4A auto-trigger spike capture")
+    ap.add_argument("--bb", action="store_true", help="press B for an on-demand black-box dump (commutation delays at speed)")
     ap.add_argument("--tag", default="loadshape")
     args = ap.parse_args()
 
@@ -141,6 +142,26 @@ def main():
             m = re.search(r"isns=(\d+\.\d+)A", echo)
             print(f"locked+ACTIVE, amp~{args.amp}, isns={m.group(1) if m else '?'}A", flush=True)
             b.drain()
+            if args.bb:
+                # On-demand black-box dump at speed, then done.
+                b.p.write(b"B")
+                t0 = time.time()
+                bb = b""
+                while time.time() - t0 < 2.0:
+                    c = p.read(65536)
+                    if c:
+                        bb += c
+                text = bb.decode("ascii", errors="replace")
+                b.send("w", 0.3)
+                (capdir / f"{stem}_bb.txt").write_text(text)
+                acc = [int(m) for m in re.findall(r"ACC s\d+ d=(\d+)", text)]
+                if acc:
+                    import statistics
+                    print(f"ACC delays (us): n={len(acc)} min={min(acc)} max={max(acc)} "
+                          f"mean={statistics.mean(acc):.1f} — {sorted(set(acc))}")
+                else:
+                    print("no ACC events parsed; raw bb saved")
+                return
             if args.hunt:
                 # Arm the >4A peak trigger (J turns on the free-run
                 # oversample + the intra-cycle peak scan) and HOLD,

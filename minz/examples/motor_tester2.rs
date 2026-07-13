@@ -1862,6 +1862,29 @@ fn main() -> ! {
                         );
                         adc_sync::oversample_stop();
                     }
+                    b'B' => {
+                        // On-demand black-box dump (freeze → dump →
+                        // thaw): read the live ACC commutation-delay
+                        // values at speed to confirm the floor rework —
+                        // ACC `d` should track the real delay, not sit
+                        // pinned at the old 24 µs floor.
+                        BB_FROZEN.store(true, Ordering::Relaxed);
+                        write!(&mut tx_writer, "bb (on demand):\r\n").ok();
+                        let bidx = BB_IDX.load(Ordering::Relaxed) as usize;
+                        minz_core::blackbox::format_dump(
+                            (0..BB_LEN).map(|k| {
+                                let i = (bidx + k) % BB_LEN;
+                                minz_core::blackbox::Event {
+                                    t: BB_T[i].load(Ordering::Relaxed),
+                                    ty: BB_TYPE[i].load(Ordering::Relaxed),
+                                    sector: BB_SEC[i].load(Ordering::Relaxed),
+                                    data: BB_DATA[i].load(Ordering::Relaxed),
+                                }
+                            }),
+                            |b| tx_writer.write_blocking(b),
+                        );
+                        BB_FROZEN.store(false, Ordering::Relaxed);
+                    }
                     b'e' => {
                         do_edge_dump = true;
                     }

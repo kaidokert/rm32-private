@@ -64,7 +64,7 @@ pub fn init() {
 /// Disabling resets the counter (and wipes ARR — rewritten anyway).
 pub fn schedule_us(us: u32) {
     let lptim = unsafe { &*stm32::LPTIM2::ptr() };
-    let ticks = (us.clamp(16, 52_000) * TICKS_PER_US_X4 / 4).min(0xFFFE) as u16;
+    let ticks = (us.clamp(4, 13_000) * TICKS_PER_US_X4 / 4).min(0xFFFE) as u16;
     lptim.cr.modify(|_, w| w.enable().clear_bit());
     lptim.cr.modify(|_, w| w.enable().set_bit());
     // RM0394: the LPTIM is actually enabled two counter-clock cycles
@@ -99,7 +99,7 @@ pub fn schedule_us(us: u32) {
 /// a pending shot still needs the full [`schedule_us`] disable/enable.
 pub fn reschedule_light(us: u32) {
     let lptim = unsafe { &*stm32::LPTIM2::ptr() };
-    let ticks = (us.clamp(16, 52_000) * TICKS_PER_US_X4 / 4).min(0xFFFE) as u16;
+    let ticks = (us.clamp(4, 13_000) * TICKS_PER_US_X4 / 4).min(0xFFFE) as u16;
     lptim
         .icr
         .write(|w| w.arrmcf().set_bit().arrokcf().set_bit());

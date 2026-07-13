@@ -37,13 +37,25 @@ pub fn auto_advance_deg(interval_us: u32, manual_deg: i32) -> i32 {
     (base + boost).min(20)
 }
 
+/// Minimum schedulable commutation delay, µs — the LPTIM2 floor.
+/// Was 24 µs at the /64 kernel (1.25 MHz: enable→start = 2 counter
+/// clocks = 1.6 µs, plus the disable/enable warm-up + ARR-write sync).
+/// At ~1400 Hz (≈124 µs windows, advance 16°) the ideal ZC→commutation
+/// delay is `124·14/60 ≈ 29 − elapsed ≈ 20 µs`, so the 24 µs floor
+/// CLAMPED it — the loop ran late by ~4-6 µs, which is where the top-end
+/// ZC-miss cascade started (black-box: every ACC pinned at d=24). The
+/// LPTIM2 kernel is now /16 (5 MHz, 0.2 µs/tick, 2-clock enable = 0.4 µs
+/// + a shorter warm-up), so the deliverable floor drops to ~8 µs and the
+/// ~20 µs high-speed delay passes UNCLAMPED. Verified positively: the
+/// bb ACC `d` now tracks the real delay (~15-22 µs, varying) instead of
+/// sitting at the floor.
+pub const LPTIM2_MIN_DELAY_US: i32 = 8;
+
 /// Delay from an accepted ZC to the commutation instant:
-/// `interval·(30−adv)/60 − elapsed`, clamped to the LPTIM2 minimum
-/// (24 µs — enable→start needs 2 counter clocks and the write takes
-/// time).
+/// `interval·(30−adv)/60 − elapsed`, clamped to [`LPTIM2_MIN_DELAY_US`].
 #[inline]
 pub fn commutation_delay_us(interval_us: u32, adv_deg: i32, elapsed_us: i32) -> u32 {
-    (interval_us as i32 * (30 - adv_deg) / 60 - elapsed_us).max(24) as u32
+    (interval_us as i32 * (30 - adv_deg) / 60 - elapsed_us).max(LPTIM2_MIN_DELAY_US) as u32
 }
 
 /// Earliest-acceptable-ZC gate, µs from window start. 30 % of the
@@ -146,8 +158,11 @@ mod tests {
         // interval 600 µs, no advance, accepted 60 µs after ZC:
         // 600·30/60 − 60 = 240.
         assert_eq!(commutation_delay_us(600, 0, 60), 240);
-        // Late accept can't go below the LPTIM2 floor.
-        assert_eq!(commutation_delay_us(200, 12, 400), 24);
+        // Late accept can't go below the LPTIM2 floor (reworked 24→8).
+        assert_eq!(commutation_delay_us(200, 12, 400), LPTIM2_MIN_DELAY_US as u32);
+        // High-speed case that USED to clamp at 24 now passes through:
+        // 124·14/60 − 8 = 20 µs (above the 8 µs floor).
+        assert_eq!(commutation_delay_us(124, 16, 8), 20);
     }
 
     #[test]
