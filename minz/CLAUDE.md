@@ -187,6 +187,22 @@ suboptimal (bounce + ARROK sync + `delay(200)` = ~3 µs/commutation baked
 into `elapsed`); a GP-timer one-pulse (TIM7, or TIM16 = production rm32's
 COM_TIMER) is the right peripheral if pushing past amp 52.
 
+**SWIFT-reacq-confirm + PHASE-C RE-TIME** (commit `6b55cd1`): (1)
+`zc::on_held_edge` arms+confirms instead of `AcceptNow` in reacq (the
+widened 8% gate can't feed a premature edge); (2) `zc::accept_publish` +
+`drive::commutation_class` — phase C (sectors 0/3) re-times from the
+comparator ZC (CHAMELEON mux) instead of dead-reckoning. C's comparator
+ZC was always seen under SWIFT — only the ADC-confirm path lacks a C
+route, so dead-reckon was a false constraint under SWIFT. BOTH
+**TOPEND-gated** (`interval < window::TOPEND_US=125 µs`, ~amp ≥48):
+ungated they broke the amp 40-44 climb (re-timed C less robust than
+dead-reckon while accelerating); the earlier `HIGH_SPEED_US=160` gate
+toggled unstably at the amp 38-40 transition. Result: clean full sweep
+15→55, qzc 100%, **1610 Hz @ amp 55** (baseline dropped at 52). The map
+(`topend2_map.png`) shows window-length σ dropping 20%→6% at the amp-48
+boundary where C re-timing engages. Change 1 alone regressed (confirm
+latency); helps only combined+gated.
+
 Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
 (`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
 buffer = the spike ONSET) then appends a `j` context dump.
