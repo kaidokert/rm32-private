@@ -140,14 +140,22 @@ not the environment — the honest version of "why does a fixed binary
 give different results" is always "check the config / bisect the code,"
 never "the bench drifted."
 
-**Intra-cycle shoot-through autopsy** (`cl_lock_map --gecko-at N --fast`
-→ `gecko.py --infile`): at amp 40/44 (1215-1316 Hz) the oversampled
-current is SMOOTH winding-limited — peak ~1.3 A, 0 railed, no sub-µs
-switching-edge transients. **No shoot-through.** Confirms at 0.27 µs
-resolution the prior census (the monster events are ZC-miss ramps, not
-two-FET shoot-through). An actual >4 A event capture needs amp ~48+
-(the monster fixes zero them at 42-44) — the burnt-motor danger regime,
-so operator-supervised. Tools: `gecko_load.py --fast --amp N`.
+**Shoot-through autopsy — ANSWERED: it is NOT shoot-through.** The mid-ON
+`i_raw` sees one point per PWM cycle and misses intra-cycle spikes (why
+the oversample first "saw nothing"). Fix: the WAX auto-trigger now scans
+the FREE-RUN RING PEAK (stride 4), and `gecko_load.py --hunt` arms J and
+holds in the spike regime. Caught a real >4 A spike at amp 46: **peak
+4.59 A, 0 railed, intra-cycle shape a SMOOTH 2→4.6 A ramp over ~150 µs
+across multiple PWM cycles** (`captures/spikehunt46_*.png`) — winding-
+limited BEMF-aided current on an L/R constant, NOT a sub-µs shoot-through
+rail. `onset_probe.py` on `sweep55_t48.bin` proves the cause-order: the
+commutation INTERVAL diverges first (100→70→160 µs at ~1400 Hz, seeded
+by a premature SWIFT accept, qzc_off=13), THEN current ramps; i_avg≈i_max
+(sustained). **Root cause of the amp draw = commutation-timing divergence
+at the speed limit, NOT shoot-through, NOT the supply** — the supply sag
+is downstream of the amp draw, never the cause. Lever: tighten the
+high-speed SWIFT accept / bound the interval jump. Tools: `gecko_load.py
+--fast --amp N [--hunt S]`, `onset_probe.py`.
 
 Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
 (`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
