@@ -103,6 +103,80 @@ at 85-91 µs windows where the fixes (tuned at ~130 µs) can't catch it.
 4. **Phase-C robustness** — it initiates the cascade; a tighter C
    confirm or dead-reckon accuracy would raise the perturbation floor.
 
+## FREQUENCY-DOMAIN model — the ceiling is an f_e limit, not a motor/throttle limit
+
+The controller's limit is set by FIXED latencies vs the shrinking window,
+so it lives in **electrical frequency**, independent of the motor Kv or
+the supply voltage. A higher-Kv motor or more volts just reaches the same
+f_e ceiling at LOWER throttle; this motor at 8 V happens to hit it at
+~amp 66-68. Window `T = 1e6/(6·f_e)` µs.
+
+### Fixed latencies (measured; do NOT scale with T)
+
+| cost | value | what it is |
+|---|---|---|
+| `elapsed` | **~15 µs** (12-18) | ZC-ISR-entry → schedule-call: persistence loop + estimator + confirm + the reads |
+| LPTIM2 commutation ISR | **~22 µs** | set_six_step + mux + close_float_window + reschedule; shares prio 1 with COMP, so it's BLIND time — a ZC landing here waits |
+| delay floor | **8 µs** | `LPTIM2_MIN_DELAY_US` (bounce + ARROK + delay(200)) |
+| ZC jitter σ | **~7 µs** | roughly constant in µs |
+
+### T-dependent budgets
+
+- window = `T`; gate = `0.30·T`; ZC→commutation delay budget =
+  `T·(30−adv)/60`. Advance auto-ramps to a 20° cap, so at speed the
+  budget is `T·10/60 = T/6`.
+
+### Where each margin hits zero
+
+| margin | condition | T | **f_e** |
+|---|---|---|---|
+| schedule delay starts flooring | `T/6 − elapsed < 8` | ~120 µs | ~1400 Hz (obs. amp 55-58) |
+| **schedule budget = elapsed (goes negative)** | `T/6 = 15` | **90 µs** | **~1850 Hz** |
+| detection margin < 3σ | `0.23·T < 21` | ~91 µs | **~1830 Hz** |
+
+**Both walls land at ~1850 Hz** — and it's the SAME cause: the ~15 µs
+`elapsed` is (a) the whole delay budget at T=90, and (b) via the
+resulting late commutation, what pushes the next ZC toward the gate.
+This is exactly the observed break (amp 68 ≈ 1850 Hz). The +22 µs
+commutation-ISR blind time (24 % of a 90 µs window) is the aggravator
+that turns a phase-C wobble into a miss.
+
+### Implication for the 95 % target and other motors
+
+- Projected 95 % on THIS motor/voltage ≈ **2000-2200 Hz** (user eyeball).
+  That is ABOVE the ~1850 Hz timing ceiling → **the controller can't
+  hold 95 % here today, and it would break at ~1850 Hz on ANY motor**
+  (higher-Kv / more-volts just arrive there sooner).
+- For robustness we want headroom well above 2200 — say a 2500-3000 Hz
+  ceiling — so a hotter motor or a fresh battery doesn't walk into the
+  wall.
+
+### Levers, sized to a target ceiling
+
+Ceiling ≈ where `T/6 ≈ elapsed` (+ the floor and detection track it):
+
+| target f_e | T | need budget `T/6` > elapsed → elapsed ≤ | how |
+|---|---|---|---|
+| 1850 (now) | 90 | ~15 µs | current |
+| 2200 (95 %) | 76 | ~11 µs | cut elapsed ~4 µs |
+| 2500 | 67 | ~9 µs | cut elapsed ~6 µs + floor→~4 |
+| 3000 (margin) | 56 | ~7 µs | cut elapsed ~8 µs + floor→~2 (TIM16) |
+
+Reducible pieces of `elapsed` (~15 µs): the persistence loop (12 reads
+at speed), the estimator work done before the elapsed read, and the
+LPTIM2-ISR blind time bleeding into it (the "LPTIM diet" lever). Plus the
+8 µs floor (GP-timer one-pulse, parked).
+
+**One re-tuning lever that needs NO latency cut:** advance vs the two
+margins. Advance at the 20° cap sets the budget to `T/6` (small) to buy
+detection margin (ZC lands later, away from the gate). But at the ceiling
+the SCHEDULE budget is the binding constraint. A lower advance at the
+very top gives a bigger budget (`T·(30−adv)/60`) at the cost of detection
+margin — there is an optimum advance-vs-f_e profile that balances the two
+walls, and it currently over-weights detection. Worth a sweep: hold amp
+~62-66 and step advance down, watch qzc% (detection) vs the ACC-delay
+floor (schedule) — the crossover is the better cap.
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
