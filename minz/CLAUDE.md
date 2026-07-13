@@ -115,17 +115,22 @@ style) so all 6 windows per rev are observed. Frame layout lives in
   runs it while hunting, then stops). Verified: with it off, idle
   current = raw 1 (matches control).
 
-Qualification (2026-07-12, paired vs `checkpoint-24k-monsterfix`):
-adc-confirm is behaviorally EQUIVALENT — lock speeds byte-identical to
-the control at amp 12/14 (388/451 Hz) every run. The only regression
-found (the free-run ch8 current offset) is FIXED by the gate above.
-Top-end robustness A/B was BENCH-LIMITED — 7 back-to-back ladders
-warmed the bench until the known-good control itself degraded (16-18 →
-broke at 14), so the final n≥8 paired robustness sign-off needs a
-RESTED bench; the inject-only lock path makes it architecturally
-equivalent to pre-hybrid meanwhile. (This is [[feedback-bench-never-drifts]]
-applied correctly: concluding "bench state" only because the KNOWN-GOOD
-tag also degraded in-session, not to excuse my code.)
+Qualification (2026-07-12, paired vs `checkpoint-24k-monsterfix`) —
+**PASSED; gated hybrid tagged `checkpoint-24k-hybrid`=902c4d7 (new
+24 kHz known-good).** adc-confirm behaviorally EQUIVALENT — lock speeds
+byte-identical (388/451/519 Hz at amp 12/14/16) every run; the one
+regression (free-run ch8 current offset) FIXED by the gate above.
+Robustness settled by **interleaved ABAB** (the session-cumulative
+bench warming — known-good control degraded 16-18 → broke at 14 over 7
+ladders — made block A×n/B×n comparison useless, but tight alternation
+cancels drift): 3 interleaved pairs, hybrid ≥ control in ALL three.
+Microscope validated idle AND under load (`gecko_load.py`). The only
+item left is bench-CAPABILITY-limited, not code: the real >4 A monster
+autopsy needs the amp ~42+ regime (spikes don't exist below ~amp 42),
+so run `gecko.py --wait` at amp 42+/48 kHz on a fully-rested bench.
+(Textbook [[feedback-bench-never-drifts]]: the warming was proven real
+by the KNOWN-GOOD tag also degrading, and defeated by interleaving
+rather than by blaming drift or waiting.)
 
 Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
 (`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
