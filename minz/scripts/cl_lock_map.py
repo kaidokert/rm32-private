@@ -43,6 +43,13 @@ ap.add_argument(
     "engage — engage itself always uses the proven adc-confirm path",
 )
 ap.add_argument("--tag", default="lockmap")
+ap.add_argument(
+    "--gecko-at",
+    type=int,
+    default=0,
+    help="at this amp rung (once locked), fire a G oversample dump and "
+    "save it to <tag>_gecko_a<amp>.txt for gecko.py --infile",
+)
 args = ap.parse_args()
 
 amps = [int(a) for a in args.amps.split(",")]
@@ -273,6 +280,24 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
                 print(f"amp {amp:2d}: {note}  << BLIND (qzc<50%) - aborting sweep", flush=True)
                 break
             print(f"amp {amp:2d}: {note}", flush=True)
+            if args.gecko_at and amp == args.gecko_at and not broke and qzc_pct >= 50:
+                # Fire a G oversample dump at this locked rung. Stream
+                # OFF first (binary MAGPIE frames would corrupt the text
+                # cdump), capture, stream back ON.
+                b.stream(False)
+                b.drain()
+                b.p.write(b"G")
+                t0 = time.time()
+                gbuf = bytearray()
+                while time.time() - t0 < 6:
+                    ch = b.p.read(65536)
+                    if ch:
+                        gbuf += ch
+                    if b"gecko:" in gbuf and b"end" in gbuf:
+                        break
+                (capdir / f"{args.tag}_gecko_a{amp}.txt").write_bytes(bytes(gbuf))
+                print(f"   GECKO dump @amp{amp}: {len(gbuf)} B saved", flush=True)
+                b.stream(True)
             if broke:
                 print("   breakage reported by firmware - stopping sweep", flush=True)
                 break

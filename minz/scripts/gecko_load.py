@@ -70,6 +70,13 @@ class Bench:
                 return
         sys.exit("edge mode set failed")
 
+    def enable_swift(self):
+        # SWIFT (M) is a stateful toggle — press until the echo says on.
+        for _ in range(2):
+            if "SWIFT" in self.send("M", 0.4):
+                return True
+        return False
+
     def engage(self):
         self.set_advance(0)
         self.set_filters()
@@ -93,6 +100,8 @@ def main():
     ap.add_argument("--port", default="COM41")
     ap.add_argument("--baud", type=int, default=2_000_000)
     ap.add_argument("--amp", type=int, default=14)
+    ap.add_argument("--fast", action="store_true", help="enable SWIFT after engage (needed above ~amp 20)")
+    ap.add_argument("--max-ma", type=float, default=2500, help="abort if isns exceeds this")
     ap.add_argument("--tag", default="loadshape")
     args = ap.parse_args()
 
@@ -105,13 +114,31 @@ def main():
         b = Bench(p, capdir / f"{stem}_session.log")
         try:
             if not b.engage():
-                sys.exit("engage failed 4x (bench may be too warm to lock)")
-            # climb from AMP_ENGAGE to the target amp
-            b.steps("a", max(0, args.amp - AMP_ENGAGE), wait=0.2)
-            time.sleep(1.0)
+                sys.exit("engage failed 4x")
+            if args.fast and not b.enable_swift():
+                sys.exit("SWIFT enable failed")
+            # Climb in ~4-amp chunks with a 2 s settle per chunk —
+            # matches cl_lock_map's proven --fast ladder pacing (SWIFT
+            # needs settle time after each amp jump).
+            amp = AMP_ENGAGE
+            while amp < args.amp:
+                nxt = min(args.amp, amp + 4)
+                b.steps("a", nxt - amp, wait=0.15)
+                amp = nxt
+                time.sleep(2.0)
+                echo = b.send("i", 0.8)
+                if "cl: ACTIVE" not in echo:
+                    sys.exit(f"ABORT: lost lock climbing to amp {amp} (not ACTIVE)")
+                m = re.search(r"isns=(\d+\.\d+)A", echo)
+                cur = float(m.group(1)) if m else 0.0
+                print(f"  amp {amp}: isns={cur:.3f}A", flush=True)
+                if cur * 1000 > args.max_ma:
+                    sys.exit(f"ABORT: isns {cur}A > max-ma")
             echo = b.send("i", 1.0)
+            if "cl: ACTIVE" not in echo:
+                sys.exit("ABORT: not ACTIVE before G")
             m = re.search(r"isns=(\d+\.\d+)A", echo)
-            print(f"locked, amp~{args.amp}, isns={m.group(1) if m else '?'}A — firing G", flush=True)
+            print(f"locked+ACTIVE, amp~{args.amp}, isns={m.group(1) if m else '?'}A — firing G", flush=True)
             # Fire G and capture the gecko dump under load.
             b.drain()
             p.write(b"G")
