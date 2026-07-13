@@ -82,6 +82,44 @@ COMP2 mux is automatic (CHAMELEON, `o` toggles, AM32 changeCompInput
 style) so all 6 windows per rev are observed. Frame layout lives in
 `scripts/magpie.py`, shared by all host scripts.
 
+### HYBRID ADC (2026-07-12) — supersedes single-group GECKO/WAXWING
+
+`src/adc_sync.rs` now runs TWO ADC1 groups at once (branch
+`bisect_init_changes`, on tag `checkpoint-24k-monsterfix`=715097d):
+
+- **Injected group** — hardware-triggered by TIM1 TRGO2 (OC4REF
+  falling, `CNT==CCR4`=SAMPLE_TICKS, mid-ON), **JADSTART-armed**. One
+  4-channel burst: ch9(A) ch10(B) ch8(current) ch11(vbat) at
+  47.5/47.5/12.5/47.5 cycles. `inj_read()->(A,B,current,vbat)`, read
+  in TIM1_UP at wrap. This REPRODUCES the old regular-group mid-ON
+  (A,B,current) triplet bit-for-bit and folds vbat in, so adc-confirm
+  / vbus-decay / overcurrent / sag-kill are control-behavior-identical
+  (the old `last_frame()`+`vbat_pump()` are gone). ⚠ a
+  hardware-triggered injected group STILL needs JADSTART to arm — see
+  the memory `reference-stm32-injected-jadstart`; omitting it left
+  vbat/A/B=0 (caught by a BENCH-NEVER-DRIFTS bisect vs the control:
+  control vbat=8.15 V, broken build 0 V, same bench).
+- **Regular group** — ch8(current) only, CONTINUOUS free-run (no
+  trigger), DMA circular into `CUR_RING` (2048 samples ≈ 0.55 ms,
+  ~150 samples/PWM cycle): the intra-cycle current MICROSCOPE for the
+  spike-conduction autopsy (smooth winding-limited BEMF-aided ramp
+  4-5 A vs sub-µs railed shoot-through at a switching edge). Injected
+  preempts it for ~2.2 µs/cycle at mid-ON — a marked, harmless gap.
+
+Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
+(`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
+buffer = the spike ONSET) then appends a `j` context dump.
+`scripts/gecko.py` renders current-vs-time + intra-cycle zoom
+(`--force` on-demand, `--wait N` for an armed trigger). The `j`
+WAXWING dump now sources A/B/current from CPU-written per-cycle CTX
+rings (`CTX_A/B/I` + `CTX_MARK` in motor_tester2.rs), aligned with
+`PWM_SAMPLE_BUF` status — waxwing.py format unchanged. **Validated at
+IDLE only** (vbat matches control, A/B sane, all dumps render);
+engage/lock + a real spike autopsy need an operator-supervised spin.
+
+The single-group GECKO description below is the PRIOR design (kept for
+the trigger/sampling constraints, which still bind the injected burst):
+
 ### GECKO — PWM-synchronous continuous current sampling
 
 `src/adc_sync.rs`: TIM1 OC4REF (falling edge at CNT=CCR4, inside the
