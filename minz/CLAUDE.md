@@ -105,6 +105,27 @@ style) so all 6 windows per rev are observed. Frame layout lives in
   spike-conduction autopsy (smooth winding-limited BEMF-aided ramp
   4-5 A vs sub-µs railed shoot-through at a switching edge). Injected
   preempts it for ~2.2 µs/cycle at mid-ON — a marked, harmless gap.
+  **GATED OFF by default** (`oversample_start`/`oversample_stop`,
+  commit 8996dc3): qualification found the free-run ch8 was interfering
+  with the injected ch8 read (idle current +13 counts/+300 mA vs the
+  pre-hybrid control; raw 13 vs 0). So the free-run is STOPPED during
+  normal lock — the ADC then does ONLY the injected mid-ON burst =
+  identical activity to the pre-hybrid build — and enabled ON DEMAND
+  (the `G` key self-fills the ring first; the `J`-armed >4 A trigger
+  runs it while hunting, then stops). Verified: with it off, idle
+  current = raw 1 (matches control).
+
+Qualification (2026-07-12, paired vs `checkpoint-24k-monsterfix`):
+adc-confirm is behaviorally EQUIVALENT — lock speeds byte-identical to
+the control at amp 12/14 (388/451 Hz) every run. The only regression
+found (the free-run ch8 current offset) is FIXED by the gate above.
+Top-end robustness A/B was BENCH-LIMITED — 7 back-to-back ladders
+warmed the bench until the known-good control itself degraded (16-18 →
+broke at 14), so the final n≥8 paired robustness sign-off needs a
+RESTED bench; the inject-only lock path makes it architecturally
+equivalent to pre-hybrid meanwhile. (This is [[feedback-bench-never-drifts]]
+applied correctly: concluding "bench state" only because the KNOWN-GOOD
+tag also degraded in-session, not to excuse my code.)
 
 Dumps: **`G` key** = on-demand oversample dump; the **>4 A auto-trigger**
 (`J` arms `WAX_TRIG_ARMED`) freezes+dumps `CUR_RING` (pre-trigger
