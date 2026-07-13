@@ -84,13 +84,17 @@ use rtt_target::rprintln;
 const BAUD: u32 = 2_000_000;
 const RX_BUF_LEN: usize = 32;
 
-/// Amplitude clamps as % of full ARR swing. **Hard-capped at 20 %** because
-/// open-loop sine drive has no rotor sync and no current limit — at low
-/// electrical frequency the applied voltage divides across the milliohm
-/// winding resistance and turns straight into copper losses (already cost
-/// us one motor on this bench). 20 % at 5 V bench supply ≈ 1 V × 1/0.05 Ω
-/// ≈ 20 A peak per phase, which is already plenty. Drop this further if
-/// the bench supply goes back above 5 V.
+/// Amplitude clamps as % of full ARR swing. The cap is a bound on how
+/// hard a guarded failure can transiently hit — it is NOT a speed/
+/// voltage limiter (see the AMP_MAX note below: under a verified closed
+/// loop the cap just sets a BEMF equilibrium that masquerades as a
+/// "voltage wall"). The OPEN-LOOP heater risk is the real reason it
+/// exists: open-loop sine/six-step drive has no rotor sync and no
+/// current limit — at low electrical frequency the applied voltage
+/// divides across the milliohm winding resistance and turns straight
+/// into copper losses (already cost us one motor on this bench). Under
+/// the closed loop the guard stack (OC trip, ZC-starvation, runaway
+/// floor, sag kill, desync) is the protection, not this cap.
 ///
 /// Does **not** protect against e.g. duty getting stuck high if the loop
 /// hangs, or shoot-through during dead-time misconfiguration — there are
@@ -106,7 +110,7 @@ const AMP_MIN: u16 = 0;
 // runaway floor, desync), NOT this cap; the cap only bounds how
 // hard a guarded failure can transiently hit. Open-loop use above
 // ~16 remains a heater risk — mind the `q` key at high amp.
-const AMP_MAX: u16 = 60;
+const AMP_MAX: u16 = 75;
 /// Bench observation: at 5 V supply this motor refuses to start
 /// (synchronise to the commanded field) below ~15 %. Set the default at
 /// the empirical floor so the user doesn't have to ramp up after boot
