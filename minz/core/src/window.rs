@@ -82,6 +82,203 @@ pub struct CloseOutcome {
     pub bb: [Option<(u8, u16)>; 2],
 }
 
+/// The scalars [`window_control_step`] (ISR) hands to
+/// [`build_window_rec`] (main) — the values the control resets destroy,
+/// plus the derived record fields that depend on them. The DIAGNOSTIC
+/// accumulators (raw/valid/i_*/vbat) are NOT here: main reads them from
+/// the just-completed double-buffer bank instead (no copy). `record`
+/// is false on non-streamed windows (decimation) — main then only
+/// clears the bank.
+#[derive(Clone, Copy, Default)]
+pub struct CloseScalars {
+    pub prev_sector: u8,
+    pub record: bool,
+    pub start_10us: u32,
+    pub len_10us: u16,
+    pub zc_off_us: u16,
+    pub qzc_off_us: u16,
+    pub pred_err_us: i16,
+    pub seq: u8,
+}
+
+/// Control refs (single-buffered — the ISR resets these at the exact
+/// commutation instant; they define the NEW window's gate/estimator/
+/// TOCTOU guard). Split out of [`WindowState`] so the hot commutation
+/// ISR touches only these + the diagnostic BANK flip.
+pub struct WindowControl<'a> {
+    pub sector_start_us: &'a AtomicU32,
+    pub qzc_us: &'a AtomicU32,
+    pub first_zc_us: &'a AtomicU32,
+    pub cand_zc_us: &'a AtomicU32,
+    pub window_gen: &'a AtomicU8,
+    pub interval_us: &'a AtomicU32,
+    pub last_qzc_us: &'a AtomicU32,
+    pub windows_since_qzc: &'a AtomicU8,
+    pub cl_active: &'a AtomicBool,
+    pub cl_noz_run: &'a AtomicU8,
+    pub cl_reacq: &'a AtomicBool,
+    pub stream_on: &'a AtomicBool,
+    pub wrec_decim: &'a AtomicU32,
+    pub wrec_seq: &'a AtomicU8,
+    pub last_comm_10us: &'a AtomicU32,
+    pub raw: &'a AtomicU32, // NOZ bb data only (read, not reset here)
+}
+
+/// Diagnostic accumulators for ONE double-buffer bank — read+cleared
+/// by main in [`build_window_rec`]. The firmware flips which bank the
+/// COMP/TIM1_UP writers target at each commutation, so main reads a
+/// stable, no-longer-written bank with no critical section.
+pub struct WindowDiag<'a> {
+    pub raw: &'a AtomicU32,
+    pub valid: &'a AtomicU32,
+    pub i_sum: &'a AtomicU32,
+    pub i_n: &'a AtomicU32,
+    pub i_min: &'a AtomicU16,
+    pub i_max: &'a AtomicU16,
+    pub vbat_min: &'a AtomicU16,
+    pub vbat_live: &'a AtomicU16,
+}
+
+/// COMMUTATION-ISR half of the close: the exact control logic (miss
+/// detection, re-acquisition trigger, span counter) plus the
+/// control-critical resets and the record-scalar computation. Returns
+/// the bb events + the [`CloseScalars`] main needs. Does NOT touch the
+/// diagnostic accumulators — the caller flips the diagnostic bank and
+/// hands `scalars` + the completed bank to main. Byte-identical control
+/// behavior to [`close_float_window`] (same test vectors).
+pub fn window_control_step(
+    ws: &WindowControl<'_>,
+    prev_sector: u8,
+    now_10us: u32,
+    now_us: u32,
+) -> ([Option<(u8, u16)>; 2], CloseScalars) {
+    let mut bb: [Option<(u8, u16)>; 2] = [None, None];
+    let start_us = ws.sector_start_us.load(Ordering::Relaxed);
+    let qzc = ws.qzc_us.load(Ordering::Relaxed);
+
+    // Boundary prediction error: predicted = qZC + interval/2.
+    let mut pred_err: i16 = i16::MIN;
+    if qzc != u32::MAX {
+        let interval = ws.interval_us.load(Ordering::Relaxed);
+        if interval != 0 {
+            let err = now_us.wrapping_sub(qzc) as i64 - (interval / 2) as i64;
+            pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
+        }
+    }
+
+    // --- CONTROL: miss detection / re-acq / span (exact) ---
+    if qzc == u32::MAX && ws.cl_active.load(Ordering::Relaxed) {
+        bb[0] = Some((EV_NOZ, ws.raw.load(Ordering::Relaxed).min(0xFFFF) as u16));
+        if prev_sector != 0 && prev_sector != 3 {
+            let run = ws.cl_noz_run.load(Ordering::Relaxed).saturating_add(1);
+            ws.cl_noz_run.store(run, Ordering::Relaxed);
+            let iv = ws.interval_us.load(Ordering::Relaxed);
+            let trip = if iv > 0 && iv < HIGH_SPEED_US { 1 } else { 2 };
+            if run >= trip && !ws.cl_reacq.load(Ordering::Relaxed) {
+                ws.cl_reacq.store(true, Ordering::Relaxed);
+            }
+            if run >= 2 && ws.last_qzc_us.load(Ordering::Relaxed) != u32::MAX {
+                ws.last_qzc_us.store(u32::MAX, Ordering::Relaxed);
+                bb[1] = Some((
+                    EV_RAQ,
+                    ws.interval_us.load(Ordering::Relaxed).min(0xFFFF) as u16,
+                ));
+            }
+        }
+    }
+    let w = ws.windows_since_qzc.load(Ordering::Relaxed);
+    ws.windows_since_qzc
+        .store(w.saturating_add(1), Ordering::Relaxed);
+
+    // --- Decimation decision + record scalars ---
+    let decim_n = ws.wrec_decim.fetch_add(1, Ordering::Relaxed);
+    let iv_now = ws.interval_us.load(Ordering::Relaxed);
+    let stream_this = iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
+    let record = ws.stream_on.load(Ordering::Relaxed) && start_us != 0 && stream_this;
+    let first_zc = ws.first_zc_us.load(Ordering::Relaxed);
+    let sc = CloseScalars {
+        prev_sector,
+        record,
+        start_10us: start_us / 10,
+        len_10us: (now_us.wrapping_sub(start_us) / 10).min(0xFFFF) as u16,
+        zc_off_us: if first_zc == u32::MAX {
+            0xFFFF
+        } else {
+            first_zc.wrapping_sub(start_us).min(0xFFFE) as u16
+        },
+        qzc_off_us: if qzc == u32::MAX {
+            0xFFFF
+        } else {
+            qzc.wrapping_sub(start_us).min(0xFFFE) as u16
+        },
+        pred_err_us: pred_err,
+        seq: if record {
+            ws.wrec_seq.fetch_add(1, Ordering::Relaxed)
+        } else {
+            0
+        },
+    };
+
+    // --- CONTROL-critical resets (exact; define the new window) ---
+    ws.first_zc_us.store(u32::MAX, Ordering::Relaxed);
+    ws.qzc_us.store(u32::MAX, Ordering::Relaxed);
+    ws.cand_zc_us.store(u32::MAX, Ordering::Relaxed);
+    ws.window_gen.store(
+        ws.window_gen.load(Ordering::Relaxed).wrapping_add(1),
+        Ordering::Relaxed,
+    );
+    ws.sector_start_us.store(now_us, Ordering::Relaxed);
+    ws.last_comm_10us.store(now_10us, Ordering::Relaxed);
+    (bb, sc)
+}
+
+/// MAIN half of the close: read the just-completed diagnostic bank,
+/// build the record (if `sc.record`), then CLEAR the bank for reuse.
+/// No critical section — the firmware flipped the writers onto the
+/// other bank before handing this one over.
+pub fn build_window_rec(diag: &WindowDiag<'_>, sc: &CloseScalars) -> Option<WindowRec> {
+    let out = if sc.record {
+        let i_n = diag.i_n.load(Ordering::Relaxed);
+        Some(WindowRec {
+            start_10us: sc.start_10us,
+            len_10us: sc.len_10us,
+            zc_off_us: sc.zc_off_us,
+            raw: diag.raw.load(Ordering::Relaxed).min(0xFFFF) as u16,
+            valid: diag.valid.load(Ordering::Relaxed).min(0xFFFF) as u16,
+            i_min: if i_n == 0 {
+                0
+            } else {
+                diag.i_min.load(Ordering::Relaxed)
+            },
+            i_max: diag.i_max.load(Ordering::Relaxed),
+            i_avg: diag.i_sum.load(Ordering::Relaxed).checked_div(i_n).unwrap_or(0) as u16,
+            qzc_off_us: sc.qzc_off_us,
+            pred_err_us: sc.pred_err_us,
+            vbat_raw: {
+                let m = diag.vbat_min.swap(u16::MAX, Ordering::Relaxed);
+                if m == u16::MAX {
+                    diag.vbat_live.load(Ordering::Relaxed)
+                } else {
+                    m
+                }
+            },
+            sector: sc.prev_sector,
+            seq: sc.seq,
+        })
+    } else {
+        None
+    };
+    // Clear the bank (vbat_min already swapped above when recording).
+    diag.raw.store(0, Ordering::Relaxed);
+    diag.valid.store(0, Ordering::Relaxed);
+    diag.i_sum.store(0, Ordering::Relaxed);
+    diag.i_n.store(0, Ordering::Relaxed);
+    diag.i_min.store(0x0FFF, Ordering::Relaxed);
+    diag.i_max.store(0, Ordering::Relaxed);
+    diag.vbat_min.store(u16::MAX, Ordering::Relaxed);
+    out
+}
+
 /// Close the float window that just ended (`prev_sector`), package
 /// it, and reset the accumulators for the new one. Must run inside
 /// the caller's commutation critical section.
@@ -324,6 +521,125 @@ mod tests {
 
         fn close(&self, sector: u8, now_10us: u32, now_us: u32) -> CloseOutcome {
             close_float_window(&self.state(), sector, now_10us, now_us)
+        }
+
+        fn control(&self) -> WindowControl<'_> {
+            WindowControl {
+                sector_start_us: &self.sector_start_us,
+                qzc_us: &self.qzc_us,
+                first_zc_us: &self.first_zc_us,
+                cand_zc_us: &self.cand_zc_us,
+                window_gen: &self.window_gen,
+                interval_us: &self.interval_us,
+                last_qzc_us: &self.last_qzc_us,
+                windows_since_qzc: &self.windows_since_qzc,
+                cl_active: &self.cl_active,
+                cl_noz_run: &self.cl_noz_run,
+                cl_reacq: &self.cl_reacq,
+                stream_on: &self.stream_on,
+                wrec_decim: &self.wrec_decim,
+                wrec_seq: &self.wrec_seq,
+                last_comm_10us: &self.last_comm_10us,
+                raw: &self.raw,
+            }
+        }
+
+        fn diag(&self) -> WindowDiag<'_> {
+            WindowDiag {
+                raw: &self.raw,
+                valid: &self.valid,
+                i_sum: &self.i_sum,
+                i_n: &self.i_n,
+                i_min: &self.i_min,
+                i_max: &self.i_max,
+                vbat_min: &self.vbat_min,
+                vbat_live: &self.vbat_live,
+            }
+        }
+    }
+
+    /// THE equivalence proof: window_control_step + build_window_rec
+    /// produce byte-identical control state, bb events, WindowRec, and
+    /// accumulator resets to the monolithic close_float_window — across
+    /// a matrix of window outcomes (healthy ZC, miss, C-window, cascade,
+    /// stream on/off). If this passes, the ISR/main split is provably a
+    /// pure relocation, not a behavior change.
+    #[test]
+    fn split_matches_monolith() {
+        // (qzc_us, first_zc, cl_active, cl_noz_run, cl_reacq, sector, interval, stream_on, decim)
+        let cases: &[(u32, u32, bool, u8, bool, u8, u32, bool, u32)] = &[
+            (10_300, 10_250, true, 0, false, 2, 600, true, 0), // healthy A/B streamed
+            (u32::MAX, u32::MAX, true, 0, false, 1, 120, true, 0), // miss, high-speed
+            (u32::MAX, u32::MAX, true, 1, true, 4, 120, true, 0), // 2nd miss cascade
+            (u32::MAX, u32::MAX, true, 0, false, 0, 600, true, 0), // C-window miss (no reacq)
+            (10_300, 10_250, true, 0, false, 5, 600, false, 0),   // stream OFF (no rec)
+            (10_300, 10_250, true, 0, false, 2, 120, true, 3),    // decimated (not 5th)
+        ];
+        for &(qzc, fz, act, noz, reacq, sec, iv, stream, decim) in cases {
+            let seed = |r: &Rig| {
+                r.qzc_us.store(qzc, Ordering::Relaxed);
+                r.first_zc_us.store(fz, Ordering::Relaxed);
+                r.cl_active.store(act, Ordering::Relaxed);
+                r.cl_noz_run.store(noz, Ordering::Relaxed);
+                r.cl_reacq.store(reacq, Ordering::Relaxed);
+                r.interval_us.store(iv, Ordering::Relaxed);
+                r.stream_on.store(stream, Ordering::Relaxed);
+                r.wrec_decim.store(decim, Ordering::Relaxed);
+            };
+            let a = Rig::new();
+            seed(&a);
+            let mono = a.close(sec, 5_000, 50_000);
+
+            let b = Rig::new();
+            seed(&b);
+            let (bb, sc) = window_control_step(&b.control(), sec, 5_000, 50_000);
+            let rec = build_window_rec(&b.diag(), &sc);
+
+            assert_eq!(bb, mono.bb, "bb mismatch case sec={sec} qzc={qzc}");
+            assert_eq!(rec, mono.rec, "rec mismatch case sec={sec} qzc={qzc}");
+            // Control state after: every field the next window depends on.
+            let ld = |x: &AtomicU32| x.load(Ordering::Relaxed);
+            assert_eq!(ld(&a.qzc_us), ld(&b.qzc_us), "qzc reset");
+            assert_eq!(ld(&a.cand_zc_us), ld(&b.cand_zc_us), "cand_zc reset");
+            assert_eq!(ld(&a.first_zc_us), ld(&b.first_zc_us), "first_zc reset");
+            assert_eq!(ld(&a.sector_start_us), ld(&b.sector_start_us), "sector_start");
+            assert_eq!(ld(&a.last_comm_10us), ld(&b.last_comm_10us), "last_comm");
+            assert_eq!(ld(&a.last_qzc_us), ld(&b.last_qzc_us), "last_qzc");
+            assert_eq!(
+                a.window_gen.load(Ordering::Relaxed),
+                b.window_gen.load(Ordering::Relaxed),
+                "window_gen"
+            );
+            assert_eq!(
+                a.cl_noz_run.load(Ordering::Relaxed),
+                b.cl_noz_run.load(Ordering::Relaxed),
+                "cl_noz_run"
+            );
+            assert_eq!(
+                a.cl_reacq.load(Ordering::Relaxed),
+                b.cl_reacq.load(Ordering::Relaxed),
+                "cl_reacq"
+            );
+            assert_eq!(
+                a.windows_since_qzc.load(Ordering::Relaxed),
+                b.windows_since_qzc.load(Ordering::Relaxed),
+                "windows_since_qzc"
+            );
+            // Diagnostic accumulators cleared identically.
+            assert_eq!(ld(&a.raw), ld(&b.raw), "raw reset");
+            assert_eq!(ld(&a.valid), ld(&b.valid), "valid reset");
+            assert_eq!(ld(&a.i_sum), ld(&b.i_sum), "i_sum reset");
+            assert_eq!(ld(&a.i_n), ld(&b.i_n), "i_n reset");
+            assert_eq!(
+                a.i_min.load(Ordering::Relaxed),
+                b.i_min.load(Ordering::Relaxed),
+                "i_min reset"
+            );
+            assert_eq!(
+                a.vbat_min.load(Ordering::Relaxed),
+                b.vbat_min.load(Ordering::Relaxed),
+                "vbat_min reset"
+            );
         }
     }
 
