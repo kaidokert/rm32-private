@@ -177,6 +177,37 @@ walls, and it currently over-weights detection. Worth a sweep: hold amp
 ~62-66 and step advance down, watch qzc% (detection) vs the ACC-delay
 floor (schedule) — the crossover is the better cap.
 
+## TIM15 swap — DONE (2026-07-13, floor 8→2 µs)
+
+Swapped the commutation one-shot LPTIM2 → **TIM15** (the L431-clean GP
+timer: own `TIM1_BRK_TIM15` vector, stays priority 1. NOT TIM16 — its
+vector is the ADC ISR's `TIM1_UP_TIM16`, which would force an ISR merge +
+priority collapse; NOT TIM17 — doesn't exist on L431). TIM15 is a 1 µs-
+tick APB2 timer with no clock-domain ARR sync and no warm-up, so
+`schedule_us` = stop→ARR→UG→start delivers a **2 µs floor** (was 8 on
+LPTIM2). `LPTIM2_MIN_DELAY_US` 8→2.
+
+**Two integration fixes killed the naive-swap chop:**
+1. **Prescaler reset (UG)**: a bare `CNT=0` left the prescaler mid-period
+   → 0-1 µs per-commutation jitter → broke at amp 43. UG resets CNT +
+   prescaler → phase-consistent tick → recovered to amp 60.
+2. **FET-first ISR reorder**: `set_six_step` now fires before bb_record /
+   counters (they were ahead of it, jittering the commutation instant) →
+   reaches amp 64.
+
+**Result**: naive swap broke at 43 → fixed build reaches **amp 64 /
+1811 Hz, qzc 99-100%** (fresh climb) = ~LPTIM2 parity (66) WITH the floor
+win. The floor win shows as the ACC delay firing ~9 µs earlier (owl
+pred-bias −13 µs vs LPTIM2 −7 µs = commutations less late).
+
+**Residual (honest)**: prediction jitter **2-3 % of window vs LPTIM2's
+1.2 %**. It is bias-linked (firing ~9 µs earlier at the ceiling is a
+tighter-coupled operating point), NOT a preamble artifact (the reorder
+didn't move it). The loop rides it at 99-100 % qzc. Open question for a
+future pass: is the jitter worth trading a bit of the floor win back
+(raise floor 2→4-5) to halve it — or is it intrinsic to the earlier
+firing? A floor-vs-jitter sweep would settle it.
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
