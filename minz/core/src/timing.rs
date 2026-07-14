@@ -37,19 +37,17 @@ pub fn auto_advance_deg(interval_us: u32, manual_deg: i32) -> i32 {
     (base + boost).min(20)
 }
 
-/// Minimum schedulable commutation delay, µs — the LPTIM2 floor.
-/// Was 24 µs at the /64 kernel (1.25 MHz: enable→start = 2 counter
-/// clocks = 1.6 µs, plus the disable/enable warm-up + ARR-write sync).
-/// At ~1400 Hz (≈124 µs windows, advance 16°) the ideal ZC→commutation
-/// delay is `124·14/60 ≈ 29 − elapsed ≈ 20 µs`, so the 24 µs floor
-/// CLAMPED it — the loop ran late by ~4-6 µs, which is where the top-end
-/// ZC-miss cascade started (black-box: every ACC pinned at d=24). The
-/// LPTIM2 kernel is now /16 (5 MHz, 0.2 µs/tick, 2-clock enable = 0.4 µs
-/// + a shorter warm-up), so the deliverable floor drops to ~8 µs and the
-/// ~20 µs high-speed delay passes UNCLAMPED. Verified positively: the
-/// bb ACC `d` now tracks the real delay (~15-22 µs, varying) instead of
-/// sitting at the floor.
-pub const LPTIM2_MIN_DELAY_US: i32 = 8;
+/// Minimum schedulable commutation delay, µs — the commutation-timer
+/// floor. History: 24 µs on LPTIM2 /64, then 8 µs (LPTIM2 disable/enable
+/// bounce + ARROK sync + warm-up). Now **2 µs** on the TIM15 one-pulse
+/// timer: a plain APB2 GP timer at 1 µs/tick with no clock-domain ARR
+/// sync and no warm-up, so `schedule_us` = stop→ARR→CNT=0→start fires
+/// reliably at ~2 µs. This is the "8→2 µs" win — at ~1800 Hz / 90 µs
+/// windows the ideal delay is ~5 µs, so the 8 µs floor was still
+/// clamping (late by ~3 µs, the top-end ZC-miss seed); 2 µs passes it
+/// unclamped. (TIM15's own `schedule_us` clamps the hardware write to
+/// ≥1 µs; this is the control-logic floor.)
+pub const LPTIM2_MIN_DELAY_US: i32 = 2;
 
 /// Delay from an accepted ZC to the commutation instant:
 /// `interval·(30−adv)/60 − elapsed`, clamped to [`LPTIM2_MIN_DELAY_US`].
