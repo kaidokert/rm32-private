@@ -397,6 +397,40 @@ non-LTO 2/4 — lottery parity, no regression), `lp2` 1658–1757 vs 1708–1823
 "engage sensitivity" attributed to LTO (and to the bus-load build, which
 crash-looped for the same reason) is EXPLAINED and gone.
 
+## `elapsed` re-measurement + decomposition (2026-07-14, LTO build)
+
+Re-measured the ZC→schedule latency on the `checkpoint-lto` build (bb ACC
+temp instrumentation, reverted after):
+
+- **`elapsed` = 16–18 µs (median 16–17)** at amp 50 and amp 64 — LTO did
+  NOT move it (pre-LTO: 15–19, median 18). Confirms the ceiling math: at
+  amp 64 (T≈92.7 µs) the schedule budget `T/6` = 15.4 µs < elapsed → the
+  budget is fully consumed by our own latency; every delay floors. **The
+  ~1800 Hz ceiling IS the elapsed wall.**
+
+- **Decomposition (amp 60, n=32, packed bb word):**
+  | segment | µs | contents |
+  |---|---|---|
+  | COMP tail (ISR entry → accept-fn entry) | **10–12** | persistence loop (~4 µs @ 12 reads) + pre-accept ISR body: blanking math, EDGE_BUF store, sector counters, MAGPIE valid/first-zc, atomics (LDREX/STREX RMWs) |
+  | accept-path compute (before the ts read) | **6–8** | accept_publish: estimator load-run-store, publishes, advance calc |
+  | total | 17–19 | (instrumentation adds ~1) |
+
+Cut targets this sizes (the next lever, NOT yet done):
+1. **Accept path (~7 µs): schedule FIRST, estimator after** — compute the
+   delay from the PRE-update interval (identical at steady state, one
+   window stale during accel) and call `schedule_us` before the estimator
+   work, mirroring the FET-first commutation-ISR reorder. Reclaims most
+   of the 6–8 µs.
+2. **COMP tail (~11 µs): accept-dispatch before diagnostics** — the
+   edge-buf/sector-counter/MAGPIE stores run before the persistence loop
+   today; move them after the accept path so the hot ZC→schedule path is
+   gate-check → persistence → accept only. The persistence loop itself
+   (~4 µs at 12 reads) is the noise defense — touch last.
+
+Realistic combined: elapsed 17 → ~7–9 µs → moves the `T/6` wall from
+~1800 Hz to ~2.4–2.6 kHz. The commutation-ISR blind time (~21 µs) becomes
+the next binding wall at ~2.2–2.5 kHz (the priority-split/pend idea).
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
