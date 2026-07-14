@@ -208,6 +208,43 @@ future pass: is the jitter worth trading a bit of the floor win back
 (raise floor 2→4-5) to halve it — or is it intrinsic to the earlier
 firing? A floor-vs-jitter sweep would settle it.
 
+## Residual-jitter A/B experiments (2026-07-13)
+
+Question: why does TIM15 show ~2-3 % prediction jitter vs LPTIM2's 1.2 %?
+
+**Ruled out — clock resolution.** LPTIM2 = 0.8 µs/tick, TIM15 = 1.0 µs.
+Quantization σ = q/√12 → 0.23 vs 0.29 µs, a 0.06 µs difference. Not the
+~1.5 µs seen. (Tick verified correct by exact low-speed lock frequency.)
+
+**A1 — floor 2 vs 8 (bias-linked hypothesis): REFUTED.** If firing ~9 µs
+earlier (floor=2) caused the jitter, floor=8 (firing later, ≈LPTIM2
+timing) should be cleaner. Opposite happened: floor=8 gave MORE jitter
+(6.6 % vs 4.7 % @ amp 45) AND a worse envelope (broke amp 45-50 vs 55).
+So the earlier firing is NOT the jitter source — it's beneficial. The
+floor-win commutation timing is good; the jitter is elsewhere.
+
+**A2 — oversample off vs on (bus-contention hypothesis): CONFOUNDED.**
+Arming the free-run oversample (DMA1 + ADC hammering APB2/AHB) reliably
+broke the lock at amp 40 (2/2) where it held with oversample off (2/2).
+Consistent with a peripheral-domain sensitivity — BUT arming also
+re-introduces the known free-run↔injected ADC ch8 interference (the
++300 mA offset that's WHY it's gated off during lock), so this can't
+separate pure APB2 bus-contention from ADC channel interference.
+
+**Standing confound in the headline comparison.** The LPTIM2 "1.2 %
+baseline" (`night2_5070`) used floor=8 AND the original ISR order; the
+TIM15 build uses floor=2 AND the FET-first reorder. So "TIM15 = 2× jitter"
+is not purely the timer swap. A clean isolation needs LPTIM2 rebuilt with
+floor=2 + the reorder (everything matched but the timer).
+
+**Net:** the residual is NOT the floor win / earlier firing (A1, decisive).
+It's most likely a peripheral-domain effect — TIM15 lives on **APB2 with
+the ADC/DMA**; LPTIM2 lived on **APB1**, isolated from that traffic (the
+operator's "clock source / AHB bus" instinct, right flavor). Not yet
+cleanly isolated from the ADC-ch8 interference. Follow-ups to nail it:
+(a) LPTIM2 + floor2 + reorder control build; (b) a bus-load test that
+doesn't touch the ADC (e.g. a memcpy DMA burst on AHB during lock).
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
