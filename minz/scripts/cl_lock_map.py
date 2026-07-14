@@ -43,6 +43,7 @@ ap.add_argument(
     "engage — engage itself always uses the proven adc-confirm path",
 )
 ap.add_argument("--tag", default="lockmap")
+ap.add_argument("--arm-j", action="store_true", help="arm J (free-run oversample+DMA on) after engage — bus-load A/B")
 ap.add_argument(
     "--gecko-at",
     type=int,
@@ -220,6 +221,14 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
                 echo = b.send("M", 0.4)
             if "SWIFT" not in echo:
                 sys.exit(f"SWIFT enable failed: {echo!r}")
+
+        if args.arm_j:
+            # Arm J → free-run current oversample + DMA1 ON (adds APB2/AHB
+            # bus traffic). Bus-contention A/B against the default (off).
+            echo = b.send("J", 0.4)
+            if "ARMED" not in echo:
+                echo = b.send("J", 0.4)  # toggle guard
+            print(f"  arm_j: {echo.strip()[:60]}", flush=True)
 
         meta = open(capdir / f"{args.tag}_meta.csv", "w")
         meta.write("amp,vbat_v,vbat_min_v,isns_a\n")
