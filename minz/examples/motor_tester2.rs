@@ -309,6 +309,10 @@ static PWM_SAMPLE_IDX: AtomicU32 = AtomicU32::new(0);
 /// now repurposed for the oversampled free-run current). `CTX_MARK`
 /// maps each cycle onto its slice of `adc_sync::CUR_RING` for the
 /// oversampled `J` autopsy.
+/// Freezes the per-cycle CTX/status ring writes during a `j` dump so
+/// main can emit them IN PLACE (no 14 KB stack snapshot — see the `j`
+/// handler for the main-frame/.bss overlap incident).
+static CTX_FREEZE: AtomicBool = AtomicBool::new(false);
 static CTX_A: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
 static CTX_B: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
 static CTX_I: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
@@ -1804,28 +1808,22 @@ fn main() -> ! {
                         // per frame: ch9=A (PA4), ch10=B (PA5), ch8=
                         // current (all mid-ON from the injected burst),
                         // ch99=status byte (bit0 COMP value, bits1-3
-                        // sector). Under the GECKO-scope hybrid these
-                        // come from the CPU-written CTX rings (the DMA
-                        // ring now carries the oversampled free-run
-                        // current, dumped by `J`) — all four rings
-                        // advance in lockstep at the same TIM1_UP index.
-                        // Snapshot under mask so a wrap can't tear the
-                        // A/B/I/status alignment; motor keeps running.
-                        let mut a = [0u16; PWM_SAMPLE_LEN];
-                        let mut b = [0u16; PWM_SAMPLE_LEN];
-                        let mut ci = [0u16; PWM_SAMPLE_LEN];
-                        let mut status = [0u8; PWM_SAMPLE_LEN];
-                        NVIC::mask(Interrupt::TIM1_UP_TIM16);
+                        // sector), from the CPU-written CTX rings.
+                        //
+                        // FREEZE-AND-DUMP-IN-PLACE — no stack snapshot.
+                        // The old copy used 14 KB of match-arm locals;
+                        // LLVM merges match-arm allocas into main's
+                        // PROLOGUE frame, so main reserved 14.6 KB of
+                        // stack against ~13 KB of headroom and the deep
+                        // frame overlapped the top of .bss (working
+                        // builds survived by link-order luck; LTO
+                        // reshuffled bss and crash-looped at arm). With
+                        // CTX_FREEZE the TIM1_UP writer skips the rings
+                        // for the ~110 ms dump instead — motor keeps
+                        // running, telemetry just pauses.
+                        CTX_FREEZE.store(true, Ordering::Relaxed);
                         let pwm_head =
                             (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
-                        for i in 0..PWM_SAMPLE_LEN {
-                            a[i] = CTX_A[i].load(Ordering::Relaxed);
-                            b[i] = CTX_B[i].load(Ordering::Relaxed);
-                            ci[i] = CTX_I[i].load(Ordering::Relaxed);
-                            status[i] = PWM_SAMPLE_BUF[i].load(Ordering::Relaxed);
-                        }
-                        unsafe { NVIC::unmask(Interrupt::TIM1_UP_TIM16) };
-
                         write!(
                             &mut tx_writer,
                             "\r\ncdump: {} frames b85 4 channels (ch9 ch10 ch8 ch99) \
@@ -1841,10 +1839,16 @@ fn main() -> ! {
                             PWM_SAMPLE_LEN,
                             |k| {
                                 let f = (pwm_head + k) & (PWM_SAMPLE_LEN - 1);
-                                [a[f], b[f], ci[f], status[f] as u16]
+                                [
+                                    CTX_A[f].load(Ordering::Relaxed),
+                                    CTX_B[f].load(Ordering::Relaxed),
+                                    CTX_I[f].load(Ordering::Relaxed),
+                                    PWM_SAMPLE_BUF[f].load(Ordering::Relaxed) as u16,
+                                ]
                             },
                             |bb| tx_writer.write_blocking(bb),
                         );
+                        CTX_FREEZE.store(false, Ordering::Relaxed);
                     }
                     b'G' => {
                         // GECKO-scope: on-demand dump of the free-run
@@ -3118,15 +3122,19 @@ fn TIM1_UP_TIM16() {
     // this cycle's injected burst + the free-run current-ring head, so
     // the `j` analog dump and the oversampled `J` autopsy can align
     // cycles onto the two streams. Same index as the status byte below.
-    CTX_A[idx].store(pa_a, Ordering::Relaxed);
-    CTX_B[idx].store(pa_b, Ordering::Relaxed);
-    CTX_I[idx].store(i_raw, Ordering::Relaxed);
-    CTX_MARK[idx].store(adc_sync::cur_head() as u16, Ordering::Relaxed);
-    PWM_SAMPLE_BUF[idx].store(value | (sector << 1), Ordering::Relaxed);
-    PWM_SAMPLE_IDX.store(
-        (idx as u32).wrapping_add(1) & PWM_SAMPLE_MASK,
-        Ordering::Relaxed,
-    );
+    // Ring writes pause during a `j` dump (CTX_FREEZE) so main can emit
+    // the rings in place — no stack snapshot (main-frame/.bss incident).
+    if !CTX_FREEZE.load(Ordering::Relaxed) {
+        CTX_A[idx].store(pa_a, Ordering::Relaxed);
+        CTX_B[idx].store(pa_b, Ordering::Relaxed);
+        CTX_I[idx].store(i_raw, Ordering::Relaxed);
+        CTX_MARK[idx].store(adc_sync::cur_head() as u16, Ordering::Relaxed);
+        PWM_SAMPLE_BUF[idx].store(value | (sector << 1), Ordering::Relaxed);
+        PWM_SAMPLE_IDX.store(
+            (idx as u32).wrapping_add(1) & PWM_SAMPLE_MASK,
+            Ordering::Relaxed,
+        );
+    }
 }
 
 #[interrupt]
