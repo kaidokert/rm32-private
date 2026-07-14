@@ -160,16 +160,6 @@ pub fn window_control_step(
     let start_us = ws.sector_start_us.load(Ordering::Relaxed);
     let qzc = ws.qzc_us.load(Ordering::Relaxed);
 
-    // Boundary prediction error: predicted = qZC + interval/2.
-    let mut pred_err: i16 = i16::MIN;
-    if qzc != u32::MAX {
-        let interval = ws.interval_us.load(Ordering::Relaxed);
-        if interval != 0 {
-            let err = now_us.wrapping_sub(qzc) as i64 - (interval / 2) as i64;
-            pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
-        }
-    }
-
     // --- CONTROL: miss detection / re-acq / span (exact) ---
     if qzc == u32::MAX && ws.cl_active.load(Ordering::Relaxed) {
         bb[0] = Some((EV_NOZ, noz_raw));
@@ -194,33 +184,42 @@ pub fn window_control_step(
     ws.windows_since_qzc
         .store(w.saturating_add(1), Ordering::Relaxed);
 
-    // --- Decimation decision + record scalars ---
+    // --- Decimation decision ---
     let decim_n = ws.wrec_decim.fetch_add(1, Ordering::Relaxed);
     let iv_now = ws.interval_us.load(Ordering::Relaxed);
     let stream_this = iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
     let record = ws.stream_on.load(Ordering::Relaxed) && start_us != 0 && stream_this;
-    let first_zc = ws.first_zc_us.load(Ordering::Relaxed);
-    let sc = CloseScalars {
-        prev_sector,
-        record,
-        start_10us: start_us / 10,
-        len_10us: (now_us.wrapping_sub(start_us) / 10).min(0xFFFF) as u16,
-        zc_off_us: if first_zc == u32::MAX {
-            0xFFFF
-        } else {
-            first_zc.wrapping_sub(start_us).min(0xFFFE) as u16
-        },
-        qzc_off_us: if qzc == u32::MAX {
-            0xFFFF
-        } else {
-            qzc.wrapping_sub(start_us).min(0xFFFE) as u16
-        },
-        pred_err_us: pred_err,
-        seq: if record {
-            ws.wrec_seq.fetch_add(1, Ordering::Relaxed)
-        } else {
-            0
-        },
+    // Record-scalar arithmetic runs ONLY on the ~1/5 streamed windows —
+    // on the 4/5 non-streamed windows it is pure waste (the returned
+    // scalars are discarded), and that waste was the double-buffer's
+    // typical-path tax. `record=false` short-circuits it.
+    let sc = if record {
+        let first_zc = ws.first_zc_us.load(Ordering::Relaxed);
+        let mut pred_err: i16 = i16::MIN;
+        if qzc != u32::MAX && iv_now != 0 {
+            let err = now_us.wrapping_sub(qzc) as i64 - (iv_now / 2) as i64;
+            pred_err = err.clamp(i16::MIN as i64 + 1, i16::MAX as i64) as i16;
+        }
+        CloseScalars {
+            prev_sector,
+            record: true,
+            start_10us: start_us / 10,
+            len_10us: (now_us.wrapping_sub(start_us) / 10).min(0xFFFF) as u16,
+            zc_off_us: if first_zc == u32::MAX {
+                0xFFFF
+            } else {
+                first_zc.wrapping_sub(start_us).min(0xFFFE) as u16
+            },
+            qzc_off_us: if qzc == u32::MAX {
+                0xFFFF
+            } else {
+                qzc.wrapping_sub(start_us).min(0xFFFE) as u16
+            },
+            pred_err_us: pred_err,
+            seq: ws.wrec_seq.fetch_add(1, Ordering::Relaxed),
+        }
+    } else {
+        CloseScalars::default() // record=false; main only clears the bank
     };
 
     // --- CONTROL-critical resets (exact; define the new window) ---

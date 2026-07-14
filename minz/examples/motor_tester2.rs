@@ -2752,9 +2752,17 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
             });
         }
     } else {
-        // Non-streamed: no flip, no handoff — clear this bank inline for
-        // the next window (cheap; what the monolith did every window).
-        minz_core::window::clear_diag_bank(&window_diag(bank));
+        // Non-streamed (4/5): no flip, no handoff — clear this bank
+        // inline for the next window. Direct stores (not window_diag() +
+        // the cross-crate clear_diag_bank call) to keep the hot 4/5 path
+        // free of struct-build + call overhead.
+        WINDOW_RAW[bank].store(0, Ordering::Relaxed);
+        WINDOW_VALID[bank].store(0, Ordering::Relaxed);
+        WINDOW_I_SUM[bank].store(0, Ordering::Relaxed);
+        WINDOW_I_N[bank].store(0, Ordering::Relaxed);
+        WINDOW_I_MIN[bank].store(0x0FFF, Ordering::Relaxed);
+        WINDOW_I_MAX[bank].store(0, Ordering::Relaxed);
+        WINDOW_VBAT_MIN[bank].store(u16::MAX, Ordering::Relaxed);
     }
 }
 
