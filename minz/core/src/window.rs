@@ -121,7 +121,10 @@ pub struct WindowControl<'a> {
     pub wrec_decim: &'a AtomicU32,
     pub wrec_seq: &'a AtomicU8,
     pub last_comm_10us: &'a AtomicU32,
-    pub raw: &'a AtomicU32, // NOZ bb data only (read, not reset here)
+    // NOTE: `raw` (the NOZ bb datum) is passed to window_control_step as
+    // a VALUE, not held here — so the firmware can build ONE const-static
+    // WindowControl (zero per-window construction) even though `raw` is a
+    // dynamic double-buffer bank ref.
 }
 
 /// Diagnostic accumulators for ONE double-buffer bank — read+cleared
@@ -151,6 +154,7 @@ pub fn window_control_step(
     prev_sector: u8,
     now_10us: u32,
     now_us: u32,
+    noz_raw: u16,
 ) -> ([Option<(u8, u16)>; 2], CloseScalars) {
     let mut bb: [Option<(u8, u16)>; 2] = [None, None];
     let start_us = ws.sector_start_us.load(Ordering::Relaxed);
@@ -168,7 +172,7 @@ pub fn window_control_step(
 
     // --- CONTROL: miss detection / re-acq / span (exact) ---
     if qzc == u32::MAX && ws.cl_active.load(Ordering::Relaxed) {
-        bb[0] = Some((EV_NOZ, ws.raw.load(Ordering::Relaxed).min(0xFFFF) as u16));
+        bb[0] = Some((EV_NOZ, noz_raw));
         if prev_sector != 0 && prev_sector != 3 {
             let run = ws.cl_noz_run.load(Ordering::Relaxed).saturating_add(1);
             ws.cl_noz_run.store(run, Ordering::Relaxed);
@@ -268,7 +272,19 @@ pub fn build_window_rec(diag: &WindowDiag<'_>, sc: &CloseScalars) -> Option<Wind
     } else {
         None
     };
-    // Clear the bank (vbat_min already swapped above when recording).
+    // Clear the bank (vbat_min already swapped above when recording, but
+    // clear_diag_bank re-stores MAX which is idempotent).
+    clear_diag_bank(diag);
+    out
+}
+
+/// Reset one diagnostic bank to its empty state. Shared by
+/// [`build_window_rec`] (main, streaming windows) and the firmware's
+/// inline non-streaming path (the ISR clears the bank itself when it is
+/// NOT flipping it to main — so the flip+handoff only happens on the 1/5
+/// streamed windows, not every window).
+#[inline]
+pub fn clear_diag_bank(diag: &WindowDiag<'_>) {
     diag.raw.store(0, Ordering::Relaxed);
     diag.valid.store(0, Ordering::Relaxed);
     diag.i_sum.store(0, Ordering::Relaxed);
@@ -276,7 +292,6 @@ pub fn build_window_rec(diag: &WindowDiag<'_>, sc: &CloseScalars) -> Option<Wind
     diag.i_min.store(0x0FFF, Ordering::Relaxed);
     diag.i_max.store(0, Ordering::Relaxed);
     diag.vbat_min.store(u16::MAX, Ordering::Relaxed);
-    out
 }
 
 /// Close the float window that just ended (`prev_sector`), package
@@ -540,7 +555,6 @@ mod tests {
                 wrec_decim: &self.wrec_decim,
                 wrec_seq: &self.wrec_seq,
                 last_comm_10us: &self.last_comm_10us,
-                raw: &self.raw,
             }
         }
 
@@ -592,8 +606,17 @@ mod tests {
 
             let b = Rig::new();
             seed(&b);
-            let (bb, sc) = window_control_step(&b.control(), sec, 5_000, 50_000);
-            let rec = build_window_rec(&b.diag(), &sc);
+            // Firmware order: read noz raw value, control_step, then EITHER
+            // build (streaming, main clears the bank) OR inline-clear
+            // (non-streaming). Both must match the monolith's resets.
+            let noz_raw = b.raw.load(Ordering::Relaxed).min(0xFFFF) as u16;
+            let (bb, sc) = window_control_step(&b.control(), sec, 5_000, 50_000, noz_raw);
+            let rec = if sc.record {
+                build_window_rec(&b.diag(), &sc)
+            } else {
+                clear_diag_bank(&b.diag());
+                None
+            };
 
             assert_eq!(bb, mono.bb, "bb mismatch case sec={sec} qzc={qzc}");
             assert_eq!(rec, mono.rec, "rec mismatch case sec={sec} qzc={qzc}");

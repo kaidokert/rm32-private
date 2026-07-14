@@ -509,12 +509,22 @@ static WAS_IN_FLOAT_SECTOR: AtomicBool = AtomicBool::new(false);
 /// Latest PWM-synchronous current sample (raw 12-bit, INA180 via
 /// ADC1 ch8), harvested once per PWM cycle by the TIM1_UP ISR.
 static LAST_I_RAW: AtomicU16 = AtomicU16::new(0);
-/// Per-window current accumulators. TIM1_UP writes; TIM7 snapshots
-/// and resets them in the same `free` block as the COMP accumulators.
-static WINDOW_I_SUM: AtomicU32 = AtomicU32::new(0);
-static WINDOW_I_N: AtomicU32 = AtomicU32::new(0);
-static WINDOW_I_MIN: AtomicU16 = AtomicU16::new(0x0FFF);
-static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
+/// DOUBLE-BUFFERED per-window diagnostic accumulators (`[_; 2]`, indexed
+/// by `WIN_BANK`). Writers (COMP: raw/valid; TIM1_UP: i_*/vbat_min) hit
+/// `[win_bank()]`. The commutation ISR FLIPS `WIN_BANK` only on the ~1/5
+/// STREAMED windows (hands the completed bank to main for the record
+/// build); on the 4/5 non-streamed windows it clears the bank inline.
+/// So the flip/handoff happens 1/5 of windows (not every window — that
+/// was the +186 cyc regression), and the WORST-CASE ISR loses the build.
+static WIN_BANK: AtomicU8 = AtomicU8::new(0);
+#[inline(always)]
+fn win_bank() -> usize {
+    (WIN_BANK.load(Ordering::Relaxed) & 1) as usize
+}
+static WINDOW_I_SUM: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+static WINDOW_I_N: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+static WINDOW_I_MIN: [AtomicU16; 2] = [const { AtomicU16::new(0x0FFF) }; 2];
+static WINDOW_I_MAX: [AtomicU16; 2] = [const { AtomicU16::new(0) }; 2];
 
 /// Overcurrent failsafe (firmware-side, host-independent). The
 /// TIM1_UP ISR accumulates the per-PWM-cycle current samples over
@@ -568,7 +578,7 @@ static VBAT_MIN_RAW: AtomicU16 = AtomicU16::new(u16::MAX);
 /// 48 kHz pump: the stream carries worst-case supply voltage at
 /// window granularity, so sag transients are directly plottable
 /// from any capture).
-static WINDOW_VBAT_MIN: AtomicU16 = AtomicU16::new(u16::MAX);
+static WINDOW_VBAT_MIN: [AtomicU16; 2] = [const { AtomicU16::new(u16::MAX) }; 2];
 /// The raw value that actually tripped (for the report — the live
 /// value may have recovered by print time).
 static VBAT_TRIP_RAW_SEEN: AtomicU16 = AtomicU16::new(0);
@@ -581,10 +591,10 @@ static VBAT_TRIP_RAW_SEEN: AtomicU16 = AtomicU16::new(0);
 static VBAT_BASELINE_RAW: AtomicU16 = AtomicU16::new(0);
 // Sag thresholds/debounce live in minz_core::guards (host-tested).
 
-/// Raw COMP edges in the current window (every EXTI fire).
-static WINDOW_RAW: AtomicU32 = AtomicU32::new(0);
-/// Edges that survived every gate (blanking, mode-5, half-window).
-static WINDOW_VALID: AtomicU32 = AtomicU32::new(0);
+/// Raw COMP edges (banked, see WIN_BANK).
+static WINDOW_RAW: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+/// Edges that survived every gate (banked).
+static WINDOW_VALID: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
 /// `ticks_1us()` of the first gate-surviving edge; `u32::MAX` = none yet.
 static WINDOW_FIRST_ZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
 /// OWL: `ticks_1us()` of the first PERSISTENCE-QUALIFIED edge (held
@@ -920,6 +930,7 @@ fn main() -> ! {
     static mut RX_QUEUE: RxQueue = Queue::new();
     static mut TX_RING: [u8; TX_RING_LEN] = [0; TX_RING_LEN];
     static mut WREC_QUEUE: WrecQueue = Queue::new();
+    static mut PEND_QUEUE: PendQueue = Queue::new();
     let cp = cortex_m::Peripherals::take().unwrap();
     let dp = stm32::Peripherals::take().unwrap();
     let BoardInit {
@@ -1106,10 +1117,12 @@ fn main() -> ! {
 
     let (producer, mut consumer) = RX_QUEUE.split();
     let (wrec_producer, mut wrec_consumer) = WREC_QUEUE.split();
+    let (pend_producer, mut pend_consumer) = PEND_QUEUE.split();
 
     free(|cs| {
         RX_PROD.borrow(cs).replace(Some(producer));
         WREC_PROD.borrow(cs).replace(Some(wrec_producer));
+        PEND_PROD.borrow(cs).replace(Some(pend_producer));
     });
 
     // Publish initial motor-drive state BEFORE unmasking TIM7 so the
@@ -2218,6 +2231,13 @@ fn main() -> ! {
                     write!(&mut tx_writer, "mode={}\r\n", mode_name(waveform)).ok();
                 }
             }
+            // Build deferred (streamed) window records from the completed
+            // banks — off the commutation ISR (the 3 kHz lever). Every
+            // microloop, so a bank is read+cleared long before its reuse.
+            free(|cs| {
+                let mut wp = WREC_PROD.borrow(cs).borrow_mut();
+                drain_pending(&mut pend_consumer, &mut wp);
+            });
             // MAGPIE drain: emit completed window records as 16-byte
             // frames. Emit all-or-nothing per frame — a partial frame
             // would desync the host parser; a dropped one just shows
@@ -2533,31 +2553,54 @@ fn TIM7() {
 /// host tests build the same struct over locals. See
 /// `minz_core::window` for the logic (reacq trigger, pred_err,
 /// decimation, accumulator reset list — all host-tested).
-static WINDOW_STATE: minz_core::window::WindowState<'static> = minz_core::window::WindowState {
-    sector_start_us: &SECTOR_START_US,
-    qzc_us: &WINDOW_QZC_US,
-    first_zc_us: &WINDOW_FIRST_ZC_US,
-    raw: &WINDOW_RAW,
-    valid: &WINDOW_VALID,
-    i_sum: &WINDOW_I_SUM,
-    i_n: &WINDOW_I_N,
-    i_min: &WINDOW_I_MIN,
-    i_max: &WINDOW_I_MAX,
-    cand_zc_us: &CAND_ZC_US,
-    window_gen: &WINDOW_GEN,
-    interval_us: &OWL_INTERVAL_US,
-    last_qzc_us: &OWL_LAST_QZC_US,
-    windows_since_qzc: &WINDOWS_SINCE_QZC,
-    cl_active: &CL_ACTIVE,
-    cl_noz_run: &CL_NOZ_RUN,
-    cl_reacq: &CL_REACQ,
-    stream_on: &STREAM_ON,
-    wrec_decim: &WREC_DECIM,
-    wrec_seq: &WREC_SEQ,
-    vbat_min: &WINDOW_VBAT_MIN,
-    vbat_live: &VBAT_RAW_LIVE,
-    last_comm_10us: &LAST_COMM_10US,
-};
+/// The commutation-ISR control view — CONST STATIC (all single-buffered
+/// refs), so the hot ISR pays ZERO per-window construction (the +186 cyc
+/// lesson: a per-call struct build over a dynamic bank ref is the
+/// regression). The banked `raw` (NOZ datum) is passed to
+/// `window_control_step` by VALUE instead.
+static WINDOW_CONTROL: minz_core::window::WindowControl<'static> =
+    minz_core::window::WindowControl {
+        sector_start_us: &SECTOR_START_US,
+        qzc_us: &WINDOW_QZC_US,
+        first_zc_us: &WINDOW_FIRST_ZC_US,
+        cand_zc_us: &CAND_ZC_US,
+        window_gen: &WINDOW_GEN,
+        interval_us: &OWL_INTERVAL_US,
+        last_qzc_us: &OWL_LAST_QZC_US,
+        windows_since_qzc: &WINDOWS_SINCE_QZC,
+        cl_active: &CL_ACTIVE,
+        cl_noz_run: &CL_NOZ_RUN,
+        cl_reacq: &CL_REACQ,
+        stream_on: &STREAM_ON,
+        wrec_decim: &WREC_DECIM,
+        wrec_seq: &WREC_SEQ,
+        last_comm_10us: &LAST_COMM_10US,
+    };
+
+/// A view of ONE diagnostic bank (built on the stack per use — cheap, 8
+/// refs, and only on the 1/5 streamed windows / non-streamed clear).
+fn window_diag(bank: usize) -> minz_core::window::WindowDiag<'static> {
+    minz_core::window::WindowDiag {
+        raw: &WINDOW_RAW[bank],
+        valid: &WINDOW_VALID[bank],
+        i_sum: &WINDOW_I_SUM[bank],
+        i_n: &WINDOW_I_N[bank],
+        i_min: &WINDOW_I_MIN[bank],
+        i_max: &WINDOW_I_MAX[bank],
+        vbat_min: &WINDOW_VBAT_MIN[bank],
+        vbat_live: &VBAT_RAW_LIVE,
+    }
+}
+
+/// ISR→main handoff (only enqueued on the 1/5 streamed windows).
+#[derive(Clone, Copy)]
+struct PendingClose {
+    bank: u8,
+    sc: minz_core::window::CloseScalars,
+}
+type PendQueue = Queue<PendingClose, 32>;
+static PEND_PROD: Mutex<RefCell<Option<Producer<'static, PendingClose>>>> =
+    Mutex::new(RefCell::new(None));
 
 /// MAGPIE/OWL float-window close: called at every commutation, from
 /// whichever engine performed it — TIM7 (open loop) or the LPTIM2
@@ -2676,17 +2719,58 @@ fn mode_cmd(
     }
 }
 
+/// Commutation-ISR window close: run ONLY the control half (exact) +
+/// bb events, then EITHER (streamed 1/5) flip the diagnostic bank and
+/// hand it to main for the record BUILD, OR (non-streamed 4/5) clear the
+/// bank inline. This keeps the flip/handoff off 4/5 of windows and moves
+/// the WindowRec build (the worst-case ISR cost) into main — the 3 kHz
+/// lever. `WINDOW_CONTROL` is a const static (zero per-window struct
+/// build); the NOZ raw is read from the completing bank by value.
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
     let (now_10, now_us) = ticks_both();
-    let out = minz_core::window::close_float_window(&WINDOW_STATE, prev_sector, now_10, now_us);
-    for (ev, data) in out.bb.iter().flatten() {
+    let bank = win_bank();
+    let noz_raw = WINDOW_RAW[bank].load(Ordering::Relaxed).min(0xFFFF) as u16;
+    let (bb, sc) = minz_core::window::window_control_step(
+        &WINDOW_CONTROL,
+        prev_sector,
+        now_10,
+        now_us,
+        noz_raw,
+    );
+    for (ev, data) in bb.iter().flatten() {
         bb_record(*ev, prev_sector, *data);
     }
-    if let Some(rec) = out.rec {
-        let mut prod = WREC_PROD.borrow(cs).borrow_mut();
+    if sc.record {
+        // Flip: COMP/TIM1_UP now target the other bank; `bank` is frozen
+        // and handed to main (which builds the rec + clears it).
+        WIN_BANK.store((bank ^ 1) as u8, Ordering::Relaxed);
+        let mut prod = PEND_PROD.borrow(cs).borrow_mut();
         if let Some(p) = prod.as_mut() {
-            // Drop on overflow — host sees the seq gap.
-            let _ = p.enqueue(rec);
+            let _ = p.enqueue(PendingClose {
+                bank: bank as u8,
+                sc,
+            });
+        }
+    } else {
+        // Non-streamed: no flip, no handoff — clear this bank inline for
+        // the next window (cheap; what the monolith did every window).
+        minz_core::window::clear_diag_bank(&window_diag(bank));
+    }
+}
+
+/// MAIN drains the pending (streamed) closes: build the WindowRec from
+/// the completed bank (host-tested `build_window_rec`, which also clears
+/// the bank) and enqueue it for serialization.
+fn drain_pending(
+    pend_consumer: &mut heapless::spsc::Consumer<'static, PendingClose>,
+    wrec_prod: &mut Option<Producer<'static, WindowRec>>,
+) {
+    while let Some(pc) = pend_consumer.dequeue() {
+        if let (Some(r), Some(p)) = (
+            minz_core::window::build_window_rec(&window_diag(pc.bank as usize), &pc.sc),
+            wrec_prod.as_mut(),
+        ) {
+            let _ = p.enqueue(r);
         }
     }
 }
@@ -2865,8 +2949,8 @@ fn TIM1_UP_TIM16() {
         if raw < VBAT_MIN_RAW.load(Ordering::Relaxed) {
             VBAT_MIN_RAW.store(raw, Ordering::Relaxed);
         }
-        if raw < WINDOW_VBAT_MIN.load(Ordering::Relaxed) {
-            WINDOW_VBAT_MIN.store(raw, Ordering::Relaxed);
+        if raw < WINDOW_VBAT_MIN[win_bank()].load(Ordering::Relaxed) {
+            WINDOW_VBAT_MIN[win_bank()].store(raw, Ordering::Relaxed);
         }
         // Threshold + debounce host-tested through SagGuard's suite
         // via the load-run-store form (minz_core::guards::sag_step);
@@ -2937,13 +3021,14 @@ fn TIM1_UP_TIM16() {
         BB_FROZEN.store(true, Ordering::Relaxed);
         WAX_TRIGGERED.store(true, Ordering::Relaxed);
     }
-    WINDOW_I_SUM.fetch_add(i_raw as u32, Ordering::Relaxed);
-    WINDOW_I_N.fetch_add(1, Ordering::Relaxed);
-    if i_raw < WINDOW_I_MIN.load(Ordering::Relaxed) {
-        WINDOW_I_MIN.store(i_raw, Ordering::Relaxed);
+    let b = win_bank();
+    WINDOW_I_SUM[b].fetch_add(i_raw as u32, Ordering::Relaxed);
+    WINDOW_I_N[b].fetch_add(1, Ordering::Relaxed);
+    if i_raw < WINDOW_I_MIN[b].load(Ordering::Relaxed) {
+        WINDOW_I_MIN[b].store(i_raw, Ordering::Relaxed);
     }
-    if i_raw > WINDOW_I_MAX.load(Ordering::Relaxed) {
-        WINDOW_I_MAX.store(i_raw, Ordering::Relaxed);
+    if i_raw > WINDOW_I_MAX[b].load(Ordering::Relaxed) {
+        WINDOW_I_MAX[b].store(i_raw, Ordering::Relaxed);
     }
     // FALCON v3: confirm or discard the pending ZC candidate using
     // the mid-ON ADC sign of the floating phase vs the driven-pair
@@ -3043,7 +3128,7 @@ fn COMP() {
     // Ack the pending bit first so the IRQ doesn't immediately re-fire.
     comp2::clear_pending();
     COMP_COUNT.fetch_add(1, Ordering::Relaxed);
-    WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
+    WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
 
     // ONE time snapshot per entry (see `ticks_both`). Entry time is
     // the honest edge timestamp anyway — the EXTI fired microseconds
@@ -3160,7 +3245,7 @@ fn COMP() {
     // MAGPIE: per-window valid count + first-survivor timestamp.
     // This ISR is the sole writer between TIM7's `free`-wrapped
     // resets, so plain check-then-store is race-free.
-    WINDOW_VALID.fetch_add(1, Ordering::Relaxed);
+    WINDOW_VALID[win_bank()].fetch_add(1, Ordering::Relaxed);
     if WINDOW_FIRST_ZC_US.load(Ordering::Relaxed) == u32::MAX {
         WINDOW_FIRST_ZC_US.store(now_us, Ordering::Relaxed);
     }
