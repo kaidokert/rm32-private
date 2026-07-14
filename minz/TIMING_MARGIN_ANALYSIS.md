@@ -371,6 +371,32 @@ the earlier "net-negative" was purely un-optimized split overhead.** A clean
 average-win too still needs LTO/inline to erase the residual boundary tax
 (needs the engage-layout re-validation).
 
+## LTO spike — RESOLVED, LTO ON (2026-07-14, commit 02bcf22, tag `checkpoint-lto`)
+
+**The "LTO breaks engage" mystery was a stack/.bss overlap, and it was a
+latent landmine in EVERY build.** Forensics on the failed LTO session logs
+found 5 boot banners per run — the board was CRASH-LOOPING (panic/fault →
+IWDG 1 s → reboot at every `q`; motor never moved), not failing to engage.
+objdump then showed main's prologue reserving **14,656 B of stack** against
+~12.8 KB of headroom (48 K RAM − 35.2 K bss): LLVM merges the `j`-handler's
+14 KB of match-arm snapshot arrays into main's prologue frame, so the deep
+frame overlapped the top of .bss from boot (the linker even defines
+`_stack_end` right there; nothing enforces it). **Non-LTO builds survived
+by link-order luck** — benign telemetry statics happened to sit at the top
+of bss; LTO reshuffled bss and put critical state under the stack.
+
+Fix: **freeze-and-dump-in-place** (`CTX_FREEZE` pauses the TIM1_UP ring
+writes for the ~110 ms `j` dump; `wax_cdump` reads the CTX rings + status
+directly — no snapshot). Main frame 14.7 KB → 4.6 KB (both builds).
+
+Result with `lto = "thin"` + `codegen-units = 1`: zero reboots across 5
+ladder runs, engage first-try, **ladder 50/58/62/64 all qzc 100 %** (the
+best single ladder either build has produced; 2/5 runs to the top vs the
+non-LTO 2/4 — lottery parity, no regression), `lp2` 1658–1757 vs 1708–1823
+(a small real win), text −1.2 %, `j` dump verified. The flash-layout
+"engage sensitivity" attributed to LTO (and to the bus-load build, which
+crash-looped for the same reason) is EXPLAINED and gone.
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
