@@ -245,6 +245,44 @@ cleanly isolated from the ADC-ch8 interference. Follow-ups to nail it:
 (a) LPTIM2 + floor2 + reorder control build; (b) a bus-load test that
 doesn't touch the ADC (e.g. a memcpy DMA burst on AHB during lock).
 
+## Follow-up experiments — DECISIVE (2026-07-13)
+
+**(a) One-variable control: LPTIM2 vs TIM15, everything else identical
+(floor2 + FET-first reorder, same ADC config).** Measured at amp 55-64:
+
+| build | jitter @55 | jitter @64 | envelope | qzc |
+|---|---|---|---|---|
+| **LPTIM2** + floor2 + reorder | **0.9-1.0 %** | 1.4 % | amp 64 / 1805 Hz | **100 %** |
+| **TIM15** + floor2 + reorder | 3.4 % | 2.3 % | amp 64 / 1811 Hz | 99 % |
+
+**The jitter IS the timer.** Same floor, same reorder, same (oversample-
+off) ADC → the ~2.5 % extra is purely the LPTIM2→TIM15 swap. This ALSO
+resolves the A2 confound: with identical ADC config TIM15 still jitters
+3×, so it is NOT the ADC-ch8 interference — it's the peripheral domain
+(TIM15 on APB2 with the injected ADC's traffic; LPTIM2 on APB1, isolated).
+
+**The floor win below ~6.5 µs is worthless here.** LPTIM2+floor2 (effective
+~6.5 µs floor: the 4 µs schedule clamp + the delay(200) warm-up) and TIM15
+(2 µs floor) reach the SAME envelope (amp 64). So TIM15's 4.5 µs-earlier
+firing bought NOTHING for the top end (that limit is the sag/bus/detection,
+not the floor) and cost 3× jitter. **LPTIM2+floor2 is strictly better.**
+
+**(b) AHB bus-load test (mem-to-mem DMA, no ADC): BLOCKED.** Adding the
+bus-load instrumentation shifted the flash layout into a no-engage regime
+(the documented PRFTEN-off alignment sensitivity — even init-only code
+moves the marginal engage; HEAD engaged fine on the same bench, the
+instrumented build failed 4× every attempt). Not run. Not needed for the
+verdict: (a) already isolated the jitter to the timer with the ADC
+controlled — (b) would only have confirmed the *mechanism* is specifically
+APB2 contention vs another timer-intrinsic property.
+
+**DECISION: revert the TIM15 swap → LPTIM2 + floor2 + reorder** (this
+commit). Captures the useful part of the "8→2" (8→~6.5 µs, all the
+envelope the floor can buy) at 3× less jitter and qzc 100 %. TIM15 lives
+in git history (`checkpoint`-able) if a true sub-6 µs floor is ever needed
+AND the APB2 jitter is addressed (e.g. move the ADC off APB2, or arm the
+timer from an APB1-side write).
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`

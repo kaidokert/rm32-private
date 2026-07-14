@@ -151,12 +151,12 @@ pub fn dump_to<W: core::fmt::Write>(w: &mut W) {
     let aircr = unsafe { (*SCB::PTR).aircr.read() };
     write!(
         w,
-        "prio: PRIGROUP={} SysTick={:02X} COMP={:02X} TIM15={:02X} TIM7={:02X} \
+        "prio: PRIGROUP={} SysTick={:02X} COMP={:02X} LPTIM2={:02X} TIM7={:02X} \
          TIM1_UP={:02X} TIM1_CC={:02X} LPTIM1={:02X} USART2={:02X}\r\n",
         (aircr >> 8) & 0x7,
         SCB::get_priority(SystemHandler::SysTick),
         NVIC::get_priority(Interrupt::COMP),
-        NVIC::get_priority(Interrupt::TIM1_BRK_TIM15),
+        NVIC::get_priority(Interrupt::LPTIM2),
         NVIC::get_priority(Interrupt::TIM7),
         NVIC::get_priority(Interrupt::TIM1_UP_TIM16),
         NVIC::get_priority(Interrupt::TIM1_CC),

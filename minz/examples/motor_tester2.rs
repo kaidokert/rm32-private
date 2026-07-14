@@ -1088,7 +1088,7 @@ fn main() -> ! {
     minz::iwdg::start_1s();
 
     // FALCON commutation one-shot (armed only when the loop engages).
-    minz::tim15_oneshot::init();
+    minz::lptim2_oneshot::init();
 
     // TIM7 motor-drive heartbeat at `MOTOR_DRIVE_HZ` (= 6 kHz). The
     // `TIM7` ISR (below) reads the motor-drive atomics each tick and
@@ -1229,7 +1229,7 @@ fn main() -> ! {
         // FALCON: commutation one-shot at COMP's level — same
         // priority means COMP and LPTIM2 serialize (tail-chain, never
         // nest), so ZC-accept and commutate can't interleave state.
-        priority::set_irq_prio(Interrupt::TIM1_BRK_TIM15, priority::PRIO_COMP);
+        priority::set_irq_prio(Interrupt::LPTIM2, priority::PRIO_COMP);
         // TIM1_CC stays at PRIO_TIM1 = 3 (set by set_irq_prios above).
         // We do NOT promote it to 0 to run before COMP (priority 1):
         // that caused a lockup because priority-0 ISRs block SysTick
@@ -1246,7 +1246,7 @@ fn main() -> ! {
 
     unsafe {
         NVIC::unmask(Interrupt::USART2);
-        NVIC::unmask(Interrupt::TIM1_BRK_TIM15);
+        NVIC::unmask(Interrupt::LPTIM2);
         NVIC::unmask(Interrupt::COMP);
         NVIC::unmask(Interrupt::TIM1_UP_TIM16);
         NVIC::unmask(Interrupt::TIM7);
@@ -2001,7 +2001,7 @@ fn main() -> ! {
                             write!(
                                 &mut tx_writer,
                                 "arrok_guard_hits={}\r\n",
-                                minz::tim15_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
+                                minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2698,9 +2698,9 @@ static WREC_DECIM: AtomicU32 = AtomicU32::new(0);
 /// qualified ZC (scheduled by the COMP ISR). Shares priority 1 with
 /// COMP so the two never nest.
 #[interrupt]
-fn TIM1_BRK_TIM15() {
+fn LPTIM2() {
     let _dur = DurGuard::new(&DUR_LPTIM2);
-    minz::tim15_oneshot::clear_flag();
+    minz::lptim2_oneshot::clear_flag();
     if !CL_ACTIVE.load(Ordering::Relaxed) || !MOTOR_ENABLED.load(Ordering::Relaxed) {
         return; // stale one-shot after disengage/kill
     }
@@ -2774,7 +2774,7 @@ fn TIM1_BRK_TIM15() {
     // count to cancel, kernel warm. Saves ~310 cyc + a 2.5 µs
     // busy-wait per commutation vs the full disable/enable path.
     if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
-        minz::tim15_oneshot::reschedule_light(t);
+        minz::lptim2_oneshot::reschedule_light(t);
     }
     // Scope trigger on each electrical rev, same as the open loop.
     if sector == 0 {
@@ -3236,7 +3236,7 @@ fn accept_qualified_zc(zc_us: u32) {
         );
         let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
         let delay = minz_core::timing::commutation_delay_us(plan.interval_us, adv, elapsed);
-        minz::tim15_oneshot::schedule_us(delay);
+        minz::lptim2_oneshot::schedule_us(delay);
         SHOT_REFINED.store(true, Ordering::Relaxed);
         bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
         // Deaf until the commutation (mask-after-accept).
