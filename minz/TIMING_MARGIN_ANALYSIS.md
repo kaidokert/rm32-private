@@ -323,6 +323,33 @@ layout re-validation); (3) shrinking the per-window control work itself
 (gate pred_err to streaming-only, etc.) — a code-gen / arithmetic problem,
 not an ISR-placement one.
 
+### RE-DONE + INTEGRATED, corrected design (commit 60cb24a)
+
+The +186 regression was caused by flipping+enqueuing EVERY window (5× the
+baseline's 1/5 enqueue). Corrected: **flip+defer only on the 1/5 STREAMED
+windows; clear the bank inline on the 4/5 non-streamed** (`clear_diag_bank`).
+Plus `WindowControl` is now a **const static** (no per-window struct build;
+the banked `raw` NOZ datum is passed by value). Result:
+- **Locks amp 40/50/58 at qzc 100 %**, control proven byte-identical
+  (`split_matches_monolith`); `lp2` uniform ~1685 — the build-window spike
+  is GONE from the ISR (worst-case, the 3 kHz-relevant metric, improves).
+- **Honest trade**: the typical non-streamed path is still +116 cyc vs the
+  baseline non-build path — the cross-crate function-boundary tax
+  (`control_step` + `build`/`clear` as separate non-inlined calls +
+  `CloseScalars` returned by value). So worst-case better, average worse.
+- **LTO** would inline the boundary away (net-positive everywhere) but
+  shifts the flash layout into a no-engage regime (tried thin LTO +
+  codegen-units=1 → engage failed; reverted). It needs a supervised
+  engage-layout re-validation to adopt.
+- **amp-64 envelope validation INCOMPLETE** — the bench lost power mid-test
+  (probe: "target voltage 0.02 V"). Whether the +116 typical cost costs the
+  top rung (baseline reached 64) is unresolved; re-check on a powered bench.
+
+Net: the build+serialize ARE off the ISR (goal met) and it locks, but the
+function-boundary tax makes it a worst-case-win / average-loss until LTO or
+`#[inline]`-able core fns remove the boundary. Keep or revert is a judgment
+call pending the amp-64 re-check + an LTO engage-validation.
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
