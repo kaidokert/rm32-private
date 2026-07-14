@@ -350,6 +350,27 @@ function-boundary tax makes it a worst-case-win / average-loss until LTO or
 `#[inline]`-able core fns remove the boundary. Keep or revert is a judgment
 call pending the amp-64 re-check + an LTO engage-validation.
 
+### RESOLVED — envelope recovered (commit b718cab, post-fuse re-check)
+
+The amp-64 re-check (fresh bench after a blown fuse) first showed a real
+64→62 regression. Two wastes on the 4/5 NON-streamed windows were the tax,
+both fixed:
+1. `window_control_step` computed + returned ALL record scalars
+   (pred_err/zc_off/qzc_off/len) even on non-streamed windows where they're
+   discarded → now **gated on `record`** (default scalars otherwise).
+2. The non-streamed bank clear went via `window_diag()` + a cross-crate
+   `clear_diag_bank` call → now **7 direct inline stores** in the firmware.
+
+**Result: reaches amp 64 (qzc 99 %, ≈ baseline's 100 %) — envelope-neutral.**
+`lp2`: non-streamed ~1621, streamed ~1768 — the streamed worst case is now
+BELOW the baseline's ~1819 build-window, so the **worst-case ISR is shorter**
+(the actual 3 kHz lever) at ~envelope-parity today. The build+serialize are
+off the commutation ISR, control proven byte-identical. **Verdict: the
+double-buffer is the right pattern (worst-case-positive, envelope-neutral);
+the earlier "net-negative" was purely un-optimized split overhead.** A clean
+average-win too still needs LTO/inline to erase the residual boundary tax
+(needs the engage-layout re-validation).
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
