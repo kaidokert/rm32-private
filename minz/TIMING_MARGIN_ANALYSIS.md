@@ -283,6 +283,46 @@ in git history (`checkpoint`-able) if a true sub-6 µs floor is ever needed
 AND the APB2 jitter is addressed (e.g. move the ADC off APB2, or arm the
 timer from an APB1-side write).
 
+## close_float_window → main: ATTEMPTED, NET-NEGATIVE, REVERTED (2026-07-13)
+
+Goal: move the WindowRec build + serialize off the priority-1 commutation
+ISR (at 3 kHz the 19.6 µs ISR exceeds the ~16 µs gate and eats detection).
+
+**Decomposition first (measured, amp 50):** whole ISR `lp2` ≈ 1569 cyc
+(19.6 µs); `close` ≈ 574 cyc non-build (4/5 windows) / ~824 build (1/5);
+`ticks_both` only 46 cyc. So the deferrable *build* is 1/5 windows and its
+*serialize was already in main* — the 574 cyc bulk is per-window CONTROL
+(miss/reacq/span + control-critical resets) + non-inlined cross-crate call
+overhead, most of which cannot move.
+
+**Implemented the clean architecture anyway** — a double-buffer (bank flip,
+no copy): core split into `window_control_step` (ISR: exact control, proven
+byte-identical by `split_matches_monolith` over healthy/miss/cascade/
+C-window/stream-off/decimated) + `build_window_rec` (main: reads the
+completed diagnostic bank). Firmware banked the 7 diagnostic accumulators,
+flipped `WIN_BANK` at each close, handed `{bank, CloseScalars}` to main via
+a queue.
+
+**Bench verdict: the commutation ISR grew +186 cyc (1569 → 1757), amp 50
+broke.** The handoff plumbing — per-call `window_control()` struct build
+(16 refs, because `raw` is now a dynamic bank ref so it can't be a const
+static) + the cross-fn `control_step` call returning `CloseScalars` by
+value + the `PendingClose` enqueue + the flip — costs MORE than the moved-
+out work (build 1/5 + 6 diagnostic resets) saves. **This is the SAME M4
+lesson as lever-#2 v1 (`RawWindow` +74 cyc), now confirmed a second time:
+on Cortex-M4 the deferred work is cheap and the struct/queue plumbing
+dominates.** Reverted the firmware (lp2 back to 1570, locks restored). The
+core split stays committed (`c9864c5`, proven-equivalent, harmless) in case
+the plumbing is ever made cheap (LTO/inline) — but as-is, "move close to
+main" is NOT a viable ISR-reclaim lever on this MCU.
+
+**So the ISR-shortening path is NOT relocating close.** The real reclaim
+is elsewhere: (1) the `elapsed` cut on the COMP path (not plumbing-bound);
+(2) making the cross-crate close cheaper via inline/LTO (needs an engage-
+layout re-validation); (3) shrinking the per-window control work itself
+(gate pred_err to streaming-only, etc.) — a code-gen / arithmetic problem,
+not an ISR-placement one.
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
