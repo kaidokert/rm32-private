@@ -28,6 +28,13 @@ ap.add_argument("--port", default="COM41")
 ap.add_argument("--baud", type=int, default=2_000_000)
 ap.add_argument("--amps", default="9,10,11,12,13,14,15,16")
 ap.add_argument("--secs", type=float, default=4.0)
+ap.add_argument(
+    "--climb-wait",
+    type=float,
+    default=0.15,
+    help="seconds between +1%% presses on rung transits - raise "
+    "(0.5-1.0) for a gentler throttle gradient at the envelope edge",
+)
 ap.add_argument("--settle", type=float, default=3.0)
 ap.add_argument(
     "--adv",
@@ -238,9 +245,9 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
         b.stream(True)
         for amp in amps:
             if amp >= cur:
-                b.steps("a", amp - cur)
+                b.steps("a", amp - cur, wait=args.climb_wait)
             else:
-                b.steps("z", cur - amp)
+                b.steps("z", cur - amp, wait=args.climb_wait)
             cur = amp
             transit = b.timed_read(args.settle)
             (capdir / f"{args.tag}_t{amp}.bin").write_bytes(transit)
