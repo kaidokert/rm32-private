@@ -514,6 +514,55 @@ coupling. A slew-tick bb event (EV for each amplitude tick) would
 correlate them directly. The single-window 4–5 A dwell spikes look like
 the same family at sub-critical size.
 
+## Spike-nature deep dive (2026-07-14, fine-duty + carrier A/B)
+
+Question: what ARE the single-window 2.5–4.5 A spikes that appear near
+amp 66 and (compounding) kill at 68? Operator hunches tested: "nothing
+mechanical, a timing/commutation margin" and "24 k/1.8 k ≈ 13 PWM cycles
+per electrical rev — unlucky ratio?"
+
+**1. NOT mechanical — confirmed.** Every event sits inside a ±10 µs
+window-length oscillation (streamed window BEFORE the spike is
+consistently LONG ~103 µs vs 93 base; the spike window is SHORT ~84 µs
+with an EARLY ZC, med offset 40 vs 48; ring-down after). A rotor+prop
+cannot oscillate speed ±10 % at ~1 kHz — inertia forbids it. The
+oscillation is COMMUTATION-TIMING around a steady rotor: late
+commutation → BEMF misalignment → current rises → distorted BEMF shifts
+the next ZC early → overcorrection. Electro-timing feedback.
+
+**2. Arrivals are Poisson, not a hunting tone.** 21 events at amp 66:
+spacing 3–1035 ms, mean 193 σ 237 — noise-kicked, no coherent mode
+frequency. Sector-patterned at 24 k: s5/s3 heavy, **sector 2 (phase A's
+window) never spikes (0/21)**.
+
+**3. NOT a sharp threshold — a soft continuous onset (fine-duty climb,
+4-count = 0.12 % steps, `fine_climb.py`).** 24 kHz from duty 64.00 % to
+67.95 %: rate ramps 0 → 0.5 → 1–2 → 3–5 /s smoothly; kill at 67.9 %.
+f_e climbs 1729 → 1777 Hz with no jump; PWM-cycles-per-electrical-rev
+sweeps 13.88 → 13.51 with **no anomaly at any ratio** (incl. 13.5).
+
+**4. Carrier A/B (the decisive ratio test): the "13" hypothesis is not
+supported, but carrier matters strongly — as ripple/margin, not
+resonance.** 22 kHz: can't even climb past amp 51–63 (3 tries).
+26 kHz: 4–10 events/s from duty 64.0 % (10× the 24 k rate) yet
+**survived the entire climb to 67.95 %** with no kill. No onset tracking
+of any integer ratio across carriers.
+
+**5. The events are real sustained currents, not sampling blips.**
+i_avg/i_max median 0.81–0.88 (≈90 % >0.8) on both carriers — a
+mid-ON-sample coincidence would give i_max ≫ i_avg.
+
+**Synthesis:** a marginally-damped electro-timing feedback loop
+(timing error ↔ current ↔ BEMF distortion), noise-kicked (Poisson),
+whose damping erodes continuously with duty/current as BEMF headroom
+vanishes — carrier changes the ripple forcing (22 k undrivable, 26 k
+noisier but shallower/survivable). The 66→68 kill is one of these
+events compounding (the transit autopsy's clean-chain ramp). NOT
+mechanical, NOT a PWM integer resonance, NOT firmware scheduling.
+Levers if pushing past 68: damping the feedback (e.g. per-window
+current feed-forward into the advance/delay, AM32-style timing
+smoothing), or carrier/voltage operating-point changes.
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
