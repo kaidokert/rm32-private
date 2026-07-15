@@ -563,6 +563,42 @@ Levers if pushing past 68: damping the feedback (e.g. per-window
 current feed-forward into the advance/delay, AM32-style timing
 smoothing), or carrier/voltage operating-point changes.
 
+## ROOT CAUSE FOUND AND FIXED: estimator INT_MIN (2026-07-14, commit 072a283)
+
+The operator's "nagging feeling that there's a timing margin in the code /
+an integer bound we didn't think of" was exactly right. **`estimator::
+INT_MIN = 100` rejected every measured interval ≤ 100 µs as insane — a
+silent f_e ceiling at 1667 Hz.** Above it the stored interval pinned just
+over 100 while the rotor ran 93–94 µs; the evidence had been in the
+captures all along (bb `REF d=102–106` vs true window 93–94). The
+free-run scheduled 1.0×(inflated interval) → systematically late
+commutations fighting the ZC-refine → the ±10 µs timing oscillation →
+BEMF-misalignment spikes with soft onset exactly at the 1667 Hz crossing
+→ the amp-66 population and the 68 kills. The whole "electro-timing
+feedback" was real — but its DRIVER was this constant.
+
+Fix: `INT_MIN` 100 → 40 (tracking; junk rejection belongs to the ±25 %
+rate bound) + new `SEED_MIN = 100` (an unseeded estimator has no
+rate-bound reference; at 40, engage-time comparator noise seeded
+41–99 µs and killed two engages — caught and split the same session).
+Bonus theory from the regression test: with ¾-smoothing and ±25 %/window
+bounds the estimator can track at most **~5 % deceleration per window**
+(ratio fixed point r* = 4q−3 ≥ 0.8) — a real transit-behavior limit.
+
+**Bench, all first-try:**
+- Fine climb 64 → 67.95 %: SURVIVES (died at 67.9 % before), top end
+  nearly spike-free (0–0.9/s vs 3–5.2/s) — the spike gradient INVERTED.
+- bb `REF d` now 92–99 (mode 93) = truth; ACC delays 7–10 µs.
+- Ladder 60→72: ALL qzc 100 %, **1879 Hz @ amp 72** (2.3 A).
+- **Full ladder 15→72: every rung qzc 100 %** — best envelope ever
+  (`intmin_full_map.png`; window-length σ now DECREASES to 6 % at the
+  top — the high end became the cleanest regime).
+
+Current feed-forward and AM32-style timing smoothing were NOT needed —
+the goal's 70+ target fell to the audit alone. They remain future
+options if a new ceiling appears above 72 (untested; AMP_MAX=75, ~2.3 A
+draw at 72 is approaching fuse territory — operator's call).
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
