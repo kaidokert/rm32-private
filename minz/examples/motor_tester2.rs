@@ -3143,8 +3143,12 @@ fn COMP() {
     // EXTI line 22 is COMP2's output (COMP1 is line 21, unused here).
     // Ack the pending bit first so the IRQ doesn't immediately re-fire.
     comp2::clear_pending();
-    COMP_COUNT.fetch_add(1, Ordering::Relaxed);
-    WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
+    // ACCEPT-DISPATCH-BEFORE-DIAGNOSTICS (elapsed cut #2, 2026-07-14):
+    // the raw/EDGE_BUF/sector/VALID/MAGPIE diagnostic stores (~5-7 µs of
+    // atomic RMWs) used to run BEFORE the persistence + accept dispatch,
+    // sitting on the hot ZC→schedule path. They now run per-path AFTER
+    // the filters/accept — every reject path keeps its exact previous
+    // counter behavior; only the ORDER on the surviving path changed.
 
     // ONE time snapshot per entry (see `ticks_both`). Entry time is
     // the honest edge timestamp anyway — the EXTI fired microseconds
@@ -3188,6 +3192,8 @@ fn COMP() {
     if blank_us > 0 {
         let since_edge = now_us.wrapping_sub(LAST_PWM_EDGE_US.load(Ordering::Relaxed));
         if since_edge < blank_us {
+            COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+            WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
             let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
             if elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed) {
                 VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -3209,6 +3215,8 @@ fn COMP() {
     if EDGE_MODE.load(Ordering::Relaxed) == 5 && !comp2::value() {
         // Also still run the time-window gate so VALID_COMP_COUNT
         // tracks the same denominator across modes.
+        COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+        WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
         let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
         if elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed) {
             VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -3216,54 +3224,15 @@ fn COMP() {
         return;
     }
 
-    // Edge-buffer write: mark "an edge happened in this 10 µs bin"
-    // at the current offset from the start of the current 2-rev
-    // window. No direction label: L4 has no per-direction EXTI
-    // pending bits and `comp2::value()` only tells us the dwell
-    // state, not the edge direction (see `EDGE_BUF` docs).
-    // At f_elec < 50 Hz 2 revs exceeds 4096 ticks and the masked
-    // index wraps, overwriting earlier cells — see `HALF_TICKS` docs.
-    let edge_idx =
-        (now_10.wrapping_sub(HALF_START_TICK.load(Ordering::Relaxed)) & HALF_TICK_MASK) as usize;
-    let edge_half = (ACTIVE_HALF.load(Ordering::Relaxed) & 1) as usize;
-    // Saturating-increment per cell. COMP ISR is the only writer (TIM7
-    // memset / E-dump snapshot run with COMP masked or in `free`), so a
-    // plain load + store is race-safe. `u8::saturating_add(1)` caps at
-    // 255 so we never wrap back to 0. The dump still maps non-zero →
-    // `#`, zero → `.`, so the visual output is unchanged; the per-cell
-    // count is available for a future "per-cell density" view.
-    let cur = EDGE_BUF[edge_half][edge_idx].load(Ordering::Relaxed);
-    EDGE_BUF[edge_half][edge_idx].store(cur.saturating_add(1), Ordering::Relaxed);
-
-    // Per-sector total-edge counter (unlike EDGE_BUF, sees every edge
-    // not just every 10 µs window with at least one edge). Slot
-    // indexing matches SECTOR_BOUNDARIES: `rev_phase * 6 + sector`.
-    // TIM7 ISR is the sole writer of REV_PHASE / CURRENT_SECTOR /
-    // ACTIVE_HALF and does so inside a critical section, so the three
-    // atomics read together here are consistent.
-    let rev_phase = REV_PHASE.load(Ordering::Relaxed) as usize;
-    let cur_sector = CURRENT_SECTOR.load(Ordering::Relaxed) as usize;
-    let slot = rev_phase * 6 + cur_sector;
-    if slot < 12 {
-        SECTOR_EDGE_COUNT[edge_half][slot].fetch_add(1, Ordering::Relaxed);
-    }
-
-    // Time-window gate (raw-only intermediate counter). Only edges in
-    // the second half of the float sector pass this. Useful as a
-    // first-pass noise gate; the upstream raw `COMP_COUNT` and the
-    // per-sector / per-cell EDGE_BUF + counters are the unfiltered
-    // diagnostic surface.
+    // Time-window gate — the LAST filter before the hot path. Pre-gate
+    // edges record the same diagnostics as before (raw counters +
+    // edge-buf/sector counts, no VALID) and leave.
     let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
     if elapsed < SECTOR_GATE_US.load(Ordering::Relaxed) {
+        COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+        WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
+        record_edge_diag(now_10);
         return;
-    }
-    VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
-    // MAGPIE: per-window valid count + first-survivor timestamp.
-    // This ISR is the sole writer between TIM7's `free`-wrapped
-    // resets, so plain check-then-store is race-free.
-    WINDOW_VALID[win_bank()].fetch_add(1, Ordering::Relaxed);
-    if WINDOW_FIRST_ZC_US.load(Ordering::Relaxed) == u32::MAX {
-        WINDOW_FIRST_ZC_US.store(now_us, Ordering::Relaxed);
     }
 
     // OWL: persistence qualification — AM32's layer-2 filter. A real
@@ -3306,6 +3275,53 @@ fn COMP() {
                 accept_qualified_zc(now_us);
             }
         }
+    }
+    // Diagnostics for gate-surviving edges — identical stores to the
+    // old pre-accept placement, now AFTER the persistence + accept
+    // dispatch (the shot is already armed by the time these atomic
+    // RMWs run). Same values: edge_idx from the entry `now_10`,
+    // first-ZC from the entry `now_us`.
+    COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+    WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
+    record_edge_diag(now_10);
+    VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
+    // MAGPIE: per-window valid count + first-survivor timestamp.
+    // This ISR is the sole writer between the commutation resets, so
+    // plain check-then-store is race-free.
+    WINDOW_VALID[win_bank()].fetch_add(1, Ordering::Relaxed);
+    if WINDOW_FIRST_ZC_US.load(Ordering::Relaxed) == u32::MAX {
+        WINDOW_FIRST_ZC_US.store(now_us, Ordering::Relaxed);
+    }
+}
+
+/// Edge-buffer + per-sector edge-count diagnostics (shared by the
+/// pre-gate return and the post-accept tail of the COMP ISR).
+///
+/// Edge-buffer write: mark "an edge happened in this 10 µs bin" at the
+/// current offset from the start of the current 2-rev window. No
+/// direction label: L4 has no per-direction EXTI pending bits and
+/// `comp2::value()` only tells us the dwell state (see `EDGE_BUF`
+/// docs). At f_elec < 50 Hz 2 revs exceeds 4096 ticks and the masked
+/// index wraps, overwriting earlier cells — see `HALF_TICKS` docs.
+/// Saturating-increment per cell: COMP ISR is the only writer (TIM7
+/// memset / E-dump snapshot run with COMP masked or in `free`), so a
+/// plain load + store is race-safe. The per-sector counter's slot
+/// indexing matches SECTOR_BOUNDARIES (`rev_phase * 6 + sector`); TIM7
+/// is the sole writer of REV_PHASE / CURRENT_SECTOR / ACTIVE_HALF and
+/// writes them inside a critical section, so the three atomics read
+/// together here are consistent.
+#[inline(always)]
+fn record_edge_diag(now_10: u32) {
+    let edge_idx =
+        (now_10.wrapping_sub(HALF_START_TICK.load(Ordering::Relaxed)) & HALF_TICK_MASK) as usize;
+    let edge_half = (ACTIVE_HALF.load(Ordering::Relaxed) & 1) as usize;
+    let cur = EDGE_BUF[edge_half][edge_idx].load(Ordering::Relaxed);
+    EDGE_BUF[edge_half][edge_idx].store(cur.saturating_add(1), Ordering::Relaxed);
+    let rev_phase = REV_PHASE.load(Ordering::Relaxed) as usize;
+    let cur_sector = CURRENT_SECTOR.load(Ordering::Relaxed) as usize;
+    let slot = rev_phase * 6 + cur_sector;
+    if slot < 12 {
+        SECTOR_EDGE_COUNT[edge_half][slot].fetch_add(1, Ordering::Relaxed);
     }
 }
 
