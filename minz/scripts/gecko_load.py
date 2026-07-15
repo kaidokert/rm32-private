@@ -104,6 +104,7 @@ def main():
     ap.add_argument("--max-ma", type=float, default=2500, help="abort if isns exceeds this")
     ap.add_argument("--hunt", type=float, default=0.0, help="arm J and hold N s for a >4A auto-trigger spike capture")
     ap.add_argument("--bb", action="store_true", help="press B for an on-demand black-box dump (commutation delays at speed)")
+    ap.add_argument("--step-to", type=int, default=0, help="TRANSIT AUTOPSY: after reaching --amp, arm J (peak trigger + bb freeze) and step to this amp; capture the auto-trigger dump")
     ap.add_argument("--tag", default="loadshape")
     args = ap.parse_args()
 
@@ -162,7 +163,44 @@ def main():
                 else:
                     print("no ACC events parsed; raw bb saved")
                 return
-            if args.hunt:
+            if args.step_to:
+                # TRANSIT AUTOPSY: arm the >4A peak trigger + bb freeze
+                # NOW, then step into the target rung while armed — the
+                # transit spike (the envelope killer) lands in the
+                # pre-trigger oversample ring + the frozen black box.
+                print(f"  arming J at amp {args.amp}, stepping to {args.step_to} armed...", flush=True)
+                b.p.write(b"J")
+                time.sleep(0.3)
+                b.drain()
+                for _ in range(max(0, args.step_to - args.amp)):
+                    b.p.write(b"a")
+                    time.sleep(0.15)
+                deadline = time.time() + max(args.hunt, 12.0)
+                buf = b""
+                got = False
+                while time.time() < deadline:
+                    c = p.read(65536)
+                    if c:
+                        buf += c
+                        if b"gecko:" in buf and b"end" in buf and not got:
+                            got = True
+                            print("  !! TRANSIT SPIKE CAUGHT", flush=True)
+                            t3 = time.time() + 3.0  # trailing bb + j dump
+                            while time.time() < t3:
+                                cc = p.read(65536)
+                                if cc:
+                                    buf += cc
+                            break
+                        if b"STARVED" in buf or b"DESYNC" in buf or b"SAG KILL" in buf:
+                            t3 = time.time() + 2.0
+                            while time.time() < t3:
+                                cc = p.read(65536)
+                                if cc:
+                                    buf += cc
+                            print("  (kill during step — capturing tail)", flush=True)
+                            break
+                text = buf.decode("ascii", errors="replace")
+            elif args.hunt:
                 # Arm the >4A peak trigger (J turns on the free-run
                 # oversample + the intra-cycle peak scan) and HOLD,
                 # watching for the firmware's auto-trigger gecko dump on
