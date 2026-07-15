@@ -129,6 +129,15 @@ consistent; decimation coprime; counters saturate safely.
 ## Suggested experiment order (each cheap, one variable)
 
 1. E1: hoist comp re-arm above close_float_window (one-line move).
+   **TRIED 2026-07-15 — REGRESSED, REVERTED.** Interleaved vs control:
+   E1 0/3 transits to amp 70 (one death even climbing to 60) vs
+   control 2/2 (one full 60→72 pass). Mechanism: EXTI has no latch
+   timestamp — a preserved edge is stamped when the COMP handler
+   finally runs (~10-20 µs post-commutation), late enough to clear
+   the 10 µs gate floor, so E1 converted DISCARDED glitches into
+   ACCEPTABLE premature edges. The end-of-ISR pending-clear is
+   protective, not a bug. Any fix here needs a hardware timestamp
+   (TIM input capture), not an ordering change.
 2. E2: reacq un-trap: AcceptNow stays in reacq at top end (or
    confirm_need=1 there) + trip=2.
 3. E3: SCHEDULE_LATENCY_US≈3 compensation in the refine path.

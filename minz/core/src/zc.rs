@@ -215,6 +215,7 @@ pub fn confirm_step(zs: &ZcState<'_>, observed: bool) -> ConfirmAction {
         let need = crate::timing::confirm_need(
             zs.cl_active.load(Ordering::Relaxed),
             zs.cl_reacq.load(Ordering::Relaxed),
+            zs.interval_us.load(Ordering::Relaxed),
         ) as u8;
         let n = zs.cand_confirms.load(Ordering::Relaxed) + 1;
         if n >= need {
@@ -331,8 +332,8 @@ pub fn accept_publish(
             // possibly-noisy comparator C ZC while accelerating (bench:
             // re-timing C broke the amp 40-44 climb), so keep dead-reckon
             // there.
-            let c_retime = zs.cl_fast_path.load(Ordering::Relaxed)
-                && interval_us < crate::window::TOPEND_US;
+            let c_retime =
+                zs.cl_fast_path.load(Ordering::Relaxed) && interval_us < crate::window::TOPEND_US;
             schedule = is_ab || c_retime;
         }
     }

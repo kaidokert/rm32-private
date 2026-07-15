@@ -105,9 +105,24 @@ pub fn persistence_reads(blank_us: u32) -> u32 {
 /// 48 kHz was tried during the second 48 kHz push and reverted with
 /// the rest of that branch — the unscaled depths are the proven
 /// configuration at BOTH carriers.)
+///
+/// E2a (CONSTANTS_AUDIT 2026-07-15): in RE-ACQUISITION under an
+/// active lock at the TOP END (interval < TOPEND_US), depth drops
+/// back to 1 — two 41.67 µs wraps (83 µs) physically cannot complete
+/// inside an 84-95 µs window before `close_float_window` clears the
+/// candidate, so depth-2 reacq at these speeds was structurally
+/// unable to accept ANY ZC (the NOZ-cascade generator). Depth 2 is
+/// kept for reacq at lower speeds (where it fits and its premature
+/// rejection is the proven configuration) and for engage/open-loop.
 #[inline]
-pub fn confirm_need(cl_active: bool, reacq: bool) -> u32 {
-    if cl_active && !reacq { 1 } else { 2 }
+pub fn confirm_need(cl_active: bool, reacq: bool, interval_us: u32) -> u32 {
+    if cl_active && !reacq {
+        1
+    } else if cl_active && reacq && interval_us > 0 && interval_us < crate::window::TOPEND_US {
+        1
+    } else {
+        2
+    }
 }
 
 #[cfg(test)]
@@ -157,7 +172,10 @@ mod tests {
         // 600·30/60 − 60 = 240.
         assert_eq!(commutation_delay_us(600, 0, 60), 240);
         // Late accept can't go below the LPTIM2 floor (reworked 24→8).
-        assert_eq!(commutation_delay_us(200, 12, 400), LPTIM2_MIN_DELAY_US as u32);
+        assert_eq!(
+            commutation_delay_us(200, 12, 400),
+            LPTIM2_MIN_DELAY_US as u32
+        );
         // High-speed case that USED to clamp at 24 now passes through:
         // 124·14/60 − 8 = 20 µs (above the 8 µs floor).
         assert_eq!(commutation_delay_us(124, 16, 8), 20);
@@ -196,9 +214,25 @@ mod tests {
     fn confirm_depth_regime_scoped() {
         // CL fast path 1; engage/open-loop/re-acq demand 2 (the
         // unconditional-1-confirm engage-runaway regression).
-        assert_eq!(confirm_need(true, false), 1);
-        assert_eq!(confirm_need(false, false), 2);
-        assert_eq!(confirm_need(true, true), 2);
-        assert_eq!(confirm_need(false, true), 2);
+        assert_eq!(confirm_need(true, false, 1000), 1);
+        assert_eq!(confirm_need(false, false, 1000), 2);
+        assert_eq!(confirm_need(true, true, 1000), 2);
+        assert_eq!(confirm_need(false, true, 1000), 2);
+    }
+
+    #[test]
+    fn confirm_need_reacq_topend_fits_the_window() {
+        // E2a: at 84-95 us intervals only ~2.2 PWM wraps fit a window
+        // and a mid-window candidate sees at most 1 — depth 2 in reacq
+        // was structurally unsatisfiable (the NOZ-cascade generator).
+        assert_eq!(confirm_need(true, true, 90), 1);
+        assert_eq!(confirm_need(true, true, 124), 1);
+        // At/above TOPEND the proven depth-2 reacq stands.
+        assert_eq!(confirm_need(true, true, 125), 2);
+        assert_eq!(confirm_need(true, true, 160), 2);
+        // Unseeded interval (0) must not take the shortcut.
+        assert_eq!(confirm_need(true, true, 0), 2);
+        // Not CL-active: engage/open-loop keep full depth regardless.
+        assert_eq!(confirm_need(false, true, 90), 2);
     }
 }
