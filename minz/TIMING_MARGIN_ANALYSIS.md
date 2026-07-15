@@ -453,6 +453,30 @@ baseline was 2/5 with two breaks at 50–58), jitter 1.0 % (= best),
 pred bias −13…−15 % → **−9.7 %** (commutations measurably less late).
 126 core tests (`schedule_precheck_agrees_with_accept_publish`).
 
+## Accept-dispatch-before-diagnostics — LANDED (2026-07-14, commit 412db65)
+
+Lever 2 of the `elapsed` cut: the COMP ISR's diagnostic stores (EDGE_BUF,
+sector counters, VALID/WINDOW_VALID/FIRST_ZC — atomic RMWs) ran before
+the persistence + accept dispatch. Reordered to filters → persistence →
+accept → diagnostics; every reject path keeps its exact previous counter
+behavior (host-visible telemetry unchanged).
+
+**Measured: ACC delays @ amp 62 = 12–14 µs (mean 13.1)** vs lever-1-only
+9–13 (mean ~11) → **`elapsed` ≈ 7 µs cumulative** (was 16.5 pre-lever-1).
+The schedule wall is now **~3.5+ kHz — past the commutation-ISR
+blind-time wall (~2.2–2.5 kHz)**, so `elapsed` cutting stops here per
+plan; the persistence loop stays untouched (noise defense).
+
+Regressions: none — ladders {64, 62, 64} (parity), qzc 100 % every locked
+rung, jitter 1.4–2.1 %, pred bias improved again (−9.7 % → −7.5…−9.0 %),
+zero reboots.
+
+**Remaining path to 3 kHz: ONE wall — the commutation-ISR blind time
+(~20 µs at priority 1).** The sized approach: priority-split — keep
+actuation (set_six_step + mux, ~5 µs) at prio 1, NVIC-pend the
+control/close tail to a lower-priority vector (~30 cyc handoff, no queue
+plumbing — the M4-cheap alternative to "move to main").
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
