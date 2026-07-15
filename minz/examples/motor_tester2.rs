@@ -3309,15 +3309,36 @@ fn COMP() {
     }
 }
 
-/// FALCON acceptance path — publish + estimator + engage decision
-/// are host-tested in minz_core::zc::accept_publish (mask-after-
-/// accept, C-window exclusion, engage transition, the estimator's
-/// full incident suite); this site records the bb events and runs
-/// the scheduling tail, keeping the elapsed-time read in its
-/// original position (after the estimator work) so the confirmation-
-/// latency compensation is unchanged.
+/// FALCON acceptance path — SCHEDULE FIRST, ESTIMATOR AFTER (the
+/// `elapsed` cut, 2026-07-14). Measured: `elapsed` (ZC → schedule) was
+/// 16–18 µs, of which 6–8 µs was accept_publish's estimator work run
+/// BEFORE the delay was computed — pure added lateness that consumed
+/// the whole schedule budget at ~1800 Hz (T/6 = 15.4 µs at amp 64,
+/// every delay floored). Now the shot is armed from
+/// `zc::schedule_precheck` (host-tested to agree with accept_publish's
+/// schedule decision) using the PRE-update interval — the same value
+/// the free-run already scheduled from at the last commutation; the
+/// ±25 %-bounded ¾-smoothed update makes pre≈post at steady state.
+/// The estimator/publish/engage (`accept_publish`, host-tested) then
+/// runs off the hot path. Same-context safety: both callers (COMP
+/// SWIFT at prio 1; TIM1_UP confirm inside `free` + gen guard) exclude
+/// a competing publish between the precheck and the publish.
 fn accept_qualified_zc(zc_us: u32) {
     let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
+    if let Some(iv) = minz_core::zc::schedule_precheck(&ZC_STATE, sec) {
+        // Host-tested: auto-advance ramp + scheduling delay
+        // (minz_core::timing).
+        let adv =
+            minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
+        let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
+        let delay = minz_core::timing::commutation_delay_us(iv, adv, elapsed);
+        minz::lptim2_oneshot::schedule_us(delay);
+        SHOT_REFINED.store(true, Ordering::Relaxed);
+        bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
+        // Deaf until the commutation (mask-after-accept).
+        comp2::set_exti_enabled(false);
+    }
+    // Estimator + publish + engage decision — off the hot path now.
     let Some(plan) = minz_core::zc::accept_publish(&ZC_STATE, sec, zc_us, ticks_10us()) else {
         return; // window already has its ZC
     };
@@ -3327,20 +3348,5 @@ fn accept_qualified_zc(zc_us: u32) {
             sec,
             plan.interval_us.min(0xFFFF) as u16,
         );
-    }
-    if plan.schedule {
-        // Host-tested: auto-advance ramp + scheduling delay
-        // (minz_core::timing).
-        let adv = minz_core::timing::auto_advance_deg(
-            plan.interval_us,
-            ADVANCE_DEG.load(Ordering::Relaxed) as i32,
-        );
-        let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
-        let delay = minz_core::timing::commutation_delay_us(plan.interval_us, adv, elapsed);
-        minz::lptim2_oneshot::schedule_us(delay);
-        SHOT_REFINED.store(true, Ordering::Relaxed);
-        bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
-        // Deaf until the commutation (mask-after-accept).
-        comp2::set_exti_enabled(false);
     }
 }

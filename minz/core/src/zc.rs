@@ -343,6 +343,47 @@ pub fn accept_publish(
     })
 }
 
+/// SCHEDULE-FIRST pre-check (the `elapsed` cut): decide — BEFORE the
+/// estimator runs — whether this accept will re-time the commutation,
+/// and hand back the PRE-update interval to compute the delay from.
+///
+/// Rationale (measured 2026-07-14): `elapsed` (ZC → schedule call) was
+/// 16–18 µs, of which 6–8 µs was `accept_publish`'s estimator work done
+/// before the delay was even computed — pure added lateness, and the
+/// entire schedule budget at ~1800 Hz. The firmware now schedules from
+/// this pre-check FIRST, then runs [`accept_publish`] for the estimator
+/// and publishes. The pre-update interval is what the free-run already
+/// scheduled from at the previous commutation; the ±25 %-bounded
+/// ¾-smoothed update makes pre≈post at steady state (one window stale
+/// during accel — bounded by the same rate bound).
+///
+/// MUST mirror `accept_publish`'s schedule decision. The one legitimate
+/// divergence: near the TOPEND boundary the pre/post interval can
+/// straddle 125 µs — a one-window scheduling-mode difference for a C
+/// window, same class as the boundary toggling that already exists.
+/// The engage accept (cl_armed, A/B) schedules in `accept_publish` via
+/// the just-set cl_active — pre-check treats `cl_armed` as schedulable
+/// so the engage's first shot is also scheduled early.
+#[inline]
+pub fn schedule_precheck(zs: &ZcState<'_>, sector: u8) -> Option<u32> {
+    if zs.window_qzc_us.load(Ordering::Relaxed) != u32::MAX {
+        return None; // mask-after-accept: window already has its ZC
+    }
+    let iv = zs.interval_us.load(Ordering::Relaxed);
+    if iv == 0 {
+        return None; // unseeded estimator
+    }
+    let is_ab = sector != 0 && sector != 3;
+    let ok = if is_ab {
+        zs.cl_active.load(Ordering::Relaxed) || zs.cl_armed.load(Ordering::Relaxed)
+    } else {
+        zs.cl_active.load(Ordering::Relaxed)
+            && zs.cl_fast_path.load(Ordering::Relaxed)
+            && iv < crate::window::TOPEND_US
+    };
+    if ok { Some(iv) } else { None }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,6 +732,48 @@ mod tests {
         r.last_qzc_us.store(u32::MAX, Ordering::Relaxed);
         let plan = accept_publish(&r.zs(), 2, 10_000, 1_000).unwrap();
         assert!(!plan.schedule);
+    }
+
+    #[test]
+    fn schedule_precheck_agrees_with_accept_publish() {
+        // Firmware order: precheck (schedule-first) THEN accept_publish.
+        // The precheck's decision must equal plan.schedule for every
+        // flag/sector/interval combination (steady state: spans=0 so the
+        // estimator doesn't move the interval between the two calls).
+        for sector in [0u8, 1, 2, 3, 4, 5] {
+            for &(active, armed, fast) in &[
+                (false, false, false),
+                (true, false, false),
+                (false, true, false),
+                (true, false, true),
+                (false, true, true),
+                (true, true, true),
+            ] {
+                for &iv in &[0u32, 110, 600] {
+                    let r = Rig::new();
+                    r.cl_active.store(active, Ordering::Relaxed);
+                    r.cl_armed.store(armed, Ordering::Relaxed);
+                    r.cl_fast_path.store(fast, Ordering::Relaxed);
+                    r.interval_us.store(iv, Ordering::Relaxed);
+                    let pre = schedule_precheck(&r.zs(), sector);
+                    let plan = accept_publish(&r.zs(), sector, 10_000, 1_000).unwrap();
+                    assert_eq!(
+                        pre.is_some(),
+                        plan.schedule,
+                        "mismatch: sec={sector} active={active} armed={armed} fast={fast} iv={iv}"
+                    );
+                    if let Some(p) = pre {
+                        assert_eq!(p, iv, "precheck must return the PRE-update interval");
+                    }
+                }
+            }
+        }
+        // Masked window (already has a qZC): precheck None, publish None.
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        r.window_qzc_us.store(9_000, Ordering::Relaxed);
+        assert!(schedule_precheck(&r.zs(), 2).is_none());
+        assert!(accept_publish(&r.zs(), 2, 10_000, 1_000).is_none());
     }
 
     #[test]
