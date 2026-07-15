@@ -313,6 +313,12 @@ static PWM_SAMPLE_IDX: AtomicU32 = AtomicU32::new(0);
 /// main can emit them IN PLACE (no 14 KB stack snapshot — see the `j`
 /// handler for the main-frame/.bss overlap incident).
 static CTX_FREEZE: AtomicBool = AtomicBool::new(false);
+
+/// FINE duty trim in raw PWM counts (ARR=3332 at 24 kHz; 1 amp% ≈ 33
+/// counts). Added to the %-derived duty in the CL commutation path —
+/// the spike-boundary microscope: step the operating point in counter
+/// resolution instead of 1 % rungs (`[`/`]` keys, ±4 counts).
+static DUTY_TRIM: portable_atomic::AtomicI16 = portable_atomic::AtomicI16::new(0);
 static CTX_A: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
 static CTX_B: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
 static CTX_I: [AtomicU16; PWM_SAMPLE_LEN] = [const { AtomicU16::new(0) }; PWM_SAMPLE_LEN];
@@ -2039,6 +2045,19 @@ fn main() -> ! {
                         last_i_tim1 = now_tim1;
                         last_i_tim1_cc = now_tim1_cc;
                     }
+                    b'[' | b']' => {
+                        let d: i16 = if b == b']' { 4 } else { -4 };
+                        let v = DUTY_TRIM.load(Ordering::Relaxed) + d;
+                        DUTY_TRIM.store(v, Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "duty trim = {} counts
+",
+                            v
+                        )
+                        .ok();
+                        tx_writer.write_blocking(&[]);
+                    }
                     b'h' => {
                         // Cycle COMP2 hysteresis: 0 → 1 → 3 → 0 (skip
                         // the 2/medium step since the user only wants
@@ -2810,7 +2829,11 @@ fn LPTIM2() {
     } else {
         base_amp
     };
-    let duty = open_loop::six_step_duty(max_duty(), amp);
+    let duty = {
+        let base = open_loop::six_step_duty(max_duty(), amp) as i32;
+        let hi = max_duty() as i32 * AMP_MAX as i32 / 100;
+        (base + DUTY_TRIM.load(Ordering::Relaxed) as i32).clamp(0, hi) as u16
+    };
     tim1_motor_pwm::set_six_step(sector, duty);
     comp2::set_inm(SECTOR_FLOAT_PHASE[sector as usize]);
     let (re, fe) = edges_for(EDGE_MODE.load(Ordering::Relaxed), sector);
