@@ -138,11 +138,25 @@ consistent; decimation coprime; counters saturate safely.
    ACCEPTABLE premature edges. The end-of-ISR pending-clear is
    protective, not a bug. Any fix here needs a hardware timestamp
    (TIM input capture), not an ordering change.
-2. E2: reacq un-trap: AcceptNow stays in reacq at top end (or
-   confirm_need=1 there) + trip=2.
-3. E3: SCHEDULE_LATENCY_US≈3 compensation in the refine path.
-4. E4: persistence 12→5 under CL lock.
-5. E5: runaway floor 60→45 (+ log interval at kills first).
-6. E6: sag debounce sized in ms (32 samples at 24 kHz);
-   short-window peak trip.
-7. E7: blind-amp clamp off for one ladder (diagnostic only).
+2. E2a: confirm_need=1 in reacq below TOPEND (trip left at 1 — with
+   the confirm achievable, first-miss reacq entry is benign).
+   **LANDED (049a848) — WIN: 3/3 full ladders to 72 vs control 1/2.**
+3. E3: LPTIM2_FULL_SCHEDULE_OVERHEAD_US=3 folded into refine elapsed.
+   **LANDED (c2e9404) — bench-neutral at n=3, kept for correctness.**
+4. E4: persistence 12→5 under established CL lock.
+   **LANDED (5337e60) — WIN: first-ever amp-74 rungs, 2/2.**
+5. E5: runaway floor 60→45.
+   **LANDED (f96bd98) — WIN: full ladders to 75 = AMP_MAX, 3/3,
+   qzc 100 %, 1931 Hz, jitter 4.8 % at top. Envelope = the clamp.**
+6. E6: REFRAMED as doc-truth (3308eec) — the 2.67 ms sag debounce is
+   the bench-proven behavior every 24 kHz result was earned on;
+   comments corrected, behavior kept. The short-window peak trip
+   stays on the backlog (OC 85 ms is blind to 10-18 ms bursts).
+7. E7: blind-amp clamp off for one ladder (diagnostic) — NOT RUN,
+   moot at the current envelope (nothing left to climb below
+   AMP_MAX); revisit if a raised clamp reopens transit deaths.
+
+Final state: tag `checkpoint-24k-audit75`. The binding limit is the
+AMP_MAX=75 duty clamp (operator's bench-current call). Remaining
+CPU/protection backlog: TIM1_CC u64 division at 72 kHz (~7 % core),
+short-window current trip, blank divisor /75 re-tune.
