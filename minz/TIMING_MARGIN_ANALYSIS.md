@@ -477,6 +477,43 @@ actuation (set_six_step + mux, ~5 µs) at prio 1, NVIC-pend the
 control/close tail to a lower-priority vector (~30 cyc handoff, no queue
 plumbing — the M4-cheap alternative to "move to main").
 
+## Instruments fixed + v5 sweeps + TRANSIT AUTOPSY (2026-07-14)
+
+**Instruments (commit f42f11c):** wire v5 (window length in µs — kills the
+10 µs-tick quantization band), snapshot-at-close (kills the double-buffer
+recycling race; zero-current records 3.9 % → 0.00 % over 22 k windows),
+plot gap-breaking. Verified live; v4 captures still parse.
+
+**v5 sweeps ×3 (40→70): amp 66 held at qzc 100 % in ALL THREE runs
+(1761–1766 Hz)** — one rung above the old ceiling — breaking only
+entering 68 (DESYNC ×2, one bus collapse to 4.95 V). With honest
+telemetry the amp-66 dwell shows REAL physics: ±10 % window-length
+spread and a ~4/s population of single-window 2.5–4.5 A spikes, ridden
+through.
+
+**Transit autopsy (66→68, peak-trigger + frozen bb + 0.27 µs ring —
+`gecko_load --step-to`): the transit spike begins with a PROVABLY CLEAN
+commutation chain.** The frozen black box shows 64 events of pure
+ACC/REF (every sector, zero NOZ/BLD, intervals 102–106 µs, delays
+unfloored 10–11 µs) right up to the >4 A trigger; the oversample ring
+shows a smooth L/R ramp 2.1 → 4.55 A in ~45 µs starting mid-window
+after an on-time commutation. **This REVERSES the old monster
+cause-order**: in the dwell-era monsters the miss came first; at the
+top-end transit the CURRENT RAMP comes first (with perfect timing), and
+the failure develops downstream — the µs-fidelity kill sequence
+(v5sweep2_t68) shows the first bad window carrying miss + stretch +
+5.5 A + sag TOGETHER after a fully clean window, then vbat ADC readings
+going nonsense-high (9.9 "V" from an 8.16 V bench = the deep sag
+corrupting ADC/VDDA), sensing degrading, 10–12 A sustained, bus → 4.98 V,
+kill. Desyncs at the top are DOWNSTREAM of the event, not its trigger.
+
+**Open question (next investigation): what starts the ramp?** Candidates:
+the 1 %/50 ms throttle-slew tick landing (same ΔV, but no BEMF headroom
+at ~2 A / amp 66+), a load-angle excursion, or a sector-specific
+coupling. A slew-tick bb event (EV for each amplitude tick) would
+correlate them directly. The single-window 4–5 A dwell spikes look like
+the same family at sub-critical size.
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
