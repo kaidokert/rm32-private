@@ -52,7 +52,17 @@ pub fn cl_watchdog(
     if have_qzc_ref && since_last_qzc_us > interval_us.max(500) * 12 {
         return Some(Kill::ZcStarved);
     }
-    if interval_us < 60 {
+    // E5 (CONSTANTS_AUDIT 2026-07-15): floor 60 -> 45. At 60 the
+    // guard collided with the loop's own LEGAL dynamics below 100 us
+    // intervals: the accept rate bound permits 0.6x (84 -> 50 us) and
+    // the reacq re-seed 0.5x (84 -> 42 us), so a single permitted
+    // fast step could land under the floor and kill a healthy lock.
+    // 45 clears one legal 0.6x accept from anywhere >= 75 us while
+    // still killing scheduler-junk runaways (the 24-50 us band a
+    // detached-field runaway self-feeds into). Re-seed at 0.5x from
+    // < 90 us can still cross it - acceptable: a genuine re-seed that
+    // halves from 90 us is indistinguishable from a runaway anyway.
+    if interval_us < 45 {
         return Some(Kill::Runaway);
     }
     if since_last_comm_us > interval_us.max(1_000) * 3 {
@@ -308,10 +318,15 @@ mod tests {
     fn regression_runaway_floor_regime_2026_07_10() {
         // 160 µs floor executed a HEALTHY 1,050 Hz lock (interval
         // 158): bb showed a clean ACC/REF chain, then DSY d=3. The
-        // floor is 60 µs now; 158 must survive, true junk (24-50 µs
-        // scheduler-floor runaway) must die.
+        // floor is 45 µs now (E5: 60 collided with the loop's own
+        // legal 0.6× accept step from any interval < 100 µs — one
+        // permitted fast accept at 84 µs lands at 50 and was killed).
+        // 158 must survive, a legal fast step from the operating band
+        // must survive, true junk (sub-45 scheduler-floor runaway)
+        // must die.
         assert_eq!(cl_watchdog(158, 0, 0, true), None);
-        assert_eq!(cl_watchdog(59, 0, 0, true), Some(Kill::Runaway));
+        assert_eq!(cl_watchdog(50, 0, 0, true), None); // 0.6×84 legal step
+        assert_eq!(cl_watchdog(44, 0, 0, true), Some(Kill::Runaway));
         assert_eq!(cl_watchdog(30, 0, 0, true), Some(Kill::Runaway));
     }
 
