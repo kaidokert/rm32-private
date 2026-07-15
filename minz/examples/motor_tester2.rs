@@ -3355,7 +3355,16 @@ fn accept_qualified_zc(zc_us: u32) {
         let adv =
             minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
         let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
-        let delay = minz_core::timing::commutation_delay_us(iv, adv, elapsed);
+        // E3: fold the LPTIM2 full-path fixed overhead (~3 us of
+        // bounce+warm-up+sync AFTER this computation, BEFORE the
+        // count starts) into elapsed so the refined shot lands on
+        // time instead of systematically late. Free-run re-arms use
+        // reschedule_light and must not apply this.
+        let delay = minz_core::timing::commutation_delay_us(
+            iv,
+            adv,
+            elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
+        );
         minz::lptim2_oneshot::schedule_us(delay);
         SHOT_REFINED.store(true, Ordering::Relaxed);
         bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);

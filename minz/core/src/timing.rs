@@ -49,6 +49,18 @@ pub fn auto_advance_deg(interval_us: u32, manual_deg: i32) -> i32 {
 /// ≥1 µs; this is the control-logic floor.)
 pub const LPTIM2_MIN_DELAY_US: i32 = 2;
 
+/// E3 (CONSTANTS_AUDIT 2026-07-15): fixed overhead of the LPTIM2
+/// FULL schedule path (`schedule_us`: disable/enable bounce +
+/// `asm::delay(200)` warm-up + ARROK sync ≈ 3 µs) that elapses AFTER
+/// the delay value is computed and BEFORE the count starts. The
+/// ZC-refine path must fold this into `elapsed` or every refined
+/// commutation fires ~3 µs late — while free-run re-arms
+/// (`reschedule_light`, no bounce/warm-up) fire on time: an
+/// alternating late/on-time jitter that seeds top-end divergence
+/// (at 84-95 µs windows, 3 µs ≈ 13° electrical of the refine delay).
+/// The free-run path must NOT apply this.
+pub const LPTIM2_FULL_SCHEDULE_OVERHEAD_US: i32 = 3;
+
 /// Delay from an accepted ZC to the commutation instant:
 /// `interval·(30−adv)/60 − elapsed`, clamped to [`LPTIM2_MIN_DELAY_US`].
 #[inline]
