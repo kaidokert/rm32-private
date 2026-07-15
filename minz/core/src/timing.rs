@@ -103,9 +103,16 @@ pub fn blank_us(user_blank_us: u32, interval_us: u32) -> u32 {
 /// Persistence depth for the ZC qualification read-loop: 5 reads
 /// while the time-blank is doing the filtering; deepen to AM32's 12
 /// once the blank has faded below 5 µs.
+///
+/// E4 (CONSTANTS_AUDIT 2026-07-15): under an ESTABLISHED lock
+/// (cl_active, not reacq) the depth stays 5 even with the blank
+/// faded — at 84-95 µs windows the 12 spaced reads cost ~1.4 µs on
+/// the COMP critical path (a fifth of the ZC->shot budget) to filter
+/// a BEMF that is large and clean at these speeds. Re-acquisition
+/// and pre-lock keep the full 12 (noise defense where it earns it).
 #[inline]
-pub fn persistence_reads(blank_us: u32) -> u32 {
-    if blank_us >= 5 { 5 } else { 12 }
+pub fn persistence_reads(blank_us: u32, cl_locked: bool) -> u32 {
+    if blank_us >= 5 || cl_locked { 5 } else { 12 }
 }
 
 /// ZC-confirm depth in PWM wraps: 1 under an established lock, 2
@@ -216,10 +223,13 @@ mod tests {
 
     #[test]
     fn persistence_deepens_as_blank_fades() {
-        assert_eq!(persistence_reads(8), 5);
-        assert_eq!(persistence_reads(5), 5);
-        assert_eq!(persistence_reads(4), 12);
-        assert_eq!(persistence_reads(0), 12);
+        assert_eq!(persistence_reads(8, false), 5);
+        assert_eq!(persistence_reads(5, false), 5);
+        assert_eq!(persistence_reads(4, false), 12);
+        assert_eq!(persistence_reads(0, false), 12);
+        // E4: established lock keeps the shallow depth at faded blank.
+        assert_eq!(persistence_reads(1, true), 5);
+        assert_eq!(persistence_reads(0, true), 5);
     }
 
     #[test]

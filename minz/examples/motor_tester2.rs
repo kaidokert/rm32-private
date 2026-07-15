@@ -3211,7 +3211,13 @@ fn COMP() {
     }
     // Persistence depth for the qZC filter below: AM32-style
     // deepening as the time-blank fades.
-    let persist_reads: u32 = minz_core::timing::persistence_reads(blank_us);
+    // E4: under an established lock the depth stays 5 (the 12-read
+    // spin cost ~1.4 us of the ZC->shot budget to filter a strong
+    // top-end BEMF); reacq/pre-lock keep 12.
+    let persist_reads: u32 = minz_core::timing::persistence_reads(
+        blank_us,
+        CL_ACTIVE.load(Ordering::Relaxed) && !CL_REACQ.load(Ordering::Relaxed),
+    );
 
     // Mode 5: value-gated recording. EXTI line 22 fires off the *raw*
     // comparator output (not gated by any internal blanking), so an
