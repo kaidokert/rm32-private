@@ -431,6 +431,28 @@ Realistic combined: elapsed 17 → ~7–9 µs → moves the `T/6` wall from
 ~1800 Hz to ~2.4–2.6 kHz. The commutation-ISR blind time (~21 µs) becomes
 the next binding wall at ~2.2–2.5 kHz (the priority-split/pend idea).
 
+## Schedule-first, estimator-after — LANDED (2026-07-14, commit b7afb8e)
+
+The `elapsed` cut, executed: the accept path now arms the LPTIM2 shot
+FIRST (from `zc::schedule_precheck`, host-tested to agree with
+`accept_publish`'s schedule decision across the full matrix, incl. the
+engage `cl_armed` case) using the PRE-update interval, then runs the
+estimator/publish/engage off the hot path. Both accept callers funnel
+through the one site.
+
+**Measured result:** ACC delays at amp 62 = **9–13 µs, varying** (pre-cut:
+`elapsed` 16.5 µs exceeded the whole budget → every delay floored) →
+back-computed `elapsed` ≈ **8–11 µs** (the 6–8 µs accept-compute is off
+the path; the ~10–12 µs COMP tail remains). **The schedule wall moves
+~1800 Hz → ~2.5–2.9 kHz**; the commutation-ISR blind time (~21 µs) now
+binds first (~2.2–2.5 kHz) — next lever: accept-dispatch-before-
+diagnostics in the COMP ISR (~5–7 µs more), then the priority-split idea.
+
+Regression check: 3/3 ladders to ≥62 qzc 100 % (1/3 to 64; the LTO
+baseline was 2/5 with two breaks at 50–58), jitter 1.0 % (= best),
+pred bias −13…−15 % → **−9.7 %** (commutations measurably less late).
+126 core tests (`schedule_precheck_agrees_with_accept_publish`).
+
 ## Data files (`captures/`)
 
 - `night2_5070_map.png`, `_dropout.png`, `_a{50,56,62,66}.bin`, `_t68.bin`
