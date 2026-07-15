@@ -534,7 +534,7 @@ static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
 
 /// Overcurrent failsafe (firmware-side, host-independent). The
 /// TIM1_UP ISR accumulates the per-PWM-cycle current samples over
-/// `1 << I_TRIP_SHIFT` PWM cycles (4096 ≈ 85 ms @ 48 kHz); if the
+/// `1 << I_TRIP_SHIFT` PWM cycles (2048 = 85 ms @ 24 kHz); if the
 /// window average exceeds [`I_TRIP_RAW`] while the drive is armed,
 /// the ISR itself kills the output (same actions as the `w` key) and
 /// raises [`OC_TRIPPED`] so main can report it. Averaging makes it a
@@ -2963,7 +2963,8 @@ fn TIM1_UP_TIM16() {
     // of the time and corrupted sector confirms on two motors). Same
     // one-per-cycle rate as the old wrap-slot pump, so the debounce
     // timing is unchanged. Kill at −10 % from the arm baseline (or the
-    // brownout backstop), debounced 64 consecutive samples = 1.3 ms.
+    // brownout backstop), debounced 64 consecutive samples = 2.67 ms
+    // at the 24 kHz carrier (carrier-relative; see guards::SAG_DEBOUNCE).
     {
         let raw = vbat_raw;
         VBAT_RAW_LIVE.store(raw, Ordering::Relaxed);

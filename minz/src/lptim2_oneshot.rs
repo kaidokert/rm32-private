@@ -55,7 +55,7 @@ pub fn init() {
 }
 
 /// Arm (or RE-arm) the one-shot to fire the `LPTIM2` interrupt in
-/// `us` microseconds. Clamped to [16 µs, 52 ms]. Callable from ISR
+/// `us` microseconds. Clamped to [4 µs, 13 ms]. Callable from ISR
 /// context (the ARROK poll is a few kernel clocks).
 ///
 /// The disable/enable bounce gives clean restart semantics: in single

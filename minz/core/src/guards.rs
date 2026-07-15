@@ -89,8 +89,13 @@ pub struct SagGuard {
 /// ≈5.95 V: below this the 3.3 V rail is one transient from the
 /// brownout that WEDGES the MCU with the bridge frozen (the burn).
 pub const VBAT_ABS_FLOOR_RAW: u16 = 793;
-/// Consecutive sub-threshold samples required (1.3 ms at the 48 kHz
-/// pump).
+/// Consecutive sub-threshold samples required. Sample rate = the PWM
+/// carrier (vbat rides the per-cycle injected burst), so 64 samples =
+/// **2.67 ms at the flashed 24 kHz** (1.3 ms at 48 kHz). E6 audit
+/// note: this is CARRIER-RELATIVE by construction; 2.67 ms is the
+/// bench-proven value every 24 kHz envelope result was earned on
+/// (rides through 1-2 ms spike bursts, kills sustained collapse).
+/// Re-derive per carrier if the sag latency matters at 48 kHz.
 pub const SAG_DEBOUNCE: u16 = 64;
 
 impl SagGuard {

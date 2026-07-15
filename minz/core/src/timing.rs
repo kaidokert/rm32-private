@@ -38,15 +38,15 @@ pub fn auto_advance_deg(interval_us: u32, manual_deg: i32) -> i32 {
 }
 
 /// Minimum schedulable commutation delay, µs — the commutation-timer
-/// floor. History: 24 µs on LPTIM2 /64, then 8 µs (LPTIM2 disable/enable
-/// bounce + ARROK sync + warm-up). Now **2 µs** on the TIM15 one-pulse
-/// timer: a plain APB2 GP timer at 1 µs/tick with no clock-domain ARR
-/// sync and no warm-up, so `schedule_us` = stop→ARR→CNT=0→start fires
-/// reliably at ~2 µs. This is the "8→2 µs" win — at ~1800 Hz / 90 µs
-/// windows the ideal delay is ~5 µs, so the 8 µs floor was still
-/// clamping (late by ~3 µs, the top-end ZC-miss seed); 2 µs passes it
-/// unclamped. (TIM15's own `schedule_us` clamps the hardware write to
-/// ≥1 µs; this is the control-logic floor.)
+/// floor. History: 24 µs on LPTIM2 /64, then 8, then 2 (the floor
+/// rework). NOTE (E6 doc-truth): the TIM15 one-pulse swap this
+/// comment once narrated was REVERTED — LPTIM2 /64 + floor 2 beat it
+/// in a one-variable control (pred jitter 0.9 % vs 3.4 %, APB2
+/// domain jitter). The flashed commutation timer is LPTIM2; its
+/// hardware clamp is 4 µs (lptim2_oneshot `clamp(4, ..)`), so THIS
+/// logic floor of 2 is currently shadowed by the hardware clamp, and
+/// the full-path ~3 µs overhead is compensated via
+/// [`LPTIM2_FULL_SCHEDULE_OVERHEAD_US`] (E3), not by this constant.
 pub const LPTIM2_MIN_DELAY_US: i32 = 2;
 
 /// E3 (CONSTANTS_AUDIT 2026-07-15): fixed overhead of the LPTIM2
