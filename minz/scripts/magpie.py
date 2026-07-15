@@ -22,9 +22,11 @@ VDDA nominal 3.3 V, 12-bit.
 
 FRAME_LEN = 26  # v3
 FRAME_LEN_V4 = 28  # v4: + vbat_raw u16 (window-min supply voltage)
+FRAME_LEN_V5 = 28  # v5: same layout; len field is MICROSECONDS (was 10 us ticks)
 SYNC0 = 0x5A
 SYNC1 = 0xA5  # v3
 SYNC1_V4 = 0xA6
+SYNC1_V5 = 0xA7
 PRED_NONE = -32768
 
 VBAT_UV_PER_COUNT = 7507  # divider-scaled: raw 1080 ≈ 8.107 V
@@ -52,14 +54,19 @@ def parse_frames(buf: bytes):
     i = 0
     while i + FRAME_LEN <= len(buf):
         is_v4 = buf[i] == SYNC0 and buf[i + 1] == SYNC1_V4
-        if is_v4 and i + FRAME_LEN_V4 > len(buf):
+        is_v5 = buf[i] == SYNC0 and buf[i + 1] == SYNC1_V5
+        if (is_v4 or is_v5) and i + FRAME_LEN_V5 > len(buf):
             break
         if (buf[i] == SYNC0 and buf[i + 1] == SYNC1 and (buf[i + 3] & 0x0F) < 6) or (
-            is_v4 and (buf[i + 3] & 0x0F) < 6
+            (is_v4 or is_v5) and (buf[i + 3] & 0x0F) < 6
         ):
-            flen = FRAME_LEN_V4 if is_v4 else FRAME_LEN
+            flen = FRAME_LEN_V5 if (is_v4 or is_v5) else FRAME_LEN
             f = buf[i : i + flen]
-            len_10us = int.from_bytes(f[8:10], "little")
+            len_field = int.from_bytes(f[8:10], "little")
+            # v5 carries the length in us directly; v3/v4 in 10 us ticks
+            # (11% quantization at ~92 us windows — the false f_e
+            # "oscillation band" incident, 2026-07-14).
+            len_us_val = len_field if is_v5 else len_field * 10
             raw = int.from_bytes(f[12:14], "little")
             valid = int.from_bytes(f[14:16], "little")
             i_min = int.from_bytes(f[16:18], "little")
@@ -74,10 +81,10 @@ def parse_frames(buf: bytes):
             # bytes themselves) and blew a map's qZC sigma 25x
             # (2026-07-11). Mirrored in minz-core wire::decode.
             def off_ok(off):
-                return off == 0xFFFF or off <= len_10us * 10 + 10
+                return off == 0xFFFF or off <= len_us_val + 10
 
             sane = (
-                0 < len_10us < 3000  # 10 µs .. 30 ms window
+                0 < len_us_val < 30000  # 1 µs .. 30 ms window
                 and valid <= raw
                 and i_min <= 0x0FFF
                 and i_max <= 0x0FFF
@@ -94,7 +101,7 @@ def parse_frames(buf: bytes):
                     zc_found=bool(f[3] & 0x80),
                     sector=f[3] & 0x0F,
                     start=int.from_bytes(f[4:8], "little"),
-                    len_us=len_10us * 10,
+                    len_us=len_us_val,
                     zc_off_us=int.from_bytes(f[10:12], "little"),
                     raw=raw,
                     valid=valid,
@@ -105,7 +112,7 @@ def parse_frames(buf: bytes):
                     pred_err_us=int.from_bytes(f[24:26], "little", signed=True),
                     # v4: worst supply voltage within/since-last-streamed
                     # window (48 kHz pump, firmware-aggregated min).
-                    vbat_raw=int.from_bytes(f[26:28], "little") if is_v4 else None,
+                    vbat_raw=int.from_bytes(f[26:28], "little") if (is_v4 or is_v5) else None,
                 )
             )
             i += flen

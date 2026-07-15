@@ -72,26 +72,45 @@ lo = next(i for i, x in enumerate(t) if x >= t_end - args.secs)
 fr = frames[lo:]
 t = t[lo:]
 
+# Break lines across stream gaps (>100 ms with no records): the plot
+# used to draw a straight bridge across a 1.11 s gap, which read as a
+# perfectly flat f_e segment ("the flat 1750 line" incident 2026-07-14).
+# A NaN vertex lifts the pen instead.
+GAP_S = 0.1
+
+
+def gapped(ts, ys):
+    xo, yo = [], []
+    for i, (x, y) in enumerate(zip(ts, ys)):
+        if i and x - ts[i - 1] > GAP_S:
+            xo.append((ts[i - 1] + x) / 2)
+            yo.append(float("nan"))
+        xo.append(x)
+        yo.append(y)
+    return xo, yo
+
+
 fig, axes = plt.subplots(3, 1, figsize=(13, 8), sharex=True)
 name = pathlib.Path(last).name
 fig.suptitle(f"dropout tail — {name}\n{kill}", fontsize=10)
 
-axes[0].plot(t, [1e6 / (6 * f["len_us"]) if f["len_us"] else 0 for f in fr],
-             lw=0.8, color="tab:blue")
+gx, gy = gapped(t, [1e6 / (6 * f["len_us"]) if f["len_us"] else 0 for f in fr])
+axes[0].plot(gx, gy, lw=0.8, color="tab:blue")
 axes[0].set_ylabel("f_e (Hz)")
 
 vb = [(x, vbat_raw_to_v(f["vbat_raw"])) for x, f in zip(t, fr) if f.get("vbat_raw")]
 if vb:
-    axes[1].plot([p[0] for p in vb], [p[1] for p in vb], lw=0.8, color="tab:red")
+    gx, gy = gapped([p[0] for p in vb], [p[1] for p in vb])
+    axes[1].plot(gx, gy, lw=0.8, color="tab:red")
     axes[1].set_ylabel("vbat window-min (V)")
 else:
     axes[1].text(0.5, 0.5, "no v4 vbat in this capture", ha="center",
                  transform=axes[1].transAxes)
 
-axes[2].plot(t, [raw_to_ma(f["i_avg"]) for f in fr], lw=0.8, color="tab:purple",
-             label="i_avg")
-axes[2].plot(t, [raw_to_ma(f["i_max"]) for f in fr], lw=0.5, alpha=0.5,
-             color="tab:purple", label="i_max")
+gx, gy = gapped(t, [raw_to_ma(f["i_avg"]) for f in fr])
+axes[2].plot(gx, gy, lw=0.8, color="tab:purple", label="i_avg")
+gx, gy = gapped(t, [raw_to_ma(f["i_max"]) for f in fr])
+axes[2].plot(gx, gy, lw=0.5, alpha=0.5, color="tab:purple", label="i_max")
 noz = [x for x, f in zip(t, fr) if f["qzc_off_us"] == 0xFFFF]
 if noz:
     for x in noz:

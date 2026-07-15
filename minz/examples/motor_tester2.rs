@@ -513,22 +513,18 @@ static WAS_IN_FLOAT_SECTOR: AtomicBool = AtomicBool::new(false);
 /// Latest PWM-synchronous current sample (raw 12-bit, INA180 via
 /// ADC1 ch8), harvested once per PWM cycle by the TIM1_UP ISR.
 static LAST_I_RAW: AtomicU16 = AtomicU16::new(0);
-/// DOUBLE-BUFFERED per-window diagnostic accumulators (`[_; 2]`, indexed
-/// by `WIN_BANK`). Writers (COMP: raw/valid; TIM1_UP: i_*/vbat_min) hit
-/// `[win_bank()]`. The commutation ISR FLIPS `WIN_BANK` only on the ~1/5
-/// STREAMED windows (hands the completed bank to main for the record
-/// build); on the 4/5 non-streamed windows it clears the bank inline.
-/// So the flip/handoff happens 1/5 of windows (not every window — that
-/// was the +186 cyc regression), and the WORST-CASE ISR loses the build.
-static WIN_BANK: AtomicU8 = AtomicU8::new(0);
-#[inline(always)]
-fn win_bank() -> usize {
-    (WIN_BANK.load(Ordering::Relaxed) & 1) as usize
-}
-static WINDOW_I_SUM: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
-static WINDOW_I_N: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
-static WINDOW_I_MIN: [AtomicU16; 2] = [const { AtomicU16::new(0x0FFF) }; 2];
-static WINDOW_I_MAX: [AtomicU16; 2] = [const { AtomicU16::new(0) }; 2];
+/// Per-window diagnostic accumulators (single-buffered again). The
+/// commutation ISR SNAPSHOTS these by value at streamed closes
+/// (`minz_core::window::snapshot_diag`) and clears them inline, so main
+/// builds records from the snapshot in the queue entry — the 2-bank
+/// double-buffer was raceable (banks recycle every ~1 ms at speed vs
+/// main's ms-scale drain under UART load: 3.9 % of records at amp 64
+/// were built from cleared banks — the dropout plot's zero-current
+/// comb; 0.0 % pre-double-buffer).
+static WINDOW_I_SUM: AtomicU32 = AtomicU32::new(0);
+static WINDOW_I_N: AtomicU32 = AtomicU32::new(0);
+static WINDOW_I_MIN: AtomicU16 = AtomicU16::new(0x0FFF);
+static WINDOW_I_MAX: AtomicU16 = AtomicU16::new(0);
 
 /// Overcurrent failsafe (firmware-side, host-independent). The
 /// TIM1_UP ISR accumulates the per-PWM-cycle current samples over
@@ -582,7 +578,7 @@ static VBAT_MIN_RAW: AtomicU16 = AtomicU16::new(u16::MAX);
 /// 48 kHz pump: the stream carries worst-case supply voltage at
 /// window granularity, so sag transients are directly plottable
 /// from any capture).
-static WINDOW_VBAT_MIN: [AtomicU16; 2] = [const { AtomicU16::new(u16::MAX) }; 2];
+static WINDOW_VBAT_MIN: AtomicU16 = AtomicU16::new(u16::MAX);
 /// The raw value that actually tripped (for the report — the live
 /// value may have recovered by print time).
 static VBAT_TRIP_RAW_SEEN: AtomicU16 = AtomicU16::new(0);
@@ -595,10 +591,10 @@ static VBAT_TRIP_RAW_SEEN: AtomicU16 = AtomicU16::new(0);
 static VBAT_BASELINE_RAW: AtomicU16 = AtomicU16::new(0);
 // Sag thresholds/debounce live in minz_core::guards (host-tested).
 
-/// Raw COMP edges (banked, see WIN_BANK).
-static WINDOW_RAW: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
-/// Edges that survived every gate (banked).
-static WINDOW_VALID: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+/// Raw COMP edges in the current window (every EXTI fire).
+static WINDOW_RAW: AtomicU32 = AtomicU32::new(0);
+/// Edges that survived every gate (blanking, mode-5, half-window).
+static WINDOW_VALID: AtomicU32 = AtomicU32::new(0);
 /// `ticks_1us()` of the first gate-surviving edge; `u32::MAX` = none yet.
 static WINDOW_FIRST_ZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
 /// OWL: `ticks_1us()` of the first PERSISTENCE-QUALIFIED edge (held
@@ -2247,7 +2243,7 @@ fn main() -> ! {
             // would desync the host parser; a dropped one just shows
             // as a seq gap.
             while let Some(rec) = wrec_consumer.dequeue() {
-                if TX_RING_LEN - 1 - tx_writer.pending() >= minz_core::wire::FRAME_LEN_V4 {
+                if TX_RING_LEN - 1 - tx_writer.pending() >= minz_core::wire::FRAME_LEN_V5 {
                     for b in rec.encode() {
                         let _ = tx_writer.push(b);
                     }
@@ -2583,23 +2579,24 @@ static WINDOW_CONTROL: minz_core::window::WindowControl<'static> =
 
 /// A view of ONE diagnostic bank (built on the stack per use — cheap, 8
 /// refs, and only on the 1/5 streamed windows / non-streamed clear).
-fn window_diag(bank: usize) -> minz_core::window::WindowDiag<'static> {
-    minz_core::window::WindowDiag {
-        raw: &WINDOW_RAW[bank],
-        valid: &WINDOW_VALID[bank],
-        i_sum: &WINDOW_I_SUM[bank],
-        i_n: &WINDOW_I_N[bank],
-        i_min: &WINDOW_I_MIN[bank],
-        i_max: &WINDOW_I_MAX[bank],
-        vbat_min: &WINDOW_VBAT_MIN[bank],
-        vbat_live: &VBAT_RAW_LIVE,
-    }
-}
+static WINDOW_DIAG: minz_core::window::WindowDiag<'static> = minz_core::window::WindowDiag {
+    raw: &WINDOW_RAW,
+    valid: &WINDOW_VALID,
+    i_sum: &WINDOW_I_SUM,
+    i_n: &WINDOW_I_N,
+    i_min: &WINDOW_I_MIN,
+    i_max: &WINDOW_I_MAX,
+    vbat_min: &WINDOW_VBAT_MIN,
+    vbat_live: &VBAT_RAW_LIVE,
+};
 
-/// ISR→main handoff (only enqueued on the 1/5 streamed windows).
+/// ISR→main handoff (only enqueued on the 1/5 streamed windows). The
+/// diagnostic values travel BY VALUE (snapshot taken in the ISR at the
+/// close), so no later accumulator reuse can corrupt the record — the
+/// fix for the 2-bank recycling race (3.9 % zeroed records at amp 64).
 #[derive(Clone, Copy)]
 struct PendingClose {
-    bank: u8,
+    snap: minz_core::window::DiagSnapshot,
     sc: minz_core::window::CloseScalars,
 }
 type PendQueue = Queue<PendingClose, 32>;
@@ -2724,16 +2721,16 @@ fn mode_cmd(
 }
 
 /// Commutation-ISR window close: run ONLY the control half (exact) +
-/// bb events, then EITHER (streamed 1/5) flip the diagnostic bank and
-/// hand it to main for the record BUILD, OR (non-streamed 4/5) clear the
-/// bank inline. This keeps the flip/handoff off 4/5 of windows and moves
-/// the WindowRec build (the worst-case ISR cost) into main — the 3 kHz
-/// lever. `WINDOW_CONTROL` is a const static (zero per-window struct
-/// build); the NOZ raw is read from the completing bank by value.
+/// bb events, then on the ~1/5 STREAMED windows SNAPSHOT the diagnostic
+/// accumulators by value into the queue entry (host-tested
+/// `snapshot_diag` — 7 loads + the vbat fold, no division/rec build)
+/// and clear them; on the 4/5 non-streamed windows just clear. Main
+/// assembles the WindowRec from the snapshot (`rec_from_snapshot`), so
+/// no accumulator reuse can ever corrupt a record — the by-value
+/// handoff replaces the raceable 2-bank double-buffer.
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
     let (now_10, now_us) = ticks_both();
-    let bank = win_bank();
-    let noz_raw = WINDOW_RAW[bank].load(Ordering::Relaxed).min(0xFFFF) as u16;
+    let noz_raw = WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16;
     let (bb, sc) = minz_core::window::window_control_step(
         &WINDOW_CONTROL,
         prev_sector,
@@ -2745,44 +2742,33 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
         bb_record(*ev, prev_sector, *data);
     }
     if sc.record {
-        // Flip: COMP/TIM1_UP now target the other bank; `bank` is frozen
-        // and handed to main (which builds the rec + clears it).
-        WIN_BANK.store((bank ^ 1) as u8, Ordering::Relaxed);
+        let snap = minz_core::window::snapshot_diag(&WINDOW_DIAG);
         let mut prod = PEND_PROD.borrow(cs).borrow_mut();
         if let Some(p) = prod.as_mut() {
-            let _ = p.enqueue(PendingClose {
-                bank: bank as u8,
-                sc,
-            });
+            let _ = p.enqueue(PendingClose { snap, sc });
         }
-    } else {
-        // Non-streamed (4/5): no flip, no handoff — clear this bank
-        // inline for the next window. Direct stores (not window_diag() +
-        // the cross-crate clear_diag_bank call) to keep the hot 4/5 path
-        // free of struct-build + call overhead.
-        WINDOW_RAW[bank].store(0, Ordering::Relaxed);
-        WINDOW_VALID[bank].store(0, Ordering::Relaxed);
-        WINDOW_I_SUM[bank].store(0, Ordering::Relaxed);
-        WINDOW_I_N[bank].store(0, Ordering::Relaxed);
-        WINDOW_I_MIN[bank].store(0x0FFF, Ordering::Relaxed);
-        WINDOW_I_MAX[bank].store(0, Ordering::Relaxed);
-        WINDOW_VBAT_MIN[bank].store(u16::MAX, Ordering::Relaxed);
     }
+    // Clear the accumulators for the new window (direct stores — no
+    // struct-build or cross-crate call on the hot path).
+    WINDOW_RAW.store(0, Ordering::Relaxed);
+    WINDOW_VALID.store(0, Ordering::Relaxed);
+    WINDOW_I_SUM.store(0, Ordering::Relaxed);
+    WINDOW_I_N.store(0, Ordering::Relaxed);
+    WINDOW_I_MIN.store(0x0FFF, Ordering::Relaxed);
+    WINDOW_I_MAX.store(0, Ordering::Relaxed);
+    WINDOW_VBAT_MIN.store(u16::MAX, Ordering::Relaxed);
 }
 
-/// MAIN drains the pending (streamed) closes: build the WindowRec from
-/// the completed bank (host-tested `build_window_rec`, which also clears
-/// the bank) and enqueue it for serialization.
+/// MAIN drains the pending (streamed) closes: assemble the WindowRec
+/// from the by-value snapshot (host-tested `rec_from_snapshot`) and
+/// enqueue it for serialization.
 fn drain_pending(
     pend_consumer: &mut heapless::spsc::Consumer<'static, PendingClose>,
     wrec_prod: &mut Option<Producer<'static, WindowRec>>,
 ) {
     while let Some(pc) = pend_consumer.dequeue() {
-        if let (Some(r), Some(p)) = (
-            minz_core::window::build_window_rec(&window_diag(pc.bank as usize), &pc.sc),
-            wrec_prod.as_mut(),
-        ) {
-            let _ = p.enqueue(r);
+        if let Some(p) = wrec_prod.as_mut() {
+            let _ = p.enqueue(minz_core::window::rec_from_snapshot(&pc.snap, &pc.sc));
         }
     }
 }
@@ -2961,8 +2947,8 @@ fn TIM1_UP_TIM16() {
         if raw < VBAT_MIN_RAW.load(Ordering::Relaxed) {
             VBAT_MIN_RAW.store(raw, Ordering::Relaxed);
         }
-        if raw < WINDOW_VBAT_MIN[win_bank()].load(Ordering::Relaxed) {
-            WINDOW_VBAT_MIN[win_bank()].store(raw, Ordering::Relaxed);
+        if raw < WINDOW_VBAT_MIN.load(Ordering::Relaxed) {
+            WINDOW_VBAT_MIN.store(raw, Ordering::Relaxed);
         }
         // Threshold + debounce host-tested through SagGuard's suite
         // via the load-run-store form (minz_core::guards::sag_step);
@@ -3033,14 +3019,13 @@ fn TIM1_UP_TIM16() {
         BB_FROZEN.store(true, Ordering::Relaxed);
         WAX_TRIGGERED.store(true, Ordering::Relaxed);
     }
-    let b = win_bank();
-    WINDOW_I_SUM[b].fetch_add(i_raw as u32, Ordering::Relaxed);
-    WINDOW_I_N[b].fetch_add(1, Ordering::Relaxed);
-    if i_raw < WINDOW_I_MIN[b].load(Ordering::Relaxed) {
-        WINDOW_I_MIN[b].store(i_raw, Ordering::Relaxed);
+    WINDOW_I_SUM.fetch_add(i_raw as u32, Ordering::Relaxed);
+    WINDOW_I_N.fetch_add(1, Ordering::Relaxed);
+    if i_raw < WINDOW_I_MIN.load(Ordering::Relaxed) {
+        WINDOW_I_MIN.store(i_raw, Ordering::Relaxed);
     }
-    if i_raw > WINDOW_I_MAX[b].load(Ordering::Relaxed) {
-        WINDOW_I_MAX[b].store(i_raw, Ordering::Relaxed);
+    if i_raw > WINDOW_I_MAX.load(Ordering::Relaxed) {
+        WINDOW_I_MAX.store(i_raw, Ordering::Relaxed);
     }
     // FALCON v3: confirm or discard the pending ZC candidate using
     // the mid-ON ADC sign of the floating phase vs the driven-pair
@@ -3193,7 +3178,7 @@ fn COMP() {
         let since_edge = now_us.wrapping_sub(LAST_PWM_EDGE_US.load(Ordering::Relaxed));
         if since_edge < blank_us {
             COMP_COUNT.fetch_add(1, Ordering::Relaxed);
-            WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
+            WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
             let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
             if elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed) {
                 VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -3216,7 +3201,7 @@ fn COMP() {
         // Also still run the time-window gate so VALID_COMP_COUNT
         // tracks the same denominator across modes.
         COMP_COUNT.fetch_add(1, Ordering::Relaxed);
-        WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
+        WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
         let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
         if elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed) {
             VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -3230,7 +3215,7 @@ fn COMP() {
     let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
     if elapsed < SECTOR_GATE_US.load(Ordering::Relaxed) {
         COMP_COUNT.fetch_add(1, Ordering::Relaxed);
-        WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
+        WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
         record_edge_diag(now_10);
         return;
     }
@@ -3282,13 +3267,13 @@ fn COMP() {
     // RMWs run). Same values: edge_idx from the entry `now_10`,
     // first-ZC from the entry `now_us`.
     COMP_COUNT.fetch_add(1, Ordering::Relaxed);
-    WINDOW_RAW[win_bank()].fetch_add(1, Ordering::Relaxed);
+    WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
     record_edge_diag(now_10);
     VALID_COMP_COUNT.fetch_add(1, Ordering::Relaxed);
     // MAGPIE: per-window valid count + first-survivor timestamp.
     // This ISR is the sole writer between the commutation resets, so
     // plain check-then-store is race-free.
-    WINDOW_VALID[win_bank()].fetch_add(1, Ordering::Relaxed);
+    WINDOW_VALID.fetch_add(1, Ordering::Relaxed);
     if WINDOW_FIRST_ZC_US.load(Ordering::Relaxed) == u32::MAX {
         WINDOW_FIRST_ZC_US.store(now_us, Ordering::Relaxed);
     }

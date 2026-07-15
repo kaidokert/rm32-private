@@ -94,7 +94,7 @@ pub struct CloseScalars {
     pub prev_sector: u8,
     pub record: bool,
     pub start_10us: u32,
-    pub len_10us: u16,
+    pub len_us: u16,
     pub zc_off_us: u16,
     pub qzc_off_us: u16,
     pub pred_err_us: i16,
@@ -204,7 +204,7 @@ pub fn window_control_step(
             prev_sector,
             record: true,
             start_10us: start_us / 10,
-            len_10us: (now_us.wrapping_sub(start_us) / 10).min(0xFFFF) as u16,
+            len_us: (now_us.wrapping_sub(start_us)).min(0xFFFF) as u16,
             zc_off_us: if first_zc == u32::MAX {
                 0xFFFF
             } else {
@@ -241,40 +241,78 @@ pub fn window_control_step(
 /// other bank before handing this one over.
 pub fn build_window_rec(diag: &WindowDiag<'_>, sc: &CloseScalars) -> Option<WindowRec> {
     let out = if sc.record {
-        let i_n = diag.i_n.load(Ordering::Relaxed);
-        Some(WindowRec {
-            start_10us: sc.start_10us,
-            len_10us: sc.len_10us,
-            zc_off_us: sc.zc_off_us,
-            raw: diag.raw.load(Ordering::Relaxed).min(0xFFFF) as u16,
-            valid: diag.valid.load(Ordering::Relaxed).min(0xFFFF) as u16,
-            i_min: if i_n == 0 {
-                0
-            } else {
-                diag.i_min.load(Ordering::Relaxed)
-            },
-            i_max: diag.i_max.load(Ordering::Relaxed),
-            i_avg: diag.i_sum.load(Ordering::Relaxed).checked_div(i_n).unwrap_or(0) as u16,
-            qzc_off_us: sc.qzc_off_us,
-            pred_err_us: sc.pred_err_us,
-            vbat_raw: {
-                let m = diag.vbat_min.swap(u16::MAX, Ordering::Relaxed);
-                if m == u16::MAX {
-                    diag.vbat_live.load(Ordering::Relaxed)
-                } else {
-                    m
-                }
-            },
-            sector: sc.prev_sector,
-            seq: sc.seq,
-        })
+        let snap = snapshot_diag(diag);
+        Some(rec_from_snapshot(&snap, sc))
     } else {
         None
     };
-    // Clear the bank (vbat_min already swapped above when recording, but
-    // clear_diag_bank re-stores MAX which is idempotent).
+    // Clear the bank (vbat_min already swapped in the snapshot when
+    // recording, but clear_diag_bank re-stores MAX which is idempotent).
     clear_diag_bank(diag);
     out
+}
+
+/// A by-value copy of one window's diagnostic accumulators, taken by
+/// the COMMUTATION ISR at the streamed close (`snapshot_diag`) so the
+/// record build in main can never read a recycled/cleared bank. The
+/// 2-bank double-buffer alone was NOT enough: banks recycle every ~2
+/// streamed closes (~1 ms at speed) while main's drain can lag several
+/// ms under UART load — 3.9 % of records at amp 64 were built from
+/// already-cleared banks (zero-current comb on every dropout plot;
+/// 0.0 % on pre-double-buffer captures).
+#[derive(Clone, Copy, Default)]
+pub struct DiagSnapshot {
+    pub raw: u32,
+    pub valid: u32,
+    pub i_sum: u32,
+    pub i_n: u32,
+    pub i_min: u16,
+    pub i_max: u16,
+    /// Min-folded vbat (already resolved against the live fallback).
+    pub vbat_raw: u16,
+}
+
+/// Copy the accumulators out (ISR context, ~7 loads + the vbat fold —
+/// no division, no WindowRec assembly; those stay in main).
+#[inline]
+pub fn snapshot_diag(diag: &WindowDiag<'_>) -> DiagSnapshot {
+    DiagSnapshot {
+        raw: diag.raw.load(Ordering::Relaxed),
+        valid: diag.valid.load(Ordering::Relaxed),
+        i_sum: diag.i_sum.load(Ordering::Relaxed),
+        i_n: diag.i_n.load(Ordering::Relaxed),
+        i_min: diag.i_min.load(Ordering::Relaxed),
+        i_max: diag.i_max.load(Ordering::Relaxed),
+        vbat_raw: {
+            let m = diag.vbat_min.swap(u16::MAX, Ordering::Relaxed);
+            if m == u16::MAX {
+                diag.vbat_live.load(Ordering::Relaxed)
+            } else {
+                m
+            }
+        },
+    }
+}
+
+/// MAIN half: assemble the WindowRec from a snapshot (the division and
+/// field packing live here, off the commutation ISR).
+#[inline]
+pub fn rec_from_snapshot(snap: &DiagSnapshot, sc: &CloseScalars) -> WindowRec {
+    WindowRec {
+        start_10us: sc.start_10us,
+        len_us: sc.len_us,
+        zc_off_us: sc.zc_off_us,
+        raw: snap.raw.min(0xFFFF) as u16,
+        valid: snap.valid.min(0xFFFF) as u16,
+        i_min: if snap.i_n == 0 { 0 } else { snap.i_min },
+        i_max: snap.i_max,
+        i_avg: snap.i_sum.checked_div(snap.i_n).unwrap_or(0) as u16,
+        qzc_off_us: sc.qzc_off_us,
+        pred_err_us: sc.pred_err_us,
+        vbat_raw: snap.vbat_raw,
+        sector: sc.prev_sector,
+        seq: sc.seq,
+    }
 }
 
 /// Reset one diagnostic bank to its empty state. Shared by
@@ -391,7 +429,7 @@ pub fn close_float_window(
         let i_n = ws.i_n.load(Ordering::Relaxed);
         out.rec = Some(WindowRec {
             start_10us: start_us / 10,
-            len_10us: (now_us.wrapping_sub(start_us) / 10).min(0xFFFF) as u16,
+            len_us: (now_us.wrapping_sub(start_us)).min(0xFFFF) as u16,
             zc_off_us,
             raw: ws.raw.load(Ordering::Relaxed).min(0xFFFF) as u16,
             valid: ws.valid.load(Ordering::Relaxed).min(0xFFFF) as u16,
@@ -674,7 +712,7 @@ mod tests {
         let rec = out.rec.expect("record");
         assert_eq!(rec.sector, 1);
         assert_eq!(rec.start_10us, 1_000);
-        assert_eq!(rec.len_10us, 60);
+        assert_eq!(rec.len_us, 600);
         assert_eq!(rec.zc_off_us, 250);
         assert_eq!(rec.qzc_off_us, 300);
         assert_eq!(rec.pred_err_us, 0);
