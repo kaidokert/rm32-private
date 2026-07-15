@@ -3,7 +3,30 @@
 //! measured failure; the tests replay them.
 
 /// Bounds and constants (µs).
-pub const INT_MIN: u32 = 100;
+///
+/// INT_MIN is an ABSURDITY bound, not a speed limit — but at 100 µs it
+/// silently WAS one: every measured interval ≤ 100 µs (f_e ≥ 1667 Hz)
+/// was rejected as insane, so above that speed the estimator PINNED
+/// just over 100 while the true window ran 93–94 µs (direct evidence:
+/// bb `REF d=102–106` vs wire window lengths 93–94 at amp 66). The
+/// free-run then scheduled 1.0×(inflated interval) → systematically
+/// late commutations fighting the ZC-refine every window → the ±10 µs
+/// commutation-timing oscillation → BEMF-misalignment current spikes
+/// with a soft onset exactly where the rotor crossed 1667 Hz — the
+/// entire amp-66 spike population and the 68 kills (2026-07-14 deep
+/// dive). 40 µs = f_e ≤ 4.2 kHz, comfortably past the 3 kHz roadmap;
+/// half-period junk is rejected by the symmetric ±25 % rate bound, not
+/// by this constant.
+pub const INT_MIN: u32 = 40;
+/// SEEDING bound: when the estimator is UNSEEDED (old == 0) the ±25 %
+/// rate bound has no reference, so any delta in (INT_MIN, INT_MAX)
+/// would seed it — at INT_MIN=40 that let engage-time comparator noise
+/// (41–99 µs spacings) seed absurdly low and killed the engage (bench,
+/// 2026-07-14: 2× engage failures immediately after the 40 change).
+/// Seeding keeps the old 100 µs bar (engage happens at ≥ ~417 µs);
+/// TRACKING below 100 µs is what INT_MIN=40 enables, and there the
+/// ±25 % bound provides the junk rejection.
+pub const SEED_MIN: u32 = 100;
 pub const INT_MAX: u32 = 30_000;
 /// Chain broken beyond this many window closes since the last qZC.
 pub const SPAN_MAX: u32 = 3;
@@ -93,7 +116,7 @@ impl Estimator {
                     // under a synchronous loop the measurement
                     // echoes the loop's own field and tight clamps
                     // remove the convergence signal).
-                    let sane = new_int > INT_MIN
+                    let sane = new_int > if old == 0 { SEED_MIN } else { INT_MIN }
                         && new_int < INT_MAX
                         && (old == 0
                             || (new_int < old.saturating_mul(5) / 4
@@ -152,6 +175,61 @@ mod tests {
         e.on_window_close();
         let iv2 = e.on_accept(4 * 600 + 700, false);
         assert!(iv2 > iv1 && iv2 < 700, "iv1={iv1} iv2={iv2}");
+    }
+
+    #[test]
+    fn regression_estimator_tracks_below_100us_2026_07_14() {
+        // INT_MIN=100 silently rejected every interval ≤ 100 µs, so
+        // above 1667 Hz the estimator pinned ~100+ while the rotor ran
+        // 93-94 µs — late free-run scheduling, the ±10 µs timing
+        // oscillation, and the whole amp-66 spike population. The
+        // estimator must track a 94 µs train exactly.
+        let mut e = Estimator::new();
+        run_train(&mut e, 0, 600, 3, false); // seed at low speed
+        // Walk down within the ±25 % bound: 600→460→350→270→210→160→125→96→94…
+        let mut t = 3 * 600;
+        let mut iv = e.interval_us;
+        // Decelerate the training period by 0.97× per step. The map
+        // ratio_next = 4q·r/(3+r) has fixed point r* = 4q−3, and staying
+        // inside the ±25 % bound needs r* ≥ 0.8 ⇒ q ≥ 0.95: with the
+        // ¾-smoothing the estimator can track at most ~5 % deceleration
+        // per window (a real transit-behavior limit, not just a test
+        // artifact). Then dwell at 94 µs to converge.
+        let mut period = 600u32;
+        for _ in 0..80 {
+            period = (period * 97 / 100).max(94);
+            e.on_window_close();
+            t += period;
+            iv = e.on_accept(t, true);
+        }
+        for _ in 0..20 {
+            e.on_window_close();
+            t += 94;
+            iv = e.on_accept(t, true);
+        }
+        assert!(
+            (90..=96).contains(&iv),
+            "estimator failed to track 94 µs (got {iv}) — INT_MIN regression"
+        );
+    }
+
+    #[test]
+    fn regression_unseeded_cannot_seed_below_100us() {
+        // With INT_MIN at 40, an UNSEEDED estimator (no ±25 % reference)
+        // must still refuse sub-100 µs junk — engage-time comparator
+        // noise seeded 41-99 µs and killed the engage otherwise.
+        let mut e = Estimator::new();
+        e.on_window_close();
+        e.on_accept(10_000, false); // chain seed only
+        e.on_window_close();
+        let iv = e.on_accept(10_094, false); // 94 µs delta, unseeded
+        assert_eq!(iv, 0, "unseeded estimator seeded from sub-100 junk");
+        // But a plausible open-loop delta seeds fine.
+        let mut e = Estimator::new();
+        e.on_window_close();
+        e.on_accept(10_000, false);
+        e.on_window_close();
+        assert_eq!(e.on_accept(10_000 + 1_667, false), 1_667);
     }
 
     #[test]
