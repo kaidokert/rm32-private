@@ -23,9 +23,41 @@ import sys
 import time
 
 import serial
+import threading
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from am32_ref import Throttle, parse_kiss  # noqa: E402
+
+
+class UartThrottle(threading.Thread):
+    """UART_DUTY_MODE driver: ASCII percent + LF on the SAME serial
+    port the telemetry arrives on (FTDI TX -> J3 S, RX -> TX1 = the
+    standard minz rig). Re-sends inside the firmware's 3 s deadman."""
+
+    def __init__(self, ser):
+        super().__init__(daemon=True)
+        self.ser = ser
+        self.value_pct = 0
+        self.run_flag = True
+
+    def run(self):
+        while self.run_flag:
+            try:
+                self.ser.write(f"{int(self.value_pct)}\n".encode())
+            except Exception:
+                pass
+            import time as _t
+
+            _t.sleep(1.0)
+
+    def stop(self):
+        self.value_pct = 0
+        for _ in range(3):
+            self.ser.write(b"0\ns")
+            import time as _t
+
+            _t.sleep(0.1)
+        self.run_flag = False
 
 SPK_RE = re.compile(rb"SPK n=(\d+) ms=(\d+) dep=(\d+) b=(\d+)")
 
@@ -37,6 +69,8 @@ def main():
     ap.add_argument("--rungs", default="30,40,45,50")
     ap.add_argument("--dwell", type=float, default=20.0)
     ap.add_argument("--max-amps", type=float, default=5.0)
+    ap.add_argument("--uart", action="store_true",
+                    help="UART_DUTY_MODE build: throttle over the telemetry port itself")
     ap.add_argument("--tag", default="am32census")
     a = ap.parse_args()
     rungs = [int(x) for x in a.rungs.split(",")]
@@ -47,16 +81,26 @@ def main():
         "throttle_pct,f_e_hz,amps,volts,spk_events,spk_ms,spk_dep_raw,"
         "spk_base_raw,spk_lines,secs\n"
     )
-    thr = Throttle(a.bf_port)
-    thr.start()
     tlm = serial.Serial(a.tlm_port, 115200, timeout=0.05)
+    if a.uart:
+        thr = UartThrottle(tlm)
+    else:
+        thr = Throttle(a.bf_port)
+    thr.start()
     try:
         print("idle hold 5s (clean arm)...", flush=True)
-        thr.value = 1000
+        if a.uart:
+            thr.value_pct = 0
+        else:
+            thr.value = 1000
         time.sleep(5.0)
         last_erpm = None
         for pct in rungs:
-            thr.value = 1000 + 10 * pct
+            if a.uart:
+                thr.value_pct = pct
+                tlm.write(f"{pct}\n".encode())
+            else:
+                thr.value = 1000 + 10 * pct
             time.sleep(2.0)
             tlm.reset_input_buffer()
             buf = bytearray()
@@ -77,7 +121,11 @@ def main():
                         dead = True
                         break
             if dead:
-                thr.value = 1000
+                if a.uart:
+                    thr.value_pct = 0
+                    tlm.write(b"0\ns")
+                else:
+                    thr.value = 1000
                 break
             frames = parse_kiss(bytes(buf))
             spk = SPK_RE.findall(bytes(buf))
