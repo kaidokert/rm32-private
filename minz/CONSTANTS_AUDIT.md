@@ -190,3 +190,23 @@ Final state: tag `checkpoint-24k-audit75`. The binding limit is the
 AMP_MAX=75 duty clamp (operator's bench-current call). Remaining
 CPU/protection backlog: TIM1_CC u64 division at 72 kHz (~7 % core),
 short-window current trip, blank divisor /75 re-tune.
+
+## THE AM32 REFERENCE EXPERIMENT (2026-07-16) — the wall, priced
+
+Rig: BF F411-Disco DSHOT300 (PB1 -> J3 S) + AM32 2.20 (+bootloader
+V18 + EEPROM seed byte0=0x01) + AM32 KISS telemetry on TX1/PB6
+(`scripts/am32_ref.py`). Same board, bench, hour as our ladders.
+
+1. **minz amps-per-Hz == AM32's** where the curves overlap (1200-1950
+   Hz; both ~2.5 A at 1950). The loop wastes no measurable current —
+   the timing-waste theory is refuted.
+2. **AM32's clean top here = 2282 Hz @ 3.97 A @ 7.20 V.** The next
+   2 % throttle step MCU-brownout-reboots it, 3/3 — the ~4 A bench
+   PSU limit folds back and AM32 (guard-free) rides the supply to
+   its edge and dies there. Not "100 % without a hitch" on this
+   supply setting.
+3. **Our 1952 -> 2282 gap is guard calibration**: AM32 dwells at
+   7.20 V / 3.97 A, beyond our sag (-10 % ~= 7.33 V) and CL OC
+   (~4 A) kill lines. Data-bounded recalibration (sag -> absolute
+   ~7.0 V floor, OC -> ~4.5 A) is the road to parity; past 2282 Hz
+   the PSU limit is the only knob. Temps 30-31 C throughout.
