@@ -241,6 +241,127 @@ pub fn overcurrent(avg_phase_raw: u32, cl_active: bool) -> bool {
     }
 }
 
+/// FAST BURST RESPONDER (2026-07-15) — clamp, don't kill; but NEVER
+/// leniently. Every envelope death from amp ~72 up is the same event:
+/// a 12 A+ current burst compounds over 10-18 ms, the bus collapses,
+/// and the sag guard kills. The protection stack has a burst-shaped
+/// hole: the OC trip averages 85 ms (blind to bursts), the sag guard
+/// reacts only AFTER the bus has collapsed. This responder watches
+/// the per-PWM-cycle mid-ON current and cuts the commanded amplitude
+/// to 2/3 while a burst is live, restoring on decay — converting
+/// fatal compounding into the ride-through the loop already performs
+/// for most bursts.
+///
+/// SAFETY INVARIANTS (the operator's fry-the-bench veto):
+/// - The responder can only ever REDUCE duty. It touches no kill:
+///   sag, OC, runaway, starvation all fire exactly as before.
+/// - A clamp that fails to bring the current down is NOT protection:
+///   if the clamp stays engaged for [`BURST_MAX_HOLD`] consecutive
+///   cycles (40 ms — longer than any observed burst) the step
+///   ESCALATES TO A KILL. A clamp can never keep a shorted/stalled
+///   state cooking indefinitely.
+/// - Trip needs [`BURST_ON_RUN`] consecutive over-threshold cycles
+///   (333 us) so the benign 2-4 A single-window spikes (sub-ms,
+///   ridden through for weeks) never engage it.
+pub const BURST_TRIP_RAW: u16 = 185; // ~5 A: above benign spikes (2-4.5 A), far below burst peaks (12 A+)
+pub const BURST_RELEASE_RAW: u16 = 110; // ~3 A release threshold (hysteresis)
+pub const BURST_ON_RUN: u16 = 8; // 333 us of sustained overcurrent to engage
+pub const BURST_OFF_RUN: u16 = 48; // 2 ms below release to disengage
+pub const BURST_MAX_HOLD: u16 = 960; // 40 ms clamped without recovery -> KILL
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BurstStep {
+    pub run: u16,
+    pub cool: u16,
+    pub hold: u16,
+    pub active: bool,
+    /// Escalation: the clamp held BURST_MAX_HOLD without the current
+    /// recovering. The caller must kill (hardware off + flags).
+    pub kill: bool,
+}
+
+/// One 24 kHz step of the burst responder. Pure; firmware keeps
+/// run/cool/hold/active in atomics (sole writer TIM1_UP).
+#[inline]
+pub fn burst_step(run: u16, cool: u16, hold: u16, active: bool, i_raw: u16) -> BurstStep {
+    if !active {
+        let run = if i_raw >= BURST_TRIP_RAW {
+            run.saturating_add(1)
+        } else {
+            0
+        };
+        if run >= BURST_ON_RUN {
+            BurstStep {
+                run: 0,
+                cool: 0,
+                hold: 0,
+                active: true,
+                kill: false,
+            }
+        } else {
+            BurstStep {
+                run,
+                cool: 0,
+                hold: 0,
+                active: false,
+                kill: false,
+            }
+        }
+    } else {
+        let hold = hold.saturating_add(1);
+        if hold >= BURST_MAX_HOLD {
+            // Anti-burnout escalation: clamping did not bring the
+            // current down within 40 ms. This is not a burst; kill.
+            return BurstStep {
+                run: 0,
+                cool: 0,
+                hold,
+                active: true,
+                kill: true,
+            };
+        }
+        if i_raw < BURST_RELEASE_RAW {
+            let cool = cool.saturating_add(1);
+            if cool >= BURST_OFF_RUN {
+                BurstStep {
+                    run: 0,
+                    cool: 0,
+                    hold: 0,
+                    active: false,
+                    kill: false,
+                }
+            } else {
+                BurstStep {
+                    run: 0,
+                    cool,
+                    hold,
+                    active: true,
+                    kill: false,
+                }
+            }
+        } else {
+            BurstStep {
+                run: 0,
+                cool: 0,
+                hold,
+                active: true,
+                kill: false,
+            }
+        }
+    }
+}
+
+/// Amplitude through the burst clamp: 2/3 while a burst is live.
+/// Composes with (after) `blind_amp_clamp`; only ever reduces.
+#[inline]
+pub fn burst_amp_clamp(base_amp: u16, burst_active: bool) -> u16 {
+    if burst_active {
+        (base_amp * 2 / 3).max(1)
+    } else {
+        base_amp
+    }
+}
+
 /// FIX #2 — blind-free-run current clamp. During a ZC-miss cascade
 /// (the monster mechanism: `monster1..3` autopsy) the loop commutates
 /// BLIND at the frozen interval while the field drifts off the still-
@@ -271,6 +392,120 @@ mod tests {
     use super::*;
 
     // ---- since_us: the watchdog underflow race ----
+
+    #[test]
+    fn burst_never_trips_on_benign_single_window_spikes() {
+        // Benign 2-4.5 A spikes last a single window (~2 PWM cycles
+        // at speed) — far under the 8-cycle engage run.
+        let mut s = BurstStep {
+            run: 0,
+            cool: 0,
+            hold: 0,
+            active: false,
+            kill: false,
+        };
+        for _ in 0..100 {
+            for _ in 0..3 {
+                s = burst_step(s.run, s.cool, s.hold, s.active, 300); // 8 A spike, 3 cycles
+                assert!(!s.active && !s.kill);
+            }
+            for _ in 0..20 {
+                s = burst_step(s.run, s.cool, s.hold, s.active, 60); // normal
+                assert!(!s.active && !s.kill);
+            }
+        }
+    }
+
+    #[test]
+    fn burst_trips_clamps_and_releases_on_decay() {
+        let mut s = BurstStep {
+            run: 0,
+            cool: 0,
+            hold: 0,
+            active: false,
+            kill: false,
+        };
+        // Sustained 6 A: engages at exactly the 8th cycle.
+        for i in 0..8 {
+            assert!(!s.active, "active early at cycle {i}");
+            s = burst_step(s.run, s.cool, s.hold, s.active, 220);
+        }
+        assert!(s.active && !s.kill);
+        assert_eq!(burst_amp_clamp(78, true), 52); // 2/3 cut
+        assert_eq!(burst_amp_clamp(78, false), 78);
+        // Burst rides down over 5 ms (120 cycles) then current drops.
+        for _ in 0..120 {
+            s = burst_step(s.run, s.cool, s.hold, s.active, 200);
+            assert!(s.active && !s.kill);
+        }
+        // 2 ms below release -> disengage, no kill, full drive back.
+        for _ in 0..(BURST_OFF_RUN - 1) {
+            s = burst_step(s.run, s.cool, s.hold, s.active, 50);
+            assert!(s.active);
+        }
+        s = burst_step(s.run, s.cool, s.hold, s.active, 50);
+        assert!(!s.active && !s.kill);
+    }
+
+    #[test]
+    fn burst_release_hysteresis_needs_consecutive_cool() {
+        let mut s = BurstStep {
+            run: 0,
+            cool: 0,
+            hold: 0,
+            active: false,
+            kill: false,
+        };
+        for _ in 0..8 {
+            s = burst_step(s.run, s.cool, s.hold, s.active, 220);
+        }
+        assert!(s.active);
+        // Alternating low/high never accumulates the cool run.
+        for _ in 0..200 {
+            s = burst_step(s.run, s.cool, s.hold, s.active, 50);
+            s = burst_step(s.run, s.cool, s.hold, s.active, 150); // above release
+            assert!(s.active, "released on non-consecutive cool");
+        }
+    }
+
+    #[test]
+    fn burst_anti_burnout_kills_at_max_hold() {
+        // THE FRY-THE-BENCH VETO: a clamp that cannot bring the
+        // current down escalates to a kill at 40 ms — it can never
+        // keep a shorted/stalled state cooking.
+        let mut s = BurstStep {
+            run: 0,
+            cool: 0,
+            hold: 0,
+            active: false,
+            kill: false,
+        };
+        for _ in 0..8 {
+            s = burst_step(s.run, s.cool, s.hold, s.active, 220);
+        }
+        assert!(s.active);
+        let mut killed_at = None;
+        for n in 0..BURST_MAX_HOLD + 10 {
+            s = burst_step(s.run, s.cool, s.hold, s.active, 220); // stays hot
+            if s.kill {
+                killed_at = Some(n);
+                break;
+            }
+        }
+        let n = killed_at.expect("must escalate to kill");
+        assert!(
+            n as u32 <= BURST_MAX_HOLD as u32,
+            "kill within 40 ms, got {n}"
+        );
+    }
+
+    #[test]
+    fn burst_clamp_only_ever_reduces() {
+        for amp in 0..=96u16 {
+            assert!(burst_amp_clamp(amp, true) <= amp.max(1));
+            assert_eq!(burst_amp_clamp(amp, false), amp);
+        }
+    }
 
     #[test]
     fn blind_amp_clamp_rides_isolated_misses_caps_cascade() {

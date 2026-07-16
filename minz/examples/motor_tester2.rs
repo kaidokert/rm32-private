@@ -570,6 +570,15 @@ const WAX_TRIG_RAW: u16 = 150;
 /// flag, and drops its local `output_enabled` mirror so `r`/`q`
 /// re-arm works afterwards.
 static OC_TRIPPED: AtomicBool = AtomicBool::new(false);
+// FAST BURST RESPONDER state (minz_core::guards::burst_step; sole
+// writer TIM1_UP). Clamp-not-kill with a 40 ms anti-burnout
+// escalation — see the core doc for the safety invariants.
+static BURST_RUN: AtomicU16 = AtomicU16::new(0);
+static BURST_COOL: AtomicU16 = AtomicU16::new(0);
+static BURST_HOLD: AtomicU16 = AtomicU16::new(0);
+static BURST_ACTIVE: AtomicBool = AtomicBool::new(false);
+static BURST_TRIPS: AtomicU32 = AtomicU32::new(0);
+static BURST_KILLED: AtomicBool = AtomicBool::new(false);
 
 /// Live vbat raw counts, refreshed at 6 kHz by the TIM7 injected
 /// pump (scale: raw 1080 ≈ 8.11 V → 7.5 mV/count).
@@ -1498,6 +1507,12 @@ fn main() -> ! {
             }
             if OC_TRIPPED.load(Ordering::Relaxed) {
                 OC_TRIPPED.store(false, Ordering::Relaxed);
+                if BURST_KILLED.swap(false, Ordering::Relaxed) {
+                    let _ = tx_writer.write_str(
+                        "!! BURST CLAMP EXCEEDED 40 ms without recovery - output killed (r/q re-arms)\r\n",
+                    );
+                    tx_writer.write_blocking(&[]);
+                }
                 output_enabled = false;
                 write!(
                     &mut tx_writer,
@@ -1999,11 +2014,17 @@ fn main() -> ! {
                             // detector at ISR entry) + worst gap.
                             write!(
                                 &mut tx_writer,
-                                "t1u: miss/s={} missed={} maxgap={}us clkback={}\r\n",
+                                "t1u: miss/s={} missed={} maxgap={}us clkback={} burst={}{}\r\n",
                                 rate(now_miss.wrapping_sub(last_i_miss)),
                                 now_miss,
                                 maxgap_cyc / (minz::SYSCLK.raw() / 1_000_000),
                                 CLOCK_BACK.load(Ordering::Relaxed),
+                                BURST_TRIPS.load(Ordering::Relaxed),
+                                if BURST_ACTIVE.load(Ordering::Relaxed) {
+                                    " ACTIVE"
+                                } else {
+                                    ""
+                                },
                             )
                             .ok();
                             write!(
@@ -2833,6 +2854,8 @@ fn LPTIM2() {
     } else {
         base_amp
     };
+    // Burst clamp composes after (only ever reduces; host-tested).
+    let amp = minz_core::guards::burst_amp_clamp(amp, BURST_ACTIVE.load(Ordering::Relaxed));
     let duty = {
         let base = open_loop::six_step_duty(max_duty(), amp) as i32;
         let hi = max_duty() as i32 * AMP_MAX as i32 / 100;
@@ -3008,6 +3031,43 @@ fn TIM1_UP_TIM16() {
         Ordering::Relaxed,
     );
     LAST_I_RAW.store(i_raw, Ordering::Relaxed);
+    // FAST BURST RESPONDER (host-tested: guards::burst_step). Only
+    // under an active closed loop — open-loop stalls belong to the
+    // 85 ms OC average. The step only ever REDUCES duty (LPTIM2
+    // applies the clamp below); the 40 ms max-hold escalates to a
+    // kill so a clamp can never keep a shorted state cooking.
+    if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
+        let was = BURST_ACTIVE.load(Ordering::Relaxed);
+        let s = minz_core::guards::burst_step(
+            BURST_RUN.load(Ordering::Relaxed),
+            BURST_COOL.load(Ordering::Relaxed),
+            BURST_HOLD.load(Ordering::Relaxed),
+            was,
+            i_raw,
+        );
+        BURST_RUN.store(s.run, Ordering::Relaxed);
+        BURST_COOL.store(s.cool, Ordering::Relaxed);
+        BURST_HOLD.store(s.hold, Ordering::Relaxed);
+        BURST_ACTIVE.store(s.active, Ordering::Relaxed);
+        if s.active && !was {
+            BURST_TRIPS.fetch_add(1, Ordering::Relaxed);
+        }
+        if s.kill {
+            BURST_KILLED.store(true, Ordering::Relaxed);
+            minz_core::guards::apply_isr_kill(
+                &KILL_FLAGS,
+                minz_core::guards::IsrKillKind::Overcurrent,
+            );
+            tim1_motor_pwm::all_off();
+            comp2::set_exti_enabled(false);
+        }
+    } else if BURST_ACTIVE.load(Ordering::Relaxed) {
+        // Loop gone (kill/disengage): clear for the next engage.
+        BURST_ACTIVE.store(false, Ordering::Relaxed);
+        BURST_RUN.store(0, Ordering::Relaxed);
+        BURST_COOL.store(0, Ordering::Relaxed);
+        BURST_HOLD.store(0, Ordering::Relaxed);
+    }
     // Analog black box trigger — freeze the wire the moment a spike
     // is seen (one-shot; the ADSTP wait is <1 µs at these sample
     // times). Frozen means LAST_I_RAW goes stale until the dump
