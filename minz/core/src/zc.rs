@@ -778,6 +778,36 @@ mod tests {
     }
 
     #[test]
+    fn regression_engage_lottery_seeding_accept_2026_07_15() {
+        // THE ENGAGE LOTTERY: after arm (estimator reset), the accept
+        // that SEEDS the interval can also be the ENGAGE accept (A/B
+        // + armed). schedule_precheck sees the PRE-update interval=0
+        // and returns None — but accept_publish seeds, engages, and
+        // returns schedule=true. The firmware MUST arm the first shot
+        // from the plan in this case (post-publish fallback), or
+        // nothing ever commutates: TIM7 freezes on cl_active and the
+        // desync watchdog kills ~4 ms later (bb: ENG -> silence ->
+        // DSY). Engage previously survived only when a C-window qZC
+        // seeded first (2 of 6 windows) — the per-build-layout
+        // "engage lottery" (bench: one build 0/12, another 8/8).
+        let r = Rig::new();
+        r.cl_armed.store(true, Ordering::Relaxed);
+        r.interval_us.store(0, Ordering::Relaxed); // arm-reset
+        r.windows_since_qzc.store(1, Ordering::Relaxed); // spans=1
+        // last_qzc set by Rig (a prior no-seed accept at 9 400).
+        assert!(
+            schedule_precheck(&r.zs(), 2).is_none(),
+            "precheck must refuse the unseeded interval"
+        );
+        let plan = accept_publish(&r.zs(), 2, 10_000, 1_000).unwrap();
+        assert!(plan.engaged, "the seeding A/B accept engages");
+        assert!(plan.schedule, "and demands a schedule");
+        assert_eq!(plan.interval_us, 600, "seeded by this very accept");
+        // The firmware pairing: precheck None + plan.schedule true =>
+        // the post-publish fallback arms the first shot.
+    }
+
+    #[test]
     fn accept_publish_c_windows_reschedule_only_swift_topend() {
         // SWIFT + TOP END: the comparator gives a real C ZC, so C
         // re-times its commutation (but still never engages).

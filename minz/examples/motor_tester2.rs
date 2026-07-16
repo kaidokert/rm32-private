@@ -100,7 +100,9 @@ const RX_BUF_LEN: usize = 32;
 /// hangs, or shoot-through during dead-time misconfiguration — there are
 /// other ways to fry the windings that this clamp doesn't cover.
 const AMP_MIN: u16 = 0;
-// Raised progressively 20 → 25 → 50 (2026-07-08/09). Lesson learned
+// Raised progressively 20 → 25 → 50 → 75 → 96 (operator-approved
+// 2026-07-15 after the audit ladder proved 75 = the clamp itself
+// dwells clean at qzc 100 %). Lesson learned
 // the embarrassing way: under a verified closed loop, each amp cap
 // just sets a BEMF equilibrium speed that then masquerades as a
 // "voltage wall" (we characterized our own 25 % cap's equilibrium
@@ -110,7 +112,7 @@ const AMP_MIN: u16 = 0;
 // runaway floor, desync), NOT this cap; the cap only bounds how
 // hard a guarded failure can transiently hit. Open-loop use above
 // ~16 remains a heater risk — mind the `q` key at high amp.
-const AMP_MAX: u16 = 75;
+const AMP_MAX: u16 = 96;
 /// Bench observation: at 5 V supply this motor refuses to start
 /// (synchronise to the commanded field) below ~15 %. Set the default at
 /// the empirical floor so the user doesn't have to ramp up after boot
@@ -3356,6 +3358,7 @@ fn record_edge_diag(now_10: u32) {
 /// a competing publish between the precheck and the publish.
 fn accept_qualified_zc(zc_us: u32) {
     let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
+    let mut shot_armed = false;
     if let Some(iv) = minz_core::zc::schedule_precheck(&ZC_STATE, sec) {
         // Host-tested: auto-advance ramp + scheduling delay
         // (minz_core::timing).
@@ -3373,6 +3376,7 @@ fn accept_qualified_zc(zc_us: u32) {
             elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
         minz::lptim2_oneshot::schedule_us(delay);
+        shot_armed = true;
         SHOT_REFINED.store(true, Ordering::Relaxed);
         bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
         // Deaf until the commutation (mask-after-accept).
@@ -3382,6 +3386,34 @@ fn accept_qualified_zc(zc_us: u32) {
     let Some(plan) = minz_core::zc::accept_publish(&ZC_STATE, sec, zc_us, ticks_10us()) else {
         return; // window already has its ZC
     };
+    // THE ENGAGE-LOTTERY FIX (2026-07-15): when the ENGAGE accept is
+    // also the accept that SEEDS the estimator (arm resets interval
+    // to 0), schedule_precheck above returned None (unseeded) — but
+    // accept_publish just seeded the interval and set cl_active. The
+    // elapsed-cut (b7afb8e) moved ALL scheduling to the precheck, so
+    // this case armed NO first shot: TIM7 freezes on cl_active,
+    // nothing ever commutates, and the desync watchdog kills ~4 ms
+    // later (bb: ENG -> silence -> DSY). Engage only survived when a
+    // C-window qZC happened to seed the estimator BEFORE the engaging
+    // A/B accept — 2 of 6 windows = the per-build-layout "engage
+    // lottery". Arm the first shot here from the just-published
+    // interval; at engage speeds (~1.6 ms) the precheck's latency
+    // motivation is irrelevant.
+    if !shot_armed && plan.schedule {
+        let iv = plan.interval_us;
+        let adv =
+            minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
+        let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
+        let delay = minz_core::timing::commutation_delay_us(
+            iv,
+            adv,
+            elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
+        );
+        minz::lptim2_oneshot::schedule_us(delay);
+        SHOT_REFINED.store(true, Ordering::Relaxed);
+        bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
+        comp2::set_exti_enabled(false);
+    }
     if plan.engaged {
         bb_record(
             minz_core::blackbox::EV_ENG,
