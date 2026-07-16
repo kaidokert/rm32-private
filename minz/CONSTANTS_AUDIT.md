@@ -156,6 +156,36 @@ consistent; decimation coprime; counters saturate safely.
    moot at the current envelope (nothing left to climb below
    AMP_MAX); revisit if a raised clamp reopens transit deaths.
 
+### Post-audit lever verdicts (2026-07-15 night, the 85 campaign)
+
+- **Advance-boost extension (finding 5 / lever #3): TRIED — REGRESSED,
+  REVERTED.** Boost cap 6→10 (17°→20-21° in the 83-95 µs band): 3/3
+  ladders died BELOW the baseline's proven rungs (76→74), with the
+  over-advance signature — current UP 0.2-0.3 A at the same rung
+  (field ahead of rotor). The +6 saturation is correct for this
+  motor at bench load; the jitter rise past amp 72 is the current
+  saturation, not gate-margin erosion. "Advance is not a lever until
+  real load" survives another test.
+- **Commutation-ISR split stage A (lever #2): TRIED — NO WIN,
+  REVERTED.** Deferred the only cs-requiring step (shared PEND
+  enqueue) to a TSC software interrupt at prio 3; control kept at
+  prio 1 (the E1 conviction + reacq-trip latency both forbid
+  deferring control). Result: lp2 dur UNCHANGED (~1663 vs 1637-1724)
+  — the deferred work only ran on 1-in-5 closes (telemetry
+  decimation), so the average win was noise; 40-60 qualification
+  clean but top-band paired runs showed split ≤ control. The v1
+  lesson again: measure the segment before plumbing around it. A
+  REAL blind-time cut requires deferring control (window_control_step
+  + reacq trips) — E1-class risk, only worth it with a hardware
+  timestamp (TIM input capture) for the COMP edge.
+- **The 80/85 wall is not software.** Every death at 78+ across
+  burst/boost/split builds is current-domain: the 85 ms OC-AVERAGE
+  trip fired at a sustained 78 dwell (2.5 A steady, over the
+  continuous envelope) and the burst responder logged 48
+  engagements/run there. 85 needs bus stiffening / supply headroom /
+  drive efficiency, not control changes. Campaign stopped per
+  operator directive.
+
 Final state: tag `checkpoint-24k-audit75`. The binding limit is the
 AMP_MAX=75 duty clamp (operator's bench-current call). Remaining
 CPU/protection backlog: TIM1_CC u64 division at 72 kHz (~7 % core),
