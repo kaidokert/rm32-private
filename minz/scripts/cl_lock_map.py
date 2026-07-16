@@ -28,6 +28,7 @@ ap.add_argument("--port", default="COM41")
 ap.add_argument("--baud", type=int, default=2_000_000)
 ap.add_argument("--amps", default="9,10,11,12,13,14,15,16")
 ap.add_argument("--secs", type=float, default=4.0)
+ap.add_argument("--blank", type=int, default=8, help="comparator blank us (24k: 8, 48k: 16)")
 ap.add_argument(
     "--climb-wait",
     type=float,
@@ -128,16 +129,31 @@ class Bench:
                 adv = int(m.group(1))
         sys.exit(f"advance set failed: wanted {target}, at {adv}")
 
-    def set_filters(self):
-        # blank = 8 µs, scaled for 48 kHz PWM (20 µs covers a whole
-        # 48 kHz period and self-blinds the loop).
-        last = ""
-        for _ in range(6):
-            last = self.send(",")
-        for _ in range(8):
-            last = self.send("n")
-        if "blank window = 8" not in last:
-            sys.exit(f"blank set failed: {last!r}")
+    def set_filters(self, blank=8):
+        # Closed-loop blank set: keys are RELATIVE, so drive by echo.
+        # 24 kHz proven value: 8. 48 kHz (2026-07-15 re-qual): 16 -
+        # blank 8 lets enough noise edges through per PWM period that
+        # the pre-lock 12-read persistence spin starves main past the
+        # 1 s IWDG at arm (crash-loop, 5 boot banners); 16 arms and
+        # engages cleanly.
+        import re as _re
+        val = None
+        for _ in range(80):
+            r = self.send(",")
+            m = _re.search(r"blank window = (\d+)", r)
+            if m:
+                val = int(m.group(1))
+                if val == 0:
+                    break
+        for _ in range(80):
+            if val == blank:
+                break
+            r = self.send("n" if (val is None or val < blank) else "N")
+            m = _re.search(r"blank window = (\d+)", r)
+            if m:
+                val = int(m.group(1))
+        if val != blank:
+            sys.exit(f"blank set failed at {val}")
         for _ in range(7):
             if "phys ZC" in self.send("k"):
                 return
@@ -214,7 +230,7 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
     try:
         b.send("w", 0.5)
         b.send("q", 2.0)
-        b.set_filters()
+        b.set_filters(args.blank)
         b.send("w", 0.5)
         cur = b.engage(AMP_START)
         if args.adv:

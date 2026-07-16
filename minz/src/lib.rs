@@ -63,6 +63,14 @@ pub const CYCLES_PER_SECOND: u32 = SYSCLK.raw();
 // amplified event rate/depth makes the analog autopsy faster and
 // clearer. 48 kHz remains the performance recipe once the event
 // mechanism is fixed.
+//
+// 2026-07-15: 48 kHz RE-INSTANCED behind the `pwm48` cargo feature
+// for the post-audit carrier re-qualification (the spike-mechanism
+// fixes, the constants-audit E-ladder, and the engage-lottery fix
+// all landed since the last 48 kHz run). Default stays 24 kHz.
+#[cfg(feature = "pwm48")]
+pub const PWM_FREQUENCY_HZ: u32 = 48_000;
+#[cfg(not(feature = "pwm48"))]
 pub const PWM_FREQUENCY_HZ: u32 = 24_000;
 
 /// TIM1 ARR = SYSCLK / PWM_FREQUENCY_HZ − 1.

@@ -250,13 +250,15 @@ impl Drop for DurGuard {
 /// at 24 kHz is 41.67 µs; blanking longer than that is meaningless.
 static BLANK_US: AtomicU16 = AtomicU16::new(0);
 
-/// Last PWM-edge timestamp in **microseconds** (`ticks_1us()` units).
-/// The `TIM1_CC` ISR latches `ticks_1us()` here every time TIM1.CCRx
-/// matches (i.e. at every PWM channel transition). The COMP ISR
-/// reads this and skips the EDGE_BUF / SECTOR_EDGE_COUNT writes if
-/// `(now_us - LAST_PWM_EDGE_US) < BLANK_US`. Both timestamps use
-/// `wrapping_sub` for the delta so the u32 wrap (~71 min) is benign.
-static LAST_PWM_EDGE_US: AtomicU32 = AtomicU32::new(0);
+/// Raw DWT.CYCCNT of the most recent PWM compare match (48 kHz-era
+/// CPU fix, 2026-07-15): TIM1_CC fires once per PWM cycle (all three
+/// CCRs hold the same duty, so the matches coincide) and used to run
+/// `ticks_1us()` — a 4-load + u64-divide chain, 81 cyc idle / 550+
+/// under load — 33% of the core at a 48 kHz carrier and the direct
+/// cause of the 48 kHz arm crash-loop (main starved past the 1 s
+/// IWDG). Now the ISR stores this single raw counter read and the
+/// COMP ISR compares in CYCLES (blank_us x 80, a multiply).
+static LAST_PWM_EDGE_CYC: AtomicU32 = AtomicU32::new(0);
 
 /// COMP2 transition rate in events/sec, computed in the main loop
 /// over rolling ~1-second windows. Read by the `b` key handler.
@@ -1261,7 +1263,7 @@ fn main() -> ! {
         // In practice the race is benign: COMP propagation delay through
         // the gate driver and EXTI path is 0.5–2 µs ≈ 40–160 cycles,
         // while TIM1_CC ISR completes in ~40 cycles. TIM1_CC almost
-        // always updates LAST_PWM_EDGE_US before the analog transition
+        // always updates LAST_PWM_EDGE_CYC before the analog transition
         // reaches the comparator. The blanking sweep confirmed it works.
     }
 
@@ -2913,7 +2915,10 @@ fn TIM1_CC() {
     // because we latch on every transition regardless.
     tim1_motor_pwm::clear_cc_flags();
     TIM1_CC_COUNT.fetch_add(1, Ordering::Relaxed);
-    LAST_PWM_EDGE_US.store(ticks_1us(), Ordering::Relaxed);
+    // Raw single-read timestamp; see LAST_PWM_EDGE_CYC. The µs
+    // conversion (u64 divide) happens ONCE per comparator edge in
+    // the COMP ISR instead of once per PWM cycle here.
+    LAST_PWM_EDGE_CYC.store(cortex_m::peripheral::DWT::cycle_count(), Ordering::Relaxed);
 }
 
 #[interrupt]
@@ -3166,12 +3171,13 @@ fn COMP() {
     // before any later in-body read would run.
     let (now_10, now_us) = ticks_both();
 
-    // Software PWM-edge blanking. The `TIM1_CC` ISR latches
-    // `ticks_1us()` into `LAST_PWM_EDGE_US` at every PWM channel
-    // transition. If we're inside the `BLANK_US` window after any
-    // such transition, this edge is almost certainly PWM-coupled
-    // ringing rather than a real BEMF event — drop it from the
-    // EDGE_BUF / SECTOR_EDGE_COUNT recording.
+    // Software PWM-edge blanking. The `TIM1_CC` ISR stores a raw
+    // DWT.CYCCNT into `LAST_PWM_EDGE_CYC` at every PWM transition;
+    // the comparison here is in CYCLES (blank_us x 80) so the hot
+    // 48 kHz CC ISR never divides. If we're inside the blank window
+    // after any transition, this edge is almost certainly
+    // PWM-coupled ringing rather than a real BEMF event — drop it
+    // from the EDGE_BUF / SECTOR_EDGE_COUNT recording.
     //
     // 1 µs resolution comes from `ticks_1us()` = DWT.CYCCNT / 80.
     // PWM cycle at 24 kHz = 41.67 µs, so a sensible blank window is
@@ -3201,8 +3207,9 @@ fn COMP() {
     let blank_us =
         minz_core::timing::blank_us(BLANK_US.load(Ordering::Relaxed) as u32, interval_us);
     if blank_us > 0 {
-        let since_edge = now_us.wrapping_sub(LAST_PWM_EDGE_US.load(Ordering::Relaxed));
-        if since_edge < blank_us {
+        let since_cyc = cortex_m::peripheral::DWT::cycle_count()
+            .wrapping_sub(LAST_PWM_EDGE_CYC.load(Ordering::Relaxed));
+        if since_cyc < blank_us * 80 {
             COMP_COUNT.fetch_add(1, Ordering::Relaxed);
             WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
             let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));

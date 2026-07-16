@@ -3,6 +3,13 @@ name = "minz"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# 48 kHz motor PWM carrier (default is 24 kHz). Build with
+# `--features pwm48`. See lib.rs::PWM_FREQUENCY_HZ for the full
+# carrier-tradeoff history; everything timing-critical derives from
+# TIM1_AUTORELOAD so this single switch is complete.
+pwm48 = []
+
 [dependencies]
 # Host-testable control/guard/telemetry logic — the extracted brain.
 # `cd core && cargo test` runs its suite on the host.
