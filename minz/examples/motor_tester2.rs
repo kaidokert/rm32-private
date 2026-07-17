@@ -674,6 +674,15 @@ static CL_STARVED: AtomicBool = AtomicBool::new(false);
 /// guards (bounds, starvation, runaway floor, desync) apply to both
 /// paths.
 static CL_FAST_PATH: AtomicBool = AtomicBool::new(false);
+// REJECTION CENSUS (2026-07-16): the estimator's formerly-silent
+// no-ops, counted per kind (core estimator::Reject). qzc coverage is
+// structurally blind to these - a rejected sample still publishes
+// the window's qZC - so they get their own i-line row.
+static EST_ACC: AtomicU32 = AtomicU32::new(0);
+static EST_REJ_FLOOR: AtomicU32 = AtomicU32::new(0);
+static EST_REJ_CEILING: AtomicU32 = AtomicU32::new(0);
+static EST_REJ_RATE: AtomicU32 = AtomicU32::new(0);
+static EST_REJ_RESEED: AtomicU32 = AtomicU32::new(0);
 /// Closed-loop commutation counter (for the `i` readout).
 static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -2044,8 +2053,13 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
+                                EST_ACC.load(Ordering::Relaxed),
+                                EST_REJ_FLOOR.load(Ordering::Relaxed),
+                                EST_REJ_CEILING.load(Ordering::Relaxed),
+                                EST_REJ_RATE.load(Ordering::Relaxed),
+                                EST_REJ_RESEED.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2698,6 +2712,11 @@ static ZC_STATE: minz_core::zc::ZcState<'static> = minz_core::zc::ZcState {
     cl_reacq: &CL_REACQ,
     cl_noz_run: &CL_NOZ_RUN,
     cl_fast_path: &CL_FAST_PATH,
+    est_acc: &EST_ACC,
+    est_rej_floor: &EST_REJ_FLOOR,
+    est_rej_ceiling: &EST_REJ_CEILING,
+    est_rej_rate: &EST_REJ_RATE,
+    est_rej_reseed: &EST_REJ_RESEED,
 };
 
 /// ISR-kill flag matrix (minz_core::guards::apply_isr_kill) — the

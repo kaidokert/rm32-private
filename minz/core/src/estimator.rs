@@ -86,6 +86,19 @@ impl Estimator {
     /// An accepted qualified ZC at `zc_us`. Returns the (possibly
     /// updated) interval. `cl_active` gates the re-acq re-seed path.
     pub fn on_accept(&mut self, zc_us: u32, cl_active: bool) -> u32 {
+        self.on_accept_traced(zc_us, cl_active).0
+    }
+
+    /// REJECTION CENSUS (2026-07-16): every silent estimator no-op
+    /// becomes a reported outcome. The INT_MIN pinning survived for
+    /// days because a rejected sample still publishes the window's
+    /// qZC — qzc reads 100 % while the estimate refuses to move; the
+    /// coverage metric is structurally blind to this failure class.
+    /// The firmware counts these per kind and prints them in the
+    /// i-line, giving the AM32-geometry A/B its second discriminator
+    /// (AM32's rule set rejects nothing, by construction).
+    pub fn on_accept_traced(&mut self, zc_us: u32, cl_active: bool) -> (u32, Option<Reject>) {
+        let mut reject = None;
         let spans = self.windows_since_qzc;
         self.windows_since_qzc = 0;
         if let Some(last) = self.last_qzc_us {
@@ -105,6 +118,8 @@ impl Estimator {
                     {
                         self.interval_us = new_int;
                         self.reacq = false;
+                    } else {
+                        reject = Some(Reject::Reseed);
                     }
                 } else {
                     // Normal path: ±25 %/window rate bound. Symmetric
@@ -127,13 +142,36 @@ impl Estimator {
                         } else {
                             (3 * old + new_int) / 4
                         };
+                    } else {
+                        // Which bound refused it?
+                        reject = Some(if new_int <= (if old == 0 { SEED_MIN } else { INT_MIN }) {
+                            Reject::Floor
+                        } else if new_int >= INT_MAX {
+                            Reject::Ceiling
+                        } else {
+                            Reject::RateBound
+                        });
                     }
                 }
             }
         }
         self.last_qzc_us = Some(zc_us);
-        self.interval_us
+        (self.interval_us, reject)
     }
+}
+
+/// Why the estimator refused to move on an accepted qZC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reject {
+    /// Below INT_MIN (or SEED_MIN when unseeded) — the INT_MIN-
+    /// pinning class (the silent 1667 Hz ceiling).
+    Floor,
+    /// Above INT_MAX.
+    Ceiling,
+    /// Outside the ±25 %/window rate bound.
+    RateBound,
+    /// Re-acq re-seed refused (spans != 1 or outside [0.5, 2]×old).
+    Reseed,
 }
 
 impl Default for Estimator {
@@ -145,6 +183,33 @@ impl Default for Estimator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejection_census_kinds_2026_07_16() {
+        // Every silent no-op is now a classified outcome.
+        let mut e = Estimator::new();
+        e.interval_us = 100;
+        e.last_qzc_us = Some(1000);
+        e.windows_since_qzc = 1;
+        // Rate bound: 100 -> 140 is +40 % > +25 %.
+        assert_eq!(e.on_accept_traced(1140, true).1, Some(Reject::RateBound));
+        // Floor: below INT_MIN.
+        e.interval_us = 50;
+        e.last_qzc_us = Some(2000);
+        e.windows_since_qzc = 1;
+        assert_eq!(e.on_accept_traced(2030, true).1, Some(Reject::Floor));
+        // Accepted: within bounds.
+        e.interval_us = 100;
+        e.last_qzc_us = Some(3000);
+        e.windows_since_qzc = 1;
+        assert_eq!(e.on_accept_traced(3110, true).1, None);
+        // Reseed refusal: reacq + spans=2.
+        e.reacq = true;
+        e.interval_us = 100;
+        e.last_qzc_us = Some(4000);
+        e.windows_since_qzc = 2;
+        assert_eq!(e.on_accept_traced(4200, true).1, Some(Reject::Reseed));
+    }
 
     /// Feed a steady qZC train (one per window) and return the
     /// converged interval.

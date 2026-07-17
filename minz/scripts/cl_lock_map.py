@@ -104,6 +104,11 @@ class Bench:
         else:
             vbat, vmin, isns = 0.0, 0.0, 0.0
         self.last_vmin = vmin
+        e = re.search(
+            r"est: acc=(\d+) rej floor=(\d+) ceil=(\d+) rate=(\d+) reseed=(\d+)",
+            echo,
+        )
+        self.last_est = tuple(int(x) for x in e.groups()) if e else (0, 0, 0, 0, 0)
         active = "cl: ACTIVE" in echo
         c = re.search(r"comms=(\d+)", echo)
         if active and c:
@@ -254,7 +259,10 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
             print(f"  arm_j: {echo.strip()[:60]}", flush=True)
 
         meta = open(capdir / f"{args.tag}_meta.csv", "w")
-        meta.write("amp,vbat_v,vbat_min_v,isns_a\n")
+        meta.write(
+            "amp,vbat_v,vbat_min_v,isns_a,est_acc,rej_floor,rej_ceil,"
+            "rej_rate,rej_reseed\n"
+        )
         # Stream stays ON for the whole ladder: rung captures AND the
         # transits between them (where kills live) all land in bins,
         # with v4 per-window vbat minima plottable via plot_dropout.
@@ -269,7 +277,12 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
             (capdir / f"{args.tag}_t{amp}.bin").write_bytes(transit)
             active, echo, vbat, isns = b.check_active()
             vmin = getattr(b, "last_vmin", 0.0)
-            meta.write(f"{amp},{vbat},{vmin},{isns}\n")
+            est = getattr(b, "last_est", (0, 0, 0, 0, 0))
+            meta.write(
+                f"{amp},{vbat},{vmin},{isns},"
+                + ",".join(str(x) for x in est)
+                + "\n"
+            )
             meta.flush()
             # HARD vbat abort. A sagging bus is the supply's current
             # limit engaging; below ~6.2 V the MCU's 3.3 V rail is one

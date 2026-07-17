@@ -118,6 +118,13 @@ pub struct ZcState<'a> {
     pub cl_reacq: &'a AtomicBool,
     pub cl_noz_run: &'a AtomicU8,
     pub cl_fast_path: &'a AtomicBool,
+    // REJECTION CENSUS counters (accepted samples + each silent-
+    // rejection kind; see estimator::Reject).
+    pub est_acc: &'a AtomicU32,
+    pub est_rej_floor: &'a AtomicU32,
+    pub est_rej_ceiling: &'a AtomicU32,
+    pub est_rej_rate: &'a AtomicU32,
+    pub est_rej_reseed: &'a AtomicU32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,7 +306,18 @@ pub fn accept_publish(
         windows_since_qzc: zs.windows_since_qzc.load(Ordering::Relaxed) as u32,
         reacq: zs.cl_reacq.load(Ordering::Relaxed),
     };
-    est.on_accept(zc_us, zs.cl_active.load(Ordering::Relaxed));
+    let (_, reject) = est.on_accept_traced(zc_us, zs.cl_active.load(Ordering::Relaxed));
+    match reject {
+        None => zs.est_acc.fetch_add(1, Ordering::Relaxed),
+        Some(crate::estimator::Reject::Floor) => zs.est_rej_floor.fetch_add(1, Ordering::Relaxed),
+        Some(crate::estimator::Reject::Ceiling) => {
+            zs.est_rej_ceiling.fetch_add(1, Ordering::Relaxed)
+        }
+        Some(crate::estimator::Reject::RateBound) => {
+            zs.est_rej_rate.fetch_add(1, Ordering::Relaxed)
+        }
+        Some(crate::estimator::Reject::Reseed) => zs.est_rej_reseed.fetch_add(1, Ordering::Relaxed),
+    };
     zs.interval_us.store(est.interval_us, Ordering::Relaxed);
     zs.last_qzc_us
         .store(est.last_qzc_us.unwrap_or(u32::MAX), Ordering::Relaxed);
@@ -465,6 +483,11 @@ mod tests {
         cl_reacq: AtomicBool,
         cl_noz_run: AtomicU8,
         cl_fast_path: AtomicBool,
+        est_acc: AtomicU32,
+        est_rej_floor: AtomicU32,
+        est_rej_ceiling: AtomicU32,
+        est_rej_rate: AtomicU32,
+        est_rej_reseed: AtomicU32,
     }
 
     impl Rig {
@@ -485,6 +508,11 @@ mod tests {
                 cl_reacq: AtomicBool::new(false),
                 cl_noz_run: AtomicU8::new(3),
                 cl_fast_path: AtomicBool::new(false),
+                est_acc: AtomicU32::new(0),
+                est_rej_floor: AtomicU32::new(0),
+                est_rej_ceiling: AtomicU32::new(0),
+                est_rej_rate: AtomicU32::new(0),
+                est_rej_reseed: AtomicU32::new(0),
             }
         }
 
@@ -505,6 +533,11 @@ mod tests {
                 cl_reacq: &self.cl_reacq,
                 cl_noz_run: &self.cl_noz_run,
                 cl_fast_path: &self.cl_fast_path,
+                est_acc: &self.est_acc,
+                est_rej_floor: &self.est_rej_floor,
+                est_rej_ceiling: &self.est_rej_ceiling,
+                est_rej_rate: &self.est_rej_rate,
+                est_rej_reseed: &self.est_rej_reseed,
             }
         }
 
