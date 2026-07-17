@@ -144,9 +144,135 @@ pub fn confirm_need(cl_active: bool, reacq: bool, interval_us: u32) -> u32 {
     }
 }
 
+/// R1 — FIRMWARE di/dt LIMITER (AM32 duty-governance port,
+/// GAP_CLOSING_PLAN rung 1; AM32 main.c:1688-1708). AM32 shapes
+/// EVERY duty write into micro-steps in its 20 kHz tick:
+/// {2,6,16}/2000 counts per 50 µs by regime = 2/6/16 %/ms,
+/// symmetric accel/decel. minz previously applied host throttle
+/// steps as instantaneous CCR edges (a ~1 % jump in one PWM update,
+/// then frozen 50 ms) — each edge bigger than anything AM32 ever
+/// applies, and a prime seed for the window-position runaway.
+/// Rates are expressed per-millisecond and scaled by the caller's
+/// actual elapsed time, so the clamp is cadence-independent
+/// (TIM7 6 kHz refresh, LPTIM2 per-commutation, open loop alike).
+pub const SLEW_STARTUP_PERMILLE_PER_MS: u32 = 20; // 2 %/ms
+pub const SLEW_LOW_PERMILLE_PER_MS: u32 = 60; // 6 %/ms (interval > 500 us)
+pub const SLEW_HIGH_PERMILLE_PER_MS: u32 = 160; // 16 %/ms (at speed)
+/// No duty application for this long = the motor was stopped/killed:
+/// restart the ramp from zero (covers every kill path without
+/// touching them).
+pub const SLEW_STALE_US: u32 = 100_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlewOut {
+    pub duty: u16,
+    pub clamped: bool,
+}
+
+/// One shaped duty application. `elapsed_us` = time since the last
+/// application (any site). Regimes mirror AM32: startup (not locked,
+/// or duty below ~7.5 % of max) 2 %/ms; low speed (interval >
+/// 500 µs) 6 %/ms; high speed 16 %/ms.
+#[inline]
+pub fn duty_slew(
+    last: u16,
+    target: u16,
+    elapsed_us: u32,
+    max_duty: u16,
+    cl_active: bool,
+    interval_us: u32,
+) -> SlewOut {
+    let (last, elapsed_us) = if elapsed_us > SLEW_STALE_US {
+        (0, 1_000) // stale: restart the ramp gently from zero
+    } else {
+        (last, elapsed_us)
+    };
+    let rate = if !cl_active || last < max_duty / 13 {
+        SLEW_STARTUP_PERMILLE_PER_MS
+    } else if interval_us == 0 || interval_us > 500 {
+        SLEW_LOW_PERMILLE_PER_MS
+    } else {
+        SLEW_HIGH_PERMILLE_PER_MS
+    };
+    let allowed = ((max_duty as u64 * rate as u64 * elapsed_us as u64) / 1_000_000).max(1) as u16;
+    if target > last {
+        let step = target - last;
+        if step > allowed {
+            SlewOut {
+                duty: last + allowed,
+                clamped: true,
+            }
+        } else {
+            SlewOut {
+                duty: target,
+                clamped: false,
+            }
+        }
+    } else {
+        let step = last - target;
+        if step > allowed {
+            SlewOut {
+                duty: last - allowed,
+                clamped: true,
+            }
+        } else {
+            SlewOut {
+                duty: target,
+                clamped: false,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn r1_slew_matches_am32_transit_shape() {
+        // AM32's 50->70 % at 1900 Hz: 16 counts per 50 us tick on a
+        // 2000 scale, linear, ~1.25 ms to target (main.c:1688-1708).
+        let (max, mut d) = (2000u16, 1005u16);
+        let mut ticks = 0;
+        loop {
+            let o = duty_slew(d, 1403, 50, max, true, 175);
+            d = o.duty;
+            ticks += 1;
+            if !o.clamped {
+                break;
+            }
+        }
+        assert_eq!(d, 1403);
+        assert_eq!(ticks, 25); // 1.25 ms, AM32-exact
+        // Symmetric decel.
+        let o = duty_slew(1403, 1005, 50, max, true, 175);
+        assert_eq!(o.duty, 1403 - 16);
+        assert!(o.clamped);
+    }
+
+    #[test]
+    fn r1_slew_regimes_and_staleness() {
+        // Startup regime (not locked): 2 %/ms -> 2 counts per 50 us.
+        let o = duty_slew(500, 2000, 50, 2000, false, 0);
+        assert_eq!(o.duty, 502);
+        // Low-duty startup even under lock.
+        let o = duty_slew(100, 2000, 50, 2000, true, 175);
+        assert_eq!(o.duty, 102);
+        // Low-speed regime: 6 %/ms.
+        let o = duty_slew(1000, 2000, 50, 2000, true, 600);
+        assert_eq!(o.duty, 1006);
+        // Per-commutation cadence at 1900 Hz (90 us elapsed, high):
+        // 2000*160*90/1e6 = 28 counts = 1.4 % per window, AM32-like.
+        let o = duty_slew(1000, 2000, 90, 2000, true, 90);
+        assert_eq!(o.duty, 1028);
+        // Staleness (kill/idle gap): ramp restarts gently from ZERO
+        // regardless of the stale last value.
+        let o = duty_slew(1700, 1700, 500_000, 2000, true, 90);
+        assert!(o.duty <= 40, "stale restart jumped: {}", o.duty);
+        // Tiny elapsed still moves at least 1 count (no stall).
+        let o = duty_slew(10, 2000, 1, 2000, false, 0);
+        assert_eq!(o.duty, 11);
+    }
 
     #[test]
     fn advance_zero_below_280hz() {

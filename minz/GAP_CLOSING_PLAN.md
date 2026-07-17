@@ -42,6 +42,24 @@ above 1650 Hz) without losing a single safety layer or data channel.
 ## The ladder
 
 ### R1 — Firmware di/dt limiter (the missing safety net)
+**ATTEMPT 1 (2026-07-17): PARKED behind `R1_DUTY_SLEW=false`.** Core
+limiter landed with AM32-exact parity tests (143 green). Three
+integration lessons, two fixed en route, one structural:
+1. multi-writer slew state (TIM7+LPTIM2) ping-ponged a ~1 % duty
+   dither at ~300 Hz (clamp counter +350/s at steady lock) — fixed
+   via single-writer;
+2. the single update initially sat in TIM7's open-loop section =
+   dead code under CL (duty froze at engage value) — fixed;
+3. RESIDUAL REGRESSION even when correct (paired: a70 spikes
+   4.9–9.1/s vs control 2.2/s; died at 74 twice vs control 76):
+   the remaining difference is that AM32's COMMUTATION NEVER WRITES
+   CCR — duty lives wholly in the control tick, commutation flips
+   phase ROLES only. Our `set_six_step` couples duty+roles, so any
+   tick/commutation interleaving perturbs duty. **Proper R1 requires
+   the duty/role split in `tim1_motor_pwm`** (a `set_duty` written
+   only by the tick; a `set_roles` for commutation) — do that split
+   FIRST, then re-enable the shaper. The split is also R5-adjacent
+   (it removes CCR traffic from the commutation ISR).
 AM32: `max_duty_cycle_change` ∈ {2,6,16}/2000 per 50 µs tick, hard,
 symmetric, applied to EVERY duty write regardless of source
 (main.c:1688-1708). A 50→70 % step becomes a 1.25 ms linear ramp of

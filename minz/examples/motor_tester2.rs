@@ -700,6 +700,58 @@ static EST_REJ_HARMONIC: AtomicU32 = AtomicU32::new(0);
 /// under a junk lock -> kill.
 static ZOMBIE_RUN_ST: AtomicU16 = AtomicU16::new(0);
 static ZOMBIE_KILLED: AtomicBool = AtomicBool::new(false);
+// R1 di/dt limiter state (core timing::duty_slew). SINGLE-WRITER:
+// only the TIM7 control tick calls slewed_duty (AM32 semantics: the
+// control loop owns duty; commutation CONSUMES the shaped value).
+// The first cut had LPTIM2+TIM7 both updating - the cross-priority
+// load/store race regressed the base and ping-ponged a ~1% duty
+// DITHER at ~300 Hz (clamp counter +350/s at steady lock), injecting
+// exactly the disturbance R1 exists to remove. Emergency reductions
+// (blind-amp clamp, kills) bypass the slew DOWNWARD by design - AM32
+// also cuts instantly on desync. Staleness >100 ms restarts the ramp
+// from zero, covering all kill paths without touching them.
+static SLEW_LAST_DUTY: AtomicU16 = AtomicU16::new(0);
+static SLEW_LAST_US: AtomicU32 = AtomicU32::new(0);
+static SLEW_CLAMP_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// R1 PARKED (2026-07-17, attempt 1 verdict): with the shaper ON,
+/// paired ladders regressed (a70 spikes 4.9-9.1/s vs control 2.2/s;
+/// died at 74 twice where control reached 76). Two integration
+/// defects found and fixed en route (multi-writer dither; dead-code
+/// update under CL) - the residual regression points at the
+/// remaining structural difference: AM32's commutation NEVER writes
+/// CCR (duty lives wholly in the control tick; commutation flips
+/// phase roles only), while our set_six_step couples duty+roles, so
+/// tick-vs-commutation interleaving perturbs duty. Proper R1 needs
+/// the duty/role split in tim1_motor_pwm (set_duty in the tick,
+/// set_roles at commutation) - see GAP_CLOSING_PLAN R1 note.
+const R1_DUTY_SLEW: bool = false;
+
+/// R1: every duty write goes through this shaper (AM32 semantics:
+/// hard symmetric di/dt clamp, speed-regime rates 2/6/16 %/ms).
+fn slewed_duty(target: u16) -> u16 {
+    if !R1_DUTY_SLEW {
+        // Passthrough: keep the bookkeeping coherent for consumers.
+        SLEW_LAST_DUTY.store(target, Ordering::Relaxed);
+        SLEW_LAST_US.store(ticks_1us(), Ordering::Relaxed);
+        return target;
+    }
+    let now = ticks_1us();
+    let out = minz_core::timing::duty_slew(
+        SLEW_LAST_DUTY.load(Ordering::Relaxed),
+        target,
+        now.wrapping_sub(SLEW_LAST_US.load(Ordering::Relaxed)),
+        max_duty(),
+        CL_ACTIVE.load(Ordering::Relaxed),
+        OWL_INTERVAL_US.load(Ordering::Relaxed),
+    );
+    if out.clamped {
+        SLEW_CLAMP_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+    SLEW_LAST_DUTY.store(out.duty, Ordering::Relaxed);
+    SLEW_LAST_US.store(now, Ordering::Relaxed);
+    out.duty
+}
 /// Closed-loop commutation counter (for the `i` readout).
 static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -2076,7 +2128,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2084,6 +2136,7 @@ fn main() -> ! {
                                 EST_REJ_RATE.load(Ordering::Relaxed),
                                 EST_REJ_RESEED.load(Ordering::Relaxed),
                                 EST_REJ_HARMONIC.load(Ordering::Relaxed),
+                                SLEW_CLAMP_COUNT.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2456,8 +2509,13 @@ fn TIM7() {
     // coast; a fallback ramp jolt has cost this bench a motor before).
     if CL_ACTIVE.load(Ordering::Relaxed) {
         if MOTOR_ENABLED.load(Ordering::Relaxed) {
-            let duty =
-                open_loop::six_step_duty(max_duty(), AMPLITUDE_PCT.load(Ordering::Relaxed) as u16);
+            // R1 single-writer update, CL branch (TIM7 returns early
+            // under CL, so this and the open-loop hoist are mutually
+            // exclusive - still one writer, one context).
+            let duty = slewed_duty(open_loop::six_step_duty(
+                max_duty(),
+                AMPLITUDE_PCT.load(Ordering::Relaxed) as u16,
+            ));
             tim1_motor_pwm::set_six_step(CURRENT_SECTOR.load(Ordering::Relaxed), duty);
             let interval_us = OWL_INTERVAL_US.load(Ordering::Relaxed);
             // Read LAST_COMM *before* now: a commutation preempting us
@@ -2599,8 +2657,15 @@ fn TIM7() {
     let amp = AMPLITUDE_PCT.load(Ordering::Relaxed) as u16;
     let arr = max_duty();
 
+    // R1 single-writer update: shape the commanded duty ONCE per
+    // control tick; every consumer (CL refresh above, open-loop step
+    // below, LPTIM2 commutation) reads SLEW_LAST_DUTY.
+    if MOTOR_ENABLED.load(Ordering::Relaxed) {
+        let _ = slewed_duty(open_loop::six_step_duty(arr, amp));
+    }
+
     if SIX_STEP_MODE.load(Ordering::Relaxed) {
-        let duty = open_loop::six_step_duty(arr, amp);
+        let duty = SLEW_LAST_DUTY.load(Ordering::Relaxed);
         tim1_motor_pwm::set_six_step(sector, duty);
 
         if AUTO_MUX.load(Ordering::Relaxed) {
@@ -2919,9 +2984,16 @@ fn LPTIM2() {
     // Burst clamp composes after (only ever reduces; host-tested).
     let amp = minz_core::guards::burst_amp_clamp(amp, BURST_ACTIVE.load(Ordering::Relaxed));
     let duty = {
-        let base = open_loop::six_step_duty(max_duty(), amp) as i32;
+        // Consume the R1-shaped duty; blind-amp reduction scales it
+        // (emergency cuts bypass the slew downward by design).
+        let shaped = SLEW_LAST_DUTY.load(Ordering::Relaxed) as i32;
+        let shaped = if amp < base_amp {
+            shaped * amp as i32 / base_amp.max(1) as i32
+        } else {
+            shaped
+        };
         let hi = max_duty() as i32 * AMP_MAX as i32 / 100;
-        (base + DUTY_TRIM.load(Ordering::Relaxed) as i32).clamp(0, hi) as u16
+        (shaped + DUTY_TRIM.load(Ordering::Relaxed) as i32).clamp(0, hi) as u16
     };
     tim1_motor_pwm::set_six_step(sector, duty);
     comp2::set_inm(SECTOR_FLOAT_PHASE[sector as usize]);
