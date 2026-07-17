@@ -40,6 +40,69 @@ pub enum Kill {
 }
 
 /// CL-mode watchdog decision for one drive tick.
+/// R3 — the watchdog verdict: recoverable sync-losses become
+/// duty-clamped RESEEDS (AM32 semantics: it re-seeds where we
+/// killed — zero kill paths vs our four); only the unrecoverable
+/// classes still kill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchdogAction {
+    None,
+    /// Cut duty to the reseed floor, enter re-acquisition, re-ramp
+    /// after fresh accepts. The caller counts strikes.
+    Reseed(Kill),
+    /// Hard stop (r/q re-arms): the 22.5 ms backstop, the runaway
+    /// floor, or strike escalation.
+    Kill(Kill),
+}
+
+/// R3 backstop: no accepted ZC for this long is not a transient —
+/// AM32's own last-resort timeout (45000 x 0.5 us ticks).
+pub const BACKSTOP_NO_ZC_US: u32 = 22_500;
+/// Reseed exits after this many fresh accepts (one electrical rev).
+pub const RESEED_EXIT_ACCEPTS: u8 = 6;
+/// Strike escalation: this many reseeds without amnesty -> kill.
+pub const RESEED_MAX_STRIKES: u8 = 4;
+/// Amnesty: this many accepts since the last reseed clears strikes
+/// (AM32's zero_crosses > 1000 analog — a healthy lock never
+/// accrues strikes).
+pub const RESEED_AMNESTY_ACCEPTS: u32 = 1_000;
+/// Commanded-amp floor while reseeding (~AM32's min_startup_duty/2).
+pub const RESEED_AMP_PCT: u16 = 6;
+
+/// R3 verdict. Same inputs as [`cl_watchdog`] + the strike count.
+#[inline]
+pub fn cl_watchdog_r3(
+    interval_us: u32,
+    since_last_qzc_us: u32,
+    since_last_comm_us: u32,
+    have_qzc_ref: bool,
+    strikes: u8,
+) -> WatchdogAction {
+    if interval_us == 0 {
+        return WatchdogAction::None;
+    }
+    if have_qzc_ref && since_last_qzc_us > BACKSTOP_NO_ZC_US {
+        return WatchdogAction::Kill(Kill::ZcStarved);
+    }
+    if interval_us < 45 {
+        return WatchdogAction::Kill(Kill::Runaway);
+    }
+    let starved = have_qzc_ref && since_last_qzc_us > interval_us.max(500) * 12;
+    let desynced = since_last_comm_us > interval_us.max(1_000) * 3;
+    if starved || desynced {
+        let why = if starved {
+            Kill::ZcStarved
+        } else {
+            Kill::Desync
+        };
+        if strikes >= RESEED_MAX_STRIKES {
+            return WatchdogAction::Kill(why);
+        }
+        return WatchdogAction::Reseed(why);
+    }
+    WatchdogAction::None
+}
+
 pub fn cl_watchdog(
     interval_us: u32,
     since_last_qzc_us: u32,
@@ -613,6 +676,35 @@ mod tests {
     fn starvation_needs_a_reference() {
         // Before the first accept there is nothing to starve from.
         assert_eq!(cl_watchdog(650, u32::MAX / 4, 0, false), None);
+    }
+
+    #[test]
+    fn r3_watchdog_reseeds_where_it_killed() {
+        use WatchdogAction as W;
+        // Starvation at speed (6 ms silence at 90 us): RESEED now.
+        assert_eq!(
+            cl_watchdog_r3(90, 6_100, 0, true, 0),
+            W::Reseed(Kill::ZcStarved)
+        );
+        // Desync (commutation silence): RESEED.
+        assert_eq!(
+            cl_watchdog_r3(600, 0, 3_100 * 3, true, 1),
+            W::Reseed(Kill::Desync)
+        );
+        // The 22.5 ms backstop is a real KILL regardless of strikes.
+        assert_eq!(
+            cl_watchdog_r3(90, 23_000, 0, true, 0),
+            W::Kill(Kill::ZcStarved)
+        );
+        // Runaway floor still kills (canary class).
+        assert_eq!(cl_watchdog_r3(40, 0, 0, true, 0), W::Kill(Kill::Runaway));
+        // Strike escalation: 4th reseed becomes a kill.
+        assert_eq!(
+            cl_watchdog_r3(90, 6_100, 0, true, RESEED_MAX_STRIKES),
+            W::Kill(Kill::ZcStarved)
+        );
+        // Healthy: nothing.
+        assert_eq!(cl_watchdog_r3(90, 100, 100, true, 0), W::None);
     }
 
     #[test]

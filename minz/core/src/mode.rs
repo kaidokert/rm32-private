@@ -22,6 +22,8 @@ pub struct ModeState<'a> {
     pub cl_noz_run: &'a AtomicU8,
     // Estimator statics (reset on CL arm).
     pub interval_us: &'a AtomicU32,
+    /// R2 stiff-average accumulator (reset with the estimator on arm).
+    pub avg_interval_acc: &'a AtomicU32,
     pub last_qzc_us: &'a AtomicU32,
     pub windows_since_qzc: &'a AtomicU8,
     // Throttle snap.
@@ -154,6 +156,7 @@ pub fn step(ms: &ModeState<'_>, mir: &mut Mirror, cmd: Cmd) -> Actions {
                 // open-loop sample. Engagement waits for a fresh
                 // estimate, so this re-seeds within a few windows.
                 ms.interval_us.store(0, Ordering::Relaxed);
+                ms.avg_interval_acc.store(0, Ordering::Relaxed);
                 ms.last_qzc_us.store(u32::MAX, Ordering::Relaxed);
                 ms.windows_since_qzc.store(0, Ordering::Relaxed);
                 ms.cl_reacq.store(false, Ordering::Relaxed);
@@ -190,6 +193,7 @@ mod tests {
         cl_reacq: AtomicBool,
         cl_noz_run: AtomicU8,
         interval_us: AtomicU32,
+        avg_interval_acc: AtomicU32,
         last_qzc_us: AtomicU32,
         windows_since_qzc: AtomicU8,
         amplitude_pct: AtomicU8,
@@ -207,6 +211,7 @@ mod tests {
                 cl_reacq: AtomicBool::new(false),
                 cl_noz_run: AtomicU8::new(0),
                 interval_us: AtomicU32::new(0),
+                avg_interval_acc: AtomicU32::new(0),
                 last_qzc_us: AtomicU32::new(u32::MAX),
                 windows_since_qzc: AtomicU8::new(0),
                 amplitude_pct: AtomicU8::new(15),
@@ -224,6 +229,7 @@ mod tests {
                 cl_reacq: &self.cl_reacq,
                 cl_noz_run: &self.cl_noz_run,
                 interval_us: &self.interval_us,
+                avg_interval_acc: &self.avg_interval_acc,
                 last_qzc_us: &self.last_qzc_us,
                 windows_since_qzc: &self.windows_since_qzc,
                 amplitude_pct: &self.amplitude_pct,

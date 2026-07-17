@@ -72,8 +72,8 @@ impl Default for BlackBox {
 }
 
 /// Event-type display names, indexed by `Event::ty`.
-pub const EV_NAMES: [&str; 10] = [
-    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ",
+pub const EV_NAMES: [&str; 11] = [
+    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ", "RSD",
 ];
 
 // The authoritative event codes (indices into EV_NAMES; the decode
@@ -99,6 +99,8 @@ pub const EV_ENG: u8 = 7;
 pub const EV_STV: u8 = 8;
 /// Re-acquisition entered.
 pub const EV_RAQ: u8 = 9;
+/// R3: sync-loss handled as a duty-clamped RESEED (not a kill).
+pub const EV_RSD: u8 = 10;
 
 /// Render a desync dump: one `bb +<dt>us NAME s<sec> d=<data>` line
 /// per event, dt in µs since the previous event (t is in 10 µs

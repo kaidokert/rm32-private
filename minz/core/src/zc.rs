@@ -129,6 +129,14 @@ pub struct ZcState<'a> {
     // AM32-GEOMETRY estimator mode (see estimator::am32_geom).
     pub cl_am32_geom: &'a AtomicBool,
     pub est_prev_period: &'a AtomicU32,
+    // R2 — the STIFF average (AM32's average_interval, the
+    // two-timescale keystone): a 6-deep average of ACCEPTED
+    // intervals, kept as a fixed-point accumulator (acc/6 = avg) so
+    // integer floor can't stall it. One accept moves it by delta/6 —
+    // a premature edge cannot drag the gate down the way it drags
+    // the fast estimate. Updated only here (accepts are serialized
+    // by the window qZC mask).
+    pub avg_interval_acc: &'a AtomicU32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -335,6 +343,24 @@ pub fn accept_publish(
     zs.cl_reacq.store(est.reacq, Ordering::Relaxed);
     zs.est_prev_period
         .store(est.prev_period_us, Ordering::Relaxed);
+    {
+        // R2 stiff average update: acc += interval - acc/6 (6-deep
+        // average as a fixed-point accumulator; seeded on first use).
+        // GEOMETRY-MODE ONLY: this sits on the accept path inside
+        // the COMP ISR - the stock path must stay byte-lean (the
+        // R2/R3 first cut added ~1 us there and regressed paired
+        // ladders vs the r1b tag).
+        let acc = zs.avg_interval_acc.load(Ordering::Relaxed);
+        let iv = zs.interval_us.load(Ordering::Relaxed);
+        if iv != 0 && zs.cl_am32_geom.load(Ordering::Relaxed) {
+            let new_acc = if acc == 0 {
+                iv.saturating_mul(6)
+            } else {
+                acc.wrapping_add(iv).wrapping_sub(acc / 6)
+            };
+            zs.avg_interval_acc.store(new_acc, Ordering::Relaxed);
+        }
+    }
     zs.cl_noz_run.store(0, Ordering::Relaxed);
     zs.last_qzc_10us.store(now_10us, Ordering::Relaxed);
 
@@ -371,6 +397,12 @@ pub fn accept_publish(
         schedule,
         interval_us,
     })
+}
+
+/// R2: the stiff average in µs (acc/6); 0 when unseeded.
+#[inline]
+pub fn avg_interval_us(zs: &ZcState<'_>) -> u32 {
+    zs.avg_interval_acc.load(Ordering::Relaxed) / 6
 }
 
 /// SCHEDULE-FIRST pre-check (the `elapsed` cut): decide — BEFORE the
@@ -502,6 +534,7 @@ mod tests {
         est_rej_harmonic: AtomicU32,
         cl_am32_geom: AtomicBool,
         est_prev_period: AtomicU32,
+        avg_interval_acc: AtomicU32,
     }
 
     impl Rig {
@@ -530,6 +563,7 @@ mod tests {
                 est_rej_harmonic: AtomicU32::new(0),
                 cl_am32_geom: AtomicBool::new(false),
                 est_prev_period: AtomicU32::new(0),
+                avg_interval_acc: AtomicU32::new(0),
             }
         }
 
@@ -558,6 +592,7 @@ mod tests {
                 est_rej_harmonic: &self.est_rej_harmonic,
                 cl_am32_geom: &self.cl_am32_geom,
                 est_prev_period: &self.est_prev_period,
+                avg_interval_acc: &self.avg_interval_acc,
             }
         }
 
@@ -743,6 +778,42 @@ mod tests {
             "stale CAS must fail against the fresh candidate"
         );
         assert_eq!(r.cand_zc_us.load(Ordering::Relaxed), 10_640);
+    }
+
+    #[test]
+    fn r2_stiff_average_is_unwalkable() {
+        // The two-timescale keystone: a premature accept drags the
+        // FAST estimate but barely moves the stiff average the gate
+        // references. Feed steady 345 us then one 190 us junk accept
+        // (geometry mode, no bounds).
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        r.cl_am32_geom.store(true, Ordering::Relaxed);
+        r.interval_us.store(345, Ordering::Relaxed);
+        r.est_prev_period.store(345, Ordering::Relaxed);
+        let mut zc = 10_000u32;
+        for _ in 0..30 {
+            zc += 345;
+            r.window_qzc_us.store(u32::MAX, Ordering::Relaxed);
+            r.windows_since_qzc.store(1, Ordering::Relaxed);
+            accept_publish(&r.zs(), 2, zc, 1_000).unwrap();
+        }
+        let avg_before = avg_interval_us(&r.zs());
+        assert!((330..=350).contains(&avg_before), "avg {avg_before}");
+        // one premature accept at 240 us (-30 %: inside the wide
+        // sanity band, so it IS accepted - the interesting case; a
+        // 190 us sample is already refused by the [2/3,3/2] bound,
+        // itself part of the defense in depth)
+        zc += 240;
+        r.window_qzc_us.store(u32::MAX, Ordering::Relaxed);
+        r.windows_since_qzc.store(1, Ordering::Relaxed);
+        accept_publish(&r.zs(), 2, zc, 1_000).unwrap();
+        let avg_after = avg_interval_us(&r.zs());
+        // stiff: moves by <= delta/6 (~26 us), NOT to the junk value
+        assert!(avg_after >= avg_before - 30, "avg collapsed: {avg_after}");
+        // while the fast estimate moved further (the schedule tracks)
+        let fast = r.interval_us.load(Ordering::Relaxed);
+        assert!(fast < avg_after, "fast {fast} avg {avg_after}");
     }
 
     #[test]

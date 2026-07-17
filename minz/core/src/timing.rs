@@ -115,6 +115,25 @@ pub fn persistence_reads(blank_us: u32, cl_locked: bool) -> u32 {
     if blank_us >= 5 || cl_locked { 5 } else { 12 }
 }
 
+/// R2 — AM32's speed-mapped persistence (main.c:2372-2379):
+/// `filter_level = map(average_interval, 50 µs, 250 µs, 3, 12)` —
+/// deep when slow (noise defense earns its latency), shallow at
+/// speed (never a top-end latency wall). Pre-lock and re-seed keep
+/// the full 12. Keyed to the STIFF average, not the fast estimate.
+#[inline]
+pub fn persistence_reads_r2(avg_interval_us: u32, cl_locked: bool, reseeding: bool) -> u32 {
+    if !cl_locked || reseeding || avg_interval_us == 0 {
+        return 12;
+    }
+    if avg_interval_us >= 250 {
+        12
+    } else if avg_interval_us <= 50 {
+        3
+    } else {
+        3 + (avg_interval_us - 50) * 9 / 200
+    }
+}
+
 /// ZC-confirm depth in PWM wraps: 1 under an established lock, 2
 /// otherwise (engage / open loop / re-acquisition). The open-loop
 /// 1-confirm is 52-69 % premature (probe replay) and shipped
@@ -356,6 +375,14 @@ mod tests {
         // E4: established lock keeps the shallow depth at faded blank.
         assert_eq!(persistence_reads(1, true), 5);
         assert_eq!(persistence_reads(0, true), 5);
+        // R2 speed map (AM32 parity): 90 µs -> 4-5 reads; 250 -> 12;
+        // 50 -> 3; pre-lock/reseed force 12.
+        assert_eq!(persistence_reads_r2(250, true, false), 12);
+        assert_eq!(persistence_reads_r2(50, true, false), 3);
+        assert_eq!(persistence_reads_r2(90, true, false), 4);
+        assert_eq!(persistence_reads_r2(150, true, false), 7);
+        assert_eq!(persistence_reads_r2(90, false, false), 12);
+        assert_eq!(persistence_reads_r2(90, true, true), 12);
     }
 
     #[test]

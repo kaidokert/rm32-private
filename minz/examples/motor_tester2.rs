@@ -694,12 +694,21 @@ static EST_PREV_PERIOD: AtomicU32 = AtomicU32::new(0);
 /// flyback edge become the reference, and starved the loop; AM32's
 /// INTERVAL_TIMER equivalent counts unconditionally).
 static GATE_LAST_ZC_US: AtomicU32 = AtomicU32::new(0);
+/// R2 stiff-average accumulator (avg = acc/6; core-updated on accepts).
+static AVG_INTERVAL_ACC: AtomicU32 = AtomicU32::new(0);
 static EST_REJ_HARMONIC: AtomicU32 = AtomicU32::new(0);
 /// Zombie-field detector state (guards::zombie_step; sole writer
 /// TIM1_UP). Fast field + implausibly low current = stalled rotor
 /// under a junk lock -> kill.
 static ZOMBIE_RUN_ST: AtomicU16 = AtomicU16::new(0);
 static ZOMBIE_KILLED: AtomicBool = AtomicBool::new(false);
+// R3 reseed state: recoverable sync-losses cut duty to RESEED_AMP_PCT
+// and re-acquire instead of killing (guards::cl_watchdog_r3).
+static RESEED_ACTIVE: AtomicBool = AtomicBool::new(false);
+static RESEED_ACCEPTS: AtomicU8 = AtomicU8::new(0);
+static RESEED_STRIKES: AtomicU8 = AtomicU8::new(0);
+static RESEED_ACC_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
+static RESEED_COUNT: AtomicU32 = AtomicU32::new(0);
 // R1 di/dt limiter state (core timing::duty_slew). SINGLE-WRITER:
 // only the TIM7 control tick calls slewed_duty (AM32 semantics: the
 // control loop owns duty; commutation CONSUMES the shaped value).
@@ -726,6 +735,28 @@ static SLEW_CLAMP_COUNT: AtomicU32 = AtomicU32::new(0);
 /// the duty/role split in tim1_motor_pwm (set_duty in the tick,
 /// set_roles at commutation) - see GAP_CLOSING_PLAN R1 note.
 const R1_DUTY_SLEW: bool = true;
+
+/// R3 shared reseed entry (called from the TIM7 watchdog on sync-
+/// loss AND from the TIM1_UP burst responder on sustained
+/// overcurrent - a surge with accepts still flowing is commutation
+/// misalignment, which re-timing fixes and killing does not).
+fn trigger_reseed(detail: u16) {
+    RESEED_ACTIVE.store(true, Ordering::Relaxed);
+    RESEED_ACCEPTS.store(0, Ordering::Relaxed);
+    RESEED_STRIKES.fetch_add(1, Ordering::Relaxed);
+    RESEED_COUNT.fetch_add(1, Ordering::Relaxed);
+    RESEED_ACC_SNAPSHOT.store(EST_ACC.load(Ordering::Relaxed), Ordering::Relaxed);
+    CL_REACQ.store(true, Ordering::Relaxed);
+    // Emergency duty cut, AM32-parity (instant, not slewed).
+    let floor = max_duty() / 100 * minz_core::guards::RESEED_AMP_PCT;
+    SLEW_LAST_DUTY.store(floor, Ordering::Relaxed);
+    tim1_motor_pwm::set_duty(floor);
+    bb_record(
+        minz_core::blackbox::EV_RSD,
+        CURRENT_SECTOR.load(Ordering::Relaxed),
+        detail,
+    );
+}
 
 /// R1: every duty write goes through this shaper (AM32 semantics:
 /// hard symmetric di/dt clamp, speed-regime rates 2/6/16 %/ms).
@@ -2128,7 +2159,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2137,6 +2168,8 @@ fn main() -> ! {
                                 EST_REJ_RESEED.load(Ordering::Relaxed),
                                 EST_REJ_HARMONIC.load(Ordering::Relaxed),
                                 SLEW_CLAMP_COUNT.load(Ordering::Relaxed),
+                                RESEED_COUNT.load(Ordering::Relaxed),
+                                RESEED_STRIKES.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2524,6 +2557,12 @@ fn TIM7() {
                 base_amp
             };
             let amp = minz_core::guards::burst_amp_clamp(amp, BURST_ACTIVE.load(Ordering::Relaxed));
+            // R3: hold the reseed floor while re-acquiring.
+            let amp = if RESEED_ACTIVE.load(Ordering::Relaxed) {
+                amp.min(minz_core::guards::RESEED_AMP_PCT)
+            } else {
+                amp
+            };
             let target = {
                 let base = open_loop::six_step_duty(max_duty(), amp) as i32;
                 let hi = max_duty() as i32 * AMP_MAX as i32 / 100;
@@ -2550,8 +2589,41 @@ fn TIM7() {
             let now_10 = ticks_10us();
             let since_us = minz_core::guards::since_us(now_10, last);
             let starve_us = minz_core::guards::since_us(now_10, last_qzc);
-            let kill =
-                minz_core::guards::cl_watchdog(interval_us, starve_us, since_us, last_qzc != 0);
+            // R3 exit/amnesty poll (est_acc delta vs snapshot; off
+            // the accept path by design).
+            {
+                let acc_now = EST_ACC.load(Ordering::Relaxed);
+                let delta = acc_now.wrapping_sub(RESEED_ACC_SNAPSHOT.load(Ordering::Relaxed));
+                if RESEED_ACTIVE.load(Ordering::Relaxed)
+                    && delta >= minz_core::guards::RESEED_EXIT_ACCEPTS as u32
+                {
+                    RESEED_ACTIVE.store(false, Ordering::Relaxed);
+                }
+                if delta >= minz_core::guards::RESEED_AMNESTY_ACCEPTS {
+                    RESEED_STRIKES.store(0, Ordering::Relaxed);
+                }
+            }
+            // R3: recoverable losses RESEED (duty floor + reacq);
+            // only backstop/runaway/escalation kill. Edge-triggered:
+            // while a reseed runs the watchdog does not re-fire (the
+            // 22.5 ms backstop stays armed above it).
+            let action = minz_core::guards::cl_watchdog_r3(
+                interval_us,
+                starve_us,
+                since_us,
+                last_qzc != 0,
+                RESEED_STRIKES.load(Ordering::Relaxed),
+            );
+            let kill = match action {
+                minz_core::guards::WatchdogAction::Kill(k) => Some(k),
+                minz_core::guards::WatchdogAction::Reseed(_why)
+                    if !RESEED_ACTIVE.load(Ordering::Relaxed) =>
+                {
+                    trigger_reseed((starve_us / 10).min(0xFFFF) as u16);
+                    None
+                }
+                _ => None,
+            };
             if let Some(kind) = kill {
                 let starved = kind == minz_core::guards::Kill::ZcStarved;
                 bb_record(
@@ -2804,6 +2876,7 @@ static MODE_STATE: minz_core::mode::ModeState<'static> = minz_core::mode::ModeSt
     cl_reacq: &CL_REACQ,
     cl_noz_run: &CL_NOZ_RUN,
     interval_us: &OWL_INTERVAL_US,
+    avg_interval_acc: &AVG_INTERVAL_ACC,
     last_qzc_us: &OWL_LAST_QZC_US,
     windows_since_qzc: &WINDOWS_SINCE_QZC,
     amplitude_pct: &AMPLITUDE_PCT,
@@ -2838,6 +2911,7 @@ static ZC_STATE: minz_core::zc::ZcState<'static> = minz_core::zc::ZcState {
     est_rej_harmonic: &EST_REJ_HARMONIC,
     cl_am32_geom: &CL_AM32_GEOM,
     est_prev_period: &EST_PREV_PERIOD,
+    avg_interval_acc: &AVG_INTERVAL_ACC,
 };
 
 /// ISR-kill flag matrix (minz_core::guards::apply_isr_kill) — the
@@ -3184,6 +3258,20 @@ fn TIM1_UP_TIM16() {
         if s.active && !was {
             BURST_TRIPS.fetch_add(1, Ordering::Relaxed);
         }
+        // R3 second trigger: a burst the clamp hasn't tamed within
+        // 2 ms (48 cycles) is commutation misalignment - RESEED
+        // (re-time the loop). Must beat the sag guard's ~2.7 ms
+        // debounce or the bus collapse kills first (bench: the 10 ms
+        // version lost that race, sag at 5.9 V). Strike escalation
+        // still applies.
+        if s.active
+            && s.hold >= 48
+            && !RESEED_ACTIVE.load(Ordering::Relaxed)
+            && CL_ACTIVE.load(Ordering::Relaxed)
+            && RESEED_STRIKES.load(Ordering::Relaxed) < minz_core::guards::RESEED_MAX_STRIKES
+        {
+            trigger_reseed(0xB0B0); // marker: burst-triggered
+        }
         if s.kill {
             BURST_KILLED.store(true, Ordering::Relaxed);
             minz_core::guards::apply_isr_kill(
@@ -3440,10 +3528,19 @@ fn COMP() {
     // E4: under an established lock the depth stays 5 (the 12-read
     // spin cost ~1.4 us of the ZC->shot budget to filter a strong
     // top-end BEMF); reacq/pre-lock keep 12.
-    let persist_reads: u32 = minz_core::timing::persistence_reads(
-        blank_us,
-        CL_ACTIVE.load(Ordering::Relaxed) && !CL_REACQ.load(Ordering::Relaxed),
-    );
+    let persist_reads: u32 = if CL_AM32_GEOM.load(Ordering::Relaxed) {
+        // R2: AM32's speed-mapped depth keyed to the STIFF average.
+        minz_core::timing::persistence_reads_r2(
+            AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6,
+            CL_ACTIVE.load(Ordering::Relaxed),
+            CL_REACQ.load(Ordering::Relaxed),
+        )
+    } else {
+        minz_core::timing::persistence_reads(
+            blank_us,
+            CL_ACTIVE.load(Ordering::Relaxed) && !CL_REACQ.load(Ordering::Relaxed),
+        )
+    };
 
     // Mode 5: value-gated recording. EXTI line 22 fires off the *raw*
     // comparator output (not gated by any internal blanking), so an
@@ -3485,14 +3582,19 @@ fn COMP() {
     // have not ported; until that lands, geometry mode keeps the
     // stock commutation-referenced gate, whose 30 % floor blocks the
     // premature-edge class by position instead of by resync.
-    const UNIT_B_ZC_GATE: bool = false;
+    // R2: unit B revived with the STIFF reference — the gate keys on
+    // the 6-deep average (one accept moves it ~2 %, unwalkable),
+    // never the fast estimate (whose collapse caused the phase-walk
+    // and the subharmonic ratchet). AM32's exact rule
+    // (stm32l4xx_it.c:280): elapsed-since-last-ACCEPTED-ZC > avg/2.
+    const UNIT_B_ZC_GATE: bool = true;
     let gate_ok = if UNIT_B_ZC_GATE
         && CL_AM32_GEOM.load(Ordering::Relaxed)
         && CL_ACTIVE.load(Ordering::Relaxed)
     {
-        let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+        let avg = AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6;
         let since_zc = now_us.wrapping_sub(GATE_LAST_ZC_US.load(Ordering::Relaxed));
-        iv == 0 || since_zc >= iv / 2
+        avg == 0 || since_zc >= avg / 2
     } else {
         elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed)
     };
@@ -3637,8 +3739,14 @@ fn accept_qualified_zc(zc_us: u32) {
     let Some(plan) = minz_core::zc::accept_publish(&ZC_STATE, sec, zc_us, ticks_10us()) else {
         return; // window already has its ZC
     };
-    // Unit-B gate reference: every accepted ZC, unconditionally.
-    GATE_LAST_ZC_US.store(zc_us, Ordering::Relaxed);
+    // Unit-B gate reference (geometry mode only - keep the stock
+    // accept path byte-lean; stock gates on SECTOR_GATE_US).
+    if CL_AM32_GEOM.load(Ordering::Relaxed) {
+        GATE_LAST_ZC_US.store(zc_us, Ordering::Relaxed);
+    }
+    // R3 exit/amnesty moved OFF the accept path: TIM7 polls the
+    // est_acc counter against snapshots (166 us granularity, zero
+    // per-accept cost).
     // THE ENGAGE-LOTTERY FIX (2026-07-15): when the ENGAGE accept is
     // also the accept that SEEDS the estimator (arm resets interval
     // to 0), schedule_precheck above returned None (unseeded) — but
