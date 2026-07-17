@@ -241,6 +241,32 @@ pub fn overcurrent(avg_phase_raw: u32, cl_active: bool) -> bool {
     }
 }
 
+/// ZOMBIE-FIELD DETECTOR (2026-07-16, post-cook). The physical
+/// invariant on this bench: a REAL rotor at electrical speed above
+/// ~1.3 kHz (interval < 125 us) draws well over 1 A; a free-running
+/// field over a STALLED rotor at low duty draws a few hundred mA.
+/// The cook: a PWM-subharmonic harmonic lock reported cl:ACTIVE at
+/// "2 kHz" while the motor stood still cooking at 0.6 A — every
+/// other guard had a hole at exactly that point (starvation: junk
+/// accepts kept flowing; runaway floor: 83 us > 45; OC trip: 0.6 A
+/// < 1.5 A). This detector closes the class: fast field + implausibly
+/// low current sustained for 500 ms cannot be a spinning rotor.
+pub const ZOMBIE_IV_US: u32 = 125; // "fast field": > ~1333 Hz electrical
+pub const ZOMBIE_I_RAW: u16 = 15; // ~0.4 A: impossible up there (real: 60+ raw)
+pub const ZOMBIE_RUN: u16 = 12_000; // 500 ms of consecutive samples at 24 kHz
+
+/// One PWM-cycle step. `run` accumulates only while BOTH conditions
+/// hold; any plausible sample resets it. Trip => kill.
+#[inline]
+pub fn zombie_step(run: u16, cl_active: bool, interval_us: u32, i_raw: u16) -> (u16, bool) {
+    if cl_active && interval_us > 0 && interval_us < ZOMBIE_IV_US && i_raw < ZOMBIE_I_RAW {
+        let run = run.saturating_add(1);
+        (run, run >= ZOMBIE_RUN)
+    } else {
+        (0, false)
+    }
+}
+
 /// FAST BURST RESPONDER (2026-07-15) — clamp, don't kill; but NEVER
 /// leniently. Every envelope death from amp ~72 up is the same event:
 /// a 12 A+ current burst compounds over 10-18 ms, the bus collapses,
@@ -392,6 +418,41 @@ mod tests {
     use super::*;
 
     // ---- since_us: the watchdog underflow race ----
+
+    #[test]
+    fn regression_zombie_field_2026_07_16() {
+        // The cook scenario: "2 kHz" harmonic lock (83 us) over a
+        // stalled rotor at 0.6 A (~22 raw mid-ON... the STALL read
+        // ~5-10 raw at the sample point). Must trip at exactly 500 ms.
+        let mut run = 0u16;
+        let mut tripped_at = None;
+        for n in 0..13_000u32 {
+            let (r, trip) = zombie_step(run, true, 83, 8);
+            run = r;
+            if trip {
+                tripped_at = Some(n);
+                break;
+            }
+        }
+        assert_eq!(tripped_at, Some(ZOMBIE_RUN as u32 - 1));
+        // A REAL 90 us lock draws 60-90 raw: never trips.
+        let mut run = 0u16;
+        for _ in 0..100_000 {
+            let (r, trip) = zombie_step(run, true, 90, 70);
+            run = r;
+            assert!(!trip);
+        }
+        // Low speed at low current is normal (idle-ish): never trips.
+        let mut run = 0u16;
+        for _ in 0..100_000 {
+            let (r, trip) = zombie_step(run, true, 600, 5);
+            run = r;
+            assert!(!trip);
+        }
+        // One plausible sample resets the accumulation.
+        let (r, _) = zombie_step(ZOMBIE_RUN - 1, true, 83, 70);
+        assert_eq!(r, 0);
+    }
 
     #[test]
     fn burst_never_trips_on_benign_single_window_spikes() {

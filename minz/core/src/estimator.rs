@@ -42,6 +42,18 @@ pub struct Estimator {
     /// Re-acquisition mode: tiny gate + strict confirms upstream,
     /// bounded direct re-seed here.
     pub reacq: bool,
+    /// AM32-GEOMETRY mode (2026-07-16 port): under an established
+    /// lock, use AM32's update rule verbatim — measurement = the
+    /// average of the last TWO periods (sector alternation cancels
+    /// before filtering), blend α = 0.5, NO acceptance bounds
+    /// (nothing is ever refused, so the estimate can never starve;
+    /// the white-box census measured 0.00 spike events/s to 2293 Hz
+    /// with this rule on identical hardware). Engage/open-loop keep
+    /// the bounded path — the census showed those rejections are
+    /// protective there (~15k correct refusals per spin-up).
+    pub am32_geom: bool,
+    /// Previous ZC-to-ZC period (µs) for the 2-period pre-average.
+    pub prev_period_us: u32,
 }
 
 impl Estimator {
@@ -51,6 +63,8 @@ impl Estimator {
             last_qzc_us: None,
             windows_since_qzc: 0,
             reacq: false,
+            am32_geom: false,
+            prev_period_us: 0,
         }
     }
 
@@ -105,7 +119,48 @@ impl Estimator {
             if (1..=SPAN_MAX).contains(&spans) {
                 let new_int = zc_us.wrapping_sub(last) / spans;
                 let old = self.interval_us;
-                if self.reacq && cl_active {
+                if self.am32_geom && cl_active && old != 0 {
+                    // THE HARMONIC GUARD (2026-07-16, post-cook): the
+                    // fully-boundless first cut let a stalled motor's
+                    // PWM-subharmonic noise (edges ~2x the carrier
+                    // period) ratchet the estimate 305 -> 83 us in
+                    // legal-looking steps - the iv/2 gate shrank WITH
+                    // the corrupted estimate and cl:ACTIVE lied over a
+                    // 0.6 A heater. One-sided, wide: a HALVING of the
+                    // interval in one accept is physically impossible
+                    // for this rotor; reject and COUNT it. The grow
+                    // side stays unbounded (deceleration starvation -
+                    // the reseed-refusal death class - lived there).
+                    if new_int < old / 2 {
+                        reject = Some(Reject::Harmonic);
+                    } else if new_int < old * 2 / 3 || new_int > old * 3 / 2 {
+                        // WIDE SYMMETRIC SANITY BOUND (2026-07-17,
+                        // the recovered port): the pre-averaged
+                        // measurement is clean enough that OWL's
+                        // tight ±25 % is unnecessary — but the bench
+                        // proved fully-boundless blending loses every
+                        // 66->70 transit to junk-edge blends (0/5,
+                        // sag kills; the +50 us phase-walk accept
+                        // was a 190-vs-345 sample this bound
+                        // rejects). [2/3, 3/2] tracks any physical
+                        // transit (5 %/window needed) with 10x
+                        // margin, and rejects the premature class.
+                        reject = Some(Reject::RateBound);
+                    } else {
+                        // AM32 rule: interval = (interval + (prev+this)/2)/2.
+                        // Any accept also ends re-acquisition (with
+                        // nothing refused on this side, one accept
+                        // re-seeds).
+                        let prev = if self.prev_period_us != 0 {
+                            self.prev_period_us
+                        } else {
+                            new_int
+                        };
+                        self.interval_us = (old + (prev + new_int) / 2) / 2;
+                        self.prev_period_us = new_int;
+                        self.reacq = false;
+                    }
+                } else if self.reacq && cl_active {
                     // Bounded direct re-seed from two FRESH strict
                     // ZCs: [0.5, 2.0]×old — wide enough to undo any
                     // walk the spiral caused, narrow enough to
@@ -172,6 +227,9 @@ pub enum Reject {
     RateBound,
     /// Re-acq re-seed refused (spans != 1 or outside [0.5, 2]×old).
     Reseed,
+    /// Geometry-mode harmonic guard: a one-accept interval halving is
+    /// physically impossible — the PWM-subharmonic stall attractor.
+    Harmonic,
 }
 
 impl Default for Estimator {
@@ -183,6 +241,105 @@ impl Default for Estimator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn am32_geometry_rule_verbatim() {
+        // interval = (old + (prev+this)/2)/2, no bounds, under lock.
+        let mut e = Estimator::new();
+        e.am32_geom = true;
+        e.interval_us = 100;
+        e.prev_period_us = 90;
+        e.last_qzc_us = Some(1000);
+        e.windows_since_qzc = 1;
+        // this period = 110: (100 + (90+110)/2)/2 = (100+100)/2 = 100
+        let (iv, rej) = e.on_accept_traced(1110, true);
+        assert_eq!(iv, 100);
+        assert_eq!(rej, None);
+        assert_eq!(e.prev_period_us, 110);
+        // The wide sanity bound rejects wild samples (+300 %) —
+        // the fully-boundless variant lost every 66->70 transit.
+        e.last_qzc_us = Some(2000);
+        e.windows_since_qzc = 1;
+        let (iv2, rej2) = e.on_accept_traced(2400, true); // 400 us = +300 %
+        assert_eq!(rej2, Some(Reject::RateBound));
+        assert_eq!(iv2, 100);
+        // A +40 % sample (transit-fast, physically possible) passes —
+        // this is the one OWL's ±25 % refused.
+        e.last_qzc_us = Some(3000);
+        e.windows_since_qzc = 1;
+        let (_, rej2b) = e.on_accept_traced(3140, true);
+        assert_eq!(rej2b, None);
+        // Fix the running state for the reacq check below.
+        e.prev_period_us = 140;
+        // Reacq ends on any accept in this mode (nothing can starve).
+        e.reacq = true;
+        e.last_qzc_us = Some(3000);
+        e.windows_since_qzc = 1;
+        let (_, rej3) = e.on_accept_traced(3150, true);
+        assert_eq!(rej3, None);
+        assert!(!e.reacq);
+    }
+
+    #[test]
+    fn am32_geometry_cancels_sector_alternation() {
+        // Alternating 80/100 us periods (rising/falling asymmetry):
+        // the 2-period pre-average feeds a constant 90 to the blend,
+        // so the estimate converges to 90 and STAYS - no ripple.
+        let mut e = Estimator::new();
+        e.am32_geom = true;
+        e.interval_us = 90;
+        e.prev_period_us = 100;
+        e.last_qzc_us = Some(0);
+        let mut zc = 0u32;
+        for i in 0..100 {
+            let period = if i % 2 == 0 { 80 } else { 100 };
+            zc += period;
+            e.windows_since_qzc = 1;
+            e.on_accept_traced(zc, true);
+            assert_eq!(e.interval_us, 90, "ripple at step {i}");
+        }
+    }
+
+    #[test]
+    fn regression_pwm_subharmonic_ratchet_2026_07_16() {
+        // THE COOK: stalled rotor, comparator chewing PWM noise. The
+        // boundless rule walked 305 us down to the 83 us subharmonic
+        // attractor and free-ran a 2 kHz field into a stationary
+        // rotor at 0.6 A. The harmonic guard must refuse any
+        // one-accept halving; the estimate must never reach the
+        // attractor from a stalled 305 us state.
+        let mut e = Estimator::new();
+        e.am32_geom = true;
+        e.interval_us = 305;
+        e.prev_period_us = 305;
+        e.last_qzc_us = Some(0);
+        let mut zc = 0u32;
+        // Noise edges at the 83 us attractor spacing, relentlessly.
+        for _ in 0..1000 {
+            zc += 83;
+            e.windows_since_qzc = 1;
+            let (_, rej) = e.on_accept_traced(zc, true);
+            assert_eq!(rej, Some(Reject::Harmonic));
+            assert_eq!(e.interval_us, 305, "estimate walked toward the attractor");
+        }
+        // A legitimate fast accel step (-30 %) still passes.
+        e.last_qzc_us = Some(zc);
+        e.windows_since_qzc = 1;
+        let (_, rej) = e.on_accept_traced(zc + 214, true);
+        assert_eq!(rej, None);
+    }
+
+    #[test]
+    fn am32_geometry_off_during_engage() {
+        // Not cl_active or unseeded: the bounded stock path runs.
+        let mut e = Estimator::new();
+        e.am32_geom = true;
+        e.interval_us = 100;
+        e.last_qzc_us = Some(1000);
+        e.windows_since_qzc = 1;
+        // cl_active=false -> bounded path -> +40 % is REJECTED.
+        assert_eq!(e.on_accept_traced(1140, false).1, Some(Reject::RateBound));
+    }
 
     #[test]
     fn rejection_census_kinds_2026_07_16() {

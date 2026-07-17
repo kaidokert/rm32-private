@@ -683,6 +683,23 @@ static EST_REJ_FLOOR: AtomicU32 = AtomicU32::new(0);
 static EST_REJ_CEILING: AtomicU32 = AtomicU32::new(0);
 static EST_REJ_RATE: AtomicU32 = AtomicU32::new(0);
 static EST_REJ_RESEED: AtomicU32 = AtomicU32::new(0);
+/// AM32-GEOMETRY estimator mode (`D` key; core estimator::am32_geom):
+/// 2-period pre-average + half-blend + no bounds, under lock only.
+static CL_AM32_GEOM: AtomicBool = AtomicBool::new(false);
+static EST_PREV_PERIOD: AtomicU32 = AtomicU32::new(0);
+/// Unit-B gate reference: time of the last ACCEPTED ZC, written at
+/// every accept and NEVER reset to a sentinel (unlike
+/// OWL_LAST_QZC_US, which the miss paths reset to u32::MAX - that
+/// sentinel blew my first gate wide open right after a miss, let a
+/// flyback edge become the reference, and starved the loop; AM32's
+/// INTERVAL_TIMER equivalent counts unconditionally).
+static GATE_LAST_ZC_US: AtomicU32 = AtomicU32::new(0);
+static EST_REJ_HARMONIC: AtomicU32 = AtomicU32::new(0);
+/// Zombie-field detector state (guards::zombie_step; sole writer
+/// TIM1_UP). Fast field + implausibly low current = stalled rotor
+/// under a junk lock -> kill.
+static ZOMBIE_RUN_ST: AtomicU16 = AtomicU16::new(0);
+static ZOMBIE_KILLED: AtomicBool = AtomicBool::new(false);
 /// Closed-loop commutation counter (for the `i` readout).
 static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -1516,6 +1533,12 @@ fn main() -> ! {
             }
             if OC_TRIPPED.load(Ordering::Relaxed) {
                 OC_TRIPPED.store(false, Ordering::Relaxed);
+                if ZOMBIE_KILLED.swap(false, Ordering::Relaxed) {
+                    let _ = tx_writer.write_str(
+                        "!! ZOMBIE FIELD: fast field + implausibly low current 500 ms (stalled rotor under junk lock) - output killed\r\n",
+                    );
+                    tx_writer.write_blocking(&[]);
+                }
                 if BURST_KILLED.swap(false, Ordering::Relaxed) {
                     let _ = tx_writer.write_str(
                         "!! BURST CLAMP EXCEEDED 40 ms without recovery - output killed (r/q re-arms)\r\n",
@@ -2053,13 +2076,14 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
                                 EST_REJ_CEILING.load(Ordering::Relaxed),
                                 EST_REJ_RATE.load(Ordering::Relaxed),
                                 EST_REJ_RESEED.load(Ordering::Relaxed),
+                                EST_REJ_HARMONIC.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2093,6 +2117,22 @@ fn main() -> ! {
                             "duty trim = {} counts
 ",
                             v
+                        )
+                        .ok();
+                        tx_writer.write_blocking(&[]);
+                    }
+                    b'D' => {
+                        let on = !CL_AM32_GEOM.load(Ordering::Relaxed);
+                        CL_AM32_GEOM.store(on, Ordering::Relaxed);
+                        EST_PREV_PERIOD.store(0, Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "estimator geometry = {}\r\n",
+                            if on {
+                                "AM32 (2-period avg, half-blend, no bounds under lock)"
+                            } else {
+                                "OWL (bounded)"
+                            }
                         )
                         .ok();
                         tx_writer.write_blocking(&[]);
@@ -2717,6 +2757,9 @@ static ZC_STATE: minz_core::zc::ZcState<'static> = minz_core::zc::ZcState {
     est_rej_ceiling: &EST_REJ_CEILING,
     est_rej_rate: &EST_REJ_RATE,
     est_rej_reseed: &EST_REJ_RESEED,
+    est_rej_harmonic: &EST_REJ_HARMONIC,
+    cl_am32_geom: &CL_AM32_GEOM,
+    est_prev_period: &EST_PREV_PERIOD,
 };
 
 /// ISR-kill flag matrix (minz_core::guards::apply_isr_kill) — the
@@ -3087,6 +3130,30 @@ fn TIM1_UP_TIM16() {
         BURST_COOL.store(0, Ordering::Relaxed);
         BURST_HOLD.store(0, Ordering::Relaxed);
     }
+    // ZOMBIE-FIELD DETECTOR (host-tested: guards::zombie_step). A
+    // "lock" reporting >1.3 kHz while drawing under ~0.4 A is a
+    // free-running field over a stalled rotor (the 2026-07-16 cook:
+    // cl:ACTIVE lied at "2 kHz"/0.6 A on a PWM-subharmonic junk
+    // lock). 500 ms sustained -> kill. Runs regardless of estimator
+    // mode - this class must never depend on the thing it guards.
+    {
+        let (zrun, ztrip) = minz_core::guards::zombie_step(
+            ZOMBIE_RUN_ST.load(Ordering::Relaxed),
+            CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed),
+            OWL_INTERVAL_US.load(Ordering::Relaxed),
+            i_raw,
+        );
+        ZOMBIE_RUN_ST.store(zrun, Ordering::Relaxed);
+        if ztrip {
+            ZOMBIE_KILLED.store(true, Ordering::Relaxed);
+            minz_core::guards::apply_isr_kill(
+                &KILL_FLAGS,
+                minz_core::guards::IsrKillKind::Overcurrent,
+            );
+            tim1_motor_pwm::all_off();
+            comp2::set_exti_enabled(false);
+        }
+    }
     // Analog black box trigger — freeze the wire the moment a spike
     // is seen (one-shot; the ADSTP wait is <1 µs at these sample
     // times). Frozen means LAST_I_RAW goes stale until the dump
@@ -3330,8 +3397,36 @@ fn COMP() {
     // Time-window gate — the LAST filter before the hot path. Pre-gate
     // edges record the same diagnostics as before (raw counters +
     // edge-buf/sector counts, no VALID) and leave.
+    //
+    // UNIT B of the AM32-geometry port: under geometry mode + lock,
+    // the gate is ZC-REFERENCED — reject edges earlier than
+    // interval/2 since the LAST ACCEPTED ZC (AM32's exact rule).
+    // The commutation-referenced gate inherits our own scheduling
+    // error (the self-referential hazard); the ZC train doesn't.
+    // Unit A alone REGRESSED (2/2 sag kills at the 66->70 transit):
+    // no-bounds is only safe behind this stronger, self-centering
+    // filter — the AM32 rule set works as a whole.
     let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
-    if elapsed < SECTOR_GATE_US.load(Ordering::Relaxed) {
+    // Unit B PARKED (2026-07-17): the ZC-referenced gate phase-walked
+    // the loop on a single premature accept (bb: +50us ACC -> field
+    // shifted half a sector -> every window's expected polarity wrong
+    // -> clean starvation kill). AM32 tolerates premature accepts
+    // because it has a polling-mode RESYNC fallback (old_routine) we
+    // have not ported; until that lands, geometry mode keeps the
+    // stock commutation-referenced gate, whose 30 % floor blocks the
+    // premature-edge class by position instead of by resync.
+    const UNIT_B_ZC_GATE: bool = false;
+    let gate_ok = if UNIT_B_ZC_GATE
+        && CL_AM32_GEOM.load(Ordering::Relaxed)
+        && CL_ACTIVE.load(Ordering::Relaxed)
+    {
+        let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+        let since_zc = now_us.wrapping_sub(GATE_LAST_ZC_US.load(Ordering::Relaxed));
+        iv == 0 || since_zc >= iv / 2
+    } else {
+        elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed)
+    };
+    if !gate_ok {
         COMP_COUNT.fetch_add(1, Ordering::Relaxed);
         WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
         record_edge_diag(now_10);
@@ -3472,6 +3567,8 @@ fn accept_qualified_zc(zc_us: u32) {
     let Some(plan) = minz_core::zc::accept_publish(&ZC_STATE, sec, zc_us, ticks_10us()) else {
         return; // window already has its ZC
     };
+    // Unit-B gate reference: every accepted ZC, unconditionally.
+    GATE_LAST_ZC_US.store(zc_us, Ordering::Relaxed);
     // THE ENGAGE-LOTTERY FIX (2026-07-15): when the ENGAGE accept is
     // also the accept that SEEDS the estimator (arm resets interval
     // to 0), schedule_precheck above returned None (unseeded) — but

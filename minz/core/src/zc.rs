@@ -125,6 +125,10 @@ pub struct ZcState<'a> {
     pub est_rej_ceiling: &'a AtomicU32,
     pub est_rej_rate: &'a AtomicU32,
     pub est_rej_reseed: &'a AtomicU32,
+    pub est_rej_harmonic: &'a AtomicU32,
+    // AM32-GEOMETRY estimator mode (see estimator::am32_geom).
+    pub cl_am32_geom: &'a AtomicBool,
+    pub est_prev_period: &'a AtomicU32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,6 +309,8 @@ pub fn accept_publish(
         },
         windows_since_qzc: zs.windows_since_qzc.load(Ordering::Relaxed) as u32,
         reacq: zs.cl_reacq.load(Ordering::Relaxed),
+        am32_geom: zs.cl_am32_geom.load(Ordering::Relaxed),
+        prev_period_us: zs.est_prev_period.load(Ordering::Relaxed),
     };
     let (_, reject) = est.on_accept_traced(zc_us, zs.cl_active.load(Ordering::Relaxed));
     match reject {
@@ -317,6 +323,9 @@ pub fn accept_publish(
             zs.est_rej_rate.fetch_add(1, Ordering::Relaxed)
         }
         Some(crate::estimator::Reject::Reseed) => zs.est_rej_reseed.fetch_add(1, Ordering::Relaxed),
+        Some(crate::estimator::Reject::Harmonic) => {
+            zs.est_rej_harmonic.fetch_add(1, Ordering::Relaxed)
+        }
     };
     zs.interval_us.store(est.interval_us, Ordering::Relaxed);
     zs.last_qzc_us
@@ -324,6 +333,8 @@ pub fn accept_publish(
     zs.windows_since_qzc
         .store(est.windows_since_qzc.min(255) as u8, Ordering::Relaxed);
     zs.cl_reacq.store(est.reacq, Ordering::Relaxed);
+    zs.est_prev_period
+        .store(est.prev_period_us, Ordering::Relaxed);
     zs.cl_noz_run.store(0, Ordering::Relaxed);
     zs.last_qzc_10us.store(now_10us, Ordering::Relaxed);
 
@@ -488,6 +499,9 @@ mod tests {
         est_rej_ceiling: AtomicU32,
         est_rej_rate: AtomicU32,
         est_rej_reseed: AtomicU32,
+        est_rej_harmonic: AtomicU32,
+        cl_am32_geom: AtomicBool,
+        est_prev_period: AtomicU32,
     }
 
     impl Rig {
@@ -513,6 +527,9 @@ mod tests {
                 est_rej_ceiling: AtomicU32::new(0),
                 est_rej_rate: AtomicU32::new(0),
                 est_rej_reseed: AtomicU32::new(0),
+                est_rej_harmonic: AtomicU32::new(0),
+                cl_am32_geom: AtomicBool::new(false),
+                est_prev_period: AtomicU32::new(0),
             }
         }
 
@@ -538,6 +555,9 @@ mod tests {
                 est_rej_ceiling: &self.est_rej_ceiling,
                 est_rej_rate: &self.est_rej_rate,
                 est_rej_reseed: &self.est_rej_reseed,
+                est_rej_harmonic: &self.est_rej_harmonic,
+                cl_am32_geom: &self.cl_am32_geom,
+                est_prev_period: &self.est_prev_period,
             }
         }
 

@@ -30,6 +30,11 @@ ap.add_argument("--amps", default="9,10,11,12,13,14,15,16")
 ap.add_argument("--secs", type=float, default=4.0)
 ap.add_argument("--blank", type=int, default=8, help="comparator blank us (24k: 8, 48k: 16)")
 ap.add_argument(
+    "--geom",
+    action="store_true",
+    help="enable the AM32-geometry estimator mode (D key, stateful)",
+)
+ap.add_argument(
     "--climb-wait",
     type=float,
     default=0.15,
@@ -110,6 +115,19 @@ class Bench:
         )
         self.last_est = tuple(int(x) for x in e.groups()) if e else (0, 0, 0, 0, 0)
         active = "cl: ACTIVE" in echo
+        # ZOMBIE PLAUSIBILITY (post-cook, 2026-07-16): a lock claiming
+        # >1.3 kHz electrical while drawing under 0.4 A is a stalled
+        # rotor under a junk lock - cl:ACTIVE LIES on a stalled rotor
+        # (rinz lesson, relearned the hot way). Treat as dead: the
+        # caller's abort path kills the drive.
+        iv_m = re.search(r"interval=(\d+)us", echo)
+        if active and iv_m and int(iv_m.group(1)) < 125 and isns < 0.4:
+            print(
+                f"  !! ZOMBIE: interval={iv_m.group(1)}us at {isns}A - "
+                "stalled rotor under junk lock, treating as DEAD",
+                flush=True,
+            )
+            active = False
         c = re.search(r"comms=(\d+)", echo)
         if active and c:
             comms = int(c.group(1))
@@ -236,6 +254,12 @@ with serial.Serial(args.port, args.baud, timeout=0.05) as p:
         b.send("w", 0.5)
         b.send("q", 2.0)
         b.set_filters(args.blank)
+        if args.geom:
+            for _ in range(2):
+                if "AM32" in b.send("D", 0.4):
+                    break
+            else:
+                sys.exit("geometry mode enable failed")
         b.send("w", 0.5)
         cur = b.engage(AMP_START)
         if args.adv:
