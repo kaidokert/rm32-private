@@ -1,5 +1,15 @@
 # CARRIER RE-QUALIFICATION — 24 vs 48 kHz after the audit era (2026-07-15)
 
+> **ERRATUM (2026-07-17, deep source study):** the claim below that
+> `variable_pwm` is an empty/vestigial block is WRONG. The empty
+> `if(variable_pwm){}` at main.c:1714 is a decoy; the live logic at
+> main.c:2131 scales the carrier 24→48 kHz with commutation interval
+> (`tim1_arr = map(interval, 48us, 100us, ARR/2, ARR)`). The AM32
+> reference runs therefore used a DYNAMIC carrier (~27 kHz at
+> 1900 Hz, rising with speed). The fixed-24-vs-fixed-48 comparison
+> below stands as measured, but AM32's operating point is the
+> interpolation between them — see GAP_CLOSING_PLAN.md rung R4.
+
 Goal: re-instance the 48 kHz build (cargo feature `pwm48`, default
 24 kHz), qualify BOTH carriers in the amp 40–60 band, count artifacts,
 measure timing, and recompute the margins — because every prior
