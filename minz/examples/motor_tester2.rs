@@ -725,7 +725,7 @@ static SLEW_CLAMP_COUNT: AtomicU32 = AtomicU32::new(0);
 /// tick-vs-commutation interleaving perturbs duty. Proper R1 needs
 /// the duty/role split in tim1_motor_pwm (set_duty in the tick,
 /// set_roles at commutation) - see GAP_CLOSING_PLAN R1 note.
-const R1_DUTY_SLEW: bool = false;
+const R1_DUTY_SLEW: bool = true;
 
 /// R1: every duty write goes through this shaper (AM32 semantics:
 /// hard symmetric di/dt clamp, speed-regime rates 2/6/16 %/ms).
@@ -2509,14 +2509,27 @@ fn TIM7() {
     // coast; a fallback ramp jolt has cost this bench a motor before).
     if CL_ACTIVE.load(Ordering::Relaxed) {
         if MOTOR_ENABLED.load(Ordering::Relaxed) {
-            // R1 single-writer update, CL branch (TIM7 returns early
-            // under CL, so this and the open-loop hoist are mutually
-            // exclusive - still one writer, one context).
-            let duty = slewed_duty(open_loop::six_step_duty(
-                max_duty(),
-                AMPLITUDE_PCT.load(Ordering::Relaxed) as u16,
-            ));
-            tim1_motor_pwm::set_six_step(CURRENT_SECTOR.load(Ordering::Relaxed), duty);
+            // R1b: the control tick is the SOLE duty writer under CL
+            // (AM32 semantics - commutation flips roles only). The
+            // full duty pipeline lives here: blind-amp + burst
+            // emergency reductions, trim, AMP_MAX clamp, the R1
+            // shaper, then a duty-only CCR write. No role rewrite
+            // between commutations (the old 6 kHz set_six_step
+            // refresh's role write was redundant and race-prone).
+            let base_amp = AMPLITUDE_PCT.load(Ordering::Relaxed) as u16;
+            let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+            let amp = if iv > 0 && iv < minz_core::window::HIGH_SPEED_US {
+                minz_core::guards::blind_amp_clamp(base_amp, CL_NOZ_RUN.load(Ordering::Relaxed))
+            } else {
+                base_amp
+            };
+            let amp = minz_core::guards::burst_amp_clamp(amp, BURST_ACTIVE.load(Ordering::Relaxed));
+            let target = {
+                let base = open_loop::six_step_duty(max_duty(), amp) as i32;
+                let hi = max_duty() as i32 * AMP_MAX as i32 / 100;
+                (base + DUTY_TRIM.load(Ordering::Relaxed) as i32).clamp(0, hi) as u16
+            };
+            tim1_motor_pwm::set_duty(slewed_duty(target));
             let interval_us = OWL_INTERVAL_US.load(Ordering::Relaxed);
             // Read LAST_COMM *before* now: a commutation preempting us
             // between the two reads then only makes `since` slightly
@@ -2974,28 +2987,13 @@ fn LPTIM2() {
     // clamping the amp starves the torque needed to lock (bisected:
     // the ungated clamp took engage to 1/6 on a healthy bench). Full
     // drive below the threshold.
-    let base_amp = AMPLITUDE_PCT.load(Ordering::Relaxed) as u16;
-    let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
-    let amp = if iv > 0 && iv < minz_core::window::HIGH_SPEED_US {
-        minz_core::guards::blind_amp_clamp(base_amp, CL_NOZ_RUN.load(Ordering::Relaxed))
-    } else {
-        base_amp
-    };
-    // Burst clamp composes after (only ever reduces; host-tested).
-    let amp = minz_core::guards::burst_amp_clamp(amp, BURST_ACTIVE.load(Ordering::Relaxed));
-    let duty = {
-        // Consume the R1-shaped duty; blind-amp reduction scales it
-        // (emergency cuts bypass the slew downward by design).
-        let shaped = SLEW_LAST_DUTY.load(Ordering::Relaxed) as i32;
-        let shaped = if amp < base_amp {
-            shaped * amp as i32 / base_amp.max(1) as i32
-        } else {
-            shaped
-        };
-        let hi = max_duty() as i32 * AMP_MAX as i32 / 100;
-        (shaped + DUTY_TRIM.load(Ordering::Relaxed) as i32).clamp(0, hi) as u16
-    };
-    tim1_motor_pwm::set_six_step(sector, duty);
+    // R1b: ROLES ONLY at commutation - zero CCR traffic (AM32's
+    // commutation never writes duty; the CCRs already hold the
+    // tick-shaped value, and SET_DUTY_CYCLE_ALL keeps the incoming
+    // PWM leg's compare valid). Blind-amp/burst emergency reductions
+    // moved to the tick writer (166 us worst-case application
+    // latency at 6 kHz - equivalent protection).
+    tim1_motor_pwm::set_roles_for_step(sector);
     comp2::set_inm(SECTOR_FLOAT_PHASE[sector as usize]);
     let (re, fe) = edges_for(EDGE_MODE.load(Ordering::Relaxed), sector);
     comp2::set_exti_edges(re, fe);

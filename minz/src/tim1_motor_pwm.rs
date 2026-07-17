@@ -206,6 +206,43 @@ pub fn set_duties(ch1: u16, ch2: u16, ch3: u16) {
 /// | 5    | C  | B  | A     |
 ///
 /// Phase A/B/C = TIM1 CH1/2/3 (PA8/PA9/PA10 high, PA7/PB0/PB1 low).
+/// R1b — duty-only write (AM32 `SET_DUTY_CYCLE_ALL` semantics: the
+/// SAME value in all three CCRs, preserving the stale-CCR-fix
+/// invariant). Sole intended writer: the control tick. Commutation
+/// must NOT call this — AM32's commutation never touches CCR, and
+/// the R1 attempt-1 bench showed tick/commutation duty interleaving
+/// perturbs the loop (paired spike regression).
+#[inline]
+pub fn set_duty(duty: u16) {
+    let tim1 = unsafe { &*TIM1::ptr() };
+    tim1.ccr1.write(|w| w.ccr().bits(duty));
+    tim1.ccr2.write(|w| w.ccr().bits(duty));
+    tim1.ccr3.write(|w| w.ccr().bits(duty));
+}
+
+/// R1b — role-only commutation flip: the HIGH/LOW/FLOAT rotation
+/// with ZERO CCR traffic (CCRs already hold the tick-shaped duty).
+#[inline]
+pub fn set_roles_for_step(step: u8) {
+    const HIGH: [u8; 6] = [0, 0, 1, 1, 2, 2];
+    const LOW: [u8; 6] = [1, 2, 2, 0, 0, 1];
+    let s = (step % 6) as usize;
+    let hi = HIGH[s];
+    let lo = LOW[s];
+    let role = |ch: u8| {
+        if ch == hi {
+            PhaseRole::Pwm
+        } else if ch == lo {
+            PhaseRole::Low
+        } else {
+            PhaseRole::Float
+        }
+    };
+    cortex_m::interrupt::free(|_| {
+        set_phase_roles(role(0), role(1), role(2));
+    });
+}
+
 #[inline]
 pub fn set_six_step(step: u8, duty: u16) {
     const HIGH: [u8; 6] = [0, 0, 1, 1, 2, 2];
