@@ -1652,17 +1652,9 @@ fn main() -> ! {
                 output_enabled = false;
                 if CL_STARVED.load(Ordering::Relaxed) {
                     CL_STARVED.store(false, Ordering::Relaxed);
-                    write!(
-                        &mut tx_writer,
-                        "!! CL ZC-STARVED - no accepted ZC for 12 intervals (stall/blind) - output killed\r\n",
-                    )
-                    .ok();
+                    write!(&mut tx_writer, "!! CL ZC-STARVED - killed\r\n",).ok();
                 } else {
-                    write!(
-                        &mut tx_writer,
-                        "!! CL DESYNC - commutation silence > 3 intervals - output killed (r/q re-arms)\r\n",
-                    )
-                    .ok();
+                    write!(&mut tx_writer, "!! CL DESYNC - killed (r/q re-arms)\r\n",).ok();
                 }
                 // Black-box dump: the 64 events leading to the kill,
                 // dt in µs since the previous recorded event. Line
@@ -1697,7 +1689,7 @@ fn main() -> ! {
                 let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
                 write!(
                     &mut tx_writer,
-                    "!! VBAT SAG KILL: bus {} mV (1.3 ms sustained) < 90% of arm baseline {} mV - output killed (r/q re-arms)\r\n",
+                    "!! VBAT SAG KILL: bus {} mV < 90% of base {} mV - killed\r\n",
                     minz_core::sense::vbat_mv(sense_adc.adc_to_mv(raw) as u32),
                     minz_core::sense::vbat_mv(sense_adc.adc_to_mv(base) as u32),
                 )
@@ -1723,21 +1715,17 @@ fn main() -> ! {
             if OC_TRIPPED.load(Ordering::Relaxed) {
                 OC_TRIPPED.store(false, Ordering::Relaxed);
                 if ZOMBIE_KILLED.swap(false, Ordering::Relaxed) {
-                    let _ = tx_writer.write_str(
-                        "!! ZOMBIE FIELD: fast field + implausibly low current 500 ms (stalled rotor under junk lock) - output killed\r\n",
-                    );
+                    let _ = tx_writer.write_str("!! ZOMBIE FIELD - killed\r\n");
                     tx_writer.write_blocking(&[]);
                 }
                 if BURST_KILLED.swap(false, Ordering::Relaxed) {
-                    let _ = tx_writer.write_str(
-                        "!! BURST CLAMP EXCEEDED 40 ms without recovery - output killed (r/q re-arms)\r\n",
-                    );
+                    let _ = tx_writer.write_str("!! BURST CLAMP - killed (r/q re-arms)\r\n");
                     tx_writer.write_blocking(&[]);
                 }
                 output_enabled = false;
                 write!(
                     &mut tx_writer,
-                    "!! OVERCURRENT TRIP: current above throttle envelope for 85 ms - output killed (r/q re-arms)\r\n",
+                    "!! OVERCURRENT TRIP - killed (r/q re-arms)\r\n",
                 )
                 .ok();
             }
@@ -2329,7 +2317,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} cls: lost={} retry={} dur={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2350,6 +2338,9 @@ fn main() -> ! {
                                 NOZ_PRE.load(Ordering::Relaxed),
                                 NOZ_NEVER.load(Ordering::Relaxed),
                                 RESCUE_COUNT.load(Ordering::Relaxed),
+                                CLOSE_LOST.load(Ordering::Relaxed),
+                                CLOSE_RETRY.load(Ordering::Relaxed),
+                                DUR_CLOSE.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -3334,6 +3325,48 @@ fn drain_pending(
 /// Round-robin counter for the high-speed telemetry decimation.
 static WREC_DECIM: AtomicU32 = AtomicU32::new(0);
 
+// ---- AM32-shape commutation split (featherweight path) ----
+// The commutation ISR STAMPS and ACTUATES; the periodic fabric
+// THINKS (AM32's architecture: its COM_TIMER ISR is pin-flips +
+// re-arm, everything else lives in the 20 kHz tick). LPTIM2 copies
+// the closed window's scalars here, resets the live window, bumps
+// CLOSED_GEN, and returns. TIM1_UP - hardware-periodic at the PWM
+// rate, priority 2 so COMP preempts it freely - notices the gen
+// change on its next wrap and runs the close from these values.
+// The buffer lives a full commutation interval before the next
+// stamp, so nothing is dropped unless the fabric loses >2 wraps
+// (>130 us of solid priority-1 occupancy) - counted, never silent.
+// Reader-side seqlock: TIM1_UP copies locals then re-checks gen;
+// a mismatch means LPTIM2 preempted mid-copy - retry next wrap.
+static CLOSED_GEN: AtomicU32 = AtomicU32::new(0);
+static CLOSED_PREV: AtomicU8 = AtomicU8::new(0);
+static CLOSED_REFINED: AtomicBool = AtomicBool::new(false);
+static CLOSED_START_US: AtomicU32 = AtomicU32::new(0);
+static CLOSED_QZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
+static CLOSED_FIRST_ZC_US: AtomicU32 = AtomicU32::new(u32::MAX);
+static CLOSED_NOW_US: AtomicU32 = AtomicU32::new(0);
+static CLOSED_NOW_10: AtomicU32 = AtomicU32::new(0);
+static CLOSED_RAW: AtomicU32 = AtomicU32::new(0);
+static CLOSED_VALID: AtomicU32 = AtomicU32::new(0);
+static CLOSED_I_SUM: AtomicU32 = AtomicU32::new(0);
+static CLOSED_I_N: AtomicU32 = AtomicU32::new(0);
+static CLOSED_I_MIN: AtomicU16 = AtomicU16::new(0x0FFF);
+static CLOSED_I_MAX: AtomicU16 = AtomicU16::new(0);
+static CLOSED_VBAT_MIN: AtomicU16 = AtomicU16::new(u16::MAX);
+static CLOSED_OPEN_LEVEL: AtomicU8 = AtomicU8::new(0);
+/// Stamped control bb events (ev<<16|data; u32::MAX = none) -
+/// produced synchronously by window_close_control in LPTIM2,
+/// recorded by the fabric.
+static CLOSED_BB0: AtomicU32 = AtomicU32::new(u32::MAX);
+static CLOSED_BB1: AtomicU32 = AtomicU32::new(u32::MAX);
+/// Fabric-side bookkeeping: last gen processed + counters.
+static CLOSE_SEEN_GEN: AtomicU32 = AtomicU32::new(0);
+/// Closes lost to a >=2-gen skip (fabric blacked out >1 interval).
+static CLOSE_LOST: AtomicU32 = AtomicU32::new(0);
+/// Seqlock retries (LPTIM2 preempted the fabric mid-copy).
+static CLOSE_RETRY: AtomicU32 = AtomicU32::new(0);
+static DUR_CLOSE: AtomicU32 = AtomicU32::new(0);
+
 /// FALCON commutation ISR — fires `interval·(30°−adv)/60°` after each
 /// qualified ZC (scheduled by the COMP ISR). Shares priority 1 with
 /// COMP so the two never nest.
@@ -3373,42 +3406,72 @@ fn LPTIM2() {
     comp2::set_exti_edges(re, fe);
     core::sync::atomic::compiler_fence(Ordering::Release);
     CURRENT_SECTOR.store(sector, Ordering::Relaxed);
-    // --- bookkeeping (off the critical path) ---
-    // DEFERRED-CLOSE ATTEMPT (TRANSIT_AUTOPSY #2) REVERTED
-    // 2026-07-17: pending the close to a priority-2 TIM15 handler
-    // shrank the ear-closed span ~20->~11 us, but comp storms
-    // starved the handler exactly when it mattered - 2475 dropped
-    // closes during engages, +201 during the fatal climb (the
-    // reacq machinery crippled mid-crisis), pre-miss count UP
-    // (+49 vs +13 baseline), envelope unchanged (died at 76 both
-    // ways). An overrun-safe version needs an inline-fallback +
-    // seqlock; not worth it until the gate rung proves
-    // insufficient. Core keeps the tested split
-    // (window_control_step_from + control_reset + equivalence
-    // test) for a future retry.
+    // --- STAMP (AM32-shape: the fabric thinks, we only record) ---
     CL_COMM_COUNT.fetch_add(1, Ordering::Relaxed);
+    let (now_10, now_us) = ticks_both();
+    CLOSED_PREV.store(prev, Ordering::Relaxed);
+    CLOSED_REFINED.store(
+        SHOT_REFINED.swap(false, Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
+    CLOSED_START_US.store(SECTOR_START_US.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_QZC_US.store(WINDOW_QZC_US.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_FIRST_ZC_US.store(
+        WINDOW_FIRST_ZC_US.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
+    CLOSED_NOW_US.store(now_us, Ordering::Relaxed);
+    CLOSED_NOW_10.store(now_10, Ordering::Relaxed);
+    CLOSED_RAW.store(WINDOW_RAW.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_VALID.store(WINDOW_VALID.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_I_SUM.store(WINDOW_I_SUM.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_I_N.store(WINDOW_I_N.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_I_MIN.store(WINDOW_I_MIN.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_I_MAX.store(WINDOW_I_MAX.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_VBAT_MIN.store(WINDOW_VBAT_MIN.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_OPEN_LEVEL.store(WINDOW_OPEN_LEVEL.load(Ordering::Relaxed), Ordering::Relaxed);
+    WINDOW_OPEN_LEVEL.store(0, Ordering::Relaxed);
+    // CONTROL stays synchronous (feather2 incident: deferring the
+    // reacq/miss logic 0-41 us let cascades outrun the response -
+    // died at 66 vs the 74-78 baseline). window_close_control is
+    // the cheap half (~10 atomic ops); the bb events it returns
+    // are stamped for the fabric to record.
     {
-        // Black box: classify the commutation by the window it ends
-        // (REF/BLD/DRK table host-tested in minz_core::drive).
-        let refined = SHOT_REFINED.swap(false, Ordering::Relaxed);
-        bb_record(
-            minz_core::drive::commutation_class(prev, refined),
-            prev,
-            OWL_INTERVAL_US.load(Ordering::Relaxed).min(0xFFFF) as u16,
+        let qzc = CLOSED_QZC_US.load(Ordering::Relaxed);
+        let bb = minz_core::window::window_close_control(&WINDOW_CONTROL, prev, qzc);
+        CLOSED_BB0.store(
+            bb[0].map_or(u32::MAX, |(e, d)| ((e as u32) << 16) | d as u32),
+            Ordering::Relaxed,
         );
-    }
-    free(|cs| close_float_window(cs, prev));
-    // Adaptive time gate: earliest acceptable ZC from the MEASURED
-    // interval (host-tested minz_core::timing::gate_us).
-    let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
-    if interval != 0 {
-        SECTOR_GATE_US.store(
-            minz_core::timing::gate_us(interval, CL_REACQ.load(Ordering::Relaxed)),
+        CLOSED_BB1.store(
+            bb[1].map_or(u32::MAX, |(e, d)| ((e as u32) << 16) | d as u32),
             Ordering::Relaxed,
         );
     }
-    // Free-run schedule: exactly 1.0x the estimator interval (AM32
-    // semantics; light re-arm valid at the ARR match - lever #2).
+    // Adaptive gate with FRESH reacq state (same-instant as the
+    // old in-ISR close).
+    {
+        let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+        if iv != 0 {
+            SECTOR_GATE_US.store(
+                minz_core::timing::gate_us(iv, CL_REACQ.load(Ordering::Relaxed)),
+                Ordering::Relaxed,
+            );
+        }
+    }
+    // Live resets: control (host-tested control_reset) + diag.
+    minz_core::window::control_reset(&WINDOW_CONTROL, now_10, now_us);
+    WINDOW_RAW.store(0, Ordering::Relaxed);
+    WINDOW_VALID.store(0, Ordering::Relaxed);
+    WINDOW_I_SUM.store(0, Ordering::Relaxed);
+    WINDOW_I_N.store(0, Ordering::Relaxed);
+    WINDOW_I_MIN.store(0x0FFF, Ordering::Relaxed);
+    WINDOW_I_MAX.store(0, Ordering::Relaxed);
+    WINDOW_VBAT_MIN.store(u16::MAX, Ordering::Relaxed);
+    // Publish: the fabric picks this up on its next wrap.
+    CLOSED_GEN.fetch_add(1, Ordering::Relaxed);
+    // Free-run schedule (light re-arm valid at the ARR match).
+    let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
     if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
         minz::lptim2_oneshot::reschedule_light(t);
     }
@@ -3419,6 +3482,103 @@ fn LPTIM2() {
     }
     // Re-open the ear for the new window (clears any pending edge).
     comp2::set_exti_enabled(true);
+}
+
+/// AM32-shape fabric close: runs in TIM1_UP (periodic, priority 2)
+/// when the stamp generation advanced. Values-first with a
+/// reader-side gen recheck; window_control_step_from is the same
+/// host-tested control authority the in-ISR close used.
+fn fabric_close_step() {
+    let g0 = CLOSED_GEN.load(Ordering::Relaxed);
+    let seen = CLOSE_SEEN_GEN.load(Ordering::Relaxed);
+    if g0 == seen {
+        return;
+    }
+    let _dur = DurGuard::new(&DUR_CLOSE);
+    let skipped = g0.wrapping_sub(seen);
+    if skipped >= 2 {
+        CLOSE_LOST.fetch_add(skipped - 1, Ordering::Relaxed);
+    }
+    // Copy locals, then confirm the stamp did not advance mid-copy.
+    let prev = CLOSED_PREV.load(Ordering::Relaxed);
+    let refined = CLOSED_REFINED.load(Ordering::Relaxed);
+    let start_us = CLOSED_START_US.load(Ordering::Relaxed);
+    let qzc = CLOSED_QZC_US.load(Ordering::Relaxed);
+    let first_zc = CLOSED_FIRST_ZC_US.load(Ordering::Relaxed);
+    let now_us = CLOSED_NOW_US.load(Ordering::Relaxed);
+    let _now_10 = CLOSED_NOW_10.load(Ordering::Relaxed);
+    let raw = CLOSED_RAW.load(Ordering::Relaxed);
+    let open_level = CLOSED_OPEN_LEVEL.load(Ordering::Relaxed);
+    let snap = minz_core::window::DiagSnapshot {
+        raw,
+        valid: CLOSED_VALID.load(Ordering::Relaxed),
+        i_sum: CLOSED_I_SUM.load(Ordering::Relaxed),
+        i_n: CLOSED_I_N.load(Ordering::Relaxed),
+        i_min: CLOSED_I_MIN.load(Ordering::Relaxed),
+        i_max: CLOSED_I_MAX.load(Ordering::Relaxed),
+        vbat_raw: {
+            let m = CLOSED_VBAT_MIN.load(Ordering::Relaxed);
+            if m == u16::MAX {
+                VBAT_RAW_LIVE.load(Ordering::Relaxed)
+            } else {
+                m
+            }
+        },
+    };
+    if CLOSED_GEN.load(Ordering::Relaxed) != g0 {
+        CLOSE_RETRY.fetch_add(1, Ordering::Relaxed);
+        return; // torn copy - next wrap retries with fresh gen
+    }
+    CLOSE_SEEN_GEN.store(g0, Ordering::Relaxed);
+    bb_record(
+        minz_core::drive::commutation_class(prev, refined),
+        prev,
+        OWL_INTERVAL_US.load(Ordering::Relaxed).min(0xFFFF) as u16,
+    );
+    // Stamped control bb events (NOZ datum patched with the raw
+    // edge count, matching the classic close's output).
+    let b0 = CLOSED_BB0.load(Ordering::Relaxed);
+    if b0 != u32::MAX {
+        let ev = (b0 >> 16) as u8;
+        let d = if ev == minz_core::window::EV_NOZ {
+            raw.min(0xFFFF) as u16
+        } else {
+            b0 as u16
+        };
+        bb_record(ev, prev, d);
+        if ev == minz_core::window::EV_NOZ {
+            match minz_core::window::classify_noz(open_level, prev) {
+                Some(true) => {
+                    NOZ_PRE.fetch_add(1, Ordering::Relaxed);
+                }
+                Some(false) => {
+                    NOZ_NEVER.fetch_add(1, Ordering::Relaxed);
+                }
+                None => {}
+            }
+        }
+    }
+    let b1 = CLOSED_BB1.load(Ordering::Relaxed);
+    if b1 != u32::MAX {
+        bb_record((b1 >> 16) as u8, prev, b1 as u16);
+    }
+    let sc = minz_core::window::window_record_step(
+        &WINDOW_CONTROL,
+        prev,
+        now_us,
+        raw.min(0xFFFF) as u16,
+        start_us,
+        qzc,
+        first_zc,
+    );
+    if sc.record {
+        free(|cs| {
+            let mut prod = PEND_PROD.borrow(cs).borrow_mut();
+            if let Some(p) = prod.as_mut() {
+                let _ = p.enqueue(PendingClose { snap, sc });
+            }
+        });
+    }
 }
 
 #[interrupt]
@@ -3739,6 +3899,9 @@ fn TIM1_UP_TIM16() {
             comp2::set_exti_enabled(false);
         }
     }
+    // AM32-shape fabric close: pick up a stamped window boundary.
+    fabric_close_step();
+
     let idx = (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
     let value = comp2::value() as u8;
     // NOZ anatomy: capture the window's FIRST per-wrap comparator

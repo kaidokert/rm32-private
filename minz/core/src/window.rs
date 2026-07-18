@@ -181,22 +181,21 @@ pub fn classify_noz(open_level: u8, prev_sector: u8) -> Option<bool> {
 /// the new window is already accruing edges. Shared/cross-window state
 /// (reacq, spans, decimation) still lives behind `ws`.
 #[allow(clippy::too_many_arguments)]
-pub fn window_control_step_from(
+/// CONTROL-only half of the close: miss detection / re-acq / span.
+/// Cheap (~10 loads/stores, heavy branch only on miss windows) and
+/// LATENCY-SENSITIVE - must run AT the commutation, synchronously
+/// (feather2 incident: deferring it 0-41 us to the fabric let miss
+/// cascades outrun the reacq response - died at amp 66 vs the 74-78
+/// baseline, harm=205, nev=271). Returns the bb events for the
+/// fabric to record.
+pub fn window_close_control(
     ws: &WindowControl<'_>,
     prev_sector: u8,
-    now_10us: u32,
-    now_us: u32,
-    noz_raw: u16,
-    start_us: u32,
     qzc: u32,
-    first_zc: u32,
-) -> ([Option<(u8, u16)>; 2], CloseScalars) {
-    let _ = now_10us;
+) -> [Option<(u8, u16)>; 2] {
     let mut bb: [Option<(u8, u16)>; 2] = [None, None];
-
-    // --- CONTROL: miss detection / re-acq / span (exact) ---
     if qzc == u32::MAX && ws.cl_active.load(Ordering::Relaxed) {
-        bb[0] = Some((EV_NOZ, noz_raw));
+        bb[0] = Some((EV_NOZ, 0));
         if prev_sector != 0 && prev_sector != 3 {
             let run = ws.cl_noz_run.load(Ordering::Relaxed).saturating_add(1);
             ws.cl_noz_run.store(run, Ordering::Relaxed);
@@ -217,17 +216,28 @@ pub fn window_control_step_from(
     let w = ws.windows_since_qzc.load(Ordering::Relaxed);
     ws.windows_since_qzc
         .store(w.saturating_add(1), Ordering::Relaxed);
+    bb
+}
 
-    // --- Decimation decision ---
+/// TELEMETRY-only half: decimation + record scalars. Latency-
+/// tolerant by nature - runs in the periodic fabric from stamped
+/// values.
+#[allow(clippy::too_many_arguments)]
+pub fn window_record_step(
+    ws: &WindowControl<'_>,
+    prev_sector: u8,
+    now_us: u32,
+    noz_raw: u16,
+    start_us: u32,
+    qzc: u32,
+    first_zc: u32,
+) -> CloseScalars {
+    let _ = noz_raw;
     let decim_n = ws.wrec_decim.fetch_add(1, Ordering::Relaxed);
     let iv_now = ws.interval_us.load(Ordering::Relaxed);
     let stream_this = iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
     let record = ws.stream_on.load(Ordering::Relaxed) && start_us != 0 && stream_this;
-    // Record-scalar arithmetic runs ONLY on the ~1/5 streamed windows —
-    // on the 4/5 non-streamed windows it is pure waste (the returned
-    // scalars are discarded), and that waste was the double-buffer's
-    // typical-path tax. `record=false` short-circuits it.
-    let sc = if record {
+    if record {
         let mut pred_err: i16 = i16::MIN;
         if qzc != u32::MAX && iv_now != 0 {
             let err = now_us.wrapping_sub(qzc) as i64 - (iv_now / 2) as i64;
@@ -252,9 +262,31 @@ pub fn window_control_step_from(
             seq: ws.wrec_seq.fetch_add(1, Ordering::Relaxed),
         }
     } else {
-        CloseScalars::default() // record=false; main only clears the bank
-    };
+        CloseScalars::default()
+    }
+}
 
+/// Composed form kept as the behavior authority for the classic
+/// wrapper + all existing close vectors (control then record; the
+/// NOZ bb datum gets the raw count patched in, matching the
+/// original single-fn output).
+#[allow(clippy::too_many_arguments)]
+pub fn window_control_step_from(
+    ws: &WindowControl<'_>,
+    prev_sector: u8,
+    now_10us: u32,
+    now_us: u32,
+    noz_raw: u16,
+    start_us: u32,
+    qzc: u32,
+    first_zc: u32,
+) -> ([Option<(u8, u16)>; 2], CloseScalars) {
+    let _ = now_10us;
+    let mut bb = window_close_control(ws, prev_sector, qzc);
+    if let Some((EV_NOZ, d)) = bb[0].as_mut() {
+        *d = noz_raw;
+    }
+    let sc = window_record_step(ws, prev_sector, now_us, noz_raw, start_us, qzc, first_zc);
     (bb, sc)
 }
 
