@@ -77,6 +77,12 @@ def main():
     try:
         press_until("D", "AM32")
         press_until("M", "SWIFT")
+        # AM32-equivalent EXTI edge config (mode 3 "phys ZC"):
+        # single expected-direction edge per sector. EDGE_MODE
+        # defaults to 0 = BOTH edges (found 2026-07-18) - all
+        # earlier MZT traces ran mode 0; ladders (cl_lock_map)
+        # always ran mode 3.
+        press_until("k", "phys ZC", tries=7)
         engaged = False
         for _ in range(8):
             # RAMP start (2026-07-18): a jumped 50 Hz field no longer
