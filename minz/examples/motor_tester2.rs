@@ -1151,8 +1151,9 @@ static HYST_LEVEL: AtomicU8 = AtomicU8::new(0);
 ///   0 = both edges          (rising + falling)
 ///   1 = rising only
 ///   2 = falling only
-///   3 = rising sec 0–2 / falling sec 3–5
-///   4 = falling sec 0–2 / rising sec 3–5
+///   3 = "phys ZC": rising on even sectors / falling on odd — the
+///       expected ZC direction only (see `minz_core::drive::edges_for`)
+///   4 = the exact inverse of 3 (anti mode)
 ///   5 = both edges, COMP ISR only writes EDGE_BUF / SECTOR_EDGE_COUNT
 ///       when `COMP2.VALUE == 1` at the moment of ISR entry. With
 ///       hardware blanking removed (see CLAUDE.md note on the
@@ -1163,7 +1164,41 @@ static HYST_LEVEL: AtomicU8 = AtomicU8::new(0);
 ///       orthogonal to this mode (gates apply independently and
 ///       additively).
 /// Modes 3 / 4 are applied per-sector inside the TIM7 ISR.
-static EDGE_MODE: AtomicU8 = AtomicU8::new(0);
+///
+/// DEFAULT = 3, AM32 PARITY (2026-07-18): AM32's `changeCompInput`
+/// hardware-selects ONE EXTI trigger direction per step — the
+/// expected ZC polarity — so wrong-direction comparator transitions
+/// never even interrupt. Mode 3 is our exact equivalent. The old
+/// default of 0 (both edges) silently ran every MZT trace with
+/// double COMP-IRQ load + software-only direction rejection while
+/// the ladders (which press `k`) ran mode 3 — a config divergence
+/// that polluted cross-config comparisons. Bench modes 0-2/5 remain
+/// available via `k` for diagnostics; the boot state now matches
+/// the reference.
+static EDGE_MODE: AtomicU8 = AtomicU8::new(3);
+
+/// IWDG FLIGHT RECORDER (2026-07-18). Three words in the NOLOAD
+/// `.uninit` section: SRAM1 keeps its content across an IWDG (or any
+/// non-POR) reset, so the next boot can read where the firmware died.
+/// - `BEACON_MAIN`: `ticks_10us()` stored once per main microloop
+///   (right after the IWDG refresh).
+/// - `BEACON_ISR`: `ticks_10us()` stored once per TIM1_UP pass.
+/// - `BEACON_PHASE`: main-loop segment marker (1=refresh 2=keys
+///   3=drain 4=epoch).
+/// Discriminator at the post-reboot boot print: `isr - main` ~= 1 s
+/// (100k ticks) => main starved while ISRs lived (CPU exhaustion);
+/// both ~equal => global wedge (fault / masked spin). The NOLOAD
+/// placement means the initializers below are never loaded - boot
+/// value is whatever RAM held; `BEACON_MAGIC` validates.
+#[unsafe(link_section = ".uninit.beacon")]
+static BEACON_MAGIC: AtomicU32 = AtomicU32::new(0);
+#[unsafe(link_section = ".uninit.beacon")]
+static BEACON_MAIN: AtomicU32 = AtomicU32::new(0);
+#[unsafe(link_section = ".uninit.beacon")]
+static BEACON_ISR: AtomicU32 = AtomicU32::new(0);
+#[unsafe(link_section = ".uninit.beacon")]
+static BEACON_PHASE: AtomicU32 = AtomicU32::new(0);
+const BEACON_VALID: u32 = 0xBEAC_0217;
 
 /// Commutation advance in degrees — cycled by the `t` key through
 /// 0 / 20 / 40 / -40 / -20. Signed: positive advances the
@@ -1648,6 +1683,27 @@ fn main() -> ! {
         )
         .ok();
         rcc.csr.modify(|_, w| w.rmvf().set_bit());
+        // Flight-recorder readout: only meaningful when the previous
+        // session armed the magic (RAM survives non-POR resets).
+        if BEACON_MAGIC.load(Ordering::Relaxed) == BEACON_VALID {
+            let bm = BEACON_MAIN.load(Ordering::Relaxed);
+            let bi = BEACON_ISR.load(Ordering::Relaxed);
+            write!(
+                &mut tx_writer,
+                "beacon: main={} isr={} d10us={} phase={}
+
+",
+                bm,
+                bi,
+                bi.wrapping_sub(bm),
+                BEACON_PHASE.load(Ordering::Relaxed),
+            )
+            .ok();
+        }
+        BEACON_MAGIC.store(BEACON_VALID, Ordering::Relaxed);
+        BEACON_MAIN.store(0, Ordering::Relaxed);
+        BEACON_ISR.store(0, Ordering::Relaxed);
+        BEACON_PHASE.store(0, Ordering::Relaxed);
     }
     priority::dump_to(&mut tx_writer);
     priority::dump_prigroup();
@@ -1720,6 +1776,8 @@ fn main() -> ! {
             // stops and the watchdog resets the chip, releasing the
             // bridge.
             minz::iwdg::refresh();
+            BEACON_MAIN.store(ticks_10us(), Ordering::Relaxed);
+            BEACON_PHASE.store(1, Ordering::Relaxed);
 
             // Monotonic check (main-loop rate tripwire).
             let mono = now_10us_64();
@@ -1917,6 +1975,7 @@ fn main() -> ! {
                 let prev_amp = amplitude_pct;
                 let prev_hz = electrical_hz;
                 let prev_mode = waveform;
+                BEACON_PHASE.store(2, Ordering::Relaxed);
                 match b {
                     b'a' => amplitude_pct = clamp_amp(amplitude_pct as i32 + 1),
                     b'z' => amplitude_pct = clamp_amp(amplitude_pct as i32 - 1),
@@ -2800,6 +2859,7 @@ fn main() -> ! {
             // frames. Emit all-or-nothing per frame — a partial frame
             // would desync the host parser; a dropped one just shows
             // as a seq gap.
+            BEACON_PHASE.store(3, Ordering::Relaxed);
             while let Some(rec) = wrec_consumer.dequeue() {
                 if TX_RING_LEN - 1 - tx_writer.pending() >= minz_core::wire::FRAME_LEN_V5 {
                     for b in rec.encode() {
@@ -3979,6 +4039,7 @@ fn TIM1_UP_TIM16() {
         // every ~41 µs, so it never misses a 53.7 s CYCCNT wrap.
         // Shares the CYCCNT read with the miss detector.
         cyc_extend(now_cyc);
+        BEACON_ISR.store(ticks_10us(), Ordering::Relaxed);
         let last = TIM1_UP_LAST_CYC.load(Ordering::Relaxed);
         TIM1_UP_LAST_CYC.store(now_cyc, Ordering::Relaxed);
         let gap = now_cyc.wrapping_sub(last);
