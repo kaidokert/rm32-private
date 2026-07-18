@@ -24,6 +24,7 @@ pub mod guards;
 pub mod mode;
 pub mod rates;
 pub mod sense;
+pub mod start;
 pub mod throttle;
 pub mod ticks;
 pub mod timing;

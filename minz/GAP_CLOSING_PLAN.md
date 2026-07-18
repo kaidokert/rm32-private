@@ -146,7 +146,32 @@ Instrument: live carrier in telemetry + meta CSV.
 Effort ~1.5 days. Risk medium-high (the 48 kHz CPU lessons apply at
 the top of the map — but R5 buys the headroom back).
 
-### R5 — ISR diet (peripheral rejiggering, operator-approved)
+### R5 — ISR diet — RESOLVED 2026-07-17 (R5a landed; R5b/R5c closed with verdicts)
+
+**R5a LANDED (f425082)**: TIM1_CC retired — the COMP ISR derives
+blank position from a direct TIM1.CNT read (edges at CNT=duty, plus
+CNT=0 in open loop; exact parity with the old CC-stamp semantics in
+both regimes). 17-72 k IRQ/s gone; bench r5a1 = no regression
+(locked 60-70 identical, died at the same lottery-band 74 transit
+as the same-session control).
+
+**R5b (TIM15 one-shot retry) CLOSED — already answered by the
+2026-07-13 one-variable A/B (6009c15)**: LPTIM2+floor2+reorder beat
+TIM15 decisively (jitter 0.9-1.0 % vs 3.4 % @amp55, qzc 100 % vs
+99 %, same amp-64 envelope). The jitter is TIM15's APB2 contention
+with the injected ADC — structural, NOT the walkable-gate artifact
+this plan hypothesized, so R2 does not reopen it. Do not retry
+without an APB2 fix.
+
+**R5c (TIM1_UP census thinning) CLOSED — deliberately skipped**:
+CPU is not the wall (the 07-13 carrier A/B decoupled spike events
+from CPU health; 45 % under load today), and half-rating the census
+above the danger band doubles the burst responder's detection
+latency (333->666 us) exactly where it matters. Trading live-fire-
+proven safety cadence for a non-bottleneck fails the standing
+constraint. Revisit only if a future rung is actually CPU-bound.
+
+#### Original R5 design (kept for reference)
 Toward AM32's fabric (COMP + commutation timer + control tick, zero
 PWM-rate interrupts):
 - Commutation timer → GP timer one-shot at 0.5 µs grain (TIM15
@@ -161,7 +186,25 @@ PWM-rate interrupts):
 Instrument: DUR counters (already per-ISR) prove each cut.
 Effort ~2-3 days total, sub-rungs individually gated.
 
-### R6 — Self-paced start (the lottery's true successor)
+### R6 — Self-paced start — LANDED 2026-07-17 (start proven 9/10; full-ladder integration pending)
+
+`minz_core::start::StartState` (7 named tests) + firmware `Y` key:
+arm through the mode machine at pinned amp 6, rotor-paced sector
+stepping in TIM7 (comparator LEVEL vs expected post-ZC, doubled
+counts + wait-skip first 5 crossings, 50 ms blind backstop),
+handoff after 4 consecutive sub-2.5 ms crossings fires the normal
+`y` engage from main (target raised to amp 10 for the slew).
+Live bench: FIRST-TRY engage; then n=8 validation = **8/8 CL
+ACTIVE** (22-25 rotor-paced crossings, <=1 blind step each) vs the
+documented ~50 % single-shot lottery; 1 later attempt died into a
+clean ZC-STARVED guard kill (9/10 overall). Telemetry: `r6:` i-line
+(on/cross/blind/handoff-interval). CAVEAT: a manual climb-to-40
+after an R6 start pinned at 439 Hz / 3.5 A because the session ran
+without the qualified D-geometry + SWIFT recipe (reflash resets
+both; the pre-SWIFT confirm ceiling is ~500-650 Hz) - wire
+`cl_lock_map --r6-start` and run the full paired ladder next.
+
+#### Original R6 design (implemented as above)
 AM32's start: polling mode, duty pinned ~6 %, commutate on
 `min_bemf_counts` consecutive comparator-level agreements (doubled
 for the first 5 crossings, wait-skip to kick the rotor), hand to

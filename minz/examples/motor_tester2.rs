@@ -763,6 +763,22 @@ const R4_VAR_CARRIER: bool = false;
 /// but also the wrap under open loop (CCR=0 channels match at 0) -
 /// the CNT check replicates both regimes.
 const R5_CNT_BLANK: bool = true;
+
+// ---- R6: self-paced polling start (minz_core::start) ----
+// `Y` arms it from standstill: duty pinned at R6_START_AMP, sector
+// advances only when the comparator LEVEL holds the expected
+// post-ZC polarity (rotor-paced, AM32 startup semantics; blind
+// backstop breaks symmetric stall). On Handoff (4 consecutive
+// crossings under 2.5 ms) the main loop fires the normal `y`
+// engage - the rotor is already turning with real BEMF, so the
+// engage lottery's forced-ramp/rotor mismatch never exists.
+static R6_ARM_EPOCH: AtomicU32 = AtomicU32::new(0);
+static R6_START: AtomicBool = AtomicBool::new(false);
+static R6_HANDOFF_REQ: AtomicBool = AtomicBool::new(false);
+static R6_CROSS_COUNT: AtomicU32 = AtomicU32::new(0);
+static R6_BLIND_COUNT: AtomicU32 = AtomicU32::new(0);
+static R6_HANDOFF_IV_US: AtomicU32 = AtomicU32::new(0);
+const R6_START_AMP: u16 = 6;
 /// Max ARR glide per TIM7 tick (~1 % per 166 us): the full 24->48 kHz
 /// span takes ~9 ms, always as micro-steps, never a discrete hop.
 const CARRIER_SLEW_ARR: u16 = 32;
@@ -1698,6 +1714,26 @@ fn main() -> ! {
                 .ok();
             }
 
+            // R6 handoff: TIM7's polling start qualified the rotor
+            // (streak of fast crossings) and requested the engage.
+            // Fire the normal `y` path from main-loop context - the
+            // rotor is already turning with real BEMF, so the CL
+            // arms and seeds at the next qualified ZC.
+            if R6_HANDOFF_REQ.swap(false, Ordering::Relaxed) {
+                // amp 6 is below the CL sustain floor: raise the
+                // target and let the 1 %/50 ms slew walk up while
+                // the engage seeds.
+                AMP_TARGET_PCT.store(10, Ordering::Relaxed);
+                mode_cmd(
+                    minz_core::mode::Cmd::ClToggle,
+                    &mut output_enabled,
+                    &mut waveform,
+                    &mut electrical_hz,
+                    &mut amplitude_pct,
+                    &mut tx_writer,
+                );
+            }
+
             // Active phase: drain RX queue + dispatch keys.
             while let Some(b) = injected.take().or_else(|| consumer.dequeue()) {
                 let mut do_edge_dump = false;
@@ -1959,6 +1995,50 @@ fn main() -> ! {
                     // pressing again while active = kill + coast. The
                     // estimator-reset-on-arm lives in the core state
                     // machine.
+                    // R6: self-paced polling start. From idle: arm
+                    // via the mode machine (kill-flag clearing, sag
+                    // baseline, estimator reset - everything `r`
+                    // does) at the pinned amp, then let the rotor
+                    // pace its own commutations; hands off to the
+                    // normal `y` engage automatically. Pressing
+                    // again while active aborts (motor off).
+                    b'Y' => {
+                        if R6_START.load(Ordering::Relaxed) {
+                            R6_START.store(false, Ordering::Relaxed);
+                            MOTOR_ENABLED.store(false, Ordering::Relaxed);
+                            tim1_motor_pwm::all_off();
+                            write!(&mut tx_writer, "r6: ABORT\r\n").ok();
+                        } else if !CL_ACTIVE.load(Ordering::Relaxed) {
+                            R6_CROSS_COUNT.store(0, Ordering::Relaxed);
+                            R6_BLIND_COUNT.store(0, Ordering::Relaxed);
+                            R6_HANDOFF_REQ.store(false, Ordering::Relaxed);
+                            R6_ARM_EPOCH.fetch_add(1, Ordering::Relaxed);
+                            mode_cmd(
+                                minz_core::mode::Cmd::Arm {
+                                    hz: FREQ_START,
+                                    amp_pct: R6_START_AMP,
+                                },
+                                &mut output_enabled,
+                                &mut waveform,
+                                &mut electrical_hz,
+                                &mut amplitude_pct,
+                                &mut tx_writer,
+                            );
+                            SIX_STEP_MODE.store(true, Ordering::Relaxed);
+                            // The polling start reads the float phase:
+                            // per-sector COMP2 routing must be live.
+                            AUTO_MUX.store(true, Ordering::Relaxed);
+                            R6_START.store(true, Ordering::Relaxed);
+                            write!(
+                                &mut tx_writer,
+                                "r6: START (poll-paced, amp {})\r\n",
+                                R6_START_AMP
+                            )
+                            .ok();
+                        } else {
+                            write!(&mut tx_writer, "r6: refused - CL active\r\n").ok();
+                        }
+                    }
                     b'y' => mode_cmd(
                         minz_core::mode::Cmd::ClToggle,
                         &mut output_enabled,
@@ -2221,7 +2301,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} carr: arr={} chg={} sagdb={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2235,6 +2315,10 @@ fn main() -> ! {
                                 tim1_motor_pwm::max_duty(),
                                 CARRIER_CHANGES.load(Ordering::Relaxed),
                                 SAG_DEBOUNCE_LIVE.load(Ordering::Relaxed),
+                                R6_START.load(Ordering::Relaxed) as u8,
+                                R6_CROSS_COUNT.load(Ordering::Relaxed),
+                                R6_BLIND_COUNT.load(Ordering::Relaxed),
+                                R6_HANDOFF_IV_US.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2566,6 +2650,12 @@ fn USART2() {
 
 #[interrupt]
 fn TIM7() {
+    // R6 polling-start state: TIM7-local. cortex-m-rt rewrites
+    // top-of-body `static mut` in an #[interrupt] fn to a safe
+    // `&mut` binding (sole-writer by construction). The nested
+    // placement does NOT get the rewrite - must live here.
+    static mut R6_STATE: minz_core::start::StartState = minz_core::start::StartState::new();
+    static mut R6_SEEN_EPOCH: u32 = 0;
     let _dur = DurGuard::new(&DUR_TIM7);
     // Motor-drive heartbeat (6 kHz). When armed: advance the electrical
     // angle accumulator, commutate (six-step or sine), update polarity
@@ -2777,7 +2867,44 @@ fn TIM7() {
     // to. Armed → compute new sector from advancing angle, with the
     // commutation-advance offset folded in. Disarmed → reuse the last
     // sector so static polarity / edges for modes 2/3 stay sensible.
-    let (sector, angle, sector_changed) = if motor_enabled {
+    // R6 polling-start state: TIM7-local (cortex-m-rt rewrites the
+    // fn-local static mut to a safe &mut - sole-writer by
+    // construction). Arm-epoch mismatch = the key handler re-armed;
+    // reset locally.
+    // Self-clear on kill: a guard that disables the motor must not
+    // leave the duty-pin latched for the next plain `r` arm.
+    if R6_START.load(Ordering::Relaxed) && !motor_enabled {
+        R6_START.store(false, Ordering::Relaxed);
+    }
+    let r6_active = R6_START.load(Ordering::Relaxed) && motor_enabled;
+
+    let (sector, angle, sector_changed) = if r6_active {
+        let epoch = R6_ARM_EPOCH.load(Ordering::Relaxed);
+        if *R6_SEEN_EPOCH != epoch {
+            *R6_SEEN_EPOCH = epoch;
+            R6_STATE.reset();
+        }
+        let expected = minz_core::zc::expected_post_zc(prev_sector);
+        let now_us = ticks_10us().wrapping_mul(10);
+        match R6_STATE.poll(comp2::value(), expected, now_us) {
+            minz_core::start::StartAction::None => (prev_sector, 0, false),
+            minz_core::start::StartAction::Commutate => {
+                R6_CROSS_COUNT.fetch_add(1, Ordering::Relaxed);
+                ((prev_sector + 1) % 6, 0, true)
+            }
+            minz_core::start::StartAction::CommutateBlind => {
+                R6_BLIND_COUNT.fetch_add(1, Ordering::Relaxed);
+                ((prev_sector + 1) % 6, 0, true)
+            }
+            minz_core::start::StartAction::Handoff { interval_us } => {
+                R6_CROSS_COUNT.fetch_add(1, Ordering::Relaxed);
+                R6_HANDOFF_IV_US.store(interval_us, Ordering::Relaxed);
+                R6_START.store(false, Ordering::Relaxed);
+                R6_HANDOFF_REQ.store(true, Ordering::Relaxed);
+                ((prev_sector + 1) % 6, 0, true)
+            }
+        }
+    } else if motor_enabled {
         // Accumulator advance + signed-advance folding host-tested in
         // minz_core::drive::angle_tick (#[inline] — verified to
         // inline into this ISR; see the piecewise-rewire notes).
@@ -2864,6 +2991,13 @@ fn TIM7() {
     // control tick; every consumer (CL refresh above, open-loop step
     // below, LPTIM2 commutation) reads SLEW_LAST_DUTY.
     if MOTOR_ENABLED.load(Ordering::Relaxed) {
+        // R6: duty pinned low while the polling start paces the
+        // rotor (AM32 pins ~6 % through its whole startup).
+        let amp = if R6_START.load(Ordering::Relaxed) {
+            R6_START_AMP
+        } else {
+            amp
+        };
         let _ = slewed_duty(open_loop::six_step_duty(arr, amp));
     }
 
