@@ -120,6 +120,38 @@ pub fn comp_storm_action(window_raw: u32, cl_active: bool) -> StormAction {
     }
 }
 
+/// MAIN-STARVATION guard (2026-07-18): the residual reboot pocket
+/// is legitimate ISR load just over 100% at priority <=3 - no
+/// storm, every ISR alive, main alone starved until the IWDG
+/// destroys a healthy run + its evidence. CPU-percent estimation
+/// is the wrong detector (boot-sensitive calibration, reported by
+/// the starving context); the SYMPTOM is directly measurable: the
+/// staleness of main's per-millisecond heartbeat, watched from
+/// TIM1_UP (priority 2, alive through every recorded pocket).
+/// Two stages: SHED at 250 ms (stop the telemetry producers, give
+/// main a chance to recover), KILL at 500 ms (still 500 ms before
+/// the IWDG - clean kill, post-mortem intact).
+pub const MAIN_STARVED_SHED_US: u32 = 250_000;
+pub const MAIN_STARVED_KILL_US: u32 = 500_000;
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum StarveAction {
+    None,
+    Shed,
+    Kill,
+}
+
+#[inline]
+pub fn main_starved_action(since_main_us: u32) -> StarveAction {
+    if since_main_us > MAIN_STARVED_KILL_US {
+        StarveAction::Kill
+    } else if since_main_us > MAIN_STARVED_SHED_US {
+        StarveAction::Shed
+    } else {
+        StarveAction::None
+    }
+}
+
 #[inline]
 pub fn comm_silence_backstop(since_comm_us: u32) -> bool {
     since_comm_us > COMM_SILENCE_BACKSTOP_US
@@ -139,7 +171,6 @@ pub const RESEED_AMP_PCT: u16 = 6;
 /// tolerance), half to 5, quarter beyond. Restores instantly on
 /// the next accept (the caller's amp pipeline re-evaluates every
 /// tick).
-#[inline]
 pub fn wait_amp_clamp(amp: u16, since_qzc_us: u32, interval_us: u32) -> u16 {
     if interval_us == 0 {
         return amp;
@@ -1154,6 +1185,18 @@ mod tests {
         assert_eq!(comp_storm_action(499, true), None);
         // CL storm / non-closing window: kill within ~7 ms
         assert_eq!(comp_storm_action(500, true), MaskKill);
+    }
+
+    #[test]
+    fn main_starvation_sheds_then_kills() {
+        use super::StarveAction::*;
+        assert_eq!(main_starved_action(1_000), None); // healthy ~1ms
+        assert_eq!(main_starved_action(250_000), None);
+        assert_eq!(main_starved_action(250_001), Shed);
+        assert_eq!(main_starved_action(500_000), Shed);
+        assert_eq!(main_starved_action(500_001), Kill);
+        // the observed pocket: a full IWDG second of starvation
+        assert_eq!(main_starved_action(1_000_000), Kill);
     }
     #[test]
     fn regression_cl_backstop_rides_the_knee() {

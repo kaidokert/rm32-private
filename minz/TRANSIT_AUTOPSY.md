@@ -664,3 +664,29 @@ in the i-echo.
 
 Live-fire: 50 Hz stall storm comp 70k -> 9.8k/s, motor driven, zero
 kills; ramp engage OK; CL amp30 931 Hz clean, kills=0.
+
+
+## Main-starvation guard + cpu=% removal (2026-07-18, operator-directed)
+
+The saturation pockets starve main, not the ISRs - so the detector
+watches the SYMPTOM: BEACON_MAIN heartbeat staleness, checked from
+TIM1_UP (guards::main_starved_action, host-tested). SHED at 250 ms
+(stop ZT/MAGPIE producers, give main a recovery window), KILL at
+500 ms (clean stop, 500 ms before the IWDG would reboot and destroy
+the evidence). `mst=sheds/kills` in the i-echo.
+
+**Acid test: the ZT-climb reproducer that rebooted 5x now terminates
+as TERMINAL: KILL** - mst=1/1, kill print on the wire, chip alive,
+all counters readable. The IWDG reboot class is converted to clean
+kills with full post-mortem data; the IWDG remains as the true-wedge
+backstop.
+
+cpu=% RIPPED OUT (idle-loop busy machinery + ~1 s boot calibration):
+the baseline was boot-sensitive, the number invited misreads, and it
+was read via main - the context that starves. `dur cyc:` remains the
+trustworthy accounting; mst= is the actionable monitor. Microloop
+slack is now a plain bounded spin.
+
+Load-shedding levers (gate ADC-confirm under SWIFT, serialize in
+main, half-rate vbat/sag, retire TIM1_CC) remain the path to actually
+CLEARING the pockets so runs complete instead of kill.

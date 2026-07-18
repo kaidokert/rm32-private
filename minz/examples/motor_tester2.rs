@@ -66,7 +66,6 @@ use minz::hal::prelude::*;
 use minz::hal::serial::{Config, Serial};
 use minz::hal::stm32;
 use minz::hal::stm32::Interrupt;
-use minz::idle_loop::IdleLoop;
 use minz::open_loop::{self, Waveform};
 use minz::priority;
 use minz::tim1_motor_pwm::{self, max_duty};
@@ -689,6 +688,9 @@ static ZOMBIE_BACKSTOP_KILLS: AtomicU32 = AtomicU32::new(0);
 /// Comparator-storm defenses (printed as storm=masks/kills).
 static STORM_MASKS: AtomicU32 = AtomicU32::new(0);
 static STORM_KILLS: AtomicU32 = AtomicU32::new(0);
+/// Main-starvation guard events (printed as mst=sheds/kills).
+static MAIN_SHEDS: AtomicU32 = AtomicU32::new(0);
+static MAIN_STARVE_KILLS: AtomicU32 = AtomicU32::new(0);
 
 /// SWIFT — AM32-style edge-timestamped fast path (`M` key). When ON
 /// and the loop is LOCKED, a comparator edge that passes the gate +
@@ -1644,19 +1646,16 @@ fn main() -> ! {
     // ----------------------------------------------------------------
     unsafe { cortex_m::interrupt::enable() };
 
-    let mut idle_loop = IdleLoop::new();
+    // cpu=% busy machinery RIPPED OUT (operator, 2026-07-18): the
+    // IdleLoop calibration baseline was boot-sensitive (same binary
+    // read 20% vs 40% idle) so the number invited misreads, and its
+    // ~1 s boot calibration + per-microloop counting bought nothing.
+    // Trustworthy accounting = the `dur cyc:` line; the ACTIONABLE
+    // monitor = the main-starvation guard in TIM1_UP (mst=).
     // TRUE 64-bit (not u32-widened): the epoch pacing compares
     // `now < next_epoch` over multi-second windows, which a 12 h-
     // wrapping u32 clock would eventually straddle → a one-epoch hang.
     let now_u64 = || now_10us_64();
-    let cal = idle_loop.calibrate(SECOND_TICKS, &now_u64);
-    rprintln!(
-        "idle_loop: calibration = {} counts / s (SysTick-only baseline)",
-        cal,
-    );
-    // Mirror to UART so host logs capture the baseline — needed to
-    // interpret cpu% across builds (the busy math is relative to it).
-    write!(&mut tx_writer, "idle cal = {} counts/s\r\n", cal).ok();
 
     // Program NVIC + SCB priorities BEFORE unmasking the app IRQs so
     // every IRQ comes up at its intended level. PRIGROUP=3 (4 preempt
@@ -1773,7 +1772,6 @@ fn main() -> ! {
     // reads this so the figure printed alongside vbat / isns reflects
     // the most recent fully-elapsed second — same window as the
     // `IdleLoop` calibration.
-    let mut last_busy_pct: u8 = 0;
 
     // Per-ISR rate diagnostics for the `i` key. Snapshot every
     // counter + the wall clock at the previous press; on the next
@@ -1835,7 +1833,12 @@ fn main() -> ! {
             // (any residual wrap race) then costs one short spin,
             // never an IWDG starvation.
             let bound = now_u64().saturating_add(2 * MICROLOOP_TICKS);
-            idle_loop.run_until(next_microloop.min(bound), &now_u64);
+            {
+                let target = next_microloop.min(bound);
+                while now_u64() < target {
+                    core::hint::spin_loop();
+                }
+            }
 
             // Active-phase duration of this microloop pass (to the
             // end of the loop body) - closes the busy% accounting.
@@ -2516,14 +2519,13 @@ fn main() -> ! {
                         };
                         write!(
                             &mut tx_writer,
-                            "vbat={}.{:03}V min={}.{:03}V isns={}.{:03}A cpu={}% (raw v={} i={})\r\n",
+                            "vbat={}.{:03}V min={}.{:03}V isns={}.{:03}A (raw v={} i={})\r\n",
                             v_supply_mv / 1000,
                             v_supply_mv % 1000,
                             v_min_mv / 1000,
                             v_min_mv % 1000,
                             i_ma / 1000,
                             i_ma % 1000,
-                            last_busy_pct,
                             v_raw,
                             i_raw,
                         )
@@ -2646,11 +2648,13 @@ fn main() -> ! {
                             }
                             write!(
                                 &mut tx_writer,
-                                " txdrop={} zbk={} storm={}/{}\r\n",
+                                " txdrop={} zbk={} storm={}/{} mst={}/{}\r\n",
                                 minz::uart_tx::TX_DROPPED.load(Ordering::Relaxed),
                                 ZOMBIE_BACKSTOP_KILLS.load(Ordering::Relaxed),
                                 STORM_MASKS.load(Ordering::Relaxed),
                                 STORM_KILLS.load(Ordering::Relaxed),
+                                MAIN_SHEDS.load(Ordering::Relaxed),
+                                MAIN_STARVE_KILLS.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2946,7 +2950,6 @@ fn main() -> ! {
         // 1-second boundary: latch idle counter, snapshot COMP rates.
         // Both windows are sized to `SECOND_TICKS` so they match the
         // `IdleLoop` calibration window exactly.
-        last_busy_pct = idle_loop.busy_percentage(idle_loop.latch());
 
         let now_count = COMP_COUNT.load(Ordering::Relaxed);
         let now_valid = VALID_COMP_COUNT.load(Ordering::Relaxed);
@@ -4210,6 +4213,35 @@ fn TIM1_UP_TIM16() {
             minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Desync);
             tim1_motor_pwm::all_off();
             comp2::set_exti_enabled(false);
+        }
+    }
+    // MAIN-STARVATION guard (see guards::main_starved_action).
+    // Gated on MOTOR_ENABLED: at boot/idle BEACON_MAIN may be 0 or
+    // stale, and arming requires a live main, so the gate makes the
+    // reference trustworthy by construction. Shed = stop the
+    // telemetry producers (ZT/MAGPIE) so the serialize load drops
+    // and main can recover; Kill = clean stop 500 ms before the
+    // IWDG would reboot and destroy the post-mortem.
+    if MOTOR_ENABLED.load(Ordering::Relaxed) {
+        let bm = BEACON_MAIN.load(Ordering::Relaxed);
+        let since = minz_core::guards::since_us(ticks_10us(), bm);
+        match minz_core::guards::main_starved_action(since) {
+            minz_core::guards::StarveAction::None => {}
+            minz_core::guards::StarveAction::Shed => {
+                if ZT_ON.swap(false, Ordering::Relaxed) || STREAM_ON.swap(false, Ordering::Relaxed)
+                {
+                    MAIN_SHEDS.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            minz_core::guards::StarveAction::Kill => {
+                MAIN_STARVE_KILLS.fetch_add(1, Ordering::Relaxed);
+                minz_core::guards::apply_isr_kill(
+                    &KILL_FLAGS,
+                    minz_core::guards::IsrKillKind::Desync,
+                );
+                tim1_motor_pwm::all_off();
+                comp2::set_exti_enabled(false);
+            }
         }
     }
     // Decaying-max vbus estimate — host-tested in minz_core::zc
