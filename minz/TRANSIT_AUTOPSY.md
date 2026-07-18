@@ -646,3 +646,21 @@ mechanism across 6 instrumented reboots:
    TIM7 copy alone starves in exactly the saturation pockets where
    zombies form. Counter zbk= in the i-echo; validated no-false-fire
    at amp 40 CL.
+
+
+## COMP-storm mask-and-kill (2026-07-18, operator-directed)
+
+The load-shedding first responder for the saturation-reboot class.
+Detection = per-window edge count (`WINDOW_RAW`) checked at COMP ISR
+entry - the storming ISR is the one context guaranteed cycles, and it
+masks its own source. Two regimes (guards::comp_storm_action, host-
+tested): open loop = MASK-ONLY at 64 edges/window (the ramp start
+deliberately stalls at 50 Hz; a kill would break every arm; TIM7
+re-enables once per sector, capping worst-case storm load at ~19k
+IRQs/s while the drive continues); CL = MASK+KILL at 500 (a window
+holding 500 edges without closing is a dead loop; kill lands in ~7 ms
+vs the IWDG's 500+ ms, preserving main + diagnostics). `storm=M/K`
+in the i-echo.
+
+Live-fire: 50 Hz stall storm comp 70k -> 9.8k/s, motor driven, zero
+kills; ramp engage OK; CL amp30 931 Hz clean, kills=0.

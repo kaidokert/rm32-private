@@ -77,6 +77,49 @@ pub const RESEED_AMNESTY_ACCEPTS: u32 = 1_000;
 /// ~1.7 ms; 100 ms = 60x margin) and must kill.
 pub const COMM_SILENCE_BACKSTOP_US: u32 = 100_000;
 
+/// COMP-STORM defense (the ISR-saturation reboot class, 2026-07-18).
+/// A stalled/incoherent field storms the unmasked comparator at
+/// 60-70k IRQs/s; with the rest of the top-rung load that crosses
+/// 100% CPU at priority <=2, starving main's IWDG refresh (and the
+/// evidence with it). Detection is PER-WINDOW edge count - already
+/// tracked, resets at every window close, and a stall stops closes
+/// so the count climbs at storm rate: one variable catches both
+/// too-noisy and commutation-stopped, speed-adaptively.
+///
+/// Open loop (mask only, budget 64): the stepper drives without the
+/// comparator, and our ramp start DELIBERATELY stalls at 50 Hz for
+/// ~1 s - a kill would break every arm. Masking caps the load
+/// (~19k/s worst case: 64 edges x 6 sectors x 50 Hz) and the next
+/// sector step re-enables, so observation degrades gracefully.
+///
+/// Closed loop (mask + kill, budget 500): CL cannot run blind; a
+/// window holding 500 edges without closing is a dead loop. Killing
+/// within ~7 ms (500/70k) preserves main, the IWDG, and the logs.
+pub const STORM_MASK_EDGES: u32 = 64;
+pub const STORM_KILL_EDGES: u32 = 500;
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum StormAction {
+    None,
+    Mask,
+    MaskKill,
+}
+
+#[inline]
+pub fn comp_storm_action(window_raw: u32, cl_active: bool) -> StormAction {
+    if cl_active {
+        if window_raw >= STORM_KILL_EDGES {
+            StormAction::MaskKill
+        } else {
+            StormAction::None
+        }
+    } else if window_raw >= STORM_MASK_EDGES {
+        StormAction::Mask
+    } else {
+        StormAction::None
+    }
+}
+
 #[inline]
 pub fn comm_silence_backstop(since_comm_us: u32) -> bool {
     since_comm_us > COMM_SILENCE_BACKSTOP_US
@@ -1095,6 +1138,22 @@ mod tests {
         assert!(!comm_silence_backstop(COMM_SILENCE_BACKSTOP_US));
         assert!(comm_silence_backstop(COMM_SILENCE_BACKSTOP_US + 1));
         assert!(comm_silence_backstop(30_000_000)); // the incident
+    }
+
+    #[test]
+    fn storm_mask_open_loop_kill_closed_loop() {
+        use super::StormAction::*;
+        // healthy windows in both modes
+        assert_eq!(comp_storm_action(10, false), None);
+        assert_eq!(comp_storm_action(10, true), None);
+        // ramp-start stall (open loop, 50 Hz, ~65 edges/window):
+        // mask only - the arm must survive (engage-recipe constraint)
+        assert_eq!(comp_storm_action(65, false), Mask);
+        assert_eq!(comp_storm_action(499, false), Mask);
+        // CL tolerates bursts below the kill budget
+        assert_eq!(comp_storm_action(499, true), None);
+        // CL storm / non-closing window: kill within ~7 ms
+        assert_eq!(comp_storm_action(500, true), MaskKill);
     }
     #[test]
     fn regression_cl_backstop_rides_the_knee() {

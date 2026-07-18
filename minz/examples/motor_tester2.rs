@@ -686,6 +686,9 @@ static LAST_QZC_10US: AtomicU32 = AtomicU32::new(0);
 static CL_STARVED: AtomicBool = AtomicBool::new(false);
 /// Kills fired by the comm-silence zombie backstop (printed as zbk=).
 static ZOMBIE_BACKSTOP_KILLS: AtomicU32 = AtomicU32::new(0);
+/// Comparator-storm defenses (printed as storm=masks/kills).
+static STORM_MASKS: AtomicU32 = AtomicU32::new(0);
+static STORM_KILLS: AtomicU32 = AtomicU32::new(0);
 
 /// SWIFT — AM32-style edge-timestamped fast path (`M` key). When ON
 /// and the loop is LOCKED, a comparator edge that passes the gate +
@@ -2643,9 +2646,11 @@ fn main() -> ! {
                             }
                             write!(
                                 &mut tx_writer,
-                                " txdrop={} zbk={}\r\n",
+                                " txdrop={} zbk={} storm={}/{}\r\n",
                                 minz::uart_tx::TX_DROPPED.load(Ordering::Relaxed),
                                 ZOMBIE_BACKSTOP_KILLS.load(Ordering::Relaxed),
+                                STORM_MASKS.load(Ordering::Relaxed),
+                                STORM_KILLS.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -3364,6 +3369,16 @@ fn TIM7() {
     let edge_mode = EDGE_MODE.load(Ordering::Relaxed);
     let (rising_en, falling_en) = edges_for(edge_mode, sector);
     comp2::set_exti_edges(rising_en, falling_en);
+    // STORM-mask recovery (open loop): a Mask action leaves EXTI
+    // disabled; re-enable once per SECTOR (not per tick - that would
+    // unbound the storm budget again). set_exti_enabled(true) clears
+    // pending first, so the storm backlog is discarded, giving each
+    // sector a fresh 64-edge budget: worst-case comparator load is
+    // capped at ~19k IRQs/s during a full stall storm while the
+    // drive and the ramp-start catch continue unharmed.
+    if sector_changed && motor_enabled && !CL_ACTIVE.load(Ordering::Relaxed) {
+        comp2::set_exti_enabled(true);
+    }
 
     // Release fence so COMP ISR (which can now preempt this ISR) reads
     // the new polarity / edge config when it samples CURRENT_SECTOR.
@@ -4541,6 +4556,38 @@ fn COMP() {
     // the honest edge timestamp anyway — the EXTI fired microseconds
     // before any later in-body read would run.
     let (now_10, now_us) = ticks_both();
+
+    // COMP-STORM defense - FIRST, before any per-edge work. The
+    // storm detection runs in the storming ISR itself: during a
+    // 70k/s storm this is the one context guaranteed cycles, and
+    // an ISR can mask its own source. Open loop: mask-only (the
+    // ramp start deliberately stalls; next sector step re-enables).
+    // CL: mask + kill within ~7 ms - preserves main, the IWDG and
+    // the diagnostics the storm used to destroy. Rationale +
+    // budgets host-tested in minz_core::guards::comp_storm_action.
+    match minz_core::guards::comp_storm_action(
+        WINDOW_RAW.load(Ordering::Relaxed),
+        CL_ACTIVE.load(Ordering::Relaxed),
+    ) {
+        minz_core::guards::StormAction::None => {}
+        minz_core::guards::StormAction::Mask => {
+            STORM_MASKS.fetch_add(1, Ordering::Relaxed);
+            comp2::set_exti_enabled(false);
+            return;
+        }
+        minz_core::guards::StormAction::MaskKill => {
+            STORM_KILLS.fetch_add(1, Ordering::Relaxed);
+            comp2::set_exti_enabled(false);
+            if MOTOR_ENABLED.load(Ordering::Relaxed) {
+                minz_core::guards::apply_isr_kill(
+                    &KILL_FLAGS,
+                    minz_core::guards::IsrKillKind::Desync,
+                );
+                tim1_motor_pwm::all_off();
+            }
+            return;
+        }
+    }
 
     // Software PWM-edge blanking. The `TIM1_CC` ISR stores a raw
     // DWT.CYCCNT into `LAST_PWM_EDGE_CYC` at every PWM transition;
