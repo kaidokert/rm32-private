@@ -63,21 +63,51 @@ the slow state through `max_duty_cycle_change` at the STARTUP class
 its recovery never outruns the rotor. Its lower miss rate is
 secondary — its recoveries are simply not violent.
 
-## THE DECISION (per the goal): harden the climb — specifically the
-## recovery re-ramp. Do NOT chase commutation latency first.
+## THE DECISION — REVERSED 2026-07-17 evening (operator was right)
 
-- Cutting commutation latency (LPTIM2 floor/TIM16 one-pulse) attacks
-  step 1, which the loop already survives; the kill lives in step 4.
-  (And the TIM15 route is separately convicted — APB2 contention.)
-- The targeted fix: after a reseed exit or burst-clamp release, hold
-  the duty slew at the STARTUP class (2 %/ms) until the duty has
-  caught its commanded target once (SlewOut.clamped == false), then
-  return to the normal regime map. Turns the 5 ms 6→76 % jump into
-  ~35 ms — the rotor can follow, the draw stays bounded, and the
-  storm's positive feedback (surge → next miss) is broken.
-- Instrument (decisions, not outcomes): recovery-window entry counter
-  + max-duty-gap-at-entry telemetry, i-line row, same commit.
-- Validate: paired ladders 66→80; expect the rsd strike storms and
-  the 70-78 transit deaths to become logged single reseeds; then
-  re-attempt 80+ and the R4 revisit (a calm recovery is exactly the
-  loop-stiffness R4's climbs were missing).
+The first cut of this document decided 'harden the recovery re-ramp,
+not commutation latency,' reasoning that the miss was survivable and
+the recovery was the killer. The operator called it exactly
+backwards: AM32 likely NEVER runs its recovery code — and that is
+now PROVEN with counters (AM32 uart_control commit 579a893, SPK line
+dsy=/bt= fields, keepalive-correct ladder on a fresh boot):
+
+- Full 60->100 % ladder (1631->2308 Hz, 4.0 A) with every commanded
+  transit including 100->70->100 swings: ZERO recovery-counter
+  movement while running. AM32's desync/backstop paths are dead code
+  in normal operation. It never needs recovery because it NEVER
+  MISSES.
+- The only in-run bumps correlated 1:1 with keepalive byte-drop
+  input glitches (a lost '6' turns '60' into a 0 % command for
+  0.8 s) — which AM32 ALSO rides through inaudibly, but that is an
+  input event, not a ZC miss.
+
+**Therefore the target is the MISS, i.e. the blind window.** Our
+NOZ d=0 signature means the comparator saw nothing: the ZC of an
+accelerating rotor drifts early, into the ~20 us commutation-ISR
+blind zone (LPTIM2 ISR ~1570 cyc + mux settle at window open) and
+ahead of the gate. At 100 us intervals that blind zone is ~20 % of
+every window, positioned exactly where a climbing rotor's ZC
+arrives. AM32's equivalent blind time is a fraction of ours (TIM16
+one-pulse, no close_float_window/serialize work in the commutation
+ISR, 0.5 us grain).
+
+Attack list (latency/blind-window work, in order):
+1. Measure the miss position directly: instrument the NOZ path with
+   where-the-level-sat (pre-crossed vs never-crossed) + time from
+   window open to first edge on the misses that DO see edges.
+2. Shrink the commutation-ISR blind zone: move close_float_window
+   out of the LPTIM2 ISR (lock-free MPSC or deferred serialize -
+   the earlier deferral failed on struct size, not on principle),
+   pre-arm the comparator before actuation, mux earlier.
+3. Gate position under acceleration: allow early ZCs (AM32's rule
+   is elapsed > avg/2 with NO late bound - our 30 % window-start
+   gate discards an early ZC edge and then the level never
+   transitions again = NOZ d=0).
+4. The recovery-re-ramp softening (the v1 decision) stays on the
+   shelf as a second-line mitigation only - fixing it first would
+   mask the miss signal the counters give us.
+
+The recovery-side observation from the first cut (reseed exit at 6
+accepts + 16 %/ms re-ramp = multi-amp surge) remains true and
+documented above - it is the amplifier, not the cause.
