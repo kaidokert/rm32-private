@@ -460,3 +460,27 @@ every boot) named iwdg=1 in-capture both times.
   B's effective crossing, mux settle on PA5, or B-window confirm
   interplay) - the concrete next target for the crest-bound gap
   vs AM32.
+
+## 2026-07-18 — pin/PWM config diff vs AM32: EXONERATED
+
+Operator question: is the phase-B signature a pin-config
+difference? Answer via live register diff (scripts/pin_reg_dump.py,
+both firmwares flashed + dumped same hour):
+
+- ALL six motor pins (PA8/PA7, PA9/PB0, PA10/PB1) and ALL four
+  comparator inputs (PA4/PA5/PB7/PB4): MODER, OSPEEDR, PUPDR,
+  OTYPER, AF byte-identical between minz and AM32.
+- TIM1 CR1/CCMR1/CCMR2/CCER/PSC/ARR/BDTR: identical (dead-time,
+  PWM mode, carrier - all matched).
+- The only diffs are deliberate non-motor items: PA2 (USART2-RX
+  swap vs DSHOT input), PB3 (scope trigger vs WS2812), TIM1.CR2
+  (our injected-ADC TRGO2), and COMP2 INMESEL = mux position at
+  dump time (state, not config).
+
+The phase-B escape signature is therefore NOT static configuration.
+Remaining candidates: runtime/software sequencing per phase (mux
+switch timing, per-port role-flip ordering, window handling) or
+the sense network's physical per-phase tolerances interacting with
+OUR acceptance specifically (AM32 shares the network and holds the
+bound - so if it is the network, the difference is in how the two
+loops respond to the same shifted crossing).
