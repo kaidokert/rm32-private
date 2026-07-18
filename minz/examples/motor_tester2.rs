@@ -783,6 +783,18 @@ const R5_CNT_BLANK: bool = true;
 /// accept route there). BLD bb events outside reseed become a
 /// CANARY: the inverted loop can be late, never blind.
 const ZC_CLOCKED: bool = true;
+/// PARKED 2026-07-18 morning (lineage conviction): the bounded-wait
+/// step + level-rescue + in-hold duty cut - each individually
+/// bench-validated - SUM to a loop that fights itself. Same-hour
+/// triple: AM32 flies 100% (hardware exonerated); pre-rescue
+/// control 7a4b77f locks the full ladder to 76 first-try; the full
+/// lineage dies sub-60. Retrospective: the dead-window stall that
+/// justified the arc was captured J-ARMED (tautopsy5) - the
+/// microscope perturbs the loop and may have amplified the very
+/// phenomenon the machinery was built to fix. Counters stay live
+/// as observers. Re-open only with J-free evidence of the
+/// dead-window class.
+const RESCUE_MACHINERY: bool = false;
 /// Reseed chain kicks: the inverted chain is silent when a reseed
 /// triggers, so reseed entry must arm the first crawl shot itself.
 static RESEED_KICKS: AtomicU32 = AtomicU32::new(0);
@@ -814,6 +826,20 @@ static RESCUE_LATE: AtomicU32 = AtomicU32::new(0);
 /// Max mid-ON current raw observed AT a rescue fire (per-hold peak
 /// self-report; swap-on-read at the i-echo as rimax=).
 static RESCUE_I_MAX: AtomicU16 = AtomicU16::new(0);
+/// IN-HOLD DUTY CUT state: set by TIM1_UP when a hold passes 1.0x
+/// interval with no qZC (duty slammed to floor before the pump can
+/// reach lethal scale); cleared at the next commutation; TIM7's amp
+/// pipeline holds the floor while set.
+static WAIT_CUT_ACTIVE: AtomicBool = AtomicBool::new(false);
+static WAIT_CUT_COUNT: AtomicU32 = AtomicU32::new(0);
+static PRE_CUT_DUTY: AtomicU16 = AtomicU16::new(0);
+/// Cuts resolved by a REAL accept (the hold was legit-late, not
+/// dead): duty restored instantly - the rotor never slowed, so
+/// this removes a us-scale dip rather than stepping into a slowed
+/// rotor (whcut2/3 lesson: legit-late and dead distributions
+/// OVERLAP in time during climbs; discriminate after the fact via
+/// SHOT_REFINED instead of guessing in advance).
+static WAIT_CUT_FALSE: AtomicU32 = AtomicU32::new(0);
 
 // ---- R6: self-paced polling start (minz_core::start) ----
 // `Y` arms it from standstill: duty pinned at R6_START_AMP, sector
@@ -2385,7 +2411,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} wmax={} rlate={} rimax={} cls: lost={} retry={} dur={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} wmax={} rlate={} rimax={} wcut={}/{} cls: lost={} retry={} dur={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2415,6 +2441,8 @@ fn main() -> ! {
                                 CL_WAIT_MAX_US.swap(0, Ordering::Relaxed),
                                 RESCUE_LATE.load(Ordering::Relaxed),
                                 RESCUE_I_MAX.swap(0, Ordering::Relaxed),
+                                WAIT_CUT_COUNT.load(Ordering::Relaxed),
+                                WAIT_CUT_FALSE.load(Ordering::Relaxed),
                                 CLOSE_LOST.load(Ordering::Relaxed),
                                 CLOSE_RETRY.load(Ordering::Relaxed),
                                 DUR_CLOSE.load(Ordering::Relaxed),
@@ -2858,6 +2886,14 @@ fn TIM7() {
             };
             // R3: hold the reseed floor while re-acquiring.
             let amp = if RESEED_ACTIVE.load(Ordering::Relaxed) {
+                amp.min(minz_core::guards::RESEED_AMP_PCT)
+            } else {
+                amp
+            };
+            // In-hold duty cut: keep the floor while the hold
+            // persists (this 6 kHz writer must not restore duty
+            // mid-hold; cleared at the next commutation).
+            let amp = if WAIT_CUT_ACTIVE.load(Ordering::Relaxed) {
                 amp.min(minz_core::guards::RESEED_AMP_PCT)
             } else {
                 amp
@@ -3545,6 +3581,22 @@ fn LPTIM2() {
     CURRENT_SECTOR.store(sector, Ordering::Relaxed);
     // --- STAMP (AM32-shape: the fabric thinks, we only record) ---
     CL_COMM_COUNT.fetch_add(1, Ordering::Relaxed);
+    // In-hold cut resolution: a REFINED commutation (armed by a
+    // real accept - the rescue never sets SHOT_REFINED) means the
+    // hold was legit-late: restore the pre-cut duty INSTANTLY (the
+    // rotor never slowed; this removes a us-dip, not a step).
+    // Rescue-driven commutations keep the floor + slew restore.
+    if WAIT_CUT_ACTIVE.swap(false, Ordering::Relaxed) {
+        let refined_peek = SHOT_REFINED.load(Ordering::Relaxed);
+        if refined_peek {
+            let d = PRE_CUT_DUTY.load(Ordering::Relaxed);
+            if d > 0 {
+                SLEW_LAST_DUTY.store(d, Ordering::Relaxed);
+                tim1_motor_pwm::set_duty(d);
+            }
+            WAIT_CUT_FALSE.fetch_add(1, Ordering::Relaxed);
+        }
+    }
     let (now_10, now_us) = ticks_both();
     CLOSED_PREV.store(prev, Ordering::Relaxed);
     CLOSED_REFINED.store(
@@ -4071,7 +4123,8 @@ fn TIM1_UP_TIM16() {
         // re-times the chain. No estimator update, no starvation-
         // watchdog feed (a stalled rotor must still starve out).
         let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
-        if ZC_CLOCKED
+        if RESCUE_MACHINERY
+            && ZC_CLOCKED
             && CL_FAST_PATH.load(Ordering::Relaxed)
             && CL_AM32_GEOM.load(Ordering::Relaxed)
             && iv > 0
@@ -4093,6 +4146,21 @@ fn TIM1_UP_TIM16() {
             {
                 let lc = LAST_COMM_10US.load(Ordering::Relaxed);
                 let since = minz_core::guards::since_us(ticks_10us(), lc);
+                // IN-HOLD DUTY CUT (guards::wait_cut_due): slam the
+                // floor at 1.0x interval, BEFORE the 1.25x step -
+                // a bounded hold hit 9.7 A (rimax=379) because
+                // current outruns any time bound at ~2.5 A/cycle.
+                if minz_core::guards::wait_cut_due(since, iv) {
+                    let floor = max_duty() / 100 * minz_core::guards::RESEED_AMP_PCT;
+                    if SLEW_LAST_DUTY.load(Ordering::Relaxed) > floor {
+                        PRE_CUT_DUTY
+                            .store(SLEW_LAST_DUTY.load(Ordering::Relaxed), Ordering::Relaxed);
+                        SLEW_LAST_DUTY.store(floor, Ordering::Relaxed);
+                        tim1_motor_pwm::set_duty(floor);
+                        WAIT_CUT_ACTIVE.store(true, Ordering::Relaxed);
+                        WAIT_CUT_COUNT.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
                 if since > iv + iv / 4 {
                     // Publish the synthesized qZC (window not NOZ,
                     // reacq spiral broken) and fire the shot.

@@ -15,11 +15,7 @@ pwm48 = []
 # `cd core && cargo test` runs its suite on the host.
 minz-core = { path = "core" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
-# paint-stack REMOVED: its ascending fill assumes stack+statics share
-# one region; with the stack in SRAM2 it painted from end-of-bss toward
-# 0x10004000 = never-terminating -> walked off mapped RAM -> imprecise
-# bus fault, dead boot (tautopsy8/9 incident).
-cortex-m-rt = { version = "0.7.5", features = ["device", "set-vtor"] }
+cortex-m-rt = { version = "0.7.5", features = ["paint-stack", "device", "set-vtor"] }
 embedded-hal = "1.0"
 fugit = { version = "0.3" }
 heapless = { version = "0.9.3", features= ["portable-atomic"] }

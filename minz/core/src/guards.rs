@@ -96,6 +96,28 @@ pub fn wait_amp_clamp(amp: u16, since_qzc_us: u32, interval_us: u32) -> u16 {
     }
 }
 
+/// IN-HOLD DUTY CUT predicate (wait clamp v2, autopsy-derived): a
+/// healthy accept lands ~0.5x interval into its window and the next
+/// commutation by ~1.0x - past 1.0x with no qZC the hold is already
+/// abnormal, and at the measured ~2.5 A/PWM-cycle pump rate the
+/// duty must cut BEFORE the 1.25x bounded-wait step (rimax=379 =
+/// 9.7 A inside a time-bounded hold; fstart1). The parked v1 clamp
+/// keyed at 2.5x - too LATE, not too eager - and cut 50 % - too
+/// weak. False-fire surface: a legit late accept in (1.0x, 1.25x)
+/// costs one floor-duty window, self-restoring - early, deep, and
+/// cheap to be wrong about.
+/// whcut2 autopsy: at 1.0x the threshold had ZERO margin against
+/// the estimator's climb lag (~3% - estimate 146 vs actual 150 us),
+/// so the cut fired EVERY window at ~1130 Hz (wcut=98, rsq=0,
+/// slew=1657) and the loop strangled itself to a sag at floor duty.
+/// 1.125x sits above the lag band (~1.05x) and below the 1.25x
+/// step; the cap moves ~3A -> ~4-5A, still far under the 9.7A the
+/// cut exists to prevent.
+#[inline]
+pub fn wait_cut_due(since_comm_us: u32, interval_us: u32) -> bool {
+    interval_us != 0 && since_comm_us > interval_us + interval_us / 8
+}
+
 pub fn cl_watchdog_r3(
     interval_us: u32,
     since_last_qzc_us: u32,
@@ -982,6 +1004,17 @@ mod tests {
     }
 
     // ---- sag_step (atomic-backed adoption path) ----
+
+    #[test]
+    fn wait_cut_fires_past_one_interval_only() {
+        // 1.125x threshold: the estimator's climb-lag band
+        // (~1.02-1.05x) must NOT fire (whcut2 strangle incident).
+        assert!(!wait_cut_due(105, 100));
+        assert!(!wait_cut_due(112, 100));
+        assert!(wait_cut_due(113, 100));
+        // unseeded estimator: never (engage regime).
+        assert!(!wait_cut_due(10_000, 0));
+    }
 
     #[test]
     fn wait_clamp_halves_then_quarters_with_wait_length() {

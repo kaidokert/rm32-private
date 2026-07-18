@@ -275,3 +275,37 @@ restore on the next real accept. This is the parked wait clamp
 reborn with the autopsy-derived threshold: the old 2.5x-interval
 key was too LATE (not too eager) and its 50 % cut too weak. The
 rescue keeps the chain alive; the cut keeps the hold survivable.
+
+## 2026-07-18 morning — the in-hold duty cut arc: PARKED, lineage CONVICTED
+
+The spec was implemented and iterated three times, each fail
+autopsied immediately:
+- 1.0x threshold: fired EVERY window at ~1130 Hz (wcut=98, rsq=0,
+  slew=1657) - the estimator's ~3 % climb lag means since_comm
+  naturally exceeds 1.0x estimate; the loop strangled itself at
+  floor duty (sag bb: perfect 146-150 us chains at the kill).
+- 1.125x: still 56 false-fires per 1 real dead window - the
+  legit-late and dead-window distributions OVERLAP in time during
+  climbs; no advance threshold separates them.
+- Instant-restore on SHOT_REFINED (discriminate after the fact;
+  false fires cost ~us): machinery finally correct (wcut=42/42
+  all-false, slew normal) - and the climb STILL died sub-60 with
+  every instrument quiet.
+
+**The same-hour triple that ended the arc:**
+1. AM32 sweep: 100 % / 2325 Hz / 4.13 A / zero spikes - hardware,
+   motor, prop, supply all exonerated on demand.
+2. Pre-rescue control (7a4b77f): first-try engage, full ladder
+   through 76.
+3. The full rescue+cut lineage: died sub-60 the same hour.
+
+**Verdict: the bounded-wait step + level-rescue + in-hold cut -
+each individually bench-validated - SUM to a loop that fights
+itself.** Parked behind RESCUE_MACHINERY=false; parity restored
+(parked1: control band, first-try engage). Counters (wmax/rlate/
+rimax/wcut) stay live as observers. Retrospective caution: the
+dead-window stall that justified the arc (tautopsy5 ring) was
+captured J-ARMED - the microscope perturbs the loop and may have
+amplified the phenomenon. Re-open only on J-free evidence of the
+dead-window class (the observers will show it: wmax/rlate move
+while rsq/wcut stay 0).
