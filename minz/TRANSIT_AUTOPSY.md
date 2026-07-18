@@ -484,3 +484,30 @@ the sense network's physical per-phase tolerances interacting with
 OUR acceptance specifically (AM32 shares the network and holds the
 bound - so if it is the network, the difference is in how the two
 loops respond to the same shifted crossing).
+
+## 2026-07-18 — HOW the pins toggle: the drive-mode difference
+
+Operator question answered (phaseouts.c + targets.h + eeprom
+default verified): with comp_pwm=1 (shipped default), AM32's PWM
+role = high pin ALTERNATE (TIM1) + **low pin GPIO OUTPUT driven
+STATICALLY HIGH** - the FD6288's internal interlock + dead-time
+does the complementary switching. Their TIM1 CCxN outputs never
+reach the pads while driving (low pins not in AF). We drive true
+timer-complementary (CHx + CHxN AF, DTG=45 = 562ns). Invisible in
+idle register dumps - a RUNTIME MODER difference only.
+
+Implications: (1) our LIN pins switch at 24 kHz on every driven
+phase, theirs are DC - every LIN edge couples into the shared BEMF
+divider network, per-phase-asymmetric by layout (a candidate for
+the phase-B escape concentration); (2) dead-time source differs
+(562 ns DTG vs FD6288-internal); (3) their commutation order is
+FLOAT -> LOW -> PWM under __disable_irq.
+
+Priority question: materially equivalent (their COM_TIMER ISR at
+NVIC 0 == their COMP, global mask during writes; our LPTIM2 at 1
+== our COMP, interrupt::free around the role flip).
+
+TESTABLE: one change to set_phase_roles (Pwm role: low pin
+OUTPUT-high instead of AF) = byte-for-byte AM32 actuation
+semantics. A/B ladder + MZT sawtooth/escape overlay answers
+whether the low-side switching is the crest-bound gap.
