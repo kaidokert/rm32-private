@@ -125,20 +125,39 @@ impl UartTxWriter {
         self.inflight = contig;
     }
 
-    /// Enqueue a byte slice without dropping: spin `service` whenever
-    /// the ring is full. Ordering vs earlier `write!` output is free
-    /// (single ring). Returns once everything is *enqueued* — the tail
-    /// of the data may still be draining by DMA afterwards, which is
-    /// fine because all output goes through the same ring.
+    /// Enqueue a byte slice, spinning `service` while the ring is
+    /// full — but BOUNDED: if the DMA fails to drain for ~50 ms the
+    /// remainder is dropped and counted in `TX_DROPPED`. The old
+    /// unbounded spin never refreshed the IWDG, so a stalled or
+    /// non-completing DMA transfer became the telemetry-load IWDG
+    /// REBOOT class (reviewer audit 2026-07-18). Telemetry loss is
+    /// recoverable; a watchdog reset mid-run is not.
     pub fn write_blocking(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            while !self.push(b) {
-                self.service();
+        for (i, &b) in bytes.iter().enumerate() {
+            if !self.push(b) {
+                let t0 = cortex_m::peripheral::DWT::cycle_count();
+                loop {
+                    self.service();
+                    if self.push(b) {
+                        break;
+                    }
+                    if cortex_m::peripheral::DWT::cycle_count().wrapping_sub(t0) > 4_000_000 {
+                        TX_DROPPED.fetch_add(
+                            (bytes.len() - i) as u32,
+                            core::sync::atomic::Ordering::Relaxed,
+                        );
+                        return;
+                    }
+                }
             }
         }
         self.service();
     }
 }
+
+/// Bytes dropped by the bounded `write_blocking` timeout. Nonzero
+/// means the DMA stalled ≥50 ms — the condition that used to reboot.
+pub static TX_DROPPED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 impl core::fmt::Write for UartTxWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {

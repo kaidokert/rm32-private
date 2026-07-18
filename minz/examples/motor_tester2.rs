@@ -452,6 +452,25 @@ static SECTOR_EDGE_COUNT: [[AtomicU32; 12]; 2] = [
 /// dump still has a 60° partitioning to chunk on.
 static CURRENT_SECTOR: AtomicU8 = AtomicU8::new(0);
 
+/// Per-sector pre-accept rejection census (reviewer audit 2026-07-18):
+/// localizes WHICH veto rejects (or delays) an edge, per sector, so
+/// the B-window (s1/s4) escape concentration can be attributed to a
+/// specific layer instead of "minz missed it". Cumulative; host
+/// scripts diff across `i` reads. b=blank g=gate p=persistence-fail
+/// d=deferred-to-confirm x=confirm-discard s=gen-stale.
+const CEN_ZERO: AtomicU32 = AtomicU32::new(0);
+static CEN_BLANK: [AtomicU32; 6] = [CEN_ZERO; 6];
+static CEN_GATE: [AtomicU32; 6] = [CEN_ZERO; 6];
+static CEN_PERSIST: [AtomicU32; 6] = [CEN_ZERO; 6];
+static CEN_DEFER: [AtomicU32; 6] = [CEN_ZERO; 6];
+static CEN_DISCARD: [AtomicU32; 6] = [CEN_ZERO; 6];
+static CEN_STALE: [AtomicU32; 6] = [CEN_ZERO; 6];
+
+fn cen_bump(cen: &[AtomicU32; 6]) {
+    let s = (CURRENT_SECTOR.load(Ordering::Relaxed) & 7).min(5) as usize;
+    cen[s].fetch_add(1, Ordering::Relaxed);
+}
+
 /// When `true`, the TIM7 ISR skips `ACTIVE_HALF` flips and
 /// `SECTOR_BOUNDARIES` updates so the frozen half stays intact.
 /// Set / cleared by the `E` key. Motor keeps running in either state.
@@ -2507,6 +2526,26 @@ fn main() -> ! {
                                 DUR_CLOSE.load(Ordering::Relaxed),
                             )
                             .ok();
+                            for (tag, cen) in [
+                                ("b", &CEN_BLANK),
+                                ("g", &CEN_GATE),
+                                ("p", &CEN_PERSIST),
+                                ("d", &CEN_DEFER),
+                                ("x", &CEN_DISCARD),
+                                ("s", &CEN_STALE),
+                            ] {
+                                write!(&mut tx_writer, "cen {}:", tag).ok();
+                                for c in cen.iter() {
+                                    write!(&mut tx_writer, " {}", c.load(Ordering::Relaxed)).ok();
+                                }
+                            }
+                            write!(
+                                &mut tx_writer,
+                                " txdrop={}
+",
+                                minz::uart_tx::TX_DROPPED.load(Ordering::Relaxed),
+                            )
+                            .ok();
                         }
                         last_i_miss = now_miss;
                         last_i_tick = now_tick;
@@ -4172,6 +4211,8 @@ fn TIM1_UP_TIM16() {
                 free(|_| {
                     if minz_core::zc::accept_gen_current(&ZC_STATE, gen_snap) {
                         accept_qualified_zc(zc_us);
+                    } else {
+                        cen_bump(&CEN_STALE);
                     }
                 });
             }
@@ -4179,6 +4220,7 @@ fn TIM1_UP_TIM16() {
                 confirms,
                 cl_active,
             } => {
+                cen_bump(&CEN_DISCARD);
                 if cl_active {
                     bb_record(minz_core::blackbox::EV_DIS, cur_sec, confirms as u16);
                 }
@@ -4401,6 +4443,7 @@ fn COMP() {
             since_cyc < blank_us * 80
         };
         if in_blank {
+            cen_bump(&CEN_BLANK);
             COMP_COUNT.fetch_add(1, Ordering::Relaxed);
             WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
             let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
@@ -4486,6 +4529,7 @@ fn COMP() {
         elapsed >= SECTOR_GATE_US.load(Ordering::Relaxed)
     };
     if !gate_ok {
+        cen_bump(&CEN_GATE);
         COMP_COUNT.fetch_add(1, Ordering::Relaxed);
         WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
         record_edge_diag(now_10);
@@ -4530,7 +4574,11 @@ fn COMP() {
                 == minz_core::zc::HeldEdge::AcceptNow
             {
                 accept_qualified_zc(now_us);
+            } else {
+                cen_bump(&CEN_DEFER);
             }
+        } else {
+            cen_bump(&CEN_PERSIST);
         }
     }
     // Diagnostics for gate-surviving edges — identical stores to the
