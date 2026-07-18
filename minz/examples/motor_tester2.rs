@@ -684,6 +684,8 @@ static LAST_COMM_10US: AtomicU32 = AtomicU32::new(0);
 static LAST_QZC_10US: AtomicU32 = AtomicU32::new(0);
 /// Selects the starvation message in the shared desync report path.
 static CL_STARVED: AtomicBool = AtomicBool::new(false);
+/// Kills fired by the comm-silence zombie backstop (printed as zbk=).
+static ZOMBIE_BACKSTOP_KILLS: AtomicU32 = AtomicU32::new(0);
 
 /// SWIFT — AM32-style edge-timestamped fast path (`M` key). When ON
 /// and the loop is LOCKED, a comparator edge that passes the gate +
@@ -1198,6 +1200,14 @@ static BEACON_MAIN: AtomicU32 = AtomicU32::new(0);
 static BEACON_ISR: AtomicU32 = AtomicU32::new(0);
 #[unsafe(link_section = ".uninit.beacon")]
 static BEACON_PHASE: AtomicU32 = AtomicU32::new(0);
+#[unsafe(link_section = ".uninit.beacon")]
+static BEACON_T7: AtomicU32 = AtomicU32::new(0);
+#[unsafe(link_section = ".uninit.beacon")]
+static BEACON_LP2: AtomicU32 = AtomicU32::new(0);
+#[unsafe(link_section = ".uninit.beacon")]
+static BEACON_COMP: AtomicU32 = AtomicU32::new(0);
+#[unsafe(link_section = ".uninit.beacon")]
+static BEACON_CC: AtomicU32 = AtomicU32::new(0);
 const BEACON_VALID: u32 = 0xBEAC_0217;
 
 /// Commutation advance in degrees — cycled by the `t` key through
@@ -1244,13 +1254,25 @@ use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 /// LAST also sees the new HIGH (its double-HIGH read then agrees).
 #[inline(always)]
 fn cyc_extend(now_cyc: u32) {
-    if now_cyc < CYC_LAST.load(Ordering::Relaxed) {
+    // STORE ORDER IS LOAD-BEARING (the 53.7 s IWDG reboot class,
+    // beacon-solved 2026-07-18): with HIGH bumped BEFORE LAST, a
+    // reader landing between the stores saw new-HIGH + old-large-
+    // LAST and its cyc<last compensation double-counted the wrap -
+    // time jumped FORWARD 53.7 s, main's microloop pacing spun
+    // toward the inflated boundary with the IWDG refresh outside
+    // the spin, reset at wrap+1s (beacon: main die at 53.66 s, isr
+    // beat 1.008 s post-glitch). LAST-first makes the worst race a
+    // single BACKWARD-glitched read: boundary checks exit early
+    // instead of spinning, delta consumers clamp, and the clkback
+    // tripwire counts it.
+    let last = CYC_LAST.load(Ordering::Relaxed);
+    CYC_LAST.store(now_cyc, Ordering::Relaxed);
+    if now_cyc < last {
         CYC_HIGH.store(
             CYC_HIGH.load(Ordering::Relaxed).wrapping_add(1),
             Ordering::Release,
         );
     }
-    CYC_LAST.store(now_cyc, Ordering::Relaxed);
 }
 
 /// 64-bit monotonic cycle count from DWT.CYCCNT + the software wrap
@@ -1319,6 +1341,20 @@ fn main() -> ! {
     static mut WREC_QUEUE: WrecQueue = Queue::new();
     static mut PEND_QUEUE: PendQueue = Queue::new();
     static mut ZT_QUEUE: ZtQueue = Queue::new();
+    // FLIGHT-RECORDER SNAPSHOT - very first thing, before any
+    // peripheral/ISR can overwrite the .uninit words (v1 printed
+    // them after the ~1 s idle calibration, by which time the
+    // fresh session's TIM1_UP had already clobbered BEACON_ISR -
+    // both reboot beacons showed isr=1.008s = the cal duration).
+    let snap_magic = BEACON_MAGIC.load(Ordering::Relaxed);
+    let snap_main = BEACON_MAIN.load(Ordering::Relaxed);
+    let snap_isr = BEACON_ISR.load(Ordering::Relaxed);
+    let snap_phase = BEACON_PHASE.load(Ordering::Relaxed);
+    let snap_t7 = BEACON_T7.load(Ordering::Relaxed);
+    let snap_lp2 = BEACON_LP2.load(Ordering::Relaxed);
+    let snap_comp = BEACON_COMP.load(Ordering::Relaxed);
+    let snap_cc = BEACON_CC.load(Ordering::Relaxed);
+    BEACON_MAGIC.store(0, Ordering::Relaxed);
     let cp = cortex_m::Peripherals::take().unwrap();
     let dp = stm32::Peripherals::take().unwrap();
     let BoardInit {
@@ -1685,18 +1721,20 @@ fn main() -> ! {
         rcc.csr.modify(|_, w| w.rmvf().set_bit());
         // Flight-recorder readout: only meaningful when the previous
         // session armed the magic (RAM survives non-POR resets).
-        if BEACON_MAGIC.load(Ordering::Relaxed) == BEACON_VALID {
-            let bm = BEACON_MAIN.load(Ordering::Relaxed);
-            let bi = BEACON_ISR.load(Ordering::Relaxed);
+        if snap_magic == BEACON_VALID {
+            let bm = snap_main;
+            let bi = snap_isr;
             write!(
                 &mut tx_writer,
-                "beacon: main={} isr={} d10us={} phase={}
-
-",
+                "beacon: main={} isr={} d10us={} phase={} t7={} lp2={} comp={} cc={}\r\n",
                 bm,
                 bi,
                 bi.wrapping_sub(bm),
-                BEACON_PHASE.load(Ordering::Relaxed),
+                snap_phase,
+                snap_t7,
+                snap_lp2,
+                snap_comp,
+                snap_cc,
             )
             .ok();
         }
@@ -1789,7 +1827,12 @@ fn main() -> ! {
             // Slack: spin idle counter until next microloop boundary.
             // ISRs preempt this naturally and steal counter increments;
             // that's exactly how "busy" gets measured.
-            idle_loop.run_until(next_microloop, &now_u64);
+            // Spin-proof (same incident): never chase a boundary
+            // further than 2 microloops from NOW - a clock glitch
+            // (any residual wrap race) then costs one short spin,
+            // never an IWDG starvation.
+            let bound = now_u64().saturating_add(2 * MICROLOOP_TICKS);
+            idle_loop.run_until(next_microloop.min(bound), &now_u64);
 
             // Active-phase duration of this microloop pass (to the
             // end of the loop body) - closes the busy% accounting.
@@ -2600,9 +2643,9 @@ fn main() -> ! {
                             }
                             write!(
                                 &mut tx_writer,
-                                " txdrop={}
-",
+                                " txdrop={} zbk={}\r\n",
                                 minz::uart_tx::TX_DROPPED.load(Ordering::Relaxed),
+                                ZOMBIE_BACKSTOP_KILLS.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2860,21 +2903,37 @@ fn main() -> ! {
             // would desync the host parser; a dropped one just shows
             // as a seq gap.
             BEACON_PHASE.store(3, Ordering::Relaxed);
-            while let Some(rec) = wrec_consumer.dequeue() {
+            // BOUNDED drains (the IWDG reboot class, beacon-solved
+            // 2026-07-18, phase=4): `while let Some = dequeue()` is
+            // unbounded when ISR load starves main below the
+            // producer rate (top-of-climb: ~12k rec/s, cpu 99%) -
+            // the loop never exhausts and the refresh outside it
+            // starves the watchdog. 64/microloop = 64k rec/s cap,
+            // far above any wire rate; excess waits in the queue.
+            for _ in 0..64 {
+                let Some(rec) = wrec_consumer.dequeue() else {
+                    break;
+                };
                 if TX_RING_LEN - 1 - tx_writer.pending() >= minz_core::wire::FRAME_LEN_V5 {
                     for b in rec.encode() {
                         let _ = tx_writer.push(b);
                     }
                 }
             }
-            while let Some(rec) = zt_consumer.dequeue() {
+            BEACON_PHASE.store(4, Ordering::Relaxed);
+            for _ in 0..64 {
+                let Some(rec) = zt_consumer.dequeue() else {
+                    break;
+                };
                 if TX_RING_LEN - 1 - tx_writer.pending() >= 17 {
                     for b in rec {
                         let _ = tx_writer.push(b);
                     }
                 }
             }
+            BEACON_PHASE.store(5, Ordering::Relaxed);
             tx_writer.service();
+            BEACON_PHASE.store(6, Ordering::Relaxed);
 
             next_microloop += MICROLOOP_TICKS;
         }
@@ -2948,6 +3007,7 @@ fn TIM7() {
     // placement does NOT get the rewrite - must live here.
     static mut R6_STATE: minz_core::start::StartState = minz_core::start::StartState::new();
     static mut R6_SEEN_EPOCH: u32 = 0;
+    BEACON_T7.store(ticks_10us(), Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_TIM7);
     // Motor-drive heartbeat (6 kHz). When armed: advance the electrical
     // angle accumulator, commutate (six-step or sine), update polarity
@@ -3179,15 +3239,26 @@ fn TIM7() {
                 last_qzc != 0,
                 RESEED_STRIKES.load(Ordering::Relaxed),
             );
-            let kill = match action {
-                minz_core::guards::WatchdogAction::Kill(k) => Some(k),
-                minz_core::guards::WatchdogAction::Reseed(_why)
-                    if !RESEED_ACTIVE.load(Ordering::Relaxed) =>
-                {
-                    trigger_reseed((starve_us / 10).min(0xFFFF) as u16);
-                    None
+            // ZOMBIE BACKSTOP: raw commutation silence, independent of
+            // every derived reference the r3 watchdog consults (the
+            // mzt_beacon 30 s / 1.5 A DC zombie fired none of them).
+            let zombie = minz_core::guards::comm_silence_backstop(since_us);
+            if zombie {
+                ZOMBIE_BACKSTOP_KILLS.fetch_add(1, Ordering::Relaxed);
+            }
+            let kill = if zombie {
+                Some(minz_core::guards::Kill::Desync)
+            } else {
+                match action {
+                    minz_core::guards::WatchdogAction::Kill(k) => Some(k),
+                    minz_core::guards::WatchdogAction::Reseed(_why)
+                        if !RESEED_ACTIVE.load(Ordering::Relaxed) =>
+                    {
+                        trigger_reseed((starve_us / 10).min(0xFFFF) as u16);
+                        None
+                    }
+                    _ => None,
                 }
-                _ => None,
             };
             if let Some(kind) = kill {
                 let starved = kind == minz_core::guards::Kill::ZcStarved;
@@ -3721,6 +3792,7 @@ static DUR_CLOSE: AtomicU32 = AtomicU32::new(0);
 /// COMP so the two never nest.
 #[interrupt]
 fn LPTIM2() {
+    BEACON_LP2.store(ticks_10us(), Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_LPTIM2);
     minz::lptim2_oneshot::clear_flag();
     if !CL_ACTIVE.load(Ordering::Relaxed) || !MOTOR_ENABLED.load(Ordering::Relaxed) {
@@ -3996,6 +4068,7 @@ fn fabric_close_step() {
 
 #[interrupt]
 fn TIM1_CC() {
+    BEACON_CC.store(ticks_10us(), Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_T1CC);
     // Fires whenever TIM1.CNT matches CCR1 / CCR2 / CCR3 (whichever
     // CCxIE we enabled — see `tim1_motor_pwm::enable_cc_interrupts`).
@@ -4106,6 +4179,22 @@ fn TIM1_UP_TIM16() {
             }
         } else {
             VBAT_SAG_RUN.store(0, Ordering::Relaxed);
+        }
+    }
+    // ZOMBIE BACKSTOP, TIM1_UP COPY (2026-07-18): the TIM7 copy
+    // starves in exactly the ISR-saturation pockets where zombies
+    // form (TIM7 is priority 3; the per-ISR beacon showed it frozen
+    // a full second while TIM1_UP/COMP kept running). This ISR is
+    // priority 2 and provably alive through every recorded pocket,
+    // so the commutation-silence kill must live here too.
+    if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
+        let lc = LAST_COMM_10US.load(Ordering::Relaxed);
+        let since = minz_core::guards::since_us(ticks_10us(), lc);
+        if minz_core::guards::comm_silence_backstop(since) {
+            ZOMBIE_BACKSTOP_KILLS.fetch_add(1, Ordering::Relaxed);
+            minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Desync);
+            tim1_motor_pwm::all_off();
+            comp2::set_exti_enabled(false);
         }
     }
     // Decaying-max vbus estimate — host-tested in minz_core::zc
@@ -4436,6 +4525,7 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP() {
+    BEACON_COMP.store(ticks_10us(), Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_COMP);
     // EXTI line 22 is COMP2's output (COMP1 is line 21, unused here).
     // Ack the pending bit first so the IRQ doesn't immediately re-fire.

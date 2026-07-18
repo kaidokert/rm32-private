@@ -66,6 +66,21 @@ pub const RESEED_MAX_STRIKES: u8 = 4;
 /// (AM32's zero_crosses > 1000 analog — a healthy lock never
 /// accrues strikes).
 pub const RESEED_AMNESTY_ACCEPTS: u32 = 1_000;
+
+/// ZOMBIE BACKSTOP (mzt_beacon incident, 2026-07-18): a CL loop sat
+/// ACTIVE for ~30 s with the commutation chain dead and 1.5 A DC in
+/// a stalled winding - no guard fired. Every existing guard keys on
+/// derived references (qzc chain, reseed state, the rotor-clock
+/// desync fold), each of which can be lied to. This one keys ONLY on
+/// the raw last-commutation timestamp: under CL, commutation silence
+/// beyond this bound is unconditionally dead (engage intervals are
+/// ~1.7 ms; 100 ms = 60x margin) and must kill.
+pub const COMM_SILENCE_BACKSTOP_US: u32 = 100_000;
+
+#[inline]
+pub fn comm_silence_backstop(since_comm_us: u32) -> bool {
+    since_comm_us > COMM_SILENCE_BACKSTOP_US
+}
 /// Commanded-amp floor while reseeding (~AM32's min_startup_duty/2).
 pub const RESEED_AMP_PCT: u16 = 6;
 
@@ -1072,6 +1087,15 @@ mod tests {
         assert!(overcurrent(76, false));
     }
 
+    #[test]
+    fn zombie_backstop_kills_comm_silence_regardless_of_refs() {
+        // The mzt_beacon zombie: accepts/reseed state confused every
+        // derived guard while commutation stood still for 30 s.
+        assert!(!comm_silence_backstop(5_000)); // legit late-ZC wait
+        assert!(!comm_silence_backstop(COMM_SILENCE_BACKSTOP_US));
+        assert!(comm_silence_backstop(COMM_SILENCE_BACKSTOP_US + 1));
+        assert!(comm_silence_backstop(30_000_000)); // the incident
+    }
     #[test]
     fn regression_cl_backstop_rides_the_knee() {
         // The ~2.7 A transitional draw at the amp-51 knee (AM32

@@ -600,3 +600,49 @@ the latency. Predictions: (1) per-window persistence-retry counters
 (instrument decisions!) spike in s1/s4 at escapes; (2) capping
 persistence depth at speed (AM32-style) collapses the s1/s4 crest
 rate. Next bench experiment: persistence-depth A/B at the high rungs.
+
+
+## The IWDG reboot class — beacon-attributed (2026-07-18)
+
+Per-ISR `.uninit` flight recorder (survives the reset) nailed the
+mechanism across 6 instrumented reboots:
+
+- main's IWDG refresh stops while TIM1_UP (prio 2) and COMP (prio 1)
+  keep beating to the reset; TIM7 (prio 3) freezes WITH main.
+- => **ISR CPU saturation pockets**: total load at priority <=2
+  crosses 100% (engage-phase comparator storms ~70k/s at stall;
+  serialize+confirm at climb tops), everything at prio >=3 plus
+  thread mode starves >1 s, IWDG fires. cpu=99% was on the wire in
+  the final pre-death i-echo.
+- The eerie 53.6x s death times were NOT the CYCCNT wrap: with
+  first-try engages the climb profile puts amp 78-80 at ~53 s. A
+  pre-band death at 64.9 s (engage-phase storm) broke the pattern.
+  The wrap-extension store-order race found en route (HIGH bumped
+  before LAST -> reader double-counts the wrap, +53.7 s forward time
+  glitch) was real and is FIXED (LAST-first), just not this killer.
+- Also hardened en route: drains bounded 64/microloop (a starved
+  main's `while let Some = dequeue()` never exhausts against a live
+  producer); run_until target clamped to now+2 microloops (no clock
+  glitch can spin past the refresh); write_blocking bounded (50 ms ->
+  drop + TX_DROPPED).
+- REMAINING WORK (next campaign item): load shedding — AM32-style
+  COMP masking outside windows at stall/open-loop, serialize budget
+  at the top rungs. The reboot class persists until ISR load pockets
+  stay under 100%.
+
+## Zombie + liveness follow-ups (operator goal, all landed)
+
+1. **comms-delta liveness** (mzt_capture.py): mid-run check = record
+   FLOW (records stop when commutation stops); final check = comms
+   counter delta across two reads. The ACTIVE flag is frozen statics
+   and lies on a zombie (the 30 s / 1.5 A mzt_beacon incident).
+2. **i-print exonerated**: 6 rapid i-presses at idle -> t1u maxgap
+   42 us (one PWM period). The print masks nothing; the earlier
+   2.7 ms attribution was wrong (probe/boot artifacts).
+3. **Comm-silence zombie backstop** (`guards::comm_silence_backstop`,
+   100 ms): kills on raw commutation silence under CL, independent of
+   every derived reference (qzc chain / reseed / desync fold — all of
+   which the zombie confused). Runs in BOTH TIM7 and TIM1_UP — the
+   TIM7 copy alone starves in exactly the saturation pockets where
+   zombies form. Counter zbk= in the i-echo; validated no-false-fire
+   at amp 40 CL.

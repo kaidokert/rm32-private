@@ -120,12 +120,18 @@ def main():
         for _ in range(lo - 15):
             key("a", 0.12)
         time.sleep(1.0)
-        m = re.search(r"cl: ACTIVE f_e=(\d+)Hz", key("i", 1.2))
-        if not m:
+        # ZOMBIE LESSON (mzt_beacon): "cl: ACTIVE f_e=" is frozen
+        # statics - it stays ACTIVE with the commutation chain dead
+        # and 1.5 A DC in the winding. Under ZT the honest liveness
+        # is RECORD FLOW (records stop when commutation stops).
+        n1 = len(cap)
+        key("", 1.0)
+        flow = bytes(cap[n1:]).count(b"\x5b\xab")
+        if flow == 0:
             died = True
-            print("DIED pre-band - fatal capture")
+            print("DIED pre-band (no record flow) - fatal capture")
         else:
-            print(f"at {lo}: {m.group(1)}Hz; tracing band climb")
+            print(f"at {lo}: {flow} rec/s; tracing band climb")
             key("", a.dwell)
             for _ in range(hi - lo):
                 key("a", a.step_wait)
@@ -140,8 +146,18 @@ def main():
             for _ in range(3):
                 if "zt trace = off" in key("Z", 0.4):
                     break
-        out = key("i", 1.2)
-        died = "cl: ACTIVE" not in out
+        # comms-DELTA liveness: two reads 1.2 s apart. A zombie
+        # prints ACTIVE forever but its comms counter is frozen.
+        c1 = re.search(r"comms=(\d+)", key("i", 1.5))
+        time.sleep(1.2)
+        c2 = re.search(r"comms=(\d+)", key("i", 1.5))
+        if c1 and c2:
+            died = int(c2.group(1)) <= int(c1.group(1))
+            if died:
+                print(f"ZOMBIE/DEAD: comms frozen at {c2.group(1)}")
+        else:
+            died = True
+            print("liveness unparseable - treating as dead")
         seg = bytes(cap[n0:])
         print("outcome:", "DIED (fatal capture)" if died else "survived")
     finally:
