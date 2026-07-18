@@ -840,6 +840,12 @@ static PRE_CUT_DUTY: AtomicU16 = AtomicU16::new(0);
 /// OVERLAP in time during climbs; discriminate after the fact via
 /// SHOT_REFINED instead of guessing in advance).
 static WAIT_CUT_FALSE: AtomicU32 = AtomicU32::new(0);
+/// J-FREE per-hold current observer: peak mid-ON i_raw sampled by
+/// TIM7 while a hold exceeds 1.5x interval (regime-scoped). The
+/// J-armed microscope perturbs the loop; this observer does not -
+/// it closes the gap that left the J-free dead-window class
+/// current-blind (parked1: wmax=370/rlate=3 with no current data).
+static HOLD_I_MAX: AtomicU16 = AtomicU16::new(0);
 
 // ---- R6: self-paced polling start (minz_core::start) ----
 // `Y` arms it from standstill: duty pinned at R6_START_AMP, sector
@@ -2411,7 +2417,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} wmax={} rlate={} rimax={} wcut={}/{} cls: lost={} retry={} dur={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} wmax={} rlate={} rimax={} himax={} wcut={}/{} cls: lost={} retry={} dur={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2441,6 +2447,7 @@ fn main() -> ! {
                                 CL_WAIT_MAX_US.swap(0, Ordering::Relaxed),
                                 RESCUE_LATE.load(Ordering::Relaxed),
                                 RESCUE_I_MAX.swap(0, Ordering::Relaxed),
+                                HOLD_I_MAX.swap(0, Ordering::Relaxed),
                                 WAIT_CUT_COUNT.load(Ordering::Relaxed),
                                 WAIT_CUT_FALSE.load(Ordering::Relaxed),
                                 CLOSE_LOST.load(Ordering::Relaxed),
@@ -2965,6 +2972,14 @@ fn TIM7() {
                 }
                 if since_us > (interval_us + interval_us / 4) * 2 {
                     RESCUE_LATE.fetch_add(1, Ordering::Relaxed);
+                }
+                // Per-hold current observer (J-free): sample the
+                // injected mid-ON current while a hold runs.
+                if since_us > interval_us + interval_us / 2 {
+                    let ir = LAST_I_RAW.load(Ordering::Relaxed);
+                    if ir > HOLD_I_MAX.load(Ordering::Relaxed) {
+                        HOLD_I_MAX.store(ir, Ordering::Relaxed);
+                    }
                 }
             }
             // R3 exit/amnesty poll (est_acc delta vs snapshot; off
