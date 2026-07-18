@@ -343,3 +343,24 @@ period lag first? does its deadline exit the viable window? does
 AM32 accept an edge minz rejects? or does minz schedule correctly
 but apply the wrong drive state/duty? The FIRST divergence is the
 bug class; the 11 A hold and sag are aftermath.
+
+## 2026-07-18 — AM32-side trace emitter LANDED + the reference envelope
+
+ZC_TRACE (AM32 uart_control, fully #ifdef-gated, unperturbed build
+byte-identical): per-commutation canonical record from the COM_TIMER
+ISR. Capture tooling: scripts/zctrace_capture.py. Perturbation-
+checked at the trace regime (60%: behavior == baseline); >85%
+throttle saturates the wire by design (not needed - the experiment
+targets 60->80).
+
+**First capture, 262,147 records through the 60->80 climb - the
+reference envelope for the differential:**
+- raw period vs estimate: mean +0.40%, sd 5.4%, p1 -9.8%, p99 +9.3%
+- raw > estimate+12.5% (minz's wait-cut band): 1 event in 262k
+- raw > estimate+25% (minz's step bound): ZERO events
+
+AM32 never opens anything resembling our dead windows in this band.
+Our loop logs rlate=3 (holds >2.5x interval) and 7-20 rescues per
+fatal climb in the same band. The differential's remaining half:
+emit the same record from minz over the same climb and find where
+our period-vs-estimate tail is born.
