@@ -243,9 +243,65 @@ pub fn duty_slew(
     }
 }
 
+/// R4 — AM32's variable_pwm carrier map (main.c:2131, converted to
+/// µs): `arr = map(interval_us, 48, 100, base/2, base)`. Below 48 µs
+/// the carrier is 48 kHz (arr = base/2); above 100 µs it is the base
+/// 24 kHz. Between, it interpolates — ripple current shrinks exactly
+/// as the windows tighten through the danger band.
+#[inline]
+pub fn carrier_arr(interval_us: u32, base_arr: u16) -> u16 {
+    let half = base_arr / 2;
+    if interval_us == 0 || interval_us >= 100 {
+        base_arr
+    } else if interval_us <= 48 {
+        half
+    } else {
+        // linear: 48..100 -> half..base
+        let span = (base_arr - half) as u32;
+        (half as u32 + span * (interval_us - 48) / 52) as u16
+    }
+}
+
+/// R4a — the sag debounce in SAMPLES for the live carrier: the
+/// proven behavior is ~2.67 ms (64 samples at 24 kHz); the sample
+/// rate is the PWM wrap rate, so at higher carriers the count must
+/// scale or benign 1.5-2 ms dips (ridden through for weeks) start
+/// killing. samples = 2670 µs / wrap_us.
+#[inline]
+pub fn sag_debounce_samples(arr: u16) -> u16 {
+    let wrap_us_x100 = (arr as u32 + 1) * 100 / 80; // 80 MHz timer
+    ((267_000 / wrap_us_x100.max(1)) as u16).max(16)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn r4_carrier_map_am32_parity() {
+        // 24 kHz base ARR 3332: >=100 us stays 24 kHz; <=48 us full
+        // 48 kHz; ~74 us = midpoint (~32 kHz); 90 us ~ 27 kHz-ish
+        // (AM32 measured ~27 kHz at 1900 Hz).
+        assert_eq!(carrier_arr(0, 3332), 3332);
+        assert_eq!(carrier_arr(200, 3332), 3332);
+        assert_eq!(carrier_arr(48, 3332), 1666);
+        assert_eq!(carrier_arr(30, 3332), 1666);
+        let mid = carrier_arr(74, 3332);
+        assert!((2470..=2530).contains(&mid), "mid {mid}");
+        let a90 = carrier_arr(90, 3332);
+        let f90 = 80_000_000 / (a90 as u32 + 1);
+        assert!((26_000..=28_500).contains(&f90), "f90 {f90}");
+    }
+
+    #[test]
+    fn r4a_sag_samples_scale_with_carrier() {
+        // 24 kHz (ARR 3332): ~64 samples = the proven 2.67 ms.
+        let s24 = sag_debounce_samples(3332);
+        assert!((62..=66).contains(&s24), "{s24}");
+        // 48 kHz (ARR 1666): ~128 samples = the same 2.67 ms.
+        let s48 = sag_debounce_samples(1666);
+        assert!((124..=132).contains(&s48), "{s48}");
+    }
 
     #[test]
     fn r1_slew_matches_am32_transit_shape() {

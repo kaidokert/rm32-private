@@ -623,8 +623,8 @@ mod tests {
             (u32::MAX, u32::MAX, true, 0, false, 1, 120, true, 0), // miss, high-speed
             (u32::MAX, u32::MAX, true, 1, true, 4, 120, true, 0), // 2nd miss cascade
             (u32::MAX, u32::MAX, true, 0, false, 0, 600, true, 0), // C-window miss (no reacq)
-            (10_300, 10_250, true, 0, false, 5, 600, false, 0),   // stream OFF (no rec)
-            (10_300, 10_250, true, 0, false, 2, 120, true, 3),    // decimated (not 5th)
+            (10_300, 10_250, true, 0, false, 5, 600, false, 0), // stream OFF (no rec)
+            (10_300, 10_250, true, 0, false, 2, 120, true, 3), // decimated (not 5th)
         ];
         for &(qzc, fz, act, noz, reacq, sec, iv, stream, decim) in cases {
             let seed = |r: &Rig| {
@@ -662,7 +662,11 @@ mod tests {
             assert_eq!(ld(&a.qzc_us), ld(&b.qzc_us), "qzc reset");
             assert_eq!(ld(&a.cand_zc_us), ld(&b.cand_zc_us), "cand_zc reset");
             assert_eq!(ld(&a.first_zc_us), ld(&b.first_zc_us), "first_zc reset");
-            assert_eq!(ld(&a.sector_start_us), ld(&b.sector_start_us), "sector_start");
+            assert_eq!(
+                ld(&a.sector_start_us),
+                ld(&b.sector_start_us),
+                "sector_start"
+            );
             assert_eq!(ld(&a.last_comm_10us), ld(&b.last_comm_10us), "last_comm");
             assert_eq!(ld(&a.last_qzc_us), ld(&b.last_qzc_us), "last_qzc");
             assert_eq!(

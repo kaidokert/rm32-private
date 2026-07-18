@@ -256,6 +256,25 @@ pub fn apply_isr_kill(kf: &KillFlags<'_>, kind: IsrKillKind) {
 /// atomic-backed state (baseline + run live in atomics; `trip` tells
 /// the caller to latch the raw and kill). Semantics single-sourced
 /// through SagGuard so its regression suite covers this path.
+/// R4a — sag debounce parameterized by the LIVE carrier's sample
+/// count (timing::sag_debounce_samples): the sample rate is the PWM
+/// wrap rate, so a fixed 64-count debounce would shrink from the
+/// proven 2.67 ms to 1.33 ms at 48 kHz and start killing benign
+/// spike-burst dips the envelope work always rode through.
+pub fn sag_step_scaled(baseline_raw: u16, run: u16, raw: u16, debounce: u16) -> (u16, bool) {
+    let threshold = (baseline_raw - baseline_raw / 10).max(VBAT_ABS_FLOOR_RAW);
+    if raw < threshold {
+        let run = run + 1;
+        if run >= debounce {
+            (0, true)
+        } else {
+            (run, false)
+        }
+    } else {
+        (0, false)
+    }
+}
+
 pub fn sag_step(baseline_raw: u16, run: u16, raw: u16) -> (u16, bool) {
     let mut g = SagGuard {
         baseline_raw,
@@ -879,6 +898,45 @@ mod tests {
         apply_isr_kill(&r.flags(), IsrKillKind::Sag);
         assert!(r.vbat_sagged.load(Relaxed));
         assert!(!r.cl_desync.load(Relaxed) && !r.bb_frozen.load(Relaxed));
+    }
+
+    #[test]
+    fn r4a_sag_step_scaled_matches_legacy_at_64_and_stretches_at_128() {
+        let base = 1000u16;
+        let sagged = 850u16; // below 900 threshold
+        // debounce 64: trips on the 64th consecutive sample, like legacy.
+        let mut run = 0u16;
+        let mut tripped_at = 0u32;
+        for i in 1..=200u32 {
+            let (r, t) = sag_step_scaled(base, run, sagged, 64);
+            run = r;
+            if t {
+                tripped_at = i;
+                break;
+            }
+        }
+        assert_eq!(tripped_at, 64);
+        // debounce 128: rides through 100 samples (a 2 ms dip at
+        // 48 kHz), trips only at 128.
+        let mut run = 0u16;
+        for _ in 0..100 {
+            let (r, t) = sag_step_scaled(base, run, sagged, 128);
+            assert!(!t);
+            run = r;
+        }
+        let mut tripped_at = 100u32;
+        loop {
+            let (r, t) = sag_step_scaled(base, run, sagged, 128);
+            run = r;
+            tripped_at += 1;
+            if t {
+                break;
+            }
+        }
+        assert_eq!(tripped_at, 128);
+        // recovery sample resets the run.
+        let (r, _) = sag_step_scaled(base, 120, base, 128);
+        assert_eq!(r, 0);
     }
 
     // ---- sag_step (atomic-backed adoption path) ----

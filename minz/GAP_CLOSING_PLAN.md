@@ -99,7 +99,40 @@ Expected: transits that die today become sub-100 ms dips.
 Effort ~2 days. Risk medium — validate the reseed can't loop-cycle
 (count reseeds/s; >2/s sustained = the old kill fires).
 
-### R4 — Variable carrier (needs R4a first)
+### R4 — Variable carrier — ATTEMPTED 2026-07-17, PARKED (revisit after R5)
+
+**R4a LANDED**: sag debounce is now carrier-scaled at the proven
+2.67 ms (`timing::sag_debounce_samples` + `guards::sag_step_scaled`,
+live `SAG_DEBOUNCE_LIVE`); `max_duty()` reads the LIVE ARR
+(`tim1_motor_pwm::LIVE_ARR`/`set_carrier_arr`); the TIM1_UP miss
+detector's period follows live ARR. Other sample-counted windows
+(OC 2^11, zombie 12000, burst 8/48) deliberately stay cycle-counted:
+at higher carriers they shrink = STRICTER (safe direction); their
+counters would expose any over-strictness.
+
+**R4 PARKED behind `R4_VAR_CARRIER=false`** after 4 same-session
+bench iterations, each fixing a real integration defect and dying
+earlier than the R4-off control (deaths at amp 70/74/70/70 vs
+control 76; all the known vbat_min 4.6-5.4 V transit-surge class):
+1. r4top1/2: the update block was MIS-PLACED (a 12-space anchor
+   substring-matched the 28-space i-echo handler line) — carrier
+   hopped 6.8 % at echo cadence, steered by reseed-transient
+   intervals, exactly during transits.
+2. r4top3: correct placement (TIM7, stiff-avg-driven, dwell-gated
+   via AMP_STABLE_RUN>=1800, frozen in reseed/burst) but the glide
+   had no deadband — 6 kHz dither (chg=68118), duty floor-erosion.
+3. r4top4, the honest verdict run: deadband 96 + rounding rescale —
+   chg=5, clean settle at 3172 (25.2 kHz) through the amp-66 dwell,
+   climb frozen — and the 66->70 climb STILL died while the
+   same-session control climbed to 76. Climbing with an elevated
+   carrier is net-negative for this loop as-is.
+Sequencing lesson: the plan's own risk note was right — R5's ISR
+headroom (and possibly a stiffer loop) must land first. The
+machinery (map/glide/gates/rescale/restore-above-the-kill-return)
+is correct, tested, and stays in the tree gated off; `carr:` i-line
+telemetry ships live.
+
+#### Original R4 design (kept for the revisit)
 R4a: convert every carrier-relative constant to TIME (sag debounce,
 OC window, census windows — the audit already flagged them as
 sample-counted). Then: `tim1_arr = map(interval_us, 48, 100, ARR/2,

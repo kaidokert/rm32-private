@@ -352,7 +352,22 @@ pub fn clear_cc_flags() {
     });
 }
 
+/// R4: the LIVE carrier ARR (variable_pwm port). The control tick
+/// owns writes; everyone else reads. Seeded at the base carrier.
+pub static LIVE_ARR: portable_atomic::AtomicU16 = portable_atomic::AtomicU16::new(TIM1_AUTORELOAD);
+
 #[inline]
-pub const fn max_duty() -> u16 {
-    TIM1_AUTORELOAD
+pub fn max_duty() -> u16 {
+    LIVE_ARR.load(portable_atomic::Ordering::Relaxed)
+}
+
+/// R4 — set the carrier ARR (preloaded via ARPE: lands at the next
+/// wrap, glitch-free; duty RATIO is preserved by the caller
+/// rescaling its counts in the same tick). AM32's variable_pwm
+/// (main.c:2131): carrier rises 24→48 kHz as the interval falls.
+#[inline]
+pub fn set_carrier_arr(arr: u16) {
+    let tim1 = unsafe { &*TIM1::ptr() };
+    tim1.arr.write(|w| w.arr().bits(arr));
+    LIVE_ARR.store(arr, portable_atomic::Ordering::Relaxed);
 }

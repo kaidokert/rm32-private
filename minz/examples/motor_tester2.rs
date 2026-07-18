@@ -736,6 +736,54 @@ static SLEW_CLAMP_COUNT: AtomicU32 = AtomicU32::new(0);
 /// set_roles at commutation) - see GAP_CLOSING_PLAN R1 note.
 const R1_DUTY_SLEW: bool = true;
 
+// ---- R4: variable carrier (AM32 variable_pwm port, main.c:2131) ----
+// Carrier rises 24->48 kHz as the interval falls through 100->48 us
+// (core::timing::carrier_arr). The control tick is the SOLE writer
+// (same ownership rule as duty); ARR lands via ARPE at the next wrap.
+// SLEW_LAST_DUTY is rescaled in the same tick so the duty RATIO is
+// continuous across a carrier step. Sag debounce re-derives per
+// carrier (R4a: 2.67 ms proven time, sample rate = wrap rate).
+// PARKED 2026-07-17 after 4 bench iterations (r4top1-4): with the
+// update mis-placed (echo-cadence hops), with 6 kHz glide dither, and
+// finally CORRECT (stiff-avg-driven, dwell-gated, deadbanded glide -
+// r4top4: chg=5, clean settle at 3172/25.2 kHz through the amp-66
+// dwell), the 66->70 transit died every time (vbat_min 4.6-5.4 V
+// surge) while the same-session R4-off control climbed to 76.
+// Climbing at an elevated carrier is net-negative for this loop
+// today. Revisit AFTER R5 (ISR diet) per the plan's own risk note -
+// the machinery below is correct and stays, gated off.
+const R4_VAR_CARRIER: bool = false;
+/// Max ARR glide per TIM7 tick (~1 % per 166 us): the full 24->48 kHz
+/// span takes ~9 ms, always as micro-steps, never a discrete hop.
+const CARRIER_SLEW_ARR: u16 = 32;
+/// Glide engages only when the mapped target is >3 % off the live
+/// ARR - clears the stiff-average jitter band (~+/-2 us).
+const CARRIER_DEADBAND_ARR: u16 = 96;
+static CARRIER_CHANGES: AtomicU32 = AtomicU32::new(0);
+/// 6 kHz ticks with applied amp == target (carrier retune gate).
+static AMP_STABLE_RUN: AtomicU16 = AtomicU16::new(0);
+/// Live sag debounce sample count for the current carrier (R4a).
+static SAG_DEBOUNCE_LIVE: AtomicU16 = AtomicU16::new(minz_core::guards::SAG_DEBOUNCE);
+
+fn apply_carrier(new_arr: u16) {
+    let old_arr = tim1_motor_pwm::max_duty();
+    if new_arr == old_arr {
+        return;
+    }
+    // Rescale the shaper's last-duty so the ratio carries over; the
+    // CCR itself is rewritten by this same tick's duty pipeline.
+    let last = SLEW_LAST_DUTY.load(Ordering::Relaxed);
+    let rescaled =
+        ((last as u32 * new_arr as u32 + old_arr as u32 / 2) / old_arr.max(1) as u32) as u16;
+    SLEW_LAST_DUTY.store(rescaled, Ordering::Relaxed);
+    tim1_motor_pwm::set_carrier_arr(new_arr);
+    SAG_DEBOUNCE_LIVE.store(
+        minz_core::timing::sag_debounce_samples(new_arr),
+        Ordering::Relaxed,
+    );
+    CARRIER_CHANGES.fetch_add(1, Ordering::Relaxed);
+}
+
 /// R3 shared reseed entry (called from the TIM7 watchdog on sync-
 /// loss AND from the TIM1_UP burst responder on sustained
 /// overcurrent - a surge with accepts still flowing is commutation
@@ -2159,7 +2207,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} carr: arr={} chg={} sagdb={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2170,6 +2218,9 @@ fn main() -> ! {
                                 SLEW_CLAMP_COUNT.load(Ordering::Relaxed),
                                 RESEED_COUNT.load(Ordering::Relaxed),
                                 RESEED_STRIKES.load(Ordering::Relaxed),
+                                tim1_motor_pwm::max_duty(),
+                                CARRIER_CHANGES.load(Ordering::Relaxed),
+                                SAG_DEBOUNCE_LIVE.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -2535,6 +2586,20 @@ fn TIM7() {
         );
     }
 
+    // R4: throttle-stability run (ticks at 6 kHz). The carrier only
+    // retunes after the applied amp has SAT at target for ~300 ms -
+    // climbs run at a fixed carrier (the surviving control's
+    // behavior); dwells get the ripple reduction. r4top1/r4top2:
+    // retuning mid-climb moved the transit death 78 -> 70/74.
+    if AMPLITUDE_PCT.load(Ordering::Relaxed) == AMP_TARGET_PCT.load(Ordering::Relaxed) as u8 {
+        let r = AMP_STABLE_RUN.load(Ordering::Relaxed);
+        if r < u16::MAX {
+            AMP_STABLE_RUN.store(r + 1, Ordering::Relaxed);
+        }
+    } else {
+        AMP_STABLE_RUN.store(0, Ordering::Relaxed);
+    }
+
     // FALCON: while the closed loop drives, the crystal stepper is
     // frozen — LPTIM2 owns sector changes, mux, and window close.
     // TIM7 keeps two jobs: duty refresh (live amp keys) and the
@@ -2563,6 +2628,36 @@ fn TIM7() {
             } else {
                 amp
             };
+            // R4: retune the carrier BEFORE the duty computation so
+            // target counts use the new ARR. Rules: drive off the
+            // STIFF 6-slot average (never a transient estimate);
+            // FROZEN during reseed/burst emergencies AND during
+            // climbs (amp must sit at target ~300 ms - the r4top1/2
+            // incident runs, which mis-placed this block into the
+            // i-echo handler, hopped the carrier mid-transit and
+            // moved the death 78 -> 70/74); GLIDE <=32 counts/tick.
+            if R4_VAR_CARRIER
+                && !RESEED_ACTIVE.load(Ordering::Relaxed)
+                && !BURST_ACTIVE.load(Ordering::Relaxed)
+                && AMP_STABLE_RUN.load(Ordering::Relaxed) >= 1800
+            {
+                let avg = AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6;
+                if avg > 0 {
+                    let want = minz_core::timing::carrier_arr(avg, minz::TIM1_AUTORELOAD);
+                    let cur = tim1_motor_pwm::max_duty();
+                    // Deadband: the stiff avg still jitters ~1-2 us
+                    // = 32-64 ARR counts through the map; without
+                    // this the glide dithered at 6 kHz (r4top3:
+                    // chg=68118, duty floor-erosion, min 4.6 V).
+                    if want.abs_diff(cur) > CARRIER_DEADBAND_ARR {
+                        let step = want.clamp(
+                            cur.saturating_sub(CARRIER_SLEW_ARR),
+                            cur.saturating_add(CARRIER_SLEW_ARR),
+                        );
+                        apply_carrier(step);
+                    }
+                }
+            }
             let target = {
                 let base = open_loop::six_step_duty(max_duty(), amp) as i32;
                 let hi = max_duty() as i32 * AMP_MAX as i32 / 100;
@@ -2650,6 +2745,15 @@ fn TIM7() {
             }
         }
         return;
+    }
+
+    // R4: outside CL the carrier returns to base. This must sit
+    // ABOVE the !motor_enabled early-return: after a kill the motor
+    // is disabled with CL off, and the next engage must start at the
+    // qualified 24 kHz carrier (r4top1 incident: carrier stuck at
+    // 3107 post-kill because the restore lived below the return).
+    if !CL_ACTIVE.load(Ordering::Relaxed) && tim1_motor_pwm::max_duty() != minz::TIM1_AUTORELOAD {
+        apply_carrier(minz::TIM1_AUTORELOAD);
     }
 
     let motor_enabled = MOTOR_ENABLED.load(Ordering::Relaxed);
@@ -3171,14 +3275,15 @@ fn TIM1_UP_TIM16() {
         let last = TIM1_UP_LAST_CYC.load(Ordering::Relaxed);
         TIM1_UP_LAST_CYC.store(now_cyc, Ordering::Relaxed);
         let gap = now_cyc.wrapping_sub(last);
-        const PERIOD_CYC: u32 = minz::TIM1_AUTORELOAD as u32 + 1;
+        // R4: the wrap period follows the LIVE carrier ARR.
+        let period_cyc: u32 = tim1_motor_pwm::max_duty() as u32 + 1;
         // Ignore the boot-first sample and anything absurd (>50 ms:
         // a halt/dump artifact, not a scheduling miss).
         if last != 0 && gap < 4_000_000 {
             if gap > TIM1_UP_MAXGAP_CYC.load(Ordering::Relaxed) {
                 TIM1_UP_MAXGAP_CYC.store(gap, Ordering::Relaxed);
             }
-            let periods = (gap + PERIOD_CYC / 2) / PERIOD_CYC;
+            let periods = (gap + period_cyc / 2) / period_cyc;
             if periods >= 2 {
                 TIM1_UP_MISSED.fetch_add(periods - 1, Ordering::Relaxed);
             }
@@ -3214,10 +3319,11 @@ fn TIM1_UP_TIM16() {
         // via the load-run-store form (minz_core::guards::sag_step);
         // flag matrix via apply_isr_kill.
         if MOTOR_ENABLED.load(Ordering::Relaxed) {
-            let (run, trip) = minz_core::guards::sag_step(
+            let (run, trip) = minz_core::guards::sag_step_scaled(
                 VBAT_BASELINE_RAW.load(Ordering::Relaxed),
                 VBAT_SAG_RUN.load(Ordering::Relaxed),
                 raw,
+                SAG_DEBOUNCE_LIVE.load(Ordering::Relaxed),
             );
             VBAT_SAG_RUN.store(run, Ordering::Relaxed);
             if trip {
