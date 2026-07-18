@@ -273,9 +273,32 @@ pub fn sag_debounce_samples(arr: u16) -> u16 {
     ((267_000 / wrap_us_x100.max(1)) as u16).max(16)
 }
 
+/// Climb lead (remaining-levers rung): during a commanded climb the
+/// 3/4-smoothed interval LAGS the accelerating rotor, so delays
+/// computed from it land commutations late - the late-schedule seed
+/// of the transit miss cascades. While climbing, shave the
+/// SCHEDULING copy of the interval by 1/16 (~6 %); the estimator,
+/// gate, and telemetry keep the honest value. No-op at dwells.
+#[inline]
+pub fn climb_lead_iv(interval_us: u32, climbing: bool) -> u32 {
+    if climbing {
+        interval_us - interval_us / 16
+    } else {
+        interval_us
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn climb_lead_shaves_only_while_climbing() {
+        assert_eq!(climb_lead_iv(160, false), 160);
+        assert_eq!(climb_lead_iv(160, true), 150);
+        assert_eq!(climb_lead_iv(96, true), 90);
+        assert_eq!(climb_lead_iv(0, true), 0);
+    }
 
     #[test]
     fn r4_carrier_map_am32_parity() {

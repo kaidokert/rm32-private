@@ -781,6 +781,20 @@ static RESEED_KICKS: AtomicU32 = AtomicU32::new(0);
 /// Core-visible mirror of ZC_CLOCKED (zc::ZcState.zc_clocked): lifts
 /// the TOPEND gate on phase-C arming (invert2 incident).
 static ZC_CLOCKED_FLAG: AtomicBool = AtomicBool::new(ZC_CLOCKED);
+/// Recovery-class re-ramp (TRANSIT_AUTOPSY lever, now first-line:
+/// the 74-78 transit deaths are reseed-strike escalations, and the
+/// 16 %/ms recovery re-ramp into a dip-slowed rotor seeds the next
+/// failure). Set at reseed EXIT; while set, the duty slew runs the
+/// STARTUP class (2 %/ms) until the duty catches its target once,
+/// then clears. ~35 ms 6->74 % instead of ~5 ms.
+static RECOVERING: AtomicBool = AtomicBool::new(false);
+static RECOV_COUNT: AtomicU32 = AtomicU32::new(0);
+/// guards::KillFlags.last_kill - always-visible kill attribution.
+static LAST_KILL: AtomicU8 = AtomicU8::new(0);
+/// TIM7 ticks where the wait clamp reduced amp (rotor-clock waits).
+static WAIT_CLAMP_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Falling-edge tracker for the burst clamp (soft-recovery entry).
+static BURST_WAS: AtomicBool = AtomicBool::new(false);
 
 // ---- R6: self-paced polling start (minz_core::start) ----
 // `Y` arms it from standstill: duty pinned at R6_START_AMP, sector
@@ -869,14 +883,22 @@ fn slewed_duty(target: u16) -> u16 {
         return target;
     }
     let now = ticks_1us();
+    // Recovery-class ramp: while RECOVERING, report cl_active=false
+    // to the slew - its rate selector then uses the STARTUP class
+    // (2 %/ms), exactly the gentle re-ramp AM32's recovery uses.
+    let recovering = RECOVERING.load(Ordering::Relaxed);
     let out = minz_core::timing::duty_slew(
         SLEW_LAST_DUTY.load(Ordering::Relaxed),
         target,
         now.wrapping_sub(SLEW_LAST_US.load(Ordering::Relaxed)),
         max_duty(),
-        CL_ACTIVE.load(Ordering::Relaxed),
+        CL_ACTIVE.load(Ordering::Relaxed) && !recovering,
         OWL_INTERVAL_US.load(Ordering::Relaxed),
     );
+    if recovering && !out.clamped {
+        // Caught the target - normal regime resumes.
+        RECOVERING.store(false, Ordering::Relaxed);
+    }
     if out.clamped {
         SLEW_CLAMP_COUNT.fetch_add(1, Ordering::Relaxed);
     }
@@ -2344,7 +2366,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} cls: lost={} retry={} dur={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} cls: lost={} retry={} dur={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2356,6 +2378,11 @@ fn main() -> ! {
                                 RESEED_COUNT.load(Ordering::Relaxed),
                                 RESEED_STRIKES.load(Ordering::Relaxed),
                                 RESEED_KICKS.load(Ordering::Relaxed),
+                                RECOV_COUNT.load(Ordering::Relaxed),
+                                LAST_KILL.load(Ordering::Relaxed),
+                                WAIT_CLAMP_COUNT.load(Ordering::Relaxed),
+                                if CL_FAST_PATH.load(Ordering::Relaxed) { 'S' } else { 'a' },
+                                if CL_AM32_GEOM.load(Ordering::Relaxed) { 'G' } else { 'o' },
                                 tim1_motor_pwm::max_duty(),
                                 CARRIER_CHANGES.load(Ordering::Relaxed),
                                 SAG_DEBOUNCE_LIVE.load(Ordering::Relaxed),
@@ -2775,7 +2802,38 @@ fn TIM7() {
             } else {
                 base_amp
             };
-            let amp = minz_core::guards::burst_amp_clamp(amp, BURST_ACTIVE.load(Ordering::Relaxed));
+            let burst_now = BURST_ACTIVE.load(Ordering::Relaxed);
+            let amp = minz_core::guards::burst_amp_clamp(amp, burst_now);
+            // Burst RELEASE gets the same soft recovery as reseed
+            // exit: the 16 %/ms re-ramp out of an emergency clamp
+            // into a slowed rotor is the surge re-seeder either way.
+            if BURST_WAS.swap(burst_now, Ordering::Relaxed) && !burst_now {
+                RECOVERING.store(true, Ordering::Relaxed);
+                RECOV_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+            // WAIT CLAMP (rotor-clocked): duty parked on a sector
+            // during a ZC wait draws BEMF-aided current the
+            // close-keyed blind clamp cannot see (no closes during
+            // a wait). Host-tested guards::wait_amp_clamp.
+            // WAIT CLAMP PARKED (levers3-6 bisect): deaths moved
+            // 74 -> 70 the run it landed and stayed with the climb
+            // lead parked; wc=4 firings in the fatal climbs = the
+            // 2.5-interval threshold false-fires on legitimate
+            // late-ZC waits and the 50 % cut CAUSES the
+            // deceleration it guards against (the ungated-clamp
+            // class). Concept stands for a speed-gated retry.
+            let amp = if false && ZC_CLOCKED && CL_FAST_PATH.load(Ordering::Relaxed) {
+                let lq = LAST_QZC_10US.load(Ordering::Relaxed);
+                let nw = ticks_10us();
+                let since = minz_core::guards::since_us(nw, lq);
+                let clamped = minz_core::guards::wait_amp_clamp(amp, since, iv);
+                if clamped < amp {
+                    WAIT_CLAMP_COUNT.fetch_add(1, Ordering::Relaxed);
+                }
+                clamped
+            } else {
+                amp
+            };
             // R3: hold the reseed floor while re-acquiring.
             let amp = if RESEED_ACTIVE.load(Ordering::Relaxed) {
                 amp.min(minz_core::guards::RESEED_AMP_PCT)
@@ -2847,6 +2905,10 @@ fn TIM7() {
                     && delta >= minz_core::guards::RESEED_EXIT_ACCEPTS as u32
                 {
                     RESEED_ACTIVE.store(false, Ordering::Relaxed);
+                    // Enter the soft recovery re-ramp (cleared by
+                    // slewed_duty when the target is caught).
+                    RECOVERING.store(true, Ordering::Relaxed);
+                    RECOV_COUNT.fetch_add(1, Ordering::Relaxed);
                 }
                 if delta >= minz_core::guards::RESEED_AMNESTY_ACCEPTS {
                     RESEED_STRIKES.store(0, Ordering::Relaxed);
@@ -3238,6 +3300,7 @@ static KILL_FLAGS: minz_core::guards::KillFlags<'static> = minz_core::guards::Ki
     oc_tripped: &OC_TRIPPED,
     vbat_sagged: &VBAT_SAGGED,
     bb_frozen: &BB_FROZEN,
+    last_kill: &LAST_KILL,
 };
 
 /// Shuttle a mode command through the core state machine and apply
@@ -4266,7 +4329,19 @@ fn record_edge_diag(now_10: u32) {
 fn accept_qualified_zc(zc_us: u32) {
     let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
     let mut shot_armed = false;
+    // Climb lead: while the throttle walks (applied != target), the
+    // smoothed interval lags the accelerating rotor - shave the
+    // SCHEDULING copy ~6 % (host-tested timing::climb_lead_iv).
+    // Estimator/gate/telemetry keep the honest interval.
+    // CLIMB LEAD PARKED (levers3/4 verdict, same-hour control): with
+    // the lead on, deaths at 74/70/70 vs control 76 - the ~6 %
+    // schedule advance during climbs regresses the transit exactly
+    // like the static-advance lessons predicted. The lag thesis
+    // stands but the lead must key on MEASURED accel, not on
+    // throttle-walking. Parked, not deleted.
+    let climbing = false && AMP_STABLE_RUN.load(Ordering::Relaxed) < 1800;
     if let Some(iv) = minz_core::zc::schedule_precheck(&ZC_STATE, sec) {
+        let iv = minz_core::timing::climb_lead_iv(iv, climbing);
         // Host-tested: auto-advance ramp + scheduling delay
         // (minz_core::timing).
         let adv =
@@ -4315,7 +4390,7 @@ fn accept_qualified_zc(zc_us: u32) {
     // interval; at engage speeds (~1.6 ms) the precheck's latency
     // motivation is irrelevant.
     if !shot_armed && plan.schedule {
-        let iv = plan.interval_us;
+        let iv = minz_core::timing::climb_lead_iv(plan.interval_us, climbing);
         let adv =
             minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
         let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;

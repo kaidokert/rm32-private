@@ -71,6 +71,31 @@ pub const RESEED_AMP_PCT: u16 = 6;
 
 /// R3 verdict. Same inputs as [`cl_watchdog`] + the strike count.
 #[inline]
+/// WAIT CLAMP (rotor-clocked world): a ZC-miss under the inversion
+/// means the loop WAITS with duty parked on one sector while the
+/// rotor coasts - BEMF-aided current ramps on L/R (levers2: lk=4
+/// sag kill through a single-reseed transit). The blind-amp clamp
+/// cannot see it: it keys on window closes and no closes happen
+/// during a wait. This clamp keys on time-since-last-accept
+/// directly: full amp to 2.5 intervals (normal jitter + late-ZC
+/// tolerance), half to 5, quarter beyond. Restores instantly on
+/// the next accept (the caller's amp pipeline re-evaluates every
+/// tick).
+#[inline]
+pub fn wait_amp_clamp(amp: u16, since_qzc_us: u32, interval_us: u32) -> u16 {
+    if interval_us == 0 {
+        return amp;
+    }
+    let iv = interval_us.max(100);
+    if since_qzc_us > iv * 5 {
+        amp / 4
+    } else if since_qzc_us * 2 > iv * 5 {
+        amp / 2
+    } else {
+        amp
+    }
+}
+
 pub fn cl_watchdog_r3(
     interval_us: u32,
     since_last_qzc_us: u32,
@@ -218,6 +243,11 @@ pub struct KillFlags<'a> {
     pub oc_tripped: &'a portable_atomic::AtomicBool,
     pub vbat_sagged: &'a portable_atomic::AtomicBool,
     pub bb_frozen: &'a portable_atomic::AtomicBool,
+    /// Last kill cause (1=desync 2=starved 3=oc 4=sag; 0=never).
+    /// ALWAYS-visible in the i-echo: a silent CL death (levers1
+    /// incident: loop dead, zero kill prints) must be attributable
+    /// without depending on the print path having survived.
+    pub last_kill: &'a portable_atomic::AtomicU8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,6 +270,15 @@ pub fn apply_isr_kill(kf: &KillFlags<'_>, kind: IsrKillKind) {
     kf.motor_enabled.store(false, Relaxed);
     kf.cl_active.store(false, Relaxed);
     kf.cl_armed.store(false, Relaxed);
+    kf.last_kill.store(
+        match kind {
+            IsrKillKind::Desync => 1,
+            IsrKillKind::Starved => 2,
+            IsrKillKind::Overcurrent => 3,
+            IsrKillKind::Sag => 4,
+        },
+        Relaxed,
+    );
     match kind {
         IsrKillKind::Desync | IsrKillKind::Starved => {
             // Freeze the black box so the dump shows the lead-up.
@@ -824,6 +863,7 @@ mod tests {
         oc_tripped: portable_atomic::AtomicBool,
         vbat_sagged: portable_atomic::AtomicBool,
         bb_frozen: portable_atomic::AtomicBool,
+        last_kill: portable_atomic::AtomicU8,
     }
 
     impl FlagRig {
@@ -838,6 +878,7 @@ mod tests {
                 oc_tripped: B::new(false),
                 vbat_sagged: B::new(false),
                 bb_frozen: B::new(false),
+                last_kill: portable_atomic::AtomicU8::new(0),
             }
         }
 
@@ -851,6 +892,7 @@ mod tests {
                 oc_tripped: &self.oc_tripped,
                 vbat_sagged: &self.vbat_sagged,
                 bb_frozen: &self.bb_frozen,
+                last_kill: &self.last_kill,
             }
         }
     }
@@ -940,6 +982,16 @@ mod tests {
     }
 
     // ---- sag_step (atomic-backed adoption path) ----
+
+    #[test]
+    fn wait_clamp_halves_then_quarters_with_wait_length() {
+        // 100 us interval: full to 250 us, half to 500, quarter after.
+        assert_eq!(wait_amp_clamp(60, 200, 100), 60);
+        assert_eq!(wait_amp_clamp(60, 300, 100), 30);
+        assert_eq!(wait_amp_clamp(60, 501, 100), 15);
+        // Unseeded estimator: no clamp (engage regime).
+        assert_eq!(wait_amp_clamp(60, 10_000, 0), 60);
+    }
 
     #[test]
     fn sag_step_matches_sagguard_semantics() {
