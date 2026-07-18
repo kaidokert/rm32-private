@@ -309,3 +309,37 @@ captured J-ARMED - the microscope perturbs the loop and may have
 amplified the phenomenon. Re-open only on J-free evidence of the
 dead-window class (the observers will show it: wmax/rlate move
 while rsq/wcut stay 0).
+
+## Review corrections (2026-07-18, second-agent + operator)
+
+1. **Overclaim retracted**: the observer1 bb shows the loop ADVANCED
+   sectors cleanly between the dead windows - it does not prove
+   those advances were PHASE-correct. The dead windows may be the
+   first OBSERVABLE symptom of a timing/estimator divergence that
+   began earlier. Treat them as symptom onset, not fault onset.
+2. **AM32 mechanism-absence assumption corrected**: established
+   fact (operator's runs): AM32 exhibits no clips/holds on this
+   rig. NOT established: HOW - whether it avoids dead windows
+   entirely, advances on a timeout/prediction path, accepts a
+   different class of ZC, or filters its interval estimate
+   differently. The differential trace must answer the HOW, not
+   assume it.
+3. **The narrowed question**: dead windows are NOT inherent to this
+   motor/load/board (AM32 proves it). What upstream timing/
+   acceptance behavior prevents AM32 from ever opening one? All
+   minz recovery work is downstream by definition; the comparison
+   point that matters is BEFORE the first minz dead window.
+
+### The differential climb trace (agreed design)
+Same motor/supply/carrier-where-possible, identical 60->80 throttle
+profile, common start marker. Per commutation/ZC window, BOTH
+firmwares emit the canonical record:
+  timestamp, sector, duty, window_open/close, raw_edge_time|none,
+  accepted/rejected+reason, measured_interval,
+  estimator_period_before, next_deadline, zc_position_in_window,
+  prediction_error
+Mechanically answerable questions, in order: does minz's estimated
+period lag first? does its deadline exit the viable window? does
+AM32 accept an edge minz rejects? or does minz schedule correctly
+but apply the wrong drive state/duty? The FIRST divergence is the
+bug class; the 11 A hold and sag are aftermath.
