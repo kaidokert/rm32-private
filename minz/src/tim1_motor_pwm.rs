@@ -96,19 +96,39 @@ enum PhaseRole {
 /// currently in ALTERNATE just get their ODR preloaded; the MODER
 /// write then flips them onto the pad. (AM32 orders MODER before BRR
 /// per pin, which briefly drives stale ODR — ours avoids that.)
+/// DRIVE-MODE EXPERIMENT (TRANSIT_AUTOPSY 07-18) — CLOSED, negative.
+/// Hypothesis was a phaseouts.c misreading: the "low pin OUTPUT-high"
+/// ENABLE style lives only under PWM_ENABLE_BRIDGE, which Vimdrones
+/// does NOT define. AM32's shipped comp_pwm=1 phaseXPWM sets the low
+/// pin ALTERNATE — byte-identical to our AF drive. Bench confirmed
+/// enable-mode is non-viable on the FD6288 anyway: LIN=1 + HIN=1
+/// hits the interlock, both FETs off, isns=0.000 A, 0/16 engages.
+/// Kept as a compile-time switch for documentation; must stay false.
+pub const DRIVE_ENABLE_MODE: bool = false;
+
 fn set_phase_roles(a: PhaseRole, b: PhaseRole, c: PhaseRole) {
     const AF: u32 = 0b10;
     let gpioa = unsafe { &*GPIOA::ptr() };
     let gpiob = unsafe { &*GPIOB::ptr() };
 
-    let m = |r: PhaseRole| if r == PhaseRole::Pwm { AF } else { 0b01 };
+    // High pins: AF when the leg PWMs. Low pins: AF only in
+    // timer-complementary mode; under DRIVE_ENABLE_MODE they are
+    // ALWAYS plain OUTPUT (level from BSRR below).
+    let mh = |r: PhaseRole| if r == PhaseRole::Pwm { AF } else { 0b01 };
+    let ml = |r: PhaseRole| {
+        if r == PhaseRole::Pwm && !DRIVE_ENABLE_MODE {
+            AF
+        } else {
+            0b01
+        }
+    };
 
     // GPIOA MODER: PA7 (A low), PA8 (A high), PA9 (B high), PA10 (C high).
     let a_mask = (0b11u32 << 14) | (0b11 << 16) | (0b11 << 18) | (0b11 << 20);
-    let a_val = (m(a) << 14) | (m(a) << 16) | (m(b) << 18) | (m(c) << 20);
+    let a_val = (ml(a) << 14) | (mh(a) << 16) | (mh(b) << 18) | (mh(c) << 20);
     // GPIOB MODER: PB0 (B low), PB1 (C low).
     let b_mask = (0b11u32 << 0) | (0b11 << 2);
-    let b_val = (m(b) << 0) | (m(c) << 2);
+    let b_val = (ml(b) << 0) | (ml(c) << 2);
 
     // BSRR: BS (bit N) the Low leg's LIN, BR (bit 16+N) every other
     // pin destined for OUTPUT. Pwm legs get no BSRR bits (ODR is
@@ -116,12 +136,20 @@ fn set_phase_roles(a: PhaseRole, b: PhaseRole, c: PhaseRole) {
     let mut bsrr_a = 0u32;
     let mut bsrr_b = 0u32;
     match a {
-        PhaseRole::Pwm => {}
+        PhaseRole::Pwm => {
+            if DRIVE_ENABLE_MODE {
+                bsrr_a |= 1 << 7; // LIN=1: FD6288 interlock drives the low FET
+            }
+        }
         PhaseRole::Low => bsrr_a |= (1 << 7) | (1 << (16 + 8)),
         PhaseRole::Float => bsrr_a |= (1 << (16 + 7)) | (1 << (16 + 8)),
     }
     match b {
-        PhaseRole::Pwm => {}
+        PhaseRole::Pwm => {
+            if DRIVE_ENABLE_MODE {
+                bsrr_b |= 1 << 0;
+            }
+        }
         PhaseRole::Low => {
             bsrr_b |= 1 << 0;
             bsrr_a |= 1 << (16 + 9);
@@ -132,7 +160,11 @@ fn set_phase_roles(a: PhaseRole, b: PhaseRole, c: PhaseRole) {
         }
     }
     match c {
-        PhaseRole::Pwm => {}
+        PhaseRole::Pwm => {
+            if DRIVE_ENABLE_MODE {
+                bsrr_b |= 1 << 1;
+            }
+        }
         PhaseRole::Low => {
             bsrr_b |= 1 << 1;
             bsrr_a |= 1 << (16 + 10);

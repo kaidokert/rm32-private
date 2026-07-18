@@ -511,3 +511,58 @@ TESTABLE: one change to set_phase_roles (Pwm role: low pin
 OUTPUT-high instead of AF) = byte-for-byte AM32 actuation
 semantics. A/B ladder + MZT sawtooth/escape overlay answers
 whether the low-side switching is the crest-bound gap.
+
+
+## Drive-mode experiment — CLOSED, NEGATIVE (2026-07-18)
+
+The hypothesized difference DOES NOT EXIST. The "AM32 low leg is
+static-high enable" reading of phaseouts.c (commit 5b0ae36) was wrong:
+that code lives only under `PWM_ENABLE_BRIDGE`, which VIMDRONES_L431
+does not define (grep: only 3 unrelated targets at targets.h:3470/
+3508/3546; `USE_INVERTED_LOW` also not ours). The shipped comp_pwm=1
+path in `phaseBPWM()` sets the LOW pin **ALTERNATE** — timer
+complementary CHxN + dead time, byte-identical semantics to our AF
+Pwm role. AM32 on this board has the same 24 kHz low-side switching
+edges we do; the phase-B escape asymmetry is NOT a drive-mode delta.
+
+Bench confirmation that enable-mode is physically non-viable here:
+implemented behind `DRIVE_ENABLE_MODE` (tim1_motor_pwm.rs, kept
+=false as documentation), LIN static-high + HIN PWM hits the FD6288
+interlock (both-high -> both FETs OFF): isns=0.000 A, comp storm,
+0/16 engages. The const must stay false.
+
+Estimator/scheduling investigation of the crest-escape tail remains
+the open path (reviewer notified the premise was a misreading).
+
+## Bench state changes discovered en route (2026-07-18)
+
+1. **minz image now extends past 0x0800F800** (overflow-checks bloat)
+   and CLOBBERS the AM32 EEPROM page on every minz flash. AM32 swap
+   recipe is now: bootloader bin @0x08000000 + app bin @0x08001000 +
+   eeprom page (0x01 + 0xFF*2047) @0x0800F800, then
+   `bootloader_spray` (the bootloader only second-chance-jumps after
+   GARBAGE bytes on PA2; a quiet idle-high UART never triggers it).
+   Verified: AM32 NOTRACE flies first attempt (erpm 67100, 0.59 A).
+
+2. **Mechanical load changed between sessions** (prop off, by the
+   numbers: amp 60 now = 1650 Hz vs ~1000 Hz in the matrix-era
+   ladders). Consequence: the jumped 50 Hz open-loop catch went 0/32
+   (perfect rotating field, flat-BEMF float windows = rotor
+   motionless — stallwax2 dump); AM32 ramps from ~0 Hz and is immune.
+   Diagnosis path: engage crawl-locks -> AM32 falsifier flies ->
+   waxwing shows textbook field + motionless rotor.
+   **Fix: RAMP START** in both capture scripts (mzt_capture.py,
+   cl_lock_map.py): arm at 50, dip to 10 Hz (stepper regime, always
+   catches), ramp +10 Hz/150 ms to 180, engage. First-try engage,
+   476 Hz lock at 66 mA on the manual probe; first-try engage in the
+   validation run.
+   ⚠ ALL cross-session comparisons to matrix-era data (mzt_first,
+   mxC/mxD, AM32 zct_first) are now CROSS-LOAD — re-baseline both
+   sides before quantitative overlays.
+
+3. **Validation run `mzt_rampstart` (zt config)**: engaged first try,
+   amp 60 = 1650 Hz, then DIED in the band climb as TERMINAL: REBOOT
+   (IWDG, banner in capture) — the known telemetry-load reboot class,
+   now holding a 303k-record MZT fatal trace
+   (captures/mzt_rampstart_*). Next session: TX-wedge hunt has a
+   fresh specimen.

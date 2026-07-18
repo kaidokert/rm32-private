@@ -79,7 +79,17 @@ def main():
         press_until("M", "SWIFT")
         engaged = False
         for _ in range(8):
+            # RAMP start (2026-07-18): a jumped 50 Hz field no longer
+            # catches on the current mechanical load (flat-BEMF stall,
+            "            # stallwax2 dump); AM32 ramps and flies. 10 Hz always",
+            # catches (stepper regime), then ramp to 180 and engage.
             key("q", 2.0)
+            for _ in range(4):      # 50 -> 10 Hz
+                key("v", 0.12)
+            time.sleep(1.0)
+            for _ in range(17):     # 10 -> 180 Hz, ~65 Hz/s
+                key("f", 0.15)
+            time.sleep(0.8)
             key("y", 3.0)
             m = re.search(r"cl: ACTIVE f_e=(\d+)Hz", key("i", 1.2))
             # junk-crawl guard (mzt_fatal4: a 29 Hz "lock" passed the

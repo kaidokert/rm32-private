@@ -198,8 +198,13 @@ class Bench:
             self.send("w", 0.5)
             self.send("q", 3.0)
             self.steps("z", AMP_START - AMP_ENGAGE, wait=0.2)
-            self.steps("f", 5, wait=0.2)
-            time.sleep(2.0)
+            # RAMP start (2026-07-18): 50 Hz jump-catch no longer works
+            # on the current load - dip to 10 Hz (always catches), then
+            # ramp to ~180 Hz before engaging. See TRANSIT_AUTOPSY.
+            self.steps("v", 4, wait=0.12)
+            time.sleep(1.0)
+            self.steps("f", 17, wait=0.15)
+            time.sleep(0.8)
             echo = self.send("y", 3.0)
             if "ARMED" not in echo:
                 continue
