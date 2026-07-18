@@ -364,3 +364,33 @@ Our loop logs rlate=3 (holds >2.5x interval) and 7-20 rescues per
 fatal climb in the same band. The differential's remaining half:
 emit the same record from minz over the same climb and find where
 our period-vs-estimate tail is born.
+
+## 2026-07-18 — THE DIFFERENTIAL OVERLAY (both halves captured)
+
+minz MZT record landed (Z key, 5B AA, field-for-field comparable;
+scripts/mzt_capture.py): 224,698 records over the identical 60->80
+climb (which SURVIVED this run). Overlay vs AM32's 262k:
+
+| period vs estimate | AM32 | minz |
+|---|---|---|
+| mean / sd | +0.40% / 5.4% | +0.82% / 5.0% |
+| p99 / p99.9 | +9.3% / +10.5% | +10.8% / +16.0% |
+| > +12.5% | 1 event (0.0004%) | 856 events (0.38%) |
+| > +25% | 0 | 0 |
+
+**Core tracking is near-identical; the whole difference is a thin
+excursion tail 1000x more frequent in minz, capped at +21% on this
+surviving run.** Tail anatomy: all 856 events carry REAL accepted
+ZCs (qzc_off 61-85 us, late-in-window) with refined schedules -
+zero misses, zero dead windows. The late-tolerance machinery
+handles them correctly; the excursions themselves are genuine
+rotor-period stretches that AM32's rotor+loop simply never
+produces. Working hypothesis for the fatal climbs: the same tail
+grows past +25% into dead windows.
+
+Next analysis (data in hand): why does the same motor+profile
+produce 15-21% period excursions under minz but not AM32 - duty-
+pipeline micro-disturbance (6 kHz slew steps vs their 20 kHz),
+commutation-jitter feedback, or estimator response shape (their
+2-period half-blend vs our smoothing). Then: capture a FATAL
+climb's MZT trace and watch the tail grow.

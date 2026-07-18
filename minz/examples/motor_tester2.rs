@@ -840,6 +840,19 @@ static PRE_CUT_DUTY: AtomicU16 = AtomicU16::new(0);
 /// OVERLAP in time during climbs; discriminate after the fact via
 /// SHOT_REFINED instead of guessing in advance).
 static WAIT_CUT_FALSE: AtomicU32 = AtomicU32::new(0);
+
+// ---- MZT: minz half of the differential climb trace ----
+// 15-byte record per commutation, 5B AA sync, field-for-field
+// comparable with AM32's ZC_TRACE record (same sizes, us units):
+// flags_sector | period u16 | estimate u16 | delay u16 | duty u16
+// | t10 u16 | qzc_off u16. Produced by the fabric close (values
+// already stamped), drained by main into the TX ring. Toggled by
+// the Z key; run WITHOUT the MAGPIE stream (wire budget).
+static ZT_ON: AtomicBool = AtomicBool::new(false);
+static CLOSED_EST_US: AtomicU32 = AtomicU32::new(0);
+/// Last armed commutation delay (us) - stored at both schedule
+/// sites in the accept path (2 cyc), read by the fabric.
+static LAST_DELAY_US: AtomicU16 = AtomicU16::new(0);
 /// J-FREE per-hold current observer: peak mid-ON i_raw sampled by
 /// TIM7 while a hold exceeds 1.5x interval (regime-scoped). The
 /// J-armed microscope perturbs the loop; this observer does not -
@@ -1245,6 +1258,7 @@ fn main() -> ! {
     static mut TX_RING: [u8; TX_RING_LEN] = [0; TX_RING_LEN];
     static mut WREC_QUEUE: WrecQueue = Queue::new();
     static mut PEND_QUEUE: PendQueue = Queue::new();
+    static mut ZT_QUEUE: ZtQueue = Queue::new();
     let cp = cortex_m::Peripherals::take().unwrap();
     let dp = stm32::Peripherals::take().unwrap();
     let BoardInit {
@@ -1434,11 +1448,13 @@ fn main() -> ! {
     let (producer, mut consumer) = RX_QUEUE.split();
     let (wrec_producer, mut wrec_consumer) = WREC_QUEUE.split();
     let (pend_producer, mut pend_consumer) = PEND_QUEUE.split();
+    let (zt_producer, mut zt_consumer) = ZT_QUEUE.split();
 
     free(|cs| {
         RX_PROD.borrow(cs).replace(Some(producer));
         WREC_PROD.borrow(cs).replace(Some(wrec_producer));
         PEND_PROD.borrow(cs).replace(Some(pend_producer));
+        ZT_PROD.borrow(cs).replace(Some(zt_producer));
     });
 
     // Publish initial motor-drive state BEFORE unmasking TIM7 so the
@@ -2118,6 +2134,16 @@ fn main() -> ! {
                     // pace its own commutations; hands off to the
                     // normal `y` engage automatically. Pressing
                     // again while active aborts (motor off).
+                    b'Z' => {
+                        let on = !ZT_ON.load(Ordering::Relaxed);
+                        ZT_ON.store(on, Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "zt trace = {}\r\n",
+                            if on { "on" } else { "off" },
+                        )
+                        .ok();
+                    }
                     b'Y' => {
                         if R6_START.load(Ordering::Relaxed) {
                             R6_START.store(false, Ordering::Relaxed);
@@ -2716,6 +2742,13 @@ fn main() -> ! {
                     }
                 }
             }
+            while let Some(rec) = zt_consumer.dequeue() {
+                if TX_RING_LEN - 1 - tx_writer.pending() >= 15 {
+                    for b in rec {
+                        let _ = tx_writer.push(b);
+                    }
+                }
+            }
             tx_writer.service();
 
             next_microloop += MICROLOOP_TICKS;
@@ -3308,6 +3341,9 @@ struct PendingClose {
     sc: minz_core::window::CloseScalars,
 }
 type PendQueue = Queue<PendingClose, 32>;
+type ZtQueue = Queue<[u8; 15], 64>;
+static ZT_PROD: Mutex<RefCell<Option<Producer<'static, [u8; 15]>>>> =
+    Mutex::new(RefCell::new(None));
 static PEND_PROD: Mutex<RefCell<Option<Producer<'static, PendingClose>>>> =
     Mutex::new(RefCell::new(None));
 
@@ -3634,6 +3670,7 @@ fn LPTIM2() {
     CLOSED_I_MAX.store(WINDOW_I_MAX.load(Ordering::Relaxed), Ordering::Relaxed);
     CLOSED_VBAT_MIN.store(WINDOW_VBAT_MIN.load(Ordering::Relaxed), Ordering::Relaxed);
     CLOSED_OPEN_LEVEL.store(WINDOW_OPEN_LEVEL.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_EST_US.store(OWL_INTERVAL_US.load(Ordering::Relaxed), Ordering::Relaxed);
     WINDOW_OPEN_LEVEL.store(0, Ordering::Relaxed);
     // CONTROL stays synchronous (feather2 incident: deferring the
     // reacq/miss logic 0-41 us let cascades outrun the response -
@@ -3741,6 +3778,43 @@ fn fabric_close_step() {
         return; // torn copy - next wrap retries with fresh gen
     }
     CLOSE_SEEN_GEN.store(g0, Ordering::Relaxed);
+    // MZT record (differential trace) - values all local/stamped.
+    if ZT_ON.load(Ordering::Relaxed) {
+        let period = now_us.wrapping_sub(start_us).min(0xFFFF) as u16;
+        let est = CLOSED_EST_US.load(Ordering::Relaxed).min(0xFFFF) as u16;
+        let delay = LAST_DELAY_US.load(Ordering::Relaxed);
+        let duty = SLEW_LAST_DUTY.load(Ordering::Relaxed);
+        let t10 = CLOSED_NOW_10.load(Ordering::Relaxed) as u16;
+        let qoff = if qzc == u32::MAX {
+            0xFFFFu16
+        } else {
+            qzc.wrapping_sub(start_us).min(0xFFFE) as u16
+        };
+        let flags = (prev & 0x07) | if refined { 0x80 } else { 0 };
+        let rec: [u8; 15] = [
+            0x5B,
+            0xAA,
+            flags,
+            period as u8,
+            (period >> 8) as u8,
+            est as u8,
+            (est >> 8) as u8,
+            delay as u8,
+            (delay >> 8) as u8,
+            duty as u8,
+            (duty >> 8) as u8,
+            t10 as u8,
+            (t10 >> 8) as u8,
+            qoff as u8,
+            (qoff >> 8) as u8,
+        ];
+        free(|cs| {
+            let mut prod = ZT_PROD.borrow(cs).borrow_mut();
+            if let Some(p) = prod.as_mut() {
+                let _ = p.enqueue(rec);
+            }
+        });
+    }
     bb_record(
         minz_core::drive::commutation_class(prev, refined),
         prev,
@@ -4525,6 +4599,7 @@ fn accept_qualified_zc(zc_us: u32) {
             elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
         minz::lptim2_oneshot::schedule_us(delay);
+        LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
         shot_armed = true;
         SHOT_REFINED.store(true, Ordering::Relaxed);
         bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
@@ -4567,6 +4642,7 @@ fn accept_qualified_zc(zc_us: u32) {
             elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
         minz::lptim2_oneshot::schedule_us(delay);
+        LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
         SHOT_REFINED.store(true, Ordering::Relaxed);
         bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
         comp2::set_exti_enabled(false);
