@@ -4018,26 +4018,58 @@ fn TIM1_UP_TIM16() {
     // commutation that opened the window). One load + rare store.
     if CL_ACTIVE.load(Ordering::Relaxed) && WINDOW_OPEN_LEVEL.load(Ordering::Relaxed) == 0 {
         WINDOW_OPEN_LEVEL.store(1 + value, Ordering::Relaxed);
-        // Rung 3 LEVEL-RESCUE - ATTEMPTED, REVERTED to COUNT-ONLY
-        // (2026-07-17 rescue1): publishing a synthesized qZC on a
-        // pre-crossed first-wrap sample fired on 2.6 % of at-speed
-        // windows and STOLE their real accepts (the COMP accept path
-        // keys on WINDOW_QZC_US==MAX), starving the estimator (rej
-        // census 5.5k -> 372) and the stiff-gate reference; the 76
-        // transit died HARDER (rsd 8/4, burst 7, 4.68 V). The
-        // pre-crossed CLASS is real but the rescue must not preempt
-        // the window's own accept - a correct version would arm a
-        // low-confidence candidate that yields to any real edge.
-        // Count-only until then (rsq= in the i-line).
+    }
+    // Evaluated EVERY wrap (rescue3 bug: nesting it in the first-
+    // wrap-only sampler meant one check at ~40 us, where the wait
+    // bound is never true - rsq stayed 0 while starve reseeds fired).
+    if CL_ACTIVE.load(Ordering::Relaxed) {
+        // LEVEL-RESCUE-ON-WAIT (tautopsy5 microscope verdict): a
+        // PRE-CROSSED window under the rotor-clocked inversion
+        // NEVER produces an edge (comp saturated post-ZC from
+        // open - ring frames 1214-1222: sector held 3.5 intervals,
+        // current +2.5 A PER CYCLE while the loop waited). The
+        // free-run-era rescue stole real accepts; the WAIT BOUND
+        // makes stealing impossible - an honest edge arrives well
+        // inside 1.25x interval, so past it + level still holding
+        // post-ZC = the crossing predated the window. Commutate
+        // NOW (we are already late); the next window's real accept
+        // re-times the chain. No estimator update, no starvation-
+        // watchdog feed (a stalled rotor must still starve out).
         let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
-        if CL_AM32_GEOM.load(Ordering::Relaxed)
+        if ZC_CLOCKED
+            && CL_FAST_PATH.load(Ordering::Relaxed)
+            && CL_AM32_GEOM.load(Ordering::Relaxed)
             && iv > 0
             && iv < minz_core::window::HIGH_SPEED_US
             && WINDOW_QZC_US.load(Ordering::Relaxed) == u32::MAX
         {
             let sector = CURRENT_SECTOR.load(Ordering::Relaxed);
-            if (value == 1) == minz_core::zc::expected_post_zc(sector) {
-                RESCUE_COUNT.fetch_add(1, Ordering::Relaxed);
+            // rescue2/3 lessons: polarity keying missed the observed
+            // stalls (convention mismatch) and raw==0 saturation keying
+            // never held (comp noise ~1.2 edges/wrap ticks raw up on
+            // gated edges). The wait ITSELF is the proof: any
+            // acceptable edge would have been accepted well inside
+            // 1.25x interval - so no qZC past that bound = the window
+            // is dead in every class. Bounded-wait step: 1.25xT,
+            // counted, bb-evented, no estimator feed - AM32's backstop
+            // philosophy at a timescale that survives OUR miss profile
+            // (the pure wait-forever inversion pumps 2.5 A/cycle into
+            // a dead window - tautopsy5 ring).
+            {
+                let lc = LAST_COMM_10US.load(Ordering::Relaxed);
+                let since = minz_core::guards::since_us(ticks_10us(), lc);
+                if since > iv + iv / 4 {
+                    // Publish the synthesized qZC (window not NOZ,
+                    // reacq spiral broken) and fire the shot.
+                    WINDOW_QZC_US.store(ticks_1us(), Ordering::Relaxed);
+                    minz::lptim2_oneshot::schedule_us(16);
+                    RESCUE_COUNT.fetch_add(1, Ordering::Relaxed);
+                    bb_record(
+                        minz_core::blackbox::EV_RSC,
+                        sector,
+                        since.min(0xFFFF) as u16,
+                    );
+                }
             }
         }
     }

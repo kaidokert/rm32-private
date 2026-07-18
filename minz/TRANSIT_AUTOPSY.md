@@ -156,3 +156,42 @@ The honest remaining levers are structural:true commutation-latency
 reduction (a GP-timer one-shot to replace LPTIM2's chain, COMP ISR
 diet) and/or estimator lead during commanded climbs — both
 plan-scale work, not session-end patches.
+
+## 2026-07-18 — THE TRANSIT-POINTED MICROSCOPE AUTOPSY (goal complete)
+
+J-armed run tautopsy5 caught a fatal climb event with the full
+instrument stack: the 4-channel CTX ring (85 ms of per-PWM-cycle
+A/B/current/sector+comp), the spike-onset bb, and the sag-kill bb.
+
+**The ring (frames 1210-1275, 41.6 us/frame):** 50 ms of rock-steady
+1.7 A, then at frame 1214 sector 4 HOLDS for ~9 frames (375 us =
+3.5 interval-times) - the rotor-clocked loop WAITING on a window
+whose comparator sat saturated from open (no edge ever coming) -
+while current stepped 69 -> 296 raw (~1.7 -> 7.4 A) at up to 2.5 A
+PER PWM CYCLE with the drive parked on the sector. Recurring 4-frame
+holds after recovery pumped more; bus sagged; lk=4. Both bb dumps
+show PERFECT commutation (104 us, d=8-9) because they cover the
+re-locked tail - the CTX ring is the only instrument that saw the
+stall.
+
+**Verdict: the transit surge is the INVERSION'S WAIT, not the
+ramp, not the timing, not the recovery.** A window that opens dead
+(pre-crossed or BEMF-invisible) never edges; the pure wait-forever
+rotor-clock pumps BEMF-aided current into it. AM32 never enters
+this state (no schedule lag); we still do on climbs.
+
+**Fix (landed, rsq=9 firing): the BOUNDED-WAIT STEP.** No qZC past
+1.25x interval = the window is dead in every class (an acceptable
+edge would have been accepted long before) -> commutate NOW,
+publish the synthesized qZC, count (rsq=) + bb EV_RSC, no estimator
+feed, no starvation-watchdog feed. Three instructive misses en
+route: polarity keying (convention mismatch with the observed
+saturation level), raw==0 saturation keying (comp noise ticks raw
+~1.2 edges/wrap on gated edges), and first-wrap-only evaluation
+(the wait bound can never be true at 40 us). Also landed:
+panic-to-UART in minz::panic (two silent IWDG reboots during the
+hunt were unattributable; RTT-only panics are invisible on this
+bench).
+
+Envelope validation deferred to a fresh bench: tonight's band slid
+to 66-74 across ALL builds including controls (9 h session).
