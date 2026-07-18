@@ -544,9 +544,13 @@ the open path (reviewer notified the premise was a misreading).
    GARBAGE bytes on PA2; a quiet idle-high UART never triggers it).
    Verified: AM32 NOTRACE flies first attempt (erpm 67100, 0.59 A).
 
-2. **Mechanical load changed between sessions** (prop off, by the
-   numbers: amp 60 now = 1650 Hz vs ~1000 Hz in the matrix-era
-   ladders). Consequence: the jumped 50 Hz open-loop catch went 0/32
+2. **RETRACTED (2026-07-18, operator called it): the "mechanical
+   load changed" claim was WRONG** — the ~1000 Hz baseline I quoted
+   was confabulated. Verified: era-AM32 at 60% = 1634 Hz (zct_first
+   ci_us median 102), today-minz amp 60 = 1650 Hz, era-minz amp 55 =
+   1610 Hz — ONE curve, load unchanged. The 50 Hz jump-catch 0/20
+   regression is therefore an OPEN code/build question (not load,
+   not bench). Consequence: the jumped 50 Hz open-loop catch went 0/32
    (perfect rotating field, flat-BEMF float windows = rotor
    motionless — stallwax2 dump); AM32 ramps from ~0 Hz and is immune.
    Diagnosis path: engage crawl-locks -> AM32 falsifier flies ->
@@ -566,3 +570,33 @@ the open path (reviewer notified the premise was a misreading).
    now holding a 303k-record MZT fatal trace
    (captures/mzt_rampstart_*). Next session: TX-wedge hunt has a
    fresh specimen.
+
+
+## B-escape mechanism analysis (2026-07-18, mzt_rampstart 303k records)
+
+Fresh same-session facts, all offline from the trace:
+- Phase-B concentration REPRODUCES: >12.5% crests per-1k: s1=53.0,
+  s4=63.6 vs 1.3-12.5 all other sectors (7216 total vs AM32-era 1 in
+  262k; >25%: ZERO — bounded here).
+- refined=100% EVERYWHERE, including inside escapes: these are NOT
+  missed detections. The comparator ZC is found every window; the
+  measured period itself runs long.
+- Refund/sum-conservation test (period[i]+period[i+1] vs local 2-rev
+  baseline; a late TIMESTAMP conserves the sum exactly, real decel
+  does not): quartiles 0.30/0.56/0.77 — ~25% pure timestamp
+  artifact, ~32% real-decel-like, 43% intermediate. Median escape
+  excess 14 us at ~100 us windows.
+
+Coherent mechanism hypothesis (testable): B's noisier analog path
+occasionally makes the persistence check fail through the true
+crossing region; the accept slips ~10-20 us to the next clean PWM
+dwell (14 us ~ 1/3 carrier period). Because the accept ARMS the
+commutation (scheduling inversion), the late timestamp fires a late
+commutation = REAL torque mistiming = the intermediate/real fraction.
+AM32 is immune because its filter_level scales DOWN with speed
+(main.c:2112, shallow persistence accepts early) while ours DEEPENS
+5->12 reads when the blank shrinks — our own noise armor manufactures
+the latency. Predictions: (1) per-window persistence-retry counters
+(instrument decisions!) spike in s1/s4 at escapes; (2) capping
+persistence depth at speed (AM32-style) collapses the s1/s4 crest
+rate. Next bench experiment: persistence-depth A/B at the high rungs.
