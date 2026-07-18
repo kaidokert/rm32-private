@@ -764,6 +764,24 @@ const R4_VAR_CARRIER: bool = false;
 /// the CNT check replicates both regimes.
 const R5_CNT_BLANK: bool = true;
 
+/// AM32 SCHEDULING INVERSION - the rotor owns the commutation clock.
+/// Under SWIFT the one-shot is armed ONLY by ZC accepts (AM32: TIM16
+/// is re-armed only from zcfoundroutine); no ZC = hold the sector
+/// and WAIT. Silence is legitimate up to the reseed threshold, so
+/// the desync watchdog folds into the starve watchdog while
+/// inverted. Reseed keeps the estimator-paced free-run as its
+/// recovery crawl (rotor-paced recovery = a later rung), and the
+/// ADC-confirm engage path keeps free-run (phase-C windows have no
+/// accept route there). BLD bb events outside reseed become a
+/// CANARY: the inverted loop can be late, never blind.
+const ZC_CLOCKED: bool = true;
+/// Reseed chain kicks: the inverted chain is silent when a reseed
+/// triggers, so reseed entry must arm the first crawl shot itself.
+static RESEED_KICKS: AtomicU32 = AtomicU32::new(0);
+/// Core-visible mirror of ZC_CLOCKED (zc::ZcState.zc_clocked): lifts
+/// the TOPEND gate on phase-C arming (invert2 incident).
+static ZC_CLOCKED_FLAG: AtomicBool = AtomicBool::new(ZC_CLOCKED);
+
 // ---- R6: self-paced polling start (minz_core::start) ----
 // `Y` arms it from standstill: duty pinned at R6_START_AMP, sector
 // advances only when the comparator LEVEL holds the expected
@@ -830,6 +848,15 @@ fn trigger_reseed(detail: u16) {
         CURRENT_SECTOR.load(Ordering::Relaxed),
         detail,
     );
+    // SCHEDULING INVERSION: the rotor-clocked chain is silent when a
+    // reseed triggers (that is WHY it triggered) - arm the first
+    // crawl shot here; subsequent reseed commutations free-run
+    // (RESEED_ACTIVE disables the inversion) until accepts return.
+    if ZC_CLOCKED && CL_FAST_PATH.load(Ordering::Relaxed) {
+        let iv = OWL_INTERVAL_US.load(Ordering::Relaxed).max(500);
+        minz::lptim2_oneshot::schedule_us(iv);
+        RESEED_KICKS.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// R1: every duty write goes through this shaper (AM32 semantics:
@@ -2317,7 +2344,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} cls: lost={} retry={} dur={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} cls: lost={} retry={} dur={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2328,6 +2355,7 @@ fn main() -> ! {
                                 SLEW_CLAMP_COUNT.load(Ordering::Relaxed),
                                 RESEED_COUNT.load(Ordering::Relaxed),
                                 RESEED_STRIKES.load(Ordering::Relaxed),
+                                RESEED_KICKS.load(Ordering::Relaxed),
                                 tim1_motor_pwm::max_duty(),
                                 CARRIER_CHANGES.load(Ordering::Relaxed),
                                 SAG_DEBOUNCE_LIVE.load(Ordering::Relaxed),
@@ -2828,10 +2856,20 @@ fn TIM7() {
             // only backstop/runaway/escalation kill. Edge-triggered:
             // while a reseed runs the watchdog does not re-fire (the
             // 22.5 ms backstop stays armed above it).
+            // Inverted clock: commutation silence while waiting on a
+            // late ZC is LEGITIMATE - fold the desync reference into
+            // the starve reference so only real ZC starvation trips
+            // (the free-run-chain-death case desync guarded cannot
+            // exist without a free-run).
+            let since_comm_eff = if ZC_CLOCKED && CL_FAST_PATH.load(Ordering::Relaxed) {
+                starve_us
+            } else {
+                since_us
+            };
             let action = minz_core::guards::cl_watchdog_r3(
                 interval_us,
                 starve_us,
-                since_us,
+                since_comm_eff,
                 last_qzc != 0,
                 RESEED_STRIKES.load(Ordering::Relaxed),
             );
@@ -3162,6 +3200,7 @@ static MODE_STATE: minz_core::mode::ModeState<'static> = minz_core::mode::ModeSt
 /// The ZC candidate/confirm/accept state machine's view of this
 /// file's statics (minz_core::zc — incl. the B1 TOCTOU regression).
 static ZC_STATE: minz_core::zc::ZcState<'static> = minz_core::zc::ZcState {
+    zc_clocked: &ZC_CLOCKED_FLAG,
     cand_zc_us: &CAND_ZC_US,
     cand_expected: &CAND_EXPECTED,
     cand_confirms: &CAND_CONFIRMS,
@@ -3470,10 +3509,17 @@ fn LPTIM2() {
     WINDOW_VBAT_MIN.store(u16::MAX, Ordering::Relaxed);
     // Publish: the fabric picks this up on its next wrap.
     CLOSED_GEN.fetch_add(1, Ordering::Relaxed);
-    // Free-run schedule (light re-arm valid at the ARR match).
+    // SCHEDULING INVERSION: no free-run re-arm when rotor-clocked -
+    // the next shot comes from the next ZC accept, or from the
+    // watchdog reseed kick if none arrives.
     let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
-    if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
-        minz::lptim2_oneshot::reschedule_light(t);
+    let rotor_clocked = ZC_CLOCKED
+        && CL_FAST_PATH.load(Ordering::Relaxed)
+        && !RESEED_ACTIVE.load(Ordering::Relaxed);
+    if !rotor_clocked {
+        if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
+            minz::lptim2_oneshot::reschedule_light(t);
+        }
     }
     // Scope trigger on each electrical rev, same as the open loop.
     if sector == 0 {

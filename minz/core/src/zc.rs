@@ -101,6 +101,15 @@ pub const fn expected_post_zc(sector: u8) -> bool {
 
 /// The state machine's view of the firmware statics.
 pub struct ZcState<'a> {
+    /// SCHEDULING INVERSION (rotor-clocked commutation): when set,
+    /// phase-C windows (sectors 0/3) MUST arm the shot at every
+    /// speed under SWIFT - without a free-run there is no
+    /// dead-reckon fallback, and a non-arming window stalls the
+    /// whole chain (invert2 incident: 3 ms silence at every C
+    /// window -> reseed storm -> strike kill). The TOPEND gate on C
+    /// re-timing was a FREE-RUN-era robustness patch and only
+    /// applies when a free-run exists to dead-reckon C.
+    pub zc_clocked: &'a AtomicBool,
     pub cand_zc_us: &'a AtomicU32,
     pub cand_expected: &'a AtomicBool,
     pub cand_confirms: &'a AtomicU8,
@@ -387,8 +396,9 @@ pub fn accept_publish(
             // possibly-noisy comparator C ZC while accelerating (bench:
             // re-timing C broke the amp 40-44 climb), so keep dead-reckon
             // there.
-            let c_retime =
-                zs.cl_fast_path.load(Ordering::Relaxed) && interval_us < crate::window::TOPEND_US;
+            let c_retime = zs.cl_fast_path.load(Ordering::Relaxed)
+                && (zs.zc_clocked.load(Ordering::Relaxed)
+                    || interval_us < crate::window::TOPEND_US);
             schedule = is_ab || c_retime;
         }
     }
@@ -441,7 +451,7 @@ pub fn schedule_precheck(zs: &ZcState<'_>, sector: u8) -> Option<u32> {
     } else {
         zs.cl_active.load(Ordering::Relaxed)
             && zs.cl_fast_path.load(Ordering::Relaxed)
-            && iv < crate::window::TOPEND_US
+            && (zs.zc_clocked.load(Ordering::Relaxed) || iv < crate::window::TOPEND_US)
     };
     if ok { Some(iv) } else { None }
 }
@@ -511,6 +521,7 @@ mod tests {
     // ---- state machine ----
 
     struct Rig {
+        zc_clocked: AtomicBool,
         cand_zc_us: AtomicU32,
         cand_expected: AtomicBool,
         cand_confirms: AtomicU8,
@@ -540,6 +551,7 @@ mod tests {
     impl Rig {
         fn new() -> Self {
             Self {
+                zc_clocked: AtomicBool::new(false),
                 cand_zc_us: AtomicU32::new(u32::MAX),
                 cand_expected: AtomicBool::new(false),
                 cand_confirms: AtomicU8::new(0),
@@ -569,6 +581,7 @@ mod tests {
 
         fn zs(&self) -> ZcState<'_> {
             ZcState {
+                zc_clocked: &self.zc_clocked,
                 cand_zc_us: &self.cand_zc_us,
                 cand_expected: &self.cand_expected,
                 cand_confirms: &self.cand_confirms,
@@ -860,6 +873,31 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn regression_invert2_c_windows_must_arm_when_rotor_clocked() {
+        // invert2 incident (2026-07-17): under the scheduling
+        // inversion, phase-C windows (sectors 0/3) hit the TOPEND
+        // gate at mid speed and armed nothing - with no free-run to
+        // dead-reckon them the chain stalled ~3 ms at every C window
+        // (reseed storm -> strike kill at amp 60). zc_clocked lifts
+        // the gate: C arms at ANY speed under SWIFT.
+        let r = Rig::new();
+        r.cl_active.store(true, Ordering::Relaxed);
+        r.cl_fast_path.store(true, Ordering::Relaxed);
+        r.interval_us.store(450, Ordering::Relaxed); // mid speed > TOPEND
+        r.window_qzc_us.store(u32::MAX, Ordering::Relaxed);
+        // Free-run world: C must NOT arm (dead-reckon covers it).
+        r.zc_clocked.store(false, Ordering::Relaxed);
+        assert_eq!(schedule_precheck(&r.zs(), 0), None);
+        assert_eq!(schedule_precheck(&r.zs(), 3), None);
+        // Rotor-clocked world: C MUST arm.
+        r.zc_clocked.store(true, Ordering::Relaxed);
+        assert_eq!(schedule_precheck(&r.zs(), 0), Some(450));
+        assert_eq!(schedule_precheck(&r.zs(), 3), Some(450));
+        // A/B unaffected either way.
+        assert_eq!(schedule_precheck(&r.zs(), 1), Some(450));
+    }
+
     fn schedule_precheck_agrees_with_accept_publish() {
         // Firmware order: precheck (schedule-first) THEN accept_publish.
         // The precheck's decision must equal plan.schedule for every
