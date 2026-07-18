@@ -72,8 +72,8 @@ impl Default for BlackBox {
 }
 
 /// Event-type display names, indexed by `Event::ty`.
-pub const EV_NAMES: [&str; 11] = [
-    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ", "RSD",
+pub const EV_NAMES: [&str; 12] = [
+    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ", "RSD", "RSC",
 ];
 
 // The authoritative event codes (indices into EV_NAMES; the decode
@@ -101,6 +101,10 @@ pub const EV_STV: u8 = 8;
 pub const EV_RAQ: u8 = 9;
 /// R3: sync-loss handled as a duty-clamped RESEED (not a kill).
 pub const EV_RSD: u8 = 10;
+/// Level-rescue accept: a pre-crossed window (crossing predated the
+/// mux switch - no edge ever existed) had its qZC synthesized from
+/// the first-wrap level sample. Data = offset us from window start.
+pub const EV_RSC: u8 = 11;
 
 /// Render a desync dump: one `bb +<dt>us NAME s<sec> d=<data>` line
 /// per event, dt in µs since the previous event (t is in 10 µs

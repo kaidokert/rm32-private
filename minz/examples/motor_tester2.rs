@@ -874,6 +874,18 @@ static CL_COMM_COUNT: AtomicU32 = AtomicU32::new(0);
 // ---------------------------------------------------------------
 /// Consecutive A/B (measurable) windows that closed without a qZC.
 static CL_NOZ_RUN: AtomicU8 = AtomicU8::new(0);
+/// NOZ anatomy (TRANSIT_AUTOPSY attack #1): comparator level at the
+/// window's first PWM wrap (0=unsampled, 1=low, 2=high) + the two
+/// class counters. pre = ZC already happened at window open (blind
+/// zone / gate discard); never = BEMF never crossed.
+static WINDOW_OPEN_LEVEL: AtomicU8 = AtomicU8::new(0);
+static NOZ_PRE: AtomicU32 = AtomicU32::new(0);
+static NOZ_NEVER: AtomicU32 = AtomicU32::new(0);
+/// Level-rescue accepts (rung 3): pre-crossed windows whose qZC was
+/// synthesized from the first-wrap sample. Cascade-breaking only -
+/// no estimator update, no shot re-time, and NOT fed to the
+/// starvation watchdog (a stalled rotor must still starve out).
+static RESCUE_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Re-acquisition mode active.
 static CL_REACQ: AtomicBool = AtomicBool::new(false);
 
@@ -2317,7 +2329,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2335,6 +2347,9 @@ fn main() -> ! {
                                 R6_CROSS_COUNT.load(Ordering::Relaxed),
                                 R6_BLIND_COUNT.load(Ordering::Relaxed),
                                 R6_HANDOFF_IV_US.load(Ordering::Relaxed),
+                                NOZ_PRE.load(Ordering::Relaxed),
+                                NOZ_NEVER.load(Ordering::Relaxed),
+                                RESCUE_COUNT.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -3267,6 +3282,23 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
     for (ev, data) in bb.iter().flatten() {
         bb_record(*ev, prev_sector, *data);
     }
+    // NOZ anatomy: classify a ZC-less close from the open-sample
+    // (host-tested minz_core::window::classify_noz).
+    if bb[0].map(|e| e.0) == Some(minz_core::window::EV_NOZ) {
+        match minz_core::window::classify_noz(
+            WINDOW_OPEN_LEVEL.load(Ordering::Relaxed),
+            prev_sector,
+        ) {
+            Some(true) => {
+                NOZ_PRE.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(false) => {
+                NOZ_NEVER.fetch_add(1, Ordering::Relaxed);
+            }
+            None => {}
+        }
+    }
+    WINDOW_OPEN_LEVEL.store(0, Ordering::Relaxed);
     if sc.record {
         let snap = minz_core::window::snapshot_diag(&WINDOW_DIAG);
         let mut prod = PEND_PROD.borrow(cs).borrow_mut();
@@ -3342,6 +3374,18 @@ fn LPTIM2() {
     core::sync::atomic::compiler_fence(Ordering::Release);
     CURRENT_SECTOR.store(sector, Ordering::Relaxed);
     // --- bookkeeping (off the critical path) ---
+    // DEFERRED-CLOSE ATTEMPT (TRANSIT_AUTOPSY #2) REVERTED
+    // 2026-07-17: pending the close to a priority-2 TIM15 handler
+    // shrank the ear-closed span ~20->~11 us, but comp storms
+    // starved the handler exactly when it mattered - 2475 dropped
+    // closes during engages, +201 during the fatal climb (the
+    // reacq machinery crippled mid-crisis), pre-miss count UP
+    // (+49 vs +13 baseline), envelope unchanged (died at 76 both
+    // ways). An overrun-safe version needs an inline-fallback +
+    // seqlock; not worth it until the gate rung proves
+    // insufficient. Core keeps the tested split
+    // (window_control_step_from + control_reset + equivalence
+    // test) for a future retry.
     CL_COMM_COUNT.fetch_add(1, Ordering::Relaxed);
     {
         // Black box: classify the commutation by the window it ends
@@ -3354,31 +3398,17 @@ fn LPTIM2() {
         );
     }
     free(|cs| close_float_window(cs, prev));
-    // Adaptive time gate: earliest acceptable ZC at 40 % of the
-    // MEASURED interval (not the stale commanded-f half-window) so an
-    // accelerating rotor's earlier-arriving ZC stays in bounds while
-    // early-window transients stay out.
+    // Adaptive time gate: earliest acceptable ZC from the MEASURED
+    // interval (host-tested minz_core::timing::gate_us).
     let interval = OWL_INTERVAL_US.load(Ordering::Relaxed);
     if interval != 0 {
-        // Adaptive gate: 20 % of the measured interval normally; in
-        // re-acquisition drop to ~8 % (just past the commutation
-        // flyback) so ZCs that drifted early — the lockout-spiral
-        // signature — become acceptable again.
-        // Host-tested: minz_core::timing::gate_us (30 % normal, 8 %
-        // re-acquisition; history in the core docs + tests).
         SECTOR_GATE_US.store(
             minz_core::timing::gate_us(interval, CL_REACQ.load(Ordering::Relaxed)),
             Ordering::Relaxed,
         );
     }
-    // Free-run schedule: exactly 1.0× the estimator interval (AM32
-    // semantics — an accepted ZC merely RE-TIMES the pending shot;
-    // the 1.5×T-fallback compounded-lag incident is a named
-    // regression on minz_core::drive::freerun_reschedule_us).
-    // Lever #2 (validated 2026-07-13): this runs at the ARR match
-    // (counter STOPPED), so the LIGHT re-arm is valid — no pending
-    // count to cancel, kernel warm. Saves ~310 cyc + a 2.5 µs
-    // busy-wait per commutation vs the full disable/enable path.
+    // Free-run schedule: exactly 1.0x the estimator interval (AM32
+    // semantics; light re-arm valid at the ARR match - lever #2).
     if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
         minz::lptim2_oneshot::reschedule_light(t);
     }
@@ -3711,6 +3741,34 @@ fn TIM1_UP_TIM16() {
     }
     let idx = (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
     let value = comp2::value() as u8;
+    // NOZ anatomy: capture the window's FIRST per-wrap comparator
+    // level (mux settled - this wrap is 0-41.6 us after the
+    // commutation that opened the window). One load + rare store.
+    if CL_ACTIVE.load(Ordering::Relaxed) && WINDOW_OPEN_LEVEL.load(Ordering::Relaxed) == 0 {
+        WINDOW_OPEN_LEVEL.store(1 + value, Ordering::Relaxed);
+        // Rung 3 LEVEL-RESCUE - ATTEMPTED, REVERTED to COUNT-ONLY
+        // (2026-07-17 rescue1): publishing a synthesized qZC on a
+        // pre-crossed first-wrap sample fired on 2.6 % of at-speed
+        // windows and STOLE their real accepts (the COMP accept path
+        // keys on WINDOW_QZC_US==MAX), starving the estimator (rej
+        // census 5.5k -> 372) and the stiff-gate reference; the 76
+        // transit died HARDER (rsd 8/4, burst 7, 4.68 V). The
+        // pre-crossed CLASS is real but the rescue must not preempt
+        // the window's own accept - a correct version would arm a
+        // low-confidence candidate that yields to any real edge.
+        // Count-only until then (rsq= in the i-line).
+        let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+        if CL_AM32_GEOM.load(Ordering::Relaxed)
+            && iv > 0
+            && iv < minz_core::window::HIGH_SPEED_US
+            && WINDOW_QZC_US.load(Ordering::Relaxed) == u32::MAX
+        {
+            let sector = CURRENT_SECTOR.load(Ordering::Relaxed);
+            if (value == 1) == minz_core::zc::expected_post_zc(sector) {
+                RESCUE_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
     let sector = CURRENT_SECTOR.load(Ordering::Relaxed) & 0x07;
     // Per-cycle context (GECKO-scope hybrid): mid-ON A/B/current from
     // this cycle's injected burst + the free-run current-ring head, so

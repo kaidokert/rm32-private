@@ -49,6 +49,16 @@ pub struct WindowState<'a> {
     pub vbat_live: &'a AtomicU16,
     // Watchdog reference.
     pub last_comm_10us: &'a AtomicU32,
+    // NOZ-anatomy instrumentation (TRANSIT_AUTOPSY attack #1): the
+    // comparator LEVEL sampled at the first PWM wrap of this window
+    // (0 = not yet sampled this window, 1 = level low, 2 = level
+    // high). A NOZ whose open-sample already sits at the expected
+    // post-ZC level = PRE-CROSSED (the ZC happened inside the
+    // commutation-ISR blind zone or was gate-discarded); otherwise
+    // NEVER-CROSSED (BEMF invisible). Different fixes - count both.
+    pub open_level: &'a AtomicU8,
+    pub noz_pre: &'a AtomicU32,
+    pub noz_never: &'a AtomicU32,
 }
 
 // Black-box event codes emitted here — authority lives in
@@ -149,16 +159,40 @@ pub struct WindowDiag<'a> {
 /// diagnostic accumulators — the caller flips the diagnostic bank and
 /// hands `scalars` + the completed bank to main. Byte-identical control
 /// behavior to [`close_float_window`] (same test vectors).
-pub fn window_control_step(
+/// NOZ anatomy (TRANSIT_AUTOPSY attack #1): classify a ZC-less
+/// window from the comparator LEVEL sampled at its first PWM wrap
+/// (open_level: 0 = unsampled, 1 = low, 2 = high). Some(true) =
+/// PRE-CROSSED (level already at expected post-ZC at window open:
+/// the ZC happened in the commutation-ISR blind zone or was
+/// gate-discarded); Some(false) = NEVER-CROSSED (BEMF invisible).
+#[inline]
+pub fn classify_noz(open_level: u8, prev_sector: u8) -> Option<bool> {
+    if open_level == 0 {
+        return None;
+    }
+    Some((open_level == 2) == crate::zc::expected_post_zc(prev_sector))
+}
+
+/// Deferred-close variant (blind-zone shrink, TRANSIT_AUTOPSY attack
+/// #2): identical control logic to the classic step, but the CLOSED
+/// window's per-window scalars arrive as VALUES (snapshotted by the
+/// commutation ISR via [`control_snapshot_reset`]) instead of live
+/// atomic reads, so it can run in a LOWER-priority deferred ISR while
+/// the new window is already accruing edges. Shared/cross-window state
+/// (reacq, spans, decimation) still lives behind `ws`.
+#[allow(clippy::too_many_arguments)]
+pub fn window_control_step_from(
     ws: &WindowControl<'_>,
     prev_sector: u8,
     now_10us: u32,
     now_us: u32,
     noz_raw: u16,
+    start_us: u32,
+    qzc: u32,
+    first_zc: u32,
 ) -> ([Option<(u8, u16)>; 2], CloseScalars) {
+    let _ = now_10us;
     let mut bb: [Option<(u8, u16)>; 2] = [None, None];
-    let start_us = ws.sector_start_us.load(Ordering::Relaxed);
-    let qzc = ws.qzc_us.load(Ordering::Relaxed);
 
     // --- CONTROL: miss detection / re-acq / span (exact) ---
     if qzc == u32::MAX && ws.cl_active.load(Ordering::Relaxed) {
@@ -194,7 +228,6 @@ pub fn window_control_step(
     // scalars are discarded), and that waste was the double-buffer's
     // typical-path tax. `record=false` short-circuits it.
     let sc = if record {
-        let first_zc = ws.first_zc_us.load(Ordering::Relaxed);
         let mut pred_err: i16 = i16::MIN;
         if qzc != u32::MAX && iv_now != 0 {
             let err = now_us.wrapping_sub(qzc) as i64 - (iv_now / 2) as i64;
@@ -222,7 +255,13 @@ pub fn window_control_step(
         CloseScalars::default() // record=false; main only clears the bank
     };
 
-    // --- CONTROL-critical resets (exact; define the new window) ---
+    (bb, sc)
+}
+
+/// Control-critical resets that define the NEW window (split out of
+/// the classic step so the commutation ISR can reset IMMEDIATELY
+/// after snapshotting, before the deferred close runs).
+pub fn control_reset(ws: &WindowControl<'_>, now_10us: u32, now_us: u32) {
     ws.first_zc_us.store(u32::MAX, Ordering::Relaxed);
     ws.qzc_us.store(u32::MAX, Ordering::Relaxed);
     ws.cand_zc_us.store(u32::MAX, Ordering::Relaxed);
@@ -232,7 +271,34 @@ pub fn window_control_step(
     );
     ws.sector_start_us.store(now_us, Ordering::Relaxed);
     ws.last_comm_10us.store(now_10us, Ordering::Relaxed);
-    (bb, sc)
+}
+
+/// Classic single-context close: read-live -> logic -> reset. Kept as
+/// the harness/open-loop path and the behavior authority (all close
+/// vectors pin THIS function; the deferred pair must stay
+/// behavior-identical: snapshot+reset then step_from == this).
+pub fn window_control_step(
+    ws: &WindowControl<'_>,
+    prev_sector: u8,
+    now_10us: u32,
+    now_us: u32,
+    noz_raw: u16,
+) -> ([Option<(u8, u16)>; 2], CloseScalars) {
+    let start_us = ws.sector_start_us.load(Ordering::Relaxed);
+    let qzc = ws.qzc_us.load(Ordering::Relaxed);
+    let first_zc = ws.first_zc_us.load(Ordering::Relaxed);
+    let out = window_control_step_from(
+        ws,
+        prev_sector,
+        now_10us,
+        now_us,
+        noz_raw,
+        start_us,
+        qzc,
+        first_zc,
+    );
+    control_reset(ws, now_10us, now_us);
+    out
 }
 
 /// MAIN half of the close: read the just-completed diagnostic bank,
@@ -361,6 +427,16 @@ pub fn close_float_window(
 
     if qzc == u32::MAX && ws.cl_active.load(Ordering::Relaxed) {
         out.bb[0] = Some((EV_NOZ, ws.raw.load(Ordering::Relaxed).min(0xFFFF) as u16));
+        // NOZ anatomy - shared authority: classify_noz.
+        match classify_noz(ws.open_level.load(Ordering::Relaxed), prev_sector) {
+            Some(true) => {
+                ws.noz_pre.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(false) => {
+                ws.noz_never.fetch_add(1, Ordering::Relaxed);
+            }
+            None => {}
+        }
         // Re-acquisition trigger: only A/B windows count (phase-C
         // windows — sectors 0/3 — are dead-reckoned and legitimately
         // ZC-less).
@@ -465,6 +541,7 @@ pub fn close_float_window(
     // here is silent telemetry corruption — the host test pins the
     // complete list.
     ws.raw.store(0, Ordering::Relaxed);
+    ws.open_level.store(0, Ordering::Relaxed);
     ws.valid.store(0, Ordering::Relaxed);
     ws.first_zc_us.store(u32::MAX, Ordering::Relaxed);
     ws.qzc_us.store(u32::MAX, Ordering::Relaxed);
@@ -512,6 +589,9 @@ mod tests {
         vbat_min: AtomicU16,
         vbat_live: AtomicU16,
         last_comm_10us: AtomicU32,
+        open_level: AtomicU8,
+        noz_pre: AtomicU32,
+        noz_never: AtomicU32,
     }
 
     impl Rig {
@@ -540,6 +620,9 @@ mod tests {
                 vbat_min: AtomicU16::new(u16::MAX),
                 vbat_live: AtomicU16::new(1_083),
                 last_comm_10us: AtomicU32::new(1_000),
+                open_level: AtomicU8::new(0),
+                noz_pre: AtomicU32::new(0),
+                noz_never: AtomicU32::new(0),
             }
         }
 
@@ -568,6 +651,9 @@ mod tests {
                 vbat_min: &self.vbat_min,
                 vbat_live: &self.vbat_live,
                 last_comm_10us: &self.last_comm_10us,
+                open_level: &self.open_level,
+                noz_pre: &self.noz_pre,
+                noz_never: &self.noz_never,
             }
         }
 
@@ -827,6 +913,92 @@ mod tests {
         }
         assert_eq!(r.cl_noz_run.load(Ordering::Relaxed), 0);
         assert!(!r.cl_reacq.load(Ordering::Relaxed));
+    }
+    #[test]
+    fn noz_precrossed_vs_nevercrossed_classification() {
+        // Sector 1: expected post-ZC level is false (rising BEMF,
+        // textbook odd sectors are rising -> post level 0). Use the
+        // authority directly so the test tracks it.
+        let expected = crate::zc::expected_post_zc(1);
+        let f = Rig::new();
+        f.cl_active.store(true, Ordering::Relaxed);
+        // Window closes ZC-less with the open-sample at the expected
+        // post-ZC level -> PRE-CROSSED.
+        f.qzc_us.store(u32::MAX, Ordering::Relaxed);
+        f.open_level
+            .store(if expected { 2 } else { 1 }, Ordering::Relaxed);
+        f.close(1, 100, 1_000);
+        assert_eq!(f.noz_pre.load(Ordering::Relaxed), 1);
+        assert_eq!(f.noz_never.load(Ordering::Relaxed), 0);
+        // Next window: open-sample at the PRE-ZC level and no ZC ->
+        // NEVER-CROSSED.
+        f.qzc_us.store(u32::MAX, Ordering::Relaxed);
+        f.open_level
+            .store(if expected { 1 } else { 2 }, Ordering::Relaxed);
+        f.close(1, 200, 2_000);
+        assert_eq!(f.noz_pre.load(Ordering::Relaxed), 1);
+        assert_eq!(f.noz_never.load(Ordering::Relaxed), 1);
+        // Unsampled window (open_level=0, e.g. sub-wrap window):
+        // counted in neither class.
+        f.qzc_us.store(u32::MAX, Ordering::Relaxed);
+        f.close(1, 300, 3_000);
+        assert_eq!(f.noz_pre.load(Ordering::Relaxed), 1);
+        assert_eq!(f.noz_never.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn noz_open_level_rearms_every_close() {
+        let f = Rig::new();
+        f.open_level.store(2, Ordering::Relaxed);
+        f.close(1, 100, 1_000);
+        assert_eq!(f.open_level.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn deferred_close_pair_equals_classic_step() {
+        // The deferred pair (snapshot values -> control_reset ->
+        // step_from) must be behavior-identical to the classic
+        // read-live step for the same window. Run one NOZ window and
+        // one qZC window through both paths on twin rigs.
+        for qzc in [u32::MAX, 940u32] {
+            let a = Rig::new();
+            let b = Rig::new();
+            for r in [&a, &b] {
+                r.cl_active.store(true, Ordering::Relaxed);
+                r.stream_on.store(true, Ordering::Relaxed);
+                r.sector_start_us.store(900, Ordering::Relaxed);
+                r.qzc_us.store(qzc, Ordering::Relaxed);
+                r.first_zc_us.store(qzc, Ordering::Relaxed);
+                r.interval_us.store(100, Ordering::Relaxed);
+            }
+            let (bb_a, sc_a) = window_control_step(&a.control(), 1, 100, 1_000, 7);
+            // Deferred path: snapshot first, reset, then step_from.
+            let cb = b.control();
+            let start = cb.sector_start_us.load(Ordering::Relaxed);
+            let q = cb.qzc_us.load(Ordering::Relaxed);
+            let fz = cb.first_zc_us.load(Ordering::Relaxed);
+            control_reset(&cb, 100, 1_000);
+            let (bb_b, sc_b) = window_control_step_from(&cb, 1, 100, 1_000, 7, start, q, fz);
+            assert_eq!(bb_a, bb_b);
+            assert_eq!(sc_a.record, sc_b.record);
+            assert_eq!(sc_a.len_us, sc_b.len_us);
+            assert_eq!(sc_a.qzc_off_us, sc_b.qzc_off_us);
+            assert_eq!(sc_a.zc_off_us, sc_b.zc_off_us);
+            assert_eq!(sc_a.pred_err_us, sc_b.pred_err_us);
+            // Live control state identical afterward.
+            assert_eq!(
+                a.qzc_us.load(Ordering::Relaxed),
+                b.qzc_us.load(Ordering::Relaxed)
+            );
+            assert_eq!(
+                a.cl_noz_run.load(Ordering::Relaxed),
+                b.cl_noz_run.load(Ordering::Relaxed)
+            );
+            assert_eq!(
+                a.windows_since_qzc.load(Ordering::Relaxed),
+                b.windows_since_qzc.load(Ordering::Relaxed)
+            );
+        }
     }
 
     #[test]

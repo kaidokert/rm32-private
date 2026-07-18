@@ -111,3 +111,48 @@ Attack list (latency/blind-window work, in order):
 The recovery-side observation from the first cut (reseed exit at 6
 accepts + 16 %/ms re-ramp = multi-amp surge) remains true and
 documented above - it is the amplifier, not the cause.
+
+## Attack-list outcomes (2026-07-17 late session)
+
+**#1 NOZ instrumentation — LANDED.** First-wrap comparator-level
+sample (`WINDOW_OPEN_LEVEL`, TIM1_UP) + `window::classify_noz` +
+`noz: pre=/nev=` i-line counters + core split
+(`window_control_step_from` / `control_reset` + deferred-pair
+equivalence test). Result data: **steady dwells 60-74 have ZERO
+misses of either class** (~520k accepts clean — dwell parity with
+AM32 already exists); the fatal transit shows both classes (~13
+pre / ~15 never in one fatal climb). A pre-crossed window means the
+crossing PREDATED the window: it happened while the mux still
+pointed at the previous phase, so NO EDGE ever existed — neither
+the ear nor the gate can rescue it; only schedule accuracy (or a
+level-based acceptance) can.
+
+**#2 blind-zone shrink (deferred close) — ATTEMPTED, REVERTED.**
+LPTIM2 kept actuation+snapshot+reschedule and re-opened the ear at
+~11 us (vs ~20), pending close/bb/serialize to a priority-2
+TIM1_BRK_TIM15 handler. Bench: comp storms starved the handler
+exactly when it mattered — dfo=2475 dropped closes during engages,
++201 during the fatal climb (reacq machinery crippled mid-crisis),
+pre-misses UP (+49 vs +13), envelope unchanged (died 76 both).
+A shippable version needs an inline-overrun fallback + seqlock;
+core keeps the tested split for that retry. ALSO: the gate was
+never the discard mechanism under --geom — the R2 stiff gate
+already REPLACES the window gate (either/or), so rung #3's
+gate-tolerance premise was largely already satisfied.
+
+**#3 early-ZC handling (level-rescue) — ATTEMPTED, REVERTED to
+count-only.** Publishing a synthesized qZC on a pre-crossed
+first-wrap sample fired on 2.6 % of at-speed windows and STOLE
+their real accepts (the COMP accept path keys on qzc==MAX):
+estimator starved (rej census 5.5k -> 372), stiff-gate reference
+stale, the 76 transit died HARDER (rsd 8/4, burst 7, 4.68 V bus).
+The class is real; the mechanism must be a low-confidence candidate
+that YIELDS to any real edge, not a preempting publish. `rsq=`
+count-only diagnostic retained.
+
+**Standing conclusion:** dwells are clean; the death is schedule
+LAG under acceleration pushing crossings behind the mux switch.
+The honest remaining levers are structural:true commutation-latency
+reduction (a GP-timer one-shot to replace LPTIM2's chain, COMP ISR
+diet) and/or estimator lead during commanded climbs — both
+plan-scale work, not session-end patches.
