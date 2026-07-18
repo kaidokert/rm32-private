@@ -215,6 +215,19 @@ Instrument: start-phase bb events; crossing-count telemetry.
 Effort ~3-4 days. Do last — the engage-lottery fix already made
 starts reliable; this makes them principled.
 
+## 2026-07-17 addendum: the transit-death autopsy (TRANSIT_AUTOPSY.md)
+
+The 70-78 transit kill class is now root-caused: a survivable
+ZC-miss run triggers burst/reseed correctly, but the RECOVERY
+re-ramp runs at the at-speed slew class (16 %/ms) into a
+dip-slowed rotor - a winding-limited multi-amp surge that sags the
+bus, seeds the next miss (reseed storms, strikes=3 observed) and
+eventually holds the sag kill. The fatal bb shows a PERFECT loop at
+the kill - the energy transient kills, not the timing. Decision:
+harden the recovery (startup-class slew until the duty catches its
+target), NOT commutation latency. Full evidence + fix design in
+TRANSIT_AUTOPSY.md.
+
 ## Validation milestones
 
 - After R1+R2: top ladders should show the spike census dropping

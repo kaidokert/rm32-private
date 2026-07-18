@@ -1690,6 +1690,22 @@ fn main() -> ! {
                     minz_core::sense::vbat_mv(sense_adc.adc_to_mv(base) as u32),
                 )
                 .ok();
+                // Transit-autopsy: the event sequence into the sag.
+                write!(&mut tx_writer, "bb (sag kill):\r\n").ok();
+                let idx = BB_IDX.load(Ordering::Relaxed) as usize;
+                minz_core::blackbox::format_dump(
+                    (0..BB_LEN).map(|k| {
+                        let i = (idx + k) % BB_LEN;
+                        minz_core::blackbox::Event {
+                            t: BB_T[i].load(Ordering::Relaxed),
+                            ty: BB_TYPE[i].load(Ordering::Relaxed),
+                            sector: BB_SEC[i].load(Ordering::Relaxed),
+                            data: BB_DATA[i].load(Ordering::Relaxed),
+                        }
+                    }),
+                    |b| tx_writer.write_blocking(b),
+                );
+                BB_FROZEN.store(false, Ordering::Relaxed);
                 tx_writer.write_blocking(&[]);
             }
             if OC_TRIPPED.load(Ordering::Relaxed) {
@@ -3477,6 +3493,10 @@ fn TIM1_UP_TIM16() {
             if trip {
                 VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
                 minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Sag);
+                // Transit-autopsy: freeze the black box AT the kill
+                // so the ZC/commutation tail into the surge survives
+                // any post-kill watchdog events; main dumps + thaws.
+                BB_FROZEN.store(true, Ordering::Relaxed);
                 tim1_motor_pwm::all_off();
                 comp2::set_exti_enabled(false);
             }
