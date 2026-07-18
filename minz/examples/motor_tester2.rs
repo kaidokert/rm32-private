@@ -753,6 +753,16 @@ const R1_DUTY_SLEW: bool = true;
 // today. Revisit AFTER R5 (ISR diet) per the plan's own risk note -
 // the machinery below is correct and stays, gated off.
 const R4_VAR_CARRIER: bool = false;
+
+/// R5a - TIM1_CC retirement: the COMP ISR derives blank position
+/// from a direct TIM1.CNT read (PWM edges sit at CNT=0 and
+/// CNT=duty; under CL SET_DUTY_CYCLE_ALL all three CCRs are equal,
+/// so there are exactly two edge positions). Kills the 17-72 k/s
+/// timestamp-only TIM1_CC ISR. Exact-parity subtlety: the old
+/// CC-match stamp saw only FALLING edges under CL (all CCRs=duty)
+/// but also the wrap under open loop (CCR=0 channels match at 0) -
+/// the CNT check replicates both regimes.
+const R5_CNT_BLANK: bool = true;
 /// Max ARR glide per TIM7 tick (~1 % per 166 us): the full 24->48 kHz
 /// span takes ~9 ms, always as micro-steps, never a discrete hop.
 const CARRIER_SLEW_ARR: u16 = 32;
@@ -1251,7 +1261,9 @@ fn main() -> ! {
     //     PWM-edge timestamp used by the COMP-ISR blanking gate.
     tim1_motor_pwm::init(dp.TIM1, &mut apb2);
     tim1_motor_pwm::enable_update_interrupt();
-    tim1_motor_pwm::enable_cc_interrupts();
+    if !R5_CNT_BLANK {
+        tim1_motor_pwm::enable_cc_interrupts();
+    }
 
     // GECKO: continuous PWM-synchronous current sampling. OC4REF
     // (falling edge at CNT = SAMPLE_TICKS) → TRGO2 → ADC1 ch8, one
@@ -1439,7 +1451,9 @@ fn main() -> ! {
         NVIC::unmask(Interrupt::COMP);
         NVIC::unmask(Interrupt::TIM1_UP_TIM16);
         NVIC::unmask(Interrupt::TIM7);
-        NVIC::unmask(Interrupt::TIM1_CC);
+        if !R5_CNT_BLANK {
+            NVIC::unmask(Interrupt::TIM1_CC);
+        }
     }
 
     // Emit the ACTUAL priority configuration (hardware read-back, not
@@ -3617,9 +3631,22 @@ fn COMP() {
     let blank_us =
         minz_core::timing::blank_us(BLANK_US.load(Ordering::Relaxed) as u32, interval_us);
     if blank_us > 0 {
-        let since_cyc = cortex_m::peripheral::DWT::cycle_count()
-            .wrapping_sub(LAST_PWM_EDGE_CYC.load(Ordering::Relaxed));
-        if since_cyc < blank_us * 80 {
+        // R5a: CNT-position blank (see R5_CNT_BLANK). TIM1 ticks at
+        // the core 80 MHz (PSC=0), so blank_us * 80 is directly a
+        // CNT distance. Duty position from SLEW_LAST_DUTY (preload
+        // skew <= one slew step ~0.4 us).
+        let in_blank = if R5_CNT_BLANK {
+            let cnt = tim1_motor_pwm::read_cnt() as u32;
+            let blank_cyc = blank_us * 80;
+            let d = SLEW_LAST_DUTY.load(Ordering::Relaxed) as u32;
+            (cnt >= d && cnt - d < blank_cyc)
+                || (!CL_ACTIVE.load(Ordering::Relaxed) && cnt < blank_cyc)
+        } else {
+            let since_cyc = cortex_m::peripheral::DWT::cycle_count()
+                .wrapping_sub(LAST_PWM_EDGE_CYC.load(Ordering::Relaxed));
+            since_cyc < blank_us * 80
+        };
+        if in_blank {
             COMP_COUNT.fetch_add(1, Ordering::Relaxed);
             WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
             let elapsed = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));

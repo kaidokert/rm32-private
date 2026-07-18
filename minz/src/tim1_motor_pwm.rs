@@ -329,6 +329,14 @@ pub fn clear_update_flag() {
 /// bench uses this to timestamp every PWM edge for the software
 /// COMP-blanking gate. The ISR is responsible for clearing the
 /// matched flags via [`clear_cc_flags`].
+/// R5a: raw TIM1 counter read for the CNT-position blank check in
+/// the COMP ISR (replaces the TIM1_CC edge-timestamp ISR).
+#[inline]
+pub fn read_cnt() -> u16 {
+    let tim1 = unsafe { &*TIM1::ptr() };
+    tim1.cnt.read().cnt().bits()
+}
+
 #[inline]
 pub fn enable_cc_interrupts() {
     let tim1 = unsafe { &*TIM1::ptr() };
