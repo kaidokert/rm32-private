@@ -2907,11 +2907,17 @@ fn TIM7() {
             let since_us = minz_core::guards::since_us(now_10, last);
             let starve_us = minz_core::guards::since_us(now_10, last_qzc);
             // Bounded-wait criterion aggregates (166 us poll grain).
-            if since_us > CL_WAIT_MAX_US.load(Ordering::Relaxed) {
-                CL_WAIT_MAX_US.store(since_us, Ordering::Relaxed);
-            }
-            if interval_us != 0 && since_us > (interval_us + interval_us / 4) * 2 {
-                RESCUE_LATE.fetch_add(1, Ordering::Relaxed);
+            // SCOPED to the rescue's regime (criterion4 lesson: the
+            // engage/low-speed phase - where the rescue is
+            // deliberately OFF - contaminated wmax/rlate with
+            // 1780 us waits the fix never claimed to bound).
+            if interval_us != 0 && interval_us < minz_core::window::HIGH_SPEED_US {
+                if since_us > CL_WAIT_MAX_US.load(Ordering::Relaxed) {
+                    CL_WAIT_MAX_US.store(since_us, Ordering::Relaxed);
+                }
+                if since_us > (interval_us + interval_us / 4) * 2 {
+                    RESCUE_LATE.fetch_add(1, Ordering::Relaxed);
+                }
             }
             // R3 exit/amnesty poll (est_acc delta vs snapshot; off
             // the accept path by design).
