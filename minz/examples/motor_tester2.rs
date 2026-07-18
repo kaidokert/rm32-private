@@ -876,7 +876,7 @@ fn trigger_reseed(detail: u16) {
     // (RESEED_ACTIVE disables the inversion) until accepts return.
     if ZC_CLOCKED && CL_FAST_PATH.load(Ordering::Relaxed) {
         let iv = OWL_INTERVAL_US.load(Ordering::Relaxed).max(500);
-        minz::lptim2_oneshot::schedule_us(iv);
+        free(|_| minz::lptim2_oneshot::schedule_us(iv));
         RESEED_KICKS.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -4079,7 +4079,21 @@ fn TIM1_UP_TIM16() {
                     // Publish the synthesized qZC (window not NOZ,
                     // reacq spiral broken) and fire the shot.
                     WINDOW_QZC_US.store(ticks_1us(), Ordering::Relaxed);
-                    minz::lptim2_oneshot::schedule_us(16);
+                    // criterion1 lessons: (1) schedule_us from prio-2
+                    // racing a COMP-context schedule can interleave
+                    // the disable/enable bounce and leave the shot
+                    // DISARMED (rlate=1, wmax=260) - free() serializes.
+                    // (2) a synthesized qZC must still COUNT AS A MISS
+                    // or the reacq gate never widens and the loop
+                    // blind-steps at 1.25xT into a growing misalignment
+                    // until the starve reseed (rsd=3 spiral). trip==1
+                    // in this regime (rescue is HIGH_SPEED-gated).
+                    free(|_| minz::lptim2_oneshot::schedule_us(16));
+                    CL_NOZ_RUN.store(
+                        CL_NOZ_RUN.load(Ordering::Relaxed).saturating_add(1),
+                        Ordering::Relaxed,
+                    );
+                    CL_REACQ.store(true, Ordering::Relaxed);
                     RESCUE_COUNT.fetch_add(1, Ordering::Relaxed);
                     bb_record(
                         minz_core::blackbox::EV_RSC,
