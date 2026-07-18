@@ -71,6 +71,24 @@ pub fn halt(info: &PanicInfo) -> ! {
     }
 }
 
+/// HardFaults were escaping silently to the IWDG (three J-armed
+/// autopsy runs rebooted with the panic handler mute - a fault is
+/// not a panic). Print the stacked PC/LR raw over UART, then halt.
+#[cortex_m_rt::exception]
+unsafe fn HardFault(ef: &cortex_m_rt::ExceptionFrame) -> ! {
+    cortex_m::interrupt::disable();
+    {
+        use core::fmt::Write;
+        let mut u = UartFmt;
+        let _ = write!(u, "\r\n",);
+        let _ = write!(u, "!! HARDFAULT pc={:08x} lr={:08x}", ef.pc(), ef.lr(),);
+        let _ = write!(u, "\r\n",);
+    }
+    loop {
+        cortex_m::asm::nop();
+    }
+}
+
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {

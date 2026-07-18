@@ -230,3 +230,48 @@ counter (INTERVAL_TIMER > 1.5x commutation_interval while running)
 + max-wait aggregate on the SPK line. Prediction: ~zero waits under
 normal running; any nonzero reading would show what wait duration
 its current levels tolerate.
+
+## 2026-07-18 (late) — the bounded-event autopsy: VERDICT
+
+Instrument changes: WAX trigger 150->110 raw (~2.9 A) + `rimax=`
+(per-hold peak current self-reported AT each rescue fire - the
+decisive instrument). En route, three findings that reshaped the
+campaign:
+
+1. **The J-armed IWDG-reboot class root-caused**: cortex-m-rt's
+   paint-stack feature fills ascending from end-of-bss to
+   _stack_start; with the stack moved to SRAM2 (0x10004000 <
+   end-of-bss) the fill never terminates and walks off mapped RAM -
+   imprecise bus fault at boot, dead chip, no prints. Fix: feature
+   removed; stack stays in SRAM2 (own 16K, overflow = LOUD bus
+   fault). Diagnosed via RCC_CSR (IWDGRSTF), CFSR/HFSR, and the
+   stacked exception frame read straight off SRAM2.
+2. **The microscope perturbs the patient**: J-armed (free-run
+   oversample ON) runs collapse the bounding (rlate=80, wmax=980,
+   deaths at 60) while J-free runs hold rlate=0 - the documented
+   free-run/injected ch8 interference degrades the loop itself.
+   Ring captures remain valid evidence but J-armed envelope/
+   robustness numbers are NOT comparable to J-free runs.
+3. **The operator's ear finding**: the open-loop engage setpoint
+   (60 Hz) sits 7.5x below the CL equilibrium at the engage amp
+   (~450 Hz) - the engage lottery IS the newborn loop surviving
+   that pull-up on a single stale seed. FREQ_START 60->180 (2.5x
+   gap) improved engage immediately (1 retry vs 4-fails); R6's 8/8
+   is the zero-gap confirmation.
+
+**THE VERDICT (fstart1: wmax=280 rlate=0 rimax=379):** the
+bounded-wait step works exactly as designed - every dead-window
+hold is time-bounded - and it is INSUFFICIENT: a single bounded
+hold reached 9.7 A (rimax 379 raw) before the step fired. At the
+measured ~2.5 A/PWM-cycle pump rate, current outruns ANY usable
+time bound (1.25x interval = ~3 cycles = ~7 A). The accumulate-
+across-events hypothesis is dead in its soft form; each event is
+individually lethal-scale.
+
+**Required fix shape (next rung): the IN-HOLD DUTY CUT.** Cut duty
+to the floor when qzc==MAX and since_comm exceeds ~1.0x interval
+(before the 1.25x step; a normal ZC has arrived well before 1.0x),
+restore on the next real accept. This is the parked wait clamp
+reborn with the autopsy-derived threshold: the old 2.5x-interval
+key was too LATE (not too eager) and its 50 % cut too weak. The
+rescue keeps the chain alive; the cut keeps the hold survivable.

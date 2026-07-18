@@ -125,7 +125,11 @@ const AMP_START: u16 = 15;
 /// driving anything yet"; the first freq key clamps it back up to `1`.
 const FREQ_MIN: u32 = 1;
 const FREQ_MAX: u32 = 600;
-const FREQ_START: u32 = 60;
+// 60 -> 180 (operator ear, 2026-07-18): the CL equilibrium at the
+// engage amp is ~450 Hz, so engaging from a 60 Hz open-loop spin
+// crossed a 7.5x speed transient on a single stale seed - the
+// engage lottery IS that pull-up. 180 Hz shrinks it to ~2.5x.
+const FREQ_START: u32 = 180;
 
 // Sense calibration (vbat divider, INA gain) lives in
 // minz_core::sense — ONE authoritative copy, host-anchored; the
@@ -564,7 +568,11 @@ static WAX_TRIGGERED: AtomicBool = AtomicBool::new(false);
 /// 2.3-3 A, monsters ≥4 A, so this fires only on a monster and the
 /// ~42 ms pre-trigger ring holds the INITIATOR window (where the ZC
 /// vanished) before the current ran away.
-const WAX_TRIG_RAW: u16 = 150;
+/// Lowered 150 -> 110 (~4 A -> ~2.9 A) for the bounded-event
+/// autopsy campaign: the bounded-wait step caps holds low enough
+/// that the fatal cluster's FIRST event may never reach 4 A - the
+/// one-shot must catch the first event, not miss all of them.
+const WAX_TRIG_RAW: u16 = 110;
 
 /// Set by the ISR after a trip; main prints the report, clears the
 /// flag, and drops its local `output_enabled` mirror so `r`/`q`
@@ -803,6 +811,9 @@ static BURST_WAS: AtomicBool = AtomicBool::new(false);
 /// outlived 2x the bound = the rescue failed to fire in time.
 static CL_WAIT_MAX_US: AtomicU32 = AtomicU32::new(0);
 static RESCUE_LATE: AtomicU32 = AtomicU32::new(0);
+/// Max mid-ON current raw observed AT a rescue fire (per-hold peak
+/// self-report; swap-on-read at the i-echo as rimax=).
+static RESCUE_I_MAX: AtomicU16 = AtomicU16::new(0);
 
 // ---- R6: self-paced polling start (minz_core::start) ----
 // `Y` arms it from standstill: duty pinned at R6_START_AMP, sector
@@ -2374,7 +2385,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} wmax={} rlate={} cls: lost={} retry={} dur={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} wmax={} rlate={} rimax={} cls: lost={} retry={} dur={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2403,6 +2414,7 @@ fn main() -> ! {
                                 RESCUE_COUNT.load(Ordering::Relaxed),
                                 CL_WAIT_MAX_US.swap(0, Ordering::Relaxed),
                                 RESCUE_LATE.load(Ordering::Relaxed),
+                                RESCUE_I_MAX.swap(0, Ordering::Relaxed),
                                 CLOSE_LOST.load(Ordering::Relaxed),
                                 CLOSE_RETRY.load(Ordering::Relaxed),
                                 DUR_CLOSE.load(Ordering::Relaxed),
@@ -4100,6 +4112,9 @@ fn TIM1_UP_TIM16() {
                         Ordering::Relaxed,
                     );
                     CL_REACQ.store(true, Ordering::Relaxed);
+                    if i_raw > RESCUE_I_MAX.load(Ordering::Relaxed) {
+                        RESCUE_I_MAX.store(i_raw, Ordering::Relaxed);
+                    }
                     RESCUE_COUNT.fetch_add(1, Ordering::Relaxed);
                     bb_record(
                         minz_core::blackbox::EV_RSC,
