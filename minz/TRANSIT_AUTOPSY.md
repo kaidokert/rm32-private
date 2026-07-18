@@ -195,3 +195,38 @@ bench).
 
 Envelope validation deferred to a fresh bench: tonight's band slid
 to 66-74 across ALL builds including controls (9 h session).
+
+## Unbiased-review sharpening (2026-07-18, second-agent read of the chart)
+
+Two corrections adopted:
+
+1. **The initiating defect, stated exactly:** a float window opens
+   already comparator-saturated, produces no edge BY CONSTRUCTION,
+   and the powered bridge then waits indefinitely for an event that
+   cannot occur. The orange-span + flat-comparator + accelerating-
+   current trio in `captures/tautopsy5_autopsy.png` proves the
+   mechanism visually. "Holding a stale sector" undersells it -
+   the window is dead at birth, not abandoned.
+2. **Everything after is downstream:** phase 2 is a failed catch-up
+   process, not the defect; phase 3's smooth L/R decay shows the
+   final cut is electrically sane; phase 4's gentle ~1 A hump shows
+   the recovery slew is a separate, controlled re-ramp.
+
+**Acceptance criterion for the bounded-wait step** (binary,
+mechanism-anchored - NOT "fewer spikes"):
+- no powered hold longer than the bound (live: `wmax=` on the
+  i-echo, the max commutation gap under CL per echo period, must
+  read ~<= 1.25x interval + poll grain);
+- no comparator-flat interval allowed to pump past the early ~3 A
+  region;
+- therefore NO phase-2 catch-up fight should ever exist in a ring
+  capture (`rlate=` counts holds outliving 2x the bound - must
+  stay 0).
+
+**AM32 confirmation experiment** (whitebox rig, next session): count
+whether AM32 ever permits an already-saturated window to hold the
+prior powered sector past its equivalent timeout - a wait-event
+counter (INTERVAL_TIMER > 1.5x commutation_interval while running)
++ max-wait aggregate on the SPK line. Prediction: ~zero waits under
+normal running; any nonzero reading would show what wait duration
+its current levels tolerate.

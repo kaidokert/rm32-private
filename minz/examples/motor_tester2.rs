@@ -795,6 +795,14 @@ static LAST_KILL: AtomicU8 = AtomicU8::new(0);
 static WAIT_CLAMP_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Falling-edge tracker for the burst clamp (soft-recovery entry).
 static BURST_WAS: AtomicBool = AtomicBool::new(false);
+/// Bounded-wait acceptance criterion (unbiased-review sharpening):
+/// the fix is proven when NO powered hold exceeds the bound - not
+/// when spikes are merely fewer. wait_max = max observed
+/// commutation-to-commutation gap under CL since last i-echo
+/// (aggregate, not point-sampled); rescue_late counts holds that
+/// outlived 2x the bound = the rescue failed to fire in time.
+static CL_WAIT_MAX_US: AtomicU32 = AtomicU32::new(0);
+static RESCUE_LATE: AtomicU32 = AtomicU32::new(0);
 
 // ---- R6: self-paced polling start (minz_core::start) ----
 // `Y` arms it from standstill: duty pinned at R6_START_AMP, sector
@@ -2366,7 +2374,7 @@ fn main() -> ! {
                             // domain (the light re-arm's premise).
                             write!(
                                 &mut tx_writer,
-                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} cls: lost={} retry={} dur={}\r\n",
+                                "arrok_guard_hits={} est: acc={} rej floor={} ceil={} rate={} reseed={} harm={} slew={} rsd={}/{} zk={} rcv={} lk={} wc={} cfg={}{} carr: arr={} chg={} sagdb={} r6: on={} cross={} blind={} hiv={} noz: pre={} nev={} rsq={} wmax={} rlate={} cls: lost={} retry={} dur={}\r\n",
                                 minz::lptim2_oneshot::ARROK_GUARD_HITS.load(Ordering::Relaxed),
                                 EST_ACC.load(Ordering::Relaxed),
                                 EST_REJ_FLOOR.load(Ordering::Relaxed),
@@ -2393,6 +2401,8 @@ fn main() -> ! {
                                 NOZ_PRE.load(Ordering::Relaxed),
                                 NOZ_NEVER.load(Ordering::Relaxed),
                                 RESCUE_COUNT.load(Ordering::Relaxed),
+                                CL_WAIT_MAX_US.swap(0, Ordering::Relaxed),
+                                RESCUE_LATE.load(Ordering::Relaxed),
                                 CLOSE_LOST.load(Ordering::Relaxed),
                                 CLOSE_RETRY.load(Ordering::Relaxed),
                                 DUR_CLOSE.load(Ordering::Relaxed),
@@ -2896,6 +2906,13 @@ fn TIM7() {
             let now_10 = ticks_10us();
             let since_us = minz_core::guards::since_us(now_10, last);
             let starve_us = minz_core::guards::since_us(now_10, last_qzc);
+            // Bounded-wait criterion aggregates (166 us poll grain).
+            if since_us > CL_WAIT_MAX_US.load(Ordering::Relaxed) {
+                CL_WAIT_MAX_US.store(since_us, Ordering::Relaxed);
+            }
+            if interval_us != 0 && since_us > (interval_us + interval_us / 4) * 2 {
+                RESCUE_LATE.fetch_add(1, Ordering::Relaxed);
+            }
             // R3 exit/amnesty poll (est_acc delta vs snapshot; off
             // the accept path by design).
             {
