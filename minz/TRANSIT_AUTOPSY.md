@@ -427,3 +427,36 @@ Permanent instrument added: reset-cause (RCC_CSR) printed + RMVF-
 cleared at every boot - reboots now name themselves in any capture.
 Open: the wedge mechanism under load (no panic, no hardfault print
 -> LOCKUP-or-wedge -> IWDG).
+
+## 2026-07-18 — overflow-checked matrix campaign + crest-escape verdict
+
+Build: release with overflow-checks=true (every wrap panics with
+file:line over UART). Matrix, identical 60->80 profile:
+
+| config | terminal |
+|---|---|
+| baseline | COMPLETED |
+| J only | REBOOT (iwdg=1, no panic, no fault) |
+| ZT only | REBOOT (iwdg=1, no panic, no fault) |
+| J+ZT | COMPLETED |
+
+**Arithmetic overflow EXCLUDED for the reboot class** (checked
+build, zero panics before both reboots). The wedge is
+telemetry-load-correlated but stochastic (both-config completed);
+common factor = heavy TX volume -> prime suspect is the main-loop
+TX/ring service path wedging -> IWDG. Reset-cause line (now at
+every boot) named iwdg=1 in-capture both times.
+
+**Crest-escape analysis (certified non-reboot runs):**
+- escapes are sudden (+20-25% from an ordinary sawtooth, no
+  build-up), carry REAL late ZCs (qzc_off 150 vs 98 us), zero
+  unrefined, zero duty involvement (1/1173 nonzero duty deltas),
+  and CLUSTER (26% within 6 records vs mostly->60 random).
+- **THE PHASE-B SIGNATURE (J-free run): escapes concentrate on
+  sectors 1 and 4 - the two phase-B float windows - at 0.84%/1.26%
+  vs <=0.10% for all other sectors.** Sector 4 is the worst in the
+  J-armed run too (7.6%). Phase B = PA5 + its own divider network:
+  a per-phase physical/config asymmetry (divider tolerance shifting
+  B's effective crossing, mux settle on PA5, or B-window confirm
+  interplay) - the concrete next target for the crest-bound gap
+  vs AM32.

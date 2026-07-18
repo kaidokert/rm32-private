@@ -49,6 +49,8 @@ def main():
     ap.add_argument("--dwell", type=float, default=3.0)
     ap.add_argument("--step-wait", type=float, default=0.7)
     ap.add_argument("--tag", default="mzt")
+    ap.add_argument("--config", choices=["base", "j", "zt", "both"],
+                    default="zt", help="reset-matrix telemetry config")
     a = ap.parse_args()
     lo, hi = a.climb
 
@@ -88,11 +90,14 @@ def main():
             key("w", 1.0)
         if not engaged:
             raise SystemExit("no engage in 8")
-        print("engaged; ZT on from engage (deaths land pre-band too)")
-        # stateful toggle: confirm ON via the echo (the D/M lesson)
-        for _ in range(3):
-            if "zt trace = on" in key("Z", 0.4):
-                break
+        print(f"engaged; config={a.config}")
+        if a.config in ("j", "both"):
+            key("J", 0.5)
+        if a.config in ("zt", "both"):
+            # stateful toggle: confirm via echo (the D/M lesson)
+            for _ in range(3):
+                if "zt trace = on" in key("Z", 0.4):
+                    break
         n0 = len(cap)
         died = False
         # climb from the engage amp (~15) to lo under trace
@@ -115,9 +120,10 @@ def main():
         # stream OFF first, then a CLEAN liveness read (mzt_fatal8:
         "        # the i-echo interleaved with trace binary and false-",
         "        # negatived - the script killed a healthy motor).",
-        for _ in range(3):
-            if "zt trace = off" in key("Z", 0.4):
-                break
+        if a.config in ("zt", "both"):
+            for _ in range(3):
+                if "zt trace = off" in key("Z", 0.4):
+                    break
         out = key("i", 1.2)
         died = "cl: ACTIVE" not in out
         seg = bytes(cap[n0:])
@@ -139,6 +145,22 @@ def main():
             f.write(f"{r['sector']},{int(r['refined'])},{r['period_us']},"
                     f"{r['est_before_us']},{r['est_us']},{r['delay_us']},"
                     f"{r['duty']},{r['t10']},{r['qzc_off']}\n")
+    # TERMINAL CLASSIFICATION (mandatory for autopsy eligibility)
+    rawb = bytes(cap)
+    reboot = rawb.count(b"reset: csr=")
+    kill = b"!! " in rawb
+    lkm = re.findall(rb"lk=(\d+)", rawb)
+    lk_last = lkm[-1].decode() if lkm else "?"
+    if reboot:
+        cz = re.findall(rb"reset: csr=[0-9a-f]+ iwdg=(\d)", rawb)
+        term = f"REBOOT (banners={reboot}, iwdg={cz[-1].decode() if cz else chr(63)})"
+    elif died and kill:
+        term = f"KILL (lk={lk_last})"
+    elif died:
+        term = f"SILENT-DEATH (lk={lk_last}, no banner, no kill print)"
+    else:
+        term = "COMPLETED"
+    print(f"TERMINAL: {term}")
     print(f"trace window: {len(seg)} B -> {len(recs)} records")
     print(f"raw: {raw_path}  csv: {csv_path}")
     if recs:

@@ -26,5 +26,8 @@ stm32l4xx-hal = { version = "0.7.1", features = ["stm32l431"] }
 systick-timer = "0.2.3"
 
 [profile.release]
+# Overflow-check campaign (reset-class triage): every wrap panics
+# with file:line over UART instead of silently wrapping.
+overflow-checks = true
 lto = "thin"
 codegen-units = 1
