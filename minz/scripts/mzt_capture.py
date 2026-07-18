@@ -21,20 +21,21 @@ import time
 
 import serial
 
-REC = 15
+REC = 17
 
 
 def decode(buf):
     recs = []
     i = 0
     while i + REC <= len(buf):
-        if buf[i] == 0x5B and buf[i + 1] == 0xAA:
+        if buf[i] == 0x5B and buf[i + 1] == 0xAB:
             fs = buf[i + 2]
-            (per, est, dly, duty, t10, qoff) = struct.unpack_from(
-                "<HHHHHH", buf, i + 3)
+            (per, estb, est, dly, duty, t10, qoff) = struct.unpack_from(
+                "<HHHHHHH", buf, i + 3)
             if 20 <= per <= 30000 and est <= 30000:
                 recs.append(dict(sector=fs & 7, refined=bool(fs & 0x80),
-                                 period_us=per, est_us=est, delay_us=dly,
+                                 period_us=per, est_before_us=estb,
+                                 est_us=est, delay_us=dly,
                                  duty=duty, t10=t10, qzc_off=qoff))
                 i += REC
                 continue
@@ -75,47 +76,69 @@ def main():
         press_until("D", "AM32")
         press_until("M", "SWIFT")
         engaged = False
-        for _ in range(4):
+        for _ in range(8):
             key("q", 2.0)
             key("y", 3.0)
-            if re.search(r"cl: ACTIVE f_e=(\d+)Hz", key("i", 1.2)):
+            m = re.search(r"cl: ACTIVE f_e=(\d+)Hz", key("i", 1.2))
+            # junk-crawl guard (mzt_fatal4: a 29 Hz "lock" passed the
+            "            # ACTIVE-only check and OC-tripped): require a sane f_e.",
+            if m and int(m.group(1)) > 250:
                 engaged = True
                 break
             key("w", 1.0)
         if not engaged:
-            raise SystemExit("no engage in 4")
-        print("engaged; climbing to the band")
-        # climb from the engage amp (~15) to lo, then trace lo->hi
+            raise SystemExit("no engage in 8")
+        print("engaged; ZT on from engage (deaths land pre-band too)")
+        # stateful toggle: confirm ON via the echo (the D/M lesson)
+        for _ in range(3):
+            if "zt trace = on" in key("Z", 0.4):
+                break
+        n0 = len(cap)
+        died = False
+        # climb from the engage amp (~15) to lo under trace
         for _ in range(lo - 15):
             key("a", 0.12)
         time.sleep(1.0)
         m = re.search(r"cl: ACTIVE f_e=(\d+)Hz", key("i", 1.2))
         if not m:
-            raise SystemExit("lost before the band")
-        print(f"at {lo}: {m.group(1)}Hz; ZT on, tracing climb")
-        key("Z", 0.3)
-        n0 = len(cap)
-        key("", a.dwell)
-        for _ in range(hi - lo):
-            key("a", a.step_wait)
-        key("", a.dwell)
-        key("Z", 0.3)
+            died = True
+            print("DIED pre-band - fatal capture")
+        else:
+            print(f"at {lo}: {m.group(1)}Hz; tracing band climb")
+            key("", a.dwell)
+            for _ in range(hi - lo):
+                key("a", a.step_wait)
+            # SILENT dwell: the i-poll flooded the wire and cost the
+            # crisis records (mzt_fatal6 queue drops at the death) -
+            # capture quietly, detect death post-hoc.
+            key("", a.dwell)
+        # stream OFF first, then a CLEAN liveness read (mzt_fatal8:
+        "        # the i-echo interleaved with trace binary and false-",
+        "        # negatived - the script killed a healthy motor).",
+        for _ in range(3):
+            if "zt trace = off" in key("Z", 0.4):
+                break
+        out = key("i", 1.2)
+        died = "cl: ACTIVE" not in out
         seg = bytes(cap[n0:])
+        print("outcome:", "DIED (fatal capture)" if died else "survived")
     finally:
         key("w", 0.5)
         key("w", 0.3)
         ser.close()
 
+    if 'seg' not in dir():
+        seg = bytes(cap)
     raw_path = pathlib.Path("captures") / f"{a.tag}_raw.bin"
     raw_path.write_bytes(cap)
-    recs = decode(seg)
+    recs = decode(bytes(cap))
     csv_path = pathlib.Path("captures") / f"{a.tag}_trace.csv"
     with open(csv_path, "w") as f:
-        f.write("sector,refined,period_us,est_us,delay_us,duty,t10,qzc_off\n")
+        f.write("sector,refined,period_us,est_before_us,est_us,delay_us,duty,t10,qzc_off\n")
         for r in recs:
             f.write(f"{r['sector']},{int(r['refined'])},{r['period_us']},"
-                    f"{r['est_us']},{r['delay_us']},{r['duty']},"
-                    f"{r['t10']},{r['qzc_off']}\n")
+                    f"{r['est_before_us']},{r['est_us']},{r['delay_us']},"
+                    f"{r['duty']},{r['t10']},{r['qzc_off']}\n")
     print(f"trace window: {len(seg)} B -> {len(recs)} records")
     print(f"raw: {raw_path}  csv: {csv_path}")
     if recs:

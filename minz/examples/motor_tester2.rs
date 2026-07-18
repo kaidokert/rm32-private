@@ -853,6 +853,12 @@ static CLOSED_EST_US: AtomicU32 = AtomicU32::new(0);
 /// Last armed commutation delay (us) - stored at both schedule
 /// sites in the accept path (2 cyc), read by the fabric.
 static LAST_DELAY_US: AtomicU16 = AtomicU16::new(0);
+/// Pre-update estimate for the accept that armed this commutation
+/// (schedule_precheck's iv IS pre-update - it runs before
+/// accept_publish moves the estimator). Reviewer requirement: both
+/// pre and post at the same semantic point for the 4-way causality
+/// split; never compare pre on one side to post on the other.
+static LAST_EST_BEFORE: AtomicU16 = AtomicU16::new(0);
 /// J-FREE per-hold current observer: peak mid-ON i_raw sampled by
 /// TIM7 while a hold exceeds 1.5x interval (regime-scoped). The
 /// J-armed microscope perturbs the loop; this observer does not -
@@ -1604,6 +1610,26 @@ fn main() -> ! {
     // the constants) over UART once at init — every automated-test
     // session log then permanently records what the run executed
     // under. Mirrors to RTT via the existing dump helpers.
+    // Reset-cause attribution (the fatal8/9 lesson: reboots
+    // masquerade as silent deaths; RCC_CSR flags accumulated since
+    // the flags were never cleared, so causes could not be
+    // attributed). Print + RMVF-clear at every boot: from now on
+    // each boot names its own cause and the next one starts clean.
+    {
+        let rcc = unsafe { &*minz::hal::pac::RCC::ptr() };
+        let csr = rcc.csr.read().bits();
+        write!(
+            &mut tx_writer,
+            "reset: csr={:08x} iwdg={} sft={} bor={} pin={}\r\n",
+            csr,
+            (csr >> 29) & 1,
+            (csr >> 28) & 1,
+            (csr >> 27) & 1,
+            (csr >> 26) & 1,
+        )
+        .ok();
+        rcc.csr.modify(|_, w| w.rmvf().set_bit());
+    }
     priority::dump_to(&mut tx_writer);
     priority::dump_prigroup();
     priority::dump_irq_prios();
@@ -2743,7 +2769,7 @@ fn main() -> ! {
                 }
             }
             while let Some(rec) = zt_consumer.dequeue() {
-                if TX_RING_LEN - 1 - tx_writer.pending() >= 15 {
+                if TX_RING_LEN - 1 - tx_writer.pending() >= 17 {
                     for b in rec {
                         let _ = tx_writer.push(b);
                     }
@@ -3341,8 +3367,8 @@ struct PendingClose {
     sc: minz_core::window::CloseScalars,
 }
 type PendQueue = Queue<PendingClose, 32>;
-type ZtQueue = Queue<[u8; 15], 64>;
-static ZT_PROD: Mutex<RefCell<Option<Producer<'static, [u8; 15]>>>> =
+type ZtQueue = Queue<[u8; 17], 256>;
+static ZT_PROD: Mutex<RefCell<Option<Producer<'static, [u8; 17]>>>> =
     Mutex::new(RefCell::new(None));
 static PEND_PROD: Mutex<RefCell<Option<Producer<'static, PendingClose>>>> =
     Mutex::new(RefCell::new(None));
@@ -3791,12 +3817,15 @@ fn fabric_close_step() {
             qzc.wrapping_sub(start_us).min(0xFFFE) as u16
         };
         let flags = (prev & 0x07) | if refined { 0x80 } else { 0 };
-        let rec: [u8; 15] = [
+        let est_before = LAST_EST_BEFORE.load(Ordering::Relaxed);
+        let rec: [u8; 17] = [
             0x5B,
-            0xAA,
+            0xAB,
             flags,
             period as u8,
             (period >> 8) as u8,
+            est_before as u8,
+            (est_before >> 8) as u8,
             est as u8,
             (est >> 8) as u8,
             delay as u8,
@@ -4600,6 +4629,7 @@ fn accept_qualified_zc(zc_us: u32) {
         );
         minz::lptim2_oneshot::schedule_us(delay);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
+        LAST_EST_BEFORE.store(iv.min(0xFFFF) as u16, Ordering::Relaxed);
         shot_armed = true;
         SHOT_REFINED.store(true, Ordering::Relaxed);
         bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
@@ -4643,6 +4673,7 @@ fn accept_qualified_zc(zc_us: u32) {
         );
         minz::lptim2_oneshot::schedule_us(delay);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
+        LAST_EST_BEFORE.store(iv.min(0xFFFF) as u16, Ordering::Relaxed);
         SHOT_REFINED.store(true, Ordering::Relaxed);
         bb_record(minz_core::blackbox::EV_ACC, sec, delay.min(0xFFFF) as u16);
         comp2::set_exti_enabled(false);

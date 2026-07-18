@@ -394,3 +394,36 @@ pipeline micro-disturbance (6 kHz slew steps vs their 20 kHz),
 commutation-jitter feedback, or estimator response shape (their
 2-period half-blend vs our smoothing). Then: capture a FATAL
 climb's MZT trace and watch the tail grow.
+
+## 2026-07-18 — record v2 + the fatal-trace classification
+
+MZT v2 (5B AB, 17 B): adds est_before (schedule_precheck's iv IS
+pre-update - stored at the arm sites), giving the reviewer's full
+quadruple: raw period, estimate-before, estimate-after, armed
+deadline, at one semantic point. Both-sides-post-update overlay
+semantics verified.
+
+**The shared sawtooth (major reframe):** lag-1 autocorrelation of
+period error: AM32 -0.76, minz -0.62/-0.45; alternating amplitude
+AM32 4.6%, minz 3.3-5.4%. BOTH loops ride a ±10% every-other-
+commutation oscillation - it is the physical system, not a minz
+defect. The difference is BOUNDEDNESS: AM32's crests never exceed
++12.5%; minz's occasionally escape.
+
+**Fatal-trace classification (fatal6 real death; fatal8/9 large
+traces):** everything timing-side ORDINARY to the end - periods
+84-104 us, sawtooth +/-13%, real mid-window ZCs, sane deadlines, 9
+events >+25% in 330k records, zero >+50%. Four-way verdict: NOT
+acceptance, NOT estimator, NOT scheduling - the class-4 boundary
+(state/ownership or a non-control cause).
+
+**And the non-control cause surfaced:** fatal8/9 'deaths' were
+REBOOTS (boot banners mid-capture, lk=0, no kill prints, one
+terminal record built from corrupt statics, sector sequence running
+backward at the end). The silent-death class = the reboot/wedge
+class, appearing under heavy-telemetry configs (J-armed earlier,
+ZT now) and possibly underlying the whole silent family (levers1).
+Permanent instrument added: reset-cause (RCC_CSR) printed + RMVF-
+cleared at every boot - reboots now name themselves in any capture.
+Open: the wedge mechanism under load (no panic, no hardfault print
+-> LOCKUP-or-wedge -> IWDG).
