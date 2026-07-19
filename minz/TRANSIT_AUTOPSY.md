@@ -885,3 +885,29 @@ completion is gated on the parity-bias root (the scope session).
 No build in the repo's history has ever completed the zt-config
 reproducer - the morning "good" builds die by end-of-profile IWDG
 reboot; tonight's die by the bias ceiling with all hardening intact.
+
+
+## THE DISCRIMINATOR RUN (2026-07-18, operator doctrine: trace the
+## AM32 divergence directly)
+
+Open loop 200 Hz / amp 20, MAGPIE g-stream, 12,216 windows,
+per-parity delta of (qualified-accept - first-gate-surviving-edge):
+
+- **Pipeline EXONERATED**: accept - first_edge = +0.1 us, BOTH
+  polarities. When a window qualifies a ZC it IS the first valid
+  edge - gate/persistence/accept add nothing.
+- **THE ASYMMETRY IS THE QUALIFICATION-MISS RATE: even windows blind
+  87%, odd 52%** - a 4x parity asymmetry. First edges sit at the
+  same window fraction (0.66) in both - the edges exist; the
+  expected-LEVEL persistence rejects everything in most even
+  windows. A blind window's commutation falls back to non-ZC timing
+  (late, carrier-scale) => the 4x-asymmetric blind rate IS the
+  parity bias.
+- Next: (a) same measurement under CL (the census said qzc~100%
+  under lock - reconcile: does the CL gate/mask change which edge
+  qualifies per parity?); (b) audit the expected-level convention
+  per sector under D-geometry (a half-inverted table would produce
+  exactly a qualify-only-on-noise 13% pass rate on one parity);
+  (c) AM32's filter passes both polarities on the same signal -
+  diff their expected-level derivation (rising = step%2) against
+  ours verbatim.
