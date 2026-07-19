@@ -726,6 +726,11 @@ static CHAIN_KICKS: AtomicU32 = AtomicU32::new(0);
 static SAG_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Chain-kick two-pass confirmation latch (false-fire fix).
 static KICK_PEND: AtomicBool = AtomicBool::new(false);
+/// Q-LOG: 25 Hz slow-variable telemetry ('Q' key toggle) — the
+/// sawtooth trace instrument.
+static QLOG_ON: AtomicBool = AtomicBool::new(false);
+static QLOG_LAST_T10: AtomicU32 = AtomicU32::new(0);
+
 /// Parity-trim EMAs: per-polarity window length (µs), the ±δ
 /// alternation-trap compensator's measurement (core::timing).
 #[unsafe(no_mangle)]
@@ -2186,6 +2191,36 @@ fn main() -> ! {
             // Autonomous ladder step (see LADDER_STEP): step size 1 or
             // 10 (%), 4-column per-rung log (interval / isns / comms /
             // vbat) for the 1:1:1:1 throttle:rpm:amps:sag map.
+            // Q-LOG (sawtooth trace): 25 Hz compact line of the SLOW
+            // control variables — the sawtooth involves no
+            // microsecond signals, so this is the whole story:
+            // time, target duty, applied duty, fast est, stiff est,
+            // advance, parity trims.
+            if QLOG_ON.load(Ordering::Relaxed) {
+                let nk = ticks_10us();
+                if nk.wrapping_sub(QLOG_LAST_T10.load(Ordering::Relaxed)) >= 4_000 {
+                    QLOG_LAST_T10.store(nk, Ordering::Relaxed);
+                    let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+                    let stiff = AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6;
+                    let adv = minz_core::timing::auto_advance_deg(
+                        iv,
+                        ADVANCE_DEG.load(Ordering::Relaxed) as i32,
+                    );
+                    write!(
+                        &mut tx_writer,
+                        "q {} {} {} {} {} {} {} {}\r\n",
+                        nk,
+                        AMP_TARGET_PCT.load(Ordering::Relaxed),
+                        AMPLITUDE_PCT.load(Ordering::Relaxed),
+                        iv,
+                        stiff,
+                        adv,
+                        parity_trim_for(0, iv),
+                        parity_trim_for(1, iv),
+                    )
+                    .ok();
+                }
+            }
             let lstep = LADDER_STEP.load(Ordering::Relaxed);
             if lstep > 0
                 && CL_ACTIVE.load(Ordering::Relaxed)
@@ -2200,7 +2235,20 @@ fn main() -> ! {
                     if amplitude_pct < LADDER_TOP {
                         amplitude_pct =
                             clamp_amp(amplitude_pct as i32 + lstep as i32).min(LADDER_TOP);
-                        AMPLITUDE_PCT.store(amplitude_pct as u8, Ordering::Relaxed);
+                        // THE SAWTOOTH (2026-07-19, Q-log verdict in
+                        // one plot): this used to store AMPLITUDE_PCT
+                        // (the APPLIED duty) directly while the
+                        // TARGET stayed at the engage value — so the
+                        // TIM7 slew dragged applied back down toward
+                        // the stale target every 50 ms and the ladder
+                        // pushed it back up every rung. That fight
+                        // was the audible 2 Hz pump, the per-rung
+                        // rise-and-fall, the reseed storms at rung
+                        // steps, and the pinned baseline — since the
+                        // day the autonomous ladder was born. Rungs
+                        // set the TARGET like every other throttle
+                        // source; the slew applies it.
+                        AMP_TARGET_PCT.store(amplitude_pct as u8, Ordering::Relaxed);
                     }
                     let a = amplitude_pct as usize;
                     if a < 96 {
@@ -2722,6 +2770,16 @@ fn main() -> ! {
                         write!(
                             &mut tx_writer,
                             "zt trace = {}\r\n",
+                            if on { "on" } else { "off" },
+                        )
+                        .ok();
+                    }
+                    b'Q' => {
+                        let on = !QLOG_ON.load(Ordering::Relaxed);
+                        QLOG_ON.store(on, Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "qlog={}\r\n",
                             if on { "on" } else { "off" },
                         )
                         .ok();

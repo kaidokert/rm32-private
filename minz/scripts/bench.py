@@ -141,10 +141,12 @@ def cmd_ladder(a):
             continue
         try:
             print(f"engaged attempt {att}: {fe} Hz; ladder step={a.step}")
-            # MAGPIE stream ON during the climb (wobble time-series in
-            # the capture). Stateful toggle: confirm the 'on' echo.
+            # MAGPIE stream + Q-log ON during the climb (wobble
+            # time-series + slow-variable trace in the capture).
             if not b.press_until("g", "stream=on", tries=4):
                 print("stream-on not confirmed (may be off)")
+            if not b.press_until("Q", "qlog=on", tries=4):
+                print("qlog-on not confirmed (may be off)")
             if not b.press_until("L", "auto-ladder step = 1"):
                 print("1%-arm not confirmed (echo loss) - proceeding")
             if a.step >= 10:
@@ -419,6 +421,8 @@ def cmd_probe_adv(a):
         print(f"engaged attempt {att}: {fe} Hz")
         if not b.press_until("g", "stream=on", tries=6):
             print("WARN: stream-on unconfirmed")
+        if not b.press_until("Q", "qlog=on", tries=6):
+            print("WARN: qlog-on unconfirmed")
         mark0 = len(b.cap)
         t0 = time.monotonic()
         while time.monotonic() - t0 < a.secs:
