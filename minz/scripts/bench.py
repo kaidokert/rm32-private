@@ -177,6 +177,13 @@ def cmd_ladder(a):
                 print("qlog-on not confirmed (may be off)")
             if a.jarm:
                 b.key("J", 0.5)  # arm the >4A WAX trigger (autopsy)
+            if a.edgemode:
+                # deterministic edge-mode set via probe (key presses
+                # proved unreliable and leak state)
+                sh("probe-rs", "write", "--chip", CHIP, "--probe",
+                   PROBE, "b8", hex(nm_addr("EDGE_MODE")),
+                   str(a.edgemode))
+                print(f"EDGE_MODE={a.edgemode} via probe")
             if not b.press_until("L", "auto-ladder step = 1"):
                 print("1%-arm not confirmed (echo loss) - proceeding")
             if a.step >= 10:
@@ -744,6 +751,7 @@ def main():
     p.add_argument("--retries", type=int, default=4)
     p.add_argument("--nostream", action="store_true")
     p.add_argument("--jarm", action="store_true")
+    p.add_argument("--edgemode", type=int, default=0)
     p = sub.add_parser("readback")
     p.add_argument("--tag", default=None)
     p.add_argument("--step", type=int, default=1)
