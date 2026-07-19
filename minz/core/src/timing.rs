@@ -37,6 +37,25 @@ pub fn auto_advance_deg(interval_us: u32, manual_deg: i32) -> i32 {
     (base + boost).min(20)
 }
 
+/// AM32's LITERAL advance law (main.c: `auto_advance_level =
+/// map(duty_cycle, 100, 2000, 13, 23)`): keyed to COMMANDED DUTY —
+/// pure feed-forward. The speed-keyed ramp above is POSITIVE
+/// FEEDBACK under an estimate excursion (est falls → advance rises →
+/// commutation earlier → excursion compounds = a gain term in the
+/// subharmonic-walk loop, 2026-07-19 ratchet autopsy). AM32's
+/// duty-keyed advance is walk-neutral by construction, and its
+/// operating numbers verify the law (14° at ~10 % duty = their
+/// measured wait/ci = 0.297). Duty in percent (5..100 ≈ their
+/// 100..2000/2000): 13° at ≤5 % → 23° at 100 %.
+#[inline]
+pub fn auto_advance_deg_am32(duty_pct: u32, manual_deg: i32) -> i32 {
+    if manual_deg != 0 {
+        return manual_deg;
+    }
+    let d = duty_pct.clamp(5, 100) as i32;
+    13 + (d - 5) * 10 / 95
+}
+
 /// Minimum schedulable commutation delay, µs — the commutation-timer
 /// floor. History: 24 µs on LPTIM2 /64, then 8, then 2 (the floor
 /// rework). NOTE (E6 doc-truth): the TIM15 one-pulse swap this
@@ -384,6 +403,18 @@ mod tests {
         assert_eq!(parity_trim_us(120, 90, 105), 0);
         // Unseeded: off.
         assert_eq!(parity_trim_us(0, 442, 517), 0);
+    }
+
+    #[test]
+    fn am32_advance_is_duty_keyed_feedforward() {
+        // Their map(duty, 100, 2000, 13, 23) anchor points.
+        assert_eq!(auto_advance_deg_am32(5, 0), 13);
+        assert_eq!(auto_advance_deg_am32(10, 0), 13); // 13.5 floor
+        assert_eq!(auto_advance_deg_am32(50, 0), 17);
+        assert_eq!(auto_advance_deg_am32(100, 0), 23);
+        // Speed never enters — an estimate excursion can't move it.
+        // Manual override still wins.
+        assert_eq!(auto_advance_deg_am32(50, 8), 8);
     }
 
     #[test]

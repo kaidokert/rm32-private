@@ -745,6 +745,29 @@ static PARITY_EMA_EVEN: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static PARITY_EMA_ODD: AtomicU32 = AtomicU32::new(0);
 
+/// The advance in effect NOW: AM32's duty-keyed feed-forward law
+/// under geometry mode (an estimate excursion cannot move it — the
+/// walk-gain fix); the legacy speed-keyed ramp otherwise. Manual
+/// `t`/`T` overrides both.
+#[inline]
+fn advance_now(iv: u32) -> i32 {
+    let manual = ADVANCE_DEG.load(Ordering::Relaxed) as i32;
+    // AM32 applies its duty-keyed advance to a RUNNING loop; their
+    // startup runs advance-neutral. 14° through OUR engage transit
+    // = 0/3 engages (the static-16° lesson again). Below 400 µs the
+    // lock is established and the duty-keyed feed-forward law takes
+    // over (walk-neutral); the engage band keeps the proven ~0-2°
+    // speed ramp.
+    if CL_AM32_GEOM.load(Ordering::Relaxed) && iv > 0 && iv < 400 {
+        minz_core::timing::auto_advance_deg_am32(
+            AMPLITUDE_PCT.load(Ordering::Relaxed) as u32,
+            manual,
+        )
+    } else {
+        minz_core::timing::auto_advance_deg(iv, manual)
+    }
+}
+
 /// Delay trim for a commutation closing sector `sec`'s window.
 #[inline]
 fn parity_trim_for(sec: u8, iv: u32) -> i32 {
@@ -2256,10 +2279,7 @@ fn main() -> ! {
                     QLOG_LAST_T10.store(nk, Ordering::Relaxed);
                     let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
                     let stiff = AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6;
-                    let adv = minz_core::timing::auto_advance_deg(
-                        iv,
-                        ADVANCE_DEG.load(Ordering::Relaxed) as i32,
-                    );
+                    let adv = advance_now(iv);
                     write!(
                         &mut tx_writer,
                         "q {} {} {} {} {} {} {} {} {} {}\r\n",
@@ -5816,7 +5836,7 @@ fn accept_qualified_zc(zc_us: u32) {
         // Host-tested: auto-advance ramp + scheduling delay
         // (minz_core::timing).
         let adv =
-            minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
+            advance_now(iv);
         // AM32-VERBATIM WAIT (operator: same quantities IN USE): their
         // wait = ci/2 - advance derives PURELY from the IIR estimate,
         // anchored at the ZC - wait spread 4 us on the aligned plot.
@@ -5877,8 +5897,7 @@ fn accept_qualified_zc(zc_us: u32) {
     // motivation is irrelevant.
     if !shot_armed && plan.schedule {
         let iv = minz_core::timing::climb_lead_iv(plan.interval_us, climbing);
-        let adv =
-            minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
+        let adv = advance_now(iv);
         let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
         let delay = minz_core::timing::commutation_delay_us(
             iv,
