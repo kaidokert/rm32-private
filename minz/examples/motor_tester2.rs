@@ -1209,7 +1209,7 @@ fn trigger_reseed(detail: u16) {
     // (RESEED_ACTIVE disables the inversion) until accepts return.
     if ZC_CLOCKED && CL_FAST_PATH.load(Ordering::Relaxed) {
         let iv = OWL_INTERVAL_US.load(Ordering::Relaxed).max(500);
-        free(|_| minz::lptim2_oneshot::schedule_us(iv));
+        free(|_| minz::tim16_oneshot::schedule_us(iv));
         arm_trace(3, iv, OWL_INTERVAL_US.load(Ordering::Relaxed));
         RESEED_KICKS.fetch_add(1, Ordering::Relaxed);
     }
@@ -4411,6 +4411,12 @@ fn LPTIM2() {
     LPTIM2_COUNT.fetch_add(1, Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_LPTIM2);
     minz::lptim2_oneshot::clear_flag();
+    // TIM16 free-run park: AM32's recipe re-arms every fire from its
+    // ISR; our rotor-clocked inversion arms only on accepts, so an
+    // unparked free-run re-wraps at the same ARR = a commutation
+    // storm (the 0/5 engage collapse on the first TIM16 build).
+    // Parking here is race-free: accepts run at this same priority.
+    minz::tim16_oneshot::cancel();
     if !CL_ACTIVE.load(Ordering::Relaxed) || !MOTOR_ENABLED.load(Ordering::Relaxed) {
         return; // stale one-shot after disengage/kill
     }
@@ -4558,7 +4564,7 @@ fn LPTIM2() {
         && !RESEED_ACTIVE.load(Ordering::Relaxed);
     if !rotor_clocked {
         if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
-            minz::lptim2_oneshot::reschedule_light(t);
+            minz::tim16_oneshot::reschedule_light(t);
             arm_trace(4, t, interval);
         }
     }
@@ -4760,6 +4766,20 @@ fn TIM1_CC() {
 
 #[interrupt]
 fn TIM1_UP_TIM16() {
+    // COM-TIMER DISPATCH FIRST (TIM16 = AM32's commutation timer,
+    // shared vector): a TIM16 wrap is a due commutation — pend the
+    // LPTIM2 vector so the commutation ISR runs at its priority-1
+    // slot unchanged (this vector is priority 2; the pend preempts
+    // the moment we return or sooner).
+    if minz::tim16_oneshot::fired_and_clear() {
+        // The pend preempts immediately (LPTIM2 vector is priority
+        // 1, we are 2) — the commutation runs before the wrap work.
+        cortex_m::peripheral::NVIC::pend(Interrupt::LPTIM2);
+    }
+    // TIM16-only entry: don't run the 24 kHz wrap body off-schedule.
+    if !tim1_motor_pwm::update_flag_set() {
+        return;
+    }
     let _dur = DurGuard::new(&DUR_T1U);
     // One-byte COMP2 + sector sample per PWM period. UIF must be
     // cleared first or the IRQ re-fires immediately on return.
@@ -5365,7 +5385,7 @@ fn TIM1_UP_TIM16() {
                     // blind-steps at 1.25xT into a growing misalignment
                     // until the starve reseed (rsd=3 spiral). trip==1
                     // in this regime (rescue is HIGH_SPEED-gated).
-                    free(|_| minz::lptim2_oneshot::schedule_us(16));
+                    free(|_| minz::tim16_oneshot::schedule_us(16));
                     CL_NOZ_RUN.store(
                         CL_NOZ_RUN.load(Ordering::Relaxed).saturating_add(1),
                         Ordering::Relaxed,
@@ -5803,7 +5823,7 @@ fn accept_qualified_zc(zc_us: u32) {
         // application point (host-tested core::timing::parity_*).
         let delay = (delay as i32 + parity_trim_for(sec, iv)).max(8) as u32;
         SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
-        minz::lptim2_oneshot::schedule_us(delay);
+        minz::tim16_oneshot::schedule_us(delay);
         // HOT PATH (COMP ISR accept): trace anomalous arms anywhere,
         // plus ALL arms in the top-end band (iv<120: the dropped-shot
         // surge regime — ~40 cyc at ≤9k/s = 0.4 % there; the engage-
@@ -5857,7 +5877,7 @@ fn accept_qualified_zc(zc_us: u32) {
         );
         let delay = (delay as i32 + parity_trim_for(sec, iv)).max(8) as u32;
         SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
-        minz::lptim2_oneshot::schedule_us(delay);
+        minz::tim16_oneshot::schedule_us(delay);
         arm_trace(2, delay, iv);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
         LAST_EST_BEFORE.store(iv.min(0xFFFF) as u16, Ordering::Relaxed);

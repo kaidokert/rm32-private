@@ -39,7 +39,7 @@ pub fn init() {
     // Park ARR at max so the free-run wraps rarely until the first
     // real schedule; URS: EGR.UG must not fire the update interrupt
     // (only a genuine overflow = the commutation instant does).
-    tim.arr.write(|w| w.arr().bits(0xFFFF));
+    tim.arr.write(|w| unsafe { w.arr().bits(0xFFFF) });
     tim.egr.write(|w| w.ug().set_bit());
     tim.sr.write(|w| unsafe { w.bits(0) });
     tim.dier.write(|w| w.uie().set_bit());
@@ -57,7 +57,7 @@ pub fn init() {
 pub fn schedule_us(us: u32) {
     let tim = unsafe { &*stm32::TIM16::ptr() };
     let ticks = (us * TICKS_PER_US).clamp(4, 0xFFFE) as u16;
-    tim.arr.write(|w| w.arr().bits(ticks));
+    tim.arr.write(|w| unsafe { w.arr().bits(ticks) });
     tim.egr.write(|w| w.ug().set_bit());
 }
 
@@ -86,7 +86,7 @@ pub fn fired_and_clear() -> bool {
 #[inline]
 pub fn cancel() {
     let tim = unsafe { &*stm32::TIM16::ptr() };
-    tim.arr.write(|w| w.arr().bits(0xFFFF));
+    tim.arr.write(|w| unsafe { w.arr().bits(0xFFFF) });
     tim.egr.write(|w| w.ug().set_bit());
     tim.sr.write(|w| unsafe { w.bits(0) });
 }

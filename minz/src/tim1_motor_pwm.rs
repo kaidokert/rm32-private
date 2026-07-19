@@ -350,6 +350,14 @@ pub fn clear_update_flag() {
     tim1.sr.modify(|_, w| w.uif().clear_bit());
 }
 
+/// Is the update (PWM wrap) flag pending? The shared TIM1_UP_TIM16
+/// vector dispatches on this vs TIM16's UIF (the COM timer).
+#[inline]
+pub fn update_flag_set() -> bool {
+    let tim1 = unsafe { &*TIM1::ptr() };
+    tim1.sr.read().uif().bit_is_set()
+}
+
 /// Enable the capture/compare interrupts for CH1/CH2/CH3. CC4 is
 /// intentionally left disabled — its compare value is the fixed
 /// ADC-TRGO point (`TIM1_CCR4_TRGO = 0x64`), not a PWM transition,
