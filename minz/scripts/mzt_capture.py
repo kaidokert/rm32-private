@@ -77,12 +77,10 @@ def main():
     try:
         press_until("D", "AM32")
         press_until("M", "SWIFT")
-        # AM32-equivalent EXTI edge config (mode 3 "phys ZC"):
-        # single expected-direction edge per sector. EDGE_MODE
-        # defaults to 0 = BOTH edges (found 2026-07-18) - all
-        # earlier MZT traces ran mode 0; ladders (cl_lock_map)
-        # always ran mode 3.
-        press_until("k", "phys ZC", tries=7)
+        # EDGE_MODE stays at the boot default (mode 0, both edges):
+        # the mode-3 experiment REGRESSED mid-rung robustness
+        # (deaths at 1100-1400 Hz vs mode-0 1790 Hz) - see the
+        # EDGE_MODE doc comment in motor_tester2.rs.
         engaged = False
         for _ in range(8):
             # RAMP start (2026-07-18): a jumped 50 Hz field no longer

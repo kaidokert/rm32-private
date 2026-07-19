@@ -739,3 +739,29 @@ Session tally lesson (operator): engage wasted a large fraction of
 bench time before the tally was demanded - keep per-session engage
 tallies; a collapsing engage rate is a CODE signal (it was the storm
 mask), never bench luck.
+
+
+## THE TRACKING ANSWER (2026-07-18, operator-directed AM32 head-to-head)
+
+Same bench, same hour, same 60->80 climb:
+- **AM32 (zct_today, 459k records): COMPLETED.** |ci-avg|/avg median
+  1.0% at 100-150us (92k records), 2.6% at 150-350us. **No sawtooth**
+  (lag-1 structure absent).
+- **minz (mzt_txfix/mode0): dies at 950-1400 Hz.** |per-est|/est
+  median 8.4%, p95 15%. Lag-1 autocorr of the period residual:
+  **-0.77 at +-17% amplitude - a violent period-2 alternating
+  oscillation.** ZC position within the window is TIGHT (0.556
+  +-0.043 of period) - detection is fine; the PERIOD oscillates.
+
+**The matrix-era "shared physical sawtooth" conclusion is FALSIFIED:
+the sawtooth is OURS.** Our accept->schedule feedback self-excites an
+alternating early/late commutation cycle; amplitude grows through the
+mid-rungs until a window misses its ZC -> desync kill. AM32 schedules
+from the RAW last interval (wait = ci/2 - advance) and stays clean;
+our smoothed-estimate scheduling overcorrects at period-2.
+
+Also: mode-3 EXTI default exonerated for the mid-rung deaths (mode-0
+revert died identically at 947 Hz) - reverted to 0 anyway pending the
+oscillation fix. Next campaign: damp the period-2 mode (schedule from
+raw-last-interval AM32-style, or add period-2 damping to the
+estimator), then re-run the ladder.

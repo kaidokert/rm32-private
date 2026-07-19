@@ -1252,7 +1252,16 @@ static HYST_LEVEL: AtomicU8 = AtomicU8::new(0);
 /// that polluted cross-config comparisons. Bench modes 0-2/5 remain
 /// available via `k` for diagnostics; the boot state now matches
 /// the reference.
-static EDGE_MODE: AtomicU8 = AtomicU8::new(3);
+/// DEFAULT REVERTED 3 -> 0 (2026-07-18 bisect): the AM32-parity
+/// single-edge default REGRESSED the loop - mode-0 era runs climbed
+/// to ~1790 Hz (mzt_rampstart, mxC/mxD completed); every mode-3 run
+/// died in CL desync/sag at 1100-1400 Hz mid-climb, and the matched-
+/// band trace comparison showed mode-3 sicker in ALL sectors (B
+/// escapes 156/1k vs 59). Our acceptance stack apparently benefits
+/// from seeing both edges (persistence re-tries on the bounce-backs).
+/// Mode 3 stays available via `k` - understanding WHY single-edge
+/// hurts is estimator-tail campaign material.
+static EDGE_MODE: AtomicU8 = AtomicU8::new(0);
 
 /// IWDG FLIGHT RECORDER (2026-07-18). Three words in the NOLOAD
 /// `.uninit` section: SRAM1 keeps its content across an IWDG (or any
