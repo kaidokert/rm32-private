@@ -93,21 +93,22 @@ pub fn start(sample_ticks: u16) {
     tim1.cr2
         .modify(|r, w| unsafe { w.bits((r.bits() & !(0xF << 20)) | (0b0111 << 20)) });
 
-    // Enable ADC idempotently (RM0394 16.4.9).
+    // Enable ADC idempotently (RM0394 16.4.9). All flag waits bounded
+    // (crate::spin — unbounded hardware-flag spins are banned).
     if adc.cr.read().aden().bit_is_clear() {
-        while adc.cr.read().addis().bit_is_set() {}
+        crate::spin::spin_until(100_000, || adc.cr.read().addis().bit_is_clear());
         adc.isr.write(|w| w.adrdy().set_bit());
         adc.cr.modify(|_, w| w.aden().set_bit());
-        while adc.isr.read().adrdy().bit_is_clear() {}
+        crate::spin::spin_until(100_000, || adc.isr.read().adrdy().bit_is_set());
     }
     // SQR/JSQR/SMPR/CFGR writes require no conversion in flight.
     if adc.cr.read().adstart().bit_is_set() {
         adc.cr.modify(|_, w| w.adstp().set_bit());
-        while adc.cr.read().adstart().bit_is_set() {}
+        crate::spin::spin_until(100_000, || adc.cr.read().adstart().bit_is_clear());
     }
     if adc.cr.read().jadstart().bit_is_set() {
         adc.cr.modify(|_, w| w.jadstp().set_bit());
-        while adc.cr.read().jadstart().bit_is_set() {}
+        crate::spin::spin_until(100_000, || adc.cr.read().jadstart().bit_is_clear());
     }
 
     // Sample times: 47.5 cycles on the phase channels (ch9/ch10) —
@@ -210,7 +211,9 @@ pub fn oversample_stop() {
     let adc = unsafe { &*ADC1::ptr() };
     if adc.cr.read().adstart().bit_is_set() {
         adc.cr.modify(|_, w| w.adstp().set_bit());
-        while adc.cr.read().adstart().bit_is_set() {}
+        // Bounded: ADSTP settles in µs; ISR-reachable via the WAX
+        // trigger machinery — an unbounded wait here is a wedge.
+        crate::spin::spin_until(100_000, || adc.cr.read().adstart().bit_is_clear());
     }
 }
 
@@ -252,7 +255,8 @@ pub fn freeze_current() -> usize {
     let dma = unsafe { &*stm32::DMA1::ptr() };
     if adc.cr.read().adstart().bit_is_set() {
         adc.cr.modify(|_, w| w.adstp().set_bit());
-        while adc.cr.read().adstart().bit_is_set() {}
+        // Bounded: called from ISR context at the WAX trigger fire.
+        crate::spin::spin_until(100_000, || adc.cr.read().adstart().bit_is_clear());
     }
     let remaining = dma.cndtr1.read().bits() as usize;
     dma.ccr1.modify(|r, w| unsafe { w.bits(r.bits() & !1) });

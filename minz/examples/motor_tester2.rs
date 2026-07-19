@@ -1706,6 +1706,7 @@ fn main() -> ! {
     static mut WREC_QUEUE: WrecQueue = Queue::new();
     static mut PEND_QUEUE: PendQueue = Queue::new();
     static mut ZT_QUEUE: ZtQueue = Queue::new();
+    static mut BEACON_SKIPS: u32 = 0;
     // FLIGHT-RECORDER SNAPSHOT - very first thing, before any
     // peripheral/ISR can overwrite the .uninit words (v1 printed
     // them after the ~1 s idle calibration, by which time the
@@ -2194,13 +2195,31 @@ fn main() -> ! {
             // can yield ONE backward-glitched read per 53.7 s; if it
             // landed here the mst guard saw main stale 53.7 s and
             // killed a healthy run (mzt_shed1/mstguard early-climb
-            // kills). Never store a beat older than the previous one
-            // (wrapping compare tolerates the true 12 h tick wrap).
+            // kills). Never store a beat older than the previous one.
+            // FORWARD BOUND (2026-07-19, the phase-6 IWDG reboots): a
+            // single FORWARD-glitched read (+53.7 s, passes the
+            // half-range check) got STORED — then every honest read
+            // for the next 53.7 s looked "backward" and was skipped:
+            // beacon frozen 30 s → proxy expiry → IWDG killed a
+            // HEALTHY run (beacon: main stale 31.0 s = proxy + 1 s,
+            // twice). No legit gap between main passes exceeds
+            // seconds; reject jumps > 5 s in either direction, and
+            // self-heal a poisoned prev by force-storing after 10k
+            // consecutive rejects (~10 s) so no glitch can freeze the
+            // heartbeat past the proxy budget.
             {
                 let bt = ticks_10us();
                 let prev = BEACON_MAIN.load(Ordering::Relaxed);
-                if bt.wrapping_sub(prev) < 0x8000_0000 {
+                let d = bt.wrapping_sub(prev);
+                if d < 500_000 {
                     BEACON_MAIN.store(bt, Ordering::Relaxed);
+                    *BEACON_SKIPS = 0;
+                } else {
+                    *BEACON_SKIPS += 1;
+                    if *BEACON_SKIPS >= 10_000 {
+                        BEACON_MAIN.store(bt, Ordering::Relaxed);
+                        *BEACON_SKIPS = 0;
+                    }
                 }
             }
             BEACON_PHASE.store(1, Ordering::Relaxed);
@@ -2236,6 +2255,18 @@ fn main() -> ! {
                         EST_ACC.load(Ordering::Relaxed),
                         (CL_ARMED.load(Ordering::Relaxed) as u32) << 1
                             | CL_ACTIVE.load(Ordering::Relaxed) as u32,
+                    )
+                    .ok();
+                    // ISR cost line (main-starve hunt): last-pass
+                    // cycles per ISR + comp rate.
+                    write!(
+                        &mut tx_writer,
+                        "d {} {} {} {} {}\r\n",
+                        DUR_T1U.load(Ordering::Relaxed),
+                        DUR_COMP.load(Ordering::Relaxed),
+                        DUR_LPTIM2.load(Ordering::Relaxed),
+                        DUR_TIM7.load(Ordering::Relaxed),
+                        COMP_RATE.load(Ordering::Relaxed),
                     )
                     .ok();
                 }

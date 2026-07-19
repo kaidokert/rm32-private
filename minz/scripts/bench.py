@@ -174,6 +174,8 @@ def cmd_ladder(a):
                 print("stream-on not confirmed (may be off)")
             if not b.press_until("Q", "qlog=on", tries=4):
                 print("qlog-on not confirmed (may be off)")
+            if a.jarm:
+                b.key("J", 0.5)  # arm the >4A WAX trigger (autopsy)
             if not b.press_until("L", "auto-ladder step = 1"):
                 print("1%-arm not confirmed (echo loss) - proceeding")
             if a.step >= 10:
@@ -182,10 +184,33 @@ def cmd_ladder(a):
             print(f"climb + hold ~{wait:.0f}s, hands off the wire...")
             t0 = time.monotonic()
             tail = b""
+            last_rx = time.monotonic()
+            probed = False
             while time.monotonic() - t0 < wait:
                 chunk = b.ser.read(8192)
                 b.cap.extend(chunk)
+                if chunk:
+                    last_rx = time.monotonic()
                 tail = (tail + chunk)[-4096:]
+                # WEDGE CATCH: q-lines flow at 25 Hz; >6 s of TOTAL
+                # silence with no kill print = main is wedged and the
+                # IWDG will fire at ~31 s. Probe-read the clock state
+                # LIVE (memory reads don't halt the core).
+                if not probed and time.monotonic() - last_rx > 6.0:
+                    probed = True
+                    print("WEDGE DETECTED - live probe:")
+                    try:
+                        c1 = probe_words(0xE0001004, 1)[0]
+                        h1 = probe_words(nm_addr("CYC_HIGH"), 1)[0]
+                        time.sleep(0.3)
+                        c2 = probe_words(0xE0001004, 1)[0]
+                        h2 = probe_words(nm_addr("CYC_HIGH"), 1)[0]
+                        ph = probe_words(nm_addr("BEACON_PHASE"), 1)[0]
+                        print(f"  CYCCNT {c1:#x} -> {c2:#x} "
+                              f"(delta {c2 - c1 & 0xFFFFFFFF})")
+                        print(f"  CYC_HIGH {h1} -> {h2}  phase={ph}")
+                    except (SystemExit, IndexError, TypeError) as e:
+                        print(f"  probe failed: {e}")
                 # Kill prints are '!! <CAPS>' TEXT; a bare b"!!" scan
                 # false-fired on 0x21 0x21 inside binary MAGPIE
                 # frames and aborted healthy climbs (m1 incident:
@@ -330,7 +355,7 @@ def cmd_postmortem(_):
                 "SHOT_ARMED_COUNT", "LPTIM2_COUNT", "CHAIN_KICKS",
                 "SAG_HOLD_COUNT", "BURST_TRIPS",
                 "RECOV_COUNT", "RESEED_COUNT", "SLEW_CLAMP_COUNT",
-                "WAIT_CLAMP_COUNT"):
+                "WAIT_CLAMP_COUNT", "SPIN_TIMEOUTS"):
         try:
             v = probe_words(nm_addr(sym), 1)[0]
             print(f"{sym} = {v}")
@@ -647,6 +672,7 @@ def main():
     p.add_argument("--tag", default=None)
     p.add_argument("--retries", type=int, default=4)
     p.add_argument("--nostream", action="store_true")
+    p.add_argument("--jarm", action="store_true")
     p = sub.add_parser("readback")
     p.add_argument("--tag", default=None)
     p.add_argument("--step", type=int, default=1)

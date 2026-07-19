@@ -131,7 +131,19 @@ impl UartTxWriter {
         if dma.ccr4.read().en().bit_is_set() {
             TX_RESYNCS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             dma.ccr4.modify(|_, w| w.en().clear_bit());
-            while dma.ccr4.read().en().bit_is_set() {}
+            // BOUNDED (2026-07-19, the phase-5 IWDG reboot: main died
+            // INSIDE service() — this readback spin was the only
+            // unbounded loop in it). EN must clear within a few bus
+            // cycles; if it somehow doesn't, nuke the channel config
+            // outright and carry on — losing one chunk beats a wedge.
+            let mut guard = 0u32;
+            while dma.ccr4.read().en().bit_is_set() {
+                guard += 1;
+                if guard > 10_000 {
+                    unsafe { dma.ccr4.write(|w| w.bits(0)) };
+                    break;
+                }
+            }
             dma.ifcr.write(|w| w.cgif4().set_bit());
         }
         unsafe {
