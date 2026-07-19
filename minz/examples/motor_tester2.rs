@@ -5686,6 +5686,15 @@ fn COMP() {
             (false, true) => LATE_ONLY.fetch_add(1, Ordering::Relaxed),
             (false, false) => NEITHER.fetch_add(1, Ordering::Relaxed),
         };
+        // ENTRY-QUALIFY tested and REVERTED (2026-07-19): the
+        // LATE_ONLY census class (60 % of qualifying edges with the
+        // wrong dwell at the entry latch) looked like the walk-seed
+        // population, but rejecting it made the ladder WORSE (died
+        // rung 47 vs 54-57 baseline; unbanded also 1/3 engages) —
+        // at speed those are REAL ZCs whose settle postdates our
+        // very-early entry latch (AM32's "immediate" read sits later
+        // in its ISR chain). Late-qualify stands; the census
+        // counters stay as observers.
         let mut held = late_value == expected;
         for _ in 0..persist_reads.saturating_sub(1) {
             if !held {
