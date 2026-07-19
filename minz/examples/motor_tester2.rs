@@ -4513,10 +4513,11 @@ fn TIM1_UP_TIM16() {
                 SAG_DEBOUNCE_LIVE.load(Ordering::Relaxed),
             );
             VBAT_SAG_RUN.store(run, Ordering::Relaxed);
-            // STALL-REGIME ONLY (the amp-82 wall, bb 0xB003): at 1900+ Hz the
-            // LEGITIMATE comparator rate crosses the 72k/s threshold that was
-            // calibrated at cruise; the storm class lives at long intervals.
-            if trip && OWL_INTERVAL_US.load(Ordering::Relaxed) > 150 {
+            // (A regex mispatch briefly gated THIS kill on interval>150,
+            // silently disabling sag protection at speed while the
+            // rate-storm stayed unscoped and killed a healthy 2032 Hz
+            // run - the bb caught it. Sag is unconditional again.)
+            if trip {
                 VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
                 minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Sag);
                 // Transit-autopsy: freeze the black box AT the kill
@@ -4573,7 +4574,13 @@ fn TIM1_UP_TIM16() {
                 delta,
             );
             STORM_RATE_RUN.store(run, Ordering::Relaxed);
-            if trip {
+            // STALL-REGIME ONLY (the amp-82/90 walls, bb 0xB003): at
+            // 1900+ Hz the LEGITIMATE comparator rate crosses the 72k/s
+            // threshold, which was calibrated at cruise. The storm class
+            // this kill exists for lives at long intervals (stall /
+            // incoherent field); at speed the zombie + desync guards own
+            // the failure modes.
+            if trip && OWL_INTERVAL_US.load(Ordering::Relaxed) > 150 {
                 bb_record(
                     minz_core::blackbox::EV_DSY,
                     CURRENT_SECTOR.load(Ordering::Relaxed),
