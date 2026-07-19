@@ -4665,8 +4665,17 @@ fn TIM1_UP_TIM16() {
             // 2× interval (floor +80 µs) AND two consecutive
             // over-threshold passes 41.6 µs apart — a stale read
             // heals on the re-check, a dead chain keeps growing.
+            // Threshold margin is SPEED-SCALED (2026-07-19 engage
+            // bisect): the flat 2×iv margin delayed the engage-phase
+            // rescue past the desync watchdog and engage collapsed
+            // 0/50 (control build engaged 2/2 same bench, same hour).
+            // max(iv/2, 120 µs): at engage (iv ~780) this is the
+            // proven 1.5×iv rescue point; at 83 µs top-end intervals
+            // the 120 µs floor stays above the ~134 µs... just at the
+            // legit staleness stack, so the 2-pass confirm below
+            // remains load-bearing against false fires.
             let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
-            if iv != 0 && iv < 5_000 && since > iv + iv.max(80) {
+            if iv != 0 && iv < 5_000 && since > iv + (iv / 2).max(120) {
                 if KICK_PEND.swap(true, Ordering::Relaxed) {
                     KICK_PEND.store(false, Ordering::Relaxed);
                     CHAIN_KICKS.fetch_add(1, Ordering::Relaxed);

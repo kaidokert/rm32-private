@@ -120,11 +120,26 @@ def cmd_ladder(a):
     for run in range(a.retries):
         b = Bench()
         died = None
+        no_engage = False
         try:
             att, fe = b.engage()
             if not att:
                 print(f"run {run}: NO ENGAGE")
-                continue
+                no_engage = True
+        finally:
+            pass
+        if no_engage:
+            import pathlib
+            tag = a.tag or f"step{a.step}"
+            capfile = (pathlib.Path("captures")
+                       / f"ladder_cap_{tag}_r{run}_noengage.bin")
+            capfile.write_bytes(bytes(b.cap))
+            print(f"engage-fail capture -> {capfile} ({len(b.cap)} bytes)")
+            b.kill()
+            b.close()
+            time.sleep(3.0)
+            continue
+        try:
             print(f"engaged attempt {att}: {fe} Hz; ladder step={a.step}")
             if not b.press_until("L", "auto-ladder step = 1"):
                 print("1%-arm not confirmed (echo loss) - proceeding")
