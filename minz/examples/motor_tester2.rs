@@ -728,6 +728,15 @@ static SAG_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);
 static KICK_PEND: AtomicBool = AtomicBool::new(false);
 /// TIM6 19.6 kHz control-loop tick counter (AM32 tenKhzRoutine home).
 static TIM6_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Per-rung dwell accumulators (operator: are our jagged map curves
+/// sampling or real? The rung log stored ONE instantaneous sample at
+/// the step instant vs AM32's smoothed KISS telemetry — these make
+/// it apples-to-apples: full-dwell means). TIM6 accumulates, the
+/// ladder stepper logs sum/n and zeroes.
+static RUNG_IV_SUM: AtomicU32 = AtomicU32::new(0);
+static RUNG_I_SUM: AtomicU32 = AtomicU32::new(0);
+static RUNG_VB_SUM: AtomicU32 = AtomicU32::new(0);
+static RUNG_N: AtomicU32 = AtomicU32::new(0);
 /// Boot-time RCC_CSR (reset-cause flags), probe-readable — the
 /// reboot-at-speed class loses the printed banner.
 #[unsafe(no_mangle)]
@@ -2347,16 +2356,18 @@ fn main() -> ! {
                     }
                     let a = amplitude_pct as usize;
                     if a < 96 {
-                        LADDER_LOG[a * 4]
-                            .store(OWL_INTERVAL_US.load(Ordering::Relaxed), Ordering::Relaxed);
-                        LADDER_LOG[a * 4 + 1]
-                            .store(LAST_I_RAW.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
+                        // Full-dwell MEANS (apples-to-apples with
+                        // AM32's smoothed KISS telemetry) — the old
+                        // single-instant samples were the map jag.
+                        let n = RUNG_N.swap(0, Ordering::Relaxed).max(1);
+                        let ivs = RUNG_IV_SUM.swap(0, Ordering::Relaxed);
+                        let is_ = RUNG_I_SUM.swap(0, Ordering::Relaxed);
+                        let vbs = RUNG_VB_SUM.swap(0, Ordering::Relaxed);
+                        LADDER_LOG[a * 4].store(ivs / n, Ordering::Relaxed);
+                        LADDER_LOG[a * 4 + 1].store(is_ / n, Ordering::Relaxed);
                         LADDER_LOG[a * 4 + 2]
                             .store(CL_COMM_COUNT.load(Ordering::Relaxed), Ordering::Relaxed);
-                        LADDER_LOG[a * 4 + 3].store(
-                            VBAT_RAW_LIVE.load(Ordering::Relaxed) as u32,
-                            Ordering::Relaxed,
-                        );
+                        LADDER_LOG[a * 4 + 3].store(vbs / n, Ordering::Relaxed);
                     }
                 }
             } else if lstep > 0 && !CL_ACTIVE.load(Ordering::Relaxed) {
@@ -3603,6 +3614,13 @@ fn TIM6_DACUNDER() {
     // The full former-TIM1-wrap workload (confirm/guards/harvest) —
     // the wholesale convergence move.
     pwm_wrap_work();
+    // Rung dwell averaging (1/8 decimated: ~2.5 kHz sampling).
+    if tick & 7 == 0 && CL_ACTIVE.load(Ordering::Relaxed) {
+        RUNG_IV_SUM.fetch_add(OWL_INTERVAL_US.load(Ordering::Relaxed), Ordering::Relaxed);
+        RUNG_I_SUM.fetch_add(LAST_I_RAW.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
+        RUNG_VB_SUM.fetch_add(VBAT_RAW_LIVE.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
+        RUNG_N.fetch_add(1, Ordering::Relaxed);
+    }
     // Throttle slew limiter: the APPLIED duty walks toward the
     // key-set target at 1 %/50 ms (980 ticks here), duty-scaled ×2/×3
     // above 70 %/85 % (ω³ transit power), sag-aware (upward slew
