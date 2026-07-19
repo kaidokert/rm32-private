@@ -2534,6 +2534,13 @@ fn main() -> ! {
                     }
                     b'L' => {
                         let on = !AUTO_LADDER.load(Ordering::Relaxed);
+                        if on {
+                            // fresh log per arm - stale RAM masqueraded
+                            // as a confirmation run once
+                            for w in LADDER_LOG.iter() {
+                                w.store(0, Ordering::Relaxed);
+                            }
+                        }
                         AUTO_LADDER.store(on, Ordering::Relaxed);
                         LADDER_LAST_T10.store(ticks_10us(), Ordering::Relaxed);
                         write!(

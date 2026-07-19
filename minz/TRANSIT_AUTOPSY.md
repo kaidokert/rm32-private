@@ -1011,3 +1011,35 @@ Reproducer state at landing: COMPLETED (5 of the last 7 attempts;
 deaths remaining are climb-transient class). Build: AM32-verbatim
 gate + wait + unmask, aligned v3 trace, all guards decimated, engage
 via R6.
+
+
+## AMP 90 CAMPAIGN (2026-07-18 night, operator goal: track throttle
+## to >=90%)
+
+**ACHIEVED: amp 90 reached and HELD ~46 s at ~2030 Hz** (92k
+commutations at the top rung, autonomous-ladder RAM log). The wall
+chain, each bench-verified and fixed:
+1. amp 65-75 stochastic "deaths" = EMI junk bytes hitting single-char
+   key bindings ('w' = kill!) -> doubled-key guard ('w' stays single).
+2. main print-livelock (PendSV: 7/8 samples in write_str) = junk-'i'
+   600-byte echo storms -> i-echo rate limit (2/s). mst stalls: 24541
+   -> 0 after.
+3. Total comms blackout at amp 77+ = physical EMI (RX start-bit
+   suppression - codex-confirmed silent mechanism - plus TX outages)
+   -> AUTONOMOUS LADDER ('L' key): firmware self-steps to 90, per-rung
+   telemetry (interval/isns/comms) in RAM, probe readback. The bench
+   link is no longer in the loop where the goal lives.
+4. amp-82 hard wall = OUR OWN CL rate-storm detector (72k/s threshold
+   legitimate at 1900+ Hz) -> scoped to the stall regime
+   (interval > 150 us).
+5. bb post-kill clear removed (it destroyed the RAM evidence exactly
+   when the wire was dead).
+
+Repeatability: 90 (46 s hold) / 86 / 90-slot-stale(discarded) across
+fresh-log runs - the residual 86-90 stochastic class is a REAL
+control failure (interval walks up, genuine comp storm on the failing
+field, storm-kill correctly ends it; bb shows DSY 0xB003 as
+executioner not cause). That class + rung-matched AM32 side-by-side
+(their firmware untouched throughout) = next session. Toolkit now in
+place: autonomous ladder + RAM rung log + preserved bb + PendSV
+profiler + doubled keys.
