@@ -948,3 +948,26 @@ Note the earlier "am32sched" experiment was the RIGHT change tested
 on the WRONG build (pre-recovery erosion, b2b active, comp27
 interactions) - a lesson in experiment hygiene: levers must be
 tested on a clean baseline.
+
+
+## Entry-latch experiment (2026-07-18): FALSIFIED cleanly
+
+Hypothesis: our persistence samples the comparator ~1.5-3 us after
+the edge (vs AM32's ~0.2 us) and misses the brief post-crossing
+dwell -> the qualification-miss asymmetry and 2.3x raw ZC spread.
+
+A/B counters on every candidate edge (entry-latched sample at +0.3us
+vs the old late sample): agree 8924 / entry-only 231 / late-only 378
+/ neither 1799 - **entry-pass 81% vs late-pass 82%**. The dwell state
+is stable across the window in question; sampling latency is NOT the
+mechanism. (A first naive entry-only build read 100% miss - a
+separate artifact; the controlled A/B is the verdict.)
+
+Also learned: the 87%/52% open-loop miss rates route through the
+ADC-confirm path, which SWIFT bypasses - the open-loop discriminator
+does not describe the CL regime. The CL raw_iv spread (49 vs 20 us)
+therefore needs a CL-REGIME edge-level trace (which edge is accepted
+vs the first crossing, per window, under lock) - or the source is
+actuation-side (drive jitter reflected in real crossing times).
+Qualification stays on the late sample (unchanged behavior); the
+A/B counters stay (ev: line) as a standing instrument.

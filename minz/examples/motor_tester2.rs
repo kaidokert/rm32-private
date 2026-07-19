@@ -701,6 +701,13 @@ static MST_KILL_SINCE: AtomicU32 = AtomicU32::new(0);
 static MST_KILL_PHASE: AtomicU32 = AtomicU32::new(0);
 /// Parity-bias compensations applied (even-window accepts backdated).
 static PARITY_COMP_APPLIED: AtomicU32 = AtomicU32::new(0);
+/// Entry-latch experiment counters: does the comparator dwell state
+/// at ISR entry (+0.3us) agree with `expected` when the LATE sample
+/// (old position, +1.5-3us) does?
+static ENTRY_AGREE: AtomicU32 = AtomicU32::new(0);
+static ENTRY_ONLY: AtomicU32 = AtomicU32::new(0);
+static LATE_ONLY: AtomicU32 = AtomicU32::new(0);
+static NEITHER: AtomicU32 = AtomicU32::new(0);
 /// Stacked-PC capture of the stalled main (PendSV trick): PendSV at
 /// the LOWEST priority preempts only thread mode, so its exception
 /// frame IS main's context - stacked PC at [sp, #24] regardless of
@@ -2793,7 +2800,7 @@ fn main() -> ! {
                             }
                             write!(
                                 &mut tx_writer,
-                                " txdrop={} zbk={} storm={}/{} mst={}/{} msts={} mstp={} wbmax={} mstpc={:08x} mstlr={:08x} txrs={} pcomp={}\r\n",
+                                " txdrop={} zbk={} storm={}/{} mst={}/{} msts={} mstp={} wbmax={} mstpc={:08x} mstlr={:08x} txrs={} pcomp={} ev:{}/{}/{}/{}\r\n",
                                 minz::uart_tx::TX_DROPPED.load(Ordering::Relaxed),
                                 ZOMBIE_BACKSTOP_KILLS.load(Ordering::Relaxed),
                                 STORM_MASKS.load(Ordering::Relaxed),
@@ -2807,6 +2814,10 @@ fn main() -> ! {
                                 MST_LR.load(Ordering::Relaxed),
                                 minz::uart_tx::TX_RESYNCS.load(Ordering::Relaxed),
                                 PARITY_COMP_APPLIED.load(Ordering::Relaxed),
+                                ENTRY_AGREE.load(Ordering::Relaxed),
+                                ENTRY_ONLY.load(Ordering::Relaxed),
+                                LATE_ONLY.load(Ordering::Relaxed),
+                                NEITHER.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -4827,6 +4838,15 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP() {
+    // ENTRY LATCH (the raw-spread experiment, 2026-07-18): read the
+    // comparator dwell state as the VERY FIRST instruction - ~0.3 us
+    // after the physical edge, inside the brief post-crossing dwell,
+    // where AM32's filter samples (~0.2 us). Our persistence loop
+    // previously started ~1.5-3 us in (after pending-clear/blank/
+    // gate/storm preamble), by which time the dwell at the true
+    // crossing was often gone - the 87%/52% qualification-miss
+    // asymmetry and the 2.3x raw ZC spread.
+    let entry_value = comp2::value();
     let _dur = DurGuard::new(&DUR_COMP);
     // EXTI line 22 is COMP2's output (COMP1 is line 21, unused here).
     // Ack the pending bit first so the IRQ doesn't immediately re-fire.
@@ -5038,8 +5058,21 @@ fn COMP() {
     // inverse. Matches `edges_for` mode 3 (rising even / falling odd).
     if WINDOW_QZC_US.load(Ordering::Relaxed) == u32::MAX {
         let expected = (CURRENT_SECTOR.load(Ordering::Relaxed) & 1) == 0;
-        let mut held = true;
-        for _ in 0..persist_reads {
+        // INSTRUMENTED A/B: compare entry-latched vs late-sampled
+        // dwell state on every candidate edge; qualify from the LATE
+        // sample (previous behavior) while counting the disagreement.
+        let late_value = comp2::value();
+        match (entry_value == expected, late_value == expected) {
+            (true, true) => ENTRY_AGREE.fetch_add(1, Ordering::Relaxed),
+            (true, false) => ENTRY_ONLY.fetch_add(1, Ordering::Relaxed),
+            (false, true) => LATE_ONLY.fetch_add(1, Ordering::Relaxed),
+            (false, false) => NEITHER.fetch_add(1, Ordering::Relaxed),
+        };
+        let mut held = late_value == expected;
+        for _ in 0..persist_reads.saturating_sub(1) {
+            if !held {
+                break;
+            }
             cortex_m::asm::delay(8);
             if comp2::value() != expected {
                 held = false;
