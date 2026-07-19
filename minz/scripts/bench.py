@@ -200,15 +200,47 @@ def cmd_ladder(a):
                     probed = True
                     print("WEDGE DETECTED - live probe:")
                     try:
+                        syms = ["COMP_COUNT", "TIM1_UP_COUNT",
+                                "LPTIM2_COUNT", "TIM7_COUNT",
+                                "USART2_COUNT", "TIM1_CC_COUNT"]
+                        addrs = {s: nm_addr(s) for s in syms}
                         c1 = probe_words(0xE0001004, 1)[0]
-                        h1 = probe_words(nm_addr("CYC_HIGH"), 1)[0]
-                        time.sleep(0.3)
+                        r1 = {s: probe_words(a, 1)[0]
+                              for s, a in addrs.items()}
+                        t1 = time.monotonic()
+                        time.sleep(1.0)
                         c2 = probe_words(0xE0001004, 1)[0]
-                        h2 = probe_words(nm_addr("CYC_HIGH"), 1)[0]
+                        r2 = {s: probe_words(a, 1)[0]
+                              for s, a in addrs.items()}
+                        dt = time.monotonic() - t1
                         ph = probe_words(nm_addr("BEACON_PHASE"), 1)[0]
-                        print(f"  CYCCNT {c1:#x} -> {c2:#x} "
-                              f"(delta {c2 - c1 & 0xFFFFFFFF})")
-                        print(f"  CYC_HIGH {h1} -> {h2}  phase={ph}")
+                        print(f"  CYCCNT delta {(c2 - c1) & 0xFFFFFFFF} "
+                              f"phase={ph}")
+                        for s in syms:
+                            rate = ((r2[s] - r1[s]) & 0xFFFFFFFF) / dt
+                            print(f"  {s}: {rate:.0f}/s")
+                        # Sample the wedged thread PC: pend PendSV via
+                        # ICSR, the handler stores main's PC/LR.
+                        for _ in range(3):
+                            sh("probe-rs", "write", "--chip", CHIP,
+                               "--probe", PROBE, "b32", "0xE000ED04",
+                               "0x10000000")
+                            time.sleep(0.2)
+                        pc = probe_words(nm_addr("MST_PC"), 1)[0]
+                        lr = probe_words(nm_addr("MST_LR"), 1)[0]
+                        pcs = probe_words(nm_addr("MST_PCS"), 8)
+                        print(f"  wedged PC={pc:08x} LR={lr:08x}")
+                        print("  PC ring: " +
+                              " ".join(f"{p:08x}" for p in pcs))
+                        # TX black-hole check: DMA1_CH4 + USART1 state
+                        ccr4 = probe_words(0x40020044, 1)[0]
+                        nd1 = probe_words(0x40020048, 1)[0]
+                        time.sleep(0.2)
+                        nd2 = probe_words(0x40020048, 1)[0]
+                        uisr = probe_words(0x4001381C, 1)[0]
+                        dmaisr = probe_words(0x40020000, 1)[0]
+                        print(f"  DMA CCR4={ccr4:08x} CNDTR4 {nd1}->{nd2} "
+                              f"DMA_ISR={dmaisr:08x} USART1_ISR={uisr:08x}")
                     except (SystemExit, IndexError, TypeError) as e:
                         print(f"  probe failed: {e}")
                 # Kill prints are '!! <CAPS>' TEXT; a bare b"!!" scan
