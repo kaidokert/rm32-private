@@ -711,6 +711,15 @@ static LAST_KEY_T10: AtomicU32 = AtomicU32::new(0);
 /// from RAM after a stall.
 static KEY_I_COUNT: AtomicU32 = AtomicU32::new(0);
 static KEY_ANY_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Keys rejected by the ladder lockout (EMI junk that beat the
+/// doubled-key guard while the ladder was armed).
+#[unsafe(no_mangle)]
+static KEY_REJECT_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Last 16 ACCEPTED key bytes, ring; readback via probe after a run.
+#[unsafe(no_mangle)]
+static KEY_LOG: [AtomicU8; 16] = [const { AtomicU8::new(0) }; 16];
+#[unsafe(no_mangle)]
+static KEY_LOG_IDX: AtomicU32 = AtomicU32::new(0);
 static LAST_I_ECHO_T10: AtomicU32 = AtomicU32::new(0);
 /// AUTONOMOUS LADDER ('L' key): the physical link blacks out under
 /// EMI at amp ~77+ (RX start-bit suppression + TX outages - codex-
@@ -722,10 +731,14 @@ static LAST_I_ECHO_T10: AtomicU32 = AtomicU32::new(0);
 static LADDER_STEP: AtomicU8 = AtomicU8::new(0);
 /// One-shot bb freeze on the first reseed (pulsing deep-dive).
 static RESEED_BB_TAKEN: AtomicBool = AtomicBool::new(false);
+/// Chain-stop snapshot at the frozen reseed: [armed, fired, lptim2
+/// ISR, CNT, ARR, CR, est_acc, watchdog detail]. Probe readback.
+#[unsafe(no_mangle)]
+static RSD_SNAP: [AtomicU32; 8] = [CEN_ZERO; 8];
 static LADDER_LAST_T10: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static LADDER_LOG: [AtomicU32; 384] = [CEN_ZERO; 384];
-const LADDER_TOP: u16 = 90;
+const LADDER_TOP: u16 = 96; // == AMP_MAX: "100% throttle" = our full-duty ceiling
 /// ZT pair-preserving decimation counter: at speed the full stream
 /// (>=315 kB/s at 2.5 kHz elec) drowns the 200 kB/s wire, eating the
 /// KEYS AND ECHOES - the 90-ladder could not command past amp 60
@@ -1082,6 +1095,19 @@ fn trigger_reseed(detail: u16) {
         // first HIGH-SPEED reseed only - engage-phase reseeds (320 Hz)
         // froze the ring before the pulsing regime was reached
         BB_FROZEN.store(true, Ordering::Relaxed);
+        // Chain-stop forensics: arm/fire accounting + LPTIM2 hardware
+        // state AT the dropout. armed>fired here = a shot that never
+        // came (the SNGSTRT class); armed==fired = no shot was armed
+        // (accept path never ran = the upstream mystery).
+        RSD_SNAP[0].store(SHOT_ARMED_COUNT.load(Ordering::Relaxed), Ordering::Relaxed);
+        RSD_SNAP[1].store(LPTIM2_COUNT.load(Ordering::Relaxed), Ordering::Relaxed);
+        let lptim = unsafe { &*stm32::LPTIM2::ptr() };
+        RSD_SNAP[2].store(lptim.isr.read().bits(), Ordering::Relaxed);
+        RSD_SNAP[3].store(lptim.cnt.read().bits(), Ordering::Relaxed);
+        RSD_SNAP[4].store(lptim.arr.read().bits(), Ordering::Relaxed);
+        RSD_SNAP[5].store(lptim.cr.read().bits(), Ordering::Relaxed);
+        RSD_SNAP[6].store(EST_ACC.load(Ordering::Relaxed), Ordering::Relaxed);
+        RSD_SNAP[7].store(detail as u32, Ordering::Relaxed);
     }
     RESEED_ACTIVE.store(true, Ordering::Relaxed);
     RESEED_ACCEPTS.store(0, Ordering::Relaxed);
@@ -2254,8 +2280,22 @@ fn main() -> ! {
                 if !ok {
                     continue;
                 }
+                // LADDER LOCKOUT: while the autonomous ladder is armed,
+                // the host has no business sending anything but a kill,
+                // so any other accepted key is EMI junk that has beaten
+                // the doubled-key guard (observed: ~11 accepted junk
+                // keys during the amp-96 hold walked the throttle down
+                // to 324 Hz — silent sabotage). Only 'w' passes.
+                if LADDER_STEP.load(Ordering::Relaxed) != 0 && b != b'w' {
+                    KEY_REJECT_COUNT.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
                 LAST_KEY_BYTE.store(0, Ordering::Relaxed);
                 KEY_ANY_COUNT.fetch_add(1, Ordering::Relaxed);
+                // Accepted-key forensics ring (post-run RAM readback):
+                // which keys actually dispatched, in order.
+                let ki = KEY_LOG_IDX.fetch_add(1, Ordering::Relaxed) as usize;
+                KEY_LOG[ki % 16].store(b, Ordering::Relaxed);
                 if b == b'i' {
                     KEY_I_COUNT.fetch_add(1, Ordering::Relaxed);
                     // RATE LIMIT (codex: the i-echo is ~600 bytes of

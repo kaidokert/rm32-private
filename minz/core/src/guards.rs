@@ -359,7 +359,13 @@ impl SagGuard {
     }
 
     pub fn threshold_raw(&self) -> u16 {
-        (self.baseline_raw - self.baseline_raw / 10).max(VBAT_ABS_FLOOR_RAW)
+        // −15 % (was −10 %): AM32 at 100 % throttle rides this bench's
+        // bus down to 7.07 V sustained and is healthy — a −10 % line
+        // from the ~8.15 V unloaded baseline (≈7.34 V) sits ABOVE the
+        // legitimate full-throttle operating point (amp-95 rung logged
+        // 7.20 V). −15 % ≈ 6.93 V keeps AM32-parity load legal while
+        // still killing a real collapse.
+        (self.baseline_raw - self.baseline_raw * 3 / 20).max(VBAT_ABS_FLOOR_RAW)
     }
 
     /// Feed one pump sample (only while the drive is armed). Returns
@@ -954,8 +960,9 @@ mod tests {
     fn sag_baseline_relative_threshold() {
         let mut g = SagGuard::new();
         g.arm(1080); // ~8.1 V
-        // −10 %: 972 raw ≈ 7.3 V.
-        assert_eq!(g.threshold_raw(), 972);
+        // −15 %: 918 raw ≈ 6.9 V (AM32 rides 7.07 V at 100 % throttle
+        // on this bench; the old −10 % line sat above that).
+        assert_eq!(g.threshold_raw(), 918);
     }
 
     #[test]

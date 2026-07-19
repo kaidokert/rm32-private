@@ -115,27 +115,55 @@ def cmd_engage(_):
 
 
 def cmd_ladder(a):
-    b = Bench()
-    try:
-        att, fe = b.engage()
-        if not att:
-            print("NO ENGAGE")
+    per_rung = 1.6 if a.step >= 10 else 0.55
+    wait = per_rung * (a.top - 10) / a.step + a.hold
+    for run in range(a.retries):
+        b = Bench()
+        died = None
+        try:
+            att, fe = b.engage()
+            if not att:
+                print(f"run {run}: NO ENGAGE")
+                continue
+            print(f"engaged attempt {att}: {fe} Hz; ladder step={a.step}")
+            if not b.press_until("L", "auto-ladder step = 1"):
+                print("1%-arm not confirmed (echo loss) - proceeding")
+            if a.step >= 10:
+                if not b.press_until("L", "auto-ladder step = 10"):
+                    print("10%-arm not confirmed - may be at 1%")
+            print(f"climb + hold ~{wait:.0f}s, hands off the wire...")
+            t0 = time.monotonic()
+            tail = b""
+            while time.monotonic() - t0 < wait:
+                chunk = b.ser.read(8192)
+                b.cap.extend(chunk)
+                tail = (tail + chunk)[-4096:]
+                # firmware prefixes every kill/guard print with '!!';
+                # the boot banner mid-run means the chip REBOOTED
+                for marker in (b"!!", b"motor_tester2: clocks"):
+                    if marker in tail:
+                        died = tail[tail.find(marker):][:80]
+                        break
+                if died:
+                    break
+        finally:
+            b.kill()
+            b.close()
+        if died:
+            print(f"run {run}: DIED mid-ladder: "
+                  f"{died.decode('utf-8', 'replace').strip()}")
+            cmd_postmortem(a)
+            time.sleep(3.0)
+            continue
+        rows = read_ladder_log()
+        top = rows[-1][0] if rows else 0
+        if top >= a.top - 2:
+            cmd_readback(a)
             return
-        print(f"engaged attempt {att}: {fe} Hz; arming ladder step={a.step}")
-        want = "auto-ladder step = 1"
-        if not b.press_until("L", want):
-            print("1%-arm not confirmed (echo loss) - proceeding")
-        if a.step >= 10:
-            if not b.press_until("L", "auto-ladder step = 10"):
-                print("10%-arm not confirmed - may be at 1%")
-        per_rung = 1.6 if a.step >= 10 else 0.55
-        wait = per_rung * (a.top - 10) / a.step + a.hold
-        print(f"climb + hold ~{wait:.0f}s, hands off the wire...")
-        time.sleep(wait)
-    finally:
-        b.kill()
-        b.close()
-    cmd_readback(a)
+        print(f"run {run}: silent death at rung {top}; retrying")
+        cmd_postmortem(a)
+        time.sleep(3.0)
+    print("LADDER FAILED all retries")
 
 
 def read_ladder_log():
@@ -176,8 +204,36 @@ def cmd_readback(a):
 
 def cmd_postmortem(_):
     print(sh(sys.executable, "scripts/bb_postmortem.py"))
+    # Chain-stop snapshot taken at the first high-speed reseed:
+    # armed==fired -> no shot was armed (upstream accept never ran);
+    # armed==fired+1 -> a shot armed but never fired (SNGSTRT class).
+    try:
+        snap = probe_words(nm_addr("RSD_SNAP"), 8)
+        names = ["armed", "fired", "lptim2_isr", "lptim2_cnt",
+                 "lptim2_arr", "lptim2_cr", "est_acc_us", "detail"]
+        print("RSD_SNAP:", ", ".join(
+            f"{n}={v:#x}" if n.startswith("lptim2_") else f"{n}={v}"
+            for n, v in zip(names, snap)))
+        if any(snap):
+            print(f"  armed-fired delta at stop = {snap[0] - snap[1]}")
+    except SystemExit:
+        pass
+    # Accepted-key ring: which keys actually dispatched, oldest->newest
+    try:
+        klog = sh("probe-rs", "read", "--chip", CHIP, "--probe", PROBE,
+                  "b8", hex(nm_addr("KEY_LOG")), "16")
+        bts = [int(x, 16) for ln in klog.splitlines()
+               for x in ln.split() if len(x) == 2]
+        idx = probe_words(nm_addr("KEY_LOG_IDX"), 1)[0]
+        seq = [bts[(idx + k) % 16] for k in range(16)]
+        print("KEY_LOG (oldest->newest):",
+              " ".join(chr(c) if 32 <= c < 127 else f"\\x{c:02x}"
+                       for c in seq if c))
+    except (SystemExit, IndexError):
+        pass
     for sym in ("STORM_KILLS", "ZOMBIE_BACKSTOP_KILLS", "MAIN_STARVE_KILLS",
-                "KEY_I_COUNT", "KEY_ANY_COUNT", "USART2_COUNT",
+                "KEY_I_COUNT", "KEY_ANY_COUNT", "KEY_REJECT_COUNT",
+                "USART2_COUNT",
                 "SHOT_ARMED_COUNT", "LPTIM2_COUNT", "BURST_TRIPS",
                 "RECOV_COUNT", "RESEED_COUNT", "SLEW_CLAMP_COUNT",
                 "WAIT_CLAMP_COUNT"):
@@ -261,6 +317,27 @@ def cmd_sweep_am32(a):
         ser.close()
 
 
+def cmd_peek(a):
+    for sym in a.syms:
+        try:
+            addr = nm_addr(sym)
+            if a.words > 1:
+                print(f"{sym} = {probe_words(addr, a.words)}")
+                continue
+            # u8 statics land at unaligned addresses; b8 always works
+            out = sh("probe-rs", "read", "--chip", CHIP, "--probe", PROBE,
+                     "b8", hex(addr), "4")
+            bts = [int(x, 16) for ln in out.splitlines()
+                   for x in ln.split() if len(x) == 2]
+            if not bts:
+                print(f"{sym} @ {addr:#x}: no data ({out.strip()[:80]})")
+                continue
+            v = sum(b << (8 * i) for i, b in enumerate(bts[:4]))
+            print(f"{sym} = {v} (b0={bts[0]})")
+        except SystemExit as e:
+            print(e)
+
+
 def cmd_kill(_):
     b = Bench()
     b.kill()
@@ -273,10 +350,11 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("engage")
     p = sub.add_parser("ladder")
-    p.add_argument("--top", type=int, default=90)
+    p.add_argument("--top", type=int, default=96)
     p.add_argument("--hold", type=float, default=30.0)
     p.add_argument("--step", type=int, default=1, choices=(1, 2, 10))
     p.add_argument("--tag", default=None)
+    p.add_argument("--retries", type=int, default=4)
     p = sub.add_parser("readback")
     p.add_argument("--tag", default=None)
     p.add_argument("--step", type=int, default=1)
@@ -289,11 +367,14 @@ def main():
     p.add_argument("--hi", type=int, default=100)
     p.add_argument("--step", type=int, default=5)
     sub.add_parser("kill")
+    p = sub.add_parser("peek")
+    p.add_argument("syms", nargs="+")
+    p.add_argument("--words", type=int, default=1)
     a = ap.parse_args()
     {"engage": cmd_engage, "ladder": cmd_ladder, "readback": cmd_readback,
      "postmortem": cmd_postmortem, "flash-minz": cmd_flash_minz,
      "flash-am32": cmd_flash_am32, "sweep-am32": cmd_sweep_am32,
-     "kill": cmd_kill}[a.cmd](a)
+     "kill": cmd_kill, "peek": cmd_peek}[a.cmd](a)
 
 
 if __name__ == "__main__":
