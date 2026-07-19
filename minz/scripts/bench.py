@@ -138,6 +138,7 @@ def cmd_engage(_):
 
 
 def cmd_ladder(a):
+    preflight_reset()
     per_rung = 1.6 if a.step >= 10 else 0.55
     # +25 s slack: engage attempts + echo-verified key retries eat
     # into the window (m5 incident: the wait expired mid-climb and
@@ -525,6 +526,13 @@ def cmd_probe_adv(a):
             print("WARN: stream-on unconfirmed")
         if not b.press_until("Q", "qlog=on", tries=6):
             print("WARN: qlog-on unconfirmed")
+        if a.keyfirst:
+            for n in range(a.presses):
+                for _ in range(5):
+                    echo = b.key(a.key, 0.5)
+                    if a.echo and a.echo in echo:
+                        print(f"press {n}: {echo.strip()[-40:]}")
+                        break
         if a.preamp > 15:
             # climb to the test amp: +10 per 's', +1 per 'a', echo-
             # verified; then let the slew settle.
@@ -544,13 +552,14 @@ def cmd_probe_adv(a):
         while time.monotonic() - t0 < a.secs:
             b.cap.extend(b.ser.read(8192))
         mark1 = len(b.cap)
-        for n in range(a.presses):
-            # echo-verified press (the wire eats singles at will)
-            for _ in range(5):
-                if a.echo in b.key(a.key, 0.4):
-                    break
-            else:
-                print(f"press {n}: echo '{a.echo}' never seen")
+        if not a.keyfirst:
+            for n in range(a.presses):
+                # echo-verified press (the wire eats singles at will)
+                for _ in range(5):
+                    if a.echo in b.key(a.key, 0.4):
+                        break
+                else:
+                    print(f"press {n}: echo '{a.echo}' never seen")
         t0 = time.monotonic()
         while time.monotonic() - t0 < a.secs:
             b.cap.extend(b.ser.read(8192))
@@ -658,6 +667,7 @@ def cmd_starts(a):
     # The 20/20 gauntlet: N times — Y-start, quick sweep to ~30%
     # throttle, verify lock speed, kill. Verdict per iteration:
     # first-try engage + clean sweep = CLEAN.
+    preflight_reset()
     b = Bench()
     clean = 0
     try:
@@ -698,6 +708,21 @@ def cmd_starts(a):
         b.kill()
         b.close()
     print(f"=== {clean}/{a.n} clean ===")
+
+
+def preflight_reset():
+    """Reset the stateful firmware toggles to known-good defaults via
+    probe writes (EDGE_MODE=0 both-edges, ADVANCE_DEG=0, BLANK_US=8).
+    The probes (k/t/n presses) leave these set across kills — ladder
+    regressions 65->49 were EDGE_MODE parked on raw-fall by an earlier
+    probe-adv, NOT hardware (operator: STOP HALLUCINATING HARDWARE
+    ISSUES — this preflight makes toggle leakage impossible)."""
+    for sym, val in (("EDGE_MODE", 0), ("ADVANCE_DEG", 0), ("BLANK_US", 8)):
+        try:
+            sh("probe-rs", "write", "--chip", CHIP, "--probe", PROBE,
+               "b8", hex(nm_addr(sym)), str(val))
+        except SystemExit:
+            print(f"preflight: {sym} not found")
 
 
 def cmd_kill(_):
@@ -745,6 +770,7 @@ def main():
     p.add_argument("--echo", default="")
     p.add_argument("--tag", default="probe")
     p.add_argument("--preamp", type=int, default=0)
+    p.add_argument("--keyfirst", action="store_true")
     p = sub.add_parser("waxdump")
     p.add_argument("--tag", default="lock")
     p.add_argument("--secs", type=float, default=8.0)
