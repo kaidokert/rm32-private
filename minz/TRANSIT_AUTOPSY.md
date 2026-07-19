@@ -832,3 +832,16 @@ offset that AM32 does not have on the same silicon. The hi-flip/
 lo-flip actuation classes are parity-aligned and remain the prime
 candidate; the WAXWING scope shot of both commutation classes is the
 decisive next experiment (X key first).
+
+
+Seventh experiment (ADC comparator-node loading): dropping ch9/ch10
+(PA4/PA5) from the injected burst moved the bias +51 -> +36us —
+partial at best, within run-to-run spread; REVERTED (it also blinds
+WAX/confirm infrastructure). The parity bias survives every code-side
+lever available tonight. HANDOFF: the phenomenon is fully bounded
+(polarity-pure, phase-blind, ~+-25us, carrier-scale, AM32-zero on
+identical silicon) and instrumented; the decisive next experiments
+need the scope (WAXWING at both commutation classes, X key) and/or an
+AM32-side ZC_TRACE with their comStep timing stamped. The flashed
+build is the committed HEAD state: b2b persistence, AM32-verbatim
+scheduling, parity comp disabled, all guards + flight recorders live.
