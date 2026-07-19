@@ -845,3 +845,43 @@ need the scope (WAXWING at both commutation classes, X key) and/or an
 AM32-side ZC_TRACE with their comStep timing stamped. The flashed
 build is the committed HEAD state: b2b persistence, AM32-verbatim
 scheduling, parity comp disabled, all guards + flight recorders live.
+
+
+## The recovery arc (2026-07-18 night) — bisect verdict + fixes
+
+**Bisect verdict**: the mid-rung regression was TODAY'S OWN hot-ISR
+hardening in micro-doses (feedback_constant_per_tick_isr violated in
+increments): morning builds (5c1ffcb, 9b9490c) climb the full profile
+to 2381 Hz; 89daf5e onward die progressively earlier. No single
+culprit - ISR flight-recorder stores (software u64-division
+timestamps at 24 kHz), backstops, storm checks, mst guard each added
+tens-to-hundreds of cycles in the 24 kHz / commutation / ZC paths.
+
+**Fixes landed (each A/B'd on the reproducer)**:
+- ISR beacons removed from hot paths; BEACON_ISR + all guards
+  (rate-storm, mst, zombie x2) DECIMATED to 1/16 (timescales >=4 ms:
+  functionally free). COMP-entry storm check skipped under CL (pure
+  accept latency; its CL arm is rate-blind by construction).
+- **R6 polling start IS the engage** (operator: "blatantly copy
+  am32"): Y arms rotor-paced start from standstill; HANDOFF_INTERVAL
+  2500 -> 700 us (67 Hz handed CL a corpse; ~240 Hz is inside CL's
+  proven regime); R6_START_AMP 6 -> 10. Engage: uniform 320 Hz ->
+  throttle-follow 510 Hz, 6/8 (residual = the post-ENG coinflip).
+- **THE ENGAGE-COINFLIP BUG**: RESEED_STRIKES only reset via the
+  1000-accept amnesty -> ACCUMULATED ACROSS ARMS; after 4 lifetime
+  reseeds every post-engage hiccup killed instantly instead of
+  reseeding. This was the falsely-named "warm-up" (operator called
+  it: no such thing - session-position-dependent logic). Fixed:
+  arm_guard_reset() per arm.
+- Parity compensation (27 us) re-enabled on the lean build - stacks:
+  tracking err 3.4%, ceiling 2165 -> 2252 Hz.
+- mzt classifier: record-flow liveness (records = commutations,
+  unfakeable; echo-parse liveness lied on a live top-of-profile run).
+
+**State**: reproducer runs 1.3 s/1126 Hz -> up to 28.9 s/2252 Hz
+(95% of profile, 255k records, mst=0/0, first-try engage), dying
+stochastically in the band at the compensated parity ceiling. FULL
+completion is gated on the parity-bias root (the scope session).
+No build in the repo's history has ever completed the zt-config
+reproducer - the morning "good" builds die by end-of-profile IWDG
+reboot; tonight's die by the bias ceiling with all hardening intact.

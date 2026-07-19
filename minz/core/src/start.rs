@@ -43,7 +43,12 @@ pub const BLIND_STEP_POLLS: u16 = 300;
 /// electrical — comfortably inside the proven engage band, and slow
 /// enough that the polling grain (166 µs ≈ 7 % of interval) still
 /// measures honestly.
-pub const HANDOFF_INTERVAL_US: u32 = 2_500;
+/// 2_500 -> 700 (2026-07-18, R6-as-the-engage): handoff at 67 Hz put
+/// CL below its viable floor (engage died instantly at 143 Hz - bb:
+/// ACC/ENG then desync in one window). AM32 polls all the way to
+/// interrupt-mode speed; 700 us = ~240 Hz hands off inside the
+/// regime where CL engage is proven.
+pub const HANDOFF_INTERVAL_US: u32 = 700;
 /// Consecutive fast crossings required before handing off.
 pub const HANDOFF_STREAK: u8 = 4;
 

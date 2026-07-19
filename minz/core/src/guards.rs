@@ -120,8 +120,11 @@ pub enum StormAction {
 /// <=2 saturated and main starved 800 ms). Detection: comparator
 /// ENTRIES per TIM1_UP wrap, sustained. >=3/wrap for 96 wraps at
 /// 24 kHz = >=72k/s held 4 ms - no legitimate regime does that.
-pub const STORM_RATE_PER_WRAP: u32 = 3;
-pub const STORM_RATE_RUN_WRAPS: u32 = 96;
+/// Checked every 16 wraps now (hot-path decimation): the delta is
+/// accumulated over 16 wraps, so the threshold scales x16 and the
+/// run-length drops to 6 (same 4 ms / 72k/s trip point).
+pub const STORM_RATE_PER_WRAP: u32 = 48;
+pub const STORM_RATE_RUN_WRAPS: u32 = 6;
 
 /// Step the run-length; returns (new_run, trip).
 #[inline]
@@ -1248,19 +1251,19 @@ mod tests {
         // healthy speed traffic: 1-2 entries/wrap never trips
         let mut run = 0;
         for _ in 0..10_000 {
-            let (r, trip) = comp_storm_rate_step(run, 2);
+            let (r, trip) = comp_storm_rate_step(run, 32);
             run = r;
             assert!(!trip);
         }
         // 72k/s sustained: trips at exactly 96 wraps (4 ms)
         let mut run = 0;
-        for k in 0..96 {
-            let (r, trip) = comp_storm_rate_step(run, 3);
+        for k in 0..6 {
+            let (r, trip) = comp_storm_rate_step(run, 48);
             run = r;
-            assert_eq!(trip, k == 95);
+            assert_eq!(trip, k == 5);
         }
         // a single quiet wrap resets the run
-        assert_eq!(comp_storm_rate_step(95, 0), (0, false));
+        assert_eq!(comp_storm_rate_step(5, 0), (0, false));
     }
     #[test]
     fn regression_cl_backstop_rides_the_knee() {

@@ -983,7 +983,10 @@ static R6_HANDOFF_REQ: AtomicBool = AtomicBool::new(false);
 static R6_CROSS_COUNT: AtomicU32 = AtomicU32::new(0);
 static R6_BLIND_COUNT: AtomicU32 = AtomicU32::new(0);
 static R6_HANDOFF_IV_US: AtomicU32 = AtomicU32::new(0);
-const R6_START_AMP: u16 = 6;
+/// 6 -> 10 (R6-as-the-engage): amp 6 cannot accelerate the rotor
+/// to the 240 Hz handoff point; 10 is still gentle (AM32 pins ~6-10%
+/// through its whole startup).
+const R6_START_AMP: u16 = 10;
 /// Max ARR glide per TIM7 tick (~1 % per 166 us): the full 24->48 kHz
 /// span takes ~9 ms, always as micro-steps, never a discrete hop.
 const CARRIER_SLEW_ARR: u16 = 32;
@@ -2194,28 +2197,34 @@ fn main() -> ! {
                         &mut amplitude_pct,
                         &mut tx_writer,
                     ),
-                    b'r' => mode_cmd(
-                        minz_core::mode::Cmd::Arm {
-                            hz: FREQ_START,
-                            amp_pct: AMP_START,
-                        },
-                        &mut output_enabled,
-                        &mut waveform,
-                        &mut electrical_hz,
-                        &mut amplitude_pct,
-                        &mut tx_writer,
-                    ),
-                    b'q' => mode_cmd(
-                        minz_core::mode::Cmd::Arm {
-                            hz: 50,
-                            amp_pct: AMP_START,
-                        },
-                        &mut output_enabled,
-                        &mut waveform,
-                        &mut electrical_hz,
-                        &mut amplitude_pct,
-                        &mut tx_writer,
-                    ),
+                    b'r' => {
+                        arm_guard_reset();
+                        mode_cmd(
+                            minz_core::mode::Cmd::Arm {
+                                hz: FREQ_START,
+                                amp_pct: AMP_START,
+                            },
+                            &mut output_enabled,
+                            &mut waveform,
+                            &mut electrical_hz,
+                            &mut amplitude_pct,
+                            &mut tx_writer,
+                        );
+                    }
+                    b'q' => {
+                        arm_guard_reset();
+                        mode_cmd(
+                            minz_core::mode::Cmd::Arm {
+                                hz: 50,
+                                amp_pct: AMP_START,
+                            },
+                            &mut output_enabled,
+                            &mut waveform,
+                            &mut electrical_hz,
+                            &mut amplitude_pct,
+                            &mut tx_writer,
+                        );
+                    }
                     b'w' => mode_cmd(
                         minz_core::mode::Cmd::Kill,
                         &mut output_enabled,
@@ -2422,6 +2431,7 @@ fn main() -> ! {
                             R6_BLIND_COUNT.store(0, Ordering::Relaxed);
                             R6_HANDOFF_REQ.store(false, Ordering::Relaxed);
                             R6_ARM_EPOCH.fetch_add(1, Ordering::Relaxed);
+                            arm_guard_reset();
                             mode_cmd(
                                 minz_core::mode::Cmd::Arm {
                                     hz: FREQ_START,
@@ -3150,7 +3160,6 @@ fn TIM7() {
     // placement does NOT get the rewrite - must live here.
     static mut R6_STATE: minz_core::start::StartState = minz_core::start::StartState::new();
     static mut R6_SEEN_EPOCH: u32 = 0;
-    BEACON_T7.store(ticks_10us(), Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_TIM7);
     // Motor-drive heartbeat (6 kHz). When armed: advance the electrical
     // angle accumulator, commutate (six-step or sine), update polarity
@@ -3383,9 +3392,11 @@ fn TIM7() {
                 RESEED_STRIKES.load(Ordering::Relaxed),
             );
             // ZOMBIE BACKSTOP: raw commutation silence, independent of
-            // every derived reference the r3 watchdog consults (the
-            // mzt_beacon 30 s / 1.5 A DC zombie fired none of them).
-            let zombie = minz_core::guards::comm_silence_backstop(since_us);
+            // every derived reference the r3 watchdog consults. 1/16-
+            // decimated (hot-path bisect): a 100 ms bound checked at
+            // 375 Hz loses nothing.
+            let zombie = TIM7_COUNT.load(Ordering::Relaxed) & 0xF == 0
+                && minz_core::guards::comm_silence_backstop(since_us);
             if zombie {
                 ZOMBIE_BACKSTOP_KILLS.fetch_add(1, Ordering::Relaxed);
             }
@@ -3777,6 +3788,21 @@ static KILL_FLAGS: minz_core::guards::KillFlags<'static> = minz_core::guards::Ki
 /// Shuttle a mode command through the core state machine and apply
 /// its actions (peripheral calls + prints) in the contract order:
 /// arm_output before EXTI-enable, all_off before EXTI-mask.
+/// Per-arm guard-state reset (2026-07-18, the engage-coinflip bug):
+/// RESEED_STRIKES only ever reset via the 1000-accept amnesty, so
+/// they ACCUMULATED ACROSS ARMS - after 4 lifetime reseeds every
+/// post-engage hiccup skipped the reseed and killed instantly
+/// (WatchdogAction::Kill when strikes >= max). This was the ~50%
+/// engage coinflip and the earlier falsely-named "warm-up": engage
+/// odds depended on how many reseeds the SESSION had burned, not on
+/// anything physical. Every arm starts with a clean slate, like the
+/// estimator's own reset-on-arm (same incident class).
+fn arm_guard_reset() {
+    RESEED_STRIKES.store(0, Ordering::Relaxed);
+    RESEED_ACTIVE.store(false, Ordering::Relaxed);
+    MST_RUN.store(0, Ordering::Relaxed);
+}
+
 fn mode_cmd(
     cmd: minz_core::mode::Cmd,
     output_enabled: &mut bool,
@@ -3945,7 +3971,6 @@ static DUR_CLOSE: AtomicU32 = AtomicU32::new(0);
 /// COMP so the two never nest.
 #[interrupt]
 fn LPTIM2() {
-    BEACON_LP2.store(ticks_10us(), Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_LPTIM2);
     minz::lptim2_oneshot::clear_flag();
     if !CL_ACTIVE.load(Ordering::Relaxed) || !MOTOR_ENABLED.load(Ordering::Relaxed) {
@@ -4221,7 +4246,6 @@ fn fabric_close_step() {
 
 #[interrupt]
 fn TIM1_CC() {
-    BEACON_CC.store(ticks_10us(), Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_T1CC);
     // Fires whenever TIM1.CNT matches CCR1 / CCR2 / CCR3 (whichever
     // CCxIE we enabled — see `tim1_motor_pwm::enable_cc_interrupts`).
@@ -4265,7 +4289,9 @@ fn TIM1_UP_TIM16() {
         // every ~41 µs, so it never misses a 53.7 s CYCCNT wrap.
         // Shares the CYCCNT read with the miss detector.
         cyc_extend(now_cyc);
-        BEACON_ISR.store(ticks_10us(), Ordering::Relaxed);
+        // BEACON_ISR moved to the 1/16 decimated guard slot (hot-path
+        // bisect): a ticks_10us() here = software u64 division at
+        // 24 kHz (~5% CPU + jitter in the confirm/fabric path).
         let last = TIM1_UP_LAST_CYC.load(Ordering::Relaxed);
         TIM1_UP_LAST_CYC.store(now_cyc, Ordering::Relaxed);
         let gap = now_cyc.wrapping_sub(last);
@@ -4350,97 +4376,113 @@ fn TIM1_UP_TIM16() {
             comp2::set_exti_enabled(false);
         }
     }
-    // CL RATE-storm detector (guards::comp_storm_rate_step): the
-    // per-window budget is rate-blind at speed (125 us windows cap
-    // at ~8 edges in a 45%-CPU storm). Sustained >=72k/s for 4 ms
-    // under CL = unrecoverable noise regime eating the CPU - kill
-    // while the evidence is still writable.
-    if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
-        let cc = COMP_COUNT.load(Ordering::Relaxed);
-        let delta = cc.wrapping_sub(STORM_PREV_COMP.swap(cc, Ordering::Relaxed));
-        let (run, trip) =
-            minz_core::guards::comp_storm_rate_step(STORM_RATE_RUN.load(Ordering::Relaxed), delta);
-        STORM_RATE_RUN.store(run, Ordering::Relaxed);
-        if trip {
-            STORM_KILLS.fetch_add(1, Ordering::Relaxed);
-            comp2::set_exti_enabled(false);
-            minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Desync);
-            tim1_motor_pwm::all_off();
-        }
-    }
-    // MAIN-STARVATION guard (see guards::main_starved_action).
-    // Gated on MOTOR_ENABLED: at boot/idle BEACON_MAIN may be 0 or
-    // stale, and arming requires a live main, so the gate makes the
-    // reference trustworthy by construction. Shed = stop the
-    // telemetry producers (ZT/MAGPIE) so the serialize load drops
-    // and main can recover; Kill = clean stop 500 ms before the
-    // IWDG would reboot and destroy the post-mortem.
-    // CL-only: arm/engage key handlers legitimately block main for
-    // hundreds of ms (mzt_shed3 false kills clustered at engage
-    // attempts); the saturation pockets this guards live under CL
-    // load, and engage-phase saturation is the storm mask's job.
-    if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
-        let bm = BEACON_MAIN.load(Ordering::Relaxed);
-        let since = minz_core::guards::since_us(ticks_10us(), bm);
-        // Debounce 8 consecutive stale passes (~333 us): a clock-
-        // glitch-corrupted reading self-heals at main's next 1 ms
-        // beat; a real starvation pocket persists for 250 ms+.
-        let act = minz_core::guards::main_starved_action(since);
-        let run = if act == minz_core::guards::StarveAction::None {
-            MST_RUN.store(0, Ordering::Relaxed);
-            0
-        } else {
-            let r = MST_RUN.load(Ordering::Relaxed).saturating_add(1);
-            MST_RUN.store(r, Ordering::Relaxed);
-            r
-        };
-        // PROXY IWDG REFRESH: while main's stall is below the kill
-        // threshold, TIM1_UP keeps the dog fed - benign 0.5-1 s main
-        // stalls (bb-proven survivable) no longer become reboots. A
-        // true wedge stops this ISR too, so the 1 s burnt-motor
-        // contract is unchanged.
-        // Feed window 30 s: the mid-climb main stall (see the
-        // stall-hunt notes) is ridden through, not killed - the
-        // control loop provably runs fine during it and the kill
-        // was costing every instrumented run. A true main death
-        // >30 s still ends in an IWDG reset.
-        if since < 30_000_000 {
-            minz::iwdg::refresh();
-        }
-        match if run >= 8 {
-            act
-        } else {
-            minz_core::guards::StarveAction::None
-        } {
-            minz_core::guards::StarveAction::None => {}
-            minz_core::guards::StarveAction::Shed => {
-                // PC-profile: sample main every 512 wraps (~21 ms)
-                if TIM1_UP_COUNT.load(Ordering::Relaxed) & 0x1FF == 0 {
-                    cortex_m::peripheral::SCB::set_pendsv();
-                }
-                if ZT_ON.swap(false, Ordering::Relaxed) || STREAM_ON.swap(false, Ordering::Relaxed)
-                {
-                    MAIN_SHEDS.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            // KILL DISARMED (operator-time call): count + record, ride
-            // through. The ISR-side guards (OC/sag/storm/zombie) hold
-            // motor safety; a stalled main is a telemetry outage.
-            minz_core::guards::StarveAction::Kill => {
-                MST_KILL_SINCE.store(since, Ordering::Relaxed);
-                MAIN_STARVE_KILLS.fetch_add(1, Ordering::Relaxed);
-            }
-            #[allow(unreachable_patterns)]
-            minz_core::guards::StarveAction::Kill => {
-                MST_KILL_SINCE.store(since, Ordering::Relaxed);
-                MST_KILL_PHASE.store(BEACON_PHASE.load(Ordering::Relaxed), Ordering::Relaxed);
-                MAIN_STARVE_KILLS.fetch_add(1, Ordering::Relaxed);
+    // HOT-PATH DECIMATION (2026-07-18 bisect verdict): the day's
+    // guards accumulated ~500 cycles of per-wrap work in this 24 kHz
+    // ISR (several with software-u64-division ticks_10us calls) and
+    // the loop is latency-marginal at speed - the mid-rung regression
+    // bisected to exactly these micro-doses (feedback_constant_per_
+    // tick_isr, violated in increments). All guarded timescales are
+    // >=4 ms, so 1/16 decimation (1.5 kHz) is functionally free.
+    if TIM1_UP_COUNT.load(Ordering::Relaxed) & 0xF == 0 {
+        BEACON_ISR.store(ticks_10us(), Ordering::Relaxed);
+        // CL RATE-storm detector (guards::comp_storm_rate_step): the
+        // per-window budget is rate-blind at speed (125 us windows cap
+        // at ~8 edges in a 45%-CPU storm). Sustained >=72k/s for 4 ms
+        // under CL = unrecoverable noise regime eating the CPU - kill
+        // while the evidence is still writable.
+        if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
+            let cc = COMP_COUNT.load(Ordering::Relaxed);
+            let delta = cc.wrapping_sub(STORM_PREV_COMP.swap(cc, Ordering::Relaxed));
+            let (run, trip) = minz_core::guards::comp_storm_rate_step(
+                STORM_RATE_RUN.load(Ordering::Relaxed),
+                delta,
+            );
+            STORM_RATE_RUN.store(run, Ordering::Relaxed);
+            if trip {
+                STORM_KILLS.fetch_add(1, Ordering::Relaxed);
+                comp2::set_exti_enabled(false);
                 minz_core::guards::apply_isr_kill(
                     &KILL_FLAGS,
                     minz_core::guards::IsrKillKind::Desync,
                 );
                 tim1_motor_pwm::all_off();
-                comp2::set_exti_enabled(false);
+            }
+        }
+        // MAIN-STARVATION guard (see guards::main_starved_action).
+        // Gated on MOTOR_ENABLED: at boot/idle BEACON_MAIN may be 0 or
+        // stale, and arming requires a live main, so the gate makes the
+        // reference trustworthy by construction. Shed = stop the
+        // telemetry producers (ZT/MAGPIE) so the serialize load drops
+        // and main can recover; Kill = clean stop 500 ms before the
+        // IWDG would reboot and destroy the post-mortem.
+        // CL-only: arm/engage key handlers legitimately block main for
+        // hundreds of ms (mzt_shed3 false kills clustered at engage
+        // attempts); the saturation pockets this guards live under CL
+        // load, and engage-phase saturation is the storm mask's job.
+        if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
+            let bm = BEACON_MAIN.load(Ordering::Relaxed);
+            let since = minz_core::guards::since_us(ticks_10us(), bm);
+            // Debounce 8 consecutive stale passes (~333 us): a clock-
+            // glitch-corrupted reading self-heals at main's next 1 ms
+            // beat; a real starvation pocket persists for 250 ms+.
+            let act = minz_core::guards::main_starved_action(since);
+            let run = if act == minz_core::guards::StarveAction::None {
+                MST_RUN.store(0, Ordering::Relaxed);
+                0
+            } else {
+                let r = MST_RUN.load(Ordering::Relaxed).saturating_add(1);
+                MST_RUN.store(r, Ordering::Relaxed);
+                r
+            };
+            // PROXY IWDG REFRESH: while main's stall is below the kill
+            // threshold, TIM1_UP keeps the dog fed - benign 0.5-1 s main
+            // stalls (bb-proven survivable) no longer become reboots. A
+            // true wedge stops this ISR too, so the 1 s burnt-motor
+            // contract is unchanged.
+            // Feed window 30 s: the mid-climb main stall (see the
+            // stall-hunt notes) is ridden through, not killed - the
+            // control loop provably runs fine during it and the kill
+            // was costing every instrumented run. A true main death
+            // >30 s still ends in an IWDG reset.
+            if since < 30_000_000 {
+                minz::iwdg::refresh();
+            }
+            match if run >= 8 {
+                act
+            } else {
+                minz_core::guards::StarveAction::None
+            } {
+                minz_core::guards::StarveAction::None => {}
+                minz_core::guards::StarveAction::Shed => {
+                    // PC-profile: sample main every 512 wraps (~21 ms)
+                    if TIM1_UP_COUNT.load(Ordering::Relaxed) & 0x1FF == 0 {
+                        cortex_m::peripheral::SCB::set_pendsv();
+                    }
+                    if ZT_ON.swap(false, Ordering::Relaxed)
+                        || STREAM_ON.swap(false, Ordering::Relaxed)
+                    {
+                        MAIN_SHEDS.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                // KILL DISARMED (operator-time call): count + record, ride
+                // through. The ISR-side guards (OC/sag/storm/zombie) hold
+                // motor safety; a stalled main is a telemetry outage.
+                minz_core::guards::StarveAction::Kill => {
+                    MST_KILL_SINCE.store(since, Ordering::Relaxed);
+                    MAIN_STARVE_KILLS.fetch_add(1, Ordering::Relaxed);
+                }
+                #[allow(unreachable_patterns)]
+                minz_core::guards::StarveAction::Kill => {
+                    MST_KILL_SINCE.store(since, Ordering::Relaxed);
+                    MST_KILL_PHASE.store(BEACON_PHASE.load(Ordering::Relaxed), Ordering::Relaxed);
+                    MAIN_STARVE_KILLS.fetch_add(1, Ordering::Relaxed);
+                    minz_core::guards::apply_isr_kill(
+                        &KILL_FLAGS,
+                        minz_core::guards::IsrKillKind::Desync,
+                    );
+                    tim1_motor_pwm::all_off();
+                    comp2::set_exti_enabled(false);
+                }
             }
         }
     }
@@ -4772,7 +4814,6 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP() {
-    BEACON_COMP.store(ticks_10us(), Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_COMP);
     // EXTI line 22 is COMP2's output (COMP1 is line 21, unused here).
     // Ack the pending bit first so the IRQ doesn't immediately re-fire.
@@ -4797,27 +4838,34 @@ fn COMP() {
     // CL: mask + kill within ~7 ms - preserves main, the IWDG and
     // the diagnostics the storm used to destroy. Rationale +
     // budgets host-tested in minz_core::guards::comp_storm_action.
-    match minz_core::guards::comp_storm_action(
-        WINDOW_RAW.load(Ordering::Relaxed),
-        CL_ACTIVE.load(Ordering::Relaxed),
-    ) {
-        minz_core::guards::StormAction::None => {}
-        minz_core::guards::StormAction::Mask => {
-            STORM_MASKS.fetch_add(1, Ordering::Relaxed);
-            comp2::set_exti_enabled(false);
-            return;
-        }
-        minz_core::guards::StormAction::MaskKill => {
-            STORM_KILLS.fetch_add(1, Ordering::Relaxed);
-            comp2::set_exti_enabled(false);
-            if MOTOR_ENABLED.load(Ordering::Relaxed) {
-                minz_core::guards::apply_isr_kill(
-                    &KILL_FLAGS,
-                    minz_core::guards::IsrKillKind::Desync,
-                );
-                tim1_motor_pwm::all_off();
+    // CL SKIP (bisect verdict): this check sits on the ZC-accept
+    // path; its CL arm (500/window) is rate-blind by construction
+    // and the decimated TIM1_UP rate detector owns CL storms - so
+    // under CL it is pure accept latency. Open loop keeps it (the
+    // stall-storm mask that protects engage).
+    if !CL_ACTIVE.load(Ordering::Relaxed) {
+        match minz_core::guards::comp_storm_action(
+            WINDOW_RAW.load(Ordering::Relaxed),
+            CL_ACTIVE.load(Ordering::Relaxed),
+        ) {
+            minz_core::guards::StormAction::None => {}
+            minz_core::guards::StormAction::Mask => {
+                STORM_MASKS.fetch_add(1, Ordering::Relaxed);
+                comp2::set_exti_enabled(false);
+                return;
             }
-            return;
+            minz_core::guards::StormAction::MaskKill => {
+                STORM_KILLS.fetch_add(1, Ordering::Relaxed);
+                comp2::set_exti_enabled(false);
+                if MOTOR_ENABLED.load(Ordering::Relaxed) {
+                    minz_core::guards::apply_isr_kill(
+                        &KILL_FLAGS,
+                        minz_core::guards::IsrKillKind::Desync,
+                    );
+                    tim1_motor_pwm::all_off();
+                }
+                return;
+            }
         }
     }
 
@@ -4978,13 +5026,8 @@ fn COMP() {
     if WINDOW_QZC_US.load(Ordering::Relaxed) == u32::MAX {
         let expected = (CURRENT_SECTOR.load(Ordering::Relaxed) & 1) == 0;
         let mut held = true;
-        // BACK-TO-BACK reads, AM32-verbatim (2026-07-18 parity-bias
-        // experiment): our delay(8) spacing stretched the persistence
-        // window to ~1.5 us - wide enough for a ringing dip at the
-        // crossing to defeat it in one polarity, slipping the accept
-        // a full carrier period (the +54 us even-sector bias). AM32
-        // reads the comparator back-to-back (~0.2 us) and is immune.
         for _ in 0..persist_reads {
+            cortex_m::asm::delay(8);
             if comp2::value() != expected {
                 held = false;
                 break;
@@ -5019,7 +5062,7 @@ fn COMP() {
                 let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
                 let zc = if expected && CL_ACTIVE.load(Ordering::Relaxed) && iv != 0 && iv < 400 {
                     PARITY_COMP_APPLIED.fetch_add(1, Ordering::Relaxed);
-                    now_us // comp disabled: testing the back-to-back persistence root fix
+                    now_us.wrapping_sub(27)
                 } else {
                     now_us
                 };
@@ -5119,21 +5162,11 @@ fn accept_qualified_zc(zc_us: u32) {
         // (minz_core::timing).
         let adv =
             minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
-        // AM32-VERBATIM SCHEDULING (2026-07-18, the period-2 orbit
-        // fix): AM32 arms wait = ci/2 - adv anchored at the ZC with
-        // NO per-window elapsed feedback. Our measured-elapsed
-        // subtraction was proportional feedback at gain ~1 with a
-        // floor-clamp nonlinearity - a stable period-2 orbit (+54 us
-        // alternating periods, d=2/d=18 alternating delays in the bb)
-        // that killed every mid-rung climb. AM32 on the same rotor:
-        // ZERO parity bias. Under SWIFT the accept dispatch is ~2 us,
-        // so a FIXED overhead constant replaces the measurement; the
-        // ADC-confirm era (whose wrap-scale latency motivated the
-        // compensation) keeps it via the !shot_armed path gating.
+        let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
         let delay = minz_core::timing::commutation_delay_us(
             iv,
             adv,
-            2 + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
+            elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
         minz::lptim2_oneshot::schedule_us(delay);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);

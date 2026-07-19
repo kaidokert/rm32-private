@@ -83,18 +83,12 @@ def main():
         # EDGE_MODE doc comment in motor_tester2.rs.
         engaged = False
         for _ in range(8):
-            # RAMP start (2026-07-18): a jumped 50 Hz field no longer
-            # catches on the current mechanical load (flat-BEMF stall,
-            "            # stallwax2 dump); AM32 ramps and flies. 10 Hz always",
-            # catches (stepper regime), then ramp to 180 and engage.
-            key("q", 2.0)
-            for _ in range(4):      # 50 -> 10 Hz
-                key("v", 0.12)
-            time.sleep(1.0)
-            for _ in range(17):     # 10 -> 180 Hz, ~65 Hz/s
-                key("f", 0.15)
-            time.sleep(0.8)
-            key("y", 3.0)
+            # R6 POLLING START (operator directive 2026-07-18: "just
+            # blatantly copy what am32 does"): Y arms the rotor-paced
+            # start from standstill (AM32 old_routine semantics) and
+            # auto-hands-off to CL - no fixed-frequency catch, no
+            # lottery, no cold-boot warm-up sensitivity.
+            key("Y", 5.0)
             m = re.search(r"cl: ACTIVE f_e=(\d+)Hz", key("i", 1.2))
             # junk-crawl guard (mzt_fatal4: a 29 Hz "lock" passed the
             "            # ACTIVE-only check and OC-tripped): require a sane f_e.",
@@ -154,8 +148,14 @@ def main():
             if died:
                 print(f"ZOMBIE/DEAD: comms frozen at {c2.group(1)}")
         else:
-            died = True
-            print("liveness unparseable - treating as dead")
+            # Echoes shredded by a still-streaming ZT wire (mzt_final2:
+            # a fully-alive top-of-profile run was classified SILENT-
+            # DEATH). RECORD FLOW is the ground-truth liveness - one
+            # record = one commutation, unfakeable.
+            n2 = len(cap)
+            key("", 1.0)
+            died = bytes(cap[n2:]).count(b'\x5b\xab') == 0
+            print(f"liveness via record flow: {'DEAD' if died else 'alive'}")
         seg = bytes(cap[n0:])
         print("outcome:", "DIED (fatal capture)" if died else "survived")
     finally:
