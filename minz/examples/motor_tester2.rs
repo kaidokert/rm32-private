@@ -726,6 +726,11 @@ static CHAIN_KICKS: AtomicU32 = AtomicU32::new(0);
 static SAG_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Chain-kick two-pass confirmation latch (false-fire fix).
 static KICK_PEND: AtomicBool = AtomicBool::new(false);
+/// Boot-time RCC_CSR (reset-cause flags), probe-readable — the
+/// reboot-at-speed class loses the printed banner.
+#[unsafe(no_mangle)]
+static BOOT_CSR: AtomicU32 = AtomicU32::new(0);
+
 /// Q-LOG: 25 Hz slow-variable telemetry ('Q' key toggle) — the
 /// sawtooth trace instrument.
 static QLOG_ON: AtomicBool = AtomicBool::new(false);
@@ -2069,6 +2074,11 @@ fn main() -> ! {
     {
         let rcc = unsafe { &*minz::hal::pac::RCC::ptr() };
         let csr = rcc.csr.read().bits();
+        // Persist for probe postmortem: the reboot-at-speed class
+        // loses the UART banner (TX dead through the death), so the
+        // printed cause was unrecoverable. IWDG vs BOR distinguishes
+        // CPU-starve from bus-brownout at honest 70 % duty.
+        BOOT_CSR.store(csr, Ordering::Relaxed);
         write!(
             &mut tx_writer,
             "reset: csr={:08x} iwdg={} sft={} bor={} pin={}\r\n",

@@ -139,7 +139,11 @@ def cmd_engage(_):
 
 def cmd_ladder(a):
     per_rung = 1.6 if a.step >= 10 else 0.55
-    wait = per_rung * (a.top - 10) / a.step + a.hold
+    # +25 s slack: engage attempts + echo-verified key retries eat
+    # into the window (m5 incident: the wait expired mid-climb and
+    # the script killed a HEALTHY rung-72 ladder, logged as "silent
+    # death" — as did m2/m3/m4).
+    wait = per_rung * (a.top - 10) / a.step + a.hold + 25.0
     for run in range(a.retries):
         b = Bench()
         died = None
@@ -164,9 +168,9 @@ def cmd_ladder(a):
             continue
         try:
             print(f"engaged attempt {att}: {fe} Hz; ladder step={a.step}")
-            # MAGPIE stream + Q-log ON during the climb (wobble
-            # time-series + slow-variable trace in the capture).
-            if not b.press_until("g", "stream=on", tries=4):
+            # Q-log always; MAGPIE stream optional (--nostream): at
+            # ~1900 Hz the per-window serialize+TX load starves main.
+            if not a.nostream and not b.press_until("g", "stream=on", tries=4):
                 print("stream-on not confirmed (may be off)")
             if not b.press_until("Q", "qlog=on", tries=4):
                 print("qlog-on not confirmed (may be off)")
@@ -182,9 +186,13 @@ def cmd_ladder(a):
                 chunk = b.ser.read(8192)
                 b.cap.extend(chunk)
                 tail = (tail + chunk)[-4096:]
-                # firmware prefixes every kill/guard print with '!!';
-                # the boot banner mid-run means the chip REBOOTED
-                for marker in (b"!!", b"motor_tester2: clocks"):
+                # Kill prints are '!! <CAPS>' TEXT; a bare b"!!" scan
+                # false-fired on 0x21 0x21 inside binary MAGPIE
+                # frames and aborted healthy climbs (m1 incident:
+                # clean 980 Hz climb killed by the monitor itself).
+                # Match the actual kill strings + the boot banner.
+                for marker in (b"!! CL", b"!! VBAT", b"!! OVERCURRENT",
+                               b"!! MAIN", b"motor_tester2: clocks"):
                     if marker in tail:
                         died = tail[tail.find(marker):][:80]
                         break
@@ -300,6 +308,20 @@ def cmd_postmortem(_):
         print("KEY_LOG (oldest->newest):",
               " ".join(chr(c) if 32 <= c < 127 else f"\\x{c:02x}"
                        for c in seq if c))
+    except (SystemExit, IndexError):
+        pass
+    try:
+        csr = probe_words(nm_addr("BOOT_CSR"), 1)[0]
+        print(f"BOOT_CSR = {csr:08x} iwdg={(csr >> 29) & 1} "
+              f"sft={(csr >> 28) & 1} bor={(csr >> 27) & 1} "
+              f"pin={(csr >> 26) & 1}")
+    except (SystemExit, IndexError):
+        pass
+    try:
+        lk = probe_words(nm_addr("LAST_KILL"), 1)[0] & 0xFF
+        names = {0: "never", 1: "desync", 2: "starved", 3: "overcurrent",
+                 4: "sag"}
+        print(f"LAST_KILL = {lk} ({names.get(lk, '?')})")
     except (SystemExit, IndexError):
         pass
     for sym in ("STORM_KILLS", "ZOMBIE_BACKSTOP_KILLS", "MAIN_STARVE_KILLS",
@@ -624,6 +646,7 @@ def main():
     p.add_argument("--step", type=int, default=1, choices=(1, 2, 10))
     p.add_argument("--tag", default=None)
     p.add_argument("--retries", type=int, default=4)
+    p.add_argument("--nostream", action="store_true")
     p = sub.add_parser("readback")
     p.add_argument("--tag", default=None)
     p.add_argument("--step", type=int, default=1)

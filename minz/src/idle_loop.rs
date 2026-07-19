@@ -90,8 +90,22 @@ impl IdleLoop {
     /// microloop. Time spent in the active phase + time stolen by
     /// ISRs both reduce the counter relative to calibration.
     pub fn run_until(&self, until: u64, get_time: &impl Fn() -> u64) {
+        // WEDGE GUARD (2026-07-19, the phase-6 IWDG reboot): a
+        // forward-glitched `until` (the CYCCNT wrap-extension race
+        // double-counting a wrap = +53.7 s) parked this spin with the
+        // IWDG refresh OUTSIDE it — the TIM1_UP proxy carried 30 s,
+        // then the chip reset (beacon: main stale 31.0 s, exactly
+        // proxy limit + 1 s). Bound the spin by its own LOCAL entry
+        // time: no legitimate microloop slack exceeds ~10 ms, so a
+        // 100 ms local bound turns a glitched boundary into one short
+        // microloop instead of a reboot.
+        let entry = get_time();
+        let bound = entry.wrapping_add(8_000_000); // 100 ms in 80 MHz ticks
         while get_time() < until {
             self.counter.fetch_add(1, Ordering::Relaxed);
+            if get_time() >= bound {
+                return;
+            }
         }
     }
 
