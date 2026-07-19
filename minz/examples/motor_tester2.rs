@@ -1897,6 +1897,12 @@ fn main() -> ! {
     minz::iwdg::start_1s();
 
     // FALCON commutation one-shot (armed only when the loop engages).
+    // COM TIMER = TIM16, AM32's own commutation timer on this chip
+    // (free-run + ARPE + UG; the LPTIM2 dropped-shot class can't
+    // exist). The TIM16 wrap is dispatched from the shared
+    // TIM1_UP_TIM16 vector, which pends the LPTIM2 vector so the
+    // commutation ISR keeps its priority-1 slot unchanged.
+    minz::tim16_oneshot::init();
     minz::lptim2_oneshot::init();
 
     // TIM7 motor-drive heartbeat at `MOTOR_DRIVE_HZ` (= 6 kHz). The

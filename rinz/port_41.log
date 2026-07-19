@@ -1,0 +1,129 @@
+﻿
+----- LOGGING STARTED (7/5/2026 3:15:46 PM) ------------------------------------
+<<< Attempting to connect to COM41.  Use CTRL-X to cancel >>>
+<<< SimplySerial v0.9.0 connected via COM41 >>>
+Settings  : 2000000 baud, no parity, 8 data bits, 1 stop bit, UTF-8 encoding, auto-connect on, echo off
+Device    : VID:0403 PID:6001
+Logfile   : port_41.log (Mode = OVERWRITE)
+---
+
+Use CTRL-X to exit.
+
+
+=== Hello, this is motor tester 2 (RX on PA2/S pin, 2000000 baud) ===
+Frequency (Hz):       d   +1, c -1, f +10, v -10
+Amplitude (% of ARR): a +1, z -1, s +10, x -10
+Mode toggle:          m   (sine <-> six-step)
+Panic reset:          r   (six-step, f=start, amp=start)
+Slow reset:           q   (six-step, f=50, amp=start)
+Kill output:          w   (clear MOE, all FETs off)
+Print sense:          i   (PA3 IN8 isns, PA6 IN11 vbat)
+Print BEMF comp:      b   (rate/s + level on observed phase)
+Cycle observed phase: p   (A=PA4, B=PA5, C=PB7; manual mode only)
+Toggle comp mux:      o   (auto per-sector [default] <-> manual single phase)
+Cycle COMP hyst:      h   (0/none -> 1/low -> 3/high -> 0)
+Cycle EXTI edges:     k   (both / raw_rise / raw_fall / phys_ZC / phys_anti / val_gated)
+Cycle commut advance: t   (0 / 20 / 40 / -40 / -20 deg)
+Adjust SW blanking:   n/N (+/- 1 µs)   ./, (+/- 10 µs coarse), clamped 0..50 µs
+Dump PWM samples:     l   (per-60deg chunks: . = 0, # = 1)
+Dump edge buffer:     e   (2 revs, 10us bins; f >= 50 Hz)
+UART blast test:      u   (64 KiB counting pattern, blocking)
+Window record stream: g   (binary 22B frames, one per float window)
+Failsafe: auto-kill at >1.5 A avg over 85 ms (stall guard, r/q re-arms)
+Freeze/dump edge buf: E   (1st press: freeze + dump; 2nd press: resume)
+Boot: OUTPUT OFF, f = 0 Hz, amp = 15 % (cap 20). Press r/q to arm.
+f=10
+armed
+f=50
+f=60
+f=70
+f=80
+f=90
+f=100
+f=110
+f=120
+f=130
+f=140
+f=150
+f=160
+f=170
+f=180
+f=190
+f=200
+f=210
+f=220
+f=230
+f=240
+f=250
+f=260
+f=270
+f=280
+f=290
+f=300
+f=310
+f=320
+f=330
+f=340
+f=350
+f=360
+f=370
+f=380
+f=390
+f=400
+amp=16
+amp=17
+f=410
+f=420
+f=430
+f=440
+amp=15
+f=50
+off
+
+=== Hello, this is motor tester 2 (RX on PA2/S pin, 2000000 baud) ===
+Frequency (Hz):       d   +1, c -1, f +10, v -10
+Amplitude (% of ARR): a +1, z -1, s +10, x -10
+Mode toggle:          m   (sine <-> six-step)
+Panic reset:          r   (six-step, f=start, amp=start)
+Slow reset:           q   (six-step, f=50, amp=start)
+Kill output:          w   (clear MOE, all FETs off)
+Print sense:          i   (PA3 IN8 isns, PA6 IN11 vbat)
+Print BEMF comp:      b   (rate/s + level on observed phase)
+Cycle observed phase: p   (A=PA4, B=PA5, C=PB7; manual mode only)
+Toggle comp mux:      o   (auto per-sector [default] <-> manual single phase)
+Cycle COMP hyst:      h   (0/none -> 1/low -> 3/high -> 0)
+Cycle EXTI edges:     k   (both / raw_rise / raw_fall / phys_ZC / phys_anti / val_gated)
+Cycle commut advance: t   (0 / 20 / 40 / -40 / -20 deg)
+Adjust SW blanking:   n/N (+/- 1 µs)   ./, (+/- 10 µs coarse), clamped 0..50 µs
+Dump PWM samples:     l   (per-60deg chunks: . = 0, # = 1)
+Dump edge buffer:     e   (2 revs, 10us bins; f >= 50 Hz)
+UART blast test:      u   (64 KiB counting pattern, blocking)
+Window record stream: g   (binary 22B frames, one per float window)
+Failsafe: auto-kill at >1.5 A avg over 85 ms (stall guard, r/q re-arms)
+Freeze/dump edge buf: E   (1st press: freeze + dump; 2nd press: resume)
+Boot: OUTPUT OFF, f = 0 Hz, amp = 15 % (cap 20). Press r/q to arm.
+
+=== Hello, this is motor tester 2 (RX on PA2/S pin, 2000000 baud) ===
+Frequency (Hz):       d   +1, c -1, f +10, v -10
+Amplitude (% of ARR): a +1, z -1, s +10, x -10
+Mode toggle:          m   (sine <-> six-step)
+Panic reset:          r   (six-step, f=start, amp=start)
+Slow reset:           q   (six-step, f=50, amp=start)
+Kill output:          w   (clear MOE, all FETs off)
+Print sense:          i   (PA3 IN8 isns, PA6 IN11 vbat)
+Print BEMF comp:      b   (rate/s + level on observed phase)
+Cycle observed phase: p   (A=PA4, B=PA5, C=PB7; manual mode only)
+Toggle comp mux:      o   (auto per-sector [default] <-> manual single phase)
+Cycle COMP hyst:      h   (0/none -> 1/low -> 3/high -> 0)
+Cycle EXTI edges:     k   (both / raw_rise / raw_fall / phys_ZC / phys_anti / val_gated)
+Cycle commut advance: t   (0 / 20 / 40 / -40 / -20 deg)
+Adjust SW blanking:   n/N (+/- 1 µs)   ./, (+/- 10 µs coarse), clamped 0..50 µs
+Dump PWM samples:     l   (per-60deg chunks: . = 0, # = 1)
+Dump edge buffer:     e   (2 revs, 10us bins; f >= 50 Hz)
+UART blast test:      u   (64 KiB counting pattern, blocking)
+Window record stream: g   (binary 22B frames, one per float window)
+Failsafe: auto-kill at >1.5 A avg over 85 ms (stall guard, r/q re-arms)
+Freeze/dump edge buf: E   (1st press: freeze + dump; 2nd press: resume)
+Boot: OUTPUT OFF, f = 0 Hz, amp = 15 % (cap 20). Press r/q to arm.
+
+<<< SimplySerial session terminated via CTRL-X >>>
