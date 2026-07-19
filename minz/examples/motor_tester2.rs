@@ -768,6 +768,11 @@ static ARM_RING_IDX: AtomicU32 = AtomicU32::new(0);
 
 #[inline]
 fn arm_trace(src: u8, delay_us: u32, iv_us: u32) {
+    // Freezes with the black box so the arm sequence across a
+    // dropped shot survives to the postmortem.
+    if BB_FROZEN.load(Ordering::Relaxed) {
+        return;
+    }
     let k = (ARM_RING_IDX.fetch_add(1, Ordering::Relaxed) as usize % 8) * 3;
     ARM_RING[k].store(delay_us.min(0xFF_FFFF) | ((src as u32) << 24), Ordering::Relaxed);
     ARM_RING[k + 1].store(iv_us, Ordering::Relaxed);
@@ -1154,11 +1159,12 @@ fn trigger_reseed(detail: u16) {
     // ARE the audible pulsing (RESEED_COUNT=8 on the amp-90 ladder);
     // the frozen bb holds the exact window sequence into the first
     // qZC dropout for post-run RAM readback. Re-armed per ladder arm.
-    if !RESEED_BB_TAKEN.swap(true, Ordering::Relaxed) {
-        // First reseed at ANY speed: the s1g capture proved the
-        // engage-phase chain stop (2.84 ms with zero commutation
-        // events before DSY) is the SAME dropped-shot class as the
-        // high-speed one, so the speed gate was hiding the evidence.
+    if OWL_INTERVAL_US.load(Ordering::Relaxed) < 120
+        && !RESEED_BB_TAKEN.swap(true, Ordering::Relaxed)
+    {
+        // TOP-END reseeds only (2026-07-19: the any-speed freeze kept
+        // spending the ring on the first benign mid-climb reseed and
+        // the rung-75 surge leadup was lost every run).
         BB_FROZEN.store(true, Ordering::Relaxed);
         // Chain-stop forensics: arm/fire accounting + LPTIM2 hardware
         // state AT the dropout. armed>fired here = a shot that never
@@ -5792,10 +5798,12 @@ fn accept_qualified_zc(zc_us: u32) {
         let delay = (delay as i32 + parity_trim_for(sec, iv)).max(8) as u32;
         SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
         minz::lptim2_oneshot::schedule_us(delay);
-        // HOT PATH (COMP ISR accept): trace ONLY anomalous arms — the
-        // unconditional trace cost ~1 µs here and collapsed engage
-        // 0/30 vs control 2/2 (the R2 byte-lean lesson, re-learned).
-        if delay > iv {
+        // HOT PATH (COMP ISR accept): trace anomalous arms anywhere,
+        // plus ALL arms in the top-end band (iv<120: the dropped-shot
+        // surge regime — ~40 cyc at ≤9k/s = 0.4 % there; the engage-
+        // critical low-speed path stays untraced, which is what the
+        // 0/30 engage collapse taught).
+        if delay > iv || iv < 120 {
             arm_trace(1, delay, iv);
         }
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
