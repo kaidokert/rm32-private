@@ -706,6 +706,23 @@ static SHOT_ARMED_COUNT: AtomicU32 = AtomicU32::new(0);
 static LPTIM2_COUNT: AtomicU32 = AtomicU32::new(0);
 static LAST_KEY_BYTE: AtomicU8 = AtomicU8::new(0);
 static LAST_KEY_T10: AtomicU32 = AtomicU32::new(0);
+/// Key-dispatch forensics (codex review): count i-dispatches and
+/// total accepted keys - verifies the junk-'i' echo-storm theory
+/// from RAM after a stall.
+static KEY_I_COUNT: AtomicU32 = AtomicU32::new(0);
+static KEY_ANY_COUNT: AtomicU32 = AtomicU32::new(0);
+static LAST_I_ECHO_T10: AtomicU32 = AtomicU32::new(0);
+/// AUTONOMOUS LADDER ('L' key): the physical link blacks out under
+/// EMI at amp ~77+ (RX start-bit suppression + TX outages - codex-
+/// confirmed mechanism), so commanding rungs over the wire is
+/// impossible exactly where the goal lives. The firmware self-steps
+/// amp +1 per 500 ms to LADDER_TOP and records per-rung telemetry
+/// (interval, isns raw, comms) into RAM for post-run probe readback.
+static AUTO_LADDER: AtomicBool = AtomicBool::new(false);
+static LADDER_LAST_T10: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LADDER_LOG: [AtomicU32; 288] = [CEN_ZERO; 288];
+const LADDER_TOP: u16 = 90;
 /// ZT pair-preserving decimation counter: at speed the full stream
 /// (>=315 kB/s at 2.5 kHz elec) drowns the 200 kB/s wire, eating the
 /// KEYS AND ECHOES - the 90-ladder could not command past amp 60
@@ -1957,6 +1974,32 @@ fn main() -> ! {
                 }
             }
             BEACON_PHASE.store(1, Ordering::Relaxed);
+            // Autonomous ladder step (see AUTO_LADDER).
+            if AUTO_LADDER.load(Ordering::Relaxed)
+                && CL_ACTIVE.load(Ordering::Relaxed)
+                && MOTOR_ENABLED.load(Ordering::Relaxed)
+            {
+                let nk = ticks_10us();
+                let lt = LADDER_LAST_T10.load(Ordering::Relaxed);
+                if nk.wrapping_sub(lt) >= 50_000 {
+                    LADDER_LAST_T10.store(nk, Ordering::Relaxed);
+                    if amplitude_pct < LADDER_TOP {
+                        amplitude_pct = clamp_amp(amplitude_pct as i32 + 1);
+                        AMPLITUDE_PCT.store(amplitude_pct as u8, Ordering::Relaxed);
+                    }
+                    let a = amplitude_pct as usize;
+                    if a < 96 {
+                        LADDER_LOG[a * 3]
+                            .store(OWL_INTERVAL_US.load(Ordering::Relaxed), Ordering::Relaxed);
+                        LADDER_LOG[a * 3 + 1]
+                            .store(LAST_I_RAW.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
+                        LADDER_LOG[a * 3 + 2]
+                            .store(CL_COMM_COUNT.load(Ordering::Relaxed), Ordering::Relaxed);
+                    }
+                }
+            } else if AUTO_LADDER.load(Ordering::Relaxed) && !CL_ACTIVE.load(Ordering::Relaxed) {
+                AUTO_LADDER.store(false, Ordering::Relaxed);
+            }
 
             // Monotonic check (main-loop rate tripwire).
             let mono = now_10us_64();
@@ -2080,9 +2123,11 @@ fn main() -> ! {
                     }),
                     |b| tx_writer.write_blocking(b),
                 );
-                for e in BB_TYPE.iter() {
-                    e.store(0xFF, Ordering::Relaxed);
-                }
+                // Ring NOT cleared (2026-07-18): the wire is often dead
+                // exactly when this report runs (EMI blackout at high
+                // amp), and clearing destroyed the RAM copy the probe
+                // post-mortem needs. The ring is circular; stale events
+                // are naturally overwritten.
                 BB_FROZEN.store(false, Ordering::Relaxed);
             }
             // Sag trip report: the ISR already killed the output;
@@ -2186,6 +2231,19 @@ fn main() -> ! {
                     continue;
                 }
                 LAST_KEY_BYTE.store(0, Ordering::Relaxed);
+                KEY_ANY_COUNT.fetch_add(1, Ordering::Relaxed);
+                if b == b'i' {
+                    KEY_I_COUNT.fetch_add(1, Ordering::Relaxed);
+                    // RATE LIMIT (codex: the i-echo is ~600 bytes of
+                    // hex-heavy formatting - the write_str livelock's
+                    // fuel). Max ~2/s regardless of how many 'i's
+                    // arrive (junk or host).
+                    let nk = ticks_10us();
+                    let last = LAST_I_ECHO_T10.swap(nk, Ordering::Relaxed);
+                    if nk.wrapping_sub(last) < 40_000 {
+                        continue;
+                    }
+                }
                 match b {
                     b'a' => amplitude_pct = clamp_amp(amplitude_pct as i32 + 1),
                     b'z' => amplitude_pct = clamp_amp(amplitude_pct as i32 - 1),
@@ -2470,6 +2528,19 @@ fn main() -> ! {
                         write!(
                             &mut tx_writer,
                             "zt trace = {}\r\n",
+                            if on { "on" } else { "off" },
+                        )
+                        .ok();
+                    }
+                    b'L' => {
+                        let on = !AUTO_LADDER.load(Ordering::Relaxed);
+                        AUTO_LADDER.store(on, Ordering::Relaxed);
+                        LADDER_LAST_T10.store(ticks_10us(), Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "auto-ladder = {}
+
+",
                             if on { "on" } else { "off" },
                         )
                         .ok();
@@ -4435,7 +4506,10 @@ fn TIM1_UP_TIM16() {
                 SAG_DEBOUNCE_LIVE.load(Ordering::Relaxed),
             );
             VBAT_SAG_RUN.store(run, Ordering::Relaxed);
-            if trip {
+            // STALL-REGIME ONLY (the amp-82 wall, bb 0xB003): at 1900+ Hz the
+            // LEGITIMATE comparator rate crosses the 72k/s threshold that was
+            // calibrated at cruise; the storm class lives at long intervals.
+            if trip && OWL_INTERVAL_US.load(Ordering::Relaxed) > 150 {
                 VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
                 minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Sag);
                 // Transit-autopsy: freeze the black box AT the kill
