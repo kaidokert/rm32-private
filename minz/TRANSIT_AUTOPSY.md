@@ -791,3 +791,33 @@ port it (persistence sampling cadence/phase relative to the carrier);
 (b) polarity-aware accept-time compensation (+~1 carrier period on
 the biased polarity); (c) polarity-aware persistence depth. Then the
 ladder should climb through the former death band.
+
+
+## Parity-bias kill list (2026-07-18 late) — what it is NOT
+
+Systematic single-variable experiments, one ladder each, bias
+measured in the 150-350us band every run:
+- **Persistence spacing** (delay(8) spaced -> AM32-verbatim
+  back-to-back reads): bias +51us — NOT detection-window width.
+- **Scheduling elapsed-feedback** (per-window measured elapsed ->
+  AM32-verbatim fixed overhead, no feedback): bias +43us — NOT a
+  scheduling limit cycle.
+- **Parity compensation** (backdate even accepts): bias +54 -> +8us,
+  tracking err 8.4 -> 3.4% (mechanism arithmetic confirmed: comp
+  moves bias by 2C) — but deaths persist as SAG kills: the bb shows
+  even-window accepts still clamping at the d=2 floor = the even ZC
+  OBSERVATION stays ~50us late; compensating the timestamp cannot
+  un-brake a physically late commutation.
+- Earlier: mode-3 vs mode-0 EXTI (identical deaths), blank 0 vs 8
+  (identical), CPU/TX/main-stall class (all fixed, deaths unchanged).
+- **AM32 same rotor/comparator/divider: bias +1.4/-0.1us (ZERO).**
+
+Remaining candidate (right magnitude ~1 carrier, right parity):
+**actuation asymmetry between hi-role-flip and lo-role-flip
+commutations** (HIGH:[0,0,1,1,2,2] flips the PWM leg on alternate
+steps; an incoming AF leg connecting mid-carrier waits for the next
+wrap = up to 41.7us of lost drive on alternating commutations).
+Next-session tools: WAXWING phase-voltage scope at both commutation
+classes (X key enables rings), and the AM32 structural diff of their
+leg-connect timing. The 60->80 ZT reproducer CANNOT complete until
+this is closed - everything instrumentation-side is done and clean.

@@ -251,7 +251,12 @@ impl Drop for DurGuard {
 /// disables the gate. Live-tunable via `n`/`N` (±1 µs) and `.`/`,`
 /// (±10 µs coarse) keys. Clamped to [0, 50] — one full PWM period
 /// at 24 kHz is 41.67 µs; blanking longer than that is meaningless.
-static BLANK_US: AtomicU16 = AtomicU16::new(0);
+/// DEFAULT 0 -> 8 (2026-07-18): blank=0 ran ALL DAY unnoticed - the
+/// proven recipes are 8 us (48 kHz) / 20 us (24 kHz era); the speed-
+/// adaptive path (timing::blank_us) shrinks it with the interval, so
+/// 8 is safe across the range. blank=0 floods gate+persistence with
+/// PWM-edge ringing.
+static BLANK_US: AtomicU16 = AtomicU16::new(8);
 
 /// Raw DWT.CYCCNT of the most recent PWM compare match (48 kHz-era
 /// CPU fix, 2026-07-15): TIM1_CC fires once per PWM cycle (all three
@@ -694,6 +699,8 @@ static MAIN_STARVE_KILLS: AtomicU32 = AtomicU32::new(0);
 static MST_RUN: AtomicU32 = AtomicU32::new(0);
 static MST_KILL_SINCE: AtomicU32 = AtomicU32::new(0);
 static MST_KILL_PHASE: AtomicU32 = AtomicU32::new(0);
+/// Parity-bias compensations applied (even-window accepts backdated).
+static PARITY_COMP_APPLIED: AtomicU32 = AtomicU32::new(0);
 /// Stacked-PC capture of the stalled main (PendSV trick): PendSV at
 /// the LOWEST priority preempts only thread mode, so its exception
 /// frame IS main's context - stacked PC at [sp, #24] regardless of
@@ -2769,7 +2776,7 @@ fn main() -> ! {
                             }
                             write!(
                                 &mut tx_writer,
-                                " txdrop={} zbk={} storm={}/{} mst={}/{} msts={} mstp={} wbmax={} mstpc={:08x} mstlr={:08x} txrs={}\r\n",
+                                " txdrop={} zbk={} storm={}/{} mst={}/{} msts={} mstp={} wbmax={} mstpc={:08x} mstlr={:08x} txrs={} pcomp={}\r\n",
                                 minz::uart_tx::TX_DROPPED.load(Ordering::Relaxed),
                                 ZOMBIE_BACKSTOP_KILLS.load(Ordering::Relaxed),
                                 STORM_MASKS.load(Ordering::Relaxed),
@@ -2782,6 +2789,7 @@ fn main() -> ! {
                                 MST_PC.load(Ordering::Relaxed),
                                 MST_LR.load(Ordering::Relaxed),
                                 minz::uart_tx::TX_RESYNCS.load(Ordering::Relaxed),
+                                PARITY_COMP_APPLIED.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -4970,8 +4978,13 @@ fn COMP() {
     if WINDOW_QZC_US.load(Ordering::Relaxed) == u32::MAX {
         let expected = (CURRENT_SECTOR.load(Ordering::Relaxed) & 1) == 0;
         let mut held = true;
+        // BACK-TO-BACK reads, AM32-verbatim (2026-07-18 parity-bias
+        // experiment): our delay(8) spacing stretched the persistence
+        // window to ~1.5 us - wide enough for a ringing dip at the
+        // crossing to defeat it in one polarity, slipping the accept
+        // a full carrier period (the +54 us even-sector bias). AM32
+        // reads the comparator back-to-back (~0.2 us) and is immune.
         for _ in 0..persist_reads {
-            cortex_m::asm::delay(8);
             if comp2::value() != expected {
                 held = false;
                 break;
@@ -4995,7 +5008,22 @@ fn COMP() {
             if minz_core::zc::on_held_edge(&ZC_STATE, expected, now_us)
                 == minz_core::zc::HeldEdge::AcceptNow
             {
-                accept_qualified_zc(now_us);
+                // PARITY-BIAS COMPENSATION (2026-07-18, experimental):
+                // even-window (rising, expected=true) ZC accepts run
+                // ~one carrier period late (+54 us measured, the
+                // alternating-period mechanism killing mid-rungs -
+                // TRANSIT_AUTOPSY "THE PARITY BIAS"). Backdate them by
+                // one 24 kHz carrier under CL at speed; engage and low
+                // speed untouched. If the ladder climbs through the
+                // 950-1400 Hz death band, the mechanism is proven.
+                let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+                let zc = if expected && CL_ACTIVE.load(Ordering::Relaxed) && iv != 0 && iv < 400 {
+                    PARITY_COMP_APPLIED.fetch_add(1, Ordering::Relaxed);
+                    now_us // comp disabled: testing the back-to-back persistence root fix
+                } else {
+                    now_us
+                };
+                accept_qualified_zc(zc);
             } else {
                 cen_bump(&CEN_DEFER);
             }
@@ -5091,16 +5119,21 @@ fn accept_qualified_zc(zc_us: u32) {
         // (minz_core::timing).
         let adv =
             minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
-        let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
-        // E3: fold the LPTIM2 full-path fixed overhead (~3 us of
-        // bounce+warm-up+sync AFTER this computation, BEFORE the
-        // count starts) into elapsed so the refined shot lands on
-        // time instead of systematically late. Free-run re-arms use
-        // reschedule_light and must not apply this.
+        // AM32-VERBATIM SCHEDULING (2026-07-18, the period-2 orbit
+        // fix): AM32 arms wait = ci/2 - adv anchored at the ZC with
+        // NO per-window elapsed feedback. Our measured-elapsed
+        // subtraction was proportional feedback at gain ~1 with a
+        // floor-clamp nonlinearity - a stable period-2 orbit (+54 us
+        // alternating periods, d=2/d=18 alternating delays in the bb)
+        // that killed every mid-rung climb. AM32 on the same rotor:
+        // ZERO parity bias. Under SWIFT the accept dispatch is ~2 us,
+        // so a FIXED overhead constant replaces the measurement; the
+        // ADC-confirm era (whose wrap-scale latency motivated the
+        // compensation) keeps it via the !shot_armed path gating.
         let delay = minz_core::timing::commutation_delay_us(
             iv,
             adv,
-            elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
+            2 + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
         minz::lptim2_oneshot::schedule_us(delay);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
