@@ -765,3 +765,29 @@ revert died identically at 947 Hz) - reverted to 0 anyway pending the
 oscillation fix. Next campaign: damp the period-2 mode (schedule from
 raw-last-interval AM32-style, or add period-2 damping to the
 estimator), then re-run the ladder.
+
+
+## THE PARITY BIAS (2026-07-18) — the tracking gap's mechanism
+
+The "period-2 oscillation" is a STATIC POLARITY BIAS, not an
+instability: even-sector (rising-BEMF) periods run +54 us (+19%)
+longer than odd-sector, consistent across runs (mode0 +54, txfix +55,
+rampstart +24 at higher speed). **54 us ~= one 24 kHz carrier
+period**: one polarity's ZC is accepted ~one PWM cycle late — the
+crossing's ringing defeats the persistence check in that polarity and
+the accept slips to the next clean dwell. The geometry-mode
+estimator's pair-averaging (AM32's rule, already implemented) hides
+the bias from the ESTIMATE while commutations still fire off the
+biased ZC train, so periods alternate mechanically. As windows shrink
+toward 120 us the fixed bias becomes ~45% of the window -> gate
+misses -> the mid-rung desync deaths. AM32, same comparator and
+rotor, shows NO bias (1.0% tracking) — their acceptance does not
+slip carrier cycles; why is the next investigation (their
+filter_level sampling cadence vs our spaced-read persistence is the
+prime suspect).
+
+Fix directions (next session): (a) understand AM32's immunity and
+port it (persistence sampling cadence/phase relative to the carrier);
+(b) polarity-aware accept-time compensation (+~1 carrier period on
+the biased polarity); (c) polarity-aware persistence depth. Then the
+ladder should climb through the former death band.
