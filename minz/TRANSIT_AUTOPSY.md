@@ -821,3 +821,14 @@ Next-session tools: WAXWING phase-voltage scope at both commutation
 classes (X key enables rings), and the AM32 structural diff of their
 leg-connect timing. The 60->80 ZT reproducer CANNOT complete until
 this is closed - everything instrumentation-side is done and clean.
+
+
+Final cut (per-sector, 150-350us band, two independent runs): the
+bias is a PURE PARITY SPLIT — all three even sectors +20..+30us, all
+three odd -19..-28us, identical across phase A/B/C float windows.
+Phase-independent => not per-pin analog, not the CHAMELEON mux, not a
+per-leg timing quirk. A polarity-pure, ~+-0.6-carrier, phase-blind
+offset that AM32 does not have on the same silicon. The hi-flip/
+lo-flip actuation classes are parity-aligned and remain the prime
+candidate; the WAXWING scope shot of both commutation classes is the
+decisive next experiment (X key first).
