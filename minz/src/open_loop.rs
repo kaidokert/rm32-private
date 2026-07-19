@@ -96,7 +96,19 @@ pub fn six_step_sector(angle: u16) -> u8 {
 /// while the low-side phase sits at 0 (low FET always on via the
 /// complementary), so the line-to-line average is `amplitude_pct`% of
 /// the bus directly.
+///
+/// AM32 running-path semantics (main.c:1774): the applied compare is
+/// `ratio*ARR + 1`, so 100 % yields CCR = ARR+1 — the compare never
+/// fires, the output is SOLID high (zero chopping, no dead-time
+/// insertion, low-side complementary never conducts; the FETs flip
+/// only at commutation). CCR = ARR alone would leave a one-tick
+/// (12.5 ns) low notch per cycle that can glitch the gate driver —
+/// the `+1` is exactly why AM32 has it. 0 % stays 0 (motor off must
+/// mean off, matching AM32's not-running branch without the +1).
 #[inline]
 pub fn six_step_duty(arr: u16, amplitude_pct: u16) -> u16 {
-    (arr as u32 * amplitude_pct as u32 / 100).min(arr as u32) as u16
+    if amplitude_pct == 0 {
+        return 0;
+    }
+    (arr as u32 * amplitude_pct as u32 / 100 + 1).min(arr as u32 + 1) as u16
 }

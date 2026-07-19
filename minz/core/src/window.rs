@@ -227,12 +227,12 @@ pub fn window_record_step(
     ws: &WindowControl<'_>,
     prev_sector: u8,
     now_us: u32,
-    noz_raw: u16,
+    noz_datum: u16,
     start_us: u32,
     qzc: u32,
     first_zc: u32,
 ) -> CloseScalars {
-    let _ = noz_raw;
+    let _ = noz_datum;
     let decim_n = ws.wrec_decim.fetch_add(1, Ordering::Relaxed);
     let iv_now = ws.interval_us.load(Ordering::Relaxed);
     let stream_this = iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
@@ -268,15 +268,16 @@ pub fn window_record_step(
 
 /// Composed form kept as the behavior authority for the classic
 /// wrapper + all existing close vectors (control then record; the
-/// NOZ bb datum gets the raw count patched in, matching the
-/// original single-fn output).
+/// NOZ bb datum gets `noz_datum` patched in — the caller-packed
+/// `(valid << 8) | raw` veto attribution, matching the monolithic
+/// close's output).
 #[allow(clippy::too_many_arguments)]
 pub fn window_control_step_from(
     ws: &WindowControl<'_>,
     prev_sector: u8,
     now_10us: u32,
     now_us: u32,
-    noz_raw: u16,
+    noz_datum: u16,
     start_us: u32,
     qzc: u32,
     first_zc: u32,
@@ -284,9 +285,9 @@ pub fn window_control_step_from(
     let _ = now_10us;
     let mut bb = window_close_control(ws, prev_sector, qzc);
     if let Some((EV_NOZ, d)) = bb[0].as_mut() {
-        *d = noz_raw;
+        *d = noz_datum;
     }
-    let sc = window_record_step(ws, prev_sector, now_us, noz_raw, start_us, qzc, first_zc);
+    let sc = window_record_step(ws, prev_sector, now_us, noz_datum, start_us, qzc, first_zc);
     (bb, sc)
 }
 
@@ -314,7 +315,7 @@ pub fn window_control_step(
     prev_sector: u8,
     now_10us: u32,
     now_us: u32,
-    noz_raw: u16,
+    noz_datum: u16,
 ) -> ([Option<(u8, u16)>; 2], CloseScalars) {
     let start_us = ws.sector_start_us.load(Ordering::Relaxed);
     let qzc = ws.qzc_us.load(Ordering::Relaxed);
@@ -324,7 +325,7 @@ pub fn window_control_step(
         prev_sector,
         now_10us,
         now_us,
-        noz_raw,
+        noz_datum,
         start_us,
         qzc,
         first_zc,
@@ -458,7 +459,15 @@ pub fn close_float_window(
     }
 
     if qzc == u32::MAX && ws.cl_active.load(Ordering::Relaxed) {
-        out.bb[0] = Some((EV_NOZ, ws.raw.load(Ordering::Relaxed).min(0xFFFF) as u16));
+        // NOZ data = (valid << 8) | raw, both saturating at 255: the
+        // fatal dead window's veto attribution in one u16. t100jfree
+        // r1 showed NOZ raw=5 with zero accepts and no way to tell
+        // WHERE the 5 edges died — valid==0 means blank/gate ate them
+        // all; valid>0 means they reached the candidate/persistence
+        // path. bb readers: d = valid*256 + raw for NOZ events.
+        let raw = ws.raw.load(Ordering::Relaxed).min(0xFF) as u16;
+        let valid = ws.valid.load(Ordering::Relaxed).min(0xFF) as u16;
+        out.bb[0] = Some((EV_NOZ, (valid << 8) | raw));
         // NOZ anatomy - shared authority: classify_noz.
         match classify_noz(ws.open_level.load(Ordering::Relaxed), prev_sector) {
             Some(true) => {
@@ -761,11 +770,13 @@ mod tests {
 
             let b = Rig::new();
             seed(&b);
-            // Firmware order: read noz raw value, control_step, then EITHER
-            // build (streaming, main clears the bank) OR inline-clear
+            // Firmware order: read + pack the noz datum ((valid<<8)|raw
+            // veto attribution), control_step, then EITHER build
+            // (streaming, main clears the bank) OR inline-clear
             // (non-streaming). Both must match the monolith's resets.
-            let noz_raw = b.raw.load(Ordering::Relaxed).min(0xFFFF) as u16;
-            let (bb, sc) = window_control_step(&b.control(), sec, 5_000, 50_000, noz_raw);
+            let noz_datum = ((b.valid.load(Ordering::Relaxed).min(0xFF) as u16) << 8)
+                | b.raw.load(Ordering::Relaxed).min(0xFF) as u16;
+            let (bb, sc) = window_control_step(&b.control(), sec, 5_000, 50_000, noz_datum);
             let rec = if sc.record {
                 build_window_rec(&b.diag(), &sc)
             } else {
@@ -895,7 +906,8 @@ mod tests {
         r.interval_us.store(130, Ordering::Relaxed); // ~1.3 kHz, amp 42
         r.qzc_us.store(u32::MAX, Ordering::Relaxed);
         let out = r.close(1, 2_000, 10_600);
-        assert_eq!(out.bb[0], Some((EV_NOZ, 40)));
+        // NOZ data packs (valid << 8) | raw — Rig: valid=6, raw=40.
+        assert_eq!(out.bb[0], Some((EV_NOZ, (6 << 8) | 40)));
         assert_eq!(out.bb[1], None, "no chain-break on the first miss");
         assert!(r.cl_reacq.load(Ordering::Relaxed), "gate widened at once");
         assert_ne!(
@@ -921,7 +933,7 @@ mod tests {
         r.cl_active.store(true, Ordering::Relaxed);
         r.qzc_us.store(u32::MAX, Ordering::Relaxed);
         let out = r.close(1, 2_000, 10_600);
-        assert_eq!(out.bb[0], Some((EV_NOZ, 40)));
+        assert_eq!(out.bb[0], Some((EV_NOZ, (6 << 8) | 40)));
         assert!(
             !r.cl_reacq.load(Ordering::Relaxed),
             "no first-miss widen at low speed / engage"

@@ -111,7 +111,11 @@ const AMP_MIN: u16 = 0;
 // runaway floor, desync), NOT this cap; the cap only bounds how
 // hard a guarded failure can transiently hit. Open-loop use above
 // ~16 remains a heater risk — mind the `q` key at high amp.
-const AMP_MAX: u16 = 96;
+// 96 → 100 (operator call 2026-07-19): six_step_duty now carries
+// AM32's `+1` (CCR = ARR+1 at 100 % = solid-on, FETs flip only at
+// commutation) so a true 100 % rung is the SAME electrical regime
+// as AM32's full throttle — no chopping, no ripple, cleanest ZC.
+const AMP_MAX: u16 = 100;
 /// Bench observation: at 5 V supply this motor refuses to start
 /// (synchronise to the commanded field) below ~15 %. Set the default at
 /// the empirical floor so the user doesn't have to ramp up after boot
@@ -812,7 +816,10 @@ fn arm_trace(src: u8, delay_us: u32, iv_us: u32) {
         return;
     }
     let k = (ARM_RING_IDX.fetch_add(1, Ordering::Relaxed) as usize % 8) * 3;
-    ARM_RING[k].store(delay_us.min(0xFF_FFFF) | ((src as u32) << 24), Ordering::Relaxed);
+    ARM_RING[k].store(
+        delay_us.min(0xFF_FFFF) | ((src as u32) << 24),
+        Ordering::Relaxed,
+    );
     ARM_RING[k + 1].store(iv_us, Ordering::Relaxed);
     ARM_RING[k + 2].store(ticks_1us(), Ordering::Relaxed);
 }
@@ -839,8 +846,12 @@ static RESEED_BB_TAKEN: AtomicBool = AtomicBool::new(false);
 static RSD_SNAP: [AtomicU32; 12] = [CEN_ZERO; 12];
 static LADDER_LAST_T10: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
-static LADDER_LOG: [AtomicU32; 384] = [CEN_ZERO; 384];
-const LADDER_TOP: u16 = 96; // == AMP_MAX: "100% throttle" = our full-duty ceiling
+// 101 rungs × 4 columns — MUST cover amp 0..=100. The old 384 (96
+// rungs) silently dropped rungs 96-100 with LADDER_TOP=100, so
+// read_ladder_log topped out at 95 and the bench called every run —
+// even a perfect climb — a "silent death" (t100a incident).
+static LADDER_LOG: [AtomicU32; 404] = [CEN_ZERO; 404];
+const LADDER_TOP: u16 = 100; // == AMP_MAX: true 100 % = CCR ARR+1 solid-on (AM32 parity)
 /// ZT pair-preserving decimation counter: at speed the full stream
 /// (>=315 kB/s at 2.5 kHz elec) drowns the 200 kB/s wire, eating the
 /// KEYS AND ECHOES - the 90-ladder could not command past amp 60
@@ -1055,6 +1066,28 @@ const ZC_CLOCKED: bool = true;
 /// as observers. Re-open only with J-free evidence of the
 /// dead-window class.
 const RESCUE_MACHINERY: bool = false;
+/// SURGICALLY RE-OPENED then RE-PARKED same session (2026-07-19, the
+/// t100 arc — the honest A/B). Re-open condition (J-free dead-window
+/// evidence) was met: t100jfree r1 bb KCK s4 d=290, 5 raw edges all
+/// vetoed, ≥5 A seed surge → sag kill. The cut alone (this flag, not
+/// the lineage) then ran two 3-retry J-free ladders (t100cut,
+/// t100sag15): **BURST_TRIPS 1-2/run → 0 across all 6 runs — the
+/// ≥5 A seed class IS suppressed — but ladder completion did NOT
+/// improve (0/6 vs 0/3 no-cut), and WAIT_CUT_COUNT = 347 (~115/run):
+/// the 1.125×iv threshold sits inside the legitimate late-ZC
+/// excursion tail (the MZT differential's +12-21 % events), exactly
+/// the overlap the lineage conviction documented. Worse, the restore
+/// edge is instant (next commutation, ~100 µs) — full duty snapped
+/// into a cut-decelerated rotor = the convicted fast-recovery surge,
+/// ~115×/run; t100sag15 r1 died in a MISS-FREE deceleration fold
+/// (iv 93→104 µs, clean accepts, no KCK/NOZ in the final 6 ms)
+/// consistent with cut-crater pumping.** Verdict: a time-threshold
+/// cut cannot be made selective enough — the fix for the dead-window
+/// class is the LAG design work (estimator lead / rotor-paced
+/// recovery), not thresholds. Do not re-enable without a
+/// discriminator that separates legit-late from dead (e.g. the NOZ
+/// (valid<<8)|raw attribution now in the bb).
+const WAIT_CUT_REOPENED: bool = false;
 /// Reseed chain kicks: the inverted chain is silent when a reseed
 /// triggers, so reseed entry must arm the first crawl shot itself.
 static RESEED_KICKS: AtomicU32 = AtomicU32::new(0);
@@ -1221,8 +1254,14 @@ fn trigger_reseed(detail: u16) {
         // shot armed with ~10x the correct delay at 107 µs cruise):
         // what delay/est the last arm actually used, and the qZC
         // clock at death.
-        RSD_SNAP[8].store(LAST_DELAY_US.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
-        RSD_SNAP[9].store(LAST_EST_BEFORE.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
+        RSD_SNAP[8].store(
+            LAST_DELAY_US.load(Ordering::Relaxed) as u32,
+            Ordering::Relaxed,
+        );
+        RSD_SNAP[9].store(
+            LAST_EST_BEFORE.load(Ordering::Relaxed) as u32,
+            Ordering::Relaxed,
+        );
         RSD_SNAP[10].store(OWL_LAST_QZC_US.load(Ordering::Relaxed), Ordering::Relaxed);
         RSD_SNAP[11].store(ticks_1us(), Ordering::Relaxed);
     }
@@ -2359,7 +2398,7 @@ fn main() -> ! {
                         AMP_TARGET_PCT.store(amplitude_pct as u8, Ordering::Relaxed);
                     }
                     let a = amplitude_pct as usize;
-                    if a < 96 {
+                    if a < 101 {
                         // Full-dwell MEANS (apples-to-apples with
                         // AM32's smoothed KISS telemetry) — the old
                         // single-instant samples were the map jag.
@@ -2519,7 +2558,7 @@ fn main() -> ! {
                 let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
                 write!(
                     &mut tx_writer,
-                    "!! VBAT SAG KILL: bus {} mV < 90% of base {} mV - killed\r\n",
+                    "!! VBAT SAG KILL: bus {} mV < 85% of base {} mV - killed\r\n",
                     minz_core::sense::vbat_mv(sense_adc.adc_to_mv(raw) as u32),
                     minz_core::sense::vbat_mv(sense_adc.adc_to_mv(base) as u32),
                 )
@@ -2908,12 +2947,7 @@ fn main() -> ! {
                     b'Q' => {
                         let on = !QLOG_ON.load(Ordering::Relaxed);
                         QLOG_ON.store(on, Ordering::Relaxed);
-                        write!(
-                            &mut tx_writer,
-                            "qlog={}\r\n",
-                            if on { "on" } else { "off" },
-                        )
-                        .ok();
+                        write!(&mut tx_writer, "qlog={}\r\n", if on { "on" } else { "off" },).ok();
                     }
                     b'L' => {
                         // cycle off -> 1% -> 10% -> off
@@ -3622,7 +3656,10 @@ fn TIM6_DACUNDER() {
     if tick & 7 == 0 && CL_ACTIVE.load(Ordering::Relaxed) {
         RUNG_IV_SUM.fetch_add(OWL_INTERVAL_US.load(Ordering::Relaxed), Ordering::Relaxed);
         RUNG_I_SUM.fetch_add(LAST_I_RAW.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
-        RUNG_VB_SUM.fetch_add(VBAT_RAW_LIVE.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
+        RUNG_VB_SUM.fetch_add(
+            VBAT_RAW_LIVE.load(Ordering::Relaxed) as u32,
+            Ordering::Relaxed,
+        );
         RUNG_N.fetch_add(1, Ordering::Relaxed);
     }
     // Throttle slew limiter: the APPLIED duty walks toward the
@@ -3786,7 +3823,10 @@ fn TIM7() {
             }
             let target = {
                 let base = open_loop::six_step_duty(max_duty(), amp) as i32;
-                let hi = max_duty() as i32 * AMP_MAX as i32 / 100;
+                // Ceiling through the same map so AMP_MAX=100 keeps
+                // the ARR+1 solid-on value (a bare ARR*pct/100 here
+                // would truncate it back to ARR = chopping).
+                let hi = open_loop::six_step_duty(max_duty(), AMP_MAX) as i32;
                 (base + DUTY_TRIM.load(Ordering::Relaxed) as i32).clamp(0, hi) as u16
             };
             tim1_motor_pwm::set_duty(slewed_duty(target));
@@ -4357,13 +4397,17 @@ fn mode_cmd(
 /// handoff replaces the raceable 2-bank double-buffer.
 fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8) {
     let (now_10, now_us) = ticks_both();
-    let noz_raw = WINDOW_RAW.load(Ordering::Relaxed).min(0xFFFF) as u16;
+    // NOZ datum = (valid<<8)|raw: the dead-window veto attribution
+    // (core window.rs authority) — valid==0 means blank/gate ate
+    // every edge; valid>0 means they died in candidate/persistence.
+    let noz_datum = ((WINDOW_VALID.load(Ordering::Relaxed).min(0xFF) as u16) << 8)
+        | WINDOW_RAW.load(Ordering::Relaxed).min(0xFF) as u16;
     let (bb, sc) = minz_core::window::window_control_step(
         &WINDOW_CONTROL,
         prev_sector,
         now_10,
         now_us,
-        noz_raw,
+        noz_datum,
     );
     for (ev, data) in bb.iter().flatten() {
         bb_record(*ev, prev_sector, *data);
@@ -4750,13 +4794,15 @@ fn fabric_close_step() {
         prev,
         OWL_INTERVAL_US.load(Ordering::Relaxed).min(0xFFFF) as u16,
     );
-    // Stamped control bb events (NOZ datum patched with the raw
-    // edge count, matching the classic close's output).
+    // Stamped control bb events (NOZ datum patched to the packed
+    // (valid<<8)|raw veto attribution, matching the classic close's
+    // output — see core window.rs close_float_window).
     let b0 = CLOSED_BB0.load(Ordering::Relaxed);
     if b0 != u32::MAX {
         let ev = (b0 >> 16) as u8;
         let d = if ev == minz_core::window::EV_NOZ {
-            raw.min(0xFFFF) as u16
+            let v = CLOSED_VALID.load(Ordering::Relaxed).min(0xFF) as u16;
+            (v << 8) | raw.min(0xFF) as u16
         } else {
             b0 as u16
         };
@@ -5148,6 +5194,19 @@ fn pwm_wrap_work() {
         BURST_ACTIVE.store(s.active, Ordering::Relaxed);
         if s.active && !was {
             BURST_TRIPS.fetch_add(1, Ordering::Relaxed);
+            // t100b autopsy: the sag-spiral seed event (exactly one
+            // ≥5 A burst per killed run) sat in the 185-199 gap below
+            // the 200-count WAX threshold, so the microscope never
+            // fired and the seed stayed invisible. The burst trip IS
+            // the seed detector — fire the freeze from it directly:
+            // CUR_RING holds the surge instant, the frozen bb the
+            // commutation story into it, and main's dump path (j
+            // context, 85 ms per-cycle rings) the deceleration tail.
+            if WAX_TRIG_ARMED.swap(false, Ordering::Relaxed) {
+                minz::adc_sync::freeze_current();
+                BB_FROZEN.store(true, Ordering::Relaxed);
+                WAX_TRIGGERED.store(true, Ordering::Relaxed);
+            }
         }
         // R3 second trigger: a burst the clamp hasn't tamed within
         // 2 ms (48 cycles) is commutation misalignment - RESEED
@@ -5400,7 +5459,7 @@ fn pwm_wrap_work() {
         // re-times the chain. No estimator update, no starvation-
         // watchdog feed (a stalled rotor must still starve out).
         let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
-        if RESCUE_MACHINERY
+        if (RESCUE_MACHINERY || WAIT_CUT_REOPENED)
             && ZC_CLOCKED
             && CL_FAST_PATH.load(Ordering::Relaxed)
             && CL_AM32_GEOM.load(Ordering::Relaxed)
@@ -5438,7 +5497,7 @@ fn pwm_wrap_work() {
                         WAIT_CUT_COUNT.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-                if since > iv + iv / 4 {
+                if RESCUE_MACHINERY && since > iv + iv / 4 {
                     // Publish the synthesized qZC (window not NOZ,
                     // reacq spiral broken) and fire the shot.
                     WINDOW_QZC_US.store(ticks_1us(), Ordering::Relaxed);
@@ -5880,8 +5939,7 @@ fn accept_qualified_zc(zc_us: u32) {
         let iv = minz_core::timing::climb_lead_iv(iv, climbing);
         // Host-tested: auto-advance ramp + scheduling delay
         // (minz_core::timing).
-        let adv =
-            advance_now(iv);
+        let adv = advance_now(iv);
         // AM32-VERBATIM WAIT (operator: same quantities IN USE): their
         // wait = ci/2 - advance derives PURELY from the IIR estimate,
         // anchored at the ZC - wait spread 4 us on the aligned plot.

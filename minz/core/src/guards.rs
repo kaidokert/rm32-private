@@ -333,6 +333,25 @@ pub struct SagGuard {
 /// ≈5.95 V: below this the 3.3 V rail is one transient from the
 /// brownout that WEDGES the MCU with the bridge frozen (the burn).
 pub const VBAT_ABS_FLOOR_RAW: u16 = 793;
+
+/// THE sag threshold — the single authority for both SagGuard and the
+/// firmware's load-run-store path. −15 % (was −10 %): AM32 at 100 %
+/// throttle rides this bench's bus down to 7.07 V sustained and is
+/// healthy — a −10 % line from the ~8.15 V unloaded baseline (≈7.34 V)
+/// sits ABOVE the legitimate full-throttle operating point (amp-95
+/// rung logged 7.20 V). −15 % ≈ 6.93 V keeps AM32-parity load legal
+/// while still killing a real collapse.
+///
+/// DIVERGENCE INCIDENT (t100cut): the −15 % fix landed only in
+/// `SagGuard::threshold_raw` while `sag_step_scaled` — the LIVE
+/// firmware path whose doc claimed "semantics single-sourced through
+/// SagGuard" — kept a hardcoded −10 % reimplementation; a healthy
+/// amp-90s rung dipping to 7.27 V (−11 %) was killed by the stale
+/// line. Both paths now call THIS function; never inline the ratio.
+#[inline]
+pub fn sag_threshold_raw(baseline_raw: u16) -> u16 {
+    (baseline_raw - baseline_raw * 3 / 20).max(VBAT_ABS_FLOOR_RAW)
+}
 /// Consecutive sub-threshold samples required. Sample rate = the PWM
 /// carrier (vbat rides the per-cycle injected burst), so 64 samples =
 /// **2.67 ms at the flashed 24 kHz** (1.3 ms at 48 kHz). E6 audit
@@ -359,13 +378,7 @@ impl SagGuard {
     }
 
     pub fn threshold_raw(&self) -> u16 {
-        // −15 % (was −10 %): AM32 at 100 % throttle rides this bench's
-        // bus down to 7.07 V sustained and is healthy — a −10 % line
-        // from the ~8.15 V unloaded baseline (≈7.34 V) sits ABOVE the
-        // legitimate full-throttle operating point (amp-95 rung logged
-        // 7.20 V). −15 % ≈ 6.93 V keeps AM32-parity load legal while
-        // still killing a real collapse.
-        (self.baseline_raw - self.baseline_raw * 3 / 20).max(VBAT_ABS_FLOOR_RAW)
+        sag_threshold_raw(self.baseline_raw)
     }
 
     /// Feed one pump sample (only while the drive is armed). Returns
@@ -463,7 +476,7 @@ pub fn apply_isr_kill(kf: &KillFlags<'_>, kind: IsrKillKind) {
 /// proven 2.67 ms to 1.33 ms at 48 kHz and start killing benign
 /// spike-burst dips the envelope work always rode through.
 pub fn sag_step_scaled(baseline_raw: u16, run: u16, raw: u16, debounce: u16) -> (u16, bool) {
-    let threshold = (baseline_raw - baseline_raw / 10).max(VBAT_ABS_FLOOR_RAW);
+    let threshold = sag_threshold_raw(baseline_raw);
     if raw < threshold {
         let run = run + 1;
         if run >= debounce {
@@ -511,14 +524,20 @@ pub fn trip_accum_step(acc: u32, cnt: u32, sample_raw: u16) -> (u32, u32, Option
 ///
 /// Open loop: 2.0 A phase-referred — the stall-heater guard (a
 /// stalled open-loop drive has no other watchdog). Under CL: a
-/// gross-fault backstop only (~4 A phase) — tighter throttle-scaled
+/// gross-fault backstop only (~5.5 A phase) — tighter throttle-scaled
 /// envelopes (2× then 3.8× the healthy curve) kept declaring walls
 /// in passable terrain that AM32 rides through; stall detection
 /// under CL belongs to ZC-starvation, supply collapse to the sag
 /// kill, a wedged core to the IWDG.
+///
+/// Raised 150 (~4 A) → 205 (~5.5 A) for the true-100% regime: at
+/// duty 1.0 phase current == battery current, and the LEGITIMATE
+/// full-throttle draw on this bench is ~4 A (AM32 parity) — the
+/// t100a r0 kill was this trip firing on a flawless 2314 Hz top
+/// rung. The faults it exists for (burst peaks) run 12 A+.
 pub fn overcurrent(avg_phase_raw: u32, cl_active: bool) -> bool {
     if cl_active {
-        avg_phase_raw > 150 // ≈ 4 A gross-fault backstop
+        avg_phase_raw > 205 // ≈ 5.5 A gross-fault backstop
     } else {
         avg_phase_raw > 75 // ≈ 2.0 A stall-heater guard
     }
@@ -1108,7 +1127,7 @@ mod tests {
     #[test]
     fn r4a_sag_step_scaled_matches_legacy_at_64_and_stretches_at_128() {
         let base = 1000u16;
-        let sagged = 850u16; // below 900 threshold
+        let sagged = 840u16; // below the −15% threshold (850)
         // debounce 64: trips on the 64th consecutive sample, like legacy.
         let mut run = 0u16;
         let mut tripped_at = 0u32;
@@ -1275,10 +1294,22 @@ mod tests {
     #[test]
     fn regression_cl_backstop_rides_the_knee() {
         // The ~2.7 A transitional draw at the amp-51 knee (AM32
-        // rides it) must NOT trip; a 4 A+ gross fault must.
+        // rides it) must NOT trip; a 6 A+ gross fault must.
         let raw_2p7a = 101;
-        let raw_4p2a = 157;
+        let raw_6a = 224;
         assert!(!overcurrent(raw_2p7a, true));
-        assert!(overcurrent(raw_4p2a, true));
+        assert!(overcurrent(raw_6a, true));
+    }
+
+    #[test]
+    fn regression_true_100pct_draw_rides_the_backstop() {
+        // t100a r0: a flawless 2314 Hz true-100% top rung (duty 1.0,
+        // phase == battery current ≈ 4 A, AM32-parity draw) was
+        // killed by the old 150-count (~4 A) backstop. The legit
+        // full-throttle draw must ride; 5.5 A+ must trip.
+        let raw_4a_legit = 150;
+        let raw_5p6a = 208;
+        assert!(!overcurrent(raw_4a_legit, true));
+        assert!(overcurrent(raw_5p6a, true));
     }
 }

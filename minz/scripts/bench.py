@@ -38,6 +38,14 @@ class Bench:
     def __init__(self):
         import serial
         self.ser = serial.Serial(PORT, BAUD, timeout=0.05)
+        # 1 MiB driver RX buffer (Windows/FTDI default is small): the
+        # wedge probe blocks the read loop for tens of seconds while
+        # probe-rs processes spawn; without headroom the backlog drops
+        # bytes (t100a: both sag-kill markers lost to the deaf window).
+        try:
+            self.ser.set_buffer_size(rx_size=1 << 20)
+        except (AttributeError, OSError):
+            pass  # non-Windows or driver refuses; best-effort
         self.cap = bytearray()
 
     def close(self):
@@ -180,6 +188,14 @@ def cmd_ladder(a):
                 # shed; the all-zero waxdump mystery was this gate)
                 sh("probe-rs", "write", "--chip", CHIP, "--probe",
                    PROBE, "b8", hex(nm_addr("DIAG_RINGS")), "1")
+                if a.waxtrig:
+                    # lowered surge trigger (raw counts; 110 ~ 2.9 A,
+                    # 75 ~ 2 A) - the clean-loop sag kills show ring
+                    # peaks BELOW the default threshold
+                    sh("probe-rs", "write", "--chip", CHIP, "--probe",
+                       PROBE, "b16", hex(nm_addr("WAX_TRIG_RAW")),
+                       str(a.waxtrig))
+                    print(f"WAX_TRIG_RAW={a.waxtrig} via probe")
                 if not b.press_until("J", "wax trigger ARMED", tries=6):
                     print("WARN: WAX trigger arm unconfirmed")
             if a.edgemode:
@@ -204,7 +220,15 @@ def cmd_ladder(a):
                 b.cap.extend(chunk)
                 if chunk:
                     last_rx = time.monotonic()
-                tail = (tail + chunk)[-4096:]
+                # Scan BEFORE truncating: an 8 KiB backlog chunk (e.g.
+                # after the wedge probe blocks this loop for tens of
+                # seconds) put the t100a sag-kill markers outside the
+                # last-4KiB window and both kills read as "silent
+                # death". `tail+chunk` keeps every byte in exactly one
+                # scan with overlap for split markers.
+                tail = tail + chunk
+                scan = tail
+                tail = tail[-4096:]
                 # WEDGE CATCH: q-lines flow at 25 Hz; >6 s of TOTAL
                 # silence with no kill print = main is wedged and the
                 # IWDG will fire at ~31 s. Probe-read the clock state
@@ -263,8 +287,8 @@ def cmd_ladder(a):
                 # Match the actual kill strings + the boot banner.
                 for marker in (b"!! CL", b"!! VBAT", b"!! OVERCURRENT",
                                b"!! MAIN", b"motor_tester2: clocks"):
-                    if marker in tail:
-                        died = tail[tail.find(marker):][:80]
+                    if marker in scan:
+                        died = scan[scan.find(marker):][:80]
                         break
                 if died:
                     break
@@ -296,9 +320,9 @@ def cmd_ladder(a):
 
 def read_ladder_log():
     base = nm_addr("LADDER_LOG")
-    w = probe_words(base, 384)
+    w = probe_words(base, 404)
     rows = []
-    for amp in range(10, 96):
+    for amp in range(10, 101):
         iv, ir, cc, vb = (w[amp * 4], w[amp * 4 + 1],
                           w[amp * 4 + 2], w[amp * 4 + 3])
         if iv or cc:
@@ -744,18 +768,39 @@ def cmd_kill(_):
     print("killed")
 
 
+def cmd_listen(a):
+    """Passive live-wire check: count bytes (and optionally show text
+    lines) on the port for --secs. Replaces ad-hoc inline python."""
+    b = Bench()
+    try:
+        t0 = time.monotonic()
+        buf = bytearray()
+        while time.monotonic() - t0 < a.secs:
+            buf.extend(b.ser.read(8192))
+        print(f"{len(buf)} bytes in {a.secs:.1f}s")
+        if a.text:
+            for ln in bytes(buf).splitlines():
+                s = ln.decode("ascii", "replace")
+                if len(s) >= 4 and sum(c.isprintable() for c in s) > len(s) * 0.8:
+                    print(s)
+    finally:
+        b.close()
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("engage")
     p = sub.add_parser("ladder")
-    p.add_argument("--top", type=int, default=96)
+    p.add_argument("--top", type=int, default=100)
     p.add_argument("--hold", type=float, default=30.0)
     p.add_argument("--step", type=int, default=1, choices=(1, 2, 10))
     p.add_argument("--tag", default=None)
     p.add_argument("--retries", type=int, default=4)
     p.add_argument("--nostream", action="store_true")
     p.add_argument("--jarm", action="store_true")
+    p.add_argument("--waxtrig", type=int, default=0,
+                   help="probe-write WAX_TRIG_RAW (raw counts) before arming J")
     p.add_argument("--edgemode", type=int, default=0)
     p = sub.add_parser("readback")
     p.add_argument("--tag", default=None)
@@ -794,6 +839,9 @@ def main():
     p.add_argument("--tag", default="ep")
     p = sub.add_parser("starts")
     p.add_argument("--n", type=int, default=3)
+    p = sub.add_parser("listen")
+    p.add_argument("--secs", type=float, default=3.0)
+    p.add_argument("--text", action="store_true")
     a = ap.parse_args()
     {"engage": cmd_engage, "ladder": cmd_ladder, "readback": cmd_readback,
      "postmortem": cmd_postmortem, "flash-minz": cmd_flash_minz,
@@ -801,7 +849,7 @@ def main():
      "kill": cmd_kill, "peek": cmd_peek, "capdump": cmd_capdump,
      "probe-adv": cmd_probe_adv, "waxdump": cmd_waxdump,
      "ztstats": cmd_ztstats, "engage-probe": cmd_engage_probe,
-     "starts": cmd_starts}[a.cmd](a)
+     "starts": cmd_starts, "listen": cmd_listen}[a.cmd](a)
 
 
 if __name__ == "__main__":
