@@ -95,7 +95,15 @@ pub const COMM_SILENCE_BACKSTOP_US: u32 = 100_000;
 /// Closed loop (mask + kill, budget 500): CL cannot run blind; a
 /// window holding 500 edges without closing is a dead loop. Killing
 /// within ~7 ms (500/70k) preserves main, the IWDG, and the logs.
-pub const STORM_MASK_EDGES: u32 = 64;
+/// 64 -> 256 (2026-07-18 engage-rate collapse): the open-loop mask
+/// was FIGHTING the engage detector - mask-after-accept already
+/// silences post-ZC noise, so open-loop 'storms' are exactly the
+/// no-accept-yet windows where the detector must sift ~65 edges for
+/// the true crossing; at budget 64 marginal windows got masked
+/// before the ZC was found and engage went from ~1st-try to 0/8.
+/// The engage-phase IWDG concern is now covered by the TIM1_UP
+/// proxy refresh; 256 keeps only a worst-case backstop.
+pub const STORM_MASK_EDGES: u32 = 256;
 pub const STORM_KILL_EDGES: u32 = 500;
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -103,6 +111,27 @@ pub enum StormAction {
     None,
     Mask,
     MaskKill,
+}
+
+/// CL RATE-storm detector (mzt_shed_base autopsy): the per-window
+/// budget above cannot fire at speed - 125 us windows cap at ~8
+/// edges even in a 60k/s storm that eats 45% CPU (rate-invisible by
+/// construction; the loop stayed healthy in the bb while priority
+/// <=2 saturated and main starved 800 ms). Detection: comparator
+/// ENTRIES per TIM1_UP wrap, sustained. >=3/wrap for 96 wraps at
+/// 24 kHz = >=72k/s held 4 ms - no legitimate regime does that.
+pub const STORM_RATE_PER_WRAP: u32 = 3;
+pub const STORM_RATE_RUN_WRAPS: u32 = 96;
+
+/// Step the run-length; returns (new_run, trip).
+#[inline]
+pub fn comp_storm_rate_step(run: u32, entries_this_wrap: u32) -> (u32, bool) {
+    if entries_this_wrap >= STORM_RATE_PER_WRAP {
+        let r = run.saturating_add(1);
+        (r, r >= STORM_RATE_RUN_WRAPS)
+    } else {
+        (0, false)
+    }
 }
 
 #[inline]
@@ -131,8 +160,21 @@ pub fn comp_storm_action(window_raw: u32, cl_active: bool) -> StormAction {
 /// Two stages: SHED at 250 ms (stop the telemetry producers, give
 /// main a chance to recover), KILL at 500 ms (still 500 ms before
 /// the IWDG - clean kill, post-mortem intact).
-pub const MAIN_STARVED_SHED_US: u32 = 250_000;
-pub const MAIN_STARVED_KILL_US: u32 = 500_000;
+/// Thresholds retuned (mzt_shed5, msts=500030): REAL ~500 ms main
+/// stalls occur benignly at low rungs (main blocked on print bursts,
+/// not ISR-starved) and used to self-heal - the 250/500 ms cut killed
+/// runs the IWDG-era firmware completed. 600/800 ms passes those and
+/// still beats the 1 s IWDG by 200 ms.
+/// Redesigned (mzt_shed4-8): sub-1 s main stalls are SURVIVABLE -
+/// the bb showed the loop riding through them perfectly (all guards
+/// live in ISRs; main is UI/telemetry). Old builds completed because
+/// such stalls self-healed invisibly; >=1 s ones were the IWDG
+/// reboots. The fix is not killing at 500-800 ms - it is having
+/// TIM1_UP refresh the IWDG while main's beat is < KILL_US stale
+/// (a true wedge stops TIM1_UP too -> 1 s reset unchanged), and
+/// killing only a main-death class stall (3 s).
+pub const MAIN_STARVED_SHED_US: u32 = 1_000_000;
+pub const MAIN_STARVED_KILL_US: u32 = 3_000_000;
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum StarveAction {
@@ -1179,7 +1221,10 @@ mod tests {
         assert_eq!(comp_storm_action(10, true), None);
         // ramp-start stall (open loop, 50 Hz, ~65 edges/window):
         // mask only - the arm must survive (engage-recipe constraint)
-        assert_eq!(comp_storm_action(65, false), Mask);
+        // ~65-edge stall windows are the DETECTOR'S regime - no mask
+        assert_eq!(comp_storm_action(65, false), None);
+        assert_eq!(comp_storm_action(255, false), None);
+        assert_eq!(comp_storm_action(256, false), Mask);
         assert_eq!(comp_storm_action(499, false), Mask);
         // CL tolerates bursts below the kill budget
         assert_eq!(comp_storm_action(499, true), None);
@@ -1191,12 +1236,31 @@ mod tests {
     fn main_starvation_sheds_then_kills() {
         use super::StarveAction::*;
         assert_eq!(main_starved_action(1_000), None); // healthy ~1ms
-        assert_eq!(main_starved_action(250_000), None);
-        assert_eq!(main_starved_action(250_001), Shed);
-        assert_eq!(main_starved_action(500_000), Shed);
-        assert_eq!(main_starved_action(500_001), Kill);
-        // the observed pocket: a full IWDG second of starvation
-        assert_eq!(main_starved_action(1_000_000), Kill);
+        // the benign self-healing stall class (0.5-1 s) must PASS
+        assert_eq!(main_starved_action(800_090), None);
+        assert_eq!(main_starved_action(1_000_001), Shed);
+        assert_eq!(main_starved_action(3_000_000), Shed);
+        assert_eq!(main_starved_action(3_000_001), Kill);
+    }
+
+    #[test]
+    fn rate_storm_trips_on_sustained_only() {
+        // healthy speed traffic: 1-2 entries/wrap never trips
+        let mut run = 0;
+        for _ in 0..10_000 {
+            let (r, trip) = comp_storm_rate_step(run, 2);
+            run = r;
+            assert!(!trip);
+        }
+        // 72k/s sustained: trips at exactly 96 wraps (4 ms)
+        let mut run = 0;
+        for k in 0..96 {
+            let (r, trip) = comp_storm_rate_step(run, 3);
+            run = r;
+            assert_eq!(trip, k == 95);
+        }
+        // a single quiet wrap resets the run
+        assert_eq!(comp_storm_rate_step(95, 0), (0, false));
     }
     #[test]
     fn regression_cl_backstop_rides_the_knee() {

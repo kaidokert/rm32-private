@@ -98,7 +98,16 @@ impl UartTxWriter {
     pub fn service(&mut self) {
         let dma = unsafe { &*stm32::DMA1::ptr() };
         if self.inflight != 0 {
-            if dma.isr.read().tcif4().bit_is_set() {
+            let tc = dma.isr.read().tcif4().bit_is_set();
+            // Lost-completion resync (the silent-TX-death wedge,
+            // 2026-07-18): CNDTR==0 means the transfer finished even
+            // if the TC flag was consumed elsewhere - without this,
+            // service waits forever for a flag that never re-sets and
+            // ALL output dies while main runs healthy.
+            if tc || dma.cndtr4.read().bits() == 0 {
+                if !tc {
+                    TX_RESYNCS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                }
                 dma.ccr4.modify(|_, w| w.en().clear_bit());
                 dma.ifcr.write(|w| w.cgif4().set_bit());
                 self.tail = (self.tail + self.inflight) & (TX_RING_LEN - 1);
@@ -113,6 +122,18 @@ impl UartTxWriter {
         }
         // Longest contiguous run from tail (a wrap becomes two chunks).
         let contig = pending.min(TX_RING_LEN - self.tail);
+        // HARDWARE CONTRACT (the black-hole wedge): L4 DMA IGNORES
+        // CMAR/CNDTR writes while EN=1. If any path leaves EN set
+        // here, the arm below is silently discarded and every
+        // subsequent "completion" advances the tail on stale flags -
+        // output becomes a black hole while the ring drains normally.
+        // Force EN=0 (and count it) before programming.
+        if dma.ccr4.read().en().bit_is_set() {
+            TX_RESYNCS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            dma.ccr4.modify(|_, w| w.en().clear_bit());
+            while dma.ccr4.read().en().bit_is_set() {}
+            dma.ifcr.write(|w| w.cgif4().set_bit());
+        }
         unsafe {
             dma.cmar4
                 .write(|w| w.bits(self.ring.as_ptr().add(self.tail) as u32));
@@ -133,6 +154,7 @@ impl UartTxWriter {
     /// REBOOT class (reviewer audit 2026-07-18). Telemetry loss is
     /// recoverable; a watchdog reset mid-run is not.
     pub fn write_blocking(&mut self, bytes: &[u8]) {
+        let wb0 = cortex_m::peripheral::DWT::cycle_count();
         for (i, &b) in bytes.iter().enumerate() {
             if !self.push(b) {
                 let t0 = cortex_m::peripheral::DWT::cycle_count();
@@ -152,11 +174,22 @@ impl UartTxWriter {
             }
         }
         self.service();
+        let dur = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(wb0);
+        if dur > WB_MAX_CYC.load(core::sync::atomic::Ordering::Relaxed) {
+            WB_MAX_CYC.store(dur, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 
 /// Bytes dropped by the bounded `write_blocking` timeout. Nonzero
 /// means the DMA stalled ≥50 ms — the condition that used to reboot.
+/// Worst single write_blocking duration in cycles (swap-read for max
+/// tracking; the mzt_shed 800 ms main-stall hunt).
+/// Hardware-state resyncs performed by `service` (lost completion or
+/// EN-left-set). Nonzero = the black-hole wedge class fired and was
+/// healed in place.
+pub static TX_RESYNCS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+pub static WB_MAX_CYC: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 pub static TX_DROPPED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 impl core::fmt::Write for UartTxWriter {

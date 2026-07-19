@@ -690,3 +690,52 @@ slack is now a plain bounded spin.
 Load-shedding levers (gate ADC-confirm under SWIFT, serialize in
 main, half-rate vbat/sag, retire TIM1_CC) remain the path to actually
 CLEARING the pockets so runs complete instead of kill.
+
+
+## Load-shedding arc — final state (2026-07-18, operator goal)
+
+Landed and validated, in order of discovery:
+- **Diag-ring gates** (`DIAG_RINGS`, X key, default OFF): waxwing CTX
+  + PWM sample byte (6 stores/cycle in TIM1_UP) and EDGE_BUF per-edge
+  writes (~5 atomics x 30k/s in COMP) now cost zero unless an autopsy
+  session enables them.
+- **Engage restored 7/8** (was 0/8): my own storm mask was fighting
+  the engage detector - open-loop "storms" ARE the no-accept-yet
+  windows the detector must sift; budget 64 masked mid-search.
+  STORM_MASK_EDGES 64->256 (the IWDG-starvation concern it guarded is
+  covered by the proxy refresh). Cold-boot first-arms still warm up
+  (~2 throwaway arms after a flash).
+- **CL rate-storm detector** (comp_storm_rate_step): the per-window
+  budget is rate-blind at speed (125 us windows cap at ~8 edges in a
+  45%-CPU storm); sustained >=72k/s for 4 ms now kills.
+- **mst guard redesigned**: sub-1 s main stalls are survivable (bb
+  showed the loop riding through); TIM1_UP proxy-feeds the IWDG while
+  main-stall < 30 s (true wedge = ISRs dead = 1 s reset unchanged);
+  the mst KILL is disarmed (counter + shed only) - a stalled main is
+  a telemetry outage, not a motor hazard.
+- **PendSV stall profiler** (naked handler): stacked-PC + LR + stack
+  slice + 8-sample PC ring of thread mode, on demand from any ISR.
+  GDB is unusable on this bench (error 138 + mcp timeouts) - this is
+  now the debugger of last resort, and it works.
+- **TX black-hole wedge found + self-healed**: probe autopsy during a
+  live "stall" showed main HEALTHY (beat advancing) while all UART
+  output silently died - the tx_writer's DMA state machine can
+  desync (L4 DMA ignores CMAR/CNDTR writes while EN=1; a lost TC
+  completion wedges service forever). service() now resyncs from
+  hardware state (CNDTR==0 => complete; force-EN=0 before arming),
+  counted as txrs=. The "main stalls" the mst guard measured were
+  write_blocking crawling against the wedged DMA at 50 ms/byte
+  timeouts during multi-line dumps.
+
+**Where the runs die now**: with every instrument artifact silenced
+(txrs=0, mst=0/0, no reboots since the proxy refresh landed), the ZT
+reproducer terminates in REAL control kills - CL desync / sag at
+~1100-1400 Hz mid-climb - each with full MZT trace to the death, bb
+dump, and classified terminal. That mid-rung death class (present all
+day, previously masked by reboots and guard kills) is the estimator-
+tail campaign's subject, not an instrumentation failure.
+
+Session tally lesson (operator): engage wasted a large fraction of
+bench time before the tally was demanded - keep per-session engage
+tallies; a collapsing engage rate is a CODE signal (it was the storm
+mask), never bench luck.

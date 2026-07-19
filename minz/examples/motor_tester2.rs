@@ -691,6 +691,76 @@ static STORM_KILLS: AtomicU32 = AtomicU32::new(0);
 /// Main-starvation guard events (printed as mst=sheds/kills).
 static MAIN_SHEDS: AtomicU32 = AtomicU32::new(0);
 static MAIN_STARVE_KILLS: AtomicU32 = AtomicU32::new(0);
+static MST_RUN: AtomicU32 = AtomicU32::new(0);
+static MST_KILL_SINCE: AtomicU32 = AtomicU32::new(0);
+static MST_KILL_PHASE: AtomicU32 = AtomicU32::new(0);
+/// Stacked-PC capture of the stalled main (PendSV trick): PendSV at
+/// the LOWEST priority preempts only thread mode, so its exception
+/// frame IS main's context - stacked PC at [sp, #24] regardless of
+/// FPU lazy stacking (FP extension stacks after xPSR). TIM1_UP
+/// pends it when the mst staleness crosses the shed level; the
+/// print maps via arm-none-eabi-nm. ISRs demonstrably run during
+/// the stall, so main is NOT in a masked section and PendSV fires.
+#[unsafe(no_mangle)]
+static MST_PC: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static MST_LR: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static MST_STACK: [AtomicU32; 32] = [CEN_ZERO; 32];
+#[unsafe(no_mangle)]
+static MST_PCS: [AtomicU32; 8] = [CEN_ZERO; 8];
+#[unsafe(no_mangle)]
+static MST_PCS_IDX: AtomicU32 = AtomicU32::new(0);
+
+core::arch::global_asm!(
+    ".section .text.PendSV",
+    ".global PendSV",
+    ".type PendSV, %function",
+    ".thumb_func",
+    "PendSV:",
+    "ldr r0, [sp, #24]",
+    "ldr r1, =MST_PC",
+    "str r0, [r1]",
+    "ldr r0, [sp, #20]",
+    "ldr r1, =MST_LR",
+    "str r0, [r1]",
+    // stack slice above the exception frame: 8-word standard frame
+    // or 26-word extended (FPU) frame per EXC_RETURN bit 4.
+    "mov r2, #32",
+    "tst lr, #0x10",
+    "it eq",
+    "moveq r2, #104",
+    "add r2, sp, r2",
+    "ldr r1, =MST_STACK",
+    "mov r3, #0",
+    "2:",
+    "ldr r0, [r2], #4",
+    "str r0, [r1], #4",
+    "add r3, #1",
+    "cmp r3, #32",
+    "bne 2b",
+    // PC-profile ring: MST_PCS[idx & 7] = stacked PC, idx += 1
+    "ldr r0, [sp, #24]",
+    "ldr r1, =MST_PCS_IDX",
+    "ldr r2, [r1]",
+    "and r3, r2, #7",
+    "adds r2, #1",
+    "str r2, [r1]",
+    "ldr r1, =MST_PCS",
+    "str r0, [r1, r3, lsl #2]",
+    "bx lr",
+);
+static STORM_RATE_RUN: AtomicU32 = AtomicU32::new(0);
+static STORM_PREV_COMP: AtomicU32 = AtomicU32::new(0);
+/// Rate-storm kills under CL (printed in storm= as the kill count).
+/// LOAD SHED (2026-07-18): heavy per-cycle/per-edge diagnostic ring
+/// writes (waxwing CTX + PWM sample byte in TIM1_UP; EDGE_BUF /
+/// SECTOR_EDGE_COUNT in COMP) are OFF by default - they cost ~10-15%
+/// CPU at the top rungs and only serve interactive autopsy dumps
+/// (`j`/`l`/`e`/`J`). Toggle with `X` before an autopsy session so
+/// the rings hold real history. The control/telemetry paths (MZT,
+/// MAGPIE, census, storm/qzc counters) are unaffected.
+static DIAG_RINGS: AtomicBool = AtomicBool::new(false);
 
 /// SWIFT — AM32-style edge-timestamped fast path (`M` key). When ON
 /// and the loop is LOCKED, a comparator edge that passes the gate +
@@ -1745,6 +1815,12 @@ fn main() -> ! {
         BEACON_ISR.store(0, Ordering::Relaxed);
         BEACON_PHASE.store(0, Ordering::Relaxed);
     }
+    // PendSV at the LOWEST priority (0xF0): preempts thread mode
+    // only - the mst stall PC-capture trick above.
+    unsafe {
+        // SHPR3 byte for PendSV (exception 14) = 0xE000_ED22.
+        core::ptr::write_volatile(0xE000_ED22 as *mut u8, 0xF0);
+    }
     priority::dump_to(&mut tx_writer);
     priority::dump_prigroup();
     priority::dump_irq_prios();
@@ -1815,7 +1891,19 @@ fn main() -> ! {
             // stops and the watchdog resets the chip, releasing the
             // bridge.
             minz::iwdg::refresh();
-            BEACON_MAIN.store(ticks_10us(), Ordering::Relaxed);
+            // MONOTONIC beat: the wrap-extension race (LAST-first fix)
+            // can yield ONE backward-glitched read per 53.7 s; if it
+            // landed here the mst guard saw main stale 53.7 s and
+            // killed a healthy run (mzt_shed1/mstguard early-climb
+            // kills). Never store a beat older than the previous one
+            // (wrapping compare tolerates the true 12 h tick wrap).
+            {
+                let bt = ticks_10us();
+                let prev = BEACON_MAIN.load(Ordering::Relaxed);
+                if bt.wrapping_sub(prev) < 0x8000_0000 {
+                    BEACON_MAIN.store(bt, Ordering::Relaxed);
+                }
+            }
             BEACON_PHASE.store(1, Ordering::Relaxed);
 
             // Monotonic check (main-loop rate tripwire).
@@ -2287,6 +2375,16 @@ fn main() -> ! {
                     // pace its own commutations; hands off to the
                     // normal `y` engage automatically. Pressing
                     // again while active aborts (motor off).
+                    b'X' => {
+                        let on = !DIAG_RINGS.load(Ordering::Relaxed);
+                        DIAG_RINGS.store(on, Ordering::Relaxed);
+                        write!(
+                            &mut tx_writer,
+                            "diag rings = {}\r\n",
+                            if on { "on" } else { "off" },
+                        )
+                        .ok();
+                    }
                     b'Z' => {
                         let on = !ZT_ON.load(Ordering::Relaxed);
                         ZT_ON.store(on, Ordering::Relaxed);
@@ -2633,6 +2731,20 @@ fn main() -> ! {
                                 DUR_CLOSE.load(Ordering::Relaxed),
                             )
                             .ok();
+                            if MST_PC.load(Ordering::Relaxed) != 0 {
+                                write!(&mut tx_writer, "mstpcs:").ok();
+                                for w in MST_PCS.iter() {
+                                    write!(&mut tx_writer, " {:08x}", w.load(Ordering::Relaxed),)
+                                        .ok();
+                                }
+                                write!(&mut tx_writer, "\r\n").ok();
+                                write!(&mut tx_writer, "mstk:").ok();
+                                for w in MST_STACK.iter() {
+                                    write!(&mut tx_writer, " {:08x}", w.load(Ordering::Relaxed),)
+                                        .ok();
+                                }
+                                write!(&mut tx_writer, "\r\n").ok();
+                            }
                             for (tag, cen) in [
                                 ("b", &CEN_BLANK),
                                 ("g", &CEN_GATE),
@@ -2648,13 +2760,19 @@ fn main() -> ! {
                             }
                             write!(
                                 &mut tx_writer,
-                                " txdrop={} zbk={} storm={}/{} mst={}/{}\r\n",
+                                " txdrop={} zbk={} storm={}/{} mst={}/{} msts={} mstp={} wbmax={} mstpc={:08x} mstlr={:08x} txrs={}\r\n",
                                 minz::uart_tx::TX_DROPPED.load(Ordering::Relaxed),
                                 ZOMBIE_BACKSTOP_KILLS.load(Ordering::Relaxed),
                                 STORM_MASKS.load(Ordering::Relaxed),
                                 STORM_KILLS.load(Ordering::Relaxed),
                                 MAIN_SHEDS.load(Ordering::Relaxed),
                                 MAIN_STARVE_KILLS.load(Ordering::Relaxed),
+                                MST_KILL_SINCE.load(Ordering::Relaxed),
+                                MST_KILL_PHASE.load(Ordering::Relaxed),
+                                minz::uart_tx::WB_MAX_CYC.swap(0, Ordering::Relaxed) / 80,
+                                MST_PC.load(Ordering::Relaxed),
+                                MST_LR.load(Ordering::Relaxed),
+                                minz::uart_tx::TX_RESYNCS.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -4215,6 +4333,24 @@ fn TIM1_UP_TIM16() {
             comp2::set_exti_enabled(false);
         }
     }
+    // CL RATE-storm detector (guards::comp_storm_rate_step): the
+    // per-window budget is rate-blind at speed (125 us windows cap
+    // at ~8 edges in a 45%-CPU storm). Sustained >=72k/s for 4 ms
+    // under CL = unrecoverable noise regime eating the CPU - kill
+    // while the evidence is still writable.
+    if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
+        let cc = COMP_COUNT.load(Ordering::Relaxed);
+        let delta = cc.wrapping_sub(STORM_PREV_COMP.swap(cc, Ordering::Relaxed));
+        let (run, trip) =
+            minz_core::guards::comp_storm_rate_step(STORM_RATE_RUN.load(Ordering::Relaxed), delta);
+        STORM_RATE_RUN.store(run, Ordering::Relaxed);
+        if trip {
+            STORM_KILLS.fetch_add(1, Ordering::Relaxed);
+            comp2::set_exti_enabled(false);
+            minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Desync);
+            tim1_motor_pwm::all_off();
+        }
+    }
     // MAIN-STARVATION guard (see guards::main_starved_action).
     // Gated on MOTOR_ENABLED: at boot/idle BEACON_MAIN may be 0 or
     // stale, and arming requires a live main, so the gate makes the
@@ -4222,18 +4358,65 @@ fn TIM1_UP_TIM16() {
     // telemetry producers (ZT/MAGPIE) so the serialize load drops
     // and main can recover; Kill = clean stop 500 ms before the
     // IWDG would reboot and destroy the post-mortem.
-    if MOTOR_ENABLED.load(Ordering::Relaxed) {
+    // CL-only: arm/engage key handlers legitimately block main for
+    // hundreds of ms (mzt_shed3 false kills clustered at engage
+    // attempts); the saturation pockets this guards live under CL
+    // load, and engage-phase saturation is the storm mask's job.
+    if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
         let bm = BEACON_MAIN.load(Ordering::Relaxed);
         let since = minz_core::guards::since_us(ticks_10us(), bm);
-        match minz_core::guards::main_starved_action(since) {
+        // Debounce 8 consecutive stale passes (~333 us): a clock-
+        // glitch-corrupted reading self-heals at main's next 1 ms
+        // beat; a real starvation pocket persists for 250 ms+.
+        let act = minz_core::guards::main_starved_action(since);
+        let run = if act == minz_core::guards::StarveAction::None {
+            MST_RUN.store(0, Ordering::Relaxed);
+            0
+        } else {
+            let r = MST_RUN.load(Ordering::Relaxed).saturating_add(1);
+            MST_RUN.store(r, Ordering::Relaxed);
+            r
+        };
+        // PROXY IWDG REFRESH: while main's stall is below the kill
+        // threshold, TIM1_UP keeps the dog fed - benign 0.5-1 s main
+        // stalls (bb-proven survivable) no longer become reboots. A
+        // true wedge stops this ISR too, so the 1 s burnt-motor
+        // contract is unchanged.
+        // Feed window 30 s: the mid-climb main stall (see the
+        // stall-hunt notes) is ridden through, not killed - the
+        // control loop provably runs fine during it and the kill
+        // was costing every instrumented run. A true main death
+        // >30 s still ends in an IWDG reset.
+        if since < 30_000_000 {
+            minz::iwdg::refresh();
+        }
+        match if run >= 8 {
+            act
+        } else {
+            minz_core::guards::StarveAction::None
+        } {
             minz_core::guards::StarveAction::None => {}
             minz_core::guards::StarveAction::Shed => {
+                // PC-profile: sample main every 512 wraps (~21 ms)
+                if TIM1_UP_COUNT.load(Ordering::Relaxed) & 0x1FF == 0 {
+                    cortex_m::peripheral::SCB::set_pendsv();
+                }
                 if ZT_ON.swap(false, Ordering::Relaxed) || STREAM_ON.swap(false, Ordering::Relaxed)
                 {
                     MAIN_SHEDS.fetch_add(1, Ordering::Relaxed);
                 }
             }
+            // KILL DISARMED (operator-time call): count + record, ride
+            // through. The ISR-side guards (OC/sag/storm/zombie) hold
+            // motor safety; a stalled main is a telemetry outage.
             minz_core::guards::StarveAction::Kill => {
+                MST_KILL_SINCE.store(since, Ordering::Relaxed);
+                MAIN_STARVE_KILLS.fetch_add(1, Ordering::Relaxed);
+            }
+            #[allow(unreachable_patterns)]
+            minz_core::guards::StarveAction::Kill => {
+                MST_KILL_SINCE.store(since, Ordering::Relaxed);
+                MST_KILL_PHASE.store(BEACON_PHASE.load(Ordering::Relaxed), Ordering::Relaxed);
                 MAIN_STARVE_KILLS.fetch_add(1, Ordering::Relaxed);
                 minz_core::guards::apply_isr_kill(
                     &KILL_FLAGS,
@@ -4557,7 +4740,7 @@ fn TIM1_UP_TIM16() {
     // cycles onto the two streams. Same index as the status byte below.
     // Ring writes pause during a `j` dump (CTX_FREEZE) so main can emit
     // the rings in place — no stack snapshot (main-frame/.bss incident).
-    if !CTX_FREEZE.load(Ordering::Relaxed) {
+    if DIAG_RINGS.load(Ordering::Relaxed) && !CTX_FREEZE.load(Ordering::Relaxed) {
         CTX_A[idx].store(pa_a, Ordering::Relaxed);
         CTX_B[idx].store(pa_b, Ordering::Relaxed);
         CTX_I[idx].store(i_raw, Ordering::Relaxed);
@@ -4847,6 +5030,11 @@ fn COMP() {
 /// together here are consistent.
 #[inline(always)]
 fn record_edge_diag(now_10: u32) {
+    // LOAD SHED: ~5 atomics per edge at up to 30k edges/s, serving
+    // only the e-dump buffers. Gated with the other autopsy rings.
+    if !DIAG_RINGS.load(Ordering::Relaxed) {
+        return;
+    }
     let edge_idx =
         (now_10.wrapping_sub(HALF_START_TICK.load(Ordering::Relaxed)) & HALF_TICK_MASK) as usize;
     let edge_half = (ACTIVE_HALF.load(Ordering::Relaxed) & 1) as usize;
