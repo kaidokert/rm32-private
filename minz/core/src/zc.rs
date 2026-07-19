@@ -99,6 +99,64 @@ pub const fn expected_post_zc(sector: u8) -> bool {
     (sector & 1) == 0
 }
 
+/// PRE-CROSSED GATE-OPEN ACCEPT (2026-07-19, the 10 %-step transit-
+/// surge autopsy). Under acceleration the true ZC arrives EARLIER
+/// each window; once it predates the gate, the comparator saturates
+/// at the post-ZC level from window open and NO EDGE ever fires
+/// inside the gate — the window ends NOZ, the estimator freezes at
+/// its own echo, duty keeps climbing, and the surplus volts dump
+/// into current until the bus folds (four 10 %-ladder runs, all
+/// killed at 6.2 V from a healthy lock; census: `noz pre=429
+/// rsq=0`). AM32 cannot go blind this way: its acceptance is LEVEL-
+/// based at gate-open. This rule reproduces that semantics with a
+/// safety the convicted wrap-armed class lacked: it fires ONLY when
+/// the window OPENED already-crossed (`open_level` at the first PWM
+/// wrap == expected post-ZC), which proves the true ZC predates
+/// gate-open — stamping the qZC AT the gate is a LATE bound, never
+/// premature. An edge-armed candidate always wins (no stealing).
+///
+/// Returns the synthesized `zc_us` (= start + gate) when the accept
+/// should fire; the caller runs the normal accept path (estimator
+/// feed included — tracking the acceleration is the point).
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn precross_accept_due(
+    open_level: u8,
+    value_now: bool,
+    sector: u8,
+    qzc_us: u32,
+    cand_zc_us: u32,
+    start_us: u32,
+    gate_us: u32,
+    now_us: u32,
+    interval_us: u32,
+) -> Option<u32> {
+    // A/B windows only (0/3 are dead-reckoned below TOPEND; their
+    // schedule doesn't consume ZCs here).
+    if sector == 0 || sector == 3 {
+        return None;
+    }
+    // Regime: the climbing/cruise band. Engage (~1667 µs) stays on
+    // the proven fragile-regime rules.
+    if interval_us == 0 || interval_us >= 500 {
+        return None;
+    }
+    // One accept per window; edges win.
+    if qzc_us != u32::MAX || cand_zc_us != u32::MAX {
+        return None;
+    }
+    let expected = expected_post_zc(sector);
+    // Window opened pre-crossed AND the level still holds now.
+    if crate::window::classify_noz(open_level, sector) != Some(true) || value_now != expected {
+        return None;
+    }
+    // Gate must have opened.
+    if now_us.wrapping_sub(start_us) < gate_us {
+        return None;
+    }
+    Some(start_us.wrapping_add(gate_us))
+}
+
 /// The state machine's view of the firmware statics.
 pub struct ZcState<'a> {
     /// SCHEDULING INVERSION (rotor-clocked commutation): when set,
@@ -459,6 +517,75 @@ pub fn schedule_precheck(zs: &ZcState<'_>, sector: u8) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- precross_accept_due (pre-crossed gate-open accept) ----
+    // sector 1: expected_post_zc = false (level LOW post-ZC), so a
+    // pre-crossed open reads open_level=1 (low).
+
+    #[test]
+    fn precross_fires_at_gate_when_opened_crossed_and_holding() {
+        // start=10_000, gate=50, now past gate, interval 166 (accel band)
+        assert_eq!(
+            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            Some(10_050)
+        );
+    }
+
+    #[test]
+    fn precross_never_fires_before_gate_or_wrong_level() {
+        // before gate
+        assert_eq!(
+            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_040, 166),
+            None
+        );
+        // opened NOT crossed (open_level = high on sector 1)
+        assert_eq!(
+            precross_accept_due(2, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            None
+        );
+        // level no longer holding (bounced back)
+        assert_eq!(
+            precross_accept_due(1, true, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            None
+        );
+        // open level unsampled
+        assert_eq!(
+            precross_accept_due(0, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            None
+        );
+    }
+
+    #[test]
+    fn precross_yields_to_edges_and_existing_qzc() {
+        // armed candidate wins
+        assert_eq!(
+            precross_accept_due(1, false, 1, u32::MAX, 10_020, 10_000, 50, 10_060, 166),
+            None
+        );
+        // window already has a qZC
+        assert_eq!(
+            precross_accept_due(1, false, 1, 10_030, u32::MAX, 10_000, 50, 10_060, 166),
+            None
+        );
+    }
+
+    #[test]
+    fn precross_scoped_to_ab_windows_and_speed_band() {
+        // dead-reckoned C windows excluded
+        assert_eq!(
+            precross_accept_due(2, true, 0, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            None
+        );
+        assert_eq!(
+            precross_accept_due(2, true, 3, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            None
+        );
+        // engage regime (>=500 us interval) excluded
+        assert_eq!(
+            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 500, 10_600, 1_667),
+            None
+        );
+    }
 
     #[test]
     fn ab_sectors_compare_float_to_neutral() {

@@ -240,7 +240,7 @@ def cmd_postmortem(_):
                 "KEY_I_COUNT", "KEY_ANY_COUNT", "KEY_REJECT_COUNT",
                 "USART2_COUNT",
                 "SHOT_ARMED_COUNT", "LPTIM2_COUNT", "CHAIN_KICKS",
-                "BURST_TRIPS",
+                "SAG_HOLD_COUNT", "BURST_TRIPS",
                 "RECOV_COUNT", "RESEED_COUNT", "SLEW_CLAMP_COUNT",
                 "WAIT_CLAMP_COUNT"):
         try:

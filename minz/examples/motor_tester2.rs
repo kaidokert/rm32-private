@@ -720,6 +720,12 @@ static KEY_REJECT_COUNT: AtomicU32 = AtomicU32::new(0);
 /// been chain death).
 #[unsafe(no_mangle)]
 static CHAIN_KICKS: AtomicU32 = AtomicU32::new(0);
+/// Upward slew steps paused by the vbat soft floor (transit-surge
+/// throttle governor engagements).
+#[unsafe(no_mangle)]
+static SAG_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Chain-kick two-pass confirmation latch (false-fire fix).
+static KICK_PEND: AtomicBool = AtomicBool::new(false);
 /// Last 16 ACCEPTED key bytes, ring; readback via probe after a run.
 #[unsafe(no_mangle)]
 static KEY_LOG: [AtomicU8; 16] = [const { AtomicU8::new(0) }; 16];
@@ -3398,16 +3404,26 @@ fn TIM7() {
     // transients at speed pulled 85 ms current surges past even
     // 3.8× the healthy envelope. Kills (`w`, guards) bypass this
     // entirely via MOTOR_ENABLED/all_off.
-    if tick.is_multiple_of(minz_core::throttle::STEP_TICKS) {
+    // Duty-scaled cadence: high-duty transits carry ω³ accel power;
+    // 1 %/50 ms there folded the bus (host-tested step_ticks_for).
+    if tick.is_multiple_of(minz_core::throttle::step_ticks_for(
+        AMPLITUDE_PCT.load(Ordering::Relaxed),
+    )) {
         // Host-tested: minz_core::throttle (incl. the snap-on-arm
-        // regression that cost 4/4 engages).
-        AMPLITUDE_PCT.store(
-            minz_core::throttle::step(
-                AMPLITUDE_PCT.load(Ordering::Relaxed),
-                AMP_TARGET_PCT.load(Ordering::Relaxed),
-            ),
-            Ordering::Relaxed,
+        // regression that cost 4/4 engages). Sag-aware since the
+        // 10%-step transit-surge kills: upward slew pauses while the
+        // bus is under the ~7.3 V soft floor, so a sustained climb
+        // can never drag the PSU into the sag-kill zone.
+        let prev = AMPLITUDE_PCT.load(Ordering::Relaxed);
+        let next = minz_core::throttle::step_sag_aware(
+            prev,
+            AMP_TARGET_PCT.load(Ordering::Relaxed),
+            VBAT_RAW_LIVE.load(Ordering::Relaxed),
         );
+        if next == prev && prev < AMP_TARGET_PCT.load(Ordering::Relaxed) {
+            SAG_HOLD_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        AMPLITUDE_PCT.store(next, Ordering::Relaxed);
     }
 
     // R4: throttle-stability run (ticks at 6 kHz). The carrier only
@@ -4640,17 +4656,29 @@ fn TIM1_UP_TIM16() {
             // commutation is >1.5 intervals overdue, software-pend
             // the commutation ISR — it commutates and re-arms the
             // next shot, one late window instead of a dead chain.
-            // Margin: max(iv/2, 60 µs) rides out refine jitter and
-            // the 10 µs tick quantization at 77 µs top-end intervals.
+            // Margin (2026-07-19 top-end false-fire fix): the first
+            // cut's iv + max(iv/2, 60) sat INSIDE the legitimate
+            // staleness stack at 83 µs intervals (10 µs tick
+            // quantization + 41.6 µs ISR cadence + jitter ≈ 134 µs)
+            // — 600-2,400 false kicks/run injected premature
+            // commutations that WERE a top-end surge source. Now:
+            // 2× interval (floor +80 µs) AND two consecutive
+            // over-threshold passes 41.6 µs apart — a stale read
+            // heals on the re-check, a dead chain keeps growing.
             let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
-            if iv != 0 && iv < 5_000 && since > iv + (iv / 2).max(60) {
-                CHAIN_KICKS.fetch_add(1, Ordering::Relaxed);
-                bb_record(
-                    minz_core::blackbox::EV_KCK,
-                    CURRENT_SECTOR.load(Ordering::Relaxed),
-                    since.min(0xFFFF as u32) as u16,
-                );
-                cortex_m::peripheral::NVIC::pend(Interrupt::LPTIM2);
+            if iv != 0 && iv < 5_000 && since > iv + iv.max(80) {
+                if KICK_PEND.swap(true, Ordering::Relaxed) {
+                    KICK_PEND.store(false, Ordering::Relaxed);
+                    CHAIN_KICKS.fetch_add(1, Ordering::Relaxed);
+                    bb_record(
+                        minz_core::blackbox::EV_KCK,
+                        CURRENT_SECTOR.load(Ordering::Relaxed),
+                        since.min(0xFFFF as u32) as u16,
+                    );
+                    cortex_m::peripheral::NVIC::pend(Interrupt::LPTIM2);
+                }
+            } else {
+                KICK_PEND.store(false, Ordering::Relaxed);
             }
         }
     }
@@ -4993,6 +5021,45 @@ fn TIM1_UP_TIM16() {
     // commutation that opened the window). One load + rare store.
     if CL_ACTIVE.load(Ordering::Relaxed) && WINDOW_OPEN_LEVEL.load(Ordering::Relaxed) == 0 {
         WINDOW_OPEN_LEVEL.store(1 + value, Ordering::Relaxed);
+    }
+    // PRE-CROSSED GATE-OPEN ACCEPT (2026-07-19 transit-surge fix):
+    // under acceleration the ZC predates the gate, no edge ever
+    // fires, and the loop goes NOZ-blind while duty climbs into a
+    // 6.2 V bus fold (all four 10%-ladder runs). When the window
+    // OPENED already-crossed and the level still holds at gate-open,
+    // accept a synthesized qZC at the gate — a late bound on the
+    // true ZC, estimator fed, so the estimate tracks the
+    // acceleration the way AM32's level-based acceptance does.
+    // Decision logic + safety scoping host-tested in core::zc.
+    if CL_ACTIVE.load(Ordering::Relaxed)
+        && CL_FAST_PATH.load(Ordering::Relaxed)
+        && CL_AM32_GEOM.load(Ordering::Relaxed)
+    {
+        let sector = CURRENT_SECTOR.load(Ordering::Relaxed);
+        if let Some(zc_us) = minz_core::zc::precross_accept_due(
+            WINDOW_OPEN_LEVEL.load(Ordering::Relaxed),
+            value != 0,
+            sector,
+            WINDOW_QZC_US.load(Ordering::Relaxed),
+            CAND_ZC_US.load(Ordering::Relaxed),
+            SECTOR_START_US.load(Ordering::Relaxed),
+            SECTOR_GATE_US.load(Ordering::Relaxed),
+            ticks_1us(),
+            OWL_INTERVAL_US.load(Ordering::Relaxed),
+        ) {
+            let gen_snap = WINDOW_GEN.load(Ordering::Relaxed);
+            free(|_| {
+                if minz_core::zc::accept_gen_current(&ZC_STATE, gen_snap) {
+                    accept_qualified_zc(zc_us);
+                }
+            });
+            RESCUE_COUNT.fetch_add(1, Ordering::Relaxed);
+            bb_record(
+                minz_core::blackbox::EV_RSC,
+                sector,
+                SECTOR_GATE_US.load(Ordering::Relaxed).min(0xFFFF) as u16,
+            );
+        }
     }
     // Evaluated EVERY wrap (rescue3 bug: nesting it in the first-
     // wrap-only sampler meant one check at ~40 us, where the wait

@@ -13,6 +13,23 @@
 /// Drive ticks (6 kHz) per 1 % step → 50 ms per percent.
 pub const STEP_TICKS: u32 = 300;
 
+/// Duty-scaled slew cadence (2026-07-19 top-transit fold): a 10 %
+/// target step at amp ~85+ (2,000 Hz, prop ω³ load) at the flat
+/// 1 %/50 ms slew drags the bus to 6.9 V — deeper than AM32 at 100 %
+/// throttle — and sag-kills. Acceleration power scales with speed,
+/// so the slew slows where the transit power lives: 1 %/50 ms below
+/// 70 % duty (the proven cadence), 1 %/100 ms to 85 %, 1 %/150 ms
+/// above. A full-range 20→100 % sweep only gains ~3 s.
+pub fn step_ticks_for(applied: u8) -> u32 {
+    if applied >= 85 {
+        STEP_TICKS * 3
+    } else if applied >= 70 {
+        STEP_TICKS * 2
+    } else {
+        STEP_TICKS
+    }
+}
+
 /// One slew step: move `applied` one percent toward `target`.
 /// (Pure form for firmware call sites that keep their state in
 /// atomics; [`Slew`] wraps the same logic for host tests.)
@@ -23,6 +40,26 @@ pub fn step(applied: u8, target: u8) -> u8 {
         applied - 1
     } else {
         applied
+    }
+}
+
+/// SAG-AWARE slew hold (2026-07-19 transit-surge defect): a sustained
+/// upward slew at speed (the 10 %-step ladder = 500 ms of continuous
+/// +1 %/50 ms) drags a lagging-BEMF surge current the whole transit
+/// and collapsed the bench PSU to 6.2 V from a HEALTHY 1,200 Hz lock
+/// — four out of four runs, all with clean accepts right up to the
+/// sag kill (the supply is never the wall; the loop-created surge
+/// is). AM32 rides the same PSU to 4.15 A because its throttle
+/// respects the electrical state. Rule: while the bus reads below the
+/// soft floor, upward slewing PAUSES (holds, never cuts — downward
+/// slew always proceeds). The hard sag kill stays at −15 %/6.9 V; the
+/// soft floor sits above it so the hold engages before the kill can.
+pub const SAG_HOLD_FLOOR_RAW: u16 = 973; // ≈7.30 V on the 7507 µV/count scale
+pub fn step_sag_aware(applied: u8, target: u8, vbat_raw: u16) -> u8 {
+    if applied < target && vbat_raw < SAG_HOLD_FLOOR_RAW {
+        applied // hold: don't deepen the surge
+    } else {
+        step(applied, target)
     }
 }
 
@@ -110,6 +147,26 @@ mod tests {
         s.snap(15);
         assert_eq!(s.applied, 15);
         assert_eq!(s.target, 15);
+    }
+
+    #[test]
+    fn duty_scaled_cadence_slows_at_the_top() {
+        assert_eq!(step_ticks_for(15), STEP_TICKS);
+        assert_eq!(step_ticks_for(69), STEP_TICKS);
+        assert_eq!(step_ticks_for(70), STEP_TICKS * 2);
+        assert_eq!(step_ticks_for(84), STEP_TICKS * 2);
+        assert_eq!(step_ticks_for(85), STEP_TICKS * 3);
+        assert_eq!(step_ticks_for(96), STEP_TICKS * 3);
+    }
+
+    #[test]
+    fn sag_hold_pauses_up_allows_down() {
+        // Below the soft floor: upward slew holds...
+        assert_eq!(step_sag_aware(50, 60, SAG_HOLD_FLOOR_RAW - 1), 50);
+        // ...downward slew still proceeds (never trap duty high)...
+        assert_eq!(step_sag_aware(50, 40, SAG_HOLD_FLOOR_RAW - 1), 49);
+        // ...and a healthy bus slews up normally.
+        assert_eq!(step_sag_aware(50, 60, SAG_HOLD_FLOOR_RAW + 10), 51);
     }
 
     #[test]
