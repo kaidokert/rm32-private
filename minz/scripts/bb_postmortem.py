@@ -36,10 +36,12 @@ def sym_addrs(elf):
         check=True).stdout
     want = {}
     for name in ["BB_T", "BB_TYPE", "BB_SEC", "BB_DATA", "BB_IDX"]:
-        m = re.search(rf"^([0-9a-f]+) [bBdD] .*{name}", out, re.M)
+        # Rust-mangled statics end <name>17h<hash>E[.0]; the old bare
+        # prefix match confused BB_T with BB_TYPE (odd-address read).
+        m = re.search(rf"^([0-9a-f]+) [bBdD] .*{name}17h[0-9a-f]+E(\.0)?$",
+                      out, re.M)
         if not m:
-            # mangled statics: match the demangle-free hashed form
-            m = re.search(rf"^([0-9a-f]+) [bBdD] .*{name}\b", out, re.M)
+            m = re.search(rf"^([0-9a-f]+) [bBdD] .*{name}$", out, re.M)
         if not m:
             raise SystemExit(f"symbol {name} not found in {elf}")
         want[name] = int(m.group(1), 16)

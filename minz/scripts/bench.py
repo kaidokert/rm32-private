@@ -81,9 +81,19 @@ class Bench:
 
 def nm_addr(sym):
     out = sh("arm-none-eabi-nm", ELF)
+    exact = None
+    mangled = None
     for ln in out.splitlines():
-        if ln.strip().endswith(sym):
-            return int(ln.split()[0], 16)
+        s = ln.strip()
+        if s.endswith(sym):
+            exact = int(ln.split()[0], 16)
+        elif sym + "17h" in s:
+            # rust-mangled statics carry a 17h<hash> suffix
+            mangled = int(ln.split()[0], 16)
+    if exact is not None:
+        return exact
+    if mangled is not None:
+        return mangled
     raise SystemExit(f"symbol {sym} not found")
 
 
@@ -111,10 +121,15 @@ def cmd_ladder(a):
         if not att:
             print("NO ENGAGE")
             return
-        print(f"engaged attempt {att}: {fe} Hz; arming ladder")
-        if not b.press_until("L", "auto-ladder = on"):
-            print("ladder arm not confirmed (echo loss) - proceeding")
-        wait = 0.55 * (a.top - 10) + a.hold
+        print(f"engaged attempt {att}: {fe} Hz; arming ladder step={a.step}")
+        want = "auto-ladder step = 1"
+        if not b.press_until("L", want):
+            print("1%-arm not confirmed (echo loss) - proceeding")
+        if a.step >= 10:
+            if not b.press_until("L", "auto-ladder step = 10"):
+                print("10%-arm not confirmed - may be at 1%")
+        per_rung = 1.6 if a.step >= 10 else 0.55
+        wait = per_rung * (a.top - 10) / a.step + a.hold
         print(f"climb + hold ~{wait:.0f}s, hands off the wire...")
         time.sleep(wait)
     finally:
@@ -123,21 +138,40 @@ def cmd_ladder(a):
     cmd_readback(a)
 
 
-def cmd_readback(_):
+def read_ladder_log():
     base = nm_addr("LADDER_LOG")
-    w = probe_words(base, 288)
-    top = 0
+    w = probe_words(base, 384)
     rows = []
     for amp in range(10, 96):
-        iv, ir, cc = w[amp * 3], w[amp * 3 + 1], w[amp * 3 + 2]
+        iv, ir, cc, vb = (w[amp * 4], w[amp * 4 + 1],
+                          w[amp * 4 + 2], w[amp * 4 + 3])
         if iv or cc:
-            top = amp
-            rows.append((amp, iv, ir, cc))
+            rows.append((amp, iv, ir, cc, vb))
+    return rows
+
+
+def save_ladder_csv(rows, tag):
+    import pathlib
+    path = pathlib.Path("captures") / f"ladder_{tag}.csv"
+    with open(path, "w") as f:
+        f.write("amp,interval_us,f_e_hz,isns_raw,comms,vbat_raw\n")
+        for amp, iv, ir, cc, vb in rows:
+            hz = 1e6 / (6 * iv) if iv else 0
+            f.write(f"{amp},{iv},{hz:.0f},{ir},{cc},{vb}\n")
+    print(f"-> {path}")
+
+
+def cmd_readback(a):
+    rows = read_ladder_log()
+    top = rows[-1][0] if rows else 0
     print(f"=== TOP RUNG {top} ===")
-    print("amp | f_e Hz | isns_raw | comms")
-    for amp, iv, ir, cc in rows:
+    print("amp | f_e Hz | isns_raw | vbat_raw | comms")
+    for amp, iv, ir, cc, vb in rows:
         if amp % 5 == 0 or amp >= top - 3:
-            print(f"{amp:3d} | {1e6/(6*iv) if iv else 0:6.0f} | {ir:4d} | {cc}")
+            print(f"{amp:3d} | {1e6/(6*iv) if iv else 0:6.0f} | {ir:4d} | "
+                  f"{vb:4d} | {cc}")
+    tag = getattr(a, "tag", None) or f"step{getattr(a, 'step', 1)}"
+    save_ladder_csv(rows, tag)
 
 
 def cmd_postmortem(_):
@@ -241,7 +275,11 @@ def main():
     p = sub.add_parser("ladder")
     p.add_argument("--top", type=int, default=90)
     p.add_argument("--hold", type=float, default=30.0)
-    sub.add_parser("readback")
+    p.add_argument("--step", type=int, default=1, choices=(1, 2, 10))
+    p.add_argument("--tag", default=None)
+    p = sub.add_parser("readback")
+    p.add_argument("--tag", default=None)
+    p.add_argument("--step", type=int, default=1)
     sub.add_parser("postmortem")
     sub.add_parser("flash-minz")
     p = sub.add_parser("flash-am32")

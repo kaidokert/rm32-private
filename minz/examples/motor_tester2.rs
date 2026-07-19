@@ -718,10 +718,13 @@ static LAST_I_ECHO_T10: AtomicU32 = AtomicU32::new(0);
 /// impossible exactly where the goal lives. The firmware self-steps
 /// amp +1 per 500 ms to LADDER_TOP and records per-rung telemetry
 /// (interval, isns raw, comms) into RAM for post-run probe readback.
-static AUTO_LADDER: AtomicBool = AtomicBool::new(false);
+/// 0 = off, 1 = 1%-step ladder, 10 = 10%-step ladder ('L' cycles).
+static LADDER_STEP: AtomicU8 = AtomicU8::new(0);
+/// One-shot bb freeze on the first reseed (pulsing deep-dive).
+static RESEED_BB_TAKEN: AtomicBool = AtomicBool::new(false);
 static LADDER_LAST_T10: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
-static LADDER_LOG: [AtomicU32; 288] = [CEN_ZERO; 288];
+static LADDER_LOG: [AtomicU32; 384] = [CEN_ZERO; 384];
 const LADDER_TOP: u16 = 90;
 /// ZT pair-preserving decimation counter: at speed the full stream
 /// (>=315 kB/s at 2.5 kHz elec) drowns the 200 kB/s wire, eating the
@@ -1069,6 +1072,17 @@ fn apply_carrier(new_arr: u16) {
 /// overcurrent - a surge with accepts still flowing is commutation
 /// misalignment, which re-timing fixes and killing does not).
 fn trigger_reseed(detail: u16) {
+    // FREEZE-ON-FIRST-RESEED (pulsing deep-dive): the reseed cycles
+    // ARE the audible pulsing (RESEED_COUNT=8 on the amp-90 ladder);
+    // the frozen bb holds the exact window sequence into the first
+    // qZC dropout for post-run RAM readback. Re-armed per ladder arm.
+    if OWL_INTERVAL_US.load(Ordering::Relaxed) < 150
+        && !RESEED_BB_TAKEN.swap(true, Ordering::Relaxed)
+    {
+        // first HIGH-SPEED reseed only - engage-phase reseeds (320 Hz)
+        // froze the ring before the pulsing regime was reached
+        BB_FROZEN.store(true, Ordering::Relaxed);
+    }
     RESEED_ACTIVE.store(true, Ordering::Relaxed);
     RESEED_ACCEPTS.store(0, Ordering::Relaxed);
     RESEED_STRIKES.fetch_add(1, Ordering::Relaxed);
@@ -1974,31 +1988,41 @@ fn main() -> ! {
                 }
             }
             BEACON_PHASE.store(1, Ordering::Relaxed);
-            // Autonomous ladder step (see AUTO_LADDER).
-            if AUTO_LADDER.load(Ordering::Relaxed)
+            // Autonomous ladder step (see LADDER_STEP): step size 1 or
+            // 10 (%), 4-column per-rung log (interval / isns / comms /
+            // vbat) for the 1:1:1:1 throttle:rpm:amps:sag map.
+            let lstep = LADDER_STEP.load(Ordering::Relaxed);
+            if lstep > 0
                 && CL_ACTIVE.load(Ordering::Relaxed)
                 && MOTOR_ENABLED.load(Ordering::Relaxed)
             {
                 let nk = ticks_10us();
                 let lt = LADDER_LAST_T10.load(Ordering::Relaxed);
-                if nk.wrapping_sub(lt) >= 50_000 {
+                // 10%-steps get a longer settle (the transient is 10x)
+                let dwell: u32 = if lstep >= 10 { 150_000 } else { 50_000 };
+                if nk.wrapping_sub(lt) >= dwell {
                     LADDER_LAST_T10.store(nk, Ordering::Relaxed);
                     if amplitude_pct < LADDER_TOP {
-                        amplitude_pct = clamp_amp(amplitude_pct as i32 + 1);
+                        amplitude_pct =
+                            clamp_amp(amplitude_pct as i32 + lstep as i32).min(LADDER_TOP);
                         AMPLITUDE_PCT.store(amplitude_pct as u8, Ordering::Relaxed);
                     }
                     let a = amplitude_pct as usize;
                     if a < 96 {
-                        LADDER_LOG[a * 3]
+                        LADDER_LOG[a * 4]
                             .store(OWL_INTERVAL_US.load(Ordering::Relaxed), Ordering::Relaxed);
-                        LADDER_LOG[a * 3 + 1]
+                        LADDER_LOG[a * 4 + 1]
                             .store(LAST_I_RAW.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
-                        LADDER_LOG[a * 3 + 2]
+                        LADDER_LOG[a * 4 + 2]
                             .store(CL_COMM_COUNT.load(Ordering::Relaxed), Ordering::Relaxed);
+                        LADDER_LOG[a * 4 + 3].store(
+                            VBAT_RAW_LIVE.load(Ordering::Relaxed) as u32,
+                            Ordering::Relaxed,
+                        );
                     }
                 }
-            } else if AUTO_LADDER.load(Ordering::Relaxed) && !CL_ACTIVE.load(Ordering::Relaxed) {
-                AUTO_LADDER.store(false, Ordering::Relaxed);
+            } else if lstep > 0 && !CL_ACTIVE.load(Ordering::Relaxed) {
+                LADDER_STEP.store(0, Ordering::Relaxed);
             }
 
             // Monotonic check (main-loop rate tripwire).
@@ -2533,24 +2557,24 @@ fn main() -> ! {
                         .ok();
                     }
                     b'L' => {
-                        let on = !AUTO_LADDER.load(Ordering::Relaxed);
-                        if on {
+                        // cycle off -> 1% -> 10% -> off
+                        let next = match LADDER_STEP.load(Ordering::Relaxed) {
+                            0 => 1u8,
+                            1 => 10,
+                            _ => 0,
+                        };
+                        if next > 0 {
                             // fresh log per arm - stale RAM masqueraded
                             // as a confirmation run once
                             for w in LADDER_LOG.iter() {
                                 w.store(0, Ordering::Relaxed);
                             }
+                            RESEED_BB_TAKEN.store(false, Ordering::Relaxed);
+                            BB_FROZEN.store(false, Ordering::Relaxed);
                         }
-                        AUTO_LADDER.store(on, Ordering::Relaxed);
+                        LADDER_STEP.store(next, Ordering::Relaxed);
                         LADDER_LAST_T10.store(ticks_10us(), Ordering::Relaxed);
-                        write!(
-                            &mut tx_writer,
-                            "auto-ladder = {}
-
-",
-                            if on { "on" } else { "off" },
-                        )
-                        .ok();
+                        write!(&mut tx_writer, "auto-ladder step = {}\r\n", next).ok();
                     }
                     b'Y' => {
                         if R6_START.load(Ordering::Relaxed) {
