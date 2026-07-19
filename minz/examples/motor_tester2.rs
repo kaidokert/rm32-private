@@ -1428,6 +1428,117 @@ const fn float_sector_mask(phase: comp2::ObservedPhase) -> u8 {
 /// Main owns the consumer half and drains it in the key-dispatch pass.
 static RX_PROD: Mutex<RefCell<Option<Producer<'static, u8>>>> = Mutex::new(RefCell::new(None));
 
+/// `l`-key dump body, extracted from main. #[inline(never)] is
+/// LOAD-BEARING: as a match arm its 2 KiB snapshot buffer merged
+/// into main's PROLOGUE frame (the documented match-arm-locals
+/// class) — combined with the `e` dump's 4 KiB the frame hit
+/// 4832 bytes, leaving 848 bytes of headroom above __euninit for
+/// all nested ISR frames. The overflow trampled .uninit.beacon
+/// (invalid magic at the IWDG-reboot boots = the proof) and the
+/// .bss tail — today's "afternoon robustness collapse". Out-of-line,
+/// the frame exists only while a dump actually runs.
+#[inline(never)]
+fn dump_pwm_samples(tx_writer: &mut UartTxWriter, observed_phase: comp2::ObservedPhase) {
+    let (float_s0, float_s1) = minz_core::drive::float_sectors(observed_phase as u8);
+    let mut snap = [0u8; PWM_SAMPLE_LEN];
+    NVIC::mask(Interrupt::TIM1_UP_TIM16);
+    let head = (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
+    for i in 0..PWM_SAMPLE_LEN {
+        snap[i] = PWM_SAMPLE_BUF[i].load(Ordering::Relaxed);
+    }
+    unsafe { NVIC::unmask(Interrupt::TIM1_UP_TIM16) };
+    // Rev alignment + chunk/ZC-marker rendering are host-tested in
+    // minz_core::dump.
+    match minz_core::dump::pwm_rev_span(&snap, head) {
+        Ok((r_start, length)) => {
+            write!(
+                tx_writer,
+                "pwm_samples last 2 revs aligned to sec 0 \
+                 ({} samples, hyst={}, obs={}, advance={}deg, blank={}us):\r\n",
+                length,
+                HYST_LEVEL.load(Ordering::Relaxed),
+                observed_phase.name(),
+                ADVANCE_DEG.load(Ordering::Relaxed),
+                BLANK_US.load(Ordering::Relaxed),
+            )
+            .ok();
+            minz_core::dump::pwm_sector_dump(&snap, r_start, length, float_s0, float_s1, |b| {
+                tx_writer.write_blocking(b)
+            });
+        }
+        Err(found) => {
+            write!(
+                tx_writer,
+                "pwm_samples last 2 revs: only {} rev starts in buffer (need 3)\r\n",
+                found,
+            )
+            .ok();
+        }
+    }
+}
+
+/// `e`/`E`-key edge-buffer dump body, extracted from main — same
+/// stack-frame rationale as [`dump_pwm_samples`] (this one owned the
+/// 4 KiB half-buffer snapshot).
+#[inline(never)]
+fn dump_edge_buffer(tx_writer: &mut UartTxWriter, electrical_hz: u32) {
+    let mut snap = [0u8; HALF_TICKS];
+    let mut sec_starts = [0u32; 12];
+    let mut sec_counts = [0u32; 12];
+    NVIC::mask(Interrupt::TIM7);
+    NVIC::mask(Interrupt::COMP);
+    let frozen = ((ACTIVE_HALF.load(Ordering::Relaxed) ^ 1) & 1) as usize;
+    for i in 0..HALF_TICKS {
+        snap[i] = EDGE_BUF[frozen][i].load(Ordering::Relaxed);
+    }
+    for i in 0..12 {
+        sec_starts[i] = SECTOR_BOUNDARIES[frozen][i].load(Ordering::Relaxed);
+        sec_counts[i] = SECTOR_EDGE_COUNT[frozen][i].load(Ordering::Relaxed);
+    }
+    let window_end_tick = HALF_START_TICK.load(Ordering::Relaxed);
+    unsafe { NVIC::unmask(Interrupt::COMP) };
+    unsafe { NVIC::unmask(Interrupt::TIM7) };
+    let buf = &snap;
+    let is_frozen = EDGE_DUMP_FREEZE.load(Ordering::Relaxed);
+
+    let edge_name = minz_core::ui::edge_mode_short(EDGE_MODE.load(Ordering::Relaxed));
+
+    // Validity + header math host-tested in
+    // minz_core::dump::edge_dump_status.
+    match minz_core::dump::edge_dump_status(&sec_starts, window_end_tick, electrical_hz) {
+        minz_core::dump::EdgeDumpStatus::Invalid => {
+            write!(
+                tx_writer,
+                "edges last 2 revs: no complete rev-pair captured yet \
+                 (let motor spin a few revs after arm/re-arm)\r\n",
+            )
+            .ok();
+        }
+        minz_core::dump::EdgeDumpStatus::MotorOff => {
+            write!(tx_writer, "edges last 2 revs: motor off (f=0)\r\n",).ok();
+        }
+        minz_core::dump::EdgeDumpStatus::Ok { window_us } => {
+            write!(
+                tx_writer,
+                "edges last 2 revs aligned to sec 0 \
+             (window={}us, hyst={}, edges={}, advance={}deg, blank={}us{}):\r\n",
+                window_us,
+                HYST_LEVEL.load(Ordering::Relaxed),
+                edge_name,
+                ADVANCE_DEG.load(Ordering::Relaxed),
+                BLANK_US.load(Ordering::Relaxed),
+                if is_frozen { ", FROZEN" } else { "" },
+            )
+            .ok();
+            // Sector chunking + glyph rendering are host-tested in
+            // minz_core::dump.
+            minz_core::dump::edge_dump_body(buf, &sec_starts, &sec_counts, window_end_tick, |b| {
+                tx_writer.write_blocking(b)
+            });
+        }
+    }
+}
+
 // DMA-backed UART TX ring (DMA1_CH4 → USART1_TX): minz::uart_tx.
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
@@ -2291,7 +2402,10 @@ fn main() -> ! {
                 // the doubled-key guard (observed: ~11 accepted junk
                 // keys during the amp-96 hold walked the throttle down
                 // to 324 Hz — silent sabotage). Only 'w' passes.
-                if LADDER_STEP.load(Ordering::Relaxed) != 0 && b != b'w' {
+                // 'L' stays live so the host can upgrade 1% -> 10%
+                // step mode (it is doubled-key-guarded; a junk L only
+                // changes step mode, visibly).
+                if LADDER_STEP.load(Ordering::Relaxed) != 0 && b != b'w' && b != b'L' {
                     KEY_REJECT_COUNT.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
@@ -2525,49 +2639,7 @@ fn main() -> ! {
                         // snapshot. TIM1 PWM and TIM7 commutation run
                         // on their own — the snapshot is the only
                         // thing that needs a consistent view.
-                        let (float_s0, float_s1) =
-                            minz_core::drive::float_sectors(observed_phase as u8);
-                        let mut snap = [0u8; PWM_SAMPLE_LEN];
-                        NVIC::mask(Interrupt::TIM1_UP_TIM16);
-                        let head =
-                            (PWM_SAMPLE_IDX.load(Ordering::Relaxed) & PWM_SAMPLE_MASK) as usize;
-                        for i in 0..PWM_SAMPLE_LEN {
-                            snap[i] = PWM_SAMPLE_BUF[i].load(Ordering::Relaxed);
-                        }
-                        unsafe { NVIC::unmask(Interrupt::TIM1_UP_TIM16) };
-                        // Rev alignment + chunk/ZC-marker rendering are
-                        // host-tested in minz_core::dump.
-                        match minz_core::dump::pwm_rev_span(&snap, head) {
-                            Ok((r_start, length)) => {
-                                write!(
-                                    &mut tx_writer,
-                                    "pwm_samples last 2 revs aligned to sec 0 \
-                                     ({} samples, hyst={}, obs={}, advance={}deg, blank={}us):\r\n",
-                                    length,
-                                    HYST_LEVEL.load(Ordering::Relaxed),
-                                    observed_phase.name(),
-                                    ADVANCE_DEG.load(Ordering::Relaxed),
-                                    BLANK_US.load(Ordering::Relaxed),
-                                )
-                                .ok();
-                                minz_core::dump::pwm_sector_dump(
-                                    &snap,
-                                    r_start,
-                                    length,
-                                    float_s0,
-                                    float_s1,
-                                    |b| tx_writer.write_blocking(b),
-                                );
-                            }
-                            Err(found) => {
-                                write!(
-                                    &mut tx_writer,
-                                    "pwm_samples last 2 revs: only {} rev starts in buffer (need 3)\r\n",
-                                    found,
-                                )
-                                .ok();
-                            }
-                        }
+                        dump_pwm_samples(&mut tx_writer, observed_phase);
                     }
                     // FALCON engage/kill: engaging waits for the next
                     // qualified ZC with an interval estimate behind it;
@@ -3144,70 +3216,7 @@ fn main() -> ! {
                 // Snapshot the frozen half under a brief TIM7+COMP mask
                 // then format to UART with motor still running.
                 if do_edge_dump {
-                    let mut snap = [0u8; HALF_TICKS];
-                    let mut sec_starts = [0u32; 12];
-                    let mut sec_counts = [0u32; 12];
-                    NVIC::mask(Interrupt::TIM7);
-                    NVIC::mask(Interrupt::COMP);
-                    let frozen = ((ACTIVE_HALF.load(Ordering::Relaxed) ^ 1) & 1) as usize;
-                    for i in 0..HALF_TICKS {
-                        snap[i] = EDGE_BUF[frozen][i].load(Ordering::Relaxed);
-                    }
-                    for i in 0..12 {
-                        sec_starts[i] = SECTOR_BOUNDARIES[frozen][i].load(Ordering::Relaxed);
-                        sec_counts[i] = SECTOR_EDGE_COUNT[frozen][i].load(Ordering::Relaxed);
-                    }
-                    let window_end_tick = HALF_START_TICK.load(Ordering::Relaxed);
-                    unsafe { NVIC::unmask(Interrupt::COMP) };
-                    unsafe { NVIC::unmask(Interrupt::TIM7) };
-                    let buf = &snap;
-                    let is_frozen = EDGE_DUMP_FREEZE.load(Ordering::Relaxed);
-
-                    let edge_name =
-                        minz_core::ui::edge_mode_short(EDGE_MODE.load(Ordering::Relaxed));
-
-                    // Validity + header math host-tested in
-                    // minz_core::dump::edge_dump_status.
-                    match minz_core::dump::edge_dump_status(
-                        &sec_starts,
-                        window_end_tick,
-                        electrical_hz,
-                    ) {
-                        minz_core::dump::EdgeDumpStatus::Invalid => {
-                            write!(
-                                &mut tx_writer,
-                                "edges last 2 revs: no complete rev-pair captured yet \
-                                 (let motor spin a few revs after arm/re-arm)\r\n",
-                            )
-                            .ok();
-                        }
-                        minz_core::dump::EdgeDumpStatus::MotorOff => {
-                            write!(&mut tx_writer, "edges last 2 revs: motor off (f=0)\r\n",).ok();
-                        }
-                        minz_core::dump::EdgeDumpStatus::Ok { window_us } => {
-                            write!(
-                                &mut tx_writer,
-                                "edges last 2 revs aligned to sec 0 \
-                             (window={}us, hyst={}, edges={}, advance={}deg, blank={}us{}):\r\n",
-                                window_us,
-                                HYST_LEVEL.load(Ordering::Relaxed),
-                                edge_name,
-                                ADVANCE_DEG.load(Ordering::Relaxed),
-                                BLANK_US.load(Ordering::Relaxed),
-                                if is_frozen { ", FROZEN" } else { "" },
-                            )
-                            .ok();
-                            // Sector chunking + glyph rendering are
-                            // host-tested in minz_core::dump.
-                            minz_core::dump::edge_dump_body(
-                                buf,
-                                &sec_starts,
-                                &sec_counts,
-                                window_end_tick,
-                                |b| tx_writer.write_blocking(b),
-                            );
-                        }
-                    }
+                    dump_edge_buffer(&mut tx_writer, electrical_hz);
                 }
                 // Publish any changes to the motor-drive atomics and
                 // print a one-line confirmation. The TIM7 ISR picks
