@@ -24,12 +24,14 @@ sys.path.insert(0, "scripts")
 import magpie
 
 QLINE = re.compile(
-    rb"q (\d+) (\d+) (\d+) (\d+) (\d+) (-?\d+) (-?\d+) (-?\d+)")
+    rb"q (\d+) (\d+) (\d+) (\d+) (\d+) (-?\d+) (-?\d+) (-?\d+)"
+    rb"(?: (\d+) (\d+))?")
 
 
 def parse(paths):
     buf = b"".join(open(p, "rb").read() for p in paths)
-    q = [tuple(int(g) for g in m.groups()) for m in QLINE.finditer(buf)]
+    q = [tuple(int(g) if g is not None else 0 for g in m.groups())
+         for m in QLINE.finditer(buf)]
     frames = magpie.parse_frames(buf)
     return q, frames
 

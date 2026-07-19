@@ -65,13 +65,36 @@ class Bench:
         self.key("w", 0.5)
         self.key("w", 0.3)
 
+    def cl_active_now(self):
+        """Robust engage check: the newest q-line's flags field
+        (bit0 = CL_ACTIVE). Immune to the RX echo loss that made the
+        'i'-echo check kill healthy locks (the fake half of the
+        engage lottery, 2026-07-19)."""
+        buf = self.key("", 0.3)
+        hits = re.findall(
+            r"q \d+ \d+ \d+ (\d+) \d+ -?\d+ -?\d+ -?\d+ \d+ (\d+)",
+            buf)
+        if not hits:
+            return None
+        iv, flags = hits[-1]
+        if int(flags) & 1 and int(iv):
+            return 1_000_000 // (6 * int(iv))
+        return 0
+
     def engage(self, attempts=10):
         self.kill()
         self.press_until("D", "AM32")
         self.press_until("M", "SWIFT")
+        self.press_until("Q", "qlog=on", tries=6)
         for att in range(attempts):
-            self.key("Y", 5.0)
-            m = re.search(r"cl: ACTIVE f_e=(\d+)Hz", self.key("i", 1.2))
+            self.key("Y", 4.0)
+            fe = None
+            for _ in range(4):
+                fe = self.cl_active_now()
+                if fe:
+                    return att + 1, fe
+            # fallback: the old echo check (q-lines may be off)
+            m = re.search(r"cl: ACTIVE f_e=(\d+)Hz", self.key("i", 1.0))
             if m:
                 return att + 1, int(m.group(1))
             self.key("w", 0.5)
@@ -496,6 +519,94 @@ def cmd_ztstats(a):
               f"p10={v[len(v)//10]:.0f} p90={v[9*len(v)//10]:.0f}")
 
 
+def cmd_engage_probe(a):
+    # N instrumented engage attempts: stream + qlog on BEFORE the
+    # first Y, per-attempt capture slices + marker classification.
+    b = Bench()
+    slices = []
+    try:
+        b.kill()
+        b.press_until("D", "AM32")
+        b.press_until("M", "SWIFT")
+        b.press_until("g", "stream=on", tries=6)
+        b.press_until("Q", "qlog=on", tries=6)
+        for att in range(a.attempts):
+            mark = len(b.cap)
+            b.key("Y", 4.0)
+            ok = False
+            for _ in range(4):
+                if b.cl_active_now():
+                    ok = True
+                    break
+            slices.append((mark, len(b.cap), ok))
+            if ok:
+                print(f"attempt {att}: ENGAGED")
+                b.kill()
+                time.sleep(2.0)
+            else:
+                print(f"attempt {att}: FAILED")
+                b.kill()
+                time.sleep(2.5)
+    finally:
+        b.kill()
+        b.close()
+    import pathlib
+    base = pathlib.Path("captures")
+    markers = [b"r6: START", b"CL ARMED", b"cl: ACTIVE", b"DESYNC",
+               b"ZC-STARVED", b"SAG", b"r6: ABORT", b"clocks"]
+    for k, (m0, m1, ok) in enumerate(slices):
+        sl = bytes(b.cap[m0:m1])
+        (base / f"engage_{a.tag}_a{k}.bin").write_bytes(sl)
+        seen = " ".join(m.decode() for m in markers if m in sl)
+        print(f"a{k} {'OK ' if ok else 'FAIL'} {len(sl):7d}B markers: {seen}")
+
+
+def cmd_starts(a):
+    # The 20/20 gauntlet: N times — Y-start, quick sweep to ~30%
+    # throttle, verify lock speed, kill. Verdict per iteration:
+    # first-try engage + clean sweep = CLEAN.
+    b = Bench()
+    clean = 0
+    try:
+        b.kill()
+        b.press_until("D", "AM32")
+        b.press_until("M", "SWIFT")
+        b.press_until("Q", "qlog=on", tries=6)
+        for it in range(a.n):
+            b.key("Y", 4.0)
+            fe0 = None
+            for _ in range(4):
+                fe0 = b.cl_active_now()
+                if fe0:
+                    break
+            if not fe0:
+                print(f"start {it}: NO ENGAGE")
+                b.kill()
+                time.sleep(2.0)
+                continue
+            # sweep 15 -> 30: one +10 then five echo-verified +1
+            for _ in range(5):
+                if "amp" in b.key("s", 0.4):
+                    break
+            for n in range(5):
+                for _ in range(5):
+                    if "amp" in b.key("a", 0.4):
+                        break
+            time.sleep(1.5)
+            fe1 = b.cl_active_now()
+            ok = fe1 and fe1 > 450
+            if ok:
+                clean += 1
+            print(f"start {it}: engaged {fe0}Hz -> sweep {fe1 or 0}Hz "
+                  f"{'CLEAN' if ok else 'DIRTY'}")
+            b.kill()
+            time.sleep(2.0)
+    finally:
+        b.kill()
+        b.close()
+    print(f"=== {clean}/{a.n} clean ===")
+
+
 def cmd_kill(_):
     b = Bench()
     b.kill()
@@ -543,13 +654,19 @@ def main():
     p.add_argument("--secs", type=float, default=8.0)
     p = sub.add_parser("ztstats")
     p.add_argument("file")
+    p = sub.add_parser("engage-probe")
+    p.add_argument("--attempts", type=int, default=8)
+    p.add_argument("--tag", default="ep")
+    p = sub.add_parser("starts")
+    p.add_argument("--n", type=int, default=3)
     a = ap.parse_args()
     {"engage": cmd_engage, "ladder": cmd_ladder, "readback": cmd_readback,
      "postmortem": cmd_postmortem, "flash-minz": cmd_flash_minz,
      "flash-am32": cmd_flash_am32, "sweep-am32": cmd_sweep_am32,
      "kill": cmd_kill, "peek": cmd_peek, "capdump": cmd_capdump,
      "probe-adv": cmd_probe_adv, "waxdump": cmd_waxdump,
-     "ztstats": cmd_ztstats}[a.cmd](a)
+     "ztstats": cmd_ztstats, "engage-probe": cmd_engage_probe,
+     "starts": cmd_starts}[a.cmd](a)
 
 
 if __name__ == "__main__":

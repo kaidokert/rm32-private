@@ -1100,9 +1100,15 @@ static R6_CROSS_COUNT: AtomicU32 = AtomicU32::new(0);
 static R6_BLIND_COUNT: AtomicU32 = AtomicU32::new(0);
 static R6_HANDOFF_IV_US: AtomicU32 = AtomicU32::new(0);
 /// 6 -> 10 (R6-as-the-engage): amp 6 cannot accelerate the rotor
-/// to the 240 Hz handoff point; 10 is still gentle (AM32 pins ~6-10%
-/// through its whole startup).
-const R6_START_AMP: u16 = 10;
+/// to the 240 Hz handoff point. 10 -> 15 (2026-07-19 engage-probe):
+/// at amp 10 the PWM ON window (4.16 µs) is SHORTER than the
+/// injected ADC sequence (~4.3 µs), so the phase channels read
+/// recirculation ZEROS and the ADC confirm runs on junk — odd
+/// sectors auto-pass, even sectors auto-discard = the engage
+/// lottery (waxdump proof: all-zero A/B at an amp-10 lock while
+/// vbat, a battery divider, read fine). 15 is the documented 24 kHz
+/// CL band floor and fits the sequence with margin.
+const R6_START_AMP: u16 = 15;
 /// Max ARR glide per TIM7 tick (~1 % per 166 us): the full 24->48 kHz
 /// span takes ~9 ms, always as micro-steps, never a discrete hop.
 const CARRIER_SLEW_ARR: u16 = 32;
@@ -2208,7 +2214,7 @@ fn main() -> ! {
                     );
                     write!(
                         &mut tx_writer,
-                        "q {} {} {} {} {} {} {} {}\r\n",
+                        "q {} {} {} {} {} {} {} {} {} {}\r\n",
                         nk,
                         AMP_TARGET_PCT.load(Ordering::Relaxed),
                         AMPLITUDE_PCT.load(Ordering::Relaxed),
@@ -2217,6 +2223,9 @@ fn main() -> ! {
                         adv,
                         parity_trim_for(0, iv),
                         parity_trim_for(1, iv),
+                        EST_ACC.load(Ordering::Relaxed),
+                        (CL_ARMED.load(Ordering::Relaxed) as u32) << 1
+                            | CL_ACTIVE.load(Ordering::Relaxed) as u32,
                     )
                     .ok();
                 }
@@ -2455,11 +2464,15 @@ fn main() -> ! {
             // Fire the normal `y` path from main-loop context - the
             // rotor is already turning with real BEMF, so the CL
             // arms and seeds at the next qualified ZC.
-            if R6_HANDOFF_REQ.swap(false, Ordering::Relaxed) {
-                // amp 6 is below the CL sustain floor: raise the
-                // target and let the 1 %/50 ms slew walk up while
-                // the engage seeds.
-                AMP_TARGET_PCT.store(10, Ordering::Relaxed);
+            if R6_HANDOFF_REQ.swap(false, Ordering::Relaxed)
+                // Seamless takeover: R6 keeps streaking (and
+                // re-requesting) while we're ARMED — arm only once.
+                && !CL_ARMED.load(Ordering::Relaxed)
+                && !CL_ACTIVE.load(Ordering::Relaxed)
+            {
+                // Hold the R6 amp through the engage (15: the ADC
+                // sequence must fit the ON window — see R6_START_AMP).
+                AMP_TARGET_PCT.store(R6_START_AMP as u8, Ordering::Relaxed);
                 mode_cmd(
                     minz_core::mode::Cmd::ClToggle,
                     &mut output_enabled,
@@ -2468,6 +2481,23 @@ fn main() -> ! {
                     &mut amplitude_pct,
                     &mut tx_writer,
                 );
+                // ENGAGE-SEED FIX (2026-07-19, engage-probe verdict):
+                // the arm reset zeroes the estimator and the first
+                // post-arm ZC pair seeds it — the Q-log caught a
+                // failed engage seeding at 1217 µs on a 516 µs rotor
+                // (a multi-window span, undivided) → wrong schedule →
+                // desync in 3 intervals. 4-of-8 engage failures were
+                // this class. R6 ALREADY validated a 4-crossing
+                // streak at the true interval; hand that measurement
+                // over as the seed. A later junk pair then gets
+                // REJECTED by the ±25 % rate bound instead of
+                // becoming the seed.
+                let r6iv = R6_HANDOFF_IV_US.load(Ordering::Relaxed);
+                if (100..=3_000).contains(&r6iv) {
+                    OWL_INTERVAL_US.store(r6iv, Ordering::Relaxed);
+                    EST_PREV_PERIOD.store(r6iv, Ordering::Relaxed);
+                    AVG_INTERVAL_ACC.store(r6iv * 6, Ordering::Relaxed);
+                }
             }
 
             // Active phase: drain RX queue + dispatch keys.
@@ -3809,6 +3839,17 @@ fn TIM7() {
     if R6_START.load(Ordering::Relaxed) && !motor_enabled {
         R6_START.store(false, Ordering::Relaxed);
     }
+    // SEAMLESS TAKEOVER (2026-07-19 engage-probe verdict): R6 used to
+    // stop stepping AT the handoff while the CL was merely ARMED —
+    // if the ZC missed R6's single last window, NOTHING commutated
+    // (bb: 192 ms coast, rotor decayed 520 → 670 µs, engage on a
+    // dying rotor, desync — 6-of-8 failures). R6 now keeps polling
+    // and stepping until the CL is ACTIVE (AM32's structure: startup
+    // steps until zero-cross lock takes over), so the engage accept
+    // always lands inside a live window at full rotor speed.
+    if R6_START.load(Ordering::Relaxed) && CL_ACTIVE.load(Ordering::Relaxed) {
+        R6_START.store(false, Ordering::Relaxed);
+    }
     let r6_active = R6_START.load(Ordering::Relaxed) && motor_enabled;
 
     let (sector, angle, sector_changed) = if r6_active {
@@ -3832,7 +3873,8 @@ fn TIM7() {
             minz_core::start::StartAction::Handoff { interval_us } => {
                 R6_CROSS_COUNT.fetch_add(1, Ordering::Relaxed);
                 R6_HANDOFF_IV_US.store(interval_us, Ordering::Relaxed);
-                R6_START.store(false, Ordering::Relaxed);
+                // Seamless takeover: R6_START stays set — polling
+                // drive continues until CL_ACTIVE (cleared above).
                 R6_HANDOFF_REQ.store(true, Ordering::Relaxed);
                 ((prev_sector + 1) % 6, 0, true)
             }
