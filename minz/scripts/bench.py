@@ -525,6 +525,20 @@ def cmd_probe_adv(a):
             print("WARN: stream-on unconfirmed")
         if not b.press_until("Q", "qlog=on", tries=6):
             print("WARN: qlog-on unconfirmed")
+        if a.preamp > 15:
+            # climb to the test amp: +10 per 's', +1 per 'a', echo-
+            # verified; then let the slew settle.
+            for _ in range((a.preamp - 15) // 10):
+                for _ in range(5):
+                    if "amp" in b.key("s", 0.4):
+                        break
+            for _ in range((a.preamp - 15) % 10):
+                for _ in range(5):
+                    if "amp" in b.key("a", 0.4):
+                        break
+            time.sleep(3.0)
+            fe = b.cl_active_now()
+            print(f"pre-climb to ~{a.preamp}%: {fe or 'DEAD'} Hz")
         mark0 = len(b.cap)
         t0 = time.monotonic()
         while time.monotonic() - t0 < a.secs:
@@ -730,6 +744,7 @@ def main():
     p.add_argument("--key", default="t")
     p.add_argument("--echo", default="")
     p.add_argument("--tag", default="probe")
+    p.add_argument("--preamp", type=int, default=0)
     p = sub.add_parser("waxdump")
     p.add_argument("--tag", default="lock")
     p.add_argument("--secs", type=float, default=8.0)

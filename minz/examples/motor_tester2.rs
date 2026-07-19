@@ -726,6 +726,8 @@ static CHAIN_KICKS: AtomicU32 = AtomicU32::new(0);
 static SAG_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Chain-kick two-pass confirmation latch (false-fire fix).
 static KICK_PEND: AtomicBool = AtomicBool::new(false);
+/// TIM6 19.6 kHz control-loop tick counter (AM32 tenKhzRoutine home).
+static TIM6_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Boot-time RCC_CSR (reset-cause flags), probe-readable — the
 /// reboot-at-speed class loses the printed banner.
 #[unsafe(no_mangle)]
@@ -1903,6 +1905,7 @@ fn main() -> ! {
     // TIM1_UP_TIM16 vector, which pends the LPTIM2 vector so the
     // commutation ISR keeps its priority-1 slot unchanged.
     minz::tim16_oneshot::init();
+    minz::tim6_loop::init();
     minz::lptim2_oneshot::init();
 
     // TIM7 motor-drive heartbeat at `MOTOR_DRIVE_HZ` (= 6 kHz). The
@@ -2065,11 +2068,15 @@ fn main() -> ! {
     }
 
     unsafe {
+        // TIM6 = AM32's 19.6 kHz control loop (timer-alignment step
+        // 2), at AM32's own priority tier: 3, the lowest motor tier.
+        priority::set_irq_prio(Interrupt::TIM6_DACUNDER, priority::PRIO_TIM7);
         NVIC::unmask(Interrupt::USART2);
         NVIC::unmask(Interrupt::LPTIM2);
         NVIC::unmask(Interrupt::COMP);
         NVIC::unmask(Interrupt::TIM1_UP_TIM16);
         NVIC::unmask(Interrupt::TIM7);
+        NVIC::unmask(Interrupt::TIM6_DACUNDER);
         if !R5_CNT_BLANK {
             NVIC::unmask(Interrupt::TIM1_CC);
         }
@@ -3563,6 +3570,34 @@ fn USART2() {
 }
 
 #[interrupt]
+fn TIM6_DACUNDER() {
+    // AM32's 19.6 kHz control loop (tenKhzRoutine home), priority 3.
+    // Timer-alignment step 2: control work migrates here from TIM7
+    // incrementally — throttle slew first.
+    minz::tim6_loop::clear_flag();
+    let tick = TIM6_COUNT.fetch_add(1, Ordering::Relaxed);
+    // Throttle slew limiter: the APPLIED duty walks toward the
+    // key-set target at 1 %/50 ms (980 ticks here), duty-scaled ×2/×3
+    // above 70 %/85 % (ω³ transit power), sag-aware (upward slew
+    // pauses under the ~7.3 V soft floor). Host-tested:
+    // minz_core::throttle.
+    if tick.is_multiple_of(minz_core::throttle::step_ticks_for_tim6(
+        AMPLITUDE_PCT.load(Ordering::Relaxed),
+    )) {
+        let prev = AMPLITUDE_PCT.load(Ordering::Relaxed);
+        let next = minz_core::throttle::step_sag_aware(
+            prev,
+            AMP_TARGET_PCT.load(Ordering::Relaxed),
+            VBAT_RAW_LIVE.load(Ordering::Relaxed),
+        );
+        if next == prev && prev < AMP_TARGET_PCT.load(Ordering::Relaxed) {
+            SAG_HOLD_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        AMPLITUDE_PCT.store(next, Ordering::Relaxed);
+    }
+}
+
+#[interrupt]
 fn TIM7() {
     // R6 polling-start state: TIM7-local. cortex-m-rt rewrites
     // top-of-body `static mut` in an #[interrupt] fn to a safe
@@ -3584,35 +3619,10 @@ fn TIM7() {
     // them, so a COMP edge that fires immediately after the sector
     // store observes the matching polarity + edges (not stale ones).
     tim7_drive::clear_update_flag();
-    let tick = TIM7_COUNT.fetch_add(1, Ordering::Relaxed);
+    let _tick = TIM7_COUNT.fetch_add(1, Ordering::Relaxed);
 
-    // Throttle slew limiter (roadmap item 5): the APPLIED duty walks
-    // toward the key-set target at 1 % per 50 ms (every 300th tick
-    // at 6 kHz). The loop never sees a throttle STEP — step
-    // transients at speed pulled 85 ms current surges past even
-    // 3.8× the healthy envelope. Kills (`w`, guards) bypass this
-    // entirely via MOTOR_ENABLED/all_off.
-    // Duty-scaled cadence: high-duty transits carry ω³ accel power;
-    // 1 %/50 ms there folded the bus (host-tested step_ticks_for).
-    if tick.is_multiple_of(minz_core::throttle::step_ticks_for(
-        AMPLITUDE_PCT.load(Ordering::Relaxed),
-    )) {
-        // Host-tested: minz_core::throttle (incl. the snap-on-arm
-        // regression that cost 4/4 engages). Sag-aware since the
-        // 10%-step transit-surge kills: upward slew pauses while the
-        // bus is under the ~7.3 V soft floor, so a sustained climb
-        // can never drag the PSU into the sag-kill zone.
-        let prev = AMPLITUDE_PCT.load(Ordering::Relaxed);
-        let next = minz_core::throttle::step_sag_aware(
-            prev,
-            AMP_TARGET_PCT.load(Ordering::Relaxed),
-            VBAT_RAW_LIVE.load(Ordering::Relaxed),
-        );
-        if next == prev && prev < AMP_TARGET_PCT.load(Ordering::Relaxed) {
-            SAG_HOLD_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
-        AMPLITUDE_PCT.store(next, Ordering::Relaxed);
-    }
+    // Throttle slew MOVED to the TIM6 19.6 kHz control loop (AM32's
+    // tenKhzRoutine home — timer-alignment step 2).
 
     // R4: throttle-stability run (ticks at 6 kHz). The carrier only
     // retunes after the applied amp has SAT at target for ~300 ms -

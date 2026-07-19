@@ -36,6 +36,19 @@ pub fn step_ticks_for(applied: u8) -> u32 {
     }
 }
 
+/// Same cadences expressed in AM32's 19.6 kHz TIM6 loop ticks
+/// (timer-alignment step 2): 50 ms/% = 980 ticks, duty-scaled ×2/×3
+/// above 70 %/85 % as bench-proven.
+pub fn step_ticks_for_tim6(applied: u8) -> u32 {
+    if applied >= 85 {
+        2_940
+    } else if applied >= 70 {
+        1_960
+    } else {
+        980
+    }
+}
+
 /// One slew step: move `applied` one percent toward `target`.
 /// (Pure form for firmware call sites that keep their state in
 /// atomics; [`Slew`] wraps the same logic for host tests.)
