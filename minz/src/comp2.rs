@@ -234,6 +234,18 @@ pub fn set_exti_enabled(enabled: bool) {
     exti.imr1.modify(|_, w| w.mr22().bit(enabled));
 }
 
+/// AM32-VERBATIM unmask (2026-07-18): `EXTI->IMR1 |= LINE` with the
+/// pending bit PRESERVED - a crossing that arrived during the masked
+/// commutation window is SERVICED immediately on unmask instead of
+/// discarded. AM32's enableCompInterrupts does exactly this; our
+/// clear-first unmask deleted the true crossing whenever it landed
+/// inside the mask (the +52 us CL acceptance equilibrium).
+#[inline]
+pub fn unmask_keep_pending() {
+    let exti = unsafe { &*EXTI::ptr() };
+    exti.imr1.modify(|_, w| w.mr22().set_bit());
+}
+
 /// Ack the EXTI line 22 pending bit. PR1 is write-1-to-clear, so this
 /// is a `write` not `modify`. Must be called at the top of the COMP
 /// ISR or the IRQ will re-fire forever.

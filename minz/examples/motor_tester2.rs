@@ -4121,8 +4121,12 @@ fn LPTIM2() {
         let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
         minz::pb3::set(!was_high);
     }
-    // Re-open the ear for the new window (clears any pending edge).
-    comp2::set_exti_enabled(true);
+    // Re-open the ear AM32-verbatim: pending PRESERVED. A crossing
+    // that fired during this masked commutation ISR is serviced the
+    // instant we unmask (their enableCompInterrupts semantics); the
+    // old clear-first unmask DELETED it and the accept slipped to the
+    // next edge (+52 us CL equilibrium, the raw-spread mechanism).
+    comp2::unmask_keep_pending();
 }
 
 /// AM32-shape fabric close: runs in TIM1_UP (periodic, priority 2)

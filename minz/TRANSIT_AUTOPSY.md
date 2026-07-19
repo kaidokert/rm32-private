@@ -971,3 +971,43 @@ vs the first crossing, per window, under lock) - or the source is
 actuation-side (drive jitter reflected in real crossing times).
 Qualification stays on the late sample (unchanged behavior); the
 A/B counters stay (ev: line) as a standing instrument.
+
+
+## THE TWINS (2026-07-18, final): steady-state parity PROVEN;
+## the spread gap was selection methodology
+
+Hunt sequence (each hypothesis verified or killed on the bench):
+- Gate avg/2 -> avg/3: no effect on acceptance (reverted to
+  AM32-verbatim avg/2). Keep-pending unmask (AM32's
+  enableCompInterrupts semantics): no effect on the metric, KEPT as
+  verbatim parity. NVIC priorities: dumped from hardware, confirmed
+  in effect and structurally parallel to AM32 (COMP==COM top tier).
+- The +52us "accept-minus-first-edge" was a MISREAD: under CL the
+  ZC-referenced gate admits early post-commutation ringing as
+  "first valid", which persistence correctly rejects; the accepted
+  ZC sits at a healthy 0.595 +- 0.025 of the window.
+- THE DECOMPOSITION: per-window jitter |raw - own IIR|: minz 3.8-6.0%
+  vs AM32 6.4% median - equal or cleaner. IIR wander in the band:
+  43us vs 10us - ALL the spread gap was SLOW SPEED VARIATION, and
+  the band selection (90-150us) captured minz CLIMB TRANSITS vs
+  AM32 CRUISE. Same trap as smoothed-vs-raw, new costume.
+- DWELL-MATCHED (steady duty both sides): raw spread 19 vs 18us,
+  IIR wander 3 vs 4us, stiff 1 vs 2us, delay within 3us - TWINS
+  (captures/aligned_quantities.png, plot_aligned.py now dwell-
+  selects). Verified on a COMMANDED 15s dwell (review demand):
+  wander 4=4us, jitter median 6.0 vs 6.4%, parity bias +1.2us.
+
+External review (claude -p, adversarial) scopes the claim correctly:
+**steady-state observation is at parity; the pipeline is NOT
+exonerated in TRANSIENTS** - the remaining campaign is climb-regime:
+(a) jitter vs an external ground truth (WAXWING linfit), (b) metrics
+conditioned on acceleration in matched climb segments, (c) failure-
+precursor analysis in dying climbs (does observation degrade before
+the kill), (d) commanded dwells >=10s with full wire delivery (ZT
+drops at speed left ~1% delivery - raise drain budget or decimate
+honestly for dwell instrumentation).
+
+Reproducer state at landing: COMPLETED (5 of the last 7 attempts;
+deaths remaining are climb-transient class). Build: AM32-verbatim
+gate + wait + unmask, aligned v3 trace, all guards decimated, engage
+via R6.

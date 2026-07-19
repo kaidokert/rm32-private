@@ -19,13 +19,33 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-mz = [r for r in csv.DictReader(open("captures/mzt_v3_trace.csv"))
+import sys
+MZ_PATH = sys.argv[1] if len(sys.argv) > 1 else "captures/mzt_v3wait_trace.csv"
+mz = [r for r in csv.DictReader(open(MZ_PATH))
       if 0 < float(r["duty"]) <= 3332 and float(r["stiff_us"]) > 0]
 am = [r for r in csv.DictReader(open("captures/zct_today_trace.csv"))
       if float(r["avg_us"]) > 0]
 
-mzb = [r for r in mz if 90 <= float(r["stiff_us"]) <= 150]
-amb = [r for r in am if 90 <= float(r["avg_us"]) <= 150]
+
+def dwell(rows, duty_key):
+    """Longest near-constant-duty run: steady-state selection. The
+    stiff-band selection compared OUR CLIMB TRANSITS against AM32's
+    CRUISE and manufactured a 49-vs-20us spread gap that vanishes
+    dwell-vs-dwell (19 vs 18us). Same conditions or no comparison."""
+    best = None
+    i = 0
+    while i < len(rows):
+        d0 = float(rows[i][duty_key])
+        j = i
+        while j < len(rows) and abs(float(rows[j][duty_key]) - d0) < 25:
+            j += 1
+        if best is None or j - i > best[1] - best[0]:
+            best = (i, j)
+        i = max(j, i + 1)
+    return rows[best[0]:best[1]]
+
+mzb = dwell(mz, "duty")
+amb = dwell(am, "duty")
 
 pairs = [
     ("raw ZC interval", "raw_iv_us", "zt_us", (60, 260)),
@@ -35,7 +55,7 @@ pairs = [
 ]
 
 fig, axes = plt.subplots(2, 2, figsize=(13, 9))
-fig.suptitle("Aligned quantities, shared 90-150us cruise band - minz (red) vs AM32 (green)\n"
+fig.suptitle("Aligned quantities, STEADY-DUTY DWELL each side - minz (red) vs AM32 (green)"
              "identical definitions; divergence is real, not methodological", fontsize=12)
 for ax, (title, mk, ak, rng) in zip(axes.flat, pairs):
     mv = [float(r[mk]) for r in mzb if 0 < float(r[mk]) < 30000]
