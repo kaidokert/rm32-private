@@ -174,8 +174,9 @@ def cmd_ladder(a):
         capfile.write_bytes(bytes(b.cap))
         print(f"serial capture -> {capfile} ({len(b.cap)} bytes)")
         if died:
-            print(f"run {run}: DIED mid-ladder: "
-                  f"{died.decode('utf-8', 'replace').strip()}")
+            msg = died.decode("ascii", "replace").strip()
+            print(f"run {run}: DIED mid-ladder: {msg}".encode(
+                "ascii", "replace").decode())
             cmd_postmortem(a)
             time.sleep(3.0)
             continue
@@ -232,14 +233,35 @@ def cmd_postmortem(_):
     # armed==fired -> no shot was armed (upstream accept never ran);
     # armed==fired+1 -> a shot armed but never fired (SNGSTRT class).
     try:
-        snap = probe_words(nm_addr("RSD_SNAP"), 8)
+        snap = probe_words(nm_addr("RSD_SNAP"), 12)
         names = ["armed", "fired", "lptim2_isr", "lptim2_cnt",
-                 "lptim2_arr", "lptim2_cr", "est_acc_us", "detail"]
+                 "lptim2_arr", "lptim2_cr", "est_acc_us", "detail",
+                 "last_delay_us", "last_est_us", "last_qzc_us", "now_1us"]
         print("RSD_SNAP:", ", ".join(
             f"{n}={v:#x}" if n.startswith("lptim2_") else f"{n}={v}"
             for n, v in zip(names, snap)))
         if any(snap):
             print(f"  armed-fired delta at stop = {snap[0] - snap[1]}")
+    except SystemExit:
+        pass
+    # Arm provenance ring: last 8 LPTIM2 arms as (src, delay, iv, t).
+    # src: 1=precheck 2=lottery 3=reseed-crawl 4=freerun 5=rescue
+    try:
+        ar = probe_words(nm_addr("ARM_RING"), 24)
+        idx = probe_words(nm_addr("ARM_RING_IDX"), 1)[0]
+        print("ARM_RING (oldest->newest):")
+        for k in range(8):
+            slot = ((idx + k) % 8) * 3
+            w0, iv, t = ar[slot], ar[slot + 1], ar[slot + 2]
+            if w0 == 0 and iv == 0:
+                continue
+            print(f"  src={w0 >> 24} delay={w0 & 0xFFFFFF}us iv={iv}us "
+                  f"t={t}")
+    except (SystemExit, IndexError):
+        pass
+    try:
+        acc = probe_words(nm_addr("AVG_INTERVAL_ACC"), 1)[0]
+        print(f"AVG_INTERVAL_ACC/6 (stiff avg) = {acc // 6} us")
     except SystemExit:
         pass
     # Accepted-key ring: which keys actually dispatched, oldest->newest
@@ -384,6 +406,64 @@ def cmd_capdump(a):
             print(s)
 
 
+def cmd_probe_adv(a):
+    # Live A/B on a steady lock: engage, stream `secs` baseline,
+    # press `key` x presses, stream `secs` more. Captures land as
+    # captures/ab_{tag}_{A,B}.bin for plot_climb comparison.
+    b = Bench()
+    try:
+        att, fe = b.engage()
+        if not att:
+            print("NO ENGAGE")
+            return
+        print(f"engaged attempt {att}: {fe} Hz")
+        b.press_until("g", "stream=on", tries=4)
+        mark0 = len(b.cap)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < a.secs:
+            b.cap.extend(b.ser.read(8192))
+        mark1 = len(b.cap)
+        for _ in range(a.presses):
+            b.key(a.key, 0.3)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < a.secs:
+            b.cap.extend(b.ser.read(8192))
+        mark2 = len(b.cap)
+    finally:
+        b.kill()
+        b.close()
+    import pathlib
+    base = pathlib.Path("captures")
+    (base / f"ab_{a.tag}_A.bin").write_bytes(bytes(b.cap[mark0:mark1]))
+    (base / f"ab_{a.tag}_B.bin").write_bytes(bytes(b.cap[mark1:mark2]))
+    print(f"A: {mark1-mark0} bytes, B: {mark2-mark1} bytes "
+          f"-> captures/ab_{a.tag}_*.bin")
+
+
+def cmd_waxdump(a):
+    # Engage steady, take a WAXWING 'j' analog dump, save the capture.
+    b = Bench()
+    try:
+        att, fe = b.engage()
+        if not att:
+            print("NO ENGAGE")
+            return
+        print(f"engaged attempt {att}: {fe} Hz; dumping...")
+        time.sleep(1.0)
+        mark = len(b.cap)
+        b.key("j", 1.0)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < a.secs:
+            b.cap.extend(b.ser.read(8192))
+    finally:
+        b.kill()
+        b.close()
+    import pathlib
+    path = pathlib.Path("captures") / f"wax_{a.tag}.bin"
+    path.write_bytes(bytes(b.cap[mark:]))
+    print(f"-> {path} ({len(b.cap) - mark} bytes)")
+
+
 def cmd_kill(_):
     b = Bench()
     b.kill()
@@ -420,11 +500,20 @@ def main():
     p.add_argument("file")
     p.add_argument("--min-len", type=int, default=6)
     p.add_argument("--grep", default=None)
+    p = sub.add_parser("probe-adv")
+    p.add_argument("--presses", type=int, default=7)
+    p.add_argument("--secs", type=float, default=3.0)
+    p.add_argument("--key", default="t")
+    p.add_argument("--tag", default="probe")
+    p = sub.add_parser("waxdump")
+    p.add_argument("--tag", default="lock")
+    p.add_argument("--secs", type=float, default=8.0)
     a = ap.parse_args()
     {"engage": cmd_engage, "ladder": cmd_ladder, "readback": cmd_readback,
      "postmortem": cmd_postmortem, "flash-minz": cmd_flash_minz,
      "flash-am32": cmd_flash_am32, "sweep-am32": cmd_sweep_am32,
-     "kill": cmd_kill, "peek": cmd_peek, "capdump": cmd_capdump}[a.cmd](a)
+     "kill": cmd_kill, "peek": cmd_peek, "capdump": cmd_capdump,
+     "probe-adv": cmd_probe_adv, "waxdump": cmd_waxdump}[a.cmd](a)
 
 
 if __name__ == "__main__":

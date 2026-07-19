@@ -84,6 +84,29 @@ pub fn gate_us(interval_us: u32, reacq: bool) -> u32 {
     }
 }
 
+/// AM32-verbatim gate for geometry mode: `average_interval / 2`
+/// (main.c COMP gate `INTERVAL_TIMER->CNT > average_interval/2`),
+/// keyed to the STIFF average like theirs. Found by the 2026-07-19
+/// even/odd autopsy at 322 Hz: our 30 % gate (133 µs of a 442 µs
+/// window) admitted a PWM-dwell noise edge at ~199 µs on the odd
+/// (rising-BEMF) windows — 40 µs BEFORE the true ZC — while AM32's
+/// half-interval gate (221 µs) blocks it on the same board. The
+/// resulting ±75 µs even/odd commutation alternation was the static
+/// two-band structure under every climb wobble. Re-acq keeps the
+/// widened 8 % gate.
+#[inline]
+pub fn gate_us_am32(avg_interval_us: u32, interval_us: u32, reacq: bool) -> u32 {
+    if reacq {
+        return gate_us(interval_us, true);
+    }
+    let base = if avg_interval_us != 0 {
+        avg_interval_us
+    } else {
+        interval_us
+    };
+    (base / 2).max(20)
+}
+
 /// Speed-adaptive comparator blank (cribbed from AM32's actual L431
 /// strategy, which has NO time-since-PWM-edge blank at all — its
 /// noise defense is persistence depth scaled with speed). Our fixed
@@ -291,6 +314,18 @@ pub fn climb_lead_iv(interval_us: u32, climbing: bool) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gate_am32_is_half_the_stiff_average() {
+        // The 322 Hz even/odd case: 442 µs window, stiff avg 517 —
+        // gate 258 blocks the 199 µs pre-ZC dwell edge the 30 % gate
+        // (133 µs) admitted.
+        assert_eq!(gate_us_am32(517, 442, false), 258);
+        // Stiff average unseeded: fall back to the fast interval.
+        assert_eq!(gate_us_am32(0, 442, false), 221);
+        // Re-acq keeps the widened 8 % gate.
+        assert_eq!(gate_us_am32(517, 442, true), gate_us(442, true));
+    }
 
     #[test]
     fn climb_lead_shaves_only_while_climbing() {

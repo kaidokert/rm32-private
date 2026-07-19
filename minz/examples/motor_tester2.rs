@@ -726,6 +726,23 @@ static CHAIN_KICKS: AtomicU32 = AtomicU32::new(0);
 static SAG_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Chain-kick two-pass confirmation latch (false-fire fix).
 static KICK_PEND: AtomicBool = AtomicBool::new(false);
+/// ARM PROVENANCE RING (2026-07-19 corrupt-delay hunt): every LPTIM2
+/// arm records [delay_us | src<<24, iv_us, now_1us] — the 522 µs
+/// shot at a 107 µs cruise left no bb event, so the arm sites
+/// themselves get a black box. src: 1=precheck 2=engage-lottery
+/// 3=reseed-crawl 4=freerun-resched 5=wait-rescue.
+#[unsafe(no_mangle)]
+static ARM_RING: [AtomicU32; 24] = [CEN_ZERO; 24];
+#[unsafe(no_mangle)]
+static ARM_RING_IDX: AtomicU32 = AtomicU32::new(0);
+
+#[inline]
+fn arm_trace(src: u8, delay_us: u32, iv_us: u32) {
+    let k = (ARM_RING_IDX.fetch_add(1, Ordering::Relaxed) as usize % 8) * 3;
+    ARM_RING[k].store(delay_us.min(0xFF_FFFF) | ((src as u32) << 24), Ordering::Relaxed);
+    ARM_RING[k + 1].store(iv_us, Ordering::Relaxed);
+    ARM_RING[k + 2].store(ticks_1us(), Ordering::Relaxed);
+}
 /// Last 16 ACCEPTED key bytes, ring; readback via probe after a run.
 #[unsafe(no_mangle)]
 static KEY_LOG: [AtomicU8; 16] = [const { AtomicU8::new(0) }; 16];
@@ -743,9 +760,10 @@ static LADDER_STEP: AtomicU8 = AtomicU8::new(0);
 /// One-shot bb freeze on the first reseed (pulsing deep-dive).
 static RESEED_BB_TAKEN: AtomicBool = AtomicBool::new(false);
 /// Chain-stop snapshot at the frozen reseed: [armed, fired, lptim2
-/// ISR, CNT, ARR, CR, est_acc, watchdog detail]. Probe readback.
+/// ISR, CNT, ARR, CR, est_acc, watchdog detail, last_delay,
+/// last_est, last_qzc, now_1us]. Probe readback.
 #[unsafe(no_mangle)]
-static RSD_SNAP: [AtomicU32; 8] = [CEN_ZERO; 8];
+static RSD_SNAP: [AtomicU32; 12] = [CEN_ZERO; 12];
 static LADDER_LAST_T10: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static LADDER_LOG: [AtomicU32; 384] = [CEN_ZERO; 384];
@@ -1119,6 +1137,14 @@ fn trigger_reseed(detail: u16) {
         RSD_SNAP[5].store(lptim.cr.read().bits(), Ordering::Relaxed);
         RSD_SNAP[6].store(EST_ACC.load(Ordering::Relaxed), Ordering::Relaxed);
         RSD_SNAP[7].store(detail as u32, Ordering::Relaxed);
+        // The DYING SHOT's provenance (the ARR=652-tick mystery: a
+        // shot armed with ~10x the correct delay at 107 µs cruise):
+        // what delay/est the last arm actually used, and the qZC
+        // clock at death.
+        RSD_SNAP[8].store(LAST_DELAY_US.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
+        RSD_SNAP[9].store(LAST_EST_BEFORE.load(Ordering::Relaxed) as u32, Ordering::Relaxed);
+        RSD_SNAP[10].store(OWL_LAST_QZC_US.load(Ordering::Relaxed), Ordering::Relaxed);
+        RSD_SNAP[11].store(ticks_1us(), Ordering::Relaxed);
     }
     RESEED_ACTIVE.store(true, Ordering::Relaxed);
     RESEED_ACCEPTS.store(0, Ordering::Relaxed);
@@ -1142,6 +1168,7 @@ fn trigger_reseed(detail: u16) {
     if ZC_CLOCKED && CL_FAST_PATH.load(Ordering::Relaxed) {
         let iv = OWL_INTERVAL_US.load(Ordering::Relaxed).max(500);
         free(|_| minz::lptim2_oneshot::schedule_us(iv));
+        arm_trace(3, iv, OWL_INTERVAL_US.load(Ordering::Relaxed));
         RESEED_KICKS.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -4303,14 +4330,23 @@ fn LPTIM2() {
         );
     }
     // Adaptive gate with FRESH reacq state (same-instant as the
-    // old in-ISR close).
+    // old in-ISR close). Geometry mode uses AM32's half-interval
+    // gate keyed to the stiff average (the 2026-07-19 even/odd
+    // autopsy: the 30% gate admitted pre-ZC dwell edges at low
+    // speed = the ±75 µs commutation alternation under the wobble).
     {
         let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
         if iv != 0 {
-            SECTOR_GATE_US.store(
-                minz_core::timing::gate_us(iv, CL_REACQ.load(Ordering::Relaxed)),
-                Ordering::Relaxed,
-            );
+            let g = if CL_AM32_GEOM.load(Ordering::Relaxed) {
+                minz_core::timing::gate_us_am32(
+                    AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6,
+                    iv,
+                    CL_REACQ.load(Ordering::Relaxed),
+                )
+            } else {
+                minz_core::timing::gate_us(iv, CL_REACQ.load(Ordering::Relaxed))
+            };
+            SECTOR_GATE_US.store(g, Ordering::Relaxed);
         }
     }
     // Live resets: control (host-tested control_reset) + diag.
@@ -4334,6 +4370,7 @@ fn LPTIM2() {
     if !rotor_clocked {
         if let Some(t) = minz_core::drive::freerun_reschedule_us(interval) {
             minz::lptim2_oneshot::reschedule_light(t);
+            arm_trace(4, t, interval);
         }
     }
     // Scope trigger on each electrical rev, same as the open loop.
@@ -5575,6 +5612,12 @@ fn accept_qualified_zc(zc_us: u32) {
         );
         SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
         minz::lptim2_oneshot::schedule_us(delay);
+        // HOT PATH (COMP ISR accept): trace ONLY anomalous arms — the
+        // unconditional trace cost ~1 µs here and collapsed engage
+        // 0/30 vs control 2/2 (the R2 byte-lean lesson, re-learned).
+        if delay > iv {
+            arm_trace(1, delay, iv);
+        }
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
         LAST_EST_BEFORE.store(iv.min(0xFFFF) as u16, Ordering::Relaxed);
         shot_armed = true;
@@ -5620,6 +5663,7 @@ fn accept_qualified_zc(zc_us: u32) {
         );
         SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
         minz::lptim2_oneshot::schedule_us(delay);
+        arm_trace(2, delay, iv);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
         LAST_EST_BEFORE.store(iv.min(0xFFFF) as u16, Ordering::Relaxed);
         SHOT_REFINED.store(true, Ordering::Relaxed);
