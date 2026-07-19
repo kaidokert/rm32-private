@@ -141,6 +141,10 @@ def cmd_ladder(a):
             continue
         try:
             print(f"engaged attempt {att}: {fe} Hz; ladder step={a.step}")
+            # MAGPIE stream ON during the climb (wobble time-series in
+            # the capture). Stateful toggle: confirm the 'on' echo.
+            if not b.press_until("g", "stream=on", tries=4):
+                print("stream-on not confirmed (may be off)")
             if not b.press_until("L", "auto-ladder step = 1"):
                 print("1%-arm not confirmed (echo loss) - proceeding")
             if a.step >= 10:

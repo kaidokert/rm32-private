@@ -5055,6 +5055,7 @@ fn TIM1_UP_TIM16() {
             SECTOR_GATE_US.load(Ordering::Relaxed),
             ticks_1us(),
             OWL_INTERVAL_US.load(Ordering::Relaxed),
+            OWL_LAST_QZC_US.load(Ordering::Relaxed),
         ) {
             let gen_snap = WINDOW_GEN.load(Ordering::Relaxed);
             free(|_| {

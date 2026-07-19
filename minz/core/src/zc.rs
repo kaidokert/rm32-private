@@ -115,9 +115,22 @@ pub const fn expected_post_zc(sector: u8) -> bool {
 /// gate-open — stamping the qZC AT the gate is a LATE bound, never
 /// premature. An edge-armed candidate always wins (no stealing).
 ///
-/// Returns the synthesized `zc_us` (= start + gate) when the accept
-/// should fire; the caller runs the normal accept path (estimator
-/// feed included — tracking the acceleration is the point).
+/// Returns the synthesized `zc_us` when the accept should fire; the
+/// caller runs the normal accept path (estimator feed included —
+/// tracking the acceleration is the point).
+///
+/// SLEW BOUND (2026-07-19, "the heartbeat"): the operator heard a
+/// rhythmic pump during the climb, and the per-window plot showed a
+/// +40 % frequency sawtooth at exactly the ladder's 0.5 s rung
+/// cadence. Cause: stamping every synthetic qZC AT the gate (30 % of
+/// the interval) let each accept drag the estimate toward the 2/3
+/// rate bound, six accepts per rev compounding into a field runaway
+/// the rotor then fell off — surge, stall-back, repeat. The
+/// synthetic sample is therefore floored at `last_qzc +
+/// 0.9×interval`: one precross accept can claim at most 10 %
+/// acceleration (real transits need ~1-5 %/window). If the floor is
+/// still in the future the accept waits for a later wrap. Real
+/// edges keep the full rate bound.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn precross_accept_due(
@@ -130,6 +143,7 @@ pub fn precross_accept_due(
     gate_us: u32,
     now_us: u32,
     interval_us: u32,
+    last_qzc_us: u32,
 ) -> Option<u32> {
     // A/B windows only (0/3 are dead-reckoned below TOPEND; their
     // schedule doesn't consume ZCs here).
@@ -154,7 +168,21 @@ pub fn precross_accept_due(
     if now_us.wrapping_sub(start_us) < gate_us {
         return None;
     }
-    Some(start_us.wrapping_add(gate_us))
+    // Slew bound: at most 10 % claimed acceleration per accept.
+    let mut zc_off = gate_us;
+    if last_qzc_us != u32::MAX {
+        let floor_abs = last_qzc_us.wrapping_add(interval_us - interval_us / 10);
+        let floor_off = floor_abs.wrapping_sub(start_us);
+        // Small-positive = the floor lands inside this window; a huge
+        // value = it wrapped/preceded window start (stale last_qzc).
+        if floor_off < 10_000 && floor_off > zc_off {
+            zc_off = floor_off;
+        }
+    }
+    if now_us.wrapping_sub(start_us) < zc_off {
+        return None; // floor in the future: wait for a later wrap
+    }
+    Some(start_us.wrapping_add(zc_off))
 }
 
 /// The state machine's view of the firmware statics.
@@ -524,9 +552,10 @@ mod tests {
 
     #[test]
     fn precross_fires_at_gate_when_opened_crossed_and_holding() {
-        // start=10_000, gate=50, now past gate, interval 166 (accel band)
+        // start=10_000, gate=50, now past gate, interval 166 (accel
+        // band), no prior qZC (slew bound inactive)
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166, u32::MAX),
             Some(10_050)
         );
     }
@@ -535,22 +564,22 @@ mod tests {
     fn precross_never_fires_before_gate_or_wrong_level() {
         // before gate
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_040, 166),
+            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_040, 166, u32::MAX),
             None
         );
         // opened NOT crossed (open_level = high on sector 1)
         assert_eq!(
-            precross_accept_due(2, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            precross_accept_due(2, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166, u32::MAX),
             None
         );
         // level no longer holding (bounced back)
         assert_eq!(
-            precross_accept_due(1, true, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            precross_accept_due(1, true, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166, u32::MAX),
             None
         );
         // open level unsampled
         assert_eq!(
-            precross_accept_due(0, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            precross_accept_due(0, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166, u32::MAX),
             None
         );
     }
@@ -559,12 +588,12 @@ mod tests {
     fn precross_yields_to_edges_and_existing_qzc() {
         // armed candidate wins
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, 10_020, 10_000, 50, 10_060, 166),
+            precross_accept_due(1, false, 1, u32::MAX, 10_020, 10_000, 50, 10_060, 166, u32::MAX),
             None
         );
         // window already has a qZC
         assert_eq!(
-            precross_accept_due(1, false, 1, 10_030, u32::MAX, 10_000, 50, 10_060, 166),
+            precross_accept_due(1, false, 1, 10_030, u32::MAX, 10_000, 50, 10_060, 166, u32::MAX),
             None
         );
     }
@@ -573,17 +602,53 @@ mod tests {
     fn precross_scoped_to_ab_windows_and_speed_band() {
         // dead-reckoned C windows excluded
         assert_eq!(
-            precross_accept_due(2, true, 0, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            precross_accept_due(2, true, 0, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166, u32::MAX),
             None
         );
         assert_eq!(
-            precross_accept_due(2, true, 3, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166),
+            precross_accept_due(2, true, 3, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166, u32::MAX),
             None
         );
         // engage regime (>=500 us interval) excluded
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 500, 10_600, 1_667),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                500,
+                10_600,
+                1_667,
+                u32::MAX
+            ),
             None
+        );
+    }
+
+    #[test]
+    fn precross_slew_bound_caps_claimed_acceleration() {
+        // THE HEARTBEAT regression: last qZC at 9_900, interval 166.
+        // Unbounded, the synthetic zc would be start+gate = 10_050 →
+        // new_int = 150 = a 10 % shrink CLAIMED BY A GUESS. The floor
+        // is last_qzc + 0.9×166 = 9_900 + 150 = 10_050... use a
+        // tighter case: last_qzc 10_000-160+... last at 9_990:
+        // floor = 9_990 + 150 = 10_140 > start+gate 10_050 → the
+        // accept must wait until now reaches 10_140 and stamp THERE.
+        assert_eq!(
+            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166, 9_990),
+            None // floor (10_140) still in the future at now=10_060
+        );
+        assert_eq!(
+            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_150, 166, 9_990),
+            Some(10_140) // stamped at the floor, not the gate
+        );
+        // A stale/wrapped last_qzc (floor before window start) is
+        // ignored — plain gate stamp.
+        assert_eq!(
+            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 166, 2_000),
+            Some(10_050)
         );
     }
 
