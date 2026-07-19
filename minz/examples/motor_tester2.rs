@@ -1895,7 +1895,10 @@ fn main() -> ! {
     //   - CC1IE / CC2IE / CC3IE (TIM1_CC) for the software
     //     PWM-edge timestamp used by the COMP-ISR blanking gate.
     tim1_motor_pwm::init(dp.TIM1, &mut apb2);
-    tim1_motor_pwm::enable_update_interrupt();
+    // TIM1.UIE stays OFF — AM32's zero-CPU-at-PWM-rate design (the
+    // wholesale convergence): the CPU never sees the 24 kHz carrier;
+    // the wrap workload runs in the TIM6 19.6 kHz loop and the
+    // TIM1_UP_TIM16 vector belongs solely to TIM16 (COM timer).
     if !R5_CNT_BLANK {
         tim1_motor_pwm::enable_cc_interrupts();
     }
@@ -2094,6 +2097,9 @@ fn main() -> ! {
         // TIM6 = AM32's 19.6 kHz control loop (timer-alignment step
         // 2), at AM32's own priority tier: 3, the lowest motor tier.
         priority::set_irq_prio(Interrupt::TIM6_DACUNDER, priority::PRIO_TIM7);
+        // TIM1_UP_TIM16 is now the PURE COM vector (TIM1.UIE off):
+        // priority 1, AM32's own tier for its commutation timer.
+        priority::set_irq_prio(Interrupt::TIM1_UP_TIM16, priority::PRIO_COMP);
         NVIC::unmask(Interrupt::USART2);
         NVIC::unmask(Interrupt::LPTIM2);
         NVIC::unmask(Interrupt::COMP);
@@ -3592,10 +3598,11 @@ fn USART2() {
 #[interrupt]
 fn TIM6_DACUNDER() {
     // AM32's 19.6 kHz control loop (tenKhzRoutine home), priority 3.
-    // Timer-alignment step 2: control work migrates here from TIM7
-    // incrementally — throttle slew first.
     minz::tim6_loop::clear_flag();
     let tick = TIM6_COUNT.fetch_add(1, Ordering::Relaxed);
+    // The full former-TIM1-wrap workload (confirm/guards/harvest) —
+    // the wholesale convergence move.
+    pwm_wrap_work();
     // Throttle slew limiter: the APPLIED duty walks toward the
     // key-set target at 1 %/50 ms (980 ticks here), duty-scaled ×2/×3
     // above 70 %/85 % (ω³ transit power), sag-aware (upward slew
@@ -4796,20 +4803,24 @@ fn TIM1_CC() {
 
 #[interrupt]
 fn TIM1_UP_TIM16() {
-    // COM-TIMER DISPATCH FIRST (TIM16 = AM32's commutation timer,
-    // shared vector): a TIM16 wrap is a due commutation — pend the
-    // LPTIM2 vector so the commutation ISR runs at its priority-1
-    // slot unchanged (this vector is priority 2; the pend preempts
-    // the moment we return or sooner).
+    // PURE COM VECTOR (the wholesale AM32 convergence): TIM1.UIE is
+    // OFF — AM32's zero-CPU-at-PWM-rate design — so ONLY TIM16 (the
+    // COM timer) fires this vector, now at priority 1. The wrap
+    // workload lives in the TIM6 19.6 kHz loop (AM32's home for all
+    // of it). The pend tail-chains into the commutation ISR.
     if minz::tim16_oneshot::fired_and_clear() {
-        // The pend preempts immediately (LPTIM2 vector is priority
-        // 1, we are 2) — the commutation runs before the wrap work.
         cortex_m::peripheral::NVIC::pend(Interrupt::LPTIM2);
     }
-    // TIM16-only entry: don't run the 24 kHz wrap body off-schedule.
-    if !tim1_motor_pwm::update_flag_set() {
-        return;
-    }
+}
+
+/// The former 24 kHz TIM1-wrap workload (confirm, injected-ADC
+/// harvest, sag/OC/storm/starve guards, chain kick, CTX rings,
+/// clock extension) — now paced by the TIM6 19.6 kHz control loop,
+/// where AM32 runs the equivalents. All guarded timescales are in
+/// µs/ms and rate-independent; the sample-count debounces stretch
+/// 24→19.6 kHz by ~22 % (sag 2.67→3.27 ms — within the bench-proven
+/// envelope).
+fn pwm_wrap_work() {
     let _dur = DurGuard::new(&DUR_T1U);
     // One-byte COMP2 + sector sample per PWM period. UIF must be
     // cleared first or the IRQ re-fires immediately on return.
