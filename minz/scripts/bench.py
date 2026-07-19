@@ -176,7 +176,12 @@ def cmd_ladder(a):
             if not b.press_until("Q", "qlog=on", tries=4):
                 print("qlog-on not confirmed (may be off)")
             if a.jarm:
-                b.key("J", 0.5)  # arm the >4A WAX trigger (autopsy)
+                # autopsy rings on (DIAG_RINGS is default-off load
+                # shed; the all-zero waxdump mystery was this gate)
+                sh("probe-rs", "write", "--chip", CHIP, "--probe",
+                   PROBE, "b8", hex(nm_addr("DIAG_RINGS")), "1")
+                if not b.press_until("J", "wax trigger ARMED", tries=6):
+                    print("WARN: WAX trigger arm unconfirmed")
             if a.edgemode:
                 # deterministic edge-mode set via probe (key presses
                 # proved unreliable and leak state)

@@ -595,7 +595,11 @@ static WAX_TRIGGERED: AtomicBool = AtomicBool::new(false);
 /// autopsy campaign: the bounded-wait step caps holds low enough
 /// that the fatal cluster's FIRST event may never reach 4 A - the
 /// one-shot must catch the first event, not miss all of them.
-const WAX_TRIG_RAW: u16 = 110;
+/// Bench-tunable via probe write (the surge-hunt threshold; the
+/// rung-62 sag kills fired with ring peaks BELOW the old 110-raw
+/// const — the killing current shape is subtler than a 3A spike).
+#[unsafe(no_mangle)]
+static WAX_TRIG_RAW: AtomicU16 = AtomicU16::new(110);
 
 /// Set by the ISR after a trip; main prints the report, clears the
 /// flag, and drops its local `output_enabled` mirror so `r`/`q`
@@ -5232,7 +5236,10 @@ fn pwm_wrap_work() {
             trig_raw = peak;
         }
     }
-    if trig_raw > WAX_TRIG_RAW && armed && !WAX_TRIGGERED.load(Ordering::Relaxed) {
+    if trig_raw > WAX_TRIG_RAW.load(Ordering::Relaxed)
+        && armed
+        && !WAX_TRIGGERED.load(Ordering::Relaxed)
+    {
         WAX_TRIG_ARMED.store(false, Ordering::Relaxed);
         minz::adc_sync::freeze_current();
         // Freeze the black box too — the 64 commutation/ZC events
