@@ -699,6 +699,21 @@ static MAIN_STARVE_KILLS: AtomicU32 = AtomicU32::new(0);
 static MST_RUN: AtomicU32 = AtomicU32::new(0);
 static MST_KILL_SINCE: AtomicU32 = AtomicU32::new(0);
 static MST_KILL_PHASE: AtomicU32 = AtomicU32::new(0);
+/// LPTIM2 chain accounting: shots ARMED (schedule/reschedule calls
+/// from accepts + reseed kicks) vs ISR FIRES. A growing gap = the
+/// SNGSTRT-dropped chain-death class.
+static SHOT_ARMED_COUNT: AtomicU32 = AtomicU32::new(0);
+static LPTIM2_COUNT: AtomicU32 = AtomicU32::new(0);
+static LAST_KEY_BYTE: AtomicU8 = AtomicU8::new(0);
+static LAST_KEY_T10: AtomicU32 = AtomicU32::new(0);
+/// ZT pair-preserving decimation counter: at speed the full stream
+/// (>=315 kB/s at 2.5 kHz elec) drowns the 200 kB/s wire, eating the
+/// KEYS AND ECHOES - the 90-ladder could not command past amp 60
+/// (same physics as AM32's own <=80%% trace assert). Emitting
+/// CONSECUTIVE PAIRS with speed-scaled group skips keeps the
+/// sum-test and parity analyses valid (adjacent windows preserved)
+/// while capping the stream at ~40-50%% of the wire.
+static ZT_DECIM_CTR: AtomicU32 = AtomicU32::new(0);
 /// Parity-bias compensations applied (even-window accepts backdated).
 static PARITY_COMP_APPLIED: AtomicU32 = AtomicU32::new(0);
 /// Entry-latch experiment counters: does the comparator dwell state
@@ -1771,7 +1786,11 @@ fn main() -> ! {
     // tier.
     unsafe {
         priority::set_irq_prios();
-        priority::set_irq_prio(Interrupt::USART2, priority::PRIO_LPTIM1);
+        // USART2 RX at prio 2 (was 4): the RX ISR has a hard 5us deadline
+        // (byte time at 2 Mbaud) and under CL load at amp 60+ the prio-4
+        // slot missed it routinely - keys silently dropped, the 90-ladder
+        // could not command past amp 60. The ISR is ~1-2us and enqueue-only.
+        priority::set_irq_prio(Interrupt::USART2, priority::PRIO_TIM1);
         // FALCON: commutation one-shot at COMP's level — same
         // priority means COMP and LPTIM2 serialize (tail-chain, never
         // nest), so ZC-accept and commutate can't interleave state.
@@ -2146,6 +2165,27 @@ fn main() -> ! {
                 let prev_hz = electrical_hz;
                 let prev_mode = waveform;
                 BEACON_PHASE.store(2, Ordering::Relaxed);
+                // EMI KEY GUARD (2026-07-18, the amp-65+ chaos): at
+                // high amp the PA2 line decodes GARBAGE frames at kHz
+                // rates; raw single-byte keys mean junk randomly hits
+                // 'w' (kills!), 'a'/'z' (throttle walks), 'i' (600-byte
+                // echo storms = the write_str main-livelock the PendSV
+                // profiler caught 7/8 samples in). Keys must now arrive
+                // DOUBLED within ~50 ms (host sends each char twice;
+                // junk pairs collide at 1/65536). 'w' stays single -
+                // a junk kill is the safe failure.
+                let now_key = ticks_10us();
+                let ok = if b == b'w' {
+                    true
+                } else {
+                    let prev = LAST_KEY_BYTE.swap(b, Ordering::Relaxed);
+                    let prev_t = LAST_KEY_T10.swap(now_key, Ordering::Relaxed);
+                    prev == b && now_key.wrapping_sub(prev_t) < 5_000
+                };
+                if !ok {
+                    continue;
+                }
+                LAST_KEY_BYTE.store(0, Ordering::Relaxed);
                 match b {
                     b'a' => amplitude_pct = clamp_amp(amplitude_pct as i32 + 1),
                     b'z' => amplitude_pct = clamp_amp(amplitude_pct as i32 - 1),
@@ -2800,7 +2840,7 @@ fn main() -> ! {
                             }
                             write!(
                                 &mut tx_writer,
-                                " txdrop={} zbk={} storm={}/{} mst={}/{} msts={} mstp={} wbmax={} mstpc={:08x} mstlr={:08x} txrs={} pcomp={} ev:{}/{}/{}/{}\r\n",
+                                " txdrop={} zbk={} storm={}/{} mst={}/{} msts={} mstp={} wbmax={} mstpc={:08x} mstlr={:08x} txrs={} pcomp={} ev:{}/{}/{}/{} arm={} lp2fire={}\r\n",
                                 minz::uart_tx::TX_DROPPED.load(Ordering::Relaxed),
                                 ZOMBIE_BACKSTOP_KILLS.load(Ordering::Relaxed),
                                 STORM_MASKS.load(Ordering::Relaxed),
@@ -2818,6 +2858,8 @@ fn main() -> ! {
                                 ENTRY_ONLY.load(Ordering::Relaxed),
                                 LATE_ONLY.load(Ordering::Relaxed),
                                 NEITHER.load(Ordering::Relaxed),
+                                SHOT_ARMED_COUNT.load(Ordering::Relaxed),
+                                LPTIM2_COUNT.load(Ordering::Relaxed),
                             )
                             .ok();
                         }
@@ -3416,6 +3458,11 @@ fn TIM7() {
             let zombie = TIM7_COUNT.load(Ordering::Relaxed) & 0xF == 0
                 && minz_core::guards::comm_silence_backstop(since_us);
             if zombie {
+                bb_record(
+                    minz_core::blackbox::EV_DSY,
+                    CURRENT_SECTOR.load(Ordering::Relaxed),
+                    0xB001,
+                );
                 ZOMBIE_BACKSTOP_KILLS.fetch_add(1, Ordering::Relaxed);
             }
             let kill = if zombie {
@@ -3989,6 +4036,7 @@ static DUR_CLOSE: AtomicU32 = AtomicU32::new(0);
 /// COMP so the two never nest.
 #[interrupt]
 fn LPTIM2() {
+    LPTIM2_COUNT.fetch_add(1, Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_LPTIM2);
     minz::lptim2_oneshot::clear_flag();
     if !CL_ACTIVE.load(Ordering::Relaxed) || !MOTOR_ENABLED.load(Ordering::Relaxed) {
@@ -4177,6 +4225,19 @@ fn fabric_close_step() {
     CLOSE_SEEN_GEN.store(g0, Ordering::Relaxed);
     // MZT record (differential trace) - values all local/stamped.
     if ZT_ON.load(Ordering::Relaxed) {
+        // pair-preserving decimation (see ZT_DECIM_CTR)
+        let ctr = ZT_DECIM_CTR.fetch_add(1, Ordering::Relaxed);
+        let iv_now = OWL_INTERVAL_US.load(Ordering::Relaxed);
+        let group: u32 = if iv_now == 0 || iv_now >= 140 {
+            1
+        } else if iv_now >= 100 {
+            4
+        } else {
+            8
+        };
+        if group > 1 && (ctr % group) >= 2 {
+            return;
+        }
         let period = now_us.wrapping_sub(start_us).min(0xFFFF) as u16;
         let est = CLOSED_EST_US.load(Ordering::Relaxed).min(0xFFFF) as u16;
         let delay = LAST_DELAY_US.load(Ordering::Relaxed);
@@ -4398,6 +4459,11 @@ fn TIM1_UP_TIM16() {
         let lc = LAST_COMM_10US.load(Ordering::Relaxed);
         let since = minz_core::guards::since_us(ticks_10us(), lc);
         if minz_core::guards::comm_silence_backstop(since) {
+            bb_record(
+                minz_core::blackbox::EV_DSY,
+                CURRENT_SECTOR.load(Ordering::Relaxed),
+                0xB002,
+            );
             ZOMBIE_BACKSTOP_KILLS.fetch_add(1, Ordering::Relaxed);
             minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Desync);
             tim1_motor_pwm::all_off();
@@ -4427,6 +4493,11 @@ fn TIM1_UP_TIM16() {
             );
             STORM_RATE_RUN.store(run, Ordering::Relaxed);
             if trip {
+                bb_record(
+                    minz_core::blackbox::EV_DSY,
+                    CURRENT_SECTOR.load(Ordering::Relaxed),
+                    0xB003,
+                );
                 STORM_KILLS.fetch_add(1, Ordering::Relaxed);
                 comp2::set_exti_enabled(false);
                 minz_core::guards::apply_isr_kill(
@@ -5235,6 +5306,7 @@ fn accept_qualified_zc(zc_us: u32) {
             adv,
             2 + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
+        SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
         minz::lptim2_oneshot::schedule_us(delay);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
         LAST_EST_BEFORE.store(iv.min(0xFFFF) as u16, Ordering::Relaxed);
@@ -5279,6 +5351,7 @@ fn accept_qualified_zc(zc_us: u32) {
             adv,
             elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
+        SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
         minz::lptim2_oneshot::schedule_us(delay);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
         LAST_EST_BEFORE.store(iv.min(0xFFFF) as u16, Ordering::Relaxed);

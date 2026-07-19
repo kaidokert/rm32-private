@@ -109,25 +109,48 @@ def main():
                     break
         n0 = len(cap)
         died = False
-        # climb from the engage amp (~15) to lo under trace
-        for _ in range(lo - 15):
-            key("a", 0.12)
+
+        def climb_to(target):
+            """Echo-verified amp stepping: RX keys DROP under full ZT
+            stream load (USART2 prio 4 overruns) - the mzt_90a ladder
+            silently capped at amp ~55 while "COMPLETED". Press, then
+            confirm the amp= echo advanced; resend on loss."""
+            cur = None
+            for _ in range(300):
+                out = key("a", 0.15)
+                m = re.findall(r"amp=(\d+)", out)
+                if m:
+                    cur = int(m[-1])
+                    if cur >= target:
+                        return cur
+            return cur
+
+        # climb from the engage amp to lo under trace (echo-verified)
+        reached = climb_to(lo)
+        print(f"climbed to amp {reached}")
         time.sleep(1.0)
         # ZOMBIE LESSON (mzt_beacon): "cl: ACTIVE f_e=" is frozen
         # statics - it stays ACTIVE with the commutation chain dead
         # and 1.5 A DC in the winding. Under ZT the honest liveness
         # is RECORD FLOW (records stop when commutation stops).
-        n1 = len(cap)
-        key("", 1.0)
-        flow = bytes(cap[n1:]).count(b"\x5b\xab")
+        # RETRIED flow check (mzt_90f/g: transient TX outages at
+        # amp 60 false-killed the band climb; txrs= counts the
+        # DMA wedge heals behind them).
+        flow = 0
+        for _ in range(4):
+            n1 = len(cap)
+            key("", 1.0)
+            flow = bytes(cap[n1:]).count(b"\x5b\xab")
+            if flow:
+                break
         if flow == 0:
             died = True
-            print("DIED pre-band (no record flow) - fatal capture")
+            print("DIED pre-band (no record flow x4) - fatal capture")
         else:
             print(f"at {lo}: {flow} rec/s; tracing band climb")
             key("", a.dwell)
-            for _ in range(hi - lo):
-                key("a", a.step_wait)
+            reached = climb_to(hi)
+            print(f"band climb reached amp {reached}")
             # SILENT dwell: the i-poll flooded the wire and cost the
             # crisis records (mzt_fatal6 queue drops at the death) -
             # capture quietly, detect death post-hoc.
