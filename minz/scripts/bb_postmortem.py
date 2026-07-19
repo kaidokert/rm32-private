@@ -24,7 +24,7 @@ CHIP = "STM32L431KCUx"
 BB_LEN = 64
 # Keep in sync with minz_core::blackbox::EV_NAMES.
 EV_NAMES = ["REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG",
-            "STV", "RAQ", "RSD", "RSC"]
+            "STV", "RAQ", "RSD", "RSC", "KCK"]
 
 DEFAULT_ELF = (pathlib.Path(__file__).resolve().parent.parent
                / "target/thumbv7em-none-eabihf/release/examples/motor_tester2")

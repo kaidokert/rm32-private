@@ -715,6 +715,11 @@ static KEY_ANY_COUNT: AtomicU32 = AtomicU32::new(0);
 /// doubled-key guard while the ladder was armed).
 #[unsafe(no_mangle)]
 static KEY_REJECT_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Chain kicks: overdue commutations software-fired by the TIM1_UP
+/// supervisor (each one is a dropped LPTIM2 shot that would have
+/// been chain death).
+#[unsafe(no_mangle)]
+static CHAIN_KICKS: AtomicU32 = AtomicU32::new(0);
 /// Last 16 ACCEPTED key bytes, ring; readback via probe after a run.
 #[unsafe(no_mangle)]
 static KEY_LOG: [AtomicU8; 16] = [const { AtomicU8::new(0) }; 16];
@@ -1089,11 +1094,11 @@ fn trigger_reseed(detail: u16) {
     // ARE the audible pulsing (RESEED_COUNT=8 on the amp-90 ladder);
     // the frozen bb holds the exact window sequence into the first
     // qZC dropout for post-run RAM readback. Re-armed per ladder arm.
-    if OWL_INTERVAL_US.load(Ordering::Relaxed) < 150
-        && !RESEED_BB_TAKEN.swap(true, Ordering::Relaxed)
-    {
-        // first HIGH-SPEED reseed only - engage-phase reseeds (320 Hz)
-        // froze the ring before the pulsing regime was reached
+    if !RESEED_BB_TAKEN.swap(true, Ordering::Relaxed) {
+        // First reseed at ANY speed: the s1g capture proved the
+        // engage-phase chain stop (2.84 ms with zero commutation
+        // events before DSY) is the SAME dropped-shot class as the
+        // high-speed one, so the speed gate was hiding the evidence.
         BB_FROZEN.store(true, Ordering::Relaxed);
         // Chain-stop forensics: arm/fire accounting + LPTIM2 hardware
         // state AT the dropout. armed>fired here = a shot that never
@@ -4614,6 +4619,30 @@ fn TIM1_UP_TIM16() {
             minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Desync);
             tim1_motor_pwm::all_off();
             comp2::set_exti_enabled(false);
+        } else {
+            // CHAIN KICK (2026-07-18, the s1g dropped-shot autopsy):
+            // the LPTIM2 free-run chain has a single point of failure
+            // — the ISR re-arms its own next shot, so one dropped
+            // SNGSTRT is chain death (2.84 ms of zero commutation
+            // events, then the desync kill; at speed, the reseed
+            // pulsing). AM32's chain survives because every ZC
+            // re-arms the timer from a context that never dies. This
+            // 24 kHz supervisor is our always-alive context: if the
+            // commutation is >1.5 intervals overdue, software-pend
+            // the commutation ISR — it commutates and re-arms the
+            // next shot, one late window instead of a dead chain.
+            // Margin: max(iv/2, 60 µs) rides out refine jitter and
+            // the 10 µs tick quantization at 77 µs top-end intervals.
+            let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+            if iv != 0 && iv < 5_000 && since > iv + (iv / 2).max(60) {
+                CHAIN_KICKS.fetch_add(1, Ordering::Relaxed);
+                bb_record(
+                    minz_core::blackbox::EV_KCK,
+                    CURRENT_SECTOR.load(Ordering::Relaxed),
+                    since.min(0xFFFF as u32) as u16,
+                );
+                cortex_m::peripheral::NVIC::pend(Interrupt::LPTIM2);
+            }
         }
     }
     // HOT-PATH DECIMATION (2026-07-18 bisect verdict): the day's

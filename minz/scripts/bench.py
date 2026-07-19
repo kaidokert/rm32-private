@@ -149,6 +149,11 @@ def cmd_ladder(a):
         finally:
             b.kill()
             b.close()
+        import pathlib
+        tag = a.tag or f"step{a.step}"
+        capfile = pathlib.Path("captures") / f"ladder_cap_{tag}_r{run}.bin"
+        capfile.write_bytes(bytes(b.cap))
+        print(f"serial capture -> {capfile} ({len(b.cap)} bytes)")
         if died:
             print(f"run {run}: DIED mid-ladder: "
                   f"{died.decode('utf-8', 'replace').strip()}")
@@ -234,7 +239,8 @@ def cmd_postmortem(_):
     for sym in ("STORM_KILLS", "ZOMBIE_BACKSTOP_KILLS", "MAIN_STARVE_KILLS",
                 "KEY_I_COUNT", "KEY_ANY_COUNT", "KEY_REJECT_COUNT",
                 "USART2_COUNT",
-                "SHOT_ARMED_COUNT", "LPTIM2_COUNT", "BURST_TRIPS",
+                "SHOT_ARMED_COUNT", "LPTIM2_COUNT", "CHAIN_KICKS",
+                "BURST_TRIPS",
                 "RECOV_COUNT", "RESEED_COUNT", "SLEW_CLAMP_COUNT",
                 "WAIT_CLAMP_COUNT"):
         try:
@@ -338,6 +344,27 @@ def cmd_peek(a):
             print(e)
 
 
+def cmd_capdump(a):
+    # Extract printable text runs from a mixed text+MAGPIE capture.
+    data = open(a.file, "rb").read()
+    run = bytearray()
+    out = []
+    for byte in data:
+        if 32 <= byte < 127 or byte in (10, 13):
+            run.append(byte)
+        else:
+            if len(run) >= a.min_len:
+                out.append(run.decode())
+            run = bytearray()
+    if len(run) >= a.min_len:
+        out.append(run.decode())
+    text = "".join(out)
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s and not a.grep or (a.grep and a.grep in s):
+            print(s)
+
+
 def cmd_kill(_):
     b = Bench()
     b.kill()
@@ -370,11 +397,15 @@ def main():
     p = sub.add_parser("peek")
     p.add_argument("syms", nargs="+")
     p.add_argument("--words", type=int, default=1)
+    p = sub.add_parser("capdump")
+    p.add_argument("file")
+    p.add_argument("--min-len", type=int, default=6)
+    p.add_argument("--grep", default=None)
     a = ap.parse_args()
     {"engage": cmd_engage, "ladder": cmd_ladder, "readback": cmd_readback,
      "postmortem": cmd_postmortem, "flash-minz": cmd_flash_minz,
      "flash-am32": cmd_flash_am32, "sweep-am32": cmd_sweep_am32,
-     "kill": cmd_kill, "peek": cmd_peek}[a.cmd](a)
+     "kill": cmd_kill, "peek": cmd_peek, "capdump": cmd_capdump}[a.cmd](a)
 
 
 if __name__ == "__main__":

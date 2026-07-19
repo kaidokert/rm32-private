@@ -72,8 +72,8 @@ impl Default for BlackBox {
 }
 
 /// Event-type display names, indexed by `Event::ty`.
-pub const EV_NAMES: [&str; 12] = [
-    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ", "RSD", "RSC",
+pub const EV_NAMES: [&str; 13] = [
+    "REF", "BLD", "DRK", "ACC", "NOZ", "DIS", "DSY", "ENG", "STV", "RAQ", "RSD", "RSC", "KCK",
 ];
 
 // The authoritative event codes (indices into EV_NAMES; the decode
@@ -105,6 +105,14 @@ pub const EV_RSD: u8 = 10;
 /// mux switch - no edge ever existed) had its qZC synthesized from
 /// the first-wrap level sample. Data = offset us from window start.
 pub const EV_RSC: u8 = 11;
+/// Chain kick: the 24 kHz supervisor found the scheduled commutation
+/// overdue (>1.5× interval since the last one — a dropped LPTIM2
+/// shot) and software-fired the commutation ISR. Data = overdue µs.
+/// The s1g capture proved one dropped shot killed the whole chain
+/// (2.84 ms of silence, then desync); the kick turns that into a
+/// one-window hiccup — AM32's chain survives because every ZC
+/// re-arms its timer, ours must survive a lost re-arm too.
+pub const EV_KCK: u8 = 12;
 
 /// Render a desync dump: one `bb +<dt>us NAME s<sec> d=<data>` line
 /// per event, dt in µs since the previous event (t is in 10 µs
