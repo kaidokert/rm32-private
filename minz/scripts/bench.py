@@ -417,14 +417,20 @@ def cmd_probe_adv(a):
             print("NO ENGAGE")
             return
         print(f"engaged attempt {att}: {fe} Hz")
-        b.press_until("g", "stream=on", tries=4)
+        if not b.press_until("g", "stream=on", tries=6):
+            print("WARN: stream-on unconfirmed")
         mark0 = len(b.cap)
         t0 = time.monotonic()
         while time.monotonic() - t0 < a.secs:
             b.cap.extend(b.ser.read(8192))
         mark1 = len(b.cap)
-        for _ in range(a.presses):
-            b.key(a.key, 0.3)
+        for n in range(a.presses):
+            # echo-verified press (the wire eats singles at will)
+            for _ in range(5):
+                if a.echo in b.key(a.key, 0.4):
+                    break
+            else:
+                print(f"press {n}: echo '{a.echo}' never seen")
         t0 = time.monotonic()
         while time.monotonic() - t0 < a.secs:
             b.cap.extend(b.ser.read(8192))
@@ -462,6 +468,28 @@ def cmd_waxdump(a):
     path = pathlib.Path("captures") / f"wax_{a.tag}.bin"
     path.write_bytes(bytes(b.cap[mark:]))
     print(f"-> {path} ({len(b.cap) - mark} bytes)")
+
+
+def cmd_ztstats(a):
+    # Per-step zt (ZC-to-ZC) means from an AM32 ZCTRACE csv — the
+    # even/odd alternation discriminator, reference side.
+    import csv as _csv
+    per = {s: [] for s in range(1, 7)}
+    with open(a.file) as f:
+        for row in _csv.DictReader(f):
+            s = int(row["step"])
+            zt = float(row["zt_us"])
+            if 1 <= s <= 6 and 0 < zt < 20000:
+                per[s].append(zt)
+    for s in range(1, 7):
+        v = per[s]
+        if not v:
+            print(f"step {s}: n=0")
+            continue
+        v.sort()
+        mean = sum(v) / len(v)
+        print(f"step {s}: n={len(v)} mean={mean:.0f} med={v[len(v)//2]:.0f} "
+              f"p10={v[len(v)//10]:.0f} p90={v[9*len(v)//10]:.0f}")
 
 
 def cmd_kill(_):
@@ -504,16 +532,20 @@ def main():
     p.add_argument("--presses", type=int, default=7)
     p.add_argument("--secs", type=float, default=3.0)
     p.add_argument("--key", default="t")
+    p.add_argument("--echo", default="")
     p.add_argument("--tag", default="probe")
     p = sub.add_parser("waxdump")
     p.add_argument("--tag", default="lock")
     p.add_argument("--secs", type=float, default=8.0)
+    p = sub.add_parser("ztstats")
+    p.add_argument("file")
     a = ap.parse_args()
     {"engage": cmd_engage, "ladder": cmd_ladder, "readback": cmd_readback,
      "postmortem": cmd_postmortem, "flash-minz": cmd_flash_minz,
      "flash-am32": cmd_flash_am32, "sweep-am32": cmd_sweep_am32,
      "kill": cmd_kill, "peek": cmd_peek, "capdump": cmd_capdump,
-     "probe-adv": cmd_probe_adv, "waxdump": cmd_waxdump}[a.cmd](a)
+     "probe-adv": cmd_probe_adv, "waxdump": cmd_waxdump,
+     "ztstats": cmd_ztstats}[a.cmd](a)
 
 
 if __name__ == "__main__":

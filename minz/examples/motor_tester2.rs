@@ -726,6 +726,26 @@ static CHAIN_KICKS: AtomicU32 = AtomicU32::new(0);
 static SAG_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);
 /// Chain-kick two-pass confirmation latch (false-fire fix).
 static KICK_PEND: AtomicBool = AtomicBool::new(false);
+/// Parity-trim EMAs: per-polarity window length (µs), the ±δ
+/// alternation-trap compensator's measurement (core::timing).
+#[unsafe(no_mangle)]
+static PARITY_EMA_EVEN: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static PARITY_EMA_ODD: AtomicU32 = AtomicU32::new(0);
+
+/// Delay trim for a commutation closing sector `sec`'s window.
+#[inline]
+fn parity_trim_for(sec: u8, iv: u32) -> i32 {
+    let (a, b) = (
+        PARITY_EMA_EVEN.load(Ordering::Relaxed),
+        PARITY_EMA_ODD.load(Ordering::Relaxed),
+    );
+    if sec & 1 == 0 {
+        minz_core::timing::parity_trim_us(a, b, iv)
+    } else {
+        minz_core::timing::parity_trim_us(b, a, iv)
+    }
+}
 /// ARM PROVENANCE RING (2026-07-19 corrupt-delay hunt): every LPTIM2
 /// arm records [delay_us | src<<24, iv_us, now_1us] — the 522 µs
 /// shot at a 107 µs cruise left no bb event, so the arm sites
@@ -4329,6 +4349,22 @@ fn LPTIM2() {
             Ordering::Relaxed,
         );
     }
+    // PARITY TRIM EMA: track per-polarity window length (the ±δ
+    // alternation trap). Cold path, two loads + a store.
+    {
+        let wl = now_us.wrapping_sub(SECTOR_START_US.load(Ordering::Relaxed));
+        if wl < 5_000 {
+            let ema = if prev & 1 == 0 {
+                &PARITY_EMA_EVEN
+            } else {
+                &PARITY_EMA_ODD
+            };
+            ema.store(
+                minz_core::timing::parity_ema_step(ema.load(Ordering::Relaxed), wl),
+                Ordering::Relaxed,
+            );
+        }
+    }
     // Adaptive gate with FRESH reacq state (same-instant as the
     // old in-ISR close). Geometry mode uses AM32's half-interval
     // gate keyed to the stiff average (the 2026-07-19 even/odd
@@ -5610,6 +5646,9 @@ fn accept_qualified_zc(zc_us: u32) {
             adv,
             2 + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
+        // Parity trim: cancel the ±δ polarity alternation at its
+        // application point (host-tested core::timing::parity_*).
+        let delay = (delay as i32 + parity_trim_for(sec, iv)).max(8) as u32;
         SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
         minz::lptim2_oneshot::schedule_us(delay);
         // HOT PATH (COMP ISR accept): trace ONLY anomalous arms — the
@@ -5661,6 +5700,7 @@ fn accept_qualified_zc(zc_us: u32) {
             adv,
             elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
+        let delay = (delay as i32 + parity_trim_for(sec, iv)).max(8) as u32;
         SHOT_ARMED_COUNT.fetch_add(1, Ordering::Relaxed);
         minz::lptim2_oneshot::schedule_us(delay);
         arm_trace(2, delay, iv);

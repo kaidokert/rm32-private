@@ -11,6 +11,12 @@
 //! spin-up ran at ~45 % duty, seeding the estimator with chaos.
 
 /// Drive ticks (6 kHz) per 1 % step → 50 ms per percent.
+/// PROBED 2026-07-19: 15 ticks (0.4 %/ms, toward AM32's 2-16 %/ms
+/// di/dt clamp) — 1 % rungs stayed trapped (punch too small), 10 %
+/// rungs punched inconsistently, and at amp 40+ the fast slew went
+/// regen-unstable (bus pumped to 11 V, sag kills). The throttle-
+/// dynamics lever needs the full R1 duty_slew architecture, not a
+/// cadence constant; reverted to the proven 300.
 pub const STEP_TICKS: u32 = 300;
 
 /// Duty-scaled slew cadence (2026-07-19 top-transit fold): a 10 %

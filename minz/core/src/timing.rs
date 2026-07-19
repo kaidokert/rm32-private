@@ -107,6 +107,52 @@ pub fn gate_us_am32(avg_interval_us: u32, interval_us: u32, reacq: bool) -> u32 
     (base / 2).max(20)
 }
 
+/// PARITY TRIM (2026-07-19, the half-speed trap autopsy): qualified
+/// ZCs are displaced ±δ by BEMF polarity (δ ≈ 37 µs at 322 Hz —
+/// offset-through-slope, measured on BOTH firmwares: AM32's own
+/// low-speed trace alternates steps 1/3/5 = 340 µs vs 2/4/6 = 302 µs
+/// on this bench). The loop echoes the displacement into a stable
+/// ±δ commutation alternation = ±26° alternating field error at low
+/// speed = the half-speed trap under every climb wobble. This trims
+/// the SCHEDULED delay per window polarity to cancel the OBSERVED
+/// window-length alternation — closed-loop on the symptom, agnostic
+/// to the electrical origin, and stronger than AM32 (which merely
+/// tolerates its smaller δ at its faster operating points).
+///
+/// EMA halves per parity (α = 1/8 per window); trim for the window's
+/// closing commutation = −(ema_this − ema_mid)/2, clamped ±80 µs,
+/// active only at low speed (interval ≥ 200 µs) where the trap
+/// lives. Pure state-in/state-out for host tests; the firmware keeps
+/// the two EMAs in atomics.
+pub const PARITY_TRIM_MIN_IV_US: u32 = 200;
+pub const PARITY_TRIM_CLAMP_US: i32 = 80;
+
+/// One window closed with length `wl_us` on an even (`parity=0`) or
+/// odd sector: returns the updated EMA for that parity.
+#[inline]
+pub fn parity_ema_step(ema_us: u32, wl_us: u32) -> u32 {
+    if ema_us == 0 {
+        wl_us
+    } else {
+        ema_us - ema_us / 8 + wl_us / 8
+    }
+}
+
+/// Delay trim (µs, signed) for a commutation closing a window of
+/// this parity. Positive = commutate later.
+#[inline]
+pub fn parity_trim_us(ema_this: u32, ema_other: u32, interval_us: u32) -> i32 {
+    if interval_us < PARITY_TRIM_MIN_IV_US || ema_this == 0 || ema_other == 0 {
+        return 0;
+    }
+    let mid = (ema_this + ema_other) / 2;
+    // Full cancellation (the /2 first cut left exactly half the
+    // alternation on the bench: ±76 → ±38 µs); the α=1/8 EMA is the
+    // loop damping.
+    let raw = -(ema_this as i32 - mid as i32);
+    raw.clamp(-PARITY_TRIM_CLAMP_US, PARITY_TRIM_CLAMP_US)
+}
+
 /// Speed-adaptive comparator blank (cribbed from AM32's actual L431
 /// strategy, which has NO time-since-PWM-edge blank at all — its
 /// noise defense is persistence depth scaled with speed). Our fixed
@@ -314,6 +360,31 @@ pub fn climb_lead_iv(interval_us: u32, climbing: bool) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parity_trim_cancels_the_measured_alternation() {
+        // Feed the measured trap: even windows 592, odd 442.
+        let mut ee = 0u32;
+        let mut eo = 0u32;
+        for _ in 0..64 {
+            ee = parity_ema_step(ee, 592);
+            eo = parity_ema_step(eo, 442);
+        }
+        assert!((580..=600).contains(&ee), "{ee}");
+        assert!((430..=450).contains(&eo), "{eo}");
+        // Even windows are long: their closing commutation trims
+        // EARLIER (negative); odd trims later. Half the offset each.
+        let te = parity_trim_us(ee, eo, 517);
+        let to = parity_trim_us(eo, ee, 517);
+        assert!((-80..=-60).contains(&te), "{te}");
+        assert!((60..=80).contains(&to), "{to}");
+        // Uniform windows: no trim.
+        assert_eq!(parity_trim_us(500, 500, 517), 0);
+        // High speed: off.
+        assert_eq!(parity_trim_us(120, 90, 105), 0);
+        // Unseeded: off.
+        assert_eq!(parity_trim_us(0, 442, 517), 0);
+    }
 
     #[test]
     fn gate_am32_is_half_the_stiff_average() {
