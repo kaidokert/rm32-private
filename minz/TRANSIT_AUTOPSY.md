@@ -911,3 +911,40 @@ per-parity delta of (qualified-accept - first-gate-surviving-edge):
   (c) AM32's filter passes both polarities on the same signal -
   diff their expected-level derivation (rising = step%2) against
   ours verbatim.
+
+
+## RESOLUTION (2026-07-18 night): aligned quantities, in use — the
+## parity bias dies at the root, the reproducer COMPLETES
+
+Operator doctrine executed literally: MZT v3 (magic 0xAC, 21 B) logs
+AM32's exact quantities (raw ZC-to-ZC = their zt; pair-avg IIR est =
+their ci; 6-slot stiff avg = their avg; scheduled delay = their
+wait), and the schedule now USES them their way: wait = est/2 - adv
+anchored at the ZC, fixed small dispatch constant, NO measured-
+elapsed, NO parity compensation.
+
+The aligned-delay histogram had the answer the whole time: AM32 wait
+= 22 us spread 4 (pure IIR); ours was half-collapsed onto the 2 us
+floor - measured-elapsed scheduling PROPAGATED accept-lateness into
+commutation timing (and comp27 "fixed" the period symmetry only by
+robbing even windows of their entire margin). With est-only wait:
+
+- parity bias, NO compensation: +54 -> **+4.4 us** (noise level).
+  The bias was never a detection mystery - it was our scheduling
+  architecture. AM32's does not propagate accept jitter; now ours
+  does not either.
+- delay: minz 22 [19-33] vs AM32 22 [18-22] - IDENTICAL medians.
+- tracking: median 4.3% / p95 12.5% vs AM32 raw 5.6% / 10.6% -
+  MATCHED.
+- **TERMINAL: COMPLETED - twice consecutively** (mzt_v3, mzt_v3wait;
+  the first completions in the repo's history).
+
+Remaining honest gaps: raw-interval spread still ~2x theirs (49 vs
+21 us p05-p95) and our cruise sits ~20% slower at equal duty - the
+next campaign items, now measurable field-for-field on every run
+(scripts/plot_aligned.py).
+
+Note the earlier "am32sched" experiment was the RIGHT change tested
+on the WRONG build (pre-recovery erosion, b2b active, comp27
+interactions) - a lesson in experiment hygiene: levers must be
+tested on a clean baseline.

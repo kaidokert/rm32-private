@@ -21,22 +21,23 @@ import time
 
 import serial
 
-REC = 17
+REC = 21
 
 
 def decode(buf):
     recs = []
     i = 0
     while i + REC <= len(buf):
-        if buf[i] == 0x5B and buf[i + 1] == 0xAB:
+        if buf[i] == 0x5B and buf[i + 1] == 0xAC:
             fs = buf[i + 2]
-            (per, estb, est, dly, duty, t10, qoff) = struct.unpack_from(
-                "<HHHHHHH", buf, i + 3)
+            (per, estb, est, dly, duty, t10, qoff, raw_iv, stiff) = struct.unpack_from(
+                "<HHHHHHHHH", buf, i + 3)
             if 20 <= per <= 30000 and est <= 30000:
                 recs.append(dict(sector=fs & 7, refined=bool(fs & 0x80),
                                  period_us=per, est_before_us=estb,
                                  est_us=est, delay_us=dly,
-                                 duty=duty, t10=t10, qzc_off=qoff))
+                                 duty=duty, t10=t10, qzc_off=qoff,
+                                 raw_iv=raw_iv, stiff=stiff))
                 i += REC
                 continue
         i += 1
@@ -170,11 +171,12 @@ def main():
     recs = decode(bytes(cap))
     csv_path = pathlib.Path("captures") / f"{a.tag}_trace.csv"
     with open(csv_path, "w") as f:
-        f.write("sector,refined,period_us,est_before_us,est_us,delay_us,duty,t10,qzc_off\n")
+        f.write("sector,refined,period_us,est_before_us,est_us,delay_us,duty,t10,qzc_off,raw_iv_us,stiff_us\n")
         for r in recs:
             f.write(f"{r['sector']},{int(r['refined'])},{r['period_us']},"
                     f"{r['est_before_us']},{r['est_us']},{r['delay_us']},"
-                    f"{r['duty']},{r['t10']},{r['qzc_off']}\n")
+                    f"{r['duty']},{r['t10']},{r['qzc_off']},"
+                    f"{r['raw_iv']},{r['stiff']}\n")
     # TERMINAL CLASSIFICATION (mandatory for autopsy eligibility)
     rawb = bytes(cap)
     reboot = rawb.count(b"reset: csr=")

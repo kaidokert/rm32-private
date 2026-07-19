@@ -962,6 +962,13 @@ static LAST_DELAY_US: AtomicU16 = AtomicU16::new(0);
 /// pre and post at the same semantic point for the 4-way causality
 /// split; never compare pre on one side to post on the other.
 static LAST_EST_BEFORE: AtomicU16 = AtomicU16::new(0);
+/// AM32-PARALLEL trace fields (operator directive: the two traces
+/// must log the SAME quantities so the plots line up field-for-
+/// field). RAW ZC-to-ZC interval = AM32's `zt` (thiszctime);
+/// the stiff 6-slot average = their `avg`; est = their `ci`
+/// (identical pair-avg IIR formula under geometry mode).
+static LAST_ZC_STAMP_US: AtomicU32 = AtomicU32::new(0);
+static LAST_RAW_ZC_IV: AtomicU16 = AtomicU16::new(0);
 /// J-FREE per-hold current observer: peak mid-ON i_raw sampled by
 /// TIM7 while a hold exceeds 1.5x interval (regime-scoped). The
 /// J-armed microscope perturbs the loop; this observer does not -
@@ -3079,7 +3086,7 @@ fn main() -> ! {
                 let Some(rec) = zt_consumer.dequeue() else {
                     break;
                 };
-                if TX_RING_LEN - 1 - tx_writer.pending() >= 17 {
+                if TX_RING_LEN - 1 - tx_writer.pending() >= 21 {
                     for b in rec {
                         let _ = tx_writer.push(b);
                     }
@@ -3701,8 +3708,8 @@ struct PendingClose {
     sc: minz_core::window::CloseScalars,
 }
 type PendQueue = Queue<PendingClose, 32>;
-type ZtQueue = Queue<[u8; 17], 256>;
-static ZT_PROD: Mutex<RefCell<Option<Producer<'static, [u8; 17]>>>> =
+type ZtQueue = Queue<[u8; 21], 256>;
+static ZT_PROD: Mutex<RefCell<Option<Producer<'static, [u8; 21]>>>> =
     Mutex::new(RefCell::new(None));
 static PEND_PROD: Mutex<RefCell<Option<Producer<'static, PendingClose>>>> =
     Mutex::new(RefCell::new(None));
@@ -4167,9 +4174,11 @@ fn fabric_close_step() {
         };
         let flags = (prev & 0x07) | if refined { 0x80 } else { 0 };
         let est_before = LAST_EST_BEFORE.load(Ordering::Relaxed);
-        let rec: [u8; 17] = [
+        let raw_iv = LAST_RAW_ZC_IV.load(Ordering::Relaxed);
+        let stiff = (AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6).min(0xFFFF) as u16;
+        let rec: [u8; 21] = [
             0x5B,
-            0xAB,
+            0xAC, // v3: AM32-parallel fields
             flags,
             period as u8,
             (period >> 8) as u8,
@@ -4185,6 +4194,10 @@ fn fabric_close_step() {
             (t10 >> 8) as u8,
             qoff as u8,
             (qoff >> 8) as u8,
+            raw_iv as u8,
+            (raw_iv >> 8) as u8,
+            stiff as u8,
+            (stiff >> 8) as u8,
         ];
         free(|cs| {
             let mut prod = ZT_PROD.borrow(cs).borrow_mut();
@@ -5062,7 +5075,7 @@ fn COMP() {
                 let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
                 let zc = if expected && CL_ACTIVE.load(Ordering::Relaxed) && iv != 0 && iv < 400 {
                     PARITY_COMP_APPLIED.fetch_add(1, Ordering::Relaxed);
-                    now_us.wrapping_sub(27)
+                    now_us // comp OFF: it robbed even-window schedule margin (aligned-delay plot)
                 } else {
                     now_us
                 };
@@ -5143,6 +5156,17 @@ fn record_edge_diag(now_10: u32) {
 /// SWIFT at prio 1; TIM1_UP confirm inside `free` + gen guard) exclude
 /// a competing publish between the precheck and the publish.
 fn accept_qualified_zc(zc_us: u32) {
+    // AM32-parallel raw interval (their zt): ZC-stamp to ZC-stamp,
+    // BEFORE any estimator/schedule processing touches it.
+    {
+        let prev = LAST_ZC_STAMP_US.swap(zc_us, Ordering::Relaxed);
+        if prev != 0 {
+            LAST_RAW_ZC_IV.store(
+                zc_us.wrapping_sub(prev).min(0xFFFF) as u16,
+                Ordering::Relaxed,
+            );
+        }
+    }
     let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
     let mut shot_armed = false;
     // Climb lead: while the throttle walks (applied != target), the
@@ -5162,11 +5186,17 @@ fn accept_qualified_zc(zc_us: u32) {
         // (minz_core::timing).
         let adv =
             minz_core::timing::auto_advance_deg(iv, ADVANCE_DEG.load(Ordering::Relaxed) as i32);
-        let elapsed = ticks_1us().wrapping_sub(zc_us) as i32;
+        // AM32-VERBATIM WAIT (operator: same quantities IN USE): their
+        // wait = ci/2 - advance derives PURELY from the IIR estimate,
+        // anchored at the ZC - wait spread 4 us on the aligned plot.
+        // Our measured-elapsed subtraction (+ the comp27 backdate
+        // inflating elapsed on evens) collapsed half our delays onto
+        // the 2 us floor: zero scheduling margin on alternate windows.
+        // Fixed small constant covers dispatch+LPTIM overhead only.
         let delay = minz_core::timing::commutation_delay_us(
             iv,
             adv,
-            elapsed + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
+            2 + minz_core::timing::LPTIM2_FULL_SCHEDULE_OVERHEAD_US,
         );
         minz::lptim2_oneshot::schedule_us(delay);
         LAST_DELAY_US.store(delay.min(0xFFFF) as u16, Ordering::Relaxed);
