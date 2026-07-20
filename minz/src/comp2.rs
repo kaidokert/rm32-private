@@ -254,3 +254,18 @@ pub fn clear_pending() {
     let exti = unsafe { &*EXTI::ptr() };
     exti.pr1.write(|w| w.pr22().set_bit());
 }
+
+/// Software re-pend of the COMP2 EXTI line (SWIER1[22]) — the AM32
+/// camp-at-the-gate port. AM32's COMP_IRQHandler does NOT clear the
+/// pending flag when its gate is closed but the comparator level
+/// already sits post-ZC: the IRQ re-fires until the gate opens and
+/// the SAME crossing is then accepted — their gate is a WAIT. Ours
+/// acked-then-discarded (~57k gate rejects/run), and a crossed BEMF
+/// never edges again → the pre-crossed dead-window class. Re-pending
+/// after our storm-safe entry-ack reproduces their semantics.
+#[inline]
+pub fn sw_repend() {
+    let exti = unsafe { &*EXTI::ptr() };
+    // SWIER is write-1-to-set; 0s elsewhere are no-ops.
+    exti.swier1.write(|w| unsafe { w.bits(1 << 22) });
+}

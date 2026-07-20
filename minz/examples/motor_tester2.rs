@@ -473,6 +473,10 @@ static CEN_PERSIST: [AtomicU32; 6] = [CEN_ZERO; 6];
 static CEN_DEFER: [AtomicU32; 6] = [CEN_ZERO; 6];
 static CEN_DISCARD: [AtomicU32; 6] = [CEN_ZERO; 6];
 static CEN_STALE: [AtomicU32; 6] = [CEN_ZERO; 6];
+/// AM32 camp-at-the-gate re-pends (gate closed + level post-ZC —
+/// the crossing waits instead of being discarded).
+#[unsafe(no_mangle)]
+static CEN_CAMP: AtomicU32 = AtomicU32::new(0);
 
 fn cen_bump(cen: &[AtomicU32; 6]) {
     let s = (CURRENT_SECTOR.load(Ordering::Relaxed) & 7).min(5) as usize;
@@ -6095,6 +6099,26 @@ fn COMP() {
         COMP_COUNT.fetch_add(1, Ordering::Relaxed);
         WINDOW_RAW.fetch_add(1, Ordering::Relaxed);
         record_edge_diag(now_10);
+        // AM32 CAMP-AT-THE-GATE (their COMP_IRQHandler, verbatim
+        // semantics): when the gate is closed but the comparator
+        // level already sits at the expected post-ZC state, AM32
+        // does NOT clear the pending flag — the IRQ re-fires until
+        // the gate opens and the SAME crossing is accepted. Their
+        // gate is a WAIT; ours was a DISCARD (57k/run), and a
+        // crossed BEMF never edges again = the pre-crossed
+        // dead-window class. Re-pend (SWIER) to camp; pre-ZC-level
+        // edges (their else-clear) drop as before.
+        // Scoped to CL (round 1): the dead-window class lives under
+        // lock; engage's discard semantics are 8/8-validated and the
+        // camp span at engage intervals (~gate 400 µs of prio-1
+        // re-fires) is untested — one variable at a time.
+        if CL_ACTIVE.load(Ordering::Relaxed)
+            && entry_value
+                == minz_core::zc::expected_post_zc(CURRENT_SECTOR.load(Ordering::Relaxed))
+        {
+            CEN_CAMP.fetch_add(1, Ordering::Relaxed);
+            comp2::sw_repend();
+        }
         return;
     }
 
