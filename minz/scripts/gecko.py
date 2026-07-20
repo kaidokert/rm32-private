@@ -88,6 +88,10 @@ def capture(port, baud, force, wait_s):
     with serial.Serial(port, baud, timeout=0.05) as p:
         p.reset_input_buffer()
         if force:
+            # Doubled-key era: wire keys must arrive twice within
+            # ~50 ms or the EMI guard eats them.
+            p.write(b"G")
+            time.sleep(0.02)
             p.write(b"G")
         deadline = time.time() + (wait_s if wait_s else 8.0)
         buf = b""
