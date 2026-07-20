@@ -357,6 +357,24 @@ pub enum HeldEdge {
 /// must be consistent before the candidate becomes visible.
 #[inline]
 pub fn on_held_edge(zs: &ZcState<'_>, expected: bool, now_us: u32) -> HeldEdge {
+    on_held_edge_sectored(zs, expected, now_us, false)
+}
+
+/// Sector-aware form: `is_c` marks a phase-C float window (sectors
+/// 0/3). During reacq-at-topend the SWIFT fallback sends edges to the
+/// candidate + wrap-confirm path — but the ADC-confirm path HAS NO C
+/// ROUTE, so a blanket fallback makes phase C structurally
+/// unclockable exactly during post-disturbance recovery (t100kick
+/// EXC rings: the collapse limps on s0/s3 at 2x window length until
+/// the sag guard fires). C keeps the comparator accept (its only
+/// route); A/B keep the protective confirm.
+#[inline]
+pub fn on_held_edge_sectored(
+    zs: &ZcState<'_>,
+    expected: bool,
+    now_us: u32,
+    is_c: bool,
+) -> HeldEdge {
     // SWIFT accepts immediately under lock — EXCEPT in re-acquisition
     // at the TOP END. Reacq widens the gate to 8 % after a ZC miss;
     // near the ceiling (interval < TOPEND_US) that widened gate admits
@@ -370,7 +388,7 @@ pub fn on_held_edge(zs: &ZcState<'_>, expected: bool, now_us: u32) -> HeldEdge {
     };
     if zs.cl_fast_path.load(Ordering::Relaxed)
         && zs.cl_active.load(Ordering::Relaxed)
-        && !reacq_topend
+        && (!reacq_topend || is_c)
     {
         HeldEdge::AcceptNow
     } else if zs.cand_zc_us.load(Ordering::Relaxed) == u32::MAX {
@@ -1212,6 +1230,43 @@ mod tests {
         // One candidate at a time.
         assert_eq!(on_held_edge(&r.zs(), false, 10_050), HeldEdge::Ignored);
         assert_eq!(r.cand_zc_us.load(Ordering::Relaxed), 10_000);
+    }
+
+    #[test]
+    fn reacq_topend_keeps_comparator_accept_for_phase_c() {
+        // The t100kick collapse class: reacq-at-topend sends ALL
+        // sectors to the wrap-confirm path, but the ADC-confirm has
+        // no phase-C route — sectors 0/3 became structurally
+        // unclockable exactly during post-disturbance recovery (the
+        // s0/s3 2x-window half-lock limp into the sag kill). C keeps
+        // AcceptNow (its only route); A/B keep the confirm.
+        let r = Rig::new();
+        r.cl_fast_path.store(true, Ordering::Relaxed);
+        r.cl_active.store(true, Ordering::Relaxed);
+        r.cl_reacq.store(true, Ordering::Relaxed);
+        r.interval_us.store(110, Ordering::Relaxed); // < TOPEND_US
+        // A/B window: falls back to the candidate route (unchanged).
+        assert_eq!(
+            on_held_edge_sectored(&r.zs(), true, 10_000, false),
+            HeldEdge::Armed
+        );
+        r.close_window();
+        // Phase-C window: comparator accept stays available.
+        assert_eq!(
+            on_held_edge_sectored(&r.zs(), true, 10_000, true),
+            HeldEdge::AcceptNow
+        );
+        // Outside reacq the flag changes nothing.
+        r.cl_reacq.store(false, Ordering::Relaxed);
+        r.close_window();
+        assert_eq!(
+            on_held_edge_sectored(&r.zs(), true, 10_000, true),
+            HeldEdge::AcceptNow
+        );
+        assert_eq!(
+            on_held_edge_sectored(&r.zs(), true, 10_000, false),
+            HeldEdge::AcceptNow
+        );
     }
 
     #[test]

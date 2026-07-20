@@ -570,6 +570,14 @@ static EXPECTED_FIRE_1US: AtomicU32 = AtomicU32::new(0);
 /// >12.5% records [t10, sector<<24|len_us, i_max<<16|vbat_min].
 /// Freezes with the black box (sag kill freezes bb) so the ring
 /// holds the 32 excursions leading INTO the kill.
+/// Ignition microscope one-shot state (see close_float_window).
+static IGNITION_BB_TAKEN: AtomicBool = AtomicBool::new(false);
+#[unsafe(no_mangle)]
+static IGNITION_T10: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static IGNITION_SEC: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static IGNITION_IMAX: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static EXC_RING: [AtomicU32; 96] = [CEN_ZERO; 96];
 #[unsafe(no_mangle)]
@@ -1392,7 +1400,11 @@ fn trigger_reseed(detail: u16) {
     // ARE the audible pulsing (RESEED_COUNT=8 on the amp-90 ladder);
     // the frozen bb holds the exact window sequence into the first
     // qZC dropout for post-run RAM readback. Re-armed per ladder arm.
-    if OWL_INTERVAL_US.load(Ordering::Relaxed) < 120
+    // PARKED for the ignition hunt: this freeze fires at the first
+    // benign top-end reseed and would steal the ring from the
+    // ignition microscope (close_float_window's >7A one-shot).
+    if false
+        && OWL_INTERVAL_US.load(Ordering::Relaxed) < 120
         && !RESEED_BB_TAKEN.swap(true, Ordering::Relaxed)
     {
         // TOP-END reseeds only (2026-07-19: the any-speed freeze kept
@@ -3327,6 +3339,7 @@ fn main() -> ! {
                                 w.store(0, Ordering::Relaxed);
                             }
                             RESEED_BB_TAKEN.store(false, Ordering::Relaxed);
+                            IGNITION_BB_TAKEN.store(false, Ordering::Relaxed);
                             BB_FROZEN.store(false, Ordering::Relaxed);
                         }
                         LADDER_STEP.store(next, Ordering::Relaxed);
@@ -4873,6 +4886,23 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
     // (Excursion recorder MOVED to accept_qualified_zc, rotor-
     // referenced — the close-to-close form read 0 excursions into
     // 4 sag kills: the free-run holds the commanded schedule.)
+    // IGNITION MICROSCOPE (passive, one-shot per arm): freeze the
+    // black box at the FIRST >~7A window under lock — the bb then
+    // holds the ±32 commutation events AROUND the ignition (the
+    // sag-kill freeze is 100s of ms too late). Answers wrong-step
+    // vs clean-step at the ignition instant.
+    if CL_ACTIVE.load(Ordering::Relaxed)
+        && WINDOW_I_MAX.load(Ordering::Relaxed) > 300
+        && !IGNITION_BB_TAKEN.swap(true, Ordering::Relaxed)
+    {
+        BB_FROZEN.store(true, Ordering::Relaxed);
+        IGNITION_T10.store(now_10, Ordering::Relaxed);
+        IGNITION_SEC.store(prev_sector as u32, Ordering::Relaxed);
+        IGNITION_IMAX.store(
+            WINDOW_I_MAX.load(Ordering::Relaxed) as u32,
+            Ordering::Relaxed,
+        );
+    }
     // Clear the accumulators for the new window (direct stores — no
     // struct-build or cross-crate call on the hot path).
     WINDOW_RAW.store(0, Ordering::Relaxed);
@@ -6298,8 +6328,18 @@ fn COMP() {
     // yields exactly the proven 8 µs + 5-read combo — unchanged.
     let interval_us = OWL_INTERVAL_US.load(Ordering::Relaxed);
     // Host-tested: minz_core::timing::{blank_us, persistence_reads}.
-    let blank_us =
-        minz_core::timing::blank_us(BLANK_US.load(Ordering::Relaxed) as u32, interval_us);
+    // AM32-VERBATIM NO-BLANK UNDER LOCK (t100veto census): AM32-L431
+    // runs NO time blank in running mode — persistence depth is the
+    // only speed filter (main.c:2112). Our ~1.2 µs residual blank at
+    // speed covers ~3% of each half-period, the same order as the
+    // 1-1.7% excursion tail: a blank-eaten REAL ZC = a long window.
+    // Engage/open-loop (no lock) keep the proven blank.
+    let blank_us = if CL_AM32_GEOM.load(Ordering::Relaxed) && CL_ACTIVE.load(Ordering::Relaxed)
+    {
+        0
+    } else {
+        minz_core::timing::blank_us(BLANK_US.load(Ordering::Relaxed) as u32, interval_us)
+    };
     if blank_us > 0 {
         // R5a: CNT-position blank (see R5_CNT_BLANK). TIM1 ticks at
         // the core 80 MHz (PSC=0), so blank_us * 80 is directly a
@@ -6486,8 +6526,16 @@ fn COMP() {
             // loop; interval math is differential so a uniform shift
             // cancels, and the schedule path re-reads elapsed time
             // fresh for its latency compensation.
-            if minz_core::zc::on_held_edge(&ZC_STATE, expected, now_us)
-                == minz_core::zc::HeldEdge::AcceptNow
+            // Sectored form: phase-C windows (sectors 0/3) keep the
+            // comparator accept during reacq-at-topend — the confirm
+            // path has no C route (the t100kick s0/s3 collapse limp).
+            let held_sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;
+            if minz_core::zc::on_held_edge_sectored(
+                &ZC_STATE,
+                expected,
+                now_us,
+                held_sec == 0 || held_sec == 3,
+            ) == minz_core::zc::HeldEdge::AcceptNow
             {
                 // PARITY-BIAS COMPENSATION (2026-07-18, experimental):
                 // even-window (rising, expected=true) ZC accepts run

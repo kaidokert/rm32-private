@@ -532,6 +532,7 @@ def cmd_postmortem(_):
                 "LATE_FIRES_200",
                 "KICK_GAP_MAX_US", "KICK_LAST_T10", "KICK_LAST_SEC",
                 "CARRIER_CHANGES", "CARRIER_LAST_T10",
+                "IGNITION_T10", "IGNITION_SEC", "IGNITION_IMAX",
                 "EXC_COUNT"):
         try:
             v = probe_words(nm_addr(sym), 1)[0]
