@@ -1375,9 +1375,18 @@ static SYNTH_RUN: AtomicU8 = AtomicU8::new(0);
 #[unsafe(no_mangle)]
 static BLIND_STAMPS: AtomicU32 = AtomicU32::new(0);
 /// Latest completed 85 ms current average (raw counts) — the WAX
-/// trigger's relative-threshold reference.
+/// trigger's relative-threshold reference + the surge-park breaker's
+/// "normal" baseline.
 #[unsafe(no_mangle)]
 static I_AVG_LIVE: AtomicU16 = AtomicU16::new(0);
+/// Surge-park breaker firings (current-keyed single-pass kicks).
+#[unsafe(no_mangle)]
+static SURGE_KICKS: AtomicU32 = AtomicU32::new(0);
+/// Regen detector state: consecutive vbat-above-baseline samples +
+/// reseeds triggered by the braking-alignment detector.
+static REGEN_RUN: AtomicU16 = AtomicU16::new(0);
+#[unsafe(no_mangle)]
+static REGEN_TRIPS: AtomicU32 = AtomicU32::new(0);
 /// Level-rescue accepts (rung 3): pre-crossed windows whose qZC was
 /// synthesized from the first-wrap sample. Cascade-breaking only -
 /// no estimator update, no shot re-time, and NOT fed to the
@@ -4257,6 +4266,7 @@ static WINDOW_CONTROL: minz_core::window::WindowControl<'static> =
         cl_reacq: &CL_REACQ,
         stream_on: &STREAM_ON,
         wrec_decim: &WREC_DECIM,
+        wrec_flood: &WREC_FLOOD,
         wrec_seq: &WREC_SEQ,
         last_comm_10us: &LAST_COMM_10US,
     };
@@ -4510,6 +4520,11 @@ fn drain_pending(
 
 /// Round-robin counter for the high-speed telemetry decimation.
 static WREC_DECIM: AtomicU32 = AtomicU32::new(0);
+/// Burst-event stream flood (core wrec_flood): the burst trip sets
+/// ~400 windows (≈50 ms at 125 µs) of decimation bypass so the
+/// transient event's INTERIOR per-sector records reach the wire —
+/// the t100onset gap that left every event interior unrecorded.
+static WREC_FLOOD: AtomicU32 = AtomicU32::new(0);
 
 // ---- AM32-shape commutation split (featherweight path) ----
 // The commutation ISR STAMPS and ACTUATES; the periodic fabric
@@ -5040,6 +5055,36 @@ fn pwm_wrap_work() {
                 SAG_DEBOUNCE_LIVE.load(Ordering::Relaxed),
             );
             VBAT_SAG_RUN.store(run, Ordering::Relaxed);
+            // REGEN DETECTOR (t100surge per-window rows): vbat ABOVE
+            // the arm baseline is physically possible only when the
+            // motor back-feeds the bus through the bridge = NEGATIVE
+            // torque = the loop is riding a braking phase alignment
+            // it cannot see in any timing telemetry (raw 1350 ≈
+            // 10.1 V vs 1090 baseline glided for tens of ms before
+            // every no-park kill; the 'sag' was the regen episode's
+            // KE running out). +6% (~0.5 V) over baseline, debounced
+            // 48 samples (2 ms), speed-gated; the response is a
+            // RESEED (re-time the alignment) — braking is a phase
+            // error, not a fault to kill.
+            {
+                let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
+                let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+                if CL_ACTIVE.load(Ordering::Relaxed)
+                    && base > 0
+                    && iv > 0
+                    && iv < minz_core::window::HIGH_SPEED_US
+                    && raw > base + base / 16
+                {
+                    let r = REGEN_RUN.load(Ordering::Relaxed).saturating_add(1);
+                    REGEN_RUN.store(r, Ordering::Relaxed);
+                    if r == 48 {
+                        REGEN_TRIPS.fetch_add(1, Ordering::Relaxed);
+                        trigger_reseed(7);
+                    }
+                } else {
+                    REGEN_RUN.store(0, Ordering::Relaxed);
+                }
+            }
             // (A regex mispatch briefly gated THIS kill on interval>150,
             // silently disabling sag protection at speed while the
             // rate-storm stayed unscoped and killed a healthy 2032 Hz
@@ -5108,6 +5153,29 @@ fn pwm_wrap_work() {
             // legit staleness stack, so the 2-pass confirm below
             // remains load-bearing against false fires.
             let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+            // SURGE-PARK BREAKER (t100flood r0, the first full-
+            // resolution event interior): ONE persistence-vetoed dead
+            // window at 1830 Hz parked the drive 330 µs (kick
+            // threshold + 2-pass + cadence = 3.5 sectors of park);
+            // the field-rotor angle swept toward opposition and the
+            // current STEPPED 2→10 A in one window with the bus
+            // crashing to 5.75 V simultaneously — everything
+            // downstream (NOZ/DIS storm, sag kill) was just the
+            // corpse cooling. The 2-pass confirm exists because TIME
+            // alone can't distinguish a legit late ZC from a dead
+            // chain at the top (staleness stack ~145 µs) — but the
+            // CURRENT can: a legit wait is low-torque (~1×avg), a
+            // parked sweep hits 2× the 85 ms average within ~50 µs.
+            // Overdue by >1×iv AND current ≥2×avg at speed → kick
+            // NOW, single-pass. Damage window 330 → ~100 µs.
+            // SURGE-PARK BREAKER — REVERTED (t100surge/persist/regen
+            // 0/15 vs the ~1/5 pre-breaker baseline; SURGE_KICKS
+            // ~100/run = massive false-fire, the 1.5×iv false-kick
+            // class reborn through a current key: `since > iv` alone
+            // is inside normal jitter and the 2×avg test did not
+            // carry the discrimination it promised. The operator
+            // called it: a bandaid on a specific condition. The
+            // SURGE_KICKS counter stays as the record.
             if iv != 0 && iv < 5_000 && since > iv + (iv / 2).max(120) {
                 if KICK_PEND.swap(true, Ordering::Relaxed) {
                     KICK_PEND.store(false, Ordering::Relaxed);
@@ -5272,6 +5340,10 @@ fn pwm_wrap_work() {
         BURST_ACTIVE.store(s.active, Ordering::Relaxed);
         if s.active && !was {
             BURST_TRIPS.fetch_add(1, Ordering::Relaxed);
+            // Stream flood: bypass the 1/5 decimation for ~50 ms so
+            // this event's interior per-sector window records reach
+            // the wire (slip-hypothesis discriminator).
+            WREC_FLOOD.store(400, Ordering::Relaxed);
             // t100b autopsy: the sag-spiral seed event (exactly one
             // ≥5 A burst per killed run) sat in the 185-199 gap below
             // the 200-count WAX threshold, so the microscope never

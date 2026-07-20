@@ -44,6 +44,12 @@ pub struct WindowState<'a> {
     // Telemetry.
     pub stream_on: &'a AtomicBool,
     pub wrec_decim: &'a AtomicU32,
+    /// Flood countdown (windows): while >0, decimation is bypassed —
+    /// EVERY window streams. Set by the firmware on a burst trip so
+    /// one transient event's INTERIOR per-sector records reach the
+    /// wire (the t100onset gap: at speed the 1/5 decimation + the
+    /// stream-invisible final ms left every event interior unrecorded).
+    pub wrec_flood: &'a AtomicU32,
     pub wrec_seq: &'a AtomicU8,
     pub vbat_min: &'a AtomicU16,
     pub vbat_live: &'a AtomicU16,
@@ -59,6 +65,20 @@ pub struct WindowState<'a> {
     pub open_level: &'a AtomicU8,
     pub noz_pre: &'a AtomicU32,
     pub noz_never: &'a AtomicU32,
+}
+
+/// Consume one flood credit: while the countdown is >0, the caller
+/// streams this window regardless of decimation. Placed FIRST in the
+/// `||` chain so a credit is spent on exactly the window it floods.
+#[inline]
+fn flood_take(flood: &AtomicU32) -> bool {
+    let f = flood.load(Ordering::Relaxed);
+    if f > 0 {
+        flood.store(f - 1, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
 }
 
 // Black-box event codes emitted here — authority lives in
@@ -129,6 +149,8 @@ pub struct WindowControl<'a> {
     pub cl_reacq: &'a AtomicBool,
     pub stream_on: &'a AtomicBool,
     pub wrec_decim: &'a AtomicU32,
+    /// See [`WindowState::wrec_flood`] — burst-event stream flood.
+    pub wrec_flood: &'a AtomicU32,
     pub wrec_seq: &'a AtomicU8,
     pub last_comm_10us: &'a AtomicU32,
     // NOTE: `raw` (the NOZ bb datum) is passed to window_control_step as
@@ -235,7 +257,8 @@ pub fn window_record_step(
     let _ = noz_datum;
     let decim_n = ws.wrec_decim.fetch_add(1, Ordering::Relaxed);
     let iv_now = ws.interval_us.load(Ordering::Relaxed);
-    let stream_this = iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
+    let stream_this =
+        flood_take(ws.wrec_flood) || iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
     let record = ws.stream_on.load(Ordering::Relaxed) && start_us != 0 && stream_this;
     if record {
         let mut pred_err: i16 = i16::MIN;
@@ -530,7 +553,8 @@ pub fn close_float_window(
     // and per-sector stats stay unbiased.
     let decim_n = ws.wrec_decim.fetch_add(1, Ordering::Relaxed);
     let iv_now = ws.interval_us.load(Ordering::Relaxed);
-    let stream_this = iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
+    let stream_this =
+        flood_take(ws.wrec_flood) || iv_now == 0 || iv_now >= 180 || decim_n.is_multiple_of(5);
     if ws.stream_on.load(Ordering::Relaxed) && start_us != 0 && stream_this {
         let first_zc = ws.first_zc_us.load(Ordering::Relaxed);
         let zc_off_us = if first_zc == u32::MAX {
@@ -626,6 +650,7 @@ mod tests {
         cl_reacq: AtomicBool,
         stream_on: AtomicBool,
         wrec_decim: AtomicU32,
+        wrec_flood: AtomicU32,
         wrec_seq: AtomicU8,
         vbat_min: AtomicU16,
         vbat_live: AtomicU16,
@@ -657,6 +682,7 @@ mod tests {
                 cl_reacq: AtomicBool::new(false),
                 stream_on: AtomicBool::new(true),
                 wrec_decim: AtomicU32::new(0),
+                wrec_flood: AtomicU32::new(0),
                 wrec_seq: AtomicU8::new(0),
                 vbat_min: AtomicU16::new(u16::MAX),
                 vbat_live: AtomicU16::new(1_083),
@@ -688,6 +714,7 @@ mod tests {
                 cl_reacq: &self.cl_reacq,
                 stream_on: &self.stream_on,
                 wrec_decim: &self.wrec_decim,
+                wrec_flood: &self.wrec_flood,
                 wrec_seq: &self.wrec_seq,
                 vbat_min: &self.vbat_min,
                 vbat_live: &self.vbat_live,
@@ -717,6 +744,7 @@ mod tests {
                 cl_reacq: &self.cl_reacq,
                 stream_on: &self.stream_on,
                 wrec_decim: &self.wrec_decim,
+                wrec_flood: &self.wrec_flood,
                 wrec_seq: &self.wrec_seq,
                 last_comm_10us: &self.last_comm_10us,
             }
@@ -893,6 +921,37 @@ mod tests {
         r.interval_us.store(0, Ordering::Relaxed);
         let out = r.close(1, 2_000, 10_600);
         assert_eq!(out.rec.unwrap().pred_err_us, i16::MIN);
+    }
+
+    #[test]
+    fn wrec_flood_bypasses_decimation_and_expires() {
+        // At speed (iv < 180) only 1 in 5 windows records; a flood
+        // credit records EVERY window and each one spends a credit.
+        let r = Rig::new();
+        r.interval_us.store(120, Ordering::Relaxed);
+        r.wrec_flood.store(3, Ordering::Relaxed);
+        let mut recorded = 0;
+        for k in 0..10u32 {
+            let sc = window_record_step(&r.control(), 1, 50_000 + k, 7, 10_000, 10_300, 10_250);
+            if sc.record {
+                recorded += 1;
+            }
+        }
+        // 3 flooded + the decimation's own 1-in-5 survivors among the
+        // remaining 7 (decim counter advanced 3 during the flood).
+        assert!(recorded >= 4, "flood must add records: {recorded}");
+        assert_eq!(r.wrec_flood.load(Ordering::Relaxed), 0, "credits spent");
+        // With no credits, back to plain decimation.
+        let r2 = Rig::new();
+        r2.interval_us.store(120, Ordering::Relaxed);
+        let mut base = 0;
+        for k in 0..10u32 {
+            let sc = window_record_step(&r2.control(), 1, 50_000 + k, 7, 10_000, 10_300, 10_250);
+            if sc.record {
+                base += 1;
+            }
+        }
+        assert_eq!(base, 2, "1-in-5 decimation baseline over 10");
     }
 
     #[test]

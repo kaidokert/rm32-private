@@ -40,6 +40,8 @@ ap.add_argument("--t1", type=float, default=None,
                 help="analysis window end, seconds from first frame")
 ap.add_argument("--tail", type=float, default=None,
                 help="analyze only the last N seconds (slip-hunt split)")
+ap.add_argument("--rows", action="store_true",
+                help="print every window in the slice (t_s sec len qzc_off i_mA)")
 args = ap.parse_args()
 
 if args.infile:
@@ -83,6 +85,14 @@ if args.t0 is not None or args.t1 is not None:
     print(f"[slice {((frames[0]['start'] - t_first) / 1e5):.1f}s.."
           f"{((frames[-1]['start'] - t_first) / 1e5):.1f}s of "
           f"{(t_last - t_first) / 1e5:.1f}s]")
+
+if args.rows:
+    print(f"{'t_s':>8} {'sec':>3} {'len':>5} {'qzc_off':>7} {'i_mA':>6} {'vbat':>5}")
+    for f in frames:
+        q = f["qzc_off_us"]
+        print(f"{(f['start'] - t_first) / 1e5:>8.4f} {f['sector']:>3} "
+              f"{f['len_us']:>5} {q if q != 0xFFFF else '--':>7} "
+              f"{raw_to_ma(f['i_avg']):>6.0f} {f.get('vbat_raw', 0):>5}")
 
 lens = [f["len_us"] for f in frames]
 mean_len = statistics.mean(lens)
