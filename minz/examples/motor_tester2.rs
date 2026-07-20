@@ -546,10 +546,36 @@ static MAIN_GAP_MAX_US: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static MAIN_GAP_T10: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
+static MAIN_GAP_PHASE: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
 static LPTIM2_LATE_MAX_US: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static LPTIM2_LATE_T10: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LPTIM2_LATE_SEC: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LATE_FIRES_200: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static KICK_GAP_MAX_US: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static KICK_LAST_T10: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static KICK_LAST_SEC: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static CARRIER_LAST_T10: AtomicU32 = AtomicU32::new(0);
 static EXPECTED_FIRE_1US: AtomicU32 = AtomicU32::new(0);
+/// EXCURSION RECORDER (EMI-immune RAM ring — the goal's tail-spread
+/// instrument, able to see inside the amp-77+ wire blackout): every
+/// window whose close-to-close length exceeds the stiff average by
+/// >12.5% records [t10, sector<<24|len_us, i_max<<16|vbat_min].
+/// Freezes with the black box (sag kill freezes bb) so the ring
+/// holds the 32 excursions leading INTO the kill.
+#[unsafe(no_mangle)]
+static EXC_RING: [AtomicU32; 96] = [CEN_ZERO; 96];
+#[unsafe(no_mangle)]
+static EXC_IDX: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static EXC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 fn cen_bump(cen: &[AtomicU32; 6]) {
     let s = (CURRENT_SECTOR.load(Ordering::Relaxed) & 7).min(5) as usize;
@@ -926,7 +952,13 @@ static ARM_RING_IDX: AtomicU32 = AtomicU32::new(0);
 
 #[inline]
 fn arm_trace(src: u8, delay_us: u32, iv_us: u32) {
-    // Freezes with the black box so the arm sequence across a
+    // The FIRE-DEADLINE stamp must NEVER freeze (t100kick: the ring
+    // freeze also froze EXPECTED_FIRE, poisoning the LATE meter for
+    // every post-freeze fire) — stamp first, then freeze-gate only
+    // the ring.
+    let now = ticks_1us();
+    EXPECTED_FIRE_1US.store(now.wrapping_add(delay_us), Ordering::Relaxed);
+    // Ring freezes with the black box so the arm sequence across a
     // dropped shot survives to the postmortem.
     if BB_FROZEN.load(Ordering::Relaxed) {
         return;
@@ -937,10 +969,7 @@ fn arm_trace(src: u8, delay_us: u32, iv_us: u32) {
         Ordering::Relaxed,
     );
     ARM_RING[k + 1].store(iv_us, Ordering::Relaxed);
-    let now = ticks_1us();
     ARM_RING[k + 2].store(now, Ordering::Relaxed);
-    // Fire-latency deadline for the LPTIM2_LATE meter.
-    EXPECTED_FIRE_1US.store(now.wrapping_add(delay_us), Ordering::Relaxed);
 }
 /// Last 16 ACCEPTED key bytes, ring; readback via probe after a run.
 #[unsafe(no_mangle)]
@@ -1347,6 +1376,11 @@ fn apply_carrier(new_arr: u16) {
         Ordering::Relaxed,
     );
     CARRIER_CHANGES.fetch_add(1, Ordering::Relaxed);
+    // Ignition correlation (t100kick: 11-13A spikes on near-clean
+    // timing = a drive-side event; the retune rescales duty + ARR
+    // mid-flight): stamp every change for T10 comparison against
+    // the EXC ring's spike windows.
+    CARRIER_LAST_T10.store(ticks_10us(), Ordering::Relaxed);
 }
 
 /// R3 shared reseed entry (called from the TIM7 watchdog on sync-
@@ -3991,15 +4025,27 @@ fn TIM6_DACUNDER() {
         }
     }
     // MAIN-GAP meter: max observed gap between main beacon beats.
-    // The surge autopsies (cmgate r1/r2) show 115-620 ms main/TX
-    // blackouts DURING the surge build — this measures them without
-    // relying on the host wedge probe.
-    {
+    // FLIGHT-SCOPED (surgemeter r0: unscoped it recorded a 16.4 s
+    // post-kill idle gap — meaningless): only under a live CL, and
+    // clamped to 5 s (the beacon's own jump guard ceiling).
+    if CL_ACTIVE.load(Ordering::Relaxed) && MOTOR_ENABLED.load(Ordering::Relaxed) {
         let bm = BEACON_MAIN.load(Ordering::Relaxed);
         let gap = minz_core::guards::since_us(ticks_10us(), bm);
-        if gap < 30_000_000 && gap > MAIN_GAP_MAX_US.load(Ordering::Relaxed) {
+        if gap < 5_000_000 && gap > MAIN_GAP_MAX_US.load(Ordering::Relaxed) {
             MAIN_GAP_MAX_US.store(gap, Ordering::Relaxed);
             MAIN_GAP_T10.store(ticks_10us(), Ordering::Relaxed);
+            // Stall-site capture: which microloop phase main last
+            // published (surgemeter r2/r3: real 77/416 ms in-flight
+            // gaps at the kill moment — WHERE does main sit?).
+            MAIN_GAP_PHASE.store(BEACON_PHASE.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+        // GROUND TRUTH on a stalled main (excring r0: a real ~5 s
+        // in-flight stall, all print paths bounded — theory
+        // exhausted, sample the PC instead): pend PendSV every
+        // ~104 ms while the gap exceeds 500 ms; the handler stores
+        // main's PC/LR into MST_PCS for post-run symbolization.
+        if gap > 500_000 && tick & 0x7FF == 0 {
+            cortex_m::peripheral::SCB::set_pendsv();
         }
     }
     // The full former-TIM1-wrap workload (confirm/guards/harvest) —
@@ -4191,7 +4237,19 @@ fn TIM7() {
                 let avg = AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6;
                 if avg > 0 {
                     let want = minz_core::timing::carrier_arr(avg, minz::TIM1_AUTORELOAD);
-                    if want != tim1_motor_pwm::max_duty() {
+                    let cur = tim1_motor_pwm::max_duty();
+                    // THRASH DEADBAND (t100carrier: 31,382 retunes/run
+                    // = ~500/s — the stiff avg's ±1 µs dither walks
+                    // `want` between adjacent ARRs and every retune
+                    // rescales SLEW_LAST_DUTY, a rounding random-walk
+                    // + a one-cycle duty/ARR mismatch, 31k times in
+                    // exactly the death band). AM32's retune is
+                    // glitchless (pct-domain duty recomputed same
+                    // pass) so it needs no deadband; ours does until
+                    // the slew state moves to pct domain. ~3% band:
+                    // dither (~1%) sits inside; the climb's real
+                    // regime shift crosses it every couple seconds.
+                    if want != cur && want.abs_diff(cur) > cur / 32 {
                         apply_carrier(want);
                     }
                 }
@@ -4812,6 +4870,9 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
             let _ = p.enqueue(PendingClose { snap, sc });
         }
     }
+    // (Excursion recorder MOVED to accept_qualified_zc, rotor-
+    // referenced — the close-to-close form read 0 excursions into
+    // 4 sag kills: the free-run holds the commanded schedule.)
     // Clear the accumulators for the new window (direct stores — no
     // struct-build or cross-crate call on the hot path).
     WINDOW_RAW.store(0, Ordering::Relaxed);
@@ -4899,12 +4960,26 @@ fn LPTIM2() {
     // at arm. Reference loaded BEFORE now (the watchdog read-order
     // rule); the <30 s clamp drops stale-deadline artifacts after
     // idle spans.
-    {
+    // Flight-scoped + stamp-validated (surgemeter r0: the first fire
+    // pre-stamp recorded boot-time 27.1 s; chain kicks don't
+    // arm_trace). excring: the 10 ms clamp SATURATED every run —
+    // raised to 1 s so the real chain-death spans read out, plus a
+    // >200 µs late-fire counter (rate matters as much as the max).
+    if CL_ACTIVE.load(Ordering::Relaxed) {
         let exp = EXPECTED_FIRE_1US.load(Ordering::Relaxed);
         let late = ticks_1us().wrapping_sub(exp);
-        if late < 30_000_000 && late > LPTIM2_LATE_MAX_US.load(Ordering::Relaxed) {
-            LPTIM2_LATE_MAX_US.store(late, Ordering::Relaxed);
-            LPTIM2_LATE_T10.store(ticks_10us(), Ordering::Relaxed);
+        if exp != 0 && late < 1_000_000 {
+            if late > 200 {
+                LATE_FIRES_200.fetch_add(1, Ordering::Relaxed);
+            }
+            if late > LPTIM2_LATE_MAX_US.load(Ordering::Relaxed) {
+                LPTIM2_LATE_MAX_US.store(late, Ordering::Relaxed);
+                LPTIM2_LATE_T10.store(ticks_10us(), Ordering::Relaxed);
+                LPTIM2_LATE_SEC.store(
+                    CURRENT_SECTOR.load(Ordering::Relaxed) as u32,
+                    Ordering::Relaxed,
+                );
+            }
         }
     }
     // TIM16 free-run park: AM32's recipe re-arms every fire from its
@@ -5545,6 +5620,18 @@ fn pwm_wrap_work() {
                 if KICK_PEND.swap(true, Ordering::Relaxed) {
                     KICK_PEND.store(false, Ordering::Relaxed);
                     CHAIN_KICKS.fetch_add(1, Ordering::Relaxed);
+                    // Burst-seed forensics: each kick = a measured
+                    // chain-death span. Max gap + last-kick stamp +
+                    // sector for the postmortem.
+                    let gap_us = since;
+                    if gap_us > KICK_GAP_MAX_US.load(Ordering::Relaxed) {
+                        KICK_GAP_MAX_US.store(gap_us, Ordering::Relaxed);
+                    }
+                    KICK_LAST_T10.store(ticks_10us(), Ordering::Relaxed);
+                    KICK_LAST_SEC.store(
+                        CURRENT_SECTOR.load(Ordering::Relaxed) as u32,
+                        Ordering::Relaxed,
+                    );
                     bb_record(
                         minz_core::blackbox::EV_KCK,
                         CURRENT_SECTOR.load(Ordering::Relaxed),
@@ -6521,10 +6608,38 @@ fn accept_qualified_zc(zc_us: u32) {
     {
         let prev = LAST_ZC_STAMP_US.swap(zc_us, Ordering::Relaxed);
         if prev != 0 {
-            LAST_RAW_ZC_IV.store(
-                zc_us.wrapping_sub(prev).min(0xFFFF) as u16,
-                Ordering::Relaxed,
-            );
+            let raw_iv = zc_us.wrapping_sub(prev);
+            LAST_RAW_ZC_IV.store(raw_iv.min(0xFFFF) as u16, Ordering::Relaxed);
+            // EXCURSION RECORDER, ROTOR-REFERENCED (excring verdict:
+            // close-to-close NEVER excurses — the free-run holds the
+            // commanded schedule while the ROTOR slips; AM32's zt is
+            // ZC-to-ZC, so this is the aligned quantity). Records
+            // raw-ZC intervals >12.5% over stiff into EXC_RING.
+            let stiff = AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6;
+            if stiff != 0
+                && raw_iv < 100_000
+                && raw_iv > stiff + stiff / 8
+                && CL_ACTIVE.load(Ordering::Relaxed)
+                && !BB_FROZEN.load(Ordering::Relaxed)
+            {
+                EXC_COUNT.fetch_add(1, Ordering::Relaxed);
+                let k = (EXC_IDX.fetch_add(1, Ordering::Relaxed) as usize % 32) * 3;
+                EXC_RING[k].store(ticks_10us(), Ordering::Relaxed);
+                // Word 1 = sec(4b) | valid(4b, veto attribution:
+                // 0 = blank/gate ate everything, >0 = edges died in
+                // candidate/persistence) | len(24b).
+                EXC_RING[k + 1].store(
+                    ((CURRENT_SECTOR.load(Ordering::Relaxed) as u32) << 28)
+                        | ((WINDOW_VALID.load(Ordering::Relaxed).min(0xF) as u32) << 24)
+                        | raw_iv.min(0xFF_FFFF),
+                    Ordering::Relaxed,
+                );
+                EXC_RING[k + 2].store(
+                    ((WINDOW_I_MAX.load(Ordering::Relaxed) as u32) << 16)
+                        | VBAT_RAW_LIVE.load(Ordering::Relaxed).min(0xFFFF) as u32,
+                    Ordering::Relaxed,
+                );
+            }
         }
     }
     let sec = CURRENT_SECTOR.load(Ordering::Relaxed) & 7;

@@ -421,6 +421,38 @@ def cmd_postmortem(_):
         print("RSD_SNAP:", ", ".join(
             f"{n}={v:#x}" if n.startswith("lptim2_") else f"{n}={v}"
             for n, v in zip(names, snap)))
+    except (SystemExit, IndexError):
+        pass
+    # EXCURSION RING: the last 32 >12.5%-over-stiff windows before
+    # the bb froze (EMI-immune — sees inside the amp-77+ wire
+    # blackout the surge builds under).
+    try:
+        ring = probe_words(nm_addr("EXC_RING"), 96)
+        idx = probe_words(nm_addr("EXC_IDX"), 1)[0]
+        rows = []
+        for k in range(32):
+            j = ((idx + k) % 32) * 3
+            t10, sl, iv = ring[j], ring[j + 1], ring[j + 2]
+            if t10 == 0:
+                continue
+            rows.append(f"  t={t10 / 1e5:8.2f}s sec={sl >> 28} "
+                        f"v={(sl >> 24) & 0xF} "
+                        f"len={sl & 0xFFFFFF}us "
+                        f"imax={iv >> 16} vbmin={iv & 0xFFFF}")
+        print(f"EXC_RING (oldest->newest, {len(rows)} of last 32):")
+        for r in rows:
+            print(r)
+    except (SystemExit, IndexError):
+        pass
+    # Per-sector veto census: which layer eats edges, by sector
+    # (b=blank g=gate p=persistence d=deferred x=confirm-discard
+    # s=gen-stale). The 73% v>0 excursion tail dies in one of these.
+    try:
+        for nm, tag in (("CEN_BLANK", "b"), ("CEN_GATE", "g"),
+                        ("CEN_PERSIST", "p"), ("CEN_DEFER", "d"),
+                        ("CEN_DISCARD", "x"), ("CEN_STALE", "s")):
+            w = probe_words(nm_addr(nm), 6)
+            print(f"{nm}: " + " ".join(f"s{i}={v}" for i, v in enumerate(w)))
         if any(snap):
             print(f"  armed-fired delta at stop = {snap[0] - snap[1]}")
     except SystemExit:
@@ -495,8 +527,12 @@ def cmd_postmortem(_):
                 "LADDER_EVAL", "LADDER_TICKS", "LADDER_STEPS_TAKEN",
                 "REGEN_TRIPS", "REGEN_REALIGNS",
                 "CAMP_BURST_MAX", "CAMP_BURST_T10",
-                "MAIN_GAP_MAX_US", "MAIN_GAP_T10",
-                "LPTIM2_LATE_MAX_US", "LPTIM2_LATE_T10"):
+                "MAIN_GAP_MAX_US", "MAIN_GAP_T10", "MAIN_GAP_PHASE",
+                "LPTIM2_LATE_MAX_US", "LPTIM2_LATE_T10", "LPTIM2_LATE_SEC",
+                "LATE_FIRES_200",
+                "KICK_GAP_MAX_US", "KICK_LAST_T10", "KICK_LAST_SEC",
+                "CARRIER_CHANGES", "CARRIER_LAST_T10",
+                "EXC_COUNT"):
         try:
             v = probe_words(nm_addr(sym), 1)[0]
             print(f"{sym} = {v}")
