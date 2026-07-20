@@ -1430,6 +1430,18 @@ static REGEN_TRIPS: AtomicU32 = AtomicU32::new(0);
 /// ISR→main request: execute the in-flight R6 polling re-entry (the
 /// AM32 old_routine shape) on a detected braking-alignment episode.
 static REGEN_REALIGN_REQ: AtomicBool = AtomicBool::new(false);
+/// IN-FLIGHT REALIGN — PARKED pending the TIM6-R6 port (2026-07-19
+/// endgame): ten iterations proved every link individually (detect
+/// 2-source, commanded-motion gate, duty slam, ridden trough,
+/// window-scoped OC, raw+elapsed phase-B gate) but the terminal
+/// constraint is structural: our R6 poller runs at TIM7's 6 kHz
+/// (166 µs — blind above ~400 µs sectors) while AM32's old_routine
+/// polls at 20 kHz, which is WHY their polling re-entry works at
+/// speed. Until R6 polls at TIM6's 19.6 kHz (the designed port),
+/// faults revert to honest kills + the bench's clean-reset retry
+/// (engages 7/7 guaranteed from reset). All machinery stays for
+/// the port.
+const REALIGN_ENABLED: bool = false;
 /// Phase A→B latch: throttle slammed, waiting for the rotor to decay
 /// into the R6 poller's valid band before the polling re-entry.
 static REGEN_DECEL: AtomicBool = AtomicBool::new(false);
@@ -2631,19 +2643,34 @@ fn main() -> ! {
             // the 6 kHz poller is itself a brake (t100live: the
             // takeover caused the surge/OC it was meant to prevent —
             // a 166 µs-cadence poller cannot take a 100 µs rotor).
-            if REGEN_REALIGN_REQ.swap(false, Ordering::Relaxed)
+            if REALIGN_ENABLED
+                && REGEN_REALIGN_REQ.swap(false, Ordering::Relaxed)
                 && CL_ACTIVE.load(Ordering::Relaxed)
                 && MOTOR_ENABLED.load(Ordering::Relaxed)
             {
-                REGEN_DECEL_T10.store(ticks_10us(), Ordering::Relaxed);
-                REGEN_DECEL.store(true, Ordering::Relaxed);
-                write!(
-                    &mut tx_writer,
-                    "!! REGEN: braking alignment - throttle down, realign at poll speed\r\n"
-                )
-                .ok();
+                // FIRST trip only stamps the window (re-trips during
+                // the decel — regen persists while braking — were
+                // re-stamping T10 and deferring phase B forever;
+                // t100reset r0: three phase-A prints then a doomed
+                // timeout-path R6 entry at iv=88 µs).
+                if !REGEN_DECEL.swap(true, Ordering::Relaxed) {
+                    REGEN_DECEL_T10.store(ticks_10us(), Ordering::Relaxed);
+                    write!(
+                        &mut tx_writer,
+                        "!! REGEN: braking alignment - throttle down, realign at poll speed\r\n"
+                    )
+                    .ok();
+                }
                 AMP_TARGET_PCT.store(R6_START_AMP as u8, Ordering::Relaxed);
                 amplitude_pct = R6_START_AMP;
+                // EMERGENCY duty slam (AM32 1.63 is immediate): the
+                // slew's 2 %/ms walk from 75 % left the rotor at
+                // 88 µs when the 300 ms timeout handed to R6 — the
+                // t100live brake-surge replay. Slam the shaper state
+                // and the CCRs now; the tick writer holds it.
+                let floor = tim1_motor_pwm::max_duty() / 100 * R6_START_AMP;
+                SLEW_LAST_DUTY.store(floor, Ordering::Relaxed);
+                tim1_motor_pwm::set_duty(floor);
             }
             // PHASE B (AM32 1.90 polling re-entry, only where the
             // poller is valid): once the rotor decays past ~400 µs
@@ -2661,13 +2688,23 @@ fn main() -> ! {
             // number that cannot move, the 2 s ride expired, sag
             // kill). CL_ACTIVE not required: if the CL died
             // mid-decel, the R6 re-entry is still the right move.
+            // raw>400 ALONE is fooled by stamp gaps (t100slam:
+            // accepts stall during the crash-decel, the next raw
+            // interval spans the gap and reads >400 while the rotor
+            // runs 83 µs — phase B handed a fast rotor to the 6 kHz
+            // poller again). Require REAL decel time too; the blind
+            // timeout path is gone — if no accepts ever flow, the
+            // desync watchdog's honest kill + clean-reset retry is
+            // better than a premature R6 hand-over. (Proper fix
+            // some day: R6 polling at TIM6's 19.6 kHz = AM32's
+            // actual polling cadence, valid at speed.)
             if REGEN_DECEL.load(Ordering::Relaxed)
                 && MOTOR_ENABLED.load(Ordering::Relaxed)
-                && (LAST_RAW_ZC_IV.load(Ordering::Relaxed) as u32 > 400
-                    || minz_core::guards::since_us(
-                        ticks_10us(),
-                        REGEN_DECEL_T10.load(Ordering::Relaxed),
-                    ) > 300_000)
+                && LAST_RAW_ZC_IV.load(Ordering::Relaxed) as u32 > 400
+                && minz_core::guards::since_us(
+                    ticks_10us(),
+                    REGEN_DECEL_T10.load(Ordering::Relaxed),
+                ) > 500_000
             {
                 REGEN_DECEL.store(false, Ordering::Relaxed);
                 REGEN_REALIGNS.fetch_add(1, Ordering::Relaxed);
@@ -4522,6 +4559,15 @@ fn arm_guard_reset() {
     RESEED_STRIKES.store(0, Ordering::Relaxed);
     RESEED_ACTIVE.store(false, Ordering::Relaxed);
     MST_RUN.store(0, Ordering::Relaxed);
+    // PARITY TRIM EMAs (t100count7 no-engage autopsy): a chaotic
+    // run saturates them at the ±80 µs clamp and NOTHING reset them
+    // — at the 500 µs engage band the trim is ACTIVE, so every
+    // post-kill engage commutated with ±78 µs (±16%) of leaked
+    // delay distortion (trims +78/−79 in the failed engages' own
+    // i-echo; a fresh flash zeroed them = the control's 8/8).
+    // Stateful-leakage class, the bench's oldest enemy.
+    PARITY_EMA_EVEN.store(0, Ordering::Relaxed);
+    PARITY_EMA_ODD.store(0, Ordering::Relaxed);
 }
 
 fn mode_cmd(
@@ -5249,12 +5295,13 @@ fn pwm_wrap_work() {
             // trough, re-arming this guard one phase early — count3:
             // 7/7 realigns fired and EVERY one was sag-killed at
             // 5.9-6.8 V within ms of the R6 re-entry (R6 counters 0).
-            // The 2 s window spans trip → decel → R6 → re-engage.
+            // The 3 s window spans trip → decel (≤1 s phase-B
+            // timeout) → R6 → re-engage.
             let decel_ride = trip
                 && minz_core::guards::since_us(
                     ticks_10us(),
                     REGEN_DECEL_T10.load(Ordering::Relaxed),
-                ) < 2_000_000;
+                ) < 3_000_000;
             if decel_ride {
                 SAG_RIDDEN.fetch_add(1, Ordering::Relaxed);
             }
@@ -5539,7 +5586,23 @@ fn pwm_wrap_work() {
             && CL_ACTIVE.load(Ordering::Relaxed)
             && RESEED_STRIKES.load(Ordering::Relaxed) < minz_core::guards::RESEED_MAX_STRIKES
         {
-            trigger_reseed(0xB0B0); // marker: burst-triggered
+            // SECOND REALIGN TRIGGER (count5: BURST_TRIPS=83 vs
+            // REGEN_TRIPS=8 — the deep no-prelude folds are
+            // burst-seeded and vbat-detector-blind). A burst the
+            // clamp hasn't tamed in 2 ms is misalignment; a reseed
+            // re-times the interval and cannot fix phase — route it
+            // to the phase-A/B realign machinery. SPEED-GATED
+            // (count6 bisect: ungated it collapsed engage 0/6 while
+            // the control ran 8/8 — at the engage-accept instant the
+            // CL goes active with the rotor hot and engage-transient
+            // bursts cycled the fragile engage to death; the fold
+            // class this hunts lives at speed).
+            let iv_now = OWL_INTERVAL_US.load(Ordering::Relaxed);
+            if iv_now > 0 && iv_now < minz_core::window::HIGH_SPEED_US {
+                REGEN_REALIGN_REQ.store(true, Ordering::Relaxed);
+            } else {
+                trigger_reseed(0xB0B0); // engage/low-speed: proven path
+            }
         }
         if s.kill {
             BURST_KILLED.store(true, Ordering::Relaxed);
@@ -5714,7 +5777,7 @@ fn pwm_wrap_work() {
         // reference (lags a transition by design, so a relative
         // threshold stays at the pre-event level during the onset).
         I_AVG_LIVE.store(avg_raw.min(0xFFFF) as u16, Ordering::Relaxed);
-        // During the 2 s realign window the loop is CL-shaped even
+        // During the 3 s realign window the loop is CL-shaped even
         // while CL_ACTIVE is technically false (R6 holding a fast
         // rotor): the open-loop 2 A stall-heater threshold false-
         // trips on the legitimate realign current (t100count4 r0/r1
@@ -5722,7 +5785,7 @@ fn pwm_wrap_work() {
         // the 5.5 A gross-fault backstop stays live throughout.
         let cl_like = CL_ACTIVE.load(Ordering::Relaxed)
             || minz_core::guards::since_us(ticks_10us(), REGEN_DECEL_T10.load(Ordering::Relaxed))
-                < 2_000_000;
+                < 3_000_000;
         let tripped = minz_core::guards::overcurrent(avg_raw, cl_like);
         if tripped && MOTOR_ENABLED.load(Ordering::Relaxed) {
             minz_core::guards::apply_isr_kill(

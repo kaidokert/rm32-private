@@ -154,6 +154,16 @@ def cmd_ladder(a):
     # death" — as did m2/m3/m4).
     wait = per_rung * (a.top - 10) / a.step + a.hold + 25.0
     for run in range(a.retries):
+        if run > 0:
+            # HARD RESET between retries (the post-desync engage
+            # collapse): a mid-climb desync leaves un-audited RAM
+            # state that kills every subsequent engage (flags audit
+            # clean; clean boots engage 8/8; count9 inherited
+            # count8's poisoned state and failed from run 0). A
+            # reset = the provably-good state; also AM32's own
+            # restart philosophy.
+            sh("probe-rs", "reset", "--chip", CHIP, "--probe", PROBE)
+            time.sleep(2.5)
         b = Bench()
         died = None
         no_engage = False
@@ -313,7 +323,14 @@ def cmd_ladder(a):
             print(f"run {run}: DIED mid-ladder: {msg}".encode(
                 "ascii", "replace").decode())
             cmd_postmortem(a)
-            time.sleep(3.0)
+            # COAST-DOWN SETTLE (t100count6-8 collapse): a kill from
+            # speed leaves the rotor coasting for many seconds; a 3 s
+            # retry hits a SPINNING rotor, R6's poll-paced start
+            # fails, and each attempt re-spins it - a self-sustaining
+            # NO-ENGAGE loop (RAM audit read fresh-boot clean; the
+            # failed starts logged 34-40 R6 crossings = the coasting
+            # rotor). Wait out the coast.
+            time.sleep(12.0)
             continue
         rows = read_ladder_log()
         top = rows[-1][0] if rows else 0
