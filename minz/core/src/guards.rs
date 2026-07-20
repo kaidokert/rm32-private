@@ -690,6 +690,168 @@ pub fn burst_amp_clamp(base_amp: u16, burst_active: bool) -> u16 {
     }
 }
 
+/// BUS GOVERNOR (AM32's LVC throttle-limiting shape — the divergence
+/// behind every t100 sag-fold death): AM32 sheds throttle
+/// PROPORTIONALLY as the bus droops, which is why it draws a smooth
+/// 4.0 A at 100 % on the bench PSU and never folds it; minz drove
+/// amp open-loop into the PSU knee and its only bus response was the
+/// -15 % KILL. Shed starts at -6 % below baseline, reaches a hard
+/// 1/4-amp floor by -12 % (just above the kill threshold so the
+/// governor always acts first). Returns the amp ceiling; the caller
+/// min()s it into the duty pipeline. Runs at the control rate on the
+/// LIVE vbat sample — fast enough to outrun a 100 ms fold, unlike
+/// the 1 %/50 ms slew's sag pause (SAG_HOLD_COUNT=0 at every fold).
+#[inline]
+pub fn bus_governor_amp(base_amp: u16, vbat_raw: u16, baseline_raw: u16) -> u16 {
+    if baseline_raw == 0 || vbat_raw == 0 {
+        return base_amp;
+    }
+    let start = baseline_raw - baseline_raw * 3 / 50; // -6 %
+    if vbat_raw >= start {
+        return base_amp;
+    }
+    let full = baseline_raw - baseline_raw * 6 / 50; // -12 %
+    if vbat_raw <= full {
+        return (base_amp / 4).max(1);
+    }
+    // Linear between: amp scales from 100 % at -6 % to 25 % at -12 %.
+    let span = (start - full) as u32;
+    let depth = (start - vbat_raw) as u32;
+    let scale = 100 - depth * 75 / span; // 100 -> 25
+    ((base_amp as u32 * scale / 100) as u16).max(1)
+}
+
+/// Governor v2 (v1 verdict: engaged 35-194x/run, folds softened
+/// ~1.3 V, still lost to the -15 % debounced kill; one desync from
+/// instant cuts). Stateful SLEWED ceiling in amp-%: target curve
+/// starts at -4 % droop, reaches the floor (1/6 of base, min the
+/// engage level) by -10 % — always ahead of the -15 % kill. The
+/// ceiling walks DOWN at most `DOWN_PER_PASS` and UP at most
+/// `UP_PER_PASS` per control pass (6 kHz): full shed in ~35 ms
+/// (faster than the ~100 ms fold, gentle enough for the lock — the
+/// run-0 desync came from instant cuts), recovery ~3x slower.
+pub const GOV_DOWN_PER_PASS: u16 = 3; // amp-% per 6 kHz pass (x0.1)
+pub const GOV_UP_PER_PASS: u16 = 1; // x0.1
+/// `ceil_x10` is the carried ceiling in tenths of amp-% (1000 =
+/// no limit at amp 100). Returns the new ceiling.
+#[inline]
+pub fn bus_governor_step(ceil_x10: u16, base_amp: u16, vbat_raw: u16, baseline_raw: u16) -> u16 {
+    let unlimited = (base_amp as u32 * 10).min(1000) as u16;
+    if baseline_raw == 0 || vbat_raw == 0 {
+        return unlimited;
+    }
+    let start = baseline_raw - baseline_raw * 2 / 50; // -4 %
+    let full = baseline_raw - baseline_raw * 5 / 50; // -10 %
+    let floor = ((base_amp / 6).max(12) as u32 * 10).min(unlimited as u32) as u16;
+    let target = if vbat_raw >= start {
+        unlimited
+    } else if vbat_raw <= full {
+        floor
+    } else {
+        let span = (start - full) as u32;
+        let depth = (start - vbat_raw) as u32;
+        let scale = 1000 - depth * (1000 - floor as u32 * 1000 / unlimited.max(1) as u32) / span;
+        ((unlimited as u32 * scale / 1000) as u16).max(floor)
+    };
+    // Slew toward the target.
+    if target < ceil_x10 {
+        ceil_x10.saturating_sub(GOV_DOWN_PER_PASS).max(target)
+    } else {
+        (ceil_x10 + GOV_UP_PER_PASS).min(target)
+    }
+}
+
+/// Whether the governor is saturated at its floor — the sag kill's
+/// ride-through condition: while the governor is ALREADY at minimum
+/// drive and the bus sits above the absolute floor, killing wastes
+/// the recovery the governor is buying (AM32's LVC rides to the
+/// floor with no kill at all). The `VBAT_ABS_FLOOR_RAW` kill path
+/// stays unconditional.
+#[inline]
+pub fn governor_floored(ceil_x10: u16, base_amp: u16) -> bool {
+    let floor = ((base_amp / 6).max(12) as u32 * 10) as u16;
+    ceil_x10 <= floor.saturating_add(GOV_DOWN_PER_PASS)
+}
+
+#[cfg(test)]
+mod bus_governor_tests {
+    use super::bus_governor_amp;
+
+    #[test]
+    fn governor_idle_above_minus_6pct() {
+        // Baseline 1090 raw (the bench 8.16 V): no shed at or above -6 %.
+        assert_eq!(bus_governor_amp(90, 1090, 1090), 90);
+        assert_eq!(bus_governor_amp(90, 1025, 1090), 90); // -5.9 %
+    }
+
+    #[test]
+    fn governor_sheds_proportionally() {
+        let base = 1090u16;
+        let start = base - base * 3 / 50; // 1025
+        let full = base - base * 6 / 50; // 960
+        let mid = (start + full) / 2;
+        let amp = bus_governor_amp(100, mid, base);
+        // Midway: ~62 % of base amp.
+        assert!((55..=70).contains(&amp), "mid-shed amp {amp}");
+        // Monotonic: deeper droop, smaller amp.
+        assert!(bus_governor_amp(100, mid - 10, base) < amp);
+    }
+
+    #[test]
+    fn governor_floors_at_quarter_before_the_kill() {
+        // -12 % = floor 1/4; the -15 % kill threshold never sees full
+        // drive.
+        assert_eq!(bus_governor_amp(100, 950, 1090), 25);
+        assert_eq!(bus_governor_amp(8, 900, 1090), 2);
+        // Never zero.
+        assert_eq!(bus_governor_amp(1, 900, 1090), 1);
+    }
+
+    #[test]
+    fn governor_unseeded_passthrough() {
+        assert_eq!(bus_governor_amp(90, 0, 1090), 90);
+        assert_eq!(bus_governor_amp(90, 1000, 0), 90);
+    }
+
+    use super::{bus_governor_step, governor_floored, GOV_DOWN_PER_PASS};
+
+    #[test]
+    fn v2_slews_down_to_floor_and_recovers() {
+        let base = 1090u16;
+        // Healthy bus: ceiling rides at the unlimited value.
+        let mut c = 1000u16;
+        c = bus_governor_step(c, 100, base, base);
+        assert_eq!(c, 1000);
+        // Deep droop (-10 %+): walks down at the slew rate, not a cliff.
+        let droop = base - base * 6 / 50;
+        let c1 = bus_governor_step(c, 100, droop, base);
+        assert_eq!(c1, 1000 - GOV_DOWN_PER_PASS);
+        // Iterate to saturation: lands on the floor (amp/6 min 12).
+        let mut cc = c1;
+        for _ in 0..1000 {
+            cc = bus_governor_step(cc, 100, droop, base);
+        }
+        assert_eq!(cc, 160); // amp 100/6 -> 16 -> 160 x10
+        assert!(governor_floored(cc, 100));
+        // Recovery: walks back up slower.
+        let cr = bus_governor_step(cc, 100, base, base);
+        assert_eq!(cr, 161);
+        assert!(!governor_floored(200, 100));
+    }
+
+    #[test]
+    fn v2_floor_never_below_engage_level() {
+        // Small base amp: floor clamps to 12 (engage territory).
+        let base = 1090u16;
+        let droop = base - base * 6 / 50;
+        let mut c = 300u16;
+        for _ in 0..1000 {
+            c = bus_governor_step(c, 30, droop, base);
+        }
+        assert_eq!(c, 120); // max(30/6=5, 12) x10
+    }
+}
+
 /// FIX #2 — blind-free-run current clamp. During a ZC-miss cascade
 /// (the monster mechanism: `monster1..3` autopsy) the loop commutates
 /// BLIND at the frozen interval while the field drifts off the still-

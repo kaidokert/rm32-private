@@ -421,6 +421,8 @@ def cmd_postmortem(_):
         print("RSD_SNAP:", ", ".join(
             f"{n}={v:#x}" if n.startswith("lptim2_") else f"{n}={v}"
             for n, v in zip(names, snap)))
+        if any(snap):
+            print(f"  armed-fired delta at stop = {snap[0] - snap[1]}")
     except (SystemExit, IndexError):
         pass
     # EXCURSION RING: the last 32 >12.5%-over-stiff windows before
@@ -453,8 +455,6 @@ def cmd_postmortem(_):
                         ("CEN_DISCARD", "x"), ("CEN_STALE", "s")):
             w = probe_words(nm_addr(nm), 6)
             print(f"{nm}: " + " ".join(f"s{i}={v}" for i, v in enumerate(w)))
-        if any(snap):
-            print(f"  armed-fired delta at stop = {snap[0] - snap[1]}")
     except SystemExit:
         pass
     # Arm provenance ring: last 8 LPTIM2 arms as (src, delay, iv, t).
@@ -533,6 +533,7 @@ def cmd_postmortem(_):
                 "KICK_GAP_MAX_US", "KICK_LAST_T10", "KICK_LAST_SEC",
                 "CARRIER_CHANGES", "CARRIER_LAST_T10",
                 "IGNITION_T10", "IGNITION_SEC", "IGNITION_IMAX",
+                "BUS_GOV_CLAMPS", "GOV_RIDES",
                 "EXC_COUNT"):
         try:
             v = probe_words(nm_addr(sym), 1)[0]

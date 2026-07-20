@@ -570,6 +570,15 @@ static EXPECTED_FIRE_1US: AtomicU32 = AtomicU32::new(0);
 /// >12.5% records [t10, sector<<24|len_us, i_max<<16|vbat_min].
 /// Freezes with the black box (sag kill freezes bb) so the ring
 /// holds the 32 excursions leading INTO the kill.
+/// Bus-governor engagement counter (6 kHz passes where it reduced).
+#[unsafe(no_mangle)]
+static BUS_GOV_CLAMPS: AtomicU32 = AtomicU32::new(0);
+/// Governor v2 slewed ceiling (amp-% x10) + floored flag (the sag
+/// kill's ride-through condition).
+static GOV_CEIL_X10: AtomicU16 = AtomicU16::new(1000);
+static GOV_FLOORED: AtomicBool = AtomicBool::new(false);
+#[unsafe(no_mangle)]
+static GOV_RIDES: AtomicU32 = AtomicU32::new(0);
 /// Ignition microscope one-shot state (see close_float_window).
 static IGNITION_BB_TAKEN: AtomicBool = AtomicBool::new(false);
 #[unsafe(no_mangle)]
@@ -4192,6 +4201,30 @@ fn TIM7() {
             };
             let burst_now = BURST_ACTIVE.load(Ordering::Relaxed);
             let amp = minz_core::guards::burst_amp_clamp(amp, burst_now);
+            // BUS GOVERNOR v2 (AM32 LVC-limiting shape; v1 verdict:
+            // engaged but lost on margin + instant cuts desynced):
+            // SLEWED ceiling from -4 % droop to an amp/6 floor by
+            // -10 % — full shed ~35 ms, recovery 3x slower; the sag
+            // kill rides through while the governor is floored (the
+            // absolute-floor kill stays unconditional).
+            let amp = {
+                let ceil = minz_core::guards::bus_governor_step(
+                    GOV_CEIL_X10.load(Ordering::Relaxed),
+                    amp,
+                    VBAT_RAW_LIVE.load(Ordering::Relaxed),
+                    VBAT_BASELINE_RAW.load(Ordering::Relaxed),
+                );
+                GOV_CEIL_X10.store(ceil, Ordering::Relaxed);
+                GOV_FLOORED.store(
+                    minz_core::guards::governor_floored(ceil, amp),
+                    Ordering::Relaxed,
+                );
+                let g = amp.min(ceil / 10);
+                if g < amp {
+                    BUS_GOV_CLAMPS.fetch_add(1, Ordering::Relaxed);
+                }
+                g
+            };
             // Burst RELEASE gets the same soft recovery as reseed
             // exit: the 16 %/ms re-ramp out of an emergency clamp
             // into a slowed rotor is the surge re-seeder either way.
@@ -4891,8 +4924,12 @@ fn close_float_window(cs: &cortex_m::interrupt::CriticalSection, prev_sector: u8
     // holds the ±32 commutation events AROUND the ignition (the
     // sag-kill freeze is 100s of ms too late). Answers wrong-step
     // vs clean-step at the ignition instant.
+    // Threshold 200 raw (~4.5A): t100ignition r0 died of sag with
+    // NO >300 window at all — the collapse can be sustained
+    // sub-7A draw (PSU-fold class), so trigger at the 2x-cruise
+    // level instead.
     if CL_ACTIVE.load(Ordering::Relaxed)
-        && WINDOW_I_MAX.load(Ordering::Relaxed) > 300
+        && WINDOW_I_MAX.load(Ordering::Relaxed) > 200
         && !IGNITION_BB_TAKEN.swap(true, Ordering::Relaxed)
     {
         BB_FROZEN.store(true, Ordering::Relaxed);
@@ -5559,7 +5596,19 @@ fn pwm_wrap_work() {
             if decel_ride {
                 SAG_RIDDEN.fetch_add(1, Ordering::Relaxed);
             }
-            if trip && !decel_ride {
+            // GOVERNOR ride (v2): while the bus governor is floored
+            // (drive already at minimum), the -15 % kill wastes the
+            // recovery the shed is buying — AM32's LVC rides to its
+            // floor with no kill. The VBAT_ABS_FLOOR_RAW kill inside
+            // sag_threshold_raw stays unconditional (a bus below the
+            // absolute floor kills regardless).
+            let gov_ride = trip
+                && GOV_FLOORED.load(Ordering::Relaxed)
+                && raw > minz_core::guards::VBAT_ABS_FLOOR_RAW;
+            if gov_ride {
+                GOV_RIDES.fetch_add(1, Ordering::Relaxed);
+            }
+            if trip && !decel_ride && !gov_ride {
                 VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
                 minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Sag);
                 // Transit-autopsy: freeze the black box AT the kill
