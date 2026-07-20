@@ -1427,6 +1427,19 @@ static SURGE_KICKS: AtomicU32 = AtomicU32::new(0);
 static REGEN_RUN: AtomicU16 = AtomicU16::new(0);
 #[unsafe(no_mangle)]
 static REGEN_TRIPS: AtomicU32 = AtomicU32::new(0);
+/// ISR→main request: execute the in-flight R6 polling re-entry (the
+/// AM32 old_routine shape) on a detected braking-alignment episode.
+static REGEN_REALIGN_REQ: AtomicBool = AtomicBool::new(false);
+/// Phase A→B latch: throttle slammed, waiting for the rotor to decay
+/// into the R6 poller's valid band before the polling re-entry.
+static REGEN_DECEL: AtomicBool = AtomicBool::new(false);
+/// Phase-A start (10 µs ticks) — bounds the sag-trough ride to 2 s.
+static REGEN_DECEL_T10: AtomicU32 = AtomicU32::new(0);
+/// Sag trips ridden through during a bounded regen decel.
+#[unsafe(no_mangle)]
+static SAG_RIDDEN: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static REGEN_REALIGNS: AtomicU32 = AtomicU32::new(0);
 /// Level-rescue accepts (rung 3): pre-crossed windows whose qZC was
 /// synthesized from the first-wrap sample. Cascade-breaking only -
 /// no estimator update, no shot re-time, and NOT fed to the
@@ -2491,7 +2504,18 @@ fn main() -> ! {
                         LADDER_LOG[a * 4 + 3].store(vbs / n, Ordering::Relaxed);
                     }
                 }
-            } else if lstep > 0 && !CL_ACTIVE.load(Ordering::Relaxed) {
+            } else if lstep > 0
+                && !CL_ACTIVE.load(Ordering::Relaxed)
+                && !R6_START.load(Ordering::Relaxed)
+                && !CL_ARMED.load(Ordering::Relaxed)
+            {
+                // Ladder disarms on a real CL loss — but NOT during an
+                // in-flight R6 realign (t100realign r0/r1: the realign
+                // SAVED the run at rungs 77/94, then this branch
+                // cancelled the climb and the loop idled at the R6
+                // band until the bench gave up). The realign resets
+                // the climb to R6_START_AMP; the rung cadence walks
+                // back up — AM32 1.63's lower-throttle-on-desync shape.
                 LADDER_STEP.store(0, Ordering::Relaxed);
             }
 
@@ -2590,6 +2614,70 @@ fn main() -> ! {
             // printing success. Draining the flags first makes the
             // mirror honest before any key reads it.
             //
+            // IN-FLIGHT R6 RE-ENTRY (the AM32 old_routine shape, 1.90
+            // "re-enter polling mode after prop strike or desync"):
+            // a regen episode = braking phase alignment = a PHASE
+            // fault; disengage the CL and hand the still-spinning
+            // rotor to the position-agnostic R6 poller (duty pinned
+            // at R6_START_AMP by the duty pipeline; the episode's own
+            // deceleration brings the rotor into R6's polling band).
+            // The seamless-takeover + handoff machinery then re-arms
+            // and re-engages exactly like a Y start — a sub-second
+            // resync instead of a sag kill.
+            // PHASE A (AM32 1.63 "lower throttle on desync"): at the
+            // regen trip, KEEP the CL tracking (it tracks the decel
+            // cleanly — every regen capture shows it) and slam the
+            // throttle to the R6 band. A LIVE handover at 1600 Hz to
+            // the 6 kHz poller is itself a brake (t100live: the
+            // takeover caused the surge/OC it was meant to prevent —
+            // a 166 µs-cadence poller cannot take a 100 µs rotor).
+            if REGEN_REALIGN_REQ.swap(false, Ordering::Relaxed)
+                && CL_ACTIVE.load(Ordering::Relaxed)
+                && MOTOR_ENABLED.load(Ordering::Relaxed)
+            {
+                REGEN_DECEL_T10.store(ticks_10us(), Ordering::Relaxed);
+                REGEN_DECEL.store(true, Ordering::Relaxed);
+                write!(
+                    &mut tx_writer,
+                    "!! REGEN: braking alignment - throttle down, realign at poll speed\r\n"
+                )
+                .ok();
+                AMP_TARGET_PCT.store(R6_START_AMP as u8, Ordering::Relaxed);
+                amplitude_pct = R6_START_AMP;
+            }
+            // PHASE B (AM32 1.90 polling re-entry, only where the
+            // poller is valid): once the rotor decays past ~400 µs
+            // sectors, hand to the position-agnostic R6 poller —
+            // disengage ALIVE (ClToggle-from-active is a full kill;
+            // t100final's silent deaths), R6 re-arm mirrors the
+            // Y-handler, the handoff consumer re-arms the CL
+            // (needs !CL_ARMED — cleared here), and the ladder
+            // resumes from the R6 band.
+            if REGEN_DECEL.load(Ordering::Relaxed)
+                && MOTOR_ENABLED.load(Ordering::Relaxed)
+                && CL_ACTIVE.load(Ordering::Relaxed)
+                && OWL_INTERVAL_US.load(Ordering::Relaxed) > 400
+            {
+                REGEN_DECEL.store(false, Ordering::Relaxed);
+                REGEN_REALIGNS.fetch_add(1, Ordering::Relaxed);
+                write!(&mut tx_writer, "!! REGEN REALIGN: R6 re-entry\r\n").ok();
+                CL_ACTIVE.store(false, Ordering::Relaxed);
+                CL_ARMED.store(false, Ordering::Relaxed);
+                R6_CROSS_COUNT.store(0, Ordering::Relaxed);
+                R6_BLIND_COUNT.store(0, Ordering::Relaxed);
+                R6_HANDOFF_REQ.store(false, Ordering::Relaxed);
+                R6_ARM_EPOCH.fetch_add(1, Ordering::Relaxed);
+                arm_guard_reset();
+                AMP_TARGET_PCT.store(R6_START_AMP as u8, Ordering::Relaxed);
+                amplitude_pct = R6_START_AMP;
+                SIX_STEP_MODE.store(true, Ordering::Relaxed);
+                AUTO_MUX.store(true, Ordering::Relaxed);
+                R6_START.store(true, Ordering::Relaxed);
+            }
+            // A kill of any kind cancels a pending phase-B.
+            if REGEN_DECEL.load(Ordering::Relaxed) && !MOTOR_ENABLED.load(Ordering::Relaxed) {
+                REGEN_DECEL.store(false, Ordering::Relaxed);
+            }
             // FALCON desync report: the TIM7 watchdog already killed
             // the output; sync main's mirror and tell the operator.
             if CL_DESYNC.load(Ordering::Relaxed) {
@@ -5108,7 +5196,14 @@ fn pwm_wrap_work() {
                     REGEN_RUN.store(r, Ordering::Relaxed);
                     if r == 48 {
                         REGEN_TRIPS.fetch_add(1, Ordering::Relaxed);
-                        trigger_reseed(7);
+                        // A reseed re-times the INTERVAL; regen is a
+                        // PHASE fault (t100clean: 5 detector-trips,
+                        // 5 reseeds, 5 kills). AM32's shape (1.90):
+                        // re-enter POLLING mode — position-agnostic,
+                        // realigns from physics. Main executes the
+                        // in-flight R6 re-entry (mode_cmd needs
+                        // main-loop context — the CL_DESYNC pattern).
+                        REGEN_REALIGN_REQ.store(true, Ordering::Relaxed);
                     }
                 } else {
                     REGEN_RUN.store(0, Ordering::Relaxed);
@@ -5118,7 +5213,23 @@ fn pwm_wrap_work() {
             // silently disabling sag protection at speed while the
             // rate-storm stayed unscoped and killed a healthy 2032 Hz
             // run - the bb caught it. Sag is unconditional again.)
-            if trip {
+            // REGEN-DECEL trough ride (phase A, AM32-1.63 shape): a
+            // controlled throttle-down after a regen episode ENDS in
+            // a bus trough (KE exhausted, PSU recovering) with duty
+            // already at the floor — killing there defeats the
+            // realign (t100phase2: every phase-A decel sag-killed).
+            // Time-bounded to 2 s so a wedged decel can never mask
+            // the guard for good; OC/storm/zombie stay live.
+            let decel_ride = trip
+                && REGEN_DECEL.load(Ordering::Relaxed)
+                && minz_core::guards::since_us(
+                    ticks_10us(),
+                    REGEN_DECEL_T10.load(Ordering::Relaxed),
+                ) < 2_000_000;
+            if decel_ride {
+                SAG_RIDDEN.fetch_add(1, Ordering::Relaxed);
+            }
+            if trip && !decel_ride {
                 VBAT_TRIP_RAW_SEEN.store(raw, Ordering::Relaxed);
                 minz_core::guards::apply_isr_kill(&KILL_FLAGS, minz_core::guards::IsrKillKind::Sag);
                 // Transit-autopsy: freeze the black box AT the kill
