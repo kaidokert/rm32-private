@@ -160,6 +160,17 @@ pub fn precross_accept_due(
     // commutation earlier every window: est walked 88→75 µs at
     // constant duty, the field ran off the rotor, 10.5 A surge, bus
     // fold. The blindness this rule cures lives at 300-600 µs).
+    //
+    // TOP-BAND EXTENSION TRIED AND CONVICTED (t100rescue): keying
+    // this same gate-stamped rule on the honest commutation-ISR
+    // open-level sample still ran away — the sample was truthful
+    // (t100dual: NOZ_PRE_ISR 14/20, disagree 2/20) but the RULE is
+    // positive feedback at short windows regardless of sample
+    // quality: each gate stamp opens the next window earlier; once
+    // the schedule leads the rotor, EVERY window genuinely reads
+    // post-ZC at open (RSC every window, est 115→60 µs). The top
+    // band's chain-continuity rescue is [`blind_chain_stamp`] —
+    // NEUTRAL stamp, walk-proof by construction.
     if !(200..500).contains(&interval_us) {
         return None;
     }
@@ -191,6 +202,93 @@ pub fn precross_accept_due(
         return None; // floor in the future: wait for a later wrap
     }
     Some(start_us.wrapping_add(zc_off))
+}
+
+/// Consecutive-synthetic cap for [`blind_chain_stamp`]: one
+/// electrical revolution of blind free-run, then the honest fallback
+/// (NOZ → reacq → starve/reseed) takes over. Keeps a stalled rotor
+/// from riding synthetic accepts indefinitely (the zombie-field
+/// hazard) — the run resets on every REAL edge accept.
+pub const BLIND_STAMP_MAX_RUN: u8 = 6;
+
+/// TOP-BAND CHAIN-CONTINUITY STAMP (2026-07-19, the t100 arc's
+/// terminal design). The fatal kill class: a pre-crossed dead window
+/// at speed (true ZC lands in the commutation-ISR blind zone; the
+/// comparator saturates post-ZC from open; no edge can ever fire) —
+/// the rotor-clocked chain PARKS ~3 sectors until the kick, the
+/// misalignment draws a ≥5 A BEMF-aided surge, and the bus-fold
+/// spiral sag-kills (t100jfree KCK s4 d=290; ISR-sampled census
+/// NOZ_PRE 14/20).
+///
+/// Why not the gate-stamped precross rule here: TRIED AND CONVICTED
+/// TWICE (rung-75 with the wrap sample; t100rescue with the honest
+/// ISR sample — RSC on every window, est walked 115→60 µs). A gate
+/// stamp claims −(mid−gate) acceleration per accept; the schedule
+/// then leads the rotor and manufactures pre-crossed windows —
+/// positive feedback that no sample quality fixes and the 0.9×iv
+/// slew floor only rate-limits.
+///
+/// THIS rule is walk-proof by construction: the synthetic qZC is
+/// stamped at `last_qzc + stiff` — the 6-deep STIFF average, i.e. a
+/// claim of exactly ZERO acceleration. The estimator's sample equals
+/// the stiff average, which therefore cannot move; consecutive
+/// synthetic accepts free-run the chain at constant cadence (AM32's
+/// 1.0×T dead-reckon semantics, but through the accept path with
+/// every guard live) and only REAL edges change the estimate. The
+/// next real edge re-times the chain honestly.
+///
+/// Eligibility (every condition load-bearing):
+/// - A/B sectors only; one accept per window; an armed candidate or
+///   existing qZC wins.
+/// - Top band only (40..200 µs): 200+ belongs to the proven
+///   gate-stamped precross; sub-40 is runaway land.
+/// - `open_level` must be the COMMUTATION-ISR sample (~10 µs fixed
+///   latency) and classify PRE-CROSSED, and the level must still
+///   hold post-ZC now — a window that merely runs late never fires.
+/// - `synth_run < BLIND_STAMP_MAX_RUN`: at most one electrical rev
+///   of blind free-run, then the honest starve path.
+/// - Stamp must be DUE (`now ≥ last_qzc + stiff`) — early wraps
+///   wait; and the anchor must exist (real last_qzc + stiff).
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn blind_chain_stamp(
+    open_level_isr: u8,
+    value_now: bool,
+    sector: u8,
+    qzc_us: u32,
+    cand_zc_us: u32,
+    now_us: u32,
+    interval_us: u32,
+    stiff_us: u32,
+    last_qzc_us: u32,
+    synth_run: u8,
+) -> Option<u32> {
+    if sector == 0 || sector == 3 {
+        return None;
+    }
+    if !(40..200).contains(&interval_us) {
+        return None;
+    }
+    if qzc_us != u32::MAX || cand_zc_us != u32::MAX {
+        return None;
+    }
+    if synth_run >= BLIND_STAMP_MAX_RUN {
+        return None;
+    }
+    if last_qzc_us == u32::MAX || stiff_us == 0 {
+        return None;
+    }
+    let expected = expected_post_zc(sector);
+    if crate::window::classify_noz(open_level_isr, sector) != Some(true) || value_now != expected {
+        return None;
+    }
+    let due = last_qzc_us.wrapping_add(stiff_us);
+    // Not due yet (a small forward distance) → wait for a later
+    // wrap; a huge wrapped distance means `due` already passed.
+    if due.wrapping_sub(now_us) < 10_000 {
+        return None;
+    }
+    Some(due)
 }
 
 /// The state machine's view of the firmware statics.
@@ -563,7 +661,18 @@ mod tests {
         // start=10_000, gate=50, now past gate, interval 350 (accel
         // band), no prior qZC (slew bound inactive)
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 350, u32::MAX),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                u32::MAX
+            ),
             Some(10_050)
         );
     }
@@ -572,22 +681,66 @@ mod tests {
     fn precross_never_fires_before_gate_or_wrong_level() {
         // before gate
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_040, 350, u32::MAX),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_040,
+                350,
+                u32::MAX
+            ),
             None
         );
         // opened NOT crossed (open_level = high on sector 1)
         assert_eq!(
-            precross_accept_due(2, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 350, u32::MAX),
+            precross_accept_due(
+                2,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                u32::MAX
+            ),
             None
         );
         // level no longer holding (bounced back)
         assert_eq!(
-            precross_accept_due(1, true, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 350, u32::MAX),
+            precross_accept_due(
+                1,
+                true,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                u32::MAX
+            ),
             None
         );
         // open level unsampled
         assert_eq!(
-            precross_accept_due(0, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 350, u32::MAX),
+            precross_accept_due(
+                0,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                u32::MAX
+            ),
             None
         );
     }
@@ -596,12 +749,34 @@ mod tests {
     fn precross_yields_to_edges_and_existing_qzc() {
         // armed candidate wins
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, 10_020, 10_000, 50, 10_060, 350, u32::MAX),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                10_020,
+                10_000,
+                50,
+                10_060,
+                350,
+                u32::MAX
+            ),
             None
         );
         // window already has a qZC
         assert_eq!(
-            precross_accept_due(1, false, 1, 10_030, u32::MAX, 10_000, 50, 10_060, 350, u32::MAX),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                10_030,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                u32::MAX
+            ),
             None
         );
     }
@@ -610,11 +785,33 @@ mod tests {
     fn precross_scoped_to_ab_windows_and_speed_band() {
         // dead-reckoned C windows excluded
         assert_eq!(
-            precross_accept_due(2, true, 0, u32::MAX, u32::MAX, 10_000, 50, 10_060, 350, u32::MAX),
+            precross_accept_due(
+                2,
+                true,
+                0,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                u32::MAX
+            ),
             None
         );
         assert_eq!(
-            precross_accept_due(2, true, 3, u32::MAX, u32::MAX, 10_000, 50, 10_060, 350, u32::MAX),
+            precross_accept_due(
+                2,
+                true,
+                3,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                u32::MAX
+            ),
             None
         );
         // engage regime (>=500 us interval) excluded
@@ -636,11 +833,134 @@ mod tests {
         // TOP END excluded (the rung-75 double-accept surge): at
         // ~78 µs windows the rule raced the real edge accept.
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 30, 10_040, 78, u32::MAX),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                30,
+                10_040,
+                78,
+                u32::MAX
+            ),
             None
         );
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 60, 10_070, 199, u32::MAX),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                60,
+                10_070,
+                199,
+                u32::MAX
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn blind_stamp_is_neutral_and_walk_proof() {
+        // Sector 1, expected post-ZC = false → pre-crossed ISR level
+        // is 1 (low) and value_now must still be false. last_qzc
+        // 9_950, stiff 100 → stamp exactly at 10_050 (zero claimed
+        // acceleration): the estimator sample equals the stiff
+        // average by construction — a chain of these moves nothing.
+        assert_eq!(
+            blind_chain_stamp(1, false, 1, u32::MAX, u32::MAX, 10_060, 100, 100, 9_950, 0),
+            Some(10_050)
+        );
+        // Not due yet → wait for a later wrap.
+        assert_eq!(
+            blind_chain_stamp(1, false, 1, u32::MAX, u32::MAX, 10_040, 100, 100, 9_950, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn blind_stamp_eligibility_gates() {
+        let ok = || blind_chain_stamp(1, false, 1, u32::MAX, u32::MAX, 10_060, 100, 100, 9_950, 0);
+        assert!(ok().is_some(), "baseline vector must fire");
+        // C windows never.
+        assert_eq!(
+            blind_chain_stamp(2, true, 0, u32::MAX, u32::MAX, 10_060, 100, 100, 9_950, 0),
+            None
+        );
+        // Band: 200+ belongs to the wrap-sampled precross; sub-40 is
+        // runaway land.
+        assert_eq!(
+            blind_chain_stamp(1, false, 1, u32::MAX, u32::MAX, 10_060, 200, 200, 9_950, 0),
+            None
+        );
+        assert_eq!(
+            blind_chain_stamp(1, false, 1, u32::MAX, u32::MAX, 10_060, 39, 39, 9_950, 0),
+            None
+        );
+        // Edges/candidates win; one accept per window.
+        assert_eq!(
+            blind_chain_stamp(1, false, 1, 10_020, u32::MAX, 10_060, 100, 100, 9_950, 0),
+            None
+        );
+        assert_eq!(
+            blind_chain_stamp(1, false, 1, u32::MAX, 10_030, 10_060, 100, 100, 9_950, 0),
+            None
+        );
+        // The consecutive cap: one rev of blind free-run, then the
+        // honest starve path (zombie-field hazard bound).
+        assert_eq!(
+            blind_chain_stamp(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_060,
+                100,
+                100,
+                9_950,
+                BLIND_STAMP_MAX_RUN
+            ),
+            None
+        );
+        // Not pre-crossed (level reads pre-ZC at open) → a merely-
+        // late window NEVER fires this rule.
+        assert_eq!(
+            blind_chain_stamp(2, false, 1, u32::MAX, u32::MAX, 10_060, 100, 100, 9_950, 0),
+            None
+        );
+        // Level no longer holding post-ZC now → wait.
+        assert_eq!(
+            blind_chain_stamp(1, true, 1, u32::MAX, u32::MAX, 10_060, 100, 100, 9_950, 0),
+            None
+        );
+        // No anchor (stale chain / zero stiff) → never.
+        assert_eq!(
+            blind_chain_stamp(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_060,
+                100,
+                100,
+                u32::MAX,
+                0
+            ),
+            None
+        );
+        assert_eq!(
+            blind_chain_stamp(1, false, 1, u32::MAX, u32::MAX, 10_060, 100, 0, 9_950, 0),
+            None
+        );
+        // Unsampled ISR level (0) → never.
+        assert_eq!(
+            blind_chain_stamp(0, false, 1, u32::MAX, u32::MAX, 10_060, 100, 100, 9_950, 0),
             None
         );
     }
@@ -652,17 +972,50 @@ mod tests {
         // 10_305 > start+gate 10_050 → the accept must wait until
         // now reaches 10_305 and stamp THERE (≤10 % claimed accel).
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 350, 9_990),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                9_990
+            ),
             None // floor (10_305) still in the future at now=10_060
         );
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_330, 350, 9_990),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_330,
+                350,
+                9_990
+            ),
             Some(10_305) // stamped at the floor, not the gate
         );
         // A stale/wrapped last_qzc (floor before window start) is
         // ignored — plain gate stamp.
         assert_eq!(
-            precross_accept_due(1, false, 1, u32::MAX, u32::MAX, 10_000, 50, 10_060, 350, 2_000),
+            precross_accept_due(
+                1,
+                false,
+                1,
+                u32::MAX,
+                u32::MAX,
+                10_000,
+                50,
+                10_060,
+                350,
+                2_000
+            ),
             Some(10_050)
         );
     }

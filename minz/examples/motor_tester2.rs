@@ -1349,6 +1349,31 @@ static CL_NOZ_RUN: AtomicU8 = AtomicU8::new(0);
 static WINDOW_OPEN_LEVEL: AtomicU8 = AtomicU8::new(0);
 static NOZ_PRE: AtomicU32 = AtomicU32::new(0);
 static NOZ_NEVER: AtomicU32 = AtomicU32::new(0);
+/// TRUE open-level: comparator VALUE read at the END of the
+/// commutation ISR (~10 µs after the mux switch, fixed latency) —
+/// vs WINDOW_OPEN_LEVEL's first-wrap sample, which lands 0-51 µs
+/// after open (up to HALF a 100 µs window) and cannot distinguish
+/// "crossed before open" from "crossed early in the window" (the
+/// rung-75 conviction that banded the precross rescue out of the
+/// top end). Dual classification below decides whether the fatal
+/// dead windows are truly pre-crossed at open.
+static WINDOW_OPEN_LEVEL_ISR: AtomicU8 = AtomicU8::new(0);
+static CLOSED_OPEN_LEVEL_ISR: AtomicU8 = AtomicU8::new(0);
+#[unsafe(no_mangle)]
+static NOZ_PRE_ISR: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static NOZ_NEV_ISR: AtomicU32 = AtomicU32::new(0);
+/// Windows where the two open-level sources give DIFFERENT verdicts
+/// (wrap says pre-crossed, ISR says not, or vice versa) — the direct
+/// measure of the wrap sample's quantization lie at speed.
+#[unsafe(no_mangle)]
+static NOZ_OPENLVL_DISAGREE: AtomicU32 = AtomicU32::new(0);
+/// Consecutive blind-chain synthetic accepts since the last REAL
+/// accept (core::zc::BLIND_STAMP_MAX_RUN caps it at one electrical
+/// rev) + the lifetime count of stamps issued.
+static SYNTH_RUN: AtomicU8 = AtomicU8::new(0);
+#[unsafe(no_mangle)]
+static BLIND_STAMPS: AtomicU32 = AtomicU32::new(0);
 /// Level-rescue accepts (rung 3): pre-crossed windows whose qZC was
 /// synthesized from the first-wrap sample. Cascade-breaking only -
 /// no estimator update, no shot re-time, and NOT fed to the
@@ -4592,6 +4617,10 @@ fn LPTIM2() {
     CLOSED_I_MAX.store(WINDOW_I_MAX.load(Ordering::Relaxed), Ordering::Relaxed);
     CLOSED_VBAT_MIN.store(WINDOW_VBAT_MIN.load(Ordering::Relaxed), Ordering::Relaxed);
     CLOSED_OPEN_LEVEL.store(WINDOW_OPEN_LEVEL.load(Ordering::Relaxed), Ordering::Relaxed);
+    CLOSED_OPEN_LEVEL_ISR.store(
+        WINDOW_OPEN_LEVEL_ISR.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
     CLOSED_EST_US.store(OWL_INTERVAL_US.load(Ordering::Relaxed), Ordering::Relaxed);
     WINDOW_OPEN_LEVEL.store(0, Ordering::Relaxed);
     // CONTROL stays synchronous (feather2 incident: deferring the
@@ -4676,6 +4705,11 @@ fn LPTIM2() {
         let was_high = PB3_LEVEL.fetch_not(Ordering::Relaxed);
         minz::pb3::set(!was_high);
     }
+    // TRUE open-level for the window that just OPENED: read the
+    // comparator NOW, ~10 µs after the mux switch (settled: COMP2
+    // prop 80 ns, divider RC ~1 µs, FET transient ~2 µs) — a fixed
+    // sub-window-latency sample vs the wrap's 0-51 µs quantization.
+    WINDOW_OPEN_LEVEL_ISR.store(1 + comp2::value() as u8, Ordering::Relaxed);
     // Re-open the ear AM32-verbatim: pending PRESERVED. A crossing
     // that fired during this masked commutation ISR is serviced the
     // instant we unmask (their enableCompInterrupts semantics); the
@@ -4808,7 +4842,29 @@ fn fabric_close_step() {
         };
         bb_record(ev, prev, d);
         if ev == minz_core::window::EV_NOZ {
-            match minz_core::window::classify_noz(open_level, prev) {
+            // Dual open-level classification: wrap sample (legacy
+            // NOZ_PRE/NOZ_NEVER) vs the commutation-ISR sample —
+            // disagreement measures the wrap quantization lie.
+            let wrap_cls = minz_core::window::classify_noz(open_level, prev);
+            let isr_cls = minz_core::window::classify_noz(
+                CLOSED_OPEN_LEVEL_ISR.load(Ordering::Relaxed),
+                prev,
+            );
+            match isr_cls {
+                Some(true) => {
+                    NOZ_PRE_ISR.fetch_add(1, Ordering::Relaxed);
+                }
+                Some(false) => {
+                    NOZ_NEV_ISR.fetch_add(1, Ordering::Relaxed);
+                }
+                None => {}
+            }
+            if let (Some(w), Some(i)) = (wrap_cls, isr_cls)
+                && w != i
+            {
+                NOZ_OPENLVL_DISAGREE.fetch_add(1, Ordering::Relaxed);
+            }
+            match wrap_cls {
                 Some(true) => {
                     NOZ_PRE.fetch_add(1, Ordering::Relaxed);
                 }
@@ -5416,7 +5472,41 @@ fn pwm_wrap_work() {
         && CL_AM32_GEOM.load(Ordering::Relaxed)
     {
         let sector = CURRENT_SECTOR.load(Ordering::Relaxed);
-        if let Some(zc_us) = minz_core::zc::precross_accept_due(
+        let iv_now = OWL_INTERVAL_US.load(Ordering::Relaxed);
+        if iv_now < 200 {
+            // TOP BAND: the walk-proof NEUTRAL stamp (core::
+            // blind_chain_stamp — stamp at last_qzc + STIFF, zero
+            // claimed acceleration, ≤6 consecutive). The gate-
+            // stamped precross was convicted here TWICE (rung-75
+            // wrap-sampled; t100rescue ISR-sampled: honest sample,
+            // same runaway — each gate stamp opens the next window
+            // earlier until every window truly reads pre-crossed,
+            // est 115→60 µs). Keyed on the commutation-ISR open
+            // level (t100dual: honest at short windows).
+            let run = SYNTH_RUN.load(Ordering::Relaxed);
+            if let Some(zc_us) = minz_core::zc::blind_chain_stamp(
+                WINDOW_OPEN_LEVEL_ISR.load(Ordering::Relaxed),
+                value != 0,
+                sector,
+                WINDOW_QZC_US.load(Ordering::Relaxed),
+                CAND_ZC_US.load(Ordering::Relaxed),
+                ticks_1us(),
+                iv_now,
+                AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6,
+                OWL_LAST_QZC_US.load(Ordering::Relaxed),
+                run,
+            ) {
+                let gen_snap = WINDOW_GEN.load(Ordering::Relaxed);
+                free(|_| {
+                    if minz_core::zc::accept_gen_current(&ZC_STATE, gen_snap) {
+                        accept_qualified_zc(zc_us);
+                    }
+                });
+                SYNTH_RUN.store(run.saturating_add(1), Ordering::Relaxed);
+                BLIND_STAMPS.fetch_add(1, Ordering::Relaxed);
+                bb_record(minz_core::blackbox::EV_RSC, sector, run as u16 + 1);
+            }
+        } else if let Some(zc_us) = minz_core::zc::precross_accept_due(
             WINDOW_OPEN_LEVEL.load(Ordering::Relaxed),
             value != 0,
             sector,
@@ -5425,7 +5515,7 @@ fn pwm_wrap_work() {
             SECTOR_START_US.load(Ordering::Relaxed),
             SECTOR_GATE_US.load(Ordering::Relaxed),
             ticks_1us(),
-            OWL_INTERVAL_US.load(Ordering::Relaxed),
+            iv_now,
             OWL_LAST_QZC_US.load(Ordering::Relaxed),
         ) {
             let gen_snap = WINDOW_GEN.load(Ordering::Relaxed);
@@ -5911,6 +6001,12 @@ fn record_edge_diag(now_10: u32) {
 /// SWIFT at prio 1; TIM1_UP confirm inside `free` + gen guard) exclude
 /// a competing publish between the precheck and the publish.
 fn accept_qualified_zc(zc_us: u32) {
+    // Blind-stamp run resets on EVERY accept; the synthetic caller
+    // re-stores run+1 immediately after (same context) so only a
+    // REAL edge/confirm accept leaves it at 0. A preempting real
+    // accept between the two stores can leave the run one high —
+    // conservative direction (earlier fallback), acceptable.
+    SYNTH_RUN.store(0, Ordering::Relaxed);
     // AM32-parallel raw interval (their zt): ZC-stamp to ZC-stamp,
     // BEFORE any estimator/schedule processing touches it.
     {
