@@ -91,12 +91,16 @@ if args.t0 is not None or args.t1 is not None:
           f"{(t_last - t_first) / 1e5:.1f}s]")
 
 if args.rows:
-    print(f"{'t_s':>8} {'sec':>3} {'len':>5} {'qzc_off':>7} {'i_mA':>6} {'vbat':>5}")
+    print(f"{'t_s':>8} {'seq':>4} {'sec':>3} {'len':>5} {'qzc_off':>7} "
+          f"{'i_mA':>6} {'imax':>6} {'vbat':>5}")
     for f in frames:
         q = f["qzc_off_us"]
-        print(f"{(f['start'] - t_first) / 1e5:>8.4f} {f['sector']:>3} "
+        print(f"{(f['start'] - t_first) / 1e5:>8.4f} {f.get('seq', 0):>4} "
+              f"{f['sector']:>3} "
               f"{f['len_us']:>5} {q if q != 0xFFFF else '--':>7} "
-              f"{raw_to_ma(f['i_avg']):>6.0f} {f.get('vbat_raw', 0):>5}")
+              f"{raw_to_ma(f['i_avg']):>6.0f} "
+              f"{raw_to_ma(f.get('i_max', 0)):>6.0f} "
+              f"{f.get('vbat_raw', 0):>5}")
 
 if args.excursions:
     # 6-deep rolling mean of prior window lens as the reference

@@ -392,6 +392,24 @@ def cmd_readback(a):
 
 def cmd_postmortem(_):
     print(sh(sys.executable, "scripts/bb_postmortem.py"))
+    # ENGINE-RATE probe (t100disarm: which ISR engines are ALIVE at
+    # death? TIM6 owns slew + rung sums — a dead TIM6 freezes the
+    # applied amp and zeroes rung rows while the lock runs on = the
+    # silent ladder-stall signature). Two reads 1 s apart -> Hz.
+    try:
+        syms = ["TIM6_COUNT", "TIM7_COUNT", "TIM1_UP_COUNT",
+                "LPTIM2_COUNT", "COMP_COUNT"]
+        addrs = {s: nm_addr(s) for s in syms}
+        r1 = {s: probe_words(a, 1)[0] for s, a in addrs.items()}
+        t1 = time.monotonic()
+        time.sleep(1.0)
+        r2 = {s: probe_words(a, 1)[0] for s, a in addrs.items()}
+        dt = time.monotonic() - t1
+        print("engine rates:", ", ".join(
+            f"{s}={((r2[s] - r1[s]) & 0xFFFFFFFF) / dt:.0f}/s"
+            for s in syms))
+    except (SystemExit, IndexError):
+        pass
     # Chain-stop snapshot taken at the first high-speed reseed:
     # armed==fired -> no shot was armed (upstream accept never ran);
     # armed==fired+1 -> a shot armed but never fired (SNGSTRT class).
@@ -472,7 +490,13 @@ def cmd_postmortem(_):
                 "MAIN_SHEDS", "MST_RUN", "MST_KILL_SINCE", "MST_KILL_PHASE",
                 "BEACON_SKIP_EVT", "BEACON_MAX_D", "CLOCK_BACK",
                 "CL_FALLS", "CL_FALL_T10", "CL_FALL_CTX",
-                "REGEN_TRIPS", "REGEN_REALIGNS"):
+                "MOTOR_FALLS", "MOTOR_FALL_T10", "MOTOR_FALL_CTX",
+                "LADDER_DISARMS", "LADDER_DISARM_T10", "LADDER_DISARM_CTX",
+                "LADDER_EVAL", "LADDER_TICKS", "LADDER_STEPS_TAKEN",
+                "REGEN_TRIPS", "REGEN_REALIGNS",
+                "CAMP_BURST_MAX", "CAMP_BURST_T10",
+                "MAIN_GAP_MAX_US", "MAIN_GAP_T10",
+                "LPTIM2_LATE_MAX_US", "LPTIM2_LATE_T10"):
         try:
             v = probe_words(nm_addr(sym), 1)[0]
             print(f"{sym} = {v}")

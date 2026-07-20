@@ -497,6 +497,59 @@ static CL_FALLS: AtomicU32 = AtomicU32::new(0);
 static CL_FALL_T10: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static CL_FALL_CTX: AtomicU32 = AtomicU32::new(0);
+static CL_FALL_PREV: AtomicBool = AtomicBool::new(false);
+/// Ladder-disarm forensics (the 2026-07-20 "silent death" class:
+/// the disarm branch cancels the climb on a transient CL gap, then
+/// the healthy lock idles at a frozen rung until the bench window
+/// expires — no kill, no print, nothing wrong with the motor).
+#[unsafe(no_mangle)]
+static LADDER_DISARMS: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LADDER_DISARM_T10: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LADDER_DISARM_CTX: AtomicU32 = AtomicU32::new(0);
+/// Stepper stage counters — MONOTONIC so the host's post-death 'w'
+/// cannot pollute them. EVAL = passes with the full gate true;
+/// TICKS = dwell fired; STEPS = amp actually incremented. A stall
+/// at rung R with TICKS ≈ full-run-count means the gates stayed
+/// true and the increment path is broken; TICKS frozen at ≈R means
+/// a gate fell at the stall (the fall watchers say which).
+#[unsafe(no_mangle)]
+static LADDER_EVAL: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LADDER_TICKS: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LADDER_STEPS_TAKEN: AtomicU32 = AtomicU32::new(0);
+/// MOTOR_ENABLED fall watcher (TIM7, mirrors CL_FALL_*): CTX =
+/// (cl_active<<8 | last_kill) at the fall.
+#[unsafe(no_mangle)]
+static MOTOR_FALLS: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static MOTOR_FALL_T10: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static MOTOR_FALL_CTX: AtomicU32 = AtomicU32::new(0);
+static MOTOR_FALL_PREV: AtomicBool = AtomicBool::new(false);
+/// Surge-mechanism meters (EMI-immune RAM aggregates — the wire is
+/// DOCUMENTED to black out at amp 77+, so only these survive the
+/// surge span): CAMP_BURST = max CEN_CAMP delta per 51 µs TIM6 tick
+/// (camp re-pend storm detector); MAIN_GAP = max beacon-beat gap
+/// (main starvation vs wire-only blackout discriminator);
+/// LPTIM2_LATE = max commutation-shot fire latency vs its armed
+/// deadline (does anything delay commutations during the surge?).
+#[unsafe(no_mangle)]
+static CAMP_BURST_MAX: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static CAMP_BURST_T10: AtomicU32 = AtomicU32::new(0);
+static CAMP_PREV: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static MAIN_GAP_MAX_US: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static MAIN_GAP_T10: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LPTIM2_LATE_MAX_US: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static LPTIM2_LATE_T10: AtomicU32 = AtomicU32::new(0);
+static EXPECTED_FIRE_1US: AtomicU32 = AtomicU32::new(0);
 
 fn cen_bump(cen: &[AtomicU32; 6]) {
     let s = (CURRENT_SECTOR.load(Ordering::Relaxed) & 7).min(5) as usize;
@@ -884,7 +937,10 @@ fn arm_trace(src: u8, delay_us: u32, iv_us: u32) {
         Ordering::Relaxed,
     );
     ARM_RING[k + 1].store(iv_us, Ordering::Relaxed);
-    ARM_RING[k + 2].store(ticks_1us(), Ordering::Relaxed);
+    let now = ticks_1us();
+    ARM_RING[k + 2].store(now, Ordering::Relaxed);
+    // Fire-latency deadline for the LPTIM2_LATE meter.
+    EXPECTED_FIRE_1US.store(now.wrapping_add(delay_us), Ordering::Relaxed);
 }
 /// Last 16 ACCEPTED key bytes, ring; readback via probe after a run.
 #[unsafe(no_mangle)]
@@ -2502,13 +2558,16 @@ fn main() -> ! {
                 && CL_ACTIVE.load(Ordering::Relaxed)
                 && MOTOR_ENABLED.load(Ordering::Relaxed)
             {
+                LADDER_EVAL.fetch_add(1, Ordering::Relaxed);
                 let nk = ticks_10us();
                 let lt = LADDER_LAST_T10.load(Ordering::Relaxed);
                 // 10%-steps get a longer settle (the transient is 10x)
                 let dwell: u32 = if lstep >= 10 { 150_000 } else { 50_000 };
                 if nk.wrapping_sub(lt) >= dwell {
+                    LADDER_TICKS.fetch_add(1, Ordering::Relaxed);
                     LADDER_LAST_T10.store(nk, Ordering::Relaxed);
                     if amplitude_pct < LADDER_TOP {
+                        LADDER_STEPS_TAKEN.fetch_add(1, Ordering::Relaxed);
                         amplitude_pct =
                             clamp_amp(amplitude_pct as i32 + lstep as i32).min(LADDER_TOP);
                         // THE SAWTOOTH (2026-07-19, Q-log verdict in
@@ -2554,6 +2613,19 @@ fn main() -> ! {
                 // band until the bench gave up). The realign resets
                 // the climb to R6_START_AMP; the rung cadence walks
                 // back up — AM32 1.63's lower-throttle-on-desync shape.
+                // INSTRUMENTED (t100clfall2: the "silent death" is
+                // this disarm firing mid-climb on a CL gap the 166 µs
+                // TIM7 tripwire never saw, then the lock running on
+                // healthy for minutes at a frozen rung while the host
+                // waits for rung 100): count + stamp + capture the
+                // flag states that let it fire.
+                LADDER_DISARMS.fetch_add(1, Ordering::Relaxed);
+                LADDER_DISARM_T10.store(ticks_10us(), Ordering::Relaxed);
+                LADDER_DISARM_CTX.store(
+                    (MOTOR_ENABLED.load(Ordering::Relaxed) as u32) << 8
+                        | LAST_KILL.load(Ordering::Relaxed) as u32,
+                    Ordering::Relaxed,
+                );
                 LADDER_STEP.store(0, Ordering::Relaxed);
             }
 
@@ -3907,6 +3979,29 @@ fn TIM6_DACUNDER() {
     // AM32's 19.6 kHz control loop (tenKhzRoutine home), priority 3.
     minz::tim6_loop::clear_flag();
     let tick = TIM6_COUNT.fetch_add(1, Ordering::Relaxed);
+    // CAMP-STORM meter: max CEN_CAMP delta per 51 µs tick. A camp
+    // storm (re-pended COMP at ~0.7 µs cadence through gate-closed
+    // spans) shows as tens of camps per tick; cruise shows 0-2.
+    {
+        let c = CEN_CAMP.load(Ordering::Relaxed);
+        let d = c.wrapping_sub(CAMP_PREV.swap(c, Ordering::Relaxed));
+        if d > CAMP_BURST_MAX.load(Ordering::Relaxed) {
+            CAMP_BURST_MAX.store(d, Ordering::Relaxed);
+            CAMP_BURST_T10.store(ticks_10us(), Ordering::Relaxed);
+        }
+    }
+    // MAIN-GAP meter: max observed gap between main beacon beats.
+    // The surge autopsies (cmgate r1/r2) show 115-620 ms main/TX
+    // blackouts DURING the surge build — this measures them without
+    // relying on the host wedge probe.
+    {
+        let bm = BEACON_MAIN.load(Ordering::Relaxed);
+        let gap = minz_core::guards::since_us(ticks_10us(), bm);
+        if gap < 30_000_000 && gap > MAIN_GAP_MAX_US.load(Ordering::Relaxed) {
+            MAIN_GAP_MAX_US.store(gap, Ordering::Relaxed);
+            MAIN_GAP_T10.store(ticks_10us(), Ordering::Relaxed);
+        }
+    }
     // The full former-TIM1-wrap workload (confirm/guards/harvest) —
     // the wholesale convergence move.
     pwm_wrap_work();
@@ -3972,9 +4067,12 @@ fn TIM7() {
     // motor_enabled + set last_kill; phase B leaves motor on; a
     // clobber/unknown writer shows motor on + last_kill 0.
     {
-        static mut CL_PREV: bool = false;
+        // Sole-writer (this ISR): a plain atomic serves as the edge
+        // memory — no `static mut` (nested ones don't get the
+        // cortex-m-rt rewrite).
         let cur = CL_ACTIVE.load(Ordering::Relaxed);
-        if *CL_PREV && !cur {
+        let prev = CL_FALL_PREV.swap(cur, Ordering::Relaxed);
+        if prev && !cur {
             CL_FALLS.fetch_add(1, Ordering::Relaxed);
             CL_FALL_T10.store(ticks_10us(), Ordering::Relaxed);
             CL_FALL_CTX.store(
@@ -3983,7 +4081,16 @@ fn TIM7() {
                 Ordering::Relaxed,
             );
         }
-        *CL_PREV = cur;
+        let mcur = MOTOR_ENABLED.load(Ordering::Relaxed);
+        let mprev = MOTOR_FALL_PREV.swap(mcur, Ordering::Relaxed);
+        if mprev && !mcur {
+            MOTOR_FALLS.fetch_add(1, Ordering::Relaxed);
+            MOTOR_FALL_T10.store(ticks_10us(), Ordering::Relaxed);
+            MOTOR_FALL_CTX.store(
+                (cur as u32) << 8 | LAST_KILL.load(Ordering::Relaxed) as u32,
+                Ordering::Relaxed,
+            );
+        }
     }
 
     // Throttle slew MOVED to the TIM6 19.6 kHz control loop (AM32's
@@ -4788,6 +4895,18 @@ fn LPTIM2() {
     LPTIM2_COUNT.fetch_add(1, Ordering::Relaxed);
     let _dur = DurGuard::new(&DUR_LPTIM2);
     minz::lptim2_oneshot::clear_flag();
+    // Fire-latency meter (surge hunt): now vs the deadline stamped
+    // at arm. Reference loaded BEFORE now (the watchdog read-order
+    // rule); the <30 s clamp drops stale-deadline artifacts after
+    // idle spans.
+    {
+        let exp = EXPECTED_FIRE_1US.load(Ordering::Relaxed);
+        let late = ticks_1us().wrapping_sub(exp);
+        if late < 30_000_000 && late > LPTIM2_LATE_MAX_US.load(Ordering::Relaxed) {
+            LPTIM2_LATE_MAX_US.store(late, Ordering::Relaxed);
+            LPTIM2_LATE_T10.store(ticks_10us(), Ordering::Relaxed);
+        }
+    }
     // TIM16 free-run park: AM32's recipe re-arms every fire from its
     // ISR; our rotor-clocked inversion arms only on accepts, so an
     // unparked free-run re-wraps at the same ARR = a commutation
@@ -5281,11 +5400,22 @@ fn pwm_wrap_work() {
             {
                 let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
                 let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+                // COMMANDED-MOTION GATE (restored 2026-07-20 — the
+                // champion revert dropped it, and its absence IS the
+                // "silent death" class): braking alignment is a
+                // throttle-DOWN phenomenon (target < applied). During
+                // climbs/holds the sag-tracking baseline sits low, so
+                // any transient load drop reads as a +6% "regen" rise
+                // -> false trip -> phase A resets the climb to 15 ->
+                // the re-climbs eat the bench window (t100stages
+                // baseline: 264 steps for an 80-rung net climb).
                 if CL_ACTIVE.load(Ordering::Relaxed)
                     && base > 0
                     && iv > 0
                     && iv < minz_core::window::HIGH_SPEED_US
                     && raw > base + base / 16
+                    && (AMP_TARGET_PCT.load(Ordering::Relaxed) as u32)
+                        < AMPLITUDE_PCT.load(Ordering::Relaxed) as u32
                 {
                     let r = REGEN_RUN.load(Ordering::Relaxed).saturating_add(1);
                     REGEN_RUN.store(r, Ordering::Relaxed);
