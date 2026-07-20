@@ -776,10 +776,17 @@ fn advance_now(iv: u32) -> i32 {
     // over (walk-neutral); the engage band keeps the proven ~0-2°
     // speed ramp.
     if CL_AM32_GEOM.load(Ordering::Relaxed) && iv > 0 && iv < 400 {
-        minz_core::timing::auto_advance_deg_am32(
-            AMPLITUDE_PCT.load(Ordering::Relaxed) as u32,
-            manual,
-        )
+        // EEPROM AUDIT (operator call, 2026-07-19): the bench AM32
+        // runs the DEFAULT eeprom (our 64K-ceiling image erases the
+        // 0xF800 page every flash cycle, AM32 rewrites defaults) and
+        // the defaults are AUTO_ADVANCE=0, ADVANCE_LEVEL=26 →
+        // temp_advance 16 → CONSTANT 15.0° at every speed. The
+        // duty-keyed 13-23° map we ported is their DISABLED mode.
+        // Mechanism: advance sets the ZC's margin to the window END
+        // (interval/2 − advance); our 18-23° at speed put ZCs 3-8°
+        // nearer the close than the reference — late-jittered
+        // crossings slip past it = the pre-crossed dead windows.
+        if manual != 0 { manual } else { 15 }
     } else {
         minz_core::timing::auto_advance_deg(iv, manual)
     }

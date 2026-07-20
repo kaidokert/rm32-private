@@ -205,6 +205,14 @@ def cmd_ladder(a):
                    PROBE, "b8", hex(nm_addr("EDGE_MODE")),
                    str(a.edgemode))
                 print(f"EDGE_MODE={a.edgemode} via probe")
+            if a.blank is not None:
+                # blank override AFTER the preflight's default-8 write
+                # (AM32-L431 runs NO blank at all - persistence only;
+                # the CNT-position blank is polarity-correlated and is
+                # the round-3 alternation suspect)
+                sh("probe-rs", "write", "--chip", CHIP, "--probe",
+                   PROBE, "b8", hex(nm_addr("BLANK_US")), str(a.blank))
+                print(f"BLANK_US={a.blank} via probe")
             if not b.press_until("L", "auto-ladder step = 1"):
                 print("1%-arm not confirmed (echo loss) - proceeding")
             if a.step >= 10:
@@ -801,6 +809,8 @@ def main():
     p.add_argument("--jarm", action="store_true")
     p.add_argument("--waxtrig", type=int, default=0,
                    help="probe-write WAX_TRIG_RAW (raw counts) before arming J")
+    p.add_argument("--blank", type=int, default=None,
+                   help="probe-write BLANK_US after preflight (0 = AM32 no-blank)")
     p.add_argument("--edgemode", type=int, default=0)
     p = sub.add_parser("readback")
     p.add_argument("--tag", default=None)
