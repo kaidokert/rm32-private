@@ -42,6 +42,10 @@ ap.add_argument("--tail", type=float, default=None,
                 help="analyze only the last N seconds (slip-hunt split)")
 ap.add_argument("--rows", action="store_true",
                 help="print every window in the slice (t_s sec len qzc_off i_mA)")
+ap.add_argument("--excursions", action="store_true",
+                help="rotor-period excursion tail: windows > 1.125x / 1.25x "
+                     "the 6-deep rolling mean (the MZT-differential metric; "
+                     "AM32 reference: 1 event >12.5%% in 262k records)")
 args = ap.parse_args()
 
 if args.infile:
@@ -93,6 +97,34 @@ if args.rows:
         print(f"{(f['start'] - t_first) / 1e5:>8.4f} {f['sector']:>3} "
               f"{f['len_us']:>5} {q if q != 0xFFFF else '--':>7} "
               f"{raw_to_ma(f['i_avg']):>6.0f} {f.get('vbat_raw', 0):>5}")
+
+if args.excursions:
+    # 6-deep rolling mean of prior window lens as the reference
+    # (mirrors the firmware's stiff average); count crests above it.
+    ref_hist = []
+    n_seen = e125 = e250 = 0
+    worst = 0.0
+    for f in frames:
+        wl = f["len_us"]
+        if len(ref_hist) == 6:
+            ref = sum(ref_hist) / 6
+            if ref > 0 and wl > ref:
+                exc = wl / ref - 1.0
+                n_seen += 1
+                worst = max(worst, exc)
+                if exc > 0.125:
+                    e125 += 1
+                if exc > 0.25:
+                    e250 += 1
+        ref_hist.append(wl)
+        if len(ref_hist) > 6:
+            ref_hist.pop(0)
+        n_seen += 0
+    total = len(frames)
+    print(f"EXCURSION TAIL: {total} windows | >12.5%: {e125} "
+          f"({1e3 * e125 / max(total, 1):.2f}/1k) | >25%: {e250} "
+          f"({1e3 * e250 / max(total, 1):.2f}/1k) | worst +{100 * worst:.0f}%")
+    print("(AM32 reference: 1 event >12.5% in 262k = 0.004/1k)")
 
 lens = [f["len_us"] for f in frames]
 mean_len = statistics.mean(lens)

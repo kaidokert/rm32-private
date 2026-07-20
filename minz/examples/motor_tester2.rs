@@ -785,9 +785,33 @@ fn advance_now(iv: u32) -> i32 {
     }
 }
 
+/// EXCURSION-TAIL STRIP (round 1): disable the minz-only per-window
+/// feedbacks with no AM32 analog — the parity trim (a unity-gain
+/// window-parity canceller with ±80 µs delay authority that SNAPS
+/// off at the 200 µs band edge = a step disturbance at the fatal
+/// band's doorstep) and the blind-chain stamp. Hypothesis (operator-
+/// framed): AM32 has no wrongness concept — our corrective
+/// machinery's RESPONSES are the excursion tail. This flag is the
+/// deletion experiment's round 1; measure the tail A/B via the
+/// window stream before touching anything else.
+/// ROUND-1 VERDICT (t100strip1, 5 runs): tail >12.5% THICKENED
+/// 3-6x (26-42/1k vs 6-17/1k) with the >25% crest class and kills
+/// UNCHANGED — the parity trim is TREATMENT, not excitation: it
+/// cancels our ±15% even/odd alternation, which un-trimmed EXCEEDS
+/// AM32's ±9.3% p99 on the same motor. The distilled question is
+/// now: why is our rising-vs-falling ZC placement asymmetric by
+/// ~1 carrier period when AM32 is immune on identical hardware
+/// (the parity-bias arc's conviction = the FUNDAMENTAL driver; the
+/// crest monsters ride on top). Flag back to false — the trim
+/// stays until the polarity-bias root is fixed.
+const STRIP_TO_AM32: bool = false;
+
 /// Delay trim for a commutation closing sector `sec`'s window.
 #[inline]
 fn parity_trim_for(sec: u8, iv: u32) -> i32 {
+    if STRIP_TO_AM32 {
+        return 0;
+    }
     let (a, b) = (
         PARITY_EMA_EVEN.load(Ordering::Relaxed),
         PARITY_EMA_ODD.load(Ordering::Relaxed),
@@ -5581,7 +5605,7 @@ fn pwm_wrap_work() {
     {
         let sector = CURRENT_SECTOR.load(Ordering::Relaxed);
         let iv_now = OWL_INTERVAL_US.load(Ordering::Relaxed);
-        if iv_now < 200 {
+        if !STRIP_TO_AM32 && iv_now < 200 {
             // TOP BAND: the walk-proof NEUTRAL stamp (core::
             // blind_chain_stamp — stamp at last_qzc + STIFF, zero
             // claimed acceleration, ≤6 consecutive). The gate-
