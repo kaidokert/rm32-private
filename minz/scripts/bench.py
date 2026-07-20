@@ -257,7 +257,18 @@ def cmd_ladder(a):
                     try:
                         syms = ["COMP_COUNT", "TIM1_UP_COUNT",
                                 "LPTIM2_COUNT", "TIM7_COUNT",
-                                "USART2_COUNT", "TIM1_CC_COUNT"]
+                                "USART2_COUNT", "TIM1_CC_COUNT",
+                                # camp-storm / phantom-lock discriminators:
+                                # CEN_CAMP rate = COMP re-pend storm load;
+                                # AT_GATE vs FREE = are accepts riding the
+                                # gate edge (self-lock) or landing free?
+                                "CEN_CAMP", "ACC_AT_GATE", "ACC_FREE",
+                                # main-alive discriminator: BEACON_MAIN is a
+                                # 10us-tick timestamp, so its "rate" is
+                                # ~100000/s when main beats normally and 0
+                                # when main is stalled OR the >5s jump guard
+                                # has frozen it (false-shed class).
+                                "BEACON_MAIN", "MAIN_SHEDS", "MST_RUN"]
                         addrs = {s: nm_addr(s) for s in syms}
                         c1 = probe_words(0xE0001004, 1)[0]
                         r1 = {s: probe_words(a, 1)[0]
@@ -437,7 +448,14 @@ def cmd_postmortem(_):
     except (SystemExit, IndexError):
         pass
     try:
-        lk = probe_words(nm_addr("LAST_KILL"), 1)[0] & 0xFF
+        # LAST_KILL is an AtomicU8 and its symbol lands UNALIGNED
+        # (t100beacon: 0x2000a747 -> the b32 read failed and the
+        # except swallowed it — the silent-death arbiter was blind
+        # exactly when needed). Read the aligned word, extract the
+        # byte.
+        addr = nm_addr("LAST_KILL")
+        word = probe_words(addr & ~3, 1)[0]
+        lk = (word >> (8 * (addr & 3))) & 0xFF
         names = {0: "never", 1: "desync", 2: "starved", 3: "overcurrent",
                  4: "sag"}
         print(f"LAST_KILL = {lk} ({names.get(lk, '?')})")
@@ -449,7 +467,12 @@ def cmd_postmortem(_):
                 "SHOT_ARMED_COUNT", "LPTIM2_COUNT", "CHAIN_KICKS",
                 "SAG_HOLD_COUNT", "BURST_TRIPS",
                 "RECOV_COUNT", "RESEED_COUNT", "SLEW_CLAMP_COUNT",
-                "WAIT_CLAMP_COUNT", "SPIN_TIMEOUTS"):
+                "WAIT_CLAMP_COUNT", "SPIN_TIMEOUTS",
+                "CEN_CAMP", "ACC_AT_GATE", "ACC_FREE",
+                "MAIN_SHEDS", "MST_RUN", "MST_KILL_SINCE", "MST_KILL_PHASE",
+                "BEACON_SKIP_EVT", "BEACON_MAX_D", "CLOCK_BACK",
+                "CL_FALLS", "CL_FALL_T10", "CL_FALL_CTX",
+                "REGEN_TRIPS", "REGEN_REALIGNS"):
         try:
             v = probe_words(nm_addr(sym), 1)[0]
             print(f"{sym} = {v}")

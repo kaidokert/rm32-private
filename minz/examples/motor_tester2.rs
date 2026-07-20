@@ -477,6 +477,26 @@ static CEN_STALE: [AtomicU32; 6] = [CEN_ZERO; 6];
 /// the crossing waits instead of being discarded).
 #[unsafe(no_mangle)]
 static CEN_CAMP: AtomicU32 = AtomicU32::new(0);
+/// GATE-EDGE ACCEPT CENSUS (the unlogged-desync detector): an accept
+/// landing within a few µs of gate-open is the camp-phantom
+/// fingerprint — a dwelling post-ZC level re-pended through the
+/// closed gate and "accepted" the instant it opens. A healthy ZC
+/// lands with real margin past the gate. A run where AT_GATE
+/// dominates is self-referentially locked (field decoupled from the
+/// rotor, accepts still flowing, desync watchdog blind) — the class
+/// behind the campgate2 sag kills / rung-85 wedges.
+#[unsafe(no_mangle)]
+static ACC_AT_GATE: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static ACC_FREE: AtomicU32 = AtomicU32::new(0);
+/// CL-fall tripwire (TIM7): every CL_ACTIVE 1->0 edge, stamped +
+/// attributed. CTX = (motor_enabled<<8 | last_kill) at the fall.
+#[unsafe(no_mangle)]
+static CL_FALLS: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static CL_FALL_T10: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+static CL_FALL_CTX: AtomicU32 = AtomicU32::new(0);
 
 fn cen_bump(cen: &[AtomicU32; 6]) {
     let s = (CURRENT_SECTOR.load(Ordering::Relaxed) & 7).min(5) as usize;
@@ -711,6 +731,14 @@ static MAIN_STARVE_KILLS: AtomicU32 = AtomicU32::new(0);
 static MST_RUN: AtomicU32 = AtomicU32::new(0);
 static MST_KILL_SINCE: AtomicU32 = AtomicU32::new(0);
 static MST_KILL_PHASE: AtomicU32 = AtomicU32::new(0);
+/// Beacon-guard forensics (the frame-cut discriminator): SKIP_EVT
+/// counts episodes where the >5 s jump guard rejected a beat (first
+/// skip only); MAX_D records the largest rejected jump in 10 µs
+/// ticks. A ~5_370_000 MAX_D is the DWT-extender ±53.7 s glitch
+/// signature; a rejected jump means the beacon froze and the mst
+/// guard shed the stream off a HEALTHY main.
+static BEACON_SKIP_EVT: AtomicU32 = AtomicU32::new(0);
+static BEACON_MAX_D: AtomicU32 = AtomicU32::new(0);
 /// LPTIM2 chain accounting: shots ARMED (schedule/reschedule calls
 /// from accepts + reseed kicks) vs ISR FIRES. A growing gap = the
 /// SNGSTRT-dropped chain-death class.
@@ -2410,6 +2438,12 @@ fn main() -> ! {
                     BEACON_MAIN.store(bt, Ordering::Relaxed);
                     *BEACON_SKIPS = 0;
                 } else {
+                    if *BEACON_SKIPS == 0 {
+                        BEACON_SKIP_EVT.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if d > BEACON_MAX_D.load(Ordering::Relaxed) {
+                        BEACON_MAX_D.store(d, Ordering::Relaxed);
+                    }
                     *BEACON_SKIPS += 1;
                     if *BEACON_SKIPS >= 10_000 {
                         BEACON_MAIN.store(bt, Ordering::Relaxed);
@@ -2639,7 +2673,15 @@ fn main() -> ! {
                 && CL_ACTIVE.load(Ordering::Relaxed)
                 && MOTOR_ENABLED.load(Ordering::Relaxed)
             {
-                REGEN_DECEL_T10.store(ticks_10us(), Ordering::Relaxed);
+                // Stamp ONLY on the episode's FIRST trip: the phase-B
+                // gate measures elapsed from T10, and re-stamping on
+                // every trip of a storm (campgate r0: 22 trips before
+                // the desync) resets the clock forever — phase B
+                // becomes unreachable and the desync watchdog wins,
+                // the exact death the gate exists to prevent.
+                if !REGEN_DECEL.load(Ordering::Relaxed) {
+                    REGEN_DECEL_T10.store(ticks_10us(), Ordering::Relaxed);
+                }
                 REGEN_DECEL.store(true, Ordering::Relaxed);
                 write!(
                     &mut tx_writer,
@@ -2657,10 +2699,23 @@ fn main() -> ! {
             // Y-handler, the handoff consumer re-arms the CL
             // (needs !CL_ARMED — cleared here), and the ladder
             // resumes from the R6 band.
+            // SOLO GATE FIX (camp-era): the stock `CL_ACTIVE &&
+            // OWL>400` starves during a crash-decel (the est rate
+            // bound freezes OWL; the desync watchdog wins the race
+            // — every camp2 desync was this). Raw-measured +
+            // time-qualified + CL-independent: LAST_RAW_ZC_IV is
+            // stamp-to-stamp truth, the 500 ms floor rejects
+            // stamp-gap spans, and a CL that died mid-decel still
+            // realigns. Tested SOLO on the champion+camp stack —
+            // its earlier conviction was as part of the slam
+            // bundle, never alone.
             if REGEN_DECEL.load(Ordering::Relaxed)
                 && MOTOR_ENABLED.load(Ordering::Relaxed)
-                && CL_ACTIVE.load(Ordering::Relaxed)
-                && OWL_INTERVAL_US.load(Ordering::Relaxed) > 400
+                && LAST_RAW_ZC_IV.load(Ordering::Relaxed) as u32 > 400
+                && minz_core::guards::since_us(
+                    ticks_10us(),
+                    REGEN_DECEL_T10.load(Ordering::Relaxed),
+                ) > 500_000
             {
                 REGEN_DECEL.store(false, Ordering::Relaxed);
                 REGEN_REALIGNS.fetch_add(1, Ordering::Relaxed);
@@ -2680,6 +2735,21 @@ fn main() -> ! {
             }
             // A kill of any kind cancels a pending phase-B.
             if REGEN_DECEL.load(Ordering::Relaxed) && !MOTOR_ENABLED.load(Ordering::Relaxed) {
+                REGEN_DECEL.store(false, Ordering::Relaxed);
+            }
+            // Quiet-recovery expiry: an episode that rides through
+            // WITHOUT handover (trips stop, CL keeps the rotor) must
+            // release the latch, or the stale T10 voids the 500 ms
+            // floor for the NEXT episode (instant phase-B on its
+            // first trip = premature handover on a possibly-spurious
+            // raw stamp). 2 s = the trough-ride/OC window: past it
+            // the episode is over by definition.
+            if REGEN_DECEL.load(Ordering::Relaxed)
+                && minz_core::guards::since_us(
+                    ticks_10us(),
+                    REGEN_DECEL_T10.load(Ordering::Relaxed),
+                ) > 2_000_000
+            {
                 REGEN_DECEL.store(false, Ordering::Relaxed);
             }
             // FALCON desync report: the TIM7 watchdog already killed
@@ -3894,6 +3964,27 @@ fn TIM7() {
     // store observes the matching polarity + edges (not stale ones).
     tim7_drive::clear_update_flag();
     let _tick = TIM7_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // CL-FALL TRIPWIRE (the t100beacon silent-death class: CL_ACTIVE
+    // 1->0 with NO kill, NO key, NO phase-B print, bb ring stale).
+    // TIM7 always runs, so every fall is seen within 166 µs. CTX
+    // packs (motor_enabled<<8 | last_kill) AT the fall: kills clear
+    // motor_enabled + set last_kill; phase B leaves motor on; a
+    // clobber/unknown writer shows motor on + last_kill 0.
+    {
+        static mut CL_PREV: bool = false;
+        let cur = CL_ACTIVE.load(Ordering::Relaxed);
+        if *CL_PREV && !cur {
+            CL_FALLS.fetch_add(1, Ordering::Relaxed);
+            CL_FALL_T10.store(ticks_10us(), Ordering::Relaxed);
+            CL_FALL_CTX.store(
+                (MOTOR_ENABLED.load(Ordering::Relaxed) as u32) << 8
+                    | LAST_KILL.load(Ordering::Relaxed) as u32,
+                Ordering::Relaxed,
+            );
+        }
+        *CL_PREV = cur;
+    }
 
     // Throttle slew MOVED to the TIM6 19.6 kHz control loop (AM32's
     // tenKhzRoutine home — timer-alignment step 2).
@@ -6196,6 +6287,22 @@ fn COMP() {
                 } else {
                     now_us
                 };
+                // Gate-edge census: classify this accept by its margin
+                // past the ZC-referenced gate-open (avg/2 since the
+                // last accepted ZC — same arithmetic as the gate
+                // check above). <=4 µs = camp-phantom fingerprint
+                // (the camp re-pends every ~1 µs, so a dwelling
+                // level is accepted 1-2 µs after the gate opens).
+                {
+                    let avg = AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6;
+                    let since_zc =
+                        now_us.wrapping_sub(GATE_LAST_ZC_US.load(Ordering::Relaxed));
+                    if avg != 0 && since_zc.wrapping_sub(avg / 2) <= 4 {
+                        ACC_AT_GATE.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        ACC_FREE.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
                 accept_qualified_zc(zc);
             } else {
                 cen_bump(&CEN_DEFER);
