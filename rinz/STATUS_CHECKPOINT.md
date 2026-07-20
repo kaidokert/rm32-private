@@ -1,4 +1,11 @@
-# Status checkpoint — 2026-07-04
+# Status checkpoint — 2026-07-04 (restart addendum 2026-07-19)
+
+> **RESTART PLAN (2026-07-19):** replacement G431 boards are in hand. Before resuming the
+> gates below, apply `MINZ_LEARNINGS.md` — the distilled transferables from the minz
+> campaign that reached AM32 operating-map parity (rung 100 / true-100% duty / ~2400 Hz).
+> Its application order (bringup checks → safety stack → duty-keyed advance → AM32-shape
+> scheduling inversion) SUPERSEDES the old "next action" at the bottom of this file; Gate 1's
+> `cl_spin_look` pre-flight health check is now step zero of every bench session.
 
 Snapshot of where we are against the three roadmap objectives, and the data gates that
 prove (or disprove) we're on track. Re-read this before resuming work; if what we're doing
