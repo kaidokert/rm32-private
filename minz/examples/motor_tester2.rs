@@ -1062,7 +1062,16 @@ const R1_DUTY_SLEW: bool = true;
 // Climbing at an elevated carrier is net-negative for this loop
 // today. Revisit AFTER R5 (ISR diet) per the plan's own risk note -
 // the machinery below is correct and stays, gated off.
-const R4_VAR_CARRIER: bool = false;
+// RE-OPENED AM32-VERBATIM (eeprom audit): VARIABLE_PWM=1 is the
+// AM32 DEFAULT — the reference bench runs the carrier 24→48 kHz
+// across 200→96 µs (map(iv,96,200,ARR/2,ARR)), i.e. through OUR
+// entire fatal band, halving comparator ripple exactly where our
+// acceptance goes dry (our own A/B: 24k = 4.5×-more/2.7×-deeper
+// events than 48k). The parked trials used a 48..100 µs band (flat
+// through the fatal band) + dwell/deadband/glide gating the
+// reference doesn't have. core::timing::carrier_arr is now the
+// verbatim law; the call site applies per tick like their tenKhz.
+const R4_VAR_CARRIER: bool = true;
 
 /// R5a - TIM1_CC retirement: the COMP ISR derives blank position
 /// from a direct TIM1.CNT read (PWM edges sit at CNT=0 and
@@ -3878,33 +3887,22 @@ fn TIM7() {
             } else {
                 amp
             };
-            // R4: retune the carrier BEFORE the duty computation so
-            // target counts use the new ARR. Rules: drive off the
-            // STIFF 6-slot average (never a transient estimate);
-            // FROZEN during reseed/burst emergencies AND during
-            // climbs (amp must sit at target ~300 ms - the r4top1/2
-            // incident runs, which mis-placed this block into the
-            // i-echo handler, hopped the carrier mid-transit and
-            // moved the death 78 -> 70/74); GLIDE <=32 counts/tick.
-            if R4_VAR_CARRIER
-                && !RESEED_ACTIVE.load(Ordering::Relaxed)
-                && !BURST_ACTIVE.load(Ordering::Relaxed)
-                && AMP_STABLE_RUN.load(Ordering::Relaxed) >= 1800
-            {
+            // R4 — AM32-VERBATIM variable carrier (eeprom default
+            // VARIABLE_PWM=1, main.c:2193): tim1_arr =
+            // map(interval, 96, 200, ARR/2, ARR), recomputed every
+            // control pass with NO dwell gate, deadband, or glide
+            // (the reference has none; the parked trials' gating +
+            // wrong 48..100 band were judged on a law the reference
+            // never runs). Keyed to the STIFF average — their
+            // commutation_interval is smoothed; the fast estimate
+            // would dither the map. Duty target below recomputes
+            // from max_duty() in this same pass, like their tenKhz.
+            if R4_VAR_CARRIER {
                 let avg = AVG_INTERVAL_ACC.load(Ordering::Relaxed) / 6;
                 if avg > 0 {
                     let want = minz_core::timing::carrier_arr(avg, minz::TIM1_AUTORELOAD);
-                    let cur = tim1_motor_pwm::max_duty();
-                    // Deadband: the stiff avg still jitters ~1-2 us
-                    // = 32-64 ARR counts through the map; without
-                    // this the glide dithered at 6 kHz (r4top3:
-                    // chg=68118, duty floor-erosion, min 4.6 V).
-                    if want.abs_diff(cur) > CARRIER_DEADBAND_ARR {
-                        let step = want.clamp(
-                            cur.saturating_sub(CARRIER_SLEW_ARR),
-                            cur.saturating_add(CARRIER_SLEW_ARR),
-                        );
-                        apply_carrier(step);
+                    if want != tim1_motor_pwm::max_duty() {
+                        apply_carrier(want);
                     }
                 }
             }

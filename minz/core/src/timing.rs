@@ -348,15 +348,22 @@ pub fn duty_slew(
 /// as the windows tighten through the danger band.
 #[inline]
 pub fn carrier_arr(interval_us: u32, base_arr: u16) -> u16 {
+    // AM32 VERBATIM (main.c:2193, eeprom default VARIABLE_PWM=1):
+    // tim1_arr = map(commutation_interval, 96, 200, ARR/2, ARR) —
+    // the carrier rises 24→48 kHz across 200→96 µs, EXACTLY the
+    // fatal band. The first cut used 48..100 µs — the R4 bench
+    // trials therefore ran the whole 200-96 µs band FLAT at 24 kHz
+    // (double the comparator ripple of the reference) and were
+    // judged net-negative on a law the reference never runs.
     let half = base_arr / 2;
-    if interval_us == 0 || interval_us >= 100 {
+    if interval_us == 0 || interval_us >= 200 {
         base_arr
-    } else if interval_us <= 48 {
+    } else if interval_us <= 96 {
         half
     } else {
-        // linear: 48..100 -> half..base
+        // linear: 96..200 -> half..base
         let span = (base_arr - half) as u32;
-        (half as u32 + span * (interval_us - 48) / 52) as u16
+        (half as u32 + span * (interval_us - 96) / 104) as u16
     }
 }
 
@@ -449,18 +456,23 @@ mod tests {
 
     #[test]
     fn r4_carrier_map_am32_parity() {
-        // 24 kHz base ARR 3332: >=100 us stays 24 kHz; <=48 us full
-        // 48 kHz; ~74 us = midpoint (~32 kHz); 90 us ~ 27 kHz-ish
-        // (AM32 measured ~27 kHz at 1900 Hz).
+        // AM32 VERBATIM (main.c:2193, eeprom default VARIABLE_PWM=1):
+        // map(interval, 96, 200, ARR/2, ARR). The earlier 48..100 µs
+        // band ran the whole fatal band flat at 24 kHz — a law the
+        // reference never runs. ARR 3332: ≥200 µs → 24 kHz; ≤96 µs →
+        // full 48 kHz; 148 µs = midpoint (~32 kHz).
         assert_eq!(carrier_arr(0, 3332), 3332);
         assert_eq!(carrier_arr(200, 3332), 3332);
+        assert_eq!(carrier_arr(250, 3332), 3332);
+        assert_eq!(carrier_arr(96, 3332), 1666);
         assert_eq!(carrier_arr(48, 3332), 1666);
-        assert_eq!(carrier_arr(30, 3332), 1666);
-        let mid = carrier_arr(74, 3332);
+        let mid = carrier_arr(148, 3332);
         assert!((2470..=2530).contains(&mid), "mid {mid}");
-        let a90 = carrier_arr(90, 3332);
-        let f90 = 80_000_000 / (a90 as u32 + 1);
-        assert!((26_000..=28_500).contains(&f90), "f90 {f90}");
+        // 120 µs (the fatal band's heart) runs meaningfully above
+        // 24 kHz — the ripple halving the reference gets there.
+        let a120 = carrier_arr(120, 3332);
+        let f120 = 80_000_000 / (a120 as u32 + 1);
+        assert!((37_000..=42_000).contains(&f120), "f120 {f120}");
     }
 
     #[test]
