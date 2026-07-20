@@ -2653,10 +2653,21 @@ fn main() -> ! {
             // Y-handler, the handoff consumer re-arms the CL
             // (needs !CL_ARMED — cleared here), and the ladder
             // resumes from the R6 band.
+            // Gate on the RAW interval or a hard timeout — NOT the
+            // estimator: during a crash-decel the rate bound rejects
+            // the fast-lengthening samples and OWL_INTERVAL_US
+            // FREEZES below any threshold (t100count2:
+            // REGEN_REALIGNS=0 across 10 trips — phase B waited on a
+            // number that cannot move, the 2 s ride expired, sag
+            // kill). CL_ACTIVE not required: if the CL died
+            // mid-decel, the R6 re-entry is still the right move.
             if REGEN_DECEL.load(Ordering::Relaxed)
                 && MOTOR_ENABLED.load(Ordering::Relaxed)
-                && CL_ACTIVE.load(Ordering::Relaxed)
-                && OWL_INTERVAL_US.load(Ordering::Relaxed) > 400
+                && (LAST_RAW_ZC_IV.load(Ordering::Relaxed) as u32 > 400
+                    || minz_core::guards::since_us(
+                        ticks_10us(),
+                        REGEN_DECEL_T10.load(Ordering::Relaxed),
+                    ) > 300_000)
             {
                 REGEN_DECEL.store(false, Ordering::Relaxed);
                 REGEN_REALIGNS.fetch_add(1, Ordering::Relaxed);
@@ -5186,7 +5197,20 @@ fn pwm_wrap_work() {
             {
                 let base = VBAT_BASELINE_RAW.load(Ordering::Relaxed);
                 let iv = OWL_INTERVAL_US.load(Ordering::Relaxed);
+                // COMMANDED-MOTION GATE (operator ear, the pop-pop
+                // loop): a commanded throttle-DOWN at speed is
+                // physically identical to fault braking (BEMF >
+                // applied → bus above baseline) — the detector
+                // tripped 25× chasing legitimate down-slews, each
+                // trip spawning a realign cycle. Only trip when the
+                // throttle is NOT slewing down (target ≥ applied):
+                // a fault-braking alignment pumps the bus at STEADY
+                // or RISING commanded throttle, which no legitimate
+                // state can.
+                let cmd_down = (AMP_TARGET_PCT.load(Ordering::Relaxed) as u16)
+                    < AMPLITUDE_PCT.load(Ordering::Relaxed) as u16;
                 if CL_ACTIVE.load(Ordering::Relaxed)
+                    && !cmd_down
                     && base > 0
                     && iv > 0
                     && iv < minz_core::window::HIGH_SPEED_US
@@ -5220,8 +5244,13 @@ fn pwm_wrap_work() {
             // realign (t100phase2: every phase-A decel sag-killed).
             // Time-bounded to 2 s so a wedged decel can never mask
             // the guard for good; OC/storm/zombie stay live.
+            // Keyed on the TIMESTAMP alone, not REGEN_DECEL: phase B
+            // clears the flag while the bus is still in its recovery
+            // trough, re-arming this guard one phase early — count3:
+            // 7/7 realigns fired and EVERY one was sag-killed at
+            // 5.9-6.8 V within ms of the R6 re-entry (R6 counters 0).
+            // The 2 s window spans trip → decel → R6 → re-engage.
             let decel_ride = trip
-                && REGEN_DECEL.load(Ordering::Relaxed)
                 && minz_core::guards::since_us(
                     ticks_10us(),
                     REGEN_DECEL_T10.load(Ordering::Relaxed),
@@ -5685,7 +5714,16 @@ fn pwm_wrap_work() {
         // reference (lags a transition by design, so a relative
         // threshold stays at the pre-event level during the onset).
         I_AVG_LIVE.store(avg_raw.min(0xFFFF) as u16, Ordering::Relaxed);
-        let tripped = minz_core::guards::overcurrent(avg_raw, CL_ACTIVE.load(Ordering::Relaxed));
+        // During the 2 s realign window the loop is CL-shaped even
+        // while CL_ACTIVE is technically false (R6 holding a fast
+        // rotor): the open-loop 2 A stall-heater threshold false-
+        // trips on the legitimate realign current (t100count4 r0/r1
+        // OC kills ms into the R6 phase). CL threshold applies;
+        // the 5.5 A gross-fault backstop stays live throughout.
+        let cl_like = CL_ACTIVE.load(Ordering::Relaxed)
+            || minz_core::guards::since_us(ticks_10us(), REGEN_DECEL_T10.load(Ordering::Relaxed))
+                < 2_000_000;
+        let tripped = minz_core::guards::overcurrent(avg_raw, cl_like);
         if tripped && MOTOR_ENABLED.load(Ordering::Relaxed) {
             minz_core::guards::apply_isr_kill(
                 &KILL_FLAGS,
