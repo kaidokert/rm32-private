@@ -52,7 +52,9 @@ capdir.mkdir(exist_ok=True)
 # Capture
 # ------------------------------------------------------------------
 if args.infile:
-    text = pathlib.Path(args.infile).read_text()
+    # Ladder captures interleave binary MAGPIE frames with the text
+    # dumps; latin-1 maps every byte so the cdump lines survive.
+    text = pathlib.Path(args.infile).read_text(encoding="latin-1")
     stem = pathlib.Path(args.infile).stem
 else:
     import serial

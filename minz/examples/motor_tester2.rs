@@ -1374,6 +1374,10 @@ static NOZ_OPENLVL_DISAGREE: AtomicU32 = AtomicU32::new(0);
 static SYNTH_RUN: AtomicU8 = AtomicU8::new(0);
 #[unsafe(no_mangle)]
 static BLIND_STAMPS: AtomicU32 = AtomicU32::new(0);
+/// Latest completed 85 ms current average (raw counts) — the WAX
+/// trigger's relative-threshold reference.
+#[unsafe(no_mangle)]
+static I_AVG_LIVE: AtomicU16 = AtomicU16::new(0);
 /// Level-rescue accepts (rung 3): pre-crossed windows whose qZC was
 /// synthesized from the first-wrap sample. Cascade-breaking only -
 /// no estimator update, no shot re-time, and NOT fed to the
@@ -2666,7 +2670,24 @@ fn main() -> ! {
             }
 
             // Active phase: drain RX queue + dispatch keys.
-            while let Some(b) = injected.take().or_else(|| consumer.dequeue()) {
+            loop {
+                // Self-injected keys (the WAX handler's `j` context
+                // chase) bypass BOTH wire guards below: they never
+                // came off the EMI-prone wire, and since the
+                // doubled-key era every injected `j` was silently
+                // eaten (single byte → doubled-key reject; then the
+                // ladder lockout) — no WAX dump ever got its analog
+                // context (t100seed: gecko ring landed, cdump absent).
+                let from_self;
+                let b = if let Some(v) = injected.take() {
+                    from_self = true;
+                    v
+                } else if let Some(v) = consumer.dequeue() {
+                    from_self = false;
+                    v
+                } else {
+                    break;
+                };
                 let mut do_edge_dump = false;
                 let prev_amp = amplitude_pct;
                 let prev_hz = electrical_hz;
@@ -2682,7 +2703,7 @@ fn main() -> ! {
                 // junk pairs collide at 1/65536). 'w' stays single -
                 // a junk kill is the safe failure.
                 let now_key = ticks_10us();
-                let ok = if b == b'w' {
+                let ok = if from_self || b == b'w' {
                     true
                 } else {
                     let prev = LAST_KEY_BYTE.swap(b, Ordering::Relaxed);
@@ -2701,7 +2722,8 @@ fn main() -> ! {
                 // 'L' stays live so the host can upgrade 1% -> 10%
                 // step mode (it is doubled-key-guarded; a junk L only
                 // changes step mode, visibly).
-                if LADDER_STEP.load(Ordering::Relaxed) != 0 && b != b'w' && b != b'L' {
+                if !from_self && LADDER_STEP.load(Ordering::Relaxed) != 0 && b != b'w' && b != b'L'
+                {
                     KEY_REJECT_COUNT.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
@@ -5351,10 +5373,20 @@ fn pwm_wrap_work() {
             trig_raw = peak;
         }
     }
-    if trig_raw > WAX_TRIG_RAW.load(Ordering::Relaxed)
-        && armed
-        && !WAX_TRIGGERED.load(Ordering::Relaxed)
-    {
+    // RELATIVE trigger (t100seed lesson): a fixed threshold fires
+    // MID-event during a full climb — normal top-rung current (157
+    // counts at amp 100) legitimately crosses any onset-sized fixed
+    // level, and by the time an 11 A state trips a high fixed level
+    // the whole pre-trigger ring is already saturated (t100seed r0:
+    // mean 11.5 A across the entire ring = spiral middle, onset
+    // lost). Threshold = 2× the 85 ms average (which LAGS the
+    // transition, staying at pre-event level exactly when needed),
+    // floored at the probe-tunable WAX_TRIG_RAW.
+    let wax_thr = {
+        let rel = 2 * I_AVG_LIVE.load(Ordering::Relaxed);
+        rel.max(WAX_TRIG_RAW.load(Ordering::Relaxed))
+    };
+    if trig_raw > wax_thr && armed && !WAX_TRIGGERED.load(Ordering::Relaxed) {
         WAX_TRIG_ARMED.store(false, Ordering::Relaxed);
         minz::adc_sync::freeze_current();
         // Freeze the black box too — the 64 commutation/ZC events
@@ -5437,6 +5469,10 @@ fn pwm_wrap_work() {
     I_TRIP_ACC.store(acc, Ordering::Relaxed);
     I_TRIP_CNT.store(cnt, Ordering::Relaxed);
     if let Some(avg_raw) = avg {
+        // Live 85 ms average — the WAX trigger's "recent normal"
+        // reference (lags a transition by design, so a relative
+        // threshold stays at the pre-event level during the onset).
+        I_AVG_LIVE.store(avg_raw.min(0xFFFF) as u16, Ordering::Relaxed);
         let tripped = minz_core::guards::overcurrent(avg_raw, CL_ACTIVE.load(Ordering::Relaxed));
         if tripped && MOTOR_ENABLED.load(Ordering::Relaxed) {
             minz_core::guards::apply_isr_kill(
