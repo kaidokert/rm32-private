@@ -477,6 +477,10 @@ static CEN_STALE: [AtomicU32; 6] = [CEN_ZERO; 6];
 /// the crossing waits instead of being discarded).
 #[unsafe(no_mangle)]
 static CEN_CAMP: AtomicU32 = AtomicU32::new(0);
+/// AM32-verbatim persistence-retry re-pends (mid-loop fail with the
+/// first read passed — the maybe-still-settling crossing).
+#[unsafe(no_mangle)]
+static CEN_PERSIST_RETRY: AtomicU32 = AtomicU32::new(0);
 /// GATE-EDGE ACCEPT CENSUS (the unlogged-desync detector): an accept
 /// landing within a few µs of gate-open is the camp-phantom
 /// fingerprint — a dwelling post-ZC level re-pended through the
@@ -1746,9 +1750,14 @@ static HYST_LEVEL: AtomicU8 = AtomicU8::new(0);
 /// band trace comparison showed mode-3 sicker in ALL sectors (B
 /// escapes 156/1k vs 59). Our acceptance stack apparently benefits
 /// from seeing both edges (persistence re-tries on the bounce-backs).
-/// Mode 3 stays available via `k` - understanding WHY single-edge
-/// hurts is estimator-tail campaign material.
-static EDGE_MODE: AtomicU8 = AtomicU8::new(0);
+/// RECONCILED 2026-07-20: that A/B predates the camp — AM32's
+/// persistence-fail RETURNS WITHOUT CLEARING PENDING (their mid-loop
+/// return), so failed qualifications retry via the hardware pending
+/// bit; single-direction is safe for them BECAUSE of that retry.
+/// The pair is now copied verbatim (mode 3 default + persistence-
+/// fail re-pend in the COMP ISR) per the operator's make-it-default
+/// directive.
+static EDGE_MODE: AtomicU8 = AtomicU8::new(3);
 
 /// IWDG FLIGHT RECORDER (2026-07-18). Three words in the NOLOAD
 /// `.uninit` section: SRAM1 keeps its content across an IWDG (or any
@@ -5087,6 +5096,19 @@ fn LPTIM2() {
     comp2::set_exti_edges(re, fe);
     core::sync::atomic::compiler_fence(Ordering::Release);
     CURRENT_SECTOR.store(sector, Ordering::Relaxed);
+    // AM32-VERBATIM reconfig hygiene (their PeriodElapsedCallback:
+    // changeCompInput runs MASKED and enableCompInterrupts clears
+    // pending LAST — the comparator can never observe its own mux
+    // switch): the INM step above changes the comparator input
+    // mid-write, latching a hardware ARTIFACT edge in EXTI PR that
+    // would tail-chain into the NEW window and be evaluated against
+    // the new sector's polarity (the no-blank change removed the
+    // 8 µs blank that used to eat it by accident — the TIM7
+    // open-loop path already had this exact clear; the CL path
+    // lacked it). Same-priority tail-chaining = COMP cannot preempt
+    // this ISR, so clearing here as the final reconfig step is
+    // equivalent to AM32's mask..unmask envelope.
+    comp2::clear_pending();
     // --- STAMP (AM32-shape: the fabric thinks, we only record) ---
     CL_COMM_COUNT.fetch_add(1, Ordering::Relaxed);
     // In-hold cut resolution: a REFINED commutation (armed by a
@@ -6550,6 +6572,7 @@ fn COMP() {
         // in its ISR chain). Late-qualify stands; the census
         // counters stay as observers.
         let mut held = late_value == expected;
+        let first_read_passed = held;
         for _ in 0..persist_reads.saturating_sub(1) {
             if !held {
                 break;
@@ -6559,6 +6582,17 @@ fn COMP() {
                 held = false;
                 break;
             }
+        }
+        // AM32-VERBATIM persistence retry: their filter loop RETURNS
+        // WITHOUT clearing the pending bit on a mid-loop fail, so a
+        // maybe-still-settling crossing re-fires and re-qualifies —
+        // the retry that makes their single-direction EXTI config
+        // sufficient. A first-read fail (level already pre-ZC) is
+        // their swallow-and-clear case: no retry. Bounded like
+        // theirs: the storm ends when the level settles either way.
+        if !held && first_read_passed && CL_ACTIVE.load(Ordering::Relaxed) {
+            CEN_PERSIST_RETRY.fetch_add(1, Ordering::Relaxed);
+            comp2::sw_repend();
         }
         if held {
             // Dispatch host-tested in minz_core::zc::on_held_edge:

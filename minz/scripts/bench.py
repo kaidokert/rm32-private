@@ -518,7 +518,7 @@ def cmd_postmortem(_):
                 "SAG_HOLD_COUNT", "BURST_TRIPS",
                 "RECOV_COUNT", "RESEED_COUNT", "SLEW_CLAMP_COUNT",
                 "WAIT_CLAMP_COUNT", "SPIN_TIMEOUTS",
-                "CEN_CAMP", "ACC_AT_GATE", "ACC_FREE",
+                "CEN_CAMP", "CEN_PERSIST_RETRY", "ACC_AT_GATE", "ACC_FREE",
                 "MAIN_SHEDS", "MST_RUN", "MST_KILL_SINCE", "MST_KILL_PHASE",
                 "BEACON_SKIP_EVT", "BEACON_MAX_D", "CLOCK_BACK",
                 "CL_FALLS", "CL_FALL_T10", "CL_FALL_CTX",
@@ -863,7 +863,11 @@ def preflight_reset():
     regressions 65->49 were EDGE_MODE parked on raw-fall by an earlier
     probe-adv, NOT hardware (operator: STOP HALLUCINATING HARDWARE
     ISSUES — this preflight makes toggle leakage impossible)."""
-    for sym, val in (("EDGE_MODE", 0), ("ADVANCE_DEG", 0), ("BLANK_US", 8)):
+    # EDGE_MODE=3 = AM32's single-direction table (the edge INTO the
+    # post-ZC state), now the firmware default too — paired with the
+    # persistence-fail re-pend that makes it sufficient (the old
+    # mode-0 "known-good" predates the camp/retry ports).
+    for sym, val in (("EDGE_MODE", 3), ("ADVANCE_DEG", 0), ("BLANK_US", 8)):
         try:
             sh("probe-rs", "write", "--chip", CHIP, "--probe", PROBE,
                "b8", hex(nm_addr(sym)), str(val))
