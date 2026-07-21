@@ -348,22 +348,25 @@ pub fn duty_slew(
 /// as the windows tighten through the danger band.
 #[inline]
 pub fn carrier_arr(interval_us: u32, base_arr: u16) -> u16 {
-    // AM32 VERBATIM (main.c:2193, eeprom default VARIABLE_PWM=1):
-    // tim1_arr = map(commutation_interval, 96, 200, ARR/2, ARR) —
-    // the carrier rises 24→48 kHz across 200→96 µs, EXACTLY the
-    // fatal band. The first cut used 48..100 µs — the R4 bench
-    // trials therefore ran the whole 200-96 µs band FLAT at 24 kHz
-    // (double the comparator ripple of the reference) and were
-    // judged net-negative on a law the reference never runs.
+    // AM32 main.c:2193: tim1_arr = map(commutation_interval, 96, 200,
+    // ARR/2, ARR) — where commutation_interval is in INTERVAL_TIMER
+    // TICKS and TIM2->PSC=39 (peripherals.c:442) = 0.5 µs/tick, so
+    // the REAL band is 48..100 µs. UNITS SAGA (twice-flipped;
+    // settled 2026-07-20 by the five-agent audit + direct source
+    // read of both PSC and the map): the first cut's 48..100 µs was
+    // RIGHT; the "correction" to 96..200 µs was the µs-misreading —
+    // it ran the ~90 µs death band at 48 kHz where the reference
+    // runs ~24-27 kHz (double EMI/ripple, half the ON-window
+    // margins, in exactly the fatal regime).
     let half = base_arr / 2;
-    if interval_us == 0 || interval_us >= 200 {
+    if interval_us == 0 || interval_us >= 100 {
         base_arr
-    } else if interval_us <= 96 {
+    } else if interval_us <= 48 {
         half
     } else {
-        // linear: 96..200 -> half..base
+        // linear: 48..100 -> half..base
         let span = (base_arr - half) as u32;
-        (half as u32 + span * (interval_us - 96) / 104) as u16
+        (half as u32 + span * (interval_us - 48) / 52) as u16
     }
 }
 

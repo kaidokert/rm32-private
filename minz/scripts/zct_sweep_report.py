@@ -44,8 +44,13 @@ with open(args.csv_path, newline="") as fh:
         else:
             if int(row["old"]):
                 continue  # old_routine / polling mode excluded
-            per = float(row["zt_ticks"]) * 0.5  # 0.5 us ticks -> us
-            rung = int(row[args.rung_col])
+            # zctrace_capture CSVs carry zt_us (already converted);
+            # the sweep-am32 CSVs carry zt_ticks (0.5 us each).
+            if "zt_us" in row:
+                per = float(row["zt_us"])
+            else:
+                per = float(row["zt_ticks"]) * 0.5
+            rung = int(row.get(args.rung_col, 0) or 0)
         if 20 <= per <= 20000:
             by_rung[rung].append(per)
 
