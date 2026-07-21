@@ -459,23 +459,26 @@ mod tests {
 
     #[test]
     fn r4_carrier_map_am32_parity() {
-        // AM32 VERBATIM (main.c:2193, eeprom default VARIABLE_PWM=1):
-        // map(interval, 96, 200, ARR/2, ARR). The earlier 48..100 µs
-        // band ran the whole fatal band flat at 24 kHz — a law the
-        // reference never runs. ARR 3332: ≥200 µs → 24 kHz; ≤96 µs →
-        // full 48 kHz; 148 µs = midpoint (~32 kHz).
+        // AM32 main.c:2193: map(commutation_interval, 96, 200, ARR/2,
+        // ARR) — in INTERVAL_TIMER TICKS (TIM2 PSC=39 = 0.5 µs/tick,
+        // peripherals.c:442), so the REAL band is 48..100 µs. UNITS
+        // SAGA settled 2026-07-20 (five-agent audit + source read):
+        // this test previously pinned the µs-misreading (96..200 µs)
+        // which ran the ~90 µs death band at 48 kHz where the
+        // reference runs ~24-27 kHz. ARR 3332: ≥100 µs → 24 kHz;
+        // ≤48 µs → 48 kHz; 74 µs = midpoint.
         assert_eq!(carrier_arr(0, 3332), 3332);
+        assert_eq!(carrier_arr(100, 3332), 3332);
         assert_eq!(carrier_arr(200, 3332), 3332);
-        assert_eq!(carrier_arr(250, 3332), 3332);
-        assert_eq!(carrier_arr(96, 3332), 1666);
         assert_eq!(carrier_arr(48, 3332), 1666);
-        let mid = carrier_arr(148, 3332);
+        assert_eq!(carrier_arr(30, 3332), 1666);
+        let mid = carrier_arr(74, 3332);
         assert!((2470..=2530).contains(&mid), "mid {mid}");
-        // 120 µs (the fatal band's heart) runs meaningfully above
-        // 24 kHz — the ripple halving the reference gets there.
-        let a120 = carrier_arr(120, 3332);
-        let f120 = 80_000_000 / (a120 as u32 + 1);
-        assert!((37_000..=42_000).contains(&f120), "f120 {f120}");
+        // The ~90 µs death band runs near the BASE carrier (24-28
+        // kHz), matching the reference's measured behavior there.
+        let a90 = carrier_arr(90, 3332);
+        let f90 = 80_000_000 / (a90 as u32 + 1);
+        assert!((24_000..=29_000).contains(&f90), "f90 {f90}");
     }
 
     #[test]

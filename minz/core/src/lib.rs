@@ -15,6 +15,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod a85;
+pub mod am32;
 pub mod blackbox;
 pub mod drive;
 pub mod dump;

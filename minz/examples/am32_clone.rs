@@ -52,6 +52,10 @@ use cortex_m::peripheral::{DWT, NVIC};
 use cortex_m_rt::entry;
 
 use minz::adc_sync;
+use minz::am32_timers::{
+    com_clear_flag, com_set_arr, com_timer_init, disable_com_timer_int, interval_cnt,
+    interval_timer_init, set_and_enable_com_int, set_interval_cnt,
+};
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
 use minz::comp2::{self, ObservedPhase};
 use minz::current_adc::SenseAdc;
@@ -64,6 +68,7 @@ use minz::priority;
 use minz::tim1_motor_pwm::{self, max_duty};
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
+use minz_core::am32::{self, Am32Intervals, UartCmd, UartDuty};
 use minz_core::blackbox::{self, BlackBox, EV_ACC, EV_DSY, EV_REF, Event};
 use minz_core::drive::edges_for;
 
@@ -117,19 +122,10 @@ const MIN_STARTUP_DUTY: u16 = MINIMUM_DUTY_CYCLE + 100; // 145
 /// main.c:657 `startup_max_duty_cycle = minimum_duty_cycle + 400`.
 const STARTUP_MAX_DUTY_CYCLE: u16 = MINIMUM_DUTY_CYCLE + 400; // 445
 
-// --- Ramp rates (main.c:1746-1754; targets.h globals 3113/3117/3121) ---
-/// `zero_crosses<150 || last_duty<150` → RAMP_SPEED_STARTUP.
-const MAX_RAMP_STARTUP: i32 = 2;
-/// else `average_interval>500` → RAMP_SPEED_LOW_RPM.
-const MAX_RAMP_LOW_RPM: i32 = 6;
-/// else → RAMP_SPEED_HIGH_RPM.
-const MAX_RAMP_HIGH_RPM: i32 = 16;
+// Ramp rates (main.c:1746-1754) + low-rpm duty ceiling map
+// (main.c:436-439) now live in `minz_core::am32` (with their AM32
+// citations); the pipeline helpers there consume them.
 
-// --- Low-rpm duty ceiling map (main.c:436-439,2450) ---
-const LOW_RPM_LEVEL: i32 = 20; // main.c:436, thousand-erpm
-const HIGH_RPM_LEVEL: i32 = 70; // main.c:437
-const THROTTLE_MAX_AT_LOW_RPM: i32 = 400; // main.c:438
-const THROTTLE_MAX_AT_HIGH_RPM: i32 = 2000; // main.c:439
 /// main.c:390 `low_rpm_throttle_limit = 1` (on by default).
 const LOW_RPM_THROTTLE_LIMIT: bool = true;
 
@@ -235,89 +231,11 @@ fn bb_record(ty: u8, sector: u8, data: u16) {
 }
 
 // ===============================================================
-// INTERVAL_TIMER = TIM2 (PSC=39 → 0.5 µs), COM_TIMER = TIM16 (PSC=39).
-// Raw register access to hit AM32's exact macro semantics
-// (peripherals.c:439-503, peripherals.h:15-26).
+// INTERVAL_TIMER = TIM2, COM_TIMER = TIM16 — the register wrappers
+// (interval_timer_init / interval_cnt / set_interval_cnt /
+// com_timer_init / set_and_enable_com_int / disable_com_timer_int /
+// com_set_arr / com_clear_flag) live in `minz::am32_timers`.
 // ===============================================================
-
-fn interval_timer_init() {
-    unsafe {
-        (*stm32::RCC::ptr())
-            .apb1enr1
-            .modify(|_, w| w.tim2en().set_bit());
-    }
-    let tim = unsafe { &*stm32::TIM2::ptr() };
-    tim.cr1.modify(|_, w| w.cen().clear_bit());
-    tim.psc.write(|w| w.psc().bits(39)); // AM32 peripherals.c:442 TIM2->PSC=39
-    tim.arr.write(|w| unsafe { w.bits(0xFFFF) }); // main.c:443 ARR=0xFFFF
-    tim.egr.write(|w| w.ug().set_bit());
-    tim.cr1.modify(|_, w| w.cen().set_bit());
-}
-
-/// INTERVAL_TIMER_COUNT — peripherals.h:15.
-#[inline]
-fn interval_cnt() -> u32 {
-    let tim = unsafe { &*stm32::TIM2::ptr() };
-    tim.cnt.read().bits() & 0xFFFF
-}
-
-/// SET_INTERVAL_TIMER_COUNT — peripherals.h:22.
-#[inline]
-fn set_interval_cnt(v: u16) {
-    let tim = unsafe { &*stm32::TIM2::ptr() };
-    tim.cnt.write(|w| unsafe { w.bits(v as u32) });
-}
-
-/// MX_TIM16_Init (peripherals.c:485): PSC=39, ARR=0xFFFF, ARPE ON,
-/// UIE off at boot. NVIC prio 0 set in main. The counter free-runs.
-fn com_timer_init() {
-    unsafe {
-        (*stm32::RCC::ptr())
-            .apb2enr
-            .modify(|_, w| w.tim16en().set_bit());
-    }
-    let tim = unsafe { &*stm32::TIM16::ptr() };
-    tim.cr1.modify(|_, w| w.cen().clear_bit());
-    tim.psc.write(|w| w.psc().bits(39)); // peripherals.c:495 Prescaler=39
-    tim.arr.write(|w| unsafe { w.arr().bits(0xFFFF) });
-    tim.egr.write(|w| w.ug().set_bit());
-    tim.sr.write(|w| unsafe { w.bits(0) });
-    tim.dier.modify(|_, w| w.uie().clear_bit()); // DISABLE_COM_TIMER_INT at boot
-    // ARPE on (peripherals.c:501 EnableARRPreload), free-run CEN on.
-    tim.cr1.modify(|_, w| w.arpe().set_bit().cen().set_bit());
-}
-
-/// SET_AND_ENABLE_COM_INT(time) — peripherals.h:19-21:
-/// CNT=0, ARR=time, SR=0, DIER.UIE=1.
-#[inline]
-fn set_and_enable_com_int(time: u16) {
-    let tim = unsafe { &*stm32::TIM16::ptr() };
-    tim.cnt.write(|w| unsafe { w.cnt().bits(0) });
-    tim.arr.write(|w| unsafe { w.arr().bits(time) });
-    tim.sr.write(|w| unsafe { w.bits(0) });
-    tim.dier.modify(|_, w| w.uie().set_bit());
-}
-
-/// DISABLE_COM_TIMER_INT() — peripherals.h:17.
-#[inline]
-fn disable_com_timer_int() {
-    let tim = unsafe { &*stm32::TIM16::ptr() };
-    tim.dier.modify(|_, w| w.uie().clear_bit());
-}
-
-/// Write COM_TIMER->ARR directly (zcfoundroutine main.c:1884; vestigial
-/// in polling — UIE is off there so it never fires).
-#[inline]
-fn com_set_arr(v: u16) {
-    let tim = unsafe { &*stm32::TIM16::ptr() };
-    tim.arr.write(|w| unsafe { w.arr().bits(v) });
-}
-
-#[inline]
-fn com_clear_flag() {
-    let tim = unsafe { &*stm32::TIM16::ptr() };
-    tim.sr.write(|w| unsafe { w.bits(0) });
-}
 
 // ===============================================================
 // comparator.c transliteration.
@@ -347,41 +265,8 @@ fn change_comp_input(sector: usize) {
 }
 
 // ===============================================================
-// map()/getAbsDif() — functions.c.
+// map()/getAbsDif() (functions.c) now live in `minz_core::am32`.
 // ===============================================================
-
-/// AM32 `map` (functions.c:22-40): recursive binary-search interpolation
-/// with end clamping. Transliterated verbatim.
-fn map(x: i32, in_min: i32, in_max: i32, out_min: i32, out_max: i32) -> i32 {
-    if x >= in_max {
-        return out_max;
-    }
-    if x <= in_min {
-        return out_min;
-    }
-    if in_min > in_max {
-        return map(x, in_max, in_min, out_max, out_min);
-    }
-    if out_min == out_max {
-        return out_min;
-    }
-    let in_mid = (in_min + in_max) >> 1;
-    let out_mid = (out_min + out_max) >> 1;
-    if in_min == in_mid {
-        return out_mid;
-    }
-    if x <= in_mid {
-        map(x, in_min, in_mid, out_min, out_mid)
-    } else {
-        map(x, in_mid + 1, in_max, out_mid, out_max)
-    }
-}
-
-/// getAbsDif (functions.c:42).
-#[inline]
-fn get_abs_dif(a: i32, b: i32) -> u32 {
-    (a - b).unsigned_abs()
-}
 
 // ===============================================================
 // ZC_TRACE ring — 15-byte records (main.c:1536-1567), 5B A9 sync.
@@ -408,53 +293,32 @@ static ZCT_DROP: AtomicU32 = AtomicU32::new(0);
 /// Mode is re-evaluated only at batch boundaries (no mid-batch
 /// flapping); flag bit6 marks batched-mode records so the host can
 /// segment (decoders mask bits0-2|7 — bit6 is backward-compatible).
-const ZCT_BATCH_LEN: u32 = 50;
-const ZCT_BATCH_CI_TICKS: u32 = 200;
 static ZCT_COMM_N: AtomicU32 = AtomicU32::new(0);
 static ZCT_BATCHING: AtomicBool = AtomicBool::new(false);
 
 // zct_write (main.c:1542-1567): one canonical row per commutation.
 fn zct_write() {
-    // Batch-decimation gate.
+    // Batch-decimation gate (am32::zct_batch_gate). Single CI snapshot
+    // used for both the gate and the packed record (the value is stable
+    // within the calling ISR — this was two separate loads before).
     let n = ZCT_COMM_N.fetch_add(1, Ordering::Relaxed);
-    if n % ZCT_BATCH_LEN == 0 {
-        // Batch boundary: re-evaluate the mode.
-        ZCT_BATCHING.store(
-            COMMUTATION_INTERVAL.load(Ordering::Relaxed) < ZCT_BATCH_CI_TICKS,
-            Ordering::Relaxed,
-        );
-    }
-    let batching = ZCT_BATCHING.load(Ordering::Relaxed);
-    if batching && (n / ZCT_BATCH_LEN) % 2 == 1 {
+    let ci_ticks = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
+    let (record, batching) = am32::zct_batch_gate(n, ci_ticks, ZCT_BATCHING.load(Ordering::Relaxed));
+    ZCT_BATCHING.store(batching, Ordering::Relaxed);
+    if !record {
         return; // the skipped half-duty of the batch cycle
     }
-    let step = CURRENT_STEP.load(Ordering::Relaxed) as u8;
-    let old = OLD_ROUTINE.load(Ordering::Relaxed);
-    let thiszc = THIS_ZC.load(Ordering::Relaxed);
-    let ci = COMMUTATION_INTERVAL.load(Ordering::Relaxed) as u16;
-    let wait = WAIT_TIME.load(Ordering::Relaxed);
-    let duty = DUTY_CYCLE.load(Ordering::Relaxed);
-    let tk = TENKHZ_COUNTER.load(Ordering::Relaxed);
-    let avg = AVERAGE_INTERVAL.load(Ordering::Relaxed) as u16;
-    let rec: [u8; ZCT_REC] = [
-        0x5B,
-        0xA9,
-        (step & 0x07)
-            | if old { 0x80 } else { 0 }
-            | if batching { 0x40 } else { 0 },
-        thiszc as u8,
-        (thiszc >> 8) as u8,
-        ci as u8,
-        (ci >> 8) as u8,
-        wait as u8,
-        (wait >> 8) as u8,
-        duty as u8,
-        (duty >> 8) as u8,
-        tk as u8,
-        (tk >> 8) as u8,
-        avg as u8,
-        (avg >> 8) as u8,
-    ];
+    let rec: [u8; ZCT_REC] = am32::zct_pack(
+        CURRENT_STEP.load(Ordering::Relaxed) as u8,
+        OLD_ROUTINE.load(Ordering::Relaxed),
+        batching,
+        THIS_ZC.load(Ordering::Relaxed),
+        ci_ticks as u16,
+        WAIT_TIME.load(Ordering::Relaxed),
+        DUTY_CYCLE.load(Ordering::Relaxed),
+        TENKHZ_COUNTER.load(Ordering::Relaxed),
+        AVERAGE_INTERVAL.load(Ordering::Relaxed) as u16,
+    );
     free(|_| {
         let h = ZCT_HEAD.load(Ordering::Relaxed);
         let nx = (h + 1) % ZCT_N;
@@ -476,6 +340,13 @@ const RX_N: usize = 256;
 static RX_RING: [AtomicU16; RX_N] = [const { AtomicU16::new(0) }; RX_N];
 static RX_HEAD: AtomicUsize = AtomicUsize::new(0);
 static RX_TAIL: AtomicUsize = AtomicUsize::new(0);
+
+/// The 6-slot `commutation_intervals[]` history over the firmware
+/// statics (minz_core owns the push/sum/e_com_time logic).
+#[inline]
+fn intervals() -> Am32Intervals<'static> {
+    Am32Intervals::new(&COMMUTATION_INTERVALS)
+}
 
 // ===============================================================
 // commutate() — main.c:854-894 (forward-only factory path).
@@ -510,7 +381,7 @@ fn commutate() {
     BEMF_COUNTER.store(0, Ordering::Relaxed);
     ZCFOUND.store(false, Ordering::Relaxed);
     // commutation_intervals[step-1] = commutation_interval (main.c:887).
-    COMMUTATION_INTERVALS[sector].store(COMMUTATION_INTERVAL.load(Ordering::Relaxed), Ordering::Relaxed);
+    intervals().push(sector, COMMUTATION_INTERVAL.load(Ordering::Relaxed));
 
     bb_record(EV_REF, sector as u8, COMMUTATION_INTERVAL.load(Ordering::Relaxed) as u16);
 }
@@ -525,16 +396,14 @@ fn get_bemf_state() {
     let rising = RISING.load(Ordering::Relaxed);
     // rising: count when current_state; else count when !current_state.
     // Both reduce to `cs == rising` (main.c:833-851).
-    if cs == rising {
-        let v = BEMF_COUNTER.load(Ordering::Relaxed).saturating_add(1);
-        BEMF_COUNTER.store(v, Ordering::Relaxed);
-    } else {
-        let bc = BAD_COUNT.load(Ordering::Relaxed) + 1;
-        BAD_COUNT.store(bc, Ordering::Relaxed);
-        if bc > BAD_COUNT_THRESHOLD {
-            BEMF_COUNTER.store(0, Ordering::Relaxed);
-        }
-    }
+    let (bemf, bad) = am32::bemf_count_step(
+        BEMF_COUNTER.load(Ordering::Relaxed),
+        BAD_COUNT.load(Ordering::Relaxed),
+        cs == rising,
+        BAD_COUNT_THRESHOLD,
+    );
+    BEMF_COUNTER.store(bemf, Ordering::Relaxed);
+    BAD_COUNT.store(bad, Ordering::Relaxed);
 }
 
 // ===============================================================
@@ -549,11 +418,11 @@ fn zcfoundroutine() {
     THIS_ZC.store(thiszc, Ordering::Relaxed);
     // commutation_interval = (thiszctime + 3*ci)/4  (main.c:1872)
     let ci_old = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
-    let ci = (thiszc as u32 + 3 * ci_old) / 4;
+    let ci = am32::polling_blend(thiszc as u32, ci_old);
     COMMUTATION_INTERVAL.store(ci, Ordering::Relaxed);
     // advance = temp_advance*ci >> 6 ; waitTime = ci/2 - advance  (1873-4)
-    let advance = (TEMP_ADVANCE * ci) >> 6;
-    let wait = (ci / 2).saturating_sub(advance);
+    let advance = am32::advance_of(ci, TEMP_ADVANCE);
+    let wait = am32::wait_time(ci, advance);
     WAIT_TIME.store(wait as u16, Ordering::Relaxed);
 
     // while INTERVAL_TIMER_COUNT < waitTime { if zero_crosses<5 break }
@@ -629,8 +498,7 @@ fn safety_kill(reason: u16) {
 // ===============================================================
 fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     // Main-context UART parser state (mirrors uart_duty_poll main.c:1367).
-    let mut uart_acc: u32 = 0;
-    let mut uart_acc_n: u8 = 0;
+    let mut uart = UartDuty::new();
     // ramp_count local-ish (ramp_divider=0 → ramp every tenKhz tick, so
     // main only needs the maps below; ramp lives in the TIM6 ISR).
 
@@ -642,7 +510,7 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
             let t = RX_TAIL.load(Ordering::Relaxed);
             let c = RX_RING[t].load(Ordering::Relaxed) as u8;
             RX_TAIL.store((t + 1) % RX_N, Ordering::Relaxed);
-            parse_rx_byte(c, &mut uart_acc, &mut uart_acc_n);
+            apply_uart_cmd(uart.step(c));
         }
 
         // ---- honor bench stop request ------------------------------
@@ -659,11 +527,7 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
         }
 
         // ---- e_com_time (main.c:2159) ------------------------------
-        let mut sum: i32 = 0;
-        for s in &COMMUTATION_INTERVALS {
-            sum += s.load(Ordering::Relaxed) as i32;
-        }
-        let e_com_time = (sum + 4) >> 1; // 0.5 µs units
+        let e_com_time = intervals().e_com_time(); // (sum+4)>>1, 0.5 µs units
 
         // input = uart_duty_get()  (main.c:1131) then setInput()
         set_input();
@@ -682,7 +546,7 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
         // `duty*tim1_arr/2000` rescale.
         if VARIABLE_PWM == 1 {
             let ci = COMMUTATION_INTERVAL.load(Ordering::Relaxed) as i32;
-            let arr = map(ci, 96, 200, (TIMER1_MAX_ARR / 2) as i32, TIMER1_MAX_ARR as i32);
+            let arr = am32::map(ci, 96, 200, (TIMER1_MAX_ARR / 2) as i32, TIMER1_MAX_ARR as i32);
             tim1_motor_pwm::set_carrier_arr(arr as u16);
         }
 
@@ -692,10 +556,8 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
 
         // desync_check block (main.c:2284-2300) — non-bi-dir subset.
         if DESYNC_CHECK.load(Ordering::Relaxed) && ZERO_CROSSES.load(Ordering::Relaxed) > 10 {
-            let lai = LAST_AVERAGE_INTERVAL.load(Ordering::Relaxed) as i32;
-            if get_abs_dif(lai, average_interval as i32) > (average_interval >> 1)
-                && average_interval < 2000
-            {
+            let lai = LAST_AVERAGE_INTERVAL.load(Ordering::Relaxed);
+            if am32::desync_due(lai, average_interval) {
                 ZERO_CROSSES.store(0, Ordering::Relaxed); // main.c:2286
                 DESYNC_HAPPENED.fetch_add(1, Ordering::Relaxed); // :2287
                 // (!bi_direction && input>47) || commutation_interval>1000 → running=0
@@ -714,21 +576,15 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
 
         // ---- low-rpm duty ceiling + filter_level (main.c:2441-2469) --
         let running = RUNNING.load(Ordering::Relaxed);
-        let e_rpm: i32 = if running && e_com_time > 0 { 600000 / e_com_time } else { 0 };
-        let k_erpm = e_rpm / 10;
-        let duty_max = if LOW_RPM_THROTTLE_LIMIT {
-            map(k_erpm, LOW_RPM_LEVEL, HIGH_RPM_LEVEL, THROTTLE_MAX_AT_LOW_RPM, THROTTLE_MAX_AT_HIGH_RPM)
-        } else {
-            2000
-        };
-        DUTY_CYCLE_MAXIMUM.store(duty_max as u16, Ordering::Relaxed);
+        let duty_max = am32::low_rpm_duty_ceiling(e_com_time, running, LOW_RPM_THROTTLE_LIMIT);
+        DUTY_CYCLE_MAXIMUM.store(duty_max, Ordering::Relaxed);
 
         let zc = ZERO_CROSSES.load(Ordering::Relaxed);
         let ci = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
         let mut filter = if zc < 100 && ci > 500 {
             12
         } else {
-            map(average_interval as i32, 100, 500, 3, 12)
+            am32::map(average_interval as i32, 100, 500, 3, 12)
         };
         if ci < 50 {
             filter = 2;
@@ -802,12 +658,8 @@ fn set_input() {
             RUNNING.store(true, Ordering::Relaxed); // main.c:1188
             LAST_DUTY_CYCLE.store(MIN_STARTUP_DUTY, Ordering::Relaxed); // :1189
         }
-        // duty_cycle_setpoint = map(input, 47, 2047, minimum_duty_cycle, 2000)
-        let sp = map(input as i32, 47, 2047, MINIMUM_DUTY_CYCLE as i32, 2000);
-        DUTY_CYCLE_SETPOINT.store(sp as u16, Ordering::Relaxed);
     } else {
         // input < 47 (main.c:1203-1300, comp_pwm subset)
-        DUTY_CYCLE_SETPOINT.store(0, Ordering::Relaxed);
         if !running {
             OLD_ROUTINE.store(true, Ordering::Relaxed);
             ZERO_CROSSES.store(0, Ordering::Relaxed);
@@ -816,8 +668,17 @@ fn set_input() {
         }
     }
 
-    // startup clamp (main.c:1302-1314), non-bi-dir (30 >> 0 = 30).
+    // duty_cycle_setpoint = map(input, 47, 2047, minimum_duty_cycle, 2000)
+    // when armed, else 0 (am32::duty_setpoint). Stored here (mirrors the
+    // two per-branch stores main.c:1194/1206) then re-clamped below —
+    // the intermediate value is what a preempting TIM6 tick reads.
+    DUTY_CYCLE_SETPOINT.store(
+        am32::duty_setpoint(input, MINIMUM_DUTY_CYCLE, DUTY_FULL),
+        Ordering::Relaxed,
+    );
     let mut sp = DUTY_CYCLE_SETPOINT.load(Ordering::Relaxed);
+
+    // startup clamp (main.c:1302-1314), non-bi-dir (30 >> 0 = 30).
     if input >= 47 && ZERO_CROSSES.load(Ordering::Relaxed) < 30 {
         if sp < MIN_STARTUP_DUTY {
             sp = MIN_STARTUP_DUTY;
@@ -833,60 +694,31 @@ fn set_input() {
     DUTY_CYCLE_SETPOINT.store(sp, Ordering::Relaxed);
 }
 
-/// uart_duty_poll byte handler — main.c:1367-1416, plus bench keys.
-fn parse_rx_byte(c: u8, uart_acc: &mut u32, uart_acc_n: &mut u8) {
-    match c {
-        b'0'..=b'9' => {
-            if *uart_acc_n < 4 {
-                *uart_acc = *uart_acc * 10 + (c - b'0') as u32;
-                *uart_acc_n += 1;
-            }
-        }
-        b's' | b'w' => {
-            // main.c:1376-1381 stop; 'w' also latches a bench kill/disarm.
+/// Apply a decoded UART command (am32::UartDuty parses; this performs
+/// the side effects) — uart_duty_poll main.c:1367-1416 + bench keys.
+fn apply_uart_cmd(cmd: Option<UartCmd>) {
+    match cmd {
+        // main.c:1376-1381,1397-1398 stop ('s'/'w' and a committed 0):
+        // zero throttle + adjusted + deadman and request the bench stop.
+        Some(UartCmd::Stop) => {
             UART_DUTY_INPUT.store(0, Ordering::Relaxed);
             ADJUSTED_INPUT.store(0, Ordering::Relaxed);
             UART_DEADMAN_TICKS.store(0, Ordering::Relaxed);
-            *uart_acc = 0;
-            *uart_acc_n = 0;
             STOP_REQ.store(true, Ordering::Relaxed);
         }
-        b'Z' => {
+        Some(UartCmd::SetThrottle(inn)) => {
+            UART_DUTY_INPUT.store(inn, Ordering::Relaxed);
+            // adjusted_input mirror (main.c:1410)
+            ADJUSTED_INPUT.store(if inn <= 48 { 0 } else { inn }, Ordering::Relaxed);
+            UART_DEADMAN_TICKS.store(0, Ordering::Relaxed);
+        }
+        Some(UartCmd::TraceToggle) => {
             let on = !ZCT_STREAM_ON.load(Ordering::Relaxed);
             ZCT_STREAM_ON.store(on, Ordering::Relaxed);
         }
-        b'i' => INFO_REQ.store(true, Ordering::Relaxed),
-        b'b' => DUMP_REQ.store(true, Ordering::Relaxed),
-        _ => {
-            // any other byte = terminator → commit (main.c:1382-1415)
-            if *uart_acc_n != 0 {
-                let v = *uart_acc;
-                let mut inn: u32 = if v <= 100 {
-                    v * 20 + 47 // percent (main.c:1387)
-                } else if v <= 1000 {
-                    v * 2 + 47 // permille (main.c:1389)
-                } else {
-                    47
-                };
-                if v == 0 {
-                    inn = 0; // 0 = STOP (main.c:1397-1398)
-                    STOP_REQ.store(true, Ordering::Relaxed);
-                } else {
-                    if inn < 48 {
-                        inn = 48;
-                    }
-                    if inn > 2047 {
-                        inn = 2047;
-                    }
-                }
-                UART_DUTY_INPUT.store(inn as u16, Ordering::Relaxed);
-                // adjusted_input mirror (main.c:1410)
-                ADJUSTED_INPUT.store(if inn <= 48 { 0 } else { inn as u16 }, Ordering::Relaxed);
-                UART_DEADMAN_TICKS.store(0, Ordering::Relaxed);
-            }
-            *uart_acc = 0;
-            *uart_acc_n = 0;
-        }
+        Some(UartCmd::Info) => INFO_REQ.store(true, Ordering::Relaxed),
+        Some(UartCmd::BbDump) => DUMP_REQ.store(true, Ordering::Relaxed),
+        None => {}
     }
 }
 
@@ -1114,11 +946,11 @@ fn TIM1_UP_TIM16() {
     let ci_old = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
     let lz = LAST_ZC.load(Ordering::Relaxed) as u32;
     let tz = THIS_ZC.load(Ordering::Relaxed) as u32;
-    let ci = (ci_old + ((lz + tz) >> 1)) >> 1;
+    let ci = am32::blend_interval(ci_old, lz, tz);
     COMMUTATION_INTERVAL.store(ci, Ordering::Relaxed);
     // advance = ci*temp_advance>>6 ; waitTime = ci/2 - advance  (:902-906)
-    let advance = (ci * TEMP_ADVANCE) >> 6;
-    let wait = (ci >> 1).saturating_sub(advance);
+    let advance = am32::advance_of(ci, TEMP_ADVANCE);
+    let wait = am32::wait_time(ci, advance);
     WAIT_TIME.store(wait as u16, Ordering::Relaxed);
     zct_write(); // ZC_TRACE main.c:908
     if !OLD_ROUTINE.load(Ordering::Relaxed) {
@@ -1142,7 +974,7 @@ fn TIM6_DACUNDER() {
     minz::tim6_loop::clear_flag();
 
     // duty_cycle = duty_cycle_setpoint (main.c:1611); tenkhzcounter++ (:1612)
-    let mut duty = DUTY_CYCLE_SETPOINT.load(Ordering::Relaxed) as i32;
+    let duty = DUTY_CYCLE_SETPOINT.load(Ordering::Relaxed) as i32;
     TENKHZ_COUNTER.store(TENKHZ_COUNTER.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
 
     if !KILLED.load(Ordering::Relaxed) {
@@ -1151,22 +983,10 @@ fn TIM6_DACUNDER() {
         let last = LAST_DUTY_CYCLE.load(Ordering::Relaxed) as i32;
         let zc = ZERO_CROSSES.load(Ordering::Relaxed);
         let avg = AVERAGE_INTERVAL.load(Ordering::Relaxed);
-        let max_change = if zc < 150 || last < 150 {
-            MAX_RAMP_STARTUP
-        } else if avg > 500 {
-            MAX_RAMP_LOW_RPM
-        } else {
-            MAX_RAMP_HIGH_RPM
-        };
-        // signed clamp — equivalent to AM32's two unsigned one-sided
-        // clamps (main.c:1760-1766) without underflow panics.
-        if duty - last > max_change {
-            duty = last + max_change;
-        }
-        if last - duty > max_change {
-            duty = last - max_change;
-        }
-        let duty = duty.clamp(0, 2000) as u16;
+        // Ramp rate selection + one-sided step clamp + 0..2000 domain
+        // clamp (am32::ramp_rate / ramp_toward).
+        let rate = am32::ramp_rate(zc, last, avg);
+        let duty = am32::ramp_toward(last, duty, rate);
         DUTY_CYCLE.store(duty, Ordering::Relaxed);
 
         // ---- apply (main.c:1771-1791) ----
@@ -1213,17 +1033,17 @@ fn TIM6_DACUNDER() {
     let (_a, _b, cur, vbat) = adc_sync::inj_read();
     I_RAW.store(cur, Ordering::Relaxed);
     VBAT_RAW.store(vbat, Ordering::Relaxed);
-    let acc = OC_ACC.load(Ordering::Relaxed) + cur as u32;
-    let cnt = OC_CNT.load(Ordering::Relaxed) + 1;
-    if cnt >= OC_WINDOW_TICKS {
-        if acc / OC_WINDOW_TICKS > OC_KILL_RAW_AVG {
-            safety_kill(1);
-        }
-        OC_ACC.store(0, Ordering::Relaxed);
-        OC_CNT.store(0, Ordering::Relaxed);
-    } else {
-        OC_ACC.store(acc, Ordering::Relaxed);
-        OC_CNT.store(cnt, Ordering::Relaxed);
+    let (acc, cnt, tripped) = am32::oc_step(
+        OC_ACC.load(Ordering::Relaxed),
+        OC_CNT.load(Ordering::Relaxed),
+        cur,
+        OC_WINDOW_TICKS,
+        OC_KILL_RAW_AVG,
+    );
+    OC_ACC.store(acc, Ordering::Relaxed);
+    OC_CNT.store(cnt, Ordering::Relaxed);
+    if tripped {
+        safety_kill(1);
     }
     if vbat < VBAT_ABS_FLOOR_RAW && RUNNING.load(Ordering::Relaxed) {
         safety_kill(2);
