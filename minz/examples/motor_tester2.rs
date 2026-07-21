@@ -5717,7 +5717,19 @@ fn pwm_wrap_work() {
             // carry the discrimination it promised. The operator
             // called it: a bandaid on a specific condition. The
             // SURGE_KICKS counter stays as the record.
-            if iv != 0 && iv < 5_000 && since > iv + (iv / 2).max(120) {
+            // ARM-ONLY-ON-ZC WAIT (operator directive; the fresh
+            // apples-to-apples sweep: AM32's worst stretch in 503k
+            // records at every speed is +18% — their COM timer is
+            // armed only by a ZC accept and a quiet chain WAITS for
+            // the camped crossing; our kick blind-stepped at ~1.5x.
+            // Under rotor-clocked SWIFT lock the kick is OFF — the
+            // late crossing arrives via the camp (AM32's measured
+            // ceiling says by ~1.2x); the zombie backstop (100 ms)
+            // and the starvation kill remain the coast bounds.
+            let wait_mode = ZC_CLOCKED
+                && CL_FAST_PATH.load(Ordering::Relaxed)
+                && CL_ACTIVE.load(Ordering::Relaxed);
+            if !wait_mode && iv != 0 && iv < 5_000 && since > iv + (iv / 2).max(120) {
                 if KICK_PEND.swap(true, Ordering::Relaxed) {
                     KICK_PEND.store(false, Ordering::Relaxed);
                     CHAIN_KICKS.fetch_add(1, Ordering::Relaxed);

@@ -575,6 +575,12 @@ def cmd_sweep_am32(a):
     ser = serial.Serial(z.PORT, z.BAUD, timeout=0.05)
     cap = bytearray()
 
+    # Per-rung capture boundaries (byte offsets into `cap`) so the
+    # decoded trace can be attributed to its rung exactly — the
+    # apples-to-apples requirement: same metric, same rungs, both
+    # firmwares.
+    rung_marks = []
+
     def hold(pct, secs):
         t0 = time.monotonic()
         last = 0.0
@@ -601,7 +607,8 @@ def cmd_sweep_am32(a):
         else:
             raise SystemExit("AM32 no start")
         for pct in range(a.lo + a.step, a.hi + 1, a.step):
-            hold(pct, 3.0)
+            rung_marks.append((pct, len(cap)))
+            hold(pct, a.dwell)
             fr = [f for f in z.parse_kiss(bytes(cap[-20000:]))
                   if 3.0 < f[1] < 12.0]
             if fr:
@@ -613,6 +620,28 @@ def cmd_sweep_am32(a):
         time.sleep(1.0)
         paced_write(ser, b"0\n")
         ser.close()
+    if a.tag:
+        import csv as _csv
+        import pathlib as _pl
+        raw_p = _pl.Path("captures") / f"zctsweep_{a.tag}_raw.bin"
+        raw_p.write_bytes(bytes(cap))
+        rung_marks.append((0, len(cap)))
+        csv_p = _pl.Path("captures") / f"zctsweep_{a.tag}.csv"
+        with open(csv_p, "w", newline="") as fh:
+            w = _csv.writer(fh)
+            w.writerow(["rung_pct", "step", "old", "zt_ticks",
+                        "ci_ticks", "wait_ticks", "duty", "avg_ticks"])
+            n = 0
+            for k in range(len(rung_marks) - 1):
+                pct, b0 = rung_marks[k]
+                b1 = rung_marks[k + 1][1]
+                for r in z.decode(bytes(cap[b0:b1])):
+                    w.writerow([pct, r["step"], int(r["old"]),
+                                r["zt_ticks"], r["ci_ticks"],
+                                r["wait_ticks"], r["duty"],
+                                r["avg_ticks"]])
+                    n += 1
+        print(f"saved {raw_p} + {csv_p} ({n} trace records)")
 
 
 def cmd_peek(a):
@@ -929,6 +958,9 @@ def main():
     p.add_argument("--lo", type=int, default=50)
     p.add_argument("--hi", type=int, default=100)
     p.add_argument("--step", type=int, default=5)
+    p.add_argument("--dwell", type=float, default=3.0)
+    p.add_argument("--tag", default=None,
+                   help="save raw wire + decoded ZCTRACE csv per rung")
     sub.add_parser("kill")
     p = sub.add_parser("peek")
     p.add_argument("syms", nargs="+")

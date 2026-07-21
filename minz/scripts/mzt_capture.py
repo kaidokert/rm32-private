@@ -59,7 +59,12 @@ def main():
     cap = bytearray()
 
     def key(k, wait):
-        ser.write(k.encode())
+        # DOUBLED-KEY EMI guard (firmware 2026-07-18): every key must
+        # arrive twice within 50 ms ('w' exempt). This script predated
+        # the guard — single sends were silently eaten (the "no engage
+        # in 8" class: KEY_LOG showed only the exempt 'w's arriving).
+        payload = k if k in ("w", "") else "".join(c + c for c in k)
+        ser.write(payload.encode())
         ser.flush()
         t0 = time.monotonic()
         buf = b""
