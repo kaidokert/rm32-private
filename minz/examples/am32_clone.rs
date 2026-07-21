@@ -397,8 +397,37 @@ static ZCT_HEAD: AtomicUsize = AtomicUsize::new(0);
 static ZCT_TAIL: AtomicUsize = AtomicUsize::new(0);
 static ZCT_DROP: AtomicU32 = AtomicU32::new(0);
 
-/// zct_write (main.c:1542-1567): one canonical row per commutation.
+//// BATCH DECIMATION (operator directive 2026-07-20): above the wire's
+/// bandwidth the trace switches to 50-commutations-on / 50-off batch
+/// mode instead of losing records to saturation aliasing. Batches
+/// (not 1-in-N) preserve CONSECUTIVE records so rolling-mean
+/// excursion metrics stay valid inside each batch (~44 usable
+/// samples per 50). Budget: 2 Mbaud ≈ 13.3k records/s; full rate
+/// fits down to ci ≈ 150 ticks (75 µs); batching engages below
+/// ci = 200 ticks (100 µs → 10k/s full → 5k/s batched, comfortable).
+/// Mode is re-evaluated only at batch boundaries (no mid-batch
+/// flapping); flag bit6 marks batched-mode records so the host can
+/// segment (decoders mask bits0-2|7 — bit6 is backward-compatible).
+const ZCT_BATCH_LEN: u32 = 50;
+const ZCT_BATCH_CI_TICKS: u32 = 200;
+static ZCT_COMM_N: AtomicU32 = AtomicU32::new(0);
+static ZCT_BATCHING: AtomicBool = AtomicBool::new(false);
+
+// zct_write (main.c:1542-1567): one canonical row per commutation.
 fn zct_write() {
+    // Batch-decimation gate.
+    let n = ZCT_COMM_N.fetch_add(1, Ordering::Relaxed);
+    if n % ZCT_BATCH_LEN == 0 {
+        // Batch boundary: re-evaluate the mode.
+        ZCT_BATCHING.store(
+            COMMUTATION_INTERVAL.load(Ordering::Relaxed) < ZCT_BATCH_CI_TICKS,
+            Ordering::Relaxed,
+        );
+    }
+    let batching = ZCT_BATCHING.load(Ordering::Relaxed);
+    if batching && (n / ZCT_BATCH_LEN) % 2 == 1 {
+        return; // the skipped half-duty of the batch cycle
+    }
     let step = CURRENT_STEP.load(Ordering::Relaxed) as u8;
     let old = OLD_ROUTINE.load(Ordering::Relaxed);
     let thiszc = THIS_ZC.load(Ordering::Relaxed);
@@ -410,7 +439,9 @@ fn zct_write() {
     let rec: [u8; ZCT_REC] = [
         0x5B,
         0xA9,
-        (step & 0x07) | if old { 0x80 } else { 0 },
+        (step & 0x07)
+            | if old { 0x80 } else { 0 }
+            | if batching { 0x40 } else { 0 },
         thiszc as u8,
         (thiszc >> 8) as u8,
         ci as u8,

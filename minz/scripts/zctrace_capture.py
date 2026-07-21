@@ -60,9 +60,23 @@ def main():
     ap.add_argument("--step-wait", type=float, default=0.7)
     ap.add_argument("--tag", default="zct")
     ap.add_argument("--spray", action="store_true")
+    ap.add_argument("--allow-hi", action="store_true",
+                    help="permit >80%% rungs (wire saturates: capture "
+                         "is LOSSY there — survival/drive test only)")
+    ap.add_argument("--profile", default=None,
+                    help="pct:secs,pct:secs,... arbitrary drive profile "
+                         "(instant setpoint steps — the firmware ramp "
+                         "absorbs them); overrides --climb after start")
     a = ap.parse_args()
     lo, hi = a.climb
-    assert hi <= 80, "trace regime is <=80% (wire saturates above)"
+    prof = None
+    if a.profile:
+        prof = [(int(p.split(":")[0]), float(p.split(":")[1]))
+                for p in a.profile.split(",")]
+        hi = max(p for p, _ in prof)
+        lo = min((p for p, _ in prof if p > 0), default=lo)
+    if not a.allow_hi:
+        assert hi <= 80, "trace regime is <=80% (wire saturates above)"
 
     ser = serial.Serial(PORT, BAUD, timeout=0.05)
     cap = bytearray()
@@ -94,11 +108,16 @@ def main():
             time.sleep(2.0)
         else:
             raise SystemExit("no start")
-        print(f"started; climbing {lo}->{hi}")
-        hold(lo, a.dwell)
-        for pct in range(lo + 1, hi + 1):
-            hold(pct, a.step_wait)
-        hold(hi, a.dwell)
+        if prof is not None:
+            print(f"started; profile {a.profile}")
+            for pct, secs in prof:
+                hold(pct, secs)
+        else:
+            print(f"started; climbing {lo}->{hi}")
+            hold(lo, a.dwell)
+            for pct in range(lo + 1, hi + 1):
+                hold(pct, a.step_wait)
+            hold(hi, a.dwell)
     finally:
         paced_write(ser, b"0\n")
         time.sleep(1.0)

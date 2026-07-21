@@ -29,9 +29,22 @@ args = ap.parse_args()
 sys.stdout.reconfigure(errors="replace")
 
 by_rung = defaultdict(list)
+prev_tk = None
 with open(args.csv_path, newline="") as fh:
     r = csv.DictReader(fh)
     for row in r:
+        # BATCH-DECIMATION gap detect (clone 50-on/50-off trace mode):
+        # a >1 ms jump in the 20 kHz tenkhz counter marks a skipped
+        # batch — insert a sentinel so the rolling-mean history resets
+        # instead of referencing the previous batch's tail.
+        tk = row.get("tenkhz")
+        if tk is not None:
+            tk = int(float(tk))
+            if prev_tk is not None and ((tk - prev_tk) & 0xFFFF) > 20:
+                for lst in by_rung.values():
+                    if lst and lst[-1] is not None:
+                        lst.append(None)
+            prev_tk = tk
         if args.minz:
             # ALIGNED QUANTITY: raw_iv_us = ZC-stamp to ZC-stamp
             # (AM32's zt twin). period_us is commutation-paced and
@@ -58,14 +71,18 @@ print(f"{'rung':>4} {'n':>7} {'med_us':>7} {'f_Hz':>6} "
       f"{'>12.5%/1k':>10} {'>25%/1k':>8} {'worst':>7}")
 for rung in sorted(by_rung):
     ps = by_rung[rung]
-    if len(ps) < 100:
-        print(f"{rung:>4} {len(ps):>7}  (too few)")
+    vals = [p for p in ps if p is not None]
+    if len(vals) < 100:
+        print(f"{rung:>4} {len(vals):>7}  (too few)")
         continue
-    med = sorted(ps)[len(ps) // 2]
+    med = sorted(vals)[len(vals) // 2]
     hist = []
     e125 = e250 = 0
     worst = 0.0
     for p in ps:
+        if p is None:
+            hist.clear()  # batch gap: don't span the skipped half
+            continue
         if len(hist) == 6:
             ref = sum(hist) / 6
             if ref > 0 and p > ref:
@@ -78,7 +95,7 @@ for rung in sorted(by_rung):
         hist.append(p)
         if len(hist) > 6:
             hist.pop(0)
-    n = len(ps)
+    n = len(vals)
     print(f"{rung:>4} {n:>7} {med:>7.0f} {1e6 / (6 * med):>6.0f} "
           f"{1e3 * e125 / n:>10.2f} {1e3 * e250 / n:>8.2f} "
           f"+{100 * worst:>5.0f}%")
