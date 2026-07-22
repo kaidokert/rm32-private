@@ -2,7 +2,10 @@
 
 pub mod a85;
 pub mod adc_sync;
+pub mod am32_control;
+pub mod am32_isr;
 pub mod am32_timers;
+pub mod bb;
 pub mod board_init;
 pub mod comp2;
 pub mod current_adc;
@@ -27,6 +30,7 @@ pub mod tim7_drive;
 pub mod timer_ext;
 pub mod uart_tx;
 pub mod usart2_rx;
+pub mod zct_trace;
 
 pub use stm32l4xx_hal as hal;
 
