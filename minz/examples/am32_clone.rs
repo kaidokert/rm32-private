@@ -48,7 +48,7 @@ use core::fmt::Write as _;
 use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
 
 use cortex_m::interrupt::{Mutex, free};
-use cortex_m::peripheral::{DWT, NVIC};
+use cortex_m::peripheral::NVIC;
 use cortex_m_rt::entry;
 
 use minz::adc_sync;
@@ -57,7 +57,7 @@ use minz::am32_timers::{
     interval_timer_init, set_and_enable_com_int, set_interval_cnt,
 };
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
-use minz::comp2::{self, ObservedPhase};
+use minz::comp2;
 use minz::current_adc::SenseAdc;
 use minz::hal::pac::interrupt;
 use minz::hal::prelude::*;
@@ -68,9 +68,8 @@ use minz::priority;
 use minz::tim1_motor_pwm::{self, max_duty};
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
-use minz_core::am32::{self, Am32Intervals, RxRing, UartCmd, UartDuty};
+use minz_core::am32::{self, Am32Intervals, RxRing, UartCmd, UartDuty, ZCT_REC, ZctRing};
 use minz_core::blackbox::{self, BlackBox, EV_ACC, EV_DSY, EV_REF, Event};
-use minz_core::drive::edges_for;
 
 use rtt_target::rprintln;
 
@@ -205,24 +204,13 @@ static ZCT_STREAM_ON: AtomicBool = AtomicBool::new(true);
 
 /// Which phase floats in each sector (minz textbook convention, matches
 /// `set_roles_for_step`): sector 0/3 → C, 1/4 → B, 2/5 → A.
-const SECTOR_FLOAT_PHASE: [ObservedPhase; 6] = [
-    ObservedPhase::C,
-    ObservedPhase::B,
-    ObservedPhase::A,
-    ObservedPhase::C,
-    ObservedPhase::B,
-    ObservedPhase::A,
-];
+// (SECTOR_FLOAT_PHASE moved to comp2::AM32_SECTOR_FLOAT_PHASE with
+// the comparator.c helpers; now_10us moved to minz::am32_timers.)
 
 // ===============================================================
 // Black box (observer). minz_core ring behind a critical-section lock.
 // ===============================================================
 static BB: Mutex<RefCell<BlackBox>> = Mutex::new(RefCell::new(BlackBox::new()));
-
-#[inline]
-fn now_10us() -> u16 {
-    (DWT::cycle_count() / 800) as u16
-}
 
 #[inline]
 fn bb_record(ty: u8, sector: u8, data: u16) {
@@ -238,31 +226,16 @@ fn bb_record(ty: u8, sector: u8, data: u16) {
 // ===============================================================
 
 // ===============================================================
-// comparator.c transliteration.
+// comparator.c transliteration — moved to minz::comp2 (the am32_*
+// helpers + AM32_SECTOR_FLOAT_PHASE live with their peripheral).
+// Aliased here to keep call sites reading like the AM32 source.
 // ===============================================================
-
-/// maskPhaseInterrupts (comparator.c:9-12): clear EXTI IMR + clear flag.
-#[inline]
-fn mask_phase_interrupts() {
-    comp2::set_exti_enabled(false);
-    comp2::clear_pending();
-}
-
-/// enableCompInterrupts (comparator.c:14-16): set EXTI IMR, keep pending.
-#[inline]
-fn enable_comp_interrupts() {
-    comp2::unmask_keep_pending();
-}
-
-/// changeCompInput (comparator.c:18-35): mux the floating phase and the
-/// single expected-direction EXTI edge for the sector. edges_for(3,·) is
-/// the minz-polarity-correct form of AM32's `if(rising)` edge select.
-#[inline]
-fn change_comp_input(sector: usize) {
-    comp2::set_inm(SECTOR_FLOAT_PHASE[sector]);
-    let (re, fe) = edges_for(3, sector as u8);
-    comp2::set_exti_edges(re, fe);
-}
+use minz::am32_timers::now_10us;
+use minz::comp2::{
+    am32_change_comp_input as change_comp_input,
+    am32_enable_comp_interrupts as enable_comp_interrupts,
+    am32_mask_phase_interrupts as mask_phase_interrupts,
+};
 
 // ===============================================================
 // map()/getAbsDif() (functions.c) now live in `minz_core::am32`.
@@ -274,7 +247,6 @@ fn change_comp_input(sector: usize) {
 // Consumer: main loop → USART1 DMA writer. Guarded with `free` because
 // two ISR contexts (prio 0 COM, prio 3 TIM6) can both push.
 // ===============================================================
-const ZCT_REC: usize = 15;
 const ZCT_N: usize = 32;
 static ZCT_RING: [[AtomicU16; ZCT_REC]; ZCT_N] =
     [const { [const { AtomicU16::new(0) }; ZCT_REC] }; ZCT_N];
@@ -383,10 +355,9 @@ struct Bench<'a> {
 
 /// ZC_TRACE ring cluster — 15-byte records + batch-decimation state.
 struct ZctTrace<'a> {
-    ring: &'a [[AtomicU16; ZCT_REC]; ZCT_N],
-    head: &'a AtomicUsize,
-    tail: &'a AtomicUsize,
-    drop: &'a AtomicU32,
+    /// Ring mechanics live host-tested in `minz_core::am32::ZctRing`;
+    /// this composes it with the batch-decimation state.
+    ring: ZctRing<'a, ZCT_N>,
     comm_n: &'a AtomicU32,
     batching: &'a AtomicBool,
 }
@@ -446,10 +417,12 @@ static BENCH: Bench<'static> = Bench {
 };
 
 static ZCT: ZctTrace<'static> = ZctTrace {
-    ring: &ZCT_RING,
-    head: &ZCT_HEAD,
-    tail: &ZCT_TAIL,
-    drop: &ZCT_DROP,
+    ring: ZctRing {
+        ring: &ZCT_RING,
+        head: &ZCT_HEAD,
+        tail: &ZCT_TAIL,
+        drop: &ZCT_DROP,
+    },
     comm_n: &ZCT_COMM_N,
     batching: &ZCT_BATCHING,
 };
@@ -490,33 +463,18 @@ impl ZctTrace<'_> {
             drive.tenkhz_counter.load(Ordering::Relaxed),
             sched.average_interval.load(Ordering::Relaxed) as u16,
         );
-        free(|_| {
-            let h = self.head.load(Ordering::Relaxed);
-            let nx = (h + 1) % ZCT_N;
-            if nx == self.tail.load(Ordering::Relaxed) {
-                self.drop.fetch_add(1, Ordering::Relaxed);
-                self.tail
-                    .store((self.tail.load(Ordering::Relaxed) + 1) % ZCT_N, Ordering::Relaxed);
-            }
-            for (i, b) in rec.iter().enumerate() {
-                self.ring[h][i].store(*b as u16, Ordering::Relaxed);
-            }
-            self.head.store(nx, Ordering::Relaxed);
-        });
+        // Dual-producer guard (prio-0 COM + prio-3 TIM6): the core
+        // ring is not self-synchronizing; the critical section stays
+        // with this platform-side caller.
+        free(|_| self.ring.push_rec(&rec));
     }
 
     /// Drain up to 3 ZC_TRACE records into the USART1 DMA ring (main.c:2347-2357).
     #[inline]
     fn drain(&self, tx: &mut UartTxWriter) {
-        let mut nrec = 0;
-        while self.tail.load(Ordering::Relaxed) != self.head.load(Ordering::Relaxed) && nrec < 3 {
-            let t = self.tail.load(Ordering::Relaxed);
-            for i in 0..ZCT_REC {
-                let _ = tx.push(self.ring[t][i].load(Ordering::Relaxed) as u8);
-            }
-            self.tail.store((t + 1) % ZCT_N, Ordering::Relaxed);
-            nrec += 1;
-        }
+        self.ring.drain(3, |b| {
+            let _ = tx.push(b);
+        });
     }
 }
 
@@ -913,7 +871,7 @@ fn print_info(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &Zc
         duty.duty_cycle.load(Ordering::Relaxed),
         bench.i_raw.load(Ordering::Relaxed),
         bench.vbat_raw.load(Ordering::Relaxed),
-        zct.drop.load(Ordering::Relaxed),
+        zct.ring.drop.load(Ordering::Relaxed),
         drive.zcfr_guard_hits.load(Ordering::Relaxed),
     );
 }

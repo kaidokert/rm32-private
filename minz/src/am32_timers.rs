@@ -98,3 +98,11 @@ pub fn com_clear_flag() {
     let tim = unsafe { &*stm32::TIM16::ptr() };
     tim.sr.write(|w| unsafe { w.bits(0) });
 }
+
+/// 10 us wall-clock ticks from DWT.CYCCNT (80 MHz / 800), u16 wrap
+/// ~0.65 s -- the black-box / trace timestamp grain of the
+/// am32_clone. Requires the DWT cycle counter enabled at boot.
+#[inline]
+pub fn now_10us() -> u16 {
+    (cortex_m::peripheral::DWT::cycle_count() / 800) as u16
+}

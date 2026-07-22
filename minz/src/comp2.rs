@@ -269,3 +269,47 @@ pub fn sw_repend() {
     // SWIER is write-1-to-set; 0s elsewhere are no-ops.
     exti.swier1.write(|w| unsafe { w.bits(1 << 22) });
 }
+
+// ===============================================================
+// AM32 comparator.c transliterations (used by the am32_clone; kept
+// with the peripheral they drive).
+// ===============================================================
+
+/// Per-sector floating phase for the AM32 six-step (comparator.c
+/// changeCompInput: steps 1/4 -> C, 2/5 -> B... mapped to the minz
+/// sector frame 0..5 and this board's textbook phase labels).
+pub const AM32_SECTOR_FLOAT_PHASE: [ObservedPhase; 6] = [
+    ObservedPhase::C,
+    ObservedPhase::B,
+    ObservedPhase::A,
+    ObservedPhase::C,
+    ObservedPhase::B,
+    ObservedPhase::A,
+];
+
+/// maskPhaseInterrupts (AM32 comparator.c:9-12): clear EXTI IMR +
+/// clear the pending flag.
+#[inline]
+pub fn am32_mask_phase_interrupts() {
+    set_exti_enabled(false);
+    clear_pending();
+}
+
+/// enableCompInterrupts (AM32 comparator.c:14-16): set EXTI IMR,
+/// KEEP pending (a crossing latched during the mask is serviced on
+/// unmask, not discarded).
+#[inline]
+pub fn am32_enable_comp_interrupts() {
+    unmask_keep_pending();
+}
+
+/// changeCompInput (AM32 comparator.c:18-35): mux the floating phase
+/// and select the single expected-direction EXTI edge for the sector.
+/// `edges_for(3, sector)` is the minz-polarity-correct form of AM32''s
+/// `if(rising)` edge select.
+#[inline]
+pub fn am32_change_comp_input(sector: usize) {
+    set_inm(AM32_SECTOR_FLOAT_PHASE[sector]);
+    let (re, fe) = minz_core::drive::edges_for(3, sector as u8);
+    set_exti_edges(re, fe);
+}

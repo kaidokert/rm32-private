@@ -479,10 +479,100 @@ impl<const N: usize> RxRing<'_, N> {
     }
 }
 
+/// ZC_TRACE record ring over borrowed atomics (the am32_clone trace
+/// buffer; 15-byte records, [`zct_pack`] layout). Producers push from
+/// TWO ISR priorities, so `push_rec` is NOT self-synchronizing — the
+/// caller must wrap it in its platform's critical section (core has
+/// no cortex-m dependency; that guard stays with the caller). The
+/// single consumer drains via a byte sink.
+pub struct ZctRing<'a, const N: usize> {
+    pub ring: &'a [[core::sync::atomic::AtomicU16; ZCT_REC]; N],
+    pub head: &'a core::sync::atomic::AtomicUsize,
+    pub tail: &'a core::sync::atomic::AtomicUsize,
+    pub drop: &'a AtomicU32,
+}
+
+/// The ZC_TRACE wire record size (5B A9 | flags | 6×u16).
+pub const ZCT_REC: usize = 15;
+
+impl<const N: usize> ZctRing<'_, N> {
+    /// Enqueue one packed record; a full ring drops the OLDEST
+    /// (advances tail) and counts it. NOT self-synchronizing — see
+    /// the struct docs.
+    #[inline]
+    pub fn push_rec(&self, rec: &[u8; ZCT_REC]) {
+        let h = self.head.load(Ordering::Relaxed);
+        let nx = (h + 1) % N;
+        if nx == self.tail.load(Ordering::Relaxed) {
+            self.drop.fetch_add(1, Ordering::Relaxed);
+            self.tail
+                .store((self.tail.load(Ordering::Relaxed) + 1) % N, Ordering::Relaxed);
+        }
+        for (i, b) in rec.iter().enumerate() {
+            self.ring[h][i].store(*b as u16, Ordering::Relaxed);
+        }
+        self.head.store(nx, Ordering::Relaxed);
+    }
+
+    /// Drain up to `max_rec` records into `sink`, byte by byte
+    /// (main.c:2347-2357 drains 3 per while(1) pass).
+    #[inline]
+    pub fn drain(&self, max_rec: usize, mut sink: impl FnMut(u8)) {
+        let mut nrec = 0;
+        while self.tail.load(Ordering::Relaxed) != self.head.load(Ordering::Relaxed)
+            && nrec < max_rec
+        {
+            let t = self.tail.load(Ordering::Relaxed);
+            for i in 0..ZCT_REC {
+                sink(self.ring[t][i].load(Ordering::Relaxed) as u8);
+            }
+            self.tail.store((t + 1) % N, Ordering::Relaxed);
+            nrec += 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use core::sync::atomic::AtomicU32;
+
+    // --- ZctRing -----------------------------------------------
+
+    #[test]
+    fn zct_ring_drops_oldest_when_full_and_drains_bounded() {
+        use core::sync::atomic::{AtomicU16, AtomicUsize};
+        static RING: [[AtomicU16; ZCT_REC]; 4] =
+            [const { [const { AtomicU16::new(0) }; ZCT_REC] }; 4];
+        static HEAD: AtomicUsize = AtomicUsize::new(0);
+        static TAIL: AtomicUsize = AtomicUsize::new(0);
+        static DROP: AtomicU32 = AtomicU32::new(0);
+        let z = ZctRing { ring: &RING, head: &HEAD, tail: &TAIL, drop: &DROP };
+        let mk = |v: u8| {
+            let mut r = [0u8; ZCT_REC];
+            r[0] = 0x5B;
+            r[1] = 0xA9;
+            r[2] = v;
+            r
+        };
+        for v in 0..5u8 {
+            z.push_rec(&mk(v)); // 5 pushes into capacity 3: 2 oldest dropped
+        }
+        assert_eq!(DROP.load(Ordering::Relaxed), 2);
+        let mut out = [0u8; 64];
+        let mut n = 0;
+        z.drain(2, |b| {
+            out[n] = b;
+            n += 1;
+        });
+        // bounded drain: exactly 2 records, oldest-surviving first
+        assert_eq!(n, 2 * ZCT_REC);
+        assert_eq!(out[2], 2);
+        assert_eq!(out[ZCT_REC + 2], 3);
+        let mut n2 = 0;
+        z.drain(10, |_| n2 += 1);
+        assert_eq!(n2, ZCT_REC); // one record left
+    }
 
     // --- RxRing ------------------------------------------------
 
