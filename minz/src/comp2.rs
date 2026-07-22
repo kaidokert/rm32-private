@@ -313,3 +313,23 @@ pub fn am32_change_comp_input(sector: usize) {
     let (re, fe) = minz_core::drive::edges_for(3, sector as u8);
     set_exti_edges(re, fe);
 }
+
+/// getBemfState() — main.c:817-852 (L431 `!getCompOutputLevel()` branch,
+/// which equals minz `comp2::value()`). Counts when the level matches the
+/// direction; a run of bad reads over threshold resets the counter.
+#[inline]
+pub fn am32_get_bemf_state(drive: &minz_core::am32_loop::Drive) {
+    use core::sync::atomic::Ordering;
+    let cs = value(); // = !getCompOutputLevel() (main.c:831)
+    let rising = drive.rising.load(Ordering::Relaxed);
+    // rising: count when current_state; else count when !current_state.
+    // Both reduce to `cs == rising` (main.c:833-851).
+    let (bemf, bad) = minz_core::am32::bemf_count_step(
+        drive.bemf_counter.load(Ordering::Relaxed),
+        drive.bad_count.load(Ordering::Relaxed),
+        cs == rising,
+        minz_core::am32_loop::BAD_COUNT_THRESHOLD,
+    );
+    drive.bemf_counter.store(bemf, Ordering::Relaxed);
+    drive.bad_count.store(bad, Ordering::Relaxed);
+}

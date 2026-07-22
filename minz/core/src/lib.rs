@@ -16,6 +16,7 @@
 
 pub mod a85;
 pub mod am32;
+pub mod am32_loop;
 pub mod blackbox;
 pub mod drive;
 pub mod dump;

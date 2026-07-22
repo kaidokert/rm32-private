@@ -68,77 +68,29 @@ use minz::priority;
 use minz::tim1_motor_pwm::{self, max_duty};
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
-use minz_core::am32::{self, Am32Intervals, RxRing, UartCmd, UartDuty, ZCT_REC, ZctRing};
+use minz_core::am32::{self, RxRing, UartDuty, ZCT_REC, ZctRing};
+use minz_core::am32_loop::{
+    BEMF_TIMEOUT_TICKS, Bench, DUTY_FULL, Drive, Duty, INIT_INTERVAL_TICKS, MIN_STARTUP_DUTY,
+    POLLING_MODE_CHANGEOVER, STARTUP_INTERVAL_TICKS, Sched, TARGET_MIN_BEMF_COUNTS, TEMP_ADVANCE,
+    VARIABLE_PWM, apply_uart_cmd, bemf_timeout_resets, duty_ramp, filter_and_duty_max,
+    min_bemf_schedule, set_input_clamp, store_average_interval, uart_deadman_tick,
+};
 use minz_core::blackbox::{self, BlackBox, EV_ACC, EV_DSY, EV_REF, Event};
 
 use rtt_target::rprintln;
 
 // ===============================================================
-// AM32 constants — factory-default EEPROM, VIMDRONES_L431.
-// (Values that depend on the flashed EEPROM image are flagged
-//  BENCH-VERIFY; the build is correct regardless of their tuning.)
+// Bench-only constants. The AM32 factory constants (DUTY_FULL,
+// LOOP_FREQUENCY_HZ, TARGET_MIN_BEMF_COUNTS, BAD_COUNT_THRESHOLD,
+// POLLING_MODE_CHANGEOVER, TEMP_ADVANCE, the interval seeds, the
+// duty-pipeline defaults, VARIABLE_PWM, BEMF_TIMEOUT_TICKS,
+// UART_DEADMAN_LIMIT) moved to `minz_core::am32_loop` with their
+// AM32 citations; the ones this file still names are re-imported.
 // ===============================================================
 
 /// TIM1 base ARR = 24 kHz carrier. AM32 targets.h:5335
 /// `TIM1_AUTORELOAD = CPU_FREQUENCY_MHZ*1e6/NOMINAL_PWM - 1 = 3332`.
 const TIMER1_MAX_ARR: u16 = minz::TIM1_AUTORELOAD; // 3332
-/// AM32's throttle/duty domain is 0..2000 (main.c throughout).
-const DUTY_FULL: u16 = 2000;
-
-/// tenKhzRoutine cadence. AM32 targets.h:177 `LOOP_FREQUENCY_HZ 20000`.
-const LOOP_FREQUENCY_HZ: u32 = 20_000;
-
-/// AM32 targets.h:5300 `TARGET_MIN_BEMF_COUNTS 3`.
-const TARGET_MIN_BEMF_COUNTS: u16 = 3;
-/// AM32 main.c:550 `bad_count_threshold = CPU_FREQUENCY_MHZ/24` = 80/24.
-const BAD_COUNT_THRESHOLD: u16 = 80 / 24; // = 3
-
-/// Polling<->interrupt changeover, 0.5 µs ticks. AM32 targets.h:5344
-/// `POLLING_MODE_THRESHOLD 2000`; non-bi-dir keeps it whole
-/// (loadEEpromSettings main.c:795).
-const POLLING_MODE_CHANGEOVER: u32 = 2000;
-
-/// Constant 15° advance: AUTO_ADVANCE off, advance_level default → 16
-/// (loadEEpromSettings main.c:628-630); `advance = ci*16>>6 = ci/4`.
-const TEMP_ADVANCE: u32 = 16;
-
-/// Startup interval seed, 0.5 µs ticks. AM32 startMotor main.c:954.
-const STARTUP_INTERVAL_TICKS: u32 = 10_000;
-/// AM32 main.c:575 global init `commutation_interval = 12500`.
-const INIT_INTERVAL_TICKS: u32 = 12_500;
-
-// --- Duty pipeline defaults (loadEEpromSettings main.c:610-797) ---
-// BENCH-VERIFY: these three resolve from the flashed EEPROM bytes,
-// which are not in the source tree. Values below follow the code path
-// for a fresh/default image (driving_brake_strength defaults to 10 at
-// main.c:696-698, so the dead-time-override block main.c:700-721 is
-// skipped) with the documented AM32-configurator factory bytes.
-/// main.c:428 `minimum_duty_cycle = DEAD_TIME` (VIMDRONES DEAD_TIME=45).
-const MINIMUM_DUTY_CYCLE: u16 = 45;
-/// main.c:653 `min_startup_duty = minimum_duty_cycle + startup_power`
-/// (startup_power factory ≈ 100).
-const MIN_STARTUP_DUTY: u16 = MINIMUM_DUTY_CYCLE + 100; // 145
-/// main.c:657 `startup_max_duty_cycle = minimum_duty_cycle + 400`.
-const STARTUP_MAX_DUTY_CYCLE: u16 = MINIMUM_DUTY_CYCLE + 400; // 445
-
-// Ramp rates (main.c:1746-1754) + low-rpm duty ceiling map
-// (main.c:436-439) now live in `minz_core::am32` (with their AM32
-// citations); the pipeline helpers there consume them.
-
-/// main.c:390 `low_rpm_throttle_limit = 1` (on by default).
-const LOW_RPM_THROTTLE_LIMIT: bool = true;
-
-/// variable_pwm carrier ride (main.c:2192-2195). BENCH-VERIFY: the
-/// factory `eepromBuffer.variable_pwm` byte is EEPROM-resident; the
-/// mode-1 path is transliterated and enabled here.
-const VARIABLE_PWM: u8 = 1;
-
-/// bemf timeout re-kick threshold, 0.5 µs ticks. main.c:2495
-/// `INTERVAL_TIMER_COUNT > 45000`.
-const BEMF_TIMEOUT_TICKS: u32 = 45_000;
-
-/// UART deadman: no command for 3 s → throttle 0. main.c:1425.
-const UART_DEADMAN_LIMIT: u32 = 3 * LOOP_FREQUENCY_HZ; // 60000 ticks
 
 /// 2 Mbaud link (both directions) — the minz-rig baud (AM32 fork
 /// uart_duty_init main.c:1363, motor_tester2 parity).
@@ -234,6 +186,7 @@ use minz::am32_timers::now_10us;
 use minz::comp2::{
     am32_change_comp_input as change_comp_input,
     am32_enable_comp_interrupts as enable_comp_interrupts,
+    am32_get_bemf_state as get_bemf_state,
     am32_mask_phase_interrupts as mask_phase_interrupts,
 };
 
@@ -293,65 +246,10 @@ static RX: RxRing<'static, RX_N> = RxRing {
 // it touches as `&` params; the ONLY places that name the SCHED /
 // DRIVE / DUTY / BENCH / ZCT instances are the ISR trampolines,
 // main_entry's top (local wiring), and these definitions.
+// (Sched / Drive / Duty / Bench struct types + the pure band fns
+// moved to minz_core::am32_loop, host-tested there; ZctTrace stays —
+// its impl needs cortex_m `free` + UartTxWriter.)
 // ===============================================================
-
-/// Scheduling / ZC-estimate cluster (all 0.5 µs units).
-struct Sched<'a> {
-    commutation_interval: &'a AtomicU32,
-    interval_hist: &'a [AtomicU32; 6],
-    average_interval: &'a AtomicU32,
-    last_average_interval: &'a AtomicU32,
-    last_zc: &'a AtomicU16,
-    this_zc: &'a AtomicU16,
-    wait_time: &'a AtomicU16,
-}
-
-/// Commutation / run-state cluster + its event counters.
-struct Drive<'a> {
-    current_step: &'a AtomicU16,
-    rising: &'a AtomicBool,
-    old_routine: &'a AtomicBool,
-    running: &'a AtomicBool,
-    zcfound: &'a AtomicBool,
-    bemf_counter: &'a AtomicU16,
-    min_bemf_up: &'a AtomicU16,
-    min_bemf_down: &'a AtomicU16,
-    zero_crosses: &'a AtomicU32,
-    filter_level: &'a AtomicU16,
-    bad_count: &'a AtomicU16,
-    desync_check: &'a AtomicBool,
-    desync_happened: &'a AtomicU32,
-    bemf_timeout_happened: &'a AtomicU32,
-    tenkhz_counter: &'a AtomicU16,
-    zcfr_guard_hits: &'a AtomicU32,
-}
-
-/// Duty pipeline cluster (0..2000 domain) + the latched kill.
-struct Duty<'a> {
-    input: &'a AtomicU16,
-    adjusted_input: &'a AtomicU16,
-    uart_duty_input: &'a AtomicU16,
-    duty_cycle_setpoint: &'a AtomicU16,
-    duty_cycle: &'a AtomicU16,
-    last_duty_cycle: &'a AtomicU16,
-    duty_cycle_maximum: &'a AtomicU16,
-    ramp_count: &'a AtomicU16,
-    killed: &'a AtomicBool,
-    kill_reason: &'a AtomicU16,
-}
-
-/// Observer / bench cluster (ADC harvest, OC accumulator, req flags).
-struct Bench<'a> {
-    uart_deadman_ticks: &'a AtomicU32,
-    i_raw: &'a AtomicU16,
-    vbat_raw: &'a AtomicU16,
-    oc_acc: &'a AtomicU32,
-    oc_cnt: &'a AtomicU32,
-    stop_req: &'a AtomicBool,
-    dump_req: &'a AtomicBool,
-    info_req: &'a AtomicBool,
-    zct_stream_on: &'a AtomicBool,
-}
 
 /// ZC_TRACE ring cluster — 15-byte records + batch-decimation state.
 struct ZctTrace<'a> {
@@ -426,16 +324,6 @@ static ZCT: ZctTrace<'static> = ZctTrace {
     comm_n: &ZCT_COMM_N,
     batching: &ZCT_BATCHING,
 };
-
-impl Sched<'_> {
-    /// The 6-slot `commutation_intervals[]` history over the firmware
-    /// statics (minz_core owns the push/sum/e_com_time logic) —
-    /// main.c:441,887.
-    #[inline]
-    fn intervals(&self) -> Am32Intervals<'_> {
-        Am32Intervals::new(self.interval_hist)
-    }
-}
 
 impl ZctTrace<'_> {
     // zct_write (main.c:1542-1567): one canonical row per commutation.
@@ -517,24 +405,10 @@ fn commutate(sched: &Sched, drive: &Drive) {
 }
 
 // ===============================================================
-// getBemfState() — main.c:817-852 (L431 `!getCompOutputLevel()` branch,
-// which equals minz `comp2::value()`). Counts when the level matches the
-// direction; a run of bad reads over threshold resets the counter.
+// getBemfState() (main.c:817-852) — moved to
+// minz::comp2::am32_get_bemf_state (it reads comp2::value(), so it
+// lives with the peripheral); aliased above as `get_bemf_state`.
 // ===============================================================
-fn get_bemf_state(drive: &Drive) {
-    let cs = comp2::value(); // = !getCompOutputLevel() (main.c:831)
-    let rising = drive.rising.load(Ordering::Relaxed);
-    // rising: count when current_state; else count when !current_state.
-    // Both reduce to `cs == rising` (main.c:833-851).
-    let (bemf, bad) = am32::bemf_count_step(
-        drive.bemf_counter.load(Ordering::Relaxed),
-        drive.bad_count.load(Ordering::Relaxed),
-        cs == rising,
-        BAD_COUNT_THRESHOLD,
-    );
-    drive.bemf_counter.store(bemf, Ordering::Relaxed);
-    drive.bad_count.store(bad, Ordering::Relaxed);
-}
 
 // ===============================================================
 // zcfoundroutine() — main.c:1868-1915 (polling mode, blocking).
@@ -704,17 +578,7 @@ fn honor_stop(drive: &Drive, duty: &Duty, bench: &Bench) {
     }
 }
 
-/// min_bemf_counts schedule band (main.c:2177-2188, non-bi-dir).
-#[inline]
-fn min_bemf_schedule(drive: &Drive) {
-    if drive.zero_crosses.load(Ordering::Relaxed) < 5 {
-        drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
-        drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
-    } else {
-        drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
-        drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
-    }
-}
+// (min_bemf_schedule band moved to minz_core::am32_loop.)
 
 /// variable_pwm carrier-ride band (main.c:2192-2195). mode 1: carrier
 /// rides the commutation interval; duty ratio is preserved by the tenKhz
@@ -728,13 +592,7 @@ fn variable_pwm_ride(sched: &Sched) {
     }
 }
 
-/// average_interval band (main.c:2283): average_interval = e_com_time / 3.
-#[inline]
-fn store_average_interval(sched: &Sched, e_com_time: i32) -> u32 {
-    let average_interval = if e_com_time > 0 { (e_com_time / 3) as u32 } else { 0 };
-    sched.average_interval.store(average_interval, Ordering::Relaxed);
-    average_interval
-}
+// (store_average_interval band moved to minz_core::am32_loop.)
 
 /// desync_check band (main.c:2284-2300) — non-bi-dir subset.
 #[inline]
@@ -759,46 +617,8 @@ fn desync_check_band(sched: &Sched, drive: &Drive, duty: &Duty, average_interval
     }
 }
 
-/// low-rpm duty ceiling + filter_level map band (main.c:2441-2469).
-/// Returns the single `running`/`zero_crosses` loads that the bemf-timeout
-/// bands reuse (preserves the original one-load ordering).
-#[inline]
-fn filter_and_duty_max(
-    sched: &Sched,
-    drive: &Drive,
-    duty: &Duty,
-    e_com_time: i32,
-    average_interval: u32,
-) -> (bool, u32) {
-    let running = drive.running.load(Ordering::Relaxed);
-    let duty_max = am32::low_rpm_duty_ceiling(e_com_time, running, LOW_RPM_THROTTLE_LIMIT);
-    duty.duty_cycle_maximum.store(duty_max, Ordering::Relaxed);
-
-    let zc = drive.zero_crosses.load(Ordering::Relaxed);
-    let ci = sched.commutation_interval.load(Ordering::Relaxed);
-    let mut filter = if zc < 100 && ci > 500 {
-        12
-    } else {
-        am32::map(average_interval as i32, 100, 500, 3, 12)
-    };
-    if ci < 50 {
-        filter = 2;
-    }
-    drive.filter_level.store(filter as u16, Ordering::Relaxed);
-    (running, zc)
-}
-
-/// bemf-timeout leniency reset band (main.c:2261-2273).
-#[inline]
-fn bemf_timeout_resets(drive: &Drive, duty: &Duty, zc: u32) {
-    let adj = duty.adjusted_input.load(Ordering::Relaxed);
-    if zc > 1000 || adj == 0 {
-        drive.bemf_timeout_happened.store(0, Ordering::Relaxed);
-    }
-    if zc > 100 && adj < 200 {
-        drive.bemf_timeout_happened.store(0, Ordering::Relaxed);
-    }
-}
+// (filter_and_duty_max + bemf_timeout_resets bands moved to
+// minz_core::am32_loop.)
 
 /// bemf-timeout re-kick band (main.c:2495-2509).
 #[inline]
@@ -882,62 +702,8 @@ fn set_input_arming(sched: &Sched, drive: &Drive, duty: &Duty, input: u16) {
     }
 }
 
-/// setInput setpoint-map + startup/max clamp band (main.c:1302-1314).
-#[inline]
-fn set_input_clamp(drive: &Drive, duty: &Duty, input: u16) {
-    // duty_cycle_setpoint = map(input, 47, 2047, minimum_duty_cycle, 2000)
-    // when armed, else 0 (am32::duty_setpoint). Stored here (mirrors the
-    // two per-branch stores main.c:1194/1206) then re-clamped below —
-    // the intermediate value is what a preempting TIM6 tick reads.
-    duty.duty_cycle_setpoint.store(
-        am32::duty_setpoint(input, MINIMUM_DUTY_CYCLE, DUTY_FULL),
-        Ordering::Relaxed,
-    );
-    let mut sp = duty.duty_cycle_setpoint.load(Ordering::Relaxed);
-
-    // startup clamp (main.c:1302-1314), non-bi-dir (30 >> 0 = 30).
-    if input >= 47 && drive.zero_crosses.load(Ordering::Relaxed) < 30 {
-        if sp < MIN_STARTUP_DUTY {
-            sp = MIN_STARTUP_DUTY;
-        }
-        if sp > STARTUP_MAX_DUTY_CYCLE {
-            sp = STARTUP_MAX_DUTY_CYCLE;
-        }
-    }
-    let dmax = duty.duty_cycle_maximum.load(Ordering::Relaxed);
-    if sp > dmax {
-        sp = dmax;
-    }
-    duty.duty_cycle_setpoint.store(sp, Ordering::Relaxed);
-}
-
-/// Apply a decoded UART command (am32::UartDuty parses; this performs
-/// the side effects) — uart_duty_poll main.c:1367-1416 + bench keys.
-fn apply_uart_cmd(duty: &Duty, bench: &Bench, cmd: Option<UartCmd>) {
-    match cmd {
-        // main.c:1376-1381,1397-1398 stop ('s'/'w' and a committed 0):
-        // zero throttle + adjusted + deadman and request the bench stop.
-        Some(UartCmd::Stop) => {
-            duty.uart_duty_input.store(0, Ordering::Relaxed);
-            duty.adjusted_input.store(0, Ordering::Relaxed);
-            bench.uart_deadman_ticks.store(0, Ordering::Relaxed);
-            bench.stop_req.store(true, Ordering::Relaxed);
-        }
-        Some(UartCmd::SetThrottle(inn)) => {
-            duty.uart_duty_input.store(inn, Ordering::Relaxed);
-            // adjusted_input mirror (main.c:1410)
-            duty.adjusted_input.store(if inn <= 48 { 0 } else { inn }, Ordering::Relaxed);
-            bench.uart_deadman_ticks.store(0, Ordering::Relaxed);
-        }
-        Some(UartCmd::TraceToggle) => {
-            let on = !bench.zct_stream_on.load(Ordering::Relaxed);
-            bench.zct_stream_on.store(on, Ordering::Relaxed);
-        }
-        Some(UartCmd::Info) => bench.info_req.store(true, Ordering::Relaxed),
-        Some(UartCmd::BbDump) => bench.dump_req.store(true, Ordering::Relaxed),
-        None => {}
-    }
-}
+// (set_input_clamp + apply_uart_cmd bands moved to
+// minz_core::am32_loop.)
 
 fn print_info(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &ZctTrace, tx: &mut UartTxWriter) {
     let _ = write!(
@@ -1194,20 +960,7 @@ fn tim6_dacunder_isr(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, z
     adc_harvest_and_safety(drive, duty, bench);
 }
 
-/// Duty ramp band (main.c:1736-1791). ramp_divider=0 → every tick.
-#[inline]
-fn duty_ramp(sched: &Sched, drive: &Drive, duty: &Duty, setpoint: i32) -> u16 {
-    let _ = duty.ramp_count.fetch_add(1, Ordering::Relaxed);
-    let last = duty.last_duty_cycle.load(Ordering::Relaxed) as i32;
-    let zc = drive.zero_crosses.load(Ordering::Relaxed);
-    let avg = sched.average_interval.load(Ordering::Relaxed);
-    // Ramp rate selection + one-sided step clamp + 0..2000 domain
-    // clamp (am32::ramp_rate / ramp_toward).
-    let rate = am32::ramp_rate(zc, last, avg);
-    let duty_val = am32::ramp_toward(last, setpoint, rate);
-    duty.duty_cycle.store(duty_val, Ordering::Relaxed);
-    duty_val
-}
+// (duty_ramp band moved to minz_core::am32_loop.)
 
 /// Duty apply band (main.c:1771-1791): CCR write path. Returns the
 /// single `running` load so the caller's polling band reuses it
@@ -1248,18 +1001,7 @@ fn polling_bemf_check(sched: &Sched, drive: &Drive, duty: &Duty, zct: &ZctTrace,
     }
 }
 
-/// UART deadman band (main.c:1425): 3 s without a command → throttle 0.
-#[inline]
-fn uart_deadman_tick(duty: &Duty, bench: &Bench) {
-    let dm = bench.uart_deadman_ticks.load(Ordering::Relaxed) + 1;
-    if dm > UART_DEADMAN_LIMIT {
-        duty.uart_duty_input.store(0, Ordering::Relaxed);
-        duty.adjusted_input.store(0, Ordering::Relaxed);
-        bench.uart_deadman_ticks.store(UART_DEADMAN_LIMIT + 1, Ordering::Relaxed);
-    } else {
-        bench.uart_deadman_ticks.store(dm, Ordering::Relaxed);
-    }
-}
+// (uart_deadman_tick band moved to minz_core::am32_loop.)
 
 /// Observer ADC harvest + the two bench-safety KILLS (non-AM32;
 /// they only stop the loop, never modulate it).
