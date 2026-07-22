@@ -1113,52 +1113,76 @@ fn tim6_dacunder_isr(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, z
     minz::tim6_loop::clear_flag();
 
     // duty_cycle = duty_cycle_setpoint (main.c:1611); tenkhzcounter++ (:1612)
-    let duty_val = duty.duty_cycle_setpoint.load(Ordering::Relaxed) as i32;
+    let setpoint = duty.duty_cycle_setpoint.load(Ordering::Relaxed) as i32;
     drive.tenkhz_counter.store(drive.tenkhz_counter.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
 
     if !duty.killed.load(Ordering::Relaxed) {
-        // ---- duty ramp (main.c:1736-1791). ramp_divider=0 → every tick.
-        let _ = duty.ramp_count.fetch_add(1, Ordering::Relaxed);
-        let last = duty.last_duty_cycle.load(Ordering::Relaxed) as i32;
-        let zc = drive.zero_crosses.load(Ordering::Relaxed);
-        let avg = sched.average_interval.load(Ordering::Relaxed);
-        // Ramp rate selection + one-sided step clamp + 0..2000 domain
-        // clamp (am32::ramp_rate / ramp_toward).
-        let rate = am32::ramp_rate(zc, last, avg);
-        let duty_val = am32::ramp_toward(last, duty_val, rate);
-        duty.duty_cycle.store(duty_val, Ordering::Relaxed);
+        let duty_val = duty_ramp(sched, drive, duty, setpoint);
+        let running = duty_apply(drive, duty, duty_val);
+        polling_bemf_check(sched, drive, duty, zct, running);
+    }
 
-        // ---- apply (main.c:1771-1791) ----
-        let tim1_arr = max_duty() as u32;
-        let running = drive.running.load(Ordering::Relaxed);
-        let input = duty.input.load(Ordering::Relaxed);
-        let base = (duty_val as u32 * tim1_arr) / 2000;
-        let adjusted = if running && input > 47 { base + 1 } else { base };
-        duty.last_duty_cycle.store(duty_val, Ordering::Relaxed); // main.c:1789
-        tim1_motor_pwm::set_carrier_arr(tim1_arr as u16); // SET_AUTO_RELOAD_PWM (:1790)
-        tim1_motor_pwm::set_duty(adjusted as u16); // SET_DUTY_CYCLE_ALL (:1791)
+    uart_deadman_tick(duty, bench);
+    adc_harvest_and_safety(drive, duty, bench);
+}
 
-        // ---- old_routine polling (main.c:1679-1696) ----
-        if drive.old_routine.load(Ordering::Relaxed) && running {
-            mask_phase_interrupts(); // main.c:1681
-            get_bemf_state(drive); // :1682
-            if !drive.zcfound.load(Ordering::Relaxed) {
-                let rising = drive.rising.load(Ordering::Relaxed);
-                let bc = drive.bemf_counter.load(Ordering::Relaxed);
-                let thresh = if rising {
-                    drive.min_bemf_up.load(Ordering::Relaxed)
-                } else {
-                    drive.min_bemf_down.load(Ordering::Relaxed)
-                };
-                if bc > thresh {
-                    drive.zcfound.store(true, Ordering::Relaxed);
-                    zcfoundroutine(sched, drive, zct, duty);
-                }
+/// Duty ramp band (main.c:1736-1791). ramp_divider=0 → every tick.
+#[inline]
+fn duty_ramp(sched: &Sched, drive: &Drive, duty: &Duty, setpoint: i32) -> u16 {
+    let _ = duty.ramp_count.fetch_add(1, Ordering::Relaxed);
+    let last = duty.last_duty_cycle.load(Ordering::Relaxed) as i32;
+    let zc = drive.zero_crosses.load(Ordering::Relaxed);
+    let avg = sched.average_interval.load(Ordering::Relaxed);
+    // Ramp rate selection + one-sided step clamp + 0..2000 domain
+    // clamp (am32::ramp_rate / ramp_toward).
+    let rate = am32::ramp_rate(zc, last, avg);
+    let duty_val = am32::ramp_toward(last, setpoint, rate);
+    duty.duty_cycle.store(duty_val, Ordering::Relaxed);
+    duty_val
+}
+
+/// Duty apply band (main.c:1771-1791): CCR write path. Returns the
+/// single `running` load so the caller's polling band reuses it
+/// (preserves the original one-load ordering).
+#[inline]
+fn duty_apply(drive: &Drive, duty: &Duty, duty_val: u16) -> bool {
+    let tim1_arr = max_duty() as u32;
+    let running = drive.running.load(Ordering::Relaxed);
+    let input = duty.input.load(Ordering::Relaxed);
+    let base = (duty_val as u32 * tim1_arr) / 2000;
+    let adjusted = if running && input > 47 { base + 1 } else { base };
+    duty.last_duty_cycle.store(duty_val, Ordering::Relaxed); // main.c:1789
+    tim1_motor_pwm::set_carrier_arr(tim1_arr as u16); // SET_AUTO_RELOAD_PWM (:1790)
+    tim1_motor_pwm::set_duty(adjusted as u16); // SET_DUTY_CYCLE_ALL (:1791)
+    running
+}
+
+/// old_routine polling band (main.c:1679-1696): comparator BEMF
+/// counting toward min_bemf_counts, then the polling ZC accept.
+#[inline]
+fn polling_bemf_check(sched: &Sched, drive: &Drive, duty: &Duty, zct: &ZctTrace, running: bool) {
+    if drive.old_routine.load(Ordering::Relaxed) && running {
+        mask_phase_interrupts(); // main.c:1681
+        get_bemf_state(drive); // :1682
+        if !drive.zcfound.load(Ordering::Relaxed) {
+            let rising = drive.rising.load(Ordering::Relaxed);
+            let bc = drive.bemf_counter.load(Ordering::Relaxed);
+            let thresh = if rising {
+                drive.min_bemf_up.load(Ordering::Relaxed)
+            } else {
+                drive.min_bemf_down.load(Ordering::Relaxed)
+            };
+            if bc > thresh {
+                drive.zcfound.store(true, Ordering::Relaxed);
+                zcfoundroutine(sched, drive, zct, duty);
             }
         }
     }
+}
 
-    // ---- UART deadman (main.c:1425): 3 s no command → throttle 0 ----
+/// UART deadman band (main.c:1425): 3 s without a command → throttle 0.
+#[inline]
+fn uart_deadman_tick(duty: &Duty, bench: &Bench) {
     let dm = bench.uart_deadman_ticks.load(Ordering::Relaxed) + 1;
     if dm > UART_DEADMAN_LIMIT {
         duty.uart_duty_input.store(0, Ordering::Relaxed);
@@ -1167,8 +1191,12 @@ fn tim6_dacunder_isr(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, z
     } else {
         bench.uart_deadman_ticks.store(dm, Ordering::Relaxed);
     }
+}
 
-    // ---- observer ADC harvest + bench-safety kills ----
+/// Observer ADC harvest + the two bench-safety KILLS (non-AM32;
+/// they only stop the loop, never modulate it).
+#[inline]
+fn adc_harvest_and_safety(drive: &Drive, duty: &Duty, bench: &Bench) {
     let (_a, _b, cur, vbat) = adc_sync::inj_read();
     bench.i_raw.store(cur, Ordering::Relaxed);
     bench.vbat_raw.store(vbat, Ordering::Relaxed);
