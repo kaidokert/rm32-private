@@ -893,6 +893,11 @@ fn main() -> ! {
 // ===============================================================
 #[interrupt]
 fn COMP() {
+    comp_isr()
+}
+
+#[inline]
+fn comp_isr() {
     let exti = unsafe { &*stm32::EXTI::ptr() };
     if exti.pr1.read().pr22().bit_is_set() {
         // if INTERVAL_TIMER->CNT > average_interval>>1  (it.c:280)
@@ -939,6 +944,11 @@ fn interrupt_routine() {
 // ===============================================================
 #[interrupt]
 fn TIM1_UP_TIM16() {
+    tim1_up_tim16_isr()
+}
+
+#[inline]
+fn tim1_up_tim16_isr() {
     com_clear_flag(); // ack TIM16 UIF (TIM1.UIE is off, so this is the COM tick)
     disable_com_timer_int(); // main.c:898
     commutate(); // :899
@@ -971,6 +981,11 @@ static OC_CNT: AtomicU32 = AtomicU32::new(0);
 
 #[interrupt]
 fn TIM6_DACUNDER() {
+    tim6_dacunder_isr()
+}
+
+#[inline]
+fn tim6_dacunder_isr() {
     minz::tim6_loop::clear_flag();
 
     // duty_cycle = duty_cycle_setpoint (main.c:1611); tenkhzcounter++ (:1612)
@@ -1055,6 +1070,11 @@ fn TIM6_DACUNDER() {
 // ===============================================================
 #[interrupt]
 fn USART2() {
+    usart2_isr()
+}
+
+#[inline]
+fn usart2_isr() {
     let usart = unsafe { &*stm32::USART2::ptr() };
     while usart.isr.read().rxne().bit_is_set() {
         let c = usart.rdr.read().bits() as u16;
