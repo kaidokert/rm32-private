@@ -341,6 +341,47 @@ static RX_RING: [AtomicU16; RX_N] = [const { AtomicU16::new(0) }; RX_N];
 static RX_HEAD: AtomicUsize = AtomicUsize::new(0);
 static RX_TAIL: AtomicUsize = AtomicUsize::new(0);
 
+/// The coupled RX-ring state as one reference-struct (SPSC: the
+/// USART2 ISR is the sole producer via `push`, main is the sole
+/// consumer via `pop` — same relaxed-ordering semantics as the
+/// loose statics it groups).
+struct RxRing<'a> {
+    ring: &'a [AtomicU16; RX_N],
+    head: &'a AtomicUsize,
+    tail: &'a AtomicUsize,
+}
+
+static RX: RxRing<'static> = RxRing {
+    ring: &RX_RING,
+    head: &RX_HEAD,
+    tail: &RX_TAIL,
+};
+
+impl RxRing<'_> {
+    /// Producer side (ISR): enqueue one byte; full ring drops.
+    #[inline]
+    fn push(&self, c: u16) {
+        let h = self.head.load(Ordering::Relaxed);
+        let nx = (h + 1) % RX_N;
+        if nx != self.tail.load(Ordering::Relaxed) {
+            self.ring[h].store(c, Ordering::Relaxed);
+            self.head.store(nx, Ordering::Relaxed);
+        }
+    }
+
+    /// Consumer side (main): dequeue one byte if available.
+    #[inline]
+    fn pop(&self) -> Option<u8> {
+        let t = self.tail.load(Ordering::Relaxed);
+        if t == self.head.load(Ordering::Relaxed) {
+            return None;
+        }
+        let c = self.ring[t].load(Ordering::Relaxed) as u8;
+        self.tail.store((t + 1) % RX_N, Ordering::Relaxed);
+        Some(c)
+    }
+}
+
 /// The 6-slot `commutation_intervals[]` history over the firmware
 /// statics (minz_core owns the push/sum/e_com_time logic).
 #[inline]
@@ -506,10 +547,7 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
         minz::iwdg::refresh();
 
         // ---- drain USART2 RX ring → parser (uart_duty_poll) --------
-        while RX_TAIL.load(Ordering::Relaxed) != RX_HEAD.load(Ordering::Relaxed) {
-            let t = RX_TAIL.load(Ordering::Relaxed);
-            let c = RX_RING[t].load(Ordering::Relaxed) as u8;
-            RX_TAIL.store((t + 1) % RX_N, Ordering::Relaxed);
+        while let Some(c) = RX.pop() {
             apply_uart_cmd(uart.step(c));
         }
 
@@ -1077,13 +1115,7 @@ fn USART2() {
 fn usart2_isr() {
     let usart = unsafe { &*stm32::USART2::ptr() };
     while usart.isr.read().rxne().bit_is_set() {
-        let c = usart.rdr.read().bits() as u16;
-        let h = RX_HEAD.load(Ordering::Relaxed);
-        let nx = (h + 1) % RX_N;
-        if nx != RX_TAIL.load(Ordering::Relaxed) {
-            RX_RING[h].store(c, Ordering::Relaxed);
-            RX_HEAD.store(nx, Ordering::Relaxed);
-        }
+        RX.push(usart.rdr.read().bits() as u16);
     }
     // Clear overrun/framing/noise errors (main.c:1417-1419).
     if usart.isr.read().ore().bit_is_set() || usart.isr.read().fe().bit_is_set() || usart.isr.read().nf().bit_is_set() {
