@@ -28,3 +28,24 @@ pub fn init_pa2_rx(usart2: stm32::USART2, pclk1_hz: u32, baud: u32) {
         .cr1
         .write(|w| w.re().set_bit().rxneie().set_bit().ue().set_bit());
 }
+
+/// The USART2 RX ISR body: drain RXNE into the caller's ring, then
+/// clear overrun/framing/noise so the IRQ can't storm (they share
+/// the RXNEIE enable — AM32 main.c:1417-1419 does the same clears).
+/// Fully decoupled: the ring arrives as a parameter; the caller's
+/// `#[interrupt]` trampoline owns the wiring and the NVIC side.
+#[inline]
+pub fn service_rx<const N: usize>(rx: &minz_core::am32::RxRing<N>) {
+    let usart = unsafe { &*stm32::USART2::ptr() };
+    while usart.isr.read().rxne().bit_is_set() {
+        rx.push(usart.rdr.read().bits() as u16);
+    }
+    if usart.isr.read().ore().bit_is_set()
+        || usart.isr.read().fe().bit_is_set()
+        || usart.isr.read().nf().bit_is_set()
+    {
+        usart
+            .icr
+            .write(|w| w.orecf().set_bit().fecf().set_bit().ncf().set_bit());
+    }
+}

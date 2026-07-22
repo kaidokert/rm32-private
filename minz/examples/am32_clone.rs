@@ -68,7 +68,7 @@ use minz::priority;
 use minz::tim1_motor_pwm::{self, max_duty};
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
-use minz_core::am32::{self, Am32Intervals, UartCmd, UartDuty};
+use minz_core::am32::{self, Am32Intervals, RxRing, UartCmd, UartDuty};
 use minz_core::blackbox::{self, BlackBox, EV_ACC, EV_DSY, EV_REF, Event};
 use minz_core::drive::edges_for;
 
@@ -304,46 +304,15 @@ static RX_RING: [AtomicU16; RX_N] = [const { AtomicU16::new(0) }; RX_N];
 static RX_HEAD: AtomicUsize = AtomicUsize::new(0);
 static RX_TAIL: AtomicUsize = AtomicUsize::new(0);
 
-/// The coupled RX-ring state as one reference-struct (SPSC: the
-/// USART2 ISR is the sole producer via `push`, main is the sole
-/// consumer via `pop` — same relaxed-ordering semantics as the
-/// loose statics it groups).
-struct RxRing<'a> {
-    ring: &'a [AtomicU16; RX_N],
-    head: &'a AtomicUsize,
-    tail: &'a AtomicUsize,
-}
-
-static RX: RxRing<'static> = RxRing {
+/// The coupled RX-ring state, grouped as `minz_core::am32::RxRing`
+/// (push/pop host-tested there) and serviced by
+/// `minz::usart2_rx::service_rx` — this file owns only the storage
+/// and the wiring.
+static RX: RxRing<'static, RX_N> = RxRing {
     ring: &RX_RING,
     head: &RX_HEAD,
     tail: &RX_TAIL,
 };
-
-impl RxRing<'_> {
-    /// Producer side (ISR): enqueue one byte; full ring drops.
-    #[inline]
-    fn push(&self, c: u16) {
-        let h = self.head.load(Ordering::Relaxed);
-        let nx = (h + 1) % RX_N;
-        if nx != self.tail.load(Ordering::Relaxed) {
-            self.ring[h].store(c, Ordering::Relaxed);
-            self.head.store(nx, Ordering::Relaxed);
-        }
-    }
-
-    /// Consumer side (main): dequeue one byte if available.
-    #[inline]
-    fn pop(&self) -> Option<u8> {
-        let t = self.tail.load(Ordering::Relaxed);
-        if t == self.head.load(Ordering::Relaxed) {
-            return None;
-        }
-        let c = self.ring[t].load(Ordering::Relaxed) as u8;
-        self.tail.store((t + 1) % RX_N, Ordering::Relaxed);
-        Some(c)
-    }
-}
 
 // ===============================================================
 // Cohesion clusters — each struct bundles the loose statics above
@@ -1267,19 +1236,7 @@ fn tim6_dacunder_isr(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, z
 // ===============================================================
 #[interrupt]
 fn USART2() {
-    usart2_isr(&RX)
-}
-
-/// Fully decoupled from globals: the ring it services arrives as a
-/// parameter (the trampoline owns the wiring).
-#[inline]
-fn usart2_isr(rx: &RxRing) {
-    let usart = unsafe { &*stm32::USART2::ptr() };
-    while usart.isr.read().rxne().bit_is_set() {
-        rx.push(usart.rdr.read().bits() as u16);
-    }
-    // Clear overrun/framing/noise errors (main.c:1417-1419).
-    if usart.isr.read().ore().bit_is_set() || usart.isr.read().fe().bit_is_set() || usart.isr.read().nf().bit_is_set() {
-        usart.icr.write(|w| w.orecf().set_bit().fecf().set_bit().ncf().set_bit());
-    }
+    // Body lives with its peripheral: minz::usart2_rx::service_rx
+    // (drain RXNE + error clears, AM32 main.c:1417-1419).
+    minz::usart2_rx::service_rx(&RX)
 }

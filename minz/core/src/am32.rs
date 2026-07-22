@@ -441,10 +441,74 @@ impl UartDuty {
     }
 }
 
+/// SPSC byte ring over borrowed atomics (the am32_clone USART2 RX
+/// ring — sole producer = the RX ISR via [`RxRing::push`], sole
+/// consumer = the main loop via [`RxRing::pop`]; a full ring drops
+/// the newest byte). Storage lives with the caller; this struct
+/// groups the coupled head/tail/ring refs (the cohesion idiom) and
+/// owns the index arithmetic. Relaxed ordering is sufficient for
+/// SPSC on a single core with data-in-the-atomics.
+pub struct RxRing<'a, const N: usize> {
+    pub ring: &'a [core::sync::atomic::AtomicU16; N],
+    pub head: &'a core::sync::atomic::AtomicUsize,
+    pub tail: &'a core::sync::atomic::AtomicUsize,
+}
+
+impl<const N: usize> RxRing<'_, N> {
+    /// Producer side (ISR): enqueue one byte; full ring drops.
+    #[inline]
+    pub fn push(&self, c: u16) {
+        let h = self.head.load(Ordering::Relaxed);
+        let nx = (h + 1) % N;
+        if nx != self.tail.load(Ordering::Relaxed) {
+            self.ring[h].store(c, Ordering::Relaxed);
+            self.head.store(nx, Ordering::Relaxed);
+        }
+    }
+
+    /// Consumer side (main): dequeue one byte if available.
+    #[inline]
+    pub fn pop(&self) -> Option<u8> {
+        let t = self.tail.load(Ordering::Relaxed);
+        if t == self.head.load(Ordering::Relaxed) {
+            return None;
+        }
+        let c = self.ring[t].load(Ordering::Relaxed) as u8;
+        self.tail.store((t + 1) % N, Ordering::Relaxed);
+        Some(c)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use core::sync::atomic::AtomicU32;
+
+    // --- RxRing ------------------------------------------------
+
+    #[test]
+    fn rx_ring_push_pop_wraps_and_drops_when_full() {
+        use core::sync::atomic::{AtomicU16, AtomicUsize};
+        static RING: [AtomicU16; 4] = [const { AtomicU16::new(0) }; 4];
+        static HEAD: AtomicUsize = AtomicUsize::new(0);
+        static TAIL: AtomicUsize = AtomicUsize::new(0);
+        let rx = RxRing { ring: &RING, head: &HEAD, tail: &TAIL };
+        assert_eq!(rx.pop(), None);
+        rx.push(b'a' as u16);
+        rx.push(b'b' as u16);
+        rx.push(b'c' as u16);
+        // Capacity is N-1: the 4th push must DROP.
+        rx.push(b'd' as u16);
+        assert_eq!(rx.pop(), Some(b'a'));
+        assert_eq!(rx.pop(), Some(b'b'));
+        assert_eq!(rx.pop(), Some(b'c'));
+        assert_eq!(rx.pop(), None);
+        // Wraparound: indices cross N cleanly.
+        for k in 0..10u16 {
+            rx.push(k);
+            assert_eq!(rx.pop(), Some(k as u8));
+        }
+    }
 
     // --- map / get_abs_dif -------------------------------------
 
