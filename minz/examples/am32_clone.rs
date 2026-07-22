@@ -296,43 +296,6 @@ static ZCT_DROP: AtomicU32 = AtomicU32::new(0);
 static ZCT_COMM_N: AtomicU32 = AtomicU32::new(0);
 static ZCT_BATCHING: AtomicBool = AtomicBool::new(false);
 
-// zct_write (main.c:1542-1567): one canonical row per commutation.
-fn zct_write() {
-    // Batch-decimation gate (am32::zct_batch_gate). Single CI snapshot
-    // used for both the gate and the packed record (the value is stable
-    // within the calling ISR — this was two separate loads before).
-    let n = ZCT_COMM_N.fetch_add(1, Ordering::Relaxed);
-    let ci_ticks = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
-    let (record, batching) = am32::zct_batch_gate(n, ci_ticks, ZCT_BATCHING.load(Ordering::Relaxed));
-    ZCT_BATCHING.store(batching, Ordering::Relaxed);
-    if !record {
-        return; // the skipped half-duty of the batch cycle
-    }
-    let rec: [u8; ZCT_REC] = am32::zct_pack(
-        CURRENT_STEP.load(Ordering::Relaxed) as u8,
-        OLD_ROUTINE.load(Ordering::Relaxed),
-        batching,
-        THIS_ZC.load(Ordering::Relaxed),
-        ci_ticks as u16,
-        WAIT_TIME.load(Ordering::Relaxed),
-        DUTY_CYCLE.load(Ordering::Relaxed),
-        TENKHZ_COUNTER.load(Ordering::Relaxed),
-        AVERAGE_INTERVAL.load(Ordering::Relaxed) as u16,
-    );
-    free(|_| {
-        let h = ZCT_HEAD.load(Ordering::Relaxed);
-        let nx = (h + 1) % ZCT_N;
-        if nx == ZCT_TAIL.load(Ordering::Relaxed) {
-            ZCT_DROP.fetch_add(1, Ordering::Relaxed);
-            ZCT_TAIL.store((ZCT_TAIL.load(Ordering::Relaxed) + 1) % ZCT_N, Ordering::Relaxed);
-        }
-        for (i, b) in rec.iter().enumerate() {
-            ZCT_RING[h][i].store(*b as u16, Ordering::Relaxed);
-        }
-        ZCT_HEAD.store(nx, Ordering::Relaxed);
-    });
-}
-
 // ===============================================================
 // USART2 RX byte ring (ISR producer, main consumer).
 // ===============================================================
@@ -382,28 +345,227 @@ impl RxRing<'_> {
     }
 }
 
-/// The 6-slot `commutation_intervals[]` history over the firmware
-/// statics (minz_core owns the push/sum/e_com_time logic).
-#[inline]
-fn intervals() -> Am32Intervals<'static> {
-    Am32Intervals::new(&COMMUTATION_INTERVALS)
+// ===============================================================
+// Cohesion clusters — each struct bundles the loose statics above
+// that are written/read together, holding ONLY `&'static Atomic*`
+// refs (storage is unchanged). Every servicing fn takes the clusters
+// it touches as `&` params; the ONLY places that name the SCHED /
+// DRIVE / DUTY / BENCH / ZCT instances are the ISR trampolines,
+// main_entry's top (local wiring), and these definitions.
+// ===============================================================
+
+/// Scheduling / ZC-estimate cluster (all 0.5 µs units).
+struct Sched<'a> {
+    commutation_interval: &'a AtomicU32,
+    interval_hist: &'a [AtomicU32; 6],
+    average_interval: &'a AtomicU32,
+    last_average_interval: &'a AtomicU32,
+    last_zc: &'a AtomicU16,
+    this_zc: &'a AtomicU16,
+    wait_time: &'a AtomicU16,
+}
+
+/// Commutation / run-state cluster + its event counters.
+struct Drive<'a> {
+    current_step: &'a AtomicU16,
+    rising: &'a AtomicBool,
+    old_routine: &'a AtomicBool,
+    running: &'a AtomicBool,
+    zcfound: &'a AtomicBool,
+    bemf_counter: &'a AtomicU16,
+    min_bemf_up: &'a AtomicU16,
+    min_bemf_down: &'a AtomicU16,
+    zero_crosses: &'a AtomicU32,
+    filter_level: &'a AtomicU16,
+    bad_count: &'a AtomicU16,
+    desync_check: &'a AtomicBool,
+    desync_happened: &'a AtomicU32,
+    bemf_timeout_happened: &'a AtomicU32,
+    tenkhz_counter: &'a AtomicU16,
+    zcfr_guard_hits: &'a AtomicU32,
+}
+
+/// Duty pipeline cluster (0..2000 domain) + the latched kill.
+struct Duty<'a> {
+    input: &'a AtomicU16,
+    adjusted_input: &'a AtomicU16,
+    uart_duty_input: &'a AtomicU16,
+    duty_cycle_setpoint: &'a AtomicU16,
+    duty_cycle: &'a AtomicU16,
+    last_duty_cycle: &'a AtomicU16,
+    duty_cycle_maximum: &'a AtomicU16,
+    ramp_count: &'a AtomicU16,
+    killed: &'a AtomicBool,
+    kill_reason: &'a AtomicU16,
+}
+
+/// Observer / bench cluster (ADC harvest, OC accumulator, req flags).
+struct Bench<'a> {
+    uart_deadman_ticks: &'a AtomicU32,
+    i_raw: &'a AtomicU16,
+    vbat_raw: &'a AtomicU16,
+    oc_acc: &'a AtomicU32,
+    oc_cnt: &'a AtomicU32,
+    stop_req: &'a AtomicBool,
+    dump_req: &'a AtomicBool,
+    info_req: &'a AtomicBool,
+    zct_stream_on: &'a AtomicBool,
+}
+
+/// ZC_TRACE ring cluster — 15-byte records + batch-decimation state.
+struct ZctTrace<'a> {
+    ring: &'a [[AtomicU16; ZCT_REC]; ZCT_N],
+    head: &'a AtomicUsize,
+    tail: &'a AtomicUsize,
+    drop: &'a AtomicU32,
+    comm_n: &'a AtomicU32,
+    batching: &'a AtomicBool,
+}
+
+static SCHED: Sched<'static> = Sched {
+    commutation_interval: &COMMUTATION_INTERVAL,
+    interval_hist: &COMMUTATION_INTERVALS,
+    average_interval: &AVERAGE_INTERVAL,
+    last_average_interval: &LAST_AVERAGE_INTERVAL,
+    last_zc: &LAST_ZC,
+    this_zc: &THIS_ZC,
+    wait_time: &WAIT_TIME,
+};
+
+static DRIVE: Drive<'static> = Drive {
+    current_step: &CURRENT_STEP,
+    rising: &RISING,
+    old_routine: &OLD_ROUTINE,
+    running: &RUNNING,
+    zcfound: &ZCFOUND,
+    bemf_counter: &BEMF_COUNTER,
+    min_bemf_up: &MIN_BEMF_UP,
+    min_bemf_down: &MIN_BEMF_DOWN,
+    zero_crosses: &ZERO_CROSSES,
+    filter_level: &FILTER_LEVEL,
+    bad_count: &BAD_COUNT,
+    desync_check: &DESYNC_CHECK,
+    desync_happened: &DESYNC_HAPPENED,
+    bemf_timeout_happened: &BEMF_TIMEOUT_HAPPENED,
+    tenkhz_counter: &TENKHZ_COUNTER,
+    zcfr_guard_hits: &ZCFR_GUARD_HITS,
+};
+
+static DUTY: Duty<'static> = Duty {
+    input: &INPUT,
+    adjusted_input: &ADJUSTED_INPUT,
+    uart_duty_input: &UART_DUTY_INPUT,
+    duty_cycle_setpoint: &DUTY_CYCLE_SETPOINT,
+    duty_cycle: &DUTY_CYCLE,
+    last_duty_cycle: &LAST_DUTY_CYCLE,
+    duty_cycle_maximum: &DUTY_CYCLE_MAXIMUM,
+    ramp_count: &RAMP_COUNT,
+    killed: &KILLED,
+    kill_reason: &KILL_REASON,
+};
+
+static BENCH: Bench<'static> = Bench {
+    uart_deadman_ticks: &UART_DEADMAN_TICKS,
+    i_raw: &I_RAW,
+    vbat_raw: &VBAT_RAW,
+    oc_acc: &OC_ACC,
+    oc_cnt: &OC_CNT,
+    stop_req: &STOP_REQ,
+    dump_req: &DUMP_REQ,
+    info_req: &INFO_REQ,
+    zct_stream_on: &ZCT_STREAM_ON,
+};
+
+static ZCT: ZctTrace<'static> = ZctTrace {
+    ring: &ZCT_RING,
+    head: &ZCT_HEAD,
+    tail: &ZCT_TAIL,
+    drop: &ZCT_DROP,
+    comm_n: &ZCT_COMM_N,
+    batching: &ZCT_BATCHING,
+};
+
+impl Sched<'_> {
+    /// The 6-slot `commutation_intervals[]` history over the firmware
+    /// statics (minz_core owns the push/sum/e_com_time logic) —
+    /// main.c:441,887.
+    #[inline]
+    fn intervals(&self) -> Am32Intervals<'_> {
+        Am32Intervals::new(self.interval_hist)
+    }
+}
+
+impl ZctTrace<'_> {
+    // zct_write (main.c:1542-1567): one canonical row per commutation.
+    #[inline]
+    fn write(&self, sched: &Sched, drive: &Drive, duty: &Duty) {
+        // Batch-decimation gate (am32::zct_batch_gate). Single CI snapshot
+        // used for both the gate and the packed record (the value is stable
+        // within the calling ISR — this was two separate loads before).
+        let n = self.comm_n.fetch_add(1, Ordering::Relaxed);
+        let ci_ticks = sched.commutation_interval.load(Ordering::Relaxed);
+        let (record, batching) =
+            am32::zct_batch_gate(n, ci_ticks, self.batching.load(Ordering::Relaxed));
+        self.batching.store(batching, Ordering::Relaxed);
+        if !record {
+            return; // the skipped half-duty of the batch cycle
+        }
+        let rec: [u8; ZCT_REC] = am32::zct_pack(
+            drive.current_step.load(Ordering::Relaxed) as u8,
+            drive.old_routine.load(Ordering::Relaxed),
+            batching,
+            sched.this_zc.load(Ordering::Relaxed),
+            ci_ticks as u16,
+            sched.wait_time.load(Ordering::Relaxed),
+            duty.duty_cycle.load(Ordering::Relaxed),
+            drive.tenkhz_counter.load(Ordering::Relaxed),
+            sched.average_interval.load(Ordering::Relaxed) as u16,
+        );
+        free(|_| {
+            let h = self.head.load(Ordering::Relaxed);
+            let nx = (h + 1) % ZCT_N;
+            if nx == self.tail.load(Ordering::Relaxed) {
+                self.drop.fetch_add(1, Ordering::Relaxed);
+                self.tail
+                    .store((self.tail.load(Ordering::Relaxed) + 1) % ZCT_N, Ordering::Relaxed);
+            }
+            for (i, b) in rec.iter().enumerate() {
+                self.ring[h][i].store(*b as u16, Ordering::Relaxed);
+            }
+            self.head.store(nx, Ordering::Relaxed);
+        });
+    }
+
+    /// Drain up to 3 ZC_TRACE records into the USART1 DMA ring (main.c:2347-2357).
+    #[inline]
+    fn drain(&self, tx: &mut UartTxWriter) {
+        let mut nrec = 0;
+        while self.tail.load(Ordering::Relaxed) != self.head.load(Ordering::Relaxed) && nrec < 3 {
+            let t = self.tail.load(Ordering::Relaxed);
+            for i in 0..ZCT_REC {
+                let _ = tx.push(self.ring[t][i].load(Ordering::Relaxed) as u8);
+            }
+            self.tail.store((t + 1) % ZCT_N, Ordering::Relaxed);
+            nrec += 1;
+        }
+    }
 }
 
 // ===============================================================
 // commutate() — main.c:854-894 (forward-only factory path).
 // ===============================================================
-fn commutate() {
+fn commutate(sched: &Sched, drive: &Drive) {
     // step++ ; if step>6 { step=1; desync_check=1 }  (main.c:856-861)
-    let mut step = CURRENT_STEP.load(Ordering::Relaxed);
+    let mut step = drive.current_step.load(Ordering::Relaxed);
     step += 1;
     if step > 6 {
         step = 1;
-        DESYNC_CHECK.store(true, Ordering::Relaxed);
+        drive.desync_check.store(true, Ordering::Relaxed);
     }
     // rising = step % 2  (main.c:862)
     let rising = (step & 1) == 1;
-    RISING.store(rising, Ordering::Relaxed);
-    CURRENT_STEP.store(step, Ordering::Relaxed);
+    drive.rising.store(rising, Ordering::Relaxed);
+    drive.current_step.store(step, Ordering::Relaxed);
     let sector = (step - 1) as usize;
 
     // comStep(step) (main.c:876) — minz role-only flip; CCRs hold the
@@ -415,16 +577,16 @@ fn commutate() {
 
     // if average_interval > polling_mode_changeover+500 → old_routine=1
     // (main.c:881-883).
-    if AVERAGE_INTERVAL.load(Ordering::Relaxed) > POLLING_MODE_CHANGEOVER + 500 {
-        OLD_ROUTINE.store(true, Ordering::Relaxed);
+    if sched.average_interval.load(Ordering::Relaxed) > POLLING_MODE_CHANGEOVER + 500 {
+        drive.old_routine.store(true, Ordering::Relaxed);
     }
     // bemfcounter=0; zcfound=0 (main.c:885-886).
-    BEMF_COUNTER.store(0, Ordering::Relaxed);
-    ZCFOUND.store(false, Ordering::Relaxed);
+    drive.bemf_counter.store(0, Ordering::Relaxed);
+    drive.zcfound.store(false, Ordering::Relaxed);
     // commutation_intervals[step-1] = commutation_interval (main.c:887).
-    intervals().push(sector, COMMUTATION_INTERVAL.load(Ordering::Relaxed));
+    sched.intervals().push(sector, sched.commutation_interval.load(Ordering::Relaxed));
 
-    bb_record(EV_REF, sector as u8, COMMUTATION_INTERVAL.load(Ordering::Relaxed) as u16);
+    bb_record(EV_REF, sector as u8, sched.commutation_interval.load(Ordering::Relaxed) as u16);
 }
 
 // ===============================================================
@@ -432,19 +594,19 @@ fn commutate() {
 // which equals minz `comp2::value()`). Counts when the level matches the
 // direction; a run of bad reads over threshold resets the counter.
 // ===============================================================
-fn get_bemf_state() {
+fn get_bemf_state(drive: &Drive) {
     let cs = comp2::value(); // = !getCompOutputLevel() (main.c:831)
-    let rising = RISING.load(Ordering::Relaxed);
+    let rising = drive.rising.load(Ordering::Relaxed);
     // rising: count when current_state; else count when !current_state.
     // Both reduce to `cs == rising` (main.c:833-851).
     let (bemf, bad) = am32::bemf_count_step(
-        BEMF_COUNTER.load(Ordering::Relaxed),
-        BAD_COUNT.load(Ordering::Relaxed),
+        drive.bemf_counter.load(Ordering::Relaxed),
+        drive.bad_count.load(Ordering::Relaxed),
         cs == rising,
         BAD_COUNT_THRESHOLD,
     );
-    BEMF_COUNTER.store(bemf, Ordering::Relaxed);
-    BAD_COUNT.store(bad, Ordering::Relaxed);
+    drive.bemf_counter.store(bemf, Ordering::Relaxed);
+    drive.bad_count.store(bad, Ordering::Relaxed);
 }
 
 // ===============================================================
@@ -452,26 +614,26 @@ fn get_bemf_state() {
 // ===============================================================
 static ZCFR_GUARD_HITS: AtomicU32 = AtomicU32::new(0);
 
-fn zcfoundroutine() {
+fn zcfoundroutine(sched: &Sched, drive: &Drive, zct: &ZctTrace, duty: &Duty) {
     // thiszctime = INTERVAL_TIMER_COUNT; SET_INTERVAL_TIMER_COUNT(0)
     let thiszc = interval_cnt() as u16; // main.c:1870
     set_interval_cnt(0); // main.c:1871
-    THIS_ZC.store(thiszc, Ordering::Relaxed);
+    sched.this_zc.store(thiszc, Ordering::Relaxed);
     // commutation_interval = (thiszctime + 3*ci)/4  (main.c:1872)
-    let ci_old = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
+    let ci_old = sched.commutation_interval.load(Ordering::Relaxed);
     let ci = am32::polling_blend(thiszc as u32, ci_old);
-    COMMUTATION_INTERVAL.store(ci, Ordering::Relaxed);
+    sched.commutation_interval.store(ci, Ordering::Relaxed);
     // advance = temp_advance*ci >> 6 ; waitTime = ci/2 - advance  (1873-4)
     let advance = am32::advance_of(ci, TEMP_ADVANCE);
     let wait = am32::wait_time(ci, advance);
-    WAIT_TIME.store(wait as u16, Ordering::Relaxed);
+    sched.wait_time.store(wait as u16, Ordering::Relaxed);
 
     // while INTERVAL_TIMER_COUNT < waitTime { if zero_crosses<5 break }
     // (main.c:1875-1879). DEVIATION #1: bounded by a spin guard — AM32's
     // loop is unbounded (a wedged INTERVAL_TIMER hangs the 20 kHz ISR
     // forever; AM32 accepts that, the IWDG would reboot). We add a loud
     // 65535-iteration break so the tick can't be captured indefinitely.
-    let zc = ZERO_CROSSES.load(Ordering::Relaxed);
+    let zc = drive.zero_crosses.load(Ordering::Relaxed);
     let mut guard: u32 = 0;
     loop {
         if interval_cnt() >= wait {
@@ -482,22 +644,22 @@ fn zcfoundroutine() {
         }
         guard += 1;
         if guard > 65_535 {
-            ZCFR_GUARD_HITS.fetch_add(1, Ordering::Relaxed);
+            drive.zcfr_guard_hits.fetch_add(1, Ordering::Relaxed);
             break;
         }
     }
 
     com_set_arr(wait as u16); // COM_TIMER->ARR = waitTime (main.c:1884)
-    commutate(); // main.c:1889
-    zct_write(); // ZC_TRACE main.c:1891
-    BEMF_COUNTER.store(0, Ordering::Relaxed); // main.c:1893
-    BAD_COUNT.store(0, Ordering::Relaxed); // main.c:1894
-    ZERO_CROSSES.store(zc.saturating_add(1), Ordering::Relaxed); // main.c:1896
+    commutate(sched, drive); // main.c:1889
+    zct.write(sched, drive, duty); // ZC_TRACE main.c:1891
+    drive.bemf_counter.store(0, Ordering::Relaxed); // main.c:1893
+    drive.bad_count.store(0, Ordering::Relaxed); // main.c:1894
+    drive.zero_crosses.store(zc.saturating_add(1), Ordering::Relaxed); // main.c:1896
 
     // changeover to interrupt mode (non-stall/non-rc_car path,
     // main.c:1908-1913): commutation_interval < polling_mode_changeover.
     if ci < POLLING_MODE_CHANGEOVER {
-        OLD_ROUTINE.store(false, Ordering::Relaxed);
+        drive.old_routine.store(false, Ordering::Relaxed);
         enable_comp_interrupts();
     }
 }
@@ -508,36 +670,45 @@ fn zcfoundroutine() {
 // at the polling→interrupt changeover in zcfoundroutine. This is the one
 // intentional divergence from AM32's line 958 `enableCompInterrupts()`.
 // ===============================================================
-fn start_motor() {
-    if !RUNNING.load(Ordering::Relaxed) {
-        commutate(); // main.c:953
-        COMMUTATION_INTERVAL.store(STARTUP_INTERVAL_TICKS, Ordering::Relaxed); // :954
+fn start_motor(sched: &Sched, drive: &Drive) {
+    if !drive.running.load(Ordering::Relaxed) {
+        commutate(sched, drive); // main.c:953
+        sched.commutation_interval.store(STARTUP_INTERVAL_TICKS, Ordering::Relaxed); // :954
         set_interval_cnt(5000); // SET_INTERVAL_TIMER_COUNT(5000) main.c:955
-        OLD_ROUTINE.store(true, Ordering::Relaxed);
-        BEMF_COUNTER.store(0, Ordering::Relaxed);
-        RUNNING.store(true, Ordering::Relaxed); // main.c:956
+        drive.old_routine.store(true, Ordering::Relaxed);
+        drive.bemf_counter.store(0, Ordering::Relaxed);
+        drive.running.store(true, Ordering::Relaxed); // main.c:956
     }
 }
 
 // ===============================================================
 // Bench-safety kill: float all legs, latch, mask comp, freeze bb.
 // ===============================================================
-fn safety_kill(reason: u16) {
+fn safety_kill(drive: &Drive, duty: &Duty, reason: u16) {
     tim1_motor_pwm::all_off();
-    RUNNING.store(false, Ordering::Relaxed);
-    DUTY_CYCLE_SETPOINT.store(0, Ordering::Relaxed);
-    DUTY_CYCLE.store(0, Ordering::Relaxed);
-    LAST_DUTY_CYCLE.store(0, Ordering::Relaxed);
-    OLD_ROUTINE.store(true, Ordering::Relaxed);
+    drive.running.store(false, Ordering::Relaxed);
+    duty.duty_cycle_setpoint.store(0, Ordering::Relaxed);
+    duty.duty_cycle.store(0, Ordering::Relaxed);
+    duty.last_duty_cycle.store(0, Ordering::Relaxed);
+    drive.old_routine.store(true, Ordering::Relaxed);
     mask_phase_interrupts();
     disable_com_timer_int();
-    KILL_REASON.store(reason, Ordering::Relaxed);
-    KILLED.store(true, Ordering::Relaxed);
+    duty.kill_reason.store(reason, Ordering::Relaxed);
+    duty.killed.store(true, Ordering::Relaxed);
     free(|cs| BB.borrow(cs).borrow_mut().freeze());
 }
 
 // ===============================================================
 fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
+    // Wire the cluster locals once (the only main-context place allowed to
+    // name the static instances). Everything below references these.
+    let sched = &SCHED;
+    let drive = &DRIVE;
+    let duty = &DUTY;
+    let bench = &BENCH;
+    let zct = &ZCT;
+    let rx = &RX;
+
     // Main-context UART parser state (mirrors uart_duty_poll main.c:1367).
     let mut uart = UartDuty::new();
     // ramp_count local-ish (ramp_divider=0 → ramp every tenKhz tick, so
@@ -547,78 +718,78 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
         minz::iwdg::refresh();
 
         // ---- drain USART2 RX ring → parser (uart_duty_poll) --------
-        while let Some(c) = RX.pop() {
-            apply_uart_cmd(uart.step(c));
+        while let Some(c) = rx.pop() {
+            apply_uart_cmd(duty, bench, uart.step(c));
         }
 
         // ---- honor bench stop request ------------------------------
-        if STOP_REQ.swap(false, Ordering::Relaxed) {
+        if bench.stop_req.swap(false, Ordering::Relaxed) {
             tim1_motor_pwm::all_off();
-            RUNNING.store(false, Ordering::Relaxed);
-            OLD_ROUTINE.store(true, Ordering::Relaxed);
-            ZERO_CROSSES.store(0, Ordering::Relaxed);
-            DUTY_CYCLE_SETPOINT.store(0, Ordering::Relaxed);
-            DUTY_CYCLE.store(0, Ordering::Relaxed);
-            LAST_DUTY_CYCLE.store(0, Ordering::Relaxed);
+            drive.running.store(false, Ordering::Relaxed);
+            drive.old_routine.store(true, Ordering::Relaxed);
+            drive.zero_crosses.store(0, Ordering::Relaxed);
+            duty.duty_cycle_setpoint.store(0, Ordering::Relaxed);
+            duty.duty_cycle.store(0, Ordering::Relaxed);
+            duty.last_duty_cycle.store(0, Ordering::Relaxed);
             mask_phase_interrupts();
             disable_com_timer_int();
         }
 
         // ---- e_com_time (main.c:2159) ------------------------------
-        let e_com_time = intervals().e_com_time(); // (sum+4)>>1, 0.5 µs units
+        let e_com_time = sched.intervals().e_com_time(); // (sum+4)>>1, 0.5 µs units
 
         // input = uart_duty_get()  (main.c:1131) then setInput()
-        set_input();
+        set_input(sched, drive, duty);
 
         // min_bemf_counts schedule (main.c:2177-2188, non-bi-dir).
-        if ZERO_CROSSES.load(Ordering::Relaxed) < 5 {
-            MIN_BEMF_UP.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
-            MIN_BEMF_DOWN.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
+        if drive.zero_crosses.load(Ordering::Relaxed) < 5 {
+            drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
+            drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
         } else {
-            MIN_BEMF_UP.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
-            MIN_BEMF_DOWN.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
+            drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
+            drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
         }
 
         // variable_pwm (main.c:2192-2195). mode 1: carrier rides the
         // commutation interval; duty ratio is preserved by the tenKhz
         // `duty*tim1_arr/2000` rescale.
         if VARIABLE_PWM == 1 {
-            let ci = COMMUTATION_INTERVAL.load(Ordering::Relaxed) as i32;
+            let ci = sched.commutation_interval.load(Ordering::Relaxed) as i32;
             let arr = am32::map(ci, 96, 200, (TIMER1_MAX_ARR / 2) as i32, TIMER1_MAX_ARR as i32);
             tim1_motor_pwm::set_carrier_arr(arr as u16);
         }
 
         // average_interval = e_com_time / 3  (main.c:2283)
         let average_interval = if e_com_time > 0 { (e_com_time / 3) as u32 } else { 0 };
-        AVERAGE_INTERVAL.store(average_interval, Ordering::Relaxed);
+        sched.average_interval.store(average_interval, Ordering::Relaxed);
 
         // desync_check block (main.c:2284-2300) — non-bi-dir subset.
-        if DESYNC_CHECK.load(Ordering::Relaxed) && ZERO_CROSSES.load(Ordering::Relaxed) > 10 {
-            let lai = LAST_AVERAGE_INTERVAL.load(Ordering::Relaxed);
+        if drive.desync_check.load(Ordering::Relaxed) && drive.zero_crosses.load(Ordering::Relaxed) > 10 {
+            let lai = sched.last_average_interval.load(Ordering::Relaxed);
             if am32::desync_due(lai, average_interval) {
-                ZERO_CROSSES.store(0, Ordering::Relaxed); // main.c:2286
-                DESYNC_HAPPENED.fetch_add(1, Ordering::Relaxed); // :2287
+                drive.zero_crosses.store(0, Ordering::Relaxed); // main.c:2286
+                drive.desync_happened.fetch_add(1, Ordering::Relaxed); // :2287
                 // (!bi_direction && input>47) || commutation_interval>1000 → running=0
-                let input = INPUT.load(Ordering::Relaxed);
-                let ci = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
+                let input = duty.input.load(Ordering::Relaxed);
+                let ci = sched.commutation_interval.load(Ordering::Relaxed);
                 if input > 47 || ci > 1000 {
-                    RUNNING.store(false, Ordering::Relaxed);
+                    drive.running.store(false, Ordering::Relaxed);
                 }
-                OLD_ROUTINE.store(true, Ordering::Relaxed); // :2291
-                LAST_DUTY_CYCLE.store(MIN_STARTUP_DUTY / 2, Ordering::Relaxed); // :2295
-                bb_record(EV_DSY, (CURRENT_STEP.load(Ordering::Relaxed) - 1) as u8, average_interval as u16);
+                drive.old_routine.store(true, Ordering::Relaxed); // :2291
+                duty.last_duty_cycle.store(MIN_STARTUP_DUTY / 2, Ordering::Relaxed); // :2295
+                bb_record(EV_DSY, (drive.current_step.load(Ordering::Relaxed) - 1) as u8, average_interval as u16);
             }
-            DESYNC_CHECK.store(false, Ordering::Relaxed); // :2297
-            LAST_AVERAGE_INTERVAL.store(average_interval, Ordering::Relaxed); // :2299
+            drive.desync_check.store(false, Ordering::Relaxed); // :2297
+            sched.last_average_interval.store(average_interval, Ordering::Relaxed); // :2299
         }
 
         // ---- low-rpm duty ceiling + filter_level (main.c:2441-2469) --
-        let running = RUNNING.load(Ordering::Relaxed);
+        let running = drive.running.load(Ordering::Relaxed);
         let duty_max = am32::low_rpm_duty_ceiling(e_com_time, running, LOW_RPM_THROTTLE_LIMIT);
-        DUTY_CYCLE_MAXIMUM.store(duty_max, Ordering::Relaxed);
+        duty.duty_cycle_maximum.store(duty_max, Ordering::Relaxed);
 
-        let zc = ZERO_CROSSES.load(Ordering::Relaxed);
-        let ci = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
+        let zc = drive.zero_crosses.load(Ordering::Relaxed);
+        let ci = sched.commutation_interval.load(Ordering::Relaxed);
         let mut filter = if zc < 100 && ci > 500 {
             12
         } else {
@@ -627,51 +798,51 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
         if ci < 50 {
             filter = 2;
         }
-        FILTER_LEVEL.store(filter as u16, Ordering::Relaxed);
+        drive.filter_level.store(filter as u16, Ordering::Relaxed);
 
         // ---- bemf timeout leniency resets (main.c:2261-2273) --------
-        let adj = ADJUSTED_INPUT.load(Ordering::Relaxed);
+        let adj = duty.adjusted_input.load(Ordering::Relaxed);
         if zc > 1000 || adj == 0 {
-            BEMF_TIMEOUT_HAPPENED.store(0, Ordering::Relaxed);
+            drive.bemf_timeout_happened.store(0, Ordering::Relaxed);
         }
         if zc > 100 && adj < 200 {
-            BEMF_TIMEOUT_HAPPENED.store(0, Ordering::Relaxed);
+            drive.bemf_timeout_happened.store(0, Ordering::Relaxed);
         }
 
         // ---- bemf timeout re-kick (main.c:2495-2509) ----------------
         if interval_cnt() > BEMF_TIMEOUT_TICKS && running {
-            BEMF_TIMEOUT_HAPPENED.fetch_add(1, Ordering::Relaxed);
+            drive.bemf_timeout_happened.fetch_add(1, Ordering::Relaxed);
             mask_phase_interrupts();
-            OLD_ROUTINE.store(true, Ordering::Relaxed);
-            if INPUT.load(Ordering::Relaxed) < 48 {
-                RUNNING.store(false, Ordering::Relaxed);
-                COMMUTATION_INTERVAL.store(5000, Ordering::Relaxed);
+            drive.old_routine.store(true, Ordering::Relaxed);
+            if duty.input.load(Ordering::Relaxed) < 48 {
+                drive.running.store(false, Ordering::Relaxed);
+                sched.commutation_interval.store(5000, Ordering::Relaxed);
             }
-            ZERO_CROSSES.store(0, Ordering::Relaxed);
-            zcfoundroutine();
+            drive.zero_crosses.store(0, Ordering::Relaxed);
+            zcfoundroutine(sched, drive, zct, duty);
         }
 
         // ---- telemetry: drain ZC_TRACE ring → USART1 DMA writer -----
-        if ZCT_STREAM_ON.load(Ordering::Relaxed) {
-            drain_zct(tx_writer);
+        if bench.zct_stream_on.load(Ordering::Relaxed) {
+            zct.drain(tx_writer);
         }
         tx_writer.service();
 
         // ---- on-demand info / bb dump / kill notice -----------------
-        if INFO_REQ.swap(false, Ordering::Relaxed) {
-            print_info(tx_writer);
+        if bench.info_req.swap(false, Ordering::Relaxed) {
+            print_info(sched, drive, duty, bench, zct, tx_writer);
         }
-        if DUMP_REQ.swap(false, Ordering::Relaxed) {
+        if bench.dump_req.swap(false, Ordering::Relaxed) {
             dump_bb(tx_writer);
         }
-        if KILLED.swap(false, Ordering::Relaxed) {
-            let reason = KILL_REASON.load(Ordering::Relaxed);
+        if duty.killed.swap(false, Ordering::Relaxed) {
+            let reason = duty.kill_reason.load(Ordering::Relaxed);
             let _ = write!(
                 tx_writer,
                 "!! KILL reason={} (1=OC 2=vbat) iraw={} vbat={}\r\n",
                 reason,
-                I_RAW.load(Ordering::Relaxed),
-                VBAT_RAW.load(Ordering::Relaxed),
+                bench.i_raw.load(Ordering::Relaxed),
+                bench.vbat_raw.load(Ordering::Relaxed),
             );
             dump_bb(tx_writer);
         }
@@ -680,28 +851,28 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
 
 /// setInput() duty-setpoint block — main.c:1180-1326 factory subset
 /// (armed always true; no sine, no brake, no current limit).
-fn set_input() {
+fn set_input(sched: &Sched, drive: &Drive, duty: &Duty) {
     // input = uart_duty_get()  (main.c:1131,1423-1431).
-    let input = UART_DUTY_INPUT.load(Ordering::Relaxed);
-    INPUT.store(input, Ordering::Relaxed);
+    let input = duty.uart_duty_input.load(Ordering::Relaxed);
+    duty.input.store(input, Ordering::Relaxed);
 
-    let running = RUNNING.load(Ordering::Relaxed);
+    let running = drive.running.load(Ordering::Relaxed);
     if input >= 47 {
         // main.c:1182-1196
         if !running {
             tim1_motor_pwm::all_off(); // main.c:1184
-            if !OLD_ROUTINE.load(Ordering::Relaxed) {
-                start_motor(); // main.c:1185-1187
+            if !drive.old_routine.load(Ordering::Relaxed) {
+                start_motor(sched, drive); // main.c:1185-1187
             }
-            RUNNING.store(true, Ordering::Relaxed); // main.c:1188
-            LAST_DUTY_CYCLE.store(MIN_STARTUP_DUTY, Ordering::Relaxed); // :1189
+            drive.running.store(true, Ordering::Relaxed); // main.c:1188
+            duty.last_duty_cycle.store(MIN_STARTUP_DUTY, Ordering::Relaxed); // :1189
         }
     } else {
         // input < 47 (main.c:1203-1300, comp_pwm subset)
         if !running {
-            OLD_ROUTINE.store(true, Ordering::Relaxed);
-            ZERO_CROSSES.store(0, Ordering::Relaxed);
-            BAD_COUNT.store(0, Ordering::Relaxed);
+            drive.old_routine.store(true, Ordering::Relaxed);
+            drive.zero_crosses.store(0, Ordering::Relaxed);
+            drive.bad_count.store(0, Ordering::Relaxed);
             tim1_motor_pwm::all_off();
         }
     }
@@ -710,14 +881,14 @@ fn set_input() {
     // when armed, else 0 (am32::duty_setpoint). Stored here (mirrors the
     // two per-branch stores main.c:1194/1206) then re-clamped below —
     // the intermediate value is what a preempting TIM6 tick reads.
-    DUTY_CYCLE_SETPOINT.store(
+    duty.duty_cycle_setpoint.store(
         am32::duty_setpoint(input, MINIMUM_DUTY_CYCLE, DUTY_FULL),
         Ordering::Relaxed,
     );
-    let mut sp = DUTY_CYCLE_SETPOINT.load(Ordering::Relaxed);
+    let mut sp = duty.duty_cycle_setpoint.load(Ordering::Relaxed);
 
     // startup clamp (main.c:1302-1314), non-bi-dir (30 >> 0 = 30).
-    if input >= 47 && ZERO_CROSSES.load(Ordering::Relaxed) < 30 {
+    if input >= 47 && drive.zero_crosses.load(Ordering::Relaxed) < 30 {
         if sp < MIN_STARTUP_DUTY {
             sp = MIN_STARTUP_DUTY;
         }
@@ -725,69 +896,56 @@ fn set_input() {
             sp = STARTUP_MAX_DUTY_CYCLE;
         }
     }
-    let dmax = DUTY_CYCLE_MAXIMUM.load(Ordering::Relaxed);
+    let dmax = duty.duty_cycle_maximum.load(Ordering::Relaxed);
     if sp > dmax {
         sp = dmax;
     }
-    DUTY_CYCLE_SETPOINT.store(sp, Ordering::Relaxed);
+    duty.duty_cycle_setpoint.store(sp, Ordering::Relaxed);
 }
 
 /// Apply a decoded UART command (am32::UartDuty parses; this performs
 /// the side effects) — uart_duty_poll main.c:1367-1416 + bench keys.
-fn apply_uart_cmd(cmd: Option<UartCmd>) {
+fn apply_uart_cmd(duty: &Duty, bench: &Bench, cmd: Option<UartCmd>) {
     match cmd {
         // main.c:1376-1381,1397-1398 stop ('s'/'w' and a committed 0):
         // zero throttle + adjusted + deadman and request the bench stop.
         Some(UartCmd::Stop) => {
-            UART_DUTY_INPUT.store(0, Ordering::Relaxed);
-            ADJUSTED_INPUT.store(0, Ordering::Relaxed);
-            UART_DEADMAN_TICKS.store(0, Ordering::Relaxed);
-            STOP_REQ.store(true, Ordering::Relaxed);
+            duty.uart_duty_input.store(0, Ordering::Relaxed);
+            duty.adjusted_input.store(0, Ordering::Relaxed);
+            bench.uart_deadman_ticks.store(0, Ordering::Relaxed);
+            bench.stop_req.store(true, Ordering::Relaxed);
         }
         Some(UartCmd::SetThrottle(inn)) => {
-            UART_DUTY_INPUT.store(inn, Ordering::Relaxed);
+            duty.uart_duty_input.store(inn, Ordering::Relaxed);
             // adjusted_input mirror (main.c:1410)
-            ADJUSTED_INPUT.store(if inn <= 48 { 0 } else { inn }, Ordering::Relaxed);
-            UART_DEADMAN_TICKS.store(0, Ordering::Relaxed);
+            duty.adjusted_input.store(if inn <= 48 { 0 } else { inn }, Ordering::Relaxed);
+            bench.uart_deadman_ticks.store(0, Ordering::Relaxed);
         }
         Some(UartCmd::TraceToggle) => {
-            let on = !ZCT_STREAM_ON.load(Ordering::Relaxed);
-            ZCT_STREAM_ON.store(on, Ordering::Relaxed);
+            let on = !bench.zct_stream_on.load(Ordering::Relaxed);
+            bench.zct_stream_on.store(on, Ordering::Relaxed);
         }
-        Some(UartCmd::Info) => INFO_REQ.store(true, Ordering::Relaxed),
-        Some(UartCmd::BbDump) => DUMP_REQ.store(true, Ordering::Relaxed),
+        Some(UartCmd::Info) => bench.info_req.store(true, Ordering::Relaxed),
+        Some(UartCmd::BbDump) => bench.dump_req.store(true, Ordering::Relaxed),
         None => {}
     }
 }
 
-/// Drain up to 3 ZC_TRACE records into the USART1 DMA ring (main.c:2347-2357).
-fn drain_zct(tx: &mut UartTxWriter) {
-    let mut nrec = 0;
-    while ZCT_TAIL.load(Ordering::Relaxed) != ZCT_HEAD.load(Ordering::Relaxed) && nrec < 3 {
-        let t = ZCT_TAIL.load(Ordering::Relaxed);
-        for i in 0..ZCT_REC {
-            let _ = tx.push(ZCT_RING[t][i].load(Ordering::Relaxed) as u8);
-        }
-        ZCT_TAIL.store((t + 1) % ZCT_N, Ordering::Relaxed);
-        nrec += 1;
-    }
-}
-
-fn print_info(tx: &mut UartTxWriter) {
+fn print_info(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &ZctTrace, tx: &mut UartTxWriter) {
     let _ = write!(
         tx,
         "i step={} old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop={} guard={}\r\n",
-        CURRENT_STEP.load(Ordering::Relaxed),
-        OLD_ROUTINE.load(Ordering::Relaxed) as u8,
-        RUNNING.load(Ordering::Relaxed) as u8,
-        COMMUTATION_INTERVAL.load(Ordering::Relaxed),
-        AVERAGE_INTERVAL.load(Ordering::Relaxed),
-        ZERO_CROSSES.load(Ordering::Relaxed),
-        DUTY_CYCLE.load(Ordering::Relaxed),
-        I_RAW.load(Ordering::Relaxed),
-        VBAT_RAW.load(Ordering::Relaxed),
-        ZCT_DROP.load(Ordering::Relaxed),
-        ZCFR_GUARD_HITS.load(Ordering::Relaxed),
+        drive.current_step.load(Ordering::Relaxed),
+        drive.old_routine.load(Ordering::Relaxed) as u8,
+        drive.running.load(Ordering::Relaxed) as u8,
+        sched.commutation_interval.load(Ordering::Relaxed),
+        sched.average_interval.load(Ordering::Relaxed),
+        drive.zero_crosses.load(Ordering::Relaxed),
+        duty.duty_cycle.load(Ordering::Relaxed),
+        bench.i_raw.load(Ordering::Relaxed),
+        bench.vbat_raw.load(Ordering::Relaxed),
+        zct.drop.load(Ordering::Relaxed),
+        drive.zcfr_guard_hits.load(Ordering::Relaxed),
     );
 }
 
@@ -931,23 +1089,23 @@ fn main() -> ! {
 // ===============================================================
 #[interrupt]
 fn COMP() {
-    comp_isr()
+    comp_isr(&SCHED, &DRIVE)
 }
 
 #[inline]
-fn comp_isr() {
+fn comp_isr(sched: &Sched, drive: &Drive) {
     let exti = unsafe { &*stm32::EXTI::ptr() };
     if exti.pr1.read().pr22().bit_is_set() {
         // if INTERVAL_TIMER->CNT > average_interval>>1  (it.c:280)
-        if interval_cnt() > (AVERAGE_INTERVAL.load(Ordering::Relaxed) >> 1) {
+        if interval_cnt() > (sched.average_interval.load(Ordering::Relaxed) >> 1) {
             comp2::clear_pending(); // it.c:281
-            interrupt_routine(); // it.c:282
+            interrupt_routine(sched, drive); // it.c:282
         } else {
             // gate closed: clear ONLY if the level sits at the pre-ZC
             // level (AM32: getCompOutputLevel()==rising; minz-inverted →
             // comp2::value() != rising). Else LEAVE PENDING (their camp:
             // a post-ZC crossing re-fires until the gate opens).
-            if comp2::value() != RISING.load(Ordering::Relaxed) {
+            if comp2::value() != drive.rising.load(Ordering::Relaxed) {
                 comp2::clear_pending(); // it.c:284-285
             }
         }
@@ -955,11 +1113,12 @@ fn comp_isr() {
 }
 
 /// interruptRoutine — main.c:918-948.
-fn interrupt_routine() {
+#[inline]
+fn interrupt_routine(sched: &Sched, drive: &Drive) {
     // persistence: reject while the level is still pre-ZC (main.c:932-940;
     // `getCompOutputLevel()==rising` → return, inverted to `value != rising`).
-    let filter = FILTER_LEVEL.load(Ordering::Relaxed);
-    let rising = RISING.load(Ordering::Relaxed);
+    let filter = drive.filter_level.load(Ordering::Relaxed);
+    let rising = drive.rising.load(Ordering::Relaxed);
     for _ in 0..filter {
         if comp2::value() != rising {
             return;
@@ -967,13 +1126,13 @@ fn interrupt_routine() {
     }
     free(|_| {
         mask_phase_interrupts(); // main.c:942
-        LAST_ZC.store(THIS_ZC.load(Ordering::Relaxed), Ordering::Relaxed); // :943
+        sched.last_zc.store(sched.this_zc.load(Ordering::Relaxed), Ordering::Relaxed); // :943
         let t = interval_cnt() as u16; // :944 thiszctime = INTERVAL_TIMER_COUNT
-        THIS_ZC.store(t, Ordering::Relaxed);
+        sched.this_zc.store(t, Ordering::Relaxed);
         set_interval_cnt(0); // :945
-        set_and_enable_com_int(WAIT_TIME.load(Ordering::Relaxed).wrapping_add(1)); // :946
+        set_and_enable_com_int(sched.wait_time.load(Ordering::Relaxed).wrapping_add(1)); // :946
     });
-    bb_record(EV_ACC, (CURRENT_STEP.load(Ordering::Relaxed) - 1) as u8, THIS_ZC.load(Ordering::Relaxed));
+    bb_record(EV_ACC, (drive.current_step.load(Ordering::Relaxed) - 1) as u8, sched.this_zc.load(Ordering::Relaxed));
 }
 
 // ===============================================================
@@ -982,31 +1141,31 @@ fn interrupt_routine() {
 // ===============================================================
 #[interrupt]
 fn TIM1_UP_TIM16() {
-    tim1_up_tim16_isr()
+    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY)
 }
 
 #[inline]
-fn tim1_up_tim16_isr() {
+fn tim1_up_tim16_isr(sched: &Sched, drive: &Drive, zct: &ZctTrace, duty: &Duty) {
     com_clear_flag(); // ack TIM16 UIF (TIM1.UIE is off, so this is the COM tick)
     disable_com_timer_int(); // main.c:898
-    commutate(); // :899
+    commutate(sched, drive); // :899
     // commutation_interval = (ci + (lastzctime+thiszctime)/2) / 2  (:900)
-    let ci_old = COMMUTATION_INTERVAL.load(Ordering::Relaxed);
-    let lz = LAST_ZC.load(Ordering::Relaxed) as u32;
-    let tz = THIS_ZC.load(Ordering::Relaxed) as u32;
+    let ci_old = sched.commutation_interval.load(Ordering::Relaxed);
+    let lz = sched.last_zc.load(Ordering::Relaxed) as u32;
+    let tz = sched.this_zc.load(Ordering::Relaxed) as u32;
     let ci = am32::blend_interval(ci_old, lz, tz);
-    COMMUTATION_INTERVAL.store(ci, Ordering::Relaxed);
+    sched.commutation_interval.store(ci, Ordering::Relaxed);
     // advance = ci*temp_advance>>6 ; waitTime = ci/2 - advance  (:902-906)
     let advance = am32::advance_of(ci, TEMP_ADVANCE);
     let wait = am32::wait_time(ci, advance);
-    WAIT_TIME.store(wait as u16, Ordering::Relaxed);
-    zct_write(); // ZC_TRACE main.c:908
-    if !OLD_ROUTINE.load(Ordering::Relaxed) {
+    sched.wait_time.store(wait as u16, Ordering::Relaxed);
+    zct.write(sched, drive, duty); // ZC_TRACE main.c:908
+    if !drive.old_routine.load(Ordering::Relaxed) {
         enable_comp_interrupts(); // main.c:910-912
     }
-    let zc = ZERO_CROSSES.load(Ordering::Relaxed);
+    let zc = drive.zero_crosses.load(Ordering::Relaxed);
     if zc < 10000 {
-        ZERO_CROSSES.store(zc + 1, Ordering::Relaxed); // main.c:913-915
+        drive.zero_crosses.store(zc + 1, Ordering::Relaxed); // main.c:913-915
     }
 }
 
@@ -1019,87 +1178,87 @@ static OC_CNT: AtomicU32 = AtomicU32::new(0);
 
 #[interrupt]
 fn TIM6_DACUNDER() {
-    tim6_dacunder_isr()
+    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT)
 }
 
 #[inline]
-fn tim6_dacunder_isr() {
+fn tim6_dacunder_isr(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &ZctTrace) {
     minz::tim6_loop::clear_flag();
 
     // duty_cycle = duty_cycle_setpoint (main.c:1611); tenkhzcounter++ (:1612)
-    let duty = DUTY_CYCLE_SETPOINT.load(Ordering::Relaxed) as i32;
-    TENKHZ_COUNTER.store(TENKHZ_COUNTER.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
+    let duty_val = duty.duty_cycle_setpoint.load(Ordering::Relaxed) as i32;
+    drive.tenkhz_counter.store(drive.tenkhz_counter.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
 
-    if !KILLED.load(Ordering::Relaxed) {
+    if !duty.killed.load(Ordering::Relaxed) {
         // ---- duty ramp (main.c:1736-1791). ramp_divider=0 → every tick.
-        let _ = RAMP_COUNT.fetch_add(1, Ordering::Relaxed);
-        let last = LAST_DUTY_CYCLE.load(Ordering::Relaxed) as i32;
-        let zc = ZERO_CROSSES.load(Ordering::Relaxed);
-        let avg = AVERAGE_INTERVAL.load(Ordering::Relaxed);
+        let _ = duty.ramp_count.fetch_add(1, Ordering::Relaxed);
+        let last = duty.last_duty_cycle.load(Ordering::Relaxed) as i32;
+        let zc = drive.zero_crosses.load(Ordering::Relaxed);
+        let avg = sched.average_interval.load(Ordering::Relaxed);
         // Ramp rate selection + one-sided step clamp + 0..2000 domain
         // clamp (am32::ramp_rate / ramp_toward).
         let rate = am32::ramp_rate(zc, last, avg);
-        let duty = am32::ramp_toward(last, duty, rate);
-        DUTY_CYCLE.store(duty, Ordering::Relaxed);
+        let duty_val = am32::ramp_toward(last, duty_val, rate);
+        duty.duty_cycle.store(duty_val, Ordering::Relaxed);
 
         // ---- apply (main.c:1771-1791) ----
         let tim1_arr = max_duty() as u32;
-        let running = RUNNING.load(Ordering::Relaxed);
-        let input = INPUT.load(Ordering::Relaxed);
-        let base = (duty as u32 * tim1_arr) / 2000;
+        let running = drive.running.load(Ordering::Relaxed);
+        let input = duty.input.load(Ordering::Relaxed);
+        let base = (duty_val as u32 * tim1_arr) / 2000;
         let adjusted = if running && input > 47 { base + 1 } else { base };
-        LAST_DUTY_CYCLE.store(duty, Ordering::Relaxed); // main.c:1789
+        duty.last_duty_cycle.store(duty_val, Ordering::Relaxed); // main.c:1789
         tim1_motor_pwm::set_carrier_arr(tim1_arr as u16); // SET_AUTO_RELOAD_PWM (:1790)
         tim1_motor_pwm::set_duty(adjusted as u16); // SET_DUTY_CYCLE_ALL (:1791)
 
         // ---- old_routine polling (main.c:1679-1696) ----
-        if OLD_ROUTINE.load(Ordering::Relaxed) && running {
+        if drive.old_routine.load(Ordering::Relaxed) && running {
             mask_phase_interrupts(); // main.c:1681
-            get_bemf_state(); // :1682
-            if !ZCFOUND.load(Ordering::Relaxed) {
-                let rising = RISING.load(Ordering::Relaxed);
-                let bc = BEMF_COUNTER.load(Ordering::Relaxed);
+            get_bemf_state(drive); // :1682
+            if !drive.zcfound.load(Ordering::Relaxed) {
+                let rising = drive.rising.load(Ordering::Relaxed);
+                let bc = drive.bemf_counter.load(Ordering::Relaxed);
                 let thresh = if rising {
-                    MIN_BEMF_UP.load(Ordering::Relaxed)
+                    drive.min_bemf_up.load(Ordering::Relaxed)
                 } else {
-                    MIN_BEMF_DOWN.load(Ordering::Relaxed)
+                    drive.min_bemf_down.load(Ordering::Relaxed)
                 };
                 if bc > thresh {
-                    ZCFOUND.store(true, Ordering::Relaxed);
-                    zcfoundroutine();
+                    drive.zcfound.store(true, Ordering::Relaxed);
+                    zcfoundroutine(sched, drive, zct, duty);
                 }
             }
         }
     }
 
     // ---- UART deadman (main.c:1425): 3 s no command → throttle 0 ----
-    let dm = UART_DEADMAN_TICKS.load(Ordering::Relaxed) + 1;
+    let dm = bench.uart_deadman_ticks.load(Ordering::Relaxed) + 1;
     if dm > UART_DEADMAN_LIMIT {
-        UART_DUTY_INPUT.store(0, Ordering::Relaxed);
-        ADJUSTED_INPUT.store(0, Ordering::Relaxed);
-        UART_DEADMAN_TICKS.store(UART_DEADMAN_LIMIT + 1, Ordering::Relaxed);
+        duty.uart_duty_input.store(0, Ordering::Relaxed);
+        duty.adjusted_input.store(0, Ordering::Relaxed);
+        bench.uart_deadman_ticks.store(UART_DEADMAN_LIMIT + 1, Ordering::Relaxed);
     } else {
-        UART_DEADMAN_TICKS.store(dm, Ordering::Relaxed);
+        bench.uart_deadman_ticks.store(dm, Ordering::Relaxed);
     }
 
     // ---- observer ADC harvest + bench-safety kills ----
     let (_a, _b, cur, vbat) = adc_sync::inj_read();
-    I_RAW.store(cur, Ordering::Relaxed);
-    VBAT_RAW.store(vbat, Ordering::Relaxed);
+    bench.i_raw.store(cur, Ordering::Relaxed);
+    bench.vbat_raw.store(vbat, Ordering::Relaxed);
     let (acc, cnt, tripped) = am32::oc_step(
-        OC_ACC.load(Ordering::Relaxed),
-        OC_CNT.load(Ordering::Relaxed),
+        bench.oc_acc.load(Ordering::Relaxed),
+        bench.oc_cnt.load(Ordering::Relaxed),
         cur,
         OC_WINDOW_TICKS,
         OC_KILL_RAW_AVG,
     );
-    OC_ACC.store(acc, Ordering::Relaxed);
-    OC_CNT.store(cnt, Ordering::Relaxed);
+    bench.oc_acc.store(acc, Ordering::Relaxed);
+    bench.oc_cnt.store(cnt, Ordering::Relaxed);
     if tripped {
-        safety_kill(1);
+        safety_kill(drive, duty, 1);
     }
-    if vbat < VBAT_ABS_FLOOR_RAW && RUNNING.load(Ordering::Relaxed) {
-        safety_kill(2);
+    if vbat < VBAT_ABS_FLOOR_RAW && drive.running.load(Ordering::Relaxed) {
+        safety_kill(drive, duty, 2);
     }
 }
 
