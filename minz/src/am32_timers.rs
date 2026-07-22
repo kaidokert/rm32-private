@@ -125,6 +125,10 @@ impl minz_core::am32_hal::ComTimers for Am32Timers {
     fn disable_com_timer_int(&self) {
         disable_com_timer_int()
     }
+    #[inline(always)]
+    fn com_clear_flag(&self) {
+        com_clear_flag()
+    }
 }
 
 /// 10 us wall-clock ticks from DWT.CYCCNT (80 MHz / 800), u16 wrap

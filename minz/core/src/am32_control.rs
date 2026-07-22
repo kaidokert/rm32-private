@@ -11,7 +11,7 @@
 use core::sync::atomic::Ordering;
 
 use crate::am32;
-use crate::am32_hal::{CompCtl, ComTimers, Cs, Hal, MotorPwm, Recorder};
+use crate::am32_hal::{CompCtl, ComTimers, Cs, Hal, InjAdc, LoopTimer, MotorPwm, Recorder};
 use crate::am32_loop::{
     BAD_COUNT_THRESHOLD, BEMF_TIMEOUT_TICKS, Bench, Drive, Duty, MIN_STARTUP_DUTY,
     POLLING_MODE_CHANGEOVER, Sched, STARTUP_INTERVAL_TICKS, TEMP_ADVANCE, VARIABLE_PWM,
@@ -31,7 +31,16 @@ use crate::zct_trace::ZctTrace;
 pub fn commutate(
     sched: &Sched,
     drive: &Drive,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
 ) {
     // step++ ; if step>6 { step=1; desync_check=1 }  (main.c:856-861)
     let mut step = drive.current_step.load(Ordering::Relaxed);
@@ -76,7 +85,16 @@ pub fn commutate(
 #[inline]
 pub fn zcfr_blend(
     sched: &Sched,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
 ) -> (u32, u32) {
     // thiszctime = INTERVAL_TIMER_COUNT; SET_INTERVAL_TIMER_COUNT(0)
     let thiszc = hal.tim.interval_cnt() as u16; // main.c:1870
@@ -104,7 +122,16 @@ pub fn zcfr_spin_wait(
     drive: &Drive,
     zc: u32,
     wait: u32,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
 ) {
     let mut guard: u32 = 0;
     loop {
@@ -128,7 +155,16 @@ pub fn zcfoundroutine<const N: usize>(
     drive: &Drive,
     zct: &ZctTrace<N>,
     duty: &Duty,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
 ) {
     let (ci, wait) = zcfr_blend(sched, hal); // main.c:1870-1874
     let zc = drive.zero_crosses.load(Ordering::Relaxed);
@@ -159,7 +195,16 @@ pub fn zcfoundroutine<const N: usize>(
 pub fn start_motor(
     sched: &Sched,
     drive: &Drive,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
 ) {
     if !drive.running.load(Ordering::Relaxed) {
         commutate(sched, drive, hal); // main.c:953
@@ -178,7 +223,16 @@ pub fn start_motor(
 pub fn safety_kill(
     drive: &Drive,
     duty: &Duty,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
     reason: u16,
 ) {
     hal.pwm.all_off();
@@ -200,7 +254,16 @@ pub fn honor_stop(
     drive: &Drive,
     duty: &Duty,
     bench: &Bench,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
 ) {
     if bench.stop_req.swap(false, Ordering::Relaxed) {
         hal.pwm.all_off();
@@ -221,7 +284,16 @@ pub fn honor_stop(
 #[inline]
 pub fn variable_pwm_ride(
     sched: &Sched,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
 ) {
     if VARIABLE_PWM == 1 {
         let max_arr = hal.pwm.base_arr();
@@ -238,7 +310,16 @@ pub fn bemf_timeout_rekick<const N: usize>(
     drive: &Drive,
     duty: &Duty,
     zct: &ZctTrace<N>,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
     running: bool,
 ) {
     if hal.tim.interval_cnt() > BEMF_TIMEOUT_TICKS && running {
@@ -260,7 +341,16 @@ pub fn desync_check_band(
     sched: &Sched,
     drive: &Drive,
     duty: &Duty,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
     average_interval: u32,
 ) {
     if drive.desync_check.load(Ordering::Relaxed) && drive.zero_crosses.load(Ordering::Relaxed) > 10 {
@@ -290,7 +380,16 @@ pub fn set_input(
     sched: &Sched,
     drive: &Drive,
     duty: &Duty,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
 ) {
     // input = uart_duty_get()  (main.c:1131,1423-1431).
     let input = duty.uart_duty_input.load(Ordering::Relaxed);
@@ -305,7 +404,16 @@ pub fn set_input_arming(
     sched: &Sched,
     drive: &Drive,
     duty: &Duty,
-    hal: &Hal<'_, impl MotorPwm, impl CompCtl, impl ComTimers, impl Recorder, impl Cs>,
+    hal: &Hal<
+        '_,
+        impl MotorPwm,
+        impl CompCtl,
+        impl ComTimers,
+        impl Recorder,
+        impl Cs,
+        impl InjAdc,
+        impl LoopTimer,
+    >,
     input: u16,
 ) {
     let running = drive.running.load(Ordering::Relaxed);
@@ -356,289 +464,12 @@ pub fn get_bemf_state(drive: &Drive, comp: &impl CompCtl) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::am32::{ZCT_REC, ZctRing};
+    use crate::am32_hal::mock::{BenchStore, DriveStore, DutyStore, MockHal, SchedStore, ZctStore};
     use crate::am32_loop::{DUTY_FULL, INIT_INTERVAL_TICKS, STARTUP_MAX_DUTY_CYCLE};
-    use core::cell::{Cell, RefCell};
-    use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize};
 
-    // --- The mock HAL: one struct implements all five traits, with
-    // --- an ordered call log (rm32 HAL-call-counter idiom).
-    #[derive(Default)]
-    struct MockHal {
-        calls: RefCell<Vec<&'static str>>,
-        roles: RefCell<Vec<u8>>,
-        comp_inputs: RefCell<Vec<usize>>,
-        carrier_arrs: RefCell<Vec<u16>>,
-        duties: RefCell<Vec<u16>>,
-        com_arrs: RefCell<Vec<u16>>,
-        events: RefCell<Vec<(u8, u8, u16)>>,
-        frozen: Cell<bool>,
-        comp_value: Cell<bool>,
-        /// INTERVAL_TIMER CNT model; advances by `interval_step` per
-        /// read so the spin-wait can be driven deterministically.
-        interval: Cell<u32>,
-        interval_step: Cell<u32>,
-        max_duty: Cell<u16>,
-        base_arr: Cell<u16>,
-    }
-
-    impl MockHal {
-        fn new() -> Self {
-            let m = Self::default();
-            m.max_duty.set(3332);
-            m.base_arr.set(3332);
-            m
-        }
-        fn hal(&self) -> Hal<'_, MockHal, MockHal, MockHal, MockHal, MockHal> {
-            Hal { pwm: self, comp: self, tim: self, bb: self, cs: self }
-        }
-        fn called(&self, name: &'static str) -> bool {
-            self.calls.borrow().iter().any(|c| *c == name)
-        }
-        fn clear_calls(&self) {
-            self.calls.borrow_mut().clear();
-        }
-    }
-
-    impl MotorPwm for MockHal {
-        fn set_duty(&self, duty: u16) {
-            self.calls.borrow_mut().push("set_duty");
-            self.duties.borrow_mut().push(duty);
-        }
-        fn set_roles_for_step(&self, step: u8) {
-            self.calls.borrow_mut().push("set_roles_for_step");
-            self.roles.borrow_mut().push(step);
-        }
-        fn all_off(&self) {
-            self.calls.borrow_mut().push("all_off");
-        }
-        fn set_carrier_arr(&self, arr: u16) {
-            self.calls.borrow_mut().push("set_carrier_arr");
-            self.carrier_arrs.borrow_mut().push(arr);
-        }
-        fn max_duty(&self) -> u16 {
-            self.max_duty.get()
-        }
-        fn base_arr(&self) -> u16 {
-            self.base_arr.get()
-        }
-    }
-
-    impl CompCtl for MockHal {
-        fn value(&self) -> bool {
-            self.comp_value.get()
-        }
-        fn change_comp_input(&self, sector: usize) {
-            self.calls.borrow_mut().push("change_comp_input");
-            self.comp_inputs.borrow_mut().push(sector);
-        }
-        fn enable_comp_interrupts(&self) {
-            self.calls.borrow_mut().push("enable_comp_interrupts");
-        }
-        fn mask_phase_interrupts(&self) {
-            self.calls.borrow_mut().push("mask_phase_interrupts");
-        }
-    }
-
-    impl ComTimers for MockHal {
-        fn interval_cnt(&self) -> u32 {
-            let v = self.interval.get();
-            self.interval.set(v + self.interval_step.get());
-            v
-        }
-        fn set_interval_cnt(&self, v: u16) {
-            self.calls.borrow_mut().push("set_interval_cnt");
-            self.interval.set(v as u32);
-        }
-        fn com_set_arr(&self, arr: u16) {
-            self.calls.borrow_mut().push("com_set_arr");
-            self.com_arrs.borrow_mut().push(arr);
-        }
-        fn set_and_enable_com_int(&self, arr: u16) {
-            self.calls.borrow_mut().push("set_and_enable_com_int");
-            self.com_arrs.borrow_mut().push(arr);
-        }
-        fn disable_com_timer_int(&self) {
-            self.calls.borrow_mut().push("disable_com_timer_int");
-        }
-    }
-
-    impl Recorder for MockHal {
-        fn record(&self, ty: u8, sector: u8, data: u16) {
-            self.events.borrow_mut().push((ty, sector, data));
-        }
-        fn freeze(&self) {
-            self.frozen.set(true);
-        }
-    }
-
-    impl Cs for MockHal {
-        fn free<R>(&self, f: impl FnOnce() -> R) -> R {
-            f() // NullCs: host tests are single-threaded
-        }
-    }
-
-    // --- Owned-atomics fixtures (the am32_loop test idiom: each store
-    // --- owns statics-shaped storage; a method borrows the cluster).
-    #[derive(Default)]
-    struct SchedStore {
-        commutation_interval: AtomicU32,
-        interval_hist: [AtomicU32; 6],
-        average_interval: AtomicU32,
-        last_average_interval: AtomicU32,
-        last_zc: AtomicU16,
-        this_zc: AtomicU16,
-        wait_time: AtomicU16,
-    }
-    impl SchedStore {
-        fn sched(&self) -> Sched<'_> {
-            Sched {
-                commutation_interval: &self.commutation_interval,
-                interval_hist: &self.interval_hist,
-                average_interval: &self.average_interval,
-                last_average_interval: &self.last_average_interval,
-                last_zc: &self.last_zc,
-                this_zc: &self.this_zc,
-                wait_time: &self.wait_time,
-            }
-        }
-    }
-
-    #[derive(Default)]
-    struct DriveStore {
-        current_step: AtomicU16,
-        rising: AtomicBool,
-        old_routine: AtomicBool,
-        running: AtomicBool,
-        zcfound: AtomicBool,
-        bemf_counter: AtomicU16,
-        min_bemf_up: AtomicU16,
-        min_bemf_down: AtomicU16,
-        zero_crosses: AtomicU32,
-        filter_level: AtomicU16,
-        bad_count: AtomicU16,
-        desync_check: AtomicBool,
-        desync_happened: AtomicU32,
-        bemf_timeout_happened: AtomicU32,
-        tenkhz_counter: AtomicU16,
-        zcfr_guard_hits: AtomicU32,
-    }
-    impl DriveStore {
-        fn drive(&self) -> Drive<'_> {
-            Drive {
-                current_step: &self.current_step,
-                rising: &self.rising,
-                old_routine: &self.old_routine,
-                running: &self.running,
-                zcfound: &self.zcfound,
-                bemf_counter: &self.bemf_counter,
-                min_bemf_up: &self.min_bemf_up,
-                min_bemf_down: &self.min_bemf_down,
-                zero_crosses: &self.zero_crosses,
-                filter_level: &self.filter_level,
-                bad_count: &self.bad_count,
-                desync_check: &self.desync_check,
-                desync_happened: &self.desync_happened,
-                bemf_timeout_happened: &self.bemf_timeout_happened,
-                tenkhz_counter: &self.tenkhz_counter,
-                zcfr_guard_hits: &self.zcfr_guard_hits,
-            }
-        }
-    }
-
-    #[derive(Default)]
-    struct DutyStore {
-        input: AtomicU16,
-        adjusted_input: AtomicU16,
-        uart_duty_input: AtomicU16,
-        duty_cycle_setpoint: AtomicU16,
-        duty_cycle: AtomicU16,
-        last_duty_cycle: AtomicU16,
-        duty_cycle_maximum: AtomicU16,
-        ramp_count: AtomicU16,
-        killed: AtomicBool,
-        kill_reason: AtomicU16,
-    }
-    impl DutyStore {
-        fn duty(&self) -> Duty<'_> {
-            Duty {
-                input: &self.input,
-                adjusted_input: &self.adjusted_input,
-                uart_duty_input: &self.uart_duty_input,
-                duty_cycle_setpoint: &self.duty_cycle_setpoint,
-                duty_cycle: &self.duty_cycle,
-                last_duty_cycle: &self.last_duty_cycle,
-                duty_cycle_maximum: &self.duty_cycle_maximum,
-                ramp_count: &self.ramp_count,
-                killed: &self.killed,
-                kill_reason: &self.kill_reason,
-            }
-        }
-    }
-
-    #[derive(Default)]
-    struct BenchStore {
-        uart_deadman_ticks: AtomicU32,
-        i_raw: AtomicU16,
-        vbat_raw: AtomicU16,
-        oc_acc: AtomicU32,
-        oc_cnt: AtomicU32,
-        stop_req: AtomicBool,
-        dump_req: AtomicBool,
-        info_req: AtomicBool,
-        zct_stream_on: AtomicBool,
-    }
-    impl BenchStore {
-        fn bench(&self) -> Bench<'_> {
-            Bench {
-                uart_deadman_ticks: &self.uart_deadman_ticks,
-                i_raw: &self.i_raw,
-                vbat_raw: &self.vbat_raw,
-                oc_acc: &self.oc_acc,
-                oc_cnt: &self.oc_cnt,
-                stop_req: &self.stop_req,
-                dump_req: &self.dump_req,
-                info_req: &self.info_req,
-                zct_stream_on: &self.zct_stream_on,
-            }
-        }
-    }
-
-    struct ZctStore {
-        ring: [[AtomicU16; ZCT_REC]; 8],
-        head: AtomicUsize,
-        tail: AtomicUsize,
-        drop: AtomicU32,
-        comm_n: AtomicU32,
-        batching: AtomicBool,
-    }
-    impl ZctStore {
-        fn new() -> Self {
-            Self {
-                ring: [const { [const { AtomicU16::new(0) }; ZCT_REC] }; 8],
-                head: AtomicUsize::new(0),
-                tail: AtomicUsize::new(0),
-                drop: AtomicU32::new(0),
-                comm_n: AtomicU32::new(0),
-                batching: AtomicBool::new(false),
-            }
-        }
-        fn zct(&self) -> ZctTrace<'_, 8> {
-            ZctTrace {
-                ring: ZctRing {
-                    ring: &self.ring,
-                    head: &self.head,
-                    tail: &self.tail,
-                    drop: &self.drop,
-                },
-                comm_n: &self.comm_n,
-                batching: &self.batching,
-            }
-        }
-        fn records(&self) -> usize {
-            (self.head.load(Ordering::Relaxed) + 8 - self.tail.load(Ordering::Relaxed)) % 8
-        }
-    }
+    // The mock HAL (all seven seams on one struct, ordered call log)
+    // + the owned-atomics cluster fixtures live in
+    // `crate::am32_hal::mock`, shared with the am32_isr tests.
 
     // --- commutate --------------------------------------------------
 

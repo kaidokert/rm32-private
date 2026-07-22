@@ -18,6 +18,7 @@ pub mod a85;
 pub mod am32;
 pub mod am32_control;
 pub mod am32_hal;
+pub mod am32_isr;
 pub mod am32_loop;
 pub mod blackbox;
 pub mod drive;

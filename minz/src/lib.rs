@@ -2,7 +2,6 @@
 
 pub mod a85;
 pub mod adc_sync;
-pub mod am32_isr;
 pub mod am32_timers;
 pub mod bb;
 pub mod board_init;
@@ -43,6 +42,8 @@ pub type Am32Hal = minz_core::am32_hal::Hal<
     am32_timers::Am32Timers,
     bb::Bb,
     bb::CortexCs,
+    adc_sync::InjAdc1,
+    tim6_loop::Tim6Loop,
 >;
 
 use fugit::HertzU32 as Hertz;

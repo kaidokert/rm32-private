@@ -234,6 +234,18 @@ pub fn inj_read() -> (u16, u16, u16, u16) {
     )
 }
 
+/// The `minz_core::am32_hal::InjAdc` register impl over the ADC1
+/// injected group — zero-sized, static dispatch; delegates to
+/// [`inj_read`], unchanged.
+pub struct InjAdc1;
+
+impl minz_core::am32_hal::InjAdc for InjAdc1 {
+    #[inline(always)]
+    fn inj_read(&self) -> (u16, u16, u16, u16) {
+        inj_read()
+    }
+}
+
 /// Latest current sample from the free-run ring's newest word — the
 /// diagnostic mirror of the injected current. Cheap live read; used
 /// as a coarse per-cycle spike detector for the analog black-box

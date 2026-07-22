@@ -255,6 +255,14 @@ pub fn clear_pending() {
     exti.pr1.write(|w| w.pr22().set_bit());
 }
 
+/// EXTI line 22 (COMP2) pending-bit read — the COMP ISR entry gate
+/// (AM32 stm32l4xx_it.c:278 `EXTI_GetITStatus`).
+#[inline]
+pub fn exti_pending() -> bool {
+    let exti = unsafe { &*EXTI::ptr() };
+    exti.pr1.read().pr22().bit_is_set()
+}
+
 /// Software re-pend of the COMP2 EXTI line (SWIER1[22]) — the AM32
 /// camp-at-the-gate port. AM32's COMP_IRQHandler does NOT clear the
 /// pending flag when its gate is closed but the comparator level
@@ -339,5 +347,13 @@ impl minz_core::am32_hal::CompCtl for Comp2 {
     #[inline(always)]
     fn mask_phase_interrupts(&self) {
         am32_mask_phase_interrupts()
+    }
+    #[inline(always)]
+    fn exti_pending(&self) -> bool {
+        exti_pending()
+    }
+    #[inline(always)]
+    fn clear_pending(&self) {
+        clear_pending()
     }
 }

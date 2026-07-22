@@ -35,3 +35,14 @@ pub fn clear_flag() {
     let tim = unsafe { &*stm32::TIM6::ptr() };
     tim.sr.write(|w| unsafe { w.bits(0) });
 }
+
+/// The `minz_core::am32_hal::LoopTimer` register impl over TIM6 —
+/// zero-sized, static dispatch; delegates to [`clear_flag`].
+pub struct Tim6Loop;
+
+impl minz_core::am32_hal::LoopTimer for Tim6Loop {
+    #[inline(always)]
+    fn clear_flag(&self) {
+        clear_flag()
+    }
+}

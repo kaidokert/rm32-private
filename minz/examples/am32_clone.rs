@@ -11,10 +11,10 @@
 //! Module layout: this program keeps the storage (statics + cluster
 //! wiring), the orchestrators (main / main_entry + its bands), and the
 //! vector table; the control layer lives host-tested in
-//! `minz_core::{am32_control, am32_loop, zct_trace}` reaching hardware
-//! only through the `minz_core::am32_hal` traits (static dispatch —
-//! the zero-sized register impls are wired in the `HAL` bundle below);
-//! the ISR servicing bodies stay in `minz::am32_isr`.
+//! `minz_core::{am32_control, am32_isr, am32_loop, zct_trace}`
+//! reaching hardware only through the `minz_core::am32_hal` traits
+//! (static dispatch — the zero-sized register impls are wired in the
+//! `HAL` bundle below).
 //!
 //! The four AM32 contexts, mapped 1:1 to hardware here:
 //!   1. COMP ISR  (their COMP_IRQHandler + interruptRoutine)  prio 0
@@ -58,8 +58,7 @@ use cortex_m::peripheral::NVIC;
 use cortex_m_rt::entry;
 
 use minz::Am32Hal;
-use minz::adc_sync;
-use minz::am32_isr::{comp_isr, tim1_up_tim16_isr, tim6_dacunder_isr};
+use minz::adc_sync::{self, InjAdc1};
 use minz::am32_timers::{Am32Timers, com_timer_init, interval_timer_init};
 use minz::bb::{Bb, CortexCs};
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
@@ -72,6 +71,7 @@ use minz::hal::stm32;
 use minz::hal::stm32::Interrupt;
 use minz::priority;
 use minz::tim1_motor_pwm::{self, Tim1Pwm};
+use minz::tim6_loop::Tim6Loop;
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 
 use minz_core::am32::{RxRing, UartDuty, ZCT_REC, ZctRing};
@@ -79,6 +79,7 @@ use minz_core::am32_control::{
     bemf_timeout_rekick, desync_check_band, honor_stop, set_input, variable_pwm_ride,
 };
 use minz_core::am32_hal::Hal;
+use minz_core::am32_isr::{comp_isr, tim1_up_tim16_isr, tim6_dacunder_isr};
 use minz_core::zct_trace::ZctTrace;
 use minz_core::am32_loop::{
     Bench, DUTY_FULL, Drive, Duty, INIT_INTERVAL_TICKS, Sched, TARGET_MIN_BEMF_COUNTS,
@@ -92,7 +93,7 @@ use rtt_target::rprintln;
 // Bench-only constants. The AM32 factory constants moved to
 // `minz_core::am32_loop`; TIMER1_MAX_ARR reaches variable_pwm_ride
 // through `MotorPwm::base_arr()`; the bench-safety kill thresholds
-// moved to minz::am32_isr (adc_harvest_and_safety).
+// moved to minz_core::am32_isr (adc_harvest_and_safety).
 // ===============================================================
 
 /// 2 Mbaud link (both directions) — the minz-rig baud (AM32 fork
@@ -171,13 +172,15 @@ static HAL: Am32Hal = Hal {
     tim: &Am32Timers,
     bb: &BB,
     cs: &CortexCs,
+    adc: &InjAdc1,
+    lt: &Tim6Loop,
 };
 
 // zcfoundroutine spin-guard counter (DEVIATION #1, minz::am32_control).
 static ZCFR_GUARD_HITS: AtomicU32 = AtomicU32::new(0);
 
 // TIM6 duty-pipeline / overcurrent accumulator storage (reached via
-// the Duty/Bench clusters; bodies in minz::am32_isr).
+// the Duty/Bench clusters; bodies in minz_core::am32_isr).
 static RAMP_COUNT: AtomicU16 = AtomicU16::new(0);
 static OC_ACC: AtomicU32 = AtomicU32::new(0);
 static OC_CNT: AtomicU32 = AtomicU32::new(0);
@@ -551,14 +554,14 @@ fn main() -> ! {
 // ===============================================================
 // THE VECTOR TABLE — every #[interrupt] trampoline, together at the
 // file's end. Trampolines are the ONLY functions that name the
-// static instances; each servicing body (minz::am32_isr) takes its
-// world as parameters.
+// static instances; each servicing body (minz_core::am32_isr) takes
+// its world as parameters.
 // ===============================================================
 
 /// COMP (priority 0) — the ZC chain.
 #[interrupt]
 fn COMP() {
-    comp_isr(&SCHED, &DRIVE, &BB)
+    comp_isr(&SCHED, &DRIVE, &HAL)
 }
 
 /// TIM16 wrap on the shared vector (priority 0) — the COM tick.
