@@ -1108,14 +1108,16 @@ fn tim6_dacunder_isr() {
 // ===============================================================
 #[interrupt]
 fn USART2() {
-    usart2_isr()
+    usart2_isr(&RX)
 }
 
+/// Fully decoupled from globals: the ring it services arrives as a
+/// parameter (the trampoline owns the wiring).
 #[inline]
-fn usart2_isr() {
+fn usart2_isr(rx: &RxRing) {
     let usart = unsafe { &*stm32::USART2::ptr() };
     while usart.isr.read().rxne().bit_is_set() {
-        RX.push(usart.rdr.read().bits() as u16);
+        rx.push(usart.rdr.read().bits() as u16);
     }
     // Clear overrun/framing/noise errors (main.c:1417-1419).
     if usart.isr.read().ore().bit_is_set() || usart.isr.read().fe().bit_is_set() || usart.isr.read().nf().bit_is_set() {
