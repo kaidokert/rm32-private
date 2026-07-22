@@ -1012,13 +1012,8 @@ fn main() -> ! {
 
 // ===============================================================
 // COMP ISR — stm32l4xx_it.c:276-290 + interruptRoutine main.c:918-948.
-// Priority 0.
+// Priority 0. (Trampoline in the vector table at file end.)
 // ===============================================================
-#[interrupt]
-fn COMP() {
-    comp_isr(&SCHED, &DRIVE)
-}
-
 #[inline]
 fn comp_isr(sched: &Sched, drive: &Drive) {
     let exti = unsafe { &*stm32::EXTI::ptr() };
@@ -1064,13 +1059,9 @@ fn interrupt_routine(sched: &Sched, drive: &Drive) {
 
 // ===============================================================
 // COM ISR (TIM16 wrap on the shared TIM1_UP_TIM16 vector) —
-// PeriodElapsedCallback main.c:896-916. Priority 0.
+// PeriodElapsedCallback main.c:896-916. Priority 0. (Trampoline in
+// the vector table at file end.)
 // ===============================================================
-#[interrupt]
-fn TIM1_UP_TIM16() {
-    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY)
-}
-
 #[inline]
 fn tim1_up_tim16_isr(sched: &Sched, drive: &Drive, zct: &ZctTrace, duty: &Duty) {
     com_clear_flag(); // ack TIM16 UIF (TIM1.UIE is off, so this is the COM tick)
@@ -1103,11 +1094,7 @@ static RAMP_COUNT: AtomicU16 = AtomicU16::new(0);
 static OC_ACC: AtomicU32 = AtomicU32::new(0);
 static OC_CNT: AtomicU32 = AtomicU32::new(0);
 
-#[interrupt]
-fn TIM6_DACUNDER() {
-    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT)
-}
-
+// (Trampoline in the vector table at file end.)
 #[inline]
 fn tim6_dacunder_isr(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &ZctTrace) {
     minz::tim6_loop::clear_flag();
@@ -1218,11 +1205,34 @@ fn adc_harvest_and_safety(drive: &Drive, duty: &Duty, bench: &Bench) {
 }
 
 // ===============================================================
-// USART2 RX ISR — enqueue bytes (priority 2). Parser runs in main.
+// THE VECTOR TABLE — every #[interrupt] trampoline, together at the
+// file's end. Trampolines are the ONLY functions that name the
+// static instances; each servicing fn above takes its world as
+// parameters.
 // ===============================================================
+
+/// COMP (priority 0) — the ZC chain.
+#[interrupt]
+fn COMP() {
+    comp_isr(&SCHED, &DRIVE)
+}
+
+/// TIM16 wrap on the shared vector (priority 0) — the COM tick.
+#[interrupt]
+fn TIM1_UP_TIM16() {
+    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY)
+}
+
+/// TIM6 19.6 kHz (priority 3) — tenKhzRoutine.
+#[interrupt]
+fn TIM6_DACUNDER() {
+    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT)
+}
+
+/// USART2 RX (priority 2) — enqueue bytes; parser runs in main.
+/// Body lives with its peripheral: minz::usart2_rx::service_rx
+/// (drain RXNE + error clears, AM32 main.c:1417-1419).
 #[interrupt]
 fn USART2() {
-    // Body lives with its peripheral: minz::usart2_rx::service_rx
-    // (drain RXNE + error clears, AM32 main.c:1417-1419).
     minz::usart2_rx::service_rx(&RX)
 }
