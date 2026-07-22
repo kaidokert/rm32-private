@@ -41,3 +41,28 @@ impl Default for Bb {
         Self::new()
     }
 }
+
+/// `minz_core::am32_hal::Recorder` over the black box — the trait
+/// methods delegate to the inherent ones above (inherent methods win
+/// resolution, so `self.record(..)` below is NOT recursive).
+impl minz_core::am32_hal::Recorder for Bb {
+    #[inline(always)]
+    fn record(&self, ty: u8, sector: u8, data: u16) {
+        self.record(ty, sector, data)
+    }
+    #[inline(always)]
+    fn freeze(&self) {
+        self.freeze()
+    }
+}
+
+/// `minz_core::am32_hal::Cs` via `cortex_m::interrupt::free` — the
+/// platform critical-section provider (zero-sized, static dispatch).
+pub struct CortexCs;
+
+impl minz_core::am32_hal::Cs for CortexCs {
+    #[inline(always)]
+    fn free<R>(&self, f: impl FnOnce() -> R) -> R {
+        free(|_| f())
+    }
+}

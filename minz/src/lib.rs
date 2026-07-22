@@ -2,7 +2,6 @@
 
 pub mod a85;
 pub mod adc_sync;
-pub mod am32_control;
 pub mod am32_isr;
 pub mod am32_timers;
 pub mod bb;
@@ -30,9 +29,21 @@ pub mod tim7_drive;
 pub mod timer_ext;
 pub mod uart_tx;
 pub mod usart2_rx;
-pub mod zct_trace;
 
 pub use stm32l4xx_hal as hal;
+
+/// The concrete AM32-clone HAL bundle for this platform: zero-sized
+/// register impls + the black box + cortex-m critical sections, all
+/// statically dispatched through `minz_core::am32_hal`. The program
+/// (`examples/am32_clone.rs`) wires one `static` instance of this.
+pub type Am32Hal = minz_core::am32_hal::Hal<
+    'static,
+    tim1_motor_pwm::Tim1Pwm,
+    comp2::Comp2,
+    am32_timers::Am32Timers,
+    bb::Bb,
+    bb::CortexCs,
+>;
 
 use fugit::HertzU32 as Hertz;
 

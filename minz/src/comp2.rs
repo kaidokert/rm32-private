@@ -314,22 +314,30 @@ pub fn am32_change_comp_input(sector: usize) {
     set_exti_edges(re, fe);
 }
 
-/// getBemfState() — main.c:817-852 (L431 `!getCompOutputLevel()` branch,
-/// which equals minz `comp2::value()`). Counts when the level matches the
-/// direction; a run of bad reads over threshold resets the counter.
-#[inline]
-pub fn am32_get_bemf_state(drive: &minz_core::am32_loop::Drive) {
-    use core::sync::atomic::Ordering;
-    let cs = value(); // = !getCompOutputLevel() (main.c:831)
-    let rising = drive.rising.load(Ordering::Relaxed);
-    // rising: count when current_state; else count when !current_state.
-    // Both reduce to `cs == rising` (main.c:833-851).
-    let (bemf, bad) = minz_core::am32::bemf_count_step(
-        drive.bemf_counter.load(Ordering::Relaxed),
-        drive.bad_count.load(Ordering::Relaxed),
-        cs == rising,
-        minz_core::am32_loop::BAD_COUNT_THRESHOLD,
-    );
-    drive.bemf_counter.store(bemf, Ordering::Relaxed);
-    drive.bad_count.store(bad, Ordering::Relaxed);
+// getBemfState() moved to minz_core::am32_control::get_bemf_state —
+// it is pure logic over the CompCtl seam (comp.value() +
+// am32::bemf_count_step), host-tested there.
+
+/// The `minz_core::am32_hal::CompCtl` register impl over COMP2 +
+/// EXTI line 22 — zero-sized, static dispatch; delegates to the
+/// comparator.c transliterations above.
+pub struct Comp2;
+
+impl minz_core::am32_hal::CompCtl for Comp2 {
+    #[inline(always)]
+    fn value(&self) -> bool {
+        value()
+    }
+    #[inline(always)]
+    fn change_comp_input(&self, sector: usize) {
+        am32_change_comp_input(sector)
+    }
+    #[inline(always)]
+    fn enable_comp_interrupts(&self) {
+        am32_enable_comp_interrupts()
+    }
+    #[inline(always)]
+    fn mask_phase_interrupts(&self) {
+        am32_mask_phase_interrupts()
+    }
 }

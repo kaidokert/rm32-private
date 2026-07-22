@@ -419,3 +419,36 @@ pub fn set_carrier_arr(arr: u16) {
     tim1.arr.write(|w| w.arr().bits(arr));
     LIVE_ARR.store(arr, portable_atomic::Ordering::Relaxed);
 }
+
+/// The `minz_core::am32_hal::MotorPwm` register impl over TIM1 —
+/// zero-sized, static dispatch; each method delegates to the free fn
+/// above so `motor_tester2` (which calls the free fns directly) is
+/// untouched.
+pub struct Tim1Pwm;
+
+impl minz_core::am32_hal::MotorPwm for Tim1Pwm {
+    #[inline(always)]
+    fn set_duty(&self, duty: u16) {
+        set_duty(duty)
+    }
+    #[inline(always)]
+    fn set_roles_for_step(&self, step: u8) {
+        set_roles_for_step(step)
+    }
+    #[inline(always)]
+    fn all_off(&self) {
+        all_off()
+    }
+    #[inline(always)]
+    fn set_carrier_arr(&self, arr: u16) {
+        set_carrier_arr(arr)
+    }
+    #[inline(always)]
+    fn max_duty(&self) -> u16 {
+        max_duty()
+    }
+    #[inline(always)]
+    fn base_arr(&self) -> u16 {
+        crate::TIM1_AUTORELOAD
+    }
+}

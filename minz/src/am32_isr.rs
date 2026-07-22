@@ -6,25 +6,24 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::am32_control::{commutate, safety_kill, zcfoundroutine};
+use crate::Am32Hal;
 use crate::am32_timers::{
     com_clear_flag, disable_com_timer_int, interval_cnt, set_and_enable_com_int, set_interval_cnt,
 };
 use crate::bb::Bb;
-use crate::comp2::{
-    self, am32_enable_comp_interrupts, am32_get_bemf_state, am32_mask_phase_interrupts,
-};
+use crate::comp2::{self, am32_enable_comp_interrupts, am32_mask_phase_interrupts};
 use crate::hal::stm32;
 use crate::tim1_motor_pwm::{self, max_duty};
-use crate::zct_trace::ZctTrace;
 use crate::{adc_sync, tim6_loop};
 
 use cortex_m::interrupt::free;
 use minz_core::am32;
+use minz_core::am32_control::{commutate, get_bemf_state, safety_kill, zcfoundroutine};
 use minz_core::am32_loop::{
     Bench, Drive, Duty, Sched, TEMP_ADVANCE, duty_ramp, uart_deadman_tick,
 };
 use minz_core::blackbox::EV_ACC;
+use minz_core::zct_trace::ZctTrace;
 
 // --- Bench-safety kill thresholds (observer ADC; kills only) ---
 /// ~85 ms current average over raw injected ch8 counts.
@@ -91,11 +90,11 @@ pub fn tim1_up_tim16_isr<const N: usize>(
     drive: &Drive,
     zct: &ZctTrace<N>,
     duty: &Duty,
-    bb: &Bb,
+    hal: &Am32Hal,
 ) {
     com_clear_flag(); // ack TIM16 UIF (TIM1.UIE is off, so this is the COM tick)
     disable_com_timer_int(); // main.c:898
-    commutate(sched, drive, bb); // :899
+    commutate(sched, drive, hal); // :899
     // commutation_interval = (ci + (lastzctime+thiszctime)/2) / 2  (:900)
     let ci_old = sched.commutation_interval.load(Ordering::Relaxed);
     let lz = sched.last_zc.load(Ordering::Relaxed) as u32;
@@ -106,7 +105,7 @@ pub fn tim1_up_tim16_isr<const N: usize>(
     let advance = am32::advance_of(ci, TEMP_ADVANCE);
     let wait = am32::wait_time(ci, advance);
     sched.wait_time.store(wait as u16, Ordering::Relaxed);
-    zct.write(sched, drive, duty); // ZC_TRACE main.c:908
+    zct.write(sched, drive, duty, hal.cs); // ZC_TRACE main.c:908
     if !drive.old_routine.load(Ordering::Relaxed) {
         am32_enable_comp_interrupts(); // main.c:910-912
     }
@@ -127,7 +126,7 @@ pub fn tim6_dacunder_isr<const N: usize>(
     duty: &Duty,
     bench: &Bench,
     zct: &ZctTrace<N>,
-    bb: &Bb,
+    hal: &Am32Hal,
 ) {
     tim6_loop::clear_flag();
 
@@ -138,11 +137,11 @@ pub fn tim6_dacunder_isr<const N: usize>(
     if !duty.killed.load(Ordering::Relaxed) {
         let duty_val = duty_ramp(sched, drive, duty, setpoint);
         let running = duty_apply(drive, duty, duty_val);
-        polling_bemf_check(sched, drive, duty, zct, bb, running);
+        polling_bemf_check(sched, drive, duty, zct, hal, running);
     }
 
     uart_deadman_tick(duty, bench);
-    adc_harvest_and_safety(drive, duty, bench, bb);
+    adc_harvest_and_safety(drive, duty, bench, hal);
 }
 
 /// Duty apply band (main.c:1771-1791): CCR write path. Returns the
@@ -169,12 +168,12 @@ pub fn polling_bemf_check<const N: usize>(
     drive: &Drive,
     duty: &Duty,
     zct: &ZctTrace<N>,
-    bb: &Bb,
+    hal: &Am32Hal,
     running: bool,
 ) {
     if drive.old_routine.load(Ordering::Relaxed) && running {
         am32_mask_phase_interrupts(); // main.c:1681
-        am32_get_bemf_state(drive); // :1682
+        get_bemf_state(drive, hal.comp); // :1682
         if !drive.zcfound.load(Ordering::Relaxed) {
             let rising = drive.rising.load(Ordering::Relaxed);
             let bc = drive.bemf_counter.load(Ordering::Relaxed);
@@ -185,7 +184,7 @@ pub fn polling_bemf_check<const N: usize>(
             };
             if bc > thresh {
                 drive.zcfound.store(true, Ordering::Relaxed);
-                zcfoundroutine(sched, drive, zct, duty, bb);
+                zcfoundroutine(sched, drive, zct, duty, hal);
             }
         }
     }
@@ -194,7 +193,7 @@ pub fn polling_bemf_check<const N: usize>(
 /// Observer ADC harvest + the two bench-safety KILLS (non-AM32;
 /// they only stop the loop, never modulate it).
 #[inline]
-pub fn adc_harvest_and_safety(drive: &Drive, duty: &Duty, bench: &Bench, bb: &Bb) {
+pub fn adc_harvest_and_safety(drive: &Drive, duty: &Duty, bench: &Bench, hal: &Am32Hal) {
     let (_a, _b, cur, vbat) = adc_sync::inj_read();
     bench.i_raw.store(cur, Ordering::Relaxed);
     bench.vbat_raw.store(vbat, Ordering::Relaxed);
@@ -208,9 +207,9 @@ pub fn adc_harvest_and_safety(drive: &Drive, duty: &Duty, bench: &Bench, bb: &Bb
     bench.oc_acc.store(acc, Ordering::Relaxed);
     bench.oc_cnt.store(cnt, Ordering::Relaxed);
     if tripped {
-        safety_kill(drive, duty, bb, 1);
+        safety_kill(drive, duty, hal, 1);
     }
     if vbat < VBAT_ABS_FLOOR_RAW && drive.running.load(Ordering::Relaxed) {
-        safety_kill(drive, duty, bb, 2);
+        safety_kill(drive, duty, hal, 2);
     }
 }

@@ -99,6 +99,34 @@ pub fn com_clear_flag() {
     tim.sr.write(|w| unsafe { w.bits(0) });
 }
 
+/// The `minz_core::am32_hal::ComTimers` register impl over
+/// INTERVAL_TIMER (TIM2) + COM_TIMER (TIM16) — zero-sized, static
+/// dispatch; delegates to the AM32 macro wrappers above.
+pub struct Am32Timers;
+
+impl minz_core::am32_hal::ComTimers for Am32Timers {
+    #[inline(always)]
+    fn interval_cnt(&self) -> u32 {
+        interval_cnt()
+    }
+    #[inline(always)]
+    fn set_interval_cnt(&self, v: u16) {
+        set_interval_cnt(v)
+    }
+    #[inline(always)]
+    fn com_set_arr(&self, arr: u16) {
+        com_set_arr(arr)
+    }
+    #[inline(always)]
+    fn set_and_enable_com_int(&self, arr: u16) {
+        set_and_enable_com_int(arr)
+    }
+    #[inline(always)]
+    fn disable_com_timer_int(&self) {
+        disable_com_timer_int()
+    }
+}
+
 /// 10 us wall-clock ticks from DWT.CYCCNT (80 MHz / 800), u16 wrap
 /// ~0.65 s -- the black-box / trace timestamp grain of the
 /// am32_clone. Requires the DWT cycle counter enabled at boot.

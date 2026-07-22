@@ -10,9 +10,11 @@
 //!
 //! Module layout: this program keeps the storage (statics + cluster
 //! wiring), the orchestrators (main / main_entry + its bands), and the
-//! vector table; the hardware-coupled servicing fns live in
-//! `minz::{am32_control, am32_isr, zct_trace, bb}` and the pure bands
-//! in `minz_core::am32_loop`.
+//! vector table; the control layer lives host-tested in
+//! `minz_core::{am32_control, am32_loop, zct_trace}` reaching hardware
+//! only through the `minz_core::am32_hal` traits (static dispatch —
+//! the zero-sized register impls are wired in the `HAL` bundle below);
+//! the ISR servicing bodies stay in `minz::am32_isr`.
 //!
 //! The four AM32 contexts, mapped 1:1 to hardware here:
 //!   1. COMP ISR  (their COMP_IRQHandler + interruptRoutine)  prio 0
@@ -55,15 +57,13 @@ use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::entry;
 
+use minz::Am32Hal;
 use minz::adc_sync;
-use minz::am32_control::{
-    bemf_timeout_rekick, desync_check_band, honor_stop, set_input, variable_pwm_ride,
-};
 use minz::am32_isr::{comp_isr, tim1_up_tim16_isr, tim6_dacunder_isr};
-use minz::am32_timers::{com_timer_init, interval_timer_init};
-use minz::bb::Bb;
+use minz::am32_timers::{Am32Timers, com_timer_init, interval_timer_init};
+use minz::bb::{Bb, CortexCs};
 use minz::board_init::{BoardInit, configure_motor_pwm_pins, init};
-use minz::comp2;
+use minz::comp2::{self, Comp2};
 use minz::current_adc::SenseAdc;
 use minz::hal::pac::interrupt;
 use minz::hal::prelude::*;
@@ -71,11 +71,15 @@ use minz::hal::serial::{Config, Serial};
 use minz::hal::stm32;
 use minz::hal::stm32::Interrupt;
 use minz::priority;
-use minz::tim1_motor_pwm;
+use minz::tim1_motor_pwm::{self, Tim1Pwm};
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
-use minz::zct_trace::ZctTrace;
 
 use minz_core::am32::{RxRing, UartDuty, ZCT_REC, ZctRing};
+use minz_core::am32_control::{
+    bemf_timeout_rekick, desync_check_band, honor_stop, set_input, variable_pwm_ride,
+};
+use minz_core::am32_hal::Hal;
+use minz_core::zct_trace::ZctTrace;
 use minz_core::am32_loop::{
     Bench, DUTY_FULL, Drive, Duty, INIT_INTERVAL_TICKS, Sched, TARGET_MIN_BEMF_COUNTS,
     apply_uart_cmd, bemf_timeout_resets, filter_and_duty_max, min_bemf_schedule,
@@ -86,9 +90,9 @@ use rtt_target::rprintln;
 
 // ===============================================================
 // Bench-only constants. The AM32 factory constants moved to
-// `minz_core::am32_loop`; TIMER1_MAX_ARR moved to minz::am32_control
-// (variable_pwm_ride); the bench-safety kill thresholds moved to
-// minz::am32_isr (adc_harvest_and_safety).
+// `minz_core::am32_loop`; TIMER1_MAX_ARR reaches variable_pwm_ride
+// through `MotorPwm::base_arr()`; the bench-safety kill thresholds
+// moved to minz::am32_isr (adc_harvest_and_safety).
 // ===============================================================
 
 /// 2 Mbaud link (both directions) — the minz-rig baud (AM32 fork
@@ -156,6 +160,19 @@ static ZCT_STREAM_ON: AtomicBool = AtomicBool::new(true);
 // ===============================================================
 static BB: Bb = Bb::new();
 
+// ===============================================================
+// The HAL bundle — zero-sized register impls (static dispatch, no
+// dyn) threaded through minz_core::am32_control. The only other
+// places that name it are the ISR trampolines and main_entry's top.
+// ===============================================================
+static HAL: Am32Hal = Hal {
+    pwm: &Tim1Pwm,
+    comp: &Comp2,
+    tim: &Am32Timers,
+    bb: &BB,
+    cs: &CortexCs,
+};
+
 // zcfoundroutine spin-guard counter (DEVIATION #1, minz::am32_control).
 static ZCFR_GUARD_HITS: AtomicU32 = AtomicU32::new(0);
 
@@ -183,8 +200,8 @@ static OC_CNT: AtomicU32 = AtomicU32::new(0);
 
 // ===============================================================
 // ZC_TRACE ring — 15-byte records (main.c:1536-1567), 5B A9 sync.
-// Behavior (write incl. batch decimation, drain) in minz::zct_trace;
-// this file owns only the storage and the wiring.
+// Behavior (write incl. batch decimation, drain) in
+// minz_core::zct_trace; this file owns only the storage and wiring.
 // ===============================================================
 const ZCT_N: usize = 32;
 static ZCT_RING: [[AtomicU16; ZCT_REC]; ZCT_N] =
@@ -222,7 +239,8 @@ static RX: RxRing<'static, RX_N> = RxRing {
 // main_entry's top (local wiring), and these definitions.
 // (Sched / Drive / Duty / Bench struct types + the pure band fns live
 // in minz_core::am32_loop, host-tested there; ZctTrace behavior lives
-// in minz::zct_trace — its impl needs cortex_m `free` + UartTxWriter.)
+// in minz_core::zct_trace — critical section + byte sink arrive
+// through the am32_hal seams.)
 // ===============================================================
 
 static SCHED: Sched<'static> = Sched {
@@ -293,8 +311,8 @@ static ZCT: ZctTrace<'static, ZCT_N> = ZctTrace {
 // ===============================================================
 // commutate / zcfoundroutine / startMotor / safety_kill / honor_stop /
 // variable_pwm_ride / bemf_timeout_rekick / desync_check_band /
-// setInput — moved to minz::am32_control (hardware side; the pure
-// bands stay in minz_core::am32_loop).
+// setInput — host-tested in minz_core::am32_control over the
+// am32_hal traits (the pure bands stay in minz_core::am32_loop).
 // ===============================================================
 
 // ===============================================================
@@ -307,7 +325,7 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     let bench = &BENCH;
     let zct = &ZCT;
     let rx = &RX;
-    let bb = &BB;
+    let hal = &HAL;
 
     // Main-context UART parser state (mirrors uart_duty_poll main.c:1367).
     let mut uart = UartDuty::new();
@@ -317,22 +335,22 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     loop {
         minz::iwdg::refresh();
         rx_drain(rx, &mut uart, duty, bench);
-        honor_stop(drive, duty, bench);
+        honor_stop(drive, duty, bench, hal);
 
         // e_com_time (main.c:2159): (sum+4)>>1, 0.5 µs units. Threaded into
         // the average_interval + low-rpm ceiling bands below.
         let e_com_time = sched.intervals().e_com_time();
         // input = uart_duty_get()  (main.c:1131) then setInput()
-        set_input(sched, drive, duty, bb);
+        set_input(sched, drive, duty, hal);
         min_bemf_schedule(drive);
-        variable_pwm_ride(sched);
+        variable_pwm_ride(sched, hal);
 
         let average_interval = store_average_interval(sched, e_com_time);
-        desync_check_band(sched, drive, duty, bb, average_interval);
+        desync_check_band(sched, drive, duty, hal, average_interval);
 
         let (running, zc) = filter_and_duty_max(sched, drive, duty, e_com_time, average_interval);
         bemf_timeout_resets(drive, duty, zc);
-        bemf_timeout_rekick(sched, drive, duty, zct, bb, running);
+        bemf_timeout_rekick(sched, drive, duty, zct, hal, running);
 
         telemetry_drain(bench, zct, tx_writer);
         handle_requests(sched, drive, duty, bench, zct, tx_writer);
@@ -352,7 +370,9 @@ fn rx_drain(rx: &RxRing<RX_N>, uart: &mut UartDuty, duty: &Duty, bench: &Bench) 
 #[inline]
 fn telemetry_drain(bench: &Bench, zct: &ZctTrace<ZCT_N>, tx: &mut UartTxWriter) {
     if bench.zct_stream_on.load(Ordering::Relaxed) {
-        zct.drain(tx);
+        zct.drain(|b| {
+            let _ = tx.push(b);
+        });
     }
     tx.service();
 }
@@ -544,13 +564,13 @@ fn COMP() {
 /// TIM16 wrap on the shared vector (priority 0) — the COM tick.
 #[interrupt]
 fn TIM1_UP_TIM16() {
-    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY, &BB)
+    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY, &HAL)
 }
 
 /// TIM6 19.6 kHz (priority 3) — tenKhzRoutine.
 #[interrupt]
 fn TIM6_DACUNDER() {
-    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &BB)
+    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &HAL)
 }
 
 /// USART2 RX (priority 2) — enqueue bytes; parser runs in main.

@@ -16,6 +16,8 @@
 
 pub mod a85;
 pub mod am32;
+pub mod am32_control;
+pub mod am32_hal;
 pub mod am32_loop;
 pub mod blackbox;
 pub mod drive;
@@ -34,3 +36,4 @@ pub mod ui;
 pub mod window;
 pub mod wire;
 pub mod zc;
+pub mod zct_trace;
