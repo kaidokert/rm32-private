@@ -541,7 +541,10 @@ fn get_bemf_state(drive: &Drive) {
 // ===============================================================
 static ZCFR_GUARD_HITS: AtomicU32 = AtomicU32::new(0);
 
-fn zcfoundroutine(sched: &Sched, drive: &Drive, zct: &ZctTrace, duty: &Duty) {
+/// zcfoundroutine blend band (main.c:1870-1874): capture thiszctime,
+/// reset INTERVAL_TIMER, blend commutation_interval, derive advance/waitTime.
+#[inline]
+fn zcfr_blend(sched: &Sched) -> (u32, u32) {
     // thiszctime = INTERVAL_TIMER_COUNT; SET_INTERVAL_TIMER_COUNT(0)
     let thiszc = interval_cnt() as u16; // main.c:1870
     set_interval_cnt(0); // main.c:1871
@@ -554,13 +557,17 @@ fn zcfoundroutine(sched: &Sched, drive: &Drive, zct: &ZctTrace, duty: &Duty) {
     let advance = am32::advance_of(ci, TEMP_ADVANCE);
     let wait = am32::wait_time(ci, advance);
     sched.wait_time.store(wait as u16, Ordering::Relaxed);
+    (ci, wait)
+}
 
-    // while INTERVAL_TIMER_COUNT < waitTime { if zero_crosses<5 break }
-    // (main.c:1875-1879). DEVIATION #1: bounded by a spin guard — AM32's
-    // loop is unbounded (a wedged INTERVAL_TIMER hangs the 20 kHz ISR
-    // forever; AM32 accepts that, the IWDG would reboot). We add a loud
-    // 65535-iteration break so the tick can't be captured indefinitely.
-    let zc = drive.zero_crosses.load(Ordering::Relaxed);
+/// zcfoundroutine spin-wait band (main.c:1875-1879):
+/// `while INTERVAL_TIMER_COUNT < waitTime { if zero_crosses<5 break }`.
+/// DEVIATION #1: bounded by a spin guard — AM32's loop is unbounded (a
+/// wedged INTERVAL_TIMER hangs the 20 kHz ISR forever; AM32 accepts that,
+/// the IWDG would reboot). We add a loud 65535-iteration break so the tick
+/// can't be captured indefinitely.
+#[inline]
+fn zcfr_spin_wait(drive: &Drive, zc: u32, wait: u32) {
     let mut guard: u32 = 0;
     loop {
         if interval_cnt() >= wait {
@@ -575,6 +582,12 @@ fn zcfoundroutine(sched: &Sched, drive: &Drive, zct: &ZctTrace, duty: &Duty) {
             break;
         }
     }
+}
+
+fn zcfoundroutine(sched: &Sched, drive: &Drive, zct: &ZctTrace, duty: &Duty) {
+    let (ci, wait) = zcfr_blend(sched); // main.c:1870-1874
+    let zc = drive.zero_crosses.load(Ordering::Relaxed);
+    zcfr_spin_wait(drive, zc, wait); // main.c:1875-1879
 
     com_set_arr(wait as u16); // COM_TIMER->ARR = waitTime (main.c:1884)
     commutate(sched, drive); // main.c:1889
@@ -643,136 +656,194 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
 
     loop {
         minz::iwdg::refresh();
+        rx_drain(rx, &mut uart, duty, bench);
+        honor_stop(drive, duty, bench);
 
-        // ---- drain USART2 RX ring → parser (uart_duty_poll) --------
-        while let Some(c) = rx.pop() {
-            apply_uart_cmd(duty, bench, uart.step(c));
-        }
-
-        // ---- honor bench stop request ------------------------------
-        if bench.stop_req.swap(false, Ordering::Relaxed) {
-            tim1_motor_pwm::all_off();
-            drive.running.store(false, Ordering::Relaxed);
-            drive.old_routine.store(true, Ordering::Relaxed);
-            drive.zero_crosses.store(0, Ordering::Relaxed);
-            duty.duty_cycle_setpoint.store(0, Ordering::Relaxed);
-            duty.duty_cycle.store(0, Ordering::Relaxed);
-            duty.last_duty_cycle.store(0, Ordering::Relaxed);
-            mask_phase_interrupts();
-            disable_com_timer_int();
-        }
-
-        // ---- e_com_time (main.c:2159) ------------------------------
-        let e_com_time = sched.intervals().e_com_time(); // (sum+4)>>1, 0.5 µs units
-
+        // e_com_time (main.c:2159): (sum+4)>>1, 0.5 µs units. Threaded into
+        // the average_interval + low-rpm ceiling bands below.
+        let e_com_time = sched.intervals().e_com_time();
         // input = uart_duty_get()  (main.c:1131) then setInput()
         set_input(sched, drive, duty);
+        min_bemf_schedule(drive);
+        variable_pwm_ride(sched);
 
-        // min_bemf_counts schedule (main.c:2177-2188, non-bi-dir).
-        if drive.zero_crosses.load(Ordering::Relaxed) < 5 {
-            drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
-            drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
-        } else {
-            drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
-            drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
-        }
+        let average_interval = store_average_interval(sched, e_com_time);
+        desync_check_band(sched, drive, duty, average_interval);
 
-        // variable_pwm (main.c:2192-2195). mode 1: carrier rides the
-        // commutation interval; duty ratio is preserved by the tenKhz
-        // `duty*tim1_arr/2000` rescale.
-        if VARIABLE_PWM == 1 {
-            let ci = sched.commutation_interval.load(Ordering::Relaxed) as i32;
-            let arr = am32::map(ci, 96, 200, (TIMER1_MAX_ARR / 2) as i32, TIMER1_MAX_ARR as i32);
-            tim1_motor_pwm::set_carrier_arr(arr as u16);
-        }
+        let (running, zc) = filter_and_duty_max(sched, drive, duty, e_com_time, average_interval);
+        bemf_timeout_resets(drive, duty, zc);
+        bemf_timeout_rekick(sched, drive, duty, zct, running);
 
-        // average_interval = e_com_time / 3  (main.c:2283)
-        let average_interval = if e_com_time > 0 { (e_com_time / 3) as u32 } else { 0 };
-        sched.average_interval.store(average_interval, Ordering::Relaxed);
+        telemetry_drain(bench, zct, tx_writer);
+        handle_requests(sched, drive, duty, bench, zct, tx_writer);
+    }
+}
 
-        // desync_check block (main.c:2284-2300) — non-bi-dir subset.
-        if drive.desync_check.load(Ordering::Relaxed) && drive.zero_crosses.load(Ordering::Relaxed) > 10 {
-            let lai = sched.last_average_interval.load(Ordering::Relaxed);
-            if am32::desync_due(lai, average_interval) {
-                drive.zero_crosses.store(0, Ordering::Relaxed); // main.c:2286
-                drive.desync_happened.fetch_add(1, Ordering::Relaxed); // :2287
-                // (!bi_direction && input>47) || commutation_interval>1000 → running=0
-                let input = duty.input.load(Ordering::Relaxed);
-                let ci = sched.commutation_interval.load(Ordering::Relaxed);
-                if input > 47 || ci > 1000 {
-                    drive.running.store(false, Ordering::Relaxed);
-                }
-                drive.old_routine.store(true, Ordering::Relaxed); // :2291
-                duty.last_duty_cycle.store(MIN_STARTUP_DUTY / 2, Ordering::Relaxed); // :2295
-                bb_record(EV_DSY, (drive.current_step.load(Ordering::Relaxed) - 1) as u8, average_interval as u16);
-            }
-            drive.desync_check.store(false, Ordering::Relaxed); // :2297
-            sched.last_average_interval.store(average_interval, Ordering::Relaxed); // :2299
-        }
+/// RX drain band — drain USART2 RX ring → uart_duty parser dispatch
+/// (uart_duty_poll main.c:1367).
+#[inline]
+fn rx_drain(rx: &RxRing<RX_N>, uart: &mut UartDuty, duty: &Duty, bench: &Bench) {
+    while let Some(c) = rx.pop() {
+        apply_uart_cmd(duty, bench, uart.step(c));
+    }
+}
 
-        // ---- low-rpm duty ceiling + filter_level (main.c:2441-2469) --
-        let running = drive.running.load(Ordering::Relaxed);
-        let duty_max = am32::low_rpm_duty_ceiling(e_com_time, running, LOW_RPM_THROTTLE_LIMIT);
-        duty.duty_cycle_maximum.store(duty_max, Ordering::Relaxed);
+/// Bench stop-request band: float, disarm, mask, zero the pipeline.
+#[inline]
+fn honor_stop(drive: &Drive, duty: &Duty, bench: &Bench) {
+    if bench.stop_req.swap(false, Ordering::Relaxed) {
+        tim1_motor_pwm::all_off();
+        drive.running.store(false, Ordering::Relaxed);
+        drive.old_routine.store(true, Ordering::Relaxed);
+        drive.zero_crosses.store(0, Ordering::Relaxed);
+        duty.duty_cycle_setpoint.store(0, Ordering::Relaxed);
+        duty.duty_cycle.store(0, Ordering::Relaxed);
+        duty.last_duty_cycle.store(0, Ordering::Relaxed);
+        mask_phase_interrupts();
+        disable_com_timer_int();
+    }
+}
 
-        let zc = drive.zero_crosses.load(Ordering::Relaxed);
-        let ci = sched.commutation_interval.load(Ordering::Relaxed);
-        let mut filter = if zc < 100 && ci > 500 {
-            12
-        } else {
-            am32::map(average_interval as i32, 100, 500, 3, 12)
-        };
-        if ci < 50 {
-            filter = 2;
-        }
-        drive.filter_level.store(filter as u16, Ordering::Relaxed);
+/// min_bemf_counts schedule band (main.c:2177-2188, non-bi-dir).
+#[inline]
+fn min_bemf_schedule(drive: &Drive) {
+    if drive.zero_crosses.load(Ordering::Relaxed) < 5 {
+        drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
+        drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
+    } else {
+        drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
+        drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
+    }
+}
 
-        // ---- bemf timeout leniency resets (main.c:2261-2273) --------
-        let adj = duty.adjusted_input.load(Ordering::Relaxed);
-        if zc > 1000 || adj == 0 {
-            drive.bemf_timeout_happened.store(0, Ordering::Relaxed);
-        }
-        if zc > 100 && adj < 200 {
-            drive.bemf_timeout_happened.store(0, Ordering::Relaxed);
-        }
+/// variable_pwm carrier-ride band (main.c:2192-2195). mode 1: carrier
+/// rides the commutation interval; duty ratio is preserved by the tenKhz
+/// `duty*tim1_arr/2000` rescale.
+#[inline]
+fn variable_pwm_ride(sched: &Sched) {
+    if VARIABLE_PWM == 1 {
+        let ci = sched.commutation_interval.load(Ordering::Relaxed) as i32;
+        let arr = am32::map(ci, 96, 200, (TIMER1_MAX_ARR / 2) as i32, TIMER1_MAX_ARR as i32);
+        tim1_motor_pwm::set_carrier_arr(arr as u16);
+    }
+}
 
-        // ---- bemf timeout re-kick (main.c:2495-2509) ----------------
-        if interval_cnt() > BEMF_TIMEOUT_TICKS && running {
-            drive.bemf_timeout_happened.fetch_add(1, Ordering::Relaxed);
-            mask_phase_interrupts();
-            drive.old_routine.store(true, Ordering::Relaxed);
-            if duty.input.load(Ordering::Relaxed) < 48 {
+/// average_interval band (main.c:2283): average_interval = e_com_time / 3.
+#[inline]
+fn store_average_interval(sched: &Sched, e_com_time: i32) -> u32 {
+    let average_interval = if e_com_time > 0 { (e_com_time / 3) as u32 } else { 0 };
+    sched.average_interval.store(average_interval, Ordering::Relaxed);
+    average_interval
+}
+
+/// desync_check band (main.c:2284-2300) — non-bi-dir subset.
+#[inline]
+fn desync_check_band(sched: &Sched, drive: &Drive, duty: &Duty, average_interval: u32) {
+    if drive.desync_check.load(Ordering::Relaxed) && drive.zero_crosses.load(Ordering::Relaxed) > 10 {
+        let lai = sched.last_average_interval.load(Ordering::Relaxed);
+        if am32::desync_due(lai, average_interval) {
+            drive.zero_crosses.store(0, Ordering::Relaxed); // main.c:2286
+            drive.desync_happened.fetch_add(1, Ordering::Relaxed); // :2287
+            // (!bi_direction && input>47) || commutation_interval>1000 → running=0
+            let input = duty.input.load(Ordering::Relaxed);
+            let ci = sched.commutation_interval.load(Ordering::Relaxed);
+            if input > 47 || ci > 1000 {
                 drive.running.store(false, Ordering::Relaxed);
-                sched.commutation_interval.store(5000, Ordering::Relaxed);
             }
-            drive.zero_crosses.store(0, Ordering::Relaxed);
-            zcfoundroutine(sched, drive, zct, duty);
+            drive.old_routine.store(true, Ordering::Relaxed); // :2291
+            duty.last_duty_cycle.store(MIN_STARTUP_DUTY / 2, Ordering::Relaxed); // :2295
+            bb_record(EV_DSY, (drive.current_step.load(Ordering::Relaxed) - 1) as u8, average_interval as u16);
         }
+        drive.desync_check.store(false, Ordering::Relaxed); // :2297
+        sched.last_average_interval.store(average_interval, Ordering::Relaxed); // :2299
+    }
+}
 
-        // ---- telemetry: drain ZC_TRACE ring → USART1 DMA writer -----
-        if bench.zct_stream_on.load(Ordering::Relaxed) {
-            zct.drain(tx_writer);
-        }
-        tx_writer.service();
+/// low-rpm duty ceiling + filter_level map band (main.c:2441-2469).
+/// Returns the single `running`/`zero_crosses` loads that the bemf-timeout
+/// bands reuse (preserves the original one-load ordering).
+#[inline]
+fn filter_and_duty_max(
+    sched: &Sched,
+    drive: &Drive,
+    duty: &Duty,
+    e_com_time: i32,
+    average_interval: u32,
+) -> (bool, u32) {
+    let running = drive.running.load(Ordering::Relaxed);
+    let duty_max = am32::low_rpm_duty_ceiling(e_com_time, running, LOW_RPM_THROTTLE_LIMIT);
+    duty.duty_cycle_maximum.store(duty_max, Ordering::Relaxed);
 
-        // ---- on-demand info / bb dump / kill notice -----------------
-        if bench.info_req.swap(false, Ordering::Relaxed) {
-            print_info(sched, drive, duty, bench, zct, tx_writer);
+    let zc = drive.zero_crosses.load(Ordering::Relaxed);
+    let ci = sched.commutation_interval.load(Ordering::Relaxed);
+    let mut filter = if zc < 100 && ci > 500 {
+        12
+    } else {
+        am32::map(average_interval as i32, 100, 500, 3, 12)
+    };
+    if ci < 50 {
+        filter = 2;
+    }
+    drive.filter_level.store(filter as u16, Ordering::Relaxed);
+    (running, zc)
+}
+
+/// bemf-timeout leniency reset band (main.c:2261-2273).
+#[inline]
+fn bemf_timeout_resets(drive: &Drive, duty: &Duty, zc: u32) {
+    let adj = duty.adjusted_input.load(Ordering::Relaxed);
+    if zc > 1000 || adj == 0 {
+        drive.bemf_timeout_happened.store(0, Ordering::Relaxed);
+    }
+    if zc > 100 && adj < 200 {
+        drive.bemf_timeout_happened.store(0, Ordering::Relaxed);
+    }
+}
+
+/// bemf-timeout re-kick band (main.c:2495-2509).
+#[inline]
+fn bemf_timeout_rekick(sched: &Sched, drive: &Drive, duty: &Duty, zct: &ZctTrace, running: bool) {
+    if interval_cnt() > BEMF_TIMEOUT_TICKS && running {
+        drive.bemf_timeout_happened.fetch_add(1, Ordering::Relaxed);
+        mask_phase_interrupts();
+        drive.old_routine.store(true, Ordering::Relaxed);
+        if duty.input.load(Ordering::Relaxed) < 48 {
+            drive.running.store(false, Ordering::Relaxed);
+            sched.commutation_interval.store(5000, Ordering::Relaxed);
         }
-        if bench.dump_req.swap(false, Ordering::Relaxed) {
-            dump_bb(tx_writer);
-        }
-        if duty.killed.swap(false, Ordering::Relaxed) {
-            let reason = duty.kill_reason.load(Ordering::Relaxed);
-            let _ = write!(
-                tx_writer,
-                "!! KILL reason={} (1=OC 2=vbat) iraw={} vbat={}\r\n",
-                reason,
-                bench.i_raw.load(Ordering::Relaxed),
-                bench.vbat_raw.load(Ordering::Relaxed),
-            );
-            dump_bb(tx_writer);
-        }
+        drive.zero_crosses.store(0, Ordering::Relaxed);
+        zcfoundroutine(sched, drive, zct, duty);
+    }
+}
+
+/// telemetry band: drain ZC_TRACE ring → USART1 DMA writer, then service.
+#[inline]
+fn telemetry_drain(bench: &Bench, zct: &ZctTrace, tx: &mut UartTxWriter) {
+    if bench.zct_stream_on.load(Ordering::Relaxed) {
+        zct.drain(tx);
+    }
+    tx.service();
+}
+
+/// on-demand info / bb dump / kill-notice band.
+#[inline]
+fn handle_requests(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &ZctTrace, tx: &mut UartTxWriter) {
+    if bench.info_req.swap(false, Ordering::Relaxed) {
+        print_info(sched, drive, duty, bench, zct, tx);
+    }
+    if bench.dump_req.swap(false, Ordering::Relaxed) {
+        dump_bb(tx);
+    }
+    if duty.killed.swap(false, Ordering::Relaxed) {
+        let reason = duty.kill_reason.load(Ordering::Relaxed);
+        let _ = write!(
+            tx,
+            "!! KILL reason={} (1=OC 2=vbat) iraw={} vbat={}\r\n",
+            reason,
+            bench.i_raw.load(Ordering::Relaxed),
+            bench.vbat_raw.load(Ordering::Relaxed),
+        );
+        dump_bb(tx);
     }
 }
 
@@ -782,7 +853,13 @@ fn set_input(sched: &Sched, drive: &Drive, duty: &Duty) {
     // input = uart_duty_get()  (main.c:1131,1423-1431).
     let input = duty.uart_duty_input.load(Ordering::Relaxed);
     duty.input.store(input, Ordering::Relaxed);
+    set_input_arming(sched, drive, duty, input);
+    set_input_clamp(drive, duty, input);
+}
 
+/// setInput arm/disarm band (main.c:1182-1300, comp_pwm subset).
+#[inline]
+fn set_input_arming(sched: &Sched, drive: &Drive, duty: &Duty, input: u16) {
     let running = drive.running.load(Ordering::Relaxed);
     if input >= 47 {
         // main.c:1182-1196
@@ -803,7 +880,11 @@ fn set_input(sched: &Sched, drive: &Drive, duty: &Duty) {
             tim1_motor_pwm::all_off();
         }
     }
+}
 
+/// setInput setpoint-map + startup/max clamp band (main.c:1302-1314).
+#[inline]
+fn set_input_clamp(drive: &Drive, duty: &Duty, input: u16) {
     // duty_cycle_setpoint = map(input, 47, 2047, minimum_duty_cycle, 2000)
     // when armed, else 0 (am32::duty_setpoint). Stored here (mirrors the
     // two per-branch stores main.c:1194/1206) then re-clamped below —
