@@ -138,30 +138,77 @@ pub trait LoopTimer {
     fn clear_flag(&self);
 }
 
-/// The bundled HAL — one parameter threads all the seams through
-/// `crate::am32_control` / `crate::am32_isr` (call sites stay short;
-/// static dispatch). Seams whose rm32 traits take `&mut self`
-/// ([`PwmOutput`], [`PhaseOutput`], [`Comparator`], [`IntervalTimer`],
-/// [`ComTimer`]) are held BY VALUE (zero-sized in firmware — free);
-/// `&self`-only seams stay plain `&` refs. `pwm`/`phase` are two slots
-/// mirroring rm32's `MotorHal` shape; firmware wires `Tim1Pwm` into both.
-pub struct Hal<
-    'a,
-    P: PwmOutput,
-    Ph: PhaseOutput,
-    C: Comparator + CompExti,
-    I: IntervalTimer,
-    CT: ComTimer + ComTimerExt,
-    B: Recorder,
-    S: Cs,
-    A: InjAdc,
-    L: LoopTimer,
-> {
+// Copied verbatim from rm32/src/hal.rs — rm32-shape convergence rung 4;
+// do not modify without syncing rm32.
+/// Bundle of ISR-level motor peripherals for static dispatch.
+///
+/// Reduces generic parameter count from 5 to 1 in ISR function signatures.
+/// Implementors provide the concrete MCU-specific types.
+pub trait MotorHal {
+    type Pwm: PwmOutput;
+    type Comp: Comparator;
+    type Phase: PhaseOutput;
+    type Interval: IntervalTimer;
+    type Com: ComTimer;
+
+    fn pwm(&mut self) -> &mut Self::Pwm;
+    fn comp(&mut self) -> &mut Self::Comp;
+    fn phase(&mut self) -> &mut Self::Phase;
+    fn interval(&mut self) -> &mut Self::Interval;
+    fn com_timer(&mut self) -> &mut Self::Com;
+}
+
+/// The concrete motor bundle implementing [`MotorHal`] — minz-OWNED
+/// (the trait above is the rm32 copy; this implementor is ours, like
+/// rm32's per-MCU bundle structs). The five rm32 `&mut self` seams are
+/// held BY VALUE (zero-sized in firmware — free). `pwm`/`phase` are two
+/// slots per the rm32 shape; firmware wires `Tim1Pwm` into both. Fns
+/// needing the minz extension seams bound the associated types:
+/// `M: MotorHal<Com: ComTimerExt>` / `M: MotorHal<Comp: CompExti>`.
+pub struct Motor<P, C, Ph, I, CT> {
+    pub pwm: P,
+    pub comp: C,
+    pub phase: Ph,
     pub interval: I,
     pub com: CT,
-    pub pwm: P,
-    pub phase: Ph,
-    pub comp: C,
+}
+
+impl<P: PwmOutput, C: Comparator, Ph: PhaseOutput, I: IntervalTimer, CT: ComTimer> MotorHal
+    for Motor<P, C, Ph, I, CT>
+{
+    type Pwm = P;
+    type Comp = C;
+    type Phase = Ph;
+    type Interval = I;
+    type Com = CT;
+
+    #[inline(always)]
+    fn pwm(&mut self) -> &mut P {
+        &mut self.pwm
+    }
+    #[inline(always)]
+    fn comp(&mut self) -> &mut C {
+        &mut self.comp
+    }
+    #[inline(always)]
+    fn phase(&mut self) -> &mut Ph {
+        &mut self.phase
+    }
+    #[inline(always)]
+    fn interval(&mut self) -> &mut I {
+        &mut self.interval
+    }
+    #[inline(always)]
+    fn com_timer(&mut self) -> &mut CT {
+        &mut self.com
+    }
+}
+
+/// The minz-owned observer bundle — the seams rm32's [`MotorHal`] knows
+/// nothing about (black box, critical sections, injected ADC, loop-timer
+/// ack). All `&self`-only seams → plain `&` refs. Threaded alongside the
+/// motor bundle as a separate parameter: `(state clusters.., hal, obs)`.
+pub struct Observer<'a, B, S, A, L> {
     pub bb: &'a B,
     pub cs: &'a S,
     pub adc: &'a A,
@@ -215,26 +262,17 @@ pub(crate) mod mock {
         pub(crate) fn new() -> Self {
             Self::default()
         }
-        pub(crate) fn hal(
-            &self,
-        ) -> Hal<
-            '_,
-            &MockHal,
-            &MockHal,
-            &MockHal,
-            &MockHal,
-            &MockHal,
-            MockHal,
-            MockHal,
-            MockHal,
-            MockHal,
-        > {
-            Hal {
+        pub(crate) fn motor(&self) -> Motor<&MockHal, &MockHal, &MockHal, &MockHal, &MockHal> {
+            Motor {
+                pwm: self,
+                comp: self,
+                phase: self,
                 interval: self,
                 com: self,
-                pwm: self,
-                phase: self,
-                comp: self,
+            }
+        }
+        pub(crate) fn observer(&self) -> Observer<'_, MockHal, MockHal, MockHal, MockHal> {
+            Observer {
                 bb: self,
                 cs: self,
                 adc: self,

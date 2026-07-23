@@ -3,16 +3,18 @@
 //! in `crate::am32` and the tenKhz/main band fns in `crate::am32_loop`.
 //! Hardware is reached ONLY through the [`crate::am32_hal`] traits
 //! (static dispatch, no `dyn`): the firmware passes its zero-sized
-//! register impls bundled in a [`Hal`]; host tests pass mocks — which
-//! is what makes every fn here unit-testable on a PC. Every fn takes
-//! its world (the cohesion clusters + `&Hal`) as parameters; the
-//! program keeps the storage.
+//! register impls in a [`MotorHal`] bundle (`hal`, rm32's calling
+//! convention — `hal.pwm().set_duty_all(..)`) plus the minz-owned
+//! [`Observer`] bundle (`obs` — bb/cs/adc/lt); host tests pass mocks —
+//! which is what makes every fn here unit-testable on a PC. Every fn
+//! takes its world (the cohesion clusters + the bundles it touches) as
+//! parameters; the program keeps the storage.
 
 use core::sync::atomic::Ordering;
 
 use crate::am32;
 use crate::am32_hal::{
-    CompExti, ComTimer, ComTimerExt, Comparator, Cs, Hal, InjAdc, IntervalTimer, LoopTimer,
+    ComTimer, ComTimerExt, Comparator, Cs, InjAdc, IntervalTimer, LoopTimer, MotorHal, Observer,
     PhaseOutput, PwmOutput, Recorder,
 };
 use crate::am32_loop::{
@@ -33,21 +35,11 @@ use crate::zct_trace::ZctTrace;
 // commutate() — main.c:854-894 (forward-only factory path).
 // ===============================================================
 #[inline(always)]
-pub fn commutate(
+pub fn commutate<M: MotorHal>(
     sched: &Sched,
     drive: &Drive,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
+    hal: &mut M,
+    obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
 ) {
     // step++ ; if step>6 { step=1; desync_check=1 }  (main.c:856-861)
     let mut step = drive.current_step.load(Ordering::Relaxed);
@@ -67,13 +59,13 @@ pub fn commutate(
     // frame internally); role-only flip, CCRs hold the tick-shaped
     // duty. AM32 wraps this in __disable_irq; the firmware impl does
     // its own interrupt::free.
-    hal.phase.com_step(step as u8);
+    hal.phase().com_step(step as u8);
     // changeCompInput() (main.c:879) — rm32's two-call shape: set_step
     // stores the (step, rising) pair, change_input applies the mux +
     // EXTI edge from it. Same register ops, same order as the old
     // single-call change_comp_input(sector).
-    hal.comp.set_step(step as u8, rising);
-    hal.comp.change_input();
+    hal.comp().set_step(step as u8, rising);
+    hal.comp().change_input();
 
     // if average_interval > polling_mode_changeover+500 → old_routine=1
     // (main.c:881-883).
@@ -86,7 +78,7 @@ pub fn commutate(
     // commutation_intervals[step-1] = commutation_interval (main.c:887).
     sched.intervals().push(sector, sched.commutation_interval.load(Ordering::Relaxed));
 
-    hal.bb.record(EV_REF, sector as u8, sched.commutation_interval.load(Ordering::Relaxed) as u16);
+    obs.bb.record(EV_REF, sector as u8, sched.commutation_interval.load(Ordering::Relaxed) as u16);
 }
 
 // ===============================================================
@@ -96,24 +88,10 @@ pub fn commutate(
 /// zcfoundroutine blend band (main.c:1870-1874): capture thiszctime,
 /// reset INTERVAL_TIMER, blend commutation_interval, derive advance/waitTime.
 #[inline]
-pub fn zcfr_blend(
-    sched: &Sched,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
-) -> (u32, u32) {
+pub fn zcfr_blend<M: MotorHal>(sched: &Sched, hal: &mut M) -> (u32, u32) {
     // thiszctime = INTERVAL_TIMER_COUNT; SET_INTERVAL_TIMER_COUNT(0)
-    let thiszc = hal.interval.count() as u16; // main.c:1870
-    hal.interval.set_count(0); // main.c:1871
+    let thiszc = hal.interval().count() as u16; // main.c:1870
+    hal.interval().set_count(0); // main.c:1871
     sched.this_zc.store(thiszc, Ordering::Relaxed);
     // commutation_interval = (thiszctime + 3*ci)/4  (main.c:1872)
     let ci_old = sched.commutation_interval.load(Ordering::Relaxed);
@@ -133,26 +111,10 @@ pub fn zcfr_blend(
 /// the IWDG would reboot). We add a loud 65535-iteration break so the tick
 /// can't be captured indefinitely.
 #[inline]
-pub fn zcfr_spin_wait(
-    drive: &Drive,
-    zc: u32,
-    wait: u32,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
-) {
+pub fn zcfr_spin_wait<M: MotorHal>(drive: &Drive, zc: u32, wait: u32, hal: &mut M) {
     let mut guard: u32 = 0;
     loop {
-        if hal.interval.count() >= wait {
+        if hal.interval().count() >= wait {
             break;
         }
         if zc < 5 {
@@ -167,31 +129,21 @@ pub fn zcfr_spin_wait(
 }
 
 #[inline(always)]
-pub fn zcfoundroutine<const N: usize>(
+pub fn zcfoundroutine<const N: usize, M: MotorHal<Com: ComTimerExt>>(
     sched: &Sched,
     drive: &Drive,
     zct: &ZctTrace<N>,
     duty: &Duty,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
+    hal: &mut M,
+    obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
 ) {
     let (ci, wait) = zcfr_blend(sched, hal); // main.c:1870-1874
     let zc = drive.zero_crosses.load(Ordering::Relaxed);
     zcfr_spin_wait(drive, zc, wait, hal); // main.c:1875-1879
 
-    hal.com.com_set_arr(wait as u16); // COM_TIMER->ARR = waitTime (main.c:1884)
-    commutate(sched, drive, hal); // main.c:1889
-    zct.write(sched, drive, duty, hal.cs); // ZC_TRACE main.c:1891
+    hal.com_timer().com_set_arr(wait as u16); // COM_TIMER->ARR = waitTime (main.c:1884)
+    commutate(sched, drive, hal, obs); // main.c:1889
+    zct.write(sched, drive, duty, obs.cs); // ZC_TRACE main.c:1891
     drive.bemf_counter.store(0, Ordering::Relaxed); // main.c:1893
     drive.bad_count.store(0, Ordering::Relaxed); // main.c:1894
     drive.zero_crosses.store(zc.saturating_add(1), Ordering::Relaxed); // main.c:1896
@@ -200,7 +152,7 @@ pub fn zcfoundroutine<const N: usize>(
     // main.c:1908-1913): commutation_interval < polling_mode_changeover.
     if ci < POLLING_MODE_CHANGEOVER {
         drive.old_routine.store(false, Ordering::Relaxed);
-        hal.comp.enable_interrupts();
+        hal.comp().enable_interrupts();
     }
 }
 
@@ -211,26 +163,16 @@ pub fn zcfoundroutine<const N: usize>(
 // intentional divergence from AM32's line 958 `enableCompInterrupts()`.
 // ===============================================================
 #[inline]
-pub fn start_motor(
+pub fn start_motor<M: MotorHal>(
     sched: &Sched,
     drive: &Drive,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
+    hal: &mut M,
+    obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
 ) {
     if !drive.running.load(Ordering::Relaxed) {
-        commutate(sched, drive, hal); // main.c:953
+        commutate(sched, drive, hal, obs); // main.c:953
         sched.commutation_interval.store(STARTUP_INTERVAL_TICKS, Ordering::Relaxed); // :954
-        hal.interval.set_count(5000); // SET_INTERVAL_TIMER_COUNT(5000) main.c:955
+        hal.interval().set_count(5000); // SET_INTERVAL_TIMER_COUNT(5000) main.c:955
         drive.old_routine.store(true, Ordering::Relaxed);
         drive.bemf_counter.store(0, Ordering::Relaxed);
         drive.running.store(true, Ordering::Relaxed); // main.c:956
@@ -241,65 +183,39 @@ pub fn start_motor(
 // Bench-safety kill: float all legs, latch, mask comp, freeze bb.
 // ===============================================================
 #[inline]
-pub fn safety_kill(
+pub fn safety_kill<M: MotorHal>(
     drive: &Drive,
     duty: &Duty,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
+    hal: &mut M,
+    obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
     reason: u16,
 ) {
-    hal.phase.all_off();
+    hal.phase().all_off();
     drive.running.store(false, Ordering::Relaxed);
     duty.duty_cycle_setpoint.store(0, Ordering::Relaxed);
     duty.duty_cycle.store(0, Ordering::Relaxed);
     duty.last_duty_cycle.store(0, Ordering::Relaxed);
     drive.old_routine.store(true, Ordering::Relaxed);
-    hal.comp.mask_interrupts();
-    hal.com.disable_interrupt();
+    hal.comp().mask_interrupts();
+    hal.com_timer().disable_interrupt();
     duty.kill_reason.store(reason, Ordering::Relaxed);
     duty.killed.store(true, Ordering::Relaxed);
-    hal.bb.freeze();
+    obs.bb.freeze();
 }
 
 /// Bench stop-request band: float, disarm, mask, zero the pipeline.
 #[inline]
-pub fn honor_stop(
-    drive: &Drive,
-    duty: &Duty,
-    bench: &Bench,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
-) {
+pub fn honor_stop<M: MotorHal>(drive: &Drive, duty: &Duty, bench: &Bench, hal: &mut M) {
     if bench.stop_req.swap(false, Ordering::Relaxed) {
-        hal.phase.all_off();
+        hal.phase().all_off();
         drive.running.store(false, Ordering::Relaxed);
         drive.old_routine.store(true, Ordering::Relaxed);
         drive.zero_crosses.store(0, Ordering::Relaxed);
         duty.duty_cycle_setpoint.store(0, Ordering::Relaxed);
         duty.duty_cycle.store(0, Ordering::Relaxed);
         duty.last_duty_cycle.store(0, Ordering::Relaxed);
-        hal.comp.mask_interrupts();
-        hal.com.disable_interrupt();
+        hal.comp().mask_interrupts();
+        hal.com_timer().disable_interrupt();
     }
 }
 
@@ -311,62 +227,36 @@ pub fn honor_stop(
 /// so `duty_apply` rescales against the VARIABLE, then writes the same
 /// value to the register (`SET_AUTO_RELOAD_PWM`).
 #[inline]
-pub fn variable_pwm_ride(
-    sched: &Sched,
-    duty: &Duty,
-    base_arr: u16,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
-) {
+pub fn variable_pwm_ride<M: MotorHal>(sched: &Sched, duty: &Duty, base_arr: u16, hal: &mut M) {
     if VARIABLE_PWM == 1 {
         let ci = sched.commutation_interval.load(Ordering::Relaxed) as i32;
         let arr = am32::map(ci, 96, 200, (base_arr / 2) as i32, base_arr as i32);
         duty.tim1_arr.store(arr as u16, Ordering::Relaxed);
-        hal.pwm.set_auto_reload(arr as u16);
+        hal.pwm().set_auto_reload(arr as u16);
     }
 }
 
 /// bemf-timeout re-kick band (main.c:2495-2509).
 #[inline]
-pub fn bemf_timeout_rekick<const N: usize>(
+pub fn bemf_timeout_rekick<const N: usize, M: MotorHal<Com: ComTimerExt>>(
     sched: &Sched,
     drive: &Drive,
     duty: &Duty,
     zct: &ZctTrace<N>,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
+    hal: &mut M,
+    obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
     running: bool,
 ) {
-    if hal.interval.count() > BEMF_TIMEOUT_TICKS && running {
+    if hal.interval().count() > BEMF_TIMEOUT_TICKS && running {
         drive.bemf_timeout_happened.fetch_add(1, Ordering::Relaxed);
-        hal.comp.mask_interrupts();
+        hal.comp().mask_interrupts();
         drive.old_routine.store(true, Ordering::Relaxed);
         if duty.input.load(Ordering::Relaxed) < 48 {
             drive.running.store(false, Ordering::Relaxed);
             sched.commutation_interval.store(5000, Ordering::Relaxed);
         }
         drive.zero_crosses.store(0, Ordering::Relaxed);
-        zcfoundroutine(sched, drive, zct, duty, hal);
+        zcfoundroutine(sched, drive, zct, duty, hal, obs);
     }
 }
 
@@ -376,18 +266,7 @@ pub fn desync_check_band(
     sched: &Sched,
     drive: &Drive,
     duty: &Duty,
-    hal: &Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
+    obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
     average_interval: u32,
 ) {
     if drive.desync_check.load(Ordering::Relaxed) && drive.zero_crosses.load(Ordering::Relaxed) > 10 {
@@ -403,7 +282,7 @@ pub fn desync_check_band(
             }
             drive.old_routine.store(true, Ordering::Relaxed); // :2291
             duty.last_duty_cycle.store(MIN_STARTUP_DUTY / 2, Ordering::Relaxed); // :2295
-            hal.bb.record(EV_DSY, (drive.current_step.load(Ordering::Relaxed) - 1) as u8, average_interval as u16);
+            obs.bb.record(EV_DSY, (drive.current_step.load(Ordering::Relaxed) - 1) as u8, average_interval as u16);
         }
         drive.desync_check.store(false, Ordering::Relaxed); // :2297
         sched.last_average_interval.store(average_interval, Ordering::Relaxed); // :2299
@@ -413,57 +292,37 @@ pub fn desync_check_band(
 /// setInput() duty-setpoint block — main.c:1180-1326 factory subset
 /// (armed always true; no sine, no brake, no current limit).
 #[inline]
-pub fn set_input(
+pub fn set_input<M: MotorHal>(
     sched: &Sched,
     drive: &Drive,
     duty: &Duty,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
+    hal: &mut M,
+    obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
 ) {
     // input = uart_duty_get()  (main.c:1131,1423-1431).
     let input = duty.uart_duty_input.load(Ordering::Relaxed);
     duty.input.store(input, Ordering::Relaxed);
-    set_input_arming(sched, drive, duty, hal, input);
+    set_input_arming(sched, drive, duty, hal, obs, input);
     set_input_clamp(drive, duty, input);
 }
 
 /// setInput arm/disarm band (main.c:1182-1300, comp_pwm subset).
 #[inline]
-pub fn set_input_arming(
+pub fn set_input_arming<M: MotorHal>(
     sched: &Sched,
     drive: &Drive,
     duty: &Duty,
-    hal: &mut Hal<
-        '_,
-        impl PwmOutput,
-        impl PhaseOutput,
-        impl Comparator + CompExti,
-        impl IntervalTimer,
-        impl ComTimer + ComTimerExt,
-        impl Recorder,
-        impl Cs,
-        impl InjAdc,
-        impl LoopTimer,
-    >,
+    hal: &mut M,
+    obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
     input: u16,
 ) {
     let running = drive.running.load(Ordering::Relaxed);
     if input >= 47 {
         // main.c:1182-1196
         if !running {
-            hal.phase.all_off(); // main.c:1184
+            hal.phase().all_off(); // main.c:1184
             if !drive.old_routine.load(Ordering::Relaxed) {
-                start_motor(sched, drive, hal); // main.c:1185-1187
+                start_motor(sched, drive, hal, obs); // main.c:1185-1187
             }
             drive.running.store(true, Ordering::Relaxed); // main.c:1188
             duty.last_duty_cycle.store(MIN_STARTUP_DUTY, Ordering::Relaxed); // :1189
@@ -474,7 +333,7 @@ pub fn set_input_arming(
             drive.old_routine.store(true, Ordering::Relaxed);
             drive.zero_crosses.store(0, Ordering::Relaxed);
             drive.bad_count.store(0, Ordering::Relaxed);
-            hal.phase.all_off();
+            hal.phase().all_off();
         }
     }
 }
@@ -518,10 +377,11 @@ mod tests {
     #[test]
     fn commutate_wraps_step_and_flags_desync_check() {
         let (ss, ds, m) = (SchedStore::default(), DriveStore::default(), MockHal::new());
-        let (sched, drive, mut hal) = (ss.sched(), ds.drive(), m.hal());
+        let (sched, drive) = (ss.sched(), ds.drive());
+        let (mut hal, obs) = (m.motor(), m.observer());
         drive.current_step.store(6, Ordering::Relaxed);
         sched.commutation_interval.store(746, Ordering::Relaxed);
-        commutate(&sched, &drive, &mut hal);
+        commutate(&sched, &drive, &mut hal, &obs);
         // 6→1 wrap sets desync_check (main.c:856-861).
         assert_eq!(drive.current_step.load(Ordering::Relaxed), 1);
         assert!(drive.desync_check.load(Ordering::Relaxed));
@@ -548,9 +408,10 @@ mod tests {
     #[test]
     fn commutate_no_wrap_even_step_and_polling_fallback() {
         let (ss, ds, m) = (SchedStore::default(), DriveStore::default(), MockHal::new());
-        let (sched, drive, mut hal) = (ss.sched(), ds.drive(), m.hal());
+        let (sched, drive) = (ss.sched(), ds.drive());
+        let (mut hal, obs) = (m.motor(), m.observer());
         drive.current_step.store(1, Ordering::Relaxed);
-        commutate(&sched, &drive, &mut hal);
+        commutate(&sched, &drive, &mut hal, &obs);
         // 1→2: no desync_check, even step is falling — and set_step
         // carries the falling pair (rung 3 coverage).
         assert_eq!(drive.current_step.load(Ordering::Relaxed), 2);
@@ -560,12 +421,12 @@ mod tests {
         assert!(!drive.old_routine.load(Ordering::Relaxed));
         // average_interval > changeover+500 → polling fallback (main.c:881).
         sched.average_interval.store(POLLING_MODE_CHANGEOVER + 501, Ordering::Relaxed);
-        commutate(&sched, &drive, &mut hal);
+        commutate(&sched, &drive, &mut hal, &obs);
         assert!(drive.old_routine.load(Ordering::Relaxed));
         // At exactly changeover+500: NOT (strict >).
         drive.old_routine.store(false, Ordering::Relaxed);
         sched.average_interval.store(POLLING_MODE_CHANGEOVER + 500, Ordering::Relaxed);
-        commutate(&sched, &drive, &mut hal);
+        commutate(&sched, &drive, &mut hal, &obs);
         assert!(!drive.old_routine.load(Ordering::Relaxed));
     }
 
@@ -574,7 +435,7 @@ mod tests {
     #[test]
     fn zcfr_blend_matches_polling_blend_and_stores_wait() {
         let (ss, m) = (SchedStore::default(), MockHal::new());
-        let (sched, mut hal) = (ss.sched(), m.hal());
+        let (sched, mut hal) = (ss.sched(), m.motor());
         m.interval.set(700); // thiszctime
         sched.commutation_interval.store(746, Ordering::Relaxed);
         let (ci, wait) = zcfr_blend(&sched, &mut hal);
@@ -594,7 +455,7 @@ mod tests {
     #[test]
     fn zcfr_spin_wait_breaks_on_cnt_reaching_wait() {
         let (ds, m) = (DriveStore::default(), MockHal::new());
-        let (drive, mut hal) = (ds.drive(), m.hal());
+        let (drive, mut hal) = (ds.drive(), m.motor());
         m.interval.set(0);
         m.interval_step.set(100); // CNT climbs 100/read
         zcfr_spin_wait(&drive, 5, 250, &mut hal);
@@ -606,7 +467,7 @@ mod tests {
     #[test]
     fn zcfr_spin_wait_breaks_immediately_below_five_zcs() {
         let (ds, m) = (DriveStore::default(), MockHal::new());
-        let (drive, mut hal) = (ds.drive(), m.hal());
+        let (drive, mut hal) = (ds.drive(), m.motor());
         m.interval.set(0); // stuck below wait
         zcfr_spin_wait(&drive, 4, 1000, &mut hal);
         // zc<5 breaks after ONE interval read (main.c:1877).
@@ -616,7 +477,7 @@ mod tests {
     #[test]
     fn zcfr_spin_wait_guard_trips_on_wedged_timer() {
         let (ds, m) = (DriveStore::default(), MockHal::new());
-        let (drive, mut hal) = (ds.drive(), m.hal());
+        let (drive, mut hal) = (ds.drive(), m.motor());
         m.interval.set(0); // wedged INTERVAL_TIMER (DEVIATION #1)
         zcfr_spin_wait(&drive, 5, 1000, &mut hal);
         assert_eq!(drive.zcfr_guard_hits.load(Ordering::Relaxed), 1);
@@ -631,8 +492,8 @@ mod tests {
             ZctStore::new(),
             MockHal::new(),
         );
-        let (sched, drive, duty, zct, mut hal) =
-            (ss.sched(), ds.drive(), us.duty(), zs.zct(), m.hal());
+        let (sched, drive, duty, zct) = (ss.sched(), ds.drive(), us.duty(), zs.zct());
+        let (mut hal, obs) = (m.motor(), m.observer());
         // thiszc=100, ci_old=100 → ci=100 < POLLING_MODE_CHANGEOVER.
         m.interval.set(100);
         m.interval_step.set(1); // let the spin-wait terminate honestly
@@ -641,7 +502,7 @@ mod tests {
         drive.old_routine.store(true, Ordering::Relaxed);
         drive.current_step.store(1, Ordering::Relaxed);
         drive.bad_count.store(3, Ordering::Relaxed);
-        zcfoundroutine(&sched, &drive, &zct, &duty, &mut hal);
+        zcfoundroutine(&sched, &drive, &zct, &duty, &mut hal, &obs);
         // COM_TIMER->ARR = waitTime (main.c:1884).
         let wait = sched.wait_time.load(Ordering::Relaxed);
         assert_eq!(*m.com_arrs.borrow(), [wait]);
@@ -668,14 +529,14 @@ mod tests {
             ZctStore::new(),
             MockHal::new(),
         );
-        let (sched, drive, duty, zct, mut hal) =
-            (ss.sched(), ds.drive(), us.duty(), zs.zct(), m.hal());
+        let (sched, drive, duty, zct) = (ss.sched(), ds.drive(), us.duty(), zs.zct());
+        let (mut hal, obs) = (m.motor(), m.observer());
         // thiszc=4000, ci_old=4000 → ci=4000 ≥ POLLING_MODE_CHANGEOVER.
         m.interval.set(4000);
         sched.commutation_interval.store(4000, Ordering::Relaxed);
         drive.zero_crosses.store(0, Ordering::Relaxed); // zc<5 skips the spin
         drive.old_routine.store(true, Ordering::Relaxed);
-        zcfoundroutine(&sched, &drive, &zct, &duty, &mut hal);
+        zcfoundroutine(&sched, &drive, &zct, &duty, &mut hal, &obs);
         assert!(drive.old_routine.load(Ordering::Relaxed));
         assert!(!m.called("enable_interrupts"));
         assert_eq!(drive.zero_crosses.load(Ordering::Relaxed), 1);
@@ -686,10 +547,11 @@ mod tests {
     #[test]
     fn start_motor_seeds_only_when_not_running() {
         let (ss, ds, m) = (SchedStore::default(), DriveStore::default(), MockHal::new());
-        let (sched, drive, mut hal) = (ss.sched(), ds.drive(), m.hal());
+        let (sched, drive) = (ss.sched(), ds.drive());
+        let (mut hal, obs) = (m.motor(), m.observer());
         sched.commutation_interval.store(INIT_INTERVAL_TICKS, Ordering::Relaxed);
         drive.bemf_counter.store(9, Ordering::Relaxed);
-        start_motor(&sched, &drive, &mut hal);
+        start_motor(&sched, &drive, &mut hal, &obs);
         // commutate ran, then the seeds (main.c:953-956).
         assert_eq!(m.roles.borrow().len(), 1);
         assert_eq!(
@@ -704,7 +566,7 @@ mod tests {
         // Already running: a second call is a no-op.
         m.clear_calls();
         sched.commutation_interval.store(777, Ordering::Relaxed);
-        start_motor(&sched, &drive, &mut hal);
+        start_motor(&sched, &drive, &mut hal, &obs);
         assert!(m.calls.borrow().is_empty());
         assert_eq!(sched.commutation_interval.load(Ordering::Relaxed), 777);
     }
@@ -714,12 +576,13 @@ mod tests {
     #[test]
     fn safety_kill_full_off_mask_disable_freeze_latch() {
         let (ds, us, m) = (DriveStore::default(), DutyStore::default(), MockHal::new());
-        let (drive, duty, mut hal) = (ds.drive(), us.duty(), m.hal());
+        let (drive, duty) = (ds.drive(), us.duty());
+        let (mut hal, obs) = (m.motor(), m.observer());
         drive.running.store(true, Ordering::Relaxed);
         duty.duty_cycle_setpoint.store(500, Ordering::Relaxed);
         duty.duty_cycle.store(400, Ordering::Relaxed);
         duty.last_duty_cycle.store(300, Ordering::Relaxed);
-        safety_kill(&drive, &duty, &mut hal, 2);
+        safety_kill(&drive, &duty, &mut hal, &obs, 2);
         // The rm32-style HAL-call assertions: every safety call fired.
         assert!(m.called("all_off"));
         assert!(m.called("mask_interrupts"));
@@ -743,7 +606,7 @@ mod tests {
             BenchStore::default(),
             MockHal::new(),
         );
-        let (drive, duty, bench, mut hal) = (ds.drive(), us.duty(), bs.bench(), m.hal());
+        let (drive, duty, bench, mut hal) = (ds.drive(), us.duty(), bs.bench(), m.motor());
         drive.running.store(true, Ordering::Relaxed);
         drive.zero_crosses.store(42, Ordering::Relaxed);
         duty.duty_cycle_setpoint.store(500, Ordering::Relaxed);
@@ -769,7 +632,7 @@ mod tests {
     #[test]
     fn variable_pwm_ride_maps_interval_to_carrier_endpoints() {
         let (ss, us, m) = (SchedStore::default(), DutyStore::default(), MockHal::new());
-        let (sched, duty, mut hal) = (ss.sched(), us.duty(), m.hal());
+        let (sched, duty, mut hal) = (ss.sched(), us.duty(), m.motor());
         // ci ≤ 96 → half the base ARR (main.c:2193 map low end).
         sched.commutation_interval.store(50, Ordering::Relaxed);
         variable_pwm_ride(&sched, &duty, 3332, &mut hal);
@@ -793,7 +656,8 @@ mod tests {
             DutyStore::default(),
             MockHal::new(),
         );
-        let (sched, drive, duty, mut hal) = (ss.sched(), ds.drive(), us.duty(), m.hal());
+        let (sched, drive, duty) = (ss.sched(), ds.drive(), us.duty());
+        let mut hal = m.motor();
         sched.commutation_interval.store(50, Ordering::Relaxed); // → ARR 1666
         variable_pwm_ride(&sched, &duty, 3332, &mut hal);
         assert_eq!(duty.tim1_arr.load(Ordering::Relaxed), 1666);
@@ -815,15 +679,15 @@ mod tests {
             ZctStore::new(),
             MockHal::new(),
         );
-        let (sched, drive, duty, zct, mut hal) =
-            (ss.sched(), ds.drive(), us.duty(), zs.zct(), m.hal());
+        let (sched, drive, duty, zct) = (ss.sched(), ds.drive(), us.duty(), zs.zct());
+        let (mut hal, obs) = (m.motor(), m.observer());
         // Below threshold: nothing.
         m.interval.set(BEMF_TIMEOUT_TICKS);
-        bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, true);
+        bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, &obs, true);
         assert_eq!(drive.bemf_timeout_happened.load(Ordering::Relaxed), 0);
         // Over threshold but not running: nothing.
         m.interval.set(46_000);
-        bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, false);
+        bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, &obs, false);
         assert_eq!(drive.bemf_timeout_happened.load(Ordering::Relaxed), 0);
         assert!(!m.called("mask_interrupts"));
     }
@@ -837,14 +701,14 @@ mod tests {
             ZctStore::new(),
             MockHal::new(),
         );
-        let (sched, drive, duty, zct, mut hal) =
-            (ss.sched(), ds.drive(), us.duty(), zs.zct(), m.hal());
+        let (sched, drive, duty, zct) = (ss.sched(), ds.drive(), us.duty(), zs.zct());
+        let (mut hal, obs) = (m.motor(), m.observer());
         m.interval.set(46_000);
         sched.commutation_interval.store(1000, Ordering::Relaxed);
         drive.running.store(true, Ordering::Relaxed);
         duty.input.store(100, Ordering::Relaxed); // ≥ 48
         drive.zero_crosses.store(50, Ordering::Relaxed);
-        bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, true);
+        bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, &obs, true);
         assert_eq!(drive.bemf_timeout_happened.load(Ordering::Relaxed), 1);
         assert!(m.called("mask_interrupts"));
         assert!(drive.old_routine.load(Ordering::Relaxed));
@@ -868,13 +732,13 @@ mod tests {
             ZctStore::new(),
             MockHal::new(),
         );
-        let (sched, drive, duty, zct, mut hal) =
-            (ss.sched(), ds.drive(), us.duty(), zs.zct(), m.hal());
+        let (sched, drive, duty, zct) = (ss.sched(), ds.drive(), us.duty(), zs.zct());
+        let (mut hal, obs) = (m.motor(), m.observer());
         m.interval.set(46_000);
         sched.commutation_interval.store(1000, Ordering::Relaxed);
         drive.running.store(true, Ordering::Relaxed);
         duty.input.store(40, Ordering::Relaxed); // < 48
-        bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, true);
+        bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, &obs, true);
         assert!(!drive.running.load(Ordering::Relaxed));
         // ci reseeded to 5000 BEFORE the blend (main.c:2503):
         // final ci = polling_blend(thiszc=46000, 5000) = 15250.
@@ -894,7 +758,8 @@ mod tests {
             DutyStore::default(),
             MockHal::new(),
         );
-        let (sched, drive, duty, hal) = (ss.sched(), ds.drive(), us.duty(), m.hal());
+        let (sched, drive, duty) = (ss.sched(), ds.drive(), us.duty());
+        let obs = m.observer();
         drive.desync_check.store(true, Ordering::Relaxed);
         drive.zero_crosses.store(11, Ordering::Relaxed);
         drive.running.store(true, Ordering::Relaxed);
@@ -902,7 +767,7 @@ mod tests {
         sched.last_average_interval.store(1600, Ordering::Relaxed);
         sched.commutation_interval.store(500, Ordering::Relaxed);
         duty.input.store(100, Ordering::Relaxed); // > 47 → running=0
-        desync_check_band(&sched, &drive, &duty, &hal, 1000);
+        desync_check_band(&sched, &drive, &duty, &obs, 1000);
         assert_eq!(drive.zero_crosses.load(Ordering::Relaxed), 0);
         assert_eq!(drive.desync_happened.load(Ordering::Relaxed), 1);
         assert!(!drive.running.load(Ordering::Relaxed));
@@ -926,7 +791,8 @@ mod tests {
             DutyStore::default(),
             MockHal::new(),
         );
-        let (sched, drive, duty, hal) = (ss.sched(), ds.drive(), us.duty(), m.hal());
+        let (sched, drive, duty) = (ss.sched(), ds.drive(), us.duty());
+        let obs = m.observer();
         drive.desync_check.store(true, Ordering::Relaxed);
         drive.zero_crosses.store(11, Ordering::Relaxed);
         drive.running.store(true, Ordering::Relaxed);
@@ -934,7 +800,7 @@ mod tests {
         sched.last_average_interval.store(1600, Ordering::Relaxed);
         sched.commutation_interval.store(500, Ordering::Relaxed); // ≤ 1000
         duty.input.store(0, Ordering::Relaxed); // ≤ 47
-        desync_check_band(&sched, &drive, &duty, &hal, 1000);
+        desync_check_band(&sched, &drive, &duty, &obs, 1000);
         // Desync registered but running survives (main.c:2288-2290).
         assert_eq!(drive.desync_happened.load(Ordering::Relaxed), 1);
         assert!(drive.running.load(Ordering::Relaxed));
@@ -948,18 +814,19 @@ mod tests {
             DutyStore::default(),
             MockHal::new(),
         );
-        let (sched, drive, duty, hal) = (ss.sched(), ds.drive(), us.duty(), m.hal());
+        let (sched, drive, duty) = (ss.sched(), ds.drive(), us.duty());
+        let obs = m.observer();
         drive.desync_check.store(true, Ordering::Relaxed);
         drive.zero_crosses.store(11, Ordering::Relaxed);
         sched.last_average_interval.store(1000, Ordering::Relaxed);
-        desync_check_band(&sched, &drive, &duty, &hal, 1000);
+        desync_check_band(&sched, &drive, &duty, &obs, 1000);
         // No desync, but flag cleared + lai updated (main.c:2297-2299).
         assert_eq!(drive.desync_happened.load(Ordering::Relaxed), 0);
         assert!(m.events.borrow().is_empty());
         assert!(!drive.desync_check.load(Ordering::Relaxed));
         // Gate closed entirely (desync_check false): lai NOT rewritten.
         sched.last_average_interval.store(1234, Ordering::Relaxed);
-        desync_check_band(&sched, &drive, &duty, &hal, 999);
+        desync_check_band(&sched, &drive, &duty, &obs, 999);
         assert_eq!(sched.last_average_interval.load(Ordering::Relaxed), 1234);
     }
 
@@ -973,11 +840,12 @@ mod tests {
             DutyStore::default(),
             MockHal::new(),
         );
-        let (sched, drive, duty, mut hal) = (ss.sched(), ds.drive(), us.duty(), m.hal());
+        let (sched, drive, duty) = (ss.sched(), ds.drive(), us.duty());
+        let (mut hal, obs) = (m.motor(), m.observer());
         duty.duty_cycle_maximum.store(DUTY_FULL, Ordering::Relaxed);
         duty.uart_duty_input.store(1047, Ordering::Relaxed);
         drive.old_routine.store(false, Ordering::Relaxed); // interrupt mode
-        set_input(&sched, &drive, &duty, &mut hal);
+        set_input(&sched, &drive, &duty, &mut hal, &obs);
         assert_eq!(duty.input.load(Ordering::Relaxed), 1047);
         // Arm path: allOff then startMotor (main.c:1184-1189).
         assert!(m.called("all_off"));
@@ -1002,10 +870,11 @@ mod tests {
             DutyStore::default(),
             MockHal::new(),
         );
-        let (sched, drive, duty, mut hal) = (ss.sched(), ds.drive(), us.duty(), m.hal());
+        let (sched, drive, duty) = (ss.sched(), ds.drive(), us.duty());
+        let (mut hal, obs) = (m.motor(), m.observer());
         sched.commutation_interval.store(INIT_INTERVAL_TICKS, Ordering::Relaxed);
         drive.old_routine.store(true, Ordering::Relaxed); // polling mode
-        set_input_arming(&sched, &drive, &duty, &mut hal, 1047);
+        set_input_arming(&sched, &drive, &duty, &mut hal, &obs, 1047);
         // all_off yes, but NO commutate/startMotor (main.c:1185 gate).
         assert!(m.called("all_off"));
         assert!(m.roles.borrow().is_empty());
@@ -1015,7 +884,7 @@ mod tests {
         assert_eq!(duty.last_duty_cycle.load(Ordering::Relaxed), MIN_STARTUP_DUTY);
         // Armed + already running: second call is a no-op.
         m.clear_calls();
-        set_input_arming(&sched, &drive, &duty, &mut hal, 1047);
+        set_input_arming(&sched, &drive, &duty, &mut hal, &obs, 1047);
         assert!(m.calls.borrow().is_empty());
     }
 
@@ -1027,10 +896,11 @@ mod tests {
             DutyStore::default(),
             MockHal::new(),
         );
-        let (sched, drive, duty, mut hal) = (ss.sched(), ds.drive(), us.duty(), m.hal());
+        let (sched, drive, duty) = (ss.sched(), ds.drive(), us.duty());
+        let (mut hal, obs) = (m.motor(), m.observer());
         drive.zero_crosses.store(42, Ordering::Relaxed);
         drive.bad_count.store(3, Ordering::Relaxed);
-        set_input_arming(&sched, &drive, &duty, &mut hal, 0);
+        set_input_arming(&sched, &drive, &duty, &mut hal, &obs, 0);
         assert!(drive.old_routine.load(Ordering::Relaxed));
         assert_eq!(drive.zero_crosses.load(Ordering::Relaxed), 0);
         assert_eq!(drive.bad_count.load(Ordering::Relaxed), 0);
@@ -1040,7 +910,7 @@ mod tests {
         m.clear_calls();
         drive.running.store(true, Ordering::Relaxed);
         drive.zero_crosses.store(9, Ordering::Relaxed);
-        set_input_arming(&sched, &drive, &duty, &mut hal, 0);
+        set_input_arming(&sched, &drive, &duty, &mut hal, &obs, 0);
         assert!(m.calls.borrow().is_empty());
         assert_eq!(drive.zero_crosses.load(Ordering::Relaxed), 9);
     }
@@ -1084,12 +954,12 @@ mod tests {
             ZctStore::new(),
             MockHal::new(),
         );
-        let (sched, drive, duty, zct, hal) =
-            (ss.sched(), ds.drive(), us.duty(), zs.zct(), m.hal());
+        let (sched, drive, duty, zct) = (ss.sched(), ds.drive(), us.duty(), zs.zct());
+        let obs = m.observer();
         drive.current_step.store(3, Ordering::Relaxed);
         sched.commutation_interval.store(300, Ordering::Relaxed); // above batch CI
         sched.this_zc.store(0x1234, Ordering::Relaxed);
-        zct.write(&sched, &drive, &duty, hal.cs);
+        zct.write(&sched, &drive, &duty, obs.cs);
         assert_eq!(zs.records(), 1);
         assert_eq!(zs.comm_n.load(Ordering::Relaxed), 1);
         // Wire bytes: 5B A9 sync + step in the flags byte.
@@ -1100,7 +970,7 @@ mod tests {
         // threshold, cycle 1 (odd) is the skipped half — no record.
         zs.comm_n.store(50, Ordering::Relaxed);
         sched.commutation_interval.store(150, Ordering::Relaxed);
-        zct.write(&sched, &drive, &duty, hal.cs);
+        zct.write(&sched, &drive, &duty, obs.cs);
         assert_eq!(zs.records(), 1); // unchanged
         assert!(zs.batching.load(Ordering::Relaxed));
     }

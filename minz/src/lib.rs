@@ -31,26 +31,27 @@ pub mod usart2_rx;
 
 pub use stm32l4xx_hal as hal;
 
-/// The concrete AM32-clone HAL bundle for this platform: zero-sized
-/// register impls + the black box + cortex-m critical sections, all
-/// statically dispatched through `minz_core::am32_hal`. The program
-/// (`examples/am32_clone.rs`) builds instances via its `hal()` wiring
+/// The concrete AM32-clone motor bundle for this platform: zero-sized
+/// register impls statically dispatched through the rm32-verbatim
+/// `minz_core::am32_hal::MotorHal` trait. The program
+/// (`examples/am32_clone.rs`) builds instances via its `motor()` wiring
 /// constructor (the `&mut self` rm32 seams — pwm/phase/timers/comp —
 /// are held by value, so a shared `static` cannot serve them). `Tim1Pwm`
-/// fills BOTH the `PwmOutput` and `PhaseOutput` slots (rm32-L431
-/// shape: one TIM1 owns both roles).
-pub type Am32Hal<'a> = minz_core::am32_hal::Hal<
-    'a,
-    tim1_motor_pwm::Tim1Pwm,
+/// fills BOTH the `PwmOutput` and `PhaseOutput` slots, `Am32Timers`
+/// both timer slots (rm32-L431 shape: one TIM1 owns both roles).
+pub type Am32Motor = minz_core::am32_hal::Motor<
     tim1_motor_pwm::Tim1Pwm,
     comp2::Comp2,
+    tim1_motor_pwm::Tim1Pwm,
     am32_timers::Am32Timers,
     am32_timers::Am32Timers,
-    bb::Bb,
-    bb::CortexCs,
-    adc_sync::InjAdc1,
-    tim6_loop::Tim6Loop,
 >;
+
+/// The minz-owned observer bundle (bb/cs/adc/lt) — the seams the rm32
+/// `MotorHal` knows nothing about. Built by the program's `observer()`
+/// wiring constructor over its `static BB` etc.
+pub type Am32Observer<'a> =
+    minz_core::am32_hal::Observer<'a, bb::Bb, bb::CortexCs, adc_sync::InjAdc1, tim6_loop::Tim6Loop>;
 
 use fugit::HertzU32 as Hertz;
 
