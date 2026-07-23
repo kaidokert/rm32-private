@@ -9,15 +9,17 @@
 //! nothing speculative. Realizing impls live in the `minz` firmware
 //! crate next to the registers they drive:
 //!
-//! | trait        | firmware impl                         |
-//! |--------------|---------------------------------------|
-//! | [`MotorPwm`] | `minz::tim1_motor_pwm::Tim1Pwm`       |
-//! | [`CompCtl`]  | `minz::comp2::Comp2`                  |
-//! | [`ComTimers`]| `minz::am32_timers::Am32Timers`       |
-//! | [`Recorder`] | `minz::bb::Bb`                        |
-//! | [`Cs`]       | `minz::bb::CortexCs`                  |
-//! | [`InjAdc`]   | `minz::adc_sync::InjAdc1`             |
-//! | [`LoopTimer`]| `minz::tim6_loop::Tim6Loop`           |
+//! | trait             | firmware impl                         |
+//! |-------------------|---------------------------------------|
+//! | [`MotorPwm`]      | `minz::tim1_motor_pwm::Tim1Pwm`       |
+//! | [`CompCtl`]       | `minz::comp2::Comp2`                  |
+//! | [`IntervalTimer`] | `minz::am32_timers::Am32Timers`       |
+//! | [`ComTimer`]      | `minz::am32_timers::Am32Timers`       |
+//! | [`ComTimerExt`]   | `minz::am32_timers::Am32Timers`       |
+//! | [`Recorder`]      | `minz::bb::Bb`                        |
+//! | [`Cs`]            | `minz::bb::CortexCs`                  |
+//! | [`InjAdc`]        | `minz::adc_sync::InjAdc1`             |
+//! | [`LoopTimer`]     | `minz::tim6_loop::Tim6Loop`           |
 
 /// TIM1 motor PWM output stage. Realized by
 /// `minz::tim1_motor_pwm::Tim1Pwm` (zero-sized, delegates to the
@@ -67,23 +69,32 @@ pub trait CompCtl {
     fn clear_pending(&self);
 }
 
-/// INTERVAL_TIMER (TIM2) + COM_TIMER (TIM16) register macros
-/// (peripherals.h:15-26, both 0.5 µs ticks). Realized by
-/// `minz::am32_timers::Am32Timers`.
-pub trait ComTimers {
-    /// `INTERVAL_TIMER_COUNT` (peripherals.h:15) — 16-bit CNT as u32.
-    fn interval_cnt(&self) -> u32;
-    /// `SET_INTERVAL_TIMER_COUNT` (peripherals.h:22).
-    fn set_interval_cnt(&self, v: u16);
+// Copied verbatim from rm32/src/hal.rs — rm32-shape convergence rung 1;
+// do not modify without syncing rm32.
+/// Interval timer (commutation timing measurement)
+pub trait IntervalTimer {
+    fn count(&self) -> u32;
+    fn set_count(&mut self, val: u32);
+}
+
+// Copied verbatim from rm32/src/hal.rs — rm32-shape convergence rung 1;
+// do not modify without syncing rm32.
+/// Commutation timer (one-shot for next commutation event)
+pub trait ComTimer {
+    fn set_and_enable(&mut self, timeout: u16);
+    fn disable_interrupt(&mut self);
+    fn enable_interrupt(&mut self);
+}
+
+/// minz extension over [`ComTimer`] — the AM32-verbatim polling path needs a
+/// bare ARR write (main.c:1884) and the shared-vector UIF ack that rm32 does
+/// in its ISR wrapper instead. Kept OUT of the copied rm32 traits.
+pub trait ComTimerExt {
     /// `COM_TIMER->ARR = time` (zcfoundroutine main.c:1884).
-    fn com_set_arr(&self, arr: u16);
-    /// `SET_AND_ENABLE_COM_INT(time)` (peripherals.h:19-21).
-    fn set_and_enable_com_int(&self, arr: u16);
-    /// `DISABLE_COM_TIMER_INT()` (peripherals.h:17).
-    fn disable_com_timer_int(&self);
+    fn com_set_arr(&mut self, arr: u16);
     /// Ack COM_TIMER's UIF (`COM_TIMER->SR = 0`) — first line of the
     /// COM ISR (TIM1.UIE is off, so the shared vector is the COM tick).
-    fn com_clear_flag(&self);
+    fn com_clear_flag(&mut self);
 }
 
 /// The black-box seam (observer-only). Realized by `minz::bb::Bb`
@@ -121,15 +132,26 @@ pub trait LoopTimer {
     fn clear_flag(&self);
 }
 
-/// The bundled HAL — one parameter threads all seven seams through
+/// The bundled HAL — one parameter threads all the seams through
 /// `crate::am32_control` / `crate::am32_isr` (call sites stay short;
-/// static dispatch — the fields are plain `&` to zero-sized impls in
-/// firmware).
-pub struct Hal<'a, P: MotorPwm, C: CompCtl, T: ComTimers, B: Recorder, S: Cs, A: InjAdc, L: LoopTimer>
-{
+/// static dispatch). Seams whose rm32 traits take `&mut self`
+/// ([`IntervalTimer`], [`ComTimer`]) are held BY VALUE (zero-sized in
+/// firmware — free); `&self`-only seams stay plain `&` refs.
+pub struct Hal<
+    'a,
+    P: MotorPwm,
+    C: CompCtl,
+    I: IntervalTimer,
+    CT: ComTimer + ComTimerExt,
+    B: Recorder,
+    S: Cs,
+    A: InjAdc,
+    L: LoopTimer,
+> {
+    pub interval: I,
+    pub com: CT,
     pub pwm: &'a P,
     pub comp: &'a C,
-    pub tim: &'a T,
     pub bb: &'a B,
     pub cs: &'a S,
     pub adc: &'a A,
@@ -187,8 +209,18 @@ pub(crate) mod mock {
         }
         pub(crate) fn hal(
             &self,
-        ) -> Hal<'_, MockHal, MockHal, MockHal, MockHal, MockHal, MockHal, MockHal> {
-            Hal { pwm: self, comp: self, tim: self, bb: self, cs: self, adc: self, lt: self }
+        ) -> Hal<'_, MockHal, MockHal, &MockHal, &MockHal, MockHal, MockHal, MockHal, MockHal>
+        {
+            Hal {
+                interval: self,
+                com: self,
+                pwm: self,
+                comp: self,
+                bb: self,
+                cs: self,
+                adc: self,
+                lt: self,
+            }
         }
         pub(crate) fn called(&self, name: &'static str) -> bool {
             self.calls.borrow().iter().any(|c| *c == name)
@@ -246,28 +278,42 @@ pub(crate) mod mock {
         }
     }
 
-    impl ComTimers for MockHal {
-        fn interval_cnt(&self) -> u32 {
+    // The by-value bundle seams are implemented on `&MockHal` (interior
+    // mutability via the Cells makes the `&mut &MockHal` receivers work),
+    // so tests build bundles with `interval: &mock, com: &mock`. Call-log
+    // strings kept IDENTICAL to the pre-rung-1 `ComTimers` names — the
+    // test assertions depend on them.
+    impl IntervalTimer for &MockHal {
+        fn count(&self) -> u32 {
             let v = self.interval.get();
             self.interval.set(v + self.interval_step.get());
             v
         }
-        fn set_interval_cnt(&self, v: u16) {
+        fn set_count(&mut self, val: u32) {
             self.calls.borrow_mut().push("set_interval_cnt");
-            self.interval.set(v as u32);
+            self.interval.set(val);
         }
-        fn com_set_arr(&self, arr: u16) {
+    }
+
+    impl ComTimer for &MockHal {
+        fn set_and_enable(&mut self, timeout: u16) {
+            self.calls.borrow_mut().push("set_and_enable_com_int");
+            self.com_arrs.borrow_mut().push(timeout);
+        }
+        fn disable_interrupt(&mut self) {
+            self.calls.borrow_mut().push("disable_com_timer_int");
+        }
+        fn enable_interrupt(&mut self) {
+            self.calls.borrow_mut().push("enable_com_timer_int");
+        }
+    }
+
+    impl ComTimerExt for &MockHal {
+        fn com_set_arr(&mut self, arr: u16) {
             self.calls.borrow_mut().push("com_set_arr");
             self.com_arrs.borrow_mut().push(arr);
         }
-        fn set_and_enable_com_int(&self, arr: u16) {
-            self.calls.borrow_mut().push("set_and_enable_com_int");
-            self.com_arrs.borrow_mut().push(arr);
-        }
-        fn disable_com_timer_int(&self) {
-            self.calls.borrow_mut().push("disable_com_timer_int");
-        }
-        fn com_clear_flag(&self) {
+        fn com_clear_flag(&mut self) {
             self.calls.borrow_mut().push("com_clear_flag");
         }
     }

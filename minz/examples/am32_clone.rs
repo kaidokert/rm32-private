@@ -163,18 +163,25 @@ static BB: Bb = Bb::new();
 
 // ===============================================================
 // The HAL bundle — zero-sized register impls (static dispatch, no
-// dyn) threaded through minz_core::am32_control. The only other
-// places that name it are the ISR trampolines and main_entry's top.
+// dyn) threaded through minz_core::am32_control. The rm32 timer
+// seams (`IntervalTimer`/`ComTimer`) take `&mut self`, so the bundle
+// holds them by value (free — ZSTs) and each context builds its own
+// instance via this wiring constructor. The only places that name it
+// are the ISR trampolines and main_entry's top (the house rule).
 // ===============================================================
-static HAL: Am32Hal = Hal {
-    pwm: &Tim1Pwm,
-    comp: &Comp2,
-    tim: &Am32Timers,
-    bb: &BB,
-    cs: &CortexCs,
-    adc: &InjAdc1,
-    lt: &Tim6Loop,
-};
+#[inline(always)]
+fn hal() -> Am32Hal<'static> {
+    Hal {
+        interval: Am32Timers,
+        com: Am32Timers,
+        pwm: &Tim1Pwm,
+        comp: &Comp2,
+        bb: &BB,
+        cs: &CortexCs,
+        adc: &InjAdc1,
+        lt: &Tim6Loop,
+    }
+}
 
 // zcfoundroutine spin-guard counter (DEVIATION #1, minz::am32_control).
 static ZCFR_GUARD_HITS: AtomicU32 = AtomicU32::new(0);
@@ -328,7 +335,8 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     let bench = &BENCH;
     let zct = &ZCT;
     let rx = &RX;
-    let hal = &HAL;
+    let mut hal = hal();
+    let hal = &mut hal;
 
     // Main-context UART parser state (mirrors uart_duty_poll main.c:1367).
     let mut uart = UartDuty::new();
@@ -561,19 +569,22 @@ fn main() -> ! {
 /// COMP (priority 0) — the ZC chain.
 #[interrupt]
 fn COMP() {
-    comp_isr(&SCHED, &DRIVE, &HAL)
+    let mut hal = hal();
+    comp_isr(&SCHED, &DRIVE, &mut hal)
 }
 
 /// TIM16 wrap on the shared vector (priority 0) — the COM tick.
 #[interrupt]
 fn TIM1_UP_TIM16() {
-    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY, &HAL)
+    let mut hal = hal();
+    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY, &mut hal)
 }
 
 /// TIM6 19.6 kHz (priority 3) — tenKhzRoutine.
 #[interrupt]
 fn TIM6_DACUNDER() {
-    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &HAL)
+    let mut hal = hal();
+    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &mut hal)
 }
 
 /// USART2 RX (priority 2) — enqueue bytes; parser runs in main.

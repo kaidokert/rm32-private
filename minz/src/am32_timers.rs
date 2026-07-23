@@ -85,6 +85,16 @@ pub fn disable_com_timer_int() {
     tim.dier.modify(|_, w| w.uie().clear_bit());
 }
 
+/// COM_TIMER DIER.UIE set — DISABLE_COM_TIMER_INT in reverse. No AM32
+/// macro (AM32 only enables UIE inside SET_AND_ENABLE_COM_INT); exists
+/// to realize rm32's verbatim `ComTimer::enable_interrupt`. Uncalled on
+/// this bench.
+#[inline]
+pub fn enable_com_timer_int() {
+    let tim = unsafe { &*stm32::TIM16::ptr() };
+    tim.dier.modify(|_, w| w.uie().set_bit());
+}
+
 /// Write COM_TIMER->ARR directly (zcfoundroutine main.c:1884; vestigial
 /// in polling — UIE is off there so it never fires).
 #[inline]
@@ -99,34 +109,48 @@ pub fn com_clear_flag() {
     tim.sr.write(|w| unsafe { w.bits(0) });
 }
 
-/// The `minz_core::am32_hal::ComTimers` register impl over
-/// INTERVAL_TIMER (TIM2) + COM_TIMER (TIM16) — zero-sized, static
-/// dispatch; delegates to the AM32 macro wrappers above.
+/// The rm32-verbatim `minz_core::am32_hal::{IntervalTimer, ComTimer}`
+/// (+ the minz `ComTimerExt`) register impl over INTERVAL_TIMER (TIM2)
+/// + COM_TIMER (TIM16) — zero-sized, static dispatch (`&mut self`
+/// receivers are free on a ZST); delegates to the AM32 macro wrappers
+/// above.
 pub struct Am32Timers;
 
-impl minz_core::am32_hal::ComTimers for Am32Timers {
+impl minz_core::am32_hal::IntervalTimer for Am32Timers {
     #[inline(always)]
-    fn interval_cnt(&self) -> u32 {
+    fn count(&self) -> u32 {
         interval_cnt()
     }
     #[inline(always)]
-    fn set_interval_cnt(&self, v: u16) {
-        set_interval_cnt(v)
+    fn set_count(&mut self, val: u32) {
+        // rm32 trait takes u32; the register op is the identical 16-bit
+        // CNT write (all callers' values fit).
+        set_interval_cnt(val as u16)
+    }
+}
+
+impl minz_core::am32_hal::ComTimer for Am32Timers {
+    #[inline(always)]
+    fn set_and_enable(&mut self, timeout: u16) {
+        set_and_enable_com_int(timeout)
     }
     #[inline(always)]
-    fn com_set_arr(&self, arr: u16) {
-        com_set_arr(arr)
-    }
-    #[inline(always)]
-    fn set_and_enable_com_int(&self, arr: u16) {
-        set_and_enable_com_int(arr)
-    }
-    #[inline(always)]
-    fn disable_com_timer_int(&self) {
+    fn disable_interrupt(&mut self) {
         disable_com_timer_int()
     }
     #[inline(always)]
-    fn com_clear_flag(&self) {
+    fn enable_interrupt(&mut self) {
+        enable_com_timer_int()
+    }
+}
+
+impl minz_core::am32_hal::ComTimerExt for Am32Timers {
+    #[inline(always)]
+    fn com_set_arr(&mut self, arr: u16) {
+        com_set_arr(arr)
+    }
+    #[inline(always)]
+    fn com_clear_flag(&mut self) {
         com_clear_flag()
     }
 }
