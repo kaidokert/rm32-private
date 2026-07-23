@@ -1488,7 +1488,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn regression_invert2_c_windows_must_arm_when_rotor_clocked() {
         // invert2 incident (2026-07-17): under the scheduling
         // inversion, phase-C windows (sectors 0/3) hit the TOPEND
@@ -1513,6 +1512,7 @@ mod tests {
         assert_eq!(schedule_precheck(&r.zs(), 1), Some(450));
     }
 
+    #[test]
     fn schedule_precheck_agrees_with_accept_publish() {
         // Firmware order: precheck (schedule-first) THEN accept_publish.
         // The precheck's decision must equal plan.schedule for every
