@@ -417,8 +417,12 @@ fn handle_requests(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct
     if bench.dump_req.swap(false, Ordering::Relaxed) {
         dump_bb(tx);
     }
-    if duty.killed.swap(false, Ordering::Relaxed) {
-        let reason = duty.kill_reason.load(Ordering::Relaxed);
+    // Kill NOTICE is one-shot via kill_reason; `killed` itself stays
+    // LATCHED (TIM6 duty/polling gate + the set_input inert gate hold
+    // until reset — consuming it here made the fault restartable, the
+    // kill/restart oscillation the 2026-07-23 structure report found).
+    let reason = duty.kill_reason.swap(0, Ordering::Relaxed);
+    if reason != 0 {
         let _ = write!(
             tx,
             "!! KILL reason={} (1=OC 2=vbat) iraw={} vbat={}\r\n",

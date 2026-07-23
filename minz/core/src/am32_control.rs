@@ -299,6 +299,15 @@ pub fn set_input<M: MotorHal>(
     hal: &mut M,
     obs: &Observer<'_, impl Recorder, impl Cs, impl InjAdc, impl LoopTimer>,
 ) {
+    // BENCH DEVIATION (not in AM32): a safety kill is LATCHED. While
+    // `killed`, the whole input pipeline is inert so a host that keeps
+    // streaming throttle cannot re-arm straight back into the fault
+    // (OC re-trips ~85 ms after each restart -> kill/restart
+    // oscillation, flagged by the 2026-07-23 structure report). There
+    // is deliberately NO re-arm path short of reset.
+    if duty.killed.load(Ordering::Relaxed) {
+        return;
+    }
     // input = uart_duty_get()  (main.c:1131,1423-1431).
     let input = duty.uart_duty_input.load(Ordering::Relaxed);
     duty.input.store(input, Ordering::Relaxed);
@@ -860,6 +869,32 @@ mod tests {
         // commutate... zc stays 0 here) → clamped to startup range.
         let sp = duty.duty_cycle_setpoint.load(Ordering::Relaxed);
         assert!((MIN_STARTUP_DUTY..=STARTUP_MAX_DUTY_CYCLE).contains(&sp));
+    }
+
+    /// Regression (2026-07-23 structure report): a safety kill must be
+    /// LATCHED — a host still streaming throttle after the kill must
+    /// not re-arm into the fault. set_input is fully inert under
+    /// `killed`: no input mirror, no arm, no mock HAL calls.
+    #[test]
+    fn set_input_is_inert_while_killed() {
+        let (ss, ds, us, m) = (
+            SchedStore::default(),
+            DriveStore::default(),
+            DutyStore::default(),
+            MockHal::new(),
+        );
+        let (sched, drive, duty) = (ss.sched(), ds.drive(), us.duty());
+        let (mut hal, obs) = (m.motor(), m.observer());
+        duty.killed.store(true, Ordering::Relaxed);
+        duty.duty_cycle_maximum.store(DUTY_FULL, Ordering::Relaxed);
+        duty.uart_duty_input.store(1047, Ordering::Relaxed); // host still streaming
+        drive.old_routine.store(false, Ordering::Relaxed); // would-arm state
+        set_input(&sched, &drive, &duty, &mut hal, &obs);
+        assert_eq!(duty.input.load(Ordering::Relaxed), 0);
+        assert_eq!(duty.duty_cycle_setpoint.load(Ordering::Relaxed), 0);
+        assert!(!drive.running.load(Ordering::Relaxed));
+        assert!(m.calls.borrow().is_empty());
+        assert!(duty.killed.load(Ordering::Relaxed)); // still latched
     }
 
     #[test]

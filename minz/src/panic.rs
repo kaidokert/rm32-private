@@ -47,6 +47,13 @@ impl core::fmt::Write for UartFmt {
 /// already left the wire).
 pub fn halt(info: &PanicInfo) -> ! {
     cortex_m::interrupt::disable();
+    // Bridge OFF before reporting: a panic must not leave TIM1 driving
+    // the motor for the ~1 s until the IWDG resets (MOE stays set
+    // through a core halt; the last CCR/pin roles would keep the
+    // bridge live under a wedged control loop). Raw pin-mode writes,
+    // no state needed; harmless pre-clock-enable (writes to an
+    // unclocked GPIO port are ignored).
+    crate::tim1_motor_pwm::all_off();
     {
         use core::fmt::Write;
         let mut u = UartFmt;
