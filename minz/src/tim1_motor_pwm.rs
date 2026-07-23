@@ -329,6 +329,55 @@ pub fn arm_output() {
     set_phase_roles(PhaseRole::Pwm, PhaseRole::Pwm, PhaseRole::Pwm);
 }
 
+/// Full brake: every leg `PhaseRole::Low` — all three low FETs solid
+/// on (LIN GPIO-forced high, HIN forced low), shorting the motor
+/// terminals to ground. Mirrors AM32 `fullBrake` (phaseouts.c: all
+/// phases `phaseXLOW`) / rm32 `PhaseOutput::full_brake`
+/// (rm32_stm32/src/phase.rs:156-160). UNCALLED by the am32_clone
+/// control path — exists to realize the rm32-verbatim trait.
+#[inline]
+pub fn full_brake() {
+    cortex_m::interrupt::free(|_| {
+        set_phase_roles(PhaseRole::Low, PhaseRole::Low, PhaseRole::Low);
+    });
+}
+
+/// Proportional (drag) brake: every HIGH-side pin GPIO-forced
+/// OUTPUT-low, every LOW-side pin ALTERNATE so TIM1's complementary
+/// channels PWM the low FETs at the current duty. Mirrors AM32
+/// `proportionalBrake` (phaseouts.c) / rm32
+/// `PhaseOutput::proportional_brake` (rm32_stm32/src/phase.rs:168-181:
+/// HIN OUTPUT-low, LIN ALTERNATE). Pin map: HIN = PA8/PA9/PA10,
+/// LIN = PA7/PB0/PB1 (MODER fields per RM0394 8.4.1; BSRR 8.4.7).
+/// UNCALLED by the am32_clone control path — exists to realize the
+/// rm32-verbatim trait.
+#[inline]
+pub fn proportional_brake() {
+    const AF: u32 = 0b10;
+    let gpioa = unsafe { &*GPIOA::ptr() };
+    let gpiob = unsafe { &*GPIOB::ptr() };
+    cortex_m::interrupt::free(|_| {
+        // Preload the HIN ODRs low (BR), then flip modes in one MODER
+        // write per port — same BSRR-before-MODER idiom as
+        // set_phase_roles.
+        gpioa
+            .bsrr
+            .write(|w| unsafe { w.bits((1 << (16 + 8)) | (1 << (16 + 9)) | (1 << (16 + 10))) });
+        // PA7 (A low) → AF; PA8/PA9/PA10 (highs) → OUTPUT.
+        let a_mask = (0b11u32 << 14) | (0b11 << 16) | (0b11 << 18) | (0b11 << 20);
+        let a_val = (AF << 14) | (0b01 << 16) | (0b01 << 18) | (0b01 << 20);
+        gpioa
+            .moder
+            .modify(|r, w| unsafe { w.bits((r.bits() & !a_mask) | a_val) });
+        // PB0 (B low) / PB1 (C low) → AF.
+        let b_mask = (0b11u32 << 0) | (0b11 << 2);
+        let b_val = (AF << 0) | (AF << 2);
+        gpiob
+            .moder
+            .modify(|r, w| unsafe { w.bits((r.bits() & !b_mask) | b_val) });
+    });
+}
+
 /// Enable the TIM1 update-event interrupt (DIER.UIE). Fires the
 /// `TIM1_UP_TIM16` IRQ once per PWM period (24 kHz @ ARR=3332). The
 /// IRQ vector is shared with TIM16, but TIM16 isn't initialised on
@@ -420,35 +469,97 @@ pub fn set_carrier_arr(arr: u16) {
     LIVE_ARR.store(arr, portable_atomic::Ordering::Relaxed);
 }
 
-/// The `minz_core::am32_hal::MotorPwm` register impl over TIM1 —
-/// zero-sized, static dispatch; each method delegates to the free fn
-/// above so `motor_tester2` (which calls the free fns directly) is
-/// untouched.
+/// The rm32-verbatim `minz_core::am32_hal::{PwmOutput, PhaseOutput}`
+/// register impls over TIM1 — zero-sized, static dispatch, one type
+/// in both bundle slots (like rm32-L431 where one TIM1 owns both
+/// roles); each called method delegates to the free fn above so
+/// `motor_tester2` (which calls the free fns directly) is untouched.
 pub struct Tim1Pwm;
 
-impl minz_core::am32_hal::MotorPwm for Tim1Pwm {
+impl minz_core::am32_hal::PwmOutput for Tim1Pwm {
+    /// `SET_DUTY_CYCLE_ALL` (AM32 peripherals.h:25): same duty in all
+    /// three CCRs, always.
     #[inline(always)]
-    fn set_duty(&self, duty: u16) {
+    fn set_duty_all(&mut self, duty: u16) {
         set_duty(duty)
     }
+    /// `SET_AUTO_RELOAD_PWM` — the live carrier ARR (preloaded).
     #[inline(always)]
-    fn set_roles_for_step(&self, step: u8) {
-        set_roles_for_step(step)
-    }
-    #[inline(always)]
-    fn all_off(&self) {
-        all_off()
-    }
-    #[inline(always)]
-    fn set_carrier_arr(&self, arr: u16) {
+    fn set_auto_reload(&mut self, arr: u16) {
         set_carrier_arr(arr)
     }
+    /// TIM1.PSC write (RM0394 26.4.15). UNCALLED by the am32_clone
+    /// control path — realizes the rm32-verbatim trait.
     #[inline(always)]
-    fn max_duty(&self) -> u16 {
-        max_duty()
+    fn set_prescaler(&mut self, psc: u16) {
+        let tim1 = unsafe { &*TIM1::ptr() };
+        tim1.psc.write(|w| w.psc().bits(psc));
     }
+    /// TIM1.CCR1 write (RM0394 26.4.16). UNCALLED — see above.
     #[inline(always)]
-    fn base_arr(&self) -> u16 {
-        crate::TIM1_AUTORELOAD
+    fn set_compare1(&mut self, val: u16) {
+        let tim1 = unsafe { &*TIM1::ptr() };
+        tim1.ccr1.write(|w| w.ccr().bits(val));
+    }
+    /// TIM1.CCR2 write. UNCALLED — see above.
+    #[inline(always)]
+    fn set_compare2(&mut self, val: u16) {
+        let tim1 = unsafe { &*TIM1::ptr() };
+        tim1.ccr2.write(|w| w.ccr().bits(val));
+    }
+    /// TIM1.CCR3 write. UNCALLED — see above.
+    #[inline(always)]
+    fn set_compare3(&mut self, val: u16) {
+        let tim1 = unsafe { &*TIM1::ptr() };
+        tim1.ccr3.write(|w| w.ccr().bits(val));
+    }
+    /// TIM1.EGR.UG (RM0394 26.4.6) — force-load the preloaded
+    /// registers. UNCALLED — see above.
+    #[inline(always)]
+    fn generate_update_event(&mut self) {
+        let tim1 = unsafe { &*TIM1::ptr() };
+        tim1.egr.write(|w| w.ug().set_bit());
+    }
+    /// Per the trait doc: OR `dtg` into TIM1.BDTR (DTG field, RM0394
+    /// 26.4.18) — matches rm32-L431's impl
+    /// (rm32_stm32/src/mcu_l431/pwm.rs:46-50). UNCALLED — see above.
+    #[inline(always)]
+    fn set_dead_time_override(&mut self, dtg: u16) {
+        let tim1 = unsafe { &*TIM1::ptr() };
+        tim1.bdtr
+            .modify(|r, w| unsafe { w.bits(r.bits() | dtg as u32) });
+    }
+}
+
+impl minz_core::am32_hal::PhaseOutput for Tim1Pwm {
+    /// AM32 comStep(step), `step ∈ 1..6` (rm32 convention at the trait
+    /// boundary). The −1 into minz's 0..5 sector frame lives HERE:
+    /// rm32's step-1 (C float / B low / A pwm, phase.rs:116-120) ==
+    /// minz sector 0 in [`set_roles_for_step`]'s table.
+    #[inline(always)]
+    fn com_step(&mut self, step: u8) {
+        set_roles_for_step(step - 1)
+    }
+    /// allOff (phaseouts.c): float all legs (gate-driver inputs
+    /// actively driven low).
+    #[inline(always)]
+    fn all_off(&mut self) {
+        all_off()
+    }
+    /// UNCALLED by the am32_clone control path — see [`full_brake`].
+    #[inline(always)]
+    fn full_brake(&mut self) {
+        full_brake()
+    }
+    /// allpwm (phaseouts.c): all six pins back to ALTERNATE, TIM1
+    /// drives every leg. UNCALLED — delegates to [`arm_output`].
+    #[inline(always)]
+    fn all_pwm(&mut self) {
+        arm_output()
+    }
+    /// UNCALLED — see [`proportional_brake`].
+    #[inline(always)]
+    fn proportional_brake(&mut self) {
+        proportional_brake()
     }
 }

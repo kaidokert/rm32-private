@@ -12,7 +12,8 @@ use core::sync::atomic::Ordering;
 use crate::am32;
 use crate::am32_control::{commutate, get_bemf_state, safety_kill, zcfoundroutine};
 use crate::am32_hal::{
-    CompCtl, ComTimer, ComTimerExt, Cs, Hal, InjAdc, IntervalTimer, LoopTimer, MotorPwm, Recorder,
+    CompCtl, ComTimer, ComTimerExt, Cs, Hal, InjAdc, IntervalTimer, LoopTimer, PhaseOutput,
+    PwmOutput, Recorder,
 };
 use crate::am32_loop::{
     Bench, Drive, Duty, Sched, TEMP_ADVANCE, duty_ramp, uart_deadman_tick,
@@ -37,7 +38,8 @@ pub fn comp_isr(
     drive: &Drive,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -71,7 +73,8 @@ pub fn interrupt_routine(
     drive: &Drive,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -119,7 +122,8 @@ pub fn tim1_up_tim16_isr<const N: usize>(
     duty: &Duty,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -165,7 +169,8 @@ pub fn tim6_dacunder_isr<const N: usize>(
     zct: &ZctTrace<N>,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -193,15 +198,19 @@ pub fn tim6_dacunder_isr<const N: usize>(
 
 /// Duty apply band (main.c:1771-1791): CCR write path. Returns the
 /// single `running` load so the caller's polling band reuses it
-/// (preserves the original one-load ordering).
+/// (preserves the original one-load ordering). The rescale denominator
+/// is the `tim1_arr` SHADOW (`duty.tim1_arr`) — AM32's
+/// `duty*tim1_arr/2000` uses the tim1_arr VARIABLE, not a register
+/// readback (main.c:1790-1791); variable_pwm_ride is the writer.
 #[inline]
 pub fn duty_apply(
     drive: &Drive,
     duty: &Duty,
     duty_val: u16,
-    hal: &Hal<
+    hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -211,14 +220,14 @@ pub fn duty_apply(
         impl LoopTimer,
     >,
 ) -> bool {
-    let tim1_arr = hal.pwm.max_duty() as u32;
+    let tim1_arr = duty.tim1_arr.load(Ordering::Relaxed) as u32; // the tim1_arr VARIABLE (main.c:1790-1791)
     let running = drive.running.load(Ordering::Relaxed);
     let input = duty.input.load(Ordering::Relaxed);
     let base = (duty_val as u32 * tim1_arr) / 2000;
     let adjusted = if running && input > 47 { base + 1 } else { base };
     duty.last_duty_cycle.store(duty_val, Ordering::Relaxed); // main.c:1789
-    hal.pwm.set_carrier_arr(tim1_arr as u16); // SET_AUTO_RELOAD_PWM (:1790)
-    hal.pwm.set_duty(adjusted as u16); // SET_DUTY_CYCLE_ALL (:1791)
+    hal.pwm.set_auto_reload(tim1_arr as u16); // SET_AUTO_RELOAD_PWM (:1790)
+    hal.pwm.set_duty_all(adjusted as u16); // SET_DUTY_CYCLE_ALL (:1791)
     running
 }
 
@@ -232,7 +241,8 @@ pub fn polling_bemf_check<const N: usize>(
     zct: &ZctTrace<N>,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -271,7 +281,8 @@ pub fn adc_harvest_and_safety(
     bench: &Bench,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -455,7 +466,7 @@ mod tests {
         // Sequence order (main.c:896-916): ack, disable, commutate.
         assert_eq!(m.calls.borrow()[0], "com_clear_flag");
         assert_eq!(m.calls.borrow()[1], "disable_com_timer_int");
-        assert_eq!(m.calls.borrow()[2], "set_roles_for_step");
+        assert_eq!(m.calls.borrow()[2], "com_step");
         assert_eq!(m.calls.borrow()[3], "change_comp_input");
         // Blend arithmetic matches am32::blend_interval (main.c:900);
         // commutate ran BEFORE the blend so ci_old is the pre-tick value.
@@ -520,8 +531,8 @@ mod tests {
         assert_eq!(m.calls.borrow()[0], "tim6_clear_flag");
         assert_eq!(drive.tenkhz_counter.load(Ordering::Relaxed), 1);
         // Killed gate: no duty apply, no polling band.
-        assert!(!m.called("set_duty"));
-        assert!(!m.called("set_carrier_arr"));
+        assert!(!m.called("set_duty_all"));
+        assert!(!m.called("set_auto_reload"));
         assert!(!m.called("mask_phase_interrupts"));
         assert_eq!(duty.ramp_count.load(Ordering::Relaxed), 0);
         // Deadman + harvest still run.
@@ -547,30 +558,33 @@ mod tests {
         tim6_dacunder_isr(&sched, &drive, &duty, &bench, &zct, &mut m.hal());
         // duty_ramp ran (ramp_count) and the CCR path fired.
         assert_eq!(duty.ramp_count.load(Ordering::Relaxed), 1);
-        assert!(m.called("set_carrier_arr"));
-        assert!(m.called("set_duty"));
+        assert!(m.called("set_auto_reload"));
+        assert!(m.called("set_duty_all"));
     }
 
     #[test]
     fn duty_apply_plus_one_only_when_running_and_input_over_47() {
         let (ds, us, m) = (DriveStore::default(), DutyStore::default(), MockHal::new());
         let (drive, duty) = (ds.drive(), us.duty());
+        // The tim1_arr shadow is duty_apply's rescale denominator
+        // (variable_pwm_ride is its writer in the real loop).
+        duty.tim1_arr.store(3332, Ordering::Relaxed);
         // running && input>47 → +1 (main.c:1782-1787 comp_pwm bump).
         drive.running.store(true, Ordering::Relaxed);
         duty.input.store(48, Ordering::Relaxed);
-        assert!(duty_apply(&drive, &duty, 1000, &m.hal()));
+        assert!(duty_apply(&drive, &duty, 1000, &mut m.hal()));
         // base = 1000*3332/2000 = 1666, adjusted 1667.
         assert_eq!(*m.duties.borrow(), [1667]);
         assert_eq!(*m.carrier_arrs.borrow(), [3332]);
         assert_eq!(duty.last_duty_cycle.load(Ordering::Relaxed), 1000);
         // input == 47: no +1.
         duty.input.store(47, Ordering::Relaxed);
-        duty_apply(&drive, &duty, 1000, &m.hal());
+        duty_apply(&drive, &duty, 1000, &mut m.hal());
         assert_eq!(m.duties.borrow()[1], 1666);
         // not running: no +1 (and returns false).
         drive.running.store(false, Ordering::Relaxed);
         duty.input.store(100, Ordering::Relaxed);
-        assert!(!duty_apply(&drive, &duty, 1000, &m.hal()));
+        assert!(!duty_apply(&drive, &duty, 1000, &mut m.hal()));
         assert_eq!(m.duties.borrow()[2], 1666);
     }
 

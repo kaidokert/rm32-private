@@ -11,7 +11,8 @@
 //!
 //! | trait             | firmware impl                         |
 //! |-------------------|---------------------------------------|
-//! | [`MotorPwm`]      | `minz::tim1_motor_pwm::Tim1Pwm`       |
+//! | [`PwmOutput`]     | `minz::tim1_motor_pwm::Tim1Pwm`       |
+//! | [`PhaseOutput`]   | `minz::tim1_motor_pwm::Tim1Pwm`       |
 //! | [`CompCtl`]       | `minz::comp2::Comp2`                  |
 //! | [`IntervalTimer`] | `minz::am32_timers::Am32Timers`       |
 //! | [`ComTimer`]      | `minz::am32_timers::Am32Timers`       |
@@ -21,30 +22,34 @@
 //! | [`InjAdc`]        | `minz::adc_sync::InjAdc1`             |
 //! | [`LoopTimer`]     | `minz::tim6_loop::Tim6Loop`           |
 
-/// TIM1 motor PWM output stage. Realized by
-/// `minz::tim1_motor_pwm::Tim1Pwm` (zero-sized, delegates to the
-/// module's free fns); mirrors AM32 `phaseouts.c` + the
-/// `SET_DUTY_CYCLE_ALL` / `SET_AUTO_RELOAD_PWM` macros.
-pub trait MotorPwm {
-    /// `SET_DUTY_CYCLE_ALL` (peripherals.h:25): same duty in all
-    /// three CCRs, always.
-    fn set_duty(&self, duty: u16);
-    /// comStep role-only flip (`phaseouts.c` HIGH/LOW/FLOAT rotation),
-    /// `step ∈ 0..5` (minz sector frame).
-    fn set_roles_for_step(&self, step: u8);
-    /// allOff (phaseouts.c): float all legs (gate-driver inputs
-    /// actively driven low).
-    fn all_off(&self);
-    /// `SET_AUTO_RELOAD_PWM` — write the live carrier ARR (preloaded).
-    fn set_carrier_arr(&self, arr: u16);
-    /// The LIVE carrier ARR (`TIMER1_MAX_ARR` as currently ridden by
-    /// variable_pwm) — the duty rescale denominator (main.c:1790).
-    fn max_duty(&self) -> u16;
-    /// The base carrier ARR — AM32 targets.h:5335 `TIM1_AUTORELOAD =
-    /// CPU_FREQUENCY_MHZ*1e6/NOMINAL_PWM - 1` (3332 on L431 @ 24 kHz;
-    /// the firmware value is carrier-feature-dependent, hence a
-    /// method, not a core const).
-    fn base_arr(&self) -> u16;
+// Copied verbatim from rm32/src/hal.rs — rm32-shape convergence rung 2;
+// do not modify without syncing rm32.
+/// PWM output interface for 3-phase motor control.
+/// Goes beyond embedded-hal's single-channel SetDutyCycle.
+pub trait PwmOutput {
+    fn set_duty_all(&mut self, duty: u16);
+    fn set_auto_reload(&mut self, arr: u16);
+    fn set_prescaler(&mut self, psc: u16);
+    fn set_compare1(&mut self, val: u16);
+    fn set_compare2(&mut self, val: u16);
+    fn set_compare3(&mut self, val: u16);
+    fn generate_update_event(&mut self);
+    /// Override dead-time in TIM1 BDTR register (OR'd with existing DTG value).
+    fn set_dead_time_override(&mut self, dtg: u16);
+}
+
+// Copied verbatim from rm32/src/hal.rs — rm32-shape convergence rung 2;
+// do not modify without syncing rm32.
+/// Motor phase output control (6-step commutation)
+pub trait PhaseOutput {
+    fn com_step(&mut self, step: u8);
+    fn all_off(&mut self);
+    fn full_brake(&mut self);
+    fn all_pwm(&mut self);
+    fn proportional_brake(&mut self);
+    /// Toggle pulse output on commutation step 1/4 (debug RPM measurement).
+    /// Default no-op — override for boards with pulse output pin.
+    fn pulse_toggle(&mut self, _step: u8) {}
 }
 
 /// COMP2 BEMF comparator + its EXTI line. Realized by
@@ -135,11 +140,14 @@ pub trait LoopTimer {
 /// The bundled HAL — one parameter threads all the seams through
 /// `crate::am32_control` / `crate::am32_isr` (call sites stay short;
 /// static dispatch). Seams whose rm32 traits take `&mut self`
-/// ([`IntervalTimer`], [`ComTimer`]) are held BY VALUE (zero-sized in
-/// firmware — free); `&self`-only seams stay plain `&` refs.
+/// ([`PwmOutput`], [`PhaseOutput`], [`IntervalTimer`], [`ComTimer`])
+/// are held BY VALUE (zero-sized in firmware — free); `&self`-only
+/// seams stay plain `&` refs. `pwm`/`phase` are two slots mirroring
+/// rm32's `MotorHal` shape; firmware wires `Tim1Pwm` into both.
 pub struct Hal<
     'a,
-    P: MotorPwm,
+    P: PwmOutput,
+    Ph: PhaseOutput,
     C: CompCtl,
     I: IntervalTimer,
     CT: ComTimer + ComTimerExt,
@@ -150,7 +158,8 @@ pub struct Hal<
 > {
     pub interval: I,
     pub com: CT,
-    pub pwm: &'a P,
+    pub pwm: P,
+    pub phase: Ph,
     pub comp: &'a C,
     pub bb: &'a B,
     pub cs: &'a S,
@@ -196,25 +205,31 @@ pub(crate) mod mock {
         /// read so the spin-wait can be driven deterministically.
         pub(crate) interval: Cell<u32>,
         pub(crate) interval_step: Cell<u32>,
-        pub(crate) max_duty: Cell<u16>,
-        pub(crate) base_arr: Cell<u16>,
     }
 
     impl MockHal {
         pub(crate) fn new() -> Self {
-            let m = Self::default();
-            m.max_duty.set(3332);
-            m.base_arr.set(3332);
-            m
+            Self::default()
         }
         pub(crate) fn hal(
             &self,
-        ) -> Hal<'_, MockHal, MockHal, &MockHal, &MockHal, MockHal, MockHal, MockHal, MockHal>
-        {
+        ) -> Hal<
+            '_,
+            &MockHal,
+            &MockHal,
+            MockHal,
+            &MockHal,
+            &MockHal,
+            MockHal,
+            MockHal,
+            MockHal,
+            MockHal,
+        > {
             Hal {
                 interval: self,
                 com: self,
                 pwm: self,
+                phase: self,
                 comp: self,
                 bb: self,
                 cs: self,
@@ -230,27 +245,56 @@ pub(crate) mod mock {
         }
     }
 
-    impl MotorPwm for MockHal {
-        fn set_duty(&self, duty: u16) {
-            self.calls.borrow_mut().push("set_duty");
+    // rm32-verbatim seams (`&mut self` receivers) on `&MockHal`, like
+    // IntervalTimer/ComTimer below. Call-log strings follow the rung-2
+    // trait method names; `roles` records the step AS PASSED (1..6 —
+    // the -1 sector conversion lives inside the firmware impl, not in
+    // core, so the mock must not convert either).
+    impl PwmOutput for &MockHal {
+        fn set_duty_all(&mut self, duty: u16) {
+            self.calls.borrow_mut().push("set_duty_all");
             self.duties.borrow_mut().push(duty);
         }
-        fn set_roles_for_step(&self, step: u8) {
-            self.calls.borrow_mut().push("set_roles_for_step");
-            self.roles.borrow_mut().push(step);
-        }
-        fn all_off(&self) {
-            self.calls.borrow_mut().push("all_off");
-        }
-        fn set_carrier_arr(&self, arr: u16) {
-            self.calls.borrow_mut().push("set_carrier_arr");
+        fn set_auto_reload(&mut self, arr: u16) {
+            self.calls.borrow_mut().push("set_auto_reload");
             self.carrier_arrs.borrow_mut().push(arr);
         }
-        fn max_duty(&self) -> u16 {
-            self.max_duty.get()
+        fn set_prescaler(&mut self, _psc: u16) {
+            self.calls.borrow_mut().push("set_prescaler");
         }
-        fn base_arr(&self) -> u16 {
-            self.base_arr.get()
+        fn set_compare1(&mut self, _val: u16) {
+            self.calls.borrow_mut().push("set_compare1");
+        }
+        fn set_compare2(&mut self, _val: u16) {
+            self.calls.borrow_mut().push("set_compare2");
+        }
+        fn set_compare3(&mut self, _val: u16) {
+            self.calls.borrow_mut().push("set_compare3");
+        }
+        fn generate_update_event(&mut self) {
+            self.calls.borrow_mut().push("generate_update_event");
+        }
+        fn set_dead_time_override(&mut self, _dtg: u16) {
+            self.calls.borrow_mut().push("set_dead_time_override");
+        }
+    }
+
+    impl PhaseOutput for &MockHal {
+        fn com_step(&mut self, step: u8) {
+            self.calls.borrow_mut().push("com_step");
+            self.roles.borrow_mut().push(step);
+        }
+        fn all_off(&mut self) {
+            self.calls.borrow_mut().push("all_off");
+        }
+        fn full_brake(&mut self) {
+            self.calls.borrow_mut().push("full_brake");
+        }
+        fn all_pwm(&mut self) {
+            self.calls.borrow_mut().push("all_pwm");
+        }
+        fn proportional_brake(&mut self) {
+            self.calls.borrow_mut().push("proportional_brake");
         }
     }
 
@@ -425,6 +469,7 @@ pub(crate) mod mock {
         pub(crate) ramp_count: AtomicU16,
         pub(crate) killed: AtomicBool,
         pub(crate) kill_reason: AtomicU16,
+        pub(crate) tim1_arr: AtomicU16,
     }
     impl DutyStore {
         pub(crate) fn duty(&self) -> Duty<'_> {
@@ -439,6 +484,7 @@ pub(crate) mod mock {
                 ramp_count: &self.ramp_count,
                 killed: &self.killed,
                 kill_reason: &self.kill_reason,
+                tim1_arr: &self.tim1_arr,
             }
         }
     }

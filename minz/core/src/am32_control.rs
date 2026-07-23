@@ -12,7 +12,8 @@ use core::sync::atomic::Ordering;
 
 use crate::am32;
 use crate::am32_hal::{
-    CompCtl, ComTimer, ComTimerExt, Cs, Hal, InjAdc, IntervalTimer, LoopTimer, MotorPwm, Recorder,
+    CompCtl, ComTimer, ComTimerExt, Cs, Hal, InjAdc, IntervalTimer, LoopTimer, PhaseOutput,
+    PwmOutput, Recorder,
 };
 use crate::am32_loop::{
     BAD_COUNT_THRESHOLD, BEMF_TIMEOUT_TICKS, Bench, Drive, Duty, MIN_STARTUP_DUTY,
@@ -23,8 +24,10 @@ use crate::blackbox::{EV_DSY, EV_REF};
 use crate::zct_trace::ZctTrace;
 
 // TIM1 base ARR (AM32 targets.h:5335 `TIM1_AUTORELOAD = 3332` on
-// L431 @ 24 kHz) arrives via `MotorPwm::base_arr()` — the firmware
-// value is carrier-feature-dependent, so it is a seam, not a const.
+// L431 @ 24 kHz) arrives as `variable_pwm_ride`'s `base_arr` parameter
+// — the firmware value is carrier-feature-dependent, so the program
+// threads it in (rm32's PwmOutput has no ARR getters; ARR is state,
+// held in `Duty::tim1_arr` like AM32's `tim1_arr` variable).
 
 // ===============================================================
 // commutate() — main.c:854-894 (forward-only factory path).
@@ -33,9 +36,10 @@ use crate::zct_trace::ZctTrace;
 pub fn commutate(
     sched: &Sched,
     drive: &Drive,
-    hal: &Hal<
+    hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -58,10 +62,12 @@ pub fn commutate(
     drive.current_step.store(step, Ordering::Relaxed);
     let sector = (step - 1) as usize;
 
-    // comStep(step) (main.c:876) — minz role-only flip; CCRs hold the
-    // tick-shaped duty. AM32 wraps this in __disable_irq; the firmware
-    // set_roles_for_step does its own interrupt::free.
-    hal.pwm.set_roles_for_step(sector as u8);
+    // comStep(step) (main.c:876) — rm32's 1..6 step convention at the
+    // trait boundary (the firmware impl converts to its 0..5 sector
+    // frame internally); role-only flip, CCRs hold the tick-shaped
+    // duty. AM32 wraps this in __disable_irq; the firmware impl does
+    // its own interrupt::free.
+    hal.phase.com_step(step as u8);
     // changeCompInput() (main.c:879).
     hal.comp.change_comp_input(sector);
 
@@ -90,7 +96,8 @@ pub fn zcfr_blend(
     sched: &Sched,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -128,7 +135,8 @@ pub fn zcfr_spin_wait(
     wait: u32,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -162,7 +170,8 @@ pub fn zcfoundroutine<const N: usize>(
     duty: &Duty,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -203,7 +212,8 @@ pub fn start_motor(
     drive: &Drive,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -232,7 +242,8 @@ pub fn safety_kill(
     duty: &Duty,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -243,7 +254,7 @@ pub fn safety_kill(
     >,
     reason: u16,
 ) {
-    hal.pwm.all_off();
+    hal.phase.all_off();
     drive.running.store(false, Ordering::Relaxed);
     duty.duty_cycle_setpoint.store(0, Ordering::Relaxed);
     duty.duty_cycle.store(0, Ordering::Relaxed);
@@ -264,7 +275,8 @@ pub fn honor_stop(
     bench: &Bench,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -275,7 +287,7 @@ pub fn honor_stop(
     >,
 ) {
     if bench.stop_req.swap(false, Ordering::Relaxed) {
-        hal.pwm.all_off();
+        hal.phase.all_off();
         drive.running.store(false, Ordering::Relaxed);
         drive.old_routine.store(true, Ordering::Relaxed);
         drive.zero_crosses.store(0, Ordering::Relaxed);
@@ -289,13 +301,20 @@ pub fn honor_stop(
 
 /// variable_pwm carrier-ride band (main.c:2192-2195). mode 1: carrier
 /// rides the commutation interval; duty ratio is preserved by the tenKhz
-/// `duty*tim1_arr/2000` rescale.
+/// `duty*tim1_arr/2000` rescale. `base_arr` (AM32 `TIMER1_MAX_ARR`,
+/// targets.h:5335) is threaded in by the program. Stores the mapped ARR
+/// into `duty.tim1_arr` — AM32's `tim1_arr = map(...)` (main.c:2194) —
+/// so `duty_apply` rescales against the VARIABLE, then writes the same
+/// value to the register (`SET_AUTO_RELOAD_PWM`).
 #[inline]
 pub fn variable_pwm_ride(
     sched: &Sched,
-    hal: &Hal<
+    duty: &Duty,
+    base_arr: u16,
+    hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -306,10 +325,10 @@ pub fn variable_pwm_ride(
     >,
 ) {
     if VARIABLE_PWM == 1 {
-        let max_arr = hal.pwm.base_arr();
         let ci = sched.commutation_interval.load(Ordering::Relaxed) as i32;
-        let arr = am32::map(ci, 96, 200, (max_arr / 2) as i32, max_arr as i32);
-        hal.pwm.set_carrier_arr(arr as u16);
+        let arr = am32::map(ci, 96, 200, (base_arr / 2) as i32, base_arr as i32);
+        duty.tim1_arr.store(arr as u16, Ordering::Relaxed);
+        hal.pwm.set_auto_reload(arr as u16);
     }
 }
 
@@ -322,7 +341,8 @@ pub fn bemf_timeout_rekick<const N: usize>(
     zct: &ZctTrace<N>,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -354,7 +374,8 @@ pub fn desync_check_band(
     duty: &Duty,
     hal: &Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -394,7 +415,8 @@ pub fn set_input(
     duty: &Duty,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -419,7 +441,8 @@ pub fn set_input_arming(
     duty: &Duty,
     hal: &mut Hal<
         '_,
-        impl MotorPwm,
+        impl PwmOutput,
+        impl PhaseOutput,
         impl CompCtl,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
@@ -434,7 +457,7 @@ pub fn set_input_arming(
     if input >= 47 {
         // main.c:1182-1196
         if !running {
-            hal.pwm.all_off(); // main.c:1184
+            hal.phase.all_off(); // main.c:1184
             if !drive.old_routine.load(Ordering::Relaxed) {
                 start_motor(sched, drive, hal); // main.c:1185-1187
             }
@@ -447,7 +470,7 @@ pub fn set_input_arming(
             drive.old_routine.store(true, Ordering::Relaxed);
             drive.zero_crosses.store(0, Ordering::Relaxed);
             drive.bad_count.store(0, Ordering::Relaxed);
-            hal.pwm.all_off();
+            hal.phase.all_off();
         }
     }
 }
@@ -490,17 +513,18 @@ mod tests {
     #[test]
     fn commutate_wraps_step_and_flags_desync_check() {
         let (ss, ds, m) = (SchedStore::default(), DriveStore::default(), MockHal::new());
-        let (sched, drive, hal) = (ss.sched(), ds.drive(), m.hal());
+        let (sched, drive, mut hal) = (ss.sched(), ds.drive(), m.hal());
         drive.current_step.store(6, Ordering::Relaxed);
         sched.commutation_interval.store(746, Ordering::Relaxed);
-        commutate(&sched, &drive, &hal);
+        commutate(&sched, &drive, &mut hal);
         // 6→1 wrap sets desync_check (main.c:856-861).
         assert_eq!(drive.current_step.load(Ordering::Relaxed), 1);
         assert!(drive.desync_check.load(Ordering::Relaxed));
         // rising = step % 2 → step 1 is rising.
         assert!(drive.rising.load(Ordering::Relaxed));
-        // comStep + changeCompInput on sector 0.
-        assert_eq!(*m.roles.borrow(), [0]);
+        // comStep gets the AM32 STEP (1..6, main.c:876);
+        // changeCompInput gets the sector (0..5).
+        assert_eq!(*m.roles.borrow(), [1]);
         assert_eq!(*m.comp_inputs.borrow(), [0]);
         // bemfcounter/zcfound reset; interval pushed into slot 0.
         assert_eq!(drive.bemf_counter.load(Ordering::Relaxed), 0);
@@ -513,9 +537,9 @@ mod tests {
     #[test]
     fn commutate_no_wrap_even_step_and_polling_fallback() {
         let (ss, ds, m) = (SchedStore::default(), DriveStore::default(), MockHal::new());
-        let (sched, drive, hal) = (ss.sched(), ds.drive(), m.hal());
+        let (sched, drive, mut hal) = (ss.sched(), ds.drive(), m.hal());
         drive.current_step.store(1, Ordering::Relaxed);
-        commutate(&sched, &drive, &hal);
+        commutate(&sched, &drive, &mut hal);
         // 1→2: no desync_check, even step is falling.
         assert_eq!(drive.current_step.load(Ordering::Relaxed), 2);
         assert!(!drive.desync_check.load(Ordering::Relaxed));
@@ -523,12 +547,12 @@ mod tests {
         assert!(!drive.old_routine.load(Ordering::Relaxed));
         // average_interval > changeover+500 → polling fallback (main.c:881).
         sched.average_interval.store(POLLING_MODE_CHANGEOVER + 501, Ordering::Relaxed);
-        commutate(&sched, &drive, &hal);
+        commutate(&sched, &drive, &mut hal);
         assert!(drive.old_routine.load(Ordering::Relaxed));
         // At exactly changeover+500: NOT (strict >).
         drive.old_routine.store(false, Ordering::Relaxed);
         sched.average_interval.store(POLLING_MODE_CHANGEOVER + 500, Ordering::Relaxed);
-        commutate(&sched, &drive, &hal);
+        commutate(&sched, &drive, &mut hal);
         assert!(!drive.old_routine.load(Ordering::Relaxed));
     }
 
@@ -731,15 +755,40 @@ mod tests {
 
     #[test]
     fn variable_pwm_ride_maps_interval_to_carrier_endpoints() {
-        let (ss, m) = (SchedStore::default(), MockHal::new());
-        let (sched, hal) = (ss.sched(), m.hal());
+        let (ss, us, m) = (SchedStore::default(), DutyStore::default(), MockHal::new());
+        let (sched, duty, mut hal) = (ss.sched(), us.duty(), m.hal());
         // ci ≤ 96 → half the base ARR (main.c:2193 map low end).
         sched.commutation_interval.store(50, Ordering::Relaxed);
-        variable_pwm_ride(&sched, &hal);
+        variable_pwm_ride(&sched, &duty, 3332, &mut hal);
+        assert_eq!(duty.tim1_arr.load(Ordering::Relaxed), 3332 / 2);
         // ci ≥ 200 → full base ARR.
         sched.commutation_interval.store(500, Ordering::Relaxed);
-        variable_pwm_ride(&sched, &hal);
+        variable_pwm_ride(&sched, &duty, 3332, &mut hal);
+        assert_eq!(duty.tim1_arr.load(Ordering::Relaxed), 3332);
         assert_eq!(*m.carrier_arrs.borrow(), [3332 / 2, 3332]);
+    }
+
+    #[test]
+    fn variable_pwm_shadow_feeds_duty_apply() {
+        // The rung-2 coupling: variable_pwm_ride stores the mapped ARR
+        // in the tim1_arr shadow, and duty_apply's rescale consumes the
+        // SHADOW — AM32's `duty*tim1_arr/2000` uses the VARIABLE, not a
+        // register readback (main.c:1790-1791).
+        let (ss, ds, us, m) = (
+            SchedStore::default(),
+            DriveStore::default(),
+            DutyStore::default(),
+            MockHal::new(),
+        );
+        let (sched, drive, duty, mut hal) = (ss.sched(), ds.drive(), us.duty(), m.hal());
+        sched.commutation_interval.store(50, Ordering::Relaxed); // → ARR 1666
+        variable_pwm_ride(&sched, &duty, 3332, &mut hal);
+        assert_eq!(duty.tim1_arr.load(Ordering::Relaxed), 1666);
+        crate::am32_isr::duty_apply(&drive, &duty, 1000, &mut hal);
+        // base = 1000 * 1666 / 2000 = 833 (not running: no +1).
+        assert_eq!(*m.duties.borrow(), [833]);
+        // Both the ride and the apply wrote the SAME shadow value to ARR.
+        assert_eq!(*m.carrier_arrs.borrow(), [1666, 1666]);
     }
 
     // --- bemf_timeout_rekick ---------------------------------------

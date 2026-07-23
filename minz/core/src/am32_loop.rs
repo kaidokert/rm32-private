@@ -121,6 +121,14 @@ pub struct Duty<'a> {
     pub ramp_count: &'a AtomicU16,
     pub killed: &'a AtomicBool,
     pub kill_reason: &'a AtomicU16,
+    /// AM32's `tim1_arr` VARIABLE (main.c:434) — the live carrier ARR
+    /// tracked as state, exactly like AM32: variable_pwm writes it
+    /// (main.c:2192-2195), the tenKhz duty apply reads it for the
+    /// `duty*tim1_arr/2000` rescale (main.c:1790-1791). rm32's
+    /// `PwmOutput` has NO ARR getter, so a register readback is not a
+    /// seam — this shadow is the rung-2 substitution for the old
+    /// `MotorPwm::max_duty()` live TIM1.ARR read.
+    pub tim1_arr: &'a AtomicU16,
 }
 
 /// Observer / bench cluster (ADC harvest, OC accumulator, req flags).
@@ -383,6 +391,7 @@ mod tests {
         ramp_count: AtomicU16,
         killed: AtomicBool,
         kill_reason: AtomicU16,
+        tim1_arr: AtomicU16,
     }
     impl DutyStore {
         fn duty(&self) -> Duty<'_> {
@@ -397,6 +406,7 @@ mod tests {
                 ramp_count: &self.ramp_count,
                 killed: &self.killed,
                 kill_reason: &self.kill_reason,
+                tim1_arr: &self.tim1_arr,
             }
         }
     }

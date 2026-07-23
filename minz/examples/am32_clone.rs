@@ -91,9 +91,10 @@ use rtt_target::rprintln;
 
 // ===============================================================
 // Bench-only constants. The AM32 factory constants moved to
-// `minz_core::am32_loop`; TIMER1_MAX_ARR reaches variable_pwm_ride
-// through `MotorPwm::base_arr()`; the bench-safety kill thresholds
-// moved to minz_core::am32_isr (adc_harvest_and_safety).
+// `minz_core::am32_loop`; TIMER1_MAX_ARR (`minz::TIM1_AUTORELOAD`)
+// is threaded into variable_pwm_ride as its `base_arr` parameter
+// from main_entry; the bench-safety kill thresholds moved to
+// minz_core::am32_isr (adc_harvest_and_safety).
 // ===============================================================
 
 /// 2 Mbaud link (both directions) — the minz-rig baud (AM32 fork
@@ -138,6 +139,12 @@ static DUTY_CYCLE: AtomicU16 = AtomicU16::new(0);
 static LAST_DUTY_CYCLE: AtomicU16 = AtomicU16::new(0);
 static DUTY_CYCLE_MAXIMUM: AtomicU16 = AtomicU16::new(DUTY_FULL);
 static TENKHZ_COUNTER: AtomicU16 = AtomicU16::new(0);
+/// AM32's `tim1_arr` variable (main.c:434) — the live carrier ARR as
+/// STATE, not a register readback (rm32's PwmOutput has no ARR
+/// getter): variable_pwm_ride writes it, duty_apply's
+/// `duty*tim1_arr/2000` rescale reads it (main.c:1790-1791). Seeded
+/// at the base carrier ARR, like AM32's boot value.
+static TIM1_ARR_SHADOW: AtomicU16 = AtomicU16::new(minz::TIM1_AUTORELOAD);
 
 /// Latched fatal kill (bench-safety). Main prints and holds off.
 static KILLED: AtomicBool = AtomicBool::new(false);
@@ -174,7 +181,8 @@ fn hal() -> Am32Hal<'static> {
     Hal {
         interval: Am32Timers,
         com: Am32Timers,
-        pwm: &Tim1Pwm,
+        pwm: Tim1Pwm,
+        phase: Tim1Pwm,
         comp: &Comp2,
         bb: &BB,
         cs: &CortexCs,
@@ -293,6 +301,7 @@ static DUTY: Duty<'static> = Duty {
     ramp_count: &RAMP_COUNT,
     killed: &KILLED,
     kill_reason: &KILL_REASON,
+    tim1_arr: &TIM1_ARR_SHADOW,
 };
 
 static BENCH: Bench<'static> = Bench {
@@ -337,6 +346,9 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     let rx = &RX;
     let mut hal = hal();
     let hal = &mut hal;
+    // AM32 TIMER1_MAX_ARR (targets.h:5335) — the base carrier ARR,
+    // threaded into variable_pwm_ride (core can't see minz's const).
+    let base_arr = minz::TIM1_AUTORELOAD;
 
     // Main-context UART parser state (mirrors uart_duty_poll main.c:1367).
     let mut uart = UartDuty::new();
@@ -354,7 +366,7 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
         // input = uart_duty_get()  (main.c:1131) then setInput()
         set_input(sched, drive, duty, hal);
         min_bemf_schedule(drive);
-        variable_pwm_ride(sched, hal);
+        variable_pwm_ride(sched, duty, base_arr, hal);
 
         let average_interval = store_average_interval(sched, e_com_time);
         desync_check_band(sched, drive, duty, hal, average_interval);
