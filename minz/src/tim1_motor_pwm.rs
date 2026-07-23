@@ -70,7 +70,7 @@ pub fn init(tim1: TIM1, apb2: &mut APB2) {
 /// - `Low` — low FET solid on by **GPIO force**: LIN OUTPUT-high,
 ///   HIN OUTPUT-low. The timer compare is irrelevant to this leg,
 ///   which is what makes commutation a pure pin-mode flip with no
-///   dependence on preloaded CCR state (see [`set_six_step`]).
+///   dependence on preloaded CCR state (see [`set_roles_for_step`]).
 /// - `Float` — both pins OUTPUT-low so the gate driver sees a clean
 ///   0 V on both inputs and holds both FETs OFF. Leaving the pins in
 ///   ALTERNATE with `CCxE=0` (`BDTR.OSSR=0` releases them to Hi-Z)
@@ -188,23 +188,6 @@ fn set_phase_roles(a: PhaseRole, b: PhaseRole, c: PhaseRole) {
         .modify(|r, w| unsafe { w.bits((r.bits() & !b_mask) | b_val) });
 }
 
-/// Phase A/B/C duty (CCR1/2/3) for continuous 3-phase drive (sine).
-/// All six PWM pins are restored to ALTERNATE so TIM1 drives them;
-/// `CCER` stays at its init value (all channels enabled).
-#[inline]
-pub fn set_duties(ch1: u16, ch2: u16, ch3: u16) {
-    cortex_m::interrupt::free(|_| {
-        let tim1 = unsafe { &*TIM1::ptr() };
-        tim1.ccr1.write(|w| w.ccr().bits(ch1));
-        tim1.ccr2.write(|w| w.ccr().bits(ch2));
-        tim1.ccr3.write(|w| w.ccr().bits(ch3));
-        set_phase_roles(PhaseRole::Pwm, PhaseRole::Pwm, PhaseRole::Pwm);
-    });
-}
-
-/// Six-step BLDC commutation: 2 phases driven, 1 floating per sector.
-/// `step ∈ 0..5` picks the (Hi, Lo, Float) mapping below.
-///
 /// **AM32 `SET_DUTY_CYCLE_ALL` semantics** (peripherals.h:25): `duty`
 /// is written to ALL THREE CCRs, always, and the low-side leg is
 /// GPIO-forced (LIN OUTPUT-high) instead of relying on the timer
@@ -275,33 +258,6 @@ pub fn set_roles_for_step(step: u8) {
     });
 }
 
-#[inline]
-pub fn set_six_step(step: u8, duty: u16) {
-    const HIGH: [u8; 6] = [0, 0, 1, 1, 2, 2];
-    const LOW: [u8; 6] = [1, 2, 2, 0, 0, 1];
-    let s = (step % 6) as usize;
-    let hi = HIGH[s];
-    let lo = LOW[s];
-
-    let role = |ch: u8| {
-        if ch == hi {
-            PhaseRole::Pwm
-        } else if ch == lo {
-            PhaseRole::Low
-        } else {
-            PhaseRole::Float
-        }
-    };
-
-    cortex_m::interrupt::free(|_| {
-        let tim1 = unsafe { &*TIM1::ptr() };
-        tim1.ccr1.write(|w| w.ccr().bits(duty));
-        tim1.ccr2.write(|w| w.ccr().bits(duty));
-        tim1.ccr3.write(|w| w.ccr().bits(duty));
-        set_phase_roles(role(0), role(1), role(2));
-    });
-}
-
 /// Hard kill: force all six motor-control pins to GPIO OUTPUT-LOW.
 /// Each gate-driver's HIN and LIN see a commanded `0` → top FET off,
 /// bottom FET off, motor terminal high-Z. This reaches the same
@@ -313,7 +269,7 @@ pub fn set_six_step(step: u8, duty: u16) {
 /// MOE stays set (the init value); the TIM1 output stage is never
 /// shut down. Pin direction (AF vs OUTPUT) is what selects whether
 /// TIM1 or this command holds the line — same mechanism
-/// [`set_six_step`] already uses for the per-sector float phase.
+/// [`set_roles_for_step`] already uses for the per-sector float phase.
 #[inline]
 pub fn all_off() {
     set_phase_roles(PhaseRole::Float, PhaseRole::Float, PhaseRole::Float);
@@ -321,9 +277,9 @@ pub fn all_off() {
 
 /// Re-arm after [`all_off`]: restore all six pins to ALTERNATE
 /// function so TIM1 drives them per the current CCR / CCER state.
-/// The next TIM7 commutation tick (within ≤167 µs at 6 kHz) calls
-/// [`set_six_step`] which re-sets the correct AF/OUTPUT split for
-/// the active sector. MOE was never cleared — see [`all_off`].
+/// The next commutation calls [`set_roles_for_step`] which re-sets
+/// the correct AF/OUTPUT split for the active sector. MOE was never
+/// cleared — see [`all_off`].
 #[inline]
 pub fn arm_output() {
     set_phase_roles(PhaseRole::Pwm, PhaseRole::Pwm, PhaseRole::Pwm);
@@ -378,95 +334,15 @@ pub fn proportional_brake() {
     });
 }
 
-/// Enable the TIM1 update-event interrupt (DIER.UIE). Fires the
-/// `TIM1_UP_TIM16` IRQ once per PWM period (24 kHz @ ARR=3332). The
-/// IRQ vector is shared with TIM16, but TIM16 isn't initialised on
-/// this bench — so the handler can assume every fire is TIM1.UIF.
-///
-/// The ISR is responsible for acking `TIM1.SR.UIF`.
-#[inline]
-pub fn enable_update_interrupt() {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.dier.modify(|_, w| w.uie().set_bit());
-}
-
-/// Ack the TIM1 update-event flag (`SR.UIF`). Call this at the top
-/// of the `TIM1_UP_TIM16` ISR before doing anything else, so the
-/// IRQ doesn't re-fire on return.
-#[inline]
-pub fn clear_update_flag() {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.sr.modify(|_, w| w.uif().clear_bit());
-}
-
-/// Is the update (PWM wrap) flag pending? The shared TIM1_UP_TIM16
-/// vector dispatches on this vs TIM16's UIF (the COM timer).
-#[inline]
-pub fn update_flag_set() -> bool {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.sr.read().uif().bit_is_set()
-}
-
-/// Enable the capture/compare interrupts for CH1/CH2/CH3. CC4 is
-/// intentionally left disabled — its compare value is the fixed
-/// ADC-TRGO point (`TIM1_CCR4_TRGO = 0x64`), not a PWM transition,
-/// so it would just be noise on the `TIM1_CC` vector.
-///
-/// Each enabled CCxIE fires `Interrupt::TIM1_CC` when `TIM1.CNT`
-/// matches the corresponding `CCRx` value — i.e. exactly when that
-/// channel's output transitions (high-to-low in PWM mode 1). The
-/// bench uses this to timestamp every PWM edge for the software
-/// COMP-blanking gate. The ISR is responsible for clearing the
-/// matched flags via [`clear_cc_flags`].
-/// R5a: raw TIM1 counter read for the CNT-position blank check in
-/// the COMP ISR (replaces the TIM1_CC edge-timestamp ISR).
-#[inline]
-pub fn read_cnt() -> u16 {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.cnt.read().cnt().bits()
-}
-
-#[inline]
-pub fn enable_cc_interrupts() {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.dier
-        .modify(|_, w| w.cc1ie().set_bit().cc2ie().set_bit().cc3ie().set_bit());
-}
-
-/// Ack TIM1's CC1IF / CC2IF / CC3IF in one shot. Call at the top of
-/// the `TIM1_CC` ISR — leaving any of these set after return causes
-/// an immediate re-fire of the vector.
-#[inline]
-pub fn clear_cc_flags() {
-    let tim1 = unsafe { &*TIM1::ptr() };
-    tim1.sr.modify(|_, w| {
-        w.cc1if()
-            .clear_bit()
-            .cc2if()
-            .clear_bit()
-            .cc3if()
-            .clear_bit()
-    });
-}
-
-/// R4: the LIVE carrier ARR (variable_pwm port). The control tick
-/// owns writes; everyone else reads. Seeded at the base carrier.
-pub static LIVE_ARR: portable_atomic::AtomicU16 = portable_atomic::AtomicU16::new(TIM1_AUTORELOAD);
-
-#[inline]
-pub fn max_duty() -> u16 {
-    LIVE_ARR.load(portable_atomic::Ordering::Relaxed)
-}
-
-/// R4 — set the carrier ARR (preloaded via ARPE: lands at the next
-/// wrap, glitch-free; duty RATIO is preserved by the caller
-/// rescaling its counts in the same tick). AM32's variable_pwm
-/// (main.c:2131): carrier rises 24→48 kHz as the interval falls.
+/// Set the carrier ARR (preloaded via ARPE: lands at the next wrap,
+/// glitch-free; duty RATIO is preserved by the caller rescaling its
+/// counts in the same tick — the `tim1_arr` shadow in am32_clone).
+/// AM32's variable_pwm (main.c:2131): carrier rises 24→48 kHz as the
+/// interval falls.
 #[inline]
 pub fn set_carrier_arr(arr: u16) {
     let tim1 = unsafe { &*TIM1::ptr() };
     tim1.arr.write(|w| w.arr().bits(arr));
-    LIVE_ARR.store(arr, portable_atomic::Ordering::Relaxed);
 }
 
 /// The rm32-verbatim `minz_core::am32_hal::{PwmOutput, PhaseOutput}`

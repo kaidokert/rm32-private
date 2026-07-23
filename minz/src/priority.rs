@@ -21,26 +21,13 @@
 //! 3. Same upper-nibble encoding applies to SCB SHPR bytes (the system
 //!    handlers — SysTick / PendSV / SVCall). Use the same `<<4` helper.
 //!
-//! ## Logical levels for this bench (0 = highest)
-//!
-//! | Lvl | Handler        | Why                                                |
-//! |-----|----------------|----------------------------------------------------|
-//! | 0   | SysTick        | 10 µs wall-clock tick; must never be preempted     |
-//! | 1   | COMP (EXTI22)  | BEMF zero-cross — short, latency-critical          |
-//! | 2   | TIM1_UP_TIM16  | Per-PWM-cycle confirm/current/failsafe machinery   |
-//! | 3   | TIM7           | 6 kHz housekeeping (stepper, watchdogs, win close) |
-//! | 4   | LPTIM1         | Soft-UART RX sample tick (least time-critical)     |
-//!
-//! `EXTI0` (soft-UART RX start-edge) is **not** assigned here — its
-//! reset value is logical `0`, which would preempt SysTick. Either set
-//! it explicitly via [`set_irq_prio`] or wire it into [`set_irq_prios`]
-//! at the same level as `LPTIM1`.
+//! The am32_clone programs its own table (COMP=0, TIM1_UP_TIM16=0,
+//! TIM6=3, USART2=2 — AM32 peripherals.c:450,491) via
+//! [`set_prigroup_preempt4_sub0`] + [`set_irq_prio`].
 
 use crate::hal::pac::Interrupt;
 use cortex_m::interrupt::InterruptNumber;
-use cortex_m::peripheral::scb::SystemHandler;
 use cortex_m::peripheral::{NVIC, SCB};
-use rtt_target::rprintln;
 
 const AIRCR_VECTKEY_WRITE: u32 = 0x5FA << 16;
 const AIRCR_VECTKEY_MASK: u32 = 0xFFFF << 16;
@@ -81,105 +68,4 @@ pub unsafe fn set_irq_prio(irq: Interrupt, logical: u8) {
     unsafe {
         (*NVIC::PTR).ipr[irqn].write(encode(logical));
     }
-}
-
-// Public constants so callers can reference the same numbers when
-// dumping or asserting expected values, and so future tweaks live in
-// one place.
-pub const PRIO_SYSTICK: u8 = 0;
-pub const PRIO_COMP: u8 = 1;
-/// TIM1_UP/TIM1_CC above TIM7 (swapped 2026-07-13). TIM1_UP hosts the
-/// per-PWM-cycle machinery — ADC-confirm, GECKO current, OC/sag
-/// failsafes — which must run EVERY 20.8 µs cycle; TIM7 is the chunky
-/// 6 kHz housekeeping pass (open-loop stepper, watchdogs, window
-/// close). With TIM7 above TIM1 (the original order, rationale "TIM7
-/// drives the FETs" — true only in open loop), long TIM7 passes
-/// coalesced TIM1_UP's pending UIF: measured 12 % of cycles LOST +
-/// 27 % late-or-lost, max 100 µs outages at amp 44-48 CL. The swap
-/// also makes TIM1_UP's documented invariant ("TIM7 can't interrupt
-/// us — plain load/store min/max is race-free") actually true.
-/// TIM7-side is safe: its shared-state sections (edgebuf flip,
-/// close_float_window) run inside `interrupt::free`.
-pub const PRIO_TIM1: u8 = 2;
-pub const PRIO_TIM7: u8 = 3;
-pub const PRIO_LPTIM1: u8 = 4;
-
-/// Program PRIGROUP and the full priority table for the motor-tester
-/// bench in one shot. Call once from `main` *before* unmasking NVIC
-/// interrupts.
-///
-/// # Safety
-/// - Must be called with interrupts disabled (or before any of the
-///   affected vectors are unmasked).
-/// - Steals the cortex-m `Peripherals` to reach SCB for the SysTick
-///   priority write — don't also call `Peripherals::take()` afterwards
-///   in the same context.
-pub unsafe fn set_irq_prios() {
-    unsafe {
-        set_prigroup_preempt4_sub0();
-
-        // SysTick lives in SCB SHPR, not NVIC IPR. cortex-m's static
-        // `SCB::get_priority` is exposed, but `set_priority` needs
-        // `&mut self`, so we steal Peripherals once to reach it.
-        let mut cp = cortex_m::Peripherals::steal();
-        cp.SCB
-            .set_priority(SystemHandler::SysTick, encode(PRIO_SYSTICK));
-
-        set_irq_prio(Interrupt::COMP, PRIO_COMP);
-        set_irq_prio(Interrupt::TIM7, PRIO_TIM7);
-        set_irq_prio(Interrupt::TIM1_UP_TIM16, PRIO_TIM1);
-        set_irq_prio(Interrupt::TIM1_CC, PRIO_TIM1);
-        set_irq_prio(Interrupt::LPTIM1, PRIO_LPTIM1);
-    }
-}
-
-/// Read AIRCR back and print PRIGROUP. Expect `PRIGROUP=3` after
-/// [`set_prigroup_preempt4_sub0`].
-pub fn dump_prigroup() {
-    let aircr = unsafe { (*SCB::PTR).aircr.read() };
-    let prigroup = (aircr >> 8) & 0x7;
-    rprintln!("AIRCR=0x{:08x}  PRIGROUP={}", aircr, prigroup);
-}
-
-/// Dump PRIGROUP + every bench-relevant priority byte, read back from
-/// hardware, to any `fmt::Write` sink — one line, host-log friendly.
-/// motor_tester2 calls this with the UART writer at init so every
-/// automated-test session log permanently records the actual IPR
-/// configuration the run executed under (raw bytes: logical level is
-/// the upper nibble, e.g. 0x20 = level 2).
-pub fn dump_to<W: core::fmt::Write>(w: &mut W) {
-    let aircr = unsafe { (*SCB::PTR).aircr.read() };
-    write!(
-        w,
-        "prio: PRIGROUP={} SysTick={:02X} COMP={:02X} LPTIM2={:02X} TIM7={:02X} \
-         TIM1_UP={:02X} TIM1_CC={:02X} LPTIM1={:02X} USART2={:02X}\r\n",
-        (aircr >> 8) & 0x7,
-        SCB::get_priority(SystemHandler::SysTick),
-        NVIC::get_priority(Interrupt::COMP),
-        NVIC::get_priority(Interrupt::LPTIM2),
-        NVIC::get_priority(Interrupt::TIM7),
-        NVIC::get_priority(Interrupt::TIM1_UP_TIM16),
-        NVIC::get_priority(Interrupt::TIM1_CC),
-        NVIC::get_priority(Interrupt::LPTIM1),
-        NVIC::get_priority(Interrupt::USART2),
-    )
-    .ok();
-}
-
-/// Read back every priority byte we programmed and print it. Expected
-/// hex values reflect the `<<4` encoding (logical 0/1/2/3/4 → 0x00 /
-/// 0x10 / 0x20 / 0x30 / 0x40).
-pub fn dump_irq_prios() {
-    let comp = NVIC::get_priority(Interrupt::COMP);
-    let tim7 = NVIC::get_priority(Interrupt::TIM7);
-    let tim1 = NVIC::get_priority(Interrupt::TIM1_UP_TIM16);
-    let tim1_cc = NVIC::get_priority(Interrupt::TIM1_CC);
-    let lptim1 = NVIC::get_priority(Interrupt::LPTIM1);
-    let syst = SCB::get_priority(SystemHandler::SysTick);
-    rprintln!("SHPR SysTick     = 0x{:02X} (expect 0x00)", syst);
-    rprintln!("NVIC COMP        = 0x{:02X} (expect 0x10)", comp);
-    rprintln!("NVIC TIM1_UP_T16 = 0x{:02X} (expect 0x20)", tim1);
-    rprintln!("NVIC TIM1_CC     = 0x{:02X} (expect 0x20)", tim1_cc);
-    rprintln!("NVIC TIM7        = 0x{:02X} (expect 0x30)", tim7);
-    rprintln!("NVIC LPTIM1      = 0x{:02X} (expect 0x40)", lptim1);
 }

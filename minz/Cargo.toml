@@ -16,14 +16,10 @@ pwm48 = []
 minz-core = { path = "core" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = { version = "0.7.5", features = ["paint-stack", "device", "set-vtor"] }
-embedded-hal = "1.0"
 fugit = { version = "0.3" }
-heapless = { version = "0.9.3", features= ["portable-atomic"] }
-portable-atomic = { version = "1.13.1", default-features = false, features = ["critical-section"]}
 
 rtt-target = "0.6.2"
 stm32l4xx-hal = { version = "0.7.1", features = ["stm32l431"] }
-systick-timer = "0.2.3"
 
 [profile.release]
 # Overflow-check campaign (reset-class triage): every wrap panics

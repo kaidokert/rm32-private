@@ -26,9 +26,6 @@
 //! ```
 
 use cortex_m::Peripherals as CortexPeripherals;
-use cortex_m::peripheral::SYST;
-use cortex_m::peripheral::syst::SystClkSource;
-use fugit::HertzU32 as Hertz;
 
 use crate::SYSCLK;
 use crate::hal::gpio::gpioa::{PA7, PA8, PA9, PA10};
@@ -101,22 +98,6 @@ pub fn configure_motor_pwm_pins<M0, M1, M2, M3, M4, M5>(
     let _hin2 = pa9.into_alternate::<1>(a_moder, a_otyper, a_afrh);
     let _lin3 = pa7.into_alternate::<1>(a_moder, a_otyper, a_afrl);
     let _hin3 = pa8.into_alternate::<1>(a_moder, a_otyper, a_afrh);
-}
-
-/// Configure Cortex-M SysTick as a periodic tick at `rate`, sourced from
-/// the core clock. Used by examples to drive a millisecond/microsecond
-/// counter via the `SysTick` exception. Consumes `SYST`.
-///
-/// The reload value is computed against `clocks.hclk()` (= sysclk on this
-/// board) so `rate` must divide it cleanly enough for the desired
-/// precision. For 80 MHz hclk: `rate = 100 kHz` → reload = 799 → 10 µs tick.
-pub fn configure_systick(syst: SYST, clocks: &Clocks, rate: Hertz) {
-    let mut syst = syst;
-    syst.set_clock_source(SystClkSource::Core);
-    syst.set_reload(clocks.hclk().raw() / rate.raw() - 1);
-    syst.clear_current();
-    syst.enable_interrupt();
-    syst.enable_counter();
 }
 
 /// Common bench setup: sysclk to [`SYSCLK`], RTT panic hook armed.

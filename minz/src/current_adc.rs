@@ -1,22 +1,26 @@
-//! Bench instrumentation ADC on ADC1: PA3 (IN8) supply current,
-//! PA6 (IN11) battery voltage. Oneshot reads via the HAL's `ADC::read`
-//! impl of `embedded_hal::adc::OneShot` — same pattern as
-//! `stm32l4xx-hal/examples/adc.rs`. Each call blocks for ~16 µs at
-//! the HAL's default sample time; that's invisible at our 24 kHz PWM
-//! and the signals are slow rails anyway, so no need for DMA / free
-//! running / hardware oversampling.
+//! ADC1 power-up + calibration via the HAL (`ADC::new` runs the
+//! factory calibration sequence), consuming the analog sense pins
+//! PA3 (IN8, supply current) and PA6 (IN11, battery voltage). The
+//! running samples come from the injected group (`adc_sync`); this
+//! type exists so the calibrated peripheral has an owner.
 
 use crate::hal::adc::{ADC, SampleTime};
 use crate::hal::delay::DelayCM;
 use crate::hal::gpio::Analog;
 use crate::hal::gpio::gpioa::{PA3, PA6};
-use crate::hal::prelude::*;
 use crate::hal::rcc::{AHB2, CCIPR, Clocks};
 use crate::hal::stm32::{ADC_COMMON, ADC1};
 
+/// Held only for ownership: keeps the calibrated ADC + analog pins
+/// alive so nothing re-configures them. After `adc_sync::start` takes
+/// over the registers, no method on this may run (see `adc_sync` docs);
+/// the am32_clone binds it as `_sense` and never touches it again.
 pub struct SenseAdc {
+    #[allow(dead_code)]
     adc: ADC,
+    #[allow(dead_code)]
     pa3: PA3<Analog>,
+    #[allow(dead_code)]
     pa6: PA6<Analog>,
 }
 
@@ -40,21 +44,5 @@ impl SenseAdc {
         // since `OneShot::read` uses `self.sample_time`.
         adc.set_sample_time(SampleTime::Cycles640_5);
         Self { adc, pa3, pa6 }
-    }
-
-    pub fn isns_raw(&mut self) -> u16 {
-        self.adc.read(&mut self.pa3).unwrap()
-    }
-
-    pub fn vbat_raw(&mut self) -> u16 {
-        self.adc.read(&mut self.pa6).unwrap()
-    }
-
-    /// Convert a raw 12-bit sample to millivolts using the VREF-
-    /// calibrated VDDA captured during `ADC::new()`. Doesn't trigger
-    /// a new conversion — pass the value returned by `isns_raw` /
-    /// `vbat_raw` if you already have it.
-    pub fn adc_to_mv(&self, raw: u16) -> u16 {
-        self.adc.to_millivolts(raw)
     }
 }

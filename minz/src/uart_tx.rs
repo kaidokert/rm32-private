@@ -158,51 +158,12 @@ impl UartTxWriter {
         self.inflight = contig;
     }
 
-    /// Enqueue a byte slice, spinning `service` while the ring is
-    /// full — but BOUNDED: if the DMA fails to drain for ~50 ms the
-    /// remainder is dropped and counted in `TX_DROPPED`. The old
-    /// unbounded spin never refreshed the IWDG, so a stalled or
-    /// non-completing DMA transfer became the telemetry-load IWDG
-    /// REBOOT class (reviewer audit 2026-07-18). Telemetry loss is
-    /// recoverable; a watchdog reset mid-run is not.
-    pub fn write_blocking(&mut self, bytes: &[u8]) {
-        let wb0 = cortex_m::peripheral::DWT::cycle_count();
-        for (i, &b) in bytes.iter().enumerate() {
-            if !self.push(b) {
-                let t0 = cortex_m::peripheral::DWT::cycle_count();
-                loop {
-                    self.service();
-                    if self.push(b) {
-                        break;
-                    }
-                    if cortex_m::peripheral::DWT::cycle_count().wrapping_sub(t0) > 4_000_000 {
-                        TX_DROPPED.fetch_add(
-                            (bytes.len() - i) as u32,
-                            core::sync::atomic::Ordering::Relaxed,
-                        );
-                        return;
-                    }
-                }
-            }
-        }
-        self.service();
-        let dur = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(wb0);
-        if dur > WB_MAX_CYC.load(core::sync::atomic::Ordering::Relaxed) {
-            WB_MAX_CYC.store(dur, core::sync::atomic::Ordering::Relaxed);
-        }
-    }
 }
 
-/// Bytes dropped by the bounded `write_blocking` timeout. Nonzero
-/// means the DMA stalled ≥50 ms — the condition that used to reboot.
-/// Worst single write_blocking duration in cycles (swap-read for max
-/// tracking; the mzt_shed 800 ms main-stall hunt).
 /// Hardware-state resyncs performed by `service` (lost completion or
 /// EN-left-set). Nonzero = the black-hole wedge class fired and was
-/// healed in place.
+/// healed in place. Probe-readable diagnostic; never read by firmware.
 pub static TX_RESYNCS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-pub static WB_MAX_CYC: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-pub static TX_DROPPED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 impl core::fmt::Write for UartTxWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {

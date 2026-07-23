@@ -1,5 +1,5 @@
 //! minz-core — the extracted, host-testable brain of the minz bench
-//! firmware (`minz/examples/motor_tester2.rs`).
+//! firmware (`minz/examples/am32_clone.rs`).
 //!
 //! Everything here is pure logic: state structs plus data-in /
 //! data-out methods. Timestamps, ADC samples, and comparator levels
@@ -14,7 +14,6 @@
 
 #![cfg_attr(not(test), no_std)]
 
-pub mod a85;
 pub mod am32;
 pub mod am32_control;
 pub mod am32_hal;
@@ -22,19 +21,4 @@ pub mod am32_isr;
 pub mod am32_loop;
 pub mod blackbox;
 pub mod drive;
-pub mod dump;
-pub mod edgebuf;
-pub mod estimator;
-pub mod guards;
-pub mod mode;
-pub mod rates;
-pub mod sense;
-pub mod start;
-pub mod throttle;
-pub mod ticks;
-pub mod timing;
-pub mod ui;
-pub mod window;
-pub mod wire;
-pub mod zc;
 pub mod zct_trace;

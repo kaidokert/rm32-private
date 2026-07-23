@@ -1,31 +1,17 @@
 #![no_std]
 
-pub mod a85;
 pub mod adc_sync;
 pub mod am32_timers;
 pub mod bb;
 pub mod board_init;
 pub mod comp2;
 pub mod current_adc;
-pub mod idle_loop;
 pub mod iwdg;
-pub mod lptim2_oneshot;
-pub mod nvic;
-pub mod open_loop;
 pub mod panic;
-pub mod pb3;
 pub mod priority;
-pub mod softuart;
-pub mod softuart_lptim1;
-pub mod softuart_tim2;
 pub mod spin;
-pub mod tim15_oneshot;
-pub mod tim16_oneshot;
-pub mod tim2_interval;
-pub mod tim6_loop;
 pub mod tim1_motor_pwm;
-pub mod tim7_drive;
-pub mod timer_ext;
+pub mod tim6_loop;
 pub mod uart_tx;
 pub mod usart2_rx;
 
@@ -58,13 +44,6 @@ use fugit::HertzU32 as Hertz;
 /// CPU / DWT cycle-counter rate. Must match `rcc.cfgr.sysclk` for this board.
 /// Pass directly to `rcc.cfgr.sysclk(...)`; use `.raw()` for u32 arithmetic.
 pub const SYSCLK: Hertz = Hertz::MHz(80);
-
-/// SysTick tick rate used across examples (10 µs / tick = 100 kHz). Drives
-/// the soft-UART idle-gap detector among other things.
-pub const SYSTICK: Hertz = Hertz::kHz(100);
-
-/// One second of `SYSCLK` cycles (for DWT busy-waits).
-pub const CYCLES_PER_SECOND: u32 = SYSCLK.raw();
 
 /// Motor PWM carrier on TIM1 (AM32 default for this ESC).
 ///
@@ -115,18 +94,3 @@ pub const TIM1_DEAD_TIME: u8 = 45;
 /// the first channel samples a phase node that hasn't risen yet
 /// (flatlined 0 in the 48 kHz WAXWING).
 pub const TIM1_CCR4_TRGO: u16 = 0x64;
-
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
