@@ -12,8 +12,8 @@ use core::sync::atomic::Ordering;
 use crate::am32;
 use crate::am32_control::{commutate, get_bemf_state, safety_kill, zcfoundroutine};
 use crate::am32_hal::{
-    CompCtl, ComTimer, ComTimerExt, Cs, Hal, InjAdc, IntervalTimer, LoopTimer, PhaseOutput,
-    PwmOutput, Recorder,
+    CompExti, ComTimer, ComTimerExt, Comparator, Cs, Hal, InjAdc, IntervalTimer, LoopTimer,
+    PhaseOutput, PwmOutput, Recorder,
 };
 use crate::am32_loop::{
     Bench, Drive, Duty, Sched, TEMP_ADVANCE, duty_ramp, uart_deadman_tick,
@@ -40,7 +40,7 @@ pub fn comp_isr(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -57,9 +57,11 @@ pub fn comp_isr(
         } else {
             // gate closed: clear ONLY if the level sits at the pre-ZC
             // level (AM32: getCompOutputLevel()==rising; minz-inverted →
-            // comp2::value() != rising). Else LEAVE PENDING (their camp:
-            // a post-ZC crossing re-fires until the gate opens).
-            if hal.comp.value() != drive.rising.load(Ordering::Relaxed) {
+            // output_level() != rising, since our output_level =
+            // comp2::value = NOT AM32 getCompOutputLevel). Else LEAVE
+            // PENDING (their camp: a post-ZC crossing re-fires until
+            // the gate opens).
+            if hal.comp.output_level() != drive.rising.load(Ordering::Relaxed) {
                 hal.comp.clear_pending(); // it.c:284-285
             }
         }
@@ -75,7 +77,7 @@ pub fn interrupt_routine(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -85,11 +87,12 @@ pub fn interrupt_routine(
     >,
 ) {
     // persistence: reject while the level is still pre-ZC (main.c:932-940;
-    // `getCompOutputLevel()==rising` → return, inverted to `value != rising`).
+    // `getCompOutputLevel()==rising` → return, inverted to
+    // `output_level != rising` — minz polarity).
     let filter = drive.filter_level.load(Ordering::Relaxed);
     let rising = drive.rising.load(Ordering::Relaxed);
     for _ in 0..filter {
-        if hal.comp.value() != rising {
+        if hal.comp.output_level() != rising {
             return;
         }
     }
@@ -98,7 +101,7 @@ pub fn interrupt_routine(
     // `hal.cs` (the ref itself is Copy, so this ends the borrow).
     let cs = hal.cs;
     cs.free(|| {
-        hal.comp.mask_phase_interrupts(); // main.c:942
+        hal.comp.mask_interrupts(); // main.c:942
         sched.last_zc.store(sched.this_zc.load(Ordering::Relaxed), Ordering::Relaxed); // :943
         let t = hal.interval.count() as u16; // :944 thiszctime = INTERVAL_TIMER_COUNT
         sched.this_zc.store(t, Ordering::Relaxed);
@@ -124,7 +127,7 @@ pub fn tim1_up_tim16_isr<const N: usize>(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -148,7 +151,7 @@ pub fn tim1_up_tim16_isr<const N: usize>(
     sched.wait_time.store(wait as u16, Ordering::Relaxed);
     zct.write(sched, drive, duty, hal.cs); // ZC_TRACE main.c:908
     if !drive.old_routine.load(Ordering::Relaxed) {
-        hal.comp.enable_comp_interrupts(); // main.c:910-912
+        hal.comp.enable_interrupts(); // main.c:910-912
     }
     let zc = drive.zero_crosses.load(Ordering::Relaxed);
     if zc < 10000 {
@@ -171,7 +174,7 @@ pub fn tim6_dacunder_isr<const N: usize>(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -211,7 +214,7 @@ pub fn duty_apply(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -243,7 +246,7 @@ pub fn polling_bemf_check<const N: usize>(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -254,8 +257,8 @@ pub fn polling_bemf_check<const N: usize>(
     running: bool,
 ) {
     if drive.old_routine.load(Ordering::Relaxed) && running {
-        hal.comp.mask_phase_interrupts(); // main.c:1681
-        get_bemf_state(drive, hal.comp); // :1682
+        hal.comp.mask_interrupts(); // main.c:1681
+        get_bemf_state(drive, &hal.comp); // :1682
         if !drive.zcfound.load(Ordering::Relaxed) {
             let rising = drive.rising.load(Ordering::Relaxed);
             let bc = drive.bemf_counter.load(Ordering::Relaxed);
@@ -283,7 +286,7 @@ pub fn adc_harvest_and_safety(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -353,7 +356,7 @@ mod tests {
         // it.c:281-282 order: clear, then interruptRoutine's sequence.
         assert_eq!(
             *m.calls.borrow(),
-            ["clear_pending", "mask_phase_interrupts", "set_interval_cnt", "set_and_enable_com_int"]
+            ["clear_pending", "mask_interrupts", "set_interval_cnt", "set_and_enable_com_int"]
         );
         assert!(!m.pending.get());
         // lastzc shift + timestamp + interval reset (main.c:943-945).
@@ -435,7 +438,7 @@ mod tests {
         // Ordered accept sequence (main.c:942-946).
         assert_eq!(
             *m.calls.borrow(),
-            ["mask_phase_interrupts", "set_interval_cnt", "set_and_enable_com_int"]
+            ["mask_interrupts", "set_interval_cnt", "set_and_enable_com_int"]
         );
         assert_eq!(sched.last_zc.load(Ordering::Relaxed), 55);
         assert_eq!(sched.this_zc.load(Ordering::Relaxed), 777);
@@ -467,7 +470,8 @@ mod tests {
         assert_eq!(m.calls.borrow()[0], "com_clear_flag");
         assert_eq!(m.calls.borrow()[1], "disable_com_timer_int");
         assert_eq!(m.calls.borrow()[2], "com_step");
-        assert_eq!(m.calls.borrow()[3], "change_comp_input");
+        assert_eq!(m.calls.borrow()[3], "set_step");
+        assert_eq!(m.calls.borrow()[4], "change_input");
         // Blend arithmetic matches am32::blend_interval (main.c:900);
         // commutate ran BEFORE the blend so ci_old is the pre-tick value.
         let ci = am32::blend_interval(1000, 400, 600);
@@ -482,7 +486,7 @@ mod tests {
         assert_eq!(zs.records(), 1);
         assert_eq!(m.events.borrow()[0].0, EV_REF);
         // Interrupt mode → comp re-enabled (main.c:910-912).
-        assert!(m.called("enable_comp_interrupts"));
+        assert!(m.called("enable_interrupts"));
         // zero_crosses incremented (main.c:913-915).
         assert_eq!(drive.zero_crosses.load(Ordering::Relaxed), 6);
     }
@@ -502,7 +506,7 @@ mod tests {
         drive.zero_crosses.store(10000, Ordering::Relaxed);
         tim1_up_tim16_isr(&sched, &drive, &zct, &duty, &mut m.hal());
         // old_routine → NO comp re-enable (main.c:910 gate).
-        assert!(!m.called("enable_comp_interrupts"));
+        assert!(!m.called("enable_interrupts"));
         // zc saturates at 10000 (main.c:913).
         assert_eq!(drive.zero_crosses.load(Ordering::Relaxed), 10000);
     }
@@ -533,7 +537,7 @@ mod tests {
         // Killed gate: no duty apply, no polling band.
         assert!(!m.called("set_duty_all"));
         assert!(!m.called("set_auto_reload"));
-        assert!(!m.called("mask_phase_interrupts"));
+        assert!(!m.called("mask_interrupts"));
         assert_eq!(duty.ramp_count.load(Ordering::Relaxed), 0);
         // Deadman + harvest still run.
         assert_eq!(bench.uart_deadman_ticks.load(Ordering::Relaxed), 1);
@@ -631,7 +635,7 @@ mod tests {
         m.interval.set(100);
         polling_bemf_check(&sched, &drive, &duty, &zct, &mut m.hal(), true);
         // Band prelude: mask + getBemfState (main.c:1681-1682).
-        assert_eq!(m.calls.borrow()[0], "mask_phase_interrupts");
+        assert_eq!(m.calls.borrow()[0], "mask_interrupts");
         // Accept: zcfoundroutine ran once (com_set_arr + commutate).
         assert_eq!(m.calls.borrow().iter().filter(|c| **c == "com_set_arr").count(), 1);
         assert_eq!(m.roles.borrow().len(), 1);
@@ -692,7 +696,7 @@ mod tests {
         assert_eq!(bench.i_raw.load(Ordering::Relaxed), 500);
         // safety_kill(reason 1): all_off + latched kill + freeze.
         assert!(m.called("all_off"));
-        assert!(m.called("mask_phase_interrupts"));
+        assert!(m.called("mask_interrupts"));
         assert!(m.called("disable_com_timer_int"));
         assert!(m.frozen.get());
         assert!(duty.killed.load(Ordering::Relaxed));

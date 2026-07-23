@@ -183,7 +183,7 @@ fn hal() -> Am32Hal<'static> {
         com: Am32Timers,
         pwm: Tim1Pwm,
         phase: Tim1Pwm,
-        comp: &Comp2,
+        comp: Comp2,
         bb: &BB,
         cs: &CortexCs,
         adc: &InjAdc1,

@@ -323,31 +323,62 @@ pub fn am32_change_comp_input(sector: usize) {
 }
 
 // getBemfState() moved to minz_core::am32_control::get_bemf_state —
-// it is pure logic over the CompCtl seam (comp.value() +
+// it is pure logic over the Comparator seam (comp.output_level() +
 // am32::bemf_count_step), host-tested there.
 
-/// The `minz_core::am32_hal::CompCtl` register impl over COMP2 +
-/// EXTI line 22 — zero-sized, static dispatch; delegates to the
-/// comparator.c transliterations above.
+/// The `minz_core::am32_hal::Comparator` + `CompExti` register impl
+/// over COMP2 + EXTI line 22 — zero-sized, static dispatch; delegates
+/// to the comparator.c transliterations above.
 pub struct Comp2;
 
-impl minz_core::am32_hal::CompCtl for Comp2 {
+/// [`Comp2::set_step`] storage (rung 3): rm32's `Comparator` splits
+/// AM32's `changeCompInput` into store (`set_step`) + apply
+/// (`change_input`), and its L431 impl holds the pair in struct
+/// fields. `Comp2` is a ZST, so the pending pair lives in these
+/// module-level statics instead. Private — nothing else may peek.
+static AM32_STEP: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
+/// See [`AM32_STEP`]. Stored to honor the verbatim trait contract but
+/// REDUNDANT for this impl: our mux (`am32_change_comp_input`) derives
+/// the EXTI edge from the sector via `drive::edges_for`, not from the
+/// stored `rising`.
+static AM32_RISING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+impl minz_core::am32_hal::Comparator for Comp2 {
+    /// minz polarity: this is `comp2::value()` = NOT AM32
+    /// `getCompOutputLevel()`; every core call site encodes the
+    /// inversion (`!= rising`).
     #[inline(always)]
-    fn value(&self) -> bool {
+    fn output_level(&self) -> bool {
         value()
     }
+    /// Store the pending `(step, rising)` pair; [`Self::change_input`]
+    /// applies it. `rising` is contract-only here (see [`AM32_RISING`]).
     #[inline(always)]
-    fn change_comp_input(&self, sector: usize) {
-        am32_change_comp_input(sector)
+    fn set_step(&mut self, step: u8, rising: bool) {
+        AM32_STEP.store(step, core::sync::atomic::Ordering::Relaxed);
+        AM32_RISING.store(rising, core::sync::atomic::Ordering::Relaxed);
+    }
+    /// Apply the stored step: changeCompInput (comparator.c:18-35) in
+    /// the minz 0..5 sector frame — same register ops, same order as
+    /// the pre-rung-3 single-call `change_comp_input(sector)`.
+    #[inline(always)]
+    fn change_input(&mut self) {
+        let step = AM32_STEP.load(core::sync::atomic::Ordering::Relaxed);
+        am32_change_comp_input((step - 1) as usize)
     }
     #[inline(always)]
-    fn enable_comp_interrupts(&self) {
+    fn enable_interrupts(&mut self) {
         am32_enable_comp_interrupts()
     }
     #[inline(always)]
-    fn mask_phase_interrupts(&self) {
+    fn mask_interrupts(&mut self) {
         am32_mask_phase_interrupts()
     }
+}
+
+/// The minz [`minz_core::am32_hal::CompExti`] extension — EXTI
+/// pending control for the AM32-verbatim camp-at-gate COMP ISR.
+impl minz_core::am32_hal::CompExti for Comp2 {
     #[inline(always)]
     fn exti_pending(&self) -> bool {
         exti_pending()

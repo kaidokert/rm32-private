@@ -35,8 +35,8 @@ pub use stm32l4xx_hal as hal;
 /// register impls + the black box + cortex-m critical sections, all
 /// statically dispatched through `minz_core::am32_hal`. The program
 /// (`examples/am32_clone.rs`) builds instances via its `hal()` wiring
-/// constructor (the `&mut self` rm32 seams — pwm/phase/timers — are
-/// held by value, so a shared `static` cannot serve them). `Tim1Pwm`
+/// constructor (the `&mut self` rm32 seams — pwm/phase/timers/comp —
+/// are held by value, so a shared `static` cannot serve them). `Tim1Pwm`
 /// fills BOTH the `PwmOutput` and `PhaseOutput` slots (rm32-L431
 /// shape: one TIM1 owns both roles).
 pub type Am32Hal<'a> = minz_core::am32_hal::Hal<

@@ -13,7 +13,8 @@
 //! |-------------------|---------------------------------------|
 //! | [`PwmOutput`]     | `minz::tim1_motor_pwm::Tim1Pwm`       |
 //! | [`PhaseOutput`]   | `minz::tim1_motor_pwm::Tim1Pwm`       |
-//! | [`CompCtl`]       | `minz::comp2::Comp2`                  |
+//! | [`Comparator`]    | `minz::comp2::Comp2`                  |
+//! | [`CompExti`]      | `minz::comp2::Comp2`                  |
 //! | [`IntervalTimer`] | `minz::am32_timers::Am32Timers`       |
 //! | [`ComTimer`]      | `minz::am32_timers::Am32Timers`       |
 //! | [`ComTimerExt`]   | `minz::am32_timers::Am32Timers`       |
@@ -52,25 +53,25 @@ pub trait PhaseOutput {
     fn pulse_toggle(&mut self, _step: u8) {}
 }
 
-/// COMP2 BEMF comparator + its EXTI line. Realized by
-/// `minz::comp2::Comp2`; mirrors AM32 `comparator.c`.
-pub trait CompCtl {
-    /// `comp2::value()` — the comparator output bit. NOTE: the minz
-    /// polarity is the INVERSE of AM32's `getCompOutputLevel()` (see
-    /// the am32_clone header comment).
-    fn value(&self) -> bool;
-    /// changeCompInput (comparator.c:18-35): mux the floating phase +
-    /// select the sector's expected EXTI edge.
-    fn change_comp_input(&self, sector: usize);
-    /// enableCompInterrupts (comparator.c:14-16): unmask, KEEP pending.
-    fn enable_comp_interrupts(&self);
-    /// maskPhaseInterrupts (comparator.c:9-12): mask + clear pending.
-    fn mask_phase_interrupts(&self);
-    /// COMP2's EXTI line pending read (`EXTI->PR1 & LINE`,
-    /// stm32l4xx_it.c:278 `EXTI_GetITStatus`) — the COMP ISR entry gate.
+// Copied verbatim from rm32/src/hal.rs — rm32-shape convergence rung 3;
+// do not modify without syncing rm32.
+/// Comparator (BEMF sensing) interface
+pub trait Comparator {
+    fn output_level(&self) -> bool;
+    /// Set the commutation step and rising/falling edge for BEMF sensing.
+    fn set_step(&mut self, step: u8, rising: bool);
+    fn change_input(&mut self);
+    fn enable_interrupts(&mut self);
+    fn mask_interrupts(&mut self);
+}
+
+/// minz extension over [`Comparator`] — EXTI pending-bit control for the
+/// AM32-verbatim camp-at-gate (stm32l4xx_it.c:278-286: a closed-gate post-ZC
+/// edge is LEFT PENDING to re-fire). rm32's wrappers clear-and-mask at ISR
+/// entry instead; reconciling the two policies is a flagged unification
+/// decision, not a mechanical move.
+pub trait CompExti {
     fn exti_pending(&self) -> bool;
-    /// Ack the COMP2 EXTI pending bit (write-1-to-clear,
-    /// stm32l4xx_it.c:281/285 `EXTI_ClearITPendingBit`).
     fn clear_pending(&self);
 }
 
@@ -140,15 +141,15 @@ pub trait LoopTimer {
 /// The bundled HAL — one parameter threads all the seams through
 /// `crate::am32_control` / `crate::am32_isr` (call sites stay short;
 /// static dispatch). Seams whose rm32 traits take `&mut self`
-/// ([`PwmOutput`], [`PhaseOutput`], [`IntervalTimer`], [`ComTimer`])
-/// are held BY VALUE (zero-sized in firmware — free); `&self`-only
-/// seams stay plain `&` refs. `pwm`/`phase` are two slots mirroring
-/// rm32's `MotorHal` shape; firmware wires `Tim1Pwm` into both.
+/// ([`PwmOutput`], [`PhaseOutput`], [`Comparator`], [`IntervalTimer`],
+/// [`ComTimer`]) are held BY VALUE (zero-sized in firmware — free);
+/// `&self`-only seams stay plain `&` refs. `pwm`/`phase` are two slots
+/// mirroring rm32's `MotorHal` shape; firmware wires `Tim1Pwm` into both.
 pub struct Hal<
     'a,
     P: PwmOutput,
     Ph: PhaseOutput,
-    C: CompCtl,
+    C: Comparator + CompExti,
     I: IntervalTimer,
     CT: ComTimer + ComTimerExt,
     B: Recorder,
@@ -160,7 +161,7 @@ pub struct Hal<
     pub com: CT,
     pub pwm: P,
     pub phase: Ph,
-    pub comp: &'a C,
+    pub comp: C,
     pub bb: &'a B,
     pub cs: &'a S,
     pub adc: &'a A,
@@ -186,7 +187,10 @@ pub(crate) mod mock {
     pub(crate) struct MockHal {
         pub(crate) calls: RefCell<Vec<&'static str>>,
         pub(crate) roles: RefCell<Vec<u8>>,
-        pub(crate) comp_inputs: RefCell<Vec<usize>>,
+        /// `(step, rising)` pairs AS PASSED to `Comparator::set_step`
+        /// (rung 3: the rm32 two-call shape — set_step stores, a
+        /// following change_input applies).
+        pub(crate) steps: RefCell<Vec<(u8, bool)>>,
         pub(crate) carrier_arrs: RefCell<Vec<u16>>,
         pub(crate) duties: RefCell<Vec<u16>>,
         pub(crate) com_arrs: RefCell<Vec<u16>>,
@@ -217,7 +221,7 @@ pub(crate) mod mock {
             '_,
             &MockHal,
             &MockHal,
-            MockHal,
+            &MockHal,
             &MockHal,
             &MockHal,
             MockHal,
@@ -298,21 +302,34 @@ pub(crate) mod mock {
         }
     }
 
-    impl CompCtl for MockHal {
-        fn value(&self) -> bool {
+    // Comparator on `&MockHal` like the other rm32-verbatim `&mut self`
+    // seams. Call-log strings follow the rung-3 trait method names;
+    // `steps` records the `(step, rising)` pair AS PASSED (1..6 — the
+    // -1 sector conversion lives inside the firmware impl's
+    // change_input, not in core, so the mock must not convert either).
+    impl Comparator for &MockHal {
+        fn output_level(&self) -> bool {
             let mut seq = self.comp_seq.borrow_mut();
             if seq.is_empty() { self.comp_value.get() } else { seq.remove(0) }
         }
-        fn change_comp_input(&self, sector: usize) {
-            self.calls.borrow_mut().push("change_comp_input");
-            self.comp_inputs.borrow_mut().push(sector);
+        fn set_step(&mut self, step: u8, rising: bool) {
+            self.calls.borrow_mut().push("set_step");
+            self.steps.borrow_mut().push((step, rising));
         }
-        fn enable_comp_interrupts(&self) {
-            self.calls.borrow_mut().push("enable_comp_interrupts");
+        fn change_input(&mut self) {
+            self.calls.borrow_mut().push("change_input");
         }
-        fn mask_phase_interrupts(&self) {
-            self.calls.borrow_mut().push("mask_phase_interrupts");
+        fn enable_interrupts(&mut self) {
+            self.calls.borrow_mut().push("enable_interrupts");
         }
+        fn mask_interrupts(&mut self) {
+            self.calls.borrow_mut().push("mask_interrupts");
+        }
+    }
+
+    // The minz CompExti extension (EXTI pending model) on the same
+    // receiver, so one `&MockHal` fills the bundle's comp slot.
+    impl CompExti for &MockHal {
         fn exti_pending(&self) -> bool {
             self.pending.get()
         }

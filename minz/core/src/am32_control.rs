@@ -12,8 +12,8 @@ use core::sync::atomic::Ordering;
 
 use crate::am32;
 use crate::am32_hal::{
-    CompCtl, ComTimer, ComTimerExt, Cs, Hal, InjAdc, IntervalTimer, LoopTimer, PhaseOutput,
-    PwmOutput, Recorder,
+    CompExti, ComTimer, ComTimerExt, Comparator, Cs, Hal, InjAdc, IntervalTimer, LoopTimer,
+    PhaseOutput, PwmOutput, Recorder,
 };
 use crate::am32_loop::{
     BAD_COUNT_THRESHOLD, BEMF_TIMEOUT_TICKS, Bench, Drive, Duty, MIN_STARTUP_DUTY,
@@ -40,7 +40,7 @@ pub fn commutate(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -68,8 +68,12 @@ pub fn commutate(
     // duty. AM32 wraps this in __disable_irq; the firmware impl does
     // its own interrupt::free.
     hal.phase.com_step(step as u8);
-    // changeCompInput() (main.c:879).
-    hal.comp.change_comp_input(sector);
+    // changeCompInput() (main.c:879) — rm32's two-call shape: set_step
+    // stores the (step, rising) pair, change_input applies the mux +
+    // EXTI edge from it. Same register ops, same order as the old
+    // single-call change_comp_input(sector).
+    hal.comp.set_step(step as u8, rising);
+    hal.comp.change_input();
 
     // if average_interval > polling_mode_changeover+500 → old_routine=1
     // (main.c:881-883).
@@ -98,7 +102,7 @@ pub fn zcfr_blend(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -137,7 +141,7 @@ pub fn zcfr_spin_wait(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -172,7 +176,7 @@ pub fn zcfoundroutine<const N: usize>(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -196,7 +200,7 @@ pub fn zcfoundroutine<const N: usize>(
     // main.c:1908-1913): commutation_interval < polling_mode_changeover.
     if ci < POLLING_MODE_CHANGEOVER {
         drive.old_routine.store(false, Ordering::Relaxed);
-        hal.comp.enable_comp_interrupts();
+        hal.comp.enable_interrupts();
     }
 }
 
@@ -214,7 +218,7 @@ pub fn start_motor(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -244,7 +248,7 @@ pub fn safety_kill(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -260,7 +264,7 @@ pub fn safety_kill(
     duty.duty_cycle.store(0, Ordering::Relaxed);
     duty.last_duty_cycle.store(0, Ordering::Relaxed);
     drive.old_routine.store(true, Ordering::Relaxed);
-    hal.comp.mask_phase_interrupts();
+    hal.comp.mask_interrupts();
     hal.com.disable_interrupt();
     duty.kill_reason.store(reason, Ordering::Relaxed);
     duty.killed.store(true, Ordering::Relaxed);
@@ -277,7 +281,7 @@ pub fn honor_stop(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -294,7 +298,7 @@ pub fn honor_stop(
         duty.duty_cycle_setpoint.store(0, Ordering::Relaxed);
         duty.duty_cycle.store(0, Ordering::Relaxed);
         duty.last_duty_cycle.store(0, Ordering::Relaxed);
-        hal.comp.mask_phase_interrupts();
+        hal.comp.mask_interrupts();
         hal.com.disable_interrupt();
     }
 }
@@ -315,7 +319,7 @@ pub fn variable_pwm_ride(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -343,7 +347,7 @@ pub fn bemf_timeout_rekick<const N: usize>(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -355,7 +359,7 @@ pub fn bemf_timeout_rekick<const N: usize>(
 ) {
     if hal.interval.count() > BEMF_TIMEOUT_TICKS && running {
         drive.bemf_timeout_happened.fetch_add(1, Ordering::Relaxed);
-        hal.comp.mask_phase_interrupts();
+        hal.comp.mask_interrupts();
         drive.old_routine.store(true, Ordering::Relaxed);
         if duty.input.load(Ordering::Relaxed) < 48 {
             drive.running.store(false, Ordering::Relaxed);
@@ -376,7 +380,7 @@ pub fn desync_check_band(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -417,7 +421,7 @@ pub fn set_input(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -443,7 +447,7 @@ pub fn set_input_arming(
         '_,
         impl PwmOutput,
         impl PhaseOutput,
-        impl CompCtl,
+        impl Comparator + CompExti,
         impl IntervalTimer,
         impl ComTimer + ComTimerExt,
         impl Recorder,
@@ -476,11 +480,12 @@ pub fn set_input_arming(
 }
 
 /// getBemfState() — main.c:817-852 (L431 `!getCompOutputLevel()` branch,
-/// which equals minz `comp2::value()`). Counts when the level matches the
-/// direction; a run of bad reads over threshold resets the counter.
+/// which equals minz `comp2::value()` = our `output_level()`). Counts when
+/// the level matches the direction; a run of bad reads over threshold
+/// resets the counter.
 #[inline]
-pub fn get_bemf_state(drive: &Drive, comp: &impl CompCtl) {
-    let cs = comp.value(); // = !getCompOutputLevel() (main.c:831)
+pub fn get_bemf_state(drive: &Drive, comp: &impl Comparator) {
+    let cs = comp.output_level(); // = !getCompOutputLevel() (main.c:831)
     let rising = drive.rising.load(Ordering::Relaxed);
     // rising: count when current_state; else count when !current_state.
     // Both reduce to `cs == rising` (main.c:833-851).
@@ -522,10 +527,16 @@ mod tests {
         assert!(drive.desync_check.load(Ordering::Relaxed));
         // rising = step % 2 → step 1 is rising.
         assert!(drive.rising.load(Ordering::Relaxed));
-        // comStep gets the AM32 STEP (1..6, main.c:876);
-        // changeCompInput gets the sector (0..5).
+        // comStep gets the AM32 STEP (1..6, main.c:876); set_step gets
+        // the SAME step + rising pair (rung 3 two-call shape) and
+        // change_input follows it (the -1 sector conversion lives in
+        // the firmware impl).
         assert_eq!(*m.roles.borrow(), [1]);
-        assert_eq!(*m.comp_inputs.borrow(), [0]);
+        assert_eq!(*m.steps.borrow(), [(1u8, true)]);
+        assert_eq!(
+            m.calls.borrow().iter().position(|c| *c == "set_step").unwrap() + 1,
+            m.calls.borrow().iter().position(|c| *c == "change_input").unwrap()
+        );
         // bemfcounter/zcfound reset; interval pushed into slot 0.
         assert_eq!(drive.bemf_counter.load(Ordering::Relaxed), 0);
         assert!(!drive.zcfound.load(Ordering::Relaxed));
@@ -540,10 +551,12 @@ mod tests {
         let (sched, drive, mut hal) = (ss.sched(), ds.drive(), m.hal());
         drive.current_step.store(1, Ordering::Relaxed);
         commutate(&sched, &drive, &mut hal);
-        // 1→2: no desync_check, even step is falling.
+        // 1→2: no desync_check, even step is falling — and set_step
+        // carries the falling pair (rung 3 coverage).
         assert_eq!(drive.current_step.load(Ordering::Relaxed), 2);
         assert!(!drive.desync_check.load(Ordering::Relaxed));
         assert!(!drive.rising.load(Ordering::Relaxed));
+        assert_eq!(m.steps.borrow()[0], (2u8, false));
         assert!(!drive.old_routine.load(Ordering::Relaxed));
         // average_interval > changeover+500 → polling fallback (main.c:881).
         sched.average_interval.store(POLLING_MODE_CHANGEOVER + 501, Ordering::Relaxed);
@@ -643,7 +656,7 @@ mod tests {
         assert_eq!(drive.zero_crosses.load(Ordering::Relaxed), 8);
         // changeover: ci < 2000 → interrupt mode + comp ints ON.
         assert!(!drive.old_routine.load(Ordering::Relaxed));
-        assert!(m.called("enable_comp_interrupts"));
+        assert!(m.called("enable_interrupts"));
     }
 
     #[test]
@@ -664,7 +677,7 @@ mod tests {
         drive.old_routine.store(true, Ordering::Relaxed);
         zcfoundroutine(&sched, &drive, &zct, &duty, &mut hal);
         assert!(drive.old_routine.load(Ordering::Relaxed));
-        assert!(!m.called("enable_comp_interrupts"));
+        assert!(!m.called("enable_interrupts"));
         assert_eq!(drive.zero_crosses.load(Ordering::Relaxed), 1);
     }
 
@@ -709,7 +722,7 @@ mod tests {
         safety_kill(&drive, &duty, &mut hal, 2);
         // The rm32-style HAL-call assertions: every safety call fired.
         assert!(m.called("all_off"));
-        assert!(m.called("mask_phase_interrupts"));
+        assert!(m.called("mask_interrupts"));
         assert!(m.called("disable_com_timer_int"));
         assert!(m.frozen.get());
         // Pipeline zeroed + latched kill.
@@ -739,7 +752,7 @@ mod tests {
         // Swap semantics: flag consumed, actions fired.
         assert!(!bench.stop_req.load(Ordering::Relaxed));
         assert!(m.called("all_off"));
-        assert!(m.called("mask_phase_interrupts"));
+        assert!(m.called("mask_interrupts"));
         assert!(m.called("disable_com_timer_int"));
         assert!(!drive.running.load(Ordering::Relaxed));
         assert!(drive.old_routine.load(Ordering::Relaxed));
@@ -812,7 +825,7 @@ mod tests {
         m.interval.set(46_000);
         bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, false);
         assert_eq!(drive.bemf_timeout_happened.load(Ordering::Relaxed), 0);
-        assert!(!m.called("mask_phase_interrupts"));
+        assert!(!m.called("mask_interrupts"));
     }
 
     #[test]
@@ -833,7 +846,7 @@ mod tests {
         drive.zero_crosses.store(50, Ordering::Relaxed);
         bemf_timeout_rekick(&sched, &drive, &duty, &zct, &mut hal, true);
         assert_eq!(drive.bemf_timeout_happened.load(Ordering::Relaxed), 1);
-        assert!(m.called("mask_phase_interrupts"));
+        assert!(m.called("mask_interrupts"));
         assert!(drive.old_routine.load(Ordering::Relaxed));
         // input ≥ 48 → running preserved, no 5000 reseed; blend uses
         // the surviving ci: (46000 + 3*1000)/4.
@@ -1041,18 +1054,18 @@ mod tests {
         // Level matches direction (rising, value=true): counter climbs.
         drive.rising.store(true, Ordering::Relaxed);
         m.comp_value.set(true);
-        get_bemf_state(&drive, &m);
-        get_bemf_state(&drive, &m);
+        get_bemf_state(&drive, &&m);
+        get_bemf_state(&drive, &&m);
         assert_eq!(drive.bemf_counter.load(Ordering::Relaxed), 2);
         assert_eq!(drive.bad_count.load(Ordering::Relaxed), 0);
         // Mismatch: bad_count climbs, counter held until the
         // threshold run, then resets (main.c:833-851).
         m.comp_value.set(false);
         for _ in 0..BAD_COUNT_THRESHOLD {
-            get_bemf_state(&drive, &m);
+            get_bemf_state(&drive, &&m);
         }
         assert_eq!(drive.bemf_counter.load(Ordering::Relaxed), 2); // held
-        get_bemf_state(&drive, &m); // bad run exceeds threshold
+        get_bemf_state(&drive, &&m); // bad run exceeds threshold
         assert_eq!(drive.bemf_counter.load(Ordering::Relaxed), 0); // reset
         assert_eq!(
             drive.bad_count.load(Ordering::Relaxed),
