@@ -119,10 +119,15 @@ fn main() -> ! {
     }
 
     // --- Start IWDG watchdog (after startup tune, matching C sequencing) ---
-    // Bench-debug: IWDG disabled so the chip can sit idle without resetting
-    // itself between test runs. Re-enable for production.
-    // sys.start_watchdog(Chip::WDG_PRESCALER, Chip::WDG_RELOAD);
-    rm32_stm32::dprintln!("[rm32] wdg DISABLED (bench debug)");
+    // ON unconditionally (rung 0 safety directive): a brown-out that wedges
+    // the core with the bridge frozen is the burnt-motor scenario — the IWDG
+    // is the only layer below firmware that releases it. L431: LSI/16,
+    // reload 4000 → 2.0 s (AM32 value). Reloaded once per main-loop pass.
+    // NOTE: debug-halting the core >2 s now causes an IWDG reset. That is
+    // intentional — do NOT freeze IWDG via DBGMCU: a halt with the motor
+    // spinning must not keep the bridge frozen.
+    sys.start_watchdog(Chip::WDG_PRESCALER, Chip::WDG_RELOAD);
+    rm32_stm32::dprintln!("[rm32] wdg ON (2s)");
 
     // --- Configure input capture inversion before moving to ISR ---
     // NOTE: `receive_dshot_dma()` deferred until after `init_isr_state` —
@@ -274,6 +279,10 @@ fn main() -> ! {
     let shared = isr::shared();
     let mut system = rm32::system::SystemTick::new();
     let mut log_counter: u32 = 0;
+    // Bench safety guard: absolute vbat-sag + overcurrent kill, latched
+    // until reset. See rm32_stm32::bench_guard for thresholds/rationale.
+    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    let mut bench_guard = rm32_stm32::bench_guard::BenchGuard::new(Chip::CPU_FREQUENCY_MHZ);
     loop {
         // Bracket the per-iter main-loop body so we can measure how much of
         // the 50 µs TIM6 period is spent doing main work vs sleeping in wfi.
@@ -315,7 +324,7 @@ fn main() -> ! {
             let exti_last = shared.dbg_exti_last_cyc();
             let main_last = shared.dbg_main_last_cyc();
             rm32_stm32::dprintln!(
-                "[loop n={} cyc_k={} isr_tick={} t6={} t14={} comp={} dma={} exti={} main={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={}",
+                "[loop n={} cyc_k={} isr_tick={} t6={} t14={} comp={} dma={} exti={} main={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={} vbat_mv={} i_ma={}",
                 log_counter / 100_000,
                 cyc_k,
                 isr_tick,
@@ -341,6 +350,8 @@ fn main() -> ! {
                 shared.dbg_bidir_evt(),
                 shared.dbg_crc_pass(),
                 shared.dbg_crc_fail(),
+                shared.battery_voltage(),
+                shared.actual_current(),
             );
             // Dump recent frame snapshots (mix of pass + fail). Useful for
             // catching DMA buffer alignment / edge polarity issues in bidir.
@@ -405,6 +416,36 @@ fn main() -> ! {
 
         // Shared pipeline — ISR runs async, sync via SharedState atomics.
         system.run_tick(shared, &mut main_state, &mut adc, &mut telem, || {});
+
+        // Bench safety guard: evaluate + enforce. On trip: AllOff + Disarm,
+        // then RE-ASSERTED every pass while latched (IsrAction is cleared by
+        // the ISR after acting; DShot input could otherwise re-arm). Only a
+        // reset re-arms the guard — a kill is evidence, not a hiccup.
+        #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+        {
+            let guard_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+            if let Some(reason) = bench_guard.tick(
+                guard_now,
+                shared.running(),
+                shared.battery_voltage(),
+                shared.actual_current(),
+            ) {
+                let tag = match reason {
+                    rm32_stm32::bench_guard::KillReason::Overcurrent => "OC",
+                    rm32_stm32::bench_guard::KillReason::VbatSag => "VBAT",
+                };
+                rm32_stm32::dprintln!(
+                    "!! BENCH KILL reason={} vbat_mv={} i_ma={} (latched until reset)",
+                    tag,
+                    shared.battery_voltage(),
+                    shared.actual_current()
+                );
+            }
+            if bench_guard.latched().is_some() {
+                shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
+                shared.transition(rm32::motor_mode::MotorEvent::Disarm);
+            }
+        }
 
         // Arming feedback: LED only (beeps need HAL access — TODO: tone request via SharedState)
         if main_state.just_armed && BOARD.has_led {

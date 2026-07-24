@@ -26,6 +26,10 @@ pub use mcu::pac;
 // --- Shared across all MCUs (zero cfg) ---
 pub mod adc_generic;
 pub mod adc_hal;
+// Bench safety guard (vbat-sag + overcurrent kill). Timing source is
+// DWT.CYCCNT — M4 targets only; M0/M0+ have no cycle counter.
+#[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+pub mod bench_guard;
 pub mod capture_generic;
 pub mod capture_hal;
 pub mod comp_hal;
