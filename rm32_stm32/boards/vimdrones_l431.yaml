@@ -1,9 +1,9 @@
 name: "VimDrones L4"
 mcu: stm32l431
 dead_time: 60
-voltage_divider: 210
-millivolt_per_amp: 8
-current_offset: 498
+voltage_divider: 933  # 9.33x ratio *100 (3.6k/30k), minz bench-validated
+millivolt_per_amp: 3  # INA180A1 30mV/A in (mV/A)/10 units, see neutron_l431.yaml
+current_offset: 0
 current_adc_channel: 8
 voltage_adc_channel: 11
 bemf_pins:
