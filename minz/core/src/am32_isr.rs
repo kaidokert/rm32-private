@@ -26,8 +26,17 @@ use crate::zct_trace::ZctTrace;
 /// ~85 ms current average over raw injected ch8 counts.
 const OC_KILL_RAW_AVG: u32 = 205;
 const OC_WINDOW_TICKS: u32 = 1700; // ≈ 85 ms at 20 kHz
-/// absolute vbat floor, raw injected ch11 counts (~5.95 V).
-const VBAT_ABS_FLOOR_RAW: u16 = 793;
+/// Absolute vbat floor, raw injected ch11 counts (~5.5 V). Retuned
+/// from 793 (~5.95 V) after the 2026-07-24 clone-vs-AM32 study: every
+/// 10→90/100% throttle slam sagged the bus to 5.92-5.95 V for a few
+/// ms (3/3 reproducible, loop provably locked at the kill) — a
+/// transient the reference rides (factory AM32 runs no LVC at all).
+/// The guard's target is PSU collapse / battery death, which goes
+/// DEEP and STAYS; hence lower floor + debounce, not instant-kill.
+const VBAT_ABS_FLOOR_RAW: u16 = 733;
+/// vbat must sit below the floor this many consecutive TIM6 ticks
+/// (~10 ms at 19.6 kHz) before the kill fires.
+const VBAT_DEBOUNCE_TICKS: u32 = 200;
 
 // ===============================================================
 // COMP ISR — stm32l4xx_it.c:276-290 + interruptRoutine main.c:918-948.
@@ -233,8 +242,17 @@ pub fn adc_harvest_and_safety<M: MotorHal>(
     if tripped {
         safety_kill(drive, duty, hal, obs, 1);
     }
+    // Debounced vbat floor: kill only on a SUSTAINED brown-out
+    // (VBAT_DEBOUNCE_TICKS consecutive low reads while running); any
+    // recovery resets the count. Transient slam sag rides through.
     if vbat < VBAT_ABS_FLOOR_RAW && drive.running.load(Ordering::Relaxed) {
-        safety_kill(drive, duty, hal, obs, 2);
+        let low = bench.vbat_low_ticks.load(Ordering::Relaxed) + 1;
+        bench.vbat_low_ticks.store(low, Ordering::Relaxed);
+        if low >= VBAT_DEBOUNCE_TICKS {
+            safety_kill(drive, duty, hal, obs, 2);
+        }
+    } else {
+        bench.vbat_low_ticks.store(0, Ordering::Relaxed);
     }
 }
 
@@ -639,16 +657,49 @@ mod tests {
         );
         let (drive, duty, bench) = (ds.drive(), us.duty(), bs.bench());
         m.inj.set((0, 0, 0, VBAT_ABS_FLOOR_RAW - 1));
-        // Not running: below-floor vbat is harvested but no kill.
+        // Not running: below-floor vbat is harvested but no kill and
+        // no debounce accumulation.
         adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
         assert_eq!(bench.vbat_raw.load(Ordering::Relaxed), VBAT_ABS_FLOOR_RAW - 1);
         assert!(!duty.killed.load(Ordering::Relaxed));
         assert!(!m.called("all_off"));
-        // Running: reason-2 kill.
+        assert_eq!(bench.vbat_low_ticks.load(Ordering::Relaxed), 0);
+        // Running: reason-2 kill only after the FULL debounce window.
         drive.running.store(true, Ordering::Relaxed);
+        for _ in 0..VBAT_DEBOUNCE_TICKS - 1 {
+            adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+        }
+        assert!(!duty.killed.load(Ordering::Relaxed)); // 199 low ticks: alive
         adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
         assert!(m.called("all_off"));
         assert!(duty.killed.load(Ordering::Relaxed));
         assert_eq!(duty.kill_reason.load(Ordering::Relaxed), 2);
+    }
+
+    /// Regression (2026-07-24 study, slam-kill retune): a TRANSIENT
+    /// sag shorter than the debounce window must ride through — one
+    /// good read resets the count entirely.
+    #[test]
+    fn adc_harvest_vbat_transient_sag_rides_through() {
+        let (ds, us, bs, m) = (
+            DriveStore::default(),
+            DutyStore::default(),
+            BenchStore::default(),
+            MockHal::new(),
+        );
+        let (drive, duty, bench) = (ds.drive(), us.duty(), bs.bench());
+        drive.running.store(true, Ordering::Relaxed);
+        // Two slam-like dips just short of the window, recovery between.
+        for _ in 0..2 {
+            m.inj.set((0, 0, 0, VBAT_ABS_FLOOR_RAW - 5));
+            for _ in 0..VBAT_DEBOUNCE_TICKS - 1 {
+                adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+            }
+            m.inj.set((0, 0, 0, VBAT_ABS_FLOOR_RAW + 100)); // recovered
+            adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+            assert_eq!(bench.vbat_low_ticks.load(Ordering::Relaxed), 0);
+        }
+        assert!(!duty.killed.load(Ordering::Relaxed));
+        assert!(!m.called("all_off"));
     }
 }

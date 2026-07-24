@@ -206,6 +206,7 @@ static ZCFR_GUARD_HITS: AtomicU32 = AtomicU32::new(0);
 static RAMP_COUNT: AtomicU16 = AtomicU16::new(0);
 static OC_ACC: AtomicU32 = AtomicU32::new(0);
 static OC_CNT: AtomicU32 = AtomicU32::new(0);
+static VBAT_LOW_TICKS: AtomicU32 = AtomicU32::new(0);
 
 // ===============================================================
 // INTERVAL_TIMER = TIM2, COM_TIMER = TIM16 — the register wrappers
@@ -317,6 +318,7 @@ static BENCH: Bench<'static> = Bench {
     vbat_raw: &VBAT_RAW,
     oc_acc: &OC_ACC,
     oc_cnt: &OC_CNT,
+    vbat_low_ticks: &VBAT_LOW_TICKS,
     stop_req: &STOP_REQ,
     dump_req: &DUMP_REQ,
     info_req: &INFO_REQ,
@@ -437,7 +439,7 @@ fn handle_requests(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct
 fn print_info(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &ZctTrace<ZCT_N>, tx: &mut UartTxWriter) {
     let _ = write!(
         tx,
-        "i step={} old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop={} guard={}\r\n",
+        "i step={} old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop={} guard={} killed={}\r\n",
         drive.current_step.load(Ordering::Relaxed),
         drive.old_routine.load(Ordering::Relaxed) as u8,
         drive.running.load(Ordering::Relaxed) as u8,
@@ -449,6 +451,7 @@ fn print_info(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &Zc
         bench.vbat_raw.load(Ordering::Relaxed),
         zct.ring.drop.load(Ordering::Relaxed),
         drive.zcfr_guard_hits.load(Ordering::Relaxed),
+        duty.killed.load(Ordering::Relaxed) as u8,
     );
 }
 
