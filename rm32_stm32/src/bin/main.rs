@@ -310,6 +310,10 @@ fn main() -> ! {
     let mut bench_throttle: u16 = 0;
     #[cfg(feature = "benchuart")]
     let mut bench_last_cmd: Option<u32> = None;
+    // Blackbox mode tracker: record a MOD event whenever the packed
+    // armed/running/old_routine/stepper_sine bits change.
+    #[cfg(feature = "blackbox")]
+    let mut bb_last_mode: u16 = 0xFFFF;
     loop {
         // Bracket the per-iter main-loop body so we can measure how much of
         // the 50 µs TIM6 period is spent doing main work vs sleeping in wfi.
@@ -444,6 +448,20 @@ fn main() -> ! {
         // Shared pipeline — ISR runs async, sync via SharedState atomics.
         system.run_tick(shared, &mut main_state, &mut adc, &mut telem, || {});
 
+        // Blackbox: mode-transition events (Running <-> OldRoutine
+        // oscillation is exactly what the chop investigation needs to see).
+        #[cfg(feature = "blackbox")]
+        {
+            let mode_bits = (shared.armed() as u16)
+                | ((shared.running() as u16) << 1)
+                | ((shared.old_routine() as u16) << 2)
+                | ((shared.stepper_sine() as u16) << 3);
+            if mode_bits != bb_last_mode {
+                bb_last_mode = mode_bits;
+                rm32_stm32::bench_bb::record(rm32::blackbox::EV_MOD, 0, mode_bits);
+            }
+        }
+
         // Bench safety guard: evaluate + enforce. On trip: AllOff + Disarm,
         // then RE-ASSERTED every pass while latched (IsrAction is cleared by
         // the ISR after acting; DShot input could otherwise re-arm). Only a
@@ -457,10 +475,20 @@ fn main() -> ! {
                 shared.battery_voltage(),
                 shared.actual_current(),
             ) {
-                let tag = match reason {
-                    rm32_stm32::bench_guard::KillReason::Overcurrent => "OC",
-                    rm32_stm32::bench_guard::KillReason::VbatSag => "VBAT",
+                let (tag, code) = match reason {
+                    rm32_stm32::bench_guard::KillReason::Overcurrent => ("OC", 1u16),
+                    rm32_stm32::bench_guard::KillReason::VbatSag => ("VBAT", 2u16),
                 };
+                // Blackbox: record the kill, then FREEZE so the dump shows
+                // the events leading TO the fault (minz reason codes:
+                // 1=OC, 2=vbat).
+                #[cfg(feature = "blackbox")]
+                {
+                    rm32_stm32::bench_bb::record(rm32::blackbox::EV_KIL, 0, code);
+                    rm32_stm32::bench_bb::freeze();
+                }
+                #[cfg(not(feature = "blackbox"))]
+                let _ = code;
                 rm32_stm32::dprintln!(
                     "!! BENCH KILL reason={} vbat_mv={} i_ma={} (latched until reset)",
                     tag,
@@ -531,7 +559,19 @@ fn main() -> ! {
                             rm32_stm32::dprintln!("[bench] zctrace: not ported yet (rung 4)");
                         }
                         UartCmd::BbDump => {
-                            rm32_stm32::dprintln!("[bench] blackbox: not ported yet (rung 3)");
+                            #[cfg(feature = "blackbox")]
+                            {
+                                let n = rm32_stm32::bench_bb::dump(|bytes| {
+                                    if let Ok(s) = core::str::from_utf8(bytes) {
+                                        rm32_stm32::debug_uart::write_str(s);
+                                    }
+                                });
+                                rm32_stm32::dprintln!("[bench] bb dump: {} events", n);
+                            }
+                            #[cfg(not(feature = "blackbox"))]
+                            rm32_stm32::dprintln!(
+                                "[bench] blackbox: build without 'blackbox' feature"
+                            );
                         }
                     }
                 }

@@ -19,6 +19,7 @@ ap.add_argument("--baud", type=int, default=2_000_000)
 ap.add_argument("--pct", type=int, default=5, help="throttle percent for the spin")
 ap.add_argument("--spin-s", type=float, default=3.0)
 ap.add_argument("--max-ma", type=int, default=800, help="abort threshold from 'i' line")
+ap.add_argument("--bb", action="store_true", help="dump the blackbox after the run")
 args = ap.parse_args()
 
 
@@ -87,6 +88,16 @@ try:
     p.flush()
     time.sleep(0.5)
     info(p)
+
+    if args.bb:
+        print("== blackbox dump (b)")
+        p.write(b"b")
+        p.flush()
+        txt = drain(p, 1.5)
+        lines = [l for l in txt.splitlines() if l.startswith("bb ") or "bb dump" in l]
+        for l in lines[-20:]:
+            print("  ", l)
+        print(f"   ({len(lines)} bb lines)")
 finally:
     # kill guard: all-off + zero on every exit path
     try:

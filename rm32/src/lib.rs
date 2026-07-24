@@ -7,6 +7,7 @@
 
 pub mod bemf;
 pub mod bench_input;
+pub mod blackbox;
 pub mod board;
 pub mod brushed;
 pub mod commutation;

@@ -119,6 +119,16 @@ pub fn handle_tim14() {
         &mut state.hal.phase,
         state.config.bi_direction != 0,
     );
+    // Blackbox: one REF per commutation step; data = commutation interval.
+    #[cfg(all(
+        feature = "blackbox",
+        any(feature = "stm32l431", feature = "stm32g431")
+    ))]
+    crate::bench_bb::record(
+        rm32::blackbox::EV_REF,
+        state.commutation.step(),
+        shared.commutation_interval().min(u16::MAX as u32) as u16,
+    );
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
@@ -139,6 +149,18 @@ pub fn handle_comp() {
         &mut state.hal.comp,
         &mut state.hal.interval,
         &mut state.hal.com_timer,
+    );
+    // Blackbox: one ACC per COMP ZC ISR (entry-level granularity for now —
+    // acceptance vs persistence-reject isn't distinguished until the core
+    // exposes it). data = commutation interval.
+    #[cfg(all(
+        feature = "blackbox",
+        any(feature = "stm32l431", feature = "stm32g431")
+    ))]
+    crate::bench_bb::record(
+        rm32::blackbox::EV_ACC,
+        state.commutation.step(),
+        isr::shared().commutation_interval().min(u16::MAX as u32) as u16,
     );
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {

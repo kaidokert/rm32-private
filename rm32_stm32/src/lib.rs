@@ -34,6 +34,13 @@ pub mod bench_guard;
 pub mod bench_uart;
 #[cfg(all(feature = "benchuart", not(feature = "stm32l431")))]
 compile_error!("feature `benchuart` is L431-only (USART2-on-PA2 bench wiring)");
+// Blackbox firmware adapter (DWT timestamps + critical-section ring).
+pub mod bench_bb;
+#[cfg(all(
+    feature = "blackbox",
+    not(any(feature = "stm32l431", feature = "stm32g431"))
+))]
+compile_error!("feature `blackbox` needs DWT.CYCCNT (M4 targets: stm32l431/stm32g431)");
 pub mod capture_generic;
 pub mod capture_hal;
 pub mod comp_hal;
