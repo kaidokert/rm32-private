@@ -93,6 +93,12 @@ fn main() -> ! {
     #[cfg(feature = "debuguart")]
     rm32_stm32::debug_uart::init();
     rm32_stm32::dprintln!("[rm32] init done");
+    // Re-print the reset cause now that the UART runs at its final baud —
+    // the pre-clock-config print above lands as garbage on the wire
+    // (RTT-only). Rung 2: last-boot reason visible on the bench wire.
+    for label in reset_cause.iter_labels() {
+        rm32_stm32::dprintln!("[rm32] last reset: {}", label);
+    }
 
     // --- WS2812 LED: boot indicator (dim red) ---
     let led_pin = rm32_stm32::ws2812_hal::GpioBPin::new(BOARD.led_pin.unwrap_or(8));
@@ -496,16 +502,28 @@ fn main() -> ! {
                             rm32_stm32::dprintln!("[bench] KILL (w): all off, throttle 0");
                         }
                         UartCmd::Info => {
+                            // minz-EXACT wire format — map_sweep.py / fly.py /
+                            // cmp_report.py regex this line. avg is in 0.5 µs
+                            // interval ticks (f_e = 2e6/(6*avg)); iraw/vbat are
+                            // raw ADC counts (scripts apply the sense cal:
+                            // 26.86 mA/count, 7.52 mV/count — inverted here
+                            // from our mA/mV). step isn't published to shared
+                            // (scripts don't capture it) — 0. drop/guard are
+                            // zctrace fields (rung 4) — 0. killed = bench_guard
+                            // latch.
+                            let avg = (shared.e_com_time() / 3).max(0) as u32;
+                            let iraw = (shared.actual_current().max(0) as u32) * 100 / 2686;
+                            let vraw = (shared.battery_voltage() as u32) * 100 / 752;
                             rm32_stm32::dprintln!(
-                                "[i] mode={:?} in={} adj={} duty={} zc={} ci={} vbat_mv={} i_ma={} guard={}",
-                                shared.motor_mode(),
-                                bench_throttle,
-                                shared.adjusted_input(),
-                                shared.duty_cycle(),
-                                shared.zero_crosses(),
+                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={}",
+                                shared.old_routine() as u8,
+                                shared.running() as u8,
                                 shared.commutation_interval(),
-                                shared.battery_voltage(),
-                                shared.actual_current(),
+                                avg,
+                                shared.zero_crosses(),
+                                shared.duty_cycle(),
+                                iraw,
+                                vraw,
                                 bench_guard.latched().is_some() as u8
                             );
                         }

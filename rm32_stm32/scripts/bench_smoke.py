@@ -32,19 +32,33 @@ def drain(p, dur=0.3):
     return out.decode(errors="replace")
 
 
+MA_PER_RAW = 3300.0 / 4095.0 / 30.0 * 1000.0  # minz sense cal, ~26.9 mA/count
+MV_PER_RAW = 3300.0 / 4095.0 * 9.33  # ~7.52 mV/count
+INFO_RE = __import__("re").compile(
+    r"i step=\d+ old=(\d+) run=(\d+) ci=\d+ avg=(\d+) "
+    r"zc=\d+ duty=(\d+) iraw=(\d+) vbat=(\d+)"
+)
+
+
 def info(p):
+    """Poll 'i' and parse with the minz map_sweep.py/fly.py regex."""
     p.write(b"i")
     p.flush()
     txt = drain(p, 0.4)
-    line = next((l for l in txt.splitlines() if "[i]" in l), "")
-    print("  ", line or f"(no [i] in {len(txt)}B)")
-    ma = None
-    if "i_ma=" in line:
-        try:
-            ma = int(line.split("i_ma=")[1].split()[0])
-        except ValueError:
-            pass
-    return line, ma
+    m = None
+    for m in INFO_RE.finditer(txt):
+        pass
+    if not m:
+        print(f"   (no info match in {len(txt)}B)")
+        return "", None
+    old, run, avg, duty, iraw, vbat = (int(m.group(k)) for k in range(1, 7))
+    fe = 2e6 / (6 * avg) if avg else 0.0
+    ma = iraw * MA_PER_RAW
+    print(
+        f"   {'RUN' if run else 'off'}{' poll' if old else ''}"
+        f" {fe:6.0f} Hz {ma:6.0f} mA {vbat * MV_PER_RAW:5.0f} mV duty {duty:4d}"
+    )
+    return m.group(0), ma
 
 
 p = serial.Serial(args.port, args.baud, timeout=0.05)
