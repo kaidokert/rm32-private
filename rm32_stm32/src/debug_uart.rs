@@ -21,7 +21,13 @@ use crate::pac::{GPIOB, RCC, USART1};
 /// CPU clock used for BRR computation. Must match the actual SYSCLK once
 /// `init()` runs. L431 production clock is 80 MHz.
 const CPU_HZ: u32 = 80_000_000;
+#[cfg(not(feature = "benchuart"))]
 const BAUD: u32 = 115_200;
+/// benchuart: 2 Mbaud so the minz bench toolchain reads both directions
+/// on one port. Needs push-pull PB6 (set in init below) — the telemetry
+/// init's open-drain + pull-up rise time caps the line at ~115200.
+#[cfg(feature = "benchuart")]
+const BAUD: u32 = 2_000_000;
 
 pub fn init() {
     unsafe {
@@ -35,6 +41,11 @@ pub fn init() {
         // PB6 -> AF mode + AF7 (USART1 TX)
         gpiob.moder.modify(|_, w| w.moder6().bits(0b10));
         gpiob.afrl.modify(|_, w| w.afrl6().bits(7));
+        // benchuart: force push-pull — telemetry init sets PB6 open-drain
+        // (half-duplex KISS pad), whose rise time caps the line ~115200.
+        // TX-only line into the adapter's RX, so push-pull is safe.
+        #[cfg(feature = "benchuart")]
+        gpiob.otyper.modify(|_, w| w.ot6().clear_bit());
 
         let usart = &*USART1::ptr();
         // Disable while we configure

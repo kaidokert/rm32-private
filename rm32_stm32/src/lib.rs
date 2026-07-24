@@ -30,6 +30,10 @@ pub mod adc_hal;
 // DWT.CYCCNT — M4 targets only; M0/M0+ have no cycle counter.
 #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
 pub mod bench_guard;
+// Bench UART throttle input (USART2 on PA2). L431-only.
+pub mod bench_uart;
+#[cfg(all(feature = "benchuart", not(feature = "stm32l431")))]
+compile_error!("feature `benchuart` is L431-only (USART2-on-PA2 bench wiring)");
 pub mod capture_generic;
 pub mod capture_hal;
 pub mod comp_hal;

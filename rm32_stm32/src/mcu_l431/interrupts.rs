@@ -5,6 +5,14 @@ use crate::isr_handlers;
 use crate::pac;
 use stm32l4xx_hal::pac::interrupt;
 
+// Bench UART RX. Ring-push-only — MUST NOT touch ISR_LOCAL (see
+// notes/ISR_STATE_INVARIANT.md); any priority is aliasing-safe.
+#[cfg(feature = "benchuart")]
+#[interrupt]
+fn USART2() {
+    crate::bench_uart::service_rx();
+}
+
 #[interrupt]
 fn TIM6_DACUNDER() {
     let tim6 = unsafe { &*pac::TIM6::PTR };

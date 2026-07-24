@@ -59,6 +59,8 @@ impl IsrCell {
             // First-time init: state was just moved from ISR_STATE into this
             // ISR_LOCAL cell, so any DMA pointer set up in main against the
             // ISR_STATE address is now stale. Re-arm DMA at the new address.
+            // benchuart: PA2 is USART2 RX — DShot capture stays unarmed.
+            #[cfg(not(feature = "benchuart"))]
             state.hal.input.receive_dshot_dma();
             rtt_target::rprintln!("[isr] state moved to ISR_LOCAL, DMA re-armed");
         }

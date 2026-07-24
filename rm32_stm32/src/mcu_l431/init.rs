@@ -247,6 +247,14 @@ pub fn init(
         nvic.set_priority(Interrupt::DMA1_CH5, 1 << 4);
         nvic.set_priority(Interrupt::EXTI15_10, 2 << 4);
         nvic.set_priority(Interrupt::TIM6_DACUNDER, 3 << 4);
+        // benchuart: USART2 RX at level 2 (matches the clone). The vector
+        // is ring-push-only — never touches ISR_LOCAL — so the IsrCell
+        // aliasing rule does not constrain its priority.
+        #[cfg(feature = "benchuart")]
+        {
+            NVIC::unmask(Interrupt::USART2);
+            nvic.set_priority(Interrupt::USART2, 2 << 4);
+        }
     }
 
     // Enable EXTI line 15 (software-triggered by DMA TC)

@@ -47,6 +47,12 @@ stm32g431 = ["dep:stm32g4xx-hal"]
 # and tail the port. Persistent across resets, survives panics.
 debuguart = []
 
+# Bench control: UART throttle on PA2 (USART2 RX @2M via SWAP) replacing
+# the DShot/PWM input-capture path, + debuguart TX bumped to 2M push-pull.
+# Drives rm32 from the minz bench toolchain (uart_cmd.py / fly.py).
+# L431-only. Mutually exclusive with DShot input by construction.
+benchuart = ["debuguart"]
+
 # Bench-debug: when on, main() bypasses normal startup and runs ONLY the
 # AM32-matching register init from `mcu::bringup::run_and_spin()`. Lets us
 # diff the firmware's register state against AM32's directly. L431-only.

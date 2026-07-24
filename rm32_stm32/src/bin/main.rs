@@ -261,8 +261,20 @@ fn main() -> ! {
 
     // Move to static, then arm DMA (buffer address must be final).
     let isr = isr::init_isr_state(isr_state);
-    isr.hal.input.receive_dshot_dma();
-    rm32_stm32::dprintln!("[rm32] isr state installed, DMA armed");
+    #[cfg(not(feature = "benchuart"))]
+    {
+        isr.hal.input.receive_dshot_dma();
+        rm32_stm32::dprintln!("[rm32] isr state installed, DMA armed");
+    }
+    // benchuart: PA2 belongs to USART2 RX — DShot capture is never armed.
+    // Init AFTER input-capture GPIO setup so this owns PA2's final mux
+    // (clock tree is at 80 MHz by now; BRR assumes it).
+    #[cfg(feature = "benchuart")]
+    {
+        let _ = isr;
+        rm32_stm32::bench_uart::init();
+        rm32_stm32::dprintln!("[rm32] benchuart: USART2 RX @2M on PA2, DShot capture OFF");
+    }
 
     // --- ADC + Telemetry (returned from init()) ---
 
@@ -283,6 +295,15 @@ fn main() -> ! {
     // until reset. See rm32_stm32::bench_guard for thresholds/rationale.
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     let mut bench_guard = rm32_stm32::bench_guard::BenchGuard::new(Chip::CPU_FREQUENCY_MHZ);
+    // Bench UART control state: parser + committed throttle + last-command
+    // timestamp for the 3 s deadman (a dead host script must not leave
+    // throttle latched — minz semantics).
+    #[cfg(feature = "benchuart")]
+    let mut bench_parser = rm32::bench_input::UartDuty::new();
+    #[cfg(feature = "benchuart")]
+    let mut bench_throttle: u16 = 0;
+    #[cfg(feature = "benchuart")]
+    let mut bench_last_cmd: Option<u32> = None;
     loop {
         // Bracket the per-iter main-loop body so we can measure how much of
         // the 50 µs TIM6 period is spent doing main work vs sleeping in wfi.
@@ -444,6 +465,75 @@ fn main() -> ! {
             if bench_guard.latched().is_some() {
                 shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
                 shared.transition(rm32::motor_mode::MotorEvent::Disarm);
+            }
+        }
+
+        // Bench UART control band: drain the RX ring, parse, inject throttle
+        // through the same shared-state path DShot uses (harness.rs model:
+        // set_newinput + signal_timeout=0 each pass while fresh, so arming /
+        // ramp / LVC / timeout semantics are identical). Deadman: 3 s without
+        // a command zeroes throttle and lets the firmware signal timeout run.
+        #[cfg(feature = "benchuart")]
+        {
+            use rm32::bench_input::UartCmd;
+            let bench_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+            let rx = rm32_stm32::bench_uart::ring();
+            while let Some(b) = rx.pop() {
+                if let Some(cmd) = bench_parser.step(b) {
+                    match cmd {
+                        UartCmd::SetThrottle(v) => {
+                            bench_throttle = v;
+                            bench_last_cmd = Some(bench_now);
+                        }
+                        UartCmd::Stop => {
+                            bench_throttle = 0;
+                            bench_last_cmd = Some(bench_now);
+                        }
+                        UartCmd::Kill => {
+                            bench_throttle = 0;
+                            bench_last_cmd = Some(bench_now);
+                            shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
+                            rm32_stm32::dprintln!("[bench] KILL (w): all off, throttle 0");
+                        }
+                        UartCmd::Info => {
+                            rm32_stm32::dprintln!(
+                                "[i] mode={:?} in={} adj={} duty={} zc={} ci={} vbat_mv={} i_ma={} guard={}",
+                                shared.motor_mode(),
+                                bench_throttle,
+                                shared.adjusted_input(),
+                                shared.duty_cycle(),
+                                shared.zero_crosses(),
+                                shared.commutation_interval(),
+                                shared.battery_voltage(),
+                                shared.actual_current(),
+                                bench_guard.latched().is_some() as u8
+                            );
+                        }
+                        UartCmd::TraceToggle => {
+                            rm32_stm32::dprintln!("[bench] zctrace: not ported yet (rung 4)");
+                        }
+                        UartCmd::BbDump => {
+                            rm32_stm32::dprintln!("[bench] blackbox: not ported yet (rung 3)");
+                        }
+                    }
+                }
+            }
+            // A latched safety kill outranks any commanded throttle.
+            if bench_guard.latched().is_some() {
+                bench_throttle = 0;
+            }
+            let deadman_cyc: u32 = 3 * Chip::CPU_FREQUENCY_MHZ * 1_000_000;
+            if let Some(last) = bench_last_cmd {
+                if bench_now.wrapping_sub(last) < deadman_cyc {
+                    shared.set_input_set(true);
+                    shared.set_newinput(bench_throttle);
+                    shared.set_signal_timeout(0);
+                } else {
+                    bench_last_cmd = None;
+                    bench_throttle = 0;
+                    shared.set_newinput(0);
+                    rm32_stm32::dprintln!("[bench] deadman (3s): throttle zeroed");
+                }
             }
         }
 
