@@ -567,11 +567,20 @@ impl<LED: OutputPin> MainState<LED> {
         };
         shared.set_filter_level(filter);
 
-        // Auto advance — scales with duty cycle
+        // Commutation advance (AM32 main.c:900-905): dynamic auto-advance
+        // scales with duty; otherwise the STATIC advance_level-derived
+        // temp_advance applies. rm32 previously published nothing in the
+        // static case, leaving the ISR at 0° advance — the largest single
+        // divergence vs AM32 at factory settings (which run 15°).
+        // NOTE: BemfState::sync_config treats 0 as "no update"; a static
+        // advance of genuinely 0 matches the ISR-side init value, so the
+        // only unreachable transition is a runtime nonzero→0 change.
         if self.config.auto_advance != 0 {
             let level =
                 crate::functions::map(shared.duty_cycle_setpoint() as i32, 100, 2000, 13, 23) as u8;
             shared.set_auto_advance(level);
+        } else {
+            shared.set_auto_advance(self.config.temp_advance());
         }
 
         // Note: send_esc_info_flag is checked and cleared by firmware main.rs

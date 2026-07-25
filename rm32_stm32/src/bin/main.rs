@@ -226,7 +226,12 @@ fn main() -> ! {
     main_state.config.bi_direction = 0;
     main_state.config.use_sine_start = 0;
     main_state.config.brake_on_stop = 0;
-    rm32_stm32::dprintln!("[rm32] BENCH: cleared stuck/stall/bidir/sine/brake");
+    // The bench EEPROM page is invalid → Default (all-zeros) config, whose
+    // advance_level=0 maps to 0° advance. The bench AM32 factory image ran
+    // advance 16 (15°, minz TEMP_ADVANCE) — set the new-format eeprom value
+    // that maps to it so the parity comparison is like-for-like.
+    main_state.config.advance_level = 26; // temp_advance() -> 16 = 15°
+    rm32_stm32::dprintln!("[rm32] BENCH: cleared stuck/stall/bidir/sine/brake; advance=15deg");
 
     // Derive motor configuration from EEPROM + board (all math now in rm32, host-testable)
     let motor_cfg = main_state.config.derive_motor_config(
