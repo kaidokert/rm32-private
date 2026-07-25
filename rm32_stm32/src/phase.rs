@@ -24,6 +24,110 @@ const MODE_ALTERNATE: u32 = 0b10;
 #[cfg(feature = "benchuart")]
 pub static COMP_PWM_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
+/// Bench live commutation-writer toggle ('E' command): 0 = sequential
+/// per-pin (AM32 phaseouts order), 1 = atomic (clone set_phase_roles:
+/// one BSRR write per port then one MODER write per port — final pin
+/// levels snap simultaneously, no intermediate bridge states).
+#[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+pub static PHASE_ATOMIC_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// L431 atomic com_step, ported from the clone's proven
+/// `set_phase_roles` (minz/src/tim1_motor_pwm.rs) onto rm32's AM32
+/// pin naming: A = PA10/PB1, B = PA9/PB0, C = PA8/PA7 (hi/lo).
+/// BSRR first (one write per port), MODER second (one modify per
+/// port). The sequential writer's six ordered pin ops span ~1-2 µs of
+/// mixed old/new bridge states per commutation; this path has none.
+#[cfg(feature = "stm32l431")]
+pub fn l431_atomic_com_step(step: u8, comp: bool) {
+    const AF: u32 = 0b10;
+    const OUT: u32 = 0b01;
+    // (hi_is_gpioa always true; lo: A,B on GPIOB pins 1,0; C on GPIOA pin 7)
+    // phase index 0=A,1=B,2=C → (hi_pin@GPIOA, lo_pin, lo_on_gpioa)
+    const PINS: [(u32, u32, bool); 3] = [(10, 1, false), (9, 0, false), (8, 7, true)];
+    // per step (1-6): (pwm_phase, low_phase, float_phase)
+    const ROLES: [(usize, usize, usize); 6] = [
+        (0, 1, 2),
+        (2, 1, 0),
+        (2, 0, 1),
+        (1, 0, 2),
+        (1, 2, 0),
+        (0, 2, 1),
+    ];
+    let Some(&(pwm, low, fl)) = ROLES.get((step as usize).wrapping_sub(1)) else {
+        return;
+    };
+
+    let mut bsrr_a = 0u32;
+    let mut bsrr_b = 0u32;
+    let mut moder_a_val = 0u32;
+    let mut moder_a_mask = 0u32;
+    let mut moder_b_val = 0u32;
+    let mut moder_b_mask = 0u32;
+    let mut set_a = |pin: u32, mode: u32| {
+        moder_a_mask |= 0b11 << (pin * 2);
+        moder_a_val |= mode << (pin * 2);
+    };
+    let mut set_b = |pin: u32, mode: u32| {
+        moder_b_mask |= 0b11 << (pin * 2);
+        moder_b_val |= mode << (pin * 2);
+    };
+
+    for (idx, &(hi, lo, lo_a)) in PINS.iter().enumerate() {
+        let (hi_mode, lo_mode, hi_lvl, lo_lvl) = if idx == pwm {
+            // driven leg: hi AF; lo AF (complementary) or OUTPUT-low (diode)
+            (
+                AF,
+                if comp { AF } else { OUT },
+                None,
+                if comp { None } else { Some(false) },
+            )
+        } else if idx == low {
+            // low leg: hi off, low FET solid on
+            (OUT, OUT, Some(false), Some(true))
+        } else {
+            debug_assert_eq!(idx, fl);
+            // floating leg: both off
+            (OUT, OUT, Some(false), Some(false))
+        };
+        set_a(hi, hi_mode);
+        if let Some(l) = hi_lvl {
+            bsrr_a |= 1 << (hi + if l { 0 } else { 16 });
+        }
+        if lo_a {
+            set_a(lo, lo_mode);
+            if let Some(l) = lo_lvl {
+                bsrr_a |= 1 << (lo + if l { 0 } else { 16 });
+            }
+        } else {
+            set_b(lo, lo_mode);
+            if let Some(l) = lo_lvl {
+                bsrr_b |= 1 << (lo + if l { 0 } else { 16 });
+            }
+        }
+    }
+
+    const GPIOA: u32 = 0x4800_0000;
+    const GPIOB: u32 = 0x4800_0400;
+    unsafe {
+        if bsrr_a != 0 {
+            core::ptr::write_volatile((GPIOA + 0x18) as *mut u32, bsrr_a);
+        }
+        if bsrr_b != 0 {
+            core::ptr::write_volatile((GPIOB + 0x18) as *mut u32, bsrr_b);
+        }
+        let ma = (GPIOA) as *mut u32;
+        core::ptr::write_volatile(
+            ma,
+            (core::ptr::read_volatile(ma) & !moder_a_mask) | moder_a_val,
+        );
+        let mb = (GPIOB) as *mut u32;
+        core::ptr::write_volatile(
+            mb,
+            (core::ptr::read_volatile(mb) & !moder_b_mask) | moder_b_val,
+        );
+    }
+}
+
 /// Pulse output toggle function — stored as fn pointer to avoid storing raw addresses.
 /// Monomorphized per pin type at `enable_pulse_output` call site.
 type PulseToggleFn = fn(u32);
@@ -145,6 +249,12 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     for PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
     fn com_step(&mut self, step: u8) {
+        #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+        if !self.bridge_enable && PHASE_ATOMIC_LIVE.load(core::sync::atomic::Ordering::Relaxed) != 0
+        {
+            l431_atomic_com_step(step, self.effective_comp_pwm());
+            return;
+        }
         match step {
             1 => {
                 Self::phase_float::<CH, CL>();
