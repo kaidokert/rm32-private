@@ -44,8 +44,20 @@ fn TIM1_UP_TIM16() {
     unsafe {
         tim16.sr.write(|w| w.bits(0));
     }
+    #[cfg(feature = "benchuart")]
+    LEAN_COMMS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     isr_handlers::handle_tim14(); // same logic, different timer
 }
+
+/// Lean camp-storm probe (clone-style single counters, always on
+/// under benchuart): COMP ISR entries + commutations. Lets a build
+/// WITHOUT blackbox/zctrace still measure entries/window, to test
+/// whether rm32's per-commutation prio-0 instrumentation load is the
+/// storm-entry differential.
+#[cfg(feature = "benchuart")]
+pub static LEAN_COMP_ENTRIES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(feature = "benchuart")]
+pub static LEAN_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 #[interrupt]
 fn COMP() {
@@ -73,6 +85,8 @@ fn COMP() {
     if exti.pr1.read().bits() & (1 << 22) == 0 {
         return;
     }
+    #[cfg(feature = "benchuart")]
+    LEAN_COMP_ENTRIES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let shared = crate::isr::shared();
     // Gate avg: 20 kHz-latched (AM32-verbatim staleness; see
     // edge_probe::gate_avg). Fallback to fresh when the latch is cold.
