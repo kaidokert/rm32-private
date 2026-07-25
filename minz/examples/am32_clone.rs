@@ -80,12 +80,12 @@ use minz_core::am32_control::{
 };
 use minz_core::am32_hal::{Motor, Observer};
 use minz_core::am32_isr::{comp_isr, tim1_up_tim16_isr, tim6_dacunder_isr};
-use minz_core::zct_trace::ZctTrace;
 use minz_core::am32_loop::{
     Bench, DUTY_FULL, Drive, Duty, INIT_INTERVAL_TICKS, Sched, TARGET_MIN_BEMF_COUNTS,
     apply_uart_cmd, bemf_timeout_resets, filter_and_duty_max, min_bemf_schedule,
     store_average_interval,
 };
+use minz_core::zct_trace::ZctTrace;
 
 use rtt_target::rprintln;
 
@@ -207,6 +207,10 @@ static RAMP_COUNT: AtomicU16 = AtomicU16::new(0);
 static OC_ACC: AtomicU32 = AtomicU32::new(0);
 static OC_CNT: AtomicU32 = AtomicU32::new(0);
 static VBAT_LOW_TICKS: AtomicU32 = AtomicU32::new(0);
+/// Bench probe for the rm32 camp-storm differential (2026-07-25):
+/// total COMP ISR entries, counted in the trampoline. Paired with
+/// zct comm_n on the info line -> avg entries/window.
+static COMP_ENTRIES: AtomicU32 = AtomicU32::new(0);
 
 // ===============================================================
 // INTERVAL_TIMER = TIM2, COM_TIMER = TIM16 — the register wrappers
@@ -412,7 +416,14 @@ fn telemetry_drain(bench: &Bench, zct: &ZctTrace<ZCT_N>, tx: &mut UartTxWriter) 
 
 /// on-demand info / bb dump / kill-notice band.
 #[inline]
-fn handle_requests(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &ZctTrace<ZCT_N>, tx: &mut UartTxWriter) {
+fn handle_requests(
+    sched: &Sched,
+    drive: &Drive,
+    duty: &Duty,
+    bench: &Bench,
+    zct: &ZctTrace<ZCT_N>,
+    tx: &mut UartTxWriter,
+) {
     if bench.info_req.swap(false, Ordering::Relaxed) {
         print_info(sched, drive, duty, bench, zct, tx);
     }
@@ -436,7 +447,14 @@ fn handle_requests(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct
     }
 }
 
-fn print_info(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &ZctTrace<ZCT_N>, tx: &mut UartTxWriter) {
+fn print_info(
+    sched: &Sched,
+    drive: &Drive,
+    duty: &Duty,
+    bench: &Bench,
+    zct: &ZctTrace<ZCT_N>,
+    tx: &mut UartTxWriter,
+) {
     let _ = write!(
         tx,
         "i step={} old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop={} guard={} killed={}\r\n",
@@ -452,6 +470,14 @@ fn print_info(sched: &Sched, drive: &Drive, duty: &Duty, bench: &Bench, zct: &Zc
         zct.ring.drop.load(Ordering::Relaxed),
         drive.zcfr_guard_hits.load(Ordering::Relaxed),
         duty.killed.load(Ordering::Relaxed) as u8,
+    );
+    // Camp-storm probe line (bench diagnostic, reads the probe static
+    // directly): COMP entries vs commutations since boot.
+    let _ = write!(
+        tx,
+        "ce={} comm={}\r\n",
+        COMP_ENTRIES.load(Ordering::Relaxed),
+        zct.comm_n.load(Ordering::Relaxed),
     );
 }
 
@@ -479,7 +505,11 @@ fn main() -> ! {
         ..
     } = init(cp, dp.FLASH, dp.RCC, dp.PWR);
 
-    rprintln!("am32_clone: sysclk={} pclk1={}", clocks.sysclk().raw(), clocks.pclk1().raw());
+    rprintln!(
+        "am32_clone: sysclk={} pclk1={}",
+        clocks.sysclk().raw(),
+        clocks.pclk1().raw()
+    );
 
     // DWT cycle counter for observer timestamps (no periodic ISR).
     let _syst = cp.SYST;
@@ -491,15 +521,25 @@ fn main() -> ! {
     let mut gpiob = dp.GPIOB.split(&mut ahb2);
 
     // USART2 RX on PA2 via CR2.SWAP: AF7 open-drain + pull-up.
-    let mut rx2 = gpioa
-        .pa2
-        .into_alternate_open_drain::<7>(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrl);
+    let mut rx2 = gpioa.pa2.into_alternate_open_drain::<7>(
+        &mut gpioa.moder,
+        &mut gpioa.otyper,
+        &mut gpioa.afrl,
+    );
     rx2.internal_pull_up(&mut gpioa.pupdr, true);
 
     // ADC sense pins: PA3 (IN8 current), PA6 (IN11 vbat).
     let pa3 = gpioa.pa3.into_analog(&mut gpioa.moder, &mut gpioa.pupdr);
     let pa6 = gpioa.pa6.into_analog(&mut gpioa.moder, &mut gpioa.pupdr);
-    let _sense = SenseAdc::new(dp.ADC1, dp.ADC_COMMON, pa3, pa6, &mut ahb2, &mut ccipr, clocks);
+    let _sense = SenseAdc::new(
+        dp.ADC1,
+        dp.ADC_COMMON,
+        pa3,
+        pa6,
+        &mut ahb2,
+        &mut ccipr,
+        clocks,
+    );
 
     // Motor PWM pins → TIM1 AF1.
     configure_motor_pwm_pins(
@@ -519,11 +559,19 @@ fn main() -> ! {
     );
 
     // USART1 TX (PB6, half-duplex init then push-pull) — the trace/telemetry link.
-    let mut usart_tx = gpiob
-        .pb6
-        .into_alternate_open_drain::<7>(&mut gpiob.moder, &mut gpiob.otyper, &mut gpiob.afrl);
+    let mut usart_tx = gpiob.pb6.into_alternate_open_drain::<7>(
+        &mut gpiob.moder,
+        &mut gpiob.otyper,
+        &mut gpiob.afrl,
+    );
     usart_tx.internal_pull_up(&mut gpiob.pupdr, true);
-    let serial = Serial::usart1(dp.USART1, (usart_tx,), Config::default().baudrate(BAUD.bps()), clocks, &mut apb2);
+    let serial = Serial::usart1(
+        dp.USART1,
+        (usart_tx,),
+        Config::default().baudrate(BAUD.bps()),
+        clocks,
+        &mut apb2,
+    );
     let (mut tx, _) = serial.split();
     minz::uart_tx::usart1_tx_push_pull_pb6();
 
@@ -561,8 +609,17 @@ fn main() -> ! {
     tim1_motor_pwm::set_duty(0);
     comp2::set_exti_enabled(false); // masked until interrupt mode engages
 
-    writeln!(&mut tx, "\r\n=== am32_clone (UART_DUTY_MODE + ZC_TRACE, {} baud) ===\r", BAUD).ok();
-    writeln!(&mut tx, "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb\r").ok();
+    writeln!(
+        &mut tx,
+        "\r\n=== am32_clone (UART_DUTY_MODE + ZC_TRACE, {} baud) ===\r",
+        BAUD
+    )
+    .ok();
+    writeln!(
+        &mut tx,
+        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb\r"
+    )
+    .ok();
 
     let mut tx_writer = UartTxWriter::new(tx, TX_RING);
 
@@ -596,6 +653,7 @@ fn main() -> ! {
 /// COMP (priority 0) — the ZC chain.
 #[interrupt]
 fn COMP() {
+    COMP_ENTRIES.fetch_add(1, Ordering::Relaxed); // camp-storm probe
     let mut motor = motor();
     comp_isr(&SCHED, &DRIVE, &mut motor, &observer())
 }

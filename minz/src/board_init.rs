@@ -102,6 +102,24 @@ pub fn configure_motor_pwm_pins<M0, M1, M2, M3, M4, M5>(
 
 /// Common bench setup: sysclk to [`SYSCLK`], RTT panic hook armed.
 pub fn init(cp: CortexPeripherals, flash: FLASH, rcc: RCC, pwr: PWR) -> BoardInit {
+    // Disarm any leftover DWT watchpoint + debug-monitor enable FIRST
+    // (ported from rm32 main.rs, the rung-9 "dead chip" scar): the
+    // debug domain (DWT comparators, DEMCR.MON_EN) survives SYSTEM
+    // resets — only power-on clears it — so a watchpoint left armed by
+    // a previous firmware/debug session halts EVERY subsequent boot at
+    // the first write to the watched address, an IWDG boot-loop that
+    // reflashing cannot fix. Clear every implemented comparator
+    // (NUMCOMP = CTRL[31:28]); unimplemented slots are RAZ/WI.
+    unsafe {
+        let dwt = &*cortex_m::peripheral::DWT::PTR;
+        let numcomp = ((dwt.ctrl.read() >> 28) & 0xF) as usize;
+        for i in 0..numcomp.min(dwt.c.len()) {
+            dwt.c[i].function.write(0);
+        }
+        let dcb = &*cortex_m::peripheral::DCB::PTR;
+        dcb.demcr.modify(|v| v & !(1 << 16)); // MON_EN off
+    }
+
     let mut flash = flash.constrain();
     let Rcc {
         ahb1,
