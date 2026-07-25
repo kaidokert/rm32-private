@@ -320,21 +320,20 @@ impl<LED: OutputPin> MainState<LED> {
                 shared.set_commutation_interval(DESYNC_RESET_INTERVAL);
             }
             shared.set_zero_crosses(0);
-            // Recovery, STATE-GATED (the minz speed-gate lesson: ungated
-            // recovery aids fire during normal spin-up timeouts and wreck
-            // engage — bench: 7/8 -> 3/8 ungated):
-            // - interrupt-mode timeout = the COM-timer chain is DEAD; do
-            //   AM32's zcfoundroutine actively: CommutateKick = interval
-            //   reset + immediate COM-timer re-arm.
-            // - polling-mode timeout = spin-up churn; the polling loop
-            //   re-arms the chain itself — passive reset only (also what
-            //   throttles this branch to C's rate; single-slot fetch_max
-            //   channel means the kick must subsume the reset).
-            if was_interrupt_mode {
-                shared.request_isr_action(crate::shared_comm::IsrAction::CommutateKick);
-            } else {
-                shared.request_isr_action(crate::shared_comm::IsrAction::ResetIntervalTimer);
-            }
+            // Active re-kick, UNGATED — AM32 calls zcfoundroutine() here
+            // unconditionally (main.c stall block), and this is also the
+            // dead-start escape: a standstill window whose static
+            // comparator level mismatches the expected post-ZC level can
+            // NEVER accept — only the 22.5 ms timeout advances it, and
+            // without a real commutation the same stuck window repeats
+            // forever (the observed 18-20 Hz dead-start class, REF at
+            // timeout pace). The kick = interval reset + COM-timer re-arm
+            // = one forced step to the NEXT window, AM32's implicit
+            // open-loop crawl. (An earlier state-gate here came from a
+            // single 7/8-vs-3/8 engage bundle; paired ABAB showed that
+            // swing was lottery noise — the reference is ungated.)
+            let _ = was_interrupt_mode;
+            shared.request_isr_action(crate::shared_comm::IsrAction::CommutateKick);
         }
 
         // Dynamic BEMF timeout threshold: lenient at low throttle
@@ -366,15 +365,14 @@ impl<LED: OutputPin> MainState<LED> {
                 // Read mode BEFORE DesyncFallback flips old_routine.
                 let desync_from_interrupt_mode = !shared.old_routine();
                 shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
-                // Duty kick-down (AM32: last_duty_cycle = min_startup/2):
-                // the restart must ramp from low, not push full duty into
-                // an unlocked field. STATE-GATED to interrupt-mode desyncs
-                // (minz speed-gate lesson): spin-up desync churn with a
-                // kicked-down duty starves the engage (bench: 7/8 -> 2/8
-                // ungated — duty pinned at min_startup/2, 19-125 Hz).
-                if desync_from_interrupt_mode {
-                    shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
-                }
+                // Duty kick-down (AM32: last_duty_cycle = min_startup/2,
+                // unconditional in the desync handler): the restart ramps
+                // from low instead of pushing full duty into an unlocked
+                // field. (An earlier interrupt-mode gate here rested on a
+                // single engage bundle later shown to be lottery noise —
+                // the reference is ungated.)
+                let _ = desync_from_interrupt_mode;
+                shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
                 if (self.config.bi_direction == 0 && shared.adjusted_input() > 47)
                     || shared.commutation_interval() > 1000
                 {

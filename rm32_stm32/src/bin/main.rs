@@ -217,40 +217,39 @@ fn main() -> ! {
     main_state.config.apply_comp_pwm_guard();
     main_state.config.apply_rc_car_overrides();
 
-    // --- BENCH-DEBUG: clean baseline matching AM32 Configurator with all
-    // "complex" features disabled. Mirrors the test setup used to compare
-    // register-level parity with AM32 during smooth PWM motor operation.
-    // Remove these overrides for production / EEPROM-respecting builds.
-    // The bench flash page passes is_valid() (leading 01 03 bytes) but its
-    // body is erased 0xFF — every field read from it is garbage (kv 10220,
-    // poles 255, startup_power 255, ...), each one pinning a different
-    // ceiling. On the bench, IGNORE the stored config entirely and build a
-    // deterministic baseline in code. kv/poles stay 0 → the eRPM duty
-    // envelope is inert (2000) → duty tracks the setpoint: the pure
-    // control-loop operating map, which is what parity work measures.
-    main_state.config.stuck_rotor_protection = 0;
-    main_state.config.stall_protection = 0;
-    main_state.config.bi_direction = 0;
-    main_state.config.use_sine_start = 0;
-    main_state.config.brake_on_stop = 0;
-    // AM32 factory baseline bits the zeroed default lacks: complementary
-    // (damped) PWM and the variable carrier — both ON in every AM32 image
-    // this bench ran, and both shape the low-speed BEMF waveform the
-    // polling startup samples. Without them the polling loop self-times at
-    // ~160 Hz (ci ~2083) and never crosses the 2000-tick changeover.
-    // The bench EEPROM page is invalid → Default (all-zeros) config, whose
-    // advance_level=0 maps to 0° advance. The bench AM32 factory image ran
-    // advance 16 (15°, minz TEMP_ADVANCE) — set the new-format eeprom value
-    // that maps to it so the parity comparison is like-for-like.
-    main_state.config.advance_level = 26; // temp_advance() -> 16 = 15°
-    // temperature_limit=0 (zeroed config) + the L431's uncalibrated temp
-    // read (~-2C) lands the duty ceiling at ~600 via map(deg,-10,10,1000,1)
-    // — the flat-line above 30% throttle in the first map sweep. AM32's
-    // configurator default is 141 (effectively disabled).
-    main_state.config.temperature_limit = 141;
-    rm32_stm32::dprintln!(
-        "[rm32] BENCH: cleared stuck/stall/bidir/sine/brake; advance=15deg tlimit=141"
-    );
+    // --- BENCH: deterministic factory-baseline config, PERSISTED ---
+    // History: the flash page held `01 03` + an erased-0xFF body — "valid"
+    // to is_valid() but garbage values (kv 10220, poles 255, startup 255…),
+    // each pinning a different ceiling (eRPM envelope floor 600, startup
+    // caps, temp map). Instead of chasing overrides field by field, build
+    // the AM32-configurator-style bench baseline in code and WRITE it to
+    // the flash page, so the stored config and the running config are the
+    // same deterministic thing (and future EEPROM-respecting builds read
+    // sane values). Complex features stay off (zeroed): stuck/stall/bidir/
+    // sine/brake.
+    {
+        let mut desired = EepromConfig::default();
+        desired.apply_version_defaults();
+        desired.reserved_0 = 1; // byte 0 = the bootloader's jump-enable flag
+        desired.version_major = 2;
+        desired.version_minor = 20;
+        desired.comp_pwm = 1; // damped (complementary) PWM — AM32 default
+        desired.variable_pwm = 1; // variable carrier — AM32 default
+        desired.advance_level = 26; // temp_advance() -> 16 = 15 deg
+        desired.temperature_limit = 141; // disabled (AM32 configurator default)
+        desired.motor_kv = 55; // 55*40+20 = 2220 kv
+        desired.motor_poles = 14;
+        desired.minimum_duty_cycle = 4; // -> minimum_duty 40
+        desired.startup_power = 105; // -> min_startup 145, startup_max 440
+        if main_state.config.as_bytes() != desired.as_bytes() {
+            let mut flashw = FlashStorage::new();
+            flashw.write(eeprom_address, desired.as_bytes());
+            rm32_stm32::dprintln!("[rm32] BENCH: persisted factory-baseline config");
+        } else {
+            rm32_stm32::dprintln!("[rm32] BENCH: stored config already at baseline");
+        }
+        main_state.config = desired;
+    }
     {
         let cfg_bytes = main_state.config.as_bytes();
         for (i, chunk) in cfg_bytes.chunks(16).enumerate() {
@@ -280,12 +279,6 @@ fn main() -> ! {
         BOARD.kv_divider,
         BOARD.startup_boost,
     );
-    // BENCH: the zeroed-config derivation yields startup duties far below
-    // the AM32 factory values this board runs (minz loadEEpromSettings:
-    // MINIMUM_DUTY=45, MIN_STARTUP=145, STARTUP_MAX=445). With the weak
-    // defaults, polling startup can't push ci under the 2000-tick
-    // changeover — the motor plateaus at ~160 Hz in a BEMF-timeout loop
-    // (the flat clean-config sweep). Pin the factory trio.
     let minimum_duty_cycle = motor_cfg.minimum_duty;
     let min_startup_duty = motor_cfg.min_startup_duty;
     let startup_max_duty = motor_cfg.startup_max_duty;

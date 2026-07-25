@@ -111,7 +111,9 @@ try:
         hold(rungs[0], 4.0)
         if a.mode == "clone":
             r = read_clone_info(rungs[0])
-            started = r is not None
+            # require a real spin-up, not a dead-start plateau (rm32's
+            # engage lottery can hand back run=1 at noise-pace f_e)
+            started = r is not None and r[0] > 300
         else:
             r = read_am32_kiss(bytes(cap))
             started = r is not None and r[0] > 300

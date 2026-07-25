@@ -19,7 +19,7 @@ try:
         while time.time() - t0 < 1.6:
             p.write(b"0\n"); p.flush(); time.sleep(0.1)
         t0 = time.time()
-        while time.time() - t0 < 3.0:
+        while time.time() - t0 < 6.0:
             p.write(f"{a.pct}\n".encode()); p.flush(); time.sleep(0.3)
         p.read(65536); p.write(b"i"); p.flush(); time.sleep(0.4)
         m = None
