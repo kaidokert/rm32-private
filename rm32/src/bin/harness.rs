@@ -579,7 +579,7 @@ impl Harness {
             }
             "zc" => {
                 if v == 1 {
-                    isr_logic::bemf_zero_cross(
+                    let _ = isr_logic::bemf_zero_cross(
                         &self.commutation,
                         &mut self.bemf,
                         &mut self.hal.comp,

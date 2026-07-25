@@ -227,21 +227,38 @@ impl Tim14Com {
         let raw = ComTimerRaw;
         raw.write_psc(crate::mcu::Chip::TIMER_PSC as u32);
         raw.write_arr(0xFFFF);
-        raw.write_egr(1); // UG — latch PSC + ARR into active registers
-        // CR1 = ARPE | CEN. Bit 7 = ARPE (auto-reload preload), bit 0 = CEN.
-        raw.modify_cr1(|v| v | (1 << 7) | (1 << 0));
+        raw.write_egr(1); // UG — latch PSC into active registers
+        // CR1 = CEN only, free-running. DELIBERATE divergence from
+        // AM32's CR1=0x81 (ARPE on): with ARPE, an arm's ARR write sits
+        // in preload until the PREVIOUS active ARR wraps — AM32 fires
+        // one commutation stale, and the boot value (0xFFFF = 32 ms)
+        // dead-starts rm32's polling path, which unlike AM32's inline
+        // zcfoundroutine commutates through this timer's ISR. ARPE off
+        // makes every arm's ARR immediately active: fires at exactly
+        // the requested wait for both polling and interrupt modes.
+        raw.modify_cr1(|v| v | (1 << 0));
         Self { raw }
     }
 }
 
 impl ComTimer for Tim14Com {
     fn set_and_enable(&mut self, timeout: u16) {
-        // Timer is running (CR1=ARPE+CEN). Write new ARR (goes to preload),
-        // issue UG to force-load it into active and reset CNT. UG also sets
-        // UIF — clear SR before re-arming UIE so the ISR fires on the next
-        // real update event, not on the UG-induced flag.
+        // AM32-verbatim SET_AND_ENABLE_COM_INT (peripherals.h:19-21):
+        // CNT=0, ARR=timeout, SR=0, UIE on. NO UG — the previous
+        // UG-based sequence had a clock-domain race: the UG-induced UIF
+        // sets in the (prescaled) timer clock domain AFTER the CPU's
+        // back-to-back SR=0 write has completed, so the "clear" cleared
+        // nothing and enabling UIE fired the ISR IMMEDIATELY — every
+        // commutation landed ~3 µs after the ZC accept (~30° effective
+        // advance) with wait_time computed but never applied. Caught by
+        // the edge probe: tim16_lat pinned at 6-8 ticks with arms of
+        // wait+1 (55-99); confirmed by in-ISR ARR/CNT16/CNT2 snapshots.
+        // With ARPE on, the ARR write lands in preload and latches at
+        // the next update — AM32's own stale-by-one quirk, mirrored.
+        #[cfg(feature = "zctrace")]
+        crate::edge_probe::armed(timeout);
+        self.raw.write_cnt(0);
         self.raw.write_arr(timeout as u32);
-        self.raw.write_egr(1); // UG
         self.raw.write_sr(0);
         self.raw.modify_dier(|v| v | 1); // UIE
     }

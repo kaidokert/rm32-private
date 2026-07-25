@@ -201,6 +201,50 @@ pub fn zct_pack(
     ]
 }
 
+/// One 15-byte edge-probe row: `5B A6` sync, the same flags/step byte as
+/// [`zct_pack`], then LE first_edge / comp_entries / tim16_lat / avg
+/// (u16 each) + gated_clears / persist_rejects (u8 each). Emitted per
+/// commutation alongside the `5B A9` row; carries WHAT THE ACCEPTANCE
+/// MACHINERY SAW during the window that ended at this commutation:
+///   first_edge — interval count at the first COMP ISR entry (0xFFFF =
+///     no edge seen), comp_entries — total COMP ISR entries (camp
+///     re-fires make this the storm meter), tim16_lat — interval count
+///     at TIM16 ISR entry (vs scheduled wait+1 = commutation latency),
+///   gated_clears — pre-ZC edges swallowed while the gate was closed,
+///   persist_rejects — gate-open entries the persistence filter refused.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn zct_probe_pack(
+    step: u8,
+    old: bool,
+    batching: bool,
+    first_edge: u16,
+    comp_entries: u16,
+    tim16_lat: u16,
+    avg: u16,
+    gated_clears: u8,
+    persist_rejects: u8,
+    last_arm: u16,
+) -> [u8; ZCT_REC] {
+    [
+        0x5B,
+        0xA6,
+        (step & 0x07) | if old { 0x80 } else { 0 } | if batching { 0x40 } else { 0 },
+        first_edge as u8,
+        (first_edge >> 8) as u8,
+        comp_entries as u8,
+        (comp_entries >> 8) as u8,
+        tim16_lat as u8,
+        (tim16_lat >> 8) as u8,
+        avg as u8,
+        (avg >> 8) as u8,
+        gated_clears,
+        persist_rejects,
+        last_arm as u8,
+        (last_arm >> 8) as u8,
+    ]
+}
+
 /// ZC_TRACE record ring over borrowed atomics. `push_rec` is NOT
 /// self-synchronizing — if more than one ISR priority produces, the
 /// caller wraps it in a critical section (this crate stays free of
@@ -338,6 +382,25 @@ mod tests {
         assert_eq!((r[13], r[14]), (0x0B, 0x0A), "avg LE");
         let b = zct_pack(2, false, true, 0, 0, 0, 0, 0, 0);
         assert_eq!(b[2], 2 | 0x40, "batching flag = bit6");
+    }
+
+    #[test]
+    fn zct_probe_pack_layout_is_wire_exact() {
+        let r = zct_probe_pack(
+            3, false, false, 0x1234, 0x0203, 0x0405, 0x0607, 0xAB, 0xCD, 0x0E0F,
+        );
+        assert_eq!((r[0], r[1]), (0x5B, 0xA6), "probe sync marker");
+        assert_eq!(r[2], 3, "flags/step byte matches zct_pack layout");
+        assert_eq!((r[3], r[4]), (0x34, 0x12), "first_edge LE");
+        assert_eq!((r[5], r[6]), (0x03, 0x02), "comp_entries LE");
+        assert_eq!((r[7], r[8]), (0x05, 0x04), "tim16_lat LE");
+        assert_eq!((r[9], r[10]), (0x07, 0x06), "avg LE");
+        assert_eq!(
+            (r[11], r[12]),
+            (0xAB, 0xCD),
+            "gated_clears / persist_rejects"
+        );
+        assert_eq!((r[13], r[14]), (0x0F, 0x0E), "last_arm LE");
     }
 
     #[test]

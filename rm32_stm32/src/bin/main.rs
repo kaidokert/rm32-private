@@ -431,6 +431,13 @@ fn main() -> ! {
                 shared.e_com_time(),
                 shared.degrees_celsius(),
             );
+            // Edge-probe lifetime totals — veto visibility even with the
+            // zct stream off (instrument-decisions-not-outcomes).
+            #[cfg(feature = "zctrace")]
+            {
+                let (gc, pr) = rm32_stm32::edge_probe::totals();
+                rm32_stm32::dprintln!("[veto gated={} prej={}]", gc, pr);
+            }
             // Dump recent frame snapshots (mix of pass + fail). Useful for
             // catching DMA buffer alignment / edge polarity issues in bidir.
             #[cfg(feature = "debuguart")]

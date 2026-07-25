@@ -110,6 +110,13 @@ pub fn handle_tim14() {
     let shared = isr::shared();
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+    // Edge probe: interval count at TIM16 entry, BEFORE any step logic —
+    // vs the scheduled wait+1 this is the commutation fire latency.
+    #[cfg(feature = "zctrace")]
+    {
+        use rm32::hal::IntervalTimer as _;
+        crate::edge_probe::tim16_fired(state.hal.interval.count());
+    }
     rm32::control::isr_logic::commutation_timer_expired(
         &mut state.commutation,
         &mut state.bemf,
@@ -130,18 +137,40 @@ pub fn handle_tim14() {
         state.commutation.step(),
         shared.commutation_interval().min(u16::MAX as u32) as u16,
     );
-    // ZC trace: one 15-byte record per commutation (minz wire format).
+    // ZC trace: one 15-byte record per commutation (minz wire format),
+    // plus the edge-probe companion row on the same gate decision. The
+    // probe snapshot RESETS every commutation regardless — window
+    // counters must not leak across gated-off stretches.
     #[cfg(feature = "zctrace")]
-    crate::bench_zct::write(
-        state.commutation.step(),
-        shared.old_routine(),
-        state.bemf.this_zc_time(),
-        shared.commutation_interval().min(u16::MAX as u32) as u16,
-        state.bemf.wait_time(),
-        shared.duty_cycle(),
-        shared.dbg_isr_tick() as u16,
-        ((shared.e_com_time() / 3).max(0) as u32).min(u16::MAX as u32) as u16,
-    );
+    {
+        let avg = ((shared.e_com_time() / 3).max(0) as u32).min(u16::MAX as u32) as u16;
+        let pushed = crate::bench_zct::write(
+            state.commutation.step(),
+            shared.old_routine(),
+            state.bemf.this_zc_time(),
+            shared.commutation_interval().min(u16::MAX as u32) as u16,
+            state.bemf.wait_time(),
+            shared.duty_cycle(),
+            shared.dbg_isr_tick() as u16,
+            avg,
+        );
+        let (first_edge, entries, tim16_lat, last_arm, gated_clears, persist_rejects) =
+            crate::edge_probe::take();
+        if let Some(batching) = pushed {
+            crate::bench_zct::write_probe(
+                batching,
+                state.commutation.step(),
+                shared.old_routine(),
+                first_edge,
+                entries,
+                tim16_lat,
+                avg,
+                gated_clears,
+                persist_rejects,
+                last_arm,
+            );
+        }
+    }
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
@@ -156,25 +185,31 @@ pub fn handle_comp() {
     let (shared, cyc_start) = (isr::shared(), unsafe {
         (*cortex_m::peripheral::DWT::PTR).cyccnt.read()
     });
-    rm32::control::isr_logic::bemf_zero_cross(
+    let accepted = rm32::control::isr_logic::bemf_zero_cross(
         &state.commutation,
         &mut state.bemf,
         &mut state.hal.comp,
         &mut state.hal.interval,
         &mut state.hal.com_timer,
     );
-    // Blackbox: one ACC per COMP ZC ISR (entry-level granularity for now —
-    // acceptance vs persistence-reject isn't distinguished until the core
-    // exposes it). data = commutation interval.
+    #[cfg(feature = "zctrace")]
+    if !accepted {
+        crate::edge_probe::persist_reject();
+    }
+    #[cfg(not(feature = "zctrace"))]
+    let _ = accepted;
+    // Blackbox: one ACC per genuine acceptance. data = commutation interval.
     #[cfg(all(
         feature = "blackbox",
         any(feature = "stm32l431", feature = "stm32g431")
     ))]
-    crate::bench_bb::record(
-        rm32::blackbox::EV_ACC,
-        state.commutation.step(),
-        isr::shared().commutation_interval().min(u16::MAX as u32) as u16,
-    );
+    if accepted {
+        crate::bench_bb::record(
+            rm32::blackbox::EV_ACC,
+            state.commutation.step(),
+            isr::shared().commutation_interval().min(u16::MAX as u32) as u16,
+        );
+    }
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };

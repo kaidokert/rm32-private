@@ -26,6 +26,21 @@ fn TIM6_DACUNDER() {
 fn TIM1_UP_TIM16() {
     // TIM16 is the commutation timer on L431
     let tim16 = unsafe { &*pac::TIM16::PTR };
+    // TEMP DIAG (edge-probe rung): 1-in-1024 raw snapshot of the fire —
+    // TIM16.ARR / TIM16.CNT / TIM2.CNT at entry, to explain why fires
+    // land at TIM2~7 when the arm value was wait+1 (~88).
+    #[cfg(feature = "zctrace")]
+    {
+        use core::sync::atomic::{AtomicU32, Ordering};
+        static FIRE_N: AtomicU32 = AtomicU32::new(0);
+        let n = FIRE_N.fetch_add(1, Ordering::Relaxed);
+        if n & 0x3FF == 0 {
+            let arr = tim16.arr.read().bits();
+            let cnt16 = tim16.cnt.read().bits();
+            let cnt2 = unsafe { (*pac::TIM2::PTR).cnt.read().bits() };
+            crate::dprintln!("[t16 arr={} cnt16={} cnt2={}]", arr, cnt16, cnt2);
+        }
+    }
     unsafe {
         tim16.sr.write(|w| w.bits(0));
     }
@@ -61,11 +76,17 @@ fn COMP() {
     let shared = crate::isr::shared();
     let avg = (shared.e_com_time() / 3).max(0) as u32;
     let cnt = unsafe { (*pac::TIM2::PTR).cnt.read().bits() };
+    // Edge probe: every confirmed-pending entry counts (camp re-fires
+    // included — this is the storm meter), first edge time captured.
+    #[cfg(feature = "zctrace")]
+    crate::edge_probe::edge_seen(cnt);
     if cnt > (avg >> 1) {
         unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
         isr_handlers::handle_comp();
     } else if isr_handlers::comp_at_pre_zc_level() {
         unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
+        #[cfg(feature = "zctrace")]
+        crate::edge_probe::gated_clear();
     }
     // else: camp — pending stays set, ISR re-fires until the gate opens.
 }
