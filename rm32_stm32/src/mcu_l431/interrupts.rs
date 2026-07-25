@@ -34,27 +34,40 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP() {
-    // AM32 pattern: COMP fires once per commutation phase, the handler
-    // masks itself, and the next commutation_timer_expired re-unmasks for
-    // the next BEMF detection window. AM32 enforces this implicitly via
-    // maskPhaseInterrupts() being called at every motor-stop site (~15
-    // places in main.c) plus inside the inner handler on a successful
-    // zero-cross detection. rm32 only masked on the zero-cross-detected
-    // path; the noise-filter early-return and the various Stop/Disarm
-    // transitions left COMP unmasked. With NVIC priorities applied
-    // (COMP=0 preempts TIM6=3), an unmasked comparator bouncing on noise
-    // (motor coasting on undriven phases, or armed-idle) storms COMP_IRQ
-    // and starves TIM6 → firmware freezes.
+    // AM32 stm32l4xx_it.c:276-290 — the half-average-interval acceptance
+    // gate + pending-bit camping (parity rung 5b; this replaces the
+    // mask-at-entry policy that made rm32 take the FIRST edge in every
+    // window and lose the window on a persistence reject):
     //
-    // Fix: clear EXTI.PR1[22] AND mask EXTI.IMR1[22] at every ISR exit.
-    // commutation_timer_expired re-unmasks when it's time to expect the
-    // next zero-cross. The noise-filter early-return is now safe.
+    //   gate OPEN  (interval CNT > average_interval/2): ack the line and
+    //     run the acceptance path. bemf_zero_cross masks the comparator
+    //     itself on accept; a persistence reject stays UNMASKED and armed
+    //     for the true crossing later in the window.
+    //   gate CLOSED, comparator at PRE-ZC level: a noise blip — ack it
+    //     and stay armed.
+    //   gate CLOSED, comparator at POST-ZC level: CAMP — leave the
+    //     pending bit set so NVIC re-fires this ISR until the gate opens
+    //     and the (early) crossing is evaluated. Bounded: TIM2 free-runs,
+    //     so CNT crosses avg/2 in at most avg/2 ticks.
+    //
+    // Storm safety without mask-at-entry: the gate absorbs early edges,
+    // accepts mask the line, and ten_khz_tick masks COMP every tick while
+    // !running (the Armed-idle storm path). The comparator is also no
+    // longer enabled at all during polling mode (exclusivity, isr_logic).
     let exti = unsafe { &*pac::EXTI::PTR };
-    unsafe {
-        exti.pr1.write(|w| w.bits(1 << 22));
-        exti.imr1.modify(|r, w| w.bits(r.bits() & !(1 << 22)));
+    if exti.pr1.read().bits() & (1 << 22) == 0 {
+        return;
     }
-    isr_handlers::handle_comp();
+    let shared = crate::isr::shared();
+    let avg = (shared.e_com_time() / 3).max(0) as u32;
+    let cnt = unsafe { (*pac::TIM2::PTR).cnt.read().bits() };
+    if cnt > (avg >> 1) {
+        unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
+        isr_handlers::handle_comp();
+    } else if isr_handlers::comp_at_pre_zc_level() {
+        unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
+    }
+    // else: camp — pending stays set, ISR re-fires until the gate opens.
 }
 
 // DMA1 Channel 5: input capture transfer complete

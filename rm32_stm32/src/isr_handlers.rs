@@ -181,6 +181,17 @@ pub fn handle_comp() {
     }
 }
 
+/// COMP gate helper for the L431 wrapper's gate-closed classification:
+/// true if the comparator currently sits at the PRE-zero-cross level
+/// (`output_level() == rising` — the level the persistence filter
+/// rejects). COMP-ISR context only (touches `ISR_LOCAL`).
+#[cfg(feature = "stm32l431")]
+pub fn comp_at_pre_zc_level() -> bool {
+    use rm32::hal::Comparator as _;
+    let state = ISR_LOCAL.get();
+    state.hal.comp.output_level() == state.commutation.rising()
+}
+
 /// DMA transfer complete (input capture ISR body).
 pub fn handle_dma_tc() {
     let state = ISR_LOCAL.get();

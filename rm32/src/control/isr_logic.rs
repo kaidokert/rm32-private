@@ -84,7 +84,11 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 ctx.hal.phase().com_step(step);
                 ctx.hal.comp().set_step(step, ctx.commutation.rising);
                 ctx.hal.comp().change_input();
-                ctx.hal.comp().enable_interrupts();
+                // AM32 startMotor deliberately does NOT enable comparator
+                // interrupts — startup runs pure polling; the interrupt
+                // path arms at the BemfLocked changeover (main.c's
+                // zcfoundroutine). rm32 previously enabled here, running
+                // both BEMF paths concurrently from the first commutation.
             }
         } else {
             ctx.shared.set_duty_cycle_setpoint(0);
@@ -247,7 +251,14 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
         shared.set_commutation_interval(new_ci);
     }
 
-    comp.enable_interrupts();
+    // Polling/interrupt exclusivity (AM32 main.c commutate + minz
+    // am32_isr.rs:122-124): the comparator interrupt path is live ONLY in
+    // interrupt mode. rm32 previously enabled unconditionally, so both
+    // BEMF paths ran concurrently during old_routine — double-commutation
+    // risk and inconsistent interval updates.
+    if !shared.old_routine() {
+        comp.enable_interrupts();
+    }
     bemf.reset_after_commutation();
     shared.increment_zero_crosses();
 
@@ -262,6 +273,9 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     };
     if shared.old_routine() && zc >= OLD_ROUTINE_EXIT_ZC && ci <= exit_interval {
         shared.transition(MotorEvent::BemfLocked);
+        // Changeover: arm the interrupt path now (AM32 zcfoundroutine
+        // enables comparator interrupts at this exact transition).
+        comp.enable_interrupts();
     }
 }
 
