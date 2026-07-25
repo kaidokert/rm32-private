@@ -9,42 +9,79 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--port", default="COM41")
 ap.add_argument("--to", type=int, default=60)
 ap.add_argument("--out", default="surge_capture")
+ap.add_argument("--ladder", action="store_true",
+                help="map_sweep profile: 10..50%% at 6s dwells before the step "
+                     "(reproduces the ladder-context kill the direct step lacks)")
+ap.add_argument("--zearly", action="store_true",
+                help="zctrace ON from engage (catch dirty-mode engages in the act)")
 a = ap.parse_args()
 
 p = serial.Serial(a.port, 2_000_000, timeout=0.05)
 raw = b""
+killed = False
 try:
     t0 = time.time()
     while time.time() - t0 < 1.6:
         p.write(b"0\n"); p.flush(); time.sleep(0.1)
-    # engage at 20% and let it lock (deterministic post-5f, ~4s)
-    t0 = time.time()
-    while time.time() - t0 < 6.0:
-        p.write(b"20\n"); p.flush(); time.sleep(0.3)
-    p.read(65536)
-    p.write(b"i"); p.flush(); time.sleep(0.4)
-    info = p.read(65536)
-    m = [l for l in info.decode(errors="replace").splitlines() if l.startswith("i step=")]
-    print("engage:", m[-1] if m else info[-100:])
-    # climb to 50 and dwell — the sweep's kill context (ci ~217 at 50%)
-    t0 = time.time()
-    while time.time() - t0 < 4.0:
-        p.write(b"50\n"); p.flush(); time.sleep(0.3)
-    p.read(65536)
-    p.write(b"Z"); p.flush(); time.sleep(0.3)
-    zack = p.read(8192)
-    print("Z ack:", b"zctrace ON" in zack, zack[-60:])
-    print(f"== stepping 50 -> {a.to}%")
-    t0 = time.time()
-    killed = False
-    while time.time() - t0 < 8.0:
-        p.write(f"{a.to}\n".encode()); p.flush()
-        chunk = p.read(65536)
-        raw += chunk
-        if b"BENCH KILL" in raw:
-            killed = True
-            break
-        time.sleep(0.1)
+
+    def dwell(pct, secs):
+        # drains continuously (zct stream must not overflow the OS buffer)
+        # and spots a mid-dwell guard kill (the sweep3 collapse class).
+        global raw, killed
+        t0 = time.time()
+        while time.time() - t0 < secs:
+            p.write(f"{pct}\n".encode()); p.flush()
+            raw += p.read(65536)
+            if b"BENCH KILL" in raw:
+                killed = True
+                print(f"KILLED mid-dwell at {pct}%")
+                return
+            time.sleep(0.1)
+
+    def engage_info():
+        p.write(b"i"); p.flush(); time.sleep(0.4)
+        global raw
+        info = p.read(65536)
+        raw += info
+        m = [l for l in info.decode(errors="replace").splitlines() if l.startswith("i step=")]
+        print("engage:", m[-1] if m else info[-100:])
+
+    if a.zearly:
+        p.write(b"Z"); p.flush(); time.sleep(0.3)
+        zack = p.read(8192)
+        print("Z ack:", b"zctrace ON" in zack)
+
+    if a.ladder:
+        # map_sweep profile: full climb with sweep-length dwells
+        dwell(10, 6.0)
+        engage_info()
+        for pct in range(20, a.to, 10):
+            if killed:
+                break
+            dwell(pct, 6.0)
+    else:
+        # engage at 20% and let it lock (deterministic post-5f, ~4s)
+        dwell(20, 6.0)
+        engage_info()
+        # climb to 50 and dwell — the sweep's kill context (ci ~217 at 50%)
+        if not killed:
+            dwell(50, 4.0)
+
+    if not killed:
+        if not a.zearly:
+            p.write(b"Z"); p.flush(); time.sleep(0.3)
+            zack = p.read(8192)
+            print("Z ack:", b"zctrace ON" in zack, zack[-60:])
+        print(f"== stepping to {a.to}%")
+        t0 = time.time()
+        while time.time() - t0 < 8.0:
+            p.write(f"{a.to}\n".encode()); p.flush()
+            chunk = p.read(65536)
+            raw += chunk
+            if b"BENCH KILL" in raw:
+                killed = True
+                break
+            time.sleep(0.1)
     # small grace read, then the frozen blackbox
     time.sleep(0.3); raw += p.read(65536)
     p.write(b"b"); p.flush(); time.sleep(1.2)

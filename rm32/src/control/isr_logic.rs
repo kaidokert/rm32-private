@@ -52,6 +52,19 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             // reset this action SUBSUMES (single-slot fetch_max channel —
             // see main_state) happens at the END of this tick with the
             // ResetIntervalTimer path, after the count is published.
+            //
+            // zcfoundroutine timing update (main.c:1870-1874): the stalled
+            // interval count (>45000) folds INTO the commutation interval
+            // BEFORE the forced step — ci = (thiszc + 3*ci)/4 — so the
+            // restart is AM32's slow crawl toward re-lock, with wait_time
+            // and advance recomputed from the inflated ci. Without this,
+            // the kick re-commutated at the PRE-FAULT cadence (ci ~200 at
+            // 60% throttle): a full-duty blind slam on a rotor that just
+            // lost sync — the transit-surge kill class at the 60% rung.
+            let count = ctx.hal.interval().count() as u16;
+            let ci = ctx.shared.commutation_interval();
+            let new_ci = ctx.bemf.record_zero_cross(count, ci);
+            ctx.shared.set_commutation_interval(new_ci);
             ctx.hal.com_timer().set_and_enable(1);
         }
         crate::shared_comm::IsrAction::ResetIntervalTimer => {
@@ -276,7 +289,29 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     comp.set_step(step, commutation.rising);
     comp.change_input();
 
-    if !shared.old_routine() {
+    // Bidir mode halves the changeover threshold for faster mode transition
+    // during direction changes (C: polling_mode_changeover / 2)
+    let exit_interval = if bidirectional {
+        OLD_ROUTINE_EXIT_INTERVAL / 2
+    } else {
+        OLD_ROUTINE_EXIT_INTERVAL
+    };
+
+    let was_interrupt_mode = !shared.old_routine();
+
+    // Mid-run polling demotion (AM32 commutate, main.c:878-881): if the
+    // average interval has inflated past the changeover threshold + 500,
+    // fall back to polling mode. This is AM32's per-commutation escape
+    // from a deep desync that never trips the BEMF timeout; without it a
+    // slowed rotor stays in interrupt mode indefinitely. Runs BEFORE the
+    // comp re-enable gate below (a demoted step must not re-arm the
+    // comparator) but does NOT suppress this step's interval update —
+    // AM32's two-tap in PeriodElapsedCallback is unconditional.
+    if was_interrupt_mode && (e_com / 3) as u32 > exit_interval + 500 {
+        shared.set_old_routine(true);
+    }
+
+    if was_interrupt_mode {
         let new_ci = bemf.update_timing_from_timer(shared.commutation_interval());
         shared.set_commutation_interval(new_ci);
     }
@@ -294,13 +329,6 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
 
     let zc = shared.zero_crosses();
     let ci = shared.commutation_interval();
-    // Bidir mode halves the changeover threshold for faster mode transition
-    // during direction changes (C: polling_mode_changeover / 2)
-    let exit_interval = if bidirectional {
-        OLD_ROUTINE_EXIT_INTERVAL / 2
-    } else {
-        OLD_ROUTINE_EXIT_INTERVAL
-    };
     // Polling→interrupt changeover (AM32 main.c:1903-1913): the
     // zc>=20 form applies ONLY with stall_protection / rc_car_reverse;
     // the normal path is `ci < changeover` ALONE. rm32 previously
@@ -313,7 +341,10 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     } else {
         ci < exit_interval
     };
-    if shared.old_routine() && changeover_met {
+    // `!was_interrupt_mode`: the promote belongs to the polling path
+    // (AM32 zcfoundroutine) — a step that just DEMOTED above must not
+    // re-promote in the same commutation.
+    if !was_interrupt_mode && shared.old_routine() && changeover_met {
         shared.transition(MotorEvent::BemfLocked);
         // Changeover: arm the interrupt path now (AM32 zcfoundroutine
         // enables comparator interrupts at this exact transition).
