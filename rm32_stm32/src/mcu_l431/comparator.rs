@@ -25,22 +25,22 @@ impl CompOps for L431Comp {
 pub struct L431Exti;
 const LINE: u32 = 1 << 22;
 impl ExtiOps for L431Exti {
-    // EDGE-PAIR (clone-verbatim, live-verified on the clone at 25%:
-    // RTSR1 = FTSR1 = line armed simultaneously). The window polarity
-    // is enforced by the ISR's level checks (gate camp/clear +
-    // persistence), NOT by the trigger selection; arming both edges
-    // means every comparator transition generates an event, so a
-    // wrong-side excursion's END produces the flush/clear event that a
-    // single armed edge never sees. rm32's previous exclusive-edge arm
-    // was the last functional divergence in the COMP path vs the clone.
+    // Exclusive single edge per window (AM32 changeCompInput verbatim).
+    // NOTE: a live dump of the running clone once caught RTSR=FTSR both
+    // set — that was a probe read landing between the two modify ops of
+    // an edge switch, not an edge-pair config; a second dump showed the
+    // exclusive state. The edge-pair experiment was null on storms
+    // anyway (rung8b).
     fn set_rising_edge(&self) {
         let exti = unsafe { &*EXTI::ptr() };
         exti.rtsr1.modify(|r, w| unsafe { w.bits(r.bits() | LINE) });
-        exti.ftsr1.modify(|r, w| unsafe { w.bits(r.bits() | LINE) });
+        exti.ftsr1
+            .modify(|r, w| unsafe { w.bits(r.bits() & !LINE) });
     }
     fn set_falling_edge(&self) {
         let exti = unsafe { &*EXTI::ptr() };
-        exti.rtsr1.modify(|r, w| unsafe { w.bits(r.bits() | LINE) });
+        exti.rtsr1
+            .modify(|r, w| unsafe { w.bits(r.bits() & !LINE) });
         exti.ftsr1.modify(|r, w| unsafe { w.bits(r.bits() | LINE) });
     }
     fn enable_interrupt(&self) {
