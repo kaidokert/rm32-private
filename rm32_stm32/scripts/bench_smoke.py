@@ -20,6 +20,7 @@ ap.add_argument("--pct", type=int, default=5, help="throttle percent for the spi
 ap.add_argument("--spin-s", type=float, default=3.0)
 ap.add_argument("--max-ma", type=int, default=800, help="abort threshold from 'i' line")
 ap.add_argument("--bb", action="store_true", help="dump the blackbox after the run")
+ap.add_argument("--zct", action="store_true", help="capture ZC-trace records during the spin")
 args = ap.parse_args()
 
 
@@ -72,16 +73,52 @@ try:
         time.sleep(0.1)
     info(p)
 
+    if args.zct:
+        p.write(b"Z")
+        p.flush()
+
     print(f"== spin: {args.pct}% for {args.spin_s}s")
+    zct_raw = b""
     t0 = time.time()
     while time.time() - t0 < args.spin_s:
         p.write(f"{args.pct}\n".encode())
         p.flush()
-        time.sleep(0.25)
-        _, ma = info(p)
-        if ma is not None and ma > args.max_ma:
-            print(f"!! current {ma}mA > {args.max_ma}mA — aborting")
-            break
+        if args.zct:
+            zct_raw += p.read(65536)
+            time.sleep(0.25)
+        else:
+            time.sleep(0.25)
+            _, ma = info(p)
+            if ma is not None and ma > args.max_ma:
+                print(f"!! current {ma}mA > {args.max_ma}mA — aborting")
+                break
+
+    if args.zct:
+        p.write(b"Z")
+        p.flush()
+        zct_raw += p.read(65536)
+        # Decode: resync on 5B A9, 15-byte records (minz wire format).
+        import struct
+
+        recs = []
+        i = 0
+        while i + 15 <= len(zct_raw):
+            if zct_raw[i] == 0x5B and zct_raw[i + 1] == 0xA9:
+                flags = zct_raw[i + 2]
+                thiszc, ci, wait, duty, tenkhz, avg = struct.unpack_from(
+                    "<6H", zct_raw, i + 3
+                )
+                recs.append((flags & 7, bool(flags & 0x80), thiszc, ci, wait, duty, avg))
+                i += 15
+            else:
+                i += 1
+        print(f"== zct: {len(recs)} records from {len(zct_raw)} bytes")
+        for r in recs[-8:]:
+            step, old, thiszc, ci, wait, duty, avg = r
+            print(
+                f"   s{step}{' poll' if old else '     '} thiszc={thiszc:5d}"
+                f" ci={ci:5d} wait={wait:5d} duty={duty:4d} avg={avg:5d}"
+            )
 
     print("== stop (s)")
     p.write(b"s\n")

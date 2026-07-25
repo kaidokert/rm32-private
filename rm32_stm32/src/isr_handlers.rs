@@ -129,6 +129,18 @@ pub fn handle_tim14() {
         state.commutation.step(),
         shared.commutation_interval().min(u16::MAX as u32) as u16,
     );
+    // ZC trace: one 15-byte record per commutation (minz wire format).
+    #[cfg(feature = "zctrace")]
+    crate::bench_zct::write(
+        state.commutation.step(),
+        shared.old_routine(),
+        state.bemf.this_zc_time(),
+        shared.commutation_interval().min(u16::MAX as u32) as u16,
+        state.bemf.wait_time(),
+        shared.duty_cycle(),
+        shared.dbg_isr_tick() as u16,
+        ((shared.e_com_time() / 3).max(0) as u32).min(u16::MAX as u32) as u16,
+    );
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };

@@ -137,6 +137,123 @@ impl<const N: usize> RxRing<'_, N> {
     }
 }
 
+// ===============================================================
+// ZC_TRACE — 15-byte per-commutation records + batch decimation.
+// Ported from minz/core/src/{am32.rs,zct_trace.rs}; wire format is
+// byte-identical so zctrace_capture.py / the plot suite work unchanged.
+// ===============================================================
+
+/// The ZC_TRACE wire record size (5B A9 sync | flags/step | 6×u16 LE).
+pub const ZCT_REC: usize = 15;
+/// Batch length in commutations (50-on / 50-off above the wire budget).
+pub const ZCT_BATCH_LEN: u32 = 50;
+/// Batching engages below this commutation interval (0.5 µs ticks).
+pub const ZCT_BATCH_CI_TICKS: u32 = 200;
+
+/// Batch-decimation gate — evaluated per commutation with the
+/// pre-increment counter `n`. At each 50-commutation boundary the mode
+/// is re-chosen (batch below [`ZCT_BATCH_CI_TICKS`]); between
+/// boundaries it holds. Returns `(record, batching)`: `record` is
+/// false for the skipped (odd) half of a batch cycle.
+#[inline]
+pub fn zct_batch_gate(n: u32, ci_ticks: u32, prev_batching: bool) -> (bool, bool) {
+    let batching = if n.is_multiple_of(ZCT_BATCH_LEN) {
+        ci_ticks < ZCT_BATCH_CI_TICKS
+    } else {
+        prev_batching
+    };
+    let record = !(batching && (n / ZCT_BATCH_LEN) % 2 == 1);
+    (record, batching)
+}
+
+/// One canonical 15-byte ZC_TRACE row: `5B A9` sync, a flags/step byte
+/// (step in bits0-2, bit7=old_routine, bit6=batched-mode), then
+/// little-endian thiszc / ci / wait / duty / tenkhz / avg.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn zct_pack(
+    step: u8,
+    old: bool,
+    batching: bool,
+    thiszc: u16,
+    ci: u16,
+    wait: u16,
+    duty: u16,
+    tenkhz: u16,
+    avg: u16,
+) -> [u8; ZCT_REC] {
+    [
+        0x5B,
+        0xA9,
+        (step & 0x07) | if old { 0x80 } else { 0 } | if batching { 0x40 } else { 0 },
+        thiszc as u8,
+        (thiszc >> 8) as u8,
+        ci as u8,
+        (ci >> 8) as u8,
+        wait as u8,
+        (wait >> 8) as u8,
+        duty as u8,
+        (duty >> 8) as u8,
+        tenkhz as u8,
+        (tenkhz >> 8) as u8,
+        avg as u8,
+        (avg >> 8) as u8,
+    ]
+}
+
+/// ZC_TRACE record ring over borrowed atomics. `push_rec` is NOT
+/// self-synchronizing — if more than one ISR priority produces, the
+/// caller wraps it in a critical section (this crate stays free of
+/// cortex-m). A full ring drops the OLDEST (advances tail) and counts
+/// it; the single consumer drains via a byte sink.
+pub struct ZctRing<'a, const N: usize> {
+    pub ring: &'a [[AtomicU16; ZCT_REC]; N],
+    pub head: &'a AtomicUsize,
+    pub tail: &'a AtomicUsize,
+    pub drop: &'a core::sync::atomic::AtomicU32,
+}
+
+impl<const N: usize> ZctRing<'_, N> {
+    /// Enqueue one packed record; full ring drops the OLDEST.
+    #[inline]
+    pub fn push_rec(&self, rec: &[u8; ZCT_REC]) {
+        let h = self.head.load(Ordering::Relaxed);
+        let nx = (h + 1) % N;
+        if nx == self.tail.load(Ordering::Relaxed) {
+            // load+store, not fetch_add: producers are caller-serialized
+            // (critical section), and M0 targets have no atomic RMW.
+            self.drop.store(
+                self.drop.load(Ordering::Relaxed).wrapping_add(1),
+                Ordering::Relaxed,
+            );
+            self.tail.store(
+                (self.tail.load(Ordering::Relaxed) + 1) % N,
+                Ordering::Relaxed,
+            );
+        }
+        for (i, b) in rec.iter().enumerate() {
+            self.ring[h][i].store(*b as u16, Ordering::Relaxed);
+        }
+        self.head.store(nx, Ordering::Relaxed);
+    }
+
+    /// Drain up to `max_rec` records into `sink`, byte by byte.
+    #[inline]
+    pub fn drain(&self, max_rec: usize, mut sink: impl FnMut(u8)) {
+        let mut nrec = 0;
+        while self.tail.load(Ordering::Relaxed) != self.head.load(Ordering::Relaxed)
+            && nrec < max_rec
+        {
+            let t = self.tail.load(Ordering::Relaxed);
+            for i in 0..ZCT_REC {
+                sink(self.ring[t][i].load(Ordering::Relaxed) as u8);
+            }
+            self.tail.store((t + 1) % N, Ordering::Relaxed);
+            nrec += 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +325,69 @@ mod tests {
         let mut p = UartDuty::new();
         // >1000 -> 47 -> clamped up to 48
         assert_eq!(feed(&mut p, "1001\n"), Some(UartCmd::SetThrottle(48)));
+    }
+
+    #[test]
+    fn zct_pack_layout_is_wire_exact() {
+        let r = zct_pack(
+            5, true, false, 0x1234, 0x0203, 0x0405, 0x0607, 0x0809, 0x0A0B,
+        );
+        assert_eq!((r[0], r[1]), (0x5B, 0xA9));
+        assert_eq!(r[2], 5 | 0x80, "step bits + old flag");
+        assert_eq!((r[3], r[4]), (0x34, 0x12), "thiszc LE");
+        assert_eq!((r[13], r[14]), (0x0B, 0x0A), "avg LE");
+        let b = zct_pack(2, false, true, 0, 0, 0, 0, 0, 0);
+        assert_eq!(b[2], 2 | 0x40, "batching flag = bit6");
+    }
+
+    #[test]
+    fn zct_gate_batches_below_threshold_in_alternating_50s() {
+        // Fast motor (ci < threshold): first 50 recorded, next 50 skipped.
+        let mut batching = false;
+        let mut recorded = 0;
+        for n in 0..200u32 {
+            let (rec, b) = zct_batch_gate(n, 100, batching);
+            batching = b;
+            if rec {
+                recorded += 1;
+            }
+        }
+        assert_eq!(recorded, 100, "50-on/50-off over 200 commutations");
+        // Slow motor: everything recorded, no batching.
+        let (rec, b) = zct_batch_gate(0, 5000, true);
+        assert!(rec && !b, "mode re-chosen at boundary");
+    }
+
+    #[test]
+    fn zct_ring_drops_oldest_and_drains_capped() {
+        use core::sync::atomic::AtomicU32;
+        static RING: [[AtomicU16; ZCT_REC]; 4] =
+            [const { [const { AtomicU16::new(0) }; ZCT_REC] }; 4];
+        static HEAD: AtomicUsize = AtomicUsize::new(0);
+        static TAIL: AtomicUsize = AtomicUsize::new(0);
+        static DROP: AtomicU32 = AtomicU32::new(0);
+        let ring = ZctRing {
+            ring: &RING,
+            head: &HEAD,
+            tail: &TAIL,
+            drop: &DROP,
+        };
+        let mut rec = [0u8; ZCT_REC];
+        for v in 0..5u8 {
+            rec[2] = v;
+            ring.push_rec(&rec); // capacity N-1=3: v=0,1 dropped (oldest)
+        }
+        assert_eq!(DROP.load(Ordering::Relaxed), 2);
+        let mut seen = [0u8; 8];
+        let mut n = 0;
+        ring.drain(3, |b| {
+            if n % ZCT_REC == 2 {
+                seen[n / ZCT_REC] = b;
+            }
+            n += 1;
+        });
+        assert_eq!(n, 3 * ZCT_REC);
+        assert_eq!(&seen[..3], &[2, 3, 4], "oldest-dropped, order kept");
     }
 
     #[test]

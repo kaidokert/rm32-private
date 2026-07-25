@@ -556,7 +556,19 @@ fn main() -> ! {
                             );
                         }
                         UartCmd::TraceToggle => {
-                            rm32_stm32::dprintln!("[bench] zctrace: not ported yet (rung 4)");
+                            #[cfg(feature = "zctrace")]
+                            {
+                                let on = rm32_stm32::bench_zct::toggle();
+                                rm32_stm32::dprintln!(
+                                    "[bench] zctrace {} (drops={})",
+                                    if on { "ON" } else { "OFF" },
+                                    rm32_stm32::bench_zct::drop_count()
+                                );
+                            }
+                            #[cfg(not(feature = "zctrace"))]
+                            rm32_stm32::dprintln!(
+                                "[bench] zctrace: build without 'zctrace' feature"
+                            );
                         }
                         UartCmd::BbDump => {
                             #[cfg(feature = "blackbox")]
@@ -580,6 +592,14 @@ fn main() -> ! {
             if bench_guard.latched().is_some() {
                 bench_throttle = 0;
             }
+            // ZC-trace drain: up to 3 records per pass onto the bench wire
+            // (binary, interleaved with the text log — the capture script
+            // resyncs on the 5B A9 marker).
+            #[cfg(feature = "zctrace")]
+            if rm32_stm32::bench_zct::enabled() {
+                rm32_stm32::bench_zct::drain(rm32_stm32::debug_uart::write_byte);
+            }
+
             let deadman_cyc: u32 = 3 * Chip::CPU_FREQUENCY_MHZ * 1_000_000;
             if let Some(last) = bench_last_cmd {
                 if bench_now.wrapping_sub(last) < deadman_cyc {

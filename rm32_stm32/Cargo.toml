@@ -58,6 +58,10 @@ benchuart = ["debuguart"]
 # command needs benchuart; recording/freeze work without it.
 blackbox = []
 
+# ZC_TRACE: minz-wire-identical 15-byte per-commutation stream with
+# 50-on/50-off batch decimation. 'Z' toggle + drain need benchuart.
+zctrace = []
+
 # Bench-debug: when on, main() bypasses normal startup and runs ONLY the
 # AM32-matching register init from `mcu::bringup::run_and_spin()`. Lets us
 # diff the firmware's register state against AM32's directly. L431-only.

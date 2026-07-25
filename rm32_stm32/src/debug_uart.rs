@@ -84,6 +84,12 @@ pub fn write_str(s: &str) {
     }
 }
 
+/// Raw byte out — for binary streams (ZC trace records) that share the
+/// bench wire with the text log.
+pub fn write_byte(b: u8) {
+    putc(b);
+}
+
 /// `core::fmt::Write` adapter so we can use `writeln!` against it.
 pub struct DebugUart;
 

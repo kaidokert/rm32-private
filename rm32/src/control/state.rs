@@ -477,6 +477,18 @@ impl BemfState {
         !self.zc_found && self.counter > threshold
     }
 
+    /// Interval-timer count at the most recent accepted zero-cross.
+    /// Read-only view for firmware-side diagnostics (ZC trace).
+    pub fn this_zc_time(&self) -> u16 {
+        self.this_zc_time
+    }
+
+    /// Commutation wait time computed from the last ZC. Read-only view
+    /// for firmware-side diagnostics (ZC trace).
+    pub fn wait_time(&self) -> u16 {
+        self.wait_time
+    }
+
     /// Record a zero-cross detection: update timing, compute new CI and wait_time.
     /// Returns the new commutation interval.
     pub(crate) fn record_zero_cross(
