@@ -28,6 +28,9 @@ pub enum UartCmd {
     Info,
     /// 'b' — request a black-box dump (stub until the blackbox rung).
     BbDump,
+    /// 'D' — toggle complementary (damped) PWM drive live (bench
+    /// diagnostic: splits drive-mode physics from spin-up dynamics).
+    DriveToggle,
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -75,6 +78,7 @@ impl UartDuty {
             b'Z' => Some(UartCmd::TraceToggle),
             b'i' => Some(UartCmd::Info),
             b'b' => Some(UartCmd::BbDump),
+            b'D' => Some(UartCmd::DriveToggle),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;

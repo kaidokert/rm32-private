@@ -290,6 +290,22 @@ fn main() -> ! {
 
     // Propagate loaded config to ISR state (still on stack, before move)
     isr_state.config = main_state.config;
+    // comp_pwm reaches the phase driver HERE and nowhere else — the
+    // per-MCU init constructed it with false (safe idle). See
+    // PhaseDriver::set_comp_pwm for the failure mode when this is missed.
+    isr_state
+        .hal
+        .phase
+        .set_comp_pwm(main_state.config.comp_pwm != 0);
+    rm32_stm32::dprintln!("[rm32] comp_pwm wired: {}", main_state.config.comp_pwm != 0);
+    // BENCH: boot in diode drive regardless of config — the complementary
+    // spin-up currently churns (comp-on climb is the open divergence);
+    // the 'D' command flips drive live once at a clean operating point.
+    #[cfg(feature = "benchuart")]
+    {
+        rm32_stm32::phase::COMP_PWM_LIVE.store(1, core::sync::atomic::Ordering::Relaxed);
+        rm32_stm32::dprintln!("[rm32] bench drive override: DIODE at boot ('D' toggles)");
+    }
     isr_state.forward = main_state.config.dir_reversed == 0;
     isr_state.edt_arm_enable = main_state.config.input_type() == rm32::config::InputType::EdtArm;
     isr_state
@@ -622,6 +638,21 @@ fn main() -> ! {
                             #[cfg(not(feature = "zctrace"))]
                             rm32_stm32::dprintln!(
                                 "[bench] zctrace: build without 'zctrace' feature"
+                            );
+                        }
+                        UartCmd::DriveToggle => {
+                            use core::sync::atomic::Ordering;
+                            use rm32_stm32::phase::COMP_PWM_LIVE;
+                            // Resolve current effective mode, flip, force.
+                            let cur = match COMP_PWM_LIVE.load(Ordering::Relaxed) {
+                                1 => false,
+                                2 => true,
+                                _ => main_state.config.comp_pwm != 0,
+                            };
+                            COMP_PWM_LIVE.store(if cur { 1 } else { 2 }, Ordering::Relaxed);
+                            rm32_stm32::dprintln!(
+                                "[bench] drive: {} (live)",
+                                if cur { "DIODE" } else { "COMPLEMENTARY" }
                             );
                         }
                         UartCmd::BbDump => {

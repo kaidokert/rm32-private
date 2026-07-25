@@ -17,6 +17,13 @@ use rm32::hal::PhaseOutput;
 const MODE_OUTPUT: u32 = 0b01;
 const MODE_ALTERNATE: u32 = 0b10;
 
+/// Bench live drive-mode override ('D' command): 0 = follow config,
+/// 1 = force diode (comp off), 2 = force complementary. Lets the bench
+/// flip drive physics mid-run to separate steady-state comp behavior
+/// from the spin-up churn. Read once per com_step — negligible.
+#[cfg(feature = "benchuart")]
+pub static COMP_PWM_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
 /// Pulse output toggle function — stored as fn pointer to avoid storing raw addresses.
 /// Monomorphized per pin type at `enable_pulse_output` call site.
 type PulseToggleFn = fn(u32);
@@ -57,6 +64,18 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         }
     }
 
+    /// Wire the LOADED config's comp_pwm into the driver. The per-MCU
+    /// init constructs the driver before the EEPROM config exists, with
+    /// comp_pwm=false as the safe idle default — main MUST call this
+    /// after config load or every commutation runs non-complementary
+    /// (low-side pin left in GPIO-output during the driven phase; the
+    /// freewheel goes through the body diode instead of the low FET).
+    /// That silent mismatch was the 8%-wrong-sided-window disparity vs
+    /// the clone: config said damped PWM, silicon ran undamped.
+    pub fn set_comp_pwm(&mut self, v: bool) {
+        self.comp_pwm = v;
+    }
+
     /// Enable RPM pulse output on the given pin.
     /// Creates a monomorphized toggle function for the pin's port.
     pub fn enable_pulse_output<P: GpioPin>(&mut self) {
@@ -74,13 +93,27 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     /// Normal: low-side alternate (comp_pwm) or output LOW.
     /// Bridge: enable pin output HIGH (comp_pwm) or no-op.
     #[inline]
+    fn effective_comp_pwm(&self) -> bool {
+        #[cfg(feature = "benchuart")]
+        {
+            match COMP_PWM_LIVE.load(core::sync::atomic::Ordering::Relaxed) {
+                1 => return false,
+                2 => return true,
+                _ => {}
+            }
+        }
+        self.comp_pwm
+    }
+
+    #[inline]
     fn phase_pwm<H: GpioPin, L: GpioPin>(&self) {
+        let comp = self.effective_comp_pwm();
         if self.bridge_enable {
-            if self.comp_pwm {
+            if comp {
                 L::set_mode(MODE_OUTPUT);
                 L::set_high(); // enable on
             }
-        } else if !self.comp_pwm {
+        } else if !comp {
             L::set_mode(MODE_OUTPUT);
             L::set_low();
         } else {
