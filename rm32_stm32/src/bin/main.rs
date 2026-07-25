@@ -397,7 +397,11 @@ fn main() -> ! {
         #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
         let main_cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         log_counter = log_counter.wrapping_add(1);
-        if log_counter.is_multiple_of(100_000) {
+        // Heartbeat suppressed while the motor runs (comp-degradation
+        // suspect test: the first [loop] print lands ~5 s after boot —
+        // exactly when sustained-comp runs collapse; RTT's fragmented
+        // critical sections + the 300-byte line are the suspects).
+        if log_counter.is_multiple_of(100_000) && !shared.running() {
             // Decode detected input protocol from the three shared flags into
             // a single short tag for the log line. `dshot_telemetry` is
             // bidirectional DShot (RPM feedback), set independently of the
