@@ -249,6 +249,13 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
             match COMP_PWM_LIVE.load(core::sync::atomic::Ordering::Relaxed) {
                 1 => return false,
                 2 => return true,
+                // 3 = AUTO: complementary only in interrupt mode; DIODE
+                // during polling/grind. Hypothesis under test: comp
+                // drive's synchronous rectification BRAKES the rotor the
+                // polling restart is accelerating, making the churn
+                // attractor self-sustaining (diode re-locks fine; comp
+                // never recovers). Auto-fallback breaks the loop.
+                3 => return !crate::isr::shared().old_routine(),
                 _ => {}
             }
         }

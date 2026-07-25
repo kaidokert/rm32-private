@@ -316,9 +316,16 @@ fn main() -> ! {
     // the 'D' command flips drive live once at a clean operating point.
     #[cfg(feature = "benchuart")]
     {
-        rm32_stm32::phase::COMP_PWM_LIVE.store(1, core::sync::atomic::Ordering::Relaxed);
-        rm32_stm32::phase::COMP_PWM_SHADOW.store(1, core::sync::atomic::Ordering::Relaxed);
-        rm32_stm32::dprintln!("[rm32] bench drive override: DIODE at boot ('D' toggles)");
+        // AUTO: complementary in interrupt mode, diode during polling/
+        // recovery. Sustained-comp parity 3/4 x 15s at clone level
+        // (7.3-7.7 e/w) where always-comp fell into a permanent ~245Hz
+        // churn attractor: comp drive's braking during polling-grind
+        // recovery made the churn self-sustaining. Designed divergence
+        // from AM32 (which applies comp unconditionally) — measured and
+        // chosen; 'D' cycles diode/comp/auto live.
+        rm32_stm32::phase::COMP_PWM_LIVE.store(3, core::sync::atomic::Ordering::Relaxed);
+        rm32_stm32::phase::COMP_PWM_SHADOW.store(3, core::sync::atomic::Ordering::Relaxed);
+        rm32_stm32::dprintln!("[rm32] bench drive: AUTO at boot ('D' cycles)");
     }
 
     isr_state.forward = main_state.config.dir_reversed == 0;
@@ -701,17 +708,22 @@ fn main() -> ! {
                             use core::sync::atomic::Ordering;
                             use rm32_stm32::phase::COMP_PWM_LIVE;
                             // Resolve current effective mode, flip, force.
-                            let cur = match COMP_PWM_LIVE.load(Ordering::Relaxed) {
-                                1 => false,
-                                2 => true,
-                                _ => main_state.config.comp_pwm != 0,
+                            // Cycle 1(diode) -> 2(comp) -> 3(auto) -> 1
+                            let cur = COMP_PWM_LIVE.load(Ordering::Relaxed);
+                            let nxt = match cur {
+                                1 => 2u8,
+                                2 => 3,
+                                _ => 1,
                             };
-                            COMP_PWM_LIVE.store(if cur { 1 } else { 2 }, Ordering::Relaxed);
-                            rm32_stm32::phase::COMP_PWM_SHADOW
-                                .store(if cur { 1 } else { 2 }, Ordering::Relaxed);
+                            COMP_PWM_LIVE.store(nxt, Ordering::Relaxed);
+                            rm32_stm32::phase::COMP_PWM_SHADOW.store(nxt, Ordering::Relaxed);
                             rm32_stm32::dprintln!(
                                 "[bench] drive: {} (live)",
-                                if cur { "DIODE" } else { "COMPLEMENTARY" }
+                                match nxt {
+                                    1 => "DIODE",
+                                    2 => "COMPLEMENTARY",
+                                    _ => "AUTO(comp iff interrupt-mode)",
+                                }
                             );
                         }
                         UartCmd::AtomicToggle => {
