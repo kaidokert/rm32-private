@@ -306,6 +306,9 @@ impl<LED: OutputPin> MainState<LED> {
         // Stall detection: if interval timer exceeds threshold, motor has stalled.
         // C: if (INTERVAL_TIMER_COUNT > 45000 && running == 1)
         if shared.interval_timer_count() > BEMF_STALL_TIMER_THRESHOLD && shared.running() {
+            // Was the chain in interrupt mode when the timeout hit? Decides
+            // the recovery below; must be read BEFORE set_old_routine.
+            let was_interrupt_mode = !shared.old_routine();
             // Only increment if not already latched (102 = confirmed stuck)
             if self.protection.bemf_timeout_happened != BEMF_FAULT_LATCHED {
                 self.protection.bemf_timeout_happened =
@@ -317,10 +320,21 @@ impl<LED: OutputPin> MainState<LED> {
                 shared.set_commutation_interval(DESYNC_RESET_INTERVAL);
             }
             shared.set_zero_crosses(0);
-            // Request HAL interval timer reset — matches C's zcfoundroutine()
-            // calling SET_INTERVAL_TIMER_COUNT(0). The ISR owns the HAL timer;
-            // main sets a flag that the ISR picks up before the next publish.
-            shared.request_isr_action(crate::shared_comm::IsrAction::ResetIntervalTimer);
+            // Recovery, STATE-GATED (the minz speed-gate lesson: ungated
+            // recovery aids fire during normal spin-up timeouts and wreck
+            // engage — bench: 7/8 -> 3/8 ungated):
+            // - interrupt-mode timeout = the COM-timer chain is DEAD; do
+            //   AM32's zcfoundroutine actively: CommutateKick = interval
+            //   reset + immediate COM-timer re-arm.
+            // - polling-mode timeout = spin-up churn; the polling loop
+            //   re-arms the chain itself — passive reset only (also what
+            //   throttles this branch to C's rate; single-slot fetch_max
+            //   channel means the kick must subsume the reset).
+            if was_interrupt_mode {
+                shared.request_isr_action(crate::shared_comm::IsrAction::CommutateKick);
+            } else {
+                shared.request_isr_action(crate::shared_comm::IsrAction::ResetIntervalTimer);
+            }
         }
 
         // Dynamic BEMF timeout threshold: lenient at low throttle
@@ -349,7 +363,18 @@ impl<LED: OutputPin> MainState<LED> {
                 // Then StopMotor conditionally: OldRoutine→Armed (sets running=0).
                 // Order matters: StopMotor before DesyncFallback would go
                 // Running→Armed, blocking DesyncFallback (Armed has no transition).
+                // Read mode BEFORE DesyncFallback flips old_routine.
+                let desync_from_interrupt_mode = !shared.old_routine();
                 shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
+                // Duty kick-down (AM32: last_duty_cycle = min_startup/2):
+                // the restart must ramp from low, not push full duty into
+                // an unlocked field. STATE-GATED to interrupt-mode desyncs
+                // (minz speed-gate lesson): spin-up desync churn with a
+                // kicked-down duty starves the engage (bench: 7/8 -> 2/8
+                // ungated — duty pinned at min_startup/2, 19-125 Hz).
+                if desync_from_interrupt_mode {
+                    shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
+                }
                 if (self.config.bi_direction == 0 && shared.adjusted_input() > 47)
                     || shared.commutation_interval() > 1000
                 {

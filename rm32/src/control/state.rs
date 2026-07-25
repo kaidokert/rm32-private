@@ -139,6 +139,14 @@ impl DutyState {
         self.last = self.min_startup;
     }
 
+    /// Desync recovery: drop the applied duty to half the startup value so
+    /// the restart ramps from low instead of pushing full duty into an
+    /// unlocked field (AM32 `last_duty_cycle = min_startup_duty / 2`; minz
+    /// am32_control.rs:284).
+    pub(crate) fn kick_down(&mut self) {
+        self.last = self.last.min(self.min_startup / 2);
+    }
+
     /// Increment ramp counter (called each ISR tick).
     pub(crate) fn increment_ramp_count(&mut self) {
         self.ramp_count += 1;

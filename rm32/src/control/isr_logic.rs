@@ -41,6 +41,19 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             ctx.hal.phase().all_off();
             ctx.hal.comp().mask_interrupts();
         }
+        crate::shared_comm::IsrAction::DutyKickDown => {
+            // Desync recovery: restart ramps from min_startup/2.
+            ctx.duty.kick_down();
+        }
+        crate::shared_comm::IsrAction::CommutateKick => {
+            // BEMF-timeout recovery, AM32 zcfoundroutine semantics: re-arm
+            // the possibly-dead COM timer to fire now so
+            // commutation_timer_expired restarts the chain. The interval
+            // reset this action SUBSUMES (single-slot fetch_max channel —
+            // see main_state) happens at the END of this tick with the
+            // ResetIntervalTimer path, after the count is published.
+            ctx.hal.com_timer().set_and_enable(1);
+        }
         crate::shared_comm::IsrAction::ResetIntervalTimer => {
             // Handled at the end of this function (after publish)
         }
@@ -184,8 +197,15 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         .set_interval_timer_count(ctx.hal.interval().count());
     // Handle ResetIntervalTimer AFTER publish so the published value isn't
     // immediately overwritten. AllOff is handled at the top (before tick).
-    if ctx.shared.isr_action() == crate::shared_comm::IsrAction::ResetIntervalTimer {
-        ctx.hal.interval().set_count(0);
+    // CommutateKick includes this reset (zcfoundroutine semantics) — its
+    // COM-timer re-arm already ran at the top.
+    {
+        let act = ctx.shared.isr_action();
+        if act == crate::shared_comm::IsrAction::ResetIntervalTimer
+            || act == crate::shared_comm::IsrAction::CommutateKick
+        {
+            ctx.hal.interval().set_count(0);
+        }
     }
     // Clear any pending action (AllOff was already executed at top)
     ctx.shared.clear_isr_action();

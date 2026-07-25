@@ -563,7 +563,9 @@ impl SharedState {
     pub fn isr_action(&self) -> crate::shared_comm::IsrAction {
         match self.isr_action.load(ACQ) {
             1 => crate::shared_comm::IsrAction::ResetIntervalTimer,
-            2 => crate::shared_comm::IsrAction::AllOff,
+            2 => crate::shared_comm::IsrAction::DutyKickDown,
+            3 => crate::shared_comm::IsrAction::CommutateKick,
+            4 => crate::shared_comm::IsrAction::AllOff,
             _ => crate::shared_comm::IsrAction::None,
         }
     }
