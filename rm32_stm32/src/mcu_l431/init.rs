@@ -22,9 +22,27 @@ pub fn init(
     //
     // Order is load-bearing: FLASH wait states MUST be raised to 4 before
     // SYSCLK exceeds 16 MHz, or the CPU may fetch garbage instructions.
-    dp.FLASH
-        .acr
-        .write(|w| unsafe { w.latency().bits(4).icen().set_bit().dcen().set_bit() });
+    //
+    // PRFTEN: deliberately ON — a documented divergence from AM32 (which
+    // runs prefetch off). The minz saga (board_init.rs, commit 8d32e66):
+    // PRFTEN off + 4WS makes hot-ISR fetch timing depend on code
+    // alignment, so ANY rebuild moves marginal timing (engage went
+    // 3-4/8 -> 8/8 from this one bit, same binary otherwise). The clone —
+    // our behavioral parity reference — runs prefetch on. It is also the
+    // prime suspect for rm32's polarity-correlated ZC accept excursions
+    // (the rising/falling persistence branches sit at different flash
+    // alignments; without prefetch the two polarities sample at different
+    // effective cadence).
+    dp.FLASH.acr.write(|w| unsafe {
+        w.latency()
+            .bits(4)
+            .prften()
+            .set_bit()
+            .icen()
+            .set_bit()
+            .dcen()
+            .set_bit()
+    });
     while dp.FLASH.acr.read().latency().bits() != 4 {}
 
     dp.RCC.cr.modify(|_, w| w.hsion().set_bit());

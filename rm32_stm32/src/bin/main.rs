@@ -234,7 +234,7 @@ fn main() -> ! {
         desired.version_major = 2;
         desired.version_minor = 20;
         desired.comp_pwm = 1; // damped (complementary) PWM — AM32 default
-        desired.variable_pwm = 1; // variable carrier — AM32 default
+        desired.variable_pwm = 1; // variable carrier — AM32 default (A/B exonerated it in the surge hunt)
         desired.advance_level = 26; // temp_advance() -> 16 = 15 deg
         desired.temperature_limit = 141; // disabled (AM32 configurator default)
         desired.motor_kv = 55; // 55*40+20 = 2220 kv
