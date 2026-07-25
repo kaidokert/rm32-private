@@ -139,6 +139,20 @@ pub fn handle_tim6() {
     // 20 kHz gate latch (AM32-verbatim staleness for the COMP gate).
     #[cfg(feature = "zctrace")]
     crate::edge_probe::gate_avg_latch((shared.e_com_time() / 3).max(0) as u32);
+    // Deferred comp re-enable ('N' experiment): apply a pending unmask,
+    // clearing the ringing-era EXTI pending first so a camped stale edge
+    // doesn't fire the instant we unmask.
+    #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
+    {
+        use core::sync::atomic::Ordering;
+        if crate::edge_probe::ENABLE_PENDING.swap(0, Ordering::Relaxed) != 0 {
+            let exti = unsafe { &*crate::pac::EXTI::PTR };
+            unsafe {
+                exti.pr1.write(|w| w.bits(1 << 22));
+                exti.imr1.modify(|r, w| w.bits(r.bits() | (1 << 22)));
+            }
+        }
+    }
     shared.dbg_isr_tick_inc();
 }
 

@@ -78,8 +78,9 @@ fn COMP() {
     // edge_probe::gate_avg). Fallback to fresh when the latch is cold.
     #[cfg(feature = "zctrace")]
     let avg = {
+        use core::sync::atomic::Ordering;
         let a = crate::edge_probe::gate_avg();
-        if a != 0 {
+        if crate::edge_probe::GATE_STALE.load(Ordering::Relaxed) != 0 && a != 0 {
             a
         } else {
             (shared.e_com_time() / 3).max(0) as u32

@@ -28,6 +28,7 @@ static LAST_ARM: AtomicU16 = AtomicU16::new(NO_EDGE);
 /// Lifetime totals for the heartbeat (drops-style visibility even when
 /// the zct stream is off).
 static TOTAL_GATED: AtomicU32 = AtomicU32::new(0);
+static TOTAL_ENTRIES: AtomicU32 = AtomicU32::new(0);
 static TOTAL_REJECTS: AtomicU32 = AtomicU32::new(0);
 /// Comp-engagement violation counters: driven phase's N-pin MODER was
 /// NOT AF right after a comp-mode commutation (per phase A/B/C).
@@ -66,6 +67,18 @@ pub fn midw() -> (u32, u32) {
 /// in comp-mode transients a freshly-shrunk gate opens early and
 /// releases camped edges into early accepts.
 static GATE_AVG: AtomicU32 = AtomicU32::new(0);
+/// 1 = use the 20 kHz latch (AM32-verbatim staleness), 0 = fresh.
+pub static GATE_STALE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
+
+/// Deferred comp re-enable experiment ('N'): when mode=1, the
+/// commutation ISR's enable_interrupts is deferred to the next 20 kHz
+/// tick (a 0-50 µs statistical blank after the phase switch). Tests
+/// the storm-entry hypothesis: a complementary-switching ringing edge
+/// arriving right at the re-enable point camps and burns ~150 µs of
+/// priority-0 spin; blanking past the ringing should collapse storms.
+pub static ENABLE_DEFER_MODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+/// enable requested by the commutation ISR, pending tick application.
+pub static ENABLE_PENDING: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 pub fn gate_avg_latch(v: u32) {
     GATE_AVG.store(v, Ordering::Relaxed);
@@ -110,6 +123,7 @@ pub fn npin_violations() -> (u32, u32, u32) {
 /// count at classification time. COMP-ISR context.
 #[inline]
 pub fn edge_seen(cnt: u32) {
+    TOTAL_ENTRIES.fetch_add(1, Ordering::Relaxed);
     let e = ENTRIES.load(Ordering::Relaxed);
     ENTRIES.store(e.saturating_add(1), Ordering::Relaxed);
     if FIRST_EDGE.load(Ordering::Relaxed) == NO_EDGE {

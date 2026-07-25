@@ -40,6 +40,11 @@ pub enum UartCmd {
     /// 'V' — arm the DWT write-watchpoint on the drive override
     /// (bench diagnostic; only effective after a clean power-up).
     WatchArm,
+    /// 'G' — toggle the COMP gate average source live: fresh
+    /// (per-commutation e_com/3) vs 20 kHz-latched (AM32-verbatim).
+    GateToggle,
+    /// 'N' — toggle deferred comp re-enable (storm-entry blanking test).
+    DeferToggle,
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -91,6 +96,8 @@ impl UartDuty {
             b'E' => Some(UartCmd::AtomicToggle),
             b'A' => Some(UartCmd::AdcToggle),
             b'V' => Some(UartCmd::WatchArm),
+            b'G' => Some(UartCmd::GateToggle),
+            b'N' => Some(UartCmd::DeferToggle),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;

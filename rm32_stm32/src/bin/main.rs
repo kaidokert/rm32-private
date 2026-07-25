@@ -762,6 +762,36 @@ fn main() -> ! {
                             #[cfg(not(all(feature = "stm32l431", feature = "zctrace")))]
                             rm32_stm32::dprintln!("[bench] watch: L431+zctrace only");
                         }
+                        UartCmd::GateToggle => {
+                            #[cfg(all(feature = "stm32l431", feature = "zctrace"))]
+                            {
+                                use core::sync::atomic::Ordering;
+                                use rm32_stm32::edge_probe::GATE_STALE;
+                                let on = GATE_STALE.load(Ordering::Relaxed) == 0;
+                                GATE_STALE.store(on as u8, Ordering::Relaxed);
+                                rm32_stm32::dprintln!(
+                                    "[bench] gate avg: {} (live)",
+                                    if on { "STALE-20k" } else { "FRESH" }
+                                );
+                            }
+                            #[cfg(not(all(feature = "stm32l431", feature = "zctrace")))]
+                            rm32_stm32::dprintln!("[bench] gate: L431+zctrace only");
+                        }
+                        UartCmd::DeferToggle => {
+                            #[cfg(all(feature = "stm32l431", feature = "zctrace"))]
+                            {
+                                use core::sync::atomic::Ordering;
+                                use rm32_stm32::edge_probe::ENABLE_DEFER_MODE;
+                                let on = ENABLE_DEFER_MODE.load(Ordering::Relaxed) == 0;
+                                ENABLE_DEFER_MODE.store(on as u8, Ordering::Relaxed);
+                                rm32_stm32::dprintln!(
+                                    "[bench] comp re-enable: {} (live)",
+                                    if on { "DEFERRED-20k" } else { "IMMEDIATE" }
+                                );
+                            }
+                            #[cfg(not(all(feature = "stm32l431", feature = "zctrace")))]
+                            rm32_stm32::dprintln!("[bench] defer: L431+zctrace only");
+                        }
                         UartCmd::BbDump => {
                             #[cfg(feature = "blackbox")]
                             {
