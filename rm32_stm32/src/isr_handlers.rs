@@ -83,6 +83,8 @@ pub fn handle_tim6() {
 
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    crate::phase::canary(0); // site 0: tim6 entry
 
     let mut ctx = rm32::control::context::MotorContext {
         commutation: &mut state.commutation,
@@ -132,6 +134,11 @@ pub fn handle_tim6() {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         shared.dbg_tim6_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
     }
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    crate::phase::canary(1); // site 1: tim6 exit (ten_khz_tick ran between 0 and 1)
+    // 20 kHz gate latch (AM32-verbatim staleness for the COMP gate).
+    #[cfg(feature = "zctrace")]
+    crate::edge_probe::gate_avg_latch((shared.e_com_time() / 3).max(0) as u32);
     shared.dbg_isr_tick_inc();
 }
 
@@ -238,6 +245,8 @@ pub fn handle_tim14() {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         shared.dbg_tim14_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
     }
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    crate::phase::canary(2); // site 2: tim14 exit
 }
 
 /// BEMF zero-cross detected (COMP ISR body).
@@ -277,6 +286,8 @@ pub fn handle_comp() {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         shared.dbg_comp_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
     }
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    crate::phase::canary(3); // site 3: comp ISR exit
 }
 
 /// COMP gate helper for the L431 wrapper's gate-closed classification:

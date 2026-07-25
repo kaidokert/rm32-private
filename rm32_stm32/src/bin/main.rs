@@ -56,6 +56,19 @@ fn main() -> ! {
         ctrl.write(ctrl.read() | 1);
     }
 
+    // Disarm any leftover DWT watchpoint + monitor enable FIRST. The
+    // debug domain (DWT comparators, DEMCR.MON_EN) survives SYSTEM
+    // resets — only power-on clears it — so a watchpoint armed by a
+    // previous firmware/debug session otherwise halts EVERY boot at the
+    // first write to the watched address ("dead chip" that flashing
+    // cannot fix). 'V' re-arms deliberately.
+    unsafe {
+        let dwt = &*cortex_m::peripheral::DWT::PTR;
+        dwt.c[1].function.write(0);
+        let dcb = &*cortex_m::peripheral::DCB::PTR;
+        dcb.demcr.modify(|v| v & !(1 << 16)); // MON_EN off
+    }
+
     rtt_target::rtt_init_print!();
     #[cfg(feature = "debuguart")]
     rm32_stm32::debug_uart::init();
@@ -304,33 +317,8 @@ fn main() -> ! {
     #[cfg(feature = "benchuart")]
     {
         rm32_stm32::phase::COMP_PWM_LIVE.store(1, core::sync::atomic::Ordering::Relaxed);
+        rm32_stm32::phase::COMP_PWM_SHADOW.store(1, core::sync::atomic::Ordering::Relaxed);
         rm32_stm32::dprintln!("[rm32] bench drive override: DIODE at boot ('D' toggles)");
-    }
-
-    // Self-hosted DWT watchpoint on phase::COMP_PWM_LIVE (storm hunt):
-    // a rogue write triggers DebugMonitor, which scans the exception
-    // frame for flash-range words (stacked LR + PC) and stores them for
-    // the 'i' readout. One-shot: the handler disarms the comparator.
-    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
-    unsafe {
-        // C_DEBUGEN (DHCSR bit0) is debugger-owned and readable by the
-        // core: while halting debug is enabled (any probe attach latches
-        // it until POWER CYCLE), a DWT match HALTS the core instead of
-        // raising DebugMonitor — the silent-death mode this trap first
-        // shipped with. Arm only on a clean power-up.
-        let dhcsr = core::ptr::read_volatile(0xE000_EDF0 as *const u32);
-        if dhcsr & 1 == 0 {
-            let addr = &rm32_stm32::phase::COMP_PWM_LIVE as *const _ as u32;
-            let dcb = &*cortex_m::peripheral::DCB::PTR;
-            dcb.demcr.modify(|v| v | (1 << 16)); // MON_EN
-            let dwt = &*cortex_m::peripheral::DWT::PTR;
-            dwt.c[1].comp.write(addr);
-            dwt.c[1].mask.write(0);
-            dwt.c[1].function.write(0x6); // write access watchpoint
-            rm32_stm32::dprintln!("[rm32] DWT watch armed on {:#010x}", addr);
-        } else {
-            rm32_stm32::dprintln!("[rm32] DWT watch SKIPPED (C_DEBUGEN set; power-cycle to arm)");
-        }
     }
 
     isr_state.forward = main_state.config.dir_reversed == 0;
@@ -665,6 +653,16 @@ fn main() -> ! {
                                 let (mv, mi) = rm32_stm32::edge_probe::midw();
                                 let dc = rm32_stm32::phase::DIODE_PWM_CALLS
                                     .load(core::sync::atomic::Ordering::Relaxed);
+                                let ch: [u16; 8] = core::array::from_fn(|i| {
+                                    rm32_stm32::phase::CANARY_HITS[i]
+                                        .load(core::sync::atomic::Ordering::Relaxed)
+                                });
+                                rm32_stm32::dprintln!(
+                                    "[canary {:?} dsv={}]",
+                                    ch,
+                                    rm32_stm32::phase::DIODE_SEEN_VAL
+                                        .load(core::sync::atomic::Ordering::Relaxed)
+                                );
                                 rm32_stm32::dprintln!(
                                     "[nviol A={} B={} C={} midw={} lstep={} lcnt={} dpwm={} wlr={:#x} wpc={:#x} whits={}]",
                                     va,
@@ -705,6 +703,8 @@ fn main() -> ! {
                                 _ => main_state.config.comp_pwm != 0,
                             };
                             COMP_PWM_LIVE.store(if cur { 1 } else { 2 }, Ordering::Relaxed);
+                            rm32_stm32::phase::COMP_PWM_SHADOW
+                                .store(if cur { 1 } else { 2 }, Ordering::Relaxed);
                             rm32_stm32::dprintln!(
                                 "[bench] drive: {} (live)",
                                 if cur { "DIODE" } else { "COMPLEMENTARY" }
@@ -740,6 +740,28 @@ fn main() -> ! {
                             #[cfg(not(feature = "stm32l431"))]
                             rm32_stm32::dprintln!("[bench] adc toggle: L431 only");
                         }
+                        UartCmd::WatchArm => {
+                            #[cfg(all(feature = "stm32l431", feature = "zctrace"))]
+                            unsafe {
+                                let dhcsr = core::ptr::read_volatile(0xE000_EDF0 as *const u32);
+                                if dhcsr & 1 == 0 {
+                                    let addr = &rm32_stm32::phase::COMP_PWM_LIVE as *const _ as u32;
+                                    let dcb = &*cortex_m::peripheral::DCB::PTR;
+                                    dcb.demcr.modify(|v| v | (1 << 16));
+                                    let dwt = &*cortex_m::peripheral::DWT::PTR;
+                                    dwt.c[1].comp.write(addr);
+                                    dwt.c[1].mask.write(0);
+                                    dwt.c[1].function.write(0x6);
+                                    rm32_stm32::dprintln!("[bench] DWT watch ARMED");
+                                } else {
+                                    rm32_stm32::dprintln!(
+                                        "[bench] DWT watch refused: C_DEBUGEN set (power-cycle first)"
+                                    );
+                                }
+                            }
+                            #[cfg(not(all(feature = "stm32l431", feature = "zctrace")))]
+                            rm32_stm32::dprintln!("[bench] watch: L431+zctrace only");
+                        }
                         UartCmd::BbDump => {
                             #[cfg(feature = "blackbox")]
                             {
@@ -770,6 +792,7 @@ fn main() -> ! {
                 rm32_stm32::bench_zct::drain(rm32_stm32::debug_uart::write_byte);
             }
 
+            rm32_stm32::phase::canary(6); // site 6: main-loop bench band
             let deadman_cyc: u32 = 3 * Chip::CPU_FREQUENCY_MHZ * 1_000_000;
             if let Some(last) = bench_last_cmd {
                 if bench_now.wrapping_sub(last) < deadman_cyc {

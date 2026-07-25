@@ -59,14 +59,37 @@ pub fn init() {
         // Enable: TE + UE
         usart.cr1.write(|w| w.te().set_bit().ue().set_bit());
 
-        // Wait for TEACK
-        while usart.isr.read().teack().bit_is_clear() {}
+        // Wait for TEACK (bounded — a wedged USART must not hang boot)
+        let mut n = 0u32;
+        while usart.isr.read().teack().bit_is_clear() {
+            n += 1;
+            if n > 100_000 {
+                break;
+            }
+        }
     }
+}
+
+/// Bounded busy-wait. A wedged USART (dead adapter, clock glitch,
+/// debugger-mangled peripheral state) must NEVER hang the firmware: an
+/// unbounded TXE poll here once boot-looped the ESC through the IWDG
+/// (each boot blocked on a print until the 2 s watchdog fired). ~16k
+/// iterations ≈ 200 µs at 80 MHz — far beyond one byte at any baud.
+#[inline]
+fn wait_flag(f: impl Fn() -> bool) -> bool {
+    for _ in 0..16_000u32 {
+        if f() {
+            return true;
+        }
+    }
+    false
 }
 
 fn putc(b: u8) {
     let usart = unsafe { &*USART1::ptr() };
-    while usart.isr.read().txe().bit_is_clear() {}
+    if !wait_flag(|| usart.isr.read().txe().bit_is_set()) {
+        return; // drop the byte — never block the firmware on the wire
+    }
     usart.tdr.write(|w| unsafe { w.bits(b as u32) });
 }
 
@@ -75,7 +98,7 @@ fn putc(b: u8) {
 /// transmitted at the new (wrong) clock and shows up as garbage.
 pub fn flush() {
     let usart = unsafe { &*USART1::ptr() };
-    while usart.isr.read().tc().bit_is_clear() {}
+    let _ = wait_flag(|| usart.isr.read().tc().bit_is_set());
 }
 
 pub fn write_str(s: &str) {

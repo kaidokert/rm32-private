@@ -59,6 +59,22 @@ pub fn midw() -> (u32, u32) {
     )
 }
 
+/// 20 kHz-latched average interval for the COMP gate (AM32-verbatim
+/// staleness: main.c:2283 computes average_interval in the slow loop;
+/// the ISR gate it.c:280 reads that stale value). rm32 previously fed
+/// the gate per-commutation-fresh e_com/3 — "fresher" is a divergence:
+/// in comp-mode transients a freshly-shrunk gate opens early and
+/// releases camped edges into early accepts.
+static GATE_AVG: AtomicU32 = AtomicU32::new(0);
+
+pub fn gate_avg_latch(v: u32) {
+    GATE_AVG.store(v, Ordering::Relaxed);
+}
+
+pub fn gate_avg() -> u32 {
+    GATE_AVG.load(Ordering::Relaxed)
+}
+
 /// Self-hosted watchpoint: writer PC/LR captured by DebugMonitor.
 static WATCH_PC: AtomicU32 = AtomicU32::new(0);
 static WATCH_LR: AtomicU32 = AtomicU32::new(0);

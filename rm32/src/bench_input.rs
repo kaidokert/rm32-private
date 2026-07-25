@@ -37,6 +37,9 @@ pub enum UartCmd {
     /// 'A' — pause/resume ADC conversions live (bench diagnostic:
     /// mux-kickback A/B; measurements freeze while paused).
     AdcToggle,
+    /// 'V' — arm the DWT write-watchpoint on the drive override
+    /// (bench diagnostic; only effective after a clean power-up).
+    WatchArm,
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -87,6 +90,7 @@ impl UartDuty {
             b'D' => Some(UartCmd::DriveToggle),
             b'E' => Some(UartCmd::AtomicToggle),
             b'A' => Some(UartCmd::AdcToggle),
+            b'V' => Some(UartCmd::WatchArm),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;

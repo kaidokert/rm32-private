@@ -74,6 +74,18 @@ fn COMP() {
         return;
     }
     let shared = crate::isr::shared();
+    // Gate avg: 20 kHz-latched (AM32-verbatim staleness; see
+    // edge_probe::gate_avg). Fallback to fresh when the latch is cold.
+    #[cfg(feature = "zctrace")]
+    let avg = {
+        let a = crate::edge_probe::gate_avg();
+        if a != 0 {
+            a
+        } else {
+            (shared.e_com_time() / 3).max(0) as u32
+        }
+    };
+    #[cfg(not(feature = "zctrace"))]
     let avg = (shared.e_com_time() / 3).max(0) as u32;
     let cnt = unsafe { (*pac::TIM2::PTR).cnt.read().bits() };
     // Edge probe: every confirmed-pending entry counts (camp re-fires
