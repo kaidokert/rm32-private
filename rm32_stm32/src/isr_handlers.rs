@@ -96,6 +96,37 @@ pub fn handle_tim6() {
     };
     rm32::control::isr_logic::ten_khz_tick(&mut ctx);
 
+    // Mid-window N-pin trap (storm hunt): at 20 kHz, if comp drive is on
+    // and the motor is in interrupt mode, the current driven phase's N
+    // pin must still be AF. A hit here with the post-com_step check
+    // clean = a concurrent writer reverts it between commutations.
+    #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
+    if shared.running() && !shared.old_routine() {
+        use core::sync::atomic::Ordering;
+        let comp_on = match crate::phase::COMP_PWM_LIVE.load(Ordering::Relaxed) {
+            1 => false,
+            2 => true,
+            _ => state.config.comp_pwm != 0,
+        };
+        if comp_on {
+            let step = state.commutation.step();
+            let (on_a, pin) = match step {
+                1 | 6 => (false, 1u32),
+                4 | 5 => (false, 0),
+                2 | 3 => (true, 7),
+                _ => (false, 1),
+            };
+            let moder = unsafe {
+                core::ptr::read_volatile(
+                    (if on_a { 0x4800_0000u32 } else { 0x4800_0400 }) as *const u32,
+                )
+            };
+            if (moder >> (pin * 2)) & 3 != 0b10 {
+                use rm32::hal::IntervalTimer as _;
+                crate::edge_probe::midw_violation(step, state.hal.interval.count());
+            }
+        }
+    }
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
@@ -127,6 +158,37 @@ pub fn handle_tim14() {
         state.config.bi_direction != 0,
         state.config.stall_protection != 0 || state.config.rc_car_reverse != 0,
     );
+    // Comp-engagement violation trap (storm hunt): immediately after the
+    // commutation's com_step, the driven phase's N pin MUST be AF when
+    // complementary drive is active. A violation here = the com_step's
+    // own write didn't land; a violation appearing LATER (statistical
+    // MODER sampling) = a concurrent writer reverted it.
+    #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
+    {
+        use core::sync::atomic::Ordering;
+        let comp_on = match crate::phase::COMP_PWM_LIVE.load(Ordering::Relaxed) {
+            1 => false,
+            2 => true,
+            _ => state.config.comp_pwm != 0,
+        };
+        if comp_on {
+            let step = state.commutation.step();
+            // step -> (driven phase idx, N-pin port A?, pin#): A=PB1 B=PB0 C=PA7
+            let (idx, on_a, pin) = match step {
+                1 | 6 => (0usize, false, 1u32),
+                4 | 5 => (1, false, 0),
+                2 | 3 => (2, true, 7),
+                _ => (0, false, 1),
+            };
+            let moder = unsafe {
+                core::ptr::read_volatile(
+                    (if on_a { 0x4800_0000u32 } else { 0x4800_0400 }) as *const u32,
+                )
+            };
+            let ok = (moder >> (pin * 2)) & 3 == 0b10;
+            crate::edge_probe::npin_check(idx, ok);
+        }
+    }
     // Blackbox: one REF per commutation step; data = commutation interval.
     #[cfg(all(
         feature = "blackbox",

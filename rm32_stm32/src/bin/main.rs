@@ -306,6 +306,33 @@ fn main() -> ! {
         rm32_stm32::phase::COMP_PWM_LIVE.store(1, core::sync::atomic::Ordering::Relaxed);
         rm32_stm32::dprintln!("[rm32] bench drive override: DIODE at boot ('D' toggles)");
     }
+
+    // Self-hosted DWT watchpoint on phase::COMP_PWM_LIVE (storm hunt):
+    // a rogue write triggers DebugMonitor, which scans the exception
+    // frame for flash-range words (stacked LR + PC) and stores them for
+    // the 'i' readout. One-shot: the handler disarms the comparator.
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    unsafe {
+        // C_DEBUGEN (DHCSR bit0) is debugger-owned and readable by the
+        // core: while halting debug is enabled (any probe attach latches
+        // it until POWER CYCLE), a DWT match HALTS the core instead of
+        // raising DebugMonitor — the silent-death mode this trap first
+        // shipped with. Arm only on a clean power-up.
+        let dhcsr = core::ptr::read_volatile(0xE000_EDF0 as *const u32);
+        if dhcsr & 1 == 0 {
+            let addr = &rm32_stm32::phase::COMP_PWM_LIVE as *const _ as u32;
+            let dcb = &*cortex_m::peripheral::DCB::PTR;
+            dcb.demcr.modify(|v| v | (1 << 16)); // MON_EN
+            let dwt = &*cortex_m::peripheral::DWT::PTR;
+            dwt.c[1].comp.write(addr);
+            dwt.c[1].mask.write(0);
+            dwt.c[1].function.write(0x6); // write access watchpoint
+            rm32_stm32::dprintln!("[rm32] DWT watch armed on {:#010x}", addr);
+        } else {
+            rm32_stm32::dprintln!("[rm32] DWT watch SKIPPED (C_DEBUGEN set; power-cycle to arm)");
+        }
+    }
+
     isr_state.forward = main_state.config.dir_reversed == 0;
     isr_state.edt_arm_enable = main_state.config.input_type() == rm32::config::InputType::EdtArm;
     isr_state
@@ -452,7 +479,15 @@ fn main() -> ! {
             #[cfg(feature = "zctrace")]
             {
                 let (gc, pr) = rm32_stm32::edge_probe::totals();
-                rm32_stm32::dprintln!("[veto gated={} prej={}]", gc, pr);
+                let (va, vb, vc) = rm32_stm32::edge_probe::npin_violations();
+                rm32_stm32::dprintln!(
+                    "[veto gated={} prej={} nviol A={} B={} C={}]",
+                    gc,
+                    pr,
+                    va,
+                    vb,
+                    vc
+                );
             }
             // Dump recent frame snapshots (mix of pass + fail). Useful for
             // catching DMA buffer alignment / edge polarity issues in bidir.
@@ -624,6 +659,26 @@ fn main() -> ! {
                                 vraw,
                                 bench_guard.latched().is_some() as u8
                             );
+                            #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
+                            {
+                                let (va, vb, vc) = rm32_stm32::edge_probe::npin_violations();
+                                let (mv, mi) = rm32_stm32::edge_probe::midw();
+                                let dc = rm32_stm32::phase::DIODE_PWM_CALLS
+                                    .load(core::sync::atomic::Ordering::Relaxed);
+                                rm32_stm32::dprintln!(
+                                    "[nviol A={} B={} C={} midw={} lstep={} lcnt={} dpwm={} wlr={:#x} wpc={:#x} whits={}]",
+                                    va,
+                                    vb,
+                                    vc,
+                                    mv,
+                                    mi & 0xFF,
+                                    mi >> 8,
+                                    dc,
+                                    rm32_stm32::edge_probe::watch_read().1,
+                                    rm32_stm32::edge_probe::watch_read().0,
+                                    rm32_stm32::edge_probe::watch_hits()
+                                );
+                            }
                         }
                         UartCmd::TraceToggle => {
                             #[cfg(feature = "zctrace")]
@@ -804,4 +859,28 @@ fn main() -> ! {
         // in ten_khz_tick (TIM6 ISR) at 20 kHz.
         cortex_m::asm::nop();
     }
+}
+
+/// Self-hosted watchpoint catcher. The DWT write-comparator on
+/// phase::COMP_PWM_LIVE raises DebugMonitor; the exception frame sits
+/// above this handler's own frame on MSP. Rather than fight prologue
+/// offsets, scan upward for the first two flash-range words — the
+/// stacked LR (thumb bit set) and PC of the writer. One-shot.
+#[cfg(all(feature = "benchuart", feature = "stm32l431", feature = "zctrace"))]
+#[cortex_m_rt::exception]
+fn DebugMonitor() {
+    let msp = cortex_m::register::msp::read();
+    let mut found = [0u32; 2];
+    let mut n = 0;
+    for off in (0..96u32).step_by(4) {
+        let v = unsafe { core::ptr::read_volatile((msp + off) as *const u32) };
+        if (0x0800_0000..0x0801_0000).contains(&(v & !1)) {
+            found[n] = v;
+            n += 1;
+            if n == 2 {
+                break;
+            }
+        }
+    }
+    rm32_stm32::edge_probe::watch_store(found.get(1).copied().unwrap_or(0), found[0]);
 }

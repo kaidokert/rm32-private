@@ -31,6 +31,10 @@ pub static COMP_PWM_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::Ato
 #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
 pub static PHASE_ATOMIC_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
+/// Storm-hunt: count of phase_pwm calls that took the DIODE branch.
+#[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+pub static DIODE_PWM_CALLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// L431 atomic com_step, ported from the clone's proven
 /// `set_phase_roles` (minz/src/tim1_motor_pwm.rs) onto rm32's AM32
 /// pin naming: A = PA10/PB1, B = PA9/PB0, C = PA8/PA7 (hi/lo).
@@ -212,6 +216,13 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     #[inline]
     fn phase_pwm<H: GpioPin, L: GpioPin>(&self) {
         let comp = self.effective_comp_pwm();
+        // Storm-hunt tap: count diode-style pwm calls; if this climbs
+        // while the live override forces complementary, some caller
+        // reaches phase_pwm with comp=false (the reverter fingerprint).
+        #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+        if !comp {
+            DIODE_PWM_CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
         if self.bridge_enable {
             if comp {
                 L::set_mode(MODE_OUTPUT);

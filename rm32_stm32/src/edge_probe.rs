@@ -29,6 +29,66 @@ static LAST_ARM: AtomicU16 = AtomicU16::new(NO_EDGE);
 /// the zct stream is off).
 static TOTAL_GATED: AtomicU32 = AtomicU32::new(0);
 static TOTAL_REJECTS: AtomicU32 = AtomicU32::new(0);
+/// Comp-engagement violation counters: driven phase's N-pin MODER was
+/// NOT AF right after a comp-mode commutation (per phase A/B/C).
+static NPIN_VIOL: [AtomicU32; 3] = [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
+
+/// Check the driven phase's N-pin right after com_step (TIM16 ISR).
+/// phase_idx: 0=A(PB1) 1=B(PB0) 2=C(PA7).
+#[inline]
+pub fn npin_check(phase_idx: usize, ok: bool) {
+    if !ok {
+        NPIN_VIOL[phase_idx].fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Mid-window violation info: count + last (step | cnt<<8) snapshot.
+static MIDW_VIOL: AtomicU32 = AtomicU32::new(0);
+static MIDW_INFO: AtomicU32 = AtomicU32::new(0);
+
+#[inline]
+pub fn midw_violation(step: u8, cnt: u32) {
+    MIDW_VIOL.fetch_add(1, Ordering::Relaxed);
+    MIDW_INFO.store((step as u32) | (cnt.min(0xFFFFFF) << 8), Ordering::Relaxed);
+}
+
+pub fn midw() -> (u32, u32) {
+    (
+        MIDW_VIOL.load(Ordering::Relaxed),
+        MIDW_INFO.load(Ordering::Relaxed),
+    )
+}
+
+/// Self-hosted watchpoint: writer PC/LR captured by DebugMonitor.
+static WATCH_PC: AtomicU32 = AtomicU32::new(0);
+static WATCH_LR: AtomicU32 = AtomicU32::new(0);
+
+static WATCH_HITS: AtomicU32 = AtomicU32::new(0);
+
+pub fn watch_store(pc: u32, lr: u32) {
+    WATCH_PC.store(pc, Ordering::Relaxed);
+    WATCH_LR.store(lr, Ordering::Relaxed);
+    WATCH_HITS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn watch_hits() -> u32 {
+    WATCH_HITS.load(Ordering::Relaxed)
+}
+
+pub fn watch_read() -> (u32, u32) {
+    (
+        WATCH_PC.load(Ordering::Relaxed),
+        WATCH_LR.load(Ordering::Relaxed),
+    )
+}
+
+pub fn npin_violations() -> (u32, u32, u32) {
+    (
+        NPIN_VIOL[0].load(Ordering::Relaxed),
+        NPIN_VIOL[1].load(Ordering::Relaxed),
+        NPIN_VIOL[2].load(Ordering::Relaxed),
+    )
+}
 
 /// COMP ISR entry with a confirmed pending edge. `cnt` = interval-timer
 /// count at classification time. COMP-ISR context.
