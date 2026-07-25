@@ -118,6 +118,7 @@ pub fn handle_tim14() {
         &mut state.hal.comp,
         &mut state.hal.phase,
         state.config.bi_direction != 0,
+        state.config.stall_protection != 0 || state.config.rc_car_reverse != 0,
     );
     // Blackbox: one REF per commutation step; data = commutation interval.
     #[cfg(all(

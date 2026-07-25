@@ -246,6 +246,7 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
 }
 
 /// Commutation timer expired (TIM14/TIM16 ISR body).
+#[allow(clippy::too_many_arguments)]
 pub fn commutation_timer_expired<S, C, Ph, T>(
     commutation: &mut Commutation,
     bemf: &mut BemfState,
@@ -254,6 +255,7 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     comp: &mut C,
     phase: &mut Ph,
     bidirectional: bool,
+    strict_changeover: bool,
 ) where
     S: SharedComm,
     C: hal::Comparator,
@@ -299,7 +301,19 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     } else {
         OLD_ROUTINE_EXIT_INTERVAL
     };
-    if shared.old_routine() && zc >= OLD_ROUTINE_EXIT_ZC && ci <= exit_interval {
+    // Polling→interrupt changeover (AM32 main.c:1903-1913): the
+    // zc>=20 form applies ONLY with stall_protection / rc_car_reverse;
+    // the normal path is `ci < changeover` ALONE. rm32 previously
+    // required zc>=20 unconditionally — and since spin-up desyncs reset
+    // zero_crosses, a descent through the changeover rarely survived 20
+    // commutations: THE engage lottery (forensic: ci descending
+    // 2676→853, 30/30 still polling, sawtooth zc resets).
+    let changeover_met = if strict_changeover {
+        zc >= OLD_ROUTINE_EXIT_ZC && ci <= exit_interval
+    } else {
+        ci < exit_interval
+    };
+    if shared.old_routine() && changeover_met {
         shared.transition(MotorEvent::BemfLocked);
         // Changeover: arm the interrupt path now (AM32 zcfoundroutine
         // enables comparator interrupts at this exact transition).

@@ -594,6 +594,7 @@ impl Harness {
                         &mut self.hal.comp,
                         &mut self.hal.phase,
                         self.config.bi_direction != 0,
+                        self.config.stall_protection != 0 || self.config.rc_car_reverse != 0,
                     );
                 }
             }

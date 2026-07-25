@@ -300,6 +300,7 @@ mod tests {
             &mut comp,
             &mut phase,
             false, // not bidirectional
+            false, // normal changeover (no stall/rc-car strictness)
         );
 
         assert_ne!(comm.step, step_before);
