@@ -211,8 +211,25 @@ pub fn handle_tim14() {
         }
     }
     // Blackbox: one REF per commutation step; data = commutation interval.
+    // GATED on the zct stream being armed: the lean-build A/B measured
+    // per-commutation instrumentation at priority 0 as a 3x camp-storm
+    // amplifier (70 vs 15-32 entries/window). Instruments now cost only
+    // while a capture is armed ('Z'), like any attached scope.
     #[cfg(all(
         feature = "blackbox",
+        feature = "zctrace",
+        any(feature = "stm32l431", feature = "stm32g431")
+    ))]
+    if crate::bench_zct::enabled() {
+        crate::bench_bb::record(
+            rm32::blackbox::EV_REF,
+            state.commutation.step(),
+            shared.commutation_interval().min(u16::MAX as u32) as u16,
+        );
+    }
+    #[cfg(all(
+        feature = "blackbox",
+        not(feature = "zctrace"),
         any(feature = "stm32l431", feature = "stm32g431")
     ))]
     crate::bench_bb::record(
@@ -284,16 +301,23 @@ pub fn handle_comp() {
     #[cfg(not(feature = "zctrace"))]
     let _ = accepted;
     // Blackbox: one ACC per genuine acceptance. data = commutation interval.
+    // Gated on zct-armed (see the REF record above for the rationale).
     #[cfg(all(
         feature = "blackbox",
         any(feature = "stm32l431", feature = "stm32g431")
     ))]
     if accepted {
-        crate::bench_bb::record(
-            rm32::blackbox::EV_ACC,
-            state.commutation.step(),
-            isr::shared().commutation_interval().min(u16::MAX as u32) as u16,
-        );
+        #[cfg(feature = "zctrace")]
+        let armed = crate::bench_zct::enabled();
+        #[cfg(not(feature = "zctrace"))]
+        let armed = true;
+        if armed {
+            crate::bench_bb::record(
+                rm32::blackbox::EV_ACC,
+                state.commutation.step(),
+                isr::shared().commutation_interval().min(u16::MAX as u32) as u16,
+            );
+        }
     }
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
