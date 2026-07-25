@@ -670,6 +670,21 @@ fn main() -> ! {
                             #[cfg(not(feature = "stm32l431"))]
                             rm32_stm32::dprintln!("[bench] atomic writer: L431 only");
                         }
+                        UartCmd::AdcToggle => {
+                            #[cfg(feature = "stm32l431")]
+                            {
+                                use core::sync::atomic::Ordering;
+                                use rm32_stm32::mcu_l431::adc::ADC_PAUSE;
+                                let on = !ADC_PAUSE.load(Ordering::Relaxed);
+                                ADC_PAUSE.store(on, Ordering::Relaxed);
+                                rm32_stm32::dprintln!(
+                                    "[bench] adc: {} (live)",
+                                    if on { "PAUSED" } else { "RUNNING" }
+                                );
+                            }
+                            #[cfg(not(feature = "stm32l431"))]
+                            rm32_stm32::dprintln!("[bench] adc toggle: L431 only");
+                        }
                         UartCmd::BbDump => {
                             #[cfg(feature = "blackbox")]
                             {

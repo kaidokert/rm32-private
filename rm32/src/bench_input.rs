@@ -34,6 +34,9 @@ pub enum UartCmd {
     /// 'E' — toggle the atomic commutation writer live (bench
     /// diagnostic: sequential per-pin vs one-BSRR/one-MODER per port).
     AtomicToggle,
+    /// 'A' — pause/resume ADC conversions live (bench diagnostic:
+    /// mux-kickback A/B; measurements freeze while paused).
+    AdcToggle,
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -83,6 +86,7 @@ impl UartDuty {
             b'b' => Some(UartCmd::BbDump),
             b'D' => Some(UartCmd::DriveToggle),
             b'E' => Some(UartCmd::AtomicToggle),
+            b'A' => Some(UartCmd::AdcToggle),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;

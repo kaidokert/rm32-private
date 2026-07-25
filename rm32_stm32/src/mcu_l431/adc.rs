@@ -1,5 +1,9 @@
 //! L431 ADC: CH8 current, CH11 voltage, CH17 temp. DMA1_CH1 circular.
 
+/// Bench live ADC pause ('A' command).
+#[cfg(feature = "benchuart")]
+pub static ADC_PAUSE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 use crate::adc_hal::AdcPeripheral;
 use crate::pac::{ADC_COMMON, ADC1, DMA1, GPIOA, RCC};
 use crate::regs::{InitError, wait_for};
@@ -99,6 +103,12 @@ impl AdcPeripheral for L431AdcOps {
     }
 
     fn start_conversion(&self) {
+        // Bench 'A' diagnostic: paused ADC = no mux switching (clone's
+        // parity-tag ADC was dormant); measurements freeze while paused.
+        #[cfg(feature = "benchuart")]
+        if ADC_PAUSE.load(core::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         let adc = unsafe { &*ADC1::ptr() };
         adc.cr.modify(|_, w| w.adstart().set_bit());
     }
