@@ -84,11 +84,19 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 ctx.hal.phase().com_step(step);
                 ctx.hal.comp().set_step(step, ctx.commutation.rising);
                 ctx.hal.comp().change_input();
-                // AM32 startMotor deliberately does NOT enable comparator
-                // interrupts — startup runs pure polling; the interrupt
-                // path arms at the BemfLocked changeover (main.c's
-                // zcfoundroutine). rm32 previously enabled here, running
-                // both BEMF paths concurrently from the first commutation.
+                // AM32 startMotor seeds (main.c:954-955): a fat initial
+                // commutation interval and a HALF-FULL interval timer. The
+                // 5000 count is the load-bearing trick — it makes the first
+                // ZC acceptance gate (CNT > average_interval/2) passable
+                // immediately, so engage converges deterministically instead
+                // of hovering at the changeover knife-edge (the observed
+                // ~50% 'engage lottery'; the clone starts 8/8 with these).
+                ctx.shared.set_commutation_interval(10000);
+                ctx.hal.interval().set_count(5000);
+                // Comparator interrupts deliberately NOT enabled here — the
+                // clone's one divergence from AM32 main.c:958, measured
+                // start-reliability-positive: startup runs pure polling and
+                // the interrupt path arms at the BemfLocked changeover.
             }
         } else {
             ctx.shared.set_duty_cycle_setpoint(0);

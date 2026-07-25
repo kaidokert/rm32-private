@@ -549,12 +549,21 @@ impl<LED: OutputPin> MainState<LED> {
             self.config.temperature_limit,
         ));
 
-        // Min BEMF counts adjustment — more lenient during startup
+        // Min BEMF counts adjustment — STRICTER during startup (AM32
+        // main.c:2177-2188 with the global TARGET_MIN_BEMF_COUNTS=3 the
+        // Vimdrones L431 inherits): startup 3*2=6 (bidir 3+1=4), running 3.
+        // rm32 previously used 4/2 — weaker confirmation let noise ZCs
+        // poison the startup interval estimate (engage-lottery feeder).
+        const TARGET_MIN_BEMF_COUNTS: u8 = 3;
         if zc < 5 {
-            let counts = if self.config.bi_direction != 0 { 3 } else { 4 };
+            let counts = if self.config.bi_direction != 0 {
+                TARGET_MIN_BEMF_COUNTS + 1
+            } else {
+                TARGET_MIN_BEMF_COUNTS * 2
+            };
             shared.set_min_bemf_counts(counts);
         } else {
-            shared.set_min_bemf_counts(2);
+            shared.set_min_bemf_counts(TARGET_MIN_BEMF_COUNTS);
         }
 
         // Filter level — dynamic based on motor speed
