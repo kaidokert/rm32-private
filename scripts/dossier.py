@@ -79,9 +79,23 @@ class Bench:
                 return True
         return False
 
+    def rampdown(self):
+        # Coast-rectification guard: killing from full speed rectifies
+        # BEMF into the unsinkable rail (measured 15.9-16.1 V spikes).
+        # Walk the throttle down before 'w'.
+        for pct in (60, 40, 25, 15):
+            self.dwell(pct, 0.4)
+
     def finish(self):
-        time.sleep(0.5)
-        self.raw += self.p.read(400000)
+        # Drain the tail until the stream goes quiet (the clone's
+        # unbatched full-rate trace can hold >1 MB in flight; a fixed
+        # single read truncated the top ladder levels on run 1).
+        quiet = 0
+        while quiet < 3:
+            chunk = self.p.read(400000)
+            self.raw += chunk
+            quiet = quiet + 1 if len(chunk) < 4096 else 0
+            time.sleep(0.1)
         self.cmd(b"i")
         self.p.write(b"w")
         self.p.flush()
@@ -226,7 +240,7 @@ def soak(b):
     b.dwell(0, 1.5)
     b.dwell(20, 2)
     b.dwell(40, 3)
-    for _ in range(5):
+    for _ in range(3):
         b.mark("50")
         b.dwell(50, 60)
         b.mark("70")
@@ -257,6 +271,10 @@ def main():
             b.cmd(b"J")
         PROGRAMS[a.program](b)
     finally:
+        try:
+            b.rampdown()
+        except Exception:
+            pass
         b.finish()
 
     stem = f"{a.outdir}/{a.fw}_{a.program}_{a.rep}"
