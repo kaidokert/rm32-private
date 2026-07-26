@@ -74,7 +74,7 @@ use minz::tim6_loop::Tim6Loop;
 use minz::uart_tx::{TX_RING_LEN, UartTxWriter};
 use minz::{Am32Motor, Am32Observer};
 
-use minz_core::am32::{RxRing, UartDuty, ZCT_REC, ZctRing};
+use minz_core::am32::{UartDuty, ZCT_REC, ZctRing};
 use minz_core::am32_control::{
     bemf_timeout_rekick, desync_check_band, honor_stop, set_input, variable_pwm_ride,
 };
@@ -243,22 +243,12 @@ static ZCT_COMM_N: AtomicU32 = AtomicU32::new(0);
 static ZCT_BATCHING: AtomicBool = AtomicBool::new(false);
 
 // ===============================================================
-// USART2 RX byte ring (ISR producer, main consumer).
+// USART2 RX: DMA-circular, no ISR, no statics here — ring + tail
+// live in minz::usart2_rx (ported back from rm32 bench_uart.rs);
+// main drains via minz::usart2_rx::pop() in rx_drain.
+// (minz_core::am32::RxRing keeps its host tests but has no firmware
+// user anymore.)
 // ===============================================================
-const RX_N: usize = 256;
-static RX_RING: [AtomicU16; RX_N] = [const { AtomicU16::new(0) }; RX_N];
-static RX_HEAD: AtomicUsize = AtomicUsize::new(0);
-static RX_TAIL: AtomicUsize = AtomicUsize::new(0);
-
-/// The coupled RX-ring state, grouped as `minz_core::am32::RxRing`
-/// (push/pop host-tested there) and serviced by
-/// `minz::usart2_rx::service_rx` — this file owns only the storage
-/// and the wiring.
-static RX: RxRing<'static, RX_N> = RxRing {
-    ring: &RX_RING,
-    head: &RX_HEAD,
-    tail: &RX_TAIL,
-};
 
 // ===============================================================
 // Cohesion clusters — each struct bundles the loose statics above
@@ -356,7 +346,6 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     let duty = &DUTY;
     let bench = &BENCH;
     let zct = &ZCT;
-    let rx = &RX;
     let mut motor = motor();
     let hal = &mut motor;
     let obs = &observer();
@@ -371,7 +360,7 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
 
     loop {
         minz::iwdg::refresh();
-        rx_drain(rx, &mut uart, duty, bench);
+        rx_drain(&mut uart, duty, bench);
         honor_stop(drive, duty, bench, hal);
 
         // e_com_time (main.c:2159): (sum+4)>>1, 0.5 µs units. Threaded into
@@ -394,11 +383,12 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     }
 }
 
-/// RX drain band — drain USART2 RX ring → uart_duty parser dispatch
-/// (uart_duty_poll main.c:1367).
+/// RX drain band — drain the USART2 DMA ring → uart_duty parser
+/// dispatch (uart_duty_poll main.c:1367). Bytes arrive via DMA1_CH6
+/// (minz::usart2_rx), so this poll is the ONLY RX consumer — no ISR.
 #[inline]
-fn rx_drain(rx: &RxRing<RX_N>, uart: &mut UartDuty, duty: &Duty, bench: &Bench) {
-    while let Some(c) = rx.pop() {
+fn rx_drain(uart: &mut UartDuty, duty: &Duty, bench: &Bench) {
+    while let Some(c) = minz::usart2_rx::pop() {
         apply_uart_cmd(duty, bench, uart.step(c));
     }
 }
@@ -600,7 +590,7 @@ fn main() -> ! {
     // IWDG — the guard that survives the MCU (bench-safety kill #3).
     minz::iwdg::start_1s();
 
-    // USART2 receiver (RXNE IRQ enqueues bytes).
+    // USART2 receiver — DMA1_CH6 circular, main polls (usart2_rx::pop).
     minz::usart2_rx::init_pa2_rx(dp.USART2, clocks.pclk1().raw(), BAUD);
 
     // Boot: energize step (AM32 init `comStep(2)` main.c:2087) at duty 0
@@ -625,18 +615,17 @@ fn main() -> ! {
 
     let mut tx_writer = UartTxWriter::new(tx, TX_RING);
 
-    // Priorities: COMP=0, TIM1_UP_TIM16(=COM)=0, TIM6=3, USART2=2
+    // Priorities: COMP=0, TIM1_UP_TIM16(=COM)=0, TIM6=3
     // (peripherals.c:450,491 + directive). <<4 IPR encoding via priority.rs.
+    // USART2 has no vector anymore — RX is DMA-circular (usart2_rx).
     unsafe {
         priority::set_prigroup_preempt4_sub0();
         priority::set_irq_prio(Interrupt::COMP, 0);
         priority::set_irq_prio(Interrupt::TIM1_UP_TIM16, 0);
         priority::set_irq_prio(Interrupt::TIM6_DACUNDER, 3);
-        priority::set_irq_prio(Interrupt::USART2, 2);
         NVIC::unmask(Interrupt::COMP);
         NVIC::unmask(Interrupt::TIM1_UP_TIM16);
         NVIC::unmask(Interrupt::TIM6_DACUNDER);
-        NVIC::unmask(Interrupt::USART2);
     }
 
     // panic::ensure_rtt() (in init) left PRIMASK=1 — re-enable IRQs.
@@ -672,12 +661,4 @@ fn TIM1_UP_TIM16() {
 fn TIM6_DACUNDER() {
     let mut motor = motor();
     tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &mut motor, &observer())
-}
-
-/// USART2 RX (priority 2) — enqueue bytes; parser runs in main.
-/// Body lives with its peripheral: minz::usart2_rx::service_rx
-/// (drain RXNE + error clears, AM32 main.c:1417-1419).
-#[interrupt]
-fn USART2() {
-    minz::usart2_rx::service_rx(&RX)
 }
