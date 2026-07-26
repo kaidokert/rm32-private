@@ -1,5 +1,12 @@
-# Desync detection and recovery
-# Covers: main_loop desync check, zero_crosses reset, running=0, old_routine=1
+# Desync detection and recovery — FAST-ROTOR PATH (kept divergence)
+# Covers: main_loop desync check, zero_crosses reset, and the fast-rotor
+# response: commutation_interval < DESYNC_STAY_INTERRUPT_CI keeps
+# interrupt mode (old_routine=0, running=1) instead of AM32's demotion.
+# Rationale (bench 07-26): rm32's 20 kHz tick-grid polling cannot track
+# windows shorter than ~3 samples, so a demotion at speed forces a
+# coast-down/restart churn cycle; AM32's main-loop-rate polling re-locks
+# in ~1 ms so its demotion is harmless. Slow-rotor desyncs (ci >= 600)
+# still demote — covered by desync_recovery.txt.
 #
 # Desync triggers when:
 #   desync_check=1 AND zero_crosses>10 AND
@@ -40,6 +47,8 @@ tick 1  | throttle=500 zc=1 comp=1 |
 tick 1  | throttle=500 zc=1 comp=0 |
 tick 1  | throttle=500 zc=1 comp=1 |
 
-# Desync should have fired: zero_crosses reset, old_routine=1
-# running=0 (because input>47 and !bi_direction, OR commutation_interval>1000)
-tick 1  | throttle=500 | zero_crosses<=2 old_routine=1
+# Desync should have fired: zero_crosses reset. The averaged-down
+# interval is far below DESYNC_STAY_INTERRUPT_CI, so the fast-rotor
+# response applies: interrupt mode retained (old_routine=0), still
+# running — only the counters/duty took the hit.
+tick 1  | throttle=500 | zero_crosses<=2 old_routine=0 running=1

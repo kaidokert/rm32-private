@@ -73,6 +73,14 @@ pub const DESYNC_RESET_INTERVAL: u32 = 5000;
 /// Prevents false desync detection at very low RPM where intervals are naturally large.
 pub const DESYNC_MAX_INTERVAL: u32 = 2000;
 
+/// Fast-rotor desync response (KEPT DIVERGENCE, see main_state.rs desync
+/// handler): below this commutation interval (ticks; 600 = 300 µs windows
+/// = ~555 Hz e and faster) a desync keeps interrupt mode instead of
+/// demoting to polling — the 20 kHz tick-grid polling cannot track
+/// windows shorter than ~3 samples, so a demotion at speed forces a
+/// coast-down/restart cycle AM32's main-loop-rate polling never suffers.
+pub const DESYNC_STAY_INTERRUPT_CI: u32 = 600;
+
 /// BEMF timeout threshold at low throttle (< 150). Lenient to avoid false desync
 /// when motor is barely spinning and BEMF signal is weak.
 pub const BEMF_TIMEOUT_LENIENT: u8 = 100;

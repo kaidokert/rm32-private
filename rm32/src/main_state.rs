@@ -366,31 +366,54 @@ impl<LED: OutputPin> MainState<LED> {
             if diff > (self.timing.average_interval >> 1)
                 && self.timing.average_interval < DESYNC_MAX_INTERVAL
             {
-                // Reset interval to 5000 if motor was running (>100 ZCs)
-                // Check before zeroing zero_crosses (C has this after, which is a bug)
-                if zc > 100 {
-                    self.timing.average_interval = DESYNC_RESET_INTERVAL;
-                }
+                // AM32 has `if (zero_crosses > 100) average_interval = 5000`
+                // HERE — but places it AFTER zeroing zero_crosses, so it is
+                // DEAD CODE and never executes (changelog 1.91 intent,
+                // botched). rm32 originally "fixed" the ordering, which
+                // CREATED a desync echo AM32 never has: last_average_interval
+                // becomes 5000 while the real interval is ~200, so the
+                // |last-avg| > avg/2 test re-fires ~10 crossings later and
+                // kicks duty down a second time just as recovery starts.
+                // Parity = match the reference's BEHAVIOR (no reset), not its
+                // intent. (Bench 07-26: clone desyncs at 60-80% are invisible
+                // <50ms blips; rm32's echoed double-kick fed the 1-2.4s churn.)
                 shared.set_zero_crosses(0);
-                // DesyncFallback first: Running→OldRoutine (sets old_routine=1).
-                // Then StopMotor conditionally: OldRoutine→Armed (sets running=0).
-                // Order matters: StopMotor before DesyncFallback would go
-                // Running→Armed, blocking DesyncFallback (Armed has no transition).
-                // Read mode BEFORE DesyncFallback flips old_routine.
                 let desync_from_interrupt_mode = !shared.old_routine();
-                shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
                 // Duty kick-down (AM32: last_duty_cycle = min_startup/2,
                 // unconditional in the desync handler): the restart ramps
                 // from low instead of pushing full duty into an unlocked
-                // field. (An earlier interrupt-mode gate here rested on a
-                // single engage bundle later shown to be lottery noise —
-                // the reference is ungated.)
-                let _ = desync_from_interrupt_mode;
+                // field.
                 shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
-                if (self.config.bi_direction == 0 && shared.adjusted_input() > 47)
-                    || shared.commutation_interval() > 1000
-                {
-                    shared.transition(crate::motor_mode::MotorEvent::StopMotor);
+                // KEPT DIVERGENCE (fast-rotor desync stays in interrupt
+                // mode). AM32 demotes to polling + running=0 here and its
+                // main-loop-rate zcfoundroutine re-locks within ~1 ms, so
+                // its desyncs at 60-80% are invisible <50 ms blips (clone
+                // control, 07-26: zc resets every 1-3 s at duty>1195, speed
+                // never leaves 1700-1900 Hz). rm32's polling lives on the
+                // 20 kHz tick grid — at 1700 Hz e a window is ~2 samples and
+                // the 3-count persistence cannot fit, so a demoted rotor
+                // coasts to ~170 Hz before polling re-locks: each desync
+                // cost 1-2.4 s of churn + a restart current surge. The
+                // level-history probe shows the rotor never actually slips
+                // at these events (extended-demag sensing gap, odd-step
+                // polarity-locked), so with the comparator left armed the
+                // next real crossing re-locks immediately — the clone's
+                // OUTCOME, reached within rm32's architecture. Polling
+                // demotion still applies below the tick-grid bandwidth.
+                let fast_rotor = shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
+                if !(desync_from_interrupt_mode && fast_rotor) {
+                    // DesyncFallback first: Running→OldRoutine (sets
+                    // old_routine=1). Then StopMotor conditionally:
+                    // OldRoutine→Armed (sets running=0). Order matters:
+                    // StopMotor before DesyncFallback would go Running→
+                    // Armed, blocking DesyncFallback (Armed has no
+                    // transition).
+                    shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
+                    if (self.config.bi_direction == 0 && shared.adjusted_input() > 47)
+                        || shared.commutation_interval() > 1000
+                    {
+                        shared.transition(crate::motor_mode::MotorEvent::StopMotor);
+                    }
                 }
             }
             self.desync_check = false;
