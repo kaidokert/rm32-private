@@ -17,6 +17,15 @@ fn TIM14() {
 
 #[interrupt]
 fn ADC_COMP() {
+    // Ack the COMP2 EXTI pending flags (line 18) at entry. The shared
+    // bemf_zero_cross has early-return paths that skip mask_interrupts
+    // (the only other place the line is cleared) — without this pre-ack
+    // a rejected edge leaves the pending bit set and NVIC re-fires
+    // forever (ISR storm; same class as the fixed L431 COMP bug — see
+    // the contract note on rm32::control::isr_logic::bemf_zero_cross).
+    let exti = unsafe { &*stm32g0xx_hal::stm32::EXTI::ptr() };
+    exti.rpr1().write(|w| unsafe { w.bits(1 << 18) });
+    exti.fpr1().write(|w| unsafe { w.bits(1 << 18) });
     isr_handlers::handle_comp();
 }
 
