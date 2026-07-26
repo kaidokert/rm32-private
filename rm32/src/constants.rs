@@ -73,6 +73,23 @@ pub const DESYNC_RESET_INTERVAL: u32 = 5000;
 /// Prevents false desync detection at very low RPM where intervals are naturally large.
 pub const DESYNC_MAX_INTERVAL: u32 = 2000;
 
+/// Wrong-phase-orbit trip (KEPT DIVERGENCE, bench 07-26): the
+/// acceptance chain can self-clock on switching artifacts in a wrong
+/// phase register (measured: injected current 2.4A -> 10-13A in one
+/// window at duty 1412, plausible z throughout, no desync-detector
+/// jump). The smoothed input current then runs ~3.3 mA per duty count
+/// vs the normal 1.2-2.3 across the whole envelope (1020->1.24A ...
+/// 2000->4.62A), so the trip is RELATIVE: it fires when I_ma exceeds
+/// duty*ORBIT_TRIP_SLOPE plus ORBIT_TRIP_OFFSET_MA, sustained for
+/// ORBIT_TRIP_MS ticks while locked.
+/// Response = full AM32 desync path (demote + kick): the demote IS the
+/// phase reset. A static ampere threshold cannot work — normal 100%
+/// draw (4.6A) exceeds any level the 70% orbit (4.7A avg) stays under.
+pub const ORBIT_TRIP_SLOPE: i32 = 2;
+pub const ORBIT_TRIP_OFFSET_MA: i32 = 1000;
+/// Consecutive 1 kHz ticks over the line before tripping (ms).
+pub const ORBIT_TRIP_MS: u16 = 30;
+
 /// Bidir DShot auto-detect confirmation: consecutive successful
 /// inverted-CRC decodes required (while the high-idle hint is active,
 /// unarmed) before committing bidir mode. The hint alone false-fires on

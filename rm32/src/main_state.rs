@@ -34,6 +34,13 @@ pub(crate) fn variable_pwm_mode2(average_interval: u32, cpu_mhz: u8) -> u16 {
     }
 }
 
+/// Wrong-phase-orbit discriminator: current far above the
+/// duty-proportional norm (see ORBIT_TRIP_* in constants.rs).
+#[inline]
+pub(crate) fn orbit_current(current_ma: i16, duty: u16) -> bool {
+    (current_ma as i32) > (duty as i32) * ORBIT_TRIP_SLOPE + ORBIT_TRIP_OFFSET_MA
+}
+
 /// Compute duty ceiling from eRPM and temperature limits.
 /// Returns the more restrictive of the two (or 2000 if neither applies).
 pub(crate) fn duty_ceiling(
@@ -128,6 +135,10 @@ pub struct MainState<LED: OutputPin = NoLed> {
     /// duty kick-down (~15-20 ms torque hole), so events/minute IS the
     /// perceived chop rate. Read by the bench 'i' info line.
     pub desync_events: u32,
+    /// Wrong-phase-orbit trips (see ORBIT_TRIP_MA) — lifetime count.
+    pub orbit_trips: u32,
+    /// Consecutive 1 kHz ticks with current above ORBIT_TRIP_MA.
+    pub(crate) orbit_trip_count: u16,
     pub(crate) last_armed: bool,
     /// Set on the tick when arming transition happens
     pub just_armed: bool,
@@ -178,6 +189,8 @@ impl MainState<NoLed> {
             low_cell_volt_cutoff: 330,
             desync_check: false,
             desync_events: 0,
+            orbit_trips: 0,
+            orbit_trip_count: 0,
             last_armed: false,
             just_armed: false,
             needs_reset: false,
@@ -402,7 +415,13 @@ impl<LED: OutputPin> MainState<LED> {
                 // next real crossing re-locks immediately — the clone's
                 // OUTCOME, reached within rm32's architecture. Polling
                 // demotion still applies below the tick-grid bandwidth.
-                let fast_rotor = shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
+                // Sane current required: an elevated-current desync means
+                // the wrong-phase orbit may already hold — the demote IS
+                // the phase reset, never skip it then.
+                let current_sane =
+                    !orbit_current(self.measurements.actual_current.0, shared.duty_cycle());
+                let fast_rotor =
+                    current_sane && shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
                 // Duty kick (AM32: last_duty_cycle = min_startup/2,
                 // unconditional). On the fast-rotor branch the rotor is
                 // still locked, so only HALVE the duty (kept divergence):
@@ -513,6 +532,32 @@ impl<LED: OutputPin> MainState<LED> {
             shared.set_actual_current(self.measurements.actual_current.0);
             shared.set_battery_voltage(self.measurements.battery_voltage.0);
             shared.set_degrees_celsius(self.measurements.degrees_celsius.0);
+
+            // Wrong-phase-orbit trip (kept divergence; see ORBIT_TRIP_*):
+            // sustained current far above the duty-proportional norm while
+            // locked means the BEMF acceptance chain is clocking itself off
+            // switching artifacts in a wrong phase register — plausible z,
+            // huge current, no desync-detector jump. Force the full AM32
+            // desync response; the demote IS the phase reset.
+            if shared.running()
+                && shared.zero_crosses() > 1000
+                && orbit_current(self.measurements.actual_current.0, shared.duty_cycle())
+            {
+                self.orbit_trip_count += 1;
+                if self.orbit_trip_count > ORBIT_TRIP_MS {
+                    self.orbit_trip_count = 0;
+                    self.orbit_trips = self.orbit_trips.wrapping_add(1);
+                    self.desync_events = self.desync_events.wrapping_add(1);
+                    shared.set_zero_crosses(0);
+                    shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
+                    shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
+                    if shared.adjusted_input() > 47 || shared.commutation_interval() > 1000 {
+                        shared.transition(crate::motor_mode::MotorEvent::StopMotor);
+                    }
+                }
+            } else {
+                self.orbit_trip_count = 0;
+            }
 
             // Low voltage cutoff (AM32 main.c:2045-2071). Counter increments
             // at 1 kHz now → LVC_NORMAL_THRESHOLD=10000 = 10 sec sustained
