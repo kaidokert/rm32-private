@@ -88,6 +88,12 @@ def main():
     )
     ap.add_argument("--outfile", default="envelope.bin")
     ap.add_argument("--no-inj", action="store_true")
+    ap.add_argument(
+        "--grad",
+        type=int,
+        default=0,
+        help="walk between levels in steps of this many %% (0 = hard steps)",
+    )
     a = ap.parse_args()
     levels = [(int(s.split(":")[0]), float(s.split(":")[1])) for s in a.levels.split(",")]
 
@@ -119,13 +125,23 @@ def main():
         time.sleep(0.2)
         raw += p.read(65536)
         armed_j = False
+        cur_pct = 0
         for pct, secs in levels:
             if pct >= 40 and not armed_j and not a.no_inj:
                 p.write(b"J")
                 p.flush()
                 armed_j = True
+            if a.grad and pct > cur_pct:
+                # stick-like walk: small steps, each held long enough for
+                # the two-frame confirmation (2 sends) plus settling
+                step = a.grad
+                x = cur_pct + step
+                while x < pct:
+                    dwell(x, 0.45)
+                    x += step
             stamps.append((len(raw), pct))
             dwell(pct, secs)
+            cur_pct = pct
         stamps.append((len(raw), -1))
         time.sleep(0.5)
         raw += p.read(300000)

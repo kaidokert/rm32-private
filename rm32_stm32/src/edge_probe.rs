@@ -154,6 +154,20 @@ pub fn armed(timeout: u16) {
     LAST_ARM.store(timeout, Ordering::Relaxed);
 }
 
+/// Comparator-level history, sampled once per 20 kHz tick (TIM6, prio
+/// 3 — constant per-tick cost). Bit = "comp output at POST-ZC level
+/// for the current step polarity". LSB = most recent tick; 16 bits =
+/// the window's last ~800 µs. The deaf-hiccup discriminator: a silent
+/// window that reads ...1111 was pinned post-ZC the whole time (demag
+/// hiding the crossing); ...0001 flipped late (crossing itself late).
+static LEVEL_HIST: AtomicU16 = AtomicU16::new(0);
+
+#[inline]
+pub fn level_tick(post_zc: bool) {
+    let h = LEVEL_HIST.load(Ordering::Relaxed);
+    LEVEL_HIST.store((h << 1) | post_zc as u16, Ordering::Relaxed);
+}
+
 /// TIM16 commutation ISR entry. `cnt` = interval-timer count at entry;
 /// scheduled fire was wait_time+1, so `cnt - (wait+1)` = fire latency
 /// (includes NVIC arbitration + any same-priority tail-chain delay —
@@ -164,18 +178,20 @@ pub fn tim16_fired(cnt: u32) {
 }
 
 /// Snapshot the window that just ended and reset for the next one.
-/// Returns (first_edge, entries, tim16_lat, last_arm, gated_clears,
+/// Returns (first_edge, entries, level_hist, last_arm, gated_clears,
 /// persist_rejects). Call ONCE per commutation (TIM16 handler, after
-/// the step logic).
+/// the step logic). level_hist replaced tim16_lat on the wire (fire
+/// latency was verified at arm+3..4 ticks and retired as a question).
 #[inline]
 pub fn take() -> (u16, u16, u16, u16, u8, u8) {
     let fe = FIRST_EDGE.swap(NO_EDGE, Ordering::Relaxed);
     let en = ENTRIES.swap(0, Ordering::Relaxed);
-    let tl = TIM16_LAT.swap(NO_EDGE, Ordering::Relaxed);
+    let _tl = TIM16_LAT.swap(NO_EDGE, Ordering::Relaxed);
+    let hist = LEVEL_HIST.swap(0, Ordering::Relaxed);
     let la = LAST_ARM.load(Ordering::Relaxed);
     let gc = GATED_CLEARS.swap(0, Ordering::Relaxed);
     let pr = PERSIST_REJECTS.swap(0, Ordering::Relaxed);
-    (fe, en, tl, la, gc.min(255) as u8, pr.min(255) as u8)
+    (fe, en, hist, la, gc.min(255) as u8, pr.min(255) as u8)
 }
 
 /// Lifetime (gated_clears, persist_rejects) for the heartbeat.

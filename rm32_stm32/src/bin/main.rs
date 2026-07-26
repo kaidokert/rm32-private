@@ -650,6 +650,7 @@ fn main() -> ! {
         {
             use rm32::bench_input::UartCmd;
             let bench_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+            rm32_stm32::bench_uart::drain_dma();
             let rx = rm32_stm32::bench_uart::ring();
             while let Some(b) = rx.pop() {
                 if let Some(cmd) = bench_parser.step(b) {

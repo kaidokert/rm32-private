@@ -98,6 +98,12 @@ pub fn handle_tim6() {
     };
     rm32::control::isr_logic::ten_khz_tick(&mut ctx);
 
+    // Comparator-level history (deaf-hiccup discriminator): one comp
+    // read per tick shifted into edge_probe::LEVEL_HIST — constant
+    // per-tick cost at prio 3. Decoded per window from the probe row.
+    #[cfg(feature = "zctrace")]
+    crate::edge_probe::level_tick(!comp_at_pre_zc_level());
+
     // Mid-window N-pin trap (storm hunt): at 20 kHz, if comp drive is on
     // and the motor is in interrupt mode, the current driven phase's N
     // pin must still be AF. A hit here with the post-com_step check

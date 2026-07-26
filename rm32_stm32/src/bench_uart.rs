@@ -36,17 +36,29 @@ pub fn ring() -> RxRing<'static, RING_N> {
     }
 }
 
+/// DMA circular RX buffer. DMA1_CH6 (CSELR C6S=0b0010 = USART2_RX)
+/// writes bytes here with zero ISR-latency dependence; main drains by
+/// NDTR position. This replaced RXNE-interrupt service: at 2 Mbaud a
+/// byte is 5 µs, and prio-0/1 ISR bursts delayed the USART2 vector past
+/// that often enough to corrupt ~20% of host sends (dropped digits ->
+/// phantom throttle values; see the two-frame-confirmation notes in
+/// bin/main.rs). DMA makes overrun structurally impossible.
+const DMA_N: usize = 256;
+static mut DMA_BUF: [u8; DMA_N] = [0; DMA_N];
+static DMA_TAIL: AtomicUsize = AtomicUsize::new(0);
+
 /// One-time init: PA2 → AF7 open-drain + pull-up, USART2 @ 2M 8N1
-/// RX-only with RXNE interrupt. Call AFTER the clock tree is at 80 MHz
-/// (BRR is computed for PCLK1=80M) and after input-capture GPIO setup so
-/// this owns PA2's final mux. Per RM0394, BRR and CR2.SWAP are only
-/// writable while UE=0 (true out of reset — call once). The caller owns
-/// the NVIC unmask + priority.
+/// RX-only, received bytes moved by DMA1_CH6 (circular). Call AFTER the
+/// clock tree is at 80 MHz (BRR is computed for PCLK1=80M) and after
+/// input-capture GPIO setup so this owns PA2's final mux. Per RM0394,
+/// BRR and CR2.SWAP are only writable while UE=0 (true out of reset —
+/// call once). No NVIC involvement — main polls via drain_dma().
 pub fn init() {
     unsafe {
         let rcc = &*RCC::ptr();
         rcc.ahb2enr.modify(|_, w| w.gpioaen().set_bit());
         rcc.apb1enr1.modify(|_, w| w.usart2en().set_bit());
+        rcc.ahb1enr.modify(|_, w| w.dma1en().set_bit());
 
         let gpioa = &*GPIOA::ptr();
         // PA2: alternate mode, AF7 (USART2_TX pad — SWAP makes it RX),
@@ -60,9 +72,46 @@ pub fn init() {
         let usart = &*USART2::ptr();
         usart.cr2.write(|w| w.swap().set_bit());
         usart.brr.write(|w| w.bits((PCLK1_HZ + BAUD / 2) / BAUD));
-        usart
-            .cr1
-            .write(|w| w.re().set_bit().rxneie().set_bit().ue().set_bit());
+        usart.cr3.write(|w| w.dmar().set_bit());
+        usart.cr1.write(|w| w.re().set_bit().ue().set_bit());
+
+        // DMA1_CH6 <- USART2_RX: peripheral->memory, byte, MINC, circular.
+        let dma = &*crate::pac::DMA1::ptr();
+        dma.cselr
+            .modify(|r, w| w.bits((r.bits() & !(0xF << 20)) | (0b0010 << 20)));
+        dma.ccr6.modify(|r, w| w.bits(r.bits() & !1)); // EN=0 before config
+        dma.cpar6.write(|w| w.bits(usart.rdr.as_ptr() as u32));
+        dma.cmar6
+            .write(|w| w.bits(core::ptr::addr_of_mut!(DMA_BUF) as u32));
+        dma.cndtr6.write(|w| w.bits(DMA_N as u32));
+        // MINC | CIRC | EN (MSIZE=PSIZE=8-bit, DIR=periph->mem)
+        dma.ccr6.write(|w| w.bits((1 << 7) | (1 << 5) | 1));
+    }
+}
+
+/// Move newly DMA'd bytes into the parser ring. Main-loop context, every
+/// pass. Also counts sticky USART error flags (framing/noise — overrun
+/// can no longer occur) so corruption stays observable.
+pub fn drain_dma() {
+    let rx = ring();
+    unsafe {
+        let dma = &*crate::pac::DMA1::ptr();
+        let usart = &*USART2::ptr();
+        let head = DMA_N - dma.cndtr6.read().bits() as usize;
+        let mut tail = DMA_TAIL.load(core::sync::atomic::Ordering::Relaxed);
+        while tail != head {
+            let b = core::ptr::read_volatile(core::ptr::addr_of!(DMA_BUF[tail]));
+            rx.push(b as u16);
+            tail = (tail + 1) % DMA_N;
+        }
+        DMA_TAIL.store(tail, core::sync::atomic::Ordering::Relaxed);
+        let isr = usart.isr.read();
+        if isr.ore().bit_is_set() || isr.fe().bit_is_set() || isr.nf().bit_is_set() {
+            ORE_N.fetch_add(1, Ordering::Relaxed);
+            usart
+                .icr
+                .write(|w| w.orecf().set_bit().fecf().set_bit().ncf().set_bit());
+        }
     }
 }
 
@@ -76,16 +125,11 @@ pub fn ore_count() -> u32 {
     ORE_N.load(Ordering::Relaxed)
 }
 
-/// USART2 ISR body: drain RXNE into the ring, then clear overrun /
-/// framing / noise so the IRQ can't storm (they share the RXNEIE
-/// enable). Ring-push-only — no motor state access.
+/// Legacy RXNE ISR body — kept as a no-op safety net in case the vector
+/// fires (it is no longer enabled; RX moved to DMA1_CH6, see init()).
 #[inline]
 pub fn service_rx() {
     let usart = unsafe { &*USART2::ptr() };
-    let rx = ring();
-    while usart.isr.read().rxne().bit_is_set() {
-        rx.push(usart.rdr.read().bits() as u16);
-    }
     let isr = usart.isr.read();
     if isr.ore().bit_is_set() || isr.fe().bit_is_set() || isr.nf().bit_is_set() {
         ORE_N.fetch_add(1, Ordering::Relaxed);
