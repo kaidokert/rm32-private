@@ -475,9 +475,11 @@ fn print_info(
     // directly): COMP entries vs commutations since boot.
     let _ = write!(
         tx,
-        "ce={} comm={}\r\n",
+        "ce={} comm={} dsy={} bt={}\r\n",
         COMP_ENTRIES.load(Ordering::Relaxed),
         zct.comm_n.load(Ordering::Relaxed),
+        drive.desync_happened.load(Ordering::Relaxed),
+        drive.bemf_timeout_happened.load(Ordering::Relaxed),
     );
 }
 
