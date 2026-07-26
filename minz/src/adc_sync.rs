@@ -19,6 +19,16 @@
 //! API (cur_word/cur_head/oversample_start/stop/last_raw/
 //! freeze_current/resume_current) was removed.
 //!
+//! GECKO API RESURRECTED (2026-07-26, rm32 battery-wall hunt): the
+//! on-demand oversample API (`oversample_start`/`oversample_stop`/
+//! `freeze_current`/`resume_current`/`cur_word`/`cur_head`) is back so
+//! the clone can capture per-window current at 90-100% throttle as the
+//! healthy reference against rm32's deaf 57 µs windows (`G` key →
+//! main-context ring dump). The free-run is STILL OFF during normal
+//! operation — enabling it biases the injected ch8 read (+13 counts /
+//! +300 mA at idle, measured 2026-07-12) — and is only started inside
+//! a `G` capture, then stopped, returning to the inject-only state.
+//!
 //! Injected group — hardware-triggered by TIM1 TRGO2 (OC4REF falling
 //! edge at `CNT == CCR4`, i.e. `SAMPLE_TICKS` into each PWM cycle,
 //! deep in the high-side ON window). Four channels in one burst:
@@ -31,7 +41,7 @@
 //! NOT be called — it rewrites SQR/CFGR under the armed groups.
 //! `SenseAdc` remains useful for power-up/calibration.
 
-use core::sync::atomic::AtomicU16;
+use core::sync::atomic::{AtomicU16, Ordering};
 
 use crate::hal::stm32;
 use crate::hal::stm32::{ADC1, TIM1};
@@ -47,12 +57,28 @@ use crate::hal::stm32::{ADC1, TIM1};
 /// (phase-insensitive: a battery-divider node, valid in ON or OFF).
 pub const SAMPLE_TICKS: u16 = 100;
 
-/// The FALCON GECKO-scope ring the dormant DMA1_CH1 config points at.
-/// Never DMA-written on the clone (ADSTART is never set) — kept
-/// because its presence is part of the bench-load-bearing layout/
-/// config (module header). 2048 × u16 = 4 KiB bss.
+/// The FALCON GECKO-scope ring the DMA1_CH1 config points at. DMA-
+/// written only while a `G` capture has the free-run running
+/// ([`oversample_start`]); dormant the rest of the time (module
+/// header). 2048 × u16 = 4 KiB bss; ≈ 0.55 ms at ~150 samples/cycle.
 pub const CUR_FRAMES: usize = 2048;
 static CUR_RING: [AtomicU16; CUR_FRAMES] = [const { AtomicU16::new(0) }; CUR_FRAMES];
+
+/// Read one current-ring word (frozen capture only — while the DMA is
+/// live a read is not self-consistent with its neighbours).
+#[inline]
+pub fn cur_word(i: usize) -> u16 {
+    CUR_RING[i % CUR_FRAMES].load(Ordering::Relaxed)
+}
+
+/// DMA write head = index of the NEXT slot the DMA will fill. The
+/// newest completed sample is `(head - 1) % CUR_FRAMES`.
+#[inline]
+pub fn cur_head() -> usize {
+    let dma = unsafe { &*stm32::DMA1::ptr() };
+    let remaining = dma.cndtr1.read().bits() as usize;
+    (CUR_FRAMES - remaining) % CUR_FRAMES
+}
 
 /// Configure and start both ADC groups. Call after TIM1 init and
 /// after the HAL `ADC::new` power-up/calibration (`SenseAdc::new`).
@@ -155,9 +181,72 @@ pub fn start(sample_ticks: u16) {
     // injected current sat +13 counts / +300 mA vs the pre-hybrid
     // control at idle; with it OFF the injected current matches the
     // control raw ~1. The free-run<->injected ch8 interaction was
-    // real.) On the clone nothing ever sets ADSTART — the regular
-    // config above stays armed-but-idle for its full lifetime.
+    // real.) The regular config above stays armed-but-idle until a
+    // `G` capture enables the microscope via [`oversample_start`] and
+    // stops it again after the dump ([`oversample_stop`]).
     adc.cr.modify(|_, w| w.jadstart().set_bit());
+}
+
+/// Enable the free-run current oversample: reset the ring and ADSTART
+/// the (continuous) regular group. Injected control sampling is
+/// unaffected. Call only inside a `G` capture (module header — the
+/// free-run biases the injected ch8 read, so it must not run during
+/// normal operation).
+pub fn oversample_start() {
+    let adc = unsafe { &*ADC1::ptr() };
+    let dma = unsafe { &*stm32::DMA1::ptr() };
+    if adc.cr.read().adstart().bit_is_set() {
+        return;
+    }
+    unsafe {
+        dma.ccr1.modify(|r, w| w.bits(r.bits() & !1));
+        dma.cndtr1.write(|w| w.bits(CUR_FRAMES as u32));
+        dma.ccr1.modify(|r, w| w.bits(r.bits() | 1));
+    }
+    adc.cr.modify(|_, w| w.adstart().set_bit());
+}
+
+/// Stop the free-run current oversample (ADSTP the regular group).
+/// Injected control sampling continues. Returns the ADC to the
+/// inject-only, proven-baseline state.
+pub fn oversample_stop() {
+    let adc = unsafe { &*ADC1::ptr() };
+    if adc.cr.read().adstart().bit_is_set() {
+        adc.cr.modify(|_, w| w.adstp().set_bit());
+        // Bounded: ADSTP settles in µs; an unbounded wait is a wedge.
+        crate::spin::spin_until(100_000, || adc.cr.read().adstart().bit_is_clear());
+    }
+}
+
+/// Freeze the free-run current capture for a consistent dump: stop
+/// regular conversions (injected control sampling continues), disable
+/// the DMA channel, return the ring's oldest-sample index (= next
+/// write slot). Restart with [`resume_current`] — or, for the one-shot
+/// `G` dump, follow with [`oversample_stop`] and stay inject-only.
+pub fn freeze_current() -> usize {
+    let adc = unsafe { &*ADC1::ptr() };
+    let dma = unsafe { &*stm32::DMA1::ptr() };
+    if adc.cr.read().adstart().bit_is_set() {
+        adc.cr.modify(|_, w| w.adstp().set_bit());
+        // Bounded (crate::spin house rule).
+        crate::spin::spin_until(100_000, || adc.cr.read().adstart().bit_is_clear());
+    }
+    let remaining = dma.cndtr1.read().bits() as usize;
+    dma.ccr1.modify(|r, w| unsafe { w.bits(r.bits() & !1) });
+    // +1: ADSTP may abort mid-word — skip the partial slot.
+    ((CUR_FRAMES - remaining) + 1) % CUR_FRAMES
+}
+
+/// Restart after [`freeze_current`]: reset the ring to slot 0 and
+/// re-arm the regular free-run.
+pub fn resume_current() {
+    let adc = unsafe { &*ADC1::ptr() };
+    let dma = unsafe { &*stm32::DMA1::ptr() };
+    unsafe {
+        dma.cndtr1.write(|w| w.bits(CUR_FRAMES as u32));
+        dma.ccr1.modify(|r, w| w.bits(r.bits() | 1));
+    }
+    adc.cr.modify(|_, w| w.adstart().set_bit());
 }
 
 /// Newest completed injected burst: `(phase_a, phase_b, current,

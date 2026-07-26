@@ -364,6 +364,8 @@ pub enum UartCmd {
     Info,
     /// 'b' — request a black-box dump.
     BbDump,
+    /// 'G' — request a GECKO free-run current-ring dump.
+    GeckoDump,
 }
 
 /// The pure UART duty-mode parser state — the digit accumulator that
@@ -372,7 +374,7 @@ pub enum UartCmd {
 /// main.c:1367-1416 exactly:
 /// - digits accumulate up to 4 (further digits ignored, not reset);
 /// - 's'/'w' commit [`Stop`](UartCmd::Stop) and clear the accumulator;
-/// - 'Z'/'i'/'b' emit their command WITHOUT touching the accumulator
+/// - 'Z'/'i'/'b'/'G' emit their command WITHOUT touching the accumulator
 ///   (so `50Z<nl>` still commits 50);
 /// - any other byte terminates: with digits pending it commits (a
 ///   `0` → [`Stop`](UartCmd::Stop); nonzero → percent/permille map to
@@ -408,6 +410,7 @@ impl UartDuty {
             b'Z' => Some(UartCmd::TraceToggle),
             b'i' => Some(UartCmd::Info),
             b'b' => Some(UartCmd::BbDump),
+            b'G' => Some(UartCmd::GeckoDump),
             _ => {
                 // terminator → commit (main.c:1382-1415)
                 let cmd = if self.n != 0 {
@@ -875,6 +878,7 @@ mod tests {
         assert_eq!(u.step(b'Z'), Some(UartCmd::TraceToggle));
         assert_eq!(u.step(b'i'), Some(UartCmd::Info));
         assert_eq!(u.step(b'b'), Some(UartCmd::BbDump));
+        assert_eq!(u.step(b'G'), Some(UartCmd::GeckoDump));
     }
 
     #[test]

@@ -556,6 +556,7 @@ pub(crate) mod mock {
         pub(crate) stop_req: AtomicBool,
         pub(crate) dump_req: AtomicBool,
         pub(crate) info_req: AtomicBool,
+        pub(crate) gecko_req: AtomicBool,
         pub(crate) zct_stream_on: AtomicBool,
     }
     impl BenchStore {
@@ -571,6 +572,7 @@ pub(crate) mod mock {
                 stop_req: &self.stop_req,
                 dump_req: &self.dump_req,
                 info_req: &self.info_req,
+                gecko_req: &self.gecko_req,
                 zct_stream_on: &self.zct_stream_on,
             }
         }

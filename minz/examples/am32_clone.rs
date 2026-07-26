@@ -157,6 +157,8 @@ static VBAT_RAW: AtomicU16 = AtomicU16::new(0);
 static STOP_REQ: AtomicBool = AtomicBool::new(false);
 static DUMP_REQ: AtomicBool = AtomicBool::new(false);
 static INFO_REQ: AtomicBool = AtomicBool::new(false);
+/// 'G' — GECKO free-run current-ring capture (main-context, one-shot).
+static GECKO_REQ: AtomicBool = AtomicBool::new(false);
 static ZCT_STREAM_ON: AtomicBool = AtomicBool::new(true);
 
 /// Which phase floats in each sector (minz textbook convention, matches
@@ -320,6 +322,7 @@ static BENCH: Bench<'static> = Bench {
     stop_req: &STOP_REQ,
     dump_req: &DUMP_REQ,
     info_req: &INFO_REQ,
+    gecko_req: &GECKO_REQ,
     zct_stream_on: &ZCT_STREAM_ON,
 };
 
@@ -424,6 +427,9 @@ fn handle_requests(
     if bench.dump_req.swap(false, Ordering::Relaxed) {
         dump_bb(tx);
     }
+    if bench.gecko_req.swap(false, Ordering::Relaxed) {
+        gecko_dump(sched, tx);
+    }
     // Kill NOTICE is one-shot via kill_reason; `killed` itself stays
     // LATCHED (TIM6 duty/polling gate + the set_input inert gate hold
     // until reset — consuming it here made the fault restartable, the
@@ -484,6 +490,84 @@ fn dump_bb(tx: &mut UartTxWriter) {
             let _ = tx.push(byte);
         }
     });
+}
+
+// ===============================================================
+// GECKO on-demand current microscope (`G` key, 2026-07-26 — the rm32
+// battery-wall hunt's healthy-reference capture). Runs INLINE in main
+// context: free-run oversample ON → ring wraps once → freeze → ASCII
+// hex dump → oversample OFF (back to inject-only; the free-run must
+// not run during normal operation — the +13-count injected-ch8 bias).
+// The ~10 KB dump exceeds the 4 KiB TX ring, so bytes go through a
+// bounded push-service soft-spin; main blocks ~50 ms at 2 Mbaud —
+// acceptable for this diagnostic (ISRs preempt freely, IWDG is 1 s).
+// ===============================================================
+
+/// Push one byte, soft-spinning `service()` while the TX ring is full
+/// (`push` returns `false` on a full ring — nothing may be dropped in
+/// a GECKO dump). Bounded: at 2 Mbaud the ring drains in ~20 ms, so
+/// the guard only trips if the wire itself is dead.
+fn push_blocking(tx: &mut UartTxWriter, b: u8) {
+    for _ in 0..1_000_000u32 {
+        if tx.push(b) {
+            return;
+        }
+        tx.service();
+    }
+}
+
+/// `core::fmt::Write` adapter over [`push_blocking`] (the header /
+/// footer lines must not drop bytes like the plain `write!` path does).
+struct BlockingFmt<'a> {
+    tx: &'a mut UartTxWriter,
+}
+
+impl core::fmt::Write for BlockingFmt<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        for b in s.bytes() {
+            push_blocking(self.tx, b);
+        }
+        Ok(())
+    }
+}
+
+/// One dump line: 16 ring words as 4-hex-char u16s, space-separated.
+fn gecko_line(tx: &mut UartTxWriter, base: usize) {
+    for k in 0..16 {
+        let v = adc_sync::cur_word(base + k);
+        for shift in [12u32, 8, 4, 0] {
+            let n = ((v >> shift) & 0xF) as u8;
+            push_blocking(tx, if n < 10 { b'0' + n } else { b'a' + n - 10 });
+        }
+        push_blocking(tx, if k == 15 { b'\r' } else { b' ' });
+    }
+    push_blocking(tx, b'\n');
+}
+
+/// The `G` capture band: oversample → wrap-once wait → freeze → dump
+/// (raw ring order; host reorders from `start=`) → back to inject-only.
+fn gecko_dump(sched: &Sched, tx: &mut UartTxWriter) {
+    adc_sync::oversample_start();
+    // Ring holds ≈0.55 ms (~150 samples/PWM cycle); wait ~1 ms so it
+    // wraps once and every slot is fresh. Timing need not be precise —
+    // just >0.6 ms; a counted cycle delay is plenty.
+    cortex_m::asm::delay(80_000); // ~1 ms at 80 MHz
+    let start = adc_sync::freeze_current();
+    let ci = sched.commutation_interval.load(Ordering::Relaxed);
+    let _ = write!(
+        BlockingFmt { tx: &mut *tx },
+        "GK n={} start={} ci={}\r\n",
+        adc_sync::CUR_FRAMES,
+        start,
+        ci
+    );
+    for line in 0..(adc_sync::CUR_FRAMES / 16) {
+        gecko_line(tx, line * 16);
+    }
+    let _ = write!(BlockingFmt { tx: &mut *tx }, "GK END\r\n");
+    // Leave the free-run OFF: freeze already ADSTP'd; this is the
+    // documented return-to-inject-only call (no resume_current).
+    adc_sync::oversample_stop();
 }
 
 // ===============================================================
@@ -614,7 +698,7 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
-        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb\r"
+        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb | 'G' gecko\r"
     )
     .ok();
 
