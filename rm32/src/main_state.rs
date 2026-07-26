@@ -123,6 +123,11 @@ pub struct MainState<LED: OutputPin = NoLed> {
     pub(crate) motor_kv: u16,
     pub(crate) low_cell_volt_cutoff: u16,
     pub(crate) desync_check: bool,
+    /// Lifetime desync-event count (AM32 `desync_happened`). Every fire
+    /// of the desync detector — the chop instrument: each event costs a
+    /// duty kick-down (~15-20 ms torque hole), so events/minute IS the
+    /// perceived chop rate. Read by the bench 'i' info line.
+    pub desync_events: u32,
     pub(crate) last_armed: bool,
     /// Set on the tick when arming transition happens
     pub just_armed: bool,
@@ -172,6 +177,7 @@ impl MainState<NoLed> {
             motor_kv: 2000,
             low_cell_volt_cutoff: 330,
             desync_check: false,
+            desync_events: 0,
             last_armed: false,
             just_armed: false,
             needs_reset: false,
@@ -378,12 +384,8 @@ impl<LED: OutputPin> MainState<LED> {
                 // intent. (Bench 07-26: clone desyncs at 60-80% are invisible
                 // <50ms blips; rm32's echoed double-kick fed the 1-2.4s churn.)
                 shared.set_zero_crosses(0);
+                self.desync_events = self.desync_events.wrapping_add(1);
                 let desync_from_interrupt_mode = !shared.old_routine();
-                // Duty kick-down (AM32: last_duty_cycle = min_startup/2,
-                // unconditional in the desync handler): the restart ramps
-                // from low instead of pushing full duty into an unlocked
-                // field.
-                shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
                 // KEPT DIVERGENCE (fast-rotor desync stays in interrupt
                 // mode). AM32 demotes to polling + running=0 here and its
                 // main-loop-rate zcfoundroutine re-locks within ~1 ms, so
@@ -401,6 +403,17 @@ impl<LED: OutputPin> MainState<LED> {
                 // OUTCOME, reached within rm32's architecture. Polling
                 // demotion still applies below the tick-grid bandwidth.
                 let fast_rotor = shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
+                // Duty kick (AM32: last_duty_cycle = min_startup/2,
+                // unconditional). On the fast-rotor branch the rotor is
+                // still locked, so only HALVE the duty (kept divergence):
+                // the full crash to ~55 recovers through the startup ramp
+                // profile for ~15-20 ms — the audible chop — and its
+                // recovery surge fed the supply-sag feedback loop.
+                if desync_from_interrupt_mode && fast_rotor {
+                    shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickHalf);
+                } else {
+                    shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
+                }
                 if !(desync_from_interrupt_mode && fast_rotor) {
                     // DesyncFallback first: Running→OldRoutine (sets
                     // old_routine=1). Then StopMotor conditionally:

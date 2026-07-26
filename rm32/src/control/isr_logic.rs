@@ -45,6 +45,11 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             // Desync recovery: restart ramps from min_startup/2.
             ctx.duty.kick_down();
         }
+        crate::shared_comm::IsrAction::DutyKickHalf => {
+            // Fast-rotor desync recovery: rotor is still locked (stay-
+            // interrupt branch), so only shed half the torque.
+            ctx.duty.kick_half();
+        }
         crate::shared_comm::IsrAction::CommutateKick => {
             // BEMF-timeout recovery, AM32 zcfoundroutine semantics: re-arm
             // the possibly-dead COM timer to fire now so

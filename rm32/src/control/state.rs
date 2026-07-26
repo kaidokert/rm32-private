@@ -147,6 +147,15 @@ impl DutyState {
         self.last = self.last.min(self.min_startup / 2);
     }
 
+    /// Fast-rotor desync recovery (kept divergence): halve the applied
+    /// duty, floored at the AM32 kick level. The rotor is known locked,
+    /// so the goal is a brief torque shed — recovery from duty/2 runs
+    /// at the high-rpm ramp (~2 ms) instead of the ~15-20 ms startup
+    /// crawl from min_startup/2 that reads as an audible chop.
+    pub(crate) fn kick_half(&mut self) {
+        self.last = self.last.min((self.last / 2).max(self.min_startup / 2));
+    }
+
     /// Increment ramp counter (called each ISR tick).
     pub(crate) fn increment_ramp_count(&mut self) {
         self.ramp_count += 1;

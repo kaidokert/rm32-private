@@ -55,6 +55,40 @@ def sane(z, p):
     return z[3] < 8000 and z[6] < 1200 and p[6] < 4000 and p[1] < 500
 
 
+def chop_episodes(comms):
+    """Duty-dip episodes — the operator-perceived chop metric.
+
+    An episode starts when duty drops >30% below its recent plateau
+    (25-window rolling max) while the plateau is a real drive level
+    (>300), and ends when duty recovers to 90% of that plateau. Returns
+    [(start_idx, duration_ms, floor_duty, plateau)].
+    """
+    eps = []
+    hist = []
+    k = 0
+    n = len(comms)
+    while k < n:
+        z = comms[k][0]
+        hist.append(z[6])
+        if len(hist) > 25:
+            hist.pop(0)
+        plateau = max(hist)
+        if plateau > 300 and z[6] < plateau * 0.7:
+            t = 0
+            floor = z[6]
+            j = k
+            while j < n and comms[j][0][6] < plateau * 0.9:
+                t += comms[j][0][3]
+                floor = min(floor, comms[j][0][6])
+                j += 1
+            eps.append((k, t / 2000.0, floor, plateau))
+            hist = []
+            k = j
+        else:
+            k += 1
+    return eps
+
+
 def level_stats(comms, marks, name, t0, t1):
     win = [
         (z, p)
@@ -181,6 +215,17 @@ def main():
         off1, _ = stamps[k + 1]
         # skip the first second of each level (transition)
         level_stats(comms, marks, f"{pct}%", off0, off1)
+
+    # Chop report: every duty-dip episode (the audible drops).
+    sane_comms = [(z, p) for z, p in comms if sane(z, p)]
+    eps = chop_episodes(sane_comms)
+    total_s = sum(z[3] for z, _ in sane_comms) / 2e6
+    print(
+        f"-- chop: {len(eps)} episodes over {total_s:.1f}s"
+        f" ({len(eps)/max(total_s,0.01)*60:.1f}/min)"
+    )
+    for k, ms, floor, plat in eps[:40]:
+        print(f"   @w{k:6d}  {ms:7.1f} ms  duty {plat} -> {floor}")
 
     # Info-line timeline (from 'i' polls): the decision axis — duty vs
     # dmax vs vbat vs current, with byte offsets mapping into levels.
