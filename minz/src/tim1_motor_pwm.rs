@@ -345,6 +345,16 @@ pub fn set_carrier_arr(arr: u16) {
     tim1.arr.write(|w| w.arr().bits(arr));
 }
 
+/// Raw TIM1.CNT read — WAXWING harvest-skew correction: position of
+/// the carrier counter at ring-write time; the injected burst fired
+/// at `CNT == CCR4` (`SAMPLE_TICKS`), so `CNT - CCR4` (mod ARR+1) is
+/// the 80 MHz-tick age of the sample being ringed.
+#[inline]
+pub fn tim1_cnt() -> u16 {
+    let tim1 = unsafe { &*TIM1::ptr() };
+    (tim1.cnt.read().bits() & 0xFFFF) as u16
+}
+
 /// The rm32-verbatim `minz_core::am32_hal::{PwmOutput, PhaseOutput}`
 /// register impls over TIM1 — zero-sized, static dispatch, one type
 /// in both bundle slots (like rm32-L431 where one TIM1 owns both

@@ -159,6 +159,8 @@ static DUMP_REQ: AtomicBool = AtomicBool::new(false);
 static INFO_REQ: AtomicBool = AtomicBool::new(false);
 /// 'G' — GECKO free-run current-ring capture (main-context, one-shot).
 static GECKO_REQ: AtomicBool = AtomicBool::new(false);
+/// 'X' — WAXWING-lite phase-voltage-ring dump (main-context, one-shot).
+static WAX_REQ: AtomicBool = AtomicBool::new(false);
 static ZCT_STREAM_ON: AtomicBool = AtomicBool::new(true);
 
 /// Which phase floats in each sector (minz textbook convention, matches
@@ -216,6 +218,37 @@ static VBAT_FLOOR_RAW: AtomicU16 = AtomicU16::new(0);
 /// total COMP ISR entries, counted in the trampoline. Paired with
 /// zct comm_n on the info line -> avg entries/window.
 static COMP_ENTRIES: AtomicU32 = AtomicU32::new(0);
+
+// ===============================================================
+// WAXWING-lite phase-voltage rings (`X` key, 2026-07-26) — the
+// voltage-domain demag instrument, companion to the GECKO current
+// microscope. The injected ADC already samples phase A (ch9/PA4)
+// and phase B (ch10/PA5) mid-ON every PWM cycle; the TIM6 harvest
+// discards both. `wax_tick` (TIM6 trampoline) rings them at the
+// 20 kHz tick with position metadata; the host reconstructs the
+// per-window demag-clamp profile by EQUIVALENT-TIME scatter — many
+// windows folded onto one axis of INTERVAL_TIMER position (0.5 µs
+// ticks since the last ZC/commutation reference), each sample's
+// position first corrected for HARVEST SKEW via the packed TIM1.CNT
+// (the injected burst fired at CNT==CCR4; the ring write happens up
+// to a full carrier period later). Rings are ALWAYS-ON (4 atomic
+// stores/tick is negligible), so a dump shows the LAST ~52 ms —
+// post-mortem capture works after any event.
+// ===============================================================
+const WAX_N: usize = 1024;
+/// Phase A raw 12-bit (injected ch9/PA4, mid-ON).
+static WAX_A: [AtomicU16; WAX_N] = [const { AtomicU16::new(0) }; WAX_N];
+/// Phase B raw 12-bit (injected ch10/PA5, mid-ON).
+static WAX_B: [AtomicU16; WAX_N] = [const { AtomicU16::new(0) }; WAX_N];
+/// INTERVAL_TIMER (TIM2) CNT at ring-write time — 0.5 µs position in
+/// the current commutation window.
+static WAX_POS: [AtomicU16; WAX_N] = [const { AtomicU16::new(0) }; WAX_N];
+/// Packed `(step << 12) | (TIM1.CNT & 0x0FFF)` — AM32 step 1..6 plus
+/// the carrier counter for harvest-skew correction (ARR ≤ 3332 <
+/// 4096, so 12 bits always hold CNT).
+static WAX_T1S: [AtomicU16; WAX_N] = [const { AtomicU16::new(0) }; WAX_N];
+/// Next slot `wax_tick` writes (sole writer = the TIM6 trampoline).
+static WAX_HEAD: AtomicUsize = AtomicUsize::new(0);
 
 // ===============================================================
 // INTERVAL_TIMER = TIM2, COM_TIMER = TIM16 — the register wrappers
@@ -323,6 +356,7 @@ static BENCH: Bench<'static> = Bench {
     dump_req: &DUMP_REQ,
     info_req: &INFO_REQ,
     gecko_req: &GECKO_REQ,
+    wax_req: &WAX_REQ,
     zct_stream_on: &ZCT_STREAM_ON,
 };
 
@@ -430,6 +464,9 @@ fn handle_requests(
     if bench.gecko_req.swap(false, Ordering::Relaxed) {
         gecko_dump(sched, tx);
     }
+    if bench.wax_req.swap(false, Ordering::Relaxed) {
+        wax_dump(sched, duty, tx);
+    }
     // Kill NOTICE is one-shot via kill_reason; `killed` itself stays
     // LATCHED (TIM6 duty/polling gate + the set_input inert gate hold
     // until reset — consuming it here made the fault restartable, the
@@ -531,14 +568,19 @@ impl core::fmt::Write for BlockingFmt<'_> {
     }
 }
 
+/// Push one u16 as 4 lowercase hex chars (shared by the GECKO and
+/// WAXWING dump lines).
+fn push_hex_u16(tx: &mut UartTxWriter, v: u16) {
+    for shift in [12u32, 8, 4, 0] {
+        let n = ((v >> shift) & 0xF) as u8;
+        push_blocking(tx, if n < 10 { b'0' + n } else { b'a' + n - 10 });
+    }
+}
+
 /// One dump line: 16 ring words as 4-hex-char u16s, space-separated.
 fn gecko_line(tx: &mut UartTxWriter, base: usize) {
     for k in 0..16 {
-        let v = adc_sync::cur_word(base + k);
-        for shift in [12u32, 8, 4, 0] {
-            let n = ((v >> shift) & 0xF) as u8;
-            push_blocking(tx, if n < 10 { b'0' + n } else { b'a' + n - 10 });
-        }
+        push_hex_u16(tx, adc_sync::cur_word(base + k));
         push_blocking(tx, if k == 15 { b'\r' } else { b' ' });
     }
     push_blocking(tx, b'\n');
@@ -568,6 +610,74 @@ fn gecko_dump(sched: &Sched, tx: &mut UartTxWriter) {
     // Leave the free-run OFF: freeze already ADSTP'd; this is the
     // documented return-to-inject-only call (no resume_current).
     adc_sync::oversample_stop();
+}
+
+// ===============================================================
+// WAXWING-lite dump band (`X` key — see the ring statics above for
+// the instrument). Mirrors the GECKO path: main-context dump through
+// push_blocking (nothing may drop). Dumping WHILE THE MOTOR RUNS is
+// the intended use — the rings keep writing during the dump (TIM6
+// preempts main), so records near the snapshotted head may be torn;
+// the host discards ±8 records around head. 1024 records × 4 u16 ≈
+// 18 KB ASCII ≈ 90 ms blocking at 2 Mbaud (ISRs preempt freely,
+// IWDG is 1 s) — acceptable for this diagnostic.
+// ===============================================================
+
+/// TIM6-trampoline ring write — one record per 20 kHz tick. JDR
+/// reads are idempotent/non-destructive (the core harvest reads them
+/// again inside `tim6_dacunder_isr`).
+#[inline]
+fn wax_tick() {
+    let (a, b, _cur, _vbat) = adc_sync::inj_read();
+    let pos = minz::am32_timers::interval_cnt() as u16; // 0.5 µs ticks
+    let t1 = tim1_motor_pwm::tim1_cnt() & 0x0FFF;
+    let step = CURRENT_STEP.load(Ordering::Relaxed);
+    let h = WAX_HEAD.load(Ordering::Relaxed);
+    WAX_A[h].store(a, Ordering::Relaxed);
+    WAX_B[h].store(b, Ordering::Relaxed);
+    WAX_POS[h].store(pos, Ordering::Relaxed);
+    WAX_T1S[h].store((step << 12) | t1, Ordering::Relaxed);
+    WAX_HEAD.store((h + 1) % WAX_N, Ordering::Relaxed);
+}
+
+/// One dump line: 4 records, each `A B POS T1S` as 4-hex-char u16s —
+/// 16 space-separated hex fields per line (the GECKO line shape).
+fn wax_line(tx: &mut UartTxWriter, base: usize) {
+    for r in 0..4 {
+        let i = base + r;
+        let rec = [
+            WAX_A[i].load(Ordering::Relaxed),
+            WAX_B[i].load(Ordering::Relaxed),
+            WAX_POS[i].load(Ordering::Relaxed),
+            WAX_T1S[i].load(Ordering::Relaxed),
+        ];
+        for (k, v) in rec.into_iter().enumerate() {
+            push_hex_u16(tx, v);
+            push_blocking(tx, if r == 3 && k == 3 { b'\r' } else { b' ' });
+        }
+    }
+    push_blocking(tx, b'\n');
+}
+
+/// The `X` dump band: snapshot head → header → 256 lines (raw ring
+/// order; host reorders from `head=`) → footer. Nothing is frozen —
+/// the rings are CPU-written and stay live (band doc above).
+fn wax_dump(sched: &Sched, duty: &Duty, tx: &mut UartTxWriter) {
+    let head = WAX_HEAD.load(Ordering::Relaxed);
+    let ci = sched.commutation_interval.load(Ordering::Relaxed);
+    let arr = duty.tim1_arr.load(Ordering::Relaxed);
+    let _ = write!(
+        BlockingFmt { tx: &mut *tx },
+        "WX n={} head={} ci={} arr={}\r\n",
+        WAX_N,
+        head,
+        ci,
+        arr
+    );
+    for line in 0..(WAX_N / 4) {
+        wax_line(tx, line * 4);
+    }
+    let _ = write!(BlockingFmt { tx: &mut *tx }, "WX END\r\n");
 }
 
 // ===============================================================
@@ -698,7 +808,7 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
-        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb | 'G' gecko\r"
+        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb | 'G' gecko | 'X' wax\r"
     )
     .ok();
 
@@ -748,6 +858,7 @@ fn TIM1_UP_TIM16() {
 /// TIM6 19.6 kHz (priority 3) — tenKhzRoutine.
 #[interrupt]
 fn TIM6_DACUNDER() {
+    wax_tick(); // WAXWING ring write (observer-only, like COMP_ENTRIES)
     let mut motor = motor();
     tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &mut motor, &observer())
 }

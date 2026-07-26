@@ -149,6 +149,9 @@ pub struct Bench<'a> {
     /// 'G' — GECKO free-run current-ring capture request (main-context
     /// oversample + dump, then back to inject-only).
     pub gecko_req: &'a AtomicBool,
+    /// 'X' — WAXWING-lite phase-voltage-ring dump request (main-context
+    /// dump of the always-on TIM6 rings; nothing to start or stop).
+    pub wax_req: &'a AtomicBool,
     pub zct_stream_on: &'a AtomicBool,
 }
 
@@ -283,6 +286,7 @@ pub fn apply_uart_cmd(duty: &Duty, bench: &Bench, cmd: Option<UartCmd>) {
         Some(UartCmd::Info) => bench.info_req.store(true, Ordering::Relaxed),
         Some(UartCmd::BbDump) => bench.dump_req.store(true, Ordering::Relaxed),
         Some(UartCmd::GeckoDump) => bench.gecko_req.store(true, Ordering::Relaxed),
+        Some(UartCmd::WaxDump) => bench.wax_req.store(true, Ordering::Relaxed),
         None => {}
     }
 }
@@ -433,6 +437,7 @@ mod tests {
         dump_req: AtomicBool,
         info_req: AtomicBool,
         gecko_req: AtomicBool,
+        wax_req: AtomicBool,
         zct_stream_on: AtomicBool,
     }
     impl BenchStore {
@@ -449,6 +454,7 @@ mod tests {
                 dump_req: &self.dump_req,
                 info_req: &self.info_req,
                 gecko_req: &self.gecko_req,
+                wax_req: &self.wax_req,
                 zct_stream_on: &self.zct_stream_on,
             }
         }
@@ -654,13 +660,15 @@ mod tests {
         apply_uart_cmd(&duty, &bench, Some(UartCmd::TraceToggle));
         assert!(!bench.zct_stream_on.load(Ordering::Relaxed));
 
-        // Info / BbDump / GeckoDump set their request flags.
+        // Info / BbDump / GeckoDump / WaxDump set their request flags.
         apply_uart_cmd(&duty, &bench, Some(UartCmd::Info));
         assert!(bench.info_req.load(Ordering::Relaxed));
         apply_uart_cmd(&duty, &bench, Some(UartCmd::BbDump));
         assert!(bench.dump_req.load(Ordering::Relaxed));
         apply_uart_cmd(&duty, &bench, Some(UartCmd::GeckoDump));
         assert!(bench.gecko_req.load(Ordering::Relaxed));
+        apply_uart_cmd(&duty, &bench, Some(UartCmd::WaxDump));
+        assert!(bench.wax_req.load(Ordering::Relaxed));
 
         // None: no-op.
         bench.stop_req.store(false, Ordering::Relaxed);
