@@ -35,10 +35,20 @@ pub(crate) fn variable_pwm_mode2(average_interval: u32, cpu_mhz: u8) -> u16 {
 }
 
 /// Wrong-phase-orbit discriminator: current far above the
-/// duty-proportional norm (see ORBIT_TRIP_* in constants.rs).
+/// duty-proportional norm (see ORBIT_TRIP_* in constants.rs). The line
+/// was calibrated on the 8.16 V bench rail; current at a given duty
+/// scales roughly with source voltage, so the line scales with the
+/// measured vbat (a 12 V pack raises it ~1.5x — slam accel there is a
+/// legitimate ~10 A operating point, clone-measured).
 #[inline]
-pub(crate) fn orbit_current(current_ma: i16, duty: u16) -> bool {
-    (current_ma as i32) > (duty as i32) * ORBIT_TRIP_SLOPE + ORBIT_TRIP_OFFSET_MA
+pub(crate) fn orbit_current(current_ma: i16, duty: u16, vbat_mv: u16) -> bool {
+    let line = (duty as i32) * ORBIT_TRIP_SLOPE + ORBIT_TRIP_OFFSET_MA;
+    let scaled = if vbat_mv > 6000 {
+        line * (vbat_mv as i32) / ORBIT_CAL_VBAT_MV
+    } else {
+        line
+    };
+    (current_ma as i32) > scaled
 }
 
 /// Compute duty ceiling from eRPM and temperature limits.
@@ -148,6 +158,10 @@ pub struct MainState<LED: OutputPin = NoLed> {
     pub(crate) desync_rearm_zc: u32,
     /// Consecutive 1 kHz ticks with current above ORBIT_TRIP_MA.
     pub(crate) orbit_trip_count: u16,
+    /// Duty snapshot (refreshed every ~100 ms) for orbit-trip
+    /// commanded-transient suppression.
+    pub(crate) orbit_duty_snap: u16,
+    pub(crate) orbit_duty_snap_age: u16,
     pub(crate) last_armed: bool,
     /// Set on the tick when arming transition happens
     pub just_armed: bool,
@@ -201,6 +215,8 @@ impl MainState<NoLed> {
             orbit_trips: 0,
             desync_rearm_zc: 10,
             orbit_trip_count: 0,
+            orbit_duty_snap: 0,
+            orbit_duty_snap_age: 0,
             last_armed: false,
             just_armed: false,
             needs_reset: false,
@@ -429,8 +445,11 @@ impl<LED: OutputPin> MainState<LED> {
                 // Sane current required: an elevated-current desync means
                 // the wrong-phase orbit may already hold — the demote IS
                 // the phase reset, never skip it then.
-                let current_sane =
-                    !orbit_current(self.measurements.actual_current.0, shared.duty_cycle());
+                let current_sane = !orbit_current(
+                    self.measurements.actual_current.0,
+                    shared.duty_cycle(),
+                    self.measurements.battery_voltage.0,
+                );
                 let fast_rotor =
                     current_sane && shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
                 // Duty kick (AM32: last_duty_cycle = min_startup/2,
@@ -555,9 +574,21 @@ impl<LED: OutputPin> MainState<LED> {
             // switching artifacts in a wrong phase register — plausible z,
             // huge current, no desync-detector jump. Force the full AM32
             // desync response; the demote IS the phase reset.
+            self.orbit_duty_snap_age += 1;
+            if self.orbit_duty_snap_age >= 100 {
+                self.orbit_duty_snap = shared.duty_cycle();
+                self.orbit_duty_snap_age = 0;
+            }
+            let transient = get_abs_dif(shared.duty_cycle() as i32, self.orbit_duty_snap as i32)
+                > ORBIT_TRANSIENT_DUTY as u32;
             if shared.running()
                 && shared.zero_crosses() > 1000
-                && orbit_current(self.measurements.actual_current.0, shared.duty_cycle())
+                && !transient
+                && orbit_current(
+                    self.measurements.actual_current.0,
+                    shared.duty_cycle(),
+                    self.measurements.battery_voltage.0,
+                )
             {
                 self.orbit_trip_count += 1;
                 if self.orbit_trip_count > ORBIT_TRIP_MS {

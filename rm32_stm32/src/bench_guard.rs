@@ -35,6 +35,16 @@ const OC_DEBOUNCE_MS: u32 = 85;
 const OV_KILL_MV: u16 = 10_800;
 const OV_DEBOUNCE_MS: u32 = 60;
 
+/// Battery-source profile (3S pack, clone-side numbers from the
+/// battB_ sessions): floor 8.47 V, OC 15 A (slam accel measured ~10 A
+/// average — a real operating point, 5x stall margin), OV 14.0 V
+/// (pack rest tops ~12.6 V; regen charges the pack instead of pumping,
+/// so OV only guards a genuinely wrong source state). Selected
+/// automatically by the first vbat reading: >10 V rest = battery.
+const B_VBAT_FLOOR_MV: u16 = 8_470;
+const B_OC_KILL_MA: i16 = 15_000;
+const B_OV_KILL_MV: u16 = 14_000;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum KillReason {
     Overcurrent,
@@ -48,6 +58,9 @@ pub struct BenchGuard {
     oc_since: Option<u32>,
     ov_since: Option<u32>,
     latched: Option<KillReason>,
+    /// None until the first nonzero vbat sample; then true = battery
+    /// profile (rest >10 V), false = bench-PSU profile.
+    battery: Option<bool>,
 }
 
 impl BenchGuard {
@@ -58,11 +71,17 @@ impl BenchGuard {
             oc_since: None,
             ov_since: None,
             latched: None,
+            battery: None,
         }
     }
 
     pub fn latched(&self) -> Option<KillReason> {
         self.latched
+    }
+
+    /// True once the source has been classified as a battery.
+    pub fn battery_profile(&self) -> bool {
+        self.battery == Some(true)
     }
 
     /// Evaluate one main-loop pass. `now_cyc` is a wrapping cycle counter
@@ -83,7 +102,20 @@ impl BenchGuard {
             return None;
         }
 
-        let vbat_low = running && vbat_mv > 0 && vbat_mv < VBAT_FLOOR_MV;
+        // Source classification on the first real vbat sample. A pack at
+        // rest reads >10 V (3S); the bench PSU rail sits ~8.1 V. Latched
+        // for the session — a mid-run sag must not flip profiles.
+        if self.battery.is_none() && vbat_mv > 0 {
+            self.battery = Some(vbat_mv > 10_000);
+        }
+        let batt = self.battery == Some(true);
+        let (floor, oc_ma, ov_mv) = if batt {
+            (B_VBAT_FLOOR_MV, B_OC_KILL_MA, B_OV_KILL_MV)
+        } else {
+            (VBAT_FLOOR_MV, OC_KILL_MA, OV_KILL_MV)
+        };
+
+        let vbat_low = running && vbat_mv > 0 && vbat_mv < floor;
         if let Some(reason) = Self::debounce(
             &mut self.vbat_low_since,
             vbat_low,
@@ -95,7 +127,7 @@ impl BenchGuard {
             return Some(reason);
         }
 
-        let ov = vbat_mv > OV_KILL_MV;
+        let ov = vbat_mv > ov_mv;
         if let Some(reason) = Self::debounce(
             &mut self.ov_since,
             ov,
@@ -107,7 +139,7 @@ impl BenchGuard {
             return Some(reason);
         }
 
-        let oc = current_ma > OC_KILL_MA;
+        let oc = current_ma > oc_ma;
         if let Some(reason) = Self::debounce(
             &mut self.oc_since,
             oc,

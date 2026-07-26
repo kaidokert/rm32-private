@@ -89,6 +89,15 @@ pub const ORBIT_TRIP_SLOPE: i32 = 2;
 pub const ORBIT_TRIP_OFFSET_MA: i32 = 1000;
 /// Consecutive 1 kHz ticks over the line before tripping (ms).
 pub const ORBIT_TRIP_MS: u16 = 30;
+/// Rail voltage (mV) the ORBIT_TRIP line was calibrated on; the line
+/// scales by measured vbat relative to this (battery sessions run
+/// ~12 V where the same duty legitimately draws ~1.5x the current).
+pub const ORBIT_CAL_VBAT_MV: i32 = 8160;
+/// Commanded-transient suppression for the orbit trip: while the
+/// applied duty moved more than this within the snapshot window, high
+/// current is expected (slam accel, clone-measured ~10 A on battery)
+/// and the trip must hold off. Steady-state orbits are unaffected.
+pub const ORBIT_TRANSIENT_DUTY: u16 = 150;
 
 /// Desync-detector re-arm holdoff after a fast-rotor fire (KEPT
 /// DIVERGENCE, see MainState::desync_rearm_zc): the stay-interrupt
