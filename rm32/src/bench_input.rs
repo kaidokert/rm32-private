@@ -51,6 +51,8 @@ pub enum UartCmd {
     InjToggle,
     /// 'g' — GECKO one-shot current-microscope capture + dump.
     GeckoGrab,
+    /// 'x' — WAXWING phase-voltage ring dump (post-mortem or live).
+    WaxDump,
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -106,6 +108,7 @@ impl UartDuty {
             b'N' => Some(UartCmd::DeferToggle),
             b'J' => Some(UartCmd::InjToggle),
             b'g' => Some(UartCmd::GeckoGrab),
+            b'x' => Some(UartCmd::WaxDump),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;

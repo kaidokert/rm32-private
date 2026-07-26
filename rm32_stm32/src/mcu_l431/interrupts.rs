@@ -103,6 +103,16 @@ fn COMP() {
         isr_handlers::handle_comp();
     } else if isr_handlers::comp_at_pre_zc_level() {
         unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
+        // Edge-swallow race fix (fall post-mortem campaign, 07-26): a
+        // real crossing landing between the level read above and the
+        // PR clear gets its pending bit cleared with the noise blip —
+        // at short windows this is the acceptance-side deaf-window
+        // seed candidate. Re-check the level after the clear: if it
+        // flipped to post-ZC, the swallowed edge was real — re-raise
+        // the line via SWIER so the camp/accept machinery re-evaluates.
+        if !isr_handlers::comp_at_pre_zc_level() {
+            unsafe { exti.swier1.write(|w| w.bits(1 << 22)) };
+        }
         #[cfg(feature = "zctrace")]
         crate::edge_probe::gated_clear();
     }

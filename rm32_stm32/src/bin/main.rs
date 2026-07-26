@@ -650,6 +650,27 @@ fn main() -> ! {
         {
             use rm32::bench_input::UartCmd;
             let bench_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+            // WAXWING freeze-on-fall: any desync/orbit event at wall
+            // duty freezes the phase-voltage ring so the deaf window
+            // survives the churn (52 ms post-mortem; 'x' dumps + re-arms).
+            #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+            {
+                static mut WAX_LAST_EVT: u32 = 0;
+                let evt = main_state
+                    .desync_events
+                    .wrapping_add(main_state.orbit_trips);
+                let last = unsafe { WAX_LAST_EVT };
+                if evt != last {
+                    unsafe { WAX_LAST_EVT = evt };
+                    if shared.duty_cycle() > 1550
+                        && shared.commutation_interval() > 300
+                        && !rm32_stm32::mcu_l431::adc::wax_frozen()
+                        && rm32_stm32::mcu_l431::adc::wax_freeze()
+                    {
+                        rm32_stm32::dprintln!("[wax] FROZEN on fall (dsy+otrip={})", evt);
+                    }
+                }
+            }
             rm32_stm32::bench_uart::drain_dma();
             let rx = rm32_stm32::bench_uart::ring();
             while let Some(b) = rx.pop() {
@@ -901,6 +922,45 @@ fn main() -> ! {
                             }
                             #[cfg(not(all(feature = "benchuart", feature = "stm32l431")))]
                             rm32_stm32::dprintln!("[bench] gecko: L431 bench only");
+                        }
+                        UartCmd::WaxDump => {
+                            #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+                            {
+                                use core::fmt::Write as _;
+                                let h = rm32_stm32::mcu_l431::adc::wax_head();
+                                rm32_stm32::dprintln!(
+                                    "WX n=1024 head={} ci={} arr={} frozen={}",
+                                    h,
+                                    shared.commutation_interval(),
+                                    shared.tim1_arr(),
+                                    rm32_stm32::mcu_l431::adc::wax_frozen() as u8
+                                );
+                                for line in 0..256usize {
+                                    let mut s = heapless::String::<96>::new();
+                                    for k in 0..4usize {
+                                        let (a, b, pos, t1s) =
+                                            rm32_stm32::mcu_l431::adc::wax_read(line * 4 + k);
+                                        let _ = write!(
+                                            s,
+                                            "{:04x} {:04x} {:04x} {:04x}",
+                                            a, b, pos, t1s
+                                        );
+                                        if k != 3 {
+                                            let _ = write!(s, "  ");
+                                        }
+                                    }
+                                    rm32_stm32::dprintln!("{}", s.as_str());
+                                    // Pace the ~20 KB dump: without a
+                                    // flush per line the TX ring drops
+                                    // ~25% of records.
+                                    #[cfg(feature = "debuguart")]
+                                    rm32_stm32::debug_uart::flush();
+                                }
+                                rm32_stm32::dprintln!("WX END");
+                                rm32_stm32::mcu_l431::adc::wax_rearm();
+                            }
+                            #[cfg(not(all(feature = "benchuart", feature = "stm32l431")))]
+                            rm32_stm32::dprintln!("[bench] wax: L431 bench only");
                         }
                         UartCmd::BbDump => {
                             #[cfg(feature = "blackbox")]

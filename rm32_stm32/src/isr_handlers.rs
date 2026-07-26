@@ -104,6 +104,11 @@ pub fn handle_tim6() {
     #[cfg(feature = "zctrace")]
     crate::edge_probe::level_tick(!comp_at_pre_zc_level());
 
+    // WAXWING-lite: per-tick phase-voltage ring write (no-op until the
+    // injected burst is armed via 'J'). Constant per-tick cost.
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    crate::mcu_l431::adc::wax_tick(state.commutation.step());
+
     // Mid-window N-pin trap (storm hunt): at 20 kHz, if comp drive is on
     // and the motor is in interrupt mode, the current driven phase's N
     // pin must still be AF. A hit here with the post-com_step check
