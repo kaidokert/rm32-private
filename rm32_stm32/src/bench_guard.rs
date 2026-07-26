@@ -24,17 +24,26 @@ const OC_KILL_MA: i16 = 5500;
 /// Current must exceed the threshold this long (minz used an ~85 ms
 /// windowed average; measurements here are already median-filtered).
 const OC_DEBOUNCE_MS: u32 = 85;
+/// Over-voltage kill: regen pumping into a source-only bench PSU drives
+/// the 8.1 V rail to 9.5-11.9 V (measured 07-25, big-picture traces).
+/// AllOff is safe here: with all FETs off the synchronous rectification
+/// stops and BEMF at bench speeds stays below the rail. 5 ms debounce
+/// rides out ADC blips; sustained pumping trips fast.
+const OV_KILL_MV: u16 = 10_200;
+const OV_DEBOUNCE_MS: u32 = 5;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum KillReason {
     Overcurrent,
     VbatSag,
+    OverVolt,
 }
 
 pub struct BenchGuard {
     cyc_per_ms: u32,
     vbat_low_since: Option<u32>,
     oc_since: Option<u32>,
+    ov_since: Option<u32>,
     latched: Option<KillReason>,
 }
 
@@ -44,6 +53,7 @@ impl BenchGuard {
             cyc_per_ms: cpu_mhz * 1000,
             vbat_low_since: None,
             oc_since: None,
+            ov_since: None,
             latched: None,
         }
     }
@@ -77,6 +87,18 @@ impl BenchGuard {
             now_cyc,
             VBAT_DEBOUNCE_MS * self.cyc_per_ms,
             KillReason::VbatSag,
+        ) {
+            self.latched = Some(reason);
+            return Some(reason);
+        }
+
+        let ov = vbat_mv > OV_KILL_MV;
+        if let Some(reason) = Self::debounce(
+            &mut self.ov_since,
+            ov,
+            now_cyc,
+            OV_DEBOUNCE_MS * self.cyc_per_ms,
+            KillReason::OverVolt,
         ) {
             self.latched = Some(reason);
             return Some(reason);

@@ -364,6 +364,16 @@ fn main() -> ! {
         rm32_stm32::dprintln!("[rm32] benchuart: USART2 RX @2M on PA2, DShot capture OFF");
     }
 
+    // Hardware-timed injected current sampling (clone FALCON pattern):
+    // per-PWM-cycle current in JDR1, read per commutation into the
+    // probe row. High-rate input-current visibility for desync-vs-sag
+    // cause/effect (operator directive).
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    {
+        rm32_stm32::mcu_l431::adc::arm_injected_current();
+        rm32_stm32::dprintln!("[rm32] injected current sampling armed (TRGO2 mid-ON)");
+    }
+
     // --- ADC + Telemetry (returned from init()) ---
 
     // Publish initial tim1_arr to SharedComm before ISR starts
@@ -582,6 +592,7 @@ fn main() -> ! {
                 let (tag, code) = match reason {
                     rm32_stm32::bench_guard::KillReason::Overcurrent => ("OC", 1u16),
                     rm32_stm32::bench_guard::KillReason::VbatSag => ("VBAT", 2u16),
+                    rm32_stm32::bench_guard::KillReason::OverVolt => ("OVOLT", 3u16),
                 };
                 // Blackbox: record the kill, then FREEZE so the dump shows
                 // the events leading TO the fault (minz reason codes:

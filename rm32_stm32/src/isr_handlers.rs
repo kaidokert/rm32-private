@@ -136,9 +136,19 @@ pub fn handle_tim6() {
     }
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
     crate::phase::canary(1); // site 1: tim6 exit (ten_khz_tick ran between 0 and 1)
-    // 20 kHz gate latch (AM32-verbatim staleness for the COMP gate).
+    // 20 kHz gate latch (AM32-verbatim staleness for the COMP gate),
+    // CLAMPED to AM32's average_interval domain (main.c clamps
+    // average_interval to 5000 at desync/timeout sites — and their COMP
+    // gate reads THAT variable). rm32 had split the quantity: main's
+    // desync clamp landed on a private copy while the gate read raw
+    // e_com/3 — after kick-era garbage intervals entered the ring the
+    // gate inflated to multi-ms, one early edge camped for the whole
+    // gate at priority 0 (59k re-entries, ~30 ms blackout, fall
+    // autopsy 07-25), starved its own accepts, and the timeout/kick
+    // churn became self-sustaining. The clamp bounds any camp to
+    // <=1.25 ms and reconnects the gate to AM32's guarded domain.
     #[cfg(feature = "zctrace")]
-    crate::edge_probe::gate_avg_latch((shared.e_com_time() / 3).max(0) as u32);
+    crate::edge_probe::gate_avg_latch(((shared.e_com_time() / 3).max(0) as u32).min(5000));
     // Deferred comp re-enable ('N' experiment): apply a pending unmask,
     // clearing the ringing-era EXTI pending first so a camped stale edge
     // doesn't fire the instant we unmask.
@@ -257,6 +267,13 @@ pub fn handle_tim14() {
         let (first_edge, entries, tim16_lat, last_arm, gated_clears, persist_rejects) =
             crate::edge_probe::take();
         if let Some(batching) = pushed {
+            // Probe row's 4th u16 slot: per-commutation INJECTED CURRENT
+            // (raw counts, hardware-timed mid-PWM-ON) — repurposed from
+            // avg, which duplicates the zct row. Decoder: x26.855 mA.
+            #[cfg(feature = "benchuart")]
+            let cur = crate::mcu_l431::adc::injected_current_raw();
+            #[cfg(not(feature = "benchuart"))]
+            let cur = avg;
             crate::bench_zct::write_probe(
                 batching,
                 state.commutation.step(),
@@ -264,7 +281,7 @@ pub fn handle_tim14() {
                 first_edge,
                 entries,
                 tim16_lat,
-                avg,
+                cur,
                 gated_clears,
                 persist_rejects,
                 last_arm,

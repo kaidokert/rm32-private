@@ -113,3 +113,37 @@ impl AdcPeripheral for L431AdcOps {
         adc.cr.modify(|_, w| w.adstart().set_bit());
     }
 }
+
+/// Hardware-timed injected current sampling — the clone's FALCON
+/// pattern (minz/src/adc_sync.rs), minimal port: ONE injected
+/// conversion of ch8 (PA3, current shunt amp) triggered by TIM1_TRGO2
+/// = OC4REF falling (CCR4=0x64 places the sample mid-PWM-ON). The
+/// regular software-scanned group (vbat/temp @1 kHz) is untouched;
+/// injected results land in JDR1 only. JADSTART must be set ONCE to
+/// arm hardware-triggered injected conversions (the JADSTART scar).
+/// Reader: `injected_current_raw` per commutation for the probe row.
+#[cfg(feature = "benchuart")]
+pub fn arm_injected_current() {
+    use stm32l4xx_hal::pac::{ADC1, TIM1};
+    unsafe {
+        let adc = &*ADC1::ptr();
+        let tim1 = &*TIM1::ptr();
+        // TIM1 TRGO2 = OC4REF (MMS2 = 0b0111). CCR4 already 0x64.
+        tim1.cr2
+            .modify(|r, w| w.bits((r.bits() & !(0xF << 20)) | (0b0111 << 20)));
+        // JQDIS: plain JSQR injected mode (no queue).
+        adc.cfgr.modify(|r, w| w.bits(r.bits() | (1 << 31)));
+        // JSQR: JL=0 (1 conv) | JEXTSEL=0b1000 (TIM1_TRGO2) |
+        // JEXTEN=0b10 (falling) | JSQ1=8 (current).
+        adc.jsqr
+            .write(|w| w.bits((0b1000 << 2) | (0b10 << 6) | (8 << 8)));
+        // Arm. Hardware triggers launch conversions from here on.
+        adc.cr.modify(|r, w| w.bits(r.bits() | (1 << 3))); // JADSTART
+    }
+}
+
+/// Latest injected current sample (raw ADC counts), any context.
+#[cfg(feature = "benchuart")]
+pub fn injected_current_raw() -> u16 {
+    unsafe { ((*stm32l4xx_hal::pac::ADC1::ptr()).jdr1.read().bits() & 0xFFFF) as u16 }
+}
