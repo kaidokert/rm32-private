@@ -140,6 +140,9 @@ pub struct Bench<'a> {
     pub oc_cnt: &'a AtomicU32,
     /// consecutive TIM6 ticks with vbat below the floor (debounce).
     pub vbat_low_ticks: &'a AtomicU32,
+    /// boot-latched kill floor = 70% of the first vbat harvest;
+    /// 0 = not yet latched.
+    pub vbat_floor_raw: &'a AtomicU16,
     pub stop_req: &'a AtomicBool,
     pub dump_req: &'a AtomicBool,
     pub info_req: &'a AtomicBool,
@@ -421,6 +424,7 @@ mod tests {
         oc_acc: AtomicU32,
         oc_cnt: AtomicU32,
         vbat_low_ticks: AtomicU32,
+        vbat_floor_raw: AtomicU16,
         stop_req: AtomicBool,
         dump_req: AtomicBool,
         info_req: AtomicBool,
@@ -435,6 +439,7 @@ mod tests {
                 oc_acc: &self.oc_acc,
                 oc_cnt: &self.oc_cnt,
                 vbat_low_ticks: &self.vbat_low_ticks,
+                vbat_floor_raw: &self.vbat_floor_raw,
                 stop_req: &self.stop_req,
                 dump_req: &self.dump_req,
                 info_req: &self.info_req,

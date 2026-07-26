@@ -37,8 +37,9 @@
 //!   - 64-event black box (minz_core::blackbox), dumped on kill / `b`.
 //!   - injected ADC (A/B/current/vbat) harvested in TIM6 for telemetry
 //!     and the two bench-safety kills ONLY.
-//!   - three bench-safety KILLS: hard overcurrent, absolute vbat floor,
-//!     IWDG. None modulate the loop; they only stop it.
+//!   - three bench-safety KILLS: hard overcurrent, boot-relative vbat
+//!     floor (70% of first harvest), IWDG. None modulate the loop;
+//!     they only stop it.
 //!
 //! Comparator-polarity note (load-bearing): minz's `comp2::value()` is
 //! the INVERSE of AM32's `getCompOutputLevel()` (POLARITY wiring — see
@@ -207,6 +208,8 @@ static RAMP_COUNT: AtomicU16 = AtomicU16::new(0);
 static OC_ACC: AtomicU32 = AtomicU32::new(0);
 static OC_CNT: AtomicU32 = AtomicU32::new(0);
 static VBAT_LOW_TICKS: AtomicU32 = AtomicU32::new(0);
+/// Boot-latched vbat kill floor (70% of first harvest; 0 = unlatched).
+static VBAT_FLOOR_RAW: AtomicU16 = AtomicU16::new(0);
 /// Bench probe for the rm32 camp-storm differential (2026-07-25):
 /// total COMP ISR entries, counted in the trampoline. Paired with
 /// zct comm_n on the info line -> avg entries/window.
@@ -313,6 +316,7 @@ static BENCH: Bench<'static> = Bench {
     oc_acc: &OC_ACC,
     oc_cnt: &OC_CNT,
     vbat_low_ticks: &VBAT_LOW_TICKS,
+    vbat_floor_raw: &VBAT_FLOOR_RAW,
     stop_req: &STOP_REQ,
     dump_req: &DUMP_REQ,
     info_req: &INFO_REQ,
@@ -465,11 +469,12 @@ fn print_info(
     // directly): COMP entries vs commutations since boot.
     let _ = write!(
         tx,
-        "ce={} comm={} dsy={} bt={}\r\n",
+        "ce={} comm={} dsy={} bt={} vfl={}\r\n",
         COMP_ENTRIES.load(Ordering::Relaxed),
         zct.comm_n.load(Ordering::Relaxed),
         drive.desync_happened.load(Ordering::Relaxed),
         drive.bemf_timeout_happened.load(Ordering::Relaxed),
+        VBAT_FLOOR_RAW.load(Ordering::Relaxed),
     );
 }
 

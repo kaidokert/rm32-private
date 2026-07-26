@@ -26,14 +26,22 @@ use crate::zct_trace::ZctTrace;
 /// ~85 ms current average over raw injected ch8 counts.
 const OC_KILL_RAW_AVG: u32 = 205;
 const OC_WINDOW_TICKS: u32 = 1700; // ≈ 85 ms at 20 kHz
-/// Absolute vbat floor, raw injected ch11 counts (~5.5 V). Retuned
-/// from 793 (~5.95 V) after the 2026-07-24 clone-vs-AM32 study: every
-/// 10→90/100% throttle slam sagged the bus to 5.92-5.95 V for a few
-/// ms (3/3 reproducible, loop provably locked at the kill) — a
-/// transient the reference rides (factory AM32 runs no LVC at all).
-/// The guard's target is PSU collapse / battery death, which goes
-/// DEEP and STAYS; hence lower floor + debounce, not instant-kill.
-const VBAT_ABS_FLOOR_RAW: u16 = 733;
+/// Boot-relative vbat kill floor, percent of the FIRST valid vbat
+/// harvest (latched once into `Bench::vbat_floor_raw`; 0 = not yet
+/// latched). The guard's target is PSU collapse / battery death,
+/// which goes DEEP and STAYS; 70% of boot voltage ≈ 5.7 V on the
+/// 8.2 V bench (matches the old 5.5 V absolute floor), ≈ 8.26 V at
+/// 11.8 V (= 2.75 V/cell on 3S li-ion — the correct empty-cell
+/// cutoff). Boot-relative means no per-source retune, sized for the
+/// 2026-07-26 battery-voltage re-qual.
+///
+/// History: was an absolute floor (793 ≈ 5.95 V, then 733 ≈ 5.5 V
+/// after the 2026-07-24 clone-vs-AM32 study: every 10→90/100%
+/// throttle slam sagged the bus to 5.92-5.95 V for a few ms — 3/3
+/// reproducible, loop provably locked at the kill — a transient the
+/// reference rides; factory AM32 runs no LVC at all). Hence
+/// debounce, not instant-kill.
+const VBAT_FLOOR_PCT: u32 = 70;
 /// vbat must sit below the floor this many consecutive TIM6 ticks
 /// (~10 ms at 19.6 kHz) before the kill fires.
 const VBAT_DEBOUNCE_TICKS: u32 = 200;
@@ -242,10 +250,22 @@ pub fn adc_harvest_and_safety<M: MotorHal>(
     if tripped {
         safety_kill(drive, duty, hal, obs, 1);
     }
-    // Debounced vbat floor: kill only on a SUSTAINED brown-out
-    // (VBAT_DEBOUNCE_TICKS consecutive low reads while running); any
-    // recovery resets the count. Transient slam sag rides through.
-    if vbat < VBAT_ABS_FLOOR_RAW && drive.running.load(Ordering::Relaxed) {
+    // Boot-relative vbat floor (see VBAT_FLOOR_PCT): latched ONCE
+    // from the first valid harvest — which happens at idle, before
+    // any arming. Until latched, the whole debounce block is skipped.
+    let floor = bench.vbat_floor_raw.load(Ordering::Relaxed);
+    if floor == 0 {
+        if vbat > 100 {
+            // sanity: ADC live, not a zero read
+            bench
+                .vbat_floor_raw
+                .store((vbat as u32 * VBAT_FLOOR_PCT / 100) as u16, Ordering::Relaxed);
+        }
+    } else if vbat < floor && drive.running.load(Ordering::Relaxed) {
+        // Debounced kill: only a SUSTAINED brown-out
+        // (VBAT_DEBOUNCE_TICKS consecutive low reads while running);
+        // any recovery resets the count. Transient slam sag rides
+        // through.
         let low = bench.vbat_low_ticks.load(Ordering::Relaxed) + 1;
         bench.vbat_low_ticks.store(low, Ordering::Relaxed);
         if low >= VBAT_DEBOUNCE_TICKS {
@@ -470,7 +490,7 @@ mod tests {
         // Would take the polling path if the killed gate leaked.
         drive.old_routine.store(true, Ordering::Relaxed);
         drive.running.store(true, Ordering::Relaxed);
-        m.inj.set((1, 2, 3, 900)); // vbat above floor
+        m.inj.set((1, 2, 3, 900)); // vbat healthy
         tim6_dacunder_isr(&sched, &drive, &duty, &bench, &zct, &mut m.motor(), &m.observer());
         // Flag acked first; counter ticks (main.c:1612).
         assert_eq!(m.calls.borrow()[0], "tim6_clear_flag");
@@ -647,6 +667,63 @@ mod tests {
         assert_eq!(bench.oc_cnt.load(Ordering::Relaxed), 0);
     }
 
+    /// (1) The floor latches from the first VALID harvest (vbat*7/10
+    /// exactly), zero/dead ADC reads never latch, and a healthy
+    /// constant vbat can never kill — the floor latches from the same
+    /// reading, so it is below it by construction.
+    #[test]
+    fn adc_harvest_vbat_floor_latches_first_valid_harvest_no_kill() {
+        let (ds, us, bs, m) = (
+            DriveStore::default(),
+            DutyStore::default(),
+            BenchStore::default(),
+            MockHal::new(),
+        );
+        let (drive, duty, bench) = (ds.drive(), us.duty(), bs.bench());
+        drive.running.store(true, Ordering::Relaxed);
+        // ADC not live yet: neither a zero read nor the ≤100 sanity
+        // band latches, and the debounce block stays skipped.
+        for v in [0u16, 100] {
+            m.inj.set((0, 0, 0, v));
+            adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+            assert_eq!(bench.vbat_floor_raw.load(Ordering::Relaxed), 0);
+            assert_eq!(bench.vbat_low_ticks.load(Ordering::Relaxed), 0);
+        }
+        // First valid harvest latches floor = 900*7/10 = 630 exactly.
+        m.inj.set((0, 0, 0, 900));
+        adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+        assert_eq!(bench.vbat_floor_raw.load(Ordering::Relaxed), 630);
+        // Constant healthy vbat, running, over the full debounce
+        // window and beyond: never kills, never accumulates.
+        for _ in 0..VBAT_DEBOUNCE_TICKS + 10 {
+            adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+        }
+        assert!(!duty.killed.load(Ordering::Relaxed));
+        assert!(!m.called("all_off"));
+        assert_eq!(bench.vbat_low_ticks.load(Ordering::Relaxed), 0);
+    }
+
+    /// (4) The floor latches ONCE — a later higher reading must not
+    /// move it.
+    #[test]
+    fn adc_harvest_vbat_floor_never_relatches() {
+        let (ds, us, bs, m) = (
+            DriveStore::default(),
+            DutyStore::default(),
+            BenchStore::default(),
+            MockHal::new(),
+        );
+        let (drive, duty, bench) = (ds.drive(), us.duty(), bs.bench());
+        m.inj.set((0, 0, 0, 800));
+        adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+        assert_eq!(bench.vbat_floor_raw.load(Ordering::Relaxed), 560); // 800*7/10
+        m.inj.set((0, 0, 0, 1200)); // supply reads higher later
+        adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+        assert_eq!(bench.vbat_floor_raw.load(Ordering::Relaxed), 560); // unmoved
+    }
+
+    /// (2) Kill fires only after VBAT_DEBOUNCE_TICKS consecutive
+    /// reads below the LATCHED floor while running.
     #[test]
     fn adc_harvest_vbat_floor_kills_only_when_running() {
         let (ds, us, bs, m) = (
@@ -656,11 +733,15 @@ mod tests {
             MockHal::new(),
         );
         let (drive, duty, bench) = (ds.drive(), us.duty(), bs.bench());
-        m.inj.set((0, 0, 0, VBAT_ABS_FLOOR_RAW - 1));
+        // Latch first (idle harvest, the boot-time path): floor 630.
+        m.inj.set((0, 0, 0, 900));
+        adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+        assert_eq!(bench.vbat_floor_raw.load(Ordering::Relaxed), 630);
         // Not running: below-floor vbat is harvested but no kill and
         // no debounce accumulation.
+        m.inj.set((0, 0, 0, 629));
         adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
-        assert_eq!(bench.vbat_raw.load(Ordering::Relaxed), VBAT_ABS_FLOOR_RAW - 1);
+        assert_eq!(bench.vbat_raw.load(Ordering::Relaxed), 629);
         assert!(!duty.killed.load(Ordering::Relaxed));
         assert!(!m.called("all_off"));
         assert_eq!(bench.vbat_low_ticks.load(Ordering::Relaxed), 0);
@@ -676,9 +757,11 @@ mod tests {
         assert_eq!(duty.kill_reason.load(Ordering::Relaxed), 2);
     }
 
-    /// Regression (2026-07-24 study, slam-kill retune): a TRANSIENT
-    /// sag shorter than the debounce window must ride through — one
-    /// good read resets the count entirely.
+    /// (3) Regression (2026-07-24 study, slam-kill retune): a
+    /// TRANSIENT sag shorter than the debounce window must ride
+    /// through — one good read resets the count entirely. Updated to
+    /// the boot-relative flow: latch first, then dip below the
+    /// latched floor.
     #[test]
     fn adc_harvest_vbat_transient_sag_rides_through() {
         let (ds, us, bs, m) = (
@@ -689,13 +772,18 @@ mod tests {
         );
         let (drive, duty, bench) = (ds.drive(), us.duty(), bs.bench());
         drive.running.store(true, Ordering::Relaxed);
-        // Two slam-like dips just short of the window, recovery between.
+        // Latch first: boot harvest 1000 → floor 700.
+        m.inj.set((0, 0, 0, 1000));
+        adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
+        assert_eq!(bench.vbat_floor_raw.load(Ordering::Relaxed), 700);
+        // Two slam-like dips below the LATCHED floor, just short of
+        // the window, recovery between.
         for _ in 0..2 {
-            m.inj.set((0, 0, 0, VBAT_ABS_FLOOR_RAW - 5));
+            m.inj.set((0, 0, 0, 695));
             for _ in 0..VBAT_DEBOUNCE_TICKS - 1 {
                 adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
             }
-            m.inj.set((0, 0, 0, VBAT_ABS_FLOOR_RAW + 100)); // recovered
+            m.inj.set((0, 0, 0, 1000)); // recovered
             adc_harvest_and_safety(&drive, &duty, &bench, &mut m.motor(), &m.observer());
             assert_eq!(bench.vbat_low_ticks.load(Ordering::Relaxed), 0);
         }
