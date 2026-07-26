@@ -23,8 +23,15 @@ use crate::blackbox::EV_ACC;
 use crate::zct_trace::ZctTrace;
 
 // --- Bench-safety kill thresholds (observer ADC; kills only) ---
-/// ~85 ms current average over raw injected ch8 counts.
-const OC_KILL_RAW_AVG: u32 = 205;
+/// ~85 ms current average over raw injected ch8 counts. History:
+/// 205 (~5.5 A) through the Extech-supply era — it correctly capped
+/// the first battery full sweep at the 95% rung (90% = 5.5 A avg,
+/// 2026-07-26). Raised to 372 (~10 A) for the battery envelope:
+/// full throttle projects ~6.5 A steady; 10 A avg over 85 ms is
+/// genuinely-wrong territory (stall/short), not an operating point.
+/// The robot-class 3S pack delivers this trivially; ±25% sense-cal
+/// uncertainty documented in minz/CLAUDE.md applies.
+const OC_KILL_RAW_AVG: u32 = 372;
 const OC_WINDOW_TICKS: u32 = 1700; // ≈ 85 ms at 20 kHz
 /// Boot-relative vbat kill floor, percent of the FIRST valid vbat
 /// harvest (latched once into `Bench::vbat_floor_raw`; 0 = not yet
