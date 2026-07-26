@@ -1,5 +1,47 @@
 # Claude Code working notes — rm32 / Vimdrones L431 bench
 
+## STATE AS OF 2026-07-26 (branch `am32_sheet`, HEAD ~4c3d98a) — read this first
+
+**The drive envelope is DONE: full 15–100% throttle locked at AM32-clone
+parity** (100% = 2347 Hz e @ 4.62 A, sd 9-17 µs at every level; per-level
+speeds/currents within 1-2% of the same-protocol clone control). The
+authoritative running state ledger lives in the session memory file
+`project_rm32_parity_state.md` (rungs 16-19), not in this document.
+Key results that OBSOLETE sections below:
+
+- The "100-200 ms chops" investigation below is ancient history. The final
+  three defects were: (1) a diagnostic print in the TIM16 ISR delaying
+  commutation ~180 µs (observer effect — NEVER print in prio-0 ISRs);
+  (2) bench USART2 RX corruption manufacturing phantom throttle values
+  (fixed: DMA circular RX, `ore=0`); (3) a desync-echo rm32 invented by
+  "fixing" AM32's dead-code `average_interval=5000` reset (reverted —
+  match the reference's BEHAVIOR, not its intent).
+- KEPT DIVERGENCES (measured + chosen): fast-rotor desyncs stay in
+  interrupt mode (`DESYNC_STAY_INTERRUPT_CI` — rm32's 20 kHz tick-grid
+  polling cannot re-lock above ~800 Hz e where AM32's main-loop-rate
+  polling can; demotion at speed cost 1-2.4 s churn per event) with a
+  half-duty kick (`IsrAction::DutyKickHalf`) instead of the full
+  min_startup/2 crash (chop softening); AUTO drive mode (comp in
+  interrupt mode, diode in polling); polling-through-timer.
+- Chop is instrumented: `dsy=` (desync events) in the bench `i` line;
+  `scripts/envelope_sweep.py` reports duty-dip chop episodes. Desync
+  rate at 70%+ is SUPPLY-SENSITIVE (rail sag deepens demag).
+- STALE CLAIMS BELOW: DSHOT150 detection EXISTS (signal.rs bucket +
+  prescaler-3 capture config). Bidir auto-detect is now self-validating
+  (commits only after 4 consecutive inverted-CRC decode successes —
+  bench validation pending a DSHOT source). Non-L431 COMP wrappers
+  pre-ack EXTI (task #39 closed).
+- Bench: `scripts/envelope_sweep.py` (staircase + --grad walks + chop
+  report) and `scripts/spiral_hunt.py` are the standard instruments.
+  Bench UART RX is DMA-based; throttle values need two identical
+  consecutive sends to apply (host scripts already repeat at 10 Hz).
+- NEXT PHASE: DSHOT/Betaflight (bidir bench validation, EDT, configurator
+  re-check), long-soak retention at 70-100% on a healthy supply (bench
+  power path was being rewired — thicker leads), non-L431 bench bringup.
+
+Everything below is historical context from the May-July campaign; trust
+file:line claims only after re-verification.
+
 ## Active investigation (May 2026)
 
 **Strategy**: rm32 must reach **1:1 parity with AM32** at three levels — exact register state during operation, identical computational architecture (don't move work between ISR and main loop), and same NVIC priority structure. If rm32 does more work than C, reduce it; never relocate it.
