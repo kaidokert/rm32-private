@@ -28,8 +28,16 @@ pub static COMP_PWM_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::Ato
 /// per-pin (AM32 phaseouts order), 1 = atomic (clone set_phase_roles:
 /// one BSRR write per port then one MODER write per port — final pin
 /// levels snap simultaneously, no intermediate bridge states).
+///
+/// DEFAULT: ATOMIC (1). Deaf-window A/B at 70%/comp (07-26): sequential
+/// ~1 per 1-2.5k windows, atomic 4 per 89k (10-20x), diode 1 per 90k,
+/// clone 0 per 281k. The sequential interleave's transient bridge
+/// states during phase handover are the dominant source of the
+/// deaf-window/orbit-entry class under complementary drive. (The old
+/// "atomic = null" verdict was measured on camp-storm entries — a
+/// metric blind to deaf windows.)
 #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
-pub static PHASE_ATOMIC_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+pub static PHASE_ATOMIC_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
 
 /// Storm-hunt: count of phase_pwm calls that took the DIODE branch.
 #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
