@@ -73,6 +73,13 @@ pub const DESYNC_RESET_INTERVAL: u32 = 5000;
 /// Prevents false desync detection at very low RPM where intervals are naturally large.
 pub const DESYNC_MAX_INTERVAL: u32 = 2000;
 
+/// Bidir DShot auto-detect confirmation: consecutive successful
+/// inverted-CRC decodes required (while the high-idle hint is active,
+/// unarmed) before committing bidir mode. The hint alone false-fires on
+/// normal DShot lines that idle high briefly; committing then inverts
+/// the CRC on non-bidir traffic and every frame fails.
+pub const BIDIR_CONFIRM_FRAMES: u8 = 4;
+
 /// Fast-rotor desync response (KEPT DIVERGENCE, see main_state.rs desync
 /// handler): below this commutation interval (ticks; 600 = 300 µs windows
 /// = ~555 Hz e and faster) a desync keeps interrupt mode instead of
