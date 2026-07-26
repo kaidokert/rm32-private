@@ -29,8 +29,11 @@ const OC_DEBOUNCE_MS: u32 = 85;
 /// AllOff is safe here: with all FETs off the synchronous rectification
 /// stops and BEMF at bench speeds stays below the rail. 5 ms debounce
 /// rides out ADC blips; sustained pumping trips fast.
-const OV_KILL_MV: u16 = 10_200;
-const OV_DEBOUNCE_MS: u32 = 5;
+// 10.8 V / 60 ms: brief regen spikes at fall boundaries reach ~10-11 V
+// for a few ms and must ride through (10.2 V / 5 ms killed 3/4 climbs);
+// sustained pumping (the 11.9 V events lasted 100s of ms) still trips.
+const OV_KILL_MV: u16 = 10_800;
+const OV_DEBOUNCE_MS: u32 = 60;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum KillReason {

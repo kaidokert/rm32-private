@@ -368,11 +368,13 @@ fn main() -> ! {
     // per-PWM-cycle current in JDR1, read per commutation into the
     // probe row. High-rate input-current visibility for desync-vs-sag
     // cause/effect (operator directive).
+    // DEFAULT OFF: armed 24 kHz injected conversions preempt the regular
+    // vbat/current control scan and measurably degrade climbing (0/8
+    // climbs with it armed at boot vs 2/4 without, 07-25). 'J' arms it
+    // live for capture/autopsy sessions — instruments cost only when
+    // attached.
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
-    {
-        rm32_stm32::mcu_l431::adc::arm_injected_current();
-        rm32_stm32::dprintln!("[rm32] injected current sampling armed (TRGO2 mid-ON)");
-    }
+    rm32_stm32::dprintln!("[rm32] injected current sampling: OFF ('J' arms)");
 
     // --- ADC + Telemetry (returned from init()) ---
 
@@ -818,6 +820,15 @@ fn main() -> ! {
                             }
                             #[cfg(not(all(feature = "stm32l431", feature = "zctrace")))]
                             rm32_stm32::dprintln!("[bench] defer: L431+zctrace only");
+                        }
+                        UartCmd::InjToggle => {
+                            #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+                            {
+                                rm32_stm32::mcu_l431::adc::arm_injected_current();
+                                rm32_stm32::dprintln!("[bench] injected current ARMED");
+                            }
+                            #[cfg(not(all(feature = "benchuart", feature = "stm32l431")))]
+                            rm32_stm32::dprintln!("[bench] injected: L431 bench only");
                         }
                         UartCmd::BbDump => {
                             #[cfg(feature = "blackbox")]

@@ -147,8 +147,13 @@ pub fn handle_tim6() {
     // autopsy 07-25), starved its own accepts, and the timeout/kick
     // churn became self-sustaining. The clamp bounds any camp to
     // <=1.25 ms and reconnects the gate to AM32's guarded domain.
+    // NOTE: an earlier continuous min(,5000) clamp here was WRONG — AM32's
+    // 5000 is a one-shot desync reset, not a cap; clamping continuously
+    // halves the legitimate spin-up gate (avg ~10000 era) and invites
+    // early accepts during every climb (4/4 climb failures measured).
+    // The 30 ms camp-blackout bound needs a camp-side fix instead.
     #[cfg(feature = "zctrace")]
-    crate::edge_probe::gate_avg_latch(((shared.e_com_time() / 3).max(0) as u32).min(5000));
+    crate::edge_probe::gate_avg_latch((shared.e_com_time() / 3).max(0) as u32);
     // Deferred comp re-enable ('N' experiment): apply a pending unmask,
     // clearing the ringing-era EXTI pending first so a camped stale edge
     // doesn't fire the instant we unmask.

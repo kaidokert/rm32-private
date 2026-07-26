@@ -45,6 +45,10 @@ pub enum UartCmd {
     GateToggle,
     /// 'N' — toggle deferred comp re-enable (storm-entry blanking test).
     DeferToggle,
+    /// 'J' — arm hardware-timed injected current sampling (one-way;
+    /// capture sessions only — the 24 kHz injected preemption degrades
+    /// the control scan).
+    InjToggle,
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -98,6 +102,7 @@ impl UartDuty {
             b'V' => Some(UartCmd::WatchArm),
             b'G' => Some(UartCmd::GateToggle),
             b'N' => Some(UartCmd::DeferToggle),
+            b'J' => Some(UartCmd::InjToggle),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;
