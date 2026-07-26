@@ -404,6 +404,28 @@ fn main() -> ! {
     let mut bench_throttle: u16 = 0;
     #[cfg(feature = "benchuart")]
     let mut bench_last_cmd: Option<u32> = None;
+    // Decision counters for the phantom-stop hunt: every committed value
+    // and every Stop commit is counted — a host streaming "50\n" should
+    // produce vals only; stops>0 means RX corruption turned a throttle
+    // line into a commanded stop (the silent-veto class).
+    #[cfg(feature = "benchuart")]
+    let mut bench_stop_n: u32 = 0;
+    #[cfg(feature = "benchuart")]
+    let mut bench_val_n: u32 = 0;
+    #[cfg(feature = "benchuart")]
+    let mut bench_last_val: u16 = 0;
+    // Two-frame confirmation (AM32 protocol-detection pattern): a
+    // throttle/stop commit only APPLIES when the same value arrives twice
+    // consecutively. Measured need: ore=24 stops=13 in one sweep — RX
+    // overrun under prio-0 ISR bursts drops a digit and "50\n" becomes
+    // "0\n", a commanded stop at speed (brake -> regen pump -> OVOLT).
+    // Hosts stream the setpoint at ~10 Hz, so a real change applies one
+    // repeat (~100 ms) later; singleton corruptions never apply.
+    // 's'/'w' stay immediate.
+    #[cfg(feature = "benchuart")]
+    let mut bench_pending: u16 = 0;
+    #[cfg(feature = "benchuart")]
+    let mut bench_veto_n: u32 = 0;
     // Blackbox mode tracker: record a MOD event whenever the packed
     // armed/running/old_routine/stepper_sine bits change.
     #[cfg(feature = "blackbox")]
@@ -633,12 +655,25 @@ fn main() -> ! {
                 if let Some(cmd) = bench_parser.step(b) {
                     match cmd {
                         UartCmd::SetThrottle(v) => {
-                            bench_throttle = v;
                             bench_last_cmd = Some(bench_now);
+                            bench_val_n += 1;
+                            bench_last_val = v;
+                            if v == bench_pending {
+                                bench_throttle = v;
+                            } else {
+                                bench_veto_n += 1;
+                            }
+                            bench_pending = v;
                         }
                         UartCmd::Stop => {
-                            bench_throttle = 0;
                             bench_last_cmd = Some(bench_now);
+                            bench_stop_n += 1;
+                            if bench_pending == 0 {
+                                bench_throttle = 0;
+                            } else {
+                                bench_veto_n += 1;
+                            }
+                            bench_pending = 0;
                         }
                         UartCmd::Kill => {
                             bench_throttle = 0;
@@ -660,7 +695,7 @@ fn main() -> ! {
                             let iraw = (shared.actual_current().max(0) as u32) * 100 / 2686;
                             let vraw = (shared.battery_voltage() as u32) * 100 / 752;
                             rm32_stm32::dprintln!(
-                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={}",
+                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={}",
                                 shared.old_routine() as u8,
                                 shared.running() as u8,
                                 shared.commutation_interval(),
@@ -669,7 +704,12 @@ fn main() -> ! {
                                 shared.duty_cycle(),
                                 iraw,
                                 vraw,
-                                bench_guard.latched().is_some() as u8
+                                bench_guard.latched().is_some() as u8,
+                                rm32_stm32::bench_uart::ore_count(),
+                                bench_stop_n,
+                                bench_val_n,
+                                bench_last_val,
+                                bench_veto_n
                             );
                             #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
                             {

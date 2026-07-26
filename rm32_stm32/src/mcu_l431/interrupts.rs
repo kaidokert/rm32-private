@@ -26,21 +26,12 @@ fn TIM6_DACUNDER() {
 fn TIM1_UP_TIM16() {
     // TIM16 is the commutation timer on L431
     let tim16 = unsafe { &*pac::TIM16::PTR };
-    // TEMP DIAG (edge-probe rung): 1-in-1024 raw snapshot of the fire —
-    // TIM16.ARR / TIM16.CNT / TIM2.CNT at entry, to explain why fires
-    // land at TIM2~7 when the arm value was wait+1 (~88).
-    #[cfg(feature = "zctrace")]
-    {
-        use core::sync::atomic::{AtomicU32, Ordering};
-        static FIRE_N: AtomicU32 = AtomicU32::new(0);
-        let n = FIRE_N.fetch_add(1, Ordering::Relaxed);
-        if n & 0x3FF == 0 {
-            let arr = tim16.arr.read().bits();
-            let cnt16 = tim16.cnt.read().bits();
-            let cnt2 = unsafe { (*pac::TIM2::PTR).cnt.read().bits() };
-            crate::dprintln!("[t16 arr={} cnt16={} cnt2={}]", arr, cnt16, cnt2);
-        }
-    }
+    // NOTE: never print from this ISR. A 1-in-1024 `[t16]` dprintln that
+    // lived here was THE 40-50% fall trigger: ~30 bytes of bounded TXE
+    // waits at 2 Mbaud = ~180 µs of priority-0 stall BEFORE the phase
+    // switch -> commutation fires ~365 TIM2 ticks late -> the next ZC
+    // passes while COMP is still masked -> deaf window -> period-2
+    // spiral. Captured end-to-end in spiral1.bin (tl=471 vs la=102).
     unsafe {
         tim16.sr.write(|w| w.bits(0));
     }

@@ -13,7 +13,7 @@
 
 #![cfg(all(feature = "benchuart", feature = "stm32l431"))]
 
-use core::sync::atomic::{AtomicU16, AtomicUsize};
+use core::sync::atomic::{AtomicU16, AtomicU32, AtomicUsize, Ordering};
 
 use crate::pac::{GPIOA, RCC, USART2};
 use rm32::bench_input::RxRing;
@@ -66,6 +66,16 @@ pub fn init() {
     }
 }
 
+/// RX corruption counter: overrun (byte LOST) + framing/noise (byte
+/// garbled). A lost digit turns a throttle line into a shorter number —
+/// "50\n" minus the '5' is "0\n" = a commanded STOP at speed. This
+/// counter is the decision-side instrument for that failure class.
+static ORE_N: AtomicU32 = AtomicU32::new(0);
+
+pub fn ore_count() -> u32 {
+    ORE_N.load(Ordering::Relaxed)
+}
+
 /// USART2 ISR body: drain RXNE into the ring, then clear overrun /
 /// framing / noise so the IRQ can't storm (they share the RXNEIE
 /// enable). Ring-push-only — no motor state access.
@@ -76,10 +86,9 @@ pub fn service_rx() {
     while usart.isr.read().rxne().bit_is_set() {
         rx.push(usart.rdr.read().bits() as u16);
     }
-    if usart.isr.read().ore().bit_is_set()
-        || usart.isr.read().fe().bit_is_set()
-        || usart.isr.read().nf().bit_is_set()
-    {
+    let isr = usart.isr.read();
+    if isr.ore().bit_is_set() || isr.fe().bit_is_set() || isr.nf().bit_is_set() {
+        ORE_N.fetch_add(1, Ordering::Relaxed);
         usart
             .icr
             .write(|w| w.orecf().set_bit().fecf().set_bit().ncf().set_bit());

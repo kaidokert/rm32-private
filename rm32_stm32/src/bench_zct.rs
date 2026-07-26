@@ -27,6 +27,11 @@ static DROP: AtomicU32 = AtomicU32::new(0);
 static COMM_N: AtomicU32 = AtomicU32::new(0);
 static BATCHING: AtomicBool = AtomicBool::new(false);
 static ENABLED: AtomicBool = AtomicBool::new(false);
+/// Freeze-on-fall: once set, producers stop pushing so the ring +
+/// in-flight wire hold the last pre-fall records intact (camp storms
+/// starve the drain and previously garbaged the fall boundary).
+/// Cleared by the Z toggle.
+static FROZEN: AtomicBool = AtomicBool::new(false);
 
 #[inline]
 fn ring() -> ZctRing<'static, ZCT_N> {
@@ -40,7 +45,17 @@ fn ring() -> ZctRing<'static, ZCT_N> {
 
 /// Toggle the stream; returns the NEW state.
 pub fn toggle() -> bool {
+    FROZEN.store(false, Ordering::Relaxed);
     !ENABLED.fetch_xor(true, Ordering::Relaxed)
+}
+
+/// Called from the commutation ISR on a fall signature.
+pub fn freeze() {
+    FROZEN.store(true, Ordering::Relaxed);
+}
+
+pub fn frozen() -> bool {
+    FROZEN.load(Ordering::Relaxed)
 }
 
 pub fn enabled() -> bool {
@@ -67,7 +82,7 @@ pub fn write(
     tenkhz: u16,
     avg: u16,
 ) -> Option<bool> {
-    if !ENABLED.load(Ordering::Relaxed) {
+    if !ENABLED.load(Ordering::Relaxed) || FROZEN.load(Ordering::Relaxed) {
         return None;
     }
     let n = COMM_N.fetch_add(1, Ordering::Relaxed);

@@ -252,6 +252,13 @@ pub fn handle_tim14() {
         state.commutation.step(),
         shared.commutation_interval().min(u16::MAX as u32) as u16,
     );
+    // NOTE: a freeze-on-fall trigger (4 consecutive early accepts at
+    // duty>500 -> bench_zct::freeze()) lived here during the spiral
+    // hunt. It caught the onset — root cause was a diagnostic print in
+    // the TIM16 ISR delaying commutation (see mcu_l431/interrupts.rs) —
+    // and was then removed: always-armed, it silences the trace on the
+    // first transient above 50% throttle, blocking envelope capture.
+    // bench_zct::freeze() stays available for future one-shot captures.
     // ZC trace: one 15-byte record per commutation (minz wire format),
     // plus the edge-probe companion row on the same gate decision. The
     // probe snapshot RESETS every commutation regardless — window
