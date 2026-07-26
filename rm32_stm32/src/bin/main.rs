@@ -873,6 +873,35 @@ fn main() -> ! {
                             #[cfg(not(all(feature = "benchuart", feature = "stm32l431")))]
                             rm32_stm32::dprintln!("[bench] injected: L431 bench only");
                         }
+                        UartCmd::GeckoGrab => {
+                            #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+                            {
+                                let head = rm32_stm32::mcu_l431::adc::gecko_capture();
+                                rm32_stm32::dprintln!(
+                                    "gecko start={} n=2048 vbat={}",
+                                    head,
+                                    shared.battery_voltage()
+                                );
+                                for line in 0..128usize {
+                                    use core::fmt::Write as _;
+                                    let mut s = heapless::String::<96>::new();
+                                    for k in 0..16usize {
+                                        let v =
+                                            rm32_stm32::mcu_l431::adc::gecko_word(line * 16 + k);
+                                        let _ = write!(
+                                            s,
+                                            "{:04x}{}",
+                                            v,
+                                            if k == 15 { "" } else { " " }
+                                        );
+                                    }
+                                    rm32_stm32::dprintln!("{}", s.as_str());
+                                }
+                                rm32_stm32::dprintln!("gecko end");
+                            }
+                            #[cfg(not(all(feature = "benchuart", feature = "stm32l431")))]
+                            rm32_stm32::dprintln!("[bench] gecko: L431 bench only");
+                        }
                         UartCmd::BbDump => {
                             #[cfg(feature = "blackbox")]
                             {

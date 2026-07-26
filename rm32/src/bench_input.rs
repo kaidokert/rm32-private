@@ -49,6 +49,8 @@ pub enum UartCmd {
     /// capture sessions only — the 24 kHz injected preemption degrades
     /// the control scan).
     InjToggle,
+    /// 'g' — GECKO one-shot current-microscope capture + dump.
+    GeckoGrab,
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -103,6 +105,7 @@ impl UartDuty {
             b'G' => Some(UartCmd::GateToggle),
             b'N' => Some(UartCmd::DeferToggle),
             b'J' => Some(UartCmd::InjToggle),
+            b'g' => Some(UartCmd::GeckoGrab),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;
