@@ -8,7 +8,7 @@ dshot=1
 EDT_ARMED=1
 running=1
 old_routine=0
-zero_crosses=200
+zero_crosses=2000  # above RECLIMB_CONFIRM_ZC=1500 -- this vector tests the TEMPERATURE ceiling, not the reclimb clamp
 commutation_interval=1000
 eeprom.limits.temperature=80
 

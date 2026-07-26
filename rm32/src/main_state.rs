@@ -659,13 +659,27 @@ impl<LED: OutputPin> MainState<LED> {
         }
 
         // eRPM + temperature duty ceiling
-        shared.set_duty_maximum(duty_ceiling(
+        let mut dmax = duty_ceiling(
             e_com_time,
             self.motor_kv,
             self.config.motor_poles,
             self.measurements.degrees_celsius.0,
             self.config.temperature_limit,
-        ));
+        );
+        // Reclimb clamp (KEPT DIVERGENCE, minz blind-amp-clamp shape):
+        // while the lock is unconfirmed (zero_crosses below threshold —
+        // fresh engage OR post-fall recovery), cap the ceiling so the
+        // reclimb toward a high commanded duty cannot surge. Measured
+        // need: after a fall at 60-70% commanded, the recovery reclimb
+        // slewed straight to duty 1412+ mid-re-spin, pulling 4.2-4.7A
+        // -> PSU sag to 5.0-5.3V -> VBAT guard kill (the clone never
+        // falls, so AM32's map alone never faces this). Cut demand while
+        // the estimator is uncertain; the cap releases on confirmation
+        // and the normal ramp takes duty to commanded.
+        if shared.zero_crosses() < RECLIMB_CONFIRM_ZC {
+            dmax = dmax.min(RECLIMB_DUTY_CAP);
+        }
+        shared.set_duty_maximum(dmax);
 
         // Min BEMF counts adjustment — STRICTER during startup (AM32
         // main.c:2177-2188 with the global TARGET_MIN_BEMF_COUNTS=3 the

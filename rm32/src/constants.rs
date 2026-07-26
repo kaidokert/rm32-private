@@ -90,6 +90,16 @@ pub const ORBIT_TRIP_OFFSET_MA: i32 = 1000;
 /// Consecutive 1 kHz ticks over the line before tripping (ms).
 pub const ORBIT_TRIP_MS: u16 = 30;
 
+/// Reclimb clamp (KEPT DIVERGENCE, see main_state duty-ceiling site):
+/// until this many zero crossings confirm the lock, the duty ceiling is
+/// capped at RECLIMB_DUTY_CAP. Covers fresh engage and post-fall
+/// recovery identically (both reset zero_crosses). 1500 crossings =
+/// 0.15-0.75 s depending on speed; the cap must clear comfortably above
+/// the startup duty band (max ~450) while bounding the recovery
+/// acceleration surge that sag-killed churny reps.
+pub const RECLIMB_CONFIRM_ZC: u32 = 1500;
+pub const RECLIMB_DUTY_CAP: u16 = 800;
+
 /// Bidir DShot auto-detect confirmation: consecutive successful
 /// inverted-CRC decodes required (while the high-idle hint is active,
 /// unarmed) before committing bidir mode. The hint alone false-fires on
