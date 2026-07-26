@@ -137,6 +137,15 @@ pub struct MainState<LED: OutputPin = NoLed> {
     pub desync_events: u32,
     /// Wrong-phase-orbit trips (see ORBIT_TRIP_MA) — lifetime count.
     pub orbit_trips: u32,
+    /// Desync-detector re-arm threshold (zero_crosses). Normally the
+    /// AM32-verbatim 10; raised to DESYNC_REARM_HOLDOFF_ZC for one
+    /// cycle after a fast-rotor fire. Without this, the stay-interrupt
+    /// response self-loops during commanded transients: fire ->
+    /// kick-half -> decel moves avg against a reference that went
+    /// stale while zc<=10 -> refire at zc=11 (measured: steps program
+    /// dsy=289 vs clone's 10 — the clone's full demote pauses the
+    /// pipeline instead). Reset to 10 once a check passes the gate.
+    pub(crate) desync_rearm_zc: u32,
     /// Consecutive 1 kHz ticks with current above ORBIT_TRIP_MA.
     pub(crate) orbit_trip_count: u16,
     pub(crate) last_armed: bool,
@@ -190,6 +199,7 @@ impl MainState<NoLed> {
             desync_check: false,
             desync_events: 0,
             orbit_trips: 0,
+            desync_rearm_zc: 10,
             orbit_trip_count: 0,
             last_armed: false,
             just_armed: false,
@@ -376,8 +386,9 @@ impl<LED: OutputPin> MainState<LED> {
             self.protection.bemf_timeout = BEMF_TIMEOUT_STRICT;
         }
 
-        // Desync detection
-        if self.desync_check && zc > 10 {
+        // Desync detection (re-arm gate is dynamic — see desync_rearm_zc)
+        if self.desync_check && zc > self.desync_rearm_zc {
+            self.desync_rearm_zc = 10;
             let diff = get_abs_dif(
                 self.timing.last_average_interval as i32,
                 self.timing.average_interval as i32,
@@ -430,6 +441,11 @@ impl<LED: OutputPin> MainState<LED> {
                 // recovery surge fed the supply-sag feedback loop.
                 if desync_from_interrupt_mode && fast_rotor {
                     shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickHalf);
+                    // Detector holdoff (see desync_rearm_zc): the stay-
+                    // interrupt response keeps wraps coming at speed, so
+                    // without this the kick's own decel refires the
+                    // detector at zc=11 in a loop during transients.
+                    self.desync_rearm_zc = DESYNC_REARM_HOLDOFF_ZC;
                 } else {
                     shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
                 }

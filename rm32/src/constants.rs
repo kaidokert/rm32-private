@@ -90,6 +90,16 @@ pub const ORBIT_TRIP_OFFSET_MA: i32 = 1000;
 /// Consecutive 1 kHz ticks over the line before tripping (ms).
 pub const ORBIT_TRIP_MS: u16 = 30;
 
+/// Desync-detector re-arm holdoff after a fast-rotor fire (KEPT
+/// DIVERGENCE, see MainState::desync_rearm_zc): the stay-interrupt
+/// response keeps the commutation pipeline running at speed, so the
+/// kick's own deceleration moves average_interval against a reference
+/// that went stale while zc<=10 and refires the detector at zc=11 —
+/// a self-loop measured at dsy=289 vs the clone's 10 on the identical
+/// step program. 100 crossings ~ 10-60 ms; a real desync still trips
+/// on the first check past the holdoff.
+pub const DESYNC_REARM_HOLDOFF_ZC: u32 = 100;
+
 /// Reclimb clamp (KEPT DIVERGENCE, see main_state duty-ceiling site):
 /// until this many zero crossings confirm the lock, the duty ceiling is
 /// capped at RECLIMB_DUTY_CAP. Covers fresh engage and post-fall
