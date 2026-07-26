@@ -102,17 +102,23 @@ impl BenchGuard {
             return None;
         }
 
-        // Source classification on the first real vbat sample. A pack at
-        // rest reads >10 V (3S); the bench PSU rail sits ~8.1 V. Latched
-        // for the session — a mid-run sag must not flip profiles.
-        if self.battery.is_none() && vbat_mv > 0 {
+        // Source classification at the FIRST running edge — not the first
+        // vbat sample: the measurement filter warms up from 0, so an early
+        // sample reads low, classifies a battery bench as PSU, and the
+        // filter then climbs through the PSU OV line on its way to pack
+        // voltage (measured: killed=1 within 2 s of boot on a 12.17 V
+        // pack). By the time the motor runs, the filter has settled for
+        // over a second and regen (the thing OV guards against) is not
+        // yet possible. Until classified, thresholds are cross-safe: PSU
+        // floor + PSU OC (battery idle never near either) with battery
+        // OV (a PSU can't pump while the motor has never run).
+        if self.battery.is_none() && running && vbat_mv > 0 {
             self.battery = Some(vbat_mv > 10_000);
         }
-        let batt = self.battery == Some(true);
-        let (floor, oc_ma, ov_mv) = if batt {
-            (B_VBAT_FLOOR_MV, B_OC_KILL_MA, B_OV_KILL_MV)
-        } else {
-            (VBAT_FLOOR_MV, OC_KILL_MA, OV_KILL_MV)
+        let (floor, oc_ma, ov_mv) = match self.battery {
+            Some(true) => (B_VBAT_FLOOR_MV, B_OC_KILL_MA, B_OV_KILL_MV),
+            Some(false) => (VBAT_FLOOR_MV, OC_KILL_MA, OV_KILL_MV),
+            None => (VBAT_FLOOR_MV, OC_KILL_MA, B_OV_KILL_MV),
         };
 
         let vbat_low = running && vbat_mv > 0 && vbat_mv < floor;
