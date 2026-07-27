@@ -186,12 +186,15 @@ pub fn tim16_fired(cnt: u32) {
 pub fn take() -> (u16, u16, u16, u16, u8, u8) {
     let fe = FIRST_EDGE.swap(NO_EDGE, Ordering::Relaxed);
     let en = ENTRIES.swap(0, Ordering::Relaxed);
-    let _tl = TIM16_LAT.swap(NO_EDGE, Ordering::Relaxed);
-    let hist = LEVEL_HIST.swap(0, Ordering::Relaxed);
+    let tl = TIM16_LAT.swap(NO_EDGE, Ordering::Relaxed);
+    let _hist = LEVEL_HIST.swap(0, Ordering::Relaxed);
     let la = LAST_ARM.load(Ordering::Relaxed);
     let gc = GATED_CLEARS.swap(0, Ordering::Relaxed);
     let pr = PERSIST_REJECTS.swap(0, Ordering::Relaxed);
-    (fe, en, hist, la, gc.min(255) as u8, pr.min(255) as u8)
+    // WALL FIRE-LATENCY TEST: 3rd slot = tim16_lat (fire time) not
+    // level-history, so the probe row carries fire-latency (tl-la) at
+    // the 100% battery wall (regime the fall60 test never covered).
+    (fe, en, tl, la, gc.min(255) as u8, pr.min(255) as u8)
 }
 
 /// Lifetime (gated_clears, persist_rejects) for the heartbeat.
