@@ -53,6 +53,9 @@ pub enum UartCmd {
     GeckoGrab,
     /// 'x' — WAXWING phase-voltage ring dump (post-mortem or live).
     WaxDump,
+    /// 'H' — ISR-duration histogram dump (then reset). Second H after a
+    /// settled hold gives the clean in-hold distribution.
+    HistDump,
     /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
     /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
     /// clamp, 'R' SWIER race fix.
@@ -113,6 +116,7 @@ impl UartDuty {
             b'J' => Some(UartCmd::InjToggle),
             b'g' => Some(UartCmd::GeckoGrab),
             b'x' => Some(UartCmd::WaxDump),
+            b'H' => Some(UartCmd::HistDump),
             b'K' => Some(UartCmd::DivToggle(0)),
             b'M' => Some(UartCmd::DivToggle(1)),
             b'P' => Some(UartCmd::DivToggle(2)),

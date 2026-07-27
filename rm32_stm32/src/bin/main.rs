@@ -944,6 +944,48 @@ fn main() -> ! {
                                 );
                             }
                         }
+                        UartCmd::HistDump => {
+                            #[cfg(all(
+                                feature = "benchuart",
+                                any(feature = "stm32l431", feature = "stm32g431")
+                            ))]
+                            {
+                                use core::fmt::Write as _;
+                                let now =
+                                    unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+                                rm32_stm32::dprintln!("HIST cyc={} shift=8 nbins=16", now);
+                                let names = ["tim6", "tim16", "comp"];
+                                for site in 0..3usize {
+                                    let (bins, sum, cnt) = rm32_stm32::bench_hist::snapshot(site);
+                                    let mut s = heapless::String::<160>::new();
+                                    let _ = write!(s, "{} cnt={} sum={}", names[site], cnt, sum);
+                                    for b in bins.iter() {
+                                        let _ = write!(s, " {}", b);
+                                    }
+                                    rm32_stm32::dprintln!("{}", s.as_str());
+                                }
+                                #[cfg(feature = "stm32l431")]
+                                {
+                                    use core::sync::atomic::Ordering;
+                                    let ce = rm32_stm32::mcu_l431::interrupts::LEAN_COMP_ENTRIES
+                                        .swap(0, Ordering::Relaxed);
+                                    let cm = rm32_stm32::mcu_l431::interrupts::LEAN_COMMS
+                                        .swap(0, Ordering::Relaxed);
+                                    rm32_stm32::dprintln!(
+                                        "HIST lean_comp_entries={} lean_comms={}",
+                                        ce,
+                                        cm
+                                    );
+                                }
+                                rm32_stm32::dprintln!("HIST END");
+                                rm32_stm32::bench_hist::reset();
+                            }
+                            #[cfg(not(all(
+                                feature = "benchuart",
+                                any(feature = "stm32l431", feature = "stm32g431")
+                            )))]
+                            rm32_stm32::dprintln!("[bench] hist: M4 bench only");
+                        }
                         UartCmd::WaxDump => {
                             #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
                             {

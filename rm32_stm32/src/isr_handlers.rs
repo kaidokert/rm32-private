@@ -144,6 +144,14 @@ pub fn handle_tim6() {
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         shared.dbg_tim6_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+        #[cfg(all(
+            feature = "benchuart",
+            any(feature = "stm32l431", feature = "stm32g431")
+        ))]
+        crate::bench_hist::record(
+            crate::bench_hist::Site::Tim6,
+            cyc_end.wrapping_sub(cyc_start),
+        );
     }
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
     crate::phase::canary(1); // site 1: tim6 exit (ten_khz_tick ran between 0 and 1)
@@ -315,6 +323,14 @@ pub fn handle_tim14() {
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         shared.dbg_tim14_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+        #[cfg(all(
+            feature = "benchuart",
+            any(feature = "stm32l431", feature = "stm32g431")
+        ))]
+        crate::bench_hist::record(
+            crate::bench_hist::Site::Tim16,
+            cyc_end.wrapping_sub(cyc_start),
+        );
     }
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
     crate::phase::canary(2); // site 2: tim14 exit
@@ -363,6 +379,14 @@ pub fn handle_comp() {
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         shared.dbg_comp_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+        #[cfg(all(
+            feature = "benchuart",
+            any(feature = "stm32l431", feature = "stm32g431")
+        ))]
+        crate::bench_hist::record(
+            crate::bench_hist::Site::Comp,
+            cyc_end.wrapping_sub(cyc_start),
+        );
     }
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
     crate::phase::canary(3); // site 3: comp ISR exit

@@ -36,6 +36,8 @@ pub mod bench_uart;
 compile_error!("feature `benchuart` is L431-only (USART2-on-PA2 bench wiring)");
 // Blackbox firmware adapter (DWT timestamps + critical-section ring).
 pub mod bench_bb;
+// ISR-duration histograms (constant-cost distribution capture).
+pub mod bench_hist;
 // ZC-trace firmware adapter (ring + batch state + enable toggle).
 pub mod bench_zct;
 // Edge/veto probe — per-window COMP entry/veto counters + TIM16 latency.
