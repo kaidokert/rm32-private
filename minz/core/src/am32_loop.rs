@@ -152,6 +152,9 @@ pub struct Bench<'a> {
     /// 'X' — WAXWING-lite phase-voltage-ring dump request (main-context
     /// dump of the always-on TIM6 rings; nothing to start or stop).
     pub wax_req: &'a AtomicBool,
+    /// 'H' — per-ISR duration histogram dump request (main-context dump
+    /// of the always-on TIM6/TIM16/COMP bin arrays).
+    pub hist_req: &'a AtomicBool,
     pub zct_stream_on: &'a AtomicBool,
 }
 
@@ -287,6 +290,7 @@ pub fn apply_uart_cmd(duty: &Duty, bench: &Bench, cmd: Option<UartCmd>) {
         Some(UartCmd::BbDump) => bench.dump_req.store(true, Ordering::Relaxed),
         Some(UartCmd::GeckoDump) => bench.gecko_req.store(true, Ordering::Relaxed),
         Some(UartCmd::WaxDump) => bench.wax_req.store(true, Ordering::Relaxed),
+        Some(UartCmd::HistDump) => bench.hist_req.store(true, Ordering::Relaxed),
         None => {}
     }
 }
@@ -438,6 +442,7 @@ mod tests {
         info_req: AtomicBool,
         gecko_req: AtomicBool,
         wax_req: AtomicBool,
+        hist_req: AtomicBool,
         zct_stream_on: AtomicBool,
     }
     impl BenchStore {
@@ -455,6 +460,7 @@ mod tests {
                 info_req: &self.info_req,
                 gecko_req: &self.gecko_req,
                 wax_req: &self.wax_req,
+                hist_req: &self.hist_req,
                 zct_stream_on: &self.zct_stream_on,
             }
         }
@@ -660,7 +666,7 @@ mod tests {
         apply_uart_cmd(&duty, &bench, Some(UartCmd::TraceToggle));
         assert!(!bench.zct_stream_on.load(Ordering::Relaxed));
 
-        // Info / BbDump / GeckoDump / WaxDump set their request flags.
+        // Info / BbDump / GeckoDump / WaxDump / HistDump set request flags.
         apply_uart_cmd(&duty, &bench, Some(UartCmd::Info));
         assert!(bench.info_req.load(Ordering::Relaxed));
         apply_uart_cmd(&duty, &bench, Some(UartCmd::BbDump));
@@ -669,6 +675,8 @@ mod tests {
         assert!(bench.gecko_req.load(Ordering::Relaxed));
         apply_uart_cmd(&duty, &bench, Some(UartCmd::WaxDump));
         assert!(bench.wax_req.load(Ordering::Relaxed));
+        apply_uart_cmd(&duty, &bench, Some(UartCmd::HistDump));
+        assert!(bench.hist_req.load(Ordering::Relaxed));
 
         // None: no-op.
         bench.stop_req.store(false, Ordering::Relaxed);

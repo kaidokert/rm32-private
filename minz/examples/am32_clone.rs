@@ -161,6 +161,8 @@ static INFO_REQ: AtomicBool = AtomicBool::new(false);
 static GECKO_REQ: AtomicBool = AtomicBool::new(false);
 /// 'X' — WAXWING-lite phase-voltage-ring dump (main-context, one-shot).
 static WAX_REQ: AtomicBool = AtomicBool::new(false);
+/// 'H' — per-ISR duration histogram dump (main-context, one-shot).
+static HIST_REQ: AtomicBool = AtomicBool::new(false);
 static ZCT_STREAM_ON: AtomicBool = AtomicBool::new(true);
 
 /// Which phase floats in each sector (minz textbook convention, matches
@@ -218,6 +220,42 @@ static VBAT_FLOOR_RAW: AtomicU16 = AtomicU16::new(0);
 /// total COMP ISR entries, counted in the trampoline. Paired with
 /// zct comm_n on the info line -> avg entries/window.
 static COMP_ENTRIES: AtomicU32 = AtomicU32::new(0);
+
+// ===============================================================
+// Per-ISR duration histogram (CPU-margin control instrument, 2026-07-26
+// — the control leg for the rm32 `ten_khz_tick` A/B). The clone has NO
+// 1 kHz PID block, so its TIM6 tick should stay tight where rm32's has
+// a 15% tail at 25-32 µs; this histogram measures it.
+//
+// BIN LAW — MUST match rm32's byte-for-byte for the bin-by-bin compare:
+//   idx = min(delta_cycles >> SHIFT, NBINS-1)
+// with SHIFT=8 (256-cycle bins = 3.2 µs @ 80 MHz DWT.CYCCNT), NBINS=16
+// (covers 0..4096 cyc ≈ 0..51 µs). Bin 0 = underflow naturally (<3.2 µs);
+// bin 15 = overflow, all passes ≥ 3840 cyc ≈ ≥48 µs. The delta is a
+// wrapping u32 cycle subtraction, so it is correct across a CYCCNT wrap.
+// Rows: index 0 = TIM6, 1 = TIM16 (COM), 2 = COMP.
+// Always-on (constant cost) so a later wall-window capture works too.
+// ===============================================================
+const HIST_SHIFT: u32 = 8;
+const HIST_NBINS: usize = 16;
+const HIST_TIM6: usize = 0;
+const HIST_TIM16: usize = 1;
+const HIST_COMP: usize = 2;
+static ISR_HIST: [[AtomicU32; HIST_NBINS]; 3] =
+    [const { [const { AtomicU32::new(0) }; HIST_NBINS] }; 3];
+
+/// Record one ISR pass duration into [`ISR_HIST`]. Constant-cost and
+/// branchless (`.min` lowers to a `cmov`); it MUST NOT grow a
+/// value-dependent heavy path — the project's constant-per-tick rule
+/// (and the [t16] scar): this instrument must not become the blip it
+/// measures. `start_cyc` is the DWT.CYCCNT read taken as the first line
+/// of the trampoline (same idiom as `minz::am32_timers::ticks_10us`).
+#[inline]
+fn hist_record(isr: usize, start_cyc: u32) {
+    let d = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start_cyc);
+    let idx = ((d >> HIST_SHIFT) as usize).min(HIST_NBINS - 1);
+    ISR_HIST[isr][idx].fetch_add(1, Ordering::Relaxed);
+}
 
 // ===============================================================
 // WAXWING-lite phase-voltage rings (`X` key, 2026-07-26) — the
@@ -357,6 +395,7 @@ static BENCH: Bench<'static> = Bench {
     info_req: &INFO_REQ,
     gecko_req: &GECKO_REQ,
     wax_req: &WAX_REQ,
+    hist_req: &HIST_REQ,
     zct_stream_on: &ZCT_STREAM_ON,
 };
 
@@ -466,6 +505,9 @@ fn handle_requests(
     }
     if bench.wax_req.swap(false, Ordering::Relaxed) {
         wax_dump(sched, duty, tx);
+    }
+    if bench.hist_req.swap(false, Ordering::Relaxed) {
+        hist_dump(tx);
     }
     // Kill NOTICE is one-shot via kill_reason; `killed` itself stays
     // LATCHED (TIM6 duty/polling gate + the set_input inert gate hold
@@ -681,6 +723,30 @@ fn wax_dump(sched: &Sched, duty: &Duty, tx: &mut UartTxWriter) {
 }
 
 // ===============================================================
+// Per-ISR duration histogram dump (`H` key — see the ISR_HIST statics
+// for the bin law). Small (~200 B ASCII), but routed through
+// BlockingFmt like the other dumps so no counts drop if the ring is
+// momentarily full. Format (the byte-comparison contract vs rm32):
+//   HG shift=8 nbins=16\r\n
+//   TIM6  <16 decimal counts, space-separated>\r\n
+//   TIM16 <16 counts>\r\n
+//   COMP  <16 counts>\r\n
+//   HG END\r\n
+// ===============================================================
+fn hist_dump(tx: &mut UartTxWriter) {
+    let mut w = BlockingFmt { tx };
+    let _ = write!(w, "HG shift={} nbins={}\r\n", HIST_SHIFT, HIST_NBINS);
+    for (isr, name) in [(HIST_TIM6, "TIM6"), (HIST_TIM16, "TIM16"), (HIST_COMP, "COMP")] {
+        let _ = write!(w, "{}", name);
+        for bin in &ISR_HIST[isr] {
+            let _ = write!(w, " {}", bin.load(Ordering::Relaxed));
+        }
+        let _ = write!(w, "\r\n");
+    }
+    let _ = write!(w, "HG END\r\n");
+}
+
+// ===============================================================
 #[entry]
 fn main() -> ! {
     static mut TX_RING: [u8; TX_RING_LEN] = [0; TX_RING_LEN];
@@ -808,7 +874,7 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
-        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb | 'G' gecko | 'X' wax\r"
+        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb | 'G' gecko | 'X' wax | 'H' hist\r"
     )
     .ok();
 
@@ -843,22 +909,28 @@ fn main() -> ! {
 /// COMP (priority 0) — the ZC chain.
 #[interrupt]
 fn COMP() {
+    let s = cortex_m::peripheral::DWT::cycle_count(); // hist: time whole pass
     COMP_ENTRIES.fetch_add(1, Ordering::Relaxed); // camp-storm probe
     let mut motor = motor();
-    comp_isr(&SCHED, &DRIVE, &mut motor, &observer())
+    comp_isr(&SCHED, &DRIVE, &mut motor, &observer());
+    hist_record(HIST_COMP, s);
 }
 
 /// TIM16 wrap on the shared vector (priority 0) — the COM tick.
 #[interrupt]
 fn TIM1_UP_TIM16() {
+    let s = cortex_m::peripheral::DWT::cycle_count(); // hist: time whole pass
     let mut motor = motor();
-    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY, &mut motor, &observer())
+    tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY, &mut motor, &observer());
+    hist_record(HIST_TIM16, s);
 }
 
 /// TIM6 19.6 kHz (priority 3) — tenKhzRoutine.
 #[interrupt]
 fn TIM6_DACUNDER() {
+    let s = cortex_m::peripheral::DWT::cycle_count(); // hist: time whole pass
     wax_tick(); // WAXWING ring write (observer-only, like COMP_ENTRIES)
     let mut motor = motor();
-    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &mut motor, &observer())
+    tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &mut motor, &observer());
+    hist_record(HIST_TIM6, s);
 }
