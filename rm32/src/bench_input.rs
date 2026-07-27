@@ -56,9 +56,11 @@ pub enum UartCmd {
     /// 'H' — ISR-duration histogram dump (then reset). Second H after a
     /// settled hold gives the clean in-hold distribution.
     HistDump,
-    /// 'C' — cycle the carrier-lever ARR override (off -> higher-carrier
-    /// fixed ARRs -> off). Ripple-displacement wall intervention test.
+    /// 'C' — cycle the carrier-lever ARR override.
     CarrierLever,
+    /// 'F' — cycle the persistence filter_level override (off/2/1).
+    /// Acceptance-side wall intervention test.
+    FilterLever,
     /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
     /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
     /// clamp, 'R' SWIER race fix.
@@ -121,6 +123,7 @@ impl UartDuty {
             b'x' => Some(UartCmd::WaxDump),
             b'H' => Some(UartCmd::HistDump),
             b'C' => Some(UartCmd::CarrierLever),
+            b'F' => Some(UartCmd::FilterLever),
             b'K' => Some(UartCmd::DivToggle(0)),
             b'M' => Some(UartCmd::DivToggle(1)),
             b'P' => Some(UartCmd::DivToggle(2)),

@@ -760,7 +760,8 @@ impl<LED: OutputPin> MainState<LED> {
         } else {
             crate::functions::map(self.timing.average_interval as i32, 100, 500, 3, 12) as u8
         };
-        shared.set_filter_level(filter);
+        let filt_ovr = shared.bench_filter_override();
+        shared.set_filter_level(if filt_ovr != 0 { filt_ovr } else { filter });
 
         // Commutation advance (AM32 main.c:900-905): dynamic auto-advance
         // scales with duty; otherwise the STATIC advance_level-derived

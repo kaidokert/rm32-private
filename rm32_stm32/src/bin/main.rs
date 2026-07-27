@@ -967,6 +967,16 @@ fn main() -> ! {
                                 khz
                             );
                         }
+                        UartCmd::FilterLever => {
+                            let cur = shared.bench_filter_override();
+                            let next = match cur {
+                                0 => 2,
+                                2 => 1,
+                                _ => 0,
+                            };
+                            shared.set_bench_filter_override(next);
+                            rm32_stm32::dprintln!("[bench] filter_level override={} (0=map)", next);
+                        }
                         UartCmd::HistDump => {
                             #[cfg(all(
                                 feature = "benchuart",

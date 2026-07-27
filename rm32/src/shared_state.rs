@@ -78,6 +78,10 @@ pub struct SharedState {
     // Lower ARR = higher PWM carrier = less current ripple. Tests the
     // ripple-displacement wall hypothesis by intervention.
     bench_arr_override: AtomicU16,
+    // Bench filter-lever: forced persistence filter_level (0=off). Lower
+    // = accept a crossing on fewer confirming reads (less likely to
+    // reject a marginal wall-slew crossing). Acceptance-side wall test.
+    bench_filter_override: AtomicU8,
     changeover_step: AtomicU8, // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
@@ -153,6 +157,7 @@ impl SharedState {
             isr_action: AtomicU8::new(0), // IsrAction::None
             bench_divergence_mask: AtomicU8::new(0),
             bench_arr_override: AtomicU16::new(0),
+            bench_filter_override: AtomicU8::new(0),
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
             dbg_crc_pass: AtomicU32::new(0),
@@ -584,6 +589,12 @@ impl SharedState {
         // Only upgrade priority — don't downgrade AllOff to ResetIntervalTimer
         let new = action as u8;
         let _ = self.isr_action.fetch_max(new, REL);
+    }
+    pub fn bench_filter_override(&self) -> u8 {
+        self.bench_filter_override.load(ACQ)
+    }
+    pub fn set_bench_filter_override(&self, v: u8) {
+        self.bench_filter_override.store(v, REL);
     }
     pub fn bench_arr_override(&self) -> u16 {
         self.bench_arr_override.load(ACQ)
