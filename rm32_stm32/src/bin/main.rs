@@ -717,7 +717,7 @@ fn main() -> ! {
                             let iraw = (shared.actual_current().max(0) as u32) * 100 / 2686;
                             let vraw = (shared.battery_voltage() as u32) * 100 / 752;
                             rm32_stm32::dprintln!(
-                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={}",
+                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={}",
                                 shared.old_routine() as u8,
                                 shared.running() as u8,
                                 shared.commutation_interval(),
@@ -733,7 +733,8 @@ fn main() -> ! {
                                 bench_last_val,
                                 bench_veto_n,
                                 main_state.desync_events,
-                                main_state.orbit_trips
+                                main_state.orbit_trips,
+                                shared.tim1_arr()
                             );
                             #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
                             {
@@ -943,6 +944,28 @@ fn main() -> ! {
                                     bit
                                 );
                             }
+                        }
+                        UartCmd::CarrierLever => {
+                            // Cycle: off -> 1666(48kHz) -> 1111(72kHz) ->
+                            // 833(96kHz) -> off. 80MHz/(ARR+1)=carrier.
+                            let cur = shared.bench_arr_override();
+                            let next = match cur {
+                                0 => 1666,
+                                1666 => 1111,
+                                1111 => 833,
+                                _ => 0,
+                            };
+                            shared.set_bench_arr_override(next);
+                            let khz = if next == 0 {
+                                0
+                            } else {
+                                80_000 / (next as u32 + 1)
+                            };
+                            rm32_stm32::dprintln!(
+                                "[bench] carrier ARR override={} ({}kHz, 0=variable_pwm)",
+                                next,
+                                khz
+                            );
                         }
                         UartCmd::HistDump => {
                             #[cfg(all(

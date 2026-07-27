@@ -74,6 +74,10 @@ pub struct SharedState {
     // bit1=kick-half off, bit2=holdoff off, bit3=reclimb clamp off).
     // 0 = all divergences active (normal). Bench-only writers.
     bench_divergence_mask: AtomicU8,
+    // Bench carrier-lever: forced TIM1 ARR (0 = off, use variable_pwm).
+    // Lower ARR = higher PWM carrier = less current ripple. Tests the
+    // ripple-displacement wall hypothesis by intervention.
+    bench_arr_override: AtomicU16,
     changeover_step: AtomicU8, // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
@@ -148,6 +152,7 @@ impl SharedState {
             prop_brake_active: AtomicBool::new(false),
             isr_action: AtomicU8::new(0), // IsrAction::None
             bench_divergence_mask: AtomicU8::new(0),
+            bench_arr_override: AtomicU16::new(0),
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
             dbg_crc_pass: AtomicU32::new(0),
@@ -579,6 +584,12 @@ impl SharedState {
         // Only upgrade priority — don't downgrade AllOff to ResetIntervalTimer
         let new = action as u8;
         let _ = self.isr_action.fetch_max(new, REL);
+    }
+    pub fn bench_arr_override(&self) -> u16 {
+        self.bench_arr_override.load(ACQ)
+    }
+    pub fn set_bench_arr_override(&self, v: u16) {
+        self.bench_arr_override.store(v, REL);
     }
     pub fn divergence_mask(&self) -> u8 {
         self.bench_divergence_mask.load(ACQ)

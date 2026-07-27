@@ -45,6 +45,28 @@ def reset_board():
     time.sleep(2)
 
 
+def reset_and_capture_cause(port):
+    """Open the port BEFORE resetting so the boot banner + RCC_CSR
+    reset-cause is captured (else it emits while the port is closed and
+    is lost). Returns the reset-cause lines. Distinguishes reboot-vs-
+    churn: a mid-run reboot re-emits '[rm32] boot' in the stream."""
+    import threading
+    p = serial.Serial(port, 2_000_000, timeout=0.05)
+    buf = bytearray(); stop = [False]
+    def rd():
+        while not stop[0]:
+            buf.extend(p.read(4096))
+    th = threading.Thread(target=rd); th.start()
+    time.sleep(0.3)
+    subprocess.run(["probe-rs", "reset", "--chip", CHIP, "--probe", PROBE], capture_output=True)
+    time.sleep(3.0)
+    stop[0] = True; th.join(); p.close()
+    txt = "".join(chr(b) if 32 <= b < 127 or b == 10 else "." for b in buf)
+    causes = [l.strip() for l in txt.split("
+") if "last reset:" in l and "- " in l]
+    return causes
+
+
 class Bench:
     def __init__(self, port):
         self.p = serial.Serial(port, 2_000_000, timeout=0.05)

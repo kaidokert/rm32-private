@@ -704,6 +704,13 @@ impl<LED: OutputPin> MainState<LED> {
             // variable_pwm=0: publish the EEPROM-derived ARR so ISR uses it
             shared.set_tim1_arr(self.timer1_max_arr);
         }
+        // Bench carrier-lever override (ripple-displacement wall test):
+        // force a fixed ARR (higher carrier) over whatever variable_pwm
+        // chose. duty RATIO is preserved (pwm_compare scales by arr).
+        let arr_ovr = shared.bench_arr_override();
+        if arr_ovr != 0 {
+            shared.set_tim1_arr(arr_ovr);
+        }
 
         // eRPM + temperature duty ceiling
         let mut dmax = duty_ceiling(
