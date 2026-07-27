@@ -58,9 +58,17 @@ pub struct BenchGuard {
     oc_since: Option<u32>,
     ov_since: Option<u32>,
     latched: Option<KillReason>,
-    /// None until the first nonzero vbat sample; then true = battery
-    /// profile (rest >10 V), false = bench-PSU profile.
+    /// None until classified; then true = battery profile, false = PSU.
     battery: Option<bool>,
+    /// Peak vbat observed while NOT running (rest = true open-circuit
+    /// source voltage, before any spin-up sag). Classification reads
+    /// this, not a single live sample — a 3S pack rests >11 V for the
+    /// whole pre-arm period, the PSU rail ~8.2 V, cleanly separable
+    /// with no warm-up/sag race. A single-sample classify at the first
+    /// running edge misfired when spin-up inrush dipped vbat <10 V →
+    /// PSU profile → OVOLT trip at 10.8 V once pack voltage recovered
+    /// (measured: killed=1 on a healthy 12.2 V pack at 70 %).
+    rest_peak_mv: u16,
 }
 
 impl BenchGuard {
@@ -72,6 +80,7 @@ impl BenchGuard {
             ov_since: None,
             latched: None,
             battery: None,
+            rest_peak_mv: 0,
         }
     }
 
@@ -102,18 +111,19 @@ impl BenchGuard {
             return None;
         }
 
-        // Source classification at the FIRST running edge — not the first
-        // vbat sample: the measurement filter warms up from 0, so an early
-        // sample reads low, classifies a battery bench as PSU, and the
-        // filter then climbs through the PSU OV line on its way to pack
-        // voltage (measured: killed=1 within 2 s of boot on a 12.17 V
-        // pack). By the time the motor runs, the filter has settled for
-        // over a second and regen (the thing OV guards against) is not
-        // yet possible. Until classified, thresholds are cross-safe: PSU
-        // floor + PSU OC (battery idle never near either) with battery
-        // OV (a PSU can't pump while the motor has never run).
-        if self.battery.is_none() && running && vbat_mv > 0 {
-            self.battery = Some(vbat_mv > 10_000);
+        // Source classification from the REST peak (see rest_peak_mv):
+        // track the highest vbat seen while not running, then lock the
+        // profile at the first running edge using that settled rest
+        // voltage — race-free against both the filter warm-up (starts
+        // at 0) and spin-up sag (dips low under inrush). Threshold at
+        // 10.5 V: a 3S pack rests >11 V, the PSU rail ~8.2 V.
+        if self.battery.is_none() {
+            if !running && vbat_mv > self.rest_peak_mv {
+                self.rest_peak_mv = vbat_mv;
+            }
+            if running && self.rest_peak_mv > 0 {
+                self.battery = Some(self.rest_peak_mv > 10_500);
+            }
         }
         let (floor, oc_ma, ov_mv) = match self.battery {
             Some(true) => (B_VBAT_FLOOR_MV, B_OC_KILL_MA, B_OV_KILL_MV),
