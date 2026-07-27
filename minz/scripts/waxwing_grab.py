@@ -100,7 +100,8 @@ def process(recs, head, arr):
     b = np.array([r[1] for r in ordered], dtype=float)
     pos = np.array([r[2] for r in ordered], dtype=float)  # 0.5 us ticks
     t1s = np.array([r[3] for r in ordered], dtype=int)
-    step = t1s >> 12  # AM32 1..6
+    step = (t1s >> 12) & 7  # AM32 1..6 (mask off bit15 post-ZC)
+    post_zc = (t1s >> 15) & 1  # normalized post-ZC (value()==rising)
     t1cnt = t1s & 0x0FFF
     # Skew: elapsed 80 MHz ticks since the injected trigger (carrier is
     # quasi-static at a held throttle, so the header ARR is good enough).
@@ -111,7 +112,8 @@ def process(recs, head, arr):
     )
     pos_corr = pos - elapsed80 / TICKS80_PER_HALFUS
     rolled = pos_corr < 0  # window rolled between sample and write
-    return dict(a=a, b=b, pos=pos, pos_corr=pos_corr, step=step, rolled=rolled)
+    return dict(a=a, b=b, pos=pos, pos_corr=pos_corr, step=step,
+                post_zc=post_zc, rolled=rolled)
 
 
 def render(d, tag, ci, arr):
@@ -119,11 +121,11 @@ def render(d, tag, ci, arr):
     cap.mkdir(exist_ok=True)
     csv = cap / f"wax_{tag}.csv"
     with open(csv, "w") as f:
-        f.write("idx,a,b,pos_halfus,pos_corrected,step\n")
+        f.write("idx,a,b,pos_halfus,pos_corrected,step,post_zc\n")
         for i in range(len(d["a"])):
             f.write(
                 f"{i},{d['a'][i]:.0f},{d['b'][i]:.0f},{d['pos'][i]:.0f},"
-                f"{d['pos_corr'][i]:.1f},{d['step'][i]}\n"
+                f"{d['pos_corr'][i]:.1f},{d['step'][i]},{d['post_zc'][i]}\n"
             )
 
     ok = ~d["rolled"]

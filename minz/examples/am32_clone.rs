@@ -297,9 +297,11 @@ static WAX_B: [AtomicU16; WAX_N] = [const { AtomicU16::new(0) }; WAX_N];
 /// INTERVAL_TIMER (TIM2) CNT at ring-write time — 0.5 µs position in
 /// the current commutation window.
 static WAX_POS: [AtomicU16; WAX_N] = [const { AtomicU16::new(0) }; WAX_N];
-/// Packed `(step << 12) | (TIM1.CNT & 0x0FFF)` — AM32 step 1..6 plus
-/// the carrier counter for harvest-skew correction (ARR ≤ 3332 <
-/// 4096, so 12 bits always hold CNT).
+/// Packed `(post_zc << 15) | (step << 12) | (TIM1.CNT & 0x0FFF)` — AM32
+/// step 1..6 (bits 12..14) plus the carrier counter (bits 0..11, for
+/// harvest-skew correction: ARR ≤ 3332 < 4096, so 12 bits always hold
+/// CNT). bit15 = normalized post-ZC (`value()==rising`); rm32-comparable
+/// (both = raw!=rising) for the WAXWING comp-fraction cross-check.
 static WAX_T1S: [AtomicU16; WAX_N] = [const { AtomicU16::new(0) }; WAX_N];
 /// Next slot `wax_tick` writes (sole writer = the TIM6 trampoline).
 static WAX_HEAD: AtomicUsize = AtomicUsize::new(0);
@@ -694,11 +696,18 @@ fn wax_tick() {
     let pos = minz::am32_timers::interval_cnt() as u16; // 0.5 µs ticks
     let t1 = tim1_motor_pwm::tim1_cnt() & 0x0FFF;
     let step = CURRENT_STEP.load(Ordering::Relaxed);
+    // bit15 = normalized post-ZC (value()==rising); rm32-comparable (both =
+    // raw!=rising); WAXWING comp-fraction cross-check 2026-07-27. Computing
+    // it in-firmware from the clone's own value()/rising means no inversion
+    // can creep into the host decode.
+    let v = minz::comp2::value();
+    let r = RISING.load(Ordering::Relaxed);
+    let post_zc = v == r;
     let h = WAX_HEAD.load(Ordering::Relaxed);
     WAX_A[h].store(a, Ordering::Relaxed);
     WAX_B[h].store(b, Ordering::Relaxed);
     WAX_POS[h].store(pos, Ordering::Relaxed);
-    WAX_T1S[h].store((step << 12) | t1, Ordering::Relaxed);
+    WAX_T1S[h].store((step << 12) | t1 | ((post_zc as u16) << 15), Ordering::Relaxed);
     WAX_HEAD.store((h + 1) % WAX_N, Ordering::Relaxed);
 }
 
