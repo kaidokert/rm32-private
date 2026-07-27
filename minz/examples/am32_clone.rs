@@ -82,9 +82,9 @@ use minz_core::am32_control::{
 use minz_core::am32_hal::{Motor, Observer};
 use minz_core::am32_isr::{comp_isr, tim1_up_tim16_isr, tim6_dacunder_isr};
 use minz_core::am32_loop::{
-    Bench, DUTY_FULL, Drive, Duty, INIT_INTERVAL_TICKS, Sched, TARGET_MIN_BEMF_COUNTS,
-    apply_uart_cmd, bemf_timeout_resets, filter_and_duty_max, min_bemf_schedule,
-    store_average_interval,
+    Bench, DELAY_CAP_CYC, DUTY_FULL, Drive, Duty, INIT_INTERVAL_TICKS, Sched,
+    TARGET_MIN_BEMF_COUNTS, apply_uart_cmd, bemf_timeout_resets, filter_and_duty_max,
+    min_bemf_schedule, store_average_interval,
 };
 use minz_core::zct_trace::ZctTrace;
 
@@ -164,6 +164,22 @@ static WAX_REQ: AtomicBool = AtomicBool::new(false);
 /// 'H' — per-ISR duration histogram dump (main-context, one-shot).
 static HIST_REQ: AtomicBool = AtomicBool::new(false);
 static ZCT_STREAM_ON: AtomicBool = AtomicBool::new(true);
+
+// ===============================================================
+// ISR-delay injection rig (bench-only causal test for the deaf-window
+// PRIMASK hypothesis, 2026-07-26). Both default 0 = no effect. The
+// TIM6 (priority 3) trampoline busy-waits `DELAY_IN_FREE_CYC` cycles
+// INSIDE a `cortex_m::interrupt::free` critical section (masks COMP for
+// its whole span) and `DELAY_OUT_FREE_CYC` cycles OUTSIDE any (COMP can
+// preempt) — so the bench can see which (if either) induces a deaf-
+// window wall on the known-good clone. 80 MHz → 80 cyc/µs; each hard-
+// capped at `am32_loop::DELAY_CAP_CYC` (4000 cyc ≈ 50 µs) so a fat-
+// finger can't wedge the tick under the 1 s IWDG. Bumped by the ']'/'['
+// (in-free ±) and '\''/';' (out-free ±) keys via `apply_uart_cmd`;
+// reported as `din=`/`dout=` on the info line.
+// ===============================================================
+static DELAY_IN_FREE_CYC: AtomicU32 = AtomicU32::new(0);
+static DELAY_OUT_FREE_CYC: AtomicU32 = AtomicU32::new(0);
 
 /// Which phase floats in each sector (minz textbook convention, matches
 /// `set_roles_for_step`): sector 0/3 → C, 1/4 → B, 2/5 → A.
@@ -397,6 +413,8 @@ static BENCH: Bench<'static> = Bench {
     wax_req: &WAX_REQ,
     hist_req: &HIST_REQ,
     zct_stream_on: &ZCT_STREAM_ON,
+    delay_in_free: &DELAY_IN_FREE_CYC,
+    delay_out_free: &DELAY_OUT_FREE_CYC,
 };
 
 static ZCT: ZctTrace<'static, ZCT_N> = ZctTrace {
@@ -554,12 +572,14 @@ fn print_info(
     // directly): COMP entries vs commutations since boot.
     let _ = write!(
         tx,
-        "ce={} comm={} dsy={} bt={} vfl={}\r\n",
+        "ce={} comm={} dsy={} bt={} vfl={} din={} dout={}\r\n",
         COMP_ENTRIES.load(Ordering::Relaxed),
         zct.comm_n.load(Ordering::Relaxed),
         drive.desync_happened.load(Ordering::Relaxed),
         drive.bemf_timeout_happened.load(Ordering::Relaxed),
         VBAT_FLOOR_RAW.load(Ordering::Relaxed),
+        DELAY_IN_FREE_CYC.load(Ordering::Relaxed),
+        DELAY_OUT_FREE_CYC.load(Ordering::Relaxed),
     );
 }
 
@@ -874,7 +894,7 @@ fn main() -> ! {
     .ok();
     writeln!(
         &mut tx,
-        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb | 'G' gecko | 'X' wax | 'H' hist\r"
+        "throttle: '<pct>\\n' (0..100) | 's'/'w' stop | 'Z' trace | 'i' info | 'b' bb | 'G' gecko | 'X' wax | 'H' hist | din -/+ '[' ']' | dout -/+ ';' '\r"
     )
     .ok();
 
@@ -933,4 +953,20 @@ fn TIM6_DACUNDER() {
     let mut motor = motor();
     tim6_dacunder_isr(&SCHED, &DRIVE, &DUTY, &BENCH, &ZCT, &mut motor, &observer());
     hist_record(HIST_TIM6, s);
+    // ISR-delay injection rig (bench causal test) — placed AFTER the real
+    // tick body AND after `hist_record`, so the histogram still measures
+    // the tick's genuine own-work and the injected delay is a separate,
+    // deliberate perturbation (not folded into the timing it measures).
+    // OUT-free first (COMP can preempt it while it runs), then IN-free
+    // inside a critical section (masks COMP for its whole span — the
+    // PRIMASK-overlap variable under test). Both default 0 = inert; each
+    // hard-capped so a fat-finger can't wedge the tick under the IWDG.
+    let d_out = DELAY_OUT_FREE_CYC.load(Ordering::Relaxed);
+    if d_out > 0 {
+        cortex_m::asm::delay(d_out.min(DELAY_CAP_CYC));
+    }
+    let d_in = DELAY_IN_FREE_CYC.load(Ordering::Relaxed);
+    if d_in > 0 {
+        cortex_m::interrupt::free(|_| cortex_m::asm::delay(d_in.min(DELAY_CAP_CYC)));
+    }
 }

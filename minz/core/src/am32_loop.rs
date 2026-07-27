@@ -71,6 +71,20 @@ pub const BEMF_TIMEOUT_TICKS: u32 = 45_000;
 /// UART deadman: no command for 3 s → throttle 0. main.c:1425.
 pub const UART_DEADMAN_LIMIT: u32 = 3 * LOOP_FREQUENCY_HZ; // 60000 ticks
 
+// --- ISR-delay injection rig (bench-only causal test, 2026-07-26) ---
+// The deaf-window PRIMASK hypothesis test bed: the TIM6 (priority 3)
+// trampoline busy-waits an adjustable number of CPU cycles, split by
+// whether it runs INSIDE a `cortex_m::interrupt::free` critical section
+// (masks COMP) or OUTSIDE (COMP can preempt). Cycles → µs at 80 MHz:
+// 80 cyc/µs. Both amounts default 0 (inert).
+/// Per-keypress bump for either injected delay, in CPU cycles
+/// (80 MHz → 280 cyc ≈ 3.5 µs).
+pub const DELAY_BUMP_CYC: u32 = 280;
+/// Hard cap on either injected delay, in CPU cycles (4000 cyc ≈ 50 µs)
+/// — a fat-finger can't wedge the tick under the 1 s IWDG. Both the
+/// apply-side clamp here AND the trampoline `.min()` enforce it.
+pub const DELAY_CAP_CYC: u32 = 4000;
+
 // ===============================================================
 // Cohesion clusters — each struct bundles the loose firmware statics
 // that are written/read together, holding ONLY `&Atomic*` refs
@@ -156,6 +170,14 @@ pub struct Bench<'a> {
     /// of the always-on TIM6/TIM16/COMP bin arrays).
     pub hist_req: &'a AtomicBool,
     pub zct_stream_on: &'a AtomicBool,
+    /// ISR-delay injection rig (bench causal test for the deaf-window
+    /// PRIMASK hypothesis): busy-wait cycles the TIM6 tick executes
+    /// INSIDE a `cortex_m::interrupt::free` critical section (masks
+    /// COMP). Bumped by ']'/'[', clamped [0, [`DELAY_CAP_CYC`]].
+    pub delay_in_free: &'a AtomicU32,
+    /// Companion: busy-wait cycles the TIM6 tick executes OUTSIDE any
+    /// critical section (COMP can preempt). Bumped by '\''/';'.
+    pub delay_out_free: &'a AtomicU32,
 }
 
 impl Sched<'_> {
@@ -291,8 +313,23 @@ pub fn apply_uart_cmd(duty: &Duty, bench: &Bench, cmd: Option<UartCmd>) {
         Some(UartCmd::GeckoDump) => bench.gecko_req.store(true, Ordering::Relaxed),
         Some(UartCmd::WaxDump) => bench.wax_req.store(true, Ordering::Relaxed),
         Some(UartCmd::HistDump) => bench.hist_req.store(true, Ordering::Relaxed),
+        // ISR-delay injection rig: bump the in/out-critical-section
+        // busy-wait, clamped [0, DELAY_CAP_CYC].
+        Some(UartCmd::DelayInFreeUp) => bump_delay(bench.delay_in_free, DELAY_BUMP_CYC as i32),
+        Some(UartCmd::DelayInFreeDown) => bump_delay(bench.delay_in_free, -(DELAY_BUMP_CYC as i32)),
+        Some(UartCmd::DelayOutFreeUp) => bump_delay(bench.delay_out_free, DELAY_BUMP_CYC as i32),
+        Some(UartCmd::DelayOutFreeDown) => bump_delay(bench.delay_out_free, -(DELAY_BUMP_CYC as i32)),
         None => {}
     }
+}
+
+/// Bump an injected-delay cell by `delta` cycles, clamped to
+/// [0, [`DELAY_CAP_CYC`]] (the ISR-delay rig; `apply_uart_cmd` helper).
+#[inline]
+fn bump_delay(cell: &AtomicU32, delta: i32) {
+    let cur = cell.load(Ordering::Relaxed) as i32;
+    let next = (cur + delta).clamp(0, DELAY_CAP_CYC as i32);
+    cell.store(next as u32, Ordering::Relaxed);
 }
 
 /// Duty ramp band (main.c:1736-1791). ramp_divider=0 → every tick.
@@ -444,6 +481,8 @@ mod tests {
         wax_req: AtomicBool,
         hist_req: AtomicBool,
         zct_stream_on: AtomicBool,
+        delay_in_free: AtomicU32,
+        delay_out_free: AtomicU32,
     }
     impl BenchStore {
         fn bench(&self) -> Bench<'_> {
@@ -462,6 +501,8 @@ mod tests {
                 wax_req: &self.wax_req,
                 hist_req: &self.hist_req,
                 zct_stream_on: &self.zct_stream_on,
+                delay_in_free: &self.delay_in_free,
+                delay_out_free: &self.delay_out_free,
             }
         }
     }
@@ -683,5 +724,42 @@ mod tests {
         apply_uart_cmd(&duty, &bench, None);
         assert!(!bench.stop_req.load(Ordering::Relaxed));
         assert_eq!(duty.uart_duty_input.load(Ordering::Relaxed), 1047);
+    }
+
+    #[test]
+    fn apply_uart_cmd_delay_bumps_and_clamps() {
+        let us = DutyStore::default();
+        let bs = BenchStore::default();
+        let (duty, bench) = (us.duty(), bs.bench());
+
+        // Both start at 0 (inert).
+        assert_eq!(bench.delay_in_free.load(Ordering::Relaxed), 0);
+        assert_eq!(bench.delay_out_free.load(Ordering::Relaxed), 0);
+
+        // Up bumps by DELAY_BUMP_CYC each press.
+        apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayInFreeUp));
+        assert_eq!(bench.delay_in_free.load(Ordering::Relaxed), DELAY_BUMP_CYC);
+        apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayInFreeUp));
+        assert_eq!(bench.delay_in_free.load(Ordering::Relaxed), 2 * DELAY_BUMP_CYC);
+        // out-free is an independent cell.
+        assert_eq!(bench.delay_out_free.load(Ordering::Relaxed), 0);
+
+        // Down clamps at 0 (never negative / never underflows).
+        for _ in 0..10 {
+            apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayInFreeDown));
+        }
+        assert_eq!(bench.delay_in_free.load(Ordering::Relaxed), 0);
+
+        // out-free bumps independently and clamps up at the cap.
+        apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayOutFreeUp));
+        assert_eq!(bench.delay_out_free.load(Ordering::Relaxed), DELAY_BUMP_CYC);
+        assert_eq!(bench.delay_in_free.load(Ordering::Relaxed), 0);
+        for _ in 0..1000 {
+            apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayOutFreeUp));
+        }
+        assert_eq!(bench.delay_out_free.load(Ordering::Relaxed), DELAY_CAP_CYC);
+        // Down from the cap steps back by exactly one bump.
+        apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayOutFreeDown));
+        assert_eq!(bench.delay_out_free.load(Ordering::Relaxed), DELAY_CAP_CYC - DELAY_BUMP_CYC);
     }
 }

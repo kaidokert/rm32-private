@@ -370,6 +370,16 @@ pub enum UartCmd {
     WaxDump,
     /// 'H' — request a per-ISR duration histogram dump.
     HistDump,
+    /// ']' — bump the INSIDE-critical-section injected TIM6 delay UP
+    /// (the ISR-delay causal-test rig; masks COMP for its span).
+    DelayInFreeUp,
+    /// '[' — bump the INSIDE-critical-section injected TIM6 delay DOWN.
+    DelayInFreeDown,
+    /// '\'' — bump the OUTSIDE-critical-section injected TIM6 delay UP
+    /// (COMP can preempt it).
+    DelayOutFreeUp,
+    /// ';' — bump the OUTSIDE-critical-section injected TIM6 delay DOWN.
+    DelayOutFreeDown,
 }
 
 /// The pure UART duty-mode parser state — the digit accumulator that
@@ -378,8 +388,9 @@ pub enum UartCmd {
 /// main.c:1367-1416 exactly:
 /// - digits accumulate up to 4 (further digits ignored, not reset);
 /// - 's'/'w' commit [`Stop`](UartCmd::Stop) and clear the accumulator;
-/// - 'Z'/'i'/'b'/'G'/'X'/'H' emit their command WITHOUT touching the accumulator
-///   (so `50Z<nl>` still commits 50);
+/// - 'Z'/'i'/'b'/'G'/'X'/'H' and the ISR-delay bump keys `[`/`]`/`;`/`'`
+///   emit their command WITHOUT touching the accumulator (so `50Z<nl>`
+///   still commits 50);
 /// - any other byte terminates: with digits pending it commits (a
 ///   `0` → [`Stop`](UartCmd::Stop); nonzero → percent/permille map to
 ///   48..2047), and always clears the accumulator.
@@ -417,6 +428,10 @@ impl UartDuty {
             b'G' => Some(UartCmd::GeckoDump),
             b'X' => Some(UartCmd::WaxDump),
             b'H' => Some(UartCmd::HistDump),
+            b']' => Some(UartCmd::DelayInFreeUp),
+            b'[' => Some(UartCmd::DelayInFreeDown),
+            b'\'' => Some(UartCmd::DelayOutFreeUp),
+            b';' => Some(UartCmd::DelayOutFreeDown),
             _ => {
                 // terminator → commit (main.c:1382-1415)
                 let cmd = if self.n != 0 {
@@ -887,6 +902,20 @@ mod tests {
         assert_eq!(u.step(b'G'), Some(UartCmd::GeckoDump));
         assert_eq!(u.step(b'X'), Some(UartCmd::WaxDump));
         assert_eq!(u.step(b'H'), Some(UartCmd::HistDump));
+        assert_eq!(u.step(b']'), Some(UartCmd::DelayInFreeUp));
+        assert_eq!(u.step(b'['), Some(UartCmd::DelayInFreeDown));
+        assert_eq!(u.step(b'\''), Some(UartCmd::DelayOutFreeUp));
+        assert_eq!(u.step(b';'), Some(UartCmd::DelayOutFreeDown));
+    }
+
+    #[test]
+    fn uart_delay_key_does_not_disturb_accumulator() {
+        // '50]\n' → ']' bumps in-free, THEN newline commits 50.
+        let mut u = UartDuty::new();
+        u.step(b'5');
+        u.step(b'0');
+        assert_eq!(u.step(b']'), Some(UartCmd::DelayInFreeUp));
+        assert_eq!(u.step(b'\n'), Some(UartCmd::SetThrottle(1047)));
     }
 
     #[test]

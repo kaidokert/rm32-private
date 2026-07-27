@@ -560,6 +560,8 @@ pub(crate) mod mock {
         pub(crate) wax_req: AtomicBool,
         pub(crate) hist_req: AtomicBool,
         pub(crate) zct_stream_on: AtomicBool,
+        pub(crate) delay_in_free: AtomicU32,
+        pub(crate) delay_out_free: AtomicU32,
     }
     impl BenchStore {
         pub(crate) fn bench(&self) -> Bench<'_> {
@@ -578,6 +580,8 @@ pub(crate) mod mock {
                 wax_req: &self.wax_req,
                 hist_req: &self.hist_req,
                 zct_stream_on: &self.zct_stream_on,
+                delay_in_free: &self.delay_in_free,
+                delay_out_free: &self.delay_out_free,
             }
         }
     }
