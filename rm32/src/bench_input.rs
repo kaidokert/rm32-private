@@ -53,6 +53,10 @@ pub enum UartCmd {
     GeckoGrab,
     /// 'x' — WAXWING phase-voltage ring dump (post-mortem or live).
     WaxDump,
+    /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
+    /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
+    /// clamp, 'R' SWIER race fix.
+    DivToggle(u8),
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -109,6 +113,11 @@ impl UartDuty {
             b'J' => Some(UartCmd::InjToggle),
             b'g' => Some(UartCmd::GeckoGrab),
             b'x' => Some(UartCmd::WaxDump),
+            b'K' => Some(UartCmd::DivToggle(0)),
+            b'M' => Some(UartCmd::DivToggle(1)),
+            b'P' => Some(UartCmd::DivToggle(2)),
+            b'Q' => Some(UartCmd::DivToggle(3)),
+            b'R' => Some(UartCmd::DivToggle(4)),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;

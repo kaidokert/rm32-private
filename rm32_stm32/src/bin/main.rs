@@ -923,6 +923,27 @@ fn main() -> ! {
                             #[cfg(not(all(feature = "benchuart", feature = "stm32l431")))]
                             rm32_stm32::dprintln!("[bench] gecko: L431 bench only");
                         }
+                        UartCmd::DivToggle(bit) => {
+                            if bit == 4 {
+                                #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+                                {
+                                    use core::sync::atomic::Ordering;
+                                    let v = rm32_stm32::mcu_l431::interrupts::RACEFIX_OFF
+                                        .load(Ordering::Relaxed)
+                                        ^ 1;
+                                    rm32_stm32::mcu_l431::interrupts::RACEFIX_OFF
+                                        .store(v, Ordering::Relaxed);
+                                    rm32_stm32::dprintln!("[bisect] racefix_off={}", v);
+                                }
+                            } else {
+                                let m = shared.toggle_divergence_bit(bit);
+                                rm32_stm32::dprintln!(
+                                    "[bisect] divmask={:04b} (bit{} flipped; 1=verbatim)",
+                                    m,
+                                    bit
+                                );
+                            }
+                        }
                         UartCmd::WaxDump => {
                             #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
                             {

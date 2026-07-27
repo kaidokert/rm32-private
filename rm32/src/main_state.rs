@@ -458,15 +458,15 @@ impl<LED: OutputPin> MainState<LED> {
                 // the full crash to ~55 recovers through the startup ramp
                 // profile for ~15-20 ms — the audible chop — and its
                 // recovery surge fed the supply-sag feedback loop.
-                if desync_from_interrupt_mode && fast_rotor {
+                if desync_from_interrupt_mode && fast_rotor && shared.divergence_mask() & 2 == 0 {
                     shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickHalf);
-                    // Detector holdoff (see desync_rearm_zc): the stay-
-                    // interrupt response keeps wraps coming at speed, so
-                    // without this the kick's own decel refires the
-                    // detector at zc=11 in a loop during transients.
-                    self.desync_rearm_zc = DESYNC_REARM_HOLDOFF_ZC;
                 } else {
                     shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
+                }
+                // Detector holdoff (see desync_rearm_zc): independent
+                // bisect axis (bit2) — applies on any fast-rotor fire.
+                if desync_from_interrupt_mode && fast_rotor && shared.divergence_mask() & 4 == 0 {
+                    self.desync_rearm_zc = DESYNC_REARM_HOLDOFF_ZC;
                 }
                 if !(desync_from_interrupt_mode && fast_rotor) {
                     // DesyncFallback first: Running→OldRoutine (sets
@@ -723,7 +723,7 @@ impl<LED: OutputPin> MainState<LED> {
         // falls, so AM32's map alone never faces this). Cut demand while
         // the estimator is uncertain; the cap releases on confirmation
         // and the normal ramp takes duty to commanded.
-        if shared.zero_crosses() < RECLIMB_CONFIRM_ZC {
+        if shared.zero_crosses() < RECLIMB_CONFIRM_ZC && shared.divergence_mask() & 8 == 0 {
             dmax = dmax.min(RECLIMB_DUTY_CAP);
         }
         shared.set_duty_maximum(dmax);
