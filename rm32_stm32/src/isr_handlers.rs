@@ -80,6 +80,9 @@ pub fn handle_tim6() {
     // cycles of measurement overhead per tick.
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    let tim6_comms_entry =
+        crate::mcu_l431::interrupts::LEAN_COMMS.load(core::sync::atomic::Ordering::Relaxed);
 
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
@@ -144,10 +147,21 @@ pub fn handle_tim6() {
     {
         let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
         shared.dbg_tim6_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
-        #[cfg(all(
-            feature = "benchuart",
-            any(feature = "stm32l431", feature = "stm32g431")
-        ))]
+        // Split by preemption: a commutation firing DURING this tick
+        // (LEAN_COMMS advanced) inflates wall-time by ~one TIM16 handler.
+        // Clean = control-tick OWN work; preempted = own + commutation.
+        #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+        {
+            let comms_after =
+                crate::mcu_l431::interrupts::LEAN_COMMS.load(core::sync::atomic::Ordering::Relaxed);
+            let site = if comms_after != tim6_comms_entry {
+                crate::bench_hist::Site::Tim6Pre
+            } else {
+                crate::bench_hist::Site::Tim6
+            };
+            crate::bench_hist::record(site, cyc_end.wrapping_sub(cyc_start));
+        }
+        #[cfg(all(feature = "benchuart", feature = "stm32g431"))]
         crate::bench_hist::record(
             crate::bench_hist::Site::Tim6,
             cyc_end.wrapping_sub(cyc_start),

@@ -954,15 +954,17 @@ fn main() -> ! {
                                 let now =
                                     unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
                                 rm32_stm32::dprintln!("HIST cyc={} shift=8 nbins=16", now);
-                                let names = ["tim6", "tim16", "comp"];
-                                for site in 0..3usize {
+                                let names = ["tim6clean", "tim16", "comp", "tim6preempt"];
+                                for site in 0..4usize {
                                     let (bins, sum, cnt) = rm32_stm32::bench_hist::snapshot(site);
-                                    let mut s = heapless::String::<160>::new();
+                                    let mut s = heapless::String::<224>::new();
                                     let _ = write!(s, "{} cnt={} sum={}", names[site], cnt, sum);
                                     for b in bins.iter() {
                                         let _ = write!(s, " {}", b);
                                     }
                                     rm32_stm32::dprintln!("{}", s.as_str());
+                                    #[cfg(feature = "debuguart")]
+                                    rm32_stm32::debug_uart::flush();
                                 }
                                 #[cfg(feature = "stm32l431")]
                                 {

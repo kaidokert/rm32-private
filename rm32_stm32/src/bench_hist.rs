@@ -27,12 +27,13 @@ pub const NBINS: usize = 16;
 pub const SHIFT: u32 = 8;
 
 /// One histogram per instrumented site. Index by [`Site`].
-pub const N_SITES: usize = 3;
+pub const N_SITES: usize = 4;
 #[repr(usize)]
 pub enum Site {
-    Tim6 = 0,  // ten_khz_tick (20 kHz control ISR)
-    Tim16 = 1, // commutation_timer_expired
-    Comp = 2,  // bemf_zero_cross (acceptance)
+    Tim6 = 0,    // ten_khz_tick (20 kHz control ISR)
+    Tim16 = 1,   // commutation_timer_expired
+    Comp = 2,    // bemf_zero_cross (acceptance)
+    Tim6Pre = 3, // TIM6 ticks preempted by a commutation (own+commutation)
 }
 
 static HIST: [[AtomicU32; NBINS]; N_SITES] =
