@@ -7,8 +7,15 @@ pub static ADC_PAUSE: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 // ---- WAXWING-lite (port of minz waxwing-lite-v1 = 25bd843) ----
 // 4x1024 u16 rings written every 20 kHz tick while the injected burst
 // is armed ('J'): A, B = raw mid-ON phase samples (JDR1/2), POS =
-// TIM2.CNT (0.5 us), T1S = (step<<12)|(TIM1.CNT & 0x0FFF). Sole
-// writer = the tick ISR; a dump after a fall is a ~52 ms post-mortem.
+// TIM2.CNT (0.5 us), T1S = (comp_postzc<<15)|(step<<12)|(TIM1.CNT &
+// 0x0FFF). Sole writer = the tick ISR; a dump after a fall is a ~52 ms
+// post-mortem. Bit 15 of T1S = the COMP VALUE bit sampled at the same
+// tick (1 = comparator at POST-zero-cross level for the current step
+// polarity, i.e. it flipped). The bedrock analog test lives in one
+// aligned ring: WAX_A/B show the floating-phase arc crossing neutral;
+// bit 15 shows whether COMP2_VALUE actually flipped there. "Arc
+// crosses but bit 15 stays 0" = the deaf window is analog (crossing
+// displaced from the arc), CPU-load-independent by construction.
 #[cfg(feature = "benchuart")]
 pub const WAX_N: usize = 1024;
 #[cfg(feature = "benchuart")]
@@ -58,7 +65,7 @@ pub fn wax_rearm() {
 /// 20 kHz tick writer (ISR context, constant cost). No-op until the
 /// injected burst has been armed ('J').
 #[cfg(feature = "benchuart")]
-pub fn wax_tick(step: u8) {
+pub fn wax_tick(step: u8, comp_post_zc: bool) {
     use core::sync::atomic::Ordering;
     use stm32l4xx_hal::pac::{ADC1, TIM1, TIM2};
     let adc = unsafe { &*ADC1::ptr() };
@@ -73,7 +80,9 @@ pub fn wax_tick(step: u8) {
     WAX_A[h].store(a, Ordering::Relaxed);
     WAX_B[h].store(b, Ordering::Relaxed);
     WAX_POS[h].store(pos, Ordering::Relaxed);
-    WAX_T1S[h].store(((step as u16) << 12) | t1, Ordering::Relaxed);
+    // bit15 = COMP VALUE (flipped to post-ZC?), bits12-14 = step, 0-11 = TIM1.CNT
+    let packed = ((comp_post_zc as u16) << 15) | (((step as u16) & 0x07) << 12) | t1;
+    WAX_T1S[h].store(packed, Ordering::Relaxed);
     WAX_HEAD.store(((h + 1) % WAX_N) as u16, Ordering::Relaxed);
 }
 

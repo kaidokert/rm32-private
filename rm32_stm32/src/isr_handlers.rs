@@ -108,9 +108,11 @@ pub fn handle_tim6() {
     crate::edge_probe::level_tick(!comp_at_pre_zc_level());
 
     // WAXWING-lite: per-tick phase-voltage ring write (no-op until the
-    // injected burst is armed via 'J'). Constant per-tick cost.
+    // injected burst is armed via 'J'). Constant per-tick cost. The comp
+    // VALUE bit is captured in the same tick (packed into T1S bit 15) so
+    // the frozen deaf window carries arc + comparator level time-aligned.
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
-    crate::mcu_l431::adc::wax_tick(state.commutation.step());
+    crate::mcu_l431::adc::wax_tick(state.commutation.step(), !comp_at_pre_zc_level());
 
     // Mid-window N-pin trap (storm hunt): at 20 kHz, if comp drive is on
     // and the motor is in interrupt mode, the current driven phase's N
@@ -185,8 +187,9 @@ pub fn handle_tim6() {
     // halves the legitimate spin-up gate (avg ~10000 era) and invites
     // early accepts during every climb (4/4 climb failures measured).
     // The 30 ms camp-blackout bound needs a camp-side fix instead.
-    #[cfg(feature = "zctrace")]
-    crate::edge_probe::gate_avg_latch((shared.e_com_time() / 3).max(0) as u32);
+    // COMP gate stale average — latched every tick in ALL builds (this
+    // is control, not instrumentation; see crate::comp_gate).
+    crate::comp_gate::latch((shared.e_com_time() / 3).max(0) as u32);
     // Deferred comp re-enable ('N' experiment): apply a pending unmask,
     // clearing the ringing-era EXTI pending first so a camped stale edge
     // doesn't fire the instant we unmask.

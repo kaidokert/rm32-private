@@ -49,6 +49,7 @@ pub mod edge_probe;
 compile_error!("feature `blackbox` needs DWT.CYCCNT (M4 targets: stm32l431/stm32g431)");
 pub mod capture_generic;
 pub mod capture_hal;
+pub mod comp_gate;
 pub mod comp_hal;
 pub mod comparator;
 #[cfg(feature = "debuguart")]

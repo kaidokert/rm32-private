@@ -670,6 +670,26 @@ fn main() -> ! {
                         rm32_stm32::dprintln!("[wax] FROZEN on fall (dsy+otrip={})", evt);
                     }
                 }
+                // Freeze on the Running->OldRoutine lock-loss transition.
+                // At the wall the chop is a BEMF lock loss to OldRoutine,
+                // NOT a desync (drop stays 0), so the trigger above never
+                // fires. THIS transition IS the deaf window: the arc-vs-
+                // VALUE bedrock test wants the ring frozen right here.
+                static mut WAX_LAST_OLD: bool = false;
+                let now_old = shared.old_routine();
+                let was_old = unsafe { WAX_LAST_OLD };
+                unsafe { WAX_LAST_OLD = now_old };
+                if now_old
+                    && !was_old
+                    && bench_last_val > 1500
+                    && !rm32_stm32::mcu_l431::adc::wax_frozen()
+                    && rm32_stm32::mcu_l431::adc::wax_freeze()
+                {
+                    rm32_stm32::dprintln!(
+                        "[wax] FROZEN on lock-loss (Running->Old, in={})",
+                        bench_last_val
+                    );
+                }
             }
             rm32_stm32::bench_uart::drain_dma();
             let rx = rm32_stm32::bench_uart::ring();
@@ -857,10 +877,10 @@ fn main() -> ! {
                             rm32_stm32::dprintln!("[bench] watch: L431+zctrace only");
                         }
                         UartCmd::GateToggle => {
-                            #[cfg(all(feature = "stm32l431", feature = "zctrace"))]
+                            #[cfg(feature = "stm32l431")]
                             {
                                 use core::sync::atomic::Ordering;
-                                use rm32_stm32::edge_probe::GATE_STALE;
+                                use rm32_stm32::comp_gate::GATE_STALE;
                                 let on = GATE_STALE.load(Ordering::Relaxed) == 0;
                                 GATE_STALE.store(on as u8, Ordering::Relaxed);
                                 rm32_stm32::dprintln!(
@@ -868,8 +888,8 @@ fn main() -> ! {
                                     if on { "STALE-20k" } else { "FRESH" }
                                 );
                             }
-                            #[cfg(not(all(feature = "stm32l431", feature = "zctrace")))]
-                            rm32_stm32::dprintln!("[bench] gate: L431+zctrace only");
+                            #[cfg(not(feature = "stm32l431"))]
+                            rm32_stm32::dprintln!("[bench] gate: L431 only");
                         }
                         UartCmd::DeferToggle => {
                             #[cfg(all(feature = "stm32l431", feature = "zctrace"))]

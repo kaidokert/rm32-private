@@ -83,20 +83,20 @@ fn COMP() {
     #[cfg(feature = "benchuart")]
     LEAN_COMP_ENTRIES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let shared = crate::isr::shared();
-    // Gate avg: 20 kHz-latched (AM32-verbatim staleness; see
-    // edge_probe::gate_avg). Fallback to fresh when the latch is cold.
-    #[cfg(feature = "zctrace")]
+    // Gate avg: AM32-verbatim 20 kHz-latched STALE average by default
+    // (crate::comp_gate), fresh e_com/3 only when the 'G' bench knob
+    // selects it or the latch is still cold. CONTROL logic — must NOT
+    // depend on zctrace (regression 07-27: the zctrace-free build fell
+    // back to fresh here and failed to lock at <=40% throttle).
     let avg = {
         use core::sync::atomic::Ordering;
-        let a = crate::edge_probe::gate_avg();
-        if crate::edge_probe::GATE_STALE.load(Ordering::Relaxed) != 0 && a != 0 {
+        let a = crate::comp_gate::get();
+        if crate::comp_gate::GATE_STALE.load(Ordering::Relaxed) != 0 && a != 0 {
             a
         } else {
             (shared.e_com_time() / 3).max(0) as u32
         }
     };
-    #[cfg(not(feature = "zctrace"))]
-    let avg = (shared.e_com_time() / 3).max(0) as u32;
     let cnt = unsafe { (*pac::TIM2::PTR).cnt.read().bits() };
     // Edge probe: every confirmed-pending entry counts (camp re-fires
     // included — this is the storm meter), first edge time captured.
