@@ -64,7 +64,20 @@ fn main() -> ! {
     // cannot fix). 'V' re-arms deliberately.
     unsafe {
         let dwt = &*cortex_m::peripheral::DWT::PTR;
-        dwt.c[1].function.write(0);
+        // Disarm ALL DWT comparators, not just c[1]. M4 (L431/G431) has
+        // up to 4 (NUMCOMP = CTRL[31:28]); a leftover watchpoint on ANY
+        // of them survives a system reset (power-on only clears the
+        // debug domain) and halts the core on its watched write — the
+        // "dead chip flashing can't fix" scar. The old code only cleared
+        // c[1] (the slot 'V' arms); a watchpoint latched on c[0]/c[2]/
+        // c[3] by a gdb/probe session sailed through. Latent-bug
+        // hygiene, closed 07-28. 'V' re-arms c[1] deliberately later.
+        let numcomp = ((dwt.ctrl.read() >> 28) & 0xF) as usize;
+        for i in 0..numcomp.min(4) {
+            dwt.c[i].function.write(0);
+            dwt.c[i].comp.write(0);
+            dwt.c[i].mask.write(0);
+        }
         let dcb = &*cortex_m::peripheral::DCB::PTR;
         dcb.demcr.modify(|v| v & !(1 << 16)); // MON_EN off
     }
