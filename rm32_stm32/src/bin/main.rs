@@ -675,8 +675,13 @@ fn main() -> ! {
                 let last = unsafe { WAX_LAST_EVT };
                 if evt != last {
                     unsafe { WAX_LAST_EVT = evt };
+                    // No ci gate: the 98-100% battery-wall storm is the
+                    // FAST-rotor desync class (onset at ci~109, stays in
+                    // interrupt mode so the OldRoutine trigger below never
+                    // fires either). duty>1550 already scopes to the wall;
+                    // the old `ci > 300` gate excluded exactly the storm
+                    // this instrument exists to capture.
                     if shared.duty_cycle() > 1550
-                        && shared.commutation_interval() > 300
                         && !rm32_stm32::mcu_l431::adc::wax_frozen()
                         && rm32_stm32::mcu_l431::adc::wax_freeze()
                     {
