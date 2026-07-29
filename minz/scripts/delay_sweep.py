@@ -122,10 +122,22 @@ def keepalive_dwell(ser, pct, dwell):
         time.sleep(0.05)
 
 
+def stage_up(ser, pct):
+    """Gentle staged climb to `pct` — the clone won't cold-arm at high
+    throttle (drops to the OldRoutine limit cycle); patient staging
+    locks it clean (bench memory)."""
+    stages = [s for s in (20, 40, 60, 80, pct) if s <= pct]
+    for s in stages:
+        for _ in range(3):  # hold each stage inside the deadman
+            paced_write(ser, f"{s}\n".encode())
+            time.sleep(0.4)
+
+
 def arm(ser, pct, tries=4):
     """Start the motor at `pct`; confirm the commutation counter climbs.
     Returns True on a confirmed spin, False after `tries` failures."""
     for attempt in range(tries):
+        stage_up(ser, pct)
         paced_write(ser, f"{pct}\n".encode())
         time.sleep(1.0)
         paced_write(ser, f"{pct}\n".encode())
@@ -172,6 +184,14 @@ def main():
     this = "din" if a.mode == "in" else "dout"
 
     ser = serial.Serial(a.port, a.baud, timeout=0.05)
+    # Trace stream floods the TX ring at high throttle and starves the
+    # info line ('i' response dropped -> comm reads None). Toggle 'Z'
+    # off until an info poll parses cleanly (bench trace-flood note).
+    for _ in range(3):
+        if read_info(ser).get("comm") is not None:
+            break
+        paced_write(ser, b"Z")
+        time.sleep(0.3)
     first_fall = None      # first level (us) that induced dsy delta or a kill
     clean_through = None   # highest level with zero dsy delta and no kill
     killed = False
