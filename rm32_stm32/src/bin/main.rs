@@ -800,7 +800,7 @@ fn main() -> ! {
                             let iraw = (shared.actual_current().max(0) as u32) * 100 / 2686;
                             let vraw = (shared.battery_voltage() as u32) * 100 / 752;
                             rm32_stm32::dprintln!(
-                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={} f={} dc={} ds={} do={} drops={} fe={} fci={}",
+                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={} f={} dc={} ds={} do={} drops={} fe={} fci={} fly={}",
                                 shared.old_routine() as u8,
                                 shared.running() as u8,
                                 shared.commutation_interval(),
@@ -824,7 +824,8 @@ fn main() -> ! {
                                 main_state.dsy_demote_old,
                                 bench_drops,
                                 bench_first_evt,
-                                bench_first_ci
+                                bench_first_ci,
+                                shared.bench_fly_n()
                             );
                             // Void-autopsy snapshot (stall-rescue state).
                             #[cfg(feature = "stm32l431")]
@@ -1095,6 +1096,14 @@ fn main() -> ! {
                             rm32_stm32::dprintln!(
                                 "[bench] temp_advance override={} (0=config 16)",
                                 next
+                            );
+                        }
+                        UartCmd::FlywheelToggle => {
+                            let on = shared.bench_flywheel() == 0;
+                            shared.set_bench_flywheel(on as u8);
+                            rm32_stm32::dprintln!(
+                                "[bench] flywheel commutation: {}",
+                                if on { "ON (backup 1.5x ci)" } else { "OFF" }
                             );
                         }
                         UartCmd::HistDump => {

@@ -436,6 +436,11 @@ pub fn handle_comp() {
         &mut state.hal.interval,
         &mut state.hal.com_timer,
     );
+    // Flywheel: the accept's set_and_enable(wait+1) just overwrote any
+    // pending backup arm — mark the current arm as real.
+    if accepted {
+        isr::shared().set_fly_pending(false);
+    }
     #[cfg(feature = "zctrace")]
     if !accepted {
         crate::edge_probe::persist_reject();

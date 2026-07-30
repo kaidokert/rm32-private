@@ -70,6 +70,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             let ci = ctx.shared.commutation_interval();
             let new_ci = ctx.bemf.record_zero_cross(count, ci);
             ctx.shared.set_commutation_interval(new_ci);
+            ctx.shared.set_fly_pending(false); // real arm, not the backup
             ctx.hal.com_timer().set_and_enable(1);
         }
         crate::shared_comm::IsrAction::ResetIntervalTimer => {
@@ -84,6 +85,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         ctx.hal.phase().com_step(changeover);
         ctx.hal.pwm().generate_update_event();
         let ci = ctx.shared.commutation_interval();
+        ctx.shared.set_fly_pending(false); // real arm, not the backup
         ctx.hal.com_timer().set_and_enable(ci as u16);
         ctx.hal.comp().enable_interrupts();
         ctx.shared.set_changeover_step(0);
@@ -263,6 +265,7 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             ctx.bemf.reset_for_step();
             ctx.shared.increment_zero_crosses();
         } else {
+            ctx.shared.set_fly_pending(false); // real arm, not the backup
             ctx.hal
                 .com_timer()
                 .set_and_enable(ctx.bemf.com_timer_delay());
@@ -288,6 +291,13 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     T: hal::ComTimer,
 {
     com_timer.disable_interrupt();
+    // Flywheel ('O'): was THIS fire the backup arm (no ZC accepted since
+    // the last commutation)? Consume the flag either way.
+    let fly_fire = shared.fly_pending();
+    shared.set_fly_pending(false);
+    if fly_fire {
+        shared.bench_fly_fired();
+    }
     let step = commutation.advance();
     // Publish desync_check flag to SharedState (main reads it for desync detection)
     if commutation.desync_check() {
@@ -335,6 +345,18 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     // risk and inconsistent interval updates.
     if !shared.old_routine() {
         comp.enable_interrupts();
+    }
+    // FLYWHEEL ('O', bench divergence under test): also arm a backup
+    // forced commutation at ~1.5x ci. A missed/invisible ZC then costs
+    // one blended-late step instead of freezing the step/mux (no
+    // commutation -> no re-mux -> ~1 e-rev of silence -> desync
+    // cascade — the 98-100% wall's amplifier). A real accept overwrites
+    // this arm (and clears fly_pending in the firmware accept path).
+    if shared.bench_flywheel() != 0 && !shared.old_routine() && shared.running() {
+        let ci = shared.commutation_interval();
+        let backup = (ci + (ci >> 1)).clamp(30, 60000) as u16;
+        com_timer.set_and_enable(backup);
+        shared.set_fly_pending(true);
     }
     bemf.reset_after_commutation();
     shared.increment_zero_crosses();

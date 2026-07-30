@@ -66,6 +66,10 @@ pub enum UartCmd {
     /// earlier (less margin — the wall should move DOWN if the demag
     /// theory holds).
     AdvanceLever,
+    /// 'O' — toggle flywheel commutation (backup forced commutation at
+    /// ~1.5x ci so a missed ZC can't freeze the mux rotation — the
+    /// 98-100% wall amplifier intervention).
+    FlywheelToggle,
     /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
     /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
     /// clamp, 'R' SWIER race fix.
@@ -130,6 +134,7 @@ impl UartDuty {
             b'C' => Some(UartCmd::CarrierLever),
             b'F' => Some(UartCmd::FilterLever),
             b'Y' => Some(UartCmd::AdvanceLever),
+            b'O' => Some(UartCmd::FlywheelToggle),
             b'K' => Some(UartCmd::DivToggle(0)),
             b'M' => Some(UartCmd::DivToggle(1)),
             b'P' => Some(UartCmd::DivToggle(2)),

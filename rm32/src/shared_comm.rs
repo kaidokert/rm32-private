@@ -231,6 +231,22 @@ pub trait MainControl {
         0
     }
 
+    /// Flywheel commutation enable (bench 'O', 0 = off). When on, each
+    /// commutation in interrupt mode also arms a backup forced
+    /// commutation at ~1.5x ci so a missed zero-cross cannot freeze the
+    /// step/mux rotation (the 2-4-window silence amplifier).
+    fn bench_flywheel(&self) -> u8 {
+        0
+    }
+    /// True while the currently-armed COM-timer arm is the flywheel
+    /// backup (set on backup arm, cleared by every real arm).
+    fn fly_pending(&self) -> bool {
+        false
+    }
+    fn set_fly_pending(&self, _v: bool) {}
+    /// Count one flywheel-backup commutation fire.
+    fn bench_fly_fired(&self) {}
+
     /// Measurement publish for EDT telemetry (main writes, ISR reads).
     fn battery_voltage(&self) -> u16 {
         0
