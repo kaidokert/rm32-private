@@ -428,9 +428,21 @@ impl<LED: OutputPin> MainState<LED> {
                 self.timing.last_average_interval as i32,
                 self.timing.average_interval as i32,
             );
-            if diff > (self.timing.average_interval >> 1)
-                && self.timing.average_interval < DESYNC_MAX_INTERVAL
-            {
+            // Detector-sensitivity lever ('T', bench): verbatim trip is
+            // diff > avg/2; the lever raises it to diff > avg (2x).
+            // Tests whether the 98-100% wall is jitter x detector
+            // sensitivity: accepts keep flowing through the disturbances
+            // (flywheel run: fly=11 vs dsy=136), so if the two-tap can
+            // absorb them without the kick/demote response amplifying,
+            // the wall should move. True-desync backstops that remain
+            // at 2x: orbit trip (30ms), stall rescue (22.5ms), BEMF
+            // timeouts.
+            let trip = if shared.bench_desync_thresh() != 0 {
+                self.timing.average_interval
+            } else {
+                self.timing.average_interval >> 1
+            };
+            if diff > trip && self.timing.average_interval < DESYNC_MAX_INTERVAL {
                 // AM32 has `if (zero_crosses > 100) average_interval = 5000`
                 // HERE — but places it AFTER zeroing zero_crosses, so it is
                 // DEAD CODE and never executes (changelog 1.91 intent,

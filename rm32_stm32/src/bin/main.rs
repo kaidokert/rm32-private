@@ -1120,6 +1120,18 @@ fn main() -> ! {
                                 if on { "ON (backup 1.5x ci)" } else { "OFF" }
                             );
                         }
+                        UartCmd::DesyncThreshToggle => {
+                            let on = shared.bench_desync_thresh() == 0;
+                            shared.set_bench_desync_thresh(on as u8);
+                            rm32_stm32::dprintln!(
+                                "[bench] desync trip: {}",
+                                if on {
+                                    "RELAXED (diff > avg)"
+                                } else {
+                                    "verbatim (diff > avg/2)"
+                                }
+                            );
+                        }
                         UartCmd::HistDump => {
                             #[cfg(all(
                                 feature = "benchuart",

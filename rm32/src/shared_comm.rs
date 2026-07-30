@@ -247,6 +247,12 @@ pub trait MainControl {
     /// Count one flywheel-backup commutation fire.
     fn bench_fly_fired(&self) {}
 
+    /// Desync-detector sensitivity lever ('T', 0 = verbatim avg/2 trip,
+    /// nonzero = relaxed avg trip).
+    fn bench_desync_thresh(&self) -> u8 {
+        0
+    }
+
     /// Measurement publish for EDT telemetry (main writes, ISR reads).
     fn battery_voltage(&self) -> u16 {
         0

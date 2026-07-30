@@ -70,6 +70,9 @@ pub enum UartCmd {
     /// ~1.5x ci so a missed ZC can't freeze the mux rotation — the
     /// 98-100% wall amplifier intervention).
     FlywheelToggle,
+    /// 'T' — toggle desync-detector sensitivity (verbatim avg/2 trip vs
+    /// relaxed avg trip). Tests jitter-x-detector as the wall.
+    DesyncThreshToggle,
     /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
     /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
     /// clamp, 'R' SWIER race fix.
@@ -135,6 +138,7 @@ impl UartDuty {
             b'F' => Some(UartCmd::FilterLever),
             b'Y' => Some(UartCmd::AdvanceLever),
             b'O' => Some(UartCmd::FlywheelToggle),
+            b'T' => Some(UartCmd::DesyncThreshToggle),
             b'K' => Some(UartCmd::DivToggle(0)),
             b'M' => Some(UartCmd::DivToggle(1)),
             b'P' => Some(UartCmd::DivToggle(2)),

@@ -92,6 +92,8 @@ pub struct SharedState {
     bench_flywheel: AtomicU8,
     fly_pending: AtomicBool,
     bench_fly_n: AtomicU32,
+    // Desync-detector sensitivity lever ('T'): 0 verbatim avg/2, 1 = avg.
+    bench_desync_thresh: AtomicU8,
     changeover_step: AtomicU8, // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
@@ -172,6 +174,7 @@ impl SharedState {
             bench_flywheel: AtomicU8::new(0),
             fly_pending: AtomicBool::new(false),
             bench_fly_n: AtomicU32::new(0),
+            bench_desync_thresh: AtomicU8::new(0),
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
             dbg_crc_pass: AtomicU32::new(0),
@@ -628,6 +631,12 @@ impl SharedState {
     pub fn set_fly_pending(&self, v: bool) {
         self.fly_pending.store(v, REL);
     }
+    pub fn bench_desync_thresh(&self) -> u8 {
+        self.bench_desync_thresh.load(ACQ)
+    }
+    pub fn set_bench_desync_thresh(&self, v: u8) {
+        self.bench_desync_thresh.store(v, REL);
+    }
     pub fn bench_arr_override(&self) -> u16 {
         self.bench_arr_override.load(ACQ)
     }
@@ -835,6 +844,9 @@ impl crate::shared_comm::MainControl for SharedState {
         // writer (commutation ISR) so this is race-free.
         self.bench_fly_n
             .store(self.bench_fly_n.load(ACQ).wrapping_add(1), REL);
+    }
+    fn bench_desync_thresh(&self) -> u8 {
+        SharedState::bench_desync_thresh(self)
     }
     fn set_auto_advance(&self, v: u8) {
         SharedState::set_auto_advance(self, v);
