@@ -931,12 +931,26 @@ fn main() -> ! {
                             #[cfg(feature = "stm32l431")]
                             {
                                 use core::sync::atomic::Ordering;
-                                use rm32_stm32::mcu_l431::adc::ADC_PAUSE;
-                                let on = !ADC_PAUSE.load(Ordering::Relaxed);
-                                ADC_PAUSE.store(on, Ordering::Relaxed);
+                                use rm32_stm32::mcu_l431::adc;
+                                // Cycle 0 (normal scan) -> 1 (paused,
+                                // frozen readings) -> 2 (HW-TIMED: injected
+                                // phase-locked scan, live readings) -> 0.
+                                let cur = adc::ADC_MODE.load(Ordering::Relaxed);
+                                let next = (cur + 1) % 3;
+                                if next == 2 {
+                                    adc::arm_injected_scan();
+                                } else if cur == 2 {
+                                    adc::disarm_injected_scan();
+                                }
+                                adc::ADC_MODE.store(next, Ordering::Relaxed);
                                 rm32_stm32::dprintln!(
-                                    "[bench] adc: {} (live)",
-                                    if on { "PAUSED" } else { "RUNNING" }
+                                    "[bench] adc mode={} ({})",
+                                    next,
+                                    match next {
+                                        1 => "PAUSED - readings frozen",
+                                        2 => "HW-TIMED injected, live",
+                                        _ => "normal sw scan",
+                                    }
                                 );
                             }
                             #[cfg(not(feature = "stm32l431"))]

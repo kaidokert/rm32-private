@@ -35,6 +35,13 @@ pub trait AdcPeripheral {
     fn enable(&self) -> Result<(), InitError>;
     /// Trigger a new conversion.
     fn start_conversion(&self);
+    /// Hardware-timed sampling hook: when the MCU is in hw-timed mode
+    /// (injected group phase-locked to the PWM, clone FALCON pattern),
+    /// return the latest [current, voltage, temperature] raws instead of
+    /// software-starting a regular scan. None = normal regular scan.
+    fn hw_timed_read(&self) -> Option<[u16; 3]> {
+        None
+    }
 }
 
 /// Temperature sensor calibration values (read from ROM at init time).

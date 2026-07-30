@@ -47,6 +47,20 @@ impl<A: AdcPeripheral, const N: usize> GenericAdc<A, N> {
 
 impl<A: AdcPeripheral> Adc for GenericAdc<A, 3> {
     fn start_conversion(&mut self) {
+        // Hw-timed mode: injected group (phase-locked to PWM) already
+        // holds fresh conversions — copy them into the measurement slots
+        // instead of software-starting a regular scan (whose random-phase
+        // mux switching injects comparator edges — the 100%-wall lever).
+        // Safe: regular DMA is idle in this mode (no ADSTART issued).
+        if let Some(vals) = self.ops.hw_timed_read() {
+            let p = self.buf.as_ptr() as *mut u16;
+            unsafe {
+                core::ptr::write_volatile(p, vals[0]);
+                core::ptr::write_volatile(p.add(1), vals[1]);
+                core::ptr::write_volatile(p.add(2), vals[2]);
+            }
+            return;
+        }
         self.ops.start_conversion();
     }
 

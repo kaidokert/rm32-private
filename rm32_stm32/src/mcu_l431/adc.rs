@@ -1,8 +1,14 @@
 //! L431 ADC: CH8 current, CH11 voltage, CH17 temp. DMA1_CH1 circular.
 
-/// Bench live ADC pause ('A' command).
+/// Bench live ADC mode ('A' command cycles): 0 = normal software-random
+/// regular scan, 1 = paused (measurements FREEZE — diagnostics only),
+/// 2 = HW-TIMED (injected 3-ch group phase-locked to the PWM via
+/// TIM1_TRGO2, clone FALCON pattern; measurements stay LIVE, regular
+/// scan off). Mode 0's random-phase mux switching injects comparator
+/// edges — measured as the 100%-wall storm lever (ABBA 3.1s vs 1.2s
+/// onset). Mode 2 is the shippable-fix candidate.
 #[cfg(feature = "benchuart")]
-pub static ADC_PAUSE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub static ADC_MODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 // ---- WAXWING-lite (port of minz waxwing-lite-v1 = 25bd843) ----
 // 4x1024 u16 rings written every 20 kHz tick while the injected burst
@@ -132,7 +138,7 @@ pub fn gecko_capture() -> usize {
     use stm32l4xx_hal::pac::{ADC1, DMA1};
     let adc = unsafe { &*ADC1::ptr() };
     let dma = unsafe { &*DMA1::ptr() };
-    ADC_PAUSE.store(true, Ordering::Relaxed);
+    let adc_mode_saved = ADC_MODE.swap(1, Ordering::Relaxed);
     // Quiesce any in-flight scan sequence (bounded).
     if adc.cr.read().adstart().bit_is_set() {
         adc.cr.modify(|_, w| w.adstp().set_bit());
@@ -176,7 +182,7 @@ pub fn gecko_capture() -> usize {
             .modify(|r, w| w.bits(r.bits() & !((1 << 13) | (1 << 12))));
         adc.sqr1.write(|w| w.bits(saved_sqr1));
     }
-    ADC_PAUSE.store(false, Ordering::Relaxed);
+    ADC_MODE.store(adc_mode_saved, Ordering::Relaxed);
     head
 }
 
@@ -287,14 +293,30 @@ impl AdcPeripheral for L431AdcOps {
     }
 
     fn start_conversion(&self) {
-        // Bench 'A' diagnostic: paused ADC = no mux switching (clone's
-        // parity-tag ADC was dormant); measurements freeze while paused.
+        // Bench 'A' modes: 1 = paused (no scan, measurements freeze),
+        // 2 = hw-timed (injected group supplies data; regular scan off —
+        // handled via hw_timed_read, this fn is not reached). Mode 0 =
+        // normal software-start regular scan.
         #[cfg(feature = "benchuart")]
-        if ADC_PAUSE.load(core::sync::atomic::Ordering::Relaxed) {
+        if ADC_MODE.load(core::sync::atomic::Ordering::Relaxed) != 0 {
             return;
         }
         let adc = unsafe { &*ADC1::ptr() };
         adc.cr.modify(|_, w| w.adstart().set_bit());
+    }
+
+    #[cfg(feature = "benchuart")]
+    fn hw_timed_read(&self) -> Option<[u16; 3]> {
+        use core::sync::atomic::Ordering;
+        if ADC_MODE.load(Ordering::Relaxed) != 2 {
+            return None;
+        }
+        let adc = unsafe { &*ADC1::ptr() };
+        Some([
+            (adc.jdr1.read().bits() & 0xFFFF) as u16, // ch8  current
+            (adc.jdr2.read().bits() & 0xFFFF) as u16, // ch11 voltage
+            (adc.jdr3.read().bits() & 0xFFFF) as u16, // ch17 temp
+        ])
     }
 }
 
@@ -338,4 +360,49 @@ pub fn arm_injected_current() {
 pub fn injected_current_raw() -> u16 {
     // WAXWING burst order: current is JDR3 (JDR1/2 = phase A/B).
     unsafe { ((*stm32l4xx_hal::pac::ADC1::ptr()).jdr3.read().bits() & 0xFFF) as u16 }
+}
+
+/// HW-TIMED SCAN (ADC_MODE 2): arm a 3-conversion injected group
+/// (ch8 current, ch11 voltage, ch17 temp) hardware-triggered by
+/// TIM1_TRGO2 = OC4REF falling — once per PWM period, phase-locked
+/// mid-PWM-ON (the clone's FALCON pattern). Replaces the software-
+/// random regular scan whose mux switching injects comparator edges
+/// (the 100%-wall storm lever, ABBA-confirmed). NOTE: conflicts with
+/// the 'J' WAXWING burst (both own JSQR) — do not arm both.
+#[cfg(feature = "benchuart")]
+pub fn arm_injected_scan() {
+    use stm32l4xx_hal::pac::{ADC1, TIM1};
+    unsafe {
+        let adc = &*ADC1::ptr();
+        let tim1 = &*TIM1::ptr();
+        // TIM1 TRGO2 = OC4REF (MMS2 = 0b0111); CCR4 already 0x64.
+        tim1.cr2
+            .modify(|r, w| w.bits((r.bits() & !(0xF << 20)) | (0b0111 << 20)));
+        // JQDIS: plain JSQR injected mode (no queue).
+        adc.cfgr.modify(|r, w| w.bits(r.bits() | (1 << 31)));
+        // JSQR (RM0394): JL[1:0]=2 (3 conv) | JEXTSEL[5:2]=0b1000
+        // (TIM1_TRGO2) | JEXTEN[7:6]=0b10 (falling) | JSQ1[12:8]=8 |
+        // JSQ2[18:14]=11 | JSQ3[24:20]=17.
+        adc.jsqr.write(|w| {
+            w.bits(2 | (0b1000 << 2) | (0b10 << 6) | (8 << 8) | (11 << 14) | (17 << 20))
+        });
+        adc.cr.modify(|r, w| w.bits(r.bits() | (1 << 3))); // JADSTART
+    }
+}
+
+/// Leave hw-timed mode: stop injected conversions (bounded wait).
+#[cfg(feature = "benchuart")]
+pub fn disarm_injected_scan() {
+    use stm32l4xx_hal::pac::ADC1;
+    unsafe {
+        let adc = &*ADC1::ptr();
+        if adc.cr.read().bits() & (1 << 3) != 0 {
+            adc.cr.modify(|r, w| w.bits(r.bits() | (1 << 4))); // JADSTP
+            for _ in 0..100_000u32 {
+                if adc.cr.read().bits() & (1 << 3) == 0 {
+                    break;
+                }
+            }
+        }
+    }
 }
