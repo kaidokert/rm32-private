@@ -26,9 +26,10 @@ def main():
     print(f"== engage reliability: {a.reps} fresh engages -> {a.target}% ==")
     results = []
     for rep in range(1, a.reps + 1):
-        banner, causes = reset_board(a.port)
-        if banner is False:
-            print(f"  rep {rep}: NO BOOT BANNER (causes={causes}) — aborting")
+        identity, causes = reset_board(a.port)
+        if identity != "rm32":
+            print(f"  rep {rep}: firmware identity={identity!r} "
+                  f"(causes={causes}) — wrong/absent firmware, aborting")
             return 1
         with Bench(a.port) as b:
             ok = b.engage_from_stop(a.target)

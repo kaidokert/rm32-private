@@ -225,6 +225,12 @@ pub trait MainControl {
     }
     fn set_auto_advance(&self, _v: u8) {}
 
+    /// Bench advance-lever override (0 = off). Nonzero replaces
+    /// auto_advance/temp_advance — demag-margin intervention ('Y').
+    fn bench_advance_override(&self) -> u8 {
+        0
+    }
+
     /// Measurement publish for EDT telemetry (main writes, ISR reads).
     fn battery_voltage(&self) -> u16 {
         0

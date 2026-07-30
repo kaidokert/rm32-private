@@ -61,6 +61,11 @@ pub enum UartCmd {
     /// 'F' — cycle the persistence filter_level override (off/2/1).
     /// Acceptance-side wall intervention test.
     FilterLever,
+    /// 'Y' — cycle the temp_advance override (off/8/24). Demag-margin
+    /// wall intervention: 8 = commutate LATER (more margin), 24 =
+    /// earlier (less margin — the wall should move DOWN if the demag
+    /// theory holds).
+    AdvanceLever,
     /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
     /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
     /// clamp, 'R' SWIER race fix.
@@ -124,6 +129,7 @@ impl UartDuty {
             b'H' => Some(UartCmd::HistDump),
             b'C' => Some(UartCmd::CarrierLever),
             b'F' => Some(UartCmd::FilterLever),
+            b'Y' => Some(UartCmd::AdvanceLever),
             b'K' => Some(UartCmd::DivToggle(0)),
             b'M' => Some(UartCmd::DivToggle(1)),
             b'P' => Some(UartCmd::DivToggle(2)),

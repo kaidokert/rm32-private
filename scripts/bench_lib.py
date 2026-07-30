@@ -70,7 +70,15 @@ def amp_floor(pct):
 def reset_board(port=DEFAULT_PORT, capture=True):
     """probe-rs reset; if capture, open the port FIRST so the boot
     banner + RCC_CSR reset causes land in the return value instead of
-    being lost. Returns (banner_seen, causes)."""
+    being lost. Returns (identity, causes) where identity is "rm32",
+    "clone", or None (no banner seen).
+
+    IDENTITY IS LOAD-BEARING: the bench chip regularly carries the
+    am32_clone (control runs flash over rm32). A script that proceeds
+    on identity != "rm32" is driving the WRONG FIRMWARE — 07-29: four
+    A/B reps ran against the clone because a runner ignored the missing
+    banner. Treat anything but "rm32" as a hard stop unless the script
+    is explicitly a clone driver."""
     if not capture:
         subprocess.run(["probe-rs", "reset", "--chip", CHIP, "--probe", PROBE],
                        capture_output=True)
@@ -95,7 +103,13 @@ def reset_board(port=DEFAULT_PORT, capture=True):
     p.close()
     txt = "".join(chr(b) if 32 <= b < 127 or b == 10 else "." for b in buf)
     causes = [m.strip() for m in re.findall(r"last reset:\s*([a-zA-Z0-9\- ]+)", txt)]
-    return "[rm32] boot" in txt, causes
+    if "[rm32] boot" in txt:
+        identity = "rm32"
+    elif "am32_clone" in txt:
+        identity = "clone"
+    else:
+        identity = None
+    return identity, causes
 
 
 class Info:
@@ -111,6 +125,14 @@ class Info:
         self.zc = g("zc")
         self.dsy = g("dsy")
         self.otrip = g("otrip")
+        # desync-response branch counters + Running->OldRoutine drops
+        self.f = g("f")        # fast-rotor stay-interrupt fires
+        self.dc = g("dc")      # demotes via orbit_current sanity veto
+        self.ds = g("ds")      # demotes from interrupt mode (ci slow)
+        self.do_ = g("do")     # desyncs fired while already polling
+        self.drops = g("drops")
+        self.fe = g("fe")      # first anomaly: 0 none, 1 drop, 2 desync
+        self.fci = g("fci")    # ci at the first anomaly
         self.killed = g("killed")
         self.volts = g("vbat") * 752 / 100 / 1000  # field -> volts
         self.amps = g("iraw") * 2686 / 100 / 1000  # field -> amps
@@ -119,7 +141,9 @@ class Info:
     def __repr__(self):
         m = "RUN" if self.running else ("safe" if self.old == 1 else "?")
         return (f"{m} ci={self.ci} duty={self.duty} zc={self.zc} "
-                f"I={self.amps:.1f}A V={self.volts:.2f}V dsy={self.dsy}")
+                f"I={self.amps:.1f}A V={self.volts:.2f}V dsy={self.dsy} "
+                f"f={self.f} dc={self.dc} ds={self.ds} do={self.do_} "
+                f"drops={self.drops} fe={self.fe} fci={self.fci}")
 
 
 def verify_locked(info, pct):
@@ -198,18 +222,28 @@ class Bench:
         self.buf.extend(self.p.read(16384))
         self._scan()
 
-    def info(self):
-        """Request and parse one `i` line (None on parse failure)."""
-        n = len(self.buf)
-        self.cmd(b"i", settle=0.3)
-        seg = "".join(chr(b) if 32 <= b < 127 else "." for b in self.buf[n:])
-        for line in seg.split("\n"):
-            if line.startswith("i "):
-                fields = dict(x.split("=") for x in line.split() if "=" in x)
-                try:
-                    return Info(fields)
-                except ValueError:
-                    return None
+    def info(self, retries=3):
+        """Request and parse one `i` line. Retries: a single-shot read
+        races the TX queue and intermittently misses the line (two
+        engage runs failed on exactly this); a retry is free."""
+        for _ in range(retries):
+            n = len(self.buf)
+            self.cmd(b"i", settle=0.35)
+            # KEEP newlines: mapping \n to "." merged all lines into one
+            # and glued the next byte onto the LAST field's value
+            # ("drops=1." -> int fails). Bit only when a trailing field
+            # is one Info actually reads.
+            seg = "".join(chr(b) if 32 <= b < 127 or b == 10 else "."
+                          for b in self.buf[n:])
+            for line in seg.split("\n"):
+                if line.startswith("i ") and line.rstrip().endswith(
+                        tuple("0123456789")):
+                    fields = dict(x.split("=") for x in line.split()
+                                  if x.count("=") == 1)
+                    try:
+                        return Info(fields)
+                    except ValueError:
+                        break
         return None
 
     def sample(self, pct):

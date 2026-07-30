@@ -175,12 +175,19 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         ctx.voltage_based_ramp,
     );
 
-    // Sync main→ISR published state (main computes, ISR applies)
-    ctx.bemf.sync_config(
-        ctx.shared.filter_level(),
-        ctx.shared.auto_advance(),
-        ctx.shared.min_bemf_counts(),
-    );
+    // Sync main→ISR published state (main computes, ISR applies).
+    // Bench advance-lever ('Y'): nonzero override replaces auto_advance
+    // (temp_advance) — the demag-margin intervention knob.
+    let adv = {
+        let ov = ctx.shared.bench_advance_override();
+        if ov != 0 {
+            ov
+        } else {
+            ctx.shared.auto_advance()
+        }
+    };
+    ctx.bemf
+        .sync_config(ctx.shared.filter_level(), adv, ctx.shared.min_bemf_counts());
 
     // Apply stall boost + duty/current ceilings
     let stall_boost = if ctx.shared.running() {

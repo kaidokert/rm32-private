@@ -145,6 +145,21 @@ pub struct MainState<LED: OutputPin = NoLed> {
     /// duty kick-down (~15-20 ms torque hole), so events/minute IS the
     /// perceived chop rate. Read by the bench 'i' info line.
     pub desync_events: u32,
+    /// Per-branch desync-response counters (instrument decisions, not
+    /// outcomes): which branch each desync fire took. `dsy_fast` =
+    /// fast-rotor stay-interrupt (kick-half, comparator stays armed);
+    /// `dsy_demote_cur` = demote because the orbit_current sanity veto
+    /// fired (current above the duty-proportional line at the event);
+    /// `dsy_demote_slow` = demote for any other reason (ci >=
+    /// DESYNC_STAY_INTERRUPT_CI, or already in polling mode).
+    pub dsy_fast: u32,
+    pub dsy_demote_cur: u32,
+    /// Demote fired FROM interrupt mode with sane current (ci >=
+    /// DESYNC_STAY_INTERRUPT_CI at the event).
+    pub dsy_demote_slow: u32,
+    /// Desync fired while ALREADY in polling mode (old_routine=1) —
+    /// the cascade's tail, not its head.
+    pub dsy_demote_old: u32,
     /// Wrong-phase-orbit trips (see ORBIT_TRIP_MA) — lifetime count.
     pub orbit_trips: u32,
     /// Desync-detector re-arm threshold (zero_crosses). Normally the
@@ -212,6 +227,10 @@ impl MainState<NoLed> {
             low_cell_volt_cutoff: 330,
             desync_check: false,
             desync_events: 0,
+            dsy_fast: 0,
+            dsy_demote_cur: 0,
+            dsy_demote_slow: 0,
+            dsy_demote_old: 0,
             orbit_trips: 0,
             desync_rearm_zc: 10,
             orbit_trip_count: 0,
@@ -450,14 +469,37 @@ impl<LED: OutputPin> MainState<LED> {
                     shared.duty_cycle(),
                     self.measurements.battery_voltage.0,
                 );
-                let fast_rotor =
-                    current_sane && shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
+                // Rotor-speed proxy. Default = ci-at-fire (proven parity
+                // behavior). 'K' (bit0) selects the EXPERIMENTAL pre-gap
+                // reference (last_average_interval) instead — the theory
+                // that gap-inflated ci misclassifies fast rotors as slow.
+                // Tested 07-29 at the 100% storm: NO effect (dsy=611
+                // identical, f=0) — the storm's desyncs fire with the
+                // pre-gap reference ALSO inflated (cascade-era checks),
+                // so the lever stays available but is NOT the fix.
+                let speed_ref = if shared.divergence_mask() & 1 != 0 {
+                    self.timing.last_average_interval
+                } else {
+                    shared.commutation_interval()
+                };
+                let fast_rotor = current_sane && speed_ref < DESYNC_STAY_INTERRUPT_CI;
                 // Duty kick (AM32: last_duty_cycle = min_startup/2,
                 // unconditional). On the fast-rotor branch the rotor is
                 // still locked, so only HALVE the duty (kept divergence):
                 // the full crash to ~55 recovers through the startup ramp
                 // profile for ~15-20 ms — the audible chop — and its
                 // recovery surge fed the supply-sag feedback loop.
+                // Branch instrumentation (decisions, not outcomes): which
+                // response path this fire takes, and why.
+                if desync_from_interrupt_mode && fast_rotor {
+                    self.dsy_fast = self.dsy_fast.wrapping_add(1);
+                } else if desync_from_interrupt_mode && !current_sane {
+                    self.dsy_demote_cur = self.dsy_demote_cur.wrapping_add(1);
+                } else if desync_from_interrupt_mode {
+                    self.dsy_demote_slow = self.dsy_demote_slow.wrapping_add(1);
+                } else {
+                    self.dsy_demote_old = self.dsy_demote_old.wrapping_add(1);
+                }
                 if desync_from_interrupt_mode && fast_rotor && shared.divergence_mask() & 2 == 0 {
                     shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickHalf);
                 } else {

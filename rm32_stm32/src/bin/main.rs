@@ -427,6 +427,20 @@ fn main() -> ! {
     let mut bench_val_n: u32 = 0;
     #[cfg(feature = "benchuart")]
     let mut bench_last_val: u16 = 0;
+    #[cfg(feature = "benchuart")]
+    let mut bench_drops: u32 = 0;
+    // First-anomaly latch: what broke FIRST at speed — a Running->Old
+    // drop (fe=1) or a desync fire (fe=2)? fci = ci at that instant.
+    // One-shot per boot (reps reset the board); armed only at wall
+    // input (>1200) so spin-up churn can't claim the latch.
+    #[cfg(feature = "benchuart")]
+    let mut bench_first_evt: u8 = 0;
+    #[cfg(feature = "benchuart")]
+    let mut bench_first_ci: u32 = 0;
+    #[cfg(feature = "benchuart")]
+    let mut bench_last_dsy: u32 = 0;
+    #[cfg(feature = "benchuart")]
+    let mut bench_last_stall: u8 = 0;
     // Two-frame confirmation (AM32 protocol-detection pattern): a
     // throttle/stop commit only APPLIES when the same value arrives twice
     // consecutively. Measured need: ore=24 stops=13 in one sweep — RX
@@ -697,16 +711,47 @@ fn main() -> ! {
                 let now_old = shared.old_routine();
                 let was_old = unsafe { WAX_LAST_OLD };
                 unsafe { WAX_LAST_OLD = now_old };
-                if now_old
-                    && !was_old
-                    && bench_last_val > 1500
-                    && !rm32_stm32::mcu_l431::adc::wax_frozen()
-                    && rm32_stm32::mcu_l431::adc::wax_freeze()
-                {
-                    rm32_stm32::dprintln!(
-                        "[wax] FROZEN on lock-loss (Running->Old, in={})",
-                        bench_last_val
-                    );
+                // First-anomaly ordering, matching tick() code order for
+                // same-pass events: the STALL block (interval_timer >
+                // 45000 -> ci:=10000, old_routine:=1, CommutateKick)
+                // runs BEFORE the desync detector, so its edge is
+                // checked first (fe=3). Then desync (fe=2), then an
+                // independent drop (fe=1). The earlier version checked
+                // desync first, so a stall+desync in one pass falsely
+                // read "desync-first" — and fci=10000 (the stall path's
+                // DESYNC_RESET_INTERVAL constant) betrayed exactly that.
+                let stall_now = main_state.protection.bemf_timeout_happened();
+                if stall_now > bench_last_stall && bench_first_evt == 0 && bench_last_val > 1200 {
+                    bench_first_evt = 3;
+                    bench_first_ci = shared.commutation_interval();
+                }
+                bench_last_stall = stall_now;
+                let dsy_now = main_state.desync_events;
+                if dsy_now != bench_last_dsy {
+                    bench_last_dsy = dsy_now;
+                    if bench_first_evt == 0 && bench_last_val > 1200 {
+                        bench_first_evt = 2;
+                        bench_first_ci = shared.commutation_interval();
+                    }
+                }
+                if now_old && !was_old {
+                    // Count EVERY Running->OldRoutine drop (operator ask:
+                    // safe-mode drops must be logged, not sample-lucky).
+                    // Edge-detected at main-loop rate; printed as drops=.
+                    bench_drops = bench_drops.wrapping_add(1);
+                    if bench_first_evt == 0 && bench_last_val > 1200 {
+                        bench_first_evt = 1;
+                        bench_first_ci = shared.commutation_interval();
+                    }
+                    if bench_last_val > 1500
+                        && !rm32_stm32::mcu_l431::adc::wax_frozen()
+                        && rm32_stm32::mcu_l431::adc::wax_freeze()
+                    {
+                        rm32_stm32::dprintln!(
+                            "[wax] FROZEN on lock-loss (Running->Old, in={})",
+                            bench_last_val
+                        );
+                    }
                 }
             }
             rm32_stm32::bench_uart::drain_dma();
@@ -755,7 +800,7 @@ fn main() -> ! {
                             let iraw = (shared.actual_current().max(0) as u32) * 100 / 2686;
                             let vraw = (shared.battery_voltage() as u32) * 100 / 752;
                             rm32_stm32::dprintln!(
-                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={}",
+                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={} f={} dc={} ds={} do={} drops={} fe={} fci={}",
                                 shared.old_routine() as u8,
                                 shared.running() as u8,
                                 shared.commutation_interval(),
@@ -772,7 +817,14 @@ fn main() -> ! {
                                 bench_veto_n,
                                 main_state.desync_events,
                                 main_state.orbit_trips,
-                                shared.tim1_arr()
+                                shared.tim1_arr(),
+                                main_state.dsy_fast,
+                                main_state.dsy_demote_cur,
+                                main_state.dsy_demote_slow,
+                                main_state.dsy_demote_old,
+                                bench_drops,
+                                bench_first_evt,
+                                bench_first_ci
                             );
                             #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
                             {
@@ -1014,6 +1066,19 @@ fn main() -> ! {
                             };
                             shared.set_bench_filter_override(next);
                             rm32_stm32::dprintln!("[bench] filter_level override={} (0=map)", next);
+                        }
+                        UartCmd::AdvanceLever => {
+                            let cur = shared.bench_advance_override();
+                            let next = match cur {
+                                0 => 8,  // LATER commutation (demag margin up)
+                                8 => 24, // earlier (margin down)
+                                _ => 0,  // back to config temp_advance (16)
+                            };
+                            shared.set_bench_advance_override(next);
+                            rm32_stm32::dprintln!(
+                                "[bench] temp_advance override={} (0=config 16)",
+                                next
+                            );
                         }
                         UartCmd::HistDump => {
                             #[cfg(all(

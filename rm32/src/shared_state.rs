@@ -82,6 +82,10 @@ pub struct SharedState {
     // = accept a crossing on fewer confirming reads (less likely to
     // reject a marginal wall-slew crossing). Acceptance-side wall test.
     bench_filter_override: AtomicU8,
+    // Bench advance-lever: forced temp_advance (0=off). Lower = LATER
+    // commutation = more demag margin before the next sensing window.
+    // Tests the demag-runaway wall theory by intervention ('Y').
+    bench_advance_override: AtomicU8,
     changeover_step: AtomicU8, // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
@@ -158,6 +162,7 @@ impl SharedState {
             bench_divergence_mask: AtomicU8::new(0),
             bench_arr_override: AtomicU16::new(0),
             bench_filter_override: AtomicU8::new(0),
+            bench_advance_override: AtomicU8::new(0),
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
             dbg_crc_pass: AtomicU32::new(0),
@@ -596,6 +601,12 @@ impl SharedState {
     pub fn set_bench_filter_override(&self, v: u8) {
         self.bench_filter_override.store(v, REL);
     }
+    pub fn bench_advance_override(&self) -> u8 {
+        self.bench_advance_override.load(ACQ)
+    }
+    pub fn set_bench_advance_override(&self, v: u8) {
+        self.bench_advance_override.store(v, REL);
+    }
     pub fn bench_arr_override(&self) -> u16 {
         self.bench_arr_override.load(ACQ)
     }
@@ -785,6 +796,9 @@ impl crate::shared_comm::MainControl for SharedState {
     }
     fn auto_advance(&self) -> u8 {
         SharedState::auto_advance(self)
+    }
+    fn bench_advance_override(&self) -> u8 {
+        SharedState::bench_advance_override(self)
     }
     fn set_auto_advance(&self, v: u8) {
         SharedState::set_auto_advance(self, v);
