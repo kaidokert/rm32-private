@@ -831,10 +831,12 @@ fn main() -> ! {
                             {
                                 use core::sync::atomic::Ordering;
                                 let n = rm32_stm32::isr_handlers::VOID_N.load(Ordering::Relaxed);
-                                if n > 0 {
+                                let h = rm32_stm32::isr_handlers::HEAL_N.load(Ordering::Relaxed);
+                                if n > 0 || h > 0 {
                                     rm32_stm32::dprintln!(
-                                        "[void n={} csr={:#010x} exti={:#04x}]",
+                                        "[void n={} heal={} csr={:#010x} exti={:#04x}]",
                                         n,
+                                        h,
                                         rm32_stm32::isr_handlers::VOID_COMP_CSR
                                             .load(Ordering::Relaxed),
                                         rm32_stm32::isr_handlers::VOID_EXTI.load(Ordering::Relaxed)

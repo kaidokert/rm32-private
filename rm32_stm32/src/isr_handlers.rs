@@ -80,6 +80,13 @@ pub static VOID_EXTI: core::sync::atomic::AtomicU32 = core::sync::atomic::Atomic
 #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
 pub static VOID_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
+/// Comp-deadlock healer fires (see handle_tim6): Running in interrupt
+/// mode with EXTI line 22 masked AND no commutation scheduled — a state
+/// nothing can exit (re-enable only happens at commutation; commutation
+/// only on accept; accepts need the line). Counted + healed per tick.
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static HEAL_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// 20kHz control loop tick (TIM6 ISR body).
 pub fn handle_tim6() {
     // Minimal-overhead timing bracket: DWT.CYCCNT delta written to a plain
@@ -123,6 +130,32 @@ pub fn handle_tim6() {
         VOID_COMP_CSR.store(comp2_csr, Ordering::Relaxed);
         VOID_EXTI.store(packed, Ordering::Relaxed);
         VOID_N.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // COMP-DEADLOCK HEALER (the 22.5 ms void fix candidate + counter).
+    // Void autopsy measured: comparator healthy+configured but EXTI
+    // IMR1[22]=0 with zero entries — a masked line nobody will ever
+    // unmask (enable happens only at commutation; commutation only on
+    // accept; accepts need the line). Detect the deadlock signature —
+    // Running, interrupt mode, line masked, COM timer NOT armed (UIE=0,
+    // nothing scheduled) — and re-enable. Converts the void into a
+    // <=50 us blip; HEAL_N counts occurrences (the initiator rate).
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    {
+        use core::sync::atomic::Ordering;
+        if shared.running() && !shared.old_routine() {
+            let exti = unsafe { &*crate::pac::EXTI::PTR };
+            let masked = exti.imr1.read().bits() & (1 << 22) == 0;
+            let tim16_uie =
+                unsafe { (*stm32l4xx_hal::pac::TIM16::PTR).dier.read().bits() & 1 != 0 };
+            if masked && !tim16_uie {
+                HEAL_N.fetch_add(1, Ordering::Relaxed);
+                unsafe {
+                    exti.pr1.write(|w| w.bits(1 << 22)); // drop stale edge
+                    exti.imr1.modify(|r, w| w.bits(r.bits() | (1 << 22)));
+                }
+            }
+        }
     }
 
     let mut ctx = rm32::control::context::MotorContext {
