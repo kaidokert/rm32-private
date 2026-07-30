@@ -70,6 +70,16 @@ impl IsrCell {
 
 static ISR_LOCAL: IsrCell = IsrCell::new();
 
+/// Void-autopsy snapshot (see handle_tim6): COMP2.CSR + packed EXTI
+/// line-22 state captured at the stall rescue, read by the bench 'i'
+/// handler. L431 bench instrument.
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static VOID_COMP_CSR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static VOID_EXTI: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static VOID_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// 20kHz control loop tick (TIM6 ISR body).
 pub fn handle_tim6() {
     // Minimal-overhead timing bracket: DWT.CYCCNT delta written to a plain
@@ -88,6 +98,32 @@ pub fn handle_tim6() {
     let shared = isr::shared();
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
     crate::phase::canary(0); // site 0: tim6 entry
+
+    // VOID AUTOPSY: the stall rescue (CommutateKick) fires only after
+    // the 22.5 ms armed-comparator edge void — snapshot the comparator
+    // + EXTI state HERE, before the kick's forced commutation re-muxes
+    // and destroys the evidence. Discriminates the remaining initiator
+    // hypotheses: EXTI masked (IMR=0) vs comparator pinned (mux/
+    // polarity — CSR INMSEL/VALUE) vs edge-select wrong (RTSR/FTSR).
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    if matches!(
+        shared.isr_action(),
+        rm32::shared_comm::IsrAction::CommutateKick
+    ) {
+        use core::sync::atomic::Ordering;
+        let comp2_csr = unsafe { core::ptr::read_volatile(0x4001_0204u32 as *const u32) };
+        let exti = unsafe { &*crate::pac::EXTI::PTR };
+        let bit = |v: u32| ((v >> 22) & 1) as u32;
+        let packed = bit(exti.imr1.read().bits())
+            | (bit(exti.pr1.read().bits()) << 1)
+            | (bit(exti.rtsr1.read().bits()) << 2)
+            | (bit(exti.ftsr1.read().bits()) << 3)
+            | ((state.commutation.step() as u32) << 4)
+            | ((state.commutation.rising() as u32) << 7);
+        VOID_COMP_CSR.store(comp2_csr, Ordering::Relaxed);
+        VOID_EXTI.store(packed, Ordering::Relaxed);
+        VOID_N.fetch_add(1, Ordering::Relaxed);
+    }
 
     let mut ctx = rm32::control::context::MotorContext {
         commutation: &mut state.commutation,

@@ -826,6 +826,21 @@ fn main() -> ! {
                                 bench_first_evt,
                                 bench_first_ci
                             );
+                            // Void-autopsy snapshot (stall-rescue state).
+                            #[cfg(feature = "stm32l431")]
+                            {
+                                use core::sync::atomic::Ordering;
+                                let n = rm32_stm32::isr_handlers::VOID_N.load(Ordering::Relaxed);
+                                if n > 0 {
+                                    rm32_stm32::dprintln!(
+                                        "[void n={} csr={:#010x} exti={:#04x}]",
+                                        n,
+                                        rm32_stm32::isr_handlers::VOID_COMP_CSR
+                                            .load(Ordering::Relaxed),
+                                        rm32_stm32::isr_handlers::VOID_EXTI.load(Ordering::Relaxed)
+                                    );
+                                }
+                            }
                             #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
                             {
                                 let (va, vb, vc) = rm32_stm32::edge_probe::npin_violations();
