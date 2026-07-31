@@ -833,6 +833,15 @@ fn main() -> ! {
                                 bench_first_ci,
                                 shared.bench_fly_n()
                             );
+                            if main_state.desync_events > 0 {
+                                rm32_stm32::dprintln!(
+                                    "[ff avg={} last={} ci={} zc={}]",
+                                    main_state.first_fire_avg,
+                                    main_state.first_fire_last,
+                                    main_state.first_fire_ci,
+                                    main_state.first_fire_zc
+                                );
+                            }
                             // Void-autopsy snapshot (stall-rescue state).
                             #[cfg(feature = "stm32l431")]
                             {

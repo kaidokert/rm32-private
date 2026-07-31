@@ -153,6 +153,16 @@ pub struct MainState<LED: OutputPin = NoLed> {
     /// `dsy_demote_slow` = demote for any other reason (ci >=
     /// DESYNC_STAY_INTERRUPT_CI, or already in polling mode).
     pub dsy_fast: u32,
+    /// First-fire forensics: the detector's own inputs at the FIRST
+    /// desync fire (avg, last_avg, ci, zc at that instant). The
+    /// verbatim_lw runs proved no per-window anomaly >±50% precedes
+    /// fires, yet |last-avg|>avg/2 fired — these name whether a
+    /// detector INPUT is corrupt (garbage ring slot / wrap) or the
+    /// quantities genuinely moved.
+    pub first_fire_avg: u32,
+    pub first_fire_last: u32,
+    pub first_fire_ci: u32,
+    pub first_fire_zc: u32,
     pub dsy_demote_cur: u32,
     /// Demote fired FROM interrupt mode with sane current (ci >=
     /// DESYNC_STAY_INTERRUPT_CI at the event).
@@ -228,6 +238,10 @@ impl MainState<NoLed> {
             desync_check: false,
             desync_events: 0,
             dsy_fast: 0,
+            first_fire_avg: 0,
+            first_fire_last: 0,
+            first_fire_ci: 0,
+            first_fire_zc: 0,
             dsy_demote_cur: 0,
             dsy_demote_slow: 0,
             dsy_demote_old: 0,
@@ -454,6 +468,13 @@ impl<LED: OutputPin> MainState<LED> {
                 // Parity = match the reference's BEHAVIOR (no reset), not its
                 // intent. (Bench 07-26: clone desyncs at 60-80% are invisible
                 // <50ms blips; rm32's echoed double-kick fed the 1-2.4s churn.)
+                if self.desync_events == 0 {
+                    // First-fire forensics (see field docs).
+                    self.first_fire_avg = self.timing.average_interval;
+                    self.first_fire_last = self.timing.last_average_interval;
+                    self.first_fire_ci = shared.commutation_interval();
+                    self.first_fire_zc = zc;
+                }
                 shared.set_zero_crosses(0);
                 self.desync_events = self.desync_events.wrapping_add(1);
                 let desync_from_interrupt_mode = !shared.old_routine();

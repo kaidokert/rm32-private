@@ -320,11 +320,26 @@ pub fn handle_tim14() {
         use core::sync::atomic::Ordering;
         let tz = state.bemf.this_zc_time() as u32;
         let ci = shared.commutation_interval();
-        if shared.duty_cycle() > 1700 && ci < 400 && tz > ci + (ci >> 1) {
+        // ABSOLUTE thresholds (bench, ~3000 Hz e regime: true window
+        // ~107 ticks). The earlier relative gate (tz > 1.5x ci) was
+        // SELF-DEFEATING: a train of 1.4-1.9x windows inflates the
+        // two-tap ci it compares against, so the walk 107->318 logged
+        // nothing (forensics showed avg=290 with a "clean" log).
+        let late = tz > 250;
+        let early = tz < 50 && tz > 0;
+        if shared.duty_cycle() > 1700 && (late || early) {
             let n = LATE_N.load(Ordering::Relaxed) as usize;
             LATE_T[n % 64].store(shared.dbg_isr_tick(), Ordering::Relaxed);
-            LATE_TZ[n % 64].store(tz.min(65535) as u16, Ordering::Relaxed);
+            // early events tagged with bit15 (tz at this speed is <400).
+            let tagged = tz.min(0x7FFF) as u16 | if early { 0x8000 } else { 0 };
+            LATE_TZ[n % 64].store(tagged, Ordering::Relaxed);
             LATE_N.store((n as u32).wrapping_add(1), Ordering::Relaxed);
+            // Analog autopsy: freeze the WAXWING ring ON the first late
+            // window (J must be armed) — the frozen ring then holds the
+            // phase arcs + comparator VALUE bit AROUND the late accept:
+            // distorted BEMF (rail/sense physics) vs clean crossing
+            // accepted late (timing/logic) — the jitter-naming picture.
+            let _ = crate::mcu_l431::adc::wax_freeze();
         }
     }
     // Comp-engagement violation trap (storm hunt): immediately after the

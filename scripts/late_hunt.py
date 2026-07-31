@@ -24,7 +24,8 @@ def main():
         if not b.engage_from_stop(55):
             print("engage failed")
             return 1
-        b.cmd(b"T", settle=0.25)
+        if "--no-T" not in sys.argv:
+            b.cmd(b"T", settle=0.25)
         for p in (70, 80, 90, 96, pct):
             if p <= pct:
                 b.hold(p, 2.2)
