@@ -429,6 +429,12 @@ fn main() -> ! {
     let mut bench_last_val: u16 = 0;
     #[cfg(feature = "benchuart")]
     let mut bench_drops: u32 = 0;
+    // 'U': bench-guard defeat for measurement-garbage A/B builds (e.g.
+    // single-channel scan experiments where vbat/current raws are
+    // invalid). Motor protection then = script kill guards + IWDG only.
+    // (mut only used on benchuart builds; read only on guard targets.)
+    #[allow(unused_mut, unused_variables)]
+    let mut bench_guard_off = false;
     // First-anomaly latch: what broke FIRST at speed — a Running->Old
     // drop (fe=1) or a desync fire (fe=2)? fci = ci at that instant.
     // One-shot per boot (reps reset the board); armed only at wall
@@ -632,7 +638,7 @@ fn main() -> ! {
         // the ISR after acting; DShot input could otherwise re-arm). Only a
         // reset re-arms the guard — a kill is evidence, not a hiccup.
         #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
-        {
+        if !bench_guard_off {
             let guard_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
             if let Some(reason) = bench_guard.tick(
                 guard_now,
@@ -1118,6 +1124,18 @@ fn main() -> ! {
                             rm32_stm32::dprintln!(
                                 "[bench] flywheel commutation: {}",
                                 if on { "ON (backup 1.5x ci)" } else { "OFF" }
+                            );
+                        }
+                        UartCmd::GuardToggle => {
+                            bench_guard_off = !bench_guard_off;
+                            rm32_stm32::dprintln!(
+                                "[bench] GUARD {} {}",
+                                if bench_guard_off { "OFF" } else { "ON" },
+                                if bench_guard_off {
+                                    "(!! script kill guards + IWDG only)"
+                                } else {
+                                    ""
+                                }
                             );
                         }
                         UartCmd::LateDump => {
