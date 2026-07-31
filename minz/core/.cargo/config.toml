@@ -1,6 +1,0 @@
-# Override the parent minz/.cargo/config.toml (which defaults to the
-# ARM target): minz-core is HOST-TESTED — that's its entire reason to
-# exist. The ARM firmware consumes it as a path dependency and builds
-# it for thumbv7em through its own crate graph regardless of this.
-[build]
-target = "x86_64-pc-windows-msvc"
