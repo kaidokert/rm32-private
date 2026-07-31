@@ -370,6 +370,10 @@ pub enum UartCmd {
     WaxDump,
     /// 'H' — request a per-ISR duration histogram dump.
     HistDump,
+    /// 'F' — toggle the free-run ADC oversample (the rm32-like scan
+    /// injector) continuously ON/OFF, to reproduce the jitter on the
+    /// controllable clone.
+    FreeRunToggle,
     /// ']' — bump the INSIDE-critical-section injected TIM6 delay UP
     /// (the ISR-delay causal-test rig; masks COMP for its span).
     DelayInFreeUp,
@@ -428,6 +432,7 @@ impl UartDuty {
             b'G' => Some(UartCmd::GeckoDump),
             b'X' => Some(UartCmd::WaxDump),
             b'H' => Some(UartCmd::HistDump),
+            b'F' => Some(UartCmd::FreeRunToggle),
             b']' => Some(UartCmd::DelayInFreeUp),
             b'[' => Some(UartCmd::DelayInFreeDown),
             b'\'' => Some(UartCmd::DelayOutFreeUp),
@@ -902,6 +907,7 @@ mod tests {
         assert_eq!(u.step(b'G'), Some(UartCmd::GeckoDump));
         assert_eq!(u.step(b'X'), Some(UartCmd::WaxDump));
         assert_eq!(u.step(b'H'), Some(UartCmd::HistDump));
+        assert_eq!(u.step(b'F'), Some(UartCmd::FreeRunToggle));
         assert_eq!(u.step(b']'), Some(UartCmd::DelayInFreeUp));
         assert_eq!(u.step(b'['), Some(UartCmd::DelayInFreeDown));
         assert_eq!(u.step(b'\''), Some(UartCmd::DelayOutFreeUp));

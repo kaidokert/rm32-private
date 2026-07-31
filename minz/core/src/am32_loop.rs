@@ -169,6 +169,10 @@ pub struct Bench<'a> {
     /// 'H' — per-ISR duration histogram dump request (main-context dump
     /// of the always-on TIM6/TIM16/COMP bin arrays).
     pub hist_req: &'a AtomicBool,
+    /// 'F' — toggle the free-run ADC oversample (rm32-like scan
+    /// injector) continuously ON/OFF; reproduces the jitter on the
+    /// controllable clone.
+    pub freerun_req: &'a AtomicBool,
     pub zct_stream_on: &'a AtomicBool,
     /// ISR-delay injection rig (bench causal test for the deaf-window
     /// PRIMASK hypothesis): busy-wait cycles the TIM6 tick executes
@@ -313,6 +317,7 @@ pub fn apply_uart_cmd(duty: &Duty, bench: &Bench, cmd: Option<UartCmd>) {
         Some(UartCmd::GeckoDump) => bench.gecko_req.store(true, Ordering::Relaxed),
         Some(UartCmd::WaxDump) => bench.wax_req.store(true, Ordering::Relaxed),
         Some(UartCmd::HistDump) => bench.hist_req.store(true, Ordering::Relaxed),
+        Some(UartCmd::FreeRunToggle) => bench.freerun_req.store(true, Ordering::Relaxed),
         // ISR-delay injection rig: bump the in/out-critical-section
         // busy-wait, clamped [0, DELAY_CAP_CYC].
         Some(UartCmd::DelayInFreeUp) => bump_delay(bench.delay_in_free, DELAY_BUMP_CYC as i32),
@@ -480,6 +485,7 @@ mod tests {
         gecko_req: AtomicBool,
         wax_req: AtomicBool,
         hist_req: AtomicBool,
+        freerun_req: AtomicBool,
         zct_stream_on: AtomicBool,
         delay_in_free: AtomicU32,
         delay_out_free: AtomicU32,
@@ -500,6 +506,7 @@ mod tests {
                 gecko_req: &self.gecko_req,
                 wax_req: &self.wax_req,
                 hist_req: &self.hist_req,
+                freerun_req: &self.freerun_req,
                 zct_stream_on: &self.zct_stream_on,
                 delay_in_free: &self.delay_in_free,
                 delay_out_free: &self.delay_out_free,

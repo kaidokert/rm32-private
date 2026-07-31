@@ -163,6 +163,10 @@ static GECKO_REQ: AtomicBool = AtomicBool::new(false);
 static WAX_REQ: AtomicBool = AtomicBool::new(false);
 /// 'H' — per-ISR duration histogram dump (main-context, one-shot).
 static HIST_REQ: AtomicBool = AtomicBool::new(false);
+/// 'F' — toggle the free-run ADC oversample (rm32-like scan injector)
+/// continuously; reproduces the ADC-injection jitter on the clone.
+static FREERUN_REQ: AtomicBool = AtomicBool::new(false);
+static FREERUN_ON: AtomicBool = AtomicBool::new(false);
 static ZCT_STREAM_ON: AtomicBool = AtomicBool::new(true);
 
 // ===============================================================
@@ -414,6 +418,7 @@ static BENCH: Bench<'static> = Bench {
     gecko_req: &GECKO_REQ,
     wax_req: &WAX_REQ,
     hist_req: &HIST_REQ,
+    freerun_req: &FREERUN_REQ,
     zct_stream_on: &ZCT_STREAM_ON,
     delay_in_free: &DELAY_IN_FREE_CYC,
     delay_out_free: &DELAY_OUT_FREE_CYC,
@@ -528,6 +533,22 @@ fn handle_requests(
     }
     if bench.hist_req.swap(false, Ordering::Relaxed) {
         hist_dump(tx);
+    }
+    // 'F' — toggle the free-run ADC oversample continuously (the
+    // rm32-like scan injector) to reproduce the jitter on the clone.
+    if bench.freerun_req.swap(false, Ordering::Relaxed) {
+        if FREERUN_ON.load(Ordering::Relaxed) {
+            adc_sync::oversample_stop();
+            FREERUN_ON.store(false, Ordering::Relaxed);
+        } else {
+            adc_sync::oversample_start();
+            FREERUN_ON.store(true, Ordering::Relaxed);
+        }
+        let _ = write!(
+            BlockingFmt { tx: &mut *tx },
+            "FR freerun={}\r\n",
+            FREERUN_ON.load(Ordering::Relaxed) as u8
+        );
     }
     // Kill NOTICE is one-shot via kill_reason; `killed` itself stays
     // LATCHED (TIM6 duty/polling gate + the set_input inert gate hold

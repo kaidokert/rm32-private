@@ -173,6 +173,18 @@ def grab(args):
             time.sleep(args.settle / 2)
             paced_write(ser, f"{args.pct}\n".encode())
             time.sleep(args.settle / 2)
+        if args.freerun:
+            # 'F' turns the rm32-like free-run ADC scan injector ON;
+            # hold with keepalives so the disruption develops, then
+            # the always-on WAXWING ring captures it.
+            paced_write(ser, b"F")
+            end = time.monotonic() + args.frdwell
+            last = 0.0
+            while time.monotonic() < end:
+                if args.pct is not None and time.monotonic() - last > 0.8:
+                    paced_write(ser, f"{args.pct}\n".encode())
+                    last = time.monotonic()
+                time.sleep(0.05)
         recs, head, ci, arr = capture(ser)
         print(f"captured {len(recs)} records, head={head}, ci={ci}, arr={arr}")
         d = process(recs, head, arr)
@@ -204,6 +216,11 @@ def main():
                     help="set throttle percent before capturing (--grab)")
     ap.add_argument("--settle", type=float, default=3.0,
                     help="seconds to hold --pct before 'X' (--grab)")
+    ap.add_argument("--freerun", action="store_true",
+                    help="send 'F' to turn on the rm32-like free-run ADC "
+                         "injector, hold --frdwell, then capture")
+    ap.add_argument("--frdwell", type=float, default=3.0,
+                    help="seconds to hold with free-run on before capture")
     ap.add_argument("--kill", action="store_true",
                     help="send '0\\n' + 'w' on every exit path (--grab)")
     args = ap.parse_args()
