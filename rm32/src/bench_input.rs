@@ -43,8 +43,6 @@ pub enum UartCmd {
     /// 'G' — toggle the COMP gate average source live: fresh
     /// (per-commutation e_com/3) vs 20 kHz-latched (AM32-verbatim).
     GateToggle,
-    /// 'N' — toggle deferred comp re-enable (storm-entry blanking test).
-    DeferToggle,
     /// 'J' — arm hardware-timed injected current sampling (one-way;
     /// capture sessions only — the 24 kHz injected preemption degrades
     /// the control scan).
@@ -56,29 +54,6 @@ pub enum UartCmd {
     /// 'H' — ISR-duration histogram dump (then reset). Second H after a
     /// settled hold gives the clean in-hold distribution.
     HistDump,
-    /// 'C' — cycle the carrier-lever ARR override.
-    CarrierLever,
-    /// 'F' — cycle the persistence filter_level override (off/2/1).
-    /// Acceptance-side wall intervention test.
-    FilterLever,
-    /// 'Y' — cycle the temp_advance override (off/8/24). Demag-margin
-    /// wall intervention: 8 = commutate LATER (more margin), 24 =
-    /// earlier (less margin — the wall should move DOWN if the demag
-    /// theory holds).
-    AdvanceLever,
-    /// 'O' — toggle flywheel commutation (backup forced commutation at
-    /// ~1.5x ci so a missed ZC can't freeze the mux rotation — the
-    /// 98-100% wall amplifier intervention).
-    FlywheelToggle,
-    /// 'T' — toggle desync-detector sensitivity (verbatim avg/2 trip vs
-    /// relaxed avg trip). Tests jitter-x-detector as the wall.
-    DesyncThreshToggle,
-    /// 'L' — dump the late-window event log (timestamped >1.5x windows;
-    /// the audible-beat hunt instrument).
-    LateDump,
-    /// 'U' — toggle the bench safety guard (defeat for A/B builds whose
-    /// measurement raws are invalid; script kill guards remain).
-    GuardToggle,
     /// 'B' — dump the onboard flight recorder (0.5s samples of
     /// ci/current/vbat; poll-law-safe chart data, read post-run).
     RecorderDump,
@@ -138,18 +113,10 @@ impl UartDuty {
             b'A' => Some(UartCmd::AdcToggle),
             b'V' => Some(UartCmd::WatchArm),
             b'G' => Some(UartCmd::GateToggle),
-            b'N' => Some(UartCmd::DeferToggle),
             b'J' => Some(UartCmd::InjToggle),
             b'g' => Some(UartCmd::GeckoGrab),
             b'x' => Some(UartCmd::WaxDump),
             b'H' => Some(UartCmd::HistDump),
-            b'C' => Some(UartCmd::CarrierLever),
-            b'F' => Some(UartCmd::FilterLever),
-            b'Y' => Some(UartCmd::AdvanceLever),
-            b'O' => Some(UartCmd::FlywheelToggle),
-            b'T' => Some(UartCmd::DesyncThreshToggle),
-            b'L' => Some(UartCmd::LateDump),
-            b'U' => Some(UartCmd::GuardToggle),
             b'B' => Some(UartCmd::RecorderDump),
             b'K' => Some(UartCmd::DivToggle(0)),
             b'M' => Some(UartCmd::DivToggle(1)),

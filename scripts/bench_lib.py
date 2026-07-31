@@ -131,9 +131,6 @@ class Info:
         self.ds = g("ds")      # demotes from interrupt mode (ci slow)
         self.do_ = g("do")     # desyncs fired while already polling
         self.drops = g("drops")
-        self.fe = g("fe")      # first anomaly: 0 none, 1 drop, 2 desync
-        self.fci = g("fci")    # ci at the first anomaly
-        self.fly = g("fly")    # flywheel backup-commutation fires
         self.killed = g("killed")
         self.volts = g("vbat") * 752 / 100 / 1000  # field -> volts
         self.amps = g("iraw") * 2686 / 100 / 1000  # field -> amps
@@ -144,8 +141,7 @@ class Info:
         return (f"{m} ci={self.ci} duty={self.duty} zc={self.zc} "
                 f"I={self.amps:.1f}A V={self.volts:.2f}V dsy={self.dsy} "
                 f"f={self.f} dc={self.dc} ds={self.ds} do={self.do_} "
-                f"drops={self.drops} fe={self.fe} fci={self.fci} "
-                f"fly={self.fly}")
+                f"drops={self.drops}")
 
 
 def verify_locked(info, pct):

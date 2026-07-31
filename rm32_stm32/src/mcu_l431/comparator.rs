@@ -44,22 +44,10 @@ impl ExtiOps for L431Exti {
         exti.ftsr1.modify(|r, w| unsafe { w.bits(r.bits() | LINE) });
     }
     fn enable_interrupt(&self) {
-        // 'N' experiment: defer the unmask to the next 20 kHz tick (see
-        // edge_probe::ENABLE_DEFER_MODE). Storm-entry blanking test.
-        #[cfg(feature = "zctrace")]
-        {
-            use core::sync::atomic::Ordering;
-            if crate::edge_probe::ENABLE_DEFER_MODE.load(Ordering::Relaxed) != 0 {
-                crate::edge_probe::ENABLE_PENDING.store(1, Ordering::Relaxed);
-                return;
-            }
-        }
         let exti = unsafe { &*EXTI::ptr() };
         exti.imr1.modify(|r, w| unsafe { w.bits(r.bits() | LINE) });
     }
     fn mask_and_clear(&self) {
-        #[cfg(feature = "zctrace")]
-        crate::edge_probe::ENABLE_PENDING.store(0, core::sync::atomic::Ordering::Relaxed);
         let exti = unsafe { &*EXTI::ptr() };
         exti.imr1.modify(|r, w| unsafe { w.bits(r.bits() & !LINE) });
         // L4: PR1 at offset 0x14

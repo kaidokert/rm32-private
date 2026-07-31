@@ -74,26 +74,6 @@ pub struct SharedState {
     // bit1=kick-half off, bit2=holdoff off, bit3=reclimb clamp off).
     // 0 = all divergences active (normal). Bench-only writers.
     bench_divergence_mask: AtomicU8,
-    // Bench carrier-lever: forced TIM1 ARR (0 = off, use variable_pwm).
-    // Lower ARR = higher PWM carrier = less current ripple. Tests the
-    // ripple-displacement wall hypothesis by intervention.
-    bench_arr_override: AtomicU16,
-    // Bench filter-lever: forced persistence filter_level (0=off). Lower
-    // = accept a crossing on fewer confirming reads (less likely to
-    // reject a marginal wall-slew crossing). Acceptance-side wall test.
-    bench_filter_override: AtomicU8,
-    // Bench advance-lever: forced temp_advance (0=off). Lower = LATER
-    // commutation = more demag margin before the next sensing window.
-    // Tests the demag-runaway wall theory by intervention ('Y').
-    bench_advance_override: AtomicU8,
-    // Flywheel commutation ('O'): backup forced commutation at ~1.5x ci
-    // so a missed ZC can't freeze the mux rotation. fly_pending marks
-    // the current COM-timer arm as the backup; fly_n counts backup fires.
-    bench_flywheel: AtomicU8,
-    fly_pending: AtomicBool,
-    bench_fly_n: AtomicU32,
-    // Desync-detector sensitivity lever ('T'): 0 verbatim avg/2, 1 = avg.
-    bench_desync_thresh: AtomicU8,
     changeover_step: AtomicU8, // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
@@ -168,13 +148,6 @@ impl SharedState {
             prop_brake_active: AtomicBool::new(false),
             isr_action: AtomicU8::new(0), // IsrAction::None
             bench_divergence_mask: AtomicU8::new(0),
-            bench_arr_override: AtomicU16::new(0),
-            bench_filter_override: AtomicU8::new(0),
-            bench_advance_override: AtomicU8::new(0),
-            bench_flywheel: AtomicU8::new(0),
-            fly_pending: AtomicBool::new(false),
-            bench_fly_n: AtomicU32::new(0),
-            bench_desync_thresh: AtomicU8::new(0),
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
             dbg_crc_pass: AtomicU32::new(0),
@@ -607,42 +580,6 @@ impl SharedState {
         let new = action as u8;
         let _ = self.isr_action.fetch_max(new, REL);
     }
-    pub fn bench_filter_override(&self) -> u8 {
-        self.bench_filter_override.load(ACQ)
-    }
-    pub fn set_bench_filter_override(&self, v: u8) {
-        self.bench_filter_override.store(v, REL);
-    }
-    pub fn bench_advance_override(&self) -> u8 {
-        self.bench_advance_override.load(ACQ)
-    }
-    pub fn set_bench_advance_override(&self, v: u8) {
-        self.bench_advance_override.store(v, REL);
-    }
-    pub fn bench_flywheel(&self) -> u8 {
-        self.bench_flywheel.load(ACQ)
-    }
-    pub fn set_bench_flywheel(&self, v: u8) {
-        self.bench_flywheel.store(v, REL);
-    }
-    pub fn bench_fly_n(&self) -> u32 {
-        self.bench_fly_n.load(ACQ)
-    }
-    pub fn set_fly_pending(&self, v: bool) {
-        self.fly_pending.store(v, REL);
-    }
-    pub fn bench_desync_thresh(&self) -> u8 {
-        self.bench_desync_thresh.load(ACQ)
-    }
-    pub fn set_bench_desync_thresh(&self, v: u8) {
-        self.bench_desync_thresh.store(v, REL);
-    }
-    pub fn bench_arr_override(&self) -> u16 {
-        self.bench_arr_override.load(ACQ)
-    }
-    pub fn set_bench_arr_override(&self, v: u16) {
-        self.bench_arr_override.store(v, REL);
-    }
     pub fn divergence_mask(&self) -> u8 {
         self.bench_divergence_mask.load(ACQ)
     }
@@ -826,27 +763,6 @@ impl crate::shared_comm::MainControl for SharedState {
     }
     fn auto_advance(&self) -> u8 {
         SharedState::auto_advance(self)
-    }
-    fn bench_advance_override(&self) -> u8 {
-        SharedState::bench_advance_override(self)
-    }
-    fn bench_flywheel(&self) -> u8 {
-        SharedState::bench_flywheel(self)
-    }
-    fn fly_pending(&self) -> bool {
-        self.fly_pending.load(ACQ)
-    }
-    fn set_fly_pending(&self, v: bool) {
-        SharedState::set_fly_pending(self, v);
-    }
-    fn bench_fly_fired(&self) {
-        // load+store (no RMW): M0 targets lack atomic fetch_add; single
-        // writer (commutation ISR) so this is race-free.
-        self.bench_fly_n
-            .store(self.bench_fly_n.load(ACQ).wrapping_add(1), REL);
-    }
-    fn bench_desync_thresh(&self) -> u8 {
-        SharedState::bench_desync_thresh(self)
     }
     fn set_auto_advance(&self, v: u8) {
         SharedState::set_auto_advance(self, v);

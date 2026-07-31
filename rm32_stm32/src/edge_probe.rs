@@ -60,16 +60,6 @@ pub fn midw() -> (u32, u32) {
     )
 }
 
-/// Deferred comp re-enable experiment ('N'): when mode=1, the
-/// commutation ISR's enable_interrupts is deferred to the next 20 kHz
-/// tick (a 0-50 µs statistical blank after the phase switch). Tests
-/// the storm-entry hypothesis: a complementary-switching ringing edge
-/// arriving right at the re-enable point camps and burns ~150 µs of
-/// priority-0 spin; blanking past the ringing should collapse storms.
-pub static ENABLE_DEFER_MODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-/// enable requested by the commutation ISR, pending tick application.
-pub static ENABLE_PENDING: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-
 /// Self-hosted watchpoint: writer PC/LR captured by DebugMonitor.
 static WATCH_PC: AtomicU32 = AtomicU32::new(0);
 static WATCH_LR: AtomicU32 = AtomicU32::new(0);

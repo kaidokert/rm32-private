@@ -153,16 +153,6 @@ pub struct MainState<LED: OutputPin = NoLed> {
     /// `dsy_demote_slow` = demote for any other reason (ci >=
     /// DESYNC_STAY_INTERRUPT_CI, or already in polling mode).
     pub dsy_fast: u32,
-    /// First-fire forensics: the detector's own inputs at the FIRST
-    /// desync fire (avg, last_avg, ci, zc at that instant). The
-    /// verbatim_lw runs proved no per-window anomaly >±50% precedes
-    /// fires, yet |last-avg|>avg/2 fired — these name whether a
-    /// detector INPUT is corrupt (garbage ring slot / wrap) or the
-    /// quantities genuinely moved.
-    pub first_fire_avg: u32,
-    pub first_fire_last: u32,
-    pub first_fire_ci: u32,
-    pub first_fire_zc: u32,
     pub dsy_demote_cur: u32,
     /// Demote fired FROM interrupt mode with sane current (ci >=
     /// DESYNC_STAY_INTERRUPT_CI at the event).
@@ -238,10 +228,6 @@ impl MainState<NoLed> {
             desync_check: false,
             desync_events: 0,
             dsy_fast: 0,
-            first_fire_avg: 0,
-            first_fire_last: 0,
-            first_fire_ci: 0,
-            first_fire_zc: 0,
             dsy_demote_cur: 0,
             dsy_demote_slow: 0,
             dsy_demote_old: 0,
@@ -442,21 +428,9 @@ impl<LED: OutputPin> MainState<LED> {
                 self.timing.last_average_interval as i32,
                 self.timing.average_interval as i32,
             );
-            // Detector-sensitivity lever ('T', bench): verbatim trip is
-            // diff > avg/2; the lever raises it to diff > avg (2x).
-            // Tests whether the 98-100% wall is jitter x detector
-            // sensitivity: accepts keep flowing through the disturbances
-            // (flywheel run: fly=11 vs dsy=136), so if the two-tap can
-            // absorb them without the kick/demote response amplifying,
-            // the wall should move. True-desync backstops that remain
-            // at 2x: orbit trip (30ms), stall rescue (22.5ms), BEMF
-            // timeouts.
-            let trip = if shared.bench_desync_thresh() != 0 {
-                self.timing.average_interval
-            } else {
-                self.timing.average_interval >> 1
-            };
-            if diff > trip && self.timing.average_interval < DESYNC_MAX_INTERVAL {
+            if diff > (self.timing.average_interval >> 1)
+                && self.timing.average_interval < DESYNC_MAX_INTERVAL
+            {
                 // AM32 has `if (zero_crosses > 100) average_interval = 5000`
                 // HERE — but places it AFTER zeroing zero_crosses, so it is
                 // DEAD CODE and never executes (changelog 1.91 intent,
@@ -468,13 +442,6 @@ impl<LED: OutputPin> MainState<LED> {
                 // Parity = match the reference's BEHAVIOR (no reset), not its
                 // intent. (Bench 07-26: clone desyncs at 60-80% are invisible
                 // <50ms blips; rm32's echoed double-kick fed the 1-2.4s churn.)
-                if self.desync_events == 0 {
-                    // First-fire forensics (see field docs).
-                    self.first_fire_avg = self.timing.average_interval;
-                    self.first_fire_last = self.timing.last_average_interval;
-                    self.first_fire_ci = shared.commutation_interval();
-                    self.first_fire_zc = zc;
-                }
                 shared.set_zero_crosses(0);
                 self.desync_events = self.desync_events.wrapping_add(1);
                 let desync_from_interrupt_mode = !shared.old_routine();
@@ -502,20 +469,8 @@ impl<LED: OutputPin> MainState<LED> {
                     shared.duty_cycle(),
                     self.measurements.battery_voltage.0,
                 );
-                // Rotor-speed proxy. Default = ci-at-fire (proven parity
-                // behavior). 'K' (bit0) selects the EXPERIMENTAL pre-gap
-                // reference (last_average_interval) instead — the theory
-                // that gap-inflated ci misclassifies fast rotors as slow.
-                // Tested 07-29 at the 100% storm: NO effect (dsy=611
-                // identical, f=0) — the storm's desyncs fire with the
-                // pre-gap reference ALSO inflated (cascade-era checks),
-                // so the lever stays available but is NOT the fix.
-                let speed_ref = if shared.divergence_mask() & 1 != 0 {
-                    self.timing.last_average_interval
-                } else {
-                    shared.commutation_interval()
-                };
-                let fast_rotor = current_sane && speed_ref < DESYNC_STAY_INTERRUPT_CI;
+                let fast_rotor =
+                    current_sane && shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
                 // Duty kick (AM32: last_duty_cycle = min_startup/2,
                 // unconditional). On the fast-rotor branch the rotor is
                 // still locked, so only HALVE the duty (kept divergence):
@@ -779,13 +734,6 @@ impl<LED: OutputPin> MainState<LED> {
             // variable_pwm=0: publish the EEPROM-derived ARR so ISR uses it
             shared.set_tim1_arr(self.timer1_max_arr);
         }
-        // Bench carrier-lever override (ripple-displacement wall test):
-        // force a fixed ARR (higher carrier) over whatever variable_pwm
-        // chose. duty RATIO is preserved (pwm_compare scales by arr).
-        let arr_ovr = shared.bench_arr_override();
-        if arr_ovr != 0 {
-            shared.set_tim1_arr(arr_ovr);
-        }
 
         // eRPM + temperature duty ceiling
         let mut dmax = duty_ceiling(
@@ -835,8 +783,7 @@ impl<LED: OutputPin> MainState<LED> {
         } else {
             crate::functions::map(self.timing.average_interval as i32, 100, 500, 3, 12) as u8
         };
-        let filt_ovr = shared.bench_filter_override();
-        shared.set_filter_level(if filt_ovr != 0 { filt_ovr } else { filter });
+        shared.set_filter_level(filter);
 
         // Commutation advance (AM32 main.c:900-905): dynamic auto-advance
         // scales with duty; otherwise the STATIC advance_level-derived

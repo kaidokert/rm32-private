@@ -429,24 +429,6 @@ fn main() -> ! {
     let mut bench_last_val: u16 = 0;
     #[cfg(feature = "benchuart")]
     let mut bench_drops: u32 = 0;
-    // 'U': bench-guard defeat for measurement-garbage A/B builds (e.g.
-    // single-channel scan experiments where vbat/current raws are
-    // invalid). Motor protection then = script kill guards + IWDG only.
-    // (mut only used on benchuart builds; read only on guard targets.)
-    #[allow(unused_mut, unused_variables)]
-    let mut bench_guard_off = false;
-    // First-anomaly latch: what broke FIRST at speed — a Running->Old
-    // drop (fe=1) or a desync fire (fe=2)? fci = ci at that instant.
-    // One-shot per boot (reps reset the board); armed only at wall
-    // input (>1200) so spin-up churn can't claim the latch.
-    #[cfg(feature = "benchuart")]
-    let mut bench_first_evt: u8 = 0;
-    #[cfg(feature = "benchuart")]
-    let mut bench_first_ci: u32 = 0;
-    #[cfg(feature = "benchuart")]
-    let mut bench_last_dsy: u32 = 0;
-    #[cfg(feature = "benchuart")]
-    let mut bench_last_stall: u8 = 0;
     // Two-frame confirmation (AM32 protocol-detection pattern): a
     // throttle/stop commit only APPLIES when the same value arrives twice
     // consecutively. Measured need: ore=24 stops=13 in one sweep — RX
@@ -638,7 +620,7 @@ fn main() -> ! {
         // the ISR after acting; DShot input could otherwise re-arm). Only a
         // reset re-arms the guard — a kill is evidence, not a hiccup.
         #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
-        if !bench_guard_off {
+        {
             let guard_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
             if let Some(reason) = bench_guard.tick(
                 guard_now,
@@ -717,38 +699,11 @@ fn main() -> ! {
                 let now_old = shared.old_routine();
                 let was_old = unsafe { WAX_LAST_OLD };
                 unsafe { WAX_LAST_OLD = now_old };
-                // First-anomaly ordering, matching tick() code order for
-                // same-pass events: the STALL block (interval_timer >
-                // 45000 -> ci:=10000, old_routine:=1, CommutateKick)
-                // runs BEFORE the desync detector, so its edge is
-                // checked first (fe=3). Then desync (fe=2), then an
-                // independent drop (fe=1). The earlier version checked
-                // desync first, so a stall+desync in one pass falsely
-                // read "desync-first" — and fci=10000 (the stall path's
-                // DESYNC_RESET_INTERVAL constant) betrayed exactly that.
-                let stall_now = main_state.protection.bemf_timeout_happened();
-                if stall_now > bench_last_stall && bench_first_evt == 0 && bench_last_val > 1200 {
-                    bench_first_evt = 3;
-                    bench_first_ci = shared.commutation_interval();
-                }
-                bench_last_stall = stall_now;
-                let dsy_now = main_state.desync_events;
-                if dsy_now != bench_last_dsy {
-                    bench_last_dsy = dsy_now;
-                    if bench_first_evt == 0 && bench_last_val > 1200 {
-                        bench_first_evt = 2;
-                        bench_first_ci = shared.commutation_interval();
-                    }
-                }
                 if now_old && !was_old {
                     // Count EVERY Running->OldRoutine drop (operator ask:
                     // safe-mode drops must be logged, not sample-lucky).
                     // Edge-detected at main-loop rate; printed as drops=.
                     bench_drops = bench_drops.wrapping_add(1);
-                    if bench_first_evt == 0 && bench_last_val > 1200 {
-                        bench_first_evt = 1;
-                        bench_first_ci = shared.commutation_interval();
-                    }
                     if bench_last_val > 1500
                         && !rm32_stm32::mcu_l431::adc::wax_frozen()
                         && rm32_stm32::mcu_l431::adc::wax_freeze()
@@ -806,7 +761,7 @@ fn main() -> ! {
                             let iraw = (shared.actual_current().max(0) as u32) * 100 / 2686;
                             let vraw = (shared.battery_voltage() as u32) * 100 / 752;
                             rm32_stm32::dprintln!(
-                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={} f={} dc={} ds={} do={} drops={} fe={} fci={} fly={} exc={} wex={} cm={}",
+                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={} f={} dc={} ds={} do={} drops={} exc={} wex={} cm={}",
                                 shared.old_routine() as u8,
                                 shared.running() as u8,
                                 shared.commutation_interval(),
@@ -829,9 +784,6 @@ fn main() -> ! {
                                 main_state.dsy_demote_slow,
                                 main_state.dsy_demote_old,
                                 bench_drops,
-                                bench_first_evt,
-                                bench_first_ci,
-                                shared.bench_fly_n(),
                                 {
                                     #[cfg(feature = "stm32l431")]
                                     {
@@ -866,32 +818,6 @@ fn main() -> ! {
                                     }
                                 }
                             );
-                            if main_state.desync_events > 0 {
-                                rm32_stm32::dprintln!(
-                                    "[ff avg={} last={} ci={} zc={}]",
-                                    main_state.first_fire_avg,
-                                    main_state.first_fire_last,
-                                    main_state.first_fire_ci,
-                                    main_state.first_fire_zc
-                                );
-                            }
-                            // Void-autopsy snapshot (stall-rescue state).
-                            #[cfg(feature = "stm32l431")]
-                            {
-                                use core::sync::atomic::Ordering;
-                                let n = rm32_stm32::isr_handlers::VOID_N.load(Ordering::Relaxed);
-                                let h = rm32_stm32::isr_handlers::HEAL_N.load(Ordering::Relaxed);
-                                if n > 0 || h > 0 {
-                                    rm32_stm32::dprintln!(
-                                        "[void n={} heal={} csr={:#010x} exti={:#04x}]",
-                                        n,
-                                        h,
-                                        rm32_stm32::isr_handlers::VOID_COMP_CSR
-                                            .load(Ordering::Relaxed),
-                                        rm32_stm32::isr_handlers::VOID_EXTI.load(Ordering::Relaxed)
-                                    );
-                                }
-                            }
                             #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
                             {
                                 let (va, vb, vc) = rm32_stm32::edge_probe::npin_violations();
@@ -980,23 +906,15 @@ fn main() -> ! {
                             {
                                 use core::sync::atomic::Ordering;
                                 use rm32_stm32::mcu_l431::adc;
-                                // Cycle 0 (normal scan) -> 1 (paused,
-                                // frozen readings) -> 2 (HW-TIMED: injected
-                                // phase-locked scan, live readings) -> 0.
-                                let cur = adc::ADC_MODE.load(Ordering::Relaxed);
-                                let next = (cur + 1) % 3;
-                                if next == 2 {
-                                    adc::arm_injected_scan();
-                                } else if cur == 2 {
-                                    adc::disarm_injected_scan();
-                                }
+                                // Toggle 0 (normal scan) <-> 1 (paused,
+                                // frozen readings).
+                                let next = (adc::ADC_MODE.load(Ordering::Relaxed) + 1) % 2;
                                 adc::ADC_MODE.store(next, Ordering::Relaxed);
                                 rm32_stm32::dprintln!(
                                     "[bench] adc mode={} ({})",
                                     next,
                                     match next {
                                         1 => "PAUSED - readings frozen",
-                                        2 => "HW-TIMED injected, live",
                                         _ => "normal sw scan",
                                     }
                                 );
@@ -1040,21 +958,6 @@ fn main() -> ! {
                             }
                             #[cfg(not(feature = "stm32l431"))]
                             rm32_stm32::dprintln!("[bench] gate: L431 only");
-                        }
-                        UartCmd::DeferToggle => {
-                            #[cfg(all(feature = "stm32l431", feature = "zctrace"))]
-                            {
-                                use core::sync::atomic::Ordering;
-                                use rm32_stm32::edge_probe::ENABLE_DEFER_MODE;
-                                let on = ENABLE_DEFER_MODE.load(Ordering::Relaxed) == 0;
-                                ENABLE_DEFER_MODE.store(on as u8, Ordering::Relaxed);
-                                rm32_stm32::dprintln!(
-                                    "[bench] comp re-enable: {} (live)",
-                                    if on { "DEFERRED-20k" } else { "IMMEDIATE" }
-                                );
-                            }
-                            #[cfg(not(all(feature = "stm32l431", feature = "zctrace")))]
-                            rm32_stm32::dprintln!("[bench] defer: L431+zctrace only");
                         }
                         UartCmd::InjToggle => {
                             #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
@@ -1115,59 +1018,6 @@ fn main() -> ! {
                                 );
                             }
                         }
-                        UartCmd::CarrierLever => {
-                            // Cycle: off -> 1666(48kHz) -> 1111(72kHz) ->
-                            // 833(96kHz) -> off. 80MHz/(ARR+1)=carrier.
-                            let cur = shared.bench_arr_override();
-                            let next = match cur {
-                                0 => 1666,
-                                1666 => 1111,
-                                1111 => 833,
-                                _ => 0,
-                            };
-                            shared.set_bench_arr_override(next);
-                            let khz = if next == 0 {
-                                0
-                            } else {
-                                80_000 / (next as u32 + 1)
-                            };
-                            rm32_stm32::dprintln!(
-                                "[bench] carrier ARR override={} ({}kHz, 0=variable_pwm)",
-                                next,
-                                khz
-                            );
-                        }
-                        UartCmd::FilterLever => {
-                            let cur = shared.bench_filter_override();
-                            let next = match cur {
-                                0 => 2,
-                                2 => 1,
-                                _ => 0,
-                            };
-                            shared.set_bench_filter_override(next);
-                            rm32_stm32::dprintln!("[bench] filter_level override={} (0=map)", next);
-                        }
-                        UartCmd::AdvanceLever => {
-                            let cur = shared.bench_advance_override();
-                            let next = match cur {
-                                0 => 8,  // LATER commutation (demag margin up)
-                                8 => 24, // earlier (margin down)
-                                _ => 0,  // back to config temp_advance (16)
-                            };
-                            shared.set_bench_advance_override(next);
-                            rm32_stm32::dprintln!(
-                                "[bench] temp_advance override={} (0=config 16)",
-                                next
-                            );
-                        }
-                        UartCmd::FlywheelToggle => {
-                            let on = shared.bench_flywheel() == 0;
-                            shared.set_bench_flywheel(on as u8);
-                            rm32_stm32::dprintln!(
-                                "[bench] flywheel commutation: {}",
-                                if on { "ON (backup 1.5x ci)" } else { "OFF" }
-                            );
-                        }
                         UartCmd::RecorderDump => {
                             #[cfg(feature = "stm32l431")]
                             {
@@ -1194,52 +1044,6 @@ fn main() -> ! {
                             }
                             #[cfg(not(feature = "stm32l431"))]
                             rm32_stm32::dprintln!("[bench] recorder: L431 only");
-                        }
-                        UartCmd::GuardToggle => {
-                            bench_guard_off = !bench_guard_off;
-                            rm32_stm32::dprintln!(
-                                "[bench] GUARD {} {}",
-                                if bench_guard_off { "OFF" } else { "ON" },
-                                if bench_guard_off {
-                                    "(!! script kill guards + IWDG only)"
-                                } else {
-                                    ""
-                                }
-                            );
-                        }
-                        UartCmd::LateDump => {
-                            #[cfg(feature = "stm32l431")]
-                            {
-                                use core::sync::atomic::Ordering;
-                                use rm32_stm32::isr_handlers as ih;
-                                let n = ih::LATE_N.load(Ordering::Relaxed);
-                                rm32_stm32::dprintln!("LW n={} (tick_ms tz):", n);
-                                let count = (n as usize).min(64);
-                                let start = if n as usize > 64 { n as usize % 64 } else { 0 };
-                                for k in 0..count {
-                                    let idx = (start + k) % 64;
-                                    let t = ih::LATE_T[idx].load(Ordering::Relaxed);
-                                    let z = ih::LATE_TZ[idx].load(Ordering::Relaxed);
-                                    rm32_stm32::dprintln!("LW {} {}", t / 20, z);
-                                    #[cfg(feature = "debuguart")]
-                                    rm32_stm32::debug_uart::flush();
-                                }
-                                rm32_stm32::dprintln!("LW END");
-                            }
-                            #[cfg(not(feature = "stm32l431"))]
-                            rm32_stm32::dprintln!("[bench] late log: L431 only");
-                        }
-                        UartCmd::DesyncThreshToggle => {
-                            let on = shared.bench_desync_thresh() == 0;
-                            shared.set_bench_desync_thresh(on as u8);
-                            rm32_stm32::dprintln!(
-                                "[bench] desync trip: {}",
-                                if on {
-                                    "RELAXED (diff > avg)"
-                                } else {
-                                    "verbatim (diff > avg/2)"
-                                }
-                            );
                         }
                         UartCmd::HistDump => {
                             #[cfg(all(
