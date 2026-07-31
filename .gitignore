@@ -2,13 +2,4 @@ target/
 Cargo.lock
 .DS_Store
 ref/
-minz/.antigravitycli/
-minz/.claude/
 .claude/
-minz/*.JPG
-minz/*.png
-minz/*.pdf
-rinz/logs/
-rinz/notes/
-rinz/ref_docs/
-minz/captures/
