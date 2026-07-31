@@ -85,8 +85,15 @@ pub const DESYNC_MAX_INTERVAL: u32 = 2000;
 /// Response = full AM32 desync path (demote + kick): the demote IS the
 /// phase reset. A static ampere threshold cannot work — normal 100%
 /// draw (4.6A) exceeds any level the 70% orbit (4.7A avg) stays under.
-pub const ORBIT_TRIP_SLOPE: i32 = 2;
-pub const ORBIT_TRIP_OFFSET_MA: i32 = 1000;
+/// RECAL 07-30 (post wall-fix): the original 2/1000 line was set from
+/// PSU-era full power (4.6A @ 8.16V). On the 3S pack the measured
+/// LEGIT 100% draw is 9.0A at ~10V loaded vbat, which the old line
+/// (6.1A scaled) false-tripped — the relaxed-T 100% ride's residual
+/// dsy was entirely these. New line at duty 2000, 10V loaded:
+/// (3*2000 + 2500) * 10/8.16 = 10.4A > 9A legit; still below the
+/// 10-13A wrong-phase rides at duty ~1400 (9.0A scaled there).
+pub const ORBIT_TRIP_SLOPE: i32 = 3;
+pub const ORBIT_TRIP_OFFSET_MA: i32 = 2500;
 /// Consecutive 1 kHz ticks over the line before tripping (ms).
 pub const ORBIT_TRIP_MS: u16 = 30;
 /// Rail voltage (mV) the ORBIT_TRIP line was calibrated on; the line
