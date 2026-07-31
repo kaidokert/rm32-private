@@ -1,0 +1,22 @@
+# EDT disarm on zero throttle
+# When EDT_ARM_ENABLE=1 and a zero-throttle DShot frame arrives,
+# EDT_ARMED should clear, blocking subsequent throttle values.
+# Golden values captured from C harness.
+#
+# MISSING IN RUST: zero throttle doesn't clear edt_armed.
+# Also: EDT_ARM_ENABLE not derived from EEPROM input_type.
+# Also: firmware passes extended_telemetry() as edt_arm_enable (wrong source).
+
+@config
+armed=1
+inputSet=1
+dshot=1
+EDT_ARMED=1
+EDT_ARM_ENABLE=1
+
+@sequence
+# Zero throttle with EDT_ARM_ENABLE → should disarm EDT
+tick 1  | dshot_frame=0    | newinput=0
+
+# Subsequent throttle should be blocked (EDT_ARMED now 0)
+tick 1  | dshot_frame=1500 | newinput=0

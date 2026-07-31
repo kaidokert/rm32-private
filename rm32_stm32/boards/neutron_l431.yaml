@@ -1,10 +1,15 @@
 name: "L431 Neutron"
 mcu: stm32l431
-dead_time: 60
-voltage_divider: 210
-millivolt_per_amp: 16
-current_offset: 498
+dead_time: 45
+voltage_divider: 933
+millivolt_per_amp: 3
+current_offset: 0
 current_adc_channel: 8
 voltage_adc_channel: 11
 stall_protect_interval: 6500
 min_bemf_counts: 2
+bemf_pins:
+  phase_a: PB7
+  phase_b: PA5
+  phase_c: PA4
+  common: PB4
