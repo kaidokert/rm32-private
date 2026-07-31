@@ -73,6 +73,9 @@ pub enum UartCmd {
     /// 'T' — toggle desync-detector sensitivity (verbatim avg/2 trip vs
     /// relaxed avg trip). Tests jitter-x-detector as the wall.
     DesyncThreshToggle,
+    /// 'L' — dump the late-window event log (timestamped >1.5x windows;
+    /// the audible-beat hunt instrument).
+    LateDump,
     /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
     /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
     /// clamp, 'R' SWIER race fix.
@@ -139,6 +142,7 @@ impl UartDuty {
             b'Y' => Some(UartCmd::AdvanceLever),
             b'O' => Some(UartCmd::FlywheelToggle),
             b'T' => Some(UartCmd::DesyncThreshToggle),
+            b'L' => Some(UartCmd::LateDump),
             b'K' => Some(UartCmd::DivToggle(0)),
             b'M' => Some(UartCmd::DivToggle(1)),
             b'P' => Some(UartCmd::DivToggle(2)),

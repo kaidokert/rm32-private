@@ -87,6 +87,20 @@ pub static VOID_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32
 #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
 pub static HEAL_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
+/// LATE-WINDOW EVENT LOG (the audible-beat hunt): drop-proof onboard
+/// ring of (20kHz-tick timestamp, thiszc) for windows arriving >1.5x
+/// the smoothed interval while fast at high duty. The full zct stream
+/// loses ~80% of records to ring overflow at 19k comms/s — this ring
+/// records ONLY the events, so beat periodicity survives intact.
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static LATE_T: [core::sync::atomic::AtomicU32; 64] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 64];
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static LATE_TZ: [core::sync::atomic::AtomicU16; 64] =
+    [const { core::sync::atomic::AtomicU16::new(0) }; 64];
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static LATE_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// 20kHz control loop tick (TIM6 ISR body).
 pub fn handle_tim6() {
     // Minimal-overhead timing bracket: DWT.CYCCNT delta written to a plain
@@ -299,6 +313,20 @@ pub fn handle_tim14() {
         state.config.bi_direction != 0,
         state.config.stall_protection != 0 || state.config.rc_car_reverse != 0,
     );
+    // Late-window event log (audible-beat hunt): record (tick-time, tz)
+    // for windows >1.5x the smoothed interval while fast at high duty.
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    {
+        use core::sync::atomic::Ordering;
+        let tz = state.bemf.this_zc_time() as u32;
+        let ci = shared.commutation_interval();
+        if shared.duty_cycle() > 1700 && ci < 400 && tz > ci + (ci >> 1) {
+            let n = LATE_N.load(Ordering::Relaxed) as usize;
+            LATE_T[n % 64].store(shared.dbg_isr_tick(), Ordering::Relaxed);
+            LATE_TZ[n % 64].store(tz.min(65535) as u16, Ordering::Relaxed);
+            LATE_N.store((n as u32).wrapping_add(1), Ordering::Relaxed);
+        }
+    }
     // Comp-engagement violation trap (storm hunt): immediately after the
     // commutation's com_step, the driven phase's N pin MUST be AF when
     // complementary drive is active. A violation here = the com_step's

@@ -1120,6 +1120,28 @@ fn main() -> ! {
                                 if on { "ON (backup 1.5x ci)" } else { "OFF" }
                             );
                         }
+                        UartCmd::LateDump => {
+                            #[cfg(feature = "stm32l431")]
+                            {
+                                use core::sync::atomic::Ordering;
+                                use rm32_stm32::isr_handlers as ih;
+                                let n = ih::LATE_N.load(Ordering::Relaxed);
+                                rm32_stm32::dprintln!("LW n={} (tick_ms tz):", n);
+                                let count = (n as usize).min(64);
+                                let start = if n as usize > 64 { n as usize % 64 } else { 0 };
+                                for k in 0..count {
+                                    let idx = (start + k) % 64;
+                                    let t = ih::LATE_T[idx].load(Ordering::Relaxed);
+                                    let z = ih::LATE_TZ[idx].load(Ordering::Relaxed);
+                                    rm32_stm32::dprintln!("LW {} {}", t / 20, z);
+                                    #[cfg(feature = "debuguart")]
+                                    rm32_stm32::debug_uart::flush();
+                                }
+                                rm32_stm32::dprintln!("LW END");
+                            }
+                            #[cfg(not(feature = "stm32l431"))]
+                            rm32_stm32::dprintln!("[bench] late log: L431 only");
+                        }
                         UartCmd::DesyncThreshToggle => {
                             let on = shared.bench_desync_thresh() == 0;
                             shared.set_bench_desync_thresh(on as u8);
