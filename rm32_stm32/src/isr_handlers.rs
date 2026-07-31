@@ -101,6 +101,18 @@ pub static LATE_TZ: [core::sync::atomic::AtomicU16; 64] =
 #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
 pub static LATE_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
+/// Parity re-qual counters (clone metric): per locked commutation,
+/// excursion = |thiszc*1000/avg - 1000| permille vs the rolling
+/// average (e_com/3). EXC_N counts >250 permille (the clone's ">25%"
+/// bucket), EXC_MAX holds the worst permille, EXC_COMMS counts locked
+/// commutations measured. Cumulative; host computes segment deltas.
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static EXC_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static EXC_MAX: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static EXC_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// 20kHz control loop tick (TIM6 ISR body).
 pub fn handle_tim6() {
     // Minimal-overhead timing bracket: DWT.CYCCNT delta written to a plain
@@ -320,6 +332,29 @@ pub fn handle_tim14() {
         use core::sync::atomic::Ordering;
         let tz = state.bemf.this_zc_time() as u32;
         let ci = shared.commutation_interval();
+        // Parity re-qual excursion counters (clone metric) — measured on
+        // every LOCKED commutation, whole envelope.
+        if shared.running() && !shared.old_routine() && tz > 0 {
+            let avg = (shared.e_com_time() / 3).max(1) as u32;
+            let permille = if tz >= avg {
+                (tz - avg) * 1000 / avg
+            } else {
+                (avg - tz) * 1000 / avg
+            };
+            EXC_COMMS.store(
+                EXC_COMMS.load(Ordering::Relaxed).wrapping_add(1),
+                Ordering::Relaxed,
+            );
+            if permille > 250 {
+                EXC_N.store(
+                    EXC_N.load(Ordering::Relaxed).wrapping_add(1),
+                    Ordering::Relaxed,
+                );
+            }
+            if permille > EXC_MAX.load(Ordering::Relaxed) {
+                EXC_MAX.store(permille, Ordering::Relaxed);
+            }
+        }
         // ABSOLUTE thresholds (bench, ~3000 Hz e regime: true window
         // ~107 ticks). The earlier relative gate (tz > 1.5x ci) was
         // SELF-DEFEATING: a train of 1.4-1.9x windows inflates the

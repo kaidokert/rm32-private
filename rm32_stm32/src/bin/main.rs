@@ -806,7 +806,7 @@ fn main() -> ! {
                             let iraw = (shared.actual_current().max(0) as u32) * 100 / 2686;
                             let vraw = (shared.battery_voltage() as u32) * 100 / 752;
                             rm32_stm32::dprintln!(
-                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={} f={} dc={} ds={} do={} drops={} fe={} fci={} fly={}",
+                                "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={} f={} dc={} ds={} do={} drops={} fe={} fci={} fly={} exc={} wex={} cm={}",
                                 shared.old_routine() as u8,
                                 shared.running() as u8,
                                 shared.commutation_interval(),
@@ -831,7 +831,40 @@ fn main() -> ! {
                                 bench_drops,
                                 bench_first_evt,
                                 bench_first_ci,
-                                shared.bench_fly_n()
+                                shared.bench_fly_n(),
+                                {
+                                    #[cfg(feature = "stm32l431")]
+                                    {
+                                        rm32_stm32::isr_handlers::EXC_N
+                                            .load(core::sync::atomic::Ordering::Relaxed)
+                                    }
+                                    #[cfg(not(feature = "stm32l431"))]
+                                    {
+                                        0u32
+                                    }
+                                },
+                                {
+                                    #[cfg(feature = "stm32l431")]
+                                    {
+                                        rm32_stm32::isr_handlers::EXC_MAX
+                                            .load(core::sync::atomic::Ordering::Relaxed)
+                                    }
+                                    #[cfg(not(feature = "stm32l431"))]
+                                    {
+                                        0u32
+                                    }
+                                },
+                                {
+                                    #[cfg(feature = "stm32l431")]
+                                    {
+                                        rm32_stm32::isr_handlers::EXC_COMMS
+                                            .load(core::sync::atomic::Ordering::Relaxed)
+                                    }
+                                    #[cfg(not(feature = "stm32l431"))]
+                                    {
+                                        0u32
+                                    }
+                                }
                             );
                             if main_state.desync_events > 0 {
                                 rm32_stm32::dprintln!(
