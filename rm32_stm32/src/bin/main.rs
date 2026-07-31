@@ -252,7 +252,9 @@ fn main() -> ! {
     // the flash page, so the stored config and the running config are the
     // same deterministic thing (and future EEPROM-respecting builds read
     // sane values). Complex features stay off (zeroed): stuck/stall/bidir/
-    // sine/brake.
+    // sine/brake. Bench-only: a production build must NEVER overwrite the
+    // user's stored configuration.
+    #[cfg(feature = "benchuart")]
     {
         let mut desired = EepromConfig::default();
         desired.apply_version_defaults();
@@ -276,6 +278,7 @@ fn main() -> ! {
         }
         main_state.config = desired;
     }
+    #[cfg(feature = "benchuart")]
     {
         let cfg_bytes = main_state.config.as_bytes();
         for (i, chunk) in cfg_bytes.chunks(16).enumerate() {
@@ -1221,16 +1224,23 @@ fn main() -> ! {
         // before the chip restarts. SCB::sys_reset sets SFTRSTF → bootloader
         // skips first-chance signal-pin check → DFU loop activates → BF
         // passthrough / AM32 Configurator BLHeli protocol can connect.
-        // BENCH DEBUG: self-reset on signal_timeout is neutered here so the
-        // chip stays alive during bidir-DSHOT detection investigation.
-        // Print rate-limited (every 200k iters) so the UART doesn't choke the
-        // main loop. Restore `sys.reset();` to re-enable Configurator passthrough.
+        // BENCH: suppressed under benchuart — the bench has no DShot source,
+        // so the timeout would bounce the chip every idle 2 s. Print
+        // rate-limited (every 200k iters) so the UART doesn't choke main.
         if main_state.needs_reset {
-            main_state.needs_reset = false;
-            if log_counter.is_multiple_of(200_000) {
-                rm32_stm32::dprintln!("[rm32] signal_timeout sticky (RESET SUPPRESSED)");
+            #[cfg(feature = "benchuart")]
+            {
+                main_state.needs_reset = false;
+                if log_counter.is_multiple_of(200_000) {
+                    rm32_stm32::dprintln!("[rm32] signal_timeout sticky (RESET SUPPRESSED)");
+                }
             }
-            // sys.reset();
+            #[cfg(not(feature = "benchuart"))]
+            {
+                #[cfg(feature = "debuguart")]
+                rm32_stm32::debug_uart::flush();
+                sys.reset();
+            }
         }
 
         sys.reload_watchdog();
