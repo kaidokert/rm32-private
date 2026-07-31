@@ -94,11 +94,19 @@ def soak(port, pct, secs):
 
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else "COM41"
-    print("== LADDER 15->100 (relaxed-T, orbit-recal) ==")
-    lad_ok, _ = ladder(port)
-    print(f"LADDER: {'PASS' if lad_ok else 'FAIL'}\n")
-    time.sleep(6)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    port = args[0] if args else "COM41"
+    if "--skip-ladder" in sys.argv:
+        # Wire-fault workaround: the slow ladder dwells in the vibration
+        # band that shakes the marginal connector open; soaks sweep
+        # through it fast. Ladder must still pass before final closure.
+        lad_ok = False
+        print("== LADDER SKIPPED (--skip-ladder) ==\n")
+    else:
+        print("== LADDER 15->100 (relaxed-T, orbit-recal) ==")
+        lad_ok, _ = ladder(port)
+        print(f"LADDER: {'PASS' if lad_ok else 'FAIL'}\n")
+        time.sleep(6)
     soaks = []
     for pct in (90, 100, 90, 100):
         print(f"== SOAK {pct}% x60s ==")

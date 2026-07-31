@@ -220,7 +220,16 @@ class Bench:
     def cmd(self, byte, settle=0.2):
         self.p.write(byte)
         self.p.flush()
-        time.sleep(settle)
+        # Keep the throttle stream alive through the settle: the ~0.5s
+        # refresh gap during info polls was audible as a periodic torque
+        # dip ("clip/beat every couple seconds", operator-confirmed gone
+        # on a poll-free hold). Same value, zero control effect.
+        t0 = time.time()
+        while time.time() - t0 < settle:
+            if self.cur_pct > 0:
+                self.p.write(f"{self.cur_pct}\n".encode())
+                self.p.flush()
+            time.sleep(0.08)
         self.buf.extend(self.p.read(16384))
         self._scan()
 
