@@ -34,6 +34,21 @@ Legend: [ ] open · [x] done · [~] deferred/ticketed
   `main_state.config`, but the ISR command processor mutates its own
   copy; Configurator-written settings may not persist. Needs
   changed-field publication via SharedState. Ticketed.
+- [ ] **A5. bench_guard enforced in production M4 builds with bench
+  thresholds** (found in the two-agent re-review) — battery profile
+  kills latched at 14.0 V OV / 15 A OC; a 4S pack trips OVOLT within
+  ~60 ms and the ESC stays dead until reset. Derive thresholds from
+  board/config (cell count) or gate enforcement under `benchuart`.
+- [ ] **A6. Feature build-matrix breaks** — `debuguart` fails to
+  compile on G071/F051/G431 (L431 PAC syntax, no compile_error guard);
+  `zctrace` fails on non-L431 (`comp_at_pre_zc_level` cfg mismatch);
+  `Cargo.toml` declares `[[example]] bringup`/`bringup_pac` for files
+  that don't exist (`cargo check --examples` / `cargo test` fail).
+- [ ] **A7. Ungated prints in production ISRs** — `[exti] frame#…` +
+  `DETECTED` rprintlns in `handle_exti_frame` (prio-2), `[isr] state
+  moved` in `IsrCell::get` (prio-0 first entry), comp_init COMP2_CSR
+  boot rprintlns, and the 300-byte `[loop]` heartbeat block ungated in
+  production main. The repo's own rule: never print in ISRs.
 
 ## Tier B — bench/prod split inconsistencies (decide which side wins)
 
@@ -74,6 +89,20 @@ Legend: [ ] open · [x] done · [~] deferred/ticketed
   'G'` (comp_gate FRESH/STALE lever; verbatim STALE won). Keep the
   `comp_gate` module itself — that's control, not instrumentation. All
   zctrace-gated, cheap either way.
+
+## Cross-MCU asymmetries (follow-up tickets, cite in the parity PRs)
+
+- G431 boots with ALL NVIC priorities at level 0 (stub
+  `adjust_irq_priorities`) — the exact configuration whose fix was the
+  L431 chop breakthrough; G071/F051 likewise.
+- DMA CGIF-clear hygiene fixed only on L431 CH5; F051/G071/G431 still
+  clear only inside the TC branch (TE-only event storms).
+- COMP ISR gate/camp/racefix architecture is L431-only; other families
+  run bare pre-ack-and-run. `comp_gate::latch` is a dead store there.
+- memory.x is L431-hardcoded into all four builds (B7).
+
+See docs/public_pr_plan.md for the full 18-PR landing sequence and the
+merged trim list.
 
 ## Confirmed keepers (operator directive: useful facilities stay)
 
