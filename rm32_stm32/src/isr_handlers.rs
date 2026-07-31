@@ -113,6 +113,23 @@ pub static EXC_MAX: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU3
 #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
 pub static EXC_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
+/// Onboard flight recorder (poll-law-safe charts): every 0.5s (10k
+/// ticks) the tick ISR samples (ci, current mA, vbat mV) into a RAM
+/// ring — zero host involvement during the run; 'B' dumps post-run.
+/// 800 slots = the last ~6.7 minutes.
+pub const SR_N: usize = 800;
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static SR_CI: [core::sync::atomic::AtomicU16; SR_N] =
+    [const { core::sync::atomic::AtomicU16::new(0) }; SR_N];
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static SR_MA: [core::sync::atomic::AtomicU16; SR_N] =
+    [const { core::sync::atomic::AtomicU16::new(0) }; SR_N];
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static SR_MV: [core::sync::atomic::AtomicU16; SR_N] =
+    [const { core::sync::atomic::AtomicU16::new(0) }; SR_N];
+#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+pub static SR_HEAD: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// 20kHz control loop tick (TIM6 ISR body).
 pub fn handle_tim6() {
     // Minimal-overhead timing bracket: DWT.CYCCNT delta written to a plain
@@ -156,6 +173,26 @@ pub fn handle_tim6() {
         VOID_COMP_CSR.store(comp2_csr, Ordering::Relaxed);
         VOID_EXTI.store(packed, Ordering::Relaxed);
         VOID_N.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // Flight recorder: one sample per 0.5s from the tick ISR (constant
+    // cost: a modulo check on the tick counter + three stores).
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    {
+        use core::sync::atomic::Ordering;
+        if shared.dbg_isr_tick() % 10_000 == 0 {
+            let h = SR_HEAD.load(Ordering::Relaxed) as usize % SR_N;
+            SR_CI[h].store(
+                shared.commutation_interval().min(65535) as u16,
+                Ordering::Relaxed,
+            );
+            SR_MA[h].store(shared.actual_current().max(0) as u16, Ordering::Relaxed);
+            SR_MV[h].store(shared.battery_voltage(), Ordering::Relaxed);
+            SR_HEAD.store(
+                SR_HEAD.load(Ordering::Relaxed).wrapping_add(1),
+                Ordering::Relaxed,
+            );
+        }
     }
 
     // COMP-DEADLOCK HEALER (the 22.5 ms void fix candidate + counter).

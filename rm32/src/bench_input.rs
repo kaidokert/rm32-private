@@ -79,6 +79,9 @@ pub enum UartCmd {
     /// 'U' — toggle the bench safety guard (defeat for A/B builds whose
     /// measurement raws are invalid; script kill guards remain).
     GuardToggle,
+    /// 'B' — dump the onboard flight recorder (0.5s samples of
+    /// ci/current/vbat; poll-law-safe chart data, read post-run).
+    RecorderDump,
     /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
     /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
     /// clamp, 'R' SWIER race fix.
@@ -147,6 +150,7 @@ impl UartDuty {
             b'T' => Some(UartCmd::DesyncThreshToggle),
             b'L' => Some(UartCmd::LateDump),
             b'U' => Some(UartCmd::GuardToggle),
+            b'B' => Some(UartCmd::RecorderDump),
             b'K' => Some(UartCmd::DivToggle(0)),
             b'M' => Some(UartCmd::DivToggle(1)),
             b'P' => Some(UartCmd::DivToggle(2)),

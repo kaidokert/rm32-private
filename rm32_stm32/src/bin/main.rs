@@ -1168,6 +1168,33 @@ fn main() -> ! {
                                 if on { "ON (backup 1.5x ci)" } else { "OFF" }
                             );
                         }
+                        UartCmd::RecorderDump => {
+                            #[cfg(feature = "stm32l431")]
+                            {
+                                use core::sync::atomic::Ordering;
+                                use rm32_stm32::isr_handlers as ih;
+                                let head = ih::SR_HEAD.load(Ordering::Relaxed) as usize;
+                                let n = head.min(ih::SR_N);
+                                let start = if head > ih::SR_N { head % ih::SR_N } else { 0 };
+                                rm32_stm32::dprintln!("SR n={} dt_ms=500", n);
+                                for k in 0..n {
+                                    let i = (start + k) % ih::SR_N;
+                                    rm32_stm32::dprintln!(
+                                        "SR {} {} {}",
+                                        ih::SR_CI[i].load(Ordering::Relaxed),
+                                        ih::SR_MA[i].load(Ordering::Relaxed),
+                                        ih::SR_MV[i].load(Ordering::Relaxed)
+                                    );
+                                    #[cfg(feature = "debuguart")]
+                                    if k % 8 == 7 {
+                                        rm32_stm32::debug_uart::flush();
+                                    }
+                                }
+                                rm32_stm32::dprintln!("SR END");
+                            }
+                            #[cfg(not(feature = "stm32l431"))]
+                            rm32_stm32::dprintln!("[bench] recorder: L431 only");
+                        }
                         UartCmd::GuardToggle => {
                             bench_guard_off = !bench_guard_off;
                             rm32_stm32::dprintln!(
