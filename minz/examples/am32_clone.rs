@@ -167,6 +167,9 @@ static HIST_REQ: AtomicBool = AtomicBool::new(false);
 /// continuously; reproduces the ADC-injection jitter on the clone.
 static FREERUN_REQ: AtomicBool = AtomicBool::new(false);
 static FREERUN_ON: AtomicBool = AtomicBool::new(false);
+/// Drop-proof late-window counter (jitter metric for the rm32 head-to-
+/// head): commutations whose ZC-to-ZC interval ran >=1.5x the average.
+static LATE_WINDOWS: AtomicU32 = AtomicU32::new(0);
 static ZCT_STREAM_ON: AtomicBool = AtomicBool::new(true);
 
 // ===============================================================
@@ -595,7 +598,7 @@ fn print_info(
     // directly): COMP entries vs commutations since boot.
     let _ = write!(
         tx,
-        "ce={} comm={} dsy={} bt={} vfl={} din={} dout={}\r\n",
+        "ce={} comm={} dsy={} bt={} vfl={} din={} dout={} late={}\r\n",
         COMP_ENTRIES.load(Ordering::Relaxed),
         zct.comm_n.load(Ordering::Relaxed),
         drive.desync_happened.load(Ordering::Relaxed),
@@ -603,6 +606,7 @@ fn print_info(
         VBAT_FLOOR_RAW.load(Ordering::Relaxed),
         DELAY_IN_FREE_CYC.load(Ordering::Relaxed),
         DELAY_OUT_FREE_CYC.load(Ordering::Relaxed),
+        LATE_WINDOWS.load(Ordering::Relaxed),
     );
 }
 
@@ -973,6 +977,16 @@ fn TIM1_UP_TIM16() {
     let mut motor = motor();
     tim1_up_tim16_isr(&SCHED, &DRIVE, &ZCT, &DUTY, &mut motor, &observer());
     hist_record(HIST_TIM16, s);
+    // Drop-proof late-window counter (jitter head-to-head vs rm32): a
+    // commutation whose measured ZC-to-ZC interval ran >=1.5x the
+    // running average = a "late window". Counter, not a stream — reads
+    // clean at 100% where the trace batches. THIS_ZC/AVERAGE_INTERVAL
+    // are 0.5 µs ticks; guard avg>20 so it only counts while locked.
+    let tz = THIS_ZC.load(Ordering::Relaxed) as u32;
+    let avg = AVERAGE_INTERVAL.load(Ordering::Relaxed);
+    if avg > 20 && tz > avg + (avg >> 1) {
+        LATE_WINDOWS.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// TIM6 19.6 kHz (priority 3) — tenKhzRoutine.
