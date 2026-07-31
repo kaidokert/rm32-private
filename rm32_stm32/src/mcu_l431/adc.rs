@@ -259,6 +259,13 @@ impl AdcPeripheral for L431AdcOps {
 
     fn configure_sequence(&self) {
         let adc = unsafe { &*ADC1::ptr() };
+        // NOTE (jitter-floor hunt, 07-30): a bench experiment replaced
+        // ch17 with a ch8 repeat (internal-channel mux-switch suspect,
+        // present in both harmful rm32 ADC configs, absent from both
+        // clean clone configs). Result: verbatim-detector storms at
+        // 3.2s vs 1.2-2.5s baseline — at most another partial, NOT the
+        // injector. Reverted; the jitter-floor source remains unnamed
+        // (relaxed-T carries the envelope meanwhile).
         adc.sqr1
             .write(|w| unsafe { w.l().bits(2).sq1().bits(8).sq2().bits(11).sq3().bits(17) });
     }
