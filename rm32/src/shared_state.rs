@@ -99,6 +99,17 @@ pub struct SharedState {
     dbg_dma_last_cyc: AtomicU32,   // DMA1_CH5 wrapper (input capture TC)
     dbg_exti_last_cyc: AtomicU32,  // EXTI15_10 wrapper (frame processing)
     dbg_main_last_cyc: AtomicU32,  // main-loop iter body (excludes wfi)
+    // ISR→main config write-through (A4): ISR-side EEPROM mutations
+    // (DSHOT commands, programming mode, servo cal) publish (offset,
+    // value) here; main drains into ITS config copy each run_tick pass
+    // so save-settings persists current bytes. SPSC: sole producer =
+    // EXTI frame ISR, sole consumer = main. Packed (offset<<8)|value.
+    // Load/store only (M0 targets lack atomic RMW); full ring drops
+    // the write — acceptable because the ISR copy stays authoritative
+    // and the next mutation of the same byte re-publishes it.
+    cfg_wr: [AtomicU16; 8],
+    cfg_wr_head: AtomicU8,
+    cfg_wr_tail: AtomicU8,
     // 1 kHz dispatch counter — incremented by TIM6 ISR (20 kHz), read +
     // reset by main loop when >= PID_LOOP_DIVIDER (20). Matches AM32's
     // placement (uint16_t one_khz_loop_counter, ++'d in tenKhzRoutine at
@@ -161,6 +172,9 @@ impl SharedState {
             dbg_dma_last_cyc: AtomicU32::new(0),
             dbg_exti_last_cyc: AtomicU32::new(0),
             dbg_main_last_cyc: AtomicU32::new(0),
+            cfg_wr: [const { AtomicU16::new(0) }; 8],
+            cfg_wr_head: AtomicU8::new(0),
+            cfg_wr_tail: AtomicU8::new(0),
             one_khz_counter: AtomicU8::new(0),
         }
     }
@@ -580,6 +594,27 @@ impl SharedState {
         let new = action as u8;
         let _ = self.isr_action.fetch_max(new, REL);
     }
+    /// ISR side: publish one config byte write (see `cfg_wr`).
+    pub fn push_config_write(&self, offset: u8, value: u8) {
+        let h = self.cfg_wr_head.load(ACQ);
+        let nx = (h + 1) % 8;
+        if nx != self.cfg_wr_tail.load(ACQ) {
+            self.cfg_wr[h as usize].store(((offset as u16) << 8) | value as u16, REL);
+            self.cfg_wr_head.store(nx, REL);
+        }
+    }
+
+    /// Main side: drain one pending config byte write.
+    pub fn pop_config_write(&self) -> Option<(u8, u8)> {
+        let t = self.cfg_wr_tail.load(ACQ);
+        if t == self.cfg_wr_head.load(ACQ) {
+            return None;
+        }
+        let packed = self.cfg_wr[t as usize].load(ACQ);
+        self.cfg_wr_tail.store((t + 1) % 8, REL);
+        Some(((packed >> 8) as u8, packed as u8))
+    }
+
     pub fn divergence_mask(&self) -> u8 {
         self.bench_divergence_mask.load(ACQ)
     }

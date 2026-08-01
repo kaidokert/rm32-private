@@ -158,6 +158,15 @@ impl SystemTick {
         telem: &mut dyn TelemetryUart,
         isr_tick: impl FnOnce(),
     ) {
+        // A4: drain ISR-side config byte writes into main's copy BEFORE
+        // any save-settings check this pass — the ISR command processor
+        // mutates its own EepromConfig; without this, save persisted a
+        // stale main copy (Configurator/DSHOT-written settings lost).
+        while let Some((off, val)) = shared.pop_config_write() {
+            if (off as usize) < main.config.as_bytes().len() {
+                main.config.as_bytes_mut()[off as usize] = val;
+            }
+        }
         // 1. Input processing
         self.tick_input(shared, main);
 
@@ -185,6 +194,33 @@ mod tests {
     use crate::commutation::Commutation;
     use crate::main_state::{ChipParams, MainState};
 
+    struct MockAdc;
+    impl MockAdc {
+        fn new() -> Self {
+            Self
+        }
+    }
+    impl crate::hal::Adc for MockAdc {
+        fn start_conversion(&mut self) {}
+        fn raw_voltage(&self) -> u16 {
+            0
+        }
+        fn raw_current(&self) -> u16 {
+            0
+        }
+        fn raw_temperature(&self) -> u16 {
+            0
+        }
+        fn calc_temperature(&self, _: u16) -> crate::units::DegreesCelsius {
+            crate::units::DegreesCelsius(25)
+        }
+    }
+
+    struct MockTelem;
+    impl crate::hal::TelemetryUart for MockTelem {
+        fn send_dma(&mut self, _: &[u8]) {}
+    }
+
     fn make_main() -> MainState {
         MainState::new(
             &BoardConfig::DEFAULT,
@@ -193,6 +229,30 @@ mod tests {
                 cpu_mhz: 64,
             },
         )
+    }
+
+    #[test]
+    fn config_write_through_reaches_main_copy() {
+        // A4 regression: ISR-side config byte writes published via the
+        // SPSC ring must land in main's copy during run_tick, BEFORE any
+        // save-settings action would persist it.
+        let shared = SharedState::new();
+        let mut main = make_main();
+        let off = core::mem::offset_of!(crate::config::EepromConfig, dir_reversed) as u8;
+        shared.push_config_write(off, 1);
+        shared.push_config_write(3, 77); // arbitrary programming byte
+        let mut sys = SystemTick::new();
+        sys.run_tick(
+            &shared,
+            &mut main,
+            &mut MockAdc::new(),
+            &mut MockTelem,
+            || {},
+        );
+        assert_eq!(main.config.dir_reversed, 1);
+        assert_eq!(main.config.as_bytes()[3], 77);
+        // Ring drained.
+        assert!(shared.pop_config_write().is_none());
     }
 
     #[test]
