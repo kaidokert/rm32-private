@@ -46,15 +46,65 @@ pub struct ToneScheduler {
     active: bool,
 }
 
-/// Beacon n (1-5): single sustained note, pitch rising with n —
-/// approximates AM32's playBeaconTune1..5 (exact tune port is a
-/// polish item; distinctness per id is what the protocol needs).
-fn beacon_note(n: u8) -> Note {
+/// AM32 beacon tune tables — verbatim from main.c:1204's dispatch:
+/// cmd 1/5 → playDefaultTone, cmd 2 → playChangedTone, cmd 3 →
+/// playBeaconTune3 (60-note descending sweep), cmd 4 → playInputTune2.
+const DEFAULT_TONE: [Note; 2] = [
     Note {
-        prescaler: 90u16.saturating_sub(15 * n as u16),
-        step: 3,
-        ms: 250,
+        prescaler: 50,
+        step: 2,
+        ms: 150,
+    },
+    Note {
+        prescaler: 30,
+        step: 2,
+        ms: 150,
+    },
+];
+const CHANGED_TONE: [Note; 2] = [
+    Note {
+        prescaler: 40,
+        step: 2,
+        ms: 150,
+    },
+    Note {
+        prescaler: 80,
+        step: 2,
+        ms: 150,
+    },
+];
+const INPUT_TUNE2: [Note; 3] = [
+    Note {
+        prescaler: 60,
+        step: 1,
+        ms: 75,
+    },
+    Note {
+        prescaler: 80,
+        step: 1,
+        ms: 75,
+    },
+    Note {
+        prescaler: 90,
+        step: 1,
+        ms: 75,
+    },
+];
+
+/// playBeaconTune3: `for i in (1..=119).rev().step_by(2)`: comStep(i/20),
+/// prescaler 10 + i/2, 10 ms each (sounds.c:261). AM32 passes comStep(0)
+/// for the last few notes — clamped to 1 here (step 0 is undefined in
+/// rm32's phase driver).
+fn beacon3_note(idx: u8) -> Option<Note> {
+    if idx >= 60 {
+        return None;
     }
+    let i = 119 - 2 * idx as u16;
+    Some(Note {
+        prescaler: 10 + i / 2,
+        step: ((i / 20) as u8).max(1),
+        ms: 10,
+    })
 }
 
 /// Arming tune = Sounds::play_input (3 descending notes, 100 ms each).
@@ -79,7 +129,10 @@ const ARMED_TUNE: [Note; 3] = [
 impl ToneScheduler {
     fn note_for(&self) -> Option<Note> {
         match self.seq_id {
-            n @ 1..=5 => (self.note_idx == 0).then(|| beacon_note(n)),
+            1 | 5 => DEFAULT_TONE.get(self.note_idx as usize).copied(),
+            2 => CHANGED_TONE.get(self.note_idx as usize).copied(),
+            3 => beacon3_note(self.note_idx),
+            4 => INPUT_TUNE2.get(self.note_idx as usize).copied(),
             TONE_ARMED => ARMED_TUNE.get(self.note_idx as usize).copied(),
             _ => None,
         }
@@ -141,14 +194,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn beacon_plays_one_note_then_silences() {
+    fn beacon2_plays_changed_tone_then_silences() {
+        // cmd 2 = playChangedTone: two 150 ms notes (AM32 main.c:1211).
         let mut t = ToneScheduler::default();
         assert!(matches!(t.tick(2, false), ToneAction::StartNote(_)));
-        // 250 ms at 20 kHz = 5000 ticks; ticks 2..=5000 are Idle.
-        for _ in 0..4999 {
-            assert!(matches!(t.tick(0, false), ToneAction::Idle));
+        let mut starts = 1;
+        let mut done = false;
+        for _ in 0..(2 * 150 * 20 + 10) {
+            match t.tick(0, false) {
+                ToneAction::StartNote(_) => starts += 1,
+                ToneAction::Silence => {
+                    done = true;
+                    break;
+                }
+                ToneAction::Idle => {}
+            }
         }
-        assert!(matches!(t.tick(0, false), ToneAction::Silence));
+        assert!(done);
+        assert_eq!(starts, 2);
+        assert!(!t.active());
+    }
+
+    #[test]
+    fn beacon3_sweeps_sixty_notes() {
+        let mut t = ToneScheduler::default();
+        let mut starts = 0;
+        let mut act = t.tick(3, false);
+        for _ in 0..(60 * 10 * 20 + 10) {
+            if matches!(act, ToneAction::StartNote(_)) {
+                starts += 1;
+            }
+            if matches!(act, ToneAction::Silence) {
+                break;
+            }
+            act = t.tick(0, false);
+        }
+        assert_eq!(starts, 60);
         assert!(!t.active());
     }
 
