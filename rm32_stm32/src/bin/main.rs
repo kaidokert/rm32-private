@@ -536,13 +536,17 @@ fn main() -> ! {
                 let h = ih::SR_HEAD.load(Ordering::Relaxed) as usize;
                 let i = h.checked_sub(1).map(|v| v % ih::SR_N).unwrap_or(0);
                 rm32_stm32::dprintln!(
-                    "[sr n={} ci={} ma={} mv={} edt={} edtv={:#05x}]",
+                    "[sr n={} ci={} ma={} mv={} edt={} edtv={:#05x} dsy={} exc={} wex={} cm={}]",
                     h,
                     ih::SR_CI[i].load(Ordering::Relaxed),
                     ih::SR_MA[i].load(Ordering::Relaxed),
                     ih::SR_MV[i].load(Ordering::Relaxed),
                     ih::EDT_SENT.load(Ordering::Relaxed),
-                    ih::EDT_LAST.load(Ordering::Relaxed)
+                    ih::EDT_LAST.load(Ordering::Relaxed),
+                    main_state.desync_events,
+                    ih::EXC_N.load(Ordering::Relaxed),
+                    ih::EXC_MAX.load(Ordering::Relaxed),
+                    ih::EXC_COMMS.load(Ordering::Relaxed)
                 );
             }
             // Edge-probe lifetime totals — veto visibility even with the

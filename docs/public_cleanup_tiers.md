@@ -52,7 +52,7 @@ Legend: [ ] open · [x] done · [~] deferred/ticketed
 
 ## Tier B — bench/prod split inconsistencies (decide which side wins)
 
-- [ ] **B5. AUTO drive mode is bench-only** — the kept divergence (comp
+- [x] **B5. AUTO drive mode promoted to ALL builds** (proven necessary by the first BF DSHOT300 full ladder: always-comp churned the whole envelope at <400 Hz e, 16k desyncs, 99.9% excursions; AUTO holds parity) — the kept divergence (comp
   in interrupt mode, diode in polling) lives in `COMP_PWM_LIVE=3`,
   `cfg(benchuart)`. Production silently runs always-comp (AM32
   verbatim) — the churn-attractor behavior measured and rejected on the
