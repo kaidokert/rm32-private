@@ -81,11 +81,17 @@ override (`scripts/bf_motor.py`), settings via `scripts/bf_cli.py`.
 ## Burn-down list (everything left to run into the ground)
 
 Flight-readiness:
-- [ ] Full-throttle envelope re-qual UNDER BF DSHOT300 (ladder to 100%
-      on battery, dsy=0/exc standard) — the flight-grade sign-off; all
-      prior parity numbers were bench-UART throttle.
-- [ ] First-engage churn class: root-cause the post-repower garbage
-      ladders (recorder rings + WAX are available now).
+- [~] Full-throttle envelope re-qual UNDER BF DSHOT300 — **BLOCKED ON
+      HARDWARE**: three ladder attempts (08-01) ended in supply-path
+      collapse; bench guard measured vbat 7659 mV @ 1413 mA (the
+      documented loose-wire signature). SOLDER THE SUPPLY WIRE, then
+      rerun `scripts/bf_ladder.py`. En route, the always-comp churn was
+      caught and fixed (B5: AUTO drive promoted to all builds — the
+      production build had churned the whole envelope at <400 Hz e with
+      16k desyncs; commit 2abf363).
+- [x] First-engage churn class: ROOT-CAUSED — it was the always-comp
+      attractor in non-benchuart builds (B5). AUTO promotion fixes it;
+      confirm with post-solder engage soaks.
 - [ ] EDT at `dshot_edt = ON` semantics via a real flight-arm (MSP RC
       injection or RX sim) — retire the FORCE crutch on-bench.
 - [ ] Protocol robustness soak: each protocol × {cold boot, FC reboot,
