@@ -525,6 +525,24 @@ fn main() -> ! {
                 shared.e_com_time(),
                 shared.degrees_celsius(),
             );
+            // Flight-recorder tail: newest sample (ci, mA, mV). Doubles as
+            // the rings' live consumer — without a reachable read, LTO
+            // dead-store-eliminates the write-only SR arrays entirely
+            // (observed: debuguart image lost SR_CI/MA/MV, kept SR_HEAD).
+            #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+            {
+                use core::sync::atomic::Ordering;
+                use rm32_stm32::isr_handlers as ih;
+                let h = ih::SR_HEAD.load(Ordering::Relaxed) as usize;
+                let i = h.checked_sub(1).map(|v| v % ih::SR_N).unwrap_or(0);
+                rm32_stm32::dprintln!(
+                    "[sr n={} ci={} ma={} mv={}]",
+                    h,
+                    ih::SR_CI[i].load(Ordering::Relaxed),
+                    ih::SR_MA[i].load(Ordering::Relaxed),
+                    ih::SR_MV[i].load(Ordering::Relaxed)
+                );
+            }
             // Edge-probe lifetime totals — veto visibility even with the
             // zct stream off (instrument-decisions-not-outcomes).
             #[cfg(feature = "zctrace")]
