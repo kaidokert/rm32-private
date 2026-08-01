@@ -96,6 +96,61 @@ def arm_test(port, hold_s=8.0):
         p.close()
 
 
+MSP_STATUS = 101
+
+
+def read_msp_replies(p, want_cmd, quiet=0.3):
+    """Collect raw MSP v1 reply payloads for want_cmd from the stream."""
+    buf = b""
+    t = time.time()
+    out = []
+    while time.time() - t < quiet:
+        buf += p.read(4096)
+    i = 0
+    while True:
+        j = buf.find(b"$M>", i)
+        if j < 0 or j + 5 > len(buf):
+            break
+        size = buf[j + 3]
+        cmd = buf[j + 4]
+        end = j + 5 + size + 1
+        if end > len(buf):
+            break
+        if cmd == want_cmd:
+            out.append(buf[j + 5:j + 5 + size])
+        i = j + 3
+    return out
+
+
+def arm_probe(port, hold_s=6.0):
+    """Three-phase arming-flags probe: RC stream + MSP_STATUS interleave.
+    Prints the raw STATUS payload per phase — the arming-disable word
+    identifies itself by which bits clear as RC/AUX conditions change."""
+    p = serial.Serial(port, 115_200, timeout=0.05)
+    phases = []
+    try:
+        for name, aux, secs in (
+            ("stream-noarm", 1000, 5.0),
+            ("stream-arm", 1900, hold_s),
+            ("stream-disarm", 1000, 2.0),
+        ):
+            t0 = time.time()
+            last = None
+            while time.time() - t0 < secs:
+                p.write(rc_frame(1000, aux))
+                p.write(msp1_frame(MSP_STATUS))
+                time.sleep(0.05)
+                got = read_msp_replies(p, MSP_STATUS, quiet=0.05)
+                if got:
+                    last = got[-1]
+            phases.append((name, last))
+    finally:
+        p.close()
+    for name, payload in phases:
+        print(f"{name:14} {(payload.hex() if payload else 'NO REPLY')}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="COM42")
@@ -105,8 +160,44 @@ def main():
                     help="sends (AM32 needs 6 for non-beacon commands)")
     ap.add_argument("--arm-test", action="store_true",
                     help="MSP RC injection flight-arm cycle")
+    ap.add_argument("--arm-probe", action="store_true",
+                    help="3-phase arming-flags probe (MSP_STATUS in-stream)")
+    ap.add_argument("--arm-fly", type=float, metavar="PCT",
+                    help="MSP flight: arm, raise throttle to PCT for --hold, disarm")
     ap.add_argument("--hold", type=float, default=8.0)
     a = ap.parse_args()
+    if a.arm_fly is not None:
+        # Full flight-realistic loop: stream disarmed, arm via AUX, ramp
+        # the RC THROTTLE channel (BF mixes -> motor), hold, throttle
+        # down, disarm. EDT activates via BF's own arm-time cmd-13 burst.
+        thr = int(1000 + a.arm_fly * 10)
+        p = serial.Serial(a.port, 115_200, timeout=0.05)
+        try:
+            for name, throttle, aux, secs in (
+                ("prestream", 1000, 1000, 5.0),
+                ("arm", 1000, 1900, 3.0),
+                ("fly", thr, 1900, a.hold),
+                ("throttle-down", 1000, 1900, 2.0),
+                ("disarm", 1000, 1000, 2.0),
+            ):
+                print(f"[fly] {name}", flush=True)
+                t0 = time.time()
+                while time.time() - t0 < secs:
+                    p.write(rc_frame(throttle, aux))
+                    time.sleep(0.05)
+        finally:
+            # Kill guard: disarm stream then close (stream loss => BF
+            # failsafe also disarms).
+            try:
+                t0 = time.time()
+                while time.time() - t0 < 1.0:
+                    p.write(rc_frame(1000, 1000))
+                    time.sleep(0.05)
+            finally:
+                p.close()
+        return 0
+    if a.arm_probe:
+        return arm_probe(a.port, a.hold)
     if a.arm_test:
         arm_test(a.port, a.hold)
         return 0

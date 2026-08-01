@@ -95,17 +95,19 @@ Flight-readiness:
       flash-A/B (cb10c0c churns today, was clean this morning). This is
       the parity ledger's "90% restart-transient on fresh pack" item in
       bidir form. Next session: recorder rings + WAX on the engage.
-- [~] EDT at `dshot_edt = ON` via real flight-arm: harness built and
-      EXECUTED (bf_msp.py --arm-test) — BF refused to arm:
-      `Arming disable flags: RXLOSS LOAD CLI DSHOT_TELEM`. The
-      structural one is **DSHOT_TELEM**: with bidir ON, BF gates arming
-      on RPM telemetry from ALL mixer motors — a single-ESC bench on a
-      quad mixer can never satisfy it. FORCE is therefore REQUIRED on
-      this bench, not a crutch. Next attempt: `mixer CUSTOM` + single
-      `mmix` entry (motor_count=1), re-run --arm-test, watch for the
-      cmd-13 burst (bidir_evt jump) at arm. (The earlier "405/613
-      signal-path degraded" theory was WRONG — it was FC config
-      half-states from glitched CLI saves; wires were never at fault.)
+- [x] **EDT FORCE crutch RETIRED** — the full production handshake
+      proven end-to-end via MSP RC injection (bf_msp.py --arm-probe /
+      --arm-fly): all arming gates cleared (mixer CUSTOM kills
+      DSHOT_TELEM; acc_hardware=NONE + rpm_filter_harmonics=0 kill
+      LOAD/RPMFILTER), BF ARMED (flightModeFlags bit set), sent its
+      arm-time cmd-13 burst (ESC counter 1->61), ESC accepted
+      (armed&&!running, AM32-verbatim), EDT activated, and BF decodes
+      RTVCS at plain `dshot_edt = ON` — reproduced across two
+      independent armed sessions. EDT current: the C flag proves
+      current frames flow in loaded sessions; a numeric CURR>=1 capture
+      needs an in-stream MSP_MOTOR_TELEMETRY read (throttle-down before
+      disarm leaves the retained sample at idle) — polish step.
+      bidir@600: committed + stable at idle.
 - [x] Protocol robustness soak (FC-reboot axis): **20/20** — 5 cycles
       × DSHOT300/600/150/PWM, zero misses, latency 2.7-7.8 s.
       Cold-boot/battery-replug axes remain (need hands).
