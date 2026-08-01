@@ -299,6 +299,8 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
+            false, // not bidirectional
+            false, // normal changeover (no stall/rc-car strictness)
         );
 
         assert_ne!(comm.step, step_before);
@@ -320,8 +322,10 @@ mod tests {
         bemf.set_filter_level(2);
         bemf.set_wait_time(500);
 
-        isr_logic::bemf_zero_cross(&comm, &mut bemf, &mut comp, &mut interval, &mut com_timer);
+        let accepted =
+            isr_logic::bemf_zero_cross(&comm, &mut bemf, &mut comp, &mut interval, &mut com_timer);
 
+        assert!(accepted);
         assert!(comp.mask_called);
     }
 
@@ -338,8 +342,10 @@ mod tests {
 
         bemf.set_filter_level(2);
 
-        isr_logic::bemf_zero_cross(&comm, &mut bemf, &mut comp, &mut interval, &mut com_timer);
+        let accepted =
+            isr_logic::bemf_zero_cross(&comm, &mut bemf, &mut comp, &mut interval, &mut com_timer);
 
+        assert!(!accepted);
         assert!(!comp.mask_called);
     }
 
@@ -358,6 +364,49 @@ mod tests {
             actual_current > 5700 && actual_current < 5800,
             "expected ~5750, got {}",
             actual_current
+        );
+    }
+
+    #[test]
+    fn commutate_kick_inflates_ci_zcfoundroutine() {
+        // AM32 zcfoundroutine (main.c:1870-1874): the BEMF-timeout kick
+        // folds the stalled interval count into ci = (count + 3*ci)/4
+        // BEFORE the forced step. A mid-run timeout at ci=200 must restart
+        // at the slow crawl (~11400), never at the pre-fault cadence.
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut duty = crate::control::state::DutyState::default();
+        let config = crate::config::EepromConfig::default();
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let mut hal = MockMotorHal::new();
+
+        shared.mode.set(crate::motor_mode::MotorMode::Running);
+        shared.commutation_interval.set(200);
+        hal.interval.count = 45001;
+        crate::shared_comm::MainControl::request_isr_action(
+            &shared,
+            crate::shared_comm::IsrAction::CommutateKick,
+        );
+
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+
+        assert_eq!(shared.commutation_interval.get(), (45001 + 3 * 200) / 4);
+        // kick subsumes the interval reset (end of tick, post-publish)
+        assert_eq!(hal.interval.count, 0);
+        // action consumed
+        assert_eq!(
+            crate::shared_comm::MainControl::isr_action(&shared),
+            crate::shared_comm::IsrAction::None
         );
     }
 }

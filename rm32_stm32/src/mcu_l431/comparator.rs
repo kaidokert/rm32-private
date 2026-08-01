@@ -1,6 +1,7 @@
-use crate::comp_hal::{CompOps, ExtiOps, InmselMap};
+use crate::comp_hal::{CompOps, ExtiOps};
 use crate::comparator::BemfComparator;
 use crate::pac::{COMP, EXTI};
+use rm32::board::BemfPins;
 
 pub struct L431Comp;
 impl CompOps for L431Comp {
@@ -9,16 +10,27 @@ impl CompOps for L431Comp {
         comp.comp2_csr.read().bits() & (1 << 30) != 0
     }
     fn set_inmsel(&self, phase: u32) {
+        // L431 COMP2: phase is packed as (inmesel << 8) | inmsel_3bit.
+        // INMSEL[2:0] at CSR bits 6:4, INMESEL[1:0] at CSR bits 26:25.
+        let inmsel = phase & 0x7;
+        let inmesel = (phase >> 8) & 0x3;
         let comp = unsafe { &*COMP::ptr() };
         let v = comp.comp2_csr.read().bits();
+        let cleared = v & !(0x7 << 4 | 0x3 << 25);
         comp.comp2_csr
-            .write(|w| unsafe { w.bits((v & !(0xF << 4 | 0x3 << 8)) | (phase << 4)) });
+            .write(|w| unsafe { w.bits(cleared | (inmsel << 4) | (inmesel << 25)) });
     }
 }
 
 pub struct L431Exti;
 const LINE: u32 = 1 << 22;
 impl ExtiOps for L431Exti {
+    // Exclusive single edge per window (AM32 changeCompInput verbatim).
+    // NOTE: a live dump of the running clone once caught RTSR=FTSR both
+    // set — that was a probe read landing between the two modify ops of
+    // an edge switch, not an edge-pair config; a second dump showed the
+    // exclusive state. The edge-pair experiment was null on storms
+    // anyway (rung8b).
     fn set_rising_edge(&self) {
         let exti = unsafe { &*EXTI::ptr() };
         exti.rtsr1.modify(|r, w| unsafe { w.bits(r.bits() | LINE) });
@@ -43,14 +55,8 @@ impl ExtiOps for L431Exti {
     }
 }
 
-pub const INMSEL: InmselMap = InmselMap {
-    phase_a: 0b0101,
-    phase_b: 0b0100,
-    phase_c: 0b0011,
-};
-
 pub type L431BemfComparator = BemfComparator<L431Comp, L431Exti>;
 
-pub fn new_comparator() -> L431BemfComparator {
-    BemfComparator::new(L431Comp, L431Exti, INMSEL)
+pub fn new_comparator(bemf_pins: BemfPins) -> L431BemfComparator {
+    BemfComparator::new(L431Comp, L431Exti, bemf_pins)
 }

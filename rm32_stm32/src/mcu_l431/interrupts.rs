@@ -5,6 +5,14 @@ use crate::isr_handlers;
 use crate::pac;
 use stm32l4xx_hal::pac::interrupt;
 
+// Bench UART RX. Ring-push-only — MUST NOT touch ISR_LOCAL (see
+// notes/ISR_STATE_INVARIANT.md); any priority is aliasing-safe.
+#[cfg(feature = "benchuart")]
+#[interrupt]
+fn USART2() {
+    crate::bench_uart::service_rx();
+}
+
 #[interrupt]
 fn TIM6_DACUNDER() {
     let tim6 = unsafe { &*pac::TIM6::PTR };
@@ -18,27 +26,124 @@ fn TIM6_DACUNDER() {
 fn TIM1_UP_TIM16() {
     // TIM16 is the commutation timer on L431
     let tim16 = unsafe { &*pac::TIM16::PTR };
+    // NOTE: never print from this ISR. A 1-in-1024 `[t16]` dprintln that
+    // lived here was THE 40-50% fall trigger: ~30 bytes of bounded TXE
+    // waits at 2 Mbaud = ~180 µs of priority-0 stall BEFORE the phase
+    // switch -> commutation fires ~365 TIM2 ticks late -> the next ZC
+    // passes while COMP is still masked -> deaf window -> period-2
+    // spiral. Captured end-to-end in spiral1.bin (tl=471 vs la=102).
     unsafe {
         tim16.sr.write(|w| w.bits(0));
     }
+    #[cfg(feature = "benchuart")]
+    LEAN_COMMS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     isr_handlers::handle_tim14(); // same logic, different timer
 }
 
+/// Bisect toggle 'R': 1 = SWIER edge-swallow race fix DISABLED.
+#[cfg(feature = "benchuart")]
+pub static RACEFIX_OFF: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// Lean camp-storm probe (clone-style single counters, always on
+/// under benchuart): COMP ISR entries + commutations. Lets a build
+/// WITHOUT blackbox/zctrace still measure entries/window, to test
+/// whether rm32's per-commutation prio-0 instrumentation load is the
+/// storm-entry differential.
+#[cfg(feature = "benchuart")]
+pub static LEAN_COMP_ENTRIES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(feature = "benchuart")]
+pub static LEAN_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 #[interrupt]
 fn COMP() {
-    isr_handlers::handle_comp();
+    // AM32 stm32l4xx_it.c:276-290 — the half-average-interval acceptance
+    // gate + pending-bit camping (parity rung 5b; this replaces the
+    // mask-at-entry policy that made rm32 take the FIRST edge in every
+    // window and lose the window on a persistence reject):
+    //
+    //   gate OPEN  (interval CNT > average_interval/2): ack the line and
+    //     run the acceptance path. bemf_zero_cross masks the comparator
+    //     itself on accept; a persistence reject stays UNMASKED and armed
+    //     for the true crossing later in the window.
+    //   gate CLOSED, comparator at PRE-ZC level: a noise blip — ack it
+    //     and stay armed.
+    //   gate CLOSED, comparator at POST-ZC level: CAMP — leave the
+    //     pending bit set so NVIC re-fires this ISR until the gate opens
+    //     and the (early) crossing is evaluated. Bounded: TIM2 free-runs,
+    //     so CNT crosses avg/2 in at most avg/2 ticks.
+    //
+    // Storm safety without mask-at-entry: the gate absorbs early edges,
+    // accepts mask the line, and ten_khz_tick masks COMP every tick while
+    // !running (the Armed-idle storm path). The comparator is also no
+    // longer enabled at all during polling mode (exclusivity, isr_logic).
+    let exti = unsafe { &*pac::EXTI::PTR };
+    if exti.pr1.read().bits() & (1 << 22) == 0 {
+        return;
+    }
+    #[cfg(feature = "benchuart")]
+    LEAN_COMP_ENTRIES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    let shared = crate::isr::shared();
+    // Gate avg: AM32-verbatim 20 kHz-latched STALE average by default
+    // (crate::comp_gate), fresh e_com/3 only when the 'G' bench knob
+    // selects it or the latch is still cold. CONTROL logic — must NOT
+    // depend on zctrace (regression 07-27: the zctrace-free build fell
+    // back to fresh here and failed to lock at <=40% throttle).
+    let avg = {
+        use core::sync::atomic::Ordering;
+        let a = crate::comp_gate::get();
+        if crate::comp_gate::GATE_STALE.load(Ordering::Relaxed) != 0 && a != 0 {
+            a
+        } else {
+            (shared.e_com_time() / 3).max(0) as u32
+        }
+    };
+    let cnt = unsafe { (*pac::TIM2::PTR).cnt.read().bits() };
+    // Edge probe: every confirmed-pending entry counts (camp re-fires
+    // included — this is the storm meter), first edge time captured.
+    #[cfg(feature = "zctrace")]
+    crate::edge_probe::edge_seen(cnt);
+    if cnt > (avg >> 1) {
+        unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
+        isr_handlers::handle_comp();
+    } else if isr_handlers::comp_at_pre_zc_level() {
+        unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
+        // Edge-swallow race fix (fall post-mortem campaign, 07-26): a
+        // real crossing landing between the level read above and the
+        // PR clear gets its pending bit cleared with the noise blip —
+        // at short windows this is the acceptance-side deaf-window
+        // seed candidate. Re-check the level after the clear: if it
+        // flipped to post-ZC, the swallowed edge was real — re-raise
+        // the line via SWIER so the camp/accept machinery re-evaluates.
+        #[cfg(feature = "benchuart")]
+        let racefix_on = RACEFIX_OFF.load(core::sync::atomic::Ordering::Relaxed) == 0;
+        #[cfg(not(feature = "benchuart"))]
+        let racefix_on = true;
+        if racefix_on && !isr_handlers::comp_at_pre_zc_level() {
+            unsafe { exti.swier1.write(|w| w.bits(1 << 22)) };
+        }
+        #[cfg(feature = "zctrace")]
+        crate::edge_probe::gated_clear();
+    }
+    // else: camp — pending stays set, ISR re-fires until the gate opens.
 }
 
 // DMA1 Channel 5: input capture transfer complete
 #[interrupt]
 fn DMA1_CH5() {
+    let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
     let dma = unsafe { &*pac::DMA1::PTR };
     let dma_isr = dma.isr.read().bits();
-    // Channel 5 TC flag = bit 17
+    // Acknowledge ALL CH5 flags up front (CGIF5 = bit 16 in IFCR clears
+    // TCIF5/HTIF5/TEIF5/GIF5 in one shot). Without this, if a transfer
+    // error (TEIF, bit 19) fires alone without TC, the ISR would return
+    // without clearing anything → NVIC re-fires forever (same class of
+    // bug as the COMP ISR pre-fix). TEIE is enabled in our CCR5=0x098B,
+    // so this path is reachable in principle.
+    unsafe {
+        dma.ifcr.write(|w| w.bits(1 << 16));
+    }
+    // Channel 5 TC flag = bit 17 — only process actual transfer complete
     if dma_isr & (1 << 17) != 0 {
-        unsafe {
-            dma.ifcr.write(|w| w.bits(1 << 16));
-        } // CGIF5
         // Disable DMA CH5
         unsafe {
             dma.ccr5.modify(|r, w| w.bits(r.bits() & !1));
@@ -50,27 +155,37 @@ fn DMA1_CH5() {
             exti.swier1.write(|w| w.bits(1 << 15));
         }
     }
+    let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+    crate::isr::shared().dbg_dma_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
 }
 
 #[interrupt]
 fn EXTI15_10() {
+    let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
     let exti = unsafe { &*pac::EXTI::PTR };
     unsafe {
         exti.pr1.write(|w| w.bits(1 << 15));
     }
-    isr_handlers::handle_exti_frame();
+    let next_capture = isr_handlers::handle_exti_frame();
+
+    // Apply prescaler change if requested (protocol detection)
+    let tim15 = unsafe { &*pac::TIM15::PTR };
+    if let Some(psc) = next_capture.prescaler {
+        unsafe {
+            tim15.psc.write(|w| w.bits(psc as u32));
+            tim15.egr.write(|w| w.bits(1)); // UG — latch new PSC immediately
+        }
+    }
 
     // Re-enable DMA CH5 for next frame
-    let shared = crate::isr::shared();
-    let sz = if shared.servo_pwm() { 2u32 } else { 32 };
     let dma = unsafe { &*pac::DMA1::PTR };
     unsafe {
-        dma.cndtr5.write(|w| w.bits(sz));
+        dma.cndtr5.write(|w| w.bits(next_capture.ndtr));
         dma.ccr5.modify(|r, w| w.bits(r.bits() | 1)); // Enable CH5
     }
-    // TIM15 CR1.CEN
-    let tim15 = unsafe { &*pac::TIM15::PTR };
     unsafe {
         tim15.cr1.modify(|r, w| w.bits(r.bits() | 1));
     }
+    let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+    crate::isr::shared().dbg_exti_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
 }

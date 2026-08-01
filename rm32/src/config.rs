@@ -166,6 +166,23 @@ impl EepromConfig {
     /// Apply defaults for fields added in newer EEPROM versions.
     /// Uses VERSION_DEFAULTS as the reference — changing a default in one place
     /// automatically propagates to the migration logic.
+    /// Static commutation advance in 0.9375° units (AM32 main.c:627-636,
+    /// loadEEpromSettings): `advance = (ci * temp_advance) >> 6`. Two
+    /// eeprom formats: old config tools wrote 0-3 (×7.5°), 1.90+ writes
+    /// 10-42 (value-10 → 0..32); anything else falls back to 16 (15°).
+    /// rm32 previously never applied this — the firmware ran 0° advance
+    /// (commutating a full 15° late vs AM32 at factory settings).
+    pub fn temp_advance(&self) -> u8 {
+        let a = self.advance_level;
+        if a < 4 {
+            a << 3 // old format: 0, 8, 16, 24
+        } else if (10..=42).contains(&a) {
+            a - 10 // new format: 0..=32
+        } else {
+            16 // out of range → 15° default
+        }
+    }
+
     pub fn apply_version_defaults(&mut self) {
         if self.eeprom_version < EEPROM_VERSION {
             let d = &VERSION_DEFAULTS;
@@ -237,6 +254,30 @@ impl EepromConfig {
     /// `dead_time`: board dead-time from YAML
     /// `kv_divider`: board KV divider (1=normal, 2=3-cell max, 16=1-2 cell max)
     /// `startup_boost`: board flag for heavy-prop startup boost
+    /// Apply RC-car mode overrides (C main.c lines 1750-1762).
+    ///
+    /// When `rc_car_reverse=1`, the C firmware modifies EEPROM buffer fields
+    /// during init to disable features incompatible with rapid direction changes.
+    /// Call after EEPROM load but before derive_motor_config.
+    pub fn apply_rc_car_overrides(&mut self) {
+        if self.rc_car_reverse == 0 {
+            return;
+        }
+        self.stuck_rotor_protection = 0;
+        self.bi_direction = 1;
+        self.use_sine_start = 0;
+        self.variable_pwm = 0;
+        self.comp_pwm = 0;
+    }
+
+    /// Apply comp_pwm guard: sine start requires complementary PWM.
+    /// Call after apply_rc_car_overrides.
+    pub fn apply_comp_pwm_guard(&mut self) {
+        if self.comp_pwm == 0 {
+            self.use_sine_start = 0;
+        }
+    }
+
     pub fn derive_motor_config(
         &self,
         default_arr: u16,
@@ -295,11 +336,14 @@ impl EepromConfig {
             }
         };
 
+        // RC-car mode: boost all duty thresholds by 50
+        let rc_boost: u16 = if self.rc_car_reverse != 0 { 50 } else { 0 };
+
         // PID gains
         let kv_div = kv_divider.max(1) as u16;
         MotorConfig {
-            minimum_duty,
-            min_startup_duty,
+            minimum_duty: minimum_duty + rc_boost,
+            min_startup_duty: min_startup_duty + rc_boost,
             startup_max_duty,
             timer1_max_arr,
             dead_time_override,
@@ -324,6 +368,26 @@ impl Default for EepromConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temp_advance_maps_both_eeprom_formats() {
+        let mut cfg = EepromConfig::default();
+        // old format 0-3: ×8 (7.5° steps)
+        for (level, want) in [(0u8, 0u8), (1, 8), (2, 16), (3, 24)] {
+            cfg.advance_level = level;
+            assert_eq!(cfg.temp_advance(), want, "old format {level}");
+        }
+        // new format 10-42: value-10
+        for (level, want) in [(10u8, 0u8), (26, 16), (42, 32)] {
+            cfg.advance_level = level;
+            assert_eq!(cfg.temp_advance(), want, "new format {level}");
+        }
+        // out of range: 4-9 and >42 → 16 (AM32 main.c:628-630)
+        for level in [4u8, 9, 43, 255] {
+            cfg.advance_level = level;
+            assert_eq!(cfg.temp_advance(), 16, "fallback {level}");
+        }
+    }
 
     #[test]
     fn blank_flash_is_invalid() {

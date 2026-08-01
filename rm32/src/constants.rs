@@ -25,6 +25,11 @@ pub const TIM1_DEFAULT_ARR: u16 = 1999;
 /// ESC arms after receiving zero throttle for this duration.
 pub const ARMING_TIMEOUT_TICKS: u32 = 20000;
 
+/// PID dispatch divider — fires the 1 kHz PID/ADC block once every N TIM6
+/// ticks. AM32 uses `LOOP_FREQUENCY_HZ / 1000` = 20 at 20 kHz TIM6
+/// (`Inc/targets.h:5318`). Set per-MCU there; for our 20 kHz TIM6 it's 20.
+pub const PID_LOOP_DIVIDER: u8 = 20;
+
 /// Default initial commutation interval in timer ticks (0.5µs each).
 /// 10000 ticks = 5ms between commutations = very slow startup.
 pub const INITIAL_COMMUTATION_INTERVAL: u32 = 10000;
@@ -49,12 +54,16 @@ pub const SERVO_CENTER: u16 = 1000;
 pub const BIDIR_MIDPOINT: u16 = 1048;
 
 /// Low voltage cutoff counter threshold (normal mode).
-/// At 10kHz main loop rate: 10000 counts = 1.0 second sustained low voltage.
+/// Counter increments at 1 kHz (inside the PID_LOOP_DIVIDER block); 10000
+/// counts = 10 sec sustained low voltage before cutoff. Matches AM32's
+/// threshold at main.c:2063.
 pub const LVC_NORMAL_THRESHOLD: u16 = 10000;
 
 /// Low voltage cutoff counter threshold during stepper_sine startup.
-/// Fast cutoff (0.1s) to protect batteries under heavy startup current draw.
-pub const LVC_STARTUP_THRESHOLD: u16 = 1000;
+/// At 1 kHz: 100 counts = 0.1 sec — fast cutoff to protect batteries under
+/// heavy startup current draw. AM32's stepper_sine override at main.c:2063
+/// uses `(10000 - (stepper_sine * 9900))` = 100.
+pub const LVC_STARTUP_THRESHOLD: u16 = 100;
 
 /// Desync recovery: average_interval is reset to this value (5ms between commutations).
 /// Provides a safe slow-speed starting point after desync event.
@@ -63,6 +72,74 @@ pub const DESYNC_RESET_INTERVAL: u32 = 5000;
 /// Desync detection: only triggers when average_interval < this value.
 /// Prevents false desync detection at very low RPM where intervals are naturally large.
 pub const DESYNC_MAX_INTERVAL: u32 = 2000;
+
+/// Wrong-phase-orbit trip (KEPT DIVERGENCE, bench 07-26): the
+/// acceptance chain can self-clock on switching artifacts in a wrong
+/// phase register (measured: injected current 2.4A -> 10-13A in one
+/// window at duty 1412, plausible z throughout, no desync-detector
+/// jump). The smoothed input current then runs ~3.3 mA per duty count
+/// vs the normal 1.2-2.3 across the whole envelope (1020->1.24A ...
+/// 2000->4.62A), so the trip is RELATIVE: it fires when I_ma exceeds
+/// duty*ORBIT_TRIP_SLOPE plus ORBIT_TRIP_OFFSET_MA, sustained for
+/// ORBIT_TRIP_MS ticks while locked.
+/// Response = full AM32 desync path (demote + kick): the demote IS the
+/// phase reset. A static ampere threshold cannot work — normal 100%
+/// draw (4.6A) exceeds any level the 70% orbit (4.7A avg) stays under.
+/// RECAL 07-30 (post wall-fix): the original 2/1000 line was set from
+/// PSU-era full power (4.6A @ 8.16V). On the 3S pack the measured
+/// LEGIT 100% draw is 9.0A at ~10V loaded vbat, which the old line
+/// (6.1A scaled) false-tripped — the relaxed-T 100% ride's residual
+/// dsy was entirely these. New line at duty 2000, 10V loaded:
+/// (3*2000 + 2500) * 10/8.16 = 10.4A > 9A legit; still below the
+/// 10-13A wrong-phase rides at duty ~1400 (9.0A scaled there).
+pub const ORBIT_TRIP_SLOPE: i32 = 3;
+pub const ORBIT_TRIP_OFFSET_MA: i32 = 2500;
+/// Consecutive 1 kHz ticks over the line before tripping (ms).
+pub const ORBIT_TRIP_MS: u16 = 30;
+/// Rail voltage (mV) the ORBIT_TRIP line was calibrated on; the line
+/// scales by measured vbat relative to this (battery sessions run
+/// ~12 V where the same duty legitimately draws ~1.5x the current).
+pub const ORBIT_CAL_VBAT_MV: i32 = 8160;
+/// Commanded-transient suppression for the orbit trip: while the
+/// applied duty moved more than this within the snapshot window, high
+/// current is expected (slam accel, clone-measured ~10 A on battery)
+/// and the trip must hold off. Steady-state orbits are unaffected.
+pub const ORBIT_TRANSIENT_DUTY: u16 = 150;
+
+/// Desync-detector re-arm holdoff after a fast-rotor fire (KEPT
+/// DIVERGENCE, see MainState::desync_rearm_zc): the stay-interrupt
+/// response keeps the commutation pipeline running at speed, so the
+/// kick's own deceleration moves average_interval against a reference
+/// that went stale while zc<=10 and refires the detector at zc=11 —
+/// a self-loop measured at dsy=289 vs the clone's 10 on the identical
+/// step program. 100 crossings ~ 10-60 ms; a real desync still trips
+/// on the first check past the holdoff.
+pub const DESYNC_REARM_HOLDOFF_ZC: u32 = 100;
+
+/// Reclimb clamp (KEPT DIVERGENCE, see main_state duty-ceiling site):
+/// until this many zero crossings confirm the lock, the duty ceiling is
+/// capped at RECLIMB_DUTY_CAP. Covers fresh engage and post-fall
+/// recovery identically (both reset zero_crosses). 1500 crossings =
+/// 0.15-0.75 s depending on speed; the cap must clear comfortably above
+/// the startup duty band (max ~450) while bounding the recovery
+/// acceleration surge that sag-killed churny reps.
+pub const RECLIMB_CONFIRM_ZC: u32 = 1500;
+pub const RECLIMB_DUTY_CAP: u16 = 800;
+
+/// Bidir DShot auto-detect confirmation: consecutive successful
+/// inverted-CRC decodes required (while the high-idle hint is active,
+/// unarmed) before committing bidir mode. The hint alone false-fires on
+/// normal DShot lines that idle high briefly; committing then inverts
+/// the CRC on non-bidir traffic and every frame fails.
+pub const BIDIR_CONFIRM_FRAMES: u8 = 4;
+
+/// Fast-rotor desync response (KEPT DIVERGENCE, see main_state.rs desync
+/// handler): below this commutation interval (ticks; 600 = 300 µs windows
+/// = ~555 Hz e and faster) a desync keeps interrupt mode instead of
+/// demoting to polling — the 20 kHz tick-grid polling cannot track
+/// windows shorter than ~3 samples, so a demotion at speed forces a
+/// coast-down/restart cycle AM32's main-loop-rate polling never suffers.
+pub const DESYNC_STAY_INTERRUPT_CI: u32 = 600;
 
 /// BEMF timeout threshold at low throttle (< 150). Lenient to avoid false desync
 /// when motor is barely spinning and BEMF signal is weak.
@@ -100,6 +177,9 @@ pub const MIN_ZC_FOR_ADVANCE: u32 = 5;
 
 /// Signal timeout threshold (20kHz ticks). 10000 = 0.5 second with no valid input.
 pub const SIGNAL_TIMEOUT_DISARM: u16 = 10000;
+/// Unarmed signal timeout: 2 seconds at 20kHz tick rate.
+/// Resets input detection so protocol can be re-detected on reconnect.
+pub const SIGNAL_TIMEOUT_UNARMED: u16 = 40000;
 
 /// Sine startup: throttle below which BEMF timeout is cleared.
 pub const SINE_BEMF_CLEAR_THROTTLE: u16 = 160;

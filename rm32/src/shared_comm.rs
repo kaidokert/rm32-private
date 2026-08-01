@@ -10,6 +10,40 @@
 
 use crate::motor_mode::{MotorEvent, MotorMode};
 
+/// Action requested from main loop to ISR context.
+///
+/// Priority-ordered: AllOff supersedes ResetIntervalTimer (if both are
+/// needed, the motor is being killed so the timer reset is moot).
+/// Stored as AtomicU8 in SharedState. Main writes via `request_isr_action`;
+/// ISR reads via `isr_action`, executes, and clears to None.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum IsrAction {
+    /// No pending action.
+    None = 0,
+    /// Reset interval timer to 0 (stall handler, matches C's zcfoundroutine).
+    ResetIntervalTimer = 1,
+    /// Fast-rotor desync recovery (KEPT DIVERGENCE): halve the applied
+    /// duty (floor min_startup/2) instead of crashing to min_startup/2.
+    /// Used only on the stay-interrupt desync branch where the rotor is
+    /// known to still be locked — recovery from duty/2 re-slews at the
+    /// high-rpm ramp in ~2 ms instead of a ~15-20 ms crawl from ~55 (the
+    /// audible chop, and the surge that fed supply-sag feedback).
+    DutyKickHalf = 2,
+    /// Desync recovery: drop the applied duty to min_startup/2 so the
+    /// restart ramps from low (AM32 desync handling; minz
+    /// am32_control.rs:284).
+    DutyKickDown = 3,
+    /// BEMF-timeout recovery: re-arm the commutation chain NOW (the COM
+    /// timer may be dead after a timeout — AM32's zcfoundroutine actively
+    /// re-commutates; rm32's previous recovery was passive).
+    CommutateKick = 4,
+    /// Kill all FETs + mask comparator interrupts (LVC, stuck rotor).
+    /// MUST stay the highest value — `request_isr_action` uses fetch_max
+    /// for priority, and a kill outranks every recovery action.
+    AllOff = 5,
+}
+
 /// Motor mode state machine — bidirectional ISR↔main.
 ///
 /// Only two methods require implementation: `motor_mode()` and `set_motor_mode()`.
@@ -100,6 +134,16 @@ pub trait IsrTiming {
         true
     }
     fn set_forward(&self, _v: bool) {}
+
+    /// Increment 1 kHz dispatch counter (TIM6 ISR side, 20 kHz). Matches
+    /// AM32's `one_khz_loop_counter++` at main.c:1317.
+    fn one_khz_counter_inc(&self) {}
+    /// Main-side: returns true and resets counter if it has exceeded
+    /// `divider` (typically PID_LOOP_DIVIDER = 20). Matches AM32's check
+    /// at main.c:1397.
+    fn one_khz_counter_check_and_reset(&self, _divider: u8) -> bool {
+        false
+    }
 }
 
 /// Main-loop-produced control data consumed by the ISR.
@@ -128,6 +172,28 @@ pub trait MainControl {
         false
     }
     fn set_prop_brake_active(&self, _v: bool) {}
+
+    /// ISR action request from main loop. Main writes the highest-priority
+    /// action; ISR reads, executes, and clears to None.
+    /// AllOff supersedes ResetIntervalTimer (motor is dead, timer moot).
+    fn isr_action(&self) -> IsrAction {
+        IsrAction::None
+    }
+    fn request_isr_action(&self, _action: IsrAction) {}
+    fn clear_isr_action(&self) {}
+
+    /// Sine changeover step request (0 = none, 1-6 = execute changeover with step).
+    /// Main sets during sine changeover; ISR applies com_step + enables interrupts.
+    fn changeover_step(&self) -> u8 {
+        0
+    }
+    fn set_changeover_step(&self, _step: u8) {}
+
+    /// Desync check flag (ISR sets on BEMF zero-cross, main clears after processing).
+    fn desync_check_pending(&self) -> bool {
+        false
+    }
+    fn set_desync_check_pending(&self, _v: bool) {}
 
     /// TIM1 auto-reload value (variable PWM). Main publishes, ISR applies.
     fn tim1_arr(&self) -> u16 {

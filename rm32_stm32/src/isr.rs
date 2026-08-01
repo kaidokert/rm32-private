@@ -80,6 +80,7 @@ pub struct IsrState<H> {
     pub config: EepromConfig,
     pub forward: bool,
     pub edt_armed: bool,
+    pub edt_arm_enable: bool,
     pub armed_timeout_count: u32,
     pub frametime_low: u16,
     pub frametime_high: u16,
@@ -103,21 +104,23 @@ pub fn shared() -> &'static SharedState {
     &SHARED
 }
 
-pub fn init_isr_state(state: TargetIsrState) {
+/// Move ISR state into the global static and return a mutable reference.
+///
+/// The reference is valid until `cortex_m::interrupt::enable()` — after that,
+/// the first ISR takes ownership via `take_isr_state()`. Use the returned
+/// reference for any final setup that needs the state at its static address
+/// (e.g. arming DMA whose CMAR register stores the buffer pointer).
+pub fn init_isr_state(state: TargetIsrState) -> &'static mut TargetIsrState {
     cortex_m::interrupt::free(|cs| {
-        ISR_STATE.borrow(cs).replace(Some(state));
-    });
+        let cell = ISR_STATE.borrow(cs);
+        cell.replace(Some(state));
+        // SAFETY: we just placed Some, interrupts are off (boot code only),
+        // and the RefCell borrow is released by replace() above.
+        let ptr: *mut TargetIsrState = cell.borrow_mut().as_mut().unwrap() as *mut _;
+        unsafe { &mut *ptr }
+    })
 }
 
 pub fn take_isr_state() -> Option<TargetIsrState> {
     cortex_m::interrupt::free(|cs| ISR_STATE.borrow(cs).borrow_mut().take())
-}
-
-/// Access ISR state in a critical section (before interrupts take it).
-pub fn with_isr_state(f: impl FnOnce(&mut TargetIsrState)) {
-    cortex_m::interrupt::free(|cs| {
-        if let Some(ref mut state) = *ISR_STATE.borrow(cs).borrow_mut() {
-            f(state);
-        }
-    });
 }

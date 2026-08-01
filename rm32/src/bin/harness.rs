@@ -10,10 +10,14 @@ use rm32::control::context::MotorContext;
 use rm32::control::isr_logic;
 use rm32::control::state::{BemfState, DutyState};
 use rm32::dshot;
+use rm32::dshot_commands::CommandResult;
 use rm32::hal;
+use rm32::hal::PhaseOutput;
+use rm32::hal::PwmOutput;
 use rm32::motor_mode::MotorMode;
 use rm32::shared_state::SharedState;
 use rm32::system::SystemTick;
+use rm32::transfer::{DetectedProtocol, TransferAction};
 use std::io::{self, BufRead, Write};
 
 // --- Mock HAL (same as harness.rs) ---
@@ -41,6 +45,7 @@ impl hal::PwmOutput for MockPwm {
 
 struct MockComp {
     level: bool,
+    mask_interrupts: HalCounter,
 }
 impl hal::Comparator for MockComp {
     fn output_level(&self) -> bool {
@@ -49,14 +54,51 @@ impl hal::Comparator for MockComp {
     fn set_step(&mut self, _: u8, _: bool) {}
     fn change_input(&mut self) {}
     fn enable_interrupts(&mut self) {}
-    fn mask_interrupts(&mut self) {}
+    fn mask_interrupts(&mut self) {
+        self.mask_interrupts.set(self.mask_interrupts.get() + 1);
+    }
 }
 
-struct MockPhase;
+use std::cell::Cell;
+use std::rc::Rc;
+
+/// Shared HAL call counter — cloneable, interior-mutable, no unsafe.
+type HalCounter = Rc<Cell<u32>>;
+
+fn new_counter() -> HalCounter {
+    Rc::new(Cell::new(0))
+}
+
+/// HAL call counters — records every safety-relevant HAL call for test assertions.
+#[derive(Clone)]
+struct HalCounts {
+    all_off: HalCounter,
+    full_brake: HalCounter,
+    mask_interrupts: HalCounter,
+}
+
+impl HalCounts {
+    fn new() -> Self {
+        Self {
+            all_off: new_counter(),
+            full_brake: new_counter(),
+            mask_interrupts: new_counter(),
+        }
+    }
+}
+
+struct MockPhase {
+    all_off: HalCounter,
+    full_brake: HalCounter,
+}
 impl hal::PhaseOutput for MockPhase {
     fn com_step(&mut self, _: u8) {}
-    fn all_off(&mut self) {}
-    fn full_brake(&mut self) {}
+    fn all_off(&mut self) {
+        self.all_off.set(self.all_off.get() + 1);
+    }
+    fn full_brake(&mut self) {
+        self.full_brake.set(self.full_brake.get() + 1);
+    }
     fn all_pwm(&mut self) {}
     fn proportional_brake(&mut self) {}
 }
@@ -149,6 +191,7 @@ struct Harness {
     duty: DutyState,
     config: EepromConfig,
     armed_timeout_count: u32,
+    hal_counts: HalCounts,
     hal: MockMotorHal,
     adc: MockAdc,
     telem: MockTelem,
@@ -170,6 +213,7 @@ struct Harness {
     dshot: bool,
     servo_pwm: bool,
     edt_armed: bool,
+    edt_arm_enable: bool,
     frametime_low: u16,
     frametime_high: u16,
     zero_input_count: u16,
@@ -177,6 +221,7 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        let counts = HalCounts::new();
         Self {
             shared: SharedState::new(),
             commutation: Commutation::new(),
@@ -190,11 +235,18 @@ impl Harness {
                     arr: 0,
                     duty_count: 0,
                 },
-                comp: MockComp { level: false },
-                phase: MockPhase,
+                comp: MockComp {
+                    level: false,
+                    mask_interrupts: counts.mask_interrupts.clone(),
+                },
+                phase: MockPhase {
+                    all_off: counts.all_off.clone(),
+                    full_brake: counts.full_brake.clone(),
+                },
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer,
             },
+            hal_counts: counts,
             tick_count: 0,
             has_throttle: false,
             throttle_value: 0,
@@ -206,6 +258,7 @@ impl Harness {
             dshot: false,
             servo_pwm: false,
             edt_armed: false,
+            edt_arm_enable: false,
             frametime_low: 400,
             frametime_high: 600,
             zero_input_count: 0,
@@ -269,10 +322,10 @@ impl Harness {
             &mut self.zero_input_count,
             self.frametime_low,
             self.frametime_high,
+            64, // harness cpu_mhz
         );
 
         // Apply transfer actions
-        use rm32::transfer::{DetectedProtocol, TransferAction};
         match actions.action {
             TransferAction::InputDetected(proto) => {
                 self.shared.set_input_set(true);
@@ -291,6 +344,10 @@ impl Harness {
                 if self.edt_armed || value == 0 {
                     self.shared.set_newinput(value);
                 }
+                // EDT disarm: zero throttle with EDT_ARM_ENABLE clears EDT_ARMED
+                if value == 0 && self.edt_arm_enable {
+                    self.edt_armed = false;
+                }
                 if telemetry {
                     self.shared.set_send_telemetry(true);
                 }
@@ -302,7 +359,6 @@ impl Harness {
                     self.shared.set_send_telemetry(true);
                 }
                 self.shared.set_signal_timeout(0);
-                use rm32::dshot_commands::CommandResult;
                 let mut fwd = self.commutation.forward();
                 let result = self.cmd_proc.process(
                     cmd,
@@ -311,7 +367,7 @@ impl Harness {
                     &mut self.config,
                     &mut fwd,
                     &mut self.edt_armed,
-                    false,
+                    self.edt_arm_enable,
                 );
                 self.commutation.set_forward(fwd);
                 match result {
@@ -332,11 +388,23 @@ impl Harness {
             TransferAction::ServoCalibrating => {
                 self.shared.set_signal_timeout(0);
             }
+            TransferAction::ServoCalibrationDone {
+                low_threshold,
+                high_threshold,
+            } => {
+                self.config.servo_low_threshold = low_threshold;
+                self.config.servo_high_threshold = high_threshold;
+                self.shared.set_save_settings_flag(true);
+                self.shared.set_signal_timeout(0);
+            }
             TransferAction::None => {}
         }
         if let Some((low, high)) = actions.frametime {
             self.frametime_low = low;
             self.frametime_high = high;
+        }
+        if actions.bidir_detected {
+            self.shared.set_dshot_telemetry(true);
         }
     }
 
@@ -350,6 +418,39 @@ impl Harness {
             self.shared.set_signal_timeout(0);
         }
 
+        // Sine mode stepping (same logic as firmware main loop)
+        if let Some((result, (ch1, ch2, ch3))) =
+            self.system.tick_sine(&self.shared, &self.config, 60, 1999)
+        {
+            self.hal.pwm.set_compare1(ch1);
+            self.hal.pwm.set_compare2(ch2);
+            self.hal.pwm.set_compare3(ch3);
+            match result {
+                rm32::sine::SineStepResult::Continue(_) => {}
+                rm32::sine::SineStepResult::Changeover {
+                    commutation_interval,
+                    step,
+                } => {
+                    self.system.apply_sine_changeover(
+                        &self.shared,
+                        &mut self.main,
+                        commutation_interval,
+                    );
+                    self.commutation.set_step(step);
+                    self.hal.phase.com_step(step);
+                }
+                rm32::sine::SineStepResult::Idle => {
+                    let brake = rm32::system::SystemTick::handle_sine_idle(
+                        &self.shared,
+                        &self.config,
+                        1999,
+                    );
+                    self.system.input_state.set_prop_brake_active(brake);
+                    self.shared.set_prop_brake_active(brake);
+                }
+            }
+        }
+
         // Advance interval timer
         self.hal.interval.count += 1;
 
@@ -359,32 +460,38 @@ impl Harness {
             self.do_transfer = false;
         }
 
-        // --- Input processing (shared library function) ---
+        // --- Shared pipeline via run_tick (same orchestration as firmware) ---
         self.main.config = self.config;
-        self.system.tick_input(&self.shared, &mut self.main);
 
-        // --- ISR tick (harness runs inline, firmware runs in actual ISR) ---
-        let mut ctx = MotorContext {
-            commutation: &mut self.commutation,
-            bemf: &mut self.bemf,
-            duty: &mut self.duty,
-            config: &self.config,
-            armed_timeout_count: &mut self.armed_timeout_count,
-            voltage_based_ramp: false,
-            shared: &self.shared,
-            hal: &mut self.hal,
-        };
-        isr_logic::ten_khz_tick(&mut ctx);
+        // Borrow ISR-owned fields for the closure
+        let commutation = &mut self.commutation;
+        let bemf = &mut self.bemf;
+        let duty = &mut self.duty;
+        let config = &self.config;
+        let armed_timeout_count = &mut self.armed_timeout_count;
+        let shared = &self.shared;
+        let hal = &mut self.hal;
 
-        // Sync desync_check from commutation before main.tick()
-        if self.commutation.desync_check() {
-            self.main.set_desync_check(true);
-            self.commutation.set_desync_check(false);
-        }
-
-        // --- Main loop (shared library function) ---
-        self.system
-            .tick_main(&self.shared, &mut self.main, &mut self.adc, &mut self.telem);
+        self.system.run_tick(
+            shared,
+            &mut self.main,
+            &mut self.adc,
+            &mut self.telem,
+            || {
+                // ISR tick (harness runs inline)
+                let mut ctx = MotorContext {
+                    commutation,
+                    bemf,
+                    duty,
+                    config,
+                    armed_timeout_count,
+                    voltage_based_ramp: false,
+                    shared,
+                    hal,
+                };
+                isr_logic::ten_khz_tick(&mut ctx);
+            },
+        );
 
         self.tick_count += 1;
     }
@@ -398,13 +505,14 @@ impl Harness {
              input={} adjusted_input={} newinput={} \
              bemfcounter={} zcfound={} rising={} \
              old_routine={} stepper_sine={} \
-             signaltimeout={} armed_timeout_count={} \
+             signaltimeout={} armed_timeout_count={} interval_timer_count={} \
              battery_voltage={} actual_current={} degrees_celsius={} \
              last_duty_cycle={} prop_brake_active={} \
              inputSet={} dshot={} servoPwm={} \
              pwm_duty={} pwm_arr={} pwm_duty_count={} \
              duty_cycle_maximum={} filter_level={} \
-             send_telemetry={} send_esc_info_flag={}",
+             send_telemetry={} send_esc_info_flag={} \
+             alloff_count={} fullbrake_count={} mask_interrupts_count={}",
             self.tick_count,
             self.shared.armed() as i32,
             self.shared.running() as i32,
@@ -428,6 +536,7 @@ impl Harness {
             self.shared.stepper_sine() as i32,
             self.shared.signal_timeout(),
             self.armed_timeout_count,
+            self.shared.interval_timer_count(),
             self.main.measurements().battery_voltage().0,
             self.main.measurements().actual_current().0,
             self.main.measurements().degrees_celsius().0,
@@ -443,6 +552,9 @@ impl Harness {
             self.bemf.filter_level(),
             self.shared.send_telemetry() as i32,
             self.shared.send_esc_info_flag() as i32,
+            self.hal_counts.all_off.get(),
+            self.hal_counts.full_brake.get(),
+            self.hal_counts.mask_interrupts.get(),
         );
         io::stdout().flush().unwrap();
     }
@@ -467,7 +579,7 @@ impl Harness {
             }
             "zc" => {
                 if v == 1 {
-                    isr_logic::bemf_zero_cross(
+                    let _ = isr_logic::bemf_zero_cross(
                         &self.commutation,
                         &mut self.bemf,
                         &mut self.hal.comp,
@@ -481,6 +593,8 @@ impl Harness {
                         &mut self.hal.com_timer,
                         &mut self.hal.comp,
                         &mut self.hal.phase,
+                        self.config.bi_direction != 0,
+                        self.config.stall_protection != 0 || self.config.rc_car_reverse != 0,
                     );
                 }
             }
@@ -532,7 +646,7 @@ impl Harness {
             "commutation_interval" => self.shared.set_commutation_interval(v as u32),
             "zero_input_count" => self.zero_input_count = v as u16,
             "EDT_ARMED" => self.edt_armed = v != 0,
-            "EDT_ARM_ENABLE" => {}
+            "EDT_ARM_ENABLE" => self.edt_arm_enable = v != 0,
             "dshot_telemetry" => self.shared.set_dshot_telemetry(v != 0),
             "signaltimeout" => self.shared.set_signal_timeout(v as u16),
             "cell_count" => self.main.cell_count = v as u8, // pub field

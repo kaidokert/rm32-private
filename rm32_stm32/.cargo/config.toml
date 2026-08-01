@@ -3,3 +3,10 @@ target = "thumbv6m-none-eabi"
 
 [target.thumbv6m-none-eabi]
 rustflags = ["-C", "link-arg=-Tlink.x"]
+
+[target.thumbv7em-none-eabi]
+rustflags = ["-C", "link-arg=-Tlink.x"]
+
+[target.thumbv7em-none-eabihf]
+runner = "probe-rs run --chip STM32L431KCUx --probe 0483:374f:0037002F3234510836303532"
+rustflags = ["-C", "link-arg=-Tlink.x"]

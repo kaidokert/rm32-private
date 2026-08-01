@@ -6,6 +6,8 @@
 #![no_std]
 
 pub mod bemf;
+pub mod bench_input;
+pub mod blackbox;
 pub mod board;
 pub mod brushed;
 pub mod commutation;
@@ -26,6 +28,7 @@ pub mod main_state;
 pub mod motor_mode;
 pub mod ntc;
 pub mod pid;
+pub mod reset_cause;
 pub mod servo;
 pub mod shared_comm;
 pub mod shared_state;

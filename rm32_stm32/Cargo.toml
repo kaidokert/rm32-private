@@ -9,6 +9,8 @@ cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 embedded-hal = "1.0"
 portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
+rtt-target = "0.5"
+heapless = "0.8"
 
 # MCU-specific HAL crates (only one active at a time)
 stm32g0xx-hal = { git = "https://github.com/stm32-rs/stm32g0xx-hal", features = ["stm32g071"], optional = true }
@@ -20,12 +22,50 @@ stm32g4xx-hal = { version = "0.1", features = ["stm32g431", "rt"], optional = tr
 name = "rm32_firmware"
 path = "src/bin/main.rs"
 
+# Minimal clock-tree bring-up — used for bit-for-bit register parity vs AM32.
+# Builds standalone (no rm32_stm32 lib linkage), L431-only.
+[[example]]
+name = "bringup"
+path = "examples/bringup.rs"
+required-features = ["stm32l431"]
+
+# Same bring-up but written with typed PAC field accessors (firmware style).
+[[example]]
+name = "bringup_pac"
+path = "examples/bringup_pac.rs"
+required-features = ["stm32l431"]
+
 [features]
 default = ["stm32g071"]
 stm32g071 = ["dep:stm32g0xx-hal"]
 stm32f051 = ["dep:stm32f0xx-hal"]
 stm32l431 = ["dep:stm32l4xx-hal"]
 stm32g431 = ["dep:stm32g4xx-hal"]
+
+# Bench-debug: hijack the AM32 KISS telemetry pin (PB6 / USART1 TX on L431)
+# for a plaintext debug log at 115200 8N1. Wire a USB-serial dongle to PB6
+# and tail the port. Persistent across resets, survives panics.
+debuguart = []
+
+# Bench control: UART throttle on PA2 (USART2 RX @2M via SWAP) replacing
+# the DShot/PWM input-capture path, + debuguart TX bumped to 2M push-pull.
+# Drives rm32 from the minz bench toolchain (uart_cmd.py / fly.py).
+# L431-only. Mutually exclusive with DShot input by construction.
+benchuart = ["debuguart"]
+
+# 64-event freeze-on-fault motor-event black box (rm32::blackbox +
+# rm32_stm32::bench_bb). M4 targets only (DWT timestamps). The 'b' dump
+# command needs benchuart; recording/freeze work without it.
+blackbox = []
+
+# ZC_TRACE: minz-wire-identical 15-byte per-commutation stream with
+# 50-on/50-off batch decimation. 'Z' toggle + drain need benchuart.
+zctrace = []
+
+# Bench-debug: when on, main() bypasses normal startup and runs ONLY the
+# AM32-matching register init from `mcu::bringup::run_and_spin()`. Lets us
+# diff the firmware's register state against AM32's directly. L431-only.
+bringup = []
 
 [build-dependencies]
 serde = { version = "1", features = ["derive"] }

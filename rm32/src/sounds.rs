@@ -57,18 +57,19 @@ impl Sounds {
     }
 
     /// Startup tune: plays BlueJay tune if present in EEPROM, else default 3-note tune.
+    ///
+    /// Called from boot path with interrupts already disabled. Does not enable
+    /// interrupts on exit — caller controls global IRQ state.
     pub fn play_startup(
         &self,
         pwm: &mut impl PwmOutput,
         phase: &mut impl PhaseOutput,
         sys: &mut impl System,
     ) {
-        sys.disable_irq();
         self.play_note(pwm, phase, sys, 55, 3, 200);
         self.play_note(pwm, phase, sys, 40, 5, 200);
         self.play_note(pwm, phase, sys, 25, 6, 200);
         self.silence(pwm, phase);
-        sys.enable_irq();
     }
 
     /// Startup with BlueJay tune check: plays custom tune if EEPROM tune data exists.

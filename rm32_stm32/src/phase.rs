@@ -17,6 +17,171 @@ use rm32::hal::PhaseOutput;
 const MODE_OUTPUT: u32 = 0b01;
 const MODE_ALTERNATE: u32 = 0b10;
 
+/// Bench live drive-mode override ('D' command): 0 = follow config,
+/// 1 = force diode (comp off), 2 = force complementary. Lets the bench
+/// flip drive physics mid-run to separate steady-state comp behavior
+/// from the spin-up churn. Read once per com_step — negligible.
+#[cfg(feature = "benchuart")]
+pub static COMP_PWM_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// Bench live commutation-writer toggle ('E' command): 0 = sequential
+/// per-pin (AM32 phaseouts order), 1 = atomic (clone set_phase_roles:
+/// one BSRR write per port then one MODER write per port — final pin
+/// levels snap simultaneously, no intermediate bridge states).
+///
+/// DEFAULT: ATOMIC (1). Deaf-window A/B at 70%/comp (07-26): sequential
+/// ~1 per 1-2.5k windows, atomic 4 per 89k (10-20x), diode 1 per 90k,
+/// clone 0 per 281k. The sequential interleave's transient bridge
+/// states during phase handover are the dominant source of the
+/// deaf-window/orbit-entry class under complementary drive. (The old
+/// "atomic = null" verdict was measured on camp-storm entries — a
+/// metric blind to deaf windows.)
+#[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+pub static PHASE_ATOMIC_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
+
+/// Storm-hunt: count of phase_pwm calls that took the DIODE branch.
+#[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+pub static DIODE_PWM_CALLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Raw COMP_PWM_LIVE value observed by the most recent diode-branch
+/// phase_pwm call (storm hunt).
+#[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+pub static DIODE_SEEN_VAL: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0xFF);
+
+/// Shadow of COMP_PWM_LIVE, written ONLY by the legit writers (boot
+/// default + the 'D' handler). Canary checkpoints compare the live
+/// static against this; a mismatch = memory corruption caught between
+/// two checkpoints, and the canary repairs from the shadow.
+#[cfg(feature = "benchuart")]
+pub static COMP_PWM_SHADOW: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// Canary check: per-site corruption counters (site 0..8).
+#[cfg(feature = "benchuart")]
+pub static CANARY_HITS: [core::sync::atomic::AtomicU16; 8] = [
+    core::sync::atomic::AtomicU16::new(0),
+    core::sync::atomic::AtomicU16::new(0),
+    core::sync::atomic::AtomicU16::new(0),
+    core::sync::atomic::AtomicU16::new(0),
+    core::sync::atomic::AtomicU16::new(0),
+    core::sync::atomic::AtomicU16::new(0),
+    core::sync::atomic::AtomicU16::new(0),
+    core::sync::atomic::AtomicU16::new(0),
+];
+
+/// Compare live vs shadow at checkpoint `site`; on mismatch count it
+/// and REPAIR from the shadow (mitigation doubles as detection).
+#[cfg(feature = "benchuart")]
+#[inline]
+pub fn canary(site: usize) {
+    use core::sync::atomic::Ordering;
+    let live = COMP_PWM_LIVE.load(Ordering::Relaxed);
+    let shadow = COMP_PWM_SHADOW.load(Ordering::Relaxed);
+    if live != shadow {
+        if let Some(c) = CANARY_HITS.get(site) {
+            let v = c.load(Ordering::Relaxed);
+            c.store(v.saturating_add(1), Ordering::Relaxed);
+        }
+        COMP_PWM_LIVE.store(shadow, Ordering::Relaxed);
+    }
+}
+
+/// L431 atomic com_step, ported from the clone's proven
+/// `set_phase_roles` (minz/src/tim1_motor_pwm.rs) onto rm32's AM32
+/// pin naming: A = PA10/PB1, B = PA9/PB0, C = PA8/PA7 (hi/lo).
+/// BSRR first (one write per port), MODER second (one modify per
+/// port). The sequential writer's six ordered pin ops span ~1-2 µs of
+/// mixed old/new bridge states per commutation; this path has none.
+#[cfg(feature = "stm32l431")]
+pub fn l431_atomic_com_step(step: u8, comp: bool) {
+    const AF: u32 = 0b10;
+    const OUT: u32 = 0b01;
+    // (hi_is_gpioa always true; lo: A,B on GPIOB pins 1,0; C on GPIOA pin 7)
+    // phase index 0=A,1=B,2=C → (hi_pin@GPIOA, lo_pin, lo_on_gpioa)
+    const PINS: [(u32, u32, bool); 3] = [(10, 1, false), (9, 0, false), (8, 7, true)];
+    // per step (1-6): (pwm_phase, low_phase, float_phase)
+    const ROLES: [(usize, usize, usize); 6] = [
+        (0, 1, 2),
+        (2, 1, 0),
+        (2, 0, 1),
+        (1, 0, 2),
+        (1, 2, 0),
+        (0, 2, 1),
+    ];
+    let Some(&(pwm, low, fl)) = ROLES.get((step as usize).wrapping_sub(1)) else {
+        return;
+    };
+
+    let mut bsrr_a = 0u32;
+    let mut bsrr_b = 0u32;
+    let mut moder_a_val = 0u32;
+    let mut moder_a_mask = 0u32;
+    let mut moder_b_val = 0u32;
+    let mut moder_b_mask = 0u32;
+    let mut set_a = |pin: u32, mode: u32| {
+        moder_a_mask |= 0b11 << (pin * 2);
+        moder_a_val |= mode << (pin * 2);
+    };
+    let mut set_b = |pin: u32, mode: u32| {
+        moder_b_mask |= 0b11 << (pin * 2);
+        moder_b_val |= mode << (pin * 2);
+    };
+
+    for (idx, &(hi, lo, lo_a)) in PINS.iter().enumerate() {
+        let (hi_mode, lo_mode, hi_lvl, lo_lvl) = if idx == pwm {
+            // driven leg: hi AF; lo AF (complementary) or OUTPUT-low (diode)
+            (
+                AF,
+                if comp { AF } else { OUT },
+                None,
+                if comp { None } else { Some(false) },
+            )
+        } else if idx == low {
+            // low leg: hi off, low FET solid on
+            (OUT, OUT, Some(false), Some(true))
+        } else {
+            debug_assert_eq!(idx, fl);
+            // floating leg: both off
+            (OUT, OUT, Some(false), Some(false))
+        };
+        set_a(hi, hi_mode);
+        if let Some(l) = hi_lvl {
+            bsrr_a |= 1 << (hi + if l { 0 } else { 16 });
+        }
+        if lo_a {
+            set_a(lo, lo_mode);
+            if let Some(l) = lo_lvl {
+                bsrr_a |= 1 << (lo + if l { 0 } else { 16 });
+            }
+        } else {
+            set_b(lo, lo_mode);
+            if let Some(l) = lo_lvl {
+                bsrr_b |= 1 << (lo + if l { 0 } else { 16 });
+            }
+        }
+    }
+
+    const GPIOA: u32 = 0x4800_0000;
+    const GPIOB: u32 = 0x4800_0400;
+    unsafe {
+        if bsrr_a != 0 {
+            core::ptr::write_volatile((GPIOA + 0x18) as *mut u32, bsrr_a);
+        }
+        if bsrr_b != 0 {
+            core::ptr::write_volatile((GPIOB + 0x18) as *mut u32, bsrr_b);
+        }
+        let ma = (GPIOA) as *mut u32;
+        core::ptr::write_volatile(
+            ma,
+            (core::ptr::read_volatile(ma) & !moder_a_mask) | moder_a_val,
+        );
+        let mb = (GPIOB) as *mut u32;
+        core::ptr::write_volatile(
+            mb,
+            (core::ptr::read_volatile(mb) & !moder_b_mask) | moder_b_val,
+        );
+    }
+}
+
 /// Pulse output toggle function — stored as fn pointer to avoid storing raw addresses.
 /// Monomorphized per pin type at `enable_pulse_output` call site.
 type PulseToggleFn = fn(u32);
@@ -57,6 +222,18 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         }
     }
 
+    /// Wire the LOADED config's comp_pwm into the driver. The per-MCU
+    /// init constructs the driver before the EEPROM config exists, with
+    /// comp_pwm=false as the safe idle default — main MUST call this
+    /// after config load or every commutation runs non-complementary
+    /// (low-side pin left in GPIO-output during the driven phase; the
+    /// freewheel goes through the body diode instead of the low FET).
+    /// That silent mismatch was the 8%-wrong-sided-window disparity vs
+    /// the clone: config said damped PWM, silicon ran undamped.
+    pub fn set_comp_pwm(&mut self, v: bool) {
+        self.comp_pwm = v;
+    }
+
     /// Enable RPM pulse output on the given pin.
     /// Creates a monomorphized toggle function for the pin's port.
     pub fn enable_pulse_output<P: GpioPin>(&mut self) {
@@ -74,13 +251,46 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     /// Normal: low-side alternate (comp_pwm) or output LOW.
     /// Bridge: enable pin output HIGH (comp_pwm) or no-op.
     #[inline]
+    fn effective_comp_pwm(&self) -> bool {
+        #[cfg(feature = "benchuart")]
+        {
+            match COMP_PWM_LIVE.load(core::sync::atomic::Ordering::Relaxed) {
+                1 => return false,
+                2 => return true,
+                // 3 = AUTO: complementary only in interrupt mode; DIODE
+                // during polling/grind. Hypothesis under test: comp
+                // drive's synchronous rectification BRAKES the rotor the
+                // polling restart is accelerating, making the churn
+                // attractor self-sustaining (diode re-locks fine; comp
+                // never recovers). Auto-fallback breaks the loop.
+                3 => return !crate::isr::shared().old_routine(),
+                _ => {}
+            }
+        }
+        self.comp_pwm
+    }
+
+    #[inline]
     fn phase_pwm<H: GpioPin, L: GpioPin>(&self) {
+        let comp = self.effective_comp_pwm();
+        // Storm-hunt tap: count diode-style pwm calls; if this climbs
+        // while the live override forces complementary, some caller
+        // reaches phase_pwm with comp=false (the reverter fingerprint).
+        #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+        if !comp {
+            DIODE_PWM_CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            // capture the raw override value the diode branch saw
+            DIODE_SEEN_VAL.store(
+                COMP_PWM_LIVE.load(core::sync::atomic::Ordering::Relaxed),
+                core::sync::atomic::Ordering::Relaxed,
+            );
+        }
         if self.bridge_enable {
-            if self.comp_pwm {
+            if comp {
                 L::set_mode(MODE_OUTPUT);
                 L::set_high(); // enable on
             }
-        } else if !self.comp_pwm {
+        } else if !comp {
             L::set_mode(MODE_OUTPUT);
             L::set_low();
         } else {
@@ -112,6 +322,14 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     for PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
     fn com_step(&mut self, step: u8) {
+        #[cfg(feature = "benchuart")]
+        canary(7); // site 7: com_step entry
+        #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
+        if !self.bridge_enable && PHASE_ATOMIC_LIVE.load(core::sync::atomic::Ordering::Relaxed) != 0
+        {
+            l431_atomic_com_step(step, self.effective_comp_pwm());
+            return;
+        }
         match step {
             1 => {
                 Self::phase_float::<CH, CL>();

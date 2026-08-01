@@ -2,6 +2,7 @@
 //!
 //! Decomposed into focused sub-structs that each own a coherent slice of state.
 
+use crate::constants::*;
 use crate::pid::Pid;
 
 /// BEMF zero-cross detection state.
@@ -85,7 +86,6 @@ impl DutyState {
         average_interval: u32,
         voltage_based: bool,
     ) {
-        use crate::constants::*;
         if self.ramp_count > self.ramp_divider as u16 {
             self.ramp_count = 0;
             if voltage_based {
@@ -139,6 +139,23 @@ impl DutyState {
         self.last = self.min_startup;
     }
 
+    /// Desync recovery: drop the applied duty to half the startup value so
+    /// the restart ramps from low instead of pushing full duty into an
+    /// unlocked field (AM32 `last_duty_cycle = min_startup_duty / 2`; minz
+    /// am32_control.rs:284).
+    pub(crate) fn kick_down(&mut self) {
+        self.last = self.last.min(self.min_startup / 2);
+    }
+
+    /// Fast-rotor desync recovery (kept divergence): halve the applied
+    /// duty, floored at the AM32 kick level. The rotor is known locked,
+    /// so the goal is a brief torque shed — recovery from duty/2 runs
+    /// at the high-rpm ramp (~2 ms) instead of the ~15-20 ms startup
+    /// crawl from min_startup/2 that reads as an audible chop.
+    pub(crate) fn kick_half(&mut self) {
+        self.last = self.last.min((self.last / 2).max(self.min_startup / 2));
+    }
+
     /// Increment ramp counter (called each ISR tick).
     pub(crate) fn increment_ramp_count(&mut self) {
         self.ramp_count += 1;
@@ -147,6 +164,32 @@ impl DutyState {
     /// Set ramp divider (test setup).
     pub fn set_ramp_divider(&mut self, v: u8) {
         self.ramp_divider = v;
+    }
+
+    /// Apply EEPROM max_ramp to ramp rate profiles.
+    ///
+    /// C logic: when `max_ramp < 10`, uses raw value for all profiles with
+    /// ramp_divider=9 (slow ramp mode). Otherwise clamps each profile to
+    /// max_ramp/10 (conditional minimum — only reduces, never increases).
+    pub fn apply_max_ramp(&mut self, max_ramp: u8) {
+        if max_ramp < 10 {
+            self.ramp_divider = 9;
+            self.max_ramp_startup = max_ramp;
+            self.max_ramp_low_rpm = max_ramp;
+            self.max_ramp_high_rpm = max_ramp;
+        } else {
+            self.ramp_divider = 0;
+            let scaled = max_ramp / 10;
+            if scaled < self.max_ramp_startup {
+                self.max_ramp_startup = scaled;
+            }
+            if scaled < self.max_ramp_low_rpm {
+                self.max_ramp_low_rpm = scaled;
+            }
+            if scaled < self.max_ramp_high_rpm {
+                self.max_ramp_high_rpm = scaled;
+            }
+        }
     }
 
     /// Compute PWM compare value from duty cycle and timer auto-reload.
@@ -406,7 +449,10 @@ impl Default for BemfState {
             min_counts_up: 2,
             min_counts_down: 2,
             bad_count: 0,
-            bad_count_threshold: 2,
+            // AM32: CPU_FREQUENCY_MHZ / 24 → 3 on the 80 MHz L431
+            // (main.c:550). Was 2 — one sample stricter than the
+            // reference, compounding standstill-window starvation.
+            bad_count_threshold: 3,
             filter_level: 5,
             wait_time: 0,
             last_zc_time: 0,
@@ -451,6 +497,18 @@ impl BemfState {
         !self.zc_found && self.counter > threshold
     }
 
+    /// Interval-timer count at the most recent accepted zero-cross.
+    /// Read-only view for firmware-side diagnostics (ZC trace).
+    pub fn this_zc_time(&self) -> u16 {
+        self.this_zc_time
+    }
+
+    /// Commutation wait time computed from the last ZC. Read-only view
+    /// for firmware-side diagnostics (ZC trace).
+    pub fn wait_time(&self) -> u16 {
+        self.wait_time
+    }
+
     /// Record a zero-cross detection: update timing, compute new CI and wait_time.
     /// Returns the new commutation interval.
     pub(crate) fn record_zero_cross(
@@ -463,7 +521,7 @@ impl BemfState {
         self.this_zc_time = interval_count;
         let new_ci = (self.this_zc_time as u32 + 3 * commutation_interval) / 4;
         let advance = (self.temp_advance as u32 * new_ci) >> crate::constants::ADVANCE_SHIFT;
-        self.wait_time = ((new_ci / 2) as u16).wrapping_sub(advance as u16);
+        self.wait_time = ((new_ci / 2) as u16).saturating_sub(advance as u16);
         new_ci
     }
 
@@ -472,7 +530,7 @@ impl BemfState {
         let zc_avg = (self.last_zc_time as u32 + self.this_zc_time as u32) >> 1;
         let new_ci = (commutation_interval + zc_avg) >> 1;
         let advance = (new_ci * self.temp_advance as u32) >> crate::constants::ADVANCE_SHIFT;
-        self.wait_time = ((new_ci >> 1) as u16).wrapping_sub(advance as u16);
+        self.wait_time = ((new_ci >> 1) as u16).saturating_sub(advance as u16);
         new_ci
     }
 
@@ -510,7 +568,7 @@ impl BemfState {
             if current_state {
                 self.counter += 1;
             } else {
-                self.bad_count += 1;
+                self.bad_count = self.bad_count.saturating_add(1);
                 if self.bad_count > self.bad_count_threshold {
                     self.counter = 0;
                 }
@@ -518,7 +576,7 @@ impl BemfState {
         } else if !current_state {
             self.counter += 1;
         } else {
-            self.bad_count += 1;
+            self.bad_count = self.bad_count.saturating_add(1);
             if self.bad_count > self.bad_count_threshold {
                 self.counter = 0;
             }
@@ -591,6 +649,11 @@ impl Default for PidState {
 }
 
 impl ProtectionState {
+    /// Read low voltage count.
+    pub fn low_voltage_count(&self) -> u16 {
+        self.low_voltage_count
+    }
+
     /// Set low voltage count (for testing/harness).
     pub fn set_low_voltage_count(&mut self, v: u16) {
         self.low_voltage_count = v;

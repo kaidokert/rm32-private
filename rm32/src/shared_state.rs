@@ -27,7 +27,11 @@ pub struct SharedState {
     dshot_telemetry: AtomicBool,
     save_settings_flag: AtomicBool,
     send_esc_info_flag: AtomicBool,
-
+    /// Set by main_state when signal_timeout exceeds threshold (matching AM32's
+    /// behavior at Src/main.c:1892-1918). Main loop polls and calls
+    /// `System::reset()`, which sets RCC_CSR.SFTRSTF; the bootloader sees that
+    /// flag and skips its first-chance signal-pin check, dropping into the DFU
+    /// loop so the AM32 Configurator passthrough / BLHeli protocol can talk.
     // Timing (ISR writes, main reads)
     zero_crosses: AtomicU32,
     commutation_interval: AtomicU32,
@@ -65,6 +69,42 @@ pub struct SharedState {
     min_bemf_counts: AtomicU8,     // min zero-cross detection threshold
     auto_advance: AtomicU8,        // commutation timing advance level
     prop_brake_active: AtomicBool, // proportional brake engaged (main sets, ISR reads)
+    isr_action: AtomicU8,          // main→ISR action request (IsrAction enum)
+    // Bench bisect: kept-divergence disable mask (bit0=stay-interrupt off,
+    // bit1=kick-half off, bit2=holdoff off, bit3=reclimb clamp off).
+    // 0 = all divergences active (normal). Bench-only writers.
+    bench_divergence_mask: AtomicU8,
+    changeover_step: AtomicU8, // sine changeover step (0=none, 1-6=pending)
+    desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
+    // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
+    dbg_crc_pass: AtomicU32,  // successful decode_frame CRC
+    dbg_crc_fail: AtomicU32,  // BadCrc / InvalidTiming returns
+    dbg_bidir_evt: AtomicU16, // monotonic count of bidir_detected=true returns
+    dbg_high_pin_n: AtomicU8, // snapshot of transfer.high_pin_count after process()
+    // Monotonic counter incremented from TIM6 ISR (20 kHz) — used to detect
+    // ISR-vs-main-loop stalls. If this advances normally between two main-
+    // loop log entries but main-loop counters don't, the main loop stalled
+    // while ISRs ran (likely ISR storm starving main). If this stalls too,
+    // the whole chip is frozen.
+    dbg_isr_tick: AtomicU32,
+    // Last-tick ISR duration (cycles). Each ISR brackets its body with
+    // DWT.CYCCNT reads and STORES the delta into the appropriate field.
+    // Single-writer per ISR; main loop READS the value (snapshot of most
+    // recent tick). Was fetch_max which adds an LDREX/STREX loop into the
+    // measurement window — store is a single STR, cheaper and produces a
+    // sample rather than a sticky maximum.
+    dbg_tim6_last_cyc: AtomicU32,  // ten_khz_tick (20 kHz)
+    dbg_tim14_last_cyc: AtomicU32, // commutation_timer_expired
+    dbg_comp_last_cyc: AtomicU32,  // bemf_zero_cross
+    dbg_dma_last_cyc: AtomicU32,   // DMA1_CH5 wrapper (input capture TC)
+    dbg_exti_last_cyc: AtomicU32,  // EXTI15_10 wrapper (frame processing)
+    dbg_main_last_cyc: AtomicU32,  // main-loop iter body (excludes wfi)
+    // 1 kHz dispatch counter — incremented by TIM6 ISR (20 kHz), read +
+    // reset by main loop when >= PID_LOOP_DIVIDER (20). Matches AM32's
+    // placement (uint16_t one_khz_loop_counter, ++'d in tenKhzRoutine at
+    // main.c:1317, checked at main.c:1397). Was on MainState until we
+    // decoupled main-loop rate from ISR rate (removed wfi).
+    one_khz_counter: AtomicU8,
 }
 
 impl Default for SharedState {
@@ -106,6 +146,105 @@ impl SharedState {
             min_bemf_counts: AtomicU8::new(2),
             auto_advance: AtomicU8::new(0),
             prop_brake_active: AtomicBool::new(false),
+            isr_action: AtomicU8::new(0), // IsrAction::None
+            bench_divergence_mask: AtomicU8::new(0),
+            changeover_step: AtomicU8::new(0),
+            desync_check_pending: AtomicBool::new(false),
+            dbg_crc_pass: AtomicU32::new(0),
+            dbg_crc_fail: AtomicU32::new(0),
+            dbg_bidir_evt: AtomicU16::new(0),
+            dbg_high_pin_n: AtomicU8::new(0),
+            dbg_isr_tick: AtomicU32::new(0),
+            dbg_tim6_last_cyc: AtomicU32::new(0),
+            dbg_tim14_last_cyc: AtomicU32::new(0),
+            dbg_comp_last_cyc: AtomicU32::new(0),
+            dbg_dma_last_cyc: AtomicU32::new(0),
+            dbg_exti_last_cyc: AtomicU32::new(0),
+            dbg_main_last_cyc: AtomicU32::new(0),
+            one_khz_counter: AtomicU8::new(0),
+        }
+    }
+
+    // --- Bench debug counters (bidir DSHOT investigation) ---
+    pub fn dbg_crc_pass(&self) -> u32 {
+        self.dbg_crc_pass.load(ACQ)
+    }
+    pub fn dbg_crc_pass_inc(&self) {
+        self.dbg_crc_pass.fetch_add(1, REL);
+    }
+    pub fn dbg_crc_fail(&self) -> u32 {
+        self.dbg_crc_fail.load(ACQ)
+    }
+    pub fn dbg_crc_fail_inc(&self) {
+        self.dbg_crc_fail.fetch_add(1, REL);
+    }
+    pub fn dbg_bidir_evt(&self) -> u16 {
+        self.dbg_bidir_evt.load(ACQ)
+    }
+    pub fn dbg_bidir_evt_inc(&self) {
+        self.dbg_bidir_evt.fetch_add(1, REL);
+    }
+    pub fn dbg_high_pin_n(&self) -> u8 {
+        self.dbg_high_pin_n.load(ACQ)
+    }
+    pub fn dbg_set_high_pin_n(&self, v: u8) {
+        self.dbg_high_pin_n.store(v, REL);
+    }
+    pub fn dbg_isr_tick(&self) -> u32 {
+        self.dbg_isr_tick.load(ACQ)
+    }
+    pub fn dbg_isr_tick_inc(&self) {
+        self.dbg_isr_tick.fetch_add(1, REL);
+    }
+    pub fn dbg_tim6_last_cyc(&self) -> u32 {
+        self.dbg_tim6_last_cyc.load(ACQ)
+    }
+    pub fn dbg_tim6_last_cyc_set(&self, cycles: u32) {
+        self.dbg_tim6_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_tim14_last_cyc(&self) -> u32 {
+        self.dbg_tim14_last_cyc.load(ACQ)
+    }
+    pub fn dbg_tim14_last_cyc_set(&self, cycles: u32) {
+        self.dbg_tim14_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_comp_last_cyc(&self) -> u32 {
+        self.dbg_comp_last_cyc.load(ACQ)
+    }
+    pub fn dbg_comp_last_cyc_set(&self, cycles: u32) {
+        self.dbg_comp_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_dma_last_cyc(&self) -> u32 {
+        self.dbg_dma_last_cyc.load(ACQ)
+    }
+    pub fn dbg_dma_last_cyc_set(&self, cycles: u32) {
+        self.dbg_dma_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_exti_last_cyc(&self) -> u32 {
+        self.dbg_exti_last_cyc.load(ACQ)
+    }
+    pub fn dbg_exti_last_cyc_set(&self, cycles: u32) {
+        self.dbg_exti_last_cyc.store(cycles, REL);
+    }
+    pub fn dbg_main_last_cyc(&self) -> u32 {
+        self.dbg_main_last_cyc.load(ACQ)
+    }
+    pub fn dbg_main_last_cyc_set(&self, cycles: u32) {
+        self.dbg_main_last_cyc.store(cycles, REL);
+    }
+    /// Increment 1 kHz dispatch counter (TIM6 ISR side, 20 kHz).
+    pub fn one_khz_counter_inc(&self) {
+        self.one_khz_counter.fetch_add(1, REL);
+    }
+    /// Read the 1 kHz dispatch counter and reset to 0 if it has reached
+    /// `divider`. Returns true if the 1 kHz block should fire this iter.
+    /// Main-loop side. Matches AM32 main.c:1397 `> PID_LOOP_DIVIDER`.
+    pub fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
+        if self.one_khz_counter.load(ACQ) > divider {
+            self.one_khz_counter.store(0, REL);
+            true
+        } else {
+            false
         }
     }
 
@@ -426,6 +565,44 @@ impl SharedState {
     pub fn set_prop_brake_active(&self, v: bool) {
         self.prop_brake_active.store(v, REL);
     }
+    pub fn isr_action(&self) -> crate::shared_comm::IsrAction {
+        match self.isr_action.load(ACQ) {
+            1 => crate::shared_comm::IsrAction::ResetIntervalTimer,
+            2 => crate::shared_comm::IsrAction::DutyKickHalf,
+            3 => crate::shared_comm::IsrAction::DutyKickDown,
+            4 => crate::shared_comm::IsrAction::CommutateKick,
+            5 => crate::shared_comm::IsrAction::AllOff,
+            _ => crate::shared_comm::IsrAction::None,
+        }
+    }
+    pub fn request_isr_action(&self, action: crate::shared_comm::IsrAction) {
+        // Only upgrade priority — don't downgrade AllOff to ResetIntervalTimer
+        let new = action as u8;
+        let _ = self.isr_action.fetch_max(new, REL);
+    }
+    pub fn divergence_mask(&self) -> u8 {
+        self.bench_divergence_mask.load(ACQ)
+    }
+    pub fn toggle_divergence_bit(&self, bit: u8) -> u8 {
+        let v = self.bench_divergence_mask.load(ACQ) ^ (1 << bit);
+        self.bench_divergence_mask.store(v, REL);
+        v
+    }
+    pub fn clear_isr_action(&self) {
+        self.isr_action.store(0, REL);
+    }
+    pub fn changeover_step(&self) -> u8 {
+        self.changeover_step.load(ACQ)
+    }
+    pub fn set_changeover_step(&self, step: u8) {
+        self.changeover_step.store(step, REL);
+    }
+    pub fn desync_check_pending(&self) -> bool {
+        self.desync_check_pending.load(ACQ)
+    }
+    pub fn set_desync_check_pending(&self, v: bool) {
+        self.desync_check_pending.store(v, REL);
+    }
 }
 
 impl crate::shared_comm::MotorState for SharedState {
@@ -500,6 +677,12 @@ impl crate::shared_comm::IsrTiming for SharedState {
     fn set_forward(&self, v: bool) {
         SharedState::set_forward(self, v);
     }
+    fn one_khz_counter_inc(&self) {
+        SharedState::one_khz_counter_inc(self);
+    }
+    fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
+        SharedState::one_khz_counter_check_and_reset(self, divider)
+    }
 }
 
 impl crate::shared_comm::MainControl for SharedState {
@@ -532,6 +715,27 @@ impl crate::shared_comm::MainControl for SharedState {
     }
     fn set_prop_brake_active(&self, v: bool) {
         SharedState::set_prop_brake_active(self, v);
+    }
+    fn isr_action(&self) -> crate::shared_comm::IsrAction {
+        SharedState::isr_action(self)
+    }
+    fn request_isr_action(&self, action: crate::shared_comm::IsrAction) {
+        SharedState::request_isr_action(self, action);
+    }
+    fn clear_isr_action(&self) {
+        SharedState::clear_isr_action(self);
+    }
+    fn changeover_step(&self) -> u8 {
+        SharedState::changeover_step(self)
+    }
+    fn set_changeover_step(&self, step: u8) {
+        SharedState::set_changeover_step(self, step);
+    }
+    fn desync_check_pending(&self) -> bool {
+        SharedState::desync_check_pending(self)
+    }
+    fn set_desync_check_pending(&self, v: bool) {
+        SharedState::set_desync_check_pending(self, v);
     }
     fn tim1_arr(&self) -> u16 {
         SharedState::tim1_arr(self)

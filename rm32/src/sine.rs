@@ -136,6 +136,10 @@ pub fn sine_step(
         } else {
             // Higher throttle — accelerate to changeover
             positions.advance(forward);
+            // C: input > 200 forces phase_A_position = 0 for immediate changeover
+            if input > crate::constants::SINE_CHANGEOVER_THROTTLE {
+                positions.a = 0;
+            }
             let pwm = sine_drive(
                 positions,
                 gate_drive_offset,

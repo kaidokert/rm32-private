@@ -176,7 +176,11 @@ impl Tim2Interval {
         let raw = Tim2Raw;
         raw.modify_cr1(|v| v & !(1 << 0)); // CEN=0
         raw.write_psc(crate::mcu::Chip::TIMER_PSC as u32);
-        raw.write_arr(0xFFFF_FFFF);
+        // ARR = 0xFFFF (16-bit wrap, AM32-matched). TIM2 is 32-bit on L4/G4,
+        // but AM32's HAL_TIM_Base_Init writes only the low 16 bits, leaving
+        // the upper half at 0. Commutation interval measurement uses u16
+        // anyway. Matching this avoids any cross-wrap arithmetic surprises.
+        raw.write_arr(0xFFFF);
         raw.write_egr(1); // UG
         raw.write_cnt(0);
         raw.modify_cr1(|v| v | (1 << 0)); // CEN=1
@@ -194,7 +198,18 @@ impl IntervalTimer for Tim2Interval {
     }
 }
 
-/// One-shot commutation timer (TIM14 on G071/F051, TIM16 on L431/G431).
+/// Free-running commutation timer with ARPE (AM32 pattern).
+///
+/// TIM14 on G071/F051, TIM16 on L431/G431. Timer runs continuously from
+/// boot with CR1 = ARPE | CEN. set_and_enable() writes the new ARR (which
+/// goes to the preload register because ARPE=1) and force-loads it via UG,
+/// resetting CNT to 0. The timer never stops, so commutation timing has no
+/// disable→enable jitter gap.
+///
+/// Previous one-shot pattern (disable CEN, set ARR, re-enable CEN per
+/// commutation) introduced enough timing jitter to make motor control
+/// visibly choppy. Captured AM32 register dumps during motor spin show
+/// TIM16.CR1=0x81 (ARPE+CEN) which is what this matches.
 pub struct Tim14Com {
     raw: ComTimerRaw,
 }
@@ -212,19 +227,40 @@ impl Tim14Com {
         let raw = ComTimerRaw;
         raw.write_psc(crate::mcu::Chip::TIMER_PSC as u32);
         raw.write_arr(0xFFFF);
-        raw.write_egr(1);
+        raw.write_egr(1); // UG — latch PSC into active registers
+        // CR1 = CEN only, free-running. DELIBERATE divergence from
+        // AM32's CR1=0x81 (ARPE on): with ARPE, an arm's ARR write sits
+        // in preload until the PREVIOUS active ARR wraps — AM32 fires
+        // one commutation stale, and the boot value (0xFFFF = 32 ms)
+        // dead-starts rm32's polling path, which unlike AM32's inline
+        // zcfoundroutine commutates through this timer's ISR. ARPE off
+        // makes every arm's ARR immediately active: fires at exactly
+        // the requested wait for both polling and interrupt modes.
+        raw.modify_cr1(|v| v | (1 << 0));
         Self { raw }
     }
 }
 
 impl ComTimer for Tim14Com {
     fn set_and_enable(&mut self, timeout: u16) {
-        self.raw.modify_cr1(|v| v & !(1 << 0));
+        // AM32-verbatim SET_AND_ENABLE_COM_INT (peripherals.h:19-21):
+        // CNT=0, ARR=timeout, SR=0, UIE on. NO UG — the previous
+        // UG-based sequence had a clock-domain race: the UG-induced UIF
+        // sets in the (prescaled) timer clock domain AFTER the CPU's
+        // back-to-back SR=0 write has completed, so the "clear" cleared
+        // nothing and enabling UIE fired the ISR IMMEDIATELY — every
+        // commutation landed ~3 µs after the ZC accept (~30° effective
+        // advance) with wait_time computed but never applied. Caught by
+        // the edge probe: tim16_lat pinned at 6-8 ticks with arms of
+        // wait+1 (55-99); confirmed by in-ISR ARR/CNT16/CNT2 snapshots.
+        // With ARPE on, the ARR write lands in preload and latches at
+        // the next update — AM32's own stale-by-one quirk, mirrored.
+        #[cfg(feature = "zctrace")]
+        crate::edge_probe::armed(timeout);
         self.raw.write_cnt(0);
         self.raw.write_arr(timeout as u32);
         self.raw.write_sr(0);
-        self.raw.modify_dier(|v| v | 1);
-        self.raw.modify_cr1(|v| v | (1 << 0));
+        self.raw.modify_dier(|v| v | 1); // UIE
     }
 
     fn disable_interrupt(&mut self) {

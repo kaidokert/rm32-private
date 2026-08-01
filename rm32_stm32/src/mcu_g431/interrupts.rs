@@ -25,6 +25,17 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP1_2_3() {
+    // Ack COMP1/COMP2 EXTI pending flags (lines 21/22) at entry. The
+    // shared bemf_zero_cross has early-return paths that skip
+    // mask_interrupts (the only other place the lines are cleared) —
+    // without this pre-ack a rejected edge leaves the pending bit set
+    // and NVIC re-fires forever (ISR storm; same class as the fixed
+    // L431 COMP bug — see the contract note on
+    // rm32::control::isr_logic::bemf_zero_cross).
+    let exti = unsafe { &*pac::EXTI::PTR };
+    unsafe {
+        exti.pr1().write(|w| w.bits((1 << 21) | (1 << 22)));
+    }
     isr_handlers::handle_comp();
 }
 
@@ -55,19 +66,24 @@ fn EXTI15_10() {
     unsafe {
         exti.pr1().write(|w| w.bits(1 << 15));
     }
-    isr_handlers::handle_exti_frame();
+    let next_capture = isr_handlers::handle_exti_frame();
+
+    // Apply prescaler change if requested (protocol detection)
+    let tim15 = unsafe { &*pac::TIM15::PTR };
+    if let Some(psc) = next_capture.prescaler {
+        unsafe {
+            tim15.psc().write(|w| w.bits(psc as u32));
+            tim15.egr().write(|w| w.bits(1)); // UG
+        }
+    }
 
     // Re-enable DMA CH1 for next frame
-    let shared = crate::isr::shared();
-    let sz = if shared.servo_pwm() { 2u32 } else { 32 };
     let dma = unsafe { &*pac::DMA1::PTR };
     let ch1 = dma.ch1();
     unsafe {
-        ch1.ndtr().write(|w| w.bits(sz));
-        ch1.cr().modify(|r, w| w.bits(r.bits() | 1)); // Enable CH1
+        ch1.ndtr().write(|w| w.bits(next_capture.ndtr));
+        ch1.cr().modify(|r, w| w.bits(r.bits() | 1));
     }
-    // TIM15 CR1.CEN
-    let tim15 = unsafe { &*pac::TIM15::PTR };
     unsafe {
         tim15.cr1().modify(|r, w| w.bits(r.bits() | 1));
     }
