@@ -95,14 +95,17 @@ Flight-readiness:
       flash-A/B (cb10c0c churns today, was clean this morning). This is
       the parity ledger's "90% restart-transient on fresh pack" item in
       bidir form. Next session: recorder rings + WAX on the engage.
-- [~] EDT at `dshot_edt = ON` via real flight-arm: harness BUILT
-      (bf_msp.py --arm-test, MSP RC injection; BF configured: RX_MSP +
-      aux arm range). Live run DEFERRED — after the 08-01 loose-wire
-      event the bench SIGNAL path degraded: bidir decode fails
-      deterministically (405/613 per ESC life) at every firmware incl.
-      the previously-stable d0a900d (flash-bisect exonerated all four
-      new commits), while unidir decode stays crc_fail=0. Both supply
-      and signal wiring need physical repair first.
+- [~] EDT at `dshot_edt = ON` via real flight-arm: harness built and
+      EXECUTED (bf_msp.py --arm-test) — BF refused to arm:
+      `Arming disable flags: RXLOSS LOAD CLI DSHOT_TELEM`. The
+      structural one is **DSHOT_TELEM**: with bidir ON, BF gates arming
+      on RPM telemetry from ALL mixer motors — a single-ESC bench on a
+      quad mixer can never satisfy it. FORCE is therefore REQUIRED on
+      this bench, not a crutch. Next attempt: `mixer CUSTOM` + single
+      `mmix` entry (motor_count=1), re-run --arm-test, watch for the
+      cmd-13 burst (bidir_evt jump) at arm. (The earlier "405/613
+      signal-path degraded" theory was WRONG — it was FC config
+      half-states from glitched CLI saves; wires were never at fault.)
 - [x] Protocol robustness soak (FC-reboot axis): **20/20** — 5 cycles
       × DSHOT300/600/150/PWM, zero misses, latency 2.7-7.8 s.
       Cold-boot/battery-replug axes remain (need hands).
