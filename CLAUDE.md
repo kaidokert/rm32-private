@@ -1,13 +1,27 @@
 # Claude Code working notes — rm32 / Vimdrones L431 bench
 
-## STATE AS OF 2026-07-26 (branch `am32_sheet`, HEAD ~4c3d98a) — read this first
+## STATE AS OF 2026-08-01 (branch `am32_sheet`) — read this first
 
-**The drive envelope is DONE: full 15–100% throttle locked at AM32-clone
-parity** (100% = 2347 Hz e @ 4.62 A, sd 9-17 µs at every level; per-level
-speeds/currents within 1-2% of the same-protocol clone control). The
-authoritative running state ledger lives in the session memory file
-`project_rm32_parity_state.md` (rungs 16-19), not in this document.
-Key results that OBSOLETE sections below:
+**Two campaigns are DONE, documented in `docs/`:**
+
+1. **Drive envelope (bench-UART throttle): full 15–100% at AM32-clone
+   parity** (100% = 3145 Hz e; 2% ladder dsy=0, exc=2/2.48M comms).
+2. **Betaflight/DShot phase: the ENTIRE production input stack is
+   validated** — PWM, DSHOT150/300/600, bidir DSHOT300 (idle + load
+   ladder to 50%, 0.00% invalid), and EDT (flags RTVCS, live values).
+   **Authoritative ledger: `docs/bf_phase.md`** — validated matrix, the
+   five first-contact defects, BF gotchas (dshot_edt=FORCE on bench,
+   exit/save reboot the FC, WebSerial port grabs), bench facts
+   (no-signal bootloop is stock behavior, first-engage churn), the
+   instrument list, and the burn-down list of everything remaining.
+
+**Public-release staging** (clean worktree `E:\m\robot\esc\rm32_clean`):
+`docs/public_cleanup_tiers.md` (Tier A/B/C ledger; A1/A2/A6/A7 done) and
+`docs/public_pr_plan.md` (18-PR landing sequence + trim list).
+
+Older per-session context lived in Claude session memory during the
+campaigns; the durable state now lives in these repo docs. Key results
+that OBSOLETE sections below:
 
 - The "100-200 ms chops" investigation below is ancient history. The final
   three defects were: (1) a diagnostic print in the TIM16 ISR delaying
