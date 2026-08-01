@@ -132,8 +132,16 @@ Flight-readiness:
       ear). Remaining: exact AM32 beacon-tune port (current notes are
       approximations), direction-change + save-persist verification on
       bench, dumps-over-flight-link verbs, Configurator passthrough.
-- [ ] AM32 Configurator passthrough re-check end-to-end (read + write +
-      persist — exercises A2 reset + A4 save path).
+- [~] AM32 Configurator passthrough: transport chain PROVEN HEADLESSLY
+      to the bootloader boundary (bf_4way.py: MSP_SET_4WAY_IF -> 1 ESC,
+      4-way protocol v108 alive, frames round-trip). DeviceInitFlash
+      fails (ack=15, 4 retries) because the BENCH'S PATCHED BOOTLOADER
+      auto-boots the app after ~500 ms idle-high — it never waits in
+      DFU for the init sequence. Deliberate bench trade-off (the fast
+      auto-boot is what makes the reset loop self-recover); a stock-
+      bootloader ESC would complete the hop. Full end-to-end (read/
+      write/persist, exercising A2+A4) = stock bootloader + browser
+      session, user-assisted.
 - [ ] KISS telemetry on PB6 (prod telemetry) + the poll-print
       disturbance question (RTT vs PB6-TX crosstalk) — the last open
       item from the parity campaign.
