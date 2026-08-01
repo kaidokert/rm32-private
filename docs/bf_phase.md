@@ -114,8 +114,14 @@ Flight-readiness:
       80k+ passes. The earlier "405/613 bidir death" resolved as
       FC-side config half-states from glitched CLI save sequences —
       verify `get` after every `set`+`save`; wires were never at fault.
-- [ ] Downthrottle blip vs the clone reference artifact (10% ladder,
-      double slams, re-qual protocol).
+- [~] Downthrottle blip (bf_slam.py built; protocol hardened twice):
+      BLOCKED ON A PUZZLE — slam-test engages show cm=0 (no
+      interrupt-mode lock) even at the exact 10% entry the flight
+      ladder locks 1.7M comms with, same build/pack/fresh-boot. Three
+      shapes tried (standstill slam, 15% pre-engage, 10% floor). Next:
+      rerun bf_slam WITH the esc tee (the last runs were blind — always
+      tee) + ears; the slam-vs-ladder engage discriminant is the thread
+      head. Item-5 verdict deferred until slams run locked.
 - [ ] Bidir at DSHOT600; EDT current under real load (needs >1 A rungs).
 - [~] DSHOT command verbs: MSP2 side channel VALIDATED (bf_msp.py,
       cmd counter 0->6 proof); A4 save path FIXED (config write-through
