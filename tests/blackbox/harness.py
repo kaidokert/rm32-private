@@ -24,6 +24,9 @@ class AM32Harness:
             repo = Path(__file__).resolve().parent.parent.parent
             exe_path = repo / "target" / "release" / "rm32_harness"
             if not exe_path.exists():
+                # Windows build artifact
+                exe_path = exe_path.with_suffix(".exe")
+            if not exe_path.exists():
                 # Fallback: C harness
                 exe_path = repo / "build" / "am32_harness"
         self.exe_path = str(exe_path)
