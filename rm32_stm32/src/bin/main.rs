@@ -1202,8 +1202,13 @@ fn main() -> ! {
             {
                 // Last-words diagnostic: what the input pipeline saw this
                 // life. Main context (prints in ISRs are forbidden).
+                #[cfg(feature = "stm32l431")]
+                let tim15_psc = unsafe { (*stm32l4xx_hal::pac::TIM15::PTR).psc.read().bits() };
+                #[cfg(not(feature = "stm32l431"))]
+                let tim15_psc = 0u32;
                 rm32_stm32::dprintln!(
-                    "[rm32] signal_timeout RESET: proto={}/{}/{} armed={} sig_to={} crc_pass={} crc_fail={} hi_pin={} newinput={} in_set={}",
+                    "[rm32] signal_timeout RESET: psc={} proto={}/{}/{} armed={} sig_to={} crc_pass={} crc_fail={} hi_pin={} newinput={} in_set={}",
+                    tim15_psc,
                     shared.dshot() as u8,
                     shared.servo_pwm() as u8,
                     shared.dshot_telemetry() as u8,

@@ -30,7 +30,8 @@ def main():
                 line, buf = buf.split(b"\n", 1)
                 txt = line.decode("ascii", "replace").rstrip()
                 if txt:
-                    print(f"[{time.time()-t0:7.2f}] {txt}", flush=True)
+                    safe = txt.encode("ascii", "replace").decode("ascii")
+                    print(f"[{time.time()-t0:7.2f}] {safe}", flush=True)
     except KeyboardInterrupt:
         pass
     finally:
