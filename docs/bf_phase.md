@@ -177,10 +177,19 @@ Flight-readiness:
       the known engage-pattern story, use staircase engages.
 
 Production hygiene (docs/public_cleanup_tiers.md + public_pr_plan.md):
-- [ ] A3 arming beeps, A4 EEPROM save path, A5 bench_guard thresholds.
-- [ ] Tier B decisions (AUTO drive + atomic writer promotion, memory.x
-      from build.rs, probe serial), Tier C backout round 2.
-- [ ] Cherry-pick the BF-phase commit chain onto the clean branch;
-      execute the 18-PR public landing plan.
+- [x] A3 arming beeps, A4 EEPROM save path, A5 bench_guard thresholds.
+- [x] Tier B CLOSED (2026-07-31, commit faafdc0): B6 atomic writer
+      promoted to all L431 builds — bench re-validated post-promotion:
+      staircase 50%->90% under bidir DSHOT300 + EDT, **dsy=0 /
+      407,939 comms**, exc 0.075% (== sequential-writer baseline).
+      B7 per-MCU memory.x from build.rs (FINDING: F051 image ~34K
+      never fit its real 27K app region — it linked against the L431
+      lie; interim 64K-span link + loud cargo warning, size pass
+      ticketed). B8 probe serial documented bench-specific. Tier C
+      round 2 done earlier (C9/C10/C12 removed, C11 keep-thru-DShot).
+- [ ] ON HOLD (operator, 2026-07-31): cherry-pick of the BF-phase
+      chain to the clean branch and the 18-PR public plan execution
+      are PAUSED — "abort the public plan / don't go into making PRs
+      yet". Do not push or open PRs until the operator re-authorizes.
 - [ ] Non-L431 parity ports (NVIC priorities, DMA hygiene, COMP gate)
       + non-L431 bench bringup.
