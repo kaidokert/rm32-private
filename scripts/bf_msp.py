@@ -79,7 +79,7 @@ def arm_test(port, hold_s=8.0):
     p = serial.Serial(port, 115_200, timeout=0.05)
     try:
         t0 = time.time()
-        while time.time() - t0 < 2.0:
+        while time.time() - t0 < 7.0:  # failsafe recovery needs seconds
             p.write(rc_frame(1000, 1000))
             time.sleep(0.05)
         print("[arm] raising AUX1", flush=True)
