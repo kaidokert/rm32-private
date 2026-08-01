@@ -81,6 +81,17 @@ impl EdtScheduler {
 
         self.counter = self.counter.wrapping_add(1);
 
+        // Periodic init re-send: the 0xE00 enable is a single frame, and
+        // BF classifies typed frames as EDT ONLY after it has seen one —
+        // a solitary lost/corrupt init (measured live: BF at 97k reads /
+        // 1 invalid with the ESC interleaving typed frames it filed as
+        // eRPM) silently disables EDT forever. Re-announce every 512
+        // responses (~1/s); BF re-enables idempotently. Phase-offset 256
+        // so it never collides with the current-frame cadence at 0.
+        if self.counter % 512 == 256 {
+            return EdtFrame::Extended(EDT_INIT_FRAME);
+        }
+
         // Alternate: extended frame, then eRPM
         if self.last_sent_extended {
             self.last_sent_extended = false;
@@ -92,12 +103,13 @@ impl EdtScheduler {
         // Voltage: every 200 frames (~4Hz)
         // Temperature: every 200 frames, offset from voltage
         let frame = if self.counter.is_multiple_of(40) {
-            // Current: 50mA per LSB
-            let payload = ((current_ma as i32).max(0) / 50) as u8;
+            // Current: EDT spec is 1 A per LSB (was 50 mA — 20x hot)
+            let payload = ((current_ma as i32).max(0) / 1000).min(255) as u8;
             (EDT_CURRENT << 8) | payload as u16
         } else if self.counter % 200 == 100 {
-            // Voltage: 25mV per LSB
-            let payload = (voltage_mv / 25).min(255) as u8;
+            // Voltage: EDT spec is 0.25 V per LSB (was 25 mV — a 12.3 V
+            // pack saturated the u8 at 0xFF, measured live as edtv=0x4ff)
+            let payload = (voltage_mv / 250).min(255) as u8;
             (EDT_VOLTAGE << 8) | payload as u16
         } else if self.counter % 200 == 150 {
             // Temperature: direct degrees C
@@ -159,11 +171,11 @@ mod tests {
         s.active = true;
         s.counter = u16::MAX; // next increment wraps to 0
 
-        let frame = s.next_frame(1500, 16800, 30);
+        let frame = s.next_frame(3500, 16800, 30);
         match frame {
             EdtFrame::Extended(v) => {
                 assert_eq!(v >> 8, EDT_CURRENT);
-                assert_eq!(v & 0xFF, 30); // 1500mA / 50 = 30
+                assert_eq!(v & 0xFF, 3); // 3500 mA at 1 A/LSB (EDT spec)
             }
             _ => panic!("expected current frame at counter=0"),
         }
@@ -190,10 +202,12 @@ mod tests {
         s.active = true;
         s.counter = 99; // next will be 100
 
-        match s.next_frame(0, 4200, 25) {
+        match s.next_frame(0, 12300, 25) {
             EdtFrame::Extended(v) => {
                 assert_eq!(v >> 8, EDT_VOLTAGE);
-                assert_eq!(v & 0xFF, 168); // 4200mV / 25 = 168
+                // 12.3 V pack at 0.25 V/LSB (EDT spec) — must NOT saturate
+                // the u8 (the /25 bug read every 3S pack as 0xFF).
+                assert_eq!(v & 0xFF, 49);
             }
             _ => panic!("expected voltage frame"),
         }

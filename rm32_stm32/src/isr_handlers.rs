@@ -484,6 +484,12 @@ pub fn comp_at_pre_zc_level() -> bool {
     state.hal.comp.output_level() == state.commutation.rising()
 }
 
+/// EDT-debug: typed frames sent + last 12-bit value (heartbeat consumer).
+#[cfg(feature = "debuguart")]
+pub static EDT_SENT: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
+#[cfg(feature = "debuguart")]
+pub static EDT_LAST: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
+
 /// DMA transfer complete (input capture ISR body).
 pub fn handle_dma_tc() {
     let state = ISR_LOCAL.get();
@@ -501,7 +507,20 @@ pub fn handle_dma_tc() {
                 shared.battery_voltage(),
                 shared.degrees_celsius(),
             ) {
-                rm32::edt::EdtFrame::Extended(v) => v,
+                rm32::edt::EdtFrame::Extended(v) => {
+                    // EDT-debug: count typed frames actually sent + latch
+                    // the last value (read by the [edt] heartbeat line).
+                    #[cfg(feature = "debuguart")]
+                    {
+                        use core::sync::atomic::Ordering;
+                        EDT_SENT.store(
+                            EDT_SENT.load(Ordering::Relaxed).wrapping_add(1),
+                            Ordering::Relaxed,
+                        );
+                        EDT_LAST.store(v, Ordering::Relaxed);
+                    }
+                    v
+                }
                 rm32::edt::EdtFrame::Erpm => {
                     rm32::dshot::erpm_to_12bit(shared.e_com_time() as u16, shared.running())
                 }
@@ -601,6 +620,12 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
             shared.set_signal_timeout(0);
         }
         TransferAction::DshotCommand { cmd, telemetry } => {
+            // Command-arrival telemetry (EDT handshake debug): count every
+            // decoded command frame and publish the last cmd id. Rides the
+            // post-detection-idle dbg fields in the [loop] line
+            // (bidir_evt = count, hi_pin_n = last cmd).
+            shared.dbg_bidir_evt_inc();
+            shared.dbg_set_high_pin_n(cmd as u8);
             shared.set_newinput(0);
             if telemetry {
                 shared.set_send_telemetry(true);
@@ -659,6 +684,15 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     if actions.bidir_detected {
         shared.set_dshot_telemetry(true);
         shared.dbg_bidir_evt_inc();
+        // BENCH: auto-start EDT at bidir commit. Production activation is
+        // AM32-verbatim (DSHOT cmd 13, 6x, while armed+stopped) — but BF
+        // sends its enable burst at motor-init and at FLIGHT-ARM, and the
+        // CLI-driven bench performs neither while the ESC can decode
+        // (measured: cmd-frame counter stayed 0 across FC reboots; the
+        // boot-time burst lands in our detection window). Auto-init here
+        // exercises the full EDT frame path against BF's parser.
+        #[cfg(feature = "debuguart")]
+        state.edt.request_init();
     }
     // Bench-debug counters for bidir-DSHOT investigation.
     // crc_pass: a Throttle/Command return means decode_frame produced a valid
