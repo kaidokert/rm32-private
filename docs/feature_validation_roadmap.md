@@ -57,9 +57,18 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
   Coast baseline captured pre-incident (spin-down ~0.5-1 s, 1
   transitional SR sample in 2/3 stops). Brake-vs-coast comparison
   PENDING hardware recovery + the fixed build.
-- [ ] **EDT temp sanity** — degC reads 7-9 on a ~20 C bench;
-  check use_ntc/offset math against AM32 for this board before
-  calling the temperature channel validated.
+- [x] **EDT temp — ROOT-CAUSED + FIXED, bench confirm pending**
+  (2026-08-01): the 7-9 C readings were the missing VDDA rescale.
+  Factory TS_CAL points are measured at 3.0 V (L4/G0/G4; F0 at
+  3.3 V) while the board runs VDDA=3.3 V; AM32 calls
+  __LL_ADC_CALC_TEMPERATURE(3300, raw, 12B) which rescales
+  raw*3300/3000 before interpolating — rm32's calc_temperature_pure
+  used raw directly (~13 C low + slope error). Fixed with per-family
+  cal_vref_mv (L431/G071/G431 3000, F051 3300 = no-op) in
+  TempCalibration + the boilerplate macro + the G431 direct site;
+  regression test temp_l431_vdda_rescale_matches_am32 (unscaled -5 C
+  vs rescaled 21 C on realistic cal values). Live ~20-25 C reading
+  to confirm on hardware recovery.
 
 ## Tier 2 — needs operator ears/hands nearby, no rewiring
 
