@@ -198,6 +198,17 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     if ctx.shared.armed() && ctx.shared.running() {
         ctx.hal.pwm().set_duty_all(ctx.duty.pwm_compare(tim1_arr));
     } else if ctx.shared.prop_brake_active() {
+        // SAFETY-CRITICAL ORDER: reconfigure the bridge for braking
+        // BEFORE the brake duty lands (AM32 proportionalBrake(),
+        // phaseouts.c: all high-sides OUTPUT-off, all low-sides PWM).
+        // The brake compare is near-ARR; applied to the mixed bridge
+        // state a stop leaves behind (one low-side FET solid-on from
+        // com_step, another leg's high-side still in AF), it drives a
+        // DC VBAT->winding->GND path — locked-rotor burn. This exact
+        // omission killed the bench supply on 2026-08-01: the duty
+        // write existed, the proportional_brake() call did not.
+        // Re-asserted every tick like AM32's every-main-pass call.
+        ctx.hal.phase().proportional_brake();
         ctx.hal.pwm().set_duty_all(DutyState::brake_compare(
             ctx.config.drag_brake_strength,
             tim1_arr,

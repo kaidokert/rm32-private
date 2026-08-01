@@ -10,27 +10,53 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
 
 ## Tier 1 — local now, no rewiring, no hands
 
-- [ ] **Direction change + save-persist round trip** (last item-6
-  residue; the only A4 gap without hardware proof). `dshotprog 0 7/8`
-  (direction) + `dshotprog 0 12` x6 (save), probe-rs reset, verify:
-  (a) EEPROM bytes over SWD (`probe-rs read b32 0x0800F800`,
-  dir_reversed offset), (b) reversed spin direction after reboot,
-  (c) restore + re-verify. EEPROM SWD read CONFIRMED working (live
-  dump shows boot-enable 0x01 + servo-cal 128/128/128/50).
+Config channel: `softuart_cmd.py --set FIELD=VAL --save / --get FIELD`
+(field->offset table in the script, anchored on poles=14@[27]).
+NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
+(26-10)*0.9375 = 15 deg, the factory default.
+
+- [x] **Direction change + save-persist round trip** (2026-08-01):
+  dir_reversed=1 -> save -> persisted -> power-cycle -> survives
+  reload -> REVERSED SPIN LOCKED CLEAN (dsy=0 / 157,322 comms,
+  eRPM 100,700 @40% == forward curve) -> restored + re-verified.
+  (Caveat: rotation sense verified by coherent reversed-sequence
+  lock, not by eye — half-applied reversal would churn.)
 - [ ] **Long-soak retention** — 15-30 min continuous at 70-100% on
   battery under BF DSHOT300, staircase engage; [sr] deltas after
   (dsy=0 standard), thermal drift eyeballed via EDT temp.
-- [ ] **LVC live trip via config trick** — set low-voltage cutoff
-  ABOVE the pack voltage (per-cell threshold), spin, verify duty
-  ramps down / cuts per AM32 semantics; restore. No PSU fiddling.
-- [ ] **Current-limit PID** — set a low current limit, load at 50%+,
-  verify duty clamps (EDT current + [sr] ma vs unlimited baseline);
-  restore.
-- [ ] **Timing-advance sweep** — spin the same rung at advance
-  settings 0/1/2/3, verify clean lock at each (dsy=0) + note ci
-  shift. (Regime-scope: mid-throttle.)
-- [ ] **Brake-on-stop** — enable, spin, stop; verify active braking
-  (rapid ci collapse / audible) vs coast baseline; restore.
+- [x] **LVC live trip** (2026-08-01): mode 1 per-cell with
+  low_cell_volt_cutoff=160 -> threshold 3 x 4.10 V = 12.30 V > pack.
+  Idle trip: Armed -> Disarmed after the 10 s sustained-low window,
+  BF still driving. Mid-spin trip: cut from 57k eRPM to Disarmed
+  mid-hold. Restored. FINDING: mode 2 (absolute) compares the raw
+  byte against centivolts in AM32 TOO (main.c:2405) — effectively
+  dead (<=2.55 V) in both; rm32 matches reference behavior verbatim.
+- [x] **Current-limit PID** (2026-08-01): limit=2 (target 400 mA) at
+  the 50% rung: SR ring reads 400/400/373 mA — PID pinned EXACTLY at
+  target; eRPM 120k -> 64.4k; sag 11.6 -> 12.0 V. Baseline 1,733 mA.
+  Gate `0<limit<100` == AM32. Restored.
+- [x] **Timing-advance sweep** (2026-08-01): new-format 10/18/26/34
+  (0/7.5/15/22.5 deg) at 40%: dsy=0 at ALL FOUR (134k-153k comms
+  each); eRPM 101.7k/101.7k/105.3k/104.5k — advance raises speed
+  ~3.5% 0->15 deg, plateaus by 22.5. Factory 26 restored.
+- [!] **Brake-on-stop — SAFETY-CRITICAL BUG FOUND, bench casualty**
+  (2026-08-01): setting brake_on_stop=1 killed the board within
+  seconds (SWD unreachable = VDD lost). ROOT CAUSE (confirmed vs
+  AM32 phaseouts.c): rm32 ported the brake duty math
+  (brake_compare == AM32's arr - brake*arr/2000) and even the
+  `proportional_brake()` bridge reconfiguration (high-sides forced
+  OUTPUT-off, low-sides to PWM) — but NEVER CALLED IT. The near-ARR
+  brake compare landed on the mixed bridge state the stop left
+  (one low-side FET solid-on via GPIO, another leg's high-side in
+  AF) -> DC VBAT->winding->GND path, locked-rotor burn, supply
+  killed. FIXED: isr_logic.rs prop-brake arm now calls
+  proportional_brake() before the duty write (re-asserted per tick,
+  AM32-style); regression test
+  `prop_brake_reconfigures_bridge_before_duty` (the HAL-call-counter
+  class — the exact bug family that infra was built for).
+  Coast baseline captured pre-incident (spin-down ~0.5-1 s, 1
+  transitional SR sample in 2/3 stops). Brake-vs-coast comparison
+  PENDING hardware recovery + the fixed build.
 - [ ] **EDT temp sanity** — degC reads 7-9 on a ~20 C bench;
   check use_ntc/offset math against AM32 for this board before
   calling the temperature channel validated.

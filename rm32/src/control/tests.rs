@@ -49,13 +49,17 @@ mod tests {
             self.mask_called = true;
         }
     }
-    struct MockPhase;
+    struct MockPhase {
+        prop_brake_calls: u32,
+    }
     impl hal::PhaseOutput for MockPhase {
         fn com_step(&mut self, _: u8) {}
         fn all_off(&mut self) {}
         fn full_brake(&mut self) {}
         fn all_pwm(&mut self) {}
-        fn proportional_brake(&mut self) {}
+        fn proportional_brake(&mut self) {
+            self.prop_brake_calls += 1;
+        }
     }
     struct MockInterval {
         count: u32,
@@ -113,11 +117,51 @@ mod tests {
                     level: false,
                     mask_called: false,
                 },
-                phase: MockPhase,
+                phase: MockPhase {
+                    prop_brake_calls: 0,
+                },
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer,
             }
         }
+    }
+
+    /// Regression for the 2026-08-01 bench kill: the prop-brake duty
+    /// (a near-ARR compare) MUST be preceded by the bridge
+    /// reconfiguration (AM32 proportionalBrake: high-sides forced off,
+    /// low-sides to PWM). Applied to the mixed com_step state a stop
+    /// leaves behind, the bare duty write creates a DC
+    /// VBAT->winding->GND path. This asserts the HAL call happens.
+    #[test]
+    fn prop_brake_reconfigures_bridge_before_duty() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut duty = crate::control::state::DutyState::default();
+        let config = crate::config::EepromConfig::default();
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let mut hal = MockMotorHal::new();
+
+        shared.mode.set(crate::motor_mode::MotorMode::Armed);
+        shared.prop_brake_active.set(true);
+
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+
+        assert!(
+            hal.phase.prop_brake_calls > 0,
+            "brake duty applied without proportional_brake() bridge setup"
+        );
+        // And the duty applied must be the brake compare, not drive duty.
+        assert!(hal.pwm.last_duty > 0, "brake compare should be near ARR");
     }
 
     #[test]
@@ -289,7 +333,9 @@ mod tests {
             level: false,
             mask_called: false,
         };
-        let mut phase = MockPhase;
+        let mut phase = MockPhase {
+            prop_brake_calls: 0,
+        };
 
         let step_before = comm.step;
         isr_logic::commutation_timer_expired(
