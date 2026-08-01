@@ -631,6 +631,10 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 shared.set_send_telemetry(true);
             }
             shared.set_signal_timeout(0);
+            // A4: diff-and-publish config mutations to main's copy (the
+            // save path persists main_state.config, not this ISR copy).
+            let dir_prev = state.config.dir_reversed;
+            let bidir_prev = state.config.bi_direction;
             let result = state.cmd.process(
                 cmd,
                 shared.armed(),
@@ -640,6 +644,18 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 &mut state.edt_armed,
                 state.edt_arm_enable,
             );
+            if state.config.dir_reversed != dir_prev {
+                shared.push_config_write(
+                    core::mem::offset_of!(rm32::config::EepromConfig, dir_reversed) as u8,
+                    state.config.dir_reversed,
+                );
+            }
+            if state.config.bi_direction != bidir_prev {
+                shared.push_config_write(
+                    core::mem::offset_of!(rm32::config::EepromConfig, bi_direction) as u8,
+                    state.config.bi_direction,
+                );
+            }
             match result {
                 rm32::dshot_commands::CommandResult::SaveSettings => {
                     shared.set_save_settings_flag(true);
@@ -647,6 +663,10 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 rm32::dshot_commands::CommandResult::PlayTone(_tone) => {}
                 rm32::dshot_commands::CommandResult::SendEscInfo => {
                     shared.set_send_esc_info_flag(true);
+                }
+                rm32::dshot_commands::CommandResult::ProgrammingCommit { position, value } => {
+                    // A4: arbitrary-byte programming writes reach main too.
+                    shared.push_config_write(position as u8, value);
                 }
                 _ => {}
             }
@@ -669,9 +689,19 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
             low_threshold,
             high_threshold,
         } => {
-            // Persist calibration to EEPROM config; main loop will save to flash
+            // Persist calibration to EEPROM config; main loop will save to
+            // flash. A4: publish the bytes so main's copy is current when
+            // the save flag is acted on.
             state.config.servo_low_threshold = low_threshold;
             state.config.servo_high_threshold = high_threshold;
+            shared.push_config_write(
+                core::mem::offset_of!(rm32::config::EepromConfig, servo_low_threshold) as u8,
+                low_threshold,
+            );
+            shared.push_config_write(
+                core::mem::offset_of!(rm32::config::EepromConfig, servo_high_threshold) as u8,
+                high_threshold,
+            );
             shared.set_save_settings_flag(true);
             shared.set_signal_timeout(0);
         }
