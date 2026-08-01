@@ -29,16 +29,14 @@ pub static COMP_PWM_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::Ato
 /// one BSRR write per port then one MODER write per port — final pin
 /// levels snap simultaneously, no intermediate bridge states).
 ///
-/// DEFAULT: ATOMIC (1). Deaf-window A/B at 70%/comp (07-26): sequential
-/// ~1 per 1-2.5k windows, atomic 4 per 89k (10-20x), diode 1 per 90k,
-/// clone 0 per 281k. The sequential interleave's transient bridge
-/// states during phase handover are the dominant source of the
-/// deaf-window/orbit-entry class under complementary drive. (The old
-/// "atomic = null" verdict was measured on camp-storm entries — a
-/// metric blind to deaf windows.)
-#[cfg(all(feature = "stm32l431", feature = "benchuart"))]
-pub static PHASE_ATOMIC_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
-
+/// Deaf-window A/B at 70%/comp (07-26): sequential ~1 per 1-2.5k
+/// windows, atomic 4 per 89k (10-20x), diode 1 per 90k, clone 0 per
+/// 281k. The sequential interleave's transient bridge states during
+/// phase handover are the dominant source of the deaf-window/
+/// orbit-entry class under complementary drive. Promoted to ALL L431
+/// builds (B6) — the bench lever (`PHASE_ATOMIC_LIVE` + 'A' toggle)
+/// is retired; the axis is settled.
+///
 /// L431 atomic com_step, ported from the clone's proven
 /// `set_phase_roles` (minz/src/tim1_motor_pwm.rs) onto rm32's AM32
 /// pin naming: A = PA10/PB1, B = PA9/PB0, C = PA8/PA7 (hi/lo).
@@ -269,9 +267,13 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     for PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
     fn com_step(&mut self, step: u8) {
-        #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
-        if !self.bridge_enable && PHASE_ATOMIC_LIVE.load(core::sync::atomic::Ordering::Relaxed) != 0
-        {
+        // B6: atomic writer always-on for L431 complementary bridges
+        // (10-20x fewer deaf windows than the sequential path; the pin
+        // map matches the AM32 L431 reference pinout shared by all
+        // upstream L431 targets). bridge_enable boards keep the
+        // sequential writer — their pin semantics differ.
+        #[cfg(feature = "stm32l431")]
+        if !self.bridge_enable {
             l431_atomic_com_step(step, self.effective_comp_pwm());
             return;
         }

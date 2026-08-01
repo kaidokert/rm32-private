@@ -885,21 +885,6 @@ fn main() -> ! {
                                 }
                             );
                         }
-                        UartCmd::AtomicToggle => {
-                            #[cfg(feature = "stm32l431")]
-                            {
-                                use core::sync::atomic::Ordering;
-                                use rm32_stm32::phase::PHASE_ATOMIC_LIVE;
-                                let on = PHASE_ATOMIC_LIVE.load(Ordering::Relaxed) == 0;
-                                PHASE_ATOMIC_LIVE.store(on as u8, Ordering::Relaxed);
-                                rm32_stm32::dprintln!(
-                                    "[bench] com writer: {} (live)",
-                                    if on { "ATOMIC" } else { "SEQUENTIAL" }
-                                );
-                            }
-                            #[cfg(not(feature = "stm32l431"))]
-                            rm32_stm32::dprintln!("[bench] atomic writer: L431 only");
-                        }
                         UartCmd::AdcToggle => {
                             #[cfg(feature = "stm32l431")]
                             {

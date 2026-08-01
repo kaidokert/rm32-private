@@ -31,9 +31,6 @@ pub enum UartCmd {
     /// 'D' — toggle complementary (damped) PWM drive live (bench
     /// diagnostic: splits drive-mode physics from spin-up dynamics).
     DriveToggle,
-    /// 'E' — toggle the atomic commutation writer live (bench
-    /// diagnostic: sequential per-pin vs one-BSRR/one-MODER per port).
-    AtomicToggle,
     /// 'A' — pause/resume ADC conversions live (bench diagnostic:
     /// mux-kickback A/B; measurements freeze while paused).
     AdcToggle,
@@ -102,7 +99,6 @@ impl UartDuty {
             b'i' => Some(UartCmd::Info),
             b'b' => Some(UartCmd::BbDump),
             b'D' => Some(UartCmd::DriveToggle),
-            b'E' => Some(UartCmd::AtomicToggle),
             b'A' => Some(UartCmd::AdcToggle),
             b'V' => Some(UartCmd::WatchArm),
             b'J' => Some(UartCmd::InjToggle),

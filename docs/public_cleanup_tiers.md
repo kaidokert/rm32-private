@@ -59,17 +59,24 @@ Legend: [ ] open · [x] done · [~] deferred/ticketed
   verbatim) — the churn-attractor behavior measured and rejected on the
   bench. Decide: promote AUTO into `effective_comp_pwm()` proper for all
   builds, or accept verbatim in prod.
-- [ ] **B6. Atomic com writer is bench-only** — `l431_atomic_com_step`
-  measured 10-20× fewer deaf windows than sequential, default-on under
-  `benchuart`, but the dispatch check is `cfg(benchuart)` → production
-  L431 uses the sequential writer. Promote to always-on for L431.
-- [ ] **B7. memory.x hardcoded to L431** — 48K RAM / 58K flash now links
-  into ALL four MCU builds (F051 has 8K RAM). build.rs has zero
-  memory.x handling. Fix: per-chip (or per-board-yaml) flash/RAM values,
-  build.rs emits memory.x into OUT_DIR + adds link search path.
-- [ ] **B8. Bench probe serial in `.cargo/config.toml`** — the
-  `thumbv7em` runner hardcodes the personal ST-LINK serial. Move to an
-  untracked local config or document as bench-specific.
+- [x] **B6. Atomic com writer promoted to ALL L431 builds** (2026-07-31)
+  — dispatch now `cfg(stm32l431)` + `!bridge_enable` (pin map = the
+  AM32 L431 reference pinout all upstream L431 targets share);
+  `PHASE_ATOMIC_LIVE` lever + 'E' toggle retired (settled axis).
+  NOTE: the BF-phase parity runs (ladder/slam/soak, all dsy=0) ran the
+  SEQUENTIAL writer (dispatch was benchuart-gated and BF-phase builds
+  are debuguart-only) — post-promotion bench re-validation required
+  and performed (see bf_phase.md).
+- [x] **B7. memory.x emitted per-MCU by build.rs** (2026-07-31) — into
+  OUT_DIR + link-search; static L431 file deleted. L431 58K/48K,
+  G071 58K/36K, G431 58K/32K. FINDING: the honest map exposed that the
+  F051 image (~34K) does NOT fit its real 27K AM32 app region — it
+  only ever linked against the L431 lie. Interim: F051 links against
+  the 64K-part span with a loud cargo warning (EEPROM page overlaps);
+  size-reduction pass required before F051 hardware bringup.
+- [x] **B8. Bench probe serial documented as bench-specific**
+  (2026-07-31) — comment in `.cargo/config.toml`; the clean tree
+  drops `--probe` (probe-rs auto-selects a sole attached probe).
 
 ## Tier C — solved-case instruments (backout round 2 candidates)
 
