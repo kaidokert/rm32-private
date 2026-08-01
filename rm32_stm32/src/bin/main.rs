@@ -1237,6 +1237,39 @@ fn main() -> ! {
             }
             #[cfg(not(feature = "benchuart"))]
             {
+                // Last-words diagnostic: what the input pipeline saw this
+                // life. Main context (prints in ISRs are forbidden).
+                rm32_stm32::dprintln!(
+                    "[rm32] signal_timeout RESET: proto={}/{}/{} armed={} sig_to={} crc_pass={} crc_fail={} hi_pin={} newinput={} in_set={}",
+                    shared.dshot() as u8,
+                    shared.servo_pwm() as u8,
+                    shared.dshot_telemetry() as u8,
+                    shared.armed() as u8,
+                    shared.signal_timeout(),
+                    shared.dbg_crc_pass(),
+                    shared.dbg_crc_fail(),
+                    shared.dbg_high_pin_n(),
+                    shared.newinput(),
+                    shared.input_set() as u8,
+                );
+                // Frame-history autopsy: raw capture deltas for the last
+                // frames this life (pass and fail) — protocol-rate and
+                // alignment forensics for the 97%-fail class.
+                #[cfg(feature = "debuguart")]
+                for snap in rm32_stm32::dbg_frame_history::take().iter() {
+                    rm32_stm32::dprintln!(
+                        "[snap n={} pass={}] d={} {} {} {} {} {} {}",
+                        snap.n,
+                        snap.crc_pass as u8,
+                        (snap.buf[1] as u16).wrapping_sub(snap.buf[0] as u16),
+                        (snap.buf[2] as u16).wrapping_sub(snap.buf[1] as u16),
+                        (snap.buf[3] as u16).wrapping_sub(snap.buf[2] as u16),
+                        (snap.buf[4] as u16).wrapping_sub(snap.buf[3] as u16),
+                        (snap.buf[5] as u16).wrapping_sub(snap.buf[4] as u16),
+                        (snap.buf[6] as u16).wrapping_sub(snap.buf[5] as u16),
+                        (snap.buf[7] as u16).wrapping_sub(snap.buf[6] as u16),
+                    );
+                }
                 #[cfg(feature = "debuguart")]
                 rm32_stm32::debug_uart::flush();
                 sys.reset();
