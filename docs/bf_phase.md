@@ -92,8 +92,14 @@ Flight-readiness:
 - [x] First-engage churn class: ROOT-CAUSED — it was the always-comp
       attractor in non-benchuart builds (B5). AUTO promotion fixes it;
       confirm with post-solder engage soaks.
-- [ ] EDT at `dshot_edt = ON` semantics via a real flight-arm (MSP RC
-      injection or RX sim) — retire the FORCE crutch on-bench.
+- [~] EDT at `dshot_edt = ON` via real flight-arm: harness BUILT
+      (bf_msp.py --arm-test, MSP RC injection; BF configured: RX_MSP +
+      aux arm range). Live run DEFERRED — after the 08-01 loose-wire
+      event the bench SIGNAL path degraded: bidir decode fails
+      deterministically (405/613 per ESC life) at every firmware incl.
+      the previously-stable d0a900d (flash-bisect exonerated all four
+      new commits), while unidir decode stays crc_fail=0. Both supply
+      and signal wiring need physical repair first.
 - [ ] Protocol robustness soak: each protocol × {cold boot, FC reboot,
       battery replug} × N, zero missed detections/arms.
 - [ ] Downthrottle blip vs the clone reference artifact (10% ladder,
