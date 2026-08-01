@@ -56,6 +56,10 @@ pub mod comparator;
 pub mod dbg_frame_history;
 #[cfg(feature = "debuguart")]
 pub mod debug_uart;
+#[cfg(all(feature = "debuguart", not(feature = "stm32l431")))]
+compile_error!("feature `debuguart` is L431-only (USART1-on-PB6 wiring + L431 PAC syntax)");
+#[cfg(all(feature = "zctrace", not(feature = "stm32l431")))]
+compile_error!("feature `zctrace` is L431-only (COMP level probe uses L431 registers)");
 pub mod dma_buf;
 pub mod emergency;
 pub mod flash;

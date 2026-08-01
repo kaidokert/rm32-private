@@ -39,12 +39,12 @@ Legend: [ ] open · [x] done · [~] deferred/ticketed
   kills latched at 14.0 V OV / 15 A OC; a 4S pack trips OVOLT within
   ~60 ms and the ESC stays dead until reset. Derive thresholds from
   board/config (cell count) or gate enforcement under `benchuart`.
-- [ ] **A6. Feature build-matrix breaks** — `debuguart` fails to
+- [x] **A6. Feature build-matrix breaks** (fixed: compile_error guards; examples/ exist in private tree — copy to clean staging) — `debuguart` fails to
   compile on G071/F051/G431 (L431 PAC syntax, no compile_error guard);
   `zctrace` fails on non-L431 (`comp_at_pre_zc_level` cfg mismatch);
   `Cargo.toml` declares `[[example]] bringup`/`bringup_pac` for files
   that don't exist (`cargo check --examples` / `cargo test` fail).
-- [ ] **A7. Ungated prints in production ISRs** — `[exti] frame#…` +
+- [x] **A7. Ungated prints in production ISRs** (ISR prints removed; [loop] heartbeat kept — it is !running-gated; comp_init boot prints kept — main context, pre-IRQ) — `[exti] frame#…` +
   `DETECTED` rprintlns in `handle_exti_frame` (prio-2), `[isr] state
   moved` in `IsrCell::get` (prio-0 first entry), comp_init COMP2_CSR
   boot rprintlns, and the 300-byte `[loop]` heartbeat block ungated in
