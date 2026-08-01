@@ -103,11 +103,14 @@ Flight-readiness:
       arm-time cmd-13 burst (ESC counter 1->61), ESC accepted
       (armed&&!running, AM32-verbatim), EDT activated, and BF decodes
       RTVCS at plain `dshot_edt = ON` — reproduced across two
-      independent armed sessions. EDT current: the C flag proves
-      current frames flow in loaded sessions; a numeric CURR>=1 capture
-      needs an in-stream MSP_MOTOR_TELEMETRY read (throttle-down before
-      disarm leaves the retained sample at idle) — polish step.
-      bidir@600: committed + stable at idle.
+      independent armed sessions. EDT current CLOSED NUMERICALLY
+      (2026-07-31): in-stream MSP_MOTOR_TELEMETRY during --arm-fly 45
+      returned rpm=16,171 (~1886 Hz e), **curr=1 A**, volt 12->11 sag
+      under load, curr back to 0 at throttle-down — the full chain
+      (rm32 EDT current frame -> BF decode -> MSP report) proven with
+      live numbers. bidir@600: committed + stable at idle.
+      SCAR: polling MSP_MOTOR (104) inside the RC stream reproducibly
+      BLOCKS ARMING (2/2 vs 2/2); poll 139/101 only.
 - [x] Protocol robustness soak (FC-reboot axis): **20/20** — 5 cycles
       × DSHOT300/600/150/PWM, zero misses, latency 2.7-7.8 s.
       Cold-boot/battery-replug axes remain (need hands).
@@ -123,7 +126,9 @@ Flight-readiness:
       NOTE: three earlier cm=0 "churn" readings were the instrument
       wiping its own evidence (post-read placed after the CLI-exit FC
       reboot). SCAR: read counters BEFORE teardown, always tee.
-- [ ] Bidir at DSHOT600; EDT current under real load (needs >1 A rungs).
+- [~] Bidir at DSHOT600 under load (idle validated; loaded rungs
+      pending). EDT current under real load: DONE (curr=1 A at 45%
+      armed fly, see item 4 above).
 - [~] DSHOT command verbs: MSP2 side channel VALIDATED (bf_msp.py,
       cmd counter 0->6 proof); A4 save path FIXED (config write-through
       ring, host-tested); A3 tone channel BUILT + WIRED (ToneScheduler

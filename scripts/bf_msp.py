@@ -14,6 +14,13 @@ then commandCount x command(u8).
 The FC must NOT be in CLI mode (MSP is dead there). ESC must be armed
 at zero throttle for command acceptance (AM32 gate: armed && !running).
 
+SCARS: (1) BF's MSP2 inline dshot-command path acks but never puts the
+command on the wire on this build — use CLI `dshotprog 0 <cmd>` for
+bench command delivery instead. (2) Interleaving MSP_MOTOR (104)
+requests into the --arm-fly RC stream reproducibly PREVENTS ARMING
+(2/2 fail with it, 2/2 arm without); poll MSP_MOTOR_TELEMETRY (139)
+and MSP_STATUS (101) only.
+
 Usage: bf_msp.py --cmd 1 [--repeat 6] [--port COM42] [--motor 255]
 """
 import argparse
@@ -97,6 +104,18 @@ def arm_test(port, hold_s=8.0):
 
 
 MSP_STATUS = 101
+MSP_MOTOR_TELEMETRY = 139
+
+
+def parse_motor_telemetry(payload):
+    """MSP_MOTOR_TELEMETRY reply: u8 count, then per motor
+    u32 rpm, u16 invalidPct*100, u8 tempC, u16 voltage, u16 current,
+    u16 consumption (13 bytes each). Returns motor 0's dict."""
+    if not payload or len(payload) < 1 + 13:
+        return None
+    rpm, inv, temp, volt, curr, cons = struct.unpack_from("<IHBHHH", payload, 1)
+    return {"rpm": rpm, "inv": inv / 100.0, "temp": temp,
+            "volt": volt, "curr": curr, "cons": cons}
 
 
 def read_msp_replies(p, want_cmd, quiet=0.3):
@@ -182,9 +201,19 @@ def main():
             ):
                 print(f"[fly] {name}", flush=True)
                 t0 = time.time()
+                last_telem = None
+                last_cmd = 0
                 while time.time() - t0 < secs:
                     p.write(rc_frame(throttle, aux))
+                    p.write(msp1_frame(MSP_MOTOR_TELEMETRY))
                     time.sleep(0.05)
+                    got = read_msp_replies(p, MSP_MOTOR_TELEMETRY, quiet=0.02)
+                    if got:
+                        t = parse_motor_telemetry(got[-1])
+                        if t:
+                            last_telem = t
+                if last_telem:
+                    print(f"[fly] {name}: telem {last_telem}", flush=True)
         finally:
             # Kill guard: disarm stream then close (stream loss => BF
             # failsafe also disarms).
