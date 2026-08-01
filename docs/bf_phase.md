@@ -126,9 +126,16 @@ Flight-readiness:
       NOTE: three earlier cm=0 "churn" readings were the instrument
       wiping its own evidence (post-read placed after the CLI-exit FC
       reboot). SCAR: read counters BEFORE teardown, always tee.
-- [~] Bidir at DSHOT600 under load (idle validated; loaded rungs
-      pending). EDT current under real load: DONE (curr=1 A at 45%
-      armed fly, see item 4 above).
+- [x] Bidir at DSHOT600 under load: **PASS** (2026-07-31) — ladder
+      15/25/35/50%, eRPM 46,600 -> 118,600 monotonic, 0.00% invalid,
+      0 invalid pkts (identical curve to DSHOT300). EDT current under
+      real load: DONE (curr=1 A at 45% armed fly, see item 4 above).
+      RESOLVED en route — the "suspicious-low eRPM" was NOT a scaling
+      bug: locked 50% reads eRPM=118,600/rpm=16,943 in the CLI,
+      matching MSP_MOTOR_TELEMETRY independently. The old low numbers
+      were REAL slow rotation: bidir_load.py direct-engaged its first
+      rung from stop (direct 50% churns at ~157 Hz e vs ~2,000 Hz e
+      staircased). Script fixed: staircase engage + --protocol arg.
 - [~] DSHOT command verbs: MSP2 side channel VALIDATED (bf_msp.py,
       cmd counter 0->6 proof); A4 save path FIXED (config write-through
       ring, host-tested); A3 tone channel BUILT + WIRED (ToneScheduler
@@ -137,16 +144,20 @@ Flight-readiness:
       ear). Remaining: exact AM32 beacon-tune port (current notes are
       approximations), direction-change + save-persist verification on
       bench, dumps-over-flight-link verbs, Configurator passthrough.
-- [~] AM32 Configurator passthrough: transport chain PROVEN HEADLESSLY
-      to the bootloader boundary (bf_4way.py: MSP_SET_4WAY_IF -> 1 ESC,
-      4-way protocol v108 alive, frames round-trip). DeviceInitFlash
-      fails (ack=15, 4 retries) because the BENCH'S PATCHED BOOTLOADER
-      auto-boots the app after ~500 ms idle-high — it never waits in
-      DFU for the init sequence. Deliberate bench trade-off (the fast
-      auto-boot is what makes the reset loop self-recover); a stock-
-      bootloader ESC would complete the hop. Full end-to-end (read/
-      write/persist, exercising A2+A4) = stock bootloader + browser
-      session, user-assisted.
+- [x] AM32 Configurator passthrough: **transport PROVEN END-TO-END**
+      (2026-07-31). With the TRUE STOCK bootloader (built from
+      AM32-bootloader @ fb0f6eb^, flashed over SWD, app untouched),
+      DeviceInitFlash succeeded FIRST TRY: bootloader signature
+      06350204, ack=0 — full host -> MSP -> 4-way -> signal-wire ->
+      bootloader -> back round trip. The app also boots normally
+      under stock with BF driving (second-chance jump works live).
+      The bench (hardcoded-jump) bootloader was restored afterward
+      and the ESC re-verified at BiDShot Armed. The browser UI is
+      just a client of this exact chain; a full read/write/persist
+      browser session remains an optional user-driven confirmation.
+      Bins archived: bootloader_stock.bin / bootloader_bench.bin
+      (session scratchpad; rebuildable from the AM32-bootloader repo,
+      stock = fb0f6eb^, bench = 9ef0c06).
 - [~] KISS telemetry on PB6 (prod telemetry) still pending a PB6
       rewire (hands). The poll-print disturbance question is ANSWERED
       by a controlled A/B (2026-07-31): a debuguart-gated print-blast

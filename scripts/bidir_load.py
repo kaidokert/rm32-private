@@ -14,8 +14,17 @@ COM41 stream is watched passively for resets/kills during the ladder.
 Kill guards: motor 1000 + CLI exit on every path; firmware bench guard
 armed underneath.
 
+RESOLVED (2026-07-31, "suspicious-low eRPM"): the CLI columns were
+never mis-scaled — locked 50% reads eRPM=118,600/RPM=16,943, matching
+the independent MSP_MOTOR_TELEMETRY path (16,171 @ 45% armed fly).
+The historical 3,200-11,800 eRPM readings were REAL: the old ladder
+direct-engaged its first rung from stop, which churns (direct 50%
+measured 157 Hz e vs ~2,000 Hz e via staircase). Fix: staircase
+engage below, per the engage-pattern law (gradual locks, direct
+churns).
+
 Usage: bidir_load.py [--bf COM42] [--esc COM41] [--ladder 15,25,35,50]
-       [--hold 5]
+       [--hold 5] [--protocol DSHOT300]
 """
 import argparse
 import re
@@ -161,6 +170,8 @@ def main():
     ap.add_argument("--esc", default="COM41")
     ap.add_argument("--ladder", default="15,25,35,50")
     ap.add_argument("--hold", type=float, default=5.0)
+    ap.add_argument("--protocol", default="DSHOT300",
+                    choices=["DSHOT150", "DSHOT300", "DSHOT600"])
     a = ap.parse_args()
     ladder = [float(x) for x in a.ladder.split(",")]
 
@@ -168,18 +179,20 @@ def main():
     bf = Bf(a.bf)
     rows = []
     try:
-        # Ensure bidir @ DSHOT300 (save only if changed — save reboots FC).
+        # Ensure bidir @ the requested protocol (save only if changed —
+        # save reboots FC).
         bf.enter()
         cur = bf.cmd("get dshot_bidir") + bf.cmd("get motor_pwm_protocol")
-        need = ("dshot_bidir = ON" not in cur) or ("= DSHOT300" not in cur)
+        need = ("dshot_bidir = ON" not in cur) or (f"= {a.protocol}" not in cur)
         if need:
-            bf.cmd("set motor_pwm_protocol = DSHOT300")
+            bf.cmd(f"set motor_pwm_protocol = {a.protocol}")
             bf.cmd("set dshot_bidir = ON")
             bf.save_and_close()
-            print("[bf] bidir@DSHOT300 set, FC rebooting", flush=True)
+            print(f"[bf] bidir@{a.protocol} set, FC rebooting", flush=True)
         else:
             bf.exit_and_close()
-            print("[bf] already bidir@DSHOT300 (exited CLI, FC rebooting)", flush=True)
+            print(f"[bf] already bidir@{a.protocol} (exited CLI, FC rebooting)",
+                  flush=True)
 
         ok, info = wait_bidir(esc, seconds=50)
         print(f"bidir commit: {'OK' if ok else 'FAIL'} {info}", flush=True)
@@ -191,6 +204,15 @@ def main():
         baseline = parse_telem(bf.cmd("dshot_telemetry_info", quiet=0.7))
         print(f"idle: flags={baseline[2]} erpm={baseline[3]} reads={baseline[0]} inv_pkts={baseline[1]}", flush=True)
         try:
+            # Staircase engage to the first rung (engage-pattern law:
+            # direct mid-throttle engage from stop churns and poisons
+            # every later rung's reading; gradual engage locks).
+            first = int(1000 + ladder[0] * 10)
+            v = 1100
+            while v < first:
+                bf.cmd(f"motor 0 {v}")
+                time.sleep(1.2)
+                v += 100
             for pct in ladder:
                 value = int(1000 + pct * 10)
                 bf.cmd(f"motor 0 {value}")
