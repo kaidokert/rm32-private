@@ -142,9 +142,34 @@ Flight-readiness:
       bootloader ESC would complete the hop. Full end-to-end (read/
       write/persist, exercising A2+A4) = stock bootloader + browser
       session, user-assisted.
-- [ ] KISS telemetry on PB6 (prod telemetry) + the poll-print
-      disturbance question (RTT vs PB6-TX crosstalk) — the last open
-      item from the parity campaign.
+- [~] KISS telemetry on PB6 (prod telemetry) still pending a PB6
+      rewire (hands). The poll-print disturbance question is ANSWERED
+      by a controlled A/B (2026-07-31): a debuguart-gated print-blast
+      lever (`PRINT_BLAST` in isr_handlers.rs, level-set by DSHOT cmd
+      42=ON / 47=OFF via CLI `dshotprog 0 42` — level not toggle, BF
+      repeats frames; MSP2 inline commands never reach the wire on
+      this BF build, use dshotprog) makes main deliberately print
+      ~60 chars every 2048 iters (~15 Hz, ~1 kB/s) WHILE RUNNING.
+      ABA at 50% (staircase engage, ~212k comms/arm) + A/B at 90%
+      (~307k comms/arm):
+        50%: exc 58 -> 101 -> 56 (OFF/ON/OFF), dsy=0 all arms
+        90%: exc 251 OFF vs 470 ON, dsy=0 both
+      VERDICT: main-context PB6 printing while running causes ZERO
+      desyncs and only ~2x the exc rate (0.03->0.05% @50%,
+      0.08->0.15% @90%) — a real, measurable disturbance signature
+      three orders below harm. The historical "print wall" is hereby
+      re-attributed: (a) prio-0 ISR printing (the TIM16 observer
+      effect, ~180 us commutation delay) and (b) the 'i' poll
+      ROUND-TRIP's RX path (phantom-throttle corruption), NOT
+      PB6-TX->PB7 comparator crosstalk and NOT main-context TX.
+      The poll law (no queries during measured runs) STANDS — the
+      exc doubling is exactly the observer effect it guards against.
+      NOTE: wex is a HIGH-WATER register (ratchets, never resets);
+      it cannot attribute per-run effects — use exc deltas.
+      The lever is bench-only and stays OUT of the clean tree
+      (Tier-C class); direct mid-throttle engage from stop churns
+      (1300 dsy at 50% direct vs 0 via staircase) — consistent with
+      the known engage-pattern story, use staircase engages.
 
 Production hygiene (docs/public_cleanup_tiers.md + public_pr_plan.md):
 - [ ] A3 arming beeps, A4 EEPROM save path, A5 bench_guard thresholds.

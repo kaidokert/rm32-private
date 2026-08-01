@@ -379,6 +379,15 @@ pub static EDT_SENT: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU
 #[cfg(feature = "debuguart")]
 pub static EDT_LAST: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
 
+/// Poll-print disturbance A/B (item 7): when set, main deliberately
+/// prints while the motor RUNS — the banned observer behavior,
+/// reintroduced as a controlled experiment to name the mechanism
+/// (RTT critical sections vs PB6-TX->PB7 comparator-input crosstalk).
+/// Level-set by DSHOT cmd 42 (ON) / 47 (OFF) at stop — level, not
+/// toggle, so BF's command repeats are idempotent.
+#[cfg(feature = "debuguart")]
+pub static PRINT_BLAST: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// DMA transfer complete (input capture ISR body).
 pub fn handle_dma_tc() {
     let state = ISR_LOCAL.get();
@@ -509,6 +518,16 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
             shared.set_signal_timeout(0);
         }
         TransferAction::DshotCommand { cmd, telemetry } => {
+            // Bench experiment lever (cmds 42/47, unassigned in the
+            // DSHOT command space): level-set the PB6 print-blast used
+            // by the poll-print-disturbance A/B (item 7). Level rather
+            // than toggle — BF repeats command frames, and repeated
+            // sets must be idempotent. Main blasts while running.
+            #[cfg(feature = "debuguart")]
+            if cmd == 42 || cmd == 47 {
+                use core::sync::atomic::Ordering;
+                PRINT_BLAST.store(cmd == 42, Ordering::Relaxed);
+            }
             // Command-arrival telemetry (EDT handshake debug): count every
             // decoded command frame and publish the last cmd id. Rides the
             // post-detection-idle dbg fields in the [loop] line

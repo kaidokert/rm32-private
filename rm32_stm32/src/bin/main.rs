@@ -1244,6 +1244,20 @@ fn main() -> ! {
             }
         }
 
+        // Item-7 A/B: deliberate PB6 print traffic WHILE RUNNING (cmd 42
+        // lever). ~60 chars every 2048 iters — comparable to the old 'i'
+        // polling that built the wall. Main context.
+        #[cfg(feature = "debuguart")]
+        if log_counter % 2048 == 0
+            && shared.running()
+            && rm32_stm32::isr_handlers::PRINT_BLAST.load(core::sync::atomic::Ordering::Relaxed)
+        {
+            rm32_stm32::dprintln!(
+                "[blast] ci={} zc={} filler=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                shared.commutation_interval(),
+                shared.zero_crosses()
+            );
+        }
         sys.reload_watchdog();
         #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
         {
