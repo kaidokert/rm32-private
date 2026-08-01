@@ -54,9 +54,21 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
   AM32-style); regression test
   `prop_brake_reconfigures_bridge_before_duty` (the HAL-call-counter
   class — the exact bug family that infra was built for).
-  Coast baseline captured pre-incident (spin-down ~0.5-1 s, 1
-  transitional SR sample in 2/3 stops). Brake-vs-coast comparison
-  PENDING hardware recovery + the fixed build.
+  RECOVERY + BENCH CLOSE-OUT (2026-08-01): the board came back after
+  ~30 min; partial reflashes still locked the core at boot (LOCKUP,
+  no output) — even the pre-casualty known-good build. Cause: flash
+  ECC corruption from the power loss DURING the in-flight save; only
+  a MASS ERASE + full re-image (bootloader + EEPROM + app) cleared
+  it. SCAR: after any power-loss-during-flash-write event, mass
+  erase — partial rewrites leave ECC-invalid words that lock the
+  core on read and masquerade as a firmware regression.
+  BRAKE VS COAST (fixed build, drag_brake_strength=10, 3 stops
+  each): brake engaged at armed-idle draws 0 mA (the old code
+  cooked here). First post-stop SR sample: brake ci 9006/9666
+  (~310 mech rpm, nearly stopped) vs coast ci 1421/3473 (~800-2000
+  rpm still spinning) — clean separation, 3-6x faster deceleration.
+  dsy=0 across the whole 569k-comm session. Config restored to
+  baseline + dump-verified. VALIDATED.
 - [x] **EDT temp — ROOT-CAUSED + FIXED, bench confirm pending**
   (2026-08-01): the 7-9 C readings were the missing VDDA rescale.
   Factory TS_CAL points are measured at 3.0 V (L4/G0/G4; F0 at
@@ -67,8 +79,9 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
   cal_vref_mv (L431/G071/G431 3000, F051 3300 = no-op) in
   TempCalibration + the boilerplate macro + the G431 direct site;
   regression test temp_l431_vdda_rescale_matches_am32 (unscaled -5 C
-  vs rescaled 21 C on realistic cal values). Live ~20-25 C reading
-  to confirm on hardware recovery.
+  vs rescaled 21 C on realistic cal values). CONFIRMED LIVE
+  (2026-08-01): degC=36-37 on the recovered board (die self-heating
+  over a ~22 C bench — plausible; was 7-9 pre-fix). VALIDATED.
 
 ## Tier 2 — needs operator ears/hands nearby, no rewiring
 
