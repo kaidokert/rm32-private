@@ -81,17 +81,20 @@ override (`scripts/bf_motor.py`), settings via `scripts/bf_cli.py`.
 ## Burn-down list (everything left to run into the ground)
 
 Flight-readiness:
-- [~] Full-throttle envelope re-qual UNDER BF DSHOT300 — **BLOCKED ON
-      HARDWARE**: three ladder attempts (08-01) ended in supply-path
-      collapse; bench guard measured vbat 7659 mV @ 1413 mA (the
-      documented loose-wire signature). SOLDER THE SUPPLY WIRE, then
-      rerun `scripts/bf_ladder.py`. En route, the always-comp churn was
-      caught and fixed (B5: AUTO drive promoted to all builds — the
-      production build had churned the whole envelope at <400 Hz e with
-      16k desyncs; commit 2abf363).
-- [x] First-engage churn class: ROOT-CAUSED — it was the always-comp
-      attractor in non-benchuart builds (B5). AUTO promotion fixes it;
-      confirm with post-solder engage soaks.
+- [x] **Full-throttle envelope re-qual UNDER BF DSHOT300: PASS**
+      (08-01, post power-fix, full pack): 1,712,046 comms, dsy=0,
+      exc=22 (0.01/1k), 0 resets, recorder min_ci=107 (3,115 Hz e at
+      100%), 6.43 A peak, 10.49 V min. The parity claim now stands
+      wire-to-winding through the flight stack.
+- [~] Engage churn class, REVISED: the "always-comp attractor" B5
+      evidence from the broken-supply runs was CONFOUNDED (B5 stays on
+      bench-era evidence). The remaining beast: **bidir engage on a
+      FRESH pack churns** (~10x slow garbage ladders, 3 consecutive
+      runs) while unidir on the same pack runs the full envelope clean
+      and bidir on a worn pack ran clean — firmware exonerated twice by
+      flash-A/B (cb10c0c churns today, was clean this morning). This is
+      the parity ledger's "90% restart-transient on fresh pack" item in
+      bidir form. Next session: recorder rings + WAX on the engage.
 - [~] EDT at `dshot_edt = ON` via real flight-arm: harness BUILT
       (bf_msp.py --arm-test, MSP RC injection; BF configured: RX_MSP +
       aux arm range). Live run DEFERRED — after the 08-01 loose-wire
@@ -100,8 +103,14 @@ Flight-readiness:
       the previously-stable d0a900d (flash-bisect exonerated all four
       new commits), while unidir decode stays crc_fail=0. Both supply
       and signal wiring need physical repair first.
-- [ ] Protocol robustness soak: each protocol × {cold boot, FC reboot,
-      battery replug} × N, zero missed detections/arms.
+- [x] Protocol robustness soak (FC-reboot axis): **20/20** — 5 cycles
+      × DSHOT300/600/150/PWM, zero misses, latency 2.7-7.8 s.
+      Cold-boot/battery-replug axes remain (need hands).
+- [x] Bidir at idle re-validated on FULL current stack (post Tier-C
+      backout): BiDShot stable, crc frozen at the 105 transition tail,
+      80k+ passes. The earlier "405/613 bidir death" resolved as
+      FC-side config half-states from glitched CLI save sequences —
+      verify `get` after every `set`+`save`; wires were never at fault.
 - [ ] Downthrottle blip vs the clone reference artifact (10% ladder,
       double slams, re-qual protocol).
 - [ ] Bidir at DSHOT600; EDT current under real load (needs >1 A rungs).
