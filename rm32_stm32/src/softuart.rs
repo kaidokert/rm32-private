@@ -63,6 +63,15 @@ pub struct SoftUart<'a, const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: u
     /// See [`Self::on_falling_edge`] / [`Self::on_sample`]. When false the
     /// timer ISR's blind `on_sample` calls return immediately.
     is_receiving: bool,
+    /// True when the previous frame ended in a valid stop bit. A clean
+    /// end means the very next falling edge IS a legitimate start bit —
+    /// back-to-back bytes in a continuous stream have sub-gap spacing
+    /// between the last data edge and the next start. After a framing
+    /// error this goes false and start qualification falls back to the
+    /// idle-gap heuristic (noise resync). Without this, only the FIRST
+    /// byte of every burst decodes (observed: 7 frames for 19 sent —
+    /// the minz era masked it by pacing 1 byte per 2 s).
+    last_frame_clean: bool,
     /// Producer half of the caller's SPSC RX queue. SoftUart pushes
     /// decoded bytes here; the consumer half lives in `main` and is
     /// drained lock-free.
@@ -95,6 +104,7 @@ impl<'a, const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
             frame_count: 0,
             overrun_count: 0,
             is_receiving: false,
+            last_frame_clean: true,
             producer,
         }
     }
@@ -106,14 +116,24 @@ impl<'a, const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
     pub fn on_falling_edge(&mut self, now_ticks: u32) -> bool {
         let elapsed = now_ticks.wrapping_sub(self.last_edge_ticks);
         self.last_edge_ticks = now_ticks;
-        if elapsed >= Self::FRAME_GAP_TICKS {
+        let qualifies = if self.is_receiving {
+            // Mid-frame data edge — never a start.
+            false
+        } else if self.last_frame_clean {
+            // Previous frame closed on a valid stop bit: the line is in
+            // a known state and this edge IS the next start bit, however
+            // tight the spacing (back-to-back stream support).
+            true
+        } else {
+            // Post-error resync: require a real idle gap.
+            elapsed >= Self::FRAME_GAP_TICKS
+        };
+        if qualifies {
             self.frame_count = self.frame_count.wrapping_add(1);
             self.reset_decoder();
             self.is_receiving = true;
-            true
-        } else {
-            false
         }
+        qualifies
     }
 
     /// Feed one bit-sample-time pin read into the decoder. Cheap no-op
@@ -127,11 +147,21 @@ impl<'a, const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
         }
         self.accum += pin_high as u32;
         self.oversample_idx += 1;
-        if (self.oversample_idx as usize) < OVERSAMPLE {
+        // The STOP bit is decided EARLY, at half the samples: the frame
+        // must close before the next byte's start edge in a
+        // back-to-back stream, or that edge lands while `is_receiving`
+        // and is misclassified as a mid-frame transition (the burst-
+        // corruption mode). Data/start bits use the full window.
+        let needed = if self.bit_index > 8 {
+            OVERSAMPLE / 2
+        } else {
+            OVERSAMPLE
+        };
+        if (self.oversample_idx as usize) < needed {
             return;
         }
-        // Bit complete — majority vote across OVERSAMPLE samples.
-        let bit: u8 = if (self.accum as usize) * 2 >= OVERSAMPLE {
+        // Bit complete — majority vote across the sampled window.
+        let bit: u8 = if (self.accum as usize) * 2 >= needed {
             1
         } else {
             0
@@ -145,6 +175,7 @@ impl<'a, const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
                     self.framing_errors = self.framing_errors.wrapping_add(1);
                     self.reset_decoder();
                     self.is_receiving = false;
+                    self.last_frame_clean = false;
                     return;
                 }
             }
@@ -154,8 +185,10 @@ impl<'a, const BAUD: u32, const TICK_HZ: u32, const OVERSAMPLE: usize>
             _ => {
                 let byte = self.byte_build;
                 let stop_ok = bit == 1;
+                // (bit was decided early — see the oversample gate above)
                 self.reset_decoder();
                 self.is_receiving = false;
+                self.last_frame_clean = stop_ok;
                 if stop_ok {
                     if self.producer.enqueue(byte).is_err() {
                         self.overrun_count = self.overrun_count.wrapping_add(1);

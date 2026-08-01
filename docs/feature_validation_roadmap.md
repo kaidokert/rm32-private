@@ -57,9 +57,26 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
 
 ## Tier 3 — gated on the PB6/spare-pin rewire
 
-- [ ] **Host->ESC UART input** — USB-TTL TX to the spare pad
-  (operator to identify; previously soft-UART in minz/rinz era).
-  Gives interactive bench control while BF keeps the signal wire.
+- [x] **Host->ESC UART input** (2026-08-01): USB-TTL TX -> header pin
+  4 (HSE_IN / PA0), 9600 8N1. Minz-era decoder resurrected (8d2ff8c^)
+  + direct-PAC glue (EXTI0 start qualify + LPTIM1 38.4 kHz sampler,
+  both prio 3). TWO DECODER FIXES en route: clean-frame back-to-back
+  start acceptance (the archived version only ever decoded the first
+  byte of a burst — masked by its 1-byte-per-2s era scripts) and
+  per-start LPTIM CMP phase resync + early stop-bit decision (free-
+  running sampler phase made burst decodes garble). Dispatch through
+  the shared bench_input vocabulary, replies DEFERRED 150 ms (one
+  adapter, two bauds — host must switch back before the reply).
+  Config verbs added: `<n>o` offset latch, `<n>v` write via the A4
+  ring, `c` persisted-EEPROM hex dump, `S` save (same flag as DSHOT
+  cmd 12). PERSIST ROUND TRIP PROVEN: [32]=129 -> save -> page reads
+  81 -> restore 128 -> page reads 80. Tools: softuart_cmd.py /
+  softuart_check.py.
+  INCIDENT + GUARD: a mis-decoded offset (pre-fix garble) landed a
+  stray write at [0] (boot-enable); the next reset bricked the app
+  jump (bootloader's jump() checks byte0==1 even in the bench
+  hardcoded build) — repaired over SWD from the dump. Bench write
+  verb now REFUSES offsets <3.
 - [ ] **Standalone EEPROM tool** (operator-proposed) — tiny isolated
   flash binary: dump/patch all config bytes over UART, independent
   of the firmware under test. Reuses rm32 config structs. SWD covers

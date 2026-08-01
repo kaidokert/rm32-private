@@ -97,12 +97,26 @@ pub fn init() -> Consumer<'static, u8, RX_QUEUE_LEN> {
     consumer
 }
 
-/// EXTI0 ISR body: ack the line, qualify the falling edge.
+/// EXTI0 ISR body: ack the line, qualify the falling edge, and — on a
+/// qualified START — phase-sync the sampler: rewrite LPTIM1.CMP so the
+/// next compare-match lands half a sample period from now, aligning
+/// the 4 samples/bit grid to THIS byte's bit boundaries (samples at
+/// ~1/8, 3/8, 5/8, 7/8 of each bit). Without the resync the free-
+/// running sampler's phase drifts per byte and back-to-back frames
+/// decode phase-dependently garbled.
 pub fn on_exti0() {
     let exti = unsafe { &*pac::EXTI::PTR };
     exti.pr1.write(|w| unsafe { w.bits(1) });
     if let Some(uart) = unsafe { &mut *UART.0.get() } {
-        uart.on_falling_edge(cyccnt() / CYCLES_PER_TICK);
+        if uart.on_falling_edge(cyccnt() / CYCLES_PER_TICK) {
+            let lptim = unsafe { &*pac::LPTIM1::PTR };
+            let period = LPTIM_ARR as u32 + 1;
+            let cnt = lptim.cnt.read().bits() & 0xFFFF;
+            let cmp = (cnt + period / 2) % period;
+            lptim.cmp.write(|w| unsafe { w.bits(cmp) });
+            // No CMPOK wait: sync completes in a few APB cycles, long
+            // before the ~26 µs to the target match; one write per frame.
+        }
     }
 }
 

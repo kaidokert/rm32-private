@@ -407,6 +407,17 @@ fn main() -> ! {
     // 9600 — a latched heartbeat readback has no such race.
     #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
     let (mut su_last, mut su_n): (u8, u32) = (0, 0);
+    // Soft-UART command dispatch state: the shared bench_input parser +
+    // the latched config offset for 'o'/'v' write pairs. Execution is
+    // DEFERRED ~150 ms (except Kill): the host shares one adapter
+    // between 9600 TX and 115200 RX-log, and an immediate reply
+    // transmits before it can switch baud back to listen.
+    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+    let mut su_parser = rm32::bench_input::UartDuty::new();
+    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+    let mut su_cfg_offset: u8 = 0;
+    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+    let mut su_pending: Option<(rm32::bench_input::UartCmd, u32)> = None;
     #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
     rm32_stm32::dprintln!("[rm32] softuart RX: PA0 9600 8N1 (EXTI0+LPTIM1)");
 
@@ -440,6 +451,8 @@ fn main() -> ! {
     let mut bench_throttle: u16 = 0;
     #[cfg(feature = "benchuart")]
     let mut bench_last_cmd: Option<u32> = None;
+    #[cfg(feature = "benchuart")]
+    let mut bench_cfg_offset: u8 = 0;
     // Decision counters for the phantom-stop hunt: every committed value
     // and every Stop commit is counted — a host streaming "50\n" should
     // produce vals only; stops>0 means RX corruption turned a throttle
@@ -995,30 +1008,41 @@ fn main() -> ! {
                         }
                         UartCmd::RecorderDump => {
                             #[cfg(feature = "stm32l431")]
-                            {
-                                use core::sync::atomic::Ordering;
-                                use rm32_stm32::isr_handlers as ih;
-                                let head = ih::SR_HEAD.load(Ordering::Relaxed) as usize;
-                                let n = head.min(ih::SR_N);
-                                let start = if head > ih::SR_N { head % ih::SR_N } else { 0 };
-                                rm32_stm32::dprintln!("SR n={} dt_ms=500", n);
-                                for k in 0..n {
-                                    let i = (start + k) % ih::SR_N;
-                                    rm32_stm32::dprintln!(
-                                        "SR {} {} {}",
-                                        ih::SR_CI[i].load(Ordering::Relaxed),
-                                        ih::SR_MA[i].load(Ordering::Relaxed),
-                                        ih::SR_MV[i].load(Ordering::Relaxed)
-                                    );
-                                    #[cfg(feature = "debuguart")]
-                                    if k % 8 == 7 {
-                                        rm32_stm32::debug_uart::flush();
-                                    }
-                                }
-                                rm32_stm32::dprintln!("SR END");
-                            }
+                            dump_recorder();
                             #[cfg(not(feature = "stm32l431"))]
                             rm32_stm32::dprintln!("[bench] recorder: L431 only");
+                        }
+                        // Config verbs — same semantics as the PA0
+                        // soft-UART dispatcher (A4 ring + save flag).
+                        UartCmd::ConfigOffset(n) => {
+                            bench_cfg_offset = n.min(255) as u8;
+                            rm32_stm32::dprintln!("[cfg] offset={}", bench_cfg_offset);
+                        }
+                        UartCmd::ConfigWrite(v) => {
+                            // Same boot-byte guard as the PA0 dispatcher.
+                            if bench_cfg_offset < 3 {
+                                rm32_stm32::dprintln!(
+                                    "[cfg] REFUSED offset {} (<3)",
+                                    bench_cfg_offset
+                                );
+                            } else {
+                                shared.push_config_write(bench_cfg_offset, v.min(255) as u8);
+                                rm32_stm32::dprintln!(
+                                    "[cfg] write [{}]={} (ring)",
+                                    bench_cfg_offset,
+                                    v.min(255)
+                                );
+                            }
+                        }
+                        UartCmd::ConfigDump => {
+                            #[cfg(feature = "stm32l431")]
+                            dump_eeprom();
+                            #[cfg(not(feature = "stm32l431"))]
+                            rm32_stm32::dprintln!("[bench] eeprom dump: L431 only");
+                        }
+                        UartCmd::SaveConfig => {
+                            shared.set_save_settings_flag(true);
+                            rm32_stm32::dprintln!("[cfg] save requested");
                         }
                         UartCmd::HistDump => {
                             #[cfg(all(
@@ -1256,17 +1280,42 @@ fn main() -> ! {
             }
         }
 
-        // PA0 soft-UART RX drain: bounded per iteration. First rung =
-        // latch into the [su] heartbeat (validation); command dispatch
-        // comes next.
+        // PA0 soft-UART RX drain + dispatch through the shared
+        // bench_input vocabulary. Throttle verbs are IGNORED here — in
+        // DSHOT/BF mode throttle ownership stays on the signal wire;
+        // this channel is for config surgery, dumps and the kill verb.
         #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
-        for _ in 0..8 {
-            match softuart_rx.dequeue() {
-                Some(b) => {
-                    su_last = b;
-                    su_n = su_n.wrapping_add(1);
+        {
+            use rm32::bench_input::UartCmd;
+            let su_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+            for _ in 0..8 {
+                let Some(b) = softuart_rx.dequeue() else {
+                    break;
+                };
+                su_last = b;
+                su_n = su_n.wrapping_add(1);
+                let Some(cmd) = su_parser.step(b) else {
+                    continue;
+                };
+                if cmd == UartCmd::Kill {
+                    // Safety verb: never deferred.
+                    su_execute(cmd, &mut su_cfg_offset);
+                } else {
+                    // Defer ~150 ms (12M cycles @80 MHz) so the reply
+                    // transmits after the host's baud switch-back. A
+                    // second command displaces the slot by running the
+                    // first immediately (hosts send sequentially).
+                    if let Some((old, _)) = su_pending.take() {
+                        su_execute(old, &mut su_cfg_offset);
+                    }
+                    su_pending = Some((cmd, su_now.wrapping_add(12_000_000)));
                 }
-                None => break,
+            }
+            if let Some((cmd, due)) = su_pending {
+                if su_now.wrapping_sub(due) < u32::MAX / 2 {
+                    su_pending = None;
+                    su_execute(cmd, &mut su_cfg_offset);
+                }
             }
         }
 
@@ -1298,6 +1347,101 @@ fn main() -> ! {
         // no longer depends on main rate — the counter is incremented
         // in ten_khz_tick (TIM6 ISR) at 20 kHz.
         cortex_m::asm::nop();
+    }
+}
+
+/// Dump the onboard flight recorder (0.5 s ci/mA/mV samples) — shared
+/// by the benchuart 'B' arm and the PA0 soft-UART dispatcher.
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+fn dump_recorder() {
+    use core::sync::atomic::Ordering;
+    use rm32_stm32::isr_handlers as ih;
+    let head = ih::SR_HEAD.load(Ordering::Relaxed) as usize;
+    let n = head.min(ih::SR_N);
+    let start = if head > ih::SR_N { head % ih::SR_N } else { 0 };
+    rm32_stm32::dprintln!("SR n={} dt_ms=500", n);
+    for k in 0..n {
+        let i = (start + k) % ih::SR_N;
+        rm32_stm32::dprintln!(
+            "SR {} {} {}",
+            ih::SR_CI[i].load(Ordering::Relaxed),
+            ih::SR_MA[i].load(Ordering::Relaxed),
+            ih::SR_MV[i].load(Ordering::Relaxed)
+        );
+        if k % 8 == 7 {
+            rm32_stm32::debug_uart::flush();
+        }
+    }
+    rm32_stm32::dprintln!("SR END");
+}
+
+/// Execute one PA0 soft-UART command (deferred dispatch — see the
+/// drain loop). Throttle verbs and benchuart-era facilities report
+/// as ignored; config verbs ride the A4 ring + save flag.
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+fn su_execute(cmd: rm32::bench_input::UartCmd, cfg_offset: &mut u8) {
+    use rm32::bench_input::UartCmd;
+    let shared = isr::shared();
+    match cmd {
+        UartCmd::ConfigOffset(n) => {
+            *cfg_offset = n.min(255) as u8;
+            rm32_stm32::dprintln!("[cfg] offset={}", *cfg_offset);
+        }
+        UartCmd::ConfigWrite(v) => {
+            // Refuse the boot-enable/layout bytes: a mis-decoded offset
+            // once landed a stray write at [0], and a bootloader that
+            // checks boot-enable bricks the app jump on the next reset
+            // (2026-08-01 incident — repaired over SWD).
+            if *cfg_offset < 3 {
+                rm32_stm32::dprintln!("[cfg] REFUSED offset {} (<3)", *cfg_offset);
+            } else {
+                // A4 write-through ring: run_tick drains into
+                // main.config — the same plumbing Configurator / DSHOT
+                // programming use.
+                shared.push_config_write(*cfg_offset, v.min(255) as u8);
+                rm32_stm32::dprintln!("[cfg] write [{}]={} (ring)", *cfg_offset, v.min(255));
+            }
+        }
+        UartCmd::ConfigDump => dump_eeprom(),
+        UartCmd::SaveConfig => {
+            // Same save path as DSHOT cmd 12.
+            shared.set_save_settings_flag(true);
+            rm32_stm32::dprintln!("[cfg] save requested");
+        }
+        UartCmd::Kill => {
+            shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
+            rm32_stm32::dprintln!("[su] KILL: all off");
+        }
+        UartCmd::Info => {
+            rm32_stm32::dprintln!(
+                "[i mode={:?} newinput={} vbat_mv={} ci={} zc={}]",
+                shared.motor_mode(),
+                shared.newinput(),
+                shared.battery_voltage(),
+                shared.commutation_interval(),
+                shared.zero_crosses()
+            );
+        }
+        UartCmd::RecorderDump => dump_recorder(),
+        other => {
+            rm32_stm32::dprintln!("[su] ignored: {:?}", other);
+        }
+    }
+}
+
+/// Hex-dump the PERSISTED EEPROM config page (raw `EepromConfig`
+/// bytes at 0x0800F800) — shared by both UART dispatchers' 'c' verb.
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+fn dump_eeprom() {
+    let len = core::mem::size_of::<rm32::config::EepromConfig>();
+    let eep = unsafe { core::slice::from_raw_parts(0x0800_F800 as *const u8, len) };
+    for (row, chunk) in eep.chunks(16).enumerate() {
+        let mut line = heapless::String::<64>::new();
+        for b in chunk {
+            let _ = core::fmt::Write::write_fmt(&mut line, format_args!("{:02x} ", b));
+        }
+        rm32_stm32::dprintln!("[eep {:02}] {}", row * 16, line.as_str());
+        rm32_stm32::debug_uart::flush();
     }
 }
 

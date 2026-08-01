@@ -51,6 +51,21 @@ pub enum UartCmd {
     /// 'B' — dump the onboard flight recorder (0.5s samples of
     /// ci/current/vbat; poll-law-safe chart data, read post-run).
     RecorderDump,
+    /// `<n>o` — latch n as the pending EEPROM/config byte offset for a
+    /// subsequent [`UartCmd::ConfigWrite`]. Offsets are raw
+    /// `EepromConfig` (repr(C)) byte offsets — identical in the live
+    /// struct and the persisted EEPROM page.
+    ConfigOffset(u16),
+    /// `<n>v` — write value n (0-255) at the latched offset through the
+    /// A4 config write-through ring (same path Configurator/DSHOT
+    /// programming writes take, so bench writes exercise production
+    /// plumbing).
+    ConfigWrite(u16),
+    /// 'c' — dump the PERSISTED EEPROM config page as hex.
+    ConfigDump,
+    /// 'S' — request save-settings (same `save_settings_flag` path as
+    /// DSHOT cmd 12).
+    SaveConfig,
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -95,6 +110,22 @@ impl UartDuty {
                 self.n = 0;
                 Some(UartCmd::Kill)
             }
+            b'o' => {
+                let v = self.acc.min(u16::MAX as u32) as u16;
+                let had = self.n != 0;
+                self.acc = 0;
+                self.n = 0;
+                had.then_some(UartCmd::ConfigOffset(v))
+            }
+            b'v' => {
+                let v = self.acc.min(u16::MAX as u32) as u16;
+                let had = self.n != 0;
+                self.acc = 0;
+                self.n = 0;
+                had.then_some(UartCmd::ConfigWrite(v))
+            }
+            b'c' => Some(UartCmd::ConfigDump),
+            b'S' => Some(UartCmd::SaveConfig),
             b'Z' => Some(UartCmd::TraceToggle),
             b'i' => Some(UartCmd::Info),
             b'b' => Some(UartCmd::BbDump),
@@ -386,6 +417,28 @@ mod tests {
         assert_eq!(p.step(b'b'), Some(UartCmd::BbDump));
         // still commits the pending 50
         assert_eq!(p.step(b'\n'), Some(UartCmd::SetThrottle(1047)));
+    }
+
+    #[test]
+    fn config_offset_and_write_commit_accumulator() {
+        let mut p = UartDuty::new();
+        assert_eq!(feed(&mut p, "26o"), Some(UartCmd::ConfigOffset(26)));
+        assert_eq!(feed(&mut p, "255v"), Some(UartCmd::ConfigWrite(255)));
+        // bare verbs without digits do nothing (no stale accumulator)
+        assert_eq!(p.step(b'o'), None);
+        assert_eq!(p.step(b'v'), None);
+        // and they clear: a following terminator commits nothing
+        assert_eq!(feed(&mut p, "42o\n"), None, "offset consumed the digits");
+    }
+
+    #[test]
+    fn config_dump_and_save_are_pure_verbs() {
+        let mut p = UartDuty::new();
+        assert_eq!(p.step(b'5'), None);
+        assert_eq!(p.step(b'c'), Some(UartCmd::ConfigDump));
+        assert_eq!(p.step(b'S'), Some(UartCmd::SaveConfig));
+        // accumulator untouched by 'c'/'S' (like 'i')
+        assert_eq!(p.step(b'\n'), Some(UartCmd::SetThrottle(147)));
     }
 
     #[test]
