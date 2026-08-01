@@ -87,16 +87,16 @@ pub static EXC_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::Atomic
 /// ring — zero host involvement during the run; 'B' dumps post-run.
 /// 800 slots = the last ~6.7 minutes.
 pub const SR_N: usize = 800;
-#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static SR_CI: [core::sync::atomic::AtomicU16; SR_N] =
     [const { core::sync::atomic::AtomicU16::new(0) }; SR_N];
-#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static SR_MA: [core::sync::atomic::AtomicU16; SR_N] =
     [const { core::sync::atomic::AtomicU16::new(0) }; SR_N];
-#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static SR_MV: [core::sync::atomic::AtomicU16; SR_N] =
     [const { core::sync::atomic::AtomicU16::new(0) }; SR_N];
-#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static SR_HEAD: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// 20kHz control loop tick (TIM6 ISR body).
@@ -120,7 +120,7 @@ pub fn handle_tim6() {
 
     // Flight recorder: one sample per 0.5s from the tick ISR (constant
     // cost: a modulo check on the tick counter + three stores).
-    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
     {
         use core::sync::atomic::Ordering;
         if shared.dbg_isr_tick() % 10_000 == 0 {
