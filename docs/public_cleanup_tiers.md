@@ -34,11 +34,12 @@ Legend: [ ] open · [x] done · [~] deferred/ticketed
   `main_state.config`, but the ISR command processor mutates its own
   copy; Configurator-written settings may not persist. Needs
   changed-field publication via SharedState. Ticketed.
-- [ ] **A5. bench_guard enforced in production M4 builds with bench
+- [x] **A5. bench_guard enforced in production M4 builds with bench
   thresholds** (found in the two-agent re-review) — battery profile
   kills latched at 14.0 V OV / 15 A OC; a 4S pack trips OVOLT within
-  ~60 ms and the ESC stays dead until reset. Derive thresholds from
-  board/config (cell count) or gate enforcement under `benchuart`.
+  ~60 ms and the ESC stays dead until reset. RESOLVED: guard gated
+  under `debuguart` (bench builds keep it; production protection = the
+  AM32 mechanism set: LVC, current-limit PID, stuck rotor).
 - [x] **A6. Feature build-matrix breaks** (fixed: compile_error guards; examples/ exist in private tree — copy to clean staging) — `debuguart` fails to
   compile on G071/F051/G431 (L431 PAC syntax, no compile_error guard);
   `zctrace` fails on non-L431 (`comp_at_pre_zc_level` cfg mismatch);

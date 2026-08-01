@@ -409,7 +409,14 @@ fn main() -> ! {
     let mut log_counter: u32 = 0;
     // Bench safety guard: absolute vbat-sag + overcurrent kill, latched
     // until reset. See rm32_stm32::bench_guard for thresholds/rationale.
-    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+    // DEBUG BUILDS ONLY (Tier A5): the thresholds are bench-pack facts
+    // (14.0 V OV, 15 A OC) — a 4S production pack would trip the latched
+    // OVOLT kill within ~60 ms of classification. Production protection
+    // is the AM32 mechanism set (LVC, current-limit PID, stuck rotor).
+    #[cfg(all(
+        feature = "debuguart",
+        any(feature = "stm32l431", feature = "stm32g431")
+    ))]
     let mut bench_guard = rm32_stm32::bench_guard::BenchGuard::new(Chip::CPU_FREQUENCY_MHZ);
     // Bench UART control state: parser + committed throttle + last-command
     // timestamp for the 3 s deadman (a dead host script must not leave
@@ -646,7 +653,11 @@ fn main() -> ! {
         // then RE-ASSERTED every pass while latched (IsrAction is cleared by
         // the ISR after acting; DShot input could otherwise re-arm). Only a
         // reset re-arms the guard — a kill is evidence, not a hiccup.
-        #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
+        // Debug builds only — see the instantiation comment (Tier A5).
+        #[cfg(all(
+            feature = "debuguart",
+            any(feature = "stm32l431", feature = "stm32g431")
+        ))]
         {
             let guard_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
             if let Some(reason) = bench_guard.tick(
