@@ -397,6 +397,19 @@ fn main() -> ! {
     // Publish initial tim1_arr to SharedComm before ISR starts
     isr::shared().set_tim1_arr(timer1_max_arr);
 
+    // debuguart: PA0 soft-UART RX (host->ESC bench input; USB-TTL TX on
+    // header pin 4). Decoded bytes drain into the main loop below.
+    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+    let mut softuart_rx = rm32_stm32::mcu_l431::softuart_rx::init();
+    // Last byte + count, surfaced via the [su] heartbeat line: the host
+    // shares one adapter between 115200 TX-log and 9600 RX, so an
+    // immediate echo is transmitted while the host is still parked at
+    // 9600 — a latched heartbeat readback has no such race.
+    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+    let (mut su_last, mut su_n): (u8, u32) = (0, 0);
+    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+    rm32_stm32::dprintln!("[rm32] softuart RX: PA0 9600 8N1 (EXTI0+LPTIM1)");
+
     // --- Enable global interrupts ---
     // SAFETY: All ISR state has been initialized and moved to globals above.
     // NVIC priorities are configured. It is now safe to take interrupts.
@@ -554,6 +567,20 @@ fn main() -> ! {
                     ih::EXC_N.load(Ordering::Relaxed),
                     ih::EXC_MAX.load(Ordering::Relaxed),
                     ih::EXC_COMMS.load(Ordering::Relaxed)
+                );
+            }
+            // PA0 soft-UART health: decoded frames / framing errors /
+            // queue overruns, plus main's drain count + last byte.
+            #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+            {
+                let (f, e, o) = rm32_stm32::mcu_l431::softuart_rx::counters();
+                rm32_stm32::dprintln!(
+                    "[su f={} e={} o={} n={} last={:#04x}]",
+                    f,
+                    e,
+                    o,
+                    su_n,
+                    su_last
                 );
             }
             // Edge-probe lifetime totals — veto visibility even with the
@@ -1226,6 +1253,20 @@ fn main() -> ! {
                 #[cfg(feature = "debuguart")]
                 rm32_stm32::debug_uart::flush();
                 sys.reset();
+            }
+        }
+
+        // PA0 soft-UART RX drain: bounded per iteration. First rung =
+        // latch into the [su] heartbeat (validation); command dispatch
+        // comes next.
+        #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+        for _ in 0..8 {
+            match softuart_rx.dequeue() {
+                Some(b) => {
+                    su_last = b;
+                    su_n = su_n.wrapping_add(1);
+                }
+                None => break,
             }
         }
 

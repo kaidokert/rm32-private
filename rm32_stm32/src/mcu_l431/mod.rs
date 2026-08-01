@@ -9,5 +9,7 @@ pub mod init;
 pub mod input_capture;
 pub mod interrupts;
 pub mod pwm;
+#[cfg(feature = "debuguart")]
+pub mod softuart_rx;
 pub mod system;
 pub mod telemetry_uart;

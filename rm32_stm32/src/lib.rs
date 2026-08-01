@@ -72,6 +72,8 @@ pub mod isr_handlers;
 mod panic;
 pub mod phase;
 pub mod regs;
+#[cfg(feature = "debuguart")]
+pub mod softuart;
 pub mod stub;
 pub mod telem_hal;
 pub mod timer;

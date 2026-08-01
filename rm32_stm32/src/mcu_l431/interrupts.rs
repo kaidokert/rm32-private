@@ -13,6 +13,20 @@ fn USART2() {
     crate::bench_uart::service_rx();
 }
 
+// PA0 soft-UART RX (debuguart bench input): edge qualifier + bit
+// sampler, both level 3. Neither touches ISR_LOCAL.
+#[cfg(feature = "debuguart")]
+#[interrupt]
+fn EXTI0() {
+    super::softuart_rx::on_exti0();
+}
+
+#[cfg(feature = "debuguart")]
+#[interrupt]
+fn LPTIM1() {
+    super::softuart_rx::on_lptim1();
+}
+
 #[interrupt]
 fn TIM6_DACUNDER() {
     let tim6 = unsafe { &*pac::TIM6::PTR };

@@ -269,6 +269,17 @@ pub fn init(
         // (bench_uart::drain_dma) — no NVIC vector. The former RXNE-ISR
         // path at level 2 lost bytes whenever prio-0/1 bursts exceeded
         // the 5 µs byte time (~20% of host sends corrupted).
+        //
+        // debuguart: PA0 soft-UART RX (EXTI0 edge + LPTIM1 sampler) at
+        // level 3 — bench input must never preempt motor-critical IRQs;
+        // 4x-oversample majority voting absorbs the resulting jitter.
+        #[cfg(feature = "debuguart")]
+        {
+            NVIC::unmask(Interrupt::EXTI0);
+            NVIC::unmask(Interrupt::LPTIM1);
+            nvic.set_priority(Interrupt::EXTI0, 3 << 4);
+            nvic.set_priority(Interrupt::LPTIM1, 3 << 4);
+        }
     }
 
     // Enable EXTI line 15 (software-triggered by DMA TC)
