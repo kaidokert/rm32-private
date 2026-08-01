@@ -341,7 +341,6 @@ fn main() -> ! {
         // from AM32 (which applies comp unconditionally) — measured and
         // chosen; 'D' cycles diode/comp/auto live.
         rm32_stm32::phase::COMP_PWM_LIVE.store(3, core::sync::atomic::Ordering::Relaxed);
-        rm32_stm32::phase::COMP_PWM_SHADOW.store(3, core::sync::atomic::Ordering::Relaxed);
         rm32_stm32::dprintln!("[rm32] bench drive: AUTO at boot ('D' cycles)");
     }
 
@@ -562,15 +561,7 @@ fn main() -> ! {
             #[cfg(feature = "zctrace")]
             {
                 let (gc, pr) = rm32_stm32::edge_probe::totals();
-                let (va, vb, vc) = rm32_stm32::edge_probe::npin_violations();
-                rm32_stm32::dprintln!(
-                    "[veto gated={} prej={} nviol A={} B={} C={}]",
-                    gc,
-                    pr,
-                    va,
-                    vb,
-                    vc
-                );
+                rm32_stm32::dprintln!("[veto gated={} prej={}]", gc, pr);
             }
             // Dump recent frame snapshots (mix of pass + fail). Useful for
             // catching DMA buffer alignment / edge polarity issues in bidir.
@@ -857,36 +848,6 @@ fn main() -> ! {
                                     }
                                 }
                             );
-                            #[cfg(all(feature = "zctrace", feature = "stm32l431"))]
-                            {
-                                let (va, vb, vc) = rm32_stm32::edge_probe::npin_violations();
-                                let (mv, mi) = rm32_stm32::edge_probe::midw();
-                                let dc = rm32_stm32::phase::DIODE_PWM_CALLS
-                                    .load(core::sync::atomic::Ordering::Relaxed);
-                                let ch: [u16; 8] = core::array::from_fn(|i| {
-                                    rm32_stm32::phase::CANARY_HITS[i]
-                                        .load(core::sync::atomic::Ordering::Relaxed)
-                                });
-                                rm32_stm32::dprintln!(
-                                    "[canary {:?} dsv={}]",
-                                    ch,
-                                    rm32_stm32::phase::DIODE_SEEN_VAL
-                                        .load(core::sync::atomic::Ordering::Relaxed)
-                                );
-                                rm32_stm32::dprintln!(
-                                    "[nviol A={} B={} C={} midw={} lstep={} lcnt={} dpwm={} wlr={:#x} wpc={:#x} whits={}]",
-                                    va,
-                                    vb,
-                                    vc,
-                                    mv,
-                                    mi & 0xFF,
-                                    mi >> 8,
-                                    dc,
-                                    rm32_stm32::edge_probe::watch_read().1,
-                                    rm32_stm32::edge_probe::watch_read().0,
-                                    rm32_stm32::edge_probe::watch_hits()
-                                );
-                            }
                         }
                         UartCmd::TraceToggle => {
                             #[cfg(feature = "zctrace")]
@@ -915,7 +876,6 @@ fn main() -> ! {
                                 _ => 1,
                             };
                             COMP_PWM_LIVE.store(nxt, Ordering::Relaxed);
-                            rm32_stm32::phase::COMP_PWM_SHADOW.store(nxt, Ordering::Relaxed);
                             rm32_stm32::dprintln!(
                                 "[bench] drive: {} (live)",
                                 match nxt {
@@ -983,21 +943,6 @@ fn main() -> ! {
                             #[cfg(not(all(feature = "stm32l431", feature = "zctrace")))]
                             rm32_stm32::dprintln!("[bench] watch: L431+zctrace only");
                         }
-                        UartCmd::GateToggle => {
-                            #[cfg(feature = "stm32l431")]
-                            {
-                                use core::sync::atomic::Ordering;
-                                use rm32_stm32::comp_gate::GATE_STALE;
-                                let on = GATE_STALE.load(Ordering::Relaxed) == 0;
-                                GATE_STALE.store(on as u8, Ordering::Relaxed);
-                                rm32_stm32::dprintln!(
-                                    "[bench] gate avg: {} (live)",
-                                    if on { "STALE-20k" } else { "FRESH" }
-                                );
-                            }
-                            #[cfg(not(feature = "stm32l431"))]
-                            rm32_stm32::dprintln!("[bench] gate: L431 only");
-                        }
                         UartCmd::InjToggle => {
                             #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
                             {
@@ -1035,27 +980,6 @@ fn main() -> ! {
                             }
                             #[cfg(not(all(feature = "benchuart", feature = "stm32l431")))]
                             rm32_stm32::dprintln!("[bench] gecko: L431 bench only");
-                        }
-                        UartCmd::DivToggle(bit) => {
-                            if bit == 4 {
-                                #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
-                                {
-                                    use core::sync::atomic::Ordering;
-                                    let v = rm32_stm32::mcu_l431::interrupts::RACEFIX_OFF
-                                        .load(Ordering::Relaxed)
-                                        ^ 1;
-                                    rm32_stm32::mcu_l431::interrupts::RACEFIX_OFF
-                                        .store(v, Ordering::Relaxed);
-                                    rm32_stm32::dprintln!("[bisect] racefix_off={}", v);
-                                }
-                            } else {
-                                let m = shared.toggle_divergence_bit(bit);
-                                rm32_stm32::dprintln!(
-                                    "[bisect] divmask={:04b} (bit{} flipped; 1=verbatim)",
-                                    m,
-                                    bit
-                                );
-                            }
                         }
                         UartCmd::RecorderDump => {
                             #[cfg(feature = "stm32l431")]
@@ -1197,7 +1121,6 @@ fn main() -> ! {
                 rm32_stm32::bench_zct::drain(rm32_stm32::debug_uart::write_byte);
             }
 
-            rm32_stm32::phase::canary(6); // site 6: main-loop bench band
             let deadman_cyc: u32 = 3 * Chip::CPU_FREQUENCY_MHZ * 1_000_000;
             if let Some(last) = bench_last_cmd {
                 if bench_now.wrapping_sub(last) < deadman_cyc {

@@ -40,10 +40,6 @@ fn TIM1_UP_TIM16() {
     isr_handlers::handle_tim14(); // same logic, different timer
 }
 
-/// Bisect toggle 'R': 1 = SWIER edge-swallow race fix DISABLED.
-#[cfg(feature = "benchuart")]
-pub static RACEFIX_OFF: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-
 /// Lean camp-storm probe (clone-style single counters, always on
 /// under benchuart): COMP ISR entries + commutations. Lets a build
 /// WITHOUT blackbox/zctrace still measure entries/window, to test
@@ -89,11 +85,11 @@ fn COMP() {
     // depend on zctrace (regression 07-27: the zctrace-free build fell
     // back to fresh here and failed to lock at <=40% throttle).
     let avg = {
-        use core::sync::atomic::Ordering;
         let a = crate::comp_gate::get();
-        if crate::comp_gate::GATE_STALE.load(Ordering::Relaxed) != 0 && a != 0 {
+        if a != 0 {
             a
         } else {
+            // Latch still cold (first ticks after boot) — fresh fallback.
             (shared.e_com_time() / 3).max(0) as u32
         }
     };
@@ -114,11 +110,7 @@ fn COMP() {
         // seed candidate. Re-check the level after the clear: if it
         // flipped to post-ZC, the swallowed edge was real — re-raise
         // the line via SWIER so the camp/accept machinery re-evaluates.
-        #[cfg(feature = "benchuart")]
-        let racefix_on = RACEFIX_OFF.load(core::sync::atomic::Ordering::Relaxed) == 0;
-        #[cfg(not(feature = "benchuart"))]
-        let racefix_on = true;
-        if racefix_on && !isr_handlers::comp_at_pre_zc_level() {
+        if !isr_handlers::comp_at_pre_zc_level() {
             unsafe { exti.swier1.write(|w| w.bits(1 << 22)) };
         }
         #[cfg(feature = "zctrace")]
