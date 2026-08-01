@@ -80,13 +80,26 @@ pub struct CaptureConfig {
 }
 
 impl CaptureConfig {
-    /// DShot detection / normal operation: 33 edges, no prescaler change.
-    /// NDTR is 33 (not 32) so the decoder can skip buf[0] — see
-    /// `dshot::decode_frame` and `signal::detect_input`. Both skip buf[0]
-    /// because it's racily stale (last edge of the previous frame's tail
-    /// from before the DMA channel was disabled+rearmed at TC).
+    /// DShot detection / normal operation: 32 edges (AM32 `buffersize = 32`,
+    /// signal.c:27), no prescaler change.
+    ///
+    /// NDTR MUST be 32: a DShot frame is exactly 32 edges, so TC fires on
+    /// the frame's LAST edge and the re-arm happens inside the ~ms
+    /// inter-frame gap — the capture window stays frame-locked. The re-arm
+    /// (receiveDshotDma parity) pulses an RCC reset of the capture timer,
+    /// which clears any latched CC/DMA request, so slot 0 is always the
+    /// next frame's first edge — no stale slot.
+    ///
+    /// History: an earlier stale-slot-0 observation (pre-RCC-reset re-arm)
+    /// was band-aided with NDTR=33 + a 2-way alignment picker. But 33
+    /// consumes one extra edge per 32-edge frame: TC then fires on the
+    /// NEXT frame's first edge, the re-arm lands mid-frame, and the window
+    /// slides +1 edge every frame — ~97% of frames decode against a
+    /// gap-spanning buffer (whose u16-wrapped frametime even passes the
+    /// window check, failing as BadCrc). Measured live vs Betaflight
+    /// DSHOT300: crc_pass=13 / crc_fail=410 per 2 s life.
     pub const DSHOT: Self = Self {
-        ndtr: 33,
+        ndtr: 32,
         prescaler: None,
     };
 
@@ -99,7 +112,7 @@ impl CaptureConfig {
     /// ~3.6 ticks (in 1-4 range).
     pub fn dshot_detection(cpu_mhz: u8) -> Self {
         Self {
-            ndtr: 33,
+            ndtr: 32,
             prescaler: Some((cpu_mhz / 6) as u16),
         }
     }
@@ -125,21 +138,21 @@ impl CaptureConfig {
         }
     }
 
-    /// DShot600 detected: 33 edges + prescaler to 0 (max resolution).
+    /// DShot600 detected: 32 edges + prescaler to 0 (max resolution).
     pub const DSHOT600_DETECTED: Self = Self {
-        ndtr: 33,
+        ndtr: 32,
         prescaler: Some(0),
     };
 
-    /// DShot300 detected: 33 edges + prescaler to 1 (half resolution).
+    /// DShot300 detected: 32 edges + prescaler to 1 (half resolution).
     pub const DSHOT300_DETECTED: Self = Self {
-        ndtr: 33,
+        ndtr: 32,
         prescaler: Some(1),
     };
 
-    /// DShot150 detected: 33 edges + prescaler to 3 (quarter resolution).
+    /// DShot150 detected: 32 edges + prescaler to 3 (quarter resolution).
     pub const DSHOT150_DETECTED: Self = Self {
-        ndtr: 33,
+        ndtr: 32,
         prescaler: Some(3),
     };
 }
@@ -259,22 +272,15 @@ impl TransferState {
         let mut bidir_detected = false;
 
         // --- DShot processing ---
-        // We capture 33 edges. The DMA isn't synchronized to frame boundaries,
-        // so the FIRST captured edge is either:
-        //   (A) stale from the previous frame's tail (buf[0]→buf[1] is the
-        //       inter-frame gap), or
-        //   (B) the first valid edge of the current frame (buf[31]→buf[32] is
-        //       the gap to the next frame).
-        // Whichever case we're in, the OTHER end has a large gap and the
-        // aligned 32-edge window has a small `buf[31]-buf[0]` frametime.
-        // Compute both options and pick the smaller — that's the real frame.
-        if dshot_mode && dma_buffer.len() >= 33 {
+        // 32 edges = exactly one frame, frame-locked by construction (see
+        // CaptureConfig::DSHOT): TC fires on the frame's last edge, the
+        // re-arm happens in the inter-frame gap, and the RCC-reset re-arm
+        // guarantees slot 0 is the frame's first edge. Decode directly —
+        // AM32-verbatim (dshot.c uses dma_buffer[0..32] as-is).
+        if dshot_mode && dma_buffer.len() >= 32 {
             let buf: [u32; 32] = {
-                let ft_keep = dma_buffer[31].wrapping_sub(dma_buffer[0]) as u16;
-                let ft_skip = dma_buffer[32].wrapping_sub(dma_buffer[1]) as u16;
-                let offset = if ft_skip < ft_keep { 1 } else { 0 };
                 let mut b = [0u32; 32];
-                b.copy_from_slice(&dma_buffer[offset..offset + 32]);
+                b.copy_from_slice(&dma_buffer[..32]);
                 b
             };
             let frame = dshot::decode_frame(&buf, frametime_low, frametime_high, dshot_telemetry);
@@ -354,10 +360,8 @@ impl TransferState {
             // the two candidate frametimes is the real frame.
             if dshot_mode && self.average_count < 8 && *zero_input_count > 5 {
                 self.average_count += 1;
-                if dma_buffer.len() >= 33 {
-                    let ft_keep = dma_buffer[31].wrapping_sub(dma_buffer[0]) as u16;
-                    let ft_skip = dma_buffer[32].wrapping_sub(dma_buffer[1]) as u16;
-                    let frametime = ft_keep.min(ft_skip);
+                if dma_buffer.len() >= 32 {
+                    let frametime = dma_buffer[31].wrapping_sub(dma_buffer[0]) as u16;
                     self.average_packet_length += frametime as u32;
                 }
                 if self.average_count == 8 {
@@ -418,9 +422,9 @@ mod tests {
 
     #[test]
     fn capture_config_ndtr_values() {
-        // DSHOT NDTR is 33 (not 32) — see CaptureConfig::DSHOT docs:
-        // captures one extra edge so the decoder can skip the stale buf[0].
-        assert_eq!(CaptureConfig::DSHOT.ndtr, 33);
+        // DSHOT NDTR is 32 = exactly one frame (AM32 buffersize) — TC on
+        // the last edge, re-arm in the inter-frame gap, frame-locked.
+        assert_eq!(CaptureConfig::DSHOT.ndtr, 32);
         assert_eq!(CaptureConfig::SERVO.ndtr, 2);
         assert_eq!(CaptureConfig::SERVO_REALIGN.ndtr, 3);
     }
@@ -452,9 +456,9 @@ mod tests {
         assert!(actions.next_capture.prescaler.is_none());
     }
 
-    /// 33-slot DMA buffer holding one DShot frame: stale edge at [0]
-    /// (large gap to [1]) so the alignment picker selects offset 1.
-    fn dshot_dma_buffer(value: u16, telem: bool, inverted_crc: bool) -> [u32; 33] {
+    /// 32-slot DMA buffer holding exactly one DShot frame (frame-locked
+    /// capture: slot 0 = the frame's first edge).
+    fn dshot_dma_buffer(value: u16, telem: bool, inverted_crc: bool) -> [u32; 32] {
         let mut bits = [0u8; 16];
         for (i, b) in bits.iter_mut().enumerate().take(11) {
             *b = ((value >> (10 - i)) & 1) as u8;
@@ -471,12 +475,11 @@ mod tests {
         bits[13] = (crc >> 2) & 1;
         bits[14] = (crc >> 1) & 1;
         bits[15] = crc & 1;
-        let mut buf = [0u32; 33];
-        buf[0] = 0; // stale tail: gap to buf[1] >> frame span
+        let mut buf = [0u32; 32];
         let mut base = 1000u32;
         for i in 0..16 {
-            buf[1 + i * 2] = base;
-            buf[1 + i * 2 + 1] = base + if bits[i] != 0 { 22 } else { 10 };
+            buf[i * 2] = base;
+            buf[i * 2 + 1] = base + if bits[i] != 0 { 22 } else { 10 };
             base += 32;
         }
         buf
@@ -547,24 +550,100 @@ mod tests {
     }
 
     #[test]
-    fn dshot_mode_requests_33() {
+    fn dshot_mode_requests_32() {
         let mut state = TransferState::default();
-        let buf = [0u32; 33];
+        let buf = [0u32; 32];
         let mut zic = 0u16;
         let actions = state.process(
             &buf, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 400, 600,
             64,
         );
-        // NDTR=33 (32 valid frame edges + 1 leading slot that gets skipped).
-        assert_eq!(actions.next_capture.ndtr, 33);
+        // NDTR=32: one frame per capture, TC on the frame's last edge.
+        assert_eq!(actions.next_capture.ndtr, 32);
+    }
+
+    /// REGRESSION (bench capture 07-31, Betaflight DSHOT300 @ PSC=1):
+    /// a real disarm frame — all-0 bits, 47/87-tick half-bits with the
+    /// observed jitter — must decode as Throttle{0}. These exact deltas
+    /// failed 97% of the time under the NDTR=33 sliding window.
+    #[test]
+    fn bf_dshot300_disarm_frame_decodes() {
+        // Measured half-bit times (rise->fall = high = 46..47 ticks,
+        // fall->rise = low = 86..87), from the [snap] frame autopsy.
+        let highs = [
+            47, 47, 47, 46, 47, 47, 47, 46, 47, 46, 47, 47, 46, 47, 47, 47,
+        ];
+        let lows = [
+            87, 86, 87, 87, 86, 87, 87, 87, 86, 87, 87, 86, 87, 87, 87, 0,
+        ];
+        let mut buf = [0u32; 32];
+        let mut t = 5000u32;
+        for i in 0..16 {
+            buf[i * 2] = t;
+            buf[i * 2 + 1] = t + highs[i];
+            t += highs[i] + lows[i];
+        }
+        let mut state = TransferState::default();
+        let mut zic = 0u16;
+        // Firmware initial wide frametime window (main.rs: 100..60000).
+        let actions = state.process(
+            &buf, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 100, 60000,
+            80,
+        );
+        assert!(
+            matches!(
+                actions.action,
+                TransferAction::DshotThrottle { value: 0, .. }
+            ),
+            "BF disarm frame must decode as Throttle 0, got {:?}",
+            actions.action
+        );
+    }
+
+    /// A gap-spanning capture (the NDTR=33 failure mode: window starts
+    /// mid-frame, spans the ~2 ms inter-frame gap whose u16-wrapped size
+    /// can sneak past the frametime window) must NOT decode a throttle.
+    #[test]
+    fn gap_spanning_capture_rejected() {
+        let mut buf = [0u32; 32];
+        // 9 tail edges of frame k (uniform cadence), so the inter-frame
+        // gap lands INSIDE bit-pair 4 (slots 8,9) — the typical sliding-
+        // window phase. (A gap BETWEEN pairs with uniform edges decodes
+        // as a legal all-zero frame — identical in AM32's decoder; the
+        // guards there are frame-locked capture + the narrowed frametime
+        // window after unarmed averaging.)
+        let mut t = 5000u32;
+        for slot in buf.iter_mut().take(9) {
+            *slot = t;
+            t += 67;
+        }
+        // ...the inter-frame gap (78_400 ticks @40 MHz ≈ 1.96 ms — wraps
+        // u16 to 12_864, sneaking past the wide frametime window)...
+        t += 78_400;
+        // ...then 23 head edges of frame k+1.
+        for slot in buf.iter_mut().skip(9) {
+            *slot = t;
+            t += 67;
+        }
+        let mut state = TransferState::default();
+        let mut zic = 0u16;
+        let actions = state.process(
+            &buf, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 100, 60000,
+            80,
+        );
+        assert!(
+            matches!(actions.action, TransferAction::None),
+            "gap-spanning capture must be rejected, got {:?}",
+            actions.action
+        );
     }
 
     #[test]
     fn servo_detection_sets_prescaler() {
         let mut state = TransferState::default();
-        // Servo-like pulse timing in detection buffer (33-edge layout — see
+        // Servo-like pulse timing in detection buffer (32-edge layout — see
         // CaptureConfig::DSHOT.ndtr).
-        let mut buf = [0u32; 33];
+        let mut buf = [0u32; 32];
         buf[0] = 100;
         buf[1] = 5000; // large gap = servo-like
         let mut zic = 0u16;
