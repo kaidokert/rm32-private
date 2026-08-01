@@ -54,14 +54,65 @@ def send_dshot_command(port, command, motor=255, count=1, quiet=0.2):
         p.close()
 
 
+MSP_SET_RAW_RC = 200  # MSP v1
+
+
+def msp1_frame(cmd, payload=b""):
+    body = bytes([len(payload), cmd]) + payload
+    crc = 0
+    for b in body:
+        crc ^= b
+    return b"$M<" + body + bytes([crc])
+
+
+def rc_frame(throttle=1000, aux1=1000):
+    # AETR + 4 aux, center sticks, given throttle/aux1.
+    ch = [1500, 1500, throttle, 1500, aux1, 1000, 1000, 1000]
+    return msp1_frame(MSP_SET_RAW_RC, struct.pack("<8H", *ch))
+
+
+def arm_test(port, hold_s=8.0):
+    """Flight-arm BF via MSP RC injection: stream disarmed RC, raise
+    AUX1 (arm switch), hold, drop AUX1, stop. BF failsafes if the
+    stream dies — motors stop. Requires: feature RX_MSP + an
+    `aux 0 0 0 1700 2100` arm range, set via CLI beforehand."""
+    p = serial.Serial(port, 115_200, timeout=0.05)
+    try:
+        t0 = time.time()
+        while time.time() - t0 < 2.0:
+            p.write(rc_frame(1000, 1000))
+            time.sleep(0.05)
+        print("[arm] raising AUX1", flush=True)
+        t0 = time.time()
+        while time.time() - t0 < hold_s:
+            p.write(rc_frame(1000, 1900))
+            time.sleep(0.05)
+        print("[arm] disarming", flush=True)
+        t0 = time.time()
+        while time.time() - t0 < 1.0:
+            p.write(rc_frame(1000, 1000))
+            time.sleep(0.05)
+    finally:
+        p.close()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="COM42")
-    ap.add_argument("--cmd", type=int, required=True, help="DSHOT command 0-47")
+    ap.add_argument("--cmd", type=int, help="DSHOT command 0-47")
     ap.add_argument("--motor", type=int, default=255, help="motor index, 255=all")
     ap.add_argument("--repeat", type=int, default=6,
                     help="sends (AM32 needs 6 for non-beacon commands)")
+    ap.add_argument("--arm-test", action="store_true",
+                    help="MSP RC injection flight-arm cycle")
+    ap.add_argument("--hold", type=float, default=8.0)
     a = ap.parse_args()
+    if a.arm_test:
+        arm_test(a.port, a.hold)
+        return 0
+    if a.cmd is None:
+        print("--cmd or --arm-test required")
+        return 1
     resp = send_dshot_command(a.port, a.cmd, a.motor, a.repeat)
     print(f"sent cmd {a.cmd} x{a.repeat} to motor {a.motor}; "
           f"ack bytes: {len(resp)}")
