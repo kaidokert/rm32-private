@@ -195,6 +195,17 @@ impl EepromConfig {
             self.current_d = d.current_d;
             self.active_brake_power = d.active_brake_power;
             self.reserved_eeprom_3 = d.reserved_eeprom_3;
+            // Servo calibration: AM32 applies (byte*2)+750 / (byte*2)+1750 /
+            // byte+1374 UNGATED (main.c:677-680); its Configurator default
+            // page carries 128/128/128/50 → the 1006-2006 µs window with
+            // 1502 µs neutral. A zeroed byte shifts the window to 750-1750,
+            // and a standard 1000 µs disarm pulse then reads as ~25%
+            // throttle (553) — the ESC can never arm from a stock PWM
+            // source. Measured live vs Betaflight 07-31.
+            self.servo_low_threshold = d.servo_low_threshold;
+            self.servo_high_threshold = d.servo_high_threshold;
+            self.servo_neutral = d.servo_neutral;
+            self.servo_dead_band = d.servo_dead_band;
         }
         self.eeprom_version = EEPROM_VERSION;
     }
@@ -209,6 +220,11 @@ const VERSION_DEFAULTS: EepromConfig = {
     c.absolute_voltage_cutoff = 10;
     c.current_p = 100;
     c.current_d = 100;
+    // AM32 Configurator servo defaults: 1006-2006 µs window, 1502 neutral.
+    c.servo_low_threshold = 128;
+    c.servo_high_threshold = 128;
+    c.servo_neutral = 128;
+    c.servo_dead_band = 50;
     c
 };
 
@@ -429,6 +445,13 @@ mod tests {
         assert_eq!(cfg.current_p, 100);
         assert_eq!(cfg.current_d, 100);
         assert_eq!(cfg.absolute_voltage_cutoff, 10);
+        // Servo cal must land on the AM32 Configurator window: a zeroed
+        // page shifts it to 750-1750 µs and a stock 1000 µs disarm pulse
+        // reads as ~25% throttle — the ESC can never arm (BF bench 07-31).
+        let mc = cfg.derive_motor_config(3332, 45, 1, false);
+        assert_eq!(mc.servo_low, 1006);
+        assert_eq!(mc.servo_high, 2006);
+        assert_eq!(mc.servo_neutral, 1502);
     }
 
     #[test]
