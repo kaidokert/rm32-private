@@ -107,6 +107,10 @@ pub struct SharedState {
     // Load/store only (M0 targets lack atomic RMW); full ring drops
     // the write — acceptable because the ISR copy stays authoritative
     // and the next mutation of the same byte re-publishes it.
+    // A3 tone channel: pending tone id (rm32::tone), 0 = none. Set by
+    // the DSHOT-command ISR (beacons) or main (arming tune); consumed
+    // by the 20 kHz tick's tone stepper.
+    tone_request: AtomicU8,
     cfg_wr: [AtomicU16; 8],
     cfg_wr_head: AtomicU8,
     cfg_wr_tail: AtomicU8,
@@ -172,6 +176,7 @@ impl SharedState {
             dbg_dma_last_cyc: AtomicU32::new(0),
             dbg_exti_last_cyc: AtomicU32::new(0),
             dbg_main_last_cyc: AtomicU32::new(0),
+            tone_request: AtomicU8::new(0),
             cfg_wr: [const { AtomicU16::new(0) }; 8],
             cfg_wr_head: AtomicU8::new(0),
             cfg_wr_tail: AtomicU8::new(0),
@@ -594,6 +599,19 @@ impl SharedState {
         let new = action as u8;
         let _ = self.isr_action.fetch_max(new, REL);
     }
+    /// Request a tone (rm32::tone ids); last writer wins.
+    pub fn set_tone_request(&self, id: u8) {
+        self.tone_request.store(id, REL);
+    }
+    /// Tone stepper side: consume the pending request (0 = none).
+    pub fn take_tone_request(&self) -> u8 {
+        let v = self.tone_request.load(ACQ);
+        if v != 0 {
+            self.tone_request.store(0, REL);
+        }
+        v
+    }
+
     /// ISR side: publish one config byte write (see `cfg_wr`).
     pub fn push_config_write(&self, offset: u8, value: u8) {
         let h = self.cfg_wr_head.load(ACQ);

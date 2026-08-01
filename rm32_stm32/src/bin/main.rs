@@ -174,6 +174,7 @@ fn main() -> ! {
     let mut isr_state = IsrState {
         commutation: Commutation::new(),
         bemf: BemfState::default(),
+        tone: rm32::tone::ToneScheduler::default(),
         duty: DutyState::default(),
         hal,
         cmd: rm32::dshot_commands::CommandProcessor::default(),
@@ -1212,9 +1213,13 @@ fn main() -> ! {
             }
         }
 
-        // Arming feedback: LED only (beeps need HAL access — TODO: tone request via SharedState)
-        if main_state.just_armed && BOARD.has_led {
-            led.set_status(LedStatus::Armed);
+        // Arming feedback: LED + the A3 tone channel (arming tune stepped
+        // by the 20 kHz tick's ToneScheduler — no HAL access needed here).
+        if main_state.just_armed {
+            shared.set_tone_request(rm32::tone::TONE_ARMED);
+            if BOARD.has_led {
+                led.set_status(LedStatus::Armed);
+            }
         }
 
         // WS2812 LED error indicator

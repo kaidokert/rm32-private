@@ -150,6 +150,40 @@ pub fn handle_tim6() {
     };
     rm32::control::isr_logic::ten_khz_tick(&mut ctx);
 
+    // A3 tone stepper (after the control tick so tone PWM writes land
+    // last within the tick). While a tone is active the control path's
+    // idle duty writes would mute it — re-assert the tone duty every
+    // tick (one HAL write, constant cost). Aborts instantly on running.
+    {
+        use rm32::hal::{PhaseOutput as _, PwmOutput as _};
+        use rm32::tone::ToneAction;
+        let req = shared.take_tone_request();
+        match state.tone.tick(req, shared.running()) {
+            ToneAction::StartNote(n) => {
+                state
+                    .hal
+                    .pwm
+                    .set_auto_reload(crate::mcu::Chip::TIM1_AUTORELOAD);
+                state.hal.pwm.set_prescaler(n.prescaler);
+                state.hal.pwm.set_duty_all(15); // Sounds default volume
+                state.hal.phase.com_step(n.step);
+            }
+            ToneAction::Silence => {
+                state.hal.phase.all_off();
+                state.hal.pwm.set_prescaler(0);
+                state
+                    .hal
+                    .pwm
+                    .set_auto_reload(crate::mcu::Chip::TIM1_AUTORELOAD);
+            }
+            ToneAction::Idle => {
+                if state.tone.active() {
+                    state.hal.pwm.set_duty_all(15);
+                }
+            }
+        }
+    }
+
     // Comparator-level history (deaf-hiccup discriminator): one comp
     // read per tick shifted into edge_probe::LEVEL_HIST — constant
     // per-tick cost at prio 3. Decoded per window from the probe row.
@@ -660,7 +694,10 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 rm32::dshot_commands::CommandResult::SaveSettings => {
                     shared.set_save_settings_flag(true);
                 }
-                rm32::dshot_commands::CommandResult::PlayTone(_tone) => {}
+                rm32::dshot_commands::CommandResult::PlayTone(tone) => {
+                    // A3: beacons route through the tick tone stepper.
+                    shared.set_tone_request(tone);
+                }
                 rm32::dshot_commands::CommandResult::SendEscInfo => {
                     shared.set_send_esc_info_flag(true);
                 }

@@ -101,9 +101,12 @@ Flight-readiness:
 - [ ] Bidir at DSHOT600; EDT current under real load (needs >1 A rungs).
 - [~] DSHOT command verbs: MSP2 side channel VALIDATED (bf_msp.py,
       cmd counter 0->6 proof); A4 save path FIXED (config write-through
-      ring, host-tested). Remaining: beacons AUDIBLE (blocked on the A3
-      tone channel — PlayTone is an empty stub), direction-change +
-      save-persist verification on bench, dumps-over-flight-link verbs.
+      ring, host-tested); A3 tone channel BUILT + WIRED (ToneScheduler
+      stepped by the 20 kHz tick; beacons via cmd 1-5, arming tune on
+      just_armed; post-tone spin verified clean — confirm audibility by
+      ear). Remaining: exact AM32 beacon-tune port (current notes are
+      approximations), direction-change + save-persist verification on
+      bench, dumps-over-flight-link verbs, Configurator passthrough.
 - [ ] AM32 Configurator passthrough re-check end-to-end (read + write +
       persist — exercises A2 reset + A4 save path).
 - [ ] KISS telemetry on PB6 (prod telemetry) + the poll-print

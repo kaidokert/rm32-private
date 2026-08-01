@@ -75,6 +75,7 @@ pub struct IsrState<H> {
     pub hal: H,
     pub cmd: CommandProcessor,
     pub edt: EdtScheduler,
+    pub tone: rm32::tone::ToneScheduler,
     pub crsf: CrsfParser,
     pub transfer: TransferState,
     pub config: EepromConfig,
