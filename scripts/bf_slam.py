@@ -92,9 +92,14 @@ class Bf:
 
 
 class EscLog:
-    def __init__(self, port):
+    def __init__(self, port, logfile=None):
         self.p = open_retry(port, 115_200, tries=5)
         self.buf = b""
+        self.log = (
+            open(logfile, "w", encoding="ascii", errors="replace")
+            if logfile
+            else None
+        )
 
     def flush(self):
         self.p.reset_input_buffer()
@@ -106,9 +111,15 @@ class EscLog:
             self.buf += self.p.read(4096)
             while b"\n" in self.buf:
                 line, self.buf = self.buf.split(b"\n", 1)
-                yield line.decode("ascii", "replace").rstrip()
+                text = line.decode("ascii", "replace").rstrip()
+                if text and self.log:
+                    self.log.write(f"{time.time():.2f} {text}\n")
+                    self.log.flush()
+                yield text
 
     def close(self):
+        if self.log:
+            self.log.close()
         self.p.close()
 
 
@@ -155,9 +166,10 @@ def main():
     ap.add_argument("--bf", default="COM42")
     ap.add_argument("--esc", default="COM41")
     ap.add_argument("--cycles", type=int, default=3)
+    ap.add_argument("--esclog", default="bf_slam_esc.log")
     a = ap.parse_args()
 
-    esc = EscLog(a.esc)
+    esc = EscLog(a.esc, logfile=a.esclog)
     bf = Bf(a.bf)
     try:
         bf.enter()
@@ -203,15 +215,18 @@ def main():
                 print(f"cycle {n + 1} done (resets so far: {resets})",
                       flush=True)
             bf.motor(1000)
+            # Read post counters BEFORE exiting the CLI — `exit` reboots
+            # the FC, the ESC resets on the signal gap, and the counters
+            # are wiped (the bug that made three slam runs read cm=0).
+            time.sleep(2)
+            post = read_sr(esc, 8)
+            print(f"post: {post}", flush=True)
         finally:
             try:
                 bf.cmd("motor 0 1000")
             except Exception:
                 pass
             bf.exit_and_close()
-        time.sleep(2)
-        post = read_sr(esc, 8)
-        print(f"post: {post}", flush=True)
     finally:
         try:
             if bf.p is None:
