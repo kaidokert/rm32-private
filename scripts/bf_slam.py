@@ -183,17 +183,18 @@ def main():
         bf.enter()
         try:
             # Engage gently first (clone protocol: slams happen FROM a
-            # running state; a 0->100% standstill slam just buys the
-            # engage lottery). 15% for 4 s establishes lock.
-            bf.motor(1150)
-            for line in esc.lines(4.0):
+            # running state). 10% for 5 s establishes lock — same engage
+            # the flight ladder locks 1.7M comms with. The slam FLOOR is
+            # 10% (never a dead stop mid-test): the item-5 question is
+            # downthrottle-transition behavior, not the engage lottery.
+            bf.motor(1100)
+            for line in esc.lines(5.0):
                 if "RESET:" in line or "] boot" in line:
                     resets += 1
             for n in range(a.cycles):
-                # spin up to 100, hold, slam down to 10, hold, slam back
-                # to 100, hold, slam to stop — the double-slam shape.
+                # 100% hold, slam to 10%, hold, slam back — from running.
                 for value, hold in (
-                    (2000, 2.5), (1100, 2.0), (2000, 2.0), (1000, 1.5),
+                    (2000, 2.5), (1100, 2.0), (2000, 2.0), (1100, 1.5),
                 ):
                     bf.motor(value)
                     for line in esc.lines(hold):
