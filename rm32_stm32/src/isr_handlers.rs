@@ -75,11 +75,11 @@ static ISR_LOCAL: IsrCell = IsrCell::new();
 /// average (e_com/3). EXC_N counts >250 permille (the clone's ">25%"
 /// bucket), EXC_MAX holds the worst permille, EXC_COMMS counts locked
 /// commutations measured. Cumulative; host computes segment deltas.
-#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static EXC_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static EXC_MAX: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-#[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static EXC_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Onboard flight recorder (poll-law-safe charts): every 0.5s (10k
@@ -266,7 +266,7 @@ pub fn handle_tim14() {
         state.config.stall_protection != 0 || state.config.rc_car_reverse != 0,
     );
     // Parity re-qual excursion counters (clone metric).
-    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
     {
         use core::sync::atomic::Ordering;
         let tz = state.bemf.this_zc_time() as u32;
