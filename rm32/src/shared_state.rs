@@ -63,18 +63,14 @@ pub struct SharedState {
     interval_timer_count: AtomicU32,
 
     // Main→ISR published control (main computes, ISR applies)
-    tim1_arr: AtomicU16,           // variable PWM auto-reload
-    duty_maximum: AtomicU16,       // eRPM/temperature throttle restriction
-    filter_level: AtomicU8,        // BEMF comparator filter samples
-    min_bemf_counts: AtomicU8,     // min zero-cross detection threshold
-    auto_advance: AtomicU8,        // commutation timing advance level
-    prop_brake_active: AtomicBool, // proportional brake engaged (main sets, ISR reads)
-    isr_action: AtomicU8,          // main→ISR action request (IsrAction enum)
-    // Bench bisect: kept-divergence disable mask (bit0=stay-interrupt off,
-    // bit1=kick-half off, bit2=holdoff off, bit3=reclimb clamp off).
-    // 0 = all divergences active (normal). Bench-only writers.
-    bench_divergence_mask: AtomicU8,
-    changeover_step: AtomicU8, // sine changeover step (0=none, 1-6=pending)
+    tim1_arr: AtomicU16,              // variable PWM auto-reload
+    duty_maximum: AtomicU16,          // eRPM/temperature throttle restriction
+    filter_level: AtomicU8,           // BEMF comparator filter samples
+    min_bemf_counts: AtomicU8,        // min zero-cross detection threshold
+    auto_advance: AtomicU8,           // commutation timing advance level
+    prop_brake_active: AtomicBool,    // proportional brake engaged (main sets, ISR reads)
+    isr_action: AtomicU8,             // main→ISR action request (IsrAction enum)
+    changeover_step: AtomicU8,        // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
     dbg_crc_pass: AtomicU32,  // successful decode_frame CRC
@@ -162,7 +158,6 @@ impl SharedState {
             auto_advance: AtomicU8::new(0),
             prop_brake_active: AtomicBool::new(false),
             isr_action: AtomicU8::new(0), // IsrAction::None
-            bench_divergence_mask: AtomicU8::new(0),
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
             dbg_crc_pass: AtomicU32::new(0),
@@ -633,14 +628,6 @@ impl SharedState {
         Some(((packed >> 8) as u8, packed as u8))
     }
 
-    pub fn divergence_mask(&self) -> u8 {
-        self.bench_divergence_mask.load(ACQ)
-    }
-    pub fn toggle_divergence_bit(&self, bit: u8) -> u8 {
-        let v = self.bench_divergence_mask.load(ACQ) ^ (1 << bit);
-        self.bench_divergence_mask.store(v, REL);
-        v
-    }
     pub fn clear_isr_action(&self) {
         self.isr_action.store(0, REL);
     }

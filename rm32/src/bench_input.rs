@@ -40,9 +40,6 @@ pub enum UartCmd {
     /// 'V' — arm the DWT write-watchpoint on the drive override
     /// (bench diagnostic; only effective after a clean power-up).
     WatchArm,
-    /// 'G' — toggle the COMP gate average source live: fresh
-    /// (per-commutation e_com/3) vs 20 kHz-latched (AM32-verbatim).
-    GateToggle,
     /// 'J' — arm hardware-timed injected current sampling (one-way;
     /// capture sessions only — the 24 kHz injected preemption degrades
     /// the control scan).
@@ -57,10 +54,6 @@ pub enum UartCmd {
     /// 'B' — dump the onboard flight recorder (0.5s samples of
     /// ci/current/vbat; poll-law-safe chart data, read post-run).
     RecorderDump,
-    /// Bisect toggles: flip one kept-divergence toward AM32-verbatim.
-    /// 'K' stay-interrupt, 'M' kick-half, 'P' holdoff, 'Q' reclimb
-    /// clamp, 'R' SWIER race fix.
-    DivToggle(u8),
 }
 
 /// The pure UART duty-mode parser — a digit accumulator. `step` feeds one
@@ -112,17 +105,11 @@ impl UartDuty {
             b'E' => Some(UartCmd::AtomicToggle),
             b'A' => Some(UartCmd::AdcToggle),
             b'V' => Some(UartCmd::WatchArm),
-            b'G' => Some(UartCmd::GateToggle),
             b'J' => Some(UartCmd::InjToggle),
             b'g' => Some(UartCmd::GeckoGrab),
             b'x' => Some(UartCmd::WaxDump),
             b'H' => Some(UartCmd::HistDump),
             b'B' => Some(UartCmd::RecorderDump),
-            b'K' => Some(UartCmd::DivToggle(0)),
-            b'M' => Some(UartCmd::DivToggle(1)),
-            b'P' => Some(UartCmd::DivToggle(2)),
-            b'Q' => Some(UartCmd::DivToggle(3)),
-            b'R' => Some(UartCmd::DivToggle(4)),
             _ => {
                 let cmd = if self.n != 0 {
                     let v = self.acc;

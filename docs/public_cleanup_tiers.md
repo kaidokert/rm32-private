@@ -73,20 +73,20 @@ Legend: [ ] open · [x] done · [~] deferred/ticketed
 
 ## Tier C — solved-case instruments (backout round 2 candidates)
 
-- [ ] **C9. Canary/shadow machinery** — `COMP_PWM_SHADOW`,
+- [x] **C9. Canary/shadow machinery** (REMOVED — round-2 backout; bench re-validation pending wiring repair) — `COMP_PWM_SHADOW`,
   `CANARY_HITS`, 8 `canary()` sites, `DIODE_PWM_CALLS`,
   `DIODE_SEEN_VAL`, `[canary]` print (`phase.rs`, `bin/main.rs`,
   `isr_handlers.rs`). The corruption it hunted was the match-arm
   stack-frame overlap — case closed. Remove unless wanted as a standing
   corruption tripwire.
-- [ ] **C10. Bisect toggles** — `RACEFIX_OFF` + 'R', divergence-mask
+- [x] **C10. Bisect toggles** (REMOVED — kept divergences now unconditional; SWIER racefix always on) — `RACEFIX_OFF` + 'R', divergence-mask
   'K'/'M'/'P'/'Q' (`shared_state.rs` divergence_mask consumers in
   `main_state.rs`/`isr_logic.rs`). Kept divergences are settled; axes
   are historical. Cheap to keep for future re-bisects — operator call.
 - [ ] **C11. DSHOT-debug-era dumps** — `dbg_frame_history` `[snap]` dump
   + the six `dbg_*_last_cyc` fields. Keep through the DShot/bidir
   phase, then prune to the core perf set (isr_tick, t6/t14/comp).
-- [ ] **C12. Storm-hunt leftovers** — N-pin traps, `midw`, `GateToggle
+- [x] **C12. Storm-hunt leftovers** (REMOVED — N-pin traps, midw, 'G' lever; comp_gate stale is unconditional) — N-pin traps, `midw`, `GateToggle
   'G'` (comp_gate FRESH/STALE lever; verbatim STALE won). Keep the
   `comp_gate` module itself — that's control, not instrumentation. All
   zctrace-gated, cheap either way.

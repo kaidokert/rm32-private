@@ -39,52 +39,6 @@ pub static COMP_PWM_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::Ato
 #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
 pub static PHASE_ATOMIC_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
 
-/// Storm-hunt: count of phase_pwm calls that took the DIODE branch.
-#[cfg(all(feature = "stm32l431", feature = "benchuart"))]
-pub static DIODE_PWM_CALLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-
-/// Raw COMP_PWM_LIVE value observed by the most recent diode-branch
-/// phase_pwm call (storm hunt).
-#[cfg(all(feature = "stm32l431", feature = "benchuart"))]
-pub static DIODE_SEEN_VAL: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0xFF);
-
-/// Shadow of COMP_PWM_LIVE, written ONLY by the legit writers (boot
-/// default + the 'D' handler). Canary checkpoints compare the live
-/// static against this; a mismatch = memory corruption caught between
-/// two checkpoints, and the canary repairs from the shadow.
-#[cfg(feature = "benchuart")]
-pub static COMP_PWM_SHADOW: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-
-/// Canary check: per-site corruption counters (site 0..8).
-#[cfg(feature = "benchuart")]
-pub static CANARY_HITS: [core::sync::atomic::AtomicU16; 8] = [
-    core::sync::atomic::AtomicU16::new(0),
-    core::sync::atomic::AtomicU16::new(0),
-    core::sync::atomic::AtomicU16::new(0),
-    core::sync::atomic::AtomicU16::new(0),
-    core::sync::atomic::AtomicU16::new(0),
-    core::sync::atomic::AtomicU16::new(0),
-    core::sync::atomic::AtomicU16::new(0),
-    core::sync::atomic::AtomicU16::new(0),
-];
-
-/// Compare live vs shadow at checkpoint `site`; on mismatch count it
-/// and REPAIR from the shadow (mitigation doubles as detection).
-#[cfg(feature = "benchuart")]
-#[inline]
-pub fn canary(site: usize) {
-    use core::sync::atomic::Ordering;
-    let live = COMP_PWM_LIVE.load(Ordering::Relaxed);
-    let shadow = COMP_PWM_SHADOW.load(Ordering::Relaxed);
-    if live != shadow {
-        if let Some(c) = CANARY_HITS.get(site) {
-            let v = c.load(Ordering::Relaxed);
-            c.store(v.saturating_add(1), Ordering::Relaxed);
-        }
-        COMP_PWM_LIVE.store(shadow, Ordering::Relaxed);
-    }
-}
-
 /// L431 atomic com_step, ported from the clone's proven
 /// `set_phase_roles` (minz/src/tim1_motor_pwm.rs) onto rm32's AM32
 /// pin naming: A = PA10/PB1, B = PA9/PB0, C = PA8/PA7 (hi/lo).
@@ -278,18 +232,6 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     #[inline]
     fn phase_pwm<H: GpioPin, L: GpioPin>(&self) {
         let comp = self.effective_comp_pwm();
-        // Storm-hunt tap: count diode-style pwm calls; if this climbs
-        // while the live override forces complementary, some caller
-        // reaches phase_pwm with comp=false (the reverter fingerprint).
-        #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
-        if !comp {
-            DIODE_PWM_CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            // capture the raw override value the diode branch saw
-            DIODE_SEEN_VAL.store(
-                COMP_PWM_LIVE.load(core::sync::atomic::Ordering::Relaxed),
-                core::sync::atomic::Ordering::Relaxed,
-            );
-        }
         if self.bridge_enable {
             if comp {
                 L::set_mode(MODE_OUTPUT);
@@ -327,8 +269,6 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     for PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
     fn com_step(&mut self, step: u8) {
-        #[cfg(feature = "benchuart")]
-        canary(7); // site 7: com_step entry
         #[cfg(all(feature = "stm32l431", feature = "benchuart"))]
         if !self.bridge_enable && PHASE_ATOMIC_LIVE.load(core::sync::atomic::Ordering::Relaxed) != 0
         {

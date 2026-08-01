@@ -488,14 +488,14 @@ impl<LED: OutputPin> MainState<LED> {
                 } else {
                     self.dsy_demote_old = self.dsy_demote_old.wrapping_add(1);
                 }
-                if desync_from_interrupt_mode && fast_rotor && shared.divergence_mask() & 2 == 0 {
+                if desync_from_interrupt_mode && fast_rotor {
                     shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickHalf);
                 } else {
                     shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
                 }
                 // Detector holdoff (see desync_rearm_zc): independent
                 // bisect axis (bit2) — applies on any fast-rotor fire.
-                if desync_from_interrupt_mode && fast_rotor && shared.divergence_mask() & 4 == 0 {
+                if desync_from_interrupt_mode && fast_rotor {
                     self.desync_rearm_zc = DESYNC_REARM_HOLDOFF_ZC;
                 }
                 if !(desync_from_interrupt_mode && fast_rotor) {
@@ -753,7 +753,7 @@ impl<LED: OutputPin> MainState<LED> {
         // falls, so AM32's map alone never faces this). Cut demand while
         // the estimator is uncertain; the cap releases on confirmation
         // and the normal ramp takes duty to commanded.
-        if shared.zero_crosses() < RECLIMB_CONFIRM_ZC && shared.divergence_mask() & 8 == 0 {
+        if shared.zero_crosses() < RECLIMB_CONFIRM_ZC {
             dmax = dmax.min(RECLIMB_DUTY_CAP);
         }
         shared.set_duty_maximum(dmax);

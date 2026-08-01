@@ -11,7 +11,7 @@
 //! not instrumentation is compiled in — whether the motor runs must
 //! never depend on a debug feature flag.
 
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// 20 kHz-latched average interval for the COMP gate (AM32-verbatim
 /// staleness: main.c:2283 computes average_interval in the slow loop;
@@ -20,10 +20,6 @@ use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 /// in comp-mode transients a freshly-shrunk gate opens early and
 /// releases camped edges into early accepts.
 static GATE_AVG: AtomicU32 = AtomicU32::new(0);
-
-/// 1 = use the 20 kHz stale latch (AM32-verbatim, DEFAULT), 0 = fresh
-/// per-commutation e_com/3 (the 'G' bench experiment — measured worse).
-pub static GATE_STALE: AtomicU8 = AtomicU8::new(1);
 
 /// Latch the current average — called from the 20 kHz control tick in
 /// ALL builds (one relaxed store, negligible cost).
