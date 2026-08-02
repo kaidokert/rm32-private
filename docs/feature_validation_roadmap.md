@@ -199,8 +199,20 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
   At 40%: eRPM 100.8-101.5k (matches the GCR/BF-path curve within
   1%), 1.20 A, sag to 11.1 V, mAh integrator accumulating (10->18->
   21, retained after stop). Tool: scripts/kiss_read.py.
-  REMAINING (future): the full BF loop — feature ESC_SENSOR + a BF
-  UART reading the same frames FC-side.
+  FULL BF LOOP VALIDATED (2026-08-02): ESC PB6 spliced to FC PC7
+  (UART6 RX) + the adapter tap in parallel; BF `serial 5 1024` +
+  feature ESC_SENSOR. The ESC answers BF's DSHOT telemetry-request
+  bit (observed 81.7 frames/s = 33 periodic + ~50 request-driven —
+  the request path's first exercise ever), and BF's ESC-sensor task
+  (100 Hz, 0 lates) decodes them: idle temp=36 C via MSP 134;
+  IN-FLIGHT at 30% (MSP RC injection): temp=34 C, rpm=82,800 —
+  within 2% of the known curve. Wiring scars: the FC's PA10/UART1 RX
+  is entangled with USB OTG on the F411 Discovery (dead for UART —
+  use PC7/UART6); serialpassthrough refuses ports that own a
+  function ("Invalid port1"); a CLI --stay session silently kills
+  MSP (the "$M<" echo tell). ESC restored to request-only
+  (interval=0, dump-verified) + debuguart build; FC keeps
+  ESC_SENSOR + UART6 as a standing bench capability.
 
 ## Declaration text (target)
 
