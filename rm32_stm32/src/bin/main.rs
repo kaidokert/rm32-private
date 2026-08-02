@@ -1419,12 +1419,16 @@ fn su_execute(cmd: rm32::bench_input::UartCmd, cfg_offset: &mut u8) {
         }
         UartCmd::Info => {
             rm32_stm32::dprintln!(
-                "[i mode={:?} newinput={} vbat_mv={} ci={} zc={}]",
+                "[i mode={:?} newinput={} adj={} fwd={} ecom={} ci={} duty={} zc={} vbat_mv={}]",
                 shared.motor_mode(),
                 shared.newinput(),
-                shared.battery_voltage(),
+                shared.adjusted_input(),
+                shared.forward() as u8,
+                shared.e_com_time(),
                 shared.commutation_interval(),
-                shared.zero_crosses()
+                shared.duty_cycle(),
+                shared.zero_crosses(),
+                shared.battery_voltage()
             );
         }
         UartCmd::RecorderDump => dump_recorder(),

@@ -83,20 +83,61 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
   (2026-08-01): degC=36-37 on the recovered board (die self-heating
   over a ~22 C bench — plausible; was 7-9 pre-fix). VALIDATED.
 
+## 3D / bidirectional drive campaign (2026-08-01, operator-assisted)
+
+- [x] **Direction evidence without eyes**: 'i' probe extended with
+  fwd flag + e_com_time; internal eRPM (60e6/ecom) vs BF GCR eRPM
+  agree within 1% AT EVERY RUNG, both directions. fwd flips with the
+  commanded half-range; commutation.advance() reverses step order on
+  the flag; operator confirmed physical reversal visually (coast-down)
+  and by airflow.
+- [x] **eRPM anomaly resolved as artifact**: the one-off 394,700
+  reading never reproduced under dual-source capture; reverse tops at
+  133.9k vs forward 142.2k eRPM at 75% (~6%, prop pushed backwards —
+  aero, not firmware). Commanded-vs-actual asymmetry per nominal rung
+  is BF-3D's value mapping (deadband 1406/1514, halves compressed),
+  not the ESC: per-adj response is linear and matches across
+  directions within 2-5%.
+- [x] **Raggedness root-caused, no reverse defect**: (a) through-
+  neutral flips cost ~2 desyncs each (start drives into a counter-
+  rotating rotor after the coast; speed-gated reversal per AM32
+  semantics, recovers immediately; 8 dsy / 4 flips / 94k comms);
+  (b) direct mid-throttle engages churn in EITHER direction in exact
+  QUANTA OF 4 desyncs per episode (the known engage-pattern law —
+  one churn episode = ~4 dsy before relock). Staircase-engaged
+  steady-state rungs 15-75%: clean both directions (4 dsy / 356k
+  comms total = one engage episode).
+- SCARS: (1) in BF-3D, motor value 1000 = FULL REVERSE — every kill
+  guard/teardown must use 1500 (a 1000-teardown left BF streaming
+  max reverse; only the refuse-to-arm-at-nonzero-throttle gate saved
+  the bench). (2) rm32 stays Disarmed after an in-session disarm even
+  at sustained zero throttle — needed a reset to re-arm; AM32 re-arms
+  — DIVERGENCE, investigate the arm state machine. (3) [i] replies
+  garble at high reverse duty (PB6 TX corruption under load; PA0 RX
+  side stayed e=0) — read BF-side telemetry at high rungs.
+  Tool: scripts/dir3d_ladder.py.
+
 ## Tier 2 — needs operator ears/hands nearby, no rewiring
 
-- [ ] **Beacon audibility** (A3 close-out) — cmds 1-5 + arming tune;
-  operator confirms pitch ladder by ear.
-- [ ] **Sine-mode smooth start** — enable use_sine_start, low-throttle
-  engages; operator judges smoothness (host xfails resolved, but the
-  stepper is firmware-main-loop, never bench-run).
-- [ ] **Stuck-rotor protection live** — enable, hold rotor (finger on
-  bell at LOW duty only), verify protective shutdown + recovery.
-- [ ] **Stall / low-RPM handling** — operator loads rotor toward
-  stall at low duty; compare against clone behavior.
-- [ ] **3D mode (bi_direction)** — BF 3D setup, forward/reverse
-  through neutral; changeover halving is host-tested, never
-  bench-run.
+- [x] **Beacon audibility CONFIRMED BY EAR** (2026-08-01): all five
+  beacon tunes + arming tune distinct at beep_volume=10; volume wired
+  AM32-style (was fixed duty 15); tone counters numerically exact
+  (141 note-starts / 11 sequences / 0 aborts).
+- [x] **Sine-mode smooth start CONFIRMED** (2026-08-01): 3% crawl
+  "smooth with a hum, no artifacts", "very smooth and quick" handoff
+  to BLDC at the changeover; dsy=0 on the wire; config restored.
+- [!] **Stuck-rotor protection — PARKED AS DEFECT INVESTIGATION**:
+  detection + latch work (wire shows bemf_to_hap=102 with drive
+  forced 0 at the AM32-correct ~2.3 s), but the latch CLEARS almost
+  instantly during a sustained standstill hold (suspect the
+  zc>100 && raw<200 low-throttle clear reopening it) so the operator
+  feels continuous churn; and after repeated stall cycles the start
+  path stayed churning at normal throttles until protection was
+  disabled + reset. Needs a code-level trace vs AM32 — including
+  whether AM32 itself behaves better (historic "working" validation
+  was harness-injection, never a physical hold). Also note: the
+  counter self-clears at stick release, so post-run reads are blind.
+- [x] **3D mode VALIDATED** — see the 3D campaign section above.
 - [ ] **Cold-boot + battery-replug soak axes** (item-3 residue) —
   every protocol x physical power cycle; zero missed detections.
 - [ ] **Browser Configurator session** (optional) — stock bootloader
