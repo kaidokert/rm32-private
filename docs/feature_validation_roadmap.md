@@ -155,9 +155,23 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
 - [x] **3D mode VALIDATED** — see the 3D campaign section above.
 - [ ] **Cold-boot + battery-replug soak axes** (item-3 residue) —
   every protocol x physical power cycle; zero missed detections.
-- [ ] **Browser Configurator session** (optional) — stock bootloader
-  swap (procedure proven, bins archived), read/write/persist through
-  the real UI, restore bench bootloader.
+- [x] **Browser Configurator session VALIDATED (2026-08-02)** — the
+  full production loop through am32.ca: connect -> MSP passthrough ->
+  DeviceInitFlash (stock bootloader swapped in over SWD) -> settings
+  page READ -> WRITE (beep_volume 10->2 + a reserved byte, proving a
+  wholesale page rewrite) -> PERSIST (dump-verified [30]=02) -> live
+  behavior followed (operator: app tones quieter; the "not lower
+  every time" beeps were the STOCK BOOTLOADER's own hardcoded-volume
+  beeps — two beepers, one knob). Bench bootloader + volume
+  restored + dump-verified afterward.
+  HONEST PARAMETER INVENTORY (Configurator page vs our validation):
+  hardware-validated = LVC, current limit, timing advance, direction,
+  3D, sine start, drag brake, stuck rotor, beep volume, telemetry,
+  comp/variable PWM, servo cal bytes. Host-tested-only/untested =
+  temperature limit (needs heat), stall protection (crawler rig),
+  RC-car reverse, active brake (brake_on_stop=2), current PID gain
+  sweeps, custom servo endpoints, startup power, custom
+  pwm_frequency, auto_advance — documented, not claimed.
 
 ## Tier 3 — gated on the PB6/spare-pin rewire
 
