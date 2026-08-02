@@ -148,8 +148,10 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
   remains unreproduced — watch item.
   Note: the reqcheck C harness hangs (infinite loop) one tick after
   a latch with throttle streaming — fake-env wait, not firmware;
-  probe rows marked DEAD. PENDING (hands): one 15%-throttle grip
-  test to feel the latch hold physically.
+  probe rows marked DEAD. PHYSICAL SIGN-OFF (2026-08-02): operator
+  gripped the bell at 15% throttle — fought ~2 s, went limp, STAYED
+  limp; mid-hold wire probe: newinput=346 (BF commanding) with adj=0
+  duty=0 (latch cutting). Feature VALIDATED.
 - [x] **3D mode VALIDATED** — see the 3D campaign section above.
 - [ ] **Cold-boot + battery-replug soak axes** (item-3 residue) —
   every protocol x physical power cycle; zero missed detections.
