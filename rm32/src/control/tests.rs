@@ -164,6 +164,62 @@ mod tests {
         assert!(hal.pwm.last_duty > 0, "brake compare should be near ARR");
     }
 
+    /// AM32 interval telemetry (main.c:1664-1672): telemetry_on_interval
+    /// was a ported-but-unwired config byte — periodic KISS telemetry
+    /// never fired. With interval=1 the flag must set after
+    /// (30-1+1)*20 = 600 ticks; with interval=0, never.
+    #[test]
+    fn interval_telemetry_fires_every_30ms() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut duty = crate::control::state::DutyState::default();
+        let mut config = crate::config::EepromConfig::default();
+        config.telemetry_on_interval = 1;
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let mut hal = MockMotorHal::new();
+        shared.mode.set(crate::motor_mode::MotorMode::Armed);
+
+        let mut fired_at = None;
+        for n in 0..700u32 {
+            isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+                commutation: &mut comm,
+                bemf: &mut bemf,
+                duty: &mut duty,
+                config: &config,
+                armed_timeout_count: &mut armed_timeout,
+                voltage_based_ramp: false,
+                shared: &shared,
+                hal: &mut hal,
+            });
+            if shared.send_telemetry() && fired_at.is_none() {
+                fired_at = Some(n);
+            }
+        }
+        let at = fired_at.expect("interval telemetry never fired");
+        assert!(
+            (595..=605).contains(&at),
+            "expected fire ~tick 600, got {at}"
+        );
+
+        // interval=0: never fires.
+        config.telemetry_on_interval = 0;
+        shared.send_telemetry.set(false);
+        for _ in 0..1500u32 {
+            isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+                commutation: &mut comm,
+                bemf: &mut bemf,
+                duty: &mut duty,
+                config: &config,
+                armed_timeout_count: &mut armed_timeout,
+                voltage_based_ramp: false,
+                shared: &shared,
+                hal: &mut hal,
+            });
+        }
+        assert!(!shared.send_telemetry(), "must not fire with interval=0");
+    }
+
     #[test]
     fn isr_tick_throttle_maps_to_setpoint() {
         let mut comm = crate::commutation::Commutation::new();

@@ -186,10 +186,21 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
   of the firmware under test. Reuses rm32 config structs. SWD covers
   read/verify today; the tool adds firmware-independent WRITE + a
   no-probe workflow.
-- [ ] **KISS telemetry on PB6** — the production telemetry output,
-  currently hijacked by debuguart. Needs PB6 returned to telemetry
-  duty for the test (debug via RTT + soft-UART during it). The last
-  "AM32 equivalent" feature with zero validation.
+- [x] **KISS telemetry — VALIDATED HOST-SIDE (2026-08-02), no rewire
+  needed**: PB6/USART1@115200 is the same wire+direction+baud as the
+  debug UART — the swap is a build flag, not solder. EN ROUTE FIX:
+  `telemetry_on_interval` was a ported-but-unwired config byte (same
+  family as proportional_brake/beep_volume) — AM32's periodic
+  telemetry trigger (main.c:1664-1672, (30-1+interval) ms + per-ESC
+  slot offset) had no rm32 consumer; wired via the one_khz_counter
+  pattern + host test interval_telemetry_fires_every_30ms.
+  Production build on the bench: 33.0 frames/s EXACT, every CRC
+  valid, zero stray bytes. Idle: 37-38 C / 12.08 V / 0 A / 0 eRPM.
+  At 40%: eRPM 100.8-101.5k (matches the GCR/BF-path curve within
+  1%), 1.20 A, sag to 11.1 V, mAh integrator accumulating (10->18->
+  21, retained after stop). Tool: scripts/kiss_read.py.
+  REMAINING (future): the full BF loop — feature ESC_SENSOR + a BF
+  UART reading the same frames FC-side.
 
 ## Declaration text (target)
 

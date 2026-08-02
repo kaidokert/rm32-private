@@ -30,6 +30,12 @@ pub const ARMING_TIMEOUT_TICKS: u32 = 20000;
 /// (`Inc/targets.h:5318`). Set per-MCU there; for our 20 kHz TIM6 it's 20.
 pub const PID_LOOP_DIVIDER: u8 = 20;
 
+/// Interval-telemetry base period in ms (AM32 `telemetry_interval_ms`,
+/// main.c:338). Effective interval = (30 - 1 + telemetry_on_interval)
+/// ms; the config value doubles as a per-ESC slot offset on shared
+/// telemetry wires (main.c:1667-1669).
+pub const TELEMETRY_INTERVAL_MS: u16 = 30;
+
 /// Default initial commutation interval in timer ticks (0.5µs each).
 /// 10000 ticks = 5ms between commutations = very slow startup.
 pub const INITIAL_COMMUTATION_INTERVAL: u32 = 10000;

@@ -24,6 +24,22 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     // correct regardless of main-loop iteration rate (main no longer wfi's
     // every iter — matches AM32's spinning while(1) at main.c:1843).
     ctx.shared.one_khz_counter_inc();
+
+    // AM32 interval telemetry (main.c:1664-1672): with
+    // telemetry_on_interval set, fire send_telemetry every
+    // (30 - 1 + interval) ms — the config value doubles as a per-ESC
+    // slot offset on shared telemetry wires. This was a
+    // ported-but-unwired config byte until 2026-08-02 (same family as
+    // proportional_brake and beep_volume): the field existed, no
+    // consumer — periodic KISS telemetry never fired.
+    if ctx.config.telemetry_on_interval != 0 {
+        let limit = (crate::constants::TELEMETRY_INTERVAL_MS - 1
+            + ctx.config.telemetry_on_interval as u16)
+            * 20;
+        if ctx.shared.telem_counter_check_and_inc(limit) {
+            ctx.shared.set_send_telemetry(true);
+        }
+    }
     // Defensive COMP-IRQ mask while not commutating. AM32 mirrors this by
     // calling maskPhaseInterrupts() at every stop/timeout site (~15 places
     // in main.c). We only mask on the AllOff path below, so StopMotor /

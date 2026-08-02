@@ -144,6 +144,13 @@ pub trait IsrTiming {
     fn one_khz_counter_check_and_reset(&self, _divider: u8) -> bool {
         false
     }
+
+    /// ISR-side (20 kHz): increment the interval-telemetry counter; if it
+    /// has exceeded `limit`, reset it and return true (fire telemetry).
+    /// Matches AM32's `telem_ms_count` block at main.c:1664-1672.
+    fn telem_counter_check_and_inc(&self, _limit: u16) -> bool {
+        false
+    }
 }
 
 /// Main-loop-produced control data consumed by the ISR.

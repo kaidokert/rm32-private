@@ -116,6 +116,7 @@ pub struct SharedState {
     // main.c:1317, checked at main.c:1397). Was on MainState until we
     // decoupled main-loop rate from ISR rate (removed wfi).
     one_khz_counter: AtomicU8,
+    telem_counter: AtomicU16,
 }
 
 impl Default for SharedState {
@@ -176,6 +177,7 @@ impl SharedState {
             cfg_wr_head: AtomicU8::new(0),
             cfg_wr_tail: AtomicU8::new(0),
             one_khz_counter: AtomicU8::new(0),
+            telem_counter: AtomicU16::new(0),
         }
     }
 
@@ -256,6 +258,17 @@ impl SharedState {
     pub fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
         if self.one_khz_counter.load(ACQ) > divider {
             self.one_khz_counter.store(0, REL);
+            true
+        } else {
+            false
+        }
+    }
+    /// Interval-telemetry counter (AM32 telem_ms_count, main.c:1664):
+    /// increment; past `limit`, reset and return true. ISR side, 20 kHz.
+    pub fn telem_counter_check_and_inc(&self, limit: u16) -> bool {
+        let n = self.telem_counter.fetch_add(1, REL);
+        if n > limit {
+            self.telem_counter.store(0, REL);
             true
         } else {
             false
@@ -722,6 +735,9 @@ impl crate::shared_comm::IsrTiming for SharedState {
     }
     fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
         SharedState::one_khz_counter_check_and_reset(self, divider)
+    }
+    fn telem_counter_check_and_inc(&self, limit: u16) -> bool {
+        SharedState::telem_counter_check_and_inc(self, limit)
     }
 }
 

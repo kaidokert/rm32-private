@@ -28,6 +28,7 @@ pub struct TestShared {
     pub auto_advance: Cell<u8>,
     pub interval_timer_count: Cell<u32>,
     pub prop_brake_active: Cell<bool>,
+    pub telem_counter: Cell<u16>,
     pub isr_action: Cell<IsrAction>,
 }
 
@@ -61,6 +62,7 @@ impl TestShared {
             auto_advance: Cell::new(0),
             interval_timer_count: Cell::new(0),
             prop_brake_active: Cell::new(false),
+            telem_counter: Cell::new(0),
             isr_action: Cell::new(IsrAction::None),
         }
     }
@@ -76,6 +78,17 @@ impl MotorState for TestShared {
 }
 
 impl IsrTiming for TestShared {
+    fn telem_counter_check_and_inc(&self, limit: u16) -> bool {
+        let n = self.telem_counter.get();
+        self.telem_counter.set(n + 1);
+        if n > limit {
+            self.telem_counter.set(0);
+            true
+        } else {
+            false
+        }
+    }
+
     fn zero_crosses(&self) -> u32 {
         self.zero_crosses.get()
     }
