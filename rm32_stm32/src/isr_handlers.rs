@@ -158,15 +158,25 @@ pub fn handle_tim6() {
         let req = shared.take_tone_request();
         match state.tone.tick(req, shared.running()) {
             ToneAction::StartNote(n) => {
+                #[cfg(feature = "debuguart")]
+                TONE_STARTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 state
                     .hal
                     .pwm
                     .set_auto_reload(crate::mcu::Chip::TIM1_AUTORELOAD);
                 state.hal.pwm.set_prescaler(n.prescaler);
-                state.hal.pwm.set_duty_all(15); // Sounds default volume
+                // AM32 sounds.c setVolume(): CCR = beep_volume(0-11) * 3.
+                let vol = (state.config.beep_volume.min(11) as u16) * 3;
+                state.hal.pwm.set_duty_all(vol);
                 state.hal.phase.com_step(n.step);
             }
             ToneAction::Silence => {
+                #[cfg(feature = "debuguart")]
+                if shared.running() {
+                    TONE_ABORTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                } else {
+                    TONE_ENDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                }
                 state.hal.phase.all_off();
                 state.hal.pwm.set_prescaler(0);
                 state
@@ -176,7 +186,8 @@ pub fn handle_tim6() {
             }
             ToneAction::Idle => {
                 if state.tone.active() {
-                    state.hal.pwm.set_duty_all(15);
+                    let vol = (state.config.beep_volume.min(11) as u16) * 3;
+                    state.hal.pwm.set_duty_all(vol);
                 }
             }
         }
@@ -378,6 +389,17 @@ pub fn comp_at_pre_zc_level() -> bool {
 pub static EDT_SENT: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
 #[cfg(feature = "debuguart")]
 pub static EDT_LAST: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
+
+/// Tone-path decision counters (instrument-decisions-not-outcomes):
+/// starts = StartNote actions applied (note transitions), aborts =
+/// running-flag kills, ends = sequences completed. Read by the [su]
+/// heartbeat; never printed from the ISR.
+#[cfg(feature = "debuguart")]
+pub static TONE_STARTS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(feature = "debuguart")]
+pub static TONE_ABORTS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(feature = "debuguart")]
+pub static TONE_ENDS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Poll-print disturbance A/B (item 7): when set, main deliberately
 /// prints while the motor RUNS — the banned observer behavior,

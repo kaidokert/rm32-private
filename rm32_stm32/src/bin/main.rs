@@ -587,13 +587,18 @@ fn main() -> ! {
             #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
             {
                 let (f, e, o) = rm32_stm32::mcu_l431::softuart_rx::counters();
+                use core::sync::atomic::Ordering;
+                use rm32_stm32::isr_handlers as ihh;
                 rm32_stm32::dprintln!(
-                    "[su f={} e={} o={} n={} last={:#04x}]",
+                    "[su f={} e={} o={} n={} last={:#04x} tn={}/{}/{}]",
                     f,
                     e,
                     o,
                     su_n,
-                    su_last
+                    su_last,
+                    ihh::TONE_STARTS.load(Ordering::Relaxed),
+                    ihh::TONE_ABORTS.load(Ordering::Relaxed),
+                    ihh::TONE_ENDS.load(Ordering::Relaxed)
                 );
             }
             // Edge-probe lifetime totals — veto visibility even with the
