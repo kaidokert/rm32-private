@@ -131,6 +131,19 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             }
         } else {
             ctx.shared.set_duty_cycle_setpoint(0);
+            // AM32 !running housekeeping (main.c:1256-1259): while at
+            // zero throttle and not running, continuously scrub the
+            // run counters (AM32 also re-asserts old_routine=1; rm32's
+            // mode model covers that — every start enters OldRoutine).
+            // rm32 lacked this — zero_crosses CARRIED ACROSS RUNS
+            // (observed 1809 at idle on the bench), polluting the
+            // zc>1000 fault-clear in the stuck-rotor latch and
+            // compute_setpoint's zc-gated startup boost (the
+            // post-stall "won't spin up" churn).
+            if !ctx.shared.running() {
+                ctx.shared.set_zero_crosses(0);
+                ctx.bemf.reset_for_step();
+            }
             if ctx.config.brake_on_stop == 2 {
                 ctx.hal.phase().com_step(2);
                 let brake_duty = (ctx.config.active_brake_power as u32 * tim1_arr as u32

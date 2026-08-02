@@ -126,17 +126,30 @@ NOTE advance_level=26 is NOT anomalous — new-format (1.90+) encoding:
 - [x] **Sine-mode smooth start CONFIRMED** (2026-08-01): 3% crawl
   "smooth with a hum, no artifacts", "very smooth and quick" handoff
   to BLDC at the changeover; dsy=0 on the wire; config restored.
-- [!] **Stuck-rotor protection — PARKED AS DEFECT INVESTIGATION**:
-  detection + latch work (wire shows bemf_to_hap=102 with drive
-  forced 0 at the AM32-correct ~2.3 s), but the latch CLEARS almost
-  instantly during a sustained standstill hold (suspect the
-  zc>100 && raw<200 low-throttle clear reopening it) so the operator
-  feels continuous churn; and after repeated stall cycles the start
-  path stayed churning at normal throttles until protection was
-  disabled + reset. Needs a code-level trace vs AM32 — including
-  whether AM32 itself behaves better (historic "working" validation
-  was harness-injection, never a physical hold). Also note: the
-  counter self-clears at stick release, so post-run reads are blind.
+- [x] **Stuck-rotor protection — DEBUGGED (2026-08-01, dual-harness
+  campaign, stall_probe.py)**. Three-part verdict:
+  (1) The standstill-hold OSCILLATION at 5% throttle is AM32-VERBATIM:
+  the same-pass clear (zc>100 && raw<200) reopens the latch in BOTH
+  implementations — the C reqcheck harness (real AM32 main.c) showed
+  the identical bemf 102->0 clear before rust did. NOT a divergence;
+  the reference oscillates too. At >=10% throttle (raw>=200) the
+  latch HOLDS SOLID in both (T3: 500+ ticks latched). Documented.
+  (2) REAL DIVERGENCE FOUND + FIXED: rm32 lacked AM32's !running
+  housekeeping (main.c:1256-1259 — continuous zero_crosses/bad_count
+  scrub at zero throttle; old_routine covered by rm32's mode model).
+  zero_crosses carried across runs (bench: 1809 at idle), polluting
+  the zc>1000 fault-clear AND compute_setpoint's zc-gated startup
+  boost — the post-stall "won't spin up" churn. Fixed in isr_logic
+  zero-throttle branch; regression vector stop_housekeeping.txt.
+  Bench-confirmed: zc=0 at idle after spins; 4/4 identical-speed
+  start/stop cycles WITH protection enabled (previously degraded).
+  (3) No-rearm-after-LVC-disarm is AM32-CORRECT (the reference
+  latches LVC until reboot). The one 3D-era no-rearm at neutral
+  remains unreproduced — watch item.
+  Note: the reqcheck C harness hangs (infinite loop) one tick after
+  a latch with throttle streaming — fake-env wait, not firmware;
+  probe rows marked DEAD. PENDING (hands): one 15%-throttle grip
+  test to feel the latch hold physically.
 - [x] **3D mode VALIDATED** — see the 3D campaign section above.
 - [ ] **Cold-boot + battery-replug soak axes** (item-3 residue) —
   every protocol x physical power cycle; zero missed detections.

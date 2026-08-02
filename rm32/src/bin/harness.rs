@@ -512,7 +512,8 @@ impl Harness {
              pwm_duty={} pwm_arr={} pwm_duty_count={} \
              duty_cycle_maximum={} filter_level={} \
              send_telemetry={} send_esc_info_flag={} \
-             alloff_count={} fullbrake_count={} mask_interrupts_count={}",
+             alloff_count={} fullbrake_count={} mask_interrupts_count={} \
+             bemf_timeout_happened={} bemf_timeout={}",
             self.tick_count,
             self.shared.armed() as i32,
             self.shared.running() as i32,
@@ -555,6 +556,8 @@ impl Harness {
             self.hal_counts.all_off.get(),
             self.hal_counts.full_brake.get(),
             self.hal_counts.mask_interrupts.get(),
+            self.main.protection.bemf_timeout_happened(),
+            self.main.protection.bemf_timeout(),
         );
         io::stdout().flush().unwrap();
     }
