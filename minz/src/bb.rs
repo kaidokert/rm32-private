@@ -17,7 +17,14 @@ impl Bb {
     #[inline]
     pub fn record(&self, ty: u8, sector: u8, data: u16) {
         let t = crate::am32_timers::now_10us();
-        free(|cs| self.0.borrow(cs).borrow_mut().record(Event { t, ty, sector, data }));
+        free(|cs| {
+            self.0.borrow(cs).borrow_mut().record(Event {
+                t,
+                ty,
+                sector,
+                data,
+            })
+        });
     }
 
     /// Freeze the ring (a fault freezes so the dump shows the events

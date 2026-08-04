@@ -157,7 +157,6 @@ impl UartTxWriter {
         }
         self.inflight = contig;
     }
-
 }
 
 /// Hardware-state resyncs performed by `service` (lost completion or

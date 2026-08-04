@@ -58,7 +58,6 @@ impl ObservedPhase {
             Self::C => (0b111, 0b00),
         }
     }
-
 }
 
 /// Initialise COMP2 for BEMF observation, defaulting to phase A

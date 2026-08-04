@@ -466,6 +466,11 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     // ramp_count local-ish (ramp_divider=0 → ramp every tenKhz tick, so
     // main only needs the maps below; ramp lives in the TIM6 ISR).
 
+    // Self-monitoring instrument (feature="monitor"): fed in main context so
+    // it adds zero cost to the prio-0 commutation/COMP ISRs.
+    #[cfg(feature = "monitor")]
+    let mut monitor = minz::monitor::Monitor::new();
+
     loop {
         minz::iwdg::refresh();
         rx_drain(&mut uart, duty, bench);
@@ -486,6 +491,15 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
         bemf_timeout_resets(drive, duty, zc);
         bemf_timeout_rekick(sched, drive, duty, zct, hal, obs, running);
 
+        // Monitor: feed each NEW commutation interval through ratch22 and
+        // check for surprises (main context, off the hot ISR path).
+        #[cfg(feature = "monitor")]
+        monitor.poll(
+            zct.comm_n.load(Ordering::Relaxed),
+            sched.commutation_interval.load(Ordering::Relaxed),
+            bench.i_raw.load(Ordering::Relaxed),
+        );
+
         telemetry_drain(bench, zct, tx_writer);
         handle_requests(sched, drive, duty, bench, zct, tx_writer);
     }
@@ -497,6 +511,13 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
 #[inline]
 fn rx_drain(uart: &mut UartDuty, duty: &Duty, bench: &Bench) {
     while let Some(c) = minz::usart2_rx::pop() {
+        // Monitor control keys are intercepted here (not valid UART_DUTY
+        // keys, so the number parser never sees them) — runtime tier/K dials.
+        #[cfg(feature = "monitor")]
+        if matches!(c, b'k' | b'K' | b'm') {
+            minz::monitor::key(c);
+            continue;
+        }
         apply_uart_cmd(duty, bench, uart.step(c));
     }
 }
@@ -608,6 +629,31 @@ fn print_info(
         DELAY_OUT_FREE_CYC.load(Ordering::Relaxed),
         LATE_WINDOWS.load(Ordering::Relaxed),
     );
+    // Monitor line (feature="monitor"): surprises / samples, the in-situ DWT
+    // cost per update, and the EW interval mean/variance the band is built on.
+    #[cfg(feature = "monitor")]
+    {
+        use minz::monitor as mon;
+        let _ = write!(
+            tx,
+            "mon tier={} k={} n={} cyc={} min={} isurp={} imean={} ivar={} \
+             csurp={} cmean={} cvar={} skew={} kurt={} eps={}\r\n",
+            mon::TIER.load(Ordering::Relaxed),
+            mon::K.load(Ordering::Relaxed),
+            mon::SAMPLES.load(Ordering::Relaxed),
+            mon::LAST_CYC.load(Ordering::Relaxed),
+            mon::MIN_CYC.load(Ordering::Relaxed),
+            mon::CI_SURP.load(Ordering::Relaxed),
+            mon::CI_MEAN_TICKS.load(Ordering::Relaxed),
+            mon::CI_VAR_TICKS2.load(Ordering::Relaxed),
+            mon::CUR_SURP.load(Ordering::Relaxed),
+            mon::CUR_MEAN.load(Ordering::Relaxed),
+            mon::CUR_VAR.load(Ordering::Relaxed),
+            mon::SKEW_M.load(Ordering::Relaxed),
+            mon::KURT_M.load(Ordering::Relaxed),
+            mon::EPOCHS.load(Ordering::Relaxed),
+        );
+    }
 }
 
 fn dump_bb(tx: &mut UartTxWriter) {
@@ -732,7 +778,10 @@ fn wax_tick() {
     WAX_A[h].store(a, Ordering::Relaxed);
     WAX_B[h].store(b, Ordering::Relaxed);
     WAX_POS[h].store(pos, Ordering::Relaxed);
-    WAX_T1S[h].store((step << 12) | t1 | ((post_zc as u16) << 15), Ordering::Relaxed);
+    WAX_T1S[h].store(
+        (step << 12) | t1 | ((post_zc as u16) << 15),
+        Ordering::Relaxed,
+    );
     WAX_HEAD.store((h + 1) % WAX_N, Ordering::Relaxed);
 }
 
@@ -790,7 +839,11 @@ fn wax_dump(sched: &Sched, duty: &Duty, tx: &mut UartTxWriter) {
 fn hist_dump(tx: &mut UartTxWriter) {
     let mut w = BlockingFmt { tx };
     let _ = write!(w, "HG shift={} nbins={}\r\n", HIST_SHIFT, HIST_NBINS);
-    for (isr, name) in [(HIST_TIM6, "TIM6"), (HIST_TIM16, "TIM16"), (HIST_COMP, "COMP")] {
+    for (isr, name) in [
+        (HIST_TIM6, "TIM6"),
+        (HIST_TIM16, "TIM16"),
+        (HIST_COMP, "COMP"),
+    ] {
         let _ = write!(w, "{}", name);
         for bin in &ISR_HIST[isr] {
             let _ = write!(w, " {}", bin.load(Ordering::Relaxed));

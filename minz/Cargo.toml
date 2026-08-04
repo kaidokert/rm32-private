@@ -9,8 +9,19 @@ edition = "2024"
 # carrier-tradeoff history; everything timing-critical derives from
 # TIM1_AUTORELOAD so this single switch is complete.
 pwm48 = []
+# Firmware self-monitoring: key values -> ratch22 online banks -> surprise
+# check, in main context (see src/monitor.rs). LITE tier. NOTE: pulls the
+# private, gitignored `ratch22-sketch/` clone as an optional path dep, so a
+# build with this feature is LOCAL-ONLY until ratch22 is published/vendored.
+monitor = ["dep:ratch22"]
+# Reserved for the per-epoch block-M4 shape tier.
+monitor-full = ["monitor"]
 
 [dependencies]
+# Optional — only pulled in by `--features monitor`. Path points at the
+# gitignored private clone; keep this crate's `monitor` builds off the
+# committed/pre-commit path until ratch22 is public.
+ratch22 = { path = "ratch22-sketch/ratch22", optional = true }
 # Host-testable control/guard/telemetry logic — the extracted brain.
 # `cd core && cargo test` runs its suite on the host.
 minz-core = { path = "core" }
