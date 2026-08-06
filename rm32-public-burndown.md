@@ -503,3 +503,16 @@ Current post-PR #45 state:
 - Rebaseline conflicts were limited to `rm32/src/bin/harness.rs` and
   `rm32/src/main_state.rs`; resolution kept the public-landed static advance
   behavior while preserving remaining squash-only harness counters.
+
+Open PR #46:
+
+- PR: https://github.com/kaidokert/rm32/pull/46
+- Branch/worktree: `public-pr-cortex-m4-linker-rustflags`,
+  `/opt/m/rust/esc/rm/rm32-public-pr-cortex-m4-linker-rustflags`
+- Commit: `d812ad4 Add linker rustflags for Cortex-M4 targets`
+- Scope: add `-Tlink.x` cargo rustflags for `thumbv7em-none-eabi` and
+  `thumbv7em-none-eabihf`; no runtime code changes.
+- Validation: firmware builds for `stm32g071`, `stm32f051`, `stm32l431`, and
+  `stm32g431` all pass. `cargo fmt --manifest-path rm32_stm32/Cargo.toml
+  --check` still reports pre-existing unrelated formatting diffs, so no
+  formatting changes were made in this PR.
