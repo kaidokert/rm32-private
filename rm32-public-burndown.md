@@ -487,3 +487,19 @@ PR #45 review follow-up:
   targeted `temp_advance` and zero-sync tests, release harness build,
   `cargo test -p rm32` (`233 passed`), and full blackbox suite
   (`69 passed, 1 xfailed`).
+
+Current post-PR #45 state:
+
+- PR #45, "Apply static commutation advance mapping", landed on public
+  `main` as `515fbe0`.
+- `/opt/m/rust/esc/rm/rm32` is fast-forwarded to `origin/main` at `515fbe0`.
+- `/opt/m/rust/esc/rm/rm32-public-clean` is reset to `origin/main` at
+  `515fbe0`.
+- `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
+  commit on top of `origin/main`:
+  `d4ce2dc Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-static-advance-rebaseline`.
+- Rebaseline conflicts were limited to `rm32/src/bin/harness.rs` and
+  `rm32/src/main_state.rs`; resolution kept the public-landed static advance
+  behavior while preserving remaining squash-only harness counters.
