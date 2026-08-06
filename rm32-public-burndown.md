@@ -504,7 +504,7 @@ Current post-PR #45 state:
   `rm32/src/main_state.rs`; resolution kept the public-landed static advance
   behavior while preserving remaining squash-only harness counters.
 
-Open PR #46:
+Closed PR #46:
 
 - PR: https://github.com/kaidokert/rm32/pull/46
 - Branch/worktree: `public-pr-cortex-m4-linker-rustflags`,
@@ -516,3 +516,15 @@ Open PR #46:
   `stm32g431` all pass. `cargo fmt --manifest-path rm32_stm32/Cargo.toml
   --check` still reports pre-existing unrelated formatting diffs, so no
   formatting changes were made in this PR.
+- Closed without merge on 2026-08-06 after review showed this is not the clean
+  standalone slice we wanted:
+  - Root-invoked CI/pre-commit commands use `cargo build --manifest-path
+    rm32_stm32/Cargo.toml` from repo root, so Cargo may not read
+    `rm32_stm32/.cargo/config.toml`; target rustflags there are not guaranteed
+    to affect the actual validation path.
+  - Adding `-Tlink.x` for M4 targets would still select the single tracked
+    `rm32_stm32/memory.x`, currently documented as STM32G071 layout.
+    L431/G431 need a deliberate per-MCU memory-script selection plan before
+    enabling target-level linker flags.
+- Future PR shape: solve Cargo config discovery and per-MCU linker memory
+  selection together. Do not re-land the PR #46 one-file form.
