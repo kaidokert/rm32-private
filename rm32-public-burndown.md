@@ -461,3 +461,15 @@ Current post-PR #44 state:
   `edt_disarm_on_zero`, `motor_restart`, `signal_timeout_armed`,
   `sine_brake_on_stop`, `sine_changeover`, `stuck_rotor_rate`, plus
   strengthening edits to existing vectors.
+
+Open PR #45:
+
+- PR: https://github.com/kaidokert/rm32/pull/45
+- Branch/worktree: `public-pr-static-advance`,
+  `/opt/m/rust/esc/rm/rm32-public-pr-static-advance`
+- Commit: `48ca447 Apply static commutation advance mapping`
+- Scope: shared EEPROM `advance_level` mapping for static commutation
+  advance, main-loop publication when dynamic auto-advance is disabled,
+  harness parity, and a blackbox vector for old/new/fallback mappings.
+- Validation: `cargo fmt --check -p rm32`, `cargo test -p rm32`,
+  release harness build, and full blackbox suite (`69 passed, 1 xfailed`).
