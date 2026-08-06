@@ -443,3 +443,21 @@ Current post-PR #43 state:
   contain that merge.
 - Most conflicts in future rebuilds are expected BEMF overlap and should keep
   the public landed version for BEMF-only files.
+
+Current post-PR #44 state:
+
+- PR #44, "Add passing blackbox vectors", landed on public `main` as
+  `6c0555e`.
+- `/opt/m/rust/esc/rm/rm32` is fast-forwarded to `origin/main` at `6c0555e`.
+- `/opt/m/rust/esc/rm/rm32-public-clean` is reset to `origin/main` at
+  `6c0555e`.
+- `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
+  commit on top of `origin/main`:
+  `6d6d0a8 Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-blackbox-rebaseline`.
+- The remaining blackbox delta in the squash projection is now the deferred
+  review set: `beacon_tones`, `bidir_autodetect`, `calibration_jitter`,
+  `edt_disarm_on_zero`, `motor_restart`, `signal_timeout_armed`,
+  `sine_brake_on_stop`, `sine_changeover`, `stuck_rotor_rate`, plus
+  strengthening edits to existing vectors.
