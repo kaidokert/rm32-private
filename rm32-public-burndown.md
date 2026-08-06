@@ -473,3 +473,17 @@ Open PR #45:
   harness parity, and a blackbox vector for old/new/fallback mappings.
 - Validation: `cargo fmt --check -p rm32`, `cargo test -p rm32`,
   release harness build, and full blackbox suite (`69 passed, 1 xfailed`).
+
+PR #45 review follow-up:
+
+- Commit: `edbd03f Address static advance review feedback`
+- Fixed the ISR sync path so a static zero advance value clears a previous
+  nonzero `temp_advance`.
+- Strengthened the blackbox vector with distinct old/new/fallback expected
+  values and added a focused unit test for zero advance sync.
+- Replaced unexplained mapping literals with named constants and a short source
+  comment.
+- Validation after the follow-up: `cargo fmt --check -p rm32`,
+  targeted `temp_advance` and zero-sync tests, release harness build,
+  `cargo test -p rm32` (`233 passed`), and full blackbox suite
+  (`69 passed, 1 xfailed`).
