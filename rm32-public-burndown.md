@@ -4,7 +4,7 @@ Last updated: 2026-08-06
 
 ## Branches And Worktrees
 
-- Public main: `/opt/m/rust/esc/rm/rm32`, `main`, now at `4c920d3 Add board-configured BEMF pin mappings (#41)`.
+- Public main: `/opt/m/rust/esc/rm/rm32`, `main`, now at `f607c76 Add reset cause reporting (#43)`.
 - Private bench tip: `/opt/m/rust/esc/rm/rm32-private-bench`, `private-bench-tip`.
 - Public clean target: `/opt/m/rust/esc/rm/rm32-public-clean`, `public-ultimate-clean`.
 - Public squash projection: `/opt/m/rust/esc/rm/rm32-public-squash`, `public-ultimate-squash`.
@@ -36,6 +36,25 @@ Known compromise:
 - This is deliberately not the final design. The representation is still a
   shared `u32` register encoding, not a type-safe Rust model.
 - Public follow-up issue: <https://github.com/kaidokert/rm32/issues/42>
+
+### PR #43: Reset cause reporting
+
+Squash merged as:
+
+- `f607c76 Add reset cause reporting (#43)`
+
+What landed:
+
+- `rm32::reset_cause::ResetCause` portable bitflags.
+- Per-MCU `read_and_clear_reset_cause()` implementations for F051, G071, G431,
+  and L431.
+- Boot-time reset-cause log before MCU init.
+- `rm32_stm32::dprintln!` RTT macro and `rtt-target` dependency.
+
+Known review follow-ups:
+
+- Macro hygiene and power-reset naming feedback was captured below. It was not
+  part of the squash-merged PR #43 state.
 
 ## Source Trails
 
@@ -344,12 +363,18 @@ After a public PR lands:
 - For squash projection, regenerate from the clean tree after it is rebased.
 - Original private bench branch can merge public main instead of rebasing.
 
-Current post-PR #41 state:
+Current post-PR #43 state:
 
 - `public-ultimate-clean-before-bemf-rebaseline` preserves the pre-rebaseline
   clean branch.
-- `rm32-public-clean` is reset to `origin/main`.
-- `rm32-public-squash` was rebuilt as one remaining-change commit on top of
-  `origin/main`: `9d4c37a Squash remaining public clean state onto public main`.
+- `rm32-public-clean` is reset to `origin/main` at `f607c76`.
+- `rm32-public-squash` was rebuilt again after PR #43 as one remaining-change
+  commit on top of `origin/main`: `a38d337 Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-reset-cause-rebaseline`.
+- `rm32-private-bench` fast-forwarded to `private/am32_sheet` at `630a5d6`.
+  Merging public `origin/main` into it was attempted and aborted because it
+  produced broad BEMF/reset-cause conflicts; the worktree is clean and does not
+  contain that merge.
 - Most conflicts in future rebuilds are expected BEMF overlap and should keep
   the public landed version for BEMF-only files.
