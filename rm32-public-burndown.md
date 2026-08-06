@@ -1,6 +1,6 @@
 # RM32 Public Burn-Down Worklog
 
-Last updated: 2026-08-05
+Last updated: 2026-08-06
 
 ## Branches And Worktrees
 
@@ -11,8 +11,9 @@ Last updated: 2026-08-05
 - Internal worklog: `/opt/m/rust/esc/rm/rm32-internal-worklog`, `internal/worklog`.
 
 Current public-clean note: a rebaseline was attempted after PR #41 squash-merged.
-The worktree is mid-conflict and should either be resolved carefully or rebuilt
-again from the backup ref `public-ultimate-clean-before-bemf-rebaseline`.
+The conflicted squash-merge attempt was discarded and `rm32-public-clean` was
+reset to `origin/main`. The pre-rebaseline clean tree is preserved as
+`public-ultimate-clean-before-bemf-rebaseline`.
 
 ## Landed Public PRs
 
@@ -59,6 +60,40 @@ Implication:
   `PA2`, not `PA7`.
 
 ## Follow-Up Design Issues
+
+### PR #43 Review Follow-Ups: Reset Cause Reporting
+
+Public PR:
+
+- <https://github.com/kaidokert/rm32/pull/43>
+
+Apply on PR #43:
+
+- Fix exported `dprintln!` macro hygiene by re-exporting `rtt_target` from
+  `rm32_stm32` and invoking it as `$crate::rtt_target::rprintln!`.
+- Correct `rm32/src/reset_cause.rs` docs: only L4 currently has every portable
+  reset flag in the set; G4 does not expose the firewall reset flag.
+- Add a distinct power reset flag instead of mapping F0 `PORRSTF` and G0
+  `PWRRSTF` to `BROWNOUT`. Cold boot should not log as brownout unless the MCU
+  specifically reports a brownout reset.
+
+Deferred / do not apply on PR #43:
+
+- Do not abstract the four `read_and_clear_reset_cause` implementations yet.
+  The PAC register accessors differ enough that inline per-MCU decode is easier
+  to review in this small PR.
+- Do not introduce a debug transport abstraction for `dprintln!` here. The
+  immediate issue is macro hygiene for the RTT dependency; transport policy is a
+  broader diagnostics decision.
+
+Related future cleanup:
+
+- If reset-cause support grows beyond these four MCUs, consider a shared helper
+  for constructing `ResetCause` from booleans, while keeping PAC reads inside
+  MCU modules.
+- If RTT becomes undesirable for default public firmware, add an explicit
+  diagnostics/logging feature rather than hiding the transport behind this reset
+  PR.
 
 ### BEMF Mapping Should Become Typed
 
@@ -309,12 +344,12 @@ After a public PR lands:
 - For squash projection, regenerate from the clean tree after it is rebased.
 - Original private bench branch can merge public main instead of rebasing.
 
-Current interrupted attempt:
+Current post-PR #41 state:
 
 - `public-ultimate-clean-before-bemf-rebaseline` preserves the pre-rebaseline
   clean branch.
-- `rm32-public-clean` has a conflicted squash-merge state after resetting to
-  `origin/main` and squash-merging that backup branch.
-- Most conflicts are expected BEMF overlap and should keep the public landed
-  version for BEMF-only files.
-
+- `rm32-public-clean` is reset to `origin/main`.
+- `rm32-public-squash` was rebuilt as one remaining-change commit on top of
+  `origin/main`: `9d4c37a Squash remaining public clean state onto public main`.
+- Most conflicts in future rebuilds are expected BEMF overlap and should keep
+  the public landed version for BEMF-only files.
