@@ -66,13 +66,32 @@ What is proposed:
 
 - Add the subset of `tests/blackbox` vectors from the cleanup branch that pass
   on current public `main`.
-- Remove the stale `desync_recovery` xfail because the adjusted vector passes.
+- Keep `desync_recovery` as an xfail because the old-routine parity difference
+  is still real.
+- Fix `eeprom_init_overrides` to use `eeprom_version=3`, matching the current
+  EEPROM version.
 
 Validation:
 
 - `cargo build -p rm32 --bin rm32_harness --release`
 - `AM32_HARNESS=target/release/rm32_harness pytest tests/blackbox/test_vectors.py -v`
-- Result: `73 passed`.
+- Initial result: `73 passed`.
+- After review cleanup: `68 passed, 1 xfailed`.
+
+Review cleanup applied:
+
+- Dropped `signal_timeout_armed`; it documents FET-off/DMA-reset/system-reset
+  safety behavior but only asserted `armed=0`, and CI failed on it.
+- Dropped `beacon_tones`; current harness does not expose `PlayTone`, and the
+  vector also needed `armed=1` plus command 4 coverage.
+- Dropped `bidir_autodetect`; current harness ignores `input_pin_state`, so the
+  vector did not exercise bidirectional autodetect.
+- Dropped `calibration_jitter`; current harness ignores `last_input` and
+  `enter_calibration_count`, so the vector did not initialize or observe the
+  transfer state it described.
+- Restored `dead_time_override` to the existing meaningful `load_eeprom` duty
+  threshold check.
+- Restored `desync_recovery` assertion and xfail.
 
 Vectors deliberately left out because they failed on current public code:
 
@@ -84,6 +103,23 @@ Vectors deliberately left out because they failed on current public code:
 - `sine_changeover`
 - `stuck_rotor`
 - `stuck_rotor_rate`
+
+Deferred PR #44 follow-ups:
+
+- Add harness observability for `PlayTone` / `play_tone_flag`, then reintroduce
+  beacon commands 2, 3, 4, and 5 with real tone assertions.
+- Add harness support for driving input-pin-high state through DShot dispatch,
+  then reintroduce bidirectional autodetect with `dshot_telemetry=1`.
+- Add supported setup/observation for calibration jitter state, or move that
+  coverage to a lower-level transfer unit test.
+- Implement or expose signal-timeout safety effects: motor-off/FET-off, DMA
+  reset, and system reset. Only then reintroduce `signal_timeout_armed`.
+- Strengthen smoke-like vectors when harness-visible signals exist:
+  `active_brake_mode2`, `rc_car_braking`, `sine_brake_mode2`,
+  `sine_brake_off`, `sine_stepping`, `variable_pwm_mode2`,
+  `bemf_falling_edge`, `desync_recovery_bidir`, `pid_clamping`,
+  `speed_control`, `lvc_absolute_cutoff`, `lvc_recovery_inhibit`, and
+  `edt_voltage_temp`.
 
 ## Source Trails
 
