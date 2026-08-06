@@ -56,6 +56,35 @@ Known review follow-ups:
 - Macro hygiene and power-reset naming feedback was captured below. It was not
   part of the squash-merged PR #43 state.
 
+### PR #44: Passing blackbox vectors
+
+Public PR:
+
+- <https://github.com/kaidokert/rm32/pull/44>
+
+What is proposed:
+
+- Add the subset of `tests/blackbox` vectors from the cleanup branch that pass
+  on current public `main`.
+- Remove the stale `desync_recovery` xfail because the adjusted vector passes.
+
+Validation:
+
+- `cargo build -p rm32 --bin rm32_harness --release`
+- `AM32_HARNESS=target/release/rm32_harness pytest tests/blackbox/test_vectors.py -v`
+- Result: `73 passed`.
+
+Vectors deliberately left out because they failed on current public code:
+
+- `desync_detection`
+- `edt_disarm_on_zero`
+- `low_voltage_cutoff`
+- `motor_restart`
+- `sine_brake_on_stop`
+- `sine_changeover`
+- `stuck_rotor`
+- `stuck_rotor_rate`
+
 ## Source Trails
 
 ### STM32G431 Comparator INMSEL Encoding
