@@ -528,3 +528,33 @@ Closed PR #46:
     enabling target-level linker flags.
 - Future PR shape: solve Cargo config discovery and per-MCU linker memory
   selection together. Do not re-land the PR #46 one-file form.
+
+Merged PR #47:
+
+- PR: https://github.com/kaidokert/rm32/pull/47
+- Branch/worktree: `public-pr-bemf-zc-result`,
+  `/opt/m/rust/esc/rm/rm32-public-pr-bemf-zc-result`
+- Commit: `6b9e981 Return BEMF zero-cross acceptance result`
+- Scope: make `bemf_zero_cross` return whether the comparator transition was
+  accepted; update host tests to assert accepted and filtered-out paths; keep
+  the STM32 ISR caller behavior unchanged by discarding the result.
+- Validation: `cargo fmt --check`, focused `isr_bemf_zero_cross` tests,
+  `cargo test -p rm32`, `cargo check --no-default-features --features
+  stm32g071 --lib` from `rm32_stm32/`, and `cargo build --release
+  --no-default-features --features stm32g071` from `rm32_stm32/`.
+
+Current post-PR #47 state:
+
+- PR #47 landed on public `main` as `fdb3ac7`.
+- `/opt/m/rust/esc/rm/rm32` is fast-forwarded to `origin/main` at `fdb3ac7`.
+- `/opt/m/rust/esc/rm/rm32-public-clean` is reset to `origin/main` at
+  `fdb3ac7`.
+- `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
+  commit on top of `origin/main`:
+  `1f929fb Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-bemf-zc-result-rebaseline`.
+- Rebaseline conflict was limited to `rm32_stm32/src/isr_handlers.rs`; the
+  resolution kept the remaining squash-side timing instrumentation and named
+  local `accepted` while relying on the now-public `bemf_zero_cross` return
+  value.
