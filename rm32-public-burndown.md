@@ -558,3 +558,54 @@ Current post-PR #47 state:
   resolution kept the remaining squash-side timing instrumentation and named
   local `accepted` while relying on the now-public `bemf_zero_cross` return
   value.
+
+Merged PR #48:
+
+- PR: https://github.com/kaidokert/rm32/pull/48
+- Branch/worktree: `public-pr-dshot-detect-timer-wrap`,
+  `/opt/m/rust/esc/rm/rm32-public-pr-dshot-detect-timer-wrap`
+- Commits:
+  - `c9f4331 Handle timer wrap in DShot input detection`
+  - `7639523 Exercise DShot300 timer wrap test`
+- Scope: make DShot input detection skip the potentially stale first capture
+  delta, compute deltas at 16-bit timer width, average actual valid deltas,
+  and add host tests for timer wrap and stale first-slot data. This
+  intentionally did not include DShot150, prescaler feedback, or 33-edge
+  capture plumbing.
+- Review follow-up: CodeRabbit correctly noted the DShot300 wrap test did not
+  cross the 16-bit boundary; fixed with the second commit.
+- Validation: `cargo fmt --check`, focused `signal::tests`, and
+  `cargo test -p rm32`.
+- Landed on public `main` as `5387162`.
+
+Merged PR #49:
+
+- PR: https://github.com/kaidokert/rm32/pull/49
+- Branch/worktree: `public-pr-ws2812-set-status`,
+  `/opt/m/rust/esc/rm/rm32-public-pr-ws2812-set-status`
+- Commit: `7f2c1c9 Add WS2812 status helper`
+- Scope: add `Ws2812Gpio::set_status()` so WS2812 LED status updates own
+  the `interrupt::free` bit-bang wrapper; update firmware call sites to use
+  `led.set_status(...)`. No motor-control behavior change.
+- Validation: `cargo fmt --check`, `cargo test -p rm32`, and
+  `cargo build --release --no-default-features --features stm32g071` from
+  `rm32_stm32/`.
+- Landed on public `main` as `e7079a3`.
+
+Current post-PR #49 state:
+
+- `/opt/m/rust/esc/rm/rm32` is fast-forwarded to `origin/main` at `e7079a3`.
+- `/opt/m/rust/esc/rm/rm32-public-clean` is reset to `origin/main` at
+  `e7079a3`.
+- `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
+  commit on top of `origin/main`:
+  `a022506 Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-ws2812-rebaseline`.
+- Rebaseline conflicts were limited to `rm32/src/signal.rs` and
+  `rm32_stm32/src/bin/main.rs`:
+  - `signal.rs` kept the public PR #48 wrap/stale-buffer implementation as
+    canonical and retained only the remaining DShot150 classifier/test from
+    the squash.
+  - `main.rs` kept the now-public `led.set_status(...)` call style and the
+    remaining squash-side LED-only arming branch.
