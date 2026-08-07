@@ -645,3 +645,38 @@ Current post-PR #50 state:
 - Private `am32_sheet` was fetched and checked out at
   `/opt/m/rust/esc/rm/rm32-am32-sheet` on local branch `am32_sheet`, tracking
   `private/am32_sheet` at `7e15d95`.
+
+Merged PR #51:
+
+- PR: https://github.com/kaidokert/rm32/pull/51
+- Branch/worktree: `public-pr-sine-changeover`,
+  `/opt/m/rust/esc/rm/rm32-public-pr-sine-changeover`
+- Commits:
+  - `993daf8 Force sine startup changeover at high throttle`
+  - `42b2363 Preserve sine phase offsets on forced changeover`
+- Scope: force high-throttle sine startup to reach the BLDC changeover point
+  immediately once input is above `SINE_CHANGEOVER_THROTTLE`; preserve B/C
+  phase offsets when rebasing phase A to zero; document the existing strict
+  threshold boundary with a unit test.
+- Review follow-up: CodeRabbit and Codex correctly flagged that resetting only
+  phase A corrupted the 120/240 degree offsets; fixed with the second commit.
+  Sourcery questioned `>` vs `>=`; left strict `>` because it was pre-existing
+  behavior and is now covered by `sine_step_threshold_is_strict`.
+- Validation: `cargo fmt --check`, `cargo test -p rm32 sine::tests --lib`,
+  and `cargo test -p rm32`.
+- Landed on public `main` as `7690ae7`.
+
+Current post-PR #51 state:
+
+- `/opt/m/rust/esc/rm/rm32` is fast-forwarded to `origin/main` at `7690ae7`.
+- `/opt/m/rust/esc/rm/rm32-public-clean` is reset to `origin/main` at
+  `7690ae7`.
+- `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
+  commit on top of `origin/main`:
+  `9b00af1 Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-sine-changeover-rebaseline`.
+- Rebaseline conflict was limited to `rm32/src/sine.rs`; the resolution kept
+  the reviewed public #51 implementation and dropped the older pre-review
+  squash-side sine changeover hunk. `rm32/src/sine.rs` now has no remaining
+  diff in the squash projection.
