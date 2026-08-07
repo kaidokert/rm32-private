@@ -599,7 +599,7 @@ Current post-PR #49 state:
   `e7079a3`.
 - `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
   commit on top of `origin/main`:
-  `a022506 Squash remaining public clean state onto public main`.
+  `3a13fea Squash remaining public clean state onto public main`.
 - Previous squash projection is preserved as
   `public-ultimate-squash-before-ws2812-rebaseline`.
 - Rebaseline conflicts were limited to `rm32/src/signal.rs` and
@@ -609,3 +609,8 @@ Current post-PR #49 state:
     the squash.
   - `main.rs` kept the now-public `led.set_status(...)` call style and the
     remaining squash-side LED-only arming branch.
+- Follow-up hygiene: removed the duplicate already-landed `set_status()`
+  method from the squash projection after the PR #49 rebase.
+- Follow-up hygiene: removed unused `heapless = "0.8"` from
+  `rm32_stm32/Cargo.toml`; remaining `heapless` use is in the core `rm32`
+  crate and already public.
