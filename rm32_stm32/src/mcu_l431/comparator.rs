@@ -15,6 +15,8 @@ impl CompOps for L431Comp {
         let inmsel = phase & 0x7;
         let inmesel = (phase >> 8) & 0x3;
         let comp = unsafe { &*COMP::ptr() };
+        let inmsel = phase & 0x7;
+        let inmesel = (phase >> 8) & 0x3;
         let v = comp.comp2_csr.read().bits();
         let cleared = v & !(0x7 << 4 | 0x3 << 25);
         comp.comp2_csr

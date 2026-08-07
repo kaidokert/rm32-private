@@ -14,26 +14,22 @@ pub enum SignalType {
 
 /// Detect input type from DMA buffer pulse pattern.
 pub fn detect_input(dma_buffer: &[u32], _cpu_mhz: u8) -> SignalType {
+    if dma_buffer.len() < 3 {
+        return SignalType::None;
+    }
+
     let mut smallest = 20000u16;
     let mut average_pulse = 0u32;
+    let mut count = 0u32;
 
-    // Skip the very first slot — in TIM/DMA continuous-capture mode buf[0]
-    // is racily stale from the previous frame's tail (typical observed value
-    // ~11385 even on a freshly-armed DMA). The `buf[0]→buf[1]` delta is an
-    // inter-frame gap, not a bit pulse. Start from buf[1].
-    //
-    // Stop at buf[31] (don't include buf[32]) — buf[32] is the FIRST edge of
-    // the NEXT frame in the 33-edge layout (or stale tail in the alternate
-    // alignment), so the delta into buf[32] is the inter-frame gap and would
-    // pollute the average.
-    //
-    // Subtract at the timer's natural width (u16) so a TIM wrap from
-    // 65535→0 yields the real elapsed ticks rather than a billion-sized u32.
+    // The first captured slot can still hold the previous frame tail. Start
+    // from buf[1] and subtract at timer width so 16-bit counter wraps stay
+    // valid pulse widths.
     let mut last = dma_buffer[1] as u16;
-    let mut count: u32 = 0;
-    for sample in &dma_buffer[2..32] {
-        let s = *sample as u16;
-        let diff = s.wrapping_sub(last);
+    let end = dma_buffer.len().min(32);
+    for sample in &dma_buffer[2..end] {
+        let sample = *sample as u16;
+        let diff = sample.wrapping_sub(last);
         if diff > 0 {
             if diff < smallest {
                 smallest = diff;
@@ -41,11 +37,12 @@ pub fn detect_input(dma_buffer: &[u32], _cpu_mhz: u8) -> SignalType {
             average_pulse += diff as u32;
             count += 1;
         }
-        last = s;
+        last = sample;
     }
-    if let Some(avg) = average_pulse.checked_div(count) {
-        average_pulse = avg;
+    if count == 0 {
+        return SignalType::None;
     }
+    average_pulse /= count;
 
     // Check DShot600: smallest 1-4, average < 60
     if (1..4).contains(&smallest) && average_pulse < 60 {
@@ -128,61 +125,36 @@ mod tests {
         assert_eq!(detect_input(&buf, 48), SignalType::None);
     }
 
-    /// TIM15 is a 16-bit counter. After ~11 ms at 5.7 MHz it wraps from
-    /// 65535 back to 0, so consecutive captured edges can straddle the wrap.
-    /// Regression: before the u16-width fix, `wrapping_sub` at u32 width
-    /// produced a billion-sized delta on the wrap point, blowing up the
-    /// average and intermittently making valid DShot frames fail detection
-    /// (and occasionally pass by accident via u32 overflow wrap).
     #[test]
     fn detect_dshot300_across_timer_wrap() {
-        let mut buf = [0u32; 33];
-        // Start near the top of u16 so the first few deltas wrap to zero.
-        let mut t: u32 = 65000;
-        for slot in buf.iter_mut() {
+        let mut buf = [0u32; 32];
+        let mut t: u32 = 65300;
+        for (i, slot) in buf.iter_mut().enumerate() {
             *slot = t & 0xFFFF;
-            // Mix of "0" pulses (5 ticks) and "1" pulses (15 ticks) — fits
-            // DShot300's "smallest 4-8, avg < 100" bucket.
-            t += if (t & 1) == 0 { 5 } else { 15 };
+            t += if i % 2 == 0 { 5 } else { 15 };
         }
         assert_eq!(detect_input(&buf, 80), SignalType::Dshot300);
     }
 
-    /// Same regression check for DShot600 — narrower bit pulses (1-4 ticks).
     #[test]
     fn detect_dshot600_across_timer_wrap() {
-        let mut buf = [0u32; 33];
+        let mut buf = [0u32; 32];
         let mut t: u32 = 65500;
-        for slot in buf.iter_mut() {
+        for (i, slot) in buf.iter_mut().enumerate() {
             *slot = t & 0xFFFF;
-            t += if (t & 1) == 0 { 2 } else { 6 };
+            t += if i % 2 == 0 { 2 } else { 6 };
         }
         assert_eq!(detect_input(&buf, 80), SignalType::Dshot600);
     }
 
-    /// Regression: hardware buffer captured on L431 with TIM15 in DMA
-    /// circular mode shows `buf[0]` lingering at the previous burst's last
-    /// edge (~11385) while `buf[1..]` is filled with this frame's bit edges.
-    /// The `buf[0]→buf[1]` delta is therefore an inter-frame gap, not a bit
-    /// pulse, and including it in the average blew detection up to a value
-    /// that always failed `< 100`. The fix is to start the loop from
-    /// `buf[1]` and only count valid bit deltas.
-    ///
-    /// Buffer values copied from a real failing exti log on bench:
-    /// `buf[0..4]=11385 11092 11099 11111` with subsequent bit deltas of
-    /// 6-7 ticks ("0") and 12-13 ticks ("1") at PSC=13 / 5.71 MHz tick,
-    /// which is DShot300 timing.
     #[test]
-    fn detect_dshot300_with_stale_buf0() {
-        let mut buf = [0u32; 33];
-        // Position 0: stale value from previous burst.
+    fn detect_dshot300_with_stale_first_slot() {
+        let mut buf = [0u32; 32];
         buf[0] = 11385;
-        // Position 1: this frame's first edge.
-        let mut t: u32 = 11092;
+        let mut t = 11092u32;
         buf[1] = t;
-        // Fill remaining 31 edges with DShot300 bit timings.
-        for slot in &mut buf[2..] {
-            t += if (t & 1) == 0 { 7 } else { 13 };
+        for (i, slot) in buf[2..].iter_mut().enumerate() {
+            t += if i % 2 == 0 { 7 } else { 13 };
             *slot = t & 0xFFFF;
         }
         assert_eq!(detect_input(&buf, 80), SignalType::Dshot300);

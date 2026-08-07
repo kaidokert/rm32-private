@@ -510,7 +510,7 @@ impl Harness {
              last_duty_cycle={} prop_brake_active={} \
              inputSet={} dshot={} servoPwm={} \
              pwm_duty={} pwm_arr={} pwm_duty_count={} \
-             duty_cycle_maximum={} filter_level={} \
+             duty_cycle_maximum={} filter_level={} temp_advance={} \
              send_telemetry={} send_esc_info_flag={} \
              alloff_count={} fullbrake_count={} mask_interrupts_count={} \
              bemf_timeout_happened={} bemf_timeout={}",
@@ -551,6 +551,7 @@ impl Harness {
             self.hal.pwm.duty_count,
             self.shared.duty_maximum(),
             self.bemf.filter_level(),
+            self.bemf.temp_advance(),
             self.shared.send_telemetry() as i32,
             self.shared.send_esc_info_flag() as i32,
             self.hal_counts.all_off.get(),
@@ -781,11 +782,9 @@ fn main() {
             if mc.dead_time_override > 0 {
                 harness.duty.apply_dead_time_override(mc.dead_time_override);
             }
-            // Apply advance level
-            let adv = harness.config.advance_level;
-            if (10..43).contains(&adv) {
-                harness.bemf.set_temp_advance(adv - 10);
-            }
+            let temp_advance = harness.config.temp_advance();
+            harness.shared.set_auto_advance(temp_advance);
+            harness.bemf.set_temp_advance(temp_advance);
             println!("ok");
             io::stdout().flush().unwrap();
         } else if let Some(rest) = line.strip_prefix("config ") {

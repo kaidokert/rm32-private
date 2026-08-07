@@ -153,6 +153,10 @@ impl EepromConfig {
 }
 
 pub const EEPROM_VERSION: u8 = 3;
+const ADVANCE_OLD_FORMAT_MAX: u8 = 3;
+const ADVANCE_NEW_FORMAT_MIN: u8 = 10;
+const ADVANCE_NEW_FORMAT_MAX: u8 = 42;
+const ADVANCE_FALLBACK: u8 = 16;
 
 impl EepromConfig {
     /// Check if loaded EEPROM data is valid (not blank/corrupt).
@@ -163,26 +167,24 @@ impl EepromConfig {
         self.eeprom_version <= EEPROM_VERSION
     }
 
-    /// Apply defaults for fields added in newer EEPROM versions.
-    /// Uses VERSION_DEFAULTS as the reference — changing a default in one place
-    /// automatically propagates to the migration logic.
-    /// Static commutation advance in 0.9375° units (AM32 main.c:627-636,
-    /// loadEEpromSettings): `advance = (ci * temp_advance) >> 6`. Two
-    /// eeprom formats: old config tools wrote 0-3 (×7.5°), 1.90+ writes
-    /// 10-42 (value-10 → 0..32); anything else falls back to 16 (15°).
-    /// rm32 previously never applied this — the firmware ran 0° advance
-    /// (commutating a full 15° late vs AM32 at factory settings).
+    /// Static commutation advance in AM32's temp_advance units.
+    ///
+    /// AM32 accepts legacy configurator values 0-3 and newer values 10-42.
+    /// Values outside both ranges use the factory 15 degree advance.
     pub fn temp_advance(&self) -> u8 {
-        let a = self.advance_level;
-        if a < 4 {
-            a << 3 // old format: 0, 8, 16, 24
-        } else if (10..=42).contains(&a) {
-            a - 10 // new format: 0..=32
+        let advance = self.advance_level;
+        if advance <= ADVANCE_OLD_FORMAT_MAX {
+            advance << 3
+        } else if (ADVANCE_NEW_FORMAT_MIN..=ADVANCE_NEW_FORMAT_MAX).contains(&advance) {
+            advance - ADVANCE_NEW_FORMAT_MIN
         } else {
-            16 // out of range → 15° default
+            ADVANCE_FALLBACK
         }
     }
 
+    /// Apply defaults for fields added in newer EEPROM versions.
+    /// Uses VERSION_DEFAULTS as the reference — changing a default in one place
+    /// automatically propagates to the migration logic.
     pub fn apply_version_defaults(&mut self) {
         if self.eeprom_version < EEPROM_VERSION {
             let d = &VERSION_DEFAULTS;
@@ -461,6 +463,31 @@ mod tests {
         cfg.max_ramp = 42; // custom value
         cfg.apply_version_defaults();
         assert_eq!(cfg.max_ramp, 42); // should NOT be overwritten
+    }
+
+    #[test]
+    fn temp_advance_maps_supported_eeprom_formats() {
+        let mut cfg = EepromConfig::default();
+
+        for (level, want) in [(0u8, 0u8), (1, 8), (2, 16), (3, 24)] {
+            cfg.advance_level = level;
+            assert_eq!(cfg.temp_advance(), want, "old format {level}");
+        }
+
+        for (level, want) in [(10u8, 0u8), (26, 16), (42, 32)] {
+            cfg.advance_level = level;
+            assert_eq!(cfg.temp_advance(), want, "new format {level}");
+        }
+    }
+
+    #[test]
+    fn temp_advance_falls_back_for_reserved_values() {
+        let mut cfg = EepromConfig::default();
+
+        for level in [4u8, 9, 43, 255] {
+            cfg.advance_level = level;
+            assert_eq!(cfg.temp_advance(), 16, "fallback {level}");
+        }
     }
 
     // --- MotorConfig derivation tests ---
