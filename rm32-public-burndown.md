@@ -680,3 +680,16 @@ Current post-PR #51 state:
   the reviewed public #51 implementation and dropped the older pre-review
   squash-side sine changeover hunk. `rm32/src/sine.rs` now has no remaining
   diff in the squash projection.
+
+Projection cleanup after PR #51:
+
+- Removed duplicate `temp_advance()` implementation and duplicate
+  `temp_advance_maps_both_eeprom_formats` test from
+  `/opt/m/rust/esc/rm/rm32-public-squash/rm32/src/config.rs`; the cleaned
+  public implementation from PR #45 remains canonical.
+- Removed private-tool `.claude/` ignore entry from the squash projection.
+- Re-amended `/opt/m/rust/esc/rm/rm32-public-squash` as one remaining-change
+  commit:
+  `9316410 Squash remaining public clean state onto public main`.
+- Remaining projection count after cleanup: 76 changed files total, 66
+  modified and 10 added.
