@@ -614,3 +614,34 @@ Current post-PR #49 state:
 - Follow-up hygiene: removed unused `heapless = "0.8"` from
   `rm32_stm32/Cargo.toml`; remaining `heapless` use is in the core `rm32`
   crate and already public.
+
+Merged PR #50:
+
+- PR: https://github.com/kaidokert/rm32/pull/50
+- Branch/worktree: `public-pr-dshot150-detection`,
+  `/opt/m/rust/esc/rm/rm32-public-pr-dshot150-detection`
+- Commit: `6976f04 Add DShot150 input detection`
+- Scope: add `SignalType::Dshot150`, classify DShot150 capture spacing in
+  `signal::detect_input`, and route DShot150 auto-detection as DShot in
+  transfer setup. This intentionally did not include capture prescaler, output
+  timing, or broader DShot plumbing changes.
+- Validation: `cargo fmt --check`, `cargo test -p rm32 signal::tests --lib`,
+  and `cargo test -p rm32`.
+- Landed on public `main` as `b9bcf11`.
+
+Current post-PR #50 state:
+
+- `/opt/m/rust/esc/rm/rm32` is fast-forwarded to `origin/main` at `b9bcf11`.
+- `/opt/m/rust/esc/rm/rm32-public-clean` is reset to `origin/main` at
+  `b9bcf11`.
+- `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
+  commit on top of `origin/main`:
+  `acda52d Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-dshot150-rebaseline`.
+- Rebaseline conflict was limited to `rm32/src/transfer.rs`; the resolution
+  kept the remaining squash-side two-step input confirmation and per-protocol
+  capture config while using the now-public DShot150 variant.
+- Private `am32_sheet` was fetched and checked out at
+  `/opt/m/rust/esc/rm/rm32-am32-sheet` on local branch `am32_sheet`, tracking
+  `private/am32_sheet` at `7e15d95`.
