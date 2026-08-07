@@ -8,6 +8,29 @@ equivalent, with extra goodies." Each feature lists method + gate.
 Test-suite baseline (2026-08-01): 282/282 host, 78/78 blackbox (all
 historical xfails gone), 4 MCU cross-builds green on every commit.
 
+## Merge + recurring-lockup watch item (2026-08-06)
+
+- origin/main (6 public PRs, #41-48) merged into am32_sheet at
+  f3175f9; tag pre-main-merge-20260806 pushed to private. 32
+  conflicts resolved: yamls kept ours (comments) except
+  protondrive_g431 (public revised the G431 INMSEL map wholesale —
+  took public for yaml+build.rs pair); build.rs = ours (B7 memory.x)
+  + public's enabled_mcu()/common-pin validation; signal.rs took
+  public (bounds-safe loop + count==0 early return); mcu.rs/lib.rs/
+  main.rs/isr_handlers kept ours (supersets); deduped temp_advance()
+  (kept public constants version) + 3 signal timer-wrap tests (kept
+  public 32-slot versions). 290 host + 80 blackbox green; bench
+  regression dsy=0/200,970 comms at the 50% staircase.
+- [!] RECURRING: power-cycle -> boot LOCKUP needing MASS ERASE +
+  re-image — SECOND instance (first attributed to power-loss-mid-
+  save ECC; this one had NO known interrupted write). The known-good
+  tag build also locked = environmental both times; mass erase fixed
+  both. Watch: if a third instance occurs, instrument properly
+  (dump ECC fault address via DBGMCU before erasing). Also this
+  session: the ST-LINK dropped off USB mid-flash once (re-enumerated
+  fine), and the no-signal bootloop (stock A2 behavior) resurfaced
+  as a red herring during re-wiring.
+
 ## Tier 1 — local now, no rewiring, no hands
 
 Config channel: `softuart_cmd.py --set FIELD=VAL --save / --get FIELD`
