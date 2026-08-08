@@ -31,6 +31,44 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   fine), and the no-signal bootloop (stock A2 behavior) resurfaced
   as a red herring during re-wiring.
 
+## Post-merge-3 full re-qual (2026-08-08) — bench-guard floor incident
+
+- SYMPTOM: bf_slam CHECK (cm~17k vs 305k reference) on BOTH a sagged
+  and a fresh 12.23 V pack; bf_ladder printed PASS but logged only
+  725k comms (half reference). Battery swap did not help — code-cause
+  hunt per BENCH-NEVER-DRIFTS.
+- ROOT CAUSE (not a merge regression): the bench guard's
+  battery-profile vbat floor (8,470 mV / 10 ms, bench_guard.rs) was
+  tuned from battB_ sessions that never exceeded ~70% throttle. At
+  100% these 3S packs sit at 8.4-8.5 V STEADY and dip 7.24-7.39 V at
+  slam inrush — the floor sat inside the normal operating band. Both
+  re-qual halves were VBAT-killed mid-test (`!! BENCH KILL` in the
+  esclog each time); the guard latches Disarm until reset, so the
+  rest of each test ran against a dead ESC. The 07-31 slam reference
+  (305,832 comms) ran on the Extech PSU profile (5,500 mV floor) —
+  today was the FIRST battery-profile slam ever. All three merges
+  touched neither guard nor measurement chain (verified by diff);
+  identical code trips identically. Both packs behaved within 150 mV
+  of each other — the swap was unnecessary.
+- FIXES: B_VBAT_FLOOR_MV 8,470 -> 6,800 with battery-specific 150 ms
+  debounce (a dying pack goes deep AND STAYS; accel transients ride
+  through). bf_ladder/bf_slam/bf_soak EscLog now latch any
+  `BENCH KILL` line and the ladder/slam verdicts fail on it — the
+  earlier ladder "PASS" with a kill in its own tee was a verdict
+  blind spot (instrument-decisions-not-outcomes).
+- Also fixed: bf_slam post-read raced BF's ~5 s CLI motor-stream
+  timeout (BF stops DSHOT -> ESC signal-timeout reset wiped counters
+  mid-window; [sr] prints only every ~5 s). Post-read now keepalives
+  `motor 0 1000` every 2 s.
+- RE-QUAL RESULTS on merged tree (fresh pack, retuned guard):
+  ladder **PASS** — 1,550,969 comms, dsy=0, exc 0.02/1k, 0 resets,
+  min vbat 8,238 mV (old floor would have killed it again), max
+  5.0 A. Slam: cycles ran clean (0 resets, no kill) but the session
+  ended when the BENCH LOST POWER (VAPP 0.03 V — battery lead
+  disconnected/pack cutout at teardown); NOT the recurring lockup
+  (probe showed no target power; watch item stays at 2 instances).
+  One clean slam run still owed once power returns.
+
 ## Tier 1 — local now, no rewiring, no hands
 
 Config channel: `softuart_cmd.py --set FIELD=VAL --save / --get FIELD`
