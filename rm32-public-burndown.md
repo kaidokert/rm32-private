@@ -693,3 +693,39 @@ Projection cleanup after PR #51:
   `9316410 Squash remaining public clean state onto public main`.
 - Remaining projection count after cleanup: 76 changed files total, 66
   modified and 10 added.
+
+Merged PR #52:
+
+- PR: https://github.com/kaidokert/rm32/pull/52
+- Branch/worktree: `public-pr-bemf-saturating-math`,
+  `/opt/m/rust/esc/rm/rm32-public-pr-bemf-saturating-math`
+- Commits:
+  - `2c80f28 Saturate BEMF timing and bad-count math`
+  - `5489627 Saturate BEMF wait math before narrowing`
+- Scope: make BEMF wait-time math saturate without cast-before-clamp wrapping
+  and make repeated wrong-polarity `bad_count` updates saturate at `u8::MAX`.
+  This intentionally did not change BEMF thresholds or per-MCU behavior.
+- Review follow-up: Codex correctly flagged that `advance as u16` wrapped
+  before saturation; fixed by subtracting in `u32` and narrowing after clamp.
+  Added rising-branch saturation coverage and type-derived saturation loop
+  bound.
+- Validation: `cargo fmt --check`, `cargo test -p rm32 bemf::tests --lib`,
+  and `cargo test -p rm32`.
+- Landed on public `main` as `05685a5`.
+
+Current post-PR #52 state:
+
+- `/opt/m/rust/esc/rm/rm32` is fast-forwarded to `origin/main` at `05685a5`.
+- `/opt/m/rust/esc/rm/rm32-public-clean` is reset to `origin/main` at
+  `05685a5`.
+- `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
+  commit on top of `origin/main`:
+  `64577a8 Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-bemf-saturating-rebaseline`.
+- Rebaseline conflict was limited to `rm32/src/control/state.rs`; the
+  resolution kept the reviewed public PR #52 saturating wait math and retained
+  only remaining squash-side BEMF changes such as the still-unlanded
+  `bad_count_threshold` change and diagnostic accessors.
+- Remaining projection count after rebaseline: 76 changed files total, 66
+  modified and 10 added.
