@@ -729,3 +729,44 @@ Current post-PR #52 state:
   `bad_count_threshold` change and diagnostic accessors.
 - Remaining projection count after rebaseline: 76 changed files total, 66
   modified and 10 added.
+
+Merged PR #53:
+
+- PR: https://github.com/kaidokert/rm32/pull/53
+- Branch/worktree: `public-config-normalization`,
+  `/opt/m/rust/esc/rm/rm32-public-clean`
+- Commits:
+  - `552d98f Normalize EEPROM config after load`
+  - `0ea4e18 Apply EEPROM normalization consistently`
+- Scope: normalize EEPROM-derived config after load, including RC-car mode
+  overrides, comp-PWM/sine-start guard, RC-car duty-floor boost, and consistent
+  harness behavior.
+- Review follow-up: Codex correctly flagged that the harness `load_eeprom`
+  path bypassed normalization and that current limiting still recomputed the
+  raw EEPROM minimum duty instead of using the derived RC-car duty floor.
+  Fixed by adding `normalize_after_load()`, naming the RC-car duty boost, and
+  storing derived `minimum_duty` in `MainState` for the current-limit floor.
+- Validation: `cargo test -p rm32` and `cargo check` in `rm32_stm32/`.
+- Landed on public `main` as `9fdaac0`.
+
+Current post-PR #53 state:
+
+- `/opt/m/rust/esc/rm/rm32` is fast-forwarded to `origin/main` at `9fdaac0`.
+- `/opt/m/rust/esc/rm/rm32-public-clean` is reset to `origin/main` at
+  `9fdaac0`.
+- `/opt/m/rust/esc/rm/rm32-public-squash` was rebuilt as one remaining-change
+  commit on top of `origin/main`:
+  `779c04d Squash remaining public clean state onto public main`.
+- Previous squash projection is preserved as
+  `public-ultimate-squash-before-config-normalization-20260807-211050`.
+- Rebaseline conflicts were in `rm32/src/main_state.rs` and
+  `rm32_stm32/src/bin/main.rs`; the resolution kept the reviewed public PR #53
+  normalization/current-limit fixes while preserving the remaining squash-side
+  1 kHz dispatch, LVC, desync, and STM32 boot-loop changes.
+- Rebase artifact fixed: removed duplicate `apply_rc_car_overrides()` /
+  `apply_comp_pwm_guard()` definitions and duplicate local `rc_boost`
+  assignment from the squash projection.
+- Validation on regenerated squash: `cargo test -p rm32` passed 273 tests;
+  `cargo check` in `rm32_stm32/` passed.
+- Remaining projection count after rebaseline: 75 changed files total, 15 under
+  `rm32/`.
