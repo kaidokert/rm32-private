@@ -35,13 +35,24 @@ const OC_DEBOUNCE_MS: u32 = 85;
 const OV_KILL_MV: u16 = 10_800;
 const OV_DEBOUNCE_MS: u32 = 60;
 
-/// Battery-source profile (3S pack, clone-side numbers from the
-/// battB_ sessions): floor 8.47 V, OC 15 A (slam accel measured ~10 A
-/// average — a real operating point, 5x stall margin), OV 14.0 V
-/// (pack rest tops ~12.6 V; regen charges the pack instead of pumping,
-/// so OV only guards a genuinely wrong source state). Selected
-/// automatically by the first vbat reading: >10 V rest = battery.
-const B_VBAT_FLOOR_MV: u16 = 8_470;
+/// Battery-source profile (3S pack). OC 15 A (slam accel measured
+/// ~10 A average in the battB_ sessions — a real operating point, 5x
+/// stall margin), OV 14.0 V (pack rest tops ~12.6 V; regen charges the
+/// pack instead of pumping, so OV only guards a genuinely wrong source
+/// state). Selected automatically by the rest-voltage peak: >10.5 V
+/// rest = battery.
+///
+/// Vbat floor: the original 8.47 V came from battB_ sessions that
+/// never exceeded ~70 % throttle. First full-envelope battery runs
+/// (2026-08-08 re-qual) measured healthy 3S packs at 8.4-8.5 V STEADY
+/// at 100 % and 7.24-7.39 V transient at slam inrush — the old floor
+/// sat inside the operating band and killed both re-qual halves
+/// mid-test. 6.8 V / 150 ms sits below healthy inrush with margin;
+/// a genuinely dying pack collapses under load and STAYS there, so
+/// the longer debounce still catches it while accel transients ride
+/// through.
+const B_VBAT_FLOOR_MV: u16 = 6_800;
+const B_VBAT_DEBOUNCE_MS: u32 = 150;
 const B_OC_KILL_MA: i16 = 15_000;
 const B_OV_KILL_MV: u16 = 14_000;
 
@@ -125,10 +136,15 @@ impl BenchGuard {
                 self.battery = Some(self.rest_peak_mv > 10_500);
             }
         }
-        let (floor, oc_ma, ov_mv) = match self.battery {
-            Some(true) => (B_VBAT_FLOOR_MV, B_OC_KILL_MA, B_OV_KILL_MV),
-            Some(false) => (VBAT_FLOOR_MV, OC_KILL_MA, OV_KILL_MV),
-            None => (VBAT_FLOOR_MV, OC_KILL_MA, B_OV_KILL_MV),
+        let (floor, floor_db_ms, oc_ma, ov_mv) = match self.battery {
+            Some(true) => (
+                B_VBAT_FLOOR_MV,
+                B_VBAT_DEBOUNCE_MS,
+                B_OC_KILL_MA,
+                B_OV_KILL_MV,
+            ),
+            Some(false) => (VBAT_FLOOR_MV, VBAT_DEBOUNCE_MS, OC_KILL_MA, OV_KILL_MV),
+            None => (VBAT_FLOOR_MV, VBAT_DEBOUNCE_MS, OC_KILL_MA, B_OV_KILL_MV),
         };
 
         let vbat_low = running && vbat_mv > 0 && vbat_mv < floor;
@@ -136,7 +152,7 @@ impl BenchGuard {
             &mut self.vbat_low_since,
             vbat_low,
             now_cyc,
-            VBAT_DEBOUNCE_MS * self.cyc_per_ms,
+            floor_db_ms * self.cyc_per_ms,
             KillReason::VbatSag,
         ) {
             self.latched = Some(reason);

@@ -88,6 +88,7 @@ class EscLog:
     def __init__(self, port):
         self.p = open_retry(port, 115_200, tries=5)
         self.buf = b""
+        self.killed = None  # first "BENCH KILL" line seen, if any
 
     def flush(self):
         self.p.reset_input_buffer()
@@ -99,7 +100,10 @@ class EscLog:
             self.buf += self.p.read(4096)
             while b"\n" in self.buf:
                 line, self.buf = self.buf.split(b"\n", 1)
-                yield line.decode("ascii", "replace").rstrip()
+                text = line.decode("ascii", "replace").rstrip()
+                if "BENCH KILL" in text and self.killed is None:
+                    self.killed = text
+                yield text
 
     def close(self):
         self.p.close()

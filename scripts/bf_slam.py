@@ -95,6 +95,7 @@ class EscLog:
     def __init__(self, port, logfile=None):
         self.p = open_retry(port, 115_200, tries=5)
         self.buf = b""
+        self.killed = None  # first "BENCH KILL" line seen, if any
         self.log = (
             open(logfile, "w", encoding="ascii", errors="replace")
             if logfile
@@ -112,6 +113,8 @@ class EscLog:
             while b"\n" in self.buf:
                 line, self.buf = self.buf.split(b"\n", 1)
                 text = line.decode("ascii", "replace").rstrip()
+                if "BENCH KILL" in text and self.killed is None:
+                    self.killed = text
                 if text and self.log:
                     self.log.write(f"{time.time():.2f} {text}\n")
                     self.log.flush()
@@ -218,8 +221,18 @@ def main():
             # Read post counters BEFORE exiting the CLI — `exit` reboots
             # the FC, the ESC resets on the signal gap, and the counters
             # are wiped (the bug that made three slam runs read cm=0).
-            time.sleep(2)
-            post = read_sr(esc, 8)
+            # KEEPALIVE while reading: the BF CLI motor stream stops
+            # ~5 s after the last motor command, the ESC signal-times-out
+            # ~2 s later and resets — which wiped the counters mid-window
+            # on 2026-08-08 ([sr] prints only every ~5 s, so an 8 s
+            # passive listen can straddle the reset and read nothing).
+            post = None
+            for _ in range(5):
+                bf.motor(1000)
+                got = read_sr(esc, 2)
+                if got:
+                    post = got
+                    break
             print(f"post: {post}", flush=True)
         finally:
             try:
@@ -246,7 +259,15 @@ def main():
     print("  (clone re-qual artifact rode double slams at dsy~0)")
     # cm must show real locked commutations or the dsy=0 is vacuous
     # (a churned run never enters interrupt mode and counts nothing).
-    verdict = post is not None and d_dsy == 0 and resets == 0 and d_cm > 100_000
+    if esc.killed:
+        print(f"  !! bench guard fired: {esc.killed}")
+    verdict = (
+        post is not None
+        and d_dsy == 0
+        and resets == 0
+        and d_cm > 100_000
+        and esc.killed is None
+    )
     print(f"  verdict: {'PASS' if verdict else 'CHECK'}")
     return 0 if verdict else 1
 

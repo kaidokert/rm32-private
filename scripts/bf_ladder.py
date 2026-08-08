@@ -114,6 +114,7 @@ class EscLog:
             else None
         )
         self.events = 0  # RESET last-words + boot banners, whole session
+        self.killed = None  # first "BENCH KILL" line seen, if any
 
     def flush(self):
         self.p.reset_input_buffer()
@@ -131,6 +132,8 @@ class EscLog:
                     self.log.flush()
                 if "RESET:" in text or "] boot" in text:
                     self.events += 1
+                if "BENCH KILL" in text and self.killed is None:
+                    self.killed = text
                 yield text
 
     def close(self):
@@ -300,7 +303,15 @@ def main():
                   f"min_ci={min(x[0] for x in run)} "
                   f"max_mA={max(x[1] for x in run)} "
                   f"min_mV={min(x[2] for x in run)}")
-    verdict = post is not None and d_dsy == 0 and resets_during == 0 and d_cm > 500_000
+    if esc.killed:
+        print(f"  !! bench guard fired: {esc.killed}")
+    verdict = (
+        post is not None
+        and d_dsy == 0
+        and resets_during == 0
+        and d_cm > 500_000
+        and esc.killed is None
+    )
     print(f"  verdict: {'PASS' if verdict else 'CHECK'}")
     return 0 if verdict else 1
 
