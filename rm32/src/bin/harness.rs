@@ -767,6 +767,7 @@ fn main() {
         } else if line.starts_with("state") {
             harness.print_state();
         } else if line.starts_with("load_eeprom") {
+            harness.config.normalize_after_load();
             // Apply EEPROM settings: derive motor config and update state
             let mc = harness.config.derive_motor_config(
                 1999,  // base TIM1 ARR (matches firmware Chip::TIM1_AUTORELOAD)
@@ -779,6 +780,7 @@ fn main() {
             harness
                 .duty
                 .set_duty_limits(mc.minimum_duty, mc.min_startup_duty, mc.startup_max_duty);
+            harness.duty.apply_max_ramp(harness.config.max_ramp);
             if mc.dead_time_override > 0 {
                 harness.duty.apply_dead_time_override(mc.dead_time_override);
             }

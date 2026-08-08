@@ -138,6 +138,7 @@ pub struct MainState<LED: OutputPin = NoLed> {
     pub(crate) cpu_mhz: u8,
     pub cell_count: u8,
     pub(crate) motor_kv: u16,
+    pub(crate) minimum_duty: u16,
     pub(crate) low_cell_volt_cutoff: u16,
     pub(crate) desync_check: bool,
     /// Lifetime desync-event count (AM32 `desync_happened`). Every fire
@@ -224,6 +225,7 @@ impl MainState<NoLed> {
             cpu_mhz: chip.cpu_mhz,
             cell_count: 0,
             motor_kv: 2000,
+            minimum_duty: 0,
             low_cell_volt_cutoff: 330,
             desync_check: false,
             desync_events: 0,
@@ -331,6 +333,7 @@ impl<LED: OutputPin> MainState<LED> {
             motor_cfg.current_kd,
         );
         self.motor_kv = motor_cfg.motor_kv;
+        self.minimum_duty = motor_cfg.minimum_duty;
         self.low_cell_volt_cutoff = motor_cfg.low_cell_volt_cutoff;
         self.timer1_max_arr = motor_cfg.timer1_max_arr;
         self.pid.set_use_current_limit(
@@ -674,7 +677,7 @@ impl<LED: OutputPin> MainState<LED> {
             // Current limit PID — reduces duty when current exceeds limit
             {
                 let target = self.config.current_limit as i32 * 200;
-                let min_duty = (self.config.minimum_duty_cycle.min(50) as i16) * 10;
+                let min_duty = self.minimum_duty.min(i16::MAX as u16) as i16;
                 let ceiling = self.pid.tick_current_limit(
                     self.measurements.actual_current.0,
                     target,
@@ -914,10 +917,16 @@ mod tests {
 
     // --- Stall detection (BEMF timeout increment) ---
 
-    struct MockAdc;
+    struct MockAdc {
+        raw_current: u16,
+    }
     impl MockAdc {
         fn new() -> Self {
-            Self
+            Self { raw_current: 0 }
+        }
+
+        fn with_raw_current(raw_current: u16) -> Self {
+            Self { raw_current }
         }
     }
     impl crate::hal::Adc for MockAdc {
@@ -926,7 +935,7 @@ mod tests {
             0
         }
         fn raw_current(&self) -> u16 {
-            0
+            self.raw_current
         }
         fn raw_temperature(&self) -> u16 {
             0
@@ -985,6 +994,38 @@ mod tests {
         assert_eq!(main.protection.bemf_timeout_happened, 0);
     }
 
+    #[test]
+    fn current_limit_uses_derived_minimum_duty() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::OldRoutine);
+
+        let mut main = make_test_main_state();
+        main.config.minimum_duty_cycle = 5;
+        main.config.current_limit = 1;
+        main.config.current_p = 100;
+        main.config.rc_car_reverse = 1;
+        main.config.normalize_after_load();
+
+        let motor_cfg = main.config.derive_motor_config(1999, 60, 1, false);
+        main.apply_motor_config(&motor_cfg);
+
+        let mut adc = MockAdc::with_raw_current(4095);
+        for _ in 0..1000 {
+            // The current-limit PID runs in the 1 kHz dispatch block
+            // (AM32 PROCESS_ADC_FLAG rate parity) — pump the counter so
+            // the block fires each iteration, as the ISR would.
+            for _ in 0..=crate::constants::PID_LOOP_DIVIDER {
+                shared.one_khz_counter_inc();
+            }
+            main.tick(&shared, &mut adc, &mut MockTelem);
+        }
+
+        assert_eq!(shared.current_limit_adjust(), motor_cfg.minimum_duty);
+    }
+
     // --- LVC tests ---
     // REQ-PROT-LVC: Low voltage cutoff protection
 
@@ -992,6 +1033,7 @@ mod tests {
     fn lvc_mode1_per_cell_triggers_disarm() {
         use crate::motor_mode::MotorMode;
         use crate::shared_state::SharedState;
+
         let shared = SharedState::new();
         shared.set_motor_mode(MotorMode::OldRoutine);
 
