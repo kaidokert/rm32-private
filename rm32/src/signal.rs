@@ -189,18 +189,18 @@ mod tests {
 
     #[test]
     fn detect_dshot150() {
-        let mut buf = [0u32; 33];
-        for (i, slot) in buf.iter_mut().enumerate() {
-            *slot = 100 + i as u32 * 10; // smallest=10, average~10
+        let mut buf = [0u32; 32];
+        for i in 0..32 {
+            buf[i] = 100 + i as u32 * 10;
         }
         assert_eq!(detect_input(&buf, 48), SignalType::Dshot150);
     }
 
     #[test]
     fn detect_rejects_ambiguous() {
-        let mut buf = [0u32; 33];
-        for (i, slot) in buf.iter_mut().enumerate() {
-            *slot = 100 + i as u32 * 20;
+        let mut buf = [0u32; 32];
+        for i in 0..32 {
+            buf[i] = 100 + i as u32 * 20;
         } // smallest=20, >16 (past DShot150), <200 (not servo)
         assert_eq!(detect_input(&buf, 48), SignalType::None);
     }

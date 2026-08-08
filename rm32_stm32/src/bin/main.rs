@@ -11,7 +11,7 @@ use cortex_m_rt::entry;
 use rm32::commutation::Commutation;
 use rm32::config::EepromConfig;
 use rm32::control::state::{BemfState, DutyState};
-use rm32::hal::{System, TelemetryUart as _};
+use rm32::hal::{PwmOutput, System, TelemetryUart as _};
 use rm32::ws2812::LedStatus;
 
 use rm32::main_state::MainState;
@@ -22,7 +22,6 @@ use rm32_stm32::mcu::{Chip, ChipConfig};
 
 use rm32::hal::Flash as _;
 use rm32::hal::InputCapture;
-use rm32::hal::PwmOutput;
 use rm32::sounds::Sounds;
 
 // Board configuration generated from YAML by build.rs.

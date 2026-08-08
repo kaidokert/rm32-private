@@ -18,10 +18,8 @@ impl<P: OutputPin> Ws2812Gpio<P> {
     pub fn new(pin: P, cpu_mhz: u32) -> Self {
         Self { pin, cpu_mhz }
     }
-}
 
-impl<P: OutputPin> Ws2812Gpio<P> {
-    /// Set LED status color (interrupts disabled during bit-bang transfer).
+    /// Set LED status color with interrupts disabled during bit-bang output.
     pub fn set_status(&mut self, status: rm32::ws2812::LedStatus) {
         cortex_m::interrupt::free(|_| {
             rm32::ws2812::send_status(self, status);

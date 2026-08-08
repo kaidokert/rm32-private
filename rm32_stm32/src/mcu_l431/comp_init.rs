@@ -22,16 +22,11 @@ pub fn init_comp2(initial_phase: u32) {
     let inmsel = (initial_phase & 0x7) as u8;
     let inmesel = ((initial_phase >> 8) & 0x3) as u8;
 
-    let inmsel = (initial_phase & 0x7) as u8;
-    let inmesel = ((initial_phase >> 8) & 0x3) as u8;
-
     unsafe {
         // Enable GPIOA, GPIOB clocks (AHB2ENR bits 0, 1)
         rcc.ahb2enr
             .modify(|_, w| w.gpioaen().set_bit().gpioben().set_bit());
         // COMP registers are clocked through SYSCFG on STM32L4.
-        rcc.apb2enr.modify(|_, w| w.syscfgen().set_bit());
-
         // L4: COMP shares its register clock with SYSCFG. Without SYSCFGEN,
         // writes to COMP_CSR are silently dropped (readback = 0).
         rcc.apb2enr.modify(|_, w| w.syscfgen().set_bit());
