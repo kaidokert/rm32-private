@@ -350,7 +350,6 @@ impl Harness {
                 if !self.edt_arm_enable || self.edt_armed || value == 0 {
                     self.shared.set_newinput(value);
                 }
-                // EDT disarm: zero throttle with EDT_ARM_ENABLE clears EDT_ARMED
                 if value == 0 && self.edt_arm_enable {
                     self.edt_armed = false;
                 }
