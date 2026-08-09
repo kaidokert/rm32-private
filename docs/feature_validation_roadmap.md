@@ -73,6 +73,35 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   marginal fast-blow fuse, not slam load. Suggested: time-delay fuse
   of same rating; check holder/leads for heat discoloration.
 
+## Merge 4 (2026-08-08 evening) + OPEN slam-storm anomaly
+
+- origin/main #55 (beacon tone vector) + #56 (reviewed EDT throttle
+  gate) merged at 0a12e40; tag pre-main-merge-20260808b on private.
+  Resolutions: took public's AM32-verbatim gate
+  (`!edt_arm_enable || edt_armed || value == 0`) over our blunt gate
+  removal; kept our on-stack isr_state boot block (theirs' closure
+  version is a strict subset); harness = union (their play_tone_flag
+  + EDT state-line fields alongside our HAL counters); vectors =
+  theirs. 305 host + 80 blackbox green (3 initial failures = stale
+  RELEASE harness binary — harness.py runs target/release; rebuild
+  BOTH profiles after a merge).
+- Bench: ladder PASS x2 on the merged build (1.50M then 1.45M comms,
+  dsy=0, 0.01 exc/1k, 0 resets) — the merged throttle gate passes
+  vanilla DSHOT at every rung.
+- [!] OPEN: bf_slam DESYNC STORM — dsy~2500, exc~19-20k, cm~22k
+  (vs 260k PASS ~2.5 h earlier on the same rig). REPRODUCED 3x:
+  merged build x2 AND the pre-merge tag build x1 (A/B both
+  directions) -> NOT code. Texture: ma=0 throughout, rail NEVER sags
+  (12.09 V flat), ladder before AND after storms passes clean ->
+  motor tracks gentle profiles but loses lock on 10%->100% steps,
+  drawing no current. Signature fits a MECHANICAL LOAD CHANGE
+  (prop/nut loosening -> near-unloaded rotor accelerates too fast on
+  hard steps for BEMF tracking; gentle ladder unaffected). NEEDS
+  HANDS: check prop nut / bell grub screw / coupling, then rerun
+  bf_slam. If hardware checks out clean, next suspect is FC-side
+  output state (dump BF diff all and compare against the slam7-era
+  config).
+
 ## Tier 1 — local now, no rewiring, no hands
 
 Config channel: `softuart_cmd.py --set FIELD=VAL --save / --get FIELD`
