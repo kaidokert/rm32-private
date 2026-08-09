@@ -63,11 +63,15 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
 - RE-QUAL RESULTS on merged tree (fresh pack, retuned guard):
   ladder **PASS** — 1,550,969 comms, dsy=0, exc 0.02/1k, 0 resets,
   min vbat 8,238 mV (old floor would have killed it again), max
-  5.0 A. Slam: cycles ran clean (0 resets, no kill) but the session
-  ended when the BENCH LOST POWER (VAPP 0.03 V — battery lead
-  disconnected/pack cutout at teardown); NOT the recurring lockup
-  (probe showed no target power; watch item stays at 2 instances).
-  One clean slam run still owed once power returns.
+  5.0 A. Slam **PASS** — 260,254 comms (reference 305,832), dsy=0,
+  0 resets, no kill; keepalive post-read verified. RE-QUAL COMPLETE
+  on the merged tree.
+- BENCH SCAR: the mid-sweep power losses were the BENCH FUSE blowing
+  (twice; ESC reset-cause read "brownout"). NOT the recurring lockup
+  (watch item stays at 2 instances). Second blow happened at IDLE
+  (motor never engaged) -> suspect connect/power-on cap inrush on a
+  marginal fast-blow fuse, not slam load. Suggested: time-delay fuse
+  of same rating; check holder/leads for heat discoloration.
 
 ## Tier 1 — local now, no rewiring, no hands
 
