@@ -60,12 +60,18 @@ impl Sounds {
     ///
     /// Called from boot path with interrupts already disabled. Does not enable
     /// interrupts on exit — caller controls global IRQ state.
+    /// Panics in debug builds if called with interrupts enabled.
     pub fn play_startup(
         &self,
         pwm: &mut impl PwmOutput,
         phase: &mut impl PhaseOutput,
         sys: &mut impl System,
     ) {
+        debug_assert!(
+            !sys.irqs_enabled(),
+            "play_startup must be called with IRQs disabled"
+        );
+
         self.play_note(pwm, phase, sys, 55, 3, 200);
         self.play_note(pwm, phase, sys, 40, 5, 200);
         self.play_note(pwm, phase, sys, 25, 6, 200);
