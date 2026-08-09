@@ -5,7 +5,7 @@
 //! instead of the legacy MotorState/tick.rs path.
 
 use rm32::commutation::Commutation;
-use rm32::config::EepromConfig;
+use rm32::config::{EepromConfig, InputType};
 use rm32::control::context::MotorContext;
 use rm32::control::isr_logic;
 use rm32::control::state::{BemfState, DutyState};
@@ -214,6 +214,7 @@ struct Harness {
     servo_pwm: bool,
     edt_armed: bool,
     edt_arm_enable: bool,
+    play_tone_flag: u8,
     frametime_low: u16,
     frametime_high: u16,
     zero_input_count: u16,
@@ -259,6 +260,7 @@ impl Harness {
             servo_pwm: false,
             edt_armed: false,
             edt_arm_enable: false,
+            play_tone_flag: 0,
             frametime_low: 400,
             frametime_high: 600,
             zero_input_count: 0,
@@ -280,6 +282,10 @@ impl Harness {
 
     fn reset(&mut self) {
         *self = Self::new();
+    }
+
+    fn sync_edt_arm_enable_from_config(&mut self) {
+        self.edt_arm_enable = self.config.input_type() == InputType::EdtArm;
     }
 
     fn build_dshot_frame(&mut self, value: u16) {
@@ -341,10 +347,9 @@ impl Harness {
                 }
             }
             TransferAction::DshotThrottle { value, telemetry } => {
-                if self.edt_armed || value == 0 {
+                if !self.edt_arm_enable || self.edt_armed || value == 0 {
                     self.shared.set_newinput(value);
                 }
-                // EDT disarm: zero throttle with EDT_ARM_ENABLE clears EDT_ARMED
                 if value == 0 && self.edt_arm_enable {
                     self.edt_armed = false;
                 }
@@ -371,6 +376,9 @@ impl Harness {
                 );
                 self.commutation.set_forward(fwd);
                 match result {
+                    CommandResult::PlayTone(tone) => {
+                        self.play_tone_flag = tone;
+                    }
                     CommandResult::SaveSettings => {
                         self.shared.set_save_settings_flag(true);
                     }
@@ -411,6 +419,7 @@ impl Harness {
     fn do_tick(&mut self) {
         // Clear one-shot flags from previous tick (so print_state can observe them)
         self.shared.set_send_esc_info_flag(false);
+        self.play_tone_flag = 0;
 
         // Apply persistent throttle
         if self.has_throttle {
@@ -511,7 +520,8 @@ impl Harness {
              inputSet={} dshot={} servoPwm={} \
              pwm_duty={} pwm_arr={} pwm_duty_count={} \
              duty_cycle_maximum={} filter_level={} temp_advance={} \
-             send_telemetry={} send_esc_info_flag={} \
+             send_telemetry={} send_esc_info_flag={} play_tone_flag={} \
+             edt_armed={} edt_arm_enable={} \
              alloff_count={} fullbrake_count={} mask_interrupts_count={} \
              bemf_timeout_happened={} bemf_timeout={}",
             self.tick_count,
@@ -554,6 +564,9 @@ impl Harness {
             self.bemf.temp_advance(),
             self.shared.send_telemetry() as i32,
             self.shared.send_esc_info_flag() as i32,
+            self.play_tone_flag,
+            self.edt_armed as i32,
+            self.edt_arm_enable as i32,
             self.hal_counts.all_off.get(),
             self.hal_counts.full_brake.get(),
             self.hal_counts.mask_interrupts.get(),
@@ -747,6 +760,76 @@ impl Harness {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dshot_harness() -> Harness {
+        let mut harness = Harness::new();
+        harness.shared.set_input_set(true);
+        harness.shared.set_dshot(true);
+        harness.dshot = true;
+        harness
+    }
+
+    #[test]
+    fn normal_dshot_accepts_throttle_without_edt_arm() {
+        let mut harness = dshot_harness();
+        harness.edt_arm_enable = false;
+        harness.edt_armed = false;
+
+        harness.build_dshot_frame(1500);
+        harness.handle_transfer();
+
+        assert_eq!(harness.shared.newinput(), 1500);
+    }
+
+    #[test]
+    fn edt_arm_blocks_throttle_until_armed() {
+        let mut harness = dshot_harness();
+        harness.edt_arm_enable = true;
+        harness.edt_armed = false;
+
+        harness.build_dshot_frame(1500);
+        harness.handle_transfer();
+
+        assert_eq!(harness.shared.newinput(), 0);
+
+        harness.edt_armed = true;
+        harness.build_dshot_frame(1500);
+        harness.handle_transfer();
+
+        assert_eq!(harness.shared.newinput(), 1500);
+    }
+
+    #[test]
+    fn edt_arm_zero_throttle_clears_armed_state() {
+        let mut harness = dshot_harness();
+        harness.edt_arm_enable = true;
+        harness.edt_armed = true;
+        harness.shared.set_newinput(1500);
+
+        harness.build_dshot_frame(0);
+        harness.handle_transfer();
+
+        assert_eq!(harness.shared.newinput(), 0);
+        assert!(!harness.edt_armed);
+    }
+
+    #[test]
+    fn load_config_derives_edt_arm_enable() {
+        let mut harness = Harness::new();
+
+        harness.config.input_type = InputType::Dshot as u8;
+        harness.sync_edt_arm_enable_from_config();
+        assert!(!harness.edt_arm_enable);
+
+        harness.config.input_type = InputType::EdtArm as u8;
+        harness.sync_edt_arm_enable_from_config();
+        assert!(harness.edt_arm_enable);
+    }
+}
+
 fn main() {
     let mut harness = Harness::new();
     let stdin = io::stdin();
@@ -777,6 +860,7 @@ fn main() {
             );
             harness.main.config = harness.config;
             harness.main.apply_motor_config(&mc);
+            harness.sync_edt_arm_enable_from_config();
             harness
                 .duty
                 .set_duty_limits(mc.minimum_duty, mc.min_startup_duty, mc.startup_max_duty);
