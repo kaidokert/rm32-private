@@ -172,7 +172,7 @@ fn main() -> ! {
     // --- Build ISR state locally (all config applied before move) ---
     let mut isr_state = IsrState {
         commutation: Commutation::new(),
-        bemf: BemfState::default(),
+        bemf: BemfState::with_cpu_mhz(Chip::CPU_FREQUENCY_MHZ as u8),
         tone: rm32::tone::ToneScheduler::default(),
         duty: DutyState::default(),
         hal,
