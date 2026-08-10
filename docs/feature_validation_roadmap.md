@@ -101,6 +101,33 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   bf_slam. If hardware checks out clean, next suspect is FC-side
   output state (dump BF diff all and compare against the slam7-era
   config).
+  RESOLVED 2026-08-09: no longer reproduces — post-merge-5 slam PASS
+  256,223 comms / dsy=0 / 0 resets (reference band). Cause never
+  pinned (mechanical state cleared / prop attention); if it recurs,
+  start at the prop stack.
+
+## Merge 5 (2026-08-09) — six PRs, heaviest conflict set yet
+
+- origin/main #57-62 merged at 7fd8d59 (tag pre-main-merge-20260809
+  on private); 25 conflicted files. TAKEN FROM PUBLIC: with_cpu_mhz
+  BEMF bad-count threshold (#57, wired into firmware boot); typed
+  DshotOutputPrescaler across hal + 4 MCU capture backends (#60);
+  configure_output with backend ARR (#58); input_set-gated unarmed
+  signal-timeout reset (#61 — prevents reset-looping with no signal
+  ever seen; kept our bootloader-DFU comment); sounds debug_assert
+  (#59). KEPT OURS: full IsrAction recovery machinery (public's
+  all_off_request bridged via default-trait shims routing
+  request_all_off() -> IsrAction::AllOff, so public call sites
+  compile unchanged); A4 config write-through ring for servo cal
+  (over their pending-servo atomics); 2-frame protocol
+  re-confirmation + OUR protocol_reconfirm vector (their single-shot
+  variant fails against re-confirmation). ADOPTED SEMANTIC: all-off
+  EARLY-RETURN in the tick (ours previously continued after
+  all_off() — one-tick bridge re-energize window). Dedup:
+  SIGNAL_TIMEOUT_UNARMED (both sides).
+- 312 host + 80 blackbox green; bench: ladder PASS 1,428,138 comms
+  dsy=0, slam PASS 256,223 comms dsy=0 — full re-qual green on the
+  merged tree.
 
 ## Tier 1 — local now, no rewiring, no hands
 
