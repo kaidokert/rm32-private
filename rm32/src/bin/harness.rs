@@ -772,6 +772,7 @@ impl Harness {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rm32::hal::Comparator;
 
     fn dshot_harness() -> Harness {
         let mut harness = Harness::new();
@@ -836,6 +837,35 @@ mod tests {
         harness.config.input_type = InputType::EdtArm as u8;
         harness.sync_edt_arm_enable_from_config();
         assert!(harness.edt_arm_enable);
+    }
+
+    #[test]
+    fn hal_call_counters_track_and_reset() {
+        let mut harness = Harness::new();
+
+        harness.hal.phase.all_off();
+        harness.hal.phase.full_brake();
+        harness.hal.comp.mask_interrupts();
+
+        assert_eq!(harness.hal_counts.all_off.get(), 1);
+        assert_eq!(harness.hal_counts.full_brake.get(), 1);
+        assert_eq!(harness.hal_counts.mask_interrupts.get(), 1);
+
+        harness.reset();
+
+        assert_eq!(harness.hal_counts.all_off.get(), 0);
+        assert_eq!(harness.hal_counts.full_brake.get(), 0);
+        assert_eq!(harness.hal_counts.mask_interrupts.get(), 0);
+    }
+
+    #[test]
+    fn do_tick_runs_shared_pipeline() {
+        let mut harness = Harness::new();
+
+        harness.do_tick();
+
+        assert_eq!(harness.tick_count, 1);
+        assert_eq!(harness.shared.signal_timeout(), 1);
     }
 }
 
