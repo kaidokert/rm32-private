@@ -12,7 +12,6 @@ use rm32::control::state::{BemfState, DutyState};
 use rm32::dshot;
 use rm32::dshot_commands::CommandResult;
 use rm32::hal;
-use rm32::hal::PhaseOutput;
 use rm32::hal::PwmOutput;
 use rm32::motor_mode::MotorMode;
 use rm32::shared_state::SharedState;
@@ -460,16 +459,11 @@ impl Harness {
                         &self.shared,
                         &mut self.main,
                         commutation_interval,
+                        step,
                     );
-                    self.commutation.set_step(step);
-                    self.hal.phase.com_step(step);
                 }
                 rm32::sine::SineStepResult::Idle => {
-                    let brake = rm32::system::SystemTick::handle_sine_idle(
-                        &self.shared,
-                        &self.config,
-                        1999,
-                    );
+                    let brake = rm32::system::SystemTick::handle_sine_idle(&self.config, 1999);
                     self.system.input_state.set_prop_brake_active(brake);
                     self.shared.set_prop_brake_active(brake);
                 }

@@ -216,10 +216,8 @@ pub trait MainControl {
 
     /// Sine changeover step request (0 = none, 1-6 = execute changeover with step).
     /// Main sets during sine changeover; ISR applies com_step + enables interrupts.
-    fn changeover_step(&self) -> u8 {
-        0
-    }
-    fn set_changeover_step(&self, _step: u8) {}
+    fn changeover_step(&self) -> u8;
+    fn set_changeover_step(&self, step: u8);
 
     /// Desync check flag (ISR sets on BEMF zero-cross, main clears after processing).
     fn desync_check_pending(&self) -> bool {
