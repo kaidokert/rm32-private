@@ -104,6 +104,23 @@ budget-bearing consumer needs, captured before names freeze.
   quality, never *reject* the sample (a monitor must not silently drop a count).
 - **P²:** no policy knob (internal reject-on-overflow).
 
+## Demonstrated demand: continuous spectral tachometer → Goertzel
+
+The app-side spectral tacho (peak-pick over ratch22's windowed Welch spectrum,
+which the crate correctly does NOT own) is **unreliable on the raw
+commutation-interval series**: reliable mean-derived e-rate 904/1353/1651 Hz vs
+spectral peak-pick +57% / +102% / +1% at 20/35/50% — it only matched when the
+sector ripple was strong. Root cause is the exact thing catch24 reported: the
+signal is drift-dominated (f1ecac ~110, low-freq power ~0.96), so a search-based
+peak-pick loses the weak fundamental. The reliable tach here is just the mean.
+
+A robust CONTINUOUS spectral tach therefore wants a Goertzel evaluated AT the
+known electrical rate (cadence/6) — evaluate the spectrum at a target frequency
+rather than search for a peak — which is exactly the **Goertzel selected-
+frequency detector on ratch22's optional-branch list**. This is the
+demonstrated-demand evidence for pulling it forward (or confirming a
+time-uniform current/BEMF capture + detrend is the app's job first).
+
 ## Measured cost (L431, 80 MHz, main context, per commutation)
 
 - Full tier WITH analytics: DWT floor **~1291 cyc** (≈16 µs), vs ~798 cyc for
