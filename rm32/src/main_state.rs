@@ -1018,10 +1018,8 @@ mod tests {
 
         let mut adc = MockAdc::with_raw_current(4095);
         for _ in 0..1000 {
-            // The current-limit PID runs in the 1 kHz dispatch block
-            // (AM32 PROCESS_ADC_FLAG rate parity) — pump the counter so
-            // the block fires each iteration, as the ISR would.
-            for _ in 0..=crate::constants::PID_LOOP_DIVIDER {
+            // The current-limit PID runs in the 1 kHz dispatch block.
+            for _ in 0..crate::constants::PID_LOOP_DIVIDER {
                 shared.one_khz_counter_inc();
             }
             main.tick(&shared, &mut adc, &mut MockTelem);
@@ -1036,6 +1034,7 @@ mod tests {
     #[test]
     fn lvc_mode1_per_cell_triggers_disarm() {
         use crate::motor_mode::MotorMode;
+        use crate::shared_comm::MainControl;
         use crate::shared_state::SharedState;
 
         let shared = SharedState::new();
@@ -1049,9 +1048,8 @@ mod tests {
         main.set_battery_voltage(crate::units::MilliVolts(500));
         // Pre-fill count near threshold
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
-        // LVC now runs inside the 1 kHz block — tick the counter past
-        // PID_LOOP_DIVIDER so the block fires this tick.
-        for _ in 0..=crate::constants::PID_LOOP_DIVIDER {
+        // LVC now runs inside the 1 kHz block.
+        for _ in 0..crate::constants::PID_LOOP_DIVIDER {
             shared.one_khz_counter_inc();
         }
 
@@ -1062,6 +1060,28 @@ mod tests {
             !shared.armed(),
             "motor should be disarmed after LVC trigger"
         );
+        assert_eq!(MainControl::isr_action(&shared), IsrAction::AllOff);
+    }
+
+    #[test]
+    fn lvc_does_not_run_before_one_khz_dispatch() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_comm::MainControl;
+        use crate::shared_state::SharedState;
+
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::OldRoutine);
+
+        let mut main = make_test_main_state();
+        main.config.low_voltage_cut_off = 1;
+        main.cell_count = 3;
+        main.low_cell_volt_cutoff = 330;
+        main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
+
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert!(shared.armed());
+        assert_eq!(MainControl::isr_action(&shared), IsrAction::None);
     }
 
     #[test]
@@ -1106,9 +1126,8 @@ mod tests {
         main.cell_count = 0; // no cells — doesn't matter for mode 2
         main.set_battery_voltage(crate::units::MilliVolts(50)); // below threshold
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
-        // LVC now runs inside the 1 kHz block — tick the counter past
-        // PID_LOOP_DIVIDER so the block fires this tick.
-        for _ in 0..=crate::constants::PID_LOOP_DIVIDER {
+        // LVC now runs inside the 1 kHz block.
+        for _ in 0..crate::constants::PID_LOOP_DIVIDER {
             shared.one_khz_counter_inc();
         }
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);

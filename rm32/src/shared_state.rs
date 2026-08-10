@@ -250,18 +250,17 @@ impl SharedState {
     }
     /// Increment 1 kHz dispatch counter (TIM6 ISR side, 20 kHz).
     pub fn one_khz_counter_inc(&self) {
-        self.one_khz_counter.fetch_add(1, REL);
+        self.one_khz_counter
+            .fetch_update(REL, ACQ, |cur| Some(cur.saturating_add(1)))
+            .ok();
     }
     /// Read the 1 kHz dispatch counter and reset to 0 if it has reached
     /// `divider`. Returns true if the 1 kHz block should fire this iter.
-    /// Main-loop side. Matches AM32 main.c:1397 `> PID_LOOP_DIVIDER`.
+    /// Main-loop side.
     pub fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
-        if self.one_khz_counter.load(ACQ) > divider {
-            self.one_khz_counter.store(0, REL);
-            true
-        } else {
-            false
-        }
+        self.one_khz_counter
+            .fetch_update(REL, ACQ, |count| (count >= divider).then_some(0))
+            .is_ok()
     }
     /// Interval-telemetry counter (AM32 telem_ms_count, main.c:1664):
     /// increment; past `limit`, reset and return true. ISR side, 20 kHz.
@@ -871,5 +870,61 @@ impl crate::shared_comm::SharedComm for SharedState {
     }
     fn set_send_esc_info_flag(&self, v: bool) {
         SharedState::set_send_esc_info_flag(self, v);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::shared_comm::{IsrAction, MainControl};
+
+    use super::*;
+
+    #[test]
+    fn isr_action_handoff_is_clearable() {
+        let shared = SharedState::new();
+
+        assert_eq!(MainControl::isr_action(&shared), IsrAction::None);
+        MainControl::request_isr_action(&shared, IsrAction::ResetIntervalTimer);
+        MainControl::request_isr_action(&shared, IsrAction::AllOff);
+        assert_eq!(MainControl::isr_action(&shared), IsrAction::AllOff);
+        MainControl::clear_isr_action(&shared, IsrAction::AllOff);
+        assert_eq!(MainControl::isr_action(&shared), IsrAction::None);
+    }
+
+    #[test]
+    fn clear_isr_action_keeps_newer_higher_priority_request() {
+        let shared = SharedState::new();
+
+        MainControl::request_isr_action(&shared, IsrAction::ResetIntervalTimer);
+        MainControl::request_isr_action(&shared, IsrAction::AllOff);
+        MainControl::clear_isr_action(&shared, IsrAction::ResetIntervalTimer);
+
+        assert_eq!(MainControl::isr_action(&shared), IsrAction::AllOff);
+    }
+
+    #[test]
+    fn one_khz_counter_saturates_until_consumed() {
+        let shared = SharedState::new();
+
+        for _ in 0..300 {
+            shared.one_khz_counter_inc();
+        }
+
+        assert!(shared.one_khz_counter_check_and_reset(20));
+        assert!(!shared.one_khz_counter_check_and_reset(20));
+    }
+
+    #[test]
+    fn one_khz_counter_dispatches_on_divider_tick() {
+        let shared = SharedState::new();
+
+        for _ in 0..19 {
+            shared.one_khz_counter_inc();
+        }
+        assert!(!shared.one_khz_counter_check_and_reset(20));
+
+        shared.one_khz_counter_inc();
+        assert!(shared.one_khz_counter_check_and_reset(20));
+        assert!(!shared.one_khz_counter_check_and_reset(20));
     }
 }
