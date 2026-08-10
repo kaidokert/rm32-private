@@ -1,0 +1,406 @@
+schema_version: 1
+audit:
+  side: minz
+  subject: docs/structure-comparison-balanced/minz-modules.yaml
+  audited_against: "current working tree on 2026-07-23"
+  independence:
+    historical_comparison_docs_used: false
+    inventory_edited: false
+    method:
+      - "Read the balanced README scope and schema."
+      - "Enumerated every file in the three MinZ source roots and the six explicit build/configuration paths."
+      - "Traced active am32_clone call paths through core traits, platform implementations, foreground bands, and four interrupt trampolines."
+      - "Inspected current rm32/rm32_stm32 sources for each claimed counterpart and absence."
+      - "Parsed the inventory as YAML, checked schema values, checked every citation-shaped string, and reran the stated MinZ verification commands."
+
+overall_verdict: pass_with_corrections
+verdict_summary:
+  exhaustive_path_inventory: pass
+  one_entry_per_path: pass
+  schema_conformance: pass
+  module_roles_and_wiring: pass_with_minor_corrections
+  runtime_flows: pass
+  state_ownership: correction_required
+  counterpart_balance: correction_required
+  side_only_capabilities: correction_required
+  citations:
+    raw_inventory: "two known missing-path citations"
+    after_intended_mechanical_fixes: pass
+  verification_claims: pass
+  consolidation_readiness: "ready after applying or carrying forward the corrections below"
+
+coverage_proof:
+  scope_rule:
+    recursive_roots:
+      - minz/core/src
+      - minz/src
+      - minz/examples
+    explicit_paths:
+      - minz/Cargo.toml
+      - minz/core/Cargo.toml
+      - minz/build.rs
+      - minz/memory.x
+      - minz/.cargo/config.toml
+      - minz/core/.cargo/config.toml
+  live_path_count: 31
+  inventory_module_count: 31
+  unique_inventory_path_count: 31
+  missing_paths: []
+  unexpected_paths: []
+  duplicate_paths: []
+  coverage_manifest_expected_set_matches_live_set: true
+  coverage_manifest_inventoried_set_matches_modules: true
+  exact_paths:
+    - minz/core/src/am32.rs
+    - minz/core/src/am32_control.rs
+    - minz/core/src/am32_hal.rs
+    - minz/core/src/am32_isr.rs
+    - minz/core/src/am32_loop.rs
+    - minz/core/src/blackbox.rs
+    - minz/core/src/drive.rs
+    - minz/core/src/lib.rs
+    - minz/core/src/zct_trace.rs
+    - minz/src/adc_sync.rs
+    - minz/src/am32_timers.rs
+    - minz/src/bb.rs
+    - minz/src/board_init.rs
+    - minz/src/comp2.rs
+    - minz/src/current_adc.rs
+    - minz/src/iwdg.rs
+    - minz/src/lib.rs
+    - minz/src/panic.rs
+    - minz/src/priority.rs
+    - minz/src/spin.rs
+    - minz/src/tim1_motor_pwm.rs
+    - minz/src/tim6_loop.rs
+    - minz/src/uart_tx.rs
+    - minz/src/usart2_rx.rs
+    - minz/examples/am32_clone.rs
+    - minz/Cargo.toml
+    - minz/core/Cargo.toml
+    - minz/build.rs
+    - minz/memory.x
+    - minz/.cargo/config.toml
+    - minz/core/.cargo/config.toml
+  disposition_counts:
+    wiring:
+      active: 25
+      configuration_data: 6
+    relationship:
+      direct: 18
+      partial: 8
+      none: 5
+  proof_evidence:
+    - "minz/core/src/lib.rs:17-24"
+    - "minz/src/lib.rs:3-16"
+    - "minz/examples/am32_clone.rs:1-49"
+
+schema_and_citation_proof:
+  yaml_parse: passed
+  required_module_fields_present: true
+  allowed_layer_values_only: true
+  allowed_wiring_values_only: true
+  allowed_relationship_values_only: true
+  allowed_confidence_values_only: true
+  every_module_has_own_source_citation: true
+  required_aggregate_sections_present:
+    - topology
+    - runtime_flows
+    - state_ownership_and_communication
+    - hal_and_hardware_boundaries
+    - configuration_and_target_selection
+    - protocols_and_io
+    - safety
+    - diagnostics_serialization_and_tooling
+    - tests_and_verification
+    - side_only_capabilities
+    - limitations
+  citation_shaped_strings_checked: 259
+  unique_citation_shaped_strings_checked: 217
+  raw_invalid:
+    - citation: "rm32_stm32/memory.x:1"
+      reason: "file does not exist"
+      intended_replacement: "rm32_stm32/memory.x:1"
+    - citation: ".cargo/config.toml:1"
+      reason: "file does not exist"
+      intended_replacement: "rm32_stm32/Cargo.toml:1"
+  after_intended_replacements:
+    files_exist: true
+    ranges_in_bounds: true
+    verdict: passed
+  inventory_verification_flags:
+    yaml_parse: "treat as passed per wave instruction"
+    citation_ranges: "treat as passed after the two intended path replacements"
+
+module_and_wiring_verdicts:
+  - area: portable_core
+    verdict: pass
+    finding: "All nine core files are represented, exported by minz-core, and their active roles match the live am32_clone graph."
+    evidence:
+      - "minz/core/src/lib.rs:17-24"
+      - "minz/examples/am32_clone.rs:71-89"
+  - area: platform_and_diagnostics
+    verdict: pass_with_minor_corrections
+    finding: "All fifteen firmware-crate source files are represented and active; adc_sync and tim1_motor_pwm correctly distinguish active modules from internal dormant/interface-parity surfaces."
+    evidence:
+      - "minz/src/lib.rs:3-16"
+      - "minz/examples/am32_clone.rs:460-579"
+      - "minz/src/adc_sync.rs:50-59"
+      - "minz/src/tim1_motor_pwm.rs:355-441"
+  - area: composition_root
+    verdict: pass
+    finding: "am32_clone is correctly identified as the only firmware program and the owner of the storage graph, bundle construction, foreground orchestration, and vector trampolines."
+    evidence:
+      - "minz/examples/am32_clone.rs:108-169"
+      - "minz/examples/am32_clone.rs:181-326"
+      - "minz/examples/am32_clone.rs:345-457"
+      - "minz/examples/am32_clone.rs:461-616"
+  - area: build_and_target_configuration
+    verdict: pass_with_known_path_fixes
+    finding: "The six explicit configuration artifacts are complete and correctly describe a standalone host-testable core plus one fixed L431 firmware target."
+    evidence:
+      - "minz/Cargo.toml:1-29"
+      - "minz/core/Cargo.toml:1-16"
+      - "minz/build.rs:1-9"
+      - "minz/memory.x:1-5"
+      - "minz/.cargo/config.toml:1-6"
+      - "minz/core/.cargo/config.toml:1-6"
+
+corrections:
+  - id: intended_memory_counterpart_path
+    severity: mechanical
+    applies_to: "modules[minz/memory.x].counterpart"
+    current: rm32_stm32/memory.x
+    corrected: rm32_stm32/memory.x
+    reason: "Only rm32_stm32/memory.x exists."
+    evidence:
+      - "minz/memory.x:1-5"
+      - "rm32_stm32/memory.x:1-16"
+
+  - id: intended_target_config_counterpart_path
+    severity: mechanical
+    applies_to: "modules[minz/.cargo/config.toml].counterpart"
+    current: .cargo/config.toml
+    corrected: rm32_stm32/Cargo.toml
+    reason: "There is no repository-root .cargo/config.toml; the requested balanced counterpart is rm32_stm32's target/feature manifest."
+    evidence:
+      - "minz/.cargo/config.toml:1-6"
+      - "rm32_stm32/Cargo.toml:1-52"
+
+  - id: am32_timers_periodic_context
+    severity: minor
+    applies_to: "modules[minz/src/am32_timers.rs].runtime_context"
+    current: "main/foreground, event ISR"
+    corrected: "main/foreground, periodic ISR, event ISR"
+    reason: "TIM6 polling-mode BEMF acceptance calls interval and commutation-timer operations through Am32Timers."
+    evidence:
+      - "minz/core/src/am32_isr.rs:183-212"
+      - "minz/core/src/am32_control.rs:91-157"
+      - "minz/src/am32_timers.rs:117-158"
+
+  - id: comp2_periodic_context
+    severity: minor
+    applies_to: "modules[minz/src/comp2.rs].runtime_context"
+    current: "main/foreground, event ISR"
+    corrected: "main/foreground, periodic ISR, event ISR"
+    reason: "TIM6 polls Comparator::output_level and its synchronous zcfoundroutine can rotate the comparator input."
+    evidence:
+      - "minz/core/src/am32_isr.rs:183-212"
+      - "minz/core/src/am32_control.rs:132-157"
+      - "minz/src/comp2.rs:324-368"
+
+  - id: state_storage_overstatement
+    severity: material
+    applies_to: state_ownership_and_communication.ownership
+    current: "The program owns all mutable runtime storage as module-level atomics and one critical-section BlackBox cell."
+    corrected: "Cross-context control/ring storage is predominantly module-level atomics plus one critical-section BlackBox; foreground-only parser, UART writer indices/ownership, and the 4 KiB TX buffer are non-atomic local/static-local state."
+    reason: "The existing sentence is contradicted by UartDuty, UartTxWriter's mutable fields, and main's static-local TX_RING."
+    evidence:
+      - "minz/examples/am32_clone.rs:345-356"
+      - "minz/examples/am32_clone.rs:461-463"
+      - "minz/examples/am32_clone.rs:558-560"
+      - "minz/src/uart_tx.rs:41-81"
+
+  - id: blackbox_counterpart_relationship
+    severity: material
+    applies_to:
+      - "modules[minz/core/src/blackbox.rs].counterpart"
+      - "modules[minz/src/bb.rs].counterpart"
+      - "side_only_capabilities[on-target black box].rm32_counterpart"
+    current: none
+    corrected: partial
+    reason: "rm32's feature-gated dbg_frame_history is also an on-target fixed history ring written from ISR context and read chronologically in main. MinZ remains distinct because it records motor-control events, holds 64 entries, freezes on safety kill, timestamps entries, and formats text replay."
+    evidence:
+      - "minz/core/src/blackbox.rs:1-66"
+      - "minz/src/bb.rs:9-35"
+      - "rm32_stm32/src/dbg_frame_history.rs:1-50"
+      - "rm32_stm32/src/isr_handlers.rs:358-365"
+      - "rm32_stm32/src/bin/main.rs:348-358"
+
+  - id: bounded_spin_counterpart_relationship
+    severity: material
+    applies_to:
+      - "modules[minz/src/spin.rs].counterpart"
+      - "side_only_capabilities[shared bounded hardware spin].rm32_counterpart"
+    current: none
+    corrected: partial
+    reason: "rm32_stm32::regs::wait_for is a shared bounded hardware-wait abstraction. MinZ's differentiator is the cumulative global timeout counter and continue-after-timeout boolean API, not the existence of bounded waiting itself."
+    evidence:
+      - "minz/src/spin.rs:1-32"
+      - "rm32_stm32/src/regs.rs:1-35"
+
+  - id: uart_rx_counterpart_context
+    severity: minor
+    applies_to: "modules[minz/src/usart2_rx.rs].counterpart"
+    current: "capture_hal/debug_uart with relationship none"
+    corrected: "retain none for an active ASCII-throttle hardware channel, but cite rm32/src/crsf.rs and rm32_stm32/src/isr_handlers.rs as a partial serial-parser/handler concept and state that current rm32 has no wired UART RX vector/adapter"
+    reason: "The active protocol remains MinZ-only, but omitting rm32's byte-fed CRSF parser and handler makes the structural mapping less balanced."
+    evidence:
+      - "minz/src/usart2_rx.rs:12-51"
+      - "rm32/src/crsf.rs:60-145"
+      - "rm32_stm32/src/isr_handlers.rs:369-381"
+
+  - id: memory_layout_difference
+    severity: material
+    applies_to: "modules[minz/memory.x].counterpart.why and final report"
+    current: "Both provide L431 linker geometry."
+    corrected: "Both are L431 linker maps, but MinZ links at 0x08000000 across 256 KiB while rm32_stm32 reserves a 4 KiB bootloader and EEPROM boundary and links the app at 0x08001000 with a 58 KiB flash region."
+    reason: "Calling the relationship direct without the address-space difference would conceal an operationally important target-layout divergence."
+    evidence:
+      - "minz/memory.x:1-5"
+      - "rm32_stm32/memory.x:1-16"
+
+  - id: stale_source_comment_scope
+    severity: minor
+    applies_to:
+      - diagnostics_serialization_and_tooling.stale_or_residual
+      - limitations.stale_residue
+    current: "Residual notes cover old black-box event codes and two motor_tester2 mentions."
+    corrected: "Also flag comp2's stale module header claiming no EXTI/interrupt use, spin.rs claiming its timeout count appears in info output, iwdg.rs referring to a removed 'u' UART blast, and tim6_loop's already-finished TIM7 migration narrative."
+    reason: "Executable wiring is correctly inventoried, but these source comments can mislead consolidation if treated as current behavior."
+    evidence:
+      - "minz/src/comp2.rs:1-16"
+      - "minz/src/comp2.rs:194-256"
+      - "minz/src/spin.rs:12-15"
+      - "minz/examples/am32_clone.rs:433-448"
+      - "minz/src/iwdg.rs:10-13"
+      - "minz/core/src/am32.rs:350-442"
+      - "minz/src/tim6_loop.rs:7-12"
+
+side_only_capability_audit:
+  verdict: pass_with_relationship_narrowing
+  correctly_unique_or_distinct:
+    - capability: "15-byte ZC_TRACE stream with adaptive 50-on/50-off batching"
+      relationship: none
+      evidence:
+        - "minz/core/src/am32.rs:247-301"
+        - "minz/core/src/zct_trace.rs:30-76"
+    - capability: "ASCII percentage/permille throttle and bench-control protocol on active USART2 RX"
+      relationship: none_active
+      evidence:
+        - "minz/core/src/am32.rs:350-442"
+        - "minz/src/usart2_rx.rs:12-51"
+    - capability: "PWM-synchronous four-channel injected phase/current/vbat burst"
+      relationship: partial
+      evidence:
+        - "minz/src/adc_sync.rs:22-28"
+        - "minz/src/adc_sync.rs:163-190"
+    - capability: "dormant regular ADC/DMA setup plus 4 KiB ring retained as empirically load-bearing"
+      relationship: none
+      evidence:
+        - "minz/src/adc_sync.rs:1-20"
+        - "minz/src/adc_sync.rs:50-59"
+    - capability: "main-only self-healing 4 KiB diagnostic UART DMA ring"
+      relationship: partial
+      evidence:
+        - "minz/src/uart_tx.rs:53-166"
+    - capability: "comparator pending-bit camping until the half-interval gate"
+      relationship: none
+      evidence:
+        - "minz/core/src/am32_isr.rs:37-60"
+        - "rm32_stm32/src/mcu_l431/interrupts.rs:23-52"
+  relationship_corrections:
+    - capability: "freeze-on-safety-kill motor-event black box"
+      corrected_relationship: partial
+      unique_delta: "motor-event schema, 64-entry depth, timestamped replay, and freeze-on-OC/UV-kill behavior"
+    - capability: "shared bounded hardware-spin helper"
+      corrected_relationship: partial
+      unique_delta: "global cumulative timeout counter and boolean continue-after-timeout API"
+  report_level_differences_not_to_lose:
+    - "MinZ unconditionally starts and foreground-refreshes its IWDG; rm32 implements the same HAL capability but its normal main currently comments out watchdog start."
+    - "MinZ's OC and raw-vbat thresholds hard-stop and freeze diagnostics; rm32 has richer configurable current/LVC/thermal policy, but not the same raw-threshold-plus-freeze behavior."
+    - "MinZ panic logs over raw UART plus RTT and then relies on IWDG reset without explicitly forcing the bridge off; rm32 forces the bridge off first and then halts."
+  evidence:
+    - "minz/src/iwdg.rs:18-34"
+    - "minz/examples/am32_clone.rs:366-368"
+    - "rm32_stm32/src/bin/main.rs:121-125"
+    - "minz/core/src/am32_isr.rs:214-239"
+    - "rm32/src/main_state.rs:429-489"
+    - "minz/src/panic.rs:45-71"
+    - "rm32_stm32/src/panic.rs:17-47"
+
+flow_and_state_audit:
+  boot: pass
+  foreground: pass
+  comparator_event: pass
+  commutation_event: pass
+  periodic_control: pass
+  uart_receive_event: pass
+  state_channels:
+    direct_atomic_control_graph: pass
+    rx_spsc: pass
+    dual_producer_zct_ring: pass
+    mutex_blackbox: pass
+  correction: "Qualify the ownership summary as described in state_storage_overstatement; the flow descriptions themselves match executable order and call paths."
+  evidence:
+    - "minz/examples/am32_clone.rs:345-457"
+    - "minz/examples/am32_clone.rs:460-616"
+    - "minz/core/src/am32_isr.rs:33-239"
+    - "minz/core/src/am32_control.rs:38-359"
+
+verification_reproduction:
+  host:
+    command: cargo test
+    working_directory: minz/core
+    exit_code: 0
+    result: "77 passed; 0 failed; 0 ignored; doc-tests 0"
+    warning: "incremental compilation session directory could not be finalized due to access denied"
+  target_check:
+    command: cargo check --example am32_clone
+    working_directory: minz
+    exit_code: 0
+    target: thumbv7em-none-eabihf
+    result: passed
+    warning: "incremental compilation session directories could not be finalized due to access denied"
+  claimed_boundaries_accurate: true
+  note: "These commands prove portable behavior and target type/trait/vector compilation, not target runtime timing, electrical behavior, flash-region suitability, or safety thresholds."
+
+report_guidance:
+  required:
+    - "Use all 31 rows in the MinZ inventory; do not collapse diagnostics, build configuration, or internally dormant surfaces out of the side-by-side module table."
+    - "Show module-level wiring separately from sub-features: adc_sync and tim1_motor_pwm are active modules containing declared-unwired operations."
+    - "Present MinZ as a dependency-free portable brain plus a single fixed L431 adapter/composition image, contrasted with rm32's broader core/platform/target-family configuration."
+    - "Describe the state model precisely: a shared Relaxed-atomic control graph across foreground and ISRs, plus foreground-local UART state and a mutex-protected black box."
+    - "Use partial, not absent, for rm32's debug frame history and bounded wait helper; emphasize the exact MinZ-only deltas."
+    - "Keep active-protocol asymmetry explicit: MinZ's active ASCII UART duty/bench channel versus rm32's active DShot/servo path and library/handler-level CRSF support."
+    - "Call out the incompatible linker placement: MinZ starts at flash base with 256 KiB available; rm32 reserves bootloader/EEPROM regions and links the app at 0x08001000."
+    - "Separate safety mechanism presence from wiring: MinZ IWDG is active; rm32 watchdog support exists but normal-main startup is currently disabled."
+    - "State that MinZ's black box freezes specifically on the OC/undervoltage safety-kill path, not on every desync or generic fault."
+    - "Treat stale source comments as residue, not behavior; executable call sites and vector wiring control the report."
+    - "Preserve verification limits: 77 host tests and a target cargo check do not establish runtime/electrical correctness."
+  avoid:
+    - "Do not say rm32 has no on-target history ring."
+    - "Do not say rm32 has no shared bounded wait abstraction."
+    - "Do not imply MinZ and rm32 use the same L431 flash geometry."
+    - "Do not imply every MinZ mutable byte is module-level atomic state."
+    - "Do not infer that every public method inside an active MinZ module is actively called."
+
+final_audit_assertion:
+  inventory_is_exhaustive_at_file_level: true
+  inventory_is_balanced_enough_for_consolidation: true
+  conditions:
+    - "Carry forward the two intended citation-path fixes."
+    - "Apply or explicitly reflect the semantic/counterpart corrections in consolidation."
+  unresolved_unknowns:
+    - "The mechanism behind adc_sync's dormant regular-group/DMA layout correlation remains empirically observed but unexplained."
+    - "No static inspection or cargo check proves real-time priority behavior, analog sampling validity, gate-drive safety, or motor operation."

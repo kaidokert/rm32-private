@@ -1204,11 +1204,11 @@ fn main() -> ! {
         );
 
         // EEPROM save on DShot command
-        // TODO: ISR command processor mutates its own config copy. Need to
-        // publish changed fields via SharedState for main to persist correctly.
-        // For now, saves main_state.config (synced from EEPROM at boot).
         if shared.save_settings_flag() {
             shared.set_save_settings_flag(false);
+            while let Some((offset, value)) = shared.pop_config_write() {
+                main_state.config.as_bytes_mut()[offset as usize] = value;
+            }
             let mut flash = FlashStorage::new();
             flash.write(eeprom_address, main_state.config.as_bytes());
         }

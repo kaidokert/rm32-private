@@ -7,7 +7,7 @@
 use crate::isr::{self, TargetIsrState};
 use crate::mcu::ChipConfig;
 use rm32::hal::{DshotOutputPrescaler, InputCapture};
-use rm32::transfer::{CaptureConfig, DetectedProtocol, TransferAction};
+use rm32::transfer::{DetectedProtocol, TransferAction};
 
 /// Single-core ISR-local cell for zero-overhead mutable ISR state.
 ///
@@ -454,7 +454,7 @@ pub fn handle_dma_tc() {
 
 /// Software-triggered frame processing (EXTI ISR body).
 /// Returns the capture size for the next DMA cycle.
-pub fn handle_exti_frame() -> CaptureConfig {
+pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
 
@@ -510,10 +510,7 @@ pub fn handle_exti_frame() -> CaptureConfig {
             shared.set_input_set(true);
             match proto {
                 DetectedProtocol::Dshot => {
-                    // No prints in ISR context — detection is observable
-                    // from main via the shared proto flags ([loop] line).
                     shared.set_dshot(true);
-                    // Store output prescaler for bidir DShot response timing
                     if let Some(prescaler) = actions.next_capture.prescaler {
                         state.hal.input.set_output_prescaler(
                             DshotOutputPrescaler::new(prescaler)

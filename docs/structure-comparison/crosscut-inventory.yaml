@@ -1,0 +1,527 @@
+scope:
+  trees:
+    - minz/
+    - minz/core/
+    - rm32/
+    - rm32_stm32/
+    - tests/blackbox/
+  concerns:
+    - manifests and crate boundaries
+    - module and executable structure
+    - commutation and BEMF control
+    - timing and interrupt orchestration
+    - state ownership and cross-context communication
+    - hardware abstraction and MCU adaptation
+    - board and persistent configuration
+    - host tests and black-box verification
+
+method:
+  - "Read the workspace and crate manifests, build scripts, public module roots, firmware entry points, interrupt trampolines, core control functions, HAL traits, state containers, board configuration, and test harness entry points."
+  - "Traced the zero-cross/commutation and 20 kHz paths symbol-by-symbol in both implementations."
+  - "Searched Rust sources for public structs, traits, statics, interrupt handlers, test modules, and minz-core call sites; searched tests/blackbox for harness/vector orchestration."
+  - "Preferred executable code, manifests, and tests over prose. Source comments are used where they define an explicit invariant that is also reflected by the adjacent code."
+
+traits:
+  - id: crate_topology
+    claim: "Both implementations separate host-testable logic from target hardware, but package it differently: minz is an excluded, fixed-target firmware crate depending on a separately detached minz-core workspace, while rm32 is the root-workspace core and rm32_stm32 is an excluded platform crate depending on it."
+    evidence:
+      - "Cargo.toml:1-7 (workspace membership/exclusions)"
+      - "minz/Cargo.toml:13-25 (minz-core path dependency plus Cortex-M/L431 dependencies)"
+      - "minz/core/Cargo.toml:5-15 (host-testable description and detached [workspace])"
+      - "rm32_stm32/Cargo.toml:6-19 (rm32 path dependency plus optional MCU HAL dependencies)"
+    confidence: high
+
+  - id: runtime_personalities
+    claim: "minz contains at least two materially different firmware personalities: motor_tester2 is an interactive open/closed-loop bench instrument, while am32_clone is a factory-default, UART-duty AM32 control transliteration. rm32_stm32 instead exposes one MCU-independent production entry point whose main-loop orchestration is also represented by SystemTick."
+    evidence:
+      - "minz/examples/motor_tester2.rs:1-48 (interactive bench tester purpose, modes, and controls)"
+      - "minz/examples/am32_clone.rs:1-17 (AM32 clone scope and module split)"
+      - "rm32_stm32/src/bin/main.rs:1-4 (MCU-independent firmware entry point)"
+      - "rm32/src/system.rs:1-6 (shared firmware/harness system tick intent)"
+      - "rm32/src/system.rs:153-172 (canonical run_tick ordering)"
+    confidence: high
+
+  - id: logic_hardware_seam_overlap
+    claim: "Both designs use statically dispatched ESC-specific HAL traits so host tests can substitute mocks without vtables in motor-critical code."
+    evidence:
+      - "minz/core/src/am32_hal.rs:1-20 (static-dispatch trait inventory and firmware implementations)"
+      - "minz/core/src/am32_control.rs:1-9 (control functions receive state clusters and Hal parameters)"
+      - "rm32/src/hal.rs:68-84 (MotorHal associated-type bundle)"
+      - "rm32/src/control/isr_logic.rs:1-5 (MotorContext static-dispatch ISR logic)"
+    confidence: high
+
+  - id: hal_granularity_mismatch
+    claim: "The HAL boundaries are similar but cut differently: minz MotorPwm owns both duty/carrier operations and phase-role changes, and ComTimers combines interval and commutation timers; rm32 splits PwmOutput, PhaseOutput, IntervalTimer, and ComTimer, then reunifies the ISR subset through MotorHal."
+    evidence:
+      - "minz/core/src/am32_hal.rs:22-46 (MotorPwm includes duty, role, off, and carrier operations)"
+      - "minz/core/src/am32_hal.rs:70-87 (combined ComTimers interface)"
+      - "rm32/src/hal.rs:14-26 (PwmOutput)"
+      - "rm32/src/hal.rs:43-66 (PhaseOutput, IntervalTimer, ComTimer)"
+      - "rm32/src/hal.rs:68-84 (MotorHal bundle)"
+    confidence: high
+
+  - id: state_ownership_mismatch
+    claim: "minz's AM32 clone stores control truth in global atomics grouped into borrowed Sched/Drive/Duty/Bench views, so main and ISR functions operate on the same cells. rm32 separates mutable ISR-exclusive Commutation/BemfState/DutyState from main-owned MainState and exchanges selected values/actions through SharedState atomics."
+    evidence:
+      - "minz/examples/am32_clone.rs:103-152 (global atomic AM32 state)"
+      - "minz/examples/am32_clone.rs:244-303 (static Sched/Drive/Duty/Bench wiring)"
+      - "minz/examples/am32_clone.rs:322-331 (main names the shared cluster instances)"
+      - "rm32_stm32/src/isr.rs:70-88 (owned IsrState fields)"
+      - "rm32_stm32/src/isr_handlers.rs:12-35 (ISR-exclusive ownership invariants and main-loop exclusion)"
+      - "rm32/src/shared_state.rs:1-18 (atomic cross-context contract)"
+      - "rm32/src/shared_state.rs:35-74 (directional ISR/main shared fields)"
+      - "rm32/src/control/state.rs:367-376 (main timing state versus ISR/shared timing)"
+    confidence: high
+
+  - id: state_names_correspond
+    claim: "The closest state-name correspondences are minz Drive to rm32 Commutation plus BemfState/motor mode, minz Duty to rm32 DutyState, minz Sched to rm32 shared timing fields plus TimingState, and minz Bench to rm32 Measurements/protection/debug state; these are conceptual mappings, not type-level compatibility."
+    evidence:
+      - "minz/core/src/am32_loop.rs:82-136 (Sched, Drive, Duty, Bench field groupings)"
+      - "rm32/src/commutation.rs:3-12 (Commutation fields)"
+      - "rm32/src/control/state.rs:8-40 (BemfState and DutyState)"
+      - "rm32/src/control/state.rs:296-337 (ProtectionState and Measurements)"
+      - "rm32/src/control/state.rs:367-376 (TimingState)"
+      - "rm32/src/shared_state.rs:35-74 (shared timing, input, duty, measurements, and actions)"
+    confidence: medium
+
+  - id: temporal_architecture_overlap
+    claim: "The AM32-clone paths have the same four temporal contexts: comparator zero-cross ISR, one-shot commutation ISR, approximately 20 kHz control ISR, and a free-running main loop."
+    evidence:
+      - "minz/examples/am32_clone.rs:19-33 (four contexts and timer units)"
+      - "minz/examples/am32_clone.rs:561-576 (COMP, TIM1_UP_TIM16, and TIM6 trampolines)"
+      - "minz/examples/am32_clone.rs:338-360 (free-running main loop bands)"
+      - "rm32_stm32/src/isr_handlers.rs:71-146 (TIM6, commutation timer, and COMP bodies)"
+      - "rm32_stm32/src/bin/main.rs:273-277 (firmware main loop)"
+      - "rm32_stm32/src/bin/main.rs:474-481 (intentional free-running loop)"
+    confidence: high
+
+  - id: zero_cross_flow_overlap
+    claim: "Both zero-cross paths persistence-filter comparator samples, capture/reset the interval timer, and arm a one-shot commutation timer; the next commutation advances the six-step state, changes the floating-phase comparator input, updates timing, and re-enables comparator interrupts."
+    evidence:
+      - "minz/core/src/am32_isr.rs:33-62 (COMP gate and pending handling)"
+      - "minz/core/src/am32_isr.rs:80-98 (persistence, interval capture/reset, and COM arm)"
+      - "minz/core/src/am32_isr.rs:107-143 (commutation timer path, timing blend, and comparator re-enable)"
+      - "rm32/src/control/isr_logic.rs:268-298 (persistence, mask, interval capture/reset, and COM arm)"
+      - "rm32/src/control/isr_logic.rs:216-252 (step advance, phase/comparator update, timing, and re-enable)"
+    confidence: high
+
+  - id: polling_handoff_overlap
+    claim: "Both implementations start with polled BEMF qualification and transition to comparator-interrupt commutation after the motor reaches a configured interval/zero-cross regime."
+    evidence:
+      - "minz/core/src/am32_isr.rs:214-250 (old_routine polling BEMF path)"
+      - "minz/core/src/am32_control.rs:153-185 (polled zero-cross routine and interrupt-mode changeover)"
+      - "rm32/src/control/isr_logic.rs:120-123 (old_routine polling dispatch)"
+      - "rm32/src/control/isr_logic.rs:182-213 (polled BEMF qualification and scheduling)"
+      - "rm32/src/control/isr_logic.rs:254-265 (old_routine exit threshold and BemfLocked transition)"
+    confidence: high
+
+  - id: step_numbering_boundary
+    claim: "Both keep AM32-style logical steps in the 1..6 domain, but minz explicitly converts step-1 to a 0..5 sector before its phase/comparator adapters, while rm32's PhaseOutput and Comparator adapters consume 1..6 directly."
+    evidence:
+      - "minz/core/src/am32_control.rs:45-63 (1..6 step advance followed by step-1 sector conversion)"
+      - "minz/src/tim1_motor_pwm.rs:205-206 (set_six_step 0..5 contract)"
+      - "minz/src/comp2.rs:286-320 (0..5 sector floating-phase table)"
+      - "rm32/src/commutation.rs:36-54 (1..6 advance)"
+      - "rm32_stm32/src/phase.rs:111-148 (PhaseOutput com_step matches 1..6)"
+      - "rm32_stm32/src/comparator.rs:28-44 (Comparator stores and maps 1..6 step)"
+    confidence: high
+
+  - id: board_target_strategy
+    claim: "minz is bound directly to STM32L431 and a concrete pin map, whereas rm32_stm32 selects among four MCU families and generates BoardConfig from per-board YAML."
+    evidence:
+      - "minz/Cargo.toml:24-25 (single stm32l4xx-hal stm32l431 dependency)"
+      - "minz/src/board_init.rs:59-70 (concrete six-pin motor map)"
+      - "minz/src/lib.rs:38-47 (concrete Am32Hal type alias)"
+      - "rm32_stm32/Cargo.toml:15-19 (four optional MCU HAL dependencies)"
+      - "rm32_stm32/Cargo.toml:38-43 (four target features)"
+      - "rm32_stm32/src/mcu.rs:22-35 (single active-MCU gateway)"
+      - "rm32_stm32/build.rs:210-245 (BOARD selection, YAML parse, and BEMF resolution)"
+      - "rm32_stm32/build.rs:247-309 (generated BoardConfig)"
+    confidence: high
+
+  - id: hardware_adapter_layering
+    claim: "minz's target crate commonly implements core traits with zero-sized wrappers around direct register modules; rm32_stm32 adds reusable generic peripheral adapters and then supplies per-MCU low-level operations/type aliases."
+    evidence:
+      - "minz/src/lib.rs:34-47 (concrete zero-sized Am32Hal bundle)"
+      - "minz/src/comp2.rs:329-350 (Comp2 trait wrapper over direct register functions)"
+      - "rm32_stm32/src/comparator.rs:1-28 (generic comparator over CompOps and ExtiOps)"
+      - "rm32_stm32/src/phase.rs:1-28 (generic compile-time pin PhaseDriver)"
+      - "rm32_stm32/src/mcu_l431/mod.rs:1-13 (per-MCU adapter modules)"
+      - "rm32_stm32/src/mcu_l431/chip.rs:76-87 (target HAL alias and chip-specific operation)"
+    confidence: high
+
+  - id: configuration_model_mismatch
+    claim: "minz's AM32 clone is compiled around a factory-default subset and hard-coded board/carrier constants, with one pwm48 feature; rm32 separates compile-time BoardConfig from a byte-compatible, flash-loaded 192-byte EepromConfig with migration/default logic."
+    evidence:
+      - "minz/examples/am32_clone.rs:5-9 (factory-default target scope)"
+      - "minz/core/src/am32_loop.rs:10-20 (factory-default constants and fixed loop cadence)"
+      - "minz/Cargo.toml:6-11 (single pwm48 feature)"
+      - "minz/src/lib.rs:92-110 (compile-time carrier and timer constants)"
+      - "rm32/src/board.rs:24-69 (BoardConfig hardware fields)"
+      - "rm32/src/config.rs:17-85 (192-byte persistent configuration layout and size check)"
+      - "rm32/src/config.rs:157-180 (validity and version-default migration)"
+      - "rm32_stm32/src/bin/main.rs:196-207 (flash read, validation, and config transforms)"
+    confidence: high
+
+  - id: same_board_values_are_not_unified
+    claim: "Even for the named Vimdrones L431 target, configuration is not sourced from one shared definition: minz compiles TIM1_DEAD_TIME=45, while rm32_stm32's vimdrones_l431 board YAML declares dead_time=60."
+    evidence:
+      - "minz/src/lib.rs:100-103 (TIM1_DEAD_TIME=45)"
+      - "rm32_stm32/boards/vimdrones_l431.yaml:1-4 (target identity and dead_time=60)"
+    confidence: high
+
+  - id: protocol_feature_breadth
+    claim: "The compared minz AM32 clone exposes a UART-duty bench protocol, while rm32 core structurally includes DShot, servo PWM, CRSF, EDT, command processing, bidirectional telemetry transfer, and multiple persistent input modes."
+    evidence:
+      - "minz/examples/am32_clone.rs:5-9 (UART_DUTY_MODE scope)"
+      - "minz/examples/am32_clone.rs:333-347 (UART parser drives input/set_input path)"
+      - "rm32/src/lib.rs:15-20 (CRSF, DShot, commands, EDT modules)"
+      - "rm32/src/config.rs:5-15 (persistent input modes)"
+      - "rm32_stm32/src/isr.rs:76-87 (command, EDT, CRSF, transfer state in ISR ownership)"
+      - "rm32_stm32/src/isr_handlers.rs:148-174 (bidirectional DShot/EDT DMA path)"
+    confidence: high
+
+  - id: control_scope_mismatch
+    claim: "rm32 models a broad ESC product state machine (arming, bidirectionality, braking, sine start, current/stall/speed PID), whereas minz am32_clone deliberately implements a forward-only factory subset; minz's broader experimental closed-loop and guard work lives in motor_tester2 rather than the clone path."
+    evidence:
+      - "minz/core/src/am32_control.rs:27-29 (forward-only commutate scope)"
+      - "minz/core/src/am32_control.rs:376-378 (factory subset limitations)"
+      - "minz/examples/motor_tester2.rs:86-118 (separate guarded bench-control scope)"
+      - "rm32/src/control/isr_logic.rs:60-99 (direction, arming/start, and braking paths)"
+      - "rm32/src/control/state.rs:198-213 (current, stall, and speed PID ownership)"
+      - "rm32/src/system.rs:92-133 (sine stepping/changeover)"
+      - "rm32/src/config.rs:36-67 (bidirectional, sine, brake, protection, PID, and input configuration)"
+    confidence: high
+
+  - id: safety_and_observability_shape
+    claim: "Both have explicit safe-off and protection concepts, but minz emphasizes bench diagnostics and latched black-box/guard behavior, while rm32 spreads production protections across core state/actions and a platform EmergencyOff/panic path."
+    evidence:
+      - "minz/examples/am32_clone.rs:35-41 (trace, black box, ADC observers, and bench kills)"
+      - "minz/core/src/am32_control.rs:219-249 (latched safety_kill and black-box freeze)"
+      - "minz/core/src/guards.rs:412-443 (kill-flag cluster and ISR kill kinds)"
+      - "rm32/src/hal.rs:135-139 (EmergencyOff contract)"
+      - "rm32/src/control/state.rs:296-325 (ProtectionState)"
+      - "rm32/src/shared_state.rs:53-74 (published protection ceilings/actions)"
+      - "rm32_stm32/src/bin/main.rs:32-33 (panic handler safes hardware)"
+    confidence: medium
+
+  - id: test_architecture_difference
+    claim: "Both cores have host unit tests and HAL mocks. rm32 additionally supplies a process-driven firmware-style harness and repository-level black-box vectors around the same SystemTick ordering; minz's exact AM32 control code is unit-tested through its Hal mock, while substantial motor_tester2 orchestration remains in the example and calls extracted pure helpers selectively."
+    evidence:
+      - "minz/core/src/lib.rs:1-13 (host-testable brain and regression-test intent)"
+      - "minz/core/src/am32_hal.rs:139-191 (shared MockHal and owned-atomic fixtures)"
+      - "minz/core/src/am32_control.rs:460-465 (control mock-test module)"
+      - "minz/examples/motor_tester2.rs:4679-4771 (example-owned orchestration statics wrapping minz-core helpers)"
+      - "rm32/src/bin/harness.rs:25-133 (mock PWM/comparator/phase/timers and MotorHal)"
+      - "rm32/src/bin/harness.rs:463-475 (harness uses shared run_tick pipeline)"
+      - "rm32/src/system.rs:153-172 (canonical ordering shared by harness and firmware)"
+      - "tests/blackbox/test_vectors.py:1-16 (pytest AM32 vector runner)"
+      - "tests/blackbox/test_vectors.py:40-52 (vector parametrization and execution)"
+    confidence: high
+
+abstractions:
+  - concept: motor_hardware_bundle
+    minz:
+      names: ["am32_hal::Hal", "MotorPwm", "CompCtl", "ComTimers", "Recorder", "Cs", "InjAdc", "LoopTimer"]
+      evidence:
+        - "minz/core/src/am32_hal.rs:22-137"
+        - "minz/src/lib.rs:34-47"
+    rm32:
+      names: ["hal::MotorHal", "PwmOutput", "Comparator", "PhaseOutput", "IntervalTimer", "ComTimer", "IsrHal"]
+      evidence:
+        - "rm32/src/hal.rs:14-84"
+        - "rm32_stm32/src/isr.rs:19-68"
+    relationship: "overlap_with_different_granularity"
+
+  - concept: commutation_state
+    minz:
+      names: ["am32_loop::Drive", "current_step", "rising", "old_routine", "zero_crosses"]
+      evidence:
+        - "minz/core/src/am32_loop.rs:93-111"
+    rm32:
+      names: ["Commutation", "SharedState::motor_mode", "SharedState::zero_crosses"]
+      evidence:
+        - "rm32/src/commutation.rs:3-12"
+        - "rm32/src/shared_state.rs:20-38"
+    relationship: "similar_concept_different_ownership"
+
+  - concept: zero_cross_state
+    minz:
+      names: ["Drive::bemf_counter", "Drive::bad_count", "Sched::last_zc", "Sched::this_zc", "Sched::wait_time"]
+      evidence:
+        - "minz/core/src/am32_loop.rs:82-111"
+    rm32:
+      names: ["BemfState"]
+      evidence:
+        - "rm32/src/control/state.rs:8-22"
+    relationship: "same_fields_clustered_differently"
+
+  - concept: duty_and_ramp_state
+    minz:
+      names: ["am32_loop::Duty"]
+      evidence:
+        - "minz/core/src/am32_loop.rs:113-125"
+    rm32:
+      names: ["control::state::DutyState"]
+      evidence:
+        - "rm32/src/control/state.rs:24-40"
+    relationship: "direct_overlap"
+
+  - concept: main_isr_bridge
+    minz:
+      names: ["global Atomic* storage", "borrowed Sched/Drive/Duty/Bench"]
+      evidence:
+        - "minz/examples/am32_clone.rs:103-152"
+        - "minz/examples/am32_clone.rs:244-303"
+    rm32:
+      names: ["SharedComm", "SharedState", "IsrAction"]
+      evidence:
+        - "rm32/src/shared_comm.rs:21-34"
+        - "rm32/src/shared_comm.rs:94-136"
+        - "rm32/src/shared_comm.rs:223-223"
+        - "rm32/src/shared_state.rs:17-20"
+    relationship: "structural_mismatch"
+
+  - concept: target_selection
+    minz:
+      names: ["stm32l4xx-hal/stm32l431", "Am32Hal", "hard-coded pin modules"]
+      evidence:
+        - "minz/Cargo.toml:24-25"
+        - "minz/src/lib.rs:34-47"
+        - "minz/src/board_init.rs:59-70"
+    rm32:
+      names: ["ChipConfig", "mcu::active", "TargetIsrHal", "BoardConfig YAML generation"]
+      evidence:
+        - "rm32_stm32/src/mcu.rs:6-35"
+        - "rm32_stm32/src/isr.rs:90-94"
+        - "rm32_stm32/build.rs:210-258"
+    relationship: "fixed_target_vs_family_adapter"
+
+  - concept: persistent_configuration
+    minz:
+      names: ["factory-default constants", "pwm48 Cargo feature"]
+      evidence:
+        - "minz/core/src/am32_loop.rs:10-20"
+        - "minz/Cargo.toml:6-11"
+    rm32:
+      names: ["EepromConfig", "MotorConfig", "Flash"]
+      evidence:
+        - "rm32/src/config.rs:17-89"
+        - "rm32/src/hal.rs:123-127"
+        - "rm32_stm32/src/bin/main.rs:196-234"
+    relationship: "one_sided_product_configuration"
+
+  - concept: orchestration_layer
+    minz:
+      names: ["am32_clone::main_entry", "interrupt trampolines"]
+      evidence:
+        - "minz/examples/am32_clone.rs:322-360"
+        - "minz/examples/am32_clone.rs:554-584"
+    rm32:
+      names: ["SystemTick", "isr_handlers", "firmware main"]
+      evidence:
+        - "rm32/src/system.rs:15-22"
+        - "rm32/src/system.rs:153-172"
+        - "rm32_stm32/src/isr_handlers.rs:71-146"
+        - "rm32_stm32/src/bin/main.rs:273-277"
+    relationship: "overlap_but_rm32_has_shared_harness_orchestrator"
+
+flows:
+  - name: minz_interrupt_zero_cross_to_commutation
+    steps:
+      - "minz/examples/am32_clone.rs:563-565 COMP"
+      - "minz/core/src/am32_isr.rs:33-62 comp_isr"
+      - "minz/core/src/am32_isr.rs:66-98 interrupt_routine"
+      - "minz/examples/am32_clone.rs:569-570 TIM1_UP_TIM16"
+      - "minz/core/src/am32_isr.rs:107-143 tim1_up_tim16_isr"
+      - "minz/core/src/am32_control.rs:31-76 commutate"
+
+  - name: rm32_interrupt_zero_cross_to_commutation
+    steps:
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-49 COMP"
+      - "rm32_stm32/src/isr_handlers.rs:127-145 handle_comp"
+      - "rm32/src/control/isr_logic.rs:281-298 bemf_zero_cross"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:17-25 TIM1_UP_TIM16"
+      - "rm32_stm32/src/isr_handlers.rs:105-124 handle_tim14"
+      - "rm32/src/control/isr_logic.rs:217-265 commutation_timer_expired"
+
+  - name: minz_20khz_control
+    steps:
+      - "minz/examples/am32_clone.rs:575-576 TIM6_DACUNDER"
+      - "minz/core/src/am32_isr.rs:151-182 tim6_dacunder_isr"
+      - "minz/core/src/am32_loop.rs:275-288 duty_ramp"
+      - "minz/core/src/am32_isr.rs:188-211 duty_apply"
+      - "minz/core/src/am32_isr.rs:217-250 polling_bemf_check"
+      - "minz/core/src/am32_isr.rs:256-285 adc_harvest_and_safety"
+
+  - name: rm32_20khz_control
+    steps:
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:8-15 TIM6_DACUNDER"
+      - "rm32_stm32/src/isr_handlers.rs:71-95 handle_tim6/MotorContext"
+      - "rm32/src/control/isr_logic.rs:15-59 ten_khz_tick actions/startup"
+      - "rm32/src/control/isr_logic.rs:60-123 input, arming, and polling"
+      - "rm32/src/control/isr_logic.rs:125-179 ramp, ceilings, PWM, and publish"
+
+  - name: minz_main_loop
+    steps:
+      - "minz/examples/am32_clone.rs:338-342 watchdog/RX/stop"
+      - "minz/examples/am32_clone.rs:343-350 timing/input/BEMF/carrier"
+      - "minz/examples/am32_clone.rs:351-357 desync/filter/timeout"
+      - "minz/examples/am32_clone.rs:358-359 telemetry and requests"
+
+  - name: rm32_main_loop
+    steps:
+      - "rm32_stm32/src/bin/main.rs:379-403 optional sine step/changeover"
+      - "rm32_stm32/src/bin/main.rs:406-407 SystemTick::run_tick"
+      - "rm32/src/system.rs:161-171 input, ISR callback, sync, and main tick"
+      - "rm32_stm32/src/bin/main.rs:424-431 dynamic IRQ priority"
+      - "rm32_stm32/src/bin/main.rs:433-449 settings/info side effects"
+
+  - name: rm32_host_blackbox_path
+    steps:
+      - "tests/blackbox/test_vectors.py:42-52 pytest vector parametrization"
+      - "tests/blackbox/harness.py:144-168 run_test_vectors/file parsing"
+      - "rm32/src/bin/harness.rs:463-475 shared SystemTick::run_tick"
+      - "rm32/src/system.rs:153-172 canonical pipeline"
+
+tests_and_verification:
+  minz:
+    - claim: "minz-core is intentionally detached for host cargo test and carries module-local regression tests."
+      evidence:
+        - "minz/core/Cargo.toml:5-15"
+        - "minz/core/src/lib.rs:1-13"
+        - "minz/core/src/zc.rs:1066-1066 (48 kHz sector-boundary regression)"
+        - "minz/core/src/guards.rs:1112-1112 (runaway-floor regression)"
+    - claim: "AM32-clone control and ISR code use a shared call-recording MockHal that can assert safety-relevant hardware effects."
+      evidence:
+        - "minz/core/src/am32_hal.rs:139-191"
+        - "minz/core/src/am32_control.rs:460-465"
+        - "minz/core/src/am32_control.rs:662-662 (safety-kill HAL-call test)"
+        - "minz/core/src/am32_isr.rs:489-489 (killed TIM6 behavior test)"
+    - claim: "motor_tester2 consumes many extracted helpers, but still owns its large ISR/orchestration state in the example."
+      evidence:
+        - "minz/examples/motor_tester2.rs:4679-4801 (window/mode/ZC/kill static wiring)"
+        - "minz/examples/motor_tester2.rs:6051-6086 (ADC zero-cross confirmation calls into minz-core)"
+  rm32:
+    - claim: "Core modules carry unit tests for commutation, BEMF, state, protocol, and orchestration behavior."
+      evidence:
+        - "rm32/src/commutation.rs:101-165"
+        - "rm32/src/bemf.rs:1-88"
+        - "rm32/src/system.rs:181-229"
+    - claim: "The native rm32_harness implements HAL mocks and invokes the same SystemTick orchestration used by firmware."
+      evidence:
+        - "rm32/Cargo.toml:12-14"
+        - "rm32/src/bin/harness.rs:25-133"
+        - "rm32/src/bin/harness.rs:463-475"
+        - "rm32/src/system.rs:1-6"
+    - claim: "Python black-box tests discover vector files and drive them through the native harness."
+      evidence:
+        - "tests/blackbox/test_vectors.py:1-16"
+        - "tests/blackbox/test_vectors.py:27-52"
+        - "tests/blackbox/harness.py:144-168"
+
+limitations:
+  - "This inventory compares checked-in source structure, not generated OUT_DIR board_config.rs output or compiled binaries."
+  - "Vendor HAL/PAC implementations and the external AM32 C source cited in comments were not audited; citations here prove repository structure and local behavior only."
+  - "minz/captures and most bench scripts were excluded from source-structure claims; they are experimental artifacts rather than firmware abstractions."
+  - "Only the L431 interrupt/initialization path was traced deeply in rm32_stm32 because it is the direct hardware overlap with minz. Other MCU directories were inventoried at their module/feature boundary."
+  - "A repository search found no minz process harness shaped like rm32_harness, but absence claims are intentionally not elevated into a proven trait; the final report should phrase this as 'no equivalent located' if needed."
+  - "The conceptual Sched/Drive/Duty/Bench mappings combine several rm32 types and should not be interpreted as field-for-field equivalence."
+
+comparison_candidates:
+  - category: overlap
+    title: "AM32 temporal skeleton"
+    claim: "Both use comparator ISR -> one-shot commutation ISR -> 20 kHz duty/polling ISR plus a spinning main loop."
+    evidence:
+      - "minz/examples/am32_clone.rs:19-33"
+      - "rm32_stm32/src/isr_handlers.rs:71-146"
+      - "rm32_stm32/src/bin/main.rs:474-481"
+
+  - category: overlap
+    title: "Host-testable static-dispatch motor logic"
+    claim: "Both isolate motor-critical logic behind monomorphized traits and provide HAL mocks."
+    evidence:
+      - "minz/core/src/am32_hal.rs:1-20"
+      - "minz/core/src/am32_hal.rs:139-191"
+      - "rm32/src/hal.rs:68-84"
+      - "rm32/src/bin/harness.rs:25-133"
+
+  - category: structural_mismatch
+    title: "Shared atomic clusters versus owned contexts"
+    claim: "minz uses atomics as the primary storage even for control clusters; rm32 uses mutable ISR/main owners and atomics specifically as the bridge."
+    evidence:
+      - "minz/examples/am32_clone.rs:103-152"
+      - "minz/examples/am32_clone.rs:244-303"
+      - "rm32_stm32/src/isr.rs:70-88"
+      - "rm32_stm32/src/isr_handlers.rs:12-35"
+      - "rm32/src/shared_state.rs:17-74"
+
+  - category: structural_mismatch
+    title: "HAL responsibility split"
+    claim: "minz folds phase roles into MotorPwm and both timers into ComTimers; rm32 separates those responsibilities before rebundling them in MotorHal."
+    evidence:
+      - "minz/core/src/am32_hal.rs:22-87"
+      - "rm32/src/hal.rs:14-84"
+
+  - category: structural_mismatch
+    title: "Fixed bench target versus board/MCU matrix"
+    claim: "minz directly targets one L431 pinout; rm32_stm32 has target-feature selection, per-MCU adapters, and generated YAML board configuration."
+    evidence:
+      - "minz/Cargo.toml:24-25"
+      - "minz/src/board_init.rs:59-70"
+      - "rm32_stm32/Cargo.toml:38-43"
+      - "rm32_stm32/src/mcu.rs:22-35"
+      - "rm32_stm32/build.rs:210-258"
+
+  - category: similar_concepts_different_names
+    title: "Control state clusters"
+    claim: "minz Sched/Drive/Duty roughly align with rm32 Timing/SharedState, Commutation/BemfState, and DutyState respectively."
+    evidence:
+      - "minz/core/src/am32_loop.rs:82-136"
+      - "rm32/src/commutation.rs:3-12"
+      - "rm32/src/control/state.rs:8-40"
+      - "rm32/src/control/state.rs:367-376"
+
+  - category: similar_concepts_different_names
+    title: "Comparator and commutation adapters"
+    claim: "minz CompCtl/change_comp_input and MotorPwm/set_roles_for_step correspond to rm32 Comparator/change_input and PhaseOutput/com_step, with a 0..5 versus 1..6 adapter boundary."
+    evidence:
+      - "minz/core/src/am32_hal.rs:48-68"
+      - "minz/core/src/am32_control.rs:45-63"
+      - "rm32/src/hal.rs:28-53"
+      - "rm32_stm32/src/comparator.rs:28-52"
+      - "rm32_stm32/src/phase.rs:111-148"
+
+  - category: one_sided_rm32
+    title: "Production protocol/configuration breadth"
+    claim: "rm32 structurally includes EEPROM persistence, DShot/servo/CRSF/EDT inputs, bidirectional telemetry, sine/brake modes, and three PID loops beyond the minz AM32 clone's declared UART-duty factory subset."
+    evidence:
+      - "minz/examples/am32_clone.rs:5-9"
+      - "minz/core/src/am32_control.rs:376-378"
+      - "rm32/src/config.rs:17-78"
+      - "rm32_stm32/src/isr.rs:76-87"
+      - "rm32/src/control/state.rs:198-213"
+      - "rm32/src/system.rs:92-133"
+
+  - category: one_sided_minz
+    title: "Experimental closed-loop instrumentation stack"
+    claim: "minz motor_tester2 exposes interactive frequency/amplitude control, waveform switching, comparator phase/hysteresis/edge experiments, window/ZC diagnostics, and a bench guard stack as a separate firmware personality."
+    evidence:
+      - "minz/examples/motor_tester2.rs:20-48"
+      - "minz/examples/motor_tester2.rs:4679-4801"
+      - "minz/core/src/lib.rs:23-39 (blackbox/drive/guards/window/zc module surface)"
+
+  - category: one_sided_rm32
+    title: "Canonical process black-box harness"
+    claim: "rm32 checks a firmware-style pipeline through rm32_harness and pytest vectors, using SystemTick shared with firmware."
+    evidence:
+      - "rm32/src/system.rs:1-6"
+      - "rm32/src/bin/harness.rs:463-475"
+      - "tests/blackbox/test_vectors.py:27-52"
+
+  - category: risk_or_reconciliation
+    title: "Same-board constants drift"
+    claim: "The same Vimdrones L431 hardware identity has separate configuration sources and currently different dead-time values (45 versus 60), so consolidation must not assume board settings are shared."
+    evidence:
+      - "minz/src/lib.rs:100-103"
+      - "rm32_stm32/boards/vimdrones_l431.yaml:1-4"

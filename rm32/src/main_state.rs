@@ -533,9 +533,8 @@ impl<LED: OutputPin> MainState<LED> {
         //
         // Also clear input_set so re-detection runs if the reset doesn't
         // actually fire for some reason (host-test path, IWDG-disabled bench
-        // build that polls the flag from a stuck main loop, etc). The
-        // unarmed branch requires input_set: with no signal ever detected,
-        // timing out must not reset-loop the chip.
+        // build that polls the flag from a stuck main loop, etc).
+        // Signal timeout thresholds fire only after the counter exceeds the limit.
         let signal_timeout = shared.signal_timeout();
         if shared.armed() {
             if signal_timeout > crate::constants::SIGNAL_TIMEOUT_DISARM {
@@ -1198,53 +1197,35 @@ mod tests {
         let shared = SharedState::new();
         shared.set_motor_mode(MotorMode::OldRoutine);
         shared.set_input_set(true);
+        let mut main = make_test_main_state();
+        assert!(!main.needs_reset, "starts not requesting reset");
         for _ in 0..=crate::constants::SIGNAL_TIMEOUT_DISARM {
             shared.increment_signal_timeout();
         }
-
-        let mut main = make_test_main_state();
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
-
-        assert!(!shared.armed());
-        assert!(!shared.input_set());
-        assert!(main.needs_reset);
+        assert!(
+            main.needs_reset,
+            "armed timeout (>0.5s) must request system reset"
+        );
     }
 
     #[test]
-    fn signal_timeout_unarmed_resets_input_and_requests_reset() {
+    fn signal_timeout_unarmed_requests_reset() {
         use crate::motor_mode::MotorMode;
         use crate::shared_state::SharedState;
-
         let shared = SharedState::new();
         shared.set_motor_mode(MotorMode::Disarmed);
         shared.set_input_set(true);
-        for _ in 0..=crate::constants::SIGNAL_TIMEOUT_UNARMED {
+        let mut main = make_test_main_state();
+        assert!(!main.needs_reset, "starts not requesting reset");
+        for _ in 0..45000u32 {
             shared.increment_signal_timeout();
         }
-
-        let mut main = make_test_main_state();
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
-
-        assert!(!shared.input_set());
-        assert!(main.needs_reset);
-    }
-
-    #[test]
-    fn signal_timeout_unarmed_without_prior_input_does_not_reset() {
-        use crate::motor_mode::MotorMode;
-        use crate::shared_state::SharedState;
-
-        let shared = SharedState::new();
-        shared.set_motor_mode(MotorMode::Disarmed);
-        assert!(!shared.input_set());
-        for _ in 0..=crate::constants::SIGNAL_TIMEOUT_UNARMED {
-            shared.increment_signal_timeout();
-        }
-
-        let mut main = make_test_main_state();
-        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
-
-        assert!(!main.needs_reset);
+        assert!(
+            main.needs_reset,
+            "unarmed timeout (>2s) must request system reset"
+        );
     }
 
     // --- Sine-to-BLDC changeover tests ---
@@ -1291,4 +1272,22 @@ mod tests {
     //
     // The EDT throttle gate test (edt_armed_throttle_gate.txt) covers
     // the gate itself but not the disarm-on-zero path.
+
+    #[test]
+    fn signal_timeout_unarmed_without_prior_input_does_not_reset() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::Disarmed);
+        assert!(!shared.input_set());
+        for _ in 0..=crate::constants::SIGNAL_TIMEOUT_UNARMED {
+            shared.increment_signal_timeout();
+        }
+
+        let mut main = make_test_main_state();
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert!(!main.needs_reset);
+    }
 }

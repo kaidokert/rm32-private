@@ -1,0 +1,495 @@
+schema_version: 1
+artifact: "second-pass audit of rm32 structural inventory"
+audited_revision: "a916d44"
+inventory: "docs/structure-comparison/rm32-inventory.yaml"
+
+scope:
+  focus:
+    - "portability split"
+    - "HAL layering and dispatch"
+    - "state ownership and cross-context communication"
+    - "SystemTick and ISR orchestration"
+    - "MCU and board configuration"
+    - "host tests, black-box tests, and firmware cross-builds"
+    - "whether recorded gaps are present in the audited revision"
+  excluded:
+    - "minz source"
+    - "on-device behavioral validation"
+
+verdict_scale:
+  confirmed: "The source directly supports the material claim."
+  qualified: "The core claim is supported, but report wording needs a stated boundary or exception."
+  contradicted: "Current source provides direct counter-evidence to the claim as written."
+
+audited_claims:
+  - id: "two_crate_portability_split"
+    verdict: "confirmed"
+    rationale: >-
+      rm32 is a no_std algorithm/protocol/state crate, while rm32_stm32 is a
+      separate no_std platform crate with the no_main firmware binary. The root
+      workspace intentionally includes only rm32 and excludes rm32_stm32 from
+      normal workspace builds because the latter is target-dependent.
+    direct_evidence:
+      - "Cargo.toml:1-7"
+      - "rm32/src/lib.rs:1-40"
+      - "rm32_stm32/src/lib.rs:1-62"
+      - "rm32_stm32/src/bin/main.rs:1-7"
+      - "rm32_stm32/Cargo.toml:6-23"
+
+  - id: "broad_domain_hal_and_static_fast_path"
+    verdict: "confirmed"
+    rationale: >-
+      The upper HAL is expressed in ESC-domain traits, MotorHal bundles the
+      five timing-critical motor peripherals through associated types, and
+      ten_khz_tick is generic over SharedComm and MotorHal. MainState deliberately
+      uses dyn Adc and dyn TelemetryUart outside that fast path.
+    direct_evidence:
+      - "rm32/src/hal.rs:14-84"
+      - "rm32/src/hal.rs:86-152"
+      - "rm32/src/control/context.rs:12-35"
+      - "rm32/src/control/isr_logic.rs:1-19"
+      - "rm32/src/main_state.rs:263-269"
+      - "rm32_stm32/src/isr_handlers.rs:82-95"
+
+  - id: "two_level_hal_adaptation"
+    verdict: "confirmed"
+    rationale: >-
+      rm32_stm32 contains reusable generic drivers below rm32's domain HAL.
+      These drivers depend on small register-operation traits; family modules
+      provide the concrete PAC operations and type aliases.
+    direct_evidence:
+      - "rm32_stm32/src/adc_generic.rs:1-48"
+      - "rm32_stm32/src/adc_hal.rs:12-39"
+      - "rm32_stm32/src/capture_generic.rs:1-36"
+      - "rm32_stm32/src/capture_hal.rs:6-43"
+      - "rm32_stm32/src/comparator.rs:1-28"
+      - "rm32_stm32/src/comp_hal.rs:4-17"
+      - "rm32_stm32/src/timer.rs:14-61"
+
+  - id: "three_way_state_ownership"
+    verdict: "qualified"
+    rationale: >-
+      The dominant software-state partition is real: MainState is thread-mode
+      state, IsrState contains fast algorithm/protocol/HAL state, and SharedState
+      is the atomic communication surface. Main cannot name the private ISR_LOCAL.
+      This is not absolute hardware ownership, however: main writes TIM1 CCRs
+      directly for sine mode and changes NVIC priorities, and EepromConfig is
+      duplicated in MainState and IsrState rather than having a single owner.
+    direct_evidence:
+      - "rm32/src/main_state.rs:90-127"
+      - "rm32_stm32/src/isr.rs:19-101"
+      - "rm32_stm32/src/isr_handlers.rs:26-27,69-69"
+      - "rm32_stm32/src/bin/main.rs:236-239"
+      - "rm32_stm32/src/bin/main.rs:379-400"
+      - "rm32_stm32/src/bin/main.rs:424-431"
+
+  - id: "directional_atomic_mailbox"
+    verdict: "confirmed"
+    rationale: >-
+      MotorState, IsrTiming, and MainControl form the directional SharedComm
+      boundary, and SharedState implements it with portable atomics. Loads and
+      stores consistently use Acquire and Release constants; read-modify-write
+      operations use Release success with Acquire failure where applicable.
+      This is a mailbox of independently atomic fields, not a transactional
+      multi-field snapshot.
+    direct_evidence:
+      - "rm32/src/shared_comm.rs:30-94"
+      - "rm32/src/shared_comm.rs:94-223"
+      - "rm32/src/shared_state.rs:1-20"
+      - "rm32/src/shared_state.rs:230-264"
+      - "rm32/src/shared_state.rs:563-582"
+      - "rm32/src/shared_state.rs:592-800"
+
+  - id: "systemtick_shared_orchestration"
+    verdict: "qualified"
+    rationale: >-
+      SystemTick::run_tick fixes the shared order of input processing, an ISR
+      callback, one-shot synchronization, and MainState::tick, and both firmware
+      and harness invoke it. It is the canonical shared control-pipeline slice,
+      not the complete firmware main-loop orchestrator: sine stepping, direct
+      PWM writes, LEDs, EEPROM save, ESC-info response, reset suppression,
+      watchdog service, and IRQ-priority changes remain around run_tick in main.
+      SystemTick also accepts concrete SharedState rather than SharedComm.
+    direct_evidence:
+      - "rm32/src/system.rs:1-6"
+      - "rm32/src/system.rs:32-75"
+      - "rm32/src/system.rs:153-172"
+      - "rm32/src/bin/harness.rs:463-494"
+      - "rm32_stm32/src/bin/main.rs:379-407"
+      - "rm32_stm32/src/bin/main.rs:409-481"
+
+  - id: "portable_interrupt_algorithms_and_wrappers"
+    verdict: "confirmed"
+    rationale: >-
+      The motor tick, commutation-expiry, and zero-cross algorithms live in rm32.
+      Shared rm32_stm32 handlers assemble stored state and concrete HAL values,
+      while family vector modules retain acknowledgement, DMA, timer, EXTI, and
+      vector-name differences. 'Thin' should be understood as algorithmically
+      thin; some wrappers contain substantial register choreography.
+    direct_evidence:
+      - "rm32/src/control/isr_logic.rs:15-19"
+      - "rm32/src/control/isr_logic.rs:216-297"
+      - "rm32_stm32/src/isr_handlers.rs:71-146"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:8-112"
+      - "rm32_stm32/src/mcu_g071/interrupts.rs:6-58"
+
+  - id: "single_feature_gateway"
+    verdict: "qualified"
+    rationale: >-
+      mcu.rs is the active-family re-export gateway used by shared callers, and
+      InitResult plus active::chip exports reduce cfg spread. Exactly-one MCU
+      selection is an intention, not an enforced invariant: Cargo features are
+      additive, mcu.rs has four independent cfg re-exports, lib.rs repeats the
+      four module cfgs, and build.rs separately branches on cfg!(feature).
+    direct_evidence:
+      - "rm32_stm32/Cargo.toml:15-19,38-43"
+      - "rm32_stm32/src/lib.rs:23-62"
+      - "rm32_stm32/src/mcu.rs:22-41"
+      - "rm32_stm32/src/init.rs:9-23"
+      - "rm32_stm32/build.rs:219-230"
+
+  - id: "board_data_is_build_generated"
+    verdict: "confirmed"
+    rationale: >-
+      Fourteen board YAML files provide PCB data. build.rs chooses BOARD or a
+      feature-based default, parses the schema, resolves family-specific BEMF
+      encodings, and emits one BoardConfig constant included by firmware main.
+    direct_evidence:
+      - "rm32_stm32/build.rs:47-85"
+      - "rm32_stm32/build.rs:114-206"
+      - "rm32_stm32/build.rs:210-309"
+      - "rm32_stm32/src/bin/main.rs:28-30"
+      - "rm32_stm32/boards/ (14 YAML files observed)"
+
+  - id: "timing_domains_are_explicit"
+    verdict: "qualified"
+    rationale: >-
+      The domains are structurally explicit: TIM6 runs the nominal 20 kHz fast
+      path; commutation, comparator, and capture are asynchronous; main spins;
+      and TIM6 increments the slow-dispatch counter. The report must call the
+      slow block nominal rather than exact 1 kHz: PID_LOOP_DIVIDER is 20 but the
+      check is strictly greater-than, so reset occurs after 21 observed increments
+      (about 952.4 Hz at exactly 20 kHz), subject also to main-loop observation.
+    direct_evidence:
+      - "rm32/src/control/isr_logic.rs:15-26"
+      - "rm32/src/constants.rs:28-31"
+      - "rm32/src/shared_state.rs:230-243"
+      - "rm32/src/main_state.rs:409-425"
+      - "rm32_stm32/src/isr_handlers.rs:71-72,105-149"
+      - "rm32_stm32/src/bin/main.rs:273-277,474-481"
+
+  - id: "host_unit_and_harness_test_seams"
+    verdict: "qualified"
+    rationale: >-
+      The core has broad host unit coverage and a mock-HAL process harness that
+      executes run_tick and ten_khz_tick. The audit reran 253 unit tests with no
+      failures. The current black-box vector suite did not fully pass locally:
+      temperature_limit failed because duty_cycle_maximum remained 2000 after
+      tick 2; the other 77 tests passed. The structural seam exists, but a report
+      must not imply the current vector suite is green without CI evidence.
+    direct_evidence:
+      - "rm32/src/control/tests.rs:123-364"
+      - "rm32/src/system.rs:181-230"
+      - "rm32/src/bin/harness.rs:30-181,463-494"
+      - "tests/blackbox/harness.py:144-263"
+      - "tests/blackbox/test_vectors.py:27-52,57-89"
+      - ".github/workflows/ci.yml:28-37,72-90"
+
+  - id: "four_target_cross_build_and_runtime_boundary"
+    verdict: "confirmed"
+    rationale: >-
+      CI defines G071/F051 on thumbv6m and L431/G431 on thumbv7em-none-eabihf.
+      The audit successfully reran all four exact release cross-build shapes.
+      No rm32_stm32 source test modules or CI on-device/emulator execution were
+      found, so platform runtime behavior remains outside automated evidence.
+    direct_evidence:
+      - ".github/workflows/ci.yml:39-70"
+      - "rm32_stm32/Cargo.toml:38-43"
+      - "search: no #[test] or #[cfg(test)] under rm32_stm32 excluding target/"
+
+  - id: "feature_board_consistency_not_enforced"
+    verdict: "confirmed"
+    rationale: >-
+      BOARD is accepted independently of the selected feature. build.rs computes
+      _expected_feature but never compares it with enabled features; its comment
+      says consistency is validated, but no validation exists in current code.
+      Because generated BEMF values are plain u32 fields, some mismatches may
+      compile and become incorrect hardware configuration rather than a useful
+      compile failure.
+    direct_evidence:
+      - "rm32_stm32/build.rs:214-245"
+      - "rm32_stm32/build.rs:311-315"
+      - "rm32/src/board.rs:7-16,62-69"
+
+  - id: "comparator_ack_family_gap"
+    verdict: "confirmed"
+    rationale: >-
+      This is a current platform gap, not merely historical commentary. The core
+      can return from filtering before mask/ack; L431 clears and masks EXTI before
+      delegation, while F051, G071, and G431 comparator vectors delegate directly.
+    direct_evidence:
+      - "rm32/src/control/isr_logic.rs:268-297"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-49"
+      - "rm32_stm32/src/mcu_f051/interrupts.rs:21-24"
+      - "rm32_stm32/src/mcu_g071/interrupts.rs:18-20"
+      - "rm32_stm32/src/mcu_g431/interrupts.rs:26-28"
+
+  - id: "split_config_persistence_bug"
+    verdict: "confirmed"
+    rationale: >-
+      This is current and arises from duplicated configuration ownership. DShot
+      command processing mutates state.config in ISR context and raises the save
+      flag, but main writes main_state.config; the firmware explicitly records
+      the missing publication step as TODO.
+    direct_evidence:
+      - "rm32_stm32/src/isr_handlers.rs:276-297,323-323"
+      - "rm32_stm32/src/bin/main.rs:236-239"
+      - "rm32_stm32/src/bin/main.rs:433-440"
+
+  - id: "signal_timeout_reset_suppressed"
+    verdict: "confirmed"
+    rationale: >-
+      Portable logic still requests a reset, but firmware clears needs_reset and
+      logs while sys.reset remains commented out for bench debugging. This is a
+      current integration policy divergence, not an architectural requirement.
+    direct_evidence:
+      - "rm32/src/main_state.rs:363-385"
+      - "rm32_stm32/src/bin/main.rs:451-465"
+
+  - id: "approximate_consumed_current_clock"
+    verdict: "confirmed"
+    rationale: >-
+      The counter advances once per free-running main-loop iteration and integrates
+      after 20,000 iterations, while comments acknowledge variable main rate. This
+      is a current functional timing approximation, not a portability-boundary trait.
+    direct_evidence:
+      - "rm32/src/main_state.rs:518-525"
+      - "rm32_stm32/src/bin/main.rs:474-481"
+
+  - id: "isr_cell_priority_invariant"
+    verdict: "contradicted"
+    rationale: >-
+      The inventory presents equal-priority access as a conditional future hazard,
+      but current L431 configuration already violates it. IsrCell::get returns an
+      &mut TargetIsrState from a shared UnsafeCell and asserts that every accessing
+      ISR is equal priority. L431 assigns COMP/TIM16 priority 0, DMA priority 1,
+      EXTI priority 2, and TIM6 priority 3, explicitly to permit preemption; all
+      corresponding shared handlers call ISR_LOCAL.get. Dynamic priority swapping
+      changes COMP/TIM16 versus DMA but does not restore a single common priority.
+      Therefore the unsafe aliasing/exclusivity premise is false on the current
+      L431 path and should be reported as a present soundness issue.
+    direct_evidence:
+      - "rm32_stm32/src/isr_handlers.rs:12-39,46-69"
+      - "rm32_stm32/src/isr_handlers.rs:71-82,105-107,127-129,148-150,177-180"
+      - "rm32_stm32/src/mcu_l431/init.rs:219-249"
+      - "rm32_stm32/src/mcu_l431/chip.rs:45-73"
+
+gaps:
+  - id: "l431_isr_cell_soundness_violation"
+    severity: "critical"
+    status: "current"
+    nature: "structural concurrency/soundness"
+    summary: >-
+      The global mutable ISR aggregate is exposed as &mut from UnsafeCell while
+      L431 intentionally permits nested handlers at different priorities.
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:12-39,46-69"
+      - "rm32_stm32/src/mcu_l431/init.rs:219-249"
+
+  - id: "nominal_1khz_off_by_one"
+    severity: "medium"
+    status: "current"
+    nature: "functional timing"
+    summary: >-
+      With divider 20 and a strict > comparison, the slow block triggers after
+      21 increments, not 20; describe it as nominal 1 kHz until corrected or
+      justified against the reference semantics.
+    evidence:
+      - "rm32/src/constants.rs:28-31"
+      - "rm32/src/shared_state.rs:230-243"
+
+  - id: "board_feature_mismatch"
+    severity: "high"
+    status: "current"
+    nature: "build-configuration integrity"
+    summary: >-
+      Board MCU identity is parsed but not checked against Cargo MCU features,
+      permitting a selected PCB definition and compiled silicon adapter to diverge.
+    evidence:
+      - "rm32_stm32/build.rs:214-245,311-315"
+
+  - id: "exactly_one_mcu_feature_not_enforced"
+    severity: "medium"
+    status: "current"
+    nature: "build-configuration integrity"
+    summary: >-
+      The architecture assumes one active family, but there are no compile_error!
+      guards for zero or multiple explicit MCU features.
+    evidence:
+      - "rm32_stm32/Cargo.toml:38-43"
+      - "rm32_stm32/src/mcu.rs:25-32"
+
+  - id: "comparator_ack_incomplete_across_families"
+    severity: "high"
+    status: "current"
+    nature: "platform interrupt integration"
+    summary: >-
+      Only the L431 wrapper performs entry acknowledgement/masking required to
+      make the portable filter's early-return safe.
+    evidence:
+      - "rm32/src/control/isr_logic.rs:268-280"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-49"
+      - "rm32_stm32/src/mcu_f051/interrupts.rs:21-24"
+      - "rm32_stm32/src/mcu_g071/interrupts.rs:18-20"
+      - "rm32_stm32/src/mcu_g431/interrupts.rs:26-28"
+
+  - id: "split_config_save_path"
+    severity: "high"
+    status: "current"
+    nature: "cross-context state synchronization"
+    summary: >-
+      ISR-mutated settings are not published back to the MainState copy used for
+      flash persistence.
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:276-297"
+      - "rm32_stm32/src/bin/main.rs:433-440"
+
+  - id: "blackbox_temperature_limit_failure"
+    severity: "medium"
+    status: "current local reproduction"
+    nature: "verification/behavior mismatch"
+    summary: >-
+      Exact local black-box invocation produced 77 passes and one failure in
+      temperature_limit; the expected duty ceiling reduction had not occurred
+      by tick 2. This does not negate the harness seam, but it prevents claiming
+      a currently green vector suite from this audit.
+    evidence:
+      - "tests/blackbox/vectors/temperature_limit.txt"
+      - "tests/blackbox/harness.py:240-263"
+
+  - id: "platform_runtime_unverified"
+    severity: "medium"
+    status: "structural verification boundary"
+    nature: "test coverage"
+    summary: >-
+      Cross-builds validate type/code generation only; PAC sequences, IRQ
+      acknowledgement, nested-priority behavior, DMA relocation, and phase drive
+      have no automated runtime execution in the inspected tree.
+    evidence:
+      - ".github/workflows/ci.yml:39-70"
+      - "search: no test modules under rm32_stm32 excluding target/"
+
+corrections_for_report:
+  - id: "correct_isr_cell_risk"
+    action: "replace"
+    inventory_location: "limitations.isr_cell_priority_invariant"
+    replacement: >-
+      IsrCell's documented equal-priority safety invariant is already violated
+      by L431's intentional nested-priority configuration; report this as a
+      current critical soundness risk, not a future conditional limitation.
+
+  - id: "qualify_systemtick_scope"
+    action: "qualify"
+    inventory_location: "traits.portable_orchestration and flows.main_loop_pipeline"
+    replacement: >-
+      SystemTick is the shared core pipeline slice used by firmware and harness.
+      Firmware orchestration also contains sine/PWM, persistence, LED, reset,
+      watchdog, debug, and NVIC work outside SystemTick.
+
+  - id: "qualify_state_ownership"
+    action: "qualify"
+    inventory_location: "traits.three_way_state_ownership"
+    replacement: >-
+      Software state is predominantly split among MainState, IsrState, and
+      atomic SharedState; main does not touch ISR_LOCAL, but it directly controls
+      selected MMIO/NVIC operations and configuration is duplicated across contexts.
+
+  - id: "qualify_feature_gateway"
+    action: "qualify"
+    inventory_location: "traits.single_feature_gateway"
+    replacement: >-
+      mcu.rs centralizes active-family re-exports for shared consumers, while
+      lib.rs and build.rs retain additional feature fan-out and exactly-one MCU
+      selection is not enforced.
+
+  - id: "correct_1khz_wording"
+    action: "replace"
+    inventory_location: "traits.timing_domains_are_explicit and flows.main_loop_pipeline"
+    replacement: >-
+      TIM6 produces a nominal 1 kHz slow-dispatch counter; current > 20 reset
+      semantics yield one dispatch per 21 increments, approximately 952.4 Hz at
+      an exact 20 kHz source rate.
+
+  - id: "record_blackbox_result"
+    action: "add"
+    inventory_location: "tests_and_verification.shared_blackbox_harness"
+    replacement: >-
+      Preserve the structural harness claim, but record that the second-pass
+      local run had 77 passing tests and one temperature_limit failure.
+
+  - id: "retain_current_gap_labels"
+    action: "retain_and_classify"
+    inventory_location: "limitations"
+    replacement: >-
+      Comparator acknowledgement, split config persistence, reset suppression,
+      and approximate current integration are all present in revision a916d44.
+      The first two are cross-layer integration defects; reset suppression is
+      explicit bench policy; current integration is a functional timing approximation.
+
+source_validation:
+  revision:
+    command: "git rev-parse --short HEAD"
+    result: "a916d44"
+
+  host_unit_tests:
+    command: "cargo test -p rm32"
+    result: "passed: 253; failed: 0; ignored: 0; bin tests: 0; doc tests: 0"
+    notes:
+      - "four test-code warnings were emitted"
+      - "a non-fatal incremental-cache access warning was emitted"
+
+  firmware_cross_builds:
+    command_shape: >-
+      cargo build --manifest-path=rm32_stm32/Cargo.toml --release
+      --features <mcu> --no-default-features --target <target>
+    results:
+      - mcu: "stm32g071"
+        target: "thumbv6m-none-eabi"
+        result: "passed"
+      - mcu: "stm32f051"
+        target: "thumbv6m-none-eabi"
+        result: "passed"
+      - mcu: "stm32l431"
+        target: "thumbv7em-none-eabihf"
+        result: "passed"
+      - mcu: "stm32g431"
+        target: "thumbv7em-none-eabihf"
+        result: "passed"
+
+  blackbox_tests:
+    preparation: "cargo build --release -p rm32 --bin rm32_harness"
+    command: "AM32_HARNESS=target/release/rm32_harness.exe python -m pytest tests/blackbox/test_vectors.py -q"
+    result: "failed: 1; passed: 77"
+    failure: >-
+      temperature_limit at tick 2: duty_cycle_maximum=2000, expected
+      duty_cycle_maximum<2000
+    notes:
+      - "pytest also emitted cache-write warnings because .pytest_cache was not writable"
+
+  static_searches:
+    - command: "rg over feature cfgs in rm32_stm32/src and build.rs"
+      result: "41 feature-gated occurrences; active MCU selection is not the only cfg fan-out"
+    - command: "rg for #[test]/#[cfg(test)] under rm32_stm32 excluding target"
+      result: "no platform-crate test modules found"
+    - command: "enumerate rm32_stm32/boards/*.yaml"
+      result: "14 board YAML files"
+
+audit_conclusion: >-
+  The inventory's central architectural picture is supported: a portable core
+  crate, an STM32 adapter crate, a two-level HAL, generic fast-path algorithms,
+  explicit main/ISR/shared state surfaces, build-generated boards, and strong
+  host test seams. The consolidated report should nevertheless surface the
+  current L431 IsrCell soundness violation as the highest-severity correction,
+  narrow SystemTick and ownership wording, describe the slow dispatch as nominal
+  rather than exact 1 kHz, and avoid implying that MCU/board selection is enforced
+  or that the current black-box suite is fully green.

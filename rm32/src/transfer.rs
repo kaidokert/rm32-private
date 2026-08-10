@@ -56,7 +56,7 @@ pub enum TransferAction {
     ServoThrottle(u16),
     /// Servo calibration in progress (signal alive, no throttle value)
     ServoCalibrating,
-    /// Servo calibration complete; persist thresholds to EEPROM.
+    /// Servo calibration complete — persist thresholds to EEPROM
     ServoCalibrationDone {
         low_threshold: u8,
         high_threshold: u8,
@@ -69,7 +69,7 @@ pub enum TransferAction {
 /// The decoder tells the HAL how to arm the next DMA capture AND
 /// what timer resolution to use. Both feedback loops were lost in
 /// the original Rust port (see BRINGUP_NOTES_L431.md, LOST_PRESCALER.md).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CaptureConfig {
     /// DMA transfer count (number of edges to capture)
     pub ndtr: u32,
@@ -134,7 +134,7 @@ impl CaptureConfig {
     pub fn servo_detected(cpu_mhz: u8) -> Self {
         Self {
             ndtr: 2,
-            prescaler: Some(cpu_mhz.saturating_sub(1) as u16),
+            prescaler: Some(cpu_mhz as u16 - 1),
         }
     }
 
@@ -161,7 +161,7 @@ impl CaptureConfig {
 pub struct TransferActions {
     /// Primary action
     pub action: TransferAction,
-    /// Capture setup for the next DMA cycle.
+    /// DMA + timer config for next capture cycle
     pub next_capture: CaptureConfig,
     /// DShot frame timing update (from unarmed averaging)
     pub frametime: Option<(u16, u16)>,
@@ -190,7 +190,6 @@ impl TransferState {
     /// `disable_stick_cal`: config disable_stick_calibration flag
     /// `zero_input_count`: current zero input counter
     /// `frametime_low/high`: current DShot frame timing bounds
-    /// `cpu_mhz`: MCU core/timer clock in MHz for capture prescaler selection
     #[allow(clippy::too_many_arguments)]
     pub fn process(
         &mut self,

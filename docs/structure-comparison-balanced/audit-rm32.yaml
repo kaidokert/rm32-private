@@ -1,0 +1,260 @@
+schema_version: 1
+audit:
+  target: docs/structure-comparison-balanced/rm32-modules.yaml
+  basis: independent current-working-tree review; historical comparison documents excluded
+  verdict: pass_with_corrections
+  summary: >-
+    The inventory is exhaustive and structurally valid. Its main architecture and
+    wiring model are supported, but one module wiring classification, two
+    side-only capability statements, one risk severity, and several counterpart
+    explanations need correction or qualification during consolidation.
+
+coverage_audit:
+  verdict: pass
+  independently_generated_scope_count: 211
+  inventory_module_count: 211
+  unique_inventory_path_count: 211
+  missing_paths: []
+  unexpected_paths: []
+  duplicate_paths: []
+  groups:
+    rm32/src/**/*.rs: 41
+    rm32_stm32/src/**/*.rs: 75
+    rm32_stm32/examples/**/*.rs: 2
+    rm32_stm32/boards/**/*.yaml: 14
+    tests/blackbox/**/*.py: 2
+    tests/blackbox/vectors/**/*.txt: 72
+    explicit_manifests_build_and_link_files: 5
+  explicit_files:
+    - Cargo.toml
+    - rm32/Cargo.toml
+    - rm32_stm32/Cargo.toml
+    - rm32_stm32/build.rs
+    - rm32_stm32/memory.x
+  proof: >-
+    A fresh recursive enumeration of the six glob groups plus the five explicit
+    files exactly matched both coverage_manifest.expected_paths and every
+    modules[].path.
+
+schema_and_citation_audit:
+  verdict: pass_with_evidence_strength_note
+  module_entries_with_required_fields: 211
+  invalid_enum_values: []
+  inconsistent_null_counterparts: []
+  evidence_references_checked: 592
+  missing_evidence_files: []
+  out_of_range_line_anchors: []
+  note: >-
+    All anchors resolve, but definition-only anchors do not by themselves prove
+    active wiring. Consolidation should cite both the implementation and a
+    firmware call site for optional or disputed wiring claims.
+
+wiring_audit:
+  verdict: pass_with_one_reclassification_and_qualifications
+  confirmed_classes:
+    test_only:
+      verdict: pass
+      detail: >-
+        The process harness, Python runner, all 72 vector files, bemf.rs,
+        control/shared_impl.rs, and control/tests.rs are correctly separated
+        from target firmware.
+      evidence:
+        - rm32/src/bemf.rs:1
+        - rm32/src/control/shared_impl.rs:1
+        - tests/blackbox/test_vectors.py:27
+    library_only:
+      verdict: pass
+      paths:
+        - rm32/src/brushed.rs
+        - rm32/src/fixed_mode.rs
+        - rm32_stm32/src/stub.rs
+      detail: Their production symbols have no non-test consumer in the current tree.
+      evidence:
+        - rm32/src/brushed.rs:43
+        - rm32/src/fixed_mode.rs:10
+        - rm32_stm32/src/stub.rs:5
+    debug_only:
+      verdict: pass
+      detail: >-
+        The two examples, L431 bring-up bypass, debug UART, and decoded-frame
+        history are explicitly example- or feature-gated.
+      evidence:
+        - rm32_stm32/Cargo.toml:26
+        - rm32_stm32/Cargo.toml:48
+        - rm32_stm32/src/lib.rs:33
+        - rm32_stm32/src/mcu_l431/mod.rs:2
+    crsf_declared_unwired:
+      verdict: pass
+      detail: >-
+        The parser is instantiated and handle_crsf_byte exists, but no current
+        target interrupt wrapper invokes it; describe it as internally prepared
+        but not end-to-end wired.
+      evidence:
+        - rm32_stm32/src/isr.rs:78
+        - rm32_stm32/src/isr_handlers.rs:369
+        - rm32_stm32/src/mcu_l431/interrupts.rs:1
+    dronecan_manifest_only:
+      verdict: pass
+      evidence:
+        - rm32/Cargo.toml:10
+        - rm32/Cargo.toml:21
+  corrections:
+    - path: rm32/src/ntc.rs
+      current: active_optional
+      corrected: declared_unwired
+      reason: >-
+        main_state has a conditional NTC call path, but BoardYaml defaults
+        use_ntc to false and none of the fourteen current board YAML files sets
+        it true. No selectable current board can execute the branch.
+      evidence:
+        - rm32/src/main_state.rs:432
+        - rm32_stm32/build.rs:69
+        - rm32/src/board.rs:85
+    - path: rm32/src/pid.rs
+      current: active_optional
+      corrected: active_optional
+      reason: >-
+        Keep the module classification because current-limit and stall PID paths
+        are firmware-reachable. Qualify the aggregate claim: speed-control PID
+        enablement is exposed by the host harness but is not enabled by current
+        firmware orchestration.
+      evidence:
+        - rm32/src/main_state.rs:258
+        - rm32/src/main_state.rs:474
+        - rm32/src/bin/harness.rs:675
+    - path: rm32/src/sine.rs
+      current: active_optional
+      corrected: active_optional
+      reason: >-
+        Keep the call-path classification, but current main forcibly clears
+        use_sine_start after loading EEPROM. It is present in firmware structure
+        yet boot-disabled in every current normal build.
+      evidence:
+        - rm32_stm32/src/bin/main.rs:209
+        - rm32_stm32/src/bin/main.rs:216
+        - rm32_stm32/src/bin/main.rs:379
+    - path: rm32/src/ws2812.rs
+      current: active_optional
+      corrected: active_optional
+      reason: >-
+        The optional classification is supported: one current board enables
+        has_led and main gates status writes on that field.
+      evidence:
+        - rm32_stm32/boards/gen_64k_g071.yaml:11
+        - rm32_stm32/src/bin/main.rs:98
+        - rm32_stm32/src/bin/main.rs:414
+    - scope: target_family_active_entries
+      current: active
+      corrected: active_build_selectable
+      reason: >-
+        Do not imply simultaneous activation. Exactly one MCU family is selected
+        by Cargo feature, while exactly one board YAML is selected by BOARD or a
+        feature-derived default.
+      evidence:
+        - rm32_stm32/Cargo.toml:39
+        - rm32_stm32/src/mcu.rs:23
+        - rm32_stm32/build.rs:1
+
+counterpart_audit:
+  verdict: pass_with_wording_corrections
+  mapping_result: >-
+    No counterpart points to a deleted MinZ path. Direct and partial mappings
+    preserve the important PWM, comparator, timers, ADC, ISR, state, UART,
+    panic, and board-init overlaps.
+  corrections:
+    - paths:
+        - rm32_stm32/src/capture_generic.rs
+        - rm32_stm32/src/capture_hal.rs
+      replacement_why: MinZ has no timer/DMA pulse-capture input abstraction.
+    - paths:
+        - rm32_stm32/src/flash.rs
+      replacement_why: MinZ has no persistent flash-settings storage abstraction.
+    - paths:
+        - rm32_stm32/src/stub.rs
+      replacement_why: MinZ has no fallback stub ADC or telemetry adapters.
+    - paths:
+        - rm32_stm32/src/ws2812_hal.rs
+      replacement_why: MinZ has no addressable-status-LED adapter.
+    - path: rm32_stm32/src/dbg_frame_history.rs
+      qualification: >-
+        Keep the partial blackbox counterpart, but state that rm32 records
+        decoded input-frame snapshots whereas MinZ records control events; these
+        are analogous bounded diagnostics, not equivalent observability.
+      evidence:
+        - rm32_stm32/src/dbg_frame_history.rs:19
+        - minz/core/src/blackbox.rs:1
+
+side_only_capability_audit:
+  verdict: incomplete_but_easily_corrected
+  confirmed: >-
+    Multi-target boards, DShot/EDT, servo/MultiShot/RC-car input, persistent
+    settings, motor modes, product protections, KISS/ESC-info, tones/LED,
+    CRSF presence, DroneCAN manifest presence, and the process vector suite are
+    correctly identified as rm32-only or materially broader.
+  required_additions:
+    - capability: reset-cause decoding and boot reporting
+      presence: active
+      closest_minz: none
+      evidence:
+        - rm32/src/reset_cause.rs:1
+        - rm32_stm32/src/bin/main.rs:66
+    - capability: typed electrical and timing quantity wrappers
+      presence: active portable abstraction
+      closest_minz: MinZ uses raw AM32 integer units
+      evidence:
+        - rm32/src/units.rs:1
+        - rm32/src/main_state.rs:426
+  required_qualifications:
+    - capability: current/stall/speed PID, temperature and NTC limiting, LVC
+      correction: >-
+        Split the claim: current/stall PID, internal-temperature limiting, and
+        LVC are firmware-reachable; speed PID is harness-enabled only; external
+        NTC conversion is dormant for every current board.
+    - capability: persistent versioned EEPROM configuration and flash storage
+      correction: >-
+        Retain "active with persistence caveat" and explicitly say the save
+        command currently writes the foreground copy rather than ISR-mutated
+        fields.
+      evidence:
+        - rm32_stm32/src/bin/main.rs:433
+
+risk_audit:
+  verdict: risks_present_and_one_understated
+  corrections:
+    - issue: IsrCell cross-interrupt mutable aliasing on STM32L431
+      current_treatment: target-by-target audit needed
+      corrected_severity: critical_current_risk
+      reason: >-
+        This is not merely hypothetical on L431. All motor/input handlers obtain
+        &mut TargetIsrState from the same UnsafeCell, while configured priorities
+        explicitly allow COMP, commutation, DMA, and EXTI handlers to preempt
+        TIM6, and dynamic priority swapping preserves unequal priorities.
+        Preemption can therefore create overlapping mutable references.
+      evidence:
+        - rm32_stm32/src/isr_handlers.rs:16
+        - rm32_stm32/src/isr_handlers.rs:82
+        - rm32_stm32/src/isr_handlers.rs:107
+        - rm32_stm32/src/isr_handlers.rs:129
+        - rm32_stm32/src/isr_handlers.rs:150
+        - rm32_stm32/src/isr_handlers.rs:180
+        - rm32_stm32/src/mcu_l431/init.rs:219
+        - rm32_stm32/src/mcu_l431/init.rs:245
+        - rm32_stm32/src/mcu_l431/chip.rs:51
+  confirmed_inventory_risks:
+    - bench firmware disables watchdog, several protections/modes, and signal-timeout reset
+    - comparator pending acknowledgement is incomplete on F051, G071, and G431
+    - DShot settings persistence does not propagate ISR-mutated config fields
+    - BOARD and Cargo MCU feature consistency is not enforced
+    - generated ADC/board fields are emitted but not consumed
+    - host vectors do not prove hardware timing or concurrency
+    - Windows harness discovery is not extension-aware
+
+report_guidance:
+  - Lead with exact exhaustive coverage, but do not turn the 72 vector files into 72 report rows; summarize them by tested capability.
+  - Distinguish available target-family code from the single feature-selected family and single selected board.
+  - Use four presence labels consistently: firmware-wired, conditionally wired, library/debug/test only, and declared/manifest only.
+  - Call NTC dormant, CRSF end-to-end unwired, DroneCAN manifest-only, brushed/fixed library-only, and speed PID harness-only.
+  - Preserve rm32-only reset-cause and typed-units abstractions in the symmetric side-only section.
+  - Contrast rm32 decoded-frame history with MinZ control-event blackbox rather than presenting either as a direct replacement.
+  - Elevate the L431 IsrCell finding to a critical current soundness risk, not a generic uncertainty.
+  - Treat reported test/build outcomes as observed command results only if consolidation retains a command transcript; source anchors alone cannot prove a past run.

@@ -1,0 +1,3590 @@
+schema_version: 1
+review:
+  side: rm32
+  basis: fresh current-working-tree inspection; historical structure-comparison evidence excluded
+  generated_from_commit: working tree (including user changes)
+  scope_count: 211
+  presence_vs_wiring_rule: A file's existence proves declared capability only. Active wiring requires a call path from the selected firmware entry/vector.
+crate_package_topology:
+- component: workspace
+  description: Root workspace builds rm32 by default and explicitly excludes rm32_stm32 because firmware requires an ARM target.
+  evidence:
+  - Cargo.toml:1
+  - Cargo.toml:5
+- component: rm32
+  description: Portable no_std library plus rm32_harness host binary; optional DroneCAN dependency is declared but no source module consumes it.
+  evidence:
+  - rm32/Cargo.toml:1
+  - rm32/Cargo.toml:13
+  - rm32/Cargo.toml:18
+- component: rm32_stm32
+  description: Separate no_std firmware package with one feature-selected STM32 family (F051, G071, G431, or L431).
+  evidence:
+  - rm32_stm32/Cargo.toml:1
+  - rm32_stm32/Cargo.toml:41
+  - rm32_stm32/src/lib.rs:54
+runtime_interrupt_flows:
+- name: boot_and_foreground
+  flow: entry -> board/MCU init -> load config -> split MainState and IsrState -> install ISR state -> arm input DMA -> enable IRQ -> free-running
+    main loop -> sine tick + SystemTick::run_tick + persistence/info actions
+  evidence:
+  - rm32_stm32/src/bin/main.rs:35
+  - rm32_stm32/src/bin/main.rs:89
+  - rm32_stm32/src/bin/main.rs:137
+  - rm32_stm32/src/bin/main.rs:259
+  - rm32_stm32/src/bin/main.rs:273
+  - rm32_stm32/src/bin/main.rs:381
+  - rm32_stm32/src/bin/main.rs:407
+- name: periodic_control
+  flow: target TIM6 vector -> handle_tim6 -> MotorContext -> ten_khz_tick -> shared outputs/PWM
+  evidence:
+  - rm32_stm32/src/isr_handlers.rs:72
+  - rm32_stm32/src/isr_handlers.rs:95
+  - rm32/src/control/isr_logic.rs:19
+- name: zero_cross_commutation
+  flow: comparator EXTI -> handle_comp -> portable bemf_zero_cross -> arm one-shot commutation timer -> target TIM14/TIM16 vector -> handle_tim14
+    -> commutation_timer_expired
+  evidence:
+  - rm32_stm32/src/isr_handlers.rs:106
+  - rm32_stm32/src/isr_handlers.rs:128
+  - rm32/src/control/isr_logic.rs:217
+  - rm32/src/control/isr_logic.rs:281
+- name: input_and_bidir_telemetry
+  flow: timer/DMA capture -> DMA completion and software EXTI -> TransferState detection/decode -> DShot/servo actions -> optional GCR/EDT encode
+    -> DMA line turnaround
+  evidence:
+  - rm32_stm32/src/isr_handlers.rs:149
+  - rm32_stm32/src/isr_handlers.rs:179
+  - rm32_stm32/src/isr_handlers.rs:223
+  - rm32_stm32/src/isr_handlers.rs:260
+- name: crsf_declared_not_end_to_end
+  flow: handle_crsf_byte can parse bytes into throttle, but no current target interrupt invokes it.
+  evidence:
+  - rm32_stm32/src/isr_handlers.rs:370
+  - rm32_stm32/src/mcu_g071/interrupts.rs:1
+  - rm32_stm32/src/mcu_l431/interrupts.rs:1
+state_ownership_and_cross_context_communication:
+- owner: ISR exclusive
+  state: Commutation, BEMF, duty, motor HAL, command processor, EDT scheduler, CRSF parser, transfer state, and ISR config copy.
+  evidence:
+  - rm32_stm32/src/isr.rs:71
+- owner: foreground exclusive
+  state: MainState owns measurements, PID/protection/config/timing; SystemTick owns foreground dispatch/input state.
+  evidence:
+  - rm32/src/main_state.rs:91
+  - rm32/src/system.rs:19
+- owner: cross-context
+  state: SharedState atomics implement directional MotorState, IsrTiming, MainControl, and SharedComm traits; prioritized IsrAction is the command
+    mailbox.
+  evidence:
+  - rm32/src/shared_comm.rs:17
+  - rm32/src/shared_comm.rs:30
+  - rm32/src/shared_state.rs:1
+- owner: ISR storage transfer
+  state: Boot places TargetIsrState behind an interrupt Mutex, then the first handler moves it to an UnsafeCell-backed ISR-local singleton.
+  evidence:
+  - rm32_stm32/src/isr.rs:100
+  - rm32_stm32/src/isr.rs:113
+  - rm32_stm32/src/isr_handlers.rs:36
+  - rm32_stm32/src/isr_handlers.rs:69
+hal_and_hardware_adapter_boundaries:
+- boundary: portable ESC HAL
+  description: rm32 defines motor PWM/comparator/phase/timers plus input capture, ADC, flash, telemetry, emergency-off, and system traits.
+  evidence:
+  - rm32/src/hal.rs:16
+  - rm32/src/hal.rs:76
+  - rm32/src/hal.rs:97
+  - rm32/src/hal.rs:143
+- boundary: generic STM32 adapters
+  description: rm32_stm32 composes raw peripheral traits into generic ADC, capture, comparator, flash, telemetry, timer, phase, and LED adapters.
+  evidence:
+  - rm32_stm32/src/adc_generic.rs:14
+  - rm32_stm32/src/capture_generic.rs:8
+  - rm32_stm32/src/comparator.rs:8
+  - rm32_stm32/src/phase.rs:28
+- boundary: target families
+  description: Each MCU family supplies chip constants and peripheral register adapters behind one feature-selected mcu gateway.
+  evidence:
+  - rm32_stm32/src/mcu.rs:7
+  - rm32_stm32/src/mcu.rs:24
+  - rm32_stm32/src/lib.rs:54
+configuration_and_target_selection:
+- layer: persistent settings
+  description: Versioned 192-byte EEPROM config is validated/migrated and derives runtime motor parameters.
+  evidence:
+  - rm32/src/config.rs:21
+  - rm32/src/config.rs:155
+  - rm32/src/config.rs:208
+- layer: board YAML
+  description: Fourteen board files choose MCU, dead time, sensing scales/channels, optional hardware traits, and BEMF pins.
+  evidence:
+  - rm32_stm32/boards/gen_64k_g071.yaml:1
+  - rm32_stm32/boards/neutron_l431.yaml:1
+  - rm32_stm32/boards/protondrive_g431.yaml:1
+- layer: build generation
+  description: BOARD selects YAML; build.rs validates MCU-specific comparator pin encodings and writes BoardConfig into OUT_DIR.
+  evidence:
+  - rm32_stm32/build.rs:1
+  - rm32_stm32/build.rs:197
+  - rm32_stm32/build.rs:241
+- layer: Cargo feature
+  description: The MCU feature still must match the YAML; build.rs only emits BOARD_MCU metadata and does not activate Cargo features.
+  evidence:
+  - rm32_stm32/build.rs:306
+  - rm32_stm32/Cargo.toml:41
+protocol_input_output_capabilities:
+- capability: DShot input
+  status: active
+  evidence:
+  - rm32/src/dshot.rs:46
+  - rm32_stm32/src/isr_handlers.rs:260
+- capability: bidirectional DShot eRPM/GCR and EDT
+  status: active_optional
+  evidence:
+  - rm32/src/dshot.rs:116
+  - rm32/src/edt.rs:26
+  - rm32_stm32/src/isr_handlers.rs:153
+- capability: servo PWM and MultiShot detection
+  status: active
+  evidence:
+  - rm32/src/signal.rs:16
+  - rm32/src/servo.rs:7
+  - rm32/src/transfer.rs:1
+- capability: CRSF
+  status: declared_unwired
+  evidence:
+  - rm32/src/crsf.rs:72
+  - rm32_stm32/src/isr_handlers.rs:370
+- capability: KISS telemetry and ESC-info
+  status: active
+  evidence:
+  - rm32/src/telemetry.rs:22
+  - rm32_stm32/src/bin/main.rs:443
+- capability: DroneCAN
+  status: manifest_only
+  evidence:
+  - rm32/Cargo.toml:10
+  - rm32/Cargo.toml:21
+safety_observability_serialization_and_tooling:
+- area: motor protections
+  description: Signal timeout, BEMF/stuck rotor, desync, low-voltage, firmware-reachable current/stall PID, and internal-temperature limiting
+    exist in portable logic; speed PID is harness-enabled only and external NTC is dormant for all current boards.
+  evidence:
+  - rm32/src/control/input.rs:60
+  - rm32/src/main_state.rs:291
+  - rm32/src/main_state.rs:474
+  - rm32/src/bin/harness.rs:675
+  - rm32/src/main_state.rs:432
+- area: hard fault response
+  description: Panic and HardFault force phases off through direct GPIO before logging.
+  evidence:
+  - rm32_stm32/src/panic.rs:21
+  - rm32_stm32/src/emergency.rs:12
+- area: observability
+  description: Reset-cause reporting, RTT/debug-UART loop metrics, atomic ISR counters, and optional decoded-frame history are wired; there is
+    no MinZ-style control-event black box.
+  evidence:
+  - rm32_stm32/src/bin/main.rs:63
+  - rm32_stm32/src/bin/main.rs:317
+  - rm32_stm32/src/dbg_frame_history.rs:19
+- area: serialization
+  description: EEPROM is byte-cast with bytemuck; DShot GCR, EDT, KISS telemetry, ESC-info, and WS2812 each have explicit encoders.
+  evidence:
+  - rm32/src/config.rs:18
+  - rm32/src/dshot.rs:116
+  - rm32/src/telemetry.rs:22
+  - rm32/src/ws2812.rs:1
+- area: host tooling
+  description: A process harness exposes configuration, ticking, state, EEPROM load, and GCR encoding to a Python vector DSL.
+  evidence:
+  - rm32/src/bin/harness.rs:745
+  - tests/blackbox/harness.py:144
+  - tests/blackbox/test_vectors.py:43
+host_tests_target_builds_and_runtime_verification_boundaries:
+- boundary: Rust unit/integration
+  description: Portable modules contain host tests; control integration tests execute the production isr_logic path.
+  evidence:
+  - rm32/src/control/tests.rs:1
+  - rm32/src/control/tests.rs:7
+- boundary: process black-box
+  description: Every .txt vector is auto-discovered and run against rm32_harness; no xfails are currently declared.
+  evidence:
+  - tests/blackbox/test_vectors.py:27
+  - tests/blackbox/test_vectors.py:40
+  - tests/blackbox/test_vectors.py:43
+- boundary: target compilation
+  description: Cargo features make four MCU code paths compilable, but a successful cross-build does not prove electrical behavior, ISR latency,
+    DMA timing, or board-pin correctness.
+  evidence:
+  - rm32_stm32/Cargo.toml:41
+  - rm32_stm32/src/mcu.rs:24
+- boundary: bench firmware current state
+  description: Current main explicitly disables the watchdog, clears several protections/modes for bench work, suppresses signal-timeout reset,
+    and logs heavily; those source facts limit production-safety claims.
+  evidence:
+  - rm32_stm32/src/bin/main.rs:123
+  - rm32_stm32/src/bin/main.rs:218
+  - rm32_stm32/src/bin/main.rs:317
+  - rm32_stm32/src/bin/main.rs:459
+- boundary: observed current host results
+  description: cargo test -p rm32 passed 253 tests. With AM32_HARNESS explicitly pointed to target/release/rm32_harness.exe, pytest passed 77
+    cases and failed temperature_limit because duty_cycle_maximum remained 2000.
+  evidence:
+  - tests/blackbox/vectors/temperature_limit.txt:1
+  - tests/blackbox/harness.py:21
+  - tests/blackbox/test_vectors.py:43
+modules:
+- path: Cargo.toml
+  layer: configuration
+  role: Workspace membership and exclusion topology.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/Cargo.toml
+    relationship: partial
+    why: Both are Cargo packages, but MinZ is excluded from the rm32 workspace.
+  evidence:
+  - Cargo.toml:1
+  - minz/Cargo.toml:1
+  confidence: high
+- path: rm32/Cargo.toml
+  layer: configuration
+  role: Portable core manifest, host harness target, and optional DroneCAN dependency.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/core/Cargo.toml
+    relationship: partial
+    why: Both define portable no_std cores; dependencies and feature surfaces differ.
+  evidence:
+  - rm32/Cargo.toml:1
+  - minz/core/Cargo.toml:1
+  confidence: high
+- path: rm32/src/bemf.rs
+  layer: test
+  role: Unit tests for the BemfState zero-cross filter; this file defines no production implementation.
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32.rs
+    relationship: direct
+    why: Both test comparator persistence and zero-cross qualification, but rm32 production logic lives in control/state.rs.
+  evidence:
+  - rm32/src/bemf.rs:1
+  - rm32/src/bemf.rs:8
+  - minz/core/src/am32.rs:1
+  confidence: high
+- path: rm32/src/bin/harness.rs
+  layer: test
+  role: Interactive host executable running production control logic against mock HALs.
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: Both host-test portable production logic; rm32 additionally exposes a process protocol for vectors.
+  evidence:
+  - rm32/src/bin/harness.rs:1
+  - rm32/src/bin/harness.rs:25
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: rm32/src/board.rs
+  layer: configuration
+  role: Typed compile-time board electrical and pin-routing configuration.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: MinZ initializes one L431/Vimdrones board; rm32 models a generated multi-board matrix.
+  evidence:
+  - rm32/src/board.rs:1
+  - rm32/src/board.rs:18
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32/src/brushed.rs
+  layer: portable_core
+  role: Two-channel brushed-motor direction and duty controller.
+  wiring: library_only
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ contains no brushed motor mode.
+  evidence:
+  - rm32/src/brushed.rs:1
+  - rm32/src/brushed.rs:10
+  confidence: high
+- path: rm32/src/commutation.rs
+  layer: portable_core
+  role: Six-step BLDC commutation state, direction, and interval history.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: direct
+    why: Both advance six-step commutation and track sector timing.
+  evidence:
+  - rm32/src/commutation.rs:1
+  - rm32/src/commutation.rs:4
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: rm32/src/config.rs
+  layer: configuration
+  role: 192-byte EEPROM schema, migrations, defaults, and derived motor configuration.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ clone uses fixed compile-time constants and has no persistent settings schema.
+  evidence:
+  - rm32/src/config.rs:1
+  - rm32/src/config.rs:8
+  confidence: high
+- path: rm32/src/constants.rs
+  layer: portable_core
+  role: Semantic control, protocol, safety, and timing constants.
+  wiring: active
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: minz/core/src/am32.rs
+    relationship: partial
+    why: Both define AM32-domain constants; rm32 covers many additional modes.
+  evidence:
+  - rm32/src/constants.rs:1
+  - rm32/src/constants.rs:8
+  - minz/core/src/am32.rs:1
+  confidence: high
+- path: rm32/src/control.rs
+  layer: portable_core
+  role: Control subsystem module boundary for ISR, input, state, and shared implementations.
+  wiring: active
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: direct
+    why: Both split portable AM32 control from hardware wiring.
+  evidence:
+  - rm32/src/control.rs:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: rm32/src/control/context.rs
+  layer: portable_core
+  role: Static-dispatch MotorContext bundling ISR state, shared communication, and HAL.
+  wiring: active
+  runtime_context: periodic ISR
+  counterpart:
+    path_or_concept: minz/core/src/am32_hal.rs
+    relationship: partial
+    why: Both bundle statically dispatched motor peripherals; ownership shapes differ.
+  evidence:
+  - rm32/src/control/context.rs:1
+  - rm32/src/control/context.rs:17
+  - minz/core/src/am32_hal.rs:1
+  confidence: high
+- path: rm32/src/control/input.rs
+  layer: portable_core
+  role: Raw-input mapping, bidirectional/RC-car behavior, stuck-rotor latch, and brake glue.
+  wiring: active
+  runtime_context: periodic ISR
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has only the fixed UART-duty/setInput subset, not rm32's protocol modes.
+  evidence:
+  - rm32/src/control/input.rs:1
+  - rm32/src/control/input.rs:20
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: rm32/src/control/isr_logic.rs
+  layer: portable_core
+  role: Portable 20 kHz, commutation-timer, and comparator ISR motor-control bodies.
+  wiring: active
+  runtime_context: periodic ISR
+  counterpart:
+    path_or_concept: minz/core/src/am32_isr.rs
+    relationship: direct
+    why: Both express the same three AM32 real-time control contexts.
+  evidence:
+  - rm32/src/control/isr_logic.rs:1
+  - rm32/src/control/isr_logic.rs:19
+  - minz/core/src/am32_isr.rs:1
+  confidence: high
+- path: rm32/src/control/shared_impl.rs
+  layer: test
+  role: Cell-backed SharedComm implementation for host control tests.
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_hal.rs
+    relationship: partial
+    why: Both support host mocks; rm32 also abstracts the cross-context mailbox.
+  evidence:
+  - rm32/src/control/shared_impl.rs:1
+  - rm32/src/control/shared_impl.rs:8
+  - minz/core/src/am32_hal.rs:1
+  confidence: high
+- path: rm32/src/control/state.rs
+  layer: portable_core
+  role: Decomposed BEMF, duty, PID, protection, measurement, and timing state.
+  wiring: active
+  runtime_context: periodic ISR
+  counterpart:
+    path_or_concept: minz/core/src/drive.rs
+    relationship: partial
+    why: Both cluster motor state, while rm32 owns substantially more product-mode state.
+  evidence:
+  - rm32/src/control/state.rs:1
+  - rm32/src/control/state.rs:10
+  - minz/core/src/drive.rs:1
+  confidence: high
+- path: rm32/src/control/tests.rs
+  layer: test
+  role: Portable control integration tests using the production ISR path.
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_isr.rs
+    relationship: partial
+    why: Both host-test production control arithmetic and ISR bodies.
+  evidence:
+  - rm32/src/control/tests.rs:1
+  - rm32/src/control/tests.rs:18
+  - minz/core/src/am32_isr.rs:1
+  confidence: high
+- path: rm32/src/crsf.rs
+  layer: protocol
+  role: CRSF byte parser, CRC, packed channels, and throttle conversion.
+  wiring: declared_unwired
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no CRSF; rm32 has a handler but no target UART IRQ calls it.
+  evidence:
+  - rm32/src/crsf.rs:1
+  - rm32/src/crsf.rs:15
+  confidence: high
+- path: rm32/src/current.rs
+  layer: portable_core
+  role: Windowed moving-average current filter.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/core/src/am32.rs
+    relationship: partial
+    why: MinZ has an overcurrent window helper, not rm32's normal current smoothing path.
+  evidence:
+  - rm32/src/current.rs:1
+  - rm32/src/current.rs:3
+  - minz/core/src/am32.rs:1
+  confidence: high
+- path: rm32/src/dshot.rs
+  layer: protocol
+  role: DShot frame decoding plus bidirectional GCR/eRPM telemetry encoding.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ accepts a bench UART duty protocol and has no DShot decoder.
+  evidence:
+  - rm32/src/dshot.rs:1
+  - rm32/src/dshot.rs:8
+  confidence: high
+- path: rm32/src/dshot_commands.rs
+  layer: protocol
+  role: Repeated-command qualification and DShot command side effects.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no DShot command plane.
+  evidence:
+  - rm32/src/dshot_commands.rs:1
+  - rm32/src/dshot_commands.rs:8
+  confidence: high
+- path: rm32/src/edt.rs
+  layer: protocol
+  role: Extended DShot Telemetry scheduler and current/voltage/temperature frames.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no EDT scheduler.
+  evidence:
+  - rm32/src/edt.rs:1
+  - rm32/src/edt.rs:13
+  confidence: high
+- path: rm32/src/filter.rs
+  layer: portable_core
+  role: Small fixed-point EWMA filter primitive.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/core/src/am32.rs
+    relationship: partial
+    why: Both smooth derived timing/measurement values but use different helpers.
+  evidence:
+  - rm32/src/filter.rs:1
+  - rm32/src/filter.rs:14
+  - minz/core/src/am32.rs:1
+  confidence: high
+- path: rm32/src/fixed_mode.rs
+  layer: portable_core
+  role: Fixed-duty and fixed-speed target conversion helpers.
+  wiring: library_only
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no fixed-mode API.
+  evidence:
+  - rm32/src/fixed_mode.rs:1
+  - rm32/src/fixed_mode.rs:10
+  confidence: high
+- path: rm32/src/functions.rs
+  layer: portable_core
+  role: AM32-compatible map and small arithmetic helpers.
+  wiring: active
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: minz/core/src/am32.rs
+    relationship: direct
+    why: Both carry AM32 mapping arithmetic.
+  evidence:
+  - rm32/src/functions.rs:1
+  - rm32/src/functions.rs:4
+  - minz/core/src/am32.rs:1
+  confidence: high
+- path: rm32/src/hal.rs
+  layer: portable_core
+  role: ESC-specific PWM, comparator, phase, timer, ADC, flash, input, telemetry, and system traits.
+  wiring: active
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: minz/core/src/am32_hal.rs
+    relationship: direct
+    why: Both use static-dispatch ESC HAL traits; rm32's interface is broader.
+  evidence:
+  - rm32/src/hal.rs:1
+  - rm32/src/hal.rs:16
+  - minz/core/src/am32_hal.rs:1
+  confidence: high
+- path: rm32/src/input_mapping.rs
+  layer: portable_core
+  role: DShot/servo bidirectional and RC-car throttle-direction state machines.
+  wiring: active
+  runtime_context: periodic ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ clone has no bidirectional or RC-car input modes.
+  evidence:
+  - rm32/src/input_mapping.rs:1
+  - rm32/src/input_mapping.rs:13
+  confidence: high
+- path: rm32/src/lib.rs
+  layer: portable_core
+  role: no_std crate root exposing rm32 control and product modules.
+  wiring: active
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: minz/core/src/lib.rs
+    relationship: partial
+    why: Both expose a portable no_std motor-control core.
+  evidence:
+  - rm32/src/lib.rs:1
+  - minz/core/src/lib.rs:1
+  confidence: high
+- path: rm32/src/main_state.rs
+  layer: firmware_orchestration
+  role: Foreground measurements, PID/protection, telemetry, desync, and configuration state.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/core/src/am32_loop.rs
+    relationship: partial
+    why: Both implement foreground AM32 bands; rm32 includes many additional protections and modes.
+  evidence:
+  - rm32/src/main_state.rs:1
+  - rm32/src/main_state.rs:18
+  - minz/core/src/am32_loop.rs:1
+  confidence: high
+- path: rm32/src/motor_mode.rs
+  layer: portable_core
+  role: Explicit motor-mode state machine and transition events.
+  wiring: active
+  runtime_context: periodic ISR
+  counterpart:
+    path_or_concept: minz/core/src/drive.rs
+    relationship: partial
+    why: MinZ uses atomic flags/cohesion clusters rather than a single enum state machine.
+  evidence:
+  - rm32/src/motor_mode.rs:1
+  - rm32/src/motor_mode.rs:11
+  - minz/core/src/drive.rs:1
+  confidence: high
+- path: rm32/src/ntc.rs
+  layer: portable_core
+  role: External NTC ADC-to-temperature lookup with a conditional MainState call path; no current board enables use_ntc.
+  wiring: declared_unwired
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no NTC conversion path.
+  evidence:
+  - rm32/src/ntc.rs:1
+  - rm32/src/ntc.rs:34
+  - rm32/src/main_state.rs:432
+  - rm32_stm32/build.rs:69
+  - rm32/src/board.rs:85
+  confidence: high
+- path: rm32/src/pid.rs
+  layer: portable_core
+  role: Generic integer PID controller used by firmware-reachable current-limit and stall loops; speed-loop enablement is harness-only.
+  wiring: active_optional
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ fixed clone has no current-limit, stall, or speed PID abstraction; rm32 firmware reaches current/stall paths while only the host
+      harness enables speed control.
+  evidence:
+  - rm32/src/pid.rs:1
+  - rm32/src/pid.rs:6
+  - rm32/src/main_state.rs:258
+  - rm32/src/main_state.rs:474
+  - rm32/src/bin/harness.rs:675
+  confidence: high
+- path: rm32/src/reset_cause.rs
+  layer: diagnostics
+  role: Portable reset-cause bitset and labels.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ does not decode and report reset causes.
+  evidence:
+  - rm32/src/reset_cause.rs:1
+  - rm32/src/reset_cause.rs:18
+  confidence: high
+- path: rm32/src/servo.rs
+  layer: protocol
+  role: Servo PWM calibration, mapping, rate checks, and bidirectional processing.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no pulse-width servo input.
+  evidence:
+  - rm32/src/servo.rs:1
+  - rm32/src/servo.rs:7
+  confidence: high
+- path: rm32/src/shared_comm.rs
+  layer: portable_core
+  role: Directional ISR/main communication traits and prioritized action mailbox.
+  wiring: active
+  runtime_context: periodic ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: partial
+    why: Both share atomic real-time state; rm32 formalizes directionality behind traits.
+  evidence:
+  - rm32/src/shared_comm.rs:1
+  - rm32/src/shared_comm.rs:21
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32/src/shared_state.rs
+  layer: portable_core
+  role: Atomic production SharedComm implementation plus debug counters.
+  wiring: active
+  runtime_context: periodic ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: partial
+    why: Both use atomics for ISR/main state; rm32 centralizes them in a typed mailbox.
+  evidence:
+  - rm32/src/shared_state.rs:1
+  - rm32/src/shared_state.rs:13
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32/src/signal.rs
+  layer: protocol
+  role: DMA pulse-shape protocol detection and servo/MultiShot conversion.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ does not auto-detect DShot, servo PWM, or MultiShot.
+  evidence:
+  - rm32/src/signal.rs:1
+  - rm32/src/signal.rs:7
+  confidence: high
+- path: rm32/src/sine.rs
+  layer: portable_core
+  role: Sinusoidal startup, gimbal stepping, and six-step changeover.
+  wiring: active_optional
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ clone implements only six-step BLDC.
+  evidence:
+  - rm32/src/sine.rs:1
+  - rm32/src/sine.rs:8
+  confidence: high
+- path: rm32/src/sounds.rs
+  layer: firmware_orchestration
+  role: Motor-phase startup and beacon tone generation.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no motor tone subsystem.
+  evidence:
+  - rm32/src/sounds.rs:1
+  - rm32/src/sounds.rs:10
+  confidence: high
+- path: rm32/src/system.rs
+  layer: firmware_orchestration
+  role: Shared foreground dispatcher for sine mode, input, watchdog-facing tick, and MainState.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/core/src/am32_loop.rs
+    relationship: partial
+    why: Both orchestrate foreground control bands; rm32 has additional product modes.
+  evidence:
+  - rm32/src/system.rs:1
+  - rm32/src/system.rs:19
+  - minz/core/src/am32_loop.rs:1
+  confidence: high
+- path: rm32/src/telemetry.rs
+  layer: protocol
+  role: KISS runtime telemetry and 49-byte ESC-info packet serialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/uart_tx.rs
+    relationship: partial
+    why: Both send UART diagnostics, but MinZ's wire data is bench-specific rather than KISS telemetry.
+  evidence:
+  - rm32/src/telemetry.rs:1
+  - rm32/src/telemetry.rs:8
+  - minz/src/uart_tx.rs:1
+  confidence: high
+- path: rm32/src/transfer.rs
+  layer: protocol
+  role: DMA capture state machine for protocol detection, DShot, servo, and bidirectional turnaround.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no pulse-capture transfer state machine.
+  evidence:
+  - rm32/src/transfer.rs:1
+  - rm32/src/transfer.rs:14
+  confidence: high
+- path: rm32/src/units.rs
+  layer: portable_core
+  role: Newtypes and conversions for voltage, current, temperature, and electrical timing.
+  wiring: active
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ uses raw AM32 integer units rather than typed quantities.
+  evidence:
+  - rm32/src/units.rs:1
+  - rm32/src/units.rs:9
+  confidence: high
+- path: rm32/src/ws2812.rs
+  layer: diagnostics
+  role: Bit-banged WS2812 status LED policy and encoding.
+  wiring: active_optional
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no addressable status LED.
+  evidence:
+  - rm32/src/ws2812.rs:1
+  - rm32/src/ws2812.rs:8
+  confidence: high
+- path: rm32_stm32/Cargo.toml
+  layer: configuration
+  role: Firmware manifest selecting one of four STM32 HAL families and debug features.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/Cargo.toml
+    relationship: partial
+    why: Both declare L431 firmware, while rm32 also selects F051/G071/G431.
+  evidence:
+  - rm32_stm32/Cargo.toml:1
+  - minz/Cargo.toml:1
+  confidence: high
+- path: rm32_stm32/boards/flycolor_g071.yaml
+  layer: configuration
+  role: Board profile for Flycolor G071 (stm32g071) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/flycolor_g071.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/gen_64k_g071.yaml
+  layer: configuration
+  role: Board profile for G071 64kESC (stm32g071) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/gen_64k_g071.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/iflight_12s_g071.yaml
+  layer: configuration
+  role: Board profile for iFlight 12S (stm32g071) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/iflight_12s_g071.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/iflight_f051.yaml
+  layer: configuration
+  role: Board profile for iFlight F051 (stm32f051) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/iflight_f051.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/mamba_f55_g071.yaml
+  layer: configuration
+  role: Board profile for Mamba F55 G071 (stm32g071) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/mamba_f55_g071.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/neutron_l431.yaml
+  layer: configuration
+  role: Board profile for L431 Neutron (stm32l431) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: MinZ has a fixed L431/Vimdrones-class board init, not this complete generated board profile.
+  evidence:
+  - rm32_stm32/boards/neutron_l431.yaml:1
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/boards/protondrive_g431.yaml
+  layer: configuration
+  role: Board profile for ProtonDrive (stm32g431) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/protondrive_g431.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/pwm_enable_g071.yaml
+  layer: configuration
+  role: Board profile for G071 PWM_EN (stm32g071) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/pwm_enable_g071.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/sequre_g431.yaml
+  layer: configuration
+  role: Board profile for SEQURE G431 (stm32g431) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/sequre_g431.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/siskin_f051.yaml
+  layer: configuration
+  role: Board profile for SISKIN PA2 (stm32f051) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/siskin_f051.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/tbs_12s_g071.yaml
+  layer: configuration
+  role: Board profile for TBS 12S G071 (stm32g071) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/tbs_12s_g071.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/tbs_4in1_g071.yaml
+  layer: configuration
+  role: Board profile for TBS 4N1 G071 (stm32g071) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/tbs_4in1_g071.yaml:1
+  confidence: high
+- path: rm32_stm32/boards/vimdrones_l431.yaml
+  layer: configuration
+  role: Board profile for VimDrones L4 (stm32l431) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: MinZ has a fixed L431/Vimdrones-class board init, not this complete generated board profile.
+  evidence:
+  - rm32_stm32/boards/vimdrones_l431.yaml:1
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/boards/wraith32v2_f051.yaml
+  layer: configuration
+  role: Board profile for Wraith32 V2 (stm32f051) including electrical scaling and BEMF routing.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ supports only its fixed L431 bench target, not this MCU/board.
+  evidence:
+  - rm32_stm32/boards/wraith32v2_f051.yaml:1
+  confidence: high
+- path: rm32_stm32/build.rs
+  layer: configuration
+  role: Board-YAML parser and generated BoardConfig/BEMF register mapping.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/build.rs
+    relationship: partial
+    why: Both perform build-time target setup; rm32 additionally generates a board matrix.
+  evidence:
+  - rm32_stm32/build.rs:1
+  - rm32_stm32/build.rs:14
+  - minz/build.rs:1
+  confidence: high
+- path: rm32_stm32/examples/bringup.rs
+  layer: diagnostics
+  role: Standalone L431 raw-register AM32-parity bring-up image for clock, GPIO, PWM, capture, DMA, UART, watchdog, and comparator snapshots.
+  wiring: debug_only
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: direct
+    why: Both instantiate the same L431/Vimdrones-class AM32 peripheral geometry; this example is a register-parity diagnostic, not normal firmware.
+  evidence:
+  - rm32_stm32/examples/bringup.rs:1
+  - rm32_stm32/examples/bringup.rs:40
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/examples/bringup_pac.rs
+  layer: diagnostics
+  role: Typed-PAC variant of the standalone L431 AM32 register-parity bring-up image.
+  wiring: debug_only
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: direct
+    why: Both configure the fixed L431 target; this example validates typed PAC encodings against the raw-register parity image.
+  evidence:
+  - rm32_stm32/examples/bringup_pac.rs:1
+  - rm32_stm32/examples/bringup_pac.rs:27
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/memory.x
+  layer: configuration
+  role: L431 bootloader-compatible flash, EEPROM boundary, and SRAM linker layout.
+  wiring: configuration_data
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/memory.x
+    relationship: direct
+    why: Both target the same L431 application/link memory geometry.
+  evidence:
+  - rm32_stm32/memory.x:1
+  - minz/memory.x:1
+  confidence: high
+- path: rm32_stm32/src/adc_generic.rs
+  layer: platform_adapter
+  role: Generic DMA-backed ADC adapter and temperature conversion.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/adc_sync.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/adc_generic.rs:1
+  - rm32_stm32/src/adc_generic.rs:14
+  - minz/src/adc_sync.rs:1
+  confidence: high
+- path: rm32_stm32/src/adc_hal.rs
+  layer: platform_adapter
+  role: ADC peripheral trait, calibration, and target-adapter macro.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/adc_sync.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/adc_hal.rs:1
+  - rm32_stm32/src/adc_hal.rs:12
+  - minz/src/adc_sync.rs:1
+  confidence: high
+- path: rm32_stm32/src/bin/main.rs
+  layer: firmware_orchestration
+  role: Firmware entry, initialization, state split, main loop, diagnostics, and persistence actions.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: direct
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/bin/main.rs:1
+  - rm32_stm32/src/bin/main.rs:35
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32_stm32/src/capture_generic.rs
+  layer: platform_adapter
+  role: Generic DMA/timer/GPIO input capture and bidirectional DShot turnaround.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no timer/DMA pulse-capture input abstraction.
+  evidence:
+  - rm32_stm32/src/capture_generic.rs:1
+  - rm32_stm32/src/capture_generic.rs:8
+  confidence: high
+- path: rm32_stm32/src/capture_hal.rs
+  layer: platform_adapter
+  role: Low-level DMA, timer, and input-pin traits for capture.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no timer/DMA pulse-capture input abstraction.
+  evidence:
+  - rm32_stm32/src/capture_hal.rs:1
+  - rm32_stm32/src/capture_hal.rs:6
+  confidence: high
+- path: rm32_stm32/src/comp_hal.rs
+  layer: platform_adapter
+  role: Low-level comparator and EXTI traits.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/comp_hal.rs:1
+  - rm32_stm32/src/comp_hal.rs:4
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/comparator.rs
+  layer: platform_adapter
+  role: Generic BEMF comparator implementing the portable comparator HAL.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/comparator.rs:1
+  - rm32_stm32/src/comparator.rs:8
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/dbg_frame_history.rs
+  layer: diagnostics
+  role: Feature-gated ring of recent decoded input-frame snapshots.
+  wiring: debug_only
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/core/src/blackbox.rs
+    relationship: partial
+    why: Both are bounded diagnostics, but rm32 stores decoded input-frame snapshots while MinZ records control events; they are analogous, not
+      equivalent observability.
+  evidence:
+  - rm32_stm32/src/dbg_frame_history.rs:1
+  - rm32_stm32/src/dbg_frame_history.rs:19
+  - minz/core/src/blackbox.rs:1
+  confidence: high
+- path: rm32_stm32/src/debug_uart.rs
+  layer: diagnostics
+  role: Feature-gated blocking plaintext USART1 debug writer.
+  wiring: debug_only
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/uart_tx.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/debug_uart.rs:1
+  - rm32_stm32/src/debug_uart.rs:23
+  - minz/src/uart_tx.rs:1
+  confidence: high
+- path: rm32_stm32/src/dma_buf.rs
+  layer: platform_adapter
+  role: Statically allocated UnsafeCell DMA buffer with explicit access contract.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/dma_buf.rs:1
+  - rm32_stm32/src/dma_buf.rs:23
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32_stm32/src/emergency.rs
+  layer: platform_adapter
+  role: Direct-register emergency all-FET-off implementation.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/emergency.rs:1
+  - rm32_stm32/src/emergency.rs:10
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: rm32_stm32/src/flash.rs
+  layer: platform_adapter
+  role: Generic flash erase/program adapter for persistent EEPROM bytes.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no persistent flash-settings storage abstraction.
+  evidence:
+  - rm32_stm32/src/flash.rs:1
+  - rm32_stm32/src/flash.rs:9
+  confidence: high
+- path: rm32_stm32/src/gpio_pin.rs
+  layer: platform_adapter
+  role: Type-level GPIO pin operations over raw port traits.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/tim1_motor_pwm.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/gpio_pin.rs:1
+  - rm32_stm32/src/gpio_pin.rs:11
+  - minz/src/tim1_motor_pwm.rs:1
+  confidence: high
+- path: rm32_stm32/src/gpio_regs.rs
+  layer: platform_adapter
+  role: MCU-family GPIO register traits and port declaration macros.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/tim1_motor_pwm.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/gpio_regs.rs:1
+  - rm32_stm32/src/gpio_regs.rs:12
+  - minz/src/tim1_motor_pwm.rs:1
+  confidence: high
+- path: rm32_stm32/src/init.rs
+  layer: firmware_orchestration
+  role: Target-selected init gateway and common InitResult hardware bundle.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: direct
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/init.rs:1
+  - rm32_stm32/src/init.rs:10
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/isr.rs
+  layer: firmware_orchestration
+  role: ISR-exclusive state/HAL ownership and global SharedState installation.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/isr.rs:1
+  - rm32_stm32/src/isr.rs:21
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32_stm32/src/isr_handlers.rs
+  layer: firmware_orchestration
+  role: Portable target wrappers for control, capture, DShot/EDT, and optional CRSF ISR bodies.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/isr_handlers.rs:1
+  - rm32_stm32/src/isr_handlers.rs:36
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32_stm32/src/lib.rs
+  layer: platform_adapter
+  role: no_std STM32 crate root and feature-selected module surface.
+  wiring: active
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: minz/src/lib.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/lib.rs:1
+  - minz/src/lib.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu.rs
+  layer: target_family
+  role: Feature-selected MCU gateway and ChipConfig constants.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/mcu.rs:1
+  - rm32_stm32/src/mcu.rs:7
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/adc.rs
+  layer: target_family
+  role: STM32F051 ADC register adapter and DMA setup.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/adc_sync.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/adc.rs:1
+  - rm32_stm32/src/mcu_f051/adc.rs:14
+  - minz/src/adc_sync.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/chip.rs
+  layer: target_family
+  role: STM32F051 Chip constants, concrete ISR HAL alias, clock gates, IRQ priorities, and PWM compare writes.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/chip.rs:1
+  - rm32_stm32/src/mcu_f051/chip.rs:6
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/comp_init.rs
+  layer: target_family
+  role: STM32F051 Comparator peripheral clock and analog-input initialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/comp_init.rs:1
+  - rm32_stm32/src/mcu_f051/comp_init.rs:11
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/comparator.rs
+  layer: target_family
+  role: STM32F051 Comparator/EXTI register adapter and board BEMF routing.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/comparator.rs:1
+  - rm32_stm32/src/mcu_f051/comparator.rs:6
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/flash.rs
+  layer: target_family
+  role: STM32F051 Flash register adapter for persistent configuration.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no equivalent product capability.
+  evidence:
+  - rm32_stm32/src/mcu_f051/flash.rs:1
+  - rm32_stm32/src/mcu_f051/flash.rs:12
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/init.rs
+  layer: target_family
+  role: STM32F051 Complete target peripheral and motor-HAL initialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/init.rs:1
+  - rm32_stm32/src/mcu_f051/init.rs:7
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/input_capture.rs
+  layer: target_family
+  role: STM32F051 Target DMA/timer/GPIO implementation for DShot/servo capture.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no equivalent product capability.
+  evidence:
+  - rm32_stm32/src/mcu_f051/input_capture.rs:1
+  - rm32_stm32/src/mcu_f051/input_capture.rs:8
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/interrupts.rs
+  layer: target_family
+  role: STM32F051 Concrete interrupt-vector trampolines and peripheral flag acknowledgement.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/interrupts.rs:1
+  - rm32_stm32/src/mcu_f051/interrupts.rs:7
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/mod.rs
+  layer: target_family
+  role: STM32F051 Target-family module index.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/lib.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/mod.rs:1
+  - minz/src/lib.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/pwm.rs
+  layer: target_family
+  role: STM32F051 Advanced-timer complementary PWM initialization and HAL adapter.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/tim1_motor_pwm.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/pwm.rs:1
+  - rm32_stm32/src/mcu_f051/pwm.rs:5
+  - minz/src/tim1_motor_pwm.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/system.rs
+  layer: target_family
+  role: STM32F051 Watchdog/reset/delay implementation and reset-cause decoding.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/iwdg.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/system.rs:1
+  - rm32_stm32/src/mcu_f051/system.rs:6
+  - minz/src/iwdg.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_f051/telemetry_uart.rs
+  layer: target_family
+  role: STM32F051 Target UART/DMA implementation for KISS telemetry.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/uart_tx.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_f051/telemetry_uart.rs:1
+  - rm32_stm32/src/mcu_f051/telemetry_uart.rs:9
+  - minz/src/uart_tx.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/adc.rs
+  layer: target_family
+  role: STM32G071 ADC register adapter and DMA setup.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/adc_sync.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/adc.rs:1
+  - rm32_stm32/src/mcu_g071/adc.rs:14
+  - minz/src/adc_sync.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/chip.rs
+  layer: target_family
+  role: STM32G071 Chip constants, concrete ISR HAL alias, clock gates, IRQ priorities, and PWM compare writes.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/chip.rs:1
+  - rm32_stm32/src/mcu_g071/chip.rs:6
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/comp_init.rs
+  layer: target_family
+  role: STM32G071 Comparator peripheral clock and analog-input initialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/comp_init.rs:1
+  - rm32_stm32/src/mcu_g071/comp_init.rs:12
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/comparator.rs
+  layer: target_family
+  role: STM32G071 Comparator/EXTI register adapter and board BEMF routing.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/comparator.rs:1
+  - rm32_stm32/src/mcu_g071/comparator.rs:6
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/flash.rs
+  layer: target_family
+  role: STM32G071 Flash register adapter for persistent configuration.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no equivalent product capability.
+  evidence:
+  - rm32_stm32/src/mcu_g071/flash.rs:1
+  - rm32_stm32/src/mcu_g071/flash.rs:12
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/init.rs
+  layer: target_family
+  role: STM32G071 Complete target peripheral and motor-HAL initialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/init.rs:1
+  - rm32_stm32/src/mcu_g071/init.rs:7
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/input_capture.rs
+  layer: target_family
+  role: STM32G071 Target DMA/timer/GPIO implementation for DShot/servo capture.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no equivalent product capability.
+  evidence:
+  - rm32_stm32/src/mcu_g071/input_capture.rs:1
+  - rm32_stm32/src/mcu_g071/input_capture.rs:8
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/interrupts.rs
+  layer: target_family
+  role: STM32G071 Concrete interrupt-vector trampolines and peripheral flag acknowledgement.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/interrupts.rs:1
+  - rm32_stm32/src/mcu_g071/interrupts.rs:6
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/mod.rs
+  layer: target_family
+  role: STM32G071 Target-family module index.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/lib.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/mod.rs:1
+  - minz/src/lib.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/pwm.rs
+  layer: target_family
+  role: STM32G071 Advanced-timer complementary PWM initialization and HAL adapter.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/tim1_motor_pwm.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/pwm.rs:1
+  - rm32_stm32/src/mcu_g071/pwm.rs:15
+  - minz/src/tim1_motor_pwm.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/system.rs
+  layer: target_family
+  role: STM32G071 Watchdog/reset/delay implementation and reset-cause decoding.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/iwdg.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/system.rs:1
+  - rm32_stm32/src/mcu_g071/system.rs:10
+  - minz/src/iwdg.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g071/telemetry_uart.rs
+  layer: target_family
+  role: STM32G071 Target UART/DMA implementation for KISS telemetry.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/uart_tx.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g071/telemetry_uart.rs:1
+  - rm32_stm32/src/mcu_g071/telemetry_uart.rs:12
+  - minz/src/uart_tx.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/adc.rs
+  layer: target_family
+  role: STM32G431 ADC register adapter and DMA setup.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/adc_sync.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/adc.rs:1
+  - rm32_stm32/src/mcu_g431/adc.rs:19
+  - minz/src/adc_sync.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/chip.rs
+  layer: target_family
+  role: STM32G431 Chip constants, concrete ISR HAL alias, clock gates, IRQ priorities, and PWM compare writes.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/chip.rs:1
+  - rm32_stm32/src/mcu_g431/chip.rs:6
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/comp_init.rs
+  layer: target_family
+  role: STM32G431 Comparator peripheral clock and analog-input initialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/comp_init.rs:1
+  - rm32_stm32/src/mcu_g431/comp_init.rs:11
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/comparator.rs
+  layer: target_family
+  role: STM32G431 Comparator/EXTI register adapter and board BEMF routing.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/comparator.rs:1
+  - rm32_stm32/src/mcu_g431/comparator.rs:6
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/flash.rs
+  layer: target_family
+  role: STM32G431 Flash register adapter for persistent configuration.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no equivalent product capability.
+  evidence:
+  - rm32_stm32/src/mcu_g431/flash.rs:1
+  - rm32_stm32/src/mcu_g431/flash.rs:12
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/init.rs
+  layer: target_family
+  role: STM32G431 Complete target peripheral and motor-HAL initialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/init.rs:1
+  - rm32_stm32/src/mcu_g431/init.rs:8
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/input_capture.rs
+  layer: target_family
+  role: STM32G431 Target DMA/timer/GPIO implementation for DShot/servo capture.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no equivalent product capability.
+  evidence:
+  - rm32_stm32/src/mcu_g431/input_capture.rs:1
+  - rm32_stm32/src/mcu_g431/input_capture.rs:8
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/interrupts.rs
+  layer: target_family
+  role: STM32G431 Concrete interrupt-vector trampolines and peripheral flag acknowledgement.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/interrupts.rs:1
+  - rm32_stm32/src/mcu_g431/interrupts.rs:8
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/mod.rs
+  layer: target_family
+  role: STM32G431 Target-family module index.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/lib.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/mod.rs:1
+  - minz/src/lib.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/pwm.rs
+  layer: target_family
+  role: STM32G431 Advanced-timer complementary PWM initialization and HAL adapter.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/tim1_motor_pwm.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/pwm.rs:1
+  - rm32_stm32/src/mcu_g431/pwm.rs:5
+  - minz/src/tim1_motor_pwm.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/system.rs
+  layer: target_family
+  role: STM32G431 Watchdog/reset/delay implementation and reset-cause decoding.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/iwdg.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/system.rs:1
+  - rm32_stm32/src/mcu_g431/system.rs:6
+  - minz/src/iwdg.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_g431/telemetry_uart.rs
+  layer: target_family
+  role: STM32G431 Target UART/DMA implementation for KISS telemetry.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/uart_tx.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_g431/telemetry_uart.rs:1
+  - rm32_stm32/src/mcu_g431/telemetry_uart.rs:9
+  - minz/src/uart_tx.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/adc.rs
+  layer: target_family
+  role: STM32L431 ADC register adapter and DMA setup.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/adc_sync.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/adc.rs:1
+  - rm32_stm32/src/mcu_l431/adc.rs:14
+  - minz/src/adc_sync.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/bringup.rs
+  layer: target_family
+  role: STM32L431 Feature-gated L431 AM32 register-parity bring-up loop.
+  wiring: debug_only
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/bringup.rs:1
+  - rm32_stm32/src/mcu_l431/bringup.rs:24
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/chip.rs
+  layer: target_family
+  role: STM32L431 Chip constants, concrete ISR HAL alias, clock gates, IRQ priorities, and PWM compare writes.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/chip.rs:1
+  - rm32_stm32/src/mcu_l431/chip.rs:6
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/comp_init.rs
+  layer: target_family
+  role: STM32L431 Comparator peripheral clock and analog-input initialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/comp_init.rs:1
+  - rm32_stm32/src/mcu_l431/comp_init.rs:16
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/comparator.rs
+  layer: target_family
+  role: STM32L431 Comparator/EXTI register adapter and board BEMF routing.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/comp2.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/comparator.rs:1
+  - rm32_stm32/src/mcu_l431/comparator.rs:6
+  - minz/src/comp2.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/flash.rs
+  layer: target_family
+  role: STM32L431 Flash register adapter for persistent configuration.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no equivalent product capability.
+  evidence:
+  - rm32_stm32/src/mcu_l431/flash.rs:1
+  - rm32_stm32/src/mcu_l431/flash.rs:12
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/init.rs
+  layer: target_family
+  role: STM32L431 Complete target peripheral and motor-HAL initialization.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/board_init.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/init.rs:1
+  - rm32_stm32/src/mcu_l431/init.rs:8
+  - minz/src/board_init.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/input_capture.rs
+  layer: target_family
+  role: STM32L431 Target DMA/timer/GPIO implementation for DShot/servo capture.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no equivalent product capability.
+  evidence:
+  - rm32_stm32/src/mcu_l431/input_capture.rs:1
+  - rm32_stm32/src/mcu_l431/input_capture.rs:8
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/interrupts.rs
+  layer: target_family
+  role: STM32L431 Concrete interrupt-vector trampolines and peripheral flag acknowledgement.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/examples/am32_clone.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/interrupts.rs:1
+  - rm32_stm32/src/mcu_l431/interrupts.rs:8
+  - minz/examples/am32_clone.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/mod.rs
+  layer: target_family
+  role: STM32L431 Target-family module index.
+  wiring: active
+  runtime_context: build time
+  counterpart:
+    path_or_concept: minz/src/lib.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/mod.rs:1
+  - minz/src/lib.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/pwm.rs
+  layer: target_family
+  role: STM32L431 Advanced-timer complementary PWM initialization and HAL adapter.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/tim1_motor_pwm.rs
+    relationship: direct
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/pwm.rs:1
+  - rm32_stm32/src/mcu_l431/pwm.rs:5
+  - minz/src/tim1_motor_pwm.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/system.rs
+  layer: target_family
+  role: STM32L431 Watchdog/reset/delay implementation and reset-cause decoding.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/iwdg.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/system.rs:1
+  - rm32_stm32/src/mcu_l431/system.rs:7
+  - minz/src/iwdg.rs:1
+  confidence: high
+- path: rm32_stm32/src/mcu_l431/telemetry_uart.rs
+  layer: target_family
+  role: STM32L431 Target UART/DMA implementation for KISS telemetry.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/uart_tx.rs
+    relationship: partial
+    why: This is rm32's per-MCU realization of the capability; MinZ is fixed to STM32L431.
+  evidence:
+  - rm32_stm32/src/mcu_l431/telemetry_uart.rs:1
+  - rm32_stm32/src/mcu_l431/telemetry_uart.rs:9
+  - minz/src/uart_tx.rs:1
+  confidence: high
+- path: rm32_stm32/src/panic.rs
+  layer: diagnostics
+  role: Panic/HardFault emergency-off, fault logging, and reset loop.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/panic.rs
+    relationship: direct
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/panic.rs:1
+  - rm32_stm32/src/panic.rs:21
+  - minz/src/panic.rs:1
+  confidence: high
+- path: rm32_stm32/src/phase.rs
+  layer: platform_adapter
+  role: Six-step GPIO phase driver with brake, bridge-enable, and pulse-output modes.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/tim1_motor_pwm.rs
+    relationship: direct
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/phase.rs:1
+  - rm32_stm32/src/phase.rs:17
+  - minz/src/tim1_motor_pwm.rs:1
+  confidence: high
+- path: rm32_stm32/src/regs.rs
+  layer: platform_adapter
+  role: Bounded peripheral-ready polling and InitError.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/spin.rs
+    relationship: direct
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/regs.rs:1
+  - rm32_stm32/src/regs.rs:5
+  - minz/src/spin.rs:1
+  confidence: high
+- path: rm32_stm32/src/stub.rs
+  layer: test
+  role: Stub ADC and telemetry HALs.
+  wiring: library_only
+  runtime_context: not applicable
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no fallback stub ADC or telemetry adapters.
+  evidence:
+  - rm32_stm32/src/stub.rs:1
+  - rm32_stm32/src/stub.rs:5
+  confidence: high
+- path: rm32_stm32/src/telem_hal.rs
+  layer: platform_adapter
+  role: Generic UART-DMA KISS telemetry adapter.
+  wiring: active
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: minz/src/uart_tx.rs
+    relationship: partial
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/telem_hal.rs:1
+  - rm32_stm32/src/telem_hal.rs:10
+  - minz/src/uart_tx.rs:1
+  confidence: high
+- path: rm32_stm32/src/timer.rs
+  layer: platform_adapter
+  role: Generic raw timer macros plus TIM2 interval and TIM14 commutation HALs.
+  wiring: active
+  runtime_context: event ISR
+  counterpart:
+    path_or_concept: minz/src/am32_timers.rs
+    relationship: direct
+    why: Both sides implement the named hardware/control boundary, with rm32 generalized across targets.
+  evidence:
+  - rm32_stm32/src/timer.rs:1
+  - rm32_stm32/src/timer.rs:18
+  - minz/src/am32_timers.rs:1
+  confidence: high
+- path: rm32_stm32/src/ws2812_hal.rs
+  layer: platform_adapter
+  role: GPIO-backed WS2812 output adapter.
+  wiring: active_optional
+  runtime_context: main/foreground
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no addressable-status-LED adapter.
+  evidence:
+  - rm32_stm32/src/ws2812_hal.rs:1
+  - rm32_stm32/src/ws2812_hal.rs:12
+  confidence: high
+- path: tests/blackbox/harness.py
+  layer: test
+  role: Subprocess driver and parser for the line-oriented rm32 host harness and vector DSL.
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ relies on Rust unit tests and has no process-level Python/vector harness.
+  evidence:
+  - tests/blackbox/harness.py:1
+  confidence: high
+- path: tests/blackbox/test_vectors.py
+  layer: test
+  role: Pytest discovery/parameterization of every black-box vector plus harness API sanity tests.
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ relies on Rust unit tests and has no process-level Python/vector harness.
+  evidence:
+  - tests/blackbox/test_vectors.py:1
+  confidence: high
+- path: tests/blackbox/vectors/active_brake_mode2.txt
+  layer: test
+  role: 'Black-box vector: Active brake on stop (mode 2)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/active_brake_mode2.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/arming_basic.txt
+  layer: test
+  role: 'Black-box vector: Basic arming sequence test'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/arming_basic.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/beacon_tones.txt
+  layer: test
+  role: 'Black-box vector: Beacon tones (DShot commands 2-5)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/beacon_tones.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/bemf_falling_edge.txt
+  layer: test
+  role: 'Black-box vector: Falling-edge BEMF zero-cross detection in old_routine'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/bemf_falling_edge.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/bemf_timeout.txt
+  layer: test
+  role: 'Black-box vector: BEMF timeout / stuck rotor protection'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/bemf_timeout.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/bemf_timeout_dynamic.txt
+  layer: test
+  role: 'Black-box vector: BEMF timeout dynamic threshold'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/bemf_timeout_dynamic.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/bidir_autodetect.txt
+  layer: test
+  role: 'Black-box vector: Bidirectional DShot auto-detection'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/bidir_autodetect.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/bidir_dshot.txt
+  layer: test
+  role: 'Black-box vector: Bidirectional DShot throttle'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/bidir_dshot.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/bidir_dshot_fault.txt
+  layer: test
+  role: 'Black-box vector: Bidirectional DShot stuck rotor fault'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/bidir_dshot_fault.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/bidir_dshot_rccar_fault.txt
+  layer: test
+  role: 'Black-box vector: Bidirectional DShot RC-car stuck rotor fault'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/bidir_dshot_rccar_fault.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/bidir_dshot_recovery.txt
+  layer: test
+  role: 'Black-box vector: Bidirectional DShot stuck rotor recovery'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/bidir_dshot_recovery.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/brake_modes.txt
+  layer: test
+  role: 'Black-box vector: Brake modes'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/brake_modes.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/calibration_jitter.txt
+  layer: test
+  role: 'Black-box vector: Calibration jitter rejection'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/calibration_jitter.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/dead_time_override.txt
+  layer: test
+  role: 'Black-box vector: Dead time override from driving_brake_strength'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/dead_time_override.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/desync_detection.txt
+  layer: test
+  role: 'Black-box vector: Desync detection and recovery'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/desync_detection.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/desync_recovery.txt
+  layer: test
+  role: 'Black-box vector: Desync recovery — zero_crosses reset, old_routine set, running cleared'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/desync_recovery.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/desync_recovery_bidir.txt
+  layer: test
+  role: 'Black-box vector: Desync detection with average_interval reset'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/desync_recovery_bidir.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/dshot_commands.txt
+  layer: test
+  role: 'Black-box vector: DShot commands'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/dshot_commands.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/dshot_commands_extended.txt
+  layer: test
+  role: 'Black-box vector: Extended DShot commands: save, EDT, programming mode'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/dshot_commands_extended.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/dshot_input.txt
+  layer: test
+  role: 'Black-box vector: DShot input via transfercomplete'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/dshot_input.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/dshot_telemetry.txt
+  layer: test
+  role: 'Black-box vector: DShot bidirectional telemetry path'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/dshot_telemetry.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/e_com_time_populated.txt
+  layer: test
+  role: 'Black-box vector: Verify e_com_time is computed from ISR commutation intervals'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/e_com_time_populated.txt:1
+  - minz/core/src/am32.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/edt_armed_throttle_gate.txt
+  layer: test
+  role: 'Black-box vector: EDT armed throttle gate'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/edt_armed_throttle_gate.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/edt_disarm_on_zero.txt
+  layer: test
+  role: 'Black-box vector: EDT disarm on zero throttle'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/edt_disarm_on_zero.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/edt_voltage_temp.txt
+  layer: test
+  role: 'Black-box vector: EDT voltage and temperature telemetry frames'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/edt_voltage_temp.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/eeprom_edt_arm.txt
+  layer: test
+  role: 'Black-box vector: EEPROM load with EDT arm input type'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/eeprom_edt_arm.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/eeprom_init_overrides.txt
+  layer: test
+  role: 'Black-box vector: EEPROM load triggers init overrides'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/eeprom_init_overrides.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/eeprom_limits_guard.txt
+  layer: test
+  role: 'Black-box vector: EEPROM load with invalid limits triggers guard clauses'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/eeprom_limits_guard.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/eeprom_load.txt
+  layer: test
+  role: 'Black-box vector: EEPROM load configuration'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/eeprom_load.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/eeprom_rc_car_init.txt
+  layer: test
+  role: 'Black-box vector: EEPROM load with RC car mode'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/eeprom_rc_car_init.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/gcr_encoding.txt
+  layer: test
+  role: 'Black-box vector: GCR/NRZI encoding test vectors for bidirectional DShot telemetry.'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/gcr_encoding.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/low_voltage_cutoff.txt
+  layer: test
+  role: 'Black-box vector: Low voltage cutoff (per-cell)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/low_voltage_cutoff.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/lvc_absolute_cutoff.txt
+  layer: test
+  role: 'Black-box vector: LVC mode 2 — absolute voltage cutoff'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/lvc_absolute_cutoff.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/lvc_recovery_inhibit.txt
+  layer: test
+  role: 'Black-box vector: LVC voltage recovery inhibit'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/lvc_recovery_inhibit.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/lvc_stepper_sine.txt
+  layer: test
+  role: 'Black-box vector: LVC threshold test'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/lvc_stepper_sine.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/motor_commutation.txt
+  layer: test
+  role: 'Black-box vector: Motor startup and BEMF commutation'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_isr.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/motor_commutation.txt:1
+  - minz/core/src/am32_isr.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/motor_restart.txt
+  layer: test
+  role: 'Black-box vector: Motor restart when !old_routine'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/motor_restart.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/pid_clamping.txt
+  layer: test
+  role: 'Black-box vector: PID integral clamping'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/pid_clamping.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/pid_loops.txt
+  layer: test
+  role: 'Black-box vector: PID control loops'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/pid_loops.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/protocol_reconfirm.txt
+  layer: test
+  role: 'Black-box vector: Protocol re-confirmation (second-frame validation)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/protocol_reconfirm.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/ramp_rate.txt
+  layer: test
+  role: 'Black-box vector: Ramp rate limiting'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_loop.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/ramp_rate.txt:1
+  - minz/core/src/am32_loop.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/rc_car_braking.txt
+  layer: test
+  role: 'Black-box vector: RC-car wrong-direction braking'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/rc_car_braking.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/rc_car_reverse.txt
+  layer: test
+  role: 'Black-box vector: RC car reverse mode (DShot, bidirectional)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/rc_car_reverse.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/rccar_reverse_preserves_zc.txt
+  layer: test
+  role: 'Black-box vector: RC-car reverse preserves zero_crosses (no commutation reset)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/rccar_reverse_preserves_zc.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/servo_bidir.txt
+  layer: test
+  role: 'Black-box vector: Servo bidirectional throttle mapping (non-RC-car)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/servo_bidir.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/servo_bidir_fault.txt
+  layer: test
+  role: 'Black-box vector: Servo bidirectional stuck rotor fault'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/servo_bidir_fault.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/servo_bidir_speed_gate.txt
+  layer: test
+  role: 'Black-box vector: Servo bidir: reversal blocked at high RPM (speed gate)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/servo_bidir_speed_gate.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/servo_calibration.txt
+  layer: test
+  role: 'Black-box vector: Servo PWM calibration sequence'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/servo_calibration.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/servo_input.txt
+  layer: test
+  role: 'Black-box vector: Servo PWM input path'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/servo_input.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/servo_rc_car_bidir.txt
+  layer: test
+  role: 'Black-box vector: Servo RC-car bidirectional: brake + return-to-center direction flip'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/servo_rc_car_bidir.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/servo_rccar_fault.txt
+  layer: test
+  role: 'Black-box vector: Servo RC-car bidirectional stuck rotor fault'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/servo_rccar_fault.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/servo_realign.txt
+  layer: test
+  role: 'Black-box vector: Servo DMA realignment (buffersize=3)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/servo_realign.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/signal_timeout.txt
+  layer: test
+  role: 'Black-box vector: Signal timeout test'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/signal_timeout.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/signal_timeout_armed.txt
+  layer: test
+  role: 'Black-box vector: Signal timeout — armed ESC disarms after 0.5s signal loss'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/signal_timeout_armed.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/signal_timeout_unarmed.txt
+  layer: test
+  role: 'Black-box vector: Signal timeout — unarmed ESC resets input after 2s signal loss'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/signal_timeout_unarmed.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/sine_brake_mode2.txt
+  layer: test
+  role: 'Black-box vector: Sine mode brake on stop — mode 2 (active brake)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/sine_brake_mode2.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/sine_brake_off.txt
+  layer: test
+  role: 'Black-box vector: Sine mode no brake (brake_on_stop=0)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/sine_brake_off.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/sine_brake_on_stop.txt
+  layer: test
+  role: 'Black-box vector: Sine mode brake on stop'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/sine_brake_on_stop.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/sine_changeover.txt
+  layer: test
+  role: 'Black-box vector: Sine-to-BLDC changeover'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/sine_changeover.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/sine_startup.txt
+  layer: test
+  role: 'Black-box vector: Sine startup mode'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/sine_startup.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/sine_stepping.txt
+  layer: test
+  role: 'Black-box vector: Sine mode — slow stepping'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/sine_stepping.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/slow_ramp.txt
+  layer: test
+  role: 'Black-box vector: Slow ramp mode (max_ramp < 10)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_loop.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/slow_ramp.txt:1
+  - minz/core/src/am32_loop.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/speed_control.txt
+  layer: test
+  role: 'Black-box vector: Speed control PID (stall_protection=1)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/speed_control.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/stuck_rotor.txt
+  layer: test
+  role: 'Black-box vector: Stuck rotor detection via interval timer timeout'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/stuck_rotor.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/stuck_rotor_rate.txt
+  layer: test
+  role: 'Black-box vector: Stuck rotor increment rate — regression test for interval timer reset'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/stuck_rotor_rate.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/telemetry.txt
+  layer: test
+  role: 'Black-box vector: Serial telemetry'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/telemetry.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/temperature_limit.txt
+  layer: test
+  role: 'Black-box vector: Temperature limiting'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/temperature_limit.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/throttle_passthrough.txt
+  layer: test
+  role: 'Black-box vector: Unidirectional throttle passthrough'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/throttle_passthrough.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/uni_brake_on_stop.txt
+  layer: test
+  role: 'Black-box vector: Unidirectional brake-on-stop (mode 1 with comp_pwm)'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: null
+    relationship: none
+    why: MinZ has no corresponding product mode or process-level vector.
+  evidence:
+  - tests/blackbox/vectors/uni_brake_on_stop.txt:1
+  confidence: high
+- path: tests/blackbox/vectors/variable_pwm.txt
+  layer: test
+  role: 'Black-box vector: Variable PWM mode 1'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: direct
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/variable_pwm.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/variable_pwm_mode2.txt
+  layer: test
+  role: 'Black-box vector: Variable PWM mode 2 — auto-frequency from average_interval'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/variable_pwm_mode2.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+- path: tests/blackbox/vectors/variable_pwm_modes.txt
+  layer: test
+  role: 'Black-box vector: Variable PWM all modes'
+  wiring: test_only
+  runtime_context: host only
+  counterpart:
+    path_or_concept: minz/core/src/am32_control.rs
+    relationship: partial
+    why: MinZ has portable tests for the closest AM32 control concept, but not this exact process vector.
+  evidence:
+  - tests/blackbox/vectors/variable_pwm_modes.txt:1
+  - minz/core/src/am32_control.rs:1
+  confidence: high
+side_only_capabilities:
+- capability: multi-MCU and fourteen-board target matrix
+  presence: active/build-selectable
+  evidence:
+  - rm32_stm32/Cargo.toml:41
+  - rm32_stm32/boards/gen_64k_g071.yaml:1
+  closest_minz: fixed STM32L431/Vimdrones bench target only
+- capability: DShot input, command plane, bidirectional GCR/eRPM, and EDT
+  presence: active/optional by runtime mode
+  evidence:
+  - rm32/src/dshot.rs:1
+  - rm32/src/dshot_commands.rs:1
+  - rm32/src/edt.rs:1
+  closest_minz: none
+- capability: servo PWM, MultiShot detection, calibration, bidirectional and RC-car mapping
+  presence: active
+  evidence:
+  - rm32/src/signal.rs:1
+  - rm32/src/servo.rs:1
+  - rm32/src/input_mapping.rs:1
+  closest_minz: none
+- capability: persistent versioned EEPROM configuration and flash storage
+  presence: 'firmware-wired load/save machinery with persistence caveat: save currently writes the foreground copy, not ISR-mutated fields'
+  evidence:
+  - rm32/src/config.rs:17
+  - rm32_stm32/src/flash.rs:1
+  - rm32_stm32/src/bin/main.rs:433
+  closest_minz: none
+- capability: sine/gimbal startup and brushed/fixed motor modes
+  presence: sine call path present but boot-disabled in current bench firmware; brushed/fixed library_only
+  evidence:
+  - rm32/src/sine.rs:47
+  - rm32/src/brushed.rs:43
+  - rm32/src/fixed_mode.rs:10
+  closest_minz: none
+- capability: current/stall PID, temperature limiting, LVC, plus dormant speed-PID and external-NTC paths
+  presence: current/stall PID, internal-temperature limiting, and LVC are firmware-reachable; speed PID is harness-enabled only; external NTC
+    is disabled by every current board
+  evidence:
+  - rm32/src/control/state.rs:203
+  - rm32/src/main_state.rs:474
+  - rm32/src/main_state.rs:543
+  - rm32/src/bin/harness.rs:675
+  - rm32/src/main_state.rs:432
+  closest_minz: MinZ has hard bench kills only, not modulating product protections
+- capability: KISS telemetry and ESC-info serialization
+  presence: active
+  evidence:
+  - rm32/src/telemetry.rs:22
+  - rm32/src/telemetry.rs:43
+  closest_minz: bench UART trace/info formats only
+- capability: motor tones and WS2812 status LED
+  presence: active_optional
+  evidence:
+  - rm32/src/sounds.rs:1
+  - rm32/src/ws2812.rs:1
+  closest_minz: none
+- capability: CRSF input
+  presence: declared_unwired
+  evidence:
+  - rm32/src/crsf.rs:1
+  - rm32_stm32/src/isr_handlers.rs:370
+  closest_minz: none
+- capability: DroneCAN feature
+  presence: manifest_only
+  evidence:
+  - rm32/Cargo.toml:10
+  - rm32/Cargo.toml:21
+  closest_minz: none
+- capability: process-driven executable black-box vector suite
+  presence: test_only
+  evidence:
+  - tests/blackbox/harness.py:144
+  - tests/blackbox/test_vectors.py:43
+  closest_minz: Rust host unit tests only
+- capability: reset-cause decoding and boot reporting
+  presence: active
+  evidence:
+  - rm32/src/reset_cause.rs:1
+  - rm32_stm32/src/bin/main.rs:66
+  closest_minz: none
+- capability: typed electrical and timing quantity wrappers
+  presence: active portable abstraction
+  evidence:
+  - rm32/src/units.rs:1
+  - rm32/src/main_state.rs:426
+  closest_minz: MinZ uses raw AM32 integer units
+limitations_and_uncertainty:
+- issue: Current firmware entry is bench-modified rather than production-safe.
+  impact: Source disables watchdog start, clears stuck/stall/bidirectional/sine/brake settings, suppresses signal-timeout reset, and emits frequent
+    diagnostics.
+  evidence:
+  - rm32_stm32/src/bin/main.rs:123
+  - rm32_stm32/src/bin/main.rs:218
+  - rm32_stm32/src/bin/main.rs:317
+  - rm32_stm32/src/bin/main.rs:459
+- issue: Comparator pending-bit handling is explicitly incomplete on F051/G071/G431.
+  impact: The portable ISR warns early return can cause an ISR storm and says only L431 currently acknowledges at wrapper entry.
+  evidence:
+  - rm32/src/control/isr_logic.rs:270
+  - rm32/src/control/isr_logic.rs:276
+- issue: 'Critical current soundness risk: IsrCell can create cross-interrupt mutable aliasing on STM32L431.'
+  severity: critical_current_risk
+  impact: All motor/input handlers obtain &mut TargetIsrState from one UnsafeCell, while L431 priorities explicitly permit COMP, commutation,
+    DMA, and EXTI handlers to preempt TIM6 and dynamic priority swapping preserves unequal priorities. Preemption can therefore overlap mutable
+    references, violating Rust aliasing requirements.
+  evidence:
+  - rm32_stm32/src/isr_handlers.rs:16
+  - rm32_stm32/src/isr_handlers.rs:82
+  - rm32_stm32/src/isr_handlers.rs:107
+  - rm32_stm32/src/isr_handlers.rs:129
+  - rm32_stm32/src/isr_handlers.rs:150
+  - rm32_stm32/src/isr_handlers.rs:180
+  - rm32_stm32/src/mcu_l431/init.rs:219
+  - rm32_stm32/src/mcu_l431/init.rs:245
+  - rm32_stm32/src/mcu_l431/chip.rs:51
+- issue: Save-settings command propagation is incomplete.
+  impact: Main acknowledges that ISR mutates its own config copy and changed fields are not published for correct persistence.
+  evidence:
+  - rm32_stm32/src/bin/main.rs:433
+- issue: CRSF and DroneCAN are presence-only.
+  impact: CRSF has parser/handler but no target RX-vector call; DroneCAN appears only as an optional dependency/feature.
+  evidence:
+  - rm32_stm32/src/isr_handlers.rs:370
+  - rm32/Cargo.toml:10
+  - rm32/Cargo.toml:21
+- issue: Board-feature consistency is not automatically enforced.
+  impact: build.rs computes expected feature only informationally; a mismatched BOARD path and Cargo feature can reach target-specific assumptions.
+  evidence:
+  - rm32_stm32/build.rs:306
+- issue: Host vectors abstract away hardware concurrency and timing.
+  impact: Mock HAL counters and synchronous ticks prove logic behavior, not DMA races, analog BEMF quality, interrupt latency, dead time, or actual
+    phase switching.
+  evidence:
+  - rm32/src/bin/harness.rs:25
+  - rm32/src/bin/harness.rs:187
+  - tests/blackbox/harness.py:40
+- issue: Target-family code was inventoried from source, not electrically exercised in this wave.
+  impact: Wiring classification means reachable in the selected feature path, not bench validation on all fourteen boards.
+  evidence:
+  - rm32_stm32/src/mcu.rs:24
+  - rm32_stm32/boards/flycolor_g071.yaml:1
+- issue: Several generated board fields are not consumed by current firmware.
+  impact: current_adc_channel, voltage_adc_channel, dual_adc, and custom_led are emitted into BoardConfig but have no source reads outside their
+    definitions; per-chip ADC code therefore does not honor those YAML values through BoardConfig.
+  evidence:
+  - rm32/src/board.rs:38
+  - rm32/src/board.rs:62
+  - rm32_stm32/build.rs:264
+  - rm32_stm32/build.rs:276
+  - rm32_stm32/src/mcu.rs:15
+- issue: Default black-box harness executable discovery is not Windows-extension aware.
+  impact: harness.py checks target/release/rm32_harness without .exe, then falls back to build/am32_harness; on Windows the suite needs AM32_HARNESS
+    set explicitly despite a successful Cargo build.
+  evidence:
+  - tests/blackbox/harness.py:21
+  - tests/blackbox/harness.py:24
+  - tests/blackbox/harness.py:27
+coverage_manifest:
+  definition: All current Rust files below rm32/src, rm32_stm32/src, and rm32_stm32/examples; every board YAML; root/rm32/rm32_stm32 manifests,
+    rm32_stm32 build/link scripts; Python black-box harness/runner; every vector text file.
+  expected_count: 211
+  inventoried_count: 211
+  expected_paths:
+  - Cargo.toml
+  - rm32/Cargo.toml
+  - rm32/src/bemf.rs
+  - rm32/src/bin/harness.rs
+  - rm32/src/board.rs
+  - rm32/src/brushed.rs
+  - rm32/src/commutation.rs
+  - rm32/src/config.rs
+  - rm32/src/constants.rs
+  - rm32/src/control.rs
+  - rm32/src/control/context.rs
+  - rm32/src/control/input.rs
+  - rm32/src/control/isr_logic.rs
+  - rm32/src/control/shared_impl.rs
+  - rm32/src/control/state.rs
+  - rm32/src/control/tests.rs
+  - rm32/src/crsf.rs
+  - rm32/src/current.rs
+  - rm32/src/dshot.rs
+  - rm32/src/dshot_commands.rs
+  - rm32/src/edt.rs
+  - rm32/src/filter.rs
+  - rm32/src/fixed_mode.rs
+  - rm32/src/functions.rs
+  - rm32/src/hal.rs
+  - rm32/src/input_mapping.rs
+  - rm32/src/lib.rs
+  - rm32/src/main_state.rs
+  - rm32/src/motor_mode.rs
+  - rm32/src/ntc.rs
+  - rm32/src/pid.rs
+  - rm32/src/reset_cause.rs
+  - rm32/src/servo.rs
+  - rm32/src/shared_comm.rs
+  - rm32/src/shared_state.rs
+  - rm32/src/signal.rs
+  - rm32/src/sine.rs
+  - rm32/src/sounds.rs
+  - rm32/src/system.rs
+  - rm32/src/telemetry.rs
+  - rm32/src/transfer.rs
+  - rm32/src/units.rs
+  - rm32/src/ws2812.rs
+  - rm32_stm32/Cargo.toml
+  - rm32_stm32/boards/flycolor_g071.yaml
+  - rm32_stm32/boards/gen_64k_g071.yaml
+  - rm32_stm32/boards/iflight_12s_g071.yaml
+  - rm32_stm32/boards/iflight_f051.yaml
+  - rm32_stm32/boards/mamba_f55_g071.yaml
+  - rm32_stm32/boards/neutron_l431.yaml
+  - rm32_stm32/boards/protondrive_g431.yaml
+  - rm32_stm32/boards/pwm_enable_g071.yaml
+  - rm32_stm32/boards/sequre_g431.yaml
+  - rm32_stm32/boards/siskin_f051.yaml
+  - rm32_stm32/boards/tbs_12s_g071.yaml
+  - rm32_stm32/boards/tbs_4in1_g071.yaml
+  - rm32_stm32/boards/vimdrones_l431.yaml
+  - rm32_stm32/boards/wraith32v2_f051.yaml
+  - rm32_stm32/build.rs
+  - rm32_stm32/examples/bringup.rs
+  - rm32_stm32/examples/bringup_pac.rs
+  - rm32_stm32/memory.x
+  - rm32_stm32/src/adc_generic.rs
+  - rm32_stm32/src/adc_hal.rs
+  - rm32_stm32/src/bin/main.rs
+  - rm32_stm32/src/capture_generic.rs
+  - rm32_stm32/src/capture_hal.rs
+  - rm32_stm32/src/comp_hal.rs
+  - rm32_stm32/src/comparator.rs
+  - rm32_stm32/src/dbg_frame_history.rs
+  - rm32_stm32/src/debug_uart.rs
+  - rm32_stm32/src/dma_buf.rs
+  - rm32_stm32/src/emergency.rs
+  - rm32_stm32/src/flash.rs
+  - rm32_stm32/src/gpio_pin.rs
+  - rm32_stm32/src/gpio_regs.rs
+  - rm32_stm32/src/init.rs
+  - rm32_stm32/src/isr.rs
+  - rm32_stm32/src/isr_handlers.rs
+  - rm32_stm32/src/lib.rs
+  - rm32_stm32/src/mcu.rs
+  - rm32_stm32/src/mcu_f051/adc.rs
+  - rm32_stm32/src/mcu_f051/chip.rs
+  - rm32_stm32/src/mcu_f051/comp_init.rs
+  - rm32_stm32/src/mcu_f051/comparator.rs
+  - rm32_stm32/src/mcu_f051/flash.rs
+  - rm32_stm32/src/mcu_f051/init.rs
+  - rm32_stm32/src/mcu_f051/input_capture.rs
+  - rm32_stm32/src/mcu_f051/interrupts.rs
+  - rm32_stm32/src/mcu_f051/mod.rs
+  - rm32_stm32/src/mcu_f051/pwm.rs
+  - rm32_stm32/src/mcu_f051/system.rs
+  - rm32_stm32/src/mcu_f051/telemetry_uart.rs
+  - rm32_stm32/src/mcu_g071/adc.rs
+  - rm32_stm32/src/mcu_g071/chip.rs
+  - rm32_stm32/src/mcu_g071/comp_init.rs
+  - rm32_stm32/src/mcu_g071/comparator.rs
+  - rm32_stm32/src/mcu_g071/flash.rs
+  - rm32_stm32/src/mcu_g071/init.rs
+  - rm32_stm32/src/mcu_g071/input_capture.rs
+  - rm32_stm32/src/mcu_g071/interrupts.rs
+  - rm32_stm32/src/mcu_g071/mod.rs
+  - rm32_stm32/src/mcu_g071/pwm.rs
+  - rm32_stm32/src/mcu_g071/system.rs
+  - rm32_stm32/src/mcu_g071/telemetry_uart.rs
+  - rm32_stm32/src/mcu_g431/adc.rs
+  - rm32_stm32/src/mcu_g431/chip.rs
+  - rm32_stm32/src/mcu_g431/comp_init.rs
+  - rm32_stm32/src/mcu_g431/comparator.rs
+  - rm32_stm32/src/mcu_g431/flash.rs
+  - rm32_stm32/src/mcu_g431/init.rs
+  - rm32_stm32/src/mcu_g431/input_capture.rs
+  - rm32_stm32/src/mcu_g431/interrupts.rs
+  - rm32_stm32/src/mcu_g431/mod.rs
+  - rm32_stm32/src/mcu_g431/pwm.rs
+  - rm32_stm32/src/mcu_g431/system.rs
+  - rm32_stm32/src/mcu_g431/telemetry_uart.rs
+  - rm32_stm32/src/mcu_l431/adc.rs
+  - rm32_stm32/src/mcu_l431/bringup.rs
+  - rm32_stm32/src/mcu_l431/chip.rs
+  - rm32_stm32/src/mcu_l431/comp_init.rs
+  - rm32_stm32/src/mcu_l431/comparator.rs
+  - rm32_stm32/src/mcu_l431/flash.rs
+  - rm32_stm32/src/mcu_l431/init.rs
+  - rm32_stm32/src/mcu_l431/input_capture.rs
+  - rm32_stm32/src/mcu_l431/interrupts.rs
+  - rm32_stm32/src/mcu_l431/mod.rs
+  - rm32_stm32/src/mcu_l431/pwm.rs
+  - rm32_stm32/src/mcu_l431/system.rs
+  - rm32_stm32/src/mcu_l431/telemetry_uart.rs
+  - rm32_stm32/src/panic.rs
+  - rm32_stm32/src/phase.rs
+  - rm32_stm32/src/regs.rs
+  - rm32_stm32/src/stub.rs
+  - rm32_stm32/src/telem_hal.rs
+  - rm32_stm32/src/timer.rs
+  - rm32_stm32/src/ws2812_hal.rs
+  - tests/blackbox/harness.py
+  - tests/blackbox/test_vectors.py
+  - tests/blackbox/vectors/active_brake_mode2.txt
+  - tests/blackbox/vectors/arming_basic.txt
+  - tests/blackbox/vectors/beacon_tones.txt
+  - tests/blackbox/vectors/bemf_falling_edge.txt
+  - tests/blackbox/vectors/bemf_timeout.txt
+  - tests/blackbox/vectors/bemf_timeout_dynamic.txt
+  - tests/blackbox/vectors/bidir_autodetect.txt
+  - tests/blackbox/vectors/bidir_dshot.txt
+  - tests/blackbox/vectors/bidir_dshot_fault.txt
+  - tests/blackbox/vectors/bidir_dshot_rccar_fault.txt
+  - tests/blackbox/vectors/bidir_dshot_recovery.txt
+  - tests/blackbox/vectors/brake_modes.txt
+  - tests/blackbox/vectors/calibration_jitter.txt
+  - tests/blackbox/vectors/dead_time_override.txt
+  - tests/blackbox/vectors/desync_detection.txt
+  - tests/blackbox/vectors/desync_recovery.txt
+  - tests/blackbox/vectors/desync_recovery_bidir.txt
+  - tests/blackbox/vectors/dshot_commands.txt
+  - tests/blackbox/vectors/dshot_commands_extended.txt
+  - tests/blackbox/vectors/dshot_input.txt
+  - tests/blackbox/vectors/dshot_telemetry.txt
+  - tests/blackbox/vectors/e_com_time_populated.txt
+  - tests/blackbox/vectors/edt_armed_throttle_gate.txt
+  - tests/blackbox/vectors/edt_disarm_on_zero.txt
+  - tests/blackbox/vectors/edt_voltage_temp.txt
+  - tests/blackbox/vectors/eeprom_edt_arm.txt
+  - tests/blackbox/vectors/eeprom_init_overrides.txt
+  - tests/blackbox/vectors/eeprom_limits_guard.txt
+  - tests/blackbox/vectors/eeprom_load.txt
+  - tests/blackbox/vectors/eeprom_rc_car_init.txt
+  - tests/blackbox/vectors/gcr_encoding.txt
+  - tests/blackbox/vectors/low_voltage_cutoff.txt
+  - tests/blackbox/vectors/lvc_absolute_cutoff.txt
+  - tests/blackbox/vectors/lvc_recovery_inhibit.txt
+  - tests/blackbox/vectors/lvc_stepper_sine.txt
+  - tests/blackbox/vectors/motor_commutation.txt
+  - tests/blackbox/vectors/motor_restart.txt
+  - tests/blackbox/vectors/pid_clamping.txt
+  - tests/blackbox/vectors/pid_loops.txt
+  - tests/blackbox/vectors/protocol_reconfirm.txt
+  - tests/blackbox/vectors/ramp_rate.txt
+  - tests/blackbox/vectors/rc_car_braking.txt
+  - tests/blackbox/vectors/rc_car_reverse.txt
+  - tests/blackbox/vectors/rccar_reverse_preserves_zc.txt
+  - tests/blackbox/vectors/servo_bidir.txt
+  - tests/blackbox/vectors/servo_bidir_fault.txt
+  - tests/blackbox/vectors/servo_bidir_speed_gate.txt
+  - tests/blackbox/vectors/servo_calibration.txt
+  - tests/blackbox/vectors/servo_input.txt
+  - tests/blackbox/vectors/servo_rc_car_bidir.txt
+  - tests/blackbox/vectors/servo_rccar_fault.txt
+  - tests/blackbox/vectors/servo_realign.txt
+  - tests/blackbox/vectors/signal_timeout.txt
+  - tests/blackbox/vectors/signal_timeout_armed.txt
+  - tests/blackbox/vectors/signal_timeout_unarmed.txt
+  - tests/blackbox/vectors/sine_brake_mode2.txt
+  - tests/blackbox/vectors/sine_brake_off.txt
+  - tests/blackbox/vectors/sine_brake_on_stop.txt
+  - tests/blackbox/vectors/sine_changeover.txt
+  - tests/blackbox/vectors/sine_startup.txt
+  - tests/blackbox/vectors/sine_stepping.txt
+  - tests/blackbox/vectors/slow_ramp.txt
+  - tests/blackbox/vectors/speed_control.txt
+  - tests/blackbox/vectors/stuck_rotor.txt
+  - tests/blackbox/vectors/stuck_rotor_rate.txt
+  - tests/blackbox/vectors/telemetry.txt
+  - tests/blackbox/vectors/temperature_limit.txt
+  - tests/blackbox/vectors/throttle_passthrough.txt
+  - tests/blackbox/vectors/uni_brake_on_stop.txt
+  - tests/blackbox/vectors/variable_pwm.txt
+  - tests/blackbox/vectors/variable_pwm_mode2.txt
+  - tests/blackbox/vectors/variable_pwm_modes.txt
+  inventoried_paths:
+  - Cargo.toml
+  - rm32/Cargo.toml
+  - rm32/src/bemf.rs
+  - rm32/src/bin/harness.rs
+  - rm32/src/board.rs
+  - rm32/src/brushed.rs
+  - rm32/src/commutation.rs
+  - rm32/src/config.rs
+  - rm32/src/constants.rs
+  - rm32/src/control.rs
+  - rm32/src/control/context.rs
+  - rm32/src/control/input.rs
+  - rm32/src/control/isr_logic.rs
+  - rm32/src/control/shared_impl.rs
+  - rm32/src/control/state.rs
+  - rm32/src/control/tests.rs
+  - rm32/src/crsf.rs
+  - rm32/src/current.rs
+  - rm32/src/dshot.rs
+  - rm32/src/dshot_commands.rs
+  - rm32/src/edt.rs
+  - rm32/src/filter.rs
+  - rm32/src/fixed_mode.rs
+  - rm32/src/functions.rs
+  - rm32/src/hal.rs
+  - rm32/src/input_mapping.rs
+  - rm32/src/lib.rs
+  - rm32/src/main_state.rs
+  - rm32/src/motor_mode.rs
+  - rm32/src/ntc.rs
+  - rm32/src/pid.rs
+  - rm32/src/reset_cause.rs
+  - rm32/src/servo.rs
+  - rm32/src/shared_comm.rs
+  - rm32/src/shared_state.rs
+  - rm32/src/signal.rs
+  - rm32/src/sine.rs
+  - rm32/src/sounds.rs
+  - rm32/src/system.rs
+  - rm32/src/telemetry.rs
+  - rm32/src/transfer.rs
+  - rm32/src/units.rs
+  - rm32/src/ws2812.rs
+  - rm32_stm32/Cargo.toml
+  - rm32_stm32/boards/flycolor_g071.yaml
+  - rm32_stm32/boards/gen_64k_g071.yaml
+  - rm32_stm32/boards/iflight_12s_g071.yaml
+  - rm32_stm32/boards/iflight_f051.yaml
+  - rm32_stm32/boards/mamba_f55_g071.yaml
+  - rm32_stm32/boards/neutron_l431.yaml
+  - rm32_stm32/boards/protondrive_g431.yaml
+  - rm32_stm32/boards/pwm_enable_g071.yaml
+  - rm32_stm32/boards/sequre_g431.yaml
+  - rm32_stm32/boards/siskin_f051.yaml
+  - rm32_stm32/boards/tbs_12s_g071.yaml
+  - rm32_stm32/boards/tbs_4in1_g071.yaml
+  - rm32_stm32/boards/vimdrones_l431.yaml
+  - rm32_stm32/boards/wraith32v2_f051.yaml
+  - rm32_stm32/build.rs
+  - rm32_stm32/examples/bringup.rs
+  - rm32_stm32/examples/bringup_pac.rs
+  - rm32_stm32/memory.x
+  - rm32_stm32/src/adc_generic.rs
+  - rm32_stm32/src/adc_hal.rs
+  - rm32_stm32/src/bin/main.rs
+  - rm32_stm32/src/capture_generic.rs
+  - rm32_stm32/src/capture_hal.rs
+  - rm32_stm32/src/comp_hal.rs
+  - rm32_stm32/src/comparator.rs
+  - rm32_stm32/src/dbg_frame_history.rs
+  - rm32_stm32/src/debug_uart.rs
+  - rm32_stm32/src/dma_buf.rs
+  - rm32_stm32/src/emergency.rs
+  - rm32_stm32/src/flash.rs
+  - rm32_stm32/src/gpio_pin.rs
+  - rm32_stm32/src/gpio_regs.rs
+  - rm32_stm32/src/init.rs
+  - rm32_stm32/src/isr.rs
+  - rm32_stm32/src/isr_handlers.rs
+  - rm32_stm32/src/lib.rs
+  - rm32_stm32/src/mcu.rs
+  - rm32_stm32/src/mcu_f051/adc.rs
+  - rm32_stm32/src/mcu_f051/chip.rs
+  - rm32_stm32/src/mcu_f051/comp_init.rs
+  - rm32_stm32/src/mcu_f051/comparator.rs
+  - rm32_stm32/src/mcu_f051/flash.rs
+  - rm32_stm32/src/mcu_f051/init.rs
+  - rm32_stm32/src/mcu_f051/input_capture.rs
+  - rm32_stm32/src/mcu_f051/interrupts.rs
+  - rm32_stm32/src/mcu_f051/mod.rs
+  - rm32_stm32/src/mcu_f051/pwm.rs
+  - rm32_stm32/src/mcu_f051/system.rs
+  - rm32_stm32/src/mcu_f051/telemetry_uart.rs
+  - rm32_stm32/src/mcu_g071/adc.rs
+  - rm32_stm32/src/mcu_g071/chip.rs
+  - rm32_stm32/src/mcu_g071/comp_init.rs
+  - rm32_stm32/src/mcu_g071/comparator.rs
+  - rm32_stm32/src/mcu_g071/flash.rs
+  - rm32_stm32/src/mcu_g071/init.rs
+  - rm32_stm32/src/mcu_g071/input_capture.rs
+  - rm32_stm32/src/mcu_g071/interrupts.rs
+  - rm32_stm32/src/mcu_g071/mod.rs
+  - rm32_stm32/src/mcu_g071/pwm.rs
+  - rm32_stm32/src/mcu_g071/system.rs
+  - rm32_stm32/src/mcu_g071/telemetry_uart.rs
+  - rm32_stm32/src/mcu_g431/adc.rs
+  - rm32_stm32/src/mcu_g431/chip.rs
+  - rm32_stm32/src/mcu_g431/comp_init.rs
+  - rm32_stm32/src/mcu_g431/comparator.rs
+  - rm32_stm32/src/mcu_g431/flash.rs
+  - rm32_stm32/src/mcu_g431/init.rs
+  - rm32_stm32/src/mcu_g431/input_capture.rs
+  - rm32_stm32/src/mcu_g431/interrupts.rs
+  - rm32_stm32/src/mcu_g431/mod.rs
+  - rm32_stm32/src/mcu_g431/pwm.rs
+  - rm32_stm32/src/mcu_g431/system.rs
+  - rm32_stm32/src/mcu_g431/telemetry_uart.rs
+  - rm32_stm32/src/mcu_l431/adc.rs
+  - rm32_stm32/src/mcu_l431/bringup.rs
+  - rm32_stm32/src/mcu_l431/chip.rs
+  - rm32_stm32/src/mcu_l431/comp_init.rs
+  - rm32_stm32/src/mcu_l431/comparator.rs
+  - rm32_stm32/src/mcu_l431/flash.rs
+  - rm32_stm32/src/mcu_l431/init.rs
+  - rm32_stm32/src/mcu_l431/input_capture.rs
+  - rm32_stm32/src/mcu_l431/interrupts.rs
+  - rm32_stm32/src/mcu_l431/mod.rs
+  - rm32_stm32/src/mcu_l431/pwm.rs
+  - rm32_stm32/src/mcu_l431/system.rs
+  - rm32_stm32/src/mcu_l431/telemetry_uart.rs
+  - rm32_stm32/src/panic.rs
+  - rm32_stm32/src/phase.rs
+  - rm32_stm32/src/regs.rs
+  - rm32_stm32/src/stub.rs
+  - rm32_stm32/src/telem_hal.rs
+  - rm32_stm32/src/timer.rs
+  - rm32_stm32/src/ws2812_hal.rs
+  - tests/blackbox/harness.py
+  - tests/blackbox/test_vectors.py
+  - tests/blackbox/vectors/active_brake_mode2.txt
+  - tests/blackbox/vectors/arming_basic.txt
+  - tests/blackbox/vectors/beacon_tones.txt
+  - tests/blackbox/vectors/bemf_falling_edge.txt
+  - tests/blackbox/vectors/bemf_timeout.txt
+  - tests/blackbox/vectors/bemf_timeout_dynamic.txt
+  - tests/blackbox/vectors/bidir_autodetect.txt
+  - tests/blackbox/vectors/bidir_dshot.txt
+  - tests/blackbox/vectors/bidir_dshot_fault.txt
+  - tests/blackbox/vectors/bidir_dshot_rccar_fault.txt
+  - tests/blackbox/vectors/bidir_dshot_recovery.txt
+  - tests/blackbox/vectors/brake_modes.txt
+  - tests/blackbox/vectors/calibration_jitter.txt
+  - tests/blackbox/vectors/dead_time_override.txt
+  - tests/blackbox/vectors/desync_detection.txt
+  - tests/blackbox/vectors/desync_recovery.txt
+  - tests/blackbox/vectors/desync_recovery_bidir.txt
+  - tests/blackbox/vectors/dshot_commands.txt
+  - tests/blackbox/vectors/dshot_commands_extended.txt
+  - tests/blackbox/vectors/dshot_input.txt
+  - tests/blackbox/vectors/dshot_telemetry.txt
+  - tests/blackbox/vectors/e_com_time_populated.txt
+  - tests/blackbox/vectors/edt_armed_throttle_gate.txt
+  - tests/blackbox/vectors/edt_disarm_on_zero.txt
+  - tests/blackbox/vectors/edt_voltage_temp.txt
+  - tests/blackbox/vectors/eeprom_edt_arm.txt
+  - tests/blackbox/vectors/eeprom_init_overrides.txt
+  - tests/blackbox/vectors/eeprom_limits_guard.txt
+  - tests/blackbox/vectors/eeprom_load.txt
+  - tests/blackbox/vectors/eeprom_rc_car_init.txt
+  - tests/blackbox/vectors/gcr_encoding.txt
+  - tests/blackbox/vectors/low_voltage_cutoff.txt
+  - tests/blackbox/vectors/lvc_absolute_cutoff.txt
+  - tests/blackbox/vectors/lvc_recovery_inhibit.txt
+  - tests/blackbox/vectors/lvc_stepper_sine.txt
+  - tests/blackbox/vectors/motor_commutation.txt
+  - tests/blackbox/vectors/motor_restart.txt
+  - tests/blackbox/vectors/pid_clamping.txt
+  - tests/blackbox/vectors/pid_loops.txt
+  - tests/blackbox/vectors/protocol_reconfirm.txt
+  - tests/blackbox/vectors/ramp_rate.txt
+  - tests/blackbox/vectors/rc_car_braking.txt
+  - tests/blackbox/vectors/rc_car_reverse.txt
+  - tests/blackbox/vectors/rccar_reverse_preserves_zc.txt
+  - tests/blackbox/vectors/servo_bidir.txt
+  - tests/blackbox/vectors/servo_bidir_fault.txt
+  - tests/blackbox/vectors/servo_bidir_speed_gate.txt
+  - tests/blackbox/vectors/servo_calibration.txt
+  - tests/blackbox/vectors/servo_input.txt
+  - tests/blackbox/vectors/servo_rc_car_bidir.txt
+  - tests/blackbox/vectors/servo_rccar_fault.txt
+  - tests/blackbox/vectors/servo_realign.txt
+  - tests/blackbox/vectors/signal_timeout.txt
+  - tests/blackbox/vectors/signal_timeout_armed.txt
+  - tests/blackbox/vectors/signal_timeout_unarmed.txt
+  - tests/blackbox/vectors/sine_brake_mode2.txt
+  - tests/blackbox/vectors/sine_brake_off.txt
+  - tests/blackbox/vectors/sine_brake_on_stop.txt
+  - tests/blackbox/vectors/sine_changeover.txt
+  - tests/blackbox/vectors/sine_startup.txt
+  - tests/blackbox/vectors/sine_stepping.txt
+  - tests/blackbox/vectors/slow_ramp.txt
+  - tests/blackbox/vectors/speed_control.txt
+  - tests/blackbox/vectors/stuck_rotor.txt
+  - tests/blackbox/vectors/stuck_rotor_rate.txt
+  - tests/blackbox/vectors/telemetry.txt
+  - tests/blackbox/vectors/temperature_limit.txt
+  - tests/blackbox/vectors/throttle_passthrough.txt
+  - tests/blackbox/vectors/uni_brake_on_stop.txt
+  - tests/blackbox/vectors/variable_pwm.txt
+  - tests/blackbox/vectors/variable_pwm_mode2.txt
+  - tests/blackbox/vectors/variable_pwm_modes.txt
+  missing_paths: []
+  unexpected_paths: []
+  duplicate_module_paths: []

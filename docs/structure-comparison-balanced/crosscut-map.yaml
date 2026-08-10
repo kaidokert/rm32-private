@@ -1,0 +1,1233 @@
+schema_version: 1
+artifact: crosscut-map
+wave: 1
+scope:
+  generated_from: current_working_tree
+  prior_artifacts_used: false
+  comparison:
+    minz: "The active am32_clone firmware, minz-core, the L431 platform crate, and build/link metadata."
+    rm32: "The rm32 portable crate, rm32_stm32 firmware/platform/targets/boards, build/link metadata, and the process black-box harness/vectors."
+  exclusions:
+    - "Historical docs/structure-comparison artifacts."
+    - "MinZ captures, scripts, photographs, PDFs, and design notes; these are outside the README's implementation surface."
+    - "Generated Python caches under tests/blackbox/__pycache__."
+  evidence:
+    - "docs/structure-comparison-balanced/README.md:5-26"
+
+coverage:
+  minz:
+    implementation_artifact_count: 31
+    rust_source_count: 25
+    path_sets:
+      - name: portable_core
+        pattern: "minz/core/src/*.rs"
+        count: 9
+        paths:
+          - minz/core/src/am32.rs
+          - minz/core/src/am32_control.rs
+          - minz/core/src/am32_hal.rs
+          - minz/core/src/am32_isr.rs
+          - minz/core/src/am32_loop.rs
+          - minz/core/src/blackbox.rs
+          - minz/core/src/drive.rs
+          - minz/core/src/lib.rs
+          - minz/core/src/zct_trace.rs
+      - name: l431_platform
+        pattern: "minz/src/*.rs"
+        count: 15
+        paths:
+          - minz/src/adc_sync.rs
+          - minz/src/am32_timers.rs
+          - minz/src/bb.rs
+          - minz/src/board_init.rs
+          - minz/src/comp2.rs
+          - minz/src/current_adc.rs
+          - minz/src/iwdg.rs
+          - minz/src/lib.rs
+          - minz/src/panic.rs
+          - minz/src/priority.rs
+          - minz/src/spin.rs
+          - minz/src/tim1_motor_pwm.rs
+          - minz/src/tim6_loop.rs
+          - minz/src/uart_tx.rs
+          - minz/src/usart2_rx.rs
+      - name: firmware_entry
+        pattern: "minz/examples/*.rs"
+        count: 1
+        paths:
+          - minz/examples/am32_clone.rs
+      - name: manifests_build_and_link
+        count: 6
+        paths:
+          - minz/Cargo.toml
+          - minz/core/Cargo.toml
+          - minz/build.rs
+          - minz/memory.x
+          - minz/.cargo/config.toml
+          - minz/core/.cargo/config.toml
+    exact_paths:
+      - minz/core/src/am32.rs
+      - minz/core/src/am32_control.rs
+      - minz/core/src/am32_hal.rs
+      - minz/core/src/am32_isr.rs
+      - minz/core/src/am32_loop.rs
+      - minz/core/src/blackbox.rs
+      - minz/core/src/drive.rs
+      - minz/core/src/lib.rs
+      - minz/core/src/zct_trace.rs
+      - minz/src/adc_sync.rs
+      - minz/src/am32_timers.rs
+      - minz/src/bb.rs
+      - minz/src/board_init.rs
+      - minz/src/comp2.rs
+      - minz/src/current_adc.rs
+      - minz/src/iwdg.rs
+      - minz/src/lib.rs
+      - minz/src/panic.rs
+      - minz/src/priority.rs
+      - minz/src/spin.rs
+      - minz/src/tim1_motor_pwm.rs
+      - minz/src/tim6_loop.rs
+      - minz/src/uart_tx.rs
+      - minz/src/usart2_rx.rs
+      - minz/examples/am32_clone.rs
+      - minz/Cargo.toml
+      - minz/core/Cargo.toml
+      - minz/build.rs
+      - minz/memory.x
+      - minz/.cargo/config.toml
+      - minz/core/.cargo/config.toml
+    topology:
+      - minz/core/.cargo/config.toml forces the detached core crate back to the Windows host target for ordinary cargo test.
+      - "minz-core is a dependency-free, independently host-tested no_std logic crate."
+      - "minz is one STM32L431 firmware/platform crate with am32_clone as its sole in-scope entry point."
+    evidence:
+      - "minz/core/Cargo.toml:1-16"
+      - "minz/Cargo.toml:1-22"
+      - "minz/core/src/lib.rs:15-24"
+      - "minz/src/lib.rs:1-18"
+      - minz/core/.cargo/config.toml:1-6
+  rm32:
+    implementation_artifact_count: 137
+    rust_source_count: 118
+    blackbox_test_source_artifact_count: 74
+    comparison_artifact_count_including_blackbox: 211
+    exact_paths:
+      - Cargo.toml
+      - rm32/Cargo.toml
+      - rm32/src/bemf.rs
+      - rm32/src/bin/harness.rs
+      - rm32/src/board.rs
+      - rm32/src/brushed.rs
+      - rm32/src/commutation.rs
+      - rm32/src/config.rs
+      - rm32/src/constants.rs
+      - rm32/src/control.rs
+      - rm32/src/control/context.rs
+      - rm32/src/control/input.rs
+      - rm32/src/control/isr_logic.rs
+      - rm32/src/control/shared_impl.rs
+      - rm32/src/control/state.rs
+      - rm32/src/control/tests.rs
+      - rm32/src/crsf.rs
+      - rm32/src/current.rs
+      - rm32/src/dshot.rs
+      - rm32/src/dshot_commands.rs
+      - rm32/src/edt.rs
+      - rm32/src/filter.rs
+      - rm32/src/fixed_mode.rs
+      - rm32/src/functions.rs
+      - rm32/src/hal.rs
+      - rm32/src/input_mapping.rs
+      - rm32/src/lib.rs
+      - rm32/src/main_state.rs
+      - rm32/src/motor_mode.rs
+      - rm32/src/ntc.rs
+      - rm32/src/pid.rs
+      - rm32/src/reset_cause.rs
+      - rm32/src/servo.rs
+      - rm32/src/shared_comm.rs
+      - rm32/src/shared_state.rs
+      - rm32/src/signal.rs
+      - rm32/src/sine.rs
+      - rm32/src/sounds.rs
+      - rm32/src/system.rs
+      - rm32/src/telemetry.rs
+      - rm32/src/transfer.rs
+      - rm32/src/units.rs
+      - rm32/src/ws2812.rs
+      - rm32_stm32/Cargo.toml
+      - rm32_stm32/boards/flycolor_g071.yaml
+      - rm32_stm32/boards/gen_64k_g071.yaml
+      - rm32_stm32/boards/iflight_12s_g071.yaml
+      - rm32_stm32/boards/iflight_f051.yaml
+      - rm32_stm32/boards/mamba_f55_g071.yaml
+      - rm32_stm32/boards/neutron_l431.yaml
+      - rm32_stm32/boards/protondrive_g431.yaml
+      - rm32_stm32/boards/pwm_enable_g071.yaml
+      - rm32_stm32/boards/sequre_g431.yaml
+      - rm32_stm32/boards/siskin_f051.yaml
+      - rm32_stm32/boards/tbs_12s_g071.yaml
+      - rm32_stm32/boards/tbs_4in1_g071.yaml
+      - rm32_stm32/boards/vimdrones_l431.yaml
+      - rm32_stm32/boards/wraith32v2_f051.yaml
+      - rm32_stm32/build.rs
+      - rm32_stm32/examples/bringup.rs
+      - rm32_stm32/examples/bringup_pac.rs
+      - rm32_stm32/memory.x
+      - rm32_stm32/src/adc_generic.rs
+      - rm32_stm32/src/adc_hal.rs
+      - rm32_stm32/src/bin/main.rs
+      - rm32_stm32/src/capture_generic.rs
+      - rm32_stm32/src/capture_hal.rs
+      - rm32_stm32/src/comp_hal.rs
+      - rm32_stm32/src/comparator.rs
+      - rm32_stm32/src/dbg_frame_history.rs
+      - rm32_stm32/src/debug_uart.rs
+      - rm32_stm32/src/dma_buf.rs
+      - rm32_stm32/src/emergency.rs
+      - rm32_stm32/src/flash.rs
+      - rm32_stm32/src/gpio_pin.rs
+      - rm32_stm32/src/gpio_regs.rs
+      - rm32_stm32/src/init.rs
+      - rm32_stm32/src/isr.rs
+      - rm32_stm32/src/isr_handlers.rs
+      - rm32_stm32/src/lib.rs
+      - rm32_stm32/src/mcu.rs
+      - rm32_stm32/src/mcu_f051/adc.rs
+      - rm32_stm32/src/mcu_f051/chip.rs
+      - rm32_stm32/src/mcu_f051/comp_init.rs
+      - rm32_stm32/src/mcu_f051/comparator.rs
+      - rm32_stm32/src/mcu_f051/flash.rs
+      - rm32_stm32/src/mcu_f051/init.rs
+      - rm32_stm32/src/mcu_f051/input_capture.rs
+      - rm32_stm32/src/mcu_f051/interrupts.rs
+      - rm32_stm32/src/mcu_f051/mod.rs
+      - rm32_stm32/src/mcu_f051/pwm.rs
+      - rm32_stm32/src/mcu_f051/system.rs
+      - rm32_stm32/src/mcu_f051/telemetry_uart.rs
+      - rm32_stm32/src/mcu_g071/adc.rs
+      - rm32_stm32/src/mcu_g071/chip.rs
+      - rm32_stm32/src/mcu_g071/comp_init.rs
+      - rm32_stm32/src/mcu_g071/comparator.rs
+      - rm32_stm32/src/mcu_g071/flash.rs
+      - rm32_stm32/src/mcu_g071/init.rs
+      - rm32_stm32/src/mcu_g071/input_capture.rs
+      - rm32_stm32/src/mcu_g071/interrupts.rs
+      - rm32_stm32/src/mcu_g071/mod.rs
+      - rm32_stm32/src/mcu_g071/pwm.rs
+      - rm32_stm32/src/mcu_g071/system.rs
+      - rm32_stm32/src/mcu_g071/telemetry_uart.rs
+      - rm32_stm32/src/mcu_g431/adc.rs
+      - rm32_stm32/src/mcu_g431/chip.rs
+      - rm32_stm32/src/mcu_g431/comp_init.rs
+      - rm32_stm32/src/mcu_g431/comparator.rs
+      - rm32_stm32/src/mcu_g431/flash.rs
+      - rm32_stm32/src/mcu_g431/init.rs
+      - rm32_stm32/src/mcu_g431/input_capture.rs
+      - rm32_stm32/src/mcu_g431/interrupts.rs
+      - rm32_stm32/src/mcu_g431/mod.rs
+      - rm32_stm32/src/mcu_g431/pwm.rs
+      - rm32_stm32/src/mcu_g431/system.rs
+      - rm32_stm32/src/mcu_g431/telemetry_uart.rs
+      - rm32_stm32/src/mcu_l431/adc.rs
+      - rm32_stm32/src/mcu_l431/bringup.rs
+      - rm32_stm32/src/mcu_l431/chip.rs
+      - rm32_stm32/src/mcu_l431/comp_init.rs
+      - rm32_stm32/src/mcu_l431/comparator.rs
+      - rm32_stm32/src/mcu_l431/flash.rs
+      - rm32_stm32/src/mcu_l431/init.rs
+      - rm32_stm32/src/mcu_l431/input_capture.rs
+      - rm32_stm32/src/mcu_l431/interrupts.rs
+      - rm32_stm32/src/mcu_l431/mod.rs
+      - rm32_stm32/src/mcu_l431/pwm.rs
+      - rm32_stm32/src/mcu_l431/system.rs
+      - rm32_stm32/src/mcu_l431/telemetry_uart.rs
+      - rm32_stm32/src/panic.rs
+      - rm32_stm32/src/phase.rs
+      - rm32_stm32/src/regs.rs
+      - rm32_stm32/src/stub.rs
+      - rm32_stm32/src/telem_hal.rs
+      - rm32_stm32/src/timer.rs
+      - rm32_stm32/src/ws2812_hal.rs
+      - tests/blackbox/harness.py
+      - tests/blackbox/test_vectors.py
+      - tests/blackbox/vectors/active_brake_mode2.txt
+      - tests/blackbox/vectors/arming_basic.txt
+      - tests/blackbox/vectors/beacon_tones.txt
+      - tests/blackbox/vectors/bemf_falling_edge.txt
+      - tests/blackbox/vectors/bemf_timeout.txt
+      - tests/blackbox/vectors/bemf_timeout_dynamic.txt
+      - tests/blackbox/vectors/bidir_autodetect.txt
+      - tests/blackbox/vectors/bidir_dshot.txt
+      - tests/blackbox/vectors/bidir_dshot_fault.txt
+      - tests/blackbox/vectors/bidir_dshot_rccar_fault.txt
+      - tests/blackbox/vectors/bidir_dshot_recovery.txt
+      - tests/blackbox/vectors/brake_modes.txt
+      - tests/blackbox/vectors/calibration_jitter.txt
+      - tests/blackbox/vectors/dead_time_override.txt
+      - tests/blackbox/vectors/desync_detection.txt
+      - tests/blackbox/vectors/desync_recovery.txt
+      - tests/blackbox/vectors/desync_recovery_bidir.txt
+      - tests/blackbox/vectors/dshot_commands.txt
+      - tests/blackbox/vectors/dshot_commands_extended.txt
+      - tests/blackbox/vectors/dshot_input.txt
+      - tests/blackbox/vectors/dshot_telemetry.txt
+      - tests/blackbox/vectors/e_com_time_populated.txt
+      - tests/blackbox/vectors/edt_armed_throttle_gate.txt
+      - tests/blackbox/vectors/edt_disarm_on_zero.txt
+      - tests/blackbox/vectors/edt_voltage_temp.txt
+      - tests/blackbox/vectors/eeprom_edt_arm.txt
+      - tests/blackbox/vectors/eeprom_init_overrides.txt
+      - tests/blackbox/vectors/eeprom_limits_guard.txt
+      - tests/blackbox/vectors/eeprom_load.txt
+      - tests/blackbox/vectors/eeprom_rc_car_init.txt
+      - tests/blackbox/vectors/gcr_encoding.txt
+      - tests/blackbox/vectors/low_voltage_cutoff.txt
+      - tests/blackbox/vectors/lvc_absolute_cutoff.txt
+      - tests/blackbox/vectors/lvc_recovery_inhibit.txt
+      - tests/blackbox/vectors/lvc_stepper_sine.txt
+      - tests/blackbox/vectors/motor_commutation.txt
+      - tests/blackbox/vectors/motor_restart.txt
+      - tests/blackbox/vectors/pid_clamping.txt
+      - tests/blackbox/vectors/pid_loops.txt
+      - tests/blackbox/vectors/protocol_reconfirm.txt
+      - tests/blackbox/vectors/ramp_rate.txt
+      - tests/blackbox/vectors/rc_car_braking.txt
+      - tests/blackbox/vectors/rc_car_reverse.txt
+      - tests/blackbox/vectors/rccar_reverse_preserves_zc.txt
+      - tests/blackbox/vectors/servo_bidir.txt
+      - tests/blackbox/vectors/servo_bidir_fault.txt
+      - tests/blackbox/vectors/servo_bidir_speed_gate.txt
+      - tests/blackbox/vectors/servo_calibration.txt
+      - tests/blackbox/vectors/servo_input.txt
+      - tests/blackbox/vectors/servo_rc_car_bidir.txt
+      - tests/blackbox/vectors/servo_rccar_fault.txt
+      - tests/blackbox/vectors/servo_realign.txt
+      - tests/blackbox/vectors/signal_timeout.txt
+      - tests/blackbox/vectors/signal_timeout_armed.txt
+      - tests/blackbox/vectors/signal_timeout_unarmed.txt
+      - tests/blackbox/vectors/sine_brake_mode2.txt
+      - tests/blackbox/vectors/sine_brake_off.txt
+      - tests/blackbox/vectors/sine_brake_on_stop.txt
+      - tests/blackbox/vectors/sine_changeover.txt
+      - tests/blackbox/vectors/sine_startup.txt
+      - tests/blackbox/vectors/sine_stepping.txt
+      - tests/blackbox/vectors/slow_ramp.txt
+      - tests/blackbox/vectors/speed_control.txt
+      - tests/blackbox/vectors/stuck_rotor.txt
+      - tests/blackbox/vectors/stuck_rotor_rate.txt
+      - tests/blackbox/vectors/telemetry.txt
+      - tests/blackbox/vectors/temperature_limit.txt
+      - tests/blackbox/vectors/throttle_passthrough.txt
+      - tests/blackbox/vectors/uni_brake_on_stop.txt
+      - tests/blackbox/vectors/variable_pwm.txt
+      - tests/blackbox/vectors/variable_pwm_mode2.txt
+      - tests/blackbox/vectors/variable_pwm_modes.txt
+    path_sets:
+      - name: portable_core_and_process_harness
+        pattern: "rm32/src/**/*.rs"
+        count: 41
+        subdivision:
+          top_level_modules: 34
+          control_submodules: 6
+          process_harness: 1
+        representative_paths:
+          - rm32/src/lib.rs
+          - rm32/src/control/isr_logic.rs
+          - rm32/src/main_state.rs
+          - rm32/src/shared_state.rs
+          - rm32/src/transfer.rs
+          - rm32/src/bin/harness.rs
+      - name: stm32_shared_and_target_platform
+        pattern: "rm32_stm32/src/**/*.rs"
+        count: 75
+        subdivision:
+          shared_top_level: 25
+          mcu_f051: 12
+          mcu_g071: 12
+          mcu_g431: 12
+          mcu_l431: 13
+        representative_paths:
+          - rm32_stm32/src/bin/main.rs
+          - rm32_stm32/src/isr.rs
+          - rm32_stm32/src/isr_handlers.rs
+          - rm32_stm32/src/mcu.rs
+          - rm32_stm32/src/mcu_l431/init.rs
+      - name: board_configuration
+        pattern: "rm32_stm32/boards/*.yaml"
+        count: 14
+        paths:
+          - rm32_stm32/boards/flycolor_g071.yaml
+          - rm32_stm32/boards/gen_64k_g071.yaml
+          - rm32_stm32/boards/iflight_12s_g071.yaml
+          - rm32_stm32/boards/iflight_f051.yaml
+          - rm32_stm32/boards/mamba_f55_g071.yaml
+          - rm32_stm32/boards/neutron_l431.yaml
+          - rm32_stm32/boards/protondrive_g431.yaml
+          - rm32_stm32/boards/pwm_enable_g071.yaml
+          - rm32_stm32/boards/sequre_g431.yaml
+          - rm32_stm32/boards/siskin_f051.yaml
+          - rm32_stm32/boards/tbs_12s_g071.yaml
+          - rm32_stm32/boards/tbs_4in1_g071.yaml
+          - rm32_stm32/boards/vimdrones_l431.yaml
+          - rm32_stm32/boards/wraith32v2_f051.yaml
+      - name: bringup_examples
+        pattern: "rm32_stm32/examples/*.rs"
+        count: 2
+        paths:
+          - rm32_stm32/examples/bringup.rs
+          - rm32_stm32/examples/bringup_pac.rs
+      - name: manifests_build_and_link
+        count: 5
+        paths:
+          - rm32/Cargo.toml
+          - rm32_stm32/Cargo.toml
+          - rm32_stm32/build.rs
+          - rm32_stm32/memory.x
+          - Cargo.toml
+      - name: process_blackbox
+        count: 74
+        subdivision:
+          python_driver_and_runner: 2
+          vector_files: 72
+        patterns:
+          - tests/blackbox/harness.py
+          - tests/blackbox/test_vectors.py
+          - "tests/blackbox/vectors/*.txt"
+    topology:
+      - "rm32 is a broad no_std portable library plus a host process harness."
+      - "rm32_stm32 is a feature-selected platform crate supporting F051, G071, G431, and L431 and generating board constants from YAML."
+    evidence:
+      - "rm32/Cargo.toml:1-21"
+      - "rm32/src/lib.rs:1-40"
+      - "rm32_stm32/Cargo.toml:1-57"
+      - "rm32_stm32/src/lib.rs:23-62"
+      - "rm32_stm32/src/mcu.rs:22-37"
+      - "tests/blackbox/test_vectors.py:27-52"
+
+executive_mapping:
+  shared_architecture:
+    - "Both separate portable control logic from register-facing STM32 adapters and use static dispatch for motor-critical HAL calls."
+    - "Both implement the AM32 three-loop motor shape: comparator zero-cross event, one-shot commutation event, and approximately 20 kHz duty/polling tick, with a free-running foreground loop."
+    - "Both use atomic cross-context state and host-test the logic that runs on target."
+  primary_difference:
+    minz: "A deliberately narrow L431 AM32 clone whose product is the motor-control experiment plus high-rate bench observability."
+    rm32: "A configurable ESC product architecture: portable state machine, many input/output protocols and operating modes, generated boards, four MCU families, and a process-level behavioral harness."
+  evidence:
+    - "minz/examples/am32_clone.rs:11-28"
+    - "minz/core/src/am32_hal.rs:1-24"
+    - "rm32/src/control/isr_logic.rs:1-19"
+    - "rm32_stm32/src/bin/main.rs:1-30"
+    - "rm32_stm32/src/lib.rs:1-4"
+
+mappings:
+  - id: portable_motor_hal
+    relationship: direct
+    minz:
+      paths: [minz/core/src/am32_hal.rs, minz/src/lib.rs]
+      qualification: "PwmOutput, PhaseOutput, Comparator, IntervalTimer, ComTimer, and MotorHal intentionally copy rm32's shape; MinZ wires zero-sized L431 register types into Motor."
+    rm32:
+      paths: [rm32/src/hal.rs, rm32_stm32/src/isr.rs]
+      qualification: "The canonical traits are implemented by a target-selected IsrHal bundle."
+    evidence:
+      - "minz/core/src/am32_hal.rs:26-66"
+      - "minz/core/src/am32_hal.rs:78-104"
+      - "minz/core/src/am32_hal.rs:141-205"
+      - "rm32/src/hal.rs:14-68"
+      - "rm32_stm32/src/isr.rs:19-68"
+
+  - id: commutation_and_bemf_control
+    relationship: direct
+    audit_qualification: Direct control-domain correspondence, but comparator event policy differs; MinZ camps a pending edge until its half-interval gate opens, while rm32 L431 clears and masks at ISR entry.
+    minz:
+      paths: [minz/core/src/am32_control.rs, minz/core/src/am32_isr.rs, minz/core/src/am32.rs]
+      qualification: "AM32-line-cited clone functions retain polling startup, COMP acceptance, delayed commutation, interval blend, advance, desync, and timeout bands."
+    rm32:
+      paths: [rm32/src/commutation.rs, rm32/src/control/isr_logic.rs, rm32/src/control/state.rs, rm32/src/main_state.rs]
+      qualification: "The same concepts are decomposed into owned state objects and ISR/foreground functions, with extra state-machine/config branches."
+    evidence:
+      - "minz/core/src/am32_isr.rs:33-129"
+      - "minz/core/src/am32_isr.rs:131-205"
+      - "rm32/src/control/isr_logic.rs:15-19"
+      - "rm32/src/control/isr_logic.rs:120-213"
+      - "rm32/src/control/isr_logic.rs:216-298"
+      - "rm32/src/main_state.rs:306-360"
+
+  - id: pwm_phase_and_timers
+    relationship: direct
+    audit_qualification: Direct only for the L431 path; rm32 additionally supplies three other MCU-family realizations.
+    minz:
+      paths: [minz/src/tim1_motor_pwm.rs, minz/src/am32_timers.rs, minz/src/tim6_loop.rs]
+      qualification: "One L431 implementation uses TIM1 for PWM/phase, TIM2 as interval timer, TIM16 as commutation timer, and TIM6 as periodic loop."
+    rm32:
+      paths:
+        - rm32_stm32/src/phase.rs
+        - rm32_stm32/src/timer.rs
+        - rm32_stm32/src/mcu_l431/pwm.rs
+        - rm32_stm32/src/mcu_l431/init.rs
+      qualification: "The L431 arrangement is equivalent, behind shared drivers and family-specific setup; other families supply parallel adapters."
+    evidence:
+      - "minz/src/lib.rs:20-40"
+      - "minz/examples/am32_clone.rs:531-541"
+      - "rm32_stm32/src/mcu_l431/chip.rs:76-83"
+      - "rm32_stm32/src/mcu_l431/init.rs:100-168"
+
+  - id: interrupt_contexts
+    relationship: partial
+    audit_qualification: COMP, commutation, and TIM6 correspond directly. MinZ USART2 RX and rm32 DMA/frame-processing EXTI are one-sided active contexts; CRSF is only a callable unwired handler.
+    minz:
+      paths: [minz/examples/am32_clone.rs, minz/core/src/am32_isr.rs]
+      qualification: "Four explicit vectors/contexts: COMP, TIM16-on-TIM1_UP, TIM6, and USART2 RX."
+    rm32:
+      paths:
+        - rm32_stm32/src/isr_handlers.rs
+        - rm32_stm32/src/mcu_l431/interrupts.rs
+      qualification: "Shared handler bodies cover TIM6, commutation, COMP, DMA input capture, frame-processing EXTI, and optional CRSF handler; per-family files provide vector wrappers."
+    evidence:
+      - "minz/examples/am32_clone.rs:19-28"
+      - "minz/examples/am32_clone.rs:589-615"
+      - "rm32_stm32/src/isr_handlers.rs:71-179"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:8-112"
+
+  - id: state_ownership_and_cross_context_communication
+    relationship: partial
+    minz:
+      paths: [minz/examples/am32_clone.rs, minz/core/src/am32_loop.rs]
+      qualification: "AM32-like globals remain independent atomics, grouped by borrowed Sched/Drive/Duty/Bench cluster views; Relaxed ordering dominates."
+    rm32:
+      paths: [rm32_stm32/src/isr.rs, rm32/src/main_state.rs, rm32/src/shared_state.rs, rm32/src/shared_comm.rs]
+      qualification: "ISR-exclusive state and foreground-exclusive MainState are separately owned; SharedState is a directional Acquire/Release mailbox and motor mode is one atomic state machine."
+    evidence:
+      - "minz/examples/am32_clone.rs:104-159"
+      - "minz/examples/am32_clone.rs:258-335"
+      - "rm32_stm32/src/isr.rs:70-101"
+      - "rm32/src/shared_state.rs:1-20"
+      - "rm32/src/shared_state.rs:21-74"
+      - "rm32/src/shared_comm.rs:89-223"
+
+  - id: foreground_orchestration
+    relationship: partial
+    minz:
+      paths: [minz/examples/am32_clone.rs, minz/core/src/am32_control.rs, minz/core/src/am32_loop.rs]
+      qualification: "The entry point directly wires and repeatedly calls throttle, BEMF scheduling, variable PWM, estimator/desync/timeout, trace drain, and request bands."
+    rm32:
+      paths: [rm32/src/system.rs, rm32/src/main_state.rs, rm32_stm32/src/bin/main.rs]
+      qualification: "SystemTick shares input/sync/main orchestration with the process harness, while target main adds sine output, LEDs, priority changes, flash, and reset handling."
+    evidence:
+      - "minz/examples/am32_clone.rs:345-388"
+      - "rm32/src/system.rs:79-172"
+      - "rm32_stm32/src/bin/main.rs:379-481"
+
+  - id: configuration
+    relationship: partial
+    audit_qualification: rm32 loads persistent configuration but the current bench entry forcibly clears stuck-rotor, stall, bidirectional, sine-start, and brake-on-stop settings.
+    minz:
+      paths: [minz/src/lib.rs, minz/Cargo.toml, minz/examples/am32_clone.rs]
+      qualification: "One board and mostly compile-time constants; pwm48 is the only declared Cargo behavior feature."
+    rm32:
+      paths: [rm32/src/config.rs, rm32/src/board.rs, rm32_stm32/build.rs, rm32_stm32/boards]
+      qualification: "Persistent EEPROM settings combine with per-board generated constants and target Cargo features."
+    evidence:
+      - "minz/Cargo.toml:6-16"
+      - "minz/src/lib.rs:42-96"
+      - "rm32/src/config.rs:8-82"
+      - "rm32_stm32/build.rs:46-88"
+      - "rm32_stm32/build.rs:210-245"
+      - "rm32_stm32/build.rs:247-315"
+
+  - id: analog_measurement_and_safety
+    relationship: partial
+    audit_qualification: MinZ reads phase A/B with current/vbat, but the periodic harvest discards phase samples; only current and vbat feed its hard-kill logic.
+    minz:
+      paths: [minz/src/adc_sync.rs, minz/src/current_adc.rs, minz/core/src/am32_isr.rs]
+      qualification: "TIM1-triggered four-channel injected sampling is explicitly observer-only but actively drives average-current and absolute-voltage kill decisions."
+    rm32:
+      paths: [rm32/src/current.rs, rm32/src/ntc.rs, rm32/src/main_state.rs, rm32_stm32/src/adc_generic.rs]
+      qualification: "Voltage/current/temperature measurements feed LVC, current PID, temperature limiting, KISS telemetry, and EDT; sampling is abstracted per target."
+    evidence:
+      - "minz/src/adc_sync.rs:19-32"
+      - "minz/src/adc_sync.rs:163-177"
+      - "minz/core/src/am32_isr.rs:211-240"
+      - "rm32/src/main_state.rs:423-515"
+
+  - id: signal_input
+    relationship: partial
+    minz:
+      paths: [minz/core/src/am32.rs, minz/core/src/am32_loop.rs, minz/src/usart2_rx.rs]
+      qualification: "A 2 Mbaud bench UART byte stream accepts numeric throttle and stop/info/trace/dump commands; RX ISR only enqueues."
+    rm32:
+      paths: [rm32/src/signal.rs, rm32/src/transfer.rs, rm32/src/dshot.rs, rm32/src/servo.rs, rm32_stm32/src/capture_generic.rs]
+      qualification: "DMA edge capture detects and then decodes DShot150/300/600 or servo PWM, including calibration and bidirectional DShot detection."
+    evidence:
+      - "minz/examples/am32_clone.rs:100-102"
+      - "minz/examples/am32_clone.rs:240-256"
+      - "minz/examples/am32_clone.rs:390-397"
+      - "rm32/src/transfer.rs:195-249"
+      - "rm32/src/transfer.rs:252-370"
+      - "rm32_stm32/src/isr_handlers.rs:220-335"
+
+  - id: telemetry_output
+    relationship: partial
+    minz:
+      paths: [minz/core/src/zct_trace.rs, minz/src/uart_tx.rs, minz/examples/am32_clone.rs]
+      qualification: "High-rate 15-byte ZC records plus textual info/black-box dump use a 4 KiB drop-on-overflow DMA TX ring."
+    rm32:
+      paths: [rm32/src/telemetry.rs, rm32/src/dshot.rs, rm32/src/edt.rs, rm32_stm32/src/telem_hal.rs]
+      qualification: "Product-facing KISS telemetry, bidirectional DShot eRPM/GCR, EDT voltage/current/temperature, and ESC-info responses."
+    evidence:
+      - "minz/core/src/zct_trace.rs:1-22"
+      - "minz/src/uart_tx.rs:1-18"
+      - "minz/examples/am32_clone.rs:400-456"
+      - "rm32_stm32/src/isr_handlers.rs:148-175"
+      - "rm32_stm32/src/bin/main.rs:443-449"
+
+  - id: safety_and_fault_shutdown
+    relationship: partial
+    audit_qualification: MinZ safety_kill immediately forces hardware off and freezes history, but foreground notification clears KILLED and can reopen duty application; its panic path waits for IWDG reset without an explicit bridge-off write.
+    minz:
+      paths: [minz/core/src/am32_control.rs, minz/core/src/am32_isr.rs, minz/src/iwdg.rs, minz/src/panic.rs]
+      qualification: "Hard bench kill forces phases off, disables comparator/commutation, freezes history, and an actively started IWDG resets wedges."
+    rm32:
+      paths: [rm32/src/main_state.rs, rm32/src/shared_comm.rs, rm32_stm32/src/emergency.rs, rm32_stm32/src/panic.rs]
+      qualification: "Product protections request all-off through the mailbox and panic/hard-fault have a register-level emergency-off path; watchdog APIs exist but firmware start is disabled."
+    evidence:
+      - "minz/core/src/am32_control.rs:182-204"
+      - "minz/src/iwdg.rs:18-33"
+      - "rm32/src/shared_comm.rs:13-28"
+      - "rm32_stm32/src/bin/main.rs:121-125"
+      - "rm32_stm32/src/panic.rs:21-59"
+
+  - id: observability
+    relationship: partial
+    minz:
+      paths: [minz/core/src/blackbox.rs, minz/src/bb.rs, minz/core/src/zct_trace.rs, minz/src/uart_tx.rs]
+      qualification: "Control-semantic recorder: a 64-event chronological ring freezes on fault, alongside a continuous commutation trace."
+    rm32:
+      paths:
+        - rm32/src/reset_cause.rs
+        - rm32/src/shared_state.rs
+        - rm32_stm32/src/dbg_frame_history.rs
+        - rm32_stm32/src/debug_uart.rs
+        - rm32_stm32/src/bin/main.rs
+      qualification: "Operational diagnostics: reset cause, ISR/main cycle snapshots, protocol counters, optional frame history, RTT and optional UART logs; no matching freeze-on-fault semantic event ring."
+    evidence:
+      - "minz/core/src/blackbox.rs:1-64"
+      - "minz/src/bb.rs:16-35"
+      - "rm32/src/shared_state.rs:75-103"
+      - "rm32_stm32/src/bin/main.rs:285-377"
+
+  - id: host_verification
+    relationship: partial
+    minz:
+      paths: [minz/core/src]
+      qualification: "77 source-level #[test] functions across seven core modules; hardware wrappers and firmware entry remain target-only."
+    rm32:
+      paths: [rm32/src, rm32/src/bin/harness.rs, tests/blackbox]
+      qualification: "253 source-level #[test] functions plus a stdin/stdout mock-HAL process harness and 72 discovered vector files."
+    evidence:
+      - "minz/core/src/lib.rs:1-15"
+      - "rm32/src/bin/harness.rs:1-20"
+      - "rm32/src/bin/harness.rs:463-494"
+      - "tests/blackbox/harness.py:18-57"
+      - "tests/blackbox/test_vectors.py:27-52"
+
+  - id: target_and_board_selection
+    relationship: partial
+    audit_qualification: Both have target/link/board selection; MinZ fixes one L431 boundary while rm32 generalizes it to features, generated data, four families, and fourteen boards.
+    minz:
+      paths: [minz/.cargo/config.toml, minz/src/board_init.rs, minz/memory.x]
+      qualification: "Fixed STM32L431KCU target and one hard-coded board/pin configuration."
+    rm32:
+      paths: [rm32_stm32/Cargo.toml, rm32_stm32/src/mcu.rs, rm32_stm32/boards, rm32_stm32/build.rs]
+      qualification: "Four MCU feature families and fourteen board descriptions selected/generated at build time."
+    evidence:
+      - "minz/.cargo/config.toml:1-6"
+      - "rm32_stm32/Cargo.toml:38-48"
+      - "rm32_stm32/src/mcu.rs:22-37"
+      - "rm32_stm32/build.rs:210-245"
+
+runtime_flow_correspondence:
+  boot_and_wiring:
+    minz:
+      flow:
+        - "Take L431 peripherals and configure one fixed clock/pin layout."
+        - "Initialize comparator, TIM1 PWM, injected ADC, TIM2/TIM16/TIM6, active IWDG, USART2 RX, USART1 DMA TX."
+        - "Install static priority levels and enter main_entry."
+      evidence:
+        - "minz/examples/am32_clone.rs:460-579"
+    rm32:
+      flow:
+        - "Generate BOARD at build time, initialize feature-selected MCU peripherals, LED and startup sound."
+        - "Load/migrate EEPROM, derive motor settings, build ISR-exclusive and main-exclusive state."
+        - "Move ISR state static, arm input DMA, enable interrupts, enter foreground loop."
+      evidence:
+        - "rm32_stm32/src/bin/main.rs:28-167"
+        - "rm32_stm32/src/bin/main.rs:169-270"
+  input_to_setpoint:
+    minz:
+      flow:
+        - "USART2 ISR pushes bytes to an atomic ring."
+        - "Foreground parser updates UART duty/input and bench request atomics."
+        - "Foreground set_input maps UART throttle to setpoint; TIM6 ramps and applies it."
+      evidence:
+        - "minz/examples/am32_clone.rs:240-256"
+        - "minz/examples/am32_clone.rs:366-375"
+        - "minz/core/src/am32_isr.rs:147-158"
+    rm32:
+      flow:
+        - "DMA input capture and EXTI frame processing detect/decode DShot or servo and publish newinput."
+        - "SystemTick input mapping publishes adjusted_input."
+        - "TIM6 computes, ramps, clamps, and applies duty."
+      evidence:
+        - "rm32_stm32/src/isr_handlers.rs:177-239"
+        - "rm32_stm32/src/isr_handlers.rs:242-335"
+        - "rm32/src/system.rs:32-47"
+        - "rm32/src/control/isr_logic.rs:64-167"
+  polling_startup:
+    minz:
+      flow:
+        - "TIM6 polls comparator while old_routine and running; accepted BEMF calls zcfoundroutine and either immediate or scheduled commutation."
+      evidence:
+        - "minz/core/src/am32_isr.rs:180-205"
+    rm32:
+      flow:
+        - "TIM6 masks/reads comparator, updates BemfState, advances directly for early crossings or arms commutation timer."
+      evidence:
+        - "rm32/src/control/isr_logic.rs:182-213"
+  interrupt_closed_loop:
+    minz:
+      flow:
+        - "COMP gates by half average interval and persistence, timestamps and arms TIM16."
+        - "TIM16 commutates, blends timing, computes advance/wait, writes trace, and re-enables comparator."
+      evidence:
+        - "minz/core/src/am32_isr.rs:37-92"
+        - "minz/core/src/am32_isr.rs:100-129"
+    rm32:
+      flow:
+        - "COMP persistence acceptance records timing and arms commutation timer."
+        - "Commutation handler advances, updates timing, publishes desync flag, and re-enables comparator."
+      evidence:
+        - "rm32/src/control/isr_logic.rs:217-266"
+        - "rm32/src/control/isr_logic.rs:268-298"
+  foreground:
+    minz:
+      flow:
+        - "Refresh watchdog; parse bench UART; compute schedule/desync/timeout; drain trace; service requests."
+      evidence:
+        - "minz/examples/am32_clone.rs:366-388"
+    rm32:
+      flow:
+        - "Run optional sine step; SystemTick input/sync/main pipeline; update LED, IRQ priorities, EEPROM, info response, reset/watchdog/logging."
+      evidence:
+        - "rm32_stm32/src/bin/main.rs:379-481"
+
+hal_boundary:
+  overlap:
+    shared_traits:
+      - PwmOutput
+      - PhaseOutput
+      - Comparator
+      - IntervalTimer
+      - ComTimer
+      - MotorHal
+    evidence:
+      - "minz/core/src/am32_hal.rs:26-66"
+      - "minz/core/src/am32_hal.rs:78-104"
+      - "minz/core/src/am32_hal.rs:141-159"
+      - "rm32/src/hal.rs:14-68"
+  minz_extensions:
+    active:
+      - "CompExti exposes pending-bit policy."
+      - "ComTimerExt exposes bare ARR and shared-vector acknowledgement."
+      - "Recorder, Cs, InjAdc, and LoopTimer form a separate observer bundle."
+    evidence:
+      - "minz/core/src/am32_hal.rs:68-76"
+      - "minz/core/src/am32_hal.rs:95-139"
+      - "minz/core/src/am32_hal.rs:207-216"
+  rm32_extensions:
+    active:
+      - "InputCapture, Adc, TelemetryUart, Flash, System, and EmergencyOff support product protocols, persistence, measurements, and safety."
+    declared_unwired:
+      - "SerialInput exists, but current STM32 firmware has no implementation/caller path."
+    evidence:
+      - "rm32/src/hal.rs:70-152"
+      - "rm32_stm32/src/isr_handlers.rs:369-382"
+
+state_mapping:
+  minz:
+    model: "Static AtomicBool/U16/U32/Usize storage plus borrowed cohesion clusters and zero-sized hardware bundles reconstructed in each context."
+    synchronization: "Mostly Relaxed atomics; explicit critical sections protect non-atomic black-box and trace ring operations."
+    evidence:
+      - "minz/examples/am32_clone.rs:104-169"
+      - "minz/examples/am32_clone.rs:258-335"
+      - "minz/src/bb.rs:9-35"
+      - "minz/core/src/zct_trace.rs:65-68"
+  rm32:
+    model: "IsrState owns mutable motor/protocol/HAL data; MainState owns foreground calculations/config; SharedState publishes atomic cross-context values and requests."
+    synchronization: "Acquire/Release portable atomics, plus an unsafe ISR-local cell predicated on non-preempting users."
+    evidence:
+      - "rm32_stm32/src/isr.rs:70-101"
+      - "rm32/src/shared_state.rs:1-20"
+      - "rm32_stm32/src/isr_handlers.rs:12-69"
+
+configuration_mapping:
+  minz:
+    active:
+      - "Fixed L431 target runner/linker configuration."
+      - "Compile-time PWM carrier feature: default 24 kHz or pwm48."
+      - "Board electrical and timing constants in code."
+    persistence: none
+    evidence:
+      - "minz/.cargo/config.toml:1-6"
+      - "minz/Cargo.toml:6-16"
+      - "minz/src/lib.rs:74-96"
+  rm32:
+    active:
+      - "Cargo MCU feature selects one of four target families."
+      - "BOARD environment/default selects one of fourteen YAML descriptions, transformed into BoardConfig."
+      - "EEPROM config is loaded, validated, migrated, guarded, and mapped to MotorConfig."
+    evidence:
+      - "rm32_stm32/Cargo.toml:38-53"
+      - "rm32_stm32/build.rs:210-245"
+      - "rm32_stm32/build.rs:247-315"
+      - "rm32_stm32/src/bin/main.rs:169-255"
+
+protocol_mapping:
+  minz:
+    wired:
+      - "2 Mbaud UART numeric throttle/stop and bench commands."
+      - "15-byte ZC_TRACE stream."
+      - "Text info and black-box dumps."
+    evidence:
+      - "minz/examples/am32_clone.rs:390-456"
+      - "minz/examples/am32_clone.rs:546-558"
+  rm32:
+    wired:
+      - "DShot150/300/600 detection and decode."
+      - "Servo PWM detection, throttle, bidirectional mapping, and calibration."
+      - "DShot command processing."
+      - "Bidirectional DShot eRPM/GCR output and EDT frames."
+      - "KISS telemetry and ESC-info packets."
+    declared_unwired:
+      - "CRSF parser and handle_crsf_byte exist, but no target interrupt calls the handler."
+      - "The optional Cargo dronecan dependency has no rm32 module or firmware wiring."
+    evidence:
+      - "rm32/src/transfer.rs:195-249"
+      - "rm32/src/transfer.rs:252-370"
+      - "rm32_stm32/src/isr_handlers.rs:148-175"
+      - "rm32_stm32/src/isr_handlers.rs:242-335"
+      - "rm32_stm32/src/isr_handlers.rs:369-382"
+      - "rm32/Cargo.toml:6-21"
+
+diagnostics_mapping:
+  minz:
+    wired:
+      - "64-event semantic black box, freeze-on-kill, chronological text replay."
+      - "Continuous zero-cross trace with batch decimation."
+      - "DMA UART TX resynchronization counter and bounded-spin timeout counter."
+      - "Active IWDG."
+    evidence:
+      - "minz/core/src/blackbox.rs:1-64"
+      - "minz/core/src/zct_trace.rs:1-22"
+      - "minz/src/uart_tx.rs:93-166"
+      - "minz/src/spin.rs:1-31"
+      - "minz/src/iwdg.rs:18-33"
+  rm32:
+    wired:
+      - "RTT boot/reset reporting and periodic state/cycle-counter logs."
+      - "Per-ISR/main last-duration counters and DShot CRC/bidir diagnostics."
+      - "Panic/HardFault emergency-off."
+      - "Optional debuguart frame-history ring."
+    qualification:
+      - "IWDG interfaces are present, but start is commented out in the current firmware."
+    evidence:
+      - "rm32_stm32/src/bin/main.rs:63-75"
+      - "rm32_stm32/src/bin/main.rs:285-377"
+      - "rm32/src/shared_state.rs:75-103"
+      - "rm32_stm32/src/bin/main.rs:121-125"
+
+test_mapping:
+  minz:
+    unit_test_attribute_count: 77
+    modules_with_tests: 7
+    strengths:
+      - "Tests target exact portable functions used by firmware and include ordered HAL-call mocks for safety-critical actions."
+      - "Black-box ring, UART/ring packing, timing bands, ISR bodies, and control bands are host-tested."
+    boundary:
+      - "No process-level firmware pipeline harness in the in-scope MinZ implementation."
+      - "L431 register configuration, vector priority behavior, DMA, and electrical timing remain target-only."
+    evidence:
+      - "minz/core/src/am32_hal.rs:218-250"
+      - "minz/core/src/am32_control.rs:366-377"
+      - "minz/core/src/am32_isr.rs:248-291"
+      - "minz/core/src/blackbox.rs:152-186"
+  rm32:
+    unit_test_attribute_count: 253
+    vector_file_count: 72
+    strengths:
+      - "Broad module-level unit suite covers control, config, protocols, modes, measurements, telemetry, and utilities."
+      - "The process harness uses the same isr_logic and SystemTick path and exposes HAL safety call counts."
+      - "Pytest discovers every vector file and has no declared xfails."
+    boundary:
+      - "Process vectors mock HAL and cannot establish register/pin/DMA/interrupt-preemption correctness."
+      - "Firmware invokes SystemTick with an empty ISR closure because the real tick is asynchronous; the harness executes it inline."
+    evidence:
+      - "rm32/src/bin/harness.rs:1-20"
+      - "rm32/src/bin/harness.rs:463-515"
+      - "rm32/src/system.rs:153-172"
+      - "tests/blackbox/test_vectors.py:27-52"
+
+declared_vs_wired:
+  minz:
+    - capability: "am32_clone motor control"
+      status: active
+      evidence: ["minz/examples/am32_clone.rs:345-388", "minz/examples/am32_clone.rs:589-607"]
+    - capability: "black-box recorder and dump"
+      status: active
+      evidence: ["minz/examples/am32_clone.rs:167-169", "minz/examples/am32_clone.rs:411-456"]
+    - capability: "injected ADC phase/current/vbat burst"
+      status: active
+      evidence: ["minz/examples/am32_clone.rs:492-536", "minz/core/src/am32_isr.rs:211-240"]
+    - capability: "regular ADC free-run DMA current ring"
+      status: declared_unwired_but_configured
+      evidence: ["minz/src/adc_sync.rs:50-55", "minz/src/adc_sync.rs:149-160"]
+    - capability: "full, all-PWM, and proportional brake primitives"
+      status: library_present_unwired
+      evidence: ["minz/src/tim1_motor_pwm.rs:425-439"]
+    - capability: "pwm48 carrier"
+      status: active_optional
+      evidence: ["minz/Cargo.toml:6-11", "minz/src/lib.rs:74-84"]
+  rm32:
+    - capability: "DShot and servo input"
+      status: active
+      evidence: ["rm32_stm32/src/isr_handlers.rs:220-335"]
+    - capability: "bidirectional DShot and EDT output"
+      status: active
+      evidence: ["rm32_stm32/src/isr_handlers.rs:148-175"]
+    - capability: "sine startup/changeover"
+      status: wired_but_runtime_forced_off
+      evidence: ["rm32_stm32/src/bin/main.rs:379-403", "rm32/src/system.rs:92-133"]
+    - capability: "brake-on-stop product modes"
+      status: wired_but_runtime_forced_off
+      evidence: ["rm32_stm32/src/bin/main.rs:209-218", "rm32/src/control/isr_logic.rs:89-98"]
+    - capability: "CRSF input"
+      status: declared_unwired
+      evidence: ["rm32_stm32/src/isr_handlers.rs:369-382"]
+    - capability: "brushed motor mode"
+      status: library_only
+      evidence: ["rm32/src/brushed.rs:1-48"]
+    - capability: "fixed duty/speed development modes"
+      status: library_only
+      evidence: ["rm32/src/fixed_mode.rs:1-24"]
+    - capability: "DroneCAN feature"
+      status: manifest_only
+      evidence: ["rm32/Cargo.toml:6-21"]
+    - capability: "MultiShot conversion helper"
+      status: library_only_unwired
+      evidence: ["rm32/src/signal.rs:70-84"]
+    - capability: "IWDG"
+      status: declared_unwired
+      evidence: ["rm32_stm32/src/bin/main.rs:121-125"]
+    - capability: "signal-timeout reset"
+      status: debug_suppressed
+      evidence: ["rm32_stm32/src/bin/main.rs:451-466"]
+    - capability: "DShot save-settings"
+      status: partial
+      evidence: ["rm32_stm32/src/bin/main.rs:433-440"]
+
+side_only_capabilities:
+  minz_only:
+    - capability: "Freeze-on-fault semantic event black box"
+      status: active
+      nearest_rm32: "Optional frame snapshots and counters are diagnostic but do not preserve a chronological control-event pre-fault history."
+      evidence:
+        - "minz/core/src/blackbox.rs:1-64"
+        - "minz/src/bb.rs:16-35"
+        - "rm32/src/shared_state.rs:75-103"
+    - capability: "Continuous ZC_TRACE binary stream with batch-decimation semantics"
+      status: active
+      nearest_rm32: "rm32 reports ordinary KISS/DShot telemetry and debug logs, not per-commutation trace records."
+      evidence:
+        - "minz/core/src/zct_trace.rs:1-22"
+        - "minz/core/src/zct_trace.rs:39-75"
+    - capability: "Bench UART throttle and interactive stop/info/trace/black-box command plane"
+      status: active
+      nearest_rm32: "rm32 input protocols are product RC protocols; debuguart is output-only."
+      evidence:
+        - "minz/examples/am32_clone.rs:390-456"
+        - "minz/examples/am32_clone.rs:546-558"
+    - capability: "PWM-synchronous four-channel injected phase/current/vbat observer burst"
+      status: active
+      nearest_rm32: "rm32 ADC provides product measurements but no matching exposed per-carrier phase A/B observer stream."
+      evidence:
+        - "minz/src/adc_sync.rs:19-32"
+        - "minz/src/adc_sync.rs:105-117"
+    - capability: "Project-wide bounded hardware-flag wait helper with timeout telemetry"
+      status: active
+      nearest_rm32: "rm32 contains direct target wait loops and has no equivalent centralized bounded-spin abstraction."
+      evidence:
+        - "minz/src/spin.rs:1-31"
+        - "rm32_stm32/src/mcu_l431/init.rs:23-50"
+    - capability: "Actively enabled independent watchdog in the compared firmware"
+      status: active
+      nearest_rm32: "rm32 has HAL/system support but its current firmware comments out start_watchdog."
+      evidence:
+        - "minz/examples/am32_clone.rs:543-544"
+        - "rm32_stm32/src/bin/main.rs:121-125"
+
+    - capability: Dormant regular ADC/DMA setup and 4 KiB current ring
+      relationship: none
+      status: declared_unwired_but_configured
+      nearest_rm32: none
+      evidence:
+        - minz/src/adc_sync.rs:50-55
+        - minz/src/adc_sync.rs:149-160
+    - capability: DMA diagnostic UART ring with lost-completion and stale-EN self-repair
+      relationship: none
+      status: active
+      nearest_rm32: rm32 debug UART and KISS transports do not implement the same repair contract.
+      evidence:
+        - minz/src/uart_tx.rs:93-166
+    - capability: Comparator pending-bit camping until the half-interval gate opens
+      relationship: none
+      status: active
+      nearest_rm32: rm32 L431 clears and masks at ISR entry; the other families omit that acknowledgement fix.
+      evidence:
+        - minz/core/src/am32_isr.rs:43-58
+        - minz/core/src/am32_hal.rs:68-76
+        - rm32_stm32/src/mcu_l431/interrupts.rs:27-49
+
+  rm32_only:
+    - capability: "Four MCU families and fourteen generated board variants"
+      status: active
+      nearest_minz: "MinZ is fixed to one L431 target and board."
+      evidence:
+        - "rm32_stm32/Cargo.toml:38-43"
+        - "rm32_stm32/src/mcu.rs:22-37"
+        - "rm32_stm32/build.rs:210-245"
+        - "minz/.cargo/config.toml:1-6"
+    - capability: "DShot150/300/600 plus bidirectional DShot telemetry"
+      status: active
+      nearest_minz: "MinZ accepts only its bench UART command stream."
+      evidence:
+        - "rm32/src/transfer.rs:195-249"
+        - "rm32/src/transfer.rs:252-281"
+        - "rm32_stm32/src/isr_handlers.rs:148-175"
+    - capability: "Servo PWM input, calibration, bidirectional and RC-car mappings"
+      status: active
+      nearest_minz: none
+      evidence:
+        - "rm32/src/transfer.rs:282-370"
+        - "rm32/src/input_mapping.rs:1-24"
+    - capability: "DShot command and EDT scheduling"
+      status: active
+      nearest_minz: none
+      evidence:
+        - "rm32_stm32/src/isr_handlers.rs:276-307"
+        - "rm32_stm32/src/isr_handlers.rs:159-172"
+    - capability: "Persistent EEPROM configuration with migration and board-derived MotorConfig"
+      status: active
+      nearest_minz: "MinZ values are compile-time and non-persistent."
+      evidence:
+        - "rm32_stm32/src/bin/main.rs:169-255"
+        - "rm32/src/config.rs:155-233"
+    - capability: "Sine startup and six-step changeover"
+      status: wired_but_runtime_forced_off
+      nearest_minz: "MinZ has no sine startup mode."
+      evidence:
+        - "rm32/src/system.rs:92-151"
+        - "rm32_stm32/src/bin/main.rs:209-218"
+        - "rm32_stm32/src/bin/main.rs:379-403"
+    - capability: "Voltage, temperature, current, and speed product measurement/limiting loops"
+      status: active_and_config_dependent
+      nearest_minz: "MinZ has hard bench current/vbat kills and AM32 low-RPM duty ceiling, not the product PID/protection matrix."
+      evidence:
+        - "rm32/src/main_state.rs:423-515"
+        - "minz/core/src/am32_isr.rs:211-240"
+    - capability: "Stall and stuck-rotor product protection"
+      status: implemented_tested_but_runtime_forced_off
+      nearest_minz: "MinZ has BEMF timeout re-kick but not rm32's configured stall/stuck protection matrix."
+      evidence:
+        - "rm32/src/main_state.rs:306-360"
+        - "rm32_stm32/src/bin/main.rs:209-218"
+    - capability: "Startup sound and reset-cause reporting"
+      status: active
+      nearest_minz: none
+      evidence:
+        - "rm32_stm32/src/bin/main.rs:63-125"
+    - capability: "WS2812 board status"
+      status: active_optional_board
+      nearest_minz: none
+      evidence:
+        - "rm32_stm32/src/bin/main.rs:97-103"
+        - "rm32_stm32/src/bin/main.rs:409-421"
+    - capability: "Bootloader-oriented signal-timeout reset flow"
+      status: wired_but_runtime_suppressed
+      nearest_minz: none
+      evidence:
+        - "rm32_stm32/src/bin/main.rs:451-466"
+    - capability: "Process-level stdin/stdout mock-HAL harness with 72 behavioral vectors"
+      status: active_test
+      nearest_minz: "MinZ has rich unit mocks but no corresponding in-scope process-vector layer."
+      evidence:
+        - "rm32/src/bin/harness.rs:1-20"
+        - "tests/blackbox/harness.py:18-57"
+        - "tests/blackbox/test_vectors.py:27-52"
+    - capability: "Brushed and fixed-duty/fixed-speed library modes"
+      status: library_only
+      nearest_minz: none
+      evidence:
+        - "rm32/src/brushed.rs:1-48"
+        - "rm32/src/fixed_mode.rs:1-24"
+
+    - capability: CRSF parser and shared byte handler
+      relationship: none
+      status: declared_unwired
+      nearest_minz: none
+      evidence:
+        - rm32/src/crsf.rs:1-20
+        - rm32_stm32/src/isr_handlers.rs:369-382
+    - capability: DroneCAN dependency and Cargo feature
+      relationship: none
+      status: manifest_only
+      nearest_minz: none
+      evidence:
+        - rm32/Cargo.toml:6-21
+    - capability: KISS telemetry and ESC-info packet protocols
+      relationship: none
+      status: active
+      nearest_minz: MinZ emits bench trace/text, not these product protocols.
+      evidence:
+        - rm32/src/telemetry.rs:1-45
+        - rm32/src/main_state.rs:501-515
+        - rm32_stm32/src/bin/main.rs:443-449
+    - capability: MultiShot conversion helper
+      relationship: none
+      status: library_only_unwired
+      nearest_minz: none
+      evidence:
+        - rm32/src/signal.rs:70-84
+    - capability: Typed voltage/current/temperature/electrical-time units
+      relationship: none
+      status: active
+      nearest_minz: MinZ uses raw AM32 integer domains.
+      evidence:
+        - rm32/src/units.rs:1-80
+
+contradictions_and_risks:
+  - id: rm32_isr_cell_preemption_unsoundness
+    severity: critical
+    side: rm32
+    finding: "IsrCell's unsafe Sync invariant says every ISR touching ISR_LOCAL has the same priority and cannot preempt another, but L431 explicitly assigns different priorities and dynamically swaps DMA versus COMP/commutation. handle_tim6, handle_tim14, handle_comp, handle_dma_tc, and handle_exti_frame all call ISR_LOCAL.get(), so nested mutable access is possible."
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:12-39"
+      - "rm32_stm32/src/isr_handlers.rs:71-82"
+      - "rm32_stm32/src/isr_handlers.rs:105-129"
+      - "rm32_stm32/src/isr_handlers.rs:148-180"
+      - "rm32_stm32/src/mcu_l431/init.rs:219-249"
+      - "rm32_stm32/src/mcu_l431/chip.rs:43-73"
+
+  - id: rm32_non_l431_comp_ack_gap
+    severity: high
+    side: rm32
+    finding: "Portable bemf_zero_cross documents that an early persistence reject requires platform acknowledgement at ISR entry; it states only L431 does so. Current F051/G071/G431 vector wrappers call handle_comp directly without an explicit pending-bit clear/mask."
+    evidence:
+      - "rm32/src/control/isr_logic.rs:268-280"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-49"
+      - "rm32_stm32/src/mcu_f051/interrupts.rs:22-25"
+      - "rm32_stm32/src/mcu_g071/interrupts.rs:18-21"
+      - "rm32_stm32/src/mcu_g431/interrupts.rs:26-29"
+
+  - id: minz_kill_latch_is_cleared_by_reporting
+    severity: high
+    side: minz
+    finding: "The firmware labels KILLED a latched fatal kill, and TIM6 suppresses duty only while it is true, but foreground reporting uses swap(false). The safety routine also leaves UART duty input intact, so after reporting a hard kill the control path can become eligible to restart."
+    evidence:
+      - "minz/examples/am32_clone.rs:149-153"
+      - "minz/examples/am32_clone.rs:420-429"
+      - "minz/core/src/am32_control.rs:182-204"
+      - "minz/core/src/am32_isr.rs:147-158"
+
+  - id: rm32_save_settings_config_copy_divergence
+    severity: medium
+    side: rm32
+    finding: "DShot command processing mutates IsrState.config, but the foreground save path writes MainState.config; the code explicitly marks the synchronization as TODO."
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:276-307"
+      - "rm32_stm32/src/bin/main.rs:433-440"
+
+  - id: rm32_debug_behavior_differs_from_declared_product_behavior
+    severity: medium
+    side: rm32
+    finding: "The current firmware overrides multiple EEPROM behaviors, disables IWDG startup, and suppresses signal-timeout reset. Reports must describe these capabilities as present but not currently exercised as production behavior."
+    evidence:
+      - "rm32_stm32/src/bin/main.rs:121-125"
+      - "rm32_stm32/src/bin/main.rs:209-218"
+      - "rm32_stm32/src/bin/main.rs:451-466"
+
+  - id: rm32_crsf_has_no_vector_wiring
+    severity: medium
+    side: rm32
+    finding: "CRSF parser state and a shared handler exist, but no MCU interrupt or foreground call reaches handle_crsf_byte; it is library/handler-only in the current firmware."
+    evidence:
+      - "rm32_stm32/src/isr.rs:70-88"
+      - "rm32_stm32/src/isr_handlers.rs:369-382"
+
+  - id: minz_dormant_adc_dma_footprint
+    severity: low
+    side: minz
+    finding: "adc_sync reserves and configures a 4 KiB regular-current DMA ring, but explicitly never starts the regular conversion in am32_clone. It is configured storage, not an active diagnostic stream."
+    evidence:
+      - "minz/src/adc_sync.rs:50-55"
+      - "minz/src/adc_sync.rs:114-132"
+      - "minz/src/adc_sync.rs:149-160"
+
+  - id: host_tests_do_not_cover_platform_concurrency_and_register_contracts
+    severity: structural
+    side: both
+    finding: "Both test portable logic with mocks, but vector/unit success cannot prove DMA address stability, pin mapping, EXTI acknowledgement, interrupt nesting, register timing, or analog behavior."
+    evidence:
+      - "minz/core/src/lib.rs:4-13"
+      - "rm32/src/bin/harness.rs:23-35"
+      - "rm32/src/system.rs:153-172"
+      - "rm32_stm32/src/isr_handlers.rs:12-69"
+
+  - id: minz_panic_does_not_force_bridge_off
+    severity: high
+    side: minz
+    finding: MinZ safety_kill forces phases off, but panic disables interrupts and waits for IWDG reset without an explicit emergency bridge-off write.
+    evidence:
+      - minz/core/src/am32_control.rs:182-204
+      - minz/src/panic.rs:45-71
+
+  - id: minz_relaxed_multi_field_state
+    severity: medium
+    side: minz
+    finding: Independent Relaxed atomics are race-free per field but do not form coherent multi-field snapshots; correctness depends on single-core access sequencing.
+    evidence:
+      - minz/core/src/am32_loop.rs:74-145
+      - minz/core/src/am32_isr.rs:43-159
+
+  - id: rm32_board_feature_mismatch_not_enforced
+    severity: medium
+    side: rm32
+    finding: build.rs derives an expected target feature from BOARD but does not reject a mismatch, so generated board data and the compiled MCU family can diverge.
+    evidence:
+      - rm32_stm32/build.rs:306-315
+
+  - id: rm32_generated_board_fields_unconsumed
+    severity: medium
+    side: rm32
+    finding: current_adc_channel, voltage_adc_channel, dual_adc, and custom_led are generated but have no runtime consumers; not every YAML field currently drives an adapter.
+    evidence:
+      - rm32/src/board.rs:38-62
+      - rm32_stm32/build.rs:264-276
+
+conclusions:
+  balanced_inventory_result:
+    - "The overlap is deep in six-step AM32 motor timing and the core motor HAL, not in the surrounding product surface."
+    - "MinZ-only items are primarily bench command, trace, pre-fault evidence, synchronized observer sampling, and actively enforced wedge containment."
+    - "rm32-only items are primarily protocol breadth, persistent/configurable product behavior, multi-target adapters, optional motor modes, and process-vector verification."
+    - "Presence and wiring must remain separate: rm32's CRSF/DroneCAN/brushed/fixed/watchdog paths and MinZ's regular ADC DMA ring are not active equivalents."
+  confidence: high

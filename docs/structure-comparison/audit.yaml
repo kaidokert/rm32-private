@@ -1,0 +1,197 @@
+schema_version: 1
+artifact: consolidated-structure-comparison-audit
+repository_revision: a916d445a7271aedc47124b9e35ae9556d200c61
+date: "2026-07-22"
+
+inputs:
+  inventories:
+    - docs/structure-comparison/minz-inventory.yaml
+    - docs/structure-comparison/rm32-inventory.yaml
+    - docs/structure-comparison/crosscut-inventory.yaml
+  independent_audits:
+    - docs/structure-comparison/audit-minz.yaml
+    - docs/structure-comparison/audit-rm32.yaml
+    - docs/structure-comparison/audit-crosscut.yaml
+  policy:
+    - "Executable source, manifests, build logic, tests, and board YAML outrank design comments."
+    - "MinZ am32_clone and motor_tester2 are separate implementation profiles."
+    - "A declared module, enum variant, or handler is not proof of end-to-end firmware wiring."
+    - "Host tests and cross-builds are not evidence of PAC, NVIC, DMA, or electrical runtime behavior."
+
+overall_verdict:
+  status: qualified_comparison_supported
+  summary: >-
+    The inventories support a detailed comparison. Both implementations extract
+    host-testable motor logic behind statically dispatched ESC-domain traits and
+    retain target-specific interrupt/register adapters. Their dominant ownership
+    models differ: am32_clone uses shared atomic storage grouped into borrowed
+    views, motor_tester2 uses a much larger example-owned integration surface,
+    and rm32 predominantly owns mutable main/ISR state separately with atomics as
+    a directional bridge. Several first-pass claims required material qualification.
+
+profile_verdicts:
+  minz_am32_clone:
+    status: confirmed_with_scope_limits
+    findings:
+      - "Compact factory-default, forward-only AM32 transliteration."
+      - "Seven-capability generic HAL and parameterized control/ISR bodies are host-testable."
+      - "Program-owned atomics are grouped as Sched, Drive, Duty, and Bench borrowed views."
+    evidence:
+      - "minz/examples/am32_clone.rs:1-17,103-152,237-360"
+      - "minz/core/src/am32_hal.rs:22-191"
+      - "minz/core/src/am32_isr.rs:33-288"
+  minz_motor_tester2:
+    status: confirmed_as_distinct_partial_extraction
+    findings:
+      - "Interactive bench/closed-loop experiment, not the same architecture as am32_clone."
+      - "Broad minz-core helpers and selected borrowed views are reused, but full ISR and hardware-effect ordering remains in the example."
+      - "No am32_hal-equivalent bundled hardware facade was found for this profile."
+    evidence:
+      - "minz/examples/motor_tester2.rs:1-49,191-1808,4116-4675,4686-4811,6315-6890"
+      - "minz/src/tim1_motor_pwm.rs:423-426"
+      - "minz/core/src/lib.rs:17-40"
+  rm32_and_rm32_stm32:
+    status: confirmed_with_current_integration_defects
+    findings:
+      - "Portable rm32 core plus STM32 platform/adaptation crate and one normal firmware binary."
+      - "Broad domain HAL, lower register-operation seams, owned MainState/IsrState, and atomic SharedState mailbox."
+      - "SystemTick is a shared pipeline slice, not the complete firmware loop."
+      - "The L431 IsrCell safety premise is currently violated by nested interrupt priorities."
+    evidence:
+      - "rm32/src/hal.rs:14-152"
+      - "rm32/src/system.rs:32-75,153-172"
+      - "rm32_stm32/src/bin/main.rs:379-481"
+      - "rm32_stm32/src/isr_handlers.rs:12-69"
+      - "rm32_stm32/src/mcu_l431/init.rs:219-249"
+
+corrections_applied:
+  - id: separate_minz_profiles
+    disposition: applied
+    correction: "am32_clone and motor_tester2 are profiled independently throughout report.md."
+    evidence: "docs/structure-comparison/audit-minz.yaml:22-40"
+  - id: minz_hal_scope
+    disposition: applied
+    correction: >-
+      The seven-capability Hal is attributed only to am32_clone. motor_tester2
+      directly orchestrates platform free functions around extracted helpers.
+    evidence: "minz/src/tim1_motor_pwm.rs:423-426; docs/structure-comparison/audit-minz.yaml:42-108"
+  - id: systemtick_scope
+    disposition: applied
+    correction: >-
+      SystemTick is described as the shared input/callback/synchronization/MainState
+      slice. Sine MMIO, IRQ priorities, persistence, LED, reset, watchdog, and
+      debug work remain outside it.
+    evidence: "rm32/src/system.rs:153-172; rm32_stm32/src/bin/main.rs:379-481"
+  - id: current_isrcell_violation
+    disposition: applied
+    correction: >-
+      Reclassified from a future conditional risk to a current critical
+      soundness risk on L431: every named handler obtains &mut state while the
+      configured priorities permit preemption.
+    evidence: "rm32_stm32/src/isr_handlers.rs:12-69,71-180; rm32_stm32/src/mcu_l431/init.rs:219-249"
+  - id: nominal_slow_dispatch
+    disposition: applied
+    correction: "The slow block is nominal 1 kHz; >20 triggers after 21 increments, about 952.4 Hz at exactly 20 kHz."
+    evidence: "rm32/src/constants.rs:28-31; rm32/src/shared_state.rs:230-243"
+  - id: dead_time_selection_context
+    disposition: applied
+    correction: >-
+      MinZ hard-codes DTG=45. rm32's default L431 board neutron_l431 also uses
+      45; opt-in BOARD=vimdrones_l431 selects 60. This is separate-source,
+      selection-dependent drift, not an unconditional default mismatch.
+    evidence: "minz/src/lib.rs:100-103; rm32_stm32/build.rs:210-227; rm32_stm32/boards/neutron_l431.yaml:1-4; rm32_stm32/boards/vimdrones_l431.yaml:1-4"
+  - id: physical_step_rotation
+    disposition: applied
+    correction: >-
+      Beyond the 0..5 versus 1..6 API boundary, the concrete L431 tables have a
+      one-step physical rotation: rm32 step 1 corresponds to MinZ logical step
+      6, rm32 step 2 to MinZ logical step 1, and so on.
+    evidence: "minz/src/tim1_motor_pwm.rs:205-240; minz/src/comp2.rs:286-320; rm32_stm32/src/phase.rs:111-148,194-197; rm32_stm32/src/comparator.rs:28-44"
+  - id: comparator_pending_semantics
+    disposition: applied
+    correction: >-
+      The common zero-cross skeleton is retained, but MinZ can preserve/re-pend
+      a post-cross pending event across a closed gate; rm32 L431 clears and masks
+      at ISR entry, while three other rm32 wrappers omit that mitigation.
+    evidence: "minz/core/src/am32_isr.rs:33-61; minz/src/comp2.rs:244-311; rm32/src/control/isr_logic.rs:268-298; rm32_stm32/src/mcu_l431/interrupts.rs:27-49"
+  - id: agents_polarity_history
+    disposition: applied
+    correction: >-
+      AGENTS.md's parity warning is retained as historical guidance, not labeled
+      a present motor_tester2 defect: current source locks POLARITY=0. It becomes
+      actionable again if dynamic polarity switching returns.
+    evidence: "minz/AGENTS.md:1-7,99-111; minz/examples/motor_tester2.rs:4539-4544,6561-6567"
+  - id: declared_vs_wired_breadth
+    disposition: applied
+    correction: >-
+      rm32's broad modules/configuration are separated from selected firmware
+      reachability. DShot, servo, commands, EDT, and bidirectional transfer are
+      wired; CRSF has a handler but no checked MCU vector caller; boot currently
+      disables five complex settings.
+    evidence: "rm32_stm32/src/isr_handlers.rs:242-359,369-381; rm32_stm32/src/bin/main.rs:196-218"
+  - id: blackbox_current_result
+    disposition: applied
+    correction: "The harness seam is credited, but the current local result is 77 passes and one temperature_limit failure."
+    evidence: "docs/structure-comparison/audit-rm32.yaml:469-478"
+
+unresolved_gaps:
+  - id: l431_isrcell_soundness
+    severity: critical
+    status: current
+    evidence: "rm32_stm32/src/isr_handlers.rs:12-69; rm32_stm32/src/mcu_l431/init.rs:219-249"
+  - id: comparator_ack_non_l431
+    severity: high
+    status: current
+    evidence: "rm32/src/control/isr_logic.rs:268-280; rm32_stm32/src/mcu_f051/interrupts.rs:21-24; rm32_stm32/src/mcu_g071/interrupts.rs:18-20; rm32_stm32/src/mcu_g431/interrupts.rs:26-28"
+  - id: split_config_save
+    severity: high
+    status: current
+    evidence: "rm32_stm32/src/isr_handlers.rs:276-323; rm32_stm32/src/bin/main.rs:433-440"
+  - id: board_feature_and_exactly_one_feature
+    severity: high
+    status: current
+    evidence: "rm32_stm32/build.rs:214-245,311-315; rm32_stm32/src/mcu.rs:22-32"
+  - id: active_firmware_bench_overrides
+    severity: high
+    status: current
+    evidence: "rm32_stm32/src/bin/main.rs:209-218,451-465"
+  - id: minz_motor_tester2_integration_surface
+    severity: medium
+    status: structural
+    evidence: "minz/examples/motor_tester2.rs:191-1808,4116-4675,6315-6890"
+  - id: platform_runtime_unverified
+    severity: medium
+    status: verification_boundary
+    evidence: ".github/workflows/ci.yml:39-70; minz/scripts/clone_regcheck.py:1-18"
+
+verification_results:
+  - check: minz_core_host_tests
+    result: "PASS: 258 reported executions, 0 failures"
+    caveat: "One duplicated #[test] executes twice and one test-shaped function lacks an effective test attribute."
+    evidence: "docs/structure-comparison/audit-minz.yaml:363-371; minz/core/src/zc.rs:1490-1492,1516"
+  - check: minz_target_checks
+    result: "PASS: release cargo check for am32_clone and motor_tester2"
+    caveat: "Type-check only; no flash or bench execution."
+    evidence: "docs/structure-comparison/audit-minz.yaml:372-380"
+  - check: rm32_host_unit_tests
+    result: "PASS: 253 tests, 0 failures"
+    evidence: "docs/structure-comparison/audit-rm32.yaml:444-451"
+  - check: rm32_four_target_cross_builds
+    result: "PASS: G071, F051, L431, and G431 release build shapes"
+    caveat: "Compile/link evidence only, not platform runtime behavior."
+    evidence: "docs/structure-comparison/audit-rm32.yaml:452-468"
+  - check: rm32_blackbox_vectors
+    result: "FAIL: 77 passed, 1 temperature_limit failure"
+    evidence: "docs/structure-comparison/audit-rm32.yaml:469-478"
+  - check: hardware_execution
+    result: not_executed
+    caveat: "No probe, flash, live-register, motor, or emulator run was part of the audits."
+
+completion_verification:
+  required_profiles_present: true
+  abstraction_dimensions_present: true
+  overlap_and_name_mapping_present: true
+  runtime_flows_present: true
+  risks_and_limitations_present: true
+  declared_vs_wired_distinction_present: true
+  source_link_policy_applied_in_report: true

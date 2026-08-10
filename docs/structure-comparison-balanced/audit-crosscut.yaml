@@ -1,0 +1,313 @@
+schema_version: 1
+artifact: audit-crosscut
+wave: 2
+audited_artifact: docs/structure-comparison-balanced/crosscut-map.yaml
+evidence_basis:
+  - current working tree
+  - docs/structure-comparison-balanced/README.md
+  - docs/structure-comparison-balanced/minz-modules.yaml
+  - docs/structure-comparison-balanced/rm32-modules.yaml
+prior_comparison_docs_used: false
+
+overall_verdict:
+  status: corrections_required
+  summary: >-
+    The cross-cut map gets the central architectural comparison right and its
+    237 evidence references are syntactically valid and within current files.
+    It is not yet a symmetric exhaustive aggregate: MinZ is short one in-scope
+    target-config path, the equal rm32 total masks a different path set, several
+    one-sided capabilities are absent from side_only_capabilities, and a few
+    relationship/wiring labels overstate equivalence or current activation.
+  usable_for_consolidation_after:
+    - Correct the coverage manifests and state their exact path sets.
+    - Add the missing MinZ-only and rm32-only capabilities with presence/wiring status.
+    - Apply the relationship and runtime-status corrections below.
+    - Carry the missing safety/configuration risks into the consolidated limitations.
+
+coverage_audit:
+  minz:
+    verdict: fail_one_missing_path
+    crosscut_count: 30
+    current_expected_count: 31
+    missing_from_crosscut:
+      - minz/core/.cargo/config.toml
+    reason: >-
+      This is not an intentional scope difference. README includes target
+      configuration, minz-modules inventories the file, and the file makes the
+      detached minz-core crate default to the Windows host target rather than
+      inheriting the parent ARM target. It is material to the host-test topology.
+    corrected_counts:
+      implementation_artifact_count: 31
+      rust_source_count: 25
+      manifests_build_link_and_target_count: 6
+    evidence:
+      - docs/structure-comparison-balanced/README.md:7-12
+      - minz/core/.cargo/config.toml:1-6
+      - minz/core/Cargo.toml:6-9
+  rm32:
+    verdict: equal_count_but_nonidentical_set
+    crosscut_count_including_blackbox: 211
+    rm32_inventory_count: 211
+    set_difference:
+      crosscut_only:
+        - rm32_stm32/.cargo/config.toml
+      rm32_inventory_only:
+        - Cargo.toml
+    findings:
+      - >-
+        Root Cargo.toml is an in-scope manifest and defines the actual workspace
+        boundary; omitting it hides that rm32_stm32 is excluded from the default
+        workspace build.
+      - >-
+        rm32_stm32/.cargo/config.toml is real target/link configuration. If it is
+        retained, README and rm32-modules should explicitly include it and the
+        normalized total becomes 212; if strict parity with the current inventory
+        is desired, replace it with Cargo.toml and retain 211.
+      - >-
+        Both wave-1 artifacts include rm32_stm32/examples/*.rs although README's
+        rm32 scope does not name the examples directory. Amend README to include
+        the two bring-up examples, or remove them from both manifests.
+      - >-
+        crosscut-map lists only representative rm32 source paths. A full audit
+        cannot prove path-set equality from representatives; consolidation should
+        use or embed the exact coverage_manifest path set.
+    evidence:
+      - Cargo.toml:1-7
+      - rm32_stm32/.cargo/config.toml:1-8
+      - rm32_stm32/Cargo.toml:25-35
+      - docs/structure-comparison-balanced/README.md:7-14
+
+mapping_audit:
+  retained:
+    - id: portable_motor_hal
+      relationship: direct
+      verdict: supported
+      note: The six core traits and MotorHal are intentionally copied verbatim.
+    - id: commutation_and_bemf_control
+      relationship: direct
+      verdict: supported_with_policy_difference
+      note: >-
+        Core polling/closed-loop timing is directly comparable, but the final
+        report must expose MinZ's pending-bit camping versus rm32's clear/mask
+        policy rather than implying identical comparator behavior.
+    - id: pwm_phase_and_timers
+      relationship: direct
+      verdict: supported_for_l431
+      note: Both L431 paths use TIM1, TIM2, TIM16, and TIM6 for corresponding roles.
+    - id: state_ownership_and_cross_context_communication
+      relationship: partial
+      verdict: supported
+    - id: foreground_orchestration
+      relationship: partial
+      verdict: supported
+    - id: configuration
+      relationship: partial
+      verdict: supported_with_runtime_qualification
+      note: rm32 loads EEPROM, but its current firmware forcibly clears several fields.
+    - id: analog_measurement_and_safety
+      relationship: partial
+      verdict: supported
+      note: MinZ phase A/B samples are harvested but discarded; only current/vbat affect safety.
+    - id: signal_input
+      relationship: partial
+      verdict: supported
+    - id: telemetry_output
+      relationship: partial
+      verdict: supported
+    - id: observability
+      relationship: partial
+      verdict: supported
+    - id: host_verification
+      relationship: partial
+      verdict: supported
+      note: Current counts are 77 MinZ tests, 253 rm32 tests, and 72 vector files.
+  corrections:
+    - id: interrupt_contexts
+      current_relationship: direct
+      corrected_relationship: partial
+      reason: >-
+        COMP, commutation, and TIM6 contexts are direct counterparts. MinZ's
+        USART2 RX context has no rm32 counterpart, while rm32's active DMA and
+        frame-processing EXTI contexts have no MinZ counterpart. CRSF is a
+        callable handler, not an optional wired interrupt context.
+      evidence:
+        - minz/examples/am32_clone.rs:589-615
+        - rm32_stm32/src/mcu_l431/interrupts.rs:8-112
+        - rm32_stm32/src/isr_handlers.rs:369-382
+    - id: target_and_board_selection
+      current_relationship: none
+      corrected_relationship: partial
+      reason: >-
+        MinZ has a real fixed target/link/board boundary; rm32 generalizes the
+        same concern into MCU features, generated board data, and fourteen
+        profiles. The breadth is one-sided, but the closest concept is not absent.
+      evidence:
+        - minz/.cargo/config.toml:1-6
+        - minz/src/board_init.rs:44-104
+        - rm32_stm32/src/mcu.rs:22-37
+        - rm32_stm32/build.rs:210-315
+    - id: safety_and_fault_shutdown
+      current_relationship: partial
+      corrected_relationship: partial
+      wording_correction: >-
+        Do not describe MinZ's KILLED flag as a durable latch. safety_kill shuts
+        hardware down and sets the flag, but foreground reporting swap(false)
+        clears it while the UART throttle remains intact, allowing TIM6 to apply
+        duty again. Also distinguish runtime kill from panic: MinZ panic disables
+        interrupts and waits for IWDG reset without explicitly forcing phases off.
+      evidence:
+        - minz/core/src/am32_control.rs:182-204
+        - minz/core/src/am32_isr.rs:147-158
+        - minz/examples/am32_clone.rs:420-429
+        - minz/src/panic.rs:45-71
+
+missing_side_only_capabilities:
+  minz_only:
+    - capability: Dormant regular ADC/DMA setup and 4 KiB current ring
+      status: declared_unwired_but_configured
+      nearest_rm32: none
+      why_missing_matters: >-
+        It is explicitly retained as bench-load-bearing layout/configuration,
+        while ADSTART is never set. Presence must not be confused with an active stream.
+      evidence:
+        - minz/src/adc_sync.rs:50-55
+        - minz/src/adc_sync.rs:149-160
+    - capability: DMA diagnostic UART ring with lost-completion and stale-EN self-repair
+      status: active
+      nearest_rm32: Debug UART/KISS transports do not implement the same repair contract.
+      evidence:
+        - minz/src/uart_tx.rs:93-166
+    - capability: Comparator pending-bit camping until the half-interval gate opens
+      status: active
+      nearest_rm32: rm32 clears/masks pending at ISR entry on L431 and lacks that fix on other families.
+      evidence:
+        - minz/core/src/am32_isr.rs:43-58
+        - minz/core/src/am32_hal.rs:68-76
+        - rm32_stm32/src/mcu_l431/interrupts.rs:27-49
+  rm32_only:
+    - capability: CRSF parser and shared byte handler
+      status: declared_unwired
+      nearest_minz: none
+      evidence:
+        - rm32/src/crsf.rs:1-20
+        - rm32_stm32/src/isr_handlers.rs:369-382
+    - capability: DroneCAN dependency and Cargo feature
+      status: manifest_only
+      nearest_minz: none
+      evidence:
+        - rm32/Cargo.toml:6-21
+    - capability: KISS telemetry and ESC-info packet protocols
+      status: active
+      nearest_minz: MinZ emits bench trace/text, not these product protocols.
+      evidence:
+        - rm32/src/telemetry.rs:1-45
+        - rm32/src/main_state.rs:501-515
+        - rm32_stm32/src/bin/main.rs:443-449
+    - capability: MultiShot conversion helper
+      status: library_only_unwired
+      nearest_minz: none
+      note: compute_multishot has no caller in current source; do not fold it into active servo support.
+      evidence:
+        - rm32/src/signal.rs:70-84
+    - capability: Typed voltage/current/temperature/electrical-time units
+      status: active
+      nearest_minz: MinZ uses raw AM32 integer domains.
+      evidence:
+        - rm32/src/units.rs:1-80
+
+side_only_entry_corrections:
+  - capability: Sine startup/changeover and proportional/full braking modes
+    correction: split_entry
+    reason: >-
+      Sine startup/changeover is rm32-only. Braking is not wholly absent from
+      MinZ: the copied HAL and Tim1Pwm implement full/all-PWM/proportional brake,
+      but am32_clone never calls them. In current rm32 firmware sine/brake config
+      is forcibly cleared at boot, so label those firmware paths
+      wired_but_runtime_forced_off, not active_optional.
+    evidence:
+      - minz/src/tim1_motor_pwm.rs:425-439
+      - rm32_stm32/src/bin/main.rs:209-218
+      - rm32_stm32/src/bin/main.rs:379-403
+  - capability: Current, speed, stall, voltage, and temperature product limiting/control
+    correction: split_by_runtime_status
+    reason: >-
+      Voltage/temperature/current measurement and associated calculations are
+      wired, while the current bench entry forcibly disables stuck/stall
+      settings. A single active_or_configured label obscures this difference.
+    evidence:
+      - rm32_stm32/src/bin/main.rs:209-218
+      - rm32/src/main_state.rs:423-515
+  - capability: WS2812 status, startup sounds, reset-cause reporting, and bootloader reset flow
+    correction: split_by_runtime_status
+    reason: >-
+      Startup sound and reset reporting are active, WS2812 is board-optional,
+      and signal-timeout reset is explicitly suppressed in the current firmware.
+    evidence:
+      - rm32_stm32/src/bin/main.rs:63-125
+      - rm32_stm32/src/bin/main.rs:409-466
+
+missing_or_understated_risks:
+  - id: minz_panic_does_not_force_bridge_off
+    severity: high
+    finding: >-
+      MinZ's ordinary safety_kill forces all phases off, but panic disables
+      interrupts and spins for IWDG reset without an emergency-off write.
+    evidence:
+      - minz/core/src/am32_control.rs:182-204
+      - minz/src/panic.rs:45-71
+  - id: minz_relaxed_multi_field_state
+    severity: medium
+    finding: >-
+      Individual atomics are race-free, but mostly Relaxed independent fields
+      do not provide coherent multi-field snapshots; correctness relies on
+      single-core ordering and preserved access sequencing.
+    evidence:
+      - minz/core/src/am32_loop.rs:74-145
+      - minz/core/src/am32_isr.rs:43-159
+  - id: rm32_board_feature_mismatch_not_enforced
+    severity: medium
+    finding: >-
+      build.rs derives an expected MCU feature from BOARD but does not reject a
+      mismatch, so selected board data and compiled target family can diverge.
+    evidence:
+      - rm32_stm32/build.rs:306-315
+  - id: rm32_generated_board_fields_unconsumed
+    severity: medium
+    finding: >-
+      current_adc_channel, voltage_adc_channel, dual_adc, and custom_led are
+      generated but have no runtime reads outside definitions/generation; avoid
+      claiming all YAML fields drive adapters.
+    evidence:
+      - rm32/src/board.rs:38-62
+      - rm32_stm32/build.rs:264-276
+retained_high_priority_risks:
+  - rm32 IsrCell preemption unsoundness
+  - rm32 non-L431 comparator acknowledgement gap
+  - MinZ kill notification clears the purported kill latch
+  - rm32 save-settings config-copy divergence
+  - rm32 current bench firmware overrides product behavior
+  - host tests do not prove platform concurrency/register/electrical behavior
+
+evidence_integrity:
+  yaml_parse: pass
+  evidence_reference_count: 237
+  unique_evidence_reference_count: 167
+  missing_paths: []
+  out_of_range_line_references: []
+  semantic_spot_checks:
+    test_attribute_counts: pass
+    vector_file_count: pass
+    minz_active_iwdg_vs_rm32_disabled_start: pass
+    crsf_and_dronecan_unwired_qualification: pass
+    minz_kill_latch_contradiction: pass
+    rm32_isr_preemption_risk: pass
+
+report_guidance:
+  - Lead with the deep overlap in six-step motor timing and copied static MotorHal traits.
+  - Present exact inventory totals only after the MinZ 31-path and rm32 path-set corrections are resolved.
+  - Use separate columns for presence and current firmware wiring; never infer activation from a module, trait, feature, or tested harness path.
+  - Give both directions equal one-sided-capability tables, including declared-unwired, library-only, test-only, and manifest-only entries.
+  - Split combined rm32 capability rows when their runtime statuses differ.
+  - State that MinZ's black box freezes, but its KILLED runtime gate is accidentally cleared by reporting.
+  - Describe MinZ brake primitives as present-but-unwired, not absent.
+  - Describe rm32 sine/brake/stuck/stall product paths as implemented/tested but forced off by the current bench firmware entry.

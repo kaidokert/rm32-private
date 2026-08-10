@@ -1,0 +1,347 @@
+audit:
+  subject: "docs/structure-comparison/crosscut-inventory.yaml"
+  pass: "independent second-pass source audit"
+  date: "2026-07-22"
+  policy:
+    - "Executable Rust, manifests, build logic, and board YAML take precedence over comments and historical reports."
+    - "A structural module or enum is not treated as proof that a feature is wired into the selected firmware target."
+    - "Claims about rm32 target behavior are limited to the L431 path unless evidence for all four target adapters was checked."
+
+audited_claims:
+  - id: crate_topology
+    verdict: confirmed
+    rationale: "The root workspace contains rm32 and excludes both target crates; minz-core declares its own workspace and is consumed by minz through a path dependency, while rm32_stm32 is an excluded path-dependent target crate."
+    direct_evidence:
+      - "Cargo.toml:1-7 — members=[rm32], with rm32_stm32 and minz excluded"
+      - "minz/Cargo.toml:13-25 — minz-core path dependency plus Cortex-M and fixed L431 HAL dependencies"
+      - "minz/core/Cargo.toml:5-15 — standalone [workspace] and host-testable description"
+      - "rm32_stm32/Cargo.toml:6-19 — rm32 path dependency and optional MCU HAL dependencies"
+
+  - id: runtime_personalities
+    verdict: qualified
+    rationale: "The two named minz personalities are materially distinct. rm32_stm32 has one normal firmware binary, but SystemTick represents only the shared input/sync/main-state slice, not the complete firmware loop: sine MMIO, IRQ priority changes, persistence/info side effects, watchdog, logging, and reset handling remain outside it, and the firmware supplies a no-op ISR closure because its ISR is asynchronous."
+    direct_evidence:
+      - "minz/examples/motor_tester2.rs:20-48 — interactive waveform, mode, and diagnostic controls"
+      - "minz/examples/am32_clone.rs:5-17 — factory-default UART-duty/ZC-trace clone scope"
+      - "rm32/src/system.rs:153-172 — run_tick covers input, callback, one-shot sync, and MainState tick"
+      - "rm32_stm32/src/bin/main.rs:379-469 — sine handling and platform side effects surround run_tick"
+      - "rm32_stm32/src/bin/main.rs:406-407 — firmware passes an empty ISR callback"
+
+  - id: logic_hardware_seam_overlap
+    verdict: confirmed
+    rationale: "Both motor-critical control layers are generic over ESC-specific traits and use concrete/mock implementations. rm32 does use dyn Adc and dyn TelemetryUart in the main-loop SystemTick, but that is outside the claimed motor-critical ISR seam."
+    direct_evidence:
+      - "minz/core/src/am32_hal.rs:1-20,126-137 — explicitly static-dispatch generic Hal bundle"
+      - "minz/core/src/am32_hal.rs:139-191 — host MockHal fixture"
+      - "rm32/src/hal.rs:68-84 — associated-type MotorHal bundle"
+      - "rm32/src/control/isr_logic.rs:15-19 — generic MotorContext control tick"
+      - "rm32/src/system.rs:47-53 — counterexample boundary: main-loop ADC and telemetry are trait objects"
+
+  - id: hal_granularity_mismatch
+    verdict: confirmed
+    rationale: "The responsibility split is accurately described. A further ownership distinction is that minz traits predominantly take &self around register/atomic-backed zero-sized objects, whereas rm32 motor traits take &mut self and live inside the owned ISR context."
+    direct_evidence:
+      - "minz/core/src/am32_hal.rs:22-87 — MotorPwm combines duty/roles/carrier and ComTimers combines both timers"
+      - "rm32/src/hal.rs:14-84 — PwmOutput, PhaseOutput, IntervalTimer, ComTimer, then MotorHal"
+      - "minz/core/src/am32_hal.rs:24-45 — hardware methods take &self"
+      - "rm32/src/hal.rs:70-83 — MotorHal accessors return mutable peripheral references"
+
+  - id: state_ownership_mismatch
+    verdict: confirmed
+    rationale: "minz's clone uses global Atomic storage as control truth and merely groups borrowed references. rm32 owns non-atomic commutation/BEMF/duty objects in IsrState/ISR_LOCAL and uses SharedState atomics for selected cross-context publication and commands. The boot-time Mutex staging cell does not invalidate the ownership distinction."
+    direct_evidence:
+      - "minz/examples/am32_clone.rs:103-152,244-303 — global atomics and borrowed Sched/Drive/Duty/Bench wiring"
+      - "minz/core/src/am32_loop.rs:82-136 — cluster fields are references to atomics"
+      - "rm32_stm32/src/isr.rs:70-99 — owned IsrState plus boot-time staging cell"
+      - "rm32_stm32/src/isr_handlers.rs:12-68 — ISR_LOCAL exclusive mutable owner and stated invariants"
+      - "rm32/src/shared_state.rs:17-74 — atomic bridge fields with directional comments"
+
+  - id: state_names_correspond
+    verdict: qualified
+    rationale: "Duty is a strong conceptual match and Drive/Sched can be mapped across multiple rm32 owners. Bench is much weaker: it mixes kill latches, raw ADC, accumulators, requests, and trace controls, while rm32 distributes analogous concerns among Measurements, ProtectionState, SharedState debug/action fields, and platform logging. It should be presented as a review aid, never as an abstraction correspondence."
+    direct_evidence:
+      - "minz/core/src/am32_loop.rs:82-136 — Sched, Drive, Duty, and heterogeneous Bench fields"
+      - "rm32/src/control/state.rs:8-40,296-337,367-376 — BemfState, DutyState, ProtectionState, Measurements, TimingState"
+      - "rm32/src/shared_state.rs:35-74 — cross-context timing/control/measurement/action fields"
+
+  - id: temporal_architecture_overlap
+    verdict: qualified
+    rationale: "The four contexts are present and the L431 TIM6 implementations use the same PSC=79, ARR=50 decomposition (about 19.6 kHz). This is a structural L431 overlap, not proof of equivalent interrupt semantics on every rm32 MCU; the non-L431 comparator wrappers omit the entry acknowledgement/mask used by L431."
+    direct_evidence:
+      - "minz/src/tim6_loop.rs:1-28 — PSC 79, ARR 50 and running TIM6"
+      - "minz/examples/am32_clone.rs:561-576 — COMP, TIM16, and TIM6 trampolines"
+      - "rm32_stm32/src/mcu_l431/init.rs:190-209 — same TIM6 decomposition"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:8-49 — TIM6, TIM16, and COMP vectors"
+      - "rm32_stm32/src/bin/main.rs:273-277,474-481 — free-running main loop"
+      - "rm32_stm32/src/mcu_g071/interrupts.rs:18-21; rm32_stm32/src/mcu_f051/interrupts.rs:22-25; rm32_stm32/src/mcu_g431/interrupts.rs:26-29 — comparator wrappers call handle_comp without L431's entry mask/ack"
+
+  - id: zero_cross_flow_overlap
+    verdict: qualified
+    rationale: "The shared high-level pipeline is real: sample filtering, interval capture/reset, one-shot scheduling, later phase/comparator change, timing update, and re-enable. The interrupt-pending contract differs materially: minz conditionally preserves a pending post-cross event and deliberately unmasks without clearing it; rm32 L431 clears and masks at wrapper entry. Shared rm32 logic also documents a latent storm bug for the other three wrappers."
+    direct_evidence:
+      - "minz/core/src/am32_isr.rs:33-98 — pending gate, repeated samples, interval reset, one-shot arm"
+      - "minz/src/comp2.rs:244-311 — keep-pending unmask and mask-and-clear operations"
+      - "minz/core/src/am32_isr.rs:107-143 — commutation, timing blend, conditional comparator re-enable"
+      - "rm32/src/control/isr_logic.rs:216-298 — shared commutation and zero-cross bodies"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-49 — L431 clears and masks EXTI before shared handler"
+      - "rm32/src/control/isr_logic.rs:268-280 — source warning that F051/G071/G431 wrappers lack the required acknowledgement"
+
+  - id: polling_handoff_overlap
+    verdict: confirmed
+    rationale: "Both clone paths enter an old/polling mode, qualify BEMF there, and move to interrupt-driven operation after thresholds. rm32 sine start still transitions StepperSine to OldRoutine before BemfLocked, so it does not provide a counterexample to the handoff."
+    direct_evidence:
+      - "minz/examples/am32_clone.rs:119-121 — OLD_ROUTINE initialized true"
+      - "minz/core/src/am32_control.rs:153-185 — polling ZC and interrupt enable below threshold"
+      - "rm32/src/motor_mode.rs:3-8,65-90 — StepperSine/OldRoutine/Running state progression"
+      - "rm32/src/control/isr_logic.rs:182-265 — polling qualification and BemfLocked threshold"
+      - "rm32/src/constants.rs:43-47,108 — handoff interval/ZC constants"
+
+  - id: step_numbering_boundary
+    verdict: qualified
+    rationale: "The API-domain statement is correct, but it is incomplete enough to mislead a side-by-side report. On the concrete L431 pin tables, rm32 step 1 has the same PWM/low/float/sense tuple as minz logical step 6, and rm32 step 2 matches minz logical step 1. The implementations therefore differ by a one-step rotation in addition to exposing 1..6 versus 0..5 adapter APIs."
+    direct_evidence:
+      - "minz/core/src/am32_control.rs:45-63 — logical step 1..6 converted with step-1"
+      - "minz/src/tim1_motor_pwm.rs:205-239 — sector 0..5 high/low tables; CH1/2/3 are PA8/PA9/PA10"
+      - "minz/src/comp2.rs:286-320 — sectors 0/3 sense PB7, 1/4 PA5, 2/5 PA4"
+      - "rm32_stm32/src/phase.rs:111-148,197 — step 1..6 table; A/B/C pins PA10/PA9/PA8"
+      - "rm32_stm32/src/comparator.rs:28-44 — step 1/4 selects YAML phase_c, 2/5 phase_a, 3/6 phase_b"
+      - "rm32_stm32/boards/vimdrones_l431.yaml:10-13 — phase_a=PB7, phase_b=PA5, phase_c=PA4"
+
+  - id: board_target_strategy
+    verdict: confirmed
+    rationale: "minz directly selects stm32l431 and embeds its relevant board pin/constants in Rust. rm32_stm32 has four mutually selectable target features and a build-time YAML-to-BoardConfig path. The result is one selected board per build, not a runtime board matrix."
+    direct_evidence:
+      - "minz/Cargo.toml:24-25 — fixed stm32l431 feature"
+      - "minz/src/board_init.rs:59-101 — concrete six-gate pin map"
+      - "minz/src/comp2.rs:74-92 — concrete L431 BEMF pin ownership"
+      - "rm32_stm32/Cargo.toml:38-43 — four MCU features"
+      - "rm32_stm32/build.rs:210-309 — board selection, YAML parse, pin resolution, generated BoardConfig"
+
+  - id: hardware_adapter_layering
+    verdict: qualified
+    rationale: "rm32_stm32 clearly adds reusable generic Comparator and PhaseDriver layers over low-level operation/pin traits. The statement should not imply that all rm32 peripherals use that extra layer: its L431 PWM and timer implementations are also zero-sized/direct-register adapters much like minz."
+    direct_evidence:
+      - "minz/src/lib.rs:34-47 and minz/src/comp2.rs:329-357 — concrete zero-sized bundle and direct wrapper"
+      - "rm32_stm32/src/comparator.rs:1-52 — generic comparator over CompOps/ExtiOps"
+      - "rm32_stm32/src/phase.rs:1-40 — generic compile-time pin driver"
+      - "rm32_stm32/src/mcu_l431/pwm.rs:1-50 — counterexample: zero-sized direct PAC PWM adapter"
+      - "rm32_stm32/src/mcu_l431/chip.rs:76-87 — concrete target aliases reunify generic and direct adapters"
+
+  - id: configuration_model_mismatch
+    verdict: qualified
+    rationale: "The structural split between board YAML and a 192-byte flash-read EepromConfig is confirmed. 'Byte-compatible' is locally asserted by repr(C), Pod, and a 192-byte size check but was not independently compared to the external C layout. More importantly, the current firmware unconditionally clears stuck-rotor, stall, bidirectional, sine, and brake settings after loading, and its save path has a TODO admitting it can persist the stale main copy rather than ISR command changes."
+    direct_evidence:
+      - "minz/core/src/am32_loop.rs:10-56 — compiled factory-default constants"
+      - "minz/src/lib.rs:92-103 — carrier selection and hard-coded dead time"
+      - "rm32/src/config.rs:17-85 — repr(C), Pod, 192-byte layout and compile-time size check"
+      - "rm32/src/config.rs:157-180 — validity and version-default migration"
+      - "rm32_stm32/src/bin/main.rs:196-218 — flash load followed by unconditional bench overrides"
+      - "rm32_stm32/src/bin/main.rs:433-441 — settings-save copy-divergence TODO"
+
+  - id: same_board_values_are_not_unified
+    verdict: qualified
+    rationale: "The two cited constants really are 45 and 60, and both write the L431 TIM1 DTG field. It is not an unconditional default-build mismatch: rm32_stm32's default stm32l431 selection is neutron_l431.yaml, whose dead_time is 45. The 60 value applies only when BOARD explicitly selects vimdrones_l431.yaml. Also, minz's comment saying 'board YAML' is stale/misleading because minz has no YAML source for the constant."
+    direct_evidence:
+      - "minz/src/lib.rs:100-103 — TIM1_DEAD_TIME=45 despite a 'board YAML' comment"
+      - "minz/src/tim1_motor_pwm.rs:54 — constant written into TIM1 BDTR.DTG"
+      - "rm32_stm32/boards/vimdrones_l431.yaml:1-4 — named VimDrones board has dead_time=60"
+      - "rm32_stm32/build.rs:215-227 — default stm32l431 board is neutron_l431.yaml"
+      - "rm32_stm32/boards/neutron_l431.yaml:1-4 — default L431 board has dead_time=45"
+      - "rm32_stm32/src/mcu_l431/init.rs:158 — selected BoardConfig value written to BDTR.DTG"
+
+  - id: protocol_feature_breadth
+    verdict: qualified
+    rationale: "rm32 has substantially broader protocol structures than am32_clone, including wired DShot/servo/EDT paths. The report must distinguish structural presence from target reachability: handle_crsf_byte exists but no checked MCU interrupt wrapper calls it, and some persistent InputType variants are declarations rather than demonstrated end-to-end platform modes."
+    direct_evidence:
+      - "minz/examples/am32_clone.rs:5-9,333-347 — UART-duty factory-subset interface"
+      - "rm32/src/lib.rs:15-20 — CRSF, DShot, command, and EDT modules"
+      - "rm32/src/config.rs:5-15 — persistent InputType variants"
+      - "rm32_stm32/src/isr_handlers.rs:246-359 — DShot, servo, command, EDT/bidirectional transfer behavior"
+      - "rm32_stm32/src/isr_handlers.rs:369-381 — CRSF byte handler exists"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs; rm32_stm32/src/mcu_g071/interrupts.rs; rm32_stm32/src/mcu_f051/interrupts.rs; rm32_stm32/src/mcu_g431/interrupts.rs — no call to handle_crsf_byte located"
+
+  - id: control_scope_mismatch
+    verdict: qualified
+    rationale: "rm32's types and core logic model the named modes and PID loops, while minz am32_clone explicitly limits itself and motor_tester2 contains broader experiments. Calling the current rm32 firmware a fully active production state machine is too strong: boot code disables bidirectional/sine/brake/stall features, speed PID is disabled by default and only explicitly toggled by the host harness, and reset-on-timeout is suppressed in the checked firmware."
+    direct_evidence:
+      - "minz/core/src/am32_control.rs:27-29,376-378 — forward-only, armed/no-sine/no-brake/no-current-limit clone subset"
+      - "minz/examples/motor_tester2.rs:20-48,86-118 — separate experimental closed-loop/guard personality"
+      - "rm32/src/motor_mode.rs:3-90 — broad mode state machine"
+      - "rm32/src/main_state.rs:466-501 — stall, current, and speed PID call sites"
+      - "rm32/src/control/state.rs:211-283,612 — three PID owners; speed control defaults false"
+      - "rm32_stm32/src/bin/main.rs:209-218 — active build clears complex features"
+      - "rm32_stm32/src/bin/main.rs:450-466 — signal-timeout reset deliberately suppressed"
+
+  - id: safety_and_observability_shape
+    verdict: qualified
+    rationale: "The structural comparison is fair, but the active-path wording needs care. minz clone has a latched kill and black box; the larger guard stack belongs primarily to motor_tester2. rm32 has EmergencyOff/panic safety and protection state/actions, but the current firmware disables stuck/stall protection at boot and suppresses one reset action for bench debugging."
+    direct_evidence:
+      - "minz/core/src/am32_control.rs:219-249 — clone safety_kill latches, offs PWM, masks comparator, freezes recorder"
+      - "minz/core/src/guards.rs:412-443 — broader bench guard flags"
+      - "rm32/src/hal.rs:135-139 and rm32_stm32/src/panic.rs:1-20 — emergency-off contract and panic integration"
+      - "rm32/src/control/state.rs:296-325 and rm32/src/shared_state.rs:53-74 — protection state and cross-context actions"
+      - "rm32_stm32/src/bin/main.rs:209-218,450-466 — active bench overrides weaken configured protections/reset"
+
+  - id: test_architecture_difference
+    verdict: qualified
+    rationale: "The unit-test and process-harness distinction is confirmed. The harness and firmware call the same SystemTick::run_tick slice, but they do not execute an identical full firmware pipeline: the harness invokes the control ISR synchronously inside the closure, firmware leaves it asynchronous, and platform side effects remain outside SystemTick. 'Shared orchestration slice' is accurate; 'same firmware execution' is not."
+    direct_evidence:
+      - "minz/core/src/am32_hal.rs:139-191 and minz/core/src/am32_control.rs:460-465 — shared mock and clone control tests"
+      - "minz/examples/motor_tester2.rs:4679-4801 — example retains large orchestration state"
+      - "rm32/src/bin/harness.rs:25-133,463-488 — mocks and synchronous ISR closure inside run_tick"
+      - "rm32_stm32/src/bin/main.rs:379-469 — firmware platform work around run_tick and asynchronous ISR callback"
+      - "tests/blackbox/test_vectors.py:1-52 and tests/blackbox/harness.py:144-168 — process-driven vector discovery/execution"
+
+gaps:
+  - id: selected_runtime_configuration
+    severity: high
+    finding: "The inventory compares declared configuration/features but does not inventory the unconditional boot-time mutations that define the currently checked firmware behavior."
+    evidence:
+      - "rm32_stm32/src/bin/main.rs:209-218 — five EEPROM-controlled features cleared after flash load"
+      - "rm32_stm32/src/bin/main.rs:450-466 — requested reset is suppressed"
+
+  - id: dead_time_selection_context
+    severity: high
+    finding: "The cited 45/60 values omit BOARD selection. Default stm32l431 builds select neutron_l431.yaml at 45; vimdrones_l431.yaml at 60 is opt-in through BOARD."
+    evidence:
+      - "rm32_stm32/build.rs:210-227"
+      - "rm32_stm32/boards/neutron_l431.yaml:1-4"
+      - "rm32_stm32/boards/vimdrones_l431.yaml:1-4"
+
+  - id: physical_step_rotation
+    severity: high
+    finding: "The step comparison stops at numeric domains and misses a one-logical-step rotation in the concrete L431 phase/sense tables."
+    evidence:
+      - "minz/src/tim1_motor_pwm.rs:205-239 and minz/src/comp2.rs:286-320"
+      - "rm32_stm32/src/phase.rs:111-148,197; rm32_stm32/src/comparator.rs:28-44; rm32_stm32/boards/vimdrones_l431.yaml:10-13"
+
+  - id: comparator_pending_contract
+    severity: high
+    finding: "The common zero-cross flow hides an important semantic mismatch: minz preserves selected pending events, rm32 L431 masks/acks immediately, and the other rm32 target wrappers omit that mitigation despite an in-source warning."
+    evidence:
+      - "minz/core/src/am32_isr.rs:33-62 and minz/src/comp2.rs:244-311"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-49"
+      - "rm32/src/control/isr_logic.rs:268-280"
+
+  - id: feature_presence_vs_wiring
+    severity: medium
+    finding: "Module names, enum variants, and handler functions were sometimes used as if they proved end-to-end firmware reachability. CRSF is the clearest counterexample: parser and handler exist, but no MCU vector calls the handler."
+    evidence:
+      - "rm32/src/config.rs:5-15"
+      - "rm32_stm32/src/isr_handlers.rs:369-381"
+      - "repository search: no handle_crsf_byte call outside its definition"
+
+  - id: harness_equivalence_boundary
+    severity: medium
+    finding: "SystemTick shares an important orchestration slice, not all firmware behavior or scheduling semantics."
+    evidence:
+      - "rm32/src/system.rs:153-172"
+      - "rm32/src/bin/harness.rs:463-488"
+      - "rm32_stm32/src/bin/main.rs:379-469"
+
+  - id: hal_mutability_and_concurrency
+    severity: medium
+    finding: "The inventory records trait granularity but misses a more architectural difference: minz's &self register/atomic facades allow shared static access, whereas rm32's &mut trait APIs reinforce exclusive ISR ownership."
+    evidence:
+      - "minz/core/src/am32_hal.rs:22-137"
+      - "rm32/src/hal.rs:14-84"
+      - "rm32_stm32/src/isr_handlers.rs:12-35"
+
+  - id: stale_source_comments
+    severity: medium
+    finding: "Some historical comments no longer describe executable code and should not be promoted to report facts."
+    evidence:
+      - "minz/src/lib.rs:100 — says board YAML although minz hard-codes the value"
+      - "rm32/src/main_state.rs:961-985 — says sine changeover and EDT wiring are missing, while current SystemTick/isr_handlers/main code implements several listed items"
+      - "rm32/src/system.rs:1-6 — says the pipeline is identical, but platform work and ISR scheduling remain different"
+
+corrections_for_report:
+  - claim_id: same_board_values_are_not_unified
+    replace_with: "minz hard-codes L431 DTG=45. rm32's selected board YAML supplies DTG: the opt-in vimdrones_l431 file says 60, while the default stm32l431 selection (neutron_l431) says 45. This proves separate sources and a possible selection-dependent drift, not an unconditional default-build mismatch."
+
+  - claim_id: step_numbering_boundary
+    replace_with: "minz keeps logical steps 1..6 but passes step-1 to 0..5 adapters; rm32 adapters take 1..6. On the concrete L431 tables there is also a one-step rotation: rm32 step 1 matches minz logical step 6, rm32 step 2 matches minz logical step 1, and so on."
+
+  - claim_id: zero_cross_flow_overlap
+    replace_with: "Both share the persistence/capture/one-shot/commutate skeleton, but not the pending-event contract: minz can preserve a post-cross pending EXTI event across the gate, whereas rm32 L431 clears and masks on ISR entry; other rm32 MCU wrappers lack that L431 mitigation."
+
+  - claim_id: runtime_personalities
+    replace_with: "minz has distinct clone and interactive tester personalities. rm32_stm32 has one normal firmware binary, and its firmware plus native harness share the SystemTick input/sync/MainState slice; sine/platform side effects and real interrupt scheduling remain outside that abstraction."
+
+  - claim_id: protocol_feature_breadth
+    replace_with: "rm32 declares and implements substantially broader protocol/control modules than minz am32_clone. DShot, servo, commands, EDT, and bidirectional transfer are wired in the examined target layer; CRSF has a parser and shared handler but no checked MCU vector wiring, so describe it as structurally present rather than end-to-end enabled."
+
+  - claim_id: control_scope_mismatch
+    replace_with: "rm32 core models bidirectionality, braking, sine startup, protections, and three PID controllers, while minz am32_clone is an explicit forward-only factory subset and motor_tester2 holds broader experiments. The checked rm32_stm32 main is currently bench-oriented: it disables several complex settings at boot, speed PID is not firmware-enabled, and timeout reset is suppressed."
+
+  - claim_id: test_architecture_difference
+    replace_with: "rm32 adds a process-driven native harness and pytest vectors that share SystemTick's input/sync/MainState ordering with firmware. The harness executes the control ISR synchronously and does not cover all platform-side loop work, so this is shared-core orchestration rather than full execution equivalence."
+
+source_validation:
+  manifest_and_build_sources:
+    status: validated
+    files:
+      - "Cargo.toml"
+      - "minz/Cargo.toml"
+      - "minz/core/Cargo.toml"
+      - "rm32/Cargo.toml"
+      - "rm32_stm32/Cargo.toml"
+      - "rm32_stm32/build.rs"
+    notes: "Workspace boundaries, optional MCU features, default board selection, and generated BoardConfig fields were read directly."
+
+  control_and_state_sources:
+    status: validated
+    files:
+      - "minz/core/src/am32_hal.rs"
+      - "minz/core/src/am32_loop.rs"
+      - "minz/core/src/am32_control.rs"
+      - "minz/core/src/am32_isr.rs"
+      - "minz/examples/am32_clone.rs"
+      - "rm32/src/hal.rs"
+      - "rm32/src/control/isr_logic.rs"
+      - "rm32/src/control/state.rs"
+      - "rm32/src/shared_state.rs"
+      - "rm32/src/main_state.rs"
+      - "rm32/src/system.rs"
+      - "rm32_stm32/src/isr.rs"
+      - "rm32_stm32/src/isr_handlers.rs"
+    notes: "Ownership, generic dispatch, polling/interrupt transitions, boot-time feature mutation, and harness/firmware boundaries were checked against executable paths."
+
+  l431_hardware_sources:
+    status: validated
+    files:
+      - "minz/src/lib.rs"
+      - "minz/src/tim1_motor_pwm.rs"
+      - "minz/src/comp2.rs"
+      - "minz/src/tim6_loop.rs"
+      - "rm32_stm32/boards/vimdrones_l431.yaml"
+      - "rm32_stm32/boards/neutron_l431.yaml"
+      - "rm32_stm32/src/phase.rs"
+      - "rm32_stm32/src/comparator.rs"
+      - "rm32_stm32/src/mcu_l431/init.rs"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs"
+      - "rm32_stm32/src/mcu_l431/pwm.rs"
+    notes: "Dead-time register use, selected-board values, physical phase/sense tables, TIM6 cadence, and comparator acknowledgement were independently traced."
+
+  other_rm32_mcu_sources:
+    status: spot_checked
+    files:
+      - "rm32_stm32/src/mcu_g071/interrupts.rs"
+      - "rm32_stm32/src/mcu_f051/interrupts.rs"
+      - "rm32_stm32/src/mcu_g431/interrupts.rs"
+    notes: "Only comparator wrapper acknowledgement was checked; no claim of full behavioral validation for these targets is made."
+
+  tests_and_harness_sources:
+    status: validated_by_source
+    files:
+      - "rm32/src/bin/harness.rs"
+      - "tests/blackbox/test_vectors.py"
+      - "tests/blackbox/harness.py"
+      - "minz/core/src/am32_hal.rs"
+      - "minz/examples/motor_tester2.rs"
+    notes: "Harness invocation and mock structure were read. This audit did not rely on a test run to prove hardware behavior."
+
+  excluded_or_unproven:
+    - "External AM32 C layout and behavior were not reopened; local 'byte-compatible' and AM32-parity comments remain local assertions."
+    - "Generated OUT_DIR board_config.rs was not required because build.rs and both relevant YAML inputs directly establish selection and emitted values."
+    - "No bench hardware execution was performed; findings concern checked-in structure and executable control paths."

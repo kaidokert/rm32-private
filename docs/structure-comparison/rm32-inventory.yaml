@@ -1,0 +1,518 @@
+schema_version: 1
+artifact: "rm32 structural inventory"
+reviewed_revision: "a916d44"
+
+scope:
+  trees:
+    - "rm32/"
+    - "rm32_stm32/"
+  concerns:
+    - "crate and build structure"
+    - "portable motor-control core"
+    - "HAL traits and adapter layers"
+    - "ISR/main-loop state ownership and orchestration"
+    - "MCU and board integration"
+    - "runtime, interrupt, and data flows"
+    - "host tests, black-box harness, and firmware cross-builds"
+  exclusions:
+    - "minz/ except as a future comparison target"
+    - "generated OUT_DIR/board_config.rs output (the generator and include site were inspected)"
+    - "external HAL/PAC dependency source"
+
+method:
+  passes:
+    - "Enumerated manifests, source modules, MCU-family directories, board YAML, tests, and CI configuration."
+    - "Read the public HAL/state/orchestration interfaces and traced firmware entry points into portable control functions."
+    - "Traced interrupt wrappers, shared handlers, input/telemetry paths, and build-time board generation."
+    - "Audited TODOs and source-admitted hazards, then ran the host unit suite."
+  commands:
+    - "rg --files rm32 rm32_stm32 tests .github"
+    - "rg -n over traits, structs, entry points, interrupt handlers, cfg gates, tests, TODOs, and board fields"
+    - "cargo test -p rm32"
+  observed_verification:
+    command: "cargo test -p rm32"
+    result: "passed: 253; failed: 0; ignored: 0 (plus 0 bin and doc tests); compiler emitted four test-code warnings and a non-fatal incremental-cache access warning"
+    repository_evidence:
+      - ".github/workflows/ci.yml:28-37 (the same host unit-test command is a CI job)"
+
+traits:
+  - id: "two_crate_portability_split"
+    claim: "The implementation is intentionally split into a no_std, platform-independent rm32 core and a no_std/no_main STM32 firmware/adaptation crate; the root workspace builds only rm32 by default because rm32_stm32 requires an ARM target."
+    evidence:
+      - "rm32/src/lib.rs:6-40 (no_std core and exported algorithm/protocol/state modules)"
+      - "rm32_stm32/src/lib.rs:6-62 (no_std platform modules and four MCU-family modules)"
+      - "rm32_stm32/src/bin/main.rs:1-7 (MCU-independent firmware entry-point intent; no_std/no_main)"
+      - "Cargo.toml:1-7 (workspace includes rm32 and excludes target-dependent rm32_stm32)"
+    confidence: "high"
+
+  - id: "broad_domain_hal"
+    claim: "rm32 defines a broad ESC-domain HAL: PWM, comparator, phase drive, interval and commutation timers, capture, ADC, flash, telemetry, emergency-off, and system control, reusing embedded-hal only where it fits."
+    evidence:
+      - "rm32/src/hal.rs:1-12 (HAL intent and embedded-hal re-exports)"
+      - "rm32/src/hal.rs:14-84 (motor-control peripheral traits plus MotorHal bundle)"
+      - "rm32/src/hal.rs:86-152 (telemetry, capture, ADC, flash, serial, emergency, and system traits)"
+    confidence: "high"
+
+  - id: "static_dispatch_in_fast_path"
+    claim: "The 20 kHz motor fast path uses generic static dispatch: MotorHal reduces five motor peripheral type parameters to one, and MotorContext bundles mutable control state, shared communication, immutable configuration, and the HAL."
+    evidence:
+      - "rm32/src/hal.rs:68-84 (MotorHal associated-type bundle)"
+      - "rm32/src/control/context.rs:12-35 (MotorContext fields and monomorphization rationale)"
+      - "rm32/src/control/isr_logic.rs:1-19 (generic, vtable-free ten_khz_tick entry point)"
+      - "rm32_stm32/src/isr_handlers.rs:82-95 (firmware constructs MotorContext and calls core ten_khz_tick)"
+    confidence: "high"
+
+  - id: "mixed_dispatch_outside_fast_path"
+    claim: "Dispatch policy is mixed by timing domain: the ISR path is generic, while MainState::tick accepts dyn Adc and dyn TelemetryUart trait objects."
+    evidence:
+      - "rm32/src/control/isr_logic.rs:1-19 (static-dispatch ISR design)"
+      - "rm32/src/main_state.rs:263-269 (main tick takes &mut dyn Adc and &mut dyn TelemetryUart)"
+    confidence: "high"
+
+  - id: "three_way_state_ownership"
+    claim: "Runtime state is partitioned into ISR-exclusive IsrState, thread-mode-exclusive MainState, and atomic SharedState; main does not access ISR_LOCAL directly."
+    evidence:
+      - "rm32_stm32/src/isr.rs:70-88 (ISR-exclusive algorithm, protocol, config, and hardware state)"
+      - "rm32/src/main_state.rs:1-4,90-127 (thread-mode ownership and MainState fields)"
+      - "rm32_stm32/src/isr.rs:97-104 (global ISR staging cell and global SharedState)"
+      - "rm32_stm32/src/isr_handlers.rs:19-31 (single-writer/single-core/no-main-access invariants)"
+    confidence: "high"
+
+  - id: "directional_atomic_mailbox"
+    claim: "ISR/main communication is expressed as directional subtraits (MotorState, IsrTiming, MainControl) composed into SharedComm and implemented by an atomic SharedState using acquire/release ordering."
+    evidence:
+      - "rm32/src/shared_comm.rs:1-9 (directional decomposition intent)"
+      - "rm32/src/shared_comm.rs:30-94 (MotorState and ISR-produced timing boundary)"
+      - "rm32/src/shared_comm.rs:132-223 (main-produced controls and SharedComm composition)"
+      - "rm32/src/shared_state.rs:13-20,106-160 (ordering constants and atomic initialization)"
+      - "rm32/src/shared_state.rs:592-768 (SharedState implementations of the directional traits)"
+    confidence: "high"
+
+  - id: "explicit_motor_state_machine"
+    claim: "Motor lifecycle is modeled as one atomic u8-backed MotorMode and centralized MotorEvent transitions rather than independent armed/running/startup booleans."
+    evidence:
+      - "rm32/src/motor_mode.rs:1-21 (linear operating modes and u8 encoding)"
+      - "rm32/src/motor_mode.rs:50-87 (events and valid transition table)"
+      - "rm32/src/shared_state.rs:246-264 (atomic load/store and CAS transition)"
+    confidence: "high"
+
+  - id: "portable_orchestration"
+    claim: "SystemTick is the canonical main-loop pipeline shared by firmware and harness: input processing, optional/async ISR work, one-shot flag synchronization, then MainState processing."
+    evidence:
+      - "rm32/src/system.rs:1-6 (single pipeline explicitly shared by firmware and harness)"
+      - "rm32/src/system.rs:15-46 (SystemTick-owned input and sine state; input stage)"
+      - "rm32/src/system.rs:62-75 (atomic ISR-to-main one-shot synchronization)"
+      - "rm32/src/system.rs:153-172 (run_tick ordering)"
+      - "rm32/src/bin/harness.rs:463-492 (harness uses run_tick and supplies inline ten_khz_tick)"
+      - "rm32_stm32/src/bin/main.rs:406-407 (firmware uses run_tick with asynchronous ISR/no-op closure)"
+    confidence: "high"
+
+  - id: "portable_interrupt_algorithms"
+    claim: "The core owns the actual tick, commutation-expiry, and BEMF-zero-cross algorithms; rm32_stm32 shared handlers adapt stored state and concrete peripherals to them."
+    evidence:
+      - "rm32/src/control/isr_logic.rs:15-19 (20 kHz core entry point)"
+      - "rm32/src/control/isr_logic.rs:216-265 (portable commutation-timer algorithm)"
+      - "rm32/src/control/isr_logic.rs:268-287 (portable BEMF zero-cross algorithm)"
+      - "rm32_stm32/src/isr_handlers.rs:71-119 (TIM6 and commutation handlers delegate into rm32)"
+      - "rm32_stm32/src/isr_handlers.rs:127-140 (comparator handler delegates into rm32)"
+    confidence: "high"
+
+  - id: "thin_family_interrupt_wrappers"
+    claim: "Each MCU family retains thin interrupt-vector wrappers for family-specific flag acknowledgement, timer/DMA register details, and vector naming, then calls common rm32_stm32 ISR handlers."
+    evidence:
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:1-24 (L431 TIM6/TIM16 wrappers clear flags then delegate)"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:52-112 (L431 DMA/EXTI register handling around shared handlers)"
+      - "rm32_stm32/src/isr_handlers.rs:1-5 (shared-handler/thin-wrapper design statement)"
+    confidence: "high"
+
+  - id: "two_level_hal_adaptation"
+    claim: "rm32_stm32 adds a second, lower-level adapter layer: reusable drivers implement rm32 traits over small register-operation traits (for example AdcPeripheral, DmaOps/TimerOps/InputPinOps, CompOps/ExtiOps, and RawTimer), with MCU modules providing concrete operations and aliases."
+    evidence:
+      - "rm32_stm32/src/adc_generic.rs:1-38 (shared ADC driver over AdcPeripheral)"
+      - "rm32_stm32/src/capture_generic.rs:1-36 (shared capture driver over three operation traits)"
+      - "rm32_stm32/src/comparator.rs:1-28 (shared comparator over CompOps and ExtiOps)"
+      - "rm32_stm32/src/timer.rs:14-47 (RawTimer boundary and PAC-shape macro)"
+      - "rm32_stm32/src/mcu_l431/chip.rs:76-97 (family-specific concrete HAL alias and raw timer/port bindings)"
+    confidence: "high"
+
+  - id: "single_feature_gateway"
+    claim: "MCU selection is centralized in mcu.rs: one Cargo feature chooses an active family module whose chip exports supply PAC, constants, type aliases, init, and helpers to otherwise cfg-free code."
+    evidence:
+      - "rm32_stm32/src/mcu.rs:1-20 (ChipConfig constants)"
+      - "rm32_stm32/src/mcu.rs:22-41 (feature-selected active module and re-exports)"
+      - "rm32_stm32/src/init.rs:1-23 (generic InitResult and active init re-export)"
+      - "rm32_stm32/Cargo.toml:38-43 (four mutually intended MCU features; G071 default)"
+    confidence: "high"
+
+  - id: "board_data_is_build_generated"
+    claim: "Board variants are YAML data converted at build time into one rm32::board::BoardConfig constant; BOARD may override the feature-dependent default, and symbolic BEMF pins are resolved to MCU-specific packed register values by build.rs."
+    evidence:
+      - "rm32_stm32/build.rs:1-4 (generator purpose and BOARD input)"
+      - "rm32_stm32/build.rs:47-85 (BoardYaml schema)"
+      - "rm32_stm32/build.rs:115-206 (family-specific BEMF pin encoders and resolution)"
+      - "rm32_stm32/build.rs:210-239 (BOARD/default selection and YAML parse)"
+      - "rm32_stm32/build.rs:254-310 (generated BoardConfig constant)"
+      - "rm32_stm32/src/bin/main.rs:28-30 (generated constant include site)"
+      - "rm32_stm32/boards/neutron_l431.yaml:1-14; rm32_stm32/boards/gen_64k_g071.yaml:1-16; rm32_stm32/boards/siskin_f051.yaml:1-14; rm32_stm32/boards/protondrive_g431.yaml:1-14 (examples spanning four MCU families)"
+    confidence: "high"
+
+  - id: "timing_domains_are_explicit"
+    claim: "The design separates a 20 kHz interrupt tick, an ISR-derived 1 kHz dispatch counter for ADC/PIDs/protection, asynchronous commutation/BEMF events, and a continuously spinning main loop."
+    evidence:
+      - "rm32/src/control/isr_logic.rs:15-26 (20 kHz tick and ISR-side 1 kHz counter increment)"
+      - "rm32/src/main_state.rs:409-425 (1 kHz ADC/PID/LVC dispatch semantics)"
+      - "rm32_stm32/src/isr_handlers.rs:71-72,105-128 (20 kHz, commutation, and comparator event handlers)"
+      - "rm32_stm32/src/bin/main.rs:273-277 (thread-mode loop)"
+    confidence: "high"
+
+  - id: "protocol_work_is_split_by_context"
+    claim: "Capture DMA/EXTI handlers decode/detect DShot or servo frames and publish input/action flags; main-loop SystemTick maps input and processes slower protection/config/telemetry work; DMA also sends bidirectional DShot/EDT responses."
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:148-174 (DMA RX/TX switch and EDT/eRPM response encoding)"
+      - "rm32_stm32/src/isr_handlers.rs:177-239 (captured buffer passed to TransferState)"
+      - "rm32_stm32/src/isr_handlers.rs:242-335 (protocol detection, throttle/command actions, and atomic publication)"
+      - "rm32/src/system.rs:32-46 (main-side input mapping/processing)"
+      - "rm32/src/main_state.rs:409-515 (main-side ADC, protection/PIDs, and KISS telemetry)"
+    confidence: "high"
+
+  - id: "direct_pac_access_is_contained_not_eliminated"
+    claim: "Although control logic is portable, hardware adapters deliberately use unsafe singleton PAC pointers and direct bit-level register writes for exact timing and cross-HAL parity."
+    evidence:
+      - "rm32_stm32/src/timer.rs:41-61 (macro-generated PAC access with documented safety)"
+      - "rm32_stm32/src/mcu_l431/chip.rs:23-40 (direct RCC bit writes)"
+      - "rm32_stm32/src/mcu_l431/chip.rs:86-97 (direct TIM1 writes and raw peripheral bindings)"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:44-49 (direct EXTI acknowledge/mask)"
+    confidence: "high"
+
+abstractions:
+  - name: "rm32::hal traits"
+    kind: "portable hardware contract"
+    role: "Defines the upper boundary between motor/protocol algorithms and platform code."
+    evidence:
+      - "rm32/src/hal.rs:14-152"
+
+  - name: "MotorHal"
+    kind: "associated-type facade"
+    role: "Bundles PWM, comparator, phase, interval timer, and commutation timer for the fast ISR path."
+    evidence:
+      - "rm32/src/hal.rs:68-84"
+
+  - name: "MotorContext"
+    kind: "borrowed execution context"
+    role: "Presents ISR algorithms with their state, configuration, shared mailbox, and MotorHal without globals."
+    evidence:
+      - "rm32/src/control/context.rs:12-35"
+
+  - name: "SharedComm hierarchy"
+    kind: "directional concurrency interface"
+    role: "Separates bidirectional mode state, ISR-to-main timing, main-to-ISR controls, and remaining protocol flags."
+    evidence:
+      - "rm32/src/shared_comm.rs:30-223"
+
+  - name: "SharedState"
+    kind: "atomic mailbox implementation"
+    role: "Concrete static communication channel between interrupt and thread contexts."
+    evidence:
+      - "rm32/src/shared_state.rs:20-104,112-160"
+
+  - name: "MotorMode/MotorEvent"
+    kind: "finite state machine"
+    role: "Defines valid lifecycle transitions and compact atomic representation."
+    evidence:
+      - "rm32/src/motor_mode.rs:8-21,50-87"
+
+  - name: "SystemTick"
+    kind: "portable orchestration facade"
+    role: "Keeps firmware and host harness on the same main-loop stage ordering."
+    evidence:
+      - "rm32/src/system.rs:15-29,153-172"
+
+  - name: "MainState"
+    kind: "thread-mode aggregate"
+    role: "Owns EEPROM config, measurements, PIDs, protection, timing, and slower control logic."
+    evidence:
+      - "rm32/src/main_state.rs:90-167,263-269"
+
+  - name: "IsrState/IsrHal"
+    kind: "interrupt-mode aggregate"
+    role: "Owns fast control/protocol state and concrete peripherals, with a TargetIsrState alias selected by MCU feature."
+    evidence:
+      - "rm32_stm32/src/isr.rs:19-94"
+
+  - name: "IsrCell"
+    kind: "single-core ISR-local storage"
+    role: "Moves boot-staged ISR state once into an UnsafeCell-backed location for zero-overhead mutable ISR access under equal-priority assumptions."
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:12-69"
+
+  - name: "ChipConfig and active MCU gateway"
+    kind: "compile-time target policy"
+    role: "Supplies silicon constants and family exports through a single cfg fan-out."
+    evidence:
+      - "rm32_stm32/src/mcu.rs:6-41"
+
+  - name: "register-operation traits"
+    kind: "lower HAL / reusable driver seam"
+    role: "Abstracts PAC differences below rm32's domain HAL so ADC, capture, comparator, and timer mechanics can be shared."
+    evidence:
+      - "rm32_stm32/src/adc_hal.rs:12-39"
+      - "rm32_stm32/src/capture_hal.rs:6-43"
+      - "rm32_stm32/src/comp_hal.rs:4-17"
+      - "rm32_stm32/src/timer.rs:14-39"
+
+  - name: "BoardConfig / BoardYaml"
+    kind: "build-time board policy"
+    role: "Separates PCB choices from silicon constants and generates the firmware's BOARD constant."
+    evidence:
+      - "rm32/src/board.rs:18-71"
+      - "rm32_stm32/build.rs:47-85,210-258"
+
+flows:
+  - name: "boot_and_state_handoff"
+    trigger: "reset enters firmware main"
+    steps:
+      - order: 1
+        action: "Disable interrupts, read reset cause, and run feature-selected MCU init."
+        evidence: "rm32_stm32/src/bin/main.rs:35-39,63-89"
+      - order: 2
+        action: "Load/derive configuration, populate MainState and IsrState, and apply timing/duty parameters."
+        evidence: "rm32_stm32/src/bin/main.rs:220-255"
+      - order: 3
+        action: "Move IsrState to static staging, arm capture DMA at its static address, publish initial ARR, then enable interrupts."
+        evidence: "rm32_stm32/src/bin/main.rs:257-270"
+      - order: 4
+        action: "On the first interrupt, IsrCell moves state into ISR_LOCAL and re-arms DMA because the address changed."
+        evidence: "rm32_stm32/src/isr_handlers.rs:46-64"
+
+  - name: "main_loop_pipeline"
+    trigger: "each thread-mode loop iteration"
+    steps:
+      - order: 1
+        action: "SystemTick maps and processes the latest shared input."
+        evidence: "rm32/src/system.rs:32-46,161-162"
+      - order: 2
+        action: "Firmware leaves the ISR callback empty because hardware interrupts run asynchronously."
+        evidence: "rm32_stm32/src/bin/main.rs:406-407"
+      - order: 3
+        action: "SystemTick transfers one-shot ISR flags and calls MainState::tick."
+        evidence: "rm32/src/system.rs:62-75,167-171"
+      - order: 4
+        action: "MainState performs timing/protection work, the ISR-clocked 1 kHz ADC/PID block, telemetry, and publishes fast-path controls."
+        evidence: "rm32/src/main_state.rs:263-324,409-515,527-565"
+
+  - name: "twenty_khz_motor_tick"
+    trigger: "TIM6 update interrupt"
+    steps:
+      - order: 1
+        action: "Family wrapper acknowledges TIM6 and enters handle_tim6."
+        evidence: "rm32_stm32/src/mcu_l431/interrupts.rs:8-14"
+      - order: 2
+        action: "Shared handler builds MotorContext from ISR_LOCAL plus global SharedState."
+        evidence: "rm32_stm32/src/isr_handlers.rs:82-94"
+      - order: 3
+        action: "ten_khz_tick consumes main requests/input, advances arming/startup/duty logic, drives HAL, and republishes ISR observations."
+        evidence: "rm32/src/control/isr_logic.rs:19-61,64-120,135-179"
+
+  - name: "zero_cross_to_commutation"
+    trigger: "comparator edge and subsequent commutation timer expiry"
+    steps:
+      - order: 1
+        action: "Comparator wrapper acknowledges/masks the hardware line (L431 path) and delegates to core zero-cross filtering."
+        evidence: "rm32_stm32/src/mcu_l431/interrupts.rs:27-49; rm32_stm32/src/isr_handlers.rs:127-140"
+      - order: 2
+        action: "Core filters comparator polarity, measures interval, and schedules the commutation timer."
+        evidence: "rm32/src/control/isr_logic.rs:281-298"
+      - order: 3
+        action: "On timer expiry, core advances the six-step phase, retargets comparator input/edge, updates timing, and re-enables comparator interrupts."
+        evidence: "rm32/src/control/isr_logic.rs:217-265"
+
+  - name: "captured_input_frame"
+    trigger: "input-capture DMA transfer complete"
+    steps:
+      - order: 1
+        action: "DMA wrapper acknowledges the channel, optionally handles bidirectional telemetry, and software-triggers frame processing."
+        evidence: "rm32_stm32/src/mcu_l431/interrupts.rs:52-79"
+      - order: 2
+        action: "EXTI frame handler passes captured edges and current protocol state into TransferState::process."
+        evidence: "rm32_stm32/src/isr_handlers.rs:177-239"
+      - order: 3
+        action: "TransferAction updates atomic protocol/input flags or runs DShot commands; next capture parameters are returned to the wrapper."
+        evidence: "rm32_stm32/src/isr_handlers.rs:242-335,366"
+      - order: 4
+        action: "Wrapper applies any requested prescaler/length and re-enables capture."
+        evidence: "rm32_stm32/src/mcu_l431/interrupts.rs:84-110"
+
+  - name: "main_to_isr_safety_request"
+    trigger: "main detects low voltage, stall, or another safety condition"
+    steps:
+      - order: 1
+        action: "Main requests priority-encoded IsrAction rather than touching ISR-owned peripherals."
+        evidence: "rm32/src/shared_comm.rs:13-27,159-166; rm32/src/main_state.rs:306-323,444-470"
+      - order: 2
+        action: "20 kHz ISR executes AllOff or resets the interval timer, then clears the request."
+        evidence: "rm32/src/control/isr_logic.rs:38-48,169-179"
+
+tests_and_verification:
+  - id: "host_unit_tests"
+    claim: "Core algorithms, state machines, protocol codecs, mapping, orchestration, and ISR logic are unit-tested on the host."
+    evidence:
+      - "rm32/src/control/tests.rs:123-364 (mock-HAL ISR behavior tests)"
+      - "rm32/src/motor_mode.rs:91-221 (mode/transition tests)"
+      - "rm32/src/dshot.rs:177-445 (decode/encode and golden-vector tests)"
+      - "rm32/src/system.rs:181-230 (orchestration flag-transfer tests)"
+      - ".github/workflows/ci.yml:28-37 (host test CI job)"
+    confidence: "high"
+
+  - id: "shared_blackbox_harness"
+    claim: "The rm32_harness binary substitutes mock HAL devices but executes the same SystemTick and ten_khz_tick control path, exposing a line protocol consumed by pytest vector tests."
+    evidence:
+      - "rm32/Cargo.toml:14-16 (harness binary declaration)"
+      - "rm32/src/bin/harness.rs:30-181 (mock HAL implementations)"
+      - "rm32/src/bin/harness.rs:463-492 (shared pipeline and ISR call)"
+      - "rm32/src/bin/harness.rs:745-752 (stdin/stdout process loop)"
+      - "tests/blackbox/harness.py:18-76,108-122 (process driver and tick protocol)"
+      - "tests/blackbox/test_vectors.py:27-52 (vector discovery and parametrization)"
+    confidence: "high"
+
+  - id: "four_target_cross_build"
+    claim: "CI cross-builds firmware for G071, F051, L431, and G431, using the M0/M0+ or M4F target appropriate to each feature."
+    evidence:
+      - ".github/workflows/ci.yml:39-70"
+      - "rm32_stm32/Cargo.toml:38-43"
+    confidence: "high"
+
+  - id: "hardware_verification_boundary"
+    claim: "The automated matrix executes core and harness behavior on the host and compile-checks each firmware target; it does not show on-device execution tests for the platform adapter layer."
+    evidence:
+      - ".github/workflows/ci.yml:28-37 (executed host unit tests)"
+      - ".github/workflows/ci.yml:39-70 (firmware job is cargo build)"
+      - ".github/workflows/ci.yml:72-90 (black-box job executes the host harness)"
+    confidence: "high"
+
+limitations:
+  - id: "feature_board_consistency_not_enforced"
+    claim: "build.rs computes an expected feature string from board.mcu but does not compare or enforce it; BOARD selection can therefore be inconsistent with the enabled MCU feature until some later generated-code or adapter failure."
+    evidence:
+      - "rm32_stm32/build.rs:210-239 (board path is independent input; feature selects only defaults)"
+      - "rm32_stm32/build.rs:313-315 (_expected_feature is unused and only BOARD_MCU/BOARD_NAME env values are emitted)"
+    confidence: "high"
+
+  - id: "comparator_ack_family_gap"
+    claim: "The portable BEMF routine explicitly warns that its filter can return before interrupt masking/acknowledgement; L431 acknowledges at wrapper entry, while the source documents F051/G071/G431 as lacking that mitigation and susceptible to a latent ISR storm."
+    evidence:
+      - "rm32/src/control/isr_logic.rs:268-280 (hazard and affected-family statement)"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-49 (L431 wrapper mitigation)"
+      - "rm32_stm32/src/mcu_g071/interrupts.rs:17-20; rm32_stm32/src/mcu_f051/interrupts.rs:21-24; rm32_stm32/src/mcu_g431/interrupts.rs:27-28 (other comparator wrappers directly delegate)"
+    confidence: "high"
+
+  - id: "split_config_persistence_bug"
+    claim: "ISR DShot commands mutate IsrState.config, but main-loop flash saving currently writes MainState.config; the firmware marks publication/synchronization of changed fields as TODO, so requested saves may persist stale boot-time values."
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:276-297 (command processor mutates ISR config and raises save flag)"
+      - "rm32_stm32/src/bin/main.rs:433-440 (explicit TODO and write of main_state.config)"
+    confidence: "high"
+
+  - id: "signal_timeout_reset_suppressed"
+    claim: "The current firmware deliberately suppresses the system reset requested by MainState on signal timeout for bench debugging, clearing the flag and logging instead."
+    evidence:
+      - "rm32/src/main_state.rs:363-385 (portable logic sets needs_reset)"
+      - "rm32_stm32/src/bin/main.rs:451-465 (bench suppression and commented sys.reset call)"
+    confidence: "high"
+
+  - id: "approximate_consumed_current_clock"
+    claim: "Consumed-current accumulation is clocked by variable-rate main-loop iterations despite its nominal 20 kHz assumption; the source labels the integration approximate."
+    evidence:
+      - "rm32/src/main_state.rs:518-525"
+    confidence: "high"
+
+  - id: "isr_cell_priority_invariant"
+    claim: "The zero-overhead unsafe ISR cell is sound only while all state-touching ISRs remain same-priority on a single core; adding a higher-priority state-touching ISR requires replacing it with a critical-section mutex."
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:12-35"
+    confidence: "high"
+
+  - id: "platform_semantics_not_runtime_tested_in_ci"
+    claim: "Direct PAC register sequences, IRQ acknowledgement, priority behavior, DMA relocation, and physical phase drive are only cross-built by the shown CI, so their runtime semantics require hardware or emulator evidence beyond this inventory."
+    evidence:
+      - ".github/workflows/ci.yml:39-70 (firmware verification is build-only)"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-112 (representative runtime-specific IRQ/DMA semantics)"
+      - "rm32_stm32/src/phase.rs:28-49,77-137 (concrete six-output phase driver and register-mode switching)"
+    confidence: "high"
+
+comparison_candidates:
+  - id: "portability_boundary"
+    question: "Does minz place its algorithm/hardware boundary at a separate core crate like rm32, or within one target crate?"
+    rm32_side: "A workspace-default no_std core plus an excluded ARM platform crate."
+    evidence:
+      - "Cargo.toml:1-7"
+      - "rm32/src/lib.rs:6-40"
+      - "rm32_stm32/src/lib.rs:6-62"
+
+  - id: "hal_granularity"
+    question: "Compare minz's hardware interface breadth and granularity with rm32's two-level domain-HAL/register-ops design."
+    rm32_side: "Many ESC-domain traits, a MotorHal facade, then smaller PAC-operation traits inside rm32_stm32."
+    evidence:
+      - "rm32/src/hal.rs:14-152"
+      - "rm32_stm32/src/adc_hal.rs:12-39"
+      - "rm32_stm32/src/capture_hal.rs:6-43"
+
+  - id: "state_and_concurrency_model"
+    question: "Compare ownership and synchronization: explicit ISR/Main aggregates plus an atomic directional mailbox versus minz's chosen shared-state mechanism."
+    rm32_side: "IsrState and MainState own disjoint state and communicate through SharedState/SharedComm atomics."
+    evidence:
+      - "rm32_stm32/src/isr.rs:70-101"
+      - "rm32/src/main_state.rs:90-127"
+      - "rm32/src/shared_comm.rs:89-223"
+
+  - id: "orchestration_shape"
+    question: "Compare whether minz has an explicit, reusable orchestration object equivalent to SystemTick or encodes order in interrupt/idle functions."
+    rm32_side: "SystemTick fixes pipeline order and is called by both firmware and harness."
+    evidence:
+      - "rm32/src/system.rs:1-6,153-172"
+      - "rm32/src/bin/harness.rs:463-492"
+      - "rm32_stm32/src/bin/main.rs:406-407"
+
+  - id: "mode_representation"
+    question: "Compare a centralized finite-state machine with minz's mode/state representation and transition enforcement."
+    rm32_side: "MotorMode/MotorEvent define a single encoded lifecycle and transition table."
+    evidence:
+      - "rm32/src/motor_mode.rs:1-21,50-87"
+
+  - id: "interrupt_layering"
+    question: "Compare whether algorithm bodies are portable and wrappers thin, and where hardware acknowledgement responsibility sits."
+    rm32_side: "Core algorithms are called by shared platform handlers, which are called by family vector wrappers; acknowledgement remains family-specific."
+    evidence:
+      - "rm32/src/control/isr_logic.rs:15-19,216-287"
+      - "rm32_stm32/src/isr_handlers.rs:1-5,71-149"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:8-49"
+
+  - id: "configuration_axes"
+    question: "Compare how compile-time silicon selection, PCB/board data, and runtime EEPROM motor settings are separated."
+    rm32_side: "Cargo features select MCU family, YAML/build.rs generates board constants, and EepromConfig/MotorConfig supplies runtime/user policy."
+    evidence:
+      - "rm32_stm32/Cargo.toml:38-43"
+      - "rm32_stm32/build.rs:210-258"
+      - "rm32/src/config.rs:21-88,208-233"
+
+  - id: "test_seam"
+    question: "Compare the ability to run control code on a host with mock hardware and whether the test harness exercises the same orchestration as firmware."
+    rm32_side: "The host harness mocks HAL and shares SystemTick/ten_khz_tick; CI also cross-builds but does not execute platform code."
+    evidence:
+      - "rm32/src/bin/harness.rs:30-181,463-492"
+      - ".github/workflows/ci.yml:28-37,39-70,72-90"
+
+  - id: "exact_register_control"
+    question: "Compare how much each design relies on typed HAL APIs versus direct PAC/bit writes for timing-critical behavior and reference-firmware parity."
+    rm32_side: "The platform layer deliberately contains direct unsafe register access behind adapter traits/macros."
+    evidence:
+      - "rm32_stm32/src/timer.rs:41-61"
+      - "rm32_stm32/src/mcu_l431/chip.rs:23-40,86-97"
+
+  - id: "runtime_timing_model"
+    question: "Compare the scheduling domains and authority for control rates, including fast tick, slow loop, commutation timer, comparator edges, and input DMA."
+    rm32_side: "20 kHz TIM6 drives fast control and the 1 kHz counter; commutation, BEMF, and capture are asynchronous; main spins continuously."
+    evidence:
+      - "rm32/src/control/isr_logic.rs:15-26"
+      - "rm32/src/main_state.rs:409-425"
+      - "rm32_stm32/src/isr_handlers.rs:71-179"
+      - "rm32_stm32/src/bin/main.rs:273-277"

@@ -1,0 +1,150 @@
+schema_version: 1
+artifact: balanced-comparison-consolidated-audit
+date: "2026-07-23"
+repository_revision: "15bf3602dbbfd0339c90539117c392075e34879c"
+working_tree_note: "The reviewed MinZ simplification is an uncommitted current-working-tree change; deleted files are not treated as implementation."
+
+inputs:
+  inventories:
+    - docs/structure-comparison-balanced/minz-modules.yaml
+    - docs/structure-comparison-balanced/rm32-modules.yaml
+    - docs/structure-comparison-balanced/crosscut-map.yaml
+  independent_audits:
+    - docs/structure-comparison-balanced/audit-minz.yaml
+    - docs/structure-comparison-balanced/audit-rm32.yaml
+    - docs/structure-comparison-balanced/audit-crosscut.yaml
+
+coverage:
+  minz:
+    expected: 31
+    inventoried: 31
+    crosscut_mapped: 31
+    missing: []
+    unexpected: []
+    duplicates: []
+    composition:
+      portable_core_rust: 9
+      platform_rust: 15
+      firmware_examples: 1
+      manifest_build_link_target: 6
+  rm32:
+    expected: 211
+    inventoried: 211
+    crosscut_mapped: 211
+    missing: []
+    unexpected: []
+    duplicates: []
+    composition:
+      portable_core_and_harness_rust: 41
+      stm32_platform_rust: 75
+      bringup_examples: 2
+      board_yaml: 14
+      manifest_build_link: 5
+      blackbox_python_and_vectors: 74
+  method: "Current filesystem path sets were independently regenerated and compared with both inventory modules lists and crosscut exact_paths."
+
+audit_verdicts:
+  minz: pass_with_corrections_reconciled
+  rm32: pass_with_corrections_reconciled
+  crosscut: corrections_required_then_reconciled
+  final: balanced_comparison_supported
+
+reconciled_corrections:
+  - "Added MinZ core host-target config to the crosscut path set."
+  - "Added both rm32_stm32 bringup examples and the root workspace manifest."
+  - "Corrected MinZ periodic-ISR contexts and foreground non-atomic ownership."
+  - "Changed MinZ blackbox versus rm32 frame history and bounded-spin versus wait_for from none to partial counterparts."
+  - "Qualified MinZ ASCII UART versus rm32 CRSF as a partial serial-input concept, while retaining the active protocols as one-sided."
+  - "Classified rm32 NTC as declared-unwired for all current boards and speed PID as harness-only in current firmware."
+  - "Added reset-cause and typed-units capabilities to the rm32-only inventory."
+  - "Split rm32 implemented capabilities from boot-forced-off, library-only, debug-only, and declared/manifest-only surfaces."
+  - "Expanded both one-sided lists with dormant/configured and transport-repair behavior."
+
+counterpart_summary:
+  crosscut_mappings:
+    direct: 3
+    partial: 11
+    none: 0
+  one_sided_capabilities:
+    minz: 9
+    rm32: 18
+  qualification: "No-counterpart capabilities are recorded separately rather than forcing false module equivalence."
+
+verification:
+  minz_core_tests:
+    command: "cargo test --manifest-path minz/core/Cargo.toml"
+    result: "pass: 77 passed, 0 failed"
+  minz_default_check:
+    command: "cargo check --release --example am32_clone"
+    result: pass
+  minz_pwm48_check:
+    command: "cargo check --release --example am32_clone --features pwm48"
+    result: pass
+  rm32_core_tests:
+    command: "cargo test -p rm32"
+    result: "pass: 253 passed, 0 failed"
+    caveat: "Four test-code warnings and a non-fatal Windows incremental-cache warning."
+  rm32_target_builds:
+    result: pass
+    targets:
+      - "stm32g071 / thumbv6m-none-eabi"
+      - "stm32f051 / thumbv6m-none-eabi"
+      - "stm32l431 / thumbv7em-none-eabihf"
+      - "stm32g431 / thumbv7em-none-eabihf"
+  rm32_blackbox:
+    result: "fail: 77 passed, 1 failed"
+    failure: "temperature_limit: duty_cycle_maximum remained 2000 at tick 2"
+  hardware_runtime:
+    result: not_executed
+    caveat: "No flash, probe, live register, motor, or electrical validation was performed."
+
+current_high_risks:
+  - id: minz_killed_latch_consumed
+    severity: high
+    finding: "safety_kill sets killed=true, but foreground reporting consumes it with swap(false), removing the ISR gate and permitting later restart eligibility."
+    evidence:
+      - "minz/core/src/am32_control.rs:186-203"
+      - "minz/examples/am32_clone.rs:413-428"
+      - "minz/core/src/am32_isr.rs:136-166"
+  - id: minz_panic_not_motor_safe_off
+    severity: high
+    finding: "The panic path reports and halts but does not independently force motor outputs off."
+    evidence:
+      - "minz/src/panic.rs:1-32"
+  - id: minz_relaxed_atomic_protocol
+    severity: medium
+    finding: "Cross-context state is broadly shared through Relaxed atomics; correctness depends on single-core interrupt behavior and operation ordering rather than an explicit publication protocol."
+    evidence:
+      - "minz/examples/am32_clone.rs:101-158"
+  - id: rm32_isrcell_aliasing
+    severity: critical
+    finding: "IsrCell returns a mutable reference under an equal-priority premise, while current L431 priorities permit nested handlers that obtain the same aggregate."
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:12-69"
+      - "rm32_stm32/src/mcu_l431/init.rs:219-249"
+  - id: rm32_non_l431_comp_ack
+    severity: high
+    finding: "The portable BEMF filter can return before acknowledgement; only L431 performs the required entry mask/clear mitigation."
+    evidence:
+      - "rm32/src/control/isr_logic.rs:268-280"
+      - "rm32_stm32/src/mcu_l431/interrupts.rs:27-49"
+  - id: rm32_split_config_save
+    severity: high
+    finding: "ISR commands mutate an ISR config copy, while foreground persistence writes main_state.config; synchronization remains TODO."
+    evidence:
+      - "rm32_stm32/src/isr_handlers.rs:276-323"
+      - "rm32_stm32/src/bin/main.rs:433-440"
+  - id: rm32_build_selection
+    severity: high
+    finding: "Board MCU identity is not enforced against selected Cargo MCU features, and exactly-one MCU feature is not guarded."
+    evidence:
+      - "rm32_stm32/build.rs:214-245"
+      - "rm32_stm32/src/mcu.rs:22-32"
+
+completion:
+  exhaustive_file_inventory: true
+  symmetric_side_only_capabilities: true
+  presence_vs_wiring_distinguished: true
+  runtime_flows_compared: true
+  risks_and_verification_reported: true
+  final_report: docs/structure-comparison-balanced/report.md

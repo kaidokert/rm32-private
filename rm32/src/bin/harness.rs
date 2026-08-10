@@ -528,9 +528,10 @@ impl Harness {
              pwm_duty={} pwm_arr={} pwm_duty_count={} \
              duty_cycle_maximum={} filter_level={} temp_advance={} \
              send_telemetry={} send_esc_info_flag={} play_tone_flag={} \
-             edt_armed={} edt_arm_enable={} dshot_output_prescaler={} \
+             edt_armed={} edt_arm_enable={} \
              alloff_count={} fullbrake_count={} mask_interrupts_count={} \
-             bemf_timeout_happened={} bemf_timeout={}",
+             bemf_timeout_happened={} bemf_timeout={} \
+             dshot_output_prescaler={}",
             self.tick_count,
             self.shared.armed() as i32,
             self.shared.running() as i32,
@@ -574,12 +575,12 @@ impl Harness {
             self.play_tone_flag,
             self.edt_armed as i32,
             self.edt_arm_enable as i32,
-            self.dshot_output_prescaler,
             self.hal_counts.all_off.get(),
             self.hal_counts.full_brake.get(),
             self.hal_counts.mask_interrupts.get(),
             self.main.protection.bemf_timeout_happened(),
             self.main.protection.bemf_timeout(),
+            self.dshot_output_prescaler,
         );
         io::stdout().flush().unwrap();
     }

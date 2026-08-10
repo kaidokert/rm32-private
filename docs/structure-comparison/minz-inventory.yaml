@@ -1,0 +1,473 @@
+schema_version: 1
+artifact: minz-first-pass-structural-inventory
+scope:
+  roots:
+    - minz/Cargo.toml
+    - minz/.cargo/config.toml
+    - minz/build.rs
+    - minz/memory.x
+    - minz/src
+    - minz/core
+    - minz/examples/am32_clone.rs
+    - minz/examples/motor_tester2.rs
+    - minz/scripts
+  focus:
+    - key traits and abstraction boundaries
+    - runtime, interrupt, command, commutation, and telemetry flows
+    - hardware coupling and board configuration
+    - build configuration and feature selection
+    - tests and bench verification
+    - structural limitations and comparison dimensions
+  exclusions:
+    - "Generated build products under minz/target were not inspected."
+    - "Captured bench data, board photographs, PDFs, and most design-history prose were not treated as architectural authority."
+    - "Legacy/single-purpose diagnostic examples were enumerated but not traced in detail."
+
+method:
+  passes:
+    - name: tree-and-build-boundary
+      approach: "Enumerated the MinZ tree, then read both manifests, target/link configuration, linker memory map, and module roots."
+    - name: active-am32-clone-trace
+      approach: "Traced am32_clone storage/wiring, main loop, interrupt trampolines, minz-core control/ISR bodies, HAL traits, and concrete register adapters."
+    - name: experimental-harness-cross-check
+      approach: "Sampled motor_tester2 entry/interrupt topology and its minz_core call sites to distinguish the broader experimental architecture from am32_clone."
+    - name: verification
+      approach: "Ran the detached host test suite and an ARM release check for am32_clone; read representative bench/probe scripts."
+  commands:
+    - "rg --files minz"
+    - "rg -n over minz/core/src, minz/src, and the two principal examples"
+    - "cd minz/core; cargo test"
+    - "cd minz; cargo check --release --example am32_clone"
+
+traits:
+  - id: two-crate-split
+    claim: "MinZ is split into an ARM-facing no_std firmware crate and a detached minz-core crate intended to run the same control/guard/telemetry logic on a host."
+    evidence:
+      - "minz/Cargo.toml:13-16 (firmware depends on minz-core by path and labels it host-testable)"
+      - "minz/src/lib.rs:1-32 (no_std firmware library and peripheral-oriented module surface)"
+      - "minz/core/Cargo.toml:5-15 (host-testable description, detached workspace, portable atomics)"
+      - "minz/core/src/lib.rs:1-15 (data-in/data-out, no hardware reads, cfg-gated no_std)"
+    confidence: high
+
+  - id: two-concurrent-firmware-shapes
+    claim: "The tree contains two materially different firmware shapes: a compact AM32 transliteration in am32_clone and a large bench/closed-loop experiment in motor_tester2 that consumes many extracted core algorithms while retaining extensive global state and orchestration locally."
+    evidence:
+      - "minz/examples/am32_clone.rs:11-17 (program limited to storage, orchestrators, vectors; control moved into minz_core)"
+      - "minz/examples/am32_clone.rs:322-360 (compact main-loop orchestration through clustered state)"
+      - "minz/examples/motor_tester2.rs:2028-2060 (entry point owns multiple queues and performs platform setup)"
+      - "minz/examples/motor_tester2.rs:4686-4801 (core WindowControl, WindowDiag, EdgeHalves, ModeState, ZcState, and KillFlags are wired over example-owned statics)"
+      - "minz/examples/motor_tester2.rs:6315-6356 (large COMP ISR remains in the example and composes core guard logic)"
+    confidence: high
+
+  - id: am32-static-dispatch-hal
+    claim: "The AM32-clone control layer reaches hardware through seven narrow traits bundled in a generic Hal; firmware uses zero-sized register implementations and tests use one recorded-call mock, with static dispatch rather than trait objects."
+    evidence:
+      - "minz/core/src/am32_hal.rs:1-20 (static-dispatch intent and trait-to-firmware-implementation table)"
+      - "minz/core/src/am32_hal.rs:26-121 (MotorPwm, CompCtl, ComTimers, Recorder, Cs, InjAdc, LoopTimer interfaces)"
+      - "minz/core/src/am32_hal.rs:124-137 (generic Hal bundle)"
+      - "minz/core/src/am32_hal.rs:145-191 (shared MockHal and bundle construction for tests)"
+      - "minz/src/lib.rs:34-47 (concrete Am32Hal type alias binds platform implementations)"
+    confidence: high
+
+  - id: state-is-static-but-clustered
+    claim: "AM32-clone runtime storage is program-owned atomic static state, grouped into borrowed cohesion clusters (Sched, Drive, Duty, Bench) before being passed explicitly to control and ISR bodies."
+    evidence:
+      - "minz/examples/am32_clone.rs:104-152 (AM32 globals represented as atomics)"
+      - "minz/core/src/am32_loop.rs:74-137 (cluster types contain only references to atomic storage)"
+      - "minz/examples/am32_clone.rs:237-312 (static atoms wired into the four clusters plus ZctTrace)"
+      - "minz/examples/am32_clone.rs:322-331 (main_entry binds cluster references once)"
+    confidence: high
+
+  - id: orchestration-separated-from-vector-table
+    claim: "For am32_clone, cortex-m entry/vector functions remain in the example as thin platform trampolines, while main control bodies are in minz-core and accept all state/HAL dependencies as parameters."
+    evidence:
+      - "minz/core/src/am32_isr.rs:1-8 (ISR bodies parameterized and hardware accessed only through traits)"
+      - "minz/examples/am32_clone.rs:554-584 (vector table trampolines delegate to core bodies or peripheral RX service)"
+      - "minz/core/src/am32_control.rs:1-9 (control functions receive clusters and Hal; program retains storage)"
+    confidence: high
+
+  - id: direct-register-platform-layer
+    claim: "The platform layer mixes stm32l4xx-hal typestate setup with direct PAC register access for timing-sensitive or AM32-compatible peripheral behavior."
+    evidence:
+      - "minz/src/board_init.rs:28-40 (HAL clock/GPIO types used by common initialization)"
+      - "minz/src/tim1_motor_pwm.rs:8-59 (TIM1 configured by PAC register writes)"
+      - "minz/src/am32_timers.rs:1-11 (raw timer access explicitly chosen to reproduce AM32 macro semantics)"
+      - "minz/src/comp2.rs:165-180 (direct COMP CSR mux/value access)"
+    confidence: high
+
+  - id: fixed-board-and-mcu-coupling
+    claim: "The firmware is tightly bound to an STM32L431KCUx ESC board: the target, probe identifier, memory map, six motor PWM pins, comparator inputs, ADC channels, timer assignments, and UART pins are encoded in source/configuration."
+    evidence:
+      - "minz/.cargo/config.toml:1-6 (thumbv7em target, STM32L431KCUx probe-rs runner, link.x)"
+      - "minz/memory.x:1-4 (256 KiB flash and 48 KiB RAM map)"
+      - "minz/src/board_init.rs:59-103 (fixed six-pin TIM1 motor mapping)"
+      - "minz/examples/am32_clone.rs:458-500 (fixed USART2, ADC, PWM, USART1, and COMP2 pin wiring)"
+      - "minz/examples/am32_clone.rs:503-519 (TIM1/ADC/TIM2/TIM16/TIM6/IWDG/USART2 assignments)"
+    confidence: high
+
+  - id: carrier-feature-is-central-configuration
+    claim: "The primary compile-time behavior switch is pwm48; otherwise the PWM carrier defaults to 24 kHz, and ARR plus ADC trigger/dead-time values are centralized in the firmware library."
+    evidence:
+      - "minz/Cargo.toml:6-11 (pwm48 feature declaration)"
+      - "minz/src/lib.rs:88-110 (feature-selected carrier and derived/shared TIM1 constants)"
+      - "minz/src/tim1_motor_pwm.rs:5-15 (TIM1 initialization consumes the shared constants)"
+    confidence: high
+
+  - id: interrupt-first-realtime-model
+    claim: "AM32-clone uses four execution contexts: priority-0 comparator acceptance, priority-0 one-shot commutation, priority-3 20 kHz duty/polling work, and a foreground UART/control/telemetry loop."
+    evidence:
+      - "minz/examples/am32_clone.rs:19-28 (documented four-context mapping)"
+      - "minz/examples/am32_clone.rs:534-545 (explicit NVIC priority and unmask configuration)"
+      - "minz/examples/am32_clone.rs:338-360 (foreground bands)"
+      - "minz/examples/am32_clone.rs:561-584 (interrupt-vector mapping)"
+    confidence: high
+
+  - id: polling-to-interrupt-startup
+    claim: "AM32-clone starts with comparator polling in the 20 kHz loop, blends accepted intervals, then changes to comparator interrupt mode when the commutation interval falls below the changeover threshold."
+    evidence:
+      - "minz/core/src/am32_isr.rs:214-250 (old_routine polling BEMF check and acceptance)"
+      - "minz/core/src/am32_control.rs:153-185 (polling ZC routine, commutation, and mode changeover)"
+      - "minz/core/src/am32_control.rs:188-216 (start_motor seeds polling mode without enabling EXTI)"
+    confidence: high
+
+  - id: pwm-duty-and-role-separation
+    claim: "Motor output separates duty writes from commutation role flips: all three CCRs receive one duty value, while high/low/float phase changes are GPIO mode changes inside a critical section."
+    evidence:
+      - "minz/src/tim1_motor_pwm.rs:205-246 (same-duty CCR invariant and reason commutation must not write duty)"
+      - "minz/src/tim1_motor_pwm.rs:248-275 (set_duty versus set_roles_for_step implementation)"
+      - "minz/core/src/am32_control.rs:58-63 (commutate changes roles and comparator input)"
+      - "minz/core/src/am32_isr.rs:203-210 (20 kHz duty rescale and write path)"
+    confidence: high
+
+  - id: observer-and-safety-paths
+    claim: "Telemetry and safety are explicitly separated from the cloned control law: injected ADC data feeds observation plus stop-only overcurrent/undervoltage kills, ZC records use a bounded ring/drain, and the black box freezes its pre-fault history."
+    evidence:
+      - "minz/examples/am32_clone.rs:35-41 (observer-only additions and three kill classes)"
+      - "minz/core/src/am32_isr.rs:253-288 (ADC harvest and stop-only safety checks)"
+      - "minz/core/src/zct_trace.rs:1-22 (dual-producer trace design, bandwidth batching, host-testable sink)"
+      - "minz/core/src/zct_trace.rs:39-75 (bounded trace write/drain behavior)"
+      - "minz/core/src/blackbox.rs:20-65 (fixed ring, freeze, chronological replay)"
+    confidence: high
+
+  - id: no-allocation-embedded-dataflow
+    claim: "Runtime communication uses fixed-capacity atomic rings/queues and atomics rather than a heap: USART2 is an ISR producer/main consumer, trace records are ISR-produced/main-drained, and black-box storage is fixed-size."
+    evidence:
+      - "minz/examples/am32_clone.rs:204-234 (fixed ZC and RX ring storage)"
+      - "minz/examples/am32_clone.rs:363-380 (main drains RX and telemetry rings)"
+      - "minz/core/src/am32.rs:451-496 (generic fixed-capacity RxRing and ZctRing types)"
+      - "minz/core/src/blackbox.rs:6-38 (64-entry in-struct black-box ring)"
+    confidence: high
+
+  - id: extraction-is-broad-but-incomplete
+    claim: "minz-core contains broad reusable pure modules for drive geometry, startup, timing, guards, mode transitions, estimator, window closure, ZC confirmation, serialization, and diagnostics; motor_tester2 invokes them from a still-large platform/example orchestration layer."
+    evidence:
+      - "minz/core/src/lib.rs:17-40 (exported core module inventory)"
+      - "minz/examples/motor_tester2.rs:4116-4127 (TIM7 ISR owns StartState but calls extracted startup/drive logic)"
+      - "minz/examples/motor_tester2.rs:4888-4922 (window control and diagnostic snapshot composed in example code)"
+      - "minz/examples/motor_tester2.rs:6051-6071 (ADC sign and ZC confirmation delegated to minz_core)"
+    confidence: high
+
+abstractions:
+  - name: minz_core::am32_hal::Hal
+    kind: static-dispatch hardware facade
+    role: "Bundles seven narrow hardware capabilities into one generic parameter passed through AM32 control/ISR functions."
+    evidence:
+      - "minz/core/src/am32_hal.rs:124-137 (Hal fields and generic bounds)"
+      - "minz/src/lib.rs:34-47 (platform binding as Am32Hal)"
+
+  - name: MotorPwm / CompCtl / ComTimers
+    kind: realtime actuator-and-sensor ports
+    role: "Define the minimum PWM, comparator/EXTI, and interval/one-shot timer operations used by commutation and ZC logic."
+    evidence:
+      - "minz/core/src/am32_hal.rs:22-86 (port contracts)"
+      - "minz/src/tim1_motor_pwm.rs:427-454 (MotorPwm adapter)"
+      - "minz/src/comp2.rs:329-358 (CompCtl adapter)"
+      - "minz/src/am32_timers.rs:102-132 (ComTimers adapter)"
+
+  - name: Recorder / Cs / InjAdc / LoopTimer
+    kind: observer, synchronization, sampling, and IRQ-ack ports
+    role: "Keep diagnostics, critical sections, ADC reads, and loop timer acknowledgment replaceable in host tests."
+    evidence:
+      - "minz/core/src/am32_hal.rs:89-121 (contracts)"
+      - "minz/src/bb.rs:45-67 (Recorder and Cs platform adapters)"
+      - "minz/src/adc_sync.rs:237-246 (InjAdc adapter)"
+      - "minz/src/tim6_loop.rs:41-47 (LoopTimer adapter)"
+
+  - name: Sched / Drive / Duty / Bench
+    kind: borrowed atomic state views
+    role: "Group related program-owned atomics without moving storage or introducing an owning runtime object."
+    evidence:
+      - "minz/core/src/am32_loop.rs:74-137 (cluster definitions)"
+      - "minz/examples/am32_clone.rs:237-301 (static cluster instances)"
+
+  - name: Am32Intervals / RxRing / ZctRing / ZctTrace
+    kind: fixed-storage data structures
+    role: "Wrap history and producer/consumer mechanics over caller-owned atomic arrays; ZctTrace adds batching and a closure-based drain sink."
+    evidence:
+      - "minz/core/src/am32.rs:317-355 (six-slot interval history view)"
+      - "minz/core/src/am32.rs:451-496 (RX and trace ring views)"
+      - "minz/core/src/zct_trace.rs:30-75 (trace composition and bounded drain)"
+
+  - name: BoardInit and peripheral modules
+    kind: concrete platform adapters
+    role: "Own clock/GPIO setup and localize PAC register access for TIM1, COMP2, ADC1, TIM2/TIM16, TIM6, UART, watchdog, and related timers."
+    evidence:
+      - "minz/src/board_init.rs:42-57 (common initialization return bundle)"
+      - "minz/src/lib.rs:3-30 (platform module inventory)"
+
+  - name: motor_tester2 core state views
+    kind: partial extraction boundary
+    role: "WindowControl, WindowDiag, ModeState, ZcState, EdgeHalves, and KillFlags put pure state transitions in core while atomics, interrupts, and orchestration remain in the example."
+    evidence:
+      - "minz/examples/motor_tester2.rs:4686-4801 (static views over example state)"
+      - "minz/core/src/window.rs:138-183 (window control/diagnostic borrowed views)"
+      - "minz/core/src/zc.rs:295-342 (ZcState borrowed atomic view)"
+
+flows:
+  - name: boot-and-wiring-am32-clone
+    steps:
+      - "examples/am32_clone.rs::main takes Cortex/PAC peripherals and calls board_init::init."
+      - "GPIO/UART/ADC/COMP2/TIM1/TIM2/TIM16/TIM6/IWDG are configured."
+      - "Static clusters and the concrete Hal are already wired at module scope."
+      - "NVIC priorities are installed, interrupts enabled, and control enters main_entry."
+    evidence:
+      - "minz/examples/am32_clone.rs:432-519 (platform setup)"
+      - "minz/examples/am32_clone.rs:521-551 (initial drive state, priorities, transition to main_entry)"
+
+  - name: command-to-duty-output
+    steps:
+      - "USART2 ISR calls usart2_rx::service_rx and pushes bytes into RxRing."
+      - "main_entry::rx_drain pops bytes, UartDuty parses them, and apply_uart_cmd updates atomic command state."
+      - "main_entry::set_input maps/clamps UART duty into duty_cycle_setpoint."
+      - "TIM6 ISR runs duty_ramp, rescales against the live carrier ARR, and MotorPwm::set_duty writes all CCRs."
+    evidence:
+      - "minz/examples/am32_clone.rs:579-584 (USART2 trampoline)"
+      - "minz/src/usart2_rx.rs:38-51 (hardware RX service pushes to core ring)"
+      - "minz/examples/am32_clone.rs:338-369 (foreground receive and set_input bands)"
+      - "minz/core/src/am32_loop.rs:244-285 (command side effects and ramp)"
+      - "minz/core/src/am32_isr.rs:151-210 (TIM6 duty pipeline and output)"
+
+  - name: polling-start-to-interrupt-commutation
+    steps:
+      - "set_input_arming/start_motor establishes running state and old_routine polling mode."
+      - "TIM6 polling_bemf_check samples the comparator and invokes zcfoundroutine after persistence counts."
+      - "zcfoundroutine captures/blends interval timing, waits to the commutation point, commutates, and records a trace."
+      - "When interval is below POLLING_MODE_CHANGEOVER, old_routine is cleared and comparator EXTI is enabled."
+    evidence:
+      - "minz/core/src/am32_control.rs:195-216 (startup state)"
+      - "minz/core/src/am32_isr.rs:217-250 (polling BEMF and accept)"
+      - "minz/core/src/am32_control.rs:153-185 (blend/wait/commutate/changeover)"
+
+  - name: comparator-zc-to-one-shot-commutation
+    steps:
+      - "COMP ISR checks EXTI pending and an interval gate, preserving a post-ZC pending level while the gate is closed."
+      - "interrupt_routine applies a comparator persistence filter, masks EXTI, timestamps the crossing, resets the interval timer, and arms TIM16."
+      - "TIM16's shared vector disables the one-shot interrupt, commutates, blends the interval, updates advance/wait, emits trace, and re-enables comparator interrupts."
+    evidence:
+      - "minz/core/src/am32_isr.rs:33-61 (pending and gate semantics)"
+      - "minz/core/src/am32_isr.rs:66-99 (accepted-ZC transaction)"
+      - "minz/core/src/am32_isr.rs:107-143 (one-shot commutation transaction)"
+
+  - name: commutation-side-hardware-update
+    steps:
+      - "commutate advances AM32 step 1..6 and derives rising direction."
+      - "MotorPwm changes phase roles without CCR traffic."
+      - "CompCtl selects the new floating phase and expected EXTI edge."
+      - "The interval history and black-box reference event are updated."
+    evidence:
+      - "minz/core/src/am32_control.rs:31-77 (commutate implementation)"
+      - "minz/src/comp2.rs:286-323 (sector floating-phase table and edge selection)"
+
+  - name: telemetry-and-postmortem
+    steps:
+      - "COM/polling accept paths call ZctTrace::write into a fixed record ring."
+      - "Foreground telemetry_drain moves up to bounded records into UartTxWriter and services transmission."
+      - "Control events are timestamped through Bb; safety_kill freezes the ring; foreground request handling renders it to UART."
+    evidence:
+      - "minz/core/src/zct_trace.rs:39-75 (trace producer and bounded consumer interface)"
+      - "minz/examples/am32_clone.rs:372-401 (foreground trace/drain/request behavior)"
+      - "minz/core/src/am32_control.rs:223-249 (freeze-on-kill)"
+      - "minz/src/bb.rs:16-35 (timestamp, freeze, and formatted replay wrapper)"
+
+  - name: motor-tester2-experimental-loop
+    steps:
+      - "main owns queues, serial/UI/bench orchestration, and extensive diagnostic state."
+      - "TIM7 supplies the 6 kHz open-loop/start heartbeat using minz_core::start and drive helpers."
+      - "COMP performs detailed gating/qualification and calls core guard/ZC functions."
+      - "LPTIM2 performs scheduled commutation; TIM6 hosts periodic guard and sampling work."
+    evidence:
+      - "minz/examples/motor_tester2.rs:2028-2060 (entry-owned queues and setup)"
+      - "minz/examples/motor_tester2.rs:4116-4137 (TIM7 role)"
+      - "minz/examples/motor_tester2.rs:5027-5034 (LPTIM2 commutation ISR role)"
+      - "minz/examples/motor_tester2.rs:5433-5478 (TIM1 timing hooks and TIM6 migration)"
+      - "minz/examples/motor_tester2.rs:6315-6356 (COMP hot path)"
+
+tests_and_verification:
+  - kind: host-unit-suite
+    claim: "The detached minz-core suite exercises pure arithmetic/state machines, AM32 control and ISR bodies, HAL call ordering, fixed rings, serialization, and incident regressions."
+    repository_evidence:
+      - "minz/core/src/lib.rs:1-13 (host-testable design and regression-test intent)"
+      - "minz/core/src/am32_hal.rs:139-191 (recording mock shared by control/ISR tests)"
+      - "minz/core/src/am32_isr.rs:294-343 (representative ISR sequence test)"
+      - "minz/core/src/zc.rs:1351-1389 (representative TOCTOU regression test)"
+    execution_evidence:
+      command: "cd minz/core; cargo test"
+      result: "PASS: 258 tests passed, 0 failed; doc-tests 0. Two warnings remain: duplicated #[test] at zc.rs:1491 and unused schedule_precheck_agrees_with_accept_publish at zc.rs:1516."
+
+  - kind: target-build-check
+    claim: "The current am32_clone example type-checks in release mode for the configured thumbv7em-none-eabihf target."
+    repository_evidence:
+      - "minz/.cargo/config.toml:1-6 (target and runner configuration)"
+      - "minz/Cargo.toml:24-31 (STM32 HAL and release profile)"
+    execution_evidence:
+      command: "cd minz; cargo check --release --example am32_clone"
+      result: "PASS: minz-core and minz checked successfully."
+
+  - kind: bench-register-conformance
+    claim: "A host script probe-reads live TIM1/TIM2/TIM16/TIM6/COMP2/NVIC registers and compares them with AM32-derived expected values."
+    repository_evidence:
+      - "minz/scripts/clone_regcheck.py:1-18 (declared conformance scope and expected values)"
+      - "minz/scripts/clone_regcheck.py:35-87 (probe read and pass/fail checks)"
+    execution_evidence:
+      command: "not run; requires the named physical probe and flashed board"
+      result: not-executed
+
+  - kind: bench-functional-tools
+    claim: "Bench verification is script-driven but hardware/manual: tools cover interactive flight/capture, repeated start/stop reliability, and clone-versus-AM32 operating-map sweeps over a fixed COM port and baud rate."
+    repository_evidence:
+      - "minz/scripts/fly.py:1-20 (interactive control, keepalive, capture workflow)"
+      - "minz/scripts/clone_starts.py:1-6 (start/stop reliability loop)"
+      - "minz/scripts/map_sweep.py:1-16 (same-protocol clone/AM32 map comparison)"
+      - "minz/scripts/fly.py:36-45 (fixed COM41/2 Mbaud bench binding)"
+    execution_evidence:
+      command: "not run; requires motor/ESC, serial adapter, and probe"
+      result: not-executed
+
+limitations:
+  - claim: "There is no single conventional firmware binary target under src/main.rs; operational programs live as Cargo examples, so 'the MinZ implementation' is ambiguous unless the report names am32_clone versus motor_tester2."
+    evidence:
+      - "minz/src/lib.rs:1-30 (library module root, no application entry)"
+      - "minz/examples/am32_clone.rs:432-433 (am32_clone entry)"
+      - "minz/examples/motor_tester2.rs:2028-2029 (motor_tester2 entry)"
+    confidence: high
+
+  - claim: "The AM32 clone is deliberately a factory-default, forward-only subset and documents intentional or guarded deviations; it is not a general AM32 configuration engine."
+    evidence:
+      - "minz/examples/am32_clone.rs:5-9 (factory-default transliteration scope)"
+      - "minz/core/src/am32_control.rs:27-29 (forward-only commutate path)"
+      - "minz/core/src/am32_control.rs:188-192 (intentional comparator-interrupt startup divergence)"
+      - "minz/core/src/am32_loop.rs:42-53 (EEPROM-derived constants marked BENCH-VERIFY)"
+    confidence: high
+
+  - claim: "Host tests strongly cover extracted logic but do not execute real PAC register side effects, NVIC timing, electrical behavior, or board safety; those require the separate bench/probe scripts."
+    evidence:
+      - "minz/core/src/lib.rs:4-9 (core receives hardware observations as arguments and reads no hardware)"
+      - "minz/core/src/am32_hal.rs:154-179 (host MockHal models calls and sampled values)"
+      - "minz/scripts/clone_regcheck.py:2-18 (live hardware register check exists separately)"
+      - "minz/scripts/clone_starts.py:20-30 (physical serial port and test setup)"
+    confidence: high
+
+  - claim: "The root firmware crate's own unit test is only a placeholder add(2,2); substantive verification is concentrated in minz-core and hardware scripts."
+    evidence:
+      - "minz/src/lib.rs:112-124 (placeholder add function and it_works test)"
+      - "minz/core/src/lib.rs:1-13 (core regression-suite intent)"
+    confidence: high
+
+  - claim: "motor_tester2 remains a high-complexity integration artifact: it combines UI, diagnostics, queues, scheduling, many atomic state banks, and multiple ISR bodies in one example despite delegating many calculations/state transitions to minz-core."
+    evidence:
+      - "minz/examples/motor_tester2.rs:2028-2049 (entry-local queues and recorder snapshot)"
+      - "minz/examples/motor_tester2.rs:4008-4045 (UI helpers and USART2/TIM6 ISR bodies)"
+      - "minz/examples/motor_tester2.rs:4686-4801 (large set of core state views wired over local globals)"
+      - "minz/examples/motor_tester2.rs:6315-6356 (substantial COMP ISR policy remains local)"
+    confidence: high
+
+  - claim: "The checked-in target runner and bench tools encode a particular probe serial and Windows COM port, reducing portability without local overrides."
+    evidence:
+      - "minz/.cargo/config.toml:4-6 (specific probe identifier)"
+      - "minz/scripts/fly.py:36-37 (COM41 and 2 Mbaud)"
+      - "minz/scripts/clone_regcheck.py:24-25 (chip and probe constants)"
+    confidence: high
+
+  - claim: "The host suite currently reports a duplicated test attribute and an uncalled test-shaped function, so the apparent 258-test count includes one duplicated execution while schedule_precheck_agrees_with_accept_publish is not run."
+    evidence:
+      - "minz/core/src/zc.rs:1490-1492 (duplicated test attribute)"
+      - "minz/core/src/zc.rs:1516 (function lacks an effective test attribute after the preceding duplicated test)"
+    confidence: high
+
+comparison_candidates:
+  - dimension: primary-implementation-boundary
+    minz_question: "Should comparison treat am32_clone as the compact current clone, motor_tester2 as the experimental controller, or explicitly report both profiles?"
+    minz_evidence:
+      - "minz/examples/am32_clone.rs:11-17"
+      - "minz/examples/motor_tester2.rs:4686-4801"
+    likely_value: "Essential framing issue; avoid collapsing the two architectures."
+
+  - dimension: hardware-abstraction-granularity
+    minz_question: "Compare MinZ's seven capability traits plus generic Hal bundle with the other implementation's HAL surface, ownership, and dispatch strategy."
+    minz_evidence:
+      - "minz/core/src/am32_hal.rs:22-137"
+      - "minz/src/lib.rs:34-47"
+    likely_value: "Direct overlap candidate around PWM/comparator/timers/ADC, with potentially different granularity."
+
+  - dimension: state-ownership-and-concurrency
+    minz_question: "Compare program-owned atomic statics and borrowed cohesion clusters against any owning state machine, mutex, critical-section, or singleton structure."
+    minz_evidence:
+      - "minz/core/src/am32_loop.rs:74-137"
+      - "minz/examples/am32_clone.rs:237-312"
+    likely_value: "Key structural difference candidate."
+
+  - dimension: interrupt-topology
+    minz_question: "Map comparator acceptance, delayed commutation, periodic duty/control, UART, and foreground work side-by-side, including priorities and where policy bodies live."
+    minz_evidence:
+      - "minz/examples/am32_clone.rs:19-28"
+      - "minz/examples/am32_clone.rs:534-584"
+      - "minz/core/src/am32_isr.rs:28-182"
+    likely_value: "Direct functional overlap with likely orchestration differences."
+
+  - dimension: startup-and-zc-model
+    minz_question: "Compare MinZ's polling startup to comparator-interrupt changeover, pending-bit gate semantics, persistence filter, and one-shot commutation scheduling."
+    minz_evidence:
+      - "minz/core/src/am32_control.rs:153-216"
+      - "minz/core/src/am32_isr.rs:33-143"
+    likely_value: "High-value behavior and timing comparison."
+
+  - dimension: motor-output-invariants
+    minz_question: "Compare how both implementations encode six-step phase roles, complementary PWM, dead time, duty ownership, and safe all-off behavior."
+    minz_evidence:
+      - "minz/src/tim1_motor_pwm.rs:65-107"
+      - "minz/src/tim1_motor_pwm.rs:205-275"
+      - "minz/src/tim1_motor_pwm.rs:305-326"
+    likely_value: "Strong overlap candidate at the hardware boundary."
+
+  - dimension: configuration-and-board-description
+    minz_question: "Compare MinZ's hard-coded Rust constants/feature/PAC setup with any declarative board, parameter, generated-code, or target mechanism."
+    minz_evidence:
+      - "minz/Cargo.toml:6-11"
+      - "minz/src/lib.rs:51-110"
+      - "minz/src/board_init.rs:59-103"
+    likely_value: "Likely difference in configurability and portability."
+
+  - dimension: host-test-seam
+    minz_question: "Compare how much exact ISR/control code is host-executable, how HAL effects are asserted, and whether tests exercise orchestration versus only pure helpers."
+    minz_evidence:
+      - "minz/core/src/am32_hal.rs:139-191"
+      - "minz/core/src/am32_isr.rs:294-343"
+      - "minz/core/src/am32_control.rs:460-470"
+    likely_value: "Likely overlap in mock-HAL testing but needs evidence audit against the other tree."
+
+  - dimension: telemetry-and-bench-tooling
+    minz_question: "Compare wire protocols, bounded buffering, fault capture, on-target observability, and automated hardware checks."
+    minz_evidence:
+      - "minz/core/src/zct_trace.rs:1-22"
+      - "minz/core/src/blackbox.rs:1-65"
+      - "minz/scripts/clone_regcheck.py:1-18"
+      - "minz/scripts/map_sweep.py:1-16"
+    likely_value: "MinZ has unusually prominent bench instrumentation; determine whether this is core architecture or development scaffolding in the final report."
+
+  - dimension: extraction-completeness
+    minz_question: "Compare compact am32_clone parameterized bodies and the partially extracted motor_tester2 against the other tree's module size/cohesion and dependency direction."
+    minz_evidence:
+      - "minz/core/src/lib.rs:17-40"
+      - "minz/examples/am32_clone.rs:11-17"
+      - "minz/examples/motor_tester2.rs:4686-4801"
+    likely_value: "Prevents a misleading single score for modularity."
