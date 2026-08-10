@@ -150,6 +150,27 @@ the localization/tiling use case (worked around it here by rebuilding a
 two-window plan per candidate split in a loop). For a fixed small K
 (pre/post/full) the tuple is fine.
 
+REFINEMENT (review agent, agreed): for HOMOGENEOUS tiling the immediate
+allocation-free answer is a plain loop over `WindowView::new(source, k*stride,
+len)` reusing one evaluator + workspace — the plan machinery's real value is
+HETEROGENEOUS profiles + the aggregated `requirements()`, so the app-side loop
+is the right tool for uniform tiling. IF a second consumer repeatedly wants
+aggregated budget + uniform `[Output; N]` output, that's the demand signal for a
+`UniformWindowPlan<P, const K>` helper — additive/non-breaking, so it can land
+POST-RC without disturbing the frozen contract. Filed, not demanded.
+
+SWEEP CONFIRMATION (8-engage sweep, identical plan): `requirements()` is the
+on-chip budgeting hook — consumer-confirmed (output_bytes 288 = 3×24×4, exactly
+three f32 catch24 vectors; checkable, not a claim). This quote belongs in the RC
+hardening-evidence file. The plan ran identically across 8 engages (reproducible
+fixture): settle band 120–132 commutations, post-lock jitter ~2.9%, pre/post
+divergence 12–14. **Wang periodicity resolved a real question**: a single engage
+reported period 9 on a short 64-sample tail (fit noise); across 8 attempts on a
+fixed 96-sample locked window it is 5.6 ± 0.48 (range 5–6) → a REPRODUCIBLE ~6
+= the six-step commutation structure in the interval stream, not fit noise. The
+consistency check (variance across attempts) is what distinguished physical from
+noise — cheap and decisive.
+
 ## Measured cost (L431, 80 MHz, main context, per commutation)
 
 - Full tier WITH analytics: DWT floor **~1291 cyc** (≈16 µs), vs ~798 cyc for
