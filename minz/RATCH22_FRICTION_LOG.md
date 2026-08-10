@@ -132,6 +132,24 @@ frequency detector on ratch22's optional-branch list**. This is the
 demonstrated-demand evidence for pulling it forward (or confirming a
 time-uniform current/BEMF capture + detrend is the app's job first).
 
+## Multi-window `WindowPlan` (PR#18/#22) — consumer note
+
+Exercised on a real engage capture: `pre / post / full` catch24 in one
+allocation-free plan, one shared workspace. POSITIVE: `WindowPlan::try_new` +
+`.and()` chaining compiled first try; mixed `Range`+`Suffix` selection is
+ergonomic; and `requirements()` reports the exact footprint (windows,
+sample-visits, workspace/output/config bytes) *before* running — precisely what
+the on-chip escalation rung needs to budget an on-demand deep-dive.
+`WindowOutOfBounds` / `TooShort` / `TooLong` separation is clear.
+
+FRICTION: the output is a nested tuple `(((a,b),c)…)` that grows with each
+`.and()`, so a K-window *tiling* (a settle-curve or changepoint sweep over many
+uniform windows) is awkward to consume — you can't index or iterate it. A
+same-profile "evaluate over N uniform windows → `[Output; N]`" helper would fit
+the localization/tiling use case (worked around it here by rebuilding a
+two-window plan per candidate split in a loop). For a fixed small K
+(pre/post/full) the tuple is fine.
+
 ## Measured cost (L431, 80 MHz, main context, per commutation)
 
 - Full tier WITH analytics: DWT floor **~1291 cyc** (≈16 µs), vs ~798 cyc for
