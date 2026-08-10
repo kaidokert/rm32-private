@@ -189,6 +189,19 @@ pub trait MainControl {
     fn request_isr_action(&self, _action: IsrAction) {}
     fn clear_isr_action(&self) {}
 
+    /// Public-API compatibility shims (upstream models all-off as its own
+    /// one-shot channel; here it routes through the priority-ordered
+    /// IsrAction request so recovery actions and all-off can't race).
+    fn all_off_request(&self) -> bool {
+        self.isr_action() == IsrAction::AllOff
+    }
+    fn request_all_off(&self) {
+        self.request_isr_action(IsrAction::AllOff);
+    }
+    fn clear_all_off_request(&self) {
+        self.clear_isr_action();
+    }
+
     /// Sine changeover step request (0 = none, 1-6 = execute changeover with step).
     /// Main sets during sine changeover; ISR applies com_step + enables interrupts.
     fn changeover_step(&self) -> u8 {

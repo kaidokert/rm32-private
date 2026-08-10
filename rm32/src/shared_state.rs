@@ -27,11 +27,10 @@ pub struct SharedState {
     dshot_telemetry: AtomicBool,
     save_settings_flag: AtomicBool,
     send_esc_info_flag: AtomicBool,
-    /// Set by main_state when signal_timeout exceeds threshold (matching AM32's
-    /// behavior at Src/main.c:1892-1918). Main loop polls and calls
-    /// `System::reset()`, which sets RCC_CSR.SFTRSTF; the bootloader sees that
-    /// flag and skips its first-chance signal-pin check, dropping into the DFU
-    /// loop so the AM32 Configurator passthrough / BLHeli protocol can talk.
+    pending_servo_calibration: AtomicBool,
+    pending_servo_low_threshold: AtomicU8,
+    pending_servo_high_threshold: AtomicU8,
+
     // Timing (ISR writes, main reads)
     zero_crosses: AtomicU32,
     commutation_interval: AtomicU32,
@@ -136,6 +135,9 @@ impl SharedState {
             dshot_telemetry: AtomicBool::new(false),
             save_settings_flag: AtomicBool::new(false),
             send_esc_info_flag: AtomicBool::new(false),
+            pending_servo_calibration: AtomicBool::new(false),
+            pending_servo_low_threshold: AtomicU8::new(0),
+            pending_servo_high_threshold: AtomicU8::new(0),
             zero_crosses: AtomicU32::new(0),
             commutation_interval: AtomicU32::new(12500),
             newinput: AtomicU16::new(0),
@@ -411,6 +413,23 @@ impl SharedState {
     }
     pub fn set_save_settings_flag(&self, v: bool) {
         self.save_settings_flag.store(v, REL);
+    }
+
+    pub fn publish_servo_calibration(&self, low_threshold: u8, high_threshold: u8) {
+        self.pending_servo_low_threshold.store(low_threshold, REL);
+        self.pending_servo_high_threshold.store(high_threshold, REL);
+        self.pending_servo_calibration.store(true, REL);
+    }
+
+    pub fn take_servo_calibration(&self) -> Option<(u8, u8)> {
+        if self.pending_servo_calibration.swap(false, ACQ) {
+            Some((
+                self.pending_servo_low_threshold.load(ACQ),
+                self.pending_servo_high_threshold.load(ACQ),
+            ))
+        } else {
+            None
+        }
     }
 
     pub fn send_esc_info_flag(&self) -> bool {
@@ -876,5 +895,34 @@ impl crate::shared_comm::SharedComm for SharedState {
     }
     fn set_send_esc_info_flag(&self, v: bool) {
         SharedState::set_send_esc_info_flag(self, v);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::shared_comm::MainControl;
+
+    use super::*;
+
+    #[test]
+    fn servo_calibration_handoff_is_one_shot() {
+        let shared = SharedState::new();
+
+        assert_eq!(shared.take_servo_calibration(), None);
+        shared.publish_servo_calibration(42, 73);
+
+        assert_eq!(shared.take_servo_calibration(), Some((42, 73)));
+        assert_eq!(shared.take_servo_calibration(), None);
+    }
+
+    #[test]
+    fn all_off_request_handoff_is_clearable() {
+        let shared = SharedState::new();
+
+        assert!(!MainControl::all_off_request(&shared));
+        MainControl::request_all_off(&shared);
+        assert!(MainControl::all_off_request(&shared));
+        MainControl::clear_all_off_request(&shared);
+        assert!(!MainControl::all_off_request(&shared));
     }
 }

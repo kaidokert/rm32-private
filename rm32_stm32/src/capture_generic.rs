@@ -3,14 +3,12 @@
 //! MCU-specific register details abstracted via DmaOps + TimerOps + InputPinOps.
 
 use crate::capture_hal::{DmaOps, InputPinOps, TimerOps};
-use rm32::hal::InputCapture;
+use rm32::hal::{DshotOutputPrescaler, InputCapture};
 
 pub struct GenericCapture<D: DmaOps, T: TimerOps, P: InputPinOps> {
     pub buffer_size: u16,
     out_put: bool,
-    /// Timer prescaler for bidir DShot output (set during protocol detection).
-    /// C: `output_timer_prescaler`. DShot600=0, DShot300=1, DShot150=3.
-    output_prescaler: u16,
+    output_prescaler: DshotOutputPrescaler,
     dma_buf: [u32; 64],
     gcr_buf: [u32; 37],
     dma: D,
@@ -23,7 +21,7 @@ impl<D: DmaOps, T: TimerOps, P: InputPinOps> GenericCapture<D, T, P> {
         Self {
             buffer_size: 32,
             out_put: false,
-            output_prescaler: 0,
+            output_prescaler: DshotOutputPrescaler::DSHOT600,
             dma_buf: [0; 64],
             gcr_buf: [0; 37],
             dma,
@@ -50,9 +48,7 @@ impl<D: DmaOps, T: TimerOps, P: InputPinOps> InputCapture for GenericCapture<D, 
     fn send_dshot_dma(&mut self) {
         self.dma.disable();
         self.timer.reset();
-        // C uses ARR=110 with rate-dependent prescaler (output_timer_prescaler).
-        // Bit period = (110+1) * (psc+1) timer ticks.
-        self.timer.configure_output(self.output_prescaler, 110);
+        self.timer.configure_output(self.output_prescaler.raw());
         self.out_put = true;
 
         self.dma.set_mar(self.gcr_buf.as_ptr() as u32);
@@ -83,7 +79,7 @@ impl<D: DmaOps, T: TimerOps, P: InputPinOps> InputCapture for GenericCapture<D, 
     fn is_output(&self) -> bool {
         self.out_put
     }
-    fn set_output_prescaler(&mut self, prescaler: u16) {
+    fn set_output_prescaler(&mut self, prescaler: DshotOutputPrescaler) {
         self.output_prescaler = prescaler;
     }
 }

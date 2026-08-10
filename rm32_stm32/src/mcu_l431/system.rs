@@ -59,6 +59,9 @@ impl rm32::hal::System for System {
     fn disable_irq(&mut self) {
         cortex_m::interrupt::disable();
     }
+    fn irqs_enabled(&self) -> bool {
+        cortex_m::register::primask::read().is_active()
+    }
     fn start_watchdog(&mut self, prescaler: u8, reload: u16) {
         // L431 default option byte is IWDG_SW=1 (software start). LSI is not
         // running after reset, and the SR busy-wait below would hang forever

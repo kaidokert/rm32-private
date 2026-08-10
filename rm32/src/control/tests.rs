@@ -51,10 +51,13 @@ mod tests {
     }
     struct MockPhase {
         prop_brake_calls: u32,
+        all_off_called: bool,
     }
     impl hal::PhaseOutput for MockPhase {
         fn com_step(&mut self, _: u8) {}
-        fn all_off(&mut self) {}
+        fn all_off(&mut self) {
+            self.all_off_called = true;
+        }
         fn full_brake(&mut self) {}
         fn all_pwm(&mut self) {}
         fn proportional_brake(&mut self) {
@@ -119,6 +122,7 @@ mod tests {
                 },
                 phase: MockPhase {
                     prop_brake_calls: 0,
+                    all_off_called: false,
                 },
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer,
@@ -341,6 +345,39 @@ mod tests {
     }
 
     #[test]
+    fn isr_tick_consumes_all_off_request() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut duty = crate::control::state::DutyState::default();
+        let config = crate::config::EepromConfig::default();
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let mut hal = MockMotorHal::new();
+
+        shared.mode.set(crate::motor_mode::MotorMode::OldRoutine);
+        shared.adjusted_input.set(1000);
+        shared.request_all_off();
+
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+
+        assert!(hal.phase.all_off_called);
+        assert!(hal.comp.mask_called);
+        assert!(!shared.all_off_request());
+        assert_eq!(shared.duty_cycle_setpoint(), 0);
+        assert_eq!(hal.pwm.last_duty, 0);
+        assert_eq!(shared.signal_timeout(), 0);
+    }
+
+    #[test]
     fn isr_tick_ramp_limits_large_step() {
         let mut comm = crate::commutation::Commutation::new();
         let mut bemf = crate::control::state::BemfState::default();
@@ -391,6 +428,7 @@ mod tests {
         };
         let mut phase = MockPhase {
             prop_brake_calls: 0,
+            all_off_called: false,
         };
 
         let step_before = comm.step;

@@ -6,8 +6,8 @@
 
 use crate::isr::{self, TargetIsrState};
 use crate::mcu::ChipConfig;
-use rm32::hal::InputCapture;
-use rm32::transfer::{DetectedProtocol, TransferAction};
+use rm32::hal::{DshotOutputPrescaler, InputCapture};
+use rm32::transfer::{CaptureConfig, DetectedProtocol, TransferAction};
 
 /// Single-core ISR-local cell for zero-overhead mutable ISR state.
 ///
@@ -454,7 +454,7 @@ pub fn handle_dma_tc() {
 
 /// Software-triggered frame processing (EXTI ISR body).
 /// Returns the capture size for the next DMA cycle.
-pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
+pub fn handle_exti_frame() -> CaptureConfig {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
 
@@ -514,13 +514,14 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                     // from main via the shared proto flags ([loop] line).
                     shared.set_dshot(true);
                     // Store output prescaler for bidir DShot response timing
-                    if let Some(psc) = actions.next_capture.prescaler {
-                        state.hal.input.set_output_prescaler(psc);
+                    if let Some(prescaler) = actions.next_capture.prescaler {
+                        state.hal.input.set_output_prescaler(
+                            DshotOutputPrescaler::new(prescaler)
+                                .expect("invalid DShot output prescaler"),
+                        );
                     }
                 }
-                DetectedProtocol::Servo => {
-                    shared.set_servo_pwm(true);
-                }
+                DetectedProtocol::Servo => shared.set_servo_pwm(true),
             }
         }
         TransferAction::DshotThrottle { value, telemetry } => {

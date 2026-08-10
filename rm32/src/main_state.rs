@@ -181,7 +181,7 @@ pub struct MainState<LED: OutputPin = NoLed> {
     pub(crate) last_armed: bool,
     /// Set on the tick when arming transition happens
     pub just_armed: bool,
-    /// Set when signal_timeout fires — firmware should reboot the chip
+    /// Set when signal timeout handling requests a firmware reset.
     pub needs_reset: bool,
     /// Custom LED pin (NoLed if board has no custom LED)
     pub(crate) led: LED,
@@ -533,14 +533,17 @@ impl<LED: OutputPin> MainState<LED> {
         //
         // Also clear input_set so re-detection runs if the reset doesn't
         // actually fire for some reason (host-test path, IWDG-disabled bench
-        // build that polls the flag from a stuck main loop, etc).
+        // build that polls the flag from a stuck main loop, etc). The
+        // unarmed branch requires input_set: with no signal ever detected,
+        // timing out must not reset-loop the chip.
+        let signal_timeout = shared.signal_timeout();
         if shared.armed() {
-            if shared.signal_timeout() > crate::constants::SIGNAL_TIMEOUT_DISARM {
+            if signal_timeout > crate::constants::SIGNAL_TIMEOUT_DISARM {
                 shared.transition(crate::motor_mode::MotorEvent::Disarm);
                 shared.set_input_set(false);
                 self.needs_reset = true;
             }
-        } else if shared.signal_timeout() > crate::constants::SIGNAL_TIMEOUT_UNARMED {
+        } else if shared.input_set() && signal_timeout > crate::constants::SIGNAL_TIMEOUT_UNARMED {
             shared.set_input_set(false);
             self.needs_reset = true;
         }
@@ -1191,38 +1194,57 @@ mod tests {
     fn signal_timeout_armed_requests_reset() {
         use crate::motor_mode::MotorMode;
         use crate::shared_state::SharedState;
+
         let shared = SharedState::new();
         shared.set_motor_mode(MotorMode::OldRoutine);
         shared.set_input_set(true);
-        let mut main = make_test_main_state();
-        assert!(!main.needs_reset, "starts not requesting reset");
         for _ in 0..=crate::constants::SIGNAL_TIMEOUT_DISARM {
             shared.increment_signal_timeout();
         }
+
+        let mut main = make_test_main_state();
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
-        assert!(
-            main.needs_reset,
-            "armed timeout (>0.5s) must request system reset"
-        );
+
+        assert!(!shared.armed());
+        assert!(!shared.input_set());
+        assert!(main.needs_reset);
     }
 
     #[test]
-    fn signal_timeout_unarmed_requests_reset() {
+    fn signal_timeout_unarmed_resets_input_and_requests_reset() {
         use crate::motor_mode::MotorMode;
         use crate::shared_state::SharedState;
+
         let shared = SharedState::new();
         shared.set_motor_mode(MotorMode::Disarmed);
         shared.set_input_set(true);
-        let mut main = make_test_main_state();
-        assert!(!main.needs_reset, "starts not requesting reset");
-        for _ in 0..45000u32 {
+        for _ in 0..=crate::constants::SIGNAL_TIMEOUT_UNARMED {
             shared.increment_signal_timeout();
         }
+
+        let mut main = make_test_main_state();
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
-        assert!(
-            main.needs_reset,
-            "unarmed timeout (>2s) must request system reset"
-        );
+
+        assert!(!shared.input_set());
+        assert!(main.needs_reset);
+    }
+
+    #[test]
+    fn signal_timeout_unarmed_without_prior_input_does_not_reset() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+
+        let shared = SharedState::new();
+        shared.set_motor_mode(MotorMode::Disarmed);
+        assert!(!shared.input_set());
+        for _ in 0..=crate::constants::SIGNAL_TIMEOUT_UNARMED {
+            shared.increment_signal_timeout();
+        }
+
+        let mut main = make_test_main_state();
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert!(!main.needs_reset);
     }
 
     // --- Sine-to-BLDC changeover tests ---

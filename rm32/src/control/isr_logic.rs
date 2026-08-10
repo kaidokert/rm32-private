@@ -54,8 +54,16 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     // Process main→ISR action request (priority-ordered enum)
     match ctx.shared.isr_action() {
         crate::shared_comm::IsrAction::AllOff => {
+            // Kill and STOP this tick (upstream early-return semantics):
+            // continuing would let the drive path re-energize the bridge
+            // one tick after all_off while main's disarm transition is
+            // still in flight. Requesters that need the kill sustained
+            // (LVC latch, bench guard) re-request every main pass.
             ctx.hal.phase().all_off();
             ctx.hal.comp().mask_interrupts();
+            ctx.shared.set_duty_cycle_setpoint(0);
+            ctx.shared.clear_isr_action();
+            return;
         }
         crate::shared_comm::IsrAction::DutyKickDown => {
             // Desync recovery: restart ramps from min_startup/2.
