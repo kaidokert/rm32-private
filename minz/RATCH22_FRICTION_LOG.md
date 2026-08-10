@@ -41,6 +41,17 @@ budget-bearing consumer needs, captured before names freeze.
    the ergonomic answer. **Secondary:** `Margin` alone retunes almost every
    window (epoch 145 over ~184 windows) → the epoch is noisy; `Hysteresis<M,D>`
    is presumably the intended damper but that's a second knob to discover.
+   **RESOLVED by PR#21** (`calculate_histogram_plan`, const histogram planner).
+   ADOPTED: the current histogram is now planned from a declared operational
+   `PhysicalRange(0,96)` + margin + deadband, constructed via
+   `PLAN.try_window_retuned_histogram()`, and switched to `Hysteresis`. Bench
+   A/B confirms the damper: over a 628-window 35→50→35 run the epoch stepped
+   only ep4→ep9→ep14 (real regime changes) vs `Margin`'s ~1-per-window churn
+   (145→305), while the histogram still resolves the current distribution.
+   Planner ergonomics: `const fn`, compile-time, `PhysicalMagnitude::integer`
+   avoids fallible margin/deadband construction; the plan's `.margin_raw` /
+   `.hysteresis_deadband_raw` feed the `Hysteresis<M,D>` type params directly.
+   Cost +~120 cyc (deadband bookkeeping). Clean; compiled first try.
 
 3. **No frame serializer / wire codec.** `.frame()` cleanly surfaced the config
    epoch, but `FrameContext` fields are private (read-only via const accessors)

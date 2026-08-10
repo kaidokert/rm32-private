@@ -23,10 +23,11 @@ use cortex_m::peripheral::DWT;
 use ratch22::{
     BlockAccumulatorWidth, BlockMomentEnvelope, BlockMomentEnvelopeRequest, BlockPowerScale,
     BoundedBlockMoments, CheckedOverflow, ConfigurationIdentity, FixedBlockM4Bank, FractionalBits,
-    I32OrdinalSlope, I32Q, I64OutputQ, Margin, Nearest, NoOnlineFeature, OnlineBuilder,
-    OnlineEwMoments, OnlineMinMax, P2Median, P2Quantile, PhysicalRange, SaturatingOverflow,
-    SelectedOnlineBank, ShiftHorizon, WideBlockI128, WindowContext, WindowIdentity,
-    WindowRetunedHistogram, calculate_block_moment_envelope_for,
+    HistogramPlan, HistogramPlanRequest, Hysteresis, I32OrdinalSlope, I32Q, I64OutputQ, Nearest,
+    NoOnlineFeature, OnlineBuilder, OnlineEwMoments, OnlineMinMax, P2Median, P2Quantile,
+    PhysicalMagnitude, PhysicalRange, SaturatingOverflow, SelectedOnlineBank, ShiftHorizon,
+    WideBlockI128, WindowContext, WindowIdentity, WindowRetunedHistogram,
+    calculate_block_moment_envelope_for, calculate_histogram_plan,
 };
 
 /// Skip surprise checks until the EW estimate has warmed up (per channel).
@@ -46,13 +47,6 @@ const WIN_SHORT: u32 = 64;
 const WIN_LONG: u32 = 256;
 /// Current histogram bins.
 const HIST_BINS: usize = 8;
-/// Current histogram initial bounds (raw ADC counts). Margin retune then
-/// TRACKS the observed current range each window (a fixed guess can't — see
-/// friction log: this is the missing range→Q calculator's job).
-const HIST_LO: i32 = 0;
-const HIST_HI: i32 = 64;
-/// Histogram retune margin (raw counts) beyond observed extrema.
-const HIST_MARGIN: u32 = 4;
 
 type Scale = I32Q<F>;
 type Horizon = ShiftHorizon<5>; // alpha = 1/32
@@ -181,7 +175,29 @@ impl Chan {
 type Trend = I32OrdinalSlope<f32, CheckedOverflow>;
 type P50 = P2Median<f32>;
 type P90 = P2Quantile<f32, 9, 10>;
-type CurHist = WindowRetunedHistogram<Margin<HIST_MARGIN>, SaturatingOverflow, HIST_BINS>;
+// Current histogram configured by ratch22's const histogram planner (PR#21 —
+// friction #2 resolved). Operational range declared in raw ADC counts;
+// Hysteresis damps the per-window epoch churn Margin<4> showed (145→305 every
+// window) — the deadband is the damper the friction log asked for.
+const CUR_OP_RANGE: PhysicalRange = match PhysicalRange::try_new(0, 96, 1) {
+    Ok(r) => r,
+    Err(_) => panic!("current op range"),
+};
+const CUR_HIST_PLAN: HistogramPlan<HIST_BINS> =
+    match calculate_histogram_plan(HistogramPlanRequest {
+        operational_range: CUR_OP_RANGE,
+        fractional_bits: 0, // raw ADC counts, no Q
+        margin: PhysicalMagnitude::integer(4),
+        hysteresis_deadband: PhysicalMagnitude::integer(8),
+    }) {
+        Ok(p) => p,
+        Err(_) => panic!("current histogram plan must fit"),
+    };
+type CurHist = WindowRetunedHistogram<
+    Hysteresis<{ CUR_HIST_PLAN.margin_raw }, { CUR_HIST_PLAN.hysteresis_deadband_raw }>,
+    SaturatingOverflow,
+    HIST_BINS,
+>;
 
 /// Onboard streaming analytics on the current channel: short/long trend, P²
 /// median+p90, and a window-retuned histogram whose config epoch is published
@@ -204,7 +220,9 @@ impl Analytics {
             trend_long: Trend::new(),
             p50: P50::try_new().expect("monitor: p50"),
             p90: P90::try_new().expect("monitor: p90"),
-            hist: CurHist::try_new(HIST_LO, HIST_HI).expect("monitor: current hist"),
+            hist: CUR_HIST_PLAN
+                .try_window_retuned_histogram()
+                .expect("monitor: current hist"),
             short_fill: 0,
             long_fill: 0,
             win_id: 0,
