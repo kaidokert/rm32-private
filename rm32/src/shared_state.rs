@@ -262,16 +262,14 @@ impl SharedState {
             .fetch_update(REL, ACQ, |count| (count >= divider).then_some(0))
             .is_ok()
     }
-    /// Interval-telemetry counter (AM32 telem_ms_count, main.c:1664):
-    /// increment; past `limit`, reset and return true. ISR side, 20 kHz.
     pub fn telem_counter_check_and_inc(&self, limit: u16) -> bool {
-        let n = self.telem_counter.fetch_add(1, REL);
-        if n > limit {
-            self.telem_counter.store(0, REL);
-            true
-        } else {
-            false
-        }
+        self.telem_counter
+            .fetch_update(REL, ACQ, |count| {
+                let next = count.saturating_add(1);
+                if next >= limit { Some(0) } else { Some(next) }
+            })
+            .map(|count| count.saturating_add(1) >= limit)
+            .unwrap_or(false)
     }
 
     // --- Motor mode ---
@@ -926,5 +924,17 @@ mod tests {
         shared.one_khz_counter_inc();
         assert!(shared.one_khz_counter_check_and_reset(20));
         assert!(!shared.one_khz_counter_check_and_reset(20));
+    }
+
+    #[test]
+    fn telem_counter_dispatches_on_limit_tick() {
+        let shared = SharedState::new();
+
+        for _ in 0..4 {
+            assert!(!shared.telem_counter_check_and_inc(5));
+        }
+
+        assert!(shared.telem_counter_check_and_inc(5));
+        assert!(!shared.telem_counter_check_and_inc(5));
     }
 }
