@@ -139,6 +139,9 @@ pub const RECLIMB_DUTY_CAP: u16 = 800;
 /// the CRC on non-bidir traffic and every frame fails.
 pub const BIDIR_CONFIRM_FRAMES: u8 = 4;
 
+/// Consecutive high input-pin samples required before probing inverted-CRC DShot.
+pub const BIDIR_IDLE_HIGH_FRAMES: u8 = 100;
+
 /// Fast-rotor desync response (KEPT DIVERGENCE, see main_state.rs desync
 /// handler): below this commutation interval (ticks; 600 = 300 µs windows
 /// = ~555 Hz e and faster) a desync keeps interrupt mode instead of

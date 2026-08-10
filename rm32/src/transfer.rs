@@ -290,7 +290,11 @@ impl TransferState {
             // frame with inverted CRC. Only a run of successful inverted
             // decodes commits bidir; a normal-CRC success while inverted
             // fails proves the high idle was spurious — reset the hint.
-            if !armed && !dshot_telemetry && self.high_pin_count > 100 {
+            if !armed
+                && !dshot_telemetry
+                && input_pin_high
+                && self.high_pin_count >= crate::constants::BIDIR_IDLE_HIGH_FRAMES
+            {
                 let inv = dshot::decode_frame(&buf, frametime_low, frametime_high, true);
                 let inv_ok = matches!(
                     inv,
@@ -355,8 +359,16 @@ impl TransferState {
             // after consecutive successful inverted-CRC decodes.
             if dshot_mode && !dshot_telemetry && input_pin_high {
                 self.high_pin_count = self.high_pin_count.saturating_add(1);
+            } else {
+                self.high_pin_count = 0;
+                self.bidir_confirms = 0;
             }
+        } else {
+            self.high_pin_count = 0;
+            self.bidir_confirms = 0;
+        }
 
+        if !armed {
             // DShot frame averaging (for dshot_frametime calibration).
             // Same alignment-detection logic as the decode path: smaller of
             // the two candidate frametimes is the real frame.
@@ -529,11 +541,10 @@ mod tests {
             }
         }
         let n = detected_at.expect("bidir never committed");
-        // Hint needs >100 high frames, then 4 confirms.
-        assert!(
-            (100..=110).contains(&n),
-            "commit at frame {n}, expected 104-ish"
-        );
+        let expected_detect_at = crate::constants::BIDIR_IDLE_HIGH_FRAMES as usize
+            + crate::constants::BIDIR_CONFIRM_FRAMES as usize
+            - 1;
+        assert_eq!(n, expected_detect_at);
     }
 
     /// Armed traffic never runs the bidir probe (handshake is pre-arm).
