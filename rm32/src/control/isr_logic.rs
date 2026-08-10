@@ -56,6 +56,8 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         crate::shared_comm::IsrAction::AllOff => {
             ctx.hal.phase().all_off();
             ctx.hal.comp().mask_interrupts();
+            ctx.shared.clear_isr_action();
+            return;
         }
         crate::shared_comm::IsrAction::DutyKickDown => {
             // Desync recovery: restart ramps from min_startup/2.
