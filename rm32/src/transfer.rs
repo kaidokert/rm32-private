@@ -112,7 +112,7 @@ impl CaptureConfig {
     /// ~3.6 ticks (in 1-4 range).
     pub fn dshot_detection(cpu_mhz: u8) -> Self {
         Self {
-            ndtr: 32,
+            ndtr: 33,
             prescaler: Some((cpu_mhz / 6) as u16),
         }
     }
@@ -215,7 +215,7 @@ impl TransferState {
         // --- Input detection (requires 2 consecutive matching detections) ---
         if !input_set {
             let sig = signal::detect_input(dma_buffer, cpu_mhz);
-            let proto = match sig {
+            let protocol = match sig {
                 signal::SignalType::Dshot600
                 | signal::SignalType::Dshot300
                 | signal::SignalType::Dshot150 => Some(DetectedProtocol::Dshot),
@@ -228,16 +228,19 @@ impl TransferState {
             // protocol detection resets pending state. Otherwise marginal
             // capture timing (DMA window grabbing mid-edge) can produce
             // alternating Some/None and the chain never reaches 2-in-a-row.
-            let confirmed = match (proto, self.pending_protocol) {
-                (Some(p), Some(pending)) if p == pending => {
+            let confirmed = match (protocol, self.pending_protocol) {
+                (Some(protocol), Some(pending)) if protocol == pending => {
                     self.pending_protocol = None;
-                    true
+                    Some(protocol)
                 }
-                (Some(p), _) => {
-                    self.pending_protocol = Some(p);
-                    false
+                (Some(protocol), _) => {
+                    self.pending_protocol = Some(protocol);
+                    None
                 }
-                (None, _) => false,
+                (None, _) => {
+                    self.pending_protocol = None;
+                    None
+                }
             };
             // Only switch to the protocol's fast capture config once
             // *confirmed*. Until then keep the slow detection prescaler so
@@ -245,15 +248,17 @@ impl TransferState {
             // the next frame — otherwise a single detect_input() hit drops
             // the prescaler to 0/1 and the next frame's deltas blow past
             // the detection thresholds, locking us out.
-            let (action, capture) = if confirmed {
+            let (action, capture) = if let Some(protocol) = confirmed {
                 let cap = match sig {
                     signal::SignalType::Dshot600 => CaptureConfig::DSHOT600_DETECTED,
                     signal::SignalType::Dshot300 => CaptureConfig::DSHOT300_DETECTED,
                     signal::SignalType::Dshot150 => CaptureConfig::DSHOT150_DETECTED,
                     signal::SignalType::ServoPwm => CaptureConfig::servo_detected(cpu_mhz),
-                    signal::SignalType::None => CaptureConfig::dshot_detection(cpu_mhz),
+                    signal::SignalType::None => {
+                        unreachable!("confirmed input detection cannot have SignalType::None")
+                    }
                 };
-                (TransferAction::InputDetected(proto.unwrap()), cap)
+                (TransferAction::InputDetected(protocol), cap)
             } else {
                 (
                     TransferAction::None,
@@ -560,6 +565,33 @@ mod tests {
         );
         // NDTR=32: one frame per capture, TC on the frame's last edge.
         assert_eq!(actions.next_capture.ndtr, 32);
+    }
+
+    #[test]
+    fn invalid_detection_clears_pending_protocol() {
+        let mut state = TransferState::default();
+        let mut zic = 0u16;
+        let mut dshot = [0u32; 33];
+        for (i, slot) in dshot.iter_mut().enumerate() {
+            *slot = 100 + i as u32 * 5;
+        }
+        let invalid = [0u32; 33];
+
+        let _ = state.process(
+            &dshot, false, false, false, false, false, false, 0, 0, false, false, &mut zic, 400,
+            600, 60,
+        );
+        let _ = state.process(
+            &invalid, false, false, false, false, false, false, 0, 0, false, false, &mut zic, 400,
+            600, 60,
+        );
+        let actions = state.process(
+            &dshot, false, false, false, false, false, false, 0, 0, false, false, &mut zic, 400,
+            600, 60,
+        );
+
+        assert!(matches!(actions.action, TransferAction::None));
+        assert_eq!(actions.next_capture, CaptureConfig::dshot_detection(60));
     }
 
     /// REGRESSION (bench capture 07-31, Betaflight DSHOT300 @ PSC=1):
