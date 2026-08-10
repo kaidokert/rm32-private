@@ -13,13 +13,24 @@ budget-bearing consumer needs, captured before names freeze.
 
 ## Blocking / design gaps
 
-1. **No range→Q envelope calculator.** `calculate_online_i32_envelope` (and any
-   physical-range → Q-format helper) does not exist yet — DESIGN.md lists it as
-   an unfinished follow-up. We hand-derived every Q format and cross-checked
-   against the `ONLINE_BLOCK_I32_Q*_REFERENCE_BOUNDS` constants. **This is the
-   single highest-value thing to build**: a bench bring-up does not know its Q
-   envelope in its head; it knows "phase current is ±X A, ADC is 12-bit." The
-   calculator is the missing bridge.
+1. **No range→Q envelope calculator.** ~~`calculate_online_i32_envelope` does
+   not exist yet.~~ **RESOLVED by PR#20** (`fixed_config`), named exactly. We
+   ADOPTED it: the interval-shape block-M4 bank is now configured by
+   `calculate_block_moment_envelope_for` from a declared `PhysicalRange(-2,2)`
+   instead of a hand-picked `WideQ32BlockMoments` + guessed `SHAPE_GAIN` bound.
+   Bench-validated identical (skew/kurt match the hand-picked version).
+   **Calculator ergonomics verdict (the milestone claim — survives contact):**
+   - POSITIVE: it's `const fn`, so a bad range fails the BUILD, not a runtime
+     `try_new` — exactly the compile-time proof we wanted. Const-generics from
+     `PLAN.sample.maximum_absolute_raw` / `PLAN.power_fractional_bits` /
+     `PLAN.maximum_samples` work on edition-2024 / rustc 1.96. Covers both
+     personalities we use (`BlockScaledI32Math`, `FixedBlockMoments`).
+   - Minor: the `const` call site is verbose — `match PhysicalRange::try_new(..)
+     { Ok=>, Err=>panic!() }` twice (const fn can't use `?`). A const
+     `*_or_panic` / unwrap helper would tidy every declaration.
+   - Gap: the plan derives sample-Q + power-scale + raw-bound + accumulator
+     width, but NOT the OUTPUT Q (`I64OutputQ<32>` still hand-chosen) — fine,
+     but the plan doesn't close the whole type.
 
 2. **Histogram initial bounds are unusable without the calculator.** First cut
    used `ExpandOnly` with a guessed `(0, 512)`; the ~38-count current all landed

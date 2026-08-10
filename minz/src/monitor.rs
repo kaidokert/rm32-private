@@ -21,10 +21,12 @@
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use cortex_m::peripheral::DWT;
 use ratch22::{
-    CheckedOverflow, ConfigurationIdentity, FixedBlockM4Bank, I32OrdinalSlope, I32Q, Margin,
-    NoOnlineFeature, OnlineBuilder, OnlineEwMoments, OnlineMinMax, P2Median, P2Quantile,
-    SaturatingOverflow, SelectedOnlineBank, ShiftHorizon, WideQ32BlockMoments, WindowContext,
-    WindowIdentity, WindowRetunedHistogram,
+    BlockAccumulatorWidth, BlockMomentEnvelope, BlockMomentEnvelopeRequest, BlockPowerScale,
+    BoundedBlockMoments, CheckedOverflow, ConfigurationIdentity, FixedBlockM4Bank, FractionalBits,
+    I32OrdinalSlope, I32Q, I64OutputQ, Margin, Nearest, NoOnlineFeature, OnlineBuilder,
+    OnlineEwMoments, OnlineMinMax, P2Median, P2Quantile, PhysicalRange, SaturatingOverflow,
+    SelectedOnlineBank, ShiftHorizon, WideBlockI128, WindowContext, WindowIdentity,
+    WindowRetunedHistogram, calculate_block_moment_envelope_for,
 };
 
 /// Skip surprise checks until the EW estimate has warmed up (per channel).
@@ -66,8 +68,39 @@ type MinBank = SelectedOnlineBank<
     NoOnlineFeature,
 >;
 
+// Interval-shape block-M4 config DERIVED by the ratch22 range→Q calculator
+// (PR#20 calculate_block_moment_envelope_for) from a declared ±2.0 physical
+// range — replaces the earlier hand-picked WideQ32BlockMoments + guessed
+// bounds. const-eval PROVES arithmetic representability at COMPILE time (the
+// exact thing friction-log #1 asked for; a bad range now fails the build, not
+// a runtime try_new). Wide accumulator: low-variance shape needs var² headroom.
+const SHAPE_RANGE: PhysicalRange = match PhysicalRange::try_new(-2, 2, 1) {
+    Ok(r) => r,
+    Err(_) => panic!("shape physical range"),
+};
+const SHAPE_PLAN: BlockMomentEnvelope = match calculate_block_moment_envelope_for(
+    BlockMomentEnvelopeRequest {
+        physical_range: SHAPE_RANGE,
+        sample_fractional_bits: FractionalBits::exact(16),
+        power_fractional_bits: FractionalBits::between(16, 30),
+        maximum_samples: EPOCH,
+        moment_order: 4,
+    },
+    BlockAccumulatorWidth::I64TermsI128Sums,
+) {
+    Ok(p) => p,
+    Err(_) => panic!("shape block envelope must fit"),
+};
+type ShapeConfig = BoundedBlockMoments<
+    WideBlockI128,
+    BlockPowerScale<{ SHAPE_PLAN.power_fractional_bits }>,
+    Nearest,
+    I64OutputQ<32>,
+    { SHAPE_PLAN.sample.maximum_absolute_raw },
+    { SHAPE_PLAN.maximum_samples },
+>;
 /// Wide-Q32 block-M4 shape bank (division-free; wide holds low-variance var²).
-type ShapeBank = FixedBlockM4Bank<I32Q<16>, CheckedOverflow, WideQ32BlockMoments<EPOCH>>;
+type ShapeBank = FixedBlockM4Bank<I32Q<16>, CheckedOverflow, ShapeConfig>;
 
 // ---- runtime dials ---------------------------------------------------------
 /// Surprise sensitivity K (band = |x−mean| > K·σ). 'k' down / 'K' up.
