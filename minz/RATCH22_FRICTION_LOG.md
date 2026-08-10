@@ -169,7 +169,12 @@ reported period 9 on a short 64-sample tail (fit noise); across 8 attempts on a
 fixed 96-sample locked window it is 5.6 ± 0.48 (range 5–6) → a REPRODUCIBLE ~6
 = the six-step commutation structure in the interval stream, not fit noise. The
 consistency check (variance across attempts) is what distinguished physical from
-noise — cheap and decisive.
+noise — cheap and decisive. Settle also reported in ms + electrical revs (agent
+request, computed from raw ci since each interval IS the elapsed time):
+**event-count CoV 2.8% vs elapsed-ms CoV 9.6%** — the controller locks in a
+consistent commutation count (~124), but wall-clock time (77–102 ms) varies
+~3.4× more because spin-up SPEED varies per attempt. Reporting both separates
+controller consistency (events) from speed-dependent elapsed time (ms).
 
 ## Measured cost (L431, 80 MHz, main context, per commutation)
 
