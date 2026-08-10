@@ -653,6 +653,26 @@ fn print_info(
             mon::KURT_M.load(Ordering::Relaxed),
             mon::EPOCHS.load(Ordering::Relaxed),
         );
+        // Onboard analytics (full tier, current channel): short/long trend
+        // slope, P² median/p90, window-retuned histogram epoch + counts.
+        let _ = write!(
+            tx,
+            "mon.a win={} tS={} tL={} p50={} p90={} hep={} h={},{},{},{},{},{},{},{}\r\n",
+            mon::AN_WIN.load(Ordering::Relaxed),
+            mon::AN_TREND_SHORT_M.load(Ordering::Relaxed),
+            mon::AN_TREND_LONG_M.load(Ordering::Relaxed),
+            mon::AN_P50.load(Ordering::Relaxed),
+            mon::AN_P90.load(Ordering::Relaxed),
+            mon::AN_HIST_EPOCH.load(Ordering::Relaxed),
+            mon::AN_HIST[0].load(Ordering::Relaxed),
+            mon::AN_HIST[1].load(Ordering::Relaxed),
+            mon::AN_HIST[2].load(Ordering::Relaxed),
+            mon::AN_HIST[3].load(Ordering::Relaxed),
+            mon::AN_HIST[4].load(Ordering::Relaxed),
+            mon::AN_HIST[5].load(Ordering::Relaxed),
+            mon::AN_HIST[6].load(Ordering::Relaxed),
+            mon::AN_HIST[7].load(Ordering::Relaxed),
+        );
     }
 }
 

@@ -49,6 +49,10 @@ MON_RE = re.compile(
     rb"csurp=(\d+) cmean=(-?\d+) cvar=(\d+) "
     rb"skew=(-?\d+) kurt=(-?\d+) eps=(\d+)"
 )
+MON_A_RE = re.compile(
+    rb"mon\.a win=(\d+) tS=(-?\d+) tL=(-?\d+) p50=(-?\d+) p90=(-?\d+) hep=(\d+) "
+    rb"h=(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)"
+)
 
 
 def poll(ser):
@@ -62,14 +66,18 @@ def poll(ser):
     m = None
     for m in MON_RE.finditer(buf):
         pass
-    return (i.groups() if i else None, m.groups() if m else None)
+    ma = None
+    for ma in MON_A_RE.finditer(buf):
+        pass
+    return (i.groups() if i else None, m.groups() if m else None,
+            ma.groups() if ma else None)
 
 
 def set_tier(ser, target):
     """Cycle 'm' (1->2->0->1) until tier==target. Readable at idle (the mon
     line prints the statics directly, no commutation needed)."""
     for _ in range(4):
-        _, mg = poll(ser)
+        _, mg, _ = poll(ser)
         if mg and int(mg[0]) == target:
             print(f"  tier set to {target}")
             return
@@ -79,7 +87,7 @@ def set_tier(ser, target):
 
 def set_k(ser, target):
     for _ in range(15):
-        _, mg = poll(ser)
+        _, mg, _ = poll(ser)
         if not mg:
             return
         cur = int(mg[1])
@@ -106,7 +114,7 @@ try:
         while time.monotonic() - t0 < a.dwell:
             paced_write(ser, f"{lvl}\n".encode())
             time.sleep(0.4)
-        ig, mg = poll(ser)
+        ig, mg, ag = poll(ser)
         if ig:
             run, ci, avg = ig[2].decode(), ig[3].decode(), int(ig[4])
             fe = int(2e6 / (6 * avg)) if avg > 0 else 0
@@ -126,6 +134,12 @@ try:
             prev_surp = isurp
         else:
             print("        mon: no line")
+        if ag:
+            win, tS, tL, p50, p90, hep = (int(x) for x in ag[:6])
+            hist = [int(x) for x in ag[6:14]]
+            print(f"        analytics[win {win}]: trend short={tS / 1000:+.3f} "
+                  f"long={tL / 1000:+.3f} cnt/samp | p50={p50} p90={p90} raw | "
+                  f"hist(ep{hep})={hist}")
 finally:
     for _ in range(3):
         paced_write(ser, b"0\n")

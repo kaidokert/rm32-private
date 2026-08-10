@@ -21,8 +21,10 @@
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use cortex_m::peripheral::DWT;
 use ratch22::{
-    CheckedOverflow, FixedBlockM4Bank, I32Q, NoOnlineFeature, OnlineBuilder, OnlineEwMoments,
-    OnlineMinMax, SaturatingOverflow, SelectedOnlineBank, ShiftHorizon, WideQ32BlockMoments,
+    CheckedOverflow, ConfigurationIdentity, FixedBlockM4Bank, I32OrdinalSlope, I32Q, Margin,
+    NoOnlineFeature, OnlineBuilder, OnlineEwMoments, OnlineMinMax, P2Median, P2Quantile,
+    SaturatingOverflow, SelectedOnlineBank, ShiftHorizon, WideQ32BlockMoments, WindowContext,
+    WindowIdentity, WindowRetunedHistogram,
 };
 
 /// Skip surprise checks until the EW estimate has warmed up (per channel).
@@ -34,6 +36,21 @@ const EPOCH: u32 = 256;
 /// Shape input gain: (ci−mean) ticks → Q16.16, ~0.01/tick (shape is
 /// scale-invariant; this just lands typical deviations inside the ±2.0 bound).
 const SHAPE_GAIN: i32 = 655;
+
+// --- onboard analytics (full tier, current channel) -------------------------
+/// Short trend window (commutations) — the fast drift-vs-ripple split.
+const WIN_SHORT: u32 = 64;
+/// Long trend / P² / histogram window (commutations).
+const WIN_LONG: u32 = 256;
+/// Current histogram bins.
+const HIST_BINS: usize = 8;
+/// Current histogram initial bounds (raw ADC counts). Margin retune then
+/// TRACKS the observed current range each window (a fixed guess can't — see
+/// friction log: this is the missing range→Q calculator's job).
+const HIST_LO: i32 = 0;
+const HIST_HI: i32 = 64;
+/// Histogram retune margin (raw counts) beyond observed extrema.
+const HIST_MARGIN: u32 = 4;
 
 type Scale = I32Q<F>;
 type Horizon = ShiftHorizon<5>; // alpha = 1/32
@@ -74,6 +91,14 @@ pub static CUR_VAR: AtomicI32 = AtomicI32::new(0);
 pub static SKEW_M: AtomicI32 = AtomicI32::new(0);
 pub static KURT_M: AtomicI32 = AtomicI32::new(0);
 pub static EPOCHS: AtomicU32 = AtomicU32::new(0);
+// onboard analytics readouts (current channel)
+pub static AN_WIN: AtomicU32 = AtomicU32::new(0);
+pub static AN_TREND_SHORT_M: AtomicI32 = AtomicI32::new(0); // slope×1000 (cnt/samp)
+pub static AN_TREND_LONG_M: AtomicI32 = AtomicI32::new(0);
+pub static AN_P50: AtomicI32 = AtomicI32::new(0); // current median (raw counts)
+pub static AN_P90: AtomicI32 = AtomicI32::new(0); // current p90
+pub static AN_HIST_EPOCH: AtomicU32 = AtomicU32::new(0); // window-retune config epoch
+pub static AN_HIST: [AtomicU32; HIST_BINS] = [const { AtomicU32::new(0) }; HIST_BINS];
 
 /// One minimal-bank channel: update + surprise band.
 struct Chan {
@@ -110,10 +135,111 @@ impl Chan {
     }
 }
 
+// Per-channel policy choices (written down per the API-hardening ask):
+//  * Trend: CheckedOverflow — the i128 sufficient-stat accumulator can't
+//    overflow at these ranges/windows, so "checked" is free insurance and
+//    transactional (a surprise sample is dropped, not corrupting the fit).
+//  * Histogram: SaturatingOverflow — a full bin should saturate + flag quality,
+//    never REJECT the sample (a monitor must not silently drop a count).
+//  * P²: no policy knob (internally reject-on-overflow); f32 update, so it runs
+//    in MAIN, never the prio-0 ISR (no-integer-variant friction, F0-relevant).
+// Q-envelope: trend/hist take RAW i32, P² takes f32 — none need the (missing)
+// range→Q calculator; that gap only bites the OnlineBank block-scaled path.
+type Trend = I32OrdinalSlope<f32, CheckedOverflow>;
+type P50 = P2Median<f32>;
+type P90 = P2Quantile<f32, 9, 10>;
+type CurHist = WindowRetunedHistogram<Margin<HIST_MARGIN>, SaturatingOverflow, HIST_BINS>;
+
+/// Onboard streaming analytics on the current channel: short/long trend, P²
+/// median+p90, and a window-retuned histogram whose config epoch is published
+/// through a frame. Fed per-commutation from main.
+struct Analytics {
+    trend_short: Trend,
+    trend_long: Trend,
+    p50: P50,
+    p90: P90,
+    hist: CurHist,
+    short_fill: u32,
+    long_fill: u32,
+    win_id: u64,
+}
+
+impl Analytics {
+    fn new() -> Self {
+        Self {
+            trend_short: Trend::new(),
+            trend_long: Trend::new(),
+            p50: P50::try_new().expect("monitor: p50"),
+            p90: P90::try_new().expect("monitor: p90"),
+            hist: CurHist::try_new(HIST_LO, HIST_HI).expect("monitor: current hist"),
+            short_fill: 0,
+            long_fill: 0,
+            win_id: 0,
+        }
+    }
+
+    fn feed(&mut self, cur: u16) {
+        let x = cur as i32;
+        let _ = self.trend_short.update(x);
+        let _ = self.trend_long.update(x);
+        let _ = self.hist.update(x);
+        let f = cur as f32;
+        let _ = self.p50.update(f);
+        let _ = self.p90.update(f);
+
+        self.short_fill += 1;
+        if self.short_fill >= WIN_SHORT {
+            if let Ok(s) = self.trend_short.snapshot() {
+                AN_TREND_SHORT_M.store((s.output().slope * 1000.0) as i32, Ordering::Relaxed);
+            }
+            self.trend_short.clear();
+            self.short_fill = 0;
+        }
+
+        self.long_fill += 1;
+        if self.long_fill >= WIN_LONG {
+            if let Ok(s) = self.trend_long.snapshot() {
+                AN_TREND_LONG_M.store((s.output().slope * 1000.0) as i32, Ordering::Relaxed);
+            }
+            if let Ok(s) = self.p50.snapshot() {
+                AN_P50.store(s.estimate() as i32, Ordering::Relaxed);
+            }
+            if let Ok(s) = self.p90.snapshot() {
+                AN_P90.store(s.estimate() as i32, Ordering::Relaxed);
+            }
+            // Publish the histogram counts + its config epoch VIA THE FRAME path
+            // (epochs surfaced in frames). Copy counts out before retune mutates.
+            let snap = self.hist.snapshot();
+            let counts = *snap.histogram().counts();
+            let samples = snap.histogram().samples();
+            let epoch = match WindowContext::new(WindowIdentity(self.win_id), samples) {
+                Some(wc) => match snap.frame(wc, ConfigurationIdentity(0)) {
+                    Ok(fr) => fr.context().configuration_epoch().map(|e| e.0).unwrap_or(0),
+                    Err(_) => snap.configuration_epoch().0,
+                },
+                None => snap.configuration_epoch().0,
+            };
+            for (i, c) in counts.iter().enumerate() {
+                AN_HIST[i].store(*c, Ordering::Relaxed);
+            }
+            AN_HIST_EPOCH.store(epoch as u32, Ordering::Relaxed);
+            AN_WIN.fetch_add(1, Ordering::Relaxed);
+            // roll the window
+            let _ = self.hist.retune();
+            self.p50.clear();
+            self.p90.clear();
+            self.trend_long.clear();
+            self.long_fill = 0;
+            self.win_id = self.win_id.wrapping_add(1);
+        }
+    }
+}
+
 pub struct Monitor {
     interval: Chan,
     current: Chan,
     shape: ShapeBank,
+    analytics: Analytics,
     shape_fill: u32,
     last_seq: u32,
 }
@@ -124,6 +250,7 @@ impl Monitor {
             interval: Chan::new(),
             current: Chan::new(),
             shape: ShapeBank::try_new().expect("monitor: shape bank config"),
+            analytics: Analytics::new(),
             shape_fill: 0,
             last_seq: u32::MAX,
         }
@@ -185,6 +312,8 @@ impl Monitor {
                 self.shape.reset();
                 self.shape_fill = 0;
             }
+            // onboard streaming analytics on the current channel
+            self.analytics.feed(current_raw);
         }
 
         let cost = DWT::cycle_count().wrapping_sub(start);
