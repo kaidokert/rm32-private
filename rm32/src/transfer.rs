@@ -223,11 +223,8 @@ impl TransferState {
                 signal::SignalType::None => None,
             };
             // Re-confirmation: first detection is tentative; second matching
-            // detection confirms. A single `None` frame between two valid
-            // detections is treated as transient noise — only a *different*
-            // protocol detection resets pending state. Otherwise marginal
-            // capture timing (DMA window grabbing mid-edge) can produce
-            // alternating Some/None and the chain never reaches 2-in-a-row.
+            // detection confirms. Invalid captures clear the tentative state,
+            // so the two detections must be consecutive.
             let confirmed = match (protocol, self.pending_protocol) {
                 (Some(protocol), Some(pending)) if protocol == pending => {
                     self.pending_protocol = None;
