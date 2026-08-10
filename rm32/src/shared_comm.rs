@@ -16,7 +16,7 @@ use crate::motor_mode::{MotorEvent, MotorMode};
 /// needed, the motor is being killed so the timer reset is moot).
 /// Stored as AtomicU8 in SharedState. Main writes via `request_isr_action`;
 /// ISR reads via `isr_action`, executes, and clears to None.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum IsrAction {
     /// No pending action.
@@ -42,6 +42,19 @@ pub enum IsrAction {
     /// MUST stay the highest value — `request_isr_action` uses fetch_max
     /// for priority, and a kill outranks every recovery action.
     AllOff = 5,
+}
+
+impl IsrAction {
+    pub const fn from_u8(value: u8) -> Self {
+        match value {
+            x if x == Self::ResetIntervalTimer as u8 => Self::ResetIntervalTimer,
+            x if x == Self::DutyKickHalf as u8 => Self::DutyKickHalf,
+            x if x == Self::DutyKickDown as u8 => Self::DutyKickDown,
+            x if x == Self::CommutateKick as u8 => Self::CommutateKick,
+            x if x == Self::AllOff as u8 => Self::AllOff,
+            _ => Self::None,
+        }
+    }
 }
 
 /// Motor mode state machine — bidirectional ISR↔main.
@@ -180,14 +193,15 @@ pub trait MainControl {
     }
     fn set_prop_brake_active(&self, _v: bool) {}
 
-    /// ISR action request from main loop. Main writes the highest-priority
-    /// action; ISR reads, executes, and clears to None.
-    /// AllOff supersedes ResetIntervalTimer (motor is dead, timer moot).
+    /// ISR action request from main loop.
+    ///
+    /// Variant values are ordered by priority; implementations keep the
+    /// highest pending action and clear only the action the ISR handled.
     fn isr_action(&self) -> IsrAction {
         IsrAction::None
     }
     fn request_isr_action(&self, _action: IsrAction) {}
-    fn clear_isr_action(&self) {}
+    fn clear_isr_action(&self, _action: IsrAction) {}
 
     /// Public-API compatibility shims (upstream models all-off as its own
     /// one-shot channel; here it routes through the priority-ordered
@@ -199,7 +213,7 @@ pub trait MainControl {
         self.request_isr_action(IsrAction::AllOff);
     }
     fn clear_all_off_request(&self) {
-        self.clear_isr_action();
+        self.clear_isr_action(IsrAction::AllOff);
     }
 
     /// Sine changeover step request (0 = none, 1-6 = execute changeover with step).

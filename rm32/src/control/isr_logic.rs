@@ -52,11 +52,13 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         ctx.hal.comp().mask_interrupts();
     }
     // Process main→ISR action request (priority-ordered enum)
-    match ctx.shared.isr_action() {
+    let action = ctx.shared.isr_action();
+    match action {
         crate::shared_comm::IsrAction::AllOff => {
             ctx.hal.phase().all_off();
             ctx.hal.comp().mask_interrupts();
-            ctx.shared.clear_isr_action();
+            ctx.shared
+                .clear_isr_action(crate::shared_comm::IsrAction::AllOff);
             return;
         }
         crate::shared_comm::IsrAction::DutyKickDown => {
@@ -260,15 +262,15 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     // CommutateKick includes this reset (zcfoundroutine semantics) — its
     // COM-timer re-arm already ran at the top.
     {
-        let act = ctx.shared.isr_action();
-        if act == crate::shared_comm::IsrAction::ResetIntervalTimer
-            || act == crate::shared_comm::IsrAction::CommutateKick
+        if action == crate::shared_comm::IsrAction::ResetIntervalTimer
+            || action == crate::shared_comm::IsrAction::CommutateKick
         {
             ctx.hal.interval().set_count(0);
         }
     }
-    // Clear any pending action (AllOff was already executed at top)
-    ctx.shared.clear_isr_action();
+    // Clear only the action handled above; a newer higher-priority action
+    // posted during this tick must remain pending.
+    ctx.shared.clear_isr_action(action);
 }
 
 /// BEMF polling (old_routine path).

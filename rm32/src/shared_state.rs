@@ -593,14 +593,7 @@ impl SharedState {
         self.prop_brake_active.store(v, REL);
     }
     pub fn isr_action(&self) -> crate::shared_comm::IsrAction {
-        match self.isr_action.load(ACQ) {
-            1 => crate::shared_comm::IsrAction::ResetIntervalTimer,
-            2 => crate::shared_comm::IsrAction::DutyKickHalf,
-            3 => crate::shared_comm::IsrAction::DutyKickDown,
-            4 => crate::shared_comm::IsrAction::CommutateKick,
-            5 => crate::shared_comm::IsrAction::AllOff,
-            _ => crate::shared_comm::IsrAction::None,
-        }
+        crate::shared_comm::IsrAction::from_u8(self.isr_action.load(ACQ))
     }
     pub fn request_isr_action(&self, action: crate::shared_comm::IsrAction) {
         // Only upgrade priority — don't downgrade AllOff to ResetIntervalTimer
@@ -641,8 +634,10 @@ impl SharedState {
         Some(((packed >> 8) as u8, packed as u8))
     }
 
-    pub fn clear_isr_action(&self) {
-        self.isr_action.store(0, REL);
+    pub fn clear_isr_action(&self, action: crate::shared_comm::IsrAction) {
+        self.isr_action
+            .compare_exchange(action as u8, 0, REL, ACQ)
+            .ok();
     }
     pub fn changeover_step(&self) -> u8 {
         self.changeover_step.load(ACQ)
@@ -778,8 +773,8 @@ impl crate::shared_comm::MainControl for SharedState {
     fn request_isr_action(&self, action: crate::shared_comm::IsrAction) {
         SharedState::request_isr_action(self, action);
     }
-    fn clear_isr_action(&self) {
-        SharedState::clear_isr_action(self);
+    fn clear_isr_action(&self, action: crate::shared_comm::IsrAction) {
+        SharedState::clear_isr_action(self, action);
     }
     fn changeover_step(&self) -> u8 {
         SharedState::changeover_step(self)
