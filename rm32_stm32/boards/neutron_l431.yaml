@@ -13,7 +13,7 @@ current_offset: 0
 current_adc_channel: 8
 voltage_adc_channel: 11
 stall_protect_interval: 6500
-min_bemf_counts: 2
+min_bemf_counts: 3
 bemf_pins:
   phase_a: PB7   # COMP2 INM IO2
   phase_b: PA5   # COMP2 INM IO5
