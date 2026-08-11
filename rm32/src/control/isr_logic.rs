@@ -12,6 +12,8 @@ use crate::hal::{self, ComTimer, Comparator, IntervalTimer, MotorHal, PhaseOutpu
 use crate::motor_mode::MotorEvent;
 use crate::shared_comm::SharedComm;
 
+const COMMUTATE_KICK_DELAY_TICKS: u16 = 1;
+
 /// 20kHz control loop tick.
 ///
 /// Handles: throttle→setpoint mapping, arming, BEMF polling (old_routine),
@@ -84,11 +86,15 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             // the kick re-commutated at the PRE-FAULT cadence (ci ~200 at
             // 60% throttle): a full-duty blind slam on a rotor that just
             // lost sync — the transit-surge kill class at the 60% rung.
-            let count = ctx.hal.interval().count() as u16;
-            let ci = ctx.shared.commutation_interval();
-            let new_ci = ctx.bemf.record_zero_cross(count, ci);
-            ctx.shared.set_commutation_interval(new_ci);
-            ctx.hal.com_timer().set_and_enable(1);
+            if ctx.shared.running() {
+                let count = ctx.hal.interval().count().min(u16::MAX as u32) as u16;
+                let ci = ctx.shared.commutation_interval();
+                let new_ci = ctx.bemf.record_zero_cross(count, ci);
+                ctx.shared.set_commutation_interval(new_ci);
+                ctx.hal
+                    .com_timer()
+                    .set_and_enable(COMMUTATE_KICK_DELAY_TICKS);
+            }
         }
         crate::shared_comm::IsrAction::ResetIntervalTimer => {
             // Handled at the end of this function (after publish)
