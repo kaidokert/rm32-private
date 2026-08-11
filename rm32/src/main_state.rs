@@ -66,17 +66,8 @@ pub(crate) fn duty_ceiling(
     } else {
         0
     };
-    // AM32-verbatim rpm levels (main.c:785-789), including the INTEGER
-    // 32/poles inner division — this shape is load-bearing. With the bench
-    // motor (kv 2220, 14 poles): low=11, high=92, floor 400 → the ceiling
-    // at k_erpm 41 is ~992. The previous rm32 form (kv*poles/3200, floor
-    // 600) gave ~1231 there — no clamp on a 60% commanded duty — which
-    // removed AM32's anti-runaway feedback: when the rotor slows into a
-    // wrong-phase orbit, the falling eRPM must pull the duty ceiling down
-    // steeply or current ramps to the bench kill.
     let poles = (motor_poles as i32).max(1);
     let erpm_max = if motor_kv < 300 {
-        // AM32: low_rpm_throttle_limit = 0 for very low-kv motors
         2000
     } else {
         let div = (32 / poles).max(1);
@@ -887,18 +878,13 @@ mod tests {
     }
 
     #[test]
-    fn duty_ceiling_bench_regime_am32_verbatim() {
-        // Bench motor (kv byte 55 → 2220, 14 poles): AM32 main.c:785-789
-        // gives low=11k/high=92k eRPM, floor 400. At the wrong-phase-orbit
-        // operating point (k_erpm=41, e_com≈1446 µs) the ceiling must clamp
-        // a 60% command (1216) — this feedback is what unwinds the runaway.
-        let dc = duty_ceiling(1446, 2220, 14, 25, 141);
-        assert!(dc < 1216, "ceiling {} must clamp 60% duty", dc);
-        assert_eq!(dc, 992); // map(41, 11, 92, 400, 2000)
-        // At the healthy 60% operating point (f_e 1667 Hz → e_com 600 µs,
-        // k_erpm 100 > high_rpm) there is no clamp.
+    fn duty_ceiling_matches_am32_rpm_limit_shape() {
+        assert_eq!(duty_ceiling(1446, 2220, 14, 25, 141), 992);
         assert_eq!(duty_ceiling(600, 2220, 14, 25, 141), 2000);
-        // Very low-kv motors: AM32 disables the limiter entirely.
+    }
+
+    #[test]
+    fn duty_ceiling_skips_rpm_limit_for_low_kv_motors() {
         assert_eq!(duty_ceiling(1446, 280, 14, 25, 141), 2000);
     }
 
