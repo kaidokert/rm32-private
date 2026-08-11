@@ -53,6 +53,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     }
     // Process main→ISR action request (priority-ordered enum)
     let action = ctx.shared.isr_action();
+    let action_interval_count = ctx.hal.interval().count();
     match action {
         crate::shared_comm::IsrAction::AllOff => {
             ctx.hal.phase().all_off();
@@ -75,8 +76,8 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             // the possibly-dead COM timer to fire now so
             // commutation_timer_expired restarts the chain. The interval
             // reset this action SUBSUMES (single-slot fetch_max channel —
-            // see main_state) happens at the END of this tick with the
-            // ResetIntervalTimer path, after the count is published.
+            // see main_state) happens before the shared interval timer is
+            // published, so main does not requeue the handled stall sample.
             //
             // zcfoundroutine timing update (main.c:1870-1874): the stalled
             // interval count (>45000) folds INTO the commutation interval
@@ -87,7 +88,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             // 60% throttle): a full-duty blind slam on a rotor that just
             // lost sync — the transit-surge kill class at the 60% rung.
             if ctx.shared.running() {
-                let count = ctx.hal.interval().count().min(u16::MAX as u32) as u16;
+                let count = action_interval_count.min(u16::MAX as u32) as u16;
                 let ci = ctx.shared.commutation_interval();
                 let new_ci = ctx.bemf.record_zero_cross(count, ci);
                 ctx.shared.set_commutation_interval(new_ci);
@@ -95,9 +96,14 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                     .com_timer()
                     .set_and_enable(COMMUTATE_KICK_DELAY_TICKS);
             }
+            ctx.hal.interval().set_count(0);
+            ctx.shared
+                .clear_isr_action(crate::shared_comm::IsrAction::CommutateKick);
         }
         crate::shared_comm::IsrAction::ResetIntervalTimer => {
-            // Handled at the end of this function (after publish)
+            ctx.hal.interval().set_count(0);
+            ctx.shared
+                .clear_isr_action(crate::shared_comm::IsrAction::ResetIntervalTimer);
         }
         crate::shared_comm::IsrAction::None => {}
     }
