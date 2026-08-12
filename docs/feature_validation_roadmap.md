@@ -106,6 +106,29 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   pinned (mechanical state cleared / prop attention); if it recurs,
   start at the prop stack.
 
+## Upstream snapshot 2026-08-12 + minz-landmine bench recovery
+
+- am32_sheet FAST-FORWARDED to private tip (cleanup agent had merged
+  all of #73-82 continuously; local had no unique commits). Prior
+  state parked as tag bench-rich-20260812. 346 host + 80 vectors
+  green after taking upstream's stuck_rotor vector (#76 retired
+  interval samples changed stall-latch timing).
+- BENCH RECOVERY — chip "dead", three separate minz-session landmines:
+  1. EEPROM page 0x0800F800 overwritten by a ratch22 "monitor:" blob
+     -> boot byte 0xDE -> bootloader jump() refused. Fix: rewrite
+     byte0=0x01 (+0xFF page; app defaults on version mismatch).
+  2. AM32-bootloader obj/*.bin was a STALE/stock build (file mtime
+     lied) -> DFU-trapped forever with BF streaming. Fix: REBUILD
+     from source at 9ef0c06 (bench hardcode) — never trust the obj
+     binary, `make AM32_L431_BOOTLOADER_PA2` first.
+  3. PB6->COM41 debug-UART wire AND FC->PA2 signal disconnected
+     (signal_timeout saturated 0xFFFF; boot banner visible IN RAM
+     via SWD — the firmware printing into a dead wire).
+  DIAGNOSTIC TRICK that cracked it: gdb force-jump (set $sp/$pc to
+  app header values, detach) + SWD RAM liveness diff of SHARED —
+  proves app health with zero working UART/RTT.
+- Re-qual on the snapshot PENDING bench rewiring (hands requested).
+
 ## Merge 5 (2026-08-09) — six PRs, heaviest conflict set yet
 
 - origin/main #57-62 merged at 7fd8d59 (tag pre-main-merge-20260809
