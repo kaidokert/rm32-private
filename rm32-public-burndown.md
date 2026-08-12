@@ -1,6 +1,55 @@
 # RM32 Public Burn-Down Worklog
 
-Last updated: 2026-08-06
+Last updated: 2026-08-12
+
+## Bench Agent Contract
+
+The private `am32_sheet` branch is the qualified source of truth for the
+working L431 port. It is allowed to keep moving by merging public `origin/main`
+after each public PR lands, then re-running bench qualification. The bench agent
+owns that merge and the immediate sanity check that the qualified board still
+spins and behaves correctly.
+
+The bench agent also owns removing bench-only cruft from `am32_sheet` once it no
+longer needs that instrumentation for qualification. In particular:
+
+- Drop stale `dbg_*` counters, heartbeat-only telemetry, DWT cycle probes, and
+  high-pin debug snapshots once the specific investigation is closed.
+- Move long forensic explanations out of public-bound source comments and into
+  this worklog.
+- Keep behavior-preserving cleanup separate from behavior changes.
+- Keep L431 qualification notes explicit when behavior is known-good only on
+  the bench board.
+- Push the cleaned branch back to `private/am32_sheet` so the public squash
+  projection shrinks before the next public PR is carved out.
+
+## Public Laundering Method
+
+We are deliberately laundering the useful private branch work into public in
+small, reviewed, atomic PRs. The private branch may contain months of detours,
+bench instrumentation, narrative comments, and L431-specific experiments; public
+`main` should only receive clean units that build, test, and make sense on their
+own.
+
+The repeatable process is:
+
+1. Treat `private/am32_sheet` as the qualified behavior reference, not as a
+   commit-history reference.
+2. Maintain `public-ultimate-squash` as one remaining-change commit on top of
+   public `origin/main`.
+3. Pick one coherent public unit from that squash: missing AM32 parity,
+   cross-platform-safe infrastructure, or a narrow behavior fix with tests.
+4. Remove bench-only commentary and instrumentation from that unit before PR.
+5. Open a normal public PR, address review with follow-up commits, and squash
+   merge.
+6. Fetch public main, merge it into `private/am32_sheet`, re-qualify on bench,
+   then regenerate the one-commit public squash.
+
+The goal is not to reproduce the private branch byte-for-byte. The goal is to
+move public `rm32` toward the qualified behavior while forcing every public
+change through a reviewable shape. As the remaining delta gets riskier, chunk
+size should shrink and the bench branch should take more ownership of deleting
+now-unneeded diagnostics before we decide what to publish next.
 
 ## Branches And Worktrees
 
