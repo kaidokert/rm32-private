@@ -330,7 +330,6 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
 {
     com_timer.disable_interrupt();
     let step = commutation.advance();
-    // Publish desync_check flag to SharedState (main reads it for desync detection)
     if commutation.desync_check() {
         shared.set_desync_check_pending(true);
         commutation.set_desync_check(false);

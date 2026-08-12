@@ -1050,6 +1050,12 @@ mod tests {
     // --- LVC tests ---
     // REQ-PROT-LVC: Low voltage cutoff protection
 
+    fn trip_one_khz(shared: &crate::shared_state::SharedState) {
+        for _ in 0..crate::constants::PID_LOOP_DIVIDER {
+            shared.one_khz_counter_inc();
+        }
+    }
+
     #[test]
     fn min_bemf_counts_are_stricter_during_unidirectional_startup() {
         use crate::shared_state::SharedState;

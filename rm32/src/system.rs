@@ -68,14 +68,11 @@ impl SystemTick {
         shared: &SharedState,
         main: &mut MainState<LED>,
     ) {
-        if shared.desync_check_pending() {
-            shared.set_desync_check_pending(false);
+        if shared.take_desync_check_pending() {
             main.set_desync_check(true);
         }
     }
-}
 
-impl SystemTick {
     /// Canonical main-loop tick with platform callback.
     ///
     /// Captures the exact orchestration order that both harness and firmware
