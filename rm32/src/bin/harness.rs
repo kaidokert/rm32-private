@@ -676,8 +676,8 @@ impl Harness {
                         &mut self.hal.com_timer,
                         &mut self.hal.comp,
                         &mut self.hal.phase,
-                        self.config.bi_direction != 0,
-                        self.config.stall_protection != 0 || self.config.rc_car_reverse != 0,
+                        self.config.is_bidirectional(),
+                        self.config.use_strict_changeover(),
                     );
                 }
             }

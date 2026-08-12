@@ -761,6 +761,106 @@ mod tests {
     }
 
     #[test]
+    fn isr_commutation_timer_normal_changeover_uses_interval_only() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let shared = TestShared::new();
+        shared.mode.set(crate::motor_mode::MotorMode::OldRoutine);
+        shared.set_commutation_interval(1999);
+        let mut com_timer = MockComTimer::new();
+        let mut comp = MockComp {
+            level: false,
+            mask_called: false,
+            enable_calls: 0,
+        };
+        let mut phase = MockPhase {
+            all_off_called: false,
+            prop_brake_calls: 0,
+        };
+
+        isr_logic::commutation_timer_expired(
+            &mut comm,
+            &mut bemf,
+            &shared,
+            &mut com_timer,
+            &mut comp,
+            &mut phase,
+            false,
+            false,
+        );
+
+        assert!(!shared.old_routine());
+        assert_eq!(comp.enable_calls, 1);
+    }
+
+    #[test]
+    fn isr_commutation_timer_strict_changeover_waits_for_zero_cross_count() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let shared = TestShared::new();
+        shared.mode.set(crate::motor_mode::MotorMode::OldRoutine);
+        shared.set_commutation_interval(1999);
+        let mut com_timer = MockComTimer::new();
+        let mut comp = MockComp {
+            level: false,
+            mask_called: false,
+            enable_calls: 0,
+        };
+        let mut phase = MockPhase {
+            all_off_called: false,
+            prop_brake_calls: 0,
+        };
+
+        isr_logic::commutation_timer_expired(
+            &mut comm,
+            &mut bemf,
+            &shared,
+            &mut com_timer,
+            &mut comp,
+            &mut phase,
+            false,
+            true,
+        );
+
+        assert!(shared.old_routine());
+        assert_eq!(comp.enable_calls, 0);
+    }
+
+    #[test]
+    fn isr_commutation_timer_bidirectional_halves_changeover_interval() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let shared = TestShared::new();
+        shared.mode.set(crate::motor_mode::MotorMode::OldRoutine);
+        shared.set_zero_crosses(19);
+        shared.set_commutation_interval(1500);
+        let mut com_timer = MockComTimer::new();
+        let mut comp = MockComp {
+            level: false,
+            mask_called: false,
+            enable_calls: 0,
+        };
+        let mut phase = MockPhase {
+            all_off_called: false,
+            prop_brake_calls: 0,
+        };
+
+        isr_logic::commutation_timer_expired(
+            &mut comm,
+            &mut bemf,
+            &shared,
+            &mut com_timer,
+            &mut comp,
+            &mut phase,
+            true,
+            true,
+        );
+
+        assert!(shared.old_routine());
+        assert_eq!(comp.enable_calls, 0);
+    }
+
+    #[test]
     fn isr_bemf_zero_cross_detected() {
         let comm = crate::commutation::Commutation::new(); // rising=true
         let mut bemf = crate::control::state::BemfState::default();

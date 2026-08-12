@@ -272,8 +272,8 @@ pub fn handle_tim14() {
         &mut state.hal.com_timer,
         &mut state.hal.comp,
         &mut state.hal.phase,
-        state.config.bi_direction != 0,
-        state.config.stall_protection != 0 || state.config.rc_car_reverse != 0,
+        state.config.is_bidirectional(),
+        state.config.use_strict_changeover(),
     );
     // Parity re-qual excursion counters (clone metric).
     #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
