@@ -1,5 +1,4 @@
-# Motor restart when !old_routine
-# When old_routine=0 and running=0, throttle >= 47 should call startMotor().
+# Motor restart when stopped in interrupt mode
 
 @config
 armed=1
@@ -12,6 +11,4 @@ zero_crosses=0
 commutation_interval=0
 
 @sequence
-# Throttle above threshold with motor stopped should restart
-# allOff called before startMotor to clear phase outputs
-tick 1  | throttle=500 | running=1 alloff_count>0
+tick 1 | throttle=500 | running=1 alloff_count>0
