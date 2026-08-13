@@ -37,10 +37,8 @@ pub(crate) fn variable_pwm_mode2(average_interval: u32, cpu_mhz: u8) -> u16 {
 
 /// Wrong-phase-orbit discriminator: current far above the
 /// duty-proportional norm (see ORBIT_TRIP_* in constants.rs). The line
-/// was calibrated on the 8.16 V bench rail; current at a given duty
-/// scales roughly with source voltage, so the line scales with the
-/// measured vbat (a 12 V pack raises it ~1.5x — slam accel there is a
-/// legitimate ~10 A operating point, clone-measured).
+/// scales with measured vbat since current at a given duty scales with
+/// source voltage.
 #[inline]
 pub(crate) fn orbit_current(current_ma: i16, duty: u16, vbat_mv: u16) -> bool {
     let line = (duty as i32) * ORBIT_TRIP_SLOPE + ORBIT_TRIP_OFFSET_MA;
@@ -134,36 +132,23 @@ pub struct MainState<LED: OutputPin = NoLed> {
     pub(crate) target_min_bemf_counts: u8,
     pub(crate) low_cell_volt_cutoff: u16,
     pub(crate) desync_check: bool,
-    /// Lifetime desync-event count (AM32 `desync_happened`). Every fire
-    /// of the desync detector — the chop instrument: each event costs a
-    /// duty kick-down (~15-20 ms torque hole), so events/minute IS the
-    /// perceived chop rate. Read by the bench 'i' info line.
+    /// Lifetime desync-event count (AM32 `desync_happened`).
     pub desync_events: u32,
-    /// Per-branch desync-response counters (instrument decisions, not
-    /// outcomes): which branch each desync fire took. `dsy_fast` =
-    /// fast-rotor stay-interrupt (kick-half, comparator stays armed);
-    /// `dsy_demote_cur` = demote because the orbit_current sanity veto
-    /// fired (current above the duty-proportional line at the event);
-    /// `dsy_demote_slow` = demote for any other reason (ci >=
-    /// DESYNC_STAY_INTERRUPT_CI, or already in polling mode).
+    /// Per-branch desync-response counters: which branch each desync
+    /// fire took (fast-rotor stay-interrupt / current-veto demote /
+    /// slow demote / already-polling).
     pub dsy_fast: u32,
     pub dsy_demote_cur: u32,
-    /// Demote fired FROM interrupt mode with sane current (ci >=
-    /// DESYNC_STAY_INTERRUPT_CI at the event).
+    /// Demote fired from interrupt mode with sane current.
     pub dsy_demote_slow: u32,
-    /// Desync fired while ALREADY in polling mode (old_routine=1) —
-    /// the cascade's tail, not its head.
+    /// Desync fired while already in polling mode.
     pub dsy_demote_old: u32,
     /// Wrong-phase-orbit trips (see ORBIT_TRIP_MA) — lifetime count.
     pub orbit_trips: u32,
     /// Desync-detector re-arm threshold (zero_crosses). Normally the
-    /// AM32-verbatim 10; raised to DESYNC_REARM_HOLDOFF_ZC for one
-    /// cycle after a fast-rotor fire. Without this, the stay-interrupt
-    /// response self-loops during commanded transients: fire ->
-    /// kick-half -> decel moves avg against a reference that went
-    /// stale while zc<=10 -> refire at zc=11 (measured: steps program
-    /// dsy=289 vs clone's 10 — the clone's full demote pauses the
-    /// pipeline instead). Reset to 10 once a check passes the gate.
+    /// AM32 10; raised to DESYNC_REARM_HOLDOFF_ZC for one cycle after a
+    /// fast-rotor fire so the stay-interrupt response cannot self-loop
+    /// against a stale average during commanded transients.
     pub(crate) desync_rearm_zc: u32,
     /// Consecutive 1 kHz ticks with current above ORBIT_TRIP_MA.
     pub(crate) orbit_trip_count: u16,
@@ -402,18 +387,12 @@ impl<LED: OutputPin> MainState<LED> {
                 shared.request_isr_action(IsrAction::CommutateKick);
             }
             shared.set_zero_crosses(0);
-            // Active re-kick, UNGATED — AM32 calls zcfoundroutine() here
-            // unconditionally (main.c stall block), and this is also the
-            // dead-start escape: a standstill window whose static
-            // comparator level mismatches the expected post-ZC level can
-            // NEVER accept — only the 22.5 ms timeout advances it, and
-            // without a real commutation the same stuck window repeats
-            // forever (the observed 18-20 Hz dead-start class, REF at
-            // timeout pace). The kick = interval reset + COM-timer re-arm
-            // = one forced step to the NEXT window, AM32's implicit
-            // open-loop crawl. (An earlier state-gate here came from a
-            // single 7/8-vs-3/8 engage bundle; paired ABAB showed that
-            // swing was lottery noise — the reference is ungated.)
+            // Active re-kick, ungated — AM32 calls zcfoundroutine() here
+            // unconditionally. Also the dead-start escape: a standstill
+            // window whose comparator level mismatches the expected
+            // post-ZC level only advances via this timeout, so the kick
+            // (interval reset + COM-timer re-arm) is AM32's implicit
+            // open-loop crawl to the next window.
             let _ = was_interrupt_mode;
             shared.request_isr_action(crate::shared_comm::IsrAction::CommutateKick);
         }
@@ -435,39 +414,23 @@ impl<LED: OutputPin> MainState<LED> {
             if diff > (self.timing.average_interval >> 1)
                 && self.timing.average_interval < DESYNC_MAX_INTERVAL
             {
-                // AM32 has `if (zero_crosses > 100) average_interval = 5000`
-                // HERE — but places it AFTER zeroing zero_crosses, so it is
-                // DEAD CODE and never executes (changelog 1.91 intent,
-                // botched). rm32 originally "fixed" the ordering, which
-                // CREATED a desync echo AM32 never has: last_average_interval
-                // becomes 5000 while the real interval is ~200, so the
-                // |last-avg| > avg/2 test re-fires ~10 crossings later and
-                // kicks duty down a second time just as recovery starts.
-                // Parity = match the reference's BEHAVIOR (no reset), not its
-                // intent. (Bench 07-26: clone desyncs at 60-80% are invisible
-                // <50ms blips; rm32's echoed double-kick fed the 1-2.4s churn.)
+                // AM32's `average_interval = 5000` reset here is dead code
+                // (placed after zero_crosses is zeroed) — match the
+                // reference's behavior (no reset), not its intent;
+                // "fixing" the ordering creates a desync echo that
+                // double-kicks duty during recovery.
                 shared.set_zero_crosses(0);
                 self.desync_events = self.desync_events.wrapping_add(1);
                 let desync_from_interrupt_mode = !shared.old_routine();
-                // KEPT DIVERGENCE (fast-rotor desync stays in interrupt
-                // mode). AM32 demotes to polling + running=0 here and its
-                // main-loop-rate zcfoundroutine re-locks within ~1 ms, so
-                // its desyncs at 60-80% are invisible <50 ms blips (clone
-                // control, 07-26: zc resets every 1-3 s at duty>1195, speed
-                // never leaves 1700-1900 Hz). rm32's polling lives on the
-                // 20 kHz tick grid — at 1700 Hz e a window is ~2 samples and
-                // the 3-count persistence cannot fit, so a demoted rotor
-                // coasts to ~170 Hz before polling re-locks: each desync
-                // cost 1-2.4 s of churn + a restart current surge. The
-                // level-history probe shows the rotor never actually slips
-                // at these events (extended-demag sensing gap, odd-step
-                // polarity-locked), so with the comparator left armed the
-                // next real crossing re-locks immediately — the clone's
-                // OUTCOME, reached within rm32's architecture. Polling
-                // demotion still applies below the tick-grid bandwidth.
-                // Sane current required: an elevated-current desync means
-                // the wrong-phase orbit may already hold — the demote IS
-                // the phase reset, never skip it then.
+                // KEPT DIVERGENCE: fast-rotor desyncs stay in interrupt
+                // mode. AM32 demotes to polling and re-locks within ~1 ms
+                // at main-loop rate; rm32 polls on the 20 kHz tick grid,
+                // which cannot re-lock above ~800 Hz e, so a demoted fast
+                // rotor coasts for seconds. The rotor is still locked at
+                // these events — leaving the comparator armed re-locks on
+                // the next real crossing. Requires sane current: an
+                // elevated-current desync may be a wrong-phase orbit,
+                // where the demote IS the phase reset.
                 let current_sane = !orbit_current(
                     self.measurements.actual_current.0,
                     shared.duty_cycle(),
@@ -477,12 +440,8 @@ impl<LED: OutputPin> MainState<LED> {
                     current_sane && shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
                 // Duty kick (AM32: last_duty_cycle = min_startup/2,
                 // unconditional). On the fast-rotor branch the rotor is
-                // still locked, so only HALVE the duty (kept divergence):
-                // the full crash to ~55 recovers through the startup ramp
-                // profile for ~15-20 ms — the audible chop — and its
-                // recovery surge fed the supply-sag feedback loop.
-                // Branch instrumentation (decisions, not outcomes): which
-                // response path this fire takes, and why.
+                // still locked, so only halve the duty (kept divergence) —
+                // a full crash costs ~15-20 ms of ramp recovery per event.
                 if desync_from_interrupt_mode && fast_rotor {
                     self.dsy_fast = self.dsy_fast.wrapping_add(1);
                 } else if desync_from_interrupt_mode && !current_sane {
@@ -497,8 +456,7 @@ impl<LED: OutputPin> MainState<LED> {
                 } else {
                     shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
                 }
-                // Detector holdoff (see desync_rearm_zc): independent
-                // bisect axis (bit2) — applies on any fast-rotor fire.
+                // Detector holdoff (see desync_rearm_zc).
                 if desync_from_interrupt_mode && fast_rotor {
                     self.desync_rearm_zc = DESYNC_REARM_HOLDOFF_ZC;
                 }
@@ -521,21 +479,12 @@ impl<LED: OutputPin> MainState<LED> {
             self.timing.last_average_interval = self.timing.average_interval;
         }
 
-        // Signal timeout — matches AM32 C `Src/main.c:1892-1918`:
-        //   Armed: 0.5s (10000 ticks @ 20kHz) → disarm + request system reset
-        //   Unarmed: 2s (40000 ticks)        → request system reset
-        // The reset (NVIC_SystemReset on the C side, `SCB::sys_reset` here)
-        // sets SFTRSTF; the AM32 bootloader sees that and skips its
-        // first-chance signal-pin check, falling into the DFU loop. That's
-        // what makes the BF-passthrough → AM32 Configurator flow work — BF
-        // stops sending DSHOT during passthrough, the ESC times out, resets
-        // into bootloader DFU, and the Configurator's BLHeli protocol talks
-        // to the bootloader, not the running firmware.
-        //
-        // Also clear input_set so re-detection runs if the reset doesn't
-        // actually fire for some reason (host-test path, IWDG-disabled bench
-        // build that polls the flag from a stuck main loop, etc).
-        // Signal timeout thresholds fire only after the counter exceeds the limit.
+        // Signal timeout (AM32 main.c:1892-1918): armed 0.5 s → disarm +
+        // reset; unarmed 2 s → reset. The reset sets SFTRSTF, dropping the
+        // bootloader into its DFU loop (the passthrough/Configurator entry
+        // path). input_set is cleared so re-detection runs; the unarmed
+        // branch requires input_set so a chip that never saw a signal
+        // does not reset-loop.
         let signal_timeout = shared.signal_timeout();
         if shared.armed() {
             if signal_timeout > crate::constants::SIGNAL_TIMEOUT_DISARM {
@@ -557,11 +506,9 @@ impl<LED: OutputPin> MainState<LED> {
             };
         }
 
-        // Armed-transition detection stays at 20 kHz so we don't miss the
-        // edge by up to 1 ms. battery_voltage used inside is updated by the
-        // 1 kHz block below; on the first armed transition, battery_voltage
-        // is already populated because the firmware runs for seconds before
-        // BF starts sending PWM.
+        // Armed-transition detection stays at tick rate so the edge isn't
+        // missed by up to 1 ms; battery_voltage is populated long before
+        // the first arm can happen.
         let armed = shared.armed();
         self.just_armed = armed && !self.last_armed;
         if self.just_armed && self.cell_count == 0 && self.config.low_voltage_cut_off == 1 {
@@ -569,22 +516,12 @@ impl<LED: OutputPin> MainState<LED> {
         }
         self.last_armed = armed;
 
-        // 1 kHz dispatch: ADC + 3 PIDs + LVC. Matches AM32 main.c:2010-2081
-        // (the PROCESS_ADC_FLAG block) plus the PID block at main.c:1397.
-        // PID_LOOP_DIVIDER=20 means this block runs every 20th 20 kHz TIM6
-        // tick = once per millisecond. Previously these all ran at 20 kHz
-        // (20× AM32 rate); see RATE_DIVERGENCE_REPORT.md.
-        //
-        // Counter increment lives in `ten_khz_tick` (TIM6 ISR), matching
-        // AM32 main.c:1317. Main reads + resets here. This way the 1 kHz
-        // rate is correct regardless of main-loop iteration rate (no longer
-        // gated by wfi — matches AM32's spinning while(1) at main.c:1843).
-        //
-        // NOT in this block (matches AM32, which runs them every main iter
-        // OUTSIDE the PROCESS_ADC_FLAG block): duty_ceiling (main.c:2096),
-        // filter_level (main.c:2112), auto_advance (main.c:2121),
-        // min_bemf_counts (main.c:1862), variable_pwm (main.c:1877). They
-        // run at our main-loop rate (~75 kHz post-wfi-removal).
+        // 1 kHz dispatch: ADC + 3 PIDs + LVC (AM32's PROCESS_ADC_FLAG
+        // block, main.c:2010-2081, plus the PID block at main.c:1397).
+        // The counter increments in the tick ISR so the 1 kHz rate holds
+        // regardless of main-loop iteration rate. duty_ceiling,
+        // filter_level, auto_advance, min_bemf_counts and variable_pwm
+        // stay outside this block at main-loop rate, matching AM32.
         if shared.one_khz_counter_check_and_reset(crate::constants::PID_LOOP_DIVIDER) {
             // ADC measurements — typed conversions via AdcCount
             let smoothed_v = AdcCount(self.measurements.voltage_filter.update(adc.raw_voltage()));
@@ -606,10 +543,9 @@ impl<LED: OutputPin> MainState<LED> {
 
             // Wrong-phase-orbit trip (kept divergence; see ORBIT_TRIP_*):
             // sustained current far above the duty-proportional norm while
-            // locked means the BEMF acceptance chain is clocking itself off
-            // switching artifacts in a wrong phase register — plausible z,
-            // huge current, no desync-detector jump. Force the full AM32
-            // desync response; the demote IS the phase reset.
+            // locked means the acceptance chain is clocking off switching
+            // artifacts in a wrong phase — force the full desync response;
+            // the demote IS the phase reset.
             self.orbit_duty_snap_age += 1;
             if self.orbit_duty_snap_age >= 100 {
                 self.orbit_duty_snap = shared.duty_cycle();
@@ -642,12 +578,9 @@ impl<LED: OutputPin> MainState<LED> {
                 self.orbit_trip_count = 0;
             }
 
-            // Low voltage cutoff (AM32 main.c:2045-2071). Counter increments
-            // at 1 kHz now → LVC_NORMAL_THRESHOLD=10000 = 10 sec sustained
-            // low voltage (was previously 10000/20kHz = 0.5 sec — 20× faster
-            // than AM32 design).
-            // Mode 1: per-cell threshold (cell_count * low_cell_volt_cutoff)
-            // Mode 2: absolute threshold (absolute_voltage_cutoff in 0.5V)
+            // Low voltage cutoff (AM32 main.c:2045-2071): 10 s sustained at
+            // the 1 kHz rate. Mode 1: per-cell threshold; mode 2: absolute
+            // threshold (0.5 V units).
             if self.config.low_voltage_cut_off != 0 {
                 let threshold = if self.config.low_voltage_cut_off == 2 {
                     self.config.absolute_voltage_cutoff as u16
@@ -749,16 +682,10 @@ impl<LED: OutputPin> MainState<LED> {
             self.measurements.degrees_celsius.0,
             self.config.temperature_limit,
         );
-        // Reclimb clamp (KEPT DIVERGENCE, minz blind-amp-clamp shape):
-        // while the lock is unconfirmed (zero_crosses below threshold —
-        // fresh engage OR post-fall recovery), cap the ceiling so the
-        // reclimb toward a high commanded duty cannot surge. Measured
-        // need: after a fall at 60-70% commanded, the recovery reclimb
-        // slewed straight to duty 1412+ mid-re-spin, pulling 4.2-4.7A
-        // -> PSU sag to 5.0-5.3V -> VBAT guard kill (the clone never
-        // falls, so AM32's map alone never faces this). Cut demand while
-        // the estimator is uncertain; the cap releases on confirmation
-        // and the normal ramp takes duty to commanded.
+        // Reclimb clamp (kept divergence): while the lock is unconfirmed
+        // (zero_crosses below threshold — fresh engage or post-fall
+        // recovery), cap the duty ceiling so the reclimb toward a high
+        // commanded duty cannot surge. Releases on confirmation.
         if shared.zero_crosses() < RECLIMB_CONFIRM_ZC {
             dmax = dmax.min(RECLIMB_DUTY_CAP);
         }

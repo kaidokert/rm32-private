@@ -27,11 +27,9 @@ pub struct SharedState {
     dshot_telemetry: AtomicBool,
     save_settings_flag: AtomicBool,
     send_esc_info_flag: AtomicBool,
-    /// Set by main_state when signal_timeout exceeds threshold (matching AM32's
-    /// behavior at Src/main.c:1892-1918). Main loop polls and calls
-    /// `System::reset()`, which sets RCC_CSR.SFTRSTF; the bootloader sees that
-    /// flag and skips its first-chance signal-pin check, dropping into the DFU
-    /// loop so the AM32 Configurator passthrough / BLHeli protocol can talk.
+    /// Set on signal timeout (AM32 main.c:1892-1918); main polls and
+    /// calls `System::reset()`, whose SFTRSTF drops the bootloader into
+    /// its DFU loop for the Configurator passthrough path.
     // Timing (ISR writes, main reads)
     zero_crosses: AtomicU32,
     commutation_interval: AtomicU32,
@@ -77,44 +75,34 @@ pub struct SharedState {
     dbg_crc_fail: AtomicU32,  // BadCrc / InvalidTiming returns
     dbg_bidir_evt: AtomicU16, // monotonic count of bidir_detected=true returns
     dbg_high_pin_n: AtomicU8, // snapshot of transfer.high_pin_count after process()
-    // Monotonic counter incremented from TIM6 ISR (20 kHz) — used to detect
-    // ISR-vs-main-loop stalls. If this advances normally between two main-
-    // loop log entries but main-loop counters don't, the main loop stalled
-    // while ISRs ran (likely ISR storm starving main). If this stalls too,
-    // the whole chip is frozen.
+    // Monotonic tick-ISR counter — distinguishes a starved main loop
+    // (this advances, main counters do not) from a frozen chip.
     dbg_isr_tick: AtomicU32,
-    // Last-tick ISR duration (cycles). Each ISR brackets its body with
-    // DWT.CYCCNT reads and STORES the delta into the appropriate field.
-    // Single-writer per ISR; main loop READS the value (snapshot of most
-    // recent tick). Was fetch_max which adds an LDREX/STREX loop into the
-    // measurement window — store is a single STR, cheaper and produces a
-    // sample rather than a sticky maximum.
+    // Last-tick ISR duration (cycles): each ISR stores its DWT.CYCCNT
+    // delta (single writer per ISR; plain store keeps the measurement
+    // overhead to one STR).
     dbg_tim6_last_cyc: AtomicU32,  // ten_khz_tick (20 kHz)
     dbg_tim14_last_cyc: AtomicU32, // commutation_timer_expired
     dbg_comp_last_cyc: AtomicU32,  // bemf_zero_cross
     dbg_dma_last_cyc: AtomicU32,   // DMA1_CH5 wrapper (input capture TC)
     dbg_exti_last_cyc: AtomicU32,  // EXTI15_10 wrapper (frame processing)
     dbg_main_last_cyc: AtomicU32,  // main-loop iter body (excludes wfi)
-    // ISR→main config write-through (A4): ISR-side EEPROM mutations
-    // (DSHOT commands, programming mode, servo cal) publish (offset,
-    // value) here; main drains into ITS config copy each run_tick pass
-    // so save-settings persists current bytes. SPSC: sole producer =
-    // EXTI frame ISR, sole consumer = main. Packed (offset<<8)|value.
-    // Load/store only (M0 targets lack atomic RMW); full ring drops
-    // the write — acceptable because the ISR copy stays authoritative
-    // and the next mutation of the same byte re-publishes it.
-    // A3 tone channel: pending tone id (rm32::tone), 0 = none. Set by
-    // the DSHOT-command ISR (beacons) or main (arming tune); consumed
-    // by the 20 kHz tick's tone stepper.
+    // ISR→main config write-through: ISR-side EEPROM mutations publish
+    // (offset, value) here; main drains into its config copy so
+    // save-settings persists current bytes. SPSC, packed
+    // (offset<<8)|value, load/store only (M0 lacks atomic RMW); a full
+    // ring drops the write — the ISR copy stays authoritative and the
+    // next mutation re-publishes.
+    // Tone channel: pending tone id (rm32::tone), 0 = none. Set by the
+    // DSHOT-command ISR (beacons) or main (arming tune); consumed by
+    // the tick's tone stepper.
     tone_request: AtomicU8,
     cfg_wr: [AtomicU16; 8],
     cfg_wr_head: AtomicU8,
     cfg_wr_tail: AtomicU8,
-    // 1 kHz dispatch counter — incremented by TIM6 ISR (20 kHz), read +
-    // reset by main loop when >= PID_LOOP_DIVIDER (20). Matches AM32's
-    // placement (uint16_t one_khz_loop_counter, ++'d in tenKhzRoutine at
-    // main.c:1317, checked at main.c:1397). Was on MainState until we
-    // decoupled main-loop rate from ISR rate (removed wfi).
+    // 1 kHz dispatch counter — incremented by the tick ISR, read +
+    // reset by main past PID_LOOP_DIVIDER (AM32's one_khz_loop_counter
+    // placement, main.c:1317/1397).
     one_khz_counter: AtomicU8,
     telem_counter: AtomicU16,
 }

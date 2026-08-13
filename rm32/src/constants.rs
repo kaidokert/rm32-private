@@ -86,25 +86,14 @@ pub const DESYNC_RESET_INTERVAL: u32 = 5000;
 /// Prevents false desync detection at very low RPM where intervals are naturally large.
 pub const DESYNC_MAX_INTERVAL: u32 = 2000;
 
-/// Wrong-phase-orbit trip (KEPT DIVERGENCE, bench 07-26): the
-/// acceptance chain can self-clock on switching artifacts in a wrong
-/// phase register (measured: injected current 2.4A -> 10-13A in one
-/// window at duty 1412, plausible z throughout, no desync-detector
-/// jump). The smoothed input current then runs ~3.3 mA per duty count
-/// vs the normal 1.2-2.3 across the whole envelope (1020->1.24A ...
-/// 2000->4.62A), so the trip is RELATIVE: it fires when I_ma exceeds
-/// duty*ORBIT_TRIP_SLOPE plus ORBIT_TRIP_OFFSET_MA, sustained for
-/// ORBIT_TRIP_MS ticks while locked.
-/// Response = full AM32 desync path (demote + kick): the demote IS the
-/// phase reset. A static ampere threshold cannot work — normal 100%
-/// draw (4.6A) exceeds any level the 70% orbit (4.7A avg) stays under.
-/// RECAL 07-30 (post wall-fix): the original 2/1000 line was set from
-/// PSU-era full power (4.6A @ 8.16V). On the 3S pack the measured
-/// LEGIT 100% draw is 9.0A at ~10V loaded vbat, which the old line
-/// (6.1A scaled) false-tripped — the relaxed-T 100% ride's residual
-/// dsy was entirely these. New line at duty 2000, 10V loaded:
-/// (3*2000 + 2500) * 10/8.16 = 10.4A > 9A legit; still below the
-/// 10-13A wrong-phase rides at duty ~1400 (9.0A scaled there).
+/// Wrong-phase-orbit trip (KEPT DIVERGENCE): the acceptance chain can
+/// self-clock on switching artifacts in a wrong phase — plausible
+/// zero-crossings, current far above the duty-proportional norm, no
+/// desync-detector jump. The trip is relative (fires when current
+/// exceeds duty*ORBIT_TRIP_SLOPE + ORBIT_TRIP_OFFSET_MA, sustained
+/// ORBIT_TRIP_MS ticks while locked) because a static ampere threshold
+/// cannot separate a wrong-phase orbit at 70% from legitimate 100%
+/// draw. Response = full desync path: the demote IS the phase reset.
 pub const ORBIT_TRIP_SLOPE: i32 = 3;
 pub const ORBIT_TRIP_OFFSET_MA: i32 = 2500;
 /// Consecutive 1 kHz ticks over the line before tripping (ms).
@@ -121,21 +110,17 @@ pub const ORBIT_TRANSIENT_DUTY: u16 = 150;
 
 /// Desync-detector re-arm holdoff after a fast-rotor fire (KEPT
 /// DIVERGENCE, see MainState::desync_rearm_zc): the stay-interrupt
-/// response keeps the commutation pipeline running at speed, so the
-/// kick's own deceleration moves average_interval against a reference
-/// that went stale while zc<=10 and refires the detector at zc=11 —
-/// a self-loop measured at dsy=289 vs the clone's 10 on the identical
-/// step program. 100 crossings ~ 10-60 ms; a real desync still trips
-/// on the first check past the holdoff.
+/// response keeps the pipeline running at speed, so the kick's own
+/// deceleration would refire the detector against a stale average —
+/// a self-loop. A real desync still trips on the first check past
+/// the holdoff.
 pub const DESYNC_REARM_HOLDOFF_ZC: u32 = 100;
 
 /// Reclimb clamp (KEPT DIVERGENCE, see main_state duty-ceiling site):
-/// until this many zero crossings confirm the lock, the duty ceiling is
-/// capped at RECLIMB_DUTY_CAP. Covers fresh engage and post-fall
-/// recovery identically (both reset zero_crosses). 1500 crossings =
-/// 0.15-0.75 s depending on speed; the cap must clear comfortably above
-/// the startup duty band (max ~450) while bounding the recovery
-/// acceleration surge that sag-killed churny reps.
+/// until this many zero crossings confirm the lock, the duty ceiling
+/// is capped at RECLIMB_DUTY_CAP. Covers fresh engage and post-fall
+/// recovery identically; the cap clears the startup duty band while
+/// bounding the recovery acceleration surge.
 pub const RECLIMB_CONFIRM_ZC: u32 = 1500;
 pub const RECLIMB_DUTY_CAP: u16 = 800;
 
@@ -149,12 +134,11 @@ pub const BIDIR_CONFIRM_FRAMES: u8 = 4;
 /// Consecutive high input-pin samples required before probing inverted-CRC DShot.
 pub const BIDIR_IDLE_HIGH_FRAMES: u8 = 100;
 
-/// Fast-rotor desync response (KEPT DIVERGENCE, see main_state.rs desync
-/// handler): below this commutation interval (ticks; 600 = 300 µs windows
-/// = ~555 Hz e and faster) a desync keeps interrupt mode instead of
-/// demoting to polling — the 20 kHz tick-grid polling cannot track
-/// windows shorter than ~3 samples, so a demotion at speed forces a
-/// coast-down/restart cycle AM32's main-loop-rate polling never suffers.
+/// Fast-rotor desync response (KEPT DIVERGENCE, see main_state.rs
+/// desync handler): below this commutation interval a desync keeps
+/// interrupt mode instead of demoting to polling — tick-grid polling
+/// cannot track windows shorter than ~3 samples, so a demotion at
+/// speed forces a coast-down/restart cycle.
 pub const DESYNC_STAY_INTERRUPT_CI: u32 = 600;
 
 /// BEMF timeout threshold at low throttle (< 150). Lenient to avoid false desync

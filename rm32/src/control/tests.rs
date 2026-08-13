@@ -150,7 +150,7 @@ mod tests {
         }
     }
 
-    /// Regression for the 2026-08-01 bench kill: the prop-brake duty
+    /// Regression: the prop-brake duty
     /// (a near-ARR compare) MUST be preceded by the bridge
     /// reconfiguration (AM32 proportionalBrake: high-sides forced off,
     /// low-sides to PWM). Applied to the mixed com_step state a stop

@@ -1,4 +1,4 @@
-//! Non-blocking tone scheduler — the A3 tone channel.
+//! Non-blocking tone scheduler.
 //!
 //! AM32 plays beacon/arming tunes with blocking delay loops from main
 //! (its main owns the hardware). rm32's HAL lives in ISR state, so

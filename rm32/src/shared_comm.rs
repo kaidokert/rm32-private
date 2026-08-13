@@ -25,18 +25,16 @@ pub enum IsrAction {
     ResetIntervalTimer = 1,
     /// Fast-rotor desync recovery (KEPT DIVERGENCE): halve the applied
     /// duty (floor min_startup/2) instead of crashing to min_startup/2.
-    /// Used only on the stay-interrupt desync branch where the rotor is
-    /// known to still be locked — recovery from duty/2 re-slews at the
-    /// high-rpm ramp in ~2 ms instead of a ~15-20 ms crawl from ~55 (the
-    /// audible chop, and the surge that fed supply-sag feedback).
+    /// Only on the stay-interrupt branch where the rotor is known to
+    /// still be locked — duty/2 re-slews in ~2 ms instead of a ~15-20 ms
+    /// crawl from the startup floor.
     DutyKickHalf = 2,
     /// Desync recovery: drop the applied duty to min_startup/2 so the
-    /// restart ramps from low (AM32 desync handling; minz
-    /// am32_control.rs:284).
+    /// restart ramps from low (AM32 desync handling).
     DutyKickDown = 3,
-    /// BEMF-timeout recovery: re-arm the commutation chain NOW (the COM
-    /// timer may be dead after a timeout — AM32's zcfoundroutine actively
-    /// re-commutates; rm32's previous recovery was passive).
+    /// BEMF-timeout recovery: re-arm the commutation chain now — the COM
+    /// timer may be dead after a timeout; AM32's zcfoundroutine actively
+    /// re-commutates.
     CommutateKick = 4,
     /// Kill all FETs + mask comparator interrupts (LVC, stuck rotor).
     /// MUST stay the highest value — `request_isr_action` uses fetch_max

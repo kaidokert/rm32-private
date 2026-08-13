@@ -21,35 +21,27 @@ const STARTUP_INTERVAL_TIMER_COUNT: u32 = STARTUP_COMMUTATION_INTERVAL / 2;
 /// Handles: throttle→setpoint mapping, arming, BEMF polling (old_routine),
 /// ramp rate limiting, PWM output.
 pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
-    // 1 kHz dispatch counter — ISR-side increment, matches AM32 main.c:1317
-    // (`one_khz_loop_counter++` inside tenKhzRoutine at 20 kHz). Main reads
-    // and resets when it exceeds PID_LOOP_DIVIDER, firing the 1 kHz block
-    // (ADC + PIDs). Placing the increment in the ISR makes the 1 kHz rate
-    // correct regardless of main-loop iteration rate (main no longer wfi's
-    // every iter — matches AM32's spinning while(1) at main.c:1843).
+    // 1 kHz dispatch counter — ISR-side increment (AM32 main.c:1317);
+    // main reads and resets past PID_LOOP_DIVIDER. Incrementing here
+    // keeps the 1 kHz rate correct regardless of main-loop iteration
+    // rate.
     ctx.shared.one_khz_counter_inc();
 
     // AM32 interval telemetry (main.c:1664-1672): with
     // telemetry_on_interval set, fire send_telemetry every
     // (30 - 1 + interval) ms — the config value doubles as a per-ESC
-    // slot offset on shared telemetry wires. This was a
-    // ported-but-unwired config byte until 2026-08-02 (same family as
-    // proportional_brake and beep_volume): the field existed, no
-    // consumer — periodic KISS telemetry never fired.
+    // slot offset on shared telemetry wires.
     if ctx.config.telemetry_on_interval != 0 {
         let limit = telemetry_interval_ticks(ctx.config.telemetry_on_interval);
         if ctx.shared.telem_counter_check_and_inc(limit) {
             ctx.shared.set_send_telemetry(true);
         }
     }
-    // Defensive COMP-IRQ mask while not commutating. AM32 mirrors this by
-    // calling maskPhaseInterrupts() at every stop/timeout site (~15 places
-    // in main.c). We only mask on the AllOff path below, so StopMotor /
-    // Disarm transitions (stuck rotor, desync, signal_timeout) can leak an
-    // unmasked COMP into Armed-idle. With COMP at NVIC level 0 and TIM6 at
-    // level 3, a comparator output bouncing on an undriven BEMF pin storms
-    // COMP_IRQ and starves TIM6 indefinitely. Re-masking here every tick
-    // when !running closes the leak from any of those paths.
+    // Defensive COMP-IRQ mask while not commutating (AM32 calls
+    // maskPhaseInterrupts() at every stop/timeout site). A comparator
+    // bouncing on an undriven BEMF pin at higher NVIC priority would
+    // otherwise storm and starve the tick ISR; re-masking every
+    // non-running tick closes every stop-path leak at once.
     if !ctx.shared.running() {
         ctx.hal.comp().mask_interrupts();
     }
@@ -75,20 +67,13 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         }
         crate::shared_comm::IsrAction::CommutateKick => {
             // BEMF-timeout recovery, AM32 zcfoundroutine semantics: re-arm
-            // the possibly-dead COM timer to fire now so
-            // commutation_timer_expired restarts the chain. The interval
-            // reset this action SUBSUMES (single-slot fetch_max channel —
-            // see main_state) happens before the shared interval timer is
-            // published, so main does not requeue the handled stall sample.
-            //
-            // zcfoundroutine timing update (main.c:1870-1874): the stalled
-            // interval count (>45000) folds INTO the commutation interval
-            // BEFORE the forced step — ci = (thiszc + 3*ci)/4 — so the
-            // restart is AM32's slow crawl toward re-lock, with wait_time
-            // and advance recomputed from the inflated ci. Without this,
-            // the kick re-commutated at the PRE-FAULT cadence (ci ~200 at
-            // 60% throttle): a full-duty blind slam on a rotor that just
-            // lost sync — the transit-surge kill class at the 60% rung.
+            // the possibly-dead COM timer so commutation_timer_expired
+            // restarts the chain. The stalled interval count folds into
+            // the commutation interval BEFORE the forced step
+            // (ci = (thiszc + 3*ci)/4, main.c:1870-1874) so the restart
+            // is AM32's slow crawl toward re-lock — without it the kick
+            // re-commutates at the pre-fault cadence, a full-duty blind
+            // slam on a rotor that just lost sync.
             if ctx.shared.running() {
                 let count = action_interval_count.min(u16::MAX as u32) as u16;
                 let ci = ctx.shared.commutation_interval();
@@ -156,14 +141,10 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         } else {
             ctx.shared.set_duty_cycle_setpoint(0);
             // AM32 !running housekeeping (main.c:1256-1259): while at
-            // zero throttle and not running, continuously scrub the
-            // run counters (AM32 also re-asserts old_routine=1; rm32's
-            // mode model covers that — every start enters OldRoutine).
-            // rm32 lacked this — zero_crosses CARRIED ACROSS RUNS
-            // (observed 1809 at idle on the bench), polluting the
-            // zc>1000 fault-clear in the stuck-rotor latch and
-            // compute_setpoint's zc-gated startup boost (the
-            // post-stall "won't spin up" churn).
+            // zero throttle and not running, continuously scrub the run
+            // counters. Without this, zero_crosses carries across runs,
+            // polluting the stuck-rotor fault-clear and the zc-gated
+            // startup boost.
             if !ctx.shared.running() {
                 ctx.shared.set_zero_crosses(0);
                 ctx.bemf.reset_for_step();
@@ -236,14 +217,10 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         ctx.hal.pwm().set_duty_all(ctx.duty.pwm_compare(tim1_arr));
     } else if ctx.shared.prop_brake_active() {
         // SAFETY-CRITICAL ORDER: reconfigure the bridge for braking
-        // BEFORE the brake duty lands (AM32 proportionalBrake(),
-        // phaseouts.c: all high-sides OUTPUT-off, all low-sides PWM).
-        // The brake compare is near-ARR; applied to the mixed bridge
-        // state a stop leaves behind (one low-side FET solid-on from
-        // com_step, another leg's high-side still in AF), it drives a
-        // DC VBAT->winding->GND path — locked-rotor burn. This exact
-        // omission killed the bench supply on 2026-08-01: the duty
-        // write existed, the proportional_brake() call did not.
+        // BEFORE the brake duty lands (AM32 proportionalBrake(): all
+        // high-sides output-off, all low-sides PWM). A near-ARR brake
+        // compare applied to the mixed bridge state a stop leaves behind
+        // drives a DC VBAT->winding->GND path — locked-rotor burn.
         // Re-asserted every tick like AM32's every-main-pass call.
         ctx.hal.phase().proportional_brake();
         ctx.hal.pwm().set_duty_all(DutyState::brake_compare(
@@ -368,7 +345,7 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
         shared.set_commutation_interval(new_ci);
     }
 
-    // Polling/interrupt exclusivity (AM32 main.c commutate + minz
+    // Polling/interrupt exclusivity (AM32 main.c commutate
     // am32_isr.rs:122-124): the comparator interrupt path is live ONLY in
     // interrupt mode. rm32 previously enabled unconditionally, so both
     // BEMF paths ran concurrently during old_routine — double-commutation

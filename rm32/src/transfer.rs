@@ -65,10 +65,9 @@ pub enum TransferAction {
 
 /// DMA capture configuration — buffer size + timer prescaler.
 ///
-/// Mirrors AM32's `buffersize` and `ic_timer_prescaler` globals.
-/// The decoder tells the HAL how to arm the next DMA capture AND
-/// what timer resolution to use. Both feedback loops were lost in
-/// the original Rust port (see BRINGUP_NOTES_L431.md, LOST_PRESCALER.md).
+/// Mirrors AM32's `buffersize` and `ic_timer_prescaler` globals: the
+/// decoder tells the HAL how to arm the next DMA capture and what timer
+/// resolution to use.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CaptureConfig {
     /// DMA transfer count (number of edges to capture)
@@ -80,44 +79,28 @@ pub struct CaptureConfig {
 }
 
 impl CaptureConfig {
-    /// DShot detection / normal operation: 32 edges (AM32 `buffersize = 32`,
-    /// signal.c:27), no prescaler change.
+    /// DShot detection / normal operation: 32 edges (AM32 `buffersize`),
+    /// no prescaler change.
     ///
-    /// NDTR MUST be 32: a DShot frame is exactly 32 edges, so TC fires on
-    /// the frame's LAST edge and the re-arm happens inside the ~ms
-    /// inter-frame gap — the capture window stays frame-locked. The re-arm
-    /// (receiveDshotDma parity) pulses an RCC reset of the capture timer,
-    /// which clears any latched CC/DMA request, so slot 0 is always the
-    /// next frame's first edge — no stale slot.
-    ///
-    /// History: an earlier stale-slot-0 observation (pre-RCC-reset re-arm)
-    /// was band-aided with NDTR=33 + a 2-way alignment picker. But 33
-    /// consumes one extra edge per 32-edge frame: TC then fires on the
-    /// NEXT frame's first edge, the re-arm lands mid-frame, and the window
-    /// slides +1 edge every frame — ~97% of frames decode against a
-    /// gap-spanning buffer (whose u16-wrapped frametime even passes the
-    /// window check, failing as BadCrc). Measured live vs Betaflight
-    /// DSHOT300: crc_pass=13 / crc_fail=410 per 2 s life.
+    /// NDTR MUST be 32: a DShot frame is exactly 32 edges, so transfer-
+    /// complete fires on the frame's last edge and the re-arm lands in
+    /// the inter-frame gap — the capture window stays frame-locked. Any
+    /// other value consumes edges across frame boundaries and the window
+    /// slides, decoding against gap-spanning buffers.
     pub const DSHOT: Self = Self {
         ndtr: 32,
         prescaler: None,
     };
 
-    /// DShot detection (re-entry): 32 edges + slow prescaler so DShot pulses
-    /// fit `signal::detect_input()`'s `smallest 1-8 ticks` heuristic
-    /// thresholds. Must be applied any time we re-enter detection mode after
-    /// a prior successful detection (which fast-tracked the prescaler to 0/1
-    /// for max resolution). `cpu_mhz/6` gives ~5.7 MHz tick at 80 MHz CPU →
-    /// DShot300 "0" pulse = ~7 ticks (in the 4-8 range), DShot600 "0" =
-    /// ~3.6 ticks (in 1-4 range).
+    /// DShot detection (re-entry): 32 edges + slow prescaler so DShot
+    /// pulses fit `signal::detect_input()`'s tick-range thresholds.
+    /// Applied whenever detection mode is re-entered after a prior
+    /// detection fast-tracked the prescaler to 0/1.
     ///
-    /// NDTR MUST be 32 here too, same as `DSHOT` above: a detection window
-    /// of 33 consumes one extra edge, so the LAST detection window before
-    /// confirmation hands steady-state capture a buffer misaligned by one
-    /// edge — which never re-locks (each 32-edge TC then drags the stale
-    /// edge forward forever). Reintroduced as 33 by the upstream
-    /// re-confirmation rewrite (#65); bench-bisected 2026-08-12: 0/508
-    /// frames decoded until this went back to 32.
+    /// NDTR MUST be 32 here too: a 33-edge detection window consumes one
+    /// extra edge, handing steady-state capture a one-edge-misaligned
+    /// buffer that never re-locks (0% decode against a live stream —
+    /// invisible to host tests).
     pub fn dshot_detection(cpu_mhz: u8) -> Self {
         Self {
             ndtr: 32,
@@ -175,10 +158,8 @@ pub struct TransferActions {
     pub frametime: Option<(u16, u16)>,
     /// Bidirectional DShot auto-detected (caller should set dshot_telemetry=true)
     pub bidir_detected: bool,
-    /// Bench-debug snapshot of `high_pin_count` for the bidir auto-detect path.
-    /// Exposed via TransferActions so the ISR handler can publish it to a
-    /// SharedState counter for main-loop heartbeat dumps. Capped at u8 (the
-    /// internal counter is u8 saturating).
+    /// Snapshot of `high_pin_count` for the bidir auto-detect path
+    /// (published to a SharedState counter for diagnostics).
     pub high_pin_count: u8,
 }
 
@@ -610,7 +591,7 @@ mod tests {
         assert_eq!(actions.next_capture, CaptureConfig::dshot_detection(60));
     }
 
-    /// REGRESSION (bench capture 07-31, Betaflight DSHOT300 @ PSC=1):
+    /// REGRESSION (bench capture, Betaflight DSHOT300 @ PSC=1):
     /// a real disarm frame — all-0 bits, 47/87-tick half-bits with the
     /// observed jitter — must decode as Throttle{0}. These exact deltas
     /// failed 97% of the time under the NDTR=33 sliding window.

@@ -155,7 +155,7 @@ impl SystemTick {
         telem: &mut dyn TelemetryUart,
         isr_tick: impl FnOnce(),
     ) {
-        // A4: drain ISR-side config byte writes into main's copy BEFORE
+        // Drain ISR-side config byte writes into main's copy BEFORE
         // any save-settings check this pass — the ISR command processor
         // mutates its own EepromConfig; without this, save persisted a
         // stale main copy (Configurator/DSHOT-written settings lost).
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn config_write_through_reaches_main_copy() {
-        // A4 regression: ISR-side config byte writes published via the
+        // Regression: ISR-side config byte writes published via the
         // SPSC ring must land in main's copy during run_tick, BEFORE any
         // save-settings action would persist it.
         let shared = SharedState::new();
