@@ -103,16 +103,24 @@ impl CaptureConfig {
         prescaler: None,
     };
 
-    /// DShot detection (re-entry): 33 edges + slow prescaler so DShot pulses
+    /// DShot detection (re-entry): 32 edges + slow prescaler so DShot pulses
     /// fit `signal::detect_input()`'s `smallest 1-8 ticks` heuristic
     /// thresholds. Must be applied any time we re-enter detection mode after
     /// a prior successful detection (which fast-tracked the prescaler to 0/1
     /// for max resolution). `cpu_mhz/6` gives ~5.7 MHz tick at 80 MHz CPU →
     /// DShot300 "0" pulse = ~7 ticks (in the 4-8 range), DShot600 "0" =
     /// ~3.6 ticks (in 1-4 range).
+    ///
+    /// NDTR MUST be 32 here too, same as `DSHOT` above: a detection window
+    /// of 33 consumes one extra edge, so the LAST detection window before
+    /// confirmation hands steady-state capture a buffer misaligned by one
+    /// edge — which never re-locks (each 32-edge TC then drags the stale
+    /// edge forward forever). Reintroduced as 33 by the upstream
+    /// re-confirmation rewrite (#65); bench-bisected 2026-08-12: 0/508
+    /// frames decoded until this went back to 32.
     pub fn dshot_detection(cpu_mhz: u8) -> Self {
         Self {
-            ndtr: 33,
+            ndtr: 32,
             prescaler: Some((cpu_mhz / 6) as u16),
         }
     }
