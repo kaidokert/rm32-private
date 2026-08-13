@@ -127,7 +127,26 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   DIAGNOSTIC TRICK that cracked it: gdb force-jump (set $sp/$pc to
   app header values, detach) + SWD RAM liveness diff of SHARED —
   proves app health with zero working UART/RTT.
-- Re-qual on the snapshot PENDING bench rewiring (hands requested).
+- Re-qual on the snapshot: **COMPLETE** (2026-08-12 evening) — ladder
+  PASS 1,586,545 comms / dsy=0 / 0 resets; slam PASS 268,494 comms /
+  dsy=0 / 0 resets.
+- [!] UPSTREAM REGRESSION found + fixed en route (5577033): #65's
+  re-confirmation rewrite reintroduced ndtr=33 in dshot_detection()
+  — the band-aid our frame-lock work replaced with 32. One-edge
+  misaligned capture that never re-locks: 0/508 frames decoded, ESC
+  reset-looping its boot tune (the "SHUT UP" incident). Invisible to
+  host tests (needs a live DSHOT stream). Found by 5-step automated
+  flash-bisect after AM32-on-same-wires exonerated the bench.
+  NEEDS UPSTREAM PR — public main still carries the 33.
+- More scars from the hunt: (a) my 0x01+0xFF EEPROM repair page was
+  its own bug (from_bytes is a blind cast); use
+  `cargo run -p rm32 --example dump_config` to regenerate the real
+  baseline page. (b) On this 128K L431 with a devinfo-bearing
+  bootloader the APP serves config from 0x0801F800 (not 0x0800F800 —
+  that's the bootloader's jump-gate page); write BOTH when repairing.
+  (c) A "known-good tag" must be verified against the intended
+  commit — bench-rich-20260812 accidentally tagged a minz commit the
+  branch had silently moved to.
 
 ## Merge 5 (2026-08-09) — six PRs, heaviest conflict set yet
 
