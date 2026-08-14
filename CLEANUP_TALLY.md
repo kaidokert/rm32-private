@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `798bfd1` on top of public `origin/main`
-`f2311d0`:
+As of public projection commit `86125e2` on top of public `origin/main`
+`5a625c2`:
 
 ```text
-12 files changed, 1488 insertions(+), 536 deletions(-)
+12 files changed, 1431 insertions(+), 535 deletions(-)
 ```
 
 Current `rm32/` file list:
