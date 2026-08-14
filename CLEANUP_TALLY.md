@@ -33,8 +33,8 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `86125e2` on top of public `origin/main`
-`5a625c2`:
+As of public projection commit `9d3a14f` on top of public `origin/main`
+`b164392`:
 
 ```text
 12 files changed, 1431 insertions(+), 535 deletions(-)
