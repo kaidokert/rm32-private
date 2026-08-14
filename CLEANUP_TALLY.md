@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `6b20eb2` on top of public `origin/main`
-`0f2982f`:
+As of public projection commit `798bfd1` on top of public `origin/main`
+`f2311d0`:
 
 ```text
-12 files changed, 1489 insertions(+), 528 deletions(-)
+12 files changed, 1488 insertions(+), 536 deletions(-)
 ```
 
 Current `rm32/` file list:
@@ -72,4 +72,3 @@ When reporting cleanup progress, include both:
 
 - `git diff --shortstat origin/main HEAD -- rm32`
 - `git diff --name-only origin/main HEAD -- rm32`
-
