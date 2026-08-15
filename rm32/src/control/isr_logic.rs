@@ -37,15 +37,12 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             ctx.shared.set_send_telemetry(true);
         }
     }
-    // Defensive COMP-IRQ mask while not commutating (AM32 calls
-    // maskPhaseInterrupts() at every stop/timeout site). A comparator
-    // bouncing on an undriven BEMF pin at higher NVIC priority would
-    // otherwise storm and starve the tick ISR; re-masking every
-    // non-running tick closes every stop-path leak at once.
+
     if !ctx.shared.running() {
+        // Keep COMP masked while phases are not commutating.
         ctx.hal.comp().mask_interrupts();
     }
-    // Process main→ISR action request (priority-ordered enum)
+
     let action = ctx.shared.isr_action();
     let action_interval_count = ctx.hal.interval().count();
     match action {
@@ -140,12 +137,9 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             }
         } else {
             ctx.shared.set_duty_cycle_setpoint(0);
-            // AM32 !running housekeeping (main.c:1256-1259): while at
-            // zero throttle and not running, continuously scrub the run
-            // counters. Without this, zero_crosses carries across runs,
-            // polluting the stuck-rotor fault-clear and the zc-gated
-            // startup boost.
             if !ctx.shared.running() {
+                // Match AM32 idle housekeeping: stale run counters must not carry
+                // into the next startup attempt.
                 ctx.shared.set_zero_crosses(0);
                 ctx.bemf.reset_for_step();
             }
@@ -307,6 +301,11 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     T: hal::ComTimer,
 {
     com_timer.disable_interrupt();
+    if !shared.running() {
+        comp.mask_interrupts();
+        return;
+    }
+
     let step = commutation.advance();
     if commutation.desync_check() {
         shared.set_desync_check_pending(true);

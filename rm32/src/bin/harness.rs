@@ -17,6 +17,7 @@ use rm32::motor_mode::MotorMode;
 use rm32::shared_state::SharedState;
 use rm32::system::SystemTick;
 use rm32::transfer::{DetectedProtocol, TransferAction};
+use std::cell::Cell;
 use std::io::{self, BufRead, Write};
 
 // --- Mock HAL (same as harness.rs) ---
@@ -58,7 +59,6 @@ impl hal::Comparator for MockComp {
     }
 }
 
-use std::cell::Cell;
 use std::rc::Rc;
 
 /// Shared HAL call counter — cloneable, interior-mutable, no unsafe.
@@ -814,6 +814,18 @@ impl Harness {
             "eeprom.current_D" => self.config.current_d = v as u8,
             "eeprom.sine_mode_power" => self.config.sine_mode_power = v as u8,
             "eeprom.driving_brake_strength" => self.config.driving_brake_strength = v as u8,
+            "isr_config.bi_direction" => {
+                self.shared.push_config_write(
+                    core::mem::offset_of!(EepromConfig, bi_direction) as u8,
+                    v as u8,
+                );
+            }
+            "isr_config.dir_reversed" => {
+                self.shared.push_config_write(
+                    core::mem::offset_of!(EepromConfig, dir_reversed) as u8,
+                    v as u8,
+                );
+            }
             _ => eprintln!("harness2: unknown key '{}'", key),
         }
     }

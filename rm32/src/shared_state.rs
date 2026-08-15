@@ -13,6 +13,8 @@ use portable_atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 const REL: Ordering = Ordering::Release;
 /// Load ordering — ensures we see all prior writes from other contexts.
 const ACQ: Ordering = Ordering::Acquire;
+const CONFIG_WRITE_QUEUE_CAPACITY: u8 = 8;
+const CONFIG_WRITE_QUEUE_LEN: u8 = CONFIG_WRITE_QUEUE_CAPACITY + 1;
 
 /// Shared state accessed by both ISR and main loop contexts.
 /// All fields are atomic — no locks or critical sections needed.
@@ -27,9 +29,13 @@ pub struct SharedState {
     dshot_telemetry: AtomicBool,
     save_settings_flag: AtomicBool,
     send_esc_info_flag: AtomicBool,
-    /// Set on signal timeout (AM32 main.c:1892-1918); main polls and
-    /// calls `System::reset()`, whose SFTRSTF drops the bootloader into
-    /// its DFU loop for the Configurator passthrough path.
+    pending_servo_calibration: AtomicBool,
+    pending_servo_low_threshold: AtomicU8,
+    pending_servo_high_threshold: AtomicU8,
+    config_write_queue: [AtomicU16; CONFIG_WRITE_QUEUE_LEN as usize],
+    config_write_head: AtomicU8,
+    config_write_tail: AtomicU8,
+
     // Timing (ISR writes, main reads)
     zero_crosses: AtomicU32,
     commutation_interval: AtomicU32,
@@ -87,19 +93,10 @@ pub struct SharedState {
     dbg_dma_last_cyc: AtomicU32,   // DMA1_CH5 wrapper (input capture TC)
     dbg_exti_last_cyc: AtomicU32,  // EXTI15_10 wrapper (frame processing)
     dbg_main_last_cyc: AtomicU32,  // main-loop iter body (excludes wfi)
-    // ISR→main config write-through: ISR-side EEPROM mutations publish
-    // (offset, value) here; main drains into its config copy so
-    // save-settings persists current bytes. SPSC, packed
-    // (offset<<8)|value, load/store only (M0 lacks atomic RMW); a full
-    // ring drops the write — the ISR copy stays authoritative and the
-    // next mutation re-publishes.
     // Tone channel: pending tone id (rm32::tone), 0 = none. Set by the
     // DSHOT-command ISR (beacons) or main (arming tune); consumed by
     // the tick's tone stepper.
     tone_request: AtomicU8,
-    cfg_wr: [AtomicU16; 8],
-    cfg_wr_head: AtomicU8,
-    cfg_wr_tail: AtomicU8,
     // 1 kHz dispatch counter — incremented by the tick ISR, read +
     // reset by main past PID_LOOP_DIVIDER (AM32's one_khz_loop_counter
     // placement, main.c:1317/1397).
@@ -124,6 +121,12 @@ impl SharedState {
             dshot_telemetry: AtomicBool::new(false),
             save_settings_flag: AtomicBool::new(false),
             send_esc_info_flag: AtomicBool::new(false),
+            pending_servo_calibration: AtomicBool::new(false),
+            pending_servo_low_threshold: AtomicU8::new(0),
+            pending_servo_high_threshold: AtomicU8::new(0),
+            config_write_queue: [const { AtomicU16::new(0) }; CONFIG_WRITE_QUEUE_LEN as usize],
+            config_write_head: AtomicU8::new(0),
+            config_write_tail: AtomicU8::new(0),
             zero_crosses: AtomicU32::new(0),
             commutation_interval: AtomicU32::new(12500),
             newinput: AtomicU16::new(0),
@@ -161,9 +164,6 @@ impl SharedState {
             dbg_exti_last_cyc: AtomicU32::new(0),
             dbg_main_last_cyc: AtomicU32::new(0),
             tone_request: AtomicU8::new(0),
-            cfg_wr: [const { AtomicU16::new(0) }; 8],
-            cfg_wr_head: AtomicU8::new(0),
-            cfg_wr_tail: AtomicU8::new(0),
             one_khz_counter: AtomicU8::new(0),
             telem_counter: AtomicU16::new(0),
         }
@@ -398,6 +398,47 @@ impl SharedState {
         self.save_settings_flag.store(v, REL);
     }
 
+    pub fn publish_servo_calibration(&self, low_threshold: u8, high_threshold: u8) {
+        self.pending_servo_low_threshold.store(low_threshold, REL);
+        self.pending_servo_high_threshold.store(high_threshold, REL);
+        self.pending_servo_calibration.store(true, REL);
+    }
+
+    pub fn take_servo_calibration(&self) -> Option<(u8, u8)> {
+        if self.pending_servo_calibration.swap(false, ACQ) {
+            Some((
+                self.pending_servo_low_threshold.load(ACQ),
+                self.pending_servo_high_threshold.load(ACQ),
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub fn push_config_write(&self, offset: u8, value: u8) -> bool {
+        let head = self.config_write_head.load(ACQ);
+        let next = (head + 1) % CONFIG_WRITE_QUEUE_LEN;
+        if next != self.config_write_tail.load(ACQ) {
+            self.config_write_queue[head as usize]
+                .store(((offset as u16) << 8) | value as u16, REL);
+            self.config_write_head.store(next, REL);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn pop_config_write(&self) -> Option<(u8, u8)> {
+        let tail = self.config_write_tail.load(ACQ);
+        if tail == self.config_write_head.load(ACQ) {
+            return None;
+        }
+        let packed = self.config_write_queue[tail as usize].load(ACQ);
+        self.config_write_tail
+            .store((tail + 1) % CONFIG_WRITE_QUEUE_LEN, REL);
+        Some(((packed >> 8) as u8, packed as u8))
+    }
+
     pub fn send_esc_info_flag(&self) -> bool {
         self.send_esc_info_flag.load(ACQ)
     }
@@ -596,27 +637,6 @@ impl SharedState {
             self.tone_request.store(0, REL);
         }
         v
-    }
-
-    /// ISR side: publish one config byte write (see `cfg_wr`).
-    pub fn push_config_write(&self, offset: u8, value: u8) {
-        let h = self.cfg_wr_head.load(ACQ);
-        let nx = (h + 1) % 8;
-        if nx != self.cfg_wr_tail.load(ACQ) {
-            self.cfg_wr[h as usize].store(((offset as u16) << 8) | value as u16, REL);
-            self.cfg_wr_head.store(nx, REL);
-        }
-    }
-
-    /// Main side: drain one pending config byte write.
-    pub fn pop_config_write(&self) -> Option<(u8, u8)> {
-        let t = self.cfg_wr_tail.load(ACQ);
-        if t == self.cfg_wr_head.load(ACQ) {
-            return None;
-        }
-        let packed = self.cfg_wr[t as usize].load(ACQ);
-        self.cfg_wr_tail.store((t + 1) % 8, REL);
-        Some(((packed >> 8) as u8, packed as u8))
     }
 
     pub fn clear_isr_action(&self, action: crate::shared_comm::IsrAction) {
@@ -898,6 +918,21 @@ mod tests {
         assert_eq!(MainControl::changeover_step(&shared), 0);
         MainControl::set_changeover_step(&shared, 5);
         assert_eq!(MainControl::changeover_step(&shared), 5);
+    }
+
+    #[test]
+    fn config_write_queue_retains_eight_writes() {
+        let shared = SharedState::new();
+
+        for offset in 0..CONFIG_WRITE_QUEUE_CAPACITY {
+            assert!(shared.push_config_write(offset, offset + 10));
+        }
+        assert!(!shared.push_config_write(99, 100));
+
+        for offset in 0..CONFIG_WRITE_QUEUE_CAPACITY {
+            assert_eq!(shared.pop_config_write(), Some((offset, offset + 10)));
+        }
+        assert_eq!(shared.pop_config_write(), None);
     }
 
     #[test]

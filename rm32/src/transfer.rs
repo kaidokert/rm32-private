@@ -423,10 +423,17 @@ impl TransferState {
 mod tests {
     use super::*;
 
+    const DSHOT300_START_TICKS: u32 = 5000;
+    const DSHOT300_ZERO_HIGHS: [u32; 16] = [
+        47, 47, 47, 46, 47, 47, 47, 46, 47, 46, 47, 47, 46, 47, 47, 47,
+    ];
+    const DSHOT300_ZERO_LOWS: [u32; 16] = [
+        87, 86, 87, 87, 86, 87, 87, 87, 86, 87, 87, 86, 87, 87, 87, 0,
+    ];
+    const INTER_FRAME_GAP_TICKS: u32 = 78_400;
+
     #[test]
     fn capture_config_ndtr_values() {
-        // DSHOT NDTR is 32 = exactly one frame (AM32 buffersize) — TC on
-        // the last edge, re-arm in the inter-frame gap, frame-locked.
         assert_eq!(CaptureConfig::DSHOT.ndtr, 32);
         assert_eq!(CaptureConfig::SERVO.ndtr, 2);
         assert_eq!(CaptureConfig::SERVO_REALIGN.ndtr, 3);
@@ -488,8 +495,32 @@ mod tests {
         buf
     }
 
-    /// Spurious high-idle on a NORMAL DShot line must never commit bidir:
-    /// the inverted-CRC probe fails every frame and resets the hint.
+    fn dshot300_disarm_capture() -> [u32; 32] {
+        let mut buf = [0u32; 32];
+        let mut t = DSHOT300_START_TICKS;
+        for i in 0..16 {
+            buf[i * 2] = t;
+            buf[i * 2 + 1] = t + DSHOT300_ZERO_HIGHS[i];
+            t += DSHOT300_ZERO_HIGHS[i] + DSHOT300_ZERO_LOWS[i];
+        }
+        buf
+    }
+
+    fn gap_spanning_capture() -> [u32; 32] {
+        let mut buf = [0u32; 32];
+        let mut t = DSHOT300_START_TICKS;
+        for slot in buf.iter_mut().take(9) {
+            *slot = t;
+            t += 67;
+        }
+        t += INTER_FRAME_GAP_TICKS;
+        for slot in buf.iter_mut().skip(9) {
+            *slot = t;
+            t += 67;
+        }
+        buf
+    }
+
     #[test]
     fn bidir_hint_alone_never_commits() {
         let mut state = TransferState::default();
@@ -597,36 +628,53 @@ mod tests {
     /// failed 97% of the time under the NDTR=33 sliding window.
     #[test]
     fn bf_dshot300_disarm_frame_decodes() {
-        // Measured half-bit times (rise->fall = high = 46..47 ticks,
-        // fall->rise = low = 86..87), from the [snap] frame autopsy.
-        let highs = [
-            47, 47, 47, 46, 47, 47, 47, 46, 47, 46, 47, 47, 46, 47, 47, 47,
-        ];
-        let lows = [
-            87, 86, 87, 87, 86, 87, 87, 87, 86, 87, 87, 86, 87, 87, 87, 0,
-        ];
-        let mut buf = [0u32; 32];
-        let mut t = 5000u32;
-        for i in 0..16 {
-            buf[i * 2] = t;
-            buf[i * 2 + 1] = t + highs[i];
-            t += highs[i] + lows[i];
-        }
+        let buf = dshot300_disarm_capture();
         let mut state = TransferState::default();
         let mut zic = 0u16;
-        // Firmware initial wide frametime window (main.rs: 100..60000).
         let actions = state.process(
             &buf, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 100, 60000,
             80,
         );
+
         assert!(
             matches!(
                 actions.action,
                 TransferAction::DshotThrottle { value: 0, .. }
             ),
-            "BF disarm frame must decode as Throttle 0, got {:?}",
+            "expected DShot throttle 0, got {:?}",
             actions.action
         );
+    }
+
+    #[test]
+    fn matching_dshot_detection_locks_protocol_with_rate_prescaler() {
+        for (step, expected_capture) in [
+            (3, CaptureConfig::DSHOT600_DETECTED),
+            (5, CaptureConfig::DSHOT300_DETECTED),
+            (10, CaptureConfig::DSHOT150_DETECTED),
+        ] {
+            let mut state = TransferState::default();
+            let mut zic = 0;
+            let mut buf = [0u32; 33];
+            for (i, slot) in buf.iter_mut().enumerate() {
+                *slot = 100 + i as u32 * step;
+            }
+
+            let _ = state.process(
+                &buf, false, false, false, false, false, false, 0, 0, false, false, &mut zic, 400,
+                600, 60,
+            );
+            let actions = state.process(
+                &buf, false, false, false, false, false, false, 0, 0, false, false, &mut zic, 400,
+                600, 60,
+            );
+
+            assert!(matches!(
+                actions.action,
+                TransferAction::InputDetected(DetectedProtocol::Dshot)
+            ));
+            assert_eq!(actions.next_capture, expected_capture);
+        }
     }
 
     /// A gap-spanning capture (the NDTR=33 failure mode: window starts

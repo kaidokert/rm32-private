@@ -555,10 +555,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 shared.set_send_telemetry(true);
             }
             shared.set_signal_timeout(0);
-            // A4: diff-and-publish config mutations to main's copy (the
-            // save path persists main_state.config, not this ISR copy).
-            let dir_prev = state.config.dir_reversed;
-            let bidir_prev = state.config.bi_direction;
+            let old_config = state.config;
             let result = state.cmd.process(
                 cmd,
                 shared.armed(),
@@ -568,17 +565,15 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 &mut state.edt_armed,
                 state.edt_arm_enable,
             );
-            if state.config.dir_reversed != dir_prev {
-                shared.push_config_write(
-                    core::mem::offset_of!(rm32::config::EepromConfig, dir_reversed) as u8,
-                    state.config.dir_reversed,
-                );
-            }
-            if state.config.bi_direction != bidir_prev {
-                shared.push_config_write(
-                    core::mem::offset_of!(rm32::config::EepromConfig, bi_direction) as u8,
-                    state.config.bi_direction,
-                );
+            for (offset, (old, new)) in old_config
+                .as_bytes()
+                .iter()
+                .zip(state.config.as_bytes().iter())
+                .enumerate()
+            {
+                if old != new {
+                    shared.push_config_write(offset as u8, *new);
+                }
             }
             match result {
                 rm32::dshot_commands::CommandResult::SaveSettings => {

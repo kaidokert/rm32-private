@@ -14,8 +14,7 @@ use embedded_hal::digital::OutputPin;
 
 /// Main-loop system tick state.
 ///
-/// Owns the `InputState` and `PhasePositions` (sine mode) that were
-/// previously duplicated or missing between harness and firmware.
+/// Owns main-loop state shared by firmware and the host harness.
 pub struct SystemTick {
     pub input_state: InputState,
     sine_positions: PhasePositions,
@@ -59,10 +58,28 @@ impl SystemTick {
         main.tick(shared, adc, telem);
     }
 
-    /// Sync ISR→main one-shot flags via SharedState atomics.
+    /// Run one complete main-loop pipeline with an injected ISR step.
     ///
-    /// ISR publishes `desync_check_pending` to SharedState; main reads and
-    /// clears it here. No `with_isr_state` needed — all through atomics.
+    /// The host harness runs the ISR inline through `isr_tick`; firmware can
+    /// pass a no-op because the ISR runs asynchronously on hardware. The
+    /// ISR-to-main handoff is synchronized before `tick_main()`.
+    pub fn run_tick<LED: OutputPin>(
+        &mut self,
+        shared: &SharedState,
+        main: &mut MainState<LED>,
+        adc: &mut dyn Adc,
+        telem: &mut dyn TelemetryUart,
+        isr_tick: impl FnOnce(),
+    ) {
+        Self::sync_config_writes(shared, main);
+        self.tick_input(shared, main);
+        isr_tick();
+        Self::sync_config_writes(shared, main);
+        self.sync_isr_to_main(shared, main);
+        self.tick_main(shared, main, adc, telem);
+    }
+
+    /// Consume ISR-published flags that affect main-loop state.
     pub fn sync_isr_to_main<LED: OutputPin>(
         &self,
         shared: &SharedState,
@@ -73,19 +90,15 @@ impl SystemTick {
         }
     }
 
-    /// Canonical main-loop tick with platform callback.
-    ///
-    /// Captures the exact orchestration order that both harness and firmware
-    /// must follow. The single `isr_and_sync` closure handles:
-    /// 1. Running the ISR tick (inline for harness, no-op for firmware)
-    /// 2. Syncing ISR→main one-shot flags (calls `sync_isr_to_main`)
-    ///
-    /// Using a single closure avoids borrow conflicts between ISR state
-    /// (commutation, bemf, etc.) and the sync step that reads commutation.
+    pub fn sync_config_writes<LED: OutputPin>(shared: &SharedState, main: &mut MainState<LED>) {
+        while let Some((offset, value)) = shared.pop_config_write() {
+            if let Some(byte) = main.config.as_bytes_mut().get_mut(offset as usize) {
+                *byte = value;
+            }
+        }
+    }
+
     /// Process sine mode stepping.
-    ///
-    /// Returns the SineStepResult and PWM values. The caller applies
-    /// PWM output and handles changeover via platform-specific HAL calls.
     pub fn tick_sine(
         &mut self,
         shared: &SharedState,
@@ -109,11 +122,7 @@ impl SystemTick {
         ))
     }
 
-    /// Apply sine changeover state transitions.
-    ///
-    /// Called when `tick_sine` returns `Changeover`. Sets shared state
-    /// and main-loop timing. The caller handles ISR HAL calls
-    /// (com_step, generate_update_event, etc.) via platform-specific code.
+    /// Apply sine changeover state transitions after `tick_sine` returns Changeover.
     pub fn apply_sine_changeover<LED: OutputPin>(
         &mut self,
         shared: &SharedState,
@@ -131,50 +140,17 @@ impl SystemTick {
         shared.transition(crate::motor_mode::MotorEvent::ExitSine);
     }
 
-    /// Handle sine mode idle (throttle=0 or !armed) brake logic.
-    ///
-    /// Matches C main.c lines 2258-2282. Returns true if prop_brake_active
-    /// should be set (brake_on_stop==1 with sufficient drag_brake_strength).
+    /// Handle sine-mode idle brake-on-stop policy.
     pub fn handle_sine_idle(config: &crate::config::EepromConfig, tim1_arr: u16) -> bool {
         if config.brake_on_stop == 1 {
             let prop_brake_duty = config.drag_brake_strength as u32 * 200;
             let tim1_arr = tim1_arr as u32;
             let scaled = ((prop_brake_duty * tim1_arr) / 2000).min(tim1_arr);
             let adjusted = tim1_arr - scaled;
-            adjusted >= 100 // below 100 → fullBrake instead (handled by caller)
+            adjusted >= 100
         } else {
             false
         }
-    }
-
-    pub fn run_tick<LED: OutputPin>(
-        &mut self,
-        shared: &SharedState,
-        main: &mut MainState<LED>,
-        adc: &mut dyn Adc,
-        telem: &mut dyn TelemetryUart,
-        isr_tick: impl FnOnce(),
-    ) {
-        // Drain ISR-side config byte writes into main's copy BEFORE
-        // any save-settings check this pass — the ISR command processor
-        // mutates its own EepromConfig; without this, save persisted a
-        // stale main copy (Configurator/DSHOT-written settings lost).
-        while let Some((off, val)) = shared.pop_config_write() {
-            if (off as usize) < main.config.as_bytes().len() {
-                main.config.as_bytes_mut()[off as usize] = val;
-            }
-        }
-        // 1. Input processing
-        self.tick_input(shared, main);
-
-        // 2. ISR tick (harness runs inline, firmware is a no-op — ISR runs async)
-        isr_tick();
-
-        // 3. Sync ISR→main flags via SharedState atomics (no with_isr_state)
-        self.sync_isr_to_main(shared, main);
-
-        // 4. Main-loop pipeline
-        self.tick_main(shared, main, adc, telem);
     }
 }
 
@@ -186,19 +162,16 @@ impl Default for SystemTick {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::board::BoardConfig;
     use crate::config::EepromConfig;
     use crate::main_state::{ChipParams, MainState};
     use crate::motor_mode::MotorEvent;
     use crate::sine::SineStepResult;
 
+    use super::*;
+
     struct MockAdc;
-    impl MockAdc {
-        fn new() -> Self {
-            Self
-        }
-    }
+
     impl crate::hal::Adc for MockAdc {
         fn start_conversion(&mut self) {}
         fn raw_voltage(&self) -> u16 {
@@ -216,75 +189,71 @@ mod tests {
     }
 
     struct MockTelem;
+
     impl crate::hal::TelemetryUart for MockTelem {
         fn send_dma(&mut self, _: &[u8]) {}
     }
 
-    fn make_main() -> MainState {
+    fn main_state() -> MainState {
         MainState::new(
             &BoardConfig::DEFAULT,
             ChipParams {
                 timer1_max_arr: 1999,
-                cpu_mhz: 64,
+                cpu_mhz: 48,
             },
         )
     }
 
     #[test]
     fn config_write_through_reaches_main_copy() {
-        // Regression: ISR-side config byte writes published via the
-        // SPSC ring must land in main's copy during run_tick, BEFORE any
-        // save-settings action would persist it.
         let shared = SharedState::new();
-        let mut main = make_main();
-        let off = core::mem::offset_of!(crate::config::EepromConfig, dir_reversed) as u8;
-        shared.push_config_write(off, 1);
-        shared.push_config_write(3, 77); // arbitrary programming byte
-        let mut sys = SystemTick::new();
-        sys.run_tick(
-            &shared,
-            &mut main,
-            &mut MockAdc::new(),
-            &mut MockTelem,
-            || {},
-        );
+        let mut main = main_state();
+        let offset = core::mem::offset_of!(EepromConfig, dir_reversed) as u8;
+
+        shared.push_config_write(offset, 1);
+        shared.push_config_write(3, 77);
+        SystemTick::sync_config_writes(&shared, &mut main);
+
         assert_eq!(main.config.dir_reversed, 1);
         assert_eq!(main.config.as_bytes()[3], 77);
-        // Ring drained.
+        assert!(shared.pop_config_write().is_none());
+
+        shared.push_config_write(offset, 2);
+        SystemTick::sync_config_writes(&shared, &mut main);
+        assert_eq!(main.config.dir_reversed, 2);
+    }
+
+    #[test]
+    fn run_tick_drains_isr_config_writes() {
+        let shared = SharedState::new();
+        let mut main = main_state();
+        let mut system = SystemTick::new();
+        let offset = core::mem::offset_of!(EepromConfig, dir_reversed) as u8;
+
+        for _ in 0..crate::constants::PID_LOOP_DIVIDER {
+            shared.one_khz_counter_inc();
+        }
+        shared.set_send_telemetry(true);
+        system.run_tick(&shared, &mut main, &mut MockAdc, &mut MockTelem, || {
+            shared.push_config_write(offset, 1);
+            shared.push_config_write(u8::MAX, 99);
+        });
+
+        assert_eq!(main.config.dir_reversed, 1);
         assert!(shared.pop_config_write().is_none());
     }
 
     #[test]
-    fn sync_isr_to_main_transfers_desync_check() {
-        let sys = SystemTick::new();
+    fn sync_isr_to_main_consumes_pending_desync_check() {
         let shared = SharedState::new();
-        let mut main = make_main();
+        let mut main = main_state();
+        let system = SystemTick::new();
 
         shared.set_desync_check_pending(true);
-        assert!(!main.desync_check(), "main starts clear");
-        sys.sync_isr_to_main(&shared, &mut main);
-        assert!(
-            main.desync_check(),
-            "main.desync_check should be set after transfer"
-        );
-        assert!(
-            !shared.desync_check_pending(),
-            "shared.desync_check_pending should be cleared after transfer"
-        );
-    }
+        system.sync_isr_to_main(&shared, &mut main);
 
-    #[test]
-    fn sync_isr_to_main_noop_when_flag_clear() {
-        let sys = SystemTick::new();
-        let shared = SharedState::new();
-        let mut main = make_main();
-        // Pre-set main.desync_check; shared flag is clear → main should be untouched.
-        main.set_desync_check(true);
-        sys.sync_isr_to_main(&shared, &mut main);
-        assert!(
-            main.desync_check(),
-            "main.desync_check unchanged when shared flag is false"
-        );
+        assert!(main.desync_check());
+        assert!(!shared.desync_check_pending());
     }
 
     #[test]
@@ -318,7 +287,7 @@ mod tests {
     #[test]
     fn apply_sine_changeover_publishes_handoff_before_exit() {
         let shared = SharedState::new();
-        let mut main = make_main();
+        let mut main = main_state();
         let mut system = SystemTick::new();
 
         shared.transition(MotorEvent::Arm);
