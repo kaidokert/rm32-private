@@ -471,6 +471,11 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
     #[cfg(feature = "monitor")]
     let mut monitor = minz::monitor::Monitor::new();
 
+    // krabilorean qualification instrument (feature="krabimon"): same onboard
+    // role as the ratch22 monitor, fed in main context (off the hot ISR path).
+    #[cfg(feature = "krabimon")]
+    let mut krabimon = minz::krabimon::Krabimon::new();
+
     loop {
         minz::iwdg::refresh();
         rx_drain(&mut uart, duty, bench);
@@ -499,6 +504,12 @@ fn main_entry(tx_writer: &mut UartTxWriter) -> ! {
             sched.commutation_interval.load(Ordering::Relaxed),
             bench.i_raw.load(Ordering::Relaxed),
         );
+        #[cfg(feature = "krabimon")]
+        krabimon.poll(
+            zct.comm_n.load(Ordering::Relaxed),
+            sched.commutation_interval.load(Ordering::Relaxed),
+            bench.i_raw.load(Ordering::Relaxed),
+        );
 
         telemetry_drain(bench, zct, tx_writer);
         handle_requests(sched, drive, duty, bench, zct, tx_writer);
@@ -516,6 +527,12 @@ fn rx_drain(uart: &mut UartDuty, duty: &Duty, bench: &Bench) {
         #[cfg(feature = "monitor")]
         if matches!(c, b'k' | b'K' | b'm') {
             minz::monitor::key(c);
+            continue;
+        }
+        // krabimon tier dial ('m'); only when the monitor isn't also claiming it.
+        #[cfg(all(feature = "krabimon", not(feature = "monitor")))]
+        if c == b'm' {
+            minz::krabimon::key(c);
             continue;
         }
         apply_uart_cmd(duty, bench, uart.step(c));
@@ -672,6 +689,47 @@ fn print_info(
             mon::AN_HIST[5].load(Ordering::Relaxed),
             mon::AN_HIST[6].load(Ordering::Relaxed),
             mon::AN_HIST[7].load(Ordering::Relaxed),
+        );
+    }
+    // krabilorean qualification line (feature="krabimon"): online core_merge
+    // per-channel stats + measured online cost; then the windowed BasicProfile
+    // batch cost + histogram mode + autocorrelation regularity markers.
+    #[cfg(feature = "krabimon")]
+    {
+        use minz::krabimon as krab;
+        let _ = write!(
+            tx,
+            "krab tier={} n={} cyc={} min={} | i[mn={} mx={} avg={} var={} mad={}] \
+             c[mn={} mx={} avg={} mad={}]\r\n",
+            krab::TIER.load(Ordering::Relaxed),
+            krab::SAMPLES.load(Ordering::Relaxed),
+            krab::LAST_CYC.load(Ordering::Relaxed),
+            krab::MIN_CYC.load(Ordering::Relaxed),
+            krab::I_MIN.load(Ordering::Relaxed),
+            krab::I_MAX.load(Ordering::Relaxed),
+            krab::I_MEAN.load(Ordering::Relaxed),
+            krab::I_VAR.load(Ordering::Relaxed),
+            krab::I_MAD.load(Ordering::Relaxed),
+            krab::C_MIN.load(Ordering::Relaxed),
+            krab::C_MAX.load(Ordering::Relaxed),
+            krab::C_MEAN.load(Ordering::Relaxed),
+            krab::C_MAD.load(Ordering::Relaxed),
+        );
+        // Windowed batch path: epochs, on-target batch cost (incl. u128 variance
+        // + autocorrelation products), window variance, histogram mode bin, and
+        // the autocorrelation markers (lag-1 acf ×1000, first zero-cross lag,
+        // first local-min lag) — the commutation-regularity signal.
+        let _ = write!(
+            tx,
+            "krab.w win={} wcyc={} wmin={} wvar={} mode={} acf1={} zc={} lmin={}\r\n",
+            krab::WIN_N.load(Ordering::Relaxed),
+            krab::WIN_CYC.load(Ordering::Relaxed),
+            krab::WIN_MIN_CYC.load(Ordering::Relaxed),
+            krab::W_VAR.load(Ordering::Relaxed),
+            krab::W_MODE.load(Ordering::Relaxed),
+            krab::W_ACF1.load(Ordering::Relaxed),
+            krab::W_ZC.load(Ordering::Relaxed),
+            krab::W_LMIN.load(Ordering::Relaxed),
         );
     }
 }

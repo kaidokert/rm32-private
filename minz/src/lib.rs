@@ -7,6 +7,8 @@ pub mod board_init;
 pub mod comp2;
 pub mod current_adc;
 pub mod iwdg;
+#[cfg(feature = "krabimon")]
+pub mod krabimon;
 #[cfg(feature = "monitor")]
 pub mod monitor;
 pub mod panic;

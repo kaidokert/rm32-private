@@ -16,12 +16,24 @@ pwm48 = []
 monitor = ["dep:ratch22"]
 # Reserved for the per-epoch block-M4 shape tier.
 monitor-full = ["monitor"]
+# Qualification of the sibling TSFE crate `krabilorean`, consumed as a
+# git-pinned dep (annotated tag v0.1.0-alpha.1 = commit 78eac27). Unlike
+# `monitor`/ratch22 (local path dep), this one resolves from a real remote,
+# so a `--features krabimon` build is reproducible and committable. See
+# src/krabimon.rs for the onboard consumer.
+krabimon = ["dep:krabilorean"]
 
 [dependencies]
 # Optional — only pulled in by `--features monitor`. Path points at the
 # gitignored private clone; keep this crate's `monitor` builds off the
 # committed/pre-commit path until ratch22 is public.
 ratch22 = { path = "ratch22-sketch/ratch22", optional = true }
+# Optional — only pulled in by `--features krabimon`. Git-pinned to the
+# annotated tag (commit 78eac27). krabilorean depends on the `fixed` crate
+# with const features that only exist in the fork patched below; a git dep
+# does NOT inherit its own workspace's [patch] table, so minz must replicate
+# the fixed-fork patch itself (see [patch.crates-io] at the bottom).
+krabilorean = { git = "https://github.com/kaidokert/krabilorean-rs-private", tag = "v0.1.0-alpha.1", optional = true }
 # Host-testable control/guard/telemetry logic — the extracted brain.
 # `cd core && cargo test` runs its suite on the host.
 minz-core = { path = "core" }
@@ -38,3 +50,10 @@ stm32l4xx-hal = { version = "0.7.1", features = ["stm32l431"] }
 overflow-checks = true
 lto = "thin"
 codegen-units = 1
+
+# krabilorean (git dep above) needs the const-generic `fixed` fork. Patches
+# only apply from the ROOT manifest, so this must live here in minz, not be
+# inherited from krabilorean's own workspace. Harmless (unused-patch warning)
+# when `krabimon` is off; required when it is on.
+[patch.crates-io]
+fixed = { git = "https://gitlab.com/kaidokert/fixed.git", tag = "v1.31.0-const-1" }
