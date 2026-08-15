@@ -106,6 +106,20 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   pinned (mechanical state cleared / prop attention); if it recurs,
   start at the prop stack.
 
+## Merge 2026-08-15 (#86-90) — config-write ring converges
+
+- origin/main #86-90 merged at 7e53ea6 (tag pre-main-merge-20260815).
+  All five were public landings of our machinery: #86 config-write
+  sync (their reviewed ring REPLACES our cfg_wr — ours deleted, ISR
+  diff-and-publish generalized to whole-config byte diff), #88 idle
+  BEMF scrub, #89 COMP mask-while-stopped, #87 capture-window tests
+  (built on the ndtr=32 fix), #90 harness imports. system.rs fully
+  converged (taken wholesale); tests.rs taken from upstream + our
+  unique commutate-kick ci-inflation test re-added; transfer.rs test
+  union (their realistic capture helpers + our bidir/NDTR tests).
+- 351 host + 81 blackbox green; bench ladder PASS 1,543,430 comms /
+  dsy=0, slam PASS 266,564 comms / dsy=0.
+
 ## Upstream snapshot 2026-08-12 + minz-landmine bench recovery
 
 - am32_sheet FAST-FORWARDED to private tip (cleanup agent had merged
