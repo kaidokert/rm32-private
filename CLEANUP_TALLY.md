@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `84a737c` on top of public `origin/main`
-`b8bfcb0`:
+As of public projection commit `9a535e9` on top of public `origin/main`
+`56744b0`:
 
 ```text
-11 files changed, 1182 insertions(+), 452 deletions(-)
+11 files changed, 1173 insertions(+), 452 deletions(-)
 ```
 
 Current `rm32/` file list:
@@ -85,3 +85,6 @@ When reporting cleanup progress, include both:
   `origin/main` via PR #61 (`89b80dc`). The remaining signal-timeout delta
   in the projection is comment/test reshaping around existing behavior, not
   a useful standalone public PR.
+- 2026-08-14: zero-throttle idle BEMF/zero-cross cleanup is public via
+  PR #88 (`56744b0`). The projection was rebased across it by keeping the
+  short public comment and dropping the longer bench-era explanation.
