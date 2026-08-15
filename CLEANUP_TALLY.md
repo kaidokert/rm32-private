@@ -33,18 +33,17 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `6093447` on top of public `origin/main`
+As of public projection commit `4e981d2` on top of public `origin/main`
 `4b0e23a`:
 
 ```text
-10 files changed, 1124 insertions(+), 468 deletions(-)
+9 files changed, 830 insertions(+), 144 deletions(-)
 ```
 
 Current `rm32/` file list:
 
 ```text
 rm32/src/constants.rs
-rm32/src/control/input.rs
 rm32/src/control/isr_logic.rs
 rm32/src/control/shared_impl.rs
 rm32/src/control/state.rs
@@ -73,14 +72,7 @@ When reporting cleanup progress, include both:
 
 ## Next Candidates
 
-Immediate projection cleanup, not a public PR:
-
-- `rm32/src/control/input.rs` is only a 2-line test diff in the public
-  projection. Try resetting it to `origin/main` in `public-ultimate-squash`
-  and run tests. If it passes, the `rm32/` modified-file tally should drop
-  from 10 to 9 with no public PR.
-
-Best next public PR candidate after that:
+Best next public PR candidate:
 
 - `rm32/src/control/isr_logic.rs` commutation-timer polling/interrupt mode
   cleanup, with focused tests from `rm32/src/control/tests.rs`.
@@ -128,3 +120,10 @@ Avoid for the next PR:
   projection selectively: test/projection cleanup from `control/tests.rs` and
   `transfer.rs` was kept, private stm32 bench instrumentation was not, and
   remaining harness comment-only residue was dropped from the squash.
+- 2026-08-15: bench reintegration `fac84c6` was folded into the public
+  projection selectively. `rm32/src/control/input.rs` now matches public
+  `origin/main`, and `rm32/src/transfer.rs` was rebuilt from public main with
+  only the remaining `TransferActions.high_pin_count` bench diagnostic delta.
+  That diagnostic is still consumed by the public projection's shared/stm32
+  debug path, so removing it is a separate cleanup pass rather than a blind
+  reset.
