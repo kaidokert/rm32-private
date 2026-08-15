@@ -33,17 +33,16 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `c0fa0e6` on top of public `origin/main`
+As of public projection commit `6093447` on top of public `origin/main`
 `4b0e23a`:
 
 ```text
-11 files changed, 1158 insertions(+), 448 deletions(-)
+10 files changed, 1124 insertions(+), 468 deletions(-)
 ```
 
 Current `rm32/` file list:
 
 ```text
-rm32/src/bin/harness.rs
 rm32/src/constants.rs
 rm32/src/control/input.rs
 rm32/src/control/isr_logic.rs
@@ -94,3 +93,7 @@ When reporting cleanup progress, include both:
 - 2026-08-15: harness import cleanup is public via PR #90 (`4b0e23a`). The
   projection was rebased across it by keeping the public module-level imports
   and the explicit ignored BEMF zero-cross return value.
+- 2026-08-15: bench reintegration `287aa53` was folded into the public
+  projection selectively: test/projection cleanup from `control/tests.rs` and
+  `transfer.rs` was kept, private stm32 bench instrumentation was not, and
+  remaining harness comment-only residue was dropped from the squash.
