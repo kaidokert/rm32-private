@@ -19,18 +19,8 @@ pub struct TransferState {
     // Calibration entry
     enter_calibration_count: u8,
     last_input: u16,
-    // Bidirectional DShot auto-detection: counts consecutive frames where
-    // input pin is HIGH at idle (inverted signaling). >100 → bidir is a
-    // HINT only; commit requires inverted-CRC decode confirmation below.
     high_pin_count: u8,
-    // Bidir self-validation: consecutive successful inverted-CRC decodes
-    // while the high-idle hint is active. A high-idle line alone spuriously
-    // matches normal DShot frames that idle high briefly — committing on
-    // the hint alone inverted the CRC on non-bidir traffic and every frame
-    // then failed. Commit only after BIDIR_CONFIRM_FRAMES in a row.
     bidir_confirms: u8,
-    // Protocol re-confirmation: require 2 consecutive matching detections
-    // before locking protocol. Prevents false lock from single noisy frame.
     pending_protocol: Option<DetectedProtocol>,
 }
 
@@ -56,107 +46,74 @@ pub enum TransferAction {
     ServoThrottle(u16),
     /// Servo calibration in progress (signal alive, no throttle value)
     ServoCalibrating,
-    /// Servo calibration complete — persist thresholds to EEPROM
+    /// Servo calibration complete; persist thresholds to EEPROM.
     ServoCalibrationDone {
         low_threshold: u8,
         high_threshold: u8,
     },
 }
 
-/// DMA capture configuration — buffer size + timer prescaler.
-///
-/// Mirrors AM32's `buffersize` and `ic_timer_prescaler` globals: the
-/// decoder tells the HAL how to arm the next DMA capture and what timer
-/// resolution to use.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// DMA capture setup requested for the next input frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaptureConfig {
-    /// DMA transfer count (number of edges to capture)
+    /// DMA transfer count.
     pub ndtr: u32,
-    /// Timer prescaler value (None = don't change, Some(v) = set PSC to v).
-    /// AM32 sets `ic_timer_prescaler = CPU_FREQUENCY_MHZ - 1` for servo
-    /// (1 µs/tick) and 0 or 1 for DShot (max resolution).
+    /// Timer prescaler update, if protocol detection changed the capture rate.
     pub prescaler: Option<u16>,
 }
 
 impl CaptureConfig {
-    /// DShot detection / normal operation: 32 edges (AM32 `buffersize`),
-    /// no prescaler change.
-    ///
-    /// NDTR MUST be 32: a DShot frame is exactly 32 edges, so transfer-
-    /// complete fires on the frame's last edge and the re-arm lands in
-    /// the inter-frame gap — the capture window stays frame-locked. Any
-    /// other value consumes edges across frame boundaries and the window
-    /// slides, decoding against gap-spanning buffers.
     pub const DSHOT: Self = Self {
         ndtr: 32,
         prescaler: None,
     };
-
-    /// DShot detection (re-entry): 32 edges + slow prescaler so DShot
-    /// pulses fit `signal::detect_input()`'s tick-range thresholds.
-    /// Applied whenever detection mode is re-entered after a prior
-    /// detection fast-tracked the prescaler to 0/1.
-    ///
-    /// NDTR MUST be 32 here too: a 33-edge detection window consumes one
-    /// extra edge, handing steady-state capture a one-edge-misaligned
-    /// buffer that never re-locks (0% decode against a live stream —
-    /// invisible to host tests).
+    /// DShot detection uses one full frame. Using 33 edges consumes the next
+    /// frame's first edge and can leave steady-state capture misaligned.
     pub fn dshot_detection(cpu_mhz: u8) -> Self {
         Self {
             ndtr: 32,
             prescaler: Some((cpu_mhz / 6) as u16),
         }
     }
-
-    /// Servo aligned: 2 edges, no prescaler change (already set on detection).
     pub const SERVO: Self = Self {
         ndtr: 2,
         prescaler: None,
     };
-
-    /// Servo misaligned: 3 edges for realignment, no prescaler change.
     pub const SERVO_REALIGN: Self = Self {
         ndtr: 3,
         prescaler: None,
     };
 
-    /// Servo detected: 2 edges + prescaler to 1 µs/tick.
-    /// `cpu_mhz`: CPU frequency in MHz (prescaler = cpu_mhz - 1).
-    pub fn servo_detected(cpu_mhz: u8) -> Self {
-        Self {
-            ndtr: 2,
-            prescaler: Some(cpu_mhz as u16 - 1),
-        }
-    }
-
-    /// DShot600 detected: 32 edges + prescaler to 0 (max resolution).
     pub const DSHOT600_DETECTED: Self = Self {
         ndtr: 32,
         prescaler: Some(0),
     };
-
-    /// DShot300 detected: 32 edges + prescaler to 1 (half resolution).
     pub const DSHOT300_DETECTED: Self = Self {
         ndtr: 32,
         prescaler: Some(1),
     };
-
-    /// DShot150 detected: 32 edges + prescaler to 3 (quarter resolution).
     pub const DSHOT150_DETECTED: Self = Self {
         ndtr: 32,
         prescaler: Some(3),
     };
+
+    pub fn servo_detected(cpu_mhz: u8) -> Self {
+        Self {
+            ndtr: 2,
+            prescaler: Some(cpu_mhz.saturating_sub(1) as u16),
+        }
+    }
 }
 
 /// Actions the caller (ISR) should take after transfer complete.
 pub struct TransferActions {
     /// Primary action
     pub action: TransferAction,
-    /// DMA + timer config for next capture cycle
+    /// Capture setup for the next DMA cycle.
     pub next_capture: CaptureConfig,
     /// DShot frame timing update (from unarmed averaging)
     pub frametime: Option<(u16, u16)>,
-    /// Bidirectional DShot auto-detected (caller should set dshot_telemetry=true)
+    /// Bidirectional DShot auto-detected.
     pub bidir_detected: bool,
     /// Snapshot of `high_pin_count` for the bidir auto-detect path
     /// (published to a SharedState counter for diagnostics).
@@ -179,6 +136,7 @@ impl TransferState {
     /// `disable_stick_cal`: config disable_stick_calibration flag
     /// `zero_input_count`: current zero input counter
     /// `frametime_low/high`: current DShot frame timing bounds
+    /// `cpu_mhz`: MCU core/timer clock in MHz for capture prescaler selection
     #[allow(clippy::too_many_arguments)]
     pub fn process(
         &mut self,
@@ -201,7 +159,7 @@ impl TransferState {
         let mut action = TransferAction::None;
         let mut frametime = None;
 
-        // --- Input detection (requires 2 consecutive matching detections) ---
+        // --- Input detection ---
         if !input_set {
             let sig = signal::detect_input(dma_buffer, cpu_mhz);
             let protocol = match sig {
@@ -211,9 +169,6 @@ impl TransferState {
                 signal::SignalType::ServoPwm => Some(DetectedProtocol::Servo),
                 signal::SignalType::None => None,
             };
-            // Re-confirmation: first detection is tentative; second matching
-            // detection confirms. Invalid captures clear the tentative state,
-            // so the two detections must be consecutive.
             let confirmed = match (protocol, self.pending_protocol) {
                 (Some(protocol), Some(pending)) if protocol == pending => {
                     self.pending_protocol = None;
@@ -228,14 +183,8 @@ impl TransferState {
                     None
                 }
             };
-            // Only switch to the protocol's fast capture config once
-            // *confirmed*. Until then keep the slow detection prescaler so
-            // the heuristic's `smallest 1-8 ticks` ranges keep matching on
-            // the next frame — otherwise a single detect_input() hit drops
-            // the prescaler to 0/1 and the next frame's deltas blow past
-            // the detection thresholds, locking us out.
-            let (action, capture) = if let Some(protocol) = confirmed {
-                let cap = match sig {
+            let (action, next_capture) = if let Some(protocol) = confirmed {
+                let capture = match sig {
                     signal::SignalType::Dshot600 => CaptureConfig::DSHOT600_DETECTED,
                     signal::SignalType::Dshot300 => CaptureConfig::DSHOT300_DETECTED,
                     signal::SignalType::Dshot150 => CaptureConfig::DSHOT150_DETECTED,
@@ -244,7 +193,7 @@ impl TransferState {
                         unreachable!("confirmed input detection cannot have SignalType::None")
                     }
                 };
-                (TransferAction::InputDetected(protocol), cap)
+                (TransferAction::InputDetected(protocol), capture)
             } else {
                 (
                     TransferAction::None,
@@ -253,7 +202,7 @@ impl TransferState {
             };
             return TransferActions {
                 action,
-                next_capture: capture,
+                next_capture,
                 frametime,
                 bidir_detected: false,
                 high_pin_count: self.high_pin_count,
@@ -263,11 +212,6 @@ impl TransferState {
         let mut bidir_detected = false;
 
         // --- DShot processing ---
-        // 32 edges = exactly one frame, frame-locked by construction (see
-        // CaptureConfig::DSHOT): TC fires on the frame's last edge, the
-        // re-arm happens in the inter-frame gap, and the RCC-reset re-arm
-        // guarantees slot 0 is the frame's first edge. Decode directly —
-        // AM32-verbatim (dshot.c uses dma_buffer[0..32] as-is).
         if dshot_mode && dma_buffer.len() >= 32 {
             let buf: [u32; 32] = {
                 let mut b = [0u32; 32];
@@ -275,21 +219,17 @@ impl TransferState {
                 b
             };
             let frame = dshot::decode_frame(&buf, frametime_low, frametime_high, dshot_telemetry);
-            // Bidir self-validation (unarmed, hint active): try the SAME
-            // frame with inverted CRC. Only a run of successful inverted
-            // decodes commits bidir; a normal-CRC success while inverted
-            // fails proves the high idle was spurious — reset the hint.
             if !armed
                 && !dshot_telemetry
                 && input_pin_high
                 && self.high_pin_count >= crate::constants::BIDIR_IDLE_HIGH_FRAMES
             {
-                let inv = dshot::decode_frame(&buf, frametime_low, frametime_high, true);
-                let inv_ok = matches!(
-                    inv,
+                let inverted = dshot::decode_frame(&buf, frametime_low, frametime_high, true);
+                let inverted_ok = matches!(
+                    inverted,
                     dshot::DshotFrame::Throttle { .. } | dshot::DshotFrame::Command { .. }
                 );
-                if inv_ok {
+                if inverted_ok {
                     self.bidir_confirms = self.bidir_confirms.saturating_add(1);
                     if self.bidir_confirms >= crate::constants::BIDIR_CONFIRM_FRAMES {
                         bidir_detected = true;
@@ -342,10 +282,6 @@ impl TransferState {
 
         // --- Unarmed housekeeping ---
         if !armed {
-            // Bidirectional DShot auto-detection hint: idle pin HIGH for
-            // 100+ frames while unarmed suggests inverted (bidir)
-            // signaling. Commit happens in the decode block above, only
-            // after consecutive successful inverted-CRC decodes.
             if dshot_mode && !dshot_telemetry && input_pin_high {
                 self.high_pin_count = self.high_pin_count.saturating_add(1);
             } else {
@@ -358,14 +294,12 @@ impl TransferState {
         }
 
         if !armed {
-            // DShot frame averaging (for dshot_frametime calibration).
-            // Same alignment-detection logic as the decode path: smaller of
-            // the two candidate frametimes is the real frame.
+            // DShot frame averaging (for dshot_frametime calibration)
             if dshot_mode && self.average_count < 8 && *zero_input_count > 5 {
                 self.average_count += 1;
                 if dma_buffer.len() >= 32 {
-                    let frametime = dma_buffer[31].wrapping_sub(dma_buffer[0]) as u16;
-                    self.average_packet_length += frametime as u32;
+                    self.average_packet_length +=
+                        (dma_buffer[31].wrapping_sub(dma_buffer[0])) as u16 as u32;
                 }
                 if self.average_count == 8 {
                     let avg = self.average_packet_length >> 3;
@@ -399,8 +333,6 @@ impl TransferState {
             }
         }
 
-        // Compute next capture config — mirrors AM32's buffersize + ic_timer_prescaler.
-        // Prescaler only changes on detection (above); steady-state just adjusts NDTR.
         let next_capture = if servo_mode && input_pin_high {
             CaptureConfig::SERVO_REALIGN
         } else if servo_mode {
@@ -439,41 +371,13 @@ mod tests {
         assert_eq!(CaptureConfig::SERVO_REALIGN.ndtr, 3);
     }
 
-    #[test]
-    fn servo_pin_high_requests_realign() {
-        let mut state = TransferState::default();
-        let buf = [0u32; 2];
-        let mut zic = 0u16;
-        let actions = state.process(
-            &buf, true, false, true, false, false, true, // input_pin_high
-            0, 0, false, false, &mut zic, 400, 600, 64,
-        );
-        assert_eq!(actions.next_capture.ndtr, 3);
-        assert!(actions.next_capture.prescaler.is_none());
-    }
-
-    #[test]
-    fn servo_pin_low_requests_normal() {
-        let mut state = TransferState::default();
-        let buf = [1000u32, 2500];
-        state.servo.set_calibration(1100, 1900, 1500, 100);
-        let mut zic = 0u16;
-        let actions = state.process(
-            &buf, true, false, true, false, false, false, 0, 0, false, false, &mut zic, 400, 600,
-            64,
-        );
-        assert_eq!(actions.next_capture.ndtr, 2);
-        assert!(actions.next_capture.prescaler.is_none());
-    }
-
-    /// 32-slot DMA buffer holding exactly one DShot frame (frame-locked
-    /// capture: slot 0 = the frame's first edge).
     fn dshot_dma_buffer(value: u16, telem: bool, inverted_crc: bool) -> [u32; 32] {
         let mut bits = [0u8; 16];
-        for (i, b) in bits.iter_mut().enumerate().take(11) {
-            *b = ((value >> (10 - i)) & 1) as u8;
+        for (i, bit) in bits[..11].iter_mut().enumerate() {
+            *bit = ((value >> (10 - i)) & 1) as u8;
         }
         bits[11] = u8::from(telem);
+
         let mut crc = (bits[0] ^ bits[4] ^ bits[8]) << 3
             | (bits[1] ^ bits[5] ^ bits[9]) << 2
             | (bits[2] ^ bits[6] ^ bits[10]) << 1
@@ -485,11 +389,12 @@ mod tests {
         bits[13] = (crc >> 2) & 1;
         bits[14] = (crc >> 1) & 1;
         bits[15] = crc & 1;
+
         let mut buf = [0u32; 32];
         let mut base = 1000u32;
-        for i in 0..16 {
+        for (i, bit) in bits.iter().enumerate() {
             buf[i * 2] = base;
-            buf[i * 2 + 1] = base + if bits[i] != 0 { 22 } else { 10 };
+            buf[i * 2 + 1] = base + if *bit != 0 { 22 } else { 10 };
             base += 32;
         }
         buf
@@ -522,83 +427,231 @@ mod tests {
     }
 
     #[test]
-    fn bidir_hint_alone_never_commits() {
+    fn servo_pin_high_requests_realign_capture() {
         let mut state = TransferState::default();
-        let buf = dshot_dma_buffer(999, false, false); // normal CRC
-        let mut zic = 0u16;
-        for _ in 0..200 {
-            let actions = state.process(
-                &buf, true, true, false, false, false, true, // pin high, unarmed
-                0, 0, false, true, &mut zic, 400, 600, 64,
-            );
-            assert!(!actions.bidir_detected, "spurious bidir commit");
-            // Normal decoding keeps working throughout.
-            assert!(matches!(
-                actions.action,
-                TransferAction::DshotThrottle { value: 999, .. }
-            ));
-        }
-        // The hint keeps getting reset by successful normal decodes.
-        assert!(state.high_pin_count <= 101);
+        let mut zic = 0;
+        let actions = state.process(
+            &[0, 0, 0],
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            0,
+            0,
+            false,
+            false,
+            &mut zic,
+            400,
+            600,
+            64,
+        );
+
+        assert_eq!(actions.next_capture, CaptureConfig::SERVO_REALIGN);
     }
 
-    /// Real bidir traffic (inverted CRC + high idle) commits after the
-    /// hint threshold plus BIDIR_CONFIRM_FRAMES consecutive confirms.
     #[test]
-    fn bidir_commits_after_inverted_crc_confirms() {
+    fn servo_pin_low_requests_normal_capture() {
         let mut state = TransferState::default();
-        let buf = dshot_dma_buffer(999, false, true); // inverted CRC
-        let mut zic = 0u16;
-        let mut detected_at = None;
-        for n in 0..200 {
+        state.servo.set_calibration(1100, 1900, 1500, 100);
+        let mut zic = 0;
+        let actions = state.process(
+            &[1000, 2500],
+            true,
+            false,
+            true,
+            false,
+            false,
+            false,
+            0,
+            0,
+            false,
+            false,
+            &mut zic,
+            400,
+            600,
+            64,
+        );
+
+        assert_eq!(actions.next_capture, CaptureConfig::SERVO);
+        assert!(matches!(actions.action, TransferAction::ServoThrottle(_)));
+    }
+
+    #[test]
+    fn dshot_mode_requests_dshot_capture() {
+        let mut state = TransferState::default();
+        let mut zic = 0;
+        let actions = state.process(
+            &[0; 32], true, true, false, false, false, false, 0, 0, false, false, &mut zic, 400,
+            600, 64,
+        );
+
+        assert_eq!(actions.next_capture, CaptureConfig::DSHOT);
+    }
+
+    #[test]
+    fn dshot_detection_uses_one_frame_capture_window() {
+        assert_eq!(CaptureConfig::dshot_detection(60).ndtr, 32);
+        assert_eq!(CaptureConfig::dshot_detection(60).prescaler, Some(10));
+    }
+
+    #[test]
+    fn normal_dshot_with_high_pin_does_not_commit_bidir() {
+        let mut state = TransferState::default();
+        let mut zic = 0;
+        let frame = dshot_dma_buffer(0, false, false);
+
+        for _ in 0..200 {
             let actions = state.process(
-                &buf, true, true, false, false, false, true, // pin high, unarmed
-                0, 0, false, true, &mut zic, 400, 600, 64,
+                &frame, true, true, false, false, false, true, 0, 0, false, false, &mut zic, 400,
+                600, 64,
             );
-            // Until commit, normal-CRC decode fails (no throttle action).
-            if actions.bidir_detected && detected_at.is_none() {
-                detected_at = Some(n);
-            }
+
+            assert!(!actions.bidir_detected);
+            assert!(matches!(
+                actions.action,
+                TransferAction::DshotThrottle { value: 0, .. }
+            ));
         }
-        let n = detected_at.expect("bidir never committed");
+    }
+
+    #[test]
+    fn inverted_crc_dshot_with_high_pin_commits_bidir_after_confirms() {
+        let mut state = TransferState::default();
+        let mut zic = 0;
+        let frame = dshot_dma_buffer(0, false, true);
+        let mut detected_at = None;
         let expected_detect_at = crate::constants::BIDIR_IDLE_HIGH_FRAMES as usize
             + crate::constants::BIDIR_CONFIRM_FRAMES as usize
             - 1;
-        assert_eq!(n, expected_detect_at);
+
+        for tick in 0..150 {
+            let actions = state.process(
+                &frame, true, true, false, false, false, true, 0, 0, false, false, &mut zic, 400,
+                600, 64,
+            );
+
+            if actions.bidir_detected {
+                detected_at = Some(tick);
+                break;
+            }
+        }
+
+        assert_eq!(detected_at, Some(expected_detect_at));
     }
 
-    /// Armed traffic never runs the bidir probe (handshake is pre-arm).
     #[test]
-    fn bidir_probe_unarmed_only() {
+    fn bidir_autodetect_is_unarmed_only() {
         let mut state = TransferState::default();
-        let buf = dshot_dma_buffer(999, false, true);
-        let mut zic = 0u16;
-        for _ in 0..200 {
+        let mut zic = 0;
+        let frame = dshot_dma_buffer(0, false, true);
+
+        for _ in 0..150 {
             let actions = state.process(
-                &buf, true, true, false, false, true, true, // ARMED
-                0, 0, false, true, &mut zic, 400, 600, 64,
+                &frame, true, true, false, false, true, true, 0, 0, false, false, &mut zic, 400,
+                600, 64,
+            );
+
+            assert!(!actions.bidir_detected);
+        }
+    }
+
+    #[test]
+    fn bidir_autodetect_requires_high_pin() {
+        let mut state = TransferState::default();
+        let mut zic = 0;
+        let frame = dshot_dma_buffer(0, false, true);
+
+        for _ in 0..150 {
+            let actions = state.process(
+                &frame, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 400,
+                600, 64,
+            );
+
+            assert!(!actions.bidir_detected);
+        }
+    }
+
+    #[test]
+    fn bidir_autodetect_resets_when_pin_goes_low() {
+        let mut state = TransferState::default();
+        let mut zic = 0;
+        let normal = dshot_dma_buffer(0, false, false);
+        let inverted = dshot_dma_buffer(0, false, true);
+
+        for _ in 0..150 {
+            let actions = state.process(
+                &normal, true, true, false, false, false, true, 0, 0, false, false, &mut zic, 400,
+                600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+
+        for _ in 0..10 {
+            let actions = state.process(
+                &inverted, true, true, false, false, false, false, 0, 0, false, false, &mut zic,
+                400, 600, 64,
             );
             assert!(!actions.bidir_detected);
         }
     }
 
     #[test]
-    fn dshot_mode_requests_32() {
+    fn bidir_autodetect_resets_when_armed() {
         let mut state = TransferState::default();
-        let buf = [0u32; 32];
-        let mut zic = 0u16;
-        let actions = state.process(
-            &buf, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 400, 600,
+        let mut zic = 0;
+        let frame = dshot_dma_buffer(0, false, true);
+        let partial_confirm_frames = crate::constants::BIDIR_IDLE_HIGH_FRAMES as usize
+            + crate::constants::BIDIR_CONFIRM_FRAMES as usize
+            - 1;
+
+        for _ in 0..partial_confirm_frames {
+            let actions = state.process(
+                &frame, true, true, false, false, false, true, 0, 0, false, false, &mut zic, 400,
+                600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+
+        let armed = state.process(
+            &frame, true, true, false, false, true, true, 0, 0, false, false, &mut zic, 400, 600,
             64,
         );
-        // NDTR=32: one frame per capture, TC on the frame's last edge.
-        assert_eq!(actions.next_capture.ndtr, 32);
+        assert!(!armed.bidir_detected);
+
+        for _ in 0..crate::constants::BIDIR_CONFIRM_FRAMES {
+            let actions = state.process(
+                &frame, true, true, false, false, false, true, 0, 0, false, false, &mut zic, 400,
+                600, 64,
+            );
+            assert!(!actions.bidir_detected);
+        }
+    }
+
+    #[test]
+    fn first_dshot_detection_stays_tentative() {
+        let mut state = TransferState::default();
+        let mut zic = 0;
+        let mut buf = [0u32; 33];
+        for (i, slot) in buf.iter_mut().enumerate() {
+            *slot = 100 + i as u32 * 5;
+        }
+
+        let actions = state.process(
+            &buf, false, false, false, false, false, false, 0, 0, false, false, &mut zic, 400, 600,
+            60,
+        );
+
+        assert!(matches!(actions.action, TransferAction::None));
+        assert_eq!(actions.next_capture, CaptureConfig::dshot_detection(60));
+        assert_eq!(actions.next_capture.ndtr, CaptureConfig::DSHOT.ndtr);
     }
 
     #[test]
     fn invalid_detection_clears_pending_protocol() {
         let mut state = TransferState::default();
-        let mut zic = 0u16;
+        let mut zic = 0;
         let mut dshot = [0u32; 33];
         for (i, slot) in dshot.iter_mut().enumerate() {
             *slot = 100 + i as u32 * 5;
@@ -622,10 +675,6 @@ mod tests {
         assert_eq!(actions.next_capture, CaptureConfig::dshot_detection(60));
     }
 
-    /// REGRESSION (bench capture, Betaflight DSHOT300 @ PSC=1):
-    /// a real disarm frame — all-0 bits, 47/87-tick half-bits with the
-    /// observed jitter — must decode as Throttle{0}. These exact deltas
-    /// failed 97% of the time under the NDTR=33 sliding window.
     #[test]
     fn bf_dshot300_disarm_frame_decodes() {
         let buf = dshot300_disarm_capture();
@@ -643,6 +692,18 @@ mod tests {
             ),
             "expected DShot throttle 0, got {:?}",
             actions.action
+        );
+    }
+
+    #[test]
+    fn gap_spanning_capture_rejected() {
+        let buf = gap_spanning_capture();
+        let frame = dshot::decode_frame(&buf, 400, 600, false);
+
+        assert!(
+            matches!(frame, dshot::DshotFrame::InvalidTiming),
+            "gap-spanning capture decoded as {:?}",
+            frame
         );
     }
 
@@ -677,139 +738,90 @@ mod tests {
         }
     }
 
-    /// A gap-spanning capture (the NDTR=33 failure mode: window starts
-    /// mid-frame, spans the ~2 ms inter-frame gap whose u16-wrapped size
-    /// can sneak past the frametime window) must NOT decode a throttle.
     #[test]
-    fn gap_spanning_capture_rejected() {
-        let mut buf = [0u32; 32];
-        // 9 tail edges of frame k (uniform cadence), so the inter-frame
-        // gap lands INSIDE bit-pair 4 (slots 8,9) — the typical sliding-
-        // window phase. (A gap BETWEEN pairs with uniform edges decodes
-        // as a legal all-zero frame — identical in AM32's decoder; the
-        // guards there are frame-locked capture + the narrowed frametime
-        // window after unarmed averaging.)
-        let mut t = 5000u32;
-        for slot in buf.iter_mut().take(9) {
-            *slot = t;
-            t += 67;
-        }
-        // ...the inter-frame gap (78_400 ticks @40 MHz ≈ 1.96 ms — wraps
-        // u16 to 12_864, sneaking past the wide frametime window)...
-        t += 78_400;
-        // ...then 23 head edges of frame k+1.
-        for slot in buf.iter_mut().skip(9) {
-            *slot = t;
-            t += 67;
-        }
+    fn matching_servo_detection_locks_protocol() {
         let mut state = TransferState::default();
-        let mut zic = 0u16;
+        let mut zic = 0;
+        let mut buf = [0u32; 33];
+        for (i, slot) in buf.iter_mut().enumerate() {
+            *slot = 100 + i as u32 * 1000;
+        }
+
+        let _ = state.process(
+            &buf, false, false, false, false, false, false, 0, 0, false, false, &mut zic, 400, 600,
+            60,
+        );
         let actions = state.process(
-            &buf, true, true, false, false, false, false, 0, 0, false, false, &mut zic, 100, 60000,
-            80,
+            &buf, false, false, false, false, false, false, 0, 0, false, false, &mut zic, 400, 600,
+            60,
         );
-        assert!(
-            matches!(actions.action, TransferAction::None),
-            "gap-spanning capture must be rejected, got {:?}",
-            actions.action
-        );
+
+        assert!(matches!(
+            actions.action,
+            TransferAction::InputDetected(DetectedProtocol::Servo)
+        ));
+        assert_eq!(actions.next_capture, CaptureConfig::servo_detected(60));
     }
 
     #[test]
-    fn servo_detection_sets_prescaler() {
+    fn servo_calibration_done_returns_thresholds() {
         let mut state = TransferState::default();
-        // Servo-like pulse timing in detection buffer (32-edge layout — see
-        // CaptureConfig::DSHOT.ndtr).
-        let mut buf = [0u32; 32];
-        buf[0] = 100;
-        buf[1] = 5000; // large gap = servo-like
-        let mut zic = 0u16;
-        let actions = state.process(
-            &buf, false, // input_set=false → detection mode
-            false, false, false, false, false, 0, 0, false, false, &mut zic, 400, 600, 80,
-        );
-        if let TransferAction::InputDetected(DetectedProtocol::Servo) = actions.action {
-            assert_eq!(actions.next_capture.prescaler, Some(79)); // cpu_mhz - 1
-            assert_eq!(actions.next_capture.ndtr, 2);
-        }
-        // (If detection doesn't trigger with this buffer, the test is inconclusive
-        // but won't fail — detection depends on signal timing heuristics)
-    }
+        state.servo.set_calibration_required(true);
+        let mut zic = 0;
 
-    #[test]
-    fn bidir_auto_detect_after_100_frames() {
-        // CONTRACT CHANGE: the 100-frame high-idle count is now only a
-        // HINT — commitment additionally requires BIDIR_CONFIRM_FRAMES
-        // consecutive successful inverted-CRC decodes (see
-        // bidir_commits_after_inverted_crc_confirms). A high idle with
-        // no decodable inverted frames (this test: garbage buffers) must
-        // NEVER commit — that was the false-positive that used to apply
-        // CRC inversion to normal DShot traffic.
-        let mut state = TransferState::default();
-        let buf = [0u32; 32];
-        let mut zic = 0u16;
-
-        for _ in 0..200 {
-            let actions = state.process(
-                &buf, true, true, false, false, // dshot_telemetry=false
-                false, // armed=false
-                true,  // input_pin_high=true (idle-high hint)
-                0, 0, false, false, &mut zic, 400, 600, 64,
+        for _ in 0..51 {
+            let high = state.process(
+                &[1000, 2900],
+                true,
+                false,
+                true,
+                false,
+                false,
+                false,
+                0,
+                0,
+                false,
+                false,
+                &mut zic,
+                400,
+                600,
+                64,
             );
-            assert!(!actions.bidir_detected);
+            assert!(matches!(
+                high.action,
+                TransferAction::ServoCalibrating | TransferAction::ServoCalibrationDone { .. }
+            ));
         }
-        // The hint itself accumulated…
-        assert!(state.high_pin_count > 100);
-        // …but no confirms, so no commit.
-        assert_eq!(state.bidir_confirms, 0);
-    }
 
-    #[test]
-    fn bidir_not_detected_when_pin_low() {
-        let mut state = TransferState::default();
-        let buf = [0u32; 32];
-        let mut zic = 0u16;
-
-        // 200 frames with pin LOW — no detection
-        for _ in 0..200 {
-            let actions = state.process(
-                &buf, true, true, false, false, false, false, // pin LOW
-                0, 0, false, false, &mut zic, 400, 600, 64,
-            );
-            assert!(!actions.bidir_detected);
+        let mut done = TransferAction::None;
+        for _ in 0..76 {
+            done = state
+                .process(
+                    &[1000, 2100],
+                    true,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    0,
+                    0,
+                    false,
+                    false,
+                    &mut zic,
+                    400,
+                    600,
+                    64,
+                )
+                .action;
         }
-    }
 
-    #[test]
-    fn bidir_not_detected_when_armed() {
-        let mut state = TransferState::default();
-        let buf = [0u32; 32];
-        let mut zic = 0u16;
-
-        // 200 frames with pin HIGH but armed — no detection
-        for _ in 0..200 {
-            let actions = state.process(
-                &buf, true, true, false, false, true, // armed=true
-                true, 0, 0, false, false, &mut zic, 400, 600, 64,
-            );
-            assert!(!actions.bidir_detected);
-        }
-    }
-
-    #[test]
-    fn bidir_not_detected_when_already_set() {
-        let mut state = TransferState::default();
-        let buf = [0u32; 32];
-        let mut zic = 0u16;
-
-        // 200 frames with pin HIGH and dshot_telemetry already true
-        for _ in 0..200 {
-            let actions = state.process(
-                &buf, true, true, false, true, // dshot_telemetry=true
-                false, true, 0, 0, false, false, &mut zic, 400, 600, 64,
-            );
-            // Counter shouldn't increment when already detected
-            assert!(!actions.bidir_detected);
-        }
+        assert!(matches!(
+            done,
+            TransferAction::ServoCalibrationDone {
+                low_threshold: _,
+                high_threshold: _
+            }
+        ));
     }
 }

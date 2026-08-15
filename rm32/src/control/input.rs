@@ -236,6 +236,7 @@ mod tests {
     use super::*;
     use crate::control::shared_impl::TestShared;
     use crate::motor_mode::MotorMode;
+    use crate::shared_comm::MainControl;
 
     fn setup() -> (TestShared, EepromConfig, ProtectionState, InputState) {
         let shared = TestShared::new();
@@ -267,6 +268,7 @@ mod tests {
         process_input(&shared, &config, &mut prot, &mut input);
         assert_eq!(input.input, 0);
         assert_eq!(shared.adjusted_input.get(), 0);
+        assert_eq!(shared.isr_action(), crate::shared_comm::IsrAction::AllOff);
         assert_eq!(prot.bemf_timeout_happened, BEMF_FAULT_LATCHED);
     }
 
