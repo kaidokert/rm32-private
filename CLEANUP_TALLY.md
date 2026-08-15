@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `9d3a14f` on top of public `origin/main`
-`b164392`:
+As of public projection commit `c28e0c7` on top of public `origin/main`
+`8da5e48`:
 
 ```text
-12 files changed, 1431 insertions(+), 535 deletions(-)
+11 files changed, 1258 insertions(+), 478 deletions(-)
 ```
 
 Current `rm32/` file list:
@@ -53,7 +53,6 @@ rm32/src/control/tests.rs
 rm32/src/main_state.rs
 rm32/src/shared_comm.rs
 rm32/src/shared_state.rs
-rm32/src/system.rs
 rm32/src/transfer.rs
 ```
 
