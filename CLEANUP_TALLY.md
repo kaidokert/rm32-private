@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `9a535e9` on top of public `origin/main`
-`56744b0`:
+As of public projection commit `77a90e2` on top of public `origin/main`
+`9ff612b`:
 
 ```text
-11 files changed, 1173 insertions(+), 452 deletions(-)
+11 files changed, 1164 insertions(+), 453 deletions(-)
 ```
 
 Current `rm32/` file list:
@@ -88,3 +88,6 @@ When reporting cleanup progress, include both:
 - 2026-08-14: zero-throttle idle BEMF/zero-cross cleanup is public via
   PR #88 (`56744b0`). The projection was rebased across it by keeping the
   short public comment and dropping the longer bench-era explanation.
+- 2026-08-15: stopped COMP masking is public via PR #89 (`9ff612b`). The
+  projection was rebased across it by keeping the concise public tick-side
+  comment and preserving the timer-side stopped guard.
