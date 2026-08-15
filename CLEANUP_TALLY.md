@@ -81,3 +81,7 @@ When reporting cleanup progress, include both:
   exposing `high_pin_count`, and it replaces unrelated servo calibration
   coverage in the projection. Treat this as projection cleanup or deferred
   diagnostics, not as another laundering chunk.
+- 2026-08-14: signal-timeout reset behavior is already public in
+  `origin/main` via PR #61 (`89b80dc`). The remaining signal-timeout delta
+  in the projection is comment/test reshaping around existing behavior, not
+  a useful standalone public PR.
