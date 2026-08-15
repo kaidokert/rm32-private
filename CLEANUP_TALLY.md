@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `77a90e2` on top of public `origin/main`
-`9ff612b`:
+As of public projection commit `c0fa0e6` on top of public `origin/main`
+`4b0e23a`:
 
 ```text
-11 files changed, 1164 insertions(+), 453 deletions(-)
+11 files changed, 1158 insertions(+), 448 deletions(-)
 ```
 
 Current `rm32/` file list:
@@ -91,3 +91,6 @@ When reporting cleanup progress, include both:
 - 2026-08-15: stopped COMP masking is public via PR #89 (`9ff612b`). The
   projection was rebased across it by keeping the concise public tick-side
   comment and preserving the timer-side stopped guard.
+- 2026-08-15: harness import cleanup is public via PR #90 (`4b0e23a`). The
+  projection was rebased across it by keeping the public module-level imports
+  and the explicit ignored BEMF zero-cross return value.
