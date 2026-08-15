@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `4e981d2` on top of public `origin/main`
-`4b0e23a`:
+As of public projection commit `aa528d9` on top of public `origin/main`
+`a79830d`:
 
 ```text
-9 files changed, 830 insertions(+), 144 deletions(-)
+9 files changed, 830 insertions(+), 143 deletions(-)
 ```
 
 Current `rm32/` file list:
@@ -127,3 +127,9 @@ Avoid for the next PR:
   That diagnostic is still consumed by the public projection's shared/stm32
   debug path, so removing it is a separate cleanup pass rather than a blind
   reset.
+- 2026-08-15: startup COMP masking is public via PR #91 (`a79830d`). The
+  projection was rebased across it, which removed that one-line deletion from
+  the remaining squash.
+- 2026-08-15: bench reintegration `1495e79` added `minz/` qualification
+  instrumentation only. It does not change the public `rm32/` projection or
+  the `rm32/` tally.
