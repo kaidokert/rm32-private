@@ -71,6 +71,37 @@ When reporting cleanup progress, include both:
 - `git diff --shortstat origin/main HEAD -- rm32`
 - `git diff --name-only origin/main HEAD -- rm32`
 
+## Next Candidates
+
+Immediate projection cleanup, not a public PR:
+
+- `rm32/src/control/input.rs` is only a 2-line test diff in the public
+  projection. Try resetting it to `origin/main` in `public-ultimate-squash`
+  and run tests. If it passes, the `rm32/` modified-file tally should drop
+  from 10 to 9 with no public PR.
+
+Best next public PR candidate after that:
+
+- `rm32/src/control/isr_logic.rs` commutation-timer polling/interrupt mode
+  cleanup, with focused tests from `rm32/src/control/tests.rs`.
+- Scope: do not re-enable COMP while still in polling mode; use interval-only
+  normal changeover and zero-cross + interval strict changeover; avoid same-step
+  demote/promote churn.
+- This is behavioral, but more defensible than the desync/orbit/reclimb policy:
+  it is AM32-intent shaped, cross-board relevant, and already has unit coverage
+  in the projection.
+- Before publishing, strip the long narrative comments hard.
+
+Avoid for the next PR:
+
+- `main_state.rs` desync/orbit/reclimb constants and policy: still
+  board-qualified on L431 only.
+- `DutyKickHalf` / `DutyKickDown`: tied to that desync policy.
+- stm32 bench/runtime instrumentation from the bench branch: private/bench
+  cruft, not public PR material.
+- Most of `transfer.rs`: still has comment/test churn and needs another cleanup
+  pass before it is a clean public slice.
+
 ## Notes
 
 - 2026-08-14: bidirectional DShot auto-detect self-validation is already
