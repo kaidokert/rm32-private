@@ -71,3 +71,13 @@ When reporting cleanup progress, include both:
 
 - `git diff --shortstat origin/main HEAD -- rm32`
 - `git diff --name-only origin/main HEAD -- rm32`
+
+## Notes
+
+- 2026-08-14: bidirectional DShot auto-detect self-validation is already
+  public in `origin/main` via PR #66 (`edde774`). The remaining
+  bidir-looking delta in `rm32/src/transfer.rs` is not a clean public PR:
+  it is mostly comment/test reshaping plus bench diagnostics such as
+  exposing `high_pin_count`, and it replaces unrelated servo calibration
+  coverage in the projection. Treat this as projection cleanup or deferred
+  diagnostics, not as another laundering chunk.
