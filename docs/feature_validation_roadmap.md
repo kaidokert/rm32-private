@@ -106,6 +106,19 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   pinned (mechanical state cleared / prop attention); if it recurs,
   start at the prop stack.
 
+## 2026-08-16: #93 merged — END OF THE MECHANICAL ROAD
+
+- Merged #93 (control hygiene; aligned TestShared method ordering to
+  upstream). 356 host + 81 vectors green; bench ladder PASS 1,532,730
+  comms / dsy=0, slam PASS 262,287 comms / dsy=0.
+- Operator declaration: the upstreaming pipeline has consumed
+  everything mechanically transferable. The REMAINING rm32/ diff is
+  the questionable pile by construction: desync/orbit/reclimb policy
+  (L431-bench-qualified only), DutyKickHalf/DutyKickDown recovery,
+  bench machinery behind `bench-diag`, tone/sounds feature, and the
+  tick-rate constants awaiting F0/G0 bringup. Each needs a judgment
+  call (qualify cross-board, redesign, or stay private) — not a PR.
+
 ## 2026-08-15 evening: #91-92 merge + tally directives + LOCKUP #3
 
 - Merged #91 (comp masked during polling startup) + #92 (slow-timer
