@@ -71,6 +71,21 @@ When reporting cleanup progress, include both:
 
 ## Next Candidates
 
+Immediate next action:
+
+- Do a projection cleanup pass before the next public behavior PR. The current
+  eight-file `rm32/` delta is no longer full of easy isolated fixes; much of it
+  is desync/orbit/reclimb policy that is bench-qualified only on L431.
+- Remove or quarantine bench-only observability from the public squash:
+  `shared_state.rs` debug counters and `transfer.rs high_pin_count` are useful
+  while debugging, but should not leak into public code unless promoted into a
+  deliberate, supported observability API.
+- Trim narrative comments in `constants.rs`, `main_state.rs`,
+  `control/isr_logic.rs`, `shared_comm.rs`, and `shared_state.rs`. Keep short
+  comments that explain non-obvious AM32 intent or hardware constraints; drop
+  bench forensics, line-number archaeology, "kept divergence" essays, and
+  long story blocks.
+
 Best next public PR candidate:
 
 - Prefer a small cleanup around 1 kHz ADC/PID/LVC dispatch if a minimal
