@@ -33,16 +33,17 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `950aa84` on top of public `origin/main`
+As of public projection commit `4554100` on top of public `origin/main`
 `2fc0e34`:
 
 ```text
-8 files changed, 760 insertions(+), 141 deletions(-)
+9 files changed, 808 insertions(+), 141 deletions(-)
 ```
 
 Current `rm32/` file list:
 
 ```text
+rm32/Cargo.toml
 rm32/src/constants.rs
 rm32/src/control/isr_logic.rs
 rm32/src/control/shared_impl.rs
@@ -152,3 +153,10 @@ Avoid for the next PR:
   `commutate_kick_inflates_ci_zcfoundroutine` test coverage was removed from
   the squash, dropping `rm32/src/control/tests.rs` from the remaining `rm32/`
   tally.
+- 2026-08-15: bench cleanup from `private/am32_sheet` (`510de4b`) was folded
+  into the public projection selectively. The useful part was quarantining
+  bench diagnostics behind an explicit `rm32/bench-diag` feature; `rm32`
+  itself defaults to no bench diagnostics, while the current `rm32_stm32`
+  bench firmware dependency opts in. This intentionally adds `rm32/Cargo.toml`
+  to the `rm32/` tally, so the file count is 9 even though the public-default
+  surface is cleaner.
