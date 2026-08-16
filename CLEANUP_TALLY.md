@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `aa528d9` on top of public `origin/main`
-`a79830d`:
+As of public projection commit `950aa84` on top of public `origin/main`
+`2fc0e34`:
 
 ```text
-9 files changed, 830 insertions(+), 143 deletions(-)
+8 files changed, 760 insertions(+), 141 deletions(-)
 ```
 
 Current `rm32/` file list:
@@ -47,7 +47,6 @@ rm32/src/constants.rs
 rm32/src/control/isr_logic.rs
 rm32/src/control/shared_impl.rs
 rm32/src/control/state.rs
-rm32/src/control/tests.rs
 rm32/src/main_state.rs
 rm32/src/shared_comm.rs
 rm32/src/shared_state.rs
@@ -74,25 +73,25 @@ When reporting cleanup progress, include both:
 
 Best next public PR candidate:
 
-- `rm32/src/control/isr_logic.rs` commutation-timer polling/interrupt mode
-  cleanup, with focused tests from `rm32/src/control/tests.rs`.
-- Scope: do not re-enable COMP while still in polling mode; use interval-only
-  normal changeover and zero-cross + interval strict changeover; avoid same-step
-  demote/promote churn.
-- This is behavioral, but more defensible than the desync/orbit/reclimb policy:
-  it is AM32-intent shaped, cross-board relevant, and already has unit coverage
-  in the projection.
-- Before publishing, strip the long narrative comments hard.
+- Prefer a small cleanup around 1 kHz ADC/PID/LVC dispatch if a minimal
+  still-private delta remains after the rebase. It is cross-board and
+  AM32-intent shaped.
+- Otherwise, pause the behavioral PR stream and do projection cleanup first:
+  strip narrative comments, delete bench-only diagnostics, and keep the public
+  squash close to reviewable code before touching desync/orbit/reclimb.
 
 Avoid for the next PR:
 
 - `main_state.rs` desync/orbit/reclimb constants and policy: still
   board-qualified on L431 only.
 - `DutyKickHalf` / `DutyKickDown`: tied to that desync policy.
+- `shared_state.rs` bench debug counters and `transfer.rs high_pin_count`:
+  useful during bench work, but not a clean public behavior slice unless they
+  are explicitly converted into a supported observability API.
 - stm32 bench/runtime instrumentation from the bench branch: private/bench
   cruft, not public PR material.
-- Most of `transfer.rs`: still has comment/test churn and needs another cleanup
-  pass before it is a clean public slice.
+- Comment-only expansions that cite bench forensics or line-number archaeology:
+  keep the short reason, drop the story.
 
 ## Notes
 
@@ -133,3 +132,8 @@ Avoid for the next PR:
 - 2026-08-15: bench reintegration `1495e79` added `minz/` qualification
   instrumentation only. It does not change the public `rm32/` projection or
   the `rm32/` tally.
+- 2026-08-15: commutation timer polling demotion is public via PR #92
+  (`2fc0e34`). The projection was rebased across it; stale duplicate
+  `commutate_kick_inflates_ci_zcfoundroutine` test coverage was removed from
+  the squash, dropping `rm32/src/control/tests.rs` from the remaining `rm32/`
+  tally.
