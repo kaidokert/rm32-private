@@ -33,11 +33,11 @@ tools. Those are intentionally filtered out of the public squash projection.
 
 ## Current Tally
 
-As of public projection commit `4554100` on top of public `origin/main`
+As of public projection commit `383c086` on top of public `origin/main`
 `2fc0e34`:
 
 ```text
-9 files changed, 808 insertions(+), 141 deletions(-)
+9 files changed, 675 insertions(+), 124 deletions(-)
 ```
 
 Current `rm32/` file list:
@@ -160,3 +160,8 @@ Avoid for the next PR:
   bench firmware dependency opts in. This intentionally adds `rm32/Cargo.toml`
   to the `rm32/` tally, so the file count is 9 even though the public-default
   surface is cleaner.
+- 2026-08-15: scrub-only cleanup folded into projection `383c086`: shortened
+  narrative comments, removed unused stall-path residue, and restored local
+  `IsrAction` imports. No behavior was intentionally changed; this reduced the
+  `rm32/` tally from `808 insertions / 141 deletions` to
+  `675 insertions / 124 deletions`.
