@@ -128,10 +128,12 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   corruption invisible to debug data reads; core fetch faults, the
   bootloader's garbage fault vector turns it into lockup. Trigger
   correlates with power-cycles (three for three).
-- Re-qual on the final tree BLOCKED: FC->PA2 signal link dead again
-  (zero edges; FC verified alive + DSHOT300-configured over COM42;
-  morning-good build also sees nothing -> physical). Ladder+slam owed
-  once the wire is back.
+- Re-qual on the final tree: briefly BLOCKED on a dead FC->PA2 link
+  (operator had rewired for experimentation; zero edges, code
+  exonerated both directions). After rewire: ladder PASS 1,515,945
+  comms / dsy=0 / 0 resets; slam PASS 261,431 comms / dsy=0 /
+  0 resets — full re-qual green on the merged+trimmed+quarantined
+  tree.
 
 ## Merge 2026-08-15 (#86-90) — config-write ring converges
 
