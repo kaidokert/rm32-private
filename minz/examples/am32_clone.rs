@@ -529,9 +529,10 @@ fn rx_drain(uart: &mut UartDuty, duty: &Duty, bench: &Bench) {
             minz::monitor::key(c);
             continue;
         }
-        // krabimon tier dial ('m'); only when the monitor isn't also claiming it.
+        // krabimon dials ('m' tier, 'R' one-shot live retained profile);
+        // only when the monitor isn't also claiming 'm'.
         #[cfg(all(feature = "krabimon", not(feature = "monitor")))]
-        if c == b'm' {
+        if matches!(c, b'm' | b'R') {
             minz::krabimon::key(c);
             continue;
         }
@@ -730,6 +731,17 @@ fn print_info(
             krab::W_ACF1.load(Ordering::Relaxed),
             krab::W_ZC.load(Ordering::Relaxed),
             krab::W_LMIN.load(Ordering::Relaxed),
+        );
+        // Live end-to-end BlockRetainedCaptureProfile (personality path, 'R'
+        // key): DWT cost + decision fields from the real firmware on live data.
+        let _ = write!(
+            tx,
+            "krab.r n={} cyc={} var={} peak={} mi={}\r\n",
+            krab::RET_N.load(Ordering::Relaxed),
+            krab::RET_CYC.load(Ordering::Relaxed),
+            krab::RET_VAR.load(Ordering::Relaxed),
+            krab::RET_PEAK.load(Ordering::Relaxed),
+            krab::RET_MI.load(Ordering::Relaxed),
         );
     }
 }

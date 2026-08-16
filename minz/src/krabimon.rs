@@ -37,11 +37,14 @@
 //! (F0/G0) portability of the u128 windowed path is a cost question, answered by
 //! the `wcyc` readout below.
 
-use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, Ordering};
 use cortex_m::peripheral::DWT;
+use krabilorean::feature_bank::periodicity::PeriodicityResult;
 use krabilorean::histogram::HistogramBounds;
+use krabilorean::personality::{BlockPrecisionPolicy, NearestTiesAway};
 use krabilorean::policy::Checked;
 use krabilorean::profiles::{CoreMergeProfile, core_merge_profile};
+use krabilorean::windowed::dynamics::{BlockGaussianMiWorkspace, BlockRetainedCaptureProfile};
 use krabilorean::windowed::{Autocorrelation, BasicProfile, Workspace};
 
 /// Windowed epoch length (samples per BasicProfile evaluation). Capped at the
@@ -92,6 +95,24 @@ pub static W_MODE: AtomicI32 = AtomicI32::new(-1); // histogram mode bin (-1 non
 pub static W_ACF1: AtomicI32 = AtomicI32::new(0); // lag-1 autocorr, milli (Q30→×1000)
 pub static W_ZC: AtomicI32 = AtomicI32::new(-1); // first non-positive lag
 pub static W_LMIN: AtomicI32 = AtomicI32::new(-1); // first local-minimum lag
+// live end-to-end BlockRetainedCaptureProfile (one-shot, 'R' key). This is the
+// personality path (block12) run on a LIVE 128-sample commutation window in the
+// real firmware — the integration deliverable. It stalls main ~7-18 ms once, so
+// it is one-shot, never per-window (ISRs preempt; the lock rides through).
+pub static RUN_RETAINED: AtomicBool = AtomicBool::new(false);
+pub static RET_N: AtomicU32 = AtomicU32::new(0); // completed evaluations
+pub static RET_CYC: AtomicU32 = AtomicU32::new(0); // DWT cost of the last one
+pub static RET_VAR: AtomicI32 = AtomicI32::new(-1); // block population variance
+pub static RET_PEAK: AtomicI32 = AtomicI32::new(-2); // periodicity peak lag (-2 = ZeroVar)
+pub static RET_MI: AtomicI32 = AtomicI32::new(-1); // Gaussian-MI first local min lag
+
+/// Dynamics window params for the live retained profile (MAX_LEN <= 128).
+const D_LEN: usize = 128;
+const D_LAGS: usize = 32;
+const D_MINP: usize = 2;
+const D_MAXP: usize = 64;
+const D_SIG: u32 = 12;
+const MAXMAG: u32 = 32_768;
 
 /// One cumulative-exact channel: Extrema + RunningMoments + SuccessiveDifference.
 struct Chan {
@@ -208,6 +229,12 @@ impl Krabimon {
             // SAFETY: main-only, single consumer; WIN_BUF/WIN_WS are never
             // touched from any ISR.
             let buf = unsafe { &mut *core::ptr::addr_of_mut!(WIN_BUF) };
+            // One-shot live retained-profile run ('R' key): the personality
+            // (block12) end-to-end on a LIVE 128-window in the real firmware.
+            if RUN_RETAINED.load(Ordering::Relaxed) && self.fill >= D_LEN {
+                RUN_RETAINED.store(false, Ordering::Relaxed);
+                run_retained(&buf[..D_LEN]);
+            }
             buf[self.fill] = ci;
             self.fill += 1;
             if self.fill >= WIN_LEN {
@@ -261,18 +288,74 @@ impl Default for Krabimon {
     }
 }
 
-/// Handle a krabimon control key ('m' cycles tier). Resets the cost floors so
-/// they reflect the new tier.
+/// One live end-to-end BlockRetainedCaptureProfile evaluation (block12) over a
+/// 128-sample live commutation window. DWT-timed; publishes cost + decision
+/// fields. Runs in main context; stalls main ~7-18 ms once (ISRs preempt).
+fn run_retained(w: &[i16]) {
+    let profile = match BlockRetainedCaptureProfile::<
+        D_LEN,
+        D_LAGS,
+        D_MINP,
+        D_MAXP,
+        D_SIG,
+        NearestTiesAway,
+    >::new(MAXMAG, BlockPrecisionPolicy::unrestricted())
+    {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let mut ws = BlockGaussianMiWorkspace::<D_LAGS>::new();
+    let t0 = DWT::cycle_count();
+    let ev = profile.evaluate(w, &mut ws);
+    let cost = DWT::cycle_count().wrapping_sub(t0);
+    RET_CYC.store(cost, Ordering::Relaxed);
+    match ev {
+        Ok(ev) => {
+            let pv = ev.variance.population_variance;
+            let v = ((pv.numerator as u64) << pv.numerator_binary_exponent)
+                / (pv.denominator as u64).max(1);
+            RET_VAR.store(v.min(i32::MAX as u64) as i32, Ordering::Relaxed);
+            let peak = match ev.periodicity.result {
+                PeriodicityResult::Defined(f) => {
+                    f.strongest_positive.map(|p| p.lag as i32).unwrap_or(-1)
+                }
+                PeriodicityResult::ZeroVariance => -2,
+                _ => -3,
+            };
+            RET_PEAK.store(peak, Ordering::Relaxed);
+            RET_MI.store(
+                ev.gaussian_mi
+                    .curve
+                    .first_local_minimum
+                    .map(|x| x as i32)
+                    .unwrap_or(-1),
+                Ordering::Relaxed,
+            );
+        }
+        Err(_) => {
+            RET_VAR.store(-1, Ordering::Relaxed);
+            RET_PEAK.store(-4, Ordering::Relaxed);
+        }
+    }
+    RET_N.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Handle a krabimon control key ('m' cycles tier, 'R' arms one live retained
+/// evaluation). Resets the cost floors so they reflect the new tier.
 pub fn key(b: u8) {
-    if b == b'm' {
-        let t = TIER.load(Ordering::Relaxed);
-        let next = match t {
-            1 => 2,
-            2 => 0,
-            _ => 1,
-        };
-        TIER.store(next, Ordering::Relaxed);
-        MIN_CYC.store(u32::MAX, Ordering::Relaxed);
-        WIN_MIN_CYC.store(u32::MAX, Ordering::Relaxed);
+    match b {
+        b'm' => {
+            let t = TIER.load(Ordering::Relaxed);
+            let next = match t {
+                1 => 2,
+                2 => 0,
+                _ => 1,
+            };
+            TIER.store(next, Ordering::Relaxed);
+            MIN_CYC.store(u32::MAX, Ordering::Relaxed);
+            WIN_MIN_CYC.store(u32::MAX, Ordering::Relaxed);
+        }
+        b'R' => RUN_RETAINED.store(true, Ordering::Relaxed),
+        _ => {}
     }
 }
