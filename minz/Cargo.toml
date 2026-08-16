@@ -33,7 +33,7 @@ ratch22 = { path = "ratch22-sketch/ratch22", optional = true }
 # with const features that only exist in the fork patched below; a git dep
 # does NOT inherit its own workspace's [patch] table, so minz must replicate
 # the fixed-fork patch itself (see [patch.crates-io] at the bottom).
-krabilorean = { git = "https://github.com/kaidokert/krabilorean-rs-private", tag = "v0.1.0-alpha.1", optional = true }
+krabilorean = { git = "https://github.com/kaidokert/krabilorean-rs-private", tag = "v0.1.0-alpha.3", optional = true }
 # Host-testable control/guard/telemetry logic — the extracted brain.
 # `cd core && cargo test` runs its suite on the host.
 minz-core = { path = "core" }
