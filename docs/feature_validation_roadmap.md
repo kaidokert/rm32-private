@@ -106,6 +106,33 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   pinned (mechanical state cleared / prop attention); if it recurs,
   start at the prop stack.
 
+## 2026-08-15 evening: #91-92 merge + tally directives + LOCKUP #3
+
+- Merged #91 (comp masked during polling startup) + #92 (slow-timer
+  demotion) — both public landings of our logic; conflicts were
+  comment-only, took theirs. Tally-agent directives executed: input.rs
+  + transfer.rs converged onto upstream (transfer keeps only the
+  high_pin_count diagnostic); main.c line-number archaeology and
+  KEPT-DIVERGENCE labels stripped from comments; bench observability
+  (shared_state dbg_* counters, high_pin_count) quarantined behind a
+  default-on `bench-diag` feature — `--no-default-features` builds the
+  exact public surface.
+- [!] RECURRING LOCKUP, THIRD INSTANCE — instrumented per watch item:
+  core locked (unrecoverable exception), PC=0x01000000,
+  LR=0xFFFFFFF9, SP=initial MSP; bootloader vector table active at
+  fault time (its non-reset vectors legitimately point at garbage).
+  ALL flash content verified byte-intact over SWD (bootloader + app
+  vectors + both EEPROM pages) — data reads see nothing wrong, yet
+  every build incl. known-good locks at boot. Mass erase + identical
+  re-image cured it AGAIN. Leading theory: ECC-syndrome/option-level
+  corruption invisible to debug data reads; core fetch faults, the
+  bootloader's garbage fault vector turns it into lockup. Trigger
+  correlates with power-cycles (three for three).
+- Re-qual on the final tree BLOCKED: FC->PA2 signal link dead again
+  (zero edges; FC verified alive + DSHOT300-configured over COM42;
+  morning-good build also sees nothing -> physical). Ladder+slam owed
+  once the wire is back.
+
 ## Merge 2026-08-15 (#86-90) — config-write ring converges
 
 - origin/main #86-90 merged at 7e53ea6 (tag pre-main-merge-20260815).
