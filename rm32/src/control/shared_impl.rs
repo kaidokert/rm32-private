@@ -160,20 +160,6 @@ impl IsrTiming for TestShared {
 }
 
 impl MainControl for TestShared {
-    fn isr_action(&self) -> IsrAction {
-        self.isr_action.get()
-    }
-    fn request_isr_action(&self, action: IsrAction) {
-        // fetch_max semantics of the real SharedState channel
-        if action as u8 > self.isr_action.get() as u8 {
-            self.isr_action.set(action);
-        }
-    }
-    fn clear_isr_action(&self, action: IsrAction) {
-        if self.isr_action.get() == action {
-            self.isr_action.set(IsrAction::None);
-        }
-    }
     fn adjusted_input(&self) -> u16 {
         self.adjusted_input.get()
     }
@@ -221,6 +207,19 @@ impl MainControl for TestShared {
     }
     fn set_prop_brake_active(&self, v: bool) {
         self.prop_brake_active.set(v);
+    }
+    fn isr_action(&self) -> IsrAction {
+        self.isr_action.get()
+    }
+    fn request_isr_action(&self, action: IsrAction) {
+        if action as u8 > self.isr_action.get() as u8 {
+            self.isr_action.set(action);
+        }
+    }
+    fn clear_isr_action(&self, action: IsrAction) {
+        if self.isr_action.get() == action {
+            self.isr_action.set(IsrAction::None);
+        }
     }
     fn changeover_step(&self) -> u8 {
         self.changeover_step.get()

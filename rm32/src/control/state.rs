@@ -498,13 +498,13 @@ impl BemfState {
     }
 
     /// Interval-timer count at the most recent accepted zero-cross.
-    /// Read-only view for firmware-side diagnostics (ZC trace).
+    /// Read-only view for firmware-side diagnostics.
     pub fn this_zc_time(&self) -> u16 {
         self.this_zc_time
     }
 
-    /// Commutation wait time computed from the last ZC. Read-only view
-    /// for firmware-side diagnostics (ZC trace).
+    /// Commutation wait time computed from the last zero-cross.
+    /// Read-only view for firmware-side diagnostics.
     pub fn wait_time(&self) -> u16 {
         self.wait_time
     }
