@@ -31,9 +31,9 @@ pub const ARMING_TIMEOUT_TICKS: u32 = 20000;
 pub const PID_LOOP_DIVIDER: u8 = 20;
 
 /// Interval-telemetry base period in ms (AM32 `telemetry_interval_ms`,
-/// main.c:338). Effective interval = (30 - 1 + telemetry_on_interval)
+/// ). Effective interval = (30 - 1 + telemetry_on_interval)
 /// ms; the config value doubles as a per-ESC slot offset on shared
-/// telemetry wires (main.c:1667-1669).
+/// telemetry wires ().
 pub const TELEMETRY_INTERVAL_MS: u16 = 30;
 
 /// Number of 20 kHz TIM6 ticks in one millisecond.
@@ -69,12 +69,12 @@ pub const BIDIR_MIDPOINT: u16 = 1048;
 /// Low voltage cutoff counter threshold (normal mode).
 /// Counter increments at 1 kHz (inside the PID_LOOP_DIVIDER block); 10000
 /// counts = 10 sec sustained low voltage before cutoff. Matches AM32's
-/// threshold at main.c:2063.
+/// threshold at .
 pub const LVC_NORMAL_THRESHOLD: u16 = 10000;
 
 /// Low voltage cutoff counter threshold during stepper_sine startup.
 /// At 1 kHz: 100 counts = 0.1 sec — fast cutoff to protect batteries under
-/// heavy startup current draw. AM32's stepper_sine override at main.c:2063
+/// heavy startup current draw. AM32's stepper_sine override at
 /// uses `(10000 - (stepper_sine * 9900))` = 100.
 pub const LVC_STARTUP_THRESHOLD: u16 = 100;
 
@@ -86,7 +86,7 @@ pub const DESYNC_RESET_INTERVAL: u32 = 5000;
 /// Prevents false desync detection at very low RPM where intervals are naturally large.
 pub const DESYNC_MAX_INTERVAL: u32 = 2000;
 
-/// Wrong-phase-orbit trip (KEPT DIVERGENCE): the acceptance chain can
+/// Wrong-phase-orbit trip (divergence from AM32): the acceptance chain can
 /// self-clock on switching artifacts in a wrong phase — plausible
 /// zero-crossings, current far above the duty-proportional norm, no
 /// desync-detector jump. The trip is relative (fires when current
@@ -108,15 +108,15 @@ pub const ORBIT_CAL_VBAT_MV: i32 = 8160;
 /// and the trip must hold off. Steady-state orbits are unaffected.
 pub const ORBIT_TRANSIENT_DUTY: u16 = 150;
 
-/// Desync-detector re-arm holdoff after a fast-rotor fire (KEPT
-/// DIVERGENCE, see MainState::desync_rearm_zc): the stay-interrupt
+/// Desync-detector re-arm holdoff after a fast-rotor fire (divergence
+/// from AM32, see MainState::desync_rearm_zc): the stay-interrupt
 /// response keeps the pipeline running at speed, so the kick's own
 /// deceleration would refire the detector against a stale average —
 /// a self-loop. A real desync still trips on the first check past
 /// the holdoff.
 pub const DESYNC_REARM_HOLDOFF_ZC: u32 = 100;
 
-/// Reclimb clamp (KEPT DIVERGENCE, see main_state duty-ceiling site):
+/// Reclimb clamp (divergence from AM32):
 /// until this many zero crossings confirm the lock, the duty ceiling
 /// is capped at RECLIMB_DUTY_CAP. Covers fresh engage and post-fall
 /// recovery identically; the cap clears the startup duty band while
@@ -134,7 +134,7 @@ pub const BIDIR_CONFIRM_FRAMES: u8 = 4;
 /// Consecutive high input-pin samples required before probing inverted-CRC DShot.
 pub const BIDIR_IDLE_HIGH_FRAMES: u8 = 100;
 
-/// Fast-rotor desync response (KEPT DIVERGENCE, see main_state.rs
+/// Fast-rotor desync response (divergence from AM32, see main_state.rs
 /// desync handler): below this commutation interval a desync keeps
 /// interrupt mode instead of demoting to polling — tick-grid polling
 /// cannot track windows shorter than ~3 samples, so a demotion at

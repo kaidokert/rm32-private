@@ -17,5 +17,8 @@ path = "src/bin/harness.rs"
 
 
 [features]
-default = []
+default = ["bench-diag"]
+# Bench-only observability (debug counters, capture diagnostics).
+# Excluded from the public projection.
+bench-diag = []
 dronecan = ["dep:dronecan"]

@@ -23,7 +23,7 @@ pub enum IsrAction {
     None = 0,
     /// Reset interval timer to 0 (stall handler, matches C's zcfoundroutine).
     ResetIntervalTimer = 1,
-    /// Fast-rotor desync recovery (KEPT DIVERGENCE): halve the applied
+    /// Fast-rotor desync recovery (divergence from AM32): halve the applied
     /// duty (floor min_startup/2) instead of crashing to min_startup/2.
     /// Only on the stay-interrupt branch where the rotor is known to
     /// still be locked — duty/2 re-slews in ~2 ms instead of a ~15-20 ms
@@ -147,18 +147,18 @@ pub trait IsrTiming {
     fn set_forward(&self, _v: bool) {}
 
     /// Increment 1 kHz dispatch counter (TIM6 ISR side, 20 kHz). Matches
-    /// AM32's `one_khz_loop_counter++` at main.c:1317.
+    /// AM32's `one_khz_loop_counter++` at .
     fn one_khz_counter_inc(&self) {}
     /// Main-side: returns true and resets counter if it has exceeded
     /// `divider` (typically PID_LOOP_DIVIDER = 20). Matches AM32's check
-    /// at main.c:1397.
+    /// at .
     fn one_khz_counter_check_and_reset(&self, _divider: u8) -> bool {
         false
     }
 
     /// ISR-side (20 kHz): increment the interval-telemetry counter; if it
     /// has exceeded `limit`, reset it and return true (fire telemetry).
-    /// Matches AM32's `telem_ms_count` block at main.c:1664-1672.
+    /// Matches AM32's `telem_ms_count` block at .
     fn telem_counter_check_and_inc(&self, limit: u16) -> bool;
 }
 

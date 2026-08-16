@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rm32 = { path = "../rm32" }
+rm32 = { path = "../rm32", features = ["bench-diag"] }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 embedded-hal = "1.0"

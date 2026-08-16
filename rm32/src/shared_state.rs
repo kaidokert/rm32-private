@@ -77,29 +77,40 @@ pub struct SharedState {
     changeover_step: AtomicU8,        // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // --- Bench debug counters (bumped from transfer.process in ISR ctx) ---
-    dbg_crc_pass: AtomicU32,  // successful decode_frame CRC
-    dbg_crc_fail: AtomicU32,  // BadCrc / InvalidTiming returns
+    #[cfg(feature = "bench-diag")]
+    dbg_crc_pass: AtomicU32, // successful decode_frame CRC
+    #[cfg(feature = "bench-diag")]
+    dbg_crc_fail: AtomicU32, // BadCrc / InvalidTiming returns
+    #[cfg(feature = "bench-diag")]
     dbg_bidir_evt: AtomicU16, // monotonic count of bidir_detected=true returns
+    #[cfg(feature = "bench-diag")]
     dbg_high_pin_n: AtomicU8, // snapshot of transfer.high_pin_count after process()
     // Monotonic tick-ISR counter — distinguishes a starved main loop
     // (this advances, main counters do not) from a frozen chip.
+    #[cfg(feature = "bench-diag")]
     dbg_isr_tick: AtomicU32,
     // Last-tick ISR duration (cycles): each ISR stores its DWT.CYCCNT
     // delta (single writer per ISR; plain store keeps the measurement
     // overhead to one STR).
-    dbg_tim6_last_cyc: AtomicU32,  // ten_khz_tick (20 kHz)
+    #[cfg(feature = "bench-diag")]
+    dbg_tim6_last_cyc: AtomicU32, // ten_khz_tick (20 kHz)
+    #[cfg(feature = "bench-diag")]
     dbg_tim14_last_cyc: AtomicU32, // commutation_timer_expired
-    dbg_comp_last_cyc: AtomicU32,  // bemf_zero_cross
-    dbg_dma_last_cyc: AtomicU32,   // DMA1_CH5 wrapper (input capture TC)
-    dbg_exti_last_cyc: AtomicU32,  // EXTI15_10 wrapper (frame processing)
-    dbg_main_last_cyc: AtomicU32,  // main-loop iter body (excludes wfi)
+    #[cfg(feature = "bench-diag")]
+    dbg_comp_last_cyc: AtomicU32, // bemf_zero_cross
+    #[cfg(feature = "bench-diag")]
+    dbg_dma_last_cyc: AtomicU32, // DMA1_CH5 wrapper (input capture TC)
+    #[cfg(feature = "bench-diag")]
+    dbg_exti_last_cyc: AtomicU32, // EXTI15_10 wrapper (frame processing)
+    #[cfg(feature = "bench-diag")]
+    dbg_main_last_cyc: AtomicU32, // main-loop iter body (excludes wfi)
     // Tone channel: pending tone id (rm32::tone), 0 = none. Set by the
     // DSHOT-command ISR (beacons) or main (arming tune); consumed by
     // the tick's tone stepper.
     tone_request: AtomicU8,
     // 1 kHz dispatch counter — incremented by the tick ISR, read +
     // reset by main past PID_LOOP_DIVIDER (AM32's one_khz_loop_counter
-    // placement, main.c:1317/1397).
+    // placement).
     one_khz_counter: AtomicU8,
     telem_counter: AtomicU16,
 }
@@ -152,16 +163,27 @@ impl SharedState {
             isr_action: AtomicU8::new(0), // IsrAction::None
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
+            #[cfg(feature = "bench-diag")]
             dbg_crc_pass: AtomicU32::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_crc_fail: AtomicU32::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_bidir_evt: AtomicU16::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_high_pin_n: AtomicU8::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_isr_tick: AtomicU32::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_tim6_last_cyc: AtomicU32::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_tim14_last_cyc: AtomicU32::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_comp_last_cyc: AtomicU32::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_dma_last_cyc: AtomicU32::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_exti_last_cyc: AtomicU32::new(0),
+            #[cfg(feature = "bench-diag")]
             dbg_main_last_cyc: AtomicU32::new(0),
             tone_request: AtomicU8::new(0),
             one_khz_counter: AtomicU8::new(0),
@@ -170,69 +192,91 @@ impl SharedState {
     }
 
     // --- Bench debug counters (bidir DSHOT investigation) ---
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_crc_pass(&self) -> u32 {
         self.dbg_crc_pass.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_crc_pass_inc(&self) {
         self.dbg_crc_pass.fetch_add(1, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_crc_fail(&self) -> u32 {
         self.dbg_crc_fail.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_crc_fail_inc(&self) {
         self.dbg_crc_fail.fetch_add(1, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_bidir_evt(&self) -> u16 {
         self.dbg_bidir_evt.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_bidir_evt_inc(&self) {
         self.dbg_bidir_evt.fetch_add(1, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_high_pin_n(&self) -> u8 {
         self.dbg_high_pin_n.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_set_high_pin_n(&self, v: u8) {
         self.dbg_high_pin_n.store(v, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_isr_tick(&self) -> u32 {
         self.dbg_isr_tick.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_isr_tick_inc(&self) {
         self.dbg_isr_tick.fetch_add(1, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_tim6_last_cyc(&self) -> u32 {
         self.dbg_tim6_last_cyc.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_tim6_last_cyc_set(&self, cycles: u32) {
         self.dbg_tim6_last_cyc.store(cycles, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_tim14_last_cyc(&self) -> u32 {
         self.dbg_tim14_last_cyc.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_tim14_last_cyc_set(&self, cycles: u32) {
         self.dbg_tim14_last_cyc.store(cycles, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_comp_last_cyc(&self) -> u32 {
         self.dbg_comp_last_cyc.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_comp_last_cyc_set(&self, cycles: u32) {
         self.dbg_comp_last_cyc.store(cycles, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_dma_last_cyc(&self) -> u32 {
         self.dbg_dma_last_cyc.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_dma_last_cyc_set(&self, cycles: u32) {
         self.dbg_dma_last_cyc.store(cycles, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_exti_last_cyc(&self) -> u32 {
         self.dbg_exti_last_cyc.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_exti_last_cyc_set(&self, cycles: u32) {
         self.dbg_exti_last_cyc.store(cycles, REL);
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_main_last_cyc(&self) -> u32 {
         self.dbg_main_last_cyc.load(ACQ)
     }
+    #[cfg(feature = "bench-diag")]
     pub fn dbg_main_last_cyc_set(&self, cycles: u32) {
         self.dbg_main_last_cyc.store(cycles, REL);
     }

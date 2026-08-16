@@ -21,13 +21,13 @@ const STARTUP_INTERVAL_TIMER_COUNT: u32 = STARTUP_COMMUTATION_INTERVAL / 2;
 /// Handles: throttle→setpoint mapping, arming, BEMF polling (old_routine),
 /// ramp rate limiting, PWM output.
 pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
-    // 1 kHz dispatch counter — ISR-side increment (AM32 main.c:1317);
+    // 1 kHz dispatch counter — ISR-side increment (AM32);
     // main reads and resets past PID_LOOP_DIVIDER. Incrementing here
     // keeps the 1 kHz rate correct regardless of main-loop iteration
     // rate.
     ctx.shared.one_khz_counter_inc();
 
-    // AM32 interval telemetry (main.c:1664-1672): with
+    // AM32 interval telemetry (): with
     // telemetry_on_interval set, fire send_telemetry every
     // (30 - 1 + interval) ms — the config value doubles as a per-ESC
     // slot offset on shared telemetry wires.
@@ -67,7 +67,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             // the possibly-dead COM timer so commutation_timer_expired
             // restarts the chain. The stalled interval count folds into
             // the commutation interval BEFORE the forced step
-            // (ci = (thiszc + 3*ci)/4, main.c:1870-1874) so the restart
+            // (ci = (thiszc + 3*ci)/4, ) so the restart
             // is AM32's slow crawl toward re-lock — without it the kick
             // re-commutates at the pre-fault cadence, a full-duty blind
             // slam on a rotor that just lost sync.
@@ -347,7 +347,7 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
 
     let zc = shared.zero_crosses();
     let ci = shared.commutation_interval();
-    // Polling→interrupt changeover (AM32 main.c:1903-1913): the
+    // Polling→interrupt changeover (AM32): the
     // zc>=20 form applies ONLY with stall_protection / rc_car_reverse;
     // the normal path is `ci < changeover` ALONE. rm32 previously
     // required zc>=20 unconditionally — and since spin-up desyncs reset

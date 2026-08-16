@@ -168,9 +168,9 @@ pub struct MainState<LED: OutputPin = NoLed> {
     pub(crate) timer1_max_arr: u16,
     /// Main-loop tick counter for consumed current accumulation
     pub(crate) ten_khz_counter: u32,
-    // 1 kHz dispatch counter lives on SharedState (ISR increments at 20 kHz,
-    // main reads + resets), matching AM32's `one_khz_loop_counter` placement
-    // in `tenKhzRoutine` at main.c:1317.
+    // 1 kHz dispatch counter lives on SharedState (ISR increments at
+    // tick rate, main reads + resets), matching AM32's
+    // `one_khz_loop_counter` placement.
 }
 
 /// MCU-specific constants — properties of the silicon, not the board PCB.
@@ -422,7 +422,7 @@ impl<LED: OutputPin> MainState<LED> {
                 shared.set_zero_crosses(0);
                 self.desync_events = self.desync_events.wrapping_add(1);
                 let desync_from_interrupt_mode = !shared.old_routine();
-                // KEPT DIVERGENCE: fast-rotor desyncs stay in interrupt
+                // Divergence from AM32: fast-rotor desyncs stay in interrupt
                 // mode. AM32 demotes to polling and re-locks within ~1 ms
                 // at main-loop rate; rm32 polls on the 20 kHz tick grid,
                 // which cannot re-lock above ~800 Hz e, so a demoted fast
@@ -440,7 +440,7 @@ impl<LED: OutputPin> MainState<LED> {
                     current_sane && shared.commutation_interval() < DESYNC_STAY_INTERRUPT_CI;
                 // Duty kick (AM32: last_duty_cycle = min_startup/2,
                 // unconditional). On the fast-rotor branch the rotor is
-                // still locked, so only halve the duty (kept divergence) —
+                // still locked, so only halve the duty —
                 // a full crash costs ~15-20 ms of ramp recovery per event.
                 if desync_from_interrupt_mode && fast_rotor {
                     self.dsy_fast = self.dsy_fast.wrapping_add(1);
@@ -479,7 +479,7 @@ impl<LED: OutputPin> MainState<LED> {
             self.timing.last_average_interval = self.timing.average_interval;
         }
 
-        // Signal timeout (AM32 main.c:1892-1918): armed 0.5 s → disarm +
+        // Signal timeout (AM32): armed 0.5 s → disarm +
         // reset; unarmed 2 s → reset. The reset sets SFTRSTF, dropping the
         // bootloader into its DFU loop (the passthrough/Configurator entry
         // path). input_set is cleared so re-detection runs; the unarmed
@@ -517,7 +517,7 @@ impl<LED: OutputPin> MainState<LED> {
         self.last_armed = armed;
 
         // 1 kHz dispatch: ADC + 3 PIDs + LVC (AM32's PROCESS_ADC_FLAG
-        // block, main.c:2010-2081, plus the PID block at main.c:1397).
+        // block, , plus the PID block at ).
         // The counter increments in the tick ISR so the 1 kHz rate holds
         // regardless of main-loop iteration rate. duty_ceiling,
         // filter_level, auto_advance, min_bemf_counts and variable_pwm
@@ -541,7 +541,7 @@ impl<LED: OutputPin> MainState<LED> {
             shared.set_battery_voltage(self.measurements.battery_voltage.0);
             shared.set_degrees_celsius(self.measurements.degrees_celsius.0);
 
-            // Wrong-phase-orbit trip (kept divergence; see ORBIT_TRIP_*):
+            // Wrong-phase-orbit trip (see ORBIT_TRIP_*):
             // sustained current far above the duty-proportional norm while
             // locked means the acceptance chain is clocking off switching
             // artifacts in a wrong phase — force the full desync response;
@@ -578,7 +578,7 @@ impl<LED: OutputPin> MainState<LED> {
                 self.orbit_trip_count = 0;
             }
 
-            // Low voltage cutoff (AM32 main.c:2045-2071): 10 s sustained at
+            // Low voltage cutoff (AM32): 10 s sustained at
             // the 1 kHz rate. Mode 1: per-cell threshold; mode 2: absolute
             // threshold (0.5 V units).
             if self.config.low_voltage_cut_off != 0 {
@@ -682,7 +682,7 @@ impl<LED: OutputPin> MainState<LED> {
             self.measurements.degrees_celsius.0,
             self.config.temperature_limit,
         );
-        // Reclimb clamp (kept divergence): while the lock is unconfirmed
+        // Reclimb clamp : while the lock is unconfirmed
         // (zero_crosses below threshold — fresh engage or post-fall
         // recovery), cap the duty ceiling so the reclimb toward a high
         // commanded duty cannot surge. Releases on confirmation.
@@ -713,7 +713,7 @@ impl<LED: OutputPin> MainState<LED> {
         };
         shared.set_filter_level(filter);
 
-        // Commutation advance (AM32 main.c:900-905): dynamic auto-advance
+        // Commutation advance (AM32): dynamic auto-advance
         // scales with duty; otherwise the STATIC advance_level-derived
         // temp_advance applies. rm32 previously published nothing in the
         // static case, leaving the ISR at 0° advance — the largest single
@@ -1232,7 +1232,7 @@ mod tests {
     /// REQ-RESET-ON-TIMEOUT: When signal_timeout fires (armed >0.5s or
     /// unarmed >2s), MainState::tick must request a system reset via
     /// `set_needs_reset(true)`. Matches AM32's NVIC_SystemReset() at
-    /// Src/main.c:1904 and :1917 — the only way the AM32 bootloader DFU
+    /// Src/and :1917 — the only way the AM32 bootloader DFU
     /// loop ever activates from a running firmware, which is what BF's
     /// passthrough mode and the AM32 Configurator depend on.
     #[test]

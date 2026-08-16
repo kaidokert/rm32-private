@@ -117,6 +117,7 @@ pub struct TransferActions {
     pub bidir_detected: bool,
     /// Snapshot of `high_pin_count` for the bidir auto-detect path
     /// (published to a SharedState counter for diagnostics).
+    #[cfg(feature = "bench-diag")]
     pub high_pin_count: u8,
 }
 
@@ -205,6 +206,8 @@ impl TransferState {
                 next_capture,
                 frametime,
                 bidir_detected: false,
+                #[cfg(feature = "bench-diag")]
+                #[cfg(feature = "bench-diag")]
                 high_pin_count: self.high_pin_count,
             };
         }
@@ -346,6 +349,7 @@ impl TransferState {
             next_capture,
             frametime,
             bidir_detected,
+            #[cfg(feature = "bench-diag")]
             high_pin_count: self.high_pin_count,
         }
     }
