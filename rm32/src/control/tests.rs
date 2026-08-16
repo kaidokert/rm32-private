@@ -318,6 +318,35 @@ mod tests {
     }
 
     #[test]
+    fn isr_tick_start_motor_keeps_comp_irq_masked_until_bemf_lock() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut duty = crate::control::state::DutyState::default();
+        let config = crate::config::EepromConfig::default();
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let mut hal = MockMotorHal::new();
+
+        shared.mode.set(crate::motor_mode::MotorMode::Armed);
+        shared.newinput.set(1000);
+        shared.adjusted_input.set(1000);
+
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+
+        assert!(shared.old_routine());
+        assert_eq!(hal.comp.enable_calls, 0);
+    }
+
+    #[test]
     fn isr_tick_zero_throttle_no_setpoint() {
         let mut comm = crate::commutation::Commutation::new();
         let mut bemf = crate::control::state::BemfState::default();
@@ -870,6 +899,92 @@ mod tests {
 
         assert!(shared.old_routine());
         assert_eq!(comp.enable_calls, 0);
+    }
+
+    fn seed_slow_commutation_history(comm: &mut crate::commutation::Commutation) {
+        for _ in 0..5 {
+            comm.record_interval(4000);
+            comm.advance();
+        }
+    }
+
+    #[test]
+    fn isr_commutation_timer_demotes_slow_interrupt_mode_to_polling() {
+        for bidirectional in [false, true] {
+            let mut comm = crate::commutation::Commutation::new();
+            seed_slow_commutation_history(&mut comm);
+            let mut bemf = crate::control::state::BemfState::default();
+            let shared = TestShared::new();
+            shared.mode.set(crate::motor_mode::MotorMode::Running);
+            shared.set_commutation_interval(1000);
+            let mut com_timer = MockComTimer::new();
+            let mut comp = MockComp {
+                level: false,
+                mask_called: false,
+                enable_calls: 0,
+            };
+            let mut phase = MockPhase {
+                all_off_called: false,
+                ..Default::default()
+            };
+
+            isr_logic::commutation_timer_expired(
+                &mut comm,
+                &mut bemf,
+                &shared,
+                &mut com_timer,
+                &mut comp,
+                &mut phase,
+                bidirectional,
+                true,
+            );
+
+            assert!(shared.old_routine());
+            assert_eq!(comp.enable_calls, 0);
+        }
+    }
+
+    #[test]
+    fn isr_commutation_timer_does_not_promote_same_step_after_demote() {
+        for bidirectional in [false, true] {
+            let mut comm = crate::commutation::Commutation::new();
+            seed_slow_commutation_history(&mut comm);
+            let mut bemf = crate::control::state::BemfState::default();
+            bemf.record_zc_timing(500);
+            let shared = TestShared::new();
+            shared.mode.set(crate::motor_mode::MotorMode::Running);
+            shared.set_commutation_interval(1000);
+            let mut com_timer = MockComTimer::new();
+            let mut comp = MockComp {
+                level: false,
+                mask_called: false,
+                enable_calls: 0,
+            };
+            let mut phase = MockPhase {
+                all_off_called: false,
+                ..Default::default()
+            };
+
+            isr_logic::commutation_timer_expired(
+                &mut comm,
+                &mut bemf,
+                &shared,
+                &mut com_timer,
+                &mut comp,
+                &mut phase,
+                bidirectional,
+                false,
+            );
+
+            let exit_interval = if bidirectional {
+                crate::constants::OLD_ROUTINE_EXIT_INTERVAL / 2
+            } else {
+                crate::constants::OLD_ROUTINE_EXIT_INTERVAL
+            };
+            assert!(shared.old_routine());
+            assert!(shared.commutation_interval() < exit_interval);
+            assert_eq!(comp.enable_calls, 0);
+        }
     }
 
     #[test]
