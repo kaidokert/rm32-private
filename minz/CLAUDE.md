@@ -47,6 +47,112 @@ no soldering needed.
 
 **J4 — 6-pin SH1.0:** SWD (ST_SWDIO / ST_SWCLK + 3.3 V / GND).
 
+## TSFE-library consumer + qualification capability (ratch22 / krabilorean, 2026-08)
+
+minz doubles as the **on-target qualification bench for embedded
+time-series-feature-extraction (TSFE) crates** — sibling no_std libraries
+(`ratch22`, `krabilorean`) are consumed in the real firmware, fed the live
+commutation stream, and measured/validated on silicon. Two consumers exist,
+each behind its own feature so they never both compile:
+
+| feature | crate | source | consumer |
+|---------|-------|--------|----------|
+| `monitor` | `ratch22` | local path (`ratch22-sketch/`, gitignored) | `src/monitor.rs` |
+| `krabimon` | `krabilorean` | **git tag** (private remote) | `src/krabimon.rs` |
+
+### Objective (the standing goal)
+
+Put these crates "through their paces measuring and characterizing things in
+real firmware" — collapse host-side Python analysis into onboard instruments,
+deliver findings as HTML artifact studies + markdown field reports, and feed a
+consumer friction log back to each library's author. The current milestone is
+**krabilorean arithmetic-personality target fitness** (see
+`KRABILOREAN_M4_QUAL.md` for the full goal/scope/matrix).
+
+### Consuming a git-pinned crate (the pattern)
+
+`krabilorean` is pulled as a git dependency pinned to an annotated tag (current:
+`v0.1.0-alpha.3` = `e3b4466`), behind the `krabimon` feature. Two non-obvious
+rules (both cost a debugging cycle if forgotten):
+
+- **A git dep does NOT inherit its own workspace's `[patch.crates-io]`.**
+  krabilorean needs a const-generic `fixed` fork; that patch must be
+  **replicated verbatim** into `minz/Cargo.toml` (and into every detached probe
+  crate's manifest). See the memory `reference-cargo-git-dep-patch`.
+- An **optional git dep still resolves its source for the lockfile even when the
+  feature is off** — so any minz build needs read access to the private repo.
+  Better than a path dep (reproducible/committable given auth), still private
+  until the crate is published.
+
+To bump the pinned version: change the `tag =` in `minz/Cargo.toml` +
+`krabilorean-probe/Cargo.toml` + `krabilorean-m4probe/Cargo.toml`, then
+cross-build `--features krabimon` for both `thumbv7em` and `thumbv6m`.
+
+### Capabilities developed (all reusable across TSFE crates / targets)
+
+1. **Onboard consumer** (`src/krabimon.rs`, `krabimon` feature): key control
+   values (interval + current) streamed through the crate's extractors in MAIN
+   context, DWT-bracketed (zero prio-0 ISR cost), published on the `krab` /
+   `krab.w` / `krab.r` info lines. Tier dial `m` (0=off, 1=online, 2=+windowed).
+   `R` key = one-shot **live end-to-end** `BlockRetainedCaptureProfile` on a 128
+   sample live window (stalls main ~7-18 ms once; the lock rides through).
+2. **Host accuracy + decision-flip harness** (`krabilorean-probe/`, gitignored,
+   git-deps the crate, own `.cargo/config` → host target): replays real
+   ZC_TRACE captures + adversarial inputs through every personality, validates
+   against the `BoundedExact64` **bit-exact reference** — bucketed rel-error,
+   variance-collapse count, published-error-bound check, exact-mean check, and
+   periodicity/Gaussian-MI **decision-flip** logging (gated on well-defined
+   exact decisions). Adversarial set in `krabilorean-probe/src/adversarial.rs`
+   (DC-offset+1-bit, constant, near-constant, square, saturating ramp).
+3. **Wide-arithmetic compile-out gate** (`scripts/compile_out_gate.py` +
+   `krabilorean-m4probe/`, gitignored): per-personality micro-libs, one workload
+   per cargo feature, **linked to a bare ELF with `--gc-sections`** so size and
+   reachable 64/128-bit AEABI/compiler-rt helpers are attributable to exactly
+   one personality's call graph. NOTE a plain `staticlib` is useless here — it
+   bundles all of compiler_builtins; you must link+gc. See memory
+   `reference-firmware-tsfe-bench-methods`.
+4. **On-silicon DWT timing** (`examples/krabi_bench.rs` + baked real windows in
+   `examples/krabi_vectors.rs`): min/median/max cycle distributions per
+   personality×workload over K reps, RTT output, no motor needed.
+   **DCE HAZARD**: `black_box` the numeric RESULT, not `.is_ok()`, or LLVM elides
+   the work (a 256-sample loop first measured 77 cyc = eliminated).
+
+### M4 qualification verdict (alpha.3, 2026-08-16) — ship WideExact on M4
+
+Dossier: artifact + `good_time/M4_FITNESS_DOSSIER.md` (+ `M4_QUAL_SUMMARY.md`).
+On the L431 (Cortex-M4 @ 80 MHz), `BoundedExact64`/`WideExact` wins decisively:
+
+- **Timing**: exact variance 12,664 cyc = fastest (block 12,749/13,625/12,832);
+  exact Gaussian-MI 1.53 ms; block retained profile 6.8–18.5 ms (9.6 ms live).
+- **Codegen**: M4 exact **728 B, wide-helper-free** (hardware `SMULL`, ratio
+  returned undivided) vs block 960 B — block scaling's whole purpose (avoiding
+  wide helpers) buys NOTHING on M4.
+- **Accuracy**: block is honest (0 bound-violations, exact means) but
+  **collapses the low-variance ESC signal to zero** — 99.7% of real windows
+  (block8), 63% (block16); only 10/2012 real windows have var ≥ 100 ticks².
+  ~100% periodicity/MI decision flips on near-constant data; block12/16 accurate
+  (1.4e-7) only on high-variance signals.
+- **Live**: retained profile ran end-to-end on a 1186 Hz lock (var=0/ZeroVar —
+  collapse confirmed in-situ).
+
+**M0 is the crux and OUT OF SCOPE** (needs F0/G0 silicon): there M4-clean exact
+pulls a soft `__aeabi_lmul` (no `UMULL` on M0) while block12 stays 32-bit-clean
+but bigger (1370 B). The exact-vs-block verdict is **core-specific** — on M0,
+block is NOT automatically faster; measure it. That is the next milestone.
+
+### Reproduce
+
+```
+# host accuracy + decision-flips (no bench)
+cd krabilorean-probe && cargo run --release -- ../captures/zct_today_raw.bin ../captures/zctsweep_am32full_raw.bin
+# codegen + size gate (per personality; --gc-sections isolation)
+cd krabilorean-m4probe && cargo build --release --no-default-features --features block12
+# on-silicon DWT timing (RTT; no motor)
+cargo run --release --example krabi_bench --features krabimon
+# live consumer + one-shot retained ('R'), kill-guarded
+cargo run --release --example am32_clone --features krabimon   # then scripts/krabimon_probe.py
+```
+
 ## `examples/motor_tester2.rs` — current bench tool (2 Mbaud, hw RX on PA2)
 
 Copy of `motor_tester.rs` with the comms path upgraded (June 2026). Use this
