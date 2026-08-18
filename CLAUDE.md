@@ -1,23 +1,73 @@
 # Claude Code working notes — rm32 / Vimdrones L431 bench
 
-## STATE AS OF 2026-08-01 (branch `am32_sheet`) — read this first
+## STATE AS OF 2026-08-16 (branch `am32_sheet`) — read this first
 
-**Two campaigns are DONE, documented in `docs/`:**
+**All three campaigns are DONE. Mechanical upstreaming is COMPLETE.**
 
-1. **Drive envelope (bench-UART throttle): full 15–100% at AM32-clone
-   parity** (100% = 3145 Hz e; 2% ladder dsy=0, exc=2/2.48M comms).
-2. **Betaflight/DShot phase: the ENTIRE production input stack is
-   validated** — PWM, DSHOT150/300/600, bidir DSHOT300 (idle + load
-   ladder to 50%, 0.00% invalid), and EDT (flags RTVCS, live values).
-   **Authoritative ledger: `docs/bf_phase.md`** — validated matrix, the
-   five first-contact defects, BF gotchas (dshot_edt=FORCE on bench,
-   exit/save reboot the FC, WebSerial port grabs), bench facts
-   (no-signal bootloop is stock behavior, first-engage churn), the
-   instrument list, and the burn-down list of everything remaining.
+1. **Drive envelope + Betaflight/DShot validation** (see below and
+   `docs/bf_phase.md`): full 15–100% at AM32-clone parity; entire
+   production input stack validated (PWM, DSHOT150/300/600, bidir,
+   EDT); full feature matrix closed in
+   `docs/feature_validation_roadmap.md` — THE living ledger (Tier 1-3,
+   protections, 3D, tones, Configurator, KISS, merge history, bench
+   scars). Read it before claiming anything is untested.
+2. **Upstreaming campaign (2026-08-06 → 08-16): ~35 public PRs landed
+   on `origin/main` (#41-#93)** via a separate scrubbing/tally agent
+   working from `private/am32_sheet`. Five careful merges back
+   (tags `pre-main-merge-*`), each bench-re-qualified. The raw rm32/
+   diff went +3,680 → +2,036 with deletions ~0 (we no longer rewrite
+   any upstream code — the diff is purely additive divergence).
+3. **END OF THE MECHANICAL ROAD (operator-declared 2026-08-16): what
+   remains is the "questionable pile"** needing judgment, not PRs:
+   desync/orbit/reclimb policy + `DutyKickHalf/Down` (L431-bench-
+   qualified only), bench machinery (gated), tone/sounds (carries
+   TICKS_PER_MS L431-ism), tick-rate constants (PID_LOOP_DIVIDER
+   family — parameterization deferred until F0/G0 board bringup,
+   which is the natural forcing function).
 
-**Public-release staging** (clean worktree `E:\m\robot\esc\rm32_clean`):
-`docs/public_cleanup_tiers.md` (Tier A/B/C ledger; A1/A2/A6/A7 done) and
-`docs/public_pr_plan.md` (18-PR landing sequence + trim list).
+**Working agreements with the other agents:**
+
+- `CLEANUP_TALLY.md` (repo root, maintained by the tally agent) defines
+  the public-burn-down accounting: measured from the
+  `public-ultimate-squash` projection, NOT the raw branch. Quote both
+  numbers when asked for "the diff".
+- Bench observability is quarantined behind rm32's default-on
+  `bench-diag` cargo feature (shared_state `dbg_*`, transfer
+  `high_pin_count`). `cargo check -p rm32 --no-default-features` builds
+  the exact public surface — keep it compiling.
+- Merge protocol: tag `pre-main-merge-YYYYMMDD` → push tag to private →
+  merge `origin/main` → prefer THEIRS for reviewed re-landings of our
+  own machinery (dedup ours) → host tests + blackbox vectors → commit
+  through hooks (fmt may force a re-commit; REBUILD both harness
+  profiles — harness.py runs target/release) → bench re-qual → push.
+  Expect concurrent pushes to `private/am32_sheet` from the other
+  agent; converge, never force-push.
+- Re-qual standard: `scripts/bf_ladder.py` (10→100→10, PASS ≈ 1.5M
+  comms, dsy=0, 0 resets) + `scripts/bf_slam.py` (3 double-slam
+  cycles, PASS ≈ 260k comms, dsy=0). Scripts fail loudly on the
+  firmware's `!! BENCH KILL` line.
+
+**Bench recovery playbook (recurring, memory-backed):**
+
+- After any minz/rinz session assume: bootloader wiped (REBUILD from
+  `E:/m/robot/esc/AM32-bootloader` at 9ef0c06 — obj/*.bin goes stale),
+  EEPROM boot byte trashed, PB6/PA2 rewired. Regenerate the config
+  page with `cargo run -p rm32 --example dump_config`; on this 128K
+  L431 write it to BOTH 0x0800F800 (bootloader jump gate) and
+  0x0801F800 (app config via bootloader devinfo).
+- RECURRING LOCKUP (3 instances, all power-cycle-correlated): core
+  locks with PC=0x01000000, all flash reads verify intact over SWD —
+  ECC-syndrome-level corruption invisible to data reads. Cure: mass
+  erase + full re-image (bootloader + EEPROM ×2 + app). Diagnose a
+  dead-looking chip with gdb force-jump + SWD RAM-liveness diff of
+  SHARED before blaming code or wires.
+- A 0% decode with clean edge timing = one-edge capture misalignment;
+  detection NDTR must be 32 (the #65 regression class — upstream once
+  reintroduced 33; invisible to host tests, bench-bisect found it).
+
+**Public-release staging** (historical): `docs/public_cleanup_tiers.md`
+and `docs/public_pr_plan.md` — superseded by the PR-by-PR pipeline
+above; the 18-PR plan was parked and then organically exceeded.
 
 Older per-session context lived in Claude session memory during the
 campaigns; the durable state now lives in these repo docs. Key results
