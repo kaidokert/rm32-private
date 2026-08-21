@@ -106,6 +106,31 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   pinned (mechanical state cleared / prop attention); if it recurs,
   start at the prop stack.
 
+## S50 (G0-class) second bench — bring-up log
+
+- 2026-08-20: Vimdrones S50 wired to the bench (FC motor out + J-Link
+  Ultra on SWD, probe 1366:1020:000506004154). Silicon = STM32G05x/G06x
+  (IDCODE 0x10016456), 64K flash, RDP level 0 — runs the stock AM32
+  2.20 VIMDRONES_S50_G071 build (G071 target on the G05x sibling).
+  OPERATOR SAFETY: motor is direction-REVERSED in ESC EEPROM
+  (dir_reversed[17]=1) so it pushes DOWN on the bench — PRESERVE this
+  flag through every future flash/EEPROM write.
+- FACTORY BACKUP taken pre-any-flashing:
+  E:/m/robot/esc/s50_backup_factory/ (full 64K + bootloader/app splits
+  + option bytes + restore command). Not read-locked.
+- Instruments: scripts/bf_4way.py = am32.ca-equivalent ID + full
+  parameter read/decode through BF passthrough (4-way protocol,
+  reference clone at E:/m/robot/esc/am32-configurator).
+  scripts/s50_ladder.py = MSP-verdict qualification ladder (bidir
+  DSHOT rpm + invalid%, MSP_SET_MOTOR drive, kill guards; MSP poll
+  rate ~3 Hz, spin floor ~10%).
+- Small qual PASS (10-25%, dwell 3 s): rpm 669/996/1276/1506 monotone,
+  invalid 0.00% everywhere, no collapses, no stalls. Bidir DSHOT300
+  link to the FC is clean.
+- Next: stock-AM32 reference card (full envelope + dose-response via
+  config knobs + KISS interval telemetry), then rm32 G0 bring-up
+  (debuguart port, bench bootloader build, PAC check G051-vs-G071).
+
 ## 2026-08-16: #93 merged — END OF THE MECHANICAL ROAD
 
 - Merged #93 (control hygiene; aligned TestShared method ordering to
