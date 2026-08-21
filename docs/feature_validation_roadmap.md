@@ -127,6 +127,14 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
 - Small qual PASS (10-25%, dwell 3 s): rpm 669/996/1276/1506 monotone,
   invalid 0.00% everywhere, no collapses, no stalls. Bidir DSHOT300
   link to the FC is clean.
+- Low-end card (descending from 10% engage, 0.1% resolution):
+  HOLD FLOOR = 4.0% commanded (632 eRPM ~ 90 rpm mech, stable);
+  3.9% = metastable stall-restart hunting (mean 1607/min 0 — AM32's
+  restart kick caught mid-cycle); 3.8% = dropout. Cold-engage floor
+  is >5% (10% proven; bracket untested) — engage >> hold hysteresis,
+  same shape as the L431 rig. Reference row for future rm32-on-G0
+  low-end lock-retention comparison (operator ranks this regime
+  first).
 - Next: stock-AM32 reference card (full envelope + dose-response via
   config knobs + KISS interval telemetry), then rm32 G0 bring-up
   (debuguart port, bench bootloader build, PAC check G051-vs-G071).
