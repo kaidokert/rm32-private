@@ -36,6 +36,7 @@ CMDS = {
     "DeviceReset": 0x35,
     "DeviceInitFlash": 0x37,
     "DeviceRead": 0x3A,
+    "DeviceWrite": 0x3B,
 }
 
 ACK_NAMES = {
@@ -127,6 +128,9 @@ def main():
     ap.add_argument("--target", type=int, default=0)
     ap.add_argument("--no-exit", action="store_true",
                     help="stay in passthrough (no FC reboot)")
+    ap.add_argument("--set", action="append", default=[], metavar="FIELD=VAL",
+                    help="read-modify-write a settings byte (repeatable); "
+                         "dir_reversed is preserved unless explicitly set")
     a = ap.parse_args()
 
     p = serial.Serial(a.bf, 115_200, timeout=0.3)
@@ -165,6 +169,26 @@ def main():
 
         # Full settings layout.
         settings = cmd4(p, "DeviceRead", bytes([LAYOUT_SIZE]), eep)
+
+        if a.set:
+            block = bytearray(settings)
+            dir_before = block[FIELDS["dir_reversed"]]
+            for kv in a.set:
+                fname_, _, val = kv.partition("=")
+                off = FIELDS[fname_]
+                print(f"set {fname_}[{off}]: {block[off]} -> {int(val)}")
+                block[off] = int(val) & 0xFF
+            if block[FIELDS["dir_reversed"]] != dir_before and not any(
+                    kv.startswith("dir_reversed=") for kv in a.set):
+                sys.exit("refusing implicit dir_reversed change")
+            # am32.ca writeSettings: DeviceWrite the full block, then verify.
+            cmd4(p, "DeviceWrite", bytes(block), eep, retries=4, deadline=3.0)
+            back = cmd4(p, "DeviceRead", bytes([LAYOUT_SIZE]), eep)
+            if bytes(back) != bytes(block):
+                sys.exit("write verify FAILED")
+            print("write verified; dir_reversed preserved =",
+                  back[FIELDS["dir_reversed"]])
+            settings = back
         print(f"\nEEPROM @0x{eep:04X} ({LAYOUT_SIZE} bytes):")
         for i in range(0, LAYOUT_SIZE, 16):
             chunk = settings[i : i + 16]

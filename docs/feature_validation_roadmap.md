@@ -148,7 +148,24 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   lower — criterion must be settle-relative. The 5.0%% notch is a
   sharp parity probe for future rm32-on-G0 (reproduce or not, either
   answer is information).
-- Next: stock-AM32 reference card (full envelope + dose-response via
+- FULL-ENVELOPE ladder (2026-08-21, KISS-instrumented): **10->100%
+  captured, 46 rungs, 0.00% invalid everywhere, monotone to ~86%**;
+  top: eRPM 22,236 (~3,177 rpm mech) at 6.9 A. KISS wire connected ->
+  volt/current/temp at ~80 Hz with a host-side median-filtered sag
+  guard (raw KISS corrupts ~11% under motor load; CRC8 leaks ~1/256 —
+  use median-of-5 + range gates, never raw high-water marks).
+- [!] BENCH SUPPLY PATH LIMIT: ~0.65 ohm series resistance (operator
+  found the pack CONNECTOR warm) — vbat sags 11.5 -> 6.7 V by 100% at
+  only ~7 A, flattening top-end eRPM (non-monotone above ~86% = vbat-
+  limited, not ESC). Back-to-back 100% dwells breach any sane floor,
+  and descending through the deep-sag region caused a real desync +
+  stuck-rotor latch at 66% (guard caught it). Ladder-down / fast-ramp
+  / slam phases DEFERRED until the connector/lead path is fixed —
+  canonical full card needs a healthy supply. ESC behavior itself:
+  flawless link (0 invalid frames across every run today).
+- Next: fix pack connector -> complete card (ladder down, fast ramps,
+  20<->100 slams via s50_fullqual.py); then stock-AM32 dose-response
+  reference card (full envelope + dose-response via
   config knobs + KISS interval telemetry), then rm32 G0 bring-up
   (debuguart port, bench bootloader build, PAC check G051-vs-G071).
 
