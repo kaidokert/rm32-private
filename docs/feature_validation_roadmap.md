@@ -135,6 +135,19 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   same shape as the L431 rig. Reference row for future rm32-on-G0
   low-end lock-retention comparison (operator ranks this regime
   first).
+- COLD-ENGAGE map (walk-down protocol, 3 attempts/rung from verified
+  stop, success = sustained spin at >=60% of the rung's steady eRPM):
+  >=6.0% reliable (3/3); 5.5% = 2/3 (settles ~1,890 eRPM); **5.0% =
+  DEAD NOTCH, 0/9 across three runs** — accelerates to ~3,400 eRPM
+  every attempt and never locks (startup->run changeover handoff
+  failing at that delivered speed?); 4.5% = 2/3 with restart-kick
+  overshoots to ~8,900; 4.0% = 3/3 (overshoot then settles at the
+  632 crawl); 3.5% = 0/3 (below hold floor). Regime: this motor/prop,
+  ~12 V pack, cold bench. INSTRUMENT NOTE: a fixed >2,000-eRPM engage
+  criterion mislabels successful 5-5.5%% engages whose steady speed is
+  lower — criterion must be settle-relative. The 5.0%% notch is a
+  sharp parity probe for future rm32-on-G0 (reproduce or not, either
+  answer is information).
 - Next: stock-AM32 reference card (full envelope + dose-response via
   config knobs + KISS interval telemetry), then rm32 G0 bring-up
   (debuguart port, bench bootloader build, PAC check G051-vs-G071).
