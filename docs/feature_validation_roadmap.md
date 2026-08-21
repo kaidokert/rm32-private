@@ -163,7 +163,16 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   / slam phases DEFERRED until the connector/lead path is fixed —
   canonical full card needs a healthy supply. ESC behavior itself:
   flawless link (0 invalid frames across every run today).
-- Next: fix pack connector -> complete card (ladder down, fast ramps,
+- [!] 2026-08-21 EPILOGUE: the battery wires + connectors MELTED —
+  ~32 W of I2R (7 A through the ~0.65 ohm joint) finished the job the
+  sag data had been reporting for three runs. Likely the same disease
+  behind the L431-side fuse blows (resistance-heated holder derating
+  the fuse). Power path condemned wholesale; rebuild with real
+  connectors + fresh leads + rated fuse holder. ACCEPTANCE TEST for
+  the rebuild: KISS sag-vs-current slope (30 s run) — healthy path
+  well under 0.1 ohm.
+- Next: rebuild power path -> acceptance-measure resistance ->
+  complete card (ladder down, fast ramps, 20<->100 slams) (ladder down, fast ramps,
   20<->100 slams via s50_fullqual.py); then stock-AM32 dose-response
   reference card (full envelope + dose-response via
   config knobs + KISS interval telemetry), then rm32 G0 bring-up
