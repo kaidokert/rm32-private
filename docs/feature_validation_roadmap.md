@@ -171,6 +171,20 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   connectors + fresh leads + rated fuse holder. ACCEPTANCE TEST for
   the rebuild: KISS sag-vs-current slope (30 s run) — healthy path
   well under 0.1 ohm.
+- 2026-08-22 LOCAL-STACK REPRO COMPLETE (PSU power, <=50% duty):
+  chip confirmed STM32G051G8U6 by marking (64K flash / 18K RAM —
+  G071 builds with SP>0x20004800 would lockup; factory + AM32 ldscript
+  are already G051-safe at SP=0x20004000). Fresh dump = bit-identical
+  to backup except telemetry byte. Bootloader: stock ae0de56
+  AM32_G071_BOOTLOADER_PB4_64K local build = identical vectors +
+  strings vs factory (38% raw identity = GCC vintage); flashed +
+  verified (jump, DFU entry, 4-way reads). App: VIMDRONES_S50_G071
+  2.20 local build (after gating our L431 bench switches to MCU_L431
+  in the AM32 tree — they broke G0 builds); flashed + verified: 4-way
+  ID correct, spins 6,871 eRPM @15%, 0.0% invalid, EEPROM preserved.
+  The S50 runs a fully locally-built, instrumentable stack; ZC_TRACE/
+  SPIKE_STATS can be enabled for G0 later by porting their emitters.
+  KISS wire went dark across the PSU rewire — reseat pending.
 - Next: rebuild power path -> acceptance-measure resistance ->
   complete card (ladder down, fast ramps, 20<->100 slams) (ladder down, fast ramps,
   20<->100 slams via s50_fullqual.py); then stock-AM32 dose-response
