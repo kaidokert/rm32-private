@@ -1,0 +1,390 @@
+[package]
+name = "binz"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["atomic-critical-section"]
+atomic-critical-section = ["portable-atomic/critical-section"]
+# G071 single privileged core only; use --no-default-features for this experiment.
+bench-single-core-atomics = ["portable-atomic/unsafe-assume-single-core"]
+# Optional characterization commands; normal motor feedback/capture is retained.
+bench-adc-probes = []
+bench-transport-probes = []
+bench-current-probes = []
+bench-current-epoch = []
+bench-current-baseline = ["bench-current-epoch"]
+bench-average-current = ["bench-prestart-dma", "bench-dma-201", "bench-pwm-20k", "bench-dma-guard"]
+# Explicit 1.5 A exploration ceiling, paired with the operator's PSU limit.
+# Absence preserves the historical 1.0 A nominal setting.
+bench-current-1500 = ["bench-average-current"]
+bench-current-2000 = ["bench-average-current"]
+bench-current-2500 = ["bench-average-current"]
+bench-current-3500 = ["bench-average-current"]
+bench-current-4000 = ["bench-average-current"]
+bench-current-foldback-policy = ["bench-average-current", "bench-live-control"]
+# Historical E777 selection remains exactly the nominal1.5A policy.
+bench-current-foldback = ["bench-current-1500", "bench-current-foldback-policy"]
+# Higher-headroom campaign selection retains the identical policy semantics.
+bench-current-foldback-2000 = ["bench-current-2000", "bench-current-foldback-policy"]
+bench-current-foldback-2500 = ["bench-current-2500", "bench-current-foldback-policy"]
+bench-current-foldback-3500 = ["bench-current-3500", "bench-current-foldback-policy"]
+bench-current-foldback-4000 = ["bench-current-4000", "bench-current-foldback-policy"]
+# Diagnostic envelope exploration: retain the signed-current measurement but
+# remove only its actuator/terminal authority. The physical PSU ceiling plus
+# bus, nFAULT, raw-validity, tracking and deadline guards remain authoritative.
+bench-current-report-only = ["bench-average-diagnostic", "bench-current-foldback-policy"]
+# Faster complete-block protection for the high-duty campaign. Twenty samples
+# at226us still span the24kHz carrier (20 unique phases, max gap278/2666 ticks)
+# while reducing warning latency from11.3ms to4.52ms.
+bench-current-fast-20 = ["bench-average-current", "bench-dma-226"]
+# Preserve the proven50-sample carrier-spanning current quantity, but evaluate
+# an O(1) rolling copy every ADC scan for earlier foreground foldback warning.
+# The original non-overlapping blocks still own the terminal second-over stop.
+bench-current-rolling-warning = ["bench-current-foldback-policy", "bench-dma-226"]
+# Current-only sequential-ADC outliers are not actuator evidence. Retain their
+# two-block terminal guard, but require same-block low-bus corroboration for a
+# current foldback; three low-bus samples request an early maximum reduction.
+bench-current-bus-assisted-foldback = ["bench-current-foldback-policy", "bench-dma-226"]
+# Three consecutive coherent DMA scans >5% below the same-wake pre-drive bus
+# baseline stop immediately; the 50-scan absolute bus guard remains independent.
+bench-fast-bus-sag = ["bench-average-current", "bench-dma-226"]
+# Diagnostic only: substitute three low bus codes after 9000 powered DMA scans
+# to exercise and time the real reason-26 DMA-to-ENABLE-off path. Never qualify
+# an envelope with this image; the physical supply is not changed.
+bench-fast-bus-inject = ["bench-fast-bus-sag"]
+# Diagnostic-only 16 coherent DMA frames before stop, emitted before the
+# bulk waveform dump. No threshold or output authority is changed.
+bench-fast-bus-tail = ["bench-fast-bus-sag", "bench-live-control"]
+# Bus-corroborated foldback remains immediate, but its ceiling recovers by1%
+# per second after a2s quiet hold. Current-only evidence cannot arm this path.
+bench-bus-recovery = ["bench-current-bus-assisted-foldback"]
+# Diagnostic-only DRV nFAULT classifier. On Driver7, gate inputs and TIM1 MOE
+# are revoked immediately, while ENABLE remains high for a bounded 5.5 ms
+# foreground observation. This separates the hardware variant's 4 ms OCP
+# auto-retry from faults which remain asserted until an ENABLE reset.
+bench-driver-fault-probe = ["bench-driven-power"]
+# Diagnostic-only 128-commutation suffix. IT86 records actual TIM17 gap,
+# measured EV_ACC interval, foreground average and pre-event watchdog deadline;
+# it is frozen by the existing stop path and dumped only post-run.
+bench-interval-tail = ["bench-driven-power"]
+# Diagnostic/safety A/B: once closed-loop speed rises, shorten the fixed 1 ms
+# missing-accepted-event timeout from the controller's established interval.
+# The bound may tighten during a segment but never loosens during a slowdown.
+bench-speed-event-watch = ["bench-driven-power"]
+# Diagnostic control A/B for a lost EXTI edge while closed-loop is already
+# running. After the normal half-interval gate opens, foreground may request
+# one ordinary COMP service for the current sector only when the real
+# comparator is already at the expected post-ZC level. The COMP ISR retains
+# its persistence reads and all normal acceptance/guard semantics.
+bench-running-level-revisit = ["bench-driven-power"]
+# Diagnostic only: sample the software and raw EXTI pending flags at each
+# accepted crossing. Distinguishes definite software-only accepts from
+# physical-only and ambiguous both-flag accepts; no control authority.
+bench-revisit-origin = ["bench-running-level-revisit", "bench-reverse-phases", "bench-lean-core"]
+# Diagnostic-only: align accepted-event source with the existing IT86 interval
+# suffix and BS85 bus tail, without an extra per-event RAM row.
+bench-revisit-origin-tail = ["bench-revisit-origin", "bench-interval-tail", "bench-fast-bus-tail"]
+# Reverse high-duty A/B: retain the qualified low-duty edge rescue, but use
+# only physical COMP edges from 35% upward. All tracking/electrical stops stay.
+bench-running-revisit-off35 = ["bench-running-level-revisit", "bench-reverse-phases"]
+bench-running-revisit-off50 = ["bench-running-level-revisit", "bench-reverse-phases", "bench-duty50-revisit-epoch"]
+bench-running-revisit-off48 = ["bench-running-level-revisit", "bench-reverse-phases", "bench-revisit48-probe"]
+bench-revisit48-probe = ["bench-live-control", "bench-running-level-revisit"]
+# Foreground-only timestamp of the last ACKed 50% live-duty transaction.
+# Post-run age is in the same powered segment clock as POWERPATH stop_us.
+bench-duty50-ack-stamp = ["bench-live-control", "bench-duty-50"]
+bench-target-ack-stamp = ["bench-live-control", "bench-duty-50"]
+bench-duty50-revisit-epoch = ["bench-duty50-ack-stamp", "bench-running-level-revisit"]
+# Diagnostic-only counters for the current live-duty epoch. Records accepted
+# events and persistence rejection index by electrical sector, then emits only
+# after shutdown. No per-event transport or timestamp reads.
+bench-persistence-hist = ["bench-driven-power"]
+# Stock G071 AM32 clears EXTI on accepted ZC, not after selecting the next
+# floating phase. Preserve a mux-latched edge for the core half-cycle gate.
+bench-preserve-mux-pending = ["bench-driven-power"]
+# Extend only the closed-loop live-duty path. Requiring foldback prevents a
+# high-range image from being built without the E777 current policy.
+bench-duty-50 = ["bench-current-foldback-policy"]
+# One-variable high-duty ripple A/B. The average/current owner still supplies
+# all protection features; only the BEMF carrier geometry selects 24 kHz.
+bench-current-carrier-24k = ["bench-duty-50", "bench-dma-226"]
+bench-average-diagnostic = ["bench-average-current"]
+# One-variable high-speed timing A/B. This changes only the compile-time
+# reference advance constant (16 -> 18); the minz-core default stays at 16.
+bench-advance-18 = ["minz-core/bench-advance-18"]
+# Second fixed timing point for the high-duty loss-of-lock A/B. The shared
+# core default remains16; campaign images must opt in explicitly.
+bench-advance-20 = ["minz-core/bench-advance-20"]
+bench-advance-22 = ["minz-core/bench-advance-22"]
+bench-advance-scheduled = ["minz-core/bench-advance-scheduled"]
+bench-adc-tim15 = ["bench-dma-feedback"]
+bench-adc-latest = ["bench-adc-tim15"]
+bench-startup-adc = ["bench-adc-latest", "bench-average-current", "bench-lean-irq"]
+bench-startup-20k = []
+bench-startup-staircase = []
+bench-normal-restart = ["bench-startup-staircase", "bench-average-current"]
+# The replacement motor's reverse qualification starts reliably from 100 Hz;
+# keep historical staircase restart builds unchanged while allowing this
+# normal-restart image to reuse that observed startup path.
+bench-reverse-flat-start = ["bench-normal-restart", "bench-reverse-phases"]
+# Post-stop ages already sampled at each measured-seed setup stage; no new
+# powered-path work. Isolates where opt-level=z spends the handoff deadline.
+bench-reverse-seed-stage = ["bench-reverse-phases"]
+# Diagnostic A/B: omit only the redundant second clear after a successful
+# driven acquisition, with physical outputs-disabled checks still required.
+bench-driven-clear-once = ["bench-driven-handoff"]
+# Qualification-only shell: omit the post-stop bulk waveform/coast dump code.
+# Powered telemetry and all electrical guards remain; terminal summaries stay.
+bench-compact-qual = []
+# Fault-only DMA snapshot: raw coherent ADC frame, reject class and age.
+# No normal-scan recording, transport or altered reject/stop semantics.
+bench-adc-latest-fault-frame = ["bench-adc-latest"]
+bench-startup-fast = ["bench-startup-adc", "bench-startup-20k"]
+bench-startup-level = ["bench-startup-adc"]
+bench-startup-comp-top = ["bench-startup-adc"]
+bench-startup-reference-pending = ["bench-startup-adc"]
+bench-handoff-registers = []
+bench-first-accept = []
+bench-startup-bootstrap = ["bench-startup-level"]
+bench-startup-polling = ["bench-startup-bootstrap"]
+bench-bemf-level-revisit = ["bench-startup-bootstrap"]
+bench-lean-core = ["bench-static-comp"]
+bench-lean-irq = ["bench-lean-core"]
+# Operator-approved report-only fast-cycle floor; all other stops retained.
+bench-fast-cycle-report = ["bench-cycle450"]
+bench-event100 = ["bench-fast-cycle-report"]
+bench-dma-guard = ["bench-dma-feedback"]
+bench-fast-coast = []
+bench-recovery-duty-check = ["bench-live-control"]
+bench-reentry-pwm-stage = ["bench-recovery-duty-check", "bench-reentry-clear-once", "bench-reentry-staging", "bench-pwm-24k"]
+bench-reentry-guard-stage = ["bench-reentry-pwm-stage", "bench-guard-install"]
+bench-reentry-next-edge = []
+bench-reentry-next-edge-live = ["bench-reentry-next-edge", "bench-reentry-guard-stage", "bench-dma-guard"]
+bench-recovery-runtime-only = ["bench-reentry-next-edge-live"]
+bench-follow-expected-phase = ["bench-reentry-next-edge-live"]
+bench-prestart-dma = ["bench-current-baseline", "bench-dma-feedback"]
+# Software-boundary IRQ partition; overhead must be bench-qualified separately.
+bench-cpu-timing = []
+bench-cpu-union = ["bench-cpu-timing"]
+bench-cpu-roots = ["bench-cpu-union"]
+# Separate characterization image: lean control/ISR bodies plus only aggregate
+# entry/exit accounting. It is not a lean qualification image.
+bench-cpu-aggregate = ["bench-cpu-roots"]
+bench-cpu-running-only = ["bench-cpu-aggregate", "bench-live-control"]
+bench-cpu-sparse = ["bench-live-control", "bench-dma-feedback"]
+bench-cpu-target-epoch = ["bench-cpu-sparse"]
+bench-rate-census = ["bench-live-control", "bench-fast-bus-sag", "bench-lean-core"]
+bench-rate-curve = ["bench-rate-census", "bench-average-diagnostic"]
+# Diagnostic-only physical phase-current event rates at matched 40/45% duty.
+# Uses the same-wake zero and complete DMA frame before the fast-bus return;
+# never changes current, bus, nFAULT, tracking, or watchdog decisions.
+bench-phase-current-census = ["bench-rate-census"]
+# Diagnostic-only first near-rail phase excursion stop. Keeps every existing
+# electrical stop and captures the first physical-phase frame post-run.
+bench-phase-peak-stop = ["bench-phase-current-census", "bench-average-current"]
+bench-fast-sag-causal = ["bench-fast-bus-sag", "bench-driven-dma", "bench-lean-core"]
+# Retain final comparator handlers instead of startup prefix; adds ISR work.
+bench-irq-tail = []
+# Snapshot immutable per-controller-call comparator read mode, not signal level.
+bench-cached-comp = []
+# Preserve fresh comparator reads/count, remove per-read adapter call overhead.
+bench-inline-comp = ["bench-cached-comp"]
+# Specialize real/inverted/trace-off reads; same live samples and reference core.
+bench-static-comp = ["bench-inline-comp"]
+# Cadence experiment: one non-inlined live read call, same polarity/read count.
+bench-comp-read-call = ["bench-static-comp"]
+# Constructor codegen experiment; no admission or timing-policy changes.
+bench-inline-guard = []
+# Validate fresh admission, then construct the guard directly in its destination.
+bench-guard-install = []
+bench-acquire-timing = []
+bench-seed-div12 = []
+# Recovery already clears on successful awake acquisition; omit duplicate only.
+bench-reentry-clear-once = []
+bench-reentry-carrier = ["bench-reentry-clear-once", "bench-reentry-staging", "bench-pwm-24k"]
+# Aggregate actual reference gate decisions; characterization overhead, no scheduling change.
+bench-comp-paths = []
+bench-comp-decisions = ["bench-comp-paths", "bench-static-comp"]
+bench-qualification-window = ["bench-static-comp"]
+bench-qualification-event = ["bench-static-comp", "bench-comp-paths"]
+bench-qualification-direct = ["bench-static-comp", "bench-com-peer"]
+bench-direct-ram = ["bench-qualification-direct"]
+bench-qualification-reject = ["bench-direct-ram"]
+bench-reject-time = ["bench-qualification-reject"]
+bench-qualification-sparse = ["bench-static-comp"]
+bench-sparse-ram = ["bench-qualification-sparse"]
+# Optional IRQ chronology; observer overhead must pass disabled qualification.
+bench-scheduling-tail = ["bench-cpu-union"]
+# Stop-context overlap only: no additional clocks or per-IRQ record array.
+bench-comp-overlap = ["bench-cpu-union"]
+# Isolate DMA preemption of COMP; independent guard stays priority0.
+bench-dma-peer = ["bench-com-peer", "bench-dma-feedback"]
+# Diagnostic scheduling A/B: COMP/COM may preempt ADC DMA; TIM6 guard stays top.
+bench-dma-below-comp = ["bench-dma-peer"]
+# Narrower scheduling A/B: only COMP rises; DMA and COM remain peers.
+bench-running-comp-top = ["bench-com-peer", "bench-dma-peer"]
+# Bounded single reference COMP service; never masks across handler returns.
+bench-comp-critical = ["bench-static-comp"]
+bench-quiet-irq-stamp = []
+bench-capture-filter = []
+bench-filter-observe = ["bench-capture-filter"]
+bench-filter-short = ["bench-filter-observe"]
+bench-filter-raw = ["bench-filter-short"]
+# Staged TIM2 source backend; no controller hooks until disabled qualification.
+bench-filter-source = ["bench-capture-filter", "bench-driven-power"]
+bench-filter-control = ["bench-filter-source"]
+# A/B only: keep hardware filter, omit added capture-disabled mux wait.
+bench-filter-early-arm = ["bench-filter-control"]
+bench-filter-one-us = ["bench-filter-early-arm"]
+# Isolation control: same TIM2 adapter, no digital qualification delay.
+bench-filter-bypass = ["bench-filter-early-arm"]
+bench-filter-latency = ["bench-filter-control"]
+bench-com-peer = ["bench-filter-source"]
+# Analog threshold A/B; applied at boot to startup and BEMF, no ISR work.
+bench-comp-hyst-low = []
+# Experimental role-only BEMF commutation; forced startup remains the baseline.
+bench-pwm-roles = []
+bench-reverse-phases = []
+bench-reverse-low-irq-cap = ["bench-reverse-phases"]
+bench-reverse-irq-probe = ["bench-reverse-low-irq-cap"]
+bench-reverse-blank = ["bench-reverse-phases"]
+# Independent carrier/blanking controls for the low-duty reverse A/B.
+bench-reverse-20k = ["bench-reverse-phases"]
+# One-variable reverse high-duty carrier A/B; startup remains at 10 kHz.
+# The 226-us ADC cadence remains compiled from the existing protection set.
+bench-reverse-32k = ["bench-reverse-phases", "bench-current-carrier-24k"]
+# Second one-variable reverse carrier point. Startup is unchanged at 10 kHz;
+# the existing 226-us coherent current/bus scan remains in the dependency set.
+bench-reverse-40k = ["bench-reverse-phases", "bench-current-carrier-24k"]
+bench-reverse-48k = ["bench-reverse-phases", "bench-current-carrier-24k"]
+# Reverse32k scheduling A/B: COMP joins existing priority-0 DMA/TIM6;
+# COM stays priority64. DMA retains uninterrupted lease ownership.
+bench-reverse-comp-dma-peer = ["bench-reverse-32k", "bench-com-peer"]
+# Reverse phase-timing A/B: hold level20 through startup/low duty and
+# request level22 only at >=35%. Uses the existing bounded minz-core
+# scheduled-advance path; the carrier is selected independently and all
+# electrical protection remains unchanged.
+bench-reverse-advance22-high = ["bench-reverse-phases", "bench-advance-scheduled"]
+# Binz-only one-variable A/B. minz-core accepts scheduled levels only18..22;
+# this candidate replaces the resulting wait_time after COM with a real
+# level24 calculation at >=35%, without editing the shared core crate.
+bench-reverse-advance24-override = ["bench-reverse-advance22-high"]
+# Second and final bounded high-speed advance point; same binz-only COM path.
+bench-reverse-advance26-override = ["bench-reverse-advance24-override"]
+bench-com-lag = ["bench-driven-power", "bench-lean-core"]
+bench-com-top-high = ["bench-com-peer", "bench-lean-core", "bench-live-control"]
+bench-reverse-irq-cap24 = ["bench-reverse-20k"]
+bench-reverse-irq-cap64 = ["bench-reverse-phases", "bench-reverse-blank"]
+# Startup-only measured timer-arm reserve: 20us versus the legacy 32us.
+bench-reverse-arm20 = ["bench-reverse-irq-cap64"]
+bench-reverse-startup-15 = ["bench-reverse-phases"]
+bench-host-abort-byte = []
+bench-live-duty-check = ["bench-pwm-roles"]
+bench-live-control = ["bench-pwm-roles"]
+# BEMF-only ARR2665; disabled setup before ADC, restores startup ARR6399.
+bench-pwm-24k = ["bench-pwm-roles", "bench-dma-feedback"]
+# Experimental override; inherits BEMF carrier preparation/restoration machinery.
+bench-pwm-20k = ["bench-pwm-24k"]
+# Fresh-seed setup keeps COMP masked until bootstrap COM, omitting enable/remask.
+bench-masked-seed-arm = []
+# Timer-arm A/B: omit only CEN clear; retain DIER/SR/NVIC clearing and final CEN set.
+bench-com-keep-running = []
+bench-prepared-timer = []
+bench-prepared-handoff = ["bench-reentry-next-edge-live", "bench-masked-seed-arm"]
+bench-follow-prevalidate = ["bench-prepared-handoff", "bench-follow-expected-phase", "bench-dma-guard"]
+bench-follow-direct = ["bench-follow-prevalidate"]
+bench-follow-setup-phase = ["bench-follow-direct"]
+bench-follow-persistence = ["bench-follow-setup-phase"]
+bench-driven-rate-snapshot = ["bench-driven-irq"]
+bench-prepared-load = ["bench-prepared-timer", "bench-dma-guard", "bench-dma-201", "bench-dma-fast-start", "bench-dma-peer", "bench-driven-dma"]
+# Idle-only SW/DMA/SW acquisition comparison, never applies offsets.
+bench-baseline-dma = ["bench-current-baseline", "bench-dma-feedback"]
+bench-dma-feedback = []
+# Sequential TIM3 reuse after forced-drive release; requires separate bench qualification.
+bench-driven-dma = ["bench-driven-handoff", "bench-dma-feedback"]
+# Lower metrology load; does not change COMP sensing or feedback-age limits.
+bench-dma-201 = ["bench-dma-feedback"]
+# 209 us advances 46/2666 timer ticks modulo the 24 kHz carrier (~1.73%),
+# retained for the E793/E794 diagnostic captures.
+bench-dma-209 = ["bench-dma-feedback"]
+# 226 us distributes one 50-scan block around the 2666-tick 24 kHz carrier:
+# all 50 phases are unique and the largest uncovered arc is 60 ticks (<1 us).
+bench-dma-226 = ["bench-dma-feedback"]
+# Start the first external ADC scan promptly; steady cadence remains explicit.
+bench-dma-fast-start = ["bench-dma-feedback"]
+# Trigger-phase metrology on spare DMA channel3; no extra interrupt.
+bench-adc-phase = ["bench-dma-feedback"]
+bench-driven-entry = []
+# Guarded20ms under-drive observer; no BEMF handoff authority.
+bench-driven-power = ["bench-driven-entry"]
+# Actual COMP IRQ observation, record-only COM requests; no handoff authority.
+bench-driven-irq = ["bench-driven-power"]
+# Experimental fresh-seed ownership transfer. Requires explicit drivex1 arm.
+bench-driven-handoff = ["bench-driven-irq"]
+# Optional ONE fresh acquisition window after a missing epoch; no timer extension.
+bench-driven-reanchor = ["bench-driven-handoff"]
+# Explicit one-restart acquisition experiment; no powered guard changes.
+bench-seed-timing-reanchor = ["bench-driven-reanchor"]
+bench-reentry-staging = []
+# Coordinated exploratory running/acquisition speed profile; electrical limits unchanged.
+bench-range300 = []
+# Next bounded profile; inherits measured fast acquisition/feedback plumbing.
+bench-range310 = ["bench-range300"]
+bench-range320 = ["bench-range310"]
+bench-range330 = ["bench-range320"]
+bench-range335 = ["bench-range330"]
+bench-range340 = ["bench-range335"]
+bench-range345 = ["bench-range340"]
+bench-range350 = ["bench-range345"]
+# Running accepted-cycle ceiling only; seed admission and event guards stay350.
+bench-cycle360 = ["bench-range350"]
+bench-cycle400 = ["bench-cycle360"]
+bench-cycle450 = ["bench-cycle400"]
+bench-seed400 = ["bench-cycle400"]
+bench-seed450 = ["bench-seed400","bench-cycle450","bench-follow-persistence"]
+bench-seed500 = ["bench-seed450"]
+bench-final-edge-prepare = ["bench-reentry-clear-once", "bench-reentry-staging"]
+bench-seedmask-check = ["bench-masked-seed-arm"]
+bench-final-edge-check = ["bench-final-edge-prepare"]
+# Fault injection ONLY: stall consumption once per boot after20000 scans.
+bench-dma-stall = ["bench-dma-feedback"]
+
+# NUCLEO-G071RB (STM32G071RBT6, 128K flash / 36K RAM, Cortex-M0+ @ 64 MHz).
+# On-board ST-Link V2-1 probe 0483:374b:066CFF343433464757233430; its VCP is
+# wired to USART2 PA2 (MCU TX) / PA3 (MCU RX).
+
+[dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+nb = "1"
+rtt-target = "0.5"
+stm32g0xx-hal = { git = "https://github.com/stm32-rs/stm32g0xx-hal", features = ["stm32g071", "rt"] }
+minz-core = { path = "../minz/core" }
+portable-atomic = { version = "1", default-features = false }
+
+# Frozen upstream15aca632; local manifest-only patch leaves backend to application.
+[patch."https://github.com/stm32-rs/stm32g0xx-hal"]
+stm32g0xx-hal = { path = "ref/stm32g0xx-hal" }
+
+[profile.release]
+opt-level = "s"
+debug = 2
+lto = "thin"
+codegen-units = 1
+
+# Retained named characterization profile. Release is explicitly size-optimized
+# too; any optimization/profile change requires fresh bench timing qualification.
+[profile.bench-probes]
+inherits = "release"
+opt-level = "s"
+
+# Keep deadline-sensitive binz startup/guard code at the qualified `s`
+# optimization while size-optimizing dependencies to fit normal restart.
+# This profile does not alter ordinary --release builds.
+[profile.release-hybrid]
+inherits = "release"
+opt-level = "z"
+
+[profile.release-hybrid.package.binz]
+opt-level = "s"

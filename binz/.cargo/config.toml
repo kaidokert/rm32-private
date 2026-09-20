@@ -1,0 +1,7 @@
+[build]
+target = "thumbv6m-none-eabi"
+
+[target.thumbv6m-none-eabi]
+linker = "scripts/audit-linker.cmd"
+runner = "probe-rs run --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430"
+rustflags = ["-C", "link-arg=-Tlink.x", "-C", "linker-flavor=ld.lld"]

@@ -1,0 +1,25 @@
+[package]
+name = "drv-observer-replay"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[features]
+bench-range300 = []
+bench-range310 = ["bench-range300"]
+bench-range320 = ["bench-range310"]
+bench-range330 = ["bench-range320"]
+bench-range335 = ["bench-range330"]
+bench-range340 = ["bench-range335"]
+bench-range345 = ["bench-range340"]
+bench-range350 = ["bench-range345"]
+bench-cpu-roots = []
+bench-comp-overlap = []
+bench-inline-guard = []
+bench-guard-install = []
+bench-seed-div12 = []
+
+[dependencies]
+minz-core = { path = "../../../minz/core" }
+portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }

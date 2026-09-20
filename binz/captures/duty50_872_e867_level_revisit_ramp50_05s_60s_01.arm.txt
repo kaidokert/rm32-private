@@ -1,0 +1,4 @@
+live1
+LIVE armed=1 one_shot=1 duty_max=500
+> 
+> 

@@ -1,0 +1,161 @@
+off
+gates + en OFF, idle
+> 
+> engage0
+ENGAGEDRY armed=0 clears_other_probes=0 gate_authority=0
+> 
+> obs0
+OBS cancelled
+> 
+> p
+OUT: ah=0 bh=0 ch=0 al=0 bl=0 cl=0 led=0 ld4=1 en=0 | mode=0 coast=0 sf=10Hz target=200Hz duty=6.2% TIM1:moe=0 ccrA=0 ccrB=0 ccrC=0 arr=6399
+> 
+> i
+IN: ah=0 bh=0 ch=0 al=0 bl=0 cl=0 led=1 ld4=0 en=0 nflt=1 btn=1
+> 
+> drivephase60
+DRIVEPHASE target=60 accepted=1 one_shot=1 gate_authority=0
+> 
+> drivedu61
+DRIVEDUTY target=61 accepted=1 one_shot=1 gate_authority=0
+> 
+> bemfdu100
+BEMFDUTY target=100 accepted=1 one_shot=1 gate_authority=0
+> 
+> drivepwm192
+DRIVEPWM target=192 accepted=1 gate_authority=0
+> 
+> driveobs1
+DRIVEOBS armed=1 window_us=20000 handoff_authority=0 one_shot=1
+> 
+> engagems40000
+ENGAGEWINDOW ms=40000
+> 
+> drivex1
+DRIVEX armed=1 accepted=1 one_shot=1
+> 
+> coretrace0
+CORETRACE enabled=0
+> 
+> capstride19
+CAPSTRIDE ticks=19 adc_hz=1000 guards_unchanged=1
+> 
+> cap1
+CAPTURE armed one-shot a85-v1
+> 
+> du62
+du=62 tenths-percent (6.2%)
+> 
+> catchdu62
+CATCHDUTY tenths=62
+> 
+> run200
+RUN: align=20ms@1.0% catch=50Hz/980ms@6.2% ramp=2000ms target=200Hz/6.2% hold=2000ms
+> D=0064 I=033E 
+D=0064 I=0343 
+D=006E I=0340 
+D=0078 I=02D0 
+D=0082 I=0272 
+D=008C I=0234 
+D=0096 I=0203 
+D=00A0 I=01D9 
+D=00AA I=01B2 
+D=00B4 I=01A2 
+D=00BE I=018A 
+D=00C8 I=0171 
+D=00D2 I=0165 
+D=00DC I=0150 
+D=00E6 I=0142 
+D=00F0 I=0137 
+D=00FA I=012A 
+D=0104 I=011C 
+D=010E I=010F 
+D=0118 I=0106 
+D=0122 I=00FD 
+D=012C I=00F8 
+D=0136 I=00EF 
+D=0140 I=00E7 
+D=014A I=00E5 
+D=0154 I=00DF 
+D=015E I=00D5 
+D=0168 I=00D4 
+D=0172 I=00CE 
+D=017C I=00C9 
+D=0186 I=00CA 
+D=0190 I=00C3 
+D=019A I=00BD 
+D=01A4 I=00BB 
+D=01AE I=00B5 
+D=01B8 I=00B5 
+D=01C2 I=00AF 
+STACK span=18416 painted=16016 untouched=15380 diagnostic_only=1
+TIMING energized_us=44711058 control_ticks=4626 max_control_interval_us=1043
+WAVETIMING updates=47001 max_gap_us=105 max_isr_us=6 target_period_us=100 elapsed_phase=1 irq=1
+LIVEACK target_tenths=100 seen=1 accepted_us=3317415 stop_us=40000004 age_us=36682589 same_powered_segment=1 ack_queued=1 pwm_transfer_within_one_carrier=1 postrun_only=1
+LIVEACK target_tenths=250 seen=1 accepted_us=10992113 stop_us=40000004 age_us=29007891 same_powered_segment=1 ack_queued=1 pwm_transfer_within_one_carrier=1 postrun_only=1
+LIVEACK target_tenths=500 seen=0 accepted_us=0 stop_us=40000004 age_us=0 same_powered_segment=1 ack_queued=1 pwm_transfer_within_one_carrier=1 postrun_only=1
+DRIVESTOP acquisition_reason=22 acquisition_us=10711 acquisition_duty_tenths=61 bemf_requested_tenths=100 disabled=1
+DRIVEADC scans=0 peak_abs_raw=0 bus_min_mv=0 uncalibrated=1 zero_scans_unavailable=1
+DRIVETRANSFER result=1 zero_not_attempted=1 two_refused=1
+DRIVENENTRY refusal=0 adopt_refusal=0 coast_stop=7 fly_age=240 fly_arr=98 fly_arm_us=7 fly_seeded=1 postrun_only=1
+TRACKSTOP event_fault=0 last_event_us=39999977 sector=3 last_poll_us=40000002 feedback_acquired_us=39999877 retained_operational_state=1
+SPEEDEVENTWATCH max_us=239 tighten_only=1 periods=3 poll_us=100 diagnostic=1
+ADOPTREFUSAL reason=0 zero_pass=1 foreground_only=1
+FASTCYCLE r1 0 0
+FASTEVENT r1 0 0 report_only=1 stale_max_us=1000 order_kill=1
+RUNLIMIT cycle_min_us=2223 event_min_us=238 cycle_max_us=6000 event_max_us=1000 experimental=1
+POWERPATH reason=2 stop_us=40000004 isr_max_us=0 commit_max_us=9 veto=0 active=0 disabled=1
+POWERCOMMITS applied=354565
+POWERFEEDBACK scans=0 peak_abs_raw=0 bus_min_mv=11665
+BEMFSTOP core_stop=7 average_half_us=176 estimated_ehz=1893 com=354565 lock_proven=0
+LEANCORE r1 recorder=0 comp_max=0 com_max=0 control_progress=1 lean_irq=1
+ADVANCEPROFILE below350=20 at_or_above350=22 retained_level=22 postrun_only=1
+ADVANCEOVERRIDE high_active=1 published=22 effective_high=26 first_ci=215 first_wait=20 first_expected=20 witnessed=1 terminal_ci=175 terminal_wait=27 terminal_expected=16 terminal_match=0 postrun_only=1
+RATECENSUS active=1 start_us=21201252 elapsed_us=18798752 target_tenths=450 below_pct_strict=1 diagnostic_only=1
+RATEBUS scans=83180 low97=678 low95=86 low95_runs=86 low95_max_streak=1 complete_dma_only=1
+RATEACCEPT accepted=216569 late125=14594 late_runs=14550 late_max_streak=2 comparator_events_only=1
+RATECURVE duty_tenths=450 bus_sum=99511240 vref_sum=125305480 scans=83180 current_sum=8899010 current_blocks=832 current_min=7639 current_max=13844 raw_units=1 diagnostic_only=1
+RUNNINGREVISIT attempts=7360 accepts=7360 postrun_only=1
+REVERSEBLANK arms=4 max_mask_us=330 still_active=0 low_speed_only=1 postrun_only=1
+CURRENTQUALITY phase_rail_codes=0 phase_rail_stop=0 bus_low_codes=0 bus_average_scans=100 vref_validity_stop=1
+FASTBUS baseline_bus=1210 baseline_vref=1507 threshold_pct=95 consecutive=3 scan_period_us=226 tripped=0 same_wake=1
+CURRENTFOLDBACK count=0 last_duty_tenths=0 last_step_tenths=0 step_policy=severity10_50 release=none first_over_warning=1 unacknowledged_second_over_stop=1 foreground_writer=1
+DONE reason=8 drive_records=243 coast_records=500 gates=off en=off
+> capstride1
+CAPSTRIDE ticks=1 adc_hz=1000 guards_unchanged=1
+> 
+> coretrace0
+CORETRACE enabled=0
+> 
+> FINALOFF
+obs0
+OBS cancelled
+> 
+> drivex0
+DRIVEX armed=0 accepted=1 one_shot=1
+> 
+> engagems1000
+ENGAGEWINDOW ms=1000
+> 
+> bemfdu0
+BEMFDUTY target=0 accepted=1 one_shot=1 gate_authority=0
+> 
+> drivephase0
+DRIVEPHASE target=0 accepted=1 one_shot=1 gate_authority=0
+> 
+> drivedu0
+DRIVEDUTY target=0 accepted=1 one_shot=1 gate_authority=0
+> 
+> drivepwm192
+DRIVEPWM target=192 accepted=1 gate_authority=0
+> 
+> p
+OUT: ah=0 bh=0 ch=0 al=0 bl=0 cl=0 led=1 ld4=0 en=0 | mode=0 coast=0 sf=10Hz target=200Hz duty=6.2% TIM1:moe=0 ccrA=0 ccrB=0 ccrC=0 arr=6399
+> 
+> i
+IN: ah=0 bh=0 ch=0 al=0 bl=0 cl=0 led=1 ld4=0 en=0 nflt=1 btn=1
+> 
+> stack
+STACK span=18416 painted=16016 untouched=15380 diagnostic_only=1
+> 
+> 

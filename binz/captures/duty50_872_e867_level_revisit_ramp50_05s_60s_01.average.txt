@@ -1,0 +1,4 @@
+avgnominal
+AVGNOMINAL accepted=1 raw_sum=17308 scans=50 target_ma=4000 vdda_mv=3313 gain=10 shunt_mohm=7 calibrated=0 uncertainty_bounded=0
+> 
+> 
