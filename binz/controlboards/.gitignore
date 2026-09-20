@@ -1,0 +1,8 @@
+# Vendor documents and extracted schematic/manufacturing assets are cached locally.
+*.pdf
+*.PDF
+*.png
+*.zip
+*.tgz
+*.xls
+DRV8304HEVM Design Files/

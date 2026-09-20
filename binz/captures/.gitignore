@@ -1,0 +1,4 @@
+# Run transcripts and build archives are local by default. Tracked qualification
+# evidence remains tracked; add new evidence explicitly with `git add -f`.
+*
+!/.gitignore
