@@ -110,6 +110,13 @@ only **catch evidence**. It is not lock evidence. The current 6% and 7% runs
 meet transfer/catch but fail the runtime and timing rows after roughly 20--30
 ms, so they must be reported as `catch=pass, sustained_lock=fail`.
 
+The executable checker is `scripts/verify_bemf_lock.py`; run it against the
+complete transcript. It intentionally rejects the retained handoff capture
+because that capture lacks a live lock summary, and it will reject the compact
+captures on `TRACKSTOP event_fault=1`. A future successful transcript must make
+this checker pass rather than relying on visual spinning or the hard-coded
+`BEMFSTOP` label.
+
 ## Known-good result
 
 ## Replication audit (2026-09-20)
