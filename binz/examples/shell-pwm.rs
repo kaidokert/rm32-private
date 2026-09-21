@@ -31,12 +31,23 @@ use stm32g0xx_hal::stm32;
 #[path = "support/bus_foldback.rs"]
 mod bus_foldback;
 #[cfg(all(feature = "bench-fast-bus-sag", feature = "bench-driver-fault-probe"))]
-compile_error!("fast bus-sag stop cannot coexist with the driver-fault probe's average-guard bypass");
-#[cfg(all(feature = "bench-running-revisit-off35", feature = "bench-running-revisit-off50"))]
+compile_error!(
+    "fast bus-sag stop cannot coexist with the driver-fault probe's average-guard bypass"
+);
+#[cfg(all(
+    feature = "bench-running-revisit-off35",
+    feature = "bench-running-revisit-off50"
+))]
 compile_error!("select one running-level-revisit duty cutoff for a causal A/B");
 #[cfg(any(
-    all(feature = "bench-running-revisit-off35", feature = "bench-running-revisit-off48"),
-    all(feature = "bench-running-revisit-off48", feature = "bench-running-revisit-off50")
+    all(
+        feature = "bench-running-revisit-off35",
+        feature = "bench-running-revisit-off48"
+    ),
+    all(
+        feature = "bench-running-revisit-off48",
+        feature = "bench-running-revisit-off50"
+    )
 ))]
 compile_error!("select one running-level-revisit duty cutoff for a causal A/B");
 #[cfg(all(feature = "bench-fast-bus-sag", feature = "bench-current-report-only"))]
@@ -55,12 +66,6 @@ mod com_timing;
 mod core_bench;
 #[path = "support/core_state.rs"]
 mod core_state;
-#[cfg(feature = "bench-fast-sag-causal")]
-#[path = "support/fast_sag_causal.rs"]
-mod fast_sag_causal;
-#[cfg(feature = "bench-rate-census")]
-#[path = "support/rate_census.rs"]
-mod rate_census;
 #[cfg(feature = "bench-current-foldback-policy")]
 #[path = "support/current_foldback.rs"]
 mod current_foldback;
@@ -74,6 +79,9 @@ mod dma_priority_probe;
 mod duty_envelope;
 #[path = "support/duty_split.rs"]
 mod duty_split;
+#[cfg(feature = "bench-fast-sag-causal")]
+#[path = "support/fast_sag_causal.rs"]
+mod fast_sag_causal;
 #[cfg(feature = "bench-filter-latency")]
 #[path = "support/filter_latency.rs"]
 mod filter_latency;
@@ -106,11 +114,11 @@ mod live_duty_hw;
 mod live_reply;
 #[path = "support/observation.rs"]
 mod observation;
+#[path = "support/phase_direction.rs"]
+mod phase_direction;
 #[cfg(feature = "bench-pwm-roles")]
 #[path = "support/phase_gpio_plan.rs"]
 mod phase_gpio_plan;
-#[path = "support/phase_direction.rs"]
-mod phase_direction;
 #[cfg(feature = "bench-pwm-roles")]
 #[path = "support/phase_role_live.rs"]
 mod phase_role_live;
@@ -120,17 +128,20 @@ mod phase_role_sequence;
 #[cfg(feature = "bench-com-peer")]
 #[path = "support/priority_probe.rs"]
 mod priority_probe;
-#[path = "support/rolling_current.rs"]
-mod rolling_current;
-#[cfg(feature = "bench-revisit-origin")]
-#[path = "support/revisit_origin.rs"]
-mod revisit_origin;
+#[cfg(feature = "bench-rate-census")]
+#[path = "support/rate_census.rs"]
+mod rate_census;
 #[cfg(feature = "bench-reverse-advance22-high")]
 #[path = "support/reverse_advance.rs"]
 mod reverse_advance;
 #[cfg(feature = "bench-reverse-advance24-override")]
 #[path = "support/reverse_advance24.rs"]
 mod reverse_advance24;
+#[cfg(feature = "bench-revisit-origin")]
+#[path = "support/revisit_origin.rs"]
+mod revisit_origin;
+#[path = "support/rolling_current.rs"]
+mod rolling_current;
 #[cfg(all(
     feature = "bench-seed-timing-reanchor",
     not(feature = "bench-live-control")
@@ -489,13 +500,12 @@ const START_TICKS: u32 = if cfg!(feature = "bench-startup-fast") {
 // The autonomous staircase reproduces the successful host path: establish
 // rotation at50eHz, then step60..200. Its former100eHz initial jump was not
 // host parity and intermittently stalled into the1A average-current guard.
-const START_HZ: u32 = if cfg!(feature = "bench-startup-staircase")
-    && !cfg!(feature = "bench-reverse-flat-start")
-{
-    50
-} else {
-    100
-};
+const START_HZ: u32 =
+    if cfg!(feature = "bench-startup-staircase") && !cfg!(feature = "bench-reverse-flat-start") {
+        50
+    } else {
+        100
+    };
 const RAMP_TICKS: u32 = if cfg!(feature = "bench-startup-fast") {
     300
 } else {
@@ -503,12 +513,21 @@ const RAMP_TICKS: u32 = if cfg!(feature = "bench-startup-fast") {
 };
 const HOLD_TICKS: u32 = if cfg!(feature = "bench-startup-fast") {
     400
+} else if cfg!(feature = "bench-hold-30s") {
+    30_000
 } else {
     2_000
 };
 const RUN_TICKS: u32 = ALIGN_TICKS + START_TICKS + RAMP_TICKS + HOLD_TICKS;
 // Leave the same 300 ms campaign tail for the under-drive handoff.
-const HANDOFF_US: u32 = (RUN_TICKS - 300) * 1_000;
+// The normal five-second campaign hands off 300 ms before its end.  A
+// thirty-second hold must hand off during the target dwell, otherwise the
+// independent 30 s campaign limit ends the run before BEMF is ever armed.
+const HANDOFF_US: u32 = if cfg!(feature = "bench-handoff-early") {
+    (ALIGN_TICKS + START_TICKS + RAMP_TICKS + 1_700) * 1_000
+} else {
+    (RUN_TICKS - 300) * 1_000
+};
 const CAPTURE_DIV: u32 = 1; // every 1 kHz sine/control update
 const CAPTURE_HZ: u32 = CONTROL_HZ / CAPTURE_DIV;
 const CAPTURE_N: usize = 256; // rolling final 256 ms; RAM shared budget with dense observer
@@ -969,6 +988,69 @@ fn capture_read(index: usize) -> Capture {
     }
 }
 
+#[cfg(feature = "bench-cap-summary")]
+fn capture_summary<W: Write>(serial: &mut W, len: usize, head: usize, vcal: u32, reason: u8) {
+    let n = len.min(CAPTURE_N);
+    let mut mins = [u16::MAX; 9];
+    let mut maxs = [0u16; 9];
+    let mut stages = [0u16; 5];
+    let mut flags_or = 0u8;
+    let mut flags_and = 0xffu8;
+    for ordinal in 0..n {
+        let row = capture_read((head + CAPTURE_N - n + ordinal) % CAPTURE_N);
+        let values = [
+            row.freq_chz,
+            row.ia,
+            row.ib,
+            row.ic,
+            row.vsenc,
+            row.neutral,
+            row.vbus,
+            row.vref,
+            row.tick,
+        ];
+        for (i, value) in values.iter().enumerate() {
+            mins[i] = mins[i].min(*value);
+            maxs[i] = maxs[i].max(*value);
+        }
+        if (row.stage as usize) < stages.len() {
+            stages[row.stage as usize] = stages[row.stage as usize].saturating_add(1);
+        }
+        flags_or |= row.flags;
+        flags_and &= row.flags;
+    }
+    let _ = writeln!(
+        serial,
+        "CAPSUMMARY n={} vcal={} reason={} order=oldest_first fields=freq_chz,ia,ib,ic,vsenc,neutral,vbus,vref,tick",
+        n, vcal, reason
+    );
+    let _ = writeln!(
+        serial,
+        "CAPMIN {} {} {} {} {} {} {} {} {}",
+        mins[0], mins[1], mins[2], mins[3], mins[4], mins[5], mins[6], mins[7], mins[8]
+    );
+    let _ = writeln!(
+        serial,
+        "CAPMAX {} {} {} {} {} {} {} {} {} flags_or={} flags_and={}",
+        maxs[0],
+        maxs[1],
+        maxs[2],
+        maxs[3],
+        maxs[4],
+        maxs[5],
+        maxs[6],
+        maxs[7],
+        maxs[8],
+        flags_or,
+        flags_and
+    );
+    let _ = writeln!(
+        serial,
+        "CAPSTAGE fixed={} align={} start={} ramp={} hold={}",
+        stages[0], stages[1], stages[2], stages[3], stages[4]
+    );
+}
+
 static mut COAST_ANCHOR_DELAY: u16 = 0;
 // Early coast only: timestamp each real comparator read after mux settling.
 // 32*3*2=192bytes; no change to legacy coast record layout or sample values.
@@ -1001,8 +1083,10 @@ fn coast_write(index: usize, tick: u32, elapsed_us: u32) {
         flags: if index < 32 || cfg!(feature = "bench-fast-coast") {
             let mut flags = get_idr(1, 14) as u8;
             for phase in 0..3 {
-                flags |= (comp_read_settle(6 + phase_direction::physical_phase(phase as u8) as u32, cfg!(feature = "bench-fast-coast"))
-                    as u8)
+                flags |= (comp_read_settle(
+                    6 + phase_direction::physical_phase(phase as u8) as u32,
+                    cfg!(feature = "bench-fast-coast"),
+                ) as u8)
                     << (phase + 1);
                 if index < 32 {
                     unsafe {
@@ -1263,8 +1347,10 @@ fn pwm_sine_prepared(amplitude: u32, theta: u32) -> [u16; 3] {
     unsafe {
         let tim = &*stm32::TIM1::ptr();
         // Native TIM1 pin pairing: CH3=A, CH2=B, CH1=C.
-        tim.ccr3().write(|w| w.bits(ccr[phase_direction::physical_phase(0) as usize]));
-        tim.ccr2().write(|w| w.bits(ccr[phase_direction::physical_phase(1) as usize]));
+        tim.ccr3()
+            .write(|w| w.bits(ccr[phase_direction::physical_phase(0) as usize]));
+        tim.ccr2()
+            .write(|w| w.bits(ccr[phase_direction::physical_phase(1) as usize]));
         tim.ccr1().write(|w| w.bits(ccr[2]));
     }
     on_us
@@ -1498,6 +1584,8 @@ fn main() -> ! {
     let mut coast_len: usize = 0;
     let mut dump_pending = false;
     let mut dump_armed = false; // one-shot opt-in; never persist across completed attempts
+    #[cfg(feature = "bench-cap-summary")]
+    let mut capture_summary_armed = false;
     let mut dump_reason: u8 = 0; // 1=timeout, 2=nFAULT, 3=host, 4=ADC rail, 5=VBUS UV
     let mut run_start_us = 0u32;
     let mut drive_elapsed_us = 0u32;
@@ -1566,8 +1654,9 @@ fn main() -> ! {
         if drive_mode != 0 {
             drive_elapsed_us = wall_us.wrapping_sub(run_start_us);
             // Reserve one control interval for polling/scan latency so outputs
-            // are already disabled by the five-second energized boundary.
-            if drive_elapsed_us >= 4_999_000 {
+            // are already disabled by the configured energized boundary.
+            let run_limit_us = RUN_TICKS.saturating_sub(1).saturating_mul(1_000);
+            if drive_elapsed_us >= run_limit_us {
                 gates_off();
                 set_pin(3, 1, false);
                 drive_mode = 0;
@@ -1865,11 +1954,15 @@ fn main() -> ! {
                                 #[cfg(feature = "bench-revisit48-probe")]
                                 if duty == 480 {
                                     let (attempts, accepts) = core_bench::running_revisit_counts();
-                                    revisit48_probe = (true, powered_timer::stream_now(), attempts, accepts);
+                                    revisit48_probe =
+                                        (true, powered_timer::stream_now(), attempts, accepts);
                                 }
                                 #[cfg(feature = "bench-rate-census")]
                                 if (cfg!(feature = "bench-rate-curve")
-                                    && matches!(duty, 50 | 100 | 150 | 200 | 250 | 300 | 350 | 400 | 450 | 500))
+                                    && matches!(
+                                        duty,
+                                        50 | 100 | 150 | 200 | 250 | 300 | 350 | 400 | 450 | 500
+                                    ))
                                     || duty == 400
                                     || (cfg!(feature = "bench-phase-current-census") && duty == 450)
                                 {
@@ -2013,15 +2106,14 @@ fn main() -> ! {
                         (START_HZ * 100, catch_duty_tenths, 2)
                     } else if sine_ticks < ALIGN_TICKS + START_TICKS + RAMP_TICKS {
                         let elapsed = sine_ticks - ALIGN_TICKS - START_TICKS;
-                        let target_chz =
-                            if cfg!(feature = "bench-startup-staircase")
-                                && !cfg!(feature = "bench-reverse-flat-start")
-                                && target_hz == 200
-                            {
-                                campaign::staircase_target(sine_ticks) * 100
-                            } else {
-                                target_hz * 100
-                            };
+                        let target_chz = if cfg!(feature = "bench-startup-staircase")
+                            && !cfg!(feature = "bench-reverse-flat-start")
+                            && target_hz == 200
+                        {
+                            campaign::staircase_target(sine_ticks) * 100
+                        } else {
+                            target_hz * 100
+                        };
                         let start_chz = START_HZ * 100;
                         let freq_chz = campaign::ramp(start_chz, target_chz, elapsed, RAMP_TICKS);
                         let duty = campaign::ramp(
@@ -2279,8 +2371,7 @@ fn main() -> ! {
                         let enabled = cortex_m::interrupt::free(|_| {
                             wave_timer::start(0, ALIGN_DUTY_TENTHS.min(target_duty_tenths));
                             #[cfg(feature = "bench-startup-adc")]
-                            let adc_ready =
-                                get_idr(3, 1) && adc_stream::startup_sample().is_some();
+                            let adc_ready = get_idr(3, 1) && adc_stream::startup_sample().is_some();
                             #[cfg(not(feature = "bench-startup-adc"))]
                             let adc_ready = true;
                             if get_idr(1, 14) && adc_ready {
@@ -2360,6 +2451,13 @@ fn main() -> ! {
                 // Keep terminal summaries; omit optional bulk capture output.
                 dump_armed = false;
             }
+            #[cfg(feature = "bench-cap-summary")]
+            if capture_summary_armed {
+                capture_summary(&mut serial, capture_len, capture_head, vcal, dump_reason);
+                #[cfg(feature = "bench-driven-power")]
+                core_bench::compact_lock_summary(&mut serial);
+                capture_summary_armed = false;
+            }
             stack_probe::report(&mut serial);
             let _ = writeln!(
                 serial,
@@ -2382,7 +2480,11 @@ fn main() -> ! {
                     live50_ack_seen as u8,
                     live50_ack_us,
                     stop_us,
-                    if live50_ack_seen { stop_us.saturating_sub(live50_ack_us) } else { 0 }
+                    if live50_ack_seen {
+                        stop_us.saturating_sub(live50_ack_us)
+                    } else {
+                        0
+                    }
                 );
             }
             #[cfg(feature = "bench-target-ack-stamp")]
@@ -2394,8 +2496,15 @@ fn main() -> ! {
                     let _ = writeln!(
                         serial,
                         "LIVEACK target_tenths={} seen={} accepted_us={} stop_us={} age_us={} same_powered_segment=1 ack_queued=1 pwm_transfer_within_one_carrier=1 postrun_only=1",
-                        duty, seen as u8, stamp, stop_us,
-                        if seen { stop_us.saturating_sub(stamp) } else { 0 }
+                        duty,
+                        seen as u8,
+                        stamp,
+                        stop_us,
+                        if seen {
+                            stop_us.saturating_sub(stamp)
+                        } else {
+                            0
+                        }
                     );
                 }
             }
@@ -2406,32 +2515,66 @@ fn main() -> ! {
                     serial,
                     "REVISIT48 ack_seen={} attempts_after_ack={} accepts_after_ack={} cutoff_tenths={} postrun_only=1",
                     revisit48_seen as u8,
-                    if revisit48_seen { after.0.saturating_sub(revisit48_before.0) } else { 0 },
-                    if revisit48_seen { after.1.saturating_sub(revisit48_before.1) } else { 0 },
-                    if cfg!(feature = "bench-running-revisit-off48") { 480 } else { 0 }
+                    if revisit48_seen {
+                        after.0.saturating_sub(revisit48_before.0)
+                    } else {
+                        0
+                    },
+                    if revisit48_seen {
+                        after.1.saturating_sub(revisit48_before.1)
+                    } else {
+                        0
+                    },
+                    if cfg!(feature = "bench-running-revisit-off48") {
+                        480
+                    } else {
+                        0
+                    }
                 );
                 let _ = writeln!(
                     serial,
                     "REVISIT50 ack_seen={} attempts_after_ack={} accepts_after_ack={} cutoff_tenths={} postrun_only=1",
                     live50_ack_seen as u8,
-                    if live50_ack_seen { after.0.saturating_sub(revisit50_before.0) } else { 0 },
-                    if live50_ack_seen { after.1.saturating_sub(revisit50_before.1) } else { 0 },
-                    if cfg!(feature = "bench-running-revisit-off48") { 480 }
-                    else if cfg!(feature = "bench-running-revisit-off50") { 500 }
-                    else { 0 }
+                    if live50_ack_seen {
+                        after.0.saturating_sub(revisit50_before.0)
+                    } else {
+                        0
+                    },
+                    if live50_ack_seen {
+                        after.1.saturating_sub(revisit50_before.1)
+                    } else {
+                        0
+                    },
+                    if cfg!(feature = "bench-running-revisit-off48") {
+                        480
+                    } else if cfg!(feature = "bench-running-revisit-off50") {
+                        500
+                    } else {
+                        0
+                    }
                 );
             }
             #[cfg(feature = "bench-revisit48-probe")]
             {
                 let (attempts, accepts) = core_bench::running_revisit_counts();
                 let stop = powered_timer::stopped_snapshot()[1];
-                let _ = writeln!(serial,
+                let _ = writeln!(
+                    serial,
                     "R48 seen={} age={} attempts={} accepts={} cutoff={}",
                     revisit48_probe.0 as u8,
-                    if revisit48_probe.0 { stop.saturating_sub(revisit48_probe.1) } else { 0 },
+                    if revisit48_probe.0 {
+                        stop.saturating_sub(revisit48_probe.1)
+                    } else {
+                        0
+                    },
                     attempts.saturating_sub(revisit48_probe.2),
                     accepts.saturating_sub(revisit48_probe.3),
-                    if cfg!(feature = "bench-running-revisit-off48") { 480 } else { 0 });
+                    if cfg!(feature = "bench-running-revisit-off48") {
+                        480
+                    } else {
+                        0
+                    }
+                );
             }
             #[cfg(feature = "bench-normal-restart")]
             if normal_restart_result != 0 {
@@ -2464,8 +2607,7 @@ fn main() -> ! {
                 let _ = writeln!(
                     serial,
                     "NORMALRESTART4 planned_remaining_us={} actual_second_power_us={} window_rounding_us=1000 postrun_only=1",
-                    normal_restart_remaining_us,
-                    second[1]
+                    normal_restart_remaining_us, second[1]
                 );
             }
             flying_bench::summary(&mut serial, dump_armed);
@@ -2522,20 +2664,38 @@ fn main() -> ! {
                 #[cfg(feature = "bench-running-level-revisit")]
                 {
                     let (attempts, accepts) = core_bench::running_revisit_counts();
-                    let _ = writeln!(serial, "RUNNINGREVISIT attempts={} accepts={} postrun_only=1", attempts, accepts);
+                    let _ = writeln!(
+                        serial,
+                        "RUNNINGREVISIT attempts={} accepts={} postrun_only=1",
+                        attempts, accepts
+                    );
                     #[cfg(feature = "bench-running-revisit-off35")]
-                    let _ = writeln!(serial, "REVISITPOLICY cutoff_tenths=350 below=enabled at_or_above=physical_comp_only reverse_only=1 postrun_only=1");
+                    let _ = writeln!(
+                        serial,
+                        "REVISITPOLICY cutoff_tenths=350 below=enabled at_or_above=physical_comp_only reverse_only=1 postrun_only=1"
+                    );
                     #[cfg(feature = "bench-running-revisit-off50")]
-                    let _ = writeln!(serial, "REVISITPOLICY cutoff_tenths=500 below=enabled at_or_above=physical_comp_only reverse_only=1 postrun_only=1");
+                    let _ = writeln!(
+                        serial,
+                        "REVISITPOLICY cutoff_tenths=500 below=enabled at_or_above=physical_comp_only reverse_only=1 postrun_only=1"
+                    );
                     #[cfg(feature = "bench-running-revisit-off48")]
-                    let _ = writeln!(serial, "REVISITPOLICY cutoff_tenths=480 below=enabled at_or_above=physical_comp_only reverse_only=1 postrun_only=1");
+                    let _ = writeln!(
+                        serial,
+                        "REVISITPOLICY cutoff_tenths=480 below=enabled at_or_above=physical_comp_only reverse_only=1 postrun_only=1"
+                    );
                 }
                 #[cfg(feature = "bench-interval-tail")]
                 if matches!(dump_reason, 8 | 26) {
                     core_bench::interval_tail_dump(&mut serial);
                 }
                 #[cfg(feature = "bench-reverse-low-irq-cap")]
-                let _ = writeln!(serial, "IRQRATE peak={} limit={} bucket_us=1000 postrun_only=1", core_bench::irq_rate_peak(), core_bench::reverse_rate_limit());
+                let _ = writeln!(
+                    serial,
+                    "IRQRATE peak={} limit={} bucket_us=1000 postrun_only=1",
+                    core_bench::irq_rate_peak(),
+                    core_bench::reverse_rate_limit()
+                );
                 #[cfg(feature = "bench-reverse-irq-probe")]
                 core_bench::reverse_irq_summary(&mut serial);
                 #[cfg(feature = "bench-reverse-blank")]
@@ -2543,7 +2703,12 @@ fn main() -> ! {
                 #[cfg(feature = "bench-reverse-irq-cap24")]
                 core_bench::observe_summary(&mut serial, false);
                 #[cfg(feature = "bench-host-abort-byte")]
-                let _ = writeln!(serial, "HOSTABORT observed={} code={} inactive_100byte_200error active_300rx_400byte_stop_500timeout_600governor_700prepare_800reply_busy_900writer_a00queue=1 owner_bit16_irq_bit17=1 postrun_only=1", (HOST_ABORT_OBS.load(portable_atomic::Ordering::Relaxed) != 0) as u8, HOST_ABORT_OBS.load(portable_atomic::Ordering::Relaxed));
+                let _ = writeln!(
+                    serial,
+                    "HOSTABORT observed={} code={} inactive_100byte_200error active_300rx_400byte_stop_500timeout_600governor_700prepare_800reply_busy_900writer_a00queue=1 owner_bit16_irq_bit17=1 postrun_only=1",
+                    (HOST_ABORT_OBS.load(portable_atomic::Ordering::Relaxed) != 0) as u8,
+                    HOST_ABORT_OBS.load(portable_atomic::Ordering::Relaxed)
+                );
                 #[cfg(feature = "bench-fast-bus-sag")]
                 average_current_live::quality_summary(&mut serial);
                 #[cfg(feature = "bench-current-foldback-policy")]
@@ -3329,6 +3494,10 @@ fn main() -> ! {
                     let _ = writeln!(serial, "OBS cancelled");
                 } else if line == b"cap1" {
                     dump_armed = true;
+                    #[cfg(feature = "bench-cap-summary")]
+                    {
+                        capture_summary_armed = true;
+                    }
                     let _ = writeln!(serial, "CAPTURE armed one-shot a85-v1");
                 } else if line == b"cap0" {
                     dump_armed = false;

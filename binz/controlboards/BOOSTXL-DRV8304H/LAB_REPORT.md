@@ -14846,3 +14846,151 @@ vref1506/vcal1662. The final36% persistence epoch was healthy at1.01..1.28
 rejects/accept. Per operator instruction this is a hard supply/power-path fold
 condition: powered testing pauses. Final off readback passed. Installed E855
 SHA `3BD142AB79C8AEF2FC05C08458D3DE2B61B246E051BD9FF49771D28EBC1C4B30`.
+
+## Entry 2026-09-20 — uninterrupted 30 s light-spin hold
+
+Built and flashed a dedicated hold-length variant from the known-good reverse /
+48 kHz feature closure. `bench-hold-30s` sets the startup hold to 30,000 ms
+and extends the shell, driven-run, powered-guard, and waveform campaign limits
+together; release-hybrid (opt-s, thin LTO, codegen-units=1) build succeeded.
+
+At PSU limit 1.0 A, after `AVGNOMINAL accepted=1`, commanded `du100` then
+`run200`: 10.0% duty, 200 eHz target. The motor ran continuously for the full
+hold. Terminal telemetry: `energized_us=29998980`, `control_ticks=29502`,
+`WAVETIMING updates=299990 max_gap_us=104 max_isr_us=6`, `DONE reason=1`,
+`drive_records=256`, `coast_records=500`, with no current, bus-sag, nFAULT,
+tracking, or watchdog stop. Operator observed approximately 550 mA, well below
+the 1 A PSU limit. Final `p/i`: all six gates=0, en=0, MOE=0, CCRs=0,
+nFAULT=1. UART was then closed and the debug runner stopped.
+
+This is the requested fixed-setting uninterrupted 30-second light-spin result.
+The flashed 30-second ELF SHA-256 was
+`406B36EC4268E359FD8BEF551793656580E79CEEE26695C1E9C45BB73E477E12`
+(2,669,096 bytes), built with `cargo build --profile release-hybrid
+--example shell-pwm --no-default-features --features <qualified-closure>,bench-hold-30s`.
+The qualified closure is the comma-separated feature list in
+`captures/reference/reverse_48k_com_top_high_20260919/README.md`.
+
+Replication limits: this run's lean post-run summary records the startup
+parameters, elapsed energized time, waveform timing, drive/coast record counts,
+and protection outcome, but it does not emit a full 30-second phase-current or
+board-VBUS waveform. The operator's PSU observation was approximately 550 mA;
+numeric phase peaks and VBUS minima require a separate `cap1`/instrumented
+capture run.
+
+## Entry 2026-09-20 — low-duty fixed-point recovery check
+
+After physical inspection (no burn/short; phase resistances acceptable; nFAULT
+high), the known-good reverse/48-kHz image was flashed and verified. PSU limit
+was 1.0 A. A direct open-loop trial at 6.2% duty / 50 eHz stopped after about
+1 ms on the firmware's `current ADC rail/peak` protection; outputs were then
+off and nFAULT remained high. This point is a stall/current-spike point, not a
+usable light-spin setting.
+
+The next fixed point was 10.0% duty / 200 eHz (`du100`, `run200`). Six bounded
+`run` windows completed normally, each reporting `energized_us` about
+4,998,000--4,999,000, `DONE reason=1`, 256 drive records, and no current,
+bus-sag, nFAULT, or tracking stop. Total energized time was approximately
+30 seconds at the same setting (the firmware's `run` command is a 5-second
+bounded window, so this is a six-window cohort rather than one uninterrupted
+30-second hold). Final readback: all gates/en/MOE off, nFAULT=1.
+
+This establishes a repeatable light-spin operating point at 10% / 200 eHz;
+the earlier 6.2% / 50 eHz attempt was below the motor's usable torque/speed
+point and was correctly caught by instantaneous-current protection.
+
+## Entry 2026-09-20 — 750 mA PSU-limit repeat
+
+With the same dedicated 30-second image and the PSU limit reduced to 750 mA,
+repeated `AVGNOMINAL accepted=1`, `du100`, `run200`. The operator observed
+approximately 550 mA during the run. It completed the uninterrupted hold:
+`energized_us=29998976`, `control_ticks=29502`, `WAVETIMING updates=299990`,
+`DONE reason=1`, `drive_records=256`, `coast_records=500`. No PSU foldback,
+bus-sag, current, nFAULT, tracking, or watchdog stop occurred. Final readback
+again showed all gates/en/MOE/CCRs off and nFAULT=1.
+
+Therefore this light-spin point remains good with at least 200 mA of PSU-limit
+headroom removed; the observed demand is below 750 mA.
+
+## Capture completeness note — 2026-09-20
+
+The 30-second control image includes a raw `Capture` record (phase IA/IB/IC,
+VSENC, neutral, VBUS, VREF, frequency, PWM state and stage), but also enables
+`bench-compact-qual`; at post-run it intentionally clears `dump_armed`, so a
+`cap1` command does not emit the bulk A85 records. The attempted sibling build
+with compact suppression removed overflowed G071 FLASH by 2752 bytes (and
+`.data` by 3952 bytes). Therefore the successful low-duty runs have exact
+startup/hold parameters and terminal timing/protection evidence, but not a
+full raw phase-current/VBUS waveform or per-event BEMF acceptance trace.
+Those require a separately size-reduced capture image or a compact streaming
+summary (min/max phase ADC, VBUS/VREF extrema, stage counts and accepted-event
+counter) before claiming complete handoff/lock characterization.
+
+## Entry 2026-09-20 — descending low-duty sweep at 750 mA PSU limit
+
+At the same 200 eHz target and 30,000 ms hold image, 7.0% duty completed
+`energized_us=29998978` with `DONE reason=1`, 256 drive records, no current,
+bus-sag, nFAULT, tracking or watchdog stop. The subsequent 6.2% run completed
+`energized_us=29998449` with the same clean result. Finally 6.0% completed
+`energized_us=29998886`, again with `DONE reason=1` and no protection trip.
+Each run ended with gates/en/MOE off and nFAULT=1.
+
+The lowest successful fixed point demonstrated in this sweep is therefore
+**6.0% duty at 200 eHz for a continuous 30 seconds**, with the PSU limited to
+750 mA. The earlier 6.2% / 50 eHz test remains a separate stalled low-speed
+case and does not contradict the successful 200 eHz point.
+
+## Entry 2026-09-20 — replication contract and compact capture build
+
+Added [`LOW_DUTY_REPLICATION.md`](../../LOW_DUTY_REPLICATION.md), which records
+the exact target, feature closure, build profile, hardware/UART setup, command
+sequence, compiled startup profile, and the evidence required to distinguish
+catch plus sustained BEMF lock from mere audible/mechanical spinning.
+
+Added opt-in `bench-cap-summary`. When `cap1` is armed, it emits compact
+`CAPSUMMARY`, `CAPMIN`, `CAPMAX`, and `CAPSTAGE` lines after shutdown, avoiding
+the previous full-A85 flash overflow. The release-hybrid build succeeded:
+text=128116, data=1200, bss=17160; ELF SHA-256
+`C61768B55FF23652F80A08FB17BFA4765CEF4900EFACFD279CC188CCAE44CD17`.
+This image has not been flashed or used for a powered run. The summary covers
+the final 256 ms ring only; accepted-BEMF/commutation counts and full-run event
+interval statistics are still required before claiming independent lock proof.
+
+## Entry 2026-09-20 — first real low-duty BEMF handoff attempt
+
+Built/flashed the compact handoff image (qualified closure plus
+`bench-hold-30s`, `bench-cap-summary`, `bench-handoff-early`), SHA
+`85286771E9430BC918A2DB28220CDB6A1BE20C18553BF4B1AEAEECE79D344457`,
+text=128116/data=1200/bss=17160. At the known benign 6% / 200 eHz setting,
+the exact sequence was `cap1`, `avgnominal`, `du60`, `driveobs1`, `drivex1`,
+`run200`; the full transcript is retained in
+`captures/handshake_6pct_200ehz_handoff_20260920.txt`.
+
+This was the first run that actually exercised handoff. It reached
+`DRIVETRANSFER result=1`, `fly_seeded=1`, and `POWERCOMMITS applied=29`, proving
+the transfer path executed. It then stopped after 23.041 ms with
+`TRACKSTOP event_fault=1`, `BEMFSTOP ... estimated_ehz=192 com=29
+lock_proven=0`, reason 8. No current, bus, nFAULT, or fast-sag protection
+tripped. Conclusion: the 30-second open-loop holds are benign and repeatable;
+closed-loop catch executes but is not yet locked. Do not call the low-duty
+campaign a BEMF-lock qualification until this tracking loss is resolved and
+the accepted-event interval evidence is present.
+
+A rebuilt compact image added `LOCKSUMMARY` counters without changing the
+powered path (SHA `ED90A650BEA682A992418DF2B984124333851C686D772CD71E764E06C220125A`,
+text=128596/data=1200/bss=17160). A repeat 6% handoff run reported
+`accepted=36`, `commutations=37`, `DRIVETRANSFER result=1`, then
+`TRACKSTOP event_fault=1` at `stop_us=30055`; `BEMFSTOP` still reports
+`lock_proven=0`. The detailed moments recorder reported `stats_events=0` on
+this live path, so accepted/commutation counters are currently the authoritative
+lock-adjacent evidence and interval moments remain an instrumentation gap.
+
+A matched 7% / 200 eHz handoff run repeated the same behavior: transfer result
+1 with 34 commutations, followed by `TRACKSTOP event_fault=1` at 27.261 ms;
+no electrical protection tripped. Transcript:
+`captures/handshake_7pct_200ehz_handoff_20260920.txt`. The 6% and 7% repeats
+localize the next work to the handoff/closed-loop acceptance path rather than
+the open-loop motor spin or bus-current margin.
+
+After the repeat, outputs were verified off and both serial and debug sessions
+were closed.

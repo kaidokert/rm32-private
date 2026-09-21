@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+bench-hold-30s = []
+bench-cap-summary = []
+bench-handoff-early = []
 default = ["atomic-critical-section"]
 atomic-critical-section = ["portable-atomic/critical-section"]
 # G071 single privileged core only; use --no-default-features for this experiment.

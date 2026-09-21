@@ -386,7 +386,8 @@ fn observe_irq_start_inner<const KEEP_COMP_MASKED: bool>() {
             n.set_priority(
                 stm32::Interrupt::ADC_COMP,
                 if cfg!(feature = "bench-running-comp-top")
-                    || cfg!(feature = "bench-reverse-comp-dma-peer") {
+                    || cfg!(feature = "bench-reverse-comp-dma-peer")
+                {
                     0
                 } else {
                     0x40
@@ -522,12 +523,30 @@ pub const fn reverse_rate_limit() -> u16 {
 pub fn reverse_irq_summary<W: Write>(out: &mut W) {
     let decisions = unsafe { core::ptr::addr_of!(REVERSE_IRQ_DECISIONS).read() };
     let trip = unsafe { core::ptr::addr_of!(REVERSE_IRQ_TRIP).read() };
-    let _ = writeln!(out, "REVERSEIRQ dispatch={} masked={} hw_off={} not_pending={} limit={} postrun_only=1", decisions[0], decisions[1], decisions[2], decisions[3], reverse_rate_limit());
-    let _ = writeln!(out, "REVERSEIRQTRIP step={} csr={} rpr={} fpr={} imr={} adc_isr={} adc_ier={} pwm_cnt={} t17={} powered={} one_shot=1", trip[0], trip[1], trip[2], trip[3], trip[4], trip[5], trip[6], trip[7], trip[8], trip[9]);
+    let _ = writeln!(
+        out,
+        "REVERSEIRQ dispatch={} masked={} hw_off={} not_pending={} limit={} postrun_only=1",
+        decisions[0],
+        decisions[1],
+        decisions[2],
+        decisions[3],
+        reverse_rate_limit()
+    );
+    let _ = writeln!(
+        out,
+        "REVERSEIRQTRIP step={} csr={} rpr={} fpr={} imr={} adc_isr={} adc_ier={} pwm_cnt={} t17={} powered={} one_shot=1",
+        trip[0], trip[1], trip[2], trip[3], trip[4], trip[5], trip[6], trip[7], trip[8], trip[9]
+    );
 }
 #[cfg(feature = "bench-reverse-blank")]
 pub fn reverse_blank_summary<W: Write>(out: &mut W) {
-    let _ = writeln!(out, "REVERSEBLANK arms={} max_mask_us={} still_active={} low_speed_only=1 postrun_only=1", REVERSE_BLANK_COUNT.load(Relaxed), REVERSE_BLANK_MAX_US.load(Relaxed), REVERSE_BLANK_ACTIVE.load(Relaxed) as u8);
+    let _ = writeln!(
+        out,
+        "REVERSEBLANK arms={} max_mask_us={} still_active={} low_speed_only=1 postrun_only=1",
+        REVERSE_BLANK_COUNT.load(Relaxed),
+        REVERSE_BLANK_MAX_US.load(Relaxed),
+        REVERSE_BLANK_ACTIVE.load(Relaxed) as u8
+    );
 }
 #[cfg(feature = "bench-reverse-blank")]
 fn reverse_blank_poll() {
@@ -842,7 +861,9 @@ pub fn publish_live_duty(duty: u32, _cs: &cortex_m::interrupt::CriticalSection) 
     #[cfg(feature = "bench-revisit-origin")]
     if POWER_DUTY.load(Relaxed) != duty {
         // Caller holds the IRQ mask, so no accepted ISR can race this epoch.
-        unsafe { core::ptr::addr_of_mut!(REVISIT_ORIGIN_COUNTS).write([[0; 4]; 2]); }
+        unsafe {
+            core::ptr::addr_of_mut!(REVISIT_ORIGIN_COUNTS).write([[0; 4]; 2]);
+        }
         REVISIT_ORIGIN_DUTY.store(duty, Relaxed);
     }
     POWER_DUTY.store(duty, Relaxed);
@@ -857,10 +878,9 @@ pub fn publish_live_duty(duty: u32, _cs: &cortex_m::interrupt::CriticalSection) 
         // Foreground live publication holds PRIMASK. Keep startup and lower
         // rungs at their qualified peer priority; only the high-duty A/B
         // lets COM preempt a comparator ISR after its timer arm.
-        cortex_m::Peripherals::steal().NVIC.set_priority(
-            stm32::Interrupt::TIM16,
-            if duty >= 480 { 0 } else { 0x40 },
-        );
+        cortex_m::Peripherals::steal()
+            .NVIC
+            .set_priority(stm32::Interrupt::TIM16, if duty >= 480 { 0 } else { 0x40 });
     }
     #[cfg(feature = "bench-persistence-hist")]
     persistence_hist_reset(duty);
@@ -907,9 +927,15 @@ pub fn reverse_advance_summary<W: Write>(out: &mut W) {
         let _ = writeln!(
             out,
             "ADVANCEOVERRIDE high_active={} published=22 effective_high={} first_ci={} first_wait={} first_expected={} witnessed={} terminal_ci={} terminal_wait={} terminal_expected={} terminal_match={} postrun_only=1",
-            high as u8, reverse_advance24::LEVEL, first_ci, first_wait, reverse_advance24::wait(first_ci),
+            high as u8,
+            reverse_advance24::LEVEL,
+            first_ci,
+            first_wait,
+            reverse_advance24::wait(first_ci),
             (first_ci != 0 && first_wait == reverse_advance24::wait(first_ci)) as u8,
-            ci, stored_wait, reverse_advance24::wait(ci),
+            ci,
+            stored_wait,
+            reverse_advance24::wait(ci),
             (stored_wait == reverse_advance24::wait(ci)) as u8
         );
     }
@@ -1163,17 +1189,17 @@ impl CompExti for Comp {
         }
         #[cfg(not(feature = "bench-revisit-origin"))]
         {
-        #[cfg(any(
-            feature = "bench-bemf-level-revisit",
-            feature = "bench-running-level-revisit"
-        ))]
-        if LEVEL_REVISIT.load(Relaxed) {
-            return true;
-        }
-        if REAL_IRQ.load(Relaxed) {
-            return comp_input::Input.exti_pending();
-        }
-        PENDING.load(Relaxed)
+            #[cfg(any(
+                feature = "bench-bemf-level-revisit",
+                feature = "bench-running-level-revisit"
+            ))]
+            if LEVEL_REVISIT.load(Relaxed) {
+                return true;
+            }
+            if REAL_IRQ.load(Relaxed) {
+                return comp_input::Input.exti_pending();
+            }
+            PENDING.load(Relaxed)
         }
     }
     fn clear_pending(&self) {
@@ -1272,7 +1298,8 @@ impl Recorder for Obs {
                     };
                     #[cfg(feature = "bench-revisit-origin")]
                     {
-                        let counts = unsafe { &mut *core::ptr::addr_of_mut!(REVISIT_ORIGIN_COUNTS) };
+                        let counts =
+                            unsafe { &mut *core::ptr::addr_of_mut!(REVISIT_ORIGIN_COUNTS) };
                         counts[0][source as usize] = counts[0][source as usize].wrapping_add(1);
                         if revisit_origin::late(interval, average) {
                             counts[1][source as usize] = counts[1][source as usize].wrapping_add(1);
@@ -1290,12 +1317,8 @@ impl Recorder for Obs {
                         let event_limit = powered_timer::speed_event_limit_us();
                         #[cfg(feature = "bench-revisit-origin-tail")]
                         let event_limit = revisit_origin::pack_limit_origin(event_limit, source);
-                        INTERVAL_TAIL[(total as usize) & 127] = [
-                            gap,
-                            interval,
-                            average as u16,
-                            event_limit,
-                        ];
+                        INTERVAL_TAIL[(total as usize) & 127] =
+                            [gap, interval, average as u16, event_limit];
                         INTERVAL_LAST = at;
                         INTERVAL_TOTAL = total.wrapping_add(1);
                     }
@@ -1718,7 +1741,12 @@ pub fn interrupt() {
         COM_LAG_MAX.store(COM_LAG_MAX.load(Relaxed).max(actual), Relaxed);
         COM_LAG_WAIT_MIN.store(COM_LAG_WAIT_MIN.load(Relaxed).min(wait), Relaxed);
         COM_LAG_WAIT_MAX.store(COM_LAG_WAIT_MAX.load(Relaxed).max(wait), Relaxed);
-        COM_LAG_EXCESS_MAX.store(COM_LAG_EXCESS_MAX.load(Relaxed).max(actual.saturating_sub(wait)), Relaxed);
+        COM_LAG_EXCESS_MAX.store(
+            COM_LAG_EXCESS_MAX
+                .load(Relaxed)
+                .max(actual.saturating_sub(wait)),
+            Relaxed,
+        );
         if actual > wait + 2 {
             COM_LAG_LATE.store(COM_LAG_LATE.load(Relaxed) + 1, Relaxed);
         }
@@ -1814,7 +1842,9 @@ pub fn observe_begin(step: u8, hz: u32, started: u32) {
     }
     #[cfg(feature = "bench-revisit-origin")]
     {
-        unsafe { core::ptr::addr_of_mut!(REVISIT_ORIGIN_COUNTS).write([[0; 4]; 2]); }
+        unsafe {
+            core::ptr::addr_of_mut!(REVISIT_ORIGIN_COUNTS).write([[0; 4]; 2]);
+        }
         REVISIT_ORIGIN_DUTY.store(0, Relaxed);
     }
     #[cfg(feature = "bench-final-edge-prepare")]
@@ -2898,8 +2928,7 @@ fn coast_run_body(
             } else {
                 seed.handoff_with_min::<{ flying_acquire::SEED_MIN_TICKS }>(now, wait)
             };
-            let Some((age, arr)) = handoff
-            else {
+            let Some((age, arr)) = handoff else {
                 return false;
             };
             Interval.set_count(age);
@@ -3120,10 +3149,44 @@ pub fn terminal_summary<W: Write>(out: &mut W) {
             out,
             "REVISITORIGIN duty_tenths={} physical_only={} software_only={} both={} neither={} late_physical={} late_software={} late_both={} late_neither={} late_rule=measured_gt_prior_average_plus_quarter flags_at_dispatch=1 both_ambiguous=1 postrun_only=1",
             REVISIT_ORIGIN_DUTY.load(Relaxed),
-            counts[0][0], counts[0][1], counts[0][2], counts[0][3],
-            counts[1][0], counts[1][1], counts[1][2], counts[1][3],
+            counts[0][0],
+            counts[0][1],
+            counts[0][2],
+            counts[0][3],
+            counts[1][0],
+            counts[1][1],
+            counts[1][2],
+            counts[1][3],
         );
     }
+}
+
+/// Small post-stop lock evidence that fits the compact qualification image.
+/// Unlike the full trace dump this does no per-event formatting or transport.
+pub fn compact_lock_summary<W: Write>(out: &mut W) {
+    let stats = unsafe { &*core::ptr::addr_of!(ACCEPT_STATS) };
+    let _ = writeln!(
+        out,
+        "LOCKSUMMARY accepted={} events={} commutations={} live_irq={} stats_events={} first_us={} last_us={} order_bad={} gaps={} gap_min_us={} gap_max_us={} cycles={} cycle_min_us={} cycle_max_us={} postrun_only=1",
+        ACCEPTS.load(Relaxed),
+        EVENTS.load(Relaxed),
+        COMMUTATIONS.load(Relaxed),
+        LIVE_IRQ.load(Relaxed) as u8,
+        stats.events,
+        stats.first,
+        stats.last,
+        stats.order_bad,
+        stats.gaps.n,
+        if stats.gaps.n == 0 { 0 } else { stats.gaps.min },
+        stats.gaps.max,
+        stats.cycles.n,
+        if stats.cycles.n == 0 {
+            0
+        } else {
+            stats.cycles.min
+        },
+        stats.cycles.max,
+    );
 }
 /// Compile-time lean-path witness, printed only after outputs are safe.
 #[cfg(feature = "bench-lean-core")]
@@ -3136,7 +3199,10 @@ pub fn lean_marker<W: Write>(out: &mut W) {
 }
 #[cfg(feature = "bench-running-level-revisit")]
 pub fn running_revisit_counts() -> (u32, u32) {
-    (LEVEL_REVISIT_ATTEMPTS.load(Relaxed), LEVEL_REVISIT_ACCEPTS.load(Relaxed))
+    (
+        LEVEL_REVISIT_ATTEMPTS.load(Relaxed),
+        LEVEL_REVISIT_ACCEPTS.load(Relaxed),
+    )
 }
 #[cfg(feature = "bench-reverse-comp-dma-peer")]
 pub fn reverse_priority_summary<W: Write>(out: &mut W) {
@@ -3174,13 +3240,21 @@ pub fn interval_tail_dump<W: Write>(out: &mut W) {
         row[0] = ordinal as u16;
         row[1] = (ordinal >> 16) as u16;
         for j in 0..2u32 {
-            if offset + j >= len { break; }
+            if offset + j >= len {
+                break;
+            }
             let source = unsafe { INTERVAL_TAIL[((first + offset + j) as usize) & 127] };
-            for k in 0..4usize { row[2 + j as usize * 4 + k] = source[k]; }
+            for k in 0..4usize {
+                row[2 + j as usize * 4 + k] = source[k];
+            }
         }
         let _ = snapshot::record(
             out,
-            if cfg!(feature = "bench-revisit-origin-tail") { "IT87" } else { "IT86" },
+            if cfg!(feature = "bench-revisit-origin-tail") {
+                "IT87"
+            } else {
+                "IT86"
+            },
             &row,
         );
         offset += 2;
@@ -3206,7 +3280,9 @@ pub fn observe_summary<W: Write>(out: &mut W, capture: bool) {
         }
     }
     #[cfg(feature = "bench-interval-tail")]
-    if capture { interval_tail_dump(out); }
+    if capture {
+        interval_tail_dump(out);
+    }
     #[cfg(any(
         feature = "bench-bemf-level-revisit",
         feature = "bench-running-level-revisit"
@@ -3769,9 +3845,12 @@ pub fn observe_summary<W: Write>(out: &mut W, capture: bool) {
     );
     if POWER_DUTY.load(Relaxed) != 0 {
         let limit = reverse_rate_limit();
-        let _ = writeln!(out, "IRQRATE peak={} limit={} bucket_us=1000", unsafe {
-            (*core::ptr::addr_of!(IRQ_RATE)).peak
-        }, limit);
+        let _ = writeln!(
+            out,
+            "IRQRATE peak={} limit={} bucket_us=1000",
+            unsafe { (*core::ptr::addr_of!(IRQ_RATE)).peak },
+            limit
+        );
     }
     let _ = writeln!(
         out,
@@ -3940,9 +4019,7 @@ pub fn comp_interrupt() {
             count.write(count.read().saturating_add(1));
         }
         if POWER_DUTY.load(Relaxed) != 0
-            && unsafe {
-                !(&mut *core::ptr::addr_of_mut!(IRQ_RATE)).hit_limit(t17(), rate_limit)
-            }
+            && unsafe { !(&mut *core::ptr::addr_of_mut!(IRQ_RATE)).hit_limit(t17(), rate_limit) }
         {
             #[cfg(feature = "bench-reverse-irq-probe")]
             unsafe {
@@ -3989,7 +4066,10 @@ pub fn comp_interrupt() {
         if POWER_DUTY.load(Relaxed) >= 480 && ACCEPTS.load(Relaxed) != before_accepts {
             let index = COMMUTATIONS.load(Relaxed);
             if index & 15 == 0 {
-                COM_LAG_EXIT_COUNT.store(unsafe { (*stm32::TIM2::ptr()).cnt().read().bits() & 65535 }, Relaxed);
+                COM_LAG_EXIT_COUNT.store(
+                    unsafe { (*stm32::TIM2::ptr()).cnt().read().bits() & 65535 },
+                    Relaxed,
+                );
                 COM_LAG_EXIT_INDEX.store(index, Relaxed);
             }
         }
