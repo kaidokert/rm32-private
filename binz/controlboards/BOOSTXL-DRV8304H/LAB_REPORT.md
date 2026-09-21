@@ -15021,3 +15021,19 @@ The full-closure comparison had 32 accepted / 33 commutations and the same
 stale-event termination. Removing level-revisit therefore did not remove the
 handoff failure; it is not established as the initiating cause. Both runs are
 replication evidence, not sustained-lock qualification.
+
+## Correction 2026-09-20 — earlier 10–50% runs used a richer handoff setup
+
+Review of the retained 10% and 50% transcripts found that those runs were not
+the minimal `driveobs1`/`drivex1` recipe used by the later 6%/7% experiments.
+They also issued `drivephase60`, `drivedu61`, `bemfdu100`, `drivepwm192`, and
+an explicit `engagems` window (35 s at 10%; 55 s at 50%) before `run200`.
+`bemfdu100` is especially important: it requests a 10.0% post-transfer BEMF
+duty while the commanded startup point is about 6.2%.
+
+The 50% transcript records `DRIVETRANSFER result=1`,
+`TRACKSTOP event_fault=0`, `POWERPATH reason=2`, and 561,869 commutations;
+the 10% transcript likewise reaches `TRACKSTOP event_fault=0` and a normal
+deadline. Those are genuine BEMF-controlled runs. The recent 6%/7% failures
+omitted these overrides and are therefore not equivalent tests. The low-duty
+replication recipe now records the known-good override sequence explicitly.

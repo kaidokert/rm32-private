@@ -107,6 +107,44 @@ BEMF controller. `drivex1` must also be sent: `driveobs1` schedules the
 handoff callback, while `drivex1` authorizes transfer. Without both, `run200`
 is intentionally an open-loop light-spin test and cannot prove handover.
 
+### Known-good BEMF-controlled recipe
+
+The earlier 10--50% locked campaign used additional driven-path overrides that
+were missing from the minimal low-duty recipe. To reproduce that behavior, use
+the following sequence while idle (CR-terminated, with no extra UART traffic):
+
+```text
+off
+engage0
+obs0
+drivephase60
+drivedu61
+bemfdu100
+drivepwm192
+driveobs1
+engagems35000
+drivex1
+cap1
+du62
+catchdu62
+run200
+```
+
+`drivephase60` and `drivedu61` establish the driven startup vector;
+`bemfdu100` sets the post-transfer BEMF duty override to 10.0%, even though
+the commanded campaign duty is 6.2%; `drivepwm192` selects the validated
+driven ADC/PWM sampling target; `engagems35000` gives the powered handoff
+window 35 seconds; and `drivex1` authorizes the one-shot transfer. The 50%
+cohort used the same setup with `engagems55000`. These are not cosmetic
+commands.
+
+The retained 10% and 50% transcripts show the distinction: both transferred
+with `DRIVETRANSFER result=1`, then ran to a normal deadline with
+`TRACKSTOP event_fault=0`; the 50% run recorded 561,869 power commits. By
+contrast, the recent minimal 6%/7% handoff sequence omitted these overrides
+and lost tracking after 20--30 ms. Those results are not an apples-to-apples
+counterexample to the earlier locked runs.
+
 ## Catch and lock evidence
 
 The existing lean summary proves elapsed powered time and protection outcome,
