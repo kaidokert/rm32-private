@@ -88,7 +88,27 @@ full-run accepted-event counter. Until that counter is emitted, label the run
 “light-spin demonstrated; handover/lock not independently quantified.”
 In the current `bench-startup-adc` closure, `ia/ib/ic` are raw ADC counts and
 `vsenc/neutral` are intentionally unavailable in those rows (reported as 0);
-do not interpret them as zero voltage.
+ do not interpret them as zero voltage.
+
+### Lock verdict rule
+
+`BEMFSTOP lock_proven=0` is currently a hard-coded conservative label in the
+compact firmware; it is not evidence that lock failed or succeeded. The
+independent verdict must therefore be derived from the run:
+
+| Check | Required for a lock pass |
+|---|---|
+| transfer | exactly one `DRIVETRANSFER result=1` |
+| runtime | the real BEMF-controlled segment reaches the requested target dwell |
+| events | accepted-event and commutation counters remain populated throughout; no final-event gap |
+| timing | no `TRACKSTOP event_fault=1`, stale-event/watchdog, order, or deadline fault |
+| protection | no current, fast-sag, nFAULT, or tracking stop |
+| shutdown | normal deadline completion, outputs disabled, `nFAULT=1` |
+
+For a 30-second target dwell, a short post-handoff burst of accepted events is
+only **catch evidence**. It is not lock evidence. The current 6% and 7% runs
+meet transfer/catch but fail the runtime and timing rows after roughly 20--30
+ms, so they must be reported as `catch=pass, sustained_lock=fail`.
 
 ## Known-good result
 
