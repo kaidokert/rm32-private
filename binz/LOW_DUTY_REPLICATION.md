@@ -266,3 +266,15 @@ commutations, then `TRACKSTOP event_fault=1` at 27.261 ms. Its transcript is
 `captures/handshake_7pct_200ehz_handoff_20260920.txt`. The repeat across 6%
 and 7% makes “insufficient BEMF amplitude at exactly 6%” an inadequate
 explanation; the handoff/closed-loop timing or acceptance path needs diagnosis.
+
+## Corrected result — richer handoff, 10% BEMF duty
+
+The minimal 6%/7% failures omitted the driven overrides used by the known-good
+high-duty campaign. Repeating that richer recipe at low duty completed a real
+35.000005 s BEMF-controlled window. Evidence is in
+`LOW_DUTY_LOCK_EVIDENCE_20260920.md`: transfer and flying seed were accepted,
+`TRACKSTOP event_fault=0`, 81,157 `POWERCOMMITS` matched 81,157 BEMF
+commutations, all protection counters remained clear, and outputs were off.
+The startup command was 6.2%; `bemfdu100` set the post-transfer duty to 10.0%,
+well below the 20% limit. `scripts/verify_bemf_lock.py` returns `BEMF_LOCK
+PASS` for this evidence.

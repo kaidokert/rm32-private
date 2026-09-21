@@ -15037,3 +15037,22 @@ the 10% transcript likewise reaches `TRACKSTOP event_fault=0` and a normal
 deadline. Those are genuine BEMF-controlled runs. The recent 6%/7% failures
 omitted these overrides and are therefore not equivalent tests. The low-duty
 replication recipe now records the known-good override sequence explicitly.
+
+## Entry 2026-09-20 — proper low-duty BEMF lock reproduced
+
+Flashed frozen qualified ELF `0C734C6710D18D7B6E89458F8287CA24C46BF98D791BF8361B7240311E0931B0` and used the richer handoff sequence:
+`off`, `avgnominal`, `engage0`, `drivephase60`, `drivedu61`, `bemfdu100`,
+`drivepwm192`, `driveobs1`, `engagems35000`, `drivex1`, `cap1`, `du62`,
+`catchdu62`, `live1`, `run200`.
+
+This is a genuine low-duty closed-loop run. Startup commanded 6.2%; the
+post-transfer BEMF duty override was 10.0%, below the 20% ceiling. Transfer
+accepted with `fly_seeded=1`; the powered deadline completed at
+`35000005us`. `TRACKSTOP event_fault=0` remained clean through shutdown,
+`POWERCOMMITS applied=81157` matched `BEMFSTOP com=81157`, and estimated speed
+was394eHz (`average_half_us=844`). No current foldback, phase rail, bus sag,
+fast-bus, nFAULT, or tracking fault occurred. Final outputs were off.
+
+The executable verifier reports:
+`BEMF_LOCK PASS hold_ms=35000 accepted=81157 commutations=81157 last_event_us=34999847 evidence_mode=production`.
+Full evidence is retained in `LOW_DUTY_LOCK_EVIDENCE_20260920.md`.

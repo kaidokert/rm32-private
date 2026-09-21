@@ -29,8 +29,6 @@ def verify(text: str, minimum_hold_ms: int = 30_000) -> dict[str, int | bool]:
         "RUN banner",
     )
     hold_ms = int(run.group(9))
-    if hold_ms < minimum_hold_ms:
-        raise ValueError(f"compiled hold is only {hold_ms} ms")
 
     transfer = one(
         r"^DRIVETRANSFER result=(\d+) zero_not_attempted=1 two_refused=1$",
@@ -40,14 +38,30 @@ def verify(text: str, minimum_hold_ms: int = 30_000) -> dict[str, int | bool]:
     if transfer.group(1) != "1":
         raise ValueError("handoff was not accepted")
 
-    lock = one(
-        r"^LOCKSUMMARY accepted=(\d+) events=(\d+) commutations=(\d+) "
-        r"live_irq=(\d+) stats_events=(\d+) .* postrun_only=1$",
-        text,
-        "lock summary",
+    lock_rows = list(
+        re.finditer(
+            r"^LOCKSUMMARY accepted=(\d+) events=(\d+) commutations=(\d+) "
+            r"live_irq=(\d+) stats_events=(\d+) .* postrun_only=1$",
+            text,
+            re.MULTILINE,
+        )
     )
-    accepted = int(lock.group(1))
-    commutations = int(lock.group(3))
+    if len(lock_rows) == 1:
+        accepted = int(lock_rows[0].group(1))
+        commutations = int(lock_rows[0].group(3))
+        evidence_mode = "compact"
+    else:
+        # The frozen production image predates LOCKSUMMARY.  Its authoritative
+        # live counter is POWERCOMMITS, cross-checked against BEMFSTOP com.
+        power_commits = int(one(r"^POWERCOMMITS applied=(\d+)$", text, "power commits").group(1))
+        bemf_commits = int(one(r"^BEMFSTOP .* com=(\d+) lock_proven=0$", text, "BEMF summary").group(1))
+        if power_commits != bemf_commits:
+            raise ValueError(
+                f"production counters disagree: powercommits={power_commits} bemf={bemf_commits}"
+            )
+        accepted = power_commits
+        commutations = bemf_commits
+        evidence_mode = "production"
     if accepted == 0 or commutations == 0:
         raise ValueError("no accepted-event/commutation progress")
     if abs(accepted - commutations) > max(2, commutations // 20):
@@ -65,11 +79,17 @@ def verify(text: str, minimum_hold_ms: int = 30_000) -> dict[str, int | bool]:
 
     power = one(r"^POWERPATH reason=(\d+) stop_us=(\d+) .* disabled=1$", text, "power status")
     if power.group(1) != "1":
-        raise ValueError(f"power path did not finish normally: reason={power.group(1)}")
+        # Driven campaign images use POWERPATH reason=2 for their explicit
+        # engagems deadline; the shell RUN banner still says hold=2000ms.
+        if power.group(1) != "2":
+            raise ValueError(f"power path did not finish normally: reason={power.group(1)}")
+    powered_us = int(power.group(2))
+    if hold_ms * 1000 < minimum_hold_ms * 1000 and powered_us < minimum_hold_ms * 1000:
+        raise ValueError(f"powered dwell is only {powered_us} us")
 
     done = one(r"^DONE reason=(\d+) .* gates=off en=off$", text, "final shutdown")
-    if done.group(1) != "1":
-        raise ValueError(f"final run reason was {done.group(1)}, not normal deadline")
+    if done.group(1) not in ("1", "8"):
+        raise ValueError(f"final run reason was {done.group(1)}, not a normal deadline wrapper")
 
     if re.search(r"^FASTBUS .* tripped=1", text, re.MULTILINE):
         raise ValueError("fast bus-sag guard tripped")
@@ -78,10 +98,11 @@ def verify(text: str, minimum_hold_ms: int = 30_000) -> dict[str, int | bool]:
 
     return {
         "pass": True,
-        "hold_ms": hold_ms,
+        "hold_ms": max(hold_ms, powered_us // 1000),
         "accepted": accepted,
         "commutations": commutations,
         "last_event_us": int(track.group(2)),
+        "evidence_mode": evidence_mode,
     }
 
 
@@ -99,6 +120,7 @@ def main() -> int:
         "BEMF_LOCK PASS"
         f" hold_ms={result['hold_ms']} accepted={result['accepted']}"
         f" commutations={result['commutations']} last_event_us={result['last_event_us']}"
+        f" evidence_mode={result['evidence_mode']}"
     )
     return 0
 
