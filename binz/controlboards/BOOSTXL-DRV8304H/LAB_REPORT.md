@@ -14985,6 +14985,15 @@ text=128596/data=1200/bss=17160). A repeat 6% handoff run reported
 this live path, so accepted/commutation counters are currently the authoritative
 lock-adjacent evidence and interval moments remain an instrumentation gap.
 
+The next feature-scoped live-gap census rebuild (SHA
+`664456EE30CBE27E963A86834FE217AAD6584033432FC59E905443FB173FB96E`,
+text=128948/data=1208/bss=17176) reported on the same 6% handoff:
+`accepted=32`, `commutations=33`, `LIVEGAPS n=31 min_us=513 max_us=964`.
+It then stopped `TRACKSTOP event_fault=1` at 26.684 ms. The gap series is
+plausible and below the 1 ms event-watch limit until the final missing edge;
+the stop was not caused by current, bus, nFAULT, or fast-sag protection. This
+is the first direct quantitative catch/edge-loss record.
+
 A matched 7% / 200 eHz handoff run repeated the same behavior: transfer result
 1 with 34 commutations, followed by `TRACKSTOP event_fault=1` at 27.261 ms;
 no electrical protection tripped. Transcript:

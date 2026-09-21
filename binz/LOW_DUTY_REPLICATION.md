@@ -104,6 +104,11 @@ The first real handoff run is retained as
 repeat with `LOCKSUMMARY` emitted `accepted=36`, `commutations=37`, then the
 same tracking stop at 30.055 ms; its detailed `stats_events=0` field shows
 that the existing event-moments recorder is not wired into the live path.
+A feature-scoped live-gap census now fills that gap: a repeat reported
+`accepted=32`, `commutations=33`, `LIVEGAPS n=31 min_us=513 max_us=964`, then
+tracking loss at 26.684 ms. The final missing event crossed the 1 ms watch
+boundary; current evidence points to a BEMF-event/closed-loop timing loss,
+not an electrical protection trip.
 Therefore the open-loop light-spin result and BEMF lock result must not be
 conflated: catch is now proven to execute, while sustained lock remains an
 active defect to diagnose.

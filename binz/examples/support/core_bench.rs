@@ -191,6 +191,43 @@ static LEVEL_FIRST: AtomicU32 = AtomicU32::new(0);
 static LEVEL_LAST: AtomicU32 = AtomicU32::new(0);
 static GATE_COUNT: AtomicU32 = AtomicU32::new(u32::MAX);
 static ACCEPTS: AtomicU32 = AtomicU32::new(0);
+// Compact live-path interval census.  The older ACCEPT_STATS recorder is
+// intentionally tied to the microscope OBS_STATUS path and therefore remains
+// empty during a real powered handoff.  This feature-scoped census records only
+// a timestamp delta per accepted event and never formats or allocates in-ISR.
+#[cfg(feature = "bench-cap-summary")]
+static LIVE_GAP_N: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bench-cap-summary")]
+static LIVE_GAP_MIN: AtomicU32 = AtomicU32::new(u32::MAX);
+#[cfg(feature = "bench-cap-summary")]
+static LIVE_GAP_MAX: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bench-cap-summary")]
+static LIVE_LAST_T17: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bench-cap-summary")]
+static LIVE_LAST_VALID: AtomicBool = AtomicBool::new(false);
+
+#[cfg(feature = "bench-cap-summary")]
+#[inline(always)]
+fn record_live_gap() {
+    let now = t17() as u32;
+    if LIVE_LAST_VALID.swap(true, Relaxed) {
+        let gap = now.wrapping_sub(LIVE_LAST_T17.load(Relaxed));
+        LIVE_GAP_N.store(LIVE_GAP_N.load(Relaxed).wrapping_add(1), Relaxed);
+        let min = LIVE_GAP_MIN.load(Relaxed);
+        if gap < min {
+            LIVE_GAP_MIN.store(gap, Relaxed);
+        }
+        let max = LIVE_GAP_MAX.load(Relaxed);
+        if gap > max {
+            LIVE_GAP_MAX.store(gap, Relaxed);
+        }
+    }
+    LIVE_LAST_T17.store(now, Relaxed);
+}
+
+#[cfg(not(feature = "bench-cap-summary"))]
+#[inline(always)]
+fn record_live_gap() {}
 // Small acquisition log, independent of optional per-read IRQ tracing. The
 // live prefix, powered reference or disabled coast writes it. Timestamp origin
 // is observation start, extended across TIM17 wraps, never reset per event.
@@ -784,6 +821,7 @@ pub fn polling_interrupt() {
                         S.average_interval.load(Relaxed),
                     );
                     ACCEPTS.store(ACCEPTS.load(Relaxed) + 1, Relaxed);
+                    record_live_gap();
                 }
                 minz_core::am32_control::zcfoundroutine(
                     &S.sched(),
@@ -1331,6 +1369,7 @@ impl Recorder for Obs {
                     return;
                 }
                 ACCEPTS.store(ACCEPTS.load(Relaxed) + 1, Relaxed);
+                record_live_gap();
             }
             return;
         }
@@ -1455,6 +1494,7 @@ impl Recorder for Obs {
                     #[cfg(feature = "bench-qualification-direct")]
                     qualification_direct_live::accepted(ACCEPTS.load(Relaxed), sector + 1);
                     ACCEPTS.store(ACCEPTS.load(Relaxed) + 1, Relaxed);
+                    record_live_gap();
                     true
                 });
                 RECORD_MAX_US.store(
@@ -1865,6 +1905,14 @@ pub fn observe_begin(step: u8, hz: u32, started: u32) {
     TRACE_N.store(0, Relaxed);
     TRACE_DROP.store(0, Relaxed);
     ACCEPTS.store(0, Relaxed);
+    #[cfg(feature = "bench-cap-summary")]
+    {
+        LIVE_GAP_N.store(0, Relaxed);
+        LIVE_GAP_MIN.store(u32::MAX, Relaxed);
+        LIVE_GAP_MAX.store(0, Relaxed);
+        LIVE_LAST_T17.store(0, Relaxed);
+        LIVE_LAST_VALID.store(false, Relaxed);
+    }
     TRACE_NEXT.store(0, Relaxed);
     LAST_IRQ_US.store(0, Relaxed);
     GATE_COUNT.store(u32::MAX, Relaxed);
@@ -3186,6 +3234,18 @@ pub fn compact_lock_summary<W: Write>(out: &mut W) {
             stats.cycles.min
         },
         stats.cycles.max,
+    );
+    #[cfg(feature = "bench-cap-summary")]
+    let _ = writeln!(
+        out,
+        "LIVEGAPS n={} min_us={} max_us={} postrun_only=1",
+        LIVE_GAP_N.load(Relaxed),
+        if LIVE_GAP_N.load(Relaxed) == 0 {
+            0
+        } else {
+            LIVE_GAP_MIN.load(Relaxed)
+        },
+        LIVE_GAP_MAX.load(Relaxed),
     );
 }
 /// Compile-time lean-path witness, printed only after outputs are safe.
