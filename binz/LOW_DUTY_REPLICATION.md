@@ -58,6 +58,29 @@ The firmware prints the authoritative `RUN: align=... catch=... ramp=...
 target=... hold=...` banner. Record that line verbatim; it is the runtime
 parameter source of truth if a feature closure changes.
 
+### Source-derived handoff constants
+
+For the frozen reverse/48 kHz closure, the less-visible runtime values are:
+
+| parameter | value | meaning |
+|---|---:|---|
+| `START_HZ` | 50 eHz | first open-loop catch frequency |
+| `CATCH_DUTY_TENTHS` | 70 | 7.0% during catch |
+| `SEED_MIN_TICKS` | 952 half-µs ticks | minimum accepted flying seed (`bench-range350`) |
+| `CYCLE_MIN_TICKS` | 5716 half-µs ticks | minimum six-event acquisition cycle |
+| `INDIVIDUAL_MIN_TICKS` | 476 half-µs ticks | minimum individual acquisition interval |
+| persistence depth | 12 reads | every candidate comparator level |
+| runtime cycle guard | 2223 µs | `bench-cycle450` profile |
+| runtime event guard | 238 µs | minimum accepted-event interval |
+| stale-event timeout | 1000 µs effective | `bench-speed-event-watch` is enabled with a three-period tighten-only policy; at this speed it does not reduce the 1000 µs ceiling |
+| low-duty advance | 20 | scheduled/reverse profile below 35.0% |
+| high-duty advance override | 26 | only active at the high-duty threshold, not in this run |
+| reverse blanking | enabled | arms when average interval is at least 1500 half-µs; post-run summary reports actual mask |
+
+The acquisition tick unit is 0.5 µs; the powered guard values are already in
+microseconds. Do not mix those units when comparing seed/interval telemetry to
+`TRACKSTOP` timestamps.
+
 For a handover/lock run, add `bench-handoff-early` to the feature closure and
 send `driveobs1` before `run200`. This moves the one-shot transfer from the
 end of the 30-second open-loop campaign to 4.7 s (20 ms align + 980 ms catch +
