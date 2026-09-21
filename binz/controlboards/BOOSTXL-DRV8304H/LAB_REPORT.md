@@ -15003,3 +15003,21 @@ the open-loop motor spin or bus-current margin.
 
 After the repeat, outputs were verified off and both serial and debug sessions
 were closed.
+
+## Entry 2026-09-20 — handoff A/B with running-level revisit disabled
+
+To separate physical comparator acceptance from the optional software level-revisit
+rescue, rebuilt the same compact early-handoff image without
+`bench-running-level-revisit`. Image SHA
+`4D2C1262D753232886DA4984C9B5809D5936FDD385949685738CDA34CBDC844`
+(text=128176/data=1208/bss=17160). The exact command sequence remained
+`cap1`, `avgnominal`, `du60`, `driveobs1`, `drivex1`, `run200`.
+
+Result: `DRIVETRANSFER result=1`, `LOCKSUMMARY accepted=28 commutations=29`,
+`LIVEGAPS n=27 min_us=482 max_us=956`, then
+`TRACKSTOP event_fault=1 stop_us=22790`; `BEMFSTOP` reported
+`lock_proven=0`. No current, bus, nFAULT, or fast-sag protection fired.
+The full-closure comparison had 32 accepted / 33 commutations and the same
+stale-event termination. Removing level-revisit therefore did not remove the
+handoff failure; it is not established as the initiating cause. Both runs are
+replication evidence, not sustained-lock qualification.

@@ -92,6 +92,48 @@ do not interpret them as zero voltage.
 
 ## Known-good result
 
+## Replication audit (2026-09-20)
+
+The recipe above is sufficient to reproduce the **open-loop** 6%/200 eHz
+light-spin. It is not yet sufficient to reproduce a successful closed-loop
+lock, because no such result exists. The exact handoff experiment is therefore
+the thing to replicate, not a claimed pass.
+
+Parameters that must be copied verbatim:
+
+- Use the frozen ELF from `captures/reference/reverse_48k_com_top_high_20260919`
+  for the qualified baseline, or record the SHA-256 of every diagnostic rebuild;
+  the mutable source tree alone is not an image identity.
+- Use the complete feature closure in that README. For the first handoff run,
+  add `bench-hold-30s`, `bench-cap-summary`, and `bench-handoff-early`.
+  `bench-running-level-revisit` is an explicit A/B variable: do not silently
+  add or remove it when comparing runs.
+- Preserve the compiled `RUN:` banner, `HANDOFF_US`, event-watch limit, carrier,
+  advance policy, current/bus thresholds, and the actual PSU voltage/current
+  limit. These are firmware parameters, not operator folklore.
+- Preserve the physical phase identity from
+  `controlboards/BOOSTXL-DRV8304H/G071_DRV8304_WIRE_MAP.md`: logical A/B/C
+  gate, VSEN, and ISEN associations, reverse phase order, ENABLE/MODE straps,
+  UART pins, and motor connector orientation.
+- Send the six commands in order, with CR terminators and no other UART traffic:
+  `cap1`, `avgnominal`, `du60`, `driveobs1`, `drivex1`, `run200`.
+  `driveobs1` arms the early handoff; `drivex1` authorizes it. Omitting either
+  changes the experiment to open loop.
+- Capture the complete post-run lines, including `DRIVETRANSFER`,
+  `LOCKSUMMARY`, `LIVEGAPS`, `TRACKSTOP`, `BEMFSTOP`, protection summaries,
+  and final output/nFAULT readback. A motor that audibly spins is not lock
+  evidence.
+
+The latest revisit-disabled A/B used image SHA
+`4D2C1262D753232886DA4984C9B5809D5936FDD385949685738CDA34CBDC8448`
+(text=128176/data=1208/bss=17160), with the same sequence and
+`bench-running-level-revisit` removed. It produced `accepted=28`,
+`commutations=29`, `LIVEGAPS n=27 min_us=482 max_us=956`, then
+`TRACKSTOP event_fault=1` at 22.790 ms. The earlier full-closure run produced
+32 accepted / 33 commutations and the same stale-event stop. Thus the A/B does
+not show that level-revisit is the root cause; both variants lose the final
+comparator event. It is useful replication data, not a lock pass.
+
 At 6.0% / 200 eHz / 30 s / 750 mA limit: `energized_us=29998886`,
 `DONE reason=1`, no current, bus-sag, nFAULT, tracking, or watchdog stop;
 outputs were off afterward. This is a repeatable benign operating point, not
