@@ -33,6 +33,19 @@ to call startup catch and closed-loop lock successful.
 - UART: USART3 PC10/PC11 to FTDI COM41, 115200 8N1, common ground. Host must
   remain silent during the powered interval; received bytes abort the run.
 
+### Telemetry interpretation
+
+The phase labels in compact captures are logical labels, not raw ADC order:
+`CURRENT_ADC=[4,1,0]`, so logical A/B/C are physical ADC4/ADC1/ADC0. The
+three current channels are bidirectional low-side CSA outputs, approximately
+70 mV/A around a zero-current code near 1.65 V; instantaneous samples can show
+PWM ripple and must not be equated with PSU average current. VBUS is ADC6
+(`VSENVM`) with an approximately 11.94:1 divider. BEMF phase inputs are
+VSENA→PB3, VSENB→PB7, VSENC→PA2, with neutral on PA3. In the compact
+`bench-startup-adc` rows, `vsenc` and `neutral` are intentionally unavailable
+and print as zero; that is an instrumentation omission, not a zero-voltage
+measurement. Use `CAPMIN`/`CAPMAX` only for the channels they actually expose.
+
 ## Runtime sequence
 
 After reset and the idle prompt:
@@ -80,6 +93,11 @@ For the frozen reverse/48 kHz closure, the less-visible runtime values are:
 The acquisition tick unit is 0.5 µs; the powered guard values are already in
 microseconds. Do not mix those units when comparing seed/interval telemetry to
 `TRACKSTOP` timestamps.
+
+The 48 kHz carrier is TIM1 at 64 MHz (`ARR=1332`, edge-aligned); the sine/control
+update is 1 kHz, and the configured complementary dead-time is 26 timer ticks
+(406.25 ns). These are part of the electrical timing regime even though the
+UART `RUN:` banner only reports the campaign rates.
 
 For a handover/lock run, add `bench-handoff-early` to the feature closure and
 send `driveobs1` before `run200`. This moves the one-shot transfer from the
