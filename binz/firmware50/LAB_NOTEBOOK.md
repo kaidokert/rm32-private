@@ -16150,3 +16150,183 @@ before the stops that cover the band it opens.
   candidate.** It is goal step 2, it is a control change rather than added
   coverage, and mixing it with four protection items would make any rung result
   uninterpretable. It gets its own predeclaration and its own review pair.
+
+### E219 — conditions record at 25% on the 3 A clamp, archived image, ladder bypassed
+
+**Discipline note first: I started this run before writing this entry.** The rule
+is a prediction before every run and I wrote the prediction into my report to
+the operator rather than into the notebook, which is the record that counts.
+This entry is written while the two segments are still in flight, so the
+predictions below are genuinely ahead of the result — but the ordering was
+sloppy and is recorded as such rather than tidied.
+
+#### Why this run exists
+
+The goal's step 1 opens with *"record actual PSU and thermal conditions"*, and
+**every current and bus figure this campaign holds was taken at a 2 A limit or
+below.** The operator has since set a **3 A clamp**. So the entire conditions
+basis — `hold_ma` 1782–1877 at 50%, `worst_ma` 2116, `bus_mean/ref_bus` 0.987,
+the ~1.72 A metered draw — describes a supply setting that is no longer the one
+on the bench. E218's constants are derived from those figures, and two reviews
+of E218 are in flight against them, so the conditions they assume need to be
+either confirmed or corrected at the present setting.
+
+#### What ran
+
+* Image: **`captures/elf/14CE44E7.e187.elf`**, sha256 `7125601fa7248b63…`, the
+  qualified production image, flashed by the fixture (`--flash`) so the recorded
+  hash is necessarily the image that ran.
+* `--command 5` — the 25% rung. The **lowest-current closed-loop rung**, chosen
+  because a conditions record needs no headroom and this is the safest powered
+  action available.
+* `--runs 2`, `--settle 20`, `--no-ladder`.
+
+**`--no-ladder` is deliberate and is the honest bypass.** This is not a rung
+attempt: 25% already has 3/3 on this ELF and a conditions record must not be
+able to alter that, in either direction. Since E193 the flag bypasses admission
+*and* recording, which is exactly the required behaviour. (Before E193 it
+recorded, and five bypassed runs had made the 50% rung report PASS — the reason
+the flag is trustworthy here is that that defect was fixed.)
+
+#### Predictions, before the result
+
+1. **Both runs complete**, with no stop. 25% on this image is qualified and a
+   higher supply ceiling cannot make a run fail — if either stops, something has
+   changed on the bench and every E218 constant is suspect until it is explained.
+2. **`hold_ma` at 25% lands within ±5% of the 2 A-supply figures.** At 25% the
+   draw is ~0.4 A against a 3 A clamp, i.e. nowhere near either limit, so the
+   supply setting should be invisible here. **A shift larger than ±5% would mean
+   the clamp change moved something other than the ceiling** — a rail voltage
+   difference, or a motor that is not the motor the old figures describe.
+3. **`bus_mean/ref_bus` ≥ 0.98.** E218's proposed droop line is 0.90 and its
+   claim is that healthy runs sit near 0.987. At 25% the ratio should be at
+   least as high as at 50%, so this is the easy end of that check; the value
+   feeds directly into the review of E218 item 1.
+4. **No thermal figure will be produced, because none can be.** This image
+   measures no temperature (five ADC channels: IN0/IN1/IN4/IN6/IN13). The only
+   thermal information available from this run is **indirect**: the run-to-run
+   drift in `hold_ma` across two segments 20 s apart, since winding resistance
+   rises with temperature. I predict that drift is **under 2%** at 25% and that
+   it is too small to serve as a thermometer — which is the measured argument
+   for E218 item 3 rather than an assumed one.
+
+#### What this run cannot do
+
+It cannot record conditions at 50%, let alone above it, and it is not an attempt
+to. It establishes the *reference* conditions at the new supply setting on a
+known-good image at the safest rung, so that the figures E218's constants rest
+on are either confirmed at 3 A or replaced before anything is built. Conditions
+at the rungs that matter are a separate, later run, and they are gated behind
+E218's review pair like everything else.
+
+### E220 — the conditions record, measured: two of four predictions failed, and one of E218's constants is unmonitorable
+
+Two runs, image `14CE44E7` (`elf_crc32 14CE44E7`, fixture-flashed), 25% rung,
+`--no-ladder`, 3 A clamp. Captures `e219-cond3a_01/_02.txt`.
+
+| | run 1 | run 2 |
+|---|---|---|
+| `reason` / `verdict` | 2 / ok | 2 / ok |
+| `hold_ms` | 67 274 | 67 276 |
+| `hold_ma` / `mean_ma` / `worst_ma` | 338 / 307 / 886 | 380 / 350 / 961 |
+| `bus_ref` / `bus_min` | 1215 / 1097 | 1210 / 1095 |
+| `spent_max_us` / `late_arms` | 11 / 0 | 11 / 0 |
+| `ci_us` (mean) | 139 | 139 |
+| `zc_rate_permille_of_expected` | — | 996 |
+
+#### Prediction 1 — both runs complete. **Met.**
+
+No stop, `late_arms = 0`, `blank_latched = 0`, `storm = 0`, `overrun = 0`,
+`forced_pct = 0`. And `spent_max_us = 11` on both, which extends E217's
+image-scoped finding to the new supply setting: the 11 µs is a property of the
+image, not of the 2 A rail.
+
+#### Prediction 2 — `hold_ma` within ±5% of the 2 A figures. **Failed, and the prediction was badly specified.**
+
+All 25% `hold_ma` on this image, same field, same rung:
+
+* **2 A supply, n = 11:** 343, 371, 374, 384, 415, 415, 421, 424, 426, 426, 429
+  — mean **403**, range 343–429.
+* **3 A clamp, n = 2:** 338, 380 — mean **359**.
+
+The mean is **−11%**, outside my ±5% band. But the honest reading is that
+**the band was untestable at n = 2**: the historical spread at this rung is
+343–429, a 25% range, so a two-sample mean has a standard error of ~20 mA and
+the difference is ~2σ at best. Run 1's 338 does sit just below the historical
+minimum of 343, which is the only part of this that is even suggestive.
+
+I predeclared a ±5% gate against a quantity whose own run-to-run scatter is 25%.
+That is the same error as E152's "±1% per-run rate gate is unusable at these
+speeds", and I made it again in the same campaign. **The correct move was to
+predeclare the n needed, which is exactly what
+[[feedback-predeclare-the-falsification-bar]] says.** No conclusion is drawn
+about the supply setting from this; it needs n ≥ 5 a side if it is worth
+answering at all, and it probably is not, because 25% draws ~0.4 A against
+either limit and neither is near binding.
+
+#### Prediction 3 — `bus_mean/ref_bus ≥ 0.98`. **Not checkable. This is a real gap in E218.**
+
+**The production report does not emit a steady loaded-bus mean at all.** It emits
+`bus_ref` (the pre-run reference) and `bus_min` (one transient scan, which the
+sag guard never judges — E175). The quantity E218's `SlowDroop` would actually
+judge — the 8-scan block mean, `rail.bus_mean()` — **exists only inside the sag
+recorder's rows**, and is absent from every production capture. The 0.987 figure
+E218 quotes as "today's healthy 50% runs" therefore comes from recorder
+captures, not from the images that would carry the guard.
+
+So as predeclared, **E218 item 1 ships a stop whose margin cannot be read in the
+capture of the run it protects** — the precise mistake E188 caught with the sag
+guard and that E218's own text claims to avoid ("so the margin against the line
+is a measurement rather than the absence of a stop"). `droop_worst_permille`
+would fix it, and E218 does list that field; what E218 got wrong is asserting
+prediction 3 was checkable *today*. It is not.
+
+#### And the number that matters most here
+
+`bus_min / bus_ref` at 25%, across all thirteen captures on this image:
+**0.903–0.939**, with both of today's runs at **0.903 and 0.905**.
+
+**E218's proposed droop line is 0.90.** The guard judges a block *mean*, which
+sits far above `bus_min`, so this is not a prediction that the guard would fire
+— but the line now sits **~0.3% away from a quantity the report does emit**, at
+the *lowest* rung, on a healthy qualified image. Whether the block mean keeps
+enough distance at 50% and above is not established by anything I have, because
+of the gap above: the quantity is not in production captures.
+
+I am **not** adjusting the constant here. Two reviews of E218 are in flight and
+were asked to recompute this distribution independently; moving the number now
+would be tuning a threshold to a measurement I took after predeclaring it, in
+the middle of its own review. It goes to them as evidence and is dispositioned
+with their verdicts.
+
+#### Prediction 4 — run-to-run drift under 2%, too small to be a thermometer. **Conclusion right, magnitude wrong, and in the wrong direction.**
+
+`hold_ma` moved **338 → 380, +12.4%** between two runs 20 s apart. I predicted
+under 2%. So the conclusion — that run-to-run current drift cannot serve as a
+thermometer — holds much more strongly than I argued, but for the opposite
+reason: the noise is far *larger* than I assumed, not smaller. It is also the
+same 25% scatter that sank prediction 2, so both failures have one cause.
+
+This is the measured argument for E218 item 3 that E218 said it wanted: **there
+is no thermal information in this image, and no way to synthesise one from
+current at this rung.** What temperature this rig can actually measure remains
+item 3's open question, and its falsifier stands.
+
+#### Conditions, recorded, which is what the run was for
+
+* Supply: operator's **3 A clamp**; `bus_ref` 1210–1215 codes, unchanged from
+  the 2 A sessions (1210–1220), so **the rail voltage is the same** and only the
+  ceiling moved.
+* Draw at 25%: `hold_ma` 338–380, `worst_ma` 886–961 on the signed proxy,
+  `oracle_ma` 326 — i.e. **+4 to +17% over the oracle**, within the +16.6/+20%
+  the fixture itself reported.
+* **Thermal: none. Not "nominal" — absent.** No channel measures temperature,
+  the BOOSTXL exposes no FET thermistor to this wiring, and 2 × 67 s at 25% is
+  the total exposure of this record.
+* Timing at the new setting: `spent_max_us` 11, `late_arms` 0, `com_late_max_us`
+  9, `comp_call_max_us` 16 — all consistent with the archived figures.
+
+**The goal's step 1 asks conditions not to be a footnote, and the honest summary
+is that half of what it asks for cannot currently be recorded**: PSU conditions
+yes, thermal conditions not at all, and the bus quantity its own droop guard
+would judge is not emitted by the images that would carry it.
