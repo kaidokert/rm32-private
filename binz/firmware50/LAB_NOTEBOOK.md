@@ -18502,3 +18502,84 @@ wording permits. What remains is **run time and one open question**:
 * **Still owed before any qualification claim at 60%:** the inverted sag
   provocation above the cap, the droop instrument's fractions (975–995, since
   the current bins are vacuous), and the `envelope_max=300` banner.
+
+### E241 — predeclaration: cap to 600, stepwise exploration, and the prediction that the *firmware's own* allowance is the 60% blocker
+
+Written before the run. Two changes, both grounded in the 525 measurement
+rather than in projection.
+
+#### Change 1 — `SIXSTEP_DUTY_CAP` 525 → 600
+
+Same one-constant shape both E235 reviews certified codegen-neutral, and
+**re-verified**: `isr_diff` against the 525 image reports all four roots
+**identical** (`ADC_COMP` 728, `TIM16` 332, `DMA1_CHANNEL1` 37,
+`TIM6_DAC_LPTIM1` 155). Host gates: 337+9 tests, clippy 0, structure exit 0,
+four roots certified.
+
+#### Change 2 — E239's breached stop rule now lives in the fixture
+
+E239 predeclared "`worst_ma` above 3000 mA ends the batch", it was **breached at
+3174 mA**, and the batch ran on because the rule existed only in a notebook
+entry. `cohort.WORST_MA_CEILING = 3800` is now a **gate**, so a run that reaches
+it fails and the ladder cannot record it as a pass.
+
+The value is the firmware's own allowance minus a margin, not taste:
+`RAW_LIMIT` is 4000 mA, where `AverageCurrent` folds back on the first
+over-block and stops on the second consecutive one. **A foldback sets
+`ceiling_tenths < duty`, which the goal says cannot count as qualification** —
+so the gate fails a run **5% before the firmware starts folding**, which is the
+difference between measuring a limit and disqualifying a rung. It retroactively
+fails nothing: the corpus maximum at any rung is 3174 (verified).
+
+#### The prediction, and it is the sharpest this campaign has had
+
+Working forward from **measured** 525 data (hold 2032 mA; worst/hold ratios
+1.285 / 1.332 / 1.549) at the local exponent 2.2:
+
+| duty | projected hold | worst @1.29 | worst @1.55 | vs `RAW_LIMIT` 4000 |
+|---|---|---|---|---|
+| 550 | 2251 | 2893 | 3487 | under |
+| 575 | 2482 | 3190 | 3845 | **brushing the 3800 gate** |
+| **600** | **2726** | **3503** | **4222** | **can reach the allowance** |
+
+**So the 60% blocker may be the firmware's own current protection, not the
+supply and not the timing.** That inverts everything I escalated earlier: the
+supply projects to 80–90% of the clamp *in CV* (E236), and the mean timing
+margin at 600 is +4 µs (E239) — but `AverageCurrent` folds back at 4 A, and a
+foldback disqualifies the rung by the goal's own criterion.
+
+Falsifiable, and 550/575 test it before 600 is attempted:
+
+1. **`worst_ma` at 550 lands 2900–3500 mA**, and at 575 **3200–3850**. If 575
+   crosses 3800 the gate fires and 600 is not attemptable without addressing
+   the current, which is then the measured blocker.
+2. **`ceiling_tenths == duty` on every run.** Any foldback is the prediction
+   arriving, and it disqualifies that rung immediately.
+3. **`thin_count` continues to grow.** Two points gave 7.8× per rung (464 →
+   3620). I predict **8 000–30 000 at 550** — a deliberately wide band, because
+   a two-point rate gives no shape and I have over-narrowed bands four times
+   already. What matters is whether growth is geometric (≈28 000) or slowing.
+4. **`late_arms` stays 0 at 550.** The tail margin is −2 µs against the worst
+   spend at 525 and produced no late arms in three runs; at 550 the floor
+   projects ci_min ≈ 47 and wait 7, i.e. **+1 modal / −3 worst**. If late arms
+   appear here, the joint-tail rate has become material and that is the
+   deadline-path finding the goal's step 2 asks for.
+5. **`filt_bus/ref_bus` ≥ 975** on every run — CV, the goal's own exclusion.
+
+#### Cohort and the process fix
+
+**One run at a time**, with every stopping rule read *between* runs — this is
+the direct correction of E239's failure, where three unattended runs meant the
+rule could not fire. Three runs at 550; only if all three are clean does 575
+follow; only if 575 is clean does 600.
+
+`--no-ladder`, exploration not qualification. The read-out is E237's list plus
+`worst_ma` against the new gate.
+
+#### Stopping rules, enforced in code this time
+
+* `worst_ma` ≥ 3800 → the run fails its gates (fixture-enforced).
+* `ceiling_tenths != duty` → foldback, rung disqualified (already gated).
+* `filt_bus/ref_bus` < 970 → the CC branch; batch ends.
+* Any `reason != 2` is retained and reported; the rung is not retried.
+* **No rung above the last clean one.** 600 is attempted only after 575 passes.

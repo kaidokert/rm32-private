@@ -260,6 +260,12 @@ def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
         fails.append("neither too_early nor blank_arms: the blanking gate is not witnessed")
     if r["coast_crossings"] == 0:
         fails.append("coast crossings = 0: the rotor was not witnessed turning")
+    if r["worst_ma"] >= WORST_MA_CEILING:
+        fails.append(
+            f"worst block {r['worst_ma']} mA at or above {WORST_MA_CEILING}: "
+            "within 5% of the firmware's own 4 A allowance, where AverageCurrent "
+            "folds back and a foldback disqualifies the rung"
+        )
     ref = ORACLE.get(r["duty"])
     if ref and abs(r["coast_ehz"] - ref[0]) * 100 > 5 * ref[0]:
         fails.append(f"coast {r['coast_ehz']} eHz outside 5% of {ref[0]}")
@@ -298,6 +304,22 @@ def rung_current_note(runs: list[dict]) -> str:
 # which is what makes it admissible here where an extrapolated oracle would not
 # be.
 SELF_REF_RUNGS = (525, 550, 575, 600)
+
+# The worst 10.1 ms current block a run may show and still be judged a pass.
+#
+# E239 predeclared "worst_ma above 3000 mA ends the batch", it was breached at
+# 3174 mA, and the batch ran on to completion because the rule lived in a
+# notebook entry and nothing enforced it. It lives here now.
+#
+# The value is the firmware's own allowance minus a margin, not a choice:
+# `protection::RAW_LIMIT` is 4000 mA, where `AverageCurrent` folds back on the
+# first over-block and stops on the second. A foldback sets
+# `ceiling_tenths < duty`, which cannot count as qualification -- so the gate
+# fails a run 5% BEFORE the firmware starts folding, which is the difference
+# between measuring a limit and disqualifying a rung.
+#
+# It retroactively fails nothing: the corpus maximum at any rung is 3174.
+WORST_MA_CEILING = 3800
 
 # The band is the qualified 500 cohort's own spread, not a choice: 27 healthy
 # runs give min 993, median 1001, max 1013. 980..1020 is generous against that,

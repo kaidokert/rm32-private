@@ -99,8 +99,19 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 /// The `I ~ duty^2` law the old comment cited is also superseded: the measured
 /// exponent across the campaign-7 rungs is ~2.4-2.9, and the 50% current is
 /// measured (1836-1877 mA on the signed proxy), not extrapolated.
-/// Raised 500 -> 525 in E235, to make ONE rung above the qualified 50%
-/// measurable. Every open question in campaign 10 is a question about
+/// Raised 500 -> 525 in E235 and 525 -> 600 in E241. 525 measured clean 3/3
+/// (hold 2032 mA, 68% of a 3 A clamp, rail in CV at 983 per mille, no
+/// foldback), the current law was validated one rung beyond its fit, and the
+/// remaining rungs are what determine the thin-margin rate's shape.
+///
+/// **The new ceiling is where the FIRMWARE's own allowance becomes reachable,
+/// not an arbitrary target**: at 600 tenths the worst 10.1 ms block projects to
+/// 3503-4222 mA against `RAW_LIMIT`'s 4000, so `AverageCurrent` may fold back
+/// there -- and a foldback disqualifies the rung by the goal's own wording.
+/// That is the prediction 550 and 575 test.
+///
+/// The original E235 reasoning, still the reason a cap raise is admissible at
+/// all: it makes ONE rung above the qualified 50% Every open question in campaign 10 is a question about
 /// behaviour above 500 tenths and nothing had ever been measured there; the
 /// current law, the interval law, the droop law and the late-arm margin were
 /// all being extrapolated, and three of the four extrapolations were wrong.
@@ -111,7 +122,7 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 /// computed first -- ~2.0 A hold and ~2.4 A worst block against a 3 A clamp
 /// and a 4 A allowance, and +5 to +6 us of arm margin against the measured
 /// modal spend of 6 us (E234, 20 478 arms).
-pub const SIXSTEP_DUTY_CAP: u16 = 525;
+pub const SIXSTEP_DUTY_CAP: u16 = 600;
 
 /// Rescue attempts the level revisit may make in one sector after its first
 /// attempt was refused (E140), each armed by another half-interval of overdue.
@@ -325,7 +336,8 @@ mod tests {
         assert_eq!(sixstep_ccr_of(375, 1333), 499);
         assert_eq!(sixstep_ccr_of(500, 1333), 666);
         assert_eq!(sixstep_ccr_of(525, 1333), 699);
-        assert_eq!(sixstep_ccr_of(750, 1333), 699, "capped at 52.5%");
+        assert_eq!(sixstep_ccr_of(600, 1333), 799);
+        assert_eq!(sixstep_ccr_of(750, 1333), 799, "capped at 60%");
         assert_eq!(AdvancePolicy::level(349), 20);
         assert_eq!(AdvancePolicy::level(350), 22);
         assert_eq!(HANDOFF_DUTY_TENTHS, 70);
