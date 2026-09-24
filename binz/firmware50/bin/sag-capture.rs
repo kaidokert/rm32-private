@@ -80,7 +80,7 @@ type SagProduction = Controller<
 /// keys the fixture drives plus the climb keys.
 ///
 /// **`b` (15%) is deliberately absent.** It is the unjudged warm-up every
-/// diagnostic runner drives first, and a dump after it would leave 1024 rows
+/// diagnostic runner drives first, and a dump after it would leave two rings
 /// in the link for the *next* capture to read as part of its own.
 fn arms_a_run(b: u8) -> bool {
     matches!(
@@ -115,7 +115,7 @@ fn main() -> ! {
     };
     safe_off(&mut Drv8304);
     board::banner(&mut board, adc_ok);
-    board.say("CHAINCAPTURE diagnostic image: every run dumps its timing chain\r\n");
+    board.say("SAGCAPTURE diagnostic image: every run dumps the sag guard inputs\r\n");
     board.tx_flush();
     let mut p = SagProduction::new();
     loop {

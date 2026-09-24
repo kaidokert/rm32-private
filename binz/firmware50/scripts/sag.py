@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Read a `sag-capture` dump and report the sharp-sag guard's own margin.
 
-The firmware records one row per block the guard judged (`src/sagtrace.rs`):
+The firmware records one row per judgement -- the guard judges **every scan**,
+at the measured 9.8 kHz, with a sliding 8-scan mean, not a decimated block --
+in two rings (`src/sagtrace.rs`):
 
-    SAGSNAP len=<n> total=<n> frozen=<0|1> num=95 den=100 streak_to_latch=3
-    SAGROW <at> <bus_mean> <vref_mean> <filt_bus> <filt_vref> <streak> <step> <duty> <since_com_us>
+    SAGSNAP judged=<n> fast_len=<n> slow_len=<n> slow_every=<n> frozen=<0|1>
+            num=95 den=100 streak_to_latch=3 adc_rail=4095
+    SAGROW  <at> <bus_mean> <vref_mean> <filt_bus> <filt_vref> <streak> <step> <duty> <since_zc_us>
+    ...
+    SAGSLOW <bus_mean> <vref_mean> <filt_bus> <filt_vref>      (every slow_every-th)
     ...
     SAGEND
 
@@ -24,10 +29,24 @@ at the *end* of the run. Neither is what the guard compares, and both have been
 quoted at it before (campaign 8). This script only uses the quartet the guard
 itself used, as recorded at the instant it judged.
 
-Coverage: the ring is bounded (512 blocks, about 1.2 s) and **freezes on the
-trip**, so a frozen dump is the window that led to the fault and an unfrozen
-one is the tail of a healthy run. `total` says how many blocks were judged;
-`len` how many survived.
+Coverage, which bounds every conclusion drawn here:
+
+* the fast ring is 512 judgements ~= **52 ms**, and for a run that does not
+  trip it is the **tail** -- it says nothing about the ramp, the first 207 ms
+  (when the reference is still the unloaded rail), or any excursion earlier in
+  the hold;
+* the decimated ring is 1024 rows every 32nd judgement ~= **1.7 s**, eight of
+  the reference's time constants, which is what showing *how the reference got
+  there* requires;
+* both **freeze on the fault**, so a frozen dump is the pre-trip window;
+* `frozen=0` does **not** mean the run was healthy -- a stop for any other
+  reason returns before the guard is judged. Read `run_reason` (this script
+  lifts it from `BEMFDONE`).
+
+The guard is also a **band-pass**: an 8-scan mean (~808 us) in the numerator
+and a 207 ms average in the denominator, so it cannot see a dip faster than
+about a millisecond or slower than a fifth of a second. That is a property of
+the guard, not of this script.
 
 Usage:
     python scripts/sag.py <capture.txt> [--csv rows.csv] [--worst 20]
@@ -41,12 +60,13 @@ import statistics
 import sys
 
 Row = collections.namedtuple(
-    "Row", "at bus vref filt_bus filt_vref streak step duty since_com"
+    "Row", "at bus vref filt_bus filt_vref streak step duty since_zc"
 )
+Slow = collections.namedtuple("Slow", "bus vref filt_bus filt_vref")
 
 
-def parse(path: pathlib.Path) -> tuple[dict, list[Row]]:
-    snap, rows = {}, []
+def parse(path: pathlib.Path) -> tuple[dict, list[Row], list[Slow]]:
+    snap, rows, slow = {}, [], []
     for line in path.read_text(errors="replace").splitlines():
         line = line.strip()
         if line.startswith("SAGSNAP"):
@@ -58,11 +78,30 @@ def parse(path: pathlib.Path) -> tuple[dict, list[Row]]:
             f = line.split()
             if len(f) == 10:
                 rows.append(Row(*(int(x) for x in f[1:])))
-    return snap, rows
+        elif line.startswith("SAGSLOW "):
+            f = line.split()
+            if len(f) == 5:
+                slow.append(Slow(*(int(x) for x in f[1:])))
+        elif line.startswith("BEMFDONE "):
+            for kv in line.split()[1:]:
+                if kv.startswith("reason="):
+                    snap["run_reason"] = int(kv.split("=", 1)[1])
+    return snap, rows, slow
+
+
+def fail_closed(r: Row, rail: int) -> bool:
+    """The guard latches at once on an implausible VREF, whatever the ratio
+    says (`protection.rs`). Reproduced here because a script that only models
+    the ratio can report "no low blocks" on the very row that tripped."""
+    return r.vref == 0 or r.vref >= rail
 
 
 def margin_permille(r: Row, num: int, den: int) -> float:
-    """The guard's own cross-product, as a ratio; 1000.0 is exactly the line."""
+    """The guard's own cross-product, as a ratio; 1000.0 is exactly the line.
+
+    `None` for a fail-closed row: there is no meaningful margin when the
+    normalisation itself is rejected.
+    """
     lhs = r.bus * r.filt_vref * den
     rhs = r.filt_bus * r.vref * num
     return 1000.0 * lhs / rhs if rhs else float("inf")
@@ -74,18 +113,27 @@ def main() -> int:
     ap.add_argument("--csv")
     ap.add_argument("--worst", type=int, default=10, help="how many tightest blocks to list")
     a = ap.parse_args()
-    snap, rows = parse(pathlib.Path(a.capture))
+    snap, rows, slow = parse(pathlib.Path(a.capture))
     if not rows:
         print("no SAGROW rows found", file=sys.stderr)
         return 1
     num = snap.get("num", 95)
     den = snap.get("den", 100)
     latch = snap.get("streak_to_latch", 3)
-    dropped = max(snap.get("total", len(rows)) - snap.get("len", len(rows)), 0)
+    rail = snap.get("adc_rail", 4095)
+    judged = snap.get("judged", len(rows))
     print(
-        f'blocks judged={snap.get("total")} kept={snap.get("len")} overwritten={dropped} '
-        f'frozen={snap.get("frozen")} fraction={num}/{den} streak_to_latch={latch}'
+        f'judgements={judged} fast_kept={snap.get("fast_len")} slow_kept={snap.get("slow_len")} '
+        f'frozen={snap.get("frozen")} fraction={num}/{den} streak_to_latch={latch} '
+        f'run_reason={snap.get("run_reason", "?")}'
     )
+    if not snap.get("frozen"):
+        print(
+            "  NOT frozen: either the run never tripped the sag guard, or it stopped for "
+            "another reason before the guard was judged -- read run_reason, not this flag"
+        )
+    if judged and rows:
+        print(f"  fast window is {len(rows)} of {judged} judgements = {100.0 * len(rows) / judged:.3f}% of the run, and it is the tail")
 
     m = [margin_permille(r, num, den) for r in rows]
     low = [r for r, x in zip(rows, m) if x < 1000.0]
@@ -98,27 +146,58 @@ def main() -> int:
     streaks = [r.streak for r in rows]
     print(f"streak held: max={max(streaks)} (latches at {latch}); rows with streak>0: {sum(1 for s in streaks if s)}")
 
-    # Where in the commutation cycle the tightest blocks fall: a sag that is
-    # phase-locked to switching looks different from one that is not.
-    if rows:
-        order = sorted(range(len(rows)), key=lambda i: m[i])
-        print(f"\ntightest {min(a.worst, len(rows))} blocks:")
-        print(f'{"margin":>9} {"bus":>6} {"vref":>6} {"filt_bus":>9} {"filt_vref":>9} {"streak":>7} {"step":>5} {"duty":>6} {"since_com":>10}')
-        for i in order[: a.worst]:
-            r = rows[i]
-            print(
-                f"{m[i]:9.1f} {r.bus:6d} {r.vref:6d} {r.filt_bus:9d} {r.filt_vref:9d} "
-                f"{r.streak:7d} {r.step:5d} {r.duty:6d} {r.since_com:10d}"
-            )
-        tight = [rows[i] for i in order[: max(a.worst, 20)]]
-        if tight:
-            sc = [r.since_com for r in tight]
-            print(
-                f"\nsince the last accepted crossing, in the tightest blocks: "
-                f"min={min(sc)} p50={statistics.median(sc):.0f} max={max(sc)} µs"
-            )
-            steps = collections.Counter(r.step for r in tight)
-            print(f"sector of the tightest blocks: {dict(sorted(steps.items()))}")
+    # Fail-closed rows, and the cross-check against the guard's own streak:
+    # if the recomputed lows and the recorded streak disagree, the host and the
+    # firmware have diverged and nothing else here is trustworthy.
+    fc = [r for r in rows if fail_closed(r, rail)]
+    if fc:
+        print(f"fail-closed rows (vref 0 or >= {rail}): {len(fc)} -- these latch whatever the ratio says")
+    disagree = 0
+    for i, r in enumerate(rows[1:], start=1):
+        # A row whose streak rose must have been low; one whose streak is 0
+        # must not have been (a healthy judgement zeroes it).
+        rose = r.streak > rows[i - 1].streak
+        was_low = m[i] < 1000.0 or fail_closed(r, rail)
+        if rose != (was_low and r.streak != 0):
+            disagree += 1
+    print(f"host/firmware disagreement on lows: {disagree} of {max(len(rows) - 1, 1)} rows")
+
+    order = sorted(range(len(rows)), key=lambda i: m[i])
+    print()
+    print(f"tightest {min(a.worst, len(rows))} judgements:")
+    print(
+        f'{"margin":>9} {"bus":>6} {"vref":>6} {"filt_bus":>9} {"filt_vref":>9} '
+        f'{"streak":>7} {"step":>5} {"duty":>6}'
+    )
+    for i in order[: a.worst]:
+        r = rows[i]
+        print(
+            f"{m[i]:9.1f} {r.bus:6d} {r.vref:6d} {r.filt_bus:9d} {r.filt_vref:9d} "
+            f"{r.streak:7d} {r.step:5d} {r.duty:6d}"
+        )
+    # `since_zc_us` is deliberately NOT summarised: judgements come every
+    # ~101 us and a sector at 47.5% is ~84 us, so the field is aliased and any
+    # distribution of it measures the aliasing, not the phase (review of
+    # E175). It stays in the CSV for anyone who wants to show that.
+
+    # The decimated history: how the reference got where it was. This is the
+    # half of the record the fast ring cannot show, because 52 ms is a quarter
+    # of one 207 ms filter time constant.
+    if slow:
+        span_ms = len(slow) * snap.get("slow_every", 32) * 101 / 1000.0
+        fb = [r.filt_bus for r in slow]
+        bus = [r.bus for r in slow]
+        print()
+        print(
+            f"decimated history: {len(slow)} rows every {snap.get('slow_every')} judgements "
+            f"~= {span_ms:.0f} ms"
+        )
+        print(
+            f"  filt_bus {min(fb)}..{max(fb)} (last {fb[-1]}), "
+            f"bus_mean {min(bus)}..{max(bus)} (last {bus[-1]})"
+        )
+        drift = [margin_permille(Row(0, r.bus, r.vref, r.filt_bus, r.filt_vref, 0, 0, 0, 0), num, den) for r in slow]
+        print(f"  margin over that history: min={min(drift):.1f} p50={statistics.median(drift):.1f} max={max(drift):.1f}")
 
     if a.csv:
         with open(a.csv, "w", newline="") as fh:

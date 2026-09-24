@@ -10684,3 +10684,315 @@ pre-run review returns.
 first 50% exploratory run — which is the only run that can capture a frozen
 pre-trip window, and therefore the only one that can say anything about why
 the guard latches there.
+
+### E178 — the pre-run review of step 3, verbatim, and the instrument it rebuilt
+
+This is the review I should have had **before** the 45% run. It found that the
+guard judges **every scan**, not a decimated block — so my coverage claim was
+wrong by 23× — that the guard is a **band-pass** blind outside ~0.8 ms to
+~200 ms, that its reference is **primed from the unloaded rail** so it is most
+sensitive in the first 207 ms of a run (the interval a tail-only ring never
+keeps), that the field I added to answer the phase question is **structurally
+aliased**, that the host script did not reproduce the guard's fail-closed
+branch, and that the test claiming host/firmware agreement asserted neither.
+Everything below is acted on before the 47.5% run.
+
+#### Review as received
+
+> ## Pre-run gate review — E175/E176 sag instrument
+>
+> Re-ran the analysis myself (`python scripts/sag.py captures/sag/e175-sag450.txt --worst 8`): min=1046.5, p01=1047.2, p50=1052.6, max=1059.6, 0 low blocks, streak max 0, judged=440436, kept=512, frozen=0. The three headline margin figures reproduce exactly.
+>
+> ### 1. Which claims lack cited measurements?
+>
+> 1. **"~1.2 s of history at the block rate" / "~2.1 kHz of blocks"** (`src/sagtrace.rs:42-43`, `scripts/sag.py:27`, `LAB_NOTEBOOK.md:10518` "~1.2 s", repeated in E176 at `LAB_NOTEBOOK.md:10625` "its final ~1.2 s") is **wrong by ~23×, and the capture disproves it.** `FastBusSag::observe` is called once per *scan*, not once per decimated block: `scan_pass` runs on every `hal.adc_due()` (`src/run/states.rs:251-253`), `RailMean` is a *sliding* 8-scan mean fed every scan (`src/run/states.rs:283`, `src/protection.rs:228-239`). Measured from the rows themselves: 512 rows span 51 629 µs, mean spacing 101.0 µs (one `at` wrap, 38454→24547) — **51.6 ms, not 1.2 s**. Cross-check: `SAGSNAP total=440436` (capture line 25) against `BEMFGUARD ticks=440458` (line 17) over a 45 s run ⇒ ~9.8 kHz, the scan rate. No measurement anywhere supports 2.1 kHz; nothing in the run is at 2.1 kHz.
+> 2. **"so a low block can be placed against the switching instant instead of being assumed independent of it"** (E175, `src/sagtrace.rs:63-65`) is not achievable with these quantities, and no measurement is offered that it is. `mean_sector_us=84` (capture line 10) is *shorter* than the 101 µs judging period, so there is at most one row per sector and `since_com_us` is aliased, not sampled. Worse, `bus_mean` averages 8 scans ≈ 808 µs ≈ 9.6 sectors, so any switching-synchronous dip is averaged out before the guard sees it. Prediction 2 is structurally untestable at this speed; E176's "no visible phase-locking ... a null on a quiet signal" understates this — it is a null the instrument *cannot* avoid producing.
+> 3. **`since_com_us` is not "since the last commutation"** (`src/sagtrace.rs:64`, field name `since_com_us`). `sector_start` is the accepted **zero-crossing** stamp (`src/run/states.rs:783-787`, seeded at `:731` from `sd.edge_us`); the commutation happens `wait_time(...)` later (`src/run/states.rs:714-716`) and that offset is not in the row. E175's prose ("accepted crossing") is right; the code comment and the field name are not, and no row carries the switching instant.
+> 4. **"Five host tests cover the ring: ... and the host's margin matches the guard's own comparison"** (E175). The fifth test (`src/sagtrace.rs:322-329`) re-implements the predicate as a local closure with literal `100`/`95` — it never calls `FastBusSag::observe` and never calls `scripts/sag.py`. It cannot detect the exact divergence class it claims to cover (firmware vs script vs notebook), and it bypasses `SAG_NUM`/`SAG_DEN` (`src/protection.rs:261-262`).
+> 5. **"the four ISR roots are byte-identical to production's"** (`scripts/sag_run.py:13`). `isr_diff.py` explicitly normalises addresses and operands away (`scripts/isr_diff.py:11-16`), so it can only show *instruction-for-instruction* identity — which is what it reports (37/716/326/155, verified). "Byte-identical" is not measured by any tool here.
+> 6. **The critical-section cost is unmeasured and unmentioned.** `SagRing::block` wraps every push in `interrupt::free` (`src/sagtrace.rs:170`), i.e. ~440 000 PRIMASK-masked windows at 9.8 kHz in a campaign whose whole risk model is COM/COMP latency. "Foreground only" is true of *code placement* and `isr_diff` confirms the roots, but neither shows ISR *latency*. (No evidence of harm: `com_late_max_us=8`, `comp_call_max_us=15`, `late_arms=0`, capture lines 12/16 — but the run is half the length of the production 45% captures, so that is weak.)
+> 7. **"an unfrozen one is the tail of a healthy run"** (`scripts/sag.py:28-29`) is false. Stops at `guard_reason` (`states.rs:213-216`), `validate_raw_feedback` (`:284`), the absolute bus floor (`:287`), `LateArm`/`BlankLatched` (`:228-233`) all return *before* the sag block, so a tripped run can dump `frozen=0`. Nothing in the dump distinguishes "healthy tail" from "tripped on another reason".
+> 8. **RAM cost never stated.** 512 × 14 B = 7168 B of the G071's 36 K in a `static` (`src/sagtrace.rs:44,97,163`) — relevant given this project's own `.bss`/stack-overlap scar.
+> 9. **Stale self-identification in the tooling.** `bin/sag-capture.rs:118` prints `CHAINCAPTURE diagnostic image: every run dumps its timing chain`; `:83-84` says "1024 rows" against `SAG_TRACE_LEN = 512`; `scripts/sag_run.py:4-9` describes the chain recorder and `captures/chain/<label>.txt` while it writes `captures/sag/`. A reader identifying the image from the capture banner is misinformed.
+> 10. **Dead safety check.** `scripts/sag_run.py:127` tests `r.get("target_duty_tenths")`, but `cohort.parse` returns that field as `"duty"` (`scripts/cohort.py:131`) — I confirmed it parses to `None`, so `not in (None, rung_duty)` never fires and `--rung-duty` silently no-ops. The 45% fact is independently supported (`BEMFRUN target_duty_tenths=450`, line 3; `duty=450` on all 512 rows), but the guard that was supposed to prove it does nothing.
+>
+> ### 2. Which numbers came from summaries rather than captures?
+>
+> 1. **"Host tests 326 + 9"** (E175). I ran them: `326 passed`, of which `sagtrace` contributes exactly **5**. So the total is 326 and the addition is +5 (321→326); "326 + 9" is neither the before nor the after. (E156 used the same `314 + 9 = 323` idiom, so this looks copied forward rather than read off a run.)
+> 2. **"gates PASS"** (E176, `LAB_NOTEBOOK.md:10583`) comes from `sag_run.py`'s console line, not the capture — `captures/sag/e175-sag450.txt` contains no verdict. I re-derived it (`cohort.run_gates` → `[]`), so it holds, but it is a summary in the entry.
+> 3. **"(3) is not yet tested"** (E176) supersedes E175's "that is the A/B below" (`LAB_NOTEBOOK.md:10539`) — there was no A/B below. The nearest available numbers already contradict prediction 3: `loop_iters_closed/closed_ms` = 1 522 521/39 776 = **38.3 /ms** (sag image, capture line 17/9) vs 3 217 002/74 776 = **43.0 /ms** and 3 195 163/74 776 = **42.7 /ms** (production 45%, `captures/2026-09-23/c7-450_01.txt`, `c7f-450_01.txt`), i.e. **~10.7% down, twice the predicted <5% bound**, well outside the 42.7–43.0 spread. Caveat: those are different images (`89D65B09`, `63EC7EFE`) on an 80 s window, so this is indicative, not the owed same-image A/B against `01A674BA`.
+> 4. **`bus_min = 1127` "6% below the mean"** (E176) is read from `BEMFDONE bus_min=1127` (line 7) against `filt_bus=1201` — correct arithmetic, but it is the run's single-scan minimum over 45 s compared with a filter value from the last 52 ms. The retirement of the E161 comparison is right; the 6% figure itself is still an apples-to-oranges pairing and should not be quoted as a margin.
+>
+> ### Is the traced description of the guard correct?
+>
+> Mostly, with one structural error and three material omissions.
+>
+> - **Correct and verified:** inputs are the 8-scan means and only once `rail.ready()` (`states.rs:290-297`); reference is Q8 EWMA, `SAG_FILTER_SHIFT = 11` (`protection.rs:288`), **rounded** on read (`protection.rs:326-333`); filter updated **after** the test (`protection.rs:382-385`); `SAG_STREAK = 3` consecutive with a healthy block zeroing it (`protection.rs:371-380`); fail-closed on `vref == 0 || vref >= ADC_RAIL` (`protection.rs:355-359`, `ADC_RAIL = 4095` at `:114`); pre-run `reference()` kept but not judged against (`protection.rs:275-277`).
+> - **Error:** "**block** means, not scans" reads as decimation. The guard judges **every scan** with a sliding mean (finding 1.1). The 207 ms figure is only correct *because* it is per-scan — so the entry's 207 ms and its 2.1 kHz block rate cannot both be true, and the ring-coverage claim is the one that is false.
+> - **Missing, material:** (a) the guard is a band-pass — structurally blind to anything faster than the 808 µs mean window and anything slower than 207 ms; for a guard named "sharp sag" on a 100 µs PWM period, that is the central fact about what it can detect, and the entry states only the slow half; (b) the filter is primed from the **bridge-off** baseline (`protection.rs:315-316`), so for the first ~207 ms of every run the reference is an unloaded rail and the guard is at its most sensitive — exactly the interval the ring never retains; (c) once `tripped`, `observe` returns early without updating filter or streak (`protection.rs:351-353`).
+>
+> ### Does the recorded row capture what the guard compared?
+>
+> - **Reference: yes.** `filtered()` is read at `states.rs:296` *before* `observe` at `:297`; `observe` recomputes the same pre-update value at `protection.rs:367`.
+> - **Streak: yes, after judging.** `self.sag.streak()` at `states.rs:306` follows the call. Caveat: a fail-closed trip also sets `lows = SAG_STREAK` (`protection.rs:357`), so a fail-closed row and a third-low row are indistinguishable in the record except by inspecting `vref`.
+> - **`since_com_us`: no, when the loop is not closed, and mislabelled when it is.** Open loop passes `None` (`states.rs:497`) ⇒ the field is a constant **0** for the whole driven/startup phase, not a measurement. Closed loop passes `Some(self.sector_start)` (`states.rs:748`) = the last **accepted ZC**, not the commutation (finding 1.3); it is not advanced by forced commutations (`forced=0` here, but not in a trip run). Also `at` uses `hal.raw()` (u16, wraps in 65.5 ms — it wraps once inside this very ring) while `since_com_us` is derived from `hal.now()` (u32) read *after* the judgement (`states.rs:299,309`), and the u32→u16 cast truncates silently at low speed.
+>
+> ### Does `scripts/sag.py` reproduce the guard's comparison exactly?
+>
+> - **The ratio branch: yes, including the boundary.** `margin_permille` (`sag.py:64-68`) forms the same cross-product with `num`/`den` taken from `SAGSNAP`, and `low ⇔ x < 1000.0` (`sag.py:91`) is exact: products are ≤ 1.68e9, `1000.0*lhs` ≤ 1.7e12 is exactly representable in a double, one ulp of the quotient is ~1e-13 relative against a minimum separation of ~6e-7, and `lhs == rhs` yields exactly `1000.0` ⇒ not low, matching `lhs < rhs` at `protection.rs:370`.
+> - **The fail-closed branch: no.** `sag.py` has no `vref == 0 || vref >= ADC_RAIL` path and `ADC_RAIL` is not in `SAGSNAP` (`sagtrace.rs:206-212`); with `rhs == 0` it returns `+inf`, i.e. reports the *safest possible* margin for the row on which the guard latched. So "low blocks: 0 of 512" can coexist with a trip, and `scripts/sag.py:11-14`'s "reproduced here exactly as it runs" is not true of the guard, only of its ratio test. The script also never asserts its recomputed lows against the recorded `streak`, which is the one cross-check that would catch a firmware/host divergence.
+>
+> ### Coverage
+>
+> - The window is **51.6 ms of 44.5 s = 0.117%**, and it is not a sample: it is the **last** 512 judgements before the stop, at the end of the hold, on one run. From it you can conclude only "in the final 52 ms of this one 45% run the block mean sat 1194–1209 against a 1201 filter and never went low". Nothing about the ramp, the acquire transient, the first-207 ms unloaded-reference interval, or any excursion in the preceding 44 s. E176 says this; E175 does not, and E175's prediction 1 ("a handful of blocks below 1005") was evaluated against this window as though it were the run.
+> - **A passing run:** the correct conclusion is "no evidence either way"; `overwritten=439924` is the honest headline, and the instrument as built cannot detect a rare excursion, which is the stated target.
+> - **A tripping run:** freeze *is* reachable — `P::G::freeze()` at `states.rs:311-314` fires on any `Some(verdict)`, including fail-closed, and the tripping row is pushed *before* the freeze (`:300` then `:313`), so the pre-trip window is captured. But it is **52 ms ≈ 0.25 of one 207 ms filter time constant**, so it cannot show how `filt_bus` reached the value that set the threshold — which is what explaining a latch requires. And trips via any other reason bypass the freeze entirely (finding 1.7). To answer the campaign-7 question the ring needs to span several filter time constants (≥ ~1 s ⇒ ≥ ~10 000 rows, i.e. ~140 KB — impossible; the fix is decimation or an on-trip-only high-rate sub-ring, not a longer flat ring).
+>
+> ### Overhead
+>
+> - **"Four ISR roots unchanged": verified** — `isr_diff.py` reports all four identical (37/716/326/155), matching E175. But this is instruction-identity, not byte-identity (1.5), and it does not bound `interrupt::free` latency (1.6).
+> - **Foreground cost: not measured in the entry.** E175 named `loop_iters_closed` as the metric and then never reported it; the capture does support a comparison, and it gives **~10.7% fewer foreground passes per closed-loop ms**, against a predicted <5% (2.3). Prediction 3 should be recorded as **failed on the available evidence**, pending a same-image A/B.
+>
+> ### The margin figures and the "~5% margin" claim
+>
+> - The three figures reproduce exactly and the derived reading is right: `bus 1194–1209` against `filt_bus 1201`, `vref 1506–1508` against `filt_vref 1507` ⇒ the block mean tracks its own reference to ±0.6%, while the line is 5% away.
+> - **Scope is wrong in two ways.** (a) "~5% margin" is not a measurement of this run — it is the constant `SAG_NUM/SAG_DEN` (`protection.rs:261-262`) restated; the *measured* quantity is that the tightest block was 4.65% above the line, i.e. the run consumed ~7% of the available headroom. (b) Any ratio-to-207-ms-EWMA guard sits at ~1053 whenever the rail is steady, so prediction 1's band "1000–1100" was near-unfalsifiable by construction; it should not be scored as "held, narrowly". State it as: *in the final 52 ms of one 45% run on image `2D157417`, margin ∈ [1046.5, 1059.6]* — regime-scoped, single-run, tail-only.
+>
+> ### Nulls, single runs and the 0.12% window treated as bounds
+>
+> 1. **Prediction 2** — E176 labels it "a null on a quiet signal", which is good, but `scripts/sag.py:101-121` prints "sector of the tightest blocks" and a `since_com` spread as if they were phase evidence; at 101 µs sampling against 84 µs sectors those two lines measure aliasing and should be removed or captioned.
+> 2. **Prediction 4's failure is over-interpreted in both directions.** E175 pre-committed that a never-leaving-0 streak at 47.5% would mean "the 50% trips are not the tail of a distribution this campaign can see from below" (`LAB_NOTEBOOK.md:10560-10563`). That inference is not available: a 0.12% tail-only window is consistent with a streak reaching 2 somewhere in the other 99.88%. E176 partly retracts this ("or the window is looking in the wrong place"); the pre-registered decision rule at `:10560` should be explicitly withdrawn before the 47.5% run, or it will license the wrong conclusion whichever way that run lands.
+> 3. **"the guard is not marginal at 45%"** (E176) is a general property drawn from one run's final 52 ms. Correct statement: *not marginal in the sampled tail of one run*.
+> 4. **"No harm resulted"** (E176) rests on `late_arms=0`, `blank_latched=0`, `com_preempts=0` from one 39.8 s run half the length of the production comparators — supported as a reading, not as a bound (the project's own E156 wording, "as measured maxima of this run, not as bounds", applies).
+>
+> ### On the 45% run the author drove before this review
+>
+> **Usable, but only as an instrument shake-out — not as a measurement of the guard's margin, and not as a data point in step 4.** The process violation is not what disqualifies it: the run passed the gates (I re-derived `run_gates → []`), `reason=2`, the protections were armed, `late_arms`/`blank_latched`/`com_preempts` all zero, the image is archived (`2D157417`) and its ISR roots are verifiably identical to production's. What limits it is the instrument, and that is exactly what the skipped review would have caught *first*: the coverage was believed to be 1.2 s and is 51.6 ms; the judging unit was described as a 2.1 kHz block and is a 9.8 kHz scan; `since_com_us` cannot resolve the phase question it was added for; the host script does not reproduce the fail-closed branch; and the one test asserting host/firmware agreement asserts neither. Two of the four pre-registered predictions were scored against a window 23× smaller than the entry believed it to be, and prediction 3 was left untested while the existing captures already contradict it.
+>
+> Concretely: keep the capture as evidence that the ring, the freeze plumbing, the dump path and the cross-product reproduce; retire it as evidence about margin. Fix the coverage claim in `sagtrace.rs:42-43`, `sag.py:27` and E175/E176, decide the ring's real span against the 207 ms time constant, and run the owed same-image `loop_iters_closed` A/B **before** 47.5% — because on the numbers already in hand the instrument costs ~10% of the foreground loop, which is the thing the 50% question is about.
+
+#### What changed before the 47.5% run
+
+**§1.1 and the coverage — the instrument is rebuilt, not just re-documented.**
+The guard judges every scan at ~9.8 kHz with a sliding 8-scan mean; 512 rows
+is **51.6 ms**. A flat ring long enough to span the reference's time constant
+is impossible (≥10 000 rows ≈ 140 KB), so there are now **two rings**, which
+is the reviewer's own suggestion:
+
+* **fast**, 512 judgements at full rate ≈ 52 ms — the shape of the dip;
+* **slow**, 1024 rows every 32nd judgement ≈ **1.7 s, eight filter time
+  constants** — *how the reference got where it was*, which is what explaining
+  a latch requires.
+
+Both freeze on the fault. RAM: 512×14 + 1024×8 = 15.4 KB; the image's `.bss`
+is **20.6 KB of 36 KB**, leaving ~15 KB of stack — stated, per the scar this
+project already has.
+
+**The band-pass, and the priming — both now in the module docs**, because they
+are the central facts about what this guard can see: numerator an 808 µs
+sliding mean, denominator a 207 ms average, so **only dips between about
+0.8 ms and 200 ms are visible to it at all**; and the reference is primed from
+the *bridge-off* baseline, so for the first ~207 ms of a run it is judging a
+loaded bus against an unloaded reference — its most sensitive interval, and the
+one a tail-only ring never keeps. That is now written down as a **hypothesis
+about the 50% trips**, to be tested by a frozen dump, not asserted.
+
+**§1.3, §1.2, §7.1 — the phase question is withdrawn, not answered.**
+`since_com_us` is renamed `since_zc_us` and documented as what it is: µs since
+the last accepted **zero crossing**, zero in open loop, and **aliased** at
+101 µs sampling against an 84 µs sector. `sag.py` no longer prints the sector
+histogram or the `since_zc` spread — those lines measured aliasing. The field
+stays in the CSV for anyone who wants to demonstrate that.
+
+**§1.4 — the agreement test now drives the guard.** It constructs a real
+`FastBusSag`, reads `filtered()`, calls `observe`, and compares the verdict
+with the host's float rule at the boundary (95.0% not low, one code below low,
+VREF moving the line). A second test pins the **fail-closed** branch: VREF of
+0 or at/above the rail latches whatever the ratio says.
+
+**The script's fail-closed branch — §"does sag.py reproduce it": now yes.**
+`ADC_RAIL` is emitted in `SAGSNAP`, `sag.py` flags fail-closed rows, and it
+**cross-checks its recomputed lows against the recorded streak** and prints the
+disagreement count — the one check that can catch a firmware/host divergence.
+
+**§1.7 — `frozen=0` no longer implies health.** The script lifts `reason` from
+`BEMFDONE` and prints it, and says in as many words that a stop for any other
+reason returns before the guard is judged.
+
+**§1.9, §1.10 — the tooling identifies itself correctly** (the banner said
+`CHAINCAPTURE`), and the runner's duty check works: it compared
+`target_duty_tenths` against a dict whose key is `duty`, so `--rung-duty`
+silently passed everything.
+
+**§1.5 — "byte-identical" is withdrawn** wherever it appeared; `isr_diff.py`
+shows instruction-for-instruction identity with addresses normalised, which is
+what is claimed from here on.
+
+**§2.1 — the test count.** 327 lib + 9 doc on this tree; the "+9" is doc-tests
+and I have been writing it as though it were part of a sum. Stated once,
+properly: **327 host tests and 9 doc-tests.**
+
+**§7.2 — the pre-registered decision rule is withdrawn.** E175 said a streak
+never leaving 0 at 47.5% would mean the 50% trips are not visible from below.
+That inference is not available from a tail-only window, and I will not draw
+it whichever way the run lands.
+
+**§1.6, §"Overhead" — deferred, with the reason.** The `interrupt::free`
+windows are ~440 000 per run and their effect on ISR latency is unmeasured;
+the same-image foreground A/B *is* now done (E177: −9.9% at 25%). The CS is
+unnecessary in principle — the ring has a single foreground writer — but
+removing it needs the ring owned by the controller rather than a static, which
+is a larger change than this step should carry. Recorded as owed; the
+`com_late_max_us`/`comp_call_max_us` readings from each sag run are the
+standing check that it is not hurting the ISRs.
+
+**§2.4, §"margin" — restated with the right scope.** The measured claim is:
+*in the final 52 ms of one 45% run on image `2D157417`, the margin lay in
+[1046.5, 1059.6] per mille and no judgement was low* — i.e. the run consumed
+about 7% of the available headroom, and the "5%" is the constant, not a
+measurement. `bus_min` against a 52 ms filter value is not a margin and is not
+quoted as one.
+
+### E179 — step 2's fix was defective; step 4's validation, and what it excludes
+
+**Written after the fix and the 47.5% run; the 50% predictions are at the end
+and are on the record before any 50% run.**
+
+#### The defect in my own step-2 "completed" work, found by the binz reviewer
+
+> In com_arm (firmware50/src/roots.rs:853), it checks the stop latch once, then
+> writes the timer. This sequence remains possible: 1. COMP passes the latch
+> check. 2. The guard interrupts, latches stop and disables the timer. 3. COMP
+> resumes after its check and enables the timer again.
+>
+> Its interleaving tests (firmware50/src/oneshot.rs:172) test partial arm →
+> stop, but never execute the interrupted arm's remaining instructions
+> afterward. The separate test starts a new arm after stopping, which correctly
+> refuses—but that is a different sequence.
+
+**Correct, and it is the exact property step 2 claimed to have closed.** A
+check followed by an unguarded write is a check-then-act race against a root
+that runs *above* COMP; my five interleavings all stopped the sequence and then
+started a *new* arm, which the latch refuses, and never resumed the
+*interrupted* one, which it did not.
+
+The fix: **the latch is re-checked with interrupts masked, around the enable.**
+
+```rust
+cortex_m::interrupt::free(|_| {
+    if !S.com().stopped.load(Ordering::Relaxed) {
+        hw::com_timer::arm(arr as u16);
+    }
+});
+```
+
+The guard cannot interleave with a masked section, so a stop landing anywhere
+in `com_arm` leaves the timer off. The model's enable step now honours the
+latch the same way, and the missing test exists: **for every prefix of the
+sequence, stop mid-arm and then run the arm's remaining steps** — the timer
+must still end unable to fire. 328 host tests.
+
+Their scope note is also right and worth keeping: this was never a
+bridge-re-energisation hazard — `MOE`, the driver enable and the `active` flag
+are separate barriers — it was an unproved safety property, and it is now
+proved by construction rather than by observation.
+
+**Cost of the masked recheck** (static longest-path, 0 WS, against E173's
+`01A674BA`): `ADC_COMP` 1009 → **1078**, `TIM16` 346 → **385**,
+`TIM6_DAC_LPTIM1` 208 → 208, and all four roots still pass the arithmetic
+audit. That is +69 cycles (≈1.1 µs) on COMP's *longest path*; the arm path
+itself gains one masked load, a branch and the PRIMASK save/restore. Named,
+not waived — and step 4's runs below are the evidence it costs the loop
+nothing measurable.
+
+#### The latency inference I made, corrected with the measurement
+
+E177 said the sag image's 10% lower foreground pass rate means "detection
+latency for *any* stop is 10% longer". The reviewer called that unsupported,
+and the measurement was already in the captures: `loop_gap_max_us`, the worst
+observed gap between foreground passes.
+
+| image, rung | `loop_gap_max_us` |
+|---|---|
+| sag recorder, 45% | **138** |
+| sag recorder, 47.5% | **151** |
+| production/chain, 47.5% | 156, 157 |
+| production, 25% | 154, 157 |
+
+The sag image's **worst** gap is *inside* the production spread, not 10% above
+it. The mean pass rate falls ~10%; the tail — which is what bounds detection
+latency — does not measurably move. My inference was wrong in the direction
+that mattered, and the honest statement is: *mean pass rate −9.9%, worst
+observed gap 138–151 µs against production's 154–157, so no measured increase
+in the worst-case latency.*
+
+#### Step 4: the guard's margin at 45% and 47.5%, and the sag-per-amp slope
+
+47.5%, image `73E1CBBC`, `captures/sag/e178-sag475.txt`, gates PASS,
+`run_reason=2`:
+
+* **fast ring**, 512 judgements ≈ 52 ms: margin **1043.7–1061.1** per mille,
+  p50 1052.6, **no low judgement**, streak never left 0;
+* **decimated ring**, 1024 rows every 32nd judgement ≈ **3.31 s** (the script
+  computes the span from the measured rate; the module doc's "1.7 s" was my
+  arithmetic on a stale assumption and is corrected to ~3.3 s): margin
+  **1042.1–1062.1**, p50 1053.3;
+* **host/firmware disagreement on lows: 0 of 511 rows** — the cross-check the
+  review asked for, passing;
+* the reference is *stiff*: `filt_bus/filt_vref` moves over 1197–1198 across
+  3.3 s while `bus_mean` wanders 1185–1207 (±0.9%).
+
+So at 47.5%, over 3.3 s, **the guard never came within 4.2% of its line.**
+45% (image `2D157417`, 52 ms only) was 1046.5–1059.6. Both are single runs and
+partial windows, and neither is a bound.
+
+**The sag-per-amp slope, in the guard's own normalised units** (median
+`bus/vref` over each run's history against the run's `hold_ma`):
+
+| run | duty | `hold_ma` | median `bus/vref` |
+|---|---|---|---|
+| `e176-sag25` | 25% | 297 | 0.80412 |
+| `e175-sag450` | 45% | 1481 | 0.79695 |
+| `e178-sag475` | 47.5% | 1599 | 0.79601 |
+
+25 → 45%: **−0.753 % per A**. 25 → 47.5%: **−0.774 % per A**. A stiff, linear
+path, and the two intervals agree to 3%.
+
+**What that excludes, and it is the point of step 4.** Going 47.5% → 50% adds
+about **0.2 A** (metered 1.5 A at 47.5% — thank you — against a proxy reading
+of 1599 mA, so the proxy is ~7% high; the fitted exponent 2.38 puts 50% near
+1.69 A of the 2 A limit). At −0.77 % per A that is **−0.15%** of `bus/vref`,
+against an observed margin of **4.2%** and a line at 5%. **A steady-state
+supply or power-path sag cannot trip this guard at 50%**: it would take roughly
+**5.5 A** of additional current to consume the margin. If 50% latches the
+guard, the cause is therefore one of:
+
+1. a **transient** inside the guard's passband (0.8–200 ms) — a dip the 3.3 s
+   median cannot see, which the frozen fast ring is built to capture;
+2. the **reference being high relative to the load** — the filter is primed
+   from the *bridge-off* rail and has a 207 ms time constant, so during the
+   ramp and the first fifth of a second it is judging a loaded bus against a
+   lighter-loaded reference;
+3. something that is not a supply phenomenon at all — a loss-of-lock current
+   surge, which is this bench's standing lesson.
+
+These are distinguishable: (1) shows as a dip in the fast ring with the
+reference steady, (2) as a *falling* `bus_mean` chasing a lagging `filt_bus`
+in the decimated ring, (3) as a trip coincident with rate or tracking symptoms
+rather than with a clean margin collapse.
+
+#### Predictions for the 50% runs, recorded before any of them
+
+1. **The current stays inside 2 A**: ~1.7 A metered, i.e. proxy `hold_ma`
+   ≈ 1800 ± 100.
+2. **If the guard latches, the frozen fast ring shows mechanism (1) or (2),
+   not a steady margin decline.** I expect (2) — a trip during or shortly
+   after the ramp, with `filt_bus` visibly above the loaded `bus_mean` — but I
+   am not confident, and the distinguishing evidence is listed above rather
+   than chosen now.
+3. **A run that reaches a steady hold at 50% does not trip**, because the
+   steady-state slope says the margin there is ~4.0%.
+4. At least one of five attempts **completes its window**; campaign 7 saw
+   three of six trip, so a 5-run cohort should contain both outcomes.
+
+No 50% run happens until the pre-run review of this step returns.

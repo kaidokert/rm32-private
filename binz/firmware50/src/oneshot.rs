@@ -135,7 +135,11 @@ impl OneShot {
                 ArmStep::Disarm => self.can_fire = false,
                 ArmStep::StampSchedule => self.scheduled_at = at.wrapping_add(us),
                 ArmStep::SetPurpose => self.purpose = purpose,
-                ArmStep::ConfigureAndEnable => self.can_fire = true,
+                // The enable re-checks the latch, because a stop can land
+                // between the first check and this step; in the firmware that
+                // recheck is inside a critical section so the guard cannot
+                // interleave with it.
+                ArmStep::ConfigureAndEnable => self.can_fire = !self.stop.latched(),
             }
         }
         true
@@ -144,6 +148,21 @@ impl OneShot {
     /// The whole sequence.
     pub fn arm(&mut self, at: u32, us: u32, purpose: u32) -> bool {
         self.arm_partial(at, us, purpose, ARM_ORDER.len())
+    }
+
+    /// **Resume an arm that was interrupted after `done` steps** -- the case
+    /// the first version of these tests never exercised: a stop that lands
+    /// mid-sequence and then the arm's *remaining* writes running. The
+    /// original check has already passed, so this deliberately skips it.
+    pub fn arm_resume(&mut self, at: u32, us: u32, purpose: u32, done: usize) {
+        for step in ARM_ORDER.iter().skip(done) {
+            match step {
+                ArmStep::Disarm => self.can_fire = false,
+                ArmStep::StampSchedule => self.scheduled_at = at.wrapping_add(us),
+                ArmStep::SetPurpose => self.purpose = purpose,
+                ArmStep::ConfigureAndEnable => self.can_fire = !self.stop.latched(),
+            }
+        }
     }
 
     /// A stop, from the guard root or the foreground: the timer goes quiet,
@@ -181,6 +200,26 @@ mod tests {
             assert!(!os.can_fire, "steps={steps}");
             assert_eq!(os.purpose, 0, "steps={steps}");
             assert_eq!(os.dispatch(), None, "steps={steps}");
+        }
+    }
+
+    /// The interleaving that matters, and the one the first version missed: a
+    /// stop lands *inside* the arm, and then the arm's remaining writes run.
+    /// The timer must still end unable to fire — the enable re-checks the
+    /// latch, which in the firmware is a masked recheck so the guard cannot
+    /// interleave with it (found by the binz reviewer against E173/E174).
+    #[test]
+    fn an_arm_interrupted_by_a_stop_does_not_enable_the_timer_when_it_resumes() {
+        for done in 0..=ARM_ORDER.len() {
+            let mut os = OneShot::idle();
+            assert!(os.arm_partial(1_000, 50, 1, done));
+            os.stop();
+            os.arm_resume(1_000, 50, 1, done);
+            assert!(
+                !os.can_fire,
+                "resumed after a stop at step {done} and the timer went live"
+            );
+            assert_eq!(os.dispatch(), None, "step {done}");
         }
     }
 

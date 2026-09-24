@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """Run the `sag-capture` diagnostic image and save the sag guard's own inputs.
 
-Flash `sag-capture` first (`shell-pwm` with both motor roots recording the
-commutation timing chain; see `bin/sag-capture.rs` and `src/chain.rs`).
-This drives the same unjudged 15% warm-up the other diagnostic runners use --
-the current proxy's zero follows the driver's temperature (E092/E093) -- then
-the requested key, and saves everything through `SAGEND` to
-`captures/chain/<label>.txt` with the image's SHA-256 in the header.
+Flash nothing by hand: pass `--elf` and `--flash` so the capture's recorded
+hash is necessarily the image that ran. The image is `shell-pwm` with the
+sharp-sag guard's inputs recorded per judgement (`bin/sag-capture.rs`,
+`src/sagtrace.rs`); its four ISR roots are instruction-identical to
+production's, but the recorder costs about 10% of the foreground pass rate, so
+its runs are evidence about the guard's inputs and never about production's
+loop quality or its stop latency.
 
-The run is judged by the ordinary per-run gates (`cohort.run_gates`), so a
-chain recorded from an unhealthy run is not passed off as a measurement of a
-healthy one. This image's four ISR roots are byte-identical to production's -- the
-recording is foreground-only -- but it still costs foreground time, so its
-runs are evidence about the guard's inputs, never about production loop
-quality.
+Drives the same unjudged 15% warm-up the other diagnostic runners use unless
+`--no-warmup`, then the requested key, and saves everything through `SAGEND`
+to `captures/sag/<label>.txt`. The run is judged by the ordinary per-run gates
+(`cohort.run_gates`), so a trace from an unhealthy run is not passed off as a
+measurement of a healthy one.
 
 Usage:
-    python scripts/sag_run.py --label e175-sag475 --command l --rung-duty 475 --pre "+++"
+    python scripts/sag_run.py --elf captures/elf/<image>.elf --flash         --label e178-sag475 --command l --rung-duty 475 --pre "+++"
 """
 
 from __future__ import annotations
@@ -124,8 +124,10 @@ def main() -> int:
     if r is None:
         print("VERDICT: incomplete run (no report)")
         return 1
-    if args.rung_duty and r.get("target_duty_tenths") not in (None, args.rung_duty):
-        print(f"VERDICT: capture ran {r.get('target_duty_tenths')} tenths, not {args.rung_duty}")
+    # `cohort.parse` names this `duty`; the old key was never present, so this
+    # check silently passed everything (review of E175).
+    if args.rung_duty and r.get("duty") not in (None, args.rung_duty):
+        print(f"VERDICT: capture ran {r.get('duty')} tenths, not {args.rung_duty}")
         return 1
     fails = cohort.run_gates(r, bemf_run.EXPLORE_HOLD_MS)
     print("VERDICT: " + ("run gates PASS" if not fails else "run gates FAIL: " + "; ".join(fails)))

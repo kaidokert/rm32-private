@@ -880,7 +880,20 @@ pub fn com_arm(us: u32, phase: u32) {
         .sched_raw
         .store(now_raw.wrapping_add(us) & 0xFFFF, Ordering::Relaxed);
     S.com().phase.store(phase, Ordering::Relaxed);
-    hw::com_timer::arm(arr as u16);
+    // **The latch is re-checked with interrupts masked, around the enable.**
+    // The check above is not enough on its own: the guard root runs above COMP
+    // and can latch a stop *between* that check and this write, and the arm
+    // would then re-enable the timer after the shutdown -- exactly the
+    // property step 2 claimed to have closed and had not. Masking makes the
+    // recheck-and-enable atomic with respect to the guard, so a stop that
+    // lands anywhere in this function leaves the timer off. Found by the binz
+    // reviewer against E173/E174; the interleaving test now *resumes* an
+    // interrupted arm instead of only starting a new one.
+    cortex_m::interrupt::free(|_| {
+        if !S.com().stopped.load(Ordering::Relaxed) {
+            hw::com_timer::arm(arr as u16);
+        }
+    });
 }
 
 /// Stop the one-shot and forget any armed event.

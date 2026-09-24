@@ -1,5 +1,5 @@
-//! The sharp-sag guard's own inputs, scan by scan, in a bounded pre-trip ring
-//! (campaign 9 step 3).
+//! The sharp-sag guard's own inputs, judgement by judgement, in two bounded
+//! rings that freeze on the fault (campaign 9 step 3).
 //!
 //! Campaign 7 saw the guard latch in three of six runs at 50% and the cause
 //! was never found. Every quantity quoted at it since has been the wrong one:
@@ -7,48 +7,70 @@
 //! (`run::states`), and the report's `filt_bus` is the filter's value at the
 //! *end* of the run. Neither is what the guard compares.
 //!
-//! What it actually compares, traced in `protection::FastBusSag::observe`:
+//! What it does compare, traced in `protection::FastBusSag::observe`:
 //!
 //! ```text
-//! bus_mean * filt_vref * 100  <  filt_bus * vref_mean * 95
+//! bus_mean * filt_vref * SAG_DEN  <  filt_bus * vref_mean * SAG_NUM
 //! ```
 //!
-//! — the **block means** of bus and VREF (`protection::RailMean`, not one
-//! scan) against the **~207 ms exponential averages** of the same two
-//! (`SAG_FILTER_SHIFT = 11` at the 9.901 kHz scan rate), in Q8 and rounded;
-//! three consecutive low blocks latch (`SAG_STREAK`), and the filter is
-//! updated *after* the test so a collapsing sample cannot drag the reference
-//! onto itself.
+//! **Judged on every scan**, not on a decimated block: `Ctx::scan_pass` runs
+//! per `adc_due`, and `protection::RailMean` is a *sliding* mean over the last
+//! `RAIL_MEAN_LEN` scans, fed every scan. The captures put that rate at
+//! **9.8 kHz** (`SAGSNAP total` against `BEMFGUARD ticks`), i.e. one judgement
+//! per ~101 µs. An earlier version of this module said "blocks" at ~2.1 kHz
+//! and was wrong by 23x, which made its coverage claim wrong by the same
+//! factor; the independent pre-run review of E175 caught it.
 //!
-//! So this records exactly those four numbers per judged block, plus the
-//! streak the guard is holding, the duty, the sector, and how long it is since
-//! the last commutation — nothing derived, and **no division in the
-//! firmware**: the host computes the margin from the raw quartet, which is the
-//! same discipline `BEMFTAIL` follows.
+//! **So the guard is a band-pass, and that is the central fact about what it
+//! can detect.** Its numerator is an 8-scan sliding mean (~808 µs, about nine
+//! sectors at 47.5%), so anything faster — a per-PWM-period dip, a switching
+//! transient — is averaged away before the comparison. Its denominator is a
+//! ~207 ms exponential average, so anything slower is followed and becomes
+//! margin rather than fault. Only dips between about 0.8 ms and 200 ms are
+//! visible to it at all. The absolute floor (`BUS_FLOOR_NUM`, `Reason::Bus`)
+//! is what covers the slow side.
 //!
-//! **Bounded and pre-trip.** [`SAG_TRACE_LEN`] blocks, circular, and it
-//! **freezes on the fault** — the ring then holds the window that led to the
-//! trip rather than whatever came after. Dumped after `safe_off`, like every
-//! other byte.
+//! **And it is primed from the bridge-off baseline** (`FastBusSag::new`), so
+//! for roughly the first 207 ms of a run its reference is an *unloaded* rail
+//! while the bus is already loaded: that is when the guard is at its most
+//! sensitive, and it is the interval a tail-only ring never retains. That is a
+//! hypothesis about the 50% trips, not a finding — the 50% runs will say.
+//!
+//! **Two rings, because one cannot answer both questions.**
+//!
+//! * [`FAST_LEN`] judgements at full rate — ~52 ms — for the shape of the dip
+//!   that trips the guard;
+//! * [`SLOW_LEN`] judgements decimated by [`SLOW_EVERY`] — ~1.7 s, i.e. eight
+//!   filter time constants — for **how the reference got where it was**, which
+//!   is what explaining a latch requires and what the fast ring alone cannot
+//!   show.
+//!
+//! Both freeze on the fault, so a dump is the window that led there. Both are
+//! written after `safe_off`, like every other byte. Row quantities are raw:
+//! the host reproduces the cross-product (`scripts/sag.py`), so the firmware
+//! does no division.
 //!
 //! Production runs [`NoSagLog`], whose `ON` is `false`, so every call folds
-//! away; only the `sag-capture` binary installs [`SagRing`]. This is
-//! diagnostic evidence and never qualifies another image.
+//! away; only the `sag-capture` binary installs [`SagRing`]. RAM cost there:
+//! `FAST_LEN` x 14 B + `SLOW_LEN` x 8 B, which the entry states against the
+//! part's 36 KB. This is diagnostic evidence and never qualifies another
+//! image.
 
 use core::cell::RefCell;
 
 use cortex_m::interrupt::{self, Mutex};
 
-/// Judged blocks kept, and **how long that actually is**: the guard judges a
-/// block whenever `RailMean` is ready, which the captures measure at
-/// **9.8–11.7 kHz** — not the ~2 kHz I first assumed. So 512 rows was about
-/// **50 ms** of history, and 1024 is about **100 ms** (14 KB of RAM). Stated
-/// because the window is what bounds every conclusion drawn from a dump: for
-/// a run that trips the ring freezes and this is the pre-trip window, but for
-/// a run that passes it is only the tail.
-pub const SAG_TRACE_LEN: usize = 1024;
+/// Full-rate judgements kept: ~52 ms at the measured 9.8 kHz.
+pub const FAST_LEN: usize = 512;
+/// Decimated judgements kept, and the decimation: 1024 rows every 32nd
+/// judgement is **~3.3 s** at the measured 9.8 kHz (1024 x 32 x 101 µs), i.e.
+/// sixteen of the reference's 207 ms time constants. `scripts/sag.py` prints
+/// the span from the dump rather than from this comment.
+pub const SLOW_LEN: usize = 1024;
+pub const SLOW_EVERY: u32 = 32;
+const _: () = assert!(SLOW_EVERY.is_power_of_two());
 
-/// One judged block: the guard's own inputs and the state it judged them in.
+/// One judgement: the guard's own inputs and the state it judged them in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Block {
     /// The raw clock when the block was judged.
@@ -65,9 +87,13 @@ pub struct Block {
     /// The sector in force, and the applied duty in tenths of a percent.
     pub step: u8,
     pub duty_tenths: u16,
-    /// µs since the last commutation, so a low block can be placed against
-    /// the switching instant rather than assumed independent of it.
-    pub since_com_us: u16,
+    /// µs since the last **accepted zero crossing** — not since the
+    /// commutation, which happens `wait_time` later and is not recorded here.
+    /// Zero before the loop is closed. At ~101 µs between judgements and an
+    /// 84 µs sector at 47.5% this is **aliased**, so it cannot answer whether
+    /// a dip is phase-locked to switching; the review of E175 established
+    /// that, and `scripts/sag.py` no longer pretends otherwise.
+    pub since_zc_us: u16,
 }
 
 /// Where the guard's blocks go. `ON` false folds every call away.
@@ -96,39 +122,62 @@ impl SagLog for NoSagLog {
 pub struct Trace {
     pub on: bool,
     pub frozen: bool,
+    /// Judgements offered to the fast ring, and to the slow one.
     pub total: u32,
-    pub len: usize,
-    pub next: usize,
-    pub blocks: [Block; SAG_TRACE_LEN],
+    pub fast_len: usize,
+    fast_next: usize,
+    pub fast: [Block; FAST_LEN],
+    pub slow_len: usize,
+    slow_next: usize,
+    pub slow: [Slow; SLOW_LEN],
+}
+
+/// A decimated row: only what the reference's history needs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Slow {
+    pub bus_mean: u16,
+    pub vref_mean: u16,
+    pub filt_bus: u16,
+    pub filt_vref: u16,
 }
 
 impl Trace {
     pub const fn empty() -> Self {
+        const EMPTY: Block = Block {
+            at: 0,
+            bus_mean: 0,
+            vref_mean: 0,
+            filt_bus: 0,
+            filt_vref: 0,
+            streak: 0,
+            step: 0,
+            duty_tenths: 0,
+            since_zc_us: 0,
+        };
+        const SLOW0: Slow = Slow {
+            bus_mean: 0,
+            vref_mean: 0,
+            filt_bus: 0,
+            filt_vref: 0,
+        };
         Self {
             on: false,
             frozen: false,
             total: 0,
-            len: 0,
-            next: 0,
-            blocks: [Block {
-                at: 0,
-                bus_mean: 0,
-                vref_mean: 0,
-                filt_bus: 0,
-                filt_vref: 0,
-                streak: 0,
-                step: 0,
-                duty_tenths: 0,
-                since_com_us: 0,
-            }; SAG_TRACE_LEN],
+            fast_len: 0,
+            fast_next: 0,
+            fast: [EMPTY; FAST_LEN],
+            slow_len: 0,
+            slow_next: 0,
+            slow: [SLOW0; SLOW_LEN],
         }
     }
 
-    /// The next circular index, written out: `% SAG_TRACE_LEN` would be a
-    /// helper division on this M0+ if the length ever stopped being a power of
-    /// two (E154's finding, in the capture ring).
-    const fn bump(i: usize) -> usize {
-        if i + 1 == SAG_TRACE_LEN {
+    /// The next circular index, written out: a modulo would be a helper
+    /// division on this M0+ if the length ever stopped being a power of two
+    /// (E154's finding, in the capture ring).
+    const fn bump(i: usize, len: usize) -> usize {
+        if i + 1 == len {
             0
         } else {
             i + 1
@@ -139,18 +188,40 @@ impl Trace {
         if !self.on || self.frozen {
             return;
         }
-        self.blocks[self.next] = *b;
-        self.next = Self::bump(self.next);
+        self.fast[self.fast_next] = *b;
+        self.fast_next = Self::bump(self.fast_next, FAST_LEN);
+        if self.fast_len < FAST_LEN {
+            self.fast_len += 1;
+        }
+        // A mask, not a modulo: the decimation is a power of two by assertion
+        // below, and a modulo invites the division helper this crate forbids.
+        if self.total & (SLOW_EVERY - 1) == 0 {
+            self.slow[self.slow_next] = Slow {
+                bus_mean: b.bus_mean,
+                vref_mean: b.vref_mean,
+                filt_bus: b.filt_bus,
+                filt_vref: b.filt_vref,
+            };
+            self.slow_next = Self::bump(self.slow_next, SLOW_LEN);
+            if self.slow_len < SLOW_LEN {
+                self.slow_len += 1;
+            }
+        }
         self.total = self.total.wrapping_add(1);
-        if self.len < SAG_TRACE_LEN {
-            self.len += 1;
+    }
+
+    /// The oldest kept row's index in each ring.
+    pub const fn fast_start(&self) -> usize {
+        if self.fast_len == FAST_LEN {
+            self.fast_next
+        } else {
+            0
         }
     }
 
-    /// The oldest kept block's index.
-    pub const fn start(&self) -> usize {
-        if self.total as usize > self.len {
-            self.next
+    pub const fn slow_start(&self) -> usize {
+        if self.slow_len == SLOW_LEN {
+            self.slow_next
         } else {
             0
         }
@@ -209,21 +280,24 @@ impl SagRing {
 /// cross-product, so no division happens here and nothing is rounded twice.
 pub fn emit(t: &Trace, out: &mut impl crate::report::Sink) {
     out.say("SAGSNAP ");
-    out.kv("len", t.len as u32);
-    out.kv("total", t.total);
+    out.kv("judged", t.total);
+    out.kv("fast_len", t.fast_len as u32);
+    out.kv("slow_len", t.slow_len as u32);
+    out.kv("slow_every", SLOW_EVERY);
     out.kv("frozen", u32::from(t.frozen));
     out.kv("num", crate::protection::SAG_NUM);
     out.kv("den", crate::protection::SAG_DEN);
     out.kv("streak_to_latch", u32::from(crate::protection::SAG_STREAK));
+    out.kv("adc_rail", u32::from(crate::protection::ADC_RAIL));
     out.say(
         "
 ",
     );
     out.flush();
-    let start = t.start();
+    let start = t.fast_start();
     let mut k = 0;
-    while k < t.len {
-        let b = &t.blocks[(start + k) % SAG_TRACE_LEN];
+    while k < t.fast_len {
+        let b = &t.fast[(start + k) % FAST_LEN];
         out.say("SAGROW ");
         out.say_u32(u32::from(b.at));
         out.say(" ");
@@ -241,7 +315,28 @@ pub fn emit(t: &Trace, out: &mut impl crate::report::Sink) {
         out.say(" ");
         out.say_u32(u32::from(b.duty_tenths));
         out.say(" ");
-        out.say_u32(u32::from(b.since_com_us));
+        out.say_u32(u32::from(b.since_zc_us));
+        out.say(
+            "
+",
+        );
+        out.flush();
+        k += 1;
+    }
+    // The decimated history: how the reference got where it was. Four columns,
+    // because that is all this question needs.
+    let start = t.slow_start();
+    let mut k = 0;
+    while k < t.slow_len {
+        let r = &t.slow[(start + k) % SLOW_LEN];
+        out.say("SAGSLOW ");
+        out.say_u32(u32::from(r.bus_mean));
+        out.say(" ");
+        out.say_u32(u32::from(r.vref_mean));
+        out.say(" ");
+        out.say_u32(u32::from(r.filt_bus));
+        out.say(" ");
+        out.say_u32(u32::from(r.filt_vref));
         out.say(
             "
 ",
@@ -275,15 +370,19 @@ mod tests {
     fn the_ring_keeps_the_last_blocks_and_says_how_many_it_dropped() {
         let mut t = Trace::empty();
         t.on = true;
-        for i in 0..(SAG_TRACE_LEN as u16 + 10) {
+        for i in 0..(FAST_LEN as u16 + 10) {
             t.push(&block(i, 1200));
         }
-        assert_eq!(t.len, SAG_TRACE_LEN);
-        assert_eq!(t.total as usize, SAG_TRACE_LEN + 10);
+        assert_eq!(t.fast_len, FAST_LEN);
+        assert_eq!(t.total as usize, FAST_LEN + 10);
         // The oldest kept block is the 11th pushed, and the newest is the last.
-        assert_eq!(t.blocks[t.start()].at, 10);
-        let newest = if t.next == 0 { SAG_TRACE_LEN - 1 } else { t.next - 1 };
-        assert_eq!(t.blocks[newest].at, SAG_TRACE_LEN as u16 + 9);
+        assert_eq!(t.fast[t.fast_start()].at, 10);
+        let newest = if t.fast_start() == 0 {
+            FAST_LEN - 1
+        } else {
+            t.fast_start() - 1
+        };
+        assert_eq!(t.fast[newest].at, FAST_LEN as u16 + 9);
     }
 
     #[test]
@@ -297,9 +396,9 @@ mod tests {
         for i in 100..120 {
             t.push(&block(i, 900));
         }
-        assert_eq!(t.len, 20, "nothing after the freeze is recorded");
+        assert_eq!(t.fast_len, 20, "nothing after the freeze is recorded");
         assert_eq!(t.total, 20);
-        assert!(t.blocks[..20].iter().all(|b| b.bus_mean == 1200));
+        assert!(t.fast[..20].iter().all(|b| b.bus_mean == 1200));
     }
 
     #[test]
@@ -308,28 +407,57 @@ mod tests {
         for i in 0..5 {
             t.push(&block(i, 1200));
         }
-        assert_eq!(t.len, 0);
+        assert_eq!(t.fast_len, 0);
         assert_eq!(t.total, 0);
     }
 
     #[test]
     fn the_index_wraps_at_the_end_and_nowhere_else() {
-        assert_eq!(Trace::bump(0), 1);
-        assert_eq!(Trace::bump(SAG_TRACE_LEN - 2), SAG_TRACE_LEN - 1);
-        assert_eq!(Trace::bump(SAG_TRACE_LEN - 1), 0);
+        assert_eq!(Trace::bump(0, FAST_LEN), 1);
+        assert_eq!(Trace::bump(FAST_LEN - 2, FAST_LEN), FAST_LEN - 1);
+        assert_eq!(Trace::bump(FAST_LEN - 1, FAST_LEN), 0);
     }
 
-    /// The host computes the margin from the raw quartet, so the arithmetic
-    /// the guard performs is reproducible outside it. This pins the identity
-    /// the host script relies on: low exactly when
-    /// `bus * filt_vref * 100 < filt_bus * vref * 95`.
+    /// **The host's margin must agree with the guard itself**, so this drives
+    /// `protection::FastBusSag::observe` rather than re-implementing its
+    /// predicate: the review of E175 pointed out that a test which restates
+    /// the comparison cannot catch a firmware/host divergence, which is the
+    /// only thing it was there for.
     #[test]
-    fn the_hosts_margin_matches_the_guards_own_comparison() {
-        let low = |bus: u32, vref: u32, fb: u32, fv: u32| bus * fv * 100 < fb * vref * 95;
-        // At exactly 95% of the reference ratio the guard is not low.
-        assert!(!low(1140, 1500, 1200, 1500), "1140/1200 = 95.0%");
-        assert!(low(1139, 1500, 1200, 1500), "one code below is low");
-        // VREF moves the line: the same bus against a lower VREF is not low.
-        assert!(!low(1139, 1425, 1200, 1500));
+    fn the_hosts_margin_agrees_with_the_guard_itself() {
+        use crate::protection::{BusReference, FastBusSag, SAG_DEN, SAG_NUM};
+
+        // The host's rule, exactly as `scripts/sag.py` computes it.
+        let host_low = |bus: u32, vref: u32, fb: u32, fv: u32| {
+            let lhs = f64::from(bus * fv * SAG_DEN);
+            let rhs = f64::from(fb * vref * SAG_NUM);
+            1000.0 * lhs / rhs < 1000.0
+        };
+        // A guard primed at 1200/1500, judged on its very first sample so the
+        // reference is exactly the priming value.
+        for (bus, vref) in [(1140u16, 1500u16), (1139, 1500), (1201, 1500), (1139, 1425)] {
+            let mut g = FastBusSag::new(BusReference { bus: 1200, vref: 1500 });
+            let (fb, fv) = g.filtered();
+            let fired = g.observe(bus, vref).is_some();
+            let guard_low = g.streak() > 0 || fired;
+            assert_eq!(
+                guard_low,
+                host_low(u32::from(bus), u32::from(vref), u32::from(fb), u32::from(fv)),
+                "bus={bus} vref={vref} fb={fb} fv={fv}"
+            );
+        }
+    }
+
+    /// The fail-closed branch the host script must also reproduce: a VREF of
+    /// zero or at the rail latches at once, whatever the ratio would say.
+    #[test]
+    fn a_bad_vref_latches_whatever_the_ratio_says() {
+        use crate::protection::{BusReference, FastBusSag, ADC_RAIL};
+
+        for vref in [0u16, ADC_RAIL, ADC_RAIL + 1] {
+            let mut g = FastBusSag::new(BusReference { bus: 1200, vref: 1500 });
+            assert!(g.observe(1200, vref).is_some(), "vref={vref} must latch");
+            assert!(g.tripped());
+        }
     }
 }

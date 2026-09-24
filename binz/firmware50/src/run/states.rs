@@ -306,7 +306,7 @@ impl Ctx {
                     streak: self.sag.streak(),
                     step: self.step.get(),
                     duty_tenths: self.applied_duty,
-                    since_com_us: sector_start.map_or(0, |t| now.wrapping_sub(t) as u16),
+                    since_zc_us: sector_start.map_or(0, |t| now.wrapping_sub(t) as u16),
                 });
                 if verdict.is_some() {
                     // Freeze: what matters is the window that led here.
