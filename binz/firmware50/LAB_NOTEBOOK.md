@@ -15224,3 +15224,112 @@ and the absence of any temperature measurement — and the campaign's real next
 experiment, **reducing `spent`**, which E211 adopted after both reviews showed
 the advance route buys exactly one rung. Each gets its own predeclaration and
 its own review pair.
+
+### E213 — predeclaration: reduce `spent`, the one lever that is not a control change
+
+Both reviews of E208 converge on this as the campaign's real work, and E211
+adopted it. This is the predeclaration, written before any build, and it goes to
+a fresh review pair before anything is built — because the goal's gate is
+"before testing every hypothesis", and this entry *is* the hypothesis.
+
+#### The question
+
+`spent` — COMP's entry-to-arm cost — is **11 µs on every capture this bench has
+ever produced** (490 of them; 10 µs on one older image family). The scheduled
+wait is `wait_time(ci, 22)`, which is 12 µs at the 50% rung's 77 µs interval and
+**10 µs at 60%'s 64 µs interval**. So:
+
+* at 50% the margin is +1 µs and one run in ten dies on a `ci` excursion;
+* at 60% the margin is **−1 µs** and every acceptance is late.
+
+Every microsecond removed from `spent` is a microsecond of margin **at every
+rung**, and it changes no control law, no threshold, no advance schedule and no
+reference divergence. **Target: `spent ≤ 7 µs**, at which `wait_time(64,22) = 10
+> 7` gives +3 µs at 60% with the reference's advance of 22 intact, and
+`wait_time(40,22) = 7` closes the structural hole E210 found at the estimator's
+own floor.
+
+#### The constraint that rules out the obvious answer
+
+**Arming before the acceptance stores was tried in E142/E144 and rejected**, and
+the code says so at the site: *"it moved the reported response time from 11 µs
+to 10 and cost about 1% of rotor speed at 37.5%"*. There is a correctness reason
+underneath the speed number: COM reads `accept_avg`/`accept_blank` when it
+fires, and at the 50% rung the arm is loaded with `arr = 0` — the timer expires
+about 1 µs later, inside the remaining COMP tail. Arming before those stores
+would let a firing read values belonging to the *previous* acceptance. So the
+reordering that would trivially cut `spent` is unavailable, and I am not going
+to re-run a rejected experiment because it would make an arithmetic pass.
+
+#### What is actually in the 11 µs, to be measured before it is cut
+
+From the code, the entry-to-arm path is: the sector count, a `Seam` borrow of
+the estimator, `bounds()`, two atomic loads (`step`, `advance`), `blanking()`,
+**`depth` live comparator reads** (`depth = 4` at a 77 µs interval, via
+`FromMicros` doubling to 154 and `mapped_filter_level`), `blend_interval`,
+`clamp_interval`, `advance_of`, `wait_time`, then **six atomic stores**
+(`sector_start_raw`, `accept_raw`, `accept_wait`, `accept_avg`, `accept_blank`,
+`accept_seq`) and the clock read that forms `spent`.
+
+**Nothing is cut until the composition is measured**, and there are two
+measurements, in this order:
+
+1. **Static, free, no bench**: cycle-cost the straight-line path from
+   `comp_root`'s entry stamp to the `spent` read in the disassembly, with the
+   same M0+ cost model `isr_cycles.py` uses — now that it relaxes
+   topologically and can be trusted. This attributes the 11 µs to named
+   groups.
+2. **On the bench, at 25%**: `bin/chain-capture.rs` runs the **production**
+   `det_decide_plain` (`<NoLog, ChainRing>`) and stamps `spent_fine` *after*
+   the arm on TIM2's 15.6 ns clock — 64× the resolution of `spent_max_us`, and
+   it includes the timer writes that `spent` omits. This is the instrument E180
+   built and E185 parked, and E210 is right that it is the one for this job.
+   25% is a safe rung and the quantity is rung-independent in the parts being
+   cut.
+
+#### Candidate reductions, ranked by risk, none applied yet
+
+| # | change | risk | expected |
+|---|---|---|---|
+| 1 | **Pack `accept_wait` + `accept_blank` into one 32-bit word** (both are ≤16 bits) and likewise `sector_start_raw` + `accept_raw` (both are the same 16-bit stamp — `raw` is stored twice). Six stores become three. | low: no reordering, no semantic change; COM's readers unpack | −1…−2 µs |
+| 2 | **Hoist `step`/`advance` loads out of the accepted branch** — they are loaded before `offer` and used after, but the compiler may be reloading them across the closure. | low | −0…−0.5 µs |
+| 3 | **Cheapen the filter's live reads** — the reads themselves are the semantics and stay, but the loop's bookkeeping (a `u8` counter and a bounds-checked compare per iteration) need not be. | low: read count unchanged | −0.5…−1 µs |
+| 4 | **`blanking()` and `clamp_interval` arithmetic** — recomputed per acceptance from values that change only when the average changes. | medium: caching invites staleness, the E167 class | −0.5 µs |
+| 5 | Reduce the filter **depth** at high rungs | **rejected in advance**: that is a detection-behaviour change, exactly what "bounded improvements, not a presumed rewrite" excludes, and it would trade margin for false accepts | — |
+
+#### Predictions, falsifiable, before the build
+
+1. The static composition will show **the six atomic stores and the four
+   comparator reads together are more than half** of the entry-to-arm path. If
+   they are less than a third, my model of where the time goes is wrong and
+   items 1–3 cannot deliver, in which case I say so and stop rather than
+   shaving elsewhere for appearances.
+2. Items 1–3 together reach **`spent ≤ 9 µs`**, not yet the 7 µs target. I do
+   **not** predict 7 µs from this round; if the composition says 7 is
+   unreachable without a control change, that is the measured blocker and it
+   gets reported as one.
+3. `spent_max_us` **will** move this time — unlike E203's candidate, where it
+   was arithmetically invariant. It is the direct read-out of the quantity
+   being cut, and it is pinned at exactly 11 across 490 captures, so any
+   change at all is visible at 1 µs resolution.
+4. **`ci_min_us` and `thin_count` will be unchanged** by this work at a given
+   rung: the interval distribution is a property of the motor and the detector,
+   not of the arm cost. If they move, the change is perturbing the drive and
+   not merely the arm, which is the E210 observer-effect warning coming true.
+
+#### Cohort and stopping rule
+
+Host gates first, then **both reviews before anything is built** — this entry is
+the hypothesis, so the gate applies to it and not just to the result. Then the
+static composition. Then, if items 1–3 survive review: build, gate, and measure
+on the bench with **three chain-capture runs at 25% per side, alternated**, on
+`spent_fine` rather than `spent_max_us`.
+
+**Stopping rule:** if `spent_max_us` does not fall by at least 1 µs, the change
+is reverted, not iterated — the same rule that correctly killed E203. If
+`ci_min_us` or `thin_count` move at a fixed rung, the change is reverted as
+perturbing the drive. **No rung above 50% is attempted from this candidate**,
+and the blocking list for 60% (duty-clamp visibility, a current stop reachable
+below the 3 A CC knee, the >207 ms droop band, and the absence of any
+temperature measurement) remains ahead of any 60% run regardless of what
+`spent` does.
