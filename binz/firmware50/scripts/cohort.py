@@ -263,6 +263,15 @@ def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
     ref = ORACLE.get(r["duty"])
     if ref and abs(r["coast_ehz"] - ref[0]) * 100 > 5 * ref[0]:
         fails.append(f"coast {r['coast_ehz']} eHz outside 5% of {ref[0]}")
+    elif r["duty"] in SELF_REF_RUNGS:
+        # Above the oracle's last entry this check used to SILENTLY DISAPPEAR,
+        # so a 525 run was judged on strictly fewer gates than a 475 one (both
+        # E235 reviews, independently). The within-run identity replaces it.
+        fails += self_ref_fails(r)
+    elif not ref:
+        fails.append(f"duty {r['duty']} has neither an oracle figure nor a "
+                     "within-run reference: refusing to judge it on fewer "
+                     "gates than a lower rung")
     return fails
 
 
@@ -279,14 +288,54 @@ def rung_current_note(runs: list[dict]) -> str:
     return f"current (report-only): mean {ma:.0f} mA vs oracle {ref[1]} ({100 * (ma - ref[1]) / ref[1]:+.0f}%)"
 
 
+# Rungs above the historical oracle's last entry (500). The goal is explicit
+# that "historical oracle comparisons end at 50%; higher-rung references must be
+# independently established", so these are judged against the run's OWN rotor
+# instead of a table: the E143 rate identity, `rate_vs_coast_permille`, which is
+# the loop's switching rate as a per mille of 6x the time-anchored coast rate.
+#
+# Nothing about it is imported from a previous image or a previous campaign,
+# which is what makes it admissible here where an extrapolated oracle would not
+# be.
+SELF_REF_RUNGS = (525, 550, 575, 600)
+
+# The band is the qualified 500 cohort's own spread, not a choice: 27 healthy
+# runs give min 993, median 1001, max 1013. 980..1020 is generous against that,
+# and the first three 525 runs measured 1002 / 996 / 999 (E239).
+SELF_REF_LO = 980
+SELF_REF_HI = 1020
+
+
+def self_ref_fails(r: dict) -> list[str]:
+    """The within-run rate identity, for a rung with no historical reference."""
+    v = r.get("rate_vs_coast_permille")
+    if not v:
+        return [f"no within-run rate identity in {r['file']}: "
+                "the coast or the hold window is missing, so this rung has no "
+                "reference at all and cannot be judged"]
+    if not SELF_REF_LO <= v <= SELF_REF_HI:
+        return [f"rate/coast {v} per mille outside {SELF_REF_LO}..{SELF_REF_HI} "
+                "(the qualified 500 cohort's own band)"]
+    return []
+
+
 def rung_oracle(runs: list[dict]) -> list[str]:
     """Oracle comparison on the rung's means (speed); empty list = pass.
     The current comparison is report-only (`rung_current_note`, E124)."""
     if not runs:
         return ["no runs"]
-    ref = ORACLE.get(runs[0]["duty"])
+    duty = runs[0]["duty"]
+    if duty in SELF_REF_RUNGS:
+        # Judged on every run's own identity rather than a mean against a
+        # table: a mean would let one bad run hide behind two good ones, and
+        # there is no external figure to compare a mean against anyway.
+        fails = []
+        for r in runs:
+            fails += self_ref_fails(r)
+        return fails
+    ref = ORACLE.get(duty)
     if not ref:
-        return [f"no oracle figure at duty {runs[0]['duty']}"]
+        return [f"no oracle figure at duty {duty}"]
     ehz = sum(r["coast_ehz"] for r in runs) / len(runs)
     ma = sum(r["hold_ma"] for r in runs) / len(runs)
     fails = []

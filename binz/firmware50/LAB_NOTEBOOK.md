@@ -18426,3 +18426,79 @@ timing margin at 60% is +4 µs. **The third — the thin-margin rate — is the 
 that grew, and it is the only one that has never had a second data point.**
 That is what 550 needs to answer, and it is the next run rather than the next
 argument.
+
+### E240 — the fixture can now record and judge rungs above 500, without inventing an oracle
+
+Host-only. No firmware, no hardware. Both E235 reviews found the same
+three-place block, two of them silent, and E234 promised this work and did not
+do it. Done now.
+
+#### What was blocked
+
+* `ladder_admit` refused any `--rung-duty` not in `ORACLE`, which ends at 500.
+* `rung_oracle` returned "no oracle figure at duty N", so a rung above 500 could
+  never produce a passing report — and therefore the rung above *it* could never
+  be admitted. The ladder was **structurally closed** at 500.
+* `run_gates`' coast check and `reference_line` both keyed on `ORACLE` and
+  **silently vanished** above 500. So a 525 run was judged on strictly fewer
+  gates than a 475 one and emitted no reference line at all — observed in E239,
+  predicted by both reviews.
+
+#### What replaces the oracle, and why it is admissible
+
+The goal is explicit: *"Historical oracle comparisons end at 50%; higher-rung
+references must be independently established."* **No `ORACLE` entry was added.**
+Above 500 the reference is the run's **own rotor** — the E143 rate identity,
+`rate_vs_coast_permille`: the accepted-crossing rate as a per mille of six times
+the *time-anchored* coast rate. It is within-run, imports nothing from a
+previous image or campaign, and is already computed by `cohort.parse`.
+
+**The band is the qualified 500 cohort's own spread, not a choice:** 27 healthy
+runs give min **993**, median **1001**, max **1013**. The band is **980–1020**,
+generous against that, and the three measured 525 runs read **1002 / 996 / 999**.
+
+#### The changes
+
+* `cohort.SELF_REF_RUNGS = (525, 550, 575, 600)` and `self_ref_fails()`.
+* `rung_oracle` judges a self-ref rung on **every run's** identity rather than a
+  mean — a mean would let one bad run hide behind two good ones, and there is no
+  external figure to compare a mean against anyway.
+* `run_gates` applies the identity where the oracle check used to disappear, and
+  now **fails loudly** for any duty with neither an oracle figure nor a
+  within-run reference: "refusing to judge it on fewer gates than a lower rung".
+* `reference_line` emits **`BEMFSELFREF`** above 500, with
+  `reference=within-run-coast` and **no `oracle_ehz` field at all** — deliberately
+  absent rather than filled with an extrapolation, so nothing downstream can
+  mistake it for a historical comparison.
+* `ladder_record`'s duty whitelist extended to 525/550/575/600; `ladder_admit`'s
+  chain continues 500 → 525 → 550 → 575 → 600.
+
+#### Verified against captures already on disk
+
+| check | result |
+|---|---|
+| `run_gates` on the three 525 runs | **clean** — where the coast check previously vanished |
+| `rung_oracle` on them as a cohort | **PASS**, all three inside the within-run band |
+| `BEMFSELFREF` for `e239-x525_01` | `loop_per_coast=1011 zc_permille_of_6x_coast=1001 band=980..1020 reference=within-run-coast verdict=ok` |
+| admission at 525 / 550 / 575 / 600 | **refused**, each naming the rung below: "only 0 run(s) on this ELF at 50/52/55/58%" |
+
+That last row is the point: the ladder is now **open in principle and still shut
+in fact**. Qualifying 525 requires 500 at 3/3 on this ELF, which requires 475,
+and so on down — the full re-earn both reviews costed at ~45 runs.
+
+#### What this means for the remaining work, stated plainly
+
+The goal's success criteria now have no *structural* blocker: rungs above 500
+can be driven, recorded, admitted and judged, against a reference the goal's own
+wording permits. What remains is **run time and one open question**:
+
+* **Open:** the thin-margin rate grew 7.8× from 500 to 525 (E239) and has two
+  points. 550 and 575 determine its shape, and they need the cap raised again.
+* **Sequencing:** exploring 550/575/600 with `--no-ladder` is cheap (three runs
+  a rung) and settles the shape; spending ~45 runs on a 15-rung re-earn is only
+  worth doing **once**, on the image that has everything settled. Burning it on
+  an image that may still need a control change is the waste both reviews
+  warned about.
+* **Still owed before any qualification claim at 60%:** the inverted sag
+  provocation above the cap, the droop instrument's fractions (975–995, since
+  the current bins are vacuous), and the `envelope_max=300` banner.

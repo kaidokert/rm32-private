@@ -113,6 +113,38 @@ def _fields(line: str) -> dict[str, str]:
     return out
 
 
+def _self_ref_line(duty, rate, cur, coast, run):
+    """The reference line for a rung above the historical oracle's last entry.
+
+    There is no external figure by design (the goal: "historical oracle
+    comparisons end at 50%; higher-rung references must be independently
+    established"), so the reference is the run's own rotor -- the E143 rate
+    identity, the accepted-crossing rate as a per mille of six times the
+    time-anchored coast rate. `oracle_ehz` is deliberately absent rather than
+    filled with an extrapolation, so nothing downstream can mistake this for a
+    historical comparison.
+    """
+    import cohort  # noqa: PLC0415 - one coast estimator for every judgement
+
+    iv = [int(x) for x in coast.get("iv_us", "").split(",") if x]
+    coast_ehz = cohort.coast_ehz(iv)
+    loop_ehz = int(rate.get("ehz_from_sector", 0))
+    zc = int(rate.get("zc_per_s", 0))
+    zc_rotor = (1000 * zc // (6 * coast_ehz)) if coast_ehz else 0
+    ident = 1000 * loop_ehz // coast_ehz if coast_ehz else 0
+    ok = cohort.SELF_REF_LO <= zc_rotor <= cohort.SELF_REF_HI
+    return (
+        f"BEMFSELFREF duty_tenths={duty} coast_ehz={coast_ehz} "
+        f"loop_ehz={loop_ehz} loop_per_coast={ident} "
+        f"zc_permille_of_6x_coast={zc_rotor} "
+        f"band={cohort.SELF_REF_LO}..{cohort.SELF_REF_HI} "
+        f"hold_ma={cur.get('hold_ma', '?')} worst_ma={cur.get('worst_ma', '?')} "
+        f"mean_ci_us={rate.get('mean_ci_us', '?')} "
+        f"hold_ms={rate.get('hold_ms', '?')} "
+        f"reference=within-run-coast verdict={'ok' if ok else 'STOP'}"
+    )
+
+
 def reference_line(capture: pathlib.Path) -> str | None:
     """Put the run's speed and current beside the oracle's at the same duty.
 
@@ -133,6 +165,13 @@ def reference_line(capture: pathlib.Path) -> str | None:
         return None
     duty = int(run.get("target_duty_tenths", 0))
     if duty not in ORACLE:
+        # Above 500 there is no historical figure by design, and returning
+        # None here meant the whole BEMFREF line vanished -- no speed
+        # comparison, no current comparison, no rate identity, no message
+        # (E239: observed at 525). The self-referenced line is emitted instead.
+        import cohort  # noqa: PLC0415
+        if duty in cohort.SELF_REF_RUNGS:
+            return _self_ref_line(duty, rate, cur, coast, run)
         return None
     ref_ehz, ref_ma = ORACLE[duty]
     iv = [int(x) for x in coast.get("iv_us", "").split(",") if x]
@@ -198,10 +237,14 @@ def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
 
 
 def ladder_admit(command: str, sha: str, rung_duty: int = 0) -> tuple[bool, str]:
+    import cohort  # noqa: PLC0415
+
     if command in ("l", "L"):
-        if rung_duty not in ORACLE:
+        if rung_duty not in ORACLE and rung_duty not in cohort.SELF_REF_RUNGS:
             return False, f"--rung-duty {rung_duty} is not a known rung"
-        # 40% follows 37.5%, then every 2.5% step follows the one below it.
+        # 40% follows 37.5%, then every 2.5% step follows the one below it --
+        # including above 500, where the chain is 500 -> 525 -> 550 -> 575 ->
+        # 600 and each rung is judged on its own rotor (cohort.SELF_REF_RUNGS).
         need = 375 if rung_duty == 400 else rung_duty - 25
     else:
         need = LADDER_PREREQ.get(command)
@@ -217,7 +260,10 @@ def ladder_record(capture: pathlib.Path, sha: str, explore: bool = False, expect
     import cohort  # noqa: PLC0415
 
     r = cohort.parse(capture)
-    if r is None or r["duty"] not in (150, 200, 250, 275, 288, 300, 325, 338, 350, 375, 400, 425, 450, 475, 500):
+    if r is None or r["duty"] not in (
+        150, 200, 250, 275, 288, 300, 325, 338, 350, 375, 400, 425, 450, 475,
+        500, 525, 550, 575, 600,
+    ):
         return None
     # `l`/`L` take their duty from shell state, so the caller says which rung
     # it believes it is running and the capture has to agree. Without this the
