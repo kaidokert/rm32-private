@@ -19458,3 +19458,155 @@ therefore built on the same contaminated quantity — the review recomputes it a
 −4.081, swinging to −2.565 without the single tripped point. It is withdrawn
 pending the adversarial review's own recomputation, and it should never have
 been quoted against a **hardcoded** comparator from E243 rather than a fresh fit.
+
+### E257 — disposition of both E255 reviews: the loop ran ahead of the rotor, and the arithmetic forces a current transient
+
+E256 already corrected three findings. Both reviews converge on the rest, and
+they invert E255's mechanism entirely. **E255's refusals were right; its reasons
+were wrong; and the load-bearing claim is contradicted by its own capture.**
+
+#### The four findings that decide it, all verified here
+
+**1. The failing run has four recorded failures and I reported one.** The state's
+own `fails` list for `e253-550_03`:
+
+> `reason 26 != 2`; `hold 15008 ms < 30000`; **`rate vs coast 1028 permille
+> outside 1%`**; **`rate/coast 1028 per mille outside 980..1020`**
+
+Two of the four are the loop-versus-rotor ratio — *the one quantity in the whole
+instrument set that speaks to slip* — and E255's prose said the opposite of its
+own fixture's verdict. In-firmware, recomputed:
+
+| | 525 ×3 | 550_01 | 550_02 | **550_03** |
+|---|---|---|---|---|
+| `zc_permille_of_6x_coast` | 1001 / 1000 / 999 | 1001 | 1000 | **1020** |
+| `loop_per_coast` | 1008 ×3 | 1013 | 1010 | **1030** |
+| `coast_ehz` | 2232–2234 | 2315 | 2322 | **2278** |
+
+Five healthy long-hold runs sit at 999–1001, sd ≈ 0.8 per mille. **1020 is a
+~24σ outlier**, and the rotor coasted *slower* while the loop reported the same
+`loop_ehz`. That is the slip signature.
+
+**2. "No current excursion" was structurally impossible evidence.** Verified in
+source: the sag verdict `return Err(r)` sits **before**
+`self.current.accumulate(...)`. So on the trip scan the current is never
+accumulated and the 0–99 scans of the block containing the event are discarded.
+`worst_hold_ma` **provably cannot** contain a surge co-located with the trip —
+and even a completed 10.1 ms block hides ≤2.0 A at 0.3 ms width. I used the
+absence of a number the architecture cannot produce as evidence against the
+mechanism.
+
+**3. I cited the one duration-biased field that favoured my conclusion and
+omitted five that contradict it.** `com_late_max_us` is a whole-run *maximum*
+and the failing run has 53% of the exposure, so a smaller maximum is the null
+expectation. Duration-robust or normalised:
+
+| | 550_01 | 550_02 | **550_03** |
+|---|---|---|---|
+| `thin_count` per ms of hold | 0.035 | 0.039 | **0.049** |
+| `too_early` per accepted ZC | 4.2e-5 | 6.2e-5 | **8.5e-5** |
+| `ci_min_us` (a **min**) | 51 | 50 | **42** |
+| `fast_min_us` (a **min**) | 38 | 38 | **34** |
+
+Both minima went the wrong way **despite half the exposure**, which makes them
+far stronger evidence than the maximum I chose.
+
+**4. The arithmetic refutes the power-path reading and forces a current
+transient.** Calibrated at 9.73 mV/code: the dip is 119 codes = **1.158 V**.
+Measured source resistance from the sustained droop is **0.106–0.130 Ω**. A
+static resistance explaining that dip at the 2.3 A hold alone needs **0.503 Ω**
+— five times measured, and it would have depressed the whole run, which
+`filt_bus` unchanged rules out. At the measured resistance the dip requires
+**ΔI ≈ 8.9 A**. So a current transient is *required*, and it is exactly the
+loop-side hypothesis E255 declined. My −5.32 per mille/amp "slope" is a
+between-run regression with **R² = 0.082** — it explains 8% of the variance, the
+scatter is the entire signal, and I presented it as a mechanism.
+
+#### The reframing I accept, and it changes the next step
+
+**The event is wide, not deep.** `RailMean` is a *sliding* mean re-judged every
+scan, so three consecutive low means need the low samples to persist across a
+10-scan span — at the observed depth, **≥5 consecutive scans ≈ ≥505 µs**. My
+"three consecutive scans" wording reads as 303 µs and the true floor is 505.
+
+And depth is uninformative: healthy non-tripping runs exist at transient
+residuals of **−42 and −48**, twice as deep as 550_03's −21, and on the only
+*distributional* bus instrument the firmware has, **550_03 has the lowest
+`dep3_n` of the three 550 runs** — the healthiest of them. So E255's "depth is
+not the trigger" section proves the right thing and draws the wrong inference:
+
+> **Duration is the discriminating variable, and it is measured nowhere.**
+
+That reframes the refusal to re-run from a rule into a reason: **another roll of
+the dice cannot produce information about a variable no instrument records.**
+Which is the justification E255 should have given.
+
+#### The 400 precedent, corrected again and worse than E256 said
+
+E256 established 400 took six runs. The reviews add the part that matters:
+`rung_report` takes `state[sha][duty][-3:]`, so **the sliding window excludes
+400's failure entirely.** Two consequences:
+
+* A single fourth run at 550 could not have granted the rung anyway — the window
+  would still contain `550_03`. It would have taken **three**, exactly as at 400.
+* **"Retain every failure" is enforced in the file but not in the verdict.** A
+  retained record that the verdict structurally steps over is bookkeeping, not a
+  gate. The campaign is currently running two different rung definitions —
+  "last three clean" and "no failure on this ELF" — and they disagree about
+  whether 400 is qualified. That is a desk question and it is now owed.
+
+#### Withdrawn
+
+* "The evidence leans away from a loop-side desync" — **contradicted** (§1–3).
+* "Marginal, stochastic event whose rate rises with duty" — unmeasured; one trip
+  in twelve runs at ≥500 is p = 0.25 (already withdrawn in E256).
+* The transient slope and every residual derived from it (§4).
+* "8-scan block mean" — it is sliding, and the word was corrected out of that
+  module once already as wrong by 23×.
+
+#### Tested and rejected, worth keeping
+
+The reviewer checked the aliasing hypothesis quantitatively rather than
+hand-waving it: at the **48 kHz** running carrier the 8-scan sliding mean
+attenuates the fundamental by |D| = 0.165, so a 5% depression of the mean would
+need ~30% fundamental ripple — implausible. **Rejected.** But it surfaced
+something real: `adc_hz`'s de-cohering constant was chosen against the *startup*
+10 kHz carrier and **never re-derived for the 48 kHz running carrier**. Noted,
+not acted on.
+
+#### Protection coverage — the finding I have to accept against my own framing
+
+**A guard with an unknown, non-zero false-positive rate is not demonstrated
+coverage; it is an untuned threshold that happens to sit inside the operating
+envelope.** E255 reported "a protection doing its job"; the reviews are right
+that "one protection is now inside the noise" is the same observation read
+honestly, and they are opposite findings.
+
+Also accepted: there is **no thermal stop and no peak-current stop faster than
+10.1 ms**, so continuing toward 60% without either is the real exposure — and
+*adding* instrumentation there weakens nothing the goal protects. And
+`BEMFSECTOR`'s per-sector counters are `u16` and **saturated in 550_03**, so
+"was the event sector-localised?" is unrecoverable from any existing capture.
+
+#### What happens next, cheapest-first, as both reviews rank it
+
+1. **The duration-matched control, now.** One 550 run aborted at ~42 s — 53% of
+   the campaign, matching `550_03`'s 418 008 drive scans and 37 508 ms closed.
+   It calibrates *every* duration-biased field **and**
+   `zc_permille_of_6x_coast` at the failing run's exposure. **If a clean 15 s
+   hold also reads ~1020, finding 1 collapses and the loop hypothesis weakens
+   sharply; if it reads ~1000, the run slipped.** Nothing else in the list has
+   that discriminating power per second of bench time, and it costs a third of a
+   run.
+2. **`sag-capture` at 550** — the validated instrument that rings the guard's own
+   inputs and freezes on the trip, which has **never been run above 500**. Its
+   dump separates a real bus notch from a VDDA event, a DMA artefact, a periodic
+   beat, and a chronically-marginal streak. Its stated limitation: `since_zc_us`
+   is aliased at 101 µs against a ~71 µs sector, so it cannot answer
+   phase-locking and will not be asked to.
+3. Re-measure the harness sag-versus-current slope at the desk before any further
+   high-duty run, because §4's arithmetic says a static-R explanation would need
+   0.5 Ω — a fault worth finding at the bench rather than at 60%.
+
+**No further rung attempt until the event is instrumented.** That is the
+principled form of E255's refusal, and it is the reviews' wording, not mine.
