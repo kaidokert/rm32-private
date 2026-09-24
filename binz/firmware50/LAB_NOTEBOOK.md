@@ -16975,3 +16975,51 @@ The four predictions that need the bench (`drive_scans/closed_ms` not being
 9.901/ms; `dep970_n` non-zero at 50% and zero at 25%; `dep900_run` zero at
 every rung 15–50%; the foreground cost invisible in `loop_iters_closed`) stand
 as written in E224 and are judged after the reviews, not before.
+
+### E226 — correction to E225: the image identity is `57E8FDE9`, not `906960FC`
+
+Caught by running the campaign's own reproducibility check rather than assuming
+it: **the committed source does not rebuild `906960FC`.** It builds
+**`57E8FDE9`**.
+
+#### What happened
+
+I built, archived `906960FC`, then committed — and the pre-commit hook's
+`cargo fmt` reformatted the sources *after* the build. The crate carries
+debuginfo in release (`optimized + debuginfo`), so moving a line moves the line
+table and the ELF's CRC with it.
+
+#### What did not change
+
+The **loadable bytes are byte-identical**: 41 444 bytes, crc32 `15B2969E` for
+both, via `objcopy -O binary`. So this is a labelling defect, not a code
+difference — the image that would have been flashed is the same image. Every
+other figure in E225 stands unchanged, and I re-ran the one most likely to
+shift: `ADC_COMP` is still **931 cycles**, against the baseline's 953.
+
+#### Why it still had to be fixed rather than noted
+
+The fixture records the **ELF** CRC in every capture header (`# elf_crc32`),
+not the loadable-byte CRC. Had I flashed `906960FC` and run the ladder, every
+capture would have carried a hash that the committed tree cannot reproduce —
+which is precisely the E164 defect, where a bisect mislabelled its own captures
+by recording a default build path instead of the archived image it actually ran.
+An ELF that no run used and that committed source does not rebuild is a trap
+with no upside, so:
+
+* `captures/elf/57E8FDE9.e225-report.elf` is the archived candidate, and
+  `cargo build --release` reproduces it from `c5aa6ef`.
+* `captures/elf/906960FC.e224-report.elf` is **deleted**. No run used it, and
+  keeping a stale-labelled twin of the same loadable image invites flashing the
+  wrong one.
+* E225's header and gate table should be read with `57E8FDE9` substituted
+  throughout. The notebook is append-only, so this entry is the correction.
+
+#### The general lesson, which is a process one
+
+**Build, then commit, then re-verify the hash — in that order — because the
+hook edits the source between the build and the commit.** On this crate
+`cargo fmt` runs on the whole tree at every commit, so any archived ELF hash
+taken before a commit is provisional. The check that catches it costs one
+rebuild and a CRC compare, and it is now the last thing I do before recording an
+image identity rather than the first.
