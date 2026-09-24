@@ -13554,3 +13554,59 @@ measurement, the chain instrument's cross-ring pairing, and the NTC read.
 `captures/elf/14CE44E7.e187.elf` → the image every one of the 45 ladder runs
 was flashed from and whose sha keys `captures/ladder_state.json` → the fifteen
 rungs, each 3/3, that make the 50% qualification.
+
+### E198 — the qualified image breaches a structure limit, and the gate's exit code hid it
+
+**Correction to E196.** I reported the structure-limits gate as passing for the
+qualified image. It did not. `captures/gates/e187-gates.txt:120-121`, archived
+before the climb and committed, says:
+
+```
+functions_over_100_lines=1 (goal 0)
+    103  mod.rs:report (line 205)
+```
+
+`src/run/mod.rs::report` is **103 lines against a limit of 100**, and it went
+over when E187 added the three report fields the campaign then relied on —
+`ceiling_tenths`, `worst_residual`, `worst_ma`. The number was printed, it was
+committed, and I read the section's `rc=0` instead of its output.
+
+**Why `rc=0`: `structure_report.py` only returned the RAM ceiling's verdict.**
+Every other limit — function length, bin size, `unsafe` count, `static mut`,
+register writes outside `hw/` — was printed and then discarded. A gate whose
+exit code ignores its own findings is not a gate, and this one had been that
+way since the limits were added. It now fails on any breach:
+
+```
+functions_over_100_lines=1 (goal 0)
+STRUCTURE LIMITS BREACHED: 1 function(s) over 100 lines
+rc=1
+```
+
+**What this does and does not mean for the qualification.** The breach is a
+reviewability limit this project set for itself, not a protection, an ISR
+property or a measurement: `report` runs in the foreground after `safe_off`,
+the four ISR roots are instruction-identical to the previous image, and the
+four-root arithmetic audit, the cycle bounds, the RAM headroom, the tests and
+clippy all pass on the qualified image. So **the 50% qualification stands on
+its runs** — fifteen rungs, 45 recorded runs, 3/3 each — **and it stands with a
+named structure-limit breach in the image it was earned on.** Both of those
+sentences go in the record together; E196's claim that the structure limits
+passed is withdrawn.
+
+**Not fixed in this image, on purpose.** Splitting `report` changes the ELF, and
+E197 has just restored the freeze that makes the committed source rebuild
+`14CE44E7` byte-identically. Editing firmware again to tidy a 3-line overshoot
+would break that for the second time today, and the ladder is keyed on the ELF.
+It joins the next image's list, which now reads: the advance clamp at the top
+rung (the ≥3 µs arm margin, E195/E196), splitting `report` to ≤100 lines,
+`det.rate`'s reset inside the guarded section (E197), a `CurrentMark`-windowed
+`worst_ma`, the `CompStorm` post-arm peak, the sag recorder's ISR-latency
+measurement, the chain instrument's cross-ring pairing, and the NTC read.
+
+**And the lesson is the gate's, not the function's.** This is the third time
+this campaign that a *number was present and a verdict was wrong*: the rate
+metric that measured its own rounding (E174), `--no-ladder` recording while its
+banner said it did not (E193), and now a limit printed beside an exit code that
+ignored it. Each was found by reading the artefact rather than the summary, and
+each is now enforced by code rather than by attention.

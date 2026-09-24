@@ -99,7 +99,27 @@ def main() -> int:
     print(f"functions_over_100_lines={len(longs)} (goal 0)")
     for name, line, length in sorted(longs, key=lambda t: -t[2]):
         print(f"  {length:5d}  {name} (line {line})")
+    # **Every limit gates, not just the RAM ceiling.** Until E198 this returned
+    # only `bss_ceiling()`'s verdict, so a violated structure limit printed its
+    # number, exited 0, and was reported as a pass -- which is how a 103-line
+    # function reached a qualified image and an archived gate file with nobody
+    # noticing (the number was in `captures/gates/e187-gates.txt:120` all
+    # along). A gate whose exit code ignores its own findings is not a gate.
+    breaches = []
+    if len(longs):
+        breaches.append(f"{len(longs)} function(s) over 100 lines")
+    if len(code_lines(bin_text)) >= 1500:
+        breaches.append("bin over 1500 lines")
+    if unsafe_bin > 10:
+        breaches.append(f"{unsafe_bin} unsafe in bin")
+    if bits_bin or bits_src:
+        breaches.append("register writes outside hw/")
+    if sm_bin or sm_src:
+        breaches.append("static mut")
     rc = bss_ceiling()
+    if breaches:
+        print("STRUCTURE LIMITS BREACHED: " + "; ".join(breaches))
+        rc = 1
     return rc
 
 
