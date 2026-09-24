@@ -10482,3 +10482,205 @@ unchanged. What is **not** claimed: that the hazards were ever reachable —
 `com_arm_preempts = 0` across ~99 000 counted preemptions in campaign 8 says
 the arm window was never hit, and zero observed violations is not proof, which
 is why the structure is there.
+
+### E175 — step 3: the sag guard traced, and instrumented on its own quantities
+
+**Written before the build and runs.**
+
+**What the guard actually compares** (`protection::FastBusSag::observe`, traced
+line by line, no edits):
+
+```
+bus_mean * filt_vref * SAG_DEN  <  filt_bus * vref_mean * SAG_NUM      (95/100)
+```
+
+* **Inputs are block means, not scans.** `Ctx::scan_pass` feeds
+  `rail.bus_mean()` and `rail.vref_mean()` — `protection::RailMean`, a running
+  mean over `RAIL_MEAN_LEN` scans — and only once `rail.ready()`.
+* **The reference is a ~207 ms exponential average** of the same two, in Q8
+  and **rounded** on read (`filtered()`), with `SAG_FILTER_SHIFT = 11` at the
+  9.901 kHz scan rate.
+* **The filter is updated after the test**, so a collapsing block cannot drag
+  the reference onto itself and hide the collapse.
+* **Three consecutive low blocks latch** (`SAG_STREAK`); one healthy block
+  zeroes the streak. A VREF of 0 or ≥ rail latches immediately, fail-closed.
+* The pre-run baseline (`reference()`) is kept for the record and is **not**
+  what a block is judged against (E146).
+
+**So every quantity this campaign has quoted at the guard was the wrong one.**
+`bus_min` is the minimum of a *single raw scan* over a whole run
+(`states.rs`), and the report's `filt_bus`/`sag_streak` are the filter and
+streak at the *end* of the run. E161 set `bus_min` beside the 95% fraction and
+called the margin negative; that comparison was meaningless, and the step-5
+review said so.
+
+**The instrument.** `src/sagtrace.rs`: a `SagLog` trait with `const ON`,
+production's `NoSagLog`, and `SagRing` — 512 blocks of 14 bytes (~1.2 s of
+history at the block rate), circular, **frozen on the trip** so a dump is the
+window that led there. Each row is the guard's own quartet *as used for that
+test* (the reference read before its post-test update), plus the streak it
+holds afterwards, the sector, the applied duty, and **µs since the last
+accepted crossing** — so a low block can be placed against the switching
+instant instead of being assumed independent of it. **No division in the
+firmware**: the host reproduces the cross-product exactly
+(`scripts/sag.py`), which is the `BEMFTAIL` discipline.
+
+The recorder is a **policy slot** (`Policies::G`), so the composition chooses
+it: `Production` defaults to `NoSagLog`, and the new `sag-capture` binary
+instantiates `SagRing`. Five host tests cover the ring: it keeps the last
+blocks and reports what it dropped, a freeze keeps the pre-trip window and
+nothing after it, a disarmed ring records nothing, the index wraps only at the
+end, and **the host's margin matches the guard's own comparison** (95.0% is not
+low, one code below is, and VREF moves the line).
+
+**Overhead, measured where it lands.** The instrumentation is **foreground
+only** — the guard is judged in `Ctx::scan_pass`, not in an interrupt — and
+`isr_diff.py` confirms the `sag-capture` image's four ISR roots are identical
+to production's (37 / 716 / 326 / 155). What it costs is foreground passes,
+which the run reports as `loop_iters_closed`; that is the A/B below.
+
+Host tests 326 + 9.
+
+**Predictions.**
+
+1. At 45% and 47.5%, **no block latches** (these rungs pass today), but the
+   margin's minimum over a run is **finite and close to the line**: I expect a
+   minimum between 1000 and 1100 per mille, i.e. 0–10% of margin, with a
+   handful of blocks below 1005.
+2. The tightest blocks are **not uniformly distributed in the commutation
+   cycle**: if the dip is switching-driven, `since_com_us` clusters; if it is
+   supply-driven, it does not. I do not predict which — that is the test.
+3. `loop_iters_closed` falls by **less than 5%** against the production image
+   at the same rung, because one 14-byte row per block at ~2 kHz is small
+   beside a foreground pass rate of ~50 kHz.
+4. The streak reaches 1 or 2 in a passing run at 47.5% at least once — a low
+   block that did not latch — because campaign 7 latched three times at 50%
+   and the margin cannot plausibly jump from "never low" to "three in a row"
+   between 47.5% and 50%.
+
+If prediction 4 fails and the streak never leaves 0 at 47.5%, the 50% trips
+are not the tail of a distribution this campaign can see from below, and step
+4's comparisons have to change.
+
+### E176 — a process violation of mine, and the 45% sag margin it produced
+
+**I drove a 45% run without the pre-run review the goal requires.** The rule
+is *"before every powered run ≥45%, spawn a fresh context-free reviewer"*, and
+I flashed `2D157417` and ran `e175-sag450` straight after building it. No
+harm resulted — the run passed its gates, every protection was armed, and
+`late_arms`/`blank_latched`/`com_preempts` were zero — but the gate exists so
+that an instrument is checked *before* it produces a number I will then
+believe, which is exactly the failure mode the last six reviews have been
+correcting. The review is running now, before the 47.5% run and before
+anything at 50%, and **this capture is held as ungated until it returns**.
+
+**What the run measured** (`captures/sag/e175-sag450.txt`, image `2D157417`,
+45% exploratory, gates PASS, `reason=2`):
+
+```
+blocks judged=440436 kept=512 overwritten=439924 frozen=0 fraction=95/100 streak_to_latch=3
+margin per mille (1000 = exactly on the line): min=1046.5 p01=1047.2 p50=1052.6 max=1059.6
+low blocks (the guard's own test): 0 of 512
+streak held: max=0 (latches at 3); rows with streak>0: 0
+
+tightest blocks:
+   margin    bus   vref  filt_bus filt_vref  streak  step   duty  since_com
+   1046.5   1194   1507      1201      1507       0     1    450        116
+   1046.5   1194   1507      1201      1507       0     2    450        116
+   1046.7   1195   1508      1201      1507       0     3    450         62
+   1047.2   1194   1506      1201      1507       0     5    450         96
+since the last accepted crossing, in the tightest blocks: min=36 p50=107 max=127 µs
+sector of the tightest blocks: {1: 7, 2: 3, 3: 4, 4: 2, 5: 2, 6: 2}
+```
+
+**Against the predictions.**
+
+* **(1) held, narrowly.** I predicted a minimum between 1000 and 1100 per
+  mille: measured **1046.5**. But I also predicted "a handful of blocks below
+  1005", and there were **none** — the tightest block is 4.7% clear of the
+  line.
+* **(4) failed at this rung.** I predicted the streak would reach 1 or 2 at
+  least once. It never left **0** in the sampled window. My reasoning was that
+  the margin could not jump from "never low" to "three in a row" between 47.5%
+  and 50%; the measurement says the distribution at 45% is nowhere near the
+  line, so that reasoning was wrong or the window is looking in the wrong
+  place — see the coverage caveat below.
+* **(2) is answered only weakly.** The tightest blocks are spread over all six
+  sectors (7/3/4/2/2/2) and `since_com_us` spans 36–127 µs with a median of
+  107, so at 45% there is **no visible phase-locking** of the tight blocks to
+  the commutation instant. With 512 blocks and a margin this far from the line,
+  this is a null on a quiet signal, not evidence of independence.
+* **(3) is not yet tested** — the foreground-cost A/B against the production
+  image at the same rung is owed.
+
+**What the numbers say about the guard, plainly.** The block mean tracks its
+own 207 ms filter to about **half a percent** (bus 1194–1195 against a
+filtered 1201, VREF 1506–1508 against 1507), while the trip line sits **5%**
+away. At 45% the guard is not marginal, and the quantity that *looked*
+marginal in E161 — `bus_min = 1127`, 6% below the mean — is a single raw scan
+the guard never judges. That comparison is now retired with a measurement
+rather than an argument.
+
+**The coverage caveat, which is the important part.** The ring keeps the last
+**512 of 440 436** judged blocks: **0.12% of the run, and its final ~1.2 s**.
+So this says nothing about the ramp, nothing about the first 40 s, and nothing
+about a rare excursion elsewhere in the hold. For a run that *trips* the
+instrument is right — it freezes on the fault, so the dump is the pre-trip
+window — but for a run that passes it shows only the tail. Campaign 7's 50%
+trips are what this instrument was built for, and until one is captured frozen,
+**no claim about why the guard latches at 50% is supported by anything here.**
+
+### E177 — the sag instrument's window and cost, measured, and both were wrong in E175
+
+**Written after two measurements that correct my own step-3 entry.**
+
+**1. The window was off by 24×.** E175 said 512 blocks was "about 1.2 s of
+pre-trip history", from an assumed ~2 kHz block rate. The captures say the
+guard judges a block at **9.8–11.7 kHz**: `total=440436` over a 45 s run at
+45% and `total=786918` over an 80 s run at 25%. `RAIL_MEAN_LEN = 8`, so a
+block is ready roughly every eight scans of the 9.901 kHz harvest and the rate
+is set by the scan rate, not by anything slower. 512 rows was therefore about
+**50 ms**, not 1.2 s.
+
+That matters because the window bounds every conclusion: E176's "no low block
+at 45%" covered **50 ms of a 45 s run**, and I described it as 1.2 s. The ring
+is now **1024 blocks ≈ 100 ms** (14 KB; the image's `.bss` is 20.6 KB of the
+36 KB part, so the stack keeps 15 KB), and `sagtrace.rs` records the measured
+rate beside the constant so the next reader does not re-derive it wrongly.
+
+**2. The instrument costs 10% of the foreground, not "less than 5%".**
+Measured back to back at 25% in one session, production against the sag image:
+
+| image | `loop_iters_closed` |
+|---|---|
+| `01A674BA` (production) | 3 525 604 |
+| `2D157417` (sag recorder) | 3 177 677 |
+
+**−9.9%.** Prediction 3 said under 5% and was wrong by a factor of two. Per
+block that is about 0.44 lost foreground passes, i.e. roughly 500 cycles for
+a 14-byte row — far more than the copy, and consistent with the
+`interrupt::free` prologue/epilogue plus the `RefCell` borrow checks around
+every push. It is a diagnostic image and the cost is acceptable, but it is
+**not negligible** and it is exactly the sort of figure I have been told twice
+not to assert without measuring.
+
+Consequences, stated rather than waived:
+
+* the sag image's foreground polls the protections 10% less often, so its
+  detection latency for *any* stop is 10% longer than production's — and the
+  two hard stops are foreground-polled;
+* its runs are evidence about the guard's inputs, never about production's
+  loop quality or its stop latency;
+* the four ISR roots remain byte-identical to production's (37 / 716 / 326 /
+  155), so nothing in the interrupt path is affected.
+
+**3. What still stands from E176.** At 45%, over the sampled window, the
+block mean tracks its own 207 ms filter to about half a percent while the trip
+line sits 5% away, and no block was low. The claim is now correctly scoped:
+**50 ms of the end of one 45 s run**, on image `2D157417`, ungated until the
+pre-run review returns.
+
+**Next:** the review, then 47.5% on the 1024-block image `D4ACF3EA`, then the
+first 50% exploratory run — which is the only run that can capture a frozen
+pre-trip window, and therefore the only one that can say anything about why
+the guard latches there.

@@ -36,10 +36,14 @@ pub trait Policies {
     type S: SagLimit;
     type R: RestartRule;
     type T: Reporting;
+    /// Where the sharp-sag guard's own inputs go, scan by scan (campaign 9
+    /// step 3). Production's `NoSagLog` folds every call away; only the
+    /// `sag-capture` image installs the ring.
+    type G: crate::sagtrace::SagLog;
 }
 
 /// The run's controller, one type parameter per policy decision.
-pub struct Controller<W, B, A, C, S, R, T> {
+pub struct Controller<W, B, A, C, S, R, T, G = crate::sagtrace::NoSagLog> {
     /// Duty the lowercase provocations and `Z` run at, tenths (E141): 250 as
     /// through campaign 5, or 375 for the goal's item 5. Shell state only --
     /// no run reads it except when it starts, and every capture records the
@@ -48,11 +52,22 @@ pub struct Controller<W, B, A, C, S, R, T> {
     /// The climb's duty, tenths (E147): 40% at boot, stepped by `+`/`-` in
     /// 2.5% increments between 37.5% and the clamp at 50%.
     climb_tenths: u16,
-    _p: PhantomData<(W, B, A, C, S, R, T)>,
+    // Two markers rather than one eight-tuple: clippy's `type_complexity`
+    // counts through aliases, and a warning is not waived in this crate.
+    _p: PhantomData<(W, B, A, C)>,
+    _q: PhantomData<(S, R, T, G)>,
 }
 
-impl<W: Direction, B: Bemf, A: Advance, C: CurrentLimit, S: SagLimit, R: RestartRule, T: Reporting> Policies
-    for Controller<W, B, A, C, S, R, T>
+impl<
+        W: Direction,
+        B: Bemf,
+        A: Advance,
+        C: CurrentLimit,
+        S: SagLimit,
+        R: RestartRule,
+        T: Reporting,
+        G: crate::sagtrace::SagLog,
+    > Policies for Controller<W, B, A, C, S, R, T, G>
 {
     type W = W;
     type B = B;
@@ -61,9 +76,11 @@ impl<W: Direction, B: Bemf, A: Advance, C: CurrentLimit, S: SagLimit, R: Restart
     type S = S;
     type R = R;
     type T = T;
+    type G = G;
 }
 
-/// The one composition this firmware runs.
+/// The one composition this firmware runs. The sag recorder slot defaults to
+/// `NoSagLog`, so production records nothing.
 pub type Production = Controller<
     policy::Wiring,
     policy::BemfPolicy,
@@ -90,8 +107,16 @@ pub struct Outcome {
     pub coast: CoastStats,
 }
 
-impl<W: Direction, B: Bemf, A: Advance, C: CurrentLimit, S: SagLimit, R: RestartRule, T: Reporting>
-    Controller<W, B, A, C, S, R, T>
+impl<
+        W: Direction,
+        B: Bemf,
+        A: Advance,
+        C: CurrentLimit,
+        S: SagLimit,
+        R: RestartRule,
+        T: Reporting,
+        G: crate::sagtrace::SagLog,
+    > Controller<W, B, A, C, S, R, T, G>
 {
     #[must_use]
     pub const fn new() -> Self {
@@ -99,6 +124,7 @@ impl<W: Direction, B: Bemf, A: Advance, C: CurrentLimit, S: SagLimit, R: Restart
             provoke_tenths: 250,
             climb_tenths: 400,
             _p: PhantomData,
+            _q: PhantomData,
         }
     }
 
@@ -545,8 +571,16 @@ impl<W: Direction, B: Bemf, A: Advance, C: CurrentLimit, S: SagLimit, R: Restart
     }
 }
 
-impl<W: Direction, B: Bemf, A: Advance, C: CurrentLimit, S: SagLimit, R: RestartRule, T: Reporting> Default
-    for Controller<W, B, A, C, S, R, T>
+impl<
+        W: Direction,
+        B: Bemf,
+        A: Advance,
+        C: CurrentLimit,
+        S: SagLimit,
+        R: RestartRule,
+        T: Reporting,
+        G: crate::sagtrace::SagLog,
+    > Default for Controller<W, B, A, C, S, R, T, G>
 {
     fn default() -> Self {
         Self::new()

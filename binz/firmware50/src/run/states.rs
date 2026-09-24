@@ -15,6 +15,7 @@ use crate::protection::{
     RailMean, Reason, RAW_LIMIT,
 };
 use crate::ramp::duty_at;
+use crate::sagtrace::SagLog;
 use crate::seed::{Edge, Qualification, Seed};
 use crate::sine;
 use crate::sixstep;
@@ -185,7 +186,15 @@ impl Ctx {
     /// driver, the closed loop's health, the injection, the roots' latches,
     /// the host, feedback age, the window, and one scan's protections.
     /// Returns the pass's timestamp, or why the run stops.
-    fn pass<P: Policies>(&mut self, hal: &mut impl Hal, closed: bool) -> Result<u32, Reason> {
+    /// `sector_start` is the last accepted crossing's stamp, or `None` before
+    /// the loop is closed: it dates a sag row against the switching instant,
+    /// which is the correlation step 3 exists to make possible.
+    fn pass<P: Policies>(
+        &mut self,
+        hal: &mut impl Hal,
+        closed: bool,
+        sector_start: Option<u32>,
+    ) -> Result<u32, Reason> {
         let now = hal.now();
         hal.drain();
         if !hal.nfault_high() {
@@ -240,13 +249,18 @@ impl Ctx {
             return Err(Reason::SegmentDeadline);
         }
         if hal.adc_due() {
-            self.scan_pass::<P>(hal, closed)?;
+            self.scan_pass::<P>(hal, closed, sector_start)?;
         }
         Ok(now)
     }
 
     /// One fresh scan: the during-run witness, then every scan protection.
-    fn scan_pass<P: Policies>(&mut self, hal: &mut impl Hal, closed: bool) -> Result<(), Reason> {
+    fn scan_pass<P: Policies>(
+        &mut self,
+        hal: &mut impl Hal,
+        closed: bool,
+        sector_start: Option<u32>,
+    ) -> Result<(), Reason> {
         if closed {
             let (vc, sr) = hal.comp_inputs();
             let s = &mut self.stats;
@@ -274,7 +288,32 @@ impl Ctx {
             return Err(Reason::Bus);
         }
         if self.rail.ready() {
-            if let Some(r) = self.sag.observe(self.rail.bus_mean(), self.rail.vref_mean()) {
+            // The guard's own inputs, recorded at the instant it judges them
+            // and *before* its post-test filter update, so the reference in
+            // the row is the one the comparison used (campaign 9 step 3).
+            // Production's `NoSagLog` folds all of this away.
+            let (bus_mean, vref_mean) = (self.rail.bus_mean(), self.rail.vref_mean());
+            let (filt_bus, filt_vref) = self.sag.filtered();
+            let verdict = self.sag.observe(bus_mean, vref_mean);
+            if P::G::ON {
+                let now = hal.now();
+                P::G::block(&crate::sagtrace::Block {
+                    at: hal.raw(),
+                    bus_mean,
+                    vref_mean,
+                    filt_bus,
+                    filt_vref,
+                    streak: self.sag.streak(),
+                    step: self.step.get(),
+                    duty_tenths: self.applied_duty,
+                    since_com_us: sector_start.map_or(0, |t| now.wrapping_sub(t) as u16),
+                });
+                if verdict.is_some() {
+                    // Freeze: what matters is the window that led here.
+                    P::G::freeze();
+                }
+            }
+            if let Some(r) = verdict {
                 return Err(r);
             }
         }
@@ -455,7 +494,7 @@ pub enum StartupNext {
 impl Startup {
     /// One pass, in place.
     pub fn poll<P: Policies>(&mut self, hal: &mut impl Hal) -> StartupNext {
-        let now = match self.ctx.pass::<P>(hal, false) {
+        let now = match self.ctx.pass::<P>(hal, false, None) {
             Ok(t) => t,
             Err(r) => return StartupNext::Stop(r),
         };
@@ -706,7 +745,7 @@ impl Locked {
 
     /// One pass of the closed loop, in place; `Some` is why it must stop.
     pub fn poll<P: Policies>(&mut self, hal: &mut impl Hal) -> Option<Reason> {
-        let now = match self.ctx.pass::<P>(hal, true) {
+        let now = match self.ctx.pass::<P>(hal, true, Some(self.sector_start)) {
             Ok(t) => t,
             Err(r) => return Some(r),
         };

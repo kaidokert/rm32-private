@@ -38,6 +38,15 @@ path = "bin/chain-capture.rs"
 test = false
 bench = false
 
+# Diagnostic: shell-pwm with the sharp-sag guard's own inputs recorded per
+# judged block in a pre-trip ring (campaign 9 step 3). Foreground
+# instrumentation; the four ISR roots are production's.
+[[bin]]
+name = "sag-capture"
+path = "bin/sag-capture.rs"
+test = false
+bench = false
+
 [lib]
 test = true
 bench = false

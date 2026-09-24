@@ -59,6 +59,7 @@ pub mod revisit;
 #[cfg(target_os = "none")]
 pub mod roots;
 pub mod run;
+pub mod sagtrace;
 pub mod seed;
 pub mod shared;
 pub mod sine;
