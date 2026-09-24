@@ -209,6 +209,20 @@ LADDER_PREREQ = {"2": 150, "5": 200, "R": 250,
                  "a": 250, "A": 250, "y": 275, "Y": 275, "c": 275, "C": 275,
                  "d": 300, "D": 300, "m": 325, "M": 325, "e": 338, "E": 338,
                  "j": 350, "J": 350, "Z": 475}
+
+# `Z` restarts at whatever `provoke_tenths` holds, and E244 extended that cycle
+# to 500 and 600 so the goal's "3/3 restart at 50% and 60%" became commandable
+# at all. Its `LADDER_PREREQ` entry stayed a fixed 475, which would have
+# admitted a 600 restart cohort on the strength of the 475 rung -- an admission
+# keyed to the wrong rung, the E148 class (E248).
+#
+# So `Z` now takes its prerequisite from `--rung-duty` when one is given, the
+# way `l`/`L` already do: the caller says which restart it believes it is
+# running and the prerequisite follows from that. Given no `--rung-duty` it
+# keeps the historical 475, so every earlier invocation still means what it
+# meant.
+def restart_prereq(rung_duty: int) -> int:
+    return rung_duty if rung_duty else LADDER_PREREQ["Z"]
 LADDER_FILE = REPO / "captures" / "ladder_state.json"
 RUNG_RUNS = 3
 
@@ -246,6 +260,8 @@ def ladder_admit(command: str, sha: str, rung_duty: int = 0) -> tuple[bool, str]
         # including above 500, where the chain is 500 -> 525 -> 550 -> 575 ->
         # 600 and each rung is judged on its own rotor (cohort.SELF_REF_RUNGS).
         need = 375 if rung_duty == 400 else rung_duty - 25
+    elif command == "Z":
+        need = restart_prereq(rung_duty)
     else:
         need = LADDER_PREREQ.get(command)
     if need is None:
@@ -504,6 +520,8 @@ def main() -> int:
         # takes (E188 SS5).
         if args.command in ("l", "L"):
             need = 375 if args.rung_duty == 400 else args.rung_duty - 25
+        elif args.command == "Z":
+            need = restart_prereq(args.rung_duty)
         else:
             need = LADDER_PREREQ.get(args.command)
         where = f"the {need / 10:.1f}% rung" if need else "its prerequisite"

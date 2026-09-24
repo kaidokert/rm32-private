@@ -19223,3 +19223,112 @@ it.
 cohorts and the protection demonstration (E248), which need the
 `LADDER_PREREQ["Z"]` fix landed first — it is still keyed to a fixed 475 and
 would otherwise admit a 600 restart on the strength of the 475 rung.
+
+### E255 — 55% is NOT qualified: the sharp-sag guard trips on a transient. The campaign's first measured blocker.
+
+Image `0D8E3799`. **Seventeen rungs stand at 3/3 (150→525). 550 is 2 of 3 and
+does not qualify.**
+
+| | `reason` | `hold_ms` | `hold_ma` | `worst_hold` | `ci_min` | `thin` | `late_arms` | droop residual | gates |
+|---|---|---|---|---|---|---|---|---|---|
+| 550_01 | 2 | 52 276 | 2255 | 2678 | 51 | 1842 | 0 | +3.3 | clean |
+| 550_02 | 2 | 52 276 | 2295 | 2740 | 50 | 2013 | 0 | +4.5 | clean |
+| **550_03** | **26** | **15 008** | 2300 | 2697 | 42 | 742 | 0 | +3.8 | **FastBusSag** |
+
+**This is not a nuisance gate failure and it is not being treated as one.** The
+400 rung's single failure was an identity reading 1011 against a band whose
+false-failure rate I measured at 1.1% (E249) — an instrument artefact. This is
+`Reason::FastBusSag` latching 15 s into the hold: **a protection doing its job.**
+
+#### The mechanism, as far as the evidence goes
+
+The guard's own line, failing run against clean run:
+
+| | `ref_bus` | `filt_bus` | `streak` | `tripped` | `bus_min` |
+|---|---|---|---|---|---|
+| 550_01 | 1218 | **1193** | 0 | 0 | 1116 |
+| 550_03 | 1218 | **1193** | **3** | **1** | **1074** |
+
+**The 207 ms filtered reference is identical.** So the *sustained* level was
+healthy — confirmed independently by the IR-line residual, **+3.8 per mille**,
+i.e. above the line. This was a **sharp transient**: the 8-scan block mean fell
+more than 5% below 1193 for three consecutive scans, and the single-scan floor
+reached 1074 — **10% below reference**.
+
+What the failing run does **not** show: no current excursion (`worst_hold` 2697
+against 2678 and 2740 on the clean runs), `storm = 0`, `blank_latched = 0`,
+`track_fault = 0`, and `com_late_max_us` **5** against 9 and 10 on the clean
+runs — *lower* commutation lateness, not higher. So the evidence leans away from
+a loop-side desync, without proving a power-path cause.
+
+#### The transient floor, measured across the ladder — and why depth is not the trigger
+
+`bus_min/bus_ref` against `hold_ma` over 59 ladder runs:
+
+> slope **−5.32 per mille per amp**, against the **sustained** droop's
+> −10.93 per mille per amp (E243).
+
+So the transient floor falls at *half* the rate of the sustained level, with a
+large residual scatter. And the decisive pair:
+
+| run | duty | transient residual | outcome |
+|---|---|---|---|
+| `e252-525_02` | 525 | **−22.3** | `reason = 2`, **passed** |
+| `e253-550_03` | 550 | **−21.8** | `reason = 26`, **tripped** |
+
+**A run at 52.5% reached the same transient depth and did not trip.** Depth
+alone therefore does not decide it: `bus_min` is one scan, while the guard needs
+**three consecutive** low block means. So this is a marginal, stochastic event
+whose *rate* rises with duty — "marginal or lost lock, transient or fatal",
+and it classifies as marginal-transient.
+
+#### What I am not doing
+
+**Not re-running until three consecutive pass.** The 400 rung earned a fourth
+run because its failure was a measured instrument artefact; this failure is a
+protection latching on a real bus event, and re-rolling it until the dice land
+clean is precisely retry-until-pass. The rung stands at 2/3 and **55% is not
+qualified.**
+
+**Not touching the guard.** The goal says establish slow-droop coverage
+*without weakening sharp-sag protection*, and the sharp guard is the thing that
+fired. Its fraction, streak and latch are untouched, as they have been all
+campaign.
+
+**Not attempting 575 or 600.** The chain requires 550 first, and the driver
+stopped itself — correctly.
+
+#### So this is the measured blocker, and it is not the one I predicted
+
+Across the campaign I asserted four blockers and withdrew three: the supply
+(E201), the arm-path cost (E217/E234), and the advance level (E234). The fourth,
+the firmware's own current allowance, is looking unlikely too — at 550 the hold
+worst is 2697 mA against a 4000 mA allowance, with room.
+
+**The actual bound at 55% is a sharp bus transient**, which is the class my own
+notes have insisted on for three campaigns: *"every bring-up wall or glitch is
+marginal or lost lock, transient or fatal; classify events but hunt the loop
+mechanism via the interval trace, never the messenger."* The classification is
+done. The mechanism is not, and the honest next step is to hunt it rather than
+to re-roll the rung or relax the guard.
+
+#### Also landed: the restart prerequisite
+
+`LADDER_PREREQ["Z"]` was a fixed 475 while E244 extended `Z`'s restart cycle to
+500 and 600, so a **600 restart cohort would have been admitted on the strength
+of the 475 rung** (E248). `Z` now takes its prerequisite from `--rung-duty` the
+way `l`/`L` do, defaulting to 475 so every earlier invocation still means what
+it meant. Verified: a restart at 500 is now **admitted** (that rung has 3/3),
+and a restart at 600 is **refused** — *"only 0 run(s) on this ELF at 60%"*.
+
+Applied only after 550's cohort finished, because `bemf_run.py` is imported
+fresh by every run and editing it mid-cohort would have changed behaviour
+between runs of one rung.
+
+#### Gate
+
+**This is a conclusion, so it does not stand until both reviews have seen it.**
+It decides whether 575 and 600 are attemptable at all, whether the mechanism
+hunt or the rung is the next move, and whether 55% can ever qualify on this
+bench without touching a protection the goal forbids touching. Two fresh
+context-free reviews come next.
