@@ -18960,3 +18960,90 @@ E239's lesson was specifically about unattended batches at the top of the
 envelope. The restart cohorts at 500 and 600, and the protection re-provocation,
 follow the rungs — they are the remaining two success criteria and neither has
 been attempted.
+
+### E248 — predeclaration: the restart cohorts and the protection demonstration, plus a fixture gap found while planning them
+
+Written while the 150→475 walk is in flight, because these are the two success
+criteria that have **never been attempted** and one of them turns out to have an
+admission gap.
+
+#### The gap, found by reading rather than by running
+
+`LADDER_PREREQ["Z"] = 475` (`bemf_run.py:211`) is a **constant**, but E244 made
+`Z` restart at whatever `provoke_tenths` holds — now 250 / 375 / 475 / **500 /
+600**. So a **restart at 600 would be admitted on the strength of the 475
+rung.** The goal asks for 3/3 restart *at* 50% and *at* 60%, and the fixture
+would have let a 600 restart cohort count while 600 itself was unproven.
+
+That is the E148 class again — an admission keyed to the wrong rung — and it is
+exactly what the ladder exists to prevent.
+
+**Fix, and its timing:** `Z`'s prerequisite becomes *the rung being restarted
+at*, not a fixed 475. It is host-only and changes admission, not judgement, so
+no collected data is invalidated. **It is deliberately not applied now:**
+`bemf_run.py` is being imported fresh by every run of the walk currently in
+flight, so editing it mid-walk would change behaviour between runs of one
+cohort. It lands after the walk and before any restart run.
+
+#### Restart cohorts
+
+* **At 500:** `x` pressed until `provoke_tenths` reads 500 (three presses from
+  its 250 start), then `Z`, three times. Admitted only once the **500 rung**
+  has 3/3 on this ELF.
+* **At 600:** `x` to 600 (four presses), then `Z`, three times. Admitted only
+  once the **600 rung** has 3/3.
+
+Both read `CLIMBAT`/`duty_tenths` by hand against the intended rung, because the
+press count is the thing that has silently lied twice (E148, E185) and `x`
+prints `duty_tenths` precisely so it can be checked.
+
+**Predictions.** A restart drives the whole campaign again from rest, so its
+gates are the run gates: `reason = 2`, hold ≥ 30 s, no foldback, droop residual
+above −20 per mille. I predict **3/3 at 500**, on the strength of the 500 rung
+and the two clean 500 runs already in the corpus on this lineage. **I make no
+prediction at 600** — nothing has been measured there, and this campaign has
+banded a baseline-free quantity four times already.
+
+#### Protection coverage, demonstrated rather than argued
+
+The goal wants coverage *explicitly demonstrated*. The honest scope, rung by
+rung:
+
+| guard | how it is demonstrated | where |
+|---|---|---|
+| `FastBusSag` (26) | gate-4 sag injection, which **now steps up at every rung** (E244) rather than being a no-op at 500 and an unload above it | at the top rung reached |
+| `AverageCurrent` (25) | gate-4 current injection: a stricter allowance with the plans held, so the first foldback goes unacknowledged | at the top rung |
+| `Driver` (7) | nFAULT, polled every guard tick | already in the corpus (`e196-pn-driver_01`) |
+| `Tracking` (8), `TickGap` (3), `FeedbackStale` (4), `CompStorm` (13), `HandlerOverrun` (14) | gate-4 provocations, one key each | at the top rung |
+| `Bus` (6) absolute floor | **not provocable** — it is 28% below the reference and nothing on the bench can pull the rail there without a fault | stated, not claimed |
+| `LateArm` (15), `BlankLatched` (16) | **not provocable by injection.** They are detections of a real timing failure; the only honest evidence is that they have *not* fired, with `ci_min_us` and `thin_count` reporting how close the margin came | reported per rung |
+| `PhasePeak` (27) | **does not exist** — no threshold, no accumulator, no call site | stated plainly, as it has been since E210 |
+
+So the demonstration will cover **seven guards by provocation** at the top rung
+and name the three that cannot be provoked, with the reason. That is the whole
+truth about coverage and it is less than the phrase "demonstrated protection
+coverage" might suggest — which is why it is written down before the runs rather
+than assembled from whatever happens to fire.
+
+#### What this does not resolve
+
+**The 50% late-arm failure is characterised, not fixed.** `ci_min_us` 54 at 500
+and 49 at 525 with `late_arms = 0` across four runs, and the margin at the
+interval floor is **+2 µs against the modal arm cost and −3 against the
+firmware's own worst** (E243's correction). The goal's step 2 asks for a
+deadline-path improvement, and no such change has been made — E203's
+absolute-deadline candidate was reverted for patching a diagnostic twin, E142's
+arm-before-stores reordering was rejected for costing 1% of rotor speed, and
+E231's advance change was cancelled when level 16 turned out to be the
+worst-performing arm of an A/B already run on this bench.
+
+What the measurements now say is that lateness is a **joint-tail rate** — it
+needs the interval floor and the arm-cost peak to coincide — and the only
+instrument that bounds that rate is `thin_count`, which is 0.065% at 500 and
+0.517% at 525. **If the rungs above 525 hold with `late_arms = 0`, the honest
+conclusion is that the failure was never a deterministic wall and no
+deadline-path change is required; if they do not, the rate is the finding and
+the change becomes specifiable against a measured distribution instead of an
+extrapolated one.** Either way that is a result rather than the open item it has
+been for fifteen entries, and it is decided by the ladder rather than by more
+argument.
