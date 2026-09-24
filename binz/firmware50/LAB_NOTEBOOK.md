@@ -12534,3 +12534,252 @@ their `VERDICT` lines are not comparable across the alternation. The cohort is
 read from the firmware's own fields — `reason`, `ceiling_tenths`, `hold_ma`,
 `worst_ma`, `loop_gap_max_us`, `com_late_max_us`, `frozen` — and from the
 frozen rings.
+
+### E189 — the 47.5% pair, and two fixture traps found by running it
+
+**Change and prediction: E188's, unchanged.** This entry records the cohort's
+first arm — one production run and one recorder run at 47.5%, key `L`, images
+`14CE44E7` and `63C0061D` as predeclared — and two fixture faults that the
+runs themselves exposed before the 50% attempts.
+
+#### The two traps, because both would have corrupted the cohort's record
+
+**1. `--step-check` is not a ladder bypass: it silently replaces the command.**
+E188 declared that the cohort would satisfy the ladder by passing
+`--step-check`, on the reviewer's and my reading that it "judges the run but
+records it against no rung". It does that — *and* `bemf_run.py:414-415` does
+`args.command, args.runs = "5", 1`. It is the **25% step-response check**, and
+it overrides whatever was asked for.
+
+So the cohort's first run drove **25%**, not 47.5%, under the label
+`e189-475-prod`. The capture says so in its own first line
+(`target_duty_tenths=250`), which is how I caught it. The capture is retained
+with its misleading label and this entry is the correction; it is a valid 25%
+production run and its numbers appear below. Three things follow:
+
+* the flag now prints `NOTE: --step-check overrides --command and --runs` and
+  its own doc says what it is for;
+* **`--no-ladder` exists**, which is the thing I actually wanted: it drives the
+  *requested* rung on an image that has not earned it, prints a banner saying
+  the run is recorded against no rung, and changes no threshold and no
+  protection — only the fixture's admission. The alternative is climbing twelve
+  rungs three runs each on **each** new image, which at ~57 s of ≥45% drive per
+  run is precisely the thermal exposure the cohort exists to bound;
+* and the fixture's own duty check would *not* have caught this, because with
+  `--step-check` nothing is recorded against a rung at all. E148 added that
+  check for exactly this class and it only guards the recording path.
+
+**2. My cohort driver read the warm-up's report.** It scraped the first match
+of each field from the combined output, and a `--step-check` or warm-up run
+prints its own report first — so the first line it printed was the **15%**
+warm-up's `ceiling_tenths=150 hold_ma=51` under a 47.5% label. Fixed to take
+the last match, and every number below is re-read from the capture file itself
+rather than from the driver's summary. This is the third time in this campaign
+that a number came from a summary rather than a capture, and the second time it
+was my own tooling doing it.
+
+#### The 47.5% pair
+
+Both runs completed their full 80 s window (`reason=2`), and neither tripped —
+as predicted, on a prior of **0 of 16**.
+
+| | production `14CE44E7` | recorder `63C0061D` |
+|---|---|---|
+| `reason` | 2 | 2 |
+| `target_duty_tenths` | 475 | 475 |
+| **`ceiling_tenths`** | **475** | **475** |
+| `hold_ma` | 1604 | 1583 |
+| **`worst_ma`** | **1937** | **1926** |
+| `loop_gap_max_us` | **147** | **168** |
+| `com_late_max_us` | 10 | 10 |
+| `comp_call_max_us` | — | 16 |
+| `closed_irq_peak_per_ms` | 64 | 62 |
+| `storm` / `late_arms` / `blank_latched` | 0 / 0 / 0 | 0 / 0 / 0 |
+| `closed_ms` / `hold_ms` | 74776 / 55776 | 74776 / 55776 |
+| `bus_min` | 1122 | 1125 |
+
+**Prediction 1 holds**: production `loop_gap_max_us` 147 ≤ 175 and
+`com_late_max_us` 10 ≤ 15. The recorder's 168 is reported without a threshold,
+as declared — it is the **first recorder run ever above 25%** — and it sits
+14% above production's on the same rung in the same session, just above the
+campaign-7 production range (134–166). That is the cleanest recorder-cost
+number on the tail this campaign has, and it points the same way as E184's
+throughput figure rather than against it.
+
+**`ceiling_tenths` reads 475, not 500**, which settles how prediction 2 must be
+read: the governor is constructed at the *commanded* rung, so the test is
+"`ceiling_tenths` equals the duty the run asked for". At the 50% rung that is
+500, so prediction 2 stands as written — but it would have been wrong to read
+"500" as a constant.
+
+**`worst_ma` is the new measurement, and it is worth the two lines it cost.**
+The worst single 10.1 ms block is **1937 mA against a 1604 mA hold mean — 21%
+above it**, on a 2 A supply. That is not a peak (a surge inside one block is
+still averaged) and it is not a protection; it is the first number on this
+bench that is not a mean of means. For scale, the 25% run that the
+`--step-check` trap produced reads `hold_ma=415`, `worst_ma=1044` — **2.5×**.
+So the block-mean instrument everything here has been measured with hides
+excursions of that size, and the 4 A allowance is 2.1× the *worst observed
+block* at 47.5%, not 2.5× the mean.
+
+#### The recorder's dump at 47.5%, which had never been taken
+
+`captures/sag/e189-475-sag.txt`, `frozen=1`, `run_reason=2`, 512 of **786 918**
+judgements kept (0.065%), one every **100.00 µs** measured:
+
+* margin **1045.6–1059.3**, p50 **1053.3** — the same 1053 this guard sits at
+  on a steady rail at every duty from 25% up, which is the invariance E182
+  established and not new information about margin;
+* **0 low judgements, streak never left 0**;
+* host/firmware disagreement **0 of 511**;
+* fail-closed rows **0** (now printed even when zero);
+* the deciding row's reference sits **0.33% *below*** the bus against the
+  **+5.26%** a streak latch needs — i.e. a settled loaded rail, nowhere near
+  the line.
+
+So the recorder runs a full window at 47.5% without tripping, and its dump is
+readable end to end. That is what the 47.5% arm was for: the recorder's effect
+at a rung with no trips is now measured (throughput and tail), before it is
+used to explain a rung that does trip.
+
+#### Running exposure
+
+Two runs at ≥45% so far: **~115 s** of the ~400 s the cohort's thermal
+deferral is argued against, with ≥95 s bridge-off between runs. **No nFAULT
+fired**, which is the only thermal-adjacent thing this firmware can tell me —
+the DRV8304H's own over-temperature shutdown reaching a pin. I have no
+temperature measurement and I have not touched the board: the touch check in
+the deferral is the operator's, and I should not write it down as though it had
+happened.
+
+### E190 — five of five at 50%, and the prediction that failed was mine
+
+The cohort ran as predeclared in E188: five attempts at the 50% rung, key `L`,
+alternated P R P R R across production `14CE44E7` and recorder `63C0061D`,
+every capture retained, ≥95 s bridge-off between runs.
+
+#### The result
+
+**Five of five completed their full window.** `reason=2` — the 80 s segment
+deadline, i.e. the normal end — with a **54.8 s hold at 50%** in every one.
+
+| run | image | reason | `ceiling_tenths` | `hold_ma` | `worst_ma` | `loop_gap_max_us` | `com_late_max_us` | `storm` |
+|---|---|---|---|---|---|---|---|---|
+| `e189-500-p1` | production | 2 | 500 | 1816 | 2232 | **143** | 12 | 0 |
+| `e189-500-s1` | recorder | 2 | 500 | 1803 | 2162 | 169 | 11 | 0 |
+| `e189-500-p2` | production | 2 | 500 | 1793 | 2146 | **152** | 11 | 0 |
+| `e189-500-s2` | recorder | 2 | 500 | 1798 | 2144 | 172 | 9 | 0 |
+| `e189-500-s3` | recorder | 2 | 500 | 1803 | 2145 | 152 | 10 | 0 |
+
+`late_arms` and `blank_latched` are 0 everywhere; `frozen=1` on all three
+recorder runs.
+
+**The frozen rings, all three, are boring in exactly the way that is
+informative:** margin p50 **1051.8–1053.7**, minimum over the retained fast
+window **1045.6**, minimum over the ~3.3 s decimated history **1042.1**, **0
+low judgements**, streak never left 0, **0 fail-closed rows**, and 0 of 511
+host/firmware disagreements in each. At the deciding (last) row the reference
+sits between **0.58% below** and **0.25% above** the bus, against the
+**+5.26%** a streak latch requires. The guard's 1052 is the same number it
+reads at 25%, 45% and 47.5% — E182's invariance, now measured at the top rung
+too.
+
+#### Against the predictions
+
+* **Prediction 1 holds.** Production `loop_gap_max_us` 143 and 152, both
+  ≤ 175; `com_late_max_us` ≤ 12 everywhere against ≤ 15. The recorder's
+  169/172/152 are reported without a threshold as declared — its first runs at
+  this rung — and they sit ~14% above production's on the same rung in the same
+  session, the same direction as its throughput cost.
+* **Prediction 2 holds, and it is the one that was worth adding.**
+  `ceiling_tenths = 500` on all five, so the foldback governor never throttled
+  and **these are genuinely 50% runs**. Before E187 a throttled run would have
+  been indistinguishable from this in the report. `hold_ma` 1793–1816 sits
+  inside the predeclared 1750–1950.
+* **Prediction 3 was not exercised**: nothing latched.
+* **Prediction 4 holds** trivially (every stop was a `Ctx::pass` stop and every
+  ring froze).
+* **Prediction 5 is falsified, and it was mine.** I predicted *two or more of
+  five* trips, on campaign 7's 3-of-7. **Zero of five tripped.**
+
+#### What that does and does not establish
+
+The honest arithmetic first, because "the trips are gone" is exactly the kind
+of claim this campaign keeps having to withdraw. Trips 3/7 (campaign 7) against
+0/5 (today) is **Fisher's exact p = 0.205, two-tailed** — *not significant*.
+**Five completions do not establish that the 50% sag trip has gone away.** To
+reject the campaign-7 rate at p < 0.05 takes **0 of 11**.
+
+What *is* established, and was not before:
+
+1. **50% runs.** Five full windows, 54.8 s of hold each, on two images, with
+   every protection armed and unchanged — thresholds, hysteresis 0, the 64/ms
+   cap, the sag fraction/streak/latch all untouched. Whatever stopped three of
+   campaign 7's seven runs is **not stopping runs on this bench today**.
+2. **It is not the guard being marginal.** The retained history never came
+   within 4.2% of the line at 50%, and the margin at 50% is
+   indistinguishable from the margin at 25% — which is the structural
+   consequence E182 established: the guard divides by a 207 ms EWMA of its own
+   input, so only a 0.8–200 ms transient can move it.
+3. **The current is measured, at both scales.** Mean `hold_ma` 1793–1816 —
+   ~3% *below* campaign 7's 1836–1877 at the same rung. And the new number:
+   the **worst single 10.1 ms block is 2144–2232 mA**, i.e. **19–23% above the
+   mean and above the 2 A supply limit**, while the mean sits comfortably under
+   it. Every current figure this bench has ever quoted was a block mean; the
+   worst block was computed and thrown away until E187.
+
+#### The leading explanation, stated as a hypothesis with its test
+
+**The supply limit changed between the two campaigns: 1.75 A then, 2.0 A now**
+(the operator's change, recorded when the goal was set). Against a mean draw of
+1.8 A and worst blocks of 2.15 A, a 1.75 A limit puts the PSU **in constant
+current** for much of a 50% hold; a PSU in CC folds the rail, and a folding
+rail inside the guard's 0.8–200 ms passband is exactly what a `FastBusSag`
+latch looks like. That would explain campaign 7's 3-of-7 without any firmware
+mechanism at all, and it would explain why the same firmware family now runs
+5/5 at the same rung.
+
+It is a hypothesis. Its discriminating test is to **set the supply back to
+1.75 A and repeat**: the trips should return, and this time the recorder would
+catch the fold in a frozen ring. That is an external change to the bench and I
+cannot make it, so it is named and owed rather than run.
+
+What the campaign-7 captures can say on their own: **nothing decisive.** Trips
+and completions there are not separated by `hold_ma` (1852–1877 vs 1836–1868)
+or by `bus_min` (1067/1090/1106 vs 1082–1090), and `bus_min` is one transient
+scan anyway (E146). No recorder existed then, which is precisely why step 3 of
+this campaign built one.
+
+#### What is *not* claimed
+
+**This is not a qualified 50%.** All seven runs at ≥45% today were driven with
+`--no-ladder` and are recorded against no rung, by design (E188): both cohort
+images are new, and climbing the ladder on them would cost twelve rungs × three
+runs *each*, which is the thermal exposure the cohort exists to bound. A
+fixture qualification needs 3/3 at the rung with the rungs below it passed on
+the same image. So: **50% is demonstrated and instrumented, not qualified**,
+and E189's and this entry's runs may not be cited as a qualification.
+
+#### Exposure so far, and the extension
+
+Seven runs at ≥45%: **~400 s**, the number E188's thermal deferral was argued
+against, with ≥95 s bridge-off between runs and no nFAULT on any run. No
+temperature is measured anywhere in this firmware; that remains the largest
+unguarded quantity and the operator's stop conditions remain the only cover.
+
+**Predeclared extension, to settle the rate question rather than suggest it:**
+six more attempts at 50% — **2 production, 4 recorder**, alternated, weighted
+to the recorder because a trip is the outcome worth catching in a frozen ring.
+That takes the cohort to **n = 11**, where 0 trips gives p = 0.043 against
+campaign 7's rate. **Bridge-off between runs goes up to 120 s** for the
+extension, against the higher cumulative exposure (11 × ~57 s ≈ 630 s at
+≥45%, ~745 s including the 47.5% pair). Predictions:
+
+1. Same bands as before: production `loop_gap_max_us` ≤ 175,
+   `com_late_max_us` ≤ 15, `ceiling_tenths` = 500, `hold_ma` 1750–1950.
+2. **If any run latches reason 26, the cohort stops there** and the frozen ring
+   is read by E188's prediction-3 procedure — a trip is a better outcome than
+   another completion, because it is the mechanism with an instrument on it.
+3. I do **not** predict zero trips. The prior that survives is campaign 7's
+   3/7; today's five completions lower it but do not replace it, and the
+   arithmetic above says so.

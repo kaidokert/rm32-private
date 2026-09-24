@@ -355,7 +355,7 @@ def main() -> int:
         help="keys to send once before the runs and not record, e.g. '+' to step "
         "the shell's climb duty up one rung. `l`/`L` drive whatever the shell "
         "holds, so without this a climb run repeats the rung it is already at -- "
-        "which is what three '42.5%' runs actually did at 40% (E185). "
+        "which is what three runs labelled 42.5 percent actually did at 40 percent (E185). "
         "`sag_run.py` has had this; this runner had not.",
     )
     ap.add_argument(
@@ -387,6 +387,17 @@ def main() -> int:
         "after the run command (0 = never)",
     )
     ap.add_argument(
+        "--no-ladder",
+        action="store_true",
+        help="drive the requested rung on an image that has not earned it, and "
+        "record it against no rung. For a predeclared exploratory cohort "
+        "(campaign 9 step 5): the alternative is climbing twelve rungs three "
+        "runs each on every new image, which at ~57 s of 45 percent-plus drive "
+        "per run "
+        "is exactly the thermal exposure the cohort is trying to bound. It "
+        "changes no threshold and no protection -- only the fixture's admission.",
+    )
+    ap.add_argument(
         "--step-check",
         action="store_true",
         help="refactor step gate (goal item 8): one unjudged 15%% warm-up run, then "
@@ -412,6 +423,13 @@ def main() -> int:
                 return 2
         time.sleep(1.0)
     if args.step_check:
+        # **`--step-check` is not a ladder bypass**: it is the 25% step-response
+        # check, and it *replaces* whatever was asked for. E188 chose it as the
+        # way to run an exploratory 47.5% cohort on a new image; the first run
+        # of that cohort therefore drove 25% and the capture said so
+        # (`target_duty_tenths=250` under a label that said 475). Use
+        # `--no-ladder` for an exploratory run at the requested rung.
+        print("NOTE: --step-check overrides --command and --runs: this is the 25% step check")
         args.command, args.runs = "5", 1
 
     day = datetime.date.today().isoformat()
@@ -422,7 +440,15 @@ def main() -> int:
     print(f"elf  {sha}")
     print(f"out  {outdir}")
 
-    admitted, why = (True, "") if args.step_check else ladder_admit(args.command, sha, args.rung_duty)
+    if args.no_ladder:
+        print("LADDER BYPASSED: exploratory run at the requested rung, on an image")
+        print("  that has not earned it. The run is driven and retained; it is recorded")
+        print("  against no rung, so it can never contribute to a 3/3 qualification.")
+    admitted, why = (
+        (True, "")
+        if (args.step_check or args.no_ladder)
+        else ladder_admit(args.command, sha, args.rung_duty)
+    )
     if not admitted:
         # `l`/`L` take their prerequisite from `--rung-duty`, not from
         # `LADDER_PREREQ`, so the old message raised `KeyError: 'L'` -- the
