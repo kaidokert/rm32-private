@@ -724,14 +724,25 @@ impl RunReport {
         out.kv("drive_scans", c.drive_scans);
         out.kv("applied_cap", u32::from(c.applied_cap));
         out.kv("applied_ccr", c.applied_ccr);
-        out.kv("dep970_n", c.depth_below[0]);
-        out.kv("dep970_run", c.depth_longest[0]);
-        out.kv("dep950_n", c.depth_below[1]);
-        out.kv("dep950_run", c.depth_longest[1]);
-        out.kv("dep920_n", c.depth_below[2]);
-        out.kv("dep920_run", c.depth_longest[2]);
-        out.kv("dep900_n", c.depth_below[3]);
-        out.kv("dep900_run", c.depth_longest[3]);
+        // **The threshold travels with the counts.** These keys were once
+        // named after the fractions (`dep970_n` and friends), and when E244
+        // moved the fractions to 995/990/985/980 the names kept saying
+        // 970/950/920/900 -- a field whose name lied about what it measured,
+        // caught on the first run of the ladder. Indexed keys cannot drift,
+        // and each bin prints its own fraction beside its counts so a capture
+        // is self-describing.
+        out.kv("dep0_pm", crate::protection::DEPTH_FRACTIONS[0]);
+        out.kv("dep0_n", c.depth_below[0]);
+        out.kv("dep0_run", c.depth_longest[0]);
+        out.kv("dep1_pm", crate::protection::DEPTH_FRACTIONS[1]);
+        out.kv("dep1_n", c.depth_below[1]);
+        out.kv("dep1_run", c.depth_longest[1]);
+        out.kv("dep2_pm", crate::protection::DEPTH_FRACTIONS[2]);
+        out.kv("dep2_n", c.depth_below[2]);
+        out.kv("dep2_run", c.depth_longest[2]);
+        out.kv("dep3_pm", crate::protection::DEPTH_FRACTIONS[3]);
+        out.kv("dep3_n", c.depth_below[3]);
+        out.kv("dep3_run", c.depth_longest[3]);
         out.say("\r\n");
         out.flush();
     }
@@ -899,10 +910,12 @@ mod tests {
         assert!(t.contains(" drive_scans="));
         assert!(t.contains(" applied_cap="));
         assert!(t.contains(" applied_ccr="));
-        assert!(t.contains(" dep970_n="));
-        assert!(t.contains(" dep970_run="));
-        assert!(t.contains(" dep900_n="));
-        assert!(t.contains(" dep900_run="));
+        assert!(t.contains(" dep0_pm="));
+        assert!(t.contains(" dep0_n="));
+        assert!(t.contains(" dep0_run="));
+        assert!(t.contains(" dep3_pm="));
+        assert!(t.contains(" dep3_n="));
+        assert!(t.contains(" dep3_run="));
         assert!(t.contains("driven_rotation=0 \nvsenc_min=0 "));
         assert!(!t.contains("BEMFINJECT"));
     }
