@@ -17882,3 +17882,114 @@ depressed bus or foldback cannot count as qualification. So either the clamp
 rises — with the power path re-measured first, per the melted-connector fault
 class — or the top rung is renegotiated. That is a measured projection from 25
 runs, not an inferred wall, and it is reported as the blocker it is.
+
+### E235 — predeclaration: one exploratory rung at 525, to convert the 60% blocker from a projection into a measurement
+
+Written before any edit. **Two independent review pairs have now converged on
+this exact image** — E222 finding 13 item 1 and E233 finding 12 step 3 — so its
+shape is theirs, not a fresh proposal of mine.
+
+#### Why 525, and why now
+
+Every open question in this campaign is a question about behaviour **above 500
+tenths**, and nothing has ever been measured there. The last six entries argued
+four of them from extrapolation and got three wrong:
+
+| question | what it rests on today | what one 525 run gives |
+|---|---|---|
+| Is 60% inside the 3 A clamp? | a slope of 2.15–2.25 fitted to ≤500, extrapolated 20% | the next real point of the current law |
+| Does `ci · duty` hold, so is ci≈64 at 60%? | contradicted by its own corpus — `mean_ci_us` is **77 at 450/475/500 alike**, i.e. already flat | the next real interval |
+| Does the sustained droop cross a 970 line? | a ring covering **4% of a run**, pooled across two cadences (E232 SS6/SS7) | `dep970_n`/`dep970_run` over **100%** of the run |
+| What is the late-arm margin? | a mean interval minus a whole-run maximum — both wrong (E234) | **`ci_min_us`, measured for the first time** |
+
+E233's closing point is the one that makes this decisive: **the two escapes are
+mutually exclusive.** If the current rolls off enough for 60% to fit the clamp,
+then the speed rolls off, then `ci` stops falling, and the timing blocker never
+arrives. If `ci` keeps falling to 64, the current keeps rising and 60% is
+outside the supply. One run at 525 tells me which branch this bench is on, and
+no amount of further analysis can.
+
+#### The change: one constant, and nothing else
+
+`SIXSTEP_DUTY_CAP: 500 → 525` (`src/run/policy.rs:102`). That single constant
+feeds **both** silent clamps (`sixstep::plan` and `policy::sixstep_ccr_of`) and
+the `+` climb ceiling (`run/mod.rs:490`), so one edit raises all three
+coherently — which is why E221 SS6's inventory of six clamp sites matters and is
+honoured rather than re-discovered.
+
+**This is not a protection threshold.** `policy.rs:89-97` already records that
+the cap's original justification is withdrawn and that at 500 it "no longer
+constrains anything". The goal's "keep existing protections and thresholds"
+covers `RAW_LIMIT`, `FastBusSag`'s fraction/streak/latch, `BUS_FLOOR_MV`,
+hysteresis 0 and the storm cap — none of which is touched. No new `Reason`, no
+new stop, no new channel, no advance change, no control-law change.
+
+The report fields it needs (`ci_min_us`, `thin_count`, the eight `dep*`,
+`drive_scans`, `applied_cap`, `applied_ccr`) are **already in `src`** from
+E212/E224 and have never been flashed. This image is the first that emits them.
+
+#### Safety, computed before the run rather than hoped for
+
+* **Current.** The measured law at exponents 2.15 / 2.25 / 2.9 gives `hold_ma`
+  **1991 / 2001 / 2066 mA** at 525 and a worst block of **2370–2458 mA**
+  (worst/hold = 1.19 at 500). Against the operator's **3 A clamp** that is
+  ~67% of the limit on the mean and ~82% on the worst block, and against
+  `RAW_LIMIT`'s 4 A it is ~60%. Comfortable on both.
+* **Timing.** `wait_time(77,22) = 12` and `wait_time(73,22) = 11` against the
+  **measured modal spend of 6 µs** (E234, 20 478 arms) leaves **+5 to +6 µs**,
+  and **+1 to +2 µs** against the worst spend ever observed (10 µs). Above
+  E179's ≥3 µs rule on the modal case; the worst case is the thing being
+  measured.
+* **525 is one rung, not a leap.** 5% of duty above a rung qualified 3/3.
+
+#### Predictions, falsifiable, each against a measured spread
+
+1. **`mean_ci_us` lands 74–77.** The flat reading (77 at three consecutive
+   rungs, sd 0) predicts 76–77; a surviving 1/duty law predicts 73. **This is
+   the prediction that decides the campaign's arithmetic:** ≤73 means ci≈64 at
+   60% and the timing question is live; ≥76 means the interval has flattened,
+   60% projects to ~72–77, and level 22 clears the margin rule with room.
+2. **`hold_ma` lands 1950–2100 mA.** Above 2200 means the exponent is steeper
+   than measured and 60% is further outside the clamp; below 1900 means it rolls
+   off and 60% may fit. The baseline's own run-to-run spread at 500 is 4.9%
+   (sd 27.6 mA), so this ±4% band is wider than the noise — deliberately,
+   after getting that wrong in E152, E220 and E224.
+3. **`dep970_run = 0` and `dep970_n < 100`**, over the whole run. This is the
+   measurement the rings cannot make. If `dep970_run` exceeds ~495 scans
+   (50 ms) the derived droop line is already crossed at 52.5% by a healthy run,
+   and E230's withdrawn proposal was a nuisance stop as well as a blind one.
+4. **`ci_min_us` lands 60–72 µs** — its first measurement ever. The one
+   latching run at 500 excursed to `ci_us = 56`, so a minimum well below the
+   mean is expected; `wait_time(60,22) = 9` against modal spend 6 is +3, which
+   is the margin rule's own edge. **If `ci_min_us` is below ~58, the tail is
+   the blocker and no advance choice fixes it** — which would be a measured
+   answer to the question E231 could not have answered in nine runs.
+5. **`reason = 2`, `late_arms = 0`, `ceiling_tenths = 525`, `applied_cap = 525`
+   in all three runs**, and `duty_tenths = 525` — the last two together proving
+   no silent clamp bit, which is the trap the cap raise creates and the reason
+   the visibility fields ship in the same image.
+
+#### Cohort, predeclared
+
+* **One run at 500 first, on this new image**, as the lower-rung regression the
+  goal requires — the ELF changed, so 500 must still behave.
+* **Three runs at 525**, `--no-ladder` (525 is absent from the fixture's
+  `ORACLE`, so it cannot be a rung run and must not pretend to be), with
+  `--rung-duty 525` so every capture is checked against the duty it claims.
+* **Exploration, not qualification**, in the goal's own separation. No rung
+  above 525 from this image; no qualification claim from any of it.
+* Host gates first: tests, clippy, structure limits, four-root audit, and the
+  ELF hash recorded **after** the commit, per E226.
+
+#### Stopping rules
+
+* **Any protection latch stops the batch** and is reported as the result, not
+  retried. `reason != 2` on any run ends it.
+* **`hold_ma` above 2200 mA or a worst block above 2600 mA stops the batch** —
+  that is the 60%-outside-the-clamp branch arriving early, and it is an answer.
+* If prediction 1 comes back ≤73, the timing question is live and goes to its
+  own predeclaration with `ci_min_us` in hand rather than projected.
+* **Nothing here qualifies anything.** The final ELF the goal asks for is a
+  later image, and on current evidence it cannot include a 60% rung on a 3 A
+  clamp — which is the operator decision E234 reported and this run either
+  confirms or overturns with the next point of the law.

@@ -99,7 +99,19 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 /// The `I ~ duty^2` law the old comment cited is also superseded: the measured
 /// exponent across the campaign-7 rungs is ~2.4-2.9, and the 50% current is
 /// measured (1836-1877 mA on the signed proxy), not extrapolated.
-pub const SIXSTEP_DUTY_CAP: u16 = 500;
+/// Raised 500 -> 525 in E235, to make ONE rung above the qualified 50%
+/// measurable. Every open question in campaign 10 is a question about
+/// behaviour above 500 tenths and nothing had ever been measured there; the
+/// current law, the interval law, the droop law and the late-arm margin were
+/// all being extrapolated, and three of the four extrapolations were wrong.
+///
+/// Not a protection threshold: the comment above records that this cap's
+/// original justification is withdrawn. [`RAW_LIMIT`], [`FastBusSag`], the bus
+/// floor, the hysteresis and the storm cap are untouched. Safety at 525 was
+/// computed first -- ~2.0 A hold and ~2.4 A worst block against a 3 A clamp
+/// and a 4 A allowance, and +5 to +6 us of arm margin against the measured
+/// modal spend of 6 us (E234, 20 478 arms).
+pub const SIXSTEP_DUTY_CAP: u16 = 525;
 
 /// Rescue attempts the level revisit may make in one sector after its first
 /// attempt was refused (E140), each armed by another half-interval of overdue.
@@ -303,11 +315,17 @@ mod tests {
         assert_eq!(sector_interval_us(200), 833);
         assert_eq!(sector_interval_us(0), u32::MAX / 4);
         assert_eq!(sixstep_ccr_of(250, 1333), 333);
-        // Clamped at `SIXSTEP_DUTY_CAP`: 37.5% from E137, 50% from E147, which
-        // is campaign 7's ceiling and the supply's.
+        // Clamped at `SIXSTEP_DUTY_CAP`: 37.5% from E137, 50% from E147, and
+        // 52.5% from E235 -- one rung above the qualified 50%, so that the
+        // current, interval, droop and late-arm laws can be measured there
+        // instead of extrapolated.
+        //
+        // This assertion is why the cap raise could not be silent: it failed
+        // the moment the constant moved, which is the gate doing its job.
         assert_eq!(sixstep_ccr_of(375, 1333), 499);
         assert_eq!(sixstep_ccr_of(500, 1333), 666);
-        assert_eq!(sixstep_ccr_of(750, 1333), 666, "capped at 50%");
+        assert_eq!(sixstep_ccr_of(525, 1333), 699);
+        assert_eq!(sixstep_ccr_of(750, 1333), 699, "capped at 52.5%");
         assert_eq!(AdvancePolicy::level(349), 20);
         assert_eq!(AdvancePolicy::level(350), 22);
         assert_eq!(HANDOFF_DUTY_TENTHS, 70);
