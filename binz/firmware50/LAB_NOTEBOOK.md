@@ -18140,3 +18140,88 @@ And the worst-block stopping rule is re-derived: the worst/hold ratio is **not**
 the 1.19 E235 assumed — it runs 1.21–1.47 across rungs (1.468 at 450), so a
 2600 mA line would fire on a healthy ramp transient at ~6% per run. The rule
 becomes **`worst_ma` > 3000 mA**, and the ratio is reported rather than assumed.
+
+### E237 — disposition of both E235 reviews: the image passes, the predeclaration is rewritten, and the batch runs
+
+Two independent reviews. **Both confirm the firmware and both reject the
+predeclaration.** E236 already corrected the two findings that were errors in
+earlier entries; this entry disposes of the rest and fixes the read-out before
+the run, which is the only thing still standing between the bench and data.
+
+#### What both reviews confirm about the image
+
+* **Byte-reproducible** from `13ebcc1`: sha256 `6762fe38…` for both the rebuild
+  and `captures/elf/5665710E.e235-cap525.elf`; loadable 41 364 B, crc32
+  `FC893C68`; present in `MANIFEST-hashes.txt:1173`.
+* **Genuinely one constant.** `git diff 13ebcc1^..13ebcc1` over `src/` is
+  `SIXSTEP_DUTY_CAP 500→525`, a doc comment, and the host-test update. No
+  `Reason` added; `RAW_LIMIT`, the sag fraction/streak/latch, `BUS_FLOOR_MV`,
+  the storm cap, hysteresis, the ADC channels, `AdvancePolicy::level`,
+  `advance_of` and `wait_time` all untouched.
+* **525 survives all six clamps**, enumerated independently and matching E221 §6.
+* **No ISR root moved by a single instruction** — `isr_diff` parent vs candidate:
+  `ADC_COMP` 728, `TIM16` 332, `DMA1_CHANNEL1` 37, `TIM6_DAC_LPTIM1` 155, all
+  identical; `isr_cycles` longest paths identical on every root. The whole −80
+  bytes of `.text` is in thread mode (`Controller::run` −88). `.data`/`.bss` +0.
+* **The current arithmetic reproduces to <0.3%** and **the 20 478-arm spend
+  distribution reproduces exactly** — modal 6 µs, max 10, and 11 never occurring
+  — re-derived from the *emitter* (`chain.rs` at `2f15dfb`) rather than the
+  docstring.
+* Host gates all re-run and confirmed: 337+9, clippy clean, structure exit 0,
+  four roots certified.
+
+#### The predeclaration's defects, accepted
+
+| # | finding | disposition |
+|---|---|---|
+| **Prediction 1 is undecidable, not merely mis-banded** | the two candidate laws are **73 vs ~74** at a field with **1 µs granularity** and a **3 µs within-rung spread** (500 reads 77–80 across 26 captures). And `ci·duty` **rises monotonically** 35 000 at 250 → 38 500 at 500, so 1/duty has been failing *gradually* since 250, not holding to 500 | **Accepted, and it goes further than E236.** E236 re-banded it to 71–74 and called it confirmatory; the truth is it **cannot discriminate at all** at this resolution. Demoted to **report-only**, with the `ci·duty` trend reported rather than a law asserted. My "the law holds tightly" was true only for the top four rungs. |
+| **Prediction 2's baseline was wrong and the band is ≈±1σ** | recomputed at 500, n=26, reason=2: **mean 1780 mA, sd 68.2 mA, cv 3.83%** — not the "sd 27.6 mA / 4.9%" I quoted, which is internally inconsistent anyway. A ±75 mA band is ~1σ, so all three runs land inside only **~28%** of the time | **Accepted. Fourth time** I have predeclared a band narrower than the quantity's own noise (E152, E220, E224, now this). Reset to **±2σ: 1860–2150 mA**, and the decision moves to the stop rule rather than the band. |
+| **Predictions 3, 4 and `applied_cap` have no baseline at all** — 0 of 88 captures | E232 finding 15 said this and I accepted it, then the section heading "each against a measured spread" reintroduced it | **Accepted.** All three are **report-only first measurements** and are labelled as such. |
+| **`reason=2` and `late_arms=0` across three runs are ~65% likely from baseline alone** (30 captures at 500: 26× reason 2, 3× FastBusSag, 1× LateArm; `late_arms` non-zero in 4/30) | so a failure carries almost no information about the cap | **Accepted.** Recast as a **retention** criterion: every run is kept and reported whatever its reason, and a single sag or late-arm stop is **not** read as a 525 finding. |
+| **`--rung-duty` is inert under `--no-ladder`** — the duty check lives only in `ladder_record`, never called on that path, and its literal list ends at 500 anyway. The runner mode E234 promised was never built | both reviews, independently | **Accepted.** The by-hand read-out list is predeclared below. This is the E148/E185 failure class and it has now been recorded three times, so it gets a written checklist rather than a good intention. |
+| **`wait_time(60,22) = 10`, not 9** | my arithmetic slip, in the safe direction | **Accepted, corrected.** |
+| **The spend distribution's scope** | all 24 chain captures are the `chain-capture` **diagnostic** image ("Both handlers are slower; never a production image") at **250–475 tenths — none at 500 or above** | **Accepted and stated.** Conservative in direction (a slower image spends more), but it is being applied to a different image at a rung above any measured point. The honest scope is "modal 6 µs on a slower diagnostic image below 500"; a production chain capture at 500+ is owed. |
+| **The worst-block tail exceeds my own stop rule** | ratio to 1.314 and max 2365 mA at 500 → **2626–2720 at 525**, above E235's 2600 line | **Already fixed in E236** (moved to 3000 mA, ratio reported not assumed). Confirmed by both reviews independently. |
+| **I quoted `policy.rs:89-97` one-sidedly** | the same paragraph says the cap "kept the firmware from commanding past a 1 A supply **by construction** … That is a real gap", so raising it **widens a gap the source itself names** | **Accepted.** The "not a protection threshold" claim survives on its own terms — the cap is not one of the enumerated thresholds — but quoting half a paragraph as licence was not honest framing, and the widened gap is why the 2600→3000 stop and the `filt_bus`/`bus_min` predictions exist. |
+| **`INJECT_SAG_DUTY_TENTHS = 500` is now *below* the cap** | so a sag provocation at 525 steps duty **down** — worse than the no-op it was at 500 | **Accepted.** No provocation is predeclared at 525, and gate-4 sag must be run at 25% and inherited. Named so it is not discovered later. |
+| **`bin/board.rs:874` still banners `envelope_max=300`** against a 525 cap | E221 §6 item 5, unaddressed | **Accepted, not fixed here** — it is a dead path (`Envelope::admit` has no non-test caller) and fixing a banner in the image about to run would invalidate the byte-identity both reviews just certified. Owed. |
+| **`firmware50/.cargo/config.toml`'s comment is false** | the crate links only by inheriting `-Tlink.x` from `binz/.cargo/config.toml`; without it the link produces an ELF with no allocated sections | **Accepted** — independently reproduced by both review rounds (E227 finding 12). Owed as a comment fix. |
+
+#### The final read-out, predeclared, because the fixture will not do it
+
+`--no-ladder` judges nothing, so these are read by hand from every capture and
+recorded in the result entry. **A run whose `CLIMBAT`/`target_duty_tenths` is
+not 525 is void, not a data point.**
+
+1. `CLIMBAT` and `target_duty_tenths` = **525** — the duty actually driven.
+2. `applied_ccr` = **699** (`1333·525/1000`), `applied_cap` = 525.
+3. `reason`, `hold_ms`, `ceiling_tenths`, `forced_pct` — retention, not pass/fail.
+4. `filt_bus/ref_bus` ≥ **975** per mille — the CV/CC discriminator, the only
+   direct evidence of what the goal forbids.
+5. `bus_min` ≥ **880** codes; a `Reason::Bus` trip with droop ≥975 is a
+   **nuisance trip, not a result**.
+6. `hold_ma` (band 1860–2150), `worst_ma` (**stop above 3000**), the worst/hold
+   ratio, `zero_drift_ma`.
+7. `mean_ci_us`, `ci_min_us`, `thin_count`, `late_arms`, `spent_max_us` —
+   report-only; **`thin_count` < 1000** of ~500 000 acceptances is the only
+   predeclared band among them.
+8. All eight `dep*` — expected **0**, vacuous by construction (shallowest bin
+   970 against a healthy 979–990).
+
+#### Cohort, final
+
+One run at 500 on this image (a **regression sample, not a 3/3 rung** — one run
+at a ~13% baseline failure rate excludes nothing, and both reviews said so),
+then three at 525. `--pre '+++++'` — five `+` presses, which nothing verifies,
+hence item 1. Exploration, not qualification. No rung above 525.
+
+#### Stopping rules, final
+
+* `worst_ma` > 3000 mA, or `hold_ma` > 2300 mA, ends the batch.
+* `filt_bus/ref_bus` < 970 on any run ends the batch — that is the CC branch.
+* Any stop is **retained and reported**; none is retried.
+* Nothing here qualifies anything.
+
+**Running now.** The image has been certified twice, the read-out is written
+down, and the remaining uncertainty is what the bench does at 525 — which is
+the only thing left that analysis cannot supply.
