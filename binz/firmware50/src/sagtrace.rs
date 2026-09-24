@@ -40,7 +40,7 @@
 //!
 //! * [`FAST_LEN`] judgements at full rate — ~52 ms — for the shape of the dip
 //!   that trips the guard;
-//! * [`SLOW_LEN`] judgements decimated by [`SLOW_EVERY`] — ~3.3 s, i.e. eight
+//! * [`SLOW_LEN`] judgements decimated by [`SLOW_EVERY`] — ~3.3 s, i.e. sixteen
 //!   filter time constants — for **how the reference got where it was**, which
 //!   is what explaining a latch requires and what the fast ring alone cannot
 //!   show.

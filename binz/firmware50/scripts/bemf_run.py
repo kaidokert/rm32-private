@@ -424,8 +424,18 @@ def main() -> int:
 
     admitted, why = (True, "") if args.step_check else ladder_admit(args.command, sha, args.rung_duty)
     if not admitted:
-        print(f"LADDER REFUSED: command {args.command} needs the "
-              f"{LADDER_PREREQ[args.command] / 10:.0f}% rung passed on this ELF: {why}")
+        # `l`/`L` take their prerequisite from `--rung-duty`, not from
+        # `LADDER_PREREQ`, so the old message raised `KeyError: 'L'` -- the
+        # refusal path itself crashed, and it is the path a new image always
+        # takes (E188 SS5).
+        if args.command in ("l", "L"):
+            need = 375 if args.rung_duty == 400 else args.rung_duty - 25
+        else:
+            need = LADDER_PREREQ.get(args.command)
+        where = f"the {need / 10:.1f}% rung" if need else "its prerequisite"
+        print(f"LADDER REFUSED: command {args.command} needs {where} passed on this ELF: {why}")
+        print("  An exploratory cohort that is not claiming a rung passes --step-check,")
+        print("  which judges the run but records it against no rung.")
         return 2
     failed_runs = 0
 

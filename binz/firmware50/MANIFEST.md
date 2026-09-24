@@ -46,7 +46,7 @@ cargo build --release                             # all three binaries
 cargo build --release --features com-top          # the diagnostic A/B variant
 ```
 
-Three binaries, from one library:
+Four binaries, from one library:
 
 | binary | what it is | production? |
 |---|---|---|

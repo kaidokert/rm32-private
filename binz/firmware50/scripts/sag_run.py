@@ -89,15 +89,28 @@ def main() -> int:
     # say so (the independent review of E161 caught the pooling). This makes
     # that impossible to repeat.
     sha = bemf_run.elf_sha256()
-    keep = REPO / "captures" / "elf" / f"{sha[:8]}.{args.label}.elf"
+    # Archived under the CRC32 the gate files, the notebook and the
+    # predeclaration all use; the SHA-256 prefix this used to use named the same
+    # image something else (E188 SS5).
+    crc = bemf_run.elf_crc32()
+    keep = REPO / "captures" / "elf" / f"{crc}.{args.label}.elf"
     keep.parent.mkdir(parents=True, exist_ok=True)
     if not keep.exists():
         keep.write_bytes(ELF.read_bytes())
-    print(f"image {sha[:8]} archived as {keep.name}")
+    print(f"image crc32={crc} sha256={sha[:8]} archived as {keep.name}")
     out_dir = REPO / "captures" / "sag"
     out_dir.mkdir(parents=True, exist_ok=True)
     warm = out_dir / f"{args.label}-warmup.txt"
     out = out_dir / f"{args.label}.txt"
+    # **A colliding label is refused here too** (E188 SS5). `bemf_run.py` gained
+    # this after a re-run destroyed nine good captures; this runner writes most
+    # of the cohort's runs and had no such check, which left the same hole open.
+    clash = [p for p in (out, warm) if p.exists()]
+    if clash:
+        print("REFUSED: these captures already exist; choose another --label:")
+        for c in clash:
+            print(f"  {c}")
+        return 2
     with serial.Serial(args.port, 115200, timeout=0.2) as port:
         try:
             if not args.no_warmup:
