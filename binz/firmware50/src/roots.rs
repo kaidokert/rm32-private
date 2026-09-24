@@ -495,17 +495,12 @@ fn accept(raw: u16, fine0: u16, wait: u32, avg: u32, blank: u32) -> Option<(u16,
     S.det().accept_blank.store(blank, Ordering::Relaxed);
     S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
     if S.com().active.load(Ordering::Relaxed) {
-        // **One deadline, from this crossing's own stamp** (campaign 10 step
-        // 2). `spent` is still measured, because it is the arm-path cost the
-        // margin is judged against and `spent_max_us` reports it -- but the
-        // timer is no longer programmed from a second clock read, so the time
-        // between this line and the timer write no longer moves the deadline.
         let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
-        let deadline = (raw as u32).wrapping_add(wait) & 0xFFFF;
-        let late = com_arm_at(deadline, 1);
+        let left = wait.saturating_sub(spent);
+        com_arm(left.max(1), 1);
         let fine_now = hw::fine::raw() as u16;
-        beat = Some((raw, fine0, fine_now, wait, fine_now.wrapping_sub(fine0), late));
-        if late {
+        beat = Some((raw, fine0, fine_now, wait, fine_now.wrapping_sub(fine0), left == 0));
+        if left == 0 {
             S.det().late_arms.store(
                 S.det().late_arms.load(Ordering::Relaxed).wrapping_add(1),
                 Ordering::Relaxed,
@@ -894,73 +889,14 @@ pub fn tim16_init(rcc: &mut Rcc) {
 /// line masked or inside a critical section).
 #[inline(always)]
 pub fn com_arm(us: u32, phase: u32) {
-    // A duration, converted to a deadline against the clock as of *now*. Kept
-    // for the foreground's handover, whose commit instant is already a
-    // deadline it computes itself; COMP's acceptance calls `com_arm_at`.
-    let now = hw::clock::raw() as u32;
-    com_arm_at(now.wrapping_add(us) & 0xFFFF, phase);
-}
-
-/// **Arm the one-shot for an absolute instant on the µs clock** (campaign 10
-/// step 2), returning `true` if the deadline was already spent.
-///
-/// The one-shot used to be armed with a *duration*, and the duration was
-/// computed from one clock read while the reload was computed from another:
-/// `accept` measured `spent` since the crossing and passed `wait - spent`, then
-/// this function read the clock again and programmed `now + us`. Everything
-/// between the two reads -- the subtraction, the call, the critical-section
-/// entry, the two flag loads and the disarm -- was therefore lost **twice**:
-/// once by not being counted in `spent`, and again because the deadline moved
-/// later by exactly that amount. At the 50% rung the whole scheduled wait is
-/// 12 µs against an arm path measured at 11 µs (E195), so a few microseconds
-/// of that shape is the difference between a commutation that lands and one
-/// that is late.
-///
-/// Now the deadline is computed **once**, from the accepted crossing's own
-/// stamp, and the reload is `deadline - now` against a clock read taken inside
-/// the critical section. The programmed instant *is* the deadline rather than a
-/// moving target.
-///
-/// What this does **not** change, deliberately: the advance, `wait_time`, the
-/// estimator, any protection, and the missed-deadline detection. A deadline
-/// already past -- or so close that the minimum reload overshoots it -- arms at
-/// the minimum and reports `true`, which is what increments `late_arms` and
-/// what `Reason::LateArm` stops on. This repairs how much of the wait survives
-/// to the timer; it does not paper over a wait that was never long enough.
-///
-/// What it also cannot change: `com_root` measures 9-12 µs between the
-/// programmed instant and its own entry, and COMP/COM are NVIC peers, so a COM
-/// firing while COMP is mid-handler waits for it. That lateness is contention,
-/// not timer imprecision, and it is accounted for rather than removed.
-#[inline(always)]
-pub fn com_arm_at(deadline: u32, phase: u32) -> bool {
-    // The wrap window: a 16-bit µs clock, so a deadline more than half a
-    // modulus ahead is read as already past. The estimator's intervals are
-    // 50-250 µs and the longest legitimate wait is a blanking floor, all far
-    // inside 32 ms.
-    let mut spent = false;
-    let arr = {
-        let now = hw::clock::raw() as u32;
-        let left = deadline.wrapping_sub(now) & 0xFFFF;
-        if left == 0 || left >= 0x8000 {
-            spent = true;
-            1
-        } else if left > 0xFFFF {
-            0xFFFE
-        } else if left < 2 {
-            1
-        } else {
-            left - 1
-        }
+    // Pure arithmetic, deliberately outside the critical section below.
+    let arr = if us < 2 {
+        1
+    } else if us > 0xFFFF {
+        0xFFFE
+    } else {
+        us - 1
     };
-    com_arm_arr(arr, deadline & 0xFFFF, phase);
-    spent
-}
-
-/// The write itself: one critical section, `sched_raw` stamped with the
-/// deadline the caller asked for rather than with a re-derived instant.
-#[inline(always)]
-fn com_arm_arr(arr: u32, sched: u32, phase: u32) {
     // **The decision and every write are one critical section** -- the arm is
     // atomic with respect to every root that could interleave with it
     // (`oneshot::FIRMWARE_ARM_IS_ATOMIC`, host-tested). Three findings, one
@@ -999,11 +935,10 @@ fn com_arm_arr(arr: u32, sched: u32, phase: u32) {
             return;
         }
         hw::com_timer::disable_interrupt();
-        // **The deadline the caller computed, not a re-derived one.** This is
-        // the whole point of campaign 10 step 2: `sched_raw` is what
-        // `com_root` measures its lateness against, so stamping a fresh
-        // `now + us` here moved the target every time the arm was slow.
-        S.com().sched_raw.store(sched, Ordering::Relaxed);
+        let now_raw = hw::clock::raw() as u32;
+        S.com()
+            .sched_raw
+            .store(now_raw.wrapping_add(us) & 0xFFFF, Ordering::Relaxed);
         S.com().phase.store(phase, Ordering::Relaxed);
         hw::com_timer::arm(arr as u16);
     });

@@ -517,14 +517,7 @@ mod tests {
     #[test]
     fn the_constant_is_read_off_com_arm_itself() {
         let src = include_str!("roots.rs");
-        // **The function that writes the timer**, which is what the property is
-        // about. Campaign 10 split the arm into a deadline computation
-        // (`com_arm_at`) and the write (`com_arm_arr`); this test caught that
-        // split by failing, which is the behaviour it was added for, and it
-        // follows the writes rather than the name.
-        let start = src
-            .find("fn com_arm_arr(")
-            .expect("the arming write must exist in roots.rs");
+        let start = src.find("pub fn com_arm(").expect("com_arm must exist in roots.rs");
         // The body ends at the next item at column zero.
         let rest = &src[start..];
         let end = rest[1..]
@@ -553,7 +546,7 @@ pub ",
     #[test]
     fn the_firmware_writes_the_tested_order() {
         let src = include_str!("roots.rs");
-        let start = src.find("fn com_arm_arr(").unwrap();
+        let start = src.find("pub fn com_arm(").unwrap();
         let rest = &src[start..];
         let end = rest[1..]
             .find(
@@ -565,13 +558,6 @@ pub ",
         // The four steps, as the straight-line code writes them: disarm, stamp
         // the schedule, store the purpose, enable.
         let marks = ["disable_interrupt()", "sched_raw", ".phase.store(", "com_timer::arm("];
-        // and the deadline must reach the stamp unmodified: `sched_raw` is what
-        // `com_root` measures lateness against, so a re-derived instant there
-        // is the defect campaign 10 step 2 removed.
-        assert!(
-            body.contains(".sched_raw.store(sched,"),
-            "the stamp must be the caller's deadline, not a re-derived instant"
-        );
         let mut at = 0usize;
         for (i, m) in marks.iter().enumerate() {
             let found = body[at..]
