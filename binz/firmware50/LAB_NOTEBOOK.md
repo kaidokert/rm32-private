@@ -17618,3 +17618,139 @@ over a corpus full of them: the ring rows are **positional**, not `key=value`
 Python string became an **actual backspace character**, so every regex matched
 nothing. The second is the heredoc-mangling scar from earlier in this campaign,
 repeated. Patch scripts get written with an editor, not piped through a shell.
+
+### E231 — predeclaration: the advance A/B at 50%. Goal step 2, the one lever that unblocks 60%.
+
+Written before any edit. This is the campaign's step 2 and it has been deferred
+behind the `spent` question (E213–E217) and the protection work (E218–E230). Both
+review pairs since E210 have named the advance level as the actual blocker, and
+E217 §1 verified the arithmetic against source. It is time to test it.
+
+#### Why the advance, and why level 20 is not the answer
+
+`wait_time(ci, l) = (ci>>1) − advance_of(ci, l)` = `ci·(32−l)/64`. So the wait is
+a **fraction of the interval**, and `spent` — pinned at 11 µs on this image
+across 85/85 records (E217 §3) — is a fixed subtrahend. Recomputed from source:
+
+| ci | l = 22 (today ≥35%) | l = 20 | **l = 16 (`DefaultAdvance`)** |
+|---|---|---|---|
+| 64 (60% projected) | **10** → late | 12 → +1 µs | **16 → +5 µs** |
+| 68 | 11 → late | 13 → +2 µs | 17 → +6 µs |
+| 77 (50% measured) | 12 → +1 µs | 14 → +3 µs | 19 → +8 µs |
+
+**E179's own rule is ≥3 µs of margin.** At the projected 60% interval, level 20
+gives +1 µs — it fails that rule at the rung it is supposed to enable, which is
+E211's "buys exactly one rung" stated in margin terms. **Only level 16 clears
+the rule at 60%, and 16 is `DefaultAdvance = FixedAdvance<16>`
+(`src/commutation.rs:246`) — the reference's own value.** So the change that
+unblocks 60% is not a divergence to be justified; it is a *return*, and today's
+22 is the divergence (E217 §1, which inverted how E211 had it).
+
+#### The hypothesis, and what makes it non-obvious
+
+Less advance means less torque at a given duty, so the rotor runs slower, so
+`ci` grows — which *increases* the wait, a favourable feedback. But it also
+means more current for the same mechanical output, and the goal is explicit:
+**"Judge advance by effective timing, speed and current — not arithmetic margin
+alone."** So the arithmetic above is the reason to run the test, not the result.
+
+Three things could make 16 the wrong choice and they are what the A/B is for:
+
+1. **Current.** If 16 costs enough torque that `hold_ma` rises materially, 60%
+   moves closer to the supply clamp and into the CC regime the goal says cannot
+   count. This is the failure mode that would matter most.
+2. **Speed.** Historical oracle comparisons assume advance 22 at ≥35%. A speed
+   change at 50% does not invalidate the *rung* (the goal's gate is a duty hold)
+   but it does invalidate the oracle comparison as a pass criterion, and that
+   has to be said rather than discovered.
+3. **Effective timing.** `spent` is unchanged by advance, so the margin
+   arithmetic is safe — but the *delivered* commutation instant at small `left`
+   is bounded by COMP's post-arm tail, not by the timer (E222 SS12, accepted in
+   E223). At level 22 today, 50% runs at `left = 1` and is tail-bound on every
+   acceptance. At 16 the timer would govern again, which is a **change in
+   mechanism**, not just in a number, and the effective angle may not move the
+   way the schedule says.
+
+#### The cohort, predeclared
+
+**Three levels × three runs, alternated, in one session, at 50% only.**
+A = 22 (today), B = 20, C = 16. Order **A B C A B C A B C**, fixture-flashed
+each time with the ELF hash recorded per capture, `--no-ladder` (this is an A/B,
+not a rung attempt, and it must not touch `14CE44E7`'s ladder state).
+
+Three a side is the campaign's own floor for a microsecond-scale A/B
+([[feedback-microsecond-ab-needs-three-runs-a-side]]), and alternation is
+required because `hold_ma` at a fixed rung drifts run-to-run.
+
+50% only, deliberately: it is the rung with a measured baseline, it is the rung
+where today's margin is +1 µs, and E228 SS9 is right that a 15-rung climb would
+make any single failure uninterpretable.
+
+**Quantities, all already reported** — no new field, no new instrument:
+
+* effective timing: `late_arms`, `spent_max_us`, `com_late_max_us`, `thin_count`, `ci_min_us`
+* speed: `coast_ehz`, `loop_ehz`, `ehz_from_ci_last`, `zc_rate_permille_of_expected`
+* current: `hold_ma`, `mean_ma`, `worst_ma`, `zero_drift_ma`
+* droop, for E230's line: `filt_bus`/`ref_bus`, and `bus_min`
+
+#### Predictions, falsifiable, before the build
+
+Each is stated against the **baseline's own run-to-run spread**, which is the
+thing I got wrong three times (E152, E220, E224) — a gate narrower than the
+noise is not a strict test.
+
+1. **`ci` rises monotonically as advance falls**: 22 → 20 → 16 gives larger mean
+   `ci_us` at each step. Baseline `ci` at 50% is 77 µs with a spread of ±2. I
+   predict **+2 to +8 µs at level 16**, i.e. outside that spread. If `ci` does
+   *not* rise, the torque/speed model is wrong and every margin projection built
+   on `wait_time(ci, l)` needs rechecking.
+2. **`late_arms` stays 0 in all nine runs.** At 50% even level 22 has +1 µs, and
+   1 late arm in 17 runs historically. Nine runs is too few to test a 6%-rate
+   event, and I am **not** claiming this A/B tests the late-arm rate — it cannot.
+   Stated so the result is not over-read.
+3. **`hold_ma` rises at level 16 by less than 10%.** Baseline at 50% is
+   1757–1846 on this image, and the run-to-run spread is ~5%. A rise beyond 10%
+   would put 60% within reach of the 3 A clamp and would make 16 the wrong
+   choice on the goal's own "cannot count under CC" criterion — so this is the
+   prediction most likely to change the decision.
+4. **`coast_ehz` falls at level 16 by 2–8%**, i.e. beyond the instrument's 3.8‰
+   scatter. If speed does *not* fall, either the advance is not doing what the
+   schedule says or the rotor is not torque-limited at 50%.
+5. **`spent_max_us` is unchanged at 11** in all nine runs. Advance changes the
+   wait, not the arm cost. If `spent` moves, the change is perturbing something
+   it should not and the A/B is confounded.
+
+#### What this candidate does NOT contain
+
+* **No cap change.** 60% stays uncommandable in this image. This A/B is at 50%
+  and its purpose is to choose a constant, not to reach a rung.
+* **No new stop.** E230's derived droop line (970, ~50 ms) is *not* implemented
+  here. Both reviews of E218 were explicit that a cap raise and new stops must
+  not ride in the image that first exercises them, and the same logic forbids
+  bundling a control change with a protection change.
+* **No fixture change.** The host work for rungs above 500 is separate and is
+  noted below.
+
+#### Stopping rules
+
+* If prediction 3 fails — `hold_ma` up more than 10% at level 16 — **level 16 is
+  rejected** and the honest conclusion is that 60% is not reachable by an advance
+  change either, which is then a measured blocker rather than an inferred one.
+* If prediction 1 fails, the A/B is void and the margin model is the thing to
+  fix, not the constant.
+* No rung above 50% from this candidate, and no qualification claim: this is an
+  **exploration** in the goal's own separation of exploration from qualification.
+* The chosen level then goes into a fresh image with its own predeclaration, its
+  own review pair, and a full re-earned ladder — because the ladder is keyed on
+  the ELF and an advance change is a control change.
+
+#### Known coupling, stated now rather than discovered later
+
+Changing the advance **invalidates the historical oracle speed comparison at
+every rung**, because `ORACLE` (`scripts/bemf_run.py:93-99`) was measured at the
+advance schedule in force then. The goal already says *"higher-rung references
+must be independently established"*; this makes that true of the lower rungs too
+for any image that changes advance. The replacement reference is the run's own
+coast (`coast_ehz` vs `loop_ehz`, the E143 rate identity), which is
+within-run and independent of any table. That substitution is host work and
+belongs with the fixture extension, not here.
