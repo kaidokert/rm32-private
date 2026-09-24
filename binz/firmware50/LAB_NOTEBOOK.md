@@ -18583,3 +18583,107 @@ follow; only if 575 is clean does 600.
 * `filt_bus/ref_bus` < 970 → the CC branch; batch ends.
 * Any `reason != 2` is retained and reported; the rung is not retried.
 * **No rung above the last clean one.** 600 is attempted only after 575 passes.
+
+### E242 — two verified corrections: `worst_ma` is a ramp quantity, and the goal's restart criterion is not commandable
+
+The adversarial review of E241 landed two BLOCKING findings. Both verified here
+before any disposition, because one of them is a **wrong claim I left standing
+in E240** and the other withdraws E241's central prediction. The full
+point-by-point disposition of both reviews follows when the evidence review
+lands.
+
+#### Correction 1 — `worst_ma` is ramp-dominated, and E194 already withdrew this exact claim
+
+E241's central prediction was that the worst 10.1 ms block reaches
+`RAW_LIMIT`'s 4000 mA at 600, so the firmware's own `AverageCurrent` is the 60%
+blocker. It was built on the worst/hold ratio, projected from two rungs as
+flat-to-growing. Recomputed over every `reason=2`, `hold_ms > 20 s` capture:
+
+| duty | 150 | 200 | 250 | 288 | 300 | **325** | 375 | 425 | 475 | 500 | 525 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `hold_ma` | 34 | 246 | 400 | 538 | 572 | 684 | 857 | 1269 | 1618 | 1793 | 2030 |
+| `worst_ma` | **900** | 984 | 984 | 964 | 991 | **1685** | 1632 | 1715 | 1961 | 2145 | 2688 |
+| ratio | **26.47** | 4.01 | 2.46 | 1.79 | 1.73 | 2.46 | 1.90 | 1.35 | 1.21 | **1.20** | 1.32 |
+
+**At duty 150 the hold averages 34 mA and the worst block reads 900 mA.** A
+900 mA block cannot exist inside a 34 mA hold — so at the low rungs the worst
+block is **provably pre-hold**, and `worst_ma` is two plateaus: ~900–990 across
+150→300 while the hold rises 17×, then ~1610–1715 across 325→425. The step at
+325 is a change of startup profile, not of duty.
+
+**The ratio trend is downward — 26.47 to 1.20 monotonically — and I projected it
+upward.** My 1.29–1.55 band came from two rungs where the 1.549 is *one run of
+three* (`e239-x525_01`, 3174 mA against 2609 and 2688), i.e. a 22% run-to-run
+spread on a quantity whose `hold_ma` spread is 1.5%. That is a rare event, not
+a stationary hold tail.
+
+And the source says so in the file I was reasoning from. `src/run/mod.rs:216-218`:
+*"`worst_*` is the worst block of the whole run, ramp included, and **not** of
+the hold — a `CurrentMark`-windowed worst is still owed (E194)."* E194 withdrew
+the earlier worst-block claims for exactly this reason and wrote *"it goes in
+before the next current claim."* **E241 is the next current claim, and I made it
+without taking the measurement E194 said had to come first.**
+
+**So E241's `RAW_LIMIT` prediction is withdrawn**, and the
+`WORST_MA_CEILING = 3800` gate is built on the wrong quantity. Under the
+downward ratio trend the worst block at 600 converges toward 1.2 × hold, about
+3300 mA, under both 3800 and 4000. The gate is also **redundant**: a foldback
+sets `ceiling_tenths < duty`, and `cohort.run_gates` already fails that
+directly and observably — the 3800 proxy adds no coverage and adds a
+false-failure mode the direct gate does not have.
+
+#### Correction 2 — the goal's restart criterion is not reachable, and E240 said otherwise
+
+The goal requires **3/3 restart at 50% and 60%**. Verified against source:
+
+* the `R` key calls `restart_campaign(io, 250)` — **hardwired to 25%**
+  (`run/mod.rs:572`).
+* the `x` key cycles `provoke_tenths` **250 → 375 → 475 → 250**
+  (`run/mod.rs:577-581`).
+* the `Z` key calls `restart_campaign(io, provoke_tenths)`
+  (`run/mod.rs:588-589`), so its ceiling is **475**. `bemf_run.py:211` agrees:
+  `"Z": 475`.
+
+**There is no command that runs a restart at 500 or at 600.** So E240's closing
+claim — *"the goal's success criteria now have no structural blocker"* — is
+**false, and is withdrawn.** It was true of the rung ladder and I generalised it
+to the whole criterion without checking the restart path. The qualified 50%
+image's own record says restart was demonstrated at **47.5%**, not 50%, which
+should have told me.
+
+This is a firmware change. Therefore **the E241 image cannot be the final ELF**,
+therefore the ~57-run ladder must not start on it — which is precisely the waste
+E240 itself warned about, arrived at from the other direction.
+
+#### What follows immediately
+
+**575 and 600 are not run.** Beyond the two corrections above, the review
+establishes that a 600 capture could not be *judged* against the goal's own CC
+exclusion even if the motor survived it: the droop discriminator falls
+−8.1 per mille per amp as ordinary IR drop, so the fit projects **976.2 at
+600** — one per mille above my own 975 threshold, with two healthy 500 runs
+already reading below it. A clean 600 run would have a coin-flip chance of
+reading "CC". That instrument needs to judge the **residual against the IR
+line**, not an absolute per mille.
+
+The items now known to be required before any qualification claim, **all of
+them firmware or host changes and therefore a new ELF**:
+
+1. restart reachable at 500 and 600;
+2. **hold-windowed `worst_ma`** — E194's owed item; the mechanism
+   (`CurrentMark`, `window_milliamps`, `window_blocks`) already exists and only
+   a windowed *worst* is missing;
+3. the sag provocation reachable above 500 **in the right direction** — at
+   550–600 `INJECT_SAG_DUTY_TENTHS = 500` is a step *down*, and it does not
+   update `applied_duty`, so such a capture would claim 550 while the bridge
+   ran 500;
+4. droop fractions in **975–995** — all four current bins sit *below* the
+   measured healthy 983;
+5. the CV/CC discriminator as an IR-line residual (host);
+6. the `envelope_max=300` banner, still owed from E221.
+
+And one thing I will not defend: the review is right that my supply ranking was
+inverted too. The local 500 to 525 exponent is **2.54**, the newest and highest,
+which de-biased projects **2762 mA at 600 — 92% of the 3 A clamp.** So the
+supply is the *nearer* candidate, not the allowance, and I swapped them on the
+strength of a ramp artefact.
