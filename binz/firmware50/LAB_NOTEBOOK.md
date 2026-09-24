@@ -13270,3 +13270,248 @@ tolerances and it is right to.
 * every rung's three runs must additionally pass the new `ceiling_tenths`
   gate — which all thirteen of today's ≥45% runs would have passed, so it
   changes no expectation, only what a future throttled run can claim.
+
+### E195 — the ladder to 47.5%, and the blocker at 50%: the wait no longer covers the arm
+
+#### The climb
+
+On production image **`14CE44E7`**, earned from scratch with the ordinary
+recorded fixture path (no `--no-ladder`), three runs per rung, each rung
+admitted only because the one below it had passed on this same image:
+
+**15, 20, 25, 27.5, 28.8, 30, 32.5, 33.8, 35, 37.5, 40, 42.5, 45 and 47.5% —
+all PASS 3/3.** The 45% rung passed despite the oracle disagreement E194
+pre-declared (the row says 1893 eHz and this bench runs ~4% faster); it landed
+inside the ±5% gate without the band being touched.
+
+Two fixture traps cost a rung each and both were mine:
+
+* the first 42.5% attempt drove **40%** three times, because `L` runs whatever
+  duty the shell holds and my driver passed only `--rung-duty`. The fixture's
+  own duty check refused all three rather than crediting them — E148's guard
+  doing exactly its job. The driver now sets the climb duty **absolutely**
+  ('-' clamps at 375, then step up), so it cannot inherit a stale state;
+* the retry then failed to launch at all: `--pre` was passed as a separate
+  argument and its value starts with `-`, so argparse read it as an option.
+  `--pre=…` as one token.
+
+#### The 50% rung: 2 of 3, and the third is the answer
+
+`e195-rung-500_03.txt`, **`reason=15` — `LateArm`**, after 5 962 ms of hold:
+`late_arms=1`, `spent_max_us=11`, and the interval at the stop
+**`ci_us=56`** against `ehz_from_ci_last=2976`.
+
+That is the first genuine failure in **14** runs at 50% today, and it is **not
+a sag trip**. `ceiling_tenths=500`, `hold_ma=1789`, `worst_ma=2116`,
+`storm=0`, `blank_latched=0`, `bus_min=1129` — nothing about the rail or the
+current is unusual. What is unusual is the interval.
+
+**Every completing 50% run on this bench ends at `ci_us` 75–79 µs. The failing
+one ended at 56.** Across all 21 captures at the rung (14 runs plus warm-ups),
+that is the only value below 75.
+
+#### The arithmetic, which is exact and is the blocker
+
+The firmware schedules each commutation `wait_time(ci, level)` after the
+crossing, where `wait_time(ci, l) = (ci >> 1) − advance_of(ci, l)`
+(`src/commutation.rs`). The arm path costs `spent_max_us = 11 µs` in every one
+of these runs. So the wait covers the arm only above a threshold in `ci`:
+
+| advance level | shortest `ci` whose wait ≥ 11 µs | `wait(75)` | margin at the 50% hold |
+|---|---|---|---|
+| 18 | 46 µs | 16 | +5 µs |
+| 20 | 54 µs | 14 | **+3 µs** |
+| **22 (the run's level)** | **66 µs** | **12** | **+1 µs** |
+| 24 | 82 µs | 9 | −2 µs |
+| 26 | 108 µs | 7 | −4 µs |
+
+**At 50% the loop runs at `ci` 75–79 µs and the advance profile asks for level
+22, which leaves one microsecond between the scheduled wait and the measured
+arm path.** At `ci = 56 µs` the wait is 9 µs against an 11 µs arm — late by
+construction, which is exactly what the run reported.
+
+Three things make this the campaign's answer rather than another observation:
+
+1. **It is a cliff, not a gradient.** The wait falls with `ci` while the arm
+   cost does not, so the margin goes from +1 µs to negative on a ~12% interval
+   excursion. A single short interval — noise, a revisit rescue, a real speed
+   excursion — takes it under, and `LateArm` latches the run. That is a
+   one-event failure mode, which is why 13 runs can complete and the 14th
+   cannot.
+2. **The campaign's own rule is already violated.** E179 refused advance 24–26
+   above 45% because "at R_COMP 10–11 µs the ≥3 µs margin rule permits ≤22".
+   At 50% level 22 leaves **+1 µs**, not ≥3. By the rule this campaign wrote
+   for itself, **level 22 is not permitted at 50%** — the permitted level there
+   is **20** (wait 14, margin +3). The profile hands out 22 anyway.
+3. **`spent_max_us` understates the arm path**, which makes the real margin
+   worse than +1 µs. It is stamped before `com_arm` and omits the dispatch, the
+   masking and the timer writes; `com_late_max_us` reads 9–12 µs in these same
+   runs and sits *outside* it. So the honest reading of the margin at 50%,
+   level 22 is **"≤1 µs, on a counter known to be optimistic"**.
+
+#### Prediction, before any further run
+
+1. **Driving the 50% rung again will mostly pass.** One more predeclared cohort
+   of **exactly three** runs; the rate over all 50% runs on this image is
+   reported whatever happens. **If any of the three fails, the rung is not
+   passed and this blocker stands** — I will not keep drawing cohorts until
+   three line up, which is what "no retry-until-pass" forbids.
+2. **The late-arm rate at 50% is of order 1 in 10–20 runs**, from 1 of 14. At
+   47.5% (`ci` 80–84 µs, wait 13–14, margin +2/+3) it should be lower, and
+   E179's historical count — `late_arms` non-zero in 4 of 588 captures,
+   including a *qualifying* 45% run — is consistent with a margin that shrinks
+   with duty rather than with a defect that appears at 50%.
+3. **The supported fix is the advance level, and it is not a protection.**
+   Level 20 at the top rung restores the campaign's own ≥3 µs margin
+   (wait 14 µs at `ci` 75, cliff at 54 µs instead of 66). It costs advance, so
+   it may cost speed against the oracle row — which is a measurement, not a
+   guess, and the ±5% gate has ~4.8% of room at 50% today. **Nothing about the
+   protections, the hysteresis, the 64/ms cap or the sag fraction/streak/latch
+   is involved.**
+4. What that fix costs is honest to state: it changes the image, so the ladder
+   is earned again from 15%. That is the fixture's rule and the reason to
+   predeclare it rather than discover it.
+
+#### And what this displaces
+
+E191's leading explanation for campaign 7's trips — the supply limit — is
+**not** what stopped a run today. Today's stop is a control-path deadline with
+an arithmetic threshold, and it is reproducible in the sense that matters: the
+condition (`wait_time(ci, 22) < arm cost`) is a property of the numbers, not of
+the bench. The supply hypothesis remains the best explanation for *campaign
+7's* `FastBusSag` trips, still untested at 1.75 A. The two are different
+failures and the notebook should stop treating "the 50% blocker" as one thing.
+
+### E196 — 50% QUALIFIED on image 14CE44E7, with the late-arm margin named
+
+#### The qualification
+
+**Image `14CE44E7`** (sha256 `7125601F…`), gated in
+`captures/gates/e187-gates.txt`: four-root arithmetic audit clean on all four
+roots, longest-path cycle bounds at 0 and 2 wait states, production roots
+instruction-identical to `7C55B7E0`, `.data`+`.bss` 4 844 B leaving 32 020 B of
+stack, 336 lib + 9 doc tests, clippy zero in all three configurations.
+
+**The ladder, earned from scratch on this one image**, three runs per rung,
+each rung admitted only because the rung below it had already passed on the
+same ELF, each run judged by `cohort.run_gates` — stop reason, ≥30 s dwell,
+`forced == 0`, the non-circular rate identity in 990–1010‰, the refusal
+witnesses, the coast crossings, coast speed within 5% of the oracle row — and
+each rung's means by `cohort.rung_oracle`:
+
+| 15 | 20 | 25 | 27.5 | 28.8 | 30 | 32.5 | 33.8 | 35 | 37.5 | 40 | 42.5 | 45 | 47.5 | **50** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | **PASS** |
+
+**15 rungs, 45 recorded runs, every one 3/3.** The 50% cohort is
+`e196-rung-500_01..03`: `reason=2`, `hold_ms` 54 774–54 776,
+`ceiling_tenths=500`, `hold_ma` 1 782–1 816.
+
+**And these are runs that held 50%, not runs that started at 50%** — the
+`ceiling_tenths == commanded duty` gate added in E193 is what makes that
+sentence checkable rather than rhetorical. Before it, a run the foldback
+governor had throttled would have passed every gate in the fixture.
+
+**Restart, 3/3 at 47.5%** (`e197-restart475_01..03`, the highest duty the shell
+offers): each provoked a `Tracking` stop at 475 (`inject=8`, 2 000 ms of hold),
+then restarted and held **26 313–26 315 ms** at 475 to `reason=2`. Fixture
+verdict **`RESTART PASS`** on all three.
+
+**Protections re-provoked from a locked loop at 47.5%**, one run each, all
+`provoked=1` with the expected reason:
+
+| provocation | key | reason | stop after inject |
+|---|---|---|---|
+| Tracking | `t` | 8 | 281 µs |
+| TickGap | `g` | 3 | 434 µs |
+| FeedbackStale | `f` | 4 | 1 092 µs |
+| Driver (nFAULT) | `n` | 7 | 55 µs |
+| CompStorm | `u` | 13 | 565 µs |
+| HandlerOverrun | `h` | 14 | 50 µs |
+| AverageCurrent | `i` | 25 | 20 165 µs |
+
+and two that need their own sentence rather than a tick:
+
+* **Watchdog, at 15% on purpose.** `Inject::Watchdog` stalls the foreground
+  100 ms unfed with commutation live — an IWDG reset with the bridge
+  energised — so E194 kept it off the top rung on the review's advice. It is
+  verified by the reset itself: the capture ends with
+  **`RESETCAUSE iwdg=1 wwdg=0 lpwr=0 sft=0 pwr=0 pin=1`** and a fresh banner,
+  which is the protection working and is also why there is no `BEMFINJECT`
+  line — the board rebooted before the report could print.
+* **Sag does not provoke above ~37.5%, and did not here.** `inject=26` at 475
+  gave `reason=2` with `provoked=0`: the provocation is a duty *step* to 500,
+  so at 475 it merely ran the whole 55.8 s window at 50% duty
+  (`ehz_from_ci_last=2222` against 47.5%'s usual ~2 100) and never latched.
+  Its positive control stays at **25%**, where E183 demonstrated the guard
+  latching in 1.73 ms with exactly three low rows and a frozen ring. **I am not
+  claiming the sag guard was shown able to latch at 47.5% or 50% on this
+  image**; that is the one protection whose high-rung demonstration the shell
+  cannot produce.
+
+#### The marginality that comes with it, stated in the qualification and not after
+
+The 50% rung passes, and **one run in seventeen at 50% today stopped on a late
+arm** (`e195-rung-500_03`, `reason=15`, 5 962 ms into the hold). E195 has the
+arithmetic; the short version belongs here because it qualifies the
+qualification:
+
+* the firmware schedules `wait_time(ci, level) = (ci >> 1) − advance_of(ci, level)`
+  and the arm path measures `spent_max_us = 11 µs` in every one of these runs;
+* at the 50% hold `ci` is **75–79 µs** and the advance profile asks for level
+  **22**, which leaves a scheduled wait of 12 µs — **+1 µs over the arm**;
+* the cliff is at `ci ≈ 66 µs`, so a ~12% interval excursion exhausts the wait
+  and `LateArm` latches. The failing run ended at `ci = 56 µs`;
+* **this campaign's own ≥3 µs margin rule (E179) is violated at level 22 and
+  satisfied at level 20** (wait 14 µs, cliff 54 µs). By the rule the campaign
+  wrote for itself, the permitted advance at 50% is 20, and the profile hands
+  out 22;
+* and `spent_max_us` is known to understate the arm path — it is stamped before
+  `com_arm` and omits the dispatch, the masking and the timer writes, while
+  `com_late_max_us` reads 9–12 µs in the same runs and sits outside it. So the
+  real margin is **≤1 µs on an optimistic counter**.
+
+So the honest statement of the result is: **50% is qualified on this image
+against the established target-dwell, restart and protection criteria, and it
+is qualified with ~1 µs of arm-path margin and an observed one-in-seventeen
+late-arm rate at the rung.** Both halves are true and the second is not a
+footnote — it is the actual blocker, and it is a control-path arithmetic
+threshold rather than a supply limit, a slip, a measurement artefact or an
+impossibility.
+
+#### What the fix would be, and why it is not in this image
+
+Advance level 20 at the top rung restores the ≥3 µs margin and moves the cliff
+from 66 µs to 54 µs. It touches **no protection** — not the thresholds, not
+hysteresis 0, not the 64/ms cap, not the sag fraction/streak/latch — only the
+advance profile, which is a control constant. It costs advance, so it may cost
+speed against the oracle row; at 50% today the coast sits ~0.2% off the row
+with ~4.8% of the ±5% gate unused, so there is room to pay for it and the cost
+is measurable rather than guessed.
+
+It is **not** in this image because changing it changes the ELF, and the ladder
+is keyed on the ELF: the fix means earning all fifteen rungs again. That is the
+fixture's rule, it is the right rule, and the choice between "qualified at 50%
+with 1 µs of margin" and "spend another 45 runs to qualify it with 3 µs" is the
+next campaign's, taken with this measurement in hand rather than without it.
+
+#### Exposure, and the two things still owed
+
+Today: **~1 500 s of drive at or above 45%** across the exploratory cohorts,
+the climb and the qualification, with ≥95–120 s bridge-off between the top-rung
+runs, **no nFAULT on any run except the one that was provoked**, and no thermal
+measurement anywhere in this firmware. The NTC read is owed and remains the
+single change that would retire that whole risk category.
+
+Owed, named, and deliberately not taken mid-qualification because the baseline
+is frozen: a `CurrentMark`-windowed `worst_ma` (the present field is a
+whole-run worst, E194), the sag recorder's ISR-latency measurement (E178), the
+`CompStorm` post-arm peak (`Rate<false>` already computes `settled_peak`), and
+the chain instrument's cross-ring pairing (E185, parked).
+
+And one test that needs the bench changed rather than the code: **set the
+supply back to 1.75 A and repeat the 50% cohort.** Campaign 7 tripped
+`FastBusSag` in 3 of 7 runs there; 0 of 17 tripped today at 2.0 A against a
+1.8 A mean draw with worst blocks above 2 A. That is the discriminating test
+for campaign 7's blocker, it would now be caught in a frozen ring, and it is
+the operator's to set.
