@@ -585,7 +585,33 @@ def main() -> int:
                     # runs the ladder never admitted, which is the exact
                     # corruption the ladder exists to prevent. The banner said
                     # "recorded against no rung"; now it is true (E192).
-                    print("   RUN (gates not judged, recorded against no rung: --no-ladder)")
+                    #
+                    # **It is judged, though.** Until E243 this branch printed
+                    # "gates not judged" and did nothing, so on the one path
+                    # E241 declared for its 550/575/600 exploration NONE of its
+                    # five stopping rules could fire -- not the worst-block
+                    # ceiling, not the foldback check, not even `reason != 2`.
+                    # E239 had already confessed that "a stopping rule that
+                    # only exists in a notebook entry is not a stopping rule";
+                    # this was the same failure one level down, in a rule that
+                    # existed in code on a path that was never taken.
+                    #
+                    # Not recorded against a rung is not the same as not
+                    # judged, and the batch stops on a failure so the rules can
+                    # actually end it.
+                    import cohort  # noqa: PLC0415
+
+                    br = cohort.parse(out)
+                    bypass_fails = cohort.run_gates(br) if br else ["capture did not parse"]
+                    if bypass_fails:
+                        failed_runs += 1
+                    print("   RUN (recorded against no rung: --no-ladder) "
+                          + ("JUDGED FAIL: " + "; ".join(bypass_fails)
+                             if bypass_fails else "JUDGED PASS"), flush=True)
+                    if bypass_fails:
+                        print("   STOPPING the batch: a bypassed run is still "
+                              "judged, and this one failed its gates.", flush=True)
+                        break
                 elif (args.command in RUNG or args.command in EXPLORE or args.command in ("l", "L")) and args.abort_after <= 0:
                     # A host-abort provocation is not a rung run (E124). An
                     # exploratory run (E137) is judged but never recorded.

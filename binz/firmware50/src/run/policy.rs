@@ -111,17 +111,22 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 /// That is the prediction 550 and 575 test.
 ///
 /// The original E235 reasoning, still the reason a cap raise is admissible at
-/// all: it makes ONE rung above the qualified 50% Every open question in campaign 10 is a question about
-/// behaviour above 500 tenths and nothing had ever been measured there; the
-/// current law, the interval law, the droop law and the late-arm margin were
-/// all being extrapolated, and three of the four extrapolations were wrong.
+/// all: every open question in campaign 10 is a question about behaviour above
+/// 500 tenths, and nothing had ever been measured there. The current law, the
+/// interval law, the droop law and the late-arm margin were all being
+/// extrapolated, and three of the four extrapolations turned out wrong.
 ///
 /// Not a protection threshold: the comment above records that this cap's
 /// original justification is withdrawn. [`RAW_LIMIT`], [`FastBusSag`], the bus
-/// floor, the hysteresis and the storm cap are untouched. Safety at 525 was
-/// computed first -- ~2.0 A hold and ~2.4 A worst block against a 3 A clamp
-/// and a 4 A allowance, and +5 to +6 us of arm margin against the measured
-/// modal spend of 6 us (E234, 20 478 arms).
+/// floor, the hysteresis and the storm cap are untouched.
+///
+/// **Measured at 525** (E239, three runs): hold **2032 mA**, 68% of a 3 A
+/// clamp with the rail in constant voltage at 983 per mille, no foldback, and
+/// +5 to +6 us of arm margin against the measured modal spend of 6 us (E234,
+/// 20 478 arms). The worst 10.1 ms block read **2609-3174 mA** -- and that is
+/// a WHOLE-RUN figure including the ramp, not a hold figure
+/// (`run/mod.rs`: a `CurrentMark`-windowed worst is owed since E194), so no
+/// projection is built on it here. E241 did build one and E242 withdrew it.
 pub const SIXSTEP_DUTY_CAP: u16 = 600;
 
 /// Rescue attempts the level revisit may make in one sector after its first

@@ -118,6 +118,11 @@ def parse(path: pathlib.Path) -> dict | None:
             "BEMFCURRENT",
             "COASTTIMING",
             "BEMFDRIVEN",
+            # The sharp guard's own reference and filtered inputs -- the CV/CC
+            # discriminator's raw material, parsed here for the first time
+            # (E243). Absent from captures written before the field existed,
+            # in which case `droop_permille` is None and the gate abstains.
+            "BEMFSAG",
         ):
             if line.startswith(key + " "):
                 rec[key] = fields(line)  # the last occurrence wins (restart: seg 2)
@@ -147,7 +152,28 @@ def parse(path: pathlib.Path) -> dict | None:
         # (those runs could not report it, and nothing else in them can say).
         "ceiling_tenths": int(rec["BEMFCURRENT"].get("ceiling_tenths", 0)),
         "worst_ma": int(rec["BEMFCURRENT"].get("worst_ma", 0)),
+        "droop_permille": _droop(rec),
     }
+
+
+def _droop(rec: dict) -> float | None:
+    """The VREF-normalised bus against its pre-run reference, per mille.
+
+    `filt_bus` is the sharp guard's own ~207 ms filtered input and `ref_bus`
+    the reference captured before the bridge was energised, so this is the
+    sustained level the guard judges against -- the quantity that separates
+    constant-voltage operation from a current-limiting supply.
+    """
+    sag = rec.get("BEMFSAG")
+    if not sag:
+        return None
+    rb = int(sag.get("ref_bus", 0))
+    rv = int(sag.get("ref_vref", 0))
+    fb = int(sag.get("filt_bus", 0))
+    fv = int(sag.get("filt_vref", 0))
+    if not rb or not fv:
+        return None
+    return fb * rv * 1000 / (rb * fv)
 
 
 def _rate_vs_coast(rec: dict, zc: int, coast: int) -> dict:
@@ -260,6 +286,14 @@ def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
         fails.append("neither too_early nor blank_arms: the blanking gate is not witnessed")
     if r["coast_crossings"] == 0:
         fails.append("coast crossings = 0: the rotor was not witnessed turning")
+    resid = droop_residual(r)
+    if resid is not None and resid < IR_RESIDUAL_FLOOR:
+        fails.append(
+            f"bus droop {r['droop_permille']:.1f} per mille is {resid:+.1f} "
+            f"against the IR line at {r['hold_ma']} mA: below {IR_RESIDUAL_FLOOR} "
+            "means the rail is folding for a reason other than load, i.e. the "
+            "supply is current-limiting, which cannot count as qualification"
+        )
     if r["worst_ma"] >= WORST_MA_CEILING:
         fails.append(
             f"worst block {r['worst_ma']} mA at or above {WORST_MA_CEILING}: "
@@ -318,8 +352,42 @@ SELF_REF_RUNGS = (525, 550, 575, 600)
 # fails a run 5% BEFORE the firmware starts folding, which is the difference
 # between measuring a limit and disqualifying a rung.
 #
-# It retroactively fails nothing: the corpus maximum at any rung is 3174.
+# It retroactively fails nothing -- verified by replaying `run_gates` over
+# every capture that emits the field: exactly one run is touched and it already
+# failed three other gates. Note the corpus maximum is **172 553 mA**
+# (`e196-pi-avgcurrent_01`, a deliberate provocation), not the 3174 E241
+# claimed; 3174 is the maximum among `reason == 2` runs, which is a different
+# statement and was the one I should have written.
 WORST_MA_CEILING = 3800
+
+# The CV/CC discriminator, in code for the first time (E243). Every
+# "droop >= 975 per mille" rule in E236-E241 was notebook-only: `filt_bus` and
+# `ref_bus` had ZERO occurrences in this file or in `bemf_run.py`.
+#
+# It is an **IR-line residual**, not an absolute line, because the bus droops
+# with load in perfectly healthy constant-voltage operation. Fitted over 363
+# healthy runs (reason 2, hold >= 20 s, no injection):
+#
+#     droop_permille = 1000.21 - 0.01093 * hold_ma        (-10.93 per mille/A)
+#
+# At the 600-tenth projection (hold ~2726 mA) that line predicts **970.4** --
+# below the absolute 975 threshold E241 predeclared, so a healthy 600 run would
+# have been judged CC by that rule. The residual is duty-independent.
+#
+# The floor is -20 per mille: healthy residuals have p5 -3.1 and sd 6.4, so it
+# is ~3 sigma clear, while the operator-confirmed current-limited runs (1.6 A
+# clamp) sit at -31 to -53. It separates without touching a healthy run.
+IR_LINE_INTERCEPT = 1000.21
+IR_LINE_SLOPE_PER_MA = -0.01093
+IR_RESIDUAL_FLOOR = -20.0
+
+
+def droop_residual(r: dict) -> float | None:
+    """Measured bus droop minus what ordinary IR drop predicts, per mille."""
+    d = r.get("droop_permille")
+    if d is None or not r.get("hold_ma"):
+        return None
+    return d - (IR_LINE_INTERCEPT + IR_LINE_SLOPE_PER_MA * r["hold_ma"])
 
 # The band is the qualified 500 cohort's own spread, not a choice: 27 healthy
 # runs give min 993, median 1001, max 1013. 980..1020 is generous against that,

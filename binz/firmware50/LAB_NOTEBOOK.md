@@ -18687,3 +18687,101 @@ inverted too. The local 500 to 525 exponent is **2.54**, the newest and highest,
 which de-biased projects **2762 mA at 600 — 92% of the 3 A clamp.** So the
 supply is the *nearer* candidate, not the allowance, and I swapped them on the
 strength of a ramp artefact.
+
+### E243 — disposition of both E241 reviews: the stopping rules are enforced for real, and the CV/CC discriminator exists in code for the first time
+
+E242 already verified and acted on the two BLOCKING findings that were errors in
+earlier entries. This is the rest, and it fixes the defect that matters most —
+one I would not have found, because it is the *third* form of the same failure.
+
+#### The finding that mattered: zero of E241's stopping rules could fire
+
+E241 declared `--no-ladder` for its 550/575/600 exploration. On that path
+`bemf_run.py` printed `"gates not judged, recorded against no rung"` and did
+nothing else — `ladder_record` is never called, therefore **`run_gates` is never
+called**. So:
+
+* the `worst_ma >= 3800` gate I had just added — **never fires**;
+* the `ceiling_tenths != duty` foldback gate I called "already gated" —
+  **never fires**;
+* `reason != 2` — **never fires**;
+* `filt_bus/ref_bus` — **not parsed anywhere in either script.** Zero
+  occurrences. Every "droop ≥ 975" rule in E236–E241 was notebook-only.
+
+**Under E241's own protocol, no stopping rule was machine-enforced at all.**
+E239 confessed that *"a stopping rule that only exists in a notebook entry is
+not a stopping rule"*; E241 then wrote one into code **on a path it had ruled
+out**, and called it "enforced in code this time". That is the same failure a
+level down, and I claimed the fix in the same breath as reintroducing it.
+
+**Fixed:** `--no-ladder` now **judges without recording**. Not recorded against
+a rung is not the same as not judged, and conflating them is what made the gate
+vacuous. The batch also **stops on a failure**, so a rule can actually end it.
+
+#### The CV/CC discriminator, in code, in the right form
+
+It had never existed in code. And the review is right that the *absolute* 975
+line I kept predeclaring is unusable at the target rung. Fitted over **363
+healthy runs** (reason 2, hold ≥ 20 s, no injection):
+
+> `droop_permille = 1000.21 − 0.01093 × hold_ma` — i.e. **−10.93 per mille per
+> amp** of ordinary power-path drop.
+
+At the 600-tenth projection (hold ≈ 2726 mA) that line predicts **970.4 per
+mille** — *below* my own 975 threshold. **A perfectly healthy 600 run would have
+been judged "CC" by the rule I wrote to detect CC.**
+
+So the gate is on the **residual**, which is duty-independent. Floor **−20 per
+mille**: healthy residuals have p5 −3.1 and sd 6.4, so it is ~3σ clear, while
+the operator-confirmed 1.6 A-clamp runs sit at **−31 to −53**.
+
+Verified across **1000 parsed captures**:
+
+| population | droop | IR residual | gate |
+|---|---|---|---|
+| 500 regression run | 984.5 | **+3.3** | clean |
+| the three 525 runs | 982.9–984.3 | **+4.7 … +6.5** | clean |
+| the five confirmed-CC runs | 929.3–930.1 | **−52.0 … −52.8** | **all five FAIL** |
+
+**The only runs newly failing on droop across the whole corpus are exactly
+those five.** Which also means something uncomfortable: until now a
+current-limited run could have been recorded as a rung pass, because nothing
+in code looked at the rail.
+
+#### Point-by-point — the evidence review
+
+| finding | disposition |
+|---|---|
+| Image byte-reproducible (`D232F90A`, sha `ab04a375…`), loadable 41 480 B | **Confirmed.** |
+| `.text` grew **+116 B**, localised entirely to foreground (`Controller::run` +124) | **Accepted.** "One constant" is true; "same one-constant shape" did not mean codegen-identical, and I should have said so. |
+| Neither image is in the **committed** manifest | **Accepted** — `captures/` is gitignored, so the inventory is working-tree only. Named, not fixed. |
+| Doc comment **mangled into ungrammatical nonsense** at `policy.rs:113`, and a stale "~2.4 A worst block" contradicted by the same commit's own 3174 | **Accepted; both fixed**, and the doc now states the worst block is a whole-run figure with no projection built on it. |
+| Four-root codegen and cycle neutrality (931/360/78/208 @0 WS, identical) | **Confirmed.** My 728/332/37/155 were *instruction* counts quoted without the label. |
+| **The foldback mechanism description is correct in every particular**, and empirically demonstrated by `e196-pi-avgcurrent_01` (`duty 475 → ceiling 425 → reason 25`) | **Accepted with thanks** — a provoked corpus run I did not know I had, confirming the one part of E241 that survives. |
+| `RAW_LIMIT` is 4000 mA **exactly by construction** (`block_milliamps` scales by `4000/allow`), so no proxy scale error enters the 3800 gate, and `zero_drift_ma` shifts residual and allowance identically | **Accepted**, and it is a better justification for the gate than the one I gave. |
+| The exponent is **≈1.5–2.5 locally**, not a point 2.2; at 1.5 the 600 worst is 3846 and at 2.5 it is 4396, so "can reach the allowance" depends on which ratio *and* exponent you pick | **Accepted.** My band varied only the ratio at a point exponent. Moot now that E242 withdrew the projection. |
+| "corpus maximum at any rung is 3174" is **wrong** — it is 172 553 mA (a provocation); 3174 is the max among `reason == 2` runs | **Accepted; corrected in `cohort.py` and here.** |
+| "retroactively fails nothing" is **true in effect** (one run touched, already failing three gates) and existing ladder state cannot change (frozen `fails` lists, keyed by sha) | **Confirmed.** |
+| 600 needs **8** `+` presses; E241 never said so | **Accepted** — E238 used 4, E239 used 5, and the count is exactly the E185 trap. Now stated. |
+| Prediction 3's band is **~14× wider than the quantity's spread** and both candidate answers sit inside it | **Accepted.** It cannot answer its own question; withdrawn rather than re-banded. |
+| Prediction 4's `ci_min ≈ 47` is a **−2 µs step against a 4 µs within-rung spread**, and 47 is literally one of the three values already measured at 525 | **Accepted.** Cannot confirm or refute; report-only. |
+| The E239 interval fit reproduces exactly (70.6 / 67.8 / 65.3) but **the fit window ≥400 is nowhere stated** (all-rung would give 80/78/76) | **Accepted** — the window is the choice that makes the number, and it was implicit. |
+| **`spent_max_us` is 11 in all four captures** while E238/E239/E241 reason from a worst spend of 10, so every "margin vs worst" figure is **1 µs optimistic** | **Accepted, and it is the sharpest small correction of the set.** The chain's `spent` (max 10 over 20 478 arms) omits the timer writes that the firmware's own `spent` includes; `left = wait − spent` uses the firmware's. So the real margins are **−2 at 500, −3 at 525, −4 projected at 550**. In an argument whose whole subject is ±1 µs, that is not rounding. |
+| `ENVELOPE_MAX = 300` bannered but gating nothing, now 2× contradictory against a 600 cap | **Accepted, still owed.** |
+| `WORST_MA_CEILING` defined after its use | Noted, harmless. |
+| **"E239's breached stop rule now lives in the fixture" is misleading** — E239's rule was >3000, the gate is 3800, and the 3174 breach that motivated it **passes** | **Accepted.** I claimed a continuity that does not exist: a different, 27% looser rule was added. The 3174 run still passes, and the honest statement is that the gate protects the *firmware's* fold point, not E239's line. |
+
+#### What is not run, and why
+
+**550, 575 and 600 are all held.** E242 established that the E241 image cannot
+be the final ELF (restart at 500/600 is not commandable), so the ladder must not
+start on it; and six firmware/host items are known outstanding. With the
+enforcement gap now closed and the discriminator in code, two of those six are
+done — the rest are not, and a 600 capture still could not be judged as
+qualification evidence.
+
+The `spent_max_us = 11` correction also means the tail margin is worse than E238
+and E239 reported: **−2 µs at 500 and −3 µs at 525 against the firmware's own
+worst arm cost**, with `late_arms` still 0 across four runs. That strengthens
+rather than weakens the joint-tail reading — the coincidence is rare — but every
+margin figure in those two entries should be read one microsecond lower.
