@@ -17500,3 +17500,121 @@ rung on an unearned image. Accepted; this is the finding that redirects the work
    measurement is to **step the supply clamp at 50%** (2.0 / 2.2 / 2.5 A) and
    find where CC begins — which requires the operator to change the PSU, and is
    reported here as the measured next step rather than performed.
+
+### E230 — the slow-droop line, derived offline. Persistence separates; level does not.
+
+E229's step 1. No hardware, no build, no flash. Tool:
+`scripts/droop_derive.py` (new); output
+`captures/analysis/e230_droop_derivation.txt`.
+
+Quantity: the VREF-normalised bus mean against the **pre-run** reference, as a
+cross-product, per mille — the thing a slow-droop stop would judge. **Not**
+`filt_bus`, which is the sharp guard's own 207 ms EWMA of its input and so
+follows a slow droop instead of revealing it. That distinction is what made
+E218's constants wrong, so it is the first thing this tool gets right.
+
+Populations, from the sag rings (`SAGROW`/`SAGSLOW`, 21 captures with rows):
+
+| population | captures | rows | min | median |
+|---|---|---|---|---|
+| **healthy** (25 / 47.5 / 50%) | 15 | 20 992 | **960.7** | 983.8 |
+| **confirmed CC** (E201, 1.6 A, operator-confirmed clipping) | 5 | 7 680 | 902.2 | 932.9 |
+| *provoked* (`e182-posctl-sag`) — **excluded** | 1 | 1 536 | 934.7 | 994.4 |
+
+Excluding the provocation matters and I nearly did not: `e182-posctl-sag` is a
+*deliberately injected* sag, and leaving it in the healthy class was pulling the
+healthy minimum down to 934.7 and manufacturing an overlap. A provoked fault is
+not a healthy observation.
+
+#### Result 1 — a level test does not separate the populations. The reviewer's "perfect separation" is not quite right.
+
+Worst healthy row **960.7** against best CC row **966.5**: the populations
+**overlap by 5.8 per mille**. E228 SS8 claimed a 965 line gives "512/512 on all
+five CC runs and 0/512 on all seventeen healthy runs"; it is very nearly true
+but not exactly — and the exception is informative rather than pedantic.
+
+The 960.7 belongs to **`e199-175a-s1`**, the run at the **1.75 A clamp** where
+the operator reported *"its certainly hitting 1.7 A .. but the CC light doesnt
+come on"*. So the one healthy capture that crosses into CC territory on level is
+precisely the one that was **marginal between CV and CC** — which is not a flaw
+in the data, it is the boundary showing up where it should. Every other healthy
+capture has a minimum of **972.1 or above**.
+
+#### Result 2 — persistence separates decisively, by three orders of magnitude.
+
+| line | healthy rows below | healthy worst streak | CC rows below | CC streak | ratio |
+|---|---|---|---|---|---|
+| 990 | 15 515 / 20 992 | 155.1 ms | 7 680 / 7 680 | ≥155.1 ms | 1× |
+| 985 | 12 359 | 17.3 ms | 7 680 | ≥155.1 ms | 9× |
+| 980 | 1 707 | 1.6 ms | 7 680 | ≥155.1 ms | 97× |
+| 978 | 361 | 1.2 ms | 7 680 | ≥155.1 ms | 129× |
+| **975** | **23 / 20 992** | **0.10 ms** | **7 680 / 7 680** | **≥155.1 ms** | **1536×** |
+| **970** | **1 / 20 992** | **0.10 ms** | **7 680 / 7 680** | **≥155.1 ms** | **1536×** |
+
+Healthy excursions below 970–980 are **single scans** — 0.1 ms, i.e. one sample
+inside an 8-sample sliding mean — while every CC run sits below every one of
+these lines for the **entire recorded window**. The discriminator is time, not
+depth, and it is not marginal: at 970 exactly **one row of 20 992** healthy
+judgements falls below, for one scan.
+
+**Derived proposal: line 970, persistence ≈50 ms (≈495 scans).** That is above
+every CC sample (max 966.5), and it clears the worst healthy excursion by
+**500×** in time. Nothing in the existing corpus would have tripped it.
+
+#### Result 3 — E218's withdrawn 900 line would have fired on nothing at all
+
+At 900: **0 healthy rows and 0 CC rows** below. Not "it would have missed the CC
+runs" — it sits below the deepest sample of *either* population. Both reviews
+said the guard could not detect the condition it cited; the count is 0/7 680.
+
+#### The duty→droop law, healthy, from the rows that carry duty
+
+| duty (tenths) | n | median | min |
+|---|---|---|---|
+| 250 | 2 560 | 995.1 | 973.1* |
+| 450 | 512 | 991.9 | 986.1 |
+| 475 | 1 024 | 983.6 | 975.3 |
+| 500 | 4 096 | 982.8 | 972.1 |
+
+(*the 25% minimum comes from the `e178`/`e189` 47.5% files' slow rings, which
+carry no duty and are attributed to 0; the 973.1 figure is a per-capture
+minimum, not a 25% one. Stated because the tool cannot duty-condition
+`SAGSLOW`.)
+
+So the **healthy 50% median is 982.8** — not the 987 E218 quoted, which was a
+40% capture, and not the 967 E224 reasoned from, which was a `filt_bus`
+minimum. Three entries, three different wrong numbers for the same quantity;
+this is the measured one.
+
+#### What this does not settle, and why the line is not final
+
+1. **The 60% question is untouched.** Healthy median falls 991.9 → 983.6 → 982.8
+   across 450 → 475 → 500. If 60% takes the *sustained* level below 970, a
+   970 line fires on legitimate IR droop and becomes the nuisance stop E222
+   warned about. Nothing in the corpus reaches above 500 tenths, so **the line
+   cannot be finalised for 60% without a measurement above 500** — which is the
+   same operator-dependent measurement E229 named.
+2. **Ring coverage is ~4% of a run** (E221 SS2): 512 fast rows plus 1 024
+   decimated samples against ~787 000 judgements. So "≥155.1 ms" for the CC
+   streak is the **ring length**, a floor rather than a value, and a healthy
+   streak longer than 0.1 ms could exist in the 96% not sampled. This bounds the
+   confidence in both directions and is the strongest argument for recording the
+   streak in firmware rather than inferring it from a ring.
+3. **n is captures, not conditions.** Five CC captures, all at one clamp
+   setting (1.6 A) on one bench day. The CV/CC boundary is bracketed to
+   1.6–1.75 A by exactly two settings.
+
+#### Gate
+
+This is a conclusion, so it does not stand until **both reviews** have seen the
+tool, the output and these populations. No firmware implements it and nothing is
+flashed. If it survives, the implementation is the one both reviewers already
+specified — hold-windowed, streak-reported, in the diagnostic image first — and
+it gets its own predeclaration.
+
+Two parsing scars, recorded because each produced a confident "no rows found"
+over a corpus full of them: the ring rows are **positional**, not `key=value`
+(`scripts/sag.py:10`); and written through a shell heredoc, `\b` in a non-raw
+Python string became an **actual backspace character**, so every regex matched
+nothing. The second is the heredoc-mangling scar from earlier in this campaign,
+repeated. Patch scripts get written with an editor, not piped through a shell.
