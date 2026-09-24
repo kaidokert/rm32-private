@@ -19332,3 +19332,129 @@ It decides whether 575 and 600 are attemptable at all, whether the mechanism
 hunt or the rung is the next move, and whether 55% can ever qualify on this
 bench without touching a protection the goal forbids touching. Two fresh
 context-free reviews come next.
+
+### E256 — corrections to E255, verified: sixteen rungs not seventeen, 400 took six runs not four, and the loop was NOT clean
+
+The evidence review of E255 is largely right and the three findings below are
+the load-bearing ones. All verified here before any disposition, because E255's
+mechanism section is wrong in a way that would mislead the next reader. The full
+point-by-point disposition follows when the adversarial review lands.
+
+#### Correction 1 — sixteen rungs at 3/3, not seventeen
+
+`captures/ladder_state.json` holds **17 rung keys** on this ELF (150 … 550), but
+550 is the 2/3 one, so **150→525 is sixteen rungs at 3/3.** I counted the keys
+while naming the range that excludes the last of them. E252 had it right
+(150→500 = fifteen); +525 = **sixteen**.
+
+Recomputed directly: rungs at 3/3 = `[150, 200, 250, 275, 288, 300, 325, 338,
+350, 375, 400, 425, 450, 475, 500, 525]`, **count 16**.
+
+#### Correction 2 — the 400 rung took SIX runs, and that undercuts my own retry argument
+
+The state holds **six records at 400**: `e247-400_01..03` (including the
+retained 1011 failure) **and a complete fresh three-run cohort**
+`e250-400_01..03`. So 400's rung did not pass on "a fourth run" — it passed on a
+**full re-roll of the cohort**, which is materially the thing E255 refuses to do
+at 550.
+
+That happened because the first walk stopped at 400 on the failure and my resume
+invocation started a fresh three-run cohort there. I then described it in E252
+and E255 as *"400 took four runs, one retained nuisance failure"* — understating
+it by two runs and mischaracterising a cohort re-roll as a single extra run.
+
+**The artefact-versus-protection distinction may still justify the asymmetry**
+— a 1.1%-false-failure-rate instrument reading is not the same as a protection
+latching — but E255 argues that asymmetry while misdescribing the size of the
+retry it is defending, and that is not a defence I can leave standing as
+written.
+
+#### Correction 3 — the loop was not clean, and this is the one that matters
+
+E255 concluded *"the evidence leans away from a loop-side desync"*. It does not.
+The three fields I cited — `storm`, `blank_latched`, `track_fault` — are **0 in
+all 57 runs on this image**, so they are constants with no discriminating power.
+`com_late_max_us` at 5 against 9/10 is an **exposure artefact**: it is a
+whole-run saturating maximum and the failing run has **418 008 drive scans
+against 786 919**, i.e. 53% of the sampling, so a lower maximum is the null
+expectation and I read it as positive evidence. And `worst_hold_ma` is a
+**10.1 ms block mean**, which cannot see a 1–10 ms surge — precisely the
+timescale the sag guard's ~0.8–200 ms passband covers.
+
+Meanwhile the capture's own interval fields, which E255 did not report:
+
+| | `ehz_from_ci_last` / `ehz_from_sector` | `ci_us` at stop | `ci_min_us` | scans |
+|---|---|---|---|---|
+| 550_01 | 2347 / 2347 = **1.000** | 71 | 51 | 786 919 |
+| 550_02 | 2380 / 2347 = **1.014** | 70 | 50 | 786 922 |
+| **550_03** | **2777 / 2347 = 1.183** | **60** | **42** | **418 008** |
+
+**At the stop instant the accepted average interval had collapsed 18.3%
+short** — and the review reports that ratio never exceeds 1.044 across all 57
+runs, so this is by far the largest outlier in the corpus on that quantity. The
+interval floor reached **42 µs** against 51/50, in **half the exposure**.
+
+42 µs is worth spelling out: `wait_time(42, 22) = 7 µs` against the measured
+modal arm cost of 6, i.e. **+1 µs** — the thinnest margin anywhere in the
+campaign — and against the firmware's own worst arm cost of 11 it is
+**negative**. `late_arms` is nonetheless 0, so the two tails did not coincide;
+but the interval got closer to the arm than it has at any rung.
+
+So the honest reading is the opposite of E255's: **there is a loop-side
+excursion at the stop instant, and whether the sagging rail caused the interval
+collapse or the interval collapse caused the current surge that sagged the rail
+is unresolved.** E255's mechanism section is withdrawn.
+
+#### And the instrument for this question was sitting unused
+
+`src/sagtrace.rs:4-8` says it in the firmware's own words: *"`bus_min` is the
+minimum of a single raw scan over the whole run … and the report's `filt_bus` is
+the filter's value at the end of the run. **Neither is what the guard
+compares.**"*
+
+E255's mechanism table is built out of exactly those two quantities. Three
+consequences I accept:
+
+* **`bus_min = 1074` does not place a 10% dip at the trip instant.** It is a
+  whole-run extreme, never rewound, so nothing in the capture times it. And
+  E255 used it as the trip depth in one section and as a run-wide statistic in
+  another — it cannot be both.
+* **`filt_bus` identity is not a discriminator.** It reads exactly 1193 in all
+  six runs at 525 and 550 regardless of outcome; the quantity is quantised flat
+  at the top of the ladder. The narrower true claim — the 207 ms average was
+  normal in the ~200 ms before the trip — is what the IR-line residual (+3.8)
+  already says, independently.
+* **"8-scan block mean" is the wrong description.** `RailMean` is a **sliding**
+  mean fed every scan, and `sagtrace.rs:16-22` records that "block" was
+  corrected out of this very module as wrong by 23×. I reintroduced the word.
+
+**The `sag-capture` image exists precisely to answer this** — it rings the
+guard's own inputs and freezes on the fault — and I did not run it. That is the
+next step, and it is a diagnostic image, so per the campaign's own rule its
+results explain the mechanism and qualify nothing.
+
+#### What survives from E255
+
+* The 550 cohort's numbers reproduce **exactly**, residuals included.
+* **55% is not qualified** — correct in the fixture's own terms, and the honest
+  report of the attempt.
+* The refusal to re-run follows from a rule rather than from the evidence, which
+  E255 said plainly and which remains the right call — subject to correction 2's
+  point that the same rule was applied more loosely at 400 than I described.
+* No foldback, and the sustained level healthy on the IR-line residual.
+
+#### What I must stop claiming
+
+**"A marginal, stochastic event whose rate rises with duty"** is asserted, not
+measured. There is **one trip in three runs at 550 and zero at every other
+rung**, so the corpus contains no rate-versus-duty measurement at all, and the
+95% interval on the trip rate at 550 spans essentially the whole range. Two of
+three is equally consistent with a rate that would pass a fresh cohort and with
+one that never will.
+
+The transient-slope arithmetic in E255 (−5.32 per mille per amp, "half the
+sustained rate", and the residuals derived from it) rests on `bus_min` and is
+therefore built on the same contaminated quantity — the review recomputes it at
+−4.081, swinging to −2.565 without the single tripped point. It is withdrawn
+pending the adversarial review's own recomputation, and it should never have
+been quoted against a **hardcoded** comparator from E243 rather than a fresh fit.
