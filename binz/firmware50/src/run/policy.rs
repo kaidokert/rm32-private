@@ -251,11 +251,7 @@ impl Bemf for BemfPolicy {
 pub struct AdvancePolicy;
 impl Advance for AdvancePolicy {
     fn level(duty_tenths: u16) -> u32 {
-        if duty_tenths >= 350 {
-            22
-        } else {
-            20
-        }
+        if duty_tenths >= 350 { 22 } else { 20 }
     }
 }
 

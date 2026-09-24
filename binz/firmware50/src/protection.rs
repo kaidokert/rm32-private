@@ -195,6 +195,97 @@ pub struct BusReference {
     pub vref: u16,
 }
 
+/// Reporting fractions for [`BusDepth`], per mille of the pre-run reference.
+///
+/// **These are not thresholds and nothing stops on them.** They exist because
+/// E218 tried to derive a slow-droop stop from quantities this firmware has
+/// never recorded, and got both of them from the wrong population: its
+/// "healthy 50%" figure was a 40% capture, and its 900 line would not have
+/// fired on any of the ten confirmed current-limited runs this bench has
+/// produced (E221 SS2, E222 SS1, verified in E223). A stop needs the
+/// distribution first, at more than one rung.
+pub const DEPTH_FRACTIONS: [u32; 4] = [970, 950, 920, 900];
+
+/// How deep, and for how long, the bus actually sits below its pre-run
+/// reference -- the distribution a slow-droop stop would have to be chosen from.
+///
+/// For each fraction in [`DEPTH_FRACTIONS`] it keeps the **number of scans
+/// below** and the **longest consecutive run below**. Both, because a count
+/// alone cannot separate one deep dip from a sustained droop, and a streak
+/// alone cannot say how often. A minimum -- which is what E218 proposed to
+/// report -- answers neither, and is not comparable to a line defined by a
+/// persistence (E222 SS3).
+///
+/// Judged as a **VREF-normalised cross-product**, the form
+/// [`FastBusSag::observe`] and the absolute floor already use: an ADC code is a
+/// ratio to VDDA, so a bare `bus/ref` conflates rail drift with bus droop, and
+/// a division here would put `__aeabi_uidiv` in the foreground loop on every
+/// scan (E222 SS4/SS5).
+///
+/// This runs in **thread mode**, not in any ISR -- every bus judgement in this
+/// firmware does. `isr_diff.py` and `isr_audit.py` cannot see it, which is
+/// stated here because E218 predeclared exactly those gates as its cohort.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BusDepth {
+    below: [u32; 4],
+    run: [u32; 4],
+    longest: [u32; 4],
+}
+
+impl Default for BusDepth {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BusDepth {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            below: [0; 4],
+            run: [0; 4],
+            longest: [0; 4],
+        }
+    }
+
+    /// Observe one scan's rail mean against the pre-run reference.
+    ///
+    /// Never returns a verdict: this is an observer. A zero reference is
+    /// ignored rather than treated as a fault, because the fail-closed
+    /// judgement belongs to the guards that actually stop the run.
+    pub fn observe(&mut self, bus: u16, vref: u16, ref_bus: u16, ref_vref: u16) {
+        if ref_bus == 0 || vref == 0 {
+            return;
+        }
+        // bus/vref < (num/1000) * (ref_bus/ref_vref), cross-multiplied.
+        let lhs = u32::from(bus) * u32::from(ref_vref) * 1_000;
+        let rhs = u32::from(ref_bus) * u32::from(vref);
+        let mut i = 0;
+        while i < DEPTH_FRACTIONS.len() {
+            if lhs < rhs * DEPTH_FRACTIONS[i] {
+                self.below[i] = self.below[i].saturating_add(1);
+                self.run[i] = self.run[i].saturating_add(1);
+                if self.run[i] > self.longest[i] {
+                    self.longest[i] = self.run[i];
+                }
+            } else {
+                self.run[i] = 0;
+            }
+            i += 1;
+        }
+    }
+
+    #[must_use]
+    pub const fn below(&self, i: usize) -> u32 {
+        self.below[i]
+    }
+
+    #[must_use]
+    pub const fn longest(&self, i: usize) -> u32 {
+        self.longest[i]
+    }
+}
+
 /// Scans in the rail moving mean that feeds the sag stop (power of two).
 pub const RAIL_MEAN_LEN: usize = 8;
 const RAIL_MEAN_SHIFT: u32 = 3;
@@ -663,11 +754,7 @@ pub const fn zero_from_blocks(sum: u64, blocks: u32) -> Option<u32> {
         return None;
     }
     let z = sum.div_ceil(blocks as u64);
-    if z > u32::MAX as u64 {
-        None
-    } else {
-        Some(z as u32)
-    }
+    if z > u32::MAX as u64 { None } else { Some(z as u32) }
 }
 
 /// Duty ceiling governor. Foldback **ratchets down only** — there is no

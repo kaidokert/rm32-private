@@ -11,8 +11,8 @@ use crate::commutation::{self, Direction, Phase, Step};
 use crate::driven;
 use crate::duty::{RUN_PERIOD_TICKS, STARTUP_TICKS};
 use crate::protection::{
-    validate_raw_feedback, AverageCurrent, BlockVerdict, CurrentMark, FastBusSag, FoldbackGovernor, PhaseCodePolicy,
-    RailMean, Reason, RAW_LIMIT,
+    AverageCurrent, BlockVerdict, BusDepth, CurrentMark, FastBusSag, FoldbackGovernor, PhaseCodePolicy, RAW_LIMIT,
+    RailMean, Reason, validate_raw_feedback,
 };
 use crate::ramp::duty_at;
 use crate::sagtrace::SagLog;
@@ -22,14 +22,14 @@ use crate::sixstep;
 use crate::startup::{Script, StaircaseScript};
 use crate::witness::RotationWitness;
 
+use super::Policies;
 use super::hal::{self, Gates, Hal, Inject};
 use super::measure::Baseline;
 use super::policy::{
-    in_off_window, sector_interval_us, sixstep_ccr_of, Advance, Bemf, CurrentLimit, SagLimit, CATCH_DUTY_TENTHS,
-    CATCH_EHZ, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG, DRIVEN_RATE, HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS,
-    REVISIT_RESCUE_MAX, SIXSTEP_DUTY_CAP, TAIL_WINDOW_US, WITNESS_HYST_CODES, WITNESS_MID_SAMPLES,
+    Advance, Bemf, CATCH_DUTY_TENTHS, CATCH_EHZ, CurrentLimit, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG, DRIVEN_RATE,
+    HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, REVISIT_RESCUE_MAX, SIXSTEP_DUTY_CAP, SagLimit, TAIL_WINDOW_US,
+    WITNESS_HYST_CODES, WITNESS_MID_SAMPLES, in_off_window, sector_interval_us, sixstep_ccr_of,
 };
-use super::Policies;
 
 /// How long a run may last: from its own entry, or to an absolute instant a
 /// campaign supplies (E090), so a restarted segment ends exactly where the
@@ -106,6 +106,8 @@ pub(crate) struct Ctx {
     pub hold_plans: bool,
     pub base: Baseline,
     pub sag: FastBusSag,
+    /// Observation only -- the droop distribution, no stop (E224).
+    pub depth: BusDepth,
     pub current: AverageCurrent,
     pub governor: FoldbackGovernor,
     pub rail: RailMean,
@@ -134,6 +136,7 @@ impl Ctx {
             hold_plans: false,
             base,
             sag: P::S::watch(base.bus_ref),
+            depth: BusDepth::new(),
             current: P::C::meter(base.zero_block),
             governor: P::C::governor(req.target_tenths),
             rail: RailMean::new(),
@@ -328,6 +331,10 @@ impl Ctx {
             // the row is the one the comparison used (campaign 9 step 3).
             // Production's `NoSagLog` folds all of this away.
             let (bus_mean, vref_mean) = (self.rail.bus_mean(), self.rail.vref_mean());
+            // Observation, before the verdict and returning nothing, so it
+            // covers the deciding scan of any stop and can pre-empt none.
+            self.depth
+                .observe(bus_mean, vref_mean, self.base.bus_ref.bus, self.base.bus_ref.vref);
             let (filt_bus, filt_vref) = self.sag.filtered();
             let verdict = self.sag.observe(bus_mean, vref_mean);
             if P::G::ON {

@@ -319,6 +319,36 @@ pub struct GuardRecord {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CurrentRecord {
     pub blocks: u32,
+    /// **Scans the drive loop actually consumed.** Reported from E224.
+    ///
+    /// `adc_hz` in the banner is a hard-coded literal, so it is not evidence
+    /// of anything; `loop_gap_max_us` exceeding the 101 us scan period says
+    /// scans are missed. This field over `hold_ms` is the only direct
+    /// measurement of the rate that `SAG_FILTER_SHIFT`'s "207 ms",
+    /// `RAIL_MEAN_LEN`'s window and any droop persistence assume (E222 SS8).
+    pub drive_scans: u32,
+    /// The duty cap **in force**, tenths -- not the duty commanded.
+    ///
+    /// `sixstep::plan` clamps at this silently and `policy::sixstep_ccr_of`
+    /// clamps again independently on the same constant, while the report's
+    /// `target_duty_tenths` is the **pre-clamp request**. Nothing revealed a
+    /// clamp before this field; it exists now rather than alongside the first
+    /// cap raise, which is when it would become load-bearing (E222 SS11/SS14).
+    pub applied_cap: u16,
+    /// The compare value actually programmed for the commanded duty, TIM1
+    /// ticks -- the arithmetic downstream of both clamps.
+    pub applied_ccr: u32,
+    /// Scans below each [`crate::protection::DEPTH_FRACTIONS`] fraction.
+    ///
+    /// **Observation, not a threshold**: no stop is attached. E218 tried to
+    /// pick a slow-droop line from quantities never recorded and took both its
+    /// constants from the wrong population; these eight numbers are the
+    /// distribution such a line has to be chosen from (E223).
+    pub depth_below: [u32; 4],
+    /// Longest consecutive run below each fraction, in scans. A count cannot
+    /// separate one dip from a droop and a streak cannot say how often, so a
+    /// persistence is chosen from this and a fraction from the counts above.
+    pub depth_longest: [u32; 4],
     pub mean_residual: i32,
     pub mean_ma: i32,
     pub hold_blocks: u32,
@@ -680,6 +710,17 @@ impl RunReport {
         out.kv("ceiling_tenths", u32::from(c.ceiling_tenths));
         out.kvi("worst_residual", c.worst_residual);
         out.kvi("worst_ma", c.worst_ma);
+        out.kv("drive_scans", c.drive_scans);
+        out.kv("applied_cap", u32::from(c.applied_cap));
+        out.kv("applied_ccr", c.applied_ccr);
+        out.kv("dep970_n", c.depth_below[0]);
+        out.kv("dep970_run", c.depth_longest[0]);
+        out.kv("dep950_n", c.depth_below[1]);
+        out.kv("dep950_run", c.depth_longest[1]);
+        out.kv("dep920_n", c.depth_below[2]);
+        out.kv("dep920_run", c.depth_longest[2]);
+        out.kv("dep900_n", c.depth_below[3]);
+        out.kv("dep900_run", c.depth_longest[3]);
         out.say("\r\n");
         out.flush();
     }
@@ -843,6 +884,13 @@ mod tests {
         assert!(t.contains(" ref_ma=326 duty_tenths=250 ceiling_tenths="));
         assert!(t.contains(" worst_residual="));
         assert!(t.contains(" worst_ma="));
+        assert!(t.contains(" drive_scans="));
+        assert!(t.contains(" applied_cap="));
+        assert!(t.contains(" applied_ccr="));
+        assert!(t.contains(" dep970_n="));
+        assert!(t.contains(" dep970_run="));
+        assert!(t.contains(" dep900_n="));
+        assert!(t.contains(" dep900_run="));
         assert!(t.contains("driven_rotation=0 \nvsenc_min=0 "));
         assert!(!t.contains("BEMFINJECT"));
     }

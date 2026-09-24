@@ -16775,3 +16775,203 @@ extrapolation holds. **I am not declaring a wall** — that is the
 the wall was my own analysis error. But it is now the leading candidate for the
 campaign's real constraint, it is an operator-visible one, and it is reported as
 the measured-extrapolation-pending-measurement that it is.
+
+### E224 — predeclaration: the report-only image. No stops, no channels, no thresholds.
+
+E223 withdrew E218. Both reviews specified the same replacement — E222 finding
+13 item 1, and E221's gate recommendation implies it — so this candidate's
+design is *theirs*, not a fresh proposal of mine. Written before any edit.
+
+**Why this shape:** E218's two thresholds were derived from populations that do
+not exist in the captures (a 40% rung read as 50%; a LateArm run's whole-run
+maximum read as a worst hold block). The reason they could be is that **the
+quantities they threshold are not recorded anywhere.** No stop can be derived
+honestly until they are. So this image adds *only* measurement.
+
+**Contains: no new stop, no new `Reason`, no new ADC channel, no threshold
+change, no cap change, no control change.** Purely additive report fields plus
+one observation-only struct. `RAW_LIMIT`, `FastBusSag`'s line, `BUS_FLOOR_MV`,
+`SIXSTEP_DUTY_CAP`, the advance schedule, hysteresis 0 and the storm cap are all
+untouched.
+
+#### What it adds
+
+**1. `drive_scans` — a field that already exists and has never been printed.**
+`Stats::drive_scans` is incremented on every consumed scan
+(`src/run/states.rs:79,307`) and read by nothing. E222 finding 8: it is the only
+direct evidence of the actual scan-consumption rate, which **three separate
+constants silently assume** — `SAG_FILTER_SHIFT`'s "207 ms",
+`RAIL_MEAN_LEN`'s window, and any future droop streak. `adc_hz` is a printed
+literal (`bin/board.rs:871`) and proves nothing; `loop_gap_max_us` of 147–179 µs
+against a 101 µs scan period says the rate is *not* exactly 9901/s.
+
+**2. `applied_cap` and the CCR actually programmed.** The one half of E218 both
+reviews said to keep. `sixstep::plan` clamps silently at `duty_cap`
+(`src/sixstep.rs:93`) and `policy::sixstep_ccr_of` clamps again, independently,
+on the same constant (`src/run/policy.rs:156-162`) — a second site E218 missed —
+while the report prints the **pre-clamp** request `target_duty_tenths`
+(`src/run/mod.rs:347,374`). Today no reachable command exceeds 500 so it cannot
+bite; it becomes a live trap the moment anything raises the cap, and the field
+must exist *before* that, not with it.
+
+**3. `BusDepth` — the bus droop *distribution*, not a threshold.** Four
+reporting fractions, 970 / 950 / 920 / 900 per mille, each carrying **total
+scans below** and **longest consecutive run below**. Eight numbers per run.
+
+Design constraints taken from the reviews, all of them:
+
+* **VREF-normalised cross-product, no division.** `bus*ref_vref*den <
+  ref_bus*vref*num`, the form `FastBusSag` and the absolute floor already use
+  (`src/protection.rs:363-369`, `:180`). E222 findings 4 and 5: a division in
+  the foreground loop costs `__aeabi_uidiv` at ~100–300 cycles per scan, and
+  omitting the VREF term silently conflates VDDA drift with bus droop.
+* **It is the decision quantity, at every fraction.** E222 finding 3: E218 would
+  have reported an instantaneous extreme against a line defined by a streak, so
+  the "margin" was not comparable to the line. A count-and-longest-streak pair
+  per fraction *is* comparable, and it is what a `(NUM, SCANS)` pair is chosen
+  from.
+* **Raw codes out, ratios computed host-side** from the `ref_bus`/`ref_vref`
+  already in every capture.
+* **Foreground, and named as such.** E222 finding 4: `scan_pass` is thread mode
+  (`src/run/states.rs:277`), the four ISR roots do not touch the bus, and
+  `isr_diff.py`/`isr_audit.py` therefore **cannot see this change at all** —
+  E218 predeclared a cohort that structurally could not detect its own item. The
+  budget here is the foreground loop, measured at ~26 µs/iteration.
+
+#### Predictions, falsifiable, before the build
+
+1. **`drive_scans / closed_ms` will not be 9.901/ms.** `loop_gap_max_us` already
+   exceeds the 101 µs scan period, so scans are being missed. I predict
+   **9.80–9.90 scans/ms** — i.e. 0.1–1% of scans dropped. If it is above 9.90 the
+   gap excursions are rarer than they look; if below 9.5 then every "207 ms"
+   and "500 ms" figure in this firmware is wrong by more than 5% and the
+   constants must be restated in scans, not milliseconds.
+2. **`BusDepth` at the 970 fraction will be non-zero at 50% and zero at 25%.**
+   The healthy 50% `filt_bus/ref_bus` minimum is 967 (E221/E222), and `filt_bus`
+   is the *smoothest* estimate, so the 8-scan mean must dip below 970. At 25%,
+   `bus_min/bus_ref` is 0.903 but that is a single scan; the 8-scan mean should
+   stay above 970. **If the 970 count is zero at 50%, my model of the ordering
+   `bus_min < bus_mean < filt_bus` is wrong.**
+3. **The longest run below 900 will be 0 at every rung 15–50%.** This is the
+   direct test of E218's withdrawn constant: if any rung shows a sustained run
+   below 900, the line I proposed was *already* being crossed and the guard
+   would have been a nuisance stop, not merely an ineffective one.
+4. **The foreground cost will be invisible in `loop_iters_closed`**, i.e. within
+   ±2% of the archived image at the same rung. Four cross-products is ~40 cycles
+   on ~26 000 cycles of loop iteration. If it moves more than 2%, the multiply
+   cost model is wrong and the fractions get cut from four to two.
+5. **`applied_cap` will read 500 and the programmed CCR will equal
+   `sixstep_ccr_of(duty, period)` at every rung**, with `target_duty_tenths` ≥
+   `duty_tenths` and equality at every rung ≤50%. (E221 finding 7: E218's
+   version of this prediction confused the cap with the applied duty and was
+   false at 15% by construction.)
+
+#### Cohort
+
+Host gates first — tests, clippy, structure limits, four-root arithmetic audit,
+`isr_diff.py` per image — **with it stated up front that the ISR gates cannot
+see this change**, so they are a check that nothing *else* moved, not evidence
+about this candidate. The foreground cost is judged by prediction 4 on the
+bench, which is the only place it is visible.
+
+Then **both reviews of the built candidate and its host-gate results, before any
+powered run.** Then the ladder re-earned from 15% on the new ELF, and
+`BusDepth`/`drive_scans` read at 15 / 25 / 37.5 / 50%.
+
+#### Stopping rules
+
+* If prediction 4 fails, the fraction count is cut, not the gate relaxed.
+* **No stop is derived from one rung's distribution.** Items 1 and 2 of the
+  withdrawn E218 get re-derived only after 15/25/37.5/50% are all recorded, each
+  3/3, on this one ELF — that is four rungs of distribution, not an
+  extrapolation from the top one.
+* **No rung above 50%**, and no cap change, from this candidate. The fixture
+  cannot record or judge above 500 (E222 finding 11) and that host work is
+  separate and not started.
+* The 60%-is-CC extrapolation (E222 finding 7, E223's closing section) is **not**
+  tested here and is not settled by this image. It needs a real current figure
+  above 500 tenths, which needs the fixture work first.
+
+### E225 — the report-only candidate, built. Host gates pass; the reviews come before any powered run.
+
+Built per E224. Image **`906960FC`**, archived as
+`captures/elf/906960FC.e224-report.elf`, sha256 `fae720fa909a8692…`.
+
+#### What is in it
+
+Exactly what E224 predeclared, and nothing else. No new `Reason`, no new stop,
+no new ADC channel, no threshold change, no cap change, no control change.
+
+* **`protection::BusDepth`** — observation only, four reporting fractions
+  (`DEPTH_FRACTIONS = [970, 950, 920, 900]` per mille), each with a **count of
+  scans below** and the **longest consecutive run below**. VREF-normalised
+  cross-product, `lhs = bus·ref_vref·1000` against `rhs·num` — **no division**,
+  so no `__aeabi_uidiv` in the foreground loop (E222 SS4/SS5). `observe`
+  returns nothing and therefore cannot pre-empt any stop.
+* **The call site** (`src/run/states.rs`, inside `Ctx::scan_pass`) puts
+  `depth.observe` **before** the sag verdict and before `record_sag_row`, so it
+  covers the deciding scan of any stop that follows, exactly as E222 SS6 asked:
+  judge, record, then return. Since it returns no error it cannot reintroduce
+  the E181 SS5 gap.
+* **Report fields**: `drive_scans`, `applied_cap`, `applied_ccr`, and
+  `dep970_n/_run`, `dep950_n/_run`, `dep920_n/_run`, `dep900_n/_run`. Seven of
+  them are asserted in the report's own test, so a field that stops being
+  emitted fails the host gate.
+
+Two notes on what the fields are, because E218's version of this got it wrong:
+`applied_cap` is the **cap in force**, not the applied duty, and `applied_ccr`
+is the compare actually programmed by `sixstep_ccr_of(applied_duty, period)` —
+the arithmetic downstream of *both* silent clamps (`sixstep.rs:93` and
+`policy.rs:156-162`, the second of which E218's inventory missed).
+
+#### Host gates
+
+| gate | result |
+|---|---|
+| `cargo build --release` (thumbv6m) | clean |
+| host tests | **337 passed, 0 failed** + 9 in the second suite |
+| `cargo clippy --release` (thumbv6m) | **0 errors, 0 warnings** |
+| `cargo clippy` (host, lib+tests) | **0** |
+| `structure_report.py` | exit 0; `bin_lines=1044` (< 1500), `functions_over_100_lines=0`, `shell-pwm` `.bss` 4184 with **32 012 B of stack left** against an 8 192 floor |
+| four-root audit, with the reviewed-loop allow file | **all four certified clean** — `ADC_COMP`, `TIM16`, `DMA1_CHANNEL1`, `TIM6_DAC_LPTIM1` |
+
+A note on the host-test invocation, since it cost me a wrong-looking failure:
+`cargo test` and `cargo clippy` without `--target` use this crate's default
+`thumbv6m-none-eabi` and fail with "can't find crate for `std`". That is the
+config, not the candidate. The host gates need
+`--target x86_64-pc-windows-msvc`, and `--all-targets` additionally fails there
+because the binaries are target-gated on `firmware50::hw`/`roots` — so the host
+run is `--lib --tests`.
+
+#### ISR cost: unchanged in behaviour, and *lower* by accident of layout
+
+`isr_cycles.py --root ADC_COMP --wait-states 2 --loop-bound 4 --loop-bound 12`:
+
+| image | longest path |
+|---|---|
+| `14CE44E7` (baseline) | 953 cycles = 14.89 µs |
+| **`906960FC`** (this candidate) | **931 cycles = 14.55 µs** |
+
+**−22 cycles.** The change adds no code to any ISR, so the only thing this can
+be is the codegen re-scheduling E210 warned about — adding code anywhere
+re-lays-out `ADC_COMP` wholesale. It happens to have gone the favourable way
+this time. `spent_compose.py` agrees in the same direction: the entry→`spent`
+window is 360 cycles here against 377 on the baseline.
+
+**Neither figure is evidence about this candidate**, and E224 predeclared why:
+the change is in **thread mode**, so `isr_audit.py`/`isr_diff.py` structurally
+cannot see it. They are a check that nothing *else* moved, which is what they
+show. The foreground cost is prediction 4's job and is only visible on the
+bench.
+
+#### What has not happened
+
+**Nothing has been flashed and nothing has been driven on this image.** E224's
+cohort puts **both reviews of the built candidate and these gate results before
+any powered run**, and that is the next step. The ladder has not been re-earned;
+`906960FC` has earned no rung, and until it does it cannot qualify anything.
+
+The four predictions that need the bench (`drive_scans/closed_ms` not being
+9.901/ms; `dep970_n` non-zero at 50% and zero at 25%; `dep900_run` zero at
+every rung 15–50%; the foreground cost invisible in `loop_iters_closed`) stand
+as written in E224 and are judged after the reviews, not before.
