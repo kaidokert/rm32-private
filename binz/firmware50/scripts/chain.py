@@ -4,12 +4,18 @@
 The firmware writes one line per event (`src/chain.rs`):
 
     CHAINSNAP len=<n> total=<n>      (the accept ring: COMP's rows)
-    CHAIN 1 <a> <b> <c> <d> <step> <flag>
+    CHAIN 1 <crossing_us> <crossing_fine> <arm_fine> <wait_us> <spent_fine> <step> <flag>
     ...
     CHAINSNAP len=<n> total=<n>      (the service ring: COM's rows)
-    CHAIN 2 <a> <b> <c> <d> <step> <flag>
+    CHAIN 2 <sched_us> <fire_fine> <bridge_fine> <late_us> <0> <step> <flag>
     ...
     CHAINEND
+
+**The fine columns are 64 MHz ticks (15.6 ns).** Until E180 every stamp was
+1 µs, which quantised the crossing-to-bridge delay (17-20 µs) and the chain
+term inside it (4 µs) in steps the size of the effect -- two A/B comparisons
+turned on differences of exactly one tick. The coarse µs stamp is kept for
+pairing, where the control path's own µs quantisation is the right unit.
 
 Two rings, one per root, because no `Seam` may be touched by two roots -- which
 is what lets the recording image run with COM above COMP (step 6a). They are
@@ -54,7 +60,14 @@ import collections
 import statistics
 import sys
 
-Row = collections.namedtuple('Row', 'kind a b c d step flag')
+Row = collections.namedtuple('Row', 'kind at_us at_fine x_fine y_us z_fine step flag')
+
+# The fine clock is TIM2 free-running at the 64 MHz core clock (E180), so one
+# tick is 15.625 ns and a µs is exactly 64 ticks. Every *measured* delta in
+# this script is fine; `y_us` (the requested wait, and the lateness the
+# firmware reports) stays µs, because those are control quantities and are
+# genuinely µs-quantised.
+TICKS_PER_US = 64.0
 
 
 def advance_of(ci, level):
@@ -69,8 +82,13 @@ def wait_time(ci, level):
 
 
 def u16(a, b):
-    """b - a as a forward 16-bit interval, µs."""
+    """b - a as a forward 16-bit interval, in whatever unit a and b are."""
     return (b - a) & 0xFFFF
+
+
+def us(ticks):
+    """Fine ticks to µs."""
+    return ticks / TICKS_PER_US
 
 
 def align(accepts, services, span=6):
@@ -91,7 +109,7 @@ def align(accepts, services, span=6):
     an acceptance carries its stamp and the wait it asked for, so
     `sched ≈ crossing + wait`.
     """
-    svc = [r for r in services if r.flag & 0x7F == 1 and r.b != 0]
+    svc = [r for r in services if r.flag & 0x7F == 1 and r.x_fine != 0]
     if not accepts or not svc:
         return []
     n = min(len(accepts), len(svc))
@@ -102,7 +120,7 @@ def align(accepts, services, span=6):
         for k in range(n):
             m = k + shift
             if 0 <= m < len(base_a):
-                d = u16(base_a[m].a + base_a[m].c, base_s[k].c)
+                d = u16(base_a[m].at_us + base_a[m].y_us, base_s[k].at_us)
                 errs.append(min(d, 0x10000 - d))
         return statistics.median(errs) if len(errs) >= n // 2 else None
 
@@ -160,7 +178,7 @@ def main():
     print('\nCOM service lateness, µs, by the timer\'s purpose')
     names = {1: 'commutation', 2: 'reverse-blank end', 3: 'blanking floor'}
     for phase in sorted({s.flag & 0x7F for s in services}):
-        late = [s.d for s in services if s.flag & 0x7F == phase]
+        late = [s.y_us for s in services if s.flag & 0x7F == phase]
         late = [x for x in late if x < 0x8000]
         if not late:
             continue
@@ -171,11 +189,11 @@ def main():
 
     # Handler-run to bridge-update, phase 1 only: what the lateness counter
     # leaves out entirely.
-    to_bridge = [u16(s.a, s.b) for s in services if s.flag & 0x7F == 1 and s.b != 0]
+    to_bridge = [us(u16(s.at_fine, s.x_fine)) for s in services if s.flag & 0x7F == 1 and s.x_fine != 0]
     if to_bridge:
         print(
             f'\nhandler entry -> bridge update, µs: n={len(to_bridge)} '
-            f'max={max(to_bridge)} p50={statistics.median(to_bridge):.1f} mean={statistics.fmean(to_bridge):.2f}'
+            f'max={max(to_bridge):.3f} p50={statistics.median(to_bridge):.3f} mean={statistics.fmean(to_bridge):.3f}'
         )
 
     # Effective angle, from aligned (acceptance, commutation) pairs and the
@@ -191,39 +209,47 @@ def main():
         prev = None
         for acc, svc_row in matched:
             if prev is not None:
-                interval = u16(prev, acc.a)
-                if 0 < interval < 0x4000:
-                    pairs.append((u16(acc.a, svc_row.b), interval, acc, svc_row))
-            prev = acc.a
+                # Both in fine ticks: an 80-190 µs sector is 5 100-12 200
+                # ticks, far inside the u16 window.
+                interval = u16(prev, acc.at_fine)
+                if 0 < interval < 0xC000:
+                    pairs.append((u16(acc.at_fine, svc_row.x_fine), interval, acc, svc_row))
+            prev = acc.at_fine
 
     # Per-event columns, because an aggregate hides what the rows carry: the
     # requested wait and the elapsed-at-arm are in every kind-1 row (the
     # independent review of E154 asked for these instead of report means).
     if accepts:
-        waits = [r.c for r in accepts]
-        spent = [r.d for r in accepts]
+        # The wait is a control quantity and stays in whole microseconds;
+        # the elapsed-at-arm is a measurement, so it is fine now.
+        waits = [r.y_us for r in accepts]
+        spent = [us(r.z_fine) for r in accepts]
         print(
             f'\nrequested wait, µs (per event): n={len(waits)} min={min(waits)} p50={statistics.median(waits):.1f} '
             f'max={max(waits)} sd={statistics.stdev(waits) if len(waits) > 1 else 0:.2f}'
         )
         print(
-            f'elapsed at the arm, µs:         n={len(spent)} min={min(spent)} p50={statistics.median(spent):.1f} '
-            f'max={max(spent)} sd={statistics.stdev(spent) if len(spent) > 1 else 0:.2f}'
+            f'elapsed at the arm, µs:         n={len(spent)} min={min(spent):.3f} p50={statistics.median(spent):.3f} '
+            f'max={max(spent):.3f} sd={statistics.stdev(spent) if len(spent) > 1 else 0:.3f}'
         )
 
     if pairs:
         ang = [d / i for d, i, _, _ in pairs]
         # The angle is a ratio, so say which side its spread comes from: the
         # crossing-to-bridge delay, or the sector interval under it.
-        num = [d for d, _, _, _ in pairs]
-        den = [i for _, i, _, _ in pairs]
+        # Both sides of the ratio are fine ticks, printed as microseconds.
+        # Three decimals because the stamp is finer than that now (15.6 ns),
+        # which is the point of E180: a 17-20 us delay and the 4 us chain
+        # term inside it are no longer reported in 1 us steps.
+        num = [us(d) for d, _, _, _ in pairs]
+        den = [us(i) for _, i, _, _ in pairs]
         print(
-            f'\ncrossing -> bridge update, µs: n={len(num)} min={min(num)} p50={statistics.median(num):.1f} '
-            f'max={max(num)} sd={statistics.stdev(num) if len(num) > 1 else 0:.2f}'
+            f'\ncrossing -> bridge update, µs: n={len(num)} min={min(num):.3f} p50={statistics.median(num):.3f} '
+            f'max={max(num):.3f} sd={statistics.stdev(num) if len(num) > 1 else 0:.3f}'
         )
         print(
-            f'sector interval, µs:          n={len(den)} min={min(den)} p50={statistics.median(den):.1f} '
-            f'max={max(den)} sd={statistics.stdev(den) if len(den) > 1 else 0:.2f}'
+            f'sector interval, µs:          n={len(den)} min={min(den):.2f} p50={statistics.median(den):.2f} '
+            f'max={max(den):.2f} sd={statistics.stdev(den) if len(den) > 1 else 0:.2f}'
         )
         print(f'\neffective angle = (bridge update - crossing) / interval, n={len(ang)}')
         sd = f'  sd={statistics.stdev(ang):.4f}' if len(ang) > 1 else ''
@@ -240,11 +266,11 @@ def main():
     for r in rows:
         if r.kind == 1:
             if acc is not None and svc is not None:
-                interval = u16(acc.a, r.a)
+                interval = u16(acc.at_fine, r.at_fine)
                 if interval:
-                    fwd.append(u16(acc.a, svc.b) / interval)
+                    fwd.append(u16(acc.at_fine, svc.x_fine) / interval)
             acc, svc = r, None
-        elif r.kind == 2 and r.flag == 1 and r.b != 0 and acc is not None and svc is None:
+        elif r.kind == 2 and r.flag == 1 and r.x_fine != 0 and acc is not None and svc is None:
             svc = r
     if fwd:
         print(
@@ -264,7 +290,8 @@ def main():
     # row's own wait says by how much. (The pre-run review of E159 found this;
     # the earlier version of this table claimed per-event fidelity it lacks.)
     if pairs:
-        sched_meas = [acc.c / i for _, i, acc, _ in pairs]
+        # The wait is microseconds, so the interval goes in as microseconds.
+        sched_meas = [acc.y_us / us(i) for _, i, acc, _ in pairs]
         print(
             f'\nscheduled angle, from each row\'s own requested wait: '
             f'p50={statistics.median(sched_meas):.4f} = {statistics.median(sched_meas) * 60:.2f} deg'
@@ -272,15 +299,20 @@ def main():
         measured = statistics.median([d / i for d, i, _, _ in pairs])
         print(f'measured effective angle:  p50={measured:.4f} = {measured * 60:.2f} deg')
         # Per-event chain, not a difference of medians.
-        chain = [(d - acc.c) for d, _, acc, _ in pairs]
+        chain = [(us(d) - acc.y_us) for d, _, acc, _ in pairs]
         print(
             f'chain per event (bridge - crossing - requested wait), µs: '
-            f'p50={statistics.median(chain):.1f} min={min(chain)} max={max(chain)} '
-            f'sd={statistics.stdev(chain) if len(chain) > 1 else 0:.2f}'
+            f'p50={statistics.median(chain):.3f} min={min(chain):.3f} max={max(chain):.3f} '
+            f'sd={statistics.stdev(chain) if len(chain) > 1 else 0:.3f}'
         )
         if level_run is not None:
-            hit = sum(1 for _, i, acc, _ in pairs if wait_time(i, level_run) == acc.c)
-            err = [wait_time(i, level_run) - acc.c for _, i, acc, _ in pairs]
+            # `wait_time` mirrors the firmware's integer arithmetic, so the
+            # interval enters it as whole microseconds.
+            i_us = [int(round(us(i))) for _, i, _, _ in pairs]
+            hit = sum(1 for k, (_, _, acc, _) in enumerate(pairs)
+                      if wait_time(i_us[k], level_run) == acc.y_us)
+            err = [wait_time(i_us[k], level_run) - acc.y_us
+                   for k, (_, _, acc, _) in enumerate(pairs)]
             pct = 100.0 * hit / len(pairs)
             print(
                 f"model check at the run's own level {level_run}: {pct:.1f}% of events match "
@@ -289,7 +321,7 @@ def main():
             )
         print('modelled scheduled angle by advance level (raw interval, see caveat):')
         for level in (20, 22, 24, 26):
-            sched = [wait_time(i, level) / i for _, i, _, _ in pairs]
+            sched = [wait_time(int(round(us(i))), level) / us(i) for _, i, _, _ in pairs]
             mark = "  <- the run's level" if level == level_run else ""
             print(f'  level {level:2d}: p50={statistics.median(sched):.4f} = {statistics.median(sched) * 60:5.2f} deg{mark}')
 
@@ -304,11 +336,11 @@ def main():
         for name, group in (("preempted", marked), ("not preempted", clean)):
             if not group:
                 continue
-            ch = [d - acc.c for d, _, acc, _ in group]
+            ch = [us(d) - acc.y_us for d, _, acc, _ in group]
             ang = [d / i for d, i, _, _ in group]
             print(
-                f'  {name:14s} n={len(group):4d}  chain p50={statistics.median(ch):.1f} '
-                f'min={min(ch)} max={max(ch)}  angle p50={statistics.median(ang):.4f}'
+                f'  {name:14s} n={len(group):4d}  chain p50={statistics.median(ch):.3f} '
+                f'min={min(ch):.3f} max={max(ch):.3f}  angle p50={statistics.median(ang):.4f}'
             )
     elif pairs:
         print('  no service row carries the preempt marker (peer image, or no preemption sampled)')
@@ -316,11 +348,11 @@ def main():
     late_arms = [r for r in accepts if r.flag & 0x80]
     print(f'\nlate arms: {len(late_arms)} of {len(accepts)} acceptances')
     for r in late_arms[:20]:
-        print(f'  step={r.step} wait={r.c} spent={r.d} stage={r.flag & 0x07:#05b}')
+        print(f'  step={r.step} wait={r.y_us}us spent={us(r.z_fine):.3f}us stage={r.flag & 0x07:#05b}')
 
     if a.csv:
         with open(a.csv, 'w', newline='') as fh:
-            fh.write('kind,a,b,c,d,step,flag\n')
+            fh.write('kind,at_us,at_fine,x_fine,y_us,z_fine,step,flag\n')
             for r in rows:
                 fh.write(','.join(str(x) for x in r) + '\n')
         print(f'\nrows written to {a.csv}')

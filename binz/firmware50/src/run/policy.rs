@@ -78,10 +78,22 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 
 /// Duty ceiling for every six-step plan, tenths of a percent.
 ///
-/// 250 through campaign 5. Campaign 6 (E137) raises it to **375**, the goal's
-/// ceiling: the bench's 1 A supply reaches its limit near there (E136's
-/// measured `I ∝ duty²` puts 37.5% at about 0.90 A), so the clamp keeps the
-/// firmware from commanding past the supply by construction.
+/// 250 through campaign 5; campaign 6 (E137) raised it to 375 and campaign 9
+/// to **500**, the commanded rung.
+///
+/// **It therefore no longer constrains anything, and the old justification is
+/// withdrawn** (E181 SS6.4). While the cap sat below the rung it kept the
+/// firmware from commanding past a 1 A supply by construction; at 500 on a
+/// 2 A supply it equals what the run asks for, so the only thing standing
+/// between the bench and an over-current is the PSU's own limit and the
+/// firmware's current protection -- whose allowance is 4 A, i.e. twice the
+/// supply (see `protection::RAW_LIMIT`). That is a real gap, named here rather
+/// than papered over by a stale comment: nothing in the firmware stops a run
+/// between 2 A and 4 A.
+///
+/// The `I ~ duty^2` law the old comment cited is also superseded: the measured
+/// exponent across the campaign-7 rungs is ~2.4-2.9, and the 50% current is
+/// measured (1836-1877 mA on the signed proxy), not extrapolated.
 pub const SIXSTEP_DUTY_CAP: u16 = 500;
 
 /// Rescue attempts the level revisit may make in one sector after its first
@@ -101,6 +113,15 @@ pub const INJECT_AFTER_US: u32 = 3_000_000;
 /// Interrupt-masked stall for the tick-gap provocation (the guard allows 200).
 pub const INJECT_STALL_US: u16 = 400;
 /// Duty for the sag provocation: the reference's 50% rung.
+///
+/// **This is a load *step*, so it only provokes anything from a rung below
+/// 50%** -- at the 50% rung it equals the commanded duty and gate 4 becomes a
+/// no-op (E181 SS6.5). The positive control that the sag guard can still latch
+/// on a given image is therefore run at 25%, where the step is a real one, and
+/// a 50% cohort inherits that evidence rather than producing it. The
+/// alternative -- stepping *above* 50% on a 2 A supply -- would provoke the
+/// guard by driving the bench past its limit, which is the wrong direction to
+/// buy a positive control in.
 pub const INJECT_SAG_DUTY_TENTHS: u16 = 500;
 
 /// Absolute bus floor, mV, and the BOOSTXL bus divider ratio x100.

@@ -195,6 +195,29 @@ impl Ctx {
         closed: bool,
         sector_start: Option<u32>,
     ) -> Result<u32, Reason> {
+        let out = self.pass_inner::<P>(hal, closed, sector_start);
+        // **Freeze on *any* stop, not only a sag verdict.** The pre-run review
+        // of the 50% cohort found that `P::G::freeze()` fired only when the sag
+        // guard latched, so for every other stop -- and the bench's own scar
+        // says the likely one at 50% is a loss-of-lock current surge arriving
+        // as `AverageCurrent`, `PhasePeak` or `Tracking` -- the rings were
+        // never frozen (E181 SS5). In practice the tail still ended at the
+        // stop, because no further scans happen, but "in practice" is not the
+        // property; this is. `freeze` is idempotent and `NoSagLog::freeze` is
+        // a no-op that folds away, so production is unchanged.
+        if P::G::ON && out.is_err() {
+            P::G::freeze();
+        }
+        out
+    }
+
+    /// The pass itself; [`Ctx::pass`] wraps it to freeze the recorder on a stop.
+    fn pass_inner<P: Policies>(
+        &mut self,
+        hal: &mut impl Hal,
+        closed: bool,
+        sector_start: Option<u32>,
+    ) -> Result<u32, Reason> {
         let now = hal.now();
         hal.drain();
         if !hal.nfault_high() {
@@ -281,11 +304,20 @@ impl Ctx {
         self.stats.drive_scans += 1;
         self.stats.bus_min = self.stats.bus_min.min(scan.bus);
         self.rail.feed(scan.bus, scan.vref);
-        if let Some(r) = validate_raw_feedback(&scan, PhaseCodePolicy::RetainRails) {
+        // **The two stops that used to return before the row was pushed**, so
+        // the deciding scan was the one sample the trace did not contain
+        // (E181 SS5, gap (a)): a rejected phase code and the absolute bus
+        // floor. They are judged here, and the row for *this* scan is recorded
+        // first. The sag verdict is not consulted -- these are not sag stops;
+        // the row is the evidence of what the rail was doing when they fired.
+        let early = validate_raw_feedback(&scan, PhaseCodePolicy::RetainRails)
+            .or_else(|| (scan.bus < self.base.bus_floor_code).then_some(Reason::Bus));
+        if let Some(r) = early {
+            if P::G::ON && self.rail.ready() {
+                let (filt_bus, filt_vref) = self.sag.filtered();
+                self.record_sag_row::<P>(hal, sector_start, filt_bus, filt_vref);
+            }
             return Err(r);
-        }
-        if scan.bus < self.base.bus_floor_code {
-            return Err(Reason::Bus);
         }
         if self.rail.ready() {
             // The guard's own inputs, recorded at the instant it judges them
@@ -296,24 +328,10 @@ impl Ctx {
             let (filt_bus, filt_vref) = self.sag.filtered();
             let verdict = self.sag.observe(bus_mean, vref_mean);
             if P::G::ON {
-                let now = hal.now();
-                P::G::block(&crate::sagtrace::Block {
-                    at: hal.raw(),
-                    bus_mean,
-                    vref_mean,
-                    filt_bus,
-                    filt_vref,
-                    streak: self.sag.streak(),
-                    step: self.step.get(),
-                    duty_tenths: self.applied_duty,
-                    since_zc_us: sector_start.map_or(0, |t| now.wrapping_sub(t) as u16),
-                });
-                if verdict.is_some() {
-                    // Freeze: what matters is the window that led here.
-                    P::G::freeze();
-                }
+                self.record_sag_row::<P>(hal, sector_start, filt_bus, filt_vref);
             }
             if let Some(r) = verdict {
+                // The freeze is in `Ctx::pass`, for every stop alike.
                 return Err(r);
             }
         }
@@ -325,6 +343,30 @@ impl Ctx {
             }
             Some(BlockVerdict::Ok) | None => Ok(()),
         }
+    }
+
+    /// Push one row of the guard's own inputs. The rail means are read from
+    /// `self.rail`, the reference is passed in because it must be the value the
+    /// comparison *used* -- read before the post-test filter update.
+    fn record_sag_row<P: Policies>(
+        &mut self,
+        hal: &mut impl Hal,
+        sector_start: Option<u32>,
+        filt_bus: u16,
+        filt_vref: u16,
+    ) {
+        let now = hal.now();
+        P::G::block(&crate::sagtrace::Block {
+            at: hal.raw(),
+            bus_mean: self.rail.bus_mean(),
+            vref_mean: self.rail.vref_mean(),
+            filt_bus,
+            filt_vref,
+            streak: self.sag.streak(),
+            step: self.step.get(),
+            duty_tenths: self.applied_duty,
+            since_zc_us: sector_start.map_or(0, |t| now.wrapping_sub(t) as u16),
+        });
     }
 
     /// Gate 4 (E080): fire the planned stimulus once, `after` into the loop.

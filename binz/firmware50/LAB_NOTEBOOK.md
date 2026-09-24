@@ -10996,3 +10996,484 @@ rather than with a clean margin collapse.
    three of six trip, so a 5-run cohort should contain both outcomes.
 
 No 50% run happens until the pre-run review of this step returns.
+
+### E180 — the timing chain's stamp was quantised at the size of the effect: TIM2
+
+**Process note first: this entry is late.** The notebook rule is change and
+prediction *before* the build. I built the TIM2 instrument and ran the gate
+suite, and am writing the entry after. That is the second ordering violation
+of this campaign (E176 was the first, a powered run before its review), and
+both are mine. Nothing powered ran on this image before this entry; the gates
+are static. The prediction below is still recorded before any run of it.
+
+#### The operator's argument, which is correct
+
+The rate gate's defect (E174) was circularity, not resolution. But the
+*measuring* instrument has a resolution defect of its own, and it is the one
+about to decide the campaign's comparisons:
+
+* every chain stamp came from TIM17, free-running at **1 MHz**;
+* the quantity being measured is the crossing-to-bridge delay, **17-20 µs**,
+  and the chain term inside it, **4 µs**;
+* so the stamp quantises the measurement in steps of **1 µs**, i.e. ~5% of the
+  delay and **25% of the chain term**, and the effective angle in steps of
+  ~1.2% of a sector;
+* E166 and E168 both turned on differences of **one tick**.
+
+An instrument whose quantum is the size of the effect cannot separate a real
+difference from a rounding boundary. That is the same failure shape as the rate
+gate, in a different place.
+
+#### The change
+
+`hw::timers::fine` — **TIM2**, the only 32-bit timer on this part and the only
+one this firmware does not already use (TIM1 bridge, TIM16 commutation
+one-shot, TIM6 ADC and guard pace, TIM17 the µs control clock). Free-running,
+`PSC = 0`, `ARR = u32::MAX`:
+
+* **15.625 ns** per tick — the chain term is now ~256 ticks, not 4;
+* **67 s** to wrap, so there is **no software extension at all**, which also
+  keeps this away from the extended-modulus bug class this bench has already
+  been bitten by (the phantom 1010 µs wrap);
+* 64 MHz is 2⁶ MHz, so ticks → µs is `>> 6`: **division-free by
+  construction**, which the four-root arithmetic audit requires.
+
+What moved onto it, and what did not:
+
+| quantity | clock | why |
+|---|---|---|
+| crossing → arm, arm → bridge, elapsed-at-arm, handler → bridge | **TIM2 fine** | measurements |
+| the requested wait, the lateness the firmware reports, all control decisions | TIM17 µs | these *are* µs quantities; the wait is computed and programmed in µs |
+| row pairing between the two rings | TIM17 µs | the rings are paired on `sched ≈ crossing + wait`, and the wait is µs |
+
+`Beat` is now `{ at_us, at_fine, x_fine, y_us, z_fine, kind, step, flag, pad }`
+— a coarse stamp for pairing plus fine stamps for every delta. A `u16` of fine
+ticks spans 1.02 ms, which every intra-sector delta fits. `scripts/chain.py`
+converts with `/64` and prints three decimals where it used to print one.
+
+**Production is untouched and this is enforced, not asserted.** TIM2 is
+initialised only by the diagnostic binaries; the recorders that read it are
+folded away by their `const ON: bool`. The verification run:
+
+```
+functions_over_100_lines=0 (goal 0)
+DMA1_CHANNEL1: identical, 37 instructions
+ADC_COMP: identical, 736 instructions
+TIM16: identical, 325 instructions
+TIM6_DAC_LPTIM1: identical, 155 instructions
+warnings: 0   warnings: 0
+```
+
+— instruction-identical against `captures/elf/304D2FA9.e179.elf`, and 328
+tests in the crate (327 lib + 9 doc-tests at E178; one lib test added here for
+the tick→µs conversion, so **328 lib + 9 doc**; the bare "328" in E179 was the
+lib count and I should have said which).
+
+#### Prediction, on the record before any run of this image
+
+1. The **median** effective angle and chain term will agree with E168's within
+   their old quantum — p50 chain ≈ 4 µs, angle p50 in 0.19-0.22 — because the
+   medians were never the thing the resolution broke.
+2. The **spread** will *grow* as reported, not shrink: E168's chain sd of
+   ~0.5 µs was largely the quantiser, and the real spread was hidden inside
+   one tick. A reported sd that stays at exactly 0.5 µs would mean the fine
+   stamps are not actually varying, i.e. an instrument fault.
+3. The chain term will resolve as **not** a whole number of µs. If it comes
+   back at 4.000, the fine clock is not running (a dead `init`, or a `to_us`
+   applied twice) and nothing measured with it may be quoted.
+4. Nothing about the angle's *conclusion* changes: 1.7-3.0° of extra advance
+   from a 4 µs chain is a statement about a median, and E168's median stands.
+   What changes is that an A/B across images can now resolve a sub-µs
+   difference instead of reporting a rounding boundary.
+
+### E181 — the pre-run review before the 50% cohort, verbatim
+
+A fresh context-free reviewer, given the captures, the source, the notebook and
+the gate outputs, with my conclusions withheld initially, asked: which claims
+lack measurements, which numbers came from summaries, is the check-then-enable
+race closed, is the slope derivation sound, what else could stop a 50% run, is
+five attempts at 50% safe, and are the four predictions falsifiable.
+
+**Appended verbatim. Nothing powered runs until every item below is fixed or
+justified in writing.** My disposition follows in E182.
+
+---
+
+Verification done: I re-ran `sag.py` on all three captures, recomputed the medians, ran `isr_diff.py`/`isr_cycles.py` on four ELFs, and read the campaign-7 50% captures the entry does not cite.
+
+## 1. Claims lacking cited measurements
+
+1. **"step 4's runs below are the evidence it costs the loop nothing measurable"** (`LAB_NOTEBOOK.md` E179, after the +69-cycle table). False: the 47.5% run's image `captures/elf/73E1CBBC.e178-sag.elf` measures `ADC_COMP` **1009** / `TIM16` **346** — the *pre-fix* numbers. The images under review (`304D2FA9.e179.elf`, `D6950A21.e179-sag.elf`) measure **1078 / 385**. No bench run of any duty exists on the fixed code; the cost is unmeasured, not "shown to cost nothing".
+2. **The fix's own scope.** "a stop landing anywhere in `com_arm` leaves the timer off" is sound for `com_arm` (`src/roots.rs:892-896`), but the entry generalises to "proved by construction rather than by observation" for the property *interrupted work must not recreate timer activity after shutdown* (`src/oneshot.rs:12-16,26-30`). The handover path that clears the latch (`bin/board.rs:519-529`) is neither cited nor tested. See the race section.
+3. **"the script computes the span from the measured rate"** (E179, decimated-ring bullet). It does not: `scripts/sag.py:187` is `len(slow) * slow_every * 101 / 1000.0` — a literal 101 µs, the same class of stale-constant arithmetic the entry is correcting. The fast ring's own `at` stamps give 51 629 µs / 511 = 101.04 µs, so the rate *is* derivable from the dump and isn't used; `SAGSLOW` rows carry no timestamp (`src/sagtrace.rs` `Block` vs the 4-field slow row), so the 3.31 s span is assumption, not measurement.
+4. **"+69 cycles (≈1.1 µs)"** is the 0-WS static path; `isr_cycles.py` itself prints *"flash wait states 2 configured; instruction fetch not modelled, real cost is higher than the figure above"*. The µs figure is quoted without that qualifier and no measured ISR cost exists.
+5. **"the fitted exponent 2.38"** has no citation in E179. Its provenance is a *reviewer's* fit at `LAB_NOTEBOOK.md:9051` / `:9110`, and that same fit projected **~1.83 A at 50%**, not 1.69 A. E179 re-anchors the exponent to one metered point and lands 8% lower, in the direction that matters for a 2 A supply, without reconciling the notebook's own number.
+6. **"metered 1.5 A at 47.5% — thank you"**: an operator-spoken figure with no capture line and no log. It is the sole calibration of the current axis *and* of the "proxy is ~7% high" correction, and that correction is one point at one duty used as a general scale factor.
+7. **"campaign 7 saw three of six trip"** (prediction 4): no capture cited. The captures show **3 of 7** (`captures/2026-09-23/c7-500_01.txt`, `c7-500_03.txt`, `c7-500c_02.txt` at `reason=26` = `FastBusSag`, `src/protection.rs:78`; four at `reason=2`), on a different image and a 74.8 s window.
+8. **"A steady-state supply or power-path sag cannot trip this guard at 50%"** is presented as the *result* of the slope fit. It is a structural property of the guard, already written in the module docs: the denominator is a 207 ms EWMA of the same signal, updated after the test (`src/protection.rs:497-499`; `src/sagtrace.rs:24-31`, "anything slower is followed and becomes margin"). No measurement is needed, and none of the three runs tests it.
+9. **"all four roots still pass the arithmetic audit"**: no audit output is archived for these images — `captures/gates/` stops at `e174-gates.txt`. There is no cited gate run of any kind for `304D2FA9` or `D6950A21`.
+10. **E146's earlier, better-anchored slope is not cited or reconciled**: `LAB_NOTEBOOK.md:7390-7394` derives **−1.0% per amp** from two *metered* points and −1.7% at 50%. E179's −0.77%/A disagrees by ~30%; on E146's slope the "5.5 A" requirement becomes ~4.4 A. Neither entry references the other.
+
+## 2. Numbers that came from summaries rather than captures
+
+1. **"gates PASS"** — still not in the capture; `captures/sag/e178-sag475.txt` has no verdict line. Same item as E178 §2.2, uncorrected.
+2. **"image `73E1CBBC`"** and **"image `2D157417`"** — no image/CRC line exists in either capture (grep for image/crc returns nothing). Provenance is the runner's filename.
+3. **"328 host tests"** — a bare console count, no run cited, and it re-enters the idiom E178 §2.1 had just corrected to "327 lib + 9 doc-tests". The two entries' totals cannot both be read off the same tree without saying what changed.
+4. **The current axis** `hold_ma` 297 / 1481 / 1599 comes from the `BEMFCURRENT` summary line, which on the same line reports `zero_drift_ma = -131 / -366 / -160` against `ref_ma=326`. The 25% anchor's own zero moved by **44% of its 297 mA reading** — and that anchor is shared by *both* fitted intervals. The drift is never carried into the fit or quoted as an uncertainty.
+5. **"median `bus/vref` over each run's history"** — the three medians reproduce exactly (0.80412 / 0.79695 / 0.79601), but "history" is the **52 ms fast tail** for all three: `e175`/`e176` have no slow ring (`slow_kept=None` from `sag.py`), i.e. 0.116% of the 45% run and **0.065%** of the 80 s 25% run (512 of 786 918, `SAGSNAP total=786918`). E178 explicitly retired `e175-sag450` as evidence about margin; E179 reinstates it as a physical data point.
+6. **The `loop_gap_max_us` table.** The "production/chain, 47.5%: 156, 157" pair is not in the 47.5% production captures I can find — `c7-475_01/02/03` read 146 / 141 / 154, `c7f-475_01` 151, `c7-explore475_01` 145. The same-rung 45% comparators (143 / 151 / 145) are omitted, and against those the sag image's 151 sits at the top of the spread rather than comfortably inside it. Worse, each cell is one run's *maximum*, and the sag runs are 39.8 s against the production runs' 74.8 s — a max over half the samples is biased low, in the direction of the conclusion.
+7. **"mean pass rate falls ~10%"** is E177's 25% A/B. At 47.5%: `1489744 / 39776 = 37.45` per ms (sag, capture `loop_iters_closed`/`closed_ms`) against `3151947 / 74776 = 42.15` (`c7-475_01`) — **−11.2%**, and rising with duty. The figure quoted for the 50% decision is the one measured at the lowest duty.
+
+## 3. Is the check-then-enable race closed?
+
+**In `com_arm`, yes. As a general property, no — and the hole is a lost stop, not a lost enable.**
+
+1. `com_arm` (`src/roots.rs:859-897`) is sound against the guard root: pre-check, `disable_interrupt()` first, stamp, purpose, then the latch recheck inside `interrupt::free` around `hw::com_timer::arm` (`:892-896`). The guard cannot interleave with the masked section, so a trip at any point leaves the timer off. `com_stop` (`:900-907`) latches **before** it touches hardware, and every caller (`guard_trip` `:667-673`, `safe_off`) clears `com().active` before calling it, and `com_root` returns on `!active` (`:989`) — so a TIM16 already pending between `stop()` and `unpend()` cannot commutate.
+2. **The remaining ordering is the handover, and it erases a latched stop.** `Handover::lock` (`src/run/states.rs:701-727`) checks `guard_reason` only in the *previous* `pass` (`:213-216`), then does `drv_end`, `det_install`, `set_period`, `apply_plan` and finally `com_handover` at `:727`. `com_handover` (`bin/board.rs:519-529`) unconditionally does `stopped.store(false)` → `active.store(true)` → `unpend`/`unmask(TIM16)` → `com_arm`. A guard trip landing anywhere in that stretch is **undone**: the latch is cleared, `com().active` and `det().active` (`board.rs:505`) are set back to true, TIM16 is unmasked and the timer is armed — after `guard_trip` has already dropped MOE and `EN`. Exposure is bounded by one foreground pass (`loop_gap_max_us` 141–157) before `pass` sees the still-latched `S.guard().reason`, but within it the timer ends **enabled after a stop has latched** and the stop is lost. The comment at `board.rs:522-524` ("this handover is the only thing that may [release]") states the invariant without checking `guard_reason` or `S.com().active` before releasing.
+3. **The masked recheck rechecks only `stopped`, not `active`** (`:893` vs the two-flag `arm_allowed` at `:859-862`). The pair is not atomic. It is currently benign only because every stop path sets `active` first and then calls `com_stop`, whose `hw::com_timer::stop()` follows any arm that slipped through — i.e. the safety rests on caller ordering, which is exactly the thing step 2 set out to stop resting on.
+4. **The one reachable two-writer window is untested.** At `:713`→`:727` the detector is already live, so COMP's `arm_marked` (`src/roots.rs:355-363`) can preempt the foreground's `com_arm` mid-sequence. Result: `sched_raw`/`phase` from one context, ARR from the other — hazard 1 in the reverse direction. `oneshot.rs` interleaves only *stops* into an arm; there is no arm×arm test and no model of two writers.
+5. **The tests do not cover what the entry claims.** `an_arm_interrupted_by_a_stop_does_not_enable_the_timer_when_it_resumes` (`src/oneshot.rs:211-224`) is a real addition and does test every prefix. But the model has no concurrency: `ArmStep::ConfigureAndEnable` is `can_fire = !stop.latched()` (`:142`, `:163`) whether or not the recheck is masked, so **a firmware with an unmasked recheck — the defective version — passes every test in this file unchanged.** The masking is what closes the race, and it is proved by argument, not by the tests; "proved by construction rather than by observation" overstates what the suite establishes. `the_firmware_order_is_the_tested_order` (`:276-294`) asserts a constant against its own literal and reads nothing from `roots.rs`.
+6. Minor divergence: the firmware's resumed arm re-stores `phase` *after* `com_stop` zeroed it, so it ends with a stale non-zero `phase` and the timer off; the model's `stop()` zeroes `purpose` and the test asserts only `can_fire`/`dispatch`, so the divergence is invisible. Harmless today (`com_root` gates on `active`), undocumented.
+
+## 4. Is the sag-per-amp slope derivation sound?
+
+**The arithmetic is right; the inference is a non-sequitur, and the captures contain its own refutation.**
+
+1. Arithmetic checks out: medians 0.80412 / 0.79695 / 0.79601 reproduce exactly; (0.79695−0.80412)/0.80412 over 1.184 A = −0.753 %/A; 25→47.5% = −0.775 %/A; 43.7 per-mille of margin ÷ 0.77 %/A ≈ 5.7 A. Units are consistent (dimensionless ratio, mA→A).
+2. **The slope is measured on the wrong quantity.** The fit is on `bus/vref` (absolute rail). The guard's input is `bus_mean/filt_bus` — normalised against a 207 ms EWMA of itself (`src/protection.rs:493-499`). A steady current step moves numerator *and* denominator together, so the absolute slope does not transfer to the margin at any gain. **The entry's own three runs measure this directly and it is not noticed: p50 margin = 1053.3 (25%), 1052.6 (45%), 1052.6/1053.3 (47.5%) — invariant to within 0.07% across a 5.4× current range.** The measured current-sensitivity of the margin is zero, so "it would take ~5.5 A more current" is not a quantity these data can produce. The true statement is the structural one: steady state cannot trip this guard *at all*, which is already in `src/sagtrace.rs:24-31`.
+3. **Three points at three duties cannot be read as a current slope.** Duty is confounded with (a) advance level — `advance_level=20` at 25% vs 22 at 45/47.5% (`BEMFRUN` lines), a different loss regime; (b) window length — 80 s vs 45 s (`total_ms`); (c) the sampled quantity itself: the bus is read on a PWM-synchronised schedule, so what "bus mean" *is* changes with duty. Two intervals sharing the same 25% anchor are not two independent estimates, so "agree to 3%" is not corroboration.
+4. **Session-to-session rail variation is the same size as the effect.** `BEMFSAG ref_bus` = 1214 / 1210 / **1217** (unloaded baselines). The 47.5% session's *unloaded* rail is higher than the 25% session's, while the total effect attributed to current over the whole range is 1.0%. No repeat runs, no error bars.
+5. **`hold_ma` is not a trustworthy axis** beyond its stated 7%: it is a signed three-shunt block residual (`src/protection.rs:443-470`) whose own zero drifted −131 / −366 / −160 mA within the same runs, and it is a hold-phase *mean*, whereas the guard's concern is excursions.
+6. **The extrapolation is unnecessary and already superseded by data.** The 50% current is measured, not predicted: `hold_ma` = 1836–1877 across seven campaign-7 50% runs. The observed 47.5%→50% proxy step is ×1.16, i.e. exponent ≈2.9, steeper than the 2.38 used.
+
+## 5. What could stop a 50% run other than the sag guard
+
+Ordered as they are reached; every one of these returns **before** the sag judgement at `src/run/states.rs:290-316`:
+
+1. `Reason::Driver` — nFAULT, `:200-202`.
+2. **`hal.guard_reason() != 0`, `:213-216`** — the whole guard root: `TickGap`, `FeedbackStale`, `Tracking`, `CampaignDeadline` (`GUARD_CAMPAIGN_US`, `roots.rs:646`).
+3. `CompStorm` `:217`, `HandlerOverrun` `:220` (50 µs per-call budget — the root that just grew 69 cycles).
+4. `LateArm` `:228`, `BlankLatched` `:231` — closed-loop only; `late_arms` was non-zero in 4 of 588 captures historically.
+5. `HostAbort` `:238`, `AdcTimeout` `:241`, `SegmentDeadline` `:244`.
+6. Inside `scan_pass`: `AdcTimeout` on a missing scan `:281`; `validate_raw_feedback` `:284`; the absolute bus floor `:287-289`.
+7. **After** the sag block: `AverageCurrent` / `PhasePeak` from `current.accumulate` `:317-324`.
+
+Freeze coverage: `P::G::freeze()` fires only on `verdict.is_some()` (`:311-314`), so for every stop above the rings are never frozen. In practice their tail still ends at the stop (no further scans occur), and `sag.py` now prints `run_reason` — so the dump is *usable* but unlabelled as to which row was last. Two real gaps: (a) for cases 6, the tripping scan returns before the ring push, so the decisive sample is never recorded; (b) for cases 1-5 up to a full pass of scans between the last recorded row and the stop is missing. Note the loss-of-lock surge the bench's own scar predicts would most likely arrive as `AverageCurrent`(25)/`PhasePeak`(27) or `Tracking`(8) — none of which freeze.
+
+## 6. Safety for five attempts at 50%
+
+1. **Current headroom against 2 A is thinner than the entry states.** Measured 50% proxy 1836–1877 mA; with the 7%-high correction that is ~1.72 A metered, and the notebook's own six-point fit says **1.83 A** (`:9110`). At 1.83 A the headroom is 8.5%, and `hold_ma` is a mean — per-block excursions are higher.
+2. **The firmware's current protection does not protect the supply.** `RAW_LIMIT` is the **4 A** nominal allowance (`src/protection.rs:406-408`), i.e. 2× the supply, and a stop needs *two consecutive* over-blocks of 100 scans (`BLOCK_SCANS=100`, `:404`; `BlockVerdict::Stop` on the second) ≈ 20 ms above 4 A. Nothing in the firmware stops a run between 2 A and 4 A. The 2 A limit is enforced only by the PSU and the operator.
+3. **The slow side of the supply is covered only at 8.4 V.** `BUS_FLOOR_MV = 8_400` (`src/run/policy.rs:107`) against a ~11.85 V rail; the sag guard is structurally blind slower than ~200 ms (`sagtrace.rs:27-31`). A PSU folding into CC rides down ~29% of the rail — with current rising as voltage falls — before anything stops.
+4. **The duty cap no longer constrains anything.** `SIXSTEP_DUTY_CAP = 500` (`policy.rs:85`) *equals* the commanded rung, so its "keeps the firmware from commanding past the supply by construction" function is spent. Its doc comment is also stale and misleading at this rung: it still reads "Campaign 6 (E137) raises it to **375** … the bench's 1 A supply reaches its limit near there", beside a value of 500 on a 2 A supply, citing `I ∝ duty²` where E179 uses 2.38.
+5. **No positive control that the guard can still latch on these images.** `INJECT_SAG_DUTY_TENTHS = 500` (`policy.rs:104`) equals both the rung and the cap, so gate 4's sag provocation cannot produce a step at 50%; the reference captures run `inject=0`. Combined with §1.9 (no archived gate run for `304D2FA9`/`D6950A21`), the images about to be driven at the highest duty of the campaign, carrying new code in two ISR roots, have **no cited qualification run at all**. This is the single most concrete pre-run gap.
+6. **No thermal protection exists.** There is no NTC/temperature reason in the `Reason` set (`src/protection.rs:13-100`) and no temperature read in `states.rs`/`policy.rs`, despite the board's NTC on PC4. Five 45 s runs at the highest duty and current yet, back to back, with nothing watching winding or FET temperature.
+7. **Recorder overhead is unresolved and grows with duty.** ~440 000 `interrupt::free` windows per run (`src/sagtrace.rs` `SagRing::block`); ISR-latency effect still unmeasured (E178 §1.6, deferred and still owed); foreground cost −9.9% at 25%, **−11.2% at 47.5%** by the captures' own fields, unmeasured at 50%, on top of +69/+39 cycles in `ADC_COMP`/`TIM16` that no bench run has exercised. RAM is stated correctly (`.bss` 20 596 B verified by `size`, ~15.6 KB left), but no stack high-water is measured, against this project's own `.bss`/stack-overlap scar.
+8. **The entry does not say which image each of the five attempts runs.** Predictions 2 and 3 presuppose a frozen ring, i.e. the sag recorder; prediction 1 and any speed/current comparison want production. An undeclared split makes the cohort's five results non-comparable.
+
+## 7. Single runs, partial windows and nulls treated as bounds; are the four predictions falsifiable?
+
+1. The whole slope table is three **52 ms tails of three single runs** (0.116% / 0.116% / 0.065% of their runs) read as a physical law. E179 does label the 45%/47.5% margins "single runs and partial windows, and neither is a bound" — and then uses the same windows as the slope's three points without repeating the caveat.
+2. **"the guard never came within 4.2% of its line"** is the minimum of one 52 ms tail plus one 3.3 s decimated tail; the 0.116% fast window cannot exclude an excursion elsewhere — the same error E178 §"Coverage" corrected. And `overwritten` is not reported by the current script output at all.
+3. **Prediction 1 is not a prediction.** `hold_ma` at 50% is already in the repository: 1836–1877 across seven runs (`captures/2026-09-23/c7-500*`), all inside "1800 ± 100". It restates existing data and cannot fail; the *falsifiable* form ("~1.7 A metered") conflicts with the notebook's own 1.83 A projection and has no logged metering procedure.
+4. **Prediction 2 is not falsifiable as written.** (a) "the frozen **fast** ring shows mechanism (1) or (2)" is self-contradictory with the instrument's own design: E178 established, and `sag.py:184-186` repeats, that 52 ms cannot show how the reference got where it was — mechanism (2) is only visible in the slow ring. (b) The three mechanisms are not exhaustive: a fail-closed latch (`protection.rs:481-486`, `vref == 0 || vref >= ADC_RAIL`) is none of them and is indistinguishable from a third-low row except by inspecting `vref`. (c) "not a steady margin decline" has no numeric criterion. (d) Mechanisms (1) and (3) are not disjoint — a loss-of-lock surge *is* a transient in the passband.
+5. **Prediction 3 is circular.** "A run that reaches a steady hold at 50% does not trip" — a run that trips during the hold can always be said not to have reached a steady hold. There is no independent definition of "steady", and no pre-registered test. Its stated reason ("the margin there is ~4.0%") is arithmetic on the refuted current-slope chain (§4.2).
+6. **Prediction 4 is falsifiable but weak and mis-anchored.** "At least one of five completes" fails only if all five trip; on the cited base rate (actually 3/7, not 3/6, and on a different image and window length) that is ~4-7%. The appended "so a 5-run cohort should contain both outcomes" is a second, unstated prediction, and "both outcomes" is not scored anywhere.
+7. E178's withdrawal of the E175 decision rule is honoured, but the same shape has reappeared: "no low judgement, streak never left 0" at 47.5% is again offered as the margin result. As E178 noted, any ratio-to-EWMA guard sits near 1053 on a steady rail, so "no low judgement in a quiet tail" is near-unfalsifiable by construction — and the three runs' identical p50s are the proof of that, not of margin.
+
+### E182 — disposition of E181: three withdrawals, six fixes, and the cohort predeclared
+
+Every numbered finding of E181 is answered below in its own order. Nothing is
+marked "noted". A finding is either **fixed** (with the artefact that shows
+it), **withdrawn** (the claim is struck from the record), or **deferred** (with
+the reason and what stands in its place). The gate output for everything here
+is `captures/gates/e182-gates.txt`, committed.
+
+#### The three withdrawals, first, because they are conclusions and not prose
+
+**1. The sag-per-amp slope does not transfer to the guard's margin. E179's
+"it would take ~5.5 A more current" is withdrawn** (E181 §4.2).
+
+The fit was on `bus/vref` — the absolute rail. The guard's input is
+`bus_mean/filt_bus`, normalised against a 207 ms EWMA **of itself**, updated
+after the test. A steady current step moves numerator and denominator together,
+so an absolute slope cannot be converted into margin at any gain, and my
+arithmetic did exactly that.
+
+Worse, my own three runs contain the refutation and I did not look:
+
+| run | duty | `hold_ma` | p50 margin (‰) |
+|---|---|---|---|
+| `e176-sag25` | 25% | 297 | 1053.3 |
+| `e175-sag450` | 45% | 1481 | 1052.6 |
+| `e178-sag475` | 47.5% | 1599 | 1052.6 |
+
+**The margin is invariant to within 0.07% across a 5.4× range of current.** The
+measured current-sensitivity of this guard's margin is *zero*. That is a
+stronger result than the one I claimed, and it is the structural one that was
+already written in `src/sagtrace.rs`: the reference follows anything slower
+than its passband, so a steady-state supply or path sag **cannot trip this
+guard at all** — not "cannot at 50%", and not "would need 5.5 A". No slope is
+needed and the three-point fit is struck: three duties, confounded with advance
+level (20 vs 22), window length and the PWM-synchronised sampling instant, two
+intervals sharing one anchor, and a session-to-session unloaded-rail spread
+(1214/1210/1217) as large as the whole effect. E146's −1.0%/A (two metered
+points) is not reconciled with it because neither number is now load-bearing;
+both describe the absolute rail, which is not what the guard judges.
+
+**2. The 50% current projection is withdrawn — it is measured, not
+extrapolated** (E181 §1.5, §4.6, §6.1, §7.3).
+
+E179 fitted an exponent of 2.38 to one metered point and projected ~1.69 A.
+The repository already holds seven campaign-7 runs at 50%: `hold_ma` =
+**1836–1877 mA** on the signed proxy (`captures/2026-09-23/c7-500*`). The
+observed 47.5%→50% step is ×1.16, i.e. an exponent near 2.9. The notebook's own
+six-point fit says 1.83 A. So: **1.84–1.88 A on the proxy; with the proxy's one
+7%-high calibration, ~1.72 A metered; the notebook's independent fit says
+1.83 A.** Against 2 A that is 6–14% of headroom, not the comfortable margin
+E179 implied, and "prediction 1" was not a prediction at all — it restated
+existing data inside its own error bar.
+
+The proxy's uncertainty is also now stated instead of being quietly dropped:
+`zero_drift_ma` on the same lines is −131/−366/−160 against `ref_ma=326`, i.e.
+the 25% anchor's own zero moved by 44% of its reading. Any statement of the
+form "the current at X% is Y mA" from this instrument carries ±0.2 A.
+
+**3. "The guard never came within 4.2% of its line" is withdrawn as a
+statement about the run** (E181 §7.1, §7.2). It is true of a 52 ms tail plus a
+3.3 s decimated tail. `sag.py` now prints what was thrown away — for the 47.5%
+capture, **439 925 of 440 437 judgements were never kept** — and the honest
+form is: *in the 0.116% of judgements retained, and in the decimated history,
+no judgement was low*. Which, as E178 already said of any ratio-to-EWMA guard
+on a steady rail, is close to unfalsifiable: the three runs' identical p50s are
+evidence about the instrument, not about margin.
+
+#### What was fixed in code, and what shows it
+
+**§3.2 — the handover erased a latched stop. This was a real defect and it is
+fixed.** `com_handover` (and `det_install`) released the stop latch, set
+`active`, unmasked TIM16 and armed the timer *unconditionally*; a guard trip
+landing anywhere in that stretch was undone, after MOE and EN were already
+dropped. Now both consult `roots::guard_latched()` — a reason is stored by
+`guard_trip` **before** it clears any flag — and do so inside a critical
+section, so the check and the release are atomic with respect to the guard. A
+refusal needs no recovery path: `active` stays false, every root and every
+`com_arm` refuses, and the next `Ctx::pass` stops the run with the latched
+reason. This is the third distinct defect found in "step 2 complete"; the
+property was asserted three times before it was true.
+
+**§3.3, §3.4 — the arm is now atomic, which was the right answer to all of
+it.** E179's masked *recheck* covered one flag and one write. `roots::com_arm`
+now runs its whole body — the two-flag `arm_allowed` decision, the disarm, the
+stamp, the purpose and the enable — inside one `interrupt::free`. That closes
+the two-flag non-atomicity (which rested on caller ordering), the guard
+interleaving, and the **two-writer** window §3.4 named, where the foreground's
+handover arms while the detector is live and COMP's arm can land inside it,
+leaving the schedule from one context and the reload from the other.
+
+Cost, as a static longest path against E173's `01A674BA` (1009 / 346), with
+the fetch model this time and not without it:
+
+| root | 0 WS | 2 WS (G071's configured value) |
+|---|---|---|
+| `ADC_COMP` | 1009 → **1081** (+72) | **1282** |
+| `TIM16` | 346 → **360** (+14) | **426** |
+| `TIM6_DAC_LPTIM1` | 208 → **208** | **249** |
+
+E179's "+69 cycles (≈1.1 µs)" is corrected twice over: the figure is +72 on
+COMP, and it is a **static upper bound at 0 wait states**, which
+`isr_cycles.py` itself warns is optimistic — the 2 WS model puts COMP's bound
+at 1282 cycles (20.0 µs) against the 50 µs `HandlerOverrun` budget. No
+*measured* ISR cost exists for any of these images, and none is claimed.
+
+**§3.5 — the tests could not fail the defective firmware. Fixed, and this was
+the sharpest finding in the review.** The model had no concurrency, so an
+unmasked recheck passed every test unchanged. `oneshot.rs` now carries
+`Atomicity::{Atomic, Interruptible}`, both hazards run against both variants,
+and two tests *assert that the interruptible shape is unsafe*:
+`a_stop_inside_an_interruptible_arm_leaves_the_timer_live` and
+`two_arms_in_flight_cannot_mix_unless_the_arm_is_interruptible` (the latter via
+a new `fires_at` field, which is the only place a mixed arm is visible).
+`the_firmware_is_the_safe_variant` runs both hazards against whatever shape
+`FIRMWARE_ARM_IS_ATOMIC` names, so flipping the constant fails the suite rather
+than merely documenting a regression. **333 lib + 9 doc tests** (E179's bare
+"328" was the lib count; +5 here).
+
+**§3.6 — the model/firmware divergence on a stale `phase` is now documented**
+in the module header, with why it is harmless (`com_root` returns on `!active`
+before it reads the purpose) and why it is written down anyway.
+
+**§5 — the rings froze only for a sag verdict. Fixed.** `Ctx::pass` now freezes
+the recorder on **any** `Err`, which covers the guard root, `CompStorm`,
+`HandlerOverrun`, `LateArm`, `BlankLatched`, `AdcTimeout`, `SegmentDeadline`
+and the current protections — including exactly the stops the bench's own scar
+predicts for a loss-of-lock surge (`AverageCurrent`, `PhasePeak`, `Tracking`),
+none of which froze before. And gap (a) is closed: the two stops that returned
+*before* the row was pushed (a rejected phase code and the absolute bus floor)
+now record the deciding scan first, through a shared `record_sag_row`.
+Production's `NoSagLog` folds all of it away; the four production roots are
+instruction-identical (`isr_diff` in the gate file).
+
+**§1.3 — `sag.py` asserted 101 µs. Fixed, and the assertion was wrong.** The
+period is now measured from the fast ring's own stamps, as a median of
+per-row forward deltas (end-minus-start *wraps* at 512 × 101 µs — caught by
+running it). Measured: **99.00 µs** per judgement, a 51.6 ms fast window summed
+from its own stamps, and a decimated span of **3244 ms** labelled
+"fast-ring rate" rather than presented as a measurement of a ring whose rows
+carry no timestamp.
+
+**§6.4, §6.5 — two stale, misleading doc comments corrected.**
+`SIXSTEP_DUTY_CAP = 500` no longer claims to keep the firmware inside the
+supply "by construction": it equals the commanded rung, so it constrains
+nothing, and the comment now says so and names the real gap — the firmware's
+own current allowance is 4 A, twice the supply, so **nothing in the firmware
+stops a run between 2 A and 4 A**. `INJECT_SAG_DUTY_TENTHS = 500` is a load
+*step*, so at the 50% rung gate 4 is a no-op; the positive control that the sag
+guard can still latch therefore runs **at 25%**, where the step is real, and
+that is now written where the constant is.
+
+**§1.9, §2.1, §2.2 — no gate output existed for the images about to be driven.
+Fixed properly**: `captures/gates/e182-gates.txt` records, per image and by
+CRC32 and SHA-256, the four-root audit on all four roots, the cycle bounds at
+0 and 2 wait states, the changed-root disassembly against `304D2FA9.e179.elf`,
+the structure limits, the test counts and all three clippy configurations. The
+images are archived as `captures/elf/{7C55B7E0,9034A6D9,33B695D8}.e182.elf`.
+
+That run also found something the hand-run gates never had: **`edge-capture`
+fails its ADC_COMP audit** — panic path, unresolved indirect call and an
+unreviewed loop via a formatter and `roots::gates_low_now`. It is the first
+time any gate file has audited that image; the E121 archives pass, its source
+is unchanged, so the shared roots code grew the problem since. It is not used
+in this campaign and is not a cohort image. It must not be flashed until it is
+fixed or deleted, and that is recorded in the gate file.
+
+#### Corrections to numbers I quoted from summaries
+
+**§2.6 — the `loop_gap_max_us` table was cherry-picked.** The full spread, with
+window lengths, replaces E179's four cells:
+
+| image | rung | `loop_gap_max_us` | window |
+|---|---|---|---|
+| production | 47.5% | 146, 141, 154, 151, 145 | 74.8 s |
+| production | 45% | 143, 151, 145 | 74.8 s |
+| sag recorder | 45% | 138 | 39.8 s |
+| sag recorder | 47.5% | 151 | 39.8 s |
+
+E179's "156, 157" are not in the 47.5% production captures. The sag image's 151
+sits at the **top** of the production spread, not comfortably inside it, and
+each cell is one run's maximum over half as many samples — biased low, in the
+direction of my conclusion. The corrected statement: *the sag recorder's worst
+observed gap is at the top of the production spread, on half the window, so
+there is no evidence it lowers the worst-case latency and none that it raises
+it either.* Which means the latency question E177 got wrong is still open, not
+answered — see the deferrals.
+
+**§2.7 -- the recorder's foreground cost, with the comparison the review's
+figure did not use.** Passes per ms, from each capture's own
+`loop_iters_closed`/`closed_ms`, at 47.5%:
+
+| capture | window | passes/ms |
+|---|---|---|
+| `c7-475_01` production | 74.8 s | 42.15 |
+| `c7-475_02` production | 74.8 s | 42.13 |
+| `c7-475_03` production | 74.8 s | 42.16 |
+| `c7f-475_01` production | 74.8 s | 41.82 |
+| `c7-explore475_01` production | **39.8 s** | **44.60** |
+| `e178-sag475` recorder | 39.8 s | **37.45** |
+
+So the recorder's cost is **-11.2%** against the three-run 74.8 s production
+group and **-16.0%** against the one production run with the *same* 39.8 s
+window -- and those two production groups differ from each other by 5.8%,
+which is the part that matters: **the inter-run spread of the baseline is a
+third of the effect being attributed to the recorder.** E177's -9.9% was at
+25%, and no same-image, same-session A/B of this exists at any duty. That is
+why the cohort below spends its first two attempts on production.
+
+**§1.7 — campaign 7 saw 3 of 7 trip, not 3 of 6** (`c7-500_01`, `c7-500_03`,
+`c7-500c_02` at `reason=26`; four at `reason=2`), on a different image and a
+74.8 s window rather than the cohort's planned one.
+
+**§1.1 — "step 4's runs are the evidence it costs the loop nothing
+measurable" is false and withdrawn.** Those runs were on `73E1CBBC`, which
+measures the **pre-fix** 1009/346. No bench run exists on the fixed code at
+any duty. That is now the cohort's first item rather than a claim.
+
+**§1.6 — the metered 1.5 A at 47.5%** is an operator-spoken figure with no
+capture line, and it is the sole calibration of the current axis and of the
+"proxy ~7% high" correction, from one point at one duty. Kept as such, labelled
+as such, and the metering is logged from now on.
+
+**§1.4, §1.8, §2.3 — qualifiers restored**: the cycle figures are static bounds
+at a stated wait-state model; "a steady-state sag cannot trip this guard" is a
+structural property of the filter, cited to `protection.rs:493-499`, not a
+result of any measurement; test counts are stated as lib + doc.
+
+#### Deferred, with what stands in their place
+
+* **§6.6, no thermal protection.** There is no temperature reason in the
+  `Reason` set and no NTC read in the loop, and I am **not** adding an ADC
+  channel and a new protection path to the images an hour before driving them
+  at the campaign's highest current — a new guard is a new way to stop a run
+  and a new thing to get wrong. Standing in its place: the cohort is five runs
+  of 45 s with a **≥60 s off-state between runs**, the operator is present and
+  the goal's own pause list includes abnormal heat, and I will touch nothing
+  and continue nothing if a run smells or the board is hot. Owed, and named as
+  the largest unguarded quantity on the bench.
+* **§6.2, §6.3 — the firmware does not protect the supply.** `RAW_LIMIT` is
+  4 A with a two-block (≈20 ms) persistence, and the only slow-rail guard is
+  an absolute floor at 8.4 V on an 11.85 V rail. Both are deliberate campaign
+  constants that the goal says to preserve, and the 2 A limit is enforced by
+  the PSU. I am not retuning protections to make a cohort safer; I am declaring
+  that the PSU is the limit and that a trip at the PSU is data, not a wall.
+* **§6.7 — the recorder's ISR-latency effect is still unmeasured** (owed since
+  E178). The standing checks remain `com_late_max_us` and `comp_call_max_us`
+  per run, plus `loop_gap_max_us`, and the cohort's production/recorder pairing
+  below gives the first same-duty comparison. No stack high-water measurement
+  exists either; `.bss` is 20 596 B with ~15.6 KB left.
+* **§3.1's scope sentence** — "proved by construction rather than by
+  observation" was too broad for the *property*, and §3.5's fix is what earns
+  it back for `com_arm`. For the handover it is now also true, and for
+  everything else the honest word is "unproved".
+
+#### The 50% cohort, predeclared
+
+Five attempts. **Images, fixed now and not chosen afterwards:**
+
+* attempts 1–2: **production `7C55B7E0`** — no recorder, so the first
+  measurement of the fixed code's cost at this rung, and the current/speed
+  numbers the cohort is compared on;
+* attempts 3–5: **sag recorder `9034A6D9`** — the frozen rings, for mechanism.
+
+Before any of them, in this order: (a) gate 4 at **25%** on `9034A6D9`, the
+positive control that the guard still latches and still freezes; (b) one 25%
+run on `7C55B7E0` for the same-image A/B baseline. All stops armed, protection
+thresholds, hysteresis 0, the 64/ms cap and the sag fraction/streak/latch
+untouched. Every capture retained, pass or fail, including ones I dislike. No
+retry-until-pass; five attempts means five, and a failure is kept and read.
+
+**Predictions, with numeric criteria, before any run:**
+
+1. **Cost of the fixed code at 47.5%–50%**: `loop_gap_max_us` on `7C55B7E0`
+   stays **≤ 160 µs** and `com_late_max_us` does not exceed its 47.5%
+   production values by more than 5 µs. Falsified by either exceeding it.
+2. **Current**: proxy `hold_ma` lands in **1750–1950 mA** (the campaign-7
+   measurement ±4%). Outside that band, the current law is wrong, not the
+   prediction.
+3. **If a run latches `FastBusSag` (reason 26)**, the frozen rings show
+   **either** ≥3 consecutive rows with margin < 1000‰ within the 52 ms fast
+   window (a passband transient, mechanism 1) **or** a decimated history whose
+   `filt_bus` stands **≥1% above** the last 10 `bus_mean` rows (a lagging
+   reference, mechanism 2) **or** a `vref` of 0 or ≥ `ADC_RAIL` in the tripping
+   row (the fail-closed latch, which E179's three mechanisms omitted). If the
+   dump shows none of these three, all of my mechanisms are wrong and I say so.
+4. **If a run stops for anything else**, the reason code is on the record and
+   the rings are frozen — which is the thing E182 fixed, so a stop with
+   `frozen=0` on these images is itself a defect report.
+5. **Base rate**: on campaign 7's 3-of-7, two or more of five trips is the
+   expected outcome; **I do not predict a qualified 50%.** A qualification
+   needs 3/3 at the rung plus the ladder's prerequisites, and this cohort is
+   explicitly exploratory — no exploratory pass is promoted.
+
+Prediction 3 replaces E179's prediction 2, which §7.4 correctly called
+unfalsifiable (it asked the 52 ms ring to show a 207 ms mechanism). E179's
+predictions 1 and 3 are withdrawn: 1 restated existing data, 3 was circular.

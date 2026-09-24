@@ -127,13 +127,40 @@ def main() -> int:
         f'frozen={snap.get("frozen")} fraction={num}/{den} streak_to_latch={latch} '
         f'run_reason={snap.get("run_reason", "?")}'
     )
+    # What the ring threw away, which no earlier version printed
+    # (E181 SS7.2): a fast ring of 512 over a run of hundreds of thousands
+    # of judgements has overwritten nearly all of them, and that number
+    # belongs on the page rather than being inferred from a percentage.
+    fast_len = snap.get("fast_len") or len(rows)
+    if judged:
+        print(f"  overwritten (fast): {max(judged - fast_len, 0)} judgements never kept")
     if not snap.get("frozen"):
         print(
             "  NOT frozen: either the run never tripped the sag guard, or it stopped for "
             "another reason before the guard was judged -- read run_reason, not this flag"
         )
+    # The judgement period, **measured from the fast ring's own 16-bit
+    # stamps** rather than assumed. The earlier code carried a literal
+    # 101 us -- the same class of stale constant this script exists to
+    # catch (E181 SS1.3). `None` when the ring is too short to measure one.
+    # Per-row forward deltas, not end-minus-start: 512 judgements at ~101 us
+    # span 51.7 ms and the stamp is 16-bit, so the total *wraps* and a naive
+    # difference is meaningless (caught by running this on the 47.5% capture).
+    # Each step is ~101 us, far inside the modulus; the median of them is the
+    # period and the sum is the window.
+    steps = [(b.at - a_.at) & 0xFFFF for a_, b in zip(rows, rows[1:])]
+    steps = [d for d in steps if 0 < d < 0x8000]
+    period_us = statistics.median(steps) if steps else None
+    window_ms = sum(steps) / 1000.0 if steps else None
     if judged and rows:
-        print(f"  fast window is {len(rows)} of {judged} judgements = {100.0 * len(rows) / judged:.3f}% of the run, and it is the tail")
+        pct = 100.0 * len(rows) / judged
+        extra = f", one every {period_us:.2f} us measured" if period_us else ""
+        print(f"  fast window is {len(rows)} of {judged} judgements = {pct:.3f}% of the run, and it is the tail{extra}")
+        if period_us and window_ms:
+            print(
+                f"  fast window spans {window_ms:.1f} ms (summed from its own stamps)"
+                f" of a run of {judged * period_us / 1000.0:.0f} ms"
+            )
 
     m = [margin_permille(r, num, den) for r in rows]
     low = [r for r, x in zip(rows, m) if x < 1000.0]
@@ -184,13 +211,19 @@ def main() -> int:
     # half of the record the fast ring cannot show, because 52 ms is a quarter
     # of one 207 ms filter time constant.
     if slow:
-        span_ms = len(slow) * snap.get("slow_every", 32) * 101 / 1000.0
+        # Derived from the measured judgement period above. `SAGSLOW` rows
+        # carry no stamp of their own, so this is the fast ring's rate
+        # projected over the decimation -- labelled as such, not offered as
+        # a measurement of the slow ring (E181 SS1.3).
+        per = period_us if period_us else 101.0
+        how = "fast-ring rate" if period_us else "ASSUMED 101 us/judgement"
+        span_ms = len(slow) * snap.get("slow_every", 32) * per / 1000.0
         fb = [r.filt_bus for r in slow]
         bus = [r.bus for r in slow]
         print()
         print(
             f"decimated history: {len(slow)} rows every {snap.get('slow_every')} judgements "
-            f"~= {span_ms:.0f} ms"
+            f"~= {span_ms:.0f} ms ({how})"
         )
         print(
             f"  filt_bus {min(fb)}..{max(fb)} (last {fb[-1]}), "

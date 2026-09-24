@@ -29,11 +29,57 @@
 //!   activity after shutdown" is a property of one function rather than of
 //!   whichever caller remembered to check.
 //!
+//! * **The arm is atomic** (E182). Ordering and a latch were not enough: the
+//!   decision is two flags, the enable is a separate write, and there are two
+//!   callers, so a guard trip *or* the other caller could land inside the
+//!   sequence. `roots::com_arm` therefore runs its whole body — decision and
+//!   writes — inside one critical section, and [`Atomicity`] lets the model
+//!   express both that shape and the defective one.
+//!
 //! **Zero observed violations is not proof**, which is why this is a model
-//! with interleaving tests and a shared decision, not a counter. The firmware
-//! runs the same decision and the same order; [`ARM_ORDER`] is the order its
-//! straight-line code follows, and `the_firmware_order_is_the_tested_order`
-//! pins the list.
+//! with interleaving tests and a shared decision, not a counter. And a model
+//! that cannot fail the broken firmware proves nothing either: the pre-run
+//! review of the 50% cohort found that the *defective* unmasked recheck passed
+//! every test here unchanged (E181 §3.5). Both hazards are now run against
+//! both variants, and the tests assert that the interruptible one is unsafe.
+//!
+//! The firmware runs the same decision and the same order; [`ARM_ORDER`] is
+//! the order its straight-line code follows, `the_firmware_order_is_the_tested_order`
+//! pins the list, and [`FIRMWARE_ARM_IS_ATOMIC`] pins the critical section.
+//!
+//! **One modelled divergence, deliberately kept** (E181 §3.6): the firmware's
+//! resumed arm re-stores `phase` after `com_stop` has zeroed it, so it can end
+//! with a stale non-zero purpose and the timer off, where the model's `stop`
+//! leaves `purpose` at 0. It is harmless — `com_root` returns on `!active`
+//! before it reads the purpose, and nothing can dispatch with the timer off —
+//! but it is a difference between the model and the code, and an undocumented
+//! one is how the last two of these were missed.
+
+/// Is the firmware's arm — its decision *and* all of its writes — atomic with
+/// respect to the contexts that can interleave with it?
+///
+/// `true` since E182: `roots::com_arm` runs its whole body inside
+/// `cortex_m::interrupt::free`. This constant exists because the model below
+/// can express both, and the pre-run review of the 50% cohort found that it
+/// could not previously: with the enable's latch recheck written *unmasked* —
+/// the defective firmware — every test in this file still passed (E181 §3.5).
+/// A model that cannot fail the broken version proves nothing, so
+/// [`Atomicity`] is now a parameter, the interleavings are run against both,
+/// and the tests assert that the unmasked variant *is* unsafe.
+///
+/// If `roots::com_arm` ever loses its critical section, flip this to `false`
+/// and `the_firmware_is_the_safe_variant` fails.
+pub const FIRMWARE_ARM_IS_ATOMIC: bool = true;
+
+/// Whether an arm can be interleaved by the guard root or by the other caller.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Atomicity {
+    /// The firmware's: decision and writes inside one critical section.
+    Atomic,
+    /// The defective shape, kept so the tests can show it failing: the writes
+    /// are open to a stop, or to a second arm, landing between them.
+    Interruptible,
+}
 
 /// May the one-shot be armed at all?
 ///
@@ -105,23 +151,92 @@ impl Stop {
 pub struct OneShot {
     pub stop: Stop,
     pub active: bool,
+    /// Which firmware shape this instance models.
+    pub atomicity: Atomicity,
     /// The purpose a firing would be served as; 0 is "nothing armed".
     pub purpose: u32,
+    /// The instant the bookkeeping says the firing is for.
     pub scheduled_at: u32,
+    /// The instant the *hardware* will actually fire at: the reload, written
+    /// at the enable, against the clock the enable read. Two writers landing
+    /// inside one arm are visible here and nowhere else — the bookkeeping ends
+    /// up describing one arm and the reload the other (E181 §3.4).
+    pub fires_at: u32,
     /// Can the timer raise an interrupt?
     pub can_fire: bool,
 }
 
 impl OneShot {
+    /// The firmware's shape: an atomic arm.
     #[must_use]
     pub const fn idle() -> Self {
+        Self::with_atomicity(Atomicity::Atomic)
+    }
+
+    #[must_use]
+    pub const fn with_atomicity(atomicity: Atomicity) -> Self {
         Self {
             stop: Stop::new(),
             active: true,
+            atomicity,
             purpose: 0,
             scheduled_at: 0,
+            fires_at: 0,
             can_fire: false,
         }
+    }
+
+    /// Can another context observe — or write — this arm half finished?
+    #[must_use]
+    pub const fn interleavable(&self) -> bool {
+        matches!(self.atomicity, Atomicity::Interruptible)
+    }
+
+    /// **The interleaving the critical section exists to forbid**: a stop
+    /// landing between the arm's decision and its enable.
+    ///
+    /// Returns whether the interleaving was *reachable* at all. On an atomic
+    /// arm it is not, and nothing happens — the guard runs either before the
+    /// decision (which then refuses) or after the enable (and `com_stop`
+    /// turns the timer off itself). On an interruptible arm it is reachable,
+    /// and the enable writes on a decision that is already stale, which is
+    /// precisely the defect.
+    pub fn stop_inside_the_arm(&mut self, at: u32, us: u32, purpose: u32) -> bool {
+        if !arm_allowed(self.stop.latched(), self.active) {
+            return false;
+        }
+        if !self.interleavable() {
+            return false;
+        }
+        // The decision has passed; the guard lands here.
+        self.stop();
+        // ... and the rest of the arm runs against it.
+        self.scheduled_at = at.wrapping_add(us);
+        self.purpose = purpose;
+        self.fires_at = at.wrapping_add(us);
+        self.can_fire = true;
+        true
+    }
+
+    /// **The two-writer interleaving** (E181 §3.4): the foreground's handover
+    /// arms while the detector is live, so COMP's own arm can land inside it.
+    ///
+    /// Returns whether the mixed state was reachable. An atomic arm cannot be
+    /// interleaved, so both arms complete in some order and the state belongs
+    /// to one of them. An interruptible arm ends with the schedule and purpose
+    /// of one writer and the enable of the other.
+    pub fn arm_interleaved_by_another_arm(&mut self, a: (u32, u32, u32), b: (u32, u32, u32)) -> bool {
+        if !self.interleavable() {
+            // Serialised: A then B, and the state is entirely B's.
+            let _ = self.arm(a.0, a.1, a.2);
+            let _ = self.arm(b.0, b.1, b.2);
+            return false;
+        }
+        // A gets as far as its stores; B arms completely; A then enables.
+        let _ = self.arm_partial(a.0, a.1, a.2, 3);
+        let _ = self.arm(b.0, b.1, b.2);
+        self.arm_resume(a.0, a.1, a.2, 3);
+        true
     }
 
     /// Run the arm sequence, stopping after `steps` of it — so a test can
@@ -139,7 +254,10 @@ impl OneShot {
                 // between the first check and this step; in the firmware that
                 // recheck is inside a critical section so the guard cannot
                 // interleave with it.
-                ArmStep::ConfigureAndEnable => self.can_fire = !self.stop.latched(),
+                ArmStep::ConfigureAndEnable => {
+                    self.fires_at = at.wrapping_add(us);
+                    self.can_fire = !self.stop.latched();
+                }
             }
         }
         true
@@ -160,7 +278,10 @@ impl OneShot {
                 ArmStep::Disarm => self.can_fire = false,
                 ArmStep::StampSchedule => self.scheduled_at = at.wrapping_add(us),
                 ArmStep::SetPurpose => self.purpose = purpose,
-                ArmStep::ConfigureAndEnable => self.can_fire = !self.stop.latched(),
+                ArmStep::ConfigureAndEnable => {
+                    self.fires_at = at.wrapping_add(us);
+                    self.can_fire = !self.stop.latched();
+                }
             }
         }
     }
@@ -171,6 +292,13 @@ impl OneShot {
         self.can_fire = false;
         self.purpose = 0;
         self.stop.latch();
+    }
+
+    /// Do the bookkeeping and the hardware agree about when the firing is for?
+    /// Only meaningful while something is armed.
+    #[must_use]
+    pub const fn consistent(&self) -> bool {
+        !self.can_fire || self.fires_at == self.scheduled_at
     }
 
     /// What a dispatch would be served as, if one can happen at all.
@@ -270,6 +398,109 @@ mod tests {
         assert!(!os.stop.latched(), "refusing is not latching");
         os.active = true;
         assert!(os.arm(0, 10, 1));
+    }
+
+    /// **The test the suite was missing**: it fails the defective firmware.
+    ///
+    /// E181 §3.5 found that an unmasked latch recheck — the shape the binz
+    /// reviewer caught — passed every test in this file unchanged, because the
+    /// model had no concurrency to express. It does now, and the two variants
+    /// come out differently.
+    #[test]
+    fn a_stop_inside_an_interruptible_arm_leaves_the_timer_live() {
+        let mut bad = OneShot::with_atomicity(Atomicity::Interruptible);
+        assert!(
+            bad.stop_inside_the_arm(1_000, 50, 1),
+            "the interleaving must be reachable on the defective shape"
+        );
+        // This is the defect, asserted rather than described: a latched stop,
+        // and a timer that will fire anyway, after the bridge is dead.
+        assert!(bad.stop.latched());
+        assert!(bad.can_fire, "the whole point: the stop was lost");
+        assert_eq!(bad.dispatch(), Some(1));
+    }
+
+    #[test]
+    fn a_stop_cannot_land_inside_an_atomic_arm_at_all() {
+        let mut good = OneShot::idle();
+        assert!(
+            !good.stop_inside_the_arm(1_000, 50, 1),
+            "an atomic arm admits no interleaving"
+        );
+        // Whichever side of the critical section the guard lands on, the timer
+        // ends off: before it, the decision refuses; after it, the stop runs.
+        let mut before = OneShot::idle();
+        before.stop();
+        assert!(!before.arm(1_000, 50, 1));
+        assert_eq!(before.dispatch(), None);
+        let mut after = OneShot::idle();
+        assert!(after.arm(1_000, 50, 1));
+        after.stop();
+        assert!(!after.can_fire);
+        assert_eq!(after.dispatch(), None);
+    }
+
+    /// The two-writer window (E181 §3.4): the foreground's handover arms while
+    /// the detector is live, so COMP's arm can land inside it.
+    #[test]
+    fn two_arms_in_flight_cannot_mix_unless_the_arm_is_interruptible() {
+        let a = (1_000_u32, 50_u32, 1_u32);
+        let b = (1_010_u32, 90_u32, 3_u32);
+
+        let mut bad = OneShot::with_atomicity(Atomicity::Interruptible);
+        assert!(bad.arm_interleaved_by_another_arm(a, b));
+        assert!(
+            !bad.consistent(),
+            "the defective shape must be able to end with one arm's schedule \
+             and the other's reload"
+        );
+
+        let mut good = OneShot::idle();
+        assert!(!good.arm_interleaved_by_another_arm(a, b));
+        assert!(good.consistent(), "an atomic arm always ends describing one arm");
+        assert_eq!(good.purpose, b.2, "serialised: the later arm wins outright");
+        assert_eq!(good.scheduled_at, b.0 + b.1);
+        assert_eq!(good.fires_at, good.scheduled_at);
+    }
+
+    #[test]
+    fn every_interleaving_keeps_an_atomic_arm_consistent() {
+        // The exhaustive version of the two tests above, over both hazards and
+        // every prefix: an atomic arm is never left describing two firings.
+        for done in 0..=ARM_ORDER.len() {
+            let mut os = OneShot::idle();
+            assert!(os.arm_partial(1_000, 50, 1, done));
+            os.stop();
+            os.arm_resume(1_000, 50, 1, done);
+            assert!(os.consistent(), "done={done}");
+            assert!(!os.can_fire, "done={done}");
+        }
+    }
+
+    #[test]
+    fn the_firmware_is_the_safe_variant() {
+        // `roots::com_arm` runs its whole body inside `interrupt::free`, so the
+        // shape the tests above prove safe is the one that is compiled. This
+        // test runs both hazards against *whatever shape the constant names*,
+        // so flipping the constant fails it rather than merely documenting a
+        // regression; the thing to re-check by reading `roots.rs` is the
+        // constant itself.
+        let shape = if FIRMWARE_ARM_IS_ATOMIC {
+            Atomicity::Atomic
+        } else {
+            Atomicity::Interruptible
+        };
+        let mut os = OneShot::with_atomicity(shape);
+        assert!(
+            !os.stop_inside_the_arm(1_000, 50, 1),
+            "com_arm must arm inside a critical section: no stop may land inside the arm"
+        );
+        let mut two = OneShot::with_atomicity(shape);
+        assert!(
+            !two.arm_interleaved_by_another_arm((1_000, 50, 1), (1_010, 90, 3)),
+            "com_arm must arm inside a critical section: no second arm may land inside one"
+        );
+        assert!(two.consistent());
     }
 
     #[test]

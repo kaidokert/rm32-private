@@ -328,11 +328,11 @@ pub fn det_counts() -> (u32, u32, u32) {
 /// the recording added. Two bodies, not one with dead branches: a closure
 /// that merely *captures* the log changed COMP's machine code (E121).
 #[inline(always)]
-pub fn det_decide<L: EdgeLog, C: ChainLog>(raw: u16, at: &mut Root<CompPrio>) -> bool {
+pub fn det_decide<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
     if L::ON {
-        det_decide_logged::<L, C>(raw, at)
+        det_decide_logged::<L, C>(raw, fine0, at)
     } else {
-        det_decide_plain::<C>(raw, at)
+        det_decide_plain::<C>(raw, fine0, at)
     }
 }
 
@@ -347,6 +347,24 @@ fn stage_code() -> u8 {
     u8::from(S.drv().active.load(Ordering::Relaxed))
         | (u8::from(S.det().active.load(Ordering::Relaxed)) << 1)
         | (u8::from(S.guard().tracking.load(Ordering::Relaxed)) << 2)
+}
+
+/// One acceptance's chain row: coarse µs for pairing, fine ticks for every
+/// measured delta (E180). `None` in production, where `C::ON` is false.
+#[inline(always)]
+#[allow(clippy::type_complexity)]
+fn beat_row<C: ChainLog>(
+    raw: u16,
+    fine0: u16,
+    wait: u32,
+    step: u8,
+    late: bool,
+) -> Option<(u16, u16, u16, u32, u16, u8, bool)> {
+    if !C::ON {
+        return None;
+    }
+    let fine_now = hw::fine::raw() as u16;
+    Some((raw, fine0, fine_now, wait, fine_now.wrapping_sub(fine0), step, late))
 }
 
 /// Arm the commutation with the hazard's own window marked, so COM can count
@@ -365,12 +383,13 @@ fn arm_marked<C: ChainLog>(left: u32) {
 
 /// Production's decision. Keep in step with [`det_decide_logged`].
 #[inline(always)]
-pub fn det_decide_plain<C: ChainLog>(raw: u16, at: &mut Root<CompPrio>) -> bool {
+pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
     let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
     let count = raw.wrapping_sub(start) as u32;
     // The chain row is filled inside the borrow and pushed after it, because
     // the root token is borrowed by the estimator's closure (E154).
-    let mut beat: Option<(u16, u16, u32, u32, u8, bool)> = None;
+    // (crossing µs, crossing fine, arm fine, wait µs, spent fine, sector, late)
+    let mut beat: Option<(u16, u16, u16, u32, u16, u8, bool)> = None;
 
     // The estimator's borrow returns the accepted crossing's (step, average)
     // so the watch is fed after it ends: the watch borrow needs the token.
@@ -421,9 +440,7 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, at: &mut Root<CompPrio>) -> bool 
                     let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
                     let left = wait.saturating_sub(spent);
                     arm_marked::<C>(left.max(1));
-                    if C::ON {
-                        beat = Some((raw, hw::clock::raw(), wait, spent, step.get(), left == 0));
-                    }
+                    beat = beat_row::<C>(raw, fine0, wait, step.get(), left == 0);
                     if left == 0 {
                         S.det().late_arms.store(
                             S.det().late_arms.load(Ordering::Relaxed).wrapping_add(1),
@@ -440,14 +457,15 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, at: &mut Root<CompPrio>) -> bool 
         }
     });
     if C::ON {
-        if let Some((crossing, arm, wait, spent, sector, late)) = beat {
+        if let Some((crossing_us, crossing_fine, arm_fine, wait_us, spent_fine, sector, late)) = beat {
             C::accept(
                 at,
                 &crate::chain::Arm {
-                    crossing,
-                    arm,
-                    wait,
-                    spent,
+                    crossing_us,
+                    crossing_fine,
+                    arm_fine,
+                    wait_us,
+                    spent_fine,
                     step: sector,
                     late,
                     stage: stage_code(),
@@ -468,7 +486,7 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, at: &mut Root<CompPrio>) -> bool 
 /// [`det_decide_plain`]'s acceptance arm, for the diagnostic twin (the
 /// production body keeps it inline: factoring it out moved COMP's code, E121).
 #[inline(always)]
-fn accept(raw: u16, wait: u32, avg: u32, blank: u32) -> Option<(u16, u16, u32, u32, bool)> {
+fn accept(raw: u16, fine0: u16, wait: u32, avg: u32, blank: u32) -> Option<(u16, u16, u16, u32, u16, bool)> {
     let mut beat = None;
     S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
     S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
@@ -480,7 +498,8 @@ fn accept(raw: u16, wait: u32, avg: u32, blank: u32) -> Option<(u16, u16, u32, u
         let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
         let left = wait.saturating_sub(spent);
         com_arm(left.max(1), 1);
-        beat = Some((raw, hw::clock::raw(), wait, spent, left == 0));
+        let fine_now = hw::fine::raw() as u16;
+        beat = Some((raw, fine0, fine_now, wait, fine_now.wrapping_sub(fine0), left == 0));
         if left == 0 {
             S.det().late_arms.store(
                 S.det().late_arms.load(Ordering::Relaxed).wrapping_add(1),
@@ -497,7 +516,7 @@ fn accept(raw: u16, wait: u32, avg: u32, blank: u32) -> Option<(u16, u16, u32, u
 /// The diagnostic image's decision: [`det_decide_plain`] with every offer's
 /// inputs, live reads and outcome recorded. Keep in step with it.
 #[inline(always)]
-pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, at: &mut Root<CompPrio>) -> bool {
+pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
     let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
     let count = raw.wrapping_sub(start) as u32;
     let rec = L::arm(at);
@@ -528,7 +547,7 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, at: &mut Root<CompPr
         log = rec.then(|| Decision::of(count, rising, advance, reads, n, &outcome));
         match outcome {
             crate::bemf::Outcome::Accepted { wait, .. } => {
-                beat = accept(raw, wait, zc.average_interval(), zc.blanking());
+                beat = accept(raw, fine0, wait, zc.average_interval(), zc.blanking());
                 sector = step.get();
                 Some((step.get(), zc.average_interval()))
             }
@@ -539,14 +558,15 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, at: &mut Root<CompPr
         L::push(at, d);
     }
     if C::ON {
-        if let Some((crossing, arm, wait, spent, late)) = beat {
+        if let Some((crossing_us, crossing_fine, arm_fine, wait_us, spent_fine, late)) = beat {
             C::accept(
                 at,
                 &crate::chain::Arm {
-                    crossing,
-                    arm,
-                    wait,
-                    spent,
+                    crossing_us,
+                    crossing_fine,
+                    arm_fine,
+                    wait_us,
+                    spent_fine,
                     step: sector,
                     late,
                     stage: stage_code(),
@@ -681,6 +701,19 @@ pub fn guard_trip(reason: Reason) {
     d.moe_off();
     d.zero_compares();
     d.enable_low();
+}
+
+/// Has the guard already latched a stop reason?
+///
+/// [`guard_trip`] stores the reason *before* it clears any `active` flag, so a
+/// context that reads this as non-zero knows a shutdown is in progress even if
+/// it has not yet reached the flag it was about to write. The foreground's
+/// handover consults it before releasing anything, because releasing is the one
+/// operation that can *undo* a stop (E181 SS3.2).
+#[inline(always)]
+#[must_use]
+pub fn guard_latched() -> bool {
+    S.guard().reason.load(Ordering::Relaxed) != 0
 }
 
 /// Arm the guard for a powered run: clock, tick and feedback baselines.
@@ -851,17 +884,7 @@ pub fn tim16_init(rcc: &mut Rcc) {
 /// line masked or inside a critical section).
 #[inline(always)]
 pub fn com_arm(us: u32, phase: u32) {
-    // **The one place that decides whether the one-shot may be armed**
-    // (`oneshot::arm_allowed`, host-tested with interleavings): a latched stop
-    // refuses, so work already in flight -- COMP mid-acceptance when the guard
-    // trips above it -- cannot re-create timer activity after the bridge is
-    // de-energised. Callers no longer have to remember.
-    if !crate::oneshot::arm_allowed(
-        S.com().stopped.load(Ordering::Relaxed),
-        S.com().active.load(Ordering::Relaxed),
-    ) {
-        return;
-    }
+    // Pure arithmetic, deliberately outside the critical section below.
     let arr = if us < 2 {
         1
     } else if us > 0xFFFF {
@@ -869,30 +892,50 @@ pub fn com_arm(us: u32, phase: u32) {
     } else {
         us - 1
     };
-    // `oneshot::ARM_ORDER`, straight-line: **disarm, stamp, purpose, enable**.
-    // The disarm comes first so nothing can dispatch while the bookkeeping is
-    // half written -- with COM above COMP a firing from the *previous* arm
-    // could otherwise land between the stores and the configuration and be
-    // served as the new purpose.
-    hw::com_timer::disable_interrupt();
-    let now_raw = hw::clock::raw() as u32;
-    S.com()
-        .sched_raw
-        .store(now_raw.wrapping_add(us) & 0xFFFF, Ordering::Relaxed);
-    S.com().phase.store(phase, Ordering::Relaxed);
-    // **The latch is re-checked with interrupts masked, around the enable.**
-    // The check above is not enough on its own: the guard root runs above COMP
-    // and can latch a stop *between* that check and this write, and the arm
-    // would then re-enable the timer after the shutdown -- exactly the
-    // property step 2 claimed to have closed and had not. Masking makes the
-    // recheck-and-enable atomic with respect to the guard, so a stop that
-    // lands anywhere in this function leaves the timer off. Found by the binz
-    // reviewer against E173/E174; the interleaving test now *resumes* an
-    // interrupted arm instead of only starting a new one.
+    // **The decision and every write are one critical section** -- the arm is
+    // atomic with respect to every root that could interleave with it
+    // (`oneshot::FIRMWARE_ARM_IS_ATOMIC`, host-tested). Three findings, one
+    // structure:
+    //
+    // * E179's masked *recheck* covered only the enable, and only `stopped`,
+    //   while the decision is two flags (`arm_allowed`). The pair was not read
+    //   atomically, so the safety still rested on every stop path happening to
+    //   clear `active` before it latched -- caller ordering, which is the thing
+    //   step 2 set out to stop resting on (E181 SS3.3).
+    // * A guard trip anywhere inside the sequence could land between the
+    //   decision and the enable, and the arm would re-create timer activity
+    //   after the bridge was de-energised (the binz reviewer, against
+    //   E173/E174).
+    // * `com_arm` has **two** callers that can interleave: COMP's acceptance
+    //   and the foreground's handover, which arms while the detector is
+    //   already live. A preemption between the stamp and the enable left
+    //   `sched_raw`/`phase` from one context and the reload from the other
+    //   (E181 SS3.4).
+    //
+    // The cost is a masked window of a few dozen cycles containing no loop and
+    // no division: the flags, a clock read, two stores and the timer writes.
+    // `oneshot::ARM_ORDER` is the order inside it -- **disarm, stamp, purpose,
+    // enable** -- kept because the disarm-first ordering is still what makes a
+    // dispatch from a *previous* arm harmless if one is already pending.
     cortex_m::interrupt::free(|_| {
-        if !S.com().stopped.load(Ordering::Relaxed) {
-            hw::com_timer::arm(arr as u16);
+        // **The one place that decides whether the one-shot may be armed**
+        // (`oneshot::arm_allowed`): a latched stop refuses, so work already in
+        // flight cannot re-create timer activity after a shutdown, and an
+        // inactive loop refuses without latching. Callers do not have to
+        // remember.
+        if !crate::oneshot::arm_allowed(
+            S.com().stopped.load(Ordering::Relaxed),
+            S.com().active.load(Ordering::Relaxed),
+        ) {
+            return;
         }
+        hw::com_timer::disable_interrupt();
+        let now_raw = hw::clock::raw() as u32;
+        S.com()
+            .sched_raw
+            .store(now_raw.wrapping_add(us) & 0xFFFF, Ordering::Relaxed);
+        S.com().phase.store(phase, Ordering::Relaxed);
+        hw::com_timer::arm(arr as u16);
     });
 }
 
@@ -1132,6 +1175,11 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
     hw::comp::line_disable();
     hw::comp::clear_pending();
     let raw = hw::clock::raw();
+    // The fine stamp for the chain's own measurements (E180): 15.6 ns ticks
+    // from the free-running TIM2, taken beside the coarse one so both name the
+    // same instant. Production runs `NoChain`, so this folds away and TIM2 is
+    // never even enabled there.
+    let fine0 = if C::ON { hw::fine::raw() as u16 } else { 0 };
     // SAFETY: the caller is the ADC_COMP handler (this fn's contract).
     let mut at = unsafe { Root::<CompPrio>::enter() };
 
@@ -1167,7 +1215,7 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
         if C::ON {
             S.det().in_decide.store(true, Ordering::Relaxed);
         }
-        let accepted = det_decide::<L, C>(raw, &mut at);
+        let accepted = det_decide::<L, C>(raw, fine0, &mut at);
         if C::ON {
             S.det().in_decide.store(false, Ordering::Relaxed);
         }

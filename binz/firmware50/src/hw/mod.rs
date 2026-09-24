@@ -29,4 +29,4 @@ pub mod pwm;
 pub mod system;
 pub mod timers;
 
-pub use timers::{clock, com_timer, pace};
+pub use timers::{clock, com_timer, fine, pace};

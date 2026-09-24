@@ -101,6 +101,10 @@ fn main() -> ! {
             cortex_m::asm::nop();
         }
     };
+    // The fine clock the chain stamps from (E180): TIM2 free-running at
+    // 64 MHz, 15.6 ns a tick. Only this image enables it; production never
+    // touches TIM2, which is what keeps its roots identical.
+    firmware50::hw::fine::init();
     safe_off(&mut Drv8304);
     board::banner(&mut board, adc_ok);
     board.say("CHAINCAPTURE diagnostic image: every run dumps its timing chain\r\n");

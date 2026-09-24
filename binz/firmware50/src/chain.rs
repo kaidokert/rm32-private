@@ -34,26 +34,49 @@ use crate::shared::{CompPrio, Motor, Root, Seam};
 pub const CHAIN_LEN: usize = 1024;
 
 /// One event. Twelve bytes, so the ring is 12 KB.
+///
+/// **Stamps are deltas in fine-clock ticks (15.6 ns), not µs** (E180). The
+/// quantity this ring exists to measure — the crossing-to-bridge delay and the
+/// chain inside it — is 4–20 µs, so a 1 µs stamp quantised it in steps the
+/// size of the effect, and two A/B comparisons turned on one tick. A `u16` of
+/// fine ticks spans 1.02 ms, which every intra-sector delta fits (the longest
+/// sector measured is 188 µs); absolute stamps would not fit, which is why
+/// they are deltas.
 #[derive(Clone, Copy)]
 pub struct Beat {
-    pub a: u16,
-    pub b: u16,
-    pub c: u16,
-    pub d: u16,
+    /// The **coarse** µs stamp, kept for pairing an acceptance with the
+    /// commutation it scheduled: an accept row carries the crossing's µs and a
+    /// service row the instant it was scheduled for, so `crossing + wait` and
+    /// `sched` match to a microsecond or two. Pairing is the one thing the
+    /// coarse clock is still better at, because the control path works in µs.
+    pub at_us: u16,
+    /// The **fine** stamp, low 16 bits of the 64 MHz free-running TIM2: the
+    /// crossing (accept) or the handler's entry (service). Wraps every
+    /// 1.02 ms, which every delta of interest is far inside.
+    pub at_fine: u16,
+    /// accept: the arm instant, fine. service: the bridge write, fine.
+    pub x_fine: u16,
+    /// accept: the requested wait, **µs** — a control quantity, and genuinely
+    /// µs-quantised. service: the lateness the firmware would report, µs.
+    pub y_us: u16,
+    /// accept: what the handler had spent at the arm, fine. service: unused.
+    pub z_fine: u16,
     /// 1 = accept, 2 = COM service.
     pub kind: u8,
     pub step: u8,
-    /// accept: stage in the low two bits, late arm in bit 7. service: phase.
+    /// accept: stage in the low two bits, late arm in bit 7. service: the
+    /// timer's purpose in the low seven bits, preempted in bit 7.
     pub flag: u8,
     pub pad: u8,
 }
 
 impl Beat {
     const EMPTY: Self = Self {
-        a: 0,
-        b: 0,
-        c: 0,
-        d: 0,
+        at_us: 0,
+        at_fine: 0,
+        x_fine: 0,
+        y_us: 0,
+        z_fine: 0,
         kind: 0,
         step: 0,
         flag: 0,
@@ -94,13 +117,16 @@ static CHAIN_SVC: Seam<Chain, Motor> = Seam::new(Chain {
 /// One acceptance's arm, as the COMP root saw it. A struct rather than seven
 /// arguments, which clippy refuses -- and which reads no better.
 pub struct Arm {
-    /// The accepted crossing's entry stamp, and the instant the one-shot was
-    /// armed.
-    pub crossing: u16,
-    pub arm: u16,
-    /// The wait asked for, and what the handler had spent when it armed.
-    pub wait: u32,
-    pub spent: u32,
+    /// The accepted crossing: its coarse µs stamp (for pairing) and its fine
+    /// stamp (for every measured delta).
+    pub crossing_us: u16,
+    pub crossing_fine: u16,
+    /// The instant the one-shot was armed, fine.
+    pub arm_fine: u16,
+    /// The wait asked for, µs — a control quantity. And what the handler had
+    /// spent when it armed, in fine ticks.
+    pub wait_us: u32,
+    pub spent_fine: u16,
     pub step: u8,
     /// The wait was already exhausted at the arm (`late_arms`).
     pub late: bool,
@@ -114,7 +140,18 @@ pub trait ChainLog {
     const ON: bool;
 
     fn accept(at: &mut Root<CompPrio>, a: &Arm);
-    fn service(at: &mut Root<Motor>, fire: u16, bridge: u16, sched: u16, late: u32, phase: u32, step: u8);
+    /// `fire_fine`/`bridge_fine` are fine stamps; `sched_us` is the coarse
+    /// instant the arm asked for (the pairing key) and `late_us` the lateness
+    /// the firmware would report.
+    fn service(
+        at: &mut Root<Motor>,
+        fire_fine: u16,
+        bridge_fine: u16,
+        sched_us: u16,
+        late_us: u32,
+        phase: u32,
+        step: u8,
+    );
 }
 
 /// Production's recorder: none.
@@ -157,10 +194,11 @@ impl ChainLog for ChainRing {
             &CHAIN_ACC,
             at,
             Beat {
-                a: a.crossing,
-                b: a.arm,
-                c: a.wait as u16,
-                d: a.spent as u16,
+                at_us: a.crossing_us,
+                at_fine: a.crossing_fine,
+                x_fine: a.arm_fine,
+                y_us: a.wait_us as u16,
+                z_fine: a.spent_fine,
                 kind: 1,
                 step: a.step,
                 flag,
@@ -170,15 +208,24 @@ impl ChainLog for ChainRing {
     }
 
     #[inline(always)]
-    fn service(at: &mut Root<Motor>, fire: u16, bridge: u16, sched: u16, late: u32, phase: u32, step: u8) {
+    fn service(
+        at: &mut Root<Motor>,
+        fire_fine: u16,
+        bridge_fine: u16,
+        sched_us: u16,
+        late_us: u32,
+        phase: u32,
+        step: u8,
+    ) {
         push_to(
             &CHAIN_SVC,
             at,
             Beat {
-                a: fire,
-                b: bridge,
-                c: sched,
-                d: late as u16,
+                at_us: sched_us,
+                at_fine: fire_fine,
+                x_fine: bridge_fine,
+                y_us: late_us as u16,
+                z_fine: 0,
                 kind: 2,
                 step,
                 flag: phase as u8,
@@ -219,7 +266,9 @@ impl ChainRing {
 
 /// The ring as text, oldest row first, parsed by `scripts/chain.py`.
 ///
-/// One line per event: `CHAIN kind a b c d step flag`. Written after
+/// One line per event: `CHAIN kind at_us at_fine x_fine y_us z_fine step flag`,
+/// where the fine columns are 64 MHz ticks (15.6 ns) and `y_us` is µs.
+/// Written after
 /// `safe_off`, like every other byte -- never while the bridge is live, since
 /// 115200-baud edges couple into the comparator.
 pub fn emit(acc: &Chain, svc: &Chain, out: &mut impl crate::report::Sink) {
@@ -247,13 +296,15 @@ fn emit_one(c: &Chain, out: &mut impl crate::report::Sink) {
         out.say("CHAIN ");
         out.say_u32(u32::from(b.kind));
         out.say(" ");
-        out.say_u32(u32::from(b.a));
+        out.say_u32(u32::from(b.at_us));
         out.say(" ");
-        out.say_u32(u32::from(b.b));
+        out.say_u32(u32::from(b.at_fine));
         out.say(" ");
-        out.say_u32(u32::from(b.c));
+        out.say_u32(u32::from(b.x_fine));
         out.say(" ");
-        out.say_u32(u32::from(b.d));
+        out.say_u32(u32::from(b.y_us));
+        out.say(" ");
+        out.say_u32(u32::from(b.z_fine));
         out.say(" ");
         out.say_u32(u32::from(b.step));
         out.say(" ");

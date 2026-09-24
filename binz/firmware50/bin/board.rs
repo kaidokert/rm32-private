@@ -502,7 +502,15 @@ impl Hal for Board {
         let _ = det.rate.lock(|r| *r = firmware50::rate::Rate::new());
         det.spent_max.store(0, Ordering::Relaxed);
         det.late_arms.store(0, Ordering::Relaxed);
-        det.active.store(true, Ordering::Release);
+        // The same refusal as `com_handover`: this store re-arms the detector,
+        // and `guard_trip` has just cleared it. Installing over a latched stop
+        // would put COMP back in service after the bridge was de-energised
+        // (E181 SS3.2). Refusing leaves `active` false, which every root reads.
+        cortex_m::interrupt::free(|_| {
+            if !roots::guard_latched() {
+                det.active.store(true, Ordering::Release);
+            }
+        });
     }
 
     fn com_handover(&mut self, duty: u16, period: u32, step: Step, commit_us: u32) {
@@ -518,16 +526,34 @@ impl Hal for Board {
         com.preempts.store(0, Ordering::Relaxed);
         com.arm_preempts.store(0, Ordering::Relaxed);
         com.blank_latched.store(0, Ordering::Relaxed);
-        // Release the stop latch: this handover is the only thing that may,
-        // and it does so before `active`, so no arm is admitted earlier
-        // (campaign 9 step 2, `oneshot::arm_allowed`).
-        com.stopped.store(false, Ordering::Relaxed);
-        com.active.store(true, Ordering::Release);
-        roots::guard_arm_tracking();
-        hw::nvic::unpend(stm32::Interrupt::TIM16);
-        hw::nvic::unmask(stm32::Interrupt::TIM16);
-        let remaining = commit_us.wrapping_sub(self.tick_clock());
-        roots::com_arm(if remaining < u32::MAX / 2 { remaining } else { 1 }, 1);
+        // **Releasing the stop latch is the one operation that can undo a
+        // stop, so it is refused if the guard has already tripped, and the
+        // release and the arm are atomic with respect to the guard.**
+        //
+        // Before E182 this stretch was unconditional: a trip landing anywhere
+        // between `Handover::lock`'s `guard_reason` check and here was erased
+        // -- the latch cleared, `active` set back to true, TIM16 unmasked and
+        // the timer armed, all *after* `guard_trip` had dropped MOE and EN.
+        // The exposure was one foreground pass (~150 us) before `pass` saw the
+        // still-latched reason, and inside it the stop was lost. Found by the
+        // pre-run review of the 50% cohort (E181 SS3.2).
+        //
+        // A refusal needs no recovery path of its own: `active` stays false, so
+        // `com_root` and every `com_arm` refuse, and the next `Ctx::pass` reads
+        // the latched `guard_reason` and stops the run with it.
+        let now = self.tick_clock();
+        cortex_m::interrupt::free(|_| {
+            if roots::guard_latched() {
+                return;
+            }
+            com.stopped.store(false, Ordering::Relaxed);
+            com.active.store(true, Ordering::Release);
+            roots::guard_arm_tracking();
+            hw::nvic::unpend(stm32::Interrupt::TIM16);
+            hw::nvic::unmask(stm32::Interrupt::TIM16);
+            let remaining = commit_us.wrapping_sub(now);
+            roots::com_arm(if remaining < u32::MAX / 2 { remaining } else { 1 }, 1);
+        });
     }
 
     #[inline(always)]
