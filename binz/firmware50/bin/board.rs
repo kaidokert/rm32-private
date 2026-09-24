@@ -499,9 +499,7 @@ impl Hal for Board {
         self.det_seq_seen = det.accept_seq.load(Ordering::Relaxed);
         det.step.store(u32::from(step.get()), Ordering::Relaxed);
         det.advance.store(advance, Ordering::Relaxed);
-        // Left outside the guarded section by E187 and moved in here: a trip
-        // landing in this stretch would otherwise zero the comparator peak of
-        // the run that tripped (E188 SS2).
+        let _ = det.rate.lock(|r| *r = firmware50::rate::Rate::new());
         // The same refusal as `com_handover`: this store re-arms the detector,
         // and `guard_trip` has just cleared it. Installing over a latched stop
         // would put COMP back in service after the bridge was de-energised
@@ -511,7 +509,6 @@ impl Hal for Board {
         // run's `late_arms` and `spent_max`.
         cortex_m::interrupt::free(|_| {
             if !roots::guard_latched() {
-                let _ = det.rate.lock(|r| *r = firmware50::rate::Rate::new());
                 det.spent_max.store(0, Ordering::Relaxed);
                 det.late_arms.store(0, Ordering::Relaxed);
                 det.active.store(true, Ordering::Release);

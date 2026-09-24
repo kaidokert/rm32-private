@@ -13515,3 +13515,42 @@ supply back to 1.75 A and repeat the 50% cohort.** Campaign 7 tripped
 1.8 A mean draw with worst blocks above 2 A. That is the discriminating test
 for campaign 7's blocker, it would now be caught in a frozen ring, and it is
 the operator's to set.
+
+### E197 — the qualified image is reproducible from source, after a freeze I broke
+
+**A reproducibility check that should have been part of the qualification, and
+nearly was not.** The goal says to freeze the baseline source, ELF and
+configuration. I did not: after `captures/gates/e187-gates.txt` built and
+archived `14CE44E7`, E188 edited **firmware** — `bin/board.rs` (moving
+`det.rate`'s reset inside the guarded section) and a doc line in
+`src/sagtrace.rs`. So for the whole climb and the whole qualification, the tree
+was one change ahead of the image on the chip.
+
+Nothing was flashed from the tree: every run passed
+`--elf captures/elf/14CE44E7.e187.elf`, every capture carries
+`# elf_crc32 14CE44E7` and `# elf_sha256 7125601F…`, and the ladder is keyed on
+that sha — so no result is contaminated. But a rebuild of `HEAD` produced
+**B53A7EA7**, not the qualified image, which would have left "qualified" resting
+on an artefact that the committed source no longer reproduced.
+
+**Fixed by restoring the freeze:** `bin/board.rs` and `src/sagtrace.rs` are
+reverted to their gated state, and `cargo build --release --bin shell-pwm` now
+produces **crc32 14CE44E7, byte-identical to
+`captures/elf/14CE44E7.e187.elf`**. The four ISR roots were instruction-identical
+either way, so the change never touched an interrupt root — but byte-identical
+is the claim worth having, and it is now true.
+
+**Carried forward, not lost:** moving `det.rate`'s reset inside the guarded
+section is a real improvement (a trip landing in `det_install` currently zeroes
+the comparator peak of the run that tripped, E193 §2). It is deferred to the
+next image, which has to re-earn the ladder anyway if the advance-profile fix
+of E195/E196 is taken. The list for that image is now: the advance clamp at the
+top rung (the ≥3 µs arm margin), `det.rate`'s reset, a `CurrentMark`-windowed
+`worst_ma`, the `CompStorm` post-arm peak, the sag recorder's ISR-latency
+measurement, the chain instrument's cross-ring pairing, and the NTC read.
+
+**So the reproducibility chain, end to end:** committed source → `cargo build
+--release --bin shell-pwm` → crc32 `14CE44E7` = the committed
+`captures/elf/14CE44E7.e187.elf` → the image every one of the 45 ladder runs
+was flashed from and whose sha keys `captures/ladder_state.json` → the fifteen
+rungs, each 3/3, that make the 50% qualification.
