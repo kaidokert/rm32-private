@@ -18785,3 +18785,98 @@ and E239 reported: **−2 µs at 500 and −3 µs at 525 against the firmware's 
 worst arm cost**, with `late_arms` still 0 across four runs. That strengthens
 rather than weakens the joint-tail reading — the coincidence is rare — but every
 margin figure in those two entries should be read one microsecond lower.
+
+### E244 — the four firmware items that stood between here and a final ELF
+
+Each was named by a review and left undone. E243 closed two of six; these are
+the remaining four. **None is an improvement — all four are prerequisites for
+the goal's own success criteria**, and until now two of those criteria were not
+even commandable.
+
+#### 1. Restart is reachable at 500 and 600
+
+The goal requires **3/3 restart at 50% and 60%**. The `R` key is hardwired to
+250 and the `x` key cycled `provoke_tenths` only 250 → 375 → 475, so the `Z`
+key's ceiling was 475 and **neither criterion was commandable at all** (E242).
+The cycle is now 250 → 375 → 475 → **500 → 600** → 250.
+
+#### 2. A hold-windowed worst block — owed since E194
+
+`AverageCurrent::worst` is a running max from `Ctx` construction, so it spans
+the sine startup, the driven stage and the ramp. At duty 150 it reads **900 mA
+against a 34 mA hold**. E194 withdrew three worst-block claims over exactly
+this and wrote *"it goes in before the next current claim"* — and then E241
+made the next current claim without it, projecting the ramp artefact three
+rungs forward (E242).
+
+`mark_hold()` resets a second max at the same instant `hold_current` is marked,
+and `hold_worst_residual()` reports it as **`worst_hold_ma`**, asserted in the
+report's own test. A max cannot be recovered by subtraction the way a running
+total can, which is why it needs its own reset rather than a `CurrentMark`.
+
+**The sentinel is guarded:** it starts at `i32::MIN` and returns **0** before
+the hold is marked, because a run that stops during the ramp has no hold and
+scaling the sentinel would print a spectacular nonsense figure. The corpus
+already holds one such artefact from another path — a provoked run reporting
+`worst_ma = 172 553` — so a sentinel that can reach the report is a defect.
+
+#### 3. The sag provocation steps up at every rung
+
+`INJECT_SAG_DUTY_TENTHS` is a fixed 500, so above the cap it became a step
+**down** — an unload, which cannot provoke a sag guard in the direction the
+guard trips — and it did not update `applied_duty`, so the capture would claim
+the rung while the bridge ran 500.
+
+Below **`INJECT_SAG_RELATIVE_FROM = 450`** the fixed 500 target is preserved
+*exactly*, so every inherited positive control at 15 / 25 / 37.5 / 47.5% still
+provokes identically. At and above it the step is relative and upward:
+`applied_duty + INJECT_SAG_STEP_TENTHS` (75). And `applied_duty` is now updated
+on that path, so `applied_ccr` describes what the bridge actually ran.
+
+#### 4. Droop fractions where the data live
+
+`DEPTH_FRACTIONS` was **[970, 950, 920, 900]** against a measured healthy band
+of **979–990**, so all four bins sat *below* healthy and every one read 0 on
+every healthy run — a censored null, not an instrument (E239 observed exactly
+that and called it vacuous). Now **[995, 990, 985, 980]**, which brackets the
+healthy band and still trips all four on the confirmed-CC runs at 929–951.
+
+#### Gates
+
+| gate | result |
+|---|---|
+| build (thumbv6m) | clean |
+| host tests | **337 + 9 passed, 0 failed** |
+| clippy (thumbv6m) | **0** |
+| `structure_report.py` | exit 0 |
+| four-root audit | all four certified clean |
+| `isr_diff` vs `D232F90A` | **all four roots identical** — 728 / 332 / 37 / 155 |
+| `isr_cycles` `ADC_COMP` | **931 cycles, unchanged** |
+
+Every one of these four changes is in **thread mode**. The ISR roots are
+byte-identical and the longest path is unmoved, so no timing argument is
+perturbed — which matters because the tail margin is the campaign's open
+question and this image must not confound it.
+
+#### What this image can do that no previous one could
+
+* be commanded to a restart at **500 and 600** — two of the goal's criteria;
+* report a **hold** worst block, so a current claim at a rung can be made at
+  all;
+* have its sag guard **provoked at the rung being qualified**, instead of
+  inheriting a positive control from 47.5%;
+* resolve bus droop **inside the healthy band**.
+
+#### What is still not done
+
+The ~57-run ladder has not started, and nothing is qualified. But the six
+outstanding items are now closed, so **this is the first image that is a
+candidate for the final ELF** rather than a step toward one. Its predeclaration
+for the ladder, and its review pair, come next — and per E239's lesson the
+batches run one at a time with the rules read between runs, which are now
+enforced in `run_gates` on the `--no-ladder` path as well (E243).
+
+One honest caveat carried forward from E243: every margin figure in E238 and
+E239 should be read **1 µs lower** than printed, because `left = wait − spent`
+uses the firmware's `spent` (11 µs) and I had been reasoning from the chain's
+(10 µs).

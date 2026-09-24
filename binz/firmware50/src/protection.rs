@@ -204,7 +204,7 @@ pub struct BusReference {
 /// fired on any of the ten confirmed current-limited runs this bench has
 /// produced (E221 SS2, E222 SS1, verified in E223). A stop needs the
 /// distribution first, at more than one rung.
-pub const DEPTH_FRACTIONS: [u32; 4] = [970, 950, 920, 900];
+pub const DEPTH_FRACTIONS: [u32; 4] = [995, 990, 985, 980];
 
 /// How deep, and for how long, the bus actually sits below its pre-run
 /// reference -- the distribution a slow-droop stop would have to be chosen from.
@@ -564,6 +564,12 @@ pub struct AverageCurrent {
     scans: u32,
     over_streak: u8,
     worst: i32,
+    /// The same running max, but reset at the hold mark (E244).
+    ///
+    /// `worst` spans the whole run -- sine startup, driven stage and ramp -- so
+    /// at duty 150 it reads 900 mA against a 34 mA hold. Owed since E194, which
+    /// withdrew three worst-block claims for exactly that reason.
+    worst_hold: i32,
     /// Signed sum of completed-block residuals, and the block count.
     ///
     /// These exist to reproduce the reference's published current column
@@ -589,6 +595,7 @@ impl AverageCurrent {
             scans: 0,
             over_streak: 0,
             worst: 0,
+            worst_hold: i32::MIN,
             total: 0,
             blocks: 0,
         }
@@ -612,6 +619,14 @@ impl AverageCurrent {
         self.scans = 0;
         if residual > self.worst as i64 {
             self.worst = residual as i32;
+        }
+        // The same max, but only since `mark_hold` -- i.e. over the dwell, not
+        // over the whole run. Owed since E194 and finally taken here: `worst`
+        // spans the sine startup, the driven stage and the ramp, so at duty
+        // 150 it reads 900 mA against a 34 mA hold, and E241 projected that
+        // ramp artefact three rungs forward as if it were a hold figure.
+        if residual > self.worst_hold as i64 {
+            self.worst_hold = residual as i32;
         }
         // Running total for the mean. Signed and unclamped, because the
         // reference's published current column is a *signed* average and a
@@ -689,6 +704,39 @@ impl AverageCurrent {
     #[inline]
     pub const fn over_streak(&self) -> u8 {
         self.over_streak
+    }
+
+    /// Start the hold window for [`Self::hold_worst_residual`].
+    ///
+    /// Called at the same instant as [`Self::mark`], from the hold mark in the
+    /// run's state machine. Separate from `mark` because a max cannot be
+    /// recovered by subtraction the way a running total can: the worst block
+    /// since an instant is not derivable from the worst block at it.
+    #[inline]
+    pub fn mark_hold(&mut self) {
+        self.worst_hold = i32::MIN;
+    }
+
+    /// The worst single block **of the hold**, raw residual.
+    ///
+    /// [`Self::worst_residual`] is the worst of the *whole run*, ramp
+    /// included; the two differ by more than an order of magnitude at low
+    /// rungs. Any claim about current at a rung wants this one.
+    ///
+    /// Returns **0 before the hold is marked**, rather than the `i32::MIN`
+    /// sentinel: a run that stops during the ramp has no hold, and scaling the
+    /// sentinel would print a spectacular nonsense figure. The corpus already
+    /// contains one such artefact from a different path (a provoked run
+    /// reporting `worst_ma=172553`), so a sentinel that can reach the report is
+    /// a defect, not a detail.
+    #[inline]
+    #[must_use]
+    pub const fn hold_worst_residual(&self) -> i32 {
+        if self.worst_hold == i32::MIN {
+            0
+        } else {
+            self.worst_hold
+        }
     }
 
     /// A mark of the completed-block totals, to average a later window.

@@ -27,8 +27,9 @@ use super::hal::{self, Gates, Hal, Inject};
 use super::measure::Baseline;
 use super::policy::{
     Advance, Bemf, CATCH_DUTY_TENTHS, CATCH_EHZ, CurrentLimit, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG, DRIVEN_RATE,
-    HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, REVISIT_RESCUE_MAX, SIXSTEP_DUTY_CAP, SagLimit, TAIL_WINDOW_US,
-    WITNESS_HYST_CODES, WITNESS_MID_SAMPLES, in_off_window, sector_interval_us, sixstep_ccr_of,
+    HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, INJECT_SAG_RELATIVE_FROM, INJECT_SAG_STEP_TENTHS, REVISIT_RESCUE_MAX,
+    SIXSTEP_DUTY_CAP, SagLimit, TAIL_WINDOW_US, WITNESS_HYST_CODES, WITNESS_MID_SAMPLES, in_off_window,
+    sector_interval_us, sixstep_ccr_of,
 };
 
 /// How long a run may last: from its own entry, or to an absolute instant a
@@ -390,7 +391,22 @@ impl Ctx {
         self.injected_at = Some(now);
         match kind {
             Inject::Sag => {
-                hal.publish_plans(INJECT_SAG_DUTY_TENTHS, self.period, INJECT_SAG_DUTY_TENTHS);
+                // Below `INJECT_SAG_RELATIVE_FROM` this is the historical fixed
+                // 500 target, unchanged, so every inherited positive control
+                // still provokes identically. At and above it the fixed target
+                // would be a step DOWN -- an unload -- so the step is relative
+                // and upward (E244).
+                let to = if self.applied_duty >= INJECT_SAG_RELATIVE_FROM {
+                    self.applied_duty.saturating_add(INJECT_SAG_STEP_TENTHS)
+                } else {
+                    INJECT_SAG_DUTY_TENTHS
+                };
+                hal.publish_plans(to, self.period, to);
+                // **The report must not claim the rung while the bridge runs
+                // something else.** Without this, `applied_ccr` described the
+                // pre-injection duty and the capture looked like an
+                // unprovoked run at its label.
+                self.applied_duty = to;
                 self.hold_plans = true;
             }
             Inject::AverageCurrent => {
@@ -866,6 +882,10 @@ impl Locked {
         if c.hold_start.is_none() && duty >= c.req.target_tenths {
             c.hold_start = Some(now);
             c.hold_current = Some(c.current.mark());
+            // The worst-block window starts at the same instant as the mean's
+            // (E244). A max cannot be recovered by subtraction the way a
+            // running total can, so it needs its own reset.
+            c.current.mark_hold();
             // **`unstable` at the hold mark** (E212), so the unstable/accepted
             // ratio can be read on the hold window as `hold_acc` already is.
             // Whole-run, the ratio mixes a 20 s ramp with a 55 s hold and a

@@ -244,6 +244,7 @@ impl<
             ceiling_tenths: ctx.governor.ceiling(),
             worst_residual: ctx.current.worst_residual(),
             worst_ma: ctx.current.block_milliamps(ctx.current.worst_residual()),
+            worst_hold_ma: ctx.current.block_milliamps(ctx.current.hold_worst_residual()),
             zero_drift_ma: zero_end.map_or(0, |z| {
                 ((i64::from(z) - i64::from(ctx.base.zero_block)) * 4_000 / i64::from(RAW_LIMIT)) as i32
             }),
@@ -577,6 +578,12 @@ impl<
                 self.provoke_tenths = match self.provoke_tenths {
                     250 => 375,
                     375 => 475,
+                    // 500 and 600 added in E244. The goal requires 3/3 restart
+                    // at 50% AND 60%, and until now the cycle stopped at 475 so
+                    // NEITHER was commandable -- the criterion was structurally
+                    // unreachable and E240 wrongly said it was not (E242).
+                    475 => 500,
+                    500 => 600,
                     _ => 250,
                 };
                 io.say("PROVOKEAT ");

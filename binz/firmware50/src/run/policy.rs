@@ -157,6 +157,19 @@ pub const INJECT_STALL_US: u16 = 400;
 /// buy a positive control in.
 pub const INJECT_SAG_DUTY_TENTHS: u16 = 500;
 
+/// Duty at or above which the sag provocation steps **relative to the rung**
+/// instead of to the fixed [`INJECT_SAG_DUTY_TENTHS`].
+///
+/// The fixed 500 target is what every existing positive control used, and at
+/// 15 / 25 / 37.5 / 47.5% it is a genuine upward step; it is preserved exactly
+/// below this threshold. At and above it the fixed target is a step *down* --
+/// an unload, which cannot provoke a sag guard in the direction the guard
+/// trips -- so the step becomes relative and upward.
+pub const INJECT_SAG_RELATIVE_FROM: u16 = 450;
+
+/// How far above the rung the relative sag provocation steps, tenths.
+pub const INJECT_SAG_STEP_TENTHS: u16 = 75;
+
 /// Absolute bus floor, mV, and the BOOSTXL bus divider ratio x100.
 pub const BUS_FLOOR_MV: u32 = 8_400;
 pub const BUS_DIVIDER_X100: u32 = 1_194;

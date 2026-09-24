@@ -378,6 +378,16 @@ pub struct CurrentRecord {
     pub worst_residual: i32,
     /// The same, in mA through the block-mean scale.
     pub worst_ma: i32,
+    /// The worst single block **of the hold**, mA -- the figure any claim about
+    /// current at a rung actually wants.
+    ///
+    /// [`Self::worst_ma`] is the worst of the whole run, ramp included, and the
+    /// two differ by more than an order of magnitude at low rungs (900 mA
+    /// against a 34 mA hold at duty 150). E194 withdrew three worst-block
+    /// claims over that and said a windowed worst had to land before the next
+    /// current claim; E241 made the next claim without it and projected the
+    /// ramp artefact three rungs forward (E242). This is that field.
+    pub worst_hold_ma: i32,
 }
 
 /// The during-run rotation witness.
@@ -710,6 +720,7 @@ impl RunReport {
         out.kv("ceiling_tenths", u32::from(c.ceiling_tenths));
         out.kvi("worst_residual", c.worst_residual);
         out.kvi("worst_ma", c.worst_ma);
+        out.kvi("worst_hold_ma", c.worst_hold_ma);
         out.kv("drive_scans", c.drive_scans);
         out.kv("applied_cap", u32::from(c.applied_cap));
         out.kv("applied_ccr", c.applied_ccr);
@@ -884,6 +895,7 @@ mod tests {
         assert!(t.contains(" ref_ma=326 duty_tenths=250 ceiling_tenths="));
         assert!(t.contains(" worst_residual="));
         assert!(t.contains(" worst_ma="));
+        assert!(t.contains(" worst_hold_ma="));
         assert!(t.contains(" drive_scans="));
         assert!(t.contains(" applied_cap="));
         assert!(t.contains(" applied_ccr="));
