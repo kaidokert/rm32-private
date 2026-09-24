@@ -38,22 +38,35 @@ CHAIN = [
     ("L", 525), ("L", 550), ("L", 575), ("L", 600),
 ]
 
-# `climb_tenths` starts here and `+` steps it by this much (src/run/mod.rs).
-CLIMB_START = 400
+# `climb_tenths` steps by this much, and `-` clamps it at this FLOOR
+# (src/run/mod.rs: climb_key). It is NOT reset between runner invocations, which
+# is the whole reason the duty must be addressed absolutely -- see `presses`.
 CLIMB_STEP = 25
+CLIMB_FLOOR = 375
+# Enough `-` presses to reach the floor from anywhere at or below the cap.
+CLIMB_RESET = (600 - CLIMB_FLOOR) // CLIMB_STEP + 2
 
 
 def presses(duty: int) -> str:
-    """The `+` string that puts the shell's climb duty exactly on `duty`.
+    """The key string that puts the shell's climb duty **absolutely** on `duty`.
 
-    Computed, never counted by hand: three runs labelled 42.5% once drove 40%
-    because the count was assumed (E185), and `--rung-duty` cannot catch it on
-    a bypassed run because the check lives in `ladder_record`.
+    `climb_tenths` persists across runner invocations -- the board is flashed
+    and reset only once per walk -- so a count computed from an assumed
+    starting value is applied to whatever the previous rung left behind. That is
+    exactly what happened here: rung 450 was asked for with two `+` presses
+    against an assumed 400, the shell was already at 425 from rung 425, and all
+    three runs drove **475**. The fixture's `expect_duty` check refused them and
+    recorded nothing, which is the check doing its job.
+
+    It is also the documented trap (*"a driver must set the climb duty
+    absolutely -- `-` clamps at 375, then step up"*), reintroduced by computing
+    a relative count. So: drive down to the floor first, then up. The duty is
+    then whatever this string says it is, regardless of history.
     """
-    n = (duty - CLIMB_START) // CLIMB_STEP
-    if n < 0 or CLIMB_START + n * CLIMB_STEP != duty:
-        sys.exit(f"duty {duty} is not reachable from {CLIMB_START} in {CLIMB_STEP} steps")
-    return "+" * n
+    n = (duty - CLIMB_FLOOR) // CLIMB_STEP
+    if n < 0 or CLIMB_FLOOR + n * CLIMB_STEP != duty:
+        sys.exit(f"duty {duty} is not reachable from {CLIMB_FLOOR} in {CLIMB_STEP} steps")
+    return "-" * CLIMB_RESET + "+" * n
 
 
 def rung_state(sha: str, duty: int) -> tuple[bool, list[str]]:
@@ -109,8 +122,12 @@ def main() -> int:
         if first:
             cmd.append("--flash")   # program once; every later run is the same image
             first = False
-        print(f"\n=== {duty} tenths via {key!r}"
-              + (f" with {len(presses(duty))} '+' press(es)" if key in ("l", "L") else ""))
+        if key in ("l", "L"):
+            k = presses(duty)
+            how = f" -- {k.count('-')} down to the floor, then {k.count('+')} up (absolute)"
+        else:
+            how = ""
+        print(f"\n=== {duty} tenths via {key!r}{how}")
         print("    " + " ".join(cmd[1:]))
         if a.dry_run:
             continue
