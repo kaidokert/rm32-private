@@ -15991,3 +15991,162 @@ at `left = 1`. The next work is measurement at safe rungs.
 Nothing above is accepted as settled beyond what the two reviews jointly
 support: the residual's cause is a *hypothesis* with a predeclared
 discriminating test, not a conclusion.
+
+### E218 — predeclaration: the protection-and-visibility candidate (goal step 1)
+
+Written before any edit. E207 prepared part of this and it was never applied;
+E209–E217 kept finding reasons to look at `spent` instead. The goal's sequence
+puts this first, and both reviews of E214 independently called all four gaps
+blocking, so this is the candidate that has to exist before any rung above 50%
+is attempted. It goes to a fresh review pair before it is built.
+
+**Everything here is additive. No existing threshold, filter, streak or latch is
+changed.** `RAW_LIMIT`, `FastBusSag`'s 95%/3-scan line, `BUS_FLOOR_MV`, the
+hysteresis of 0, the 64/ms storm cap and the sag fraction/streak/latch are all
+left exactly as they are, per the goal.
+
+#### Item 1 — a slow-droop stop, `Reason::BusDroop = 29`
+
+**The gap, measured, not supposed.** `FastBusSag` divides `bus_mean` by a 207 ms
+EWMA *of its own input* (`protection.rs:295-305`), so it is a high-pass
+detector: anything slower than its passband becomes its own reference. E201
+demonstrated this on a real current-limited supply — 55 s of operator-confirmed
+CC held the rail 6% low and produced **zero** low judgements, with the reference
+tracking down to 1131 where a latch needs +5.26%. The only slow-side cover is
+the absolute floor `BUS_FLOOR_MV = 8400` (code ~873), which on an 11.85 V bus is
+28% down. So the band from ~1% to ~28% of sustained droop is uncovered, and that
+band is exactly the CC-knee signature.
+
+`SlowDroop` is a **low-pass** detector against a **fixed** reference — the
+pre-run `base.bus_ref.bus`, captured before the bridge is energised
+(`states.rs:136` already passes it to the sharp guard's constructor). It shares
+no state with `FastBusSag`, so neither can mask the other.
+
+Constants from measurement:
+
+| quantity | `bus_mean / ref_bus` |
+|---|---|
+| today's healthy 50% runs | 1200/1215 = **0.987** |
+| E201's confirmed-CC runs | 1122/1215 = **0.923** |
+| the absolute floor | 873/1215 = **0.718** |
+
+`DROOP_NUM/DROOP_DEN = 90/100` sits **below** every observed CC run, so it does
+not fire on anything this bench has actually produced, and covers 10%→28% where
+nothing did. `DROOP_SCANS = 4950` ≈ 500 ms at the 9.901 kHz harvest — 1650× the
+sharp guard's three-scan streak, so it cannot pre-empt a transient the sharp
+guard owns. `ref_bus == 0` returns `BusDroop`, fail-closed like everything else
+in the module.
+
+It reports `droop_worst_permille`, the deepest ratio seen, **so the margin
+against the line is a measurement rather than the absence of a stop** — the
+mistake E188 made with the sag guard.
+
+#### Item 2 — a current stop reachable below the CC knee, `Reason::SupplyCeiling`
+
+`RAW_LIMIT` ≈ 4 A over two consecutive 10.1 ms blocks. On the operator's 3 A
+clamp that is **unreachable**: the PSU enters CC first and the firmware never
+stops. `policy.rs:89-97` already says so in the source — "nothing in the
+firmware stops a run between 2 A and 4 A".
+
+**`RAW_LIMIT` is not touched.** A second, independent ceiling is added with its
+own constant and its own reason, so the existing protection keeps its exact
+behaviour and this one covers the band beneath it. Set from the measured draw
+rather than chosen: 50% measures `hold_ma` 1782–1877 on the signed proxy, so the
+ceiling goes at **2600 mA** — ~39% above the worst measured 50% hold, beneath
+the 3 A clamp, and far beneath `RAW_LIMIT`. Two consecutive blocks, matching the
+existing persistence rather than inventing one.
+
+**Risk, stated:** the proxy's absolute accuracy is anchored to one operator-
+metered point and its error tracks bridge-off zero drift. A ceiling in milliamps
+inherits that. This is why it goes at 2600 and not at 2100: it is a backstop
+against a runaway, not a precision limit, and the *report* keeps the raw figures
+so a trip can be audited.
+
+#### Item 3 — temperature, as observation
+
+"No temperature measured anywhere" is true and has been true all campaign. The
+BOOSTXL-DRV8304H exposes no thermistor to this wiring, so **FET temperature is
+not measurable on this rig** — that is a hardware fact, not a firmware gap. What
+*is* measurable is the G071's **internal sensor on ADC channel 12**, which the
+scan does not currently include (`hw/adc.rs:35-41`: IN0/IN1/IN4/IN6/IN13).
+
+Added as a **sixth channel, reported as min/max, with no stop attached.** Die
+temperature is not FET temperature and I will not pretend a threshold on it is
+thermal protection. It is an observation that makes a thermal trend visible for
+the first time, which is what step 1 asks for ("record actual PSU and thermal
+conditions").
+
+**This is the riskiest item in the candidate** and the one I expect review to
+push back on. Adding a channel changes `SCAN_LEN`, the DMA transfer length and
+the per-scan ADC time, and the harvest's 9.901 kHz de-cohering against the
+10 kHz carrier is load-bearing (the binz scar: an equal-period sampler
+phase-locks to one PWM instant). If the scan no longer fits the interval the
+whole instrument moves. **Falsifier: if `adc_hz` or the ISR's measured cost
+changes at all, item 3 is reverted and temperature is reported from a separate
+low-rate read instead.**
+
+#### Item 4 — duty-cap visibility, and making the rung commandable
+
+`sixstep::plan` clamps silently at `duty_cap` (`sixstep.rs:93`) and the report
+prints `target_duty_tenths`, the **pre-clamp** request (`run/mod.rs:347,374`).
+E216 is right that this cannot bite today because no reachable command exceeds
+500 — and equally right that **it becomes a live trap the moment the cap is
+raised**, which item 4 does.
+
+So the visibility lands *first and in the same candidate*: `applied_cap` and the
+CCR actually programmed go into the report, so a clamped run is visible in its
+own capture. Then `SIXSTEP_DUTY_CAP` 500 → **600** and the climb clamp
+(`run/mod.rs:475`) with it, because **60% is not commandable today and nothing
+about it has ever been measured** (E216 finding 3, accepted in E217).
+
+Raising the cap is the one item here that *enables* rather than protects, which
+is why it is last and why items 1–3 are in the same image: the cap must not rise
+before the stops that cover the band it opens.
+
+#### Predictions, falsifiable, before the build
+
+1. **`SlowDroop` will not fire in any healthy run at any rung 15–50%.** The
+   deepest ratio observed becomes `droop_worst_permille`; I predict it stays
+   **above 960** at every rung on the 3 A clamp. If it dips below 900 in a run
+   that completes, the constant is wrong for this bench and the item is
+   re-derived, not loosened after the fact.
+2. **The 2600 mA ceiling will not fire at 50%.** Worst hold block is 2116 mA
+   measured. If it fires at 50%, either the proxy drifted or the draw moved, and
+   the run is void rather than the threshold raised.
+3. **Item 3 will change `adc_hz`.** I predict a sixth channel *will* perturb the
+   scan timing and that the falsifier above will fire — I would rather predeclare
+   that and be shown wrong than discover it in a powered run.
+4. **`applied_cap` will read 500 on every archived-image rerun and 600 after the
+   cap change**, and `target_duty_tenths` will equal `applied_cap` at every rung
+   at or below the cap. A mismatch at any rung ≤50% means the clamp is biting
+   somewhere I have not found.
+5. **Lower rungs will not regress.** 15/25/37.5% keep 3/3 on the new ELF before
+   any rung above 50% is attempted, because the ladder is keyed on the ELF and
+   this is a new one.
+
+#### Cohort, predeclared
+
+* Host first: tests, clippy, structure limits, the four-root arithmetic audit,
+  `isr_diff.py` per image, and changed-root disassembly — the ISR gains
+  `SlowDroop::observe` on the drive path, so its cycle cost must be counted and
+  not merely assumed small.
+* Then **both reviews of this entry**, before anything is built.
+* Then the build, the ELF hash recorded, and the ladder re-earned from 15%.
+* **No rung above 50% from this candidate** until items 1–2 have each been
+  *provoked* and seen to stop with the expected reason, and the protections
+  re-provoked as a set — the goal's "explicitly demonstrated protection
+  coverage" is a demonstration, not an argument.
+
+#### Stopping rules
+
+* Any item whose ISR cost or `adc_hz` moves the instrument is reverted, not
+  tuned (item 3's falsifier, generalised).
+* If a guard fires in a healthy run, the constant is re-derived from the
+  measurement that contradicted it and the candidate is re-reviewed — it is not
+  relaxed to make a rung pass. That inversion is the exact failure this
+  campaign's discipline exists to prevent.
+* The advance-level question (E216 finding 1, E217 §1: 16 is the reference, 22 is
+  the divergence, `wait_time(64,20) = 12 > 11`) is **deliberately not in this
+  candidate.** It is goal step 2, it is a control change rather than added
+  coverage, and mixing it with four protection items would make any rung result
+  uninterpretable. It gets its own predeclaration and its own review pair.
