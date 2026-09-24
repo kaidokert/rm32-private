@@ -15511,3 +15511,483 @@ tool, the five-image output, and the ELF hashes — recomputed the quantities, a
 returned verdicts without seeing each other's or this entry's reading. Both go
 in verbatim with point-by-point dispositions, and any material error is
 corrected and re-reviewed before dependent work proceeds.
+
+### E215 — the evidence review of E214, verbatim
+
+Independent, context-free, given the tool, the five-image output, the ELFs and
+the source, and instructed not to read E214 until it had formed its own numbers.
+It recomputed the longest path with its own disassembler and CFG rather than the
+tool's. Reproduced here unedited; disposition in E217.
+
+---
+
+I have everything. All quantitative findings below were computed **before** opening E214 (I read E213 first, which the brief permits); I mark the few cross-checks made after.
+
+## Findings
+
+**1. Image identity — CONFIRMED.** `captures/elf/14CE44E7.e187.elf` sha256 = `7125601fa7248b6312c25a16dea037c1424ede94501a591a63b02bb2547cb348`, exactly as stated. The other three: `ED4E305C.e212-ciwatch.elf` = `3e499749…`, `5A8C0127.e208-margin.elf` = `7cb00b82…`, `2BD11F17.e203-deadline.elf` = `366a6c2a…` (no reference values were given for these).
+
+**2. Production root — CONFIRMED.** `bin/shell-pwm.rs:123-126` defines `#[interrupt] fn ADC_COMP()` = `comp_root::<NoLog, NoChain>()`. `comp_root`, `det_decide_plain`, `arm_marked`, `com_arm`, `note_margin` are all `#[inline(always)]`, so `ADC_COMP` is the whole production path, no diagnostic twin. The fifth image in the output file (`63C0061D`) is built from `bin/sag-capture.rs:61-64`, whose `ADC_COMP` is *also* `comp_root::<NoLog, NoChain>()`; its 710 instructions, 583/407 cycle figures and census are byte-for-byte identical to `14CE44E7`, so it is legitimately the same root, not a twin.
+
+**3. Window start anchor — CONFIRMED, with a +4-cycle over-count.** `ix 15 = 0x80011de: ldr r2,[pc,#0x294]` resolves to literal `0x40014824` (TIM17 base 0x40014800 + CNT 0x24); `ix 16 = 0x80011e0: ldr r3,[r2]` is the stamp itself. It sits immediately after the `line_disable`/`clear_pending` stores, matching `src/roots.rs:1212-1214`. The window therefore starts one instruction *before* the instant `spent` is zeroed, over-counting by `insn_cost(ix15)` = 4 cy at 2 WS.
+
+**4. Arm anchor — CONFIRMED.** `ix 456 = 0x8001596` loads literal `0x40014400` (TIM16); `ix 458 = 0x800159a: str r0,[r1,#0xc]` is the DIER write, i.e. `hw::com_timer::disable_interrupt()` (`src/hw/timers.rs`, `dier().reset()`), the first register touch of `com_arm` (`src/roots.rs:969`). I verified the same `t16[0] → str [rX,#0xc]` adjacency in `2BD11F17` (ix441→ix443) and `ED4E305C` (ix442→ix444), so the blind `t16[0]` choice is not accidentally hitting some other TIM16 access in those images. The prompt's description of the anchor is exactly right.
+
+**5. `spent` read — CONFIRMED at ix 421.** `ix 419` loads the CNT literal, `ix 421 = 0x800154e: ldr r1,[r2]` is the read; `ix 418/420` are the `S.com().active.load` test that precedes it in `src/roots.rs:469-470`. `ix 429-431` then compute `wrapping_sub(raw)`/`uxth` and spill it. It is the last CNT read before the arm.
+
+**6. The output file does not contain the numbers E214 quotes — reproducibility gap.** `captures/analysis/e214_spent_composition.txt` reports only `407 cy = 6.36 us` (0 WS) and `583 cy = 9.11 us` (2 WS), with `dst = ix 456`. Neither 507 nor 591 appears anywhere in it. The tool as committed prints exactly one window and its default `dst` is the TIM16 *literal load*, two instructions short of the DIER store. The archived artifact therefore backs a number E214 does not use, and E214's table cannot be reproduced from the artifact alone.
+
+**7. Headline numbers — CONFIRMED, all four exact.** Recomputed with my own independent disassembler/CFG/longest-path script (not the tool's), depth 4, 64 MHz, 2 WS:
+
+| endpoint | cycles | µs |
+|---|---|---|
+| ix 15 → ix 421 (`spent` read) | **507** | **7.922** |
+| ix 15 → ix 456 (tool's dst) | 583 | 9.109 |
+| ix 15 → ix 458 (DIER store) | **591** | **9.234** |
+| ix 15 → ix 456, 0 WS | 407 | 6.359 |
+
+E214's 507/7.92 and 591/9.23 are correct. (I recomputed the other three images' totals only through the tool's own functions, not independently.)
+
+**8. Persistence filter identification — CONFIRMED, index range loose.** The on-path loop is the back-edge `ix 352 → ix 341`. `ix 340` loads literal `0x40010204` (COMP2 CSR); `ix 341: ldr r3,[r4]` is the per-trip read; `ix 342-344` are the CSR bit extract (attributed `comp2_csr.rs:98`); the bound in `r1` is built at `ix 330-334` as `(…*1475)>>16` then `+3` — exactly `mapped_filter_level` (`src/bemf.rs:52-75`, `MAP_RECIP=1475`, `MAP_SHIFT=16`, `MAP_OUT_LOW=3`). It is the filter. E214's "ix 335–352 loads 0x40010204 once per trip" is wrong in detail: `ix 335-340` is hoisted pre-loop setup and the literal load at `ix 340` executes once, not per trip. The substance holds.
+
+**9. Depth = 4 at 77 µs — CONFIRMED, but the composition is depth-dependent and this is not flagged.** `DET_FILTER = FromMicros(WithShallowFloor(MappedFilter))` (`src/run/policy.rs:194`). `level(77)` → `77*2=154` → `154 ≥ SHALLOW_INTERVAL` → `(154-100)*1475>>16 = 1` → `3+1 = 4`. ✓ However at the **64 µs** interval that E213/E214 reason about for 60%, depth = **3** (`128→0→3`), and at long intervals it saturates at **12** (`MAP_OUT_HIGH`, reached at `avg ≥ 250 µs`). The modelled window ranges 471 cy (depth 2) → 507 (4) → 651 cy = 10.17 µs (depth 12).
+
+**10. The other loop is correctly excluded — CONFIRMED.** Back-edge `ix 173 → ix 162`. It is *also* a COMP2 CSR persistence filter (`ix 162: ldr r0,[r5]`, `comp2_csr.rs:98` at ix 163) with bound `cmp r3,#0xb` = 12 trips, attributed `src/roots.rs:626/631` — the driven-stage observer (`drv_decide`), which is the `S.drv().active` branch of `comp_root`, mutually exclusive with the detector branch. Rightly off-path.
+
+**11. The longest path is NOT a realizable execution — WRONG, but worth only 1 cycle.** I scanned every conditional branch on the path for shared flag-setters. Exactly one contradictory pair exists: from the single `ix 214: cmp r2,#0x40`, the path takes `ix 215: bhi` (count > 64) **and** `ix 222: bls` (count ≤ 64). The `bls` is forced — the fall-through leads to the storm-cutoff `return` and cannot reach the arm — so the infeasibility lives at `ix 215`, where taking the branch costs +3 and falling through via `ix 216` costs +2. **The reported figure is overstated by 1 cycle (0.016 µs)** on this account. The methodological hazard is real and it does manifest; its magnitude here is negligible.
+
+**12. "Same cost model as isr_cycles.py" — WRONG, and the divergence is 126 cycles.** `spent_compose.insn_cost` adds `+wait_states` to **every** `ldr` and `str` (line 183-185). `isr_cycles.cost` returns a flat 2 for every load/store and charges wait states **only** under `--fetch-model`, and then only to pc-relative (flash) loads and taken branches (lines 273-284). Charging 2 flash wait states to an SRAM stack spill or an APB peripheral store has no physical basis on the G071 (SRAM is zero-wait; APB runs at the core clock). Re-running the identical window with wait states on pc-relative loads only:
+
+| endpoint | tool model | WS-on-flash-loads-only |
+|---|---|---|
+| → ix 421 | 507 cy / 7.92 µs | **381 cy / 5.95 µs** |
+| → ix 456 | 583 cy / 9.11 µs | 439 cy / 6.86 µs |
+
+So ~126 cycles (1.97 µs) of the 507 is a data-access charge with no physical justification. The tool's own docstring claim that it "uses the same disassembler and the same cost model" is false for the cost model.
+
+**13. "Every figure is a lower bound" — UNSUPPORTED.** The stated reason (no instruction-fetch wait states) is real: by `isr_cycles`' own fetch model the window would gain `taken×W = 19×2 = 38` cy, plus `per-insn 0.25 × 2 × 190 = 95` cy — call it +133. But that sits against over-counts of the same order: **+126** from finding 12, **+4** from finding 3, **+1** from finding 11. Neither side is measured, so 507 is a point estimate with two-sided unquantified error, not a bound. Separately, E214 offers "exception entry and exit is ~24 cycles (0.38 µs)" as part of the 3.1 µs gap — **that is wrong**: both window endpoints are CNT reads *inside* the handler, so exception entry and exit are outside `spent` by construction and can be none of the gap.
+
+**14. The gap's most likely explanation is unexamined — and it is depth, not fetch.** `spent_max` is a saturated whole-run maximum (`src/roots.rs:481-483`: `if spent > spent_max { store }`), while the model is a single static path at depth 4. Because the filter depth is speed-scheduled up to 12, the *same* window at depth 12 models **651 cy = 10.17 µs**, which with TIM17's 1 µs truncation reads 10 or 11. A run-wide max of 11 is therefore far more plausibly a long-interval, deep-filter acceptance than a depth-4 one, and comparing it to the depth-4 path is a category error. E214's gap discussion does not mention depth at all. This has a downstream consequence: E214 costs item 3 (filter bookkeeping) at "56 cycles = 0.88 µs", which is the depth-4 figure; at depth 12 the same bookkeeping is `12 × 14 = 168` cy = **2.6 µs**. The lever E214 dismisses as the smallest of the three is the one that scales with the regime where `spent` is actually worst.
+
+**15. The prediction's arithmetic — the refutation SURVIVES recomputation.** I identified the instructions myself. The six publish stores, all on one base `r2 = 0x20000190` with consecutive offsets, are:
+
+| ix | instruction | field |
+|---|---|---|
+| 389 | `str r1,[r2,#0x4]` | `sector_start_raw` |
+| 390 | `str r1,[r2,#0x1c]` | `accept_raw` (same `r1` — `raw` is genuinely stored twice, as E213 says) |
+| 406 | `str r4,[r2,#0x20]` | `accept_wait` |
+| 407 | `str r6,[r2,#0x10]` | `accept_avg` |
+| 408 | `str r1,[r2,#0x14]` | `accept_blank` |
+| 413 | `str r1,[r2,#0x18]` | `accept_seq.fetch_add`, inside its `cpsid`/`msr` section (ix 409-415) |
+
+= **24 cy**. The four comparator reads are `ix 341` × 4 trips = **16 cy**. Against the 507-cycle `spent` window:
+
+| reading | cycles | share of 507 | share at 0 WS (/355) |
+|---|---|---|---|
+| strictly the six stores + the four reads | 40 | **7.9%** | 5.6% |
+| E214's reading (all 13 register-base stores — a declared superset — + four reads) | 68 | **13.4%** | 9.0% |
+| most generous (all register-base stores + the *whole* filter loop ×4) | 124 | **24.5%** | 24.8% |
+| six stores + the atomic's whole critical section + reads + CSR extract | 67 | 13.2% | — |
+
+**E214's 13.4% and 24.5% both reproduce exactly.** Every defensible reading is below one third; the widest is 24.5%, and the accounting is loaded *in favour* of the prediction (a superset of stores, the whole loop counted as "the reads"), not against it. The refutation also survives dropping the questionable wait-state model (finding 12) — at 0 WS the three readings are 5.6% / 9.0% / 24.8%. **Prediction 1 is correctly refuted.** The only reading that would cross a third is "all stores + whole loop, at depth 12" = 268/651 = 41.2%, and E213's own wording ("the **four** comparator reads") pins depth 4, so that reading is not available to it.
+
+**16. "other / unattributed" is neither — WRONG label, but the arithmetic closes.** Every path instruction lands in exactly one census bucket and one module bucket (I checked: census instruction count = module instruction count = path length = 223; the unmatched-line set is empty). But the buckets sum to the *single-trip instruction cost* (415 of 507; 487 of 583) while the percentage denominator is the *total*. The residual is exactly `taken-branch penalties + extra loop trips`: 507-window `38 + 54 = 92` ✓ (reported 18.1%); 583-window `42 + 54 = 96` ✓ (reported 16.5%). Consequences: (a) every reported share is deflated by a constant 18.1%; (b) the census's "branch 28 cy 5.5%" is wrong as the cost of branching — the true figure is `28 + 38 = 66` cy = **13.0%**, which would make branches the third-largest category rather than the seventh; (c) the filter loop's real cost is `18 × 4 = 72` cy = 14.2%, not the 18 cy the single-trip census implies. None of this changes finding 15's verdict, and (b)/(c) both cut *against* the categories E213 wanted to be large.
+
+**17. Per-line attribution is stale — CONFIRMED, and correctly self-disclosed.** `14CE44E7`'s DWARF puts the acceptance stores at `src/roots.rs:417` and the filter driver at `:412`; today's tree has them at 447-456 and 442 — a ~30-line shift. I dated it by comparing `ED4E305C` (built later), which reports `:442` and matches the current tree. The tool guards `--quote-source` against exactly this, the output file carries no quoted source, and E214 states the limit and declines to rely on per-line claims. Correct handling; the top-20 line tables are nonetheless unusable against today's source.
+
+**18. The per-FILE rollup is NOT version-stable — WRONG.** E214 says the file-level rollup "is version-stable and is what I rely on". `GROUPS` (spent_compose.py:222) hardcodes `'bin/shell-pwm.rs'` as the ISR entry shell. For `63C0061D`, built from `bin/sag-capture.rs`, the pattern misses and 16 cy silently move out of a named group into "other / unattributed", which rises 16.5% → 19.2% — visible in the output file at lines 262-264 as `0 cy 0.0% 0 insn ISR entry shell`. Any named source file absent from `GROUPS` is absorbed the same way, silently; for the other four images the unmatched set happened to be empty. The fifth row's rollup is broken, and the mechanism is general.
+
+**19. Latent hazard, not triggered — `bl` callees are silently free.** `spent_compose.insn_cost` charges `bl` a flat 4 cycles and never recurses into the callee, unlike `isr_cycles`, which costs callees recursively. There are **0** `bl` instructions on this path, so nothing is excluded here. If the window ever gains a call, the tool will under-report by the entire callee without any warning.
+
+**20. Window definition vs. E213's own specification — slip.** E213 specified measurement 1 as "the straight-line path from `comp_root`'s entry stamp **to the `spent` read**". The tool's default and the whole archived output file measure entry → the arm, 84 cycles (1.3 µs) further on. E214's table reports both and correctly uses 507 for the fraction, so the conclusion is computed on the right window; only the artifact on disk is on the wrong one.
+
+**21. OUT OF SCOPE / unverified.** "`spent` reads exactly 11 µs in 490 captures" is the anchor of the entire hypothesis and is a bench claim; nothing in the sources I was given (tool, output file, ELFs, source) can confirm it. I did not verify it.
+
+## Bottom line
+
+The measurement is sound where it matters. The anchors are the right anchors, verified against both the disassembly and the source; the loop is the persistence filter; depth 4 is right for 77 µs; the off-path loop is correctly excluded; 507, 583 and 591 cycles all reproduce exactly under independent code; and the census and module rollup for the 507-cycle window reproduce exactly.
+
+**E213's prediction 1 is genuinely refuted, and the refutation is robust.** I get 7.9% on the narrowest reading, 13.4% on E214's (which I confirm to the cycle), and 24.5% on the most generous scoring the claim can bear — all below the one-third falsifier, and still below it at 0 wait states. The accounting choices are biased *toward* the prediction, not away from it. E214 is right to stop items 1-3, and right that the arithmetic behind item 1 is small (the six stores already share one base register with consecutive offsets, so packing them into three saves 3 stores = 12 cy = 0.19 µs, the whole prize).
+
+The defects worth acting on are in the *supporting* claims, not the verdict:
+- the "lower bound" framing is unsupported — a ~126-cycle unphysical data-access charge sits opposite a ~133-cycle fetch under-charge, and the 0.38 µs of exception entry/exit offered as part of the gap is not in the window at all;
+- the cost model is **not** `isr_cycles.py`'s, contrary to both the tool's docstring and E214;
+- the 3.1 µs gap has an unexamined and better candidate than fetch stalls — `spent_max` is a run-wide maximum and the filter depth reaches 12, at which the same model gives 10.17 µs. This also means item 3's ceiling is 2.6 µs at the rungs where `spent` is worst, not the 0.88 µs quoted;
+- "other / unattributed 18.1%" is entirely branch penalties plus loop trips, and the resulting constant 18.1% deflation hides that branching is really 13.0% of the path;
+- the file-level rollup is not version-stable — a hardcoded `bin/shell-pwm.rs` silently broke the fifth image's row;
+- the longest path does mix mutually exclusive branches (one pair, `ix 215`/`ix 222` off `cmp r2,#0x40`), worth 1 cycle.
+
+### E216 — the adversarial review of E214, verbatim
+
+Independent, context-free, dispatched in the same message as E215 and never
+shown E215's verdict or E214's reading until it had formed its own. Reproduced
+unedited; disposition in E217.
+
+---
+
+I have formed my view from the raw evidence, the code, and the capture corpus, and then read E214 last. Report follows.
+
+---
+
+# Adversarial review — E214 (`spent` composition)
+
+**Bottom line:** the arithmetic in E214 is correct and reproduces exactly, and its stop decision on items 1–3 is right. But its framing — "this is the measured blocker for 60%" — does not survive. `spent` is not the binding term; it is one of two factors in a product, and the other factor is a single self-imposed constant. Separately, the campaign has an in-hand measurement (E142) that shows the commutation instant at the top rungs is set by COMP's **post-arm tail**, not by the timer arithmetic at all — which decouples the `LateArm` protection from the physics it is named after.
+
+Findings 1–13 predate reading E214. Findings 14–16 are dispositions of E214's own text and necessarily postdate it.
+
+---
+
+## Causality — is `spent` the binding constraint?
+
+**1. BLOCKING — The wall at `spent = 11` is at ~53 % duty, not 60 %, and it is set by the advance level, not by `spent`.**
+`wait_time(ci, l) = (ci>>1) - advance_of(ci, l)` (`src/commutation.rs:261-270`), so the wait is `ci·(32-l)/64`: a *fraction* of `ci`. With `l = 22` (`src/run/policy.rs:252-259`, level 22 at duty ≥ 350) the wait is 15.6 % of `ci`, and `wait > 11` first holds at `ci = 72 µs`. Computed against the real measured `ci` per rung (below), that is ≈ 53.5 % duty. So:
+
+| `spent` | level 22 | level 20 | level 16 (reference default) |
+|---|---|---|---|
+| 11 | ci ≥ 72 (≈53 % duty) | ci ≥ **60 (≈64 %)** | ci ≥ 46 (≈84 %) |
+| 7 (the target) | ci ≥ 46 (≈84 %) | ci ≥ 38 | ci ≥ 30 |
+
+**60 % clears with `spent` left at 11 µs and the advance dropped from 22 to 20.** `DefaultAdvance = FixedAdvance<16>` (`src/commutation.rs:246`) is the *reference's* value; 22 is a firmware50 divergence adopted for speed. The blocker is therefore a tuning constant with an already-priced tradeoff, not an ISR cost. And the feedback sign is favourable: less advance → slower rotor → larger `ci` → more wait. The campaign's goal is a **duty** rung, not a speed target, so trading advance for margin costs nothing against the stated goal.
+*Distinguishing observation:* one A/B at 50 % on `AdvancePolicy::level` returning 20 vs 22, reading `thin_count`/`late_arms` and `ehz_from_ci_last`. Cheap, one constant, no ISR surgery.
+
+**2. BLOCKING — `ci ≈ 64 µs` at 60 % is an extrapolation past a cap, and the product it extrapolates is not constant.** I extracted `ehz_from_ci_last` for every `BEMFRUN` block in `captures/`:
+
+```
+duty 200 →  963 ehz  ci=173.1  ci·duty=34614
+duty 350 → 1529       109.0           38151
+duty 425 → 1851        90.0           38268
+duty 475 → 2083        80.0           38006
+duty 500 → 2164        77.0           38509
+```
+The product rises monotonically ~11 % from 200 to 500 tenths and is **still rising at the top** (+1.3 % over the last rung). Extrapolating the last slope gives `ci ≈ 66-68 µs` at 60 %, not 64. `wait_time(67,22) = 10`, `wait_time(68,22) = 11` — the function is non-monotonic in `ci` (integer `>>1` against integer advance), so the late/not-late verdict flips on ±1 µs of estimator jitter. **The −1 µs deficit E213/E214 quote is inside the extrapolation's own error bar.**
+
+**3. BLOCKING — 60 % is not reachable by any command this firmware accepts, so nothing about it has ever been measured.** `SIXSTEP_DUTY_CAP = 500` (`src/run/policy.rs:102`), applied in `sixstep_ccr_of` (`:157`) and `sixstep::plan` (`src/sixstep.rs:93`). `Controller::command` takes one byte; the highest target any key produces is `climb_tenths`, itself clamped at 500 (`src/run/mod.rs:475`). There is no capture at any rung above 500 in the corpus. "60 % is blocked" is an inference about a configuration that does not exist in any built image; the policy comment itself withdraws the cap's old justification and names the resulting gap (`policy.rs:89-97`).
+The clamp *is* silent at the plan level — `io.kv("target_duty_tenths", target)` prints the pre-clamp request (`run/mod.rs:347,374`) — but today that cannot bite, because no reachable `target` exceeds 500. It becomes a live trap the moment the cap or the climb step is raised. (E213 lists duty-clamp visibility as a 60 % blocker; that is correct and I confirm it.)
+
+**4. MATERIAL — 50 % already runs at `left = 1`, i.e. the envelope's true edge is *here*, and the campaign's own data says so.** `ci = 77` at 500 tenths → `wait_time(77,22) = 12`, `spent = 11` → `left = 1`. `late_arms` is non-zero in 6 of 1070 captures (5×1, 1×2). So the observed failure is a jitter tail at the margin that exists *now*, and the next rung up (52.5 %, `ci ≈ 73`) is already inside it. Framing the problem as "60 %" hides that.
+
+---
+
+## Is a static longest-path count the right instrument?
+
+**5. MATERIAL — The cost model charges flash wait states on SRAM, stack and peripheral accesses, so the 2 WS figures are not a lower bound.** `spent_compose.insn_cost` adds `ws` to *every* `ldr`/`str` (`scripts/spent_compose.py:180-186`). On a G071 only flash reads pay `FLASH_ACR.LATENCY`; SRAM is zero-wait and peripherals sit behind APB. In the 507-cycle window there are ~60 non-literal memory ops, so ≈ **120 cycles (1.9 µs) of the 507 are spurious**. Meanwhile instruction fetch is charged at zero. The two errors have opposite signs and the net is unknown — E214's "every figure below is a **lower bound**" is not established.
+This matters concretely: the per-item ceilings rest on those inflated numbers (see finding 15).
+
+**6. MATERIAL — The repo already has a fetch model and this measurement did not use it.** `scripts/isr_cycles.py --fetch-model --wait-states 2 --per-insn 0.25 --loop-hit` exists and is documented in `WCET_ESTIMATES.md`. Run on the whole root it gives 1196 cy = **18.69 µs**, against a *measured* `call_max_us` of 15–16 µs; the 0 WS figure is 12.89 µs. So reality sits between the two models and the unmodelled term E214 leaves as "an unknown" was partly computable for free.
+
+**7. MINOR — DMA bus contention is quantitatively ruled out, so it should not be left on the list of candidate explanations.** The harvest is 5 channels per TIM6 tick at 101 µs (`bin/board.rs:826`, `board.kv("adc_hz", 9901)`), i.e. one DMA beat per ~20 µs. At most one beat lands inside an 8–11 µs COMP window, costing 1–2 cycles. It cannot be 3 µs.
+
+**8. BLOCKING — The one preemption source that *can* be 3 µs is unexamined: the guard root at NVIC 0x00 preempts COMP at 0x40, every 101 µs.** `Guard::NVIC = 0x00` (`src/shared.rs:70-74`), set on `TIM6_DAC_LPTIM1` by `guard_arm` (`src/roots.rs:771`); COMP and COM are peers at 0x40 (`shared.rs:64-68`). TIM6 runs at 101 µs (`bin/board.rs:826`). The entry→`spent` window is ~8 µs and is **not** interrupt-masked (the only PRIMASK regions on the path are the portable-atomic shim and the post-`spent` `interrupt::free`). So **~8 % of acceptances have a whole guard ISR inserted inside the measured window** — and at ~13 000 acceptances/s over a 30 s run that is ~30 000 preempted acceptances, so `spent_max`, being a run maximum (`roots.rs:481-483`), is *certain* to be one of them.
+
+This is a complete alternative explanation for the 3.1 µs residual: `spent_max` = straight-line path (~8 µs) + one guard ISR (~3 µs). It also explains `call_max_us` cleanly: 0 WS whole-root 12.9 µs + ~3 µs = the measured 15–16.
+*Distinguishing observation, decisive and already built:* `bin/chain-capture.rs` stamps `spent_fine` on TIM2 at 15.6 ns. If the guard hypothesis holds, the distribution is **bimodal** — a main mode near 7–8 µs and a ~8 %-weight satellite ~3 µs higher. If it is unimodal at 11 µs, the guard is exonerated and fetch stalls are the answer. This is E213's own measurement #2, at 25 %, and it was never taken. It should be taken *before* anything else, because the two hypotheses point at completely different work (interrupt architecture vs code layout).
+
+---
+
+## Quantization and the instrument
+
+**9. MATERIAL — `spent` is a difference of two 1 MHz TIM17 reads, so a reading of 11 means "true value in (10, 11]", and the `left == 0` test is decided by sub-microsecond phase.** `spent = hw::clock::raw().wrapping_sub(raw)` (`roots.rs:470`, and the twin at `:529`); `late = left == 0` with `left = wait.saturating_sub(spent)` (`:471-475`). At `wait = 12, spent = 11` the protection latches or does not latch on where the true duration falls inside a 1 µs bin. **A latching hard stop whose trigger is a quantization coin flip is a design defect independent of everything in E213/E214**, and it is the mechanism behind "1 LateArm in 17 runs" — not a physical event.
+
+**10. MATERIAL — `spent_max_us` is not "11 in every capture"; it takes 12 distinct values across 1070 captures.** Histogram over `captures/`: `11×616, 16×131, 18×122, 13×81, 10×72, 19×22, 17×11, 0×6, 12×3, 24×2, 23×2, 15×2`. Cross-tabbed against rung, the 13–24 group is confined to 150–300 tenths and older image families, and — to E213's credit — the `10` group is exactly the `e142`/`ab133-e133` families (`captures/2026-09-23/c7-e142-*.txt`), i.e. the rejected arm-before-stores image. So "11 within the current family" is defensible. But "490 captures" is a subset of the corpus and the claim should be stated as image-scoped, because the corpus as a whole shows the quantity ranging to 24 µs.
+
+**11. MINOR — The stopping rule's resolution equals the whole predicted effect.** E213: revert unless `spent_max_us` falls ≥ 1 µs. E214's modelled best case is 1.3 µs. Since the reported value is effectively `ceil(true)`, a 1.3 µs cut moves 11 → 10 — a one-bit answer sitting on its own threshold. The 15.6 ns `spent_fine` instrument is the right one and E213 already says so; the `spent_max_us` rule should not be the arbiter.
+
+---
+
+## Observer effects and concurrency
+
+**12. BLOCKING — The campaign already owns a measurement proving the commutation instant is set by COMP's post-arm tail, not by the timer arithmetic — and it is being read as a cost rather than as evidence.** The site comment (`roots.rs:463-468`) records E142: arming *before* the accept stores moved `spent` 11 → 10 **and cost ~1 % of rotor speed at 37.5 %**. If the delivered commutation were governed by the timer, that change is a no-op: the arm loads `left = wait - spent`, so the expiry is `edge + wait` either way. The only way arming *earlier* makes the motor *slower* is if the delivered instant is bounded below by COMP's remaining tail — which moving the stores after the arm lengthened. Corroborated by the measured maxima: `call_max_us` 15–16 vs `spent_max_us` 11 gives a post-arm tail of **4–5 µs**, and COMP/COM are same-priority peers at 0x40 so TIM16 *cannot* preempt — it tail-chains.
+
+Consequences that change what to do next:
+- At `left ≤ 4`, the commutation lands at `edge + spent + tail`, not `edge + wait`. At 50 % (`left = 1`) that is happening on every acceptance today.
+- **Cutting `spent` to 7 µs at level 22 and `ci = 64` yields `left = 3` — still inside the tail.** The protection would stop latching while the delivered angle barely moves. E213's lever changes the *verdict*, not the physics the verdict is named after.
+- There is no production counter for "COM dispatched from inside COMP's tail". `in_arm`/`preempted` exist only in `ChainLog` images (`roots.rs:374-382`, `log_service`). Per the campaign's own scar about instrumenting decisions rather than outcomes, this is a silent path.
+
+**13. MATERIAL — The wait compensates `spent` but not the pre-stamp latency, and that asymmetry is undocumented.** `raw` is taken at `roots.rs:1214`, *after* `line_disable()` + `clear_pending()` (8 instructions, ix 8–14 in the disassembly) and after exception entry (~12 cycles). So the true edge→arm latency exceeds `spent` by ~0.5 µs that nothing subtracts. Small, but it is a systematic angle bias in the same direction as everything else here, and E214 spends 0.38 µs of its 3.1 µs residual on exception entry/exit — which is *definitionally outside* the measured window and cannot be part of that gap.
+
+---
+
+## Dispositions of E214 itself
+
+**14. Sound. The arithmetic reproduces exactly.** I re-ran the committed tool's graph/longest-path with re-anchored endpoints: ix15→ix421 = **507 cy = 7.92 µs @2WS**, ix15→ix458 = **591 cy = 9.23 µs**. Both match E214's table to the cycle. The `src`/`dst` anchoring in the notebook is right and the docstring in the shipped tool is wrong: `spent_compose.py:26-29` claims the first TIM16 access "is where `spent` is read", but `spent`'s clock read is at ix 421 and the TIM16 touch is 37 instructions later. E214 caught this; the tool was not fixed.
+
+**15. MATERIAL — The prediction is refuted, but item 3's ceiling is over-credited by ~3×, and the "generous" 24.5 % score straddles the falsifier.** The loop body (ix 341–352) is: `ldr` CSR, `ands`, `subs`/`sbcs` (boolify the bit), `rsbs`/`adcs` (boolify `rising` — **loop-invariant, genuinely hoistable**), `cmp`, `beq`, `b`, `adds` counter, `cmp`, `blo`. The 56 cycles E214 calls "counter and compare bookkeeping" are mostly the boolification and the equality test against `rising` — those are the semantics. Removable: the invariant pair (2 cy/trip) plus, if the variable depth could be unrolled, the counter and bound (~3 cy + branch penalty). That is **≈0.2–0.3 µs, not 0.88 µs**. The only item the measurement supported is three times weaker than stated. This strengthens the stop, so it does not change the decision — but it should be corrected, because the "best case ≈1.3 µs" figure is quoted downstream.
+Also: with the spurious data wait states of finding 5 removed, the register-base-store share falls from 10.3 % to ~7 %, so the refutation of "more than half" is robust under every accounting. The **one-third** falsifier, however, is straddled by accounting choice — E214's own generous score is 24.5 %, and adding the vendored atomic critical sections (53 cy, which *are* the sixth store's `fetch_add`) gives 177/507 = **34.9 %, above the falsifier.** The correct statement is: "more than half" is refuted decisively; "less than a third" depends on whether the atomic shim counts as part of "the six atomic stores". It plainly does, since `accept_seq` is one of the six. **E214's own falsifier is not cleanly met, and the entry does not say so.**
+
+**16. MINOR — The evidence file does not contain the conclusion's numbers, and the module table drops its unattributed row.** `captures/analysis/e214_spent_composition.txt` contains no `507`, `7.92`, `591` or `9.23`; the committed `spent_compose.py` hard-anchors `dst = t16[0]` and reports 583 cy / 9.11 µs. A reviewer sent to the raw output cannot reach the notebook's table without re-parameterising the tool. Also, the by-module table sums to 415 of 507 cycles; the 92 cy (18 %) "other / unattributed" row present in the raw output is omitted, so "39 % estimator arithmetic / 21 % stack / 15 % bookkeeping / 10 % atomics" are shares of an 82 % accounted total presented as if complete. The "`spent` is not concentrated anywhere" conclusion survives; the percentages should be restated against the real denominator.
+
+---
+
+## Protection coverage at 60 %
+
+**17. BLOCKING — There is no temperature measurement of any kind.** The scan is exactly five channels: IN0/IN1/IN4 (three shunt amps), IN6 (bus), IN13 (VREFINT) — `src/hw/adc.rs:35-41`. No NTC, no on-die sensor, no derating. At a projected ~3 A continuous this is the gap that has no backstop at all.
+
+**18. BLOCKING — No peak/instantaneous current stop exists, and the average stop sits at twice the supply.** `Reason::PhasePeak` is documented in the code as never raised (`src/protection.rs:79-94`) — the firmware is honest about this. The only current stop is `AverageCurrent` on 100-scan (10.1 ms) block means at `RAW_LIMIT` ≈ 4 A (`:421-425`), and the first over-block is a **foldback**, not a stop; only a second consecutive one stops (`:533-544`). With the measured exponent 2.4–2.9 and 1.84 A at 50 %, 60 % projects to **~3.0 A on a 2 A supply** — inside the 4 A allowance, so the PSU enters CC and neither current protection fires. `policy.rs:91-97` states this gap explicitly: "nothing in the firmware stops a run between 2 A and 4 A."
+
+**19. MATERIAL — Slow droop is covered, but only by a 29 %-deep absolute floor.** `FastBusSag` judges against a ~207 ms EWMA (`SAG_FILTER_SHIFT = 11`, `protection.rs:295-305`) at a 95 % relative floor with a 3-scan streak — by design a slow droop "takes the reference with it" (`:377-381`). The backstop is the absolute floor `BUS_FLOOR_MV = 8400` on an 11.85 V bus, checked per scan (`run/states.rs:317`). So a droop slower than 207 ms and shallower than ~29 % is uncovered — exactly the CC-knee signature. E213's blocker list names this correctly.
+
+**20. MATERIAL — A 60 % run would not be safe as the firmware stands**, and for reasons that have nothing to do with `spent`: no thermal measurement, no reachable current stop below the CC knee, an uncovered slow-droop band, and a duty cap that must be raised (making the report's `target_duty_tenths` a lie at the same moment). E213 already lists all four and says they stand ahead of any 60 % run. That judgement is correct and should not be relaxed by any result about `spent`.
+
+---
+
+## Discrimination — would the next step discriminate?
+
+**21. Building items 1–3 would not have discriminated anything, and E214 is right to stop — but the residual is not the next hypothesis either.** A null result on items 1–3 is ambiguous between "the model is wrong" and "the cut worked and the run-to-run quantization hid it" (findings 9–11). E214 already declines to adopt "code size and layout" on the strength of a residual; I agree, and finding 8 gives a much stronger competing explanation for the same residual that costs one bench run to separate.
+
+**The ranked next steps I would argue for, cheapest first:**
+
+1. **One `chain-capture` run at 25 %** (existing image, safe rung) → `spent_fine` histogram. Bimodal ⇒ guard preemption (finding 8); unimodal ⇒ fetch. This settles the residual *and* tells you whether `spent`'s worst case is a code property or an interrupt-architecture property. E213 predeclared it and it was skipped.
+2. **Flash the E212 ci-watch image and actually run it.** `ci_min_us`/`thin_count` exist (`roots.rs:399-412`, `bin/board.rs:721-722`) and **appear in zero captures** — I grepped the whole corpus; the only hit is the ELF itself. The causal variable of the entire argument has never been measured. It should also record the *distribution* of `left`, not just a `left ≤ 2` count, because `thin` conflates late with 1 and 2.
+3. **One A/B on the advance level at 50 %** (finding 1). One constant, both directions measurable in `thin_count` and `ehz_from_ci_last`, and it is the lever that actually reaches 60 % with `spent` untouched.
+4. **Reconsider `LateArm` as a latching stop.** `arm_marked(left.max(1))` means a late arm still commutates ~1–2 µs late on a 64–77 µs sector — ~1° electrical, smaller than the tail-induced error that occurs on *every* acceptance at 50 % (finding 12). A bounded-overshoot or repeat-count stop would match the physics; the present one stops a qualified run for a quantization bin.
+
+**What has NOT been measured that must be before anyone concludes anything about 60 %:** `ci` at any rung above 500 (no such run exists), the `left`/`spent` distribution at any rung (only a saturated max), the current draw above 50 %, and any temperature at all.
+
+---
+
+**Where the reasoning is sound:** the disassembly work is careful, the two self-reported broken tool versions and the refusal to accept a plausible-looking wrong number are exemplary, the anchor correction to ix 421 is right, the numbers reproduce exactly, and refusing to promote the residual into a new hypothesis without predeclaration is the correct discipline. **Where it is not:** the entry calls `spent` "the measured blocker for 60 %" when it is one factor of a product whose other factor is a one-line constant; its own one-third falsifier is straddled once the atomic shim is counted with the store it implements; its "lower bound" claim is unsupported; item 3's ceiling is 3× too generous; and the strongest available explanation for its own 3.1 µs residual — a priority-0 guard ISR preempting the measured window 8 % of the time — is not on its list.
+
+### E217 — disposition of E215/E216: the verdict stands, my falsifier does not, and `spent` is not the blocker
+
+Two independent reviews, neither having seen the other's verdict or E214's
+reading before forming its own. They converge on the result and diverge from me
+on what it means. **E214's conclusion (prediction 1's "more than half" is
+refuted; items 1–3 are not built) survives both. Four of E214's supporting
+claims do not, one of them being my own falsifier, and the entry's framing —
+"`spent` is the measured blocker for 60%" — is withdrawn.**
+
+The notebook is append-only, so the corrections live here and E214 must be read
+with this entry.
+
+#### The three things I verified myself before dispositioning
+
+Neither reviewer's load-bearing new claim was taken on trust.
+
+**1. `DefaultAdvance = FixedAdvance<16>` — `src/commutation.rs:246`. 16 is the
+reference's value.** `AdvancePolicy::level` (`src/run/policy.rs:252-259`)
+returns 22 at duty ≥ 350 and 20 below. So **22 is firmware50's divergence, and
+22→20 moves *toward* the reference, not away from it.** This inverts E210's
+finding as I dispositioned it in E211 ("a divergence from the reference
+schedule, not a tuning knob") and inverts the reason E206 gave for adopting it
+cautiously. E210 was describing 22 as the baseline; the baseline is 16.
+Recomputing `wait_time` directly:
+
+| ci | l=22 | l=20 | l=16 |
+|---|---|---|---|
+| 64 | **10** | **12** | 16 |
+| 68 | 11 | 13 | 17 |
+| 72 | 12 | 14 | 18 |
+| 77 (50% today) | 12 | 14 | 19 |
+
+`wait > 11` first holds at ci ≥ 72 for l=22, **ci ≥ 60 for l=20**, ci ≥ 46 for
+l=16. E216's table reproduces exactly. Note also the non-monotonicity E216
+flags: `wait_time(72,22) = 12` but `wait_time(73,22) = 11`, because an integer
+`>>1` races an integer advance. The late/not-late verdict genuinely flips on
+±1 µs.
+
+**2. The guard ISR is 208 cycles = 3.25 µs** (`isr_cycles.py --root
+TIM6_DAC_LPTIM1 --wait-states 2`, 0 back-edges, no bounds needed), plus ~0.38 µs
+exception entry and exit. `Guard::NVIC = 0x00` against `Motor::NVIC = 0x40`
+(`src/shared.rs:64-74`) — it preempts COMP. **~3.6 µs delivered is exactly the
+size of E214's unexplained 3.1 µs residual.** E216's finding 8 is quantitatively
+right, and my own census is its corroboration: the `spent` window contains only
+one `cpsid`/`msr` pair (8 cy, 2 instructions), so the window is overwhelmingly
+*unmasked* and can be preempted.
+
+**3. The corpus discriminates between the two reviewers' residual hypotheses,
+and it needed no bench time.** E215's finding 14 says the gap is filter depth
+(depth 12 ⇒ 651 cy ⇒ 10.17 µs); E216's finding 8 says it is guard preemption.
+Depth rises with the interval; guard preemption does not. So I cross-tabbed
+`spent_max_us` against `ci` over all 902 records that carry both:
+
+| ci band | all images | `14CE44E7` only |
+|---|---|---|
+| 40–79 µs | 11 ×36 | **11 ×19** |
+| 80–119 | 10 ×24, 11 ×187 | **11 ×35** |
+| 120–159 | 10, 11, 12, 13, 16, 18, 19 | **11 ×18** |
+| 160–199 | 10…19 | **11 ×6** |
+| 200–239 | 10…19 | **11 ×7** |
+| 800–839 | 16 ×8, 17 ×4, 18 ×30, 19 ×2 | — |
+
+**On the qualified image `spent_max_us` is 11 in 85 of 85 records, across ci 40
+to 239 µs — i.e. across filter depths 3 through ~8.** Depth therefore does *not*
+explain the maximum on this image; if it did, the maximum would climb with the
+interval and it is flat. The spread to 19 µs is across *older* image families,
+exactly as E216's finding 10 independently found. A ci-independent additive term
+of ~3 µs fits; a depth-scaled term does not. **The guard-preemption hypothesis is
+adopted as the leading explanation and the depth hypothesis is set aside as an
+explanation of the maximum** — E215's point that depth scales item 3's ceiling in
+*other* regimes still stands on its own.
+
+#### Point-by-point disposition — E215 (evidence)
+
+| # | finding | disposition |
+|---|---|---|
+| 1,2 | image hashes; `ADC_COMP` is the production root in both `shell-pwm` and `sag-capture` | **Confirmed.** The fifth image being a legitimate same-root build is a check I had not made. |
+| 3 | window starts one instruction before the stamp: **+4 cy over-count** | **Accepted; fixed.** |
+| 4,5 | both anchors correct, `spent` read at ix 421 | Confirmed. |
+| 6 | **the archived artifact contains 583/9.11, not the 507/591 E214 quotes** | **Accepted — this is the worst defect of the set.** A reviewer sent to the raw output could not reach my table. Tool now reports both windows by default; artifact regenerated. |
+| 7 | 507 / 583 / 591 / 407 all reproduce under independent code | **The verdict's foundation, independently confirmed.** |
+| 8 | the loop is the filter; my "ix 335–352 once per trip" is loose (335–340 is hoisted setup, the literal load runs once) | **Accepted, corrected.** |
+| 9 | depth 4 right at 77 µs, but depth is **3 at 64 µs** and saturates at 12; composition is depth-dependent and E214 did not flag it | **Accepted.** Now flagged, and the tool takes `--depth`. Note 60% is the *shallower* case. |
+| 10 | the off-path loop is `drv_decide`'s own filter, correctly excluded | Confirmed. |
+| 11 | the longest path does mix mutually exclusive branches at `ix 215`/`ix 222`; **worth 1 cycle** | **Accepted.** Real hazard, negligible magnitude here, now named in the tool. |
+| 12 | **the cost model is not `isr_cycles.py`'s**: +WS on every load/store including SRAM spills and APB stores; ~126 cy of 507 unphysical | **Accepted in full; fixed.** The docstring's claim was false and I wrote it. |
+| 13 | "lower bound" unsupported (two-sided error); **exception entry/exit is definitionally outside the window** and cannot be part of the gap | **Accepted; both withdrawn.** The 0.38 µs was simply wrong — both endpoints are clock reads inside the handler. |
+| 14 | the gap is depth, not fetch; item 3 is 2.6 µs at depth 12 | **Half accepted.** Refuted as the explanation of the maximum (§3 above); accepted that item 3's ceiling scales with depth in other regimes. |
+| 15 | refutation survives recomputation: **7.9% / 13.4% / 24.5%**, and the accounting is biased toward the prediction | **Accepted with thanks.** 13.4% and 24.5% reproduce to the cycle. |
+| 16 | "other/unattributed" is exactly branch penalties + extra loop trips; every share deflated 18.1%; **branching is really 13.0%**, third-largest | **Accepted; fixed.** The census now reports branch penalties as branch cost. |
+| 17 | stale per-line attribution, correctly self-disclosed and guarded | Confirmed. |
+| 18 | **the per-file rollup is *not* version-stable**: hardcoded `bin/shell-pwm.rs` silently dumped 16 cy into "other" for `63C0061D` | **Accepted; my claim that it was version-stable is wrong.** The tool now fails loudly on any unmatched source file instead of absorbing it. |
+| 19 | latent: `bl` callees silently free (0 on this path) | **Accepted;** the tool now refuses a window containing `bl`. |
+| 20 | the artifact measured entry→arm where E213 specified entry→`spent` read | **Accepted;** both now reported. |
+| 21 | the "11 µs in 490 captures" anchor was unverifiable from the given sources | **Accepted, and now verified by me** (§3): image-scoped, 85/85 on `14CE44E7`. |
+
+#### Point-by-point disposition — E216 (adversarial)
+
+| # | finding | disposition |
+|---|---|---|
+| 1 | **the wall is at ~53% duty and it is set by the advance level; 60% clears with `spent` untouched at level 20; 16 is the reference** | **Accepted, verified independently (§1), and it replaces E214's framing.** |
+| 2 | `ci ≈ 64` at 60% is an extrapolation of a product that is still rising; 66–68 is as defensible; the verdict flips on ±1 µs | **Accepted.** The −1 µs deficit is inside its own error bar. E211's "deterministically late on the first crossing" was overstated. |
+| 3 | **60% is not reachable by any command this firmware accepts** — `SIXSTEP_DUTY_CAP = 500`, `climb_tenths` clamped at 500, no capture above 500 exists | **Accepted, and it is the honest frame.** "60% is arithmetically blocked" was an inference about a configuration no built image can enter. |
+| 4 | **50% already runs at `left = 1`** — the true edge is here, and 52.5% is already inside the jitter tail | **Accepted.** This is where the work is, not at 60%. |
+| 5 | spurious data wait states; not a lower bound | **Accepted** (= E215 #12/#13). |
+| 6 | the repo's own fetch model was available and unused: 1196 cy = 18.69 µs whole-root vs measured `call_max_us` 15–16 | **Accepted.** Reality sits between the models; I left computable ground as "unknown". |
+| 7 | DMA contention quantitatively ruled out (≤2 cycles) | **Accepted**, and struck from the candidate list. |
+| 8 | **guard root at 0x00 preempts the unmasked ~8 µs window every 101 µs; `spent_max` is a run maximum so it is certainly a preempted sample** | **Accepted and adopted**, magnitude verified at 3.25 µs (§2). |
+| 9 | `spent` is a 1 MHz difference, so 11 means (10, 11]; **a latching stop decided by a quantization bin** | **Accepted as a defect in its own right.** |
+| 10 | `spent_max_us` takes 12 values corpus-wide; the claim must be image-scoped; the `10` group is exactly the rejected e142 family | **Accepted;** independently reproduced (§3). |
+| 11 | the stopping rule's 1 µs resolution equals the whole predicted effect | **Accepted.** `spent_max_us` is the wrong arbiter; `spent_fine` is the right one. |
+| 12 | **E142 is evidence, not a cost: arming earlier made the motor *slower*, which is only possible if the delivered instant is bounded by COMP's post-arm tail (4–5 µs), not by the timer** | **Accepted, and it is the most consequential finding in either review.** Cutting `spent` would move the *verdict* without moving the physics the verdict is named after. I had the E142 result in the code comment and read it as a price rather than as a measurement. |
+| 13 | the wait compensates `spent` but not the ~0.5 µs pre-stamp latency | **Accepted**, named as a systematic angle bias. |
+| 14 | anchoring right, the shipped tool's docstring wrong | **Accepted; fixed.** |
+| 15 | **my one-third falsifier is straddled: with the atomic shim, which *is* `accept_seq`'s `fetch_add`, the generous score is 34.9%** — and item 3's real ceiling is 0.2–0.3 µs, not 0.88 | **Accepted. This is my error and it matters.** See below. |
+| 16 | artifact lacks the numbers; module table omits the unattributed row so shares are of an 82% total | **Accepted; both fixed.** |
+| 17 | **no temperature measurement of any kind** — five channels, none thermal | **Accepted; blocking.** |
+| 18 | no peak current stop; the 4 A average stop is unreachable at a projected ~3 A on a 2 A supply, and the first over-block folds back rather than stopping | **Accepted; blocking.** |
+| 19 | slow droop covered only by a 29%-deep absolute floor; the CC-knee band is uncovered | **Accepted; blocking.** |
+| 20 | a 60% run would not be safe as the firmware stands, for reasons unrelated to `spent` | **Accepted, and not relaxed by anything in E214.** |
+| 21 | ranked next steps; `ci_min_us`/`thin_count` appear in **zero captures** | **Accepted** — the causal variable of the whole argument has never been measured. |
+
+#### The correction to my own falsifier, and what the corrected model does to it
+
+E213 set the bar: *"If they are less than a third … items 1–3 cannot deliver, in
+which case I say so and stop."* E216 is right that `accept_seq` is one of the six
+stores and its `fetch_add` **is** the vendored critical section, so counting the
+shim with the store it implements gives 177/507 = **34.9%, above one third** —
+and E214 did not flag that the falsifier depended on that choice. **Accepted as
+a real gap in my accounting.**
+
+But there is a second-order point the reviews could not make, because each found
+only half of it: **E216's straddle is computed under the very cost model E216
+(finding 5) and E215 (finding 12) both condemn.** With the unphysical data wait
+states removed — wait states on flash reads only, which is what
+`isr_cycles.py` actually does — the whole window is **377 cy = 5.89 µs** (E215
+independently predicted 381 cy for it; the 4-cycle difference is exactly their
++4 anchor over-count, now also fixed), and every reading falls:
+
+| reading | inflated model | **corrected model** |
+|---|---|---|
+| strictly the six stores + four reads | 40 cy / 7.9% | 20 cy / **5.3%** |
+| E214's (all register-base stores + four reads) | 68 / 13.4% | 32 / **8.5%** |
+| generous (all stores + the whole filter loop ×4) | 124 / 24.5% | 88 / **23.3%** |
+| E216's (that, plus `accept_seq`'s critical section) | 177 / **34.9%** | 103 / **27.3%** |
+
+**Under the cost model both reviewers say is the correct one, every defensible
+reading is below one third, including E216's.** So:
+
+* **"More than half" is refuted decisively** — 5.3% to 27.3%, on any reading, at
+  either wait-state setting, under either cost model.
+* **"Less than a third" is met** under the corrected model, and straddled only
+  under the model that charges flash wait states to SRAM spills.
+
+**Even so, the stop does not rest on the falsifier**, and E214 should not have
+implied it did. It rests on magnitude, which both reviewers quantified better
+than I had: item 1's entire prize is 3 fewer stores = **12 cy = 0.19 µs** (the
+six already share one base register with consecutive offsets — E215's figure and
+mine now agree exactly), item 2 is **≤0.1 µs**, and item 3 is **0.2–0.3 µs**,
+not the 0.88 µs I quoted, because most of that loop body is the boolification
+and the compare against `rising` — the semantics, not bookkeeping. **Total
+≈0.5 µs against the ~4 µs the target needs.**
+
+#### The residual is now the dominant term, which changes the priority
+
+With the corrected model the static window is 5.89 µs against a measured 11 µs,
+so **~5.1 µs — 46% of the quantity — is outside the model entirely.** It was
+3.1 µs when the model was inflated. Two named candidates, and they are additive
+rather than competing:
+
+* **one guard ISR at ~3.6 µs** (208 cycles + entry/exit), verified in §2, fires
+  every 101 µs into an ~6 µs unmasked window, and `spent_max` being a run
+  maximum makes a preempted sample certain;
+* **instruction fetch**, which this model charges at zero and which the repo's
+  own fetch model (E216 finding 6) puts at a substantial fraction.
+
+The consequence for method is sharper than the consequence for either
+hypothesis: **no static shaving exercise can be judged against `spent_max_us`,**
+because more of that number lives outside the code path than in it. That is the
+strongest argument yet for the measurement both reviewers rank first.
+
+#### What E214 claimed that is now withdrawn
+
+1. *"`spent` is the measured blocker for 60%."* **Withdrawn.** `wait` is
+   `ci·(32−l)/64`; `spent` is one term against a product whose other factor is a
+   one-line constant that currently diverges from the reference in the
+   unfavourable direction. At level 20, 60% clears with `spent` untouched.
+2. *"every figure below is a lower bound."* **Withdrawn** — two-sided error of
+   comparable magnitude in both directions.
+3. *"exception entry and exit is ~24 cycles, part of the 3.1 µs gap."*
+   **Withdrawn** — it is outside the window by construction.
+4. *"the file-level rollup is version-stable and is what I rely on."*
+   **Withdrawn** — it silently mis-attributed the fifth image.
+5. *"pinned at 11 µs in 490 captures"* → **restated as image-scoped**: 85/85 on
+   `14CE44E7` across ci 40–239 µs; the corpus as a whole ranges 10–19 µs (and
+   E216 finds 24) across older families.
+6. *"60% is arithmetically blocked."* **Restated**: no built image can command
+   60% (`SIXSTEP_DUTY_CAP = 500`), the interval at 60% is an extrapolation with
+   the verdict inside its error bar, and the margin question is answered by the
+   advance level. Nothing about 60% has been measured.
+
+#### What stands
+
+* The measurement itself, now at its corrected value: **377 cy = 5.89 µs**
+  entry→`spent` read and 439 cy = 6.86 µs entry→arm under the corrected model
+  (507 / 591 under the inflated one, both reproduced independently to the cycle
+  before correction); the anchors; the filter identification; the depth-4 trip
+  count; stability across four images.
+* "More than half" refuted; items 1–3 not built.
+* `spent` is not concentrated in any one object — restated against the correct
+  507 denominator with the 92 cy of branch-and-loop cost where it belongs.
+* Every protection gap on the 60% blocking list, unchanged and unstarted.
+
+#### Next, and what it is gated on
+
+Both reviewers independently rank the same first measurement, and E213
+predeclared it and then skipped it: **`spent_fine` on TIM2's 15.6 ns clock via
+`bin/chain-capture.rs`, at 25%, a safe rung on an existing image.** It
+discriminates guard preemption (bimodal, ~8% satellite ~3 µs high) from
+fetch stalls (unimodal), and those two answers point at completely different
+work — interrupt architecture versus code layout. It also replaces
+`spent_max_us`, whose 1 µs resolution is the size of the entire effect.
+
+Then, separately and each with its own predeclaration and review pair:
+
+1. the `left` **distribution** rather than a saturated maximum, and the
+   `ci_min_us`/`thin_count` fields that exist in `ED4E305C` and have **never
+   been run**;
+2. an advance-level A/B at 50% — one constant, toward the reference, with
+   `ehz_from_ci_last` and `thin_count` as the read-outs and E210's three
+   confounds explicitly measured rather than assumed away;
+3. whether `LateArm` as a latching stop matches the physics, given that at
+   `left ≤ 4` the delivered instant is set by COMP's tail on *every* acceptance
+   at 50% — a question about the protection's design, not its threshold, and
+   the goal's "keep existing protections" means I do not touch it without the
+   operator, only measure and report.
+
+**I am not proposing a 60% run.** Three of E216's blocking findings say a safe
+one is not currently possible, the rung is not commandable, and 50% already runs
+at `left = 1`. The next work is measurement at safe rungs.
+
+Nothing above is accepted as settled beyond what the two reviews jointly
+support: the residual's cause is a *hypothesis* with a predeclared
+discriminating test, not a conclusion.

@@ -178,9 +178,24 @@ def topo(n, succ, back):
 
 
 def insn_cost(rows, i, ws):
+    """Instruction cost, with wait states charged only where flash is read.
+
+    E215 SS12 / E216 SS5: the first version added `ws` to EVERY load and store.
+    On a G071 only a flash read pays `FLASH_ACR.LATENCY` -- SRAM is zero-wait
+    and the peripherals sit behind APB at the core clock -- so charging two
+    wait states to a stack spill or a TIM16 store has no physical basis. It
+    inflated the 507-cycle window by ~126 cycles (2 us), and it made the
+    docstring's claim to use `isr_cycles.py`'s model false: that one returns a
+    flat 2 for any load/store and charges wait states only under
+    `--fetch-model`, and then only to pc-relative loads and taken branches.
+
+    So: literal-pool (pc-relative) loads pay `ws`; nothing else does. Fetch is
+    still not modelled, which is why no figure here is a bound in either
+    direction.
+    """
     a, mn, ops = rows[i]
     c = cost(mn, ops)
-    if mn.lower().startswith(('ldr', 'str')):
+    if mn.lower().startswith('ldr') and '[pc' in ops:
         c += ws
     return c
 
@@ -219,20 +234,61 @@ GROUPS = [
     ('rate + EventWatch bookkeeping', ('src/rate.rs',)),
     ('critical sections and atomics (vendored)',
      ('portable-atomic', 'cortex-m/src')),
-    ('ISR entry shell', ('bin/shell-pwm.rs',)),
+    # Any `bin/*.rs`, not just shell-pwm: E215 SS18 found that hardcoding one
+    # binary silently moved `sag-capture`'s 16 cycles into "other" and made the
+    # rollup look version-stable when it was not.
+    ('ISR entry shell', ('bin/',)),
     ('PAC register accessors', ('stm32g0-staging',)),
 ]
 
 
-def census(rows, path, ws):
+def deref(rows, lit_ix, limit=8):
+    """The index that actually READS through a register just loaded from a pool.
+
+    `ldr rN,[pc,#imm]` only puts the peripheral ADDRESS in a register; the
+    access is the following `ldr rM,[rN]`. E215 SS3: anchoring on the literal
+    load put the window start one instruction before the timestamp and
+    over-counted it. Returns None rather than guessing.
+    """
+    m = re.match(r'(r\d+)\s*,', rows[lit_ix][2])
+    if not m:
+        return None
+    reg = m.group(1)
+    for i in range(lit_ix + 1, min(lit_ix + 1 + limit, len(rows))):
+        mn, ops = rows[i][1].lower(), rows[i][2]
+        if mn.startswith(('ldr', 'str')) and re.search(rf'\[{reg}\b', ops):
+            return i
+    return None
+
+
+def census(rows, path, ws, back=(), depth=1):
     """Addressing-mode census: version-independent, unlike a line number.
 
     Distinguishes the traffic that a packing change can remove (stores and
     loads through a register base -- shared state and peripherals) from the
     traffic it cannot (stack spills, literal-pool loads), and from work that is
     not memory traffic at all.
+
+    E215 SS16 / E216 SS16: the first version summed only single-trip
+    instruction costs while dividing by the whole-window total, so every share
+    was deflated by a constant ~18% and the residual was labelled "other /
+    unattributed" when it was entirely taken-branch penalties plus extra loop
+    trips. Both now land in the buckets they belong to, so the census sums to
+    the window total exactly.
     """
     out = {}
+    # Taken-branch penalties, charged to the branch that pays them.
+    for a, b in zip(path, path[1:]):
+        if b != a + 1:
+            e = out.setdefault('branch', [0, 0])
+            e[0] += 2  # 3 cycles taken vs 1 not taken
+    ps = set(path)
+    for s_, d_ in back:
+        if s_ in ps and d_ in ps:
+            body = sum(insn_cost(rows, i, ws) for i in range(d_, s_ + 1)) + 3
+            e = out.setdefault(f'extra loop trips (depth {depth})', [0, 0])
+            e[0] += body * max(depth - 1, 0)
+            e[1] += (s_ - d_ + 1) * max(depth - 1, 0)
     for i in path:
         _, mn, ops = rows[i]
         m = mn.lower()
@@ -264,9 +320,10 @@ def main():
     ap.add_argument('--wait-states', type=int, default=2)
     ap.add_argument('--top', type=int, default=20)
     ap.add_argument('--depth', type=int, default=4,
-                    help='persistence-filter trips at the rung being modelled '
-                         '(4 at a 77 us interval); a loop on the path is '
-                         'charged depth-1 extra body traversals')
+                    help='persistence-filter trips at the rung being modelled: '
+                         '4 at a 77 us interval, 3 at 64 us, saturating at 12 '
+                         'above ~250 us (src/bemf.rs mapped_filter_level). A '
+                         'loop on the path is charged depth-1 extra traversals')
     ap.add_argument('--quote-source', action='store_true',
                     help='print the source text of each line. ONLY valid when '
                          'the ELF was built from the current tree -- an '
@@ -276,7 +333,7 @@ def main():
     rows, words = llvm_rows(a.elf, a.root)
     lines = gnu_lines(a.elf)
     lits = resolve(rows, words)
-    print(f'{a.elf}  root={a.root}  (disassembler: llvm-objdump, as isr_cycles)')
+    print(f'{a.elf}  root={a.root}  llvm-objdump; wait states on flash reads only')
     print(f'  literals in .text: {len(words)};  instructions: {len(rows)};'
           f'  pc-relative loads resolved: {len(lits)};'
           f'  addresses with a firmware50 line: '
@@ -284,11 +341,26 @@ def main():
 
     cnt = sorted(i for i, w in lits.items() if w == TIM17_CNT)
     t16 = sorted(i for i, w in lits.items() if w == TIM16_BASE)
-    print(f'  TIM17 CNT (0x{TIM17_CNT:08x}) loaded at {cnt}')
-    print(f'  TIM16     (0x{TIM16_BASE:08x}) loaded at {t16}')
     if not cnt or not t16:
         raise SystemExit('anchors not found -- refusing to report a prefix')
-    src, dst = cnt[0], t16[0]
+
+    src = deref(rows, cnt[0])
+    arm = deref(rows, t16[0])
+    if src is None or arm is None:
+        raise SystemExit('could not find the access through an anchor register')
+    spent_read = None
+    for i in cnt:
+        d = deref(rows, i)
+        if d is not None and d < arm:
+            spent_read = d
+    if spent_read is None:
+        raise SystemExit('no TIM17 CNT read before the arm -- refusing')
+    print(f'  entry stamp:  ix {src} (0x{rows[src][0]:x}) '
+          f'{rows[src][1]} {rows[src][2]}')
+    print(f'  `spent` read: ix {spent_read} (0x{rows[spent_read][0]:x}) '
+          f'{rows[spent_read][1]} {rows[spent_read][2]}')
+    print(f'  the arm:      ix {arm} (0x{rows[arm][0]:x}) '
+          f'{rows[arm][1]} {rows[arm][2]}')
 
     succ, back = graph(rows)
     order = topo(len(rows), succ, back)
@@ -304,52 +376,91 @@ def main():
                 except OSError:
                     pass
 
-    for ws in (0, a.wait_states):
-        total, path = longest(rows, succ, back, order, src, dst, ws)
-        ps = set(path)
-        extra, loops_on = 0, []
-        for (s_, d_) in back:
-            if s_ in ps and d_ in ps:
-                body = sum(insn_cost(rows, i, ws) for i in range(d_, s_ + 1)) + 3
-                extra += body * max(a.depth - 1, 0)
-                loops_on.append((d_, s_, body))
-        total += extra
-        print(f'\n  entry stamp (ix {src}, 0x{rows[src][0]:x}) -> arm '
-              f'(ix {dst}, 0x{rows[dst][0]:x}), longest path, {ws} WS: '
-              f'{total} cycles = {total / 64:.2f} us, {len(path)} instructions')
-        for d_, s_, body in loops_on:
-            print(f'    includes a loop at ix {d_}..{s_} '
-                  f'({lines.get(rows[d_][0])}), {body} cy/trip, charged '
-                  f'{a.depth} trips (+{body * (a.depth - 1)} cy over one)')
-        if not loops_on and back:
-            print('    no classified loop lies on this path')
-        if ws == 0:
-            continue
-        print('  addressing-mode census (one trip of any loop):')
-        for k, (cy, n) in sorted(census(rows, path, ws).items(),
-                                 key=lambda kv: -kv[1][0]):
-            print(f'    {cy:5d} cy {100 * cy / total:5.1f}%  {n:3d} insn  {k}')
-        per = {}
-        for i in path:
-            e = per.setdefault(lines.get(rows[i][0]) or '(no line info)', [0, 0])
-            e[0] += insn_cost(rows, i, ws)
-            e[1] += 1
-        print(f'  attribution by source line, top {a.top}:')
-        for k, (cy, n) in sorted(per.items(), key=lambda kv: -kv[1][0])[:a.top]:
-            t = ''
-            f, _, ln = k.rpartition(':')
-            if f in quoted and ln.isdigit() and int(ln) <= len(quoted[f]):
-                t = '  ' + quoted[f][int(ln) - 1].strip()[:72]
-            print(f'    {cy:5d} cy {100 * cy / total:5.1f}%  {n:3d} insn  {k}{t}')
-        print('  rolled up:')
-        named = 0
-        for label, pats in GROUPS:
-            cy = sum(v[0] for k, v in per.items() if any(p in k for p in pats))
-            n = sum(v[1] for k, v in per.items() if any(p in k for p in pats))
-            named += cy
-            print(f'    {cy:5d} cy {100 * cy / total:5.1f}%  {n:3d} insn  {label}')
-        print(f'    {total - named:5d} cy {100 * (total - named) / total:5.1f}%'
-              f'       other / unattributed')
+    for label, dst in (('entry -> the `spent` read', spent_read),
+                       ('entry -> the arm', arm)):
+        print()
+        print(f'=== {label}')
+        for ws in (0, a.wait_states):
+            total, path = longest(rows, succ, back, order, src, dst, ws)
+            calls = [i for i in path if rows[i][1].lower() == 'bl']
+            if calls:
+                raise SystemExit(
+                    f'{len(calls)} bl instruction(s) on the path at {calls}: '
+                    'callees are not costed here -- refusing rather than '
+                    'under-reporting')
+            ps = set(path)
+            extra, loops_on = 0, []
+            for (s_, d_) in back:
+                if s_ in ps and d_ in ps:
+                    body = sum(insn_cost(rows, i, ws)
+                               for i in range(d_, s_ + 1)) + 3
+                    extra += body * max(a.depth - 1, 0)
+                    loops_on.append((d_, s_, body))
+            total += extra
+            print(f'  {ws} WS: {total} cycles = {total / 64:.2f} us, '
+                  f'{len(path)} instructions on the path')
+            for d_, s_, body in loops_on:
+                print(f'    loop ix {d_}..{s_}, {body} cy/trip, '
+                      f'{a.depth} trips (+{body * (a.depth - 1)} over one)')
+            if not loops_on and back:
+                print('    no classified loop lies on this path')
+            if ws == 0:
+                continue
+
+            cen = census(rows, path, ws, back, a.depth)
+            csum = sum(v[0] for v in cen.values())
+            if csum != total:
+                raise SystemExit(f'census {csum} != window total {total}')
+            print(f'  addressing-mode census (sums to {csum}, the total):')
+            for k, (cy, n) in sorted(cen.items(), key=lambda kv: -kv[1][0]):
+                print(f'    {cy:5d} cy {100 * cy / total:5.1f}%  '
+                      f'{n:3d} insn  {k}')
+
+            per = {}
+            for i in path:
+                e = per.setdefault(lines.get(rows[i][0]) or '(no line info)',
+                                   [0, 0])
+                e[0] += insn_cost(rows, i, ws)
+                e[1] += 1
+            print(f'  attribution by source line, top {a.top} '
+                  f'(single trip, no branch penalties):')
+            for k, (cy, n) in sorted(per.items(),
+                                     key=lambda kv: -kv[1][0])[:a.top]:
+                t = ''
+                f, _, ln = k.rpartition(':')
+                if f in quoted and ln.isdigit() and int(ln) <= len(quoted[f]):
+                    t = '  ' + quoted[f][int(ln) - 1].strip()[:72]
+                print(f'    {cy:5d} cy {100 * cy / total:5.1f}%  {n:3d} insn'
+                      f'  {k}{t}')
+
+            unmatched = sorted(k for k in per
+                               if k != '(no line info)'
+                               and not any(p in k for _g, ps_ in GROUPS
+                                           for p in ps_))
+            if unmatched:
+                raise SystemExit(
+                    'source files on the path match no group in GROUPS, so '
+                    'their cycles would vanish into "other":'
+                    + ''.join('\n  ' + u for u in unmatched))
+            print('  rolled up (single trip; branch penalties and extra loop '
+                  'trips are in the census, not here):')
+            named = 0
+            for lbl, pats in GROUPS:
+                cy = sum(v[0] for k, v in per.items()
+                         if any(p in k for p in pats))
+                n = sum(v[1] for k, v in per.items()
+                        if any(p in k for p in pats))
+                named += cy
+                if n:
+                    print(f'    {cy:5d} cy {100 * cy / total:5.1f}%  '
+                          f'{n:3d} insn  {lbl}')
+            noline = per.get('(no line info)', [0, 0])[0]
+            if noline:
+                print(f'    {noline:5d} cy {100 * noline / total:5.1f}%'
+                      f'       no line info')
+            resid = total - named - noline
+            print(f'    {resid:5d} cy {100 * resid / total:5.1f}%'
+                  f'       branch penalties + extra loop trips (see census)')
     return 0
 
 
