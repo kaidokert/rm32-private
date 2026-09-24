@@ -1,0 +1,36 @@
+# Cross-build config for firmware50. The probe is pinned so a flash can never
+# pick up the wrong ST-Link on this bench. Flashing is done with explicit
+# `probe-rs download` + `probe-rs reset` (never a long-lived `run`).
+[build]
+target = "thumbv6m-none-eabi"
+
+[target.thumbv6m-none-eabi]
+runner = "probe-rs run --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430"
+
+# NOTE: `-Tlink.x` is deliberately NOT set here. `build.rs` emits it as a
+# `cargo:rustc-link-arg`, which is attached to this crate no matter which
+# directory the build runs from. Setting it in both places passes the flag
+# twice and the linker then reads `memory.x` twice ("region 'FLASH' already
+# defined").
+#
+# IMPORTANT: cargo discovers `.cargo/config.toml` by walking up from the
+# *current directory*, not from `--manifest-path`. Building from the parent
+# `binz/` directory therefore picks up binz's config — including its linker
+# wrapper — which is exactly the coupling this crate is supposed to be free
+# of. Always build with this directory as the cwd:
+#
+#   cd binz/firmware50 && cargo build --release
+#
+# `scripts/build.ps1` does that for you and prints the size report.
+
+# Third-party sources are vendored under the gitignored `ref/vendor` (the
+# stm32g0 PAC and the HAL's own dependencies), so the build is offline and
+# pinned to one tree. `ref/stm32g0xx-hal` is a path dependency and is not a
+# registry source, so it is not listed here.
+#
+# Recreate with:  cargo vendor ref/vendor
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "ref/vendor"

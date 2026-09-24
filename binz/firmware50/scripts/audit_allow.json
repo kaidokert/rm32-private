@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Reviewed-loop allowlist for scripts/isr_audit.py.",
+    "Every loop reachable from an audited root must be named here with a",
+    "stated bound. A loop that is NOT bounded in software must say so",
+    "explicitly and name what else bounds it. Adding a symbol here without",
+    "reviewing it defeats the entire audit."
+  ],
+  "reviewed_loops": [
+    "ADC_COMP",
+    "firmware50::bemf::ZeroCross::offer",
+    "shell_pwm::drive_loop",
+    "shell_pwm::Board::scan",
+    "shell_pwm::say_u32",
+    "shell_pwm::kv",
+    "shell_pwm::kvi"
+  ],
+  "_loop_review": {
+    "shell_pwm::drive_loop": "The drive loop itself. Intentionally iterates until a stop condition, and every exit is a bound: the segment deadline and campaign deadline in RunGuard::poll, the script running out of ticks (script.at -> None at RUN_TICKS), the RUN_LIMIT_US energized-time ceiling, nFAULT, the host abort key, and every protection trip. Worst case is bounded by RUN_LIMIT_US = 5.2 s.",
+    "shell_pwm::Board::scan": "Five fixed ADC reads. The backward branch is the compiler sharing one call site across the five channels; the iteration count is a compile-time constant. Bounded.",
+    "shell_pwm::say_u32": "Decimal conversion. Bounded by the 10-digit maximum of a u32 and an explicit `n < 10` guard on the accumulate loop; the emit loop counts down from n.",
+    "shell_pwm::kv": "Emits a fixed key string then delegates. Bounded by the &str length, which is always a literal at the call site.",
+    "shell_pwm::kvi": "As kv.",
+    "ADC_COMP": "The COMP ISR root. Its only backward branch is the persistence filter in firmware50::bemf::ZeroCross::offer, inlined here since the zero-crossing decision moved into the interrupt (notebook E044). That loop reads COMP2_CSR once per iteration and exits on the first read that disagrees; its depth is FixedFilter<12>, i.e. at most 12 register reads, and the depth type is u8 so it cannot exceed 255 even in principle. This is the reference's own filter depth ('persistence depth | 12 reads', binz/LOW_DUTY_REPLICATION.md) and it is what AM32's handler does. There is no other loop: the mask, ack, gate and estimator update are straight-line. Bounded. UPDATED E058/E064: ADC_COMP now has a second backward branch, drv_decide's driven-stage persistence loop (`while i < 12`, u8 counter, one COMP2_CSR read per iteration, exits on the first disagreeing read) -- the reference's driven observer uses the same 12 reads (`DRIVENIRQ ... filter_reads=12`). The E064 IRQ trace adds only straight-line stores guarded by `n < IRQ_TRACE_LEN`. isr_cycles.py is run with two --loop-bound 12 accordingly.",
+    "firmware50::bemf::ZeroCross::offer": "The closed-loop persistence filter itself, no longer inlined into ADC_COMP once the E064 IRQ trace grew the handler. Same loop as described under ADC_COMP: `while i < depth` with depth = FixedFilter<12>::level() = 12 (a u8, so at most 255 in principle), one COMP2_CSR read per iteration, exit on the first read that disagrees. Bounded at 12 reads.",
+    "_removed_Adc_read": "stm32g0xx_hal::analog::adc::Adc::read was allowlisted as NOT BOUNDED IN SOFTWARE. It is no longer reachable -- the bounded PAC scan replaced it -- so the entry was removed (as notebook E029 said it should be). A stale allowlist entry for an unbounded spin is a latent hole: it would silently re-admit the spin if a future edit called it again."
+  },
+  "indirect_calls": [],
+  "panic_paths": []
+}

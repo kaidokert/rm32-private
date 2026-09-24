@@ -1,0 +1,107 @@
+# firmware50 — standalone typed G071/DRV8304 ESC firmware.
+# Reproduces the qualified sensorless behavior to ~10% throttle.
+# Independent: its own [workspace] table makes it a workspace ROOT, so the
+# parent rm32 workspace never claims it and no root manifest edit is needed.
+# Built explicitly:  cargo build --manifest-path binz/firmware50/Cargo.toml --release
+[package]
+name = "firmware50"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone typed G071/DRV8304 ESC firmware; qualified-behavior reproduction to 10%"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+# A path dependency living inside a workspace root's directory is otherwise
+# pulled in as an implicit member, which would apply this crate's profiles to
+# it and force its dev-dependencies (rtic, defmt-rtt, panic-probe) to resolve.
+exclude = ["ref"]
+
+[[bin]]
+name = "shell-pwm"
+path = "bin/shell-pwm.rs"
+test = false
+bench = false
+
+# Diagnostic: shell-pwm with the COMP root's decisions recorded, for the
+# replay test (E121). Its COMP handler is slower; never a production image.
+[[bin]]
+name = "edge-capture"
+path = "bin/edge-capture.rs"
+test = false
+bench = false
+
+# Diagnostic: shell-pwm with the commutation timing chain recorded in both
+# motor roots (E154). Both handlers are slower; never a production image.
+[[bin]]
+name = "chain-capture"
+path = "bin/chain-capture.rs"
+test = false
+bench = false
+
+[lib]
+test = true
+bench = false
+
+# **The COM-above-COMP A/B** (campaign 8 step 6b). COMP and its own values move
+# to NVIC 0x80, below the COM root's 0x40, so a commutation preempts a
+# zero-crossing decision. That this is what the reference does above 48% duty
+# comes from the operator's goal statement, not from anything verified in this
+# tree, and the tree's own arithmetic puts the crossing near 75% duty (E167,
+# E170). Sound
+# only because step 6a left no value touched by both roots; the compiler
+# enforces that through `shared::CompPrio`. Never a production image: the
+# qualified arrangement is peers at 0x40, which is the default.
+[features]
+com-top = []
+
+[dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+
+# Peripheral access goes through the HAL wherever the HAL exposes what is
+# needed. The one documented exception is TIM1 PWM: this HAL's PWM macro
+# substitutes `cc1ne` for `cc1e`, so it enables only the complementary
+# outputs and the main OC1-3 never pulse. TIM1 is therefore configured through
+# the PAC underneath the HAL (`stm32g0xx_hal::stm32`), which is also what the
+# qualified binz image does.
+#
+# Vendored under the gitignored `ref/` so the build is offline and pinned.
+stm32g0xx-hal = { path = "ref/stm32g0xx-hal", features = ["stm32g071", "rt"] }
+
+# The PAC's `atomics` feature routes through portable-atomic, and thumbv6m has
+# no atomic read-modify-write instructions, so portable-atomic needs a backend
+# for this target. `unsafe-assume-single-core` (E131), not `critical-section`:
+# the `critical-section` backend cannot assume one core, so it wraps *every*
+# atomic access, plain 32-bit loads and stores included, in a critical section
+# (26 in the COMP root, 252 of its 1176 modelled cycles; 220 of the guard's
+# 421). With `unsafe-assume-single-core` loads and stores are plain `ldr`/`str`
+# and only read-modify-writes disable interrupts around themselves. Its safety
+# condition -- one core, privileged mode -- holds for the G071: a single
+# Cortex-M0+ running this firmware in thread/handler mode with no RTOS.
+# cortex-m's `critical-section-single-core` stays: `interrupt::free` and the
+# `Seam` locks still use it.
+#
+# The backend is chosen for the firmware target only (see the target table
+# below): portable-atomic refuses `unsafe-assume-single-core` on the host,
+# where the host tests use its native atomics.
+portable-atomic = { version = "1", default-features = false }
+# No panic-halt: `bin/shell-pwm.rs` owns a safing #[panic_handler] that
+# de-energizes the bridge before halting. A second handler would not link, and
+# a halt-only handler would leave the gates wherever the fault left them.
+
+# The firmware's portable-atomic backend (E131): one core, privileged mode.
+[target.'cfg(target_os = "none")'.dependencies]
+portable-atomic = { version = "1", default-features = false, features = ["unsafe-assume-single-core"] }
+
+# Production profile for the M0: small, thin-LTO, single codegen unit, abort.
+# debug=true keeps line info so the ISR-root disassembly audit stays readable.
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+overflow-checks = false
+debug = true
+
+[profile.dev]
+panic = "abort"

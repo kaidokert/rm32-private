@@ -1,0 +1,20 @@
+# Build output.
+/target
+
+# Vendored third-party sources: the stm32g0xx-hal clone and the registry
+# crates it pulls in (the stm32g0 PAC and friends). Vendored so this crate
+# builds offline and against a pinned tree, but deliberately NOT committed —
+# it is someone else's code and it is large.
+#
+# To recreate:
+#   cp -r ../ref/stm32g0xx-hal ref/stm32g0xx-hal
+#   cargo vendor ref/vendor
+/ref
+
+# Preserved but not committed: the images are 114 MB and the captures grow with
+# every run. `captures/MANIFEST-hashes.txt` is committed instead -- the
+# inventory with sizes and SHA-256 -- so any artefact can still be identified
+# or checked (see MANIFEST.md). Regenerate with
+# `python scripts/manifest_hashes.py`.
+/captures/*
+!/captures/MANIFEST-hashes.txt
