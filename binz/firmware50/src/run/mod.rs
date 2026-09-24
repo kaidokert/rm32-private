@@ -202,6 +202,39 @@ impl<
         }
     }
 
+    /// The current proxy's half of the report.
+    ///
+    /// Lifted out of [`Self::report`] to bring that function back under the
+    /// 100-line structure limit, which it had been over since E187 added the
+    /// three fields below -- printed in the archived gate output and missed
+    /// because `structure_report.py` returned only the RAM ceiling's verdict
+    /// (E198). Both are fixed in this candidate.
+    ///
+    /// **Every number here is a 10.1 ms block quantity on an uncalibrated
+    /// signed three-shunt residual**, not a metered current: the scale rests on
+    /// one operator-metered point, and `zero_drift_ma` on the same line is the
+    /// systematic that comes with it. `worst_*` is the worst block of the whole
+    /// run, ramp included, and **not** of the hold -- a `CurrentMark`-windowed
+    /// worst is still owed (E194).
+    fn current_record(ctx: &states::Ctx, zero_end: Option<u32>) -> CurrentRecord {
+        CurrentRecord {
+            blocks: ctx.current.blocks(),
+            mean_residual: ctx.current.mean_residual(),
+            mean_ma: ctx.current.mean_milliamps(),
+            hold_blocks: ctx.hold_current.map_or(0, |m| ctx.current.window_blocks(m)),
+            hold_ma: ctx.hold_current.map_or(0, |m| ctx.current.window_milliamps(m)),
+            zero_blocks: ZERO_BLOCKS,
+            zero_start: ctx.base.zero_block,
+            zero_end,
+            ceiling_tenths: ctx.governor.ceiling(),
+            worst_residual: ctx.current.worst_residual(),
+            worst_ma: ctx.current.block_milliamps(ctx.current.worst_residual()),
+            zero_drift_ma: zero_end.map_or(0, |z| {
+                ((i64::from(z) - i64::from(ctx.base.zero_block)) * 4_000 / i64::from(RAW_LIMIT)) as i32
+            }),
+        }
+    }
+
     fn report(
         io: &mut impl Hal,
         ctx: &states::Ctx,
@@ -273,22 +306,7 @@ impl<
                     _ => 0,
                 },
             ),
-            current: CurrentRecord {
-                blocks: ctx.current.blocks(),
-                mean_residual: ctx.current.mean_residual(),
-                mean_ma: ctx.current.mean_milliamps(),
-                hold_blocks: ctx.hold_current.map_or(0, |m| ctx.current.window_blocks(m)),
-                hold_ma: ctx.hold_current.map_or(0, |m| ctx.current.window_milliamps(m)),
-                zero_blocks: ZERO_BLOCKS,
-                zero_start: ctx.base.zero_block,
-                zero_end,
-                ceiling_tenths: ctx.governor.ceiling(),
-                worst_residual: ctx.current.worst_residual(),
-                worst_ma: ctx.current.block_milliamps(ctx.current.worst_residual()),
-                zero_drift_ma: zero_end.map_or(0, |z| {
-                    ((i64::from(z) - i64::from(ctx.base.zero_block)) * 4_000 / i64::from(RAW_LIMIT)) as i32
-                }),
-            },
+            current: Self::current_record(ctx, zero_end),
             witness: WitnessRecord {
                 samples: s.wit.samples(),
                 bemf_min,

@@ -1,0 +1,10 @@
+# elf_crc32 14CE44E7
+# elf_sha256 7125601FA7248B6312C25A16DEA037C1424EDE94501A591A63B02BB2547CB348
+# started 2026-09-24T06:45:43
+BEMFRUN handoff_ehz=200 target_duty_tenths=150 advance_level=20 total_ms=80000 inject=0
+PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS
+firmware50 shell-pwm open-loop, protections live (HAL)
+carrier_hz=10000 control_hz=1000 adc_hz=9901 SCRIPT_TICKS=5000 envelope_min=40 envelope_max=300 envelope_step=50 raw_limit=31857 adc_ok=1 prefetch=1
+RESETCAUSE iwdg=1 wwdg=0 lpwr=0 sft=0 pwr=0 pin=1 obl=0
+PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS
+send '?' for commands

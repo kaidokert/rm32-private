@@ -1,0 +1,5 @@
+# elf_crc32 14CE44E7
+# elf_sha256 7125601FA7248B6312C25A16DEA037C1424EDE94501A591A63B02BB2547CB348
+# started 2026-09-24T03:48:26
+BEMFRUN handoff_ehz=200 target_duty_tenths=475 advance_level=22 total_ms=80000 inject=0
+PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS

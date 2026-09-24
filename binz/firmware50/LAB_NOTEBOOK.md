@@ -13830,3 +13830,393 @@ stops runs on this bench today is not the sag guard at all. It is the **late
 arm** of E195/E196 — `wait_time(ci, 22)` leaving +1 µs over an 11 µs arm path,
 one stop in seventeen — which is a control-path arithmetic threshold with a
 named fix.
+
+### E202 — campaign 10, step 1: the operating conditions, and step 2's predeclaration
+
+New goal: **qualify 60% through bounded timing improvements**, starting from
+archived image `14CE44E7` whose late-arm failure and margin shortfall are
+unresolved (E195/E196). No MCU ceiling or trigger redesign presumed.
+
+#### 1. The operating conditions, recorded before any powered work
+
+**PSU: a 3 A clamp, set by the operator this session and recorded here before
+any run.** The history matters, because two settings used earlier in this
+session are disqualifying for a target hold:
+
+| setting | when | what it did at 50% |
+|---|---|---|
+| 2.0 A | the qualification of E196 | no CC; `hold_ma` 1782–1816 |
+| 1.75 A | E200 | **never clipped** — the draw is ~1.70 A metered, under the limit |
+| 1.6 A | E201 | **CC clipping**: `hold_ma` 1651–1658, `bus_mean` 1122 vs 1194–1205 |
+| **3.0 A** | **now** | to be measured |
+
+The goal's rule is explicit and I adopt it as a gate on my own results:
+**sustained CC, a depressed bus or a duty foldback cannot count as target
+qualification.** Concretely a run counts only with `ceiling_tenths` equal to the
+commanded duty (gated since E193) *and* a bus that is not sitting depressed —
+the E201 signature to watch for is `bus_mean` in the low 1120s against
+~1195–1205 unlimited, with `filt_bus` tracking it down.
+
+**Projected current, which is planning evidence and not calibration.** A linear
+fit over the measured 42.5–50% rungs gives 191 mA per 2.5% rung on the proxy:
+
+| rung | proxy mA | metered estimate (x0.938) |
+|---|---|---|
+| 52.5% | 2008 | ~1.88 A |
+| 55.0% | 2199 | ~2.06 A |
+| 57.5% | 2390 | ~2.24 A |
+| **60.0%** | **2580** | **~2.42 A** |
+
+So the 3 A clamp carries ~19% headroom on the *mean* at 60%. It does **not**
+obviously carry the worst block: the whole-run worst at 50% was 2081–2365 proxy
+(E194 — whole-run, not hold-windowed), which scaled to 60% is ~2.9–3.3 proxy,
+i.e. **at or above a 3 A clamp**. Peak clipping at 60% is therefore expected and
+must be distinguished from sustained CC; what separates them is `bus_mean`, not
+`bus_min`, plus the operator's CC indicator.
+
+**Slow-droop coverage, independently of the sharp-sag stop.** As of `14CE44E7`
+there is exactly one slow-side protection: the absolute floor
+`BUS_FLOOR_MV = 8_400` (code 873) against an ~11.85 V rail, judged per scan with
+no hysteresis. E201 showed why that is not enough on its own — a
+current-limited supply held the rail at code ~1122 for a full 55 s hold and the
+sharp-sag guard *by design* followed it, because it divides by a 207 ms EWMA of
+its own input. The floor was 2.4 V away and never near. **So between a 6%
+sustained droop and a 29% collapse there is no coverage at all**, and the goal
+requires that gap closed or explicitly bounded before the climb. That is step
+1's remaining work item, and it is a protection *addition*: no existing
+threshold, hysteresis, cap or sag constant is touched.
+
+**Thermal observation and cooldown limits, defined now rather than argued
+later.** Nothing in this firmware measures temperature, and the board's NTC —
+the only sensor there is — **is not the motor**: a warm FET says nothing
+quantitative about winding temperature. So the limits are procedural, and for
+this whole campaign they are:
+
+* **≥120 s bridge-off between any two runs at or above 45%**, ≥60 s below it;
+* **no more than six runs at ≥50% in any twenty minutes**;
+* the session stops on smoke, smell, a board hot to the touch (the operator's
+  check, not mine to assert — E189), or any nFAULT no injection explains;
+* the board NTC read is **owed as observation**, explicitly not as a protection
+  and explicitly not as a motor-temperature measurement.
+
+One datum in favour of the procedure so far: across ~1 500 s of ≥45% drive
+today, **no unprovoked nFAULT** — the DRV8304H's own over-temperature shutdown
+is the one thermal-adjacent signal this firmware can see, and it never fired.
+
+#### 2. Step 2's predeclaration: question, change, prediction, cohort, stopping rule
+
+**The question.** At 50% `wait_time(ci, 22)` schedules 12 µs against an arm path
+that `spent_max_us` measures at 11 µs, and one run in seventeen latched
+`LateArm` when a short interval took the wait under the arm cost (E195). Does
+**absolute-deadline arming** recover enough of that margin to remove the
+failure, without touching advance, the protections or the estimator?
+
+**What the code does now**, read rather than assumed (`roots.rs:489-514`):
+
+```rust
+let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;  // since the crossing
+let left  = wait.saturating_sub(spent);
+com_arm(left.max(1), 1);          // ... which then takes ANOTHER clock read
+```
+
+`accept` subtracts the elapsed time since the crossing — correctly — and then
+`com_arm` computes its reload from a **second, later** `hw::clock::raw()` and
+stamps `sched_raw = that_read + us`. **Everything spent between the two reads is
+lost twice: once by not being in `spent`, and again by moving the deadline
+later.** That is exactly the "latency, not merely timer programming"
+distinction the goal draws, and it is a local defect with a local repair.
+
+**And the bridge lands later still.** `com_root` measures
+`late = now_raw − sched_raw` at handler entry — 9–12 µs at 50%. COMP and COM are
+NVIC **peers** (both 0x40), so a COM firing while COMP is mid-handler waits for
+it, and COMP's longest path is 1081 cycles at 0 WS / 1282 at 2 WS (17–20 µs).
+So `com_late_max_us` is largely *COM queued behind COMP*, not timer imprecision
+— which means it cannot be removed by arming differently, only accounted for.
+
+**The change.** `com_arm` takes an **absolute deadline** on the µs clock instead
+of a duration, and computes its reload from the clock read *inside* its own
+critical section:
+
+* `accept` passes `deadline = raw.wrapping_add(wait)` — one deadline, derived
+  once from the accepted crossing's own stamp;
+* `com_arm` computes `arr = (deadline − now) & 0xFFFF` with a wrap window and
+  stamps `sched_raw = deadline`, so the programmed instant *is* the deadline
+  rather than a moving target;
+* a deadline already past, or inside the minimum reload, is the **missed
+  deadline**: it arms at the minimum and counts `late_arms` exactly as today.
+  Detection is preserved, not softened;
+* accepted-sector identity (`sector_start_raw`, `accept_*`, `accept_seq`), the
+  atomic stop/arm behaviour of E182 and the `arm_allowed` decision are
+  untouched.
+
+**Prediction.** The recovered margin is the gap between the two clock reads —
+the `left` arithmetic, the call, the critical-section entry, the flag loads and
+the disarm. I estimate **1–3 µs**, so `spent_max_us` should fall from 11 to
+**8–10 µs** while the scheduled wait at a 75 µs interval stays 12 µs, moving the
+margin from +1 µs to **+2…+4 µs**. If `spent_max_us` does not move, the fix is
+worthless and I will say so rather than keeping it for tidiness. The cliff moves
+from `ci ≈ 66 µs` to `ci ≈ 60–63 µs` — which is **not** enough on its own for
+60%, where the interval is ~62 µs, so advance must be judged separately and **by
+effective angle, speed and current** rather than by making the margin arithmetic
+pass.
+
+**Cohort and stopping rule.** Host gates first: four-root arithmetic audit,
+cycle bounds, changed-path disassembly, structure limits **including the
+`report` breach of E198, fixed in the same candidate**, tests, replay, clippy.
+Then, before any rung above 45%, a fresh context-free review of the change and
+the captures. Then three runs at 25% as the low-rung regression check and three
+at 50% against the qualified baseline — **same rung, alternated with archived
+`14CE44E7` in one session**, since this is a microsecond-class A/B and the rule
+is ≥3 runs a side with fixture flashing and hashing. **Stopping rule: if the 50%
+trio does not match or beat the baseline on `spent_max_us`, `com_late_max_us`,
+speed and current, the change is reverted, not tuned.**
+
+### E203 — the absolute-deadline candidate, built and gated; measurements before review
+
+Campaign 10 step 2's candidate, built from the source committed at E198 plus the
+change predeclared in E202. **Nothing powered has run on it.** Under the new
+goal's dual-review rule, both reviews come before the hypothesis is tested.
+
+**Identity.** candidate `2BD11F17` (sha256 `366A6C2AFAEF8CC7`), archived as
+`captures/elf/2BD11F17.e203-deadline.elf`; baseline is the qualified
+`14CE44E7` (sha256 `7125601F…`), archived and committed.
+
+**What changed, exactly two things:**
+
+1. **Absolute-deadline arming.** `com_arm_at(deadline, phase)` computes the
+   reload as `(deadline − now) & 0xFFFF` from a clock read *inside* its own
+   critical section and stamps `sched_raw = deadline`; `accept` passes
+   `raw + wait` derived once from the accepted crossing's stamp. `com_arm(us,
+   phase)` is retained as a thin wrapper for the foreground handover. A
+   deadline already past, or within the minimum reload, returns `true` and
+   feeds the existing `late_arms` counter — detection preserved.
+2. **`run::report` split** (`current_record` lifted out), which clears E198's
+   structure-limit breach in the same candidate, as the goal requires.
+
+**Gate measurements, candidate vs baseline:**
+
+| gate | baseline `14CE44E7` | candidate `2BD11F17` |
+|---|---|---|
+| four-root arithmetic audit | 4/4 clean | **4/4 clean** |
+| `ADC_COMP` instructions / longest path | 738 / 1081 cycles | **740 / 1083** (+2 cycles) |
+| `TIM16` instructions / longest path | 332 / 360 cycles | **362 / 373** (+13 cycles) |
+| `DMA1_CHANNEL1` | 37, identical | 37, **identical** |
+| `TIM6_DAC_LPTIM1` | 155, identical | 155, **identical** |
+| `functions_over_100_lines` | **1** (`report`, 103) | **0** |
+| host tests | 336 lib + 9 doc | **336 lib + 9 doc** |
+
+Two of those numbers are the ones to argue about, and I am naming them rather
+than burying them:
+
+* **`TIM16` grew 30 instructions and 13 cycles on its longest path.** COM arms
+  the blanking floor and the reverse-blank end through the same path, so the
+  deadline arithmetic is now inside the COM root as well as the COMP one. 373
+  cycles at 0 WS is 5.8 µs, and the 2 WS figure will be higher.
+* **`ADC_COMP` grew 2 cycles**, which is the acceptance path the change is
+  supposed to make *cheaper*. Whether the arm path actually costs less is a
+  bench question — `spent_max_us` is the measurement — and the static bound
+  cannot answer it, because what moved is *when* the clock is read, not how
+  many instructions execute.
+
+**The predeclared prediction (E202), unchanged and on the record:**
+`spent_max_us` falls from 11 µs to 8–10 µs; the margin at a 75 µs interval goes
+from +1 µs to +2…+4 µs; the cliff moves from `ci ≈ 66 µs` to ~60–63 µs, which is
+**not** sufficient for 60% on its own. If `spent_max_us` does not move, the
+change is worthless and gets reverted rather than kept for tidiness.
+
+**Stopping rule, unchanged:** if the 50% trio does not match or beat the
+baseline on `spent_max_us`, `com_late_max_us`, speed and current, the change is
+reverted, not tuned.
+
+### E204 — evidence review of the deadline candidate, verbatim
+
+The first of the two mandatory reviews. A fresh context-free evidence reviewer,
+given the source, both ELFs, the captures and the host scripts, asked to
+recompute every quantity and check units, windows, uncertainty, image identity
+and cohort accounting. It formed its view from the code and captures before
+reading E202/E203, and it has not seen the adversarial review.
+
+**Headline: the change is not on the path the candidate image executes.**
+Appended verbatim; my point-by-point disposition is in E206, after the
+adversarial review lands, so that one corrected candidate answers both.
+
+---
+
+# Independent evidence review — E202/E203, firmware50
+
+## Headline: the change is not on the path the candidate image executes
+
+`det_decide` dispatches on the **edge log**, not the chain log — `src/roots.rs:331-338`:
+
+```rust
+if L::ON { det_decide_logged::<L, C>(...) } else { det_decide_plain::<C>(...) }
+```
+
+The only production binary is `shell-pwm`, which instantiates `comp_root::<NoLog, NoChain>()` (`bin/shell-pwm.rs:126`). So production runs `det_decide_plain`, whose arm is **inline** and **unchanged**:
+
+```
+roots.rs:440   let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
+roots.rs:441   let left  = wait.saturating_sub(spent);
+roots.rs:442   arm_marked::<C>(left.max(1));          // duration, second clock read
+roots.rs:444   if left == 0 { late_arms += 1 }
+```
+
+`git diff src/roots.rs` touches exactly one acceptance body: `accept()` at `roots.rs:489`. Its own docstring (`roots.rs:486-487`) says what it is: *"`det_decide_plain`'s acceptance arm, **for the diagnostic twin** (the production body keeps it inline)."* E202 quotes `roots.rs:489-514` as "what the code does now, read rather than assumed" — that is the diagnostic twin, not production.
+
+Both review ELFs are `shell-pwm` (`arm-none-eabi-nm`: `shell_pwm::__cortex_m_rt_main` at 0x080070c0 / 0x08007160). I disassembled `ADC_COMP` in `2BD11F17` and the production path still computes `wait.saturating_sub(spent)` and `.max(1)`:
+
+```
+8001578  movs r0,#0 ; str r0,[r1,#12]     TIM16 DIER = 0   (disarm)
+800157e  subs r2, r4, r6 ; bcs            left = wait - spent  (saturating)
+8001584  cmp r2,#1 ; bhi ; ldr r2,[sp,#24]    left.max(1)
+80015d8  cmp r4, r6 ; bhi                 late_arms++ iff wait <= spent   ← OLD semantics
+80015e6  cmp r0, r6 ; bcs ; str r6,...    spent_max = max(spent_max, spent)
+```
+
+So in the candidate image **`late_arms` and `spent_max` are computed by bit-identical arithmetic on bit-identical quantities to the baseline.** The A/B on those two metrics is arithmetically guaranteed to show no change — and they are the two metrics the stopping rule keys on.
+
+The only production-visible change is the `com_arm` → `com_arm_at`/`com_arm_arr` refactor, which shifts the `sched_raw` stamp from inside the critical section to a clock read taken just before it. Measured effect: **sub-microsecond, and in the wrong direction for `com_late_max_us`** (see §2).
+
+---
+
+## 1. The arming arithmetic
+
+**Modulus: confirmed 65536.** TIM17, `psc=63`, `arr=0xFFFF` (`src/hw/timers.rs:99-104`) → 1 MHz, full 16-bit wrap. `& 0xFFFF` is right. No extended-clock modulus bug here.
+
+**Does the new deadline equal the old intent?** Yes, for the diagnostic path. Old programmed instant was `now₂ + (wait − (now₁ − raw))` = `raw + wait + (now₂ − now₁)`; new is `raw + wait`. The claimed defect is real and the repair computes the intended instant.
+
+**`left >= 0x8000` window: safe.** `wait = wait_time(average_interval, level)`, and `average_interval` is bounded by `ZeroCross::new_bounded(seed, SECTOR_FLOOR_US, seed + seed/2)` (`run/policy.rs:245`) with `SEED_MAX_US = 1000` (`seed.rs:35`), so `ci ≤ 1500 µs`, `wait ≤ 750 µs`. The other two callers pass `REVERSE_BLANK_US = 280` (`roots.rs:27`) and `blank_remaining(...) ≤ ci/2`. Nothing approaches 32768 µs.
+
+**Four defects / misstatements in the new function:**
+
+1. **"a clock read taken inside the critical section" is false in source and in object code.** `com_arm_at`'s read (`roots.rs:944`) happens *before* `com_arm_arr`'s `cortex_m::interrupt::free` (`roots.rs:968`). In the emitted candidate, all three CNT reads precede `cpsid i`:
+   `8001550 ldr r2,[r2,#0]` / `8001552 ldr r1,[r0,#0]` / `8001556 ldr r0,[r0,#0]` … `8001560 cpsid i`.
+   So the ARR value is computed from a clock read outside the masked window — a smaller instance of exactly the staleness class the campaign set out to remove. (Harmless today: COMP/COM are 0x40 peers, so neither preempts. It is a claim that is wrong, not a live bug.)
+
+2. **`late_arms` is a strict superset of what it counted before.** Old: `now₁ − raw ≥ wait`. New: `now₃ − raw ≥ wait`, one clock read later. Since the clock only advances, every case the old counted the new counts, **plus** every case where the deadline expired during the arm. `Reason::LateArm` has no threshold — `if closed && hal.late_arms() != 0 { return Err(Reason::LateArm) }` (`run/states.rs:251-252`) — so on the diagnostic path the candidate is *more* likely to abort a run for identical physics. E203's "counts `late_arms` exactly as today / detection preserved" is not correct.
+
+3. **`left == 1` overshoots without being counted.** `arr = 1` fires at `arr+1 = 2 µs` (`hw/timers.rs:141`), so a 1 µs deadline lands 1 µs late and returns `false`. Only `left == 0` and `left ≥ 0x8000` return `true`. The docstring's "or so close that the minimum reload overshoots it — arms at the minimum and reports `true`" is wrong for that case.
+
+4. **The `left > 0xFFFF` branch (`roots.rs:951`) is dead** — `left` is already masked. Its predecessor (`us > 0xFFFF → 0xFFFE`) was a real clamp; now an out-of-range duration wraps instead of clamping. No current caller can reach it, but the guard is gone.
+
+**One genuine missed-late window:** if a handler were ever slow enough that `now₃ − raw − wait ≥ 0x8000` (32.8 ms over), the new code reads the deadline as 32 ms in the *future* and arms a long timer instead of reporting late. The old code armed at minimum and counted it. Unreachable in practice; worth knowing it exists.
+
+**Stale docstrings:** `com_arm` is described as "kept for the foreground's handover" (`roots.rs:898-900`) and E203 calls it "a thin wrapper for the foreground handover." There is **no foreground caller.** `com_arm`'s only callers are `arm_marked` (production COMP acceptance, `roots.rs:378`) and `com_root` phases 2/3 (`roots.rs:1163,1168`). The "thin wrapper" *is* the production commutation arm path. This is the misconception the whole entry rests on.
+
+The `oneshot` source-scraping gates were correctly re-pointed at `fn com_arm_arr(` (`oneshot.rs:525`, `:558`) and do still check the critical section, `arm_allowed` and `ARM_ORDER` — but they now cover only the *write*, not the deadline computation, so the "decision and every write are one critical section" invariant is no longer gated.
+
+---
+
+## 2. The margin arithmetic
+
+**`wait_time` reproduces exactly.** `advance_of(ci,l) == (ci*l)>>6` verified against 64-bit arithmetic. Advance at both rungs is **22** (`run/policy.rs:252-259`: ≥350 tenths → 22), confirmed in the captures (`e195-rung-500_01.txt:4 advance_level=22`).
+
+| level | 50 | 60 | 70 | 75 | 80 | 90 | 100 | 110 | 120 |
+|---|---|---|---|---|---|---|---|---|---|
+| 18 | 11 | 14 | 16 | 16 | 18 | 20 | 22 | 25 | 27 |
+| 20 | 10 | 12 | 14 | 14 | 15 | 17 | 19 | 21 | 23 |
+| **22** | **8** | **10** | **11** | **12** | **13** | **15** | **16** | **18** | **19** |
+| 24 | 7 | 8 | 9 | 9 | 10 | 12 | 13 | 14 | 15 |
+| 26 | 5 | 6 | 7 | 7 | 8 | 9 | 10 | 11 | 12 |
+
+At level 22 the wait is 12 µs for ci = 74–77 and 79, and the 11 µs cliff is at ci = 66. **E202's wait/cliff arithmetic is correct.**
+
+**`spent_max_us` is the wrong quantity, and it cannot move.**
+
+- It is stamped at `roots.rs:440` / `:501` as `clock − raw` *before* the arm, so it **excludes** the critical-section entry, the two flag loads, the disarm, the two stores and the six timer writes. The real crossing-to-timer-programmed cost is `spent` **plus** that tail — so "12 µs wait vs 11 µs arm path" already overstates the margin.
+- Nothing in the diff touches any code between `raw` and the `spent` read, in either twin. `spent_max_us` is **arithmetically invariant** under this change. The predeclared prediction "falls from 11 to 8–10 µs" is not merely unlikely; it is impossible by construction.
+- Across the whole capture corpus `spent_max_us` takes 12 distinct values (10,11,12,13,15,16,17,18,19,23,24) — but in **every** 475/500 run, on all five images, it is exactly **11**. A max over ~250 k acceptances that always lands on the same integer is a saturated deterministic longest path, not a distribution. It has no run-to-run variance and no resolution finer than 1 µs = 9% of itself.
+- Window mismatch: `spent_max` is reset at `det_handover` (`bin/board.rs:509-514`), so it is an extremum over **ramp + hold**, while `ci_us` is `io.det_average()` at the *stop instant* (`run/mod.rs:259`). The two are not from the same moment. "12 µs wait against 11 µs spent" pairs a whole-closed-loop extremum with a final-instant interval. It is neither a per-acceptance worst case nor a typical margin.
+
+**`com_late_max_us`** — `roots.rs:1107-1111`, COM-root entry minus `sched_raw`, `store`-if-greater, reset at `com_handover` (`board.rs:550`), taken for **all three phases** (commutate, reverse-blank end, blanking-floor arm). So it is not commutation lateness alone. Critically: the candidate stamps `sched_raw` ~one critical-section entry **earlier** than the baseline, so for identical physical behaviour the candidate will report `com_late_max_us` **larger**. The stopping rule ("match or beat the baseline on `spent_max_us`, `com_late_max_us`") is therefore biased against the candidate on one metric and blind on the other. **The two ELFs' `com_late_max_us` are not comparable.**
+
+**"One run in seventeen latched LateArm" — refuted as stated.** Distinct 50% runs on 2026-09-24:
+
+| cohort | n | LateArm |
+|---|---|---|
+| `14CE44E7` (the image being qualified) | **10** | **1** (`e195-rung-500_03`) |
+| `63C0061D` (sag image) @ 2.0 A | 7 | 0 |
+| `63C0061D` @ 1.75 A (E199) + @ 1.6 A (E200) | 6 | 0 |
+| all 50% today | 23 | 1 |
+
+The 17 = 10 + 7, i.e. **two images and one supply setting**, silently dropping E199/E200's six 50% runs from the same day. On the image under qualification the rate is **1 of 10**, which the notebook's framing understates by 1.7×. `isr_diff` shows the two images' four ISR roots are byte-identical, so pooling is defensible for a *control-path* rate only — not for anything the foreground touches, and not while the denominator is truncated.
+
+Omitted prior evidence: `late_arms > 0` occurred four other times on earlier images — `c7-500_01` (1), `c7-500c_01` (1), `c7-500c_03` (2), and **`c7f-450_02` (1, at the 45% rung)**. Those predate the `states.rs:251` stop, so the 47.5%/50% rungs there were qualified with late arms present and unenforced, and 45% is not late-arm-free.
+
+---
+
+## 3. Units, windows, uncertainty
+
+Block = `BLOCK_SCANS = 100` scans (`protection.rs:421`) at the 9901 Hz harvest (`bin/board.rs:807` `pace.start(101.micros())`, `:852` `adc_hz=9901`) = **10.10 ms**. Note it is a fixed *sample count*, not a fixed time window — a dropped scan lengthens the block.
+
+| field | window | statistic | conversion |
+|---|---|---|---|
+| `mean_ma` | whole run (7869 blocks ≈ 79.5 s), sine start + driven + ramp + hold | mean | `residual × 4000 / 31857` |
+| `hold_ma` | since the hold mark (5423 blocks = 54.77 s = `hold_ms`) | mean | same |
+| `worst_ma` / `worst_residual` | **whole run, ramp included — NOT the hold** | extremum | same |
+| `zero_drift_ma` | pre-drive vs post-drive 50-block zeros | difference | same |
+
+Verified on `e195-rung-500_01`: `mean_residual=11447 → 1437` ✓; `worst_residual=17266 → 2167` ✓; `(617104 − 618690)×4000/31857 = −199` ✓.
+
+The whole-run window on `worst_*` is documented in the source (`run/mod.rs:216-218`, "a `CurrentMark`-windowed worst is still owed") and is the right label — but it means `worst_ma` is not a hold-window quantity and cannot be compared to `hold_ma` headroom directly.
+
+**Calibration basis of the scale.** `RAW_LIMIT = 31_857` is derived from datasheet nominals: 4 A × 7 mΩ × gain 10 = 280 mV, × 4095/3600 codes/mV × 100 scans = 31 850 (`protection.rs:424-425`). It hardcodes **VDDA = 3600 mV** while the firmware *measures* VDDA per run (`3000 × VREFINT_CAL / code`, `hw/adc.rs:336`) and uses it only for the bus floor. The notebook already records the consequence at `LAB_NOTEBOOK.md:4717`: the reference measured at 3309 mV, so "the same residual reads 9% higher here." Every mA figure carries that ~9% multiplicative systematic.
+
+**The 0.938 scale rests on one reading, from an image nobody is reviewing.** It appears in no source file; only in prose (`LAB_NOTEBOOK.md:13690`, `:13863`): one operator PSU reading of 1.50 A against `hold_ma=1599` from `captures/sag/e178-sag475.txt` — image `73E1CBBC`, a **20.8 s** hold (below the 30 s qualification dwell), a sag-recorder build, not in `ladder_state.json`. An earlier statement of the same point (`:10962`) puts it at "~7% high", not 6.2%. And the per-run bridge-off `zero_drift_ma` across today's 50% runs is **−92 to −253 mA** (5–14% of `hold_ma`) — larger than the 6.2% a single multiplicative scale removes, and the notebook's own E136 finding (`:6825`) is that "the proxy's error is its zero, not its gain." A single gain factor is the wrong shape of correction for the dominant error.
+
+**The projection reproduces; the stated inputs do not.** Least-squares over all 14 passing runs at 425/450/475/500 (`ladder_state.json`, image `7125601F`) gives **190.6 ± 6.6 mA per 2.5% rung** (residual sd 28.6 mA) — E202's 191 reproduces. My fitted line gives 1998 / 2189 / 2380 / **2570** vs the entry's 2008 / 2199 / 2390 / 2580, a uniform +10 mA intercept offset (the entry anchors on ~1817 rather than the fitted 1808). Negligible. But:
+
+- **No uncertainty is stated.** Slope-only 95% CI at 60% is ±68 mA; a single future run's prediction interval is ≈ ±90 mA; plus the ~9% scale systematic. "~2.42 A, 19% headroom on a 3 A clamp" is really 2.42 ± 0.09 A with a multiplicative unknown on top.
+- **"2.0 A … `hold_ma` 1782–1816" matches nothing.** The actual baseline 50% `hold_ma` values are e195 {1823, 1801, 1789} and e196 {1757, 1846, 1840} — range **1757–1846**.
+- **"whole-run worst at 50% was 2081–2365 (E194)" is misattributed.** E194's captures are 15/20/25% climbs only. 2081 is `e190-500-p4` (image `14CE44E7`) and 2365 is `sag/e190-500-s6` (image `63C0061D`) — the range spans two images. On the baseline image alone the 50% `worst_ma` cohort is **2092–2252**.
+
+---
+
+## 4. Image identity and cohort accounting
+
+`captures/elf/` names by **CRC32**, `ladder_state.json` keys by **SHA-256**: `14CE44E7 ≡ 7125601FA7248B63…` (`e195-rung-500_01.txt:1-2`). Both review ELFs' CRC32 reproduce from their bytes, and `cargo build --release --bins` on the current tree reproduces `2BD11F17` / sha256 `366A6C2A…` byte-for-byte — **the working tree is the candidate**, so tree-derived gates legitimately apply to it.
+
+Five accounting defects:
+
+1. **Two runs were driven at 50% while every field says 47.5%.** `Inject::Sag` is not a bus perturbation — `run/states.rs:383` does `hal.publish_plans(INJECT_SAG_DUTY_TENTHS, …)` with `INJECT_SAG_DUTY_TENTHS = 500` (`run/policy.rs:130`) and freezes the plans. `e196-pv-sag_01.txt` commands 475 and ran **53.8 s of its 55.8 s hold at 50%** (`:8 stop_after_inject_us=53776079`), with `mean_ci_us=77` / `hold_ma=1840` — the 50% values, not 47.5%'s (80 / ~1610). It still reports `duty_tenths=475 ceiling_tenths=475`. Same for `c7f-p475-v_01.txt`. **`ceiling_tenths` cannot detect an injection that raises duty**, so the E193 throttle gate does not cover this. These are two unlabelled extra 50% runs, and contaminate any 47.5% pool.
+2. **Four captures labelled 475 were driven at 250:** `e189-475-prod_01.txt` and `e196-restart475_0{1,2,3}_01.txt` (`:4 target_duty_tenths=250`, `advance_level=20`) — the wrong-duty attempt, re-run correctly as E197 (`:4 =475`, `advance_level=22`). Both sets remain on disk under 475 names.
+3. **`fails` is not empty as claimed.** 28 of 547 ladder records carry a non-empty `fails`, including the qualified image's `e195-rung-500_03` → `['reason 15 != 2: exhausted commutation deadline (a late arm)', 'hold 5962 ms < 30000']`, and 5 of 6 500-rung records on image `89D65B09`.
+4. **Runs missing from the ladder:** four clean reason-2 54.8 s 50% runs on the qualified image (`e189-500-p1/p2`, `e190-500-p3/p4`), plus `e189-475-prodB_01`, plus the **entire** `63C0061D` sag cohort (8 runs at 475/500 today, 6 more at E199/E200). `ladder_state.json` is a subset selected by which harness invocation wrote it, not by which runs happened. Nine duplicate filenames exist within rungs (image `1B27A4C8`, rungs 150/200/250) — none at 450/475/500.
+5. **No overwrites.** Every 50% capture's mtime is 33–88 s after its own `# started` stamp, monotone in sequence.
+
+Neither review ELF is in the **committed** hash inventory: `manifest_hashes.py --check` reports 1310 artefacts, 0 changed, but 272 `added` — including both ELFs and all of `captures/sag/` and `captures/gates/` from e182 on. E203's "archived **and committed**" overstates it.
+
+---
+
+## 5. The gate numbers
+
+Every figure in E203's gate table reproduces exactly.
+
+| gate | baseline `14CE44E7` | candidate `2BD11F17` | verdict |
+|---|---|---|---|
+| four-root audit | 4/4 clean | 4/4 clean | ✔ |
+| `ADC_COMP` insns / cycles @0WS | 738 / 1081 | 740 / 1083 | ✔ |
+| `TIM16` insns / cycles @0WS | 332 / 360 | 362 / 373 | ✔ |
+| `DMA1_CHANNEL1` / `TIM6_DAC_LPTIM1` | 37 / 155 | identical | ✔ |
+| `functions_over_100_lines` | 1 (`report`, 103) | 0 | ✔ (see below) |
+| host tests | 336 lib + 9 doc | 336 lib + 9 doc | ✔ |
+
+The baseline's four cycle figures match `captures/gates/e187-gates.txt` line for line. `isr_diff.py` exits 1 with `ADC_COMP: DIFFERS 738→740`, `TIM16: DIFFERS 332→362`. `size`: text +160 B, data/bss unchanged. `structure_report.py` exit 0, all verdicts pass.
+
+Three caveats:
+
+- **The `ADC_COMP` delta is +6 cycles, not +2, at the G071's real wait states.** With `--fetch-model` (2 WS): `ADC_COMP` 1282 → **1288**, `TIM16` 426 → **439** (6.86 µs at 64 MHz, vs the 5.83 µs the entry computes from the 0 WS figure). The entry quotes only 0 WS and says of TIM16 "the 2 WS figure will be higher" without stating it. Its own self-criticism — that `ADC_COMP` grew on the path the change should make cheaper — is understated by 3×.
+- **"baseline = 1" for the structure limit is not recomputable.** `structure_report.py` reads the working-tree `src/**/*.rs`, and the tree is the candidate. The baseline's `1` rests solely on the archived `e187-gates.txt` (which does record it verbatim). Supported by archive, not by recomputation.
+- **Zero new tests.** 336 + 9 before and after. Nothing in the host suite exercises `com_arm_at`'s new `left >= 0x8000` window or its minimum-reload branch — the two places where I found the behaviour misdescribed. Coverage of the new arithmetic is the (unrun) bench only. Also: the three diagnostic images rebuild to `56709CDF` / `FD04219B` / `508EB779`, none archived under E203 — so a chain- or edge-capture run on this code, which is the only configuration that executes the changed `accept()`, has no archived image to cite.
+
+---
+
+## What would make a later comparison uninterpretable
+
+1. The changed code is not in the candidate's execution path. Any bench A/B between `14CE44E7` and `2BD11F17` measures a `sched_raw`-stamp shift of well under 1 µs, not absolute-deadline arming.
+2. `spent_max_us` cannot move: no instruction was removed between `raw` and its stamp, and it is pinned at exactly 11 in all 30+ runs at 475/500 across five images. The stopping rule's own trigger ("if `spent_max_us` does not move, the change is worthless") will fire for reasons unrelated to the change's merit.
+3. `com_late_max_us` is biased larger in the candidate by construction. Do not use it as an A/B metric across these two ELFs.
+4. The two `Inject::Sag` runs silently drove 50% under 47.5% labels, and `ceiling_tenths` does not catch it. Fix the report to print the injected duty before any further cohort is built.
+5. `ladder_state.json` omits five clean runs on the qualified image and the whole sag cohort. Any "N runs at rung X" quoted from it is a lower bound.
+
+**What is right, briefly:** the modulus, the `left >= 0x8000` window bound, `wait_time`/`advance_of`/the cliff at ci = 66, the 191 mA/rung slope, the mA conversion arithmetic, the whole-run labelling of `worst_*`, the COMP longest-path µs conversions, and the entire E203 gate table.

@@ -1,0 +1,26 @@
+# elf_crc32 14CE44E7
+# elf_sha256 7125601FA7248B6312C25A16DEA037C1424EDE94501A591A63B02BB2547CB348
+# started 2026-09-24T05:10:44
+BEMFRUN handoff_ehz=200 target_duty_tenths=300 advance_level=20 total_ms=80000 inject=0
+PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS
+POSTSTOP
+PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS
+BEMFDONE reason=2 accepted=594081 forced=0 zc_acc=594081 too_early=0 unstable=1582920 ci_us=119 bus_ref=1216 bus_min=1133
+BEMFSAG ref_bus=1216 ref_vref=1505 filt_bus=1208 filt_vref=1504 streak=0 tripped=0
+BEMFGATE closed_ms=74776 hold_ms=64776 target_tenths=300 zc_per_s=7944 comm_per_s=7944 ehz_from_ci_last=1400 forced_pct=0
+BEMFRATE hold_ms=64776 hold_accepted=539499 hold_forced=0 mean_ci_us=120 mean_sector_us=120 ehz_from_sector=1388 zc_per_s=8328 zc_expected_per_s=8333 zc_rate_permille_of_expected=999 hold_forced_pct=0
+BEMFTAIL accepts=23110 span_us=2774433 start_before_stop_us=2774551 end_before_stop_us=118 window_us=2000000
+BEMFRCOMP spent_max_us=11 late_arms=0 com_preempts=0 com_arm_preempts=0
+BEMFSECTOR a1=65535 f1=0 a2=65535 f2=0 a3=65535 f3=0 a4=65535 f4=0 a5=65535 f5=0 a6=65535 f6=0
+BEMFPHASE lt075=3472 to100=65535 to125=65535 to150=5135 gt150=117
+BEMFREVISIT r1=5636 v1=5636 r2=16782 v2=16782 r3=14386 v3=14386 r4=15541 v4=15538 r5=11126 v5=11127 r6=21277 v6=21172
+BEMFDRIVEN entered=1 epochs=21 accepts=13 early=16 unstable=291 defers=2 retries=0 late_max_us=18 qual_intervals=12 qual_reanchors=0 qual_fault=0 fail=0 seeded=1 seed_step=3 seed_us=756 commanded_us=833 irq_peak_per_ms=61 closed_irq_peak_per_ms=62 storm=0 storm_step=0 cap_armed=1 comp_call_max_us=16 overrun=0 blank_arms=594082 blank_latched=0 com_count=594082 com_late_max_us=5
+BEMFGUARD reason=0 ticks=786939 gap_max_us=109 track_fault=0 track_max_us=291 fast_events=585300 fast_min_us=70 loop_iters_closed=3327335 loop_gap_max_us=171 acquire_us=16796
+BEMFDRVROWS 9:3:7706:928 10:4:690:680 11:5:792:740 12:6:640:559 13:1:721:441 14:2:702:321 15:3:784:258 16:4:661:86
+BEMFDRVROWS 17:5:765:15 18:6:888:76 19:1:775:13 20:2:826:21 21:3:830:14
+BEMFCURRENT blocks=7869 mean_residual=4043 mean_ma=507 hold_blocks=6413 hold_ma=571 zero_blocks=50 zero_start=618204 zero_end=617115 zero_drift_ma=-136 ref_ma=326 duty_tenths=300 ceiling_tenths=300 worst_residual=8020 worst_ma=1007
+BEMFWITNESS samples=167515 bemf_min=0 bemf_max=0 mid=0 mid_fixed=0 alt=0 hyst_codes=12 driven_rotation=0
+vsenc_min=0 vsenc_max=0 star_min=0 star_max=0 bus_ref=1216
+BEMFCOAST reason=2 pp_first=0 pp_last=0 crossings=0 spun=1 comp_edges=1587 comp_hi=378875 comp_polls=555088
+COASTTIMING trans=1043 offset_us=39 first_us=325 iv_us=370,354,368,360,367,355,372,358 ehz_first=1351
+BEMFREF duty_tenths=300 coast_ehz=1383 loop_ehz=1388 oracle_ehz=1371 speed_pct=+0.9 speed_within_5pct=1 hold_ma=571 oracle_ma=519 current_pct=+10.0 zc_rate_circular_ignored=999 zc_permille_of_6x_coast=1003 hold_ms=64776 verdict=ok
