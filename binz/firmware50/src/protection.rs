@@ -76,8 +76,25 @@ pub enum Reason {
     AverageCurrent = 25,
     /// Fast bus sag: three consecutive scans below the relative floor.
     FastBusSag = 26,
-    /// Instantaneous phase peak (not armed in the 10% composition).
+    /// Instantaneous phase peak. **NOT IMPLEMENTED AND NEVER RAISED.**
+    ///
+    /// There is no threshold, no accumulator and no call site: the variant and
+    /// its wire code exist, and nothing in `src/` or `bin/` can produce it.
+    /// Two reviews in a row have listed it among "the stops a loss-of-lock
+    /// surge would arrive as" -- one of the three named stops can never fire
+    /// (E186 SS6), and I had repeated that. **This firmware has no
+    /// instantaneous or peak current protection of any kind**; the only
+    /// current stop is [`Self::AverageCurrent`], which judges 10.1 ms block
+    /// means at a 4 A allowance. The nearest thing to peak evidence is
+    /// `AverageCurrent::worst_residual`, now reported (E187) -- the worst
+    /// *block*, not a peak.
+    ///
+    /// Kept rather than deleted because the wire code is part of the capture
+    /// format's history; do not cite it as coverage.
     PhasePeak = 27,
+    /// **An unrecognised guard code.** The decode's fallback, so that an
+    /// unknown stop can never be read as the success code (E186 SS6).
+    UnknownGuard = 28,
 }
 
 impl Reason {
@@ -563,6 +580,20 @@ impl AverageCurrent {
     #[inline]
     pub const fn worst_residual(&self) -> i32 {
         self.worst
+    }
+
+    /// One block's signed residual in mA, on the same scale the mean uses:
+    /// the allowance is 4 A by construction (`RAW_LIMIT`), so a residual is
+    /// milliamps as `residual * 4000 / allow`. Added in E187 because
+    /// [`Self::worst_residual`] was computed every block and never read, so
+    /// every current figure this bench had ever produced was a mean.
+    #[inline]
+    #[must_use]
+    pub const fn block_milliamps(&self, residual: i32) -> i32 {
+        if self.allow == 0 {
+            return 0;
+        }
+        ((residual as i64 * 4_000) / self.allow as i64) as i32
     }
     #[inline]
     pub const fn over_streak(&self) -> u8 {

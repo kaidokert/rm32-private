@@ -282,6 +282,9 @@ impl<
                 zero_blocks: ZERO_BLOCKS,
                 zero_start: ctx.base.zero_block,
                 zero_end,
+                ceiling_tenths: ctx.governor.ceiling(),
+                worst_residual: ctx.current.worst_residual(),
+                worst_ma: ctx.current.block_milliamps(ctx.current.worst_residual()),
                 zero_drift_ma: zero_end.map_or(0, |z| {
                     ((i64::from(z) - i64::from(ctx.base.zero_block)) * 4_000 / i64::from(RAW_LIMIT)) as i32
                 }),
@@ -597,6 +600,40 @@ const fn fault_code(f: crate::seed::Fault) -> u32 {
     }
 }
 
+/// **Does this key drive a powered run?**
+///
+/// The one authoritative list. The recording images have to arm and dump their
+/// rings around exactly the keys that drive a run, and they each kept their own
+/// hand-maintained allowlist — which is how a gate-4 provocation on the sag
+/// recorder ran, latched the guard, froze the rings and emitted *nothing*
+/// (E183): `v` was missing from the copy. E186 asked for a test tying the two
+/// together; deleting one of the two lists is better than testing that they
+/// agree, so both images now ask this.
+///
+/// `b` (the 15% warm-up) is included here because it *is* a run; the images
+/// exclude it themselves, because a dump after the unjudged warm-up would
+/// leave a second ring in the link for the next capture to read as its own.
+#[must_use]
+pub const fn drives_a_run(b: u8) -> bool {
+    matches!(
+        b,
+        // the fixed rungs and the short metered holds
+        b'b' | b'2' | b'5' | b'3' | b'4' | b'6' | b'7' | b'8' | b'9'
+        // the lettered rungs, explore and qualify
+        | b'm' | b'M' | b'y' | b'Y' | b'a' | b'A' | b'c' | b'C'
+        | b'd' | b'D' | b'e' | b'E' | b'j' | b'J'
+        // the climb's two run keys ('+'/'-' only move the duty)
+        | b'l' | b'L'
+        // the restart campaigns
+        | b'R' | b'Z'
+    ) || inject_for(b).is_some()
+        // The lowercase provocations: the same stimulus from a locked loop at
+        // the provoke duty (E125). `command` reaches them by upper-casing, so
+        // this must too -- the first version of this function missed them, and
+        // the key-set test caught it.
+        || (b.is_ascii_lowercase() && inject_for(b.to_ascii_uppercase()).is_some())
+}
+
 /// The provocation a shell key asks for.
 #[must_use]
 pub const fn inject_for(b: u8) -> Option<Inject> {
@@ -612,4 +649,72 @@ pub const fn inject_for(b: u8) -> Option<Inject> {
         b'W' => Inject::Watchdog,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod key_tests {
+    /// The recorder images arm their rings on exactly the keys that drive a
+    /// run, so this list is safety-relevant to the *evidence*: a key that
+    /// drives a run and is missing records nothing (E183's silent no-dump), and
+    /// a key that does not drive a run but is listed dumps a stale ring into
+    /// the next capture.
+    #[test]
+    fn every_run_key_is_named_and_nothing_else_is() {
+        for b in b'!'..=b'~' {
+            let drives = super::drives_a_run(b);
+            let dispatched = matches!(
+                b,
+                b'b' | b'2'
+                    | b'5'
+                    | b'3'
+                    | b'4'
+                    | b'6'
+                    | b'7'
+                    | b'8'
+                    | b'9'
+                    | b'm'
+                    | b'M'
+                    | b'y'
+                    | b'Y'
+                    | b'a'
+                    | b'A'
+                    | b'c'
+                    | b'C'
+                    | b'd'
+                    | b'D'
+                    | b'e'
+                    | b'E'
+                    | b'j'
+                    | b'J'
+                    | b'l'
+                    | b'L'
+                    | b'R'
+                    | b'Z'
+                    | b'T'
+                    | b'G'
+                    | b'F'
+                    | b'N'
+                    | b'U'
+                    | b'H'
+                    | b'V'
+                    | b'I'
+                    | b'W'
+                    | b't'
+                    | b'g'
+                    | b'f'
+                    | b'n'
+                    | b'u'
+                    | b'h'
+                    | b'v'
+                    | b'i'
+                    | b'w'
+            );
+            assert_eq!(drives, dispatched, "key {:?}", b as char);
+        }
+        // Keys that must NOT arm a ring: they change state or print, and a dump
+        // after one would corrupt the next capture.
+        for b in [b'+', b'-', b'x', b'p', b'?', b'o', b's'] {
+            assert!(!super::drives_a_run(b), "key {:?} must not drive a run", b as char);
+        }
+    }
 }

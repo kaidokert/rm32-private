@@ -31,12 +31,17 @@ pub const HANDOFF_EHZ: u32 = 200;
 /// statistics and gate nothing.
 pub const TAIL_WINDOW_US: u32 = 2_000_000;
 
-/// The run window: 44 s from E083 to campaign 5 (4.72 s startup + 7.5 s ramp
-/// to 25% + 31.8 s hold at target). **54 s from E137**, because the ramp is
-/// 1%/0.5 s from 10% and reaching 37.5% costs 14.0 s rather than 7.5 s, so a
-/// 30 s dwell no longer fits in 44 s. It stays inside `GUARD_CAMPAIGN_US`,
-/// which moves with it and keeps its margin; the backstop only catches a
-/// foreground that never ends a run and is not a fault threshold.
+/// A qualifying run's total window, ms: ramp plus hold plus the coast.
+///
+/// **80 s, and the doc comment used to say 54.** It is the constant that
+/// decides how long the bench is actually driven, and the safety argument for
+/// the 50% cohort was written against a stale reading of it (E186 S1): with
+/// `ramp.rs`'s 20.0 s ramp to 500 tenths, an `L` run at 50% holds 31-55 s and
+/// spends about **57 s at or above 45%**. Five attempts is ~285 s of the
+/// highest current this bench has run, with no thermal protection anywhere in
+/// this firmware. `l` (explore) uses `BEMF_EXPLORE_MS` instead -- 45 s total,
+/// ~20 s of hold, which `cohort.py`'s 30 s minimum hold then fails, so an
+/// exploratory key cannot produce a qualifying run by construction.
 pub const BEMF_TOTAL_MS: u32 = 80_000;
 
 /// The exploratory window: the same startup and ramp, about 10 s at target

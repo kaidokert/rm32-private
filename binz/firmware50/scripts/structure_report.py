@@ -103,39 +103,84 @@ def main() -> int:
     return rc
 
 
-# The G071 has 36 KB of RAM and no stack guard: when `.bss` grows, the stack
-# silently overlaps it. E185 lost an evening to exactly that -- E180's wider
-# chain `Beat` took the chain image's `.bss` to 32 888 B, leaving under 4 KB,
-# and every run of that image died in under a millisecond with a comparator
-# storm while the cause looked like a timer register. The rule now fails here,
-# at the desk, on any image that leaves less than this much for the stack.
+# The G071 has 36 KB of RAM and no stack guard: when static data grows, the
+# stack silently overlaps it. E185 lost an evening to exactly that -- E180's
+# wider chain `Beat` left under 4 KB for a stack whose largest single frame
+# (`Controller::run`) reserves 5076 B, so SP descended *into* the ring the COM
+# root was writing, and the deaths looked like a timer-register fault.
+#
+# The model is `RAM - (.data + .bss)`. E185's version omitted `.data`
+# (644-660 B in every image), i.e. it was optimistic by ~660 B about the exact
+# quantity that had just cost an evening (E186 SS5).
 RAM_BYTES = 36 * 1024
 STACK_FLOOR = 8 * 1024
+# The largest single stack frame in the tree, measured from the disassembly
+# (`Controller::run`'s prologue). Reported beside the headroom so the margin is
+# a number rather than a hope; not a bound -- callees and four ISR roots sit on
+# top of it.
+LARGEST_FRAME = 5076
 
 
 def bss_ceiling() -> int:
-    """Check every built image's `.bss` against the stack floor."""
+    """Check the built images *and* the archived ones against the stack floor."""
     import shutil
     import subprocess
 
     size = shutil.which("arm-none-eabi-size")
+    if size is None:
+        print("bss_headroom: FAIL -- arm-none-eabi-size not found, so the RAM "
+              "ceiling could not be checked at all")
+        return 1
     out = pathlib.Path("target/thumbv6m-none-eabi/release")
-    if size is None or not out.is_dir():
-        print("bss_headroom: SKIPPED (no arm-none-eabi-size, or nothing built)")
-        return 0
+    # Cargo's own lock files live in the same directory and have no suffix.
+    built = (
+        [
+            p
+            for p in sorted(out.glob("*"))
+            if p.is_file() and not p.suffix and not p.name.startswith(".")
+        ]
+        if out.is_dir()
+        else []
+    )
+    # The archived images are what actually gets flashed (`--elf captures/elf/..
+    # --flash`), so they are checked too -- but a historical image cannot be
+    # made to pass retroactively, so they are reported and named unflashable
+    # rather than failing the build. Only the current images gate.
+    archived = sorted(pathlib.Path("captures/elf").glob("*.elf"))
+    elfs = [(p, True) for p in built] + [(p, False) for p in archived]
+    if not elfs:
+        print("bss_headroom: FAIL -- nothing built and nothing archived to check")
+        return 1
     bad = 0
-    for elf in sorted(out.glob("*")):
-        if elf.suffix or not elf.is_file():
-            continue
+    unflashable = []
+    for elf, gates in elfs:
         r = subprocess.run([size, str(elf)], capture_output=True, text=True)
         rows = [ln.split() for ln in r.stdout.strip().splitlines()[1:]]
         if not rows or len(rows[0]) < 3:
+            print(f"bss_headroom: FAIL -- could not size {elf.name}")
+            bad += 1
             continue
-        bss = int(rows[0][2])
-        left = RAM_BYTES - bss
+        data, bss = int(rows[0][1]), int(rows[0][2])
+        left = RAM_BYTES - data - bss
         flag = "" if left >= STACK_FLOOR else "  <-- BELOW THE STACK FLOOR"
-        print(f"bss_headroom: {elf.name:16s} bss={bss:6d} stack_left={left:6d} (floor {STACK_FLOOR}){flag}")
-        bad += left < STACK_FLOOR
+        if left < LARGEST_FRAME and not flag:
+            flag = "  <-- BELOW THE LARGEST KNOWN FRAME"
+        print(
+            f"bss_headroom: {elf.name:34s} data={data:5d} bss={bss:6d} "
+            f"stack_left={left:6d} (floor {STACK_FLOOR}, largest frame {LARGEST_FRAME}){flag}"
+        )
+        if left < STACK_FLOOR:
+            if gates:
+                bad += 1
+            else:
+                unflashable.append(elf.name)
+    if unflashable:
+        print(
+            f"bss_headroom: {len(unflashable)} ARCHIVED image(s) are below the stack "
+            "floor and MUST NOT BE FLASHED again:"
+        )
+        for name in unflashable:
+            print(f"  {name}")
     return 1 if bad else 0
 
 

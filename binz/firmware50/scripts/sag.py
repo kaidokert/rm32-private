@@ -176,9 +176,30 @@ def main() -> int:
     # Fail-closed rows, and the cross-check against the guard's own streak:
     # if the recomputed lows and the recorded streak disagree, the host and the
     # firmware have diverged and nothing else here is trustworthy.
+    # **Printed even when zero** (E186 SS4). The fail-closed latch is the
+    # only mechanism genuinely distinguishable from the streak latch, and it
+    # *forges* the streak on its way out (`protection.rs` sets
+    # `lows = SAG_STREAK` before returning), so a fail-closed trip dumps a
+    # row with streak=3 and a perfectly normal margin. Reporting its absence
+    # by silence made the one real discriminator invisible.
     fc = [r for r in rows if fail_closed(r, rail)]
-    if fc:
-        print(f"fail-closed rows (vref 0 or >= {rail}): {len(fc)} -- these latch whatever the ratio says")
+    print(f"fail-closed rows (vref 0 or >= {rail}): {len(fc)} -- these latch whatever the ratio says")
+    # On a frozen ring the last row is the deciding judgement, so name its
+    # numbers outright instead of leaving them to the --worst table.
+    if rows:
+        last = rows[-1]
+        ratio = (last.filt_bus / last.bus) if last.bus else 0.0
+        need = den / num - 1.0
+        print(
+            f"  last row: bus_mean={last.bus} vref_mean={last.vref} "
+            f"filt_bus={last.filt_bus} filt_vref={last.filt_vref} "
+            f"streak={last.streak} margin={margin_permille(last, num, den):.1f}"
+        )
+        print(
+            f"  reference above the bus by {100.0 * (ratio - 1.0):+.2f}%"
+            f" (a streak latch needs >= +{100.0 * need:.2f}%);"
+            f" fail_closed={fail_closed(last, rail)}"
+        )
     disagree = 0
     for i, r in enumerate(rows[1:], start=1):
         # A row whose streak rose must have been low; one whose streak is 0
@@ -234,9 +255,9 @@ def main() -> int:
 
     if a.csv:
         with open(a.csv, "w", newline="") as fh:
-            fh.write("at,bus_mean,vref_mean,filt_bus,filt_vref,streak,step,duty_tenths,since_com_us,margin_permille\n")
+            fh.write("at,bus_mean,vref_mean,filt_bus,filt_vref,streak,step,duty_tenths,since_zc_us,margin_permille\n")
             for r, x in zip(rows, m):
-                fh.write(f"{r.at},{r.bus},{r.vref},{r.filt_bus},{r.filt_vref},{r.streak},{r.step},{r.duty},{r.since_com},{x:.2f}\n")
+                fh.write(f"{r.at},{r.bus},{r.vref},{r.filt_bus},{r.filt_vref},{r.streak},{r.step},{r.duty},{r.since_zc},{x:.2f}\n")
         print(f"\nrows written to {a.csv}")
     return 0
 

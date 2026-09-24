@@ -53,6 +53,7 @@ Three binaries, from one library:
 | `shell-pwm` | the production image | yes |
 | `edge-capture` | `shell-pwm` + the COMP decision recorder (E121) | no |
 | `chain-capture` | `shell-pwm` + the commutation timing chain (E154) | no |
+| `sag-capture` | `shell-pwm` + the bus-sag guard's own inputs, two rings (E176) | no |
 
 **A diagnostic image never qualifies another image.** Both recorders are
 `const ON: bool` traits (`capture::EdgeLog`, `chain::ChainLog`); production
@@ -90,8 +91,8 @@ dump is written after `safe_off`.
 | link-time math audit | runs automatically (`scripts/audit-linker.cmd` as the target linker) | refuses the link if a division helper is reachable from a root |
 | longest-path cycles | `python scripts/isr_cycles.py --elf <elf> --root <root> --loop-bound 12 --loop-bound 12 [--fetch-model]` | a **static upper bound**, not a measurement; 0 wait states by default, `--fetch-model` for the G071's 2 |
 | changed-root disassembly | `python scripts/isr_diff.py <old.elf> <new.elf>` | the four roots' instructions, addresses normalised, intra-root branch displacements kept |
-| structure limits | `python scripts/structure_report.py` | bin ≤ 1500 lines, ≤ 10 `unsafe`, no `static mut`, no register writes outside `hw/`, no function > 100 lines |
-| host tests + replay | `cargo test --target x86_64-pc-windows-msvc` | 315 lib + 9 doc; includes the 1536-decision replay of a recorded capture |
+| structure limits + RAM headroom | `python scripts/structure_report.py` | bin ≤ 1500 lines, ≤ 10 `unsafe`, no `static mut`, no register writes outside `hw/`, no function > 100 lines, **and every built image leaves ≥ 8 KB of the G071's 36 KB for the stack after `.data + .bss`** (E187; the archived images are checked too and named unflashable rather than failing the build) |
+| host tests + replay | `cargo test --target x86_64-pc-windows-msvc` | 336 lib + 9 doc; includes the 1536-decision replay of a recorded capture |
 | clippy | `cargo clippy --release --bins` and `--features com-top`, plus `--target x86_64-pc-windows-msvc --lib --tests` | zero warnings |
 | per-run fixture gates | `scripts/bemf_run.py` / `scripts/cohort.py` | stop reason, hold, forced, the **non-circular** rate identity, refusal witnesses, ladder prerequisites |
 
@@ -129,9 +130,14 @@ null.
 
 ## Images and captures
 
-`captures/elf/` holds every flashed image, keyed by the first eight hex digits
-of its SHA-256; each capture's first line records the hash of the image that
-produced it. `captures/` also holds the per-day run captures, `chain/` (timing
+`captures/elf/` holds every flashed image, keyed by eight hex digits of a hash
+of its contents — **and which hash depends on when it was archived**: the
+campaign-7-and-earlier names are a SHA-256 prefix, the campaign-9 names
+(`7C55B7E0`, `A1906AEC`, `33B695D8`) are a CRC32, because `gates.py` computes
+that. Every capture written from E187 on records **both** in its header
+(`# elf_crc32`, `# elf_sha256`); older captures carry only the SHA-256, which
+is why a reviewer could not tie a dump to the CRC32 the notebook quotes
+(E186 §4). Do not assume a name and a header hash are the same function. `captures/` also holds the per-day run captures, `chain/` (timing
 chain dumps), `replay/` (decision captures), `asm/` (root disassembly),
 `gates/` (saved gate outputs) and `ladder_state.json` (the fixture's per-ELF
 rung ladder).

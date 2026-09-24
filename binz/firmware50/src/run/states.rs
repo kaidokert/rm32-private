@@ -404,7 +404,12 @@ pub const fn reason_from_code(code: u32) -> Reason {
         4 => Reason::FeedbackStale,
         7 => Reason::Driver,
         8 => Reason::Tracking,
-        _ => Reason::SegmentDeadline,
+        // **Not `SegmentDeadline`.** That is code 2, the *success* code every
+        // gate treats as a completed window, so an unrecognised guard code
+        // used to decode a stop into a pass (E186 SS6). Every code the guard
+        // can currently store is mapped above; this is the fallback, and a
+        // fallback for an unknown stop must never be the pass.
+        _ => Reason::UnknownGuard,
     }
 }
 
@@ -440,7 +445,12 @@ impl Idle {
         super::measure::say_preflight(&p, io);
         let mut gates = match self.gates.after_preflight(&p) {
             Ok(g) => g,
-            Err(g) => return Err(Refused::new(io, g, Reason::Driver, entry)),
+            Err(g) => {
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                return Err(Refused::new(io, g, Reason::Driver, entry));
+            }
         };
         io.gates_to_timer(&mut gates);
         io.resync_adc();
@@ -451,13 +461,37 @@ impl Idle {
             io.drain();
         }
         if !io.nfault_high() {
-            return Err(Refused::new(io, gates, Reason::Driver, entry));
+            {
+                // Freeze the recorder here as well: an arm refusal is a stop,
+                // and the ring is already armed by the time we get here
+                // (E186 SS3).
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                return Err(Refused::new(io, gates, Reason::Driver, entry));
+            }
         }
         let Some(mut base) = super::measure::capture_baseline(io) else {
-            return Err(Refused::new(io, gates, Reason::AdcTimeout, entry));
+            {
+                // Freeze the recorder here as well: an arm refusal is a stop,
+                // and the ring is already armed by the time we get here
+                // (E186 SS3).
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                return Err(Refused::new(io, gates, Reason::AdcTimeout, entry));
+            }
         };
         let Some(zero) = super::measure::averaged_zero(io, base.zero_block) else {
-            return Err(Refused::new(io, gates, Reason::AdcTimeout, entry));
+            {
+                // Freeze the recorder here as well: an arm refusal is a stop,
+                // and the ring is already armed by the time we get here
+                // (E186 SS3).
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                return Err(Refused::new(io, gates, Reason::AdcTimeout, entry));
+            }
         };
         base.zero_block = zero;
         Ok(Armed {
@@ -538,6 +572,7 @@ impl Startup {
     pub fn poll<P: Policies>(&mut self, hal: &mut impl Hal) -> StartupNext {
         let now = match self.ctx.pass::<P>(hal, false, None) {
             Ok(t) => t,
+            // `pass` has already frozen the recorder.
             Err(r) => return StartupNext::Stop(r),
         };
         let flow = if self.driven.is_none() {
@@ -548,7 +583,17 @@ impl Startup {
         match flow {
             Ok(None) => StartupNext::Continue,
             Ok(Some((seed, raw))) => StartupNext::Seeded(seed, raw, now),
-            Err(r) => StartupNext::Stop(r),
+            Err(r) => {
+                // **The startup stops did not freeze the recorder** -- every
+                // `InvalidSeed` returns through here, outside `Ctx::pass`
+                // (E186 SS3). Without this a perfectly ordinary failed seed
+                // dumps `frozen=0`, which the cohort's own scoring calls a
+                // defect report.
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                StartupNext::Stop(r)
+            }
         }
     }
 
@@ -750,8 +795,16 @@ impl Handover {
             now,
         } = self;
         hal.drv_end();
+        // **Nothing is installed or written once the guard has latched.**
+        // `set_period` and `apply_plan` below rewrite the compares that
+        // `guard_trip` zeroed, and they used to run unconditionally -- ahead of
+        // `com_handover`'s own latch check. No current flows (MOE and the
+        // driver enable are both down), so this was never a re-energisation;
+        // it rested on caller ordering, which is the thing step 2 set out to
+        // stop resting on (E186 SS2). A latched guard now skips the installs
+        // outright, and the next `Ctx::pass` stops the run with the reason.
+        let latched = hal.guard_reason() != 0;
         let adv = P::A::level(duty_at(ctx.req.target_tenths, 0));
-        hal.det_install(P::B::estimator(sd.interval_us), sd.interval_us, raw, ctx.step, adv);
         ctx.last_ci = sd.interval_us;
         let commit_us = sd
             .edge_us
@@ -759,14 +812,17 @@ impl Handover {
         ctx.closed_at = Some(now);
         ctx.drv.seed = Some(sd);
         ctx.period = RUN_PERIOD_TICKS;
-        hal.set_period(ctx.period);
         let mut gates: Gates<hal::Locked> = gates.pass();
         let bemf_duty = ctx.governor.clamp(duty_at(ctx.req.target_tenths, 0));
-        if let Some(pl) = ctx.plan::<P>(ctx.step, bemf_duty) {
-            hal.apply_plan(&mut gates, &pl);
-            ctx.applied_duty = bemf_duty;
+        if !latched {
+            hal.det_install(P::B::estimator(sd.interval_us), sd.interval_us, raw, ctx.step, adv);
+            hal.set_period(ctx.period);
+            if let Some(pl) = ctx.plan::<P>(ctx.step, bemf_duty) {
+                hal.apply_plan(&mut gates, &pl);
+                ctx.applied_duty = bemf_duty;
+            }
+            hal.com_handover(bemf_duty, ctx.period, ctx.step, commit_us);
         }
-        hal.com_handover(bemf_duty, ctx.period, ctx.step, commit_us);
         Locked {
             ctx,
             gates,

@@ -500,14 +500,17 @@ impl Hal for Board {
         det.step.store(u32::from(step.get()), Ordering::Relaxed);
         det.advance.store(advance, Ordering::Relaxed);
         let _ = det.rate.lock(|r| *r = firmware50::rate::Rate::new());
-        det.spent_max.store(0, Ordering::Relaxed);
-        det.late_arms.store(0, Ordering::Relaxed);
         // The same refusal as `com_handover`: this store re-arms the detector,
         // and `guard_trip` has just cleared it. Installing over a latched stop
         // would put COMP back in service after the bridge was de-energised
         // (E181 SS3.2). Refusing leaves `active` false, which every root reads.
+        // The two counter resets are inside the section for the same reason as
+        // COM's (E186 SS2): a refused install must not erase the tripping
+        // run's `late_arms` and `spent_max`.
         cortex_m::interrupt::free(|_| {
             if !roots::guard_latched() {
+                det.spent_max.store(0, Ordering::Relaxed);
+                det.late_arms.store(0, Ordering::Relaxed);
                 det.active.store(true, Ordering::Release);
             }
         });
@@ -516,16 +519,6 @@ impl Hal for Board {
     fn com_handover(&mut self, duty: u16, period: u32, step: Step, commit_us: u32) {
         roots::com_publish_plans(duty, period);
         let com = S.com();
-        com.step.store(u32::from(step.get()), Ordering::Relaxed);
-        com.count.store(0, Ordering::Relaxed);
-        com.late_max.store(0, Ordering::Relaxed);
-        com.blank_arms.store(0, Ordering::Relaxed);
-        // The preemption counters too: they were boot-cumulative while every
-        // denominator restarted here, so the ratio was not apples to apples
-        // (E170).
-        com.preempts.store(0, Ordering::Relaxed);
-        com.arm_preempts.store(0, Ordering::Relaxed);
-        com.blank_latched.store(0, Ordering::Relaxed);
         // **Releasing the stop latch is the one operation that can undo a
         // stop, so it is refused if the guard has already tripped, and the
         // release and the arm are atomic with respect to the guard.**
@@ -546,6 +539,22 @@ impl Hal for Board {
             if roots::guard_latched() {
                 return;
             }
+            // The counter resets live *inside* the guarded section (E186
+            // SS2): they used to run unconditionally, so a trip landing in
+            // this stretch was correctly refused and then reported with
+            // `com_late_max_us=0`, `count=0`, `blank_latched=0` -- the
+            // tripping run's own diagnostics erased. `late_arms` is a field
+            // this campaign has already been burned by mis-quoting.
+            com.step.store(u32::from(step.get()), Ordering::Relaxed);
+            com.count.store(0, Ordering::Relaxed);
+            com.late_max.store(0, Ordering::Relaxed);
+            com.blank_arms.store(0, Ordering::Relaxed);
+            // The preemption counters too: they were boot-cumulative while
+            // every denominator restarted here, so the ratio was not apples
+            // to apples (E170).
+            com.preempts.store(0, Ordering::Relaxed);
+            com.arm_preempts.store(0, Ordering::Relaxed);
+            com.blank_latched.store(0, Ordering::Relaxed);
             com.stopped.store(false, Ordering::Relaxed);
             com.active.store(true, Ordering::Release);
             roots::guard_arm_tracking();

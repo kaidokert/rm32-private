@@ -660,10 +660,15 @@ pub fn drv_decide(raw: u16) -> bool {
 
 /// NVIC priority byte for the guard: the highest, above COMP/COM (0x40).
 pub const GUARD_IRQ_PRIORITY: u8 = Guard::NVIC;
-/// Backstop on the whole powered run, µs. The foreground ends a run at
-/// `BEMF_TOTAL_MS`; this only catches a foreground that never does. It moves
-/// with that window and keeps its margin above it: 45 s against a 44 s window
-/// to campaign 5, 56 s against 54 s from E137 (the ramp to 37.5% costs 14 s).
+/// Backstop on the whole powered run, µs: the last stop if every other one
+/// fails to fire. The foreground ends a run at `policy::BEMF_TOTAL_MS`; this
+/// only catches a foreground that never does.
+///
+/// It must sit **above** `policy::BEMF_TOTAL_MS` (80 s) so that an ordinary
+/// run ends on its own window rather than on this, and close enough above it
+/// that a run which loses its foreground still stops. The doc comment here
+/// used to compare 56 s against 54 s -- both stale by a campaign, in the one
+/// place that bounds how long the bridge can stay energised (E186 S1).
 pub const GUARD_CAMPAIGN_US: u32 = 84_000_000;
 
 /// The guard clock as of now. Call from the guard or inside a critical

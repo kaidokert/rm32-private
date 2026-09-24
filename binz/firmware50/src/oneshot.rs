@@ -503,6 +503,71 @@ mod tests {
         assert!(two.consistent());
     }
 
+    /// **The constant is now derived from the source, not asserted beside it.**
+    ///
+    /// E186 SS2 found the hole: `FIRMWARE_ARM_IS_ATOMIC` was a hand-written
+    /// literal, so deleting the `interrupt::free` from `roots::com_arm` left
+    /// every test in this file passing. The safety-relevant direction --
+    /// firmware made unsafe without anyone flipping the constant -- was as
+    /// uncaught as before, and E182 claimed credit in the wrong direction.
+    ///
+    /// This reads `roots.rs` at compile time and checks the body of `com_arm`
+    /// itself. Crude, and it would have caught all three of the shutdown
+    /// defects this campaign found by other means.
+    #[test]
+    fn the_constant_is_read_off_com_arm_itself() {
+        let src = include_str!("roots.rs");
+        let start = src.find("pub fn com_arm(").expect("com_arm must exist in roots.rs");
+        // The body ends at the next item at column zero.
+        let rest = &src[start..];
+        let end = rest[1..]
+            .find(
+                "
+pub ",
+            )
+            .map_or(rest.len(), |i| i + 1);
+        let body = &rest[..end];
+        let atomic = body.contains("cortex_m::interrupt::free");
+        assert_eq!(
+            atomic, FIRMWARE_ARM_IS_ATOMIC,
+            "com_arm's critical section and FIRMWARE_ARM_IS_ATOMIC disagree:              the arm is {} in roots.rs but the constant says {}",
+            if atomic { "atomic" } else { "interruptible" },
+            FIRMWARE_ARM_IS_ATOMIC
+        );
+        // And the decision inside it is the shared one, not a re-implementation.
+        assert!(
+            body.contains("arm_allowed("),
+            "com_arm must ask `oneshot::arm_allowed`, not decide for itself"
+        );
+    }
+
+    /// `ARM_ORDER` against the source too, for the same reason: the old test
+    /// compared the constant with its own literal (E186 SS2).
+    #[test]
+    fn the_firmware_writes_the_tested_order() {
+        let src = include_str!("roots.rs");
+        let start = src.find("pub fn com_arm(").unwrap();
+        let rest = &src[start..];
+        let end = rest[1..]
+            .find(
+                "
+pub ",
+            )
+            .map_or(rest.len(), |i| i + 1);
+        let body = &rest[..end];
+        // The four steps, as the straight-line code writes them: disarm, stamp
+        // the schedule, store the purpose, enable.
+        let marks = ["disable_interrupt()", "sched_raw", ".phase.store(", "com_timer::arm("];
+        let mut at = 0usize;
+        for (i, m) in marks.iter().enumerate() {
+            let found = body[at..]
+                .find(m)
+                .unwrap_or_else(|| panic!("com_arm is missing step {i}: {m}"));
+            at += found + m.len();
+        }
+        assert_eq!(ARM_ORDER.len(), marks.len());
+    }
+
     #[test]
     fn the_firmware_order_is_the_tested_order() {
         // `roots::com_arm` writes straight-line in this order; if it is ever

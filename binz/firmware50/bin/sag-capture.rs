@@ -88,41 +88,14 @@ type SagProduction = Controller<
 /// freezes and dumps a real trip, rather than only quiet tails -- produced no
 /// dump at all. Found by running it: `reason=26 provoked=1` and no `SAGEND`.
 fn arms_a_run(b: u8) -> bool {
-    matches!(
-        b,
-        b'2' | b'5'
-            | b'v'
-            | b'V'
-            | b'i'
-            | b'I'
-            | b't'
-            | b'T'
-            | b'g'
-            | b'G'
-            | b'f'
-            | b'F'
-            | b'u'
-            | b'U'
-            | b'h'
-            | b'H'
-            | b'a'
-            | b'A'
-            | b'y'
-            | b'Y'
-            | b'c'
-            | b'C'
-            | b'd'
-            | b'D'
-            | b'm'
-            | b'M'
-            | b'e'
-            | b'E'
-            | b'j'
-            | b'J'
-            | b'l'
-            | b'L'
-            | b'Z'
-    )
+    // **One list, in the library** (E186 SS3): `run::drives_a_run` is what the
+    // shell actually dispatches on, so this image cannot drift from it -- which
+    // is exactly what a local allowlist did, silently, in E183.
+    //
+    // `b` (15%) is excluded here: it is the unjudged warm-up every diagnostic
+    // runner drives first, and a dump after it would leave two rings in the
+    // link for the *next* capture to read as part of its own.
+    firmware50::run::drives_a_run(b) && b != b'b'
 }
 
 #[entry]

@@ -40,7 +40,7 @@
 //!
 //! * [`FAST_LEN`] judgements at full rate — ~52 ms — for the shape of the dip
 //!   that trips the guard;
-//! * [`SLOW_LEN`] judgements decimated by [`SLOW_EVERY`] — ~1.7 s, i.e. eight
+//! * [`SLOW_LEN`] judgements decimated by [`SLOW_EVERY`] — ~3.3 s, i.e. eight
 //!   filter time constants — for **how the reference got where it was**, which
 //!   is what explaining a latch requires and what the fast ring alone cannot
 //!   show.
@@ -52,7 +52,7 @@
 //!
 //! Production runs [`NoSagLog`], whose `ON` is `false`, so every call folds
 //! away; only the `sag-capture` binary installs [`SagRing`]. RAM cost there:
-//! `FAST_LEN` x 14 B + `SLOW_LEN` x 8 B, which the entry states against the
+//! `FAST_LEN` x 16 B + `SLOW_LEN` x 8 B = 16 384 B, which the entry states against the
 //! part's 36 KB. This is diagnostic evidence and never qualifies another
 //! image.
 

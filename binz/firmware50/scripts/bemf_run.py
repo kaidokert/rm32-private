@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import zlib
 import pathlib
 import subprocess
 import sys
@@ -258,6 +259,19 @@ def elf_sha256() -> str:
     return hashlib.sha256(ELF.read_bytes()).hexdigest().upper()
 
 
+def elf_crc32() -> str:
+    """The CRC32 the notebook and `captures/elf/` name images by.
+
+    The header carried only the SHA-256 while every notebook entry, every gate
+    file and every archived filename used the CRC32, so tying a capture to its
+    image meant joining two files by hand -- and a reviewer could not confirm
+    which image produced a given dump at all (E186 SS4). Both go in now.
+    """
+    if not ELF.exists():
+        return "no-elf"
+    return f"{zlib.crc32(ELF.read_bytes()) & 0xFFFFFFFF:08X}"
+
+
 def capture_one(
     port: serial.Serial,
     out: pathlib.Path,
@@ -277,6 +291,7 @@ def capture_one(
     abort_sent = abort_after <= 0
     completed = False
     with out.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f"# elf_crc32 {elf_crc32()}\n")
         fh.write(f"# elf_sha256 {elf_sha256()}\n")
         fh.write(f"# started {datetime.datetime.now().isoformat(timespec='seconds')}\n")
         pending = b""
@@ -420,6 +435,22 @@ def main() -> int:
         # Clear anything the firmware queued before we attached.
         time.sleep(0.3)
         port.reset_input_buffer()
+        # **A colliding label is refused, not overwritten** (E186's
+        # label-collision item). Re-running a label destroyed nine good
+        # captures during this campaign's ladder climb -- three 15%, three 20%
+        # and three 25% runs -- and the campaign's own rule is that every
+        # capture is retained. The ladder still holds their summaries, but the
+        # captures themselves are gone.
+        clash = [
+            outdir / f"{args.label}_{i:02d}.txt"
+            for i in range(1, args.runs + 1)
+            if (outdir / f"{args.label}_{i:02d}.txt").exists()
+        ]
+        if clash:
+            print("REFUSED: these captures already exist; choose another --label:")
+            for c in clash:
+                print(f"  {c}")
+            return 2
         for key in args.pre:
             print(f"== pre-key {key!r} (not recorded)")
             port.write(key.encode())

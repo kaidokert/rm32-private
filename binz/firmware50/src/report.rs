@@ -315,6 +315,27 @@ pub struct CurrentRecord {
     pub zero_start: u32,
     pub zero_end: Option<u32>,
     pub zero_drift_ma: i32,
+    /// **The duty ceiling the foldback governor ended the run at**, tenths.
+    ///
+    /// The governor ratchets *down only*, and until E187 its new ceiling was
+    /// thrown away at the call site (`let _ = self.governor.warn(..)`), so a
+    /// run that touched the 4 A allowance once, got throttled, and then
+    /// completed its window was reported as a clean run at the commanded duty
+    /// -- with every current and speed figure measured at a *lower* duty. A
+    /// run whose `ceiling_tenths` is below its `duty_tenths` did not hold the
+    /// rung, whatever else the report says (E186 SS7.3).
+    pub ceiling_tenths: u16,
+    /// The **worst single block's** signed current residual, raw codes.
+    ///
+    /// `AverageCurrent` judges 100-scan (10.1 ms) block means, so every
+    /// current number this bench has ever produced is an average. This is the
+    /// worst of those blocks rather than the mean of them -- still not a peak
+    /// (a desync surge inside one block is averaged), but the first figure
+    /// here that is not a mean of means. It was computed every block and had
+    /// no reader at all (E186 SS7.4).
+    pub worst_residual: i32,
+    /// The same, in mA through the block-mean scale.
+    pub worst_ma: i32,
 }
 
 /// The during-run rotation witness.
@@ -637,6 +658,11 @@ impl RunReport {
         out.kvi("zero_drift_ma", c.zero_drift_ma);
         out.kv("ref_ma", oracle_ma(self.target_tenths));
         out.kv("duty_tenths", u32::from(self.target_tenths));
+        // E187: the two fields that decide whether the numbers above describe
+        // the rung that was asked for.
+        out.kv("ceiling_tenths", u32::from(c.ceiling_tenths));
+        out.kvi("worst_residual", c.worst_residual);
+        out.kvi("worst_ma", c.worst_ma);
         out.say("\r\n");
         out.flush();
     }
@@ -789,7 +815,12 @@ mod tests {
             "BEMFTAIL accepts=14382 span_us=2000181 start_before_stop_us=2400000 end_before_stop_us=399819 window_us=2000000 \r\n"
         ));
         assert!(t.contains(" hold_ma=366 zero_blocks=0 zero_start=617714 zero_end=616029 "));
-        assert!(t.contains(" ref_ma=326 duty_tenths=250 \r\n"));
+        // E187: the ceiling and the worst block, on the same line. A run whose
+        // ceiling fell below its commanded duty did not hold the rung, and
+        // until E187 the report could not say so.
+        assert!(t.contains(" ref_ma=326 duty_tenths=250 ceiling_tenths="));
+        assert!(t.contains(" worst_residual="));
+        assert!(t.contains(" worst_ma="));
         assert!(t.contains("driven_rotation=0 \nvsenc_min=0 "));
         assert!(!t.contains("BEMFINJECT"));
     }

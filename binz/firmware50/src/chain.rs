@@ -49,13 +49,19 @@ use crate::shared::{CompPrio, Motor, Root, Seam};
 /// about: it uses the last n rows of each ring.
 pub const CHAIN_LEN: usize = 512;
 
-/// The most `.bss` the two rings together may take. The G071 has 36 KB of RAM
-/// and the rest of the firmware needs ~20 KB of it, so a diagnostic recorder
-/// that helps itself to more than this is the fault in E185 again.
+/// The most `.bss` the two rings together may take.
+///
+/// The G071 has 36 KB of RAM. Production's entire `.bss` is 4184 B -- the
+/// "~20 KB" this comment used to claim was wrong by five times (E186 SS5); what
+/// actually needs the room is the **stack**, whose largest single frame
+/// (`Controller::run`) reserves 5076 B, on a part with no stack guard. 16 KB of
+/// rings leaves ~17 KB, and `scripts/structure_report.py` checks the real
+/// figure per image including `.data`.
 pub const RING_BUDGET: usize = 16 * 1024;
 const _: () = assert!(2 * core::mem::size_of::<Chain>() <= RING_BUDGET);
 
-/// One event. Twelve bytes, so the ring is 12 KB.
+/// One event. **Fourteen** bytes since E180's fine stamps, so each ring is
+/// 7 KB at `CHAIN_LEN` 512 (the doc said twelve and 12 KB; E186 SS5).
 ///
 /// **Stamps are deltas in fine-clock ticks (15.6 ns), not µs** (E180). The
 /// quantity this ring exists to measure — the crossing-to-bridge delay and the
