@@ -19047,3 +19047,89 @@ the change becomes specifiable against a measured distribution instead of an
 extrapolated one.** Either way that is a result rather than the open item it has
 been for fifteen entries, and it is decided by the ladder rather than by more
 argument.
+
+### E249 — the walk: ten rungs 3/3, stopped at 400 on a gate that is tighter than its own quantity
+
+Image **`0D8E3799`** (`e246-final-candidate`, sha256 `d9d77f3cfad2fd00…`),
+driven by `scripts/ladder_drive.py`. **33 runs, 32 passes.**
+
+| rung | 150 | 200 | 250 | 275 | 288 | 300 | 325 | 338 | 350 | 375 | **400** |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| result | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | **2/3** |
+
+**Ten consecutive rungs at 3/3 on one ELF**, each admitted only because the one
+below it passed on that same image. The walk then **stopped itself** at 400, on
+one run of three:
+
+> `e247-400_03.txt: rate vs coast 1011 per mille outside 1% (matched window vs
+> time-anchored coast)`
+
+E245's prediction 1 therefore holds for 150–375: those rungs were qualified on
+`14CE44E7`, the four ISR roots here are byte-identical, every change since is
+thread-mode, and all ten reproduce. A failure below 500 would have been evidence
+that a foreground change perturbed the drive; none did.
+
+#### The 400 failure is a property of the gate, and I measured it before touching anything
+
+`run_gates` requires `990 ≤ rate_vs_coast_permille ≤ 1010` (`cohort.py:240`).
+Over every healthy run in the corpus (`reason = 2`, hold ≥ 30 s):
+
+| n | min | p1 | p5 | median | p95 | max | sd |
+|---|---|---|---|---|---|---|---|
+| **793** | 989 | 994 | 996 | **1002** | 1007 | 1018 | **3.29** |
+
+* **The gate excludes 9 of 793 healthy runs — 1.1%.**
+* **1011 occurs four times**, at four different duties on four different images:
+  `e073-quiet_01` (100), `c7-e144-375_01` (375), **`e247-400_03` (400)**, and
+  `c7-500c_01` (500) — that last one from **campaign 7's qualified lineage**.
+* **The band is centred on 1000 while the distribution is centred on 1002.**
+  Eight of the nine exclusions are on the high side; the asymmetry is the
+  off-centring, not the width.
+
+So the band is both **tighter than the quantity's own scatter** (±10 against an
+sd of 3.29 with a long right tail to 1018) and **off-centre by 2 per mille**.
+Per run the false-failure rate is 1.1%; over a three-run cohort ~3.3%; over the
+57 runs a full ladder needs, **~0.6 nuisance failures are expected.** One at the
+eleventh rung is precisely at expectation.
+
+This is the fifth time this campaign a gate has turned out narrower than the
+noise it judges (E152, E220, E224, E237 — and now one I inherited rather than
+wrote).
+
+#### What I am not doing about it
+
+**I am not widening the gate.** The statistics would support it, and that is
+exactly why it would be the wrong move here: changing a threshold because it has
+just failed a run I wanted to pass is the inversion this campaign's discipline
+exists to forbid, whatever the arithmetic says. A gate loosened at the moment it
+bites is not a gate.
+
+So: **the failure is retained and reported**, the run stays in the corpus and in
+the ladder's records, and the gate stands untouched. The fixture's own
+definition of a rung is its **last three** records clean, so the ladder is
+resumed at 400 — which is the fixture operating as designed, not a goalpost
+moved, and it is reported as *"400 took four runs, one retained nuisance
+failure"* rather than as a clean 3/3.
+
+**The gate's 1.1% false-failure rate goes to the review pair** that judges the
+final result, because it bears on every rung's 3/3 and on any future ladder: a
+correction to its centre and width is defensible **on the distribution**, and
+not defensible **on this run**. That distinction is the whole point, and it is
+the reviewers' call rather than mine at the moment of being bitten.
+
+#### Also confirmed by this batch
+
+* **E245 prediction 4, decisively.** At rung 150: `worst_ma = 969` against
+  **`worst_hold_ma = 146`**, with `hold_ma = 27`. A 6.6× difference, so E244's
+  windowed max works and E242's finding — that the whole-run worst at low rungs
+  is a ramp artefact — is now visible in every capture rather than inferred.
+* **E245 prediction 5.** The droop bins read **14 100 / 217 / 4 / 0** at rung
+  150 where all four previously read 0 on every healthy run, and each prints its
+  own threshold (`dep0_pm=995 … dep3_pm=980`) after E246. The instrument
+  resolves inside the healthy band for the first time.
+* The `BEMFREF` line prints `verdict=STOP` at the low rungs on
+  `current_pct = −53%` (27 mA against an oracle 58). That is the **report-only**
+  current comparison (E124), and at 150 tenths the proxy sits near its own
+  zero-drift floor (`zero_drift_ma = −172`), so the figure is meaningless there
+  and gates nothing. Named because a line reading `STOP` in a passing run is
+  alarming to read and will be read again.
