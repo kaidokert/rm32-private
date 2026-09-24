@@ -13610,3 +13610,223 @@ metric that measured its own rounding (E174), `--no-ladder` recording while its
 banner said it did not (E193), and now a limit printed beside an exit code that
 ignored it. Each was found by reading the artefact rather than the summary, and
 each is now enforced by code rather than by attention.
+
+### E199 — the discriminating test, at last: 50% on a 1.75 A supply
+
+**The operator has set the supply back to 1.75 A.** This is the test E191,
+E196 and E198 all named as owed and unrunnable: the one external change that
+separates "campaign 7's `FastBusSag` trips were the supply in constant current"
+from every other explanation.
+
+#### Change
+
+**No firmware change, no image change.** The recorder image `63C0061D`
+(gated in `captures/gates/e187-gates.txt`; four roots instruction-identical to
+production `14CE44E7`), driven with `sag_run.py`, which **never writes to the
+ladder** — so the 2.0 A qualification of E196 cannot be disturbed by these
+runs, and none of them may ever be credited to a rung.
+
+The only variable is the supply current limit: **2.0 A → 1.75 A**, against a
+measured mean draw at the 50% hold of **1782–1816 mA** and worst 10.1 ms blocks
+of **2081–2365 mA** (E191/E194 — whole-run worst, not hold-windowed).
+
+#### Prediction, before the first run
+
+1. **Trips return.** At a 1.75 A limit the supply sits in constant current for
+   much of a 50% hold, the rail folds, and a fold inside the guard's
+   0.8–200 ms passband latches `FastBusSag` (reason 26). Campaign 7's rate was
+   3 of 7; today's at 2.0 A was **0 of 17**. So I predict **≥1 trip in 5 runs**
+   (81% by run 3 at campaign 7's rate), and the cohort **stops at the first
+   one** — the frozen ring is the evidence and there is nothing to learn from
+   driving further into a current limit below the draw.
+2. **The frozen ring shows a fold, not a fail-closed latch**, read by E188's
+   procedure in order: (a) `vref_mean` of the deciding row **not** 0 or ≥4095
+   (so not the fail-closed path); (b) `filt_bus / bus_mean ≥ 1.0526` at the
+   latch, which is forced by the latch condition; (c) the discriminating
+   quantity — **`closed_ms` at the stop and `hold_ms > 0`**. Campaign 7's three
+   trips latched at `closed_ms` 51.4–67.5 s with holds of 31–47 s, i.e.
+   settled-hold transients, hundreds of filter time constants past the 207 ms
+   priming window. **I expect the same here**, and a trip inside the first
+   207 ms would be the surprise.
+3. **The slow ring should show what the fast ring cannot**: `bus_mean` walking
+   *down* over hundreds of ms as the supply folds, with `filt_bus` lagging
+   above it — which is the one mechanism E179 proposed, E182 could not test and
+   E191 could not reproduce.
+4. **If 5 runs complete clean**, the supply hypothesis is in serious trouble
+   and I will say so: 0 of 5 is only p = 0.205 against campaign 7's rate, so a
+   null needs **0 of 10–12** (p = 0.051 / 0.036) before it can reject the
+   hypothesis, and I will drive that rather than call an inconclusive result a
+   refutation.
+5. **Current and protections:** `hold_ma` should read *below* today's
+   1782–1816 if the supply is limiting (the proxy measures what the bridge
+   draws, and a folding rail draws less at the same duty). The absolute bus
+   floor is 8.4 V against an 11.85 V rail, so a deep fold stops the run on
+   `Reason::Bus` (6) instead of 26 — which is also an informative outcome and
+   is not a failure of the test.
+
+Exposure: 5 runs × ~57 s at ≥45% ≈ **285 s**, with ≥120 s bridge-off, on a
+supply now current-limited below the draw — which makes these the *least*
+thermally aggressive 50% runs of the day, since a folding rail delivers less
+power. Still no temperature measurement in this firmware.
+
+### E200 — the 1.75 A run, why it proved nothing, and the 1.6 A test
+
+#### What the 1.75 A setting actually did: nothing, and the operator saw it first
+
+One run, `captures/sag/e199-175a-s1.txt`, recorder image `63C0061D`:
+`reason=2`, full 80 s window, `hold_ms=54776`, `ceiling_tenths=500`,
+**`hold_ma=1760`**, `worst_ma=2131`, `bus_min=1095`, ring frozen with no low
+judgement. A clean 50% run at a 1.75 A setting.
+
+**The operator's observation is what settles it: the supply's CC light never
+came on, and the meter read ~1.7 A.** So the supply was never limiting, and a
+test of "does a current-limited supply fold the rail and latch the guard"
+cannot run when the supply is not limiting. The remaining four runs were
+stopped — at a non-limiting supply they would only re-measure what seventeen
+runs today already showed.
+
+**The arithmetic agrees, and it sharpens the hypothesis rather than killing
+it.** Using the single operator-metered calibration point (1.50 A against a
+proxy of 1599 mA at 47.5%, i.e. ×0.938):
+
+| | proxy `hold_ma` | metered | against a 1.75 A limit |
+|---|---|---|---|
+| campaign 7 @ 50% | 1836–1877 | **1.72–1.76 A** | at or over it |
+| today @ 2.0 A | 1782–1816 | 1.67–1.70 A | — |
+| today @ 1.75 A | 1760 | ~1.65 A | **under it** |
+
+**Campaign 7 drew +3.4% more at the same rung than the same firmware family
+draws today**, and that 3–4% is exactly the difference between sitting on a
+1.75 A limit and sitting just below it. So E191's supply hypothesis survives
+with its precondition made explicit: *the trips need the draw to reach the
+limit*, and today it does not. Why the draw fell 3.4% is unexplained — warmer
+windings (higher copper resistance at the same duty) is the obvious candidate
+and is not measured, because nothing in this firmware measures temperature.
+
+Also worth stating plainly: **every current figure in this notebook rests on
+one metered point.** If the meter can be read during a run, it tightens all of
+them.
+
+#### Change
+
+**Supply limit 1.75 A → 1.6 A**, at the operator's hand. No firmware change, no
+image change: recorder `63C0061D` again, driven by `sag_run.py`, which never
+writes to the ladder, so E196's 2.0 A qualification is untouchable by these
+runs. 1.6 A is ~6% *below* the present draw, so the supply must enter constant
+current — which is the precondition the 1.75 A setting lacked.
+
+#### Prediction, before the first run
+
+1. **The PSU enters CC** (the operator should see the light this time), the rail
+   folds, and a run stops on **`FastBusSag` (26)** or, if the fold is deep
+   enough to cross 8.4 V, on **`Bus` (6)**. I predict a stop in the **first or
+   second run**, and the cohort stops at the first one — the frozen ring is the
+   evidence.
+2. **The stop should come EARLY, and this is the sharp part.** The ramp crosses
+   the 1.6 A draw at roughly 47–48% duty, about 19 s in, so the fold begins
+   during the ramp or the first seconds of the hold. Campaign 7's three trips
+   came at **31–47 s of hold** — late, which fits a supply only *marginally*
+   over its limit whose fold develops as the draw creeps up. **A trip within
+   the first few seconds of the hold at 1.6 A, against 31–47 s at 1.75 A, is
+   the signature that distinguishes a current-limited fold from anything else.**
+3. **In the frozen ring**: `vref_mean` normal (not 0 or ≥4095, so not the
+   fail-closed path), and `bus_mean` walking *down* across tens to hundreds of
+   ms with `filt_bus` lagging above it — the lagging-reference mechanism E179
+   proposed, E182 could not test and E191 could not reproduce. The slow ring is
+   where that is visible; the 52 ms fast ring can only show the last dip.
+4. **`hold_ma` below 1760** if the supply is delivering less, and the guard's
+   margin no longer pinned at 1052.
+5. **If all five complete clean**, the supply mechanism is refuted even at 6%
+   below the draw, campaign 7's trips need a different explanation, and I will
+   say so rather than reaching for a third variant of the same story.
+
+### E201 — CC clipping does not trip the sharp-sag guard: the supply hypothesis is refuted
+
+**The operator set the supply to 1.6 A — ~6% below the measured draw — and
+confirmed from the bench that the PSU is CC clipping.** That is the
+precondition the 1.75 A setting lacked (E200), and it is the discriminating
+test E191 named and could not run.
+
+#### Result: five of five completed
+
+| run | reason | `hold_ma` | fast-ring margin min | low judgements |
+|---|---|---|---|---|
+| `e200-16a-s1` | 2 | 1654 | 1038.9 | 0 of 512 |
+| `e200-16a-s2` | 2 | 1658 | **1020.1** | 0 of 512 |
+| `e200-16a-s3` | 2 | 1652 | 1046.3 | 0 of 512 |
+| `e200-16a-s4` | 2 | 1657 | 1036.6 | 0 of 512 |
+| `e200-16a-s5` | 2 | 1651 | 1039.2 | 0 of 512 |
+
+All five held 54.8 s at 50% with `ceiling_tenths=500`, every ring frozen, every
+one **zero low judgements and zero fail-closed rows**.
+
+**And the supply was unmistakably limiting.** `hold_ma` fell to **1651–1658**
+from 1760 at the 1.75 A setting and 1782–1816 at 2.0 A — the bridge is being
+given less. The rail came down with it:
+
+| | 2.0 A | 1.6 A, CC clipping |
+|---|---|---|
+| `bus_mean` (tail) | 1194–1205 | **1122** |
+| `filt_bus`, the guard's reference | 1197–1198 | **1131** |
+| reference above bus | −0.6 … +0.3% | **+0.80%** (a latch needs **+5.26%**) |
+| decimated 3.3 s | `filt_bus` 1197–1198, `bus_mean` 1185–1207 | `filt_bus` 1126–1143, `bus_mean` 1108–1164 |
+| margin min over 3.3 s | 1040.3–1044.9 | 1028.7–1032.5 |
+
+#### The finding, in the words the binz reviewer proposed and I am adopting
+
+> **Confirmed CC operation with sustained bus reduction did not trigger the
+> sharp-sag guard because the filtered reference tracked it. Supply current
+> limiting is therefore insufficient, by itself, to explain the historical
+> fast-sag trips.**
+
+**So E191's leading hypothesis is refuted at its own discriminating test.**
+A current-limited supply, clipping, holding the rail ~6% lower than an
+unlimited one, moved the guard's margin by about **12‰ out of the 52‰ it has**
+and latched nothing. Campaign 7's three `FastBusSag` trips therefore require
+**an abrupt or deep excursion relative to the recent bus level — or a fault in
+the measurement or decision path — and not merely a supply at its limit.**
+
+This is the structural property E182 derived from the filter and E200 predicted:
+the guard divides by a 207 ms EWMA **of its own input**, so anything slower than
+its passband is followed and becomes margin. It is now demonstrated on a real
+folding supply rather than argued from a time constant. Two of my own
+predictions in E200 are falsified by it: prediction 1 (a stop in the first or
+second run) and prediction 2 (an early stop as the signature of a
+current-limited fold). There was no stop to be early.
+
+#### Three things this must not be read as saying
+
+1. **Not "CC operation is safe."** The sharp-sag guard *deliberately* tolerates
+   gradual droop; the independent absolute floor (`BUS_FLOOR_MV = 8400`,
+   ≈ code 873) is what covers deeper slow declines, and under CC the rail sat
+   at code ~1122 — about 2.4 V above that floor, so neither guard was near its
+   line. That division of labour is a design choice, not evidence that all
+   current-limited operation is benign.
+2. **Not a complete account of the run.** The fast ring is 0.065% of the
+   judgements and the decimated ring ~3.3 s of a 78 s run: **a tail ring
+   explains the retained tail, not how CC began earlier** during the ramp. The
+   coverage caveat of E194 applies unchanged.
+3. **Not a threshold change.** Nothing in this result argues for moving the
+   fraction, the streak, the latch or the floor, and none of them is touched.
+
+#### What campaign 7's trips now need
+
+The remaining candidates, in the order the evidence supports:
+
+* **an abrupt excursion** inside the guard's 0.8–200 ms passband — a desync or
+  loss-of-lock current surge, which is this bench's own standing lesson, and
+  which a *frozen ring* would now capture. None has occurred in 22 runs at 50%
+  today (17 at 2.0 A, 5 at 1.6 A);
+* **a measurement or decision-path fault** — the fail-closed `vref` branch is
+  the one path that latches without a real dip, and it has fired **zero** times
+  in every run today, now that `sag.py` prints its count unconditionally;
+* **a difference in the bench between the campaigns** that is not the supply
+  setting: campaign 7's draw was **+3.4% higher** at the same rung (E200), and
+  nothing in this firmware measures temperature, so a warmer motor then is
+  consistent and untestable with what is here.
+
+And the one thing that *is* established about 50%: the failure that actually
+stops runs on this bench today is not the sag guard at all. It is the **late
+arm** of E195/E196 — `wait_time(ci, 22)` leaving +1 µs over an 11 µs arm path,
+one stop in seventeen — which is a control-path arithmetic threshold with a
+named fix.
