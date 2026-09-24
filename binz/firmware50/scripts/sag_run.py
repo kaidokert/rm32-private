@@ -44,7 +44,13 @@ def main() -> int:
     ap.add_argument(
         "--command",
         default="5",
-        choices=["b", "2", "5", "a", "A", "y", "Y", "c", "C", "d", "D", "m", "M",
+        # The gate-4 provocations are admitted too (E182): the positive
+        # control that the sag guard still latches *and still freezes the
+        # rings* on a given image is `v` -- the 25% bus-sag injection. It must
+        # be run at a rung below 50%, because the injection is a duty *step*
+        # and at the 50% rung it steps to the duty already commanded.
+        choices=["b", "2", "5", "v", "V", "i", "I", "t", "T", "g", "G",
+                 "a", "A", "y", "Y", "c", "C", "d", "D", "m", "M",
                  "e", "E", "j", "J", "l", "L", "Z", "x"],
         help="the shell key to drive; the rung keys are the same as the "
         "fixture's (`J` = 37.5%% qualified window, `j` = its explore window)",

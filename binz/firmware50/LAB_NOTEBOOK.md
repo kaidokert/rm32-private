@@ -11477,3 +11477,102 @@ retry-until-pass; five attempts means five, and a failure is kept and read.
 Prediction 3 replaces E179's prediction 2, which §7.4 correctly called
 unfalsifiable (it asked the 52 ms ring to show a 207 ms mechanism). E179's
 predictions 1 and 3 are withdrawn: 1 restated existing data, 3 was circular.
+
+### E183 — the positive control: what a real latch looks like in the instrument
+
+**Change and prediction, before the runs.** Nothing in the firmware's decision
+path changed after E182's gates. Two host-side changes, both found by running
+the thing rather than by reading it, and both named below. The powered work
+here is at **25% and below**; the pre-run review gate applies at 45% and above
+and is not being bypassed.
+
+Prediction, before the provocation ran: gate 4's `v` at 25% latches
+`FastBusSag` (reason 26) within a few ms of the injected duty step, and the
+frozen fast ring shows **exactly three** low rows — the streak the guard needs
+— with the reference `filt_bus` steady across them, because a 207 ms filter
+cannot follow a millisecond step. If instead the reference moves with the bus,
+the recorder is reading the filter after its update and step 3's whole
+instrument is wrong.
+
+#### Two of my own errors first
+
+**1. The recorder image did not dump after a provocation, and nobody had
+noticed because nobody had provoked it.** `bin/sag-capture.rs::arms_a_run`
+listed only the rung and climb keys, so `v` ran, latched, froze the rings — and
+emitted nothing. The first attempt produced `reason=26 provoked=1` and no
+`SAGEND`. The provocation keys are now in the list, and `sag_run.py` accepts
+them. This is the plainest possible case for running the positive control: the
+instrument the campaign proposes to hang a 50% conclusion on had never once
+been asked to record a trip, and the path that records one was missing.
+
+**2. I deleted the vendored dependency tree.** To decide whether
+`edge-capture`'s audit failure predated E182 I built it in a scratch git
+worktree, linked `ref/vendor` and `ref/stm32g0xx-hal` into it as junctions,
+and then cleaned up with `rmdir /s /q` and a `robocopy /MIR` of an empty
+directory — **both of which follow junctions and delete the target**. The
+build then failed on a missing HAL. Restored from `MANIFEST.md`'s own recipe
+(`cp -r ../ref/stm32g0xx-hal`, `cargo vendor ref/vendor`), and the restore is
+*certified* rather than assumed: `shell-pwm` rebuilds to **7C55B7E0** and
+`chain-capture` to **33B695D8**, byte-identical CRC32s to the pre-deletion
+images. The lesson is the one the manifest already anticipated by having a
+recipe; the new one is never to point a recursive delete at a junction.
+
+**3. And a third: the "timeouts" in the first climb attempt were mine.**
+`bemf_run.py --timeout` defaults to **75 s** while a rung run is 80 s of window
+plus ~18 s of acquire, so three 15% runs in a row "did not reach their end
+marker" and the ladder correctly refused to advance. The firmware was fine.
+The three dead captures are kept (`e183-climb-150_0*`), and the climb reruns at
+`--timeout 150`.
+
+#### The positive control, and it is a good one
+
+`captures/sag/e182-posctl-sag.txt`, image **A1906AEC**, gate-4 bus-sag
+injection at the 25% rung — a duty step to 50% on the *plans* while the run
+holds 25%. `BEMFINJECT expected_reason=26 reason=26 fired=1 provoked=1
+stop_after_inject_us=1850`, so the guard latched **1.85 ms** after the step.
+
+The frozen ring, `frozen=1`, `run_reason=26`, 512 of 140 745 judgements kept
+(one every **101.00 µs** measured), and the margin's descent is right there in
+the tail:
+
+| margin ‰ | `bus_mean` | `filt_bus` | streak |
+|---|---|---|---|
+| 1043.9 | 1202 | 1212 | 0 |
+| 1037.9 | 1195 | 1212 | 0 |
+| 1029.2 | 1185 | 1212 | 0 |
+| 1022.2 | 1177 | 1212 | 0 |
+| 1014.4 | 1168 | 1212 | 0 |
+| 1007.5 | 1160 | 1212 | 0 |
+| 1002.3 | 1154 | 1212 | 0 |
+| **998.8** | 1150 | 1212 | **1** |
+| **992.9** | 1144 | 1212 | **2** |
+| **989.4** | 1140 | 1212 | **3** → latch |
+
+Everything the prediction asked for, and three things worth keeping:
+
+* **`bus_mean` falls 1202 → 1140 (−5.2%) in about ten judgements (~1 ms)
+  while `filt_bus` does not move at all.** The reference is steady across the
+  event, which is what a 207 ms EWMA must do against a 1 ms step — so the
+  recorder is indeed reading the reference the comparison *used*, before its
+  post-test update. Step 3's instrument is doing what E175 claimed it does,
+  now demonstrated on a trip rather than on quiet tails.
+* **Exactly three low rows, and the streak counts 1, 2, 3 then latches** —
+  `SAG_STREAK = 3` observed end to end, and the host's recomputation agrees
+  with the firmware's own streak on **all 511** rows.
+* **The decimated ring stays boring** (margin 1037.9–1062.2, `filt_bus`
+  1212–1213 across 3.3 s), which is the signature of a transient rather than a
+  drift — and therefore the discriminator E182's prediction 3 relies on is
+  *calibrated on a known event* rather than invented: the trip that came from a
+  genuine load step reads as mechanism (1), fast ring ≥3 rows below 1000‰ with
+  the reference flat.
+
+So: **the guard still latches on this image, the recorder still freezes, the
+dump still arrives, and the fast ring is sufficient to identify a passband
+transient.** That is the positive control E181 §6.5 said was missing, and it is
+the evidence a 50% trip will be read against.
+
+One caveat, recorded: `sag_run.py` applies the fixture's *rung* gates to a
+provocation run, so it prints `VERDICT: run gates FAIL: reason 26 != 2` for a
+run whose entire purpose is to stop with reason 26. `bemf_run.py` knows better
+(`BEMFINJECT ... provoked=1`). The verdict line is wrong for this run type and
+is not evidence of anything; the gate to read is `BEMFINJECT`.

@@ -657,3 +657,16 @@ loop, all via `<core::fmt::Formatter>::pad_integral` and
 
 Owed: either re-audit and fix edge-capture, or delete it. It must not be
 flashed until then. Recorded rather than quietly dropped from the loop.
+
+## sag-capture rebuilt as A1906AEC (E182: the gate-4 provocations now dump)
+   shell-pwm 7C55B7E0 and chain-capture 33B695D8 rebuild bit-identically after the
+   vendor tree was restored, which also certifies the restore.
+  ADC_COMP           AUDIT PASSED: 1 root(s) certified clean.
+  TIM16              AUDIT PASSED: 1 root(s) certified clean.
+  DMA1_CHANNEL1      AUDIT PASSED: 1 root(s) certified clean.
+  TIM6_DAC_LPTIM1    AUDIT PASSED: 1 root(s) certified clean.
+  isr_diff vs production 7C55B7E0:
+DMA1_CHANNEL1: identical, 37 instructions
+ADC_COMP: identical, 738 instructions
+TIM16: identical, 332 instructions
+TIM6_DAC_LPTIM1: identical, 155 instructions

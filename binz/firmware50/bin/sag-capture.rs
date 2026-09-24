@@ -82,10 +82,29 @@ type SagProduction = Controller<
 /// **`b` (15%) is deliberately absent.** It is the unjudged warm-up every
 /// diagnostic runner drives first, and a dump after it would leave two rings
 /// in the link for the *next* capture to read as part of its own.
+///
+/// **The gate-4 provocations are present** (E182). They were not, so the one
+/// run that *makes* the guard latch -- the positive control that the recorder
+/// freezes and dumps a real trip, rather than only quiet tails -- produced no
+/// dump at all. Found by running it: `reason=26 provoked=1` and no `SAGEND`.
 fn arms_a_run(b: u8) -> bool {
     matches!(
         b,
         b'2' | b'5'
+            | b'v'
+            | b'V'
+            | b'i'
+            | b'I'
+            | b't'
+            | b'T'
+            | b'g'
+            | b'G'
+            | b'f'
+            | b'F'
+            | b'u'
+            | b'U'
+            | b'h'
+            | b'H'
             | b'a'
             | b'A'
             | b'y'
