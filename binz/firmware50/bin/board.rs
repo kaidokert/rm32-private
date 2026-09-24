@@ -496,6 +496,8 @@ impl Hal for Board {
         // pre-run review of step 6b (E167); it predates the restructure.
         det.accept_raw.store(u32::from(raw), Ordering::Relaxed);
         det.rebase.store(0, Ordering::Relaxed);
+        det.margin_min_p1.store(0, Ordering::Relaxed);
+        det.wait_min_p1.store(0, Ordering::Relaxed);
         self.det_seq_seen = det.accept_seq.load(Ordering::Relaxed);
         det.step.store(u32::from(step.get()), Ordering::Relaxed);
         det.advance.store(advance, Ordering::Relaxed);
@@ -703,6 +705,12 @@ impl Hal for Board {
             unstable,
             spent_max_us: S.det().spent_max.load(Ordering::Relaxed),
             late_arms: S.det().late_arms.load(Ordering::Relaxed),
+            // E208: the causal side of the late arm. `margin_min_p1` is stored
+            // plus one so that 0 means "no acceptance seen".
+            margin_min_us: S.det().margin_min_p1.load(Ordering::Relaxed).saturating_sub(1),
+            wait_min_us: S.det().wait_min_p1.load(Ordering::Relaxed).saturating_sub(1),
+            margin_seen: S.det().margin_min_p1.load(Ordering::Relaxed) != 0,
+            rebase: S.det().rebase.load(Ordering::Relaxed),
             com_preempts: S.com().preempts.load(Ordering::Relaxed),
             com_arm_preempts: S.com().arm_preempts.load(Ordering::Relaxed),
             drv_early: S.drv().early.load(Ordering::Relaxed),

@@ -218,6 +218,18 @@ pub struct Roots {
     /// COMP's entry-to-arm time and the arms that reached the wait (E083).
     pub spent_max_us: u32,
     pub late_arms: u32,
+    /// **The smallest `wait - spent` of the run**, µs -- the margin whose left
+    /// tail is the late arm (E207). Meaningless unless `margin_seen`.
+    pub margin_min_us: u32,
+    /// The smallest scheduled `wait` of the run, µs: the quantity that varies.
+    pub wait_min_us: u32,
+    /// Was any acceptance seen at all? Distinguishes "margin 0" from "no data".
+    pub margin_seen: bool,
+    /// Intervals beyond `ci_max` that were re-based and discarded -- counted
+    /// and reset since the estimator was written, and **never reported** until
+    /// E208. It is the counter that says whether a crossing was lost just
+    /// before a stop (E205 SS1d).
+    pub rebase: u32,
     /// **COM dispatches** (any phase, not only commutations) that preempted a
     /// zero-crossing decision, and the subset that landed inside `com_arm`'s
     /// own write sequence. Both read zero unless the image carries the chain
@@ -541,6 +553,11 @@ impl RunReport {
         out.say("BEMFRCOMP ");
         out.kv("spent_max_us", self.roots.spent_max_us);
         out.kv("late_arms", self.roots.late_arms);
+        // E208: the causal side of the late arm, per run.
+        out.kv("margin_min_us", self.roots.margin_min_us);
+        out.kv("wait_min_us", self.roots.wait_min_us);
+        out.kv("margin_seen", u32::from(self.roots.margin_seen));
+        out.kv("rebase", self.roots.rebase);
         out.kv("com_preempts", self.roots.com_preempts);
         out.kv("com_arm_preempts", self.roots.com_arm_preempts);
         out.say("\r\n");
@@ -818,6 +835,11 @@ mod tests {
         // E187: the ceiling and the worst block, on the same line. A run whose
         // ceiling fell below its commanded duty did not hold the rung, and
         // until E187 the report could not say so.
+        // E208: the causal-side fields, on the line the fixture parses.
+        assert!(t.contains(" margin_min_us="));
+        assert!(t.contains(" wait_min_us="));
+        assert!(t.contains(" margin_seen="));
+        assert!(t.contains(" rebase="));
         assert!(t.contains(" ref_ma=326 duty_tenths=250 ceiling_tenths="));
         assert!(t.contains(" worst_residual="));
         assert!(t.contains(" worst_ma="));

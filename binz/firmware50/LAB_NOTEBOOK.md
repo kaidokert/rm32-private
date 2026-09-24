@@ -14554,3 +14554,159 @@ path and stamps `spent_fine` *after* the arm on a 15.6 ns clock.
 
 Each of those carries its own predeclaration and its own pair of reviews before
 anything powered runs, as the goal requires.
+
+### E207 — predeclaration: the safety-and-instrument candidate (no threshold relaxed)
+
+Both reviews list the same work before any 60% attempt. This is the
+predeclaration for it, written before the build. **Nothing here relaxes an
+existing protection**: two additions, four report fields, one widened counter,
+and one visibility fix.
+
+#### The question
+
+Can the campaign *see* a 60% run well enough to judge it, and does anything
+stop the failure mode E205 §4.7 describes — a supply in CC, a bus walking down
+invisibly to the sharp-sag guard, ending in a desync that heats the motor and
+appears in no field of the report?
+
+#### The change, item by item
+
+**1. The duty clamp becomes visible (blocking, E205 §4.1).** `sixstep::plan`
+clamps at `duty_cap` silently (`sixstep.rs:93`), and the report prints the
+*commanded* duty, so a 60% command would report 600 while the bridge ran 500
+and E193's ceiling gate would pass it. The report gains **`applied_cap`** and
+**`ccr_of_duty`** — the cap in force and the compare value actually programmed
+for the commanded duty — so a clamped run is visible in its own capture.
+`SIXSTEP_DUTY_CAP` itself is **not** raised in this candidate: raising it is a
+separate declared change with its own reviews, and it must not ride along with
+instrumentation.
+
+**2. The injected duty becomes visible (blocking, E204 §4.1).** `Inject::Sag`
+publishes `INJECT_SAG_DUTY_TENTHS = 500` and freezes the plans, so two runs
+labelled 47.5% actually drove 50% and `ceiling_tenths` could not see it. The
+report gains **`inject_duty_tenths`** — the duty an injection published, or 0 —
+so an injection that *raises* duty cannot hide inside a lower-rung label again.
+
+**3. Slow-droop coverage, additive and not the EWMA (blocking, E202/E205).**
+A new stop: **`bus_mean` below `DROOP_NUM/DROOP_DEN` of the *pre-run*
+reference, sustained for `DROOP_MS`**, judged on the same 8-scan mean the sharp
+guard uses but against the baseline captured before the bridge was energised —
+so it is a low-pass detector where `FastBusSag` is a high-pass one, and the two
+do not share a threshold, a filter or a latch.
+
+Chosen from measurement, not taste: today's 50% runs sit at
+`bus_mean/ref_bus ≈ 1200/1215 = 0.987`; the confirmed-CC runs of E201 sat at
+`1122/1215 = 0.923`; the absolute floor is `873/1215 = 0.718`. **`DROOP_NUM/DEN
+= 90/100` with `DROOP_MS = 500`** therefore leaves the observed CC runs
+untouched (0.923 > 0.90), covers the band from 10% to the floor's 28%, and
+needs half a second of it — fifty times the sharp guard's 3-scan streak, so it
+cannot fire on a transient the other guard owns.
+
+**4. Instrument the causal variable, not the event (E205 §5.3).** The late arm
+is a 1-in-10 event whose cause is `ci`, and `wait − spent` is the quantity that
+actually varies. New per-run fields: **`margin_min`** (the smallest
+`wait − spent` seen), **`wait_min`**, **`hold_unstable`** (so the
+unstable/accept ratio can be read on the hold window as `hold_accepted`
+already is), and **`rebase`** — which is counted and reset today and *never
+printed*, and is the one counter that says whether a crossing was lost just
+before a stop. `acc_by_phase` widens from `u16` to `u32`, because it saturates
+at 65535 in every 500-rung run and the phase histogram is unreadable there.
+**`worst_ma` becomes hold-windowed** through a `CurrentMark`, with the
+whole-run value kept beside it as `worst_run_ma`.
+
+#### Predictions, falsifiable, before the build
+
+1. **The four ISR roots stay instruction-identical** except `ADC_COMP`, which
+   gains the `margin_min`/`wait_min` compare-and-store. I predict **≤ +10
+   cycles** on its longest path at 0 WS; more than that and the instrument is
+   too expensive for the path it measures.
+2. **`margin_min` at 50% reads 1–2 µs** on the baseline advance of 22 — because
+   `wait` is 12 µs at `ci` 75–79 and `spent` is pinned at 11. If it reads ≥3 µs,
+   then `spent` is *not* the 11 µs that `spent_max_us` reports at the moment
+   that matters, and E195's whole margin arithmetic needs revisiting.
+3. **`rebase` is non-zero at 50%** — if crossings are being lost and re-based,
+   that is the upstream mechanism E205 §1c proposes. If it reads exactly 0
+   across three runs, that mechanism is out and chatter or the revisit rescue
+   is what remains.
+4. **The droop guard does not fire** at 50% on the 3 A clamp (`bus_mean/ref` ≈
+   0.987 against a 0.90 line). If it fires, either the rail is far worse than
+   the captures say or my threshold arithmetic is wrong — and in that case the
+   *candidate* is wrong, not the bench.
+5. **`applied_cap` reads 500 and `ccr_of_duty` matches the commanded 500** at
+   the 50% rung, which is the check that the clamp is not already biting where
+   the campaign thought it was not.
+
+#### Cohort and stopping rule
+
+Host gates first (four-root audit, cycle bounds at 0 and 2 WS, changed-path
+disassembly, structure limits, tests, replay, clippy), then **both reviews
+before anything powered**. Then three runs at 25% (lower-rung regression) and
+three at 50%, alternated against `14CE44E7` in one session with fixture
+flashing and hashing.
+
+**Stopping rule:** if the 25% or 50% trio regresses against the baseline on
+speed, current or any protection counter, the candidate is reverted. If
+`margin_min` cannot be read (saturated, or always equal to `wait`), the
+instrument is wrong and is fixed before anything else proceeds. **No rung above
+50% is attempted from this candidate** — it exists to make 60% *judgeable*, and
+the cap raise, the single-block current stop chosen from the measured
+hold-windowed worst, and the advance experiment each follow with their own
+predeclaration and their own two reviews.
+
+### E208 — the instrument candidate built; one prediction falsified favourably, and unexplained
+
+Built from the reverted baseline plus E207's instrumentation. **Nothing powered
+has run on it**, and both reviews come before anything does.
+
+**Identity.** candidate **`5A8C0127`**, archived as
+`captures/elf/5A8C0127.e208-margin.elf`. Baseline: the qualified `14CE44E7`.
+
+**What is in it** (of E207's list): `margin_min_us`, `wait_min_us`,
+`margin_seen` and `rebase` on `BEMFRCOMP`; the per-acceptance recording
+extracted into **one** `note_margin(left, wait)` called by *both* the
+production inline arm and the diagnostic twin — deliberately one function,
+because E204's finding was that the previous candidate edited only the twin and
+therefore never ran. Two host tests: the margin's plus-one arithmetic (a late
+arm is exactly `margin == 0`, and 0-means-unset is unreachable from an
+acceptance), and the wire format, so the four fields cannot silently vanish.
+
+**Not yet in it**, and each is its own declared change with its own two
+reviews: the duty-clamp visibility and the cap raise, the injected-duty field,
+the slow-droop stop, and the hold-windowed worst current. E207 predeclared all
+four; splitting them from the instrument is deliberate, because a candidate
+that changes a protection *and* a measurement cannot be judged by either.
+
+#### Measurements, against E207's predictions
+
+| gate | baseline `14CE44E7` | candidate `5A8C0127` |
+|---|---|---|
+| `ADC_COMP` instructions | 738 | **726** |
+| `ADC_COMP` longest path, 0 WS / 2 WS | 1081 / 1282 | **1036 / 1226** |
+| `TIM16` | 332 insns, 360 / 426 | **identical** |
+| `DMA1_CHANNEL1`, `TIM6_DAC_LPTIM1` | 37 / 155 | **identical** |
+| four-root arithmetic audit | 4/4 clean | **4/4 clean** |
+| `functions_over_100_lines` | 0 | **0** |
+| host tests | 336 + 9 | **337 + 9** |
+| clippy | 0 warnings | **0 warnings** |
+
+**Prediction 1 is falsified, in the favourable direction, and I do not believe
+it yet.** I predicted **≤ +10 cycles** on `ADC_COMP` for adding two
+compare-and-store pairs. The measurement is **−45 cycles at 0 WS and −56 at
+2 WS, with twelve fewer instructions** — the root got *cheaper* by adding code
+to it. A plausible mechanism exists (`margin_p1 = left + 1` reuses the `left`
+the arm already computes, and the compiler appears to have reorganised the
+surrounding compare chain), but **plausible is not measured**, and a
+40-cycle improvement from an instrument is exactly the shape of result that
+turns out to be the compiler deleting something that mattered.
+
+So this is recorded as an **open question for the reviewers**, not as a win:
+either the change genuinely lets the compiler do better, or something is gone
+from `ADC_COMP` that should not be. Nothing powered runs on this candidate
+until that is settled, and the four other predictions (margin 1–2 µs at 50%,
+`rebase` non-zero, the droop guard silent, `applied_cap` visible) cannot be
+tested until it is — three of them need the runs, and one needs the field that
+is deliberately not in this candidate yet.
+
+One structural note: the instrument first pushed `det_decide_plain` to 118
+lines and the structure gate caught it — the gate that E198 had to be taught to
+fail on its own findings. It is now one extracted function and back to 0.
