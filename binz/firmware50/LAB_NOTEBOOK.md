@@ -18225,3 +18225,80 @@ hence item 1. Exploration, not qualification. No rung above 525.
 **Running now.** The image has been certified twice, the read-out is written
 down, and the remaining uncertainty is what the bench does at 525 — which is
 the only thing left that analysis cannot supply.
+
+### E238 — the regression sample at 500 on `5665710E`: `ci_min_us = 54`, and the tail is the blocker
+
+One run, image `5665710E` (`elf_crc32 5665710E`, fixture-flashed), 500 tenths,
+`--pre '++++'`, `--no-ladder`. Capture `e238-reg500_01.txt`. Read by hand
+against E237's list, because the fixture judges nothing on this path.
+
+#### The read-out
+
+| item | value | predeclared | verdict |
+|---|---|---|---|
+| `target_duty_tenths` / `CLIMBAT` | **500** | must equal the intended duty or the run is void | ✓ drove what it claimed |
+| `applied_cap` / `applied_ccr` | **525** / **666** | cap in force; `1333·500/1000 = 666` | ✓ exact |
+| `reason` / `hold_ms` / `ceiling_tenths` / `forced_pct` | 2 / 54 776 / 500 / 0 | retention | ✓ clean, no foldback |
+| `filt_bus/ref_bus` | **984.5** ‰ | ≥ 975 (CV/CC discriminator) | ✓ CV |
+| `bus_min` | **1119** | ≥ 880 | ✓ 254 codes clear of the floor |
+| `hold_ma` / `worst_ma` / ratio | 1734 / 2229 / **1.285** | stop above 3000 | ✓ and the ratio is again above the 1.19 E235 assumed |
+| `zero_drift_ma` | −172 | — | in the usual negative (conservative) direction |
+| `mean_ci_us` | **77** | matches the healthy 500 baseline exactly | ✓ |
+| **`ci_min_us`** | **54** | 60–72, report-only | **outside the band, low** |
+| `thin_count` | **464** | < 1000 | ✓ |
+| `late_arms` / `spent_max_us` | 0 / 11 | — | ✓ |
+| `dep970_n` / `dep970_run` | **1 / 1** | expected 0, vacuous by construction | ✓ vacuous, as predeclared |
+| `drive_scans` vs `ticks` | 786 917 vs 786 939 | — | **22 scans missed = 0.003%** |
+
+#### `ci_min_us = 54` is the finding, and it relocates the blocker
+
+This is the **first measurement of the causal variable** in the campaign's
+history. `wait_time` is applied per acceptance to the *accepted average
+interval*, not to the run's mean, so the margin that matters is the one at the
+interval's floor:
+
+| ci | `wait_time(ci,22)` | vs modal spend 6 µs | vs worst observed spend 10 µs |
+|---|---|---|---|
+| 77 (mean, measured) | 12 | +6 | +2 |
+| **54 (`ci_min`, measured)** | **9** | **+3** | **−1** |
+| 64 (mean at 600, 1/duty) | 10 | +4 | +0 |
+| **45 (`ci_min` at 600, 1/duty)** | **7** | **+1** | **−3** |
+
+So **at 500 the tail interval is already at E179's ≥3 µs rule against the modal
+spend, and one microsecond short against the worst spend.** `late_arms = 0` in
+this run not because the margin is comfortable but because the worst spend did
+not coincide with the worst interval — which is exactly the joint-tail
+mechanism E233 finding 10 described and which no mean-based calculation can see.
+
+Scaled to 600 tenths, the tail gives +1 µs modal and **−3 µs worst**. **The tail
+is the blocker at 60%, not the mean** — and this is now measured at 500 rather
+than projected from anywhere.
+
+Note what this does *not* say. It does not say 60% latches deterministically:
+the mean still clears the rule at +4 µs, and lateness needs the interval floor
+and the spend peak to coincide. It is a **rate** question, and the rate is
+what `thin_count` measures — 464 of ~709 000 hold acceptances here, i.e.
+**0.065%** at 500. Whether that rate is tolerable at 60% is the question the
+525 runs start to answer, and three runs cannot finish it.
+
+#### Two predictions of mine settled by this one run
+
+* **E224's prediction 1 is refuted.** I predicted 0.1–1% of scans dropped;
+  `drive_scans` 786 917 against `ticks` 786 939 is **22 scans, 0.003%** — 30×
+  below the bottom of my band, and exactly the figure E233 derived from
+  existing captures before I ever flashed anything. The premise was available
+  in the archive the whole time.
+* **E237's `ci_min_us` band (60–72) is wrong, low by 6 µs.** It was declared
+  report-only precisely because it had no baseline, so this is the band failing
+  in the way a first measurement should be allowed to — but it is recorded as a
+  miss, not quietly replaced.
+
+#### What stands, and what it costs
+
+The image regresses cleanly at 500 on every predeclared item: same interval,
+same spend, no foldback, CV rail, 254 codes of bus-floor headroom, and a
+current 3.5% below the 500 median (1734 vs 1798). **One run is a sample, not a
+rung** — both reviews said so and the fixture agrees (`RUNG 50%: NOT PASSED
+(only 0 run(s) on this ELF at 50%)`), so nothing here qualifies the image at
+500. It establishes only that the cap raise did not break the rung below it,
+which is what a regression sample is for.
