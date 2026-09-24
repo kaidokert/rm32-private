@@ -17993,3 +17993,150 @@ E212/E224 and have never been flashed. This image is the first that emits them.
   later image, and on current evidence it cannot include a 60% rung on a 3 A
   clamp — which is the operator decision E234 reported and this run either
   confirms or overturns with the next point of the law.
+
+### E236 — two corrections I verified before dispositioning: the interval law holds, and the operator escalation was mis-framed
+
+The adversarial review of E235 landed two BLOCKING findings that each correct a
+previous entry of mine. I verified both myself before writing any disposition,
+because one of them is an escalation to the operator that should not stand
+wrong for a moment longer than necessary. **The full point-by-point disposition
+of both reviews follows when the evidence review lands; these two are separated
+out because they are corrections, not judgements.**
+
+#### Correction 1 — the interval law holds. My "it has already flattened" pooled provoked and CC captures into the healthy class.
+
+E234 accepted, and E235 built a prediction on, the claim that `mean_ci_us` reads
+**77 at 450, 475 and 500 alike**, so the 1/duty law had failed at the last
+measured rung and ci≈64 at 60% was withdrawn. Recomputed on **healthy CV runs
+only** — excluding any capture with `inject != 0` or `provoked=1`, and any whose
+`filt_bus/ref_bus` is below 970 per mille:
+
+| duty (tenths) | 400 | 425 | 450 | 475 | 500 |
+|---|---|---|---|---|---|
+| `mean_ci_us` (median, sd 0 at each) | **95** | **89** | **84** | **80** | **77** |
+| `ci · duty` | 38 000 | 37 825 | 37 800 | 38 000 | 38 500 |
+
+**`ci · duty` spans 37 800–38 500 — a 1.9% spread across five rungs.** The law
+holds. 450 is **84 µs**, not 77.
+
+Where the 77s came from, exactly as the review said: the 475-rung captures
+reading 77 are `PROVOKED` (n=22) — the sag positive control publishes
+`INJECT_SAG_DUTY_TENTHS = 500` mid-run, so a 475-labelled capture reports a
+500-rung interval — and the 500-rung captures reading 78–80 are the **CC**
+population at the 1.6 A clamp (`ci · duty` = 40 000 there, visibly off the law).
+**I pooled a perturbed cohort and a current-limited cohort into a healthy one,
+one entry after E230 was withdrawn for precisely that.** Twice in two entries,
+and the second time I had just finished writing the disposition of the first.
+
+So the law predicts **ci ≈ 72.4 µs at 525 and 63.3 µs at 600**, and **E211's
+ci≈64 at 60% is reinstated** — I withdrew it in E234 on a mis-read table.
+
+**It does not restore the timing blocker.** With the measured modal spend of
+6 µs (E234, 20 478 arms — that measurement stands), `wait_time(64, 22) = 10`
+leaves **+4 µs**, still above E179's ≥3 µs rule. So the mean is fine at 60% on
+today's advance schedule; what is open is the **tail**, which is `ci_min_us` and
+`thin_count`, neither of which has ever been recorded.
+
+**E235's prediction 1 is therefore wrong before it is tested** (it bands 74–77
+and says "flat predicts 76–77"); the corpus predicts **72.4**, below its lower
+edge, and its decision rule has no branch for 74–75. It is re-set below.
+
+#### Correction 2 — the operator escalation was mis-framed. 60% projects inside the clamp, in CV.
+
+E234 escalated: *"a healthy 60% run draws ~2.7 A mean and ~3.2 A in its worst
+blocks against a 3 A clamp… either the clamp rises or the top rung is
+renegotiated."* Two things are wrong with that, and E230's own disposition had
+already named the first.
+
+**(a) It read an uncalibrated proxy as amps.** `hold_ma` is a signed
+three-shunt residual anchored on one operator-metered point. **The clamp
+setting is the meter**, and both sides of the CV/CC transition at the 50% rung
+are already in the corpus: at a **1.75 A** clamp the runs are healthy
+(`filt_bus/ref_bus` 979–990 per mille), while at **1.6 A** they are CC
+(929–969, `hold_ma` pinned). The proxy reads **1799 mA** median at 500 CV, so it
+over-reads the true mean by ~3–12%. Refining further: two campaign-7 captures at
+the 1.75 A clamp (`c7-500_03`, `c7-explore500_01`) reach droop **969**, i.e.
+some 500 runs *did* brush CC at 1.75 A — so the true 500 mean sits near
+**1.70–1.75 A** and the proxy's error is at the ~3% end.
+
+**(b) A worst block is not a CC criterion.** `worst_ma` is a 10.1 ms block mean
+that the supply's output capacitors serve. Constant-current limiting is a
+*mean*-against-clamp phenomenon, so quoting a 3.2 A worst block as evidence of
+CC was category error.
+
+Projecting the **metered** anchor with the **top-end** exponents (each rung
+400/425/450/475 spanned to 500 gives k = 2.392 / 2.092 / 1.859 / 2.249):
+
+| anchor | k = 1.859 | k = 2.392 |
+|---|---|---|
+| 1.70 A | 2386 mA (**80%** of clamp) | 2629 mA (88%) |
+| 1.75 A | 2456 mA (82%) | 2707 mA (**90%**) |
+
+**60% projects to 2386–2707 mA — 80–90% of the 3 A clamp, in CV.** Inside it,
+not over it. And **525 projects to 1967 mA, 66% of the clamp.**
+
+An honesty note on the uncertainty, which is larger than either the review or I
+allowed: taken over *all* adjacent rung pairs the exponent scatters **0.51 to
+3.20** (the 338→350 pair is nearly flat), which would project 58–104% of the
+clamp — uninformative. The 1.86–2.39 band above is the **top-end regime only**,
+which is the defensible one for extrapolating past 500, and it is stated as a
+choice rather than smuggled in.
+
+**The revised operator question**, which replaces E234's:
+
+> A healthy 60% run is projected at **2.4–2.7 A mean**, i.e. **80–90% of the
+> 3 A clamp, in constant-voltage** — not in CC. Is that acceptable as a
+> qualifying 60%, or should the clamp rise first (with the bench power path
+> re-measured, per the connector-resistance fault class)?
+
+That is a decision about margin, not a blocker. **E234's "either the clamp rises
+or the top rung is renegotiated" is withdrawn.**
+
+#### E235's predictions, re-set before the run
+
+Only the two that were wrong, plus the two the review showed were vacuous; the
+rest stand. The run does not proceed on the old set.
+
+1. **`mean_ci_us` = 71–74 at 525** (law predicts 72.4; the field's run-to-run sd
+   is 0 at fixed config, so ±1.5 µs is generous). Outside that band the law has
+   broken between 500 and 525, which is itself the finding. **No branch of this
+   decides 60% any more** — with modal spend 6 the mean clears the rule at
+   ci=64 either way. Demoted from decisive to confirmatory.
+2. **`hold_ma` 1900–2100 mA** at 525 (metered projection 1967, proxy reads ~3%
+   high, baseline sd 0.8%). Unchanged in substance.
+3. **All eight `dep*` fields read 0.** The review is right that this is a
+   censored null, not a measurement: healthy `filt_bus/ref_bus` is 979–990 and
+   the shallowest bin is 970. Predeclared as **vacuous-by-construction** rather
+   than dressed up — the droop instrument needs fractions in 975–995 and that is
+   a later change.
+4. **Decision weight moves to `thin_count`.** `src/oneshot.rs:596-609` says the
+   margin *minimum* was dropped because "a minimum over ~700 000 acceptances
+   cannot separate a habitually thin margin from one excursion", and
+   `thin_count` replaced it — and then E235 banded `ci_min_us` and predeclared
+   nothing for `thin_count`. **`ci_min_us` is now report-only** (first
+   measurement, no baseline, n=1 for the 500 arm — an extreme-value statistic
+   cannot carry a decision on that). **`thin_count` < 1000 of ~500 000
+   acceptances** is the predeclared band.
+5. Unchanged except: `applied_cap` **cannot** reveal a clamp at a rung equal to
+   the cap (already accepted in E229), so the duty check moves to a **by-hand
+   read of `CLIMBAT` and `target_duty_tenths` on every capture** — because
+   `--no-ladder` never calls `ladder_record`, which is where `--rung-duty` is
+   enforced, so E235's "every capture is checked against the duty it claims" was
+   **false**. 525 needs five blind `+` presses and nothing in the fixture
+   verifies the count. That is the E148/E185 failure, recorded twice already.
+
+Added, from the review, both free and both previously unpredeclared:
+
+6. **`filt_bus/ref_bus` ≥ 975 per mille on all three runs** — the validated
+   CV/CC discriminator. Below 970 is the CC branch arriving, and it is the only
+   direct evidence of the thing the goal forbids.
+7. **`bus_min` ≥ 880 codes.** Healthy 500 runs already reach **865** against an
+   absolute floor of ~861–875 (`Reason::Bus`), so one run in thirteen came
+   within a handful of codes of a hard stop. A `Reason::Bus` trip with
+   `filt_bus/ref_bus` still ≥975 is a **nuisance trip, not a result**, and is
+   predeclared as such so the stopping rule cannot report it as an answer.
+
+And the worst-block stopping rule is re-derived: the worst/hold ratio is **not**
+the 1.19 E235 assumed — it runs 1.21–1.47 across rungs (1.468 at 450), so a
+2600 mA line would fire on a healthy ramp transient at ~6% per run. The rule
+becomes **`worst_ma` > 3000 mA**, and the ratio is reported rather than assumed.
