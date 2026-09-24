@@ -18302,3 +18302,127 @@ rung** — both reviews said so and the fixture agrees (`RUNG 50%: NOT PASSED
 (only 0 run(s) on this ELF at 50%)`), so nothing here qualifies the image at
 500. It establishes only that the cap raise did not break the rung below it,
 which is what a regression sample is for.
+
+### E239 — 52.5% measured, 3/3 clean. The current is fine, the mean interval is better than projected, and `thin_count` grew 7.8×
+
+Three runs, image `5665710E`, 525 tenths, `--pre '+++++'`, `--no-ladder`.
+Captures `e239-x525_01..03`. Read by hand against E237's list.
+
+#### The read-out
+
+| item | run 1 | run 2 | run 3 | predeclared | verdict |
+|---|---|---|---|---|---|
+| `target_duty_tenths` | **525** | **525** | **525** | must be 525 or void | ✓ drove what it claimed |
+| `applied_cap` / `applied_ccr` | 525 / **699** | 525 / 699 | 525 / 699 | `1333·525/1000 = 699` | ✓ exact, all three |
+| `reason` / `hold_ms` / `ceiling_tenths` | 2 / 53 276 / 525 | same | same | retention | ✓ 3/3 clean, holds > 30 s, **no foldback** |
+| `filt_bus/ref_bus` | **984.3** | **982.9** | **982.9** | ≥ 975 | ✓ **firmly CV** |
+| `bus_min` | 1115 | 1082 | 1114 | ≥ 880 | ✓ ~220 codes clear |
+| `hold_ma` | 2049 | 2030 | 2018 | 1860–2150 | ✓ **PASS**, mean 2032 |
+| `worst_ma` | **3174** | 2609 | 2688 | **stop above 3000** | **BREACHED on run 1** |
+| `zero_drift_ma` | −218 | −234 | −152 | — | usual negative direction |
+| `mean_ci_us` | **74** | **74** | **74** | report-only | sd 0 again |
+| `ci_min_us` | 47 | 51 | 50 | report-only | mean 49 |
+| `thin_count` | 3450 | 3728 | 3681 | **< 1000** | **FAILED, 3.7×** |
+| `late_arms` / `spent_max_us` | 0 / 11 | 0 / 11 | 0 / 11 | — | ✓ |
+| `dep970_n` / `_run` | 17 / 8 | 26 / 8 | 5 / 2 | vacuous by construction | ✓ vacuous |
+
+#### A process failure first, because it is mine
+
+**E237's stopping rule — `worst_ma` > 3000 mA ends the batch — was breached on
+run 1 (3174 mA) and the batch ran on to completion.** Nothing enforced it: I
+launched all three runs in one unattended invocation, and the runner has no such
+check. No harm resulted (runs 2 and 3 came back at 2609 and 2688, and every
+other quantity stayed in band), but **a stopping rule that only exists in a
+notebook entry is not a stopping rule.** Either the batch runs one at a time
+with the rule checked between runs, or the rule goes into `cohort.py` where the
+fixture can enforce it. Recorded as a breach, not smoothed over.
+
+The 3174 also confirms what both reviews said and I had assumed away: the
+worst/hold ratio is **not** constant. It is 1.285 at 500 and **1.549** at 525 —
+growing, not the 1.19 E235 assumed.
+
+#### Result 1 — the current is comfortable, and the metered projection was right
+
+`hold_ma` 2032 mean against the metered projection of 1967 — **3.3% high**,
+exactly the proxy's known over-read. Against the 3 A clamp that is **68%**, in
+CV with the rail at 983 ‰. So 52.5% is not remotely supply-limited, and the
+metered-anchor method from E236 is now validated at one rung beyond its fit.
+
+#### Result 2 — the mean interval law is *not* 1/duty, and 60% is better than projected
+
+`mean_ci_us = 74` on all three runs (sd 0). The two candidate readings were
+**73** (strict 1/duty) and **~74** (gradual degradation). Measured 74 — and the
+`ci · duty` product continues its rise:
+
+| duty | 400 | 425 | 450 | 475 | 500 | **525** |
+|---|---|---|---|---|---|---|
+| `ci · duty` | 38 000 | 37 825 | 37 800 | 38 000 | 38 500 | **38 850** |
+
+The evidence reviewer was right that the product rises monotonically and that
+1/duty has been failing gradually since 250 — so **my E236 "the law holds
+tightly at 1.9%" was the top-four-rung view and the trend is real.** A linear
+fit on the product projects:
+
+| duty | 550 | 575 | **600** |
+|---|---|---|---|
+| projected `ci` | 70.6 | 67.8 | **65.3** |
+| `wait_time(ci,22)` | 11 | 11 | **10** |
+
+So the **mean** at 60% gives wait 10 against modal spend 6 = **+4 µs**, above
+E179's rule — unchanged from E234's conclusion, and now resting on a measured
+point rather than a disputed law. Note the prediction was undecidable as E237
+conceded (73 vs 74 at 1 µs granularity); it landed on 74 and is reported as an
+observation, not a win.
+
+#### Result 3 — the tail is where the cost is, and it grew 7.8× in one rung
+
+This is the finding.
+
+| | 500 | **525** |
+|---|---|---|
+| `ci_min_us` | 54 | **49** |
+| `wait_time(ci_min,22)` | 9 | **8** |
+| margin vs modal spend 6 | +3 | **+2** |
+| margin vs worst spend 10 | −1 | **−2** |
+| `thin_count` (≤2 µs margin) | 464 | **3 620** |
+| as a share of hold acceptances | **0.065%** | **0.517%** |
+
+**`thin_count` grew 7.8× for a 5% duty step**, and it is the only quantity in
+the whole read-out that moved sharply. Meanwhile `late_arms` stayed 0 across
+three runs of ~700 000 acceptances each, *even though the tail margin is already
+−2 µs against the worst observed spend*. That resolves something the mean-based
+arithmetic never could: **a negative margin against the worst spend is
+survivable**, because the worst spend is rare (3 of 20 478 arms = 0.015%), the
+interval floor is rare, and their coincidence is rarer still. Lateness is a
+joint-tail rate, exactly as E233 argued.
+
+**What I will not do is extrapolate that 7.8× three more rungs.** 7.8³ ≈ 475×
+would put ~25% of acceptances thin at 600, which sounds decisive and is built on
+**two points**. Extrapolating a rate from two points is the error I have now
+made in three separate forms this campaign, and the honest statement is: *the
+thin-margin rate is growing much faster than the mean margin is shrinking, and
+550 and 575 are needed to know its shape.*
+
+#### What this run cannot say
+
+* **No speed cross-check exists at 525.** `BEMFREF` is absent entirely — 525 is
+  not in the fixture's `ORACLE`, so `reference_line` returns `None` and the
+  coast-vs-loop identity, the speed comparison and the current comparison all
+  silently vanish. Both reviews predicted this; it is now observed. The
+  within-run coast identity is the replacement and it is still unbuilt host work.
+* **Nothing is qualified.** `RUNG 52%: NOT PASSED (only 0 run(s) on this ELF at
+  52%)` — the fixture cannot record a rung above 500 at all, so these are three
+  exploratory runs and the goal's 3/3 is not claimable here by construction.
+* **`dep970_*` is vacuous as predeclared** (longest run 8 scans = 0.8 ms against
+  a ~50 ms persistence), so this says nothing about a droop stop. The droop
+  instrument still needs fractions in 975–995.
+
+#### Where this leaves 60%
+
+Two of the three blockers that have been argued about for a dozen entries are
+now measured and **neither is a wall**: the current at 60% projects to 80–90% of
+the 3 A clamp in CV (E236, and the 525 point confirms the method), and the mean
+timing margin at 60% is +4 µs. **The third — the thin-margin rate — is the one
+that grew, and it is the only one that has never had a second data point.**
+That is what 550 needs to answer, and it is the next run rather than the next
+argument.
