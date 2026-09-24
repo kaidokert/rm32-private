@@ -151,7 +151,10 @@ def reference_line(capture: pathlib.Path) -> str | None:
         f"BEMFREF duty_tenths={duty} coast_ehz={coast_ehz} loop_ehz={loop_ehz} "
         f"oracle_ehz={ref_ehz} speed_pct={speed_pct:+.1f} speed_within_5pct={int(abs(speed_pct) <= 5.0)} "
         f"hold_ma={hold_ma} oracle_ma={ref_ma} current_pct={cur_pct:+.1f} "
-        f"zc_rate_permille={rate.get('zc_rate_permille_of_expected', '?')} "
+        # The circular metric is not printed as the run's rate any more: it
+        # measures truncation (E172). The gate's own quantity is computed by
+        # `cohort.parse` and printed by the ladder summary instead.
+        f"zc_rate_circular_ignored={rate.get('zc_rate_permille_of_expected', '?')} "
         f"zc_permille_of_6x_coast={zc_rotor} "
         f"hold_ms={rate.get('hold_ms', '?')} verdict={'STOP' if stop else 'ok'}"
     )

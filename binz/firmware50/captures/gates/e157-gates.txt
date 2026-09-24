@@ -1,0 +1,8 @@
+bin_lines=969 (goal < 1500)
+bin_unsafe=3 (goal <= 10)
+bits_writes_outside_hw: bin=0 src=0 (goal 0)
+static_mut: bin=0 src=0 (goal 0)
+functions_over_100_lines=0 (goal 0)
+== host tests ==
+test result: ok. 314 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.57s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s

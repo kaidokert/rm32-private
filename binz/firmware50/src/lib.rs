@@ -48,6 +48,7 @@ pub mod fixed;
 /// Every register access, behind safe functions (target-only HAL glue).
 #[cfg(target_os = "none")]
 pub mod hw;
+pub mod oneshot;
 pub mod protection;
 pub mod ramp;
 pub mod rate;

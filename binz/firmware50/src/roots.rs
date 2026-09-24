@@ -851,6 +851,17 @@ pub fn tim16_init(rcc: &mut Rcc) {
 /// line masked or inside a critical section).
 #[inline(always)]
 pub fn com_arm(us: u32, phase: u32) {
+    // **The one place that decides whether the one-shot may be armed**
+    // (`oneshot::arm_allowed`, host-tested with interleavings): a latched stop
+    // refuses, so work already in flight -- COMP mid-acceptance when the guard
+    // trips above it -- cannot re-create timer activity after the bridge is
+    // de-energised. Callers no longer have to remember.
+    if !crate::oneshot::arm_allowed(
+        S.com().stopped.load(Ordering::Relaxed),
+        S.com().active.load(Ordering::Relaxed),
+    ) {
+        return;
+    }
     let arr = if us < 2 {
         1
     } else if us > 0xFFFF {
@@ -858,6 +869,12 @@ pub fn com_arm(us: u32, phase: u32) {
     } else {
         us - 1
     };
+    // `oneshot::ARM_ORDER`, straight-line: **disarm, stamp, purpose, enable**.
+    // The disarm comes first so nothing can dispatch while the bookkeeping is
+    // half written -- with COM above COMP a firing from the *previous* arm
+    // could otherwise land between the stores and the configuration and be
+    // served as the new purpose.
+    hw::com_timer::disable_interrupt();
     let now_raw = hw::clock::raw() as u32;
     S.com()
         .sched_raw
@@ -868,6 +885,9 @@ pub fn com_arm(us: u32, phase: u32) {
 
 /// Stop the one-shot and forget any armed event.
 pub fn com_stop() {
+    // Latch first: from here every `com_arm` is refused, including one already
+    // in flight below this context (campaign 9 step 2).
+    S.com().stopped.store(true, Ordering::Relaxed);
     hw::com_timer::stop();
     S.com().phase.store(0, Ordering::Relaxed);
     hw::nvic::unpend(stm32::Interrupt::TIM16);

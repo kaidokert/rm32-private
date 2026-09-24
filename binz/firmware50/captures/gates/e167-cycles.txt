@@ -1,0 +1,22 @@
+== ADC_COMP
+loops (back-edges)   2, bounds supplied [12, 12]
+longest path         989 cycles @ 0 wait states
+== TIM16
+loops (back-edges)   0, bounds supplied [12, 12]
+longest path         333 cycles @ 0 wait states
+== TIM6_DAC_LPTIM1
+loops (back-edges)   0, bounds supplied [12, 12]
+longest path         204 cycles @ 0 wait states
+== DMA1_CHANNEL1
+loops (back-edges)   0, bounds supplied [12, 12]
+longest path         78 cycles @ 0 wait states
+== structure
+bin_lines=980 (goal < 1500)
+bin_unsafe=3 (goal <= 10)
+bits_writes_outside_hw: bin=0 src=0 (goal 0)
+static_mut: bin=0 src=0 (goal 0)
+functions_over_100_lines=1 (goal 0)
+    111  roots.rs:com_root (line 908)
+== tests
+test result: ok. 314 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.54s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s

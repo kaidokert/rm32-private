@@ -18,3 +18,12 @@
 # `python scripts/manifest_hashes.py`.
 /captures/*
 !/captures/MANIFEST-hashes.txt
+
+# Python bytecode: four .pyc files reached the first commit (E174).
+__pycache__/
+*.pyc
+
+# The gate outputs entries cite ARE committed -- they are small text files and
+# an entry that cites an uncommitted artefact cites nothing (E174).
+!/captures/gates/
+!/captures/gates/*

@@ -29,6 +29,9 @@ OUT = REPO / "captures" / "MANIFEST-hashes.txt"
 # artefacts entries cite. `__pycache__` and the fixture's mutable ladder state
 # are excluded -- the first is noise, the second changes with every run.
 SKIP = {"__pycache__"}
+# The fixture rewrites this on every run, so a `--check` would report it as
+# CHANGED for a reason unrelated to tampering (E174).
+SKIP_FILES = {"ladder_state.json"}
 
 
 def entries() -> list[tuple[str, int, str]]:
@@ -36,7 +39,7 @@ def entries() -> list[tuple[str, int, str]]:
     for p in sorted((REPO / "captures").rglob("*")):
         if not p.is_file() or p.name == OUT.name:
             continue
-        if any(part in SKIP for part in p.parts):
+        if any(part in SKIP for part in p.parts) or p.name in SKIP_FILES:
             continue
         h = hashlib.sha256(p.read_bytes()).hexdigest().upper()
         rows.append((p.relative_to(REPO).as_posix(), p.stat().st_size, h))

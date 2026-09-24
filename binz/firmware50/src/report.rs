@@ -722,10 +722,18 @@ mod tests {
     #[test]
     fn the_rate_identity_is_only_truncation() {
         fn permille(hold_ms: u32, hold_acc: u32) -> u32 {
-            let r = RunReport { closed_us: hold_ms * 1_000, hold_us: hold_ms * 1_000, hold_acc, ..RunReport::default() };
+            let r = RunReport {
+                closed_us: hold_ms * 1_000,
+                hold_us: hold_ms * 1_000,
+                hold_acc,
+                ..RunReport::default()
+            };
             let t = text(|b| r.emit(b));
             let line = t.lines().find(|l| l.starts_with("BEMFRATE ")).unwrap();
-            let tok = line.split_whitespace().find(|k| k.starts_with("zc_rate_permille_of_expected=")).unwrap();
+            let tok = line
+                .split_whitespace()
+                .find(|k| k.starts_with("zc_rate_permille_of_expected="))
+                .unwrap();
             tok.split('=').nth(1).unwrap().parse().unwrap()
         }
         // 20774 ms / 256577 accepts = 80.97 µs a sector: floor 80, 80/80.97.

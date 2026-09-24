@@ -419,6 +419,12 @@ pub struct Com {
     /// Of those, the ones that landed inside `com_arm`'s own write sequence:
     /// the hazard's own window (E170).
     pub arm_preempts: AtomicU32,
+    /// **A stop has latched**: `com_stop` sets it and only the foreground's
+    /// handover clears it, so work that was already in flight -- COMP
+    /// mid-acceptance when the guard trips -- cannot re-create timer activity
+    /// after the bridge is de-energised. `oneshot::arm_allowed` is the rule
+    /// and `com_arm` is the only caller (campaign 9 step 2).
+    pub stopped: AtomicBool,
 }
 
 /// A scan word: `core`'s `AtomicU32`, whose load and store are a plain
@@ -672,6 +678,7 @@ static COM: Com = Com {
     plans: Seam::new([None; 8]),
     preempts: u(),
     arm_preempts: u(),
+    stopped: f(),
 };
 static SCAN: Scan = Scan {
     seq: u(),

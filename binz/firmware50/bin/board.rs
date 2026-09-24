@@ -518,6 +518,10 @@ impl Hal for Board {
         com.preempts.store(0, Ordering::Relaxed);
         com.arm_preempts.store(0, Ordering::Relaxed);
         com.blank_latched.store(0, Ordering::Relaxed);
+        // Release the stop latch: this handover is the only thing that may,
+        // and it does so before `active`, so no arm is admitted earlier
+        // (campaign 9 step 2, `oneshot::arm_allowed`).
+        com.stopped.store(false, Ordering::Relaxed);
         com.active.store(true, Ordering::Release);
         roots::guard_arm_tracking();
         hw::nvic::unpend(stm32::Interrupt::TIM16);

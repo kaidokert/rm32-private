@@ -1,0 +1,20 @@
+== gates E172
+root                 ADC_COMP
+longest path         989 cycles @ 0 wait states
+root                 TIM16
+longest path         333 cycles @ 0 wait states
+root                 TIM6_DAC_LPTIM1
+longest path         204 cycles @ 0 wait states
+root                 DMA1_CHANNEL1
+longest path         78 cycles @ 0 wait states
+bin_lines=986 (goal < 1500)
+bin_unsafe=3 (goal <= 10)
+bits_writes_outside_hw: bin=0 src=0 (goal 0)
+static_mut: bin=0 src=0 (goal 0)
+functions_over_100_lines=0 (goal 0)
+test result: ok. 315 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.28s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+DMA1_CHANNEL1: identical, 37 instructions
+ADC_COMP: identical, 699 instructions
+TIM16: identical, 306 instructions
+TIM6_DAC_LPTIM1: identical, 153 instructions

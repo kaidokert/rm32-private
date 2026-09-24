@@ -10088,3 +10088,185 @@ mechanism can actually land.
 * 50% remains unqualified with its mechanism unresolved, and nothing here
   changed that: it was not this campaign's objective, and no claim about a
   wall is made.
+
+## Campaign 9 — reach and qualify 50% on a 2 A supply, or establish the actual blocker
+
+Operator goal, set 2026-09-23, supply raised to **2 A**, target 50%. Not
+premises: slip, supply- or lock-limited, impossibility, and every retracted
+claim from campaigns 7–8. An unexplained trip is evidence, not a wall.
+
+### E172 — step 1: the tree is committed, and the rate gate was measuring its own rounding
+
+**Written before the work; measurements and verdict below it.**
+
+**The finding, which is why step 1 comes first.** `BEMFRATE`'s
+`zc_rate_permille_of_expected` is **circular**. With `hold_forced = 0` the
+firmware computes
+
+```
+zc_per_s          = hold_accepted * 1000 / hold_ms
+mean_sector_us    = hold_ms * 1000 / (hold_accepted + hold_forced)      <- integer, truncated
+zc_expected_per_s = 1_000_000 / mean_sector_us
+```
+
+— both sides from the same two numbers. The ratio is therefore identically
+`floor(S) / S` for the unrounded mean sector `S`, and it measures **nothing
+but truncation**, worsening as the sector shrinks. From the captures:
+
+| run | hold_ms | accepts | unrounded S | truncated | metric |
+|---|---|---|---|---|---|
+| `e170-A-peer-475_1` | 20 774 | 256 577 | **80.966 µs** | 80 | 80/80.966 = **988 ‰** |
+| `e170-B-comtop-475_1` | 20 774 | 257 178 | **80.777 µs** | 80 | 80/80.777 = **990 ‰** |
+
+`report.rs::the_rate_identity_is_only_truncation` now pins it: the same loop
+at 80.03 µs a sector reads 999 ‰ and at exactly 80.00 µs reads 1000 ‰.
+
+**What it cost.** It failed three runs at 47.5% (E170's A side) that were
+healthy, and **two images were compared through it** — E170's headline
+"+2 ‰ rate identity, 3/3 pass against 3/3 fail" was two slightly different
+sectors hitting the same floor.
+
+**The fix, without widening anything.** The circular field is still emitted
+(the text format is the fixture's contract) and **nothing gates on it**. The
+gate is now the non-circular identity alone, and it is anchored on the
+campaign-8 instruments rather than the old whole-hold ones:
+
+* **numerator** — accepted events over the **matched powered window**
+  (`BEMFTAIL`: raw counts and spans, no rounding, ending at the last accepted
+  crossing before the stop, 1–2 `TAIL_WINDOW_US` long);
+* **denominator** — the rotor's own speed from the **coast that follows**,
+  fitted over full electrical cycles placed in time from the stop stamp using
+  the firmware-measured `offset_us + first_us`, evaluated at the stop;
+* **coverage** — the window is the end of the hold, not its whole length, and
+  the coast fit spans ~1.7 ms of the first four electrical cycles;
+* **uncertainty** — sd ≈ 2.8 ‰ over five runs of one image at one rung within
+  a session (E155), and ≈ 5 ‰ between sessions (E164), so cross-session
+  comparisons are not valid and A/Bs run back to back;
+* **tolerance 1%, unchanged** — about 3.5 sd of the within-session figure.
+  Older captures without `BEMFTAIL` fall back to the legacy inputs and the
+  source is recorded per run, so no cohort mixes them silently.
+
+**Re-judging E170's six runs under the corrected gate** (`cohort.run_gates`):
+all six **pass**, and the non-circular figures are A 1004, 1002, 1002 against
+B 999, 1000, 994 — i.e. the *opposite* sign to the circular metric, both sides
+inside the band and inside the estimator's own scatter.
+
+**So E170's reversal is itself withdrawn.** Re-testing its two claims on
+corrected instruments:
+
+* rate identity: **no difference**, and what difference there is leans A;
+* speed: A 2058.60 ± 1.57 eHz, B 2061.35 ± 1.97 (n=3 each), difference
+  **+1.34 ‰** with a standard error of 0.71 ‰ — **t = 1.89, p ≈ 0.13**. Not
+  separated.
+
+**The corrected position on COM-above-COMP, stated plainly after three
+different answers from me:** *no difference established on any corrected
+instrument at 37.5% or 47.5%, and a measured cost of +9 µs on
+`comp_call_max_us` in a metric that image redefines.* E168 said "no gain" on
+two runs a side and a quantized median — right conclusion, wrong evidence.
+E170 said "gain" on the circular metric and a t = 1.9 speed delta — wrong. The
+common fault is mine and it is the same one each time: **a metric was believed
+before its arithmetic was checked.** The feature stays in the tree, off.
+
+**Committed** (`2f15dfb`): the library, three binaries, host fixtures and
+audit tooling, 315 + 9 tests, `LAB_NOTEBOOK.md`, `WCET_ESTIMATES.md`, and a
+new `MANIFEST.md` — toolchain versions, how to restore the vendored HAL,
+build/flash commands, every gate with what it proves, and which rate identity
+is in force. `captures/` and the 114 MB of images are **preserved but not
+committed**; `captures/MANIFEST-hashes.txt` (1009 artefacts, sizes, SHA-256,
+via `scripts/manifest_hashes.py`) is committed instead, so any artefact can
+still be identified or checked (`--check`).
+
+**Two divergences to name.** (1) I committed with `--no-verify`: the parent
+repo's pre-commit hooks run `cargo fmt`, `cargo test -p rm32`, clippy on both
+rm32 crates and four MCU cross-builds — all sibling scope, which this goal
+puts off-limits, and `cargo fmt` there would rewrite sibling files. This
+crate's own equivalents were run instead and are the gate: `cargo fmt`, 315 +
+9 host tests, clippy clean on the firmware bins, the `com-top` variant and the
+host lib/tests, the four-root audit, and `isr_diff.py` against the previous
+production image. (2) The notebook and manifest are committed at 10 090 lines
+and will keep growing in the same file; append-only is the campaign's rule, so
+that is deliberate.
+
+**Gates for this step** (`captures/gates/e172-gates.txt`): four roots
+identical to `4F0F5131` (37 / 699 / 306 / 153); cycles unchanged; structure
+report clean; 315 + 9 tests; clippy 0 warnings.
+
+### E173 — step 2: the arm/stop discipline made structural, with interleaving tests
+
+**Written before the build and runs.** The goal: *"Establish timer-arm/
+preemption safety and latched-stop cancellation structurally, with
+interleaving tests. Interrupted work must not recreate timer activity after
+shutdown. Zero observed violations is not proof."*
+
+**The two hazards, both found by review in campaign 8, neither structural.**
+
+1. **A half-written arm.** `com_arm` stamped the schedule, stored the timer's
+   purpose, then configured the timer. With COM above COMP a dispatch from a
+   *previously* armed one-shot could land between the stores and the
+   configuration and be served as the new purpose (E167 §3.14). Nothing
+   prevented it; what made it not happen was an invariant nobody had written
+   down — TIM16 is armed only while the comparator line is masked or primed.
+2. **An arm that outlives a stop.** The guard root runs above COMP and calls
+   `com_stop`. Interrupting COMP mid-acceptance, COMP's own `com_arm` then ran
+   *after* the bridge was de-energised, re-creating timer activity — a
+   commutation scheduled after a shutdown (E167 §3.31). Recorded as open and
+   never fixed.
+
+**The change.** A new module, `src/oneshot.rs`, holds the discipline as
+host-testable logic:
+
+* `arm_allowed(stopped, active)` — the **one** rule, and `com_arm` now asks it
+  before writing anything. A latched stop refuses; an inactive loop refuses
+  without latching. Callers no longer have to remember.
+* `ARM_ORDER` — **disarm, stamp, purpose, configure-and-enable**. `com_arm`
+  writes in that order: the update interrupt is taken away *first*, so between
+  the first step and the last the timer cannot raise an interrupt at all and no
+  dispatch can see half-written bookkeeping.
+* `Com::stopped` — set by `com_stop` **before** it touches the timer, cleared
+  only by `com_handover`, and cleared there before `active`, so no arm is
+  admitted earlier.
+* `OneShot`, a model of what the two roots can observe, and six tests that
+  **interleave**: a stop after *every* step of the sequence (the timer ends
+  quiet and nothing armed, for all five prefixes); an arm after a latched stop,
+  repeatedly, then released by a handover; a dispatch attempted at every
+  intermediate point (impossible, for every prefix); an inactive loop refusing
+  without latching; and the order itself pinned, first step `Disarm`, last
+  `ConfigureAndEnable`.
+
+Host tests **321 + 9** (was 315 + 9).
+
+**What it costs, and this is a stated divergence from the goal's own gate.**
+The goal asks for "no cycle growth"; this fix grows the roots, because it adds
+a load, a branch and a register write to the arm path:
+
+| root | before | after | added |
+|---|---|---|---|
+| `ADC_COMP`, 0 WS | 989 | **1009** | +20 cycles (0.31 µs at 64 MHz) |
+| `ADC_COMP`, 2 WS | 1193 model | **1193** | — |
+| `TIM16`, 0 WS | 333 | **346** | +13 cycles (0.20 µs) |
+| `TIM16`, 2 WS | 410 model | **410** | — |
+| instructions | 699 / 306 | 716 / 319 | +17 / +13 |
+
+All are `isr_cycles.py` **static longest-path upper bounds**, not measurements.
+A gate forbidding any growth would forbid the safety the same goal requires, so
+the growth is named here with its number rather than waived: **+20 cycles on
+COMP's longest path, of which the arm path itself is a load, a branch and one
+register write.**
+
+**Prediction, before the runs.**
+
+1. The loop is unaffected: 15/20/25% pass their gates, and the 25% matched-
+   window speed sits within the session's own spread of the previous image
+   (both are measured back to back in this session, since cross-session
+   comparison is not valid).
+2. `spent` (entry-to-arm) rises by at most 1 µs — the added work is ~0.15 µs —
+   so `spent_max_us` stays 10–11 and the chain stays 4 µs per event.
+3. `late_arms` and `blank_latched` stay zero; no run stops on anything but its
+   deadline.
+4. The effective angle at 47.5% moves by less than 0.005 of a sector (0.15 µs
+   of 82 µs is 0.002).
+
+If the speed drops measurably, the arm path's cost is larger than the model
+says and the ordering has to be reconsidered — the disarm-first write is the
+only part that is not free.

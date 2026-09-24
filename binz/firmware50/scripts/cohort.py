@@ -11,6 +11,8 @@ inside it (``check``).
 Gates (shared with ``bemf_run.py``):
 
 * run gates 1-3: stop reason 2 (deadline), hold >= 30 s at target, forced 0,
+  **one** rate identity -- the non-circular one (E172 replaced the pair of
+  tests, of which the first measured only truncation) --
   accepted rate within 1% of the loop's expectation AND of 6 x coast eHz,
   `unstable` non-zero and the blanking gate witnessed (``too_early`` non-zero,
   or ``blank_arms`` non-zero once E134 enforces the gate with the line masked),
@@ -135,6 +137,7 @@ def parse(path: pathlib.Path) -> dict | None:
         "unstable": int(rec["BEMFDONE"].get("unstable", 0)),
         "hold_ms": int(rec["BEMFRATE"].get("hold_ms", 0)),
         "rate_permille": int(rec["BEMFRATE"].get("zc_rate_permille_of_expected", 0)),
+        "has_tail": bool(rec.get("BEMFTAIL")),
         **_rate_vs_coast(rec, zc, coast),
         "coast_ehz": coast,
         "coast_crossings": int(rec["COASTTIMING"].get("trans", 0)),
@@ -221,6 +224,13 @@ def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
             f"rate vs coast {r['rate_vs_coast_permille']} permille outside 1% "
             f"({r['rate_source']})"
         )
+    # A silent fallback to the legacy inputs would compare unlike quantities,
+    # so it is a stated failure rather than a note nobody sees on a passing
+    # run (E174 found that `rate_source` only surfaced on failure).
+    if r["rate_source"].startswith("legacy") and r.get("has_tail"):
+        fails.append("rate fell back to the legacy inputs although BEMFTAIL was present")
+    if r["rate_source"] == "no coast":
+        fails.append("no coast: the rate identity could not be computed")
     # The detector must be seen refusing edges, not just accepting them. Two
     # refusal witnesses: the persistence filter (`unstable`) and the blanking
     # gate. From E134 the gate is enforced in hardware -- the line stays masked
@@ -268,7 +278,10 @@ def rung_oracle(runs: list[dict]) -> list[str]:
     return fails
 
 
-QUANTITIES = ("accepted", "rate_permille", "coast_ehz", "hold_ma")
+# `rate_permille` is deliberately absent: it is the circular metric (E172),
+# and `check()` banded it here long after `run_gates` stopped gating on it --
+# which made "nothing gates on it" false, as the step-1 review found (E174).
+QUANTITIES = ("accepted", "rate_vs_coast_permille", "coast_ehz", "hold_ma")
 
 
 def cohort() -> list[dict]:
