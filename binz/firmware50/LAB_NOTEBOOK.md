@@ -16330,3 +16330,448 @@ item 3's open question, and its falsifier stands.
 is that half of what it asks for cannot currently be recorded**: PSU conditions
 yes, thermal conditions not at all, and the bus quantity its own droop guard
 would judge is not emitted by the images that would carry it.
+
+### E221 — the evidence review of E218, verbatim
+
+Context-free, given the predeclaration, the source and the captures, and asked
+to recompute every quantity E218 rests on. It was told the most important check
+was whether `DROOP_SCANS` counts scans or blocks. Reproduced unedited;
+disposition in E223.
+
+---
+
+## Review of E218 — recomputed findings
+
+Read-only; nothing built, flashed, or edited. All line numbers from the working tree as read.
+
+---
+
+### 1. The slow-droop gap — **CONFIRMED (mechanism), WRONG in one detail (the axis), and the "1%" lower bound is UNSUPPORTED**
+
+- `FastBusSag` judges `bus_mean` against `filtered()`, which is an EWMA of *its own input* — `observe()` computes the verdict at `src/protection.rs:377-390` and only then does `self.filt_bus_q8 = ewma(self.filt_bus_q8, bus)` (`protection.rs:394`). `SAG_FILTER_SHIFT = 11` (`protection.rs:306`) = 2048 scans = **207 ms** at 9901 Hz. So E218's core claim is right: any droop slower than the filter becomes its own reference. **CONFIRMED.**
+- Detail correction: it does **not divide** — the test is the cross-product `bus*fv*100 < fb*vref*95` (`protection.rs:384-386`), VREF-normalised. Conceptually equivalent, but "divides" is not what the code does, and the VREF normalisation means a whole-rail (VDDA) droop is also cancelled — a second blindness E218 does not mention.
+- Passband, recomputed: coverage is a **rate** criterion, not a depth band. The guard trips when the input sits >5% below a reference decaying with tau = 207 ms, for 3 consecutive scans (0.30 ms). A sustained ramp is invisible below roughly **5% per 207 ms ~= 24%/s**; a step deeper than 5% trips in 0.3 ms. So the uncovered region is **any depth up to the absolute floor, at any rate below ~24%/s** — E218's "~1% to ~28%" describes depth and so mislabels the axis. The "~1%" lower edge is not derived from anything and does not exist as a boundary.
+- Only slow-side cover: **CONFIRMED.** On the drive path `validate_raw_feedback` is called with `PhaseCodePolicy::RetainRails` (`src/run/states.rs:316`), which skips both the phase-code band *and* the `BUS_FLOOR_NUM` cross-product (`protection.rs:169-184` — that branch is `Band`-only, i.e. dead on the drive path). The live floor is the separate per-scan `scan.bus < self.base.bus_floor_code` at `states.rs:317`.
+- Floor depth, recomputed: `BUS_FLOOR_MV = 8400`, `BUS_DIVIDER_X100 = 1194` (`src/run/policy.rs:133-134`), `bus_floor_code = 8400*100*4095/(1194*vdda_mv)` (`src/run/measure.rs:93-95`) -> **873** at VDDA 3300 mV. `873/1215 = 0.7185` -> **28.15% down**. E218's "code ~873 ... 28%" **CONFIRMED**.
+- Not mentioned but relevant: the gate driver's own thermal/UV shutdown reports on nFAULT, which the guard root checks *every* 101 us tick (`src/roots.rs:849-852` -> `Reason::Driver`). So "no thermal coverage at all" overstates the gap.
+
+### 2. The three constants — **the numbers are cherry-picked; 0.90 has only ~1.0 point of observed margin, not the implied comfort. Partly WRONG.**
+
+Recomputed over all 1019 captures (`bus_ref` from `BEMFDONE`, `filt_bus` from `BEMFSAG`, `bus_mean` from the `SAGSLOW`/`SAGROW` rings of the six sag-image captures):
+
+| quantity | E218 | recomputed |
+|---|---|---|
+| healthy 50% `filt_bus/ref_bus` | 0.987 | **0.982-0.988** on baseline images (min over all 50% healthy: 0.967, `captures/2026-09-23/c7-explore500_01.txt`). 0.987 is at the *optimistic* end. |
+| E201 CC `filt_bus/ref_bus` | 0.923 | **0.9293-0.9515** (`captures/sag/e200-16a-s1..s5.txt`). 0.923 is the E201 table's *tail bus_mean* 1122, not filt_bus. |
+| floor | 0.718 | **0.7185** OK |
+
+**Would 0.90 have fired?** Not on any run-aggregate, but the margin is far thinner than E218 implies:
+
+- Minimum 8-scan `bus_mean` anywhere in the corpus: **1098 / 1217 = 0.9022** — `captures/sag/e200-16a-s2.txt` (fast ring, a CC run that *completed*). That is **2.7 ADC codes** above the proposed line.
+- Minimum decimated `bus_mean`: **1108 / 1217 = 0.9104**, same file. CC-run medians 0.930-0.935; **zero** samples below 0.910 in any ring.
+- Healthy 50%: minimum ring `bus_mean` **1184/1216 = 0.9721** (`captures/sag/e190-500-s5.txt`, `e190-500-s6.txt`).
+- Coverage caveat that E201 itself states and E218 drops: the rings are **512 scans (52 ms) + 1024 decimated samples (3.3 s) out of ~786 900 judgements (79 s)** — ~4%. The claim "does not fire on anything this bench has actually produced" is unverified for 96% of every run.
+
+So: the line is below every *observed* sample, by 0.2% in the worst case. Calling that "below every observed CC run" is true but materially misleading, and at 60% (where CC on the 3 A clamp is the *expected* condition) crossing 0.90 is likely — which is the guard's purpose, but it means prediction 1's scope must stay <=50%.
+
+### 3. `DROOP_SCANS = 4950 ~= 500 ms` — **CONFIRMED. The suspected 8x error does not exist.**
+
+This is the check the brief flagged as most important, and E218 is right.
+
+- `RailMean` is a **sliding** 8-sample mean, `feed()`ed on *every* scan (`states.rs:309`; `protection.rs:245-256`); `ready()` latches true after the 8th sample and never goes false (`protection.rs:259-262`). `sag.observe(bus_mean, vref_mean)` therefore runs **once per scan**, not once per block (`states.rs:325-332`).
+- Empirically confirmed: `SAGSNAP judged=786918` vs `BEMFGUARD ticks=786939` in `captures/sag/e200-16a-s1.txt` — 1:1 with the 9901 Hz guard tick, 21 apart over 79 s.
+- Rate: `pace.start(101.micros())` at `bin/board.rs:826` -> 1/101 us = **9900.99 Hz**. 4950/9901 = **499.9 ms**. OK And 4950/3 = 1650x the sharp streak OK.
+- Context error worth fixing: E218's cohort says "the **ISR** gains `SlowDroop::observe` on the drive path". It does not — `scan_pass` runs in **thread mode** (`src/sagtrace.rs:234` says so explicitly), and the guard ISR (`roots.rs:824-871`) contains no bus or current protection at all. The WCET argument should be about the main loop's per-scan budget, not ISR cost.
+
+### 4. The 2600 mA ceiling — **the justification is WRONG by a factor that matters. This is the finding to act on.**
+
+- `RAW_LIMIT = 31_857` (`protection.rs:425`), `BLOCK_SCANS = 100` (`protection.rs:421`) -> 100/9901 = **10.1 ms**; `block_milliamps(31857) = 31857*4000/31857 = 4000 mA`; hard stop at `over_streak >= 2` (`protection.rs:541`). **E218 CONFIRMED** on all three.
+- `hold_ma` at 50%: E218 says **1782-1877**. Recomputed: **1757-1846** on image `14CE44E7`, **1651-1803** on `63C0061D`, **1855-1877** on the pre-`worst_ma` campaign-7 image. The quoted range is a **three-image splice** — the exact misattribution class E217 SS3.7 already accepted a correction for — and both ends are wrong for any single image.
+- "**Worst hold block is 2116 mA measured**" — **WRONG twice.** (a) `worst_ma` is the worst block of the **whole run**, not hold-windowed (`protection.rs:581-591`, `run/mod.rs:231`; the notebook says so at lines 13631 and 13235). (b) 2116 is one file — `captures/2026-09-24/e195-rung-500_03.txt`, the run that **stopped on LateArm** — and the notebook's own corrected cohort is 2013-2365 (line 15026) / 2092-2252 baseline-only (line 14171, accepted at 14481).
+- **Recomputed worst block at 50%: 2365 mA** (`captures/sag/e190-500-s6.txt`, `worst_residual=18837`), corpus maximum at any legitimate rung. 2098 mA already appears at 45%.
+- Therefore **2600 mA is +9.9% above the worst measured 50% block** (and +15.5% over the baseline-image max 2252), **not "~39%"**. The 39% figure is 2600/1877 — computed against a *hold mean*, from a *different image* — while the sentence it appears in says "worst measured 50% hold".
+- And the margin is inside the proxy's own error: `zero_drift_ma` at 50% runs **-92 to -253 mA** (`e195-rung-500_03.txt`), i.e. the zero drift alone (253) exceeds the entire headroom (235) between 2600 and the worst observed block. E218 names this risk qualitatively and then contradicts it quantitatively.
+- Would 2600 have fired on a completed run? Not on the single worst block alone (two consecutive over-blocks required), but a 2365 mA block occurred in a **healthy, completed** run and nothing in the corpus records whether a *second* consecutive block was near it — `worst` keeps only the maximum. **Prediction 2 is not safe as stated.** If the intent is a backstop and not a precision limit, the constant should be re-derived from 2365 (e.g. >=3000), or the persistence lengthened, before build.
+- Also: `captures/2026-09-24/e196-pi-avgcurrent_01.txt` reports `worst_ma=172553` — the proxy can produce nonsense when the zero block is wrong. A milliamp ceiling inherits that failure mode with no plausibility gate.
+
+### 5. Temperature / channel 12 — **channel identity CONFIRMED; two required changes MISSING; the `adc_hz` reasoning is WRONG**
+
+- Channel 12 is the internal temperature sensor: `ref/stm32g0xx-hal/src/analog/adc.rs:480-484` — `int_adc! { VTemp: (12, tsen), VRef: (13, vrefen), VBat: (14, vbaten) }`. **CONFIRMED**, and it requires `ADC_CCR.TSEN`, which this firmware **never sets** — `src/hw/adc.rs:133` sets only `vrefen`. E218 does not mention TSEN; without it channel 12 converts noise.
+- Sampling time: `smpr.smp1 = cycles79_5` for *all* channels (`adc.rs:155`), ADC clock = PCLK/2 = **32 MHz** (`adc.rs:131`, `Config::pll()` at `board.rs:785`) -> 79.5 cycles = **2.48 us** sampling. ST specifies a minimum sampling time for the internal temperature sensor (and for VREFINT) in the us range, above this. I **could not confirm the exact figure** from any document in this tree — **UNCERTAIN**, but it needs checking before item 3 is believed to yield a usable reading; the fix is `SMPR.SMP2` + `SMPSEL` for that channel, which E218 also does not mention.
+- Current consumers of `SCAN_LEN` (`adc.rs:44`, derived from `CHANNELS.len()`): `DmaCell`/`DMA_BUF` (`adc.rs:92,96`), NDTR at **two** sites (`adc.rs:208` in `dma_start`, `adc.rs:252` in `resync`). Beyond `SCAN_LEN`, a sixth channel touches: `RawScan` (5 fields, `protection.rs:111-118`), the DMA root's build (`adc.rs:295-301`), the seqlock `Scan` struct + `publish` + `snapshot` (`src/shared.rs:451-497` — one extra atomic store in the DMA ISR), 8 `RawScan {...}` literals across `src/hw/adc.rs`, `src/protection.rs`, `src/run/hal.rs`, `src/run/sim.rs`, `src/shared.rs`, `bin/board.rs`, plus the report. Position derivation (`scan_index`) is automatic and correct — ch 12 sorts before 13, and `IX_VREF` moves from 4 to 5 with no manual edit. The `const _` ascending assertion (`adc.rs:73-79`) still holds.
+- **"Item 3 will change `adc_hz`" is WRONG on both counts.** (a) `adc_hz` is a **hard-coded literal**: `board.kv("adc_hz", 9901)` (`bin/board.rs:871`). It cannot change no matter what the ADC does — so prediction 3 is **not falsifiable from the field it names**, and the stated falsifier ("if `adc_hz` ... changes at all, item 3 is reverted") can never fire. (b) The scan rate is set by TIM6's period, not by channel count: per-channel time = (79.5 + 12.5)/32 MHz = 2.875 us, so **5 ch = 14.4 us, 6 ch = 17.25 us**, both far inside the 101 us trigger interval. De-cohering *is* load-bearing and *is* real (101 us vs the 10 kHz carrier, `board.rs:826`), but a sixth channel does not perturb it. The observable at risk is ADC `OVR`/DMA alignment and the DMA-ISR store count — neither of which E218's falsifier watches.
+
+### 6. The duty cap — **premise CONFIRMED; the clamp inventory is INCOMPLETE**
+
+- `SIXSTEP_DUTY_CAP = 500` at `src/run/policy.rs:102` OK; the "nothing in the firmware stops a run between 2 A and 4 A" comment at `policy.rs:93-97` OK (E218 cites 89-97).
+- Clamp at `src/sixstep.rs:93` OK; climb clamp at `src/run/mod.rs:475` OK; report prints the **pre-clamp** request `target_duty_tenths` at `run/mod.rs:347` (and `:374` for restarts) OK.
+- **Every duty clamp/limit in the tree** (E218 names three of six):
+ 1. `sixstep::plan`, `if duty_tenths > duty_cap { duty_cap }` — `sixstep.rs:93`.
+ 2. **`policy::sixstep_ccr_of`, an independent clamp hard-wired to `SIXSTEP_DUTY_CAP`** — `policy.rs:156-162`. Used by the witness OFF-window gate (`states.rs:298`). **Not named in E218.** Same constant, so it follows a cap raise, but it is a second site.
+ 3. climb selector `.min(SIXSTEP_DUTY_CAP)` and `.max(375)` floor — `run/mod.rs:475,477`.
+ 4. `FoldbackGovernor::clamp` to the ratcheting ceiling — `protection.rs:710-718`, applied at `states.rs:627,819,854`. Ceiling starts at `target_tenths.max(VF_FLOOR_TENTHS)` (`policy.rs:268-270`), so it does **not** cap at 500.
+ 5. `duty::Envelope::admit` with `ENVELOPE_MAX = 300` / `ENVELOPE_MAX_DUTY50 = 500` (`src/duty.rs:30,35,80-91`) — a stop, not a clamp, but it has **no live consumer**: `bin/board.rs` imports the constants only to print them (`board.rs:873-875`). Dead for the six-step path; the banner still advertises `envelope_max=300`, which will read as a 30% ceiling next to a 60% cap.
+ 6. `Step`/plan validity limits (`period > 65536` -> `None`, `sixstep.rs:80`) — unaffected.
+- Existing field revealing a clamp? **`ceiling_tenths`** (`report.rs:330-337`, printed at `report.rs:677-678`) reveals *foldback* only. With target 600 and cap 500 the governor ceiling is 600, so `ceiling_tenths` would print 600 while the CCRs carry 500 — i.e. **no existing field exposes the cap clamp**, and today `ceiling_tenths == duty_tenths` in every 50% capture. E218's premise is **CONFIRMED**, and `ceiling_tenths` becomes a *second* misleading pre-clamp field once the cap is raised.
+- Is 600 reachable? Through `sixstep::plan`/`sixstep_ccr_of` yes, once the constant moves (all three CCRs equal, `sixstep.rs:105-107`). Note the side effect E218 defers: `AdvancePolicy::level` returns **22** for anything >=350 (`policy.rs:252-258`), so a 60% rung inherits advance 22 — the level E217 SS1 identified as the divergence — automatically.
+
+### 7. Prediction checkability — **2 of 5 falsifiable today; 1 unfalsifiable as written; 1 self-inconsistent**
+
+| # | judged on | status |
+|---|---|---|
+| 1 | `droop_worst_permille` — **new field** | Retrospectively checkable **only** on the 6 `sag-capture` images, via min `SAGSLOW`/`SAGROW` `bus_mean`. There the healthy 50% minimum is **972 permille** — 12 above the predicted 960 bound, on 4% run coverage. Production captures carry only `bus_min` (single scan, down to **865 permille**) and `filt_bus` (a tail EWMA, not a minimum). **UNCERTAIN / weakly checkable.** |
+| 2 | `worst_ma` — exists | Falsifiable, but its stated basis (2116) is wrong; the real bar is 2365. **WRONG basis.** |
+| 3 | `adc_hz` — exists but is a **literal** (`board.rs:871`) | **Unfalsifiable as written**; and the mechanism predicted does not exist (SS5). |
+| 4 | `applied_cap` — **new field** | Self-inconsistent: "`target_duty_tenths` will equal `applied_cap` at every rung at or below the cap" is false by construction (150 != 500 at the 15% rung). Also "500 on every archived-image rerun" — archived images have no such field. **Needs rewriting.** |
+| 5 | `reason=2`, `ceiling_tenths`, `hold_ms` — all exist | Falsifiable today. **CONFIRMED.** |
+
+### 8. Direct source contradictions
+
+1. `bin/board.rs:871` — `board.kv("adc_hz", 9901)` is a literal; E218 treats it as a measurement and builds item 3's only falsifier on it. **WRONG.**
+2. `src/sagtrace.rs:234` + `src/roots.rs:824-871` — `scan_pass` is thread mode and the guard ISR has no bus/current protection; E218's cohort says "the **ISR** gains `SlowDroop::observe`". **WRONG.**
+3. `src/protection.rs:384-386` — the comparison is a cross-product, not a division ("divides `bus_mean` by..."). Cosmetic, but it also hides the VREF normalisation. **Imprecise.**
+4. `src/hw/adc.rs:133` — only `vrefen` is set; item 3 needs `tsen` and E218 does not say so. **Omission.**
+5. `src/protection.rs:581-591` / notebook 13631 — `worst_ma` is whole-run, not hold-windowed; E218 calls 2116 a "worst hold block". **WRONG.**
+6. `src/run/policy.rs:156-162` — a second `SIXSTEP_DUTY_CAP` clamp site E218's item-4 inventory misses. **Omission.**
+
+---
+
+### Gate recommendation
+
+**Items 1 and 3 are arithmetically sound where it counts** — `DROOP_SCANS = 4950` really is 500 ms (the suspected 8x error is not present), the slow-droop blindness is real, the 28% floor is the only cover, and channel 12 really is the temp sensor.
+
+**Do not build as predeclared.** Three things need fixing first:
+
+1. **Item 2's constant.** The worst measured 50% block is **2365 mA**, not 2116; 2600 is **+9.9%**, not +39%, and the run-to-run zero drift (up to 253 mA) is larger than that margin. Re-derive, or state explicitly that a trip at 50% is expected and acceptable.
+2. **Item 3's falsifier.** `adc_hz` is a literal and the mechanism predicted (channel count perturbing the 9901 Hz rate) does not exist; a 6-channel scan is 17.25 us inside a 101 us window. Replace the falsifier with something observable (ADC `OVR`, DMA alignment, measured per-scan ISR cost), and add `CCR.TSEN` plus the temp sensor's minimum sampling time to the change list.
+3. **Predictions 3 and 4** are unfalsifiable/self-inconsistent as written; prediction 1's bound (960 permille) has only 12 of retrospective margin and is only checkable on the diagnostic image.
+
+Item 1's 0.90 line is defensible but should be stated honestly: **the closest observed 8-scan mean is 0.9022** (`captures/sag/e200-16a-s2.txt`), on 4% of one run's coverage — not "comfortably below everything this bench has produced".
+
+### E222 — the adversarial review of E218, verbatim
+
+Dispatched in the same message as E221, never shown E221's verdict. Reproduced
+unedited; disposition in E223.
+
+---
+
+I have what I need. Report follows.
+
+---
+
+# Adversarial review of E218 — the protection-and-visibility candidate
+
+**Verdict: do not build as written.** Item 1's threshold is refuted by captures already in this repo, item 2's threshold makes the campaign's own goal rung unreachable, item 3's stated falsifier cannot fire and its sensor is under-sampled at the configured sample time, and item 4 raises a cap the host fixture cannot record or judge above. Two of the four items should be dropped or re-derived; one (the reporting half of item 4, plus one field E218 does not mention) is worth building alone, today.
+
+---
+
+## 1. BLOCKING — `SlowDroop` at 900/1000 does not fire on the condition it was created for. Its own motivating evidence sits *above* the line.
+
+E218 justifies item 1 as covering "the CC-knee signature" (`LAB_NOTEBOOK.md` E218, item 1), then sets `DROOP_NUM/DROOP_DEN = 90/100` explicitly "**below** every observed CC run, so it does not fire on anything this bench has actually produced."
+
+Those two sentences contradict each other. E201's runs are *the* confirmed CC condition on this bench — operator-confirmed clipping at 1.6 A (`LAB_NOTEBOOK.md:13743-13760`). Their ratios, from the captures:
+
+| population | `filt_bus / ref_bus`, permille | files |
+|---|---|---|
+| healthy 50%, 2.0 A | **967 - 988** | `captures/sag/c7-explore500_01.txt` ... `e196-rung-500_0*.txt` |
+| 1.75 A (E200, "proved nothing") | 984 | `captures/sag/e199-175a-s1.txt` |
+| **confirmed CC, 1.6 A (E201)** | **929, 929, 930, 930, 951** | `captures/sag/e200-16a-s1..s5.txt` |
+| proposed line | 900 | — |
+
+So the guard, as specified, would have returned `tripped=0` on all five of E201's CC runs. Item 1 closes the 1%-28% band on paper and leaves the only CC evidence this bench has ever produced on the passing side of the line. The band it actually covers — 900 down to the 718 floor — is a band E218 itself says nothing has produced.
+
+**The observation that distinguishes it:** replay E201's `e200-16a-s*` sag rings through the proposed comparison offline (the rows are in `captures/sag/`, and `src/sagtrace.rs` already has host-side replay). Predicted result: `droop_worst_permille` ~= 910-930, trip count 0. If that is the result, item 1 buys no coverage of CC and the predeclaration's motivation is void.
+
+Grounding: `src/protection.rs:295-305` (the EWMA that makes `FastBusSag` high-pass), `src/run/policy.rs:132` (`BUS_FLOOR_MV = 8_400`), `LAB_NOTEBOOK.md:13780-13795`.
+
+---
+
+## 2. BLOCKING — Prediction 1 ("stays above 960 at every rung") is already falsified, and the trend with duty puts a healthy 60% run *at* the line.
+
+E218 predicts `droop_worst_permille > 960` at every rung 15-50%. Measured `filt_bus/ref_bus` at 50% already reaches **967** on a healthy run (`captures/sag/c7-explore500_01.txt`: 1173/1213) and **929** under CC — and `filt_bus` is a 207 ms EWMA, i.e. the *smoothest* available estimate. The quantity `droop_worst_permille` proposes to report is the deepest 8-scan mean, which is strictly lower. In the same runs `bus_min` (single scan) reaches **1000-1051** at 50% (`e200-16a-s1.txt`, `e196-rung-500_01.txt`) — 822-865 permille. The 8-scan mean minimum lies between 865 and 967, and nothing in the corpus pins it, because the quantity has never been recorded.
+
+The duty trend, from the c7 family (one ELF, one bench day):
+
+```
+400 -> 985-993   450 -> 984-986   475 -> 980-985   500 -> 967-974
+```
+
+-15 permille over the last 25 tenths, steepening (superlinear in current). Extrapolating 500->600 on that slope alone gives **~907**; on the policy file's own measured exponent 2.4-2.9 for current (`src/run/policy.rs:99-101`), current rises x1.56-1.70 into 60%, so the droop term rises with it and 890-910 is the honest band.
+
+So at the campaign's target rung, a **healthy** run lands on or below the proposed line. That is precisely the nuisance stop that gets "tuned away" — the inversion E218's own stopping rules exist to forbid, arriving on the first 60% attempt.
+
+---
+
+## 3. BLOCKING (internal inconsistency) — the reported statistic is not the quantity the decision uses, so the "margin" is not a margin.
+
+`DROOP_SCANS = 4950` is described as a streak ("1650x the sharp guard's three-scan streak"), i.e. 500 ms *continuously* below the fraction. But the reported field is `droop_worst_permille`, "the deepest ratio seen" — an instantaneous extreme of a different order of magnitude.
+
+A run can therefore read `droop_worst_permille = 875` and have been nowhere near a trip (one 8-scan dip, streak 12). The operator reading 875 against a line of 900 will conclude the run nearly stopped. E218 claims this field makes "the margin against the line a measurement rather than the absence of a stop" — it does the opposite: it reports a number that is not comparable to the line, which is the same defect as E188's.
+
+The repo's own doctrine says this: `src/run/states.rs:330-336` records the guard's inputs "at the instant it judges them and *before* its post-test filter update, so the reference in the row is the one the comparison used". Apply that here: report **the longest low streak** (in scans, or ms) and the **deepest 500 ms-window ratio** — the quantities the decision is actually made on. Report `droop_worst_permille` too if you like, but not as the margin.
+
+---
+
+## 4. MATERIAL — the call site is **foreground, not the ISR**, so E218's cost analysis is aimed at the wrong budget; and the division is unnecessary.
+
+E218's cohort says "the ISR gains `SlowDroop::observe` on the drive path, so its cycle cost must be counted". That is false. The named site (`src/run/states.rs:325-340`) is inside `Ctx::scan_pass`, called from `Ctx::pass_inner` (`src/run/states.rs:277`), which is the foreground run loop. This firmware's four ISR roots are `COMP`, `TIM16`/COM, `DMA1_CHANNEL1` and `TIM6_DAC_LPTIM1`/GUARD (`bin/shell-pwm.rs:115-128`, `bin/board.rs:54-68`); the guard root touches `nfault`, tick gap, feedback age, deadline and tracking and **never reads the bus** (`src/roots.rs`, `guard_root`). Every bus protection in this firmware is foreground.
+
+Consequences:
+- `scripts/isr_audit.py` will certify the change unchanged, because the new code is reachable from no root. So `isr_diff.py` per image and "changed-root disassembly" — the cohort E218 predeclares — **cannot detect this item's cost at all**. The cohort as written does not cover the thing it says it covers.
+- The relevant budget is the foreground loop period. Measured: `loop_iters_closed=2829585` over `closed_ms=74776` -> 26.4 us/iteration, with `loop_gap_max_us` 147-179 (`captures/e196-rung-500.runlog`, `captures/sag/e200-16a-s1.txt`). One `__aeabi_uidiv` is ~100-300 cycles on this M0+ (1.6-4.7 us) per consumed scan (~9.9 k/s) — 1.5-4.7% of foreground time, and it lands in the loop that polls `late_arms`, `blank_latched` and `com_step`.
+- **It is also avoidable.** The whole module compares by cross-product precisely to avoid this (`src/protection.rs:363-369`, `severity_reduction` at `:434-446`). `bus_mean * DROOP_DEN < ref_bus * DROOP_NUM` needs no division; both sides fit u32 for 12-bit inputs. Track the *worst raw 8-scan mean* (a `u16` min) and let the host compute permille from the already-reported `ref_bus`. Zero division, zero new cost, strictly more information.
+
+---
+
+## 5. MATERIAL — `SlowDroop` omits the VREF normalisation every other bus judgement in this module uses.
+
+`FastBusSag` compares `bus * ref_vref * 100 < ref_bus * vref * 95` (`src/protection.rs:363-369`); the absolute floor compares `bus * vcal < BUS_FLOOR_NUM * vref` (`src/protection.rs:180`). Both normalise, because an ADC code is a ratio to VDDA. `bus_mean * 1000 / ref_bus` does not. On this bench `vref` is stable (1503-1507 across the whole corpus), so the error is <~2 permille today — but the candidate's margin is 29-67 permille and shrinking, and a guard that silently conflates VDDA drift with bus droop has no reason to exist alongside two that do not.
+
+---
+
+## 6. MATERIAL — ordering at the call site is unspecified, and the order decides which stop is reported and whether the deciding scan's evidence survives.
+
+`scan_pass` already has a deliberate ordering with a scar attached: the early stops (`validate_raw_feedback`, absolute floor) record the sag row **before** returning, because "the deciding scan was the one sample the trace did not contain (E181 SS5)" — `src/run/states.rs:309-322`. The sag verdict is then taken, the row recorded, and only then the error returned (`:323-343`).
+
+E218 says only "~line 325-340". It does not say whether `SlowDroop::observe` runs before or after `self.sag.observe`, nor whether a `BusDroop` return happens before or after `record_sag_row`. Both matter:
+- Before `sag.observe`: a `BusDroop` trip skips the sag filter update and the row — reintroducing exactly the E181 SS5 gap.
+- Before `self.current.accumulate` (`:339`): the partial block is discarded, which is harmless on a stop but changes `blocks` accounting if the guard ever returns non-fatally.
+- If both trip in the same scan, whichever is judged first wins and the other's state is frozen mid-streak. `sag_streak` is reported (`src/report.rs:479`); a `BusDroop` stop with `sag_streak=2` and a `FastBusSag` stop are then not distinguishable by mechanism.
+
+They cannot mask each other through shared state — E218 is right about that, and the code supports it (independent structs, `Ctx` fields at `src/run/states.rs:108-111`). The hazard is ordering and evidence, not state. **Specify it: judge, record the row, then return** — and say in the entry which stop wins.
+
+---
+
+## 7. BLOCKING — item 2's 2600 mA ceiling is inside the proxy's measured error band at 50%, and it makes 60% unreachable. The candidate is self-blocking.
+
+E218 sets 2600 mA from "50% measures `hold_ma` 1782-1877" and predicts "worst hold block is 2116 mA measured".
+
+From the captures, the worst single-block figure at 50% is **2365 mA** (`captures/sag/e190-500-s6.txt`), with 2252, 2232, 2217, 2207 close behind. The proposed ceiling is on a **block** residual with two-block persistence, matching `AverageCurrent` (`src/protection.rs:520-540`), so 2365 is the quantity it compares. Margin: 235 mA, **9.9%** — not the "~39%" E218 claims, which compares a ceiling against a *mean*.
+
+Against that 9.9%, the proxy's own run-to-run error:
+- `zero_drift_ma` across the corpus spans **0 to -599 mA** (n=1091); -133 to -250 mA is routine at 50%. Residual is `zero_block - sum` (`src/protection.rs:519`) with `zero_block` taken pre-drive, so a zero that falls during the run **inflates** the reported current by the drift. The measured drift sign is negative throughout — i.e. the error always pushes *toward* the ceiling.
+- Absolute anchoring is one operator-metered point, and `AverageCurrent::mean_milliamps`'s own doc says it "is not a calibrated DC-link measurement" (`src/protection.rs:568-576`). At 50% the proxy reads 1757-1846 against oracle 1603 — over-reading 10-15%.
+
+So a 50% run identical in physics but with 300 mA more zero drift trips `SupplyCeiling`. Prediction 2 ("will not fire at 50%") rests on a number (2116) that is not the worst in the repo.
+
+**And it blocks the goal.** At `duty^2.4-2.9` (`src/run/policy.rs:99-101`), 500->600 tenths multiplies current by 1.56-1.70:
+
+| quantity at 60%, extrapolated | value |
+|---|---|
+| proxy `hold_ma` | 2800 - 3060 mA |
+| proxy worst block | 3680 - 4020 mA |
+| true PSU draw (from oracle 1603) | 2500 - 2725 mA |
+
+A 2600 mA per-block ceiling fires during the ramp into 60%. The candidate therefore ships a stop that forbids the rung the same image is being built to reach. Worse, the worst-block figure approaches `RAW_LIMIT`'s 4 A (`src/protection.rs:421`) — the *existing* protection is also at its line at 60%.
+
+The larger point, which no item in E218 states: **60% at 11.85 V on a 3 A clamp is 83-91% of the supply.** The goal says "sustained CC, suppressed bus voltage or duty foldback cannot count as target qualification". By extrapolation from this bench's own numbers, 60% on this supply *is* the CC regime. That is an operator/hardware question (a bigger supply, or a lower bus voltage at the same current), and it should be settled before any firmware is written for 60%.
+
+**Is the ceiling worth having at all?** As specified, no: 20.2 ms to react is a runaway backstop, not protection, and at 2600 it would trip on healthy 50% drift while still not reaching before `RAW_LIMIT` at 60%. If a sub-4 A backstop is wanted, derive it from the *measured worst block per rung* with an explicit drift allowance (e.g. worst-block x 1.25 + 600 mA), report the margin, and attach no stop until a rung's worst block is known.
+
+---
+
+## 8. MATERIAL — item 3: the falsifier cannot fire, because `adc_hz` is a printed literal.
+
+E218's stopping rule for its riskiest item is "if `adc_hz` or the ISR's measured cost changes at all, item 3 is reverted". `adc_hz` appears exactly once in the tree: `bin/board.rs:871`, `board.kv("adc_hz", 9901)` — a hardcoded banner constant. It cannot change unless someone edits it. Prediction 3 ("item 3 *will* change `adc_hz`") is therefore unfalsifiable in both directions.
+
+It is also wrong on the mechanism. The scan rate is set by TIM6 TRGO (`src/hw/adc.rs:216-226`, `super::pace::trgo_on_update()`), not by sequence length. ADC clock is PCLK/2 = 32 MHz (`src/hw/adc.rs:130`), `SMP1 = 79.5` cycles (`:161`) -> 92 cycles = 2.875 us per channel. Five channels = 14.4 us; six = 17.3 us; both far inside the 101 us trigger period. A sixth channel will not move the rate, and the de-cohering argument (9.901 kHz vs 10 kHz) is untouched because the trigger is untouched.
+
+**There is a real measurement to add instead, and it already exists unused:** `Stats::drive_scans` is incremented every consumed scan (`src/run/states.rs:79,307`) and **never reported**. Print it. `drive_scans / hold_ms` is the only direct evidence of the actual scan-consumption rate — which is what `DROOP_SCANS = 4950 ~= 500 ms`, `SAG_FILTER_SHIFT`'s "207 ms" and `RAIL_MEAN_LEN`'s window all silently assume, and which `loop_gap_max_us` 147-179 us (vs a 101 us scan period) says is not exactly 9901/s.
+
+---
+
+## 9. MATERIAL — item 3: the temperature channel will read garbage at the configured sample time.
+
+All channels share `SMP1` (`src/hw/adc.rs:161`; `SMPSEL` is never written, so every channel uses sampling-time 1). 79.5 cycles at 32 MHz = **2.48 us** of sampling. The STM32G0 datasheet specifies a minimum sampling time for the internal temperature sensor (`tS_temp`) of **5 us** — roughly double what is configured. Sampling a high-impedance internal source for half its required time gives a reading dominated by the previous channel's residual charge on the sample capacitor. Note the channel-ordering detail that makes this worse: `CHANNELS` is ascending (`src/hw/adc.rs:34-41`, asserted at `:73-79`), so channel 12 sits immediately **before** VREFINT — a bad temp sample sits between the bus and the reference the bus is normalised by.
+
+*(The G071 datasheet is not in this tree — `binz/*.pdf` are the Nucleo/driver docs. Verify `tS_temp` against the datasheet before acting; the check is one table lookup.)*
+
+The fix is cheap and known: put channel 12 (and arguably 13) on `SMP2` via `SMPSEL`, at 160.5 cycles = 5.0 us. Total scan becomes ~22 us, still far inside 101 us. **If item 3 ships without this, its one deliverable is a wrong number that will nonetheless be plotted as a thermal trend.**
+
+The index machinery itself is safe: `scan_index` is const-derived from the table (`src/hw/adc.rs:46-61`), `SCAN_LEN` drives `NDTR` in both `dma_start` (`:211`) and `resync` (`:246`), and `DMA_BUF` is sized from it (`:94`). Adding a channel does not require hand-editing any index. Consumers to check: `RawScan` (`src/protection.rs:197-204`) and every `dma_word(IX_*)` in `dma_isr` (`:284-300`).
+
+---
+
+## 10. MATERIAL — item 3 misstates the existing thermal coverage, and the G071 die is not a proxy for anything in the hypothesis that motivated it.
+
+"No temperature measured anywhere" is true of *firmware fields* and false of *protection*: the DRV8304's own over-temperature shutdown asserts nFAULT, and `guard_root` polls `nfault_high()` on every 200 us tick and stops the run as `Reason::Driver` (`src/roots.rs`, guard_root; `src/protection.rs` `Driver = 7`). Device-level thermal protection exists and is demonstrable — `e196-pn-driver_01.txt` is a provoked `Driver` stop already in the corpus.
+
+What item 3 adds is an MCU die reading on a Nucleo that is thermally separate from the DRV8304H daughterboard and from the motor. E201's third open candidate was "a warmer *motor*" (`LAB_NOTEBOOK.md:13830-13833`). The G071 die will track lab ambient plus MCU self-heating and will not move with motor or FET temperature. So item 3 does not address the hypothesis it cites, and — as the review was asked — a thermal observation with no stop, reported alongside three new stops, does create the appearance of thermal coverage where the substance is "the lab warmed up 2 degrees".
+
+For the goal's "record actual thermal conditions", an operator-logged IR/thermocouple reading of the motor can and FET heatsink before and after each run is strictly better evidence, costs no firmware risk, and can be added to the capture header host-side this afternoon.
+
+---
+
+## 11. BLOCKING — item 4 raises the firmware cap into rungs the host fixture cannot record, admit, or judge.
+
+`SIXSTEP_DUTY_CAP: u16 = 500` (`src/run/policy.rs:102`) is not the only 500 in the path:
+
+- `scripts/bemf_run.py` `ladder_record` whitelists duties `(150 ... 475, 500)`. A 525/550/575/600 capture returns `None` — "not a rung run" — and is **silently never recorded**.
+- `ladder_admit` for `L` requires `rung_duty in ORACLE`; `ORACLE` (`scripts/bemf_run.py:92-99`) ends at 500.
+- `cohort.rung_oracle` returns the failure `"no oracle figure at duty 600"` for any rung above 500, so `rung_report` can never pass — the 3/3 the goal requires is unobtainable by construction.
+- `RUNG` (`scripts/bemf_run.py:100+`) has no key for the new rungs, so there is no way to command one through the qualifying path; `+` steps `climb_tenths` by 25 up to the cap (`src/run/mod.rs:473-476`), i.e. exploration only.
+
+So item 4 makes 60% *commandable* and leaves it *unqualifiable*. The goal asks for three >=30 s holds at each rung from 50% to 60% — four new rungs that do not exist in the fixture, with no oracle speed/current reference for any of them. That host work is larger than the firmware change and is not mentioned in E218.
+
+Two smaller consequences of the same raise:
+- `INJECT_SAG_DUTY_TENTHS = 500` (`src/run/policy.rs:130`) is a load *step*. At a 60% rung it becomes a step **down**, silently. `roots.rs:995` already warns the provocation "passes anything but `SIXSTEP_DUTY_CAP`".
+- `Reason::BusDroop = 29` and a `SupplyCeiling` sit above `UnknownGuard = 28`, the decode's deliberate fallback (`src/protection.rs`, `UnknownGuard` doc: "so that an unknown stop can never be read as the success code (E186 SS6)"). Host-side this is safe — `cohort.run_gates` fails anything with `reason != 2` (`scripts/cohort.py:193-199`) — but the new codes must be added to the `named` map at `:196-197`, or a real new stop reports as a bare number. MINOR, but it is the kind of omission that makes a provoked demonstration unreadable.
+
+---
+
+## 12. BLOCKING (sequencing) — do not raise the cap in the image that first introduces three unexercised stops.
+
+E218 argues items 1-3 must be in the same image "because the cap must not rise before the stops that cover the band it opens", and then constrains itself with "no rung above 50% until items 1-2 have each been provoked".
+
+That constraint makes the co-shipping argument unnecessary: if no rung above 50% may run until the new stops are provoked, the cap raise buys nothing in this image and costs the interpretability of the whole ELF. The worst case is concrete: a new guard with a defect (a threshold on the wrong side, a streak that never resets, the `ref_bus == 0` fail-closed path reached in error) plus a cap that permits 20% more duty means the first thing anyone learns about the defect is at a rung where current is 1.6x and the bus is at its knee. Additive guards fail safe *as stops*; they do not fail safe *as coverage*, and a guard that silently never fires is indistinguishable from one that is protecting you — which is the campaign's own `feedback_instrument_decisions_not_outcomes` lesson.
+
+Sequence instead: cap stays 500 until items 1-2 are provoked and seen to stop with the expected reason at 25%, and the host ladder is extended and dry-run. Then the cap rises in an image whose only change is the cap.
+
+---
+
+## 13. MATERIAL — four items plus a cap raise on one new ELF makes the next rung failure uninterpretable. A cheaper decomposition exists and is strictly better.
+
+The ladder is keyed on the ELF hash (`scripts/bemf_run.py` `_ladder_load`/`ladder_record`), so this candidate must re-earn 15 rungs. If rung *n* fails on the new ELF, the candidates are: a `BusDroop` nuisance trip, a `SupplyCeiling` nuisance trip, a scan-timing perturbation from the sixth channel, a duty change from the cap/clamp edit, or a genuine regression. Five explanations, one observation.
+
+Decomposition that discriminates, in order:
+
+1. **Report-only image (zero new stops, zero new channels).** Add: `drive_scans`; `applied_cap` and the programmed CCR; the longest low-streak and deepest 500 ms bus ratio (the item-1 *statistic* without the item-1 *stop*); `worst_ma` already exists. Re-earn the ladder once. This is the only piece of E218 that is unambiguously worth building, it satisfies the goal's step 1 "record actual PSU conditions", and it produces the numbers needed to derive items 1 and 2 honestly — which is precisely what E218 lacks.
+2. Re-derive `DROOP_*` from that image's measured streak/window distribution across 15/25/37.5/50%, then ship the stop alone and provoke it at 25%.
+3. Re-derive the current ceiling from that image's measured worst-block distribution plus an explicit zero-drift allowance; ship alone; provoke.
+4. Temperature: operator-logged external reading now; MCU channel only if someone wants it, with `SMPSEL`, alone.
+5. Cap raise + host ladder extension, alone, after the operator has settled the supply question in finding 7.
+
+---
+
+## 14. MINOR — what E218 gets right, and should keep
+
+- Foldback *is* already visible and already gated: `ceiling_tenths` is reported (`src/report.rs`, `BEMFCURRENT`) and `cohort.run_gates` fails any run where `ceiling_tenths != duty` (`scripts/cohort.py:212-216`). `e196-pi-avgcurrent_01.txt` shows `ceiling_tenths=425 duty_tenths=475` — a throttled run, visibly so. The goal's "duty foldback cannot count" is covered. E218 does not claim otherwise, but neither does it credit it, and it is one of the four "blocking gaps" reviewers named.
+- The duty-cap *visibility* half of item 4 is a real gap and correctly diagnosed: `sixstep::plan` clamps silently (`src/sixstep.rs:93`) and `sixstep_ccr_of` clamps again independently (`src/run/policy.rs:157-163`), while the report prints the pre-clamp request. Ship that half.
+- `FastBusSag` and `SlowDroop` genuinely share no state, and the claim that neither can mask the other through state is correct (`Ctx` fields, `src/run/states.rs:108-111`).
+- The refusal to attach a stop to die temperature is the right call for the wrong reason — the reading is not a thermal measurement of anything relevant, not merely a non-FET one.
+- Keeping the advance-level question out of this candidate is correct.
+
+---
+
+## One thing to check before anything else
+
+The 50% droop figures in E218's constants table (`1200/1215 = 0.987`) do not match any 50% capture in `captures/sag/`, where the healthy range is 967-988 permille and the worst is 1173/1213. Find where 1200 came from. If it is a 37.5% or 47.5% run, or the `bus_mean` decimated tail from E201's 2.0 A column rather than a 50% hold, then both of item 1's constants and both of its predictions were derived from the wrong population — and that is the single edit that changes what gets built.
+
+### E223 — disposition of E221/E222: E218 is withdrawn, and the gate worked
+
+Two independent reviews of a predeclaration, neither having seen the other.
+**Both say: do not build as written. I accept that in full and withdraw E218.**
+This is the first time in the campaign the review gate has stopped something
+*before* it reached hardware, and it caught four defects that a powered run
+would have taught me the expensive way.
+
+#### The two findings I verified myself, because they decide everything else
+
+**1. `SlowDroop` at 90/100 would not have fired on a single confirmed-CC run.**
+E222 finding 1. Replayed `filt_bus/ref_bus` over all ten E201 captures
+(`captures/sag/e200-16a-s1..s5.txt` plus warmups):
+
+| run | permille | vs the proposed 900 line |
+|---|---|---|
+| s1 / s2 / s3 / s4 | 930 / 929 / 930 / 929 | **would NOT trip** |
+| s5 | 951 | **would NOT trip** |
+| warmups (all five) | 998–999 | would not trip |
+
+E218 wrote that the line sits "**below** every observed CC run, so it does not
+fire on anything this bench has actually produced" — and cited the CC knee as
+the reason the guard exists. **Those two sentences contradict each other and I
+wrote them next to each other.** A guard justified by a condition it cannot
+detect is not additive coverage; it is a stop that will only ever fire on
+something else.
+
+**2. E218's "today's healthy 50% runs sit at 1200/1215 = 0.987" is a 40% run.**
+E222's closing item asked where 1200 came from. It is
+`captures/.../c7-400_01.txt` and `c7-400b_02.txt` —
+`BEMFSAG ref_bus=1215 ref_vref=1504 filt_bus=1200` — the **`c7-400` family, the
+40% rung.** The healthy 50% range is 967–988 (E221 finding 2, E222 finding 2),
+minimum 967. So **both of item 1's constants and both of its predictions were
+derived from the wrong rung**, and the margin I thought was 87 permille is 67
+at best and 67→0 by 60% on the measured duty trend.
+
+That is the [[feedback-verify-reported-numbers]] rule broken again, in the
+direction it always breaks: I took a figure that supported the design instead of
+opening the population it claimed to describe.
+
+#### Point-by-point — E221 (evidence)
+
+| # | finding | disposition |
+|---|---|---|
+| 1 | slow-droop blindness real; but `FastBusSag` uses a **cross-product, not a division**, and is **VREF-normalised**, so it is also blind to whole-rail droop; coverage is a **rate** criterion (~24%/s), not the "1%–28%" depth band; the 1% edge does not exist | **Accepted in full.** Three corrections, one of them (the second blindness) a gap I never mentioned. |
+| 2 | constants cherry-picked; healthy 50% is 0.982–0.988 (min 0.967); CC is 0.929–0.952 not 0.923; **closest observed 8-scan mean 0.9022**, 2.7 ADC codes off the line; the rings cover only ~4% of a run so "never fires" is unverified for 96% | **Accepted.** The 4% coverage point is the one I would have missed entirely. |
+| 3 | **`DROOP_SCANS = 4950` really is 500 ms** — `RailMean` is a sliding mean fed every scan with a latching `ready()`, confirmed by `SAGSNAP judged=786918` vs `ticks=786939` | **Confirmed, and the one thing that held.** The suspected 8× error is absent. |
+| 4 | worst 50% block is **2365 mA** not 2116; 2116 was the **LateArm run** and `worst_ma` is **whole-run, not hold-windowed**; "1782–1877" is a **three-image splice**; 2600 is **+9.9%** not +39%; zero drift to 253 mA **exceeds** the 235 mA headroom; the proxy can emit `worst_ma=172553` | **Accepted in full; independently reproduced** (worst 2013–2365 over n=23, max in `e190-500-s6`, a *completed* run). Every number in item 2's justification was wrong. |
+| 5 | ch 12 is the temp sensor, but **`TSEN` is never set** (`adc.rs:133` sets only `vrefen`); all channels share `SMP1`; `adc_hz` is a literal so the falsifier cannot fire; 6 channels is 17.25 µs inside 101 µs so the mechanism does not exist either | **Accepted in full.** Verified `adc.rs:133` and `board.rs:871` myself. |
+| 6 | premise right; **six duty clamps, I named three** — the missed one is `policy::sixstep_ccr_of`, an independent clamp on the same constant; `ceiling_tenths` becomes a *second* misleading pre-clamp field after a raise; advance 22 is inherited automatically at 60% | **Accepted.** Verified `policy.rs:156-162`. |
+| 7 | 2 of 5 predictions falsifiable today; #3 unfalsifiable; **#4 self-inconsistent** | **Accepted.** Prediction 4 confused `applied_cap` (the cap) with the applied duty, so "`target_duty_tenths` will equal `applied_cap` at every rung at or below the cap" is false at 15% by construction. |
+| 8 | six direct source contradictions | **All accepted.** |
+
+#### Point-by-point — E222 (adversarial)
+
+| # | finding | sev | disposition |
+|---|---|---|---|
+| 1 | the guard misses the condition it was built for | BLOCKING | **Accepted; verified (§1). Item 1 withdrawn.** |
+| 2 | prediction 1 already falsified (967 at 50%); duty trend 985→967 over 400→500 extrapolates to **890–910 at 60%**, so a *healthy* 60% run lands on the line | BLOCKING | **Accepted.** The nuisance stop would have arrived on the first 60% attempt — the exact inversion my own stopping rules forbid. |
+| 3 | the reported statistic is not the decision quantity: `DROOP_SCANS` is a **streak**, `droop_worst_permille` an **instantaneous extreme**, so the "margin" is not comparable to the line — E188's defect again | BLOCKING | **Accepted.** Report the **longest low streak** and the **deepest 500 ms-window ratio** instead. |
+| 4 | the call site is **foreground, not ISR**, so `isr_diff`/`isr_audit` **cannot detect this item's cost** and my predeclared cohort does not cover what it claims; and the division is **avoidable** — cross-product, keep a `u16` min, let the host compute permille | MATERIAL | **Accepted in full.** The cohort error is the worse half: I predeclared a gate that structurally could not see the change. |
+| 5 | omits the VREF normalisation both other bus judgements use | MATERIAL | **Accepted.** |
+| 6 | call-site ordering unspecified; wrong order reintroduces the E181 SS5 gap; which stop wins is undefined | MATERIAL | **Accepted:** judge, record the row, then return — and say so. |
+| 7 | 2600 mA is inside the proxy error **and self-blocking** — extrapolated 60% worst block is 3680–4020 mA, so it fires on the ramp into the rung the image exists to reach; and **60% on a 3 A clamp at 11.85 V is 83–91% of the supply, i.e. 60% on this supply IS the CC regime** the goal says cannot count | BLOCKING | **Accepted, and this is the finding that changes the campaign, not just the candidate.** See below. |
+| 8 | falsifier cannot fire; **`Stats::drive_scans` is incremented and never reported** — the real measurement to add | MATERIAL | **Accepted.** `drive_scans/hold_ms` is the only direct evidence of the scan rate that three separate constants assume. |
+| 9 | `tS_temp` ≈ 5 µs vs **2.48 µs configured**; ch 12 sits immediately before VREFINT, so a bad sample sits next to the reference the bus is normalised by; needs `SMPSEL`/`SMP2` | MATERIAL | **Accepted.** Item 3 as written would have produced a wrong number that got plotted as a thermal trend. |
+| 10 | **nFAULT already gives device-level thermal protection** (`Reason::Driver`, polled every tick, already provoked in `e196-pn-driver_01.txt`); the G071 die is thermally separate from the driver board and the motor, so item 3 does not address the hypothesis it cites | MATERIAL | **Accepted.** "No temperature measured anywhere" was true of *fields* and false of *protection*, and I have repeated it for several entries. |
+| 11 | **item 4 makes 60% commandable and leaves it unqualifiable**: `ladder_record` whitelists duties ending at 500, `ORACLE` ends at 500, `cohort.rung_oracle` refuses "no oracle figure at duty 600", no `RUNG` key exists — so the goal's 3/3 is unobtainable by construction; plus `INJECT_SAG_DUTY_TENTHS = 500` **inverts** to a step *down* at a 60% rung, and the new reason codes need adding to `cohort.py`'s `named` map | BLOCKING | **Accepted in full.** The host work is larger than the firmware change and E218 did not mention it. |
+| 12 | do not raise the cap in the image that first introduces three unexercised stops; my own "no rung above 50%" rule makes the co-shipping argument unnecessary | BLOCKING | **Accepted.** My sequencing argument was self-defeating and I did not notice. |
+| 13 | four items plus a cap raise on one ELF gives five explanations for one observation; a **report-only image first** is strictly better | MATERIAL | **Accepted as the plan.** |
+| 14 | foldback **is already visible and gated** (`ceiling_tenths` + `cohort.run_gates` fails `ceiling != duty`, demonstrated in `e196-pi-avgcurrent_01.txt`) | MINOR | **Accepted** — so one of the four "blocking gaps" was never a gap, and the goal's "foldback cannot count" is already covered. |
+
+#### What is withdrawn, and what replaces it
+
+**E218 is withdrawn as a candidate.** Items 1, 2 and 3 are not built; item 4's
+cap raise is not built. Specifically:
+
+* **Item 1** — the stop is withdrawn. Its *statistic* survives and is worth
+  having, as E222 specifies: longest low streak, deepest 500 ms-window ratio,
+  VREF-normalised, cross-product, no division, reported as a raw `u16` min with
+  the host computing permille from the `ref_bus` already in the capture.
+* **Item 2** — withdrawn entirely. Every figure in its justification was wrong,
+  and at a correctly derived value it is either inside the proxy's error or
+  above `RAW_LIMIT`'s own line at 60%. If a sub-4 A backstop is wanted it must
+  be derived from a measured worst-block distribution *per rung* that does not
+  yet exist.
+* **Item 3** — withdrawn. It does not measure the thing its motivation names,
+  device thermal protection already exists via nFAULT, and at the configured
+  sample time it would read garbage. **Thermal conditions on this rig are an
+  operator-instrument question**, not a firmware one.
+* **Item 4** — the **visibility half is kept and is the only thing built now**;
+  the cap raise is deferred behind the host-fixture work and the supply question.
+
+**Next: a report-only image. Zero new stops, zero new channels, zero threshold
+changes, no cap change.** Fields: `drive_scans`; `applied_cap` and the CCR
+actually programmed; the longest low bus streak and the deepest 500 ms-window
+VREF-normalised bus ratio as raw codes. Its predeclaration and its own review
+pair come next, and it is the image that makes items 1–2 derivable honestly —
+which is what E218 lacked and could not have known it lacked without these two
+reviews.
+
+#### The finding that outranks the candidate
+
+E222 finding 7's last paragraph is the one to carry: **60% at 11.85 V on the 3 A
+clamp is 83–91% of the supply, so by this bench's own current law 60% on this
+supply is the CC regime** — and the goal states that "sustained CC, depressed bus
+voltage or duty foldback cannot count as target qualification". If that holds,
+**no firmware change makes a 60% hold qualify on this supply**, and the blocker
+is the bench, not the code.
+
+That is a measured extrapolation, not a measurement, and the honest next step is
+to measure it rather than assert it: the report-only image plus one 52.5% rung
+would give the first real current figure above 500 tenths and settle whether the
+extrapolation holds. **I am not declaring a wall** — that is the
+[[feedback-dont-declare-walls-prematurely]] trap, and twice before on this bench
+the wall was my own analysis error. But it is now the leading candidate for the
+campaign's real constraint, it is an operator-visible one, and it is reported as
+the measured-extrapolation-pending-measurement that it is.
