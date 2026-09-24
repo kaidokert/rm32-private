@@ -15333,3 +15333,181 @@ and the blocking list for 60% (duty-clamp visibility, a current stop reachable
 below the 3 A CC knee, the >207 ms droop band, and the absence of any
 temperature measurement) remains ahead of any 60% run regardless of what
 `spent` does.
+
+### E214 — the `spent` composition, measured: E213's prediction 1 is refuted
+
+E213 promised this measurement before anything was cut, and made it falsifiable:
+*"the six atomic stores and the four comparator reads together are more than
+half of the entry-to-arm path. If they are less than a third, my model of where
+the time goes is wrong and items 1–3 cannot deliver, in which case I say so and
+stop rather than shaving elsewhere for appearances."*
+
+**They are 13.4% of it. The prediction is refuted and I am stopping items 1–3 as
+the route to the 7 µs target.** No firmware was built; nothing was flashed; the
+bench was not used.
+
+Tool: `scripts/spent_compose.py` (new, in the repo). Raw output for five images:
+`captures/analysis/e214_spent_composition.txt`. Baseline
+`captures/elf/14CE44E7.e187.elf`, sha256 `7125601fa7248b63…` — the qualified
+production image, unchanged.
+
+#### Two broken versions first, because both produced a plausible number
+
+I am recording these because the first one is the more dangerous failure mode
+this campaign has produced:
+
+1. **Version 1 reported 11.53 µs — and it was meaningless.** It looked for
+   objdump's pc-relative comment with a `;` separator where this objdump writes
+   `@`, so it found no literal pools, so its `tim16_first` anchor stayed `None`,
+   so its "straight-line prefix" silently became the **entire 738-instruction
+   function**. The figure it printed landed within 5% of the 11 µs it was
+   supposed to explain. A broken method that reproduces the expected answer is
+   worse than one that crashes, and I nearly wrote it down.
+2. **Version 2 found no path at all.** It borrowed `isr_cycles.py`'s `target()`
+   but ran GNU objdump, whose branch targets are bare hex (`beq.n 8001218
+   <ADC_COMP+0x58>`); the `0x([0-9a-f]+)` pattern matched the symbol suffix
+   `0x58` instead. **Zero of 85 branches resolved**, the CFG had no branch
+   edges, and entry could not reach the arm. Loud, therefore harmless.
+
+**`isr_cycles.py` is not affected** — I checked rather than assumed. Its
+`OBJDUMP_DEFAULT` is llvm-objdump, which prints `0x`-prefixed targets: 97 of 98
+branches resolve, and it correctly finds the two loops. The fault was mine for
+pointing a borrowed parser at a different disassembler. `spent_compose.py` now
+uses llvm-objdump for the disassembly and cost model, and joins GNU objdump's
+`-l` inline line table by address only for source attribution.
+
+#### Method, and its two honest limits
+
+* `src` = the first read of the TIM17 CNT address — `comp_root`'s entry stamp,
+  the zero of `spent`.
+* The `spent` read is `ldr r1, [r2]` at ix 421, the **last** CNT read before the
+  arm. The arm itself is ix 458, `str r0, [r1, #0xc]` into TIM16 — DIER, i.e.
+  `hw::com_timer::disable_interrupt()`. Both windows are reported.
+* Cost = **longest path** over the back-edge-free DAG with `isr_cycles.py`'s
+  model, relaxed topologically. An instruction-index range would have silently
+  included the rejected-crossing code that the accepted path branches over.
+* The on-path loop was verified **structurally**, not from a line number: ix
+  335–352 loads `0x40010204` (the G071 COMP2 CSR) once per trip. It is the
+  persistence filter. Charged 4 trips (`depth = 4` at a 77 µs interval).
+
+Limits, stated because they bound what may be concluded:
+
+* **Line numbers belong to each ELF's own source, not today's tree.** The
+  archived images carry E187-era DWARF; annotating them with the current file
+  text mislabels individual lines. The *file*-level rollup is version-stable and
+  is what I rely on. No per-line source text is quoted for an archived image.
+* The model charges no instruction-fetch wait states — `isr_cycles.py` says so
+  itself. So every figure below is a **lower bound**.
+
+#### The measurement
+
+Entry → the `spent` read, and entry → the arm, at the G071's configured 2 wait
+states, 64 MHz:
+
+| image | entry → `spent` read | entry → arm |
+|---|---|---|
+| `14CE44E7` (qualified) | **507 cy = 7.92 µs** | 591 cy = 9.23 µs |
+| `ED4E305C` (e212 candidate) | — | 549 cy = 8.58 µs |
+| `5A8C0127` (e208) | — | 561 cy = 8.77 µs |
+| `2BD11F17` (e203, reverted) | — | 557 cy = 8.70 µs |
+
+Stable across four independently built images, as `spent = 11 µs` is stable
+across 490 captures. The modelled 7.92 µs against the reported 11 µs leaves
+**~3.1 µs unattributed**: exception entry and exit is ~24 cycles (0.38 µs), and
+the remainder is instruction fetch the model does not charge — ~190 instructions
+fetched at 2 wait states. Plausible, and **not measured**. It stays an unknown.
+
+Census of the 507-cycle `spent` window:
+
+|  | cycles | share | insns |
+|---|---|---|---|
+| ALU / move | 84 | 16.6% | 84 |
+| load: shared state / peripheral (register base) | 80 | 15.8% | 20 |
+| **store: stack (sp-relative)** | 60 | 11.8% | 15 |
+| load: literal pool (pc-relative) | 52 | 10.3% | 13 |
+| **store: shared state / peripheral (register base)** | **52** | **10.3%** | 13 |
+| **load: stack (sp-relative)** | 48 | 9.5% | 12 |
+| branch | 28 | 5.5% | 28 |
+| PRIMASK (critical section) | 8 | 1.6% | 2 |
+| multiply | 3 | 0.6% | 3 |
+
+By module:
+
+| module | cycles | share | what it is |
+|---|---|---|---|
+| `src/bemf.rs` | 117 | 23.1% | blanking, the filter, blend/clamp, accept bookkeeping |
+| `src/commutation.rs` | 82 | 16.2% | `advance_of`, `wait_time`, the pair average |
+| `src/rate.rs` | 75 | 14.8% | rate / `EventWatch` bookkeeping |
+| `src/roots.rs` | 69 | 13.6% | entry, filter driver, the publish stores |
+| vendored `portable-atomic` critical sections | 53 | 10.5% | the atomic shim |
+| `bin/shell-pwm.rs` | 16 | 3.2% | the ISR entry shell |
+| PAC `comp2_csr` | 3 | 0.6% | the comparator read itself |
+
+#### Prediction 1, judged
+
+* **The six atomic stores.** Every register-base store on the path — a
+  *superset* of the six, since it also catches the rate bookkeeping — is **52
+  cycles, 10.3%**.
+* **The four comparator reads.** The filter loop is 18 cy/trip; of that the
+  COMP2 CSR read is **4 cy**. Four reads = **16 cycles, 3.2%**. The other 56
+  cycles of the loop are its counter and compare bookkeeping.
+
+**Together: 68 cycles, 13.4%.** Even scored as generously as the claim can be
+read — every register-base store plus the *whole* filter loop rather than its
+reads — it is 124 cycles, **24.5%**, still below the one-third falsifier.
+Prediction 1 is refuted on both readings.
+
+Predictions 2–4 are not tested: nothing was built, which is what refuting 1 is
+supposed to cause.
+
+#### What follows, and what does not
+
+**Items 1–3 cannot deliver the target, and I am not building them.** Their
+modelled ceilings, taken at face value and assuming each works perfectly:
+
+* item 1 (pack the stores): at most the 52 cycles of register-base stores, and
+  realistically ~20 of them, since three of the thirteen are not the packable
+  pair — **≤ 0.3 µs**;
+* item 2 (hoist `step`/`advance`): inside the 52-cycle load figure — **≤ 0.1 µs**;
+* item 3 (the filter's bookkeeping): **56 cycles = 0.88 µs**, the largest of the
+  three, and the only one the measurement actually supports.
+
+Best case ≈ 1.3 µs modelled, reaching ~9.7 µs measured — E213's own prediction 2
+said 9 µs and that now looks optimistic. **Reaching 7 µs requires removing about
+4 µs, i.e. roughly half the entire modelled path.** No item on E213's list is
+within a factor of three of that, and item 5 was rejected in advance for being a
+detection-behaviour change.
+
+**This is the measured blocker for 60%, stated as one.** With `ci ≈ 64 µs` at
+60% and `wait_time(64, 22) = 10 µs`, closing the −1 µs deficit needs `spent ≤ 9`,
+and holding the +3 µs that E211 called the target needs `spent ≤ 7`. The first is
+arguably within reach of item 3 alone; the second is not reachable by any bounded
+local change identified so far. What the composition says is that `spent` is not
+concentrated anywhere — it is 39% estimator arithmetic (`bemf` + `commutation`),
+21% stack traffic from inlining the whole estimator into one ISR, 15% diagnostic
+bookkeeping, 10% the atomic shim — so there is no single object to remove.
+
+**Three things this does not conclude**, and they stay open:
+
+1. The ~3.1 µs gap between the modelled 7.92 µs and the measured 11 µs is
+   **unattributed**. If it is mostly fetch stalls, then the cheapest lever is
+   code size and layout on this path, not any of E213's items — and that is a
+   *different hypothesis*, requiring its own predeclaration and its own review
+   pair before it is tested. I am not adopting it here on the strength of a
+   residual.
+2. `src/rate.rs` at 75 cycles (14.8%) is **bookkeeping, not control**, and E210
+   independently found its too-fast block executes on most acceptances. Whether
+   any of it is diagnostic-only and removable from the production path is
+   unexamined. Also a separate hypothesis.
+3. Nothing here says 60% is unreachable. It says the route E213 predeclared does
+   not reach it, by a factor of three, on a measurement E213 itself specified as
+   the test.
+
+#### Gate
+
+Per the campaign's standing requirement, **this conclusion is not accepted until
+two fresh, context-free, independent reviews have seen the raw evidence** — the
+tool, the five-image output, and the ELF hashes — recomputed the quantities, and
+returned verdicts without seeing each other's or this entry's reading. Both go
+in verbatim with point-by-point dispositions, and any material error is
+corrected and re-reviewed before dependent work proceeds.
