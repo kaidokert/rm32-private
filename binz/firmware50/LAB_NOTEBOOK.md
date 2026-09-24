@@ -12092,3 +12092,254 @@ Non-blocking but worth logging: `sagtrace.rs:43-46`'s surviving "1.7 s"; `sagtra
 ---
 
 Two notes on my own limits: I did not flash, reset, or drive anything, and no `probe-rs` ran. Everything above is from the source, the archived ELFs, the committed captures and the host scripts; where a number exists only in the notebook I have said so explicitly rather than assuming it was measured elsewhere.
+
+### E187 — disposition of E186: four blockers closed, and the cohort re-declared
+
+Same rule as E182: every item is **fixed** (with the artefact), **withdrawn**
+(struck from the record), or **deferred** (with the reason and what stands in
+its place). Gate output: `captures/gates/e187-gates.txt`, committed.
+
+#### The four stop-ships
+
+**S1 — the exposure. Fixed, and the number was wrong by about four times.**
+The cohort runs `L`, whose window is `BEMF_TOTAL_MS = 80_000`: a 20.0 s ramp
+plus a 31–55 s hold, i.e. **≈57 s at or above 45% per attempt and ≈285 s
+across five**, not "five runs of 45 s". `l` (explore) is 45 s total with ~20 s
+of hold, which `cohort.py`'s 30 s minimum hold then fails, so the exploratory
+key cannot produce a qualifying run at all. Both governing doc comments are
+corrected: `BEMF_TOTAL_MS` said "54 s from E137" against a value of 80 s, and
+`GUARD_CAMPAIGN_US` compared "56 s against 54 s" against 84 s. E182 corrected
+the two stale comments it had been *told* about and left the one that bounds
+how long the bridge stays energised. The thermal deferral is restated below
+against the real number.
+
+**S2 — the predeclared image did not exist. Fixed.** `9034A6D9` was superseded
+by `A1906AEC` when E183 fixed the missing dump path, and I predeclared the dead
+hash. Both cohort images are now rebuilt, gated and archived:
+
+| role | image | `.data` + `.bss` | stack left | audits |
+|---|---|---|---|---|
+| production | **`14CE44E7`** | 660 + 4 184 | **32 020** | 4/4 clean |
+| sag recorder | **`63C0061D`** | 660 + 20 596 | **15 608** | 4/4 clean |
+
+with cycle bounds at 0 and 2 wait states, the production roots
+instruction-identical to `7C55B7E0`, 336 lib + 9 doc tests and clippy zero in
+all three configurations. The commitment "fixed now and not chosen afterwards"
+was broken silently once; these are the hashes, and any further change to them
+voids the predeclaration rather than quietly replacing it.
+
+**S3 — E184's production column. Withdrawn, and the cause is my own capture
+loss.** The captures E184 quoted no longer exist: my second climb re-ran
+15/20/25% with the same labels and **overwrote** the first climb's files —
+`captures/ladder_state.json` holds **six** entries per rung under three
+filenames, which is the evidence of the collision. So:
+
+* the **passes/ms** column *does* reproduce: the surviving production captures
+  read 46.0796 / 46.0786 / 46.0742 against my 46.09 / 46.09 / 46.08, i.e.
+  correct to two decimals, and the **recorder cost of −13.51%** stands
+  (39.8534 / 46.0775);
+* the **`loop_gap_max_us`** column cannot be verified and the surviving set
+  contradicts my conclusion: production **150 / 164 / 180** against the
+  recorder's 171 / 157 / 158, so the recorder's worst gap is **5.0% below**
+  production's, not 4% above it. **"+4% on the worst observed gap, and both
+  instruments agree about that" is withdrawn.** The honest statement is that
+  production's own run-to-run spread on this quantity is 150–180 µs — **20%** —
+  which swamps any recorder effect in either direction, so E177's inference,
+  E179's correction and E184's correction of that are all withdrawn and the
+  tail question is *open*;
+* production's sd is **0.0028** passes/ms, not "about 0.01" (that is the
+  recorder's, 0.0113);
+* and the runs were not alternated in one session: the recorder side ran
+  00:45–00:55 and the production side 01:23–01:27. The −13.51% is a
+  same-rung, same-day comparison of two three-run groups, which is weaker than
+  what E184 claimed for it.
+
+`bemf_run.py` now **refuses a colliding `--label`** rather than overwriting.
+Nine good captures were destroyed (three each at 15, 20 and 25%), not three
+timed-out ones as E184 said — the timed-out attempts left no capture at all.
+
+**S4 — prediction 3 was not a discriminator. Withdrawn and rewritten.** The
+review is right on every point: mechanism 1 *is* `SAG_STREAK = 3` restated, so
+it is entailed by every non-fail-closed trip and cannot fail; mechanism 2
+corresponds to no latch path and its 1% threshold is five times looser than
+the 5.26% a latch requires; mechanism 3 is the only genuine alternative, and
+it **forges the streak** (`lows = SAG_STREAK` before returning), so a
+fail-closed trip dumps `streak=3` with a normal margin and reads exactly like
+mechanism 1 unless `vref_mean` is inspected — which `sag.py` printed only
+conditionally, through a `--csv` path that **crashed** on a renamed field and
+had therefore never run. Fixed: the `--csv` bug, the fail-closed count printed
+even when zero, and the deciding row's own numbers named outright. On the
+positive control that now reads:
+
+```
+fail-closed rows (vref 0 or >= 4095): 0 -- these latch whatever the ratio says
+  last row: bus_mean=1140 vref_mean=1508 filt_bus=1212 filt_vref=1507 streak=3 margin=989.4
+  reference above the bus by +6.32% (a streak latch needs >= +5.26%); fail_closed=False
+```
+
+#### Fixed in code, beyond the blockers
+
+* **`reason_from_code` fell open onto the success code.** Its fallback was
+  `SegmentDeadline` = 2, which every gate treats as a completed window: an
+  unrecognised *stop* decoded as a *pass*. Now `UnknownGuard` (28).
+* **The freeze gaps** (`InvalidSeed`, the four arm refusals) are closed — both
+  paths return outside `Ctx::pass` and dumped `frozen=0`, which the cohort's
+  own prediction 4 called a defect report.
+* **`FIRMWARE_ARM_IS_ATOMIC` was a literal.** E182 claimed "flipping the
+  constant fails the suite"; the review's point is that the safety-relevant
+  direction is the other one — *deleting the critical section* left every test
+  passing. It is now read off `roots.rs` with `include_str!`, and the failure
+  was demonstrated by flipping the constant: `the arm is atomic in roots.rs
+  but the constant says false`. `ARM_ORDER` is likewise checked against the
+  order the code actually writes in, not against its own literal.
+* **`Handover::lock` no longer installs over a latched guard**, and
+  `com_handover`'s and `det_install`'s counter resets moved **inside** their
+  guarded sections, so a refused handover no longer erases the tripping run's
+  `late_arms`, `spent_max`, `com_late_max_us` and `blank_latched`.
+* **One authoritative run-key list.** `arms_a_run` was a hand-maintained
+  allowlist in each recorder image — the thing that silently produced no dump
+  in E183. Both images now call `run::drives_a_run`, and a host test pins that
+  set key-by-key over the printable ASCII range; writing it immediately caught
+  that my first version omitted the *lowercase* provocations.
+* **`PhasePeak` is documented as never raised.** No threshold, no accumulator,
+  no call site: two reviews in a row listed it among "the stops a loss-of-lock
+  surge would arrive as" and I repeated that. **This firmware has no
+  instantaneous or peak current protection of any kind.**
+* **The RAM gate counts `.data`** (E185's model was optimistic by ~660 B on
+  exactly the quantity that had cost an evening), reports the largest known
+  stack frame beside the headroom, checks the **archived** images too, and
+  fails loudly instead of silently skipping. Its most useful output is a list
+  of **37 archived images below the stack floor, which must not be flashed
+  again** — and that list is every chain and peer image campaign 8 measured
+  with (E162/E165/E166/E168/E170). Campaign 8's chain and COM-top numbers were
+  taken on images whose largest stack frame overlapped `.bss`. I am not
+  retracting them — they ran clean 80 s campaigns, and the review shows four
+  such images doing so — but they carry that caveat from now on.
+* Doc corrections: `sagtrace.rs`'s surviving "1.7 s" (the other half of E179's
+  correction) and its ring arithmetic (14 B → **16 B**, so 16 384 B not
+  15 360); `chain.rs`'s "twelve bytes, so the ring is 12 KB" (**14 B**, 7 KB at
+  512) and `RING_BUDGET`'s "the rest of the firmware needs ~20 KB" (production's
+  entire `.bss` is 4 184 B — wrong by five times, in the comment justifying a
+  RAM budget); `MANIFEST.md`'s test count, its missing `sag-capture` row, its
+  `structure_report.py` description, and its claim about capture headers.
+* **Captures now carry the CRC32** the notebook and `captures/elf/` name images
+  by, beside the SHA-256 they already had. A reviewer could not previously tie
+  a dump to the hash every entry quotes. The manifest now also states plainly
+  that the archive's *names* are a SHA-256 prefix before campaign 9 and a CRC32
+  after it — two different functions, which nothing said.
+
+#### Corrections to the record
+
+* **E183's `stop_after_inject_us` is 1726, not 1850**, and the descent is 13
+  judgements, not ten. The omitted third gate failure is real and is not an
+  artefact of applying rung gates to a provocation: **`rate vs coast 955 ‰`**,
+  45 ‰ off a gate whose within-session sd is 2.8 ‰, and the only outlier among
+  thirteen sag captures. The benign reading — the coast is anchored at the
+  stop, right after 1.7 ms at doubled duty, so it measures a faster rotor than
+  the 2 s powered mean — is plausible and *implies the injection did real
+  mechanical work*, which E183 did not mention. E183's "not evidence of
+  anything" covered two of the three failures and should not have covered the
+  third.
+* **E185's headline symptom described no single run.** `BEMFGUARD ticks=2`
+  appears only in the `reason=13` bisect captures, where `spun=1`; the two
+  captures of the named image are `reason=11` with `spun=0` and no `BEMFGUARD`
+  line at all. The "2/2 each way" counted a byte-identical ELF twice.
+* **And the E185 diagnosis is withdrawn as stated.** "The cause was
+  stack/`.bss` exhaustion, and it was not TIM2" is not supported by its own
+  bisect: every image in that table has identical `.data + .bss` and identical
+  headroom (3 316 B real, not 3 976), and **four of them ran clean 80-second
+  campaigns**. RAM exhaustion is a *proven latent defect* of that whole build
+  family — the review's stack arithmetic is stronger than mine: SP descends
+  ~1 556 B below `__ebss`, inside `CHAIN_SVC`, in slots the COM root rewrites —
+  but it does not discriminate the deaths, and my second-order clause ("which
+  variable the overflow lands on changes with layout") was asserted, never
+  measured, and a `.text` shift does not move `.bss`. **The specific cause of
+  those deaths is unresolved.** The fix (512-row rings) is sufficient for
+  headroom without having been shown to be the cure. What would settle it:
+  paint the stack region at reset and report the high-water, or a canary above
+  `__ebss` checked each guard tick. Neither exists; both are cheap; neither is
+  going in an hour before a cohort.
+* Also withdrawn: E185's first candidate for the cross-ring nonsense. The
+  accept:service ratio is **2:1 at both ring sizes**, so "halving the rings
+  changed that ratio" is false. The live candidate is the one the 31 ns
+  handler-to-bridge figure points at: the `x_fine` stamp is not taken where
+  the analysis assumes.
+* E182 measured the judgement period as **99.00 µs** and E183 as **101.00 µs**
+  — different captures, same correct script; both stand, and the 2% spread is
+  the quantity's own, not a disagreement.
+* `policy.rs`'s "measured exponent ~2.4–2.9" describes a curve that is
+  **straight** in the band being driven: `hold_ma` rises 1111 → 1299 → 1487 →
+  1675 → 1855 across 40 → 50%, i.e. **188/188/188/180 mA per 2.5%**. Both my
+  2.38 and my 2.9 are fits to a local straight line.
+
+#### Deferred, and what stands in their place
+
+* **Thermal, restated against the real exposure** (S1). ≈57 s ≥45% per
+  attempt, ≈285 s across five, with no temperature anywhere in this firmware
+  and no path from the windings, shunts or power path to nFAULT. I am still not
+  adding an ADC channel and a protection path before driving: a new guard is a
+  new way to stop a run and a new thing to get wrong. What stands in its
+  place, and it is now a stated stop condition rather than a gesture: **≥90 s
+  bridge-off between attempts** (up from 60, against the corrected exposure);
+  the operator present; **the run stops for the session** on smoke, smell, a
+  hot board by touch, or a driver nFAULT that is not explained by an injected
+  provocation. The NTC read is owed and named.
+* **Nothing between 2 A and 4 A**, and no peak protection. Deliberate campaign
+  constants that the goal says to preserve; the PSU enforces 2 A. What changed
+  is the *evidence*: `worst_residual`/`worst_ma` are now reported, so the worst
+  single 10.1 ms block is on the record instead of only the mean of blocks.
+* **`CompStorm` has no instrumented post-arm margin.** Real, and the recorder's
+  per-scan `interrupt::free` is a plausible way to produce one, which would be
+  uninterpretable. Not adding a counter now; instead the cohort's design breaks
+  the confound (below), and `closed_irq_peak_per_ms` is read as the
+  whole-closed-loop maximum it is, including the 40 ms unarmed window.
+* **Stack high-water is still unmeasured.** The gate now prints the largest
+  known frame (5 076 B) beside each image's headroom, so the margin is a number
+  — 15 608 B for the recorder, 32 020 B for production — rather than an
+  assertion. A painted-stack measurement is owed.
+
+#### The cohort, re-declared
+
+**Order, and it now starts one rung lower to break the confound the review
+named.** No recorder run has ever been done at 45% or above on the full
+window, and no recorder run has ever recorded a trip except the 25%
+provocation — so attempts at 50% on that image would be simultaneously the
+highest-current, longest and first-of-kind runs of it.
+
+1. **47.5%, alternated, `L`, one production and one recorder, twice** (4 runs):
+   the recorder's effect at a rung where campaign 7 saw **0 of 8** sag trips.
+2. **50%, `L`, five attempts**: 2 × production `14CE44E7`, 3 × recorder
+   `63C0061D`, alternated P R P R R, every capture retained.
+
+**Predictions, with numeric criteria, before any run:**
+
+1. **Foreground cost and tail.** `loop_gap_max_us` ≤ **190 µs** on every run
+   (production's own 25% spread is 150–180 on the surviving captures, so the
+   old "≤160" would have failed a clean run). `com_late_max_us` ≤ **15 µs**.
+   Falsified by either being exceeded.
+2. **The rung was actually held**: `ceiling_tenths == 500` on every 50%
+   attempt, and proxy `hold_ma` in **1750–1950 mA**. A run inside the current
+   band with a ceiling below 500 is *not* a confirmation — it is a throttled
+   run, and until E187 the report could not tell me that.
+3. **If a run latches reason 26**, the frozen ring is read in this order:
+   (a) `vref_mean` of the deciding row 0 or ≥ 4095 → **fail-closed**, which is
+   a different mechanism and reads identically without this check;
+   (b) otherwise `filt_bus / bus_mean ≥ 1.0526` at the latch — which is
+   *forced* by the latch condition, so it is a consistency check on the
+   instrument, not evidence;
+   (c) the discriminating question: **`closed_ms` at the stop against 207 ms,
+   and whether `hold_ms > 0`** — a trip inside the first fifth of a second,
+   before the reference has followed the load, is the primed-reference
+   mechanism; a trip during a settled hold is a transient. These are on every
+   report already and appeared in none of my earlier predictions.
+4. **Any stop returned by `Ctx::pass` freezes the ring** — re-scoped from
+   E182's over-broad version, since the arm refusals and `InvalidSeed` now
+   freeze too but a refusal before the 8-scan rail mean fills still records no
+   row.
+5. **Two or more of five 50% attempts trip**, on campaign 7's 3-of-7; and
+   **zero of the four 47.5% runs trip**, on campaign 7's 0-of-8. I do not
+   predict a qualified 50%: qualification needs 3/3 at the rung plus the
+   ladder, and this cohort is exploratory.
+6. **`worst_ma` is a first measurement, not a prediction.** No number is
+   predicted; it goes on the record for every run, and the mean-to-worst ratio
+   is the thing to look at afterwards.
