@@ -19133,3 +19133,93 @@ the reviewers' call rather than mine at the moment of being bitten.
   zero-drift floor (`zero_drift_ma = −172`), so the figure is meaningless there
   and gates nothing. Named because a line reading `STOP` in a passing run is
   alarming to read and will be read again.
+
+### E252 — 150→500 qualified on one ELF, and the hold-windowed worst settles the E241/E242 dispute
+
+Image **`0D8E3799`** (`e246-final-candidate`, sha256 `d9d77f3cfad2fd00…`).
+
+#### Fifteen rungs, 3/3 each, on one image
+
+| 150 | 200 | 250 | 275 | 288 | 300 | 325 | 338 | 350 | 375 | 400 | 425 | 450 | 475 | **500** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | **3/3** |
+
+Each rung admitted only because the one below it passed on this same ELF.
+**The 50% rung — the goal's first target — is qualified on the candidate.**
+
+The 500 cohort, read against E237's list:
+
+| | 500_01 | 500_02 | 500_03 |
+|---|---|---|---|
+| `reason` / `hold_ms` | 2 / 54 776 | 2 / 54 776 | 2 / 54 776 |
+| `ceiling_tenths` | 500 | 500 | 500 |
+| `hold_ma` | 1789 | 1800 | 1800 |
+| `worst_hold_ma` | 2360 | 2245 | 2248 |
+| droop / **IR residual** | 982.9 / **+2.2** | 982.1 / **+1.6** | 981.3 / **+0.7** |
+| `ci_min_us` | 49 | 55 | 55 |
+| `thin_count` | 595 | 617 | 596 |
+| `late_arms` | 0 | 0 | 0 |
+
+All three hold 54.8 s against a 30 s requirement, no foldback, and the rail sits
+**above** the IR line on every run — constant voltage, not current-limited, on
+the discriminator that only entered the code in E243.
+
+Two rungs cost extra runs and are reported as such, never as clean 3/3:
+
+* **400 took four runs.** One retained nuisance failure (`e247-400_03`, identity
+  1011 against a gate of 990–1010 whose measured false-failure rate is 1.1% —
+  E249). The gate was **not** widened.
+* **450 took six runs.** Three were refused by the fixture for driving 475 when
+  450 was asked, because my driver computed a relative press count against a
+  shell whose climb duty persists between invocations. My bug; the fixture's
+  `expect_duty` check caught it and recorded nothing.
+
+#### The hold-windowed worst settles E241 vs E242 — and my withdrawal was over-broad
+
+`worst_hold_ma` (E244) against the whole-run figure, across the qualified ladder:
+
+| duty | `hold_ma` | whole-run worst | **hold worst** | ratio |
+|---|---|---|---|---|
+| 150 | −13 | 874 | **118** | **7.41** |
+| 250 | 375 | 1038 | 613 | 1.69 |
+| 350 | 731 | 1675 | 1604 | 1.04 |
+| 450 | 1611 | 1942 | 1885 | 1.03 |
+| **500** | 1789 | 2360 | **2360** | **1.00** |
+
+So the mechanism is now measured rather than argued: **the ramp contributes a
+roughly fixed ~900–1700 mA transient, and the rising hold overtakes it around
+duty 350.** Below that the whole-run worst is almost entirely ramp; above it the
+two converge; at 500 they are *identical*.
+
+That means:
+
+* **Both E241 reviews were right about the low rungs.** A 900 mA block inside a
+  34 mA hold is a ramp artefact, exactly as they said, and 7.41× at rung 150 is
+  the most dramatic form of it in the corpus.
+* **But at the rungs that matter they were not.** At 450 and 500 the ratio is
+  1.03 and 1.00, so **`worst_ma` at 475–525 was already a hold figure** — which
+  means E239's 3174 mA at 525 was a hold measurement, and **E242's withdrawal
+  of the `RAW_LIMIT` concern on ramp-artefact grounds was over-broad.**
+* What *was* genuinely wrong in E241 is the **method**: projecting the
+  worst/hold ratio forward as flat-to-rising when it is a **falling** curve
+  (7.41 → 1.00), for the mechanical reason above. The ratio is not a constant
+  and never was.
+
+**And the fix is that no projection is needed at all.** `worst_hold_ma` measures
+the quantity directly at each rung, which is precisely what E194 asked for and
+what E241 lacked. At 600 it will be read, not extrapolated — so the question
+"does the worst hold block approach the 4 A allowance" becomes a measurement
+three rungs from now instead of an argument.
+
+I am recording this as a **partial rehabilitation of a prediction I withdrew**,
+because getting that wrong in the other direction would be just as bad: the
+concern was disposed of with an argument that holds at rung 150 and does not
+hold at rung 500, and I did not check where the crossover was before accepting
+it.
+
+#### What remains
+
+525 is running. Then 550, 575, 600, one rung at a time. Then the two restart
+cohorts and the protection demonstration (E248), which need the
+`LADDER_PREREQ["Z"]` fix landed first — it is still keyed to a fixed 475 and
+would otherwise admit a 600 restart on the strength of the 475 rung.
