@@ -152,7 +152,24 @@ def parse(path):
                 f = line.split()
                 # Eight numbers now, not seven: the row carries a coarse
                 # stamp for pairing plus three fine stamps (E180).
-                if len(f) == 9:
+                # Pre-E180 captures carry 6 post-kind columns and their
+                # `spent`/`arm` are COARSE MICROSECONDS; post-E180 carry 7 with
+                # TIM2 fine stamps in 15.6 ns ticks. Requiring only the latter
+                # made this tool print "no CHAIN rows found" over 24 archived
+                # captures holding 20478 measured arms, which is why four
+                # entries argued `spent` from the whole-run aggregate instead
+                # (E232 SS11 / E233 SS11).
+                #
+                # It REFUSES them rather than coercing: every downstream figure
+                # here divides fine ticks by 64, so feeding microseconds in
+                # would silently under-report by that factor. Legacy captures
+                # are read by `scripts/chain_spent.py`, which states its units.
+                if len(f) == 8:
+                    raise SystemExit(
+                        'legacy 6-column CHAIN rows (coarse microsecond stamps, '
+                        'pre-E180). This tool assumes 15.6 ns fine stamps and '
+                        'would under-report by 64x. Use scripts/chain_spent.py.')
+                elif len(f) == 9:
                     rows.append(Row(*(int(x) for x in f[1:])))
             elif line.startswith('BEMFRUN '):
                 for kv in line.split()[1:]:

@@ -17754,3 +17754,131 @@ for any image that changes advance. The replacement reference is the run's own
 coast (`coast_ehz` vs `loop_ehz`, the E143 rate identity), which is
 within-run and independent of any table. That substitution is host work and
 belongs with the fixture extension, not here.
+
+### E234 — disposition of E232/E233: `spent` is 6 µs, not 11, and it dissolves the last four entries' arithmetic
+
+Two independent reviews of one conclusion (E230) and one hypothesis (E231).
+**Both reject both. I accept, withdraw E230's headline result, and cancel E231
+before it runs.** E233's finding 1 is the most consequential result of the
+campaign so far, and I verified it first because everything else depends on it.
+
+#### The measurement, verified over 20 478 arms
+
+E233 said the per-crossing spend is 5–7 µs, not 11, and that it read 1 705 arms.
+I built `scripts/chain_spent.py` and read **every** legacy chain capture — 24 of
+them, **20 478 measured arms**:
+
+| `spent` µs | 5 | **6** | 7 | 8 | 9 | 10 | **11** |
+|---|---|---|---|---|---|---|---|
+| arms | 2 819 (13.8%) | **15 813 (77.2%)** | 520 | 717 | 606 | 3 | **0** |
+
+* **Modal `spent` is 6 µs. The value 11 does not occur once in 20 478 arms** —
+  while `spent_max_us` reports 10–11 in every one of those same runs.
+* **`left` never reaches 0 in any arm.** Its minimum anywhere is **1**
+  (`e168-A-peer-475_1`), and the modal `left` is 7–10 at 375–475 and 20 at 25%.
+
+Recomputing E231's decisive table against the measured spend:
+
+| ci | l=22 vs modal 6 | l=22 vs worst 10 | l=20 vs modal | l=16 vs modal |
+|---|---|---|---|---|
+| **64** (60% projected) | **+4 µs — passes ≥3** | +0 | +6 | +10 |
+| 72 | +6 | +2 | +8 | +12 |
+| 77 (50%) | +6 | +2 | +8 | +13 |
+
+**Level 22 — today's schedule — already clears E179's ≥3 µs rule at the
+projected 60% interval.** E231's central claim ("only level 16 clears") is an
+artifact of subtracting a saturated whole-run maximum from a mean interval, and
+so is **E211's "60% latches `Reason::LateArm` on the first crossing after lock,
+deterministically"**, which I have repeated in five entries. It is withdrawn.
+
+The worst-case column is the honest residual: at ci=64 with level 22 the margin
+against the worst observed spend is **+0**, so lateness at 60% is a **tail-rate
+question**, not a certainty — which is exactly what E231 conceded nine runs
+cannot measure, and exactly what `ci_min_us` exists for and has never recorded.
+
+**`spent_max_us` sits ~1 µs above even the per-crossing maximum**, consistent
+with it covering the arm's timer writes that the chain's `spent` omits. It is
+not wrong as a field; it is wrong as the thing to subtract, and E217 item 11
+**accepted that in writing** ("`spent_max_us` is the wrong arbiter;
+`spent_fine` is the right one") before E231 subtracted it again. E217 §2 even
+gave the corrected static window as 5.89 µs — within 1 µs of the modal 6
+measured here, from the other direction. **I contradicted my own accepted
+disposition, and both reviewers caught it independently.**
+
+#### Point-by-point — E232 (evidence)
+
+| # | finding | disposition |
+|---|---|---|
+| 1 | column indices right; but the docstring's "the quantity `FastBusSag` and the absolute floor judge" is **wrong** — `FastBusSag` divides by its 207 ms EWMA, the floor is an absolute-mV test with no `ref_bus`; only the cross-product *form* is shared | **Accepted; docstring corrected.** The notebook body had it right, so it is a tool-comment defect. |
+| 2 | **the committed artifact does not match the notebook** — the tool has no exclusion mechanism, so `e230_droop_derivation.txt` is the un-excluded run | **Accepted. This is E215 SS6 repeated and it is the worst of the set.** Flag added, artifact regenerated. |
+| 3 | populations confirmed when e182 is removed by hand; persistence table reproduces cell-for-cell | Noted. |
+| 4 | CV/CC labelling **confirmed and self-evidencing** — `e182-posctl-sag` is the only capture in 21 with `inject != 0` and `reason != 2`; two label imprecisions (a 45% run described as 47.5%, three report formats pooled) | **Accepted**, both corrected. |
+| 5 | the duty→droop table has **two wrong cells** — n=2560 is the un-excluded count and the minima 973.1/972.1 are per-capture overall minima, not duty-conditioned; 972.1 < 975.3 is arithmetically impossible under the stated exclusion | **Accepted.** I mixed two runs' output into one table. |
+| 6 | **the separation claim is wrong**: pooling a 101 µs ring with a 3.23 ms decimated ring manufactured the overlap. Fast-ring only: healthy min **975.3** vs CC max **958.1** — **separable by +17.2 per mille** | **Accepted in full. E230 Result 1 is withdrawn, and my "correction" of E228 was itself wrong** — E228's claim was a fast-ring claim and it holds. |
+| 7 | persistence figures inflated **20–65×**: every healthy sub-975 row is a *decimated* sample, so "0.10 ms" is unsupported (bounded to ≤~6.5 ms); real healthy streaks are 174 ms below 985 and 16.2 ms below 980; the CC floor is ~3.36 s, not 155.1 ms; the margin is **≥7.7×**, not 500× | **Accepted in full.** A healthy run sits below 985 *longer* than the CC streak I quoted. |
+| 8 | coverage is **0.195% by judgement / 4.23% by time** and I used both framings inconsistently (21× apart); rings freeze on fault and are otherwise the tail | **Accepted.** "No healthy run would trip" is unrefuted over 4% of the tail, not established. |
+| 9 | **970 was already `DEPTH_FRACTIONS[0]`**, committed in `c5aa6ef` before E230 | **Accepted.** Presenting it as derived without disclosing that is not a blind derivation. |
+| 10 | the instrument E230 asks for **already exists and is unflashed** — `dep970_n`/`dep970_run` record the full-run streak over 100% of a run | **Accepted**, and it reframes E228's rejection: that image cannot resolve the healthy *distribution shape*, but it can definitively answer the one question the ring cannot. |
+| 11 | `wait_time(ci,l) ≠ ci·(32−l)/64` as integers — they differ by 1 in **15 875 of 24 000** cases including ci=68 and 72; the table values are right (computed from source) but the stated identity is not, and ±1 µs is the resolution the argument turns on | **Accepted; the identity claim is withdrawn.** |
+| 12 | **`DefaultAdvance` is dead code** — used nowhere on the production path; AM32 maps duty to **13..23** (≈18 at half duty, 23 at full) and minz-core admits only **18..22**, so **16 is below the reference's range and 22 is closer to it than 16** | **Accepted. "It is a return, not a divergence" is inverted and withdrawn**, and E217 §1 said it first — I built on a doc comment attached to an unused alias. |
+| 13 | **ci=64 at 60% is contradicted by the corpus**: `mean_ci_us` 84 → 77/80 → **77 on all ten runs** at 450/475/500. The interval stops falling, so the 1/duty law already failed at the last measured rung | **Accepted**, and it compounds with the spend finding. |
+| 14 | baseline bookkeeping: `ci` spread is **0** not ±2 (I quoted a different field); `spent` 87/87 not 85/85; late-arm rate at this rung ~**10%** not 6%; the 3.8‰ scatter is **borrowed from another rung and multiple images** | **All accepted.** |
+| 15 | **`ci_min_us`/`thin_count` are in 0 of 88 captures** — "all already reported" is false, and the A arm cannot be `14CE44E7` since those fields postdate it | **Accepted.** So the A/B had no baseline for two of its own metrics. |
+| 16 | prediction 2 fails **61%** of the time from baseline alone (0.9⁹ = 0.39) | **Accepted.** |
+| 17 | the margin table is mean-based but lateness is per-event on `average_interval`, and `spent=11` means (10,11] — ±1 µs on both terms | **Accepted**, and now moot: the per-event distribution is measured above. |
+
+#### Point-by-point — E233 (adversarial)
+
+| # | finding | sev | disposition |
+|---|---|---|---|
+| 1 | **modal spend 5–6 µs, so level 22 already clears the rule at 60%** | BLOCKING | **Accepted; verified at 20 478 arms.** |
+| 2 | **`left = 1` is false** — measured 5–10 at 475, mode 7, zero exhausted arms; `CHAIN 2` lateness modally 1–2 µs, so the timer already governs | BLOCKING | **Accepted.** The "tail-bound on every acceptance" premise, which I took from E222 and repeated, is unsupported by the only per-crossing delivery data in the corpus. |
+| 3 | **level 16 has already been A/B'd and is the worst arm**: advance16 reached 38% then collapsed, 18 → 39, **20 → 43**, and 22-global failed startup twice (`binz/AGENTS.md:2161`). That is why the schedule exists | BLOCKING | **Accepted.** I proposed the worst-performing arm of an A/B already run, and did not cite it. Regime-scoped, so the ceilings do not transfer — the **ordering** does, and it had to be reconciled rather than ignored. |
+| 4 | **60% is blocked by current before timing**: slope 2.15–2.25 puts 600 tenths at **2.69–2.74 A mean and ~3.2 A worst block** against a 3 A clamp — and less advance costs torque, so the timing fix *worsens* the supply blocker | BLOCKING | **Accepted.** On the goal's own "sustained CC cannot count", 60% is a CC-brushing rung on this supply regardless of advance. |
+| 5 | E230's numbers unreproducible from its own tool | BLOCKING | **Accepted** (= E232 SS2). |
+| 6 | the 970 line is **simultaneously** a nuisance stop at 60% (healthy median extrapolates to 965–979) **and blind to CC at a 3 A clamp** — droop depth is set by the *overdemand ratio*, and at ~0% overdemand the bus barely folds (975–985, indistinguishable from healthy) | MATERIAL | **Accepted, and this is the finding I would never have reached.** The five CC captures are one clamp at ~15% overdemand; the line generalises to nothing. And the persistence "1500×" is `ring_length / 1 scan` — **50 ms is unfalsifiable against this data; 5 ms and 150 ms fit equally well.** |
+| 7 | protection coverage at 60% enumerated: average-current allowance unreachable below the clamp, no peak stop, **no temperature anywhere**, sharp sag catches a step not a knee, the sag positive control is a **no-op at the 50% rung** (`INJECT_SAG_DUTY_TENTHS = 500`), slow droop has no stop and no report in any flashed image | MATERIAL | **Accepted in full.** At 60% the only active limiter is the PSU, and the firmware would neither stop on it nor record it — a 30 s CC hold would report `reason=2 ceiling_tenths=600`, a pass. |
+| 8 | the fixture blocks >500 in **three** places, two silently: `ladder_admit` refuses, `rung_oracle` can never pass, and `run_gates`' 5% coast gate **silently disappears** while `BEMFREF` is omitted entirely | MATERIAL | **Accepted.** The silent ones are worse than the refusal. |
+| 9 | the A/B does not discriminate: **A and B are predicted identical** by the mechanism the campaign accepted, so six of nine runs measure one condition; a null is uninterpretable; and 50% and 60% are on **opposite sides of the sign change** being tested | MATERIAL | **Accepted. E231 is cancelled.** |
+| 10 | the late-arm rate is misquoted — **5 events in 30 runs, 4 runs affected (13%)** at 500 tenths, and `e195-rung-500_03` **latched** `reason=15` at `ci_us=56`. The stop census at 500 is **3× FastBusSag : 1× LateArm** — the dominant failure at the top rung is **bus sag, not timing** | MATERIAL | **Accepted, and it is the redirect.** I picked the lever for the minority mode. Scaling the 56 µs excursion to a 64 µs mean gives ~47 µs, where even level 16 fails the ≥3 µs rule against the worst spend — the rule is being applied to the mean and the event is caused by the minimum. |
+| 11 | `scripts/chain.py` **cannot parse the archived captures** (6 columns vs 7), which is plausibly why four entries argued from aggregates | MINOR | **Accepted; fixed.** It now **refuses** legacy captures with a message rather than coercing them — every downstream figure divides fine ticks by 64, so accepting µs would under-report 64×. `scripts/chain_spent.py` reads them with explicit units. |
+
+#### What is withdrawn
+
+1. **E230 Result 1** (populations overlap on level) — wrong, a pooling artifact.
+2. **E230's persistence margins and the 1500×/500× figures** — inflated 20–65×,
+   and the persistence is unfalsifiable against censored streaks.
+3. **The 970 line** — not blindly derived, a nuisance stop at the target rung,
+   and blind to CC at the clamp that matters.
+4. **E231 in its entirety** — cancelled before running. Its margin arithmetic,
+   its `left = 1` premise, its "return to the reference" framing, its ci=64
+   projection and its choice of level 16 are each independently wrong.
+5. **E211's "deterministically late at 60%"**, carried through five entries.
+
+#### What replaces it, in E233's order, because it is right
+
+1. **Done here, free:** `chain.py` fixed to refuse legacy captures;
+   `chain_spent.py` added; the 20 478-arm distribution measured and published.
+2. **Next, free:** the exclusion flag in `droop_derive.py`, the artifact
+   regenerated, and the fast/slow rings **separated** rather than pooled.
+3. **One image, one predeclaration:** cap raise to **525 only**, plus the
+   report-only fields already sitting in `src` (`ci_min_us`, `thin_count`, the
+   eight `dep*`, `applied_cap`) and **no new stop** — which is what both E218
+   reviews required and what E224/E225 built and never flashed. Host work
+   alongside: replace the oracle gate above 500 with the within-run coast
+   identity, and give the runner a mode that drives the requested rung *and*
+   judges it.
+4. **One exploratory run at 525**, which answers in one 80 s window all four
+   things the last six entries have argued about: the next point of the current
+   law, the next point of the droop law, whether `ci·duty` holds, and what
+   `ci_min_us` actually is. **Nine runs at 50% answer none of them.**
+5. Only then the advance question, chain-instrumented, judged on **effective
+   angle**, at the rung where the margin is actually in question.
+
+**And one thing goes to the operator, because it can invalidate the campaign:**
+by this bench's own current law a healthy 60% run draws ~2.7 A mean and ~3.2 A
+in its worst blocks against a **3 A clamp**. The goal says sustained CC,
+depressed bus or foldback cannot count as qualification. So either the clamp
+rises — with the power path re-measured first, per the melted-connector fault
+class — or the top rung is renegotiated. That is a measured projection from 25
+runs, not an inferred wall, and it is reported as the blocker it is.
