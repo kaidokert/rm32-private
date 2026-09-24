@@ -393,6 +393,10 @@ impl Hal for Board {
         S.det().late_arms.load(Ordering::Relaxed)
     }
 
+    fn unstable_count(&self) -> u32 {
+        roots::det_counts().2
+    }
+
     #[inline(always)]
     fn blank_latched(&self) -> u32 {
         S.com().blank_latched.load(Ordering::Relaxed)
@@ -495,9 +499,6 @@ impl Hal for Board {
         // first commutation's floor was computed from garbage. Found by the
         // pre-run review of step 6b (E167); it predates the restructure.
         det.accept_raw.store(u32::from(raw), Ordering::Relaxed);
-        det.rebase.store(0, Ordering::Relaxed);
-        det.margin_min_p1.store(0, Ordering::Relaxed);
-        det.wait_min_p1.store(0, Ordering::Relaxed);
         self.det_seq_seen = det.accept_seq.load(Ordering::Relaxed);
         det.step.store(u32::from(step.get()), Ordering::Relaxed);
         det.advance.store(advance, Ordering::Relaxed);
@@ -511,6 +512,16 @@ impl Hal for Board {
         // run's `late_arms` and `spent_max`.
         cortex_m::interrupt::free(|_| {
             if !roots::guard_latched() {
+                // **These three belong inside the guarded section too.** They
+                // were reset above it, so an install refused because the guard
+                // had already latched still zeroed them -- blanking the margin
+                // and the re-base count on exactly the trip they exist to
+                // explain. `rebase` carried that flaw before E208 made it
+                // visible; both reviews called this the cheapest necessary fix
+                // (E209 SS5, E210 SS2).
+                det.rebase.store(0, Ordering::Relaxed);
+                det.ci_min_p1.store(0, Ordering::Relaxed);
+                det.thin.store(0, Ordering::Relaxed);
                 det.spent_max.store(0, Ordering::Relaxed);
                 det.late_arms.store(0, Ordering::Relaxed);
                 det.active.store(true, Ordering::Release);
@@ -707,9 +718,9 @@ impl Hal for Board {
             late_arms: S.det().late_arms.load(Ordering::Relaxed),
             // E208: the causal side of the late arm. `margin_min_p1` is stored
             // plus one so that 0 means "no acceptance seen".
-            margin_min_us: S.det().margin_min_p1.load(Ordering::Relaxed).saturating_sub(1),
-            wait_min_us: S.det().wait_min_p1.load(Ordering::Relaxed).saturating_sub(1),
-            margin_seen: S.det().margin_min_p1.load(Ordering::Relaxed) != 0,
+            ci_min_us: S.det().ci_min_p1.load(Ordering::Relaxed).saturating_sub(1),
+            thin_count: S.det().thin.load(Ordering::Relaxed),
+            hold_unstable: 0,
             rebase: S.det().rebase.load(Ordering::Relaxed),
             com_preempts: S.com().preempts.load(Ordering::Relaxed),
             com_arm_preempts: S.com().arm_preempts.load(Ordering::Relaxed),

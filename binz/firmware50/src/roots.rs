@@ -381,7 +381,7 @@ fn arm_marked<C: ChainLog>(left: u32) {
     }
 }
 
-/// **Record the per-acceptance margin and the scheduled wait** (E208).
+/// **Record the causal variable and the thin-margin count** (E208/E212).
 ///
 /// One function, called by both acceptance paths, because E204 found the
 /// previous candidate edited only the diagnostic twin and therefore did not
@@ -396,16 +396,18 @@ fn arm_marked<C: ChainLog>(left: u32) {
 /// whole-run maximum that reads 11 µs in 490 captures, including every run
 /// that ever latched a late arm.
 #[inline(always)]
-fn note_margin(left: u32, wait: u32) {
-    let margin_p1 = left.saturating_add(1);
-    let prev = S.det().margin_min_p1.load(Ordering::Relaxed);
-    if prev == 0 || margin_p1 < prev {
-        S.det().margin_min_p1.store(margin_p1, Ordering::Relaxed);
+fn note_margin(left: u32) {
+    // The accepted average interval, stored by the estimator's borrow just
+    // above: the causal variable, and level-invariant (E210 SS1).
+    let ci_p1 = S.det().accept_avg.load(Ordering::Relaxed).saturating_add(1);
+    let prevc = S.det().ci_min_p1.load(Ordering::Relaxed);
+    if prevc == 0 || ci_p1 < prevc {
+        S.det().ci_min_p1.store(ci_p1, Ordering::Relaxed);
     }
-    let wait_p1 = wait.saturating_add(1);
-    let prevw = S.det().wait_min_p1.load(Ordering::Relaxed);
-    if prevw == 0 || wait_p1 < prevw {
-        S.det().wait_min_p1.store(wait_p1, Ordering::Relaxed);
+    if left <= 2 {
+        S.det()
+            .thin
+            .store(S.det().thin.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
     }
 }
 
@@ -468,7 +470,7 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                     let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
                     let left = wait.saturating_sub(spent);
                     arm_marked::<C>(left.max(1));
-                    note_margin(left, wait);
+                    note_margin(left);
                     beat = beat_row::<C>(raw, fine0, wait, step.get(), left == 0);
                     if left == 0 {
                         S.det().late_arms.store(
@@ -535,7 +537,7 @@ fn accept(raw: u16, fine0: u16, wait: u32, avg: u32, blank: u32) -> Option<(u16,
                 Ordering::Relaxed,
             );
         }
-        note_margin(left, wait);
+        note_margin(left);
         if spent > S.det().spent_max.load(Ordering::Relaxed) {
             S.det().spent_max.store(spent, Ordering::Relaxed);
         }

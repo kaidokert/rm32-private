@@ -118,6 +118,41 @@ def target(ops: str) -> int | None:
     return int(m.group(1), 16) if m else None
 
 
+
+def _topo_order(n, succ, back_edges):
+    """Topological order of the graph with `back_edges` removed.
+
+    Raises if what remains is not a DAG: a cycle here means a real loop was not
+    classified as one, and a longest path over it is meaningless rather than
+    merely wrong. Refusing is the point -- see the note at the relaxation.
+    """
+    indeg = [0] * n
+    for i in range(n):
+        for j in succ[i]:
+            if (i, j) not in back_edges and j < n:
+                indeg[j] += 1
+    from collections import deque
+
+    q = deque(i for i in range(n) if indeg[i] == 0)
+    order = []
+    while q:
+        i = q.popleft()
+        order.append(i)
+        for j in succ[i]:
+            if (i, j) in back_edges or j >= n:
+                continue
+            indeg[j] -= 1
+            if indeg[j] == 0:
+                q.append(j)
+    if len(order) != n:
+        raise SystemExit(
+            f"isr_cycles: {n - len(order)} instruction(s) left in a cycle after "
+            "back-edge removal -- a loop was not classified, so the longest path "
+            "would be meaningless. Refusing rather than under-reporting."
+        )
+    return order
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--elf", required=True)
@@ -249,8 +284,24 @@ def main() -> int:
             return c
 
         # Longest path on the DAG obtained by removing back-edges.
+        #
+        # **Relaxed in topological order, not instruction order.** Index order
+        # is a valid topological order only if every surviving edge goes
+        # forward, and the compiler is free to place a tail-merged or outlined
+        # block *after* the epilogue and jump backwards into the body -- which
+        # is not a loop and is not removed as a back-edge. A single pass in
+        # index order then never propagates that block's cost into the
+        # instructions that follow it, and the tool silently under-reports.
+        #
+        # That happened, and it took two independent reviews to catch: adding a
+        # ten-instruction instrument to `ADC_COMP` moved one `EventWatch` block
+        # out of line, created four backward non-loop edges, and the reported
+        # longest path *fell* by 45 cycles at 0 WS. The honest figures were 18
+        # cycles lower, not 45, and the difference was entirely this loop
+        # (E209 SS3, E210 SS2). A gate that can quietly report an improvement
+        # for a change that costs cycles is worse than no gate.
         be = set(back_edges)
-        order = list(range(n))
+        order = _topo_order(n, succ, be)
         best = [-(10**9)] * n
         best[0] = insn_cost(0)
         for i in order:

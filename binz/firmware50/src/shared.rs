@@ -286,18 +286,19 @@ pub struct Det {
     pub late_arms: AtomicU32,
     /// Refusals by the re-base rule.
     pub rebase: AtomicU32,
-    /// **The smallest `wait - spent` this run has seen, plus one** (so 0 means
-    /// "never set" and the arithmetic needs no sentinel).
+    /// **The smallest accepted average interval of the run, plus one.**
     ///
-    /// The late arm is a 1-in-10 event and `spent_max_us` is a saturated
-    /// whole-run maximum that reads 11 in 490 captures, so neither says how
-    /// close the scheduled wait came to the arm path on the acceptances that
-    /// did *not* fail. This does: its left tail **is** the failure (E207).
-    pub margin_min_p1: AtomicU32,
-    /// The smallest `wait` scheduled this run, plus one. `wait` is the quantity
-    /// that actually varies -- it falls with the interval -- and the cliff is a
-    /// property of it, not of `spent`.
-    pub wait_min_p1: AtomicU32,
+    /// The causal variable: the scheduled wait is `wait_time(ci, level)`, so a
+    /// late arm needs `ci` below a threshold -- 71 µs at level 22 against an
+    /// 11 µs arm path -- and `spent` has never varied on this bench (11 µs in
+    /// 490 captures). Unlike the wait, this is **invariant under the advance
+    /// level**, so it is the only one of the two that can judge an advance A/B
+    /// (E210 SS1).
+    pub ci_min_p1: AtomicU32,
+    /// Acceptances whose margin was 2 µs or less. A **count**, because a
+    /// minimum over ~700 000 samples cannot distinguish a habitually thin
+    /// margin from one excursion, and that distinction is the question.
+    pub thin: AtomicU32,
     /// The storm count is enforced only once set (E107).
     pub cap_armed: AtomicBool,
     /// The estimator. Ceiling: the motor roots (`ADC_COMP` writes it and
@@ -617,8 +618,8 @@ static EDGE: Edge = Edge {
 };
 static DET: Det = Det {
     active: f(),
-    margin_min_p1: u(),
-    wait_min_p1: u(),
+    ci_min_p1: u(),
+    thin: u(),
     sector_start_raw: u(),
     step: AtomicU32::new(1),
     advance: AtomicU32::new(20),

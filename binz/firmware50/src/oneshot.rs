@@ -589,30 +589,31 @@ pub ",
         );
     }
 
-    /// **The margin instrument's arithmetic**, which is what E208 added and
-    /// what the late-arm question now turns on. `margin_min_p1` is stored plus
-    /// one so a run with no acceptance is distinguishable from a run whose
-    /// margin reached zero -- and the late arm is exactly `margin == 0`.
+    /// **The late-arm predicate, and why the margin minimum was dropped.**
+    ///
+    /// E208 recorded `min(wait - spent)` per run. Both reviews of it showed the
+    /// statistic is redundant: `left` is floored at 0, so a margin minimum of
+    /// zero is *equivalent* to `late_arms > 0` by construction (E209 SS5), and
+    /// a minimum over ~700 000 acceptances cannot separate a habitually thin
+    /// margin from one excursion (E210 SS1). What replaced it is `thin_count`
+    /// -- a count of acceptances with `left <= 2` -- and `ci_min_us`, the
+    /// causal variable. This test keeps the predicate itself pinned.
     #[test]
-    fn the_margin_is_zero_exactly_when_the_arm_is_late() {
+    fn a_late_arm_is_exactly_an_exhausted_wait() {
         // `wait.saturating_sub(spent) + 1`, the production expression.
         let margin_p1 = |wait: u32, spent: u32| wait.saturating_sub(spent).saturating_add(1);
         // A late arm is `left == 0`, i.e. spent >= wait, i.e. margin_p1 == 1.
         assert_eq!(margin_p1(12, 11), 2, "one microsecond of margin");
         assert_eq!(margin_p1(11, 11), 1, "no margin: this is the late arm");
         assert_eq!(margin_p1(9, 11), 1, "over by two: still exactly the late arm");
-        // The stored-plus-one convention: 0 is unreachable from an acceptance,
-        // so it can mean "never set" without a sentinel value.
-        for wait in 0..40u32 {
-            for spent in 0..40u32 {
-                assert!(margin_p1(wait, spent) >= 1, "plus-one must never be 0");
-            }
-        }
-        // And the reported value is the stored one minus one, saturating.
-        let reported = |p1: u32| p1.saturating_sub(1);
-        assert_eq!(reported(0), 0, "never set reports 0 -- read margin_seen");
-        assert_eq!(reported(1), 0, "a real zero margin also reports 0");
-        assert_eq!(reported(2), 1);
+        // `thin_count` is what replaced the minimum: a *count* of acceptances
+        // at or below two microseconds of margin, which is what separates
+        // "habitually thin" from "one excursion".
+        let thin = |wait: u32, spent: u32| wait.saturating_sub(spent) <= 2;
+        assert!(thin(12, 11), "the 50% rung's nominal margin is thin");
+        assert!(thin(13, 11));
+        assert!(!thin(14, 11), "three microseconds is not thin");
+        assert!(thin(9, 11), "and an exhausted wait is thin as well as late");
     }
 
     #[test]

@@ -218,13 +218,13 @@ pub struct Roots {
     /// COMP's entry-to-arm time and the arms that reached the wait (E083).
     pub spent_max_us: u32,
     pub late_arms: u32,
-    /// **The smallest `wait - spent` of the run**, µs -- the margin whose left
-    /// tail is the late arm (E207). Meaningless unless `margin_seen`.
-    pub margin_min_us: u32,
-    /// The smallest scheduled `wait` of the run, µs: the quantity that varies.
-    pub wait_min_us: u32,
-    /// Was any acceptance seen at all? Distinguishes "margin 0" from "no data".
-    pub margin_seen: bool,
+    /// The smallest accepted average interval, µs: the causal variable, and
+    /// invariant under the advance level.
+    pub ci_min_us: u32,
+    /// Acceptances with 2 µs of margin or less.
+    pub thin_count: u32,
+    /// `unstable` accumulated during the hold only (E212).
+    pub hold_unstable: u32,
     /// Intervals beyond `ci_max` that were re-based and discarded -- counted
     /// and reset since the estimator was written, and **never reported** until
     /// E208. It is the counter that says whether a crossing was lost just
@@ -554,9 +554,9 @@ impl RunReport {
         out.kv("spent_max_us", self.roots.spent_max_us);
         out.kv("late_arms", self.roots.late_arms);
         // E208: the causal side of the late arm, per run.
-        out.kv("margin_min_us", self.roots.margin_min_us);
-        out.kv("wait_min_us", self.roots.wait_min_us);
-        out.kv("margin_seen", u32::from(self.roots.margin_seen));
+        out.kv("ci_min_us", self.roots.ci_min_us);
+        out.kv("thin_count", self.roots.thin_count);
+        out.kv("hold_unstable", self.roots.hold_unstable);
         out.kv("rebase", self.roots.rebase);
         out.kv("com_preempts", self.roots.com_preempts);
         out.kv("com_arm_preempts", self.roots.com_arm_preempts);
@@ -836,9 +836,9 @@ mod tests {
         // ceiling fell below its commanded duty did not hold the rung, and
         // until E187 the report could not say so.
         // E208: the causal-side fields, on the line the fixture parses.
-        assert!(t.contains(" margin_min_us="));
-        assert!(t.contains(" wait_min_us="));
-        assert!(t.contains(" margin_seen="));
+        assert!(t.contains(" ci_min_us="));
+        assert!(t.contains(" thin_count="));
+        assert!(t.contains(" hold_unstable="));
         assert!(t.contains(" rebase="));
         assert!(t.contains(" ref_ma=326 duty_tenths=250 ceiling_tenths="));
         assert!(t.contains(" worst_residual="));

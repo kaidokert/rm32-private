@@ -267,6 +267,10 @@ impl Hal for Sim {
     fn storm(&self) -> bool {
         false
     }
+    fn unstable_count(&self) -> u32 {
+        0
+    }
+
     fn late_arms(&self) -> u32 {
         u32::from(self.faults.late_arm_at.is_some_and(|t| self.t >= t))
     }

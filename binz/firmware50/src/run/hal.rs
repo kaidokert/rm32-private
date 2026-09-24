@@ -290,6 +290,11 @@ pub trait Hal {
     /// the blanking window latched: campaign 8's two hard stops. Both are
     /// read from the roots' counters, which only ever rise.
     fn late_arms(&self) -> u32;
+
+    /// The detector's cumulative `unstable` count, for the hold-window mark
+    /// (E212): the ratio against accepted crossings is only meaningful on a
+    /// single stage, and whole-run it mixes the ramp with the hold.
+    fn unstable_count(&self) -> u32;
     fn blank_latched(&self) -> u32;
     fn overrun(&self) -> bool;
     fn cap_armed(&self) -> bool;

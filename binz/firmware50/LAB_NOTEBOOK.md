@@ -14710,3 +14710,517 @@ is deliberately not in this candidate yet.
 One structural note: the instrument first pushed `det_decide_plain` to 118
 lines and the structure gate caught it — the gate that E198 had to be taught to
 fail on its own findings. It is now one extracted function and back to 0.
+
+### E209 — evidence review of the margin instrument, verbatim
+
+The first of the pair for candidate `5A8C0127`. Fresh, context-free, given both
+ELFs and the source, asked to settle from the object code whether the instrument
+is present and whether the −45 cycle figure is real. It has not seen the
+adversarial review.
+
+**Headline: nothing was silently lost — and the cycle figure I reported is
+wrong, by tool defect.** Appended verbatim; disposition in E211.
+
+---
+
+Tree restored (`git status` clean in `firmware50`, target artifact back to the candidate hash, temp worktree pruned).
+
+# Evidence review — `14CE44E7.e187` vs `5A8C0127.e208-margin`
+
+## Bottom line
+
+**Nothing was silently lost.** The instrument is present, correct, and on the production acceptance path; all memory side effects of the baseline survive exactly.
+
+**But the headline cycle figure is wrong.** The −45 / −56 cycles is ~60% a defect in `scripts/isr_cycles.py`. Recomputed with a correct topological longest path, the candidate is **1063 @ 0 WS and 1259 @ 2 WS**, not 1036 / 1226. The real static improvement is **−18 / −23**, not −45 / −56. `isr_cycles.py`'s number for the *baseline* is correct; only the candidate's is inflated, and for a reason specific to the candidate.
+
+## Provenance first (this is what makes the rest decidable)
+
+- `cargo build --release --bin shell-pwm` at HEAD (`57e70ac`) reproduces `5A8C0127.e208-margin.elf` **bit for bit**: `7cb00b82…` = committed ELF hash.
+- HEAD~1 (`bdd8b4f`), built in the same directory, gives `.text`/`.rodata`/`.data` **byte-identical** to `14CE44E7.e187.elf` (`.text` sha `cc9733d7…`, `.rodata` `7eb8a7fc…`, `.data` `80010c57…`; whole-ELF hash differs only in debug metadata).
+- Therefore the two ELFs differ by **exactly** `git show 57e70ac -- src bin`, which is **100 insertions, 0 deletions** across `src/roots.rs`, `src/shared.rs`, `src/report.rs`, `bin/board.rs`, `src/oneshot.rs`. No source-level deletion exists to have been lost.
+
+`size`: text 39752→40024, data 660→668 (+8 = the two new `AtomicU32`), bss 4184 unchanged. `nm` shows `shared::DET` grew 0x74→0x7c at 0x20000190.
+
+## 1. Is the instrument present and reachable?
+
+Yes. `Det` is `#[repr(C)]` (`src/shared.rs:253`), so offsets are declaration order: `margin_min_p1` = DET+48, `wait_min_p1` = DET+52. `cap_armed` and everything after shift +8 (visible as `movs r0,#48`→`#56`, `#108`→`#116`, `#96`→`#104`).
+
+The single site, `ADC_COMP` 0x080015b2–0x080015cc (r5 = literal 0x8001790 = `0x20000190` = `DET`):
+
+```
+80015b2  ldr  r0,[r5,#48]   ; prev
+80015b4  subs r0,r0,#1
+80015b6  cmp  r0,r6         ; r6 = left
+80015b8  bls  80015be       ; skip store
+80015ba  adds r0,r6,#1      ; left+1
+80015bc  str  r0,[r5,#48]
+80015be  ldr  r0,[r5,#52]   ; same for wait (r4)
+…
+80015cc  str  r0,[r5,#52]
+```
+
+The compiler folded `prev == 0 || margin_p1 < prev` into one unsigned compare: store iff `(prev-1) > left`, which is exact — `prev == 0` wraps `prev-1` to `0xFFFFFFFF`, always greater. 10 instructions for both fields.
+
+Placement is on the hot path, not a cold branch:
+- 0x8001534–0x800153c loads `COM.active` (`0x20000000+0`) and `beq 0x80015e2` — jumping **past** the instrument, so the whole block is inside `if S.com().active` (`src/roots.rs:467`).
+- 0x800153e–0x800154a computes `spent = TIM17.CNT - raw` (r2 = 0x40014824) and `left = wait ⊖ spent` (r6), saturating.
+- 0x800154c–0x80015ae is `com_arm`'s `interrupt::free` (`cpsid`, `arm_allowed` reading `COM.stopped` at +396 and `COM.active` at +0, then TIM16 DIER/ARR/CNT/EGR/SR/CR1 at 0x40014400, `msr PRIMASK`).
+- 0x80015b2 the instrument, then 0x80015ce `late_arms` (DET+40) guarded by `cmp wait,spent; bhi`, then 0x80015da `spent_max` (DET+36). Order matches `roots.rs:470–481`.
+
+Only one such site exists — `det_decide_logged`/`accept` are dead in `shell-pwm` (`L::ON == false`), as intended.
+
+## 2. What the compiler actually did — full accounting of the −12 instructions
+
+I ran a controlled build: **HEAD with only the two `note_margin(left, wait)` call lines deleted**, fields/report/resets kept. Result: `ADC_COMP` = **738 instructions, 1081 / 1282 cycles — identical to the baseline**. So the struct-layout shift costs nothing, and the entire delta is attributable to the two calls.
+
+Opcode histogram, baseline → candidate (net −12):
+
+| | Δ | | Δ |
+|---|---|---|---|
+| `mov` (reg-reg) | −12 | `str` | +3 |
+| `ldr` | −6 | `adds` | +2 |
+| `nop` | −2 | `subs` | +2 |
+| `b.n` | −3 | `bls` | +2 |
+| `bne`,`bge` | −1,−1 | `cmp`,`movs`,`beq`,`blt` | +1 each |
+
+Classified by addressing base — **this is the check that answers "was anything lost"**:
+
+| | baseline | varA (no calls) | candidate |
+|---|---|---|---|
+| `ldr` real memory | 50 | 50 | **52** (+2 = instrument) |
+| `ldr` literal pool | 57 | 57 | 57 |
+| `ldr [sp]` (spill reload) | 49 | 49 | **41** (−8) |
+| `str` real memory | 68 | 68 | **71** (+3) |
+| `str [sp]` (spill) | 32 | 32 | 32 |
+| `ldrb`/`ldrh`/`strb`/`strh` memory | 11/9/13/9 | 11/9/13/9 | 11/9/13/9 |
+
+Every byte/halfword access and every literal load is preserved. The only real-memory growth is the instrument's 2 loads + 2 stores, plus **one** extra store, which I located: the baseline shares one `str r0,[r1,#116]` (EXTI_IMR1 set, `hw::comp::line_enable`) between two paths — 0x800141e does `b.n 0x8001786` into it. The candidate un-merges that tail and emits the store on both paths (0x8001424 and 0x8001708). Same number of IMR1 *loads* (4 in both), 3→4 stores, one fewer `b.n`. No extra runtime write; the paths are mutually exclusive.
+
+The two signed-branch changes (`bge`→`blt`) are the same test with inverted polarity and swapped block layout: `cmp r4,#0` / `mvns` / `lsls r,#1` = the saturating `average*2` at `roots.rs:805`. Present in both, both sites. `nop` −2 is alignment padding.
+
+So the remaining −24 is **register allocation and scheduling**: 12 fewer reg-reg copies and 8 fewer stack reloads, at the price of one more stack slot (`sub sp,#44`→`#48`) and one duplicated store. Adding a second consumer of `left`/`wait` after the critical section changed their live ranges, and LLVM (`opt-level="s"`, `lto="thin"`, `codegen-units=1`) picked a globally better assignment. **Nothing is missing.** The notebook's proposed mechanism ("`margin_p1` reuses the arm's own `left`") explains why the instrument is *cheap*; it does not explain the −24, which is a whole-function allocation effect.
+
+## 3. Is the cycle figure trustworthy? No — for the candidate
+
+`isr_cycles.py` costs instructions at M0+ rates, removes back-edges that form real cycles, then computes a longest path with **a single relaxation pass in instruction-index order** (`scripts/isr_cycles.py:255–265`), and takes `max` over *all* nodes (line 266). Index order is a valid topological order only if every surviving edge goes forward. The docstring itself acknowledges backward *non-loop* jumps (tail-merged trampolines) — and that is exactly what the candidate introduced:
+
+| | back-edges | real loops | backward **non-loop** edges |
+|---|---|---|---|
+| baseline `ADC_COMP` | 2 | 2 | **0** |
+| candidate `ADC_COMP` | 6 | 2 | **4** |
+
+The four: `0x8001736 b → 0x8001670`, `0x8001740 beq → 0x8001670`, `0x8001748 bne → 0x8001672`, `0x800177e b → 0x80016d6`. All originate *after* the epilogue at 0x8001714/0x8001716, so their contributions into the shared tail are never propagated forward by the single pass. The tool under-reports.
+
+Recomputed with a real topological sort (graph verified acyclic; my reimplementation reproduces the tool exactly on the baseline and on varA, where there are no such edges):
+
+| | 0 WS | 2 WS (`--fetch-model`) |
+|---|---|---|
+| baseline | 1081 (= tool) | 1282 (= tool) |
+| candidate, tool | 1036 | 1226 |
+| **candidate, correct** | **1063** | **1259** |
+
+Loop extras are identical in both (176 + 176 @ 0 WS), and in both images the maximum lands on the same instruction — the function's single epilogue `pop {r4,r5,r6,r7,pc}` — so the endpoints *are* comparable. The −18 / −23 is real; the extra −27 / −33 is tool error. The other three roots have zero backward non-loop edges in either image, so their figures (TIM16 360/426, DMA1 78/84, TIM6 208/249) are unaffected. **`isr_cycles.py` should be fixed to relax in topological order, or to refuse a function with backward non-loop edges.**
+
+## 4. The other three roots
+
+`scripts/isr_diff.py` verified: `DMA1_CHANNEL1` identical, 37 instructions; `TIM16` identical, 332; `TIM6_DAC_LPTIM1` identical, 155. Only `ADC_COMP` differs (738→726). This is internally consistent: every `Det` field TIM16 and the guard touch (`step`+8, `accept_avg`+16, `accept_blank`+20, `accept_raw`+28, `active`+0) sits *below* the insertion point at 48, so no offset they use moved. That is the payoff of `shared.rs`'s "last field on purpose" rule, applied here by inserting after `rebase`.
+
+## 5. The instrument's arithmetic — correct, with one placement defect
+
+Correct and unambiguous:
+- `left = wait.saturating_sub(spent)`; `margin_p1 = left.saturating_add(1)` ≥ 1 always, so stored 0 is unreachable from an acceptance — the sentinel-free convention holds. `margin_seen` = `margin_min_p1 != 0`.
+- **A late arm is exactly `margin_min_us == 0 && margin_seen`.** `late_arms` increments iff `left == 0` (`roots.rs:473`), and the minimum reaches 0 iff some acceptance had `left == 0`. The two are equivalent by construction, so `margin_min_us==0 && margin_seen` ⟺ `late_arms > 0`. No overflow: `wait = (ci>>1) - advance` (`commutation.rs:268`) with `max_interval = seed_us + seed_us/2` (`run/policy.rs:245`), so `wait` is a few hundred µs; `saturating_add(1)` never saturates and cannot alias.
+- `arm_marked(left.max(1))` arms with the clamped value but `note_margin` records the raw `left` — right choice; the instrument measures the truth, not the clamp.
+- Window: reset in `det_install` (`bin/board.rs:498–500`), read in `roots_record` (`bin/board.rs:710–713`). `det_install` is reached once per run from `Handover::lock` (`src/run/states.rs:818`, entered once in `run/mod.rs:146`), and `roots_record` runs at report time after the coast, with the detector already inactive. So the window is "the closed-loop portion of one run" — which is the whole population of acceptances, since the driven stage uses `drv_decide` and `COM.active` is false before handover. Correct for the quantity.
+
+**Defect (small, real, and against the tree's own stated rule).** `margin_min_p1`, `wait_min_p1` **and** `rebase` are reset at `board.rs:498–500`, *outside* the `interrupt::free { if !guard_latched() { … } }` block at `board.rs:512–518` that protects `spent_max` and `late_arms`. The comment there states the rule explicitly: *"a refused install must not erase the tripping run's `late_arms` and `spent_max`"* (E186 SS2). If a guard trip lands between `states.rs:806`'s `let latched = hal.guard_reason() != 0` and these three stores, the install is refused, `det.active` is never set, and the tripping run reports `margin_seen=0`, `margin_min_us=0`, `rebase=0` for a run that did have data. That is precisely the case the fields were added for — `rebase` is documented as *"the counter that says whether a crossing was lost just before a stop"*. `rebase` already had this flaw pre-E208; E208 is what makes it visible. **Move all three inside the existing critical section**, alongside `spent_max`/`late_arms`.
+
+Minor: `board.rs:710` and `:712` load `margin_min_p1` twice (value and `margin_seen`). Benign only because the detector is inactive at report time.
+
+## 6. Both acceptance paths
+
+Confirmed identical arguments and identical meaning.
+
+| | production `det_decide_plain` | twin `accept` |
+|---|---|---|
+| `spent` | `roots.rs:468` `hw::clock::raw().wrapping_sub(raw) as u32` | `roots.rs:527`, same expression |
+| `left` | `:469` `wait.saturating_sub(spent)` | `:528`, same |
+| arm | `:470` `arm_marked::<C>(left.max(1))` | `:529` `com_arm(left.max(1), 1)` |
+| `note_margin(left, wait)` | `:471` | `:538` |
+| gate | inside `if S.com().active` `:467` | inside `if S.com().active` `:526` |
+
+The only difference is ordering relative to the `late_arms` bump (before it in production, after it in the twin), which cannot affect the recorded values because `spent` is sampled before the arm in both. E204's failure mode — editing only the twin — is genuinely closed by the single shared `#[inline(always)] fn note_margin`.
+
+## 7. `rebase`
+
+Incremented at `src/roots.rs:432` (`det_decide_plain`) and `:563` (`det_decide_logged`), in the `count > ci_max` branch where the detector re-bases `sector_start_raw` and discards the interval. In the candidate's object code it is a `portable_atomic` fetch_add under `cpsid`/`msr` at `ADC_COMP` 0x800140c–0x8001418 (DET+44 — the one DET offset ≥44 that did *not* move, and identical in both images). Reset at `bin/board.rs:498`, emitted at `src/report.rs:560`. Window: same as the margin fields (handover → report), with the same reset-placement defect above. It counts closed-loop re-bases only; the driven observer's refusals are separate counters.
+
+## 8. Gates — all reproduce
+
+| gate | baseline | candidate |
+|---|---|---|
+| four-root arithmetic audit (`isr_audit.py … --allow-file scripts/audit_allow.json`) | AUDIT PASSED, 4/4 clean | AUDIT PASSED, 4/4 clean |
+| `isr_diff.py` | — | 3 roots identical, `ADC_COMP` 738→726 |
+| `ADC_COMP` cycles, tool | 1081 / 1282 | 1036 / 1226 ← **artefact**; correct 1063 / 1259 |
+| `TIM16` / `DMA1` / `TIM6` cycles | 360/426, 78/84, 208/249 | identical |
+| `structure_report.py` | `bin_lines=1033 (<1500)`, `bin_unsafe=3 (≤10)`, `bits_writes_outside_hw 0`, `static_mut 0`, **`functions_over_100_lines=0`** | same; `stack_left` 32020 → 32012, floor 8192 |
+| `cargo test --target x86_64-pc-windows-msvc` | (not re-run) | **337 passed + 9 doc** |
+| clippy (`--bin shell-pwm`; host `--lib --tests`) | — | 0 warnings |
+| `size` | text 39752 data 660 bss 4184 | text 40024 data 668 bss 4184 |
+
+## Where the notebook differs from my findings
+
+Reproduced exactly: 738→726; the three identical roots and their cycle figures; 4/4 audit; `functions_over_100_lines=0`; 337+9 tests (the +1 over 336 is the one new `#[test]` in `src/oneshot.rs`); clippy clean; the split of E207's other four changes out of this candidate (`acc_by_phase` is still `[u16; 5]` at `report.rs:406`, no `hold_unstable`).
+
+Differs:
+
+1. **"−45 cycles at 0 WS and −56 at 2 WS" is not the static cost of the change.** It is −18 / −23. The remainder is `isr_cycles.py` under-relaxing across four backward non-loop edges that only the candidate has. E208 was right to distrust the number; the reason is the instrument, not the compiler.
+2. **"a 40-cycle improvement… is the shape of result that turns out to be the compiler deleting something that mattered" — it did not.** Byte-verified additive source diff, plus a per-width, per-base memory-op census showing +2 loads / +3 stores (2 instrument + 1 tail-un-merged `line_enable`) and everything else preserved, plus a controlled no-calls build that returns exactly to 738 / 1081 / 1282.
+3. **The proposed mechanism is the wrong one.** "`margin_p1` reuses the arm's own `left`" explains the instrument's 12 instructions. The −24 elsewhere is −12 reg-reg `mov` and −8 stack reloads: a global register-allocation change, paid for with one extra stack slot and one duplicated store.
+4. **"Two host tests" is one new test plus four assertions added to the existing wire-format test** (`src/report.rs:838–842`).
+5. **Not in the notebook at all:** the three new/newly-reported per-run counters are reset outside the latch-protected section that `late_arms` and `spent_max` sit inside, contradicting the rule the adjacent comment states (E186 SS2). Worth fixing before the runs, because it can blank the fields on exactly the trip they were built to explain.
+
+Verdict: the instrument is safe to run. Fix the reset placement and correct (or fail-close) `isr_cycles.py` before quoting a cycle figure for `ADC_COMP`; the honest static numbers are **726 instructions, 1063 cycles @ 0 WS, 1259 @ 2 WS**.
+
+### E210 — adversarial review of the margin instrument, verbatim
+
+The second of the pair, fresh and context-free, never having seen the evidence
+review. It reaches the same two defects independently (the cycle figure is an
+outlining artefact; the resets sit outside the latch-protected section) and adds
+the finding that decides this campaign: **60% is arithmetically unreachable on
+this firmware, and it takes no bench time to show it.**
+
+Appended verbatim; disposition in E211.
+
+---
+
+I formed my view from the code, the two ELFs and all 621 captures before reading E207/E208. Findings below; where I agree with the author I say so in a line.
+
+## Headline: the 60% goal is blocked by arithmetic that is already measurable, and the planned cohort cannot see it
+
+`wait_time(ci, level) = (ci>>1) − advance_of(ci, level)` (`src/commutation.rs:261-269`). The arm's cost is `spent = hw::clock::raw() − raw` (`src/roots.rs:468`), and a late arm is exactly `wait ≤ spent`.
+
+Measured across every capture: `spent_max_us` = 11 (436 occurrences) or 10 (65, all `captures/2026-09-23/c7-e142-*`). `mean_ci_us` at the 500 rung = 77.
+
+| commanded duty | mean_ci (measured) | `wait_time(ci,22)` | `wait_time(ci,20)` | late-arm threshold (ci ≤) |
+|---|---|---|---|---|
+| 450 | 84 | 14 | 16 | 71 / 59 |
+| 475 | 79 | 12 | 15 | 71 / 59 |
+| **500** | **77** | **12** | **14** | **71 / 59** |
+| **600 (extrapolated)** | **≈63** | **10** | **12** | — |
+
+`ci × duty_tenths` is 37.5k–38.5k across seven rungs (350→500), so 600 gives ci ≈ 63 µs. At advance 22 that is `wait = 10 µs < spent = 11 µs` — **`left == 0` on every acceptance**, so a 60% run on this firmware latches `Reason::LateArm` on the first crossing after lock, deterministically. Advance 20 gives `wait = 12`, i.e. a 1 µs margin: *exactly the 50%/advance-22 situation that is failing one run in ten today*. Advance 22→20 buys precisely one rung and hands you back the same defect at the next.
+
+None of this needs the motor. It needs no new field.
+
+---
+
+## 1. Does measuring the margin settle the cause? Mostly no — the cause is already proven by existing fields
+
+**The claim that `ci` is causal and `spent` is not is already established, twice over, from data in hand.**
+
+- `left == 0` implies `wait ≤ spent`, and `spent ≤ spent_max_us` by construction — both are written in the same `if S.com().active` block (`src/roots.rs:467-481`), so their coverage is identical. `spent_max_us = 11` in *every* late-arm capture therefore proves `wait ≤ 11` at the late acceptance, hence `ci ≤ 71 µs`, against a mean of 77. The author's own §397 docstring says `spent_max_us` "cannot answer this question". It answers it as an **upper bound**, which is the direction the argument needs.
+- `captures/2026-09-24/e195-rung-500_03.txt`: `reason=15`, `ci_us=56`, `mean_ci_us=77`, `ehz_from_ci_last=2976` against `ehz_from_sector=2192`. `wait_time(56,22) = 9 < 11`. The collapse is in the capture already.
+
+**`margin_min_us` carries no information beyond `late_arms`.** It is `min(left)` where `left = wait.saturating_sub(spent)` (`src/roots.rs:399`). `left` is floored at 0, so `margin_min_us == 0` ⟺ `late_arms != 0`. On a run with no late arm, `wait ≥ 12` and `spent` reaches 11 somewhere in ~710,000 acceptances (`hold_accepted=710171`), so `margin_min_us` will read **1**, in every healthy 500-rung run. The author predicts 1–2 µs himself (E207 prediction 2). A two-valued instrument that is analytically predictable before the run is not evidence; it is a checksum.
+
+**The minimum is the wrong statistic, for the reason you suspected.** A minimum over 7×10⁵ samples at 1 µs quantisation is an extreme-value statistic pinned by the single worst excursion in 80 s. It cannot distinguish "habitually 1 µs" from "one interval collapsed once" — and here the truth is *habitually 1 µs*, which the min will report identically in both cases.
+
+**`wait_min_us` does earn its place, with one fatal caveat.** It is the only clean per-run minimum of the *blended* `average_interval` (via `wait = f(average_interval)`, `src/bemf.rs:415-417`) — and the blend, not the raw gap, is what schedules the commutation. The existing `fast_min_us` is *not* a substitute: it is measured in `guard_event` from `guard_now()` **after** the arm and after an interrupt-masked window (`src/roots.rs:799-810`), so it is contaminated by handler-tail jitter and reads 30–46 µs at the 500 rung in runs with `late_arms=0` — physically impossible as a `count`, since the blanking gate refuses anything `≤ ci/2 ≈ 38` (`src/bemf.rs:394`) and `too_early` reads 0–5. So `fast_min_us` is biased low by several µs and useless as a min-ci proxy.
+
+**But `wait_min_us` is confounded with the next experiment's independent variable.** `wait_min = wait_time(ci_min, level)`. Changing the level from 22 to 20 multiplies it by 1.2 *whether or not `ci` moved at all*. You cannot use it to judge the advance change. Record `ci_min_us` (min `average_interval` at acceptance) instead — same one atomic, same cost, in the units every capture already prints (`mean_ci_us`, `ci_us`), and invariant under the advance knob.
+
+**What I would record instead**, all in the same COMP tail, all one store:
+- `ci_min_us` — the causal variable, level-invariant.
+- `thin_count` — acceptances with `left <= 2`. A count, not a min: it separates "habitually thin" from "one excursion", which is the question.
+- `hold_unstable` — E207 §4 listed it, E208 dropped it. `unstable/accepted` is 1.55–1.74 in healthy 500 runs and **2.31** in the one that stopped on 15. That ratio is the only field that already discriminates the failing run on the *upstream* mechanism, and it is currently whole-run only.
+
+**The mechanism nobody has instrumented.** `blend_interval(77, 77, 40) = 65`; one accepted count near the blanking gate drags the average below the 71 µs cliff in a single step, and the floor of the band is `SECTOR_FLOOR_US = 40` (`src/run/policy.rs:82`, `:245` → band `[40, 1250]`), at which `wait_time(40,22) = 7 < 11` — **the estimator is permitted to enter a region where a late arm is structurally certain.** That is a one-line structural fix (raise the floor, or clamp `com_arm(max(wait, spent+k))`) that makes late arms impossible without touching the drive at 77 µs. It is not on the plan.
+
+---
+
+## 2. Observer effects and concurrency
+
+**Sound:** `note_margin` is called *after* `arm_marked` (`src/roots.rs:471-472`), so it cannot inflate `spent` for the acceptance it measures. Correct by construction. Say it in the notebook — it is the one thing that makes the instrument admissible at all.
+
+**The −45 cycles is an artefact, and I can name it.** Nothing was deleted. In the baseline, the `EventWatch` too-fast counter update (`fast_count` saturating add at offset `#56`, `fast_min` at `#60`, `src/tracking.rs:136-142`) is **inline** at `0x80016c4`–`0x80016dc`, inside the PRIMASK window `cpsid 0x8001618 … msr 0x8001756`. In the candidate the same block is **outlined** to `0x8001754`–`0x800176c`, entered by `bls.n 0x8001718` at `0x800166c` and returning via `b.n 0x80016d6` at `0x800177e` — still inside `cpsid 0x8001614 … msr 0x80016d8`, so there is no soundness problem (I checked, because an unmasked write to a watch the guard root also touches would have been one). Instruction census confirms preservation: `mvns` 3→3, `muls` 4→4, `strh` 9→9, `str` 100→103 (+2 margin stores), `ldr` 156→150.
+
+`isr_cycles.py` walks a *longest path*; that path no longer traverses the outlined block, so the number fell. **The block is not cold**: `fast_events` is 226,965–860,000 per run at the 500 rung, i.e. it executes on most acceptances. Its real cost went **up** by two taken branches (~+4 cycles on M0+), on top of `note_margin`'s own ~10-16. Net expected cost of the candidate on the common path: roughly **+15 cycles (+0.25 µs)**, not −45. E208's table must not be quoted as the instrument's cost, and prediction 1 is not falsified — it was mismeasured.
+
+**The observer effect that is real.** At the 500 rung `left = 1`, so `com_arm` loads `arr = 0` and TIM16's compare expires ~1 µs into a COMP tail that still has the masked `guard_event` block and the overrun check to run. COM is a same-priority peer (`COM_IRQ_PRIORITY = Motor::NVIC = 0x40`, `COMP_IRQ_PRIORITY = CompPrio::NVIC`, `src/roots.rs:232, 908`), so it **cannot preempt**: every commutation at this rung is dispatched late by the whole remaining COMP tail. `com_late_max_us` = 9–11 at the 500 rung and 4–8 below 300, exactly as that predicts. Adding ~0.25 µs to that tail moves the actual commutation instant by ~0.25 µs in a regime where the deadline margin is 1 µs. It cannot change *whether* `left == 0`, but it perturbs the drive, and the only field that would show it (`com_late_max_us`) is a max with 1 µs resolution — it will not resolve 0.25 µs. This is a genuine, if small, instrument-perturbs-phenomenon case and it should be declared rather than dismissed.
+
+**Tearing/racing: one concrete defect.** `margin_min_p1`, `wait_min_p1` and `rebase` are reset at `bin/board.rs:498-500`, **outside** the `cortex_m::interrupt::free` + `!guard_latched()` section that protects `spent_max` and `late_arms` at `bin/board.rs:513-515`. The comment at `:511` explains why those two are inside: "a refused install must not erase the tripping run's `late_arms` and `spent_max`" (E186 SS2). The three new fields reintroduce exactly that defect: after a latched stop, a `det_install` that is refused will still have zeroed them, so the run that latched the late arm reports `late_arms=1, margin_seen=0, margin_min_us=0, rebase=0` — the instrument erased on the one event it exists to measure, and E207 prediction 3 (`rebase` non-zero) unreadable. Move `:498-500` inside the section. This is the cheapest and most necessary change in the whole candidate.
+
+**The diagnostic twin still isn't the production sequence.** `note_margin` is shared, which is the right fix for E204's finding, but the two call sites differ in order: production runs `arm_marked; note_margin; beat_row; late_arms++; spent_max` (`:471-481`), the twin runs `com_arm; beat; late_arms++; note_margin; spent_max` (`:529-541`). Functionally equivalent (no shared state), but the stated principle — "anything that must hold of an acceptance belongs here rather than in two places" — is only half delivered; the surrounding sequence is still duplicated and still divergent.
+
+**Also, and separately:** the ADC_COMP diff is not "baseline plus an instrument". Register allocation differs from instruction [7] onward, the frame grew (`sub sp, #44` → `sub sp, #48`), and 726 vs 738 instructions are differently scheduled throughout. E204's criterion (production machine code untouched) is violated *more* thoroughly by e208 than by the e203 candidate it rejected. That does not make e208 wrong, but it does mean a 25%/50% A/B against `14CE44E7` measures codegen as well as the instrument — the same confound E167 caught with `isr_diff.py`.
+
+`isr_audit.py --allow-file scripts/audit_allow.json` is clean on all four roots of the candidate, as claimed. (Without `--allow-file` ADC_COMP fails on the allowlist, not on arithmetic.)
+
+---
+
+## 3. The advance experiment: a real effect, buried under three confounds
+
+Reducing advance 22 → 20 changes more than the wait:
+
+1. **Torque and current.** Less advance at 2.1 keHz is less field alignment: speed falls, current changes, and `hold_ma` (1789–1825 at 500) moves.
+2. **Speed, which feeds back into the metric.** Slower rotor → larger `ci` → larger `wait` → larger margin. **Margin improves for two reasons and the planned metrics cannot separate them** unless `ci` is reported alongside. It is (`mean_ci_us`), so this confound is manageable — but only if the comparison is stated as margin-at-fixed-ci, not margin.
+3. **Zero-crossing position within the sector.** Commutating later moves the drive relative to the rotor, which changes the BEMF waveform seen by the comparator in the *next* floating window. `unstable/accepted` (1.55–1.74 at the 500 rung) and the acceptance position within the blanking window will both move. That is a change in the detector's operating point, not a change in the margin arithmetic, and it is the thing most likely to make 20 "look better" for an unrelated reason. **Blanking itself does not change** — `blanking() = average_interval/2` (`src/bemf.rs:350-374`), independent of advance — so the gate is fixed while the crossing moves inside it.
+4. **The confound that actually worries me.** `advance_level` is not a free knob: `AdvancePolicy::level` already returns 20 below 350 tenths and 22 at/above (`src/run/policy.rs:253-259`), transcribed from the qualified reference (`binz/AGENTS.md:133`). "Advance 20 at 50%" is not a tuning experiment, it is a **divergence from the reference schedule** at a rung where the reference is the only thing validating the number. Any speed loss will be read as "advance costs speed", when the reference's own schedule says 22 is what 50% wants.
+
+And the result is knowable now: the trip threshold moves from `ci ≤ 71` (8% below the 77 µs mean) to `ci ≤ 59` (23% below). That is a real robustness gain — for one rung.
+
+**The regime note is correct to distrust.** Your own memory records "advance: useless @400 Hz, +108 Hz @900 Hz" from a different tree. This bench runs 2164 eHz at the 500 rung. Nothing in these captures measures advance sensitivity at 2.1 keHz; treat every advance-vs-speed claim as unmeasured in this regime.
+
+**There is a strictly better lever that changes no control behaviour at all.** `spent = 11 µs = 704 cycles` at 64 MHz, for: one clock read, a `Seam` borrow, `bounds()`, two atomic loads, `blanking()`, **four** comparator reads (`DET_FILTER` at `average_interval = 77 µs` → `FromMicros` doubles to 154 → `mapped_filter_level` = 3 + ((54×1475)>>16) = **4**, `src/bemf.rs:64-75`), `blend_interval`, `clamp_interval`, `advance_of`, `wait_time`, six atomic stores, one clock read. 704 cycles for that is fat. Halving `spent` buys the same margin as advance 22→20 — with zero change to torque, speed, zero-crossing position or the reference's advance schedule. It is the discriminating experiment: it moves the arm cost and *only* the arm cost. It is not on the plan.
+
+---
+
+## 4. Protection coverage for 60% — this is where the hardware risk is
+
+**What actually protects the bridge**
+
+| Protection | Where | Reachable at 60%? |
+|---|---|---|
+| nFAULT / DRV8304 VDS+OC | `roots.rs:846` (guard, 101 µs) and `states.rs:223` (foreground) | Yes. **This is the real protection.** |
+| Absolute bus floor, per scan | `states.rs:314`, `scan.bus < base.bus_floor_code`; floor = `8400×100×4095/(1194×VDDA)` ≈ **873 codes ≈ 72% of the 1209-code reference** (`measure.rs:93-103`) | Yes, and it is un-averaged and fast. The one honest slow-droop cover. Foreground-latency bound (`loop_gap_max_us=151`). |
+| Tick gap 200 µs, feedback age 1000 µs | `roots.rs:850-861` | Yes. |
+| Tracking (missing commutation) | `roots.rs:799-810`; `tighten_max_interval` refuses to go below `min_interval = 238` (`tracking.rs:113-119`), so `track_max_us` pins at **240 µs ≈ 3 sectors** at 500 and cannot tighten further at 600 | Yes, ~3.8 sectors at 60%. |
+| `LateArm` / `BlankLatched` | `states.rs:251-256`, foreground poll | Yes — at 60%, **immediately and always** (see headline). |
+
+**What does not protect it**
+
+- **No peak / per-scan current protection of any kind.** `Reason::PhasePeak = 27` has no threshold, no accumulator and no call site (`src/protection.rs:79-94`); the code documents this explicitly. Do not count it.
+- **No phase-code band.** `PHASE_CODE_LOW/HIGH` (`protection.rs:127-128`) only fire under `PhaseCodePolicy::Band`, and the only call site in the tree passes `RetainRails` (`states.rs:313`). Dead.
+- **The average-current stop is unreachable on a current-limited supply.** `RAW_LIMIT` ≈ 4 A over `BLOCK_SCANS = 100` scans (10.1 ms), and it needs **two consecutive** over-blocks (`protection.rs:540-545`) — ≥20.2 ms with a foldback in between. Measured: `hold_ma` 1789–1825 and `worst_ma` 2013–2365 at 500. Extrapolating the notebook's own I∝duty^2.4–2.9 gives ~2.9 A / worst-block ~3.4 A at 600 — under the 4 A allowance. Meanwhile **the supply clamps at 3 A**: in CC the bus folds instead of the current rising, so the residual never reaches 4 A. The allowance is above the supply, therefore the only current stop in the firmware cannot fire from an overload. (`policy.rs:94-97` still says "4 A, i.e. twice the supply" — stale at 2 A, wrong at 3 A, and the gap it names is real.)
+- **A short desync surge is invisible to everything.** The tracking watch allows ~3 missed sectors (≈240 µs) before `Stale`. A 240 µs–1 ms surge inside a 10.1 ms block is diluted 10–40× in the block mean, so it cannot raise a foldback, let alone two consecutive over-blocks. A *cyclic* desync at 60% would heat the motor and the FETs and appear in no stop.
+- **The sag guard cannot see what you'd want it to.** It judges the 8-scan `RailMean` (`protection.rs:199-275`, `states.rs:322-329`) against a **207 ms EWMA** of itself (`SAG_FILTER_SHIFT = 11`), needs 3 consecutive means below 95% (`SAG_NUM/DEN`, `SAG_STREAK`) — ~10 scans ≈ 1 ms. Two blind spots, both by design: (a) a dip shorter than ~1 ms, attenuated 8× by the mean; (b) any droop slower than 207 ms, because the reference follows it (the `a_slow_droop_is_not_a_dip` test at `protection.rs:1107` proves the blindness deliberately). Evidence it is already blind: `captures/sag/e200-16a-s1.txt` has `bus_min=1000` against `bus_ref=1209` — **an 83% excursion with no trip.** Between (a) and (b) the covered band is: a dip lasting 1 ms to 200 ms, deeper than 5%. A PSU walking into CC at 60% is exactly case (b).
+- **No temperature, anywhere.** `src/hw/adc.rs:35-41` scans five channels (0, 1, 4, 6, 13) = three phases, bus, VREFINT. No NTC, no die temp, no `TS_CAL`. `BEMF_TOTAL_MS = 80_000` (`policy.rs:45`) with a 20 s ramp gives ~55 s of hold per run; `GUARD_CAMPAIGN_US = 84_000_000` is the only ceiling on energised time. Six runs at 60% is ~5.5 minutes at the highest current this bench has ever run, thermally unprotected.
+
+**`src/sixstep.rs:93` clamps duty at `duty_cap`, and every production call passes `SIXSTEP_DUTY_CAP = 500` (`roots.rs:87, 998`; `states.rs:182`; `policy.rs:102`). A 60% run on this candidate drives 50%.** The report prints the commanded value: `duty_tenths=600`, `ceiling_tenths=600` (`FoldbackGovernor::new(target.max(VF_FLOOR), …)`), `target_tenths=600` — all three blind to the clamp. **No field of the report would reveal it.** E207 called `applied_cap`/`ccr_of_duty` "blocking (E205 §4.1)"; E208 shipped without them. The stopping rule ("no rung above 50% from this candidate") is what keeps that safe, and it must be honoured literally.
+
+**What an unprotected failure at 60% looks like.** Loss of lock → the drive stops opposing back-EMF → the phase current steps up for as long as re-lock takes; the PSU hits 3 A CC and the bus folds. If the fold is slower than 207 ms the sag guard follows it; the absolute floor at 873 codes (72%) is the first thing that fires, unless the DRV8304's own VDS/OC beats it to nFAULT. If lock is regained within ~240 µs, nothing fires at all and the cycle repeats. The trace it leaves: `bus_min` (per-scan, reported), `worst_ma` / `worst_residual` (10.1 ms block max, reported, and diluted), `fast_events` / `fast_min_us`, and `com_late_max_us`. **All are maxima or minima with no timestamp and no duration**, so a repeating 0.5 ms surge reads as one modestly bad block. The `sagtrace` ring (`captures/sag/*`, `SAGROW`, 512 rows) is the only per-scan record, and it is a diagnostic build.
+
+---
+
+## 5. Is the planned cohort the right next step? No
+
+Three runs at 25% and three at 50% on a candidate that changes no control behaviour can falsify exactly three things:
+
+1. That the candidate's codegen changes did not regress speed/current/protection counters (a real but weak regression check — and one that is confounded by the wholesale ADC_COMP re-scheduling documented above, so a null result proves less than it looks like it does).
+2. E207 prediction 2 (`margin_min` 1–2 µs) — **analytically forced**; only a reading ≥3 would inform, and that would mean `spent_max_us` is wrong, which two independent captures already contradict.
+3. E207 prediction 3 (`rebase` non-zero) — **the one genuinely new fact in the cohort**, and it is destroyed on the failing run by the reset-outside-the-guard defect in §2, and the whole point of it (was a crossing lost before the stop?) needs a 1-in-10 event that three runs will probably not catch.
+
+That is ~8 minutes of drive at the highest current this bench has run, thermally unprotected, for one probably-empty counter. Not worth it as specified.
+
+**And here is the objection that reframes the campaign.** Of the five captures with `late_arms > 0`, **four completed normally at full duration** with unremarkable speed and current:
+
+| capture | `late_arms` | stop reason | `ci_us` at stop | `worst_ma` |
+|---|---|---|---|---|
+| `captures/2026-09-23/c7-500_01.txt` | 1 | 26 (sag) | 74 | — |
+| `captures/2026-09-23/c7-500c_01.txt` | 1 | **2 (success)** | 78 | — |
+| `captures/2026-09-23/c7-500c_03.txt` | 2 | **2 (success)** | 79 | — |
+| `captures/2026-09-23/c7f-450_02.txt` | 1 | **2 (success)** | 79 | — |
+| `captures/2026-09-24/e195-rung-500_03.txt` | 1 | **15 (LateArm)** | 56 | 2116 |
+
+Healthy 500 runs show `worst_ma` 2013–2365; the run that stopped on 15 shows **2116**. There is no current surge, no bus event, no thermal signature. The physical consequence of one `left == 0` is that one commutation out of ~700,000 fires a few µs into a 38 µs half-sector — a few electrical degrees, once, on top of a ~10 µs handler-latency floor that shifts *every* commutation anyway.
+
+**So "one run in ten stops" is a consequence of the decision to make `late_arms` a stop, not evidence of a hazard.** Making an unchecked counter into a stop was right in principle (`protection.rs:50-64` argues it well), but the threshold chosen was `!= 0` on a quantity whose nominal value is 1 µs from zero. That is a protection tuned below the noise floor of its own instrument. It deserves to be named as a candidate explanation before any more instrument work.
+
+### What I would do, in order, before any 60% run
+
+1. **Fix the reset placement** — move `bin/board.rs:498-500` inside the `interrupt::free` + `!guard_latched()` section at `:513`. Free, and without it the instrument is blind on the failure.
+2. **Decide the `late_arms` policy question on paper.** Either (a) it is a survivable transient — then it is a counter with a rate threshold, not a `!= 0` stop, and the "1-in-10 at 50%" problem dissolves; or (b) it is a hazard — then say what the hazard is, because four of five captures say it isn't, and the 60% arithmetic says it becomes universal, which makes a `!= 0` stop a hard ceiling at 50%, not a protection.
+3. **Replace the instrument's statistic**: `ci_min_us` (level-invariant) + `thin_count` (`left <= 2`) + `hold_unstable`, instead of `margin_min_us`. Keep `wait_min_us` only as a cross-check, never as the advance A/B's metric.
+4. **Run the experiment that changes nothing about the drive**: reduce `spent`. 704 cycles to reach the arm, for four comparator reads and a dozen atomics, is the whole problem restated. Every µs removed is a µs of margin at every rung, with no torque, speed, angle or reference-divergence confound. If `spent` reaches 6 µs, `wait_time(ci,22) > spent` holds down to ci = 39 µs — below the estimator's own floor — and late arms become structurally impossible at both 50% and 60% with the reference's advance schedule intact.
+5. **Alternatively or additionally, close the structural hole**: `SECTOR_FLOOR_US = 40` lets `average_interval` enter a band where `wait < spent` by construction. Either raise the floor for this rung or floor the arm at `spent + k`. One line, host-testable, no bench time.
+6. **Only then** the advance experiment, judged on margin-at-fixed-`ci`, `unstable/accepted`, `fast_events`, and current — with the understanding that 20 buys one rung.
+7. **Before anything at 60%**: the duty-clamp visibility and the cap raise (E207 item 1, deferred), a current protection that is reachable below the supply's CC knee, a droop stop for the >207 ms band, and some answer to the total absence of temperature measurement over ~5.5 minutes of 3 A drive. Every one of those is E207's own list; none of them is in the candidate.
+
+The three things I would attack in the notebook, in priority order: the missing thermal and peak-current coverage at 60% (hardware risk); the 1081→1036 figure being quoted as the instrument's cost when it is an outlining artefact (measurement uninterpretability); and treating `late_arms != 0` as a hazard when four of five captures completed through it (causal reasoning).
+
+### E211 — disposition of E209/E210: 60% is arithmetically blocked, and the lever is `spent`
+
+Two independent reviews, neither having seen the other, agree on two defects and
+one reframing. I accept all three, and the reframing changes what this campaign
+is doing.
+
+#### The finding that decides the campaign, verified independently
+
+`ci × duty_tenths` is **37 525–38 675 across seven measured rungs** (35%→50%),
+mean 38 236. So at 60% the interval is **ci ≈ 64 µs**, and with `spent` pinned
+at 11 µs in every capture ever taken:
+
+| advance level | `wait_time(64, level)` | vs `spent = 11` |
+|---|---|---|
+| 22 (the reference schedule at ≥35%) | **10 µs** | **late on every acceptance** |
+| 20 | 12 µs | +1 µs — *today's failing 50% situation* |
+| 18 | 14 µs | +3 µs |
+
+**A 60% run on this firmware latches `Reason::LateArm` on the first crossing
+after lock, deterministically.** Not probabilistically, not thermally, not
+because of the supply — arithmetically. And advance 22→20, which E195 called
+"the supported fix" and E206 adopted as the replacement experiment, **buys
+exactly one rung and hands the same defect back at the next.** I reproduced all
+of it from the captures; it needed no bench time, and I had planned bench time
+that could not have revealed it.
+
+#### Point-by-point disposition — E209 (evidence)
+
+| finding | disposition |
+|---|---|
+| Nothing silently lost: additive source diff, per-width memory-op census, and a controlled no-calls build returning exactly to 738/1081/1282 | **Accepted with thanks.** This is the question I raised and could not answer myself. |
+| The instrument is present, on the hot path, inside `if S.com().active`, after the arm | **Accepted**; the compiler folded my two-branch test into one unsigned compare, which is exact. |
+| **The −45/−56 figure is a tool defect**: `isr_cycles.py` relaxes in instruction-index order, valid only if every edge goes forward, and the candidate introduced **four backward non-loop edges**. Correct: **1063 @ 0 WS, 1259 @ 2 WS**, i.e. **−18/−23** | **Accepted. `isr_cycles.py` is fixed below**, and the notebook figure is corrected. E208's instinct to distrust the number was right; my proposed mechanism was wrong. |
+| My mechanism ("`margin_p1` reuses the arm's `left`") explains the instrument's 12 instructions, not the −24, which is register allocation: −12 reg-reg moves, −8 stack reloads, +1 stack slot | **Accepted, corrected.** |
+| `margin_min_us == 0 && margin_seen` ⟺ `late_arms > 0`, by construction | **Accepted** — and it is why the statistic is being replaced (E210 §1). |
+| **The three new counters reset *outside* the latch-protected section** that `spent_max`/`late_arms` sit inside, against the rule the adjacent comment states (E186 §2) — so a refused install blanks them on exactly the trip they exist to explain | **Accepted; fixed below.** Both reviewers called this the cheapest necessary change, and `rebase` carried the flaw before E208 made it visible. |
+| "Two host tests" is one test plus four assertions | **Accepted, corrected.** |
+| Gates otherwise reproduce exactly | Noted. |
+
+#### Point-by-point disposition — E210 (adversarial)
+
+| finding | disposition |
+|---|---|
+| **The 60% arithmetic above** | **Accepted. It replaces the plan.** |
+| `spent_max_us` answers the causal question as an **upper bound** — the direction the argument needs — so `ci ≤ 71 µs` at every late arm was already provable from data in hand | **Accepted.** My docstring saying it "cannot answer this question" is wrong and is corrected: it cannot bound the margin from below, which is a different claim. |
+| `margin_min_us` is analytically forced to 1 in healthy runs; a minimum over 7×10⁵ samples cannot separate "habitually thin" from "one excursion" | **Accepted.** Replaced by `ci_min_us` (level-invariant) + `thin_count` (`left ≤ 2`) + `hold_unstable`. `margin_min_us` is kept only as the cheap equivalence check it is, and stops being called evidence. |
+| `wait_min_us` is **confounded with the advance knob** (`wait_min = wait_time(ci_min, level)`), so it cannot judge an advance A/B | **Accepted** — this is why `ci_min_us` replaces it as the metric. |
+| `fast_min_us` is not a min-ci proxy: measured after the arm, inside a masked window, reads 30–46 µs where the blanking gate refuses ≤ ci/2 ≈ 38 | **Accepted**, and worth having in writing. |
+| The −45 is an **outlining artefact**: the `EventWatch` too-fast block moved out of line, still inside PRIMASK (checked), executes on most acceptances (`fast_events` 227k–860k), and now costs **two extra branches**. Real common-path cost ≈ **+15 cycles (+0.25 µs)** | **Accepted.** Same root cause as E209's finding, reached differently. The instrument costs ~+0.25 µs, not −0.7 µs. |
+| The observer effect is real: at `left = 1` the timer expires inside the COMP tail, COM cannot preempt (same-priority peer), so the instrument shifts the actual commutation by ~0.25 µs where the margin is 1 µs — and `com_late_max_us` cannot resolve it | **Accepted and declared.** It cannot change *whether* `left == 0`, and it does perturb the drive. |
+| `note_margin` after `arm_marked` cannot inflate the `spent` it measures | **Accepted, and now stated in the code** rather than left implicit. |
+| The twin's surrounding sequence is still duplicated and divergent in order | **Accepted**; functionally equivalent, principle half-delivered. Named. |
+| e208's ADC_COMP is re-scheduled wholesale, so a 25/50% A/B measures codegen too | **Accepted**; it is a weaker regression check than it looks. |
+| Advance 22→20 carries three confounds (torque/current, speed→ci→margin, crossing position inside a fixed blanking gate) and is a **divergence from the reference schedule**, not a tuning knob | **Accepted.** This is the strongest argument against the experiment E206 adopted. |
+| **`spent` is the confound-free lever**: 704 cycles for one clock read, a `Seam` borrow, `bounds()`, two atomic loads, `blanking()`, **four** comparator reads, blend/clamp/advance/wait, six atomic stores, one clock read | **Accepted as the campaign's next work.** Every µs removed is a µs of margin at *every* rung, with no torque, speed, angle or reference divergence. |
+| `SECTOR_FLOOR_US = 40` lets the estimator enter a band where `wait_time(40,22) = 7 < 11` — a late arm is structurally certain there | **Accepted as real**, and *not* fixable by raising the floor: at 60% the true interval is 64 µs, so a floor high enough to exclude the late-arm band would clamp the real signal. It is another statement of "reduce `spent`". |
+| **`late_arms != 0` as a stop is a policy choice, not a demonstrated hazard**: four of five captures with `late_arms > 0` **completed normally**, with `worst_ma` 2116 inside the healthy 2013–2365 | **Accepted as the honest reading, and the protection stays.** The goal says keep existing protections and thresholds, and I am not relaxing a stop to make a rung pass — that is precisely the "arbitrary qualification barrier" inversion. But the consequence must be stated plainly: **at 60% this stop is a hard ceiling rather than a protection**, and the way through it is more margin, not a looser threshold. |
+| Protection coverage at 60%: no peak current; the 4 A average stop is unreachable below a 3 A CC knee; the sag guard covers only 1–200 ms dips deeper than 5%; `bus_min=1000` against `bus_ref=1209` already passed untripped; no temperature anywhere; **`sixstep.rs:93` clamps duty at 500 so a 60% run drives 50% and no report field reveals it** | **Accepted in full; all blocking, all still outstanding.** The stopping rule "no rung above 50% from this candidate" is honoured literally. |
+| The planned 25%/50% cohort is ~8 minutes of top-current drive for one probably-empty counter | **Accepted. The cohort is cancelled** in that form. |
+
+#### What changes now
+
+**Fixed in this candidate** (both reviewers' cheapest-necessary list):
+
+1. The three per-run counters reset **inside** the `interrupt::free`/`!guard_latched()` section, with `spent_max` and `late_arms`.
+2. `isr_cycles.py` relaxes in **topological order** and refuses a function whose surviving edges are not a DAG — so the tool cannot silently under-report again. Every cycle figure in this notebook from E203 on is re-derived with it.
+3. The statistic replaced: **`ci_min_us`**, **`thin_count`**, **`hold_unstable`**; `margin_min_us` demoted to an equivalence check.
+4. The two docstring claims corrected: `spent_max_us` bounds the margin from above (not "cannot answer"), and `note_margin`'s placement after the arm is stated as the reason it is admissible.
+
+**The campaign's next experiment, replacing the advance A/B:** reduce `spent`.
+It is a bounded, local timing improvement — the goal's own words — it changes no
+control law, no threshold, no reference schedule, and it moves the one quantity
+that gates every rung. Target: **`spent ≤ 7 µs`**, at which `wait_time(64,22) =
+10 > 7` gives +3 µs at 60% *with the reference's advance schedule intact*, and
+`wait_time(40,22) = 7` closes E210's structural hole at the estimator's own
+floor. Its predeclaration, cohort and review pair come before any of it is
+built.
+
+**And the blocking list for 60% is unchanged and un-started**: duty-clamp
+visibility and the cap raise, a current stop reachable below the CC knee, a
+slow-droop stop for the >207 ms band, and an answer to the total absence of
+temperature measurement. E207 prepared the first three; none is applied.
+
+### E212 — the instrument rebuilt on both reviews' advice, and the tool that hid its cost
+
+Candidate **`ED4E305C`**, archived as `captures/elf/ED4E305C.e212-ciwatch.elf`.
+Nothing powered has run on it.
+
+#### What the reviews changed
+
+**Removed**, because they were shown to be redundant or confounded:
+`margin_min_us` (equivalent to `late_arms > 0` by construction — E209 §5),
+`wait_min_us` (it is `wait_time(ci_min, level)`, so it moves 20% when the
+advance knob moves, which is the very A/B it was meant to judge — E210 §1), and
+`margin_seen` with them.
+
+**Kept and added**, the quantities that carry information:
+
+* **`ci_min_us`** — the smallest accepted average interval. The *causal*
+  variable, and invariant under the advance level.
+* **`thin_count`** — acceptances with 2 µs of margin or less. A **count**, not
+  a minimum, because a minimum over ~700 000 samples cannot separate a
+  habitually thin margin from one excursion.
+* **`hold_unstable`** — `unstable` captured at the hold mark, so the
+  unstable/accepted ratio can be read on the hold window as `hold_acc` already
+  is. Whole-run it mixes a 20 s ramp with a 55 s hold, which is exactly how the
+  one late-arm run's apparent anomaly (2.31 against 1.55–1.74) stayed
+  confounded.
+* **`rebase`** — counted and reset since the estimator was written, never
+  printed until now.
+
+**And the resets moved inside the latch-protected section**, with `spent_max`
+and `late_arms`. Both reviewers called this the cheapest necessary fix: an
+install refused because the guard had already latched was zeroing the new
+counters, blanking the margin and the re-base count on exactly the trip they
+exist to explain. `rebase` carried that flaw before E208 made it visible.
+
+#### The tool that hid the cost, now fixed
+
+`scripts/isr_cycles.py` relaxed its longest path in **instruction-index order**,
+which is a valid topological order only if every surviving edge goes forward.
+E208's instrument moved one `EventWatch` block out of line and created four
+backward non-loop edges, so the tool never propagated that block's cost — and
+reported the root as **45 cycles cheaper** for a change that costs cycles. Both
+reviewers found it independently, from different directions.
+
+It now relaxes in **topological order** and **refuses** a function whose
+surviving edges are not a DAG, rather than under-reporting. Re-deriving with the
+fixed tool reproduces E209's recomputation exactly:
+
+| image | 0 WS | 2 WS |
+|---|---|---|
+| baseline `14CE44E7` | 1081 | 1282 |
+| E208's `5A8C0127`, as first reported | ~~1036~~ | ~~1226~~ |
+| E208's `5A8C0127`, corrected | **1063** | **1259** |
+| **this candidate `ED4E305C`** | **1059** | **1251** |
+
+**So E208's headline was wrong twice over and is withdrawn**: the figure was a
+tool artefact, and my proposed mechanism ("`margin_p1` reuses the arm's `left`")
+explained only the instrument's own instructions, not the −24 that came from
+register allocation. A gate that can quietly report an improvement for a change
+that costs cycles is worse than no gate, which is why the fix refuses rather
+than guesses.
+
+Worth recording what the intermediate build cost, because it is the honest
+scale of this kind of instrument: with *all* the statistics in
+(`margin_min` + `wait_min` + `ci_min` + `thin`), the root read **762
+instructions, 1121 / 1333 cycles** — **+40 / +51**, i.e. +0.8 µs at 2 WS on a
+path whose margin at the 50% rung is **1 µs**. That would have perturbed the
+thing it measures, exactly as E210 §2 warned. Dropping the two redundant
+statistics is what brought it back to 728 / 1059 / 1251.
+
+#### Gates
+
+| gate | baseline | `ED4E305C` |
+|---|---|---|
+| four-root arithmetic audit | 4/4 clean | **4/4 clean** |
+| `ADC_COMP` | 738 insns, 1081/1282 | **728, 1059/1251** |
+| `TIM16` / `DMA1` / `TIM6` | 332 / 37 / 155 | **identical** |
+| `functions_over_100_lines` | 0 | **0** |
+| host tests | 336 + 9 | **337 + 9** |
+| clippy | 0 | **0** |
+| stack left | 32 020 | 32 004 |
+
+#### Corrections to the record
+
+* E208's "−45 / −56 cycles": **withdrawn**, tool artefact. Honest figures above.
+* E208's "two host tests": one new test plus four assertions on the existing
+  wire-format test.
+* `spent_max_us`'s docstring said it "cannot answer this question". It bounds
+  the margin **from above**, which is the direction the causal argument needs —
+  `spent_max = 11` in every late-arm capture proves `wait ≤ 11`, hence
+  `ci ≤ 71 µs`. What it cannot do is bound the margin from below. Corrected.
+* `note_margin` runs *after* `arm_marked`, so it cannot inflate the `spent` it
+  measures. That is what makes it admissible at all, and it is now stated in
+  the code rather than left implicit.
+
+#### Still outstanding, unchanged
+
+The blocking list for 60% — duty-clamp visibility and the cap raise, a current
+stop reachable below the 3 A CC knee, a slow-droop stop for the >207 ms band,
+and the absence of any temperature measurement — and the campaign's real next
+experiment, **reducing `spent`**, which E211 adopted after both reviews showed
+the advance route buys exactly one rung. Each gets its own predeclaration and
+its own review pair.

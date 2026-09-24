@@ -277,7 +277,14 @@ impl<
                 }),
                 _ => None,
             },
-            roots: io.roots_record(),
+            roots: {
+                // `hold_unstable` is a foreground quantity: the HAL reports the
+                // cumulative count and the hold mark is held here, so the
+                // subtraction belongs here rather than in the board (E212).
+                let mut r = io.roots_record();
+                r.hold_unstable = r.unstable.saturating_sub(s.unstable_at_hold);
+                r
+            },
             acc_by_step: core::array::from_fn(|i| s.acc_by_step[i]),
             forced_by_step: [0; 6],
             acc_by_phase: core::array::from_fn(|i| s.acc_by_phase[i]),

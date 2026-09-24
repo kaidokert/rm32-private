@@ -63,6 +63,8 @@ pub(crate) struct Stats {
     pub star: (u16, u16),
     pub wit: RotationWitness,
     pub hold_acc: u32,
+    /// `unstable` as of the hold mark (E212).
+    pub unstable_at_hold: u32,
     pub hold_ci_sum: u32,
     /// The matched speed window (campaign 8 step 3): the last accepted
     /// crossing's stamp with the hold-accept count as of it, plus two marks
@@ -155,6 +157,7 @@ impl Ctx {
                 star: (u16::MAX, 0),
                 wit: RotationWitness::new(WITNESS_MID_SAMPLES, WITNESS_HYST_CODES),
                 hold_acc: 0,
+                unstable_at_hold: 0,
                 tail_last: None,
                 tail_mark: None,
                 tail_prev: None,
@@ -856,6 +859,13 @@ impl Locked {
         if c.hold_start.is_none() && duty >= c.req.target_tenths {
             c.hold_start = Some(now);
             c.hold_current = Some(c.current.mark());
+            // **`unstable` at the hold mark** (E212), so the unstable/accepted
+            // ratio can be read on the hold window as `hold_acc` already is.
+            // Whole-run, the ratio mixes a 20 s ramp with a 55 s hold and a
+            // short run reads high for that reason alone -- which is exactly
+            // how the one late-arm run's apparent anomaly stayed confounded
+            // (E210 SS1).
+            c.stats.unstable_at_hold = hal.unstable_count();
         }
         if let Some(raw) = hal.det_poll() {
             self.consume(hal, raw);
