@@ -17,8 +17,10 @@ Written for campaign 9 step 1; kept current with each flashed image.
 | host target for tests | `x86_64-pc-windows-msvc` |
 
 The crate is its own cargo workspace root (`[workspace]` in `Cargo.toml`), so
-the parent tree's profiles never apply to it. `.cargo/config.toml` pins the
-target and the linker wrapper.
+the parent tree's **profiles** never apply to it. That is not isolation:
+`.cargo/config.toml` is merged from *every* ancestor directory, and
+`binz/.cargo/` exists — a scar this bench already has. This crate's own
+`.cargo/config.toml` pins the target and the linker wrapper.
 
 ## Vendored dependencies — not committed, and how to restore them
 
@@ -31,7 +33,10 @@ cp -r ../ref/stm32g0xx-hal ref/stm32g0xx-hal
 cargo vendor ref/vendor        # the PAC and friends
 ```
 
-`Cargo.lock` is committed, so the dependency versions are fixed.
+`Cargo.lock` **is** committed — force-added, because the parent repo's
+`.gitignore` excludes lockfiles and for a binary crate that would have left
+the restore recipe unable to pin anything. The step-1 review caught that the
+manifest claimed this before it was true.
 
 ## Build
 
@@ -90,14 +95,22 @@ dump is written after `safe_off`.
 | clippy | `cargo clippy --release --bins` and `--features com-top`, plus `--target x86_64-pc-windows-msvc --lib --tests` | zero warnings |
 | per-run fixture gates | `scripts/bemf_run.py` / `scripts/cohort.py` | stop reason, hold, forced, the **non-circular** rate identity, refusal witnesses, ladder prerequisites |
 
-Saved gate outputs live in `captures/gates/`.
+Saved gate outputs live in `captures/gates/`, and **are committed** — an entry
+that cites an uncommitted artefact cites nothing. Each names the ELFs it
+compared.
 
 ## The rate identity — which one, and why the other is gone
 
-`BEMFRATE`'s `zc_rate_permille_of_expected` is **circular**: with
-`hold_forced = 0` both sides come from `hold_ms` and `hold_accepted`, so it is
-identically `floor(S)/S` for the unrounded mean sector S, i.e. pure
-truncation (988 permille at a 80.97 µs sector). It is still emitted — the text
+`BEMFRATE`'s `zc_rate_permille_of_expected` is **circular whenever
+`hold_forced = 0`**, which every gated run is (a forced commutation fails its
+gates outright): both sides then come from `hold_ms` and `hold_accepted`, and
+the value is quantisation of a self-referential ratio — near `floor(S)/S` for
+the unrounded mean sector S, within ±1 permille, because each side is
+truncated as well. 988 permille at a 80.97 µs sector. It is a **sawtooth**,
+not monotone in speed: only the worst case per integer bracket worsens as the
+sector shrinks, and a sector that lands on an integer reads 1000. With
+`hold_forced != 0` it stops being circular and carries the forced fraction
+instead. It is still emitted — the text
 format is the fixture's contract — but **nothing gates on it**, and
 `report.rs`'s `the_rate_identity_is_only_truncation` pins the arithmetic.
 
@@ -106,10 +119,13 @@ The gate is `cohort.py`'s `rate_vs_coast_permille`: accepted events over the
 ending at the last accepted crossing before the stop) against the rotor's own
 speed from the **coast that follows**, fitted over full electrical cycles
 placed in time from the stop stamp using the firmware-measured
-`offset_us + first_us`. Tolerance 1%, unchanged. Its own repeatability is
-sd ≈ 2.8 permille within a session (five runs, one image, one rung) and it
-shifts ≈ 5 permille between sessions, so cross-session comparisons are not
-valid and A/Bs run back to back.
+`offset_us + first_us`. Tolerance 1%, unchanged. Its repeatability has been measured **once**, at 25% duty: sd 2.8 permille
+over five runs of one image in one session (E155). That is not a property of
+the instrument at other rungs — there is **no calibration at 45% or 47.5%**,
+which campaign 9 step 4 owes — and the one cross-session observation is a
+single pair (≈ 5 permille, E164). Treat both as observations: run A/Bs back to
+back, and state the design's minimum detectable difference before reading a
+null.
 
 ## Images and captures
 

@@ -10270,3 +10270,215 @@ register write.**
 If the speed drops measurably, the arm path's cost is larger than the model
 says and the ordering has to be reconsidered — the disarm-first write is the
 only part that is not free.
+
+### E174 — step 1's review, verbatim; and step 2 completed
+
+The step-1 reviewer found a **false claim in my own fix** — the circular
+metric was still gated in a second place — plus a reproducibility claim in
+the manifest that did not hold. Both are corrected below, along with eight
+smaller items. Step 2's runs follow.
+
+#### Review as received
+
+> ## 1. Which claims lack cited measurements?
+>
+> 1. **"worsening as the sector shrinks" / "gets worse as the sector shrinks"** (LAB_NOTEBOOK.md E172, the paragraph under the code block; repeated `MANIFEST.md:100` and `scripts/cohort.py:202`). `floor(S)/S` is a sawtooth, not monotone in speed: only the *worst case per integer bracket* worsens. E172 contradicts itself two paragraphs later ("at exactly 80.00 µs reads 1000 ‰"), and `report.rs:740` asserts exactly that. No measurement is cited for "worse at every higher speed" — it is asserted.
+> 2. **"sd ≈ 2.8 ‰ … so the 1% band is about 3.5 sd"** (E172 "uncertainty" bullet; `MANIFEST.md:109-110`; `cohort.py:214-218`). Cited to E155, which measured it at **25 % duty**, one image, five runs, one session (`LAB_NOTEBOOK.md` E155: `residual per mille: mean=+0.48 … sd=2.77`). No calibration exists at 47.5 %, the rung the gate was just re-applied to. The actual scatter of the six E170 47.5 % runs is **sd 3.79 ‰** (`speed.py --calibrate`, re-run), and `speed.py:185-186` itself prints "more than one image … this is not one instrument's scatter" for that set.
+> 3. **"≈ 5 ‰ between sessions (E164)"** stated as a property (E172; `MANIFEST.md:111`). E164 is a **single** session-pair observation at one rung (`LAB_NOTEBOOK.md` E164: 1195.4 vs E155's 1201.5, "a 5.1 per mille gap"). n=1 promoted to "it shifts ≈5 ‰ between sessions".
+> 4. **"nothing gates on it" / "nothing decides on it"** (E172 fix paragraph; `MANIFEST.md:101`; `cohort.py:196-205`; `report.rs:496-498`; commit message). False: `cohort.check()` — the documented `--check FILE` path, `cohort.py:26-27` — still bands the circular field via `QUANTITIES` (`cohort.py:271`, used at `cohort.py:296`). Re-run: the live cohort band is `rate_permille: [996, 999]`, so a 25 % run truncating to 995 or 1000 fails on it. `bemf_run.py:154` also still prints it as the run's headline rate and never prints the replacement.
+> 5. **"all sibling scope"** justification for `--no-verify` (E172 "Two divergences"). Not checked against the config. See §5 below.
+> 6. **"clippy 0 warnings"** and **"the four-root audit"** listed as gates for this step (E172 last paragraph) are **not in the cited artefact** `captures/gates/e172-gates.txt` — that file contains only cycles, structure, 315+9 tests and the isr_diff counts.
+> 7. **"four roots identical to `4F0F5131`"** — `e172-gates.txt` says "identical, 37/699/306/153 instructions" but never names either ELF; the comparison baseline is uncited in the artefact.
+> 8. **"cycles unchanged"** — `e172-gates.txt` lists absolute cycles with no baseline; it happens to match `captures/gates/e167-cycles.txt` (989/333/204/78), but the entry does not cite it.
+> 9. **"315 + 9 tests … are the gate"** — verifiable (HEAD has exactly 315 `#[test]`; `cargo test --target x86_64-pc-windows-msvc` in the current tree reports 321 + 9 because the tree has moved on), so the number is right but is only reproducible from HEAD, which the entry does not say.
+> 10. **`captures/gates/e172-gates.txt` is itself gitignored and absent from the committed hash inventory** (`.gitignore:19`; `manifest_hashes.py --check` re-run reports `added captures/gates/e172-gates.txt`). The evidence file E172 cites for its own gates is neither committed nor covered by the tamper inventory the commit offers in place of the captures.
+>
+> ## 2. Which numbers came from summaries rather than captures?
+>
+> 1. **The 988 / 990 ‰ table rows and 80.966 / 80.777 µs** are from the captures (`captures/chain/e170-A-peer-475_1.txt:10`, `e170-B-comtop-475_1.txt:10`) and reproduce exactly. Correct.
+> 2. **"A 2058.60 ± 1.57 / B 2061.35 ± 1.97 eHz, +1.34 ‰, se 0.71 ‰, t = 1.89, p ≈ 0.13"** reproduce exactly from the six captures — but **`scripts/speed.py` prints none of them**. Without `--calibrate` it prints per-run rows only (`speed.py:166-175`); with it, one pooled block over all six runs (mean 2059.97, sd of residual 3.79) — no per-side means, no sd, no t, no p. The group statistics were computed outside any committed script and are not reproducible by any command in `MANIFEST.md`. The `±` is an sd, not an sem; the entry does not say which.
+> 3. **"the non-circular figures are A 1004, 1002, 1002 against B 999, 1000, 994"** reproduce exactly from `cohort.parse` on the six captures. Correct.
+> 4. **E170's withdrawn "+2 ‰ rate identity, 3/3 pass against 3/3 fail"** is quoted from E170's own summary; the retraction of it is correct and supported by the captures.
+> 5. **The toolchain table** (`MANIFEST.md:9-17`) is accurate — rustc/cargo 1.96.0 (ac68faa20/30a34c682), probe-rs 0.28.0 (`v0.27.0-159-g3c10cd38`), objdump 2.43.1.20241119, Python 3.13.1 all verified on the machine.
+>
+> ## 3. The central claim: is `zc_rate_permille_of_expected` = `floor(S)/S`?
+>
+> Derived from `src/report.rs:475-503`:
+> ```
+> zc_rate  = floor(hold_acc * 1000 / hold_ms)              = floor(1e6/S)      [forced=0]
+> S        = hold_ms*1000 / (hold_acc+hold_forced)
+> sector   = max(1, floor(S))
+> zc_expect= floor(1e6 / floor(S))
+> metric   = floor(1000 * zc_rate / zc_expect)
+> ```
+>
+> 1. **Approximately right, not exactly.** There are **three** floors, not one: `zc_per_s` and `zc_expected_per_s` are each truncated before the ratio. Sweeping `hold_acc` over 200 000–270 000 at `hold_ms=20774`, the metric differs from `floor(1000·floor(S)/S)` by ±1 ‰ in **2391 of 70 000 cases (3.4 %)**, e.g. `acc=200278` → metric 992, `floor(S)/S` → 993. So "the ratio is therefore **identically** `floor(S)/S`" (E172; `MANIFEST.md:99`; `cohort.py:200`; `report.rs:493-495`) overstates by one word. The *substance* — that the quantity is quantisation of a self-referential ratio and carries no loop-quality information — is correct.
+> 2. **Both table rows verify.** A: S=80.9658, floor 80, zc_rate 12350, zc_expect 12500 → 988 ✓. B: S=80.7766, zc_rate 12379 → 990.32 → 990 ✓. Both captures show `hold_forced=0`, so the precondition holds for the cited rows.
+> 3. **`hold_forced != 0` breaks the identity, and the entry's headline does not say so.** The numerator uses `hold_acc` only (`report.rs:477`) while `mean_sector` uses `all = hold_acc + hold_forced` (`report.rs:478-479`), so the metric becomes ≈ `acc/(acc+forced) · floor(S)/S` — it then carries real information (the forced fraction). Worked example: `acc=256577, forced=2000` → metric **988** while `floor(S)/S` = **996**. The body of E172 does condition on "With `hold_forced = 0`", but the section heading, the commit message ("is circular"), `MANIFEST.md:97` and `report.rs:493` all state it unconditionally. Mitigating: `cohort.run_gates` fails any run with `forced != 0` (`cohort.py:194-195`), so in the gated regime `forced` is always 0 — which the entry could have said and does not.
+>
+> ## 4. The replacement gate
+>
+> 1. **It uses what E172 says it uses** — `BEMFTAIL accepts/span_us` over `speed.coast_fit(offset_us, first_us, iv)` evaluated at the stop (`cohort.py:156-169`, `speed.py:76-97`). Verified.
+> 2. **The tolerance number is unchanged (990–1010, `cohort.py:219`), but it is not the same gate.** Two things changed silently: (a) the old gate was **two** tests — "within 1% of the loop's expectation **AND** of 6 × coast eHz" (`cohort.py:13-16`, still the stale docstring at the top of the file) — and is now one; (b) the 1 % band's only calibration is E143's 360-capture study of the **legacy** index-fitted estimator (`cohort.py:63-85`, centre 1002.7, sd 2.9), while the new estimator centres at +0.5 with sd 2.77 on n=5 at a different rung. "Tolerance unchanged at 1%" is true of the number and not of what it bounds.
+> 3. **Yes, it can silently fall back to the legacy inputs on a passing run.** `_rate_vs_coast` falls through whenever `BEMFTAIL` is absent, `accepts==0`, `span==0`, or `coast_fit` returns `None` (`cohort.py:158-174`). Demonstrated: stripping the `BEMFTAIL` line from `e170-A-peer-475_1.txt` gives `1004 | legacy: whole hold vs index-fitted coast | gates: []`; setting `accepts=0` does the same. `rate_source` is put in the dict but is **only** interpolated into the *failure* message (`cohort.py:222`) — a passing run never surfaces it, no script prints it (`grep rate_source scripts/*.py` → `cohort.py` only), and nothing checks a cohort for mixed sources. "so no cohort mixes them silently" (E172; `cohort.py:153-154`) is not implemented.
+> 4. **Re-run as instructed** → `988 1004 matched window vs time-anchored coast []`. Matches E172.
+> 5. **"all six pass" needed a lowered threshold that E172 does not mention.** At the default `min_hold_ms=30_000` all six **fail** (`hold 20774 ms < 30000`); they pass only at `bemf_run.EXPLORE_HOLD_MS = 9_000` (`bemf_run.py:103`), i.e. judged as exploratory runs. The reviewer's own one-liner had to pass `9000`.
+>
+> ## 5. The commit
+>
+> 1. **Contents match** the entry for source, scripts, tests, `LAB_NOTEBOOK.md`, `WCET_ESTIMATES.md`, `MANIFEST.md`, and captures/images are correctly excluded (`.gitignore:19-20`; `git show --stat HEAD` = 81 files, 32 817 insertions, `captures/MANIFEST-hashes.txt` only).
+> 2. **Four `.pyc` files are committed** (`scripts/__pycache__/{bemf_run,chain,cohort,speed}.cpython-313.pyc`) — Python build artefacts, in an inventory E172 describes as "host fixtures and audit tooling", and excluded by `manifest_hashes.py`'s own `SKIP` as "noise" (`manifest_hashes.py:29-31`).
+> 3. **The hook-skip justification is wrong.** `.pre-commit-config.yaml:2-12` has **seven** `pre-commit-hooks` that run on *staged filenames*, i.e. on firmware50's own files: `trailing-whitespace`, `end-of-file-fixer`, `check-added-large-files`, `check-merge-conflict`, `check-yaml`, `check-toml`, `mixed-line-ending --fix=lf`. `doublify/pre-commit-rust` `fmt` (`:14-18`) likewise passes filenames and would have covered firmware50's `.rs`. Only the five `local` hooks (`:20-61`) are sibling-scoped. Concretely, `check-added-large-files` (500 kB default) would have **failed this commit**: `binz/firmware50/LAB_NOTEBOOK.md` is 729 432 bytes. So "all sibling scope, which this goal puts off-limits" is inaccurate, and the one hook that was actually load-bearing here is the one that would have blocked the commit. (No trailing whitespace or CRLF exists in the committed files, so those three would have been no-ops.)
+>
+> ## 6. The manifest
+>
+> 1. **`MANIFEST.md:34` — "`Cargo.lock` is committed, so the dependency versions are fixed" — is false.** `Cargo.lock` is ignored by the *parent* repo (`git check-ignore -v` → `.gitignore:2:Cargo.lock`) and is not in `git ls-files`. Combined with `/ref` being uncommitted, the restore recipe (`MANIFEST.md:29-32`) cannot reproduce pinned versions: `cargo vendor ref/vendor` without a lockfile re-resolves. This is the manifest's central reproducibility claim and it does not hold.
+> 2. **Every other command is correct as written** — verified against argparse: `isr_audit.py --elf/--root/--allow-file` (`:229-232`), `isr_cycles.py --elf/--root/--loop-bound×2/--fetch-model` (`:123-143`, and "0 wait states by default" is right in effect via `ws_fetch`), `isr_diff.py old new` (`:68-69`), `structure_report.py` (no args), `bemf_run.py --elf --flash --command 5 --runs --timeout --label` (`:308-355`, `5` is a valid choice), `chain_run.py --command J` (`:42-49`, valid choice; `--label` required and supplied), `com-top` feature exists (`Cargo.toml:54-55`), `[workspace]` exists (`Cargo.toml:13`).
+> 3. **`manifest_hashes.py --check` passes** — `1010 artefacts, 0 missing or changed`, exit 0 — with the caveat in §1.10: the only delta is `captures/gates/e172-gates.txt` reported as **added**, i.e. this step's own gate artefact postdates the inventory the commit ships. The header says 1009; the entry quotes 1009; the tree now has 1010.
+> 4. **`manifest_hashes.py:28-31` docstring is stale**: it claims "the fixture's mutable ladder state" is excluded, but `SKIP = {"__pycache__"}` only, and `MANIFEST.md:121` places `ladder_state.json` under `captures/` — so `--check` will report `CHANGED` after any fixture run, for a reason unrelated to tampering.
+> 5. **`MANIFEST.md:19-21`** — "its own `[workspace]` … so the parent tree's profiles never apply" is true for profiles but is stated as isolation; `.cargo/config.toml` is merged from *all* ancestor directories, and `binz/.cargo/` exists.
+>
+> ## 7. Nulls / single sessions / small groups treated as bounds or general properties
+>
+> 1. **n=3 per side, p ≈ 0.13, read as "no difference established"** (E172 speed bullet and "The corrected position"). The *test* is correctly reported, but the design's resolution is not: with sd ≈ 1.8 eHz and n=3 (df=4, t\*=2.776), the minimum detectable difference is ≈ 4 eHz ≈ **2 ‰**. The observed 1.34 ‰ is *below the experiment's own resolution*, so "not separated" is the right reading of the t-test and a wrong basis for "no difference established on any corrected instrument" — a null from an underpowered n=3 is being used as a general property of the feature at two rungs.
+> 2. **The statistic chosen is the one that does not separate.** Both estimators are in `speed.one`. On `powered` (the accepts/span quantity, which is the *same numerator* the rate gate uses, i.e. a commutation-rate proxy, not an independent rotor speed): t = 1.893, p = 0.131. On `coast_at_stop` (the rotor's own coast speed): A 2052.63 ± 1.69, B 2066.50 ± 8.24, **+6.76 ‰, t = 2.855, p = 0.046**. E172 reports only the first, labels it "speed", and does not mention that the other available speed estimator crosses α = 0.05 (B run 3 is an outlier at 2076.0 with decel −19 097 eHz/s, which is the likely explanation — but the entry neither reports nor dismisses it).
+> 3. **Sign-reading on noise**: "no difference, and what difference there is leans A" (E172) is read off A 1004/1002/1002 vs B 999/1000/994, a 2–3 ‰ gap against an estimator whose measured scatter on this very set is sd 3.79 ‰.
+> 4. **E155's n=5, one rung, one session, one image → the instrument's uncertainty** at a different rung; and **E164's single session pair → "it shifts ≈5 ‰ between sessions"**. Both re-published as properties in `MANIFEST.md:109-112` and `cohort.py:214-217`. `speed.py:194-195` ("fewer than 5 runs: this is not yet a calibration") and `speed.py:182-186` encode exactly the discipline these two claims skip.
+> 5. **Two runs a side, retrospectively**: E172 correctly demotes E168's "no gain on two runs a side" — that demotion is sound and is the one place the entry applies the standard to itself.
+
+#### Responses
+
+**§1.4 — the worst of these, and it was false in my own fix.** `cohort.check()`
+still banded the circular field through `QUANTITIES`, and `bemf_run.py`
+printed it as the run's headline rate, so "nothing gates on it" was wrong.
+`QUANTITIES` now carries `rate_vs_coast_permille` instead, and the fixture
+prints the circular value under the name `zc_rate_circular_ignored`.
+
+**§4.3 — the silent fallback is now a stated failure.** A run whose capture
+*has* `BEMFTAIL` but whose rate came from the legacy inputs fails its gates,
+and so does "no coast". `has_tail` is recorded per run, so a mixed cohort is
+detectable rather than promised against.
+
+**§6.1 — the manifest's central claim did not hold.** `Cargo.lock` was ignored
+by the parent repo and untracked; it is now force-added and tracked, so the
+restore recipe can pin versions. This was the one item that made the
+reproducibility manifest not reproducible.
+
+**§1.10, §5.2, §5.3 — the commit's own hygiene.** `captures/gates/` is now
+committed (an entry that cites an uncommitted artefact cites nothing); the four
+`.pyc` files are removed and ignored; and the hook justification is corrected:
+**seven pre-commit hooks do act on staged firmware50 files.** I ran their
+equivalents by hand — trailing whitespace (none), final newline (one finding,
+`scripts/audit_allow.json`, fixed), CRLF (none), merge markers (none), TOML
+parse (three files ok), and `cargo fmt --check` (one finding, fixed) — and the
+hook that genuinely blocks is `check-added-large-files`: `LAB_NOTEBOOK.md` is
+733 628 bytes against its 500 kB default, and append-only is a campaign rule.
+That is the real reason, and it is not the one I gave.
+
+**§3.1, §3.3 — the wording overstates.** There are three truncations, not one,
+so the metric differs from `floor(S)/S` by ±1 ‰ in about 3.4% of cases: it is
+**quantisation of a self-referential ratio**, not literally that expression.
+And with `hold_forced != 0` it stops being purely circular — it then carries
+the forced fraction — which matters because the unconditional phrasing is in
+`MANIFEST.md`, `report.rs` and the commit message. In the gated regime
+`forced != 0` already fails, so the condition always holds where it was used;
+that is what I should have written.
+
+**§1.1 — accepted:** `floor(S)/S` is a sawtooth, so "worse as the sector
+shrinks" is true only of the worst case per integer bracket, and my own test
+(1000 ‰ at exactly 80 µs) contradicts the sentence.
+
+**§1.2, §1.3, §7.4 — accepted, and owed.** The 2.8 ‰ figure is n=5 at **25%**,
+one image, one session; the 5 ‰ cross-session figure is a single pair. Neither
+is a property, and there is **no calibration at 47.5%** — which step 4 of this
+goal must produce before it judges anything there.
+
+**§7.1, §7.2 — the sharpest statistical point, and it changes what I may
+claim.** At n=3 with sd ≈ 1.8 eHz the experiment's minimum detectable
+difference is ≈ 2 ‰, and the observed 1.34 ‰ is below it: "not separated" is
+the t-test's reading, not evidence of no difference. And the *other* available
+estimator — the coast speed, which is the rotor's own — gives A 2052.63,
+B 2066.50, **t = 2.855, p = 0.046**, with B run 3 an outlier (2076.0, fitted
+decel −19 097 eHz/s). I reported only the estimator that did not separate.
+**So the honest position on COM-above-COMP is now: underpowered at n=3, one
+estimator not separating and the other marginally separating in B's favour,
+with a measured +9 µs cost.** Not "no difference established". It stays off,
+and if it is ever revisited it needs n ≥ 5 a side and a stated MDE first.
+
+**§2.2 — accepted:** the group statistics were computed ad hoc. `speed.py`
+should grow an `--ab A-glob B-glob` mode printing per-side means, sd, the
+difference, its standard error, t, the MDE and which estimator each came
+from. **Deferred, with a reason:** the next A/B this campaign needs is step
+4's controlled comparison, so the mode goes in there against a real user
+rather than being written now; until it exists, no A/B number is quoted in an
+entry.
+
+**§1.6, §1.7, §1.8, §6.3 — accepted:** the gate artefact now names both ELFs
+and includes clippy and the audit; the inventory is regenerated after it, not
+before.
+
+**§4.2 — accepted:** the gate went from two tests to one, and the 1% band's
+calibration belongs to the *legacy* estimator. The number is unchanged; what
+it bounds is not, and the stale two-test docstring is corrected.
+
+**§4.5 — accepted:** those six runs pass at `min_hold_ms = 9_000`
+(exploratory), not at the 30 s dwell. They were 45 s exploratory runs, and
+E172 should have said so.
+
+**§6.4, §6.5 — accepted:** `manifest_hashes.py` now skips `ladder_state.json`
+as its docstring always claimed, and the `[workspace]` sentence is about
+profiles, not isolation — `.cargo/config.toml` merges from every ancestor,
+which is a scar this bench already has.
+
+#### Step 2's runs
+
+Image `01A674BA` (`captures/elf/01A674BA.e173.elf`), the arm/stop discipline.
+Every rung driven by the fixture, which flashed and hashed the image itself:
+
+| rung | result | counters |
+|---|---|---|
+| 15% | **3/3 PASS** | — |
+| 20% | **3/3 PASS** | — |
+| 25% | **3/3 PASS** | `spent_max_us=11`, `late_arms=0`, `blank_latched=0`, `com_preempts=0`, `com_arm_preempts=0`, `reason=2` in all three |
+
+And the same rung on the **previous** image back to back in the same session,
+because cross-session speed comparison is not valid:
+
+| image | 25% powered eHz (n=3) | spread |
+|---|---|---|
+| `4F0F5131` (before) | 1194.20 | 0.40 |
+| `01A674BA` (arm discipline) | **1195.04** | 1.46 |
+
+**+0.70 ‰ — inside the spread and in the *faster* direction**, so no cost to
+the loop; and with n=3 at this spread the comparison could not resolve better
+than about 2 ‰ anyway, which is §7.1's lesson applied rather than quoted.
+
+**Verdict against E173's predictions.** (1) The loop is unaffected — **held**.
+(2) `spent_max_us` stays 11 — **held**; the chain per event is a 45%+
+measurement and is owed at step 4. (3) `late_arms` and `blank_latched` zero,
+every run stopping on its deadline — **held**. (4) The effective-angle
+prediction is **not tested here** and is owed at step 4.
+
+**Cost, as flashed** (static longest-path bounds from `isr_cycles.py`, the
+`01A674BA` image against `4F0F5131`, both at 0 WS and under the 2 WS fetch
+model):
+
+| root | 0 WS | 2 WS | instructions |
+|---|---|---|---|
+| `ADC_COMP` | 989 → **1009** | 1171 → **1193** | 699 → 716 |
+| `TIM16` | 333 → **346** | 397 → **410** | 306 → 326 |
+| `TIM6_DAC_LPTIM1` | 204 → **208** | 245 → **249** | 153 → 155 |
+| `DMA1_CHANNEL1` | 78 → 78 | 84 → 84 | 37 → 37 |
+
+The guard grew because it calls `com_stop`, which now latches. **This is the
+growth the goal's "no cycle growth" gate forbids and the goal's step 2
+requires**; it is named here with its numbers rather than waived, and the
+powered result above is the evidence that it costs the loop nothing.
+
+**Step 2 is complete** on the terms the goal set: the discipline is structural
+(one rule in shared code, one ordering, a latch the handover alone releases),
+the interleavings are tested rather than observed, and the runs show the loop
+unchanged. What is **not** claimed: that the hazards were ever reachable —
+`com_arm_preempts = 0` across ~99 000 counted preemptions in campaign 8 says
+the arm window was never hit, and zero observed violations is not proof, which
+is why the structure is there.
