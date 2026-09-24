@@ -18880,3 +18880,83 @@ One honest caveat carried forward from E243: every margin figure in E238 and
 E239 should be read **1 µs lower** than printed, because `left = wait − spent`
 uses the firmware's `spent` (11 µs) and I had been reasoning from the chain's
 (10 µs).
+
+### E245 — predeclaration: the qualification ladder on `D56FC16B`, driven and stopping on first failure
+
+Written before the first run. All six prerequisite items are closed (E243,
+E244), the four ISR roots are byte-identical to the previous image, and
+`D56FC16B.e244-final-candidate.elf` is the first image that can satisfy the
+goal's criteria rather than merely approach them.
+
+#### The chain
+
+The ladder is keyed on the ELF sha256 and each rung is admitted only when the
+one below has **three passing runs on that same image**. Nineteen rungs:
+
+> 150 → 200 → 250 → 275 → 288 → 300 → 325 → 338 → 350 → 375 → 400 → 425 → 450
+> → 475 → 500 → 525 → 550 → 575 → 600
+
+At three runs each that is **57 powered runs**, about 100 s apiece plus settle.
+
+#### The driver, and why it is not 57 hand commands
+
+`scripts/ladder_drive.py`. It calls `bemf_run.py` exactly as a hand invocation
+would, in **ladder mode**, bypassing no gate, and reads back the rung report the
+fixture writes. Three specific failures of mine are the reason it exists:
+
+* **E239** — a stopping rule was breached and the batch ran on, because three
+  runs went out in one unattended invocation with nothing checked between them.
+  Here each rung's report is read as it lands and **the walk stops on the first
+  failure**.
+* **E148 / E185** — `L` drives whatever duty the shell holds, so a rung is
+  commanded by stepping the climb duty with `+`. Three runs once drove 40% under
+  a 42.5% label because the count was assumed. The press count is now
+  **computed** from the rung (400 → 0 presses, 600 → 8), and the driver refuses
+  a duty not reachable in 25-tenth steps.
+* Admission refuses without explaining; the driver prints which rung below is
+  missing.
+
+Verified by dry run: the chain, the keys, and all nine press counts.
+
+#### Predictions
+
+1. **150 → 475 pass 3/3 each.** These fourteen rungs were qualified on
+   `14CE44E7`, the four ISR roots here are byte-identical to `D232F90A`, and
+   every change since is thread-mode. A failure below 500 is therefore *not* a
+   rung result — it is evidence that one of E243/E244's foreground changes
+   perturbed the drive, and it stops the walk for that reason.
+2. **500 passes 3/3.** Measured once on this lineage already (E238: `reason=2`,
+   hold 54.8 s, droop 984.5 ‰, `bus_min` 1119).
+3. **525 passes 3/3.** Measured three times (E239), all clean.
+4. **`worst_hold_ma` reads far below `worst_ma` at the low rungs** — the whole
+   point of E244's windowed max. At 150 the whole-run figure is ~900 mA against
+   a 34 mA hold, so I predict `worst_hold_ma` under **150 mA** there. If it
+   tracks `worst_ma`, the window is not being marked and the field is worthless.
+5. **The droop bins now read non-zero.** With fractions at 995/990/985/980
+   against a healthy band of 979–990, `dep995_n` should be large at every rung
+   and `dep980_n` near zero. If all four still read 0, the fractions are still
+   in the wrong place.
+
+**550, 575 and 600 carry no prediction.** Nothing has ever been measured there;
+predicting them would be the fourth time this campaign I put a band on a
+quantity with no baseline. They are driven and reported.
+
+#### Stopping rules — all now enforced in code
+
+`run_gates` fails a run on `reason != 2`, a hold under 30 s, a foldback
+(`ceiling_tenths != duty`), `worst_ma ≥ 3800`, and the **IR-line droop residual
+below −20 per mille** (E243, the CV/CC discriminator). The driver stops the walk
+on the first rung that does not reach 3/3. Nothing is retried: a failure is the
+result.
+
+#### Scope of this batch
+
+**150 → 475 only**, unattended. That is fourteen rungs, 42 runs, ~70 minutes,
+all at or below the current where this bench has run for three campaigns.
+
+**500 and above are driven separately, one rung at a time**, because that is
+where the thermal exposure and the open tail-margin question live, and because
+E239's lesson was specifically about unattended batches at the top of the
+envelope. The restart cohorts at 500 and 600, and the protection re-provocation,
+follow the rungs — they are the remaining two success criteria and neither has
+been attempted.
