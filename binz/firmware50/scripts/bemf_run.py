@@ -442,8 +442,10 @@ def main() -> int:
 
     if args.no_ladder:
         print("LADDER BYPASSED: exploratory run at the requested rung, on an image")
-        print("  that has not earned it. The run is driven and retained; it is recorded")
-        print("  against no rung, so it can never contribute to a 3/3 qualification.")
+        print("  that has not earned it. The run is driven and retained, and is NOT")
+        print("  recorded against any rung, so it cannot contribute to a 3/3")
+        print("  qualification. (Until E193 this banner was false: the bypass skipped")
+        print("  admission only, and five runs were written into the ladder.)")
     admitted, why = (
         (True, "")
         if (args.step_check or args.no_ladder)
@@ -528,6 +530,16 @@ def main() -> int:
                     if fails:
                         failed_runs += 1
                     print("   STEP CHECK " + ("FAIL: " + "; ".join(fails) if fails else "PASS"), flush=True)
+                elif args.no_ladder:
+                    # **A bypassed run is not recorded.** `--no-ladder` skipped
+                    # *admission* only, so thirteen runs driven with it were
+                    # still written into `ladder_state.json` -- including 47.5%
+                    # and 50% entries for an image that had earned neither.
+                    # A later "3/3 at 50%" could then have been satisfied by
+                    # runs the ladder never admitted, which is the exact
+                    # corruption the ladder exists to prevent. The banner said
+                    # "recorded against no rung"; now it is true (E192).
+                    print("   RUN (gates not judged, recorded against no rung: --no-ladder)")
                 elif (args.command in RUNG or args.command in EXPLORE or args.command in ("l", "L")) and args.abort_after <= 0:
                     # A host-abort provocation is not a rung run (E124). An
                     # exploratory run (E137) is judged but never recorded.

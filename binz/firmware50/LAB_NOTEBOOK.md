@@ -12896,3 +12896,377 @@ any run**. That is the figure the thermal deferral must be read against; it is
 also the reason I am stopping the driving here rather than continuing into a
 qualification climb on my own authority. There is still no temperature in this
 firmware, and the NTC read remains owed.
+
+### E192 — the qualification climb on the current image: change and prediction
+
+**I stopped short in E191 and that was wrong.** E191 ended by declaring 50%
+"reached but not qualified" and handing the qualification decision to the
+operator on the grounds of cumulative thermal exposure. The goal's pause list
+is specific — smoke, smell, abnormal heat, unavailable hardware, or a
+demonstrated constraint requiring external change — and **cumulative exposure
+with no measured abnormality is not on it**. No nFAULT fired in any of the
+thirteen runs, nothing was measured hot, and "the ladder costs 45 runs" is a
+cost, not a constraint. Declining on that basis is exactly the *arbitrary
+qualification barrier* the success criterion forbids. So the climb runs.
+
+#### Change
+
+**No firmware change.** The image is the already-gated production
+`14CE44E7` (`captures/gates/e187-gates.txt`: four-root audits clean, cycle
+bounds at 0 and 2 wait states, `.data`+`.bss` 4 844 B leaving 32 020 B of
+stack, roots instruction-identical to `7C55B7E0`, 336 lib + 9 doc tests,
+clippy zero). Nothing about the protections, the sag guard's
+fraction/streak/latch, hysteresis 0 or the 64/ms cap is touched.
+
+**What is different from E189–E191 is the *path*, and it is the point.** Those
+thirteen runs used `--no-ladder` and are recorded against no rung. This climb
+uses the ordinary fixture path: **15, 20, 25, 27.5, 28.8, 30, 32.5, 33.8, 35,
+37.5, 40, 42.5, 45, 47.5 and 50%, three runs per rung**, each admitted only
+when the rung below has three passing runs **on this same image**, each judged
+by `cohort.run_gates` and each rung's means by `cohort.rung_oracle`. That is
+what "qualified" means here, and nothing less of it will be called that.
+
+Process note: the 15–42.5% part of the climb was launched before this entry was
+written, which is the wrong order and the third ordering slip of this campaign.
+Those rungs are all below the 45% review gate; the prediction below is recorded
+before any run at 45% or above, and a fresh context-free review is running
+concurrently against the plan.
+
+#### Prediction, before the ≥45% rungs
+
+1. **Every rung 15–42.5% passes 3/3.** The same climb passed on `7C55B7E0`
+   earlier today (E185) and the images' four ISR roots are
+   instruction-identical, so a rung failure below 45% would mean the E187
+   foreground changes cost something measurable — which would be a finding in
+   itself and would stop the climb.
+2. **45%, 47.5% and 50% each pass 3/3**, on the strength of 11-of-11
+   completions at 50% already (E191) — but the gates are tighter than
+   "completed": `cohort.run_gates` requires the stop reason, the dwell, the
+   forced count and the **non-circular rate identity**, and `rung_oracle`
+   requires the rung's means against the frozen oracle. The specific risk is
+   **not** the drive: it is the **current proxy**. Today's 25% step check read
+   `hold_ma=415` against an oracle of 326 (+27%) with `zero_drift_ma=-156`, and
+   the drift across today's runs spans −47 to −231 mA. If a rung fails, I
+   predict it fails on current, for that instrument reason, and that will be
+   reported as an instrument failure rather than dressed up as a physical
+   limit — or dismissed as one.
+3. **`worst_ma` at the top rung stays in 2.0–2.4 A** (today's eleven read
+   2081–2365) and `ceiling_tenths` equals each rung's commanded duty on every
+   run. A ceiling below the command means the run was throttled and is not a
+   rung run, whatever its other numbers say.
+4. **No sag latch at any rung**, on 0-of-11 at 50% (p = 0.043 against campaign
+   7's rate). A latch would stop the climb and be read by E188's prediction-3
+   procedure with a frozen ring — still the outcome I would rather have.
+5. **A 50% restart and 50% protection provocations are not available from the
+   shell**: `x` cycles the provoke duty 25 → 37.5 → 47.5% only, and
+   `restart_campaign` is driven at 25% (`R`) or that provoke duty (`Z`). So the
+   honest qualification statement will be "3/3 target-dwell at 50%, with
+   restart and protections re-provoked at 47.5%" — and I will say exactly that
+   rather than implying the restart and the protections were exercised at 50%.
+   If the review disagrees about what the shell allows, its finding governs.
+
+Exposure: nine of the climb's runs are at or above 45% (three each at 45, 47.5
+and 50%), ≈57 s each, ≈515 s, on top of the ≈745 s already driven today. Still
+no temperature measurement anywhere in this firmware; ≥120 s bridge-off between
+the ≥45% runs, and the session stops on smoke, smell, heat or an unexplained
+nFAULT.
+
+### E193 — the pre-run review before the qualification climb, verbatim
+
+A fresh context-free reviewer, given the plan (climb the fixture ladder on
+`14CE44E7` from 15% to 50%, three runs per rung, then claim a qualified 50%),
+the source, the captures, the ladder state and the gate outputs. It did not
+flash or drive anything; the 15–42.5% part of the climb was running while it
+read.
+
+**Verdict: two stop-ships, both in the fixture's *record* rather than the code;
+one gate likely to fail for an instrument reason; and one hardware-risk item in
+the plan. Appended verbatim; disposition in E194.**
+
+---
+
+I have everything I need. Here is the review.
+
+# Pre-run review: the 15→50% ladder climb on `14CE44E7` (sha `7125601f`)
+
+Verification performed myself: read `LAB_NOTEBOOK.md` E186–E191; read `scripts/bemf_run.py`, `scripts/cohort.py`, `src/run/{mod,policy,states}.rs`, `src/protection.rs`, `src/ramp.rs`, `src/sagtrace.rs`, `bin/board.rs`; re-parsed **every** capture under `captures/2026-09-23/c7*` and `captures/2026-09-24/` through `cohort.parse`/`run_gates`; dumped `captures/ladder_state.json` per image and re-ran `rung_report`/`ladder_admit` on it; ran `scripts/sag.py` on `e189-475-sag` and `e190-500-s7`; recomputed both Fisher p-values; hashed `captures/elf/14CE44E7.e187.elf` and the current build output; ran `cargo test --target x86_64-pc-windows-msvc` (336 lib + 9 doc pass).
+
+**Verdict: two stop-ship items, both about the fixture's record rather than the code, plus one gate that is likely to fail for an instrument reason and one hardware-risk item in the plan.** The plan *can* produce a qualification by the fixture's definition — but as written it would produce one that partly rests on runs E190/E191 say cannot contribute, and it costs ~3× more high-current drive than a cheaper honest route that E191 overlooked.
+
+---
+
+## S1 (stop-ship). `--no-ladder` does **not** stop a run being recorded, and four 50% records already exist on this image
+
+`bemf_run.py:443-446` prints:
+
+> "LADDER BYPASSED … The run is driven and retained; **it is recorded against no rung, so it can never contribute to a 3/3 qualification.**"
+
+That is false for `L`. The recording branch at `bemf_run.py:531-536` is reached regardless of `--no-ladder`; `explore` is true only for the `EXPLORE` keys and lowercase `l` (`:534`), so an uppercase `L` run goes straight into `ladder_record` → `_ladder_save` (`:232-236`). `--no-ladder` only skips *admission* (`:447-451`).
+
+The state file proves it. `captures/ladder_state.json`, key `7125601FA7248B63…`:
+
+| duty | records | `fails` |
+|---|---|---|
+| 475 | `e189-475-prodB_01.txt` | `[]` |
+| 500 | `e189-500-p1_01.txt`, `e189-500-p2_01.txt`, `e190-500-p3_01.txt`, `e190-500-p4_01.txt` | `[]`, `[]`, `[]`, `[]` |
+
+Running the fixture's own function on it today:
+
+```
+7125601F 500 -> rung_report = True  []      # THE 50% RUNG ALREADY REPORTS PASS
+7125601F 475 -> False ['only 1 run(s) on this ELF at 48%']
+7125601F 450/425/400 -> False ['only 0 run(s) …']
+```
+
+Consequences:
+
+1. **E190's and E191's "all seven / all thirteen runs at ≥45% today were driven with `--no-ladder` and are recorded against no rung, by design" is wrong for 5 of the 13** (the four production 500s and the production 475). The eight recorder runs went through `sag_run.py` and are indeed unrecorded; the production ones are recorded and clean.
+2. **If the climb reaches 47.5% and stops there, `rung_report` will already answer PASS at 50%** — and `bemf_run.py:570-572` will print `RUNG 50%: PASS` — off runs driven before any prerequisite existed. Nothing in the record marks a run as `--no-ladder`-admitted, so no future reader can tell.
+3. Because the window is `[-RUNG_RUNS:]` (`bemf_run.py:192`), the three planned fresh 500 runs *do* displace those four. **So drive them** — that is the clean resolution and it is exactly what makes them worth their 170 s. Do not skip them and inherit the bypassed records. But note the corollary: since the 500 report is currently PASS, driving three more can only *lose* it if one fails a gate; pre-declare that a failure is recorded and re-run, not re-interpreted.
+
+**Fix before driving (one line each):** either add `"admitted": bool` to the recorded dict, or delete the five bypassed records from `ladder_state.json` (keeping the captures) and say so in the entry. And correct `bemf_run.py:446`'s banner — it is the only place that states a false invariant about the record.
+
+## S2 (stop-ship). The default build path is **not** the production image
+
+```
+captures/elf/14CE44E7.e187.elf            sha 7125601FA7248B63  crc 14CE44E7
+target/thumbv6m-none-eabi/release/shell-pwm  sha 04BB9256872C69FF  crc B53A7EA7
+```
+
+`bemf_run.py:42` defaults `ELF` to that build path and `capture_one` writes its hashes into every header (`:294-295`); `elf_sha256()` is also the ladder key (`:439`, `:234`). One invocation in the 42–45 that forgets `--elf captures/elf/14CE44E7.e187.elf` will (a) stamp the capture with an image that is not on the chip — the E164 scar, which `--elf`'s own help text describes — and (b) silently open a **second ladder key**, so that rung records against `04BB9256` and the chain breaks without any error. `e192-climb-150_01.txt` is correctly stamped `14CE44E7/7125601F`, so the operator is passing it now; the exposure is the remaining ~44 invocations. Flash once with `--elf … --flash`, pass `--elf` on every subsequent call, and run no `cargo build` during the climb.
+
+---
+
+## 1. What the fixture requires, precisely — and whether the plan is a qualification
+
+**A rung passes** iff `rung_report` (`bemf_run.py:188-197`) says so:
+
+* **the last three records** for `(elf_sha256, duty)` in `captures/ladder_state.json` (`:192`) — *not* any three, and earlier failures are simply forgotten once three clean runs follow;
+* fewer than three records → `only N run(s) on this ELF at X%`;
+* **every one of those three** has empty `fails` from `cohort.run_gates` (`cohort.py:181-248`): `reason == 2`; `hold_ms ≥ 30 000`; `forced == 0`; `990 ≤ rate_vs_coast_permille ≤ 1010` (`:222`) with no legacy fallback while `BEMFTAIL` is present (`:230`) and not `"no coast"`; `unstable != 0`; `too_early != 0 || blank_arms != 0`; `coast_crossings > 0`; and `|coast_ehz − ORACLE[duty][0]| ≤ 5%` (`:245-247`);
+* **plus** `cohort.rung_oracle` on the rung's means (`:264-278`): **mean `coast_ehz` within 20% of the oracle only.** The current comparison is `del`'d at `:277` and is report-only since E124 (`rung_current_note`, `:251-261`). So **no current figure can fail a rung.**
+
+**Admission** (`ladder_admit`, `:200-211`): for `l`/`L`, `--rung-duty` must be in `ORACLE` and the prerequisite is `rung_duty − 25` (375 for 400). Chain to the top: 375→400→425→450→475→500, complete. For the lettered keys it comes from `LADDER_PREREQ` (`:169-172`).
+
+**`--rung-duty` does two things:** it picks the prerequisite (above), and it is `expect_duty` in `ladder_record` (`:226-227`) — a capture whose `BEMFRUN target_duty_tenths` disagrees is **not recorded** and returns the mismatch as a failure. This is the E148/E185 guard and it is the only defence against the shell's `climb_tenths` being somewhere else than assumed (`mod.rs:446-467`; `climb_tenths` resets to **400** on every reset, `mod.rs:125`). Note it is inert when `--rung-duty` is 0, i.e. on any `--no-ladder` fallback.
+
+**Can an `L` run at 500 be recorded? Yes** — 500 is in `ladder_record`'s allowlist (`:220`) and in `ORACLE`; the four existing records are the proof.
+
+**So: does the plan produce "qualified 50%"?** By the fixture's letter, yes — *if* all 14–15 rungs report pass on this ELF. Three things in the plan are **not** a qualification by that definition:
+
+* the four existing 500 records and the one 475 record (S1) — driven with admission bypassed; a qualification that includes them is a qualification of the fixture's hole, not of the ladder;
+* the restart campaign and the gate-4 provocations are **not part of the fixture's definition at all** (`restart_verdict` at `:239-253` is a separate judgement; provocation runs are excluded from recording by `abort_after`/key dispatch). They are the notebook's historical qualification, not the fixture's, and — see §3 — they cannot be run at 50%;
+* **`ceiling_tenths` is not a gate.** `cohort.parse` (`:108-145`) reads `BEMFCURRENT` only for `hold_ma`; it never reads `ceiling_tenths`. A run the foldback governor throttled below 500 (`protection.rs:540-545` → `governor.warn`, `states.rs:341`) still reports `target_duty_tenths=500` and would pass every gate. This is E187's own prediction-2 quantity and it is not in the fixture. **Add `ceiling_tenths == duty` to `run_gates` before claiming a 50% qualification** — it is three lines and it is the difference between "three runs at 50%" and "three runs that started at 50%", E191's own phrase.
+
+Minor: **the 28.8% rung is a prerequisite of nothing.** `LADDER_PREREQ` maps both `Y`(288) and `C`(300) to 275 (`:170`). Skipping it removes 3 runs (~4 min of drive) and costs nothing.
+
+## 2. Will the rungs pass today? One rung is at real risk, and it is instrumental
+
+I re-gated all 141 complete campaign-7 captures and today's 46. Results that matter:
+
+* **45% is the marginal rung, for an oracle reason.** `ORACLE[450] = 1893` eHz, gate ±5%. Measured coast at 450: `c7-450_0*` 1960/1960/1967 (**+3.5…+3.9%**), `c7f-450_0*` 1979/1979/1976 (**+4.4…+4.5%**), `c7f-explore450_01` 1973 (+4.2%). Today's image sits at the top of that family at 475 (`e189-475-prodB_01` 2063 = +3.41%, vs `c7-475` +3.0…+3.3% and `c7f-475` +3.0…+3.7%), so a 450 prediction of **+3.8…+4.6%** is the honest band: **0.4–1.2 pp of margin on a ±5% gate.** Every neighbouring rung's oracle row is interpolated (`cohort.py:53` lists 425 and 475) while 450 claims to be measured; the bench simply runs ~4% faster than that row. If a 450 run fails on `coast … outside 5% of 1893`, **that is an oracle disagreement, not a drive defect — and the band must not be widened after the fact.** Pre-declare that now, or the temptation will arrive mid-climb.
+* **The rate identity will probably cost one re-run.** Over yesterday's 36 matched-window climb runs on `1B27A4C8`: mean 1001.2, sd 3.33, range 996–1009 — `e183-climb-150_01.txt` landed **1009** against a 1010 edge. Across 42–45 runs, expect ≥1 failure on this quantity with material probability. Budget the re-runs; at 450/475/500 each one is another ~57 s of ≥45% drive.
+* **Current cannot fail anything** (`rung_oracle:277`), which is just as well: `hold_ma` vs `ORACLE` mA is +11–13% at 500 (1782–1816 vs 1603) but **+12% to −97% at 150** (today 65; historical 2, 15, 51, 77–135 vs oracle 58). And the proxy's own zero moves *within each run*: `zero_drift_ma` = **−92** at 150, **−227** at 475, **−163/−173** at 500 (`e192-climb-150_01`, `e189-475-prodB_01`, `e189-500-p1_01`, `e190-500-p4_01`). At the 15% rung the drift is **larger than the reading**. Nothing in E189–E191 propagates it (see §6).
+* Everything else is comfortable: 350 sits at −2.5…−3.8%, 375 at −3.0%, all `hold_ms` far above 30 000, `unstable`/`blank_arms` non-zero everywhere, `coast_crossings` 1387–1414.
+
+## 3. Restart and protections: **neither is possible at 50%**
+
+* **Restart.** `R` is hard-wired to 250 (`mod.rs:532`). `Z` runs `restart_campaign(provoke_tenths)` (`:547-550`), and `provoke_tenths` is only ever 250 → 375 → 475 → 250, cycled by `x` (`:534-546`), starting at 250 (`:124`). **The maximum restart duty is 47.5%.** `LADDER_PREREQ["Z"] = 475` (`bemf_run.py:172`), so after the climb `Z` is admitted; precedent exists on the other image (`c7f-restart475_0*`, `reason=2`, hold 26.3 s).
+* **Protections.** Uppercase `T G F N U H V I W` run at `BEMF_DUTY_TENTHS` = **15%** (`mod.rs:556-564`, `policy.rs:57`); lowercase `t g f n u h v i w` run at `provoke_tenths`, **max 47.5%** (`:565-571`). There is no path to a 50% provocation. Also: the lowercase provocations have **no `LADDER_PREREQ` entry**, so they are admitted on any image at 47.5% with no rung passed.
+* **And the sag provocation is a no-op at the top.** `Inject::Sag` publishes `INJECT_SAG_DUTY_TENTHS = 500` as a *step* (`policy.rs:130`, `states.rs:382-385`), documented at `policy.rs:120-129` as a no-op at the 50% rung. At 47.5% the step is 475→500, and the evidence says it does nothing: `captures/2026-09-23/c7f-p475-v_01.txt` is `reason=2`, `hold_ms=55776`, `hold_ma=1871` — it ran the **full 56 s window at 50% duty** and never latched (and then fails the coast gate at +8.3%, because it was faster than 47.5%). The sag positive control has to stay at 25%.
+
+**So the honest qualification statement can say:** 3/3 at 45%, 47.5% and 50% with every rung below passed on image `14CE44E7`; a normal-start restart re-qualified at **25% and 47.5%**; gate-4 provocations re-qualified at **15% and 47.5%**, with the `Sag` provocation acknowledged as not provoking above ~37.5% and its positive control inherited from 25%. **It cannot say** a 50% restart, a 50% protection provocation, or any protection positive control at 50% — nor that the sag guard was shown able to latch at any high rung on this image.
+
+## 4. What would make the result uninterpretable
+
+* **The `--no-ladder` runs** — S1. The single largest interpretability problem, and it is in the record right now.
+* **Image identity** — S2. Also note `bemf_run.py`'s header is `elf_sha256()` of a *file*, not of the chip, unless `--flash` is used (its own `--elf` help says so).
+* **Six entries per rung.** Two distinct causes. `9F77B756`/`77C10285` hold several genuine cohorts (`ctl-*`, `hctl-*`, `ab7-*`) — harmless, the last-3 window picks the newest. `1B27A4C8` is the bad kind: at 150/200/250 the **same filenames appear twice** (`e183-climb-150_01.txt` … `_03.txt`, then again), because the label was re-run, the capture overwritten and re-judged. It happens not to corrupt anything there (the last three are distinct), but `ladder_record` has **no dedup on `file`**, so a rung can in principle report 3/3 off fewer than three physical runs. `bemf_run.py:480-489` now refuses a colliding label, which closes the mechanism for new runs; a two-line assertion that the last three filenames are distinct would close the reading of old state. (`{label}_warmup.txt` is still outside the clash list, `:502-505`.)
+* **Can `rung_oracle` be satisfied by runs not at the claimed duty?** Not by *label*: the bucket is the capture's own `target_duty_tenths` (`:234`) and `expect_duty` rejects a shell-state mismatch (`:226-227`). But **yes by throttling** — nothing reads `ceiling_tenths` (§1). And with `--no-ladder` and no `--rung-duty`, `expect_duty` is 0 and the duty cross-check is off.
+
+## 5. Hardware risk — this is where I would change the plan
+
+**The firmware's protections during a 50% hold** (`states.rs:303-345`): `AdcTimeout`; VREF plausibility and the absolute bus floor (`validate_raw_feedback` + `scan.bus < base.bus_floor_code`, `:313-314`); `FastBusSag` (3 consecutive scans below 95% of a ~207 ms EWMA, `protection.rs:278-407`); `AverageCurrent` — **two consecutive 10.1 ms block means above a 4 A-equivalent allowance**, with a foldback on the first (`:509-546`, `RAW_LIMIT = 31_857` at `:425`); plus `TickGap`/`FeedbackStale`/`Tracking`/`CycleTiming`/`CompStorm`/`HandlerOverrun`/`LateArm`/`BlankLatched`. **There is no peak current protection** (`Reason::PhasePeak` is documented as never raised, `protection.rs:94`, and `grep` confirms no call site) and **no temperature of any kind** (no NTC/temperature symbol anywhere in `src/` or `bin/`). `policy.rs:92-97` names the gap plainly: nothing stops a run between 2 A and 4 A.
+
+**Measured envelope:** `hold_ma` 1782–1816 and `worst_ma` 2081–2365 at 500 (`captures/2026-09-24/e18*`,`e19*`); 1836–1877 in campaign 7 (`c7-500*`). Worst *block* is ~1.7× under the only current stop, which needs it sustained over two blocks. That is adequate margin against a desync surge and the DRV8304H's own OCP→`nFAULT` backs it.
+
+**What the plan adds, and it is a lot.** 15 rungs × 3 runs at `BEMF_TOTAL_MS = 80_000` (`policy.rs:45`) ≈ **59 minutes of energised drive**; `ramp_us(500) = 20 s` (`ramp.rs:41-48`) leaves ~57 s at ≥45% per run, so the nine top runs are **~515 s at ≥45%** — on top of the **~745 s already driven today** (E191). That is **~1260 s of ≥45% drive in one day, on a bench with zero temperature instrumentation**, 69% more than the figure the thermal deferral was last argued against and 2.5× the figure it was originally written for. Plus 400/425 at 1.03–1.30 A for another ~350 s.
+
+Changes I would make, in order:
+
+1. **Take the cheap route first, or instead.** E191 says the cheapest honest route is `7C55B7E0` (= sha `1B27A4C8`, ladder to 425) at nine runs. That is wrong — see §6. `ladder_admit("L", …, 500)` returns **True today** for both `63EC7EFE` (the `c7f` image: 150→475 all passing) and `89D65B09` (campaign-7 production: 150→475 all passing, 500 failing on the last three). Either needs **three** clean 500 runs — **~170 s at ≥45% instead of ~515 s**, a 3× reduction in the unguarded quantity. It qualifies an older image (no `ceiling_tenths`/`worst_ma`, no `UnknownGuard`), which is a real cost — but it is the operator's trade to make, and E191 removed it from the table by miscounting.
+2. **Split the climb across sessions.** The fixture is keyed on the ELF, not the session (`bemf_run.py:192`), so rungs ≤375 and rungs 400–500 can be days apart at zero cost. As written, the nine hottest runs land at the end of an hour of driving on already-warm hardware.
+3. **Drop `w`/`W` to 15% only.** `Inject::Watchdog` stalls the foreground 100 ms unfed (`bin/board.rs:677-685`) with interrupts and commutation still live — i.e. an IWDG reset with the bridge energised. `c7f-p475-w_01.txt` is the one capture in the whole tree with no report (it parses as incomplete), which is what that looks like. Do not do that at 1.7 A.
+4. **Budget `v` honestly.** The 47.5% sag provocation is a **full 56 s run at 50% duty** (§3), not a short stimulus. If the provocation set is run at 47.5%, count `v` as a tenth top-rung run.
+5. **Keep a written cooldown and log the touch check.** E189 was right to refuse to write down a touch check that did not happen; make it an explicit line in the fixture's output or the entry for each of the nine top runs. And the NTC read remains owed — it is the single change that would retire this entire risk category.
+
+## 6. Claims in E189–E191 that the captures and source do not support
+
+1. **"All seven / all thirteen runs at ≥45% today … are recorded against no rung, by design"** (E190 *What is not claimed*; E191 *Not qualified*). False for five of them — S1. The strongest and most consequential error in the three entries: the 50% rung on this image already reports PASS.
+2. **"The cheapest honest route … is the older production image `7C55B7E0`, whose ladder already reaches 42.5%: … nine runs, ~510 s more at ≥45%"** (E191). `7C55B7E0`/`1B27A4C8` does reach 425, but `63EC7EFE` and `89D65B09` reach **475** and are admitted for `L` at 500 today — three runs, ~170 s. The stated cost of the honest route is 3× too high, and this is the sentence the operator's thermal decision was handed on.
+3. **`worst_ma` is attributed to the hold; the code never windows it.** `AverageCurrent::worst` is updated from construction and has no mark (`protection.rs:521-524`; the only windowed accessors are `window_milliamps`/`window_blocks`, `:605-640`). The 15% capture settles it empirically: `e192-climb-150_01` reads `hold_ma=65` with **`worst_ma=917`** — 14×, and the hold is 7155 of 7869 blocks, so the worst block is a startup/ramp artefact. So E189's "the worst single 10.1 ms block is 1937 mA against a 1604 mA hold mean" and E191's "worst 10.1 ms blocks of **2.08–2.37 A**" at 50% are not established as belonging to the 50% hold. (A `CurrentMark`-windowed worst is the same two lines that added `worst_ma`.)
+4. **"the guard never came within 4.0% of its line"** across "~23 s of retained judgement history" (E191; E190 point 2 "It is not the guard being marginal"). `sag.py` on `e190-500-s7` prints `overwritten (fast): 786400 judgements never kept`: the fast ring is **512 of 786912 = 0.065%**, tail-only, spanning **51.6 ms**; the slow ring is 1024 rows *decimated by 32* (`sagtrace.rs:64-71`) — samples, not per-bucket minima. Total retained ≈ **0.2%** of the judgements. A 0.8–200 ms dip can sit entirely between retained samples, and `sagtrace.rs:33-38` says the guard's most sensitive interval — the first ~207 ms, primed off an unloaded rail — "is the interval a tail-only ring never retains." It was not retained in any of the eleven. The numbers quoted are exact (I reproduced min 1044.7 / p50 1052.6 / 0 lows / 0 fail-closed / 0-of-511 on `s7`, and min 1045.6 / p50 1053.3 on `e189-475-sag`); it is the *coverage* claim that outruns them.
+5. **`hold_ma` quoted as amps drawn** — "draws 1.78–1.82 A mean" (E191), "The current is measured, at both scales" (E190 point 3). `protection.rs:564-570` is explicit that this is neither a calibrated DC-link nor a PSU current; and `zero_drift_ma` = −163/−173 at 500 and −227 at 475 is a **9–13% systematic on the number itself**, measured by the firmware, reported in every capture, and mentioned in none of E189–E191.
+6. **The Fisher arithmetic is right; the inference is looser than the headline.** I recomputed: 3/7 vs 0/5 → **0.2045**; 3/7 vs 0/11 → **0.0429**. But (a) the stopping rule was chosen after seeing 0/5 and the cohort was extended to exactly the n at which p crosses 0.05 ("running until the arithmetic said something" — E191's own words), so 0.043 is not a clean pre-registered α; (b) the two arms differ in **image, supply limit and session**, so "the campaign-7 50% trip rate is rejected" is really "3/7 is rejected under today's joint conditions" — which E191's blocker paragraph says correctly and its section heading does not; (c) the 3/7 denominator includes `c7-explore500_01`, an explore run with a 19.8 s hold against the others' 54.8 s, so the denominator mixes exposures (excluding it gives 3/6 and a *stronger* p, so the conclusion survives).
+7. Small ones that check out and are worth recording as verified: `ceiling_tenths = 475` on the 47.5% pair and 500 on all eleven ✓; `hold_ms` 54774–54776 ✓; `loop_gap_max_us = 177` on `e190-500-p4_01` against the ≤175 band, correctly reported as a falsification ✓; `hold_ma=415`/`worst_ma=1044` on the `--step-check` 25% run ✓ (2.52×); `e189-475-prod_01.txt` really is `target_duty_tenths=250` ✓; gate file's `-> FAIL` is `edge-capture`'s `ADC_COMP` audit only ✓; `14CE44E7.e187.elf` = sha `7125601f…` ✓; host tests 336 + 9 pass (E186 quoted 333 + 9).
+
+---
+
+## If you change only three things
+
+1. **Resolve the record before driving** (S1): mark or remove the five `--no-ladder` records, fix the banner at `bemf_run.py:446`, and drive the three fresh 500 runs so the last-3 window is a real cohort.
+2. **Add `ceiling_tenths == duty` to `cohort.run_gates`**, then put the 45% oracle disagreement (+3.8…+4.6% against an unmarked-as-interpolated 1893) in writing as a pre-declared reading *before* a 450 run fails on it.
+3. **Cut the high-current exposure**: offer the operator the `63EC7EFE`/`89D65B09` three-run route (~170 s) against `14CE44E7`'s full climb (~515 s on top of today's 745 s), split the climb across sessions, skip the 288 rung, keep `w` at 15%, and count `v` as a tenth top-rung run.
+
+### E194 — disposition of E193, and the 45% reading pre-declared
+
+#### S1 — the bypass recorded after all. Fixed, and the record is repaired
+
+`--no-ladder` skipped *admission only*. An uppercase `L` run went straight into
+`ladder_record`, so **five runs were written into the ladder for an image that
+had earned nothing** — the 47.5% production run and four of the 50% production
+runs — and `rung_report` answered **PASS at 50%** off them. E190's and E191's
+"recorded against no rung, by design" is therefore **false for five of the
+thirteen**, and the design was only in the banner. The eight recorder runs went
+through `sag_run.py`, which never records, and those are as described.
+
+Three fixes:
+
+1. `--no-ladder` now skips recording as well, printing
+   `RUN (gates not judged, recorded against no rung: --no-ladder)`.
+2. The banner no longer states the false invariant; it says what is true and
+   names the period when it was not.
+3. **The five records are removed** from `captures/ladder_state.json`
+   (previous state preserved as `captures/ladder_state.pre-e193.json`; the
+   captures themselves are untouched and still committed). `rung_report` on
+   this image now answers, correctly:
+
+   ```
+   15.0% PASS   20.0% PASS   25.0% PASS   27.5% fail (only 1 run)
+   [45.0%] fail: only 0 run(s)   [47.5%] fail: only 0 run(s)   [50.0%] fail: only 0 run(s)
+   ```
+
+So the 50% rung is earned from scratch or not at all. And the corollary E193
+draws is on the record before the runs: **a 50% run that fails a gate is
+recorded and re-run, not re-interpreted.**
+
+#### The gate that was missing: `ceiling_tenths`
+
+E187 added the field, E188 and E190 predicted on it, E191 reported it on all
+eleven runs — and **the fixture never read it.** A run the foldback governor
+throttled below its commanded duty reported `target_duty_tenths=500`, passed
+every gate and would have been recorded as a rung run. `cohort.run_gates` now
+fails such a run outright (`throttled: ceiling N != commanded M`), and
+`cohort.parse` carries `ceiling_tenths` and `worst_ma`. Captures older than
+E187 report 0 and are not judged on it. Verified against two captures: 15% and
+50%, both ceiling == duty, both still PASS.
+
+This is the difference between "three runs at 50%" and "three runs that started
+at 50%" — E191's own phrase, which the fixture could not enforce when I wrote
+it.
+
+#### S2 — image identity. Checked rather than promised
+
+`bemf_run.py`'s default `ELF` is the build path, whose current contents are a
+*different* image (`B53A7EA7`/`04BB9256`) from the one on the chip
+(`14CE44E7`/`7125601F`), and `elf_sha256()` is the ladder key — so one
+invocation without `--elf` would silently open a second ladder key. The climb
+driver passes `--elf captures/elf/14CE44E7.e187.elf` on **every** invocation
+and flashes only on the first; `e192-climb-150_01.txt` carries
+`# elf_crc32 14CE44E7` / `# elf_sha256 7125601F…`, and every capture in the
+climb is checked for the same pair before the rung is believed. **No `cargo
+build` runs until the climb finishes** — the only edits made during it are to
+host scripts.
+
+#### The 45% oracle disagreement, pre-declared
+
+`ORACLE[450] = 1893` eHz with a ±5% per-run gate. Measured coast at 450 on two
+earlier images: 1960 / 1960 / 1967 (+3.5…+3.9%) and 1979 / 1979 / 1976
+(+4.4…+4.5%), plus 1973 (+4.2%). Today's image reads +3.41% at 475. **So the
+45% rung is expected to land +3.8…+4.6% against a gate that allows 5.0% —
+0.4 to 1.2 points of margin.**
+
+Recorded before the run, so that it cannot be argued after: **if a 45% run
+fails on `coast … outside 5% of 1893`, that is an oracle-row disagreement, not
+a drive defect, and the band will not be widened.** The honest handling is to
+report the failure, re-run as the fixture intends, and if the rung cannot pass
+on the oracle row as written, to say that the 45% oracle row is wrong for this
+bench and stop — not to loosen a tolerance mid-climb. The goal forbids widening
+tolerances and it is right to.
+
+#### Adopted from E193 §5
+
+* **`w`/`W` stays at 15% only.** `Inject::Watchdog` stalls the foreground
+  100 ms unfed with commutation live — an IWDG reset with the bridge
+  energised — and the one capture in the tree with no report at all is that
+  provocation at 47.5%. Not at 1.7 A.
+* **`v` counts as a top-rung run.** At 47.5% the sag provocation is a *step to
+  500* held for the whole window, so it is a 56 s run at 50% duty, not a short
+  stimulus. Budgeted as such; and it does not latch (the precedent capture
+  completed), so the sag positive control stays at 25%, where E183 demonstrated
+  it.
+* The 28.8% rung is a prerequisite of nothing, but it is mid-climb and costs
+  nothing at 0.3 A; left alone.
+* **Not adopted: the cheap route.** E193 is right that `63EC7EFE` and
+  `89D65B09` are admitted for `L` at 500 today and would need only three runs
+  (~170 s) against this image's ~515 s — and right that E191's "cheapest route"
+  sentence was wrong by 3×, because I looked at one older image and not at the
+  two that already reach 47.5%. But both of those are campaign-7 images: they
+  predate the atomic arm, the handover latch check, the freeze coverage,
+  `UnknownGuard`, and the `ceiling_tenths`/`worst_ma` fields — including the
+  gate added above, without which their own 50% runs cannot be shown to have
+  held 50%. Qualifying one of them would be qualifying an image I would not
+  ship, and the goal's own words are to freeze *this* baseline and never
+  transfer qualification between images. The exposure is the cost of qualifying
+  the right image, and it is spent deliberately.
+
+#### Corrections to E189–E191, from §6
+
+1. **"Recorded against no rung" — false for five runs.** Above.
+2. **"The cheapest honest route is `7C55B7E0` … nine runs":** wrong. Two other
+   images reach 475 and need three. Corrected above.
+3. **`worst_ma` is a whole-run worst, not a hold worst.** `AverageCurrent::worst`
+   is updated from construction and has no window mark. The 15% capture proves
+   it: `hold_ma=65` with `worst_ma=917`, 14× — a ramp artefact, because the
+   worst block there cannot be in the hold. **So E189's "the worst single
+   10.1 ms block is 1937 mA against a 1604 mA hold mean" and E191's "worst
+   blocks of 2.08–2.37 A" at 50% are withdrawn as statements about the 50%
+   hold.** What they support is: *over the whole run*, including the ramp, the
+   worst block was 2081–2365 mA. A windowed worst is two lines — the same two
+   that added the field — and it is **owed and deliberately not taken now**,
+   because it is a firmware change and the baseline is frozen mid-climb. It
+   goes in before the next current claim.
+4. **The sag-guard coverage claim outran its data.** "The guard never came
+   within 4.0% of its line" rests on 512 tail rows (0.065% of the judgements,
+   51.6 ms) plus 1024 rows decimated by 32 — **~0.2% of the run**, and samples
+   rather than per-bucket minima. A dip inside the guard's own 0.8–200 ms
+   passband can sit entirely between retained samples, and the interval the
+   module doc calls most sensitive — the first ~207 ms, judged against a
+   reference primed off an unloaded rail — **is never in a tail-only ring**. The
+   correct statement: *in the ~0.2% of judgements retained, spanning the tail
+   and a decimated 3.3 s, no judgement was low and the minimum margin was
+   1040.3‰.* The invariance across duties stands; the coverage does not.
+5. **`hold_ma` is not amps drawn.** It is an uncalibrated signed three-shunt
+   block residual whose own zero drifted −163 to −231 mA *within* these runs —
+   a 9–13% systematic that every capture reports and none of E189–E191 quoted.
+   "Draws 1.78–1.82 A" should read *"the current proxy reads 1782–1816 mA, with
+   a −163…−231 mA zero drift on the same lines"*.
+6. **The Fisher inference is looser than E191's heading.** The arithmetic
+   reproduces (0.2045 and 0.0429), but the stopping rule was chosen after
+   seeing 0/5 and the cohort extended to exactly the n where p crosses 0.05, so
+   **0.043 is not a pre-registered α**; and the two arms differ in image,
+   supply limit *and* session, so what is rejected is "3 of 7 under campaign
+   7's joint conditions", not "the 50% sag trip". E191's blocker paragraph says
+   this correctly and its heading does not. Excluding the one explore run from
+   the denominator (3/6) strengthens rather than weakens it.
+7. E193 also verified a list of numbers I had quoted, including the `177 µs`
+   falsification, the `250`-tenths mislabelled capture, and that the gate
+   file's `-> FAIL` is `edge-capture` only. And it corrects E186's "333 + 9
+   tests" to the current **336 + 9**.
+
+#### Prediction for the ≥45% rungs, unchanged from E192 except
+
+* 45% now carries the pre-declared oracle reading above;
+* every rung's three runs must additionally pass the new `ceiling_tenths`
+  gate — which all thirteen of today's ≥45% runs would have passed, so it
+  changes no expectation, only what a future throttled run can claim.

@@ -142,6 +142,11 @@ def parse(path: pathlib.Path) -> dict | None:
         "coast_ehz": coast,
         "coast_crossings": int(rec["COASTTIMING"].get("trans", 0)),
         "hold_ma": int(rec["BEMFCURRENT"].get("hold_ma", 0)),
+        # E193: the duty the foldback governor ended at. Absent from captures
+        # written before E187, in which case it is taken as the commanded duty
+        # (those runs could not report it, and nothing else in them can say).
+        "ceiling_tenths": int(rec["BEMFCURRENT"].get("ceiling_tenths", 0)),
+        "worst_ma": int(rec["BEMFCURRENT"].get("worst_ma", 0)),
     }
 
 
@@ -196,6 +201,19 @@ def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
         fails.append(f"hold {r['hold_ms']} ms < {min_hold_ms}")
     if r["forced"] != 0:
         fails.append(f"forced {r['forced']}")
+    # **The run must have held the duty it asked for.** The foldback governor
+    # ratchets the ceiling *down only* on an over-current block and never
+    # reports it back to the caller, so before E187 a throttled run looked
+    # identical to a clean one, and even after E187 the fixture did not read
+    # the field: a run that touched the 4 A allowance, got cut to a lower duty
+    # and then completed its window would have passed every gate here and been
+    # recorded as a rung run (E193 SS1). `ceiling_tenths` of 0 means a capture
+    # older than the field, which is not judged.
+    if r["ceiling_tenths"] and r["ceiling_tenths"] != r["duty"]:
+        fails.append(
+            f"throttled: ceiling {r['ceiling_tenths']} != commanded {r['duty']} "
+            "-- the governor cut the duty, so this is not a run at this rung"
+        )
     # **`zc_rate_permille_of_expected` is NOT gated any more, because it
     # measures nothing.** With `hold_forced = 0` the firmware computes
     # `zc_per_s = accepts / hold_ms` and `zc_expected_per_s = 1e6 /
