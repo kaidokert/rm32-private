@@ -335,6 +335,15 @@ def main() -> int:
     )
     ap.add_argument("--settle", type=float, default=3.0, help="rest between runs")
     ap.add_argument(
+        "--pre",
+        default="",
+        help="keys to send once before the runs and not record, e.g. '+' to step "
+        "the shell's climb duty up one rung. `l`/`L` drive whatever the shell "
+        "holds, so without this a climb run repeats the rung it is already at -- "
+        "which is what three '42.5%' runs actually did at 40% (E185). "
+        "`sag_run.py` has had this; this runner had not.",
+    )
+    ap.add_argument(
         "--rung-duty",
         type=int,
         default=0,
@@ -411,6 +420,16 @@ def main() -> int:
         # Clear anything the firmware queued before we attached.
         time.sleep(0.3)
         port.reset_input_buffer()
+        for key in args.pre:
+            print(f"== pre-key {key!r} (not recorded)")
+            port.write(key.encode())
+            port.flush()
+            time.sleep(0.4)
+            while True:
+                line = port.readline()
+                if not line:
+                    break
+                print("   " + line.decode(errors="replace").strip())
         for i in range(1, args.runs + 1):
             out = outdir / f"{args.label}_{i:02d}.txt"
             if args.step_check and i == 1:

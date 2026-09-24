@@ -150,7 +150,9 @@ def parse(path):
                         snap[k] = int(v)
             elif line.startswith('CHAIN '):
                 f = line.split()
-                if len(f) == 8:
+                # Eight numbers now, not seven: the row carries a coarse
+                # stamp for pairing plus three fine stamps (E180).
+                if len(f) == 9:
                     rows.append(Row(*(int(x) for x in f[1:])))
             elif line.startswith('BEMFRUN '):
                 for kv in line.split()[1:]:

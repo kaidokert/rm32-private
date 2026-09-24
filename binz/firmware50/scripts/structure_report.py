@@ -99,7 +99,44 @@ def main() -> int:
     print(f"functions_over_100_lines={len(longs)} (goal 0)")
     for name, line, length in sorted(longs, key=lambda t: -t[2]):
         print(f"  {length:5d}  {name} (line {line})")
-    return 0
+    rc = bss_ceiling()
+    return rc
+
+
+# The G071 has 36 KB of RAM and no stack guard: when `.bss` grows, the stack
+# silently overlaps it. E185 lost an evening to exactly that -- E180's wider
+# chain `Beat` took the chain image's `.bss` to 32 888 B, leaving under 4 KB,
+# and every run of that image died in under a millisecond with a comparator
+# storm while the cause looked like a timer register. The rule now fails here,
+# at the desk, on any image that leaves less than this much for the stack.
+RAM_BYTES = 36 * 1024
+STACK_FLOOR = 8 * 1024
+
+
+def bss_ceiling() -> int:
+    """Check every built image's `.bss` against the stack floor."""
+    import shutil
+    import subprocess
+
+    size = shutil.which("arm-none-eabi-size")
+    out = pathlib.Path("target/thumbv6m-none-eabi/release")
+    if size is None or not out.is_dir():
+        print("bss_headroom: SKIPPED (no arm-none-eabi-size, or nothing built)")
+        return 0
+    bad = 0
+    for elf in sorted(out.glob("*")):
+        if elf.suffix or not elf.is_file():
+            continue
+        r = subprocess.run([size, str(elf)], capture_output=True, text=True)
+        rows = [ln.split() for ln in r.stdout.strip().splitlines()[1:]]
+        if not rows or len(rows[0]) < 3:
+            continue
+        bss = int(rows[0][2])
+        left = RAM_BYTES - bss
+        flag = "" if left >= STACK_FLOOR else "  <-- BELOW THE STACK FLOOR"
+        print(f"bss_headroom: {elf.name:16s} bss={bss:6d} stack_left={left:6d} (floor {STACK_FLOOR}){flag}")
+        bad += left < STACK_FLOOR
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":

@@ -29,9 +29,31 @@
 
 use crate::shared::{CompPrio, Motor, Root, Seam};
 
-/// Events kept. Circular: the dump ends at the stop, which is where a fault
-/// puts the interesting rows (E138 learned this the hard way).
-pub const CHAIN_LEN: usize = 1024;
+/// Events kept per ring. Circular: the dump ends at the stop, which is where a
+/// fault puts the interesting rows (E138 learned this the hard way).
+///
+/// **512, not 1024, and the reason is a real fault** (E185). E180 widened
+/// [`Beat`] for the fine stamps, which took the chain image's `.bss` from
+/// 28 792 to 32 888 bytes — leaving under 4 KB of the G071's 36 KB for the
+/// stack. Every run of that image then died within a millisecond with a
+/// comparator storm or an ADC timeout, and it looked for a while like writing
+/// TIM2's `ARR` was somehow stopping TIM6: two builds differing only in the
+/// *value* written (0 versus `u32::MAX`, with the counter stopped) behaved
+/// differently 2/2 each, because the literal changed the code layout and
+/// tipped a stack that was already overlapping `.bss`. This bench's own scar
+/// warned about exactly that. Two rings of 512 restore ~16 KB of headroom, and
+/// [`RING_BUDGET`] plus `scripts/structure_report.py`'s `.bss` ceiling make the
+/// next attempt to grow them fail at the desk instead of on the bench.
+///
+/// 512 events is 43 ms at 47.5%, which the tail-pairing analysis does not care
+/// about: it uses the last n rows of each ring.
+pub const CHAIN_LEN: usize = 512;
+
+/// The most `.bss` the two rings together may take. The G071 has 36 KB of RAM
+/// and the rest of the firmware needs ~20 KB of it, so a diagnostic recorder
+/// that helps itself to more than this is the fault in E185 again.
+pub const RING_BUDGET: usize = 16 * 1024;
+const _: () = assert!(2 * core::mem::size_of::<Chain>() <= RING_BUDGET);
 
 /// One event. Twelve bytes, so the ring is 12 KB.
 ///

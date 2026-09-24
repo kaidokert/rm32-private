@@ -11576,3 +11576,225 @@ provocation run, so it prints `VERDICT: run gates FAIL: reason 26 != 2` for a
 run whose entire purpose is to stop with reason 26. `bemf_run.py` knows better
 (`BEMFINJECT ... provoked=1`). The verdict line is wrong for this run type and
 is not evidence of anything; the gate to read is `BEMFINJECT`.
+
+### E184 — the recorder's cost, measured properly at last, and it splits in two
+
+**Change and prediction, before the runs.** No firmware change. The runs are
+the A/B E181 §2.7 said did not exist: **three runs per side, at the same rung,
+in one session, alternated, each side flashed from its archived ELF and
+hashed** — production `7C55B7E0` against recorder `A1906AEC` at 25%. All runs
+are at or below 25%.
+
+Prediction, recorded before the numbers were read: the recorder costs between
+9% and 16% of foreground passes (the range of the three cross-session figures
+this replaces), and `loop_gap_max_us` — the tail, which bounds detection
+latency — differs by less than the production spread, because E179's claim
+that it does *not* move was wrong in its reasoning but may still be right in
+its conclusion.
+
+**First, a correction to E183.** I wrote that the three timed-out 15% captures
+were kept. They were not: the rerun used the same labels and **overwrote
+them**. The runner names captures by label and index, so a rerun of a failed
+attempt destroys its evidence unless the label changes. Three dead captures
+are not much of a loss, but "retain every capture" is a campaign rule and the
+fixture makes it easy to break by accident. Owed: a label collision should
+refuse, or suffix. For now the rule is mine to keep by choosing labels.
+
+#### The measurement
+
+| side | image | passes/ms | `loop_gap_max_us` | `com_late_max_us` |
+|---|---|---|---|---|
+| production | `7C55B7E0` | **46.09, 46.09, 46.08** | 164, 158, 153 | 7, 9, 9 |
+| recorder | `A1906AEC` | **39.87, 39.85, 39.84** | 171, 157, 158 | 11, 11, 6 |
+
+* **Recorder cost = −13.5%** of foreground passes (39.85 / 46.09). Both sides
+  have a standard deviation of about **0.01 passes/ms** — 0.02% — so the
+  effect is 600 standard deviations wide and the number needs no statistics.
+  It also sits inside the predicted 9–16% band, so none of the cross-session
+  figures was mad; they were just not measurements of one thing.
+* **The tail does move, slightly, and E179's conclusion was wrong too.** The
+  recorder's worst gap is 171 µs against production's 164 µs, and its spread
+  (157–171) sits above production's (153–164). That is **+4%** on the worst
+  observed gap, not the 0% E179 claimed nor the 10% E177 inferred. The
+  `interrupt::free` windows do lengthen the tail; they lengthen it by about
+  7 µs, and both instruments agree with each other about that.
+* `com_late_max_us` is 6–11 µs on the recorder against 7–9 µs on production —
+  the same picture, at the resolution that counter has.
+
+#### And the cost splits into two parts, which the captures already contained
+
+The recorder image's own **warmup** is the 15% `b` run, and `b` is
+deliberately *not* in `arms_a_run` — so the warmup runs the recorder image
+**with the ring disarmed** (`SAGROW=0` in the capture, confirmed). That gives a
+same-image, ring-on/ring-off control nobody had noticed was there:
+
+| | production | recorder image | difference |
+|---|---|---|---|
+| 15%, ring **disarmed** | 49.41, 49.41, 49.40 | 45.33, 45.33, 45.32 | **−8.3%** |
+| 25%, ring **armed** | 46.09, 46.09, 46.08 | 39.87, 39.85, 39.84 | **−13.5%** |
+
+So roughly **8 points of the cost are the call and its critical section, paid
+on every scan whether or not anything is recorded**, and the rest is the
+storage. `SagRing::block` takes `interrupt::free` and then finds `on == false`
+and returns; the masking is the expense, not the ring. That is worth knowing
+for two reasons: it says where to look if this ever needs to be cheaper (hoist
+the `on` check out of the critical section), and it says the recorder's
+*latency* effect is not proportional to what it records.
+
+The two rows are at different rungs, so the 8.3 and the 13.5 are not strictly
+subtractable — the honest statement is that at 15% with nothing being recorded
+the image already pays 8.3%, and at 25% recording everything it pays 13.5%.
+
+#### What this settles, and what it does not
+
+E177's inference (10% fewer passes ⇒ 10% longer stops) is withdrawn for good;
+E179's correction of it (no measured increase in the tail) is also withdrawn;
+the measured answer is **+4% on the worst gap, −13.5% on throughput**, from one
+session, same rung, alternated, 3+3. The ISR-latency question E178 deferred is
+still not answered — `loop_gap_max_us` is a foreground quantity, and no
+measurement of COMP's or COM's own service latency under the recorder exists.
+`com_late_max_us` and `comp_call_max_us` remain the standing proxies, and they
+did not move outside their usual range.
+
+#### The ladder, for the record
+
+`7C55B7E0` is a new image, so the fixture makes it earn every rung again
+(E109). Passed 3/3 with no gate failures: **15%, 20%, 25%**, and the climb
+continues to 42.5% before the pre-run review that the 45% gate requires. The
+rung keys were read off the firmware's own shell table rather than inferred
+from the ladder's prerequisite map — `A`=27.5, `Y`=28.8, `C`=30, `D`=32.5,
+`M`=33.8, `E`=35, `J`=37.5 — because the prerequisites are ambiguous about
+which key drives which rung and a wrong guess would have climbed a ladder with
+a missing step.
+
+### E185 — the chain image died in under a millisecond, and it was not TIM2
+
+**Change and prediction, before the runs.** The ladder climb on the new
+production image, and the first powered runs of the TIM2 chain instrument.
+Prediction for the climb: every rung to 42.5% passes 3/3, as it did on
+`63EC7EFE` in campaign 7. Prediction for the chain image: it records, and the
+chain term comes back *not* a whole number of µs (E180's prediction 3).
+
+Everything here is at or below 42.5%; the 45% gate and its review are untouched.
+
+#### The ladder
+
+`7C55B7E0` is a new image, so the fixture makes it earn every rung again
+(E109). **15, 20, 25, 27.5, 28.8, 30, 32.5, 33.8, 35, 37.5, 40 and 42.5% all
+pass 3/3 with no gate failures.** The rung keys were read off the firmware's
+own shell table (`src/run/mod.rs:501-508`) rather than inferred from the
+ladder's prerequisite map, which is ambiguous about which key drives which rung.
+
+Two process notes:
+
+* **Three runs I labelled 42.5% actually drove 40%.** `L` runs whatever duty
+  the *shell* holds, and `--rung-duty` only tells the fixture what to check —
+  so without a `+` first, a climb run repeats the rung it is already at. The
+  fixture caught it exactly as designed (E148's check: "capture ran 400
+  tenths, not the 425 asked for") and credited the runs to nothing. I added
+  `--pre` to `bemf_run.py`, which `sag_run.py` has had all along.
+* The runner's default `--timeout` is 75 s against a ~98 s run, which is what
+  made the first climb attempt fail three times at 15%. Named in E183.
+
+#### The chain image: symptom, false trail, cause
+
+**Symptom.** Every run of `33B695D8` — 25% and 42.5% alike — died within about
+a millisecond: `reason=11` (`AdcTimeout`) or `reason=13` (`CompStorm`),
+`entered=0`, `spun=0`, `CHAINSNAP len=0`, and the tell I should have read
+first: **`BEMFGUARD ticks=2`.** The 9.9 kHz guard tick ran *twice*. Nothing
+downstream of that is meaningful — an ADC timeout and a comparator storm are
+both what you get when the tick that paces them stops.
+
+**The false trail, recorded because it was convincing.** Removing
+`hw::fine::init()` made the image work (1024 rows, gates PASS). Bisecting the
+init, in both orders and with repeats:
+
+| init contents | result |
+|---|---|
+| clock enable only | rows=1024, reason=2 (pass) |
+| + PSC=0, ARR=`u32::MAX` | rows=0, reason=13 |
+| + PSC, ARR, CEN | rows=0, reason=13 |
+| clock only, again | rows=1024, reason=2 |
+| PSC=0, **ARR=0** | rows=1024, reason=2 (pass) |
+| PSC=0, **ARR=`u32::MAX`** | rows=0, reason=13 |
+
+Order-independent, 2/2 each way. Which reads as: *writing `0xFFFFFFFF` to a
+stopped TIM2's auto-reload register stops TIM6*. That is not a thing the
+hardware can do — TIM2's ARR is at `0x4000002C`, inside TIM2's own 1 KB
+region, and with `CEN = 0` the counter does not even run. I was one step from
+writing it down as a silicon oddity.
+
+**The cause, with numbers.** `arm-none-eabi-size`:
+
+| image | `.bss` | stack left of 36 KB |
+|---|---|---|
+| chain image at E162/E165 (pre-E180) | 28 792 | 8 072 |
+| **chain image after E180** | **32 888** | **3 976** |
+| sag recorder `A1906AEC` | 20 596 | 16 268 |
+| production `7C55B7E0` | 4 184 | 32 680 |
+
+E180 widened `Beat` for the fine stamps — two rings of 1024 — and took the
+chain image to **under 4 KB of stack on a part with no stack guard**. The
+stack was overlapping `.bss`, so the run corrupted the recorder's own state
+and the tick's. And that is why the ARR *value* appeared to matter: `movs r1,
+#0` and a literal-pool `0xFFFFFFFF` are different code, the layout shifts, and
+which variable the overflow lands on changes with it. Every "2/2 reproducible"
+result in that table is real and none of them was about TIM2.
+
+**This bench has the scar already** — *"Rust match-arm locals merge into main's
+prologue frame: big branch-local buffers reserve stack at fn entry; main can
+silently overlap .bss (no guard)"* — and E181 §6.7 had *just* said "no stack
+high-water is measured, against this project's own `.bss`/stack-overlap scar".
+The reviewer pointed at the hole and I walked into it four hours later.
+
+**Fix, in three parts.**
+
+1. `CHAIN_LEN` 1024 → **512** per ring: `.bss` 32 888 → **18 552**, i.e.
+   18 312 B of stack. 512 events is 43 ms at 47.5%, and the analysis pairs
+   *tails*, so nothing is lost.
+2. A `const` assert in `src/chain.rs`: the two rings together may not exceed
+   `RING_BUDGET` (16 KB). Growing them past it now fails to compile.
+3. **`scripts/structure_report.py` gained a `.bss` ceiling** — every built
+   image must leave at least 8 KB for the stack. It prints, for the record:
+   chain 18 552 / 18 312 left, edge 22 660 / 14 204, sag 20 596 / 16 268,
+   production 4 184 / 32 680. The E180 image would have failed it (3 976).
+   This is the gate the campaign was missing, and it is cheap.
+
+#### The instrument itself is **not** validated, and no chain number may be quoted
+
+With the RAM fixed and the fine clock actually running, `e185-chain25-fine2`
+records 512 rows and the *within-ring* fine quantities look right and are
+genuinely sub-µs:
+
+* elapsed at the arm: **8.109–11.297 µs**, sd 0.749 — resolution that did not
+  exist before;
+* sector interval from fine stamps: 106.73–187.88 µs, p50 139.72;
+* handler entry → bridge update: p50 **0.031 µs**.
+
+And the *cross-ring* quantities are nonsense:
+
+* median scheduled-instant disagreement in the pairing: **48 µs** (it was a
+  couple of µs when the rings were 1024 and the stamps were coarse);
+* crossing → bridge update: p50 **521 µs**, range 9.9–1020.9 — the quantity is
+  ~20 µs;
+* effective angle p50 **3.76** of a sector, i.e. 225°, which is not a thing;
+* chain per event p50 495 µs, which contradicts the 0.031 µs handler-to-bridge
+  figure from the same rows.
+
+Two candidates, neither confirmed: the tail alignment is wrong now that one
+ring holds 256 commutations against the other's 512 accepts (halving the rings
+changed that ratio), and the 28 ns handler-to-bridge figure suggests the
+`bridge` stamp is not taken where I think it is — 28 ns is under two ticks,
+and `apply_plan` writes three compare registers.
+
+**So E180's predictions 1, 2 and 4 are untested, and by E180's own rule —
+"nothing measured with it may be quoted" — the chain instrument is parked
+until the pairing and the stamp placement are fixed.** It is not on the 50%
+cohort's path: the cohort runs production and the sag recorder, and the sag
+recorder's rings were validated against a real trip in E183. What the fine
+clock *has* already earned is the within-ring resolution above, which is the
+thing the operator asked for; it is the host-side pairing that is now the
+weak link, and it was the weak link before too (E154's 45 µs "chain" and 0.61
+angle came from the same place).
+
+Next: the pre-run review, before any run at 45% or above.
