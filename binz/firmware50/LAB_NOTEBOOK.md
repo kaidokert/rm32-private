@@ -12783,3 +12783,116 @@ extension, against the higher cumulative exposure (11 × ~57 s ≈ 630 s at
 3. I do **not** predict zero trips. The prior that survives is campaign 7's
    3/7; today's five completions lower it but do not replace it, and the
    arithmetic above says so.
+
+### E191 — eleven of eleven at 50%: the campaign-7 trip rate is rejected
+
+The extension predeclared in E190 ran: six more attempts at the 50% rung, key
+`L`, 2 production and 4 recorder, alternated, 120 s bridge-off, stopping at the
+first sag latch. **None latched.**
+
+#### The eleven
+
+| run | image | reason | `ceiling` | `hold_ma` | `worst_ma` | `loop_gap` | `com_late` |
+|---|---|---|---|---|---|---|---|
+| `e189-500-p1` | production | 2 | 500 | 1816 | 2232 | 143 | 12 |
+| `e189-500-s1` | recorder | 2 | 500 | 1803 | 2162 | 169 | 11 |
+| `e189-500-p2` | production | 2 | 500 | 1793 | 2146 | 152 | 11 |
+| `e189-500-s2` | recorder | 2 | 500 | 1798 | 2144 | 172 | 9 |
+| `e189-500-s3` | recorder | 2 | 500 | 1803 | 2145 | 152 | 10 |
+| `e190-500-p3` | production | 2 | 500 | 1782 | 2143 | 149 | 9 |
+| `e190-500-s4` | recorder | 2 | 500 | 1798 | 2109 | 160 | 10 |
+| `e190-500-s5` | recorder | 2 | 500 | 1788 | 2207 | 164 | 11 |
+| `e190-500-p4` | production | 2 | 500 | 1788 | 2081 | **177** | 10 |
+| `e190-500-s6` | recorder | 2 | 500 | 1800 | 2365 | 157 | 9 |
+| `e190-500-s7` | recorder | 2 | 500 | 1793 | 2217 | 169 | 10 |
+
+**Eleven of eleven completed the full 80 s window with a 54.8 s hold at 50%.**
+`ceiling_tenths = 500` on all eleven — no run was throttled. `storm`,
+`late_arms` and `blank_latched` are 0 in every one. All seven recorder rings
+froze and dumped.
+
+**The result:** 3 of 7 (campaign 7) against **0 of 11** (today) is **Fisher's
+exact p = 0.043**, two-tailed. **The campaign-7 50% trip rate is rejected at
+the 5% level.** That is the number E190 predeclared as the bar, and it is met —
+not by a bigger claim than the data supports, but by running until the
+arithmetic said something.
+
+#### The rings, seven of them, all at the top rung
+
+Margin minimum over each retained fast window: **1044.7–1047.4**; over each
+~3.3 s decimated history: **1040.3–1044.7**; p50 **1051.8–1053.7** in every
+run. **Zero** low judgements, **zero** fail-closed rows, and **0 of 511**
+host/firmware disagreements in all seven. So across ~23 s of retained
+judgement history at 50%, the guard never came within **4.0%** of its line, and
+the margin at 50% is the same 1052 it reads at 25%.
+
+#### Against the predictions, including the one that failed
+
+* **Prediction 2 holds on all eleven**: `ceiling_tenths = 500`, `hold_ma`
+  1782–1816 inside the predeclared 1750–1950. This is the prediction that was
+  worth adding, and it is what licenses the phrase "eleven runs at 50%" rather
+  than "eleven runs that started at 50%".
+* **Prediction 1 is falsified, once, on the tail.** `e190-500-p4` read
+  `loop_gap_max_us = **177**` against my band of ≤ 175. `com_late_max_us`
+  stayed ≤ 12 everywhere. Reported rather than rounded: the band was derived
+  from campaign 7's 134–166 plus the 25% spread, and **today's production tail
+  at 50% is 143–177**, i.e. above the range I calibrated against. Four
+  production runs is a thin basis either way; what is now clear is that a
+  ≤ 175 band on this quantity is not a safe predeclaration, and the recorder's
+  157–172 sits *inside* production's spread rather than above it — which
+  further undercuts E184's already-withdrawn tail conclusion.
+* **Prediction 3 was never exercised** across eleven runs. The discriminator
+  built in E187, calibrated on E183's positive control and rewritten after
+  E186, has still never been applied to an unprovoked trip, because there has
+  not been one.
+* **Prediction 4** holds: every stop was a `Ctx::pass` stop and every ring
+  froze.
+* **Prediction 5** (E188's) was falsified at n=5 and is now falsified
+  decisively.
+
+#### Where this leaves the campaign's question
+
+The goal was to **reach and qualify 50%, or establish the actual blocker.**
+
+**Reached, eleven times, instrumented.** With every protection armed and
+unchanged — thresholds, hysteresis 0, the 64/ms cap, the sag
+fraction/streak/latch — the drive holds 50% for 54.8 s, draws 1.78–1.82 A mean
+with worst 10.1 ms blocks of **2.08–2.37 A**, and leaves the sag guard 4% clear
+of its line.
+
+**Not qualified, and I am not going to blur that.** All thirteen runs at ≥45%
+today were driven with `--no-ladder` and are recorded against no rung. A
+fixture qualification is 3/3 at the rung with every rung below it passed **on
+the same image**, and both cohort images are new. The cheapest honest route to
+one is the older production image `7C55B7E0`, whose ladder already reaches
+42.5%: 45%, 47.5% and 50% at 3 runs each — nine runs, ~510 s more at ≥45% —
+but that image predates the E187 fixes (the ceiling and worst-block reporting,
+the freeze coverage, `UnknownGuard`), so it would qualify a *worse* image. The
+better route is to climb `14CE44E7` from 15%, which is twelve rungs × 3 runs.
+Either way it is a decision about thermal exposure on a bench with **no
+temperature measurement anywhere**, and that is the constraint to put in front
+of the operator rather than to spend unilaterally.
+
+**The blocker: not reproduced, and its most likely cause is the bench, not the
+firmware.** The supply limit was 1.75 A in campaign 7 and is 2.0 A now, against
+a 1.8 A mean and worst blocks above 2 A. A PSU in constant current folds the
+rail; a folding rail inside the guard's 0.8–200 ms passband is what a
+`FastBusSag` latch looks like; and 0-of-11 at 2.0 A against 3-of-7 at 1.75 A is
+consistent with exactly that. **It remains a hypothesis**: the discriminating
+test is to set the supply back to 1.75 A and repeat, which is an external
+change I cannot make, and which would now be caught in a frozen ring rather
+than inferred.
+
+What is *excluded* is a firmware mechanism that gets worse with duty: at 50%
+the guard's margin is indistinguishable from 25%, the loop's timing counters
+are flat, no comparator storm, no late arm, no blank latch, and the current
+sits where the law says it should.
+
+#### Exposure
+
+Thirteen runs at ≥45% today, **≈745 s** of drive at or above 45%, with ≥95 s
+(first seven) and 120 s (last six) bridge-off between runs, and **no nFAULT on
+any run**. That is the figure the thermal deferral must be read against; it is
+also the reason I am stopping the driving here rather than continuing into a
+qualification climb on my own authority. There is still no temperature in this
+firmware, and the NTC read remains owed.
