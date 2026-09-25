@@ -23201,3 +23201,119 @@ measured run and that is stated now so it cannot look like a retry later.
    acceptance list fails and the criterion is *not* met regardless of the
    reasons — I would rather discover that the instrument cannot evidence a
    restart than assert 3/3 from a clean `reason = 2`.
+
+### E273a — evidence review of E272, verbatim
+
+Fresh, context-free agent, run concurrently with the adversarial review and
+without access to it. It reproduced every number in E272 and then found the
+hidden choices; E273 acts on its recommendation #4 (the acceptance conditions
+cannot fail) and its decontamination point, and on the adversarial review's
+deeper finding.
+
+---
+
+## Verdict
+
+Everything numerically checkable in E272 reproduces, within rounding. The reasoning has real hidden choices — but none of them changes the verdict, and I verified that by sensitivity analysis rather than taking it on faith. The three self-corrections are all correct. The rung list is correct.
+
+---
+
+## (a) The corpus — reproduced
+
+169 matched-source records (`rate_source == "matched window vs time-anchored coast"`, field `rate_vs_coast_permille`):
+
+| | |
+|---|---|
+| n | 169 |
+| mean | 1001.195 |
+| median | 1001 |
+| population sd | **3.8665** |
+| sample sd | 3.8780 |
+| min / max | 994 / 1028 |
+| outside 990..1010 | **[1011, 1028]** (2/169 = 1.18%) |
+
+E272's "n = 169, sd 3.87, median 1001, measured 1.2% (2/169)" — all correct (3.87 = population sd).
+
+**Pooling across images is legitimate on this corpus.** Three images have ≥20 records:
+
+| image (sha256 prefix) | n | mean | sample sd |
+|---|---|---|---|
+| 7125601F | 55 | 1000.836 | 3.489 |
+| D9D77F3C | 54 | 1001.630 | 4.858 |
+| 1B27A4C8 | 45 | 1001.289 | 3.245 |
+
+One-way ANOVA on means: F = 0.549, **p = 0.578** — no detectable offset between images (spread of means is 0.8 permille). Levene p = 0.944. Bartlett p = 0.0028, but that is entirely the single 1028 record: dropping it gives Levene p = 0.268, ANOVA p = 0.785. So the pooled sd is the right denominator for scatter, and this derivation is not affected. Note this **contradicts `scripts/cohort.py:256-257`**, which asserts the estimator "shifts by ~5 permille between sessions (E164)" — no such shift is visible across images here.
+
+**But the pooled sd is contaminated by the very event the band must reject.** D9D77F3C's sd of 4.858 is inflated by 1028, a `reason = 26` firmware latch. Excluding it: population sd **3.2767**, and `ceil(3.33 × 3.2767) = 11` → band **990..1012**. That band still admits 1011 and still rejects 1028, so the conclusion survives; but the rule's "nothing excluded" clause means the band is widened using the defect itself, which is circular in the direction of the preferred outcome. Harmless here, wrong in principle.
+
+## (b) The false-positive arithmetic — reproduced, with three small errors and one structural one
+
+- Half-width 10 on sd 3.8665 → **2.586σ**. "±2.59σ" ✓.
+- Two-sided normal rate at k = 2.59: **0.960%**. E272 says **0.97%** in prose (§4) and **0.93%** in the table — internally inconsistent with each other, and neither is right. Correct value 0.96%. Measured 1.18% agrees with it.
+
+| k | per-run (mine) | E272 | P(≥1 in 57) mine | E272 |
+|---|---|---|---|---|
+| 2.59 | 0.960% | 0.93% | **42.3%** | 41.4% |
+| 3.00 | 0.270% | 0.27% ✓ | 14.28% | 14.3% ✓ |
+| 3.33 | 0.0868% | 0.10% | **4.83%** | 5.0% |
+| 4.00 | 0.00633% | 0.006% ✓ | 0.360% | 0.4% ✓ |
+
+Rows 1 and 3 are off; the headline "41%" is really 42%, and the "5.0%" that just clears a 5% budget is really 4.83%. Direction is favourable to the proposal in the one place it matters (row 3), but it clears either way.
+
+**57 is the right walk length.** `scripts/ladder_drive.py:33-41` `CHAIN` has exactly 19 entries (150…600) and `scripts/bemf_run.py:230` `RUNG_RUNS = 3` → 57. Caveat: `rung_report` (`bemf_run.py:261-313`) counts **every** attempt, so a walk with any retry exceeds 57; 57 is a floor, not the expected count.
+
+**The bigger structural problem: the ±2.59σ figure silently re-centres.** The band 990..1010 is centred on 1000, but the corpus median is 1001. Relative to the median the current band is −11/+9 permille = −2.845σ/+2.328σ, giving a per-run rate of **1.22%** and P(≥1 in 57) = **50.3%**, not 41%. E272 computes the old band's risk with a symmetric assumption and the new band with a median centre — two conventions in one table. (It makes the current band look *better* than it is, so it does not flatter the proposal.)
+
+**The normal tail at 3.33σ is not credible as stated.** Full corpus: skew **+2.07**, excess kurtosis **+12.0** — flagrantly non-normal, driven entirely by 1028. Drop 1028 and it is textbook normal (skew +0.305, excess kurtosis −0.332) — but then sd = 3.277. The entry borrows the sd from the contaminated corpus and the normality from the clean one. Also, at n = 169 the expected count beyond ±3.33σ is **0.147** — the data contains no information at that distance; the tail is an assumption, not a measurement. Distribution-free, the largest clean |z| is (1011−1001)/3.277 = **3.05σ**, i.e. the worst non-latch record already sits near where the rule places its edge.
+
+## (c) The proposed band — verified
+
+`band = round(median) ± ceil(k·sd)`; exact threshold k\* solving P(≥1 in 57) = 0.05 is **3.3202**, so 3.33 is the smallest two-decimal value that clears it. `ceil(3.33 × 3.8665) = 13` → **988..1014**. ✓
+
+Re-scoring all 169: **exactly one record changes verdict** — `e247-400_03.txt` (rung 400, image D9D77F3C), 1011, fail → pass. Zero pass → fail. Residual out-of-band: **1**, and it is `e253-550_03.txt` (1028). ✓ All three claimed acceptance conditions reproduce.
+
+σ figures: 1028 is 6.91σ on mean+sample sd, **6.98σ on median+population sd** (the rule's own convention). "6.9σ" is the former; by its own centre/sd it is 7.0σ. 1011 is 2.53σ on mean+sample sd, **2.586σ** on median+population sd. "2.5σ" is the former. Same conventions mismatch as in (b); immaterial.
+
+**The acceptance conditions are not independent of the outcome — they cannot discriminate.** Condition 1 ("must still reject 1028") is vacuous twice over: (i) 1028 is rejected by a *separate* gate, `cohort.self_ref_fails`'s 980..1020 band for rungs ≥525, and (ii) it carries `reason = 26`, a firmware latch that fails rung 550 permanently under `_is_firmware_latch` (`bemf_run.py:250-259`) regardless of any rate band. My simulation confirms rung 550 fails under **both** bands. Condition 2 ("residual = 1, and it is that record") is the same fact restated. Condition 3 ("1011 must pass") *is* the desired outcome. So the test set is: one condition that cannot fail, one that restates it, and one that is the goal. It is strictly weaker than E263's test, whatever one thinks of E263's coherence.
+
+**On the "no free parameter" claim: false as stated, but the verdict is robust.** Hidden choices: budget = 0.05; walk length = 57; median not mean; `ceil` not `round`; population not sample sd; pooled not per-image sd; normal tail not empirical; corpus with nothing excluded. I swept them:
+
+| variation | band | 1011 | 1028 |
+|---|---|---|---|
+| as proposed | 988..1014 | pass | fail |
+| walk 45 (chain to 500) | 988..1014 | pass | fail |
+| budget 0.10 | 988..1014 | pass | fail |
+| budget 0.20 | 989..1013 | pass | fail |
+| budget 0.01 | 986..1016 | pass | fail |
+| 1028 excluded from sd | 990..1012 | pass | fail |
+
+Every plausible setting gives the same two verdicts. So the claim should be "the conclusion has no free parameter", not "the rule has none". The one choice that is genuinely load-bearing and genuinely wrong is including the latch in the noise sd — and it happens to be conservative in the direction of a wider band, which is the direction the author wanted. That should be said out loud rather than defended as "nothing excluded".
+
+## (d) The consequence — verified exactly
+
+Simulated by re-running `cohort.run_gates` over every stored record for image `D9D77F3C…` (= `captures/elf/0D8E3799.e246-final-candidate.elf`; the filename prefix is not its sha256) with the band constant at `scripts/cohort.py:271` patched in a scratch copy. Recomputation reproduces all stored `fails` lists byte-for-byte (0 mismatches over 17 rungs / 48 records), so the simulation is sound.
+
+- **990..1010:** pass = 150, 200, 250, 275, 288, 300, 325, 338, 350, 375, **425, 450, 475, 500, 525** (15); fail = 400 (host gate, 1011), 550 (firmware latch).
+- **988..1014:** pass = **150, 200, 250, 275, 288, 300, 325, 338, 350, 375, 400, 425, 450, 475, 500, 525 — sixteen rungs, contiguous**; **550 alone fails.**
+
+Prediction 4 of E272 is correct as written.
+
+## (e) The three self-corrections — all correct
+
+1. **`reason_from_code` genuinely uncalled.** `src/roots.rs:884` has zero callers: the only call site, `src/run/states.rs:245`, is unqualified and resolves to the same-module `pub const fn` at `src/run/states.rs:442`; `states.rs` does not import `roots`, and there is no `roots::reason_from_code` or re-export anywhere in `src/`, `bin/`, or `build.rs`. Dead code. E272's withdrawal of E269's "the copy that reports kept the defect" is right.
+
+2. **Byte-identical: verified independently.** Built with `scripts/build.ps1` (which pins the linker/rustflags past the ancestor-config merge). Per-section md5, capture vs fresh build: `.vector_table`, `.text`, `.rodata`, `.data` all identical; full allocated image (`objcopy -O binary`) md5 `4f7dcf61…`, 41 632 bytes, identical. Sizes match E272 (.text 35 752, .rodata 5 024, .data 668, .bss 4 184, .vector_table 0xbc = 188). This is **not** vacuous: the capture's mtime is 2026-09-24 13:19 and the E269 source fix landed in commit `0b4ae12` at 20:37, so the source did change and the binary did not. (Incidentally, `firmware50/` *is* git-tracked now — `LAB_NOTEBOOK.md:8468`'s "untracked, no history" is stale.)
+
+3. **`wait_time(71, 22) = 11`** — confirmed from `src/commutation.rs:253-262`: `advance_of(71,22) = 1×22 + ((7×22)>>6) = 24`, `wait = 35 − 24 = 11`. **`spent_max_us` is a saturated whole-run maximum**: monotone store-if-greater at `src/roots.rs:481-482` and `:551-552`, zeroed only per run at `bin/board.rs:539`; documented as such at `src/roots.rs:395-397`. **The "modal 6 µs over 20 478 arms" is traceable and I reproduced it**: `python scripts/chain_spent.py` prints "pooled over 20478 measured arms … modal spent 6 us; max observed 10 us", with spent = 6 at 77.2%, and **spent = 11 never occurs**. So margin vs modal = 5 µs ✓. `late_arms = 0` in all four 550 captures (`e253-550_01..03`, `e258-ctrl550_01`) ✓. The "0 µs margin" reading is indeed an artefact of the saturated aggregate.
+
+---
+
+## What I would push back on
+
+1. **Fix the σ convention.** Use median + population sd everywhere, or mean + sample sd everywhere. Right now the band uses one and every reported σ uses the other. Publish 1028 = 7.0σ and 1011 = 2.59σ.
+2. **Correct the table.** Row 1 is 0.96% / 42.3%; row 3 is 0.087% / 4.83%. And prose §4's 0.97% contradicts the table's 0.93%.
+3. **Drop the normal-tail framing or own it.** The corpus is normal only after excluding the latch, and n = 169 gives 0.15 expected observations past 3.33σ. State the band as a predeclared budget under an *assumed* Gaussian, and add the distribution-free fact that does the real work: the largest non-latch deviation in 169 records is 3.05σ on the clean sd, so 988..1014 is the narrowest band that does not fail the corpus's own worst clean draw.
+4. **Replace the acceptance conditions with something that can fail.** "1028 stays rejected" cannot fail — it is rejected by `self_ref_fails`' 980..1020 band and by its `reason = 26` latch independently of any rate band; I verified rung 550 fails under both bands. A condition with teeth: predeclare that the band must not exceed the width at which any *clean* record in the corpus would be admitted at >3.05σ, and predeclare the band computed with the latch excluded (990..1012) as the primary, reporting the contaminated 988..1014 as the conservative bound. Both unblock 400; committing to the tighter one removes the only real objection.
+5. **The independence assumption behind `1-(1-p)^57` is unargued.** It happens to be defensible on this corpus (ANOVA p = 0.58 across images), but `cohort.py:256-257` asserts a ~5 permille between-session shift that would make the 57 runs correlated and the figure meaningless. One of those two statements is wrong and the entry should say which — my numbers say `cohort.py`'s note is the wrong one.
+
+Everything else in E272 stands, including the part that matters most: the blocker is real, self-inflicted, and correctly diagnosed, and the rung list is exactly right.
