@@ -11304,6 +11304,33 @@
     "droop_permille": 982.0060299963512,
     "fails": []
    }
+  ],
+  "600": [
+   {
+    "file": "e318-600-explore_01.txt",
+    "duty": 600,
+    "reason": 15,
+    "accepted": 228111,
+    "forced": 0,
+    "too_early": 7,
+    "blank_arms": 228231,
+    "unstable": 520976,
+    "hold_ms": 31,
+    "rate_permille": 996,
+    "has_tail": true,
+    "rate_vs_coast_permille": 995,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2467,
+    "coast_crossings": 1490,
+    "hold_ma": 2988,
+    "ceiling_tenths": 600,
+    "worst_ma": 3115,
+    "droop_permille": 977.0731225946515,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 31 ms < 30000"
+    ]
+   }
   ]
  },
  "2264FFA36BC78B1AB96185D1F175FE826126EC46C6E08322DC8D9305E3295848": {
@@ -12959,6 +12986,317 @@
     "fails": [
      "reason 15 != 2: exhausted commutation deadline (a late arm)",
      "hold 18923 ms < 30000"
+    ]
+   }
+  ]
+ },
+ "8768CCA1EC63849629776B9B1B874F9008A75CA54406A37CFFAAEA067381CDFC": {
+  "550": [
+   {
+    "file": "e315-550-why_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 189511,
+    "forced": 0,
+    "too_early": 2,
+    "blank_arms": 189613,
+    "unstable": 472471,
+    "hold_ms": 0,
+    "rate_permille": 0,
+    "has_tail": true,
+    "rate_vs_coast_permille": 0,
+    "rate_source": "legacy: whole hold vs index-fitted coast",
+    "coast_ehz": 2285,
+    "coast_crossings": 1439,
+    "hold_ma": 0,
+    "ceiling_tenths": 550,
+    "worst_ma": 2464,
+    "droop_permille": 982.6732673267327,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 0 ms < 30000",
+     "rate vs coast 0 permille outside 1% (legacy: whole hold vs index-fitted coast)",
+     "rate fell back to the legacy inputs although BEMFTAIL was present",
+     "no within-run rate identity in e315-550-why_01.txt: the coast or the hold window is missing, so this rung has no reference at all and cannot be judged"
+    ]
+   }
+  ]
+ },
+ "32A765FB52F8ABB35B1C6798E6472CEC4A74C394C9A01CBEE452B83C2E537102": {
+  "550": [
+   {
+    "file": "e315-550-hist_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 325406,
+    "forced": 0,
+    "too_early": 4,
+    "blank_arms": 325860,
+    "unstable": 628835,
+    "hold_ms": 9640,
+    "rate_permille": 987,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1000,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2308,
+    "coast_crossings": 1433,
+    "hold_ma": 2250,
+    "ceiling_tenths": 550,
+    "worst_ma": 2565,
+    "droop_permille": 981.2265441121007,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 9640 ms < 30000"
+    ]
+   }
+  ]
+ },
+ "F2D352F7FE8FBF8C165D0A08D5759AFCB4BCE14B6522D6DED05A9641D03B5E5B": {
+  "500": [
+   {
+    "file": "e315-500-hold_01.txt",
+    "duty": 500,
+    "reason": 15,
+    "accepted": 304970,
+    "forced": 0,
+    "too_early": 1,
+    "blank_arms": 305335,
+    "unstable": 632776,
+    "hold_ms": 11344,
+    "rate_permille": 995,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1006,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2143,
+    "coast_crossings": 1375,
+    "hold_ma": 1733,
+    "ceiling_tenths": 500,
+    "worst_ma": 2065,
+    "droop_permille": 983.7089467259783,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 11344 ms < 30000"
+    ]
+   }
+  ]
+ },
+ "7A18FB42CEA9CE7B71AFA9FF646110066903719DC7F1C94C0410525F25176763": {
+  "500": [
+   {
+    "file": "e315-500-mh_01.txt",
+    "duty": 500,
+    "reason": 2,
+    "accepted": 995935,
+    "forced": 0,
+    "too_early": 4,
+    "blank_arms": 997675,
+    "unstable": 1569214,
+    "hold_ms": 64776,
+    "rate_permille": 995,
+    "has_tail": true,
+    "rate_vs_coast_permille": 998,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2158,
+    "coast_crossings": 1391,
+    "hold_ma": 1719,
+    "ceiling_tenths": 500,
+    "worst_ma": 2076,
+    "droop_permille": 986.8095630667766,
+    "fails": []
+   }
+  ],
+  "550": [
+   {
+    "file": "e315-550-mh_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 300769,
+    "forced": 0,
+    "too_early": 32,
+    "blank_arms": 301134,
+    "unstable": 599515,
+    "hold_ms": 7851,
+    "rate_permille": 987,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1001,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2310,
+    "coast_crossings": 1447,
+    "hold_ma": 2252,
+    "ceiling_tenths": 550,
+    "worst_ma": 2603,
+    "droop_permille": 981.8481848184819,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 7851 ms < 30000"
+    ]
+   }
+  ]
+ },
+ "46685F08A9E96EC1FFCC5237E2AD743A0E54A4A8468086E8A71168D19DC61A39": {
+  "600": [
+   {
+    "file": "e321-600-adv20_01.txt",
+    "duty": 600,
+    "reason": 15,
+    "accepted": 224007,
+    "forced": 0,
+    "too_early": 23,
+    "blank_arms": 224029,
+    "unstable": 519141,
+    "hold_ms": 152,
+    "rate_permille": 998,
+    "has_tail": true,
+    "rate_vs_coast_permille": 987,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2468,
+    "coast_crossings": 1504,
+    "hold_ma": 2764,
+    "ceiling_tenths": 600,
+    "worst_ma": 3024,
+    "droop_permille": 977.9161932416516,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 152 ms < 30000",
+     "rate vs coast 987 permille outside 1% (matched window vs time-anchored coast)"
+    ]
+   }
+  ]
+ },
+ "7707478D80C7D6AE8F05D55D3690E023950B06EDEEDEF767A9DE55C44EDDAC97": {
+  "600": [
+   {
+    "file": "e324-600-deepfilter_01.txt",
+    "duty": 600,
+    "reason": 15,
+    "accepted": 425152,
+    "forced": 0,
+    "too_early": 329,
+    "blank_arms": 423686,
+    "unstable": 737540,
+    "hold_ms": 13799,
+    "rate_permille": 986,
+    "has_tail": true,
+    "rate_vs_coast_permille": 999,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2452,
+    "coast_crossings": 1523,
+    "hold_ma": 2834,
+    "ceiling_tenths": 600,
+    "worst_ma": 3818,
+    "droop_permille": 976.4051016293062,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 13799 ms < 30000",
+     "worst block 3818 mA at or above 3800: within 5% of the firmware's own 4 A allowance, where AverageCurrent folds back and a foldback disqualifies the rung"
+    ]
+   },
+   {
+    "file": "e327-600-floor5-rpt_01.txt",
+    "duty": 600,
+    "reason": 2,
+    "accepted": 1100435,
+    "forced": 0,
+    "too_early": 1159,
+    "blank_arms": 1094366,
+    "unstable": 1449894,
+    "hold_ms": 59776,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 996,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2439,
+    "coast_crossings": 1491,
+    "hold_ma": 2774,
+    "ceiling_tenths": 600,
+    "worst_ma": 3732,
+    "droop_permille": 977.0923379819703,
+    "fails": []
+   },
+   {
+    "file": "q600-h2_01.txt",
+    "duty": 600,
+    "reason": 15,
+    "accepted": 668195,
+    "forced": 0,
+    "too_early": 621,
+    "blank_arms": 664560,
+    "unstable": 996351,
+    "hold_ms": 30273,
+    "rate_permille": 987,
+    "has_tail": true,
+    "rate_vs_coast_permille": 996,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2462,
+    "coast_crossings": 1498,
+    "hold_ma": 2815,
+    "ceiling_tenths": 600,
+    "worst_ma": 3764,
+    "droop_permille": 979.4976216581618,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)"
+    ]
+   }
+  ]
+ },
+ "89C41E093002B43FFD0483829C776703C86C9593083B390B6C0B37C883B07D60": {
+  "600": [
+   {
+    "file": "e325-600-floor6_01.txt",
+    "duty": 600,
+    "reason": 15,
+    "accepted": 255338,
+    "forced": 0,
+    "too_early": 64,
+    "blank_arms": 255177,
+    "unstable": 559788,
+    "hold_ms": 2236,
+    "rate_permille": 997,
+    "has_tail": true,
+    "rate_vs_coast_permille": 989,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2466,
+    "coast_crossings": 1500,
+    "hold_ma": 2824,
+    "ceiling_tenths": 600,
+    "worst_ma": 3627,
+    "droop_permille": 978.7230547872306,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 2236 ms < 30000",
+     "rate vs coast 989 permille outside 1% (matched window vs time-anchored coast)"
+    ]
+   }
+  ]
+ },
+ "FCF42A19D769F74DAB38E1EB17C0D472DD356AAD29348DDE13F2987A2C16A6B9": {
+  "600": [
+   {
+    "file": "e328-600-wideblank_01.txt",
+    "duty": 600,
+    "reason": 26,
+    "accepted": 189921,
+    "forced": 0,
+    "too_early": 4,
+    "blank_arms": 189939,
+    "unstable": 362766,
+    "hold_ms": 0,
+    "rate_permille": 0,
+    "has_tail": true,
+    "rate_vs_coast_permille": 0,
+    "rate_source": "legacy: whole hold vs index-fitted coast",
+    "coast_ehz": 2224,
+    "coast_crossings": 1423,
+    "hold_ma": 0,
+    "ceiling_tenths": 600,
+    "worst_ma": 2810,
+    "droop_permille": 982.8593247997392,
+    "fails": [
+     "reason 26 != 2",
+     "hold 0 ms < 30000",
+     "rate vs coast 0 permille outside 1% (legacy: whole hold vs index-fitted coast)",
+     "rate fell back to the legacy inputs although BEMFTAIL was present",
+     "no within-run rate identity in e328-600-wideblank_01.txt: the coast or the hold window is missing, so this rung has no reference at all and cannot be judged"
     ]
    }
   ]
