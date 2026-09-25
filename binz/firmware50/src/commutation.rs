@@ -255,10 +255,42 @@ pub const fn advance_of(ci: u32, level: u32) -> u32 {
     (ci >> 6) * level + (((ci & 63) * level) >> 6)
 }
 
-/// `wait = (ci >> 1) - advance`, saturating so it can never wrap negative.
+/// `wait = ceil(ci / 2) - advance`, saturating so it can never wrap negative.
+///
+/// **Why `ceil` and not `ci >> 1`** (E318). The true wait is
+/// `ci/2 - ci*level/64`, and this is a *difference of two floors*: flooring the
+/// minuend loses up to 0.5 µs while flooring the subtrahend gains up to
+/// 1 µs, so the two errors do not cancel and the result can come out **below
+/// the true wait**. Measured across `level` 16..22 and `ci` 20..3999, the old
+/// form **schedules the arm early on 496 of 1980 intervals — a quarter of them
+/// — by as much as 0.47 µs**, and it is non-monotone in `ci` at 58 points
+/// (`ci = 58` gives 10 while `ci = 59` gives 9, because `ci >> 1` truncates the
+/// half-microsecond just as the advance crosses an integer).
+///
+/// That is the wrong direction for an arm whose failure mode is running out of
+/// margin. Taking `ceil(ci/2)` makes the error **exactly `[0, +1.47] µs`: never
+/// negative for any `level` in 16..=22 at any reachable `ci`**, and it never
+/// returns a smaller wait than the old form at any `(ci, level)` — so it is a
+/// monotone improvement in margin, not a trade.
+///
+/// It cost: +0.51 µs of wait on average over `ci` 45..89, i.e. **0.46° of
+/// electrical advance given up at ci = 67**, against 2.69° for dropping the
+/// level from 22 to 20. Roughly one sixth of the price of the advance change
+/// that was the other candidate, which is why this one goes first.
+///
+/// Three of the four latches whose interval was ever recorded sat at `ci` 59,
+/// 57 and 59 — odd intervals, where the old form's truncation is worst — and
+/// all three gain the microsecond that takes `left` from 0 to 1.
+///
+/// Single-floor forms (`ci * (32 - level) >> 6`) are exact and monotone but
+/// give *smaller* waits than the old form, so they make the margin worse; they
+/// were measured and rejected.
+/// Written `(ci >> 1) + (ci & 1)` rather than `(ci + 1) >> 1`: the latter
+/// overflows at `ci = u32::MAX`, which `wait_is_half_cycle_minus_advance_and_
+/// never_wraps` passes deliberately and which caught it immediately.
 #[inline]
 pub const fn wait_time(ci: u32, level: u32) -> u32 {
-    (ci >> 1).saturating_sub(advance_of(ci, level))
+    ((ci >> 1) + (ci & 1)).saturating_sub(advance_of(ci, level))
 }
 
 /// What is left of the blanking window, `blanking` µs after a crossing that
@@ -598,12 +630,25 @@ mod tests {
     /// The floor sits `advance` after the commutation, which is what the COM
     /// root holds the line masked for (E134), and a late commutation eats into
     /// it rather than moving it.
+    ///
+    /// **`- (ci & 1)` since E318**, and it is a real coupling rather than a
+    /// relaxed expectation. `blanking()` is `average_interval >> 1`
+    /// (`bemf.rs:350`, kept as the reference's exact half cycle), while
+    /// `wait_time` now takes `ceil(ci/2)`, so on an **odd** interval the
+    /// commutation lands 1 µs later and the blank remaining at that instant is
+    /// 1 µs shorter. Production is unaffected in its blanking *length* — the
+    /// COM root measures `since` from the clock, not from `wait`
+    /// (`roots.rs:1218`) — but the arm/blank boundary does move by that
+    /// microsecond, and on an odd interval with a short remainder it can fall
+    /// below `BLANK_ARM_MIN_US` and skip the blanking arm entirely. Neither
+    /// E316 review examined this coupling when it recommended the rounding, so
+    /// it is stated here rather than absorbed.
     #[test]
     fn the_blank_left_after_a_commutation_is_the_advance() {
         for ci in [141u32, 235, 174, 80, 48] {
             let wait = wait_time(ci, 20);
             let left = blank_remaining(ci >> 1, wait);
-            assert_eq!(left, advance_of(ci, 20), "ci={ci}");
+            assert_eq!(left, advance_of(ci, 20) - (ci & 1), "ci={ci}");
             // 5 µs late: the blank is 5 µs shorter, and the floor does not move.
             assert_eq!(blank_remaining(ci >> 1, wait + 5), left - 5, "ci={ci}");
         }

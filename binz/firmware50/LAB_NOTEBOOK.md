@@ -32401,3 +32401,122 @@ limit.
   p = 0.086.
 * Census: 197 CRC-bearing `advance_level=22` captures at rung ≥ 425;
   `reason = 15` stops: 2 @ 500, 10 @ 550, 1 @ 575, 1 @ 600.
+
+### E319 — rung 600 reached and held 31 ms, and `wait_time` has a demonstrated defect: it schedules the arm early on a quarter of all intervals
+
+#### First, the run both review rounds asked for and I never did
+
+Production image `0D8E3799` (the one that already held 48.3 s at 575),
+`inject=0`, every protection armed, rung **600**. The tree's first un-injected
+rung-600 capture, `captures/2026-09-25/e318-600-explore_01.txt`:
+
+```
+reason=15   hold_ms=31   mean_ci_us=67   ehz_from_sector=2525
+ci_us=50    ci_min_us=48   thin_count=492 (2157/1e6)   late_arms=1
+BEMFSAG   streak=0 tripped=0   filt_bus=1185 / ref 1212 = -2.2%   bus_min 1099 = -9.3%
+BEMFCURRENT hold_ma=2988   worst_ma=3115   worst_hold_ma=3115
+BEMFSELFREF zc_permille_of_6x_coast=1019   band 980..1020   verdict=ok
+```
+
+**60 % was reached and it was real.** The applied duty hit target, and the
+run's own within-run coast reference puts the loop at **1019 per mille of
+6× coast speed, inside the 980–1020 band, `verdict=ok`** — so the loop was
+genuinely tracking the rotor at 2525 eHz, not slipping.
+
+It then stopped on **LateArm 31 ms into the hold**, with the estimate at 50
+against a mean of 67 — another depressed-estimate stop, consistent with the
+fourteen-latch corpus spanning ci 40–62. The sag guard never armed
+(`streak=0`), and `thin_count` at 2157/10⁶ is **no worse than production at
+550** (~1950).
+
+So on this evidence the binding constraint at 600 is the **timing stop**, not
+the supply. The supply is nonetheless at its limit — `hold_ma = 2988` is 99.6 %
+of the 3 A clamp and `worst_hold_ma = 3115` is over it — but that is from
+**three current blocks**, ~30 ms, and is not a 30 s average. It is the next
+question, not this one, and it replaces the projection I had been quoting: my
+"60 % is unreachable" cited the tree's only rung-600 capture, which both
+reviews point out is `inject=25` with ~1 s of hold. **A wall declared from that
+is the inferred wall the goal forbids.** Withdrawn.
+
+#### And the defect the run points at
+
+The adversarial review ranked "round `wait_time` up" ahead of L 22→20, and
+examining it found something stronger than a rounding preference.
+
+`wait = ci/2 − ci·level/64`, and the implementation is a **difference of two
+floors**: flooring the minuend loses up to 0.5 µs while flooring the subtrahend
+gains up to 1 µs, so the errors do not cancel. Measured across `level` 16..22
+and `ci` 20..3999:
+
+```
+old  (ci >> 1) - advance :  err [-0.47, +0.94] us,  496 of 1980 SCHEDULE EARLY
+new  ceil(ci/2) - advance:  err [+0.00, +1.47] us,    0 of 1980 schedule early
+```
+
+**The old form schedules the arm earlier than the true advance calls for on a
+quarter of all intervals**, by up to 0.47 µs, and it is non-monotone in `ci` at
+58 points (`ci=58` → 10 but `ci=59` → 9, because `ci >> 1` truncates the
+half-microsecond exactly as the advance crosses an integer). For an arm whose
+failure mode is running out of margin, that is the wrong direction.
+
+Taking `ceil(ci/2)` makes the error **never negative at any reachable
+`(ci, level)`**, and it **never returns a smaller wait than the old form** — so
+it is a monotone improvement in margin, not a trade. Price: +0.51 µs of wait on
+average over ci 45..89, i.e. **0.46° of electrical advance given up at ci=67,
+against 2.69° for L 22→20** — about one sixth.
+
+Three of the four latches whose interval was ever recorded sat at ci **59, 57,
+59** — odd intervals, where the old truncation is worst — and each gains the
+microsecond that takes `left` from 0 to 1.
+
+Written `(ci >> 1) + (ci & 1)`, not `(ci + 1) >> 1`: the latter **overflows at
+`ci = u32::MAX`**, which the existing never-wraps test passes deliberately and
+which caught it on the first run. Cost in the root: `ADC_COMP` 760 → **764**
+(+4), hazard classes unchanged, and that +4 is in the *pre-arm* path so it adds
+~0.06 µs to `spent` — net **+0.45 µs of margin**.
+
+Single-floor forms (`ci·(32−level) >> 6`) are exact and monotone, and were
+measured and **rejected**: they give *smaller* waits than the old form, so they
+make the margin worse.
+
+#### Two couplings I found by running the tests, which neither review examined
+
+1. **The blanking boundary moves.** `blanking()` is `average_interval >> 1`
+   (`bemf.rs:350`, deliberately the reference's exact half cycle), so on an odd
+   interval the commutation now lands 1 µs later and the blank *remaining* at
+   that instant is 1 µs shorter. Production blanking **length** is unaffected —
+   the COM root measures `since` from the clock, not from `wait`
+   (`roots.rs:1218`) — but on an odd interval with a short remainder the
+   boundary can now fall below `BLANK_ARM_MIN_US` and skip the blanking arm.
+   Stated in the test rather than absorbed into it.
+2. **The replay corpus.** `production_policy_reproduces_the_captured_25_percent
+   _sequence` replays a real 25 % capture and asserted the policy's `wait`
+   equals the recorded one. Rather than loosen that to an inequality, it now
+   asserts the difference is **exactly `average_interval & 1`** — which keeps
+   the hardware capture as evidence and makes it a *stronger* check than
+   before: it fails if the wait moves on an even interval, or by 2 µs, or in
+   the wrong direction.
+
+345 tests pass, clippy clean, ratchet clean, self-test clean.
+
+#### Predeclaration, before this image is flashed
+
+> **Rung 600, production + the `wait_time` fix, un-injected, all protections
+> armed.** If the mechanism is the arm's margin, the LateArm at 31 ms should
+> not recur at the same interval depth: the latch needs `wait <= spent`, and
+> every observed latch interval now yields one more microsecond of wait.
+>
+> * **Holds >= 30 s** → 60 % is demonstrated; freeze and qualify.
+> * **Stops on sag, current or the tracking stop** → that is the demonstrated
+>   external constraint, reported with its capture rather than a projection,
+>   and it is the operator's to resolve.
+> * **Stops on LateArm again** → the margin fix is insufficient and the
+>   remaining candidate is the ~9 µs guard preemption that
+>   `WCET_ESTIMATES.md:111,128` already prices at 4.2 % incidence.
+> * **Refuted if** it stops on LateArm at an interval where the new `wait`
+>   exceeds the run's own `spent_max_us`, which would mean `spent` is larger in
+>   production than any chain capture has measured.
+
+Not flashed: a `wait_time` change is a control change on every rung including
+the qualified 50 %, and it has two couplings neither E316 review examined.
+Two fresh reviews first.
