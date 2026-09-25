@@ -25542,3 +25542,140 @@ zeroes; a loud host refusal on `ceiling_tenths < duty_tenths`; an NDTR or
 sequence-validity flag on the ADC snapshot; and a clean observer-cost A/B on an
 image differing only by the observer, since E291's −3.3% is an image delta and
 not yet an attributed cost.
+
+### E294 — the walk completed, the band is 992..1008, and the real reason to re-derive it was not the one I gave
+
+**Image `480263F1.e286-rawdepth.elf`** (sha256 `366E781F…A544`, now in
+`MANIFEST-hashes.txt`). **Ten rungs, thirty runs, 3/3 each, zero gate failures**,
+every one via the primary estimator:
+
+| rung | values | mean | sd |
+|---|---|---|---|
+| 150 | 1000, 997, 999 | 998.67 | 1.528 |
+| 200 | 999, 1001, 1001 | 1000.33 | 1.155 |
+| 250 | 1001, 1000, 1001 | 1000.67 | 0.577 |
+| 275 | 1002, 1003, 999 | 1001.33 | 2.082 |
+| 288 | 1001, 1002, 1000 | 1001.00 | 1.000 |
+| 300 | 1001, 1002, 1001 | 1001.33 | 0.577 |
+| 325 | 996, 999, 997 | 997.33 | 1.528 |
+| 338 | 999, 998, 997 | 998.00 | 1.000 |
+| 350 | 1003, 1005, 1001 | 1003.00 | 2.000 |
+| 375 | 1000, 997, 1003 | 1000.00 | 3.000 |
+
+#### The band
+
+```
+pooled sd      2.135  -> +-8
+within-rung sd 1.612  -> +-6
+sd about trend 2.127  -> +-8     <- E290's rule
+trend          +2.75 permille per 1000 duty-tenths (+0.62 across 150..375)
+
+DERIVED BAND   992..1008   (median 1000.5, +-8)
+```
+
+**E286's stop condition did not fire.** 0 of 30 outside the old 990–1010, 0 of 30
+outside the derived 992–1008, and **every rung's verdict is identical under
+both** — which is the assumption that made walking the low rungs before deriving
+the band legitimate in the first place. Only ±4 would have excluded anything
+(`e286-350_02` at 1005).
+
+The band **tightens**: at sd 2.135 the old ±10 was a 4.7 σ test, and ±8 is 3.5 σ
+by construction. That is the direction E285 stopped the walk to fix.
+
+**Scope, stated because the band is only valid inside it:** this is a
+**within-session** band on **one image**. Corpus-wide the same quantity has
+sd 3.0–3.8, so a cross-session or cross-image comparison needs the wider figure,
+not this one.
+
+The `.5` median tie I predeclared a guard for **actually happened** — median
+1000.5, where Python's `round()` returns 1000 by banker's rounding. Written
+before the data, and it earned itself.
+
+#### The real justification, found after the band was already derived
+
+E290 justified departing from E286's pooled-sd rule with a "+25.6 ‰ duty trend".
+E293 recorded that the trend was a four-rung artifact (+0.90 ‰ at eight rungs,
+and **+0.62 ‰ across the full ten**). So the rule survived with no argument
+behind it, which I said at the time.
+
+**Here is the argument, and it is nothing to do with duty.** Splitting the whole
+corpus by the length of `COASTTIMING iv_us` — which directly reports whether an
+image carried the 8-slot or the 32-slot coast buffer — and measuring **pure
+within-session, within-rung** scatter:
+
+| coast buffer | groups | n | within session+rung sd | 3.5 σ |
+|---|---|---|---|---|
+| **8-slot** (pre-E281) | 66 | **193** | **3.202** | ±12 |
+| **32-slot** (post-E281) | 10 | 30 | **1.612** | ±6 |
+
+**A 1.99× reduction against E281's predicted `sqrt(32/8)` = 2.0.** That is the
+first quantitative confirmation of E281's claim, on n=193 against n=30, and it
+is the actual reason the band had to be re-derived: **the old 990–1010 was
+calibrated against a 3.2 ‰ estimator and the instrument is now 1.6 ‰.** E285 was
+right to stop the walk, and right about why — I then spent E290 inventing a
+worse reason for the same correct action.
+
+The lesson is narrow and I want it recorded as such: **the justification was
+available in the captures the whole time**, in a field (`iv_us` length) that
+says which instrument produced the row. I reached for a pattern in eight numbers
+instead of a discriminator sitting in 223 captures.
+
+#### Two of my own speculations retired by more data
+
+**"Advance 22 is noisier" — refuted.** From this walk's 6 advance-22 runs
+(sd 2.811 against advance-20's 1.857) I suggested the high-duty regime might
+need a wider band. Corpus-wide, with n=129 against n=204:
+
+| advance | n | sd | within-rung sd |
+|---|---|---|---|
+| 20 | 204 | 3.164 | 3.066 |
+| 22 | 129 | 3.400 | 3.177 |
+
+Materially identical. The n=5/6 difference was noise, and I said it was too
+small to claim when I raised it — which is the only reason this costs nothing.
+
+**"Between-session drift explains the corpus/session gap" — refuted.** I
+hypothesised that the corpus's wider scatter came from session-to-session drift.
+Measured: the corpus's **within-session, within-rung** sd is **3.031**,
+essentially identical to its within-rung figure of 3.066, so between-group means
+(sd 2.214) are *not* what makes it wide. This session is simply **2× tighter**,
+and the coast buffer is why — which is the table above.
+
+#### The confound that stands, unresolved
+
+`AdvancePolicy::level` (`run/policy.rs:295`) is `if duty_tenths >= 350 { 22 }
+else { 20 }`, and **no duty in the entire corpus has ever been run at both
+levels**. So the +3 ‰ apparent step at rung 350 in this walk is unattributable
+between duty and advance, and every low-vs-high rung comparison this campaign
+has made compares two advance levels as well as two duties. Breaking it needs a
+diagnostic image with a different `AdvancePolicy` — legitimate, but a separate
+experiment and not on the critical path. Recorded as open, not resolved.
+
+#### Predeclared predictions, scored
+
+| prediction | result |
+|---|---|
+| E290 #1: measured sd 1.0–1.8 | **REFUTED** — pooled 2.135. (Within-rung is 1.612, inside; the predeclared statistic was the pooled/about-trend one, so this counts as refuted.) |
+| E290 #2: band 996–1004 or 995–1005 (±4/±5) | **REFUTED** — ±8, and the centre is 1000.5 not 1000 |
+| E286 #3: all ten low rungs pass 3/3 under both bands | **CONFIRMED** — 0 of 30 outside either, no verdict differs |
+| E286 #4: `raw1_run` ≈ 0 | **REFUTED** (E288), and the instrument itself is now in question (E291) |
+
+Two refuted, one confirmed, one refuted and then invalidated. The one that
+mattered — #3, the legitimacy of the walk order — held.
+
+#### And a defect in my own watcher, same class as everything else this session
+
+I armed a background wait on **file count reaching 30**. It fired while the
+thirtieth capture was **293 bytes** and still being written, and `derive_band.py`
+correctly reported n=29. File count is a proxy for "the run finished"; the
+condition is "the capture parses as a complete run". Re-armed on the condition
+itself. The script refusing to score the partial file is the only reason this
+was visible — [[feedback-instrument-must-fail-loudly]] paying for itself twice
+in one entry, since the `.5`-tie guard did the same.
+
+#### Next
+
+The bridge-off control (E292), which is built, clippy-clean and waiting. The
+board is now free. Its predeclared bar is unchanged and on the record: **`raw1_n`
+≥ 100 in both phases means the excursions are the sampling path**, and I expect
+150–350 with `raw1_run = 1` and `sag_tripped = 0`.
