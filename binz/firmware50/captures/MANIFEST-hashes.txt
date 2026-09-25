@@ -1480,3 +1480,11 @@ E3BB2544.e315-marginhist.elf
          step at ci 73 carries a 15.8x hazard ratio (p=1.0e-07) against a
          duty trend accounting for only 2.4-4.0x. ADC_COMP 742, hazard
          classes unchanged, the audited 12-read bound intact and tested.
+
+8AD9C4D9.e325-deepfilter6-adv20.elf
+  crc32  8AD9C4D9
+  sha256 89C41E093002B43FFD0483829C776703C86C9593083B390B6C0B37C883B07D60
+  build  cargo build --release --features deep-filter-6,advance-low
+  E325   Filter floor 6 instead of E324 image 08135D56 floor 5, same
+         advance -- single variable against a 13.8 s rung-600 hold. Tests
+         whether the depth trend is monotone or floor 5 is its optimum.

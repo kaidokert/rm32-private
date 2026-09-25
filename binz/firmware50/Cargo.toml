@@ -88,6 +88,10 @@ margin-hist = []
 # a smooth duty trend that accounts for only 2.4-4.0x. E322 decoupled the step
 # from the `wait` boundary it had been confounded with. Default OFF.
 deep-filter = []
+# Filter floor 6 instead of 5 (E325), to test whether E324's 91x hold
+# improvement at floor 5 is the start of a monotone trend or its optimum.
+# Takes precedence over `deep-filter`.
+deep-filter-6 = []
 
 [dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }

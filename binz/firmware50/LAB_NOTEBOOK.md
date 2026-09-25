@@ -34709,3 +34709,104 @@ extends past 13.8 s the depth trend is real and monotone. If it shortens, floor
 5 is the optimum of the margin/descent trade and deeper filtering costs more in
 `spent` than it buys. Either way the current tail gets a longer sample, which is
 what the qualification question now turns on.
+
+### E325–E327 — floor 6 is worse, advance 16 is blocked by a real invariant, and **rung 600 held 59.8 s clean. 60 % is demonstrated.**
+
+#### E325 — floor 6: worse, and the mechanism says why
+
+Predeclared in E324. Same advance, floor 5 → 6, single variable:
+
+```
+floor 5:  hold 13799 ms   thin 715/1e6   ci_min 43
+floor 6:  hold  2236 ms   thin 967/1e6   ci_min 47
+```
+
+**6× shorter.** The predeclared reading was "hold shortens ⇒ floor 5 is the
+optimum of the margin/descent trade", and the cost side agrees: `thin` rose
+715 → 967 per 10⁶ as the extra read added to `spent` while `wait` stayed put.
+n = 1 a side, so the optimum is not *established* — but there is no reason to go
+deeper, and floor 5 stands as the working value.
+
+#### E326 — advance 16 refused by a design invariant, correctly
+
+At advance 16, `wait_time(ci) >= 10` for **every** `ci` at or above
+`SECTOR_FLOOR_US`, so no descent the estimator's clamp permits could reach
+`left == 0` against `spent = 9`. That looked like the complete answer on the
+margin side. It is not reachable:
+
+`const _: () = assert!(ADVANCE_HIGH >= ADVANCE_LOW)` refused it on the first
+build, with `ADVANCE_LOW = 20`. **The assert is right** — advance rises with
+speed to offset commutation delay, so a high-duty level *below* the low-duty one
+inverts the physics. Flattening both to 16 satisfies it but changes the ramp's
+advance, which broke three tests that deliberately pin `ADVANCE_LOW`
+(*"below the step never varies"*, and *"changing both at once would make the
+result unattributable"*). Reverted rather than papered over.
+
+**So advance 20 is the lowest high-duty level reachable without reshaping the
+schedule**, and E322 had already shown the descent chases past it. The margin
+side really is capped — that part of E323 survives.
+
+#### E327 — and then the repeat of floor 5 held 59.8 seconds and finished clean
+
+Exact repeat of E324's image `08135D56` (sha256 `7707478D80C7D6AE…`), rung 600,
+un-injected, every protection armed. `captures/2026-09-25/e327-600-floor5-rpt_01.txt`:
+
+```
+reason=2   hold_ms=59776   late_arms=0   ci_min_us=48
+mean_ci_us=68  ehz_from_sector=2450  zc_permille_of_6x_coast=1004  verdict=ok
+hold_ma=2774  worst_ma=3732  hold_blocks=5918  hold_forced=0  ceiling_tenths=600
+BEMFSAG streak=0 tripped=0   BEMFGUARD reason=0 track_fault=0
+RUN PASS (gates 1-3)
+```
+
+**59.8 seconds of hold at 60 % duty — very nearly twice the 30 s gate — with
+`reason=2`, zero late arms, no foldback, no sag streak, no tracking fault, and
+the fixture's own verdict a PASS.**
+
+The full progression at this rung:
+
+| run | reason | `hold_ms` | blocks | `hold_ma` | `worst_ma` |
+|---|---|---|---|---|---|
+| e278 adv22 floor3 | 15 | 1307 | 130 | 2869 | 3490 |
+| e318 adv22 floor3 | 15 | 31 | 3 | 2988 | 3115 |
+| E322 adv20 floor3 | 15 | 152 | 15 | 2764 | 3024 |
+| E325 adv20 floor6 | 15 | 2236 | 222 | 2824 | 3627 |
+| E324 adv20 floor5 | 15 | 13799 | 1366 | 2834 | 3818 |
+| **E327 adv20 floor5** | **2** | **59776** | **5918** | **2774** | **3732** |
+
+#### Two of my own conclusions refuted by this run, both in the useful direction
+
+1. **The current tail does not grow with sampling.** I projected from
+   3115 (3 blocks) → 3024 (15) → 3490 (130) → 3818 (1366) that a 30-second hold
+   at ~3000 blocks would meet the 4 A foldback and be disqualified. E327 has
+   **5918 blocks and reads 3732** — *lower* than the 1366-block run. So that
+   series was run-to-run variation, not an extreme-value trend, and I read a
+   trend into five points that were not ordered by the thing I claimed ordered
+   them. **The supply carried a 59.8 s hold at 92.5 % of the clamp with no
+   foldback.**
+2. **E324's 13.8 s was not a ceiling.** I treated it as the floor-5 hold
+   length; it was one draw. The same image, same rung, same everything, held
+   4.3× longer and completed.
+
+And E323's closing claim — that every permitted avenue was exhausted — was
+wrong, as E324 already recorded. The filter floor was a control parameter I had
+not examined, and it is what carried this.
+
+#### What is demonstrated, precisely
+
+**Candidate: `08135D56.e324-deepfilter-adv20`** — persistence-filter floor 5
+(control parameter; reference floor is 3) and advance level 20 (the E300
+intervention), on top of the `accept_wait` dead-store removal. No diagnostic
+features. `ADC_COMP` 742, hazard classes unchanged, the audited 12-read loop
+bound intact and tested, 344 host tests, clippy clean.
+
+It has **demonstrated 60 %**: one clean ≥30 s actual-target hold with all
+protections armed and no foldback. Per the goal that is the trigger to freeze it
+and qualify once. This is **not** qualification — one hold is not three, and the
+lower rungs and restarts are untouched.
+
+**Predeclared qualification plan, in this order:** three ≥30 s actual-target
+holds at each of 500, 525, 550, 575, 600; 3/3 restart at 500 and 600;
+representative lower-rung regression; demonstrated protection coverage. The
+image is frozen at `08135D56` for all of it — any change invalidates the runs
+already banked.

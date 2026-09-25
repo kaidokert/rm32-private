@@ -100,10 +100,15 @@ pub const MAP_OUT_HIGH: u8 = 12;
 /// bound. `reference_filter_never_exceeds_twelve_reads` caught it on the first
 /// run. A floor is `max(FILTER_FLOOR, mapped)`, which touches only the
 /// intervals where the map is already at or below it.
-#[cfg(not(feature = "deep-filter"))]
+#[cfg(not(any(feature = "deep-filter", feature = "deep-filter-6")))]
 pub const FILTER_FLOOR: u8 = MAP_OUT_LOW;
-#[cfg(feature = "deep-filter")]
+#[cfg(all(feature = "deep-filter", not(feature = "deep-filter-6")))]
 pub const FILTER_FLOOR: u8 = 5;
+/// One level deeper, to test whether E324's floor-5 result is the start of a
+/// monotone trend or its optimum (E325). Takes precedence over `deep-filter`
+/// so enabling both is not a silent conflict.
+#[cfg(feature = "deep-filter-6")]
+pub const FILTER_FLOOR: u8 = 6;
 
 #[inline]
 pub const fn mapped_filter_level(average_interval: u32) -> u8 {
@@ -658,7 +663,7 @@ mod tests {
     /// reference deliberately, which is the whole point of the feature, so the
     /// assertion is scoped to the configuration it describes rather than
     /// weakened for both.
-    #[cfg(not(feature = "deep-filter"))]
+    #[cfg(not(any(feature = "deep-filter", feature = "deep-filter-6")))]
     #[test]
     fn mapped_filter_reproduces_the_reference_map_exactly() {
         // The reciprocal multiply must equal the truncating integer division
@@ -680,7 +685,7 @@ mod tests {
     /// reference deliberately, which is the whole point of the feature, so the
     /// assertion is scoped to the configuration it describes rather than
     /// weakened for both.
-    #[cfg(not(feature = "deep-filter"))]
+    #[cfg(not(any(feature = "deep-filter", feature = "deep-filter-6")))]
     #[test]
     fn mapped_filter_clamps_at_both_ends() {
         assert_eq!(mapped_filter_level(0), MAP_OUT_LOW);
