@@ -1488,3 +1488,15 @@ E3BB2544.e315-marginhist.elf
   E325   Filter floor 6 instead of E324 image 08135D56 floor 5, same
          advance -- single variable against a 13.8 s rung-600 hold. Tests
          whether the depth trend is monotone or floor 5 is its optimum.
+
+3450AB06.e328-wideblank-floor5-adv20.elf
+  crc32  3450AB06
+  sha256 FCF42A19D769F74DAB38E1EB17C0D472DD356AAD29348DDE13F2987A2C16A6B9
+  build  cargo build --release --features wide-blank,deep-filter,advance-low
+  E328   Half-cycle gate widened 32/64 -> 40/64 on top of E324s candidate
+         08135D56 (floor 5 + advance 20), which completes 1 run in 3 at
+         rung 600. Single variable. Offline safety check against the 1536
+         real COMP decisions in captures/replay: the wider gate would have
+         refused 6 of 279 hardware-accepted crossings (2.15%), all in the
+         0.53..0.70 count/ci band whose median is 1.007 -- asserted by
+         the_wide_gate_would_refuse_only_the_anomalous_band.

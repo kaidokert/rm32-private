@@ -34810,3 +34810,104 @@ holds at each of 500, 525, 550, 575, 600; 3/3 restart at 500 and 600;
 representative lower-rung regression; demonstrated protection coverage. The
 image is frozen at `08135D56` for all of it — any change invalidates the runs
 already banked.
+
+### E328 — qualification hold 2 refused by the fixture's own gate, and the wide gate is refuted by the risk I predicted. 60 % is demonstrated but not reliable: 1 run in 3 completes.
+
+#### Qualification hold 2 of 3 at rung 600: held 30.3 s, then latched
+
+Frozen candidate `08135D56`, `q600-h2`: `hold_ms=30273`, which **clears the
+30 s bar**, then `reason=15`. `hold_ma=2815`, `worst_ma=3764`, `verdict=ok`.
+
+Whether a ≥30 s hold followed by a late arm counts is exactly the sort of call
+I should not make in my own favour, so I took the repo's own definition rather
+than my judgement. `scripts/cohort.py:320-337`, `run_gates`:
+
+```python
+if r["reason"] != 2:
+    fails.append(f"reason {r['reason']} != 2" + ...)
+```
+
+**`reason != 2` is a gate failure.** A qualifying run must complete cleanly, not
+merely hold long enough. So this run does **not** count, and rung 600 stands at
+**1 of 3**.
+
+Three runs of the frozen candidate at rung 600:
+
+```
+13799 ms  reason 15      55273 / 38799 / 84776 ms closed
+59776 ms  reason  2  PASS
+30273 ms  reason 15
+```
+
+Exposure 178.9 s closed, 2 events → hazard **0.0112/s**, MTTF 89 s. A
+qualifying run is ~85 s closed, so `P(complete) = 0.386` and
+**`P(3/3) = 0.058`**. Reaching `P(3/3) = 0.9` needs a **29× further hazard
+reduction**. So the candidate demonstrates 60 % is *achievable* and not that it
+is *reliable*, and freezing it for qualification was premature — one clean hold
+is a demonstration, and I said so, but the gap to 3/3 is larger than one hold
+suggests.
+
+#### The wide gate: predicted risk, materialised
+
+`BLANK_64` is a const generic the estimator explicitly supports as a build
+parameter (1..=56, production 32). Widening it to 40 refuses the
+`0.500..0.625 · ci` band of early edges that feeds the descent, and unlike
+filter depth it costs a multiply and a shift rather than two live comparator
+reads on the pre-arm path — descent resistance without spending `spent`.
+
+**The offline safety check first**, on the 1536 real COMP decisions in
+`captures/replay/e121-capture25b.txt`: a 40/64 gate would refuse **6 of the 279
+crossings the hardware accepted** (2.15 %), all in a `count/ci` band of
+0.53..0.70 whose median is **1.007**. That is now asserted in-suite by
+`the_wide_gate_would_refuse_only_the_anomalous_band`, replaying explicitly on
+`ZeroCrossWith<REFERENCE_BLANK_64>` so the test means the same thing in every
+build.
+
+**And the stated risk, written before the run:** a refusal leaves
+`sector_start_raw` unmoved, so the *following* accept measures ~1.5× and jerks
+the estimate **up ~13 %** — possibly adding as much jitter as it removes.
+
+It did. `captures/2026-09-25/e328-600-wideblank_01.txt`:
+
+```
+reason=26 (FastBusSag)   hold_ms=0   late_arms=0   closed_ms=22642
+coast_ehz=2224  (usual 2450)      accepted 189921 / 22.6 s = 8387/s
+too_early=4     spent_max_us=12   thin_count=12   ci_min_us=52
+```
+
+**It removed the late arm completely and produced a supply event instead.** The
+rotor ran **9 % slower**, accepts ran at **8387/s against ~13344 expected** — the
+loop was missing real crossings — and `too_early` read only **4**, which is the
+tell: the refusals were not counted at the gate, they left the sector start
+unmoved and the loop commutated late, drawing more current until the sag guard
+stopped it. Marked `# REFUTED — do not enable` in both the type's docs and
+`Cargo.toml`, and kept only so the result is reproducible.
+
+#### The ratchet earned its keep again
+
+The image tripped it: **`ADC_COMP` `mul` 4 → 8**. The non-reference gate
+replaces a single shift with the exact `q·B + ((r·B)>>6)` split — two
+multiplies per `blanking()`, called twice on the accept path. `div 0`,
+`helper 0`, `irq 9` unchanged, and ~4 single-cycle multiplies ≈ 0.06 µs. I ran
+it as a **stated, priced deviation and did not bless it**, so the production
+baseline stays at `mul 4` and nothing was hidden by a threshold.
+
+#### Levers tried, and where this leaves the envelope
+
+| lever | outcome |
+|---|---|
+| reduce `spent` | irreducible distributed work; one dead store, 2 instructions (E321) |
+| raise `wait` via advance | descent chases the threshold; capped at 20 by `ADVANCE_HIGH >= ADVANCE_LOW` (E322, E326) |
+| rate-limit the descent | runaway step *is* normal jitter, 12.5 % vs 10.8 % (E323) |
+| cumulative descent limit | 1.9× separation, narrowing with duty (E323) |
+| **filter floor 3 → 5** | **the one that worked: 91× on the hold, 1 in 3 runs now completes at 600 (E324)** |
+| filter floor 6 | 6× worse than floor 5 (E325) |
+| widen the gate 32 → 40 | refuted: slower rotor, missed crossings, bus sag (E328) |
+
+**Measured envelope.** 57.5 % held 48.3 s on a production image with every
+protection armed. 60 % is demonstrated by one clean 59.8 s hold and holds ≥30 s
+in 2 of 3 runs, but completes cleanly in 1 of 3, and the supply carried it at
+92.5 % of the clamp with no foldback. The remaining gap is **29×** on the
+LateArm hazard, and every margin- and estimator-side lever I am permitted to
+change has now been measured — one of them worked and the rest are recorded
+above.

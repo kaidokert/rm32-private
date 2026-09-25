@@ -272,7 +272,48 @@ pub struct ZeroCrossWith<const BLANK_64: u32> {
 pub const REFERENCE_BLANK_64: u32 = 32;
 
 /// The production detector: the reference's half-cycle gate.
+#[cfg(not(feature = "wide-blank"))]
 pub type ZeroCross = ZeroCrossWith<REFERENCE_BLANK_64>;
+
+/// **40/64 instead of the reference's 32/64** (`wide-blank`, E328).
+///
+/// # REFUTED ON THE BENCH — do not enable
+///
+/// One run at rung 600 (`captures/2026-09-25/e328-600-wideblank_01.txt`)
+/// stopped on **`reason=26`, FastBusSag**, at 22.6 s with `hold_ms=0` and
+/// `late_arms=0`. It removed the late arm and produced a supply event instead,
+/// by the mechanism predicted below: `coast_ehz` fell to **2224** against the
+/// usual 2450 (a 9 % slower rotor) and accepts ran at **8387/s against ~13344
+/// expected**, so the loop was missing real crossings. `too_early` read only
+/// **4**, which is the tell — the refusals were not counted at the gate,
+/// they left `sector_start_raw` unmoved so the *following* accept measured
+/// ~1.5× and jerked the estimate up, and the loop then commutated late. It
+/// adds more jitter than it removes. Kept only so the result is reproducible.
+///
+/// The gate is what admits the edges that feed the estimator's descent, and it
+/// admits everything above `0.5 · ci`. `lt075` — accepts arriving below
+/// `0.75 · ci`, i.e. the descent's fuel — runs at **1.88 % of accepts at rung
+/// 600**, and the blend turns each one into a step of up to
+/// `1 - (0.75 + 0.25 · BLANK_64/64)`: **12.5 % at the reference 32, 9.4 % at
+/// 40**. Widening the gate to 40 refuses the whole band between `0.500 · ci`
+/// and `0.625 · ci` outright.
+///
+/// **Why this and not more filter depth.** E324's floor 3 → 5 attacked the same
+/// fuel and bought 91× on the rung-600 hold, but it costs two extra live
+/// comparator reads *on the pre-arm path*, which is why `thin` rose 40× and why
+/// floor 6 was 6× worse than floor 5 (E325). The gate is a comparison: a
+/// non-reference fraction costs the exact `interval * BLANK_64 / 64` —
+/// a multiply and a shift instead of a single shift — so roughly four
+/// instructions against two ~0.25 µs reads. **It buys descent resistance
+/// without spending `spent`.**
+///
+/// **What it risks.** An edge from a rotor that genuinely accelerated more than
+/// 37.5 % inside one commutation would now be refused — which no loaded rotor
+/// can do. A refusal leaves `sector_start_raw` unmoved, so the *following*
+/// accept measures a doubled count and the estimate moves **up**, which is the
+/// safe direction and is what the tracking stop already covers.
+#[cfg(feature = "wide-blank")]
+pub type ZeroCross = ZeroCrossWith<40>;
 
 impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
     /// `BLANK_64` must lie in `1..=56`: zero would disable the gate that stops
@@ -517,6 +558,10 @@ mod tests {
     }
 
     /// The default is the reference's half cycle, and `blanking` reports it.
+    /// **Scoped to the default gate.** `wide-blank` changes `ZeroCross`'s
+    /// fraction deliberately (E328), so this pins the configuration it
+    /// describes rather than being weakened for both.
+    #[cfg(not(feature = "wide-blank"))]
     #[test]
     fn default_blanking_is_half_a_cycle() {
         let zc = ZeroCross::new(2777);
@@ -542,6 +587,10 @@ mod tests {
 
     /// The half-cycle shortcut is exactly the general formula at 32, for
     /// every interval including the extremes.
+    /// **Scoped to the default gate.** `wide-blank` changes `ZeroCross`'s
+    /// fraction deliberately (E328), so this pins the configuration it
+    /// describes rather than being weakened for both.
+    #[cfg(not(feature = "wide-blank"))]
     #[test]
     fn the_half_cycle_shortcut_equals_the_general_formula() {
         for i in (0..70_000u32).chain([u32::MAX / 2, u32::MAX - 1, u32::MAX]) {
@@ -564,6 +613,10 @@ mod tests {
 
     /// A wider window refuses edges a half-cycle window would have accepted,
     /// and counts them as `too_early` rather than silently dropping them.
+    /// **Scoped to the default gate.** `wide-blank` changes `ZeroCross`'s
+    /// fraction deliberately (E328), so this pins the configuration it
+    /// describes rather than being weakened for both.
+    #[cfg(not(feature = "wide-blank"))]
     #[test]
     fn a_wider_window_refuses_the_early_band() {
         let ci = 2560;
@@ -715,6 +768,10 @@ mod tests {
 
     // --- half-cycle gate ---------------------------------------------------
 
+    /// **Scoped to the default gate.** `wide-blank` changes `ZeroCross`'s
+    /// fraction deliberately (E328), so this pins the configuration it
+    /// describes rather than being weakened for both.
+    #[cfg(not(feature = "wide-blank"))]
     #[test]
     fn edges_inside_the_blanking_window_are_refused() {
         let mut z = ZeroCross::new(20_000);
@@ -734,6 +791,10 @@ mod tests {
         ));
     }
 
+    /// **Scoped to the default gate.** `wide-blank` changes `ZeroCross`'s
+    /// fraction deliberately (E328), so this pins the configuration it
+    /// describes rather than being weakened for both.
+    #[cfg(not(feature = "wide-blank"))]
     #[test]
     fn the_blanking_window_tracks_the_average_interval() {
         let mut z = ZeroCross::new(400);

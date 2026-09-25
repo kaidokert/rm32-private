@@ -88,6 +88,11 @@ margin-hist = []
 # a smooth duty trend that accounts for only 2.4-4.0x. E322 decoupled the step
 # from the `wait` boundary it had been confounded with. Default OFF.
 deep-filter = []
+# REFUTED (E328) -- do not enable; see bemf.rs. Widens the gate 32/64 -> 40/64,
+# refusing the 0.500..0.625 band of early edges that feeds the estimator's
+# descent. Costs a multiply and a shift rather than the two extra comparator
+# reads a deeper filter spends on the pre-arm path.
+wide-blank = []
 # Filter floor 6 instead of 5 (E325), to test whether E324's 91x hold
 # improvement at floor 5 is the start of a monotone trend or its optimum.
 # Takes precedence over `deep-filter`.

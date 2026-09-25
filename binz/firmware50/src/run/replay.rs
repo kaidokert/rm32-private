@@ -75,6 +75,13 @@ fn parse() -> ([u32; 5], Vec<Decision>) {
 
 /// The replay itself: offer every recorded decision to the production
 /// detector and require the recorded outcome.
+///
+/// **Scoped to the reference gate.** `wide-blank` widens it deliberately
+/// (E328), so the recorded outcomes no longer hold — but the capture is too
+/// valuable to simply drop from that configuration, so
+/// [`the_wide_gate_refuses_only_the_anomalous_band`] below replays the same
+/// 1536 decisions and measures exactly what the wider gate changes.
+#[cfg(not(feature = "wide-blank"))]
 #[test]
 fn production_policy_reproduces_the_captured_25_percent_sequence() {
     type B = <Production as Policies>::B;
@@ -153,4 +160,56 @@ fn a_one_step_different_policy_does_not_reproduce_it() {
         ) || taken != d.reads_taken()
     });
     assert!(mismatch, "a different gate must decide some recorded edge differently");
+}
+
+/// **What a wider gate would have refused, measured on real hardware
+/// decisions** (E328).
+///
+/// The 1536 recorded decisions come from a locked 25 % run, so every
+/// `Kind::Accepted` among them is a crossing the hardware took at the
+/// reference 32/64 gate. This replays the estimator along that *same*
+/// trajectory — explicitly on `ZeroCrossWith<REFERENCE_BLANK_64>`, so the test
+/// means the same thing in every build — and asks which of those accepts fall
+/// at or below a 40/64 gate. That is the only question the capture can answer
+/// about `wide-blank`: its **input** rate. It cannot say what the loop then
+/// does, which is why this is a measurement and not a qualification.
+///
+/// In that run the accepted crossings' `count / average_interval` has median
+/// **1.007** — crossings arrive when the estimate says they should — with a
+/// 1st percentile of 0.529 and a 5th of 0.699. So a small anomalous population
+/// sits just above the reference gate, and it is exactly the descent fuel the
+/// wider gate targets. Pinning the count here means a change to the gate, the
+/// blend or the clamp cannot move it silently.
+#[test]
+fn the_wide_gate_would_refuse_only_the_anomalous_band() {
+    type B = <Production as Policies>::B;
+    let (state, decisions) = parse();
+    let mut zc = crate::bemf::ZeroCrossWith::<{ crate::bemf::REFERENCE_BLANK_64 }>::from_state(state);
+    let mut accepts = 0usize;
+    let mut refused_at_40 = 0usize;
+    for d in &decisions {
+        let count = u32::from(d.count);
+        if d.kind == Kind::Rebase {
+            continue;
+        }
+        let ci = zc.average_interval();
+        let mut taken = 0u16;
+        let outcome = zc.offer(count, d.rising, u32::from(d.advance), &B::FILTER, || {
+            let bit = (d.reads >> taken) & 1 == 1;
+            taken += 1;
+            bit
+        });
+        if matches!(outcome, Outcome::Accepted { .. }) {
+            accepts += 1;
+            // The comparison uses the interval in force when the edge arrived.
+            if count <= (ci * 40) / 64 {
+                refused_at_40 += 1;
+            }
+        }
+    }
+    assert_eq!(accepts, 279, "the capture's accepted-crossing count");
+    assert_eq!(
+        refused_at_40, 6,
+        "a 40/64 gate would refuse this many of the 279 crossings the hardware          accepted at 32/64 -- 2.15%, all in the 0.53..0.70 band"
+    );
 }
