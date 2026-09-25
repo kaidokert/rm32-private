@@ -25679,3 +25679,136 @@ The bridge-off control (E292), which is built, clippy-clean and waiting. The
 board is now free. Its predeclared bar is unchanged and on the record: **`raw1_n`
 ≥ 100 in both phases means the excursions are the sampling path**, and I expect
 150–350 with `raw1_run = 1` and `sag_tripped = 0`.
+
+### E295 — the bridge-off control: my prediction refuted, and so is the review's central claim I accepted
+
+**`e292-idlescan.txt`**, image `idle-scan` sha256 `62094AAB…`. Two 45 s phases,
+445 475 scans each, **bridge never energised** — `preflight_passed=1`, `moe=0`,
+`gates_low=1`, `en=0` at exit, and `sag_tripped=0` in both phases.
+
+```
+phase=A_en_low   scans=445475 ref_bus=1212 filt_bus=1211 bus_min=1139
+                 raw0_n=243 raw0_run=1  raw1_n=20 raw1_run=1  raw2_n=0  raw3_n=0
+                 dep0_n=4024 dep0_run=12  gap_max_us=40  gap_over_88us=0
+                 shunt_first=3795 shunt_last=3807 shunt_drift=+12
+phase=B_en_high  scans=445475 ref_bus=1211 filt_bus=1210 bus_min=1143
+                 raw0_n=269 raw0_run=1  raw1_n=19 raw1_run=1  raw2_n=0  raw3_n=0
+                 dep0_n=1837 dep0_run=9   gap_max_us=40  gap_over_88us=0
+                 shunt_first=6155 shunt_last=6203 shunt_drift=+48
+```
+
+#### My predeclared bar, scored honestly
+
+E292 set three outcomes. **`raw1_n = 20 / 19` lands in the middle band**, which I
+predeclared as *"partial, settles nothing alone, and I will say so rather than
+pick a side."* My stated expectation was **150–350** — the artifact outcome —
+and it is **refuted**. The excursions are **not** purely instrumentation.
+
+But "settles nothing" was too pessimistic a thing to have written, because the
+comparison I also predeclared — **rates, not counts** — is informative:
+
+| cohort | raw1 rate /10⁶ | raw0 rate /10⁶ | depth (codes) |
+|---|---|---|---|
+| control `EN` low | **44.9** | 545.5 | **72** |
+| control `EN` high | **42.7** | 603.8 | **67** |
+| driving 150 | 287.8 | 1731.5 | 116 |
+| driving 250 | 294.6 | 2135.6 | 86 |
+| driving 375 | 401.8 | 2685.4 | 93 |
+
+**A real artifact floor exists and is now measured for the first time: ~43.8 per
+10⁶ scans, 1 in 22 800, with ~70 codes of depth, with nothing energised.** It
+accounts for **~18%** of the lowest driving rung's rate. So E284's premise was
+part artifact — and only part.
+
+**`EN` low vs high changes nothing** (44.9 vs 42.7). Driver-amplifier bias
+coupling is **excluded**, which was one of the three branches I predeclared.
+
+#### The finding that reverses the review, and my acceptance of it
+
+E291's adversarial review concluded that the raw observer *does not track load*,
+citing `raw1_n` over the then-available captures as "essentially flat while
+current changes 70×". **I accepted that, and the completed walk refutes it.**
+Over all ten rungs, as rates:
+
+| rung | raw1 rate /10⁶ | raw0 rate /10⁶ | hold_ma |
+|---|---|---|---|
+| 150 | 238.9 | 1648.0 | 43 |
+| 200 | 206.6 | 1546.4 | 254 |
+| 250 | 282.6 | 1981.0 | 383 |
+| 275 | 363.8 | 2394.5 | 478 |
+| 288 | 302.1 | 2114.9 | 540 |
+| 300 | 319.1 | 2151.4 | 546 |
+| 325 | 340.1 | 2368.5 | 676 |
+| 338 | 366.9 | 2478.8 | 716 |
+| 350 | 317.6 | 2298.2 | 749 |
+| **375** | **431.9** | **3146.3** | **875** |
+
+**`corr(raw1 rate, duty) = +0.706`**, slope **+791 per 10⁶ per 1000 duty-tenths**
+— a **+81%** rise from rung 150 to 375 while `hold_ma` goes 43 → 875 (20×). The
+`raw0` bin rises +91% in parallel. The review's flatness claim rested on raw
+counts over a **partial** walk, and on a cohort that stopped at 288.
+
+**So the two quantities move in opposite directions, and that is the whole
+resolution:**
+
+* **Depth** (`filt_bus − bus_min`) is load-independent and slightly negative
+  (E291: `corr = −0.204`), because it is the magnitude of the single deepest
+  excursion and that is dominated by the ~70-code artifact floor just measured.
+  **E291's finding stands, and E284's "depth does not discriminate" is correct.**
+* **Count** (`raw*_n` as a rate) tracks load strongly, `corr = +0.706`, 5.5–8.9×
+  above the measured bridge-off floor. **This discriminates.**
+
+#### What survives of E284's instrument, and what does not
+
+**Dead:** `raw*_run`. The review's arithmetic holds and I re-checked it — at
+p ≈ 2.9 × 10⁻⁴ over 886 k scans the expected longest run is 0.68, so an observed
+1 carries no information, and my predeclared `≥ 10` arm needs p ≥ 0.257, a
+factor of ~900. **The duration half of "depth does not discriminate, duration
+does" is unreachable by construction and is withdrawn.**
+
+**Alive:** `raw*_n` as a rate against a measured floor. That is a usable
+instrument, and it is the one E284 would have had if it had predeclared a rate
+comparison against a control instead of a run-length threshold.
+
+#### Where my own control cannot answer, stated rather than glossed
+
+**`gap_over_88us = 0` does not exclude the tearing hypothesis.** The idle loop's
+`gap_max_us` is **40 µs**, far under the 88 µs window, because this binary does
+no commutation work — while a *driving* run's `loop_gap_max_us` is **145–192 µs**.
+So the control measured the tear count in the one regime where tearing cannot
+happen. **That is a design flaw in the control I built**, and the measurement I
+added specifically to test the mechanism does not test it. Testing it needs the
+counter in a driving image, which is now an owed item rather than a settled one.
+
+**The shunt-settling test is also only partial.** Drift over 45 s is +12 (`EN`
+low) and +48 (`EN` high) raw units — an order of magnitude below the ~450-unit
+first-run deficit of E293. But the control captures its zero after boot and
+banner, whereas the hypothesis concerns the first *powered* run's zero, so this
+weakens the settling explanation without excluding it.
+
+#### The lesson, which is the same one twice in one session
+
+E293 recorded: *never derive a correction to a statistic from a fraction of the n
+you already predeclared.* I wrote that about over-defending my own position, and
+then did it again in the opposite direction — **I accepted a critic's conclusion
+from 13 captures while the 30-run walk that refutes it was already running on the
+bench.** Deference is not rigour either. The reviewer's challenge was right about
+`raw*_run`, right about the reference defect, right about the overflow, right
+about E287 and right about the process gaps; it was wrong about load-tracking,
+and I had the means to know that in under an hour.
+
+Both failures have the same shape: **a conclusion accepted at the n that was
+convenient rather than the n that was already predeclared and in flight.**
+[[feedback-test-the-falsifier-that-fires]] is updated to say so, because its
+current text only covers the self-serving direction.
+
+#### Standing
+
+The band from E294 is unaffected: 30 runs, 10 rungs, 3/3 each, band **992..1008**.
+Nothing in this entry touches the rate identity.
+
+Owed, carried forward: the tear counter in a driving image; the three missing
+entries (E253/E254/E258); `raw_depth.observe` moved above the `early` return and
+after `current.accumulate`; a clean observer-cost A/B on an image differing only
+by the observer; `hold_valid` for injected captures; a loud refusal on
+`ceiling_tenths < duty_tenths`.
