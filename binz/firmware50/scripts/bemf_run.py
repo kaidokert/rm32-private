@@ -202,9 +202,12 @@ def reference_line(capture: pathlib.Path) -> str | None:
 
 # The ladder the fixture enforces (goal item 9, notebook E109): a rung may be
 # launched only when the rung below it has a passing report on this same ELF.
-# A rung's report is its last three runs on that ELF: every run passes gates
-# 1-3 (cohort.run_gates) and the rung's means pass the oracle comparison
-# (cohort.rung_oracle). `R` (restart at 25%) needs the 25% rung.
+# A rung's report covers **every attempt on that ELF**, not its last three
+# (E259): every run passes gates 1-3 (cohort.run_gates) and the rung's means
+# pass the oracle comparison (cohort.rung_oracle) on the most recent cohort.
+# Failures are scoped by origin (E262): a firmware protection latch fails the
+# rung permanently on that image, while a host-gate verdict is reported and
+# recomputed rather than erased. `R` (restart at 25%) needs the 25% rung.
 LADDER_PREREQ = {"2": 150, "5": 200, "R": 250,
                  "a": 250, "A": 250, "y": 275, "Y": 275, "c": 275, "C": 275,
                  "d": 300, "D": 300, "m": 325, "M": 325, "e": 338, "E": 338,
@@ -238,6 +241,23 @@ def _ladder_save(state: dict) -> None:
     LADDER_FILE.write_text(json.dumps(state, indent=1), encoding="utf-8")
 
 
+# `reason` values that are not a firmware protection latch: 2 is the normal
+# segment deadline and 9 is a host abort. Anything else was raised by
+# `src/protection.rs` and is evidence about the machine rather than the gate.
+NON_LATCH_REASONS = (2, 9)
+
+
+def _is_firmware_latch(record: dict) -> bool:
+    """Did the firmware itself stop this run, as opposed to a host gate?
+
+    A record with no stored `reason` is treated as a host-gate failure: the
+    conservative direction is to keep the rung recoverable rather than to
+    declare a permanent latch the capture does not actually evidence.
+    """
+    reason = record.get("reason")
+    return reason is not None and int(reason) not in NON_LATCH_REASONS
+
+
 def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
     """Pass/fail of the rung at `duty` on this ELF, with its reasons."""
     import cohort  # noqa: PLC0415 - sibling script
@@ -258,11 +278,35 @@ def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
     all_runs = state.get(sha, {}).get(str(duty), [])
     if len(all_runs) < RUNG_RUNS:
         return False, [f"only {len(all_runs)} run(s) on this ELF at {duty / 10:.0f}%"]
-    fails = [f"{r['file']}: {', '.join(r['fails'])}" for r in all_runs if r["fails"]]
-    if fails:
+    # **Failures are scoped by origin** (E262, adopting E261b's reviewer call).
+    #
+    # Two unlike things were being treated as one permanent disqualification:
+    #
+    #   (a) a firmware protection latch -- a `reason` the firmware itself
+    #       raised -- which is evidence about the machine, and
+    #   (b) a clean `reason = 2` run failed by a threshold in `cohort.py`,
+    #       which is evidence about the gate.
+    #
+    # The rule's remedy for a failure is "fix the cause and build a new image".
+    # For (b) the cause is **not in the image**, so no new image could ever
+    # clear it while only a new image could clear the record -- a deadlock. So
+    # (a) fails the rung permanently on that ELF, and (b) is reported and
+    # recomputed under the current gate rather than erased. Neither is
+    # re-rolled, and both stay in the file.
+    #
+    # E263: the band correction that would have reclassified the one class-(b)
+    # record was **rejected by its own predeclared anti-fitting test** (it flips
+    # only failures into passes, because the corpus has no mass at the low
+    # edge), so a class-(b) record still fails the rung under the current gate.
+    # The scoping changes why it fails, not that it does.
+    latched = [r for r in all_runs if r["fails"] and _is_firmware_latch(r)]
+    gated = [r for r in all_runs if r["fails"] and not _is_firmware_latch(r)]
+    fails = [f"{r['file']} (firmware latch): {', '.join(r['fails'])}" for r in latched]
+    fails += [f"{r['file']} (host gate): {', '.join(r['fails'])}" for r in gated]
+    if latched:
         fails.append(
-            f"{len(fails)} of {len(all_runs)} attempts at {duty / 10:.0f}% failed on "
-            "this ELF; a retained failure is not erased by later passes"
+            f"{len(latched)} of {len(all_runs)} attempts at {duty / 10:.0f}% latched a "
+            "firmware protection on this ELF; that is permanent for this image"
         )
     fails += cohort.rung_oracle(all_runs[-RUNG_RUNS:])
     return not fails, fails

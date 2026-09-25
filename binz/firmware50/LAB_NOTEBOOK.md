@@ -20828,3 +20828,96 @@ test below can actually bite.
 
 Prediction 4 is the one that decides whether this correction is honest, and I do
 not know its answer at the time of writing.
+
+### E263 — the band correction is rejected by its own predeclared test; rung 400 stays unqualified
+
+Computed after E262 was committed. Three of four predictions right, and **the
+one that decided the question was wrong.**
+
+| prediction | outcome |
+|---|---|
+| 1. band is 991..1011 | **correct** (median 1001, n=169, sd 3.87) |
+| 2. `e247-400_03` (1011) flips to pass | **correct** — and it lands *exactly* on the new high edge |
+| 3. `e253-550_03` (1028) stays failed | **correct**, and permanently so under rule 1 (`reason = 26`) |
+| 4. **at least one prior pass flips to a failure** | **WRONG — zero did** |
+
+#### Why prediction 4 failed, and why that is fatal to the correction
+
+The corpus near the two edges:
+
+| window | records |
+|---|---|
+| **988..992** (the tightened low edge) | **none at all** |
+| 1008..1014 (the loosened high edge) | 1008, 1008, 1008, 1009, **1011** |
+
+**The low edge is empty.** So re-centring by +1 permille cannot cost anything,
+by construction — every record it could possibly affect is on the high side, and
+the only one it moves is the single record whose reclassification I wanted. The
+correction is pure gain for my preferred outcome.
+
+That is exactly what the anti-fitting test was written to catch, and E262
+committed it before the computation so this could not be argued afterwards:
+
+> *"If re-scoring the whole corpus flips only failures into passes and no passes
+> into failures, the correction was fitted to the outcome and must be
+> rejected."*
+
+**Rejected. Rung 400 remains unqualified on image `0D8E3799`, and fifteen rungs
+stand.**
+
+#### What I am not going to do now
+
+**Go shopping for a rule that passes.** The reviewer's alternative (median ± 3 sd
+= ±11.6) is wider on both edges and could never flip a pass either; a tolerance
+interval would be more principled in the abstract, and trying it *now*, after
+seeing that re-centring failed, is precisely the fitting the test forbids. One
+rule was predeclared, it failed, and that is the answer for this image.
+
+The band's 1.2% false-failure rate is still real and still off-centre — E249's
+diagnosis stands. What E263 establishes is that **it cannot be corrected
+outcome-neutrally on this corpus**, because the distribution has no mass at the
+low edge. Any future correction must be predeclared against a corpus that has
+been extended on the low side first, so the test can bite.
+
+And 1011 is **2.5σ** on the measured distribution, not a clear artefact. I have
+been calling it a nuisance failure since E249 on the strength of a rate estimate
+E261 showed to be circular. On the honest reading it is an unremarkable tail
+event that the gate, as written, refuses — which is a statement about the gate's
+width, not about that run.
+
+#### How rung 400 legitimately clears, and the loophole to guard
+
+The next build is a **new ELF** regardless — the recorder change E261 §5 requires
+is substantive firmware work. A new image carries its own ledger, so the ladder
+re-walks from 150 on it and `e247-400_03`'s failure does not transfer. That is
+not retry-until-pass: it is a different binary, and the failed record stays in
+the file and stays reported.
+
+**But it is one step from becoming retry-until-pass**, and I am writing the guard
+down now, before I am the one tempted:
+
+* The new image must carry a **substantive change**, never a no-op rebuild to
+  reset a ledger.
+* The re-walk is a **full re-walk** — every rung, three runs each — not a
+  re-attempt of the rung that failed.
+* Every prior image's failures stay recorded and get cited whenever the rung is
+  reported, so "400 has failed once on a previous image" travels with the claim.
+
+If 400 fails again on the new image, that is two independent images failing the
+same rung on the same gate, which is evidence about the gate and would justify a
+predeclared correction against an extended corpus — the path E263 leaves open
+and explicitly does not take today.
+
+#### Also landed
+
+* `rung_report`'s permanence is now scoped by origin per E262 rule 1: a firmware
+  latch (`reason ∉ {2, 9}`) fails the rung permanently; a host-gate verdict is
+  reported and recomputed, not erased. With the band correction rejected, rung
+  400's class-2 record still fails it under the current gate — the scoping
+  changes *why* it fails, not *that* it does.
+* `bemf_run.py:205`'s docstring still claimed *"a rung's report is its last three
+  runs on that ELF"*. Corrected.
+* Rung accounting now reads `target_duty_tenths`, never the filename, so the
+  `e250-450_*`-drove-475 class of error cannot recur silently.
+
+This is a conclusion, so it goes to both reviews with the recorder design.
