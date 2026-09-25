@@ -23137,3 +23137,67 @@ So the blocker is a governance question, not a measurement one: **does E259's ev
 3. **Then the firmware change worth making** is the coast buffer (8 → 24+ half-periods), not a band. It is the only change that makes any version of this gate an instrument.
 4. **The operator-gated supply measurement E272 names in §7 stays first** among anything that uses the motor — and it is the cheaper of the two options offered there (CC indicator on existing firmware, no new image, no added exposure). Nothing should be re-walked before it.
 5. If, after (2) and (3), the campaign still wants a band change: predeclare it **against a corpus extended on the low side**, as E263 required, with the scale estimator and the pooling level named *before* computation. E263's test was not incoherent — it was a test the corpus could not yet run. The answer to a test you cannot run is to get the data, not to replace the test.
+
+### E276 — predeclaration: the 3/3 restart cohort at 50%
+
+Image `0D8E3799`. The goal requires **3/3 restart at 50% and at 60%**. 50% is
+reachable now; 60% is not, for the reason E275 records.
+
+#### Admissibility, checked rather than assumed
+
+`ladder_admit('Z', sha, 500)` returns **admissible**, because
+`restart_prereq(500)` is 500 and that rung now has three measured passes of its
+own (E254 fixed this key's prerequisite from a fixed 475 — without which a 600
+restart would have been admitted on the 475 rung). `ladder_admit('Z', sha, 600)`
+returns **refused**: *"only 0 measured run(s) on this ELF at 60%"*, which is the
+correct answer and confirms the admission gate is doing its job in both
+directions.
+
+#### The command, and the trap it avoids
+
+`Z` restarts at whatever `provoke_tenths` holds, and that value is **cycled by
+the `x` key**: 250 → 375 → 475 → **500** → 600 → 250, from a boot default of
+250 (`src/run/mod.rs:124,578-587`). So a restart at 50% needs **three presses of
+`x`** — `--pre=xxx` — and nothing else. This is the same class of trap as the
+persistent `climb_tenths`: the duty a key acts on is shell state, not an
+argument, so it must be addressed explicitly from a known start. The runner
+flashes first, so the default of 250 is guaranteed.
+
+Three runs, `--label e276-rst500`, ~80 s each at ~1.8 A — the rung whose three
+holds already ran 54.8 s each.
+
+#### What a restart run actually does
+
+`restart_campaign(io, at)` stops a closed loop at the target duty and
+re-acquires from rest within one run, so a passing record is evidence that the
+arm path, sector identity and wrap safety survive a stop/start at that duty —
+which is what the goal's "preserve atomic stop/arm behaviour, sector identity
+and wrap safety" asks to be demonstrated rather than assumed.
+
+#### Acceptance, predeclared
+
+Each of the three runs must show:
+
+1. `reason = 2` — no protection latch, no deadline miss.
+2. **The restart itself succeeded**, not merely that the run ended cleanly: the
+   capture's restart fields must show a re-acquire at 500 after the stop. If the
+   report does not distinguish a restarted run from an ordinary one, that is a
+   reporting gap and I will say so rather than claim the criterion met.
+3. `ceiling_tenths == 500` — no foldback.
+4. `late_arms = 0` and a measured rate identity (slope < 0) on each run.
+
+**3 of 3 required.** A single failure is a failure of the cohort and will be
+reported as such — not re-rolled. If one run comes back *unmeasured* on the rate
+identity (unphysical coast fit, 3.1% base rate), the cohort needs a fourth
+measured run and that is stated now so it cannot look like a retry later.
+
+#### Predictions
+
+1. **All three pass.** 500 holds 54.8 s three times with `late_arms = 0`, and
+   the restart cycle has passed 3/3 at 47.5% on the predecessor image.
+2. **At most one of the three is unmeasured** on the rate identity — at a 3.1%
+   base rate, P(≥1 in 3) = 9%, so the likely outcome is zero.
+3. The restart is **visible in the capture**. If it is not, prediction 2 of the
+   acceptance list fails and the criterion is *not* met regardless of the
+   reasons — I would rather discover that the instrument cannot evidence a
+   restart than assert 3/3 from a clean `reason = 2`.
