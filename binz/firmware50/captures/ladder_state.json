@@ -12543,6 +12543,108 @@
     "droop_permille": 995.0819672131148,
     "fails": []
    }
+  ],
+  "500": [
+   {
+    "file": "e303-ab-A22_1_01.txt",
+    "duty": 500,
+    "reason": 2,
+    "accepted": 798296,
+    "forced": 0,
+    "too_early": 50,
+    "blank_arms": 995131,
+    "unstable": 1653905,
+    "hold_ms": 64776,
+    "rate_permille": 998,
+    "has_tail": true,
+    "rate_vs_coast_permille": 771,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2149,
+    "coast_crossings": 1363,
+    "hold_ma": 1776,
+    "ceiling_tenths": 500,
+    "worst_ma": 2131,
+    "droop_permille": 984.5557761397238,
+    "fails": [
+     "rate vs coast 771 permille outside 1% (matched window vs time-anchored coast)"
+    ]
+   }
+  ]
+ },
+ "005DC8045E39EDA0BC07CA2D04CFE5BE7A4CA243A7EE129A8EA728242D7D8C72": {
+  "500": [
+   {
+    "file": "e303-ab-B20_1_01.txt",
+    "duty": 500,
+    "reason": 2,
+    "accepted": 791873,
+    "forced": 0,
+    "too_early": 2,
+    "blank_arms": 967478,
+    "unstable": 1691908,
+    "hold_ms": 64776,
+    "rate_permille": 998,
+    "has_tail": true,
+    "rate_vs_coast_permille": 785,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2088,
+    "coast_crossings": 1375,
+    "hold_ma": 1643,
+    "ceiling_tenths": 500,
+    "worst_ma": 2228,
+    "droop_permille": 986.8421052631579,
+    "fails": [
+     "rate vs coast 785 permille outside 1% (matched window vs time-anchored coast)"
+    ]
+   }
+  ]
+ },
+ "8DB7DA900E822459DF56548FC294B3841027336167B28FE4C233E0A5924C7879": {
+  "150": [
+   {
+    "file": "e303-150_01.txt",
+    "duty": 150,
+    "reason": 2,
+    "accepted": 357732,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 357733,
+    "unstable": 2355405,
+    "hold_ms": 82276,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 999,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 710,
+    "coast_crossings": 583,
+    "hold_ma": 25,
+    "ceiling_tenths": 150,
+    "worst_ma": 844,
+    "droop_permille": 999.1749174917492,
+    "fails": []
+   },
+   {
+    "file": "e303-150_02.txt",
+    "duty": 150,
+    "reason": 2,
+    "accepted": 357755,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 357756,
+    "unstable": 2361188,
+    "hold_ms": 82274,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 705,
+    "coast_crossings": 557,
+    "hold_ma": 92,
+    "ceiling_tenths": 150,
+    "worst_ma": 917,
+    "droop_permille": 997.5288303130149,
+    "fails": []
+   }
   ]
  }
 }

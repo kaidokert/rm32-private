@@ -303,10 +303,21 @@ pub const ADVANCE_LOW: u32 = 20;
 /// (always 62) -- about **12 µs of interval headroom, ~3 rungs**.
 ///
 /// Measured need: `thin_count` (`wait − spent <= 2 µs`) is 0 through rung 350
-/// and then 8 / 11 / 121 / 1062 / **4074** per 10⁶ accepted commutations at
-/// rungs 425 / 450 / 475 / 500 / 525, while `spent_max_us` stays pinned at 11
-/// and `late_arms` is still 0. At 52.5% the mean `ci` is 73 -- on the level-22
-/// line -- and the minimum is 54, twenty µs below it (E300).
+/// and then 8 / 11 / 121 / **688** / **4118** per 10⁶ accepted commutations at
+/// rungs 425 / 450 / 475 / 500 / 525 (E303 corrects E300's 1062 at rung 500:
+/// no emitted denominator yields that figure, and the corrected series is
+/// smoother -- 5.7x then 6.0x rather than a spurious 8.8x then 3.8x).
+///
+/// Two labels in E298/E300 were also wrong and are corrected here. `ci_us` is
+/// **the estimate at the stop**, not a mean (`report.rs`), so "mean ci" in
+/// those entries is the mean over runs of a *last value*; the firmware's own
+/// hold mean is `mean_ci_us`, and at rung 525 it reads **74**, one µs
+/// *above* the always-clear line rather than sitting on it. And
+/// `spent_max_us = 11` is a **whole-run saturating maximum**, not a typical
+/// arm cost -- the mode is ~6 -- so every margin derived from it is a
+/// worst-case margin, and it is image-specific (10-24 across older images).
+///
+/// `late_arms` is still 0 at every clean rung.
 ///
 /// **This is a control schedule, not a protection threshold**, and it is the
 /// "bounded control improvement" the campaign goal asks for. Nothing about the

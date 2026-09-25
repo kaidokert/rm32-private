@@ -231,6 +231,14 @@ const _: () = assert!(RAW_DEPTH_FRACTIONS[RAW_DEPTH_TRIP_IX] == 950);
 // are measuring the same thing twice.
 const _: () = assert!(RAW_DEPTH_FRACTIONS[0] < DEPTH_FRACTIONS[3]);
 
+// `BusDepth::with_fractions` precomputes `frac / 5` (E303), so every fraction
+// must be an exact multiple of 5 or the scaled comparison silently shifts the
+// line. E291 relied on this and only said so in a comment; it is checked now.
+const _: () = assert!(DEPTH_FRACTIONS[0] % 5 == 0 && DEPTH_FRACTIONS[1] % 5 == 0);
+const _: () = assert!(DEPTH_FRACTIONS[2] % 5 == 0 && DEPTH_FRACTIONS[3] % 5 == 0);
+const _: () = assert!(RAW_DEPTH_FRACTIONS[0] % 5 == 0 && RAW_DEPTH_FRACTIONS[1] % 5 == 0);
+const _: () = assert!(RAW_DEPTH_FRACTIONS[2] % 5 == 0 && RAW_DEPTH_FRACTIONS[3] % 5 == 0);
+
 /// How deep, and for how long, the bus actually sits below its pre-run
 /// reference -- the distribution a slow-droop stop would have to be chosen from.
 ///
@@ -259,6 +267,25 @@ pub struct BusDepth {
     /// [`DEPTH_FRACTIONS`], the raw one [`RAW_DEPTH_FRACTIONS`] (E284). Carried
     /// per instance so the two cannot be confused at the call site.
     fracs: [u32; 4],
+    /// `fracs[i] / 5`, **precomputed at construction** (E303).
+    ///
+    /// E291 scaled both sides of the cross-product by 1/5 to fix a real
+    /// overflow, and wrote `rhs * (self.fracs[i] / 5)` inline. `fracs` is a
+    /// struct field, so the compiler cannot fold that division: on thumbv6m it
+    /// lowered to `bl __aeabi_uidiv` **inside the four-iteration loop**, and
+    /// `scan_pass` calls `observe` twice per scan -- eight soft divisions per
+    /// ADC scan at ~9.9 kHz, in the foreground that hosts every bus judgement.
+    ///
+    /// Measured cost of that mistake, rung 150, matched window:
+    /// `loop_iters_closed` **3 976 438 -> 2 058 998 (-48%)** and
+    /// `loop_gap_max_us` **151 -> 225 (+49%)**. The module comment two hundred
+    /// lines above this one warns against exactly it: "a division here would
+    /// put `__aeabi_uidiv` in the foreground loop on every scan".
+    ///
+    /// Precomputing costs four const divisions per run and restores the
+    /// multiply-only inner loop. Every fraction is asserted a multiple of 5, so
+    /// this is exact.
+    scaled: [u32; 4],
 }
 
 impl Default for BusDepth {
@@ -287,6 +314,7 @@ impl BusDepth {
             below: [0; 4],
             run: [0; 4],
             longest: [0; 4],
+            scaled: [fracs[0] / 5, fracs[1] / 5, fracs[2] / 5, fracs[3] / 5],
             fracs,
         }
     }
@@ -330,7 +358,7 @@ impl BusDepth {
         let rhs = u32::from(ref_bus) * u32::from(vref);
         let mut i = 0;
         while i < self.fracs.len() {
-            if lhs < rhs * (self.fracs[i] / 5) {
+            if lhs < rhs * self.scaled[i] {
                 self.below[i] = self.below[i].saturating_add(1);
                 self.run[i] = self.run[i].saturating_add(1);
                 if self.run[i] > self.longest[i] {

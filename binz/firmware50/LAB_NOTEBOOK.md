@@ -27045,3 +27045,163 @@ and the reviews, which exist to stop me being wrong, were also the thing
 generating new images and therefore new ladders. **Rigor that regenerates its
 own work is not rigor.** Rule 3 is the fix: a batch that cannot name a decision
 it changes does not run.
+
+### E303 — the division I introduced, the ratchet that would have caught it, and three numbers I propagated wrongly
+
+Both reviews of E298–E301 are dispositioned in E304 below. This entry is the
+repair, because one finding was a defect I shipped and it had to be fixed before
+anything else ran.
+
+#### What I broke
+
+E291 fixed a real `u32` overflow in `BusDepth::observe` by scaling both sides of
+the cross-product by 1/5. I wrote it inline:
+
+```rust
+if lhs < rhs * (self.fracs[i] / 5) {
+```
+
+`fracs` is a **struct field**, so the compiler cannot fold that division. On
+thumbv6m it lowered to a **call, inside the four-iteration loop**, and
+`scan_pass` calls `observe` **twice per scan** — eight soft divisions per ADC
+scan at ~9.9 kHz, in the foreground that hosts every bus judgement and sits
+upstream of two hard stops.
+
+Measured at rung 150, matched window, matched ISR load (`drive_scans` 885 922 vs
+885 916, `unstable` within 0.03%):
+
+| | old `480263F1` | broken `5D4BF25C` | **fixed `7D3B70F0`** |
+|---|---|---|---|
+| `loop_iters_closed` | 3 976 438 / 3 976 719 / 3 974 325 | 2 058 998 / 2 055 057 / 2 047 620 | **4 023 548** |
+| `loop_gap_max_us` | 151 / 140 / 156 | 225 / 209 / 229 | **151** |
+| `r4` (revisit tries) | 11 506 / 11 457 / 11 282 | 6 393 / 6 471 / 6 257 | **10 941** |
+
+**−48% of the foreground and +49% on its worst gap**, and the level-revisit
+poll — which exists because falling-armed sectors accept ~10% without it
+(E046–E055) — lost 44% of its opportunities. At rung 500 that poll is already
+the load-bearing, already-marginal path (`r4/v4` = 47 203/19 381, 41%
+accepted), so this was a **control** change wearing an observer's label.
+
+`protection.rs:246-248` warns against precisely this — *"a division here would
+put `__aeabi_uidiv` in the foreground loop on every scan"* — and E291's own
+comment claimed that scaling "the two constants (not the products)" avoided it.
+**False as compiled.** The constants are a runtime array.
+
+**Fix:** precompute `fracs[i] / 5` into a `scaled: [u32; 4]` field at
+construction. Four const divisions per run, a multiply-only inner loop,
+arithmetically identical because every fraction is a multiple of 5 — which is
+now **asserted** rather than remarked:
+
+```rust
+const _: () = assert!(DEPTH_FRACTIONS[0] % 5 == 0 && …);
+const _: () = assert!(RAW_DEPTH_FRACTIONS[0] % 5 == 0 && …);
+```
+
+**Acceptance test, predeclared before the run:** `loop_iters_closed` back at
+~3.97 M at rung 150. Measured **4 023 548** — marginally *better* than
+pre-defect, consistent with the precomputation also removing E291's inline
+arithmetic. `reason=2`, `gap_max` 151, `r4` 10 941. **Passed.**
+
+#### How it got past me twice, and the ratchet that fixes it
+
+I disassembled `BusDepth::observe` on both images, saw `movs r6, #200` and
+`movs r1, #5`, and reported the fix verified. **The `bl` was two instructions
+later and I did not follow it.** E301 states "verified by disassembly, not by
+trusting cargo" — the verification was real and insufficient.
+
+Nothing else could see it either: `isr_diff.py` compares the four ISR roots and
+says in its own docstring that thread mode is invisible to it;
+`isr_audit.py` and `WCET_ESTIMATES.md` cover roots only. `BusDepth::observe` is
+thread mode. **The one gate that could have caught a per-scan cost was blind by
+construction, and the operator is the one who suggested the fix.**
+
+`scripts/insn_ratchet.py` counts instruction **classes** per symbol against a
+checked-in baseline and fails the build on any drift in a hazard class:
+
+```
+symbol                                     insns    div    mul    irq   excl helper
+ADC_COMP                                     728      0      4      9      0      0
+DMA1_CHANNEL1                                 37      0      0      2      0      0
+TIM16                                        332      0      2      6      0      0
+TIM6_DAC_LPTIM1                              155      0      0      1      0      0
+protection::BusDepth::observe                 50      0      4      0      0      0
+```
+
+`div` / `mul` / `irq` (`cpsid`/`cpsie`) / `excl` / `helper` ratchet at **zero
+drift in both directions** — a count that *fell* is also a changed hot path and
+wants a reason. `insns` gets ±8 of slack. So the critical-section count of every
+ISR root is now pinned: a new `cpsid` in `ADC_COMP` is a build failure, which
+is the structure the atomic stop/arm work exists to protect.
+
+**Verified against the broken image**, which is the only test that matters:
+
+```
+protection::BusDepth::observe        53 (+3) 1 (+1)      4      0      0  1 (+1)
+RATCHET FAILED (2): div 0 -> 1 (+1) ; helper 0 -> 1 (+1)     [exit 1]
+```
+
+**And the ratchet had two defects of its own, both found by running it rather
+than by reading it:**
+
+1. Its first `WATCHED` list used Rust names (`roots::comp_root`), which LTO
+   inlines away. It found **1 of 8 symbols and blessed a one-symbol baseline
+   without complaint** — a silent pass. Now it uses the vector symbols
+   (`ADC_COMP`, `TIM16`, `TIM6_DAC_LPTIM1`, `DMA1_CHANNEL1`, the same four
+   `isr_diff.py` uses) and **refuses below `MIN_SYMBOLS = 5`**.
+2. Its `div` regex matched only `__aeabi_u?idiv`. **This toolchain does not emit
+   that name** — it calls
+   `compiler_builtins::int::specialized_div_rem::u32_div_rem`. So the first
+   version of the check **could not see its own motivating bug.** Widened to
+   cover `u32_div_rem`/`u64_div_rem`/`__udivsi3`/`__divsi3`.
+
+That second one is the [[feedback-instrument-must-fail-loudly]] case in its
+purest form: a gate written to catch a specific defect, which would have passed
+that defect, and which only failed loudly once pointed at the broken binary.
+
+#### Three numbers I propagated wrongly, corrected in source and here
+
+1. **The rung-500 thin rate is 688 per 10⁶, not 1062.** No emitted denominator
+   yields 1062 (`accepted` 688.5, `zc_acc` 687.7, `drive_scans` 767.4,
+   `hold_accepted` 831.3). Wrong in E300's table, in E301's prediction 4, and I
+   had copied it into `run/policy.rs`. The corrected series — **8 / 11 / 121 /
+   688 / 4118** — is *smoother*: 475→500 = 5.7× and 500→525 = 6.0×, where 1062
+   manufactured a spurious 8.8× then 3.8×. "An order of magnitude every two
+   rungs" survives and is conservative (425→475 = 14.6×, 475→525 = 34×).
+2. **`ci_us` is the estimate at the stop, not a mean.** Every "mean `ci`" in
+   E298/E300 is the mean over runs of a *last value*. The firmware emits the
+   real hold mean as `mean_ci_us`, and at rung 525 it is **74** — one µs
+   *above* the always-clear line — not 73 sitting on it. Same substitution at
+   rung 600 is 3× larger: the hold mean is **67**, not 49, so "24 µs below the
+   line" should read **7 µs below, with the final estimate 25 µs below**.
+3. **`spent_max_us = 11` is a whole-run saturating maximum**, not a typical arm
+   cost; E239 records a **modal spend of 6**. So every margin I quoted is a
+   worst-case margin presented as *the* margin. It is also image-specific —
+   10–24 across older images, 11 in all 48 of this lineage — so it anchors
+   nothing outside it.
+
+Two smaller slips from the same reviews, corrected without ceremony: E301's
+"+1 µs to +3 µs at `ci ≈ 76`" is **+1 to +4** (`wait(76,20) = 15`), and "~3
+rungs" of headroom is **~2** (12 µs ÷ 0.20 µs per duty-tenth = 2.4 rungs).
+
+#### Images
+
+| image | crc32 | sha256 | note |
+|---|---|---|---|
+| `7D3B70F0.e303-nodiv-adv22.elf` | 7D3B70F0 | `8DB7DA900E822459…` | production advance, division removed |
+| `47680FD8.e303-nodiv-adv20.elf` | 47680FD8 | `C36BD0340DA10C30…` | advance-20 variant for the A/B |
+
+Both manifested. `5D4BF25C` and `8FE909B3` are **superseded and must not be
+used**: they carry the foreground regression, so any `thin_count` or
+`loop_iters` measured on them is not comparable.
+
+#### What this cost, and the rule it confirms
+
+Six runs and a build. What it bought: the foreground restored and *measured*
+back, a mechanical gate on the class of defect, and three propagated numbers
+corrected before they anchored a decision.
+
+It also confirms the goal's rule 2 from the other direction. The 48-run ladder
+I had queued on `5D4BF25C` would have qualified an image with a 48% foreground
+regression, and every rung would have passed — `reason=2` throughout, because
+the regression does not stop a run at low duty. **A full ladder would not have
+caught this. One changed-path check did.**
