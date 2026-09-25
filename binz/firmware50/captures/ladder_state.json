@@ -13688,6 +13688,56 @@
     "fails": [],
     "anchored": "E333 qualification, image 439BF1CD. Harder rungs done first: 600 is 3/3 with rung_report PASS, 575 is 3/3. Operator-metered: clamp 3.00 A, 2.15 A during a rung-600 hold vs proxy 2280 = 6.0% over-read, so the hardest rung draws 71.7% of clamp and every rung below is strictly easier electrically. rung 500."
    }
+  ],
+  "150": [
+   {
+    "file": "reg150_01.txt",
+    "duty": 150,
+    "reason": 2,
+    "accepted": 249192,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 249192,
+    "unstable": 1650030,
+    "hold_ms": 57274,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 698,
+    "coast_crossings": 548,
+    "hold_ma": 53,
+    "ceiling_tenths": 150,
+    "worst_ma": 971,
+    "droop_permille": 1000.1603211694221,
+    "fails": [],
+    "anchored": "E335 lower-rung regression and protection coverage, image 439BF1CD. Ladder: 500/525/575/600 all PASS 3/3; 550 is 2/3 with one FastBusSag at LOWER current than the passing 600 runs (flagged, not excised). Restart cohorts: 3/3 at both 600 and 500, recovered=1 in all six, second segments holding 34.2 s. Operator-metered: clamp 3.00 A, 2.15 A at rung 600 = 71.7% of clamp. Regression anchor 150."
+   }
+  ],
+  "375": [
+   {
+    "file": "reg375_01.txt",
+    "duty": 375,
+    "reason": 2,
+    "accepted": 542920,
+    "forced": 0,
+    "too_early": 3,
+    "blank_arms": 542911,
+    "unstable": 1163000,
+    "hold_ms": 45776,
+    "rate_permille": 997,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1000,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 1650,
+    "coast_crossings": 1207,
+    "hold_ma": 864,
+    "ceiling_tenths": 375,
+    "worst_ma": 1512,
+    "droop_permille": 991.1182027730241,
+    "fails": [],
+    "anchored": "E335 lower-rung regression and protection coverage, image 439BF1CD. Ladder: 500/525/575/600 all PASS 3/3; 550 is 2/3 with one FastBusSag at LOWER current than the passing 600 runs (flagged, not excised). Restart cohorts: 3/3 at both 600 and 500, recovered=1 in all six, second segments holding 34.2 s. Operator-metered: clamp 3.00 A, 2.15 A at rung 600 = 71.7% of clamp. Regression anchor 375."
+   }
   ]
  }
 }
