@@ -34613,3 +34613,99 @@ tripped=0`, 2494 mA). 60 % is reached with the loop genuinely tracking
 (`verdict=ok`, 991–1019 per mille of 6× coast) and, at advance 20, with rung
 600's worst current block down to **3024 mA — the same as the 575 run that held
 48.3 s**. The supply is not the blocker; a single estimator excursion is.
+
+### E324 — the filter floor was the mechanism: rung 600 held **13.8 s**, up from 152 ms. And the supply constraint has finally separated from the timing one.
+
+I was wrong to close E323 by saying every permitted avenue was exhausted. The
+persistence filter's depth is a **control parameter, not a protection**, and
+E322 had just decoupled it from the `wait` boundary it was confounded with.
+
+#### The argument, made before the run
+
+The map floors at **3** reads for every interval at or below 73 µs, and that
+boundary falls between rung 525 (ci 74, depth 4) and rung 550 (ci 71, depth 3)
+— exactly where the campaign's failure lives:
+
+```
+depth 4 rungs (475, 500, 525):   6 events /  8183 s = 0.00073 /s
+depth 3 rungs (550, 575):       11 events /   948 s = 0.01160 /s
+                        rate ratio 15.8x, exact conditional p = 1.0e-07
+```
+
+The smooth duty trend accounts for only **2.4–4.0×** of that (hazard doubles
+every 1.25–1.95 % duty; 525 → 550 is 2.5 %), leaving a **4–6.5× excess at one
+discrete step** — and the only discrete thing at ci 73 is that constant.
+
+#### The result
+
+Filter floor 3 → 5, on top of the advance-20 baseline E322 measured at the same
+rung, so a single variable. `captures/2026-09-25/e324-600-deepfilter_01.txt`:
+
+| run | `hold_ms` | blocks | `hold_ma` | `worst_ma` | `thin`/10⁶ |
+|---|---|---|---|---|---|
+| e278 adv22 floor3 | 1307 | 130 | 2869 | 3490 | — |
+| e318 adv22 floor3 | 31 | 3 | 2988 | 3115 | 2157 |
+| E322 adv20 floor3 | 152 | 15 | 2764 | 3024 | 18 |
+| **E324 adv20 floor5** | **13799** | **1366** | 2834 | **3818** | 715 |
+
+**13.8 seconds at 60 %** — 91× the advance-20 baseline, 10.6× the best prior
+run at this rung, with the loop tracking correctly (`verdict=ok`,
+`zc_permille_of_6x_coast=1001`) and speed recovered to the advance-22 level
+(`ehz_from_sector` 2450 → 2487). `too_early` rose 14× (23 → 329): the gate is
+refusing far more edges, which is exactly the mechanism — **the descent was
+being fed by edges a 3-read filter admitted and a 5-read filter rejects.**
+
+It still latched, at `ci_at_late=47`, `spent=9`, `ci_min=43`. And `thin` rose
+40× (18 → 715 per 10⁶), which is the honest cost: two extra reads add ~0.5 µs
+to `spent` while `wait` is unchanged. So depth trades margin for descent
+resistance, and at this floor the trade is strongly favourable — 91× on the
+hold for 40× on a near-miss counter that does not itself stop a run.
+
+#### And the constraint has changed hands
+
+With 13.8 s of hold I have **1366 current blocks** where every prior rung-600
+run had 3, 15 or 130. `worst_ma` reads **3818 mA**, and the fixture refused the
+run for it: within 5 % of the firmware's own 4 A allowance, where
+`AverageCurrent` folds back — and the goal says a foldback cannot qualify a
+target.
+
+`worst_ma` is an extreme value and it grows with the sample: 3115 (3 blocks),
+3024 (15), 3490 (130), **3818 (1366)**. A 30-second hold is ~3000 blocks. So
+**the honest projection is that a qualifying hold at 600 runs into the 4 A
+foldback**, and for the first time that is a measurement rather than a
+projection from three blocks or from an injected capture.
+
+So the two constraints have separated, which two prior rung-600 runs could not
+manage because both stopped on LateArm inside 1.3 s:
+
+* **the timing stop is no longer the binding one at 600** — 13.8 s of hold, and
+  the remaining latch is at ci 47 where the descent still reaches;
+* **the current tail is.** 2834 mA mean is 94 % of the 3 A supply clamp, and
+  the worst block is 95 % of the firmware's 4 A foldback threshold.
+
+#### Implementation note, because the first attempt was wrong
+
+I first raised `MAP_OUT_LOW`, which is the map's additive **base**
+(`MAP_OUT_LOW + add`), so it shifted the entire curve up by two and took the
+deepest schedule from 12 reads to **14** — past the audited loop bound.
+`reference_filter_never_exceeds_twelve_reads` caught it on the first run. The
+shipped form is a separate `FILTER_FLOOR` applied as `max(floor, mapped)`, with
+a new test asserting the floor lifts only the shallow end, leaves the 12 bound
+intact, and stays monotone. The two reference-parity tests are scoped to the
+default build, since `deep-filter` breaks that parity deliberately rather than
+accidentally. 346 tests default, 344 with the feature, clippy clean in both.
+
+#### Next
+
+Deeper floors are the obvious continuation — the mechanism is confirmed and the
+trade at floor 5 is strongly favourable, so floor 6 should extend the hold
+further at ~0.25 µs of `spent` per level. But the current tail is now what
+decides whether 60 % can be *qualified* rather than merely held, and it is the
+one constraint I cannot engineer around: it is the motor's draw at that duty on
+this supply.
+
+**Predeclared, before any build: floor 6, same advance, rung 600.** If the hold
+extends past 13.8 s the depth trend is real and monotone. If it shortens, floor
+5 is the optimum of the margin/descent trade and deeper filtering costs more in
+`spent` than it buys. Either way the current tail gets a longer sample, which is
+what the qualification question now turns on.

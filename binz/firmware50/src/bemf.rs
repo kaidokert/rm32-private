@@ -57,13 +57,58 @@ const MAP_RECIP: u32 = 1475;
 const MAP_SHIFT: u32 = 16;
 pub const MAP_IN_LOW: u32 = 100;
 pub const MAP_IN_HIGH: u32 = 500;
+/// The reference's floor is **3** reads. `deep-filter` raises it to **5**
+/// (E324).
+///
+/// **Why.** The map floors at 3 for every `average_interval` at or below
+/// 73 µs, and that boundary falls between rung 525 (ci 74, depth 4) and rung
+/// 550 (ci 71, depth 3) — exactly where this campaign's failure appears:
+///
+/// ```text
+/// depth 4 rungs (475, 500, 525):   6 events /  8183 s = 0.00073 /s
+/// depth 3 rungs (550, 575):       11 events /   948 s = 0.01160 /s
+///                                  rate ratio 15.8x, exact p = 1.0e-07
+/// ```
+///
+/// The smooth duty trend accounts for only **2.4–4.0×** of that (the hazard
+/// doubles every 1.25–1.95 % duty, and 525 → 550 is 2.5 %), leaving a **4–6.5×
+/// excess at a single discrete step** — and the only discrete thing at ci 73 is
+/// this constant.
+///
+/// E322 is what makes the argument admissible: it decoupled the depth step
+/// from the `wait` boundary, which had been confounded with it to within one
+/// microsecond since E314. Advance 20 moved the wait threshold and the latch
+/// followed it down to ci 46 rather than disappearing, so the wait boundary is
+/// *not* what separates 525 from 550. Depth is the surviving discrete
+/// correlate.
+///
+/// **What it costs and what it risks.** Two extra live comparator reads per
+/// accepted crossing, ~0.25 µs each by the static model, on the pre-arm path —
+/// so `spent` rises by ~0.5 µs, against a `wait` of 9–11 at these rungs. And a
+/// deeper filter refuses more edges: if it refuses *real* crossings the
+/// commutation is missed and the tracking stop fires, which is a different and
+/// equally informative failure. The audited loop bound is unchanged — the
+/// clamp at `MAP_OUT_HIGH` still bounds it at 12.
 pub const MAP_OUT_LOW: u8 = 3;
 pub const MAP_OUT_HIGH: u8 = 12;
+
+/// Applied as a **floor on the mapped result**, not as the map's base.
+///
+/// The first attempt at this raised `MAP_OUT_LOW`, which is the map's additive
+/// base (`MAP_OUT_LOW + add`), so it shifted the entire curve up by two and
+/// took the deepest schedule from 12 reads to 14 — past the audited loop
+/// bound. `reference_filter_never_exceeds_twelve_reads` caught it on the first
+/// run. A floor is `max(FILTER_FLOOR, mapped)`, which touches only the
+/// intervals where the map is already at or below it.
+#[cfg(not(feature = "deep-filter"))]
+pub const FILTER_FLOOR: u8 = MAP_OUT_LOW;
+#[cfg(feature = "deep-filter")]
+pub const FILTER_FLOOR: u8 = 5;
 
 #[inline]
 pub const fn mapped_filter_level(average_interval: u32) -> u8 {
     if average_interval <= MAP_IN_LOW {
-        return MAP_OUT_LOW;
+        return FILTER_FLOOR;
     }
     if average_interval >= MAP_IN_HIGH {
         return MAP_OUT_HIGH;
@@ -71,7 +116,8 @@ pub const fn mapped_filter_level(average_interval: u32) -> u8 {
     let span = average_interval - MAP_IN_LOW;
     let add = (span * MAP_RECIP) >> MAP_SHIFT;
     // `add` is bounded by 9 over the clamped range, so this cannot overflow.
-    MAP_OUT_LOW + add as u8
+    let mapped = MAP_OUT_LOW + add as u8;
+    if mapped < FILTER_FLOOR { FILTER_FLOOR } else { mapped }
 }
 
 impl FilterPolicy for MappedFilter {
@@ -580,6 +626,39 @@ mod tests {
         }
     }
 
+    /// The floor is a floor: it lifts the shallow end and leaves the deep end
+    /// exactly where the reference put it, including the audited 12 bound that
+    /// the first attempt at this broke by raising the map's additive base.
+    #[test]
+    fn the_filter_floor_lifts_only_the_shallow_end() {
+        // Half-µs inputs, as the map takes them. 500 and above is the deep clamp.
+        assert_eq!(mapped_filter_level(500), MAP_OUT_HIGH, "deep clamp untouched");
+        assert_eq!(mapped_filter_level(4000), MAP_OUT_HIGH, "and beyond it");
+        assert!(mapped_filter_level(100) >= FILTER_FLOOR, "the short-interval return");
+        let mut x = 100;
+        while x <= 500 {
+            let d = mapped_filter_level(x);
+            assert!(d >= FILTER_FLOOR, "below the floor at {x}: {d}");
+            assert!(d <= MAP_OUT_HIGH, "past the audited bound at {x}: {d}");
+            x += 1;
+        }
+        // Monotone, so the floor cannot introduce a dip.
+        let mut prev = 0;
+        let mut x = 100;
+        while x <= 500 {
+            let d = mapped_filter_level(x);
+            assert!(d >= prev, "not monotone at {x}");
+            prev = d;
+            x += 1;
+        }
+    }
+
+    /// **Guards the DEFAULT build's reference parity.** `deep-filter` raises
+    /// `FILTER_FLOOR` and therefore breaks this map's parity with the
+    /// reference deliberately, which is the whole point of the feature, so the
+    /// assertion is scoped to the configuration it describes rather than
+    /// weakened for both.
+    #[cfg(not(feature = "deep-filter"))]
     #[test]
     fn mapped_filter_reproduces_the_reference_map_exactly() {
         // The reciprocal multiply must equal the truncating integer division
@@ -596,6 +675,12 @@ mod tests {
         }
     }
 
+    /// **Guards the DEFAULT build's reference parity.** `deep-filter` raises
+    /// `FILTER_FLOOR` and therefore breaks this map's parity with the
+    /// reference deliberately, which is the whole point of the feature, so the
+    /// assertion is scoped to the configuration it describes rather than
+    /// weakened for both.
+    #[cfg(not(feature = "deep-filter"))]
     #[test]
     fn mapped_filter_clamps_at_both_ends() {
         assert_eq!(mapped_filter_level(0), MAP_OUT_LOW);

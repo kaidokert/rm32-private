@@ -81,6 +81,13 @@ sag-ring = []
 # `P(latch/arm) = P(wait <= 9) x P(spent >= 9)`, whose other factor is already
 # measured at 0.0297 over 20 478 archived chain arms.
 margin-hist = []
+# Raises the persistence filter's floor from the reference's 3 reads to 5
+# (E324). The map floors at 3 for every interval at or below 73 us, and that
+# boundary sits between rung 525 (depth 4, 0 events in 703 s) and rung 550
+# (depth 3, 10 events in 876 s): pooled, 15.8x with exact p = 1.0e-07, against
+# a smooth duty trend that accounts for only 2.4-4.0x. E322 decoupled the step
+# from the `wait` boundary it had been confounded with. Default OFF.
+deep-filter = []
 
 [dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }

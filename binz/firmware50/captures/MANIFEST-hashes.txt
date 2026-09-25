@@ -1469,3 +1469,14 @@ E3BB2544.e315-marginhist.elf
          (the E300 intervention), plus the accept_wait dead-store removal
          (ADC_COMP 758). Predeclared at rung 600: wait20 = 9/10 at the two
          observed 600 stop intervals (ci 49/50) where wait22 = 8.
+
+08135D56.e324-deepfilter-adv20.elf
+  crc32  08135D56
+  sha256 7707478D80C7D6AE8F05D55D3690E023950B06EDEEDEF767A9DE55C44EDDAC97
+  build  cargo build --release --features deep-filter,advance-low
+  E324   Persistence filter FLOOR raised 3 -> 5 (control parameter, not a
+         protection), on top of the advance-20 baseline E322 measured at
+         rung 600. Single variable against that baseline. The depth 4->3
+         step at ci 73 carries a 15.8x hazard ratio (p=1.0e-07) against a
+         duty trend accounting for only 2.4-4.0x. ADC_COMP 742, hazard
+         classes unchanged, the audited 12-read bound intact and tested.
