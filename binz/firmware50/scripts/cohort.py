@@ -88,6 +88,22 @@ def coast_ehz(iv: list[int]) -> int:
     def pair_sums(h: list[int]) -> list[int]:
         return [h[i] + h[i + 1] for i in range(len(h) - 1) if h[i] + h[i + 1] > 0]
 
+    # **Truncate at the first unfilled slot before pairing** (E281). The
+    # firmware's buffer is fixed-length and zero-padded -- 32 slots since E281,
+    # 8 before -- so a rotor that yields fewer transitions leaves trailing
+    # zeros. The filter below keeps any pair whose SUM is positive, and a real
+    # half-period paired with a zero sums positive, so `[250, 0]` was admitted
+    # as a spurious half-length cycle. Measured: the same eight real values read
+    # 1974 eHz alone and **1763 with 24 zeros appended** -- an 11% corruption of
+    # the quantity the oracle comparison rests on.
+    #
+    # `speed.coast_fit` already stops at the first non-positive value; this is
+    # the same rule, and the two estimators must agree about where the data
+    # ends. Found by auditing the readers before widening the buffer rather than
+    # after -- which is the one thing E265 and E269 said to do first.
+    end = next((i for i, v in enumerate(iv) if v <= 0), len(iv))
+    iv = iv[:end]
+
     ps = pair_sums(iv[1:]) or pair_sums(iv)
     n = len(ps)
     if n == 0:

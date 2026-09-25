@@ -42,7 +42,7 @@ pub const TAIL_WINDOW_US: u32 = 2_000_000;
 /// this firmware. `l` (explore) uses `BEMF_EXPLORE_MS` instead -- 45 s total,
 /// ~20 s of hold, which `cohort.py`'s 30 s minimum hold then fails, so an
 /// exploratory key cannot produce a qualifying run by construction.
-pub const BEMF_TOTAL_MS: u32 = 80_000;
+pub const BEMF_TOTAL_MS: u32 = 90_000;
 
 /// The exploratory window: the same startup and ramp, about 10 s at target
 /// (E137). One of these precedes every rung's 3/3 cohort, and it is not

@@ -23690,3 +23690,123 @@ post-restart dwell). Three items now, one ELF.
 | 3/3 restart at 60% | blocked |
 | **demonstrated protection coverage** | **3 of 4 at 50%**; sharp-droop side demonstrated only at 15% |
 | both reviews on every conclusion | six appended; **this entry needs its pair** |
+
+### E281 — the new image: coast buffer 8 → 32, window 80 → 90 s, and a host defect caught before the bench
+
+**`7CCCE8A8.e281-coast32.elf`**, sha256 `2264ffa36bc78b1ab96185d1f175fe826126ec46c6e08322dc8d9305e3295848`.
+
+I had been treating "this needs a new ELF" as a pause. It is not one — the bench
+is available and nothing external is constraining it. Two evidenced repairs,
+both foreground-only.
+
+#### 1. The coast buffer, 8 half-periods → 32
+
+This is the defect behind every disputed reading in the campaign.
+`speed.coast_fit` pairs the reported half-periods into full cycles and
+least-squares an intercept back to the stop, so **8 gave 4 points and 2
+residual degrees of freedom.** Measured consequences, all from E273:
+
+* the identity's scatter is **93% this estimator** (`powered` sd 1.03 per mille
+  against `coast@0` sd 3.76 over six runs of one image);
+* **10 of 318 runs (3.1%) produce a physically impossible positive slope** —
+  the rotor accelerating with the bridge off — and their mean residual is
+  **+11.9** per mille against **+0.1** for the rest;
+* both records that blocked rungs 400 and 550 on the rate gate are in that class.
+
+Intercept SE against length, at the measured spacing (t₀ 173 µs, cycle 508 µs):
+
+| half-periods | cycle points | intercept SE | window | speed change across it |
+|---|---|---|---|---|
+| **8 (was)** | 4 | ×1.000 | 2.2 ms | 0.19% |
+| 24 | 12 | ×0.520 | 6.3 ms | 0.54% |
+| **32 (now)** | **16** | **×0.446** | 8.3 ms | **0.71%** |
+
+32 more than halves the SE, and 0.71% of speed change keeps a linear fit
+unbiased. There is data to fill it: `COASTTIMING trans=1351` at rung 450 means
+1351 transitions were already being seen and the first 8 kept.
+
+#### 2. `BEMF_TOTAL_MS`, 80 000 → 90 000 ms
+
+E277 measured that a restart campaign shares **one** window with its first
+segment: 29 477 ms to the end of the first report, then 26 233 ms of
+off+startup+ramp, leaving a maximum post-restart hold of **24 290 ms**. A 30 s
+dwell needs ≥ **85 710**; 90 000 yields ~34 290 ms with margin, at 10 s per run.
+
+#### A host defect caught before the bench, by doing the thing I said to do
+
+Widening the buffer changes what the host receives, so **I audited the readers
+before the change rather than after** — which is exactly the lesson E265 and
+E269 each recorded after failing to. It found one:
+
+> `speed.coast_fit` stops at the first non-positive value, so padding is
+> harmless to it. **`cohort.coast_ehz` did not.** Its `pair_sums` keeps any pair
+> whose *sum* is positive, and a real half-period paired with a zero sums
+> positive — so `[250, 0]` was admitted as a spurious half-length cycle.
+> Measured: the same eight real values read **1974 eHz alone and 1763 with 24
+> zeros appended — an 11% corruption.**
+
+That estimator feeds the oracle comparison (`cohort.py:304`) and
+`zc_permille_of_6x_coast`, so shipping the wider buffer without this fix would
+have silently poisoned them on every new capture. Fixed to truncate at the first
+unfilled slot, so the two estimators now agree about where the data ends.
+Verified at pad 0, 8 and 24 — identical results — and `e274-450m_01` still reads
+1005, unchanged.
+
+**This is the first time in the campaign that the reader audit ran first and
+caught something.** The two prior format changes (E264's units, E265's chain
+rate) each shipped a defect that a reader audit would have found.
+
+#### Audits
+
+| audit | result |
+|---|---|
+| host tests | **344 + 9 pass** |
+| clippy, target | clean |
+| `sag_selftest.py` | 48 of 48 |
+| four-root arithmetic, `shell-pwm` | **4 roots certified clean** |
+| **four roots vs the qualified image** | **identical: 37 / 728 / 332 / 155** |
+| `structure_report.py` | exit 0 |
+
+| section | qualified | **new** | |
+|---|---|---|---|
+| `.text` | 35 752 | **35 780** | +28 B |
+| `.rodata`, `.data`, `.bss`, `.vector_table` | — | — | **identical** |
+
+**Both changes are foreground-only, and that is measured rather than intended:
+all four motor-critical ISR roots are byte-identical to the qualified image.**
+`BEMF_TOTAL_MS` bounds the run window in the foreground; `CoastStats` is written
+by the coast capture *after* the bridge is off. So "preserve existing
+control/protection timing" holds exactly.
+
+**An instrument weakness found on the way, and not fixed here.**
+`structure_report.py:141` has `LARGEST_FRAME = 5076`, documented as "measured
+from the disassembly" — but it is a **hardcoded constant measured once by hand
+and never re-verified**, so the gate reports a frame size it does not check.
+That matters right now because `CoastStats` grew 96 B and lives on the stack
+(`.bss` is unchanged), and the gate cannot tell me whether the frame moved. The
+risk is negligible — `shell-pwm` has **32 012 B** of stack headroom against an
+8 192 floor, so 96 B is 0.3% of it — but the number is asserted, not measured,
+which is the same class as E265's hardcoded tick rate and E268's vacuous gate.
+Named, owed, not claimed as verified.
+
+#### What this fixes, and what it does not
+
+**Fixes:** the 3.1% spurious rate-gate failure rate, which is what made a 57-run
+ladder walk a coin flip on being permanently holed (E272 measured 42.7%). With
+the SE more than halved, the unphysical-slope class should largely disappear —
+and E273's non-result verdict remains as the backstop for any that survive.
+
+**Does not fix:** the 550 `FastBusSag` latch. That was a real event and this
+change does not touch the guard or its thresholds. But E280 removed the reading
+that it was a capacity limit: **575 duty ran 54.8 s at 3002 mA worst block with
+zero sag streak**, so 550's trip is not a monotone function of duty or current.
+On a fresh ledger 550 gets three new attempts, and E263's guards apply — the
+change is substantive, the re-walk is full, and the prior failure travels with
+the rung whenever it is reported.
+
+#### Next
+
+A **full re-walk** on this image, 150 → 600, three runs per rung. The early
+rungs are the goal's "lower-rung regressions" at 15–30% duty. Both reviews on
+E280 and on this entry run concurrently with it, and a material finding stops
+the walk rather than being absorbed into it.

@@ -114,8 +114,8 @@ pub struct CoastStats {
     pub comp_hi: u32,
     pub comp_polls: u32,
     /// Debounced comparator transitions, the time from the float to the
-    /// first, and the first eight spacings (E065). Two transitions per
-    /// electrical cycle on one phase.
+    /// first, and the first [`COAST_IV_LEN`] spacings (E065, widened E281).
+    /// Two transitions per electrical cycle on one phase.
     pub trans_n: u32,
     /// µs from the stop stamp to the coast window's own origin: what the
     /// bridge spends being safed and the comparator re-pointed before the
@@ -124,8 +124,34 @@ pub struct CoastStats {
     /// (campaign 8 step 3).
     pub offset_us: u32,
     pub first_trans_us: u32,
-    pub trans_iv: [u32; 8],
+    /// The retained half-period spacings. **32, widened from 8 in E281**, and
+    /// the reason is the one defect behind every disputed reading in this
+    /// campaign: `speed.coast_fit` pairs these into full cycles and
+    /// least-squares an intercept back to the stop, so 8 gave **4 points and 2
+    /// residual degrees of freedom**.
+    ///
+    /// The identity built on it has **93% of its scatter in this estimator**
+    /// (`powered` sd 1.03 per mille against `coast@0` sd 3.76 over six runs of
+    /// one image), and **10 of 318 runs produced a physically impossible
+    /// positive slope** -- the rotor accelerating with the bridge off -- whose
+    /// mean residual was +11.9 per mille against +0.1 for the rest. Both
+    /// records that blocked rungs 400 and 550 on the rate gate were in that
+    /// class (E273).
+    ///
+    /// Intercept standard error against length, at the measured spacing:
+    /// 8 -> x1.000 (2.2 ms window), 24 -> x0.520, **32 -> x0.446 (8.3 ms)**.
+    /// 32 more than halves it, and the rotor slows only **0.71%** across that
+    /// window at the measured -1495 eHz/s, so the linear fit stays unbiased.
+    /// There is data to fill it: `COASTTIMING trans=1351` at rung 450 means
+    /// 1351 transitions were already seen and the first 8 kept.
+    ///
+    /// The capture loop (`run::measure`) and `emit` are both generic over this
+    /// length, so widening it touches nothing else.
+    pub trans_iv: [u32; COAST_IV_LEN],
 }
+
+/// Retained coast half-period spacings; see [`CoastStats::trans_iv`].
+pub const COAST_IV_LEN: usize = 32;
 
 impl CoastStats {
     /// A result for a run that never got to drive (`scans == 0`), so a
@@ -144,7 +170,7 @@ impl CoastStats {
             trans_n: 0,
             offset_us: 0,
             first_trans_us: 0,
-            trans_iv: [0; 8],
+            trans_iv: [0; COAST_IV_LEN],
         }
     }
 
@@ -809,7 +835,16 @@ mod tests {
             trans_n: 866,
             offset_us: 1_204,
             first_trans_us: 91,
-            trans_iv: [431, 440, 430, 443, 432, 443, 430, 446],
+            trans_iv: {
+                let mut v = [0u32; COAST_IV_LEN];
+                let seed = [431, 440, 430, 443, 432, 443, 430, 446];
+                let mut i = 0;
+                while i < seed.len() {
+                    v[i] = seed[i];
+                    i += 1;
+                }
+                v
+            },
             ..CoastStats::empty()
         };
         let got = text(|b| c.emit(Reason::SegmentDeadline, b));
@@ -817,8 +852,23 @@ mod tests {
             got,
             "BEMFCOAST reason=2 pp_first=0 pp_last=0 crossings=0 spun=1 comp_edges=1356 comp_hi=304401 \
              comp_polls=443146 \r\nCOASTTIMING trans=866 offset_us=1204 first_us=91 \
-             iv_us=431,440,430,443,432,443,430,446 ehz_first=1160 \r\n"
+             iv_us=431,440,430,443,432,443,430,446,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 \
+             ehz_first=1160 \r\n"
         );
+        // **The emitted length is part of the capture format** (E281 widened
+        // `COAST_IV_LEN` 8 -> 32), so the count is asserted alongside the text:
+        // a host pairs these into full cycles, and a silent change in how many
+        // arrive is the unit-versioning class E265 exists to refuse.
+        let n = got
+            .split("iv_us=")
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap()
+            .split(',')
+            .count();
+        assert_eq!(n, COAST_IV_LEN);
     }
 
     /// `zc_rate_permille_of_expected` is `floor(S)/S`, nothing else: two
