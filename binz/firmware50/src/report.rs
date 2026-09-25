@@ -668,10 +668,21 @@ impl RunReport {
     }
 
     fn emit_histograms(&self, out: &mut impl Sink) {
-        // E315. One line, always emitted, all zeros without `margin-hist` --
-        // an absent line and a zero line are different facts and a host should
-        // not have to guess which build it is reading.
+        // E337. One line, always emitted — but with an explicit `armed` flag,
+        // because E315's justification here ("an absent line and a zero line
+        // are different facts") described an intent the code did not achieve:
+        // the line it emitted was *all zeros either way*, so a reader could not
+        // tell a build without the instrument from a run that genuinely
+        // measured zero. The qualification review caught it. An instrument that
+        // reports an absent measurement as a measured zero is the failure mode
+        // [[feedback-instrument-must-fail-loudly]] exists for, and I wrote the
+        // comment that claimed otherwise.
+        //
+        // `armed=0` means the counters are not compiled in and every bucket
+        // below is meaningless; `armed=1` means they are live and a zero is a
+        // measurement.
         out.say("BEMFMARGIN ");
+        out.kv("armed", u32::from(cfg!(feature = "margin-hist")));
         for (k, v) in WAIT_HIST_KEYS.iter().zip(self.roots.wait_hist.iter()) {
             out.kv(k, *v);
         }
@@ -687,6 +698,7 @@ impl RunReport {
         // comparing them compared their ramp fractions. Both E315 reviews named
         // that confound and I walked into it anyway.
         out.say("BEMFMARGINHOLD ");
+        out.kv("armed", u32::from(cfg!(feature = "margin-hist")));
         for (k, v) in WAIT_HIST_KEYS.iter().zip(self.roots.wait_hist_hold.iter()) {
             out.kv(k, *v);
         }
@@ -1045,6 +1057,22 @@ mod tests {
         for line in ["BEMFMARGIN ", "BEMFMARGINHOLD "] {
             assert!(t.contains(line), "missing {line}");
         }
+        // **And each margin line must say whether its counters are live**
+        // (E337). Without `armed` a host cannot distinguish "not compiled in"
+        // from "measured zero", which is exactly how the qualification review
+        // found the instrument reporting an absent measurement as a real one.
+        // The expected value follows the feature, so this test pins the flag in
+        // both configurations rather than only the one it was written under.
+        let want_armed = if cfg!(feature = "margin-hist") {
+            " armed=1 "
+        } else {
+            " armed=0 "
+        };
+        assert_eq!(
+            t.matches(want_armed).count(),
+            2,
+            "both margin lines must carry the armed flag for this build"
+        );
         for k in WAIT_HIST_KEYS.iter().chain(LEFT_HIST_KEYS.iter()) {
             // Twice: once on each line. Built without `format!` because this
             // module is `no_std` and the test harness does not import `alloc`.

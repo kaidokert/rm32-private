@@ -281,12 +281,31 @@ def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
     # less evidence than its siblings and must not count toward the three --
     # while equally not being held against the rung, because the defect is the
     # estimator's and not the machine's.
-    unmeasured = [r for r in all_runs if r.get("identity_unavailable")]
-    measured = [r for r in all_runs if not r.get("identity_unavailable")]
+    # **And a run that was never powered is unmeasured on EVERY axis** (E337),
+    # for the same reason and by the fixture rather than by hand. The operator
+    # cutting the supply mid-session produced a capture that `run_gates` judged
+    # a firmware latch, which permanently disqualified a good image at its
+    # hardest rung -- twice. The first time it was edited out of
+    # `ladder_state.json`, which both qualification reviews called procedurally
+    # wrong while accepting the physics. `cohort.never_powered` states the
+    # physics as a strict predicate instead: it excuses exactly one capture in
+    # the whole corpus and cannot swallow a real `Reason::Bus` trip, which always
+    # has a normal rail and thousands of accepted crossings.
+    def _unmeasured(r: dict) -> bool:
+        return bool(r.get("identity_unavailable")) or cohort.never_powered(r)
+
+    unmeasured = [r for r in all_runs if _unmeasured(r)]
+    measured = [r for r in all_runs if not _unmeasured(r)]
     if len(measured) < RUNG_RUNS:
+        n_unpowered = sum(1 for r in unmeasured if cohort.never_powered(r))
+        why = []
+        if len(unmeasured) - n_unpowered:
+            why.append(f"{len(unmeasured) - n_unpowered} unmeasured: coast fit unphysical")
+        if n_unpowered:
+            why.append(f"{n_unpowered} unmeasured: no bus")
         return False, [
             f"only {len(measured)} measured run(s) on this ELF at {duty / 10:.0f}%"
-            + (f" ({len(unmeasured)} unmeasured: coast fit unphysical)" if unmeasured else "")
+            + (f" ({'; '.join(why)})" if why else "")
         ]
     # **Failures are scoped by origin** (E262, adopting E261b's reviewer call).
     #
@@ -309,16 +328,21 @@ def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
     # only failures into passes, because the corpus has no mass at the low
     # edge), so a class-(b) record still fails the rung under the current gate.
     # The scoping changes why it fails, not that it does.
-    latched = [r for r in all_runs if r["fails"] and _is_firmware_latch(r)]
-    gated = [r for r in all_runs if r["fails"] and not _is_firmware_latch(r)]
+    # The unmeasured runs are excluded here too (E337). Counting them as
+    # measured was only half the defect: an unpowered run also carried a
+    # `reason` that `_is_firmware_latch` classified as a permanent latch, so it
+    # disqualified the rung through this path regardless.
+    judged = [r for r in all_runs if not _unmeasured(r)]
+    latched = [r for r in judged if r["fails"] and _is_firmware_latch(r)]
+    gated = [r for r in judged if r["fails"] and not _is_firmware_latch(r)]
     fails = [f"{r['file']} (firmware latch): {', '.join(r['fails'])}" for r in latched]
     fails += [f"{r['file']} (host gate): {', '.join(r['fails'])}" for r in gated]
     if latched:
         fails.append(
-            f"{len(latched)} of {len(all_runs)} attempts at {duty / 10:.0f}% latched a "
+            f"{len(latched)} of {len(judged)} attempts at {duty / 10:.0f}% latched a "
             "firmware protection on this ELF; that is permanent for this image"
         )
-    fails += cohort.rung_oracle(all_runs[-RUNG_RUNS:])
+    fails += cohort.rung_oracle(judged[-RUNG_RUNS:])
     return not fails, fails
 
 

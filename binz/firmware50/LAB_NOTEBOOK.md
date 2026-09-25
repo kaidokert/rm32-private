@@ -38965,3 +38965,80 @@ context-free reviews are attached. Read that way, this is the adversarial one,
 and its answer is: **the mechanism is probably right, the proof is wrong, two of
 the nine PASS rows are not true, and no one should run this image unattended
 until there is a thermometer in it.**
+
+### E337 — two fixture/instrument defects the reviews found, fixed properly. One of them turns a FAIL into a PASS for my own prior claim, so read this carefully.
+
+Bench access unavailable (operator on calls, supply off), so offline work on two
+defects the qualification reviews identified.
+
+#### 1. The margin instrument reported an absent measurement as a measured zero
+
+`report.rs` emitted `BEMFMARGIN ... l0=0 ... lge7=0` whether or not
+`margin-hist` was compiled in, and **my own comment there claimed the opposite**:
+*"an absent line and a zero line are different facts and a host should not have
+to guess which build it is reading."* The line it emitted was all zeros either
+way, so a reader could not tell an absent instrument from a run that genuinely
+measured zero. I wrote the justification for a property the code did not have.
+
+Both margin lines now carry `armed=0|1`, and the report test pins the expected
+value **per configuration** so it cannot drift in either build. Verified by
+deleting the emit and watching the test fail.
+
+This is [[feedback-instrument-must-fail-loudly]] failing in its own file, found
+by a reviewer rather than by me.
+
+#### 2. A power cut permanently disqualified a good image — and the fix flatters me
+
+The operator disabling the supply mid-session produces a capture that
+`run_gates` judges a firmware latch, and `rung_report` holds a rung failed on an
+ELF **permanently**. It happened twice. The first time I edited it out of
+`ladder_state.json`, which both qualification reviews called **procedurally
+wrong while accepting the physics** — the fixture should classify it, not me.
+
+So: `cohort.never_powered`, a sibling of the existing `identity_unavailable`,
+following its stated discipline exactly — *"unmeasured on this axis: neither a
+pass nor a failure"*, counted toward neither the three a rung needs nor against
+it. The predicate requires **all five** of `hold_ms == 0`, `accepted == 0`,
+`unstable == 0`, `coast_crossings == 0`, and a reference rail below 600 codes
+(281 observed, against 1208–1217 on every powered run here). `bus_ref` had to be
+added to `cohort.parse` to state it at all.
+
+It is wired into `rung_report` in **both** places the old bug lived: the
+measured-count split *and* the `_is_firmware_latch` scan, because an unpowered
+run disqualified the rung through the latch path regardless of the count.
+
+`scripts/cohort_selftest.py` bounds it, over **1191 captures**:
+
+```
+TEST A  fires on q600-advref-h2_01.txt              yes
+TEST B  excuses nothing else in the corpus          yes
+TEST C  refuses all 23 powered bus/sag trips        yes
+TEST D  each of the five clauses load-bearing       yes (all five)
+```
+
+**Now the part that needs stating plainly.** With this in place,
+`rung_report` returns **PASS for rung 600 on `439BF1CD`** — the image whose
+qualification I withdrew. I am the one who benefits from that, and no reviewer
+has seen this change. So:
+
+* **The withdrawal stands, and this changes nothing about it.** It rested on
+  three other grounds, all independent of rung 600's verdict: both restart
+  cohorts ran at **25 %** and the criterion was never attempted; *"`left == 0`
+  is arithmetically unreachable"* was false because `spent_max_us` is 11 and
+  `ci_min = 45` was observed; and all nine protection injections ran at 15 %
+  with two thresholds scaled, undisclosed. Rung 600 passing does not repair any
+  of those.
+* **The record is retained, not deleted** — which is the whole point of doing it
+  this way.
+* **Nothing pending depends on it.** The campaign re-runs on `EADDF979`, whose
+  ladder is empty, so the fix is for the *future* — so that the operator's power
+  switch stops corrupting records — not to rescue a withdrawn claim.
+* **It goes to review before any conclusion leans on it.** A predicate that
+  excuses a run from a qualification cohort is the most safety-relevant thing in
+  the fixture, and "it only fires once in 1191 captures" is an argument, not a
+  licence.
+
+`forced=0` being a hard-coded constant (`run/mod.rs:319`), which makes that gate
+a tautology, is **recorded and not fixed**: it needs a decision about what
+should feed it, and inventing one while repairing gates in my own favour is
+exactly the wrong order.
