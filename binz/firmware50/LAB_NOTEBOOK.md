@@ -28049,3 +28049,117 @@ the decision:**
 The estimator ratchet remains the mechanism and is untouched by any of this; it
 is *why* a latch happens. The session term is *how often*. Those are different
 questions and I had been conflating them.
+
+### E311 — all four session candidates refuted from existing captures. Stop chasing the rate; fix the mechanism.
+
+Zero bench time, per the goal's rule 3. E310 predeclared four candidates for the
+session term with the discriminator for each. **All four are refuted, and three
+of them point the wrong way.**
+
+#### The measurements
+
+Rung 550, un-injected, all captures on disk:
+
+| quantity | 09-24 (**0** latches / 2.64 M arms) | 09-25 (**7** latches) | verdict |
+|---|---|---|---|
+| droop per amp | 0.920 %/A | **0.840** | **refuted — the rail is stiffer where it latches more** |
+| `zero_drift_ma` | −226 | **−119** | **refuted — half the thermal drift** |
+| `coast_ehz` | 2309 | 2312 | **refuted — identical** |
+| `hold_ma` | 2284 | 2248 | **refuted — marginally lower load** |
+| `mean_ci_us` | 71.0 | 71.5 | identical (09-25 marginally *slower*) |
+| `ehz_from_sector` | 2347 | 2330 | identical |
+| `ci_min_us` | 49.2 | 48.4 | identical |
+| `filt_bus` / `ref_bus` | 1193 / 1218 | 1190 / 1213 | identical |
+| **`thin` per 10⁶ arms** | **2025** | **2622** | **+29%** |
+
+**Every health indicator is better on the session that fails more.** A stiffer
+rail, half the zero drift, the same rotor speed, the same interval, the same
+bus. I also tested the one mechanism a stiffer rail suggests — more torque →
+faster rotor → shorter interval → ratchet starts closer to the cliff — and it is
+refuted: `mean_ci` is 71.0 against 71.5, i.e. the latching session ran
+*marginally slower*.
+
+The only quantity that moved is `thin`, **+29%**, and `thin` is downstream of the
+estimate — it is an **effect of the same thing I am trying to explain**, not a
+cause of it. The `ci_min` distributions hint in the same direction (09-25 has
+3 of 10 runs below 48 µs against 1 of 4) at an n that supports nothing.
+
+#### So: two inconclusive batches on this question, and the rule says redesign
+
+E310's own prediction was *"if none of the four moves, the session term is not
+any of them, and the next step is a within-session rate measurement at fixed
+everything — which is expensive and should only be bought after the free
+analysis fails."* The free analysis has failed.
+
+The goal's rule 3 is explicit: **after two inconclusive batches, redesign the
+test before spending another equivalent batch.** A rate measurement at fixed
+everything would be ~12 runs for a number that tells me *how often*, not *why* —
+and I already know **why**: the estimator ratchet, verified from source in E307.
+
+**So I am going to stop chasing the rate and fix the mechanism.** That is the
+"bounded control improvement" the goal asks for, and it is targeted at a
+mechanism I derived from source and confirmed numerically, rather than at a
+correlate.
+
+#### The mechanism, and the four ways to break it
+
+`ZeroCross::offer` gates on `count > self.average_interval >> 1` (`bemf.rs:394`)
+and then blends the accepted count into that same estimate
+(`blend_interval = (ci + ((last+this)>>1)) >> 1`), clamped below at
+`SECTOR_FLOOR_US = 40`. **The gate's threshold is the variable the gate
+updates.** A short accept lowers the estimate, which lowers the gate, which
+admits a shorter accept. Downward is positive feedback; upward is negative,
+because a raised estimate *refuses* short counts.
+
+Measured consequence: 71 → 62 → 48 → 40 in three accepts, `wait22` 11 → 10 → 8
+→ 7, and two of six observed stop estimates sitting exactly on that ladder.
+
+Candidate repairs, smallest first:
+
+| # | change | why it breaks the loop | risk |
+|---|---|---|---|
+| **1** | **Raise the clamp floor to a fraction of the commanded rung's interval** instead of a fixed 40 µs | at rung 550 the true interval is 71 and the floor is 40, so the estimate may walk **44% below truth**. A floor at, say, 0.8× the handoff-derived interval stops the walk one station in. | smallest; touches one constant's derivation, no new state, and it **cannot** loosen anything — a floor only ever refuses lower estimates |
+| 2 | Asymmetric blend: weight upward corrections more than downward | directly damps the positive-feedback direction | changes the estimator's dynamics everywhere, including startup and handoff |
+| 3 | Gate on a slower, separate reference rather than the live estimate | removes the feedback path entirely | the principled fix and the largest change; new state in the ISR |
+| 4 | Change the gate fraction from 1/2 | shifts where the ratchet starts | it is the reference's own value and matching it is a standing campaign goal |
+
+**#1 is the smallest sufficient change and the only one that cannot make
+anything worse**, because a floor is a one-sided constraint. #3 is the right
+long-term answer and needs its own campaign.
+
+#### Predeclared, before any build
+
+> **Question.** Does raising the estimator's lower clamp from a fixed 40 µs to a
+> rung-scaled floor reduce the rung-550 `LateArm` rate without costing speed or
+> lock quality?
+>
+> **Falsifiable prediction.** With the floor at 0.8× the commanded interval
+> (≈57 µs at rung 550), the estimate cannot reach the stations where
+> `wait22 ≤ 8`, so **`thin` per 10⁶ arms falls by ≥2× and `late_arms` goes to 0
+> across 6 runs at 550**, with `ehz_from_sector` within 1% and
+> `rate_vs_coast_permille` inside 992..1008 on every run. **If `thin` does not
+> fall, the ratchet is not reaching the floor and my mechanism is wrong.**
+>
+> **Smallest sufficient test.** The floor is enforced by `clamp_interval`, which
+> is pure arithmetic on existing host-testable code. **First: a host test and an
+> offline replay of recorded crossings through `ZeroCross::offer` at both floors
+> — zero bench time** — which either shows the walk being stopped or shows it
+> never reaches 40, refuting the mechanism for free. Only if the replay confirms
+> it does this become an image and 6 runs.
+>
+> **Decision each outcome changes.** Replay shows the walk stopping → build and
+> A/B. Replay shows the estimate never reaches the floor → the ratchet is not
+> the mechanism and E307 is withdrawn. Replay is inconclusive → the recorded
+> crossing sequences are inadequate and the chain recorder is needed first.
+>
+> **Safety.** A raised floor can only *refuse* low estimates, so it cannot
+> shorten a wait or advance a commutation. It could in principle make the
+> estimator slower to follow a genuine rapid deceleration — which is what the
+> tracking watchdog and `rebase` exist for, and both stay armed and unchanged.
+
+This is the first hypothesis this campaign has had that (a) comes from source
+rather than from a correlate, (b) has a free offline test before any bench time,
+and (c) proposes a change that is one-sided in the safe direction.
+
+**Both mandated reviews go out on this predeclaration before I act on it** — that
+is the rule I broke in E296 and am not breaking again.
