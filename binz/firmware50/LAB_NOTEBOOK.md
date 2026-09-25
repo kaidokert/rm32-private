@@ -23485,3 +23485,94 @@ evidence about any rung.
    forcing the driver's fault line, and I do not know whether that path behaves
    the same under load as at 15%. If it does not fire, that is a coverage gap
    worth naming, not a failed run.
+
+### E279 — I drove 60% on an unqualified rung. The persistent-shell-state trap, third instance, and the guard that ends it
+
+**This is a process failure, not a measurement.** E278's cohort is void and
+re-run below.
+
+#### What happened
+
+I launched four provocations with `--pre=xxx` and **without `--flash`**. `x`
+cycles `provoke_tenths`, and that value is **shell state that survives a runner
+invocation**. The previous cohort (E276's restart runs) had left it at **500**,
+so instead of starting from the boot default of 250 the cycle went:
+
+> **500 → 600 → 250 → 375**
+
+* **Run 1 (`v`, sharp sag) fired at `target_duty_tenths=375`** — 37.5%, not the
+  50% E278 predeclared. Criterion 3 fails; the run is void as coverage evidence.
+* **Run 2 (`i`) then walked 375 → 475 → 500 → 600 and drove
+  `target_duty_tenths=600`** — **60% duty on a rung that has never been
+  qualified**, above every rung in the ladder, with no admission. I stopped it
+  within seconds of seeing it.
+
+#### The bench is safe, verified rather than assumed
+
+Killing the runner bypassed its own kill guard, so I safed the bench by hand and
+read the result back:
+
+> `POSTSTOP` · `PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1
+> verdict=PASS` (twice) · `BEMFDONE reason=9` — the host abort, i.e. **my stop**,
+> not a protection · `bus_min=1118`, `ci_us=115` at the stop.
+
+So no protection fired, the rail held (1118 against a 1221 reference, 8.4% down
+on a *single raw scan* during a 60% run), and the bridge is off with the gates
+low. No damage, and the 60% excursion lasted seconds.
+
+#### Why this is the same trap for the third time
+
+| instance | state | cost |
+|---|---|---|
+| E148 | `climb_tenths` | admission keyed to the wrong rung |
+| E185 | `climb_tenths` | **three runs drove 475 when 450 was asked** |
+| **E279** | **`provoke_tenths`** | **one run at 37.5% instead of 50%, one run at 60% unadmitted** |
+
+Each time the mechanism is identical: a key that moves shell state *relatively*,
+addressed as if the state were known. I wrote the absolute-addressing fix for
+`climb_tenths` myself, in this campaign, and then wrote a relative sequence for
+`provoke_tenths` two entries later. Knowing the trap did not prevent it; only a
+guard can.
+
+#### The guard
+
+`scripts/bemf_run.py` now **refuses** a `--pre` containing any of `x`, `+`, `-`
+unless `--flash` is given, because flashing resets the part and that is the only
+condition under which a relative sequence is calculable (`climb_tenths` → 400,
+`provoke_tenths` → 250). Verified: the exact command I ran now exits **2** with
+
+> *"REFUSED: --pre contains the state-cycling key(s) 'x' but --flash was not
+> given. Those keys move shell state that survives a runner invocation, so the
+> sequence is only calculable from a freshly reset board. Add --flash, or
+> address the state absolutely. This guard exists because without it a
+> --pre=xxx with stale state drove 60% duty on an unqualified rung (E279)."*
+
+This is the same shape as `ladder_record`'s `expect_duty` check — which caught
+the E185 instance *after* the drive — moved to **before** the drive, where it
+prevents the exposure instead of recording it.
+
+**Why the guard and not just care:** E276's restart cohort used `--pre=xxx`
+*with* `--flash` and landed on 500 correctly, so the working and broken commands
+differ by one flag whose relevance is invisible at the call site. That is a
+guard's job, not a reader's.
+
+#### What is void, and what is retained
+
+* **E278's cohort is void** as protection-coverage evidence: run 1 at 37.5% and
+  run 2 at 60% are neither the predeclared rung nor admitted ones. Both captures
+  are **retained** — `e278-prot500-v_01` and `e278-prot500-i_01` — and are named
+  here as void rather than deleted, per "retain every failure".
+* The 60% run is **not** evidence about rung 600 in any direction. It was a
+  provoked run at an unadmitted duty, aborted by the host. Per the campaign's
+  rule, diagnostic results qualify nothing — and an unadmitted one does not even
+  inform.
+* Nothing about E275's sixteen rungs or E277's restart cohort is affected; both
+  were flashed and verified at their target duty.
+
+#### Re-run, predeclared unchanged
+
+E278's four provocations (`v`, `i`, `g`, `n`) at 50%, with **`--flash` on every
+one** so each starts from a reset board and `xxx` lands on 500. The four
+acceptance criteria stand as written, including criterion 3 —
+`target_duty_tenths = 500` — which is now the criterion that would have caught
+this, and which I will check on every capture before reporting any of them.

@@ -632,6 +632,36 @@ def main() -> int:
             for c in clash:
                 print(f"  {c}")
             return 2
+        # **A relative pre-key sequence is meaningless without a reset** (E279).
+        # `x` cycles `provoke_tenths` and `+`/`-` move `climb_tenths`; both are
+        # SHELL STATE that survives a runner invocation, so a sequence like
+        # `xxx` only lands where intended if the shell booted at its default.
+        #
+        # This has now bitten the campaign three times: `climb_tenths` twice
+        # (E148, E185 -- three runs at 475 when 450 was asked), and then
+        # `provoke_tenths`, when I ran four provocations with `--pre=xxx` and no
+        # `--flash`. The previous cohort had left it at 500, so the cycle went
+        # 500 -> 600 -> 250 -> 375: the first provocation fired at 37.5% instead
+        # of 50%, and the second **drove 60% duty on a rung that has never been
+        # qualified** before I stopped it.
+        #
+        # So: a `--pre` containing a state-cycling key now REQUIRES `--flash`.
+        # Flashing resets the part, which puts `climb_tenths` at 400 and
+        # `provoke_tenths` at 250 -- the only condition under which a relative
+        # sequence is calculable. This is the same shape as `ladder_record`'s
+        # `expect_duty` check, moved before the drive instead of after it.
+        cycling = sorted(set(args.pre) & set("x+-"))
+        if cycling and not args.flash:
+            print(
+                f"REFUSED: --pre contains the state-cycling key(s) {''.join(cycling)!r} "
+                "but --flash was not given. Those keys move shell state that "
+                "survives a runner invocation, so the sequence is only calculable "
+                "from a freshly reset board. Add --flash, or address the state "
+                "absolutely. "
+                "This guard exists because without it a --pre=xxx with stale "
+                "state drove 60% duty on an unqualified rung (E279)."
+            )
+            return 2
         for key in args.pre:
             print(f"== pre-key {key!r} (not recorded)")
             port.write(key.encode())
