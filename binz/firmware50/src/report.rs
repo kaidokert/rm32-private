@@ -373,6 +373,10 @@ pub struct CurrentRecord {
     pub depth_below: [u32; 4],
     /// The raw-scan observer's counts and longest runs (E284), with its own
     /// fractions so the capture stays self-describing.
+    /// The raw allowance the mA fields are scaled against (E287). Equal to
+    /// `RAW_LIMIT` on a normal run; `RAW_LIMIT/100` under
+    /// `Inject::AverageCurrent`, which makes those mA figures 100x inflated.
+    pub current_allow: u32,
     pub raw_depth_below: [u32; 4],
     pub raw_depth_longest: [u32; 4],
     /// Longest consecutive run below each fraction, in scans. A count cannot
@@ -740,6 +744,12 @@ impl RunReport {
         out.kv("hold_blocks", c.hold_blocks);
         out.kvi("hold_ma", c.hold_ma);
         out.kv("zero_blocks", c.zero_blocks);
+        // **The scale the mA fields are in** (E287). `block_milliamps` divides
+        // by this, so the figures above are milliamps only when it equals
+        // `RAW_LIMIT`; an `Inject::AverageCurrent` run rebuilds the accumulator
+        // at `RAW_LIMIT/100` and every mA field is then 100x inflated.
+        out.kv("ma_allow", c.current_allow);
+        out.kv("ma_allow_ref", crate::protection::RAW_LIMIT);
         out.kv("zero_start", c.zero_start);
         out.kv("zero_end", c.zero_end.unwrap_or(0));
         out.kvi("zero_drift_ma", c.zero_drift_ma);
@@ -945,6 +955,8 @@ mod tests {
             },
             current: CurrentRecord {
                 hold_ma: 366,
+                // The mA scale this fixture's figures are in (E287).
+                current_allow: crate::protection::RAW_LIMIT,
                 zero_start: 617_714,
                 zero_end: Some(616_029),
                 ..CurrentRecord::default()
@@ -965,7 +977,16 @@ mod tests {
         assert!(t.contains(
             "BEMFTAIL accepts=14382 span_us=2000181 start_before_stop_us=2400000 end_before_stop_us=399819 window_us=2000000 \r\n"
         ));
-        assert!(t.contains(" hold_ma=366 zero_blocks=0 zero_start=617714 zero_end=616029 "));
+        assert!(t.contains(" hold_ma=366 zero_blocks=0 "));
+        // **The mA scale is emitted beside the figures it governs** (E287).
+        // `block_milliamps` divides by `ma_allow`, so the mA fields are
+        // milliamps only when it equals `ma_allow_ref` (`RAW_LIMIT`). An
+        // `Inject::AverageCurrent` run rebuilds the accumulator at
+        // `RAW_LIMIT/100`, which made every mA field in that capture 100x
+        // inflated with nothing saying so -- `e280-prot500-i` reads
+        // `worst_ma=184352` where the truth is ~1840 mA.
+        assert!(t.contains(" ma_allow=31857 ma_allow_ref=31857 "));
+        assert!(t.contains(" zero_start=617714 zero_end=616029 "));
         // E187: the ceiling and the worst block, on the same line. A run whose
         // ceiling fell below its commanded duty did not hold the rung, and
         // until E187 the report could not say so.

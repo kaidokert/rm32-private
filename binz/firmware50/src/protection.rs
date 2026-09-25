@@ -753,6 +753,22 @@ impl AverageCurrent {
         ((residual as i64 * 4_000) / self.allow as i64) as i32
     }
     #[inline]
+    /// The raw allowance the mA scale is relative to (E287).
+    ///
+    /// `block_milliamps` scales by `4000/allow`, so a capture's mA figures only
+    /// mean milliamps when `allow == RAW_LIMIT`. `Inject::AverageCurrent`
+    /// deliberately rebuilds this accumulator with `RAW_LIMIT/100` to trip the
+    /// stop, which makes every mA field in that capture **100x inflated** --
+    /// `e280-prot500-i` reads `worst_ma=184352` where the truth is ~1840 mA,
+    /// and nothing in the report said so. A reader sees 184 A.
+    ///
+    /// So the allowance is now emitted beside the figures it scales.
+    #[must_use]
+    pub const fn allow(&self) -> u32 {
+        self.allow
+    }
+
+    #[inline]
     pub const fn over_streak(&self) -> u8 {
         self.over_streak
     }

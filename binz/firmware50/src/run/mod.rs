@@ -257,6 +257,7 @@ impl<
             hold_blocks: ctx.hold_current.map_or(0, |m| ctx.current.window_blocks(m)),
             hold_ma: ctx.hold_current.map_or(0, |m| ctx.current.window_milliamps(m)),
             zero_blocks: ZERO_BLOCKS,
+            current_allow: ctx.current.allow(),
             zero_start: ctx.base.zero_block,
             zero_end,
             ceiling_tenths: ctx.governor.ceiling(),
