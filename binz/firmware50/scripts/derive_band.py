@@ -27,6 +27,7 @@ from __future__ import annotations
 import collections
 import math
 import pathlib
+import re
 import statistics
 import sys
 
@@ -42,6 +43,14 @@ def rows(pattern: str, root: pathlib.Path) -> list[dict]:
     for p in sorted(root.glob(pattern)):
         d = cohort.parse(p)
         if d:
+            # **The advance level is part of the cohort's identity, not a
+            # detail.** The ladder switches from 20 to 22 partway up (rung 350
+            # on this walk), so a band pooled over "the 30 runs" silently
+            # averages two different control parameters. `cohort.parse` does not
+            # carry it, so it is read here and disclosed below rather than
+            # discovered afterwards.
+            m = re.search(r"\badvance_level=(\d+)", p.read_text(encoding="utf-8", errors="replace"))
+            d["advance_level"] = int(m.group(1)) if m else -1
             out.append(d)
     return out
 
@@ -82,6 +91,24 @@ def main() -> int:
         by[r["duty"]].append(r["rate_vs_coast_permille"])
 
     print(f"n = {len(rs)} runs over {len(by)} rungs, all via: {PRIMARY}\n")
+
+    # Disclose cohort heterogeneity BEFORE any pooled statistic is printed, so
+    # the reader sees the mixture before the number derived from it. The ladder
+    # switches advance level partway up, and a band pooled over "the 30 runs"
+    # would silently average two different control parameters.
+    adv = collections.defaultdict(list)
+    for r in rs:
+        adv[r["advance_level"]].append(r["rate_vs_coast_permille"])
+    if len(adv) > 1:
+        print("!! MIXED COHORT: this pool spans more than one advance level.")
+        for a in sorted(adv):
+            g = adv[a]
+            sd = f"{statistics.stdev(g):.3f}" if len(g) > 1 else "n/a"
+            print(f"   advance {a}: n={len(g):>2} median={statistics.median(g)} sd={sd}")
+        print("   The band below pools them, as E290 predeclared over 30 runs;")
+        print("   the per-level figures above are what that pooling averages.\n")
+    else:
+        print(f"cohort is homogeneous: advance level {next(iter(adv))} throughout\n")
     print(f'{"rung":>5} {"n":>2} {"values":>22} {"mean":>8} {"sd":>6}')
     within = []
     for d in sorted(by):
