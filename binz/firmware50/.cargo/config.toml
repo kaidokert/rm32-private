@@ -29,6 +29,30 @@ runner = "probe-rs run --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757
 # registry source, so it is not listed here.
 #
 # Recreate with:  cargo vendor ref/vendor
+#
+# **`ref/` is gitignored and `ref/stm32g0xx-hal` is a PATH dependency with no
+# revision in `Cargo.toml`, so nothing in git records what it should contain.**
+# E320: it was deleted mid-session and neither the build nor `cargo vendor`
+# could run -- vendoring needs the HAL's own manifest to resolve the graph, so
+# the two cannot be restored independently. Every hash in
+# `captures/MANIFEST-hashes.txt` is unreproducible without it. Restore order:
+#
+#   1. git clone https://github.com/stm32-rs/stm32g0xx-hal ref/stm32g0xx-hal
+#      git -C ref/stm32g0xx-hal checkout 15aca63
+#      # then apply the one local change: Cargo.toml, `M` in the working tree
+#      # of the sibling clone at binz/ref/stm32g0xx-hal, which is the copy this
+#      # tree was restored from and verified against.
+#   2. cargo vendor ref/vendor          # 26 crates, pinned by Cargo.lock
+#   3. VERIFY, do not assume -- rebuild a manifested commit and compare:
+#        git diff 7836a5b --stat -- src bin Cargo.toml build.rs   # must be empty
+#        cargo build --release --features margin-hist
+#        # crc32 of target/thumbv6m-none-eabi/release/shell-pwm must be 26843E7C
+#        # and the file byte-identical to captures/elf/26843E7C.e315-marginhold.elf
+#
+# Step 3 is the point. A restored toolchain that builds *different* bytes from
+# the same source would silently invalidate the archive while every test passed,
+# and codegen is a first-order carrier of this firmware's failure rate (E318:
+# two production images differ 2.9x in latch hazard at the same rung).
 [source.crates-io]
 replace-with = "vendored-sources"
 

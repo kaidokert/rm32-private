@@ -32520,3 +32520,1760 @@ make the margin worse.
 Not flashed: a `wait_time` change is a control change on every rung including
 the qualified 50 %, and it has two couplings neither E316 review examined.
 Two fresh reviews first.
+
+#### E319 addendum, offline while the reviews run: the supply is NOT the wall, and I had that wrong in both directions
+
+Rule 3 work — existing captures only, no bench. Every un-injected capture with
+a real hold window (`hold_blocks >= 50`, ~0.5 s), the mA scale valid
+(`ma_allow == ma_allow_ref`, E287) and no foldback (`ceiling >= duty`):
+
+| rung | n | `hold_ma` median | worst block | filtered sag | `bus_min` sag |
+|---|---|---|---|---|---|
+| 450 | 20 | 1460 | 2210 | −1.56 % | −10.86 % |
+| 475 | 35 | 1599 | 2002 | −1.81 % | −12.23 % |
+| 500 | 42 | 1798 | 2360 | **−7.07 %** | −17.76 % |
+| 525 | 9 | 2064 | 2761 | −1.97 % | −11.75 % |
+| 550 | 16 | 2251 | 2751 | −2.14 % | −11.82 % |
+| 575 | 1 | **2494** | **3022** | −1.98 % | −9.40 % |
+
+`I = exp(5.3042 + 0.004392 · tenths)` fits rungs 450–575 to within **46 mA**,
+and the plain per-25-tenths increment (140, 199, 266, 187, 243 mA) agrees. Both
+project rung 600:
+
+```
+log-linear          2806 mA = 93.5 % of the 3 A clamp
+increment from 575  2701 mA = 90.0 %
+measured, 3 blocks  2988 mA          (~30 ms, the hold's opening transient)
+```
+
+**So a 30 s hold at 600 should draw 2.7–2.8 A sustained, with worst 10 ms
+blocks near 3.2 A.** Marginal, and over the clamp on peaks.
+
+**And the 575 run settles whether that disqualifies it.** Its worst block was
+already **3022 mA — over the clamp — and it held 48.3 s with no protection
+trip, no foldback, and filtered sag of −1.98 %.** Brief blocks above the clamp
+are survivable here and are not the "sustained CC" the goal forbids; the
+filtered bus barely moves. `bus_min` runs −9 to −12 % at *every* rung including
+450, so it is an instantaneous artifact and not a rung-dependent signal —
+using it as the sag number was wrong, and the 10 % spec is against the synced
+baseline, not this.
+
+**So I had the supply wrong in both directions.** I first declared 600
+unreachable on it, citing a figure that came from an `inject=25` capture; then,
+having withdrawn that, I said the supply was "the next constraint at 99.6 % of
+the clamp" — from three current blocks. Neither was a measurement of a hold.
+The measured relationship says **600 is electrically feasible and the timing
+stop is the only demonstrated blocker.**
+
+One loose end, recorded not resolved: the **−7.07 % filtered sag at rung 500**
+is an outlier against −1.6 to −2.1 % everywhere else, including higher rungs.
+It is a single run dragging a minimum. Worth identifying before any
+qualification quotes a sag figure, and not load-bearing here.
+
+Unchanged: this is a projection from 450–575 onto 600, so it is evidence that
+600 is worth attempting, not evidence that it holds. The predeclaration stands.
+
+### E320 — both reviews refute the `wait_time` change and it is reverted. It would have created a new LateArm path, it is the reference verbatim, and my rung-600 run was the worse of two.
+
+Reverted at HEAD: `src/commutation.rs` and `src/run/replay.rs` restored to
+`59e486b~1`. 345 tests, clippy clean, `ADC_COMP` back to 760, ratchet and
+self-test clean. The notebook keeps the analysis; the code keeps the reference.
+
+#### Why it is out, in order of severity
+
+**1. It creates a new LateArm path.** The evidence review's finding and the
+one I had no answer to. `spent` is sampled from a **1 MHz** timer, so the +4
+instructions raise the *reported* `spent` by a whole microsecond on ~6 % of
+arms. On an **even** interval the wait does not move at all. So on even
+intervals the change is a strict margin **loss**, and it manufactures a fresh
+`left: 1 → 0` transition. My "net +0.45 µs" was an average over a quantity that
+does not average — it is per-arm, and per-arm it is negative half the time.
+
+**2. It is the AM32 reference verbatim.** `AM32/Src/main.c:933`:
+
+```c
+waitTime = (commutation_interval >> 1) - advance;
+```
+
+and again at `:2027` as `commutation_interval / 2 - advance`. I called a
+reference-parity expression a defect. This tree's whole method is to match the
+reference's behaviour and then diverge deliberately and measurably; I skipped
+the "deliberately" step.
+
+**3. It silently invalidates the justification for the production advance
+level.** `src/run/policy.rs:302-303` picks level 22 by *"the **real integer**
+function ... level 22 clears it only above `ci` = 72 (always 74) while level 20
+clears it above 60 (always 62)"*. My change moves those to **69/71 and 57/59**
+and I did not update them. The review found five more stale sites:
+`scripts/chain.py:119-121`, `scripts/advance_ab.py:11-12`,
+`WCET_ESTIMATES.md:138` plus odd-`ci` rows in its two wait tables, and
+`bemf.rs:732,749` which still encode the floor identity and pass only because
+their fixtures are even. Three files changed; six needed to.
+
+**4. My monotonicity justification was backwards, and I already knew it.** C2
+claimed the old form is non-monotone at 58 points. The review reproduces 310 or
+622 depending on domain, and — the part that matters — **the new form is
+non-monotone at *more* points at every level**; at level 16 the old form is
+perfectly monotone and the new one has 994 drops. **I computed this myself
+earlier in the session, wrote "the rounding does NOT restore monotonicity — it
+just moves the non-monotone points", and then put monotonicity in the review
+brief as a justification anyway.** That is not an error of analysis, it is one
+of honesty in the brief, and it is the worst item here.
+
+**5. The sample behind it was unrepresentative.** The corpus has **13**
+`reason=15` stops at rung ≥ 550, not 14; only **3** carry a recorded interval;
+and **none of the four latches I cited is from a production image** — all four
+are E314/E315 diagnostics, which the same reviews established latch 4.5× more
+often. The actual rescue band is `ci ∈ {55, 57, 59}`. My own re-tabulation also
+showed "gains a microsecond" is not "rescued": of the four where `spent` is
+known, three gain margin and one does not, and for the rest `spent` is unknown
+so rescue is unknowable. I wrote the brief as though it were known.
+
+**6. The blanking coupling is worse than I stated.** I found it and called it
+0.01 % incidence. The review shows `BLANK_ARM_MIN_US` is crossed
+**deterministically at ci 47/49 (level 22) and 53 (level 20)** — precisely the
+band the high rungs stop in — and that it perturbs `blank_arms` and
+`blank_latched`. Two further couplings I never named: `states.rs:897` shifts the
+transfer commit, and `thin_count` **stops being a comparable series** because it
+improves for free on odd intervals.
+
+**7. And the predeclared run could not have discriminated.** At `ci` 48–52 the
+change provably cannot move `left` off 0, and both rung-600 stops are in that
+band. A LateArm stop was the expected outcome under *both* forms. I predeclared
+a run whose informative outcome was arithmetically unavailable — the same defect
+as E312's vacuous falsifier, which I had already recorded and committed not to
+repeat.
+
+Confirmed by the evidence review, for the record: C1's error ranges and the
+25.00 % early fraction (on the full domain — my quoted "496 of 1980" was **one
+level over ci 20..1999**, mislabelled as the whole sweep, off by 14×), the
+"never returns a smaller wait" property (provable, 5.1 M pairs checked), C3's
+0.46° vs 2.69°, C5's +4 instructions genuinely ahead of the `spent` stamp, C6's
+overflow, C7, C9's assertion being non-vacuous and discriminating under four
+perturbations, and C10's numbers.
+
+#### The rung-600 correction, which also undoes my supply conclusion
+
+`captures/2026-09-24/e278-prot500-i_01.txt` is labelled `inject=25` and reports
+**`fired=0 provoked=0`** — *the injection never fired.* It is a de-facto
+un-injected rung-600 run **on the same production image `0D8E3799`**, and:
+
+```
+hold_ms=1307       (42x my 31 ms)        hold_blocks=130   (vs my 3)
+hold_ma=2869  = 95.6 % of the 3 A clamp  worst_ma=3490 = 116 %
+reason=15  ci_us=49   BEMFSELFREF verdict=ok  zc_permille_of_6x_coast=1005
+```
+
+So: **"the tree's first un-injected rung-600 capture" was a header fact**, my
+run is the **worse of the two**, and the supply evidence I declared absent
+exists, with 130 blocks behind it, and is **worse than my projection** (I
+projected 2701–2806 mA and ~3229 worst; measured 2869 and 3490).
+
+**That is the third time I have been wrong about the supply, in three different
+directions.** "600 is unreachable on it" (from a capture I mis-read as
+injected), then "the supply is not the wall" (from a fit whose top anchor was
+that same run), then "the next constraint at 99.6 %" (from three blocks).
+The defensible statement, and the only one I will make from here:
+
+> At rung 600 the measured sustained hold is **2869 mA, 95.6 % of the clamp,
+> with worst blocks at 116 %**, over 1.3 s. Rung 575 held 48.3 s at 2494 mA
+> with worst blocks already at 100.7 % and no trip. **Whether the supply
+> permits a 30 s hold at 600 is UNRESOLVED, because no rung-600 run has ever
+> survived longer than 1.3 s** — every one stopped on LateArm first. The two
+> constraints have never been separated, and they cannot be until a 600 run
+> outlives the timing stop.
+
+#### Environment incident, and it is a real fragility
+
+Mid-session, `firmware50/ref/` was emptied — both the gitignored registry
+vendor directory and `ref/stm32g0xx-hal`, which is a **path dependency with no
+revision recorded anywhere in the repo**. Nothing built, and `cargo vendor`
+could not run either because it needs the HAL's manifest to resolve.
+
+Restored from `binz/ref/stm32g0xx-hal` (`15aca63`, `M Cargo.toml`) plus
+`cargo vendor ref/vendor` (26 crates, `Cargo.lock` unchanged). **Then verified
+rather than assumed:** the source at HEAD is byte-identical to `7836a5b` for
+`src`/`bin`/`Cargo.toml`/`build.rs`, so rebuilding with `margin-hist` must
+reproduce `26843E7C` — and it does, **byte-identical to the archived ELF**.
+So the restored toolchain provably builds the same binaries as the archive, and
+no manifest hash is invalidated.
+
+The fragility stands: a gitignored path dependency with no recorded revision is
+one `rm` away from making every hash in `captures/MANIFEST-hashes.txt`
+unreproducible, and the only reason this was recoverable is that a sibling
+directory happened to hold a compatible clone. Recording the revision belongs
+in the repo.
+
+#### Next, per both reviews rather than per me
+
+Both independently point at the same lever and it is not the one I built:
+**re-price the E142/E144 arm-first ordering**, which buys the same microsecond
+**uniformly — on even intervals too — with no advance cost**, where my change
+bought it on odd intervals only and gave up 0.46° everywhere. `roots.rs:465-468`
+records it as already measured once: *"moved the reported response time from
+11 µs to 10 and cost about 1 % of rotor speed at 37.5 %"*. That note is the
+thing to re-read and re-price, because 1 % at 37.5 % is not 1 % at 60 %.
+
+The 600-first predeclaration is **abandoned**; its only informative outcome was
+arithmetically unreachable. And the adversarial review notes the 600 run also
+violated the fixture's ladder — 575 is absent from it and 550 is permanently
+failed on that image — so the order was wrong as well as the arithmetic.
+
+---
+
+### E319 review 1 of 2 — EVIDENCE (verbatim)
+
+# E319 — evidence review
+
+Independent recomputation of claims C1–C13 in `captures/reviews/E319-BRIEF.md`.
+Every number below was recomputed from source, from the captures, or from a
+build I made myself. Nothing was taken from the brief or the notebook. Where I
+could not reproduce a figure I say so and give what I get instead.
+
+Method summary:
+
+* `advance_of`, both `wait_time` forms and the true rational wait were
+  re-implemented in Python directly from `src/commutation.rs:254-296`,
+  including the `level > 64` clamp, and swept exhaustively.
+* The change was built twice: the working tree at `59e486b`, and a clean
+  `git worktree` at `59e486b~1` (with `ref/` junctioned so the vendored
+  sources resolve). `scripts/insn_ratchet.py` was run on both, and on the
+  archived production ELF.
+* `ADC_COMP` was disassembled in both builds with `arm-none-eabi-objdump` and
+  diffed with addresses normalised, to locate the added instructions relative
+  to the `spent` stamp and the arm.
+* The host suite was run (`cargo test --target x86_64-pc-windows-msvc --lib`:
+  **345 passed, 0 failed** — the commit message's count is right), and then
+  re-run against four deliberate perturbations of `wait_time` to check that
+  the two named tests fail for the right reasons.
+* Every `captures/**/*.txt` was re-parsed (1259 runs) for the `reason=15`
+  census, the `ci_at_late` census and the thin-rate comparison.
+* The working tree was left as I found it (`git status --porcelain src/` is
+  empty). `target/` now holds a build of `59e486b`; the temporary worktree was
+  removed.
+
+---
+
+## Verdict table
+
+| Claim | Verdict |
+|---|---|
+| C1 error ranges / early counts | **CONFIRMED but mislabelled** — the numbers are a level-22, `ci` 20..1999 sweep, not the stated `level` 16..22 × `ci` 20..3999 sweep |
+| C1 "never returns a smaller wait" | **CONFIRMED** (and provable for all of `u32` × all levels) |
+| C2 non-monotone count 58 | **REFUTED as stated** (I get 310 or 622 depending on domain; 58 matches no natural domain) |
+| C2 as a justification | **REFUTED** — the new form is non-monotone at *more* points than the old at every level, and introduces non-monotonicity at level 16 where the old form has none |
+| C3 arithmetic (0.46° vs 2.69°) | **CONFIRMED** |
+| C3 as a cost metric | **UNSUPPORTED as the decision-relevant cost**; the measured A/B exists and says ~2.8 % of rotor speed for L 22→20 |
+| C4 "three of four gain 1 µs" | **CONFIRMED numerically, misleading in framing**; all four are odd, and the fourth gains its microsecond and still latches |
+| C4 representativeness | **REFUTED** — the corpus has 13, not 14; only 3 of them carry an interval; none of the four is from the production image |
+| C5 +4 / classes unchanged | **CONFIRMED** (760 → 764; div 0, mul 4, irq 9, excl 0, helper 0 in both) |
+| C5 "+4 is in the pre-arm path" | **CONFIRMED** from the disassembly |
+| C5 "net margin +0.45 µs" | **REFUTED as a per-arm statement** — on even intervals the change is a net margin *loss* |
+| C6 overflow | **CONFIRMED**, empirically (the test panics) |
+| C7 single-floor forms | **CONFIRMED** exactly |
+| C8 blanking coupling | **CONFIRMED and understated** — `BLANK_ARM_MIN_US` is crossed at `ci` 47 and 49 at level 22, inside the exact interval band the high rungs live in |
+| C9 replay assertion | **CONFIRMED** and non-vacuous (143 odd / 136 even accepted decisions); "no other effect on the decision path" is overstated |
+| C10 60 % reached | **CONFIRMED** (every number recomputes exactly) |
+| C11 "timing stop, not the supply" | **REFUTED as an exclusion**; `thin_count` comparison is not like-for-like and is against the wrong image |
+| C12 three current blocks | **CONFIRMED** |
+| C13 withdrawal | **CONFIRMED as a withdrawal**, but its premise is wrong: the injection in that capture **never fired**, so the tree already held rung 600 for 1.307 s un-provoked |
+
+---
+
+## C1 — the error ranges and the early count
+
+### The functions, as the source actually defines them
+
+`src/commutation.rs:254-257`:
+
+```rust
+pub const fn advance_of(ci: u32, level: u32) -> u32 {
+    let level = if level > 64 { 64 } else { level };
+    (ci >> 6) * level + (((ci & 63) * level) >> 6)
+}
+```
+
+`src/commutation.rs:295-297` (new) and `59e486b~1:src/commutation.rs:260-262`
+(old):
+
+```rust
+((ci >> 1) + (ci & 1)).saturating_sub(advance_of(ci, level))   // new
+(ci >> 1).saturating_sub(advance_of(ci, level))                // old
+```
+
+True wait, as an exact rational: `ci/2 − ci·level/64` (computed with
+`fractions.Fraction`, no floating point).
+
+### What the stated domain actually gives
+
+Sweeping `level` 16..=22 × `ci` 20..=3999 — the domain the brief and the
+source comment both name — gives **27 860** pairs, not 1980:
+
+| form | pairs | schedule early | error range (µs) |
+|---|---|---|---|
+| old | 27 860 | **6 964** (25.00 %) | **[−0.4844, +0.9688]** |
+| new | 27 860 | **0** | **[0.0000, +1.4844]** |
+
+The brief's "496 of 1980" and its "[−0.47, +0.94]" / "[+0.00, +1.47]" are the
+figures for **level 22 alone over `ci` 20..=1999**:
+
+```
+L=22, ci 20..1999 : n=1980, old early=496, old err [-0.4688,+0.9375], new err [0.0000,+1.4688]
+```
+
+That is an exact match on all four numbers, and no other level reproduces the
+496 (levels 16..21 give 495 over the same span). So **the measurement is
+right and its stated domain is wrong**: it is one level over half the interval
+range, quoted as seven levels over the whole range. The qualitative
+conclusions survive — the early fraction is 25.00 % on the full domain too, and
+the per-level worst case is slightly *worse* than quoted (−0.4844 µs at levels
+17, 19, 21) — but the labelled figures are not the figures of the labelled
+sweep. Per-level breakdown over `ci` 20..=3999:
+
+| level | early | fraction | old err | new err |
+|---|---|---|---|---|
+| 16 | 995 | 0.2500 | [−0.2500, +0.5000] | [0.0000, +1.2500] |
+| 17 | 995 | 0.2500 | [−0.4844, +0.9688] | [0.0000, +1.4844] |
+| 18 | 995 | 0.2500 | [−0.4688, +0.9375] | [0.0000, +1.4688] |
+| 19 | 996 | 0.2503 | [−0.4844, +0.9688] | [0.0000, +1.4844] |
+| 20 | 995 | 0.2500 | [−0.4375, +0.8750] | [0.0000, +1.4375] |
+| 21 | 994 | 0.2497 | [−0.4844, +0.9688] | [0.0000, +1.4844] |
+| 22 | 994 | 0.2497 | [−0.4688, +0.9375] | [0.0000, +1.4688] |
+
+The "schedules early on a quarter of all intervals" headline is therefore
+**CONFIRMED** on the full domain, and it is not a level-22 artefact.
+
+### That the new error is never negative
+
+Provable, not just measured. Write `ci = 64q + r`, `0 ≤ r < 64`, `L ≤ 64`.
+Then `advance_of = qL + ⌊rL/64⌋`, so `ci·L/64 − advance_of = frac(rL/64) ∈
+[0, 1)`, and
+
+```
+err_new = ceil(ci/2) − advance_of − (ci/2 − ci·L/64)
+        = (ci & 1)/2 + frac(rL/64)  ∈  [0, 1.5)
+```
+
+with no saturation for `L ≤ 22` (the true wait `ci(32−L)/64 > 0` for `ci > 0`,
+and `minuend − advance = err_new + true_wait > 0`). The observed maximum
+1.4844 = 0.5 + 63·19/64 mod 1 is consistent with that bound.
+
+### "Never returns a smaller wait than the old form"
+
+**CONFIRMED, and it is a theorem, not a sample.** `saturating_sub` is monotone
+non-decreasing in its minuend, `(ci>>1) + (ci&1) ≥ (ci>>1)` for every `u32`,
+and the subtrahend is identical, so `new ≥ old` everywhere by construction. I
+also checked it exhaustively: **5 110 511** pairs over `level` ∈ {0..69, 100,
+1000, u32::MAX} × `ci` ∈ {0..69 999} ∪ {65535, 65536, 2²⁰, 2²⁴, 2³¹, u32::MAX−1,
+u32::MAX}. Zero cases where `new < old`; the difference is 0 (3 955 377 pairs)
+or 1 (1 155 134 pairs) and never anything else.
+
+No overflow anywhere: the new minuend peaks at `(u32::MAX >> 1) + 1 =
+2 147 483 648 < 2³²`, and with the level clamp `advance_of(u32::MAX, 64)`
+evaluates to exactly `u32::MAX`.
+
+### Levels actually reachable, and level ≥ 32
+
+Production reaches exactly two levels: `ADVANCE_LOW = 20` below 35 % duty and
+`ADVANCE_HIGH = 22` at/above it (`src/run/policy.rs:332-343`), with
+`const _: () = assert!(ADVANCE_HIGH >= 16 && ADVANCE_HIGH <= 22)` bounding the
+campaign. Level 16 is reachable through `DefaultAdvance = FixedAdvance<16>`
+(`src/commutation.rs:238`). The `advance-low` feature makes `ADVANCE_HIGH` 20.
+`advance_of` itself clamps only at 64 (`commutation.rs:255`), so nothing
+downstream prevents a wild level — the comment at `policy.rs:352-356` says so,
+correctly.
+
+Over levels 16..=22 restricted to {20, 22} the claim holds identically
+(1989 of 7960 early under the old form, 0 under the new).
+
+At **level ≥ 32** the change is not behaviour-neutral, and the source comment
+does not cover this case:
+
+* `level = 32`: `advance_of(ci,32) = ⌊ci/2⌋` exactly, so the old form returns
+  **0 for every `ci`** while the new form returns **1 on every odd `ci`** — a
+  1 µs wait where the true wait is exactly 0. 2000 of the 4000 values in
+  `ci` 0..3999 change from 0 to 1.
+* `level` 33..63: the new form returns 1 for a few small odd `ci` (16 values at
+  level 33, 2 at level 40, 1 at level 63) where the old returned 0.
+* `level ≥ 64`: `advance_of = ci`, so both forms return 0 for all `ci`. The
+  comment's claim that "any level of 64 or more makes `advance >= ci`, so
+  `wait_time` saturates to 0 either way" is **CONFIRMED** — but it is only
+  true at ≥ 64, and the 32..63 band now behaves differently from before.
+
+None of this is reachable in production, and all of it is in the safe (longer
+wait) direction, so it is a note, not a defect. The test at
+`commutation.rs:669` (`wait_time(1024, 32) == 0`) passes only because 1024 is
+even; it no longer pins what its name says for odd intervals.
+
+---
+
+## C2 — non-monotonicity
+
+**The "58 points" does not reproduce.** Counting `ci` where `wait(ci) <
+wait(ci−1)`:
+
+| level | old, ci 20..1999 | new, ci 20..1999 | old, ci 20..3999 | new, ci 20..3999 |
+|---|---|---|---|---|
+| 16 | **0** | **494** | **0** | **994** |
+| 17 | 247 | 278 | 499 | 558 |
+| 18 | 248 | 309 | 498 | 621 |
+| 19 | 278 | 310 | 561 | 621 |
+| 20 | 248 | 370 | 498 | 745 |
+| 21 | 309 | 340 | 622 | 684 |
+| 22 | **310** | **371** | **622** | **746** |
+| all 16..22 summed | — | — | **3300** | **4969** |
+
+No natural domain gives 58. The count is very nearly proportional to the `ci`
+span (≈0.157 drops per `ci` at level 22), so 58 corresponds to a span of about
+370 `ci` values — e.g. `ci` 20..387 at level 22, or 20..477 at level 20. I
+cannot find a principled sweep that yields it, and the brief does not name one.
+**REFUTED as stated.**
+
+The witness pair is right but level-specific: `old(58,22) = 10` and
+`old(59,22) = 9`. At levels 16..21 the old form gives the *same* value at 58 and
+59 (15/15, 14/14, 13/13, 12/12, 11/11, 10/10), so the cited example exists only
+at level 22.
+
+**And the argument cuts the other way.** The new form is non-monotone at *more*
+points than the old at every single level, and at **level 16 the old form is
+perfectly monotone while the new form is non-monotone at 994 points** in
+`ci` 20..3999 (first at `ci` 23 → 7, `ci` 24 → 6). The mechanism is obvious once
+stated: at level 16, `advance_of = ⌊ci/4⌋` exactly, so `⌊ci/2⌋ − ⌊ci/4⌋` is
+non-decreasing while `⌈ci/2⌉ − ⌊ci/4⌋` is not.
+
+So C2 is not a reason to prefer the new form; **it is a reason the new form is
+slightly worse on that particular axis.** The brief presents it as supporting
+evidence ("and it is non-monotone in `ci` at 58 points … For an arm whose
+failure mode is running out of margin, that is the wrong direction"), and the
+source comment at `commutation.rs:265-269` repeats it. The author's own earlier
+suspicion that the new form is also non-monotone is correct, and the brief
+should say so: **C2 must be withdrawn as a justification.** The only defensible
+monotonicity statement in the vicinity is C7's: the single-floor form is the one
+that is exactly monotone (0 drops at every level, verified below), and it was
+rejected for a different reason.
+
+---
+
+## C3 — the price
+
+### The arithmetic
+
+* `mean(new − old)` over `ci` 45..=89 = `mean(ci & 1)` = **23/45 = 0.5111 µs**,
+  independent of level. The brief's +0.51 µs is right.
+* One commutation interval is 60 electrical degrees, so at `ci = 67`,
+  1 µs = 60/67 = **0.8955°**. 0.5111 µs = **0.4577° ≈ 0.46°**. Confirmed.
+* L 22→20 at `ci = 67`: `advance_of(67,22) = 23`, `advance_of(67,20) = 20`, so
+  the wait moves 10 → 13 µs, a 3 µs change = **2.6866° ≈ 2.69°**. Confirmed.
+* Ratio 2.69/0.46 = 5.9, so "about one sixth" is right.
+
+Note that the 2.69° figure is the *integer* wait difference (3 µs); the exact
+advance difference at `ci = 67` is `67·2/64 = 2.094 µs = 1.875°`. The brief's
+number is the larger of the two and is the one consistent with the integer
+function, which is the right choice — but it is inflated by 43 % relative to
+the ideal advance change by the same floor effects the change is about.
+
+### Is "degrees of advance given up" the right cost metric?
+
+**No, not on its own.** Advance is not a quantity the bench measures; the
+campaign's gates are speed against a reference, current, `thin_count`,
+`late_arms` and hold duration. Degrees of advance is a proxy whose transfer
+function to those gates is not established anywhere I can find. Using it makes
+the comparison between the two candidate changes *internally* consistent (both
+priced in the same proxy), which is legitimate, but "one sixth the price" is a
+statement about the proxy, not about speed, current or hold.
+
+### The measured A/B does exist, and the brief does not cite it
+
+`captures/2026-09-25/e303-ab-A22_1_01.txt` (ELF `5D4BF25C`, `advance_level=22`)
+and `e303-ab-B20_1_01.txt` (ELF `8FE909B3`, `advance_level=20`), both
+`target_duty_tenths=500`, `inject=0`, `hold_ms=64776`, `reason=2`,
+`late_arms=0`:
+
+| | L22 | L20 | change |
+|---|---|---|---|
+| `coast_ehz` (rotor, from the coast fit) | 2149 | 2088 | **−2.84 %** |
+| `ehz_from_sector` (loop) | 1666 | 1650 | −0.96 % |
+| `hold_ma` | 1776 | 1643 | −7.5 % |
+| `thin_count` | 1027 | **0** | — |
+| `ci_min_us` | 54 | 56 | — |
+
+So the **measured** speed cost of L 22→20 at rung 500 is about **2.8 % of rotor
+speed** (or ~1.0 % by the loop's own sector rate), together with a 7.5 %
+reduction in hold current and the elimination of every thin arm. This is a
+single pair, one run each, on two different ELFs, so it is weak — but it exists
+and it is the only direct evidence of the cost of the alternative candidate.
+
+If the 2.69° ↔ 2.84 % correspondence is taken as locally linear, the ceil
+change's 0.46° prices at roughly **0.5 % of rotor speed**. That is the number
+the brief should be quoting, and it is small. This is an inference (mine), not
+a reading.
+
+One thing the A/B shows that the degrees metric hides: L 22→20 bought
+`thin_count` 1027 → 0, i.e. it removed the entire thin population at rung 500.
+The ceil change cannot do that — see C4 — so "one sixth of the price" is not
+"one sixth of the price for the same benefit".
+
+---
+
+## C4 — the four recorded latches
+
+Every capture in the tree with `ci_at_late` non-zero (re-parsed from all 1259
+runs; six captures carry the field at all, four have it non-zero):
+
+| capture | image | rung | `ci_at_late` | `spent_at_late` | `ci_us` | `ci_min_us` |
+|---|---|---|---|---|---|---|
+| `2026-09-25/e315-500-hold_01.txt` | `5EB8018E` (e315-marginhist-hold) | 500 | **51** | 9 | 51 | 51 |
+| `2026-09-25/e315-550-hist_01.txt` | `E3BB2544` (e315-marginhist) | 550 | **57** | 9 | 57 | 49 |
+| `2026-09-25/e315-550-mh_01.txt` | `26843E7C` (e315-marginhold) | 550 | **59** | 9 | 61 | 52 |
+| `2026-09-25/e315-550-why_01.txt` | `0F890AF2` (e314-whylate-adv22) | 550 | **59** | 9 | 59 | 54 |
+
+Recomputing both forms at level 22, with `left = wait − spent` saturating and
+`left == 0` ⇒ `Reason::LateArm` (`src/roots.rs:513-528`, `src/run/states.rs:279`):
+
+| `ci_at_late` | `advance_of` | old wait | new wait | old `left` @ spent 9 | new `left` | rescued? |
+|---|---|---|---|---|---|---|
+| 51 | 17 | 8 | **9** | 0 | **0** | **no** |
+| 57 | 19 | 9 | **10** | 0 | **1** | yes |
+| 59 | 20 | 9 | **10** | 0 | **1** | yes |
+| 59 | 20 | 9 | **10** | 0 | **1** | yes |
+
+So "three of the four … each gains 1 µs, taking `left` 0 → 1" is
+**numerically CONFIRMED**, but the framing is wrong in a way that matters:
+
+* **All four intervals are odd** (51, 57, 59, 59), and **all four gain the
+  microsecond.** The brief's "three of the four … were at ci 59, 57, 59 — odd
+  intervals" implies the fourth was even and therefore unhelped. It was odd,
+  it was helped by exactly the same 1 µs, and it still latches, because at
+  `ci = 51` the gain takes the wait from 8 to 9 and `spent` was 9. The
+  discriminator is not parity, it is whether `old wait == spent`.
+* The rescue band is therefore extremely narrow. At `spent = 9` and level 22,
+  the change converts a latch into a non-latch at **exactly `ci` ∈ {55, 57,
+  59}** and nowhere else in 40..74. For every `ci ≤ 54` — which includes both
+  rung-600 stops and the `ci_min_us = 48` of the motivating run — `left` stays
+  0 under both forms:
+
+```
+ci  adv  old  new  left@spent9 (old/new)
+48   16    8    8      0 / 0
+49   16    8    9      0 / 0
+50   17    8    8      0 / 0
+51   17    8    9      0 / 0
+52   17    9    9      0 / 0
+53   18    8    9      0 / 0
+54   18    9    9      0 / 0
+55   18    9   10      0 / 1   <- rescued
+56   19    9    9      0 / 0
+57   19    9   10      0 / 1   <- rescued
+58   19   10   10      1 / 1
+59   20    9   10      0 / 1   <- rescued
+60   20   10   10      1 / 1
+```
+
+**Is four representative of the `reason=15` stops at rung ≥ 550?** No, on three
+counts.
+
+1. **The corpus holds 13, not 14.** Re-parsing every run in `captures/`
+   (1259 `BEMFRUN` blocks) for `BEMFDONE reason=15` with
+   `target_duty_tenths >= 550` gives thirteen: ten at 550, one at 575
+   (`e308-550-old-3`), two at 600 (`e278-prot500-i`, `e318-600-explore`). The
+   `ci_us` span is **40..62**, and one of them (`e305-550-noring-2`) does stop
+   with the estimate pinned at `SECTOR_FLOOR_US = 40` — those two sub-claims in
+   the brief's "Also relevant" are right. The count of fourteen is not.
+2. **Only three of the thirteen carry an interval at all.** The fourth
+   recorded latch is at rung 500. So the sample is 3/13 ≈ 23 % of the
+   population it is being generalised to.
+3. **None of the four is from the production image.** They come from
+   `5EB8018E`, `E3BB2544`, `26843E7C` and `0F890AF2` — the four E314/E315
+   diagnostic images. The production image `0D8E3799` has never recorded a
+   `ci_at_late` (the instrument postdates it: `ADC_COMP` is 728 instructions in
+   `0D8E3799` and 760 in the tree, exactly the +32 E314 blessed for adding this
+   instrument). E314's own entry warns that layout is a live carrier — "two
+   images with instruction-identical `ADC_COMP` differ 3.2× in `thin`". So the
+   latch-interval evidence is drawn entirely from images that are not the one
+   the change would be flashed over, and not the one that produced any of the
+   captures being explained.
+
+Using the best available proxy for the production image — `ci_us`, the estimate
+at the stop — the five production-image (`0D8E3799`) `reason=15` stops sit at
+`ci_us` 50, 51, 49, 50 (and none of those is in the rescue band {55, 57, 59}).
+**On the evidence in the tree, the change would not have prevented a single
+stop on the production image, including the rung-600 stop that motivates it.**
+
+---
+
+## C5 — the instruction cost
+
+**CONFIRMED.** Built both commits myself.
+
+`59e486b~1` (clean worktree, `cargo build --release --bin shell-pwm`):
+
+```
+ADC_COMP    760    div 0   mul 4   irq 9   excl 0   helper 0
+```
+
+`59e486b` (working tree, rebuilt):
+
+```
+ADC_COMP    764 (+4)   div 0   mul 4   irq 9   excl 0   helper 0
+```
+
+Hazard classes identical in both, and `scripts/insn_ratchet.py` exits 0 on both
+(the `insns` slack is ±8). `TIM16` 332, `DMA1_CHANNEL1` 37,
+`TIM6_DAC_LPTIM1` 155 and `BusDepth::observe` 50 are unchanged, which also
+confirms the brief's aside that `WCET_ESTIMATES.md:111,128` prices the guard
+root at 155 instructions.
+
+One thing the brief does not mention: the ratchet reports
+`run::Controller 587 (−6)` on **both** builds, so that −6 is pre-existing
+baseline staleness, not a consequence of this change.
+
+### Are the added instructions in the pre-arm path?
+
+**Yes.** Normalised diff of the two `ADC_COMP` disassemblies isolates three
+real added instructions (one `str` to the stack and two `ldr` reloads around
+offset +0x33a..+0x346, i.e. register pressure) plus one trailing `nop` of
+function alignment. The new arithmetic itself is visible at
+`ADC_COMP+0x366`:
+
+```
++0x366  lsrs r1, r6, #1      ; ci >> 1
++0x368  subs r2, r6, r1      ; ci - (ci >> 1)  ==  ceil(ci/2)     <- the change
++0x36a  lsrs r3, r6, #6      ; advance_of ...
+...
++0x380  subs r4, r2, r3      ; wait
++0x386  ldr  r2, [pc, ...]   ; accept bookkeeping stores
++0x3a8  ldr  r0, [r3, #0]    ; hw::clock::raw()
++0x3ac  subs r0, r0, r1      ; spent = raw_now - raw
++0x3bc  cpsid i              ; the arm's critical section
++0x400  str  r2, [r6, #16]   ; the COM one-shot
+```
+
+So the added code executes **before** the `spent` stamp at +0x3a8, which means
+it is charged to `spent` — the direction the brief states. Four cycles at
+64 MHz is 0.0625 µs, so "~0.06 µs" is right (three executed instructions, two
+of them loads, is more like 4–6 cycles, 0.06–0.09 µs).
+
+### But "net margin +0.45 µs" is wrong as a per-arm statement
+
+`spent` is sampled from TIM17, which runs at exactly 1 MHz with a 16-bit
+modulus (`src/hw/timers.rs:99-123`), so **`spent` has 1 µs resolution**. Adding
+~0.0625 µs of work ahead of the stamp does not shave 0.06 µs off the margin on
+every arm; it raises the *reported* `spent` by a whole microsecond on roughly
+6 % of arms and changes nothing on the rest. Consequently:
+
+* On **odd** intervals: `wait` +1 µs, and `spent` +1 µs on ~6 % of arms →
+  margin +1 µs usually, 0 occasionally.
+* On **even** intervals: `wait` unchanged, `spent` +1 µs on ~6 % of arms →
+  **margin −1 µs on about one arm in sixteen, and never better.**
+
+The brief's "net margin +0.45 µs" is the mean of a two-point distribution
+presented as if it applied to each arm. It does not, and the even-interval half
+of the distribution is a **strict regression**. That also falsifies the
+stronger framing in the source comment — "it never returns a smaller wait than
+the old form at any `(ci, level)` — so it is a monotone improvement in margin,
+not a trade". The *wait* is never smaller; the *margin* (`left = wait − spent`,
+which is the quantity that raises `LateArm`) can be, on half of all intervals.
+`left == 0` stops the run, so there is a new failure mode: an even-interval arm
+that previously had `left == 1` can now read `left == 0` and stop the run.
+From the table above, at `spent = 9` and level 22 those are `ci` ∈ {58, 60, 62,
+64, …}; `e305-550-ring-2_01.txt` stopped with `ci_us = 62`. I cannot put a rate
+on this from the emitted fields, but `thin_count` (arms with `left ≤ 2`) runs
+~2000 per 10⁶ at rung 550, so the population it draws from is not empty.
+
+This is the single most important thing the brief does not name.
+
+---
+
+## C6 — the overflow
+
+**CONFIRMED, empirically.** `commutation.rs:662-674`
+(`wait_is_half_cycle_minus_advance_and_never_wraps`) ends with
+`let _ = wait_time(u32::MAX, 26);`. I substituted `((ci + 1) >> 1)` for the
+committed form and re-ran the suite: that test **FAILS** (release-profile test
+builds keep overflow checks in the test profile, so `ci + 1` panics). With
+`(ci >> 1) + (ci & 1)` the minuend is `2 147 483 648`, comfortably inside
+`u32`, and `wait_time(u32::MAX, 26)` returns a value rather than trapping.
+
+`advance_of_split_matches_the_wide_product` (`commutation.rs:615-628`) also
+fails under that substitution, because its tail asserts
+`wait_time(ci, 65) == wait_time(ci, 64)` and `wait_time(ci, 1000) == 0` at
+`ci = u32::MAX`. Both still hold under the committed form.
+
+So the choice of spelling is correctly justified and the test that catches it
+is real.
+
+---
+
+## C7 — single-floor forms
+
+**CONFIRMED exactly.** For `sf(ci,L) = (ci·(32−L)) >> 6` over `level` 16..=22 ×
+`ci` 20..=3999 (27 860 pairs):
+
+* `sf` equals `⌊ci/2 − ci·L/64⌋` at every single pair — it is exact (asserted
+  against `Fraction`, zero mismatches).
+* `sf` is **monotone**: zero decreasing steps at every level (the only form of
+  the three that is).
+* `sf < old` at **19 219** pairs (69 %), `sf == old` at 8641, `sf > old` at
+  **0**. The maximum deficit is 1 µs.
+
+So "exact and monotone but give *smaller* waits than the old form, making
+margin worse" is right in every particular. Rejecting it on margin grounds is
+coherent — though note it is the only candidate that actually delivers the
+monotonicity C2 asks for, and the brief uses monotonicity as an argument *for*
+the ceil form while rejecting the monotone form.
+
+---
+
+## C8 — the blanking coupling
+
+The mechanism is correctly characterised, and the source citations check out.
+
+* `blanking()` is `average_interval >> 1` when the fraction is the reference's
+  (`src/bemf.rs:348-352`), as claimed.
+* `blank_remaining(blanking, since_zc) = blanking.saturating_sub(since_zc)`
+  (`src/commutation.rs:305-307`).
+* The COM root computes `since` from the clock, not from `wait`:
+  `let since = now_raw.wrapping_sub(S.det().accept_raw.load(..) as u16) as u32;`
+  at `src/roots.rs:1218`. So the blanking **length** is indeed unchanged; only
+  the boundary moves, because the commutation itself lands 1 µs later.
+  **CONFIRMED.**
+* `BLANK_ARM_MIN_US = 16` (`src/commutation.rs:312`), used at
+  `src/roots.rs:1225`: `hold >= BLANK_ARM_MIN_US` primes the edge and arms the
+  one-shot for the remainder; below it the root drops straight to
+  `comp_exti_arm(step)` with `phase = 0`.
+
+### Does the boundary actually get crossed for realistic intervals?
+
+**Yes — and squarely inside the band where the high rungs stop.** Ignoring
+jitter, `hold ≈ blanking − wait = ⌊ci/2⌋ − (⌈ci/2⌉ − advance) = advance_of(ci,L)
+− (ci & 1)`. The arm is skipped when that falls below 16, i.e. when
+`advance_of(ci,L) == 16` (or 17) **and `ci` is odd**:
+
+* **level 22**: `advance_of(ci,22) = 16` for `ci` ∈ {47, 48, 49}. The odd ones,
+  **`ci` = 47 and `ci` = 49**, move from `hold = 16` (blank armed) to
+  `hold = 15` (blank skipped).
+* **level 20**: `advance_of(ci,20) = 16` for `ci` ∈ {52, 53, 54}; the odd one,
+  **`ci` = 53**, crosses.
+
+The motivating rung-600 capture reports `ci_min_us = 48` and stops with the
+estimate at 50; the thirteen `reason=15` stops span `ci_us` 40–62. So the
+crossing interval is not a corner case, it is the operating point. Concretely,
+at level 22 and `ci` 47 or 49 the COM root will now take the `else` branch:
+no `comp_exti_prime`, no second COM one-shot, `blank_arms` not incremented, and
+the comparator line armed immediately for the final 15 µs of what used to be a
+masked window. That changes (a) the number of COMP dispatches inside the blank,
+(b) the `blank_arms` counter (228 231 in the 600 capture), and (c) the
+`blank_latched` counter, which is itself a hard stop
+(`Reason::BlankLatched`, `src/run/states.rs:282-284`).
+
+So C8 is **CONFIRMED and understated**: the brief says the boundary "can now
+fall below `BLANK_ARM_MIN_US`", which reads as a hypothetical. It is
+deterministic at three specific intervals in the band the campaign is stuck
+in, and it perturbs a protection counter. "Stated in the test, not absorbed" is
+honest but insufficient for a change that is about to be flashed at exactly
+those intervals.
+
+### The test
+
+`the_blank_left_after_a_commutation_is_the_advance`
+(`src/commutation.rs:646-656`) now asserts
+`left == advance_of(ci, 20) - (ci & 1)` for `ci` ∈ {141, 235, 174, 80, 48} —
+two odd, three even, so it exercises both sides of the parity term. It also
+keeps the "5 µs late eats the blank" assertion. It passes.
+
+It does discriminate: with the old form it fails, with `(ci>>1)+1` it fails,
+with `(ci>>1)+((ci&1)<<1)` it fails (see the perturbation table under C9). It
+would panic on underflow if `advance_of` were 0 at an odd `ci`, which none of
+the five inputs is.
+
+### A third coupling the author does not name
+
+Two existing tests in `src/bemf.rs` still encode the **floor** identity and now
+pass only because their fixture interval is even (20 000):
+
+* `bemf.rs:732`: `assert_eq!(wait + advance, average_interval >> 1);`
+* `bemf.rs:749`: `assert_eq!(wait, average_interval >> 1);`
+  (`a_zero_advance_level_waits_the_full_half_cycle`)
+
+On an odd interval `wait + advance == (ci >> 1) + 1`, so both identities are
+now false in general; they are silently parity-dependent rather than wrong.
+Odd intervals are not rare — in the replay capture 143 of 279 accepted
+decisions have an odd estimate. These two tests should be updated the way the
+blanking test was, and the brief's "two couplings" is really three.
+
+A fourth site is touched and not mentioned: `src/run/states.rs:897` uses
+`wait_time(sd.interval_us, adv)` to compute the **transfer commit instant** at
+loop close, so the handoff commutation also moves 1 µs on an odd driven seed.
+That is in the acquire path, which the campaign qualified separately.
+
+---
+
+## C9 — the replay test
+
+**CONFIRMED, and the assertion is stronger than a loosened equality.**
+
+* `src/bemf.rs:417` computes `wait_time(self.average_interval, advance_level)`
+  from the **post-blend** estimate, which is exactly the `average` field the
+  capture records — so `recorded + (average & 1)` is the right expectation.
+* `captures/replay/e121-capture25b.txt` holds 1536 decisions, of which **279
+  are `Accepted`**, with `average` spanning 128..158 and `advance = 20`
+  throughout.
+* **143 of the 279 accepted decisions have an odd `average`, 136 even**, so
+  both branches of the parity term are exercised heavily. The assertion is not
+  vacuous.
+* For all 279, the recorded `wait` equals `old(average, 20)` exactly — the
+  capture really is a fixture of the old form, so the delta assertion is a
+  genuine cross-check and not a tautology.
+
+Perturbation results (each substituted into `wait_time`, full `--lib` suite
+re-run, then reverted):
+
+| substitution | `the_blank_left…` | `…captured_25_percent_sequence` | `…never_wraps` |
+|---|---|---|---|
+| `(ci >> 1)` (the old form) | FAIL | FAIL | ok |
+| `(ci >> 1) + 1` | FAIL | FAIL | FAIL |
+| `(ci >> 1) + ((ci & 1) << 1)` (+2 on odd) | FAIL | FAIL | ok |
+| `(ci + 1) >> 1` | ok | ok | **FAIL** (overflow) |
+| committed `(ci >> 1) + (ci & 1)` | ok | ok | ok |
+
+So the tests fail for the right reasons: wrong direction, wrong magnitude and
+wrong parity are all caught, and the one arithmetically-equivalent spelling is
+caught by the overflow test instead. The claim that it "fails if the wait moves
+on an even interval, or by 2 µs, or in the wrong direction" is **CONFIRMED**.
+
+One overstatement: the comment says the assertion turns the capture into "a
+check that the change is EXACTLY the rounding and has **no other effect on the
+decision path**". The `wait` is an *output* of `offer`; it feeds no decision
+inside the estimator. The accept/refuse/estimate/read-count assertions in the
+same loop are what pin the decision path, and they were already there and are
+untouched by the change. The new assertion pins the wait, which is the right
+thing to pin — but it says nothing about the decision path.
+
+---
+
+## C10 — was 60 % genuinely reached?
+
+**CONFIRMED.** Every number in the brief's excerpt of
+`captures/2026-09-25/e318-600-explore_01.txt` recomputes exactly, and the
+provenance checks out: the capture header's `elf_sha256`
+`D9D77F3C…C40897` matches `captures/elf/0D8E3799.e246-final-candidate.elf`
+in `captures/MANIFEST-hashes.txt:1222`.
+
+* **Duty.** `RUN_PERIOD_TICKS = 1333` (`src/duty.rs:43`) and
+  `sixstep_ccr_of(600, 1333) = 1333·600/1000 = 799`
+  (`src/run/policy.rs:197-204`) — matches `applied_ccr=799`, i.e. 59.94 %.
+  `SIXSTEP_DUTY_CAP = 600`, `ceiling_tenths=600`, `applied_cap=600`, so the
+  governor never folded back. The applied duty did hit target.
+* **The self-reference.** The `BEMFSELFREF` line is emitted by the **host**
+  (`scripts/bemf_run.py:116-145`), not the firmware. `verdict` is
+  `cohort.SELF_REF_LO <= zc_rotor <= cohort.SELF_REF_HI` with the band
+  980..1020 (`scripts/cohort.py:513-514`) and
+  `zc_rotor = 1000·zc_per_s // (6·coast_ehz)`. Running
+  `cohort.coast_ehz([199,206,200,206,202,206,205,204])` gives **2467**, and
+  `1000·15096 // (6·2467) = **1019**`. Confirmed, and `verdict=ok` means
+  exactly what the brief says: the loop's accepted-crossing rate over the hold
+  was within ±2 % of six times the rotor's own coast-fitted speed.
+* Cross-checks: `zc_per_s = 468·1000/31 = 15096`;
+  `mean_sector = 31000/468 = 66`; `ehz_from_sector = 10⁶/(6·66) = 2525`; all
+  reproduce from `src/report.rs:585-625`.
+* Plausibility: the oracle's last entry is 2096 eHz at rung 500
+  (`scripts/bemf_run.py:96`); 600/500 × 2096 = 2515, against a measured coast
+  of 2467 and a loop rate of 2525.
+
+Three caveats the brief does not state:
+
+1. `loop_per_coast = 1023` is **outside** the 980..1020 band. The gate
+   deliberately uses `zc_rotor` (1019) and not `ident` (1023), so
+   `verdict=ok` is correct per the script — but the run sits one unit inside
+   the edge on the gated metric and outside it on the ungated one.
+2. `coast_ehz` is fitted from the coast **after** the stop
+   (`COASTTIMING offset_us=46 first_us=95`), so it is the rotor speed at
+   bridge-off, which is the right anchor but is a post-mortem quantity.
+3. `hold_ms = 31` with 468 accepted crossings. `hold_ms` is integer
+   milliseconds, so `ehz_from_sector` carries about 0.4 % of quantisation at
+   this sample size (the unrounded mean sector is 66.24 µs → 2516 eHz, not
+   2525).
+
+None of that disturbs the claim. 60 % speed was real for 31 ms.
+
+---
+
+## C11 — "the binding constraint at 600 is the timing stop, not the supply"
+
+**REFUTED as an exclusion of the supply.** The two supporting readings are
+each weaker than stated, and the third piece of evidence points the other way.
+
+**"Sag never armed."** True as a reading (`streak=0 tripped=0`), but it
+establishes less than the brief implies. The guard is
+`SAG_NUM/SAG_DEN = 95/100` of a filtered reference for `SAG_STREAK = 3`
+consecutive judgements (`src/protection.rs:467-470`), i.e. it is built to catch
+a *sustained* 5 % collapse. The capture's `filt_bus/ref_bus = 1185/1212 =
+97.8 %` never approaches it — while `bus_min = 1099` is **−9.3 %** against the
+same reference, within a whisker of the operator's own 10 %-drop kill rule.
+A guard that is designed not to see an instantaneous dip not seeing one is not
+evidence of a healthy supply.
+
+**"`thin_count`/arm is no worse than production at rung 550."** This does not
+survive recomputation.
+
+| capture | image | rung | accepted | `thin_count` | per 10⁶ | `hold_ms` |
+|---|---|---|---|---|---|---|
+| `e308-550-old-1` | **0D8E3799** | 550 | 232 634 | 216 | **928** | 2 943 |
+| `e308-550-old-2` | **0D8E3799** | 550 | 918 705 | 1 868 | **2 033** | 52 276 |
+| `e315-550-why` | 0F890AF2 | 550 | 189 511 | 370 | 1 952 | 0 |
+| `e318-600-explore` | **0D8E3799** | 600 | 228 111 | 492 | **2 157** | **31** |
+
+So 2157 is **above both** production-image figures at 550, not "no worse". The
+notebook's comparison figure of "~1950" is `e315-550-why`'s 1952 — a **different
+image** (`0F890AF2`, the E314 `whylate` diagnostic), which is precisely the
+substitution E314 itself warned about when it noted that instruction-identical
+images differ 3.2× in `thin`.
+
+Worse, the two sides are not commensurable. `thin` is a whole-run counter
+incremented in `note_margin` on every armed acceptance
+(`src/roots.rs:421-433`) from the moment the COM root is active — it is not
+hold-gated. The 600 run has `closed_ms = 25031` against `hold_ms = 31`: all but
+468 of its 228 111 accepted arms happened during the 25 s climb, at long
+intervals with fat margins. A 550 run with a 52 s hold is the opposite
+mixture. Normalising both by total accepted arms and comparing the quotients
+is not a valid comparison, and the emitted fields do not let a hold-window thin
+rate be recovered.
+
+**And the supply evidence at 600 is worse than the brief allows** — see C13.
+The other rung-600 capture on the *same image* held 1.307 s with
+`hold_ma = 2869` (95.6 % of the 3 A clamp) over 130 blocks and
+`worst_hold_ma = 3490` (116 %).
+
+Finally, the dichotomy itself is suspect. Both rung-600 stops are
+depressed-estimate `LateArm`s (`ci_us` 50 and 49, against `mean_ci_us = 67`).
+A supply in constant-current sags the bus, which lowers BEMF amplitude and
+perturbs zero-crossing timing, which is one plausible generator of a depressed
+estimate. "Timing, not supply" treats the two as independent when the capture
+gives no basis for separating them. **This is an inference presented as a
+reading.**
+
+---
+
+## C12 — the supply evidence is thin
+
+**CONFIRMED, and the brief is right to flag it.**
+
+* `hold_blocks = 3`. A block is 100 ADC scans at ~9.9 kHz ≈ 10 ms — confirmed
+  by ratio in the long runs (`e305-550-noring-1`: `hold_ms = 62274`,
+  `hold_blocks = 6165` → 10.1 ms/block). So `hold_ma = 2988` is the mean of
+  **three blocks, ~30 ms**, and `worst_hold_ma = 3115` is the single worst of
+  those three.
+* `window_milliamps` (`src/protection.rs:894-902`) is `mean·4000/allow`, and
+  `window_blocks` is the block delta — so `hold_ma` is a plain mean over the
+  hold window's completed blocks. Confirmed.
+* The mA scale is credible: `RAW_LIMIT = 31857` (`src/protection.rs:614`), and
+  `24813·4000/31857 = 3116 ≈ worst_ma = 3115`; `6157·4000/31857 = 773 =
+  mean_ma`. So the report was scaled against the nominal allowance, as
+  `inject=0` requires.
+* `2988/3000 = 99.6 %` and `3115/3000 = 103.8 %`. Confirmed.
+
+Two notes. The capture does **not** carry the `ma_allow`/`ma_allow_ref` fields
+(`src/report.rs:808-809`) that the current tree emits for exactly this
+purpose — image `0D8E3799` predates them — so the scaling had to be inferred
+from the residual/mA ratio rather than read. And the 3 A clamp is an operator
+bench setting recorded only in `LAB_NOTEBOOK.md`; nothing in source or capture
+attests to it, so the "99.6 % of clamp" framing rests on that one line.
+
+For balance: `e308-550-old-3` (same image, rung 575) held **48.319 s** with
+`worst_hold_ma = 3022` — already over the clamp on a block — and no protection
+trip, `streak=0 tripped=0`. So a single block above the clamp demonstrably does
+not end a hold, which supports the brief's caution rather than undermining it.
+
+---
+
+## C13 — the withdrawn "60 % is unreachable"
+
+Withdrawing a wall inferred from a Poisson projection plus one capture is
+right, and the brief's description of that capture is accurate as far as its
+header goes: `captures/2026-09-24/e278-prot500-i_01.txt` is `inject=25`,
+rung 600, `hold_ms = 1307` (~1 s).
+
+**But its premise is wrong, and that matters more than the withdrawal.** That
+capture's own injection report says:
+
+```
+BEMFINJECT expected_reason=25 reason=15 guard_reason=0 fired=0 stop_after_inject_us=0 provoked=0
+```
+
+`fired` is `inj.fired_at.is_some()` (`src/report.rs:558`) and `fired_at` is
+`ctx.injected_at` (`src/run/mod.rs:315`), which `maybe_inject` sets only when
+the delay has elapsed (`src/run/states.rs:444-451`). For a lower-case
+provocation key the delay is `ramp_us(at) + R::INJECT_AT_TARGET_US`
+(`src/run/mod.rs:674-676`) = `ramp_us(600) + 2 s`. With
+`START_TENTHS = 100`, `STEP_TENTHS = 10`, `STEP_US = 500_000`
+(`src/ramp.rs:15-19,41-48`), `ramp_us(600) = 50 × 0.5 s = 25 s`, so the
+injection window opened at **27 s** and the run stopped at
+`closed_ms = 26307`. The injection could not and did not fire. Independently:
+the capture's mA fields scale against 31857, not `RAW_LIMIT/100`, which they
+would not if `Inject::AverageCurrent` had rebuilt the accumulator
+(`src/run/states.rs:472-478`).
+
+So `e278-prot500-i_01.txt` is, in substance, an **un-provoked rung-600 run on
+the production image `0D8E3799`** that:
+
+* reached target and **held 1.307 s** — 42× longer than the new capture's 31 ms;
+* passed the same self-reference: `zc_permille_of_6x_coast = 1005`,
+  `loop_per_coast = 1008`, `verdict=ok`, `coast_ehz = 2465`;
+* stopped on the same `reason=15` with the same depressed estimate
+  (`ci_us = 49`, `mean_ci_us = 67`, `late_arms = 1`, `spent_max_us = 11`);
+* recorded **130 current blocks (~1.3 s)** of hold current: `hold_ma = 2869`,
+  `worst_hold_ma = 3490`.
+
+Consequences:
+
+1. **"The tree's first un-injected rung-600 capture" is a statement about a
+   header field, not about the physics.** Functionally the tree already had
+   one, and it is the better of the two.
+2. **The new run is the worse of the two rung-600 holds** (31 ms vs 1307 ms) on
+   the same image. A 42× spread across two samples means neither hold duration
+   supports any conclusion about where 600 sits; the new capture cannot be read
+   as progress.
+3. **C12's "the evidence is thin — three current blocks, not a 30 s average" is
+   true of the new capture and false of the corpus.** There is a 1.3 s,
+   130-block current record at rung 600, and it is worse: `worst_hold_ma = 3490`
+   = 116 % of the clamp. That is the evidence E314 used, and dismissing the
+   capture for an inject flag that never fired discards a real measurement.
+
+The withdrawal of the wall stands (a wall should not be declared from a
+projection). But the same capture, correctly read, is the strongest supply
+evidence at rung 600 in the tree, and it argues against C11.
+
+---
+
+## What this change invalidates
+
+Things in the tree that encode the old wait values and were not updated:
+
+1. **`scripts/chain.py:119-121`** — the host mirror of `wait_time`, still
+   `max((ci >> 1) - advance_of(ci, level), 0)`, with a docstring claiming it is
+   `src/commutation.rs::wait_time`. It is used at `chain.py:374-389` to score
+   recorded arms against predicted waits and to compute the scheduled fraction.
+   After this change the mirror is wrong on every odd interval, and
+   `src/run/policy.rs:299` explicitly advertises it as the mirror.
+2. **`src/run/policy.rs:302-303`** — "level 22 clears it only above `ci` = 72
+   (always 74) while level 20 clears it above 60 (always 62)". Recomputed with
+   `wait > 11`: old form 72/74 and 60/62 (the doc is right), **new form 69/71
+   and 57/59**. The 12 µs span between the levels survives; the absolute
+   thresholds move by 3 µs each, in the direction that weakens the case for the
+   L 22→20 A/B this very comment exists to justify.
+3. **`scripts/advance_ab.py:11-12`** — repeats the same 72/60 constants.
+4. **`WCET_ESTIMATES.md:138`** — states the formula as
+   `wait_time(ci, level) = (ci >> 1) − advance_of(ci, level)`. Now stale.
+   The wait columns in its §5b and §7 tables move by 1 µs at every odd `ci`:
+   §5b's 139→26 becomes 27, 125→23 becomes 24, 123→23 becomes 24, 113→21
+   becomes 22, 97→**15** becomes 16 (that is the 37.5 % row whose "4 µs on the
+   narrow figure" margin is the document's headline); §7's 101→16 becomes 17.
+   `wait_time(70,22) = 11` at §5b:293 is unchanged (70 is even).
+5. **`src/bemf.rs:732` and `src/bemf.rs:749`** — two assertions that still
+   encode `wait + advance == ci >> 1` and `wait == ci >> 1`, passing only
+   because their fixture interval is even. Silently parity-dependent.
+6. **`thin_count` as a comparable series.** `thin` counts arms with
+   `left <= 2` (`src/roots.rs:429`). On odd intervals the change adds 1 µs to
+   `left`, so arms that sat at `left == 2` move to 3 and stop being counted.
+   The campaign's whole margin series — 0 through rung 350, then 8 / 11 / 121 /
+   688 / 4118 per 10⁶ at rungs 425–525 (`src/run/policy.rs:307-313`) — was
+   measured under the old form, and every future `thin` reading on the new form
+   will be lower for reasons that have nothing to do with the loop getting
+   better. **Any post-flash `thin` comparison against the existing corpus is
+   invalid unless it is parity-split.** This is the most consequential
+   invalidation, because `thin` is the campaign's primary margin instrument and
+   the change will make it improve for free.
+7. **`captures/insn_baseline.json`** — `ADC_COMP: 760` is now 764. Within the
+   ±8 slack so the ratchet passes, but the baseline no longer describes the
+   tree.
+8. **The replay fixture** `captures/replay/e121-capture25b.txt` remains valid
+   evidence only because the test was changed to model the delta. Any *other*
+   consumer of that file's `wait` column now disagrees with the firmware.
+
+Not invalidated, but worth restating: the qualified image is **`0D8E3799`,
+whose `ADC_COMP` is 728 instructions** — 32 fewer than the pre-change tree and
+36 fewer than the post-change tree. Every `spent` figure the margin argument
+leans on (`spent_max_us = 11`, `spent_at_late = 9`, the E314 census with mode 6
+and max 10) was measured on leaner images, and E314's own entry records that
+layout is an uncontrolled carrier worth up to 3.2× in `thin`. So "net margin
++0.45 µs" is being computed against a baseline that does not exist in any
+flashed image.
+
+---
+
+## Judgements the brief asks for
+
+**Is the change safe on every rung including the qualified 50 %?** Mostly, with
+one unquantified exception. At 50 % the interval runs ~75–79 µs; the blanking
+boundary crossing needs `advance_of(ci,22) ∈ {16,17}`, i.e. `ci` 47–52, so 50 %
+never touches it. The wait gains 1 µs on odd intervals (more margin, ~0.4° less
+advance, ~0.4–0.5 % speed by the A/B's exchange rate) and loses ~0.06 µs of
+`spent` — which, at TIM17's 1 µs resolution, is a whole microsecond of margin
+lost on roughly 6 % of even-interval arms. That is a new way to reach
+`left == 0`, and `left == 0` stops the run outright. It is small, but it is not
+zero, and the campaign's own standard (three ≥30 s holds, 3/3 restart) means
+**50 % has to be re-qualified**, not argued.
+
+**Does the predeclared next run discriminate?** **No.** At `ci` 48–52 — where
+both rung-600 stops sat, and where `ci_min_us = 48` — the change provably
+cannot move `left` off 0 at any `spent ≥ 9`. A rung-600 `LateArm` stop is the
+expected outcome under *both* forms, so the run cannot distinguish them, and a
+longer or shorter hold would be indistinguishable from the 42× run-to-run
+spread the corpus already shows (31 ms vs 1307 ms on the same image at the same
+rung). A run that discriminates would have to target the rescue band —
+intervals 55–59, i.e. roughly rung 550 — and would have to be an ABAB with
+enough arms to see a difference in `left == 0` incidence, with `thin` split by
+parity so the instrument does not improve for free.
+
+**What could break that the author has not named:** the even-interval margin
+regression via `spent` (C5); the `left == 1 → 0` new-stop path it creates; the
+two parity-dependent `bemf.rs` assertions; the transfer-commit shift at
+`states.rs:897`; the `blank_arms`/`blank_latched` perturbation at `ci` 47/49/53
+(named as a possibility, not as the deterministic event it is); and the
+invalidation of `thin_count` as a comparable series.
+
+**Overall.** The defect C1 identifies is real, correctly analysed and worth
+fixing; the fix is minimal, correctly spelled, well tested and cheap. But three
+of the supporting arguments do not hold: C2 is backwards, C5's net-margin
+arithmetic ignores the 1 µs sampling of `spent` and hides a regression on half
+of all intervals, and C4/C11/C13 rest on a capture set that contains no
+production-image latch interval and on a rung-600 comparison that discards a
+better capture for an injection that never fired. The change does not address
+the failure it is introduced to address: at the intervals where the production
+image actually stops, it changes nothing at all.
+
+---
+
+### E319 review 2 of 2 — ADVERSARIAL (verbatim)
+
+# E319 — adversarial review
+
+Reviewer had no prior context on this campaign. Everything below was
+recomputed from source and captures in `E:\m\robot\esc\rm32\binz\firmware50`
+at commit `59e486b`. Host tests were run (`cargo test --target
+x86_64-pc-windows-msvc --lib`: **345 passed, 0 failed** — that claim in the
+commit message is true).
+
+---
+
+## 0. Verdict
+
+**The change is not a bug fix. It is an uncontrolled retune of the advance,
+applied silently, at a granularity of roughly half an advance level, weighted
+towards the highest rung on the bench — and it is being justified by a run in
+which it would have made no difference at all.**
+
+Three findings decide it:
+
+1. **`(ci >> 1) - advance` is the reference's arithmetic, verbatim**
+   (`AM32/Src/main.c:933`, `:2027`), and the production advance schedule
+   (`ADVANCE_LOW = 20` / `ADVANCE_HIGH = 22`) was tuned on hardware *against
+   that arithmetic* — `src/run/policy.rs:300-305` justifies level 22 by "the
+   **real integer** function", quoting thresholds that this commit silently
+   falsifies and does not update. Changing the rounding changes the tuned
+   quantity. That is a retune, whatever it is called.
+
+2. **The motivating capture is not rescued by the change.** The rung-600 stop
+   was at `ci_us = 50` — an **even** interval. `wait_time(50, 22) = 8` before
+   and `8` after. Zero microseconds gained. Of the four latches whose interval
+   the firmware actually recorded, the brief quotes three and omits the fourth
+   (`ci_at_late = 51`, `captures/2026-09-25/e315-500-hold_01.txt`), which is
+   odd, gains its microsecond, and **still latches** (8 → 9 against
+   `spent_at_late = 9`). Across all thirteen `reason = 15` stops at rung ≥ 550,
+   the change would have prevented **5**, and **0 of the 4 that occurred on the
+   production image `0D8E3799`**.
+
+3. **C11 ("the timing stop binds, not the supply") is unsupportable from a
+   31 ms hold.** `FastBusSag` judges an 8-scan mean against 95 % of a **207 ms
+   EWMA** (`src/protection.rs:212`, `:485-495`). A 31 ms hold is 0.15 time
+   constants: the guard's own reference had barely begun to see the 60 % load.
+   "Sag never armed" is a statement about the guard's time constant, not about
+   the supply. Worse, the **same image already latched `FastBusSag`
+   (reason 26) at rung 550** — it is in `captures/ladder_state.json` under
+   `D9D77F3C…`, `"550"`, alongside the reason-15 record. The supply constraint
+   is *demonstrated* on this image one rung lower.
+
+And one process finding that determines the order of work:
+
+4. **The rung-600 run was launched in violation of the fixture's own ladder.**
+   `scripts/bemf_run.py:325-341` requires the rung below (575) to have a
+   passing report **on the same ELF**; `rung_report` (`:261-322`) says a rung
+   needs ≥ 3 measured runs and **no failed attempt at all** on that image.
+   In `captures/ladder_state.json`, image `D9D77F3C…` has `"575"` **absent
+   entirely** and `"550"` containing a reason-26 and a reason-15 record — i.e.
+   550 is permanently failed on that image. 600 was run anyway, and is now
+   recorded with `"fails": ["reason 15 != 2 …", "hold 31 ms < 30000"]`.
+
+---
+
+## 1. Is "schedules the arm early" a defect? No. It is the tuned behaviour.
+
+The brief's frame is that `wait = ci/2 − ci·level/64` is a rational ideal and
+the integer implementation errs against it. That frame is wrong in two ways.
+
+**(a) The reference defines the arithmetic, not the ideal.**
+
+```
+AM32/Src/main.c:933   waitTime = (commutation_interval >> 1) - advance;
+AM32/Src/main.c:2027  waitTime = commutation_interval / 2 - advance;
+minz/core/src/am32.rs:113-119   "waitTime — main.c:906/1874: ci/2 - advance"
+```
+
+Both floors. `src/commutation.rs:1-17` states this module's contract as the
+reference's arithmetic in different units, and `src/bemf.rs:346-352` keeps
+`blanking()` as `average_interval >> 1` *explicitly* because it is "the
+reference's exact half cycle". After this change the firmware computes the
+half cycle **two different ways in two places** — floor for the blank, ceil
+for the wait — and encodes the inconsistency in an assertion
+(`commutation.rs:652`, `advance_of(ci,20) - (ci & 1)`) rather than resolving
+it. If `ceil` is right, it is right in `blanking()` too. Pick one.
+
+Note also that the reference arms at **`waitTime + 1`** (`main.c:973`;
+`minz/core/src/am32_isr.rs:117`) in half-µs ticks, i.e. +0.5 µs, while
+firmware50 arms at `left.max(1)` with no `+1` at all. So the reference's own
+upward nudge is *half* the size of this one and is applied to **every**
+interval, not only odd ones. "Match the ideal" was never the campaign's
+standard; matching the reference was.
+
+**(b) The level was tuned on hardware, against the floor, and the level step
+is bench-decisive.**
+
+`src/run/policy.rs:299-305`:
+
+> the reason that A/B exists: `wait_time(ci, level) = ci * (32 - level) / 64`
+> must exceed the measured 11 µs arm cost, and by the **real integer** function
+> … level 22 clears it only above `ci` = 72 (always 74) while level 20 clears
+> it above 60 (always 62) — about **12 µs of interval headroom, ~3 rungs**.
+
+I recomputed those four thresholds under both forms:
+
+| level | first `ci` with `wait > 11` | always-clear from |
+|---|---|---|
+| 22, old | 72 | 74 |
+| 22, **new** | **69** | **71** |
+| 20, old | 60 | 62 |
+| 20, **new** | **57** | **59** |
+
+So the commit makes its own justifying doc comment false by 3 µs in four
+places and **does not touch it** (`git show --stat 59e486b`: three files,
+`commutation.rs`, `run/replay.rs`, `LAB_NOTEBOOK.md`). The same applies to
+`src/shared.rs:311-315` ("71 µs at level 22 against an 11 µs arm path" → 68)
+and `src/shared.rs:366-370`, whose whole argument for bucketing on `wait`
+rather than `ci` is the comb `wait22(57)=9, wait22(58)=10, wait22(59)=9` —
+after the change those are 10, 10, 10.
+
+How big is the retune? At `ci = 67`, one advance level is `67/64 = 1.047 µs`.
+The change adds **+1 µs on odd intervals, 0 on even**:
+
+| rung | mean `ci` | de-tune, odd interval | mean de-tune |
+|---|---|---|---|
+| 600 | 67 | **0.96 level** (0.90°) | 0.48 level (0.45°) |
+| 550 | 71 | 0.90 level | 0.45 level |
+| 500 | 77 | 0.83 level | 0.42 level |
+| 250 | ~143 | 0.45 level | 0.22 level |
+
+**The de-tune is speed-weighted: it is largest exactly at the top rung, where
+the bench is at its current limit and where level 22 was chosen over 20.** And
+level steps are not cosmetic on this hardware. `binz/AGENTS.md:2161-2166`
+records the powered A/B that chose them:
+
+> advance16 E834 reached 38 then collapsed to ~0.83keHz/nFAULT; advance18 E832
+> reached 39 then collapsed/~1.0keHz/nFAULT; advance20 E836 reached 43, held …
+> Global advance22 failed startup twice with zero powered events.
+
+One and two level steps flipped whether the motor reached a rung or collapsed,
+and *global* level 22 failed to start at all — which is why the schedule is
+20-below-35 %/22-above. This change removes ~0.5 level everywhere, including
+below 35 % where level 20 sits one step above the 18 that collapsed. It is not
+in the class of things that can be reasoned about as rounding.
+
+**Decisive answer: treat this as a control retune. It must be flagged
+(`advance-low` already shows the pattern: `policy.rs:308-311`), predeclared as
+an A/B, and qualified from the bottom of the ladder — or it must not be
+flashed.**
+
+---
+
+## 2. C1–C7, recomputed
+
+### C1 — the sweep is misreported by a factor of 14; the direction claim holds
+
+Over the *stated* sweep (`level` 16..=22 × `ci` 20..=3999 = **27 860** pairs):
+
+```
+old: err ∈ [-0.484, +0.969] µs,  6 964 / 27 860 (25.00 %) schedule early
+new: err ∈ [ 0.000, +1.484] µs,      0 / 27 860 schedule early
+```
+
+The brief's "**496 of 1980**" is not that sweep. It is **one level over
+`ci` 20..1999** (I reproduced it exactly: level 22, `ci` 20..1999 → 496 early
+of 1980; every other level gives 495). The *fraction* — a quarter — is right
+and robust. The quoted numerator and denominator do not correspond to the
+quoted sweep. Per the project's own standard
+([[feedback-verify-reported-numbers]]) that is a reported number that does not
+survive opening.
+
+Substance: the claims that the new form is never early, and never returns a
+smaller wait, are **true** (`new = old + (ci & 1)` before saturation, and
+`advance_of` is exact — `commutation.rs:602-615` proves it against the 64-bit
+product).
+
+But read the error ranges again. The old form's error is **centred**
+(−0.48…+0.97); the new form's is **strictly biased late** (0…+1.48), with the
+larger worst-case magnitude. `wait` is integer µs and the ideal is not
+representable, so *every* form errs by under 1 µs. Calling a ≤ 0.48 µs
+quantisation "a defect" while `spent` is 9–11 µs, `com_late_max_us = 9`, and a
+guard preemption costs 4.7–5.2 µs (`LAB_NOTEBOOK.md` E318 census;
+`WCET_ESTIMATES.md:111-128`) is a category error about what dominates.
+
+### C2 — true of the old form, false as a reason for the new one
+
+The old form is non-monotone. So is the new one, **more often**. Over
+`ci` 20..1999:
+
+| level | non-monotone points, old | new |
+|---|---|---|
+| 16 | 0 | **494** |
+| 20 | 248 | **370** |
+| 22 | 310 | **371** |
+
+Worked example at level 22: old `58 → 10, 59 → 9` (the brief's); new
+`55 → 10, 56 → 9`. The change relocates the non-monotonicity and increases its
+count, and at level 16 — the reference default, `DefaultAdvance` — it
+*introduces* it where the old form had none. C2 is quoted as a defect of the
+old form and the change makes that defect worse. It should be withdrawn, not
+cited.
+
+### C3 — arithmetic right, comparison priced against something never measured
+
+`+0.511 µs` mean over `ci` 45..89 ✓ (I get 0.5111 at both levels 20 and 22).
+`0.46°` at `ci = 67` ✓ (0.457). `2.69°` for `L 22→20` ✓ (3 µs). "About one
+sixth" ✓ arithmetically.
+
+But **one sixth of what**? The campaign has never measured what an advance
+level costs on the bench in this regime. Its only matched level A/B is
+`captures/2026-09-25/e303-ab-A22_1_01.txt` vs `e303-ab-B20_1_01.txt`, n = 1 a
+side, and both sides ran with the loop at **775 per mille of the coast-measured
+rotor rate** (`mean_sector_us = 100-101` against `coast_ehz = 2149/2088`,
+i.e. the commutation rate is 29 % below the rotor). At rung 500 the rate
+identity is printed as `zc_rate_circular_ignored` and **nothing gates it**
+(`scripts/cohort.py:424`, `:458` — the band applies only to
+`SELF_REF_RUNGS = (525, 550, 575, 600)`), so that A/B passed with a 29 %
+internal contradiction unflagged. Its numbers (coast 2149 → 2088, −2.8 %;
+`hold_ma` 1776 → 1643, −7.5 %) are the only bench data on the price of an
+advance level, and they come from a pair that cannot both be right.
+
+One useful thing does survive from them: the direction. **Less advance
+measured *lower* current at fixed duty**, which means the retune is very
+unlikely to raise current — see §3.5. That is the opposite of what I expected
+and I will not pretend otherwise.
+
+### C4 — the sample is biased and contains its own counterexample
+
+See §5. Short form: the four intervals that were ever recorded come from four
+**non-production, one-off diagnostic images** (`5EB8018E`, `E3BB2544`,
+`26843E7C`, `0F890AF2`), because `ci_at_late`/`spent_at_late` did not exist
+before E314/E315; the production image `0D8E3799` cannot report them at all.
+The fourth recorded latch is `ci_at_late = 51`, also odd, also gains 1 µs, and
+**still trips** (`wait` 8 → 9 vs `spent_at_late = 9`). The brief says "three of
+the four … each gains the microsecond that takes `left` from 0 to 1" — true of
+those three, and it omits that the fourth member of its own four-point sample
+refutes the generalisation.
+
+### C5 — structurally right, but "net +0.45 µs of margin" is not a quantity
+
+The `+4` instructions are genuinely pre-arm: `wait` is computed inside
+`ZeroCross::offer` (`src/bemf.rs:417`) and `spent` is read afterwards
+(`src/roots.rs:512`). I did not rebuild to confirm 760 → 764 or the hazard
+classes; that is cheap and should be re-run.
+
+The arithmetic is the problem. `spent` is read from a **1 MHz** stamp
+(`WCET_ESTIMATES.md:102`, TIM17, 1 µs resolution), so `spent` is an integer
+number of microseconds and `left = wait − spent` lives on the same lattice.
+You cannot subtract 0.06 µs from a 1 µs gain and call the result 0.45 µs of
+margin. The honest statement: **gain = +1 µs on odd intervals, 0 on even;
+cost = a ~6 % increase in the chance that a given arm's `spent` rounds up one
+tick.** Also relevant: `spent_max_us` is image-specific and has read **10–24**
+across images (`policy.rs:334-337`), and 13 at 25 % in E131
+(`WCET_ESTIMATES.md:104`). The claimed gain is smaller than the build-to-build
+spread of the quantity it is measured against — and this change *is* a new
+build.
+
+### C6 — true
+
+`(ci + 1) >> 1` wraps at `u32::MAX`; `wait_is_half_cycle_minus_advance_and_
+never_wraps` (`commutation.rs:662-674`) exercises `u32::MAX`. Correct call,
+correct reason.
+
+### C7 — true and correctly rejected
+
+`ci*(32−level) >> 6` is exact and monotone and strictly ≤ the old form. Fine.
+
+---
+
+## 3. Safety on every rung
+
+### 3.1 Wrap and arm safety: unaffected
+
+`com_arm` (`src/roots.rs:1017-1025`) clamps: `us > 0xFFFF → 0xFFFE`,
+`us < 2 → 1`, else `us − 1`. One extra microsecond cannot cross the 16-bit
+reload or produce a zero ARR. The arm remains one `interrupt::free` critical
+section with `arm_allowed` inside it (`:1051-1057`) — the atomic stop/arm
+property is untouched. Sector identity, the `& 7` table indexing
+(`commutation.rs:95-150`) and `Reverse` are untouched.
+
+### 3.2 Startup / acquisition handoff: negligible
+
+`src/run/states.rs:897` commits the handover at
+`edge + wait_time(sd.interval_us, adv).max(1)`. `seed_us` is ~806 µs in the
+600 capture; +1 µs on an odd seed is 0.12 % of one interval and 0.07 of a
+level. No concern.
+
+### 3.3 `SECTOR_FLOOR_US`: the change does nothing there
+
+`SECTOR_FLOOR_US = 40` (`policy.rs:82`) is the estimator's lower clamp
+(`policy.rs:286`). `wait_time(40, 22) = 7` both before and after (40 is even);
+`wait_time(41, 22)` goes 6 → 7. Against the measured `spent_at_late = 9`, both
+are certain latches. **Answer to the brief's question: no — the run that
+stopped with the estimate pinned at the floor
+(`captures/2026-09-25/e305-550-noring-2_01.txt`, `ci_us = 40`,
+`ci_min_us = 40`) gains exactly zero.**
+
+More generally, the *structural* fact the change does not move: for `ci ≤ 46`
+at level 22 the wait is below the measured arm cost, so **any** excursion of
+the estimate into the low 40s latches `LateArm` with certainty. The change
+narrows the guaranteed-latch zone from `ci ≤ 57 (and 59)` to `ci ≤ 54 (and
+56)` — 3 µs off the top of a 22 µs-wide failure band (observed stops span
+40–62).
+
+### 3.4 The already-qualified 50 %: invalidated as a matter of bookkeeping
+
+At rung 500 the hold mean is `ci ≈ 77` (`e195`, `e315-500-hold`), so the
+retune there is 0.83 level on odd intervals. More importantly the ladder is
+keyed on the ELF hash (`scripts/bemf_run.py:261`, `_ladder_load`,
+`captures/ladder_state.json`), and `rung_report` demands ≥ 3 measured runs and
+zero failures **on that image**. A new `wait_time` means a new image means
+**every rung report in the tree resets to zero**, including the 15-rung 50 %
+cohort on `14CE44E7`. That is not an argument against the change; it is the
+price of it, and the brief does not state it.
+
+### 3.5 Current and bus sag: the one place the change is probably *safe*
+
+I expected a systematically later commutation to raise current. The
+campaign's own matched A/B says the opposite: at rung 500, level 22 → 20
+(−2 levels, i.e. commutating later) moved `hold_ma` **1776 → 1643 (−7.5 %)**
+and coast speed **2149 → 2088 (−2.8 %)** (`e303-ab-A22_1_01`,
+`e303-ab-B20_1_01`). Scaling the ceil change's mean −0.42 level at that rung
+gives roughly **−1.5 % current, −0.6 % speed**. Direction is towards *less*
+current, which matters given `hold_ma = 2988` against a 3 A clamp. I therefore
+**do not** claim this change is current-unsafe. I claim it is a speed
+regression of the same order as the tolerance the rate-identity band uses, at
+every rung, unmeasured, with no off switch.
+
+### 3.6 Reverse blanking: untouched
+
+`REVERSE_BLANK_SUM_US` gates on the six-slot **sum of intervals**
+(`commutation.rs:398-420`), not on `wait`. Unaffected.
+
+---
+
+## 4. The blanking coupling (C8) — real, small, and the author names the wrong consequence
+
+`blanking() = average_interval >> 1` (`src/bemf.rs:350`). The COM root computes
+`since = now − accept_raw` from the clock and takes
+`blank_remaining(blanking, since)` (`src/roots.rs:1216-1220`), so the *length*
+claim is correct: blanking length is clock-derived and unchanged.
+
+The boundary: with `since ≈ wait`, `hold ≈ advance − (ci & 1)`. At level 22,
+`hold < BLANK_ARM_MIN_US = 16` when `advance ≤ 15` (old) or `advance ≤ 16`
+(new, odd `ci`), i.e. the skip boundary moves from **`ci ≤ 46`** to
+**`ci ≤ 47` on odd intervals only**. One microsecond of a boundary that real
+dispatch jitter already moves by up to nine: `com_late_max_us = 9` in the 600
+capture. Measured incidence in that run: `blank_arms = 228231` against
+`com_count = 228253` — **22 skips in 228 k commutations (0.01 %)**.
+
+**What skipping costs is not what the brief implies.** The `else` branch
+(`roots.rs:1227-1229`) arms the comparator line immediately, and any edge
+inside the remaining half-cycle is still refused by the gate
+`if count <= self.blanking()` (`src/bemf.rs:394`). So a skipped blank arm
+**cannot** admit an early crossing — sector identity and the too-early gate are
+safe. What it costs is extra COMP dispatches, and COMP dispatch load is exactly
+what inflates `spent`, which is the numerator of the `LateArm` hazard. That is
+the second-order feedback the author did not name: the change's own coupling
+pushes, very slightly, against the margin it is buying. At 0.01 % incidence
+with `blank_latched = 0`, it is negligible. **C8 is honest and correctly
+stated; its size is negligible; its stated mechanism is the less important
+one.**
+
+On C9: asserting `wait == recorded + (average & 1)` is a good, tight test. Be
+clear what it now means, though — the recorded capture is hardware evidence of
+**the reference's arithmetic**, and the test now passes only for the divergent
+form. It no longer detects "we diverge from the hardware we captured"; it
+asserts the divergence. That is fine if the divergence is a deliberate,
+documented control choice. It is not fine while `commutation.rs:1-17` and
+`bemf.rs:346-352` still claim reference parity.
+
+---
+
+## 5. C4's sample, tabulated
+
+The corpus census in the notebook (E318, `LAB_NOTEBOOK.md:32402`) says:
+"197 CRC-bearing `advance_level=22` captures at rung ≥ 425; `reason = 15`
+stops: **2 @ 500, 10 @ 550, 1 @ 575, 1 @ 600**". That is **14 in total**, of
+which **12 are at rung ≥ 550**. The brief's "fourteen `reason = 15` stops at
+rung ≥ 550" mis-states its own census. (I find 15 capture files containing
+`reason=15`; the extra is `e278-prot500-i_01` at rung 600 with `inject = 25`,
+excluded from the census.)
+
+All of them, with the rescue computed. `ci` is `ci_at_late` where the image
+records it, otherwise `ci_us` (the estimate at the stop, `report.rs:250-255`).
+That proxy is defensible but not exact: in the four instrumented runs
+`ci_at_late` vs `ci_us` is 51/51, 57/57, 59/59 and **59/61** — three exact, one
+off by 2. "Rescued" means `old_wait ≤ spent < new_wait`, using the run's own
+`spent_at_late` where known and 9 elsewhere (every measured value is 9).
+
+| rung | capture | image | `ci` | old `wait` | new `wait` | rescued? |
+|---|---|---|---|---|---|---|
+| 600 | e318-600-explore | **0D8E3799** | 50 (even) | 8 | 8 | **no** |
+| 600 | e278-prot500-i (inject=25) | **0D8E3799** | 49 | 8 | 9 | **no** |
+| 575 | e308-550-old-3 | **0D8E3799** | 51 | 8 | 9 | **no** |
+| 550 | e308-550-old-1 | **0D8E3799** | 50 (even) | 8 | 8 | **no** |
+| 550 | e305-550-noring-2 | 7D3B70F0 | 40 (floor) | 7 | 7 | **no** |
+| 550 | e305-550-noring-3 | 7D3B70F0 | 55 | 9 | 10 | yes |
+| 550 | e308-550-new-1 | 7D3B70F0 | 47 | 7 | 8 | **no** |
+| 550 | e305-550-ring-1 | C2DA171A | 59 | 9 | 10 | yes |
+| 550 | e305-550-ring-2 | C2DA171A | 62 (even) | 10 | 10 | **no** |
+| 550 | e305-550-ring-3 | C2DA171A | 54 (even) | 9 | 9 | **no** |
+| 550 | e315-550-hist | E3BB2544 | **57** | 9 | 10 | yes |
+| 550 | e315-550-mh | 26843E7C | **59** | 9 | 10 | yes |
+| 550 | e315-550-why | 0F890AF2 | **59** | 9 | 10 | yes (but `hold_ms = 0` — this run never reached target) |
+| 500 | e315-500-hold | 5EB8018E | **51** | 8 | 9 | **no** |
+| 500 | e195-rung-500 | 7125601F | 56 (even) | 9 | 9 | **no** |
+
+**5 of 13 at rung ≥ 550 (38 %). 0 of 4 on the production image. 1 of the 5 was
+not even at target.** The `ci ≈ 62` stop implies `spent ≥ 10` on that run,
+which also contradicts `shared.rs:313` ("`spent` has never varied on this
+bench (11 µs in 490 captures)") and `spent_at_late = 9` four times over — the
+`spent` story is less settled than either claim.
+
+Note what the population says about the mechanism. The notebook's own
+Gaussian-through-comb fit is (µ, σ) = (71.25, 2.50) at 550
+(`LAB_NOTEBOOK.md` E318 census). Under that fit, `ci = 47` is −9.7 σ and
+`ci = 40` is impossible. Both were observed. **The failure tail is not
+Gaussian jitter; it is the depressed-estimate mechanism the author names in
+the same paragraph** — and rounding does not touch it. At 600, the estimate
+walked from a 67 µs mean to 48 µs inside 31 ms. A 1 µs rounding gain against a
+19 µs estimate collapse is not the lever.
+
+---
+
+## 6. The rung-600 capture (C10–C13)
+
+### `hold_ms` is 31 milliseconds of a 25-second closed run
+
+`hold_ms = hold_us / 1_000` (`src/report.rs:535`) — time at target duty.
+The capture: `closed_ms = 25031`, `hold_ms = 31`,
+`BEMFTAIL span_us = 31568`. The run was closed-loop for 25 s (the ramp) and
+stopped **31 ms after arriving at target**. The campaign's condition is
+3 × ≥ 30 s holds per rung; this is 0.1 % of one of them. The ladder record
+already says so: `"fails": ["reason 15 != 2 …", "hold 31 ms < 30000"]`.
+
+### Was the duty really at target? Yes.
+
+`duty_tenths = 600`, `ceiling_tenths = 600`, `applied_cap = 600`,
+`applied_ccr = 799`. 799 of the 10 kHz/64 MHz reload is 60.0 %. No foldback,
+no suppression. This part of C10 is sound.
+
+### `verdict = ok` over a meaningful window? No — and the brief quotes the worse of two available numbers.
+
+`zc_permille_of_6x_coast` is computed by the **host** script
+(`scripts/bemf_run.py:_self_ref_line`, :118-146) as
+`1000 × zc_per_s / (6 × coast_ehz)`, where `zc_per_s` comes from `BEMFRATE` and
+is `hold_accepted × 1000 / hold_ms` (`report.rs:610-617`) — with `hold_ms`
+**floored to whole milliseconds**. The hold was ~31.568 ms and `hold_ms = 31`,
+so `zc_per_s` is inflated by **1.8 %**: 468 × 1000 / 31 = 15 096 against a true
+14 825/s. Recomputing: **~1001 per mille, not 1019.** Using
+`COASTTIMING ehz_first = 2512` (the coast interval nearest the stop instant;
+the eight intervals are 199…206 µs and rising, i.e. decelerating) instead of
+the fitted 2467 gives **~981**.
+
+So three defensible estimators give **981, 1001, 1019** — a 38 per mille spread
+across a **40 per mille band**. The verdict is inside the band on all three,
+but the band is fully spanned by estimator choice; the metric cannot resolve
+tracking to better than a few per cent on a 31 ms window with a post-stop
+coast reference.
+
+And the pipeline's own preferred figure disagrees with the brief. The ladder
+record for this run stores `"rate_vs_coast_permille": 995` ("matched window vs
+time-anchored coast"), and `bemf_run.py:190-193` explicitly demotes the
+circular metric ("The gate's own quantity is computed by `cohort.parse`").
+**The brief quotes 1019 — the truncation-inflated, deprecated number, sitting
+1 per mille inside the band — when the gate's own number for the same run is
+995.** Quoting the figure that looks most impressive and least robust is the
+failure mode this project has written down twice
+([[feedback-verify-reported-numbers]],
+[[feedback-check-the-instrument-transfer-function]]).
+
+Independent reason to distrust the instrument at face value: the same
+estimator, at rung 500, reported `coast_ehz = 2149` for a run whose
+commutation rate was 1666 eHz — a 29 % contradiction that no gate examined
+because the band only applies at ≥ 525. An instrument that agrees on the run
+you want to believe and disagrees by 29 % where nothing checks it has not
+earned the word "genuinely".
+
+**C10 survives in weakened form**: 60 % duty was applied, the rotor turned at
+~2500 eHz, and the loop was not grossly slipping. It does not survive as
+"60 % was reached and it was real" with the precision the 1019/1020 framing
+implies.
+
+### C11 — "the timing stop binds, not the supply" — refuted
+
+Three independent reasons:
+
+1. **The sag guard cannot fire in 31 ms.** `FastBusSag` compares an 8-scan
+   mean against 95 % of a **207 ms EWMA** of its own input
+   (`src/protection.rs:212`, `:485-495`: `SAG_FILTER_SHIFT = 11` = 2048 scans
+   at 9.901 kHz). 31 ms is 307 scans = 0.15 τ. `streak = 0` is structurally
+   guaranteed, not informative.
+2. **The same image already latched the sag guard one rung lower.**
+   `captures/ladder_state.json`, `D9D77F3C…` / `"550"` contains a
+   `reason = 26` record (`FastBusSag`, `protection.rs:78`) with
+   `hold_ms = 15008`. The supply constraint is demonstrated on `0D8E3799` at
+   550. Claiming it does not bind at 600 from a 31 ms sample is the inferred
+   wall in the other direction.
+3. **The `thin_count` comparison is invalid.** `thin_count = 492` over
+   `accepted = 228111` is 2157/10⁶ — but it is a **whole-run** count, and in
+   this run 0.12 % of accepts were at target (31 ms of 25 s). The 550 runs it
+   is compared against held 3–59 s at target, so 40 %+ of their accepts were at
+   the rung. The 600 figure is overwhelmingly a measurement of the sub-550
+   ramp. Normalising per-accept across runs whose at-target exposure differs by
+   ~300× compares nothing.
+
+Supporting numbers the brief does not mention: `bus_min = 1099` against
+`ref_bus = 1212` is **90.7 %** — past the 95 % trip line by 27 codes, invisible
+only because the guard filters (`protection.rs:214-222`: "**every run takes a
+raw scan past the line**"). `droop_permille` in the ladder records rises
+monotonically with rung: 982.9 @ 500, 978.8 @ 550, **977.1 @ 600**. And
+`0D8E3799` predates the raw-depth observer (E284) — its `BEMFCURRENT` line
+carries `dep0..dep3` and **no `raw*` bins at all** — so the motivating capture
+is physically incapable of reporting the sag evidence that would settle the
+question. The right conclusion is: **at 600, on a 31 ms sample, nothing about
+the binding constraint is established.**
+
+### C12 — understated, in the same direction as C11
+
+`hold_ma = 2988` is the mean over `hold_blocks = 3` (~30 ms) and
+`worst_hold_ma = 3115` is over the clamp. The brief calls the evidence "thin",
+which is right, then builds C11 on the same 31 ms. A 3 A CC clamp that is
+being touched within 30 ms of arrival, on a bus already 9.3 % below reference,
+is not separable from the timing stop with these instruments — least of all on
+an image that cannot print the raw sag bins.
+
+### C13 — the withdrawal is correct and should stand
+
+Withdrawing "60 % is unreachable" is the strongest thing in this entry. It was
+inferred from a Poisson projection plus one `inject = 25` capture, and the
+goal forbids inferred walls. **Keep the withdrawal. Do not replace it with the
+mirror-image claim** ("the supply is not the constraint") from a sample that
+cannot see the supply. The defensible statement is: *60 % is enterable; what
+binds there is unmeasured.*
+
+---
+
+## 7. Does the predeclared next run discriminate? No.
+
+The predeclaration (`LAB_NOTEBOOK.md`, E319) offers four outcomes for one
+rung-600 run on the fixed image.
+
+* **Outcome 4 is inside outcome 3 and is nearly unreachable.** "Refuted if it
+  stops on LateArm at an interval where the new `wait` exceeds the run's own
+  `spent_max_us`" — with `spent_max_us = 11`, that needs `new_wait ≥ 12`,
+  i.e. `ci ≥ 69`. Every production latch has been at `ci` 49–51. The most
+  likely single result (another LateArm at `ci ≈ 50`, where the change does
+  nothing) lands in outcome 3, "insufficient", and cannot refute anything.
+  **The predeclaration has no reachable falsifier**, which is the failure the
+  project has already written down ([[feedback-test-the-falsifier-that-fires]],
+  [[feedback-predeclare-the-falsification-bar]]).
+* **n = 1 cannot resolve a hazard rate.** E315's own reviews computed ~63 runs
+  a side for whole-run rate A/Bs, and the answer to that was to build the
+  per-arm margin histogram. The change's entire claimed effect is a **shift of
+  the `wait` distribution** — and `margin-hist` measures exactly that, ~10⁶
+  samples per run (`src/shared.rs:349-380`, `roots.rs:421-451`).
+* **It is a run at the bench's current limit**, on an image whose 550 rung has
+  a sag latch, with `worst_hold_ma` already over the clamp — to test a
+  hypothesis that can be tested at 450/475 (~1.5 A) in one run.
+* **The ladder forbids it.** `ladder_admit` needs 575 on the same ELF
+  (`bemf_run.py:325-341`); on a brand-new image nothing above 150 exists. The
+  previous 600 run was already run around this gate. Doing it twice turns a
+  gate into a formality.
+
+**Order: no. Re-qualify upward.** The campaign's completion condition is
+3 × ≥ 30 s at *each* rung 500–600 plus restarts. On the new image every rung
+resets. 600 is the last thing to run, not the first.
+
+---
+
+## 8. What I would do instead
+
+**Ordered.**
+
+1. **Do not flash this as a silent global change.** If it goes in, it goes in
+   behind a cargo feature exactly like `advance-low`
+   (`policy.rs:308-311`) — `wait-ceil` or similar — so it is an A/B with an off
+   switch and a name, and so the qualified 50 % image can be rebuilt without
+   it. Update `policy.rs:299-305`, `shared.rs:311-315` and `shared.rs:366-370`,
+   whose numbers this commit falsifies (72/74 → 69/71, 60/62 → 57/59, 71 → 68,
+   and the `wait22(57/58/59)` comb). Resolve the floor/ceil split with
+   `bemf.rs:350` or state in both places that it is deliberate.
+2. **Measure the change where it is free, not where it is expensive.** Build
+   the candidate with `margin-hist` and run **rung 450 and 475** (~1.5 A
+   against a 3 A clamp). Predict the new `wait_hist` exactly beforehand from
+   the archived histograms and the comb — the prediction is deterministic —
+   then check it. One run a side, ~10⁶ arms, no bench risk, and it settles the
+   whole mechanism question: does the `wait` distribution move as computed, and
+   does `left_hist`/`comp_call_max_us` show the `+4` instructions costing a
+   tick. This is the instrument the campaign built for this exact problem and
+   the predeclaration bypasses it.
+3. **Prefer the lever that costs no advance at all.** `spent ≈ 9-11 µs`
+   against a `wait` of 10-11 µs is the defect. `roots.rs:503-509` records that
+   arming **before** the bookkeeping stores was tried (E142/E144) and moved the
+   response time **11 µs → 10 µs** — the same microsecond this change buys —
+   and was rejected for ~1 % of rotor speed at 37.5 %. That trade deserves
+   re-pricing at today's stakes: it is uniform across all intervals (not odd
+   only), it does **not** move the commutation instant, it does not touch the
+   blanking boundary, and its cost is already measured. Re-run that A/B first.
+   Second candidate on the same axis: the ~4.2 %-incidence guard preemption
+   (155 instructions, 4.7–5.2 µs — `WCET_ESTIMATES.md:111-128`), which is what
+   turns a mode-6 `spent` into a 9–11.
+4. **Then attack the real mechanism: the depressed estimate.** At 600 the
+   estimate fell from a 67 µs mean to 48 µs while the rotor held 2525 eHz, and
+   `hold_unstable/hold_accepted ≈ 1.0` at 600 and 1.15–1.20 at 550 — one
+   rejected offer per acceptance. `blend_interval` (`commutation.rs:377-383`)
+   folds `prev_zc` and `last_zc` into the estimate, so a mis-timed or spurious
+   crossing drags it down and the drag is what schedules a wait the arm cannot
+   meet. Instrument the *decisions* that produce a short blend (per-kind
+   counters at birth — [[feedback-instrument-decisions-not-outcomes]]) rather
+   than continuing to price rounding against the symptom.
+5. **Re-qualify upward on one ELF**: 500 → 525 → 550 → 575, 3 × ≥ 30 s each,
+   through the ladder with no `--no-ladder`, before any 600 attempt. If 550 or
+   575 latches on the new image, the change is not a margin improvement in
+   practice, whatever the histogram said.
+
+**Abandon:**
+
+* The claim that this is "a monotone margin improvement, not a trade." It is a
+  trade: ~0.5 advance level, weighted to the top rung, in the direction the
+  binz level A/B measured as worse.
+* C2 as an argument. The new form is non-monotone at more points, and
+  introduces non-monotonicity at level 16 where there was none.
+* "0.46° against 2.69°, about one sixth." Both sides are unmeasured on the
+  bench; the only matched level A/B in the tree is internally contradictory at
+  29 %.
+* C11 in its current form, and the 1019 per mille figure. Use 995 (the gate's
+  own) and say the window is 31 ms.
+* The rung-600-first predeclaration.
+
+**Keep:** C6, C7, C13, and the C8 disclosure. Disclosing the blanking coupling
+instead of absorbing it into a loosened assertion is the best-executed part of
+this entry, even though its magnitude is 0.01 % and its stated consequence is
+the less important of the two.

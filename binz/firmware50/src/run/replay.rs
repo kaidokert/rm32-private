@@ -111,25 +111,7 @@ fn production_policy_reproduces_the_captured_25_percent_sequence() {
                 },
                 Kind::Accepted,
             ) => {
-                // **E318.** The recorded `wait` came from hardware running the
-                // old `(ci >> 1) - advance`; `wait_time` now takes
-                // `ceil(ci/2)`, so the policy is expected to differ from the
-                // capture by exactly `average_interval & 1` -- one microsecond
-                // on odd intervals, nothing on even ones.
-                //
-                // Asserting that delta, rather than loosening the equality, is
-                // deliberate: it keeps the capture as evidence and turns it
-                // into a check that the change is EXACTLY the rounding and has
-                // no other effect on the decision path. A plain `<= 1` would
-                // pass for any small drift; this fails if the wait moves on an
-                // even interval, or by 2 µs, or in the wrong direction.
-                let recorded = u32::from(d.wait);
-                assert_eq!(
-                    wait,
-                    recorded + (u32::from(d.average) & 1),
-                    "#{i}: wait (recorded {recorded}, interval {})",
-                    d.average
-                );
+                assert_eq!(wait, u32::from(d.wait), "#{i}: wait");
                 assert_eq!(average_interval, u32::from(d.average), "#{i}: new estimate");
             }
             (Outcome::TooEarly, Kind::TooEarly) | (Outcome::Unstable, Kind::Unstable) => {}

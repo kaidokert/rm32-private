@@ -1451,3 +1451,12 @@ E3BB2544.e315-marginhist.elf
          hold-window histograms and never printed them (silent no-op edit);
          report.rs now asserts both lines and every bucket key, and that
          assertion is verified to FAIL without the emit.
+
+26843E7C.e315-marginhold.elf
+  crc32  26843E7C
+  sha256 7A18FB42CEA9CE7B71AFA9FF646110066903719DC7F1C94C0410525F25176763
+  build  cargo build --release --features margin-hist (post-fmt source, commit 7836a5b)
+  E315   BEMFMARGINHOLD emitted and test-asserted. Supersedes 19341051,
+         which was built from the pre-fmt source and is NOT this binary --
+         cargo fmt changed codegen, so the earlier hash does not describe
+         what the committed tree builds. Flash this one.
