@@ -30564,3 +30564,1840 @@ level from an estimator field the foreground sets, so the level never appears
 as an immediate in the hot root. Both E315 reviews named layout as a live
 carrier; here there is no layout term at all. The capture reports
 `advance_level`, so the image cannot be silently inert.
+
+### E318 — both reviews void E316, E317's premise goes with it, and the best evidence in this campaign was sitting in a file I had filed as damage
+
+Both reviews of E316 land and converge: **the 39.7x is void.** I verified the
+load-bearing parts myself. Dispositions below, then what actually matters.
+
+#### The result is void, and a replicate in the same directory proves it
+
+**I cited two of five `margin-hist` captures.** `grep -l "BEMFMARGIN "` returns
+five. The three I omitted destroy the claim:
+
+* Two clean 90 s **rung-500** runs, denominators agreeing to 0.04 %
+  (997 689 vs 997 321), read `w<=9` of **11 and 77**. Exact conditional test:
+  **RR 7.00, 95 % CI (3.70, 14.61), p = 1.2e-13.** Same rung, same session,
+  same instrument family. That is not Poisson noise — it is **between-image
+  variance of the same order as my effect.**
+* Whole-run 500 -> 550 is **18.7x on `26843E7C`** and **0.95x (0.58, 1.53) on
+  `E3BB2544`**. One image says trough occupancy rises; the other, same bench,
+  same two rungs, says it does not move. My 39.7x is **n = 1 run per rung in
+  one image.**
+* And the 550 "hold window" is **7.851 s that terminates at the latch**,
+  against 64.776 s of clean hold at 500. The measurement interval is selected
+  by the event it is used to explain. It is also a quarter of the campaign's
+  own 30 s hold definition.
+
+Worse, one of my own numbers was the other image's. E316's "P(wait<=9) is flat
+at 1.0x", which I presented as the ramp-fraction artifact the hold mark would
+fix, is `E3BB2544`'s genuine between-rung ratio — not `26843E7C`'s whole-run
+figure, which is 18.7x.
+
+#### And even at face value it measured speed, not excursions
+
+The adversarial review's sharpest point, and I have no answer to it. A **rigid
+one-bucket shift** of a fixed-shape distribution (mode 12 at ci 77 -> mode 11
+at ci 71, because the modes are simply `mean_ci_us`) predicts
+`P(wait<=9)` = 2.33e-3 at 550, i.e. **178x**. I measured **39.7x — 4.5x BELOW
+the shift null.** Mode-relative trough occupancy **fell 4.3x**, and the fitted
+spread did not grow (2.75 -> 2.50).
+
+So the distribution got *relatively tighter* with duty. **There is no excess
+excursion. My 40x was less than what pure speed predicts**, and I reported it
+as evidence of an excursion mechanism.
+
+#### The instrument moved the operating point by a whole rung
+
+`thin` per arm: `26843E7C` at 550 = **7.60e-3**, against production
+`0D8E3799` at 550 = 1.96e-3 and `0D8E3799` at **575 = 9.27e-3**. The
+instrumented 550 run sits at **82 % of production's 575 margin curve.**
+
+And the mechanism I never considered: **COM is a peer at NVIC 0x40 and cannot
+preempt COMP**, while `left_hist` says **76 % of arms load the one-shot for
+<= 6 us** — so `note_margin`'s +18 instructions land *inside the commutation's
+own blocking window* on three arms in four. "It is after the arm, so it cannot
+affect `spent`" was the wrong frame: it delays the **dispatch**.
+
+I checked the consequence directly. Rung 550, `advance_level=22`, `inject=0`,
+by image:
+
+```
+production  7D3B70F0   332.9 s   3 events   0.00901/s
+production  0D8E3799   324.3 s   1 event    0.00308/s
+            -> pooled  657.1 s   4 events   0.00609/s   P(3/3) = 0.38
+diagnostic  4 images   219.3 s   6 events   0.02736/s   P(3/3) = 0.013
+```
+
+**Diagnostic images latch 4.5x more often than production**, and two
+*production* images differ **2.9x** from each other. Image codegen is a
+first-order carrier of the latch rate — visible since E305 and never targeted.
+`margin-hist` is retired.
+
+#### P4 was backwards, and the 9 us is already documented
+
+`spent = 9` in all four latches is **not a fixed cost — it is the minimum of
+the compatible set.** Given `left == 0` needs `spent >= wait`, and the chain
+corpus caps spend (20 478 arms, which I re-extracted: max **10 us**, with 9
+carrying 606), `wait = 9` *forces* `spent = 9` in three of the four. I reported
+a tautology as a signature. And at rung 500 there were **11 arms at `wait = 9`
+that latched zero times** — `P(spent >= wait | wait = 9) ~= 1.4 %`, so it is a
+tail draw, exactly as the review says.
+
+My explanation of the 15x over-prediction is also wrong: measured
+`corr(wait, spent) = +0.104`, **not negative.** The filter-depth story dies
+with it — and separately `SHALLOW_LEVEL`'s threshold is in **half-us**, so the
+3 -> 2 step needs ci < 25 us and is unreachable (corpus min 40). The live step
+is **4 -> 3 at ci = 73**, which falls *between* my two compared windows, so P1
+compared two different detectors.
+
+What the 9 us is, from the tree's own documentation
+(`WCET_ESTIMATES.md:111,128`): the guard root is **155 instructions at NVIC
+0x00**, ~330 cycles ~= **5.2 us**, on a ~4 us base. At 4 us per 95.7 us that is
+**4.2 % incidence**, predicting **2.56 latches at 550 (1 observed) and 0.50 at
+500 (0 observed)**. The guard-preemption hypothesis is quantitatively supported
+from a file already in the repo — no new instrument needed.
+
+#### P7's premise is refuted by a field already in every capture
+
+`acc_by_phase`'s `lt075` counts accepts arriving below 0.75x the estimate —
+**literally the downward-feedback event.** Per arm across rungs:
+
+```
+500: 4.69e-2   550: 2.70e-2   575: 2.58e-2   600: 2.19e-2
+```
+
+It **falls monotonically with duty.** The estimator's downward feedback gets
+*less* frequent as duty rises. The entire E316/E317 direction — arrest the
+positive feedback — is aimed at something that does not worsen where the
+failure does. (Two of its five buckets are `u16`-saturated at 65535 in every
+capture; widening to u32 is owed.)
+
+#### My hazard fit was not reproducible, and the conclusion is stronger without it
+
+The evidence review could not reproduce my coefficients, and its census differs
+from mine (6/52.33 M against my 5/32.74 M at rung 500). **My event and exposure
+extraction was wrong.** Every unbiased specification — including the zero-event
+rungs 425/475/525, which I wrongly dropped — is *steeper*: b between 0.0355 and
+0.0557, doubling every **1.25-1.95 %** duty, not 2.36 %. So I quoted an
+intercept and a slope in three commits that I could not defend, and the honest
+statement is "the hazard roughly doubles per 1.5-2 % duty over 450-575."
+
+#### And now the thing that matters
+
+`captures/2026-09-25/e308-550-old-3_01.txt` — **production image `0D8E3799`,
+`inject=0`, `target_duty_tenths=575`, `hold_ms=48319`.**
+
+**57.5 % has already been held for 48.3 seconds — 1.6x the 30 s gate — with
+every protection armed and `streak=0 tripped=0`.**
+
+That is the run E309 filed as *damage*, because my own board reset drove it one
+rung past its keys. Its filename says `550-old-3`, which is why I never looked
+at it. **The best single piece of evidence in this campaign has been sitting in
+the tree, misfiled as an accident, while I spent E310-E317 modelling why 55 %
+fails.** Its own numbers: `hold_ma = 2494` (83 % of the 3 A clamp),
+`worst_ma ~= 3020`, `bus_min 1099` against `ref_bus 1213` = **-9.4 % against a
+10 % kill spec**, `mean_ci_us = 69`, `ehz_from_sector = 2415`.
+
+So the constraint above 550 is **electrical and marginal**, not a timing wall —
+and my "60 % is unreachable" rested on projections plus a single rung-600
+capture which the review points out is **`inject=25` with ~1 s of hold**. That
+is diagnostic evidence used to declare a wall, which this campaign's own rules
+forbid, and the goal says explicitly to pause for a demonstrated constraint and
+**not an inferred one**.
+
+#### What I am doing, in the reviews' order
+
+1. **Retire `margin-hist`.** It perturbs the operating point by a rung.
+2. **Retract E316 and E317.** E317's advance-20 predeclaration rested on the
+   void 40x, and advance 20 is also the *wrong* first lever: the review ranks
+   **rounding `wait_time` up** (~0.2 % speed) ahead of L 22->20 (~1 %), because
+   `wait_time` is non-monotone (`ci=58`->10, `ci=59`->9) and three of four
+   latches sit at ci 59/57, **the top of the `wait=9` band** — the tripwire
+   fires on its own +/-1 us truncation error.
+3. **Run rung 600 once on the production image `0D8E3799`, un-injected, every
+   protection armed.** It is the one rung no un-injected image has ever driven,
+   it is what the completion condition requires, and both review rounds
+   recommended it. A single frozen capture there is worth more than any further
+   modelling.
+
+Predeclared for that run, before flashing: **if 600 holds >= 30 s** with no
+protection trip and no foldback, the campaign's ceiling is demonstrated and
+final qualification begins. **If it trips sag, current or the tracking stop**,
+that is the demonstrated constraint the goal asks me to pause on, and I report
+it with the capture rather than a projection. **If it latches LateArm**, the
+timing work is back on the critical path and the first lever is `wait_time`
+rounding, not the advance level.
+
+---
+
+### E316 review 1 of 2 — EVIDENCE (verbatim)
+
+# E316 — independent evidence review
+
+Recomputed from captures and source only. No number in `E316-BRIEF.md` was
+taken on trust. Every figure below is either re-derived from a capture line
+quoted verbatim, or from source quoted with `file:line`. Where I could not
+reproduce a figure in the brief I say so and give mine.
+
+Tree state: 1310 `captures/**/*.txt` and 41 `*.runlog`, of which 1117 txt files
+carry a `BEMFRCOMP` line; splitting runlogs on `BEMFRUN` gives **1230 runs**
+(1229 after removing `captures/e195-rung-500.runlog`, which is a duplicate
+transcript of `captures/2026-09-24/e195-rung-500_03.txt` — same
+`closed_ms=25962`, same counters). All aggregates below are over those 1229
+runs unless stated.
+
+---
+
+## Verdict table
+
+| # | Claim | Verdict |
+|---|---|---|
+| P1 | 39.7x rise in hold-window `P(wait<=9)`, statistically solid | **arithmetic CONFIRMED / inference REFUTED** |
+| P2 | `wait_hist` unperturbed, so P1 is a clean measurement | **first half CONFIRMED in source / conclusion UNSUPPORTED (evidence against)** |
+| P3 | Hold restriction necessary; whole-run ratio was 1.0x | **premise CONFIRMED / the 1.0x number is WRONG (18.7x)** |
+| P4 | Four-for-four `spent_at_late = 9` is a signature, not a spend tail | **REFUTED — near-tautological, and 9 is the top of the measured spend distribution** |
+| P5 | `log h = -20.886 + 0.029368 x rung`, b/se 3.6 | **coefficients NOT REPRODUCIBLE; method biased; conclusion survives a correct fit** |
+| P6 | Occupancy 39.7x vs hazard 5.5x, so `P(latch\|wait<=9)` falls | **the two are NOT commensurable — the sign of the effect flips with which image supplies the occupancy** |
+| P7a | Blanking gate is self-referential positive feedback | **CONFIRMED as a mechanism, but already documented and already clamped in source** |
+| P7b | Filter depth drops 3->2 below ci 50 | **REFUTED — the 3->2 step is at ci < 25 µs and is never reached; the live step is 4->3 at ci = 73 µs** |
+| P8 | LateArm is a 1 µs tripwire against 9-10 µs of unreported COM lateness | **source claims CONFIRMED; the two capture-derived generalisations are WRONG** |
+| P9 | 600 unreachable on current grounds | **current figures CONFIRMED verbatim; the evidential base is one injected run** |
+
+---
+
+## P1 — the 39.7x
+
+### Re-extraction
+
+`captures/2026-09-25/e315-500-mh_01.txt` (image `26843E7C`,
+`target_duty_tenths=500`, `reason=2`, `closed_ms=84776`, `hold_ms=64776`):
+
+```
+BEMFMARGIN     wle7=0 w8=0 w9=11 w10=1965 w11=49191 w12=604499 w13=200812 wge14=141211
+BEMFMARGINHOLD wle7=0 w8=0 w9=11 w10=1957 w11=48776 w12=596165 w13=179844 wge14=12596
+```
+
+`captures/2026-09-25/e315-550-mh_01.txt` (same image,
+`target_duty_tenths=550`, `reason=15`, `closed_ms=30351`, `hold_ms=7851`):
+
+```
+BEMFMARGIN     wle7=0 w8=0 w9=62 w10=3599 w11=84911 w12=59231 w13=24569 wge14=128827
+BEMFMARGINHOLD wle7=0 w8=0 w9=57 w10=3348 w11=74900 w12=30006 w13=1016 wge14=175
+```
+
+Hold totals: 500 sums to **839 349**, 550 to **109 502** — both as the brief
+states. Whole-run totals sum to 997 689 and 301 199, which are exactly the
+`zc_acc` of each run, so the histogram is complete and the denominators are
+the right ones.
+
+`P(wait<=9)` = 11/839349 = **1.3105e-05** and 57/109502 = **5.2054e-04**.
+Ratio = **39.72x**. Modal bucket `w12` at 500 and `w11` at 550. Every number
+in the brief's table reproduces.
+
+### Confidence interval, exact
+
+A ratio of two Poisson rates with 11 and 57 events is best bounded by
+conditioning on the total: given N = 68 events, X = 57 in the 550 arm is
+Binomial(N, theta) with theta = R n2 / (n1 + R n2). Clopper-Pearson on
+theta = 57/68 = 0.8382 gives (0.7290, 0.9164), which maps to
+
+> **exact 95% CI for the ratio = (20.6, 84.0)**, point 39.72,
+> one-sided conditional p = 1.4e-42.
+
+So *as arithmetic on this pair of runs*, P1's ratio is not a counting
+accident. The normal-approximation reflex would have given a similar
+interval here; the exact one is reported because the lower count is 11.
+
+### Why P1 nonetheless does not survive as a statement about duty
+
+**The brief cites two of five `margin-hist` captures and omits the three that
+contradict it.** `grep -l "BEMFMARGIN " captures --include=*.txt` returns five
+files:
+
+| file | image | rung | reason | whole-run `w<=9` / total | `P(wait<=9)` whole |
+|---|---|---|---|---|---|
+| `2026-09-25/e315-475-hist_01.txt` | `E3BB2544` | **500** (see note) | 2 | 77 / 997 321 | 7.720e-05 |
+| `2026-09-25/e315-500-mh_01.txt` | `26843E7C` | 500 | 2 | 11 / 997 689 | 1.103e-05 |
+| `2026-09-25/e315-500-hold_01.txt` | `5EB8018E` | 500 | **15** | 5 / 305 339 | 1.638e-05 |
+| `2026-09-25/e315-550-hist_01.txt` | `E3BB2544` | 550 | 15 | 24 / 325 881 | 7.365e-05 |
+| `2026-09-25/e315-550-mh_01.txt` | `26843E7C` | 550 | 15 | 62 / 301 199 | 2.058e-04 |
+
+(Note: `e315-475-hist_01.txt` is *named* 475 but its own
+`BEMFRUN target_duty_tenths=500`, `BEMFCURRENT duty_tenths=500
+ceiling_tenths=500`, and `mean_ci_us=77` — the rung-500 signature; the
+archived 475 runs read `mean_ci_us=80`. It is a rung-500 run under a
+misleading filename.)
+
+Two consequences, both fatal to P1 as stated:
+
+1. **At a fixed rung, between-run/between-image spread is 7x.** The two clean
+   90 s rung-500 runs have denominators that agree to 0.04% (997 689 vs
+   997 321) and `w<=9` counts of **11 and 77**. Exact conditional test:
+   RR = 7.00, 95% CI (3.70, 14.61), p = 1.2e-13. This is not Poisson noise.
+   At 550 the same comparison gives RR = 2.80 (1.72, 4.68), p = 5.1e-06.
+
+2. **Within the other `margin-hist` image the rung effect vanishes.**
+   Whole-run 500 -> 550:
+   * `26843E7C`: 1.103e-05 -> 2.058e-04, **RR = 18.67** (9.75, 39.32).
+   * `E3BB2544`: 7.720e-05 -> 7.365e-05, **RR = 0.95** (0.58, 1.53), p = 0.62.
+
+   One image says the trough occupancy rises 19x; the other, run in the same
+   session on the same bench at the same two rungs, says it does not move.
+   There is no hold-window pair for `E3BB2544` because only `26843E7C`
+   emits `BEMFMARGINHOLD`, so the 39.7x rests on **n = 1 run per rung in one
+   image**, with a same-rung replicate that disagrees by 7x.
+
+   If one applies `26843E7C`'s own finding that essentially all trough arms
+   fall inside the hold window (11 of 11 at 500, 57 of 62 at 550) to
+   `E3BB2544`, its implied hold ratio is 1.72e-04 / 9.20e-05 = **1.9x**.
+
+3. **The two windows compared are not the same kind of window.** The 500 hold
+   window is 64.776 s of a run that ended cleanly. The 550 hold window is
+   **7.851 s that terminates at the latch** — the measurement interval is
+   selected by the event it is being used to explain, and it over-samples the
+   pre-failure excursion by construction. It is also not the qualifying hold:
+   the campaign definition is a >=30 s hold (`src/run/states.rs:941`, the hold
+   mark is "the first instant the *applied* duty reaches target"), and 7.85 s
+   is a quarter of it.
+
+**Verdict P1: the arithmetic and the exact CI are CONFIRMED. The claim that
+the ratio "is statistically solid" as a property of rung 500 vs 550 is
+REFUTED** — the within-rung, within-instrument replicate variance (7x,
+p = 1e-13) is of the same order as the effect, and the only other image with
+both rungs shows a ratio of 0.95.
+
+---
+
+## P2 — is `wait_hist` perturbed?
+
+### The source claim: confirmed exactly
+
+* `wait` is produced by the estimator and nothing else.
+  `src/bemf.rs:415-423`: `self.average_interval = self.clamp_interval(
+  blend_interval(...)); let wait = wait_time(self.average_interval,
+  advance_level);` and is returned in `Outcome::Accepted { wait, .. }`.
+  `wait_time` / `advance_of` are pure functions of `(ci, level)`
+  (`src/commutation.rs:253-263`). **`spent` appears nowhere in that chain.**
+* The arm order, `src/roots.rs:508-512`:
+
+  ```rust
+  let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
+  let left = wait.saturating_sub(spent);
+  arm_marked::<C>(left.max(1));
+  note_margin(wait, left);
+  ```
+
+  `spent` is stamped **before** the arm; `note_margin` (the histogram
+  increment) runs **after** it. Twin path identical in effect:
+  `src/roots.rs:580-601` computes `spent`, calls `com_arm(left.max(1), 1)`,
+  then `note_margin(wait, left)`. So the instrument's own cost cannot enter
+  the `spent` of the arm it is recording. Confirmed as the brief and
+  `src/roots.rs:398-405` say.
+* The `.bss` is pre-allocated in every build so only the increment is added
+  (`src/shared.rs:374-379`). Structurally consistent with the byte-identical
+  claim; I did not rebuild both images, so **"760 -> 778 instructions" and
+  "byte-identical with the feature off" are unverified here** — nothing in
+  `captures/asm/` records that pair.
+
+### The counter-argument: there is capture evidence of indirect perturbation
+
+Per-image census at matched rungs, `advance_level=22`, `inject=0`
+(`unstable` and `thin` normalised per accepted arm; `n` = runs):
+
+**Rung 500**
+
+| image | n | `unstable`/arm | `ci_min_us` | `mean_ci_us` | `comp_call_max_us` | `zc_per_s` | `thin` per 1e6 | latches |
+|---|---|---|---|---|---|---|---|---|
+| `0D8E3799` e246 production | 6 | 1.722 | 52.7 | 76.8 | 16 | 11166 | 622 | 0 |
+| `14CE44E7` e187 production | 10 | 1.663 | – | 77.0 | 16 | 11357 | – | 1 |
+| `26843E7C` e315-marginhold | 1 | 1.576 | 55 | 77 | 16 | 11747 | 1932 | 0 |
+| `E3BB2544` e315-marginhist | 1 | 1.585 | 52 | 77 | 16 | 11739 | 2072 | 0 |
+| `5EB8018E` e315-marginhist-hold | 1 | 2.075 | 51 | 77 | 16 | 9729 | 1210 | **1** |
+
+**Rung 550**
+
+| image | n | `unstable`/arm | `ci_min_us` | `mean_ci_us` | `comp_call_max_us` | `zc_per_s` | `thin` per 1e6 | latches |
+|---|---|---|---|---|---|---|---|---|
+| `0D8E3799` e246 production | 6 | 1.695 | 49.7 | 71.0 | 16 | 11233 | 1814 | 1 |
+| `7D3B70F0` e303-nodiv | 5 | 1.550 | 45.6 | 71.4 | 16 | 11837 | 1815 | 3 |
+| `C2DA171A` e304-ring | 3 | 1.794 | 51.7 | 72.0 | 16 | 10907 | 4880 | 3 |
+| `E3BB2544` e315-marginhist | 1 | 1.932 | 49 | 71 | 16 | 10124 | 8442 | 1 |
+| `26843E7C` e315-marginhold | 1 | 1.993 | 52 | 71 | 16 | 9909 | 7604 | 1 |
+| `0F890AF2` e314-whylate | 1 | 2.493 | 54 | – | 16 | 8475 | 1 952 | 1 |
+
+Readings:
+
+* **`comp_call_max_us` is 16 in every image at both rungs.** That is the
+  brief's own bound on handler duration and it does not move. It is, however,
+  a saturated whole-run maximum — the same property that
+  `src/roots.rs:395-397` cites to disqualify `spent_max_us` as an arbiter
+  ("a saturated whole-run maximum that reads 11 µs in 490 captures").
+  A 1 µs shift in the *typical* handler cost would be invisible to it.
+* **`mean_ci_us` is identical** (77 at 500, 71 at 550) across production and
+  instrumented images — the estimator's central tendency is not moved.
+* **`thin` is 3.1x production at 500 and 4.2x at 550** (the brief's "2-4x", and
+  I confirm it; `C2DA171A`, an unrelated diagnostic, reads 2.7x at 550).
+  `thin` is `left <= 2`, i.e. `wait - spent <= 2`. Since `wait` is by
+  construction untouched, a 4x rise in `thin` *requires* `spent` to have
+  risen — and the brief itself notes the disassembly diff shows "register
+  reallocation across the whole handler", which is code **before** the
+  `spent` stamp. So the instrument raises the pre-arm handler cost by about
+  1 µs, invisibly to `spent_max_us` (still 11 everywhere).
+* **The instrumented images latch sooner.** At rung 550, the one production
+  image latched 1 time in 324.3 s of closed loop; the five non-production
+  images latched 9 times in 552.1 s. Rate ratio **5.29**, one-sided exact
+  p = 0.068. At rung 500 the three e315 images latched 1 time in 200.9 s
+  against 1 in 2028.2 s for production (RR = 10.1, p = 0.17). Stratified over
+  the two rungs, exact p = **0.021**. Caveat, stated plainly: I classified
+  "production" after seeing the outcomes, so this is a hypothesis with a
+  test, not a predeclared result. The non-post-hoc version — `26843E7C`
+  alone vs `0D8E3799` at 550 — is RR = 10.7, p = 0.16 and proves nothing on
+  its own.
+
+**Verdict P2: the source half is CONFIRMED — `wait` genuinely does not depend
+on `spent`, and `note_margin` genuinely lands after the arm. The conclusion
+drawn from it ("therefore P1 is a clean measurement") is UNSUPPORTED.** The
+mechanism the brief rules out (instrument cost entering `spent` of the
+recorded arm) is indeed ruled out. The mechanisms it does not address are
+live: the instrumented build's arms carry ~1 µs less margin (`thin` 4x), it
+latches ~5x sooner, and — decisively — its own replicate at rung 500
+(`E3BB2544`, the other `margin-hist` image) reports a `w<=9` count 7x
+different. Whatever `wait_hist` is measuring, it is not reproducible across
+two builds of the same instrument at the same rung.
+
+---
+
+## P3 — was the hold restriction necessary?
+
+| quantity | 500 (`e315-500-mh_01`) | 550 (`e315-550-mh_01`) |
+|---|---|---|
+| whole-run arms | 997 689 | 301 199 |
+| hold arms | 839 349 | 109 502 |
+| hold fraction of arms | 0.841 | 0.364 |
+| `hold_ms / closed_ms` | 64776/84776 = 0.764 | 7851/30351 = 0.259 |
+| **ramp fraction of time** | **0.236** | **0.741** |
+| `wge14` whole-run | 141 211 (14.15%) | 128 827 (42.77%) |
+| `wge14` hold | 12 596 (1.50%) | 175 (0.16%) |
+| whole-run `P(wait<=9)` | 1.1025e-05 | 2.0584e-04 |
+| hold `P(wait<=9)` | 1.3105e-05 | 5.2054e-04 |
+
+* The **premise is confirmed and is large**: `wge14` collapses from 14.2% to
+  1.5% (500) and from 42.8% to 0.16% (550) when the ramp is removed. The ramp
+  really does pile arms into the top bucket, exactly as
+  `src/run/states.rs:956-967` argues. The ramp fractions are 23.6% and 74.1%
+  (the brief says 24% and 70% — the 550 figure is 74%, not 70%).
+* **The "1.0x" is wrong.** Whole-run, the same image gives
+  2.0584e-04 / 1.1025e-05 = **18.67x** (exact 95% CI 9.75 – 39.32,
+  p = 9.2e-29), not 1.0x. The hold restriction raises the contrast from 18.7x
+  to 39.7x — it roughly doubles it; it does not rescue a null.
+* Sanity check on the `left` half: whole-run `l0+l1+l2` is 1 924 at 500 and
+  2 287 at 550, matching `thin_count=1924` and `thin_count=2287` on the
+  `BEMFRCOMP` lines exactly. The histograms are internally consistent.
+* Minor: the hold mark is not a fixed 22.5 s. `src/run/states.rs:941` sets it
+  at the first instant applied duty reaches target, and the captures show
+  `closed_ms - hold_ms` = 20 000 at rung 500 and 22 500 at 550/575. The
+  brief's "22.5 s of duty ramp" holds only at 550 and above.
+
+**Verdict P3: the reasoning is CONFIRMED and important. The specific number
+1.0x is REFUTED; the correct whole-run ratio is 18.7x.**
+
+---
+
+## P4 — the `spent_at_late = 9` signature
+
+### The four captures are four, but the population is nineteen
+
+`ci_at_late` / `spent_at_late` exist in exactly four captures:
+
+| capture | image | rung | `ci_at_late` | `spent_at_late` | `wait22(ci)` recomputed | `spent_max_us` | `ci_min_us` |
+|---|---|---|---|---|---|---|---|
+| `2026-09-25/e315-500-hold_01.txt` | `5EB8018E` | 500 | 51 | 9 | **8** | 11 | 51 |
+| `2026-09-25/e315-550-hist_01.txt` | `E3BB2544` | 550 | 57 | 9 | **9** | 11 | 49 |
+| `2026-09-25/e315-550-mh_01.txt` | `26843E7C` | 550 | 59 | 9 | **9** | 11 | 52 |
+| `2026-09-25/e315-550-why_01.txt` | `0F890AF2` | 550 | 59 | 9 | **9** | 11 | 54 |
+
+`wait22` recomputed from `src/commutation.rs:253-263`:
+`advance_of(59,22) = 0*22 + ((59*22)>>6) = 1298>>6 = 20`, `59>>1 = 29`,
+`wait = 9`. Likewise 57 -> 9, 51 -> 8. The brief's `9/9/8/9` is correct, as is
+`spent_max_us = 11` in all four.
+
+But `ci_at_late`/`spent_at_late` were only added at E314, so **"four latches"
+is four *instrumented* latches, not four latches.** Census of
+`late_arms != 0` over the whole tree (`advance_level=22`):
+
+| rung | runs with `late_arms>0` | events | total closed-loop exposure | runs |
+|---|---|---|---|---|
+| 450 | 1 (`c7f-450_02`, `reason=2`) | 1 | 1 609.8 s | 23 |
+| 500 | 5 | 6 | 4 576.5 s | 64 |
+| 550 | 10 | 10 | 876.4 s | 17 |
+| 575 | 1 | 1 | 72.3 s | 1 |
+| 600 (`inject=25`) | 1 | 1 | 26.3 s | 1 |
+
+**19 runs, 20 events.** Three of them (`2026-09-23/c7-500_01`,
+`c7-500c_01`, `c7-500c_03` with `late_arms=2`, and `c7f-450_02`) ended with
+`reason=2`/`reason=26` — those images predate `src/run/states.rs:278`, where
+`late_arms != 0` became a stop. So 15 of the 19 have **no `ci_at_late`
+instrument at all**, and the four that do are the four most recent. The
+"four-for-four" is a complete-case set of size 4 out of 20, selected by
+instrument vintage.
+
+### Is `spent = 9` significant, or forced?
+
+I recomputed the joint `(wait, spent)` distribution from the chain rings
+myself. 24 six-column chain captures, **20 478 per-arm pairs** (this exactly
+reproduces the brief's and `Cargo.toml:80-82`'s count; duties 250/375/400/
+425/450/475, so rungs <=475 as stated):
+
+```
+spent µs :   5      6     7     8     9    10
+count    : 2819  15813   520   717   606     3
+P(spent >= 9)  = 0.02974      <- reproduces Cargo.toml's 0.0297 exactly
+P(spent >= 8)  = 0.06475
+P(spent >= 10) = 1.47e-04
+```
+
+**`spent` tops out at 9 µs in 20 478 measured arms** (three excursions to 10,
+none above). Therefore:
+
+* For the three latches with `wait = 9`, `left == 0` requires `spent >= 9`, and
+  the measured conditional is `P(spent = 9 | spent >= 9) = 606/609 = 0.995`.
+  Those three readings are **arithmetically forced**; they carry no
+  information.
+* For the one latch with `wait = 8` (`ci_at_late = 51`), `spent` could have
+  been 8 or 9. The measured conditional is
+  `P(spent = 9 | spent >= 8) = 606/1323 = 0.458`. Observing 9 there has
+  p = 0.46 — unremarkable.
+
+So the observation is "1 of 4 informative, and that one is a coin flip".
+Worse, the inference is inverted: **9 µs is the top of the spend
+distribution, so a latch at `spent = 9` *is* a draw from the spend tail** —
+the tail is simply only 1 µs long. The brief's own instrument already says
+this: `spent_max_us = 11` "reads 11 µs in 490 captures, including every run
+that ever latched a late arm" (`src/roots.rs:395-397`), i.e. it never
+discriminates, and the chain data shows why — the whole distribution lives in
+5..9.
+
+**Verdict P4: REFUTED.** The numbers in the table are all correct. The
+conclusion drawn from them ("one specific ~9 µs cost, not a draw from a spend
+tail") does not follow: three of four readings are forced by `left == 0`
+itself, and 9 is the maximum of the measured spend distribution.
+
+### Bonus: the negative-correlation claim in "Also relevant" is refuted by the same data
+
+The brief attributes the model's over-prediction to `wait` and `spent` being
+"negatively correlated via filter depth". Over the 20 478 chain pairs,
+**corr(wait, spent) = +0.104**; restricted to `advance_level=22`
+(19 113 pairs) it is **+0.006**. Mean `spent` by `wait` bucket is flat:
+
+```
+wait : 10   11   12   13   14   15   16   17   18   19   20   25   26   27   28
+E[sp]: 6.33 5.81 6.05 6.02 5.91 5.97 6.05 6.05 6.12 6.44 6.00 6.15 6.38 6.38 6.47
+```
+
+The correlation is weakly *positive*, not negative. (Caveat: the chain rings
+contain no arm with `wait <= 9` — minimum observed `wait` is 10 — so the
+trough itself is unmeasured. But nothing in the cited dataset supports the
+stated sign.)
+
+### Bonus: where the "15x over-prediction" actually is
+
+The brief places it at rung 500. Recomputing with the campaign's own factors:
+
+| rung | `P(wait<=9)` used | x 0.02974 | measured per-arm hazard | over-prediction |
+|---|---|---|---|---|
+| 500 hold | 1.3105e-05 | 3.898e-07 | 1.147e-07 (6 / 52.33 M arms) | **3.4x** |
+| 500 whole | 1.1025e-05 | 3.279e-07 | 1.147e-07 | 2.9x |
+| **550 hold** | **5.2054e-04** | **1.546e-05** | 9.879e-07 (10 / 10.12 M) | **15.6x** |
+
+The 15x is at **rung 550**, not 500. And note what it means: `src/shared.rs:
+354-359` states the model "reproduces the independently measured 8.4e-7 per
+arm exactly" with `P(wait<=9)` *implied* at 2.8e-05. The instrument then
+measured 5.2e-04 — **18.6x the value the model needed**. The instrument
+falsified the model it was built to complete. That is a result, and the brief
+does not report it.
+
+---
+
+## P5 — the Poisson regression
+
+### I cannot reproduce the brief's fit
+
+Exposure and events extracted by me from every capture
+(`advance_level=22`, `inject=0`, exposure = `BEMFGATE closed_ms`, event =
+`late_arms`):
+
+```
+rung  runs   closed_s   events   accepted arms
+ 350    35     2165.1        0     18 429 552
+ 375    47     2881.2        0     26 089 567
+ 400    33     2392.6        0     23 156 226
+ 425    25     1759.4        0     17 894 992
+ 450    23     1609.8        1     17 231 174
+ 475    49     2904.1        0     31 652 262
+ 500    64     4576.5        6     52 329 249
+ 525     9      703.0        0      8 437 255
+ 550    17      876.4       10     10 122 068
+ 575     1       72.3        1        907 519
+```
+
+The brief's P6 gives "5 events / 32.74 M arms" at 500 and "8 events /
+9.50 M arms" at 550. My census gives **6 / 52.33 M** and **10 / 10.12 M**.
+The 550 arm count differs by 6% but the 500 arm count differs by 60%, which
+is not a consistent selection rule; I could not find a filter (image, date,
+reason, `inject`) that yields the brief's pair. **Both exposures and both
+event counts in the brief are unreproducible from the tree.**
+
+### My fits (Newton-Raphson IRLS, log link, log-exposure offset)
+
+| specification | b0 | b1 | se(b1) | b/se | doubling | h(600) | P(3/3, 52.5 s) at 500 / 550 / 600 |
+|---|---|---|---|---|---|---|---|
+| **all rungs 350-575** | -27.888 | **0.042095** | 0.007478 | **5.63** | 1.65% duty | 7.20e-02 | 0.845 / 0.251 / 3e-06 |
+| brief's set (450,500,550,575 only) | -24.163 | 0.035485 | 0.007827 | 4.53 | 1.95% | 5.66e-02 | 0.774 / 0.220 / 1e-04 |
+| all rungs, **drop 575** | -29.434 | 0.045133 | 0.008708 | 5.18 | 1.54% | 9.50e-02 | 0.849 / 0.209 / 1e-08 |
+| events-only, drop 575 | -25.556 | 0.038215 | 0.008954 | 4.27 | 1.81% | 7.23e-02 | 0.779 / 0.185 / 1e-05 |
+| rungs >= 450 | -27.333 | 0.041062 | 0.007864 | 5.22 | 1.69% | 6.75e-02 | 0.839 / 0.256 / 4e-06 |
+
+The brief reports b1 = 0.029368, b/se = 3.6, doubling 2.36%. **No
+specification I tried reproduces it**; the closest (its own events-only set)
+gives 0.0355 and b/se 4.5. Every fit is *steeper* than the brief's, so the
+brief's projection is the optimistic end of the family.
+
+Method notes:
+
+* **Restricting to "rungs with events" is a biased design.** Poisson
+  regression handles zero-count cells; dropping them discards the most
+  informative observations. Rung 525 carries **703 s with 0 events** and sits
+  between 500 (1.31e-03/s) and 550 (1.14e-02/s); rung 475 carries 2 904 s with
+  0 events. Including them steepens the slope (0.0355 -> 0.0421) and tightens
+  it (b/se 4.5 -> 5.6).
+* **Sensitivity to 575 is real but modest.** The 575 cell is a *single* 72.3 s
+  run with 1 event — the top anchor of the curve is n = 1. Dropping it moves
+  b1 from 0.0421 to 0.0451 (it is a *low* observation relative to the fit:
+  expected 1.82, observed 1), so the 575 point is holding the slope *down*,
+  not up. The projection to 600 is therefore not an artifact of that run.
+* **Goodness of fit is acceptable.** Residual deviance 9.60 on 8 df
+  (p ~ 0.29) for the all-rung fit. Fitted vs observed: 450 expects 0.21 gets
+  1; 475 expects 1.08 gets 0; 500 expects 4.90 gets 6; 525 expects 2.15 gets
+  0; 550 expects 7.70 gets 10; 575 expects 1.82 gets 1. Log-linearity is not
+  rejected, but neither is it distinguished from a threshold at ~500 by this
+  data.
+* **Pooling diagnostic and production images is not innocent.** At rung 550,
+  homogeneity across the six images has deviance 6.85 on 5 df (p ~ 0.23), so
+  heterogeneity is not *proven*; but the production/non-production split has
+  RR 5.29 (p = 0.068) at 550 and a stratified p = 0.021 over 500+550
+  (post-hoc grouping, see P2). Nine of the ten rung-550 events come from
+  non-production images. If the production rate is the right one, the 550 cell
+  is 1/324.3 s = 3.1e-03/s rather than 1.14e-02/s, and the slope drops
+  materially.
+
+**Verdict P5: the stated coefficients are NOT REPRODUCIBLE and the stated
+method (rungs with events only) is biased. The qualitative conclusion — a
+steeply log-linear hazard in duty, making 600 unqualifiable — survives and is
+in fact stronger under every unbiased specification I fitted (P(3/3) at 600
+between 1e-8 and 1e-4, against the brief's 0.002).** The honest statement is
+"the hazard rises roughly 2x per 1.5-2% duty over 450-575, and every fit puts
+600 out of reach", not a quoted intercept and slope.
+
+---
+
+## P6 — commensurability
+
+**They are not commensurable, and the brief's own framing hides it.**
+
+Four distinct mismatches:
+
+1. **Window.** The occupancy is the *hold window*; the hazard denominator is
+   *whole-run arms* (the counter rises from loop close, `src/protection.rs:
+   55-58`). Matched whole-run to whole-run, occupancy rises 18.7x, not 39.7x.
+2. **Image.** The occupancy is from one image (`26843E7C`); the hazard pools
+   ten images at 500 and six at 550. The same-rung between-image spread in
+   occupancy is 7x (P1).
+3. **Replication.** Occupancy is n = 1 run per rung. The hazard is 6 and 10
+   events over 64 and 17 runs.
+4. **The hazard ratio itself.** My census gives
+   1.147e-07 -> 9.879e-07 = **8.62x** (exact 95% CI 2.84 – 28.85), not the
+   brief's ~5.5x.
+
+Consequence, computed both ways:
+
+| occupancy source (whole-run) | `P(latch \| wait<=9)` at 500 | at 550 | trend |
+|---|---|---|---|
+| `26843E7C` (the brief's image) | 1.040e-02 | 4.799e-03 | **falls 2.2x** |
+| `E3BB2544` (the omitted image) | 1.485e-03 | 1.341e-02 | **rises 9.0x** |
+
+**The sign of P6's paradox is determined by which of two same-family images
+you pick.** There is no paradox to explain; there is an unresolved
+instrument-reproducibility problem. And note the exact 95% CI on the hazard
+ratio (2.8 – 28.9) already contains 8.6 *and* 18.7, so even the brief's
+version of the puzzle is not statistically established.
+
+The comparison that *would* be commensurable, and is cheap: run the **same
+image** (`26843E7C`) three times at each of two safe rungs, and compute
+latches per trough-arm *within that image*, using the hold snapshot on both
+sides. At 450/475 (`~1.5 A` against the 3 A clamp, per `src/shared.rs:365`)
+that costs no bench risk, and `P(latch | wait<=9)` becomes a ratio of two
+numbers from one build. Anything less does not test the model.
+
+---
+
+## P7 — the proposed change
+
+### (a) The blanking gate: mechanism confirmed, but already known and already clamped
+
+Source, verbatim. `src/bemf.rs:348-355`:
+
+```rust
+/// The half-cycle blanking window, in the same units as `count`.
+#[inline]
+pub const fn blanking(&self) -> u32 {
+    if BLANK_64 == REFERENCE_BLANK_64 {
+        return self.average_interval >> 1;
+    }
+```
+
+`src/bemf.rs:392-397`:
+
+```rust
+// 1. half-cycle gate -- strictly greater, matching the reference.
+if count <= self.blanking() {
+    self.too_early = self.too_early.wrapping_add(1);
+    return Outcome::TooEarly;
+}
+```
+
+So acceptance requires `count > average_interval >> 1`, as the brief says.
+The window is derived from the estimate, and `src/bemf.rs:415` blends the
+admitted `count` back into that estimate. That is a genuine positive-feedback
+loop, and it is **asymmetric**: an edge later than expected is always
+admitted, an edge earlier than expected is refused only until the estimate has
+sagged enough to admit it. The bias has one direction, downward.
+
+But this is not a discovery. `src/bemf.rs:186-199` already states it, with
+the bench evidence, and already states the fix that is in the code:
+
+> "**Without these the estimator runs away, measured on the bench.** The
+> blanking window is half the current estimate, so an edge accepted early in a
+> sector pulls the estimate down, which narrows the window, which admits an
+> even earlier edge next time. A first closed-loop run handed off at 60 eHz --
+> a 2777 us sector -- and collapsed to `ci_us = 65` [...] Clamping the estimate
+> is what the reference does [...] and it breaks the feedback: the window can
+> never narrow past the floor."
+
+The clamp is `clamp_interval` (`src/bemf.rs:481-489`) with
+`min_interval = SECTOR_FLOOR_US = 40` (`src/run/policy.rs:82,286`). Observed
+`ci_min_us` across all captures reporting it: the distribution runs
+40,42,43,47,48,49,50,51,... and **exactly one run reaches 40**
+(`2026-09-25/e305-550-noring-2_01.txt`, `ci_min_us=40`, `reason=15`,
+`coast_ehz=73.0 µs` implied truth vs `ci_us=40` at the stop — a 45% error).
+So the loop is arrested, but at rung 550 the operating point (`mean_ci_us=71`)
+sits only 31 µs above the floor and one run rode it all the way down.
+
+The same comment block also documents the *other* half of the lever already:
+`BLANK_64` is a type parameter, and widening it "is self-correcting in the
+right direction: it refuses the early band, the estimate rises toward the true
+sector time, and the gate widens with it", bounded above because "a genuine
+crossing sits near 64".
+
+### (b) The depth schedule: the brief's threshold is wrong by 2x, and the cited step is dead
+
+`src/run/policy.rs:235`:
+
+```rust
+pub const DET_FILTER: ReferenceFilterUs = FromMicros(WithShallowFloor(MappedFilter));
+```
+
+`src/bemf.rs:107-121`:
+
+```rust
+pub const SHALLOW_INTERVAL: u32 = 50;
+/// The depth used when the interval is below `SHALLOW_INTERVAL`.
+pub const SHALLOW_LEVEL: u8 = 2;
+...
+        if average_interval < SHALLOW_INTERVAL {
+            SHALLOW_LEVEL
+```
+
+`SHALLOW_INTERVAL` is in **half-microseconds** — `FromMicros::level`
+(`src/bemf.rs:96-99`) doubles its input before handing it on, and
+`src/bemf.rs:448` asserts it: `assert_eq!(f.level(24), SHALLOW_LEVEL, "below
+50 half-us")`. So the 3 -> 2 step is at **ci < 25 µs**, not "below ci 50".
+The lowest `ci_min_us` ever recorded is 40, and `SECTOR_FLOOR_US` is 40, so
+**that step can never be reached**. Claim (b) as written is refuted on both
+the threshold and the mechanism.
+
+Recomputing `DET_FILTER` depth over the live range (`mapped_filter_level`,
+`src/bemf.rs:64-74`, on `2 * ci_us`):
+
+```
+ci µs : 25..72 -> depth 3 | 73..99 -> 4 | 100..122 -> 5 | ...
+```
+
+The step that *is* in play is **4 -> 3 at ci = 73 µs**, and it falls exactly
+between the two rungs measured: rung 500 runs at `mean_ci_us = 77` (depth 4),
+rung 550 at `mean_ci_us = 71` (depth 3). A version of the author's argument
+therefore survives in stronger form — the loop loses a quarter of its
+persistence reads between 500 and 550 — but it is a *level shift at the
+operating point*, not a feedback loop responding to excursions: from ci 72
+down to 25 the depth is constant at 3, so once at 550 a further downward
+excursion changes no depth at all.
+
+### Is either actually positive feedback?
+
+(a) yes, in the downward direction, and it is bounded only by
+`min_interval = 40`. (b) no — it is a static schedule crossed once per rung;
+in the 550 regime it is flat, so it cannot amplify an excursion. The
+positive-feedback framing should be dropped from (b).
+
+There is a third element the brief does not mention and which matters more
+than (b): **`wait_time` is a comb**, stated in `src/shared.rs:368-370`
+("`wait22(57) = 9`, `wait22(58) = 10`, `wait22(59) = 9`") and reproduced by me:
+
+```
+ci : 50 51 52 53 54 55 56 57 58 59 60 61 62 ...
+w22:  8  8  9  8  9  9  9  9 10  9 10 10 10
+w20: 10 10 10 10 11 10 11 11 11 11 12 11 12
+```
+
+`wait22 <= 9` for every ci in 25..=57, plus ci = 59. `wait20 <= 9` only for
+ci <= 49. So the trough is not a smooth function of the excursion depth, and
+"arresting the excursion" only helps if it keeps ci above 57 — a 14 µs move
+from the 550 operating point of 71, i.e. essentially all of the available
+headroom.
+
+### The smallest bounded change
+
+**It already exists as a cargo feature and has almost no exposure.**
+`src/run/policy.rs:294-328`: `ADVANCE_LOW = 20`, `ADVANCE_HIGH = 22`, with
+`#[cfg(feature = "advance-low")] pub const ADVANCE_HIGH: u32 = 20;` and a
+compile-time assert `ADVANCE_HIGH >= 16 && ADVANCE_HIGH <= 22`
+(`policy.rs:354`). Its own doc comment computes the effect:
+level 22 clears the 11 µs arm cost only above ci 72, level 20 above ci 60 —
+"about **12 µs of interval headroom, ~3 rungs**". My comb table agrees: it
+moves the `wait <= 9` boundary from ci 57 to ci 49.
+
+The one predeclared A/B in the tree, same rung, same session:
+
+| | `e303-ab-A22_1_01.txt` (adv 22) | `e303-ab-B20_1_01.txt` (adv 20) |
+|---|---|---|
+| `thin_count` | 1027 | **0** |
+| `ci_min_us` | 54 | 56 |
+| `late_arms` | 0 | 0 |
+| `coast_ehz` | 2149 | 2088 |
+| `too_early` | 50 | 2 |
+
+Level 20 **eliminated the thin-margin population entirely** at rung 500, at a
+cost of 2.8% of coast speed on this pair — not the ~1% the brief cites (the
+~1% figure in the tree belongs to a different change, the arm-ordering A/B at
+E142/E144, `src/roots.rs:497-505`). n = 1 per side, and both runs sit at
+`mean_ci_us = 100` rather than the 77 of the other rung-500 runs, so this pair
+is not fully comparable. Census: across the whole tree there is **exactly one
+`advance_level=20` run at rung >= 500** (84.8 s). The advance lever is
+essentially untested where it is needed.
+
+### What a control change could break
+
+* **`SECTOR_FLOOR_US`.** It is simultaneously the estimator floor
+  (`policy.rs:286`) and the value the blanking gate cannot narrow past. Raising
+  it to arrest excursions narrows the admissible band from below and will start
+  refusing genuine crossings at high duty — rung 575 already runs
+  `ci_min_us = 50`, ten µs above it.
+* **Startup acquisition.** The same `ZeroCross::new_bounded(seed_us,
+  SECTOR_FLOOR_US, seed_us + seed_us/2)` serves handover at 200 eHz
+  (`seed_us` ~ 760-833, so `max_interval` ~ 1140-1250). Any change to the band
+  or the gate fraction changes what the handoff will accept, and handover is
+  where `qual_intervals`/`qual_reanchors` live.
+* **Wrap and overflow safety.** `blanking()` for `BLANK_64 != 32` and
+  `advance_of` are both split into whole/fractional sixty-fourths specifically
+  to avoid `__aeabi_lmul`, which the ISR math audit forbids in `ADC_COMP`
+  (`src/commutation.rs:242-252`, `src/bemf.rs:360-375`). Any new arithmetic in
+  the gate must respect that or it fails at link time.
+* **Atomic stop/arm.** `com_arm` is one critical section with a re-checked
+  `arm_allowed` (`src/roots.rs:1048-1072`, `src/oneshot.rs:90-115`). Touching
+  the arm path risks the three findings enumerated there.
+* **The low rungs that currently qualify.** 350-475 carry 9 200 s of
+  zero-event exposure at level 22. A blanking or depth change is a change to
+  the accept decision at *every* rung, so it re-opens the whole ladder.
+
+### A cheaper and more decisive experiment
+
+Three, in increasing cost:
+
+1. **Instrument the excursion, not the outcome.** The tree has no distribution
+   of `average_interval` — only `ci_min_us` (a saturated minimum) and
+   `mean_ci_us`. An eight-bucket `ci` histogram with a hold snapshot, built
+   exactly like `wait_hist`, would say whether the estimate at 550 spends
+   measurable time below 57 (the comb boundary) or merely touches it once. That
+   is the causal variable; `wait` is a comb of it.
+2. **Replicate the instrument before believing it.** Three runs of `26843E7C`
+   and three of `E3BB2544` at rung 500, hold snapshots only. If `w<=9` reads
+   11-ish in one build and 77-ish in the other, the instrument is
+   build-dependent and P1 is void. This costs six safe runs and settles the
+   single largest uncertainty in the brief.
+3. **Give the existing `advance-low` feature exposure.** It is a compiled,
+   asserted, already-reviewed change with a predeclared A/B behind it and one
+   85 s run above rung 475. Three runs at 500 and three at 550 would either
+   reproduce `thin_count = 0` and no latch, or not. That is a bounded
+   experiment on a lever that already exists, against a proposal to modify the
+   accept decision that the whole ladder rests on.
+
+**Verdict P7: (a) CONFIRMED as a mechanism, but it is documented in source and
+already clamped, and the brief presents it as a finding. (b) REFUTED — wrong
+threshold by 2x, and inactive in the regime; the real step is 4 -> 3 at
+ci = 73. The smallest bounded change is not a new one: it is the existing
+`advance-low` feature, whose speed cost the brief understates (2.8% measured,
+n=1, not ~1%) and whose exposure above rung 475 is one run.**
+
+---
+
+## P8 — is LateArm a tripwire rather than a limit?
+
+### Source claims: all three confirmed
+
+* `src/roots.rs:511` — `arm_marked::<C>(left.max(1));` and the twin at
+  `src/roots.rs:582` — `com_arm(left.max(1), 1);`. The arm **is** placed.
+  `com_arm` (`src/roots.rs:1017-1026`) maps `us < 2` to `arr = 1` on a 1 MHz
+  one-shot, so the commutation fires ~1-2 µs after the arm instead of at
+  `wait`. With `ci_at_late = 59` that is 1 µs of 59 µs per 60 electrical
+  degrees = **1.02 electrical degrees, on one commutation.** Confirmed.
+  (`COM_TIMEOUT_MIN = 200` half-µs at `src/commutation.rs:298` is a different
+  clamp and is not on this path.)
+* `src/protection.rs:48-63` contains exactly the quoted sentence, at
+  **`src/protection.rs:52`**: "it was non-zero in 4 of 588 captures, one of
+  them a qualifying 45% run." Confirmed as a quotation.
+* `src/run/states.rs:278` — `if closed && hal.late_arms() != 0 { return
+  Err(Reason::LateArm); }` — is a foreground poll, so the stop is one
+  foreground iteration after the latch.
+
+### But both capture-derived generalisations in P8 are wrong
+
+* **"4 of 588 captures" is stale by 5x.** It was true of the tree when written.
+  Today: **19 runs / 20 events out of 1229 runs** (table in P4). Anyone
+  reading P8 as a statement about the present tree is reading a 2026-09-something
+  snapshot. The "qualifying 45% run" is `2026-09-23/c7f-450_02.txt`
+  (`target_duty_tenths=450`, `late_arms=1`, `reason=2`, `closed_ms=74774`) —
+  confirmed.
+* **"`com_late_max_us` reads 9-10 µs in every clean run" is false.** Over the
+  1 004 runs reporting it, the `reason=2` distribution is:
+
+  ```
+  com_late_max_us :  5    6    7    8    9   10   11   12   13   14   15
+  clean runs      : 149   58  104  161  188  141  124   38   27   12    2
+  ```
+
+  Median 9, but only 329 of 1 004 read 9 or 10; the range is 5-15. The
+  `reason=15` runs read 7-13. The *substance* of P8 survives this — realised
+  COM lateness of 5-15 µs is reported and tolerated in every clean run, while
+  a 1 µs arm error stops the run — but "9-10 in every clean run" is not what
+  the captures say.
+
+### Assessment
+
+The hazard `Reason::LateArm` measures is, on its face, **an instrument
+threshold, not a physical limit**: the stop fires on a 1 µs / 1-degree error
+on one commutation, while 5-15 µs of realised COM lateness is routine and
+merely logged. Two things nevertheless argue the stop is tracking something
+real:
+
+* Every one of the 14 `reason=15` stops has a collapsed estimate. Using each
+  capture's own `BEMFCOAST`/`BEMFSELFREF coast_ehz` as truth, `ci_us` at the
+  stop is 14.0% – 45.2% **below** `1e6/(6*coast_ehz)` in all 14. So the latch
+  co-occurs with a genuinely wrong estimate, not merely a slow handler.
+* The stop is therefore better read as a *detector of estimator collapse* than
+  as a deadline violation — and that is a physical failure.
+
+Correction to the brief's "Also relevant" bullet on this: the separation is
+**not** "clean stops within 2.5% of truth, all eight LateArm stops 14-45%
+below it."
+  * There are **14** LateArm stops with a coast reference, not eight (a 15th,
+    in `captures/e195-rung-500.runlog`, is the duplicate).
+  * Of 840 `reason=2` runs with a coast reference, **214 (25.5%)** deviate by
+    more than 2.5%; the range is -13.21% to +17.03%.
+  * The bands do abut: worst clean is **-13.21%**
+    (`2026-09-24/e278-prot500-v_01.txt`, rung 375) against the mildest LateArm
+    at **-14.03%** (`e305-550-ring-2_01.txt`). A 0.8-percentage-point gap with
+    n = 1 either side is not "separates perfectly".
+  * And the band is not LateArm-specific: `2026-09-25/e253-550_03.txt` reads
+    **-17.99%** with `reason=26` (FastBusSag), sitting inside it. What the
+    coast check separates is "the estimator had collapsed" from "it had not" —
+    which is the useful reading, and a stronger one than the brief's.
+
+**Verdict P8: source claims CONFIRMED (`file:line` above). The two statistical
+claims attached to it are WRONG (4 of 588 -> 19 of 1229; "9-10 in every clean
+run" -> 5-15, median 9). The assessment asked for: the tripwire is
+mis-specified as a deadline, but it is a reliable *proxy* for estimator
+collapse, which is physical. The measured hazard is therefore neither pure
+artifact nor a timing limit — it is the collapse rate, read through a 1 µs
+gauge.**
+
+---
+
+## P9 — 60% unreachable
+
+Current figures, verbatim:
+
+* `captures/2026-09-24/e278-prot500-i_01.txt` —
+  `duty_tenths=600 ... hold_ma=2869 ... worst_ma=3490 worst_hold_ma=3490`,
+  i.e. **2.87 A hold, 3.49 A worst block**. Confirmed.
+* `captures/2026-09-25/e308-550-old-3_01.txt` —
+  `duty_tenths=575 ... hold_ma=2494 ... worst_ma=3022`, i.e. **3.02 A worst
+  block**. Confirmed.
+* The 3 A clamp is corroborated in source: `src/shared.rs:365` — "450/475 draw
+  ~1.5 A against a 3 A clamp".
+
+Caveats the brief does not state:
+
+* **The rung-600 capture is the only one in the tree, and it is an injected
+  protection-provocation run**: `BEMFRUN ... target_duty_tenths=600 ...
+  inject=25`, `reason=15`. Its hold is `hold_blocks=130` against 4 784 at 575
+  — roughly 1 s of hold. "2.87 A hold at 600" is an average over ~1 s of an
+  injected run, not a characterisation of rung 600.
+* I could not source the "worst 10.1 ms block". `blocks=3071` over
+  `closed_ms=26307` gives 8.6 ms/block in that capture and 9.5 ms at 575.
+* The arithmetic still lands: 575 is already at 3.02 A worst block against a
+  3 A clamp, on a real 72 s non-injected run. The current argument for 600
+  does not need the injected capture.
+
+**Verdict P9: every quoted current figure CONFIRMED. The claim is sound, but
+one of its two legs (the 600 numbers) rests on a single injected run with ~1 s
+of hold, and should be stated as such. The P5 leg is sound under a corrected
+fit, more strongly than the brief claims.**
+
+---
+
+## Inferences presented as readings
+
+1. **P3's "whole-run ratio 1.0x"** — presented as a reading from the captures;
+   the captures give 18.67x.
+2. **P4's "the latch is one specific ~9 µs cost, not a draw from a spend
+   tail"** — presented as what the four captures show; it is an inference, and
+   the campaign's own chain data contradicts it (9 is the maximum of the spend
+   distribution).
+3. **P5's `log h = -20.886 + 0.029368 x rung` and "b/se = 3.6"** — presented as
+   a computed fit; not reproducible from the tree under any specification I
+   tried.
+4. **P6's "5 events / 32.74 M arms" and "8 events / 9.50 M arms"** — presented
+   as counts; the tree gives 6 / 52.33 M and 10 / 10.12 M.
+5. **P7(b)'s "drops 3 -> 2 below ci 50"** — presented as a source reading; the
+   constant is in half-microseconds and the source's own test says "below 50
+   half-us" (`src/bemf.rs:448`).
+6. **P8's "4 of 588 captures"** — a correct quotation of
+   `src/protection.rs:52` presented as a current fact.
+7. **P8's "`com_late_max_us` reads 9-10 µs ... in every clean run"** — the
+   distribution is 5-15.
+8. **"clean stops within 2.5% of truth ... separates perfectly"** — 25.5% of
+   clean runs exceed 2.5%, the bands abut at 0.8 pp, and a FastBusSag run sits
+   inside the LateArm band.
+9. **"wait and spent being negatively correlated via filter depth"** — the
+   cited 20 478-pair dataset gives corr = +0.104.
+10. **"Production ISR roots are byte-identical with the feature off; `ADC_COMP`
+    760 -> 778"** — plausible from `src/shared.rs:374-379` but not recorded
+    anywhere in `captures/asm/`; unverified.
+
+## Evidence in the tree the brief omits
+
+1. **Three further `margin-hist` captures** — `e315-475-hist_01.txt`
+   (actually rung 500), `e315-500-hold_01.txt`, `e315-550-hist_01.txt`. They
+   give a 7x same-rung discrepancy at 500 and a within-image 500->550 ratio of
+   0.95. This is the single most consequential omission.
+2. **15 further `late_arms != 0` captures** (19 total, not 4), including four
+   from images where a late arm did **not** stop the run (`reason=2`/`26`) —
+   which changes the censoring structure any rate model rests on.
+3. **Rung 525: 9 runs, 703 s, zero events.** A zero-count cell sitting between
+   the two rungs the argument is about, excluded by P5's design.
+4. **The one `advance_level=20` run above rung 475** (`e303-ab-B20_1_01.txt`)
+   with `thin_count = 0` against 1027 at level 22 — direct evidence on P7's
+   alternative, and the only such evidence that exists.
+5. **`src/bemf.rs:186-212`** — the estimator-runaway comment, which already
+   states P7(a)'s mechanism, its bench evidence, the clamp that arrests it,
+   and the `BLANK_64` widening lever as "self-correcting in the right
+   direction".
+6. **`ci_min_us = 40` in `e305-550-noring-2_01.txt`** — the estimator reached
+   `SECTOR_FLOOR_US` exactly once in the whole tree, on a latching run whose
+   `ci_us` was 45% below coast truth. The best single piece of evidence for
+   the collapse mechanism, and it is not cited.
+7. **`src/shared.rs:352-359`** — the model the instrument was built to
+   complete predicted `P(wait<=9) = 2.8e-05`; the instrument measured
+   5.2e-04. The instrument falsified its own model by 18.6x, and the brief
+   reports the measurement without reporting that it refutes the prediction.
+8. **`src/shared.rs:368-370` plus my comb table** — `wait22 <= 9` covers
+   ci 25..57 and 59, and `wait20 <= 9` only ci <= 49. This quantifies the
+   advance lever's effect on the trough far better than the "~1% rotor speed"
+   framing.
+
+## Reproduction
+
+All aggregates were produced by parsing every `captures/**/*.txt` and
+`*.runlog`, splitting runlogs on `BEMFRUN`, and extracting
+`target_duty_tenths`, `advance_level`, `inject`, `BEMFDONE reason/accepted/
+zc_acc/ci_us/too_early/unstable`, `BEMFGATE closed_ms/hold_ms/zc_per_s`,
+`BEMFRATE hold_accepted/mean_ci_us`, `BEMFRCOMP spent_max_us/late_arms/
+ci_at_late/spent_at_late/ci_min_us/thin_count`, `BEMFDRIVEN comp_call_max_us/
+com_late_max_us`, `BEMFCURRENT hold_ma/worst_ma`, and `coast_ehz`.
+`captures/e195-rung-500.runlog` was excluded as a duplicate of
+`2026-09-24/e195-rung-500_03.txt`. Chain pairs were taken from the
+six-column `CHAIN 1` rows only (columns `crossing arm wait spent step flag`,
+`spent` in µs); the seven-column files are all `advance_level=20`, rung 250,
+and store `spent` in TIM2 fine units, so mixing them would mix units.
+Poisson fits are Newton-Raphson on the canonical log link with
+`log(exposure)` offset; intervals are exact (Clopper-Pearson on the
+conditional binomial), never normal-approximate.
+
+---
+
+### E316 review 2 of 2 — ADVERSARIAL (verbatim)
+
+# E316 — adversarial review
+
+Reviewer: adversarial, no prior campaign context. Every number below is
+recomputed from `captures/` and `src/`. Where I disagree with the brief I say so
+without hedging.
+
+**Bottom line up front.**
+
+1. **P1 is void.** A replicate of the same measurement exists in the same
+   capture directory, on a second `margin-hist` image, and it disagrees by 7.0x
+   at matched rung. Whole-run, the 500→550 ratio of `P(wait<=9)` is **18.7x on
+   image `26843E7C` and 0.95x on image `E3BB2544`**. The headline 39.7x is not
+   reproducible across builds.
+2. **P2 is false.** Not arguable — falsified, twice: by the replicate above, and
+   by the author's own `thin` field, which places the instrumented image at rung
+   550 on production's **rung-575** margin curve.
+3. **Even taking the numbers at face value, P1 measures the operating point, not
+   excursions.** A rigid one-bucket shift of the rung-500 distribution predicts
+   `P(wait<=9)` = 2.33e-3 at 550. The measured value is 5.21e-4 — **4.5x
+   smaller than a pure mode shift predicts**. Mode-relative trough occupancy
+   *fell* 4.3x from 500 to 550. P1 has the sign backwards once the operating
+   point is controlled for.
+4. **P7 is wrong on the source.** The depth schedule does not "drop 3 → 2 below
+   ci 50". The shallow floor is unreachable in this regime, and the real step is
+   **4 → 3 at ci = 73** — which sits *between* the two windows being compared,
+   making the 500/550 comparison a comparison of two different detectors.
+5. **P4's ~9 µs is already explained and already bounded.** 155 instructions of
+   guard root at NVIC 0x00, ~330 cycles ≈ 5.2 µs, on top of a ~4 µs pre-arm
+   base. `WCET_ESTIMATES.md:111,128` says this in as many words. No control
+   change is needed to test it; a two-instruction witness settles it.
+6. **The timing work is not on the critical path to 60%.** A production-family
+   image already held **48.3 s at rung 575**, which clears the campaign's 30 s
+   hold. The only rung-600 run in the corpus had `inject=25` and ran in
+   sustained duty foldback. 60% is gated by current and by the 10% bus-sag
+   spec, not by `LateArm`.
+
+---
+
+## 1. Ground truth: what `wait` actually is
+
+`wait_time(ci, 22) = (ci>>1) - ((ci>>6)*22 + (((ci&63)*22)>>6))`
+(`src/commutation.rs:253-263`). Tabulated, the map from `ci` to `wait` is a
+**non-monotone comb**:
+
+| `wait` | `ci` values that produce it |
+|---|---|
+| 8 | 46, 48, 49, 50, 51, 53 |
+| **9** | **52, 54, 55, 56, 57, 59** |
+| 10 | 58, 60, 61, 62, 63, 64, 65, 67 |
+| 11 | 66, 68, 69, 70, 71, 73 |
+| 12 | 72, 74, 75, 76, 77, 79 |
+| 13 | 78, 80, 81, 82, 83, 85 |
+
+Two facts fall straight out and neither is in the brief.
+
+**(a) `wait` is not monotone in `ci`.** `ci = 58` gives `wait = 10`;
+`ci = 59` gives `wait = 9`. A *one-microsecond-slower* interval yields a
+*one-microsecond-shorter* wait. Same at 51/52/53 (8, 9, 8) and 67/68 (10, 11).
+The two independent truncations — `ci>>1` and the split advance — beat against
+each other with a ±1 µs sawtooth around the exact value `ci*(32-L)/64`.
+
+**Three of the four recorded latches are at `ci_at_late` = 59 and 57 — the top
+two `ci` values in the whole `wait=9` band.** At `ci = 59` the exact wait is
+9.22 µs and the code returns 9; at `ci = 58` the exact wait is 9.06 µs and the
+code returns 10. The tripwire is firing on a truncation artifact of its own
+arithmetic, on the *slowest* intervals in the band. That is not a picture of a
+rotor in trouble. It is a picture of a ±1 µs quantization error meeting a
+tripwire with 1 µs of granularity.
+
+**(b) each `wait` bucket is ~6 `ci` values wide**, so `wait_hist` is a coarse,
+comb-aliased re-encoding of the `ci` distribution and nothing more. Since
+`d(wait)/d(ci) ≈ 0.156`, one bucket of `wait` is 6.4 µs of `ci`. The hold-window
+means are `mean_ci_us = 77` (rung 500) and `71` (rung 550); `wait(77) = 12` and
+`wait(71) = 11` — **exactly the two reported modal buckets.** The mode is the
+mean speed. Nothing else.
+
+---
+
+## 2. P2 — the observer effect. P2 is falsified.
+
+### 2.1 The replicate exists, and it disagrees by 7x
+
+The brief compares `26843E7C` at rung 500 and 550. A **second** image,
+`E3BB2544`, ran the same two rungs on the same day and also emits whole-run
+`BEMFMARGIN`:
+
+| image | rung | run | `w9`+`w8` | hist total | `P(wait<=9)` |
+|---|---|---|---|---|---|
+| `26843E7C` | 500 | 84.78 s, reason 2 | 11 | 997 689 | **1.102e-05** |
+| `E3BB2544` | 500 | 84.77 s, reason 2 | 77 | 997 321 | **7.720e-05** |
+| `26843E7C` | 550 | 30.35 s, reason 15 | 62 | 301 199 | **2.058e-04** |
+| `E3BB2544` | 550 | 32.14 s, reason 15 | 24 | 325 881 | **7.365e-05** |
+
+(`captures/2026-09-25/e315-500-mh_01.txt`, `e315-475-hist_01.txt` — note that
+file is labelled 475 and its `target_duty_tenths` is **500** —
+`e315-550-mh_01.txt`, `e315-550-hist_01.txt`.)
+
+Both rung-500 runs are 84.77 s, `reason=2`, `advance_level=22`,
+`mean_ci_us=77`, `hold_ms≈64 775`. They are as close to a replicate as this
+corpus contains. They differ in `P(wait<=9)` by **7.01x**.
+
+And the quantity the brief is selling:
+
+* whole-run 500→550 ratio, `26843E7C`: **18.7x**
+* whole-run 500→550 ratio, `E3BB2544`: **0.95x**
+
+The same measurement, two builds, one day apart: 18.7x and 0.95x. On a log
+scale the between-build spread (log 7.0 = 1.95) is **53% of the entire claimed
+effect** (log 39.7 = 3.68). P1 has n = 1 per cell and a demonstrated
+reproducibility of 7x. It establishes nothing.
+
+Note also that this destroys P3's stated reasoning. P3 says "whole-run, **the
+same image** gave a ratio of 1.0x". The image carrying `BEMFMARGINHOLD`
+(`26843E7C`) gives **18.7x** whole-run. The 1.0x belongs to `E3BB2544`, a
+different build. P3 as written compares across images and then explains the
+result with a ramp-fraction argument. The ramp-fraction argument may well be
+right about `wge14` — `wge14` is 141 211 whole-run and 12 596 in hold at 500,
+128 827 → 175 at 550, so yes, ramp arms pile into the top bucket — but it is
+being used to explain a number that the primary image does not produce.
+
+### 2.2 `thin` already says the instrument moved the run a whole rung
+
+`thin` counts `left <= 2` and is in production. Per accepted arm:
+
+| image | 425 | 450 | 475 | 500 | 525 | 550 | 575 |
+|---|---|---|---|---|---|---|---|
+| `480263F1` | 1.06e-5 | 1.30e-5 | 1.30e-4 | 7.29e-4 | 4.28e-3 | — | — |
+| `0D8E3799` | 5.6e-6 | 8.7e-6 | 1.16e-4 | 2.30e-3 | 3.99e-3 | 1.96e-3 | 9.27e-3 |
+| `E3BB2544` | — | — | — | 2.07e-3 | — | 8.44e-3 | — |
+| `26843E7C` | — | — | — | **1.93e-3** | **7.60e-3** | — | — |
+
+Read the `26843E7C` row against `0D8E3799`:
+
+* at rung **500**, `26843E7C` reads 1.93e-3 — the value `0D8E3799` reads at
+  rung **525** (3.99e-3) is only 2x higher, and `480263F1` at 500 reads
+  7.3e-4, i.e. **2.6x lower**.
+* at rung **550**, `26843E7C` reads 7.60e-3 against `0D8E3799`'s 1.96e-3 at the
+  same rung — and against `0D8E3799`'s **9.27e-3 at rung 575**.
+
+**The instrumented image at rung 550 sits at 82% of production's rung-575
+margin rate.** The brief concedes this as "`thin` 2-4x above production" and
+then argues it does not matter because `wait_hist` is a pure function of the
+estimator. It matters. `thin` is `wait - spent <= 2`; the image's whole margin
+population has moved about one rung up the curve, and `P(wait<=9)` rises about
+**6x per 25 tenths** on the production images (`480263F1`, 475→500: 1.30e-4 →
+7.29e-4 = 5.6x; 500→525: 5.9x). One rung of displacement is one factor of ~6 of
+the claimed 40x, manufactured by the instrument.
+
+### 2.3 The mechanism P2's argument does not cover
+
+P2's argument is positional: `note_margin` is called *after* `com_arm`
+(`src/roots.rs:511-512`), so the instrument cannot enter the `spent` it
+measures. That is true of *that call site* and false of the change. The brief
+itself states the disassembly diff shows **"register reallocation across the
+whole handler"**. Register reallocation moves spills and reloads onto the
+*pre-arm* path. `spent` is `hw::clock::raw() - raw` at line 509 — every
+instruction between the entry stamp and line 509 is inside it. +18 net
+instructions at the end is compatible with ±N instructions before line 509.
+The positional argument and the reallocation admission are inconsistent, and
+`thin` is the measured consequence.
+
+Beyond that, there are at least five live paths from the instrument to
+`wait_hist`, and the author has argued none of them:
+
+1. **COM blocking.** COM (`TIM16`) is a **peer** of ADC_COMP at NVIC 0x40
+   (`src/shared.rs:64-68`, `roots.rs:1001-1009`) — it *cannot preempt*. The
+   one-shot is loaded with `left.max(1)`. From `left_hist` at rung 500,
+   `l0..l6` sum to 641 823 of 839 349 arms: **76% of all arms load the COM
+   one-shot for 6 µs or less**, so for 76% of arms the commutation interrupt
+   fires while ADC_COMP is still executing its tail — which is exactly where
+   `note_margin` now lives. The instrument therefore delays the *commutation
+   itself* on three arms in four. `com_late_max_us` reads 8-13 across the
+   corpus and is the only bound on it. Commutation lateness is a change in
+   applied electrical angle; it changes the next crossing's timing; that changes
+   `ci`; `wait` is a function of `ci`. This is a closed loop from the instrument
+   to the measured quantity, and it runs on 76% of arms.
+2. **Entry latency to the next edge.** A longer handler masks the comparator
+   line for longer (`hw::comp::line_disable()` at entry, re-armed by COM), so
+   which edge is served changes.
+3. **Accept/reject outcomes** feed the estimator and only accepted crossings
+   blend (`src/bemf.rs:415`), so any change in the accepted subset changes `ci`.
+4. **The blanking gate is derived from the estimate** (`count <= blanking()`,
+   `bemf.rs:394`; `blanking() = average_interval >> 1`, `bemf.rs:350-354`), so a
+   perturbed estimate perturbs which edges are admissible — a second-order loop.
+5. **`ci_min_us` differs between the two rung-500 replicates**: 55
+   (`26843E7C`) vs 52 (`E3BB2544`). The two builds do not just report
+   differently; their estimators reach different minima on the same bench at the
+   same rung.
+
+**Verdict on P2: false.** `wait_hist` is not immune to the instrument. The
+instrument can manufacture roughly a factor of 6 of the 39.7x through the rung
+displacement visible in `thin`, and the build-to-build spread of the measurement
+itself is 7x. P1 is void.
+
+---
+
+## 3. P1 and the mode-shift alternative — quantified
+
+Set the instrument aside and take the two hold histograms as given.
+
+Hold-window occupancy (recomputed; both sums check: 839 349 and 109 502):
+
+| bucket | ≤7 | 8 | 9 | 10 | 11 | 12 | 13 | ≥14 |
+|---|---|---|---|---|---|---|---|---|
+| p(500) | 0 | 0 | 1.311e-5 | 2.332e-3 | 5.811e-2 | **0.7103** | 0.2143 | 1.501e-2 |
+| p(550) | 0 | 0 | 5.205e-4 | 3.057e-2 | **0.6840** | 0.2741 | 9.278e-3 | 1.598e-3 |
+
+### 3.1 A rigid one-bucket shift over-predicts the effect by 4.5x
+
+Shift p(500) down one bucket and compare:
+
+| bucket | shift-predicted p(550) | actual | actual/predicted |
+|---|---|---|---|
+| 9 | **2.332e-3** | **5.205e-4** | **0.223** |
+| 10 | 5.811e-2 | 3.057e-2 | 0.526 |
+| 11 | 0.7103 | 0.6840 | 0.963 |
+| 12 | 0.2143 | 0.2741 | 1.28 |
+| 13 | 1.501e-2 | 9.278e-3 | 0.618 |
+
+A pure one-bucket translation predicts a **178x** rise in `P(wait<=9)`. The
+measured rise is 39.7x — **4.5x less than the null of "the distribution moved
+one bucket and kept its shape."**
+
+### 3.2 Mode-relative, the trough got *emptier*
+
+| | occupancy 2 buckets below the mode |
+|---|---|
+| rung 500 (mode = 12) | p(w10)/p(w12) = **3.283e-3** |
+| rung 550 (mode = 11) | p(w9)/p(w11) = **7.610e-4** |
+
+**4.3x lower at 550.** Three buckets below the mode: 1.845e-5 at 500 versus
+0 counts at 550. On every mode-relative measure the rung-550 distribution is
+*tighter*, not more excursion-prone.
+
+A Gaussian-in-`ci` fit pushed through the comb agrees on the shape question:
+best fit is µ = 76.50, σ = 2.75 at rung 500 and µ = 71.25, σ = 2.50 at rung 550.
+**σ does not grow.** (The Gaussian badly under-predicts the far left tail —
+2.4e-10 against a measured 1.3e-5 — so the `ci` distribution is genuinely
+heavy-tailed on the low side; use the non-parametric shift argument above, which
+assumes nothing.)
+
+### 3.3 An independent, already-existing excursion instrument says the same
+
+`acc_by_phase` (`src/run/states.rs:1022-1034`, emitted as `BEMFPHASE`) buckets
+each accepted crossing's `count` against the **prior** estimate. Bucket 0
+(`lt075`) is `count <= 0.75 * ci_before` — the literal event that pulls the
+estimator down, i.e. exactly what P7 proposes to arrest. Buckets 1 and 2 are
+`u16`-saturated at 65535 and unusable, but bucket 0 is not:
+
+| rung | image | `lt075` | accepted | per arm |
+|---|---|---|---|---|
+| 500 | `26843E7C` | 46 688 | 995 935 | **4.69e-2** |
+| 550 | `26843E7C` | 8 124 | 300 769 | **2.70e-2** |
+| 575 | `0D8E3799` | 23 411 | 907 519 | **2.58e-2** |
+| 600 | `0D8E3799` | 5 418 | 246 877 | **2.19e-2** |
+
+**The rate of downward estimator excursions falls monotonically with duty** —
+4.69e-2 → 2.70e-2 → 2.58e-2 → 2.19e-2 from 500 to 600. `gt150` per arm also
+falls (5.22e-3 → 3.88e-3), and the down/up asymmetry `lt075/gt150` falls from
+9.0 to 7.0. This is production instrumentation, on the same runs, needing no
+new build, and it directly contradicts the reading of P1 that motivates P7.
+
+### 3.4 What *does* rise with duty, and why 40x
+
+`lt075` events are common (1 accept in 21) and each one pulls the estimate down
+about 7.5% through `blend_interval` (`prev = ci`, `this = 0.75 ci` ⇒
+`new = 0.925 ci`). Reaching `wait <= 9` needs `ci <= 59`, so:
+
+* from `ci = 77` (rung 500): 0.925^k ≤ 59/77 ⇒ k ≥ 3.42 consecutive events
+* from `ci = 71` (rung 550): 0.925^k ≤ 59/71 ⇒ k ≥ 2.39
+
+With the measured per-arm rates, `p^k`: 0.0469^3.42 = 2.9e-5 versus
+0.0270^2.39 = 1.79e-4 — a **6.2x** rise, driven entirely by needing one fewer
+consecutive event, with the *rate* of events falling.
+
+So the measured 39.7x sits between "pure comb/mode shift" (178x) and "pure
+chain-depth shortening at a falling event rate" (6.2x). It is diagnostic of
+neither, and both of those are consequences of the rotor being 8% faster at
+rung 550 — a fact `coast_ehz` (2158 → 2310) reports without any instrument at
+all. **P1 does not measure an excursion process.**
+
+---
+
+## 4. Confounds in the two windows
+
+The two windows are **not comparable**, for four independent reasons.
+
+**(a) They are two different detectors.** `DET_FILTER =
+FromMicros(WithShallowFloor(MappedFilter))` (`src/run/policy.rs:235`). Tracing
+it: `FromMicros` doubles the µs interval; `WithShallowFloor` fires only below
+`SHALLOW_INTERVAL = 50` on the *doubled* value, i.e. `ci < 25 µs` —
+**unreachable at any rung in this corpus**; `MappedFilter` then gives
+`3 + ((2ci - 100) * 1475 >> 16)`. Evaluated:
+
+| `ci` | 45-72 | 73-94 | 95+ |
+|---|---|---|---|
+| depth | **3** | **4** | 5 |
+
+The rung-500 hold runs at `mean_ci = 77` → **depth 4**. The rung-550 hold runs
+at `mean_ci = 71` → **depth 3**. The step is at `ci = 73`, and it falls *between
+the two compared windows*. Acceptance selectivity, the `lt075` rate, and the
+pre-arm `spent` base all differ by construction. Any 40x measured across that
+boundary is attributable to it as readily as to duty.
+
+**(b) The 550 window ends at a latch, and the run length is an outcome.** Under
+a strictly stationary Poisson model the rate estimate is nearly unbiased (the
+guaranteed-inclusion bias is ≈ 1 count in 57, +2%). But the burst/chain
+mechanism in §3.4 is explicitly non-stationary, and the stopping rule
+terminates the window at the worst instant the run ever had. `wait_hist` is a
+cumulative counter, so **there is no way to test whether the 57 counts were
+uniform over 7.85 s or bunched in the last 200 ms.** That is a hole in the
+instrument, not a property of the motor. A 500-arm ring of `(wait, spent)` with
+timestamps, or per-second buckets, would close it; cumulative totals never can.
+
+**(c) 8x shorter is fine for the ratio, fatal for the variance.** 57 counts give
+±13% on the rate; that is not the problem. The problem is n = 1 run per cell
+against a demonstrated 7x between-build spread (§2.1). The brief's statistical
+claim ("solid at counts 11 and 57") answers the wrong question: Poisson noise on
+the numerator, when the dominant variance term is run/build identity.
+
+**(d) The denominators are not `hold_accepted`.** The hold histogram sums to
+839 349 against `hold_accepted = 837 624` at rung 500 (+1 725) and 109 502
+against 109 216 at 550 (+286). The histogram snapshot mark and `hold_acc` do not
+agree about when the hold begins, by 0.13-0.26% of arms. Immaterial to the
+ratio; it should still be reconciled, because the excess at rung 500 (1 725) is
+157x the numerator (11).
+
+---
+
+## 5. P4 — near-tautology, and the sign of the inference is wrong
+
+`left = wait.saturating_sub(spent)`; `left == 0` ⟺ `spent >= wait`
+(`src/roots.rs:509-514`). Enumerating what `spent` is compatible with the
+observed latches, bounded above by `spent_max_us = 11` (which is updated at
+`roots.rs:526-528`, i.e. *includes* the latching arm):
+
+| capture | `ci_at_late` | `wait22(ci)` | compatible `spent` | observed |
+|---|---|---|---|---|
+| `e315-500-hold_01` | 51 | 8 | 8, 9, 10, 11 | 9 |
+| `e315-550-hist_01` | 57 | 9 | 9, 10, 11 | 9 |
+| `e315-550-mh_01` | 59 | 9 | 9, 10, 11 | 9 |
+| `e315-550-why_01` | 59 | 9 | 9, 10, 11 | 9 |
+
+So 9 is **not forced** — but it is the **minimum of the compatible set in all
+four cases**. That is the signature of a *monotonically decaying tail*, which is
+precisely what P4 claims to rule out. If `P(spent=9) > P(10) > P(11)` with a
+decay factor of 3-5 per µs, then P(all four at the minimum) is 0.23-0.42. 4/4
+is unremarkable.
+
+The author's own counts refute P4 directly:
+
+* rung 500, `26843E7C`: **11 arms at `wait = 9`, zero latches** (`reason=2`).
+* rung 550, `26843E7C`: 62 arms at `wait = 9` whole-run, **one** latch.
+
+If the latch were "one specific ~9 µs cost coinciding with a low `wait`" in the
+sense of something deterministic, all 11 rung-500 `w9` arms would have latched.
+They did not. The pooled estimate is **P(spent ≥ wait | wait = 9) ≈ 1/73 =
+1.4%** (95% CI 0.03%-7.4%). `spent >= 9` is a ~1% tail event. **P4's conclusion
+is backwards: this is exactly a draw from a spend tail.**
+
+Two further caveats the brief does not state:
+
+* All four latches come from **four different ELF images** (`5EB8018E`,
+  `E3BB2544`, `26843E7C`, `0F890AF2`), all E315-era experimental builds, all
+  from one day. **P4 has zero production data points.** The one production-image
+  latch in the corpus (`e195-rung-500_03`, `14CE44E7`) predates the
+  `ci_at_late`/`spent_at_late` fields and reports 0/0.
+* `e315-550-why_01` has `hold_ms = 0` and `mean_ci_us = 1` — it latched during
+  the ramp. It is not a hold-window event and should not be pooled with the
+  other three.
+
+### What actually costs the microseconds — and it is already written down
+
+`spent` is the entry-stamp-to-arm interval. Typical `spent` is recoverable from
+`left_hist`: at rung 500 the modal `left` is 6 with a modal `wait` of 12 ⇒
+`spent ≈ 6`; at rung 550 modal `left` 5 with modal `wait` 11 ⇒ `spent ≈ 6`.
+`spent_max_us = 11` in **every capture in the corpus** — 197 crc'd runs from
+rung 425 to 600, every image, clean and latched alike. A saturated maximum that
+never moves is a quantized mechanism, not a distribution.
+
+`WCET_ESTIMATES.md` names it:
+
+* line 22: guard (`TIM6_DAC_LPTIM1`) at **NVIC 0x00**; line 29: **"Only the
+  guard can preempt COMP."** Confirmed in source: `Guard::NVIC = 0x00`,
+  `Motor::NVIC = 0x40` for ADC_COMP / TIM16 / DMA1_CHANNEL1
+  (`src/shared.rs:64-74`).
+* line 111: **"A guard preemption costs about 301 cycles"**; line 128: "one
+  guard preemption + its entry/exit | ~330" cycles = **5.2 µs at 64 MHz**.
+* `captures/insn_baseline.json`: `TIM6_DAC_LPTIM1` = **155 instructions**.
+  Consistent.
+* line 107/232: `comp_call_max_us` "entry stamp → end of the decision,
+  **including any guard preemption**" — and it reads 15-16 in every run here.
+
+So: **`spent` = pre-arm base + 5.2 µs × (guard preemptions)**. Base ≈ 4 µs at
+depth 3 gives `spent = 9`; base ≈ 6 µs at depth 4 gives `spent = 11`. That is
+both observed values, and it explains why `spent_max` is invariantly 11 and why
+`spent_at_late` is 9 at the fast rungs where depth is 3.
+
+The incidence check: guard period is 95.7 µs at rung 500 (`ticks = 885 934` /
+84.776 s = 10 450 Hz) and 85.6 µs at rung 600. A ~4 µs pre-arm window therefore
+catches a guard preemption on **4.2-4.7% of arms**. Predicted latches:
+
+| window | `P(wait<=9)` | arms | × 0.045 | expected | observed |
+|---|---|---|---|---|---|
+| 550 hold | 5.205e-4 | 109 502 | | **2.56** | 1 |
+| 500 hold | 1.311e-5 | 839 349 | | **0.50** | 0 |
+
+Both consistent. This model over-predicts by ~2.5x, not the 15x the brief
+reports for `P(wait<=9) × P(spent>=9)` — because the chain captures that
+supplied `P(spent>=9)` top out at rung 475, where depth is 4 and the base is
+6 µs, so `P(spent>=9)` there is far larger than at rung 550's depth 3. **The 15x
+discrepancy is the depth step, not a mysterious negative correlation.**
+
+**A preemption witness is feasible, discriminating, and nearly free.** The
+pattern already exists: `com_preempts` / `com_arm_preempts` count COM landing
+inside `in_decide` / `in_arm` (`roots.rs:1129`, set at `roots.rs:374-381`,
+`1347-1351`) and read **0 in every capture** — correctly, since COM is a peer
+and cannot preempt. Apply the identical pattern to the guard root:
+`in_decide`/`in_arm` set unconditionally (2 stores, ~4 instructions, ~0.06 µs —
+**300x cheaper than `margin-hist`'s +18**), and two conditional increments in
+the guard root, which is not the arm-critical path. Add one flag latched at the
+late arm: "was a guard preemption seen in this handler".
+
+**Predeclared bar.** At rung 550, three runs of ~300 k arms each: the model
+predicts `guard_arm_preempts / arms` = 4.2-4.7% (≈ 12 600-14 100 per run) and
+**every** late arm carrying the preemption flag. Refutation: if
+`guard_arm_preempts` is below 1% of arms, or if the flag is clear at a latch,
+the guard-preemption account of the 9 µs is dead and the cost is somewhere on
+the pre-arm path instead. Either result is decisive, and neither requires
+touching control.
+
+---
+
+## 6. P7 — the proposed control change. Reject it.
+
+### 6.1 P7(b) is factually wrong about the source
+
+The brief: "persistence-filter depth is scheduled on the same estimate and
+**drops 3 → 2 below ci 50**." Both halves are wrong (§4a):
+
+* the shallow floor `SHALLOW_LEVEL = 2` requires `average_interval < 50` **after
+  `FromMicros` doubling**, i.e. `ci < 25 µs`. The corpus minimum is
+  `ci_min_us = 40`. **Level 2 is unreachable and has never been used at any rung
+  in this campaign.**
+* `ci = 50` is not a step. `mapped_filter_level` returns 3 for all `ci` in
+  45-72. The only step in this regime is **4 → 3 at `ci = 73`**.
+
+So the sentence describes a mechanism that does not run. Worse, the real step
+sits between the two windows P1 compares, which is a confound the brief never
+sees. Anyone acting on P7(b) as written would edit the wrong constant.
+
+And the only evidence that speaks to depth points the *opposite* way from the
+proposed remedy: the depth-4 window (rung 500) has **1.7x more** `lt075`
+sub-0.75 accepts per arm than the depth-3 window (rung 550), 4.69e-2 vs
+2.70e-2. Deepening the filter is not demonstrated to reduce downward
+excursions; the available data suggests the reverse. Deepening it also **adds a
+comparator read to the pre-arm path**, raising the `spent` base and therefore
+`P(spent >= wait)` — it buys the excursion at the price of the other factor in
+the very product being minimized.
+
+### 6.2 P7(a) is a real loop, but it has no fuel on this bench
+
+The self-reference is real: `offer` gates on `count <= self.blanking()`
+(`bemf.rs:394`) and `blanking() = average_interval >> 1` (`bemf.rs:350-354`),
+and `average_interval` is then updated from the accepted `count`
+(`bemf.rs:415`). A depressed estimate does shrink its own gate.
+
+But the loop needs a population of early edges to admit, and there isn't one.
+`too_early` — edges the gate refused — reads **4 of 997 689** at rung 500,
+**32 of 301 199** at 550, **77 of 908 925** at 575, **19 of 247 056** at 600.
+Four parts per million to one part per ten thousand. `blank_latched = 0` and
+`rebase = 0` everywhere. There is no reservoir of sub-half-cycle edges for a
+shrunken gate to let in.
+
+The honest counter to my own point: `too_early` is measured with the *current*
+gate, so a gate that has already collapsed would report few refusals as a
+*consequence*. That is the circular trap and I cannot fully close it from these
+counters. But the mechanism that is actually documented in the data is the one
+in §3.4 — `lt075` accepts at 0.75-1.0 of the estimate, which are **past** the
+gate and fail on persistence depth, not on blanking. The gate is at 0.5·ci; the
+excursion population is at 0.75-1.0·ci. **The gate is not where the excursions
+enter.** Touching it addresses the wrong stage.
+
+### 6.3 The smallest bounded change, and what each candidate risks
+
+**Candidate A — fix the arithmetic, not the control (my recommendation if
+anything is changed at all).** `wait_time` truncates twice and lands up to 1 µs
+*below* the exact `ci*(32-L)/64` (`ci = 58`: exact 9.06, returned 10; `ci = 59`:
+exact 9.22, returned 9). Rounding up — `wait = (ci*(32-L) + 63) >> 6`, still
+shift-only, still no `__aeabi_lmul`, still covered by
+`advance_of_split_matches_the_wide_product` — makes `wait` never understate the
+truth and removes the non-monotonicity that puts `ci = 59` in the `wait = 9`
+band while `ci = 58` sits at 10.
+*Cost:* it is **not free** — it is the same advance-for-margin trade at finer
+grain. Average +0.5 µs of wait ≈ ΔL of 0.45 ≈ **~0.2% rotor speed**, against
++2.2 µs for ~1% at L 22→20. Same µs per percent. The argument for it is
+correctness, not economy: a tripwire with 1 µs of granularity should not be
+reading a function with 1 µs of truncation error.
+*Risks:* none to sector identity, wrap safety, `SECTOR_FLOOR_US`, stop/arm
+atomicity, or startup; `wait` moves by at most 1 µs and only upward, so the low
+rungs that qualify get more margin, not less. Must still be A/B'd for the speed
+delta because the goal cares about it.
+
+**Candidate B — asymmetric downward rate limit on the estimate.** Looks
+cheapest (one compare, zero added ISR reads, no effect on `spent`). **It has an
+acquisition hazard the brief does not consider.** The estimator is seeded at
+`seed_us ≈ 761` (`BEMFDRIVEN seed_us=761`) and must descend to ~71 µs inside
+`acquire_us ≈ 16.8 ms`. At the handover accept rate (~1 200/s at 200 eHz) that
+is ~20 accepts. An absolute limit of, say, 4 µs per accept needs ~173 accepts
+≈ 144 ms — **8x the acquisition budget. It would break startup.** A *relative*
+limit (max 7-8% down per accept) is what `blend_interval` already delivers for
+a 0.75 crossing, so it changes nothing. A limit gated to closed-loop steady
+state adds a mode and a state transition to the one value two motor roots
+touch. Not cheap.
+
+**Candidate C — floor the blanking gate.** Addresses the wrong stage (§6.2) and
+the gate is the only defence against commutation ringing and re-serving the same
+edge; `rebase = 0` and `blank_latched = 0` today, and both would be the failure
+modes. Do not spend the loop's one self-lock defence on an unproven effect.
+
+### 6.4 Verdict
+
+**Changing control is premature and P7 should not be actioned.** The evidence it
+rests on is (i) non-reproducible across builds by 7x, (ii) over-explained by the
+operating point and the comb, (iii) contradicted by `lt075`, the one
+already-deployed instrument that measures the proposed mechanism directly, and
+(iv) described against a source reading that is wrong.
+
+**Cheapest experiment that discriminates "estimator positive feedback" from
+"the estimator is correctly tracking a genuinely varying interval":** you
+already have one, and it needs no new firmware. `BEMFSELFREF coast_ehz` is an
+independent post-run speed. At rung 550, `ci_us` at the stop is 61 (2732 eHz)
+against `coast_ehz = 2310` — the estimate reads **15.5% short of truth at the
+instant of the latch**, while `mean_ci_us = 71` over the hold is within 1.6% of
+truth (72.15 µs). All eight LateArm stops are 14-45% below truth; all clean
+stops within 2.5%. That is the real finding of this campaign and it is far
+stronger than the wait histogram. What it does *not* yet separate is whether the
+collapse is self-reinforcing or a faithful record of a genuine transient. To
+separate those you need the actual sector durations during the excursion, not
+the estimate. Concretely:
+
+1. Un-saturate `acc_by_phase` (it is `[u16; 8]`, `states.rs:57`; buckets 1 and 2
+   are pinned at 65535 in every capture — the instrument is blind in its own
+   bulk). Make them `u32`. **Foreground only, zero ISR cost.**
+2. Add a run-length histogram of *consecutive* `lt075` accepts (foreground, in
+   the same place `acc_by_phase` is incremented). Positive feedback predicts a
+   run-length distribution with a **fatter-than-geometric** tail; faithful
+   tracking predicts geometric with parameter = the measured 2.7-4.7%.
+   **Predeclared bar:** at rung 550, measure the run-length distribution over
+   three runs (~900 k arms, ~24 000 `lt075` events, so runs of length ≥4 are
+   expected ~18 under geometric). If observed runs of length ≥4 are within 2x of
+   the geometric prediction, there is no positive feedback and P7 is dead. If
+   they exceed it by ≥5x, feedback is real and the depth/gate work is justified.
+   If between, the experiment was underpowered and you needed more arms — say so
+   before running, not after.
+3. The guard witness of §5, in the same build, so both factors are measured on
+   one image.
+
+All three are foreground or guard-side. **None of them touches ADC_COMP's
+pre-arm path, which is the only reason `margin-hist` was perturbing.**
+
+---
+
+## 7. P5 — the regression
+
+**The brief's specification is wrong in three ways.**
+
+**(a) It fits only "rungs with events."** Dropping rungs 425, 475 and 525
+discards **1 815 s of zero-event exposure at target** and selects the
+regressors on the outcome. Refitting the same Poisson model over all rungs with
+exposure (events = `reason == 15`, exposure = `closed_ms - 22 500`, restricted
+to `advance_level = 22` runs that reached target with a recorded ELF CRC):
+
+| rung | latches | runs | s at target | arms |
+|---|---|---|---|---|
+| 425 | 0 | 9 | 500.5 | 7.22 M |
+| 450 | 0 | 10 | 552.8 | 8.42 M |
+| 475 | 0 | 15 | 814.1 | 13.00 M |
+| 500 | 2 | 41 | 1797.4 | 30.81 M |
+| 525 | 0 | 9 | 500.5 | 8.44 M |
+| 550 | 10 | 17 | 494.0 | 10.12 M |
+| 575 | 1 | 1 | 49.8 | 0.91 M |
+| 600 | 1 | 1 | 3.8 | 0.25 M |
+
+gives `log h = -34.887 + 0.055657 · rung`, se(b) = 0.00992, **b/se = 5.61**,
+**doubling every 1.25% duty** — not 0.029368 and 2.36%. The brief's slope is
+**half** the correctly specified one. Its P(3/3) figures are correspondingly
+optimistic at 550 (my fit: 0.11, not 0.25) and its 600 figure is not
+meaningfully different from zero either way.
+
+**(b) Rung 450 is not an event rung under this stop specification.** The 450
+"event" is `c7f-450_02`, `late_arms = 1`, **`reason = 2`** — a run that
+*completed* with a late arm, in a pre-tripwire image with no recorded CRC.
+`Reason::LateArm` became a stop later (`src/protection.rs:48-63`: "This was a
+*counter* through campaigns 5-7 ... A counter nobody stops on is a counter
+nobody checks, so it is a stop"). Among CRC-bearing, tripwire-carrying images
+there are **zero** `reason = 15` stops at 450. Pooling a non-stopping counter
+increment with stopping events mixes two different response variables.
+
+**(c) The events are clustered by ELF image, and image is uncontrolled.** At
+rung 550 alone, the 10 latches come from **six different images** with wildly
+different rates:
+
+| image | rung-550 runs | latches |
+|---|---|---|
+| `0D8E3799` | 5 | **1** |
+| `7D3B70F0` | 5 | 3 |
+| `C2DA171A` | 3 | **3** |
+| `E3BB2544` | 1 | 1 |
+| `26843E7C` | 1 | 1 |
+| `0F890AF2` | 1 | 1 |
+
+Fisher exact, `0D8E3799` (1/5) versus `C2DA171A` (3/3): **p = 0.071**;
+versus the pooled others (6/8): **p = 0.086**. Suggestive, not conclusive at
+n = 8 — but it is the *same order as the effect being claimed* and it is
+entirely unmodelled. With events clustered by image, se(b) from a Poisson GLM
+that ignores the cluster is **understated**, so even b/se = 5.6 overstates the
+confidence.
+
+**What 4 rungs and ~15 events actually support:** that the LateArm stop rate is
+zero up to and including rung 525 across 2 368 s at target and 37 M arms, and
+non-zero at 550 and above. That is a *threshold* observation, and the data are
+consistent with a cliff between 525 and 550 as readily as with a log-linear
+ramp (525: 0 events in 500 s; 550: 10 in 494 s). A two-parameter exponential
+cannot be distinguished from a step function on this data.
+
+**The 600 projection is extrapolation beyond the data, and the one 600 datapoint
+is not admissible.** `e278-prot500-i_01.txt` is the corpus's only rung-600 run.
+It has **`inject=25`** — the average-current protection provocation — and its
+`BEMFCURRENT` shows sustained foldback: `dep3_n = 44 503` of 307 103 scans with
+`dep3_run = 435`, i.e. 14% of scans at depth 3 (98.0% of ceiling) in runs of
+hundreds. Per the campaign goal this run cannot qualify and should not be a
+regression point. **A clean (`inject=0`) rung-600 attempt has never been run.**
+
+---
+
+## 8. P8 — is the hazard an artifact of the tripwire? Substantially, yes
+
+`arm_marked(left.max(1))` (`roots.rs:511`) **still arms the commutation**. The
+realized error on a late arm is the difference between the exhausted deadline
+and a 1 µs one-shot — on **one** commutation, roughly 1 electrical degree at
+these intervals. Meanwhile `com_late_max_us` reads **8-13 µs of realized
+commutation lateness in every clean, qualifying run** (`com_late_max_us = 8` at
+rung 500, 10 at 550, 11 at 575, 8 at 600) and is merely reported.
+
+The corpus contains the controlled comparison: `c7f-450_02` (`late_arms = 1`,
+`reason = 2`) is **a qualifying 45% run that contained the identical physical
+event and completed normally**. Two more (`c7-500c_01`, `c7-500c_03` with
+`late_arms = 2`) likewise completed at 50%. The same event is benign in one
+image and fatal in another **solely because the counter became a stop.**
+
+So the quantity P5 regresses is the **firing rate of a tripwire whose realized
+physical error is ~1 µs on one commutation**, in a system that tolerates 8-13 µs
+of commutation lateness in every run it certifies. I agree with the campaign's
+decision not to change it mid-campaign — a stop you silently relax is worse than
+a stop that is too tight — but the brief should stop describing it as a physical
+limit. It is a specification limit, and a strict one. Any statement of the form
+"the bench cannot do 57.5%" built on it is a statement about the tripwire.
+
+---
+
+## 9. P9 and the critical path — the timing work is not on it
+
+**Rung 575 already clears the campaign's hold requirement.** `e308-550-old-3_01`
+(image `0D8E3799`, the production family, `inject=0`, `advance_level=22`,
+`target_duty_tenths=575`) ran **`hold_ms = 48 319`** at target before latching at
+72.3 s. The qualifying window is 22.5 s ramp + **≥30 s** hold. This run held
+**1.6x the requirement** and would have terminated clean under a 30 s window.
+One run is not 3/3, but "575 is past the wall" is not what this capture says.
+
+**Where the real walls are, in order:**
+
+1. **Bus sag against the operator's 10% instant-kill spec.** Rung 575:
+   `bus_ref = 1213`, `bus_min = 1099` → **−9.4%**. Rung 600 (the injected run):
+   1219 → 1121 → −8.0%, but that run only held 1.3 s. 575 is already within 0.6
+   points of the kill spec on a 48 s hold. This is a hard stop and it is the
+   operator's own, not a model.
+2. **Current against the 3 A clamp.** 575: `hold_ma = 2494`, `worst_ma = 3022`
+   — already **over** the clamp on the worst 10.1 ms block. 600: 2869 / 3490.
+   P9's arithmetic here is sound and I have nothing to attack in it.
+3. **Sustained foldback.** The only 600 run spent 14% of its drive scans at
+   foldback depth 3 in runs of 435 scans. The goal forbids qualifying that way.
+4. **LateArm.** Fourth, behind three physical walls, and per §8 it is a
+   specification limit with a ~1 µs realized error.
+
+**P9's conclusion (60% unreachable on this bench) is correct — but the P5 leg of
+it is the weak leg and is not needed.** The current and sag legs stand on their
+own with production instrumentation. Drop the P5 projection from the argument;
+it is an extrapolation two rungs past the last zero-event rung, fit on a
+mis-specified model, on events clustered by image.
+
+---
+
+## 10. What I would do next, in order
+
+1. **Retire `margin-hist`.** It displaces the run about one rung up the hazard
+   curve (§2.2) and its headline result is not reproducible across builds by a
+   factor of 7 (§2.1). Any further run on this feature buys nothing but a number
+   that cannot be compared with production. If it must be kept, it must be
+   validated by **three runs per rung on one image** before any inference — and
+   the existing pair already tells you the between-build spread will swamp the
+   effect.
+2. **Widen `acc_by_phase` to `u32`** (`src/run/states.rs:57`). It is the
+   instrument that directly measures the proposed mechanism, it is foreground,
+   it costs nothing in any ISR, and **two of its five buckets have been
+   saturated at 65535 in every capture in this corpus.** This should have been
+   done before a new ISR instrument was contemplated.
+3. **Add the `lt075` run-length histogram and the guard-preemption witness**
+   (§5, §6.4), both outside ADC_COMP's pre-arm path, with the predeclared bars
+   stated above. These two measurements between them decide *both* factors of
+   the latch product, on one image, with ~0.06 µs of added ISR cost.
+4. **Re-run rung 575 for 3/3** under the 30 s window, on the production image,
+   `inject=0`. One run already held 48 s. If it goes 3/3 the campaign has 57.5%
+   and the whole E315/E316 line of inquiry was optional.
+5. **Then, and only then, decide about margin.** If margin is genuinely needed,
+   the ranked options are: (A) round `wait_time` up — bounded, one line,
+   host-tested, corrects a real 1 µs understatement, ~0.2% speed; (B) L 22→20 —
+   known, measured, ~1% speed, already A/B'd. Both are reversible and neither
+   touches the estimator.
+
+**Abandon:** the P5 → 600 projection; the P7 blanking-gate and filter-depth
+edits; any further inference from `wait_hist` as currently built; and the
+framing of `Reason::LateArm` as a physical limit rather than a specification
+limit.
+
+---
+
+## Appendix — recomputations
+
+* `wait22` comb and `ci → wait` inverse: §1, computed from
+  `src/commutation.rs:253-263`.
+* Hold histogram sums: 0+0+11+1957+48776+596165+179844+12596 = **839 349** ✓;
+  0+0+57+3348+74900+30006+1016+175 = **109 502** ✓.
+* `P(wait<=9)`: 11/839 349 = 1.3105e-5; 57/109 502 = 5.2054e-4; ratio
+  **39.72** ✓ (the brief's arithmetic is correct; its interpretation is not).
+* Whole-run sums: `26843E7C`@500 = 997 689; `E3BB2544`@500 = 997 321;
+  `26843E7C`@550 = 301 199; `E3BB2544`@550 = 325 881.
+* One-bucket-shift prediction for `w9`@550 = p(`w10`)@500 = **2.332e-3**
+  (measured 5.205e-4, ratio 0.223).
+* Mode-relative: 2 below mode = 3.283e-3 (500) vs 7.610e-4 (550).
+* Gaussian-through-comb ML fit: (µ, σ) = (76.50, 2.75) and (71.25, 2.50).
+* `mapped_filter_level` trace: depth 3 for `ci` 45-72, 4 for 73-94, 5 for 95+;
+  `SHALLOW_LEVEL` needs `ci < 25`.
+* Guard: `Guard::NVIC = 0x00`; `insn_baseline.json` `TIM6_DAC_LPTIM1` = 155
+  insns; `WCET_ESTIMATES.md:111,128` ≈ 301-330 cycles ≈ 4.7-5.2 µs; guard rate
+  885 934 / 84.776 s = 10 450 Hz (95.7 µs); 4 µs window ⇒ 4.2% incidence.
+* `lt075` per accepted arm: 4.69e-2 (500), 2.70e-2 (550), 2.58e-2 (575),
+  2.19e-2 (600).
+* Poisson GLM over all 8 rungs with exposure: a = −34.887, b = 0.055657,
+  se(b) = 0.00992, b/se = 5.61, doubling 1.25% duty.
+* Image-cluster Fisher tests at rung 550: 1/5 vs 3/3, p = 0.071; 1/5 vs 6/8,
+  p = 0.086.
+* Census: 197 CRC-bearing `advance_level=22` captures at rung ≥ 425;
+  `reason = 15` stops: 2 @ 500, 10 @ 550, 1 @ 575, 1 @ 600.
