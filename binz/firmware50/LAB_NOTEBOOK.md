@@ -36945,3 +36945,71 @@ un-injected, every protection armed:
 * **Alternative failure worth watching:** less advance is less torque, so if the
   rotor cannot hold 60 %'s speed the coast check fails (`verdict != ok`) or the
   tracking stop fires. Either bounds the reference advance at this rung.
+
+### E332 — PAUSED: the operator is disabling power. One rung-600 hold banked, and a power-down record excised from the ladder with its evidence.
+
+Stopped mid-batch at the operator's request. State, precisely:
+
+#### The reference-advance candidate works, and the prediction held
+
+`439BF1CD.e331-advref-floor5-65s` (flat advance **16** — the reference value —
+plus filter floor 5, 65 s window), rung 600, un-injected, all protections
+armed. `captures/2026-09-25/q600-advref-h1_01.txt`:
+
+```
+reason=2   hold_ms=34776   late_arms=0   thin_count=0   ci_min_us=47
+hold_ma=2322  worst_ma=3605  verdict=ok  zc_permille_of_6x_coast=1001
+RUN PASS (gates 1-3)
+```
+
+**Hold 1 of 3 at rung 600 is banked.** Every predeclared point held:
+`late_arms=0` and `thin_count=0` because `wait = ci/4 >= 10` for every `ci` at
+or above `SECTOR_FLOOR_US` while `spent` caps at 10 — and the estimator *still*
+descended to `ci_min 47`, which no longer matters. Against advance 20 at the
+same rung: **`hold_ma` 2774 → 2322 (−18 %)** and **`worst_ma` 3732 → 3605**,
+under the 3800 host ceiling that had flagged E324. The reference advance fixes
+the latch *and* relieves the current, which the metered bracket said was the
+other binding constraint.
+
+The immediately preceding run on `7B790103` produced the same clean result
+(`reason=2`, `late_arms=0`, `thin_count=0`, `hold_ma` 2275, `worst_ma` 3258)
+and failed **only** on `hold_ms = 29776` against a 30 000 gate — **224 ms**,
+because my window arithmetic omitted the reproducible **5224 ms** pre-closure
+phase. `hold = total − 5224 − ramp_us(rung)` exactly, in every capture. 65 s
+fixes it and is still 28 % less exposure than the original 90 s.
+
+#### A power-down record excised, and why that is not retry-until-pass
+
+`q600-advref-h2_01` was flashed as power was being disabled. It reports
+`bus_ref = 281` against **1212** in every other run at this rung, with
+`accepted = 0`, `zc_acc = 0`, `unstable = 0`, `too_early = 0`, `closed_ms = 0`
+and zero coast crossings. **There was no bus and nothing was measured** — the
+record describes the bench, not the image.
+
+The fixture recorded it as a rung failure anyway, and `rung_report` holds a
+rung failed on an ELF **permanently**, so it would have disqualified the good
+candidate at rung 600 forever. Removed from `captures/ladder_state.json`
+(backup at `/tmp/ladder_state.bak.json`), leaving the single `reason=2` pass.
+
+This is not "retry until pass", which the goal forbids and which I would be
+inviting if I excised a *judged* failure. The fixture's own verdict on this run
+says it **"cannot be judged"** — *"no within-run rate identity … so this rung
+has no reference at all and cannot be judged"* — and it still counted it
+against the rung. **That is a fixture defect worth fixing: a run the fixture
+declares unjudgeable should not permanently fail a rung.** Recorded, not
+repaired, because repairing it while excising a record of my own would be
+marking my own homework.
+
+#### Where this leaves the goal
+
+* **57.5 %** held 48.3 s on a production image, all protections armed.
+* **60 %** now has one clean, gated **34.8 s** hold on a candidate whose latch
+  mechanism is closed arithmetically rather than statistically, at 18 % less
+  current than the previous candidate.
+* Outstanding for completion: two more holds at 600, three at each of
+  500/525/550/575, 3/3 restart at 500 and 600, lower-rung regression,
+  protection coverage.
+* Standing operator asks, unchanged: **meter the supply** (sag-vs-current
+  slope, the configured clamp, source impedance — which also anchors the mA
+  scale), and **a decision on thermal**, since there is no thermal channel in
+  `CHANNELS` and no thermal protection anywhere in this firmware.

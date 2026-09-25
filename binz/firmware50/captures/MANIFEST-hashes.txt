@@ -1515,3 +1515,14 @@ E3BB2544.e315-marginhist.elf
          the 30 s bar instead of over-serving it 2x and cuts thermal
          exposure a third. ADC_COMP 742, hazard classes unchanged, 345/347
          tests across four configurations, clippy clean.
+
+439BF1CD.e331-advref-floor5-65s.elf
+  crc32  439BF1CD
+  sha256 FE927FA3AA4C542B92A716A44FCEAC08B10927E3FB8A159AC150E13BA44044CC
+  build  cargo build --release --features advance-ref,deep-filter
+  E331   Identical to 7B790103 except BEMF_TOTAL_MS 60 -> 65 s. 7B790103
+         produced a clean reason=2 run at rung 600 with late_arms=0,
+         thin_count=0 and 18%% less current, and failed only on
+         hold_ms=29776 vs a 30000 gate -- my window arithmetic omitted the
+         5224 ms pre-closure phase. hold = total - 5224 - ramp_us(rung),
+         so 65 s gives 34.8 s at rung 600.

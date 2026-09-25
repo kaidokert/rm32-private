@@ -51,17 +51,25 @@ pub const TAIL_WINDOW_US: u32 = 2_000_000;
 /// was halving its own pass rate for nothing the bar asks for. Both E327
 /// reviews flagged it independently as a defect nobody had decided.
 ///
-/// 60 s leaves 35 s of hold at rung 600 (25 s ramp) and 40 s at rung 500, so
-/// every rung still clears the 30 s bar with margin. It is not a weakening:
-/// runs recorded at 90 s were tested *harder* and stay valid as evidence at
-/// their own exposure.
+/// **65 s, and the arithmetic is `hold = total - 5224 - ramp_us(rung)`.** My
+/// first attempt set 60 s by computing 60 − 25 = 35 s of hold at rung 600 and
+/// forgetting the ~5.2 s pre-closure phase that every run spends reaching the
+/// 200 eHz handoff. The real hold was **29 776 ms — 224 ms under the 30 000
+/// gate** (E331), which the fixture failed on that alone after an otherwise
+/// clean `reason=2` run. The offset is exactly reproducible: every capture
+/// shows `total_ms - closed_ms = 5224`.
+///
+/// At 65 s: **34.8 s of hold at rung 600**, 37.3 s at 550, 39.8 s at 500 — all
+/// clear of the bar with margin, and still 28 % less exposure than the original
+/// 90 s. It is not a weakening: runs recorded at 90 s were tested *harder* and
+/// stay valid as evidence at their own exposure.
 ///
 /// It also cuts the thermal exposure this constant's previous comment warned
 /// about by a third — five attempts is ~300 s at 60 s rather than ~450 s —
 /// which matters because there is still **no thermal channel in `CHANNELS`**
 /// (`src/hw/adc.rs:33-41`) and no thermal protection anywhere in this
 /// firmware.
-pub const BEMF_TOTAL_MS: u32 = 60_000;
+pub const BEMF_TOTAL_MS: u32 = 65_000;
 
 /// The exploratory window: the same startup and ramp, about 10 s at target
 /// (E137). One of these precedes every rung's 3/3 cohort, and it is not
