@@ -27617,3 +27617,118 @@ two rungs" escalation **breaks at 550**. What actually predicts the stop is
 unresolved, and the `chain::Beat` per-arm distribution at 525 and 550 —
 already implemented in `bin/chain-capture.rs`, never run above 42.5% — is what
 would settle it.
+
+### E307 — predeclaration: the thing to explain is the image, not the rung. The advance A/B is withdrawn.
+
+Both reviews of E305 are appended verbatim in E308 with dispositions. They
+converge independently on one finding, and it redirects everything.
+
+#### Withdrawn, not deferred: the advance A/B
+
+E304's decision table sent a `reason=15` result to an advance A/B at rung 500.
+**Both reviews say do not run it, and they are right for reasons I had not
+seen:**
+
+* **The bar is pre-satisfied by arithmetic.** `thin ⇔ wait − spent ≤ 2` and
+  `spent_max_us = 11` on every image in this lineage. At advance 20,
+  `wait(72) = 14`, so thin at the nominal interval needs `spent ≥ 12` — which
+  **cannot happen**. My "cut thin_count 5×" bar is satisfied by the `spent`
+  ceiling with no rotor involvement.
+* **It is scheduled at a rung where the event has never occurred.**
+  `late_arms = 0` on every image ever run at 500 (3.0 M arms). The bar even
+  requires `late_arms = 0` on both sides.
+* **`thin_count` is empirically refuted as a predictor.** Rung 525 carries
+  **4100–4400 thin per 10⁶ and zero latches in 3.08 M arms**; production at 550
+  carries **1580–1850 and latches**. The 8 / 121 / 688 / 4118 series I promoted
+  to a decision variable climbed three orders of magnitude with `late_arms` flat
+  at zero the whole way. **A monotone covariate that never moves the outcome is
+  a correlate.**
+
+#### The mechanism, resolved at the desk and verified by me
+
+`wait = wait_time(average_interval, 22)`, the blanking gate is
+`count > average_interval >> 1` (`bemf.rs:394`),
+`blend_interval = (ci + ((last+this)>>1)) >> 1` (`commutation.rs:292`), and the
+clamp floor is `SECTOR_FLOOR_US = 40`.
+
+**So a lower estimate lowers the gate, which admits shorter counts, which lowers
+the estimate further.** Downward is positive feedback; upward is negative. I
+simulated it with the real integer arithmetic, each crossing arriving 1 µs past
+the gate:
+
+| avg | gate > | accept @ | → avg | `wait22` | `wait ≤ spent_max 11` |
+|---|---|---|---|---|---|
+| 71 | 35 | 36 | **62** | 10 | yes |
+| 62 | 31 | 32 | **48** | 8 | yes |
+| 48 | 24 | 25 | **40** | 7 | yes (clamp) |
+
+**Three accepts — about 200 µs — from the rung's true 71 µs to the clamp.** The
+six observed stop estimates are 40, 54, 55, 59, 62, 72: **62 and 40 are exact
+stations on that ratchet, and 40 is the floor.**
+
+So `LateArm` is a **coincidence detector**, `P(low estimate) × P(high spend)`.
+Not "margin ran out" — that would latch at the run's own minimum every time,
+and `ring-2` latched at 62 having already survived 53, while `noring-1` reached
+49 and never latched. And not "the rotor desynced" — `BEMFSELFREF verdict=ok`
+at 994–1013 ‰ on all six, so the **rotor** was at 71–72 and only the
+**estimate** dipped. **Both of my E305 readings are wrong.**
+
+#### And the ratchet is identical in the image that never fails
+
+Verified across the three 550-relevant images:
+
+```
+0D8E3799.e246-final-candidate  728 insns  mnemonic-md5 e1cbb0c3879a
+7D3B70F0.e303-nodiv-adv22      728 insns  mnemonic-md5 e1cbb0c3879a
+C2DA171A.e304-ring-adv22       728 insns  mnemonic-md5 e1cbb0c3879a
+```
+
+**Identical.** The estimator, gate, blend, clamp, `spent`, `wait` and arm are
+the same code in the image that has **never** late-armed and in the images that
+latch 5 of 6. So the `spent` distribution cannot have changed and the ratchet is
+equally available everywhere.
+
+**What differs must be what the estimator is fed** — COMP *entry* latency, which
+`spent` is structurally blind to, because `raw` is stamped **inside** the handler
+(`roots.rs:1255-1257`) after `line_disable()` and `clear_pending()`. Entry
+latency jitters `count`, which feeds the ratchet. It is set by thread-mode and
+other-ISR load, which **did** change across the lineage — and that is precisely
+where `isr_diff.py` and `insn_ratchet.py` are blind by construction.
+
+It also explains the recorder: a critical section 9 840×/s adds entry latency,
+and the measured consequence is `gt150` up 1.4–2.0×, `lt075` down,
+non-overlapping on every column, with `spent_max` unchanged at 11.
+
+#### Also withdrawn: the phrase "the 55% failure"
+
+Rung 550 has been driven to a **clean 90 s finish three times** — `e253-550_01`,
+`e253-550_02`, `e305-550-noring-1`, all `reason=2`, `late_arms=0`. And
+`late_arms` is **0 in 22 of 22 runs on the two older images (5.7 M arms)** against
+1 in 5 of 6 on the two newest. This is an **intermittent stop with a rate**, not
+a rung ceiling, and my framing invited a capability intervention where the right
+measurement is a rate.
+
+#### The experiment, and what each outcome decides
+
+**Rung 550, `0D8E3799.e246-final-candidate` vs `7D3B70F0.e303-nodiv-adv22`,
+three runs a side, ABAB in one session, flashed and hashed per side — with the
+side order REVERSED (the older image first)**, because per side the first run was
+the longest in all three prior sessions and that confound needs breaking.
+
+The n, stated in advance: at the observed ~1.5e-6 latches per arm, three runs a
+side is ~2 M arms per side and resolves a 3× rate difference
+([[feedback-predeclare-the-falsification-bar]]).
+
+| outcome | decision |
+|---|---|
+| `0D8E3799` **0/3** and `7D3B70F0` **≥2/3** | a **regression** in the E281→E303 chain. The 550 framing is withdrawn entirely and the next step is `git bisect` over thread-mode, not any control change. |
+| both latch ≥2/3 | the image hypothesis dies, the session/bench term is live, and the estimator gate becomes the target. |
+| both 0/3 | 550 is not reliably failing at all, and the whole batch was chasing a rate. |
+
+**Secondary quantity, predeclared:** `gt150` and `lt075` per 10³. If entry
+latency is the channel, the two images must differ in the **crossing-phase
+distribution**, not only in `late_arms`. If `late_arms` differs while
+`gt150`/`lt075` match, the entry-latency story is wrong.
+
+Every protection unchanged and armed; `PREFLIGHT` before each run. `0D8E3799`
+needs `--anchor` with its proof, since its ladder state predates this lineage.
