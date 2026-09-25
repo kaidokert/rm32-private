@@ -66,6 +66,10 @@ bench = false
 # qualified arrangement is peers at 0x40, which is the default.
 [features]
 com-top = []
+# Drops the advance level at/above 35% duty from 22 to 20, for the A/B E300
+# predeclared against the arm path. Default OFF, so the default build's
+# `AdvancePolicy` is unchanged. See `run::policy::ADVANCE_HIGH`.
+advance-low = []
 
 [dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }

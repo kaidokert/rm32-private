@@ -287,14 +287,66 @@ impl Bemf for BemfPolicy {
     }
 }
 
+/// The duty at or above which the high advance level applies: 35%.
+pub const ADVANCE_STEP_TENTHS: u16 = 350;
+
+/// The advance level below [`ADVANCE_STEP_TENTHS`].
+pub const ADVANCE_LOW: u32 = 20;
+
+/// The advance level at and above [`ADVANCE_STEP_TENTHS`]. **Production is 22.**
+///
+/// The `advance-low` feature drops it to 20, for the A/B E300 predeclared. The
+/// reason that A/B exists: `wait_time(ci, level) = ci * (32 - level) / 64` must
+/// exceed the measured 11 µs arm cost, and by the **real integer** function
+/// (`src/commutation.rs`, mirrored in `scripts/chain.py`) level 22 clears it
+/// only above `ci` = 72 (always 74) while level 20 clears it above 60
+/// (always 62) -- about **12 µs of interval headroom, ~3 rungs**.
+///
+/// Measured need: `thin_count` (`wait − spent <= 2 µs`) is 0 through rung 350
+/// and then 8 / 11 / 121 / 1062 / **4074** per 10⁶ accepted commutations at
+/// rungs 425 / 450 / 475 / 500 / 525, while `spent_max_us` stays pinned at 11
+/// and `late_arms` is still 0. At 52.5% the mean `ci` is 73 -- on the level-22
+/// line -- and the minimum is 54, twenty µs below it (E300).
+///
+/// **This is a control schedule, not a protection threshold**, and it is the
+/// "bounded control improvement" the campaign goal asks for. Nothing about the
+/// guards, their fractions, their streaks or their latches is touched.
+#[cfg(not(feature = "advance-low"))]
+pub const ADVANCE_HIGH: u32 = 22;
+#[cfg(feature = "advance-low")]
+pub const ADVANCE_HIGH: u32 = 20;
+
 /// The qualified image's schedule: 20 below 35% duty, 22 at/above
 /// (`binz/AGENTS.md:133`).
 pub struct AdvancePolicy;
 impl Advance for AdvancePolicy {
     fn level(duty_tenths: u16) -> u32 {
-        if duty_tenths >= 350 { 22 } else { 20 }
+        if duty_tenths >= ADVANCE_STEP_TENTHS {
+            ADVANCE_HIGH
+        } else {
+            ADVANCE_LOW
+        }
     }
 }
+
+// Bounds on what this campaign is willing to build, and **not** a mirror of any
+// core clamp -- `advance_of` clamps only at `level > 64` (`commutation.rs:254`),
+// so nothing downstream would stop a wild value; it would just quietly
+// re-scale the advance. (I first wrote this comment claiming the core clamps
+// 18..=22. That is a *binz* fact, not a firmware50 one, and citing it here
+// without re-reading the source is exactly
+// [[feedback-dont-inherit-scars-unverified]].)
+//
+// 22 is the production high level and 16 is `DefaultAdvance = FixedAdvance<16>`,
+// the reference value, so the reference-to-production span is the legitimate
+// range for an A/B. Anything outside it is a new question, not a variant.
+const _: () = assert!(ADVANCE_HIGH >= 16 && ADVANCE_HIGH <= 22);
+const _: () = assert!(ADVANCE_LOW >= 16 && ADVANCE_LOW <= 22);
+const _: () = assert!(ADVANCE_HIGH >= ADVANCE_LOW);
+// The step must stay where production put it: this A/B varies the *level*, not
+// the duty at which the schedule changes. Changing both at once would make the
+// result unattributable.
+const _: () = assert!(ADVANCE_STEP_TENTHS == 350);
 
 /// `AverageCurrent` at the nominal allowance, foldback to the V/f floor.
 pub struct CurrentProtection;
@@ -356,8 +408,20 @@ mod tests {
         assert_eq!(sixstep_ccr_of(525, 1333), 699);
         assert_eq!(sixstep_ccr_of(600, 1333), 799);
         assert_eq!(sixstep_ccr_of(750, 1333), 799, "capped at 60%");
-        assert_eq!(AdvancePolicy::level(349), 20);
-        assert_eq!(AdvancePolicy::level(350), 22);
+        // Below the step is 20 in **both** builds; at and above it the
+        // `advance-low` feature is the only thing that moves. Asserted against
+        // the constants rather than literals so the default build still pins
+        // 20/22 while the A/B build is not a test failure.
+        assert_eq!(AdvancePolicy::level(349), ADVANCE_LOW);
+        assert_eq!(AdvancePolicy::level(350), ADVANCE_HIGH);
+        assert_eq!(AdvancePolicy::level(349), 20, "below the step never varies");
+        #[cfg(not(feature = "advance-low"))]
+        assert_eq!(AdvancePolicy::level(350), 22, "production high level");
+        #[cfg(feature = "advance-low")]
+        assert_eq!(AdvancePolicy::level(350), 20, "advance-low variant");
+        // The step itself is fixed, so an A/B varies one thing.
+        assert_eq!(AdvancePolicy::level(ADVANCE_STEP_TENTHS - 1), ADVANCE_LOW);
+        assert_eq!(AdvancePolicy::level(ADVANCE_STEP_TENTHS), ADVANCE_HIGH);
         assert_eq!(HANDOFF_DUTY_TENTHS, 70);
     }
 

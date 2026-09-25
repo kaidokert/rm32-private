@@ -26838,3 +26838,109 @@ refuses to fit `raw*` bins from an image built before the fix commit;
 `raw_depth.observe` moved above the `early` return; `hold_valid` for injected
 captures; a loud refusal on `ceiling_tenths < duty_tenths`; the tear counter in a
 driving image; and a switching-on/torque-off control.
+
+### E301 — predeclaration: the fixed image, its full ladder, and the advance A/B that follows
+
+Two images built, archived and manifested:
+
+| image | crc32 | sha256 | policy |
+|---|---|---|---|
+| `5D4BF25C.e301-fixed-adv22.elf` | 5D4BF25C | `4476DFC587F9242F…` | **production**: advance 22 at/above 35% |
+| `8FE909B3.e301-fixed-adv20.elf` | 8FE909B3 | `005DC8045E39EDA0…` | A/B variant: advance **20** at/above 35% |
+
+Both carry the four E291/E299 fixes. **Verified by disassembly, not by trusting
+cargo**: `BusDepth::observe` in both reads `movs r6, #200` and `movs r1, #5` —
+the post-E291 `1/5`-scaled cross-product — where `480263F1` read
+`movs r1, #125; lsls r1,r1,#3` (SCALE = 1000). `raw1_run` and `ma_allow` are
+both present as emitted field names.
+
+**A method note against myself.** I first tried to prove the advance difference
+by counting `#22` / `#20` literals in each disassembly. The counts came out
+3/5 and 1/4 — not a clean discriminator, because those literals appear all over
+unrelated code. **The actual proof is the test suite**: the assertion is written
+against the constants *and* against literals under `cfg`, so the default build
+asserts `level(350) == 22` and the `advance-low` build asserts `== 20`, and both
+configurations run 345 tests green. A bad verification method that happens to
+show a difference is worse than no method, so the literal count is recorded and
+discarded.
+
+#### What changed in source, and what deliberately did not
+
+`run/policy.rs` now names the schedule in constants — `ADVANCE_STEP_TENTHS =
+350`, `ADVANCE_LOW = 20`, `ADVANCE_HIGH = 22` (or 20 under the feature) — with
+the reasoning for the A/B at the constant, and four build assertions:
+
+```rust
+const _: () = assert!(ADVANCE_HIGH >= 16 && ADVANCE_HIGH <= 22);
+const _: () = assert!(ADVANCE_LOW  >= 16 && ADVANCE_LOW  <= 22);
+const _: () = assert!(ADVANCE_HIGH >= ADVANCE_LOW);
+const _: () = assert!(ADVANCE_STEP_TENTHS == 350);
+```
+
+The last one matters: **this A/B varies the level, not the duty at which the
+schedule steps.** Changing both would make the result unattributable.
+
+**And I caught myself inheriting a scar.** My first version of that comment said
+the bounds mirrored a core clamp — *"`advance_of` clamps to 18..=22"*. It does
+not: `commutation.rs:254` clamps only at `level > 64`. The 18..22 clamp is a
+**binz** fact, and citing it here without re-reading the source is exactly
+[[feedback-dont-inherit-scars-unverified]]. The bounds are now stated as **my
+own choice of range** — 22 is production, 16 is `DefaultAdvance =
+FixedAdvance<16>`, the reference value, so the reference-to-production span is
+the legitimate range for a variant and anything outside it is a new question.
+
+**No protection, threshold, fraction, streak or latch is touched.** The advance
+schedule is a control schedule, which is the "bounded control improvement" the
+goal asks for.
+
+#### The plan, in order, and why this order
+
+1. **Full ladder 150 → 525 on `5D4BF25C`**, three runs a rung, sixteen rungs.
+   This is **not** a hypothesis test — it is the qualification the goal requires
+   on one reproducible ELF, and the fixed image needs it regardless of anything
+   the A/B says. So it starts now, and the reviews run concurrently rather than
+   gating it.
+2. **Dual review, landing before the A/B.** The hypothesis under test is *"the
+   arm path, not the bus, limits the rungs above 525"* and the change under test
+   is an advance-schedule variant. That is the class the goal requires reviewing
+   **before** testing, and E297/E299 recorded the cost of getting that order
+   wrong last batch.
+3. **The A/B: advance 20 vs 22 at rung 500**, three runs a side, ABAB, one
+   session, each side flashed and hashed.
+4. **Then 550 → 575 → 600** on whichever schedule the A/B evidences, with
+   E285's bar still in force at 550: **eight consecutive clean runs or an
+   evidenced mechanism, not three.**
+
+#### Predeclared for the ladder, before it runs
+
+1. **All sixteen rungs 3/3**, `reason=2`, `ceiling == duty`. A failure below 525
+   is a **regression** against `480263F1`'s sixteen-for-sixteen and I treat it as
+   one — the goal's "lower-rung regressions" clause — not as news about 60%.
+2. **The rate identity stays inside 992..1008** with within-session sd
+   **1.4–2.2 ‰**. The 32-slot coast buffer is unchanged, so this should
+   reproduce the previous image's 1.612.
+3. **`raw1_n` at rungs 375 / 400 / 425 comes in BELOW the old image's**, and the
+   rate stops rising with duty. This is both reviews' settling test, and it
+   rides the ladder for free instead of costing three extra runs. Quantitatively:
+   the old image read **431.9 / 405.2 / 613.3** per 10⁶; the corrected
+   prediction is a **flat ~210–230** at every rung. **If the fixed image still
+   shows a duty-proportional rise, my E299 disposition is wrong and E295 was
+   right after all.**
+4. **`thin_count` reproduces** the old image's trajectory within its within-rung
+   spread — 0 through 350, ~120/10⁶ at 475, ~1060 at 500, ~4070 at 525. The four
+   fixes are report-and-observer-side and touch no timing, so a change here
+   would mean one of them was not as inert as claimed.
+5. **`spent_max_us` stays 11** and **`late_arms` stays 0** through 525.
+
+#### And the A/B's bar, predeclared now rather than after
+
+> Advance 20 at rung 500 must cut `thin_count` from ~700 per run to **under
+> 50** — margin goes from +1 µs to +3 µs at `ci` ≈ 76 by the real integer
+> `wait_time` — with `late_arms = 0` on both sides and the rate identity inside
+> 992..1008 on both. **If advance 20 does not cut `thin_count` by at least 5×,
+> the thin condition is not about `wait` and the arm-path model is refuted.**
+
+Advance 20 means less advance, so less torque at a given duty: I expect the
+rotor **slower** on the 20 side, and `ehz_from_sector` down by low single-digit
+per cent. That is a cost to weigh, not a failure — and per the goal, scheduling
+is judged by actual timing and operating performance, not by arithmetic margin.
