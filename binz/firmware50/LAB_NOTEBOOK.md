@@ -27298,3 +27298,42 @@ extrapolation.
 
 Every protection stays armed and unchanged. `PREFLIGHT` runs before each run.
 Six runs at 550 is ~9 minutes of drive.
+
+#### E304 prediction 1, measured — and my bar was ambiguous at exactly the boundary
+
+`e304-cost150_01`, image `C2DA171A`, rung 150, `reason=2`, RUN PASS:
+
+```
+loop_iters_closed = 3 620 853     (E303 no-ring baseline: 4 023 548)
+gap_max_us = 108   loop_gap_max_us = 167   track_max_us = 657
+```
+
+**A 10.008% drop.** My bar said *"within 10%"* and, in the same sentence,
+*"if it falls below ~3.6 M"*. The measurement **fails the percentage by 0.008%
+and passes the absolute by 20 000**. I am recording that rather than quoting
+the half that passes, because choosing between two halves of my own threshold
+after seeing the number is the exact failure this campaign has been correcting.
+
+**Substance, not threshold arithmetic.** This quantity is extremely repeatable —
+E303's three no-ring runs spanned 3 974 325 to 3 976 719, a **0.06%** spread — so
+10.008% is a real cost, not noise, even at n=1. But it is an order of magnitude
+below E303's 48% regression, and the timing metrics are all in normal range
+(`gap_max` 108 against 104–111 historically, `loop_gap_max` 167 against 140–178).
+
+**Verdict: proceed, with the cost stated as 10% rather than "within 10%".** The
+alternative is leaving the campaign's only real high-rung failure unrecorded,
+which is the status quo the goal calls out as first priority.
+
+**The limitation this creates, stated before the runs rather than after.** A 10%
+foreground cost could itself change whether the trip occurs — and that is
+precisely what `bin/sag-capture.rs`'s **0-of-7** history hints at. So:
+
+> **If six runs at 550 come back clean, I cannot distinguish "the trip is not
+> reproducible" from "the recorder suppressed it."** That outcome is
+> *inconclusive by construction*, not evidence of a healthy rung, and I will
+> report it as inconclusive. Only a recorded latch, or a latch on the no-ring
+> image in the same session, discriminates.
+
+That is the honest cost of recording at all, and it is why the next step pairs
+the ring runs with no-ring runs rather than treating six clean ring runs as an
+answer.

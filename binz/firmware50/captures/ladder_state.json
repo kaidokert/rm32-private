@@ -12668,5 +12668,31 @@
     "fails": []
    }
   ]
+ },
+ "B972B0618BE49474C4DC483EB5C56D0044494456929B65940443D8A299C22877": {
+  "150": [
+   {
+    "file": "e304-cost150_01.txt",
+    "duty": 150,
+    "reason": 2,
+    "accepted": 357659,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 357661,
+    "unstable": 2337970,
+    "hold_ms": 82276,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 704,
+    "coast_crossings": 553,
+    "hold_ma": 32,
+    "ceiling_tenths": 150,
+    "worst_ma": 822,
+    "droop_permille": 999.8404188458785,
+    "fails": []
+   }
+  ]
  }
 }
