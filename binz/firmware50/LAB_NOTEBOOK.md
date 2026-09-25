@@ -23576,3 +23576,117 @@ one** so each starts from a reset board and `xxx` lands on 500. The four
 acceptance criteria stand as written, including criterion 3 —
 `target_duty_tenths = 500` — which is now the criterion that would have caught
 this, and which I will check on every capture before reporting any of them.
+
+### E280 — protection coverage at 50%: three of four demonstrated, and the fourth ran 57.5% for 54.8 s without a sag streak
+
+Image `0D8E3799`, four provocations from a locked 50% loop, each with `--flash`
+so `provoke_tenths` started from its 250 default and `xxx` landed on 500.
+**All four report `target_duty_tenths=500`** — criterion 3, the one E279's
+failure would have caught, verified first on every capture.
+
+| key | protection | `expected/reason` | `fired/provoked` | stop after inject | `ceiling` | PREFLIGHT |
+|---|---|---|---|---|---|---|
+| **`i`** | `AverageCurrent` | **25 / 25** | 1 / **1** | **20 211 µs** | **450** | PASS ×2 |
+| **`g`** | `TickGap` | **3 / 3** | 1 / **1** | **436 µs** | 500 | PASS ×2 |
+| **`n`** | `Driver` (nFAULT) | **7 / 7** | 1 / **1** | **100 µs** | 500 | PASS ×2 |
+| **`v`** | `FastBusSag` | 26 / **2** | 1 / **0** | — (ran to window end) | 500 | PASS ×2 |
+
+**Three of four pass all four criteria. `v` fails criteria 1 and 2.**
+
+#### The three that passed, and what each confirms beyond "it fired"
+
+* **`i` confirms the two-stage current rule, which was until now a reading of
+  the source.** `ceiling_tenths = 450` — it **folded back from 500 first** — and
+  the stop came **20 211 µs** after the injection, against the ≥20.3 ms that two
+  complete 10.1 ms blocks require. That is prediction 3 of E278, and it is the
+  first direct measurement of the latency this campaign has been quoting from
+  `protection.rs`.
+* **`n` is the fastest path on the board at 100 µs**, exactly as E269's
+  stop-path trace argued — the only fast current route the hardware has, and now
+  measured rather than inferred.
+* **`g` stops in 436 µs**, comfortably inside its 200 µs-threshold guard's own
+  tick.
+
+Every one safes the bridge: `PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1
+en=0 nfault=1 verdict=PASS`, before and after.
+
+**My prediction 4 was wrong in the good direction.** I named `n` as the one I
+was least sure of, not knowing whether the nFAULT path behaves the same under
+load. It fired, and fastest of all four.
+
+#### The one that failed is the most informative result of the session
+
+`v` did not trip. And the reason is not that the stimulus was absent — `fired=1`
+— but that **the machine absorbed it**. What the capture says:
+
+| | |
+|---|---|
+| `applied_ccr` | **766** |
+| `sixstep_ccr_of(duty, 1333) = 1333 × duty / 1000` | so **duty = 575** |
+| hold | **54 776 ms** |
+| `hold_ma` | **2459 mA** |
+| `worst_hold_ma` | **3002 mA** |
+| `ref_bus / filt_bus` | 1214 / **1189** — **2.1% down** |
+| `streak` / `tripped` | **0 / 0** |
+
+`Inject::Sag` steps duty by `INJECT_SAG_STEP_TENTHS = 75` above
+`INJECT_SAG_RELATIVE_FROM = 450`, so from 500 it went to **575**, and the CCR
+confirms it independently: 1333 × 575/1000 = 766, exactly the recorded value.
+
+> **The rig sustained 57.5% duty for 54.8 seconds, drawing 2459 mA average with
+> a 3002 mA worst 10.1 ms block, and the sharp-sag guard never reached streak
+> 1.** Its 207 ms reference sat 2.1% above the bus against a 5% line.
+
+**This cuts against my own clamp hypothesis.** E266 §5 proposed that a transient
+only ~0.7 A above the hold would push the PSU into constant current and collapse
+the rail by whatever the loop needed. This run touched **3002 mA in a 10.1 ms
+block** — at the 3 A clamp — and the rail moved 2.1%, with zero sag streak. So
+either the clamp does not engage on a 10 ms excursion at this average, or
+engaging it does not produce the depression `FastBusSag` needs. Both readings
+weaken the clamp story, and I am recording that against a hypothesis I authored.
+
+**And it bears directly on 550.** A *higher* duty (575) ran *longer* (54.8 s vs
+15.0 s) at *higher* current (2459 vs 2300 mA average, 3002 vs 2697 mA worst
+block) without the guard reaching streak 1. **So the 550 trip is not a monotone
+function of duty or of current** — which is what E269's bound already implied by
+a different route (a ≥0.71 ms, ≤10%-deep depression is not something a steady
+operating point explains) and is now supported by a direct comparison.
+
+**What it does not do.** This is an *injected* run at rung 500 — `duty_tenths`
+and `ceiling_tenths` both report 500, the stepped duty is the injection's. Per
+the campaign's rule a provoked diagnostic run **qualifies nothing**, so this is
+not evidence that rung 575 passes; it is evidence about the machine's capacity
+and about the guard's sensitivity.
+
+#### The coverage gap, named rather than worked around
+
+**The sharp-sag guard's coverage at 50% is not demonstrated**, and the reason is
+that the only stimulus the firmware offers for it — a 7.5-point duty step — is
+too weak to trip it at this rung. The goal asks for demonstrated protection
+coverage, so the honest report is:
+
+* **slow/current side: demonstrated** at 50% (`i`, with its foldback and its
+  20.2 ms latency measured);
+* **ISR-class guards: demonstrated** at 50% (`g`, `n`);
+* **sharp-droop side: NOT demonstrated at 50%.** It is demonstrated at 15%
+  (E271, `reason=26 provoked=1`, a 1.3 ms collapse) and it latched
+  spontaneously at 550 — but a guard that cannot be provoked at the rung under
+  qualification is not covered *there*, and I will not claim it is.
+
+Closing that gap needs a stronger stimulus than a duty step — which is a
+firmware change, and therefore belongs with the new image E275 and E277 already
+owe (coast buffer 8 → 32 half-periods, and a window long enough for a 30 s
+post-restart dwell). Three items now, one ELF.
+
+#### Criteria, updated
+
+| criterion | status |
+|---|---|
+| one reproducible final ELF | `0D8E3799` — loadable bytes reproduced from source at HEAD |
+| lower-rung regressions | **16 rungs, 150 → 525** |
+| three ≥30 s holds at 50% / 52.5% | **3/3 each** (54.8 s, 53.3 s), no foldback |
+| three ≥30 s holds at 55 / 57.5 / 60% | blocked by the 550 latch |
+| 3/3 restart at 50% | **met** |
+| 3/3 restart at 60% | blocked |
+| **demonstrated protection coverage** | **3 of 4 at 50%**; sharp-droop side demonstrated only at 15% |
+| both reviews on every conclusion | six appended; **this entry needs its pair** |
