@@ -517,7 +517,13 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
 /// [`det_decide_plain`]'s acceptance arm, for the diagnostic twin (the
 /// production body keeps it inline: factoring it out moved COMP's code, E121).
 #[inline(always)]
-fn accept(raw: u16, fine0: u16, wait: u32, avg: u32, blank: u32) -> Option<(u16, u16, u16, u32, u16, bool)> {
+fn accept<C: ChainLog>(
+    raw: u16,
+    fine0: u16,
+    wait: u32,
+    avg: u32,
+    blank: u32,
+) -> Option<(u16, u16, u16, u32, u16, bool)> {
     let mut beat = None;
     S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
     S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
@@ -529,7 +535,11 @@ fn accept(raw: u16, fine0: u16, wait: u32, avg: u32, blank: u32) -> Option<(u16,
         let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
         let left = wait.saturating_sub(spent);
         com_arm(left.max(1), 1);
-        let fine_now = hw::fine::raw() as u16;
+        // Gated like `beat_row`'s read (E269): `edge-capture` reaches this
+        // path and never calls `hw::fine::init()`, so this was a live read of
+        // an unclocked peripheral inside the prio-0 COMP root of the very
+        // image whose purpose is measuring that root's cost.
+        let fine_now = if C::ON { hw::fine::raw() as u16 } else { 0 };
         beat = Some((raw, fine0, fine_now, wait, fine_now.wrapping_sub(fine0), left == 0));
         if left == 0 {
             S.det().late_arms.store(
@@ -579,7 +589,7 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut
         log = rec.then(|| Decision::of(count, rising, advance, reads, n, &outcome));
         match outcome {
             crate::bemf::Outcome::Accepted { wait, .. } => {
-                beat = accept(raw, fine0, wait, zc.average_interval(), zc.blanking());
+                beat = accept::<C>(raw, fine0, wait, zc.average_interval(), zc.blanking());
                 sector = step.get();
                 Some((step.get(), zc.average_interval()))
             }
@@ -878,7 +888,13 @@ pub fn reason_from_code(code: u32) -> Reason {
         4 => Reason::FeedbackStale,
         7 => Reason::Driver,
         8 => Reason::Tracking,
-        _ => Reason::SegmentDeadline,
+        // **Not `SegmentDeadline`** (E269). That is code 2, the *success*
+        // code every gate treats as a completed window, so an unrecognised
+        // guard code decoded a stop into a pass. `run::states` fixed exactly
+        // this in E186 SS6 and this duplicate was left behind -- the copy that
+        // *reports* kept the defect while the copy that *gates* was corrected,
+        // which is the worst way round.
+        _ => Reason::UnknownGuard,
     }
 }
 

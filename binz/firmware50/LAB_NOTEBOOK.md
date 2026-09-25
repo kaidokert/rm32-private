@@ -22007,3 +22007,309 @@ describing the consequence was inverted.
   offered that addresses it, and E267 states why it is not in this build.
 * **The clamp's transient response**, which needs the operator to sweep the
   current limit.
+
+### E269 — disposition of both E266/E267 reviews: the cohort is withdrawn, and the existing data already bounds the event
+
+Both reviews ran concurrently and context-free, neither saw the other, and
+**both say do not run the 550 cohort.** They converge on that from different
+directions and between them find a wrong threshold, a discriminator that is a
+category error, an observer control that measures a quantity insensitive to the
+mechanism, a self-test that could not detect the defect it was written for, and
+a latent decoder that reports an unknown stop as a pass. Everything
+load-bearing below is recomputed here.
+
+**The single most useful thing either review produced costs no bench time at
+all, and I should have computed it three entries ago.** It is in §3.
+
+---
+
+## Part 1 — the cohort is withdrawn
+
+E267's three runs at 550 are cancelled. Not because the instrument is broken
+this time — the E266 fixes are real and both reviewers verified them — but
+because the plan spends ~240 s of drive at ~2.2 A, on a bench with no thermal
+channel, for a 70.4% chance of one trace whose central discriminator cannot be
+evaluated.
+
+**Replaced by a positive control that costs ~5 s at ~0.5 A.** The adversarial
+reviewer found the lever nobody had used: `Inject::Sag` (`src/run/states.rs:409`)
+steps duty to a **fixed 500** below `INJECT_SAG_RELATIVE_FROM = 450`, and
+`e182-posctl-sag` already latched with it **from rung 250**:
+
+```
+bus_mean 1213 → 1205 → 1195 → 1185 → 1168 → 1160 → 1154 → 1150 → 1144 → 1140
+streak        0      0      0      0      0      0      0      1      2      3 (latch)
+```
+
+A 1.3 ms monotone collapse of 72 codes, at ~0.5 A. So `sag-capture` at rung
+250 with `V` has P(latch) ≈ 1 by precedent, and it is the only way to get the
+v3 columns onto hardware at all — **no capture on disk carries a single v3
+byte**, so the entire new path has never run on real data. Flashing an unproven
+format straight into a 240 s high-current cohort would have repeated the
+E264/E266 failure one level up: the code compiles, the *format* is unvalidated.
+
+---
+
+## Part 2 — errors in E267 corrected
+
+**2.1 The threshold table had a wrong cell, and it was a measurement wearing a
+derivation's label.** E267: *"raw depth needing 5 scans ≤ **1074** codes —
+`1193 − 477/5`"*. But `1193 − 477.2/5 = 1097.6`. **1074 is `1193 − 477/4`** —
+the *four*-scan depth. And it is not a slip of the pen: **1074 is `bus_min` of
+`e253-550_03`, the very run being explained.** A measured value from the run
+under investigation was substituted into a cell presented as an arithmetic
+derivation, with the divisor off by one.
+
+Both reviewers caught it independently, and one added that the tool would have
+printed 1097 — so **the predeclared table disagreed with the tool that was to
+evaluate it**, which is the exact failure a predeclared table exists to prevent.
+
+**2.2 And the thresholds were conservative in the false-negative direction.**
+The guard compares `bus_mean = bus_sum >> 3` with a strict `<`, so a depth
+derived in the reals is a few codes shy. Solved on the integers the firmware
+actually uses (`sag.py::exact_depth`, new):
+
+| k scans | continuous | **exact** |
+|---|---|---|
+| 1 | 715.8 | **720** |
+| 2 | 954.4 | 956 |
+| 4 | 1073.7 | **1074** |
+| 5 | 1097.6 | **1098** |
+
+Conservative here means the tool could report "0 rows below threshold" for a dip
+that *did* latch. Fixed, and the k=4 row confirms the 1074 diagnosis exactly.
+
+**2.3 Prediction 2 is withdrawn: comparing a phase code to a DC-link clamp
+current is a category error, three times over.**
+
+* **Wrong domain.** The PSU clamp acts on the **DC-link average**. Three
+  low-side shunts measure **phase** current. At 55% duty `i_dc ≈ d·i_phase`, so
+  3 A of DC-link corresponds to **≈5.5 A of phase current ≈ 434 codes**, not
+  239. Conversely a phase reading 239 codes means the supply is delivering
+  ~1.65 A — *below* the clamp. **The prediction is invalid in both directions.**
+* **Wrong shunt count.** 79.64 codes/A is `RAW_LIMIT/(100 × 4)`, and
+  `RAW_LIMIT`'s own derivation (`protection.rs:514`) is a *one*-shunt
+  calculation for a quantity that is the **sum of three**. Applying it per
+  phase is wrong by however many shunts conduct at the sample instant — which,
+  because the trigger is de-cohered from the carrier, is unknown per row.
+* **Wrong sign, and wrong zero.** `residual = zero_block − (a+b+c)`
+  (`protection.rs:617`), so motoring pulls codes **down**; E267 said "deviates
+  from zero" with no direction. And a single amplifier's zero is
+  `zero_start/300 ≈ 2060`, not `/100`.
+
+And there was no tool: `sag.py` never parsed `BEMFCURRENT`, `zero_start` or any
+codes-per-amp constant. E267's *"`scripts/sag.py` prints all of these from the
+capture; none is a runtime choice"* was **false** — the third consecutive round
+in which the host tool did not do what the entry claimed.
+
+**2.4 Prediction 3 is withdrawn: `loop_iters_closed` is insensitive to masking
+and moves the wrong way.** It counts **foreground** passes
+(`src/run/states.rs:240`). PRIMASK stops **ISRs**, not the foreground — masking
+interrupts does not reduce foreground iterations and, if anything, raises them
+because the foreground stops being preempted. And its natural spread already
+breaks the band:
+
+| capture | `loop_iters_closed` | `closed_ms` | per ms |
+|---|---|---|---|
+| e253-550_01 | 2 624 139 | 74 776 | 35.09 |
+| e253-550_02 | 2 624 328 | 74 776 | 35.09 |
+| **550_03 (trip)** | 1 445 447 | 37 508 | **38.54** |
+| ctrl (aborted) | 1 429 274 | 36 977 | **38.65** |
+
+**10.2% spread on one image, confounded with duration** — and since a tripping
+run *is* a short run, the observable is confounded with the very outcome under
+study. A 5% band cannot survive a 10% nuisance spread.
+
+Worse, and this one is mine to own: E267 said *"if the 16.8% reproduces, the
+reading is 'the cost is unchanged', not vindication."* Combined with the ≤5%
+pass branch, **no outcome counted against the instrument.** That is a
+pre-committed acquittal, in the entry whose stated purpose was to fix thresholds
+"so they cannot be chosen later".
+
+**Replaced by observables that are actually sensitive to a ~3 µs mask**, all
+already in the production report: `loop_gap_max_us`, `gap_max_us`,
+`com_late_max_us`, `late_max_us`, and the `thin_count` rate — compared at a rung
+both images have run, duration-matched.
+
+**2.5 The arm margin at 550 is zero, and the recorder can move it.** Level is
+22 at this duty; at `mean_ci_us = 71`, `wait_time(71,22) = 35 − 24 = **11 µs**`
+— and `spent_max_us = **11**` in all four 550 captures. `wait_time` is
+non-monotonic (72 → 12, 73 → 11), so the late/not-late verdict flips on ±1 µs.
+`SagRing::block` holds PRIMASK ~3 µs at 9.84 kHz (~3% masked duty), and while
+`spent` is stamped at ISR *entry* and so is blind to entry delay, `count` is
+too — so entry jitter feeds `blend_interval` and moves **`ci`**, which is the
+causal variable for late arms. **Predeclared: a `Reason::LateArm` (15) in a
+`sag-capture` run is an instrument artefact, not a finding.**
+
+---
+
+## Part 3 — the free result: the existing data already bounds the event, and I conceded the wrong weakness
+
+This costs nothing and settles more than the cohort would have.
+
+From `e253-550_03`'s **production** report alone: `filt_bus = 1193`,
+`bus_min = 1074`. So the deepest deficit available in *any single scan of the
+whole run* is 119 codes, and latching needs 477 codes of summed deficit in each
+of three consecutive 8-windows:
+
+> ⌈477/119⌉ = **5** scans at the deepest depth observed anywhere in the run,
+> plus 2 more to carry the streak to 3 → **≥7 scans ≈ 0.71 ms**, with a floor no
+> deeper than **10%** below the reference.
+
+**So the 550 trip was a bus depression lasting ≥0.71 ms and ≤10% deep. Not a
+single-scan spike, not a switching transient.** E266 concluded "transient,
+necessarily"; this bounds it from *both* sides, from data already on disk.
+
+**And it demolishes E267's stated limitation.** I conceded the instrument
+"cannot answer the order" because judgements arrive every 101 µs against a
+71 µs sector. But the event spans **~10 sectors and ~7 judgements**. Sub-sector
+ordering was never required. The 256-row / 26 ms fast ring covers a 1.3 ms
+collapse with ~12 ms of pre-history — **the instrument is adequate for this
+event, and I conceded the wrong weakness while asserting the wrong strengths.**
+
+**Two more things the existing captures already say.** Across 10 752 judgement
+rows in 21 captures, `streak` reads 1 or 2 in exactly **two rows, both in the
+provoked `e182` run** — *zero* standalone near-misses, ever, and the guard's
+resting margin is 5.26% by construction with worst healthy-rail usage under 18%
+of it. So the guard is **not** chronically marginal at any duty tested. And the
+dominant variable is the supply, not the throttle: the `e200-16a` cohort ran on
+a **1.6 A** clamp with `filt_bus` 1128–1157 against 1195–1213 — a folded rail —
+and its worst headroom is **2.01%** against **4.30%** on a healthy rail, with
+excursions ±35 codes against ±11. Meanwhile duty moves it by 0.01 points
+(4.31% at 250‰ vs 4.30% at 500‰).
+
+---
+
+## Part 4 — defects fixed, including one that had been lying since E186
+
+**4.1 An unknown guard code decoded as the *success* code.** `run::states`
+fixed exactly this in E186 SS6, with a comment reading *"a fallback for an
+unknown stop must never be the pass"*. `roots.rs::reason_from_code` is the
+**unfixed duplicate**, still mapping `_ => Reason::SegmentDeadline` — code 2,
+the success code. The copy that **gates** was corrected and the copy that
+**reports** kept the defect, which is the worst way round. E186 SS6 was half
+fixed and nobody noticed for 83 entries.
+
+**4.2 A 2.7-second interrupt mask.** `SagRing::read` wrapped the whole dump in
+`interrupt::free` — ~1280 lines through a 115 200-baud link with a blocking
+flush per line — and `disarm()` runs on the line before, so the mask bought
+nothing. Now the critical section only obtains the reference.
+
+**4.3 An ungated read of an unclocked peripheral in a priority-0 root.**
+`accept()` read TIM2 unconditionally; `edge-capture` reaches that path and never
+calls `fine::init()`. `beat_row` gates the same read and this one did not — in
+the one image whose purpose is measuring that root's cost. Now gated on
+`C::ON`, and measured: `edge-capture`'s `ADC_COMP` went **1007 → 1003
+instructions**, other three roots untouched.
+
+**4.4 The self-test could not detect the defect it was written for.** A review
+defeated it four ways; the one that matters is a v3 capture with `at_fine = 0`
+on every row — the E264 defect verbatim — which **passed**, and `sag.py`
+reported `255 of 255 usable, min=0.000 max=0.000 us`. Three holes: a zero delta
+survived the coarse cross-check, `one()` accepted "REFUSED" unconditionally so
+refused files counted as passes, and `structural()` checked `at_fine is not
+None` and never that it *varied*.
+
+Rewritten so **every case states the verdict it expects**: 41 real captures
+expecting `ok`/`no-rows` plus **7 synthetic fixtures each expecting a specific
+refusal**, and a fixture that passes when it should be refused now fails the
+suite. **48 of 48 cases OK.**
+
+**And it immediately caught a defect in itself.** The flat-fine fixture was
+built by substituting literal tick values; when I corrected the fixture's own
+stamps it silently stopped zeroing three of four rows, `at_fine` was no longer
+constant, and the case passed when it should have been refused. The suite
+reported the failure. It is now built by field index.
+
+**4.5 My fixture exposed a loose cross-check.** `fine_delta_us` tolerated
+`|coarse − fine| > span/2` = 4096 µs, so a **ten-fold** disagreement passed —
+my fixture had 1101 µs of fine spacing against 101 µs of coarse. At 125 ns and
+1 µs the two stamps must agree to ~2 µs for any gap inside the fine span.
+Tightened, and the fixture made self-consistent.
+
+**4.6 Stale documentation, again.** `bin/chain-capture.rs:91-93` still said
+"64 MHz, 15.6 ns" — **in the image that actually clocks TIM2** — and E268's
+sweep missed it while claiming that class closed. Also `sagtrace.rs:67-68`
+(still "26 B / 14 848 B" after the row went to 28 B / 15 360), `sag.py:10` (the
+pre-E264 nine-column wire format) and `sag.py:62` ("v2" where the firmware
+stamps `row_v=3`). And `sag.py`'s justification that *"chain.py already refuses
+legacy captures for exactly this reason"* was **backwards** — `chain.py` falls
+back to 64 MHz with a printed note, deliberately, because every chain capture on
+disk predates the versioning. Corrected to state the difference.
+
+---
+
+## Part 5 — where I push back, and what I accept against my own numbers
+
+**The 95 mΩ is image-conditional and I over-claimed it.** The same regression on
+the other images with ≥46 clean runs gives slopes **0.0945 / 0.0996 / 0.1065 /
+0.1518** mV/mA (R² 0.975 / 0.826 / 0.705 / 0.822). A genuine source resistance
+cannot vary 1.6× between firmware images on one supply and one harness. So it
+is an image-conditional fit, not a bench constant — and only on `D9D77F3C` is
+R² high enough to call it a line. It remains comfortably under the 300 mΩ scar
+line, so the safety reading survives; the *number* does not deserve the
+definite article.
+
+**And the argument was a tautology.** The guard's reference is a 207 ms EWMA of
+the bus, updated after every test, so it **follows** any sustained change — no
+value of source resistance could make a sustained droop trip it. Quoting
+"5950 mA" as the current at which it *would* implies the opposite. The correct
+statement is structural: *a sustained droop is invisible to the sharp guard at
+any magnitude, by construction.* I presented a design tautology as a
+measurement, under a heading that said "restated from measurement".
+
+**Accepted: 9.73 mV/code is ~0.7% high.** Captures report `vdda_mv = 3313` →
+**9.660 mV/code**. Nothing in the conclusion moves, but the constant is not the
+board's.
+
+**Accepted: the duty-600 row was an unstated extrapolation.** A log-log fit over
+17 measured rungs gives `hold_ma ∝ duty^2.55` → **2987 mA / 312 mV / 2.6%** at
+duty 600, ~10% deeper than the 284 mV I wrote. The error is against me.
+
+**Pushed back — and the reviewer was wrong here:** one review states production
+has *no* absolute bus floor, because `BUS_FLOOR_NUM` is only reachable under
+`PhaseCodePolicy::Band`. `src/run/states.rs:321` checks a **different**
+quantity, unconditionally, outside that branch:
+`(scan.bus < self.base.bus_floor_code).then_some(Reason::Bus)`, with
+`bus_floor_code` derived at baseline (`run/measure.rs:103`). It fires every scan
+in production. The two-sided sharp-bus coverage stands. (The reviewer is right
+that its trip point is ~29% down, which is a long way from the guard's 5%.)
+
+**Also accepted, on provenance:** `captures/elf/` is gitignored and
+`0D8E3799.e246-final-candidate.elf` is absent from `MANIFEST-hashes.txt`. So the
+stronger of my two production-identity references has **no recorded
+provenance**, and the manifest itself is uncommitted. That is a real gap in a
+campaign whose discipline says to hash every ELF.
+
+---
+
+## Part 6 — audits, and the plan
+
+| audit | result |
+|---|---|
+| host tests | **344 + 9 pass** |
+| `sag_selftest.py` | **48 of 48** (41 captures + 7 expectation-bearing fixtures) |
+| clippy, target | clean |
+| four-root arithmetic, `sag-capture` | **4 roots certified clean** |
+| production vs the qualified image `0D8E3799` | **identical**: 37 / 728 / 332 / 155 |
+| `edge-capture` `ADC_COMP` | **1007 → 1003** (the ungated TIM2 read removed) |
+| `structure_report.py` | exit 0; `sag-capture` bss 19 572 / stack 16 624 |
+
+**The order, which is both reviews' and no longer mine:**
+
+1. **Validate the v3 format on hardware**: `sag-capture` at rung **250** with
+   `V`. ~5 s, ~0.5 A, P(latch) ≈ 1 by the `e182` precedent. No v3 byte has ever
+   been recorded.
+2. **The supply measurement the notebook has owed since campaign 7** —
+   `LAB_NOTEBOOK.md:7473` asked for it and `:7522` logged it as open. Operator
+   watches the CC indicator during an existing-firmware run, and/or rung **500
+   with the clamp lowered to 2.5 A**: draw/clamp 0.72 against the 0.76 of the
+   550-on-3 A point that trips 1/3 of the time — **the same ratio at 50% duty
+   and 1.8 A**, inside the qualified envelope, on the rung where matched
+   production captures already exist. Do **not** raise the clamp: `policy.rs:92`
+   says nothing in the firmware stops a run between 2 A and 4 A, so the clamp is
+   the only thing holding the bench out of that blind band.
+3. Only then, and at most **one** run at 550, for a v3 dump of a 550 event
+   specifically.
+
+Step 1 is the next action. Both reviews follow verbatim.

@@ -89,8 +89,10 @@ fn main() -> ! {
         }
     };
     // The fine clock the chain stamps from (E180): TIM2 free-running at
-    // 64 MHz, 15.6 ns a tick. Only this image enables it; production never
-    // touches TIM2, which is what keeps its roots identical.
+    // **8 MHz, 125 ns a tick** since campaign 11 (`firmware50::fine`), and the
+    // rate travels in each dump's `CHAINSNAP fine_hz` so a host cannot read a
+    // delta at the wrong one. Only a diagnostic image enables it; production
+    // never touches TIM2, which is what keeps its roots identical.
     firmware50::hw::fine::init();
     safe_off(&mut Drv8304);
     board::banner(&mut board, adc_ok);

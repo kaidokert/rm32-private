@@ -7,7 +7,8 @@ in two rings (`src/sagtrace.rs`):
 
     SAGSNAP judged=<n> fast_len=<n> slow_len=<n> slow_every=<n> frozen=<0|1>
             num=95 den=100 streak_to_latch=3 adc_rail=4095
-    SAGROW  <at> <bus_mean> <vref_mean> <filt_bus> <filt_vref> <streak> <step> <duty> <since_zc_us>
+    SAGROW  <at> <at_fine> <pwm_ctr> <bus_raw> <pa> <pb> <pc> <bus_mean>
+            <vref_mean> <filt_bus> <filt_vref> <streak> <step> <duty> <since_zc_us>
     ...
     SAGSLOW <bus_mean> <vref_mean> <filt_bus> <filt_vref>      (every slow_every-th)
     ...
@@ -59,7 +60,8 @@ import pathlib
 import statistics
 import sys
 
-# v2 (campaign 11) added `at_fine`, `bus_raw` and the three phase codes.
+# v3 (campaign 11) added `at_fine`, `pwm_ctr`, `bus_raw` and the three phase
+# codes. The firmware stamps `row_v=3`; there was never a shipped v2.
 # `bus_raw` is the field that matters most: `bus` below is the guard's 8-tap
 # sliding mean, so it widens every event by 7 scans and cannot state a dip's
 # true width. v1 captures are read with those fields as None.
@@ -137,10 +139,14 @@ def check_units(snap: dict, rows: list[Row]) -> None:
     """Refuse a capture whose tick rate is not declared.
 
     **The fine stamp's rate is part of the format, not commentary.** It changed
-    from 15.625 ns to 125 ns between campaigns, so reading a v2 delta with the
-    v1 rate under-reports every interval by 8x. `scripts/chain.py` already
-    refuses legacy captures for exactly this reason; assuming a rate here would
-    reintroduce the trap one file over.
+    from 15.625 ns to 125 ns between campaigns, so reading a v3 delta at the v1
+    rate misreports every interval by 8x.
+
+    `scripts/chain.py` takes the opposite policy deliberately, and it is worth
+    being accurate about the difference (E269): it *falls back* to 64 MHz with a
+    printed note, because every chain capture on disk predates the versioning
+    and is genuinely 64 MHz. No sag capture carries fine stamps at all yet, so
+    there is nothing here to stay compatible with and refusing costs nothing.
     """
     has_fine = any(r.at_fine is not None for r in rows)
     if not has_fine:
@@ -156,6 +162,19 @@ def check_units(snap: dict, rows: list[Row]) -> None:
         raise SystemExit("REFUSED: SAGSNAP declares `fine_hz` but not `span16_us`.")
     # Read the version tag rather than trusting the field count alone: a future
     # format with the same width would otherwise parse as this one (E266).
+    # **A fine stamp that never changes is the E264 defect verbatim** and used
+    # to be reported as "255 of 255 usable, min=0.000 max=0.000 us". `Hal::fine`
+    # had a default body returning 0 with no override and the image never
+    # clocked TIM2, so every row stamped the same value. Refuse it here rather
+    # than let a column of constants be read as a timeline.
+    stamps = {r.at_fine for r in rows if r.at_fine is not None}
+    if len(stamps) == 1:
+        raise SystemExit(
+            f"REFUSED: every row's at_fine is {stamps.pop()} -- a fine stamp "
+            "that never changes is not a clock. Either the image did not call "
+            "hw::fine::init() or Hal::fine() is not overridden (the E264/E266 "
+            "defect). Re-dump with an image whose TIM2 is running."
+        )
     v = snap.get("row_v")
     if v is not None and v > 3:
         raise SystemExit(
@@ -184,10 +203,40 @@ def fine_delta_us(a: Row, b: Row, snap: dict) -> float | None:
     # spans 65.536 ms against the fine stamp's 8.192 ms, so if the two disagree
     # by more than a fine wrap, the fine delta has wrapped and is meaningless.
     coarse = (b.at - a.at) & 0xFFFF  # TIM17 is 1 us per tick
-    span = snap.get("span16_us", 0)
-    if span and abs(coarse - us) > span / 2:
+    # **The tolerance is the coarse clock's own quantisation, not half the fine
+    # span** (E269). At 125 ns and 1 us the two stamps must agree to ~2 us for
+    # any gap inside the fine span; a `span/2` tolerance let a ten-fold
+    # disagreement through, which my own selftest fixture then demonstrated.
+    # A larger disagreement means the fine delta wrapped (the true gap exceeds
+    # `span16_us`) or one of the clocks is not running -- either way it is not
+    # a measurement.
+    if abs(coarse - us) > 2.0:
+        return None
+    # A zero fine delta against a non-zero coarse one is a stopped clock, not a
+    # measurement. `check_units` refuses a wholly constant column; this catches
+    # the per-pair case the average would otherwise absorb (E269).
+    if us == 0.0 and coarse > 1:
         return None
     return us
+
+
+def exact_depth(ref: int, k: int, num: int, den: int) -> int:
+    """The deepest raw code for which `k` scans at that depth latch the guard.
+
+    Solved on the integers the firmware actually uses rather than in the reals:
+    `RailMean` sums eight raw samples and shifts right by three, and the sag
+    test is a strict `<`, so the continuous answer `ref - budget/k` is a few
+    codes conservative. For a diagnostic that is the wrong direction -- it
+    reports "nothing below threshold" for a dip that did latch.
+
+    Searches downward from `ref` for the largest raw value at which a window
+    holding `k` such samples and `8 - k` samples at `ref` still reads low.
+    """
+    for raw in range(ref, -1, -1):
+        mean = (k * raw + (8 - k) * ref) >> 3
+        if mean * den < ref * num:
+            return raw
+    return 0
 
 
 def raw_run_width(rows: list[Row], threshold: int) -> tuple[int, int]:
@@ -407,10 +456,16 @@ def main() -> int:
             f"raw bus (v3): deficit budget for a low window = {budget:.0f} codes "
             f"against filt_bus {ref}"
         )
+        # **Integer boundaries, not the continuous ones** (E269). The guard
+        # compares `bus_mean = bus_sum >> 3` with a strict `<`, so a depth
+        # derived in the reals is conservative by a few codes -- and
+        # conservative here means the tool can report "0 rows below threshold"
+        # for a dip that did latch, which is the wrong direction for a
+        # diagnostic. `exact_depth` solves the integer condition directly.
         for k, label in ((1, "one scan suffices"), (5, "needs 5 scans")):
-            thr = int(ref - budget / k)
+            thr = exact_depth(ref, k, num, den)
             run, n = raw_run_width(rows, thr)
-            print(f"  below {thr} ({label}): longest run {run} scans, {n} rows total")
+            print(f"  raw <= {thr} ({label}): longest run {run} scans, {n} rows total")
         raws = [r.bus_raw for r in rows if r.bus_raw is not None]
         print(f"  raw bus {min(raws)}..{max(raws)} (mean-of-raw {sum(raws) / len(raws):.0f})")
         phs = [(r.phase_a, r.phase_b, r.phase_c) for r in rows if r.phase_a is not None]

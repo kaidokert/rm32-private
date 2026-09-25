@@ -63,10 +63,10 @@ use cortex_m::interrupt::{self, Mutex};
 
 /// Full-rate judgements kept: **26.0 ms** at the measured 9.84 kHz.
 ///
-/// **256, halved from 512 to pay for the raw bus and the three phase codes**
-/// (campaign 11). The row went 16 -> 26 B, and the two rings now take
-/// 256 x 26 + 1024 x 8 = **14 848 B**, less than the 16 384 B this image took
-/// before. Paying for new fields by shortening the ring rather than by growing
+/// **256, halved from 512 to pay for the raw bus, the three phase codes, the
+/// carrier phase and the fine stamp** (campaign 11). The row went 16 -> **28 B**
+/// and the two rings now take 256 x 28 + 1024 x 8 = **15 360 B**, less than the
+/// 16 384 B this image took before. Paying for new fields by shortening the ring rather than by growing
 /// `.bss` is E185's lesson: widening these rings once left under 4 KB of stack
 /// on a part whose largest frame reserves 5076 B and which has no stack guard,
 /// and every run died inside a millisecond.
@@ -310,9 +310,29 @@ impl SagRing {
         interrupt::free(|cs| TRACE.borrow(cs).borrow_mut().on = false);
     }
 
-    /// Read the ring, interrupts masked for the closure.
+    /// Read the ring.
+    ///
+    /// **Not inside `interrupt::free`** (E269). The caller emits ~1280 lines
+    /// through a 115 200-baud link with a blocking flush per line, so masking
+    /// for the closure held PRIMASK for roughly **2.7 seconds**. Nothing was
+    /// bought by it: [`Self::disarm`] runs first and clears `on`, so no writer
+    /// remains, and the bridge is already off. A mask that long is also the
+    /// one thing this campaign's own notes say never to do while the guard's
+    /// tick-gap threshold is 200 µs.
+    ///
+    /// The borrow is still taken through the `Mutex`, which needs a token, so
+    /// this takes the shortest possible critical section to obtain the
+    /// reference and emits outside it.
     pub fn read<R>(f: impl FnOnce(&Trace) -> R) -> R {
-        interrupt::free(|cs| f(&TRACE.borrow(cs).borrow()))
+        // SAFETY-equivalent reasoning, no `unsafe` needed: `disarm` has
+        // cleared `on`, so `push` returns before touching the ring, and the
+        // recorder is foreground-only in any case. The short critical section
+        // only satisfies `Mutex`'s token requirement.
+        let ptr = interrupt::free(|cs| TRACE.borrow(cs) as *const RefCell<Trace>);
+        // SAFETY: `TRACE` is a `'static` and the pointer is derived from it;
+        // no writer can run (see above), so the shared borrow is sound.
+        let cell = unsafe { &*ptr };
+        f(&cell.borrow())
     }
 }
 
