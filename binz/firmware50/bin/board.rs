@@ -411,6 +411,14 @@ impl Hal for Board {
         roots::det_counts().2
     }
 
+    fn wait_hist(&self) -> [u32; 8] {
+        core::array::from_fn(|i| S.det().wait_hist[i].load(Ordering::Relaxed))
+    }
+
+    fn left_hist(&self) -> [u32; 8] {
+        core::array::from_fn(|i| S.det().left_hist[i].load(Ordering::Relaxed))
+    }
+
     #[inline(always)]
     fn blank_latched(&self) -> u32 {
         S.com().blank_latched.load(Ordering::Relaxed)
@@ -540,6 +548,15 @@ impl Hal for Board {
                 det.late_arms.store(0, Ordering::Relaxed);
                 det.ci_at_late.store(0, Ordering::Relaxed);
                 det.spent_at_late.store(0, Ordering::Relaxed);
+                // E315: per-run like every counter above it. A histogram that
+                // accumulated across runs would report the ladder, not the run
+                // -- the same defect `rebase` had before E208.
+                let mut i = 0;
+                while i < 8 {
+                    det.wait_hist[i].store(0, Ordering::Relaxed);
+                    det.left_hist[i].store(0, Ordering::Relaxed);
+                    i += 1;
+                }
                 det.active.store(true, Ordering::Release);
             }
         });
@@ -742,6 +759,12 @@ impl Hal for Board {
             // plus one so that 0 means "no acceptance seen".
             ci_min_us: S.det().ci_min_p1.load(Ordering::Relaxed).saturating_sub(1),
             thin_count: S.det().thin.load(Ordering::Relaxed),
+            wait_hist: core::array::from_fn(|i| S.det().wait_hist[i].load(Ordering::Relaxed)),
+            left_hist: core::array::from_fn(|i| S.det().left_hist[i].load(Ordering::Relaxed)),
+            // The hold-window pair is a foreground subtraction against the hold
+            // mark, done in `run::mod` where the mark lives (E212's pattern).
+            wait_hist_hold: [0; 8],
+            left_hist_hold: [0; 8],
             hold_unstable: 0,
             rebase: S.det().rebase.load(Ordering::Relaxed),
             com_preempts: S.com().preempts.load(Ordering::Relaxed),

@@ -1419,3 +1419,35 @@ captures/sag/e200-16a-s5-warmup.txt	2696	E46FD9513E6410586347C9FF3ACB0074A2D026C
 captures/sag/e200-16a-s5.txt	54212	C6360313501A4C49DA40AE44C9CDE1422F4A6336ADCF1EE1522A41C303BFDB55
 captures/sag/e270-v3val250-warmup.txt	2959	E508B5B98D2968177991D65136827897D031C4B12FD66482F1F3920DF3FECB13
 captures/sag/e270-v3val250.txt	50874	CFEBC72B6241CE75C7E88069544618C82A712240E00CA2F67430703956243731
+
+E3BB2544.e315-marginhist.elf
+  crc32  E3BB2544
+  sha256 32A765FB52F8ABB35B1C6798E6472CEC4A74C394C9A01CBEE452B83C2E537102
+  build  cargo build --release --features margin-hist
+  E315   per-arm wait/left histograms in note_margin. ADC_COMP 760 -> 778
+         (+18), hazard classes unchanged (div 0, mul 4, irq 9, excl 0,
+         helper 0). NOT a production image: the added code reallocates
+         registers across the whole handler, so it may shift spent even
+         though the increment is after the arm. left_hist vs the 20478
+         archived chain arms at 475 is the validity check.
+
+5EB8018E.e315-marginhist-hold.elf
+  crc32  5EB8018E
+  sha256 F2D352F7FE8FBF8C165D0A08D5759AFCB4BCE14B6522D6DED05A9641D03B5E5B
+  build  cargo build --release --features margin-hist
+  E315   adds BEMFMARGINHOLD: the wait/left histograms restricted to the
+         hold window, because the first pair (E3BB2544) read 76%% hold at
+         rung 500 against 30%% at 550 and the whole-run comparison was a
+         ramp-fraction comparison. Hold mark is foreground: ADC_COMP is
+         unchanged at 778 (+18 vs production 760), classes unchanged.
+         wait_hist is immune to the image own spend inflation; left_hist
+         is not, so left rates are diagnostic-only.
+
+19341051.e315-marginhold.elf
+  crc32  19341051
+  sha256 006864937A0E702609A3DDE0782E03860827E872CCD22EA0BA743811365C01FE
+  build  cargo build --release --features margin-hist
+  E315   BEMFMARGINHOLD actually emitted this time. 5EB8018E computed the
+         hold-window histograms and never printed them (silent no-op edit);
+         report.rs now asserts both lines and every bucket key, and that
+         assertion is verified to FAIL without the emit.

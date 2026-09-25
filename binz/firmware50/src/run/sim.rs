@@ -270,6 +270,12 @@ impl Hal for Sim {
     fn unstable_count(&self) -> u32 {
         0
     }
+    fn wait_hist(&self) -> [u32; 8] {
+        [0; 8]
+    }
+    fn left_hist(&self) -> [u32; 8] {
+        [0; 8]
+    }
 
     fn late_arms(&self) -> u32 {
         u32::from(self.faults.late_arm_at.is_some_and(|t| self.t >= t))

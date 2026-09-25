@@ -302,6 +302,10 @@ pub trait Hal {
     /// (E212): the ratio against accepted crossings is only meaningful on a
     /// single stage, and whole-run it mixes the ramp with the hold.
     fn unstable_count(&self) -> u32;
+    /// The cumulative per-arm margin histograms, for the hold-window mark
+    /// (E315). Zero throughout without `margin-hist`.
+    fn wait_hist(&self) -> [u32; 8];
+    fn left_hist(&self) -> [u32; 8];
     fn blank_latched(&self) -> u32;
     fn overrun(&self) -> bool;
     fn cap_armed(&self) -> bool;

@@ -28535,3 +28535,1825 @@ supported, and I withdraw it.
 
 One run at 550 on `0F890AF2` to read `ci_at_late`. That is one run, and it
 settles a mechanism argument that has consumed E300–E312.
+
+### E315 — the run answered the question, and both reviews then dissolved the question. There was never a cliff at 55%: the LateArm hazard is log-linear in duty, doubling every 2.36% of it.
+
+One run at rung 550 on `0F890AF2` (sha256 `8768CCA1EC63849629776B9B1B874F9008A75CA54406A37CFFAAEA067381CDFC`),
+anchored, `captures/2026-09-25/e315-550-why_01.txt`:
+
+```
+reason=15  ci_at_late=59  spent_at_late=9  ci_min_us=54  thin_count=370
+accepted=189511  closed_ms=22360  hold_ms=0  ci_us=59
+```
+
+`wait_time(59, 22) = 29 − 20 = 9` and `spent_at_late = 9`, so `left = 0`
+exactly. **The predeclared discriminator resolved against the boundary
+hypothesis**: I predicted `ci_at_late ≈ 71–72` for a boundary failure at
+nominal and "well below" for a depressed estimate. It read 59, with spend 9,
+not the 11 my margin model required. E300–E312's argument is settled, and
+settled against me.
+
+Then both reviews arrived and the interesting part is that they did not
+dispute that reading — they dissolved the frame around it.
+
+---
+
+#### 1. There is no clean/latching dichotomy. It is one Poisson process.
+
+The adversarial review's first finding, and I recomputed all of it. Pooled over
+all fifteen un-injected rung-550 runs: **813.9 s of closed-loop exposure,
+9 495 893 arms, 8 LateArm events** → hazard **0.00983/s**, MTTF **101.7 s**,
+one per **1.19 M arms**. Under that single rate the expected number of
+survivors, each censored at its own observed length, is **9.0 of 15** against
+**7 observed**.
+
+So five clean runs and eight latches is exactly what one constant-hazard
+population yields under this censoring. **P5 and P6 — my own propositions —
+presuppose a difference the data does not establish.** "The clean/latching
+difference must therefore be dwell" presupposes the difference. The honest null
+is that there is none, and twelve entries of mine are built on the assumption
+that 550 is a place where something changes.
+
+#### 2. And the hazard is log-linear in duty. This is the number I should have computed in E300.
+
+Per-rung, pooled across every capture in the tree (Poisson regression,
+exposure-offset):
+
+```
+log hazard = −20.886 + 0.029368 · rung        b/se = 3.6   (significant)
+hazard doubles every 23.6 tenths of duty = 2.36 % duty
+```
+
+| rung | fit hazard/s | MTTF | P(one 52.5 s run) | **P(3/3)** |
+|---|---|---|---|---|
+| 450 | 0.00047 | 2144 s | 0.976 | 0.93 |
+| 475 | 0.00097 | 1029 s | 0.950 | 0.86 |
+| 500 | 0.00203 | 494 s | 0.899 | **0.73** |
+| 525 | 0.00422 | 237 s | 0.801 | 0.51 |
+| 550 | 0.00880 | 114 s | 0.630 | **0.25** |
+| 575 | 0.01833 | 55 s | 0.382 | 0.06 |
+| 600 | 0.03819 | 26 s | 0.135 | **0.002** |
+
+A qualifying run is 22.5 s of ramp (`ramp_us(550) = 45 × 500 ms`, confirmed by
+the evidence review and exact in all 14 prior captures) plus a 30 s hold.
+
+**So there is no 55 % failure to explain.** There is a continuous hazard that
+crosses "MTTF ≈ run length" near 550. Everything I called a cliff was that
+crossing. Three consequences, none of which I had:
+
+* **P(3/3) at 550 is 0.213 today.** Reaching 0.95 needs a **30×** hazard
+  reduction. No microsecond-scale change delivers 30×.
+* **60 % is unreachable on timing alone**, P(3/3) = 0.002, *independently* of
+  the supply wall both reviews also flag. Two separate walls, and I had only
+  been arguing about the supply one.
+* **The existing 50 % qualification passed at P(3/3) = 0.73.** It is a real
+  pass and I am not reopening it, but it was not a robust one, and nothing in
+  the fixture said so.
+
+#### 3. The estimate at the stop is not a speed. It is an error — and that was in every capture already.
+
+The adversarial review's second finding, and it is the best piece of work in
+either report. Every capture carries `BEMFSELFREF coast_ehz`, an independent
+post-run speed. Converting to a true interval, `1e6/(6·coast_ehz)`, and
+comparing with `ci_us` at the stop. I recomputed all fifteen:
+
+```
+reason  2 (deadline, n=5):  −2.5 % … −0.3 %
+reason  9 (host abort):     −5.3 %
+reason 26 (fast bus sag):   −18.0 %
+reason 15 (LateArm,  n=8):  −45.2 % … −14.0 %
+```
+
+**Perfect separation, 11.5 percentage points of gap.** Every clean stop is
+within 2.5 % of truth; every latch is 14–45 % below it. `ci = 59` in e315 is
+not an operating point — the rotor was at ≈ 73 µs. **The estimator was wrong by
+19 %.**
+
+And the sag run breaks the tautology. For a LateArm stop "the estimate was low"
+is near-circular, since `wait ∝ ci`. For `Reason::FastBusSag` it is not:
+nothing in the sag path reads `ci`. Yet `e253-550_03` stopped on a sag with the
+estimate 18 % low. **Estimator collapse is a real event with two exits, and
+LateArm is one exit, not the cause.** My corpus table listed reason 26 as a
+separate category and thereby discarded the single point that separates cause
+from symptom.
+
+#### 4. The closed model. Two measured factors that multiply out to the measured hazard.
+
+This is mine, built on their findings, and it is the first quantitative model
+of the failure in this campaign.
+
+From the 24 archived chain captures — **20 478 per-arm `(wait, spent)` pairs**,
+which the evidence review pointed out have been sitting in the tree wait-
+resolved all along, `chain_spent.py` parsing `wait` and reporting only its mode:
+
+```
+P(spent >= 9) = 0.02974      (a 5–6 us body at 91 %, an 8–9 us satellite at 6.5 %)
+P(spent >= 11) = 0            in 20 478 arms
+```
+
+The e315 latch was `wait = 9, spent = 9`. So:
+
+```
+P(latch per arm) = P(wait <= 9) x P(spent >= 9)
+8.425e-07        = P(wait <= 9) x 0.02974
+=> P(wait <= 9)  = 2.83e-05    ~= 18 trough arms per run
+```
+
+**8.4e-7 per arm is the independently measured hazard**, so the two factors
+multiply out to it. One factor is directly measured over 20 478 arms; the other
+is implied, and it is the only unmeasured number left in the mechanism.
+
+The model immediately prices every candidate:
+
+* **Removing the 8–9 µs spend satellite** takes `P(spent ≥ 9)` below detection
+  in 20 478 arms — a **≥ 609×** hazard reduction, twenty times the 30× needed.
+  Highest leverage on the table by a wide margin.
+* **Advance 20** requires the estimator to collapse below ci **49** instead of
+  59 — a deeper and rarer excursion, which is why the rung-500 A/B took
+  `thin_count` **1027 → 0** for 0.96 % speed (§7 below). Real, but it buys a
+  factor, not an order of magnitude.
+* **Arresting the collapse** attacks `P(wait ≤ 9)` directly. Costs no speed.
+
+#### 5. `Reason::LateArm` fires on an event less harmful than events the firmware tolerates in every run
+
+Both reviews found this independently and I verified it in source. At the latch
+the arm is **still placed** — `arm_marked::<C>(left.max(1))`, `roots.rs:472`,
+and `com_arm(left.max(1), 1)` at `:543`. So the commutation fires ~1 µs late:
+at ci ≈ 59 µs per 60 electrical degrees, **~1 electrical degree of angle error
+on one commutation.** The response is to terminate a 22-second run.
+
+Meanwhile `com_late_max_us` — *realized* COM dispatch lateness — reads
+**9–10 µs in every one of the five clean runs** and is merely reported. The
+firmware stops a run for ~1 µs of arm error while routinely ignoring ten times
+that in realized lateness.
+
+And `src/protection.rs:48-63` justifies the stop on process grounds only, in
+its own words: *"it was non-zero in 4 of 588 captures, one of them a qualifying
+45 % run. A counter nobody stops on is a counter nobody checks, so it is a
+stop."* **The firmware's own comment records the event occurring inside a
+qualifying run.**
+
+So the entire hazard above may be an artifact of a tripwire, not a physical
+limit. I am **not** changing it: the goal says *"Keep existing protections and
+thresholds, including sharp/slow sag, current, tracking and timing stops,"* and
+LateArm is a timing stop. This is flagged for the operator as the one question
+in this campaign I cannot answer myself, and it is the cheapest fix on the
+table by far. Everything below assumes the tripwire stays.
+
+#### 6. My propositions, dispositioned
+
+| # | disposition |
+|---|---|
+| P1 `closed − hold = 22500` is a schedule constant | **CONFIRMED**, traced to `ramp_us(550) = 45 × 500 ms`; exact in all 14 prior runs |
+| P2 `wait22(59) = 9 = spent`, `left = 0` | **CONFIRMED** and the two quantities are provably the same `average_interval`. But **largely tautological** — `left == 0` ⟺ `spent ≥ wait` by construction. What is learned is that the inequality is *tight* and `spent = 9` is inside measured support; "no free parameter" was overclaimed, and the 6 µs deficit splits exactly 3 µs of wait loss against 3 µs of spend excess, i.e. the datum is maximally unable to attribute |
+| P3 the ci-71/72 boundary hypothesis is refuted | **CONFIRMED** — and the refutation was already available without the new counter |
+| P4 `ci_at_late == ci_us` validates the cheap field | **UNSUPPORTED as stated.** n = 1, two different reads of a mutating value ~24 µs apart. An inference presented as a reading — the exact failure I have a memory about. Better corroboration exists and I did not cite it: in **three of seven** prior latches `ci@stop == ci_min_us` exactly |
+| P5 `ci_min` indistinguishable clean vs latching | **CONFIRMED**, exact Mann-Whitney **p = 0.866** against an attainable minimum of 0.0016 — but see §1: it answers a question that presupposes a dichotomy |
+| P6 a trough exists, every run visits it, so it must be dwell | **PARTLY.** Trough and universal visitation confirmed; "must be dwell" is a false dichotomy, and the trough is a ~3e-5 excursion, not a region the estimator occupies |
+| P7 `spent_max_us` is unusable in a margin argument | **conclusion CONFIRMED, my stated reason REFUTED.** Depth does *not* materially scale spend: the static model prices a filter level at 0.25 µs/trip, and a wait-conditioned re-derivation shows mean spend flat at 5.8–6.4 µs across depths 4–7. My depth-confound story in E314 §"the mechanism I missed" is wrong |
+| P8 the preemption counters fold to zero in production | **CONFIRMED with a correction I owe.** `com_preempts` is **29 686–33 219 in five `captures/chain/` captures**, and `com_arm_preempts = 0` in those instrumented runs **is** real evidence — the tree's only preemption measurement, which I dismissed as structurally void |
+| P9 the chain spend data may be unrepresentative | **CONFIRMED in fact, wrong in three details.** They run to **47.5 %** not 42.5 %, and the spend **is** wait-resolved per arm |
+| P10 a new `ci < 60` trough-arm counter | **REJECTED by both reviews, and they are right.** See §7 |
+
+#### 7. P10 was a bad experiment and both reviews dismantled it the same way
+
+* It is a **whole-run counter across event-censored runs of unequal length** —
+  the confound this campaign has already proved for `unstable/accepted`,
+  `mean_ma`, `zc_per_s` and `too_early`, all four monotone in duration. And
+  **e315 latched during the ramp**, so its trough count would be ramp-only
+  against survivors' 85 s of mostly hold.
+* **The axis is wrong.** `wait22` is a **comb, not a ramp**: 57→9, 58→**10**,
+  59→9. A `ci < 60` bucket lumps waits 6–10 and builds the truncation artifact
+  into the instrument. Bucket on `wait` or `left`, the quantities in the latch
+  condition. (My own "first reaches 9" framing was wrong for the same reason:
+  `wait22` first reaches 9 at ci **52**; 59 is the *largest* ci with
+  `wait22 ≤ 9`. I mislabelled the last element of my own sorted list as the
+  first.)
+* **It is partly pre-satisfied** — `ci_min ≤ 54` in all fifteen runs.
+* **Its null was pre-committed to the expensive branch**, which the evidence
+  review names for what it is: a decision to pay for speed loss dressed as a
+  measurement.
+* And the nearest existing counter **already failed**: `thin_count` (`left ≤ 2`,
+  strictly more mechanism-relevant) gives Mann-Whitney **p = 0.724**.
+
+The evidence review also demonstrated the exposure trap on a field I never
+mentioned: `BEMFPHASE lt075` "discriminates" at **p = 0.0062**, and
+`rho(hold_fraction, lt075_rate) = 0.879`. It is a ramp-fraction proxy. Any new
+whole-run counter would have behaved the same way and I would have believed it.
+The fix pattern is already in the tree — `unstable_at_hold`
+(`states.rs:939`), whose own comment diagnoses this confound — so **mark the
+existing counters at the hold before adding any new one.**
+
+Two more things from the tree that I should have cited and did not:
+
+* **The advance-20 A/B is half done.** `e303-ab-A22_1` vs `e303-ab-B20_1` at
+  rung 500: `thin_count` **1027 → 0**, `mean_ci_us` 100 → 101, for a **0.96 %**
+  speed cost. Two runs where six were planned, at 500 not 550, so it is below
+  this campaign's own three-a-side bar — but it is real and it points the right
+  way.
+* **`BEMFPHASE` has been saturated at 65535 in all fifteen runs.** Seventh
+  present-but-inert instrument this campaign.
+
+#### 8. What I am doing next, and why it is not a bench run
+
+The closed model in §4 has exactly one unmeasured factor, `P(wait ≤ 9)`, and
+measuring it is a **named evidence gap** under Rule 3. The instrument both
+reviews converge on is what P10 should have been:
+
+**A per-arm `wait` and `left` histogram in the existing `note_margin`
+(`roots.rs:399-411`)** — one clamp and one indexed increment each, no division,
+no multiply, no helper, so it passes the ISR arithmetic audit that E315's other
+half just made automatic and proved clean across all 145 archived images.
+
+Why this and not a run at 550:
+
+* **It is per-arm, ~10⁶ samples per run**, so it resolves a few-percent shift
+  in a *single* run. That is the only escape from the n-infeasibility both
+  reviews computed for rate A/Bs (33 latches a side ≈ 63 runs a side).
+* **It can be measured at safe rungs.** `P(wait ≤ 9)` at 450 and 475 costs
+  ~1.5 A, nowhere near the 3 A clamp, and the §2 fit then *predicts* 550 —
+  which I can check against a hazard I already know. A model that predicts a
+  known answer from safe data is worth more than another run at the edge.
+* **It is falsifiable in the direction that matters**: if measured
+  `P(wait ≤ 9)` at 550 is not ≈ 2.8e-5, the closed model is wrong and the
+  arithmetic in §4 is coincidence.
+
+Then, at 4 instructions, the **guard-preemption witness** the adversarial
+review specifies: snapshot the guard tick at COMP entry, compare at the arm,
+count disagreements, stamp at the latch. It tests whether the 8–9 µs satellite
+— the **609×** factor — is guard preemption, which is currently a
+coincidence-of-rates argument and not a measurement. If it is, protecting the
+arm window is the whole fix.
+
+The adversarial review's own predeclared alternative, **chain-capture at 550**,
+stays on the table and I record its predeclared readings here because they
+remain valid: `wait` descending over ≥ 10 consecutive arms into the latch ⇒
+collapse; `wait` flat with a single spend excursion ⇒ cost; both ⇒ common-cause
+disturbance; neither ⇒ the event is faster than 121 ms and the trough framing
+is wrong. Not one of the 28 archived chain captures is above 475 — the
+instrument was built, validated and never aimed at the target. But it needs a
+latch to be useful (P ≈ 0.52/run) and it perturbs the roots, whereas the
+histogram works at safe rungs on the first run, so the histogram goes first.
+
+And the reviewer's predeclared refutation of my own trough-dwell mechanism,
+recorded before I run anything: *trough-dwell is refuted if, over a window
+common to both arms, per-arm occupancy of `wait ≤ 9` and the `left ∈ {1,2}`
+tail mass are both indistinguishable between latching and deadline runs.* The
+review predicts refutation. §4's model predicts the occupancy is real but tiny
+and **run-independent**, which is the same branch. I expect to be refuted on
+"dwell" and confirmed on "coincidence".
+
+#### 9. Corrections and citations I owe
+
+* `wait22` first reaches 9 at **ci 52**, not 59 (non-monotone; 58 → 10).
+* `wait22(72) = 12`, not 11 — the refuted hypothesis's own arithmetic.
+* `wait20 > wait22` **for every ci** is false; it is equal at 17 values, all
+  ci ≤ 29, i.e. true where it matters and overstated as written.
+* `spent` is stamped at `roots.rs:470`/`:541`; the entry stamp is `:1269`, not
+  `:1255`. `count_preempt` is `:1065`, not `:1064`.
+* Chain captures reach **47.5 %**, not 42.5 %.
+* I reported a 64-bit division inside `scan_pass` mid-investigation; my `awk`
+  bled past the symbol boundary. The per-symbol pass shows `scan_pass` has
+  none — they belong to `averaged_zero` and `main`.
+* **Both reviews flagged an ordering defect I should fix**: `late_arms` is
+  incremented before the witnesses are stamped, and `guard_reason` is checked
+  before `late_arms`, which masks co-occurrence evidence.
+
+Both reviews are appended verbatim below from
+`captures/reviews/E315-EVIDENCE.md` and `captures/reviews/E315-ADVERSARIAL.md`
+— which is also the fix E313b promised, reviewers writing to a repo file rather
+than returning prose only through the transcript. Agreement is not proof, and
+here it did not need to be: they disagree with each other about whether the
+estimator or the tripwire is the thing to fix, and I have recorded both.
+
+---
+
+### E315 review 1 of 2 — EVIDENCE (verbatim)
+
+# E315 evidence review — everything recomputed from the captures and the source
+
+Reviewer: independent, no prior campaign context. Every number below was
+recomputed from `E:\m\robot\esc\rm32\binz\firmware50` — from `src/`, `bin/`,
+`scripts/`, `captures/` and, where the source has moved, from git history. No
+figure was taken from the brief on trust. Where I reproduce a brief figure I
+say so; where I do not, I give mine and the file:line or the capture that
+settles it.
+
+Summary of dispositions:
+
+| # | Claim | Disposition |
+|---|---|---|
+| P1 | `closed-hold = 22500` is a schedule constant; `hold_ms=0` is a schedule artifact | **CONFIRMED** |
+| P2 | `wait22(59)=9 = spent 9`, `left=0`, no free parameter | **CONFIRMED** (exact, and the two quantities are provably the same `average_interval`) |
+| P3 | the ci-71/72 boundary hypothesis is refuted | **CONFIRMED** for the event; the refutation was already available in the corpus without the new counter, and the prior hypothesis's own arithmetic was half wrong |
+| P4 | `ci_at_late == ci_us` validates `ci_us`-at-stop for the 7 prior latches | **UNSUPPORTED as stated** — n=1, and it is an inference presented as a validation. Corroborating (not validating) evidence exists |
+| P5 | `ci_min` is indistinguishable between clean and latching | **CONFIRMED** — exact Mann-Whitney p = 0.866, against a design whose attainable minimum is p = 0.0016 |
+| P6 | a `wait22 <= 9` trough exists, every run visits it, so the discriminator must be dwell | **PARTLY CONFIRMED** — trough and universal visitation confirmed; "must be dwell" is a false dichotomy and the trough is a ~3e-5 excursion, not a region the estimator occupies |
+| P7 | `spent_max_us` is unusable in a margin argument | **CONFIRMED in its conclusion, REFUTED in its stated reason** — depth does *not* materially scale spend (0.25 µs per filter level, measured two ways) |
+| P8 | `com_preempts`/`com_arm_preempts` are structurally zero in production; the 8–9 µs satellite attribution is not a measurement | **CONFIRMED, with a factual correction** — they are *not* zero in every capture in the tree, and the nonzero ones carry real information the brief discards |
+| P9 | the chain spend distribution is from low-duty, deep-filter captures and may not be representative | **CONFIRMED in fact, wrong in two details, and wrong about the direction of the bias** |
+| P10 | a new "trough arms" counter is the next test | **UNSUPPORTED** — a cheaper instrument already exists (mark the counters at the hold, as `unstable_at_hold` already is), the proposed counter's power is weak, and the decision the brief frames has a fourth option it never names |
+
+---
+
+## 0. What the arithmetic actually is
+
+`src/commutation.rs:253` and `:260`:
+
+    advance_of(ci, L) = { L = min(L,64); (ci>>6)*L + (((ci&63)*L)>>6) }
+    wait_time(ci, L)  = (ci>>1).saturating_sub(advance_of(ci, L))
+
+Recomputed independently:
+
+| ci | `advance_of(ci,22)` | `wait22` | `wait20` |
+|---|---|---|---|
+| 40 | 13 | **7** | 8 |
+| 47 | 16 | **7** | 9 |
+| 50 | 17 | **8** | 10 |
+| 54 | 18 | **9** | 11 |
+| 55 | 18 | **9** | 10 |
+| 59 | 20 | **9** | 11 |
+| 62 | 21 | **10** | 12 |
+| 70 | 24 | **11** | 14 |
+| 71 | 24 | **11** | 13 |
+| 72 | 24 | **12** | 14 |
+
+So `wait22(59) = 9`, `wait22(71) = 11`, `wait20(59) = 11` — all three brief
+figures reproduce.
+
+**The brief's "first reaches 9" framing is wrong.** `wait22` is not monotone in
+`ci`: floor-quantisation makes it 9 at ci = 52, 54, 55, 56, 57 and 59, and
+**10** at ci = 53 and 58. The first ci at which `wait22` reaches 9 is **52, not
+59**. What is true, and is what the trough argument actually needs, is that
+**59 is the largest ci with `wait22 <= 9`** (the full set at ci ≤ 80 is
+{1..57, 59}). Anyone re-deriving "ci < 60" from a monotone reading will get the
+right boundary for the wrong reason, and will include ci 58 (wait 10) in the
+trough.
+
+`wait22(ci) ≈ 0.15625·ci` exactly as P6 says: `1/2 − 22/64 = 0.15625`.
+
+**Advance 20.** The trough boundary does move from 59 to 49 (largest ci with
+`wait20 <= 9` is 49). But the brief's "`wait20(ci) > wait22(ci)` for **every**
+ci" is **false**: it fails at 17 values — ci ∈ {0,1,2,4,5,7,8,10,11,13,14,16,
+17,20,23,26,29}, where the two are equal. All are ci ≤ 29, i.e. outside any
+reachable regime, so the claim is true where it matters and should be stated
+that way.
+
+**Depth.** The brief gives `depth = 3 + ((2*ci − 100)*1475 >> 16)`. The real
+policy is `DET_FILTER = FromMicros(WithShallowFloor(MappedFilter))`
+(`src/run/policy.rs:235`, `src/bemf.rs:64-120`): the same map, but with a
+shallow floor of 2 below 50 half-µs and clamps at 3 and 12. Over the ci range
+in play the brief's formula is right; depth(59) = 3, depth(79) = 4.
+
+### The `left == 0` latch condition
+
+- `src/roots.rs:470-471` — `spent = clock::raw() − raw`; `left = wait.saturating_sub(spent)`.
+- `src/roots.rs:399` `note_margin(left)` — doc comment states the contract
+  outright: *"a late arm is exactly `left == 0`"*; `thin` counts `left <= 2`
+  (`roots.rs:408-411`).
+- `src/run/states.rs:265` — `if closed && hal.late_arms() != 0 { return Err(Reason::LateArm) }`.
+- `src/protection.rs:64` — `LateArm = 15`.
+
+The clock is TIM17, PSC 63, ARR 0xFFFF, i.e. **1 MHz / 16-bit**
+(`src/hw/timers.rs:112-122`), so `spent` is in whole microseconds. Confirmed.
+
+**One thing the brief never says, and it is the most consequential fact in the
+file.** On a latch the firmware calls `arm_marked::<C>(left.max(1))`
+(`roots.rs:472`) / `com_arm(left.max(1), 1)` (`roots.rs:543`). So when
+`left == 0` the one-shot is loaded with **1 µs** and the commutation fires at
+`edge + spent + 1 = edge + 10 µs` instead of the requested `edge + 9 µs`. At
+ci = 59 µs per 60 electrical degrees, that is a **~1 µs / ~1 electrical degree**
+timing error on **one** commutation. `Reason::LateArm` then terminates the
+entire run. `src/protection.rs:48-63` justifies the stop on a *process* ground
+— *"A counter nobody stops on is a counter nobody checks, so it is a stop"* —
+not a physical one. The protection is orders of magnitude more severe than the
+defect it detects, and that belongs in any discussion of what to fix.
+
+---
+
+## 1. P1 — `closed_ms − hold_ms = 22500`: CONFIRMED
+
+`hold_start` is set at `src/run/states.rs:930-931`, on the first pass where the
+**applied** duty reaches target:
+
+    if c.hold_start.is_none() && duty >= c.req.target_tenths { c.hold_start = Some(now); ... }
+
+`duty` comes from `ramp::duty_at(target, now − closed_at)` through
+`governor.clamp`. `src/ramp.rs:15-47`: `START_TENTHS = 100`,
+`STEP_TENTHS = 10`, `STEP_US = 500_000`, and
+`ramp_us(550) = ceil(450/10) × 500_000 = 45 × 500_000 = 22_500_000 µs`
+= **22500 ms**. Recomputed, exact. `closed_us` and `hold_us` are both measured
+to the same `stopped_at` (`src/run/mod.rs:327-328`), so their difference is
+exactly the time from loop closure to hold start.
+
+I re-extracted the difference from every capture myself: **22500 in all 14
+non-e315 rung-550 runs**, and 22360 in e315 (= its `closed_ms`, because
+`hold_ms = 0`). The brief's claim reproduces. e315 therefore latched **140 ms
+before** the hold window would have opened. P1's reading is correct.
+
+Two additions the brief should carry:
+
+1. The 22500 is not merely a constant, it is a **gate that passed**. Because
+   `hold_start` waits on the *applied, governor-clamped* duty, any duty
+   foldback would have pushed the difference above 22500. It is 22500 to the
+   millisecond in all 14 runs, which is independent evidence of **no
+   foldback** — directly relevant to the campaign rule quoted at the end of
+   the brief.
+2. P1 defends against one reading of "anomalous" and not the other. e315 is
+   the shortest-lived run in the corpus (189,511 accepted arms, next shortest
+   232,634). I tested that properly: pooling the other 14 runs as exposure
+   gives a per-arm latch hazard of 7.5e-7, under which P(e315 latches inside
+   its own 189,511 arms) = **0.133**. So e315's early death is **not**
+   statistically anomalous — but that is an arithmetic result the brief does
+   not do, and P1 as written does not establish it.
+
+---
+
+## 2. P2 — `left = 0` exactly: CONFIRMED, and stronger than the brief argues
+
+`wait22(59) = 9` (recomputed above). `spent_at_late = 9` (read directly from
+`captures/2026-09-25/e315-550-why_01.txt`, line `BEMFRCOMP`). `left = 9 − 9 = 0`.
+
+The brief understates its own case. The two numbers are guaranteed to be the
+*same* `average_interval`, not merely consistent ones. In
+`src/bemf.rs:413-421`, `offer` blends **first** and then computes the wait from
+the blended value:
+
+    self.average_interval = self.clamp_interval(blend_interval(...));   // :415
+    let wait = wait_time(self.average_interval, advance_level);         // :417
+
+and `ci_at_late` stores `zc.average_interval()` (`roots.rs:483`) / the `avg`
+handed in (`roots.rs:558`) — the post-blend value, the same one `wait` was
+derived from. So `wait = wait_time(ci_at_late, 22)` is an **identity**, not a
+fit, and `wait22(59) = 9 = spent` closes with zero slack. P2 is confirmed with
+no free parameter, as claimed.
+
+(Aside, for completeness: the *filter depth* on that arm was computed from the
+**pre**-blend interval, `src/bemf.rs:401`, so depth was not necessarily
+depth(59). It does not matter — see §7 — but a depth argument keyed to
+`ci_at_late` would be off by one blend.)
+
+### Can the capture perturb what it measures? No — by control flow, not by luck
+
+`det_decide_plain` (`roots.rs:470-486`), in order:
+
+    470  spent   = clock::raw() − raw        <-- the measurement
+    471  left    = wait − spent
+    472  arm_marked(left.max(1))             <-- the arm
+    473  note_margin(left)
+    474  beat_row(...)                       <-- folds to None in production
+    475  if left == 0 { late_arms++;  if n == 0 { ci_at_late; spent_at_late } }
+
+The twin, `accept` (`roots.rs:541-562`), has the same property with the capture
+at `:557-559`, after `com_arm` at `:543`.
+
+`spent` is sampled **before** the arm and **before** the capture stores, and
+the capture block is guarded by `left == 0 && n == 0`, so it executes at most
+once per run and never on the path that produces the number. **The new
+instrument provably cannot inflate `spent_at_late`.** That is a control-flow
+guarantee and it is the right answer to the question.
+
+But there is a residual the brief does not mention, and a reviewer should see
+it. The brief's `728 -> 760` instruction growth reproduces **exactly**:
+`scripts/insn_ratchet.py` on `captures/elf/0F890AF2.e314-whylate-adv22.elf`
+reports `ADC_COMP 760, div 0, mul 4, irq 9`, and on the predecessor
+`captures/elf/7D3B70F0.e303-nodiv-adv22.elf` it reports `728 (−32)` with
+identical hazard classes. Confirmed, including "hazard classes unchanged".
+However `scripts/spent_compose.py`, the tree's own static cost model, puts the
+longest entry→arm path at **398 cycles (6.22 µs) at 2 WS on 7D3B70F0 and 431
+cycles (6.73 µs) on 0F890AF2** at depth 3 — **+33 cycles, +0.51 µs, +18
+instructions on the path**. The source ordering says the added code is not on
+that path, so the growth is either arm-side or codegen reshuffling (the line
+attribution changes wholesale between the two ELFs — `roots.rs:980`,
+`commutation.rs:52/261` appear in one and not the other, which is inlining
+churn, and the two images differ by more than the capture). I cannot attribute
+the +0.51 µs to the capture, and I cannot attribute it away either. It is
+**unexplained, it is the size of the effect under discussion, and the brief
+does not mention it.** If any future argument turns on `spent` being
+comparable across these two images, this has to be closed first.
+
+---
+
+## 3. P3 — the ci-71/72 hypothesis: CONFIRMED for the event, but the brief
+## overstates what the new measurement was needed for
+
+The latch is measured at ci 59, spend 9. That is not ci 71–72, so the specific
+boundary story is refuted for this event. Agreed.
+
+Two corrections.
+
+**The prior hypothesis's own arithmetic was half wrong**, and the brief repeats
+it: `wait22(71) = 11` but `wait22(72) = **12**`. "ci 71–72, where wait22 = 11"
+is only true of 71.
+
+**The refutation did not require the new counter.** I re-extracted `ci@stop`
+for every latching run in the corpus: 40, 55, 59, 62, 54, 47, 50 (prior) and 59
+(e315). **No LateArm run in the tree has ever stopped with ci above 62.** If
+`ci_us`-at-stop is readable at all — which is exactly what P4 asserts — the
+71/72 hypothesis was already dead in the seven prior captures. The new
+measurement is valuable because it pins `spent` at the latch, which nothing
+else does; framing it as the thing that killed the ci-71/72 story oversells it.
+
+---
+
+## 4. P4 — `ci_at_late == ci_us` as a validation: UNSUPPORTED as stated
+
+This is the one proposition that is an **inference presented as a reading**.
+
+What the source says. `ci_us` in `BEMFDONE` is
+`io.det_average().unwrap_or(ctx.last_ci)` (`src/run/mod.rs:320`), which is
+`roots::det_average_interval()` (`roots.rs:299-304`) — a **live read of the
+estimator, taken in the foreground during report construction, after the
+latch, after `safe_off`**. `ci_at_late` is the in-ISR value at the latch.
+They are different reads at different instants of a mutating value.
+
+How far apart can they be? The latch is detected on the next foreground pass
+(`states.rs:265`). e315 ran 937,565 closed iterations in 22,360 ms = 42 kHz, so
+~24 µs of detection latency against a ~59 µs interval: **zero to one further
+accepted crossing** can land in between, plus whatever lands during shutdown
+while `det.active` is still set. `blend_interval`
+(`src/commutation.rs:292-295`) is a heavy smoother, `(ci + (last+this)/2)/2`,
+so one crossing moves the estimate by at most a few µs. So agreement is
+*likely* — and in e315 it is exact — but this is **n = 1**, and one agreement
+does not validate an instrument across three different firmware images
+(0D8E3799, 7D3B70F0, C2DA171A) whose codegen and hence loop rate differ.
+
+Corroboration the brief omits, which is better evidence than what it cites:
+in **three of the seven prior latching runs** `ci@stop` equals `ci_min_us`
+**exactly** — e305-550-noring-2 (40/40), e308-550-new-1 (47/47), e308-550-old-1
+(50/50). Since `ci_min_p1` is a running minimum updated at every acceptance
+including the latching one (`roots.rs:401-405`), `ci_min <= ci_at_late` always;
+equality means the latch happened at the run's minimum interval. That is three
+independent internal consistency checks pointing the same way, and it is real
+support. It is not the support P4 claims.
+
+Note also that e315 itself is a **counterexample to the tempting stronger
+reading**: `ci_at_late = 59` but `ci_min_us = 54`. The estimator reached 54
+(`wait22(54) = 9`, the same wait) repeatedly during the run **without
+latching**, and then latched at 59. Reaching the trough is not sufficient.
+That is a genuine and useful datum and it is in the brief's own capture.
+
+**Verdict: UNSUPPORTED as a validation; SUPPORTED as a plausibility argument.**
+State it as the latter.
+
+---
+
+## 5. P5 — `ci_min` clean vs latching: CONFIRMED, with a named test
+
+I re-extracted `ci_min_us` myself rather than reading the brief's column.
+
+- clean (reason 2, n = 5): 51, 50, 49, 43, 51 → median 50, range 43–51
+- latching (reason 15, n = 8): 40, 49, 53, 53, 49, 47, 50, 54 → median 49.5, range 40–54
+
+(Both sets reproduce the brief exactly. reason 26 = 42 and reason 9 = 54 are
+neither group.)
+
+**Exact two-sided Mann-Whitney (full permutation over all C(13,5) = 1287
+splits): U = 18.5 of 40, p = 0.866.** Permutation test on the difference of
+means (0.575 µs): p = 0.844.
+
+Per the campaign's own rule about predeclaring a falsification bar, here is the
+power statement: with n = 5 and n = 8 the **minimum attainable two-sided
+p is 2/1287 = 0.0016**, reached only at complete separation. So the design
+*could* have detected a clean shift and did not come close. p = 0.866 means "no
+evidence of a difference", and the sample is small enough that a modest shift
+would also have gone undetected — but the strong version ("`ci_min` is the
+discriminator") is refuted.
+
+**A confound that strengthens P5 and that the brief does not state.** `ci_min`
+is a whole-run minimum, and the clean runs are systematically **longer** (median
+74,776 ms / 920,739 arms vs 40,714 ms / 444,850 arms; Mann-Whitney on exposure
+p = 0.010). A minimum over more samples is biased **downward**. So the
+comparison is biased in the clean runs' favour and they still do not sit lower.
+P5 is confirmed, and the exposure bias makes it a slightly stronger result than
+the brief claims.
+
+**The same confound is a trap for any replacement metric.** See §10.
+
+---
+
+## 6. P6 — the trough: PARTLY CONFIRMED; the framing is wrong in one important way
+
+Confirmed:
+
+- The trough exists. `wait22 <= 9` for ci ≤ 57 and ci = 59 (not monotone; 58 is 10).
+- **Every run in the corpus visits it.** All 15 rung-550 runs have
+  `ci_min_us` ∈ [40, 54], every one of which sits at `wait22 <= 9`. That is a
+  direct reading, not an inference.
+- Clean runs visit it *deeper* than some latching runs (`ci_min` 43 in
+  e308-550-new-3, `wait22(43) = 7`, no latch) — so the trough is not lethal on
+  contact, which is the observation P6 is built on.
+
+Refuted / misframed:
+
+**The trough is a rare excursion, not a region the rotor operates in, and the
+already-captured data says so.** `BEMFRATE` gives
+`mean_ci_us = hold_ci_sum / hold_accepted` over the hold window. I read it from
+every run: **71 or 72 µs in all 14 rung-550 runs with a hold window** (69 µs at
+rung 575). `wait22(71) = 11`, `wait22(72) = 12`. So the operating point is
+`wait = 11–12`, and ci ≤ 59 is an excursion.
+
+How rare? A consistency calculation from data already in the tree, no new
+firmware:
+
+- Measured spend distribution (§9): P(S ≥ 9) = 0.030, P(S ≥ 10) = 1.5e-4, P(S ≥ 11) = 0.
+- Measured `thin_count` (arms with `left <= 2`) at rung 550: 370/189,511 to 4,560/751,156, i.e. 1e-3 to 6e-3.
+- Measured per-arm latch hazard, pooled over all 15 runs by survival exposure: **8.4e-7 per accepted arm** (8 events in 9,495,893 arms).
+
+With the operating wait at 11–12, an arm is *thin* when S ≥ 9 (p = 0.030) and
+*latches* only when S ≥ W. Since S never exceeded 10 in 20,478 measured arms, a
+latch essentially requires **W = 9**, i.e. ci ∈ {52..57, 59}. Then
+P(W = 9) ≈ hazard / P(S ≥ 9) = 8.4e-7 / 0.030 ≈ **3e-5**, and
+P(W = 11) ≈ thin_rate / P(S ≥ 9) ≈ 2e-3 / 0.030 ≈ **0.07**. Both are
+self-consistent with mean ci 71–72 and with the thin rates. So roughly **3 arms
+in 100,000 are in the trough** — about 6 arms in e315's whole run and about 28
+in a clean run.
+
+That reframes P6's conclusion. "The clean/latching difference must therefore be
+DWELL in the trough (or arrival of a costly arm during it)" is a **false
+dichotomy with the answer hidden inside the parenthesis**. With ~6–28 trough
+arms per run and P(S ≥ 9) = 0.03 per trough arm, a latch is a **coin-flip-rare
+coincidence on a handful of arms**. Under a constant hazard the clean runs had
+a 50–60% chance of latching too and simply did not. That is *not* "dwell
+differs"; it is "the event is rare and the sample is tiny", and it is the
+hypothesis P6 never lists.
+
+I tested for a run-level factor anyway, and there is a hint but no significance:
+
+| image (elf_crc32) | runs | exposure (arms) | latches | hazard / arm |
+|---|---|---|---|---|
+| 0D8E3799 | 6 | 3,787,283 | 1 | 2.6e-7 |
+| 7D3B70F0 | 5 | 4,018,899 | 3 | 7.5e-7 |
+| C2DA171A ("ring") | 3 | 1,500,200 | 3 | 2.0e-6 |
+| 0F890AF2 (e315) | 1 | 189,511 | 1 | 5.3e-6 |
+
+Binomial test, ring's share of the 8 latches against its share of exposure:
+one-sided **p = 0.119**. Not significant. But the ring image *does* separate
+completely on `thin_count` rate — 3,488 / 5,080 / 6,071 per 1e6 versus
+928–2,201 for every other image in the corpus — which is a clean 2–3× image
+signature and is worth knowing whatever it means.
+
+---
+
+## 7. P7 — `spent_max_us` unusable: CONCLUSION CONFIRMED, REASON REFUTED
+
+The conclusion is right, and the source says so itself. `note_margin`'s doc
+comment, `src/roots.rs:393-397`:
+
+> `spent_max_us` cannot answer this question: it is a saturated whole-run
+> maximum that reads 11 µs in 490 captures, including every run that ever
+> latched a late arm.
+
+I verified the reading, not the comment: `spent_max_us = 11` in **all 15**
+rung-550 captures, clean and latching alike. Confirmed.
+
+**But P7's stated mechanism — "filter depth (hence spend) scales with ci" — is
+refuted by two independent measurements in this tree.**
+
+1. *Static.* `scripts/spent_compose.py` costs the filter's back-edge at
+   **16 cycles per trip = 0.25 µs** (`captures/analysis/e217_spent_composition.txt`,
+   "loop ix 341..352, 16 cy/trip"). Across the entire legal depth range 3..12
+   that is **2.25 µs total**, and depth 3 vs depth 4 — the difference between
+   rung 550 and the chain captures — is **0.25 µs**.
+2. *Measured.* I re-derived the spend distribution **conditioned on wait** from
+   the chain rings (and hence on ci, since `wait` is a deterministic function
+   of ci; see §9). Mean spend is flat at **5.8–6.4 µs across waits 11 through
+   28**, i.e. across depths 4 through 7, and P(S ≥ 9) is flat at 0.02–0.05:
+
+| wait | n | mean spend | mode | max | P(S≥9) |
+|---|---|---|---|---|---|
+| 12 | 2900 | 6.05 | 6 | 9 | 0.033 |
+| 13 | 7267 | 6.02 | 6 | 9 | 0.029 |
+| 16 | 5400 | 6.05 | 6 | 9 | 0.028 |
+| 26 | 918 | 6.38 | 6 | 10 | 0.050 |
+| 27 | 347 | 6.38 | 6 | 10 | 0.040 |
+
+So spend does **not** scale with ci in any way that matters. P7 should rest on
+the two arguments that survive — it is a whole-run saturating maximum, and it
+reads identically in clean and latching runs — and drop the depth argument,
+which is not only unsupported but contradicted by the tree's own instrument.
+
+**A companion field the brief misses, with the same defect.**
+`comp_call_max_us` (`roots.rs:1316-1320`) is the whole-root entry→exit maximum
+and reads **exactly 16 in all 15 rung-550 captures**. It is *not* clipped by the
+overrun gate — `rate::HANDLER_BUDGET_US = 50` (`src/rate.rs:49`) — so 16 µs is a
+genuine converged maximum, a full **9–10 µs above** the static entry→arm path
+of 6.2–6.7 µs. It carries exactly the ci-blind-saturated-max defect P7
+describes and it is the only field in the report that bounds the *whole* root.
+It should be named alongside `spent_max_us` in any future margin argument, and
+disqualified on the same grounds.
+
+---
+
+## 8. P8 — preemption counters: CONFIRMED, with a factual correction the brief
+## should not have made
+
+**The gate is real.** `count_preempt` (`src/roots.rs:1065-1068`, **not** 1064):
+
+    fn count_preempt<C: ChainLog>() -> bool {
+        if !C::ON { return false; }
+        ...
+    }
+
+Production instantiates `NoChain` (`C::ON == false`), so both
+`S.com().preempts` and `S.com().arm_preempts` are never touched and
+`com_preempts = com_arm_preempts = 0` is a compile-time consequence, not a
+measurement. Confirmed.
+
+**But "structurally ZERO in every production image" slides into a claim the
+tree contradicts, and the brief then discards real evidence.** I swept every
+capture in the tree:
+
+    com_preempts=0        424 captures
+    com_preempts=29913    captures/chain/e168-B-comtop-475_1.txt
+    com_preempts=29686    captures/chain/e168-B-comtop-475_2.txt
+    com_preempts=33133    captures/chain/e170-B-comtop-475_1.txt
+    com_preempts=33030    captures/chain/e170-B-comtop-475_2.txt
+    com_preempts=33219    captures/chain/e170-B-comtop-475_3.txt
+    com_arm_preempts=0    425 captures (all of them, including the five above)
+
+So in the five `com-top` A/B images where the counter **is** instrumented, COM
+preempted COMP ~30,000 times per run — and `com_arm_preempts` was **zero in
+every one of them**. That is a real, non-vacuous negative: **the arm-window
+hazard has never been observed to fire in ~157,000 counted preemptions**. The
+brief throws that away by treating all zeros as structural. It is the only
+direct measurement of preemption-inside-the-arm anywhere in the tree and it
+bears on the mechanism.
+
+**The satellite attribution.** Confirmed as an inference, not a measurement,
+and the brief is right to flag it. The rate facts are as stated:
+`Guard::NVIC = 0x00` and `Motor::NVIC = 0x40` (`src/shared.rs:67,73`), the
+guard root is `TIM6_DAC_LPTIM1` at `GUARD_IRQ_PRIORITY` (`roots.rs:716,820`),
+and TIM6 runs at **9901 Hz** (`src/hw/timers.rs:191`). Nothing in the tree
+counts guard-root entries that occurred inside COMP.
+
+I will add a quantitative objection the brief does not make, because it cuts
+against the hypothesis rather than for it. The guard root is ~140–155
+instructions; a coincidence-of-rates estimate with a ~4 µs handler over COMP's
+~6.5 µs pre-arm window gives an overlap probability of roughly
+9901 × 10.5e-6 ≈ **10%**, against an observed 8–9 µs satellite of **6.5%** —
+the right order, as claimed. **But a full guard-root preemption should displace
+spend by the guard root's whole duration (~4 µs), taking 6 µs to ~10 µs, not to
+8–9 µs.** A partial overlap can produce any value in 0..4 µs, so the hypothesis
+is *compatible* with the satellite but makes no prediction the satellite could
+have violated. It is unfalsifiable as posed. If it is to be tested, it needs a
+counter, and the counter is cheap: a `Guard`-class entry that observes
+`S.det().in_decide` — the mechanism `count_preempt` already implements for COM
+— would measure it directly.
+
+---
+
+## 9. P9 — the chain spend distribution: CONFIRMED in fact, wrong in two details,
+## and wrong about the direction of the bias
+
+I ran `scripts/chain_spent.py` myself (its output is also archived verbatim at
+`captures/analysis/e234_chain_spent.txt`).
+
+**What it reads.** `captures/chain/*.txt` by default, **legacy 6-column
+`CHAIN 1` rows only** — it explicitly `continue`s on `d['fine']`, so every
+post-E180 fine-stamp capture is skipped. 24 captures, 20,478 arms.
+
+**The distribution reproduces exactly:** spend 5 (13.8%), 6 (77.2%), 7 (2.5%),
+8 (3.5%), 9 (3.0%), 10 (0.015%); **mode 6, max 10, never 11**. Confirmed.
+
+**Detail 1 — the duty range is wrong.** The brief says "≤ 42.5% duty". The
+actual set is `target_duty_tenths` ∈ {250, 375, 400, 425, 450, **475**}, i.e.
+up to **47.5%**, and 14 of the 24 captures are at 475. Reconstructing ci from
+each capture's modal wait puts them at ci ≈ 78–85 (475), 98–105 (375) and
+134–141 (250), i.e. depths **4, 5 and 6–7**.
+
+**Detail 2 — "may not be ci-resolved" is wrong; it *is* wait-resolved, and the
+script already parses the field.** `parse()` returns `(wait, spent, step)` per
+arm, and `wait` is a deterministic function of ci and level, so conditioning on
+`wait` conditions on ci (one-to-many, but in exactly the direction the argument
+needs). I did that conditioning in §7. The per-arm joint distribution is
+sitting in the rings and has never been used; the script only ever prints
+per-capture modes and a pooled marginal.
+
+**The bias runs the other way.** P9's worry is that the chain captures have
+"DEEPER filter depth than rung 550's depth 3", the implication being that the
+distribution is unrepresentative in an unknown direction. Deeper filter =
+**more** work = **higher** spend, so the chain distribution is **conservative**
+for rung 550 — and, per §7, the depth term is only 0.25 µs per level and the
+measured spend is flat in wait anyway. So the representativeness objection is
+formally correct and materially weak. That should be said, because as written
+P9 leaves the reader free to discard the only per-arm spend measurement in the
+tree.
+
+**One thing I checked that could have invalidated the comparison and does
+not.** The *current* chain row records `spent_fine` from a fine stamp taken
+**after** `arm_marked` (`roots.rs:466-468` region and `chain.rs:150-166`), which
+would make it a different quantity from the production `spent`. The **legacy**
+6-column rows that `chain_spent.py` actually reads do not: at commit `2f15dfb`,
+`binz/firmware50/src/roots.rs:421-425` computes `spent` **before**
+`arm_marked` and passes that same pre-arm value into the beat. So the legacy
+`spent` column **is** the production quantity, and `left = wait − spent` as the
+script computes it **is** the firmware's `left`. The comparison is sound. This
+is worth recording because it is not obvious and it would have silently
+invalidated every use of that corpus.
+
+---
+
+## 10. P10 — the proposed next test: UNSUPPORTED
+
+### Would a "ci < 60 trough arms" counter discriminate?
+
+**Threshold.** `ci < 60` is very nearly the right cut. A latch needs `W <= S`,
+`S` never exceeded 10, and `wait22 <= 10` for ci ≤ 65 plus 67; the dominant
+contribution is `W = 9` ⇒ ci ∈ {52..57, 59}. So `ci < 60` captures the arms
+that matter, at the cost of including ci 58 (wait 10) and 52/53 asymmetrically.
+Defensible.
+
+**Power.** From §6, trough arms are ~3e-5 of accepted, so the counter would
+read about **6 in e315 and ~28 in a clean run**. Distinguishing two Poisson
+rates from counts of 6 and 28 is possible only for large ratios, and the
+comparison is contaminated by the exposure confound below. In a single run pair
+it will not settle anything; pooled over the corpus it might.
+
+**The nearest existing quantity already failed to discriminate.** `thin_count`
+counts `left <= 2` — a *tighter* and more mechanism-relevant near-miss than "ci
+in the trough", because it conditions on the spend as well as the wait. I
+tested it exactly as I tested `ci_min`:
+
+- clean (n=5): 1853, 2003, 2033, 2081, 2186 per 1e6 accepted — median 2033
+- latching (n=8): 928, 1580, 1697, 1864, 1952, 3488, 5080, 6071 — median 1908
+- exact Mann-Whitney **U = 23, p = 0.724** (attainable minimum 0.0016)
+
+So the existing near-miss counter does not discriminate either. That is not
+proof the new one won't, but it is the most relevant prior available and the
+brief does not cite it.
+
+### A confound that will bite whatever counter is added
+
+Any counter reported as a **whole-run rate** will appear to discriminate for a
+reason that has nothing to do with the mechanism: **latching runs are truncated,
+so they contain a larger fraction of the 22.5 s ramp**, where ci is long and the
+dynamics differ. I demonstrated this on a field the brief never mentions.
+`BEMFPHASE lt075` counts accepted crossings arriving before 0.75 × the previous
+interval — i.e. **the ratchet-down events themselves**, which is the closest
+thing in the capture format to P10's actual question:
+
+    lt075 per 1e6 accepted:  clean 31729..34211  |  latching 21687..32964
+    exact Mann-Whitney p = 0.0062
+
+That looks like a discovery. It is not. **Spearman rho(hold_fraction,
+lt075_rate) = 0.879** across the 15 runs: the ordering of `lt075` rate is
+almost exactly the ordering of `hold_accepted / accepted`, from e315 (hold
+fraction 0.000, rate 21687) monotonically up to e308-550-new-3 (0.819, 34211).
+Restricting to runs with hold fraction ≥ 0.55 leaves a residual p = 0.032 on
+n = 5 vs 5, with the three "ring"-image runs supplying the separation — i.e. the
+residual is plausibly the image effect from §6, not a trough effect. **`lt075`
+is an exposure/ramp-fraction proxy, not a latch predictor**, and any new
+whole-run counter will behave the same way. (By contrast
+rho(hold_fraction, thin_rate) = 0.264, which is why `thin_count`'s null result
+is meaningful and `lt075`'s positive result is not.)
+
+### The cheaper instrument that already exists
+
+**No new counter is needed to ask P10's question. What is needed is a mark.**
+The firmware already does exactly this for one field, `src/run/states.rs:939`:
+
+    c.stats.unstable_at_hold = hal.unstable_count();
+
+with the comment: *"Whole-run, the ratio mixes a 20 s ramp with a 55 s hold and
+a short run reads high for that reason alone — which is exactly how the one
+late-arm run's apparent anomaly stayed confounded."* The tree has already
+diagnosed the confound I just measured, and already has the fix pattern.
+Snapshotting `thin`, `ci_min_p1`, `lt075` and `late_arms` at the hold mark —
+four loads and four stores in the **foreground**, zero added instructions in
+`ADC_COMP`, no hazard-class risk, no ratchet event — turns four existing
+whole-run counters into hold-window counters and removes the dominant confound
+from all of them at once. That is strictly cheaper and strictly more
+informative than adding a new ISR counter and leaving it whole-run.
+
+### The decision the brief frames has a fourth option it never names
+
+P10 presents a binary: suppress the estimator ratchet (free) or raise the wait
+(costs speed). Two more options are on the table and both are in the tree:
+
+**(a) Change the latch, not the timing.** Per §0, `left == 0` means one
+commutation fired ~1 µs (~1 electrical degree) late, and the response is to
+terminate the run. Whether that is the right response is a live question that
+`src/protection.rs:48-63` answers on process grounds only. A latch threshold
+with any margin at all — or `late_arms` as a budgeted rate rather than a
+one-strike stop — costs no speed, no arithmetic and no ISR instructions.
+
+**(b) Advance 20 is already measured once, and the brief does not cite it.**
+`scripts/advance_ab.py` predeclares the bar and its two surviving captures at
+rung 500 are in the tree:
+
+| capture | advance | thin_count | ehz_from_sector | mean_ci_us | hold_ma | late_arms |
+|---|---|---|---|---|---|---|
+| `captures/2026-09-25/e303-ab-A22_1_01.txt` | 22 | **1027** | 1666 | 100 | 1776 | 0 |
+| `captures/2026-09-25/e303-ab-B20_1_01.txt` | 20 | **0** | 1650 | 101 | 1643 | 0 |
+
+Advance 20 took `thin_count` from 1027 to **zero** — far past the predeclared
+5× bar — for a **0.96%** speed cost. The script's own header names the
+methodological weakness (less advance ⇒ less torque ⇒ longer ci ⇒ thin relieved
+for free), and `mean_ci_us` moved only 100→101, so the confound is small here.
+Two caveats: the A/B planned six runs ABAB and only **two** exist in the tree
+(one per side), which is below the campaign's own "three runs a side" standard
+for a microsecond A/B; and it was run at rung **500**, not 550. An
+`advance_level=20` image exists and is archived
+(`captures/elf/15BD8D56.e314-whylate-adv20.elf`) but I found **no rung-550 or
+higher capture at advance 20 anywhere in the tree**. Finishing that A/B at 550
+is a cheaper and more decisive next step than a new counter, and it is already
+half done.
+
+---
+
+## 11. Numbers in the brief that are wrong
+
+| Brief | Actual | Severity |
+|---|---|---|
+| "the ci at which `wait22` first reaches 9" (implied 59) | **52**; `wait22` is non-monotone (58 → 10). 59 is the *largest* ci with `wait22 <= 9` | framing; the trough boundary is still 59 |
+| "ci 71–72, where `wait22 = 11`" | `wait22(71)=11`, `wait22(72)=`**12** | minor, but it is the refuted hypothesis's own arithmetic |
+| "`wait20(ci) > wait22(ci)` for every ci" | fails at 17 values, all ci ≤ 29 (equality) | true where it matters; overstated |
+| "`spent` ... stamped at ~1255" | entry stamp `raw` is at `roots.rs:`**1269**; `spent` at `:470` and `:541` | citation drift |
+| "`count_preempt` in `src/roots.rs:1064`" | `:1065` | citation drift |
+| "`com_preempts` and `com_arm_preempts` are structurally ZERO in **every** ... image" / "their zero values are not evidence" | true of production; **`com_preempts` is 29,686–33,219 in five `captures/chain/` captures**, and `com_arm_preempts = 0` in those instrumented runs **is** evidence | substantive — discards the tree's only preemption measurement |
+| "chain captures taken at ≤ **42.5%** duty" | up to **47.5%**; 14 of 24 captures are at 475 | substantive |
+| "the spend distribution ... may not be ci-resolved" | it **is** wait-resolved per arm; `chain_spent.py` parses `wait` and never uses it | substantive |
+| "DEEPER filter depth ... may not be representative" | direction unstated; deeper = costlier, so the corpus is **conservative** for 550, and depth is worth only 0.25 µs/level | substantive |
+| "filter depth (hence spend) scales with ci" (P7's reason) | **refuted**: spend is flat in wait across depths 4–7, and the static model prices a depth level at 0.25 µs | substantive |
+| `hold_ms`/`closed_ms`/`ci@stop`/`ci_min`/`thin per 1e6` corpus table (all 15 rows) | **all reproduce exactly** | — |
+| `reason=15 late_arms=1 ci_at_late=59 spent_at_late=9 ci_min_us=54 thin_count=370 accepted=189511 closed_ms=22360 hold_ms=0 ci_us=59` | **all reproduce exactly** | — |
+| `ADC_COMP 728 -> 760`, div 0 / mul 4 / irq 9 | **reproduces exactly** via `scripts/insn_ratchet.py` on the two archived ELFs | — |
+| rung 600 hold 2.87 A, worst 3.49 A; rung 575 worst 3.02 A | **reproduce** (`captures/2026-09-24/e278-prot500-i_01.txt` `hold_ma=2869 worst_ma=3490`; `captures/2026-09-25/e308-550-old-3_01.txt` `worst_ma=3022`) | — |
+
+Claims that are inferences presented as readings:
+
+1. **P4** — "This validates `ci_us`-at-stop as a faithful reading of the
+   estimate at the latch". It is a single agreement between two reads of a
+   mutating value taken at different instants in different execution contexts,
+   generalised to three other firmware images. State it as a plausibility
+   argument with the three `ci@stop == ci_min` coincidences as support.
+2. **P6** — "The clean/latching difference must therefore be DWELL in the
+   trough". "Must" does not follow; the arithmetic in §6 makes a rare
+   coincidence on ~6–28 trough arms the leading explanation, and P6 never
+   lists it.
+3. **P1** — "NOT that the run was anomalously unhealthy" is the right
+   conclusion but P1's argument does not reach it; the supporting arithmetic
+   (P = 0.133) is in §1 and was not done.
+
+## 12. Evidence in the tree the brief omits and that bears on the propositions
+
+1. **`mean_ci_us = 71–72` in the hold window of every rung-550 run**
+   (`BEMFRATE`). The single most important omission: it fixes the operating
+   wait at 11–12 and makes the trough a ~3e-5 excursion (§6). Without it, P6's
+   "every run visits it" invites the false picture of an estimator that lives
+   there.
+2. **`captures/2026-09-25/e308-550-old-3_01.txt` — rung 575, advance 22,
+   `reason=15`, and it survived 907,519 arms / 72.3 s before latching**, with
+   `mean_ci_us = 69`, `thin_count = 8411` and `ci_us = 51` at stop. The most
+   informative single capture in the tree for this mechanism: it shows the
+   `ci_us`-at-stop / `ci_min` pair being latch-selected rather than typical (51
+   at stop vs 69 mean), and it shows that a faster rung with a *higher* thin
+   rate still ran for 907k arms.
+3. **The advance-20 A/B at rung 500** (`e303-ab-A22_1` / `e303-ab-B20_1`):
+   `thin_count` 1027 → 0 for a 0.96% speed cost. Directly prices P10's
+   "costs speed" option, and it is half-finished (2 of 6 runs, wrong rung).
+4. **`com_arm_preempts = 0` in the five `com-top` captures where the counter is
+   live**, against ~157,000 counted COM-over-COMP preemptions (§8).
+5. **`comp_call_max_us = 16` in all 15 rung-550 captures**, against a 50 µs
+   overrun budget and a 6.2–6.7 µs static entry→arm path — a second
+   saturated whole-run maximum with the same defect as `spent_max_us` (§7).
+6. **`BEMFPHASE` is dead in every rung-550 run.** `acc_by_phase` is `[u16; 5]`
+   (`src/report.rs:491`) and **`to100 = 65535` and `to125 = 65535` in all 15
+   captures** — the two central bins of the arrival-phase histogram have been
+   saturated the whole campaign. Only `lt075`, `to150` and `gt150` still carry
+   information. An instrument that reports a plausible-looking constant instead
+   of failing loudly is the failure class this campaign has named before, and
+   it is the histogram that would otherwise speak most directly to the ratchet.
+7. **`lt075` is an exposure proxy** (rho = 0.879 with hold fraction, §10) — a
+   worked warning for whatever counter is added next.
+8. **Per-image latch hazard spans 8× and the "ring" image separates completely
+   on thin rate** (§6). p = 0.119 on the hazard, so not significant, but the
+   thin-rate separation is clean and unexplained.
+9. **The legacy chain `spent` column is the pre-arm production quantity**
+   (commit `2f15dfb`, `binz/firmware50/src/roots.rs:421-425`), while the
+   current fine-stamp column is post-arm. Nothing in the tree says so, and the
+   distinction decides whether the 20,478-arm corpus is usable at all (§9).
+10. **`arm_marked(left.max(1))`**: the physical consequence of a latch is a
+    ~1 µs / ~1° commutation slip, and the stop is justified on process grounds
+    (§0). This reframes the entire fix decision and appears nowhere in the
+    brief.
+
+## 13. What I would do next, on this evidence
+
+1. **Mark the existing counters at the hold** (`thin`, `ci_min_p1`, `lt075`,
+   `late_arms`), the way `unstable_at_hold` already is
+   (`src/run/states.rs:939`). Foreground only; zero `ADC_COMP` instructions;
+   removes the confound that currently makes every whole-run rate
+   uninterpretable. Do this **before** adding any counter.
+2. **Fix or widen `acc_by_phase`** — it has been saturated for the whole
+   campaign and it is the ratchet histogram.
+3. **Finish the advance A/B at rung 550, three runs a side, ABAB, one
+   session**, using the archived `15BD8D56` advance-20 image. It is the only
+   lever in the brief with a measured effect size, and it is 2/6 done at the
+   wrong rung.
+4. **Separately decide whether `left == 0` should stop the run at all**, given
+   that its physical consequence is ~1 electrical degree on one commutation.
+   That is a policy question the instrumentation cannot answer and it dominates
+   the cost of every other option.
+5. If a preemption counter is wanted, **instrument the guard root against
+   `in_decide`** — the mechanism `count_preempt` already implements for COM.
+   That converts P8's unfalsifiable coincidence-of-rates argument into a
+   measurement.
+
+---
+
+### E315 review 2 of 2 — ADVERSARIAL (verbatim)
+
+# E315 — adversarial review
+
+Reviewer context: none. I did not read the notebook narrative before
+recomputing. Every number below is recomputed from `src/`, `bin/` and
+`captures/*/*.txt`; where I quote the brief I say so.
+
+---
+
+## 0. Summary of findings, in order of how much they change the conclusion
+
+1. **The corpus has no clean/latching dichotomy to explain.** Pooled over all
+   fifteen rung-550 runs the LateArm hazard is **1 per 101.7 s of run time
+   (1 per 1.19 M arms)**, and the seven survivors are censored at 37–85 s. At
+   that hazard, `P(survive 74.8 s) = 0.48` and `P(survive 84.8 s) = 0.44`. Five
+   survivors and eight events is *exactly* what a single constant-hazard
+   population produces under this censoring. **P5 and P6 are built on a
+   difference that the data does not establish exists.** "The clean/latching
+   difference must therefore be DWELL" (P6) presupposes a difference; the
+   honest null is that there is none.
+
+2. **The decisive discriminator is already in every capture and nobody looked
+   at it: the estimate at the stop is not a speed, it is an error.** Each
+   capture carries `BEMFSELFREF coast_ehz`, an independent post-run speed
+   measurement. Converting it to a true commutation interval
+   (`1e6 / (6 · coast_ehz)`) and comparing with `ci_us` at the stop:
+
+   | run | reason | `ci@stop` | true ci (coast) | error |
+   |---|---|---|---|---|
+   | e253-550_01 | 2 | 71 | 72.0 | −1.4 % |
+   | e253-550_02 | 2 | 70 | 71.8 | −2.5 % |
+   | e305-noring-1 | 2 | 72 | 72.2 | −0.3 % |
+   | e308-new-3 | 2 | 71 | 71.6 | −0.8 % |
+   | e308-old-2 | 2 | 71 | 72.3 | −1.8 % |
+   | e258-ctrl550 | 9 (abort) | 68 | 71.8 | −5.3 % |
+   | **e253-550_03** | **26 (sag)** | **60** | **73.2** | **−18.0 %** |
+   | e305-ring-2 | 15 | 62 | 72.1 | −14.0 % |
+   | six more LateArm runs | 15 | 40–59 | 71.8–73.0 | −18 % … −45 % |
+
+   Full table in §2.1. **Perfect separation:** all five scheduled-deadline
+   stops land within 2.5 % of the truth; all eight LateArm stops are 14–45 %
+   below it; the single FastBusSag stop is 18 % below it. `ci = 59` in e315 is
+   not an operating point — the rotor was at ≈73 µs. The estimator was wrong
+   by 19 %.
+
+3. **The FastBusSag run breaks the tautology and names the mechanism.** For a
+   LateArm stop, "the estimate was low" is near-tautological (`wait ∝ ci`). For
+   `Reason::FastBusSag` it is not: nothing in the sag path reads `ci`. Yet
+   e253-550_03 stopped on a sag with the estimate 18 % low. So the estimator
+   collapse is a real, independently-observable event that exits through
+   *either* guard. **The mechanism is estimator collapse; LateArm is one of its
+   exits, not its cause.** The brief's own corpus table lists reason 26 as a
+   separate category ("fast bus sag") and thereby discards the one data point
+   that distinguishes cause from symptom.
+
+4. **`Reason::LateArm` fires on an event strictly less harmful than events the
+   firmware already tolerates in every run.** At the latch the arm is still
+   placed — `arm_marked::<C>(left.max(1))` (`src/roots.rs:472`) — so the
+   commutation fires ~1 µs after the instant the crossing asked for. Meanwhile
+   `com_late_max_us`, the *realized* COM dispatch lateness
+   (`src/roots.rs:1130-1133`), reads **5–12 µs in all fifteen runs including
+   every clean one**, and is merely reported. The firmware stops a 22-second
+   run for ≈1 µs of commutation-angle error while routinely ignoring ten times
+   that. `src/protection.rs:51-52` records that `late_arms` was non-zero in "4
+   of 588 captures, one of them a **qualifying 45 % run**" — i.e. the event is
+   empirically survivable. This is a mis-specified tripwire, and it is the
+   proximate blocker at rung 550, not the physics.
+
+5. **P10 does not discriminate and is very likely to return a null whose
+   interpretation is pre-committed.** Details in §7. Its fatal defect is that
+   it is a whole-run counter compared across runs of unequal, event-censored
+   length — the exact error this campaign has already proved for
+   `unstable/accepted`, `mean_ma`, `zc_per_s` and `too_early`, all four of
+   which I show in §5.2 to be pure duration artifacts. e315 latched **during
+   the ramp**, 140 ms before the hold window; its trough-arm count would cover
+   ramp arms only.
+
+6. **60 % is not reachable on this bench and the timing work is not on the
+   critical path.** §8.
+
+---
+
+## 1. Causality: is P2 evidence, or a restatement?
+
+### 1.1 The arithmetic checks out
+
+`src/commutation.rs:253-263`:
+
+```
+advance_of(ci,L) = (ci>>6)*min(L,64) + (((ci&63)*min(L,64))>>6)
+wait_time(ci,L)  = (ci>>1).saturating_sub(advance_of(ci,L))
+```
+
+`wait_time(59,22)`: `59>>1 = 29`; `advance = (59·22)>>6 = 1298>>6 = 20`;
+`29 − 20 = 9`. Confirmed. `spent_at_late = 9`, so `left = 0`. `wait` is what
+the estimator returns (`src/bemf.rs:417`), and `ci_at_late` is
+`zc.average_interval()` read *after* the blend (`src/bemf.rs:415`,
+`src/roots.rs:483`) — i.e. the same value `wait` was computed from. The two
+numbers are mutually consistent. Good instrument placement; no complaint there.
+
+### 1.2 What is tautological
+
+`left = wait.saturating_sub(spent)`; `left == 0` **iff** `spent ≥ wait`.
+Therefore *any* latch, by construction, satisfies `left == 0` and
+`spent ≥ wait_time(ci_at_late, 22)`. The claim that the arithmetic "closes" is
+the claim that a subtraction is consistent with its own operands. It is
+guaranteed in advance. The brief's phrase "**fully explained with no free
+parameter**" is false in the strict sense: the free parameter is
+`spent = 9` — *why was this arm 3 µs above the modal 6?* — and it has simply
+been moved from the conclusion into the premise.
+
+### 1.3 What is actually learned (three things, all worth having)
+
+- **The inequality is tight.** `spent = wait` exactly rather than `spent ≫ wait`
+  rules out a gross overrun, a hang, an interrupt storm or a runaway filter
+  loop. Had `spent` come back 30 or 60 the mechanism would be entirely
+  different. This is real information and the brief undersells it.
+- **`spent = 9` is inside the already-measured support.** Over the 20 478 valid
+  chain arms (recomputed in §5.1: `{5:2819, 6:15813, 7:520, 8:717, 9:606,
+  10:3}`), 9 µs occurs at 3.0 %. No new cost mechanism is needed.
+- **P3 is sustained.** The latch happened at `wait = 9`, not at the nominal
+  `wait = 11–12` (`wait22(71) = 11`, `wait22(72) = 12`, recomputed). The
+  boundary-at-nominal hypothesis is dead. P3 is the brief's one unambiguously
+  correct proposition, and the one that cost the least to establish.
+
+### 1.4 The measurement is *maximally* uninformative about attribution
+
+Nominal at rung 550 is `ci ≈ 72` → `wait22 = 12`. Modal spend is 6. So the
+nominal margin is `12 − 6 = 6 µs`. At the latch:
+
+- `wait` fell 12 → 9: **−3 µs** contributed by the estimate.
+- `spent` rose 6 → 9: **+3 µs** contributed by the handler.
+
+The two contributions are **exactly equal**. A single observation that splits
+the deficit 50/50 between the two candidate causes is the *least* informative
+observation available on the attribution question. The author read it as
+decisive for the estimator side. It is not decisive for either.
+
+### 1.5 The "exactness" is one quantum wide
+
+`hw::clock::raw()` is TIM17, **1 MHz, 16-bit** (`src/hw/timers.rs:91,112,120`).
+`spent = raw_now − raw_entry` on integer counts, so the true elapsed time lies
+in roughly `(spent−1, spent+1)` µs. The "exact identity `wait = spent = 9`"
+is therefore an equality **within ±1 µs, which is 11 % of the quantity**. The
+word "exact" should not appear in this argument.
+
+---
+
+## 2. Alternatives
+
+### 2.1 Estimator collapse as *the* mechanism, with two exits — ADOPT
+
+Full table, `true_ci = 1e6/(6·coast_ehz)` from each capture's own
+`BEMFSELFREF coast_ehz`:
+
+```
+run              rsn ci@stop ci_min coast_ehz true_ci   err%  w22(stop) w22(ci_min) w20(ci_min)
+e253-550_01        2     71     51     2315     72.0   -1.4      11          8          10
+e253-550_02        2     70     50     2322     71.8   -2.5      11          8          10
+e253-550_03       26     60     42     2278     73.2  -18.0      10          7           8
+e258-ctrl550       9     68     54     2321     71.8   -5.3      11          9          11
+e305-noring-1      2     72     49     2307     72.2   -0.3      12          8           9
+e305-noring-2     15     40     40     2284     73.0  -45.2       7          7           8
+e305-noring-3     15     55     49     2320     71.8  -23.4       9          8           9
+e305-ring-1       15     59     53     2317     71.9  -18.0       9          8          10
+e305-ring-2       15     62     53     2311     72.1  -14.0      10          8          10
+e305-ring-3       15     54     49     2308     72.2  -25.2       9          8           9
+e308-new-1        15     47     47     2319     71.9  -34.6       7          7           9
+e308-new-3         2     71     43     2328     71.6   -0.8      11          7           8
+e308-old-1        15     50     50     2316     72.0  -30.5       8          8          10
+e308-old-2         2     71     51     2305     72.3   -1.8      11          8          10
+e315-why          15     59     54     2285     72.9  -19.1       9          9          11
+```
+
+Cut at 6 %: nine stops are ≥14 % low, five are ≤5.3 % low, zero overlap. Under
+the null of no association, a perfect 3-vs-12 split has
+`p = 1/C(12,3) = 1/220 = 0.0045`.
+
+**The honest caveat, stated before the conclusion:** `ci@stop` in a
+deadline-stop run is sampled at an arbitrary steady instant, whereas in a
+LateArm run it is sampled at the failure. The comparison therefore conditions
+on the outcome, and for LateArm it is close to tautological. What is *not*
+tautological is **e253-550_03**: it stopped on `Reason::FastBusSag`, whose path
+(`BUS_FLOOR_NUM = 963` per mille, three-scan streak) never reads `ci`, and its
+estimate was 18 % low. And `ci_min` in the deadline runs is 43–51, so the
+survivors do ratchet — they were simply not sampled there.
+
+**Mechanism, source-grounded.** The blanking gate is self-referential:
+
+```
+src/bemf.rs:395-399    if count <= self.blanking() { too_early; return }
+src/bemf.rs:349-354    blanking() == average_interval >> 1
+src/bemf.rs:415        average_interval = clamp(blend_interval(avg, prev_zc, last_zc))
+src/commutation.rs:289 blend_interval(ci,a,b) = (ci + ((a+b)>>1)) >> 1
+```
+
+The admission threshold is half the current estimate. Accept one short `count`
+and the estimate falls; the gate falls with it; an even shorter edge is now
+admissible. **Positive feedback.** A second feedback path compounds it: the
+persistence depth is scheduled *on the same estimate* and gets **shallower as
+the estimate falls** — `mapped_filter_level` gives depth 3 for `ci ≤ 72`, and
+`WithShallowFloor` drops it to **2** once `ci < 50` (`src/bemf.rs:108-120`). So
+the deeper the collapse, the weaker the noise rejection that would arrest it.
+
+The smoking gun is in the brief's own hint. `ZeroCross::new_bounded(seed_us,
+SECTOR_FLOOR_US, …)` (`src/run/policy.rs:286`) clamps the estimate at
+`SECTOR_FLOOR_US = 40` (`src/run/policy.rs:82`). **e305-550-noring-2 latched at
+`ci = 40` with `ci_min = 40` — the estimator ran to its lower clamp.** That is
+not a rotor visiting a trough; that is a divergent loop hitting a rail.
+
+Enabling condition: at rung 550 the depth is at its **minimum** (3), while
+e315 reports `unstable = 472 471` against `accepted = 189 511` — the comparator
+line is being rejected 2.5 times per acceptance. Three consecutive live reads
+at the expected level is a weak gate against PWM-synchronous noise at 55 %
+duty. The filter is scheduled backwards for this purpose: deep where the
+margin is large, shallow where the loop is least stable.
+
+**This alternative fits the whole corpus, including the sag run, and the brief
+never raises it.**
+
+### 2.2 The ratchet as a *consequence* of a missed commutation — cannot be separated at n=1, and matters
+
+If a commutation lands late (`com_late_max_us` is 5–12 µs in every run) or an
+edge is missed, the next `count` is measured from a displaced
+`sector_start_raw` and is short, which blends the estimate down. So
+"late/missed commutation → ratchet" and "ratchet → late arm" are the same two
+variables in the opposite order. **e315's single datum cannot order them**: it
+records the state at the latch, not the sequence into it. The notebook's own
+E305 heading ("I still have no sequence") concedes this, and P2 then claims the
+mechanism anyway.
+
+### 2.3 Blanking-gate / `too_early` interaction — checked, and the counter points the wrong way
+
+`too_early` at the stop is 1–87 across the corpus, and it **falls with run
+length** (87, 57, 51, 43, 39 in the long runs; 1, 2, 4, 8 in the short ones),
+because the early low-speed phase dominates. It is another duration artifact
+(§5.2) and cannot be used. Worse, it is the *wrong* counter for this
+mechanism: the runaway works by the gate **admitting** short edges, which
+increments `accepted`, not `too_early`. A collapsing gate makes `too_early`
+*decrease*. There is currently **no counter that can see the runaway.**
+
+### 2.4 `blend_interval` smoothing — real, and it fixes the ratchet's sign
+
+`blend_interval` is a one-pole IIR with pole 0.5 per acceptance plus a
+two-sample pre-average. Lag on an *accelerating* rotor biases the estimate
+**high** (safe). So lag cannot produce a low estimate; only short `count`
+inputs can. That narrows the cause of the collapse to admitted short edges —
+which is §2.1 — and eliminates "the estimator just lags" as an explanation.
+
+### 2.5 `SECTOR_FLOOR_US = 40` — not an interaction, a **witness**
+
+The floor never causes anything; it records that the loop reached its rail
+(e305-noring-2). It also means `ci_min = 40` is a **censored** reading: any run
+that would have gone lower reports 40. `ci_min` is therefore not merely
+"indistinguishable" (P5) — at the bottom of its range it is **saturated**, and
+P5 draws a conclusion from a saturated statistic.
+
+### 2.6 Depth step near ci 72/73 — confirmed, and it is on the wrong side
+
+`depth = 3 + ((2·ci − 100)·1475 >> 16)` gives 3 for `ci ≤ 72` and 4 for
+`ci ≥ 73` (threshold: `2ci − 100 ≥ 45` → `ci ≥ 72.5`). **Rung 550's nominal
+`ci ≈ 72` sits one microsecond below the step.** So the whole rung runs at the
+shallowest mapped depth, and any excursion downward keeps it there until 50,
+where it drops to 2. The schedule gives this rung the least persistence it will
+ever have. That is a design finding, not a coincidence.
+
+Note also that `depth` is computed from the **pre-blend** estimate
+(`src/bemf.rs:401`) while `ci_at_late` is the **post-blend** value. The two are
+one blend apart; it does not change any number here, but a spend-vs-depth
+argument must use the pre-blend value and the brief's `depth` formula is stated
+without saying which.
+
+### 2.7 Rotor/mechanical disturbance and bus sag — not excluded, and one is implicated
+
+`bus_min / bus_ref` at rung 550 is **1096/1211 … 1126/1220 = 905–923 per
+mille**, i.e. instantaneous dips of **8–9 %** on every run, against a
+`BUS_FLOOR_NUM` of 963 per mille on the *filtered* bus with a three-scan
+streak. One run (e253-550_03) tripped it. The bench is already at its
+electrical limit at 550 (§8), so a load/supply disturbance of the size needed
+to disturb a crossing is present in every run. Cannot be excluded; and §2.1
+gives it a path into the estimator.
+
+### 2.8 "ci is driven down by the same event that kills the run" — the brief's own parenthetical is the correct reading
+
+Yes. `ci_min = 40` co-occurring with a latch at `ci = 40` is one event, not two
+facts. The brief raises this and then does not follow it.
+
+---
+
+## 3. The latch is a tripwire, not a failure
+
+- The arm is still made: `arm_marked::<C>(left.max(1))` → `com_arm(1,1)` →
+  `arr = 1` (`src/roots.rs:374-382, 978-986`). Intended firing time
+  `raw + wait = raw + 9`; actual `raw + spent + 1 = raw + 10`. **Realized
+  error: +1 µs on a 59 µs interval — about 1.0 electrical degree.**
+- Worst case is bounded: `comp_call_max_us = 16` in all fifteen runs, so the
+  worst conceivable arm lateness at `wait = 7` is 9 µs ≈ 9 electrical degrees,
+  once, self-correcting at the next crossing.
+- `com_late_max_us` = 5–12 µs in every run, clean ones included, and is only
+  reported (`src/roots.rs:1130-1133`). The firmware tolerates an order of
+  magnitude more realized lateness than the amount it stops for.
+- `src/protection.rs:51-52`: `late_arms` was non-zero in "4 of 588 captures,
+  one of them a **qualifying 45 % run**". The event has already been survived
+  in a run that passed.
+
+The stated justification — "A counter nobody stops on is a counter nobody
+checks, so it is a stop" (`src/protection.rs:53`) — is a process argument, not
+a safety argument, and it has now cost eight runs and a campaign phase.
+**The right form of this protection is a threshold on realized lateness
+(`spent − wait`) or on a rate of late arms, not `≥ 1` on a 1 µs event.**
+
+---
+
+## 4. Observer effects
+
+### 4.1 The +32 instructions
+
+`captures/insn_baseline.json` now reads `ADC_COMP.insns = 760`, `div 0`,
+`mul 4`, `irq 9`, `helper 0`, `excl 0`. The two new stores sit inside
+`if left == 0 { if n == 0 { … } }`, so their **executed** cost is zero on all
+but one arm in the run's lifetime. On instruction *count* the brief's
+reassurance is correct.
+
+**It is not correct on layout.** +32 instructions in the middle of the prio-0
+root shifts every subsequent instruction's flash address. On G071 at 64 MHz the
+flash needs wait states and the fetch path is line-based; moving the persistence
+loop and the arm sequence across line boundaries changes the executed cost of
+the *unchanged* code by a fraction of a microsecond. When the entire quantity
+under study is a 1 µs margin quantized to 1 µs, a fractional-µs layout shift is
+not negligible — it is the same order as the effect. "Hazard classes unchanged"
+answers the math audit, not the timing question.
+
+### 4.2 The corpus proves instrumentation moves the outcome
+
+Thin rate per accepted arm, by image:
+
+| image | runs | thin per 1e6 accepted | latched |
+|---|---|---|---|
+| `0D8E3799` | 6 | 928, 1849, 1882, 2003, 2033, 2186 | 1/6 |
+| `7D3B70F0` | 5 | 1580, 1697, 1853, 1864, 2081 | 2/5 |
+| **`C2DA171A`** ("ring") | 3 | **3488, 5080, 6071** | **3/3** |
+| `0F890AF2` (e315) | 1 | 1952 | 1/1 |
+
+`C2DA171A` runs **2–3× the thin rate** of the others and latched 3/3. LateArm
+hazard: ring **22.3 per 1000 s** of run time vs **7.4 per 1000 s** for
+everything else — a 3× rate ratio. Poisson test, 3 events in 134.4 s against
+the non-ring rate: `p ≈ 0.078`. Marginal, but it is the **only** factor in the
+entire corpus with any signal, it moves in the direction of arm cost, and it
+scales with the thin rate. Note `C2DA171A` is not the chain image — "ring /
+no-ring" is the `SixSlot` reverse-blank A/B (E305) — so this is a *control-path*
+change affecting timing, exactly the class "hazard classes unchanged" does not
+cover.
+
+### 4.3 The brief's implied claim about instruction-identical hot roots
+
+I could not confirm it from the capture tree. `captures/asm/` holds only
+`ADC_COMP`, `ADC_COMP.e131`, `ZeroCross_offer` and three `.e131` peers, and
+`captures/insn_baseline.json` holds a single (current) snapshot. **There is no
+per-image instruction census in the tree**, so "instruction-identical hot roots
+with materially different thin rates" cannot be checked, and should not be
+asserted in a brief that instructs the reviewer to recompute everything.
+
+What *can* be said is stronger and uses data that is in the tree: within image
+`0D8E3799` — byte-identical by definition — the thin rate ranges **928 to
+2186, a 2.4× spread**, and the run with the *lowest* thin rate in the whole
+corpus (e308-old-1, 928/1e6) **latched**. So the thin rate neither predicts the
+latch nor is determined by the image. Both legs of any thin-rate argument fail.
+
+### 4.4 Is e315 comparable to the 14 prior runs?
+
+**No, on three counts.** (a) New image, no control runs; the corpus shows a 3×
+hazard swing between images. (b) It is the only run in the corpus that latched
+**before reaching target duty** (§5.3) — a different operating point from the
+other seven latches, all of which were 2 943–59 386 ms into the hold. (c) n = 1
+against a hazard of 1 per 102 s: a 22.4 s run is a 20 % draw. e315 is a
+consistency check on two field values. It is not a comparison.
+
+---
+
+## 5. Statistics
+
+### 5.1 The chain spend distribution — recomputed, and P9 is right for the wrong reason
+
+Over `captures/chain/*.txt`, excluding the five bisect/fine files whose `spent`
+column is in fine ticks or all zeros:
+
+`{5: 2819, 6: 15813, 7: 520, 8: 717, 9: 606, 10: 3}`, **n = 20 478**. Mode 6,
+max 10, never 11. The brief's cited numbers reproduce exactly.
+
+But P9's *reason* — "≤42.5 % duty, therefore deeper filter, therefore more
+spend" — is refuted by the same data. Per-file modes: duty 250 (deepest
+filter) mode 6; duty 375 mode 6; duty 475 mode 6. `P(spent ≥ 9)` = 4.9 % at
+duty 250, 3.3 % at 375, 3.4 % at 475. **Filter depth barely moves spend**, which
+makes sense: a `hw::comp::level` read is a few cycles and the depth difference
+is single-digit reads. So the distribution is probably more representative than
+P9 allows, and the correct objection is different and much stronger:
+
+Every chain capture is at advance level 22 with duty ≤ 475, and **not one of
+the 28 chain captures is at rung 550**. The instrument that records exactly
+`(wait, spent, left)` per arm has never been aimed at the rung under study.
+That is the indictment, not the depth argument.
+
+Representativeness matters because it creates a quantitative constraint. If
+`P(spent ≥ 9) ≈ 3 %` holds at 550, then any arm at `ci ≤ 59` (`wait22 ≤ 9`)
+carries ≈3 % latch risk and any arm at `ci ≤ 43` (`wait22 = 7`) carries ≈9 %.
+Clean runs armed ~1 M times each and reached `ci_min` 43–51. For them to latch
+**zero** times, the number of arms spent below `ci ≈ 59` must be of order
+**tens per run, not thousands**. Combined with the measured hazard
+(0.53 latches per run) this closes: `≈ 30 trough arms/run × 3 % ≈ 0.9
+latches/run` against 8/15 = 0.53 observed.
+
+**So the corpus is quantitatively consistent with a model in which the ratchet
+excursion is a brief isolated event of a few tens of arms, each carrying a few
+percent latch risk, identical in every run.** No dwell difference is required
+to fit the data. That is the null P6 must beat and has not tested.
+
+### 5.2 Every aggregate in the report is duration-confounded
+
+Sorted by `closed_ms`:
+
+| run | closed s | unstable/accepted | mean_ma | zc_per_s | too_early |
+|---|---|---|---|---|---|
+| e315 | 22.4 | **2.49** | 596 | 8475 | 2 |
+| e308-old-1 | 25.4 | 2.28 | 787 | 9143 | 1 |
+| e305-ring-2 | 30.0 | 2.08 | 1015 | 9839 | 4 |
+| e258-ctrl | 37.0 | 1.81 | 1254 | 10660 | 19 |
+| e305-noring-2 | 40.5 | 1.76 | 1263 | 10911 | 8 |
+| e305-ring-1 | 63.0 | 1.54 | 1602 | 11928 | 15 |
+| e253-550_01 | 74.8 | 1.42 | 1709 | 12298 | 39 |
+| e308-new-3 | 84.8 | **1.41** | 1761 | 12476 | 87 |
+
+`unstable/accepted`, `mean_ma`, `zc_per_s` and `too_early` are **monotone in
+run length** with essentially no residual. They are all ramp-fraction
+artifacts: a short run is mostly ramp. Any of them read as a health signal is a
+reading of the clock. This is established fact in this corpus and it is the
+precedent that condemns P10 (§7).
+
+### 5.3 P1 — half right, and the wrong half is the inference
+
+`closed_ms − hold_ms = 22 500` in all fourteen non-e315 runs. `hold_start` is
+set when applied duty first reaches the target
+(`src/run/states.rs:930-931`; `hold_us` is derived from it at
+`src/run/mod.rs:328`), so the constant is a deterministic ramp duration.
+**The schedule claim is correct**: `hold_ms = 0` does not mean the run
+collapsed early in some novel way.
+
+The inference "**NOT** that the run was anomalously unhealthy" does not follow.
+e315 latched 140 ms *before* the ramp completed — the only run in the corpus to
+latch outside the hold. If the hazard is duty-dependent (the premise of the
+entire rung ladder), e315 latched at a duty at which **nothing else in the
+corpus ever latched**, which makes it the *most* anomalous latch, not a
+reassuringly ordinary one. At minimum: e315's operating point differs from the
+other seven latches, and P1 converts that difference into a claim of normality.
+
+### 5.4 What can and cannot be concluded at n = 5 clean / 8 latching
+
+Pooled over all fifteen rung-550 runs: exposure **813.9 s**, **9 495 893**
+arms, **23 197** thin arms, **8** events.
+
+- hazard **0.00983 /s**, MTTF **101.7 s**
+- **1 186 987 arms per latch**
+- **2 900 thin arms per latch** → `P(latch | thin arm) ≈ 3.4e-4`
+- survivor predictions under this single rate: `P(survive 74.8 s) = 0.480`
+  (three survivors sit there), `P(survive 84.8 s) = 0.435` (two sit there),
+  `P(survive 37 s) ≈ 0.69` (two censored there)
+- latch times, s: 22.4, 25.4, 30.0, 40.5, 40.9, 41.4, 63.0, 81.9 — spread
+  across the whole exposure with no clustering.
+
+**Conclusion: a single constant-hazard population is not rejected.** The
+observed 5/13 survival to a 75–85 s deadline at MTTF 102 s is unremarkable.
+Therefore:
+
+- **Nothing** in this corpus establishes that clean and latching runs are
+  different populations. P5's "indistinguishable" is correct but its
+  "therefore … is not the discriminator", and P6's "the clean/latching
+  difference must therefore be DWELL", both assume a difference the data does
+  not support.
+- The only factor with any signal at all is the image (§4.2), at `p ≈ 0.078`.
+- To separate two hazards differing by a factor RR with 80 % power at
+  α = 0.05 you need about `2·(1.96+0.84)² / (ln RR)²` events **per arm**:
+  **33 latches per side for RR = 2**, 13 per side for RR = 3. At
+  `P(event per run) ≈ 0.52`, that is **~63 runs per side** for a 2× effect and
+  ~25 per side for 3×, at ~90 s of motor time each plus flashing.
+  **Run-outcome A/Bs at this hazard are infeasible.** The campaign must stop
+  counting runs and start counting arms — there are 10⁶ arms per run.
+
+### 5.5 P4 — probably true, weakly supported, and the mechanism permits drift
+
+`ci_at_late = ci_us = 59`: agreement at n = 1. After the latch the one-shot
+still fires and the detector keeps accepting; the foreground loops 937 565
+times in 22.36 s (≈24 µs/iteration) against an accept interval of ≈118 µs, so
+*typically* zero further acceptances intervene — but not guaranteed, and each
+would re-blend `ci`. Also `ci` is integer-µs, so neighbouring blends often
+round to the same value: agreement is cheap. Reading the seven prior `ci@stop`
+values "directly as latch-time estimates" is **plausible and I provisionally
+accept it** — §2.1's table depends on it — but it rests on one agreement. Cost
+to make it sound: also stamp `accept_seq` at the latch and report the delta at
+stop. Two words of RAM, zero hot-path cost.
+
+### 5.6 P7 — correct, and stronger than stated
+
+`spent_max_us = 11` in all fifteen runs. But the chain rings show **no 11 in
+20 478 arms** (max 10, three occurrences). So each run contains ≈1 arm at 11 µs
+that the ring never caught. At `ci ≤ 71` (`wait22 ≤ 11`) an 11 µs arm
+**latches**. Clean runs have `spent_max = 11` and did not latch. Therefore in
+clean runs that 11 µs arm must have landed at `ci ≥ 74` (`wait22 ≥ 12`) — i.e.
+during the low-speed part of the run, where the margin is widest.
+`spent_max` is not merely ci-blind; it is systematically generated in the
+regime where it is harmless, and is therefore **anti-correlated** with the
+quantity anyone wants it to bound. Any margin argument built on it is not just
+unsupported — it is backwards.
+
+### 5.7 P8 — correct on the structural zero; over-harsh on the rate argument
+
+Structural zero **confirmed**: `count_preempt` (`src/roots.rs:1064-1070`)
+returns `false` immediately unless `C::ON`, and production instantiates the
+no-chain logger, so `com_preempts` and `com_arm_preempts` cannot rise. Their
+zeros are uninformative. Agreed — same "present but inert instrument" class the
+code comments keep flagging.
+
+On the 8–9 µs satellite I part company with the brief: the coincidence-of-rates
+argument is **quantitatively better than P8 allows**. Priorities:
+`Guard (TIM6_DAC_LPTIM1) = 0x00`, `COMP = 0x40`, `COM (TIM16) = 0x40`,
+`DMA1_CH1 = 0x40` (`src/shared.rs:67,73`, `src/hw/adc.rs:86`,
+`src/roots.rs:232,965,716`). So **only the guard can preempt COMP**; COM and
+DMA are peers and tail-chain. The guard period is **101 µs**
+(`src/roots.rs:703`; `gap_max_us` 104–109 in every capture is consistent). The
+arm window — entry stamp to the arm — is the measured `spent`, ≈6 µs.
+`6/101 = 5.9 %`. Observed satellite mass `(717+606+3)/20478 = 6.5 %`.
+**5.9 % predicted vs 6.5 % observed**, with an offset of +2–3 µs against a
+155-instruction guard root. That is a coherent, self-consistent quantitative
+account, not a coincidence.
+
+It is still **not a measurement**, and P8 is right that it is presented as one.
+The fix is four instructions and reuses existing state: the guard already
+maintains a tick counter (`S.guard().ticks`, reported as `BEMFGUARD ticks`).
+Snapshot it at COMP entry, compare at the arm, count the disagreements — and
+stamp it at the latch. One run then tells you whether *the latching arm itself*
+was preempted. §7.3.
+
+### 5.8 One instrument-transfer-function gap nobody has named
+
+`spent` is measured from the **handler entry stamp** (`raw`), but `wait` runs
+from the **edge**. The latency from the comparator edge to handler entry is
+never measured and is not in `spent`. A peer root already in service (DMA1_CH1,
+TIM16 — both 0x40) delays COMP entry by tail-chaining; the guard (0x00) delays
+it outright. That latency partly self-compensates, because it inflates `count`
+and hence `ci` and hence `wait` — but only partly, and the direction of the
+residual is unknown. **Any statement of the form "the arm had N µs of margin"
+is a statement about `spent` only, not about lateness.** That is a limit on the
+whole margin discourse, not just on `spent_max`.
+
+---
+
+## 6. Concurrency
+
+**Priority structure** (verified): Guard 0x00 > {COMP, COM/TIM16, DMA1_CH1} all
+0x40; `Fine` 0x80 (`src/shared.rs:67,73,97`). Consequences:
+
+- The COM root cannot preempt COMP's arm sequence, and DMA cannot preempt
+  either. The only preemptor of the arm window is the guard.
+- Two latch sites exist but **cannot coexist at runtime**: `accept` is called
+  only from `det_decide_logged` (`src/roots.rs:604`), and `comp_root`
+  dispatches `det_decide_logged` xor `det_decide_plain` on `L::ON`
+  (`src/roots.rs:326-336`). Monomorphisation makes them mutually exclusive per
+  image. **The read-then-store first-latch guard cannot race between the two
+  sites.** The E314 worry about covering only one site is a
+  correctness-of-instrumentation concern (valid) and not a concurrency one.
+- Within one site, `let n = load(); store(n+1)` is not atomic, but nothing else
+  writes `late_arms`, and the only preemptor (the guard) does not touch it.
+  Same shape for `spent_max` and `ci_min_p1`. **No live lost-update bug.** It is
+  fragile by construction and would break silently the day a second writer
+  appears; `fetch_add` costs nothing extra here, since the M0+ path is already a
+  critical-section shim.
+
+**Two real ordering defects, both latent, both attribution hazards:**
+
+1. **The counter is incremented before the witnesses are stored**
+   (`src/roots.rs:476-485` and `551-560`): `store(n+1)`, then
+   `store(ci_at_late)`, `store(spent_at_late)`. Reversing this costs nothing
+   and removes any future possibility of a reader seeing `late_arms = 1` with
+   zeroed witnesses. Today the foreground cannot preempt the ISR so it is
+   benign; if the guard trips inside that window the run stops on the guard
+   reason with the witnesses unset and `late_arms` already 1.
+2. **The foreground checks `guard_reason` before `late_arms`**
+   (`src/run/states.rs:248-266`). Any guard trip in the same pass as a latch
+   **masks the latch** and reports the guard code. Given §2.1 — where the same
+   estimator collapse can exit through `FastBusSag` — this ordering actively
+   destroys the co-occurrence evidence that would settle the mechanism. Report
+   both: the stop reason is one thing, `late_arms != 0` is another, and both
+   belong in the capture.
+
+---
+
+## 7. Does the next experiment discriminate? — P10, judged harshly
+
+### 7.1 It does not. Four reasons, in descending severity.
+
+1. **It is a whole-run counter compared across event-censored runs of unequal
+   length.** Latching runs stop at 22–82 s; survivors at 75–85 s. §5.2 proves
+   that every existing whole-run aggregate in this report
+   (`unstable/accepted`, `mean_ma`, `zc_per_s`, `too_early`) is monotone in
+   duration and carries no other information. A `trough_arms` counter inherits
+   exactly that confound. Worse, **e315 latched during the ramp**, so its
+   trough count would be a ramp-only count compared against survivors' 85 s of
+   mostly-hold. P10 as written repeats the campaign's own proven error.
+2. **Its two branches are not symmetric, and the null is pre-committed.**
+   "Dwell longer → suppress the ratchet, costs no speed" vs "dwell equally →
+   reduce arm cost / advance 20, costs speed". A null result — which §5.1's
+   closed model predicts, and which the existing `thin_count` has already
+   delivered (2.4× spread *within one byte-identical image*, with the **lowest**
+   thin rate in the corpus belonging to a **latching** run) — routes straight to
+   the expensive branch. An experiment whose likely outcome is a null, and whose
+   null is assigned by prior commitment to the costly action, is a decision to
+   pay for speed loss dressed as a measurement.
+3. **The boundary is wrong.** `wait22(ci)` is a **comb, not a ramp**:
+   `wait22(57) = 9`, `wait22(58) = 10`, `wait22(59) = 9`, `wait22(60) = 10`,
+   because `ci>>1` truncates on odd `ci` while `advance` keeps climbing. A
+   `ci < 60` bucket therefore lumps together `wait` values from 6 to 10, and
+   excludes `wait22(58) = 10` while including `wait22(59) = 9`. If you must
+   bucket, bucket on `wait` or on `left` — the quantities in the latch
+   condition. Bucketing on `ci` builds the truncation artifact into the
+   instrument.
+4. **It is partly pre-satisfied.** `ci_min ≤ 54` in all fifteen runs, so a
+   `ci < 60` counter is guaranteed non-zero everywhere. Only its normalized
+   rate carries information, and (1) says the normalization is unavailable.
+
+### 7.2 The cheapest decisive experiment costs one run and zero new firmware
+
+**Run `bin/chain-capture.rs` at rung 550.** It already records, per accepted
+crossing, `(crossing_us, crossing_fine, arm_fine, wait_us, spent_fine, step,
+late)` into a 1024-row ring dumped at run end (`bin/chain-capture.rs:61-115`,
+`src/chain.rs`), and it arms on the rung keys
+(`arms_a_run` → `run::drives_a_run`). At 8 475 accepts/s the ring holds the
+**final ~121 ms before the stop**. That is the *sequence into the latch* — the
+thing E305 said it did not have and E315 still does not have. Not one of the 28
+archived chain captures is at 550; all are ≤475. The instrument was built,
+validated, and never aimed at the target.
+
+**Predeclared readings:**
+
+- `wait` descends over tens to hundreds of consecutive arms into the latch with
+  `spent` at its ordinary mode → **estimator collapse (§2.1)**. Decision: arrest
+  the ratchet — raise the persistence floor at low `ci`, and/or floor the
+  blanking gate on a longer-horizon average (the existing `SixSlot`) instead of
+  the self-referential `average_interval >> 1`. Costs no speed.
+- `wait` flat at 11–12 with a single `spent` excursion to 11–12 → **cost
+  excursion**. Decision: arm cost, or advance 20. Costs speed.
+- `wait` descends *and* `spent` spikes at the same arm → **common-cause
+  disturbance (§2.7)**; neither timing fix is the answer, and the next
+  instrument is electrical, not temporal.
+- No descent and no spike, i.e. the latch is invisible at 121 ms → the event is
+  faster than the ring and the whole trough/dwell framing is wrong; go to the
+  edge log.
+
+Cost: one flash, one 90 s run. Risks: the chain image perturbs timing (§4.2),
+and the ring only helps if that run latches — at `P ≈ 0.52` per run, budget 2–3
+runs. Even so it is an order of magnitude cheaper than any rate A/B (§5.4).
+
+### 7.3 The two cheap firmware additions, if one run is not enough
+
+Both are per-arm, so they yield ~10⁶ samples per run and can resolve a
+few-percent shift in a **single** run — the only way out of §5.4's
+infeasibility.
+
+- **`left` histogram**, 8 buckets `0..=7+`, incremented in the existing
+  `note_margin` (`src/roots.rs:399-411`): one compare, one clamp, one indexed
+  increment. No division, no multiply, no helper — passes the ISR math audit.
+  This gives the whole margin distribution, lets you *predict* the latch rate
+  from the tail, and lets you check the prediction. Add a second 4-bucket axis
+  on `ci` (`<50, 50-64, 65-79, ≥80`) for a 32-word joint histogram if the
+  marginal is ambiguous. **This is what P10 should have been.**
+- **Guard-preemption witness**: snapshot `S.guard().ticks` at COMP entry,
+  compare at the arm, count disagreements, and stamp the value at the latch.
+  ~4 instructions, reuses existing state, and it converts §5.7's rate argument
+  into a measurement — including for the latching arm itself, at n = 1.
+
+### 7.4 Predeclared refutation of the trough-dwell mechanism
+
+State it before running, per the campaign's own rule:
+
+> **Trough-dwell is refuted if**, over a window common to both arms of the
+> comparison (e.g. the first 22 s of closed loop, or `hold_start + 0…20 s`),
+> the per-arm occupancy of `wait ≤ 9` is statistically indistinguishable
+> between runs that latch and runs that reach the deadline, **and** the `left`
+> histogram's `left ∈ {1,2}` tail mass per arm is indistinguishable between
+> them. In that case the latch is a tail draw from a distribution common to all
+> runs; there is nothing to suppress, and the actionable items are the tripwire
+> (§3) and the arm cost, not the estimator.
+>
+> **Trough-dwell is supported if** the chain ring shows `wait` descending over
+> ≥10 consecutive arms into the latch, or if low-`wait` occupancy differs by
+> ≥2× on a windowed, per-arm basis.
+
+§5.1's closed model — ~30 trough arms per run, ~3 % each, no run-level
+difference — predicts the **refutation** branch. That is the prediction this
+review is willing to be wrong about.
+
+---
+
+## 8. Safety, and whether any of this is on the critical path
+
+- **Rung 550 is already at the bench's electrical limit.** Hold current
+  2 234–2 273 mA (E305 table) against a **3 A PSU clamp** = 75 %. Worst 10.1 ms
+  block 2 464–2 751 mA. Instantaneous bus dips to **905–923 per mille** of
+  reference in **every** run, against `BUS_FLOOR_NUM = 963`
+  (`src/protection.rs:123`) on the filtered bus with a three-scan streak — and
+  **one run in the corpus already tripped `FastBusSag`** (e253-550_03). The
+  margin to a bus-sag stop at 550 is a filter time constant, not a comfortable
+  ratio.
+- **Rung 575**: worst block 3.02 A > the 3 A clamp. The supply enters constant
+  current inside the worst blocks. The campaign goal forbids qualifying under
+  sustained CC or suppressed bus; 575 is at best a coin flip against that rule.
+- **Rung 600**: hold 2.87 A = **96 % of the clamp**, worst block 3.49 A. The
+  firmware's own projection (`src/run/policy.rs:109-112`) is 3 503–4 222 mA
+  against `RAW_LIMIT` = 4 000, i.e. `AverageCurrent` foldback is expected — and
+  `policy.rs` states plainly that a foldback "disqualifies the rung by the
+  goal's own wording". **60 % is not reachable on a 3 A supply. Not
+  marginally — administratively, by the goal's own constraint.**
+- Therefore: **the arm-timing work is not on the critical path to 60 %.** No
+  amount of margin at the commutation arm moves a 2.87 A hold below a 3 A
+  clamp. The binding constraint is the supply, and the goal's wording forbids
+  the obvious workaround. Note also that a bigger supply is the anti-lever for
+  a loss-of-sync surge: it feeds the event rather than revealing it.
+- What the timing work *is* on the critical path for is **550 at 3/3**, and
+  there §3 says the blocker is a tripwire that fires on ≈1 µs of realized error
+  in a firmware that tolerates 10–12 µs of the same error every run.
+
+**A prediction to be recorded before anyone spends a rung on it:** advance 20
+moves the trough boundary from `ci ≈ 59` to `ci ≈ 49` and buys only 1–2 µs at
+the observed `ci_min` (the `w20(ci_min)` column in §2.1). If §2.1 is right, it
+does not remove the estimator collapse — it lets the motor keep commutating
+through a 20–45 % wrong interval estimate, hence a wrong commutation angle,
+hence more current. **Advance 20 is predicted to convert timing stops into
+current or sag stops** — which the goal forbids qualifying under. It would look
+like progress on the LateArm counter and be a regression on the gate.
+
+---
+
+## 9. Verdict on each proposition
+
+| # | verdict |
+|---|---|
+| P1 | **Half.** The 22 500 ms constant is real and correctly sourced (`states.rs:930`). The inference "not anomalously unhealthy" does not follow: e315 is the only latch in the corpus outside the hold window, at a duty where nothing else ever latched. |
+| P2 | **Rejected as stated.** `left == 0` ⟺ `spent ≥ wait` by construction, so the "closure" is guaranteed. What *is* learned is that the inequality is tight (no gross overrun), and that is worth having. "No free parameter" is false — `spent = 9` against the modal 6 is the free parameter. The deficit splits exactly 3 µs / 3 µs between wait and spend, making the datum maximally unable to attribute. And "exact" is ±1 µs on a 1 MHz clock = 11 %. |
+| P3 | **Accepted.** `wait22(71) = 11`, `wait22(72) = 12`; the latch was at `wait = 9`. The nominal-boundary hypothesis is dead. The brief's one clean win. |
+| P4 | **Provisionally accepted, weakly supported.** One agreement; the mechanism permits post-latch re-blending; `ci` is integer-µs so agreement is cheap. Cheap to make sound (stamp `accept_seq` at the latch). |
+| P5 | **Premise accepted, conclusion rejected.** `ci_min` is indistinguishable — and also **saturated** at `SECTOR_FLOOR_US = 40`, and a whole-run minimum. The conclusion assumes a clean/latching difference exists; §5.4 shows the corpus is one constant-hazard population. Meanwhile the quantity that *does* separate perfectly — `ci@stop` against each run's own `coast_ehz` — is in every capture and unexamined. |
+| P6 | **Rejected.** The "trough" is a comb, not a region (`wait22(58) = 10` sits between two 9s). The premise "spent does not fall with ci" happens to be empirically right (§5.1) but not for the reason implied. And "the difference must therefore be DWELL" is a non-sequitur twice over: there is no established difference, and even granting one, "arrival of a costly arm" and "estimator divergence" are untested alternatives — §2.1 fits the whole corpus *including* the FastBusSag run, which this framing discards. |
+| P7 | **Accepted and strengthened.** `spent_max` is anti-correlated with the margin it is used to bound: it is generated in the high-`ci` regime where `wait` is largest. Not just unusable — backwards. |
+| P8 | **Structural zero confirmed** (`roots.rs:1064-1070`). **Over-harsh on the satellite:** 5.9 % predicted preemption probability (6 µs arm window / 101 µs guard period) against 6.5 % observed satellite mass, at a +2–3 µs offset from a 155-instruction guard root. Coherent, not coincidental — but still not measured, and measurable for ~4 instructions (§7.3). |
+| P9 | **Right conclusion, wrong reason.** Filter depth barely moves spend (mode 6 at duty 250, 375 and 475 alike). The real objection is that **no chain capture exists at rung 550** — the per-arm instrument has never been aimed at the rung under study. |
+| P10 | **Rejected.** Whole-run counter across event-censored runs of unequal length — the exact confound already proven for four other aggregates; `ci` is the wrong bucketing axis (comb); pre-satisfied (`ci_min ≤ 54` everywhere); its likely null routes by prior commitment to the costly branch; and `thin_count` is already a dwell×cost proxy that fails to separate (2.4× spread within one byte-identical image; lowest-thin run latched). Replace with: chain capture at 550 (§7.2, zero new firmware), then a `left` histogram ± `ci` axis (§7.3, per-arm so n = 10⁶ per run), and a guard-preemption witness. |
+
+---
+
+## 10. The three things I would do next, in order
+
+1. **Chain capture at rung 550, 2–3 runs.** Existing image, existing script. It
+   answers the sequence question outright and costs nothing to build. §7.2 has
+   the four predeclared readings and what each one changes.
+2. **Fix the tripwire before buying margin.** `Reason::LateArm` currently fires
+   on ≈1 µs of realized error while `com_late_max_us` = 5–12 µs is tolerated and
+   reported in every run. Give it a threshold on `spent − wait` (or a rate over
+   a window), re-run 550 to the deadline, and read `late_arms` as the **count**
+   it was through campaigns 5–7. One run then yields n ≫ 1 instead of n = 1,
+   which is the only affordable way past §5.4. Predeclared: if a thresholded run
+   completes a 30 s hold at 550 with `late_arms` in the tens and no other
+   protection firing, the stop was the blocker and the mechanism question is a
+   tuning question, not a safety one.
+3. **Stop treating 60 % as a timing problem.** §8. The hold current at 600 is
+   96 % of the clamp and the firmware's own projection expects foldback. Either
+   the goal's supply constraint changes — explicitly, by the operator, not by
+   inference — or 60 % is out of reach on this bench and the campaign's
+   remaining question is 550 at 3/3.
+
+---
+
+## 11. Two process notes
+
+- The brief instructs the reviewer to accept no number without recomputing it,
+  and then asserts one number that is **not in the tree**: the implied pair of
+  images with instruction-identical hot roots and materially different thin
+  rates. `captures/asm/` holds six files for two images and
+  `captures/insn_baseline.json` holds one current snapshot. That claim should
+  either come with a per-image census artifact or be dropped. A stronger version
+  of the same point is available from data that *is* in the tree (§4.3).
+- The strongest evidence in this campaign — `coast_ehz` as an independent speed
+  reference against `ci@stop` — has been sitting in the `BEMFSELFREF` line of
+  every capture since the instrument was built, labelled
+  `reference=within-run-coast`. It was written to be exactly this check.
+  Fifteen runs went by. Before adding a sixteenth counter, read the ones already
+  reported.

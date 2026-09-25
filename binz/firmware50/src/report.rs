@@ -217,6 +217,10 @@ impl CoastStats {
 // The run report
 // ---------------------------------------------------------------------------
 
+/// `w<=7 .. w>=14` and `l0 .. l>=7`, spelled out so a host parser reads the
+/// bucket's meaning off the key rather than off a position it has to know.
+const WAIT_HIST_KEYS: [&str; 8] = ["wle7", "w8", "w9", "w10", "w11", "w12", "w13", "wge14"];
+const LEFT_HIST_KEYS: [&str; 8] = ["l0", "l1", "l2", "l3", "l4", "l5", "l6", "lge7"];
 const SECTOR_ACC_KEYS: [&str; 6] = ["a1", "a2", "a3", "a4", "a5", "a6"];
 const SECTOR_FRC_KEYS: [&str; 6] = ["f1", "f2", "f3", "f4", "f5", "f6"];
 const REVISIT_TRY_KEYS: [&str; 6] = ["r1", "r2", "r3", "r4", "r5", "r6"];
@@ -255,6 +259,19 @@ pub struct Roots {
     pub ci_min_us: u32,
     /// Acceptances with 2 µs of margin or less.
     pub thin_count: u32,
+    /// **The per-arm arm-margin distributions** (E315), eight buckets each;
+    /// zero throughout unless the image carries `margin-hist`. `wait_hist` is
+    /// the requested wait (`<=7, 8, 9, 10, 11, 12, 13, >=14`) and `left_hist`
+    /// is `wait - spent` (`0..=6, >=7`). See `roots::note_margin` for why the
+    /// buckets are on `wait` and not on the interval.
+    pub wait_hist: [u32; 8],
+    pub left_hist: [u32; 8],
+    /// The same two, restricted to the **hold window** (E315). The whole-run
+    /// pair mixes the 22.5 s ramp with the hold in whatever proportion the run
+    /// happened to end at, and comparing two runs with 76% and 30% hold
+    /// fractions compares their ramp fractions. Zero when the run never held.
+    pub wait_hist_hold: [u32; 8],
+    pub left_hist_hold: [u32; 8],
     /// `unstable` accumulated during the hold only (E212).
     pub hold_unstable: u32,
     /// Intervals beyond `ci_max` that were re-based and discarded -- counted
@@ -651,6 +668,33 @@ impl RunReport {
     }
 
     fn emit_histograms(&self, out: &mut impl Sink) {
+        // E315. One line, always emitted, all zeros without `margin-hist` --
+        // an absent line and a zero line are different facts and a host should
+        // not have to guess which build it is reading.
+        out.say("BEMFMARGIN ");
+        for (k, v) in WAIT_HIST_KEYS.iter().zip(self.roots.wait_hist.iter()) {
+            out.kv(k, *v);
+        }
+        for (k, v) in LEFT_HIST_KEYS.iter().zip(self.roots.left_hist.iter()) {
+            out.kv(k, *v);
+        }
+        out.say("\r\n");
+        out.flush();
+        // **The hold window's own copy, on its own line** (E315), so a host
+        // cannot mistake one for the other. The whole-run pair mixes the 22.5 s
+        // ramp with the hold in whatever proportion the run ended at: the first
+        // margin-hist pair read 76% hold at rung 500 against 30% at 550, so
+        // comparing them compared their ramp fractions. Both E315 reviews named
+        // that confound and I walked into it anyway.
+        out.say("BEMFMARGINHOLD ");
+        for (k, v) in WAIT_HIST_KEYS.iter().zip(self.roots.wait_hist_hold.iter()) {
+            out.kv(k, *v);
+        }
+        for (k, v) in LEFT_HIST_KEYS.iter().zip(self.roots.left_hist_hold.iter()) {
+            out.kv(k, *v);
+        }
+        out.say("\r\n");
+        out.flush();
         out.say("BEMFSECTOR ");
         let sectors = SECTOR_ACC_KEYS.iter().zip(SECTOR_FRC_KEYS.iter());
         for ((ka, kf), (a, f)) in sectors.zip(self.acc_by_step.iter().zip(self.forced_by_step.iter())) {
@@ -991,6 +1035,27 @@ mod tests {
             "BEMFTAIL accepts=14382 span_us=2000181 start_before_stop_us=2400000 end_before_stop_us=399819 window_us=2000000 \r\n"
         ));
         assert!(t.contains(" hold_ma=366 zero_blocks=0 "));
+        // **Both margin lines must be emitted, with every bucket key** (E315).
+        // The hold line was added, wired end to end, and then NOT emitted,
+        // because the edit that was supposed to add the `out.say` silently did
+        // nothing and nothing failed -- the eighth present-but-inert instrument
+        // this campaign, and the first one to cost a bench run. Asserting the
+        // key names here is what makes that a test failure instead of a capture
+        // with a missing line that a host has to notice.
+        for line in ["BEMFMARGIN ", "BEMFMARGINHOLD "] {
+            assert!(t.contains(line), "missing {line}");
+        }
+        for k in WAIT_HIST_KEYS.iter().chain(LEFT_HIST_KEYS.iter()) {
+            // Twice: once on each line. Built without `format!` because this
+            // module is `no_std` and the test harness does not import `alloc`.
+            let mut needle = [0u8; 16];
+            needle[0] = b' ';
+            let kb = k.as_bytes();
+            needle[1..1 + kb.len()].copy_from_slice(kb);
+            needle[1 + kb.len()] = b'=';
+            let needle = core::str::from_utf8(&needle[..2 + kb.len()]).unwrap();
+            assert_eq!(t.matches(needle).count(), 2, "bucket not on both margin lines: {k}");
+        }
         // **The mA scale is emitted beside the figures it governs** (E287).
         // `block_milliamps` divides by `ma_allow`, so the mA fields are
         // milliamps only when it equals `ma_allow_ref` (`RAW_LIMIT`). An

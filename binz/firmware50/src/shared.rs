@@ -344,6 +344,39 @@ pub struct Det {
     /// decision, so it cannot show whether a single preemption ever landed
     /// here. The step-6 review made exactly that point (E170).
     pub in_arm: AtomicBool,
+    /// **The arm-margin distribution, per accepted crossing** (E315).
+    ///
+    /// `wait_hist` buckets the *requested* wait and `left_hist` buckets
+    /// `wait - spent`, the margin the arm was actually loaded with. Both are
+    /// eight buckets wide; see `roots::note_margin` for the mapping.
+    ///
+    /// Why these and not another counter. E315's closed model of the rung-550
+    /// LateArm hazard is
+    /// `P(latch/arm) = P(wait <= 9) x P(spent >= 9)`, and it reproduces the
+    /// independently measured 8.4e-7 per arm exactly. `P(spent >= 9) = 0.0297`
+    /// is directly measured over 20 478 archived chain arms. **`P(wait <= 9)`
+    /// is the only unmeasured factor left in the mechanism**, implied at
+    /// 2.8e-5, and these buckets measure it.
+    ///
+    /// Per-arm, so ~10^6 samples a run: enough to resolve a few-percent shift
+    /// in a *single* run, which is the only escape from the ~63-runs-a-side
+    /// infeasibility that both E315 reviews computed for whole-run rate A/Bs.
+    /// It also reads at SAFE rungs (450/475 draw ~1.5 A against a 3 A clamp),
+    /// so the model can be checked where the bench is not near its limit and
+    /// then used to predict 550, whose hazard is already known.
+    ///
+    /// Bucketed on `wait`, not on `ci`, because `wait_time` is a **comb**:
+    /// `wait22(57) = 9`, `wait22(58) = 10`, `wait22(59) = 9`. A `ci` bucket
+    /// would fold that truncation artifact into the instrument -- the defect
+    /// that got E315's first proposal rejected by both reviews.
+    ///
+    /// **Last fields on purpose**, per `in_decide`'s note above: appended so
+    /// no existing offset moves and the roots' machine code is unchanged where
+    /// the increment is compiled out. The arrays are present in every build
+    /// (64 bytes of `.bss`) precisely so that enabling `margin-hist` changes
+    /// only the ~10 instructions of the increment and not the layout.
+    pub wait_hist: [AtomicU32; 8],
+    pub left_hist: [AtomicU32; 8],
 }
 
 /// Closed-loop COMP health: the storm and handler-budget stops (E107).
@@ -628,6 +661,12 @@ const fn f() -> AtomicBool {
     AtomicBool::new(false)
 }
 
+/// Eight zeroed buckets. Written out rather than `[u(); 8]` because
+/// `AtomicU32` is not `Copy`, so the array-repeat form does not compile.
+const fn hist() -> [AtomicU32; 8] {
+    [u(), u(), u(), u(), u(), u(), u(), u()]
+}
+
 const fn w() -> Word {
     Word::new(0)
 }
@@ -659,6 +698,8 @@ static DET: Det = Det {
     rate: Seam::new(Rate::new()),
     in_decide: f(),
     in_arm: f(),
+    wait_hist: hist(),
+    left_hist: hist(),
 };
 static COMP: CompHealth = CompHealth {
     storm: f(),

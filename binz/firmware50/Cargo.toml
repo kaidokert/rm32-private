@@ -74,6 +74,13 @@ advance-low = []
 # -- same serve loop, same policies, same guards. For capturing the rung-550
 # trip sequence, which no existing capture has. See run::ProductionSagLog.
 sag-ring = []
+# The per-arm arm-margin histograms in `roots::note_margin` (E315): eight
+# buckets on the requested `wait`, eight on `wait - spent`. Default OFF, so
+# production is unchanged and the `.bss` arrays cost nothing but space. What it
+# measures is `P(wait <= 9)` -- the one unmeasured term in E315's closed model
+# `P(latch/arm) = P(wait <= 9) x P(spent >= 9)`, whose other factor is already
+# measured at 0.0297 over 20 478 archived chain arms.
+margin-hist = []
 
 [dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }

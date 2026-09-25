@@ -395,8 +395,30 @@ fn arm_marked<C: ChainLog>(left: u32) {
 /// reports. `spent_max_us` cannot answer this question: it is a saturated
 /// whole-run maximum that reads 11 µs in 490 captures, including every run
 /// that ever latched a late arm.
+/// **Both histograms are behind `margin-hist`** and both are incremented here,
+/// which is called *after* `arm_marked`/`com_arm` on both acceptance paths. So
+/// the instrument's own cost lands after the commutation is already scheduled
+/// and **cannot enter the `spent` it is helping to measure** -- the observer
+/// effect that would otherwise invalidate the whole exercise, since
+/// `P(spent >= 9)` is one of the two factors in the model. It does lengthen the
+/// handler, so it can still delay the *next* entry; `comp_call_max_us` bounds
+/// that and is reported alongside.
+///
+/// Bucket maps, both eight wide and both provably in range (the `& 7` is a
+/// no-op the compiler drops once it has seen the bound, and a guarantee if it
+/// has not -- no panic path, so no branch and no helper call in the prio-0
+/// root):
+///
+/// | `wait_hist` | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+/// |---|---|---|---|---|---|---|---|---|
+/// | wait µs | ≤7 | 8 | **9** | 10 | 11 | 12 | 13 | ≥14 |
+///
+/// `left_hist` is the identity for 0..=6 with 7 meaning "7 or more", so bucket
+/// 0 is the latch itself and buckets 1-2 are `thin`'s two components split out.
+/// Bucket 2 of `wait_hist` plus everything below it is `P(wait <= 9)`, the
+/// quantity E315 needs.
 #[inline(always)]
-fn note_margin(left: u32) {
+fn note_margin(wait: u32, left: u32) {
     // The accepted average interval, stored by the estimator's borrow just
     // above: the causal variable, and level-invariant (E210 SS1).
     let ci_p1 = S.det().accept_avg.load(Ordering::Relaxed).saturating_add(1);
@@ -409,6 +431,23 @@ fn note_margin(left: u32) {
             .thin
             .store(S.det().thin.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
     }
+    #[cfg(feature = "margin-hist")]
+    {
+        let wi = if wait >= 14 {
+            7
+        } else if wait <= 7 {
+            0
+        } else {
+            (wait - 7) as usize
+        } & 7;
+        let li = if left >= 7 { 7 } else { left as usize } & 7;
+        let w = &S.det().wait_hist[wi];
+        w.store(w.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
+        let l = &S.det().left_hist[li];
+        l.store(l.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
+    }
+    #[cfg(not(feature = "margin-hist"))]
+    let _ = wait;
 }
 
 /// Production's decision. Keep in step with [`det_decide_logged`].
@@ -470,7 +509,7 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                     let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
                     let left = wait.saturating_sub(spent);
                     arm_marked::<C>(left.max(1));
-                    note_margin(left);
+                    note_margin(wait, left);
                     beat = beat_row::<C>(raw, fine0, wait, step.get(), left == 0);
                     if left == 0 {
                         let n = S.det().late_arms.load(Ordering::Relaxed);
@@ -559,7 +598,7 @@ fn accept<C: ChainLog>(
                 S.det().spent_at_late.store(spent, Ordering::Relaxed);
             }
         }
-        note_margin(left);
+        note_margin(wait, left);
         if spent > S.det().spent_max.load(Ordering::Relaxed) {
             S.det().spent_max.store(spent, Ordering::Relaxed);
         }

@@ -66,6 +66,16 @@ pub(crate) struct Stats {
     pub hold_acc: u32,
     /// `unstable` as of the hold mark (E212).
     pub unstable_at_hold: u32,
+    /// The margin histograms as of the hold mark (E315), so the reported
+    /// distributions can be the hold window's rather than a ramp/hold mixture
+    /// whose proportions differ from run to run.
+    pub wait_hist_at_hold: [u32; 8],
+    pub left_hist_at_hold: [u32; 8],
+    /// Whether the hold mark was ever laid down. Needed because the two
+    /// snapshots above are all-zero *both* when the run never held and when it
+    /// held from the first arm, and subtracting an all-zero snapshot from the
+    /// whole-run counts would silently report the ramp as the hold window.
+    pub held: bool,
     pub hold_ci_sum: u32,
     /// The matched speed window (campaign 8 step 3): the last accepted
     /// crossing's stamp with the hold-accept count as of it, plus two marks
@@ -169,6 +179,9 @@ impl Ctx {
                 wit: RotationWitness::new(WITNESS_MID_SAMPLES, WITNESS_HYST_CODES),
                 hold_acc: 0,
                 unstable_at_hold: 0,
+                wait_hist_at_hold: [0; 8],
+                left_hist_at_hold: [0; 8],
+                held: false,
                 tail_last: None,
                 tail_mark: None,
                 tail_prev: None,
@@ -367,8 +380,7 @@ impl Ctx {
             // toward being satisfied -- in the one place the test has to be
             // trustworthy. At the low rungs the two differ by ~2 codes, which
             // is why the walk's numbers survive.
-            self.raw_depth
-                .observe(scan.bus, scan.vref, filt_bus, filt_vref);
+            self.raw_depth.observe(scan.bus, scan.vref, filt_bus, filt_vref);
             let verdict = self.sag.observe(bus_mean, vref_mean);
             if P::G::ON {
                 self.record_sag_row::<P>(hal, &scan, sector_start, filt_bus, filt_vref);
@@ -941,6 +953,19 @@ impl Locked {
             // how the one late-arm run's apparent anomaly stayed confounded
             // (E210 SS1).
             c.stats.unstable_at_hold = hal.unstable_count();
+            // **The margin histograms at the hold mark** (E315), for exactly
+            // the reason stated above, which I then walked into anyway. The
+            // first margin-hist pair read 76% hold at rung 500 against 30% at
+            // 550, so the whole-run comparison between them was a ramp-fraction
+            // comparison: the ramp's long intervals put every arm in the top
+            // `wait` bucket, diluting the low buckets by however much ramp the
+            // run happened to contain. Both E315 reviews named this confound
+            // and one of them named this very line as the fix pattern. Eight
+            // loads and eight stores, in the foreground, so no ISR instruction
+            // and no ratchet event.
+            c.stats.wait_hist_at_hold = hal.wait_hist();
+            c.stats.left_hist_at_hold = hal.left_hist();
+            c.stats.held = true;
         }
         if let Some(raw) = hal.det_poll() {
             self.consume(hal, raw);

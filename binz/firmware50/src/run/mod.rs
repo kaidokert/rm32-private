@@ -344,6 +344,22 @@ impl<
                 // subtraction belongs here rather than in the board (E212).
                 let mut r = io.roots_record();
                 r.hold_unstable = r.unstable.saturating_sub(s.unstable_at_hold);
+                // E315: the same subtraction for the margin histograms, and for
+                // the same reason. `*_at_hold` stays zero if the run never
+                // reached its hold, in which case the hold window is empty and
+                // these read zero -- which is the correct answer and is
+                // distinguishable from "no instrument" by the whole-run line
+                // being non-zero.
+                let mut i = 0;
+                while i < 8 {
+                    r.wait_hist_hold[i] = r.wait_hist[i].saturating_sub(s.wait_hist_at_hold[i]);
+                    r.left_hist_hold[i] = r.left_hist[i].saturating_sub(s.left_hist_at_hold[i]);
+                    i += 1;
+                }
+                if !s.held {
+                    r.wait_hist_hold = [0; 8];
+                    r.left_hist_hold = [0; 8];
+                }
                 r
             },
             acc_by_step: core::array::from_fn(|i| s.acc_by_step[i]),
