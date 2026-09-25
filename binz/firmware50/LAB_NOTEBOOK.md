@@ -22807,3 +22807,64 @@ happens to be convenient.
    permanent under rule 1.
 
 Both reviews before the ladder depends on this.
+
+### E274 — predeclaration: one measured run at 450, to complete the chain
+
+Image `0D8E3799.e246-final-candidate.elf` — the production image, whose
+loadable bytes HEAD reproduces exactly.
+
+#### Why this is a measurement and not a retry
+
+Rung 450 holds three records, all `reason = 2` with 57.3 s holds:
+
+| record | reason | hold | identity |
+|---|---|---|---|
+| `e251-450_01` | 2 | 57 276 ms | 1000 |
+| **`e251-450_02`** | 2 | 57 276 ms | **unavailable — coast slope +0** |
+| `e251-450_03` | 2 | 57 274 ms | 1008 |
+
+**Nothing failed at 450.** Under E273 the middle run is *unmeasured* on the rate
+identity, because its coast fit is physically impossible — so the rung has **two
+measured passes and needs three**. Adding a third measurement where one was
+never obtained is not re-rolling a failure; there is no failure to re-roll. That
+is the distinction E263 was trying to draw and could not, and E273 makes it
+concrete.
+
+#### The run
+
+`bemf_run.py --command L --rung-duty 450 --pre=-----------+++ --runs 1`,
+flashing `0D8E3799` so the ledger key stays the qualified image's. The press
+string addresses duty **absolutely** — 11 resets to the floor then 3 steps —
+because `climb_tenths` persists across runner invocations, which is the E148/E185
+trap that cost three runs at 475 earlier in this campaign. `--pre=` is passed as
+**one token**, because a leading `-` is otherwise read as a flag and the run
+dies instantly.
+
+~80 s at ~1.6 A, inside the qualified envelope, at a rung that already holds
+57 s three times.
+
+#### Acceptance, from the gates as they now stand
+
+1. `reason = 2`, hold ≥ 30 000 ms.
+2. `ceiling_tenths == 450` — **no foldback**, per the goal's rule that a
+   suppressed or folded rung cannot qualify.
+3. A **measured** rate identity: `coast_fit` slope < 0, and the ratio inside
+   990–1010. If the slope comes out ≥ 0 again the run is unmeasured and the rung
+   still needs a third — that outcome is predeclared as *not* a failure, and
+   **not** a licence to keep rolling: two unmeasured runs at one rung would be
+   evidence about the coast estimator, and the answer would be the denominator
+   fix E273 records, not a fourth attempt.
+4. IR-line droop residual positive (constant-voltage side of the CV/CC
+   discriminator).
+
+#### Predictions
+
+1. **The run passes all four.** The rung already holds 57 s three times and the
+   two measured siblings read 1000 and 1008.
+2. The coast slope is **negative**. Corpus-wide only 3.1% of runs are unphysical,
+   so a second at this rung would be a 1-in-32 coincidence and would point at
+   something rung-specific.
+3. **With it, 450 qualifies and the chain is whole from 150 to 525** — sixteen
+   rungs, 550 alone failing. That is the claim this run settles.
+4. It changes nothing about 550: its latch is permanent for this image under
+   rule 1, so **no run at any rung can qualify 60% on `0D8E3799`.**
