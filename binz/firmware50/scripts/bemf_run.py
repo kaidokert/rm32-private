@@ -242,11 +242,29 @@ def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
     """Pass/fail of the rung at `duty` on this ELF, with its reasons."""
     import cohort  # noqa: PLC0415 - sibling script
 
-    runs = state.get(sha, {}).get(str(duty), [])[-RUNG_RUNS:]
-    if len(runs) < RUNG_RUNS:
-        return False, [f"only {len(runs)} run(s) on this ELF at {duty / 10:.0f}%"]
-    fails = [f"{r['file']}: {', '.join(r['fails'])}" for r in runs if r["fails"]]
-    fails += cohort.rung_oracle(runs)
+    # **Every attempt on this ELF counts, not the last three.**
+    #
+    # This used to read `[-RUNG_RUNS:]`, so a rung passed on a sliding window
+    # that stepped over its own failures: rung 400 on image 0D8E3799 has six
+    # records, the third of which failed, and the window excluded it entirely.
+    # "Retain every failure" was enforced in the file and not in the verdict,
+    # which is bookkeeping rather than a gate -- and it means the rungs above
+    # 400 were admitted on a pass that erased a failure.
+    #
+    # So: a rung needs at least RUNG_RUNS attempts and **no failed attempt at
+    # all** on that image. A rung that has failed on an ELF stays failed on it;
+    # the way forward is to fix the cause and build a new image, not to roll
+    # again. The oracle comparison still judges the most recent cohort.
+    all_runs = state.get(sha, {}).get(str(duty), [])
+    if len(all_runs) < RUNG_RUNS:
+        return False, [f"only {len(all_runs)} run(s) on this ELF at {duty / 10:.0f}%"]
+    fails = [f"{r['file']}: {', '.join(r['fails'])}" for r in all_runs if r["fails"]]
+    if fails:
+        fails.append(
+            f"{len(fails)} of {len(all_runs)} attempts at {duty / 10:.0f}% failed on "
+            "this ELF; a retained failure is not erased by later passes"
+        )
+    fails += cohort.rung_oracle(all_runs[-RUNG_RUNS:])
     return not fails, fails
 
 

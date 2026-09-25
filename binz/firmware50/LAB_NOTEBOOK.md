@@ -19610,3 +19610,395 @@ Also accepted: there is **no thermal stop and no peak-current stop faster than
 
 **No further rung attempt until the event is instrumented.** That is the
 principled form of E255's refusal, and it is the reviews' wording, not mine.
+
+### E259 — campaign 11 opens by closing two of my own conclusions and putting a hole in the ladder
+
+The new goal corrects three things I have been asserting and adds one discipline
+rule. All four cut against results I reported as standing, so they are disposed
+of here, before any further bench time, and each disposition is recomputed rather
+than conceded.
+
+---
+
+#### 1. The rung definition was bookkeeping, not a gate — and the ladder has a hole
+
+The goal: **"No retry-until-pass or 'last three passes' erasing failures."**
+
+`rung_report` read `state[sha][duty][-RUNG_RUNS:]`. E257 already noticed that
+the window steps over rung 400's retained failure; the goal makes it decisive.
+"Retain every failure" was enforced in the *file* and not in the *verdict*, and a
+retained record the verdict structurally cannot see is an audit trail, not a
+gate. Changed: a rung needs ≥3 attempts and **no failed attempt at all** on that
+image. A rung that has failed on an ELF stays failed on it; the way forward is to
+fix the cause and build a new image, not to roll the cohort again.
+
+Re-audited across all 17 rung keys on `0D8E3799`, every record counted:
+
+| rung | records | failed | verdict |
+|---|---|---|---|
+| 150–375 (ten rungs) | 3 each | 0 | **qualified** |
+| **400** | **6** | **1** (`e247-400_03`) | **NOT qualified** |
+| 425, 450, 475, 500, 525 | 3 each | 0 | qualified on their own records |
+| **550** | **3** | **1** (`e253-550_03`) | **NOT qualified** |
+
+So **fifteen rungs pass the new rule, not sixteen** — and the loss is not at the
+top of the ladder but in the middle of it.
+
+**What this voids is a claim, not the data.** 425–525 each have three clean
+records and pass the new rule on their own terms. What is withdrawn is E252's
+load-bearing sentence — *"Each rung admitted only because the one below it passed
+on this same ELF"* — because 425 was admitted on a 400 verdict that no longer
+holds. **The chain is unbroken from 150 to 375 and from 425 to 525, with a hole
+at 400.** That includes the goal's own 50% target: the 500 rung's three holds are
+clean and reproduce, but its *admission* traces back through 400.
+
+I am recording this as the cost of the rule, not as an argument against it. The
+400 failure was an identity reading 1011 against a 990–1010 band whose measured
+false-failure rate is 1.1% (E249) — the best available reason to call it an
+artefact, and exactly the kind of reason that makes retry-until-pass feel
+justified each time. The rule exists because that feeling is not evidence. Either
+the gate band is wrong and gets fixed on its merits, or 400 is unqualified; it
+cannot be settled by rolling again.
+
+---
+
+#### 2. Withdrawn: the slip conclusion — and the instrument cannot support it in principle
+
+E257 §1 called `zc_permille_of_6x_coast = 1020` a "~24σ outlier" and "the slip
+signature". The goal: **"Coast ratios do not prove slip."** It is right, and the
+reason is structural rather than statistical. Read out of the source:
+
+* **Numerator** `zc_per_s` is a **whole-run** accepted-crossing rate — 15 s for
+  the failing run.
+* **Denominator** `coast_ehz` (`scripts/cohort.py:65`) is a back-extrapolation of
+  the **post-stop** coast to the bridge-off instant, fitted over eight
+  half-periods ≈ **1.7 ms after the bridge floats**, across a measured
+  `offset_us` of 46–49 µs. `src/report.rs:100` calls it exactly that: *"What the
+  bridge-off coast window saw."*
+* **`loop_ehz` reads 2347 in all three 550 runs and in the control.** It is a
+  constant here, so the ratio carries **no loop-side information at all**: its
+  entire variation across the cohort is `coast_ehz`.
+
+So the quantity is (whole-run loop rate) ÷ (rotor speed measured 1.7 ms *after
+the stop*). A deviation says the rotor at the stop instant was not at the run
+average. That is a statement about **the end of the run**, and a rotor
+decelerating into a sag produces it just as readily as a loop running ahead of
+the rotor — with the causal arrow reversed. The tripped run's stop *is* the
+trip, so its denominator is the only one in the cohort measured after an abnormal
+stop.
+
+**`ci_min_us = 42` is withdrawn as evidence of the same thing**, on the goal's
+own correction: *"ci_min_us is an estimator minimum, not a raw interval."* The
+`wait_time(42, 22) = 7 µs` against a 6 µs arm cost that E256 called "the thinnest
+margin anywhere in the campaign" was arithmetic on an estimator output, and
+`late_arms = 0` says the arm never actually missed.
+
+Also withdrawn under *"untimed extrema do not establish ordering"*: `fast_min_us`
+and `ci_min_us` as ordering evidence (both whole-run minima, unstamped), and
+`bus_min` in every remaining use.
+
+---
+
+#### 3. The duration-matched control: the outlier is real, and it still proves nothing about order
+
+`e258-ctrl550_01`, aborted at 42 s. The match is better than predicted:
+
+| | `550_03` (tripped) | `ctrl550_01` | |
+|---|---|---|---|
+| `drive_scans` | 418 008 | **412 733** | −1.3% |
+| `hold_ms` | 15 008 | **14 477** | −3.5% |
+| coast `offset_us` | 46 | 48 | matched |
+| `comp_edges` | 2026 | 2032 | matched |
+| `loop_ehz` | 2347 | 2347 | identical |
+| **`coast_ehz`** | **2278** | **2321** | **−1.9%** |
+| **`zc_permille_of_6x_coast`** | **1020** | **1001** | |
+
+Exposure, coast-window geometry and the comparator witness are all matched, and
+the clean run reads **1001**. So the prediction stated in E257 step 1 resolves in
+the direction it called "the run slipped": **1020 is not a duration artefact.**
+
+But E257 pre-committed to reading that outcome as slip, and §2 above says the
+instrument cannot carry that. The honest result is narrower and I am stating it
+as the whole of it:
+
+> **At matched exposure, the rotor's speed at the stop instant was 1.9% lower in
+> the tripped run than in the clean one.** Whether the rotor slowed and the loop
+> then surged current into a sagging rail, or the rail sagged and the rotor then
+> slowed, is **not determined by any quantity in this capture** — the ratio is
+> blind to order by construction, and nothing else here is timestamped.
+
+Per the goal: **unresolved chronology stays unresolved.** The control was still
+worth its third of a run — it removed exposure as the explanation, which was the
+cheapest live alternative — but it cannot close the question, and I predicted it
+would.
+
+---
+
+#### 4. Withdrawn: the supply-headroom conclusion
+
+E257 §4 argued from the dip depth that a static-resistance explanation needs
+0.503 Ω against 0.106–0.130 Ω measured, therefore **ΔI ≈ 8.9 A is required** and
+a current transient is forced. The goal: **"average current does not exclude
+transient limiting."** The symmetric error is mine: I used an *untimed extremum*
+(`bus_min`, a whole-run single-scan floor) as the trip depth, then inverted a
+resistance through it to manufacture a current that no instrument measured.
+Withdrawn entirely, including the 8.9 A figure.
+
+The operator's meter reading of **2.152 A at 550** stands as a measurement, and
+the proxy's +4.8–6.9% over-read stands. What does **not** stand is any claim
+about headroom at 60% derived from them: the metered value is an average, the
+clamp responds to something faster, and *"average current does not exclude
+transient limiting"* applies to the meter exactly as it applies to
+`worst_hold_ma`. The 3 A clamp's behaviour at 550 is unmeasured, not comfortable.
+
+---
+
+#### 5. What is therefore actually known at 550
+
+* Three runs. Two held 52.3 s clean; one latched `FastBusSag` at 15.0 s.
+* One duration-matched clean control at 14.5 s, which did **not** trip.
+* The rotor at the tripped stop was 1.9% slow relative to its own run average.
+* **No timing information whatsoever about the trip itself.** The trip's depth,
+  width, phase, sector and current are each either unrecorded, saturated
+  (`BEMFSECTOR`'s u16 counters), untimed (`bus_min`), structurally discarded (the
+  sag verdict returns before `current.accumulate`), or aliased (`since_zc_us` at
+  101 µs against a ~71 µs sector).
+
+That list is the argument for the next step rather than a lament: **five of the
+six candidate mechanisms are indistinguishable given what the ladder image
+records, and one existing instrument separates them.** `bin/sag-capture.rs` rings
+the guard's own inputs and freezes on the trip, and it has never been run above
+500.
+
+---
+
+#### Predictions, before the build
+
+Stated so they can fail. `sag-capture` at 550, three runs:
+
+1. **At least one run trips** — the ladder cohort's rate is 1/3 and the control
+   adds a fourth non-tripping run, so 1 in 4 observed; three runs at that rate
+   give a 58% chance of at least one trip. **If none trips, the instrument's own
+   observer cost has moved the event** and that is the finding, not a failure to
+   reproduce.
+2. **If a trip is captured, the ring resolves the notch width** — the falsifiable
+   part: E257's re-reading says the guard needs ≥5 consecutive low scans
+   ≈ **≥505 µs**, so I predict the ring shows a depression **≥505 µs wide**, not a
+   single-scan spike. A narrower captured event would mean I have the guard's own
+   dynamics wrong.
+3. **`ci_us` and the bus dip are separable in time.** I predict nothing about
+   which comes first — that is the open question and I am not pre-committing to
+   an answer the way I did in E257 step 1.
+
+Observer cost and timing resolution get stated from the image before any run, not
+after, and this entry is a conclusion plus a hypothesis, so **both reviews come
+before the build.**
+
+### E260 — conditions, protection inventory, and the shared timeline: why the recorder comes before the cause
+
+Goal step 1 and the timebase bullet, answered from source and existing captures
+before any bench time. One part of step 1 turns out not to be answerable by this
+firmware at all, and that is reported as a measured gap rather than worked around.
+
+---
+
+#### 1. PSU conditions — verified, from the captures
+
+Read off the four 550-rung captures (three cohort runs + `e258-ctrl550_01`):
+
+| | `ref_bus` | `filt_bus` | `ceiling_tenths` vs `duty_tenths` | IR residual |
+|---|---|---|---|---|
+| 550_01 | 1218 | 1193 | 550 / 550 — no foldback | +3.3 |
+| 550_02 | 1218 | 1193 | 550 / 550 — no foldback | +4.5 |
+| 550_03 | 1218 | 1193 | 550 / 550 — no foldback | +3.8 |
+| ctrl | 1220 | 1194 | 550 / 550 — no foldback | — |
+
+`ceiling_tenths == duty_tenths` on every run, so **no foldback occurred**, and
+the IR-line residual is **positive** on all three cohort runs, which is the
+constant-voltage side of the CV/CC discriminator (E243). Operator-metered
+**2.152 A** at this rung against the **3 A clamp**. So on the goal's own terms —
+*"sustained CC, suppressed bus voltage or foldback cannot qualify a rung"* —
+none of the three disqualifiers is present at 550.
+
+**What I am not claiming** is headroom at 60%. Per the goal, *average current
+does not exclude transient limiting*: 2.152 A is a meter average, the clamp
+responds to something faster than the meter integrates, and the firmware's own
+current instrument is a 10.1 ms block mean. The clamp's transient behaviour at
+this rung is **unmeasured**, and E259 withdrew the arithmetic that pretended
+otherwise.
+
+#### 2. Thermal conditions — not measurable by this image, and that is the finding
+
+The ADC channel table (`src/hw/adc.rs:35-41`) converts **five** channels,
+ascending: three shunt amplifiers (IN0, IN1, IN4), the bus divider (IN6), and
+VREFINT (IN13). IN2/IN3 are deliberately excluded (sample-and-hold injection,
+E041/E042). **There is no thermal channel in the scan**, and the firmware says
+so itself at `src/run/policy.rs:41` — *"the highest current this bench has run,
+with no thermal protection anywhere in …"*.
+
+So goal step 1's *"verify … thermal conditions"* **cannot be satisfied by this
+firmware**: there is no sensor, no report key, and no stop. This is a
+demonstrated instrumentation gap, not an inferred wall, and I am not going to
+substitute a proxy for it. The honest statement of the thermal condition at 550
+is **unknown**, and it stays unknown until either a channel is added or the
+operator provides an external reading.
+
+#### 3. Protection coverage — inventoried, with one standing claim corrected
+
+| protection | timescale | status at 550 |
+|---|---|---|
+| `FastBusSag` (sharp bus) | band-pass ≈ **0.8–200 ms** | **fired** in 550_03 |
+| absolute bus floor (`BUS_FLOOR_NUM` ≈ 8400 mV) | **every scan**, ~101 µs | armed, did not fire |
+| `AverageCurrent` (slow current) | 100-scan blocks = **10.1 ms** | armed, no foldback |
+| guard tick / feedback age | 200 µs | armed, `track_fault=0` |
+| **fast peak current** | — | **absent in production** |
+| **thermal** | — | **absent entirely** (§2) |
+
+The sharp/slow droop coverage the goal asks about is therefore **real and
+two-sided on the bus**: a band-pass guard for 0.8–200 ms dips and a per-scan
+absolute floor beneath it. `sagtrace.rs:25-32` states that division of labour in
+the firmware's own words.
+
+**The correction.** I have been asserting "no peak-current stop faster than
+10.1 ms" without the reason. The reason is that one *is implemented and tested*:
+`validate_raw_feedback` band-checks all three phase codes against
+`PHASE_CODE_LOW..=PHASE_CODE_HIGH` = **848..3248** on every scan. Production
+does not use it — `src/run/states.rs:320` passes `PhaseCodePolicy::RetainRails`,
+and the enum's own doc explains why: with block averaging installed, *"a rail is
+deliberately retained in the block average rather than rejecting the scan"*. The
+two policies are **mutually exclusive by design**, not an oversight. So the gap
+is a deliberate trade, and closing it is a design change, not a bug fix —
+which means it is out of scope under *"keep existing protections/thresholds"*
+unless evidence demands it.
+
+#### 4. Correction to E259: the deciding scan *is* recordable
+
+E259 §5 listed the deciding scan among the things no instrument holds. That is
+wrong for the bus side and I am correcting it before it propagates.
+`src/run/states.rs:335-346`:
+
+```rust
+self.depth.observe(bus_mean, vref_mean, ...);      // "before the verdict ... can pre-empt none"
+let (filt_bus, filt_vref) = self.sag.filtered();
+let verdict = self.sag.observe(bus_mean, vref_mean);
+if P::G::ON { self.record_sag_row::<P>(hal, sector_start, filt_bus, filt_vref); }
+if let Some(r) = verdict { return Err(r); }        // the stop comes AFTER the row
+```
+
+The row is pushed **before** the verdict returns, with the reference *as used for
+that test* (read before the post-test filter update). The comment states the
+intent: *"it covers the deciding scan of any stop and can pre-empt none."*
+Production folds it away (`NoSagLog`); only `sag-capture` installs the ring.
+
+**What remains true** is the current side: `self.current.accumulate(...)` sits
+*after* the sag return, so the trip scan's phase currents are never accumulated
+and the block containing the event is discarded. `worst_hold_ma` still provably
+cannot hold a surge co-located with the trip. But the raw `phase_a/b/c` are in
+hand at that exact point in the function — three shunt channels, every scan —
+so they are **available to a recorder and merely not recorded**.
+
+#### 5. The shared timeline — the gap the goal names, quantified
+
+The goal asks for *"TIM2 at 8 MHz / 125 ns per tick for the shared
+diagnostic/fault timeline, with 32-bit run anchors and explicit, versioned
+capture units."* Measured against what exists:
+
+| recorder | timebase | width | tick | wrap |
+|---|---|---|---|---|
+| sag ring (`Block.at = hal.raw()`) | **TIM17** | u16 | **1 µs** | **65.536 ms** |
+| chain (`roots.rs:366,532,1219`) | **TIM2** | u16 (truncated from u32) | **15.625 ns** | **1.024 ms** |
+| run / watchdog | extended µs | u32 | 1 µs | — |
+
+**Three recorders, three timebases, no shared anchor.** Goal step 2 asks to
+*align* raw intervals, estimator state, acceptance origin, commutation, bus/VREF
+and phase currents. The bus/VREF stream is stamped in TIM17 µs; the interval and
+arm-path stream is stamped in truncated TIM2 ticks; neither can be placed on the
+other's axis. That — not row ordering — is the actual obstacle.
+
+Two things I checked rather than assumed:
+
+* **Ordering inside each ring is already safe.** Row spacing is 101 µs (fast)
+  and 3.232 ms (slow) against a 65.536 ms wrap — 649 and 20.3 rows per wrap — so
+  cumulative `wrapping_sub` recovers order unless an inter-row gap reaches
+  65.536 ms. The existing delta arithmetic is correctly wrap-safe already
+  (`fine_now.wrapping_sub(fine0)`, `hw::clock::raw().wrapping_sub(raw)`).
+  So I am **not** claiming the present rings are unorderable; they are not.
+* **The existing fine clock does wrap inside a run, and this is a defect.**
+  `hw::fine` runs TIM2 at PSC=0, i.e. 64 MHz / **15.625 ns**, 32-bit, wrapping
+  at **67.11 s**. The 550 runs are commanded `total_ms=80000` = **80 s**, with
+  52.3 s holds. So a 32-bit "run anchor" on the present configuration **wraps
+  mid-run**. E180 chose 64 MHz when runs were shorter; at this campaign's run
+  length it is no longer a run anchor.
+
+**The goal's 8 MHz resolves both, and the arithmetic supports the number rather
+than merely permitting it:**
+
+| | 64 MHz (now) | **8 MHz (goal)** |
+|---|---|---|
+| tick | 15.625 ns | **125 ns** |
+| 32-bit wrap | **67.11 s** — inside a run | **536.87 s** — 6.7× the run |
+| u16 delta span | 1.024 ms | **8.192 ms** |
+| ticks→µs | `>>6` | **`>>3`** — still division-free |
+| step on the 4 µs chain term | 0.39% | **3.1%** (TIM17 is 25%) |
+| step on a 101 µs judgement | 0.02% | **0.12%** |
+
+PSC=7 gives 64/8 exactly, and 8 MHz = 2³ MHz keeps the ISR arithmetic audit's
+division-free requirement. The resolution given up is 8×, and 125 ns is still
+**8× finer than the 1 µs the sag ring uses today** and ample for every quantity
+E180 was built to measure. The u16 delta span rising to 8.192 ms matters
+directly: the event this campaign is chasing is predicted at ≥505 µs, and a
+multi-sector window now fits in a bounded 16-bit delta.
+
+**And this is why capture units must be versioned.** Changing the tick from
+15.625 ns to 125 ns silently reinterprets every recorded delta by 8×. This
+repo has already been bitten by exactly that: `scripts/chain.py` now *refuses*
+legacy 6-column captures because their `spent` is coarse µs while post-E180 rows
+are 15.6 ns ticks, so accepting them would under-report by 64×. The unit goes in
+the capture, and the parser refuses a capture that does not declare one.
+
+---
+
+#### 6. What this makes the next step, and its cost stated in advance
+
+`bin/sag-capture.rs` is the right instrument and it is **not yet sufficient** for
+what goal step 2 asks. Stated before building, so the claim can fail:
+
+**Already present** — 512 fast rows at ~101 µs = **51.7 ms**, 1024 decimated
+rows at 3.232 ms = **3.31 s** (sixteen of the reference's 207 ms constants), both
+freezing on the fault, holding bus/VREF means, the reference as used, streak,
+sector and duty. RAM **16 384 B** of the part's 36 KB. Rows written after
+`safe_off`; `NoSagLog` folds the whole thing out of production.
+
+**Missing for step 2** — phase currents (available in the same `RawScan`, never
+stored), the raw interval and acceptance origin (a different recorder, a
+different timebase), and a shared 32-bit anchor to align them on.
+`since_zc_us` stays aliased at 101 µs against a ~71 µs sector at this rung and
+**will not be asked a phase-locking question.**
+
+Predeclared costs of the change I intend: `Block` grows from **16 B**; at u32
+`at` plus three phase codes it becomes **24 B**, so the fast ring goes
+8 192 → **12 288 B** and the total 16 384 → **20 480 B** of 36 KB. Per-row work
+gains one 32-bit timer read and three u16 stores. Both get measured against the
+four-root arithmetic audit and the changed-path disassembly before any powered
+run, and the ISR cost A/B goes against the **parent commit**, not the last
+qualified image (the E230 lesson).
+
+#### Predictions, before any build
+
+1. The recorder change costs **≤ 20 480 B** RAM and adds **no** measurable cost
+   to the three motor roots, because the sag ring is foreground-only
+   (`sagtrace.rs:118-121`: *"the guard is judged in `Ctx::pass`, not in an
+   interrupt"*). If a motor-root cost appears, I have the concurrency wrong.
+2. A `sag-capture` run at 550 trips at least once in three (observed rate 1 in 4
+   including the control → 58% chance of ≥1 in three runs). **If none trips, the
+   observer moved the event** and that is the result, not a retry cue.
+3. If a trip is captured, the fast ring shows a depression **≥505 µs** wide, not
+   a single-scan spike — the guard's own numerator is an 8-scan sliding mean
+   (~808 µs), so a narrower event cannot latch it. A narrower captured event
+   means I have the guard's dynamics wrong.
+4. **No prediction about ordering.** Whether the interval excursion precedes or
+   follows the bus dip is the open question; E257 pre-committed to an answer and
+   that was the error the new goal corrects.
+
+This entry is conclusions plus a build plan, so **both reviews come before the
+build**, and the E259 dispositions land first.
