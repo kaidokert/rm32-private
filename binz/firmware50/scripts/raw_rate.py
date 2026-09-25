@@ -31,9 +31,103 @@ import statistics
 
 # Measured, not assumed. `captures/2026-09-24/e292-idlescan.txt`, bridge off.
 BRIDGE_OFF_FLOOR = 43.8
-# E296's predeclared tolerance: inside this, a rung is the same
-# load-proportional phenomenon and says nothing about a latch.
+
+# E296's original tolerance on the RAW rate against a duty line.
+# **RETIRED AS CONFOUNDED (E297)** and kept only so the historical verdict can
+# be reproduced: it fired at rung 425 (+43.4%) because the excursion rate is
+# essentially proportional to *current* and duty is what changes current. The
+# measured within-rung CV of the rate is 16.5% (max 19.6%), so +-25% on a 3-run
+# mean was only ~2.6 sigma to begin with.
 TOLERANCE_PCT = 25.0
+
+# E297's replacement, predeclared before rungs 450+ ran: the rate **per unit
+# current** against the mean of rungs 350-425, with a tolerance taken from the
+# measured CV rather than from a round number.
+RATE_PER_MA_LO = 0.317
+RATE_PER_MA_HI = 0.589
+SCORE_FROM_TENTHS = 450
+# Below this many 930-bin counts per run the deep-bin ratio is Poisson noise
+# (sqrt(5) ~ 2.2 at the counts rungs 375-400 produce) and is not read. Stated
+# before the data, because rungs 375 and 400 turned out to be the anomalously
+# LOW ones -- the apparent 6.7x "jump" at 425 was measured against them.
+DEEP_BIN_FLOOR = 25.0
+
+# The window above describes ONE regime and is predeclared for rungs at or above
+# this duty. `rate/mA` is not constant across the ladder: it falls from 0.814 at
+# rung 200 to ~0.40-0.50 at 350-450, i.e. the excursion rate grows SUB-
+# proportionally to current (a power law with exponent ~0.6, not 1.0). So
+# "proportional to current" overstates it and the window cannot be applied
+# outside the band it was measured in.
+
+
+def per_run(pattern: str, root: pathlib.Path) -> dict[int, list[tuple]]:
+    """Per run: (rate per 1e6 scans, raw1_n, raw2_n, hold_ma), keyed by rung.
+
+    Carries `hold_ma` because the raw excursion rate tracks current rather than
+    duty (E297), so the only non-confounded reading is per unit current. Note it
+    is **sub**-proportional -- `rate/mA` falls from 0.814 at rung 200 to
+    ~0.40-0.50 at 350-450, a power law with exponent ~0.6 -- so "proportional to
+    current" is a convenient shorthand and not the measured relationship.
+    """
+    out: dict[int, list[tuple]] = collections.defaultdict(list)
+    for p in sorted(root.glob(pattern)):
+        t = p.read_text(encoding="utf-8", errors="replace")
+        try:
+            duty = int(re.search(r"\btarget_duty_tenths=(\d+)", t).group(1))
+            scans = int(re.search(r"\bdrive_scans=(\d+)", t).group(1))
+            r1 = int(re.search(r"\braw1_n=(\d+)", t).group(1))
+            r2 = int(re.search(r"\braw2_n=(\d+)", t).group(1))
+            ma = int(re.search(r"BEMFCURRENT .*?\bhold_ma=(-?\d+)", t).group(1))
+        except AttributeError:
+            continue
+        if scans == 0 or ma == 0:
+            continue
+        out[duty].append((1e6 * r1 / scans, r1, r2, ma))
+    return out
+
+
+def report_normalised(root: pathlib.Path, patterns: list[str]) -> int:
+    """E297's predeclared discriminator, applied mechanically rather than by eye."""
+    merged: dict[int, list[tuple]] = collections.defaultdict(list)
+    for pat in patterns:
+        for duty, rows in per_run(pat, root).items():
+            merged[duty].extend(rows)
+    if not merged:
+        print("  no captures")
+        return 0
+    print(f'{"rung":>5}{"n":>3}{"rate/1e6":>10}{"hold_ma":>8}{"rate/mA":>9}'
+          f'{"verdict":>10}{"raw2_n":>8}{"raw2/raw1":>12}')
+    steps = []
+    for duty in sorted(merged):
+        v = merged[duty]
+        rate = statistics.mean(x[0] for x in v)
+        ma = statistics.mean(x[3] for x in v)
+        rpm = rate / ma
+        r1 = statistics.mean(x[1] for x in v)
+        r2 = statistics.mean(x[2] for x in v)
+        # **Scope.** E297 predeclared this window for rungs 450 and above, from
+        # the mean of 350-425. `rate/mA` is strongly duty-dependent below that
+        # (5.556 at rung 150 against ~0.45 at 400), so applying the window to
+        # the low rungs flags them all and says nothing -- the window describes
+        # one regime, not the whole ladder. Lower rungs print as context.
+        scored = duty >= SCORE_FROM_TENTHS
+        on = RATE_PER_MA_LO <= rpm <= RATE_PER_MA_HI
+        if scored and not on:
+            steps.append((duty, rpm))
+        verdict = ("STEP" if not on else "on line") if scored else "(context)"
+        deep = f"{r2 / r1:.4f}" if r2 >= DEEP_BIN_FLOOR else "below floor"
+        print(f"{duty:>5}{len(v):>3}{rate:>10.1f}{ma:>8.0f}{rpm:>9.3f}"
+              f"{verdict:>10}{r2:>8.1f}{deep:>12}")
+    print(f"\n  predeclared (E297): rate/mA in {RATE_PER_MA_LO}..{RATE_PER_MA_HI}; "
+          f"deep-bin ratio read only at raw2_n >= {DEEP_BIN_FLOOR:.0f}")
+    if steps:
+        print("  !! STEP(S) outside the predeclared window:")
+        for duty, rpm in steps:
+            print(f"     rung {duty}: rate/mA = {rpm:.3f}")
+        return 1
+    print("  every rung inside the window: excursions track current (sub-proportionally),")
+    print("  carrying no information about a latch.")
+    return 0
 
 
 def rates(pattern: str, root: pathlib.Path, bin_ix: int) -> dict[int, list[float]]:
@@ -96,7 +190,11 @@ def main() -> int:
           f"rate = {intercept:.1f} + {slope:.4f} x duty_tenths  corr={corr:+.3f}")
     print(f"  bridge-off floor {BRIDGE_OFF_FLOOR} /1e6 (measured, e292-idlescan)\n")
 
-    print(f"scoring {args.score} (tolerance +-{TOLERANCE_PCT:.0f}%):")
+    print("E297 discriminator -- rate per unit current, the non-confounded reading:")
+    rc = report_normalised(root, [args.fit, args.score])
+
+    print(f"\nE296 discriminator, RETIRED AS CONFOUNDED, shown only so its "
+          f"historical verdict reproduces (tolerance +-{TOLERANCE_PCT:.0f}%):")
     sc = rates(args.score, root, args.bin)
     if not sc:
         print("  no scored captures yet")
@@ -117,14 +215,10 @@ def main() -> int:
         print(f"{duty:>5}{len(v):>3}{m:>10.1f}{pred:>11.1f}{dev:>+7.1f}%"
               f'{"ON LINE" if on else "** STEP **":>12}{m / BRIDGE_OFF_FLOOR:>8.1f}x')
     if steps:
-        print("\n!! STEP(S) beyond the predeclared tolerance -- the first evidence of a")
-        print("   mechanism distinct from the load-proportional rise seen from rung 150:")
-        for duty, dev in steps:
-            print(f"     rung {duty}: {dev:+.1f}%")
-        return 1
-    print("\nAll scored rungs on the line: the same load-proportional phenomenon,")
-    print("carrying no information about a latch. That is a useful negative.")
-    return 0
+        print("  (retired test flags: "
+              + ", ".join(f"rung {d} {v:+.1f}%" for d, v in steps) + ")")
+    print("\nThe retired test's verdict is not load-bearing; E297's is.")
+    return rc
 
 
 if __name__ == "__main__":
