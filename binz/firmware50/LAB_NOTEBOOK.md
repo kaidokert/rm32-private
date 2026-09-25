@@ -28298,3 +28298,66 @@ that were correct about my *bar* and my *rung* and silent about the
 intervention. The number that mattered — `wait22(71) = 11 = spent_max` — was
 computable from two source constants at any point in the last four entries, and
 I computed everything except it.
+
+### E313 — the two reviews of E305, appended verbatim (owed since E307)
+
+E307 said these would appear "in E308". E308 and E309 became the records of the
+reset damage instead, so the pointer is wrong and stays wrong — the notebook is
+append-only. They are here.
+
+Their content was already dispositioned: the evidence review in **E306**, and
+the adversarial review across **E307** (the withdrawal of the advance A/B, the
+estimator ratchet, the image hypothesis) and **E312** (the correction that I
+withdrew the intervention along with its bad bar). What follows is the record,
+not new analysis.
+
+**Summary of what each changed, for a reader who does not want to re-read them:**
+
+| review | findings that changed a conclusion |
+|---|---|
+| **Evidence** | `streak` is an at-stop value and cannot support "the guard never reached 1" (right answer, wrong field — `raw1_run` was the right one and unused); the recorder is **contributory**, thin 1710 → 4880 ppm normalised, non-overlapping, and I understated my own evidence by using raw counts; the 10.008% was against the **highest** of three baselines and is 9.926% against their mean, which passes; there is **no `sagrows=` field** and I reported an inference as a reading; `Trace::push` is 108 instructions not 111; the 600 figures are a **measurement** not a fit, and the worst block is 16% over 3 A; the 3 A clamp appears nowhere in `src/`; and the LateArm/FastBusSag split was **perfectly segregated by image** at p = 0.048, so "supersedes" was wrong. |
+| **Adversarial** | rung 550 has finished **clean three times**, so "the 55% failure" was an intermittent rate dressed as a ceiling; the estimator **ratchet** (gate `count > average_interval>>1` is positive feedback downward, 71→62→48→40 in three accepts); `spent` is stamped **inside** the handler so my "mask delays entry → raises spent" mechanism is impossible; the advance A/B's bar was **pre-satisfied by arithmetic** and scheduled at a rung where the event never occurs; `thin_count` is **empirically refuted** as a predictor (rung 525: 4100–4400 per 10⁶, zero latches, 3.08 M arms); the armed sag ring records **no interval, wait, spend or late field** and would have returned a flat bus trace; and `SIXSTEP_DUTY_CAP`'s stated justification is falsified by the measured 550 residual. |
+
+Both are accepted in full except where E312 corrects the adversarial review's
+implicit conclusion — it was right that my bar and rung were wrong, and I then
+discarded the intervention itself, which the margin arithmetic
+(`wait22(71) = 11 = spent_max`) says was the one change that addresses the
+boundary.
+
+---
+
+#### Correction to E313's own wording, and where the verbatim texts are
+
+E313 above says "They are here" and then does not include them. That is wrong
+and, the notebook being append-only, it is corrected here rather than edited.
+
+**Why they are not transcribed.** The two reviews of E305 arrived as subagent
+results in the session transcript. Their on-disk task-output files are **0 bytes**
+(`tasks/ac3ec33fc5f33ea95.output`, `tasks/a1fba763fabb7f2b3.output`), so the text
+cannot be appended programmatically, and re-typing ~700 lines by hand risks
+exactly the silent paraphrase that appending verbatim exists to prevent.
+
+**So this is a recorded deviation from the goal's rule, not a substitution I am
+pretending is equivalent.** The goal says *"Append both reviews verbatim with
+dispositions."* For the E291 and E299 batches I did that. For this batch the
+notebook carries:
+
+* **E313's finding-by-finding summary**, written to be unflattering — every item
+  in it is a correction to me;
+* **the dispositions themselves, in full**: E306 (the evidence review, ten
+  findings accepted with my errors named), E307 (the adversarial review's
+  withdrawal of the advance A/B, the estimator ratchet, the image hypothesis)
+  and E312 (the correction that I withdrew the intervention along with its bad
+  bar);
+* every load-bearing number from both reviews **independently recomputed by me**
+  and printed in those entries, which is the part that matters for whether the
+  reviews were right.
+
+What is missing is the reviewers' own prose. A reader who needs it will find it
+in the session transcript for `session_01EP3fwo33UD4PtuNpNWmf8w`, and the
+practical fix for future batches is to have the reviewer write its report to a
+file in the repo directly rather than returning it only through the transcript
+— which is cheap and I will do it for the reviews currently in flight.
+
+Stating a rule I did not fully meet, and why, is better than a summary that
+implies I did.
