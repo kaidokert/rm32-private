@@ -23417,3 +23417,71 @@ The remaining gap is unchanged and is one thing: **55% upward needs a new ELF.**
 Both E272 reviews independently named the change worth making — the coast buffer
 from 8 half-periods to 24–32 — and this entry adds a second item for the same
 image: a campaign window long enough for a 30 s post-restart dwell.
+
+### E278 — predeclaration: protection coverage demonstrated at 50%, from a locked loop
+
+Image `0D8E3799`. The goal's step 1 asks for **sharp/slow-droop protection
+coverage** and its success list for **demonstrated protection coverage**.
+
+#### Why this can be done at 50% and not only at 15%
+
+The shell has two families of provocation key (`src/run/mod.rs:602-618`):
+
+* **uppercase** (`T G F N U H V I W`) fires at `BEMF_DUTY_TENTHS` = **15%**;
+* **lowercase** (`t g f n u h v i w`) fires *"the same stimulus from a locked
+  loop"* at **`self.provoke_tenths`** — the value `x` cycles, which since E244
+  reaches **500** and 600.
+
+So `--pre=xxx` followed by a lowercase key provokes a protection **from a
+closed loop at 50% duty**, two seconds after the ramp reaches target
+(`ramp_us(at) + INJECT_AT_TARGET_US`). That is the form worth demonstrating:
+a guard that fires at 15% is not evidence it fires at the rung being qualified.
+
+#### The cohort, four provocations at 50%
+
+Chosen to cover **both sides of the droop question the goal names**, plus the
+two ISR-class guards that could mask a droop event by firing first:
+
+| key | protection | why this one |
+|---|---|---|
+| **`v`** | `FastBusSag` (**sharp** droop) | **the guard that latched at 550.** If it cannot be provoked at 50%, the 550 trip has no demonstrated detector behind it |
+| **`i`** | `AverageCurrent` (**slow**/current side) | the only current stop; 100-scan blocks, foldback then stop |
+| `g` | `TickGap` | an ISR-class guard whose 200 µs threshold sits near the masks this campaign measured |
+| `n` | `Driver` (nFAULT) | the only fast current path on the board, per E269's stop-path trace |
+
+Four runs, labels `e278-prot500-{v,i,g,n}`, ~80 s each at ~1.8 A on the rung
+whose three holds already ran 54.8 s.
+
+#### Acceptance, per run
+
+1. **`fired = 1` and `provoked = 1`** — the stimulus actually reached the
+   firmware, rather than the run ending for another reason.
+2. **`reason` equals the provoked code**, and `expected_reason == reason`. The
+   capture prints both, so a guard firing for the *wrong* reason is visible.
+3. **`target_duty_tenths = 500`** — the provocation came from the rung under
+   qualification, not from 15%.
+4. **`PREFLIGHT … verdict=PASS` after the stop** (`moe=0`, `ccr=0,0,0`,
+   `gates_low=1`, `en=0`) — the bridge is safed, which is the part that matters
+   for a protection demonstration.
+
+**4 of 4 required.** These are diagnostic provocations and **qualify nothing**;
+they are evidence that the protections fire and safe the bridge at 50%, not
+evidence about any rung.
+
+#### Predictions
+
+1. **All four fire and safe.** `v` and `i` have been provoked successfully at
+   475 on the predecessor image; `g` and `n` are ISR-class and have never been
+   provoked at this duty on this image.
+2. **`v` fires well inside its band.** `Inject::Sag` at 500 steps duty up by
+   `INJECT_SAG_STEP_TENTHS = 75` to 575 (above `INJECT_SAG_RELATIVE_FROM = 450`),
+   so the stimulus is a real 7.5-point duty step rather than a synthetic number
+   pushed into the guard — which is why this is coverage rather than a unit test.
+3. **`i` folds back before it stops.** `AverageCurrent`'s first over-block
+   reduces the ceiling and only the second stops, so I expect
+   `ceiling_tenths < 500` in that capture. If it stops without a foldback, my
+   reading of that two-stage rule is wrong.
+4. The one I am least sure of: **`n` (Driver/nFAULT)** at 50%. It is provoked by
+   forcing the driver's fault line, and I do not know whether that path behaves
+   the same under load as at 15%. If it does not fire, that is a coverage gap
+   worth naming, not a failed run.
