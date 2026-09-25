@@ -66,11 +66,40 @@ WATCHED = (
     "TIM6_DAC_LPTIM1",
     "DMA1_CHANNEL1",
     "protection::BusDepth::observe",
+    # **Thread-mode additions (E308).** Both reviews of E305 landed on the same
+    # structural point: `spent` is stamped INSIDE the COMP handler
+    # (`roots.rs:1255-1257`), so COMP *entry* latency is invisible to
+    # `spent_max_us`, `thin_count` and `late_arms` alike -- and entry latency is
+    # set by thread-mode work and critical sections. The four ISR roots are
+    # byte-identical across every image in this campaign, including the one that
+    # has never late-armed, so whatever moves the failure rate is HERE, in the
+    # foreground, where `isr_diff.py` says in its own docstring it cannot look.
+    #
+    # `record_sag_row` is the concrete instance: it takes a critical section
+    # 9 840 times a second, which `sagtrace.rs`'s own module comment says is
+    # unnecessary, and the measured consequence was `gt150` up 1.4-2.0x -- the
+    # signature of delayed entry -- with `spent_max` unchanged at 11.
+    "run::states::Ctx::scan_pass",
+    "run::states::Ctx::record_sag_row",
+    "sagtrace::Trace::push",
 )
 
 # A thin match is a silent pass: the first version of this script found 1 of 8
 # symbols and cheerfully blessed a one-symbol baseline. Refuse instead.
 MIN_SYMBOLS = 5
+
+# Symbols that exist only in some build configurations. Their ABSENCE is not a
+# failure -- `record_sag_row` and `Trace::push` are compiled out of a production
+# build, and flagging that would make the ratchet refuse every normal image.
+# Their hazard-class DRIFT is still a failure wherever they do appear.
+#
+# This is the honest form of a cross-configuration ratchet: without it, blessing
+# from a recorder build refuses production and blessing from production refuses
+# the recorder build, so the check would be switched off within a day.
+OPTIONAL = frozenset({
+    "run::states::Ctx::record_sag_row",
+    "sagtrace::Trace::push",
+})
 
 CLASSES = ("insns", "div", "mul", "irq", "excl", "helper")
 
@@ -171,7 +200,10 @@ def main() -> int:
     for k in sorted(set(base) | set(now)):
         b, n = base.get(k), now.get(k)
         if n is None:
-            fails.append(f"{k}: in the baseline, ABSENT from this ELF")
+            if k in OPTIONAL:
+                print(f"{k:<44}{'(absent, optional)':>12}")
+            else:
+                fails.append(f"{k}: in the baseline, ABSENT from this ELF")
             continue
         if b is None:
             fails.append(f"{k}: in this ELF but NOT the baseline (bless to accept)")
