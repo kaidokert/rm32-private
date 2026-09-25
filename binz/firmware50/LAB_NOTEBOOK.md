@@ -23845,3 +23845,122 @@ distinction that matters is not *which keys* appear but *whether the sequence
 normalises its own starting state* — which is a property I had already
 implemented in `ladder_drive` and failed to recognise in my own guard one entry
 later.
+
+### E283 — my window change broke rung 150 three times, and the constant that broke it warns about exactly this
+
+**`39E0500A.e283-backstop.elf`**, sha256 `2c51387ca721ab77e6f31d8a91887d5505c80e28546590e4be613e2656cad865`.
+
+The walk on `7CCCE8A8` failed **3 of 3 at rung 150** — the lowest rung, which
+passed 3/3 on the previous image. I stopped the walk on the first rung rather
+than letting it burn an hour discovering the same thing nineteen times.
+
+#### The regression
+
+All three runs: `reason = 1` — **`CampaignDeadline`** — after holding
+**76 783 ms**. The rate identity was fine (998 / 997 / 1000), so the coast
+widening works; the only failure was the stop code.
+
+`roots.rs:714` had **`GUARD_CAMPAIGN_US = 84_000_000`** — the ISR guard's own
+backstop on how long the bridge may stay energised. E281 moved
+`BEMF_TOTAL_MS` 80 000 → 90 000 and left the backstop at 84 s, so **the
+backstop fired 6 s before the window closed, on every run.**
+
+**And the constant's own doc comment warns about precisely this**, including
+that it had already gone stale once:
+
+> *"It must sit **above** `policy::BEMF_TOTAL_MS` (80 s) … The doc comment here
+> used to compare 56 s against 54 s — both stale by a campaign, in the one place
+> that bounds how long the bridge can stay energised (E186 S1)."*
+
+So this is the **third** time the coupling has gone stale, in a constant whose
+comment exists to say so. Reading the warning did not prevent it, for the same
+reason E279's shell-state trap recurred: a documented coupling is not a checked
+one.
+
+#### The fix: derived, not written down
+
+```rust
+pub const GUARD_CAMPAIGN_MARGIN_US: u32 = 4_000_000;
+pub const GUARD_CAMPAIGN_US: u32 =
+    crate::run::policy::BEMF_TOTAL_MS * 1_000 + GUARD_CAMPAIGN_MARGIN_US;
+```
+
+The backstop now follows the window by construction, with the same 4 s of
+margin the literal encoded. The coupling cannot go stale a fourth time because
+there is no longer a second number to update.
+
+#### And my first assertions were vacuous — caught by trying to break them
+
+I added two `const _: () = assert!(…)` guards comparing `GUARD_CAMPAIGN_US`
+against `BEMF_TOTAL_MS`. Then I set the window to **200 s** to watch them fire,
+and **they did not** — because the backstop is now *derived from* the window, so
+both comparisons hold for any value. **An assertion that checks an identity is
+the can't-fail class I have been finding in other people's work all session, and
+I wrote two of them minutes after writing the fix.**
+
+Replaced with a bound that can actually bite — an **absolute** ceiling on the
+window, which is the thing nothing else in the firmware caps and which is the
+longest the bridge is ever energised:
+
+```rust
+const _: () = assert!(crate::run::policy::BEMF_TOTAL_MS <= 120_000);
+const _: () = assert!(GUARD_CAMPAIGN_MARGIN_US >= 1_000_000);
+```
+
+Verified by breaking it: a 200 s window now produces **2 build errors**, and the
+tree builds clean at 90 s. 120 s catches a typo while leaving room above the
+90 s the restart campaign needs for a 30 s post-restart dwell.
+
+#### A correction to wording I have used repeatedly, including in E281
+
+I have been writing that the four motor ISR roots are **"byte-identical"**
+between images. That overclaims, and `scripts/isr_diff.py`'s own docstring says
+why: it normalises *"absolute addresses, `pc`-relative comment targets and
+symbol suffixes … because a root that is byte-identical still lands at a
+different address in a different image."*
+
+So what the tool establishes is **identity instruction for instruction**, not
+byte identity. And in *this* image it demonstrably cannot be byte identity:
+`GUARD_CAMPAIGN_US` changed from 84 s to 94 s, and that constant is loaded from
+the guard root's literal pool by an `ldr rN, [pc, #x]` whose instruction text is
+unchanged while the pool word differs.
+
+**The substantive claim survives and is the one the goal actually asks for.**
+"Preserve existing control/protection timing" is established by identical
+instruction sequences — identical instructions cost identical cycles, and a
+changed immediate changes no timing. But I should have said *instruction-for-
+instruction* and not *byte*, in E281 and in the entries before it.
+
+#### Image `7CCCE8A8` is dead for qualification, and that is the rule working
+
+Rung 150 now carries **three `reason = 1` records** on that image.
+`_is_firmware_latch` classifies any `reason ∉ {2, 9}` as a firmware latch, and
+E262 rule 1 makes a latch permanent for the ELF. So **`7CCCE8A8` can never
+qualify rung 150, and therefore nothing above it.** That is correct: the image
+had a real defect that stopped every run early.
+
+`39E0500A` is a different image with a substantive change — the backstop
+coupling — so it gets its own ledger legitimately under E263's guards, and the
+three failures stay recorded and travel with any future report of rung 150.
+
+**Three images now, and the ledger is doing its job:** `0D8E3799` (16 rungs,
+550 latched), `7CCCE8A8` (defective, rung 150 latched), `39E0500A` (the walk
+restarts here).
+
+#### Audits on `39E0500A`
+
+| audit | result |
+|---|---|
+| host tests | **344 + 9 pass** |
+| clippy, target | clean |
+| four-root arithmetic | **4 roots certified clean** |
+| four roots vs `0D8E3799` | **identical instruction for instruction** (37 / 728 / 332 / 155) |
+| the new build assertion | **fires** at a 200 s window, clean at 90 s |
+
+#### What this cost, and what it bought
+
+Cost: three runs at 15% duty and about eight minutes. Bought: the coupling is
+now structural rather than documented, the window has an absolute ceiling for
+the first time, and a wording error I had been repeating is corrected.
+
+The walk restarts on `39E0500A`, 150 → 600.

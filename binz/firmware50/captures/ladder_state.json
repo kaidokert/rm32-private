@@ -11258,5 +11258,81 @@
     ]
    }
   ]
+ },
+ "2264FFA36BC78B1AB96185D1F175FE826126EC46C6E08322DC8D9305E3295848": {
+  "150": [
+   {
+    "file": "e282-150_01.txt",
+    "duty": 150,
+    "reason": 1,
+    "accepted": 334177,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 334178,
+    "unstable": 2232031,
+    "hold_ms": 76783,
+    "rate_permille": 998,
+    "has_tail": true,
+    "rate_vs_coast_permille": 998,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 708,
+    "coast_crossings": 574,
+    "hold_ma": -35,
+    "ceiling_tenths": 150,
+    "worst_ma": 906,
+    "droop_permille": 999.3355481727575,
+    "fails": [
+     "reason 1 != 2"
+    ]
+   },
+   {
+    "file": "e282-150_02.txt",
+    "duty": 150,
+    "reason": 1,
+    "accepted": 334277,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 334278,
+    "unstable": 2225321,
+    "hold_ms": 76783,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 997,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 709,
+    "coast_crossings": 575,
+    "hold_ma": 93,
+    "ceiling_tenths": 150,
+    "worst_ma": 1019,
+    "droop_permille": 1000.6648936170212,
+    "fails": [
+     "reason 1 != 2"
+    ]
+   },
+   {
+    "file": "e282-150_03.txt",
+    "duty": 150,
+    "reason": 1,
+    "accepted": 334177,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 334178,
+    "unstable": 2227917,
+    "hold_ms": 76783,
+    "rate_permille": 998,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1000,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 705,
+    "coast_crossings": 570,
+    "hold_ma": 86,
+    "ceiling_tenths": 150,
+    "worst_ma": 1033,
+    "droop_permille": 1000.0,
+    "fails": [
+     "reason 1 != 2"
+    ]
+   }
+  ]
  }
 }

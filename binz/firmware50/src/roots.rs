@@ -706,12 +706,39 @@ pub const GUARD_IRQ_PRIORITY: u8 = Guard::NVIC;
 /// fails to fire. The foreground ends a run at `policy::BEMF_TOTAL_MS`; this
 /// only catches a foreground that never does.
 ///
-/// It must sit **above** `policy::BEMF_TOTAL_MS` (80 s) so that an ordinary
-/// run ends on its own window rather than on this, and close enough above it
-/// that a run which loses its foreground still stops. The doc comment here
-/// used to compare 56 s against 54 s -- both stale by a campaign, in the one
-/// place that bounds how long the bridge can stay energised (E186 S1).
-pub const GUARD_CAMPAIGN_US: u32 = 84_000_000;
+/// It must sit **above** [`crate::run::policy::BEMF_TOTAL_MS`] so that an
+/// ordinary run ends on its own window rather than on this, and close enough
+/// above it that a run which loses its foreground still stops.
+///
+/// **Derived, not written down** (E283). This was a literal 84 s against an
+/// 80 s window, and the comment beside it recorded that it had *already* gone
+/// stale once ("used to compare 56 s against 54 s -- both stale by a campaign,
+/// in the one place that bounds how long the bridge can stay energised",
+/// E186 S1). I then moved `BEMF_TOTAL_MS` to 90 s and left this at 84, so the
+/// backstop fired **6 s early on every run** and three rung-150 runs stopped
+/// with `CampaignDeadline` instead of `SegmentDeadline` -- the third time this
+/// coupling has gone stale, in a constant whose own doc comment warns about it.
+///
+/// Now it follows the window by construction, with the same 4 s of margin the
+/// literal encoded, and the assertions below make a violation a build error
+/// rather than a bench result.
+pub const GUARD_CAMPAIGN_MARGIN_US: u32 = 4_000_000;
+pub const GUARD_CAMPAIGN_US: u32 = crate::run::policy::BEMF_TOTAL_MS * 1_000 + GUARD_CAMPAIGN_MARGIN_US;
+
+// **The first pair of assertions here were vacuous and I caught it by trying
+// to break them** (E283). They compared `GUARD_CAMPAIGN_US` against
+// `BEMF_TOTAL_MS`, but the former is now *derived from* the latter, so both
+// held for any window -- including a deliberately absurd 200 s. An assertion
+// that checks an identity is the can't-fail class this campaign keeps finding.
+//
+// What actually needs bounding is the window itself, absolutely: it is the
+// longest the bridge is ever energised on this bench, and nothing else in the
+// firmware caps it. 120 s catches a typo (200_000, 900_000) while leaving room
+// above the 90 s the restart campaign needs for a 30 s post-restart dwell.
+const _: () = assert!(crate::run::policy::BEMF_TOTAL_MS <= 120_000);
+// And the margin must be a real interval, not zero or negative-by-wrap.
+const _: () = assert!(GUARD_CAMPAIGN_MARGIN_US >= 1_000_000);
+const _: () = assert!(GUARD_CAMPAIGN_US > crate::run::policy::BEMF_TOTAL_MS * 1_000);
 
 /// The guard clock as of now. Call from the guard or inside a critical
 /// section, so the (ext, raw) pair cannot change underneath.
