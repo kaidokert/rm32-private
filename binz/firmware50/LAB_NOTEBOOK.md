@@ -22313,3 +22313,64 @@ campaign whose discipline says to hash every ELF.
    specifically.
 
 Step 1 is the next action. Both reviews follow verbatim.
+
+### E270 — predeclaration: validate the v3 capture format on hardware, at 25% duty
+
+Image **`7E20F95D.e270-v3.elf`**, sha256 `ac7c41e9ef0001f9…`.
+
+E269 step 1. **No capture on disk carries a single v3 byte**, so every new
+column — `at_fine`, `pwm_ctr`, `bus_raw`, `phase_a/b/c` — and every host path
+that reads them has only ever run against synthetic fixtures I wrote myself.
+Flashing an unvalidated format into a high-current cohort is how E264 and E266
+went wrong; this validates it at the cheapest operating point that can produce
+a real latch.
+
+#### The run
+
+`sag_run.py --command V --label e270-v3val250`, i.e. `Inject::Sag` at rung
+**250**. Below `INJECT_SAG_RELATIVE_FROM = 450` the injection steps duty to a
+fixed **500** (`run/policy.rs`), which is what makes a 25% run able to provoke
+the guard at all. One run. **~5 s of drive at ~0.5 A**, against the 240 s at
+2.2 A the withdrawn cohort would have cost.
+
+Precedent: `e182-posctl-sag` ran exactly this and latched —
+`target_duty_tenths=250 inject=26 provoked=1 reason=26`, a 1.3 ms monotone
+collapse of 72 codes. So P(latch) ≈ 1, and this is a **positive control**: the
+event is commanded, not waited for.
+
+#### Acceptance criteria, stated before the run
+
+This is a format validation, so the bar is about the *columns*, not the physics:
+
+1. **`reason = 26` with `tripped = 1` and `frozen = 1`.** If it does not latch,
+   the provocation path changed and that is the finding.
+2. **`row_v = 3`, `fine_hz = 8000000`, `span16_us = 8192` in `SAGSNAP`.**
+3. **`at_fine` varies across rows**, and `sag.py` does not refuse. A constant
+   column means `Hal::fine()` or `fine::init()` is still not wired — the exact
+   E264/E266 defect, which the tool now refuses by name.
+4. **Fine and coarse deltas agree to within 2 µs.** The row carries both TIM17
+   (1 µs) and TIM2 (125 ns); disagreement beyond the coarse clock's own
+   quantisation means one of them is wrong.
+5. **`pwm_ctr` takes more than one distinct value.** The ADC trigger is
+   de-cohered from the carrier, so a single value would mean the counter is not
+   being read.
+6. **The three phase codes sit near a per-channel zero of ≈2060** and move
+   downward under load (`residual = zero − sum`).
+7. **`bus_raw` and `bus_mean` differ**, and the raw column shows a deeper floor
+   than the mean — that is the whole point of recording it, and if they track
+   each other the boxcar is not where I think it is.
+
+#### What this run does NOT establish
+
+It is a **diagnostic image and a provoked event at 25% duty**. It qualifies
+nothing, it says nothing about the 550 mechanism, and the observer-cost question
+is not asked here. Per the campaign's rule, diagnostic results never qualify
+another image.
+
+#### Prediction
+
+All seven criteria pass. **The one I am least sure of is 4** — the two clocks
+are read at different points in `record_sag_row` and the coarse one is a
+foreground read, so a systematic offset would not surprise me; if it exceeds
+2 µs the tool will return `None` for every pair and report zero usable deltas,
+which is the loud failure I built for.
