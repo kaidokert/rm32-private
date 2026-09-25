@@ -650,7 +650,21 @@ def main() -> int:
         # `provoke_tenths` at 250 -- the only condition under which a relative
         # sequence is calculable. This is the same shape as `ladder_record`'s
         # `expect_duty` check, moved before the drive instead of after it.
-        cycling = sorted(set(args.pre) & set("x+-"))
+        # `+`/`-` move `climb_tenths`, which the firmware **floors at 375**
+        # (`run/mod.rs:493`), so a sequence that begins with enough `-` presses
+        # to reach that floor is **absolute by construction** and needs no
+        # reset -- that is exactly the fix E185 introduced and what
+        # `ladder_drive.py` emits (`CLIMB_RESET` leading minuses, then N
+        # pluses). Refusing it would refuse the correct caller, so the guard
+        # only objects to a climb sequence that is *not* self-resetting.
+        #
+        # `x` has no floor: it wraps 250 -> 375 -> 475 -> 500 -> 600 -> 250, so
+        # no prefix normalises it and `--flash` stays mandatory there.
+        CLIMB_RESET_PRESSES = 11  # (600 - 375)/25 + 2, as ladder_drive computes
+        climb = set(args.pre) & set("+-")
+        leading_minus = len(args.pre) - len(args.pre.lstrip("-"))
+        self_resetting = leading_minus >= CLIMB_RESET_PRESSES
+        cycling = sorted(({"x"} & set(args.pre)) | (climb if not self_resetting else set()))
         if cycling and not args.flash:
             print(
                 f"REFUSED: --pre contains the state-cycling key(s) {''.join(cycling)!r} "

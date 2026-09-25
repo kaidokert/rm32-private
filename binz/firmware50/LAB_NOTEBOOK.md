@@ -23810,3 +23810,38 @@ A **full re-walk** on this image, 150 → 600, three runs per rung. The early
 rungs are the goal's "lower-rung regressions" at 15–30% duty. Both reviews on
 E280 and on this entry run concurrently with it, and a material finding stops
 the walk rather than being absorbed into it.
+
+### E282 — correction to E279's guard: it would have stopped the walk at rung 400
+
+Caught in a dry run before the walk reached it, not mid-walk.
+
+E279's guard refused any `--pre` containing `+`, `-` or `x` without `--flash`.
+But `ladder_drive.py` emits `--pre=-----------+++` for rung 450 and has done
+since E185 — **eleven leading minus presses, then N pluses**. That sequence is
+**absolute by construction**: the firmware floors `climb_tenths` at 375
+(`run/mod.rs:493`), so eleven resets reach the floor from any starting value and
+the pluses then address the duty exactly. It is the E185 fix itself, and my
+guard would have refused it and stopped the walk at 400.
+
+So the guard now objects only to a climb sequence that is **not**
+self-resetting: `+++` alone is refused, `-----------+++` is accepted. `x` keeps
+requiring `--flash`, because its cycle **wraps** (250 → 375 → 475 → 500 → 600 →
+250) and no prefix normalises it — which is exactly why E279 happened.
+
+Verified against five cases:
+
+| `--pre` | `--flash` | verdict |
+|---|---|---|
+| `-----------+++` | no | **accept** — absolute |
+| `-----------+++++++++` | no | **accept** — absolute |
+| `+++` | no | **refuse** — relative |
+| `xxx` | no | **refuse** — wrapping cycle |
+| `xxx` | yes | accept |
+
+**The lesson I am taking from this is about guards, not about presses.** A guard
+written the same hour as the incident it prevents is calibrated to that
+incident, and mine forbade the correct pattern along with the broken one. The
+distinction that matters is not *which keys* appear but *whether the sequence
+normalises its own starting state* — which is a property I had already
+implemented in `ladder_drive` and failed to recognise in my own guard one entry
+later.
