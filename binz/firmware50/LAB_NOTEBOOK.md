@@ -25882,3 +25882,104 @@ stands — **eight consecutive clean runs or an evidenced mechanism, not three**
 and it applies on the *fixed* image, where the raw-depth reference is the
 guard's own and the observer's line does not drift 24 codes between low and high
 duty.
+
+### E297 — my predeclared discriminator fired, and it fired on current. Not a mechanism.
+
+Rungs **400 and 425 both pass 3/3**, `reason=2`, `ceiling == duty` on every run.
+The E296 discriminator **fired at rung 425** — and I am recording, before the two
+reviews land, that **it fired on a quantity confounded with current and I am not
+claiming a mechanism.**
+
+#### What the predeclared test said, and what it did
+
+E296 fit `rate = 91.5 + 0.7910 × duty_tenths` from the ten-rung walk
+(`corr = +0.706`) and predeclared **±25%**.
+
+| rung | n | measured /10⁶ | predicted | dev | predeclared verdict |
+|---|---|---|---|---|---|
+| 400 | 3 | 405.2 | 407.8 | **−0.6%** | ON LINE |
+| 425 | 3 | 613.3 | 427.6 | **+43.4%** | **STEP** |
+
+(At n=2 it read +53.6%; the third run brought it to +43.4%. Both 425 runs were
+elevated, so it is not one outlier.)
+
+#### Why the test was weak, measured rather than argued
+
+**Within-rung CV of this rate is 16.5% median, 19.6% max**, across all twelve
+rungs:
+
+| rung | n | rate mean | rate sd | CV% | hold_ma | **rate/mA** |
+|---|---|---|---|---|---|---|
+| 150 | 3 | 238.9 | 43.1 | 18.0 | 43 | 5.556 |
+| 200 | 3 | 206.6 | 5.6 | 2.7 | 254 | 0.814 |
+| 250 | 3 | 282.6 | 54.1 | 19.1 | 383 | 0.737 |
+| 275 | 3 | 363.8 | 68.6 | 18.8 | 478 | 0.762 |
+| 288 | 3 | 302.1 | 41.9 | 13.9 | 540 | 0.560 |
+| 300 | 3 | 319.1 | 61.5 | 19.3 | 546 | 0.585 |
+| 325 | 3 | 340.1 | 55.1 | 16.2 | 676 | 0.503 |
+| 338 | 3 | 366.9 | 51.8 | 14.1 | 716 | 0.512 |
+| 350 | 3 | 317.6 | 36.4 | 11.5 | 749 | 0.424 |
+| 375 | 3 | 431.9 | 56.1 | 13.0 | 875 | 0.494 |
+| 400 | 3 | 405.2 | 79.5 | 19.6 | 1022 | 0.397 |
+| 425 | 3 | 613.3 | 103.0 | 16.8 | 1231 | **0.498** |
+
+So ±25% on a **3-run mean** is `25 / (16.5/√3)` ≈ **2.6 σ**. Defensible as a
+screen, but not the strong test the word "STEP" implies.
+
+**And the decisive check kills it.** Normalised per unit current, rung 425 reads
+**0.498**, which is *not* anomalous against 375 (0.494) and sits inside the
+350–400 spread (0.397–0.498). Rate rose **+51%** while current rose **+20%**, so
+the excess is `1.514/1.204 = +26%`, against a propagated uncertainty of
+`√2 × 16.8% / √3 ≈ 14%`. **That is ~1.8 σ. Not significant.**
+
+The raw excursion rate is essentially proportional to current, and duty is
+precisely the thing that changes current. **My discriminator tested the rate
+against a *duty* line, so it was always going to fire wherever current stepped
+faster than duty.** That is a design fault in the test, not a finding about the
+machine.
+
+#### And my normalisation arithmetic was wrong the first time
+
+I fit `rate/mA` against duty as a straight line. It predicted **−4.057** at rung
+400 — a negative excursion rate — because `rate/mA` falls hyperbolically
+(5.556 → ~0.4) and a line through a 1/x curve extrapolates below zero. The
+per-rung column above is the valid reading; the fit was nonsense and reported a
+"−109.8% deviation" that meant nothing. Recorded because a −110% deviation is
+exactly the kind of number that looks like a dramatic finding.
+
+#### What I am *not* doing
+
+I am not switching to the normalised test and declaring rung 425 clean, because
+that is "picking the band that passes" with the sign flipped. The record is:
+**the predeclared test fired; a post-hoc normalisation dissolves it to 1.8 σ;
+therefore no mechanism is claimed and the predeclared test is retired as
+confounded.**
+
+#### Predeclared, now, for rungs 450 / 475 / 500 / 525 — before they run
+
+The replacement discriminator, fixed before the data:
+
+> **Score `raw1_n / hold_ma` against the mean of rungs 350–425 (0.453), with a
+> tolerance of ±3 σ of the propagated within-rung spread, i.e. ±30%.** A rung
+> outside **0.317–0.589** is a step. Inside it, the excursions are proportional
+> to current and carry no information about a latch.
+
+This is falsifiable, it is normalised against the confound, and its tolerance
+comes from the measured CV rather than from a round number I liked.
+
+**Second, independent quantity, also predeclared:** the **deep-bin ratio**
+`raw2_n / raw1_n` (930 line over 950 line). At rung 400 the mean `raw2_n` is 5
+and at 425 it is 33.5 — a **6.7×** jump against a 1.2× current rise, far larger
+than the 950 bin's 1.6×. If that ratio keeps climbing with duty it is a genuine
+deepening of the excursion distribution, which current alone does not explain.
+Counts are small (Poisson `√5 ≈ 2.2`), so **I will not read it below `raw2_n`
+≈ 25 per run**, and I say that now rather than after seeing which way it goes.
+
+#### Standing
+
+Nothing here touches the band (E294, **992..1008**) or the rung verdicts: 400
+and 425 are 3/3 clean, `ceiling == duty`, and the climb continues to 525. Both
+mandated reviews of E290–E296 are running and were launched **after** the climb
+started, which is itself out of order — the goal requires them before a
+hypothesis test. Recorded as a breach; their verdicts land before I act on
+anything above 425.
