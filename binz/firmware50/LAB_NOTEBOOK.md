@@ -30357,3 +30357,76 @@ like progress on the LateArm counter and be a regression on the gate.
   `reference=within-run-coast`. It was written to be exactly this check.
   Fifteen runs went by. Before adding a sixteenth counter, read the ones already
   reported.
+
+### E316 — the predeclared test fired, and it refuted my reading in favour of the reviewer's: hold-window trough occupancy rises 40× from rung 500 to 550
+
+E315 closed with two hypotheses making opposite predictions about one
+measurable quantity, and the adversarial review set the bar before the run.
+The margin histograms, restricted to the hold window (image `26843E7C`,
+committed source `7836a5b`):
+
+```
+HOLD-WINDOW P(wait <= 9):   rung 500 = 1.31e-05     rung 550 = 5.21e-04
+                                              ratio = 39.7x
+predeclared:  bulk-shift => ~flat        trough => >= 3x
+```
+
+**The trough branch, decisively.** Counts are 11 of 839 349 hold arms at 500
+against 57 of 109 502 at 550, so the Poisson 95 % interval on the ratio is
+roughly 23–68× — nowhere near 1. `wait` is `wait_time(ci, level)`, a pure
+function of the estimator, so **this is the one quantity in the whole
+instrument that the image's own +18 instructions cannot perturb.** The
+`left_hist` rates are inflated 2–4× against production and remain
+diagnostic-only; this number is not.
+
+The modal wait also moved `w12` → `w11` as the bulk-shift reading predicted, so
+both effects are real — but trough occupancy grows **40×** against a hazard
+ratio of ~5.5×, so the bulk shift is the small term. **My bulk-shift reading
+is refuted and E315's own "P(wait ≤ 9) is flat at 1.0×" was the ramp-fraction
+artifact**, exactly as the hold mark was built to expose: whole-run, 550's
+70 % ramp diluted its trough arms into a false agreement with 500.
+
+#### And the latch signature is now four for four
+
+| run | `ci_at_late` | `wait22(ci)` | `spent_at_late` |
+|---|---|---|---|
+| e315-550-why | 59 | 9 | **9** |
+| e315-550-hist | 57 | 9 | **9** |
+| e315-500-hold | 51 | 8 | **9** |
+| e315-550-mh | 59 | 9 | **9** |
+
+**`spent = 9` in every latch.** Never 10, never 11 — although `spent_max_us`
+reads 11 in all four runs, so 10 and 11 µs arms do occur and are harmless,
+because they land where `wait` is large. So the latch is not a draw from a
+spend tail: **it is one specific ~9 µs cost coinciding with a trough.** That is
+a far sharper target than anything E300–E315 had, and it is exactly what the
+adversarial review's 4-instruction guard-preemption witness was specified to
+identify — the guard root (`TIM6_DAC_LPTIM1`, NVIC 0x00) is the only root that
+can preempt COMP (0x40), and a preemption costs ~5 µs on a ~5 µs body.
+
+#### What this changes
+
+The fix direction is now the one that **costs no rotor speed**: arrest the
+estimator's downward excursions, rather than raise `wait` by dropping the
+advance level. Both source-grounded candidates come from the adversarial
+review:
+
+* the blanking gate is `count > average_interval >> 1` — **self-referential**,
+  so a depressed estimate shortens its own blank and admits earlier crossings;
+* persistence depth is scheduled on the same estimate and drops 3 → 2 below
+  ci 50, shallowing the filter exactly where it is already wrong.
+
+Both are positive feedback on a quantity now measured to be 40× more excursive
+at 550 than at 500. Neither has been touched.
+
+Not yet acted on: the goal requires two fresh reviews before a control change,
+and a blanking-gate change is a control change. What *is* settled, because it
+was predeclared and the bar was set by a reviewer rather than by me, is the
+direction.
+
+Standing, from E315 and unchanged: the LateArm tripwire question is the
+operator's (realized error ~1 µs against 9–10 µs of tolerated realized COM
+lateness, and the firmware's own comment records the event inside a qualifying
+45 % run), and **60 % remains unreachable on two independent grounds** — the
+log-linear hazard fit projects P(3/3) = 0.002, and rung 600 draws 96 % of the
+3 A clamp.
