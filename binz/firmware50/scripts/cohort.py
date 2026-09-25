@@ -195,11 +195,38 @@ def _rate_vs_coast(rec: dict, zc: int, coast: int) -> dict:
     fit = speed.coast_fit(int(ct.get("offset_us", 0)), int(ct.get("first_us", 0)), iv) if iv else None
     if accepts and span and fit:
         powered = accepts * 1e6 / (6.0 * span)
-        at_stop = fit[0]
-        if at_stop > 0:
+        at_stop, slope = fit[0], fit[1]
+        # **A coast fit that says the rotor accelerated is not a measurement**
+        # (E273). `speed.coast_fit` least-squares four full-cycle points and
+        # extrapolates the intercept back to the stop, so when the reported
+        # half-periods happen to put the largest pair first the line tilts
+        # upward and the intercept lands below every sibling's -- manufacturing
+        # a high ratio out of the extrapolation rather than the loop.
+        #
+        # The identity's scatter is 93% this estimator and 7% the loop rate
+        # (measured over the six rung-400 runs on one image: `powered` sd 1.03
+        # permille, `coast@0` sd 3.76). Corpus-wide, 7 of 318 runs have a
+        # positive slope and their mean residual is +11.91 permille against
+        # +0.10 for the other 311 -- so the sign is very nearly a deterministic
+        # predictor of a high-side gate failure.
+        #
+        # A coasting rotor must decelerate. `slope >= 0` is therefore
+        # physically impossible, and the right verdict is **no result**: the
+        # run is neither a pass nor a fail on this gate, it is unmeasured. That
+        # is deliberately not a widened band -- the criterion is a sign, so
+        # there is no parameter here to tune toward a preferred outcome, and
+        # E272's proposal to widen the band instead would have made exactly
+        # these broken estimates pass.
+        if at_stop > 0 and slope < 0:
             return {
                 "rate_vs_coast_permille": round(1000 * powered / at_stop),
                 "rate_source": "matched window vs time-anchored coast",
+            }
+        if at_stop > 0:
+            return {
+                "rate_vs_coast_permille": 0,
+                "rate_source": "coast fit unphysical (slope >= 0); identity unavailable",
+                "coast_slope_ehz_per_s": round(slope * 1e6),
             }
     if coast:
         return {
@@ -207,6 +234,27 @@ def _rate_vs_coast(rec: dict, zc: int, coast: int) -> dict:
             "rate_source": "legacy: whole hold vs index-fitted coast",
         }
     return {"rate_vs_coast_permille": 0, "rate_source": "no coast"}
+
+
+def identity_unavailable(r: dict) -> bool:
+    """Did the rate identity fail to produce a measurement at all? (E273)
+
+    `speed.coast_fit` extrapolates an intercept from four full-cycle points, and
+    when the reported half-periods put the largest pair first the line tilts
+    upward -- the fit then says the rotor accelerated with the bridge off. That
+    is impossible, so there is no identity, and the run is **unmeasured on this
+    axis**: neither a pass nor a failure.
+
+    That third state matters. Gating the 0 would fail a run for the estimator's
+    defect; ignoring it would let a run count toward a rung on strictly less
+    evidence than its siblings. So callers must count only *measured* runs
+    toward the three a rung needs, while not holding the missing identity
+    against it. 10 of 318 matched-source runs in the corpus are in this class
+    (3.1%), and their mean residual was +11.9 permille against +0.1 for the
+    rest -- i.e. the sign was very nearly a deterministic predictor of the
+    high-side gate failures this used to produce.
+    """
+    return "unphysical" in r.get("rate_source", "")
 
 
 def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
@@ -263,7 +311,17 @@ def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
     # within a session (E155), and shifts by ~5 permille between sessions
     # (E164) -- so the 1% band is about 3.5 sd of the within-session figure.
     # **The tolerance is unchanged at 1%.**
-    if not 990 <= r["rate_vs_coast_permille"] <= 1010:
+    #
+    # **An unavailable identity is unmeasured, not failed** (E273). A coast fit
+    # with slope >= 0 says the rotor accelerated with the bridge off, which is
+    # impossible, so `_rate_vs_coast` returns 0 with a stated source rather
+    # than a manufactured ratio. Gating that 0 against the band would fail a
+    # run for the estimator's defect. The run is still judged by every other
+    # gate, and the missing identity is reported rather than hidden -- which is
+    # the distinction E174 asked for.
+    if identity_unavailable(r):
+        pass  # judged by `identity_unavailable`, not gated here -- see below
+    elif not 990 <= r["rate_vs_coast_permille"] <= 1010:
         fails.append(
             f"rate vs coast {r['rate_vs_coast_permille']} permille outside 1% "
             f"({r['rate_source']})"
@@ -397,8 +455,25 @@ SELF_REF_HI = 1020
 
 
 def self_ref_fails(r: dict) -> list[str]:
-    """The within-run rate identity, for a rung with no historical reference."""
+    """The within-run rate identity, for a rung with no historical reference.
+
+    **Two different reasons for a missing identity, and they are not the same
+    verdict** (E273). I first wrote a docstring here claiming the `if not v`
+    guard below already treated a missing identity as "nothing to judge"; it
+    did not -- it returned a failure. Describing behaviour the code does not
+    have is precisely the class of error this campaign keeps finding, so:
+
+    * **coast fit unphysical** (slope >= 0, the rotor cannot accelerate with
+      the bridge off): the estimator failed, the run is *unmeasured* on this
+      axis, and `rung_report` declines to count it toward the three rather than
+      holding it against the rung.
+    * **no coast or no hold window at all**: nothing was recorded to judge, and
+      for a rung at or above 525 this identity is the only reference there is,
+      so that remains a stated failure.
+    """
     v = r.get("rate_vs_coast_permille")
+    if identity_unavailable(r):
+        return []  # unmeasured, not failed -- see `identity_unavailable`
     if not v:
         return [f"no within-run rate identity in {r['file']}: "
                 "the coast or the hold window is missing, so this rung has no "

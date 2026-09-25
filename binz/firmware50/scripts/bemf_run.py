@@ -276,8 +276,18 @@ def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
     # the way forward is to fix the cause and build a new image, not to roll
     # again. The oracle comparison still judges the most recent cohort.
     all_runs = state.get(sha, {}).get(str(duty), [])
-    if len(all_runs) < RUNG_RUNS:
-        return False, [f"only {len(all_runs)} run(s) on this ELF at {duty / 10:.0f}%"]
+    # **A run whose rate identity is unavailable is unmeasured, not passed**
+    # (E273): its coast fit was physically impossible, so it carries strictly
+    # less evidence than its siblings and must not count toward the three --
+    # while equally not being held against the rung, because the defect is the
+    # estimator's and not the machine's.
+    unmeasured = [r for r in all_runs if r.get("identity_unavailable")]
+    measured = [r for r in all_runs if not r.get("identity_unavailable")]
+    if len(measured) < RUNG_RUNS:
+        return False, [
+            f"only {len(measured)} measured run(s) on this ELF at {duty / 10:.0f}%"
+            + (f" ({len(unmeasured)} unmeasured: coast fit unphysical)" if unmeasured else "")
+        ]
     # **Failures are scoped by origin** (E262, adopting E261b's reviewer call).
     #
     # Two unlike things were being treated as one permanent disqualification:
@@ -354,6 +364,13 @@ def ladder_record(capture: pathlib.Path, sha: str, explore: bool = False, expect
         # dwell and must not count toward a 3/3 cohort.
         return cohort.run_gates(r, EXPLORE_HOLD_MS)
     r["fails"] = cohort.run_gates(r)
+    # The third state (E273): a run whose coast fit was physically impossible
+    # has no rate identity, so it is unmeasured on that axis. Stored with the
+    # record so `rung_report` can decline to count it toward the three without
+    # holding it against the rung.
+    if cohort.identity_unavailable(r):
+        r["identity_unavailable"] = True
+        r["coast_slope_ehz_per_s"] = r.get("coast_slope_ehz_per_s", 0)
     state = _ladder_load()
     state.setdefault(sha, {}).setdefault(str(r["duty"]), []).append(r)
     _ladder_save(state)

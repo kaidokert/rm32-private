@@ -22648,3 +22648,162 @@ blocker, not an inferred wall.
 
 This is a rule change that unblocks qualification, so **both reviews come before
 it is applied** — and before any ladder walk depends on it.
+
+### E273 — E272's band widening is withdrawn: the gate caught a broken coast estimate, not a tail draw
+
+Both E272 reviews are appended verbatim after this. The evidence review
+reproduced every number and sharpened the band to 990–1012. **The adversarial
+review found that widening the band was the wrong fix entirely, and I verified
+its central claims myself before accepting them.** E272's rule is withdrawn.
+
+---
+
+## Part 1 — what the identity actually measures
+
+`rate_vs_coast_permille` divides a powered-window crossing rate by
+`speed.coast_fit`'s intercept — a least-squares line through **four full-cycle
+points**, extrapolated back to the stop. Variance decomposition over the six
+rung-400 runs on one image, recomputed here:
+
+| | sd |
+|---|---|
+| `powered` (the loop) | 1.79 eHz = **1.03 permille** |
+| `coast@0` (the denominator) | 6.53 eHz = **3.76 permille** |
+| **variance share** | **coast 93%, powered 7%** |
+
+**So the quantity E272 proposed widening a band around is 93%
+coast-estimator error.** The corpus sd of 3.87 that set `k·sd` is, to first
+order, the estimator's own standard error. A band around it is a band around
+noise in the reference, not around loop-versus-rotor divergence.
+
+## Part 2 — and both disputed runs are physically impossible
+
+`coast_fit` returns a slope in eHz/µs. **A coasting rotor must decelerate**, so
+a positive slope is impossible. Computed for the rung-400 family and the 550
+cohort:
+
+| run | `iv` pair sums | slope | `coast@0` | ratio |
+|---|---|---|---|---|
+| e247-400_01 | [575, 578, 580, 581] | **−10 338** | 1743.8 | 1000 |
+| e247-400_02 | [576, 575, 578, 578] | −4 691 | 1740.0 | 1004 |
+| **e247-400_03** | **[581, 574, 578, 578]** | **+2 558** | **1727.2** | **1011** |
+| e250-400_02 | [577, 578, 578, 578] | −1 556 | 1733.0 | 1007 |
+| e253-550_01 | [433, 432, 435, 435] | **−11 030** | 2316.9 | 1000 |
+| **e253-550_03** | **[446, 437, 444, 443]** | **+2 149** | **2257.5** | **1028** |
+
+Both disputed runs — **and only those two in these two cohorts** — put their
+largest pair sum **first**, which tilts the fitted line upward and drags the
+extrapolated intercept below every sibling's. `e247-400_03`'s `powered` is
+1745.6, dead middle of its family; its `coast@0` is the lowest by 6 eHz. **The
+high ratio was manufactured by the extrapolation.**
+
+Corpus-wide: **10 of 318 matched-source runs (3.1%)** have slope ≥ 0.
+
+**So the gate caught a broken instrument, and E272 proposed widening the band
+until broken instruments pass.** That is worse than either position E262/E263
+argued over, and the adversarial reviewer is right to call it a category error:
+a physical-plausibility gate was going to be relaxed to settle a bookkeeping
+dispute.
+
+## Part 3 — the fix is a third verdict, not a threshold
+
+A coast fit with `slope ≥ 0` yields **no identity**. The run is neither a pass
+nor a failure on that gate — it is **unmeasured**, and that third state is the
+whole point:
+
+* **Gating the 0 would fail a run for the estimator's defect** — which is what
+  has been happening.
+* **Ignoring it would let a run count toward a rung on strictly less evidence
+  than its siblings.**
+
+So `cohort.identity_unavailable()` marks it, `run_gates` and `self_ref_fails`
+stop failing it, and **`rung_report` declines to count it toward the three**.
+Host-only, no bench time, no protection or threshold touched — and the criterion
+is a **sign**, so there is no parameter to tune toward a preferred outcome. That
+is the property E272 claimed and did not have.
+
+#### It costs me a rung, which is how I know it is not fitted
+
+Re-scored from the captures, image `0D8E3799`:
+
+| rung | before | **after** |
+|---|---|---|
+| **400** | failed (1011) | **qualified** — 5 measured, 0 failing, 1 unmeasured |
+| **450** | qualified | **NOT qualified** — `e251-450_02` has slope +0, leaving **2 measured** |
+| **550** | failed | **still failed** — `reason 26 != 2; hold 15008 ms < 30000` |
+
+**Fifteen rungs qualify, the same count as before, with a different member
+missing.** E272's band moved exactly one record in exactly the direction I
+wanted; this rule moves two in opposite directions. And 550's failure message is
+now clean — the spurious rate-identity line is gone, because its coast fit was
+unphysical, while the two grounds that have nothing to do with the estimator
+stand.
+
+**The remaining gap is one measured run at 450**, and that is an *additional
+measurement where none was obtained* — not a re-roll of a failure, because
+nothing failed at 450. That distinction is the one E263 was trying to draw.
+
+## Part 4 — an error I made inside this very patch
+
+I first wrote a docstring on `self_ref_fails` claiming its `if not v` guard
+"already treats a missing identity as nothing to judge". **It did not — it
+returned a failure.** I described behaviour the code did not have, in the same
+commit that criticises exactly that, and only caught it because the re-score
+printed a rate-identity failure for 550 that should not have been there.
+
+Corrected, and the two reasons are now distinguished: an **unphysical fit** is
+unmeasured; **no coast or hold window at all** stays a stated failure, because
+for rungs ≥525 that identity is the only reference there is.
+
+## Part 5 — what I accept from the reviews and do not act on yet
+
+**The gate's verdicts are anti-correlated with significance.** Studentizing each
+residual by its own run's coast-intercept standard error, the adversarial review
+finds `e250-400_02` at **t = +9.01 passing** while `e247-400_03` at **t = +1.46
+fails**. If loop-versus-rotor divergence is what this gate exists to catch, it
+is not catching it — and a fixed half-width cannot, because the per-run
+intercept SE is heteroscedastic by **5.8×** (p10 to p90). No value of `k`
+repairs that.
+
+**The real fix is the denominator, and it is a firmware change.** The firmware
+reports 8 coast half-periods = 4 fit points = 2 residual degrees of freedom.
+Extending that to 24–32 half-periods would cut the intercept SE by 2–3× *and*
+stabilise the slope sign, which is the root cause of every disputed reading in
+this campaign. Then a studentized gate — `|powered/coast − 1| > k·SE_run` —
+has no free width at all. **That is the right next firmware change**, and it is
+recorded rather than done here because it produces a new ELF and therefore a
+fresh ledger and a full re-walk.
+
+**Two things I am not doing.** The reviewer notes that a full re-walk of
+`0D8E3799` provably tops out at 525, because 550 has already failed a firmware
+latch and rule 1 makes that permanent for this image — so 76 minutes of motor
+at ≥2 A would buy zero progress toward 60%. And the operator-gated supply
+measurement stays ahead of anything that uses the motor.
+
+**One review claim I did not adopt.** The adversarial review proposes settling
+"does E259's every-attempt rule apply retroactively to admissions already
+granted" as the real blocker. It is a fair question, but E273 makes it moot for
+400 and it would not help 450 — whose problem is a missing measurement, not an
+admission. I am leaving it open rather than resolving it in a direction that
+happens to be convenient.
+
+## Part 6 — audits
+
+| audit | result |
+|---|---|
+| host tests | **344 + 9 pass** |
+| `sag_selftest.py` | **48 of 48** |
+| `structure_report.py` | exit 0 |
+| healthy-run regression | `e252-525_01`: source unchanged, ratio 1001, **gates empty** |
+| corpus census | 10 of 318 runs (3.1%) now unmeasured on this axis |
+
+#### Predictions, for the review that follows
+
+1. No healthy run changes verdict — only the 10 unphysical-fit runs do.
+2. The qualified set is **150–425 plus 475–525, fifteen rungs**, with 450 and
+   550 unqualified.
+3. A single additional measured run at 450 would complete the chain to 525, and
+   **no run at any rung can qualify 550 on this image**, because its latch is
+   permanent under rule 1.
+
+Both reviews before the ladder depends on this.
