@@ -27459,3 +27459,161 @@ that the table did not anticipate:
 So the next step is the **armed** ring at 550 — one run, to get the pre-trip
 sequence — and the reviews' verdicts on whether the A/B as designed can
 discriminate at all. Both are in flight.
+
+### E306 — disposition of the evidence review of E303–E305: the failure mode changed with the image, and I framed that as a correction
+
+The evidence review is appended verbatim in E307. **Its headline finding changes
+the next experiment**, and eight of its findings are corrections to me. The
+adversarial review is still in flight; this entry disposes of what I verified.
+
+#### The finding that changes the plan
+
+**The rung-550 `LateArm` is perfectly segregated by image.** Verified myself,
+every un-injected 550 capture in the corpus:
+
+| image | n | `late_arms` | stops |
+|---|---|---|---|
+| `0D8E3799` (E246 candidate) | 4 | **0 on all four** | 2× SegmentDeadline, 1× **FastBusSag**, 1× HostAbort |
+| `7D3B70F0` + `C2DA171A` (post-E303) | 6 | **1 on five** | 5× **LateArm**, 1× SegmentDeadline |
+
+`0D8E3799` never latched a late arm at 550 — *including on the run where the sag
+guard tripped*. The new lineage latches it 5 of 6 and has never tripped the sag
+guard. Fisher one-sided on LateArm: **p = 0.048**.
+
+**So "the new data supersedes the bus-sag reading" is wrong, and I should not
+have written it.** Five stops of a kind the old image never produced, on images
+that never produced the old image's stop, is an **image difference**, not a
+correction. Both mechanisms are live (5 LateArm + 1 FastBusSag in 10 runs at
+550), and the honest hypothesis is now: **the 550 LateArm may be a regression
+somewhere in the E281 → E303 chain**, not a property of the rung.
+
+That is far more actionable than the arm-path story, and it makes the review's
+proposed experiment the right one: **an ABAB of `0D8E3799` against `7D3B70F0` at
+550 in one session** — cheaper, more discriminating, and it tests "did we break
+550?" against "550 is hard". It also supports my own `ci_us = 40`
+interval-collapse worry from E305 rather than contradicting it.
+
+**I am not launching it until the adversarial review lands**, because the goal
+requires two reviews before acting on a new hypothesis and one of them
+*proposed* this one.
+
+#### My evidence for "not a bus event" was the wrong field
+
+`FastBusSag::observe` sets `lows = 0` on **any** non-low scan, and the report
+emits the **instantaneous** streak at the stop (`run/mod.rs:325`). There is no
+max-streak accumulator. So `streak = 0` means *"the last judged scan was not
+low"* — it says nothing about whether the streak ever reached 1 or 2, which is
+exactly what I claimed it proved.
+
+**The conclusion survives on a field that was in the capture and which I did not
+use.** `raw1_run` is the longest *consecutive* run of raw scans below the
+guard's own 950 line, and it reads **1 in every one of the six runs**
+(`raw1_n` 78–172). The guard needs three consecutive **8-tap-mean** low
+judgements; a single isolated raw excursion cannot carry that mean across the
+line. `dep3_run` (2% down) is 26–149 scans and nothing deeper is sustained.
+
+Right answer, wrong evidence — and the right evidence was one field away. This
+is the E284 lesson recurring: I reached for the quantity I had been thinking
+about instead of the one that answers the question.
+
+#### The recorder is contributory, and I understated my own evidence
+
+I compared **raw** `thin_count` — ring 1030–4560 against no-ring 699–1957 — and
+called it weak because it overlaps (1030 < 1957). Normalised by its documented
+denominator, `accepted`, the sides **do not overlap at all**:
+
+| side | thin per 10⁶ accepted |
+|---|---|
+| no-ring | 1853 / 1580 / 1697 — mean **1710** |
+| ring | 6071 / 3488 / 5080 — mean **4880** |
+
+**2.85×, complete separation, exact one-sided rank p = 0.05.** And the older
+`0D8E3799` runs sit at 1980, statistically indistinguishable from the no-ring
+side. So the recorder is **not necessary** for the failure (no-ring latches 2/3)
+but it is **measurably contributory on the exact causal variable** — and I had
+the data to say so and didn't, because I used the unnormalised count.
+
+#### And my mechanism for that was wrong
+
+I wrote that the ring's critical section *"delays COMP entry, which raises
+`spent`"*. **Refuted at the source.** `roots.rs:1255-1257` stamps `raw` **inside
+the handler**, after `line_disable()` and `clear_pending()`. A PRIMASK mask
+delays entry *and the stamp by the same amount*, so `spent` is unchanged — and
+`spent_max_us = 11` on **all six** runs, ring and no-ring alike, which is the
+empirical confirmation.
+
+The effect must run through **`wait`**, not `spent`: a jittered entry stamp
+jitters the interval estimate, hence `average_interval`, hence
+`wait_time(average_interval, level)`, and with `wait` only 11–12 µs sub-µs
+jitter moves arms into the thin bin directly. Same observation, wrong mechanism,
+and the right one is measurable with the `chain::Beat` rows I have not run.
+
+#### The threshold drama was baseline selection
+
+The ring's cost against the **single highest** of three available baselines is
+**10.0085%**; against their **mean** it is **9.9258% — which passes the bar I
+set.** I quoted `e303-150_01`, the maximum. So E304's *"fails the percentage by
+0.008%"* — which I made a point of not resolving in my own favour — was an
+artifact of picking one baseline, and the honest reading is that the cost is
+**~9.9%** and inside the bar.
+
+I also cited the wrong image for repeatability: *"E303's three no-ring runs
+spanned 3 974 325 to 3 976 719, a 0.06% spread"* — those are `480263F1`, the
+**pre**-E303 image. The actual baseline image's spread is **0.160%**.
+
+Being scrupulous about not picking the favourable half of a threshold is worth
+nothing if the threshold's inputs were chosen carelessly.
+
+#### Smaller corrections, all accepted
+
+* **There is no `sagrows=` field.** `grep -o "sagrows=" ` over the whole corpus
+  returns nothing; `SAGROW` lines are emitted only by `sagtrace::emit`, called
+  only from `bin/sag-capture.rs`. I wrote "carries `sagrows=0`" repeatedly in
+  E304 and E305. **The absence was inferred from missing lines, not read from a
+  field, and I stated it as a reading.** The substance — nothing was recorded —
+  is right and independently confirmed from source.
+* **My instruction counts are wrong**: `Trace::push` is **108**, not 111;
+  `record_sag_row` is **84**, not 92. And `Trace::push` has **0** `cpsid`;
+  the single critical section is in `record_sag_row`, enclosing the whole call —
+  masking ~25–30 instructions, 9 840 times per second, **for zero recorded data**
+  on the flown image.
+* **`spent_max_us = 11` re-used as "the 11 µs arm".** E303 §3 corrected exactly
+  this — it is a whole-run saturating maximum over a modal-6 distribution — and
+  **E305 used 11 as the margin anchor two entries later.** It is also
+  entry→arm, not edge→arm, so it *understates* the true bar.
+* **The 600 figures are a measurement, not a fit.** I called
+  "2.83–2.87 A hold, ~3.5 A worst block" a *projection*. They are
+  `e278-prot500-i_01`'s **directly measured** `hold_ma = 2869` and
+  `worst_ma = 3490`. Calling a measurement a fit understates it — and the worst
+  block is **16% above 3 A**. The review's independent quadratic gives 2819 mA
+  hold, corroborating within 2%.
+* **The 3 A clamp is not in the repo.** It appears nowhere in `src/`; the only
+  current constant is `RAW_LIMIT = 31_857` ≡ 4000 mA, i.e. the firmware's own
+  allowance is **above** the supply. No capture carries a CC or PSU channel, so
+  CC can only ever be *inferred* from this corpus, never measured. **That is a
+  demonstrated instrumentation gap, not an inferred wall** — and it is the one
+  thing here that genuinely needs the operator's meter or a deliberately
+  lowered clamp.
+* **Two orphan captures must never be cited.** `e303-ab-A22_1_01` and
+  `e303-ab-B20_1_01` sit on the superseded `5D4BF25C`/`8FE909B3` images, are
+  referenced nowhere, and report `mean_ci_us` of **100/101** where every other
+  rung-500 capture reads 77 — a 30% slower rotor. Flagged here so they are not
+  later mistaken for a rung-500 advance A/B.
+
+#### What survives, and what the model does not do
+
+**Survives:** rung 550 fails as a **timing stop**, reproducibly (5/6), on two
+independently-hashed images, with no bus, current or foldback disqualifier at
+550 — and the review strengthened that with a flat **0.9%/A resistive droop law
+with no knee from rung 250 to 550** (source impedance ≈ 0.10 Ω), which is far
+better evidence than anything I cited.
+
+**Does not survive:** that the margin model *predicts* the stops. The surviving
+run `noring-1` reached `ci_min_us = 49` → `wait_time(49,22) = 8`, **three µs
+below its own `spent_max`**, and latched nothing. And rung 525 has *more* wait
+margin, **2.4× more** thin events, and **0 of 9** LateArms. A pure wait-shift
+model predicts the opposite ordering, so the E300/E303 "order of magnitude every
+two rungs" escalation **breaks at 550**. What actually predicts the stop is
+unresolved, and the `chain::Beat` per-arm distribution at 525 and 550 —
+already implemented in `bin/chain-capture.rs`, never run above 42.5% — is what
+would settle it.
