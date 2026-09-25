@@ -485,7 +485,6 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                 // E153 found it; the order below is the qualified one.)
                 S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
                 S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
-                S.det().accept_wait.store(wait, Ordering::Relaxed);
                 // The estimate this acceptance hands to the commutation, taken
                 // here and published before the arm (step 6a). COM reads these
                 // instead of borrowing `det.zc`, which is what made the
@@ -572,7 +571,6 @@ fn accept<C: ChainLog>(
     let mut beat = None;
     S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
     S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
-    S.det().accept_wait.store(wait, Ordering::Relaxed);
     S.det().accept_avg.store(avg, Ordering::Relaxed);
     S.det().accept_blank.store(blank, Ordering::Relaxed);
     S.det().accept_seq.fetch_add(1, Ordering::Relaxed);

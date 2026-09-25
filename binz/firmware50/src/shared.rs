@@ -276,11 +276,29 @@ pub struct Det {
     /// commutation. Both are plain 32-bit loads and stores on this core.
     pub accept_avg: AtomicU32,
     pub accept_blank: AtomicU32,
-    /// Incremented on each accepted crossing; `accept_raw`/`accept_wait`
-    /// describe that crossing.
+    /// Incremented on each accepted crossing; `accept_raw` describes that
+    /// crossing.
+    ///
+    /// **`accept_wait` was removed from here (E321).** It was stored on both
+    /// acceptance paths, inside the prio-0 COMP root and *ahead of the arm*,
+    /// and **nothing in `src/`, `bin/` or `scripts/` ever read it** — a dead
+    /// store on the one path whose cost is subtracted from every commutation's
+    /// margin. Deleting it cannot change behaviour, because no reader existed
+    /// to observe it; it only returns the two instructions it was spending
+    /// (`ADC_COMP` 760 → 758).
     pub accept_seq: AtomicU32,
     pub accept_raw: AtomicU32,
-    pub accept_wait: AtomicU32,
+    /// **Dead, and deliberately still here.** Nothing reads it; its two stores
+    /// were deleted from both acceptance paths. The *field* stays because this
+    /// struct is `#[repr(C)]` and the roots address it by offset, so deleting
+    /// it moves every later field and re-codegens the roots: measured
+    /// `ADC_COMP` 760 → **742**, of which only 2 instructions are the dead
+    /// store and 16 are layout. E318 established that codegen is a first-order
+    /// carrier of this firmware's latch hazard (two production images differ
+    /// 2.9× at the same rung), so a 16-instruction layout shuffle bundled into
+    /// a margin change would make the result uninterpretable. Four bytes of
+    /// `.bss` is the price of an isolated measurement.
+    pub accept_wait_unused: AtomicU32,
     /// Longest entry-stamp-to-arm time, and arms that reached the wait (E083).
     pub spent_max: AtomicU32,
     pub late_arms: AtomicU32,
@@ -687,7 +705,7 @@ static DET: Det = Det {
     accept_blank: u(),
     accept_seq: u(),
     accept_raw: u(),
-    accept_wait: u(),
+    accept_wait_unused: u(),
     spent_max: u(),
     late_arms: u(),
     ci_at_late: u(),

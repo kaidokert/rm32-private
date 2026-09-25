@@ -34277,3 +34277,111 @@ resets. 600 is the last thing to run, not the first.
 instead of absorbing it into a loosened assertion is the best-executed part of
 this entry, even though its magnitude is 0.01 % and its stated consequence is
 the less important of the two.
+
+### E321 — a dead store in the prio-0 root, and why micro-optimising `spent` cannot be the answer. The lever is advance 20, and its A/B has been half-finished since E303.
+
+#### One free thing, isolated
+
+`accept_wait` was stored on **both** acceptance paths, inside the prio-0 COMP
+root and **ahead of the arm**, and **nothing in `src/`, `bin/` or `scripts/`
+ever read it.** A dead store on the one path whose cost is subtracted from
+every commutation's margin. Removed: `ADC_COMP` 760 → **758**, hazard classes
+unchanged, 345 tests pass. It cannot change behaviour, because no reader
+existed to observe it.
+
+**The field is deliberately still there**, renamed `accept_wait_unused`.
+Deleting it from the middle of a `#[repr(C)]` struct moved every later offset
+and re-codegened the root to **742** — of which 2 instructions are the dead
+store and **16 are layout**. E318 established that codegen is a first-order
+carrier of this firmware's latch hazard (two production images differ 2.9× at
+the same rung), so bundling a 16-instruction layout shuffle into a margin
+change would have made the result uninterpretable. Four bytes of `.bss` is the
+price of an isolated measurement.
+
+#### And one thing tried and reverted, before spending bench time on it
+
+Both E319 reviews pointed at the E142/E144 **arm-first ordering** as the lever
+that buys the microsecond *uniformly*. I established the ordering is a
+publish-before-arm requirement — `accept_raw`, `accept_avg` and `accept_blank`
+are read by the COM root — and that `sector_start_raw` and `accept_seq` are
+read by **no** root, so moving only those two past the arm is safe even under
+`com-top`. Implemented, and then reverted, because measuring it showed the
+premise is wrong:
+
+**`ADC_COMP` went 758 → 762.** Moving two stores out of the pre-arm window
+costs two instructions overall and buys ~4 instructions ≈ **0.06 µs** of
+pre-arm path. Against a `spent` of 5–6 µs that is 1 %.
+
+So I looked at where the 5–6 µs actually goes, which I should have done first.
+The persistence filter — the obvious suspect — is a **tight loop of 3–4
+comparator reads with no delays** (`bemf.rs:403-410`), about 0.4–0.6 µs at the
+high rungs. The rest is distributed: the ISR prologue, the EXTI acknowledge,
+the extended-clock read, and **four `Seam` critical sections** (the ratchet
+reads `irq 9` in this root). There is no removable chunk.
+
+**Therefore micro-optimising `spent` cannot produce the microsecond that
+matters, let alone the ~20–30× hazard reduction a 3/3 hold needs.** That is a
+structural conclusion and it closes off a direction I have now spent two
+entries on: E319's `ceil(ci/2)` (reverted — it created a new LateArm path) and
+this reorder (reverted — 0.06 µs). `left = wait − spent`, and `spent` is
+essentially fixed, so **the only lever with real magnitude is `wait`.**
+
+#### The lever, and its A/B is already half-run
+
+`advance-low` (level 22 → 20) exists as a cargo feature. The E303 pair, which
+I verified myself from the captures — same rung 500, both `reason=2`, both
+holding **64.776 s**, matched windows:
+
+| | advance 22 | advance 20 |
+|---|---|---|
+| `thin_count` | 1027 | **0** |
+| `ehz_from_sector` | 1666 | 1650 (**−0.96 %**) |
+| `hold_ma` | 1776 | **1643 (−7.5 %)** |
+| `worst_hold_ma` | 2131 | 2228 (+4.6 %) |
+
+**Thin arms eliminated entirely, and mean current down 7.5 %, for 1 % of rotor
+speed.** This is the only candidate on the table that addresses **both**
+constraints — and the supply is the one I have now been wrong about three
+times.
+
+And the arithmetic at the rung that matters is decisive. Both rung-600 stops
+were at `ci` 49 and 50:
+
+```
+ci = 49:  wait22 = 8   ->  wait20 = 9
+ci = 50:  wait22 = 8   ->  wait20 = 10
+```
+
+Every measured latch had `spent = 9` where `spent` was recorded, and the chain
+corpus caps per-arm `spent` at 10 over 20 478 arms. So at those intervals
+advance 20 moves `left` from a forced 0 to 0–1 at ci 49 and **1** at ci 50.
+That is +1 to +2 µs — **twenty to forty times** what either micro-optimisation
+offered.
+
+#### Predeclaration, before the build
+
+> **One run, rung 600, production source + `advance-low`, un-injected, every
+> protection armed.** The informative arm first; the matched control only if it
+> earns one (Rule 2: explore before qualifying).
+>
+> * **Holds ≥ 30 s** → 60 % is demonstrated. Freeze and qualify.
+> * **Holds materially longer than 1.307 s** (the current best at 600) but
+>   under 30 s → advance 20 bought real margin and the residual is measurable;
+>   next question is what it stops on.
+> * **Stops on LateArm at `ci` ≈ 49–51 with a hold comparable to 1.307 s** →
+>   **refuted.** Advance 20 did not buy the margin, the +1–2 µs of `wait` was
+>   not the binding quantity, and — with `spent` shown above to be
+>   irreducible — the arm-margin framing is exhausted, not merely unlucky.
+> * **Stops on sag or current** → the supply constraint is finally separated
+>   from the timing one, which two 600 runs have never managed because both
+>   stopped on LateArm first.
+>
+> Secondary, measured in the same capture: `hold_ma` should fall ~7.5 % from
+> 2869 to ≈ 2654 mA (88 % of the 3 A clamp) and `ehz_from_sector` ~1 %.
+> A current reduction at 600 is worth having independently of the hold.
+
+Not a new hypothesis: `advance-low` is the intervention E300 predeclared,
+whose bar E307 withdrew for a bad reason and E312 restored, which E319's
+adversarial review ranked second behind the `ceil(ci/2)` rounding — and the
+rounding is now dead. This is the surviving ranked candidate, its A/B is half
+complete, and both arms of that pair are in the tree.
