@@ -25812,3 +25812,73 @@ entries (E253/E254/E258); `raw_depth.observe` moved above the `early` return and
 after `current.accumulate`; a clean observer-cost A/B on an image differing only
 by the observer; `hold_valid` for injected captures; a loud refusal on
 `ceiling_tenths < duty_tenths`.
+
+### E296 — predeclaration: climb 400 → 525 on `480263F1`, with the first numeric prediction the raw observer can actually be wrong about
+
+Image `480263F1.e286-rawdepth.elf` (sha256 `366E781F…A544`, manifested). Rung
+375 passed 3/3, so 400 is admissible. Six rungs, eighteen runs: **400, 425, 450,
+475, 500, 525.** Band from E294: **992..1008**.
+
+**This is diagnosis, not qualification, and I am saying so before it runs.** The
+tree now carries four source fixes that this image does not (the `raw_depth`
+reference, the `BusDepth` overflow scaling, `block_milliamps`, the doc comment),
+so `480263F1` cannot be the campaign's final ELF. Under the standing rule that
+diagnostic results never qualify another image, and the ladder rule that a rung
+needs the rung below on the *same* ELF, **the final qualification will need a
+full ladder on the fixed image regardless.** So the right use of this image is
+to find the 550 mechanism cheaply, fix it, and then pay for one ladder — not to
+pay for two.
+
+#### The prediction, stated numerically so the instrument can fail
+
+E295 established what the raw-scan observer actually measures: the **count as a
+rate**, against a measured bridge-off floor of **43.8 per 10⁶ scans**. Across
+rungs 150 → 375 that rate rose linearly, `corr = +0.706`, slope **+791 per 10⁶
+per 1000 duty-tenths**, reaching **431.9** at rung 375.
+
+Extrapolating that fit:
+
+| rung | predicted raw1 rate /10⁶ | signal : floor |
+|---|---|---|
+| 400 | ~450 | 10 : 1 |
+| 450 | ~490 | 11 : 1 |
+| 500 | ~530 | 12 : 1 |
+| 525 | ~550 | 13 : 1 |
+
+**The discriminator, fixed before the runs:** if a rung's measured rate sits
+within **±25%** of this line, the excursions are the same load-proportional
+phenomenon seen all the way up from 150 and carry no information about a latch.
+**If a rung — especially 525 — departs from the line by more than ±25%, that is
+a step, and a step is the first evidence of a distinct mechanism rather than
+more of the same.**
+
+This is what E284 should have predeclared. It is a rate against a control,
+extrapolated from ten rungs, with a stated tolerance — not a run-length
+threshold that needed a 900× rate change to fire. If the rates come in on the
+line all the way to 525, **the raw-depth observer has told me the honest answer
+that there is nothing anomalous below 550**, and that is a useful negative.
+
+#### Also predeclared
+
+1. **All six rungs pass 3/3** within 992..1008. Rung 500 was qualified in
+   campaign 9 on a different image, so a failure there is a regression and I
+   treat it as one rather than as news about 60%.
+2. **`raw1_run` stays 1** at every rung. It cannot do otherwise at these rates
+   (E295), so this is a consistency check on the instrument, not a measurement —
+   and if it ever exceeds 2, the rate has changed by orders of magnitude and
+   everything above is void.
+3. **The rate identity's within-session sd stays 1.4–2.2 ‰** on the 32-slot
+   estimator. Above 3.0 would mean the advance-22 regime is genuinely noisier
+   than advance-20, which corpus data (n=129 vs n=204, sd 3.400 vs 3.164)
+   currently says it is not.
+4. **`ceiling_tenths == duty_tenths`** on every run. A throttled run is not a
+   rung run, and the foldback governor engaging at these duties would itself be
+   the finding.
+
+#### What I will not do
+
+Reach 550 on this image and call anything qualified. The 550 bar from E285
+stands — **eight consecutive clean runs or an evidenced mechanism, not three** —
+and it applies on the *fixed* image, where the raw-depth reference is the
+guard's own and the observer's line does not drift 24 codes between low and high
+duty.
