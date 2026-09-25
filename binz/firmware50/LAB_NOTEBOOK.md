@@ -37094,3 +37094,98 @@ LateArm can pre-empt the injected `Tracking` fault, leaving
 `first_reason = 15` and no restart attempted — is largely defused by a
 candidate that records `late_arms=0`, but its two-startup budget inside the
 65 s window still needs checking before the cohort is spent.
+
+### E334 — final qualification of `439BF1CD`: four of five rungs PASS at 3/3, 550 blocked by one bus transient, and the restart at 600 recovers.
+
+Image `439BF1CD.e331-advref-floor5-65s` — flat advance **16** (the reference
+value) + persistence-filter floor 5, 65 s window. No diagnostic features.
+`ADC_COMP` 742, hazard classes unchanged, audited 12-read bound intact,
+345/347 host tests across four configurations, clippy clean.
+
+#### The ladder, by the fixture's own `rung_report`
+
+| rung | verdict | holds |
+|---|---|---|
+| 500 | **PASS** | 3/3 |
+| 525 | **PASS** | 3/3 |
+| 550 | **FAIL** | 2/3 — one `FastBusSag` |
+| 575 | **PASS** | 3/3 |
+| 600 | **PASS** | 3/3 |
+
+**Fourteen of fifteen holds clean, and `late_arms = 0` and `thin_count = 0` in
+every single one of the fifteen** — including the failure. `hold_ms` is
+`65000 − 5224 − ramp_us(rung)` to the millisecond throughout.
+
+That is the substantive result: the latch mechanism that consumed E300–E328 does
+not occur at all on this image, at any rung from 50 % to 60 %, while `ci_min`
+still falls to 45–48 exactly as before. The estimator's descent was never worth
+fighting; at advance 16, `wait = ci/4 >= 10` for every `ci` at or above
+`SECTOR_FLOOR_US` against a `spent` capping at 10, so `left == 0` is
+arithmetically unreachable.
+
+#### The one failure, and what it is not
+
+`q550-advref_02`: `reason=26` (`FastBusSag`), `streak=3 tripped=1`, hold
+26 762 ms.
+
+```
+late_arms=0   thin_count=0   verdict=ok   zc_permille_of_6x_coast=1013
+filt_bus 983 per mille  (CV threshold 975)      <- the FILTERED bus was healthy
+bus_min  870 per mille                          <- deepest instantaneous dip of the day
+hold_ma  2047   worst_ma 2633                   <- LOWER than the passing 600 runs
+```
+
+So: not timing, not tracking, not duty, not the mean rail. A **fast transient**,
+caught by the guard that exists for fast transients, **at less current than the
+rung-600 runs that passed three times over**. A trip at 2047 mA where 2280 mA
+passed repeatedly is a vbat anomaly, not a duty limit.
+
+Checked for progressive degradation across all thirteen powered runs of the
+session: `zero_drift_ma` wanders −114 … −278 with **no monotone trend**, and
+`filt_bus` holds 980–986 per mille throughout. So there is no evidence of a
+power path degrading under the campaign — but that one dip is the deepest of
+the day, and this bench has a recorded history of deep sag and a melted
+connector at ~0.65 Ω.
+
+**Not excised.** `rung_report` counts every attempt on an ELF permanently, so
+550 is failed for this image. That rule exists to prevent retry-until-pass and I
+am not going to route around it — unlike E332's power-down record, which the
+fixture itself declared unjudgeable, this is a *judged* failure with a real
+protection trip. The decision about whether it is the bench belongs to the
+operator, and it is the one remaining item from the two asks I opened in E329.
+
+#### Restart at 600 recovers, and §9.4's warning is defused
+
+`r600-advref_01`:
+
+```
+first_reason=8 (Tracking, the injected fault)   first_hold_ms=2000
+admitted=1  refusal=0  aborted=0
+second_reason=2   second_hold_ms=34249   recovered=1
+```
+
+Section 9.4 warned this cohort would be the campaign's most expensive item
+because a LateArm can pre-empt the injection at rung 600, leaving
+`first_reason = 15` with the restart never attempted. **That cannot happen on
+this image**: `late_arms = 0` in all fifteen holds, and the first segment duly
+stopped on the injected `Tracking` fault. The second segment then took a second
+startup, a second 25 s ramp and a second descent through the interval band that
+used to be fatal, and **held 34.2 s at 60 %**.
+
+Cohorts at 600 and 500 still running, three each.
+
+#### The measured envelope, with the supply finally anchored
+
+The operator confirmed the **clamp at 3.00 A** and metered **2.15 A** during a
+rung-600 hold, against the proxy's `hold_ma` 2280 — a **6.0 % over-read**,
+inside the 2.7–12.4 % bracket `scripts/metered_current.py` derives from the
+corpus and now confirmed by a direct meter. So:
+
+* **true draw at 60 % = 2.15 A = 71.7 % of the clamp**, against the 92–95 % I
+  asserted repeatedly from the raw proxy;
+* droop **982 per mille** against a 975 CV threshold — the rail never folded;
+* and the reference advance *relieved* the supply: `hold_ma` 2774 → 2280
+  (−18 %), `worst_ma` 3732 → 3246.
+
+Advance 20 sat at 82–90 % of the clamp. Advance 16 sits at 72 %. **The supply
+was never the constraint at 60 %.**
