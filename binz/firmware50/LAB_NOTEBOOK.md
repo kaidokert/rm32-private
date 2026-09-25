@@ -21495,3 +21495,348 @@ so they go to two fresh reviews before the bench, and the supply sweep that
 needs the operator is named rather than assumed.
 
 The reviews follow verbatim.
+
+### E266a — evidence review of E264, verbatim
+
+Fresh, context-free agent, run concurrently with the adversarial review and
+without access to it. Instructed to verify from primary sources before reading
+the interpretation, and to re-run every audit itself. It worked in a separate
+worktree, which is why one hash it quotes differs from the repo's.
+
+---
+
+Cleanup done, worktree removed, tree restored. Here is the review.
+
+## Verdict
+
+The build is real and the production-immutability audit is genuine. But **three of the four things E264 claims to have built do not work**, and its headline statistic is wrong by a factor that inverts the conclusion. Two of the failures are runtime-fatal and would have been caught by running the tool once on a real capture.
+
+---
+
+## A. `src/fine.rs` — arithmetic correct, but the module is dead on the target
+
+Everything I could recompute is right:
+
+| claim | my value | verdict |
+|---|---|---|
+| `FINE_HZ=8e6`, `FINE_PSC=7` on 64 MHz | 64/(7+1)=8 MHz | ✓ (TIM17 at `timers.rs:109` forces 1 MHz as "64/64", independently confirming a 64 MHz timer clock) |
+| `US_SHIFT` | `trailing_zeros(8)=3` | ✓ |
+| 32-bit wrap | 2³²×125 ns = **536.87 s**; `SPAN32_S`=536 | ✓ |
+| 16-bit span | 65536×125 ns = **8192 µs** | ✓ |
+| old span | 2³²×15.625 ns = **67.109 s** | ✓ |
+| `to_tenths` u32 safety "below 53.7 s" | 2³²/10/8e6 = 53.69 s | ✓ |
+| division-free | no `__aeabi_uidiv`/`__aeabi_idiv` in either ELF (only pre-existing 64-bit `__aeabi_uldivmod`, present identically in the parent) | ✓ |
+
+`the_thirty_two_bit_anchor_outlasts_the_longest_run` (fine.rs:104-122) — the picosecond arithmetic is **correct**: 4294967295×15625/1e12 = 67 s, divisor 1e12 is right, and both assertions hold. The "one of them caught my own arithmetic" story checks out.
+
+`sixteen_bit_deltas_alias_beyond_their_span` (fine.rs:158-166) — correct, and `SPAN16_US` is compared against `to_us(true_gap)`, µs vs µs. ✓
+
+Two problems:
+
+1. **fine.rs:91 `the_rate_is_eight_megahertz_and_division_free` does not test division-freedom at all.** It checks five constants. Division-freedom is only establishable from the disassembly (I did it; it holds). A test that cannot fail for the property in its name is the failure mode this campaign's own memory rule names.
+
+2. **`to_us`, `to_tenths`, `since`, `since16` have zero callers outside fine.rs.** The commit says "the units and **every modular subtraction** moved to a new host-visible `src/fine.rs` so they can be tested". The real modular subtractions stayed where they were: `src/roots.rs:367`, `:533` still do `fine_now.wrapping_sub(fine0)` inline, and `roots.rs:1215-1216` still carries the comment "15.6 ns ticks". So the 7 new tests validate functions nothing calls; the code paths that actually subtract fine stamps are untested and were not touched. `E185`/`since16` is tested-but-dead.
+
+---
+
+## B. `src/sagtrace.rs` — `size_of` and the ring total are exactly right; four doc numbers are stale or wrong
+
+`Block` = 10×u16 + 2×u8 + 2×u16 = **26 B**, align 2, no padding. ✓ `Slow` = 8 B. ✓
+Rings = 256×26 + 1024×8 = 6656 + 8192 = **14848 B**. ✓ Previous = 512×16 + 1024×8 = 16384. ✓ Delta 1536 B — and **confirmed on the metal**: `sag-capture` `.bss` went 0x5074 (20596) → 0x4a74 (19060), exactly −1536. `structure_report.py` prints `bss=19060 stack_left=17136`, matching the entry.
+
+Stale/wrong in the same file:
+
+- **`sagtrace.rs:55`** still says `FAST_LEN x 16 B + SLOW_LEN x 8 B = 16 384 B`. Both the row size and the total are the old ones, and with `FAST_LEN=256` the stated formula doesn't even evaluate to the stated number (it would be 12288). This is the module-level "RAM cost" paragraph — the one a reader checks first.
+- **`sagtrace.rs:41`** "`FAST_LEN` judgements at full rate — **~52 ms**" — that is the 512-row figure; it is 26 ms.
+- **`sagtrace.rs:44`** "~3.3 s, i.e. **eight** filter time constants" contradicts `sagtrace.rs:79` "**sixteen**" in the same file. 3.31/0.207 = 16.0, so :79 is right and :44 is wrong.
+- **`sagtrace.rs:74`** "26 ms is still **~50x** the widest dip the guard can latch on". Against the band's fast edge (~0.8 ms) it is 32×; against the slow edge (~200 ms) it is 0.13×. The notebook entry says "~32×" — the source comment kept the review's inherited 50×. ("widest" is also the wrong word for the quantity being divided by.)
+- **`sagtrace.rs:305`** the `emit` docstring names the last column `since_com_us`, while the field is `since_zc_us` and its own doc at `:125-130` says explicitly "**not** since the commutation". The format string contradicts the field it documents.
+
+`emit` field order **does** match the docstring and is 14 columns: `at at_fine bus_raw pa pb pc bus vref filt_bus filt_vref streak step duty since_zc`. ✓
+
+---
+
+## C. The recorded fine timeline is **always zero**. This is the headline feature and it is not wired.
+
+- `src/run/hal.rs:225-228` gives `fn fine(&self) -> u16 { 0 }` a default body.
+- `bin/board.rs:185 impl Hal for Board` **does not override it** — the string "fine" does not appear anywhere in `bin/board.rs`.
+- `bin/sag-capture.rs` **never calls `firmware50::hw::fine::init()`**. Only `bin/chain-capture.rs:94` does. TIM2's clock is never even ungated in the sag image.
+
+So every `SAGROW`'s `at_fine` will be `0`, every fine delta will be 0 µs, and the claim "this ring and `chain::Beat` finally share a timeline" / "one 125 ns timeline" is false in the built artifact. The comment at `run/states.rs:373-377` ("only when the recorder is installed: production runs `NoSagLog` and never initialises TIM2") documents production correctly and silently mis-states the diagnostic image. This is the one thing a single bench run would have exposed, and the whole `check_units`/`fine_hz`/`span16_us` versioning apparatus is guarding a column of zeros.
+
+---
+
+## D. `src/run/states.rs` — correct, and production does no new work
+
+Verified from the diff and the code:
+- The sag row is pushed at `:340-342`, **before** `if let Some(r) = verdict { return Err(r) }` at `:343`. ✓
+- The early-stop path (`:321-327`) also pushes the deciding scan's row before returning. ✓
+- `bus_raw`/`phase_a/b/c` come from the same `scan` binding that fed `self.rail.feed(scan.bus, scan.vref)` and that `current.accumulate` would have consumed. ✓ The row genuinely precedes `current.accumulate` at `:349`. ✓
+- `at_fine: if P::G::ON { hal.fine() } else { 0 }` — redundant (the whole call site is already `P::G::ON`-gated) but harmless and const-folded.
+- Nothing new on the `P::G::ON == false` path: the `early` computation and `RailMean` feed were already there at the parent; the diff adds only a `&RawScan` parameter and fields inside the `P::G::block` literal.
+
+And this is **measured**, not asserted — see F.
+
+---
+
+## E. `scripts/sag.py` — crashes on every real capture; both new capabilities are dead code
+
+`V1_FIELDS=10`/`V2_FIELDS=15` are correct against `emit` (token + 9, token + 14). ✓ Both refusal paths fire when provoked (I tested a 13-field row and a fine-stamped capture with `fine_hz` stripped). ✓
+
+But:
+
+1. **`scripts/sag.py:337` raises `TypeError` on any capture containing `SAGSLOW` rows.**
+   ```python
+   drift = [margin_permille(Row(0, r.bus, r.vref, r.filt_bus, r.filt_vref, 0, 0, 0, 0), num, den) for r in slow]
+   ```
+   `Row` now has 14 fields; this passes 9. Running it on the exact file the commit cites:
+   ```
+   $ python scripts/sag.py captures/sag/e190-500-s7.txt
+   ...
+   TypeError: Row.__new__() missing 5 required positional arguments:
+     'filt_vref', 'streak', 'step', 'duty', and 'since_zc'   (exit 1)
+   ```
+   So **"v1 captures still parse: `e190-500-s7` reproduces its old report exactly" is false.** It reproduces the report up to the last line and then dies. (Had the arity matched, it would have been silently *worse*: positionally, `r.bus` would land in the new `at_fine` slot.) Same crash on a hand-built v2 capture.
+
+2. **`fine_delta_us` (sag.py:137) and `raw_run_width` (sag.py:154) are never called.** Nothing in `main()` references `bus_raw`, `at_fine`, or the phase codes. I planted a 3-scan raw notch and a phase excursion in a v2 capture; the report mentioned neither. The two new instruments the entry says the campaign needed exist as unreferenced functions. Prediction 2 and prediction 3 currently have **no tool that evaluates them.**
+
+3. **The aliasing refusal is unreachable.** In `fine_delta_us`, `ticks = (b.at_fine - a.at_fine) & 0xFFFF` ≤ 65535, so `us` ≤ 8191.875 and `us >= span16_us` can never be true. The docstring ("Returning None rather than a number is the whole point") and the commit's "refuses … any pairing across the 16-bit aliasing limit" describe a branch that cannot execute. Detecting aliasing from a lone 16-bit delta is information-theoretically impossible; it needs a cross-check against the coarse `at` (TIM17) delta, which the function never reads.
+
+4. **Asymmetric refusals.** A malformed `SAGROW` refuses loudly; a malformed `SAGSLOW` is **silently dropped** (`sag.py:105`, `if len(f) == 5:`). I truncated one slow row and the entire "decimated history" section vanished with no message — the exact "reported an empty ring as a clean one" failure the row refusal was written to prevent.
+
+5. **`row_v` is never read** (zero references in sag.py). Version dispatch is by field count only, so the emitted version tag is decorative and a future 15-field v3 would be silently parsed as v2.
+
+6. **Two concatenated dumps merge silently.** `SAGEND` is ignored by `parse`. I concatenated a v1 dump's rows onto a v2 dump: the tool reported "fast window is 13 of 1000" with `fast_kept=8` from the header, mixed `None` and integer fields in one row list, and no complaint. This is the requested "silently wrong answer" — and it is realistic, since a shell log accumulates runs.
+
+7. **Stale docstring** (`sag.py:33-40`): "the fast ring is 512 judgements ~= 52 ms" and "the decimated ring is 1024 rows every 32nd judgement ~= **1.7 s**, eight of the reference's time constants". The runtime print from the same script says `~= 3244 ms`. 1.7 s is wrong by 2×; the SAGROW format shown at `:11` is still the v1 9-column one.
+
+8. **`--csv` (sag.py:342-344) writes only the v1 columns** — `bus_raw`, `at_fine` and all three phase codes are dropped from the CSV too.
+
+---
+
+## F. Audits — all reproduced, with one caveat
+
+| audit | claimed | I measured |
+|---|---|---|
+| host tests | 344 + 9 | **344 passed + 9 doc-tests** ✓ |
+| clippy, target | clean | **clean, exit 0** ✓ |
+| `structure_report.py` | exit 0, bin_lines 1044, static_mut 0, bits_writes 0, fns>100 0 | **identical**, exit 0 ✓ |
+| `isr_audit.py` on sag-capture | 4 roots clean | **AUDIT PASSED: 4 root(s) certified clean** (reachable 1/2/1/1) ✓ |
+| sag-capture bss/stack | 19060 / 17136 | ✓ |
+| sag-capture text/data | 44628 / 668 | ✓ |
+| `isr_diff.py` shell-pwm | 37 / 728 / 332 / 155 identical | **identical, exit 0** — and also identical for `sag-capture` ✓ |
+
+**Production byte-identical:** true, and I reproduced it independently. Building `5f96d35` and `edefd5e` in the same fresh worktree:
+
+```
+shell-pwm  .text 35752 IDENTICAL   .rodata 4964 IDENTICAL
+           .data 668 IDENTICAL     .bss 0x1058 IDENTICAL   .vector_table 188 IDENTICAL
+sag-capture .text DIFFER  .rodata DIFFER  .vector_table DIFFER   (expected)
+```
+
+Two caveats on how it should be stated:
+- **The property is build-path–sensitive.** My first parent build, in a different directory, produced `.rodata` = 4964 vs the repo's 5024 — a 60-byte path-string difference. "Byte-identical" holds only for two builds at the same absolute path; it is not a reproducible-build claim. (The entry's table quotes 5024, so it was measured at the repo path — fine, but the caveat belongs in the claim.)
+- **`.bss` "IDENTICAL" via section content is vacuous** (NOBITS, 0 bytes extracted). The meaningful check is the size: 0x1058 = 4184 both. It is right, just not by the route the table implies.
+
+**"The parent's production build … reproduces the qualified ladder image `0D8E3799` bit-for-bit":** `d9d77f3cfad2fd00` is the sha256 of the *whole ELF file* of `0D8E3799`, not its loadable bytes. I verified that HEAD built at the repo path is **identical to `0D8E3799` in every allocated section and in the full `objcopy -O binary` image** (sha256 `c811ab98a9fb9063` both ways) while the ELF files differ (`db958b97…` vs `dabce4af…`). So the *loadable* reproduction is established. The whole-file identity is plausible for the parent (no new source file → no debuginfo shift) but I could not reproduce it without rebuilding in the live tree, and it sits one sentence after "compare loadable bytes, not the ELF hash" — the claim should say which of the two it is. The quoted `sag-capture` sha256 `733de16150e5912a…` I could not reproduce (`5d025bad…`), which by the entry's own rule is not a number worth quoting.
+
+---
+
+## G. The statistics are wrong, and the archive that refutes them is in the same repo
+
+The three inputs check out exactly:
+- `captures/2026-09-23/c7-500{,c}_0{1,2,3}.txt`: `BEMFDONE reason=26` in `c7-500_01`, `c7-500_03`, `c7-500c_02`; `reason=2` in the other three. **3 of 6.** ✓
+- `captures/sag/e189-500-s{1,2,3}`, `e190-500-s{4..7}`: all `reason=2`. **0 of 7.** ✓
+- 0.5⁵ = 0.03125 = **3.1%**. ✓
+
+The arithmetic is right and the inference is not.
+
+1. **The test is the wrong test.** This is a two-sample comparison, not a one-sample binomial against a known parameter. Fisher's exact, one-sided, 3/6 vs 0/5: C(6,3)·C(5,0)/C(11,3) = 20/165 = **p = 0.121**. Not 3.1%, and not significant at the campaign's own 0.05 bar. To reach p < 0.05 against a 3/6 baseline you need **0 trips in 9**.
+
+2. **E261 already did this correctly and E264 regressed it.** E261 line 94: "`sag-capture` at rung 500: 0 trips in 7 runs. Production at rung 500 on 09-23: 3 trips in 6 runs. **Fisher one-sided p = 0.070.**" (20/286 — I reproduce it.) E261 line 140 goes further: "For zero trips to be significant at p<0.05 you need **11 consecutive non-trips at 1/4, or 8 at 1/3**." E264 answers that review by setting the bar at **five**, using a weaker test, and reporting a smaller p. The user's own standing rule on this — predeclare the n that makes the rate answer significant — is being applied in reverse.
+
+3. **p = 0.5 is not production's rate at rung 500 — it is the rate in the one session where it tripped.** The repo holds **21** un-provoked rung-500 production runs (`duty_tenths=500`, `inject=0`, `SAGSNAP`-free, i.e. `shell-pwm`):
+
+   ```
+   c7-500_01     26      e189-500-p1    2     e195-rung-500_01  2     e238-reg500_01  2
+   c7-500_02      2      e189-500-p2    2     e195-rung-500_02  2     e251-500_01     2
+   c7-500_03     26      e190-500-p3    2     e195-rung-500_03 15     e251-500_02     2
+   c7-500c_01     2      e190-500-p4    2     e196-rung-500_01  2     e251-500_03     2
+   c7-500c_02    26                           e196-rung-500_02  2
+   c7-500c_03     2                           e196-rung-500_03  2
+   c7-explore500  2
+   ```
+   **3 `FastBusSag` trips in 21 runs (3 in 19 full-length), and all three are in the single 09-23 `c7` session.** Rate ≈ 0.15, and plainly not i.i.d. Bernoulli — it is session-clustered.
+
+   At p = 0.15, P(0 trips in 5) = 0.85⁵ = **44%**. At p = 0.30 (3/10 if you take only the two 09-2x cohorts), 0.7⁵ = **17%**. Zero trips in five would be uninformative under any honest prior.
+
+   Worse: the four runs `e189-500-p{1,2}`, `e190-500-p{3,4}` — all `reason=2`, 0 trips — are the very runs E264 uses **in the same paragraph** as the `loop_iters_closed` baseline. The entry reads its archive for the denominator of prediction 4 and not for the numerator of prediction 1. This is verbatim the criticism E261 line 52 made of E259: "has a three-trip cohort sitting in its own archive and did not look at it."
+
+4. **The null is cross-era too.** E264 rejects E261b's 16.8% because it is "cross-era", then takes its own null trip rate from a different session on a different day, on a bench whose sag behaviour is documented as supply- and session-sensitive.
+
+`loop_iters_closed` baseline **2 835 519 (n=4)** — verified: 2840303, 2834658, 2834494, 2832622, mean 2835519.25. ✓ hold_ms 54774/54776 matched. ✓
+
+---
+
+## H. Are the four predictions falsifiable?
+
+1. **"Trips at least once in five at 500."** Falsifiable as a proposition, but its decision rule is unsound (G). And the no-trip branch is pre-assigned a finding ("the recorder is suppressing and the design is wrong"), which is the structure E261 line 140 rejected.
+2. **"Raw notch spans ≥3 consecutive scans (≥305 µs)."** 3 × 101.7 = 305 µs ✓, and it is the right *kind* of prediction — derived from the streak logic, independent of the withdrawn `bus_min`. **But it is not operationalized:** the only function that measures it, `raw_run_width(rows, threshold)`, is never called, and **`threshold` is nowhere predeclared.** A post-hoc choice of "low" determines the answer. Declare the threshold (and the tool invocation) before the run or the prediction cannot fail.
+3. **"A phase code within ±5 scans of the notch exceeds 848..3248."** The band exists (`protection.rs:127-128`) and is genuinely not enforced in the run (the run installs `PhaseCodePolicy::RetainRails`), so this is a real, falsifiable proposition. But again no code evaluates it, and "±5 scans" is undefended. Also note the phase codes are only recorded when `self.rail.ready()` — a notch before the rail filter is ready records no row at all.
+4. **"`loop_iters_closed` within 5% of 2 835 519."** The cleanest of the four: pre-registered number, verified baseline, matched rung and `hold_ms`, sharp threshold. ✓
+
+---
+
+## I. One-line note on E265 (committed while I was reviewing)
+
+E265 independently found the chain half of the same defect — at E264, `src/chain.rs` still documented 15.6 ns at :66/:70/:81/:83/:298 and `scripts/chain.py:70` hard-coded `TICKS_PER_US = 64.0`, so `timers.rs:41`'s claim that "**every** dump states it (`FINEHZ`), and the host parsers refuse a capture that does not" was false at commit time (the token `FINEHZ` exists nowhere in the tree; the emitted key is `fine_hz`, and at E264 only `sagtrace::emit` emitted it). E265 fixes the emit and the parser but **states the error direction backwards**: reading 8 MHz ticks at 64 ticks/µs makes every delta read **8× too small**, not "8x too large". The stale 15.6 ns docstrings at `chain.rs:66/70/81/83/298` are still there. And E265 does not touch the missing `fine::init()` in `sag-capture` (§C), which remains open.
+
+---
+
+## Minimum fixes before this goes near the bench
+
+1. `bin/sag-capture.rs`: call `firmware50::hw::fine::init()`; `bin/board.rs`: implement `fn fine(&self)`. Until then `at_fine` is a zero column.
+2. `scripts/sag.py:337`: the script exits 1 on every real capture.
+3. Call `raw_run_width` and `fine_delta_us` from `main()`, predeclare the notch threshold, and print `bus_raw`/phase columns (and add them to the CSV). Drop or re-found the unreachable aliasing branch on a coarse-clock cross-check.
+4. Make `SAGSLOW` refuse like `SAGROW`; read `row_v`; bound a capture at `SAGEND`.
+5. Re-derive the step-1 bar from the **whole** rung-500 archive with a two-sample exact test, and state the n it needs.
+6. Fix `sagtrace.rs:41/44/55/74/305`, `sag.py:33-40`, `roots.rs:1215`, `timers.rs:41`, `chain.rs:66/70/81/83/298`.
+
+### E266b — adversarial review of E264, verbatim
+
+Fresh, context-free agent, launched concurrently with the evidence review and
+without access to it. Given the bench facts as facts, told to attack the
+reasoning and the safety of a change about to be flashed to a motor, and to
+look at code and captures before the interpretation.
+
+---
+
+I did the code and evidence pass first, then read E264/E265/E261. Note that HEAD moved while I worked: it is now `92c00df` (E265), not `edefd5e` (E264).
+
+## Verdict
+
+**Do not flash this for the planned experiment yet.** Three of the four predictions are unsound as written, the headline instrument (`at_fine`, "one 125 ns timeline") is **dead code that will record a column of zeros**, the host analyser **crashes on every real capture**, and the observer-control statistics are built on a rung-500 trip rate from a *different firmware image* whose same-image rate is 0/13. The audits that were run (byte identity, roots, `.bss`) are real and I re-verified them — they are just not the axes that matter here.
+
+---
+
+## 1. Safety of the TIM2 rescale — the control-path claim holds; the justification does not
+
+Verified independently, and I agree with E265: nothing on a control or protection path reads the fine clock. Every consumer is `hw::fine::raw() as u16` at `src/roots.rs:366`, `:532`, `:1219`, and the arm decision at `roots.rs:528-531` is computed from **TIM17** (`hw::clock::raw()`) and dispatched by `com_arm` *before* the fine read. `src/roots.rs:366` is inside `beat_row`, which returns `None` when `C::ON` is false. I also confirmed by disassembly (below) that the four roots are instruction-identical between `shell-pwm` and `sag-capture`. So the rescale is reporting-only. Good.
+
+But the stated *reason* for the rescale is fictitious:
+
+- "The 32-bit counter wraps at 67.11 s against runs commanded `total_ms = 80000` — a run anchor that wraps inside a run is not an anchor." **There is no 32-bit fine anchor.** Every call site truncates to `u16` on the same line. `fine::since`, `to_us`, `to_tenths`, `SPAN32_S`, `US_SHIFT` are used **nowhere** in `src/` or `bin/` outside `src/fine.rs`'s own tests and the re-export at `src/hw/timers.rs:61`. `SPAN32_S == 536` is asserted against a run length by a test that guards a quantity no firmware code reads. `src/fine.rs` is 179 lines of host scaffolding for one register write (`psc().set(FINE_PSC)`).
+- The real gain is the u16 span, 1.024 → 8.192 ms. **That gain was already available and larger.** `sagtrace::Block.at` and `chain::Beat.at_us` are both TIM17 (`hw::clock::raw()`, 1 MHz, full 16-bit) — a **65.536 ms** common span at 1 µs resolution, 8× the new fine span, against a 71 µs sector and a 101 µs scan period. The "shared timeline" the commit is named for existed before the commit, on a better-scaled clock.
+- The cost is 8× resolution on the one ring that actually *uses* fine ticks (`chain::Beat.spent_fine`, ~6 µs per E234 → 2.1% quantisation instead of 0.26%), plus the `chain.py` breakage.
+
+E265 caught the `chain.py` 8× misread — genuinely the right catch, and it closes my axis-1 finding. Two loose ends remain:
+
+- **`src/chain.rs` still asserts the old rate in its own doc comments**: `:66` "(15.6 ns)", `:70` "1.02 ms", `:81` "64 MHz free-running TIM2", `:83` "1.02 ms", and `:298` — which documents the *on-wire format* of `CHAIN` rows — "the fine columns are 64 MHz ticks (15.6 ns)". E265 fixed the tool and the header and left the producer's format documentation lying. That is the same class E265 says it fixed.
+- `scripts/chain_spent.py:44`/`:11` still comment "post-E180, fine stamps in 15.6 ns ticks". It skips fine-stamp captures (`:70-71`), so it does not mis-report — but it now skips for a reason that is stated wrongly.
+- `bin/edge-capture.rs` never calls `hw::fine::init()`, yet `roots::accept()` (`roots.rs:532`) reads TIM2 unconditionally on the `L::ON` path. Pre-existing, not a regression, but it means that path has always stamped from an unclocked timer.
+
+## 2. The instrument does not discriminate — and cannot, at this sample rate
+
+**2a. The fine stamp is not recorded at all.** `Hal::fine()` at `src/run/hal.rs:229-231` is a **default method returning `0`**, and **nothing overrides it**. `impl Hal for Board` (`bin/board.rs:185`) has `now`, `raw`, `stamp_from_raw`, … and no `fine`. And `bin/sag-capture.rs` never calls `hw::fine::init()` — only `bin/chain-capture.rs:94` does, so in the image that will be flashed TIM2 is not even clocked. `at_fine` will be `0` in all 256 rows. `scripts/sag.py::check_units` tests `r.at_fine is not None`, and `0 is not None`, so it passes; `fine_delta_us` would return `0.0` for every pair (and is never called). The commit's title deliverable is a zero column with no detector. E265's "exhaustive grep for `fine::raw|hal.fine()`" found the *call site* at `states.rs:377` and did not check that the trait method resolves to a clock — the identical error one level down from the one E265 congratulates itself for finding.
+
+**2b. The samples are not simultaneous, and the sequencing matters.** From `src/hw/adc.rs`: `ckmode().pclk_div2()` (`:137`) → 32 MHz ADC clock; `smp1().cycles79_5()` (`:156`) → 79.5 + 12.5 = **92 ADC cycles = 2.875 µs per channel**; `CHANNELS` (`:33-41`) converts in ascending channel order IN0, IN1, IN4, IN6, IN13 = ISENA, ISENB, ISENC, **VBUS**, VREF. So within one scan:
+
+| | phase_a | phase_b | phase_c | **bus** | vref |
+|---|---|---|---|---|---|
+| sample start (µs) | 0 | 2.875 | 5.75 | **8.625** | 11.5 |
+
+`src/duty.rs:43` `RUN_PERIOD_TICKS = 1333` at 64 MHz → **carrier period 20.83 µs (48.0 kHz)**; confirmed against the captures' `applied_ccr=733` at duty 550. So **phase_a and bus are sampled ~9.9 µs apart = 0.475 of a carrier period**, and the three phase codes are 0.14 period apart from each other. They are not "in hand at the same point"; they are four different points of the switching cycle.
+
+**2c. The scan is deliberately de-cohered from the PWM, and the row does not record the carrier phase.** TIM6 runs at 9901 Hz (`src/hw/timers.rs:189`) with `trgo_on_update`; nothing synchronises it to TIM1. 48010/9901 = 4.849, so the sample point walks **0.849 of a carrier period per scan**. Every `bus_raw` and every phase code lands at an unknown, different carrier phase. That is correct for reconstructing a DC average (which is why the 8-tap mean exists) and **fatal for reading a single raw sample as a bus level**: consecutive `bus_raw` values will differ by the 48 kHz rail ripple aliased at an unknown phase, which on a long-lead bench supply is plausibly comparable to the 5% sag line itself. The firmware *already owns* the primitive that would fix this — `in_off_window(hal.pwm_counter(), …)` at `src/run/states.rs:302-307`, used for the BEMF witness in the same function, three lines above the scan read. `hal.pwm_counter()` was **not** added to the row. One `u16` field (2 B, 512 B of ring) would make every `bus_raw` and every phase code interpretable. Its absence is the single biggest miss in the build.
+
+**2d. Topology: the discrimination is *partly* possible, and better than the author argues.** This is a **three-shunt** low-side design (`RAW_LIMIT` doc at `src/protection.rs:514-516`: "three shunts, 7 mOhm, gain 10, VDDA 3600"). Per `src/sixstep.rs:14-16`, the **sink** phase is `MODE_FORCE_INACTIVE`, i.e. its low-side FET is held on unconditionally — so the sink shunt conducts in **both** carrier windows and is a continuously valid measurement of phase current. The source shunt conducts only in the OFF window (freewheel); the floating shunt reads offset. The row records `step`, so the host can pick the sink column per sector. So a surge is *not* topologically invisible — but only on one of the three columns, chosen by sector, and only if you know whether the sample was ON or OFF for the other two, which (2c) you do not.
+
+**2e. The scan rate is coarser than the event.** Judgements arrive every **101 µs**; a sector at rung 550 is **71 µs** (`src/fine.rs:157` uses exactly this figure). The ordering question — did the loop-side surge precede the rail dip, or follow it — lives inside one commutation interval. You cannot order events at 71 µs with a 101 µs sampler, whatever clock stamps the rows. `sagtrace.rs:124-127` already says `since_zc_us` is aliased for exactly this reason. The same aliasing kills the new columns.
+
+## 3. The observer control is not a control
+
+The subagent's file survey and my own greps agree, and they contradict the entry.
+
+- The 3 trips at rung 500 are in `captures/2026-09-23/c7-500*.txt`, whose header is `# elf_sha256 89D65B09…` — the notebook itself (`LAB_NOTEBOOK.md:13097`) calls `89D65B09` **"campaign-7 production"**, an E147-era image, old capture format (no `ceiling_tenths`, no `worst_ma`, `BEMFREF` not `BEMFSELFREF`). **E261 §1.4 labels that row `14CE44E7`. It is mislabelled, and E264 inherited the number without the image.**
+- On the current-era images the rung-500 rate is **zero**: `14CE44E7` **0/10** (one `reason=15` LateArm), `0D8E3799` (the qualified ladder candidate, whose production bytes this HEAD reproduces) **0/3**. Pooled: **0/13**.
+- "The old recorder trips 0/7" is an arbitrary subset of **0/13** on image `63C0061D`, which is *newer* than the trip set by a day and a campaign — "old" is wrong. No 0/7 arm appears anywhere in the notebook; the notebook's own arms were 0/5 and 0/11 (`:13110`), and `:13110` records the caveat verbatim: "the two arms differ in **image, supply limit and session**".
+- The on-disk denominator is 3/**7**, not 3/6; 3/6 requires excluding `c7-explore500_01` for its 19.8 s hold. The notebook already knows this (`:11181`, `:13110`) and E264 dropped the qualification.
+
+So **p = 0.5 is not a prior, it is an artefact of a cross-image, cross-session, cross-format, cross-supply-limit comparison.** Against the only defensible same-lineage baseline (0/13), the rule-of-three 95% upper bound on the rung-500 trip rate is ≈ 3/13 = 23%, and P(0 trips in 5 | 0.23) = 0.77⁵ = **0.27**. The declared bar of 3.1% is off by an order of magnitude. Zero trips in five is the *expected* outcome under the null, so the test has essentially no power and cannot distinguish "the recorder suppresses the event" from "no recent image trips at 500".
+
+And note the converse: on `0D8E3799`, the image whose control path `sag-capture` reproduces byte-for-byte, **there are three rung-500 runs, none of which tripped**. If the recorder were the suppressor you would already expect production to trip there. It doesn't.
+
+What one-or-more trips in five would prove: that *this* image can latch at 500. It would not clear the instrument of distorting the *rate*, because a single trip is consistent with any rate from ~2% to ~65%. And it would not clear it of distorting the *event* — the thing the ring is supposed to measure — which is a separate question the design never addresses.
+
+**Cost:** 5 × 80 s at duty 500 is ~400 s of drive at 1.41–1.80 A (`e189`/`e190` `mean_ma` 1404–1419, `hold_ma` 1788–1803), plus the mandatory 15% warm-up and the ramp each time, on a bench with **no thermal channel in the ADC scan at all** and a motor of uncertain remaining life. That is a lot of thermal exposure to buy a test whose power is ~0.
+
+## 4. RAM and stack — this axis checks out
+
+I rebuilt and measured rather than trusting the entry:
+
+```
+sag-capture  text 44628  data 668  bss 19060  → stack_left 17136
+shell-pwm    text 40964  data 668  bss  4184  → stack_left 32012
+```
+
+`19060 − 4184 = 14876` = `256×26 + 1024×8 = 14848` rings + 28 B of `Trace` header. `Block` is ten `u16` + `u8` + `u8` + `u16` + `u16` = **26 B, align 2, no padding** — the arithmetic is exactly right, and 1536 B *less* than the previous 512×16 + 1024×8 = 16384. 17136 B of stack against a 5076 B largest frame is 3.4× headroom; the 8192 floor is arbitrary but conservative and I see no new deep call path (`record_sag_row` takes one extra `&RawScan` and constructs the same struct on the stack of an already-live frame). **No stack risk.** I also verified the production identity claims myself:
+
+- `.text`/`.rodata`/`.data`/`.bss`/`.vector_table` of `shell-pwm` are byte-identical to `captures/elf/0D8E3799.e246-final-candidate.elf`.
+- Normalised disassembly of `ADC_COMP`, `TIM16`, `DMA1_CHANNEL1`, `TIM6_DAC_LPTIM1`: identical between `shell-pwm` and `sag-capture` except two literal-pool words in `TIM16`.
+
+One caveat on the gate: `scripts/structure_report.py::bss_ceiling` only *gates* ELFs found in `target/thumbv6m-none-eabi/release`. On a clean tree it gates **zero** images and still returns 0 ("bss_headroom: … nothing built" is only reached if the archive is also empty). I hit exactly that on my first run. The gate passes vacuously unless you happen to have built.
+
+The **real** foreground risk is untouched and got worse: `SagRing::block` is `interrupt::free(|cs| … push(b))` (`src/sagtrace.rs:272`), i.e. PRIMASK set ~9840×/s, masking COMP and TIM16 — the exact path `late_arms` measures, in the campaign's thinnest arm margin. The copy inside that mask went from 16 B to **26 B (+62%)**. Nothing in this change shortens it.
+
+## 5. The four predictions
+
+**P1 — "trips at least once in five at 500."** Can fail, but see §3: it is powered against a fabricated prior, and *either* outcome is confounded. Zero trips is the modal outcome under the honest null.
+
+**P2 — "the raw notch spans ≥3 consecutive scans (≥305 µs), depth-free."** **Wrong, and I derived it from the code.** The guard is fed the **mean**, not the raw sample: `src/run/states.rs:339` `self.sag.observe(bus_mean, vref_mean)`, where `bus_mean` is `RailMean`'s **8-tap** boxcar (`src/protection.rs:290` `RAIL_MEAN_LEN = 8`). Latching needs `SAG_STREAK = 3` (`:372`) consecutive **mean** samples below `SAG_NUM/SAG_DEN = 95%` (`:369-370`) of the 2048-scan EWMA reference (`:396` `SAG_FILTER_SHIFT = 11`).
+
+Write the per-scan deficit `dᵢ = ref − rawᵢ`. A window is low iff `Σ_{8-window} dᵢ > 0.05 × 8 × ref = 0.4·ref`. With `filt_bus = 1193` (the tripping run `e253-550_03`), that budget is **477 codes** — the same 477 E257 used. Three consecutive low windows span a 10-scan union with a 6-scan intersection. With `K = ⌈477/d_max⌉` the floor is `m ≥ max(K, 2K−6)`:
+
+| deepest single-scan dip | K | minimum raw scans |
+|---|---|---|
+| ≥ 477 codes (≥40% of ref, raw ≤ 716 ≈ 7.0 V) | 1 | **1** |
+| ≥ 239 codes (raw ≤ 954 ≈ 9.3 V) | 2 | **2** |
+| ≥ 159 codes (13.3%) | 3 | 3 |
+| 119 codes (`bus_min` of the tripping run) | 5 | 5 |
+
+So **the depth-free floor is 1, not 3.** "3" is what you get if you assume the deepest dip is ≤13.3% of the reference — i.e. it *is* depth-dependent, and E264 obtained it by dropping E257's depth input (d = 119 → 5) and keeping the shape of the conclusion. A single very deep scan latches the guard, and that is precisely the signature the loop-side hypothesis predicts. Worse, the *interpretation* is pre-loaded backwards: E264 says a recorded run of 1 or 2 "would mean the mean was dragged low by something other than a sustained bus depression." No — it would mean a short deep collapse, which is the surge story. The prediction's failure branch is pre-declared to favour the supply story.
+
+And it cannot be measured as written. `raw_run_width(rows, threshold)` exists at `scripts/sag.py:154` and is **never called from `main()`** (grep: definition only). Its `threshold` parameter has no definition anywhere. The number the prediction is about is not produced by the tool.
+
+**P3 — "at least one phase code exceeds the band 848..3248."** **The yardstick is off by ~4×.** `PHASE_CODE_LOW/HIGH` (`src/protection.rs:127-128`) is only consulted under `PhaseCodePolicy::Band` (`:167`), which production never installs — `scan_pass` passes `RetainRails` (`states.rs:322`), so the band is unused *by design*, as the entry concedes. Scaling it: `RAW_LIMIT = 31857` ↔ 4 A over 100 scans → **79.64 codes/A**; `zero_start = 619016` over `BLOCK_SCANS = 100` and three channels → zero ≈ **2063 codes/channel** (and `residual = zero_block − sum`, `protection.rs:617`, so current pulls codes *down*). Therefore:
+
+- `848` is 1215 codes below zero = **15.3 A** on one shunt.
+- `3248` is 1185 codes above zero = **14.9 A** of regeneration.
+
+The band is **±15 A** — 3.8× the firmware's own 4 A allowance and **5× the PSU's 3 A clamp**. On a CC-clamped 3 A supply, 15 A on one leg has to come out of the bulk capacitance for microseconds, at an unknown carrier phase, sampled once per 101 µs. P3 will almost certainly fail *whatever the truth is*, and its failure is pre-declared to favour "the power-path reading". That is a rigged discriminator dressed as a neutral one. The right yardstick is in reach and was not used: the row now has the three raw codes, the run report has `zero_start`, and `79.64 codes/A` is a constant — so you can state instantaneous per-phase amps directly and compare against 4 A (318 codes) or the 3 A clamp (239 codes). `scripts/sag.py` does not parse `BEMFCURRENT` and so cannot do it.
+
+**P4 — "`loop_iters_closed` within 5% of production at 500."** This one can fail and its failure is informative. But the stated *reason* to expect it ("the rings are foreground-only and 1536 B smaller than before") is a non-argument: `.bss` size does not cost foreground cycles, and the per-scan masked copy got **62% longer**. The named mechanism from E261 — PRIMASK at 9.84 kHz — is untouched. If the 16.8% reappears, the honest reading is "unchanged", not "E261b was right to doubt".
+
+## 6. The analyser is broken, and the ordering question still cannot be answered in one run
+
+**`scripts/sag.py` crashes on every real capture.** `Row` is 14 fields (`:66-69`); line **337** constructs it with **9** positional arguments:
+
+```python
+drift = [margin_permille(Row(0, r.bus, r.vref, r.filt_bus, r.filt_vref, 0, 0, 0, 0), num, den) for r in slow]
+```
+
+→ `TypeError: Row.__new__() missing 5 required positional arguments`. I ran it: it fails on `captures/sag/e189-500-s1.txt`, `e178-sag475.txt`, and — directly contradicting the entry — on **`captures/sag/e190-500-s7.txt`**, the file E264 names as "reproduces its old report exactly". Every one of the 21 sag captures on disk has 1024 `SAGSLOW` rows, so the crash is universal. There is no automated test of `sag.py` anywhere in the tree. This is the campaign's own "instrument must fail loudly" and "verify reported numbers before advising" rules, violated in the sentence that claims verification. Also: `scripts/sag.py:34` still says "the fast ring is 512 judgements ~= **52 ms**" after the halving to 256/26.0 ms — the coverage bound that the docstring says "bounds every conclusion drawn here"; and the CSV writer (`:342-346`) omits `at_fine`, `bus_raw` and all three phase codes, so the new data cannot even be exported.
+
+**Can both rings coexist?** Measured, not guessed: `chain-capture` bss 18552, `sag-capture` 19060, `shell-pwm` 4184 → chain rings 14368 B, sag rings 14876 B. Combined: 4184 + 14368 + 14876 = **33428 B bss**, + 668 data → **2768 B of stack left**, against an 8192 floor and a 5076 B largest frame. That is E185 reproduced exactly — the image would die inside a millisecond. **So no, not as built.** Cheapest path that does fit: drop the sag **slow** ring (8192 B — it is only the 3.3 s reference history, irrelevant to ordering) → 25236 B bss, **10960 B** stack left, both fast rings intact. Second cheapest: `FAST_LEN` 256 → 128 as well.
+
+And even then, §2e stands: at 101 µs per scan against a 71 µs sector, the two rings cannot order events inside a commutation interval. **The cheapest thing that would actually answer the ordering question** is not a bigger ring — it is (a) `pwm_counter()` in the sag row so a raw sample is interpretable at all, and (b) a *triggered* burst: on the first low mean (streak == 1), capture N back-to-back scans at the ADC's native ~14 µs cadence (or ADC free-run) into a tiny 32-row buffer, instead of trying to see a 71 µs event through a 101 µs sampler. That is ~1 KB, not 15.
+
+## 7. Sequencing — this is the wrong next thing
+
+E261's own disposition, accepting both reviews, reads: "**Consequence for sequencing, which both reviews rank first: no further rung attempt until the supply side is characterised.**" I grepped E262 and E263: neither mentions supply, clamp, PSU, thermal, or peak current — they are the rung-400 band correction. E264 then schedules five rung-500 runs and, conditionally, rung 550, and does not acknowledge that it is re-ordering its own disposition.
+
+The safety picture is unchanged and E261 stated it correctly: the only current stop is `AverageCurrent` over 100 scans, first over-block **folds back** and only the second **stops** → earliest stop ≈ **20.3 ms**, up to ~31 ms; `RAW_LIMIT` is a **4 A** allowance behind a **3 A** clamp; `Reason::PhasePeak` is documented as never raised; **no thermal channel is in `CHANNELS` at all** (`src/hw/adc.rs:33-41` — five channels, none of them temperature). Production also has **no absolute bus floor** on the rail: `BUS_FLOOR_NUM` is only enforced under `PhaseCodePolicy::Band` (`protection.rs:167`), which is not installed, so the only bus protection in the live image is `FastBusSag` — a band-pass that can see neither a fast collapse (<0.8 ms) nor a slow droop (>0.2 s). Building a recorder does not change any of that.
+
+**The order I would insist on:** (1) fix `sag.py` and add a test that runs it over every capture in `captures/sag/`; (2) add `pwm_counter()` to the row and implement `hal.fine()` or delete `at_fine` and pair on `at`/`at_us` (which is the better clock anyway); (3) do the desk supply characterisation E261 already committed to — sag-vs-current slope, clamp setting swept, source impedance — which needs **no motor run at 50%** and is the one experiment that cleanly separates the two hypotheses; (4) only then re-derive a same-image trip-rate baseline at rung 500 and a power calculation for it. Five runs at 50% to test a 3.1% bar that is really ~27% is spending the motor to answer nothing.
+
+### Things I checked and found sound
+Production byte identity (re-verified section-by-section against `0D8E3799`); four roots instruction-identical across both images; `Block` = 26 B with no padding; 14848 B ring total and the 1536 B reduction; `sag-capture` bss 19060 / stack 17136; stack unthreatened; the `RetainRails`-discards-the-trip-block motivation for recording phase codes before `current.accumulate` (`states.rs:352`) is correct and is the best idea in the commit; recording `bus_raw` alongside the mean is right; E265's `chain.py` catch is right and was self-found.
