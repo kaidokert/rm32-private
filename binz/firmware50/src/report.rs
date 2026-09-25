@@ -371,12 +371,17 @@ pub struct CurrentRecord {
     /// constants from the wrong population; these eight numbers are the
     /// distribution such a line has to be chosen from (E223).
     pub depth_below: [u32; 4],
-    /// The raw-scan observer's counts and longest runs (E284), with its own
-    /// fractions so the capture stays self-describing.
     /// The raw allowance the mA fields are scaled against (E287). Equal to
     /// `RAW_LIMIT` on a normal run; `RAW_LIMIT/100` under
     /// `Inject::AverageCurrent`, which makes those mA figures 100x inflated.
     pub current_allow: u32,
+    /// The raw-scan observer's counts and longest runs (E284), with its own
+    /// fractions so the capture stays self-describing.
+    ///
+    /// E287's field was inserted between this comment and its fields, so for
+    /// two commits it documented `current_allow` and these two carried nothing
+    /// — a mechanical patch landing a field at a matched line rather than in a
+    /// place chosen for it.
     pub raw_depth_below: [u32; 4],
     pub raw_depth_longest: [u32; 4],
     /// Longest consecutive run below each fraction, in scans. A count cannot

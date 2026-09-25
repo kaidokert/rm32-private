@@ -339,16 +339,36 @@ impl Ctx {
             // the row is the one the comparison used (campaign 9 step 3).
             // Production's `NoSagLog` folds all of this away.
             let (bus_mean, vref_mean) = (self.rail.bus_mean(), self.rail.vref_mean());
+            // The guard's own reference, read **before** its post-test filter
+            // update, so it is the value `self.sag.observe` below compares
+            // against on this very scan. Hoisted above the observers because
+            // `raw_depth` must judge the same line the guard does; nothing
+            // mutates `self.sag` between here and the `observe` call.
+            let (filt_bus, filt_vref) = self.sag.filtered();
             // Observation, before the verdict and returning nothing, so it
-            // covers the deciding scan of any stop and can pre-empt none.
+            // covers the deciding scan of a **sag** stop and can pre-empt none.
+            //
+            // Deliberately against the **pre-run baseline** `bus_ref`: this
+            // observer's purpose is the distribution a slow-droop line would
+            // have to be chosen from (E223), which is a baseline question.
             self.depth
                 .observe(bus_mean, vref_mean, self.base.bus_ref.bus, self.base.bus_ref.vref);
             // The raw scan, against deeper fractions bracketing the trip line
-            // (E284). Same reference and same cross-product, no division, and
-            // it returns nothing -- an observer, like the one above.
+            // (E284), and against the **guard's** reference, not the baseline.
+            //
+            // **This was wrong until E291** and the comment asserted the
+            // opposite: it was fed `base.bus_ref` while `FastBusSag` judges
+            // against `filtered()` -- whose own doc says "the ~200 ms average
+            // of the bus, **not** the pre-run baseline", because a slow droop
+            // must take the reference with it. So the 950 bin was measuring a
+            // line ~24 codes shallower than the guard's on the 550 cohort
+            // (0.95*bus_ref = 1157.1 against the guard's 0.95*filt_bus =
+            // 1133.4), which biased the `>= 10` arm of E284's two-sided test
+            // toward being satisfied -- in the one place the test has to be
+            // trustworthy. At the low rungs the two differ by ~2 codes, which
+            // is why the walk's numbers survive.
             self.raw_depth
-                .observe(scan.bus, scan.vref, self.base.bus_ref.bus, self.base.bus_ref.vref);
-            let (filt_bus, filt_vref) = self.sag.filtered();
+                .observe(scan.bus, scan.vref, filt_bus, filt_vref);
             let verdict = self.sag.observe(bus_mean, vref_mean);
             if P::G::ON {
                 self.record_sag_row::<P>(hal, &scan, sector_start, filt_bus, filt_vref);

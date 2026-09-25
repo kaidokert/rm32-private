@@ -309,11 +309,28 @@ impl BusDepth {
             return;
         }
         // bus/vref < (num/1000) * (ref_bus/ref_vref), cross-multiplied.
-        let lhs = u32::from(bus) * u32::from(ref_vref) * 1_000;
+        //
+        // **Both sides are scaled by 1/5** (E291). The natural form multiplies
+        // by 1_000, and `4095 * 4095 * 1_000 = 16_769_025_000` is **3.9x past
+        // `u32::MAX`** -- so the doc comment above, which borrowed
+        // `FastBusSag`'s `* 100` bound of `1_676_902_500 < 2^31`, asserted a
+        // guarantee this function does not have. It was not theoretical: the
+        // largest `lhs` in the capture corpus is `2058 * 1508 * 1000 =
+        // 3_103_464_000`, **72% of `u32::MAX`**, and it wraps at bus code 2849
+        // -- about 27.7 V on this bench's scale, inside the board's 6-50 V
+        // rating. A wrap here silently inverts the comparison and the counts
+        // become garbage with no symptom.
+        //
+        // Scaling the two constants (not the products) is exact for any input,
+        // because every fraction is a multiple of 5 -- asserted below. Worst
+        // case becomes `4095 * 4095 * 200 = 3_353_805_000 < u32::MAX`, and the
+        // right side is strictly smaller, so neither can wrap at 12 bits.
+        const SCALE: u32 = 200; // 1_000 / 5
+        let lhs = u32::from(bus) * u32::from(ref_vref) * SCALE;
         let rhs = u32::from(ref_bus) * u32::from(vref);
         let mut i = 0;
         while i < self.fracs.len() {
-            if lhs < rhs * self.fracs[i] {
+            if lhs < rhs * (self.fracs[i] / 5) {
                 self.below[i] = self.below[i].saturating_add(1);
                 self.run[i] = self.run[i].saturating_add(1);
                 if self.run[i] > self.longest[i] {
@@ -739,18 +756,37 @@ impl AverageCurrent {
         self.worst
     }
 
-    /// One block's signed residual in mA, on the same scale the mean uses:
-    /// the allowance is 4 A by construction (`RAW_LIMIT`), so a residual is
-    /// milliamps as `residual * 4000 / allow`. Added in E187 because
+    /// One block's signed residual in mA. Added in E187 because
     /// [`Self::worst_residual`] was computed every block and never read, so
     /// every current figure this bench had ever produced was a mean.
+    ///
+    /// **Scaled by `RAW_LIMIT`, not by `allow` (E291.)** The old form divided
+    /// by `self.allow` and justified it as "the allowance is 4 A by
+    /// construction (`RAW_LIMIT`)" -- which holds only while the two are equal.
+    /// `RAW_LIMIT` raw units == 4000 mA is the **calibration**; `allow` is the
+    /// **trip threshold**, and `Inject::AverageCurrent` deliberately rebuilds
+    /// this accumulator at `RAW_LIMIT/100`. Dividing by the threshold conflated
+    /// the two and inflated every mA field in an injected capture 100x:
+    /// `e280-prot500-i` reads `worst_ma=184352` where the truth is 1840 mA.
+    ///
+    /// E287 reported the allowance beside the figures so a reader could divide.
+    /// That was the wrong repair in two ways. It left the numbers wrong and
+    /// pushed the correction onto every future reader; and it was not even
+    /// uniform -- `zero_drift_ma` (`run/mod.rs`) always divided by `RAW_LIMIT`,
+    /// so one `BEMFCURRENT` line carried **two different mA scales** under a
+    /// single `ma_allow`, and a reader who followed E287's instruction would
+    /// have corrupted `zero_drift_ma` and `ref_ma` by 100x. Fixing the scale at
+    /// its root makes the whole line one scale and costs nothing.
+    ///
+    /// Captures where no injection ran are **unchanged**: `allow == RAW_LIMIT`
+    /// there, so this is bit-identical for every qualifying run ever recorded.
+    /// `allow()` is still emitted as `ma_allow`, now as what it actually is --
+    /// the trip threshold, which tells a reader an injection was active -- and
+    /// no longer as a scale anyone must apply.
     #[inline]
     #[must_use]
     pub const fn block_milliamps(&self, residual: i32) -> i32 {
-        if self.allow == 0 {
-            return 0;
-        }
-        ((residual as i64 * 4_000) / self.allow as i64) as i32
+        ((residual as i64 * 4_000) / RAW_LIMIT as i64) as i32
     }
     #[inline]
     /// The raw allowance the mA scale is relative to (E287).
@@ -1412,6 +1448,34 @@ mod tests {
         }
         assert_eq!(last, Some(BlockVerdict::Ok));
         assert_eq!(acc.over_streak(), 0);
+    }
+
+    #[test]
+    fn milliamps_are_milliamps_whatever_the_trip_threshold_is() {
+        // E291. `RAW_LIMIT` raw units == 4000 mA is the calibration; `allow` is
+        // the trip threshold, and `Inject::AverageCurrent` rebuilds the
+        // accumulator at `RAW_LIMIT/100` to force a stop. The mA scale must not
+        // follow the threshold: the same residual is the same current whatever
+        // the run is willing to tolerate.
+        //
+        // This is the assertion that fails on the pre-E291 form, which divided
+        // by `self.allow` and so read 100x high on every injected capture --
+        // `e280-prot500-i`'s `worst_ma=184352` for a true 1840 mA.
+        let normal = AverageCurrent::new(0, RAW_LIMIT);
+        let injected = AverageCurrent::new(0, RAW_LIMIT / 100);
+        for residual in [1_i32, 318, 14_656, RAW_LIMIT as i32, -14_656] {
+            assert_eq!(
+                normal.block_milliamps(residual),
+                injected.block_milliamps(residual),
+                "residual {residual} must read the same mA under either threshold",
+            );
+        }
+        // And the calibration itself: the full allowance is 4 A, and the
+        // capture that exposed the defect now reads its true current.
+        assert_eq!(normal.block_milliamps(RAW_LIMIT as i32), 4_000);
+        assert_eq!(injected.block_milliamps(14_656), 1_840);
+        // Sign is preserved for a regenerating block.
+        assert_eq!(normal.block_milliamps(-(RAW_LIMIT as i32)), -4_000);
     }
 
     #[test]

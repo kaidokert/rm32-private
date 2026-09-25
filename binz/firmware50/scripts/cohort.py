@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import statistics
 import sys
 
@@ -60,6 +61,49 @@ def fields(line: str) -> dict[str, str]:
             k, v = tok.split("=", 1)
             out[k] = v
     return out
+
+
+# Key names emitted by more than one report line, so a flat `\bkey=` regex over
+# a whole capture resolves them by **emission order** rather than by meaning.
+#
+# `zc_per_s` is the one that bites: BEMFGATE's is over the whole closed window
+# (84 776 ms in e286-250_01) and BEMFRATE's over the hold alone (77 276 ms),
+# reading 6942 against 7156 -- a 3% difference, and the gated rate identity
+# `zc_permille_of_6x_coast` is computed from **BEMFRATE's**. `reason` is worse
+# in principle: three lines emit it (BEMFDONE, BEMFCOAST, BEMFGUARD) and it is
+# the field `_is_firmware_latch` classifies every run by.
+#
+# `parse` below is line-scoped and takes each from its own line, which is why
+# the ledger is correct. This census exists so that a reader which is *not*
+# line-scoped can be found, and so a ninth collision cannot arrive unnoticed.
+AMBIGUOUS_KEYS = frozenset({
+    "accepts",      # BEMFDRIVEN, BEMFTAIL
+    "duty_tenths",  # BEMFCURRENT, BEMFREF
+    "hold_ma",      # BEMFCURRENT, BEMFREF
+    "hold_ms",      # BEMFGATE, BEMFRATE, BEMFREF
+    "reason",       # BEMFDONE, BEMFCOAST, BEMFGUARD
+    "unstable",     # BEMFDONE, BEMFDRIVEN
+    "verdict",      # BEMFREF, PREFLIGHT
+    "zc_per_s",     # BEMFGATE, BEMFRATE
+})
+
+
+def ambiguous_keys(path: pathlib.Path) -> dict[str, list[str]]:
+    """Which key names this capture emits on more than one line.
+
+    Returns `{key: [line names]}`. Compare against [`AMBIGUOUS_KEYS`]: a key
+    here but not there is a **new** collision, and any flat-regex reader of it
+    is now resolving by emission order.
+    """
+    owner: dict[str, set[str]] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        m = re.match(r"([A-Z]{3,})\b", line)
+        if not m:
+            continue
+        for k in fields(line):
+            owner.setdefault(k, set()).add(m.group(1))
+    return {k: sorted(v) for k, v in sorted(owner.items()) if len(v) > 1}
 
 
 def coast_ehz(iv: list[int]) -> int:

@@ -24299,3 +24299,1025 @@ scatter as a by-product.
 
 This is a measurement of the instrument, not a qualification of the rungs; the
 rungs qualify in step 3 when the band exists.
+
+### E288 — two entries never reached the notebook, and the firmware now walking contains both
+
+Written **after** the code it describes, which is the defect. E284 and E287 were
+designed, built, audited and committed; neither appended an entry to this
+notebook. `grep -n 'E284\|E287' LAB_NOTEBOOK.md` returns nothing, and
+`git show --stat c74aa08 -- LAB_NOTEBOOK.md` returns nothing — E287's commit
+touched the notebook by **zero lines**.
+
+The goal's discipline clause is "append-only notebook predictions before
+builds/runs; measurements and reviewed verdicts afterward." For these two
+changes the record lives in a git commit message and a scratchpad patch
+docstring instead, and **the image currently walking the low rungs
+(`480263F1.e286-rawdepth.elf`) contains both of them.** So the campaign's own
+record does not describe the firmware producing its current data.
+
+I noticed only because I went to hand E284–E287 to the two reviewers and the
+entries were not there to hand over.
+
+#### Corroborating symptom: the numbering already drifted
+
+E286's prediction 4 credits the raw-depth observer to **E285**. It is E284's.
+The misattribution is what a missing entry looks like from the outside — I
+reached for the nearest number that existed in the notebook, because the right
+one did not.
+
+#### And a doc comment landed on the wrong field for two commits
+
+E287 inserted `current_allow` into `CurrentRecord` at a matched line. The match
+put it **between E284's doc comment and the fields that comment describes**:
+
+```rust
+/// The raw-scan observer's counts and longest runs (E284), with its own
+/// fractions so the capture stays self-describing.
+/// The raw allowance the mA fields are scaled against (E287). …
+pub current_allow: u32,
+pub raw_depth_below: [u32; 4],      // undocumented
+pub raw_depth_longest: [u32; 4],    // undocumented
+```
+
+Two doc comments concatenated onto one field, and the two fields the first one
+was written for carrying nothing. `cargo doc` renders E284's sentence as
+documentation of E287's field, which is false in both directions. This is the
+cost of `patch_*.py` scripts that anchor on a unique substring: the anchor was
+unique, and still the wrong place. Fixed, with the history noted in the comment
+so the next reader knows why the ordering looks deliberate.
+
+Nothing about the emitted format or the measured numbers changes — the field
+order in the struct is not the emission order, and the audits below re-ran.
+
+#### The two entries, reconstructed from their real sources
+
+Both are reconstructed from artifacts written **at the time**, not from memory:
+the patch docstrings in `patch_e284.py` / `patch_e284b.py` (written before the
+build, so their predictions are genuinely predeclared) and the commit messages.
+I am not backdating them; they appear here, at E288, in the order I actually
+wrote them.
+
+---
+
+#### E284 (built, committed, unrecorded) — measure the guard's refusal class: raw-scan depth and duration
+
+From the adversarial review of E280/E281, every number re-verified:
+
+* **Every run takes a raw scan past the 5% trip line**, pass or fail. `bus_min`
+  against `0.95 × filt_bus` is **44 codes past** on the 575 injection run and
+  **+17 / +36 / +59** on the three 550 runs — *including the two that passed*.
+* So the discriminating variable is not depth. It is the **duration** of the dip
+  relative to the guard's 8-scan mean.
+* And **nothing measured it.** `FastBusSag` is fed `rail.bus_mean()`, and so is
+  the existing `BusDepth` observer — whose fractions are [995, 990, 985, 980],
+  with **no bin at the 950 trip line**. The only raw-scan number in the entire
+  report was the scalar `bus_min`.
+* Corroborating: across ~600 runs `BEMFSAG streak=` is **only ever 0 or 3**,
+  never 1 or 2. The guard is bimodal by construction, so "zero streak" carries
+  almost no information — which is exactly what E280 read it as carrying.
+
+The instrument: a **second `BusDepth` fed the raw scan**, fractions bracketing
+the trip line. `BusDepth` already keeps both the count below and the longest
+consecutive run below per fraction, which is precisely the needed pair. The 950
+bin's `longest` is the measurement.
+
+Fractions from the measured minima (`bus_min/filt_bus` = 90.0–93.5% across the
+550 cohort and the 575 run), so they bracket what actually happens:
+**[970, 950, 930, 910]**, with 950 the trip line itself. `BusDepth` grew a
+per-instance `fracs` field so the two observers cannot be confused at the call
+site, plus `fraction(i)` so the report prints the threshold beside the counts
+rather than leaving the reader to assume it (the `dep970_n` lesson, E246).
+
+Cost: four comparisons and a handful of adds per scan, in the foreground, in the
+function that already calls `BusDepth::observe`. No ISR time and no new run — it
+rides the walk that was happening anyway.
+
+**Predeclared discriminator, verbatim from the patch docstring:**
+
+> if clean runs show a longest raw run of 1–3 scans at the 950 bin and a
+> latching run shows ≥ 10, the event is a short transient whose duration is the
+> whole story. If clean runs also show ≥ 10, the guard is firing on something
+> other than depth-and-duration and the threshold is the defect.
+
+**First data (rungs 150–250, seven clean runs):** `raw1_n` = 178–261 scans below
+the 950 line, and `raw1_run` = **1 in every one of them**. Never two
+consecutive. `raw0_run` (970) is 1–2; `raw2_n` (930) is 0–1.
+
+So the clean side sits in the **first** branch — and more sharply than the
+branch anticipated, at 1 rather than 1–3. Depth excursions past the guard's own
+trip line are routine (~1 scan in 3,200) and **instantaneous**. The 8-scan mean
+cannot see a single scan, which is why these runs pass and why `bus_min` was
+never evidence of anything.
+
+**The discriminator is half-closed and stays half-closed.** The clean branch is
+satisfied; the ≥ 10 arm needs a latching run, and there is no latch below 400.
+I am not calling the transient hypothesis confirmed on one side of a two-sided
+test. It closes at 550 or not at all.
+
+Prediction 4 of E286 said `raw1_run` would be **0** at these rungs. It reads 1
+while `raw1_n` reads ~200. **Refuted, and informatively**: I predicted the wrong
+field, conflating "how often" with "how long" — which is the precise conflation
+this observer exists to break. That I made it while writing the prediction for
+the instrument that breaks it is the useful part.
+
+---
+
+#### E287 (committed, unrecorded) — the mA scale is emitted beside the figures it governs
+
+An owed item from the E280/E281 evidence review. `block_milliamps` scales by
+`4000/allow`, so a capture's mA fields mean milliamps **only when
+`allow == RAW_LIMIT`**. `Inject::AverageCurrent` deliberately rebuilds the
+accumulator at `RAW_LIMIT/100` to trip the stop, which makes every mA field in
+that capture **100× inflated** — `e280-prot500-i` reads `worst_ma=184352` where
+the truth is ~1840 mA, and nothing in the report said so. **A reader sees
+184 A.**
+
+The numbers were correct for their allowance; the report never stated the
+allowance had changed. So `BEMFCURRENT` now emits `ma_allow` beside
+`ma_allow_ref` (= `RAW_LIMIT`), next to the figures they scale, and
+`AverageCurrent::allow()` exposes it with the reason on the accessor. A reader
+can now divide.
+
+**The format-lock test caught the insertion twice** — once on the contiguous
+substring it asserts, and once because the fixture left the new field at its
+default and emitted `ma_allow=0`. Both are the test doing its job; the assertion
+now names the new fields explicitly and the fixture sets the scale. A
+format-lock test that had merely counted fields would have passed both times.
+
+Also landed in that commit: the three coast readers carrying E285's
+zero-padding defect (`coast_estimators`, `coast_offline3`, `coast_offline1` —
+the last with no positivity filter at all), `LARGEST_FRAME` corrected from the
+never-right 5076 to the measured **5420** with `DEEPEST_PATH 7024` printed
+beside it, and `cohort.py`'s stale "7 of 318" census.
+
+---
+
+#### What this costs the campaign
+
+Nothing in the firmware or the data: both changes are audited and their code is
+unchanged by this entry (bar the doc-comment reattachment). What it cost is the
+record's completeness for two commits, and one misattributed citation in E286
+that I am leaving in place rather than editing — the notebook is append-only,
+and a corrected pointer here is worth more than a silently fixed reference
+there.
+
+The reviewers get E284–E288 together, which is what they should have been given
+in the first place.
+
+### E289 — correction to E288, found minutes after writing it: the walking image does not contain E287
+
+E288 says, of `480263F1.e286-rawdepth.elf`:
+
+> **the image currently walking the low rungs … contains both of them.**
+
+**That is false for E287.** Verified three ways:
+
+| check | result |
+|---|---|
+| `ma_allow` in the walk's captures | **0 of 10** `e286-*.txt` contain it |
+| `raw1_run` in the walk's captures | present (so E284 *is* in the image) |
+| ELF build time | `480263F1.e286-rawdepth.elf` — **22:10:08** |
+| E287 commit time | `c74aa08` — **22:36:26**, 26 minutes later |
+
+So the image contains **E284 and not E287**, and the tree the repo is sitting on
+now differs from the image producing the current data.
+
+#### Why I got it wrong, and why it matters more than the error
+
+I wrote "contains both" because both entries were missing from the notebook for
+the same reason, so I described them as one event. They are not one event: E284
+was built into the walking image, E287 was committed while that image was
+already spinning the motor. **Grouping two changes by how they failed to be
+recorded is not grouping them by what they affect** — and an image manifest is
+exactly the thing that must not be inferred from a narrative.
+
+The consequence is the campaign's own standing rule, "diagnostic results never
+qualify another image":
+
+* The low-rung walk's 30 runs qualify **`480263F1`**, and nothing else.
+* E287's `ma_allow` emission is therefore **unexercised on hardware.** It has
+  host tests and a format-lock test; it has no bench capture. I must not later
+  cite the walk as evidence that E287 works, and the next image built from this
+  tree is a **new image** needing its own identity and its own audits.
+* Nothing in E284's conclusions is touched — the raw-depth numbers come from an
+  image that genuinely contains the raw-depth observer, which is the claim that
+  matters. That claim was verified by the presence of `raw1_run` in the
+  captures, not by assuming it.
+
+#### The check that should have been automatic
+
+I established the image manifest by **looking for the field in the capture**,
+which is the only method that cannot be fooled by a narrative about what was
+committed when. `grep -l ma_allow captures/2026-09-24/e286-*.txt` returning
+`0 of 10` is the whole proof, and it took one command. The lesson is not "be
+careful" — it is that **a capture self-reports its own image's feature set, and
+that is cheaper and stronger than reasoning from git.** Field-presence is a
+manifest. I should read it before every claim about what an image contains,
+the way E285 forced me to compare encoded bytes instead of trusting a tool's
+silence.
+
+I am leaving E288's sentence in place — append-only — with this entry as its
+correction. Both reviewers were dispatched before I found this and were **not**
+told; item F of the evidence brief and challenge 7 of the adversarial brief both
+ask precisely this question, and whether they find it independently is a live
+test of the reviews themselves. Their verdicts are dispositioned against this
+entry when they return.
+
+### E290 — predeclaration, at 13 of 30 runs: the pooled sd is not scatter, and three estimators of one identity
+
+Written with **four rungs complete (150 / 200 / 250 / 275, 11 scored runs)** and
+the walk still going, so the rule below is fixed before the data that decides
+it exists. E286 predeclared `band = round(median) ± ceil(3.5 × sd)` from the
+30 runs' "measured within-session scatter". Two things found on the way to
+computing it change what that sentence denotes.
+
+#### 1. I nearly derived the band from a quantity nothing is judged on
+
+There are **three** numbers in play for one identity, and I confused two of them:
+
+| number | formula | rung 250 run 1 | who uses it |
+|---|---|---|---|
+| `loop_ehz / coast_ehz` | whole-hold sector mean ÷ coast | **1008** | nobody |
+| `zc_permille_of_6x_coast` (emitted) | `zc_per_s / (6 × coast_ehz)` | **1003** | emitted, not gated |
+| `cohort.rate_vs_coast_permille` | `1000 × powered / at_stop`, matched window vs time-anchored coast | **1001** | **the gate** |
+
+My first attempt computed the top row, got sd **3.665**, and would have derived
+a band of **±13**. That is not a slightly-wrong band; it is three times too wide,
+and it would have admitted anything. The quantity is a whole-hold average
+divided by a coast fit, so it carries neither the numerator nor the denominator
+the gate evaluates.
+
+My second attempt computed the middle row, labelled it `EMITTED (gated)` in the
+script's own output, and got **±6**. The label was false: the firmware emits it
+and `cohort` never reads it. The two run parallel with a consistent **+2**
+offset, which is exactly the kind of near-agreement that lets a wrong field
+survive a sanity check.
+
+Only the third row is gated — `cohort.py:384` and `SELF_REF_LO/HI` both read
+`rate_vs_coast_permille`. **This is [[feedback-verify-reported-numbers]] again,
+in the sharpest form yet: I verified against the firmware's own emitted field
+and the firmware's emitted field was still the wrong one.** What saved it was
+printing `rate_source` beside every value — all 11 runs read `matched window vs
+time-anchored coast`, the primary path, which is also confirmation that E281's
+32-slot buffer eliminated the unphysical-slope non-results that forced the
+legacy path before.
+
+The one thing that did validate cleanly: my reimplementation of `coast_ehz`
+reproduces the firmware's own figure on **all 11 captures**, so the pairing
+analysis below rests on an estimator I can compute independently.
+
+#### 2. The owed `pair_sums` item is off the critical path, with a number
+
+`cohort.pair_sums` pairs half-periods with a **sliding** window
+(`h[i] + h[i+1]` for every `i`), so each half-period appears in two pairs and
+adjacent pair sums are correlated. The owed concern was "understated SE".
+Resolved in two parts:
+
+* **No bias.** A moving sum of a linear sequence is exactly linear, so least
+  squares recovers the slope exactly and the −0.5 intercept lands where
+  intended. Analytic, not asserted.
+* **No consumed SE.** `coast_ehz` returns a point estimate; nothing derives an
+  uncertainty from the fit residuals, so there is no understated SE being used.
+* **And the choice is immaterial.** Re-running all 13 captures with **disjoint**
+  pairing (`h[0]+h[1], h[2]+h[3], …`, uncorrelated but half the points) moves
+  `coast_ehz` by at most **1 eHz** and the ratio by at most **2 ‰**; sd 1.629 vs
+  a disjoint 1.6-ish. The pairing cannot move the band.
+
+So the item is closed as *not on the critical path* — which is a different and
+weaker claim than "correct", and it is the one the evidence supports.
+
+#### 3. Eight key names are ambiguous across report lines, and one reader was wrong
+
+Found while chasing the field confusion above. A flat `\bkey=` regex over a
+capture resolves these by **emission order**:
+
+| key | lines |
+|---|---|
+| `reason` | **BEMFDONE, BEMFCOAST, BEMFGUARD** |
+| `zc_per_s` | BEMFGATE, BEMFRATE |
+| `hold_ms` | BEMFGATE, BEMFRATE, BEMFREF |
+| `duty_tenths`, `hold_ma` | BEMFCURRENT, BEMFREF |
+| `accepts` | BEMFDRIVEN, BEMFTAIL |
+| `unstable` | BEMFDONE, BEMFDRIVEN |
+| `verdict` | BEMFREF, PREFLIGHT |
+
+`zc_per_s` is the one that bites numerically: BEMFGATE's is over the whole
+closed window (84 776 ms) and BEMFRATE's over the hold alone (77 276 ms),
+reading **6942 against 7156** — 3% apart. `reason` is the worse one in
+principle, because it is the field `_is_firmware_latch` classifies every run by,
+and **three** lines emit it.
+
+Audited every reader. `cohort.parse` is line-scoped (`rec["BEMFDONE"]["reason"]`,
+`rec["BEMFRATE"]["zc_per_s"]`), so the ledger and the latch classification are
+correct — and `bemf_run.py` consumes `cohort`'s output, so it inherits that.
+`coast_estimators` / `coast_offline1` / `coast_offline3` anchor or line-scope
+too. **One reader was flat:** `metered_current.py:46` matched `\breason=(\d+)`
+over the whole file and landed on BEMFDONE's **only because BEMFDONE is emitted
+first** — correct by accident, and silently wrong the moment the report is
+reordered. Anchored on its line.
+
+Added `cohort.ambiguous_keys(path)` plus a declared `AMBIGUOUS_KEYS` set, and
+verified the guard **bites**: injecting a ninth collision into a copy of a real
+capture makes it appear as undeclared. Per
+[[feedback-instrument-must-fail-loudly]] — a census that merely agrees with
+itself is worthless; this one was tested against a planted defect.
+
+#### 4. The predeclared statistic is contaminated, and the fix is the stricter band
+
+The gated value **rises monotonically with duty**:
+
+| rung | runs | mean | within-rung sd |
+|---|---|---|---|
+| 150 | 1000, 997, 999 | 998.67 | 1.528 |
+| 200 | 999, 1001, 1001 | 1000.33 | 1.155 |
+| 250 | 1001, 1000, 1001 | 1000.67 | 0.577 |
+| 275 | 1002, 1003 | 1002.50 | 0.707 |
+
+Decomposed:
+
+* pooled **across** rungs: sd **1.629** → ±6 → **995..1007**
+* pooled **within** rungs: sd **1.061** → ±4 → **997..1005**
+* about the fitted trend line: sd **1.032** → ±4
+* the trend itself: **+25.6 ‰ per 1000 duty-tenths**, i.e. **+3.2 ‰** across
+  150 → 275
+
+Within-rung and about-trend sd agree at ~1.03–1.06, and that agreement is the
+tell: the excess in the pooled figure is a **deterministic duty trend**, not
+run-to-run noise. It also matches E286's prediction of 1.25 (from 2.8 × 0.447)
+far better than 1.629 does.
+
+**The rule I am fixing now, before the remaining runs:** E286 predeclared the
+band from *scatter*. **A trend is not scatter.** Pooled sd over a trending
+variable is scatter *plus* trend, so the faithful reading of my own
+predeclaration is the trend-removed figure, and the band is
+
+> **median ± ceil(3.5 × sd_about_trend)**, computed over all 30 runs.
+
+I want this on the record with its direction stated, because the direction is
+what makes it honest: **±4 is the *stricter* band.** Following the pooled rule
+would give me ±6, the wider and more permissive one. So this correction cannot
+be the "picking the band that passes" that E286 forbade — it picks the band
+that is *harder* to pass. If the arithmetic had run the other way, the
+predeclared pooled rule would stand unchanged, and I am stating that
+counterfactual now rather than after seeing the remaining 17 runs.
+
+Two guards survive from E286 untouched: **nothing is chosen after seeing which
+runs it moves**, and **if any low rung's verdict differs between the candidate
+bands, the circularity is real and I stop and say so.** On the 11 runs so far,
+**0 are outside** the old 990–1010, ±6, ±5 or ±4 — every candidate agrees, which
+is the assumption that made this walk order legitimate in the first place.
+
+#### 5. The duty trend is a finding, not a nuisance
+
++25.6 ‰ per 1000 duty-tenths is small but monotonic across four rungs. Extrapolated
+to rung 600 it is **+11 ‰** from rung 150 — comparable to the whole band width.
+So the identity is **not duty-invariant**, and a band derived at low duty and
+applied at 600 is applying a low-duty calibration to a high-duty measurement.
+
+That is a separate question from the band and I am not resolving it here. I am
+recording it as the thing to test, and **predeclaring that I will not treat a
+high-rung rate offset as a defect until this trend is measured or excluded** —
+because a trend I have already seen at low duty would otherwise get rediscovered
+at 550 and blamed on the motor.
+
+#### Standing predictions, restated against current data
+
+| E286 prediction | status at 11 runs |
+|---|---|
+| 1. measured sd 1.0–1.8 | **holding** — 1.629 pooled, 1.032 about trend |
+| 2. band 996–1004 or 995–1005 (±4/±5) | **±4 → 997..1005** — the *centre* is 1001, not 1000, so the interval is off by one even where the half-width matches. Counts as **partly refuted** unless the final median is 1000. |
+| 3. all ten low rungs pass 3/3 under both bands | **holding** — 0 of 11 outside any candidate |
+| 4. `raw1_run` ≈ 0 | **refuted** (E288) — reads 1 with `raw1_n` ≈ 200 |
+
+Prediction 2 is the one to watch: `ceil(3.5 × sd)` flips from ±5 to ±6 at
+sd = 1.4286, and from ±4 to ±5 at 1.1429. At sd_about_trend = 1.032 there is
+only **0.11** of headroom before the half-width moves, so this prediction is
+decided by the last runs, not the first.
+
+### E291 — dual review of E284–E289: the raw-depth observer measures the ADC, not the rail
+
+Both reviews are appended verbatim below. **They converge on three findings
+independently, and the adversarial review dismantles E284's premise.** I
+verified every load-bearing number myself before accepting any of it; where my
+recomputation differs from a reviewer's I give both.
+
+#### The finding that ends E284's conclusion
+
+E284's premise was: *every run, pass or fail, takes a raw scan past the 5% trip
+line, so depth cannot discriminate and duration must.* The adversarial review
+tested whether those excursions are a **bus event at all**. They are not.
+
+My own recomputation over the whole capture corpus, `filt_bus − bus_min`,
+after excluding runs where `bus_min` never left its `u16::MAX` sentinel
+(**that exclusion matters: without it the "depth" at rung 150 reads −2289**):
+
+| duty | n | mean depth (codes) | sd | mean hold_ma |
+|---|---|---|---|---|
+| 150 | 78 | **96.8** | 13.8 | 58 |
+| 250 | 67 | 96.1 | 13.1 | 371 |
+| 375 | 27 | 92.8 | 10.3 | 908 |
+| 475 | 54 | 87.2 | 13.6 | 1572 |
+| 550 | 4 | **90.0** | 22.6 | 2284 |
+
+n = 494, range **66–146**, median 91. `corr(depth, duty) = −0.218`,
+`corr(depth, hold_ma) = −0.204`. (The reviewer got −0.335 / −0.317 on a
+slightly different filter; the magnitudes differ, the sign and the conclusion
+do not.)
+
+**Current changes 40× and the excursion gets *shallower*.** A load-induced rail
+event cannot do that. A tight, bounded, unimodal distribution with a hard floor
+at 66 codes and no dependence on load is the signature of a **fixed-magnitude
+sampling artifact**, not a droop.
+
+The contrast inside the same instrument settles it: the *mean* observer tracks
+load exactly as physics demands — `dep0_n` 9 851 → 280 104 and `dep0_run`
+13 → 55 across 150 → 250, and `dep0_run = 332 716` at 525 — while `raw1_n` over
+the whole 150 → 288 walk is essentially flat (255, 183, 197, 188, 183, 178, 261,
+292, 198, 316, 265, 386, 308) as current changes 70×.
+
+So **depth of the quantity the guard consumes discriminates cleanly; depth of a
+quantity the guard never sees does not.** E284 wrote those as one sentence. They
+are not one sentence, and the conclusion "duration is the whole story" rests on
+the conflation.
+
+#### And `raw1_run = 1` was never a measurement
+
+The adversarial review computed the expected longest run of consecutive
+successes under independent Bernoulli trials, `≈ ln(N·p)/ln(1/p)` at
+N = 885 922:
+
+| bin | n | p | expected max run | observed |
+|---|---|---|---|---|
+| raw0 (970) | 1534 | 1.7e−3 | 1.15 | 1–2 |
+| **raw1 (950)** | 255 | 2.9e−4 | **0.68** | **1** |
+| raw2 (930) | 19 | 2.1e−5 | 0.27 | 1 |
+| raw3 (910) | 5 | 5.6e−6 | 0.13 | 1 |
+| dep0 (995) | 31 125 | 3.5e−2 | 3.09 | **31** |
+
+Every raw bin sits at the independent-noise prediction rounded up. `dep0`
+exceeds it tenfold. **The raw bins show zero clustering; the mean bin shows real
+persistence.**
+
+And the `≥ 10` arm of my predeclared discriminator needs
+`p ≥ (1/787000)^0.1 = 0.257` — the raw scan below the line **a quarter of the
+time**, `raw1_n ≥ ~202 000`. Measured p is 0.0003. **The two arms of my test are
+three orders of magnitude apart in rate with nothing in between assigned any
+meaning**, so every non-catastrophic latch lands in the uncovered region. E288
+said the test was "half-closed and stays half-closed." It was never a test. This
+is [[feedback-predeclare-the-falsification-bar]] un-applied: I built the
+instrument without computing the n or the power that would make its answer mean
+anything.
+
+The self-criticism in E288 is also inverted. I wrote that I had "conflated how
+often with how long." In this data they are **the same field** — the one run
+with `raw1_run = 2` (`e286-275_03`) is the run with the largest `raw1_n` (386),
+because run length is a deterministic function of count at these rates.
+
+#### E286's own falsifier fired and I reassigned it to a wording error
+
+E286 prediction 4 stated its falsifier itself:
+
+> A large value at low duty would mean the raw bus routinely goes 5% down even
+> when nothing is loaded, which would make the whole depth-and-duration reading
+> wrong.
+
+Measured at 15% duty and **6 mA** hold: `raw1_n = 255` — 20–30 excursions per
+second past the guard's line at essentially zero load, with `raw3` (9% down)
+firing five times. E288 recorded this as "refuted, and informatively", then
+reclassified it as having named the wrong field and carried on. **The falsifier
+fired on the count, my own text said what a large count means, and I spent the
+finding on a wording confession instead of the test.** That is the worst single
+thing in this stretch of the campaign.
+
+#### Four defects repaired in source
+
+1. **`raw_depth` judged the wrong reference** — both reviews found this
+   independently, and it is the one that would have corrupted the 550 arm.
+   `FastBusSag` judges against `self.filtered()`, whose own doc says "the
+   ~200 ms average of the bus, **not** the pre-run baseline"; I fed the observer
+   `base.bus_ref`. On the 550 cohort the bin's line sat at `0.95 × bus_ref` =
+   1157.1 against the guard's `0.95 × filt_bus` = 1133.4 — **~24 codes
+   shallower, biased toward satisfying the `≥ 10` arm** at exactly the rungs
+   that fail. Now fed `sag.filtered()`, hoisted above the observers and read
+   before the guard's post-test update, so it is the same reference the same
+   scan. This also dissolves the adversarial review's separate point that
+   `RAW_DEPTH_TRIP_IX = 1` names the wrong bin at 550 (`0.95·1193/1218` = 930‰,
+   i.e. `fractions[2]`): with the reference corrected, 950 is the guard's line
+   at every rung by construction rather than by coincidence at one duty.
+2. **`BusDepth::observe` had no overflow guarantee and its comment claimed
+   one.** It multiplied by 1 000 while citing `FastBusSag`'s `* 100` bound of
+   `1_676_902_500 < 2^31`. Real worst case `4095² × 1000` = **1.68e10, 3.9× past
+   `u32::MAX`**; largest value actually in the corpus `2058 × 1508 × 1000` =
+   3 103 464 000, **72% of `u32::MAX`**, wrapping at bus code 2849 (~27.7 V,
+   inside the board's 6–50 V rating). Both sides now scale by 1/5 — exact,
+   because every fraction is a multiple of 5 — giving a worst case of
+   3 353 805 000 and no wrap at 12 bits.
+3. **E287 was the wrong repair, and left two mA scales on one line.**
+   `zero_drift_ma` always divided by `RAW_LIMIT` while its four siblings divided
+   by `allow()`, under a single `ma_allow` — so a reader following E287's own
+   instruction to divide would have corrupted `zero_drift_ma` and `ref_ma` by
+   100×. **A worse failure mode than the one it fixed, and sanctioned by a field
+   in the report.** Fixed at the root instead: `RAW_LIMIT` raw units = 4000 mA
+   is the *calibration*, `allow` is the *trip threshold*, and
+   `block_milliamps` now divides by the calibration. Every injected capture's mA
+   figures become true mA; **every non-injected capture is bit-identical**,
+   because `allow == RAW_LIMIT` there. `ma_allow` is still emitted, now as what
+   it is — the threshold, which tells a reader an injection ran.
+   Pinned by a test that **fails on the old form** (verified by reverting: same
+   residual read 0 mA against 12 mA), asserting that a residual is the same
+   current whatever the run tolerates, that the full allowance is 4 A, and that
+   `e280-prot500-i`'s 14 656 reads 1840 mA.
+4. **A doc comment documented the wrong field** (E288) — repaired, and the
+   evidence review confirms the misplacement existed in **one** commit, not two
+   as E288 claimed, and that no other field in `src/` carries the same
+   signature.
+
+#### Where I was wrong about my own process, per both reviewers
+
+**E288's diagnosis of the E286 misattribution is wrong, and both reviews say so
+independently.** `git log -S RAW_DEPTH_FRACTIONS -- src/protection.rs` returns
+exactly one commit: **`43e60a6`, whose message is "E285 — I read a tool's
+silence as confirmation".** E284 has no commit of its own; its code shipped
+inside E285's. So E286 did not "reach for the nearest number that existed" —
+**it faithfully cited what git records**, and E288's "corroborating symptom:
+the numbering already drifted" is a narrative I constructed about an error I had
+not actually made. The real defect is mechanical and different: a named change
+was committed under another entry's message. I am striking my own correction,
+not E286's citation.
+
+**And the gap is five entries, not two.** Missing from E250–E289: **E253, E254,
+E258, E284, E287.** Captures on disk prove the experiments ran — `e253-550_01..03`
+(the 550 cohort, including this campaign's only sag latch), `e258-ctrl550_01`,
+and E254 survives only as a passing reference inside E276. **The three 550 runs
+that are the entire basis for E284's "including the two that passed" have no
+entry of their own.** E288 confessed two and I stopped counting there.
+
+**`480263F1.e286-rawdepth.elf` has no line in `captures/MANIFEST-hashes.txt`**,
+while `39E0500A` and `7CCCE8A8` each have one. The image producing the
+campaign's current data is unhashed, against the goal's explicit "hash
+source/configuration/ELFs".
+
+**E286's header names the wrong image.** It opens *"Image
+`39E0500A.e283-backstop.elf`"* and its prediction 4 discusses the raw-depth
+observer — **which does not exist in `39E0500A`.** The captures report
+`elf_crc32 480263F1`. So prediction 4 was unmeasurable on the image its own
+predeclaration named, and E289 corrected this class of error one entry later
+without noticing it here.
+
+#### Two findings I accept with a correction to the reviewer
+
+**The observer costs ~3.3% of foreground throughput, and the cost was never
+audited.** Verified myself, four runs against three at rung 150, zero overlap:
+
+| image | raw observer | iters/tick |
+|---|---|---|
+| e282-150_01/02/03 | no | 4.6379 / 4.6410 / 4.6403 |
+| e284-150_01 | no | 4.6505 |
+| **e286-150_01/02/03** | **yes** | **4.4884 / 4.4887 / 4.4860** |
+
+**−3.33%**, repeatable, within-group spread < 0.013. For "four comparisons and a
+handful of adds" that implies ~225 cycles per scan, an order of magnitude above
+E284's characterisation. **My correction to the reviewer: this A/B is not
+clean.** Those images differ by more than the observer, so −3.3% is the cost of
+an image difference with the observer as the leading candidate — not a measured
+observer cost. Attributing it needs a build differing only by the observer.
+Either way E284's cost claim had no instrument behind it, and the campaign's
+own cost tooling (`isr_diff.py`, `isr_audit.py`, `WCET_ESTIMATES.md`) is
+structurally blind to thread mode, which `protection.rs:250-252` states in as
+many words.
+
+Risk metrics did not move at rung 150 (`spent_max_us=11`, `late_arms=0`,
+`com_preempts=0`, `gap_max_us` 104–108 both eras), so the cost bought no timing
+regression *there*. But `iters/tick` falls with duty on the new image (4.488 at
+150 → 4.097 at 288) and the pre-observer 525/550 images ran 3.38/3.34, so
+carrying a 3.3% tax to 60% is an untested extrapolation into the least
+headroom.
+
+**The ADC snapshot's own coherence precondition is violated in every capture,
+and it is a candidate mechanism for the artifact.** `hw/adc.rs` argues the DMA
+"does not rewrite until the next TIM6 trigger, ~88 µs after the transfer-complete
+interrupt", with no double buffer, no NDTR check and no sequence counter.
+Measured `loop_gap_max_us` is **140–192 µs in every capture** — more than the
+101 µs scan period and **over double the stated window**. A snapshot straddling
+a re-trigger mixes cycle N's bus with cycle N+1's VREFINT, which produces
+exactly "bus low, vref normal" for exactly one scan. The scan converts
+sequentially ascending (IN0/IN1/IN4 shunts, IN6 bus, IN13 VREFINT), so bus and
+VREFINT are microseconds apart and the cross-product cannot normalise a
+transient that lands between them. The report records only the **maximum** gap,
+so the count of gaps over 88 µs — the predicted tear count — is unmeasured,
+against `raw1_n ≈ 200` of 886 000.
+
+#### Also accepted, from the evidence review
+
+* **`raw1_n` "178–261" is refuted**: it is now 178–**386**, and E284 stated a
+  range from a 7-run snapshot of a *live* walk without its n or timestamp.
+  **`raw2_n` "0–1" is refuted**: actual values reach 19, 19, 24.
+* **"~1 scan in 3 200" has an unstated denominator.** Against `drive_scans` it
+  is 1 in **3 873** (11-run mean). 3 200 is reproducible only as
+  `hold_blocks × 100 / max(raw1_n)` — hold scans, applied to the single deepest
+  run.
+* **"seven clean runs" is undefined.** Six of the twelve carry
+  `BEMFREF verdict=STOP` on the fixture's oracle comparison. I confirmed this
+  and confirmed it is **advisory — printed and never gated**; speed matches the
+  oracle everywhere (`speed_within_5pct=1`, +0.3 to +1.7%) and only
+  `current_pct` diverges. "Clean" in E284/E288 can only mean "no guard latch";
+  it does not mean the run passed every printed check, and I did not say which
+  sense I meant.
+* The raw observer is gated behind `if self.rail.ready()`, so **the one observer
+  that does not need the 8-scan window inherits it** and discards the first 8
+  scans; and it sits *after* the `early` return, so it never sees the deciding
+  scan of the absolute-bus-floor stop — the stop that fires on deep single-scan
+  dips. E284's comment claimed it "covers the deciding scan of any stop."
+  Corrected to say *sag* stop; the placement itself is listed below.
+* `BusDepth`'s counters cannot overflow (u32, `saturating_add`, 886k scans/run —
+  ~72 hours to saturate). Not sustained, and I had not checked it either.
+
+#### What the walk's data is still good for
+
+The low-rung walk is **unaffected** by all of this. Its purpose is the rate
+identity `rate_vs_coast_permille` and the pass/fail ledger, neither of which
+touches `raw_depth`. Rungs 150–300 are 3/3 with `reason=2`, and the band
+derivation of E290 stands on its own evidence. I am letting the walk finish
+rather than restarting it, and the raw-depth *fields* in those captures are
+retained as the artifact's own measurement — they are now evidence about the
+ADC, which is worth having.
+
+#### Predeclared next step: the bridge-off control run
+
+The adversarial review named the right experiment and I am adopting it verbatim
+as the next thing this campaign does after the walk. **It energises nothing.**
+
+> run the scan path for 90 s with the bridge off — MOE clear, EN low — and emit
+> `raw0..raw3`. If `raw1_n ≈ 200` with no load, the excursions are 100%
+> instrumentation.
+
+**Predeclared bar, before the run:**
+
+* **If `raw1_n ≥ 100` with the bridge off**, the excursions are instrumentation.
+  E284's premise, its fractions, its trip index and its predeclared
+  discriminator all fall together, and "depth does not discriminate, duration
+  does" is withdrawn as unsupported. I expect this outcome: **`raw1_n` in
+  150–350, `raw1_run = 1`.**
+* **If `raw1_n ≤ 10`**, the excursions require the bridge and are load-related
+  after all, and the negative load correlation needs a different explanation
+  which I do not currently have.
+* **Anything between 10 and 100** is a partial artifact and settles nothing on
+  its own; I will say so rather than pick a side.
+
+Second measurement on the same image, because it costs nothing and tests the
+tearing mechanism directly: **count scans where the loop gap exceeded the
+88 µs no-rewrite window**, and compare that count against `raw1_n`. A max-only
+recorder makes the tear count unfalsifiable, which is
+[[feedback-check-the-instrument-transfer-function]] exactly.
+
+Owed and not yet done, listed so they are not lost: the three missing entries
+(E253, E254, E258), `480263F1`'s manifest line, an NDTR/sequence validity flag
+on the snapshot, moving `raw_depth.observe` above the `early` return and after
+`current.accumulate` so it both sees every deciding scan and stops delaying two
+hard stops, a `hold_valid` flag for injected captures whose hold accounting
+`Inject::AverageCurrent` silently zeroes (`blocks=2 hold_blocks=0 hold_ma=0` in
+`e280-prot500-i_01`), and a loud host refusal on `ceiling_tenths < duty_tenths`
+instead of a doc comment.
+
+**Agreement is not proof, and here it was not even agreement in my favour: both
+reviewers found the reference defect I had asserted was correct, and one of them
+took the instrument apart.** The reviews follow verbatim.
+
+---
+
+#### Review 1 of 2 — EVIDENCE (verbatim, unedited)
+
+Brief: recompute from source and captures; verify field meanings, units, windows,
+uncertainty, image identity and every attempt. Instructed to read raw captures
+before source and source before the notebook. Given no interpretation and not
+shown the adversarial review.
+
+> ## EVIDENCE REVIEW — E284 / E287 / E288 / E289 (independent recompute)
+>
+> Method: raw captures read before source; source read before notebook. All numbers below were recomputed from `captures/` and `src/` in `E:\m\robot\esc\rm32\binz\firmware50`. **The walk was still live during this review** — `e286-275_01/_02` completed and `_03` started while I worked, so the cohort I recomputed is larger than E284's.
+>
+> ---
+>
+> ### 1. **CONFIRMED** — the raw observer really observes the raw scan, not the mean
+>
+> `src/run/states.rs:336-350`:
+>
+> ```rust
+> let (bus_mean, vref_mean) = (self.rail.bus_mean(), self.rail.vref_mean());
+> self.depth    .observe(bus_mean, vref_mean, self.base.bus_ref.bus, self.base.bus_ref.vref);
+> self.raw_depth.observe(scan.bus,  scan.vref,  self.base.bus_ref.bus, self.base.bus_ref.vref);
+> ```
+>
+> `scan` is the `RawScan` from `hal.scan()` at line 317; `bus_mean/vref_mean` come from `RailMean` (`RAIL_MEAN_LEN = 8`, `protection.rs:341`). The two observers receive **different first two arguments**. The entry's central claim holds. `fracs` is per-instance (`BusDepth.fracs`, set by `new()` vs `new_raw()`), so the fraction sets cannot cross.
+>
+> Two caveats the entry does not state:
+> - Both `observe()` calls sit inside `if self.rail.ready()` (line 336), so the raw observer is **blind to the first 7 scans of every run**. `stats.bus_min` (line 319) is not — it is updated on every scan including pre-ready and including the `early`-return stop path. So `bus_min` and `raw_depth` are drawn from slightly different populations, and the entry's comparison of one to the other inherits that.
+> - Commutation-phase coherence is not controlled for; both observers see whatever PWM instant the de-cohered 9.901 kHz scan landed on.
+>
+> ### 2. **REFUTED** (as to added risk) / **CONFIRMED** (as to identity) — overflow at the raw fractions
+>
+> `BusDepth::observe` (`protection.rs:307-327`) is a single implementation; arithmetic is **byte-identical for both instances** — only `self.fracs[i]` differs. CONFIRMED.
+>
+> The cross-product is
+> ```
+> lhs = bus * ref_vref * 1_000        rhs = ref_bus * vref ;  test: lhs < rhs * fracs[i]
+> ```
+> `lhs` does not depend on `fracs`, and `rhs * fracs[i]` is **smaller** for 910..970 than for 980..995. So the raw instance carries **strictly less** overflow risk than the existing one. Any claim of added risk at the raw fractions is refuted.
+>
+> **However, a real latent defect exists in `BusDepth::observe` independent of the fractions, and the source comment misstates it.** Lines 244-248 say this is "the form `FastBusSag::observe` and the absolute floor already use". It is not: `FastBusSag` multiplies by `SAG_DEN = 100` and documents the resulting bound (`protection.rs:505`: `4095*4095*100 = 1_676_902_500 < 2^31`). `BusDepth` multiplies by **1_000**, which destroys that guarantee by 10×:
+>
+> | quantity | value |
+> |---|---|
+> | `u32::MAX` | 4 294 967 295 |
+> | worst `lhs` actually in this corpus (`bus_ref=2058`, `ref_vref=1508`; `captures/2026-09-20/e080-inject-N_01.txt`) | 3 103 464 000 — **72.3 % of `u32::MAX`** |
+> | bus code at which `lhs` wraps, at `ref_vref=1508` | **2849** (≈ 27.7 V bus by this bench's 11.85 V / 1218-code scale) |
+> | 12-bit worst case as the comment implies is safe | 4095·4095·1000 = 1.677e10 — **3.9× over** |
+>
+> The board is rated 6–50 V. At any bus above ~28 V both observers wrap silently and report garbage counts. Not triggered by the current data; the documented guarantee is simply absent.
+>
+> ### 3. **CONFIRMED (numbers)** / **REFUTED (the quantity's identity)** — "44 codes past" and "+17/+36/+59"
+>
+> `filt_bus` **is** emitted, on `BEMFSAG`. `bus_ref` is not being substituted for it. I used `0.95 × filt_bus` from `BEMFSAG` and `bus_min` from `BEMFDONE`:
+>
+> | run | filt_bus | 0.95·filt_bus | bus_min | past | outcome |
+> |---|---|---|---|---|---|
+> | `e280-prot500-v` (the "575" injection run) | 1189 | 1129.55 (entry: 1130) | 1086 | **43.6 → 44** | clean |
+> | `e253-550_01` | 1193 | 1133.35 | 1116 | **+17.4** | clean |
+> | `e253-550_02` | 1193 | 1133.35 | 1097 | **+36.4** | clean |
+> | `e253-550_03` | 1193 | 1133.35 | 1074 | **+59.4** | tripped (streak=3) |
+>
+> All four figures reproduce exactly. `bus_min/filt_bus` = 93.5 / 92.0 / 90.0 / 91.3 % → the source comment's "90.0–93.5 %" also reproduces. There is no capture named `*575*`; the run is `e280-prot500-v`, whose `target_duty_tenths=500` was raised to 575 by `Inject::Sag` (`applied_ccr=766 = 1333·575/1000` — independently confirms the duty).
+>
+> **But `0.95 × filt_bus` is not the line the new observer measures.** `raw_depth.observe` is passed `self.base.bus_ref` — the **pre-run baseline** — while `FastBusSag` judges against `filtered()`, the 207 ms EWMA. Same 95 % fraction, **different reference**:
+>
+> | | guard's line (0.95·filt_bus) | raw1 bin's line (0.95·bus_ref) | raw bin is shallower by |
+> |---|---|---|---|
+> | `e286-150_01` | 1154.3 | 1156.1 | 1.9 codes |
+> | `e253-550_*` | 1133.4 | 1157.1 | **23.7 codes (≈2 % of bus)** |
+>
+> So `src/report.rs:791-795` and `src/run/mod.rs:239-241` — "below the guard's own 950 trip line" — are **inaccurate**. At the low rungs the error is ~2 codes and the reading survives; at 550, where the two-sided test is supposed to close, `raw1_*` will be counting excursions past a line ~24 codes shallower than the guard's, biasing the `≥10` arm toward being satisfied. This must be fixed or stated before the 550 arm is scored.
+>
+> Second uncertainty the entry does not state: the emitted `filt_bus` is the EWMA **at the end of the run (or at the trip)**, whereas `bus_min` occurred at an unknown earlier instant. The comparison mixes two times. Settling it needs the sag-row trace (`record_sag_row`), not the summary line.
+>
+> ### 4. **REFUTED (range)** / **CONFIRMED (`raw1_run`)** — the `raw1` table
+>
+> Every `e286-*.txt` present at 22:47, recomputed:
+>
+> | capture | bus_ref | bus_min | filt_bus | raw0_n/run | **raw1_n/run** | raw2_n/run | raw3_n/run | BEMFREF verdict |
+> |---|---|---|---|---|---|---|---|---|
+> | e286-150_01 | 1217 | 1099 | 1215 | 1534 / 2 | **255 / 1** | 19 / 1 | 5 / 1 | **STOP** |
+> | e286-150_02 | 1215 | 1127 | 1215 | 1317 / 2 | **183 / 1** | 1 / 1 | 0 / 0 | ok |
+> | e286-150_03 | 1217 | 1128 | 1215 | 1529 / 2 | **197 / 1** | 1 / 1 | 0 / 0 | ok |
+> | e286-200_01 | 1216 | 1118 | 1214 | 1554 / 2 | **188 / 1** | 3 / 1 | 0 / 0 | **STOP** |
+> | e286-200_02 | 1213 | 1114 | 1214 | 1262 / 2 | **183 / 1** | 19 / 1 | 0 / 0 | **STOP** |
+> | e286-200_03 | 1214 | 1099 | 1214 | 1294 / 1 | **178 / 1** | 1 / 1 | 1 / 1 | **STOP** |
+> | e286-250_01 | 1218 | 1126 | 1212 | 1892 / 2 | **261 / 1** | 1 / 1 | 0 / 0 | ok |
+> | e286-250_02 | 1216 | 1103 | 1212 | 1893 / 2 | **292 / 1** | 24 / 1 | 3 / 1 | ok |
+> | e286-250_03 | 1215 | 1132 | 1212 | 1480 / 1 | **198 / 1** | 0 / 0 | 0 / 0 | **STOP** |
+> | e286-275_01 | 1217 | 1113 | 1211 | 1956 / 2 | **316 / 1** | 6 / 1 | 0 / 0 | ok |
+> | e286-275_02 | 1217 | 1136 | 1211 | 1982 / 2 | **265 / 1** | 0 / 0 | 0 / 0 | **STOP** |
+>
+> - **`raw1_run = 1` in every completed capture in the entire repository.** `grep -rho "raw1_run=[0-9]*" captures/ | sort | uniq -c` → `11 raw1_run=1`, nothing else. **It is never >1 anywhere.** CONFIRMED.
+> - **"`raw1_n` is 178–261" is REFUTED.** Correct for the 7 runs that existed when E284 was written (178–261, exactly), but the range is now **178–316**; `250_02` (292) and `275_01` (316) both exceed the stated ceiling. The entry states a range without stating it was a 7-run snapshot of a live walk. `raw1_n` is also **trending up with duty** (150: 183–255; 275: 265–316), which the "routine and instantaneous" framing does not mention.
+> - **"`raw2_n` (930) is 0–1" is REFUTED**: actual 0, 0, 1, 1, 1, 1, 3, 6, 19, 19, 24. Three runs sit at 19–24.
+> - "`raw0_run` (970) is 1–2": CONFIRMED (nine 2s, two 1s).
+> - **"seven clean runs" is misleading.** Of the first 7, **four carry `verdict=STOP`** on the fixture's own oracle comparison (`scripts/bemf_run.py:184` — `abs(speed_pct)>20 or abs(cur_pct)>20`): `150_01` at `current_pct=-89.7`, `200_01/02/03` at `+59.9/+49.7/+46.1`. Across all 11, six read STOP. "Clean" here can only mean "no guard latch" (`BEMFGUARD reason=0`, `BEMFDONE reason=2`); it does not mean the run passed. The entry does not say which sense it uses.
+> - **"~1 scan in 3,200" is REFUTED as stated.** Recomputed against `drive_scans` (≈885 921): 11-run mean 228.7 → **1 in 3 873**; the 7-run cohort E284 had, 206.4 → **1 in 4 292**. The figure 3 200 is reproducible only as `hold_blocks·100 / max(raw1_n)` = 814 500 / 255 = 3 194 — i.e. a different denominator (hold scans) applied to the single deepest run. The denominator is not stated in the entry.
+> - Supporting arithmetic the entry omits but which holds: a one-scan dip of the observed magnitude (1217→1099 = 118 codes) moves the 8-scan mean by 118/8 = 14.8 codes ≈ **1.2 % of bus**, against a 5 % (≈61-code) requirement plus a 3-scan streak. So the mechanism claim ("the mean cannot see a single scan") is quantitatively sound.
+> - **Caution on the `≥10` arm.** A `FastBusSag` latch needs 3 consecutive means below the line, spanning 10 raw scans whose average is below it. That does not *force* `raw1_run ≥ 10`, but it makes a latch with `raw1_run = 1` arithmetically near-impossible. Combined with finding 3 (the raw bin's line is 24 codes shallower at 550), the second arm of the two-sided test is **weakly informative and biased toward passing**. The test is less two-sided than E284 presents it.
+>
+> ### 5. **CONFIRMED** — the E287 mA-scale arithmetic; **CONFIRMED** — the walk's captures do not carry it
+>
+> - `block_milliamps` (`protection.rs:749-754`): `residual * 4_000 / allow`. CONFIRMED.
+> - `Inject::AverageCurrent` → `states.rs:444`: `self.current = AverageCurrent::new(self.base.zero_block, RAW_LIMIT / 100);` with `RAW_LIMIT = 31_857` (`protection.rs:567`) → `allow = 318`. CONFIRMED.
+> - `e280-prot500-i_01.txt`: `worst_residual=14656 worst_ma=184352`. Back-solve: `14656·4000/184352 = 317.99` → allowance was 318, confirming the inject path. True value at `RAW_LIMIT`: `14656·4000/31857 = ` **1840.1 mA**. Both the reading and the "~1840 mA" correction CONFIRMED.
+> - `ma_allow` / `ma_allow_ref`: **absent from every capture in the repository.** `grep -rl "ma_allow" captures/` returns nothing. The fields exist only in `src/report.rs` (5 occurrences) and in the host test's format-lock assertion (`" ma_allow=31857 ma_allow_ref=31857 "`). **The walking image predates them.**
+>
+> ### 6. **CONFIRMED** — image identity; the walking ELF contains E284 and **not** E287
+>
+> | check | result |
+> |---|---|
+> | `captures/elf/480263F1.e286-rawdepth.elf` exists | yes, 1 700 948 bytes, mtime **2026-09-24 22:10:08 -0700** |
+> | capture self-report | every `e286-*.txt` line 1-2: `# elf_crc32 480263F1`, `# elf_sha256 366E781F…A544` — matches the filename |
+> | `raw0_pm` string in that ELF | present (`grep -ac raw1_run` → 1) → **E284 is in the image** |
+> | `ma_allow` string in that ELF | **0** → **E287 is not in the image** |
+> | `ma_allow` in the 11 `e286-*.txt` | **0 of 11** |
+> | `c74aa08` (E287) commit time | **22:36:26**, 26 min after the ELF was built |
+> | `39E0500A.e283-backstop.elf` (the image E286 predeclared) | contains **0** `raw0_pm` — so it could not have produced this data either |
+>
+> E288's sentence "the image currently walking the low rungs … contains both of them" is **false for E287**, exactly as E289 states. E289's own verification is sound and its "0 of 10" was correct for the file count at the time (a 10th, `e286-275_01`, was in progress; there are 11 now). **E289 stands; E288 is wrong on this point and correctly retracted.**
+>
+> Additional discrepancy neither entry raises: **E286's predeclaration names image `39E0500A.e283-backstop.elf`**, and the walk it predeclared ran on `480263F1`. The predeclared image is not the image that produced the data, and `39E0500A` lacks the observer that prediction 4 is about. E286's prediction 4 was therefore unmeasurable on the image it named.
+>
+> ### 7. **CONFIRMED (notebook absence)** / **REFUTED (two separate commits, and "two commits" of misplacement)**
+>
+> ```
+> git show --stat c74aa08 -- LAB_NOTEBOOK.md   →  (no output: zero lines)
+> git show HEAD:./LAB_NOTEBOOK.md | grep -cE "E284|E287"  →  0
+> grep -cE "E284|E287" LAB_NOTEBOOK.md (working tree)     →  24
+> git status --short  →  M LAB_NOTEBOOK.md, M captures/ladder_state.json, M src/report.rs
+> ```
+> CONFIRMED: neither E284 nor E287 has a notebook entry in `HEAD`; E288/E289 are uncommitted working-tree additions.
+>
+> **But E288's framing is wrong in two checkable ways:**
+> - `git log --oneline -S "RAW_DEPTH_FRACTIONS" -- src/protection.rs` → **`43e60a6` (the E285 commit)**. There is no E284 commit. E284's code shipped *inside* E285's commit, whose message already carries E284's reasoning verbatim ("every run pass or fail takes a raw scan past the 5% line, so depth does not discriminate and streak is only ever 0 or 3 across the corpus"). So **E286's attribution of the observer to E285 is literally correct at the commit level**, and E288's "corroborating symptom: the numbering already drifted … It is E284's" is a narrative claim git does not support. The two changes were also not symmetric: E287 *is* its own commit, E284 is not.
+> - **"for two commits it documented `current_allow`" is REFUTED.** `git log -S "current_allow" -- src/report.rs` returns exactly **one** commit (`c74aa08`, = `HEAD`). The misplacement existed in one commit. The uncommitted diff is doc-comment-only (7 insertions, 2 deletions, no emission change) — E288's "nothing about the emitted format changes" CONFIRMED.
+>
+> ### 8. Units and windows
+>
+> - **CONFIRMED** `RAIL_MEAN_LEN = 8` (`protection.rs:341`, `RAIL_MEAN_SHIFT = 3`, compile-time asserted). "8-scan mean" correct.
+> - **CONFIRMED** 207 ms EWMA: `SAG_FILTER_SHIFT = 11` → 2048 scans; 2048 / 9901 Hz = **206.8 ms**.
+> - **CONFIRMED** the fractions are **per mille** (`dep*_pm`, `raw*_pm`), and 950 ‰ = the guard's `SAG_NUM/SAG_DEN = 95/100`. The entry's "5 % line" / "950 line" usage is consistent.
+> - **CONFIRMED** `raw*_run` / `dep*_run` are in **scans**, not ms — `run[i]` is incremented per `observe()` call. At 9.901 kHz, `raw1_run = 1` is ~101 µs. The entry never converts, which is correct but leaves the reader to. `raw*_n` likewise scans.
+> - **CONFIRMED** "`BEMFSAG streak=` is only ever 0 or 3": over **507** `BEMFSAG` lines in `captures/`, values are `500× streak=0`, `7× streak=3`, none 1 or 2. (A naive `grep streak=` finds 13 `streak=1` — those are `RATEACCEPT`/`RATEBUS` lines, a different quantity. The claim survives the correct filter.) The "~600 runs" figure is loose: 507 `BEMFSAG` lines, 1217 `BEMFRUN` lines across `.txt`+`.runlog` (duplicated), so the evidence base for this claim is **507 runs**, not ~600.
+> - **UNRESOLVED** — whether the raw observer's ~7-scan blind spot at `rail.ready()` and its exclusion of `early`-return stop scans matter. It cannot matter for the counts (7 of 885 921), but it does mean **the deciding scan of a `Reason::Bus` / rejected-phase-code stop is never observed by `raw_depth`**, contradicting `states.rs:342-343`'s "it covers the deciding scan of any stop". It covers the deciding scan of a *sag* stop. Settling it: add a counter for `early`-path scans, or move the raw observe above the `early` gate.
+>
+> ---
+>
+> ### Items owed before the 550 arm is scored
+>
+> 1. `raw_depth`'s reference is `bus_ref`, not `filt_bus` — the ≥10 arm will be measured against a line ~24 codes shallower than the guard's at 550. Fix the reference or restate the bin.
+> 2. `raw1_n`'s stated range (178–261) is a snapshot of a live walk and is already exceeded (316). Any range quoted from an in-progress walk needs its `n` and timestamp.
+> 3. Four of the seven "clean runs" carry `verdict=STOP`. The cohort's definition of clean must be stated.
+> 4. "~1 scan in 3,200" needs its denominator printed, or restating as 1 in ~3,900 over `drive_scans`.
+> 5. `BusDepth::observe`'s `×1000` form has no overflow guarantee (wraps above bus code 2849; the corpus already reaches 2058 = 72 % of `u32::MAX`) while its own comment claims the `FastBusSag` bound.
+> 6. E284's code is in commit `43e60a6`, not a commit of its own; E286's "(E285)" attribution is defensible and E288's correction of it is not supported by git.
+
+**Disposition:** accepted in full. Items 1, 5 and 6 are repaired or retracted
+above; 2, 3 and 4 are corrected in the dispositions; the `rail.ready()` blind
+spot and the `early`-return placement are owed. Its finding 1 — that the
+observer does read the raw scan — is CONFIRMED and remains true; it is simply
+not sufficient, which is what the adversarial review establishes.
+
+#### Review 2 of 2 — ADVERSARIAL (verbatim, unedited)
+
+Brief: construct competing explanations; challenge discrimination, observer
+effects, concurrency and safety. Instructed to read raw captures before source
+and source before the notebook. Given no interpretation and not shown the
+evidence review.
+
+> ## ADVERSARIAL REVIEW — E284/E286/E287/E288 (raw-scan bus-depth observer)
+>
+> Raw evidence read before any notebook entry: 13 `e286-*` captures (150–288), `e284-150_01`, `e282-150_01..03`, `e251-500_*`, `e252-525_*`, `e253-550_*`, `e258-ctrl550_01`, `e278/e280-prot500-*`, plus a 491-run corpus sweep of `BEMFSAG`/`BEMFDONE`. Source read: `protection.rs:190-807`, `run/states.rs:100-450`, `run/mod.rs:205-270`, `report.rs:370-810`, `hw/adc.rs:23-315`.
+>
+> ---
+>
+> ### CHALLENGE 1 — The raw excursions are an instrumentation artifact, not a bus event. The central claim's premise is measuring the ADC, not the rail. **SUSTAINED.**
+>
+> **Competing explanation (a) in your brief, and the evidence is overwhelming.**
+>
+> Corpus sweep, `filt_bus − bus_min` over 491 runs spanning duty 150→600 and `hold_ma` 6 mA → 2869 mA (a ~480× current range):
+>
+> ```
+> n=491  min 66  median 91  max 146   (no value below 66, none above 151)
+>  64- 71   9      96-103  83
+>  72- 79  55     104-111  65
+>  80- 87 126     112-119  39
+>  88- 95  96     120-151  18
+> ```
+>
+> A tight, bounded, unimodal distribution with a hard floor. On the 93 runs where duty, current and scan count all parse:
+>
+> ```
+> corr(depth, duty)      = -0.335
+> corr(depth, |hold_ma|) = -0.317
+> mean depth: 99.9 codes @ duty 150 (6-63 mA)   vs   87.1 @ duty 500 (1789 mA)
+> ```
+>
+> **The deepest single-scan bus excursions happen at the lowest current, and depth is negatively correlated with load.** A load-induced bus event cannot do that. At duty 150 the hold current is 6–63 mA and `bus_min` sits 55 codes past `0.95·filt_bus` — deeper than two of the three 550 runs (+17, +36) that E284 cites as its cohort. Converted to volts on any plausible divider, a ~9% rail collapse at 60 mA implies tens of ohms of source impedance; this bench's worst documented power-path fault is 0.65 Ω.
+>
+> Cross-check that separates artifact from physics inside the same instrument: `dep0` (the **mean**) moves with load exactly as physics demands — `dep0_n` 9,851 → 280,104 and `dep0_run` 13 → 55 across 150→250, and 644,973 / `dep0_run=332,716` at 525. `raw1_n` over the same 150→288 walk: 255, 183, 197, 188, 183, 178, 261, 292, 198, 316, 265, 386, 308 — essentially flat while current changes 70×. **The mean observer tracks load; the raw observer does not.** That is the inverse of E284's premise.
+>
+> Mechanism candidates, all artifact-class and all consistent: (i) the scan converts channels **sequentially ascending** (`adc.rs:57-61`: IN0/IN1/IN4 shunts, IN6 bus, IN13 VREFINT), so bus and VREFINT are microseconds apart and a VDDA/ground transient landing on the bus conversion is **not** normalised away by the cross-product — it produces precisely "bus low, vref normal", and precisely for one scan; (ii) a torn snapshot (see Challenge 4); (iii) a single-conversion bit error — note `filt_bus − 128` spans 1045–1087 and `filt_bus − 64` spans 1109–1151, which brackets the entire observed `bus_min` population 1051–1141.
+>
+> **Consequence for the conclusion:** "every run takes a raw scan past the 5% line, pass or fail" is correctly *measured* and wrongly *interpreted*. It does not show depth fails to discriminate; it shows `bus_min` is not a measurement of the bus. And the discriminator E284 says does not exist has been in the report all along: `filt_bus` falls monotonically 1215 (150) → 1193 (550) → 1189 (600) while `ref_bus` holds 1213–1219, and `dep0_run` spans four orders of magnitude between passing low rungs and failing high ones. **Depth of the quantity the guard actually consumes discriminates cleanly. Depth of a quantity the guard never sees does not. Those are not the same sentence.**
+>
+> **Settling check (one run, motor never energised, zero risk):** run the scan path for 90 s with the bridge off — MOE clear, EN low — and emit `raw0..raw3`. If `raw1_n ≈ 200` with no load, the excursions are 100% instrumentation and E284's premise, its fractions, its predeclared discriminator and E288's "depth does not discriminate" all collapse together. Second check: add a per-scan NDTR/sequence validity flag and a count of scans rejected by it.
+>
+> ---
+>
+> ### CHALLENGE 2 — `raw1_run = 1` is an arithmetic necessity. The observer has ~0 statistical power, and the ≥10 arm requires a 900× higher event rate than measured. **SUSTAINED** (your explanation (b), and worse than posed).
+>
+> Expected longest run of successes under independent Bernoulli, `≈ ln(N·p)/ln(1/p)`, at N = 885,922:
+>
+> | bin | n | p | expected max run | observed |
+> |---|---|---|---|---|
+> | raw0 (970) | 1534 | 1.7e-3 | 1.15 | **1–2** |
+> | raw1 (950) | 255 | 2.9e-4 | 0.68 | **1** |
+> | raw2 (930) | 19 | 2.1e-5 | 0.27 | **1** |
+> | raw3 (910) | 5 | 5.6e-6 | 0.13 | **1** |
+> | dep0 (995) | 31125 | 3.5e-2 | 3.09 | **31** |
+>
+> Every raw bin's observed run equals the independent-noise prediction rounded up. `dep0` exceeds it 10×. **The raw bins show zero clustering; the mean bin shows real persistence.** To have even a 50% chance of observing `raw1_run = 2` you need `n ≈ √N ≈ 940`; measured `n` is 178–386. The single run in the cohort that shows `raw1_run = 2` (`e286-275_03`) is the run with the largest `raw1_n = 386` — run length is a deterministic function of count here, so "how long" carries no information independent of "how often". E288's self-criticism ("I predicted the wrong field, conflating how often with how long") is inverted: in this data they are the same field.
+>
+> **The ≥10 arm is unreachable by construction.** `run ≥ 10` needs `p ≥ (1/787000)^0.1 = 0.257`, i.e. `raw1_n ≥ ~202,000` of 787,000 scans — the raw scan below the line **a quarter of the time**. The clean side measured p = 0.0003. The two arms of the predeclared test are separated by **three orders of magnitude in rate with nothing in between assigned any meaning.** The uncovered cells you asked about — latch shows 1, or shows 4–9 — are not edge cases; under the measured rate they are the *overwhelmingly likely* outcomes.
+>
+> **The author is right to refuse "confirmed", and for the wrong reason.** He treats it as a two-sided test awaiting its second side. It is a test whose positive arm requires a near-total bus collapse that would be obvious in `bus_min`, `filt_bus` and `BEMFDONE reason` without any observer. **As posed it is unfalsifiable: every non-catastrophic latch lands in the uncovered region.** This is the campaign's own [[predeclare-the-falsification-bar]] rule un-applied — no n, no power calculation was done before the instrument was built.
+>
+> **Additional defect, conclusion-changing: `RAW_DEPTH_TRIP_IX = 1` is the wrong bin at the rungs that fail.** `FastBusSag` trips at `0.95 · filt_bus` (`protection.rs:526-529`), but `BusDepth::observe` judges fractions of **`ref_bus`** (`states.rs:349-350`). At duty 150, `0.95·1215/1217 = 948‰` → bin 950 is correct. At duty 550, `0.95·1193/1218 = 930‰` → the guard's line coincides with `RAW_DEPTH_FRACTIONS[2] = 930`, **not [1] = 950**. `raw1` is 2% shallower than the guard's real line at exactly the failing rungs. The const-assert at `protection.rs:229` locks in this mislabel, and the doc comment at `:225-227` asserts the false identity. So the discriminator is read against a bin that means "the guard's line" at the clean end and "shallower than the guard's line" at the latching end — a bias **toward** longer runs at the failing rung, i.e. toward confirming the hypothesis.
+>
+> **Settling check:** re-index the trip bin to the guard's own comparison — feed `BusDepth` the *filtered* reference (`sag.filtered()`), not `base.bus_ref` — or add a fifth bin computed as `0.95·filt_bus` directly. Until then no `raw1_run` comparison across rungs is valid.
+>
+> ---
+>
+> ### CHALLENGE 3 — The observer's cost is measurable, was measured by accident, and was never audited. It costs 3.4% of foreground loop throughput. **SUSTAINED.**
+>
+> Scan rate: `drive_scans` 885,922 over `closed_ms` 84,776 → **10,450 scans/s** (TIM6 at 9901 Hz TRGO, `timers.rs:191`; `ticks` 885,934 over the 90 s window). ~886k observer calls per run.
+>
+> Matched-rung A/B at duty 150, same 90 s window, `loop_iters_closed / ticks`:
+>
+> | image | raw observer | iters/tick |
+> |---|---|---|
+> | e282-150_01/02/03 | no | 4.6379 / 4.6410 / 4.6403 |
+> | e284-150_01 | no | 4.6505 |
+> | **e286-150_01/02/03** | **yes** | **4.4884 / 4.4887 / 4.4860** |
+>
+> Four runs a side, zero overlap, within-group spread <0.003. **−3.40% of foreground iterations, repeatable.** At 4.65 iters/tick the iteration period is ~21.7 µs, so 0.162 lost iterations ≈ **3.5 µs (~225 cycles) per scan** — for what E284 describes as "four comparisons and a handful of adds". Either the cost is real and an order of magnitude above the entry's characterisation, or `loop_iters_closed` is not a clean proxy; **nobody checked which**, and that is the finding.
+>
+> The audit was structurally skipped, and the source says so: `protection.rs:250-252` — *"This runs in thread mode... `isr_diff.py` and `isr_audit.py` cannot see it."* `WCET_ESTIMATES.md` covers ISR roots only and contains no mention of `BusDepth` or the scan path. So the campaign's cost-audit tooling is blind to the one place this observer lives, and E284's cost claim is an assertion with no instrument behind it.
+>
+> **Foreground is confirmed** — `scan_pass` is called from `pass_inner` (`states.rs:288-290`), reached from the run loop, not from any ISR. Your instruction to verify rather than trust the entry was warranted and the entry is correct here.
+>
+> **Risk metrics did not move at 150:** `spent_max_us=11`, `late_arms=0`, `com_preempts=0`, `gap_max_us` 104–108 both eras, `track_max_us` 654–660 both eras, `loop_gap_max_us` 140–170 both eras. So at 15% the cost bought no timing regression. But `iters/tick` falls with duty on the new image — 4.488 (150), 4.342 (200), 4.179 (250), 4.157 (275), 4.097 (288) — and the pre-observer 525/550 images ran 3.38 / 3.34. **Extrapolating the 3.4% tax onto a 60% rung where headroom is already 28% lower is an untested projection**, and 60% is where you intend to qualify.
+>
+> **Settling check:** bracket `raw_depth.observe` with TIM17 (M0+ has no DWT) and emit max + sum cycles; DCE-safe (`black_box` the result). Then re-run the A/B at 500, three runs a side, before any 60% attempt.
+>
+> ---
+>
+> ### CHALLENGE 4 — Reads are coherent, but the DMA snapshot's own safety precondition is violated in every capture, and the observer sits upstream of two hard stops. **PARTIALLY SUSTAINED — one item is serious.**
+>
+> **(a) Tearing between `scan.bus` and `scan.vref`: NOT SUSTAINED as a register-read race.** `hal.scan()` returns one `RawScan` built from five `read_volatile`s of a static DMA buffer (`adc.rs:295-312`), and `bus_ref` is an immutable `Baseline` field. No cross-ISR pairing.
+>
+> **(b) But the snapshot's coherence rests on a timing argument that the reports falsify.** `adc.rs:308-310`: *"the DMA does not rewrite until the next TIM6 trigger, ~88 µs after the transfer-complete interrupt."* There is no double buffer, no NDTR check, no sequence counter. Measured `loop_gap_max_us` is **140–192 µs in every capture** (192 in `e252-525_02`) — more than the 101 µs scan period and **more than double the stated 88 µs no-rewrite window.** On those iterations the DMA has re-triggered and is rewriting the buffer while the reader is between iterations; a snapshot straddling that point mixes cycle N's bus with cycle N+1's VREFINT. **That is the exact signature of the single-scan "bus low, vref normal" excursions in Challenge 1.** The report records only the *maximum* gap, so the *number* of gaps over 88 µs — which is the predicted count of torn scans — is unmeasured. Compare `raw1_n ≈ 200` of 886k. This is the campaign's [[check-the-instrument-transfer-function]] rule: a max-only recorder makes the tear-count unfalsifiable.
+>
+> **(c) The observer delays two hard stops on every scan.** In `scan_pass`, order is: `bus_min` → `rail.feed` → early stops → `depth.observe` → **`raw_depth.observe`** → `sag.observe` (hard stop) → `current.accumulate` (hard stop). The doc claims it "can pre-empt none" — true for preemption, **false for latency**. Every `FastBusSag` and `AverageCurrent` verdict is now issued ~225 cycles later than before, on every scan, for an observer that by Challenge 1 is measuring the ADC.
+>
+> **(d) The stated reason for that placement is already false.** `states.rs:342-343` says the observation sits before the verdict "so it covers the deciding scan of any stop". It does not: the `Reason::Bus` absolute-floor stop and the rejected-phase-code stop return at `states.rs:334`, **before** `raw_depth.observe`. The one observer built to catch deep single-scan dips is blind to the deciding scan of the stop that fires on deep single-scan dips. It is also gated behind `if self.rail.ready()`, so the observer that does not need the 8-scan window inherits it and discards the first 8 scans of every run.
+>
+> **(e) Overflow: NOT SUSTAINED.** `below`/`run`/`longest` are `u32` with `saturating_add`; 886k scans per 90 s run against 4.29e9. ~72 hours of continuous drive to saturate.
+>
+> **Settling check:** read NDTR at snapshot and count invalid scans; histogram loop gaps (or just count gaps > 88 µs) and compare that count against `raw1_n`; move `raw_depth.observe` after `current.accumulate` and above the early-return, which costs nothing and fixes both (c) and (d).
+>
+> ---
+>
+> ### CHALLENGE 5 — E287's fix is incomplete and introduces a new misreading hazard: one `BEMFCURRENT` line now carries **two different mA scales** and a single `ma_allow` that does not say which fields it governs. **SUSTAINED — this is the highest-value finding in section 5.**
+>
+> `run/mod.rs:258-268`. `mean_ma`, `hold_ma`, `worst_ma`, `worst_hold_ma` all scale by `ctx.current.allow()`. **`zero_drift_ma` hardcodes `RAW_LIMIT`:**
+>
+> ```rust
+> zero_drift_ma: zero_end.map_or(0, |z| {
+>     ((i64::from(z) - i64::from(ctx.base.zero_block)) * 4_000 / i64::from(RAW_LIMIT)) as i32
+> }),
+> ```
+>
+> Verified against the raw capture, `e280-prot500-i_01`: `mean_residual=13923 mean_ma=175132` → divisor 318 (= `RAW_LIMIT/100`); `zero_start=618335 zero_end=617326 zero_drift_ma=-126` → −1009 × 4000 / 31857 = −126, divisor 31857. **Two scales, one line.** `ref_ma` (from the `oracle_ma` const table) is a third fixed-scale field. So E287's own reader instruction — "A reader can now divide" — **corrupts `zero_drift_ma` by 100× and `ref_ma` by 100× if followed**, which is a worse failure mode than the one it fixed, because it is now sanctioned by a field in the report.
+>
+> **Does it make old captures interpretable? No.** `ma_allow` is absent from every pre-E287 capture, so the ~40 injected captures in the corpus remain undecodable except by knowing `Inject::AverageCurrent` was used — which is exactly the information the fix was supposed to stop requiring. Verified: `grep -l ma_allow captures/2026-09-24/e286-*.txt` → 0 of 10 (see Challenge 7).
+>
+> **Other quantities against a mutable reference, not fixed:**
+> - **`hold_blocks` / `hold_ma` are silently destroyed by the same injection.** `Inject::AverageCurrent` replaces the whole accumulator (`states.rs:444`: `self.current = AverageCurrent::new(...)`), which resets `blocks`, `total`, `worst`, `worst_hold` **and drops the hold mark**. `e280-prot500-i_01` reads `blocks=2 hold_blocks=0 hold_ma=0` — the hold accounting is zeroed and nothing says so. E287 fixed the scale and left the mark.
+> - **`Inject::Sag` mutates `applied_duty`** (`states.rs:427-437`), so in an injected capture `duty_tenths` / `ref_ma` describe the label and `applied_ccr` describes the step. `e280-prot500-v_01` is labelled 500 and ran 575; E284 then cites that run's 44 codes as "the 575 injection run" while its own `BEMFCURRENT` says `duty_tenths=500`. Two entries later that provenance is only recoverable from prose.
+> - **`ceiling_tenths < duty_tenths` is documented as invalidating every figure on the line** (`report.rs:400-408`) and is still not a gate — `e280-prot500-i_01` reports `duty_tenths=500 ceiling_tenths=450` and all its mA figures were measured at a lower duty than labelled.
+>
+> **Settling check:** emit either one scale for the whole line, or a per-field scale tag; add a `scale_uniform` / `hold_valid` flag the host asserts; and put `ceiling_tenths < duty_tenths` behind a loud host-side refusal instead of a doc comment.
+>
+> ---
+>
+> ### CHALLENGE 6 — The process account is incomplete. **SUSTAINED.** Three more missing entries, one misdiagnosed cause, and an unmanifested ELF.
+>
+> **Missing numbers in E250–E289** (`grep -n "^### E2"`): **E253, E254, E258, E284, E287.** E288 admits two. The other three are the same class and have captures on disk proving experiments ran: `e253-550_01..03` (the 550 cohort, including the campaign's only sag latch), `e258-ctrl550_01`, and E254 which survives only as a passing reference inside E276 (`LAB_NOTEBOOK.md:23150`, "E254 fixed this key's prerequisite"). **The three 550 runs that are the entire basis for E284's "including the two that passed" have no notebook entry of their own.**
+>
+> **E288's diagnosis of its own misattribution is wrong.** It says E286 credited the observer to E285 as "numbering drift... I reached for the nearest number that existed." `git log -S RAW_DEPTH_FRACTIONS -- src/protection.rs` returns exactly one commit: **`43e60a6`, whose message is "E285 — I read a tool's silence as confirmation".** E284 has no commit of its own; its code is buried inside E285's. So E286 did not reach for a wrong nearby number — **it faithfully cited what git says**, and the real defect is that a named change was committed under another entry's message. That is a different and more mechanical failure than the one E288 confesses, and the confession's "corroborating symptom" section is therefore also wrong.
+>
+> **Unmanifested image.** `captures/elf/480263F1.e286-rawdepth.elf` exists on disk but has **0 entries in `captures/MANIFEST-hashes.txt`** (39E0500A and 7CCCE8A8 both have 1). The image producing the campaign's current data is unhashed.
+>
+> **Doc-comment scan: NOT SUSTAINED as a pattern.** A sweep of `src/**/*.rs` for the signature (two sentence-complete `///` blocks concatenated onto one field, second citing an E-number) finds no other instance. The `CurrentRecord` case appears unique, and the fix at `report.rs:370-388` is correct and records its own history.
+>
+> ---
+>
+> ### CHALLENGE 7 — Already caught by the author, correctly, in E289 — but E286's own header names the wrong image and E289 does not mention it. **NOT SUSTAINED as posed; a residual finding stands.**
+>
+> E289 establishes by field-presence (0 of 10 `e286-*.txt` contain `ma_allow`; `raw1_run` present) plus timestamps (ELF 22:10:08, `c74aa08` 22:36:26) that the walking image contains E284 and **not** E287, that the walk qualifies `480263F1` and nothing else, and that E287's emission is unexercised on hardware. That is the right method — field-presence over narrative — and it is the right conclusion. Independently confirmed here: `ma_allow` absent from all 13 `e286-*` captures; `raw1_run` present in all 13.
+>
+> **Residual:** E286's predeclaration opens *"Image `39E0500A.e283-backstop.elf`"*, and its prediction 4 discusses the raw-depth observer, **which does not exist in 39E0500A**. The captures report `elf_crc32 480263F1`. So the predeclaration is internally contradictory and names an image the walk did not run on — the same class of error E289 corrects, one entry earlier and unmentioned. Under "diagnostic results never qualify another image", the walk's 30 runs qualify `480263F1`, an image that is neither the one its predeclaration names nor present in the manifest.
+>
+> ---
+>
+> ### THE ONE THING THAT WOULD CHANGE MOST
+>
+> E286's prediction 4 stated its own falsifier: *"A large value at low duty would mean the raw bus routinely goes 5% down even when nothing is loaded, which would make the whole depth-and-duration reading wrong."*
+>
+> Measured at 15% duty, 6 mA hold: **`raw1_n = 255`** — 20–30 excursions per second past the guard's line at essentially zero load, with `raw3` (9% down) firing 5 times. The predicted value was 0. E288 records the prediction as *"Refuted, and informatively"* and then reclassifies it as having named the wrong field — `run` instead of `n` — and proceeds. **The falsifier fired on the count, the entry's own text says what a large count means, and the count was reassigned to a wording error rather than tested.** Combined with depth being negatively correlated with duty and current, and `raw*_run` matching pure-independence predictions in all four bins while `dep0_run` exceeds them 10×, the artifact hypothesis is not a competing explanation to be weighed — it is the one the data favours, and E284's premise, its fractions, its trip index and its predeclared discriminator all rest on it.
+>
+> **Do the bridge-off 90 s control run before anything else.** It costs one flash, energises nothing, risks no motor, and it decides whether this instrument measures the rail or the ADC.
+
+**Disposition:** accepted, and it is the more important of the two reviews.
+Challenges 1, 2, 5 and 6 are sustained and change conclusions; 4(b) is sustained
+and supplies a mechanism; 4(c)/(d) are sustained and owed; 4(a)/(e) are
+correctly not sustained and I had not checked (e) either. One correction to it,
+recorded above: the Challenge 3 A/B images differ by more than the observer, so
+−3.3% is an image delta with the observer as leading candidate, not a measured
+observer cost. Its Challenge 2 fix and the evidence review's item 1 are the same
+defect, found independently from opposite directions, and both are repaired.
+
+Its closing instruction is adopted as the campaign's next action.

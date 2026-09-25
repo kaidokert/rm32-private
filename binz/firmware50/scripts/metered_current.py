@@ -43,7 +43,13 @@ def runs():
         # got pooled into "the interval has flattened".
         inj = re.search(r'\binject=(\d+)', t)
         provoked = (inj and inj.group(1) != '0') or 'provoked=1' in t
-        rs = re.search(r'\breason=(\d+)', t)
+        # **Anchored on its line.** `reason` is emitted by THREE lines --
+        # BEMFDONE, BEMFCOAST and BEMFGUARD -- and a flat `\breason=` matched
+        # whichever came first in the file. That was BEMFDONE only by emission
+        # order, not by anything guaranteed: reorder the report and this reader
+        # silently starts classifying runs by the coast or guard reason instead.
+        # Eight key names are ambiguous this way; see `cohort.ambiguous_keys`.
+        rs = re.search(r'^BEMFDONE .*?\breason=(\d+)', t, re.M)
         sag = re.search(r'BEMFSAG ref_bus=(\d+) ref_vref=(\d+) filt_bus=(\d+) filt_vref=(\d+)', t)
         droop = None
         if sag:
