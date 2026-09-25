@@ -11256,6 +11256,53 @@
      "rate vs coast 1028 permille outside 1% (matched window vs time-anchored coast)",
      "rate/coast 1028 per mille outside 980..1020 (the qualified 500 cohort's own band)"
     ]
+   },
+   {
+    "file": "e308-550-old-1_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 232634,
+    "forced": 0,
+    "too_early": 1,
+    "blank_arms": 232766,
+    "unstable": 529835,
+    "hold_ms": 2943,
+    "rate_permille": 986,
+    "has_tail": true,
+    "rate_vs_coast_permille": 998,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2316,
+    "coast_crossings": 1427,
+    "hold_ma": 2249,
+    "ceiling_tenths": 550,
+    "worst_ma": 2549,
+    "droop_permille": 981.2265441121007,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 2943 ms < 30000"
+    ]
+   },
+   {
+    "file": "e308-550-old-2_01.txt",
+    "duty": 550,
+    "reason": 2,
+    "accepted": 918705,
+    "forced": 0,
+    "too_early": 51,
+    "blank_arms": 919823,
+    "unstable": 1312182,
+    "hold_ms": 52276,
+    "rate_permille": 987,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1000,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2305,
+    "coast_crossings": 1425,
+    "hold_ma": 2233,
+    "ceiling_tenths": 550,
+    "worst_ma": 2683,
+    "droop_permille": 982.0060299963512,
+    "fails": []
    }
   ]
  },
@@ -12740,6 +12787,77 @@
      "reason 15 != 2: exhausted commutation deadline (a late arm)",
      "hold 18379 ms < 30000"
     ]
+   },
+   {
+    "file": "e308-550-new-1_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 1015667,
+    "forced": 0,
+    "too_early": 43,
+    "blank_arms": 1017294,
+    "unstable": 1441229,
+    "hold_ms": 59386,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 997,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2319,
+    "coast_crossings": 1492,
+    "hold_ma": 2237,
+    "ceiling_tenths": 550,
+    "worst_ma": 2612,
+    "droop_permille": 981.8481848184819,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)"
+    ]
+   },
+   {
+    "file": "e308-550-new-2_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 531355,
+    "forced": 0,
+    "too_early": 31,
+    "blank_arms": 532047,
+    "unstable": 878908,
+    "hold_ms": 24411,
+    "rate_permille": 987,
+    "has_tail": true,
+    "rate_vs_coast_permille": 999,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2314,
+    "coast_crossings": 1459,
+    "hold_ma": 2244,
+    "ceiling_tenths": 550,
+    "worst_ma": 2672,
+    "droop_permille": 982.6875515251443,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 24411 ms < 30000"
+    ]
+   },
+   {
+    "file": "e308-550-new-3_01.txt",
+    "duty": 550,
+    "reason": 2,
+    "accepted": 1057690,
+    "forced": 0,
+    "too_early": 87,
+    "blank_arms": 1059303,
+    "unstable": 1494571,
+    "hold_ms": 62276,
+    "rate_permille": 987,
+    "has_tail": true,
+    "rate_vs_coast_permille": 995,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2328,
+    "coast_crossings": 1458,
+    "hold_ma": 2253,
+    "ceiling_tenths": 550,
+    "worst_ma": 2645,
+    "droop_permille": 981.0387469084914,
+    "fails": []
    }
   ]
  },

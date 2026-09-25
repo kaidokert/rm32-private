@@ -27924,3 +27924,128 @@ underpowered*, and I will say that rather than claim the hypothesis is settled.
 
 The batch needs one more run per side. That is the cost of the reset: two runs,
 plus the 575 accident, plus a lost capture.
+
+### E310 — the image hypothesis is dead. The 550 latch rate is a session effect.
+
+The in-session ABAB is complete. **It refutes the hypothesis E307 predeclared,
+which is the outcome that was worth paying for.**
+
+*(Numbering note: E307 said the two reviews of E305 would be appended "in E308".
+E308 and E309 became the records of my reset damage instead. The reviews are
+appended verbatim in E311; the pointer in E307 is wrong and stays wrong, being
+append-only.)*
+
+#### The result, as a rate against exposure
+
+Rung 550, un-injected, scored as latches per million accepted arms — which is
+the form the adversarial review asked for, because a run that stops early has
+less exposure and a raw count hides that:
+
+| cohort | latches / runs | arms | **per 10⁶ arms** |
+|---|---|---|---|
+| **`0D8E3799` (old), in-session 09-25** | **1 / 2** | 1 151 339 | **0.87** |
+| **`7D3B70F0` (new), in-session 09-25** | **1 / 2** | 2 073 357 | **0.48** |
+| `0D8E3799` (old), prior session 09-24 | 0 / 4 | 2 635 944 | **0.00** |
+| new lineage, prior batch `e305` | 5 / 6 | 3 445 742 | **1.45** |
+
+*(The new side's in-session count is 1/2 from files because E308 destroyed
+`new-2`'s capture; its verdict — a latch — is known from the log, which would
+make the new side 2/3 and ~0.77 per 10⁶. Either way it is the same number as
+the old side.)*
+
+**In-session, the two images are indistinguishable: 0.87 against 0.48–0.77 per
+10⁶ arms, on ~1–2 M arms a side.** Fisher on 1/2 vs 1/2 is p = 1.0.
+
+**And the same old image went 0.00 → 0.87 per 10⁶ between sessions**, having
+never latched once in 2.64 M arms on 09-24 and latching on its first run on
+09-25.
+
+#### So the image hypothesis is dead, and E307's own table says what that means
+
+E307 predeclared: *"both latch → the image hypothesis dies; the session/bench
+term is live and the ratchet is a property of the rung."* Both latched.
+
+**What is now established:**
+
+1. The rung-550 `LateArm` is **not** a regression in the E281 → E303 chain. The
+   image that predates all of it latches at the same rate in the same session.
+2. The estimator ratchet verified in E307 — the gate `count > average_interval
+   >> 1` walking the estimate 71 → 62 → 48 → 40 in three accepts — is **a
+   property of the rung's arithmetic**, present identically in every image
+   (`ADC_COMP` byte-identical across all of them), and it fires intermittently.
+3. **A session term is real and it is large** — a factor of at least 2, and
+   plausibly the whole 0.00 → 1.45 span.
+
+That third point is the one I did not expect and cannot dismiss. My standing
+rule is [[feedback-bench-never-drifts]]: a failure is **always** a code cause to
+bisect, never "drift", unless the operator names a physical fault. **I have now
+controlled for the code — same rung, same session, byte-identical ISR roots,
+ABAB alternated, flashed and hashed per side — and the code does not explain
+it.** That is precisely the condition under which the rule permits looking
+further, and it is the first time this campaign has met it.
+
+#### What could vary by session, and how to tell — stated without guessing
+
+Candidates, each with the measurement that would discriminate it:
+
+| candidate | discriminator, already in the captures |
+|---|---|
+| supply/path resistance | the droop-per-amp law: **0.9 %/A, flat 250→550**, source ≈ 0.10 Ω. Recompute it per session — a change here is the [[reference-bench-power-path-resistance]] fault class, which has a documented history on this bench. |
+| thermal | `zero_drift_ma` per run, and the first-run current deficit of E293. Both are already emitted. |
+| rotor / mechanical | `BEMFSELFREF coast_ehz` at matched duty across sessions, and `hold_ma` at matched duty. |
+| window length | the 09-24 old-image runs used `total_ms = 80 000`; 09-25 used 80 000 (old) and 90 000 (new). **Normalising by arms already removes this**, which is why the rate table above is the right form. |
+
+**I am not going to name a cause.** The honest statement is that the code is
+controlled for and the session term is unexplained, and the next batch measures
+the candidates rather than assuming one.
+
+#### The cost of this batch, stated plainly
+
+Predeclared three runs a side; **delivered two usable per side**, because one
+careless `probe-rs reset` of mine destroyed a completed capture (E308) and
+corrupted another run's pre-key sequence into an unintended rung-575 drive
+(E309). So:
+
+* the verdict is **directionally clear but formally underpowered** — I said ~2 M
+  arms a side to resolve a 3× difference, and the sides are ~1.15 M and ~2.07 M
+  with one latch each;
+* the refutation nevertheless holds, because it does not rest on a rate
+  *difference*. It rests on the old image **latching at all**, which it had
+  never done in 2.64 M arms. One latch is sufficient to kill "this image never
+  does it"; no n is required to falsify a universal.
+
+That last point is worth keeping: **the batch is underpowered for the
+comparison it was designed to make and fully powered for the refutation it
+actually delivered**, because the hypothesis was a universal and universals die
+to a single counterexample.
+
+#### What is withdrawn, and what is next
+
+**Withdrawn:** "the 550 LateArm is a regression in the E281→E303 chain" — my own
+hypothesis from E306/E307, refuted by the experiment I designed to test it. Also
+withdrawn is the framing that the E308-era images are suspect: they are not.
+
+**Next, per the goal's rule 1 — the question, the prediction, the smallest test,
+the decision:**
+
+> **Question.** What varies between sessions such that the same image latches at
+> 0.00 and then 0.87 per 10⁶ arms at the same rung?
+>
+> **Smallest sufficient test.** Recompute the four discriminators above from
+> captures **already on disk** — droop-per-amp, `zero_drift_ma`, coast speed at
+> matched duty, `hold_ma` at matched duty — per session. **Zero bench time.**
+> The goal's rule 3 says reuse valid captures and offline replay before
+> spending runs, and this question is entirely answerable from the corpus.
+>
+> **Prediction.** If it is the power path, droop-per-amp rises measurably
+> between 09-24 and 09-25 at matched duty. If it is thermal, `zero_drift_ma`
+> differs. If none of the four moves, the session term is not any of them and
+> the next step is a within-session rate measurement at fixed everything — which
+> is expensive and should only be bought after the free analysis fails.
+>
+> **Decision it changes.** Whether the next bench batch measures the rail, the
+> thermal state, or the estimator gate itself.
+
+The estimator ratchet remains the mechanism and is untouched by any of this; it
+is *why* a latch happens. The session term is *how often*. Those are different
+questions and I had been conflating them.
