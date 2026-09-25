@@ -25419,3 +25419,126 @@ comparison cohort.
 E290's band derivation stands on its own evidence and is computed when the
 thirtieth run lands, under the rule fixed there before the data existed:
 `median ± ceil(3.5 × sd_about_trend)`, the stricter of the two candidates.
+
+### E293 — at 26 of 30 runs: E290's reasoning is refuted by its own data, and the cohort is not homogeneous
+
+Three findings, all recorded **before the last three runs land**, because two of
+them change how the band is computed and the third is a measurement defect I
+first described wrongly.
+
+#### 1. The duty trend that justified E290's rule was a four-rung artifact
+
+E290 departed from E286's pooled-sd rule on the grounds that the pooled figure
+contained a real monotonic duty trend, and that "a trend is not scatter". With
+four rungs that trend measured **+25.63 ‰ per 1000 duty-tenths**, +3.20 ‰ across
+150 → 275.
+
+With eight rungs it is **+0.90 ‰ per 1000 tenths — +0.17 ‰ across the whole
+range** — and `sd_about_trend` (1.785) equals the pooled sd (1.786) to three
+decimals. Rung 325 reads **996 / 999 / 997**, *below* rung 150. The monotonic
+rise was four points of noise that happened to ascend.
+
+| rung | values | mean | sd |
+|---|---|---|---|
+| 150 | 1000, 997, 999 | 998.67 | 1.528 |
+| 200 | 999, 1001, 1001 | 1000.33 | 1.155 |
+| 250 | 1001, 1000, 1001 | 1000.67 | 0.577 |
+| 275 | 1002, 1003, 999 | 1001.33 | 2.082 |
+| 288 | 1001, 1002, 1000 | 1001.00 | 1.000 |
+| 300 | 1001, 1002, 1001 | 1001.33 | 0.577 |
+| 325 | **996, 999, 997** | 997.33 | 1.528 |
+| 338 | 999, 998, 997 | 998.00 | 1.000 |
+
+**So E290's rule survives and its justification does not.** Both readings now
+give the same answer because the trend is nil, which is the only reason this
+costs nothing. I am not quietly keeping the rule and dropping the argument: the
+argument was wrong, I made it on four rungs when I had predeclared thirty, and
+the lesson is that **I derived a correction to a statistic from a third of the
+data I had already said I would use.**
+
+It also retires E290's §5, which extrapolated the trend to rung 600 and
+predeclared that I would not treat a high-rung rate offset as a defect until the
+trend was measured or excluded. **It is now excluded**, at least across
+150 → 338, and that conditional is discharged rather than left standing.
+
+#### 2. The cohort spans two advance levels, and I found it by reading a log line
+
+Rungs 350 and 375 run **`advance_level=22`**; 150 → 338 ran **20**. The ladder
+switches partway up. So E286's "those 30 runs" is **24 runs at advance 20 and 6
+at advance 22**, and a band pooled over all of them averages two different
+control parameters.
+
+The field was in `BEMFRUN` on every capture in the campaign and nothing ever
+looked at it — not `cohort.parse`, not any of the scoring scripts. I noticed
+because I happened to `tail` the walk log while waiting. That is the same class
+as the ambiguous-key census in E290: a quantity sitting in plain text, load-
+bearing, unread.
+
+`derive_band.py` now reads it per capture and prints the per-level breakdown
+**before** any pooled statistic, so the mixture is visible ahead of the number
+derived from it.
+
+**The rule, fixed now:** the band is computed as E286 predeclared — pooled over
+all 30 runs — **and** reported for the advance-20 subset alone. If the two give
+different half-widths I report both and say the cohort was not homogeneous; I do
+not pick. What I will not do is silently substitute the 24-run figure because it
+is cleaner, having already made exactly that mistake once this entry.
+
+At 24 runs the advance-20 figures are median **1000.0**, sd **1.857** → ±7 →
+**993..1007**. Every candidate band from 990–1010 down to ±4 currently leaves
+**0 of 24 outside**, so E286's stop condition has not fired.
+
+#### 3. The first-run current under-read is the session's first run, not each rung's
+
+E291 reported a corpus-wide asymmetry — 43 groups where run 1 reads much lower
+in `mean_residual`, 1 higher, 186 similar — and I described it as a first-run
+effect without separating *which* first run. Resolved per rung on this walk:
+
+| rung | run 1 vs its siblings |
+|---|---|
+| **150** | **−81.8 %** |
+| 200 | +8.1 % |
+| 250 | −6.7 % |
+| 275 | −3.8 % |
+| 288 | −8.9 % |
+| 300 | +3.1 % |
+| 325 | −3.5 % |
+| 338 | −2.6 % |
+
+**Only the session's very first powered run is affected**, and every subsequent
+rung's run 1 scatters both directions within ±9%. It is a **fixed additive
+deficit of roughly 450 raw units**, which is ruinous at rung 150 only because
+the true residual there is ~548 — the same order as the error. `hold_ma` reads
+**6** against siblings' 63 and 60, and the resulting `current_pct = −89.7`
+flagged `verdict=STOP` on a run that passed every gate.
+
+So the corpus signal was real but I read its shape wrong: those 43 low groups
+are **session-first runs**, and they looked like "low duty" because the lowest
+rung is always what a session walks first.
+
+**Mechanism, stated as a hypothesis with its test.** `residual = zero_block −
+sum`, and the zero block is captured once before each run. On the session's
+first run the DRV8304's shunt amplifiers have only just been biased by `EN`
+going high for the first time, so an offset still settling when the zero is
+taken makes every later block read low. The control run tests it directly and
+for free: phase B's `EN` low → high transition *is* that event, and
+`shunt_first/last/min/max/drift` now record it.
+
+**And a correction to my own safety claim in the other direction.** I flagged
+this as "in the unsafe direction" before measuring the magnitude per rung. The
+same residual feeds `AverageCurrent`, so a 450-unit deficit against
+`RAW_LIMIT = 31 857` makes the 4 A trip **~1.4 % late** — real, bounded, and far
+smaller than "unsafe direction" implied without a number attached. The genuine
+cost is to the *current oracle comparison* on session-first runs, which is a
+measurement problem, not a protection one.
+
+#### What is still owed
+
+The three missing entries (E253, E254, E258); the `raw_depth` placement move
+(above the `early` return and after `current.accumulate`, which fixes both the
+blind deciding scan and the two delayed hard stops); a `hold_valid` flag for
+injected captures whose hold accounting `Inject::AverageCurrent` silently
+zeroes; a loud host refusal on `ceiling_tenths < duty_tenths`; an NDTR or
+sequence-validity flag on the ADC snapshot; and a clean observer-cost A/B on an
+image differing only by the observer, since E291's −3.3% is an image delta and
+not yet an attributed cost.
