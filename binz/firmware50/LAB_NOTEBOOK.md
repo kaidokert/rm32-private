@@ -27337,3 +27337,125 @@ precisely what `bin/sag-capture.rs`'s **0-of-7** history hints at. So:
 That is the honest cost of recording at all, and it is why the next step pairs
 the ring runs with no-ring runs rather than treating six clean ring runs as an
 answer.
+
+### E305 — the 55% failure is a timing stop, reproducibly, on both images — and I still have no sequence
+
+Six runs at rung 550, **alternating two images in one session**, each side flashed
+and hashed. Both mandated reviews were dispatched on this batch's conclusion and
+are appended in E306.
+
+| # | side | reason | hold_ms | `ci_us` | `ci_min` | thin | too_early | `hold_ma` | `filt_bus` |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | ring | **15** | 40 474 | 59 | 53 | 4560 | 15 | 2249 | 1191 |
+| 2 | no-ring | 2 | 62 274 | 72 | 49 | 1957 | 36 | 2249 | 1189 |
+| 3 | ring | **15** | 7 515 | 62 | 53 | 1030 | 4 | 2273 | 1189 |
+| 4 | no-ring | **15** | 18 048 | 40 | 40 | 699 | 8 | 2244 | 1189 |
+| 5 | ring | **15** | 18 923 | 54 | 49 | 2305 | 8 | 2261 | 1192 |
+| 6 | no-ring | **15** | 18 379 | 55 | 49 | 759 | 16 | 2234 | 1190 |
+
+**`reason = 15` is `Reason::LateArm` (`protection.rs:64`). Five of six runs
+latched it — ring 3/3, no-ring 2/3.**
+
+#### What is firmly established
+
+**The 55% failure is a timing stop, not a bus event.** `BEMFSAG streak = 0` and
+`tripped = 0` on **all six** runs: the sharp guard never reached streak 1.
+`hold_ma` is a steady 2234–2273 mA against a 3 A clamp, `ceiling_tenths == duty`
+on every run (no foldback), and `filt_bus` sits at 1189–1192 against
+`ref_bus` ~1212 — **1.8% down, not suppressed**. So none of the three
+disqualifiers the goal names (sustained CC, suppressed bus, foldback) is
+present, and the stop is the arm deadline.
+
+**It is not an observer artifact.** The no-ring image — production's own
+recorder, which records nothing — latched 2 of 3. The recorder makes it more
+likely (3/3 vs 2/3, and `thin_count` runs 1030–4560 on the ring against
+699–1957 without it), but it does not manufacture the failure.
+
+**And there is no session drift.** `filt_bus` flat to 3 codes across all six,
+`hold_ma` flat to 1.7%, and `hold_ms` is **not** monotone — 40 k, 62 k, 7.5 k,
+18 k, 19 k, 18 k. The longest hold is run 2 and the shortest is run 3. The last
+three settle at a consistent ~18–19 s with `ci` 54–55 and `ci_min` 49, so the
+failure has a **characteristic time and interval** rather than a degrading
+bench. I checked this before a reviewer could, because
+[[feedback-bench-never-drifts]] makes it my job to look for the code cause and
+[[reference-bench-power-path-resistance]] makes the rail a real fault class —
+neither applies here.
+
+**This supersedes the reading that the only un-injected stop above 525 is a bus
+sag.** That was `e253-550_03` — one run, `reason=26`, on an older image in an
+older session. Five timing stops on two fixed images outweigh it, but the older
+trip is **not** thereby explained: see the open question below.
+
+#### The open question this batch raises against my own conclusion
+
+`ci_us` is the interval estimate **at the stop** (`report.rs`), and it reads
+**40, 54, 55, 59, 62, 72**. Rung 550's steady interval should be ~71, and the
+integer `wait_time` clears an 11 µs arm only above `ci` = 72 (always 74) at
+advance 22. So a stop at `ci` 54–62 is arithmetically consistent with simply
+running out of margin.
+
+**But run 4 stopped with `ci_us = 40` and `ci_min_us = 40`** — its estimate was
+*at its own minimum* at the stop, 31 µs below the rung's steady interval. That
+is not a margin running out; that is an interval **collapsing**. If the interval
+collapses first, `LateArm` is the stop that happens to notice a desync, **not
+the mechanism** — and re-tuning the advance schedule would move which stop fires
+rather than fix anything.
+
+**I am not resolving that from these captures**, because the quantity that would
+settle it — the aligned pre-trip sequence — is exactly what I failed to record.
+
+#### The recorder was compiled in and never armed
+
+**Every capture has `sagrows = 0`, including all five latching runs.** `SagRing`
+starts `on = false` and records nothing until `arm_next_run()`;
+`bin/sag-capture.rs` calls that from its own serve loop, and `Production::serve`
+has no such call. So I built an image whose whole purpose was to record the
+sequence, caught the trip five times, and recorded none of it.
+
+**Third instrument in this batch that was present and inert** — after the
+ratchet's symbol list that matched 1 of 8, and the ratchet's `div` regex that
+could not see its own motivating bug. Fixed (arm at boot under the same
+feature; `Ctx::pass` calls `freeze()` on **any** stop per E181 SS5, so the dump
+is always the window that led to the fault), built, not yet flashed.
+
+#### The recorder's cost, measured — and a claim of mine retracted within minutes
+
+The ring costs **10.008%** of foreground throughput (`loop_iters_closed`
+3 620 853 against 4 023 548 at rung 150, same window, both runs completed).
+
+I then claimed `Trace::push` contained *"2 division-helper calls per row — same
+defect class as E303"*. **That is wrong and I retract it.** The two calls are
+`__aeabi_memcpy` (the 28-byte `Block` and the 8-byte `Slow` copies). My grep
+pattern was `div_rem|__aeabi`, which matches memcpy, and I read the count as
+division. **A too-broad pattern producing a confident wrong reading is the same
+error as the ratchet's too-narrow one, in the opposite direction.**
+
+The real cost is: `record_sag_row` 92 instructions, `Trace::push` 111, two
+memcpys, and **one critical section per row at ~9.9 kHz** — where
+`sagtrace.rs`'s own module comment says a critical section is *unnecessary*
+because the recorder is foreground-only. I verified that claim independently:
+`src/roots.rs` never touches the ring and all eight call sites are in thread-mode
+`states.rs`. So the `interrupt::free` is avoidable cost, and it is a plausible
+mechanism for the ring's higher latch rate — disabling interrupts 9 900×/s
+delays COMP entry, which raises `spent`, which is what `thin_count` measures.
+
+**Also noted so I do not misuse it:** `loop_iters_closed` is a **cumulative**
+counter, so comparing it across runs that stopped at different times (7.5 s to
+62 s here) is meaningless. The rung-150 comparison is valid only because both
+runs completed the same 90 s window.
+
+#### Where this leaves the decision
+
+E304's decision table said a recorded `reason=15` confirms the arm path and
+sends me to the advance A/B. **I am not taking that step yet**, for two reasons
+that the table did not anticipate:
+
+1. The `ci_us = 40` run suggests `LateArm` may be downstream of an interval
+   collapse, and the A/B raises `wait` **by construction** — `thin_count` must
+   fall whether or not the mechanism is the arm. That makes the predeclared bar
+   nearly unfalsifiable, which I should have seen when I wrote it.
+2. The sequence is still unrecorded, and it is the goal's stated first priority.
+
+So the next step is the **armed** ring at 550 — one run, to get the pre-trip
+sequence — and the reviews' verdicts on whether the A/B as designed can
+discriminate at all. Both are in flight.

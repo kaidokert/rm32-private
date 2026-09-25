@@ -142,6 +142,19 @@ fn main() -> ! {
     // so the two cannot be enabled apart.
     #[cfg(feature = "sag-ring")]
     firmware50::hw::fine::init();
+    // **And arm it.** `SagRing` starts `on = false` and records nothing until
+    // `arm_next_run()`; `bin/sag-capture.rs` calls that per run from its own
+    // serve loop, which `Production::serve` does not have. Without this the
+    // ring is compiled in and silent -- which is exactly what happened: the
+    // first rung-550 attempt on this image latched `Reason::LateArm` and
+    // dumped `sagrows=0`, so the decisive trip was caught and not recorded
+    // (E305). Third instrument in this batch that was present and inert.
+    //
+    // Arming once at boot is enough and is simpler than per-run arming: the
+    // ring is bounded and `Ctx::pass` calls `P::G::freeze()` on **any** stop
+    // (E181 SS5), so the dump is always the window that led to the fault.
+    #[cfg(feature = "sag-ring")]
+    firmware50::sagtrace::SagRing::arm_next_run();
     // Belt and braces: whatever the reset state was, the bridge is off now.
     safe_off(&mut Drv8304);
     board::banner(&mut board, adc_ok);

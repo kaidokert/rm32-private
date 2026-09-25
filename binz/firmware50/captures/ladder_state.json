@@ -12667,6 +12667,80 @@
     "droop_permille": 996.7078189300412,
     "fails": []
    }
+  ],
+  "550": [
+   {
+    "file": "e305-550-noring-1_01.txt",
+    "duty": 550,
+    "reason": 2,
+    "accepted": 1055842,
+    "forced": 0,
+    "too_early": 36,
+    "blank_arms": 1057361,
+    "unstable": 1486924,
+    "hold_ms": 62274,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 998,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2307,
+    "coast_crossings": 1421,
+    "hold_ma": 2249,
+    "ceiling_tenths": 550,
+    "worst_ma": 2751,
+    "droop_permille": 981.023102310231,
+    "fails": []
+   },
+   {
+    "file": "e305-550-noring-2_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 442456,
+    "forced": 0,
+    "too_early": 8,
+    "blank_arms": 442984,
+    "unstable": 777783,
+    "hold_ms": 18048,
+    "rate_permille": 986,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1010,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2284,
+    "coast_crossings": 1428,
+    "hold_ma": 2244,
+    "ceiling_tenths": 550,
+    "worst_ma": 2611,
+    "droop_permille": 981.023102310231,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 18048 ms < 30000"
+    ]
+   },
+   {
+    "file": "e305-550-noring-3_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 447244,
+    "forced": 0,
+    "too_early": 16,
+    "blank_arms": 447791,
+    "unstable": 782422,
+    "hold_ms": 18379,
+    "rate_permille": 987,
+    "has_tail": true,
+    "rate_vs_coast_permille": 997,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2320,
+    "coast_crossings": 1467,
+    "hold_ma": 2234,
+    "ceiling_tenths": 550,
+    "worst_ma": 2557,
+    "droop_permille": 981.8481848184819,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 18379 ms < 30000"
+    ]
+   }
   ]
  },
  "B972B0618BE49474C4DC483EB5C56D0044494456929B65940443D8A299C22877": {
@@ -12692,6 +12766,82 @@
     "worst_ma": 822,
     "droop_permille": 999.8404188458785,
     "fails": []
+   }
+  ],
+  "550": [
+   {
+    "file": "e305-550-ring-1_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 751156,
+    "forced": 0,
+    "too_early": 15,
+    "blank_arms": 754819,
+    "unstable": 1158723,
+    "hold_ms": 40474,
+    "rate_permille": 995,
+    "has_tail": true,
+    "rate_vs_coast_permille": 993,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2317,
+    "coast_crossings": 1460,
+    "hold_ma": 2249,
+    "ceiling_tenths": 550,
+    "worst_ma": 2644,
+    "droop_permille": 980.4033674811342,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)"
+    ]
+   },
+   {
+    "file": "e305-550-ring-2_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 295336,
+    "forced": 0,
+    "too_early": 4,
+    "blank_arms": 296256,
+    "unstable": 612823,
+    "hold_ms": 7515,
+    "rate_permille": 996,
+    "has_tail": true,
+    "rate_vs_coast_permille": 997,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2311,
+    "coast_crossings": 1435,
+    "hold_ma": 2273,
+    "ceiling_tenths": 550,
+    "worst_ma": 2610,
+    "droop_permille": 977.9505899402541,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 7515 ms < 30000"
+    ]
+   },
+   {
+    "file": "e305-550-ring-3_01.txt",
+    "duty": 550,
+    "reason": 15,
+    "accepted": 453708,
+    "forced": 0,
+    "too_early": 8,
+    "blank_arms": 455558,
+    "unstable": 800798,
+    "hold_ms": 18923,
+    "rate_permille": 997,
+    "has_tail": true,
+    "rate_vs_coast_permille": 998,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2308,
+    "coast_crossings": 1441,
+    "hold_ma": 2261,
+    "ceiling_tenths": 550,
+    "worst_ma": 2624,
+    "droop_permille": 982.8457298284573,
+    "fails": [
+     "reason 15 != 2: exhausted commutation deadline (a late arm)",
+     "hold 18923 ms < 30000"
+    ]
    }
   ]
  }
