@@ -30513,3 +30513,54 @@ the point.
 
 Not yet run: E316's reviews are outstanding and a level change is a control
 change.
+
+#### E317 correction, before the run: "removes every excursion observed" is wrong, and a field in every capture says so
+
+`ci_min_us` is reported in every capture and is the run's minimum accepted
+average interval. Across the seventeen un-injected rung-550 runs:
+
+```
+ci_min:  40 42 43 47 49 49 49 49 | 50 50 51 51 52 53 53 54 54
+         \--- wait20 <= 9 --------/  \--- wait20 >= 10 ---------/
+          8 of 17 runs                 9 of 17 runs
+```
+
+**Eight of seventeen runs reached an interval at which advance 20 still permits
+a latch** (`wait20 <= 9` needs ci <= 49; `wait20(40) = 8`, `wait20(47) = 9`).
+So the claim above — that the excursion floor is 52 — is a property of **one
+run's hold window**, not of the machine. `e315-550-hist` itself read
+`ci_min = 49`. I generalised a single sample into a floor, which is the same
+error as E314's `spent_max` anchor, four entries later.
+
+And note the direction: ci falls as duty rises, so a low `ci_min` is a hold-phase
+excursion, not a ramp artifact. These are real.
+
+**The corrected prediction, which is what the run will be judged against:**
+
+> Advance 20 moves the latch-eligible interval set from `ci <= 59` to
+> `ci <= 49`. The measured rung-550 hold window puts
+> `P(ci in 52..59) = 5.21e-04` against `P(ci <= 51) < 2.7e-05` (zero of
+> 109 502), so the population below the new boundary is **at least 20× smaller**
+> than the population above it.
+>
+> So: `wle7 + w8 + w9` at advance 20 should read **at most ~3 of ~10^5 hold
+> arms**, against 57 at advance 22 — a **>=20x reduction, not elimination.**
+>
+> **Refuted if** it reads within 5× of 5.21e-04 (~11+ counts per 10^5), which
+> would mean advance 20 bought almost nothing.
+
+Against the 30× hazard reduction that P(3/3) >= 0.95 at rung 550 requires
+(E315 §2), a 20× reduction is **close but not clearly sufficient**, and it is
+honest to say so before running rather than after. Advance 20 is therefore a
+candidate component of a fix, not the fix — and the estimator's positive
+feedback, which would attack the excursions themselves rather than the
+threshold they must cross, remains the other half.
+
+Build prepared, not flashed: `margin-hist` + `advance-low`. Worth recording
+that this is an unusually clean A/B — **`ADC_COMP` is byte-identical between
+the two images** (780 disassembly lines, zero diff), because
+`wait_time(self.average_interval, advance_level)` (`bemf.rs:417`) reads the
+level from an estimator field the foreground sets, so the level never appears
+as an immediate in the hot root. Both E315 reviews named layout as a live
+carrier; here there is no layout term at all. The capture reports
+`advance_level`, so the image cannot be silently inert.
