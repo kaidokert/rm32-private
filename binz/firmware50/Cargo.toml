@@ -42,6 +42,10 @@ bench = false
 # judged block in a pre-trip ring (campaign 9 step 3). Foreground
 # instrumentation; the four ISR roots are production's.
 [[bin]]
+name = "idle-scan"
+path = "bin/idle-scan.rs"
+
+[[bin]]
 name = "sag-capture"
 path = "bin/sag-capture.rs"
 test = false

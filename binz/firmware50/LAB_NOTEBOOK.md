@@ -25321,3 +25321,101 @@ observer cost. Its Challenge 2 fix and the evidence review's item 1 are the same
 defect, found independently from opposite directions, and both are repaired.
 
 Its closing instruction is adopted as the campaign's next action.
+
+### E292 — predeclaration: the bridge-off control, with two phases instead of one
+
+New binary `bin/idle-scan.rs`, built and clippy-clean, **not yet flashed** — the
+low-rung walk is still holding the board and flashing over it would destroy 22
+captures. It runs after the walk and before anything else, as E291 committed to.
+
+#### What it settles
+
+Whether the raw-scan excursions E284 built an instrument around are a bus event
+at all. The corpus says they are probably not: `filt_bus − bus_min` is 66–146
+codes with median 91 over 494 runs, `corr(depth, hold_ma) = −0.204`, and the
+excursion gets **shallower** as current rises 40×. This run removes the load and
+measures the same quantity with the same code.
+
+#### Two phases, because "bridge off" is two conditions
+
+The adversarial review proposed one 90 s pass with `MOE` clear and `EN` low. I
+am running two 45 s phases instead, because the DRV8304's `ENABLE` **biases its
+shunt amplifiers** — so `EN` low removes the load *and* changes the analog
+environment, and a single pass cannot tell those apart.
+
+| phase | `EN` | bridge | isolates |
+|---|---|---|---|
+| **A** | low | off | the ADC, DMA and bus divider alone |
+| **B** | high | off, never switched | a driving run's analog environment minus switching |
+
+Both feed the **same** `BusDepth` code the run uses, against the **same**
+reference the guard uses — a `FastBusSag` seeded from that phase's own 2048-scan
+baseline, read before its post-test update, exactly as `scan_pass` does. So a
+difference between control and run cannot come from the arithmetic or the
+reference, which is the confound that made E284's original comparison
+uninterpretable.
+
+#### Predeclared outcomes, with the reading fixed in advance
+
+| result | conclusion |
+|---|---|
+| `raw1_n ≥ 100` in **both** phases | the excursions are the **sampling path itself**. E284's premise, its fractions, its trip index and its discriminator all fall together. |
+| `raw1_n ≥ 100` in **B only** | driver-amplifier bias coupling — still an artifact, but one that needs `EN` high, so it is present in every real run. |
+| `raw1_n ≥ 100` in **A only** | I have no mechanism for this and would say so rather than invent one. |
+| `raw1_n ≤ 10` in **both** | the excursions genuinely require switching or load. E284's premise survives, and the **negative load correlation becomes the open question** — it is not explained by anything I currently believe. |
+| 10 < `raw1_n` < 100 | partial, settles nothing alone, and I will say so rather than pick a side. |
+
+**My expectation, stated so it can be wrong: `raw1_n` between 150 and 350 in
+both phases, `raw1_run = 1`, `sag_tripped = 0`.** That is the artifact outcome.
+Scan counts are directly comparable: 45 s at ~10 450 scans/s is ~470 000 per
+phase against a run's ~886 000, so I compare **rates**, not raw counts, and
+`scans` is emitted for exactly that reason.
+
+#### The second measurement, which costs nothing and was impossible before
+
+`gap_over_88us`. `hw::adc` justifies its unsynchronised DMA snapshot with "the
+DMA does not rewrite until the next TIM6 trigger, ~88 µs after the
+transfer-complete interrupt", while measured `loop_gap_max_us` is **140–192 µs
+in every capture** — over double that window. A snapshot straddling a
+re-trigger mixes one cycle's bus with the next cycle's VREFINT, which is
+precisely a one-scan "bus low, vref normal" reading, and the cross-product
+cannot normalise it because the channels convert sequentially (IN0/IN1/IN4
+shunts, IN6 bus, IN13 VREFINT) microseconds apart.
+
+The report has only ever kept the **maximum** gap, so the **count** past the
+window — the predicted number of torn scans — has never been measured. Now it
+is, beside `raw1_n`, on the same scans. **If `gap_over_88us` is within an order
+of magnitude of `raw1_n`, tearing is the mechanism.** If it is zero while
+`raw1_n` is 200, tearing is excluded and the remaining candidates are the
+sequential-conversion transient and single-conversion bit errors.
+
+#### Why this cannot drive the motor, established by construction rather than claimed
+
+`safe_off` runs before the banner, and **`moe_on` requires a `Gates<S: Drives>`
+capability that this binary never constructs** — so the call is not merely
+absent, it is *uncallable*. Corroborated three ways: no source reference to
+`moe_on`, `apply_plan`, `set_compares`, `gates_to_timer`, `all_phases_pwm` or
+`Gates<`; no such symbol linked into the ELF; and TIM1 register access reduced
+to CR1 and CCR1 (the safing writes) against `shell-pwm`'s additional EGR/CCMR1/CNT.
+
+**One honest limit on that last check:** absolute-address grepping of the
+disassembly cannot prove `BDTR` is never written, because `str r1, [r0, #0x44]`
+addressing is invisible to it — and my first attempt at this check returned
+"none" for `safe_off` too, which is *called from main*, proving the check was
+blind rather than reassuring. That is E285's lesson arriving a third time, so I
+am recording which of these checks actually carries the guarantee (the type
+system) and which are corroboration (the rest). The runtime `PREFLIGHT` line and
+the emitted `preflight_passed` close it empirically.
+
+#### What the walk produced meanwhile, and what it is worth
+
+Eight rungs complete on `480263F1` — **150, 200, 250, 275, 288, 300, 325, 338,
+all 3/3 with `reason=2`** — 22 captures, two rungs to go. None of E291's
+findings touch it: the walk's verdict is the rate identity and the ladder, and
+`raw_depth` enters neither. The raw-depth fields in those captures are retained
+as what they now are — a measurement of the instrument, which is the control's
+comparison cohort.
+
+E290's band derivation stands on its own evidence and is computed when the
+thirtieth run lands, under the rule fixed there before the data existed:
+`median ± ceil(3.5 × sd_about_trend)`, the stricter of the two candidates.
