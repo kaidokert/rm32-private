@@ -371,6 +371,10 @@ pub struct CurrentRecord {
     /// constants from the wrong population; these eight numbers are the
     /// distribution such a line has to be chosen from (E223).
     pub depth_below: [u32; 4],
+    /// The raw-scan observer's counts and longest runs (E284), with its own
+    /// fractions so the capture stays self-describing.
+    pub raw_depth_below: [u32; 4],
+    pub raw_depth_longest: [u32; 4],
     /// Longest consecutive run below each fraction, in scans. A count cannot
     /// separate one dip from a droop and a streak cannot say how often, so a
     /// persistence is chosen from this and a fraction from the counts above.
@@ -769,6 +773,23 @@ impl RunReport {
         out.kv("dep3_pm", crate::protection::DEPTH_FRACTIONS[3]);
         out.kv("dep3_n", c.depth_below[3]);
         out.kv("dep3_run", c.depth_longest[3]);
+        // The raw-scan observer (E284). `raw1_run` is the discriminator: the
+        // longest consecutive run of raw scans below the guard's own 950 trip
+        // line. The guard sees an 8-scan mean, so a dip shorter than its window
+        // is invisible to it and to `dep*` above -- and every run, pass or
+        // fail, takes a raw scan past that line.
+        out.kv("raw0_pm", crate::protection::RAW_DEPTH_FRACTIONS[0]);
+        out.kv("raw0_n", c.raw_depth_below[0]);
+        out.kv("raw0_run", c.raw_depth_longest[0]);
+        out.kv("raw1_pm", crate::protection::RAW_DEPTH_FRACTIONS[1]);
+        out.kv("raw1_n", c.raw_depth_below[1]);
+        out.kv("raw1_run", c.raw_depth_longest[1]);
+        out.kv("raw2_pm", crate::protection::RAW_DEPTH_FRACTIONS[2]);
+        out.kv("raw2_n", c.raw_depth_below[2]);
+        out.kv("raw2_run", c.raw_depth_longest[2]);
+        out.kv("raw3_pm", crate::protection::RAW_DEPTH_FRACTIONS[3]);
+        out.kv("raw3_n", c.raw_depth_below[3]);
+        out.kv("raw3_run", c.raw_depth_longest[3]);
         out.say("\r\n");
         out.flush();
     }

@@ -101,6 +101,14 @@ for f in sorted(BASE.glob('2026-09-2*/*.txt')):
     p_all = fit_at_zero(pairs_with_time(iv, first_us, False))
     p_drop = fit_at_zero(pairs_with_time(iv, first_us, True))
     # and the estimator in use (index-based, first half-period dropped)
+    # **Truncate at the first unfilled slot** (E285); this one had no positivity filter at all, so
+    # padding entered the pair sums directly. The firmware's buffer
+    # is fixed-length and zero-padded -- 32 slots since E281, 8 before -- and
+    # a real half-period paired with a zero sums positive, so `[250, 0]` was
+    # admitted as a spurious half-length cycle. E281 fixed this in
+    # `cohort.coast_ehz` and claimed to have audited the readers; it audited
+    # 2 of 5, and this is one of the three it missed.
+    iv = iv[:next((i for i, v in enumerate(iv) if v <= 0), len(iv))]
     ps = [iv[i] + iv[i + 1] for i in range(1, len(iv) - 1)]
     n = len(ps)
     mx = (n - 1) / 2

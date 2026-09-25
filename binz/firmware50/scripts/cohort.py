@@ -221,7 +221,7 @@ def _rate_vs_coast(rec: dict, zc: int, coast: int) -> dict:
         #
         # The identity's scatter is 93% this estimator and 7% the loop rate
         # (measured over the six rung-400 runs on one image: `powered` sd 1.03
-        # permille, `coast@0` sd 3.76). Corpus-wide, 7 of 318 runs have a
+        # permille, `coast@0` sd 3.76). Corpus-wide, 10 of 318 runs have a
         # positive slope and their mean residual is +11.91 permille against
         # +0.10 for the other 311 -- so the sign is very nearly a deterministic
         # predictor of a high-side gate failure.

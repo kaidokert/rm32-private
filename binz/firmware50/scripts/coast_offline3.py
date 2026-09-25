@@ -25,8 +25,11 @@ def coast_time(iv, first_us):
     t = first_us + iv[0]
     s = []
     for i in range(len(h) - 1):
+        # E285: a real half-period paired with zero padding sums positive, so
+        # this filter admitted it as a spurious half-length cycle. Require
+        # BOTH halves present, which is the same rule as `speed.coast_fit`.
         per = h[i] + h[i + 1]
-        if per > 0:
+        if h[i] > 0 and h[i + 1] > 0:
             s.append((t + per / 2.0, per))
         t += h[i]
     n = len(s)

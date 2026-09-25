@@ -23964,3 +23964,281 @@ now structural rather than documented, the window has an absolute ceiling for
 the first time, and a wording error I had been repeating is corrected.
 
 The walk restarts on `39E0500A`, 150 → 600.
+
+### E285 — disposition of both E280/E281 reviews: I read a tool's silence as confirmation, and the silence was the bug
+
+Both reviews are severe and largely right. **The single sharpest finding is one
+I would not have found myself**, and it is about my own reasoning inverting the
+meaning of evidence. Every load-bearing number below is recomputed here.
+
+---
+
+## Part 1 — the headline: `isr_diff.py`'s "identical" was the bug's fingerprint, and E281 quoted it as reassurance
+
+E281 wrote: *"Both changes are foreground-only, and that is measured rather than
+intended: all four motor-critical ISR roots are byte-identical."*
+
+`GUARD_CAMPAIGN_US` — the constant that must track `BEMF_TOTAL_MS` — **lives
+inside the TIM6 guard root.** So identity there did not show the change was
+harmless; it showed **the window change never reached the guard.** Verified by
+reading the word out of the loadable bytes at `0x08001c98`:
+
+| image | window | backstop at `0x08001c98` |
+|---|---|---|
+| `0D8E3799` | 80 s | **84 s** — correct, 4 s margin |
+| `7CCCE8A8` | 90 s | **84 s** — **stale, 6 s *below* the window** |
+| `39E0500A` | 90 s | **94 s** — fixed |
+
+And `isr_diff.py` reported `TIM6_DAC_LPTIM1: identical, 155 instructions` for
+**all three pairings**, including the fixed one. **The tool is structurally
+incapable of answering the question I was asking it**, and I read the absence of
+a signal it cannot produce as confirmation that nothing had changed.
+
+E283 found the defect independently from the bench (three `reason=1` runs), but
+the review found *why my audit missed it*, which is the more useful half.
+
+#### The instrument is fixed, and it now catches exactly this
+
+`isr_diff` normalises addresses and comment targets by design — its own
+docstring says so — so no amount of comment parsing makes it safe. **It now also
+compares each root's encoded byte column**, which both disassemblers print and
+neither normalises:
+
+```
+7CCCE8A8 -> 39E0500A
+  TIM6_DAC_LPTIM1: identical, 155 instructions
+      [INSTRUCTIONS identical, ENCODED BYTES DIFFER: a constant moved]   exit 1
+```
+
+Re-running the claim E281 actually made, with the working tool:
+
+| | TIM16 | TIM6 |
+|---|---|---|
+| `0D8E3799` → `7CCCE8A8` (the "foreground-only" image) | **bytes DIFFER** | bytes same ← **the bug** |
+| `0D8E3799` → `39E0500A` (fixed) | bytes differ | **bytes DIFFER** ← the fix reaching the ISR |
+| self vs self (control) | identical | identical, **exit 0** |
+
+So **"all four roots byte-identical" was false in both directions**: TIM16's
+bytes did change (two relocated `.rodata` pointers, benign), and TIM6's bytes
+*should* have changed and did not. The correct wording, which I will use from
+now on, is **"identical instruction for instruction"** — which is the right
+evidence for timing, since identical instructions cost identical cycles.
+
+**And the first two attempts at this fix failed silently, which is its own
+lesson.** Attempt one folded the pool value into the text *before*
+`HEX.sub('@', …)`, which erased it. Attempt two wrote a regex for llvm's
+`@ 0x8001c84 <sym>` while this tool defaults to **GNU**, which writes
+`@ (8001c84 <sym>)` — bare hex, no `0x`, in parens. **Third disassembler-syntax
+trap of the campaign** (after the `;`-vs-`@` one and the branch-target one).
+Comparing bytes avoids the whole class.
+
+---
+
+## Part 2 — E280's 57.5% conclusion is withdrawn
+
+Both reviewers converge by different routes, and both are right.
+
+**The arithmetic held.** The duty was 575 (`applied_ccr=766` = `1333 × 575/1000`),
+the injection landed exactly 2.000 s into the hold, so **96.35%** of the
+54.776 s ran at 575, and `worst_hold_ma` does cover it. My "54.8 s at 57.5%"
+overstated by 3.7%, and `hold_ma=2459` is blended (≈2486 mA unblended). Those
+are ~1% quibbles.
+
+**The inference does not hold, for three independent reasons:**
+
+1. **No discriminating power.** 550 is **2/3 clean** — the latch is a ~1-in-3
+   per-run event. A single clean run at 575 has likelihood **2/3** under that
+   very rate. By the campaign's own predeclare-the-bar standard, rejecting
+   p ≥ 1/3 at 5% needs **0 trips in 8**, not 0 in 1. I compared `v` only against
+   `e253-550_03` and not against the two 550 runs that ran 52.3 s clean.
+
+2. **The capture contradicts me on its own line.** `bus_min = 1086` against a
+   trip line of `0.95 × 1189 = 1130` — the bus went **44 codes (3.7%) past the
+   line.** And it is *deeper* than both clean 550 runs:
+
+   | run | trip line | `bus_min` | past by | outcome |
+   |---|---|---|---|---|
+   | `e253-550_01` | 1133 | 1116 | +17 | clean |
+   | `e253-550_02` | 1133 | 1097 | +36 | clean |
+   | **`e280-…-v` (575)** | **1130** | **1086** | **+44** | clean |
+   | `e253-550_03` | 1133 | 1074 | +59 | **latched** |
+
+   **Every run, pass or fail, takes a raw scan past the 5% line.** So depth does
+   not discriminate, the 575 run sat *between* the clean pair and the trip — a
+   marginal operating point, not an absorbed one — and "zero sag streak" carries
+   almost no information. Corroborating: across the corpus `BEMFSAG streak=` is
+   **only ever 0 or 3**, never 1 or 2. The guard is bimodal by construction.
+
+3. **The run was made with a protection layer disarmed.** `Inject::Sag` sets
+   `hold_plans = true` (`states.rs:426`), and `states.rs:924` gates *all*
+   further duty publication on `!hold_plans`. So the `FoldbackGovernor`'s
+   ceiling was computed and **never applied** for the whole 52.8 s.
+   `e280-prot500-i` proves foldback works at 500 (`ceiling_tenths=450`) — and
+   that is exactly the mechanism the `v` run had switched off. It was an
+   **unguarded excursion that happened not to fail**, not a capacity result.
+
+**Withdrawn:** "the machine absorbed it", "575 ran clean so 550's trip is not a
+monotone function of duty or current", and the use of that run to weaken the
+clamp hypothesis. **What survives:** the injection reached 575, the bridge ran
+it, the guard did not reach streak 1 on that one run, and the bridge safed.
+
+**And the conclusion I bought was already free on disk.** `FastBusSag` has
+latched spontaneously at **rung 500, three times** (`c7-500_01`, `c7-500_03`,
+`c7-500c_02`, image `89D65B09`, 3 of 7) — which establishes "not monotone in
+duty" without driving anything. I spent 52.8 s of unguarded 575 drive on a
+conclusion the repository already contained.
+
+---
+
+## Part 3 — what the 550 latch actually looks like, which neither of my entries cited
+
+Assembled from fields I had in hand and did not use:
+
+| | 550_01 | 550_02 | **550_03 (latched)** |
+|---|---|---|---|
+| `ci_us` at stop | 71 | 70 | **60** |
+| `ehz_from_ci_last` | 2347 | 2380 | **2777** |
+| coast-measured eHz | 2347 | 2304 | **2262** |
+| `ci_min_us` | 51 | 50 | **42** (floor is 40) |
+| `worst_hold_ma` | 2678 | 2740 | **2697 — indistinguishable** |
+| hold | 52.3 s | 52.3 s | **15.0 s** |
+
+The failing run's **current was indistinguishable** from the clean ones, while
+its minimum tracked interval went 8–9 µs lower **in a third of the exposure**,
+down onto the physical floor, and its last accepted interval was **18% short of
+the rotor's actual sector.** That is commutation running ahead of the rotor — a
+partial desync — and a desync surge is exactly the ≥6 A-class transient the
+guard needs.
+
+**Derived guard sensitivity**, which explains why the duty-step provocation
+cannot work: the trip needs `bus_mean` ≤ 0.95 × `filt_bus` = a 60-code /
+**577 mV** depression in the 8-scan mean, i.e. **ΔI ≈ 6.1 A** at the measured
+~95 mΩ, held **≥1 ms**. The `v` injection's +75 tenths is ≈ +0.6–0.75 A ≈ 0.5%
+of bus in the mean — **an order of magnitude short.** So E280's coverage table
+should read *"sag: not provoked; stimulus undersized ~10×"*, not *"the fourth
+ran clean"* — and `policy.rs:150-157` already says gate 4 is a no-op at 50%.
+
+---
+
+## Part 4 — the discriminator, landed, because it rides the walk
+
+**Every bus instrument in the firmware is blind at exactly the guard's
+timescale.** `FastBusSag` sees `rail.bus_mean()`; so does `BusDepth::observe`;
+and `DEPTH_FRACTIONS = [995, 990, 985, 980]` has **no bin at the 950 trip
+fraction**. The only raw-scan number in the whole report is the scalar `bus_min`.
+
+So: **a second `BusDepth` fed the raw scan**, with
+`RAW_DEPTH_FRACTIONS = [970, 950, 930, 910]` bracketing the trip line, emitted
+as `raw0..raw3_{pm,n,run}`. `BusDepth` already keeps both the count below and the
+**longest consecutive run below** per fraction, which is exactly the pair needed.
+**`raw1_run` is the measurement**: the longest run of consecutive raw scans below
+the line the guard trips on.
+
+Fractions chosen from the measured minima (`bus_min/filt_bus` = 90.0–93.5%
+across that cohort). Cost: four comparisons per scan, in the foreground, in the
+function that already calls `BusDepth::observe`. No ISR time, no extra run.
+
+**Predeclared discrimination:** if clean runs read 1–3 scans at the 950 bin and
+a latch reads ≥10, the event is a short transient whose duration is the whole
+story. If clean runs also read ≥10, the guard fires on something other than
+depth-and-duration and the threshold is the defect.
+
+---
+
+## Part 5 — the other corrections, all verified
+
+**Three more readers carried the identical padding defect**, and E281 claimed to
+have audited the readers while covering 2 of 5: `coast_estimators.py`,
+`coast_offline3.py`, `coast_offline1.py` (the last had **no positivity filter at
+all**). All three fixed; padding invariance verified.
+
+**And E281's verification of that fix was vacuous.** "`e274-450m_01` still reads
+1005" — 1005 is `rate_vs_coast_permille`, which comes from `speed.coast_fit`,
+**the estimator that was never broken.** The quantity the fix touches for that
+file is `coast_ehz = 1974`, also unchanged. I verified the wrong number.
+
+**`LARGEST_FRAME = 5076` was never right for either image.** The real frame is
+register-based (`add sp, r6` with a negative literal), so no `sub sp, #imm` scan
+finds it: **5324** on the qualified image, **5420** now — optimistic by 248 and
+344 B. Corrected to the measured value. And the number that matters is the
+deepest *call path*: three `CoastStats` sit on
+`main → serve → restart_campaign → rung → run`, so E281's +96 B cost **+392 B**
+of worst-case depth, **6632 → 7024 B against the 8192 B floor.** My "96 B is
+0.3% of headroom" was the wrong axis — RAM headroom (32 kB) is never threatened,
+but the floor is now ~1.1 kB from binding, down from ~1.5 kB.
+`structure_report` now prints the deepest path beside the frame.
+
+| claim | mine | correct |
+|---|---|---|
+| speed change over the 32-slot window | 0.71% | **0.63%** |
+| coast decel on `e274-450m_01` | −1495 eHz/s | **−1491** |
+| "E272 measured 42.7%" for a 57-run walk | 42.7% | **83.8%** at 3.1%; 42.7% is n ≈ 17 |
+| two-block current-stop latency | "≥20.3 ms" | **20.2 ms** (the measurement was fine; the *bar* was misstated) |
+| `cohort.py:224` census | "7 of 318" | **10 of 318**, matching E273 and `report.rs` |
+| four roots | "byte-identical" | **instruction-for-instruction**; 3 of 4 byte-identical |
+
+**Accepted and owed:** the `i` provocation's current fields are **100×
+inflated** — `Inject::AverageCurrent` rebuilds the accumulator with
+`allow = RAW_LIMIT/100` and `block_milliamps` divides by `allow`, so that
+capture reads `worst_ma=184352` where the truth is ≈1840 mA, and nothing says
+so. A reader sees 184 A.
+
+**Also accepted:** `cohort.pair_sums` uses **overlapping** pairs while
+`coast_fit` uses **disjoint** ones, so any SE computed on the former is
+understated by autocorrelation. And the offline `coast_*` scripts execute their
+analyses on import, which is why touching them prints a report.
+
+**A curvature check I should have done and the reviewer did:** bias on a linear
+extrapolation over the 32-slot window is `c·(Sxx/n − x̄²)` with `c = f/2τ²`,
+giving **−0.007 eHz** at n=16 against an intercept SE of ~4 eHz — **~600×
+smaller than the noise it trades against.** So 32 is sound, but my justification
+("0.71% speed change") used the *first* derivative where bias depends on the
+second, and took the rate from the slowest-decelerating capture in the corpus
+(median is −3302 eHz/s; the high rungs run −11 000 to −13 600). Right answer,
+wrong reason.
+
+---
+
+## Part 6 — the gate I loosened, and the bar for 550
+
+**The rate gate was loosened ~2× in σ terms by E281, silently.**
+`cohort.py:328` justifies the 990–1010 band as *"about 3.5 sd of the
+within-session figure"* at sd 2.8 ‰ — i.e. it is **calibrated against the n=8
+estimator's noise.** Halving the SE makes it a ~7σ test, and
+`SELF_REF_LO/HI = 980..1020` becomes ~14σ. E281 presented the change purely as
+removing the 3.1% spurious-failure class.
+
+**So the walk is stopped and will not resume on the loosened gate.** Predeclared
+here, before any measurement: the band shall be **re-derived as 3.5 σ of the new
+estimator's measured within-session scatter**, from the first rungs' own cohorts
+on the new image — not from the Monte-Carlo prediction, and not chosen after
+seeing which runs it moves. The predicted value is ±4–5 ‰
+(2.8 × 0.447 × 3.5 ≈ 4.4), so I expect roughly **996–1004**; if the measured
+scatter disagrees with the prediction, **the measurement wins.**
+
+**And the 550 bar, predeclared.** 550 is 1/3 on the previous image and the same
+guard was 3/7 at rung 500 on `89D65B09`. P(3 clean | p = 1/3) = **0.296**, so
+**a 3/3 pass at 550 has a ~30% chance of happening with nothing fixed** and
+would license 575 and 600 on it. To reject p ≥ 1/3 at α = 0.05 requires **0
+trips in 8**. So: **550 qualifies on eight consecutive clean runs, or on a
+stated and evidenced mechanism — not on three.** Written down before the walk
+reaches it.
+
+**One more hazard I had not priced:** E272's "walk is X% likely to be holed"
+covered the rate-gate defect only. The spontaneous sag latch is an *independent*
+per-run hazard, and the fresh ledger re-exposes the sixteen rungs that already
+passed to an event that has fired at rung 500 before.
+
+---
+
+## Part 7 — what is not withdrawn
+
+The coast widening is right and both reviewers agree: intercept SE **×0.447**
+measured by Monte-Carlo against my ×0.446, curvature bias 600× below the noise,
+no systematic shift across the corpus (mean ≈ median ≈ 0 for a 6→8 lengthening),
+and the unphysical-slope class drops **11.5% → 1.9%** at that step.
+`BEMF_TOTAL_MS = 90_000` is arithmetically right for a 30 s post-restart dwell.
+The `COAST_IV_LEN` plumbing, the format-lock test asserting both text and count,
+and `size_of::<CoastStats>()` 76 → 172 B all verified independently.
+
+Nothing resumes on the bench until the band is re-derived.

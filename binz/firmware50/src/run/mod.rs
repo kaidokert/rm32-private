@@ -233,6 +233,24 @@ impl<
                 ctx.depth.longest(2),
                 ctx.depth.longest(3),
             ],
+            // The raw-scan observer (E284): the guard and `depth` above both
+            // judge an 8-scan mean, so a dip shorter than that window is
+            // invisible to both -- and every run, pass or fail, takes a raw
+            // scan past the 5% line. `raw_depth_longest[RAW_DEPTH_TRIP_IX]` is
+            // the longest consecutive run of raw scans below the guard's own
+            // trip line, which is the quantity that discriminates.
+            raw_depth_below: [
+                ctx.raw_depth.below(0),
+                ctx.raw_depth.below(1),
+                ctx.raw_depth.below(2),
+                ctx.raw_depth.below(3),
+            ],
+            raw_depth_longest: [
+                ctx.raw_depth.longest(0),
+                ctx.raw_depth.longest(1),
+                ctx.raw_depth.longest(2),
+                ctx.raw_depth.longest(3),
+            ],
             blocks: ctx.current.blocks(),
             mean_residual: ctx.current.mean_residual(),
             mean_ma: ctx.current.mean_milliamps(),

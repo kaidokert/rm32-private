@@ -206,6 +206,31 @@ pub struct BusReference {
 /// distribution first, at more than one rung.
 pub const DEPTH_FRACTIONS: [u32; 4] = [995, 990, 985, 980];
 
+/// Fractions for the **raw-scan** depth observer (E284), bracketing the sharp
+/// guard's own trip line.
+///
+/// `FastBusSag` compares an **8-scan mean** against 95% of a 207 ms EWMA, and
+/// the existing [`DEPTH_FRACTIONS`] observe that same mean -- so neither can
+/// see a dip shorter than the mean's window, and neither has a bin at 950 where
+/// the guard actually trips. Measured consequence: **every run takes a raw scan
+/// past the line**, pass or fail. `bus_min` against `0.95*filt_bus` is 44 codes
+/// past on the 575 injection run and **+17 / +36 / +59** on the three 550 runs,
+/// the two that passed included.
+///
+/// So depth does not discriminate and duration is unmeasured. 950 is the trip
+/// line; the rest bracket the measured minima (`bus_min/filt_bus` ran
+/// 90.0-93.5% across that cohort).
+pub const RAW_DEPTH_FRACTIONS: [u32; 4] = [970, 950, 930, 910];
+
+/// Index of the trip line within [`RAW_DEPTH_FRACTIONS`]; its `longest` is the
+/// quantity that discriminates a short transient from a sustained droop.
+pub const RAW_DEPTH_TRIP_IX: usize = 1;
+
+const _: () = assert!(RAW_DEPTH_FRACTIONS[RAW_DEPTH_TRIP_IX] == 950);
+// The raw bins must be strictly deeper than the mean bins, or the two observers
+// are measuring the same thing twice.
+const _: () = assert!(RAW_DEPTH_FRACTIONS[0] < DEPTH_FRACTIONS[3]);
+
 /// How deep, and for how long, the bus actually sits below its pre-run
 /// reference -- the distribution a slow-droop stop would have to be chosen from.
 ///
@@ -230,6 +255,10 @@ pub struct BusDepth {
     below: [u32; 4],
     run: [u32; 4],
     longest: [u32; 4],
+    /// Which fraction set this instance judges against: the mean observer uses
+    /// [`DEPTH_FRACTIONS`], the raw one [`RAW_DEPTH_FRACTIONS`] (E284). Carried
+    /// per instance so the two cannot be confused at the call site.
+    fracs: [u32; 4],
 }
 
 impl Default for BusDepth {
@@ -239,13 +268,35 @@ impl Default for BusDepth {
 }
 
 impl BusDepth {
+    /// The observer for the guard's own input: the 8-scan rail mean.
     #[must_use]
     pub const fn new() -> Self {
+        Self::with_fractions(DEPTH_FRACTIONS)
+    }
+
+    /// The observer for the **raw scan** (E284), which is the only one that can
+    /// see a dip shorter than the mean's 8-scan window.
+    #[must_use]
+    pub const fn new_raw() -> Self {
+        Self::with_fractions(RAW_DEPTH_FRACTIONS)
+    }
+
+    #[must_use]
+    pub const fn with_fractions(fracs: [u32; 4]) -> Self {
         Self {
             below: [0; 4],
             run: [0; 4],
             longest: [0; 4],
+            fracs,
         }
+    }
+
+    /// The fraction this index judges against, so a report can print the
+    /// threshold beside the counts rather than leaving the reader to assume it
+    /// (the `dep970_n` lesson, E246).
+    #[must_use]
+    pub const fn fraction(&self, i: usize) -> u32 {
+        self.fracs[i]
     }
 
     /// Observe one scan's rail mean against the pre-run reference.
@@ -261,8 +312,8 @@ impl BusDepth {
         let lhs = u32::from(bus) * u32::from(ref_vref) * 1_000;
         let rhs = u32::from(ref_bus) * u32::from(vref);
         let mut i = 0;
-        while i < DEPTH_FRACTIONS.len() {
-            if lhs < rhs * DEPTH_FRACTIONS[i] {
+        while i < self.fracs.len() {
+            if lhs < rhs * self.fracs[i] {
                 self.below[i] = self.below[i].saturating_add(1);
                 self.run[i] = self.run[i].saturating_add(1);
                 if self.run[i] > self.longest[i] {

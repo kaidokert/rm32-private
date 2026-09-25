@@ -21,6 +21,13 @@ BASE = pathlib.Path(r'E:\m\robot\esc\rm32\binz\firmware50\captures')
 
 
 def pairs(iv):
+    # **Truncate at the first unfilled slot** (E285). The firmware's buffer
+    # is fixed-length and zero-padded -- 32 slots since E281, 8 before -- and
+    # a real half-period paired with a zero sums positive, so `[250, 0]` was
+    # admitted as a spurious half-length cycle. E281 fixed this in
+    # `cohort.coast_ehz` and claimed to have audited the readers; it audited
+    # 2 of 5, and this is one of the three it missed.
+    iv = iv[:next((i for i, v in enumerate(iv) if v <= 0), len(iv))]
     return [iv[i] + iv[i + 1] for i in range(len(iv) - 1) if iv[i] + iv[i + 1] > 0]
 
 

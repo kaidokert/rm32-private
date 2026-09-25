@@ -109,6 +109,12 @@ pub(crate) struct Ctx {
     pub sag: FastBusSag,
     /// Observation only -- the droop distribution, no stop (E224).
     pub depth: BusDepth,
+    /// The same observer fed the **raw scan** rather than the 8-scan mean
+    /// (E284). The guard, and `depth` above, both judge the mean, so neither
+    /// can see a dip shorter than its window -- and every run, pass or fail,
+    /// takes a raw scan past the 5% line. This is the one that measures the
+    /// duration that actually discriminates.
+    pub raw_depth: BusDepth,
     pub current: AverageCurrent,
     pub governor: FoldbackGovernor,
     pub rail: RailMean,
@@ -138,6 +144,7 @@ impl Ctx {
             base,
             sag: P::S::watch(base.bus_ref),
             depth: BusDepth::new(),
+            raw_depth: BusDepth::new_raw(),
             current: P::C::meter(base.zero_block),
             governor: P::C::governor(req.target_tenths),
             rail: RailMean::new(),
@@ -336,6 +343,11 @@ impl Ctx {
             // covers the deciding scan of any stop and can pre-empt none.
             self.depth
                 .observe(bus_mean, vref_mean, self.base.bus_ref.bus, self.base.bus_ref.vref);
+            // The raw scan, against deeper fractions bracketing the trip line
+            // (E284). Same reference and same cross-product, no division, and
+            // it returns nothing -- an observer, like the one above.
+            self.raw_depth
+                .observe(scan.bus, scan.vref, self.base.bus_ref.bus, self.base.bus_ref.vref);
             let (filt_bus, filt_vref) = self.sag.filtered();
             let verdict = self.sag.observe(bus_mean, vref_mean);
             if P::G::ON {

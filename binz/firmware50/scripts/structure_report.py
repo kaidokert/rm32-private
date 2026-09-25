@@ -138,7 +138,30 @@ STACK_FLOOR = 8 * 1024
 # (`Controller::run`'s prologue). Reported beside the headroom so the margin is
 # a number rather than a hope; not a bound -- callees and four ISR roots sit on
 # top of it.
-LARGEST_FRAME = 5076
+# **Measured, and it was never right** (E285). This read 5076, documented as
+# "measured from the disassembly" -- but measured once by hand, builds ago.
+# The real frame is register-based (`add sp, r6` with a negative literal), so
+# no `sub sp, #imm` scan finds it:
+#
+#   0D8E3799 (qualified):  literal 0xffffeb34 = -5324, + 20 B of pushes
+#   39E0500A (current):    literal 0xffffead4 = -5420, + 20 B of pushes
+#
+# So it was optimistic by 248 B on the qualified image and 344 B now, and it
+# errs in the direction that understates usage.
+#
+# And the number that actually matters is the deepest *call path*, not the
+# largest single frame: three `CoastStats` sit on
+# main -> serve -> restart_campaign -> rung -> run, so E281's +96 B of buffer
+# cost **+392 B** of worst-case depth, 6632 -> 7024 B against the 8192 B floor.
+# "96 B is 0.3% of headroom" was the wrong axis: RAM headroom (32 kB) is never
+# threatened, but the floor's implicit claim that 8 KB of stack suffices is now
+# ~1.1 kB from binding, down from ~1.5 kB. The next struct of this class on
+# that path eats it.
+LARGEST_FRAME = 5420
+# The deepest measured foreground call path for the current image, summed from
+# the disassembly. Printed beside the frame so the margin that matters is the
+# one on the line.
+DEEPEST_PATH = 7024
 
 
 def bss_ceiling() -> int:
@@ -210,7 +233,8 @@ def bss_ceiling() -> int:
             flag = "  <-- BELOW THE LARGEST KNOWN FRAME"
         print(
             f"bss_headroom: {elf.name:34s} data={data:5d} bss={bss:6d} "
-            f"stack_left={left:6d} (floor {STACK_FLOOR}, largest frame {LARGEST_FRAME}){flag}"
+            f"stack_left={left:6d} (floor {STACK_FLOOR}, largest frame {LARGEST_FRAME}, "
+            f"deepest path {DEEPEST_PATH}){flag}"
         )
         if left < STACK_FLOOR:
             if gates:
