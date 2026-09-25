@@ -1212,7 +1212,7 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
     hw::comp::line_disable();
     hw::comp::clear_pending();
     let raw = hw::clock::raw();
-    // The fine stamp for the chain's own measurements (E180): 15.6 ns ticks
+    // The fine stamp for the chain's own measurements (E180): 125 ns ticks
     // from the free-running TIM2, taken beside the coarse one so both name the
     // same instant. Production runs `NoChain`, so this folds away and TIM2 is
     // never even enabled there.

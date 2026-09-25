@@ -63,11 +63,14 @@ const _: () = assert!(2 * core::mem::size_of::<Chain>() <= RING_BUDGET);
 /// One event. **Fourteen** bytes since E180's fine stamps, so each ring is
 /// 7 KB at `CHAIN_LEN` 512 (the doc said twelve and 12 KB; E186 SS5).
 ///
-/// **Stamps are deltas in fine-clock ticks (15.6 ns), not µs** (E180). The
+/// **Stamps are deltas in fine-clock ticks, not µs** (E180). The tick is
+/// **125 ns** since campaign 11 (`crate::fine`; it was 15.625 ns), and the rate
+/// travels in each dump's `CHAINSNAP fine_hz` because reading a delta at the
+/// wrong rate is wrong by 8x (E265). The
 /// quantity this ring exists to measure — the crossing-to-bridge delay and the
 /// chain inside it — is 4–20 µs, so a 1 µs stamp quantised it in steps the
 /// size of the effect, and two A/B comparisons turned on one tick. A `u16` of
-/// fine ticks spans 1.02 ms, which every intra-sector delta fits (the longest
+/// fine ticks spans **8.192 ms** at 125 ns, which every intra-sector delta fits (the longest
 /// sector measured is 188 µs); absolute stamps would not fit, which is why
 /// they are deltas.
 #[derive(Clone, Copy)]
@@ -78,9 +81,9 @@ pub struct Beat {
     /// `sched` match to a microsecond or two. Pairing is the one thing the
     /// coarse clock is still better at, because the control path works in µs.
     pub at_us: u16,
-    /// The **fine** stamp, low 16 bits of the 64 MHz free-running TIM2: the
+    /// The **fine** stamp, low 16 bits of the free-running TIM2 at 8 MHz: the
     /// crossing (accept) or the handler's entry (service). Wraps every
-    /// 1.02 ms, which every delta of interest is far inside.
+    /// **8.192 ms**, which every delta of interest is far inside.
     pub at_fine: u16,
     /// accept: the arm instant, fine. service: the bridge write, fine.
     pub x_fine: u16,
@@ -295,7 +298,9 @@ impl ChainRing {
 /// The ring as text, oldest row first, parsed by `scripts/chain.py`.
 ///
 /// One line per event: `CHAIN kind at_us at_fine x_fine y_us z_fine step flag`,
-/// where the fine columns are 64 MHz ticks (15.6 ns) and `y_us` is µs.
+/// where the fine columns are TIM2 ticks at the rate the dump's `CHAINSNAP
+/// fine_hz` declares -- **125 ns** for anything recorded since campaign 11,
+/// 15.625 ns before it -- and `y_us` is µs.
 /// Written after
 /// `safe_off`, like every other byte -- never while the bridge is live, since
 /// 115200-baud edges couple into the comparator.

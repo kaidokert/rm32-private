@@ -11,7 +11,9 @@ The firmware writes one line per event (`src/chain.rs`):
     ...
     CHAINEND
 
-**The fine columns are 64 MHz ticks (15.6 ns).** Until E180 every stamp was
+**The fine columns are TIM2 ticks at the rate the capture declares** in its
+`CHAINSNAP fine_hz` -- 125 ns since campaign 11, 15.625 ns before it (E265).
+Until E180 every stamp was
 1 µs, which quantised the crossing-to-bridge delay (17-20 µs) and the chain
 term inside it (4 µs) in steps the size of the effect -- two A/B comparisons
 turned on differences of exactly one tick. The coarse µs stamp is kept for
@@ -192,21 +194,23 @@ def parse(path):
                 # stamp for pairing plus three fine stamps (E180).
                 # Pre-E180 captures carry 6 post-kind columns and their
                 # `spent`/`arm` are COARSE MICROSECONDS; post-E180 carry 7 with
-                # TIM2 fine stamps in 15.6 ns ticks. Requiring only the latter
+                # TIM2 fine stamps. Requiring only the latter
                 # made this tool print "no CHAIN rows found" over 24 archived
                 # captures holding 20478 measured arms, which is why four
                 # entries argued `spent` from the whole-run aggregate instead
                 # (E232 SS11 / E233 SS11).
                 #
                 # It REFUSES them rather than coercing: every downstream figure
-                # here divides fine ticks by 64, so feeding microseconds in
-                # would silently under-report by that factor. Legacy captures
-                # are read by `scripts/chain_spent.py`, which states its units.
+                # here divides fine ticks by `TICKS_PER_US`, which `fine_rate`
+                # takes from the capture, so feeding microseconds in would
+                # silently misreport by that factor. Legacy captures are read by
+                # `scripts/chain_spent.py`, which states its units.
                 if len(f) == 8:
                     raise SystemExit(
                         'legacy 6-column CHAIN rows (coarse microsecond stamps, '
-                        'pre-E180). This tool assumes 15.6 ns fine stamps and '
-                        'would under-report by 64x. Use scripts/chain_spent.py.')
+                        'pre-E180). This tool reads fine stamps at the rate the '
+                        'capture declares and would misreport these by that '
+                        'factor. Use scripts/chain_spent.py.')
                 elif len(f) == 9:
                     rows.append(Row(*(int(x) for x in f[1:])))
             elif line.startswith('BEMFRUN '):
@@ -299,7 +303,7 @@ def main():
         # The angle is a ratio, so say which side its spread comes from: the
         # crossing-to-bridge delay, or the sector interval under it.
         # Both sides of the ratio are fine ticks, printed as microseconds.
-        # Three decimals because the stamp is finer than that now (15.6 ns),
+        # Three decimals because the stamp is finer than a microsecond,
         # which is the point of E180: a 17-20 us delay and the 4 us chain
         # term inside it are no longer reported in 1 us steps.
         num = [us(d) for d, _, _, _ in pairs]

@@ -21939,3 +21939,71 @@ operator to sweep the current limit and is the one measurement I cannot take
 myself.
 
 Both reviews before this is flashed.
+
+### E268 — three owed items closed, and one correction to E265
+
+Cleared while the third review round runs, because none of them is a hypothesis
+and all three were named as owed in E266.
+
+#### 1. The RAM gate could pass by finding nothing
+
+`scripts/structure_report.py::bss_ceiling` failed only when the built images
+**and** the archive were both empty. `captures/elf/` is never empty, so the
+`elfs` list was never empty, so on a clean tree the check gated **zero current
+images and still returned 0**. Only built images gate; archived ones are
+reported and cannot be made to pass retroactively. So the coverage the check
+actually achieved was invisible in its verdict.
+
+That is my own instrument-must-fail-loudly rule broken in the instrument that
+enforces the RAM ceiling — which is the one E185's sub-millisecond deaths were
+traced to. It now requires all four binaries (`shell-pwm`, `edge-capture`,
+`chain-capture`, `sag-capture`) to be present and **names the missing ones**.
+
+Falsified both ways rather than asserted:
+
+| state | exit |
+|---|---|
+| all four built | **0** |
+| `sag-capture` deleted | **1**, naming it |
+| restored | **0** |
+
+#### 2. Five stale rate assertions in the producer's own documentation
+
+E265 fixed `chain.py`'s hardcoded divisor and added `fine_hz` to the header, and
+left `src/chain.rs` asserting the old rate in five places — including `:298`,
+which documents the **on-wire format** of `CHAIN` rows. That is the same class
+E265 claimed to fix, one file over, which is exactly the criticism E266 made of
+E264's audit blindness and I then reproduced.
+
+Corrected in `src/chain.rs` (×5), `src/roots.rs:1215`, `scripts/chain.py` (×5)
+and `scripts/chain_spent.py`. The format documentation now says what is true:
+**the fine columns are TIM2 ticks at the rate the capture declares** — 125 ns
+since campaign 11, 15.625 ns before it — rather than naming one rate as if it
+were permanent. The references that remain in `hw/timers.rs`, `sag.py` and
+`chain.py:66` are historical (*"it was"*, *"changed from"*) and are correct as
+written.
+
+Regression-checked: the legacy six-column refusal still fires, and both rate
+paths still announce themselves.
+
+#### 3. Correction: E265 stated the error direction backwards
+
+E265 said reading 8 MHz ticks at 64 ticks/µs makes a delta read *"8× too
+large"*. It is **8× too small**: dividing a tick count by 64 when the ticks are
+eight times longer under-reports the interval. The evidence reviewer caught it.
+The *defect* E265 described was real and the fix is right; only the sentence
+describing the consequence was inverted.
+
+#### What is still owed and is not closed here
+
+* **The two rings cannot coexist.** 33 428 B of `.bss` leaves ~2.8 KB of stack
+  against a 5 076 B frame — E185 reproduced. So the chain and sag rings cannot
+  be in one image as built, and the ordering question stays unanswerable in a
+  single run. The cheapest route on the table is dropping the sag slow ring
+  (8 192 B); it is not taken yet because it costs the reference history, which
+  is what explains a latch.
+* **The sample-rate limit no ring size fixes:** 101 µs per judgement against a
+  71 µs sector. Both reviews' triggered-burst proposal is the only design
+  offered that addresses it, and E267 states why it is not in this build.
+* **The clamp's transient response**, which needs the operator to sweep the
+  current limit.

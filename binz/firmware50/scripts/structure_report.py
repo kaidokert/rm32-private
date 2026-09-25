@@ -168,6 +168,29 @@ def bss_ceiling() -> int:
     # rather than failing the build. Only the current images gate.
     archived = sorted(pathlib.Path("captures/elf").glob("*.elf"))
     elfs = [(p, True) for p in built] + [(p, False) for p in archived]
+
+    # **A gate that can pass by finding nothing is not a gate** (E268). This
+    # used to fail only when built *and* archived were both empty -- and
+    # `captures/elf/` is never empty, so on a clean tree it checked zero
+    # current images and still returned 0. Only the built images gate; the
+    # archived ones are reported and cannot be made to pass retroactively. So
+    # the coverage this check actually achieved was invisible in its verdict.
+    #
+    # Now: the current binaries must be present, and any that are missing are
+    # named. This is the crate's own instrument-must-fail-loudly rule applied
+    # to the instrument that enforces the RAM ceiling -- which is the one that
+    # E185's sub-millisecond deaths were traced to.
+    want = {"shell-pwm", "edge-capture", "chain-capture", "sag-capture"}
+    have = {p.name for p in built}
+    missing = sorted(want - have)
+    if missing:
+        print(
+            "bss_headroom: FAIL -- these images are not built, so the RAM "
+            f"ceiling gated none of them: {', '.join(missing)}. "
+            "Run `cargo build --release` first; a clean tree would otherwise "
+            "pass this check without measuring anything."
+        )
+        return 1
     if not elfs:
         print("bss_headroom: FAIL -- nothing built and nothing archived to check")
         return 1

@@ -41,7 +41,7 @@ def parse(path):
         c = f[2:]
         if len(c) == 6:          # pre-E180: crossing arm wait spent step flag
             wait, spent, step = int(c[2]), int(c[3]), int(c[4])
-        elif len(c) == 7:        # post-E180, fine stamps in 15.6 ns ticks
+        elif len(c) == 7:        # post-E180, fine stamps (rate per CHAINSNAP fine_hz)
             wait, spent, step = int(c[3]), int(c[4]), int(c[5])
             fine = True
         else:
