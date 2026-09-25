@@ -311,6 +311,12 @@ fn emit_one(c: &Chain, out: &mut impl crate::report::Sink) {
     out.say("CHAINSNAP ");
     out.kv("len", c.len as u32);
     out.kv("total", c.total);
+    // Versioned capture units. The fine stamps are TIM2 ticks, and that rate
+    // changed from 15.625 ns to 125 ns in campaign 11 -- an 8x reinterpretation
+    // of every recorded delta. `scripts/chain.py` reads the rate from here
+    // rather than asserting one, and says so when a capture predates this.
+    out.kv("fine_hz", crate::fine::FINE_HZ);
+    out.kv("span16_us", crate::fine::SPAN16_US);
     out.say("\r\n");
     out.flush();
     let start = if c.total as usize > c.len {

@@ -62,12 +62,50 @@ import sys
 
 Row = collections.namedtuple('Row', 'kind at_us at_fine x_fine y_us z_fine step flag')
 
-# The fine clock is TIM2 free-running at the 64 MHz core clock (E180), so one
-# tick is 15.625 ns and a µs is exactly 64 ticks. Every *measured* delta in
-# this script is fine; `y_us` (the requested wait, and the lateness the
-# firmware reports) stays µs, because those are control quantities and are
-# genuinely µs-quantised.
-TICKS_PER_US = 64.0
+# The fine clock is TIM2. **Its rate is read from the capture, not asserted
+# here** (E265): campaign 11 moved it from 64 MHz (15.625 ns) to 8 MHz (125 ns),
+# so a hardcoded divisor silently misreports every measured delta by 8x. Every
+# *measured* delta in this script is in fine ticks; `y_us` (the requested wait,
+# and the lateness the firmware reports) stays µs, because those are control
+# quantities and are genuinely µs-quantised.
+#
+# A capture with no `fine_hz` in its `CHAINSNAP` predates the versioning, and
+# every such capture on disk is 64 MHz -- so that is the fallback, and it is
+# **printed rather than assumed silently**.
+LEGACY_FINE_HZ = 64_000_000.0
+
+# Set from the capture by `fine_rate`. Module-level because `us()` is called
+# from a dozen places that have no snapshot in hand.
+TICKS_PER_US = LEGACY_FINE_HZ / 1e6
+FINE_NOTE = ''
+
+
+def fine_rate(snap: dict) -> None:
+    """Set the tick rate from the capture's own header.
+
+    Refuses a declared rate that is not a whole number of MHz, because `us()`
+    would then carry a rounding this tool does not track.
+    """
+    global TICKS_PER_US, FINE_NOTE
+    hz = snap.get('fine_hz')
+    if hz is None:
+        TICKS_PER_US = LEGACY_FINE_HZ / 1e6
+        FINE_NOTE = (f'fine rate ASSUMED {LEGACY_FINE_HZ / 1e6:.0f} MHz '
+                     f'({1e9 / LEGACY_FINE_HZ:.3f} ns/tick): capture predates '
+                     f'unit versioning (E265)')
+        return
+    hz = float(hz)
+    if hz <= 0 or hz % 1e6:
+        sys.exit(f'REFUSED: CHAINSNAP fine_hz={hz:.0f} is not a whole number of MHz')
+    TICKS_PER_US = hz / 1e6
+    FINE_NOTE = (f'fine rate {hz / 1e6:.0f} MHz ({1e9 / hz:.3f} ns/tick), '
+                 f'declared by the capture')
+
+
+def span16_us() -> float:
+    """How much time a u16 fine stamp spans at the current rate: the limit
+    beyond which a pairing aliases and must not be reported."""
+    return 65536.0 / TICKS_PER_US
 
 
 def advance_of(ci, level):
@@ -184,6 +222,10 @@ def main():
     ap.add_argument('--csv')
     a = ap.parse_args()
     snap, rows, level_run = parse(a.log)
+    # Set the tick rate from the capture before any delta is computed, and say
+    # which rate was used -- a silent 8x is exactly what E265 exists to stop.
+    fine_rate(snap)
+    print(FINE_NOTE)
     if not rows:
         print('no CHAIN rows found', file=sys.stderr)
         return 1

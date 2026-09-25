@@ -21094,3 +21094,83 @@ row is the first instrument in this campaign that can address it, and
 pre-committing to an answer is what the goal corrects.
 
 This is a build plus hypotheses, so **both reviews come before it is flashed.**
+
+### E265 — a defect E264 introduced: the chain recorder's units were left unversioned
+
+Found by reading my own commit rather than by running into it, which is the only
+good way to find this class.
+
+**E264 moved TIM2 from 64 MHz to 8 MHz and versioned the *sag* ring's units
+carefully. It left the *chain* ring's alone.** `scripts/chain.py` hardcoded
+
+```python
+TICKS_PER_US = 64.0
+```
+
+with a docstring asserting 15.6 ns ticks, and `CHAINSNAP` carried only `len` and
+`total`. So every chain capture taken after E264 would have been read at 64
+ticks per µs when its ticks are eight times longer — **every measured delta in
+that tool reported 8× too large, silently.**
+
+This is exactly the trap the brief names, and exactly the one this repo has
+already been bitten by once: `chain.py` *refuses* legacy six-column captures
+because their `spent` is coarse µs and accepting them would under-report by 64×.
+Fixing the units one file over while leaving this file asserting a stale
+constant is worse than fixing neither, because the sag ring's correctness
+invites trust in the chain ring's.
+
+**What changed.** `CHAINSNAP` now states `fine_hz` and `span16_us`, as `SAGSNAP`
+does. `chain.py` derives its rate from the capture instead of asserting one, and
+`span16_us()` is derived too — the u16 fine stamp spans 1.024 ms at 64 MHz and
+8.192 ms at 8 MHz, so a pairing window written down for one rate is wrong for
+the other. A declared rate that is not a whole number of MHz is **refused**,
+because `us()` would otherwise carry a rounding the tool does not track.
+
+**The fallback is stated, not silent.** A capture with no `fine_hz` predates the
+versioning, and every such capture on disk is 64 MHz, so that is what it is read
+at — but the tool prints which rate it used, every time:
+
+```
+fine rate ASSUMED 64 MHz (15.625 ns/tick): capture predates unit versioning (E265)
+fine rate 8 MHz (125.000 ns/tick), declared by the capture
+```
+
+Both paths exercised against a real post-E180 capture and a hand-edited copy of
+it. The historical captures are therefore still read correctly, and a new one
+cannot be read at the wrong rate without the line above appearing.
+
+**What this says about E264.** Its audits were thorough on the axes it chose —
+production byte-identity, four-root arithmetic, `.bss`, tests — and blind on the
+one axis that mattered for a *rate* change: who else consumes the quantity whose
+units moved. I audited the code I changed and not the code that reads it. That
+is the check to run first next time a unit changes, before the section diff.
+
+#### And the question that actually decides safety, now verified rather than assumed
+
+E264 asserted production never initialises TIM2 and let the section diff stand
+as corroboration. "Consistent with" is not "verified", so here is the check:
+**does any control or protection path read the fine clock?** If one did, an 8×
+rescale would be a behavioural change, not a reporting one.
+
+Every consumer, exhaustively (`grep` for `fine::raw|hal.fine()` across `src/`
+and `bin/`): `roots.rs:366`, `roots.rs:532`, `roots.rs:1219`,
+`run/states.rs:377`. And the arm path at `roots.rs:528-533` settles it:
+
+```rust
+let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;   // TIM17, 1 µs
+let left  = wait.saturating_sub(spent);
+com_arm(left.max(1), 1);                                    // the decision
+let fine_now = hw::fine::raw() as u16;                      // read AFTER it
+beat = Some((raw, fine0, fine_now, wait, fine_now.wrapping_sub(fine0), left == 0));
+```
+
+The scheduling decision is computed from **TIM17** and dispatched by `com_arm`
+*before* the fine clock is read at all; the fine value only ever enters the
+`beat` tuple, whose sole consumers are the chain recorder's rows
+(`roots.rs:491`, `:593`). `roots.rs:366` sits inside `beat_row`, which returns
+`None` when `C::ON` is false, and `:1219` is guarded by `C::ON` explicitly.
+
+**So the fine clock feeds recorded values and never a control decision, and the
+rate change is reporting-only.** That is the claim E264 should have made in
+those terms, and it is also why the four production roots came out identical:
+not luck, but because the quantity that moved is not on the control path.
