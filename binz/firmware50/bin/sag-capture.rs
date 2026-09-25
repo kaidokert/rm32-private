@@ -105,6 +105,12 @@ fn main() -> ! {
             cortex_m::asm::nop();
         }
     };
+    // The fine clock the rows stamp from: TIM2 at 8 MHz, 125 ns a tick
+    // (`crate::fine`). **Only a diagnostic image enables it**; production never
+    // touches TIM2, which is what keeps its four roots byte-identical. Without
+    // this call `Hal::fine` reads an unclocked counter and every row stamps 0
+    // -- which is exactly what E264 shipped (E266).
+    firmware50::hw::fine::init();
     safe_off(&mut Drv8304);
     board::banner(&mut board, adc_ok);
     board.say("SAGCAPTURE diagnostic image: every run dumps the sag guard inputs\r\n");

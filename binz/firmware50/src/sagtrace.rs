@@ -38,10 +38,11 @@
 //!
 //! **Two rings, because one cannot answer both questions.**
 //!
-//! * [`FAST_LEN`] judgements at full rate — ~52 ms — for the shape of the dip
-//!   that trips the guard;
-//! * [`SLOW_LEN`] judgements decimated by [`SLOW_EVERY`] — ~3.3 s, i.e. eight
-//!   filter time constants — for **how the reference got where it was**, which
+//! * [`FAST_LEN`] judgements at full rate — **~26 ms** — for the shape of the
+//!   dip that trips the guard;
+//! * [`SLOW_LEN`] judgements decimated by [`SLOW_EVERY`] — ~3.3 s, i.e.
+//!   **sixteen** filter time constants (3.31 s / 207 ms) — for **how the
+//!   reference got where it was**, which
 //!   is what explaining a latch requires and what the fast ring alone cannot
 //!   show.
 //!
@@ -52,8 +53,8 @@
 //!
 //! Production runs [`NoSagLog`], whose `ON` is `false`, so every call folds
 //! away; only the `sag-capture` binary installs [`SagRing`]. RAM cost there:
-//! `FAST_LEN` x 16 B + `SLOW_LEN` x 8 B = 16 384 B, which the entry states against the
-//! part's 36 KB. This is diagnostic evidence and never qualifies another
+//! `FAST_LEN` x 28 B + `SLOW_LEN` x 8 B = **15 360 B** of the part's 36 KB,
+//! which `scripts/structure_report.py` checks per image against the stack. This is diagnostic evidence and never qualifies another
 //! image.
 
 use core::cell::RefCell;
@@ -70,9 +71,10 @@ use cortex_m::interrupt::{self, Mutex};
 /// on a part whose largest frame reserves 5076 B and which has no stack guard,
 /// and every run died inside a millisecond.
 ///
-/// 26 ms is still ~50x the widest dip the guard can latch on (its numerator is
-/// an 8-scan sliding mean, so it cannot see anything slower than ~200 ms or
-/// faster than ~0.8 ms), and the analysis uses the last rows before the freeze.
+/// 26 ms is **~32x the guard's fast edge** (~0.8 ms), the shortest dip it can
+/// latch on; it is *not* longer than the slow edge (~200 ms), so this ring
+/// shows the shape of a fast event while the decimated ring shows the
+/// reference's history. The analysis uses the last rows before the freeze.
 pub const FAST_LEN: usize = 256;
 /// Decimated judgements kept, and the decimation: 1024 rows every 32nd
 /// judgement is **~3.3 s** at the measured 9.8 kHz (1024 x 32 x 101 µs), i.e.
@@ -93,6 +95,19 @@ pub struct Block {
     /// Wraps every **8.192 ms**; the host must not pair across a longer gap
     /// (`hw::fine::SPAN16_US`).
     pub at_fine: u16,
+    /// **The PWM counter at this scan**, so the raw samples above are
+    /// interpretable at all.
+    ///
+    /// The ADC trigger is deliberately de-cohered from the carrier -- TIM6 at
+    /// 9901 Hz against a 48.0 kHz carrier -- so the sample point walks ~0.85 of
+    /// a carrier period per scan and every raw sample below lands at a
+    /// different, unknown point of the switching cycle. That is right for
+    /// reconstructing a DC average (which is what the 8-tap mean is for) and
+    /// useless for reading one raw sample as a bus level, because consecutive
+    /// samples differ by carrier ripple aliased at an unknown phase. With this
+    /// field the host can bin by phase, or restrict a comparison to samples
+    /// taken at a like point in the cycle.
+    pub pwm_ctr: u16,
     /// **The raw bus sample of this very scan**, not the mean.
     ///
     /// Without it nothing here can state the width of a dip: the mean below is
@@ -180,6 +195,7 @@ impl Trace {
         const EMPTY: Block = Block {
             at: 0,
             at_fine: 0,
+            pwm_ctr: 0,
             bus_raw: 0,
             phase_a: 0,
             phase_b: 0,
@@ -302,8 +318,9 @@ impl SagRing {
 
 /// The ring as text, oldest block first, parsed by `scripts/sag.py`.
 ///
-/// `SAGROW at at_fine bus_raw pa pb pc bus vref filt_bus filt_vref streak step
-/// duty since_com_us` -- **raw quantities only**: the host computes the margin
+/// `SAGROW at at_fine pwm_ctr bus_raw pa pb pc bus vref filt_bus filt_vref
+/// streak step duty since_zc_us` -- **raw quantities only**: the host computes
+/// the margin
 /// with the guard's own cross-product, so no division happens here and nothing
 /// is rounded twice.
 ///
@@ -326,7 +343,7 @@ pub fn emit(t: &Trace, out: &mut impl crate::report::Sink) {
     // Versioned capture units: the fine clock's rate travels with the rows.
     out.kv("fine_hz", crate::fine::FINE_HZ);
     out.kv("span16_us", crate::fine::SPAN16_US);
-    out.kv("row_v", 2);
+    out.kv("row_v", 3);
     out.say(
         "
 ",
@@ -340,6 +357,8 @@ pub fn emit(t: &Trace, out: &mut impl crate::report::Sink) {
         out.say_u32(u32::from(b.at));
         out.say(" ");
         out.say_u32(u32::from(b.at_fine));
+        out.say(" ");
+        out.say_u32(u32::from(b.pwm_ctr));
         out.say(" ");
         out.say_u32(u32::from(b.bus_raw));
         out.say(" ");

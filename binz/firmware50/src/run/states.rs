@@ -378,6 +378,9 @@ impl Ctx {
             // The raw sample of *this* scan, alongside the mean the guard
             // judged, so the host can state a dip's true width instead of the
             // boxcar's.
+            // The carrier phase this scan was taken at; without it a raw
+            // sample cannot be compared with the next one (E266).
+            pwm_ctr: hal.pwm_counter() as u16,
             bus_raw: scan.bus,
             phase_a: scan.phase_a,
             phase_b: scan.phase_b,

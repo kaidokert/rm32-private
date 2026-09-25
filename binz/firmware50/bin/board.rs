@@ -23,12 +23,12 @@ use firmware50::bridge::safe_off;
 use firmware50::commutation::{SixSlot, Step};
 use firmware50::duty::{ENVELOPE_MAX, ENVELOPE_MIN, ENVELOPE_STEP, STARTUP_TICKS};
 use firmware50::hw;
-use firmware50::protection::{RawScan, RAW_LIMIT};
+use firmware50::protection::{RAW_LIMIT, RawScan};
 use firmware50::report::{GuardRecord, Roots, Sink};
-use firmware50::roots::{self, Drv8304, DRV_GATE_US};
+use firmware50::roots::{self, DRV_GATE_US, Drv8304};
 use firmware50::run::hal::{DrivenAccept, Drives, Stopped};
 use firmware50::run::{Gates, Hal, Inject, Preflight};
-use firmware50::shared::{TxRing, SHARED as S};
+use firmware50::shared::{SHARED as S, TxRing};
 use firmware50::sixstep::Plan;
 use firmware50::startup::{CONTROL_HZ, SCRIPT_TICKS};
 
@@ -189,6 +189,20 @@ impl Hal for Board {
     }
 
     #[inline(always)]
+    /// The fine diagnostic clock, 125 ns a tick.
+    ///
+    /// **This override is the difference between a timeline and a column of
+    /// zeros** (E266): `Hal::fine` has a default body returning 0, and without
+    /// this the sag ring recorded no time at all while every unit-versioning
+    /// check downstream passed happily on the zeros.
+    ///
+    /// Returns 0 unless some image called `hw::fine::init()`, because TIM2 is
+    /// otherwise unclocked -- production never touches it, which is what keeps
+    /// its four roots identical.
+    fn fine(&self) -> u16 {
+        firmware50::hw::fine::raw() as u16
+    }
+
     fn raw(&self) -> u16 {
         hw::clock::raw()
     }

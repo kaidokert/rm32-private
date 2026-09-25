@@ -31,13 +31,13 @@ itself used, as recorded at the instant it judged.
 
 Coverage, which bounds every conclusion drawn here:
 
-* the fast ring is 512 judgements ~= **52 ms**, and for a run that does not
-  trip it is the **tail** -- it says nothing about the ramp, the first 207 ms
-  (when the reference is still the unloaded rail), or any excursion earlier in
-  the hold;
-* the decimated ring is 1024 rows every 32nd judgement ~= **1.7 s**, eight of
-  the reference's time constants, which is what showing *how the reference got
-  there* requires;
+* the fast ring is **256** judgements ~= **26 ms** (E264 halved it to pay for
+  the raw bus and the phase codes), and for a run that does not trip it is the
+  **tail** -- it says nothing about the ramp, the first 207 ms (when the
+  reference is still the unloaded rail), or any excursion earlier in the hold;
+* the decimated ring is 1024 rows every 32nd judgement ~= **3.3 s**, sixteen of
+  the reference's 207 ms time constants, which is what showing *how the
+  reference got there* requires;
 * both **freeze on the fault**, so a frozen dump is the pre-trip window;
 * `frozen=0` does **not** mean the run was healthy -- a stop for any other
   reason returns before the guard is judged. Read `run_reason` (this script
@@ -65,28 +65,47 @@ import sys
 # true width. v1 captures are read with those fields as None.
 Row = collections.namedtuple(
     "Row",
-    "at at_fine bus_raw phase_a phase_b phase_c bus vref filt_bus filt_vref streak step duty since_zc",
+    "at at_fine pwm_ctr bus_raw phase_a phase_b phase_c bus vref filt_bus filt_vref "
+    "streak step duty since_zc",
 )
 Slow = collections.namedtuple("Slow", "bus vref filt_bus filt_vref")
 
-# Field counts including the leading "SAGROW" token.
-V1_FIELDS = 10
-V2_FIELDS = 15
+# Field counts including the leading "SAGROW" token, newest first.
+V1_FIELDS = 10   # at bus vref filt_bus filt_vref streak step duty since_zc
+V3_FIELDS = 16   # + at_fine pwm_ctr bus_raw phase_a phase_b phase_c
+KNOWN_FIELDS = (V1_FIELDS, V3_FIELDS)
 
 
 def _row_from(f: list[str]) -> Row:
     """One row, whichever format version it is. Refuses anything else."""
     v = [int(x) for x in f[1:]]
-    if len(f) == V2_FIELDS:
+    if len(f) == V3_FIELDS:
         return Row(*v)
     if len(f) == V1_FIELDS:
         at, bus, vref, fb, fv, streak, step, duty, zc = v
-        return Row(at, None, None, None, None, None, bus, vref, fb, fv, streak, step, duty, zc)
+        return Row(
+            at=at, at_fine=None, pwm_ctr=None, bus_raw=None,
+            phase_a=None, phase_b=None, phase_c=None,
+            bus=bus, vref=vref, filt_bus=fb, filt_vref=fv,
+            streak=streak, step=step, duty=duty, since_zc=zc,
+        )
     raise SystemExit(
-        f"REFUSED: a SAGROW with {len(f) - 1} fields is neither v1 ({V1_FIELDS - 1}) "
-        f"nor v2 ({V2_FIELDS - 1}). Silently skipping it would report an empty ring "
-        f"as a clean one.\n  {' '.join(f)}"
+        f"REFUSED: a SAGROW with {len(f) - 1} fields matches no known format "
+        f"{tuple(n - 1 for n in KNOWN_FIELDS)}. Silently skipping it would report "
+        f"an empty ring as a clean one.\n  {' '.join(f)}"
     )
+
+
+def _slow_from(f: list[str]) -> Slow:
+    """One decimated row. **Refuses like `_row_from` does** (E266): this used to
+    drop a malformed row silently, so a truncated dump made the whole decimated
+    section vanish with no message -- the same failure the row refusal exists to
+    prevent, one branch over."""
+    if len(f) != 5:
+        raise SystemExit(
+            f"REFUSED: a SAGSLOW with {len(f) - 1} fields, expected 4.\n  {' '.join(f)}"
+        )
+    return Slow(*(int(x) for x in f[1:]))
 
 
 def parse(path: pathlib.Path) -> tuple[dict, list[Row], list[Slow]]:
@@ -101,9 +120,12 @@ def parse(path: pathlib.Path) -> tuple[dict, list[Row], list[Slow]]:
         elif line.startswith("SAGROW "):
             rows.append(_row_from(line.split()))
         elif line.startswith("SAGSLOW "):
-            f = line.split()
-            if len(f) == 5:
-                slow.append(Slow(*(int(x) for x in f[1:])))
+            slow.append(_slow_from(line.split()))
+        elif line.startswith("SAGEND"):
+            # One dump per file. A shell log accumulates runs, and merging two
+            # dumps silently mixed v1 and v3 rows in one list (E266).
+            if rows or slow:
+                break
         elif line.startswith("BEMFDONE "):
             for kv in line.split()[1:]:
                 if kv.startswith("reason="):
@@ -132,6 +154,14 @@ def check_units(snap: dict, rows: list[Row]) -> None:
         )
     if "span16_us" not in snap:
         raise SystemExit("REFUSED: SAGSNAP declares `fine_hz` but not `span16_us`.")
+    # Read the version tag rather than trusting the field count alone: a future
+    # format with the same width would otherwise parse as this one (E266).
+    v = snap.get("row_v")
+    if v is not None and v > 3:
+        raise SystemExit(
+            f"REFUSED: capture declares row_v={v}, this tool understands up to 3. "
+            "Field count alone cannot tell two same-width formats apart."
+        )
 
 
 def fine_delta_us(a: Row, b: Row, snap: dict) -> float | None:
@@ -148,7 +178,16 @@ def fine_delta_us(a: Row, b: Row, snap: dict) -> float | None:
         return None
     ticks = (b.at_fine - a.at_fine) & 0xFFFF
     us = ticks * 1_000_000.0 / hz
-    return None if us >= snap.get("span16_us", 0) else us
+    # **Aliasing is not detectable from the fine delta alone** -- masked to
+    # 0xFFFF it can never reach `span16_us`, so the guard that used to live here
+    # was unreachable (E266). The coarse TIM17 stamp is the cross-check: it
+    # spans 65.536 ms against the fine stamp's 8.192 ms, so if the two disagree
+    # by more than a fine wrap, the fine delta has wrapped and is meaningless.
+    coarse = (b.at - a.at) & 0xFFFF  # TIM17 is 1 us per tick
+    span = snap.get("span16_us", 0)
+    if span and abs(coarse - us) > span / 2:
+        return None
+    return us
 
 
 def raw_run_width(rows: list[Row], threshold: int) -> tuple[int, int]:
@@ -334,14 +373,82 @@ def main() -> int:
             f"  filt_bus {min(fb)}..{max(fb)} (last {fb[-1]}), "
             f"bus_mean {min(bus)}..{max(bus)} (last {bus[-1]})"
         )
-        drift = [margin_permille(Row(0, r.bus, r.vref, r.filt_bus, r.filt_vref, 0, 0, 0, 0), num, den) for r in slow]
+        # **By keyword, not position** (E266). This was nine positional args
+        # against a fourteen-field Row, so it raised TypeError on every capture
+        # that has SAGSLOW rows -- which is all of them. And had the arity
+        # happened to match, `r.bus` would have landed in the `at_fine` slot and
+        # the tool would have printed confident wrong numbers instead.
+        drift = [
+            margin_permille(
+                Row(
+                    at=0, at_fine=None, pwm_ctr=None, bus_raw=None,
+                    phase_a=None, phase_b=None, phase_c=None,
+                    bus=r.bus, vref=r.vref, filt_bus=r.filt_bus, filt_vref=r.filt_vref,
+                    streak=0, step=0, duty=0, since_zc=0,
+                ),
+                num, den,
+            )
+            for r in slow
+        ]
         print(f"  margin over that history: min={min(drift):.1f} p50={statistics.median(drift):.1f} max={max(drift):.1f}")
+
+    # ---- what the v3 columns say, with the threshold derived not chosen ----
+    if any(r.bus_raw is not None for r in rows):
+        ref = rows[-1].filt_bus
+        # The guard's own condition: a window of RAIL_MEAN_LEN=8 is low when its
+        # summed deficit exceeds (1 - num/den) * 8 * ref. A *single* scan that
+        # deep latches on its own, so this is the deficit budget, not a depth.
+        budget = (1.0 - num / den) * 8 * ref
+        # Report at the depth that would make one scan sufficient, and at the
+        # shallower depth that needs the full streak -- both derived from the
+        # line above, so neither is a post-hoc choice.
+        print()
+        print(
+            f"raw bus (v3): deficit budget for a low window = {budget:.0f} codes "
+            f"against filt_bus {ref}"
+        )
+        for k, label in ((1, "one scan suffices"), (5, "needs 5 scans")):
+            thr = int(ref - budget / k)
+            run, n = raw_run_width(rows, thr)
+            print(f"  below {thr} ({label}): longest run {run} scans, {n} rows total")
+        raws = [r.bus_raw for r in rows if r.bus_raw is not None]
+        print(f"  raw bus {min(raws)}..{max(raws)} (mean-of-raw {sum(raws) / len(raws):.0f})")
+        phs = [(r.phase_a, r.phase_b, r.phase_c) for r in rows if r.phase_a is not None]
+        if phs:
+            lo = min(min(p) for p in phs)
+            hi = max(max(p) for p in phs)
+            print(f"  phase codes {lo}..{hi} over {len(phs)} rows")
+        ctrs = [r.pwm_ctr for r in rows if r.pwm_ctr is not None]
+        if ctrs:
+            print(
+                f"  pwm counter {min(ctrs)}..{max(ctrs)} -- raw samples are taken at "
+                f"{len(set(ctrs))} distinct carrier phases, so compare within a phase bin"
+            )
+        fd = [fine_delta_us(x, y, snap) for x, y in zip(rows, rows[1:])]
+        good = [d for d in fd if d is not None]
+        if good:
+            print(
+                f"  fine deltas: {len(good)} of {len(fd)} usable, "
+                f"min={min(good):.3f} p50={statistics.median(good):.3f} max={max(good):.3f} us"
+            )
+        else:
+            print("  fine deltas: NONE usable -- at_fine is absent or all zero")
 
     if a.csv:
         with open(a.csv, "w", newline="") as fh:
-            fh.write("at,bus_mean,vref_mean,filt_bus,filt_vref,streak,step,duty_tenths,since_zc_us,margin_permille\n")
+            fh.write(
+                "at,at_fine,pwm_ctr,bus_raw,phase_a,phase_b,phase_c,"
+                "bus_mean,vref_mean,filt_bus,filt_vref,streak,step,duty_tenths,"
+                "since_zc_us,margin_permille\n"
+            )
+            e = lambda v: "" if v is None else v  # noqa: E731 - v1 rows lack v3 fields
             for r, x in zip(rows, m):
-                fh.write(f"{r.at},{r.bus},{r.vref},{r.filt_bus},{r.filt_vref},{r.streak},{r.step},{r.duty},{r.since_zc},{x:.2f}\n")
+                fh.write(
+                    f"{r.at},{e(r.at_fine)},{e(r.pwm_ctr)},{e(r.bus_raw)},"
+                    f"{e(r.phase_a)},{e(r.phase_b)},{e(r.phase_c)},"
+                    f"{r.bus},{r.vref},{r.filt_bus},{r.filt_vref},"
+                    f"{r.streak},{r.step},{r.duty},{r.since_zc},{x:.2f}\n"
+                )
         print(f"\nrows written to {a.csv}")
     return 0
 

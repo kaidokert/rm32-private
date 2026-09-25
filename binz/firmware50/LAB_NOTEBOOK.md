@@ -21174,3 +21174,324 @@ The scheduling decision is computed from **TIM17** and dispatched by `com_arm`
 rate change is reporting-only.** That is the claim E264 should have made in
 those terms, and it is also why the four production roots came out identical:
 not luck, but because the quantity that moved is not on the control path.
+
+### E266 — disposition of both E264 reviews: three of the four things I built did not work, and the experiment tested nothing
+
+Both reviews are appended verbatim after this disposition. They ran
+concurrently and context-free, neither saw the other, and **they converge on the
+same verdict from disjoint evidence: do not flash E264 as it stood.** Between
+them they find two runtime-fatal defects, a fabricated statistic, and a rigged
+discriminator. Every load-bearing number below is recomputed here.
+
+The summary I owe first: **E264's own claim of verification was false.** I wrote
+that `e190-500-s7` "reproduces its old report exactly". It does — right up to
+the final section, where `sag.py` raises `TypeError`. I had piped the run
+through `head -12` and the traceback fell past line 12. That is this campaign's
+own verify-reported-numbers rule broken in the sentence claiming verification,
+and it is the second time this session I have quoted truncated output as proof.
+
+---
+
+## Part 1 — the two defects that made the build inert
+
+#### 1.1 `at_fine` would have recorded a column of zeros
+
+`Hal::fine()` was added as a **default** method returning 0
+(`src/run/hal.rs:229`), `impl Hal for Board` never overrode it — the token
+`fine` did not appear in `bin/board.rs` at all — and **`bin/sag-capture.rs`
+never called `hw::fine::init()`**, so TIM2 was not even clocked in the image I
+was about to flash. Only `chain-capture` calls it.
+
+So the commit's headline — "one 125 ns timeline", the whole reason the
+prescaler moved — would have written 256 rows of `at_fine = 0`, and the entire
+`fine_hz` / `span16_us` / `check_units` apparatus would have passed happily on
+the zeros, because `0 is not None`.
+
+Both reviewers found this independently. One of them names the sharper version:
+E265's "exhaustive grep for `fine::raw|hal.fine()`" found the *call site* and
+did not check that the trait method resolves to a clock — **the identical error
+one level down from the one E265 congratulated itself for catching.** That is
+the finding I least want and most need.
+
+**Fixed:** `bin/board.rs` overrides `fine()` to read TIM2;
+`bin/sag-capture.rs` calls `hw::fine::init()`.
+
+#### 1.2 `sag.py` exited 1 on every real capture
+
+`scripts/sag.py:337` built a 14-field `Row` with **nine positional arguments**,
+on the path that runs whenever a capture has `SAGSLOW` rows — which is all 21 of
+them. And the near-miss is worse than the crash: had the arity happened to
+match, `r.bus` would have landed in the new `at_fine` slot and the tool would
+have printed confident wrong numbers instead of stopping.
+
+**Fixed, and built by keyword now**, so a field added to `Row` cannot silently
+shift columns again.
+
+**And the test that should have existed now does.** `scripts/sag_selftest.py`
+runs the tool over every capture on disk and checks three things per file: that
+it exits 0 or declines with a stated reason, that no row carries a `None` in a
+field its format version is supposed to have, and that a v1 and a v3 row never
+end up in the same list. Result:
+
+> **41 of 41 captures OK.** Against the broken version: **19 FAILED**, naming
+> the `TypeError`.
+
+I ran it against the pre-fix file deliberately to confirm it fails loudly rather
+than trusting that it would.
+
+---
+
+## Part 2 — the experiment tested nothing, and the reason is worse than a wrong p-value
+
+#### 2.1 The statistic was the wrong test, and I regressed a number E261 already had right
+
+E264 declared "at p = 0.5, P(0 trips in 5) = 3.1%". That is a **one-sample**
+binomial against a parameter I invented. It is a **two-sample** comparison, and
+Fisher's exact, one-sided:
+
+| comparison | p |
+|---|---|
+| 3/6 vs 0/5 — **E264's plan** | **0.121** |
+| 3/6 vs 0/7 — **which E261 already reported as 0.070** | 0.070 |
+| 3/7 vs 0/5 — the on-disk denominator | 0.159 |
+
+To clear p < 0.05 against a 3/6 baseline you need **0 trips in 9**. E261 said so
+in almost those words ("11 consecutive non-trips at 1/4, or 8 at 1/3"), and E264
+answered that review by setting the bar at five with a weaker test and reporting
+a smaller number. That is the falsification-bar rule applied in reverse.
+
+#### 2.2 And the baseline is void: the current lineage has no rung-500 event at all
+
+This is the finding that kills the design rather than merely weakening it. Every
+rung-500 capture, tallied by the image's own `elf_sha256`:
+
+| image | rung-500 runs | `FastBusSag` trips |
+|---|---|---|
+| **`89D65B09`** — campaign-7 production | 7 | **3** |
+| `828501C1` | 13 | 0 |
+| `7125601F` (= 14CE44E7) | 10 | 0 |
+| `D9D77F3C` (= 0D8E3799, the qualified candidate) | 3 | 0 |
+| `6762FE38` | 1 | 0 |
+
+**All three trips are on one image, in one session.** The current lineage is
+**0 of 26** at rung 500. E261 §1.4 labelled that row `14CE44E7`; it is
+mislabelled, and E264 inherited the number without the image.
+
+So the planned control asked whether the recorder suppresses an event that
+**the current production image does not produce either**. Zero trips in five
+would have been the expected outcome under any honest prior, and I had
+pre-declared that outcome as evidence of an observer effect. **The rung-500
+control is dropped.**
+
+Worse for my own framing: `0D8E3799` — whose control path `sag-capture`
+reproduces byte-for-byte — has three rung-500 runs and none tripped. If the
+recorder were the suppressor, production would trip there. It doesn't.
+
+#### 2.3 What the honest version is
+
+At rung 550 on the current image, production is **1 trip in 3** unaborted runs.
+Detecting suppression *there* needs **0 trips in 8** for p < 0.05
+((2/3)⁸ = 0.039); three runs give 0.296, i.e. nothing.
+
+So the redesign, predeclared:
+
+* **The observer question is answered by a cost measurement, not a rate.**
+  `loop_iters_closed` at a rung both images have run, same `hold_ms`, same
+  session — a number, not a p-value. That was prediction 4 and it is the only
+  one of the four that survives intact.
+* **The mechanism question is asked at 550, where the event actually is**, with
+  the outcome rules fixed in advance: a captured trip is analysable and is the
+  win; **0 trips in 3 is explicitly uninformative** about both the mechanism and
+  the observer. Eight is the n that would make a non-trip mean something, and
+  stopping at three is a stated cost-of-bench choice, not a hidden one.
+
+---
+
+## Part 3 — two predictions were rigged, and one was wrong by construction
+
+#### 3.1 Prediction 2's "depth-free floor of 3" is really 1, and I kept a conclusion after dropping its premise
+
+The adversarial reviewer derived it and I reproduce the derivation. The guard
+needs `SAG_STREAK = 3` consecutive low 8-tap means, each below
+`SAG_NUM/SAG_DEN = 95%` of the reference. With `filt_bus = 1193` the deficit
+budget per window is **477 codes**. For a contiguous low run of `m` scans at
+depth `d`, with `K = ⌈477/d⌉`, latching needs `m ≥ max(K, 2K−6)`:
+
+| deepest single scan | K | minimum raw scans |
+|---|---|---|
+| **≥ 477 codes (≥ 4.64 V)** | 1 | **1** |
+| ≥ 239 codes | 2 | 2 |
+| ≥ 159 codes | 3 | 3 |
+| 119 codes (`bus_min` of the tripping run) | 5 | 5 |
+
+**A single sufficiently deep scan latches the guard.** My "≥3" is what you get
+by assuming the dip is no deeper than 13.3% of the reference — so it *is*
+depth-dependent, and I obtained it by deleting E257's depth input (119 → 5) and
+keeping the shape of the answer. Exactly the error E259 was written to correct,
+committed one entry later.
+
+And the failure branch was pre-loaded backwards: E264 said a run of 1 or 2
+"would mean the mean was dragged low by something other than a sustained bus
+depression." No — it would mean a **short deep collapse**, which is the
+loop-side surge story. I assigned the surge signature to the supply column.
+
+**Restated so it can fail in the right direction:** the recorded raw samples
+either do or do not satisfy the guard's own condition — three consecutive
+8-windows each with ≥477 codes of summed deficit. If they do, the latch is
+explained by the raw bus and the (m, d) pair says which regime. **If they do
+not, something other than the raw bus drove the mean low** — `vref`, or a
+filter-state artefact — and that is a finding about the guard, not the supply.
+`scripts/sag.py` now computes this, with the threshold **derived from
+`(1 − num/den) × 8 × filt_bus`** rather than chosen.
+
+#### 3.2 Prediction 3's yardstick was ±15 A — five times the PSU clamp
+
+`PHASE_CODE_LOW/HIGH = 848..3248` scales, at 79.64 codes/A
+(`RAW_LIMIT = 31857` ↔ 4 A over `BLOCK_SCANS = 100`) against a per-channel zero
+of ≈2063 codes, to **±15 A on one shunt** — 3.8× the firmware's own allowance
+and **5× the 3 A clamp**. On a CC-clamped supply that is unreachable, so P3
+would have failed whatever the truth was, and its failure was pre-declared to
+favour the power-path reading. **A rigged discriminator dressed as a neutral
+one**, and the reviewer is right to name it that.
+
+**The right yardstick was in reach and is now used:** 3 A (the clamp) is **239
+codes** of deviation from zero; 4 A (the firmware allowance) is **318**.
+
+#### 3.3 A raw sample was uninterpretable without the carrier phase
+
+The ADC trigger is deliberately de-cohered — TIM6 at 9901 Hz against a
+**48.0 kHz** carrier (`RUN_PERIOD_TICKS = 1333`), so the sample point walks
+~0.85 of a carrier period per scan and every `bus_raw` lands at a different,
+unknown point of the switching cycle. Recording a raw sample without the phase
+it was taken at buys a number that cannot be compared with the next one. And
+within one scan the channels are **2.875 µs apart** (79.5 + 12.5 cycles at
+32 MHz), so `phase_a` and `bus` are **~9.9 µs = 0.475 of a carrier period**
+apart — they are not "in hand at the same point", they are four points of the
+switching cycle.
+
+`Hal::pwm_counter()` already existed and was already implemented on `Board`. It
+is now in the row: **+2 B**, and the reviewer's "single biggest miss" costs 512 B
+of ring.
+
+---
+
+## Part 4 — where I push back
+
+**The absolute bus floor *is* live in production**, and the adversarial review
+is wrong on this one point. It says "`BUS_FLOOR_NUM` is only enforced under
+`PhaseCodePolicy::Band`, so the only bus protection in the live image is
+`FastBusSag`." But `src/run/states.rs:321` checks a *different* quantity,
+unconditionally, outside the `Band` branch:
+
+```rust
+let early = validate_raw_feedback(&scan, PhaseCodePolicy::RetainRails)
+    .or_else(|| (scan.bus < self.base.bus_floor_code).then_some(Reason::Bus));
+```
+
+`base.bus_floor_code` is a baseline-derived per-scan floor (`run/measure.rs:103`)
+and it fires every scan in production. So E260's "sharp bus coverage is
+two-sided — a band-pass guard plus a per-scan absolute floor beneath it"
+**stands**. The reviewer conflated the constant used inside `validate_raw_feedback`
+with the live check in `scan_pass`.
+
+I am also not accepting "the `sag-capture` sha256 I could not reproduce, which
+by the entry's own rule is not a number worth quoting" as a defect in the
+*claim*: the hash differs because the reviewer built in a different worktree,
+and the same review establishes that allocated-section identity is
+build-path-sensitive. The right lesson, which I accept, is that **a diagnostic
+image's whole-file hash is not a reproducibility claim** and should have been
+stated as the loadable-bytes hash or not at all.
+
+---
+
+## Part 5 — the supply characterisation both reviews ranked first, done from existing data
+
+Both reviews say the live exposure toward 60% is the supply, and that a desk
+characterisation should precede any rung attempt. E262 and E263 did not touch
+it. Here it is, and it needed no bench time: **56 clean runs on image
+`0D8E3799`**, regressing *sustained* sag (`ref_bus − filt_bus`, a 207 ms EWMA —
+not `bus_min`, which stays withdrawn) against `hold_ma` at 9.73 mV/code:
+
+> **sag(mV) = 0.0945 × hold_ma + 30.1, R² = 0.975, residual sd 9.0 mV**
+>
+> **Source resistance = 95 mΩ.**
+
+That is comfortably under the 300 mΩ this bench's own scar says never to qualify
+through. Projected:
+
+| | hold | sustained sag | of 11.85 V |
+|---|---|---|---|
+| duty 500 | 1800 mA | 200 mV | 1.7% |
+| duty 550 | 2290 mA | 247 mV | 2.1% |
+| duty 600 | 2690 mA | 284 mV | 2.4% |
+| the 3 A clamp | 3000 mA | 314 mV | 2.6% |
+
+**And the conclusion that matters: the sustained droop can never trip the sharp
+guard within the clamp's reach.** The guard's line is 5% = 592 mV, which at
+95 mΩ needs **5950 mA** — nearly twice the clamp. So the 550 trip is **not** a
+sustained-droop event, and could not have been. It is transient, necessarily.
+
+This also sharpens E261's clamp hypothesis into something testable and much more
+plausible than the 8.9 A figure E259 withdrew. A resistive transient reaching
+the guard's line needs ~4 A *above* the hold. But a **CC supply that hits its
+limit stops behaving resistively** — it drops its output voltage until current
+falls back to 3 A. So a transient demanding only ~0.7 A more than the 2.29 A
+hold puts the PSU into constant current, and in CC the rail falls by whatever
+the loop needs, not by 95 mΩ × ΔI. **That is a mechanism that produces a 5% dip
+at a 2.29 A average, and it predicts phase codes reaching ≈239 codes of
+deviation — not 1215.**
+
+Stated as a hypothesis with its test, not a conclusion. The clamp's *transient*
+response still needs the operator to sweep the current limit, which is named
+here as the one measurement I cannot take myself.
+
+---
+
+## Part 6 — audits on the fixed build, and what happens next
+
+| audit | result |
+|---|---|
+| host tests | **344 + 9 doc pass** |
+| `sag_selftest.py` | **41 of 41 captures OK** (19 fail on the pre-fix file) |
+| clippy, target | clean |
+| four-root arithmetic, `sag-capture` | **4 roots certified clean** |
+| production four roots vs parent | **identical**: 37 / 728 / 332 / 155 |
+| `structure_report.py` | exit 0; `static_mut` 0, `bits_writes_outside_hw` 0, fns >100 lines 0, `bin_lines` 1058/1500 |
+| `sag-capture` `.bss` / stack | **19 572 / 16 624** against a 8 192 floor, 5 076 B largest frame |
+
+Rings are now 256 × 28 + 1024 × 8 = **15 360 B**, still 1 024 B below the
+16 384 B this image used before E264. The `.bss` delta against `shell-pwm`
+(19 572 − 4 184 = 15 388) is the rings plus the 28 B `Trace` header, which is
+the arithmetic closing exactly.
+
+**Accepted and owed, not done here:**
+
+* `structure_report.py`'s `.bss` ceiling gates only ELFs present in
+  `target/…/release`, so on a clean tree it passes **vacuously**. A gate that
+  can pass by finding nothing is the failure mode of my own
+  instrument-must-fail-loudly rule and needs the same treatment
+  `sag_selftest.py` just got.
+* `src/chain.rs`'s doc comments still assert 15.6 ns at five places, and
+  `src/roots.rs:1215` with them. E265 fixed the emit and the parser and left the
+  producer's format documentation lying — the same class E265 claims to fix.
+* E265 states the error direction backwards: reading 8 MHz ticks at 64 ticks/µs
+  makes a delta read **8× too small**, not too large.
+* `chain-capture` and `sag-capture` rings **cannot coexist** in one image:
+  4 184 + 14 368 + 15 388 ≈ 33 940 B of `.bss` leaves ~2 KB of stack against a
+  5 076 B frame — E185 reproduced exactly. So **the ordering question still
+  cannot be answered in one run**, and the reviewer's cheapest route (drop the
+  sag slow ring, 8 192 B) is the option on the table.
+* And the deeper limit, which no ring size fixes: **judgements arrive every
+  101 µs against a 71 µs sector.** Ordering two events inside one commutation
+  interval is not possible at that sample rate, whatever clock stamps the rows.
+  The reviewer's proposal — a *triggered burst* of back-to-back scans on
+  `streak == 1`, ~1 KB rather than 15 — is the only design offered that
+  addresses it, and it is the right next design question.
+
+**Nothing is flashed.** E264's build was inert in two of its three new
+capabilities and its experiment tested nothing; this entry fixes the first and
+withdraws the second. The fixes are themselves a conclusion plus a hypothesis,
+so they go to two fresh reviews before the bench, and the supply sweep that
+needs the operator is named rather than assumed.
+
+The reviews follow verbatim.
