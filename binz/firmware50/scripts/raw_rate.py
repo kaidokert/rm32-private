@@ -28,6 +28,10 @@ import math
 import pathlib
 import re
 import statistics
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import provenance  # noqa: E402  -- sibling script, path set above
 
 # Measured, not assumed. `captures/2026-09-24/e292-idlescan.txt`, bridge off.
 BRIDGE_OFF_FLOOR = 43.8
@@ -70,7 +74,21 @@ def per_run(pattern: str, root: pathlib.Path) -> dict[int, list[tuple]]:
     current" is a convenient shorthand and not the measured relationship.
     """
     out: dict[int, list[tuple]] = collections.defaultdict(list)
-    for p in sorted(root.glob(pattern)):
+    # **Provenance is enforced here, not advisory.** `480263F1` measured every
+    # `raw*` bin against the wrong reference, and E295-E297 built three entries
+    # of analysis on those counts after the defect had already been disclosed.
+    # A table lookup now refuses what two reviews had to disassemble an ELF to
+    # establish. Field-scoped, so that image's timing fields stay usable.
+    usable, refused = provenance.filter_usable(
+        sorted(root.glob(pattern)), ("raw1_n", "raw2_n"), strict=True
+    )
+    if refused:
+        print(f"  REFUSED {len(refused)} capture(s) on provenance:")
+        for _c, reason in refused[:3]:
+            print(f"    {reason}")
+        if len(refused) > 3:
+            print(f"    ... and {len(refused) - 3} more")
+    for p in usable:
         t = p.read_text(encoding="utf-8", errors="replace")
         try:
             duty = int(re.search(r"\btarget_duty_tenths=(\d+)", t).group(1))
@@ -172,9 +190,12 @@ def fit(by_rung: dict[int, list[float]]) -> tuple[float, float, float]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="captures/2026-09-24")
-    ap.add_argument("--fit", default="e286-*.txt", help="cohort the line is fitted from")
-    ap.add_argument("--score", default="e296-*.txt", help="cohort scored against it")
+    # Defaults point at the **post-fix** cohort. The old e286/e296 captures are
+    # refused by the provenance gate for every `raw*` field, so defaulting to
+    # them would make the tool print a wall of refusals and no data.
+    ap.add_argument("--root", default="captures/2026-09-25")
+    ap.add_argument("--fit", default="e301-*.txt", help="cohort the line is fitted from")
+    ap.add_argument("--score", default="e301-*.txt", help="cohort scored against it")
     ap.add_argument("--bin", type=int, default=1, help="raw bin index (1 = the 950 line)")
     args = ap.parse_args()
     root = pathlib.Path(args.root)

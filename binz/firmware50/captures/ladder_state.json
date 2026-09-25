@@ -12450,5 +12450,99 @@
     "fails": []
    }
   ]
+ },
+ "4476DFC587F9242F32B229C8FFCA763CABE6A49681F3A6DECD431EFD5764DA07": {
+  "150": [
+   {
+    "file": "e301-150_01.txt",
+    "duty": 150,
+    "reason": 2,
+    "accepted": 357458,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 357459,
+    "unstable": 2385445,
+    "hold_ms": 82276,
+    "rate_permille": 998,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1000,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 707,
+    "coast_crossings": 568,
+    "hold_ma": 20,
+    "ceiling_tenths": 150,
+    "worst_ma": 845,
+    "droop_permille": 998.5146072713303,
+    "fails": []
+   },
+   {
+    "file": "e301-150_02.txt",
+    "duty": 150,
+    "reason": 2,
+    "accepted": 357398,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 357399,
+    "unstable": 2387949,
+    "hold_ms": 82276,
+    "rate_permille": 998,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 706,
+    "coast_crossings": 546,
+    "hold_ma": 80,
+    "ceiling_tenths": 150,
+    "worst_ma": 914,
+    "droop_permille": 996.057229238669,
+    "fails": []
+   },
+   {
+    "file": "e301-150_03.txt",
+    "duty": 150,
+    "reason": 2,
+    "accepted": 357205,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 357206,
+    "unstable": 2403690,
+    "hold_ms": 82276,
+    "rate_permille": 997,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1004,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 705,
+    "coast_crossings": 546,
+    "hold_ma": 82,
+    "ceiling_tenths": 150,
+    "worst_ma": 925,
+    "droop_permille": 995.9016393442623,
+    "fails": []
+   }
+  ],
+  "200": [
+   {
+    "file": "e301-200_01.txt",
+    "duty": 200,
+    "reason": 2,
+    "accepted": 477985,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 477986,
+    "unstable": 2121406,
+    "hold_ms": 79776,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1001,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 955,
+    "coast_crossings": 756,
+    "hold_ma": 202,
+    "ceiling_tenths": 200,
+    "worst_ma": 878,
+    "droop_permille": 995.0819672131148,
+    "fails": []
+   }
+  ]
  }
 }

@@ -342,7 +342,13 @@ def ladder_admit(command: str, sha: str, rung_duty: int = 0) -> tuple[bool, str]
     return ok, "; ".join(why)
 
 
-def ladder_record(capture: pathlib.Path, sha: str, explore: bool = False, expect_duty: int = 0) -> list[str] | None:
+def ladder_record(
+    capture: pathlib.Path,
+    sha: str,
+    explore: bool = False,
+    expect_duty: int = 0,
+    anchor_proof: str = "",
+) -> list[str] | None:
     """Judge one completed rung run (gates 1-3) and record it. Returns the
     failures, or None when the capture is not a rung run."""
     import cohort  # noqa: PLC0415
@@ -371,6 +377,12 @@ def ladder_record(capture: pathlib.Path, sha: str, explore: bool = False, expect
     if cohort.identity_unavailable(r):
         r["identity_unavailable"] = True
         r["coast_slope_ehz_per_s"] = r.get("coast_slope_ehz_per_s", 0)
+    # An anchored rung carries its justification into the record (E302), so a
+    # later reader can tell a rung earned by walking the ladder from one admitted
+    # because the image's ISR roots were identical -- and on what evidence. An
+    # unmarked record is a walked one; there is no way to anchor silently.
+    if anchor_proof:
+        r["anchored"] = anchor_proof
     state = _ladder_load()
     state.setdefault(sha, {}).setdefault(str(r["duty"]), []).append(r)
     _ladder_save(state)
@@ -539,6 +551,25 @@ def main() -> int:
         "changes no threshold and no protection -- only the fixture's admission.",
     )
     ap.add_argument(
+        "--anchor",
+        action="store_true",
+        help="admit this rung without its predecessor ON THIS ELF, and still "
+        "RECORD it as a rung run. For re-qualifying an image whose four ISR "
+        "roots are identical instruction-for-instruction to one that already "
+        "walked the ladder: the full walk then re-tests the control path "
+        "against a change that provably did not touch it. Requires "
+        "--anchor-proof, which is written into the ladder record so a reader "
+        "can tell an anchored rung from a walked one. Unlike --no-ladder this "
+        "DOES count toward 3/3, which is exactly why the justification is "
+        "mandatory.",
+    )
+    ap.add_argument(
+        "--anchor-proof",
+        default="",
+        help="the evidence that the skipped rungs cannot be affected, e.g. "
+        "'isr_diff 480263F1 vs 5D4BF25C: 4 roots identical'. Recorded verbatim.",
+    )
+    ap.add_argument(
         "--step-check",
         action="store_true",
         help="refactor step gate (goal item 8): one unjudged 15%% warm-up run, then "
@@ -587,9 +618,30 @@ def main() -> int:
         print("  recorded against any rung, so it cannot contribute to a 3/3")
         print("  qualification. (Until E193 this banner was false: the bypass skipped")
         print("  admission only, and five runs were written into the ladder.)")
+    # **Anchor admission (E302).** The full-ladder rule exists to stop
+    # retry-until-pass, and it does. Applied to an image whose four ISR roots are
+    # identical instruction-for-instruction to an image that already walked the
+    # ladder, it re-qualifies the control path against a change that provably did
+    # not touch it -- 48 runs and ~2 hours to learn nothing. So a change with
+    # identical roots re-qualifies at three anchor rungs; a control-path change
+    # still re-walks everything.
+    #
+    # This is NOT `--no-ladder`: an anchor run **is** recorded against its rung,
+    # so it must carry its justification into the record. `--anchor-proof` is
+    # mandatory and is written into the ladder state, so a later reader can see
+    # which rungs were earned by a walk and which by an anchor, and on what
+    # grounds. An anchor claim with no proof is refused.
+    if args.anchor and not args.anchor_proof:
+        print("REFUSED: --anchor requires --anchor-proof stating why the skipped")
+        print("  rungs cannot be affected (e.g. 'isr_diff 480263F1 vs 5D4BF25C:")
+        print("  4 roots identical'). An anchor without a justification is just")
+        print("  a ladder bypass that records itself as a pass.")
+        return 2
+    if args.anchor:
+        print(f"ANCHOR ADMISSION: {args.anchor_proof}")
     admitted, why = (
         (True, "")
-        if (args.step_check or args.no_ladder)
+        if (args.step_check or args.no_ladder or args.anchor)
         else ladder_admit(args.command, sha, args.rung_duty)
     )
     if not admitted:
