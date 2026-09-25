@@ -26708,3 +26708,133 @@ evidence review, which removed the confound by truncating the same captures and
 got 1.41× — so I take the harsher of the two. Its Challenge 5 assessment that
 the observer is immaterial for safety agrees with my own audit and with the
 evidence review.
+
+### E300 — the climb reached 52.5% clean, and the arm path is measured: thin 8 → 4074 per million
+
+Image `480263F1.e286-rawdepth.elf`. **Six rungs, eighteen runs, 3/3 each**, every
+one `reason=2`, `ceiling_tenths == duty`, primary estimator:
+
+| rung | `rate_vs_coast_permille` |
+|---|---|
+| 400 | 1000, 999, 1001 |
+| 425 | 996, 998, 998 |
+| 450 | 997, 1002, 997 |
+| 475 | 1003, 1001, 999 |
+| 500 | 999, 1001, 996 |
+| **525** | **998, 997, 1000** |
+
+All inside the derived band (992..1008) **and** the live gate (990..1010).
+Combined with the ten-rung walk, that is **sixteen consecutive rungs 3/3 on one
+image, 150 → 525**.
+
+**52.5% is the goal's first milestone and it is clean here — and it does not
+qualify.** This image carries none of the four fixes from E291/E299 and is
+pre-E291 by disassembly, so under "diagnostic results never qualify another
+image" it is a measurement, not a rung. I said that in E296 before the climb and
+I am holding to it rather than banking a milestone I disqualified in advance.
+
+#### The arm path, which is the actual blocker
+
+Uninjected captures only, normalised by accepted commutations:
+
+| rung | mean `ci_us` | `ci_min` | `thin_count` per run | thin per 10⁶ accepted | `late_arms` |
+|---|---|---|---|---|---|
+| 425 | 88 | 57 | 4, 4, 5, 8, 7, 13 | **8** | 0 |
+| 450 | 85 | 54 | 6, 10, 6, 6, 19, 9, 8 | **11** | 0 |
+| 475 | 79 | 57 | 85…141 (n=9) | **121** | 0 |
+| 500 | 75 | 56 | 464…737 (n=7) | **1062** | 0 |
+| **525** | **73** | 54 | **3450…4507 (n=9)** | **4074** | 0 |
+
+**Roughly an order of magnitude every two rungs**, and `spent_max_us` is pinned
+at 11 from rung 150 to 525 while `late_arms` is **0 at every clean rung**. So
+0.41% of commutations at 52.5% are already inside 2 µs of the arm deadline and
+the detector has not fired once.
+
+From the real integer `wait_time` (`scripts/chain.py`, mirroring
+`src/commutation.rs`): advance 22 clears the 11 µs arm only above `ci` = 72
+(always 74); advance 20 above 60 (always 62). **Rung 525's mean `ci` is 73 —
+sitting on the line — and its minimum is 54, which is 20 µs below it.**
+
+**E298's predeclared bar, scored:** `thin_count` ≥ 150 at rung 500 and ≥ 250 at
+525. Measured **719–737** and **4203–4507**. Both hit, by factors of ~5 and ~17.
+Mean `ci` predicted 74–78 at 500 and 68–73 at 525; measured **76** and **73**.
+Four for four.
+
+#### Rung 600 has never been attempted
+
+The scoreboard's first useful output, and it is a fact about the corpus I did not
+know: **there is exactly one capture in the entire corpus at `target_duty_tenths
+= 600`, and it is `inject=25`.** `e278-prot500-i_01` — a protection-injection
+run on the old 80 s window. It died `reason=15` (`Reason::LateArm`,
+`protection.rs:64`) with `late_arms=1`, mean `ci` = **49 µs** and 1307 ms of
+hold.
+
+**I nearly reported that as "the only rung-600 attempt died of LateArm, exactly
+as the arm-path model predicts."** It is an injected run, so its stop reason
+describes the provocation as much as the duty, and n=1. What is safely
+attributable is the interval: `ci` = 49 µs at duty 600, which the injection does
+not set — the rotor does. That is **24 µs below the advance-22 arm line**, and
+it is the only measurement of `ci` at 600 that exists.
+
+So the honest statement: **rung 600 is unmeasured, and the one adjacent
+data point is consistent with the arm-path model without testing it.**
+
+#### The scoreboard, and the defect it found in itself
+
+Built as the remedy for E298's lesson — nothing scored the quantities the machine
+was already emitting, so only a quantity someone had theorised about could be
+noticed. It ranks 106 non-constant counters by rank correlation with duty
+(Spearman, because `thin_count`'s shape is superlinear and Pearson would miss
+it), qualifies every key by its emitting line so the eight known ambiguous names
+stay distinct, and says in its own output that a high rank is a hypothesis
+rather than a finding.
+
+**Its first run surfaced `e278-prot500-i_01` as "the rung-600 cohort"** because
+it grouped by `target_duty_tenths` without filtering injections. That is the
+same class of defect as everything else this batch: a tool that answers
+confidently from contaminated input. Injected runs are now excluded by default
+and the exclusion is *printed*. With the filter, the rung-600 cohort vanishes
+and rung 500 drops from 14 captures to 7.
+
+`thin_count` ranks **48th of 106** — present, but below dozens of trivially
+duty-coupled quantities (interval scaling, counts over a fixed window). So the
+scoreboard would have surfaced it to a reader scanning the list, not shouted it.
+That is the honest limit of the tool: it makes nothing invisible; it does not
+make the important thing obvious.
+
+It also confirms the adversarial review's point that the *mean* observer does the
+load-tracking job far better: `dep1_run` goes 20–71 at rung 375 to
+16 976–26 657 at 550, a ~400× rise — with 47× within-rung scatter at rung 525
+(725 to 34 167), so it is sensitive and very noisy.
+
+#### Predeclared next step
+
+**This image is finished.** Everything further needs the rebuild, which the
+final qualification always required:
+
+1. **Build the fixed image** — the four E291/E299 fixes — and make the advance
+   schedule selectable so the A/B below is possible at all (`AdvancePolicy` is a
+   firmware step at `duty_tenths >= 350`, `run/policy.rs:295`). Full audits,
+   new hash, manifest line.
+2. **Dual review before testing**, this time *before* the runs rather than
+   during them. The hypothesis under test is "the arm path, not the bus, limits
+   the rungs above 525", and the change under test is an advance-schedule
+   variant — a control change, which is exactly the class the goal requires
+   reviewing first.
+3. **The A/B: advance 20 vs 22 at rung 500**, three runs a side, ABAB, one
+   session, fixture-flashed and hashed per side.
+   **Predeclared now:** advance 20 should cut `thin_count` at rung 500 from
+   ~700 per run to **under 50** (margin goes from +1 µs to +3 µs at `ci` = 76),
+   with `late_arms = 0` on both sides and the rate identity inside 992..1008 on
+   both. **If advance 20 does not cut `thin_count` by at least 5×, the thin
+   condition is not about `wait` and the whole arm-path model is refuted.**
+4. **Three runs at rungs 375 / 400 / 425 on the fixed image**, comparing
+   `raw1_n` directly against this image — both reviews' settling test for
+   whether the excursion rate was ever load-related.
+
+Owed and carried: the three missing entries (E253/E254/E258); wire the band in
+with a scope assertion or stop calling it the band; a build-provenance gate that
+refuses to fit `raw*` bins from an image built before the fix commit;
+`raw_depth.observe` moved above the `early` return; `hold_valid` for injected
+captures; a loud refusal on `ceiling_tenths < duty_tenths`; the tear counter in a
+driving image; and a switching-on/torque-off control.
