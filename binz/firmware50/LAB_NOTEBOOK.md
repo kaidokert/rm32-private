@@ -28163,3 +28163,138 @@ and (c) proposes a change that is one-sided in the safe direction.
 
 **Both mandated reviews go out on this predeclaration before I act on it** — that
 is the rule I broke in E296 and am not breaking again.
+
+### E312 — the free test killed my own fix and found the real arithmetic: rung 550 has zero margin at advance 22
+
+Zero bench time. E311 predeclared a floor fix with a free offline test first, and
+**the test refuted the fix.** It also found the thing that had been in front of
+me for four entries.
+
+#### The floor fix is dead
+
+E311 predicted that raising the estimator's lower clamp from 40 µs to ~0.8× the
+commanded interval (≈57 µs at rung 550) would stop the walk before `wait` fell
+too far. Checked against the real integer `wait_time`:
+
+| `ci` | `wait@22` | margin vs `spent_max` 11 |
+|---|---|---|
+| 57 (the proposed floor) | **9** | **−2** |
+| 62 | 10 | −1 |
+| 71 (rung 550 nominal) | **11** | **+0** |
+| 74 | 12 | +1 |
+
+**A floor at 57 still leaves `wait = 9`, below `spent_max = 11`.** To obtain any
+margin the floor would have to be 72–74 — which is the rung's own nominal
+interval, i.e. not a floor but pinning the estimate. **Fix refused, for free,
+before a build.**
+
+And the corpus says the walk rarely reaches the old floor anyway: of 33
+un-injected runs at duty ≥ 500, only **2** had `ci_min ≤ 42`. So the floor was
+never the binding constraint.
+
+#### What the same check found instead
+
+**At rung 550's measured nominal interval — 71 µs in both sessions,
+`mean_ci_us` 71.0 and 71.5 — `wait22(71) = 11`, exactly equal to
+`spent_max_us = 11`. The margin is zero with a perfect estimator.**
+
+```
+lowest ci where wait > 11 for ALL higher ci:   advance 22 -> 74
+                                               advance 20 -> 62
+wait22(71) = 11   margin +0
+wait20(71) = 13   margin +2
+```
+
+So rung 550 sits **three microseconds below** the interval advance 22 needs
+(74), and the rung's own nominal is 71. **The rung is on the arithmetic
+boundary.** No estimator ratchet is required to explain a latch: any downward
+jitter, from any source, puts `wait` under a worst-case spend.
+
+That also explains what the `ci_min` distributions were telling me and I had
+been reading as noise:
+
+```
+ci_min on LATCHING runs (n=8) : 40 47 49 49 50 50 53 53   mean 48.9
+ci_min on CLEAN runs    (n=23): 43 47 47 48 49 49 50 ...  mean 51.9
+```
+
+**Heavily overlapping**, because `ci_min` alone was never going to separate them
+— the latch is a coincidence of a low estimate *and* a high spend, and at this
+rung the low-estimate condition is satisfied at the **nominal** interval.
+
+#### Which means I withdrew the right intervention for the wrong reason
+
+E307 withdrew the advance A/B. Both reviews were right that **my bar was
+pre-satisfied** (`thin ⇔ wait − spent ≤ 2`, and at advance 20 thin at nominal
+needs `spent ≥ 12`, which `spent_max = 11` forbids) and that **rung 500 was the
+wrong rung** (`late_arms = 0` there across 3.0 M arms).
+
+**But I then threw out the intervention along with the bar.** Advance 20 gives
+`wait20(71) = 13` against `spent_max = 11` — margin **+2** at nominal, and it
+tolerates the estimate falling to **62** before the margin vanishes, against
+**74** at advance 22. That is the 12 µs of interval headroom, and at rung 550 it
+is the difference between zero margin and two microseconds.
+
+The reviewers' "the bar is satisfied by the `spent` ceiling alone" is, read the
+other way round, **the strongest available argument for the change**: if `spent`
+never exceeds 11 and advance 20 puts `wait` at 13, then advance 20 should
+produce **no late arms at 550 at all**, except on runs whose estimate dips below
+62.
+
+So: the A/B comes back, at the right rung, with the right outcome, and a bar
+that can fail.
+
+#### Predeclared, before any build or run
+
+> **Question.** Does advance 20 eliminate the rung-550 `LateArm` by restoring
+> worst-case arm margin from 0 to +2 µs?
+>
+> **Prediction, falsifiable and numeric.** Six runs at 550, three a side, ABAB,
+> one session, flashed and hashed per side:
+> * **advance 22: ≥2 of 3 latch** (the measured rate is ~1.0 per 10⁶ arms and a
+>   run is ~0.5–1.0 M arms);
+> * **advance 20: 0 of 3 latch**, and any latch that does occur must have
+>   `ci_min_us < 62` — which is the model's own escape clause and is checkable
+>   per run;
+> * **speed cost ≤ 2%**: `ehz_from_sector` on the advance-20 side within 2% of
+>   the advance-22 side, and `rate_vs_coast_permille` inside 992..1008 on every
+>   run. Less advance means less torque, so a speed cost is *expected*; the
+>   question is whether it is affordable.
+>
+> **What refutes it.** Advance 20 latching with `ci_min ≥ 62` refutes the margin
+> model outright — the arm would be failing with margin in hand. Advance 22
+> **not** latching in 3 runs makes the batch underpowered and I say so rather
+> than reading a null as support.
+>
+> **Decision.** Advance 20 clean → it becomes the schedule for 550 and above,
+> and the 57.5/60% exploration proceeds on it. Advance 20 also latching → the
+> arm-margin model is wrong and the next target is `spent` itself (E142's
+> arm-order variant measured `spent` 11 → 10, and the persistence filter's depth
+> sits inside the measured window — both are levers on the *other* term).
+>
+> **Not thin_count.** The outcome is `late_arms`, the actual hard stop.
+> `thin_count` is reported for continuity and **is not the bar** — it is the
+> variable both reviews showed to be a correlate, climbing three orders of
+> magnitude across rungs with the outcome flat at zero.
+>
+> **Safety.** Less advance is less torque and a slower rotor, so `ci` lengthens —
+> which *relieves* the failure independently. The reviews flagged that as a
+> confound and it is: a `late_arms` drop could be either mechanism. It is
+> separable by the numbers, because the direct term is `Δwait = ci/32 ≈ +2.2 µs`
+> while a 1–3% speed loss gives `Δci ≈ 0.7–2.2 µs` → `Δwait ≈ +0.1–0.3 µs`, an
+> 8:1 ratio. **Both `ehz_from_sector` and `mean_ci_us` are reported per run so
+> the split is visible rather than assumed.** Every protection stays armed and
+> unchanged; only `ADVANCE_HIGH` moves, and the images already exist
+> (`7D3B70F0` / `47680FD8`, both manifested, ISR roots byte-identical).
+>
+> **No new instrumentation.** Both images are built and hashed; the outcome is a
+> field production already emits.
+
+#### What I got wrong, stated once
+
+I spent E300–E307 building a `thin_count` escalation story, then withdrew the
+one intervention that addresses the actual arithmetic, on reviewers' criticisms
+that were correct about my *bar* and my *rung* and silent about the
+intervention. The number that mattered — `wait22(71) = 11 = spent_max` — was
+computable from two source constants at any point in the last four entries, and
+I computed everything except it.
