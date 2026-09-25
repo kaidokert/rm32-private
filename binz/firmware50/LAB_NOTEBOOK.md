@@ -26082,3 +26082,258 @@ That is the same failure as
 reporting. The lesson is not "look harder" — it is that **a per-rung scoreboard
 of every emitted counter would have surfaced this without anyone looking for
 it**, and this campaign does not have one.
+
+### E299 — disposition of both reviews of E290–E297: I withdraw E295, and the instrument I rehabilitated was measuring its own stale reference
+
+Both reviews are appended verbatim below. **They converge independently on the
+same finding, by different methods, and it withdraws my own headline conclusion
+from E295.** I verified every load-bearing number myself before accepting any of
+it.
+
+#### The finding: `480263F1` is pre-fix, proven at the instruction level
+
+The evidence review did not infer this from timestamps. It disassembled both
+ELFs:
+
+| image | `BusDepth::observe` | verdict |
+|---|---|---|
+| **`480263F1`** (all e286 + e296 captures) | `movs r1,#125; lsls r1,r1,#3` → **SCALE = 1000**, no `/5` | **pre-E291** |
+| `62094AAB` (idle-scan control) | `movs r6,#200` + `movs r1,#5; bl __aeabi_uidiv` | post-fix |
+
+And at the call sites in `480263F1` (`scan_pass`, 0x8006d3c and 0x8006d52),
+**both** observers load `ref_bus`/`ref_vref` from the same base register while
+the second passes `scan.bus`/`scan.vref` as the sample. So `raw_depth` in every
+capture this batch rests on observed **the raw scan against `base.bus_ref`** —
+the stale pre-run baseline, not the guard's filtered reference.
+
+Timeline: ELF built **22:10:08**, the fix committed **23:02:41**, e296 ran
+**23:30–23:48**. I *disclosed* the image mismatch in E296 and then predeclared
+and fired a quantitative test on the defective quantity anyway. The adversarial
+review's phrasing is fair and I am adopting it: **the rule "diagnostic results
+never qualify another image" was honoured for verdicts and violated for
+findings.**
+
+#### Why that destroys E295's conclusion
+
+`base.bus_ref` does not droop; `filt_bus` does. So the observer's threshold
+drifts **shallower relative to the rail, monotonically with load**. Measured
+gap between the line actually used and the guard's:
+
+| rung | 150 | 250 | 350 | 400 | 425 | 450 | 475 |
+|---|---|---|---|---|---|---|---|
+| gap (ADC codes) | 1.0 | 3.6 | 4.8 | 8.3 | **11.7** | **12.1** | **13.7** |
+
+My own verification, and this is the number that settles it — **within rungs,
+where duty is fixed by construction** (n=41):
+
+```
+corr(reference bias, raw1 rate) = +0.792
+corr(hold_ma,        raw1 rate) = -0.626
+```
+
+At fixed duty the excursion count follows **the instrument's own reference
+drift** strongly positively, and follows **current negatively**. No physical
+rail-sag mechanism produces that sign pair. Across rungs,
+`corr(bias, rate) = +0.953` against `corr(duty, rate) = +0.824` — the bias is
+the better predictor.
+
+**Both reviewers removed the artifact by different methods and both got flat:**
+
+| | reported | corrected | method |
+|---|---|---|---|
+| adversarial | `corr(duty, rate) = +0.706` | **−0.005** | per-run tail slope from the 970/950 bin pair |
+| evidence | same | **+0.051** | per-run decay constant over the 24-code bin spacing |
+
+The evidence review's refit: `rate = 91.5 + 0.7910·duty` becomes
+`212.3 + 0.0202·duty`, with every rung 150–475 inside **±13%** of a flat
+~210–230 per 10⁶.
+
+**So E295's headline — "`raw*_n` as a rate tracks load, this discriminates" — is
+WITHDRAWN. E291 was right, and its `corr = −0.204` on depth was the same
+artifact seen from the other side.** The walk was not the refutation of E291; it
+was the artifact's dose-response curve.
+
+**What survives:** the bridge-off floor is real (44.9 / 42.7 per 10⁶, EN low vs
+high — so driver-amplifier bias coupling is genuinely excluded), and the
+corrected flat level of ~210 per 10⁶ is still ~4.8× that floor. So E295's
+refutation of *its own* "purely instrumental" prediction stands. The excursions
+are something; they are **load-independent** something, and they discriminate
+nothing above rung 425.
+
+#### E296's line and E297's discriminator both fall with it
+
+E296's predeclared line and its 10:1 → 13:1 "signal-to-floor" table are void:
+they compare a `filtered()`-referenced floor against `bus_ref`-referenced
+driving counts whose bias grows with duty. Corrected, the ratio is **~5.3× at
+every rung, flat** — not a climbing 10:1 → 13:1.
+
+**And E297 diagnosed the wrong confound.** I concluded the test "fired on
+current". The dominant confound is the reference defect, which merely *looks*
+like current because `filt_bus` droops with load. My replacement discriminator
+— `raw1_n / hold_ma` — normalises against a variable that is **negatively**
+related to the count within rungs (−0.626), so it would have passed everything
+and taught nothing. Withdrawn. The adversarial review predicted exactly that
+before the remaining rungs ran, and rungs 450/475 duly came in "on line".
+
+**The "step" was never a step.** Deviations from E296's line: 400 −0.6%, 425
++43.4%, 450 +30.1%, 475 +37.7%. Everything from 425 up is above the line;
+**nothing steps and returns.** A mechanism that engages at 425 does not
+disengage at 450. The line simply under-predicts the top of its own
+extrapolation, because the bias it is fitted to keeps growing.
+
+#### The coast-buffer claim: refuted by the confound-free test I should have run
+
+E294 claimed "the first quantitative confirmation of E281" — 3.202 vs 1.612, a
+1.99× reduction against a predicted `√(32/8)` = 2.0.
+
+The evidence review removed the confound properly, and the method is the one I
+should have thought of: an 8-slot image records exactly `iv_us[:8]`, so
+**recompute the same 30 captures truncated to 8 slots.** Same session, same
+image, same runs — only the buffer length differs:
+
+| slots used | within-rung sd | pooled sd |
+|---|---|---|
+| 8 (truncated) | **2.253** | 2.906 |
+| 32 (as reported) | **1.594** | 2.151 |
+
+**Ratio 1.41, not 1.99.** Removing the common `powered`-term scatter in
+quadrature gives ~1.63 for the coast term alone. Either way **E281's
+`√N` prediction is not confirmed**, and my "first quantitative confirmation"
+is **withdrawn**.
+
+My cohort comparison was also confounded exactly as the adversarial review
+says: every 32-slot capture in the corpus comes from four sessions all on
+2026-09-24, and at the time I wrote it, from **one**. And the adversarial review
+adds that my 8-slot figure isn't even reproducible — it gets 3.10–3.35 across
+filters, not 3.202, and neither reviewer could recover my cohort. **The
+most-cited number in E294 cannot be reproduced from the repository**, which is
+the same class as every instrument defect I have found in other people's work
+this campaign.
+
+#### And the band's justification was null all along
+
+This one is the sharpest and I missed it entirely:
+
+```
+ceil(3.5 × 2.1348) = 8      (pooled sd)
+ceil(3.5 × 2.1268) = 8      (sd about trend)
+```
+
+**The two rules give the identical band.** So E290's trend argument, E293's
+retraction of that argument, and E294's replacement justification **all decide
+nothing whatsoever about this band's width.** The only candidate that would have
+differed is the within-rung rule (±6). I spent three entries arguing about which
+statistic to use for a choice that was numerically insensitive to the answer.
+
+The band itself reproduces exactly — median 1000.5, pooled sd 2.1348, ±8,
+**992..1008** — and every one of the 30 runs passes under it, the old ±10, and
+±5 and ±6 besides.
+
+#### The band is not wired in, which is the `ceiling_tenths` trap again
+
+`cohort.py:384` hard-codes `990 <= rate_vs_coast_permille <= 1010`. **992 and
+1008 appear nowhere in the tooling.** I have been writing "band from E294:
+992..1008" across four entries as though it governs. It does not; the live gate
+is still ±1%, and it is *wider* than the derived band, so the derived band has
+never gated a run. My own memory records this exact failure mode — *"`ceiling_tenths`
+was not a gate"* — and I repeated it within the same campaign.
+
+#### Two more of my claims corrected
+
+**"No duty in the entire corpus has ever been run at both advance levels" is
+false as written.** Duty 150 has been run at advance **20** (288 captures) and
+advance **26** (31 captures, `captures/2026-09-20/`). It is true only in the
+narrower form I actually needed: **no duty has ever been run at both 20 and
+22**, and every capture obeys the `>= 350` rule with zero exceptions. The 20-vs-22
+confound at rung 350 stands; the sweeping version does not.
+
+**E295's comparison table mixed units of aggregation.** Its "driving 150 |
+287.8" and "driving 250 | 294.6" are *single runs*, while the table below gives
+rung *means* (238.9, 282.6). Worse, the single run I used to headline the floor
+comparison is `e286-150_01` — **the anomalous capture with `hold_ma=6`**, the
+~450-unit first-run shunt deficit from E293. I used the least representative
+capture in the walk to anchor the comparison, two entries after documenting why
+it is unrepresentative.
+
+#### What stands
+
+**The rung verdicts.** Both reviews replayed the gates independently: rungs
+400 ×3, 425 ×3, 450 ×3, 475 ×2 all **PASS**, `reason=2`, `ceiling == duty`,
+primary estimator throughout, `worst_ma` ≤ 2210 against a 3800 ceiling, and
+`rate_vs_coast_permille` 996–1003 — all inside 992..1008 and 990..1010. e296
+within-rung sd **1.886**, inside E296's predeclared 1.4–2.2. Nothing in this
+disposition touches a rung result.
+
+**The bridge-off control**, with the caveat now explicit that its floor is
+measured against a *different reference* from the driving counts (post-fix vs
+pre-fix image), so the floor is nearly reference-independent at idle
+(`ref_bus` 1212 vs `filt_bus` 1211) but the driving side is inflated. And the
+adversarial review adds the objection I should have made myself: **a floor
+measured with no PWM switching cannot bound a phenomenon whose candidate causes
+include switching noise.** The control excludes static instrument noise and
+driver bias coupling. It cannot exclude switching-correlated noise, which is
+precisely the artifact class that makes a count rise while depth does not.
+
+#### The redirect, which is the reviews' most valuable output
+
+The adversarial review pointed at a quantity in every capture I had already
+collected. E298 predeclared its bar; rung 500 then landed:
+
+| rung | 350 | 375 | 400 | 425 | 450 | 475 | **500** |
+|---|---|---|---|---|---|---|---|
+| mean `ci_us` | 108 | 101 | 93 | 87 | 83 | 80 | **77** |
+| `ci_min_us` | 75 | 65 | 62 | 57 | 54 | 57 | **56** |
+| `thin_count` | 0 | ≤1 | ≤2 | 8–13 | 8–19 | 110–126 | **737** |
+| `spent_max_us` | 11 | 11 | 11 | 11 | 11 | 11 | **11** |
+| `late_arms` | 0 | 0 | 0 | 0 | 0 | 0 | **0** |
+
+E298 predeclared **`thin_count` ≥ 150 at rung 500** and **mean `ci` 74–78**.
+Measured **737** and **77**. Both hit.
+
+From the real integer `wait_time` (mirrored in `scripts/chain.py`, not a float
+model): advance 22 clears the 11 µs arm only above `ci` = 72 (always 74);
+advance 20 above 60 (always 62). **At rung 500 the mean `ci` is 77 — barely
+clear — and the minimum is 56, which is 16 µs below the line.** That is what
+737 thin commutations per run means, and `late_arms` being 0 means the detector
+has not fired yet, not that the margin is intact.
+
+**This is the blocker, it is the one project memory already named, and it was
+degrading in the same captures I was mining for excursion counts.**
+
+**An honesty note on E298's own status:** I committed it saying "rung 500 on the
+bench", and **two of its three captures were already on disk** when I did. I had
+not read them — the entry was written from the 350–475 data — but the data
+existed, so it is a weaker predeclaration than the wording implies and I am not
+claiming otherwise.
+
+#### What happens next, and what is now owed
+
+The climb finishes at 525 for its `thin_count`/`ci` value, and then **this image
+is done**. Everything further needs the fixed build:
+
+1. **Rebuild** with the four fixes, full ladder, one ELF — which was always
+   required for the final qualification.
+2. **Three runs at rungs 375 / 400 / 425 on the post-fix image**, comparing
+   `raw1_n` directly. Both reviews name this as the settling test: if the rise
+   survives, my correction is wrong; if it flattens, the observer is confirmed
+   load-blind. Three runs.
+3. **The advance-20 vs advance-22 A/B at rung 500**, three runs a side, ABAB,
+   one session — E298's predeclared discriminator for the actual blocker.
+4. **A per-rung scoreboard of every emitted counter.** The lesson of this batch
+   is not "look harder": `thin_count` sat in all forty captures beside fields I
+   read repeatedly. A scoreboard would have surfaced it with nobody looking.
+5. **Wire the band in with a scope assertion, or stop calling it the band.**
+6. A build-provenance gate: refuse to fit `raw*` bins from an image built before
+   the fix commit. The adversarial review notes this single check would have
+   blocked E295, E296 and E297 at source.
+7. Still owed from before: the three missing entries (E253/E254/E258),
+   `raw_depth.observe` moved above the `early` return, `hold_valid` for injected
+   captures, a loud refusal on `ceiling_tenths < duty_tenths`, the tear counter
+   in a driving image, and a switching-on/torque-off control.
+
+**Agreement is not proof — but two independent reviews reaching the same
+conclusion by different arithmetic, against my own published position, is the
+strongest evidence this campaign has produced about its own instruments.** The
+reviews follow verbatim.
+
+---
