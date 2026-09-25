@@ -34486,3 +34486,130 @@ and quantitatively wrong in my favour, which is not a reason to soften it.
 Advance 20 is kept as the standing candidate regardless: 123× fewer thin arms
 and a 13 % lower worst block, for 1.5 % of speed, with rung 600's electrical
 profile brought down to rung 575's. Two fresh reviews before anything further.
+
+### E323 — the descent cannot be rate-limited, because the runaway's step size and normal jitter are the same quantity. Every avenue I am permitted to change is now closed, measured.
+
+E322 left two candidates: stop the estimator's descent, or change the latch
+specification. The second is fenced to the operator. This entry is the first,
+and it does not work — for a reason that is structural rather than a matter of
+picking a better constant.
+
+#### The design, and why it looked safe
+
+`min_interval = SECTOR_FLOOR_US = 40 µs`, justified at `policy.rs:80-82` as
+*"the physical maximum (4166 eHz), not a design choice"*. So the estimate is
+bounded against physical impossibility and **not** against operational
+implausibility — and that is the gap the rung-600 latches fall through: E322
+latched with the estimate at 46 µs while the run's own coast reference put the
+rotor at 68 µs, i.e. 48 % faster than measured, arrived at in four
+commutations. A loaded rotor cannot do that. Nothing checks the *rate*.
+
+So: rate-limit the estimate's downward step per accepted crossing, asymmetric
+(down limited, up free, since a too-small estimate is the direction that
+latches). I sized it from the ramp — 761 µs to 68 µs across ~124 800 accepts is
+a **mean descent of 0.0019 % per accept**, against a runaway I had put at 25 %
+per accept, so 1/32 (3.125 %) looked like 1614× headroom.
+
+#### Then the replay vector refuted it, and refuted my arithmetic twice
+
+`captures/replay/e121-capture25b.txt` holds **1536 consecutive real COMP
+decisions** from a locked 25 % run with the estimator's initial state. Simulated
+over it:
+
+```
+limit          accepts   times the limit BOUND     worst clamp
+1/8  (12.50%)     279     0   ( 0.00%)                 0 us
+1/16 ( 6.25%)     279    22   ( 7.89%)                 8 us
+1/32 ( 3.12%)     279    87   (31.18%)                13 us
+```
+
+**At 1/32 the limit binds on 31 % of accepts in a normal locked run.** My
+1614× headroom was computed from the *mean* descent over the ramp, but the
+per-accept steps fluctuate widely around that mean — normal operation's
+downward steps run to a **median of 4.1 % and a maximum of 10.8 %**. I used a
+mean where the distribution governs, which is the same error class as E314's
+`spent_max` anchor and E315's multiplied marginals. Third time today.
+
+And the runaway's step is not 25 % either. The blend is
+`new = 0.75·ci + 0.25·x`, and the gate refuses `count <= ci >> 1`, so the
+smallest *acceptable* `x` is `ci/2` and therefore
+
+```
+new >= 0.75·ci + 0.125·ci = 0.875·ci      a MAXIMUM 12.5% step
+```
+
+A 68 → 46 collapse then needs **2.9 accepts**, which is exactly what E307
+measured (71 → 62 → 48 → 40 in three). So:
+
+> **The runaway's maximum per-accept step is 12.5 %. Normal locked operation
+> already reaches 10.8 %. They are the same quantity, and no per-accept rate
+> limit can separate them.**
+
+#### The cumulative version fails too, on a narrower but real margin
+
+If single steps cannot discriminate, persistence might: refuse a *cumulative*
+drop beyond some bound over a short window. Measured over the same real run:
+
+```
+window        worst NORMAL cumulative drop
+ 3 accepts            17.09 %
+ 4 accepts            15.48 %
+ 6 accepts            14.29 %
+12 accepts            10.67 %
+```
+
+against the rung-600 collapse of **32.4 % over ~3 accepts**. A factor of
+**1.9** — real, but thin, and it is one run of normal data at ci ≈ 145 µs.
+At rung 600 ci ≈ 68 µs, so a 1 µs blend quantum is 1.5 % rather than 0.7 %:
+**relative jitter grows as duty rises, and the separation shrinks exactly where
+it is needed.** I am not shipping a guard whose margin is 1.9× on n = 1 and
+narrowing in the direction of use.
+
+Reverted; `src/bemf.rs` and `Cargo.toml` are back at HEAD, 345 tests pass.
+
+#### What this closes, with the measurement for each
+
+| avenue | closed by | result |
+|---|---|---|
+| reduce `spent` | E321 | distributed, irreducible work — ISR prologue, EXTI ack, extended-clock read, four `Seam` critical sections. The one removable item was a dead store worth 2 instructions. |
+| raise `wait` (advance level) | E322 | the descent chases the threshold: 22 → 20 moved the latch interval 49/50 → 46 rather than preventing it, and at the sector floor no level in 16..22 survives `spent = 9`. |
+| rate-limit the descent | **E323** | the runaway's step (12.5 % max) *is* normal jitter (10.8 % max). |
+| limit cumulative descent | **E323** | 1.9× separation on one run, narrowing with duty. |
+
+`left = wait − spent`. `spent` is fixed, `wait` is a threshold the descent
+follows, and the descent is indistinguishable from normal tracking by any
+rate or excursion test available inside the interval sequence. **Every avenue
+the goal permits me to change is now closed, and each closure is a
+measurement rather than an inference.**
+
+#### What remains, and why it is the operator's
+
+1. **An independent speed cross-check.** The collapse is detectable *outside*
+   the interval sequence — the run's own coast reference separates clean stops
+   (within 2.5 % of truth) from every latch (14–45 % low), and the firmware
+   already carries a rotation witness and per-sector slots. A detector that
+   refused an estimate implying a rotor acceleration no load could produce is
+   the one discriminator the evidence supports. It is also a new closed-loop
+   sensing path, not a bounded tweak, and the goal says commutation redesign
+   requires evidence that local improvements are insufficient. **That evidence
+   is now the table above.**
+2. **The latch specification.** Both E315 reviews found it mis-specified: the
+   arm is still placed (`arm_marked(left.max(1))`), the realised error is ~1 µs
+   of commutation angle on one commutation, `protection.rs:52` records the
+   event inside a **qualifying 45 % run**, and 9–10 µs of *realised* COM
+   lateness is tolerated and merely reported in every clean run. One late arm
+   currently ends a 25-second run.
+
+**So the decision is now a choice the goal reserves**: either the timing-stop
+fence opens enough to make a single late arm non-fatal — a budgeted rate, or a
+threshold with any margin at all — or 57.5 % stands as the qualified ceiling
+with 60 % reachable but not holdable. I have no permitted change left that
+closes the gap, and I would rather say that than keep spending bench time on
+avenues I have already measured shut.
+
+**Where the envelope actually stands.** 57.5 % has held **48.3 s** on a
+production image with every protection armed (`e308-550-old-3_01`, `streak=0
+tripped=0`, 2494 mA). 60 % is reached with the loop genuinely tracking
+(`verdict=ok`, 991–1019 per mille of 6× coast) and, at advance 20, with rung
+600's worst current block down to **3024 mA — the same as the 575 run that held
+48.3 s**. The supply is not the blocker; a single estimator excursion is.
