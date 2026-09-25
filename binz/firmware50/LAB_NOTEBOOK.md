@@ -24242,3 +24242,60 @@ The `COAST_IV_LEN` plumbing, the format-lock test asserting both text and count,
 and `size_of::<CoastStats>()` 76 → 172 B all verified independently.
 
 Nothing resumes on the bench until the band is re-derived.
+
+### E286 — predeclaration: walk the low rungs to measure the band, then derive it, then continue
+
+Image `39E0500A.e283-backstop.elf`. E285 stopped the walk because the rate gate
+is calibrated against the **n=8** estimator and E281 halved its standard error,
+making the 990–1010 band a ~7σ test. The band must be re-derived from the new
+estimator's **measured** scatter — and measuring that needs runs, which is
+circular unless the order is chosen carefully.
+
+#### Why the low rungs resolve the circularity
+
+The band matters at two moments: **admission** (does the rung below pass?) and
+**judgement** (does this run pass?). Judgement can be applied retroactively —
+the records store `rate_vs_coast_permille`, and re-scoring under a corrected
+band is exactly what E272/E273 did. **Admission cannot**, which is the
+retroactivity problem E259 hit.
+
+But at the low rungs, admission is insensitive to the band: the three 32-slot
+captures I already have read **998 / 997 / 1000**, comfortably inside every
+candidate band from 990–1010 to 996–1004. So walking 150 → 375 cannot be
+corrupted by the loosened gate, and it produces 30 runs of the new estimator's
+scatter as a by-product.
+
+#### The plan, in order
+
+1. **Walk 150 → 375** (`--to-duty 375`): ten rungs, three runs each, 15–37.5%
+   duty. These are the goal's own "lower-rung regressions", and they are the
+   lowest-current runs in the campaign.
+2. **Derive the band** from those 30 runs' measured within-session scatter:
+   `band = round(median) ± ceil(3.5 × sd)`, the same 3.5 σ rule `cohort.py:328`
+   already states for the old estimator. No other parameter, and **nothing
+   chosen after seeing which runs it moves.**
+3. **Re-score everything** under the derived band and report what changes.
+4. **Continue 400 → 600** on the corrected band, with E285's predeclared 550
+   bar in force: **eight consecutive clean runs, or an evidenced mechanism —
+   not three.**
+
+#### Predictions
+
+1. **The measured sd is 1.0–1.8 ‰.** Predicted 1.25 from 2.8 × 0.447; the n=3
+   sample already reads 1.53. If it comes out above 2.2 the Monte-Carlo
+   prediction is wrong and the coast widening bought less than claimed.
+2. **The derived band is 996–1004 or 995–1005** (±4 or ±5 at a median of 1000).
+   Stated numerically so it can be wrong.
+3. **All ten low rungs pass 3/3** under both the old and the derived band, and
+   the choice changes no verdict below 400 — which is the assumption that makes
+   this order legitimate. **If any low rung's verdict differs between the two
+   bands, the circularity is real and I stop and say so** rather than picking
+   the band that passes.
+4. **`raw1_run` is small at these rungs.** The new raw-depth observer (E285)
+   reports the longest run of consecutive raw scans below the guard's 950 line;
+   at 15–37.5% duty I expect **0** in most runs. A large value at low duty would
+   mean the raw bus routinely goes 5% down even when nothing is loaded, which
+   would make the whole depth-and-duration reading wrong.
+
+This is a measurement of the instrument, not a qualification of the rungs; the
+rungs qualify in step 3 when the band exists.
