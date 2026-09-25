@@ -30430,3 +30430,86 @@ lateness, and the firmware's own comment records the event inside a qualifying
 45 % run), and **60 % remains unreachable on two independent grounds** — the
 log-linear hazard fit projects P(3/3) = 0.002, and rung 600 draws 96 % of the
 3 A clamp.
+
+### E317 — PREDECLARATION, written before the build: the measured wait distribution prices advance 20 offline, and it says advance 20 removes every excursion that has ever been observed
+
+Written before flashing anything, and before E316's two reviews have landed.
+Prediction first, per the notebook rule.
+
+#### The unresolved question
+
+Does lowering the advance level from 22 to 20 remove the observed latch
+mechanism, and at what speed cost? This has been argued since E300 and
+repeatedly withdrawn on the grounds that no outcome discriminated. **It is now
+decidable offline, because E316 measured the quantity it turns on.**
+
+#### What the measured data already says
+
+`wait_time` is a deterministic function of `ci`, so a `wait` bucket inverts to
+a known `ci` set:
+
+```
+wait22 =  7  <=  ci in {40,42,43,44,45,47}
+wait22 =  8  <=  ci in {46,48,49,50,51,53}
+wait22 =  9  <=  ci in {52,54,55,56,57,59}
+```
+
+The rung-550 hold window (image `26843E7C`, 109 502 arms) read
+**`wle7 = 0`, `w8 = 0`, `w9 = 57`.** Those two zeros are the load-bearing
+measurement: they say that in 109 502 accepted crossings **the estimator never
+once went below ci 52.** The excursions are real, they are 40× more frequent
+than at rung 500, and they are *bounded*.
+
+Under advance 20, `wait20 <= 9` requires **ci <= 49** — strictly below every
+excursion observed. Each observed trough interval, at the `spent = 9` that all
+four latches shared:
+
+| ci | `wait22` | left | `wait20` | left |
+|---|---|---|---|---|
+| 52 | 9 | **0** | 10 | 1 |
+| 54–59 | 9 | **0** | 10–11 | 1–2 |
+| 51 | 8 | **0** | 10 | 1 |
+| 48 | 8 | **0** | 9 | **0** |
+
+So all four recorded latches (`ci_at_late` 59, 57, 51, 59) would have had
+`left` of 2, 2, 1, 2 at advance 20. **None of them latches.**
+
+#### Falsifiable prediction
+
+One run at rung 550 with **both** `advance-low` and `margin-hist`:
+
+> **`P(wait <= 9)` over the hold window falls from 5.21e-04 to ~0**, because
+> reaching it now requires ci <= 49 and the measured excursion floor is 52.
+> Quantitatively: `wle7 + w8 + w9` should read **0 of ~10^5 hold arms**,
+> against 57 at advance 22.
+>
+> **Refuted if** `wle7 + w8 + w9` is non-zero at a rate within 5× of 5.21e-04.
+> That would mean the excursions go deeper than 109 502 arms could see, the
+> `ci <= 51` population is real, and advance 20 buys a factor rather than the
+> mechanism.
+
+This is a **per-arm** measurement, ~10^5 samples in one run, so it settles in a
+single run what a rate A/B could not settle in 63 runs a side — which is the
+whole reason the histogram was built. It also reads `ehz_from_sector` in the
+same capture, so the speed cost is measured rather than assumed.
+
+#### Which decision each outcome changes
+
+* **Prediction holds** → advance 20 is a demonstrated bounded control
+  improvement that removes the measured mechanism at ~1 % speed, and
+  exploration proceeds 57.5 → 60 on it. It does **not** change the supply
+  wall at 600, which stands independently.
+* **Refuted** → the excursion distribution has an unsampled deep tail, advance
+  20 is a factor and not a fix, and the estimator's positive feedback (E316's
+  blanking gate and depth schedule) is the necessary target after all.
+
+#### Honest bound on the claim
+
+`P(ci <= 51) < 3/109502 = 2.7e-05` at 95 %, which is 32× the measured
+rung-550 latch rate of 8.4e-07 per arm. So the observation **cannot** prove
+elimination — it proves only that every excursion actually seen sits above the
+advance-20 boundary. The run above tests it directly at 10^5 samples, which is
+the point.
+
+Not yet run: E316's reviews are outstanding and a level change is a control
+change.
