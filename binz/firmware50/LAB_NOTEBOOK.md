@@ -21840,3 +21840,102 @@ The safety picture is unchanged and E261 stated it correctly: the only current s
 
 ### Things I checked and found sound
 Production byte identity (re-verified section-by-section against `0D8E3799`); four roots instruction-identical across both images; `Block` = 26 B with no padding; 14848 B ring total and the 1536 B reduction; `sag-capture` bss 19060 / stack 17136; stack unthreatened; the `RetainRails`-discards-the-trip-block motivation for recording phase codes before `current.accumulate` (`states.rs:352`) is correct and is the best idea in the commit; recording `bus_raw` alongside the mean is right; E265's `chain.py` catch is right and was self-found.
+
+### E267 — predeclaration of the 550 diagnostic cohort: what runs, what each outcome means, and what this instrument still cannot answer
+
+Written before flashing. E266 fixed the build and withdrew E264's experiment;
+this states the replacement concretely enough to fail.
+
+#### What I am not doing, and why
+
+* **No rung-500 observer control.** E266 §2.2: all three rung-500 trips are on
+  image `89D65B09`, the current lineage is **0 of 26** there, and `0D8E3799` —
+  whose production bytes this build reproduces — has three rung-500 runs and no
+  trips. The control asked whether the recorder suppresses an event production
+  does not produce either. Five runs at 50% would have been ~400 s of drive at
+  1.4–1.8 A on a bench with no thermal channel, to answer nothing.
+* **No triggered burst, yet.** Both reviews propose it and it is the only design
+  offered that addresses the sample-rate limit. It is not in this build
+  deliberately: the ADC is trigged by TIM6 at 9.9 kHz and that same scan feeds
+  the guard, so retriggering it for a burst touches the path the brief says to
+  preserve. It is the next design question, not a thing to smuggle into a
+  diagnostic run.
+* **No rung attempt.** This is a diagnostic image and its results qualify
+  nothing.
+
+#### The cohort
+
+Three runs of the fixed `sag-capture` at rung 550, plus the `loop_iters_closed`
+comparison at a rung both images have run. Labels predeclared: `e267-550-v3_01`
+through `_03`.
+
+#### What the instrument can and cannot answer, stated before it runs
+
+**Can:** the *shape* of the deciding event — is the raw bus depression deep and
+short, or shallow and long; does `vref` move; was the reference chronically
+marginal; do the phase currents reach the clamp; is the event confined to one
+sector.
+
+**Cannot:** the *order* of the bus dip and any loop excursion. Judgements arrive
+every 101 µs against a **71 µs** sector at this rung, so two events inside one
+commutation interval cannot be ordered, whatever clock stamps the rows. Both
+reviews establish this and E266 accepts it. **Unresolved chronology stays
+unresolved**, and no outcome below will be read as settling it.
+
+#### Thresholds, computed now so they cannot be chosen later
+
+All derived from the guard's own arithmetic at `filt_bus = 1193`, the tripping
+run's value:
+
+| quantity | value | derivation |
+|---|---|---|
+| deficit budget for one low 8-window | **477 codes** | `(1 − 95/100) × 8 × 1193` |
+| raw depth at which **1** scan suffices | ≤ **716** codes | `1193 − 477` |
+| raw depth needing **5** scans | ≤ **1074** codes | `1193 − 477/5` |
+| the 3 A PSU clamp, per phase | **239 codes** from zero | 79.64 codes/A |
+| the 4 A firmware allowance | **318 codes** from zero | `RAW_LIMIT/100` |
+
+`scripts/sag.py` prints all of these from the capture; none is a runtime choice.
+
+#### Predictions
+
+1. **If a trip is captured, the recorded raw samples satisfy the guard's own
+   condition** — three consecutive 8-windows each with ≥477 codes of summed
+   deficit. **If they do not, something other than the raw bus drove the mean
+   low** (`vref`, or a filter-state artefact), and that is a finding about the
+   guard rather than about the supply. This is the prediction E264 got backwards
+   by assigning the short-deep-collapse signature to the supply column; the
+   (m, d) pair is reported, and **no particular (m, d) is pre-declared as
+   favouring either hypothesis.**
+2. **The discriminator, stated symmetrically.** At least one phase code within
+   the captured window deviates from zero by **≥239 codes (3 A)** → consistent
+   with the clamp mechanism E266 §5 derives, and with a loop-side surge; both
+   remain live. **All three phase codes staying below 239 codes through a real
+   bus notch** → the rail fell without the ESC drawing clamp-level current,
+   which points away from both and at the supply's own behaviour or the
+   measurement. Neither branch is the finding in advance.
+3. **`loop_iters_closed` is within 5% of the matched production figure.** The
+   honest reason, replacing E264's non-argument: the ring is foreground-only, so
+   its cost is `interrupt::free` at ~9.84 kHz, and that mask got **62% longer**
+   (16 → 26 → 28 B per copy). So if anything I expect this to be *worse* than
+   E264 predicted, and E261b's measured 16.8% may well reproduce. **If it does,
+   the reading is "the cost is unchanged and cross-era was not the explanation",
+   not vindication.**
+4. **0 trips in 3 is uninformative.** Predeclared: production is 1/3 at this
+   rung, so (2/3)³ = **0.296** — a non-trip is the second most likely single
+   outcome and says nothing about either the mechanism or the observer. Eight
+   runs would be needed for a non-trip to mean anything ((2/3)⁸ = 0.039), and
+   stopping at three is a stated cost-of-bench choice.
+
+#### Safety, restated from measurement
+
+Source resistance **95 mΩ** (E266 §5, R² 0.975 over 56 runs), so sustained sag
+at this rung is **2.1%** against a guard line of 5%, and the sustained droop
+cannot reach the guard within the clamp's range. What is absent is unchanged and
+not being worked around: no thermal channel at all, no peak-current stop, and
+the only current stop needs two 10.2 ms blocks (**≥20.3 ms**) at a 4 A allowance
+that sits *above* the 3 A clamp. The clamp's transient response needs the
+operator to sweep the current limit and is the one measurement I cannot take
+myself.
+
+Both reviews before this is flashed.
