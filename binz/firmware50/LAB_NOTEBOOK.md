@@ -26337,3 +26337,374 @@ strongest evidence this campaign has produced about its own instruments.** The
 reviews follow verbatim.
 
 ---
+
+#### Review 1 of 2 — EVIDENCE (verbatim, unedited)
+
+Brief: recompute from source and captures; verify field meanings, units,
+windows, uncertainty, image identity and every attempt. Instructed to read raw
+captures before source and source before the notebook. Given no interpretation
+and not shown the adversarial review.
+
+> # INDEPENDENT EVIDENCE REVIEW — E290–E297, recomputed from captures and source
+>
+> **Snapshot cutoff: 2026-09-24 23:49 local.** The e296 climb was landing captures *while this review ran*; at cutoff the set is e296-400 ×3, 425 ×3, 450 ×3, 475 ×2 complete + `e296-475_03.txt` at 293 bytes (header + `BEMFRUN` + `PREFLIGHT` only, still being written). Every number below is tagged with the n it came from. e286 is a closed set of 30.
+>
+> Working method: raw captures and disassembly first; `LAB_NOTEBOOK.md` read only after A, B, C, E, F, G had been computed.
+>
+> ---
+>
+> ## 1. Field identity of the banded quantity — **CONFIRMED**
+>
+> `scripts/derive_band.py:87` reads `r["rate_vs_coast_permille"]`, produced by `cohort._rate_vs_coast` (`scripts/cohort.py:239-296`) from `BEMFTAIL accepts/span_us` against `speed.coast_fit`. It is **not** the firmware-emitted `zc_permille_of_6x_coast`. `derive_band` also asserts `rate_source == "matched window vs time-anchored coast"` on every row and refuses otherwise (`:80-85`).
+>
+> Measured offsets over the 30 e286 runs:
+> - `zc_permille_of_6x_coast − rate_vs_coast_permille`: mean **+1.80**, distribution {−1:3, 0:1, +1:7, +2:11, +3:4, +4:4}. The "+2" claim is **CONFIRMED** as a central tendency, not a constant.
+> - `1000·loop_ehz/coast_ehz − rate_vs_coast_permille`: mean **+5.76**, sd **2.69** over all 30. E290/derive_band's docstring says "+7, sd 3.7" — that was an 11-run figure and is now **stale by ~1.2 ‰**; it is not wrong in sign or order. E290's single worked row (`e286-250_01`: 1008 / 1003 / 1001) reproduces exactly (`loop_ehz=1199`, `coast_ehz=1189` → 1008).
+> - All 30 rows, `rate_source` = primary path. **CONFIRMED.**
+>
+> ## 2. The band 992..1008 — **CONFIRMED, but the stated justification is null**
+>
+> `python scripts/derive_band.py` reproduced independently:
+>
+> | quantity | my recompute | E294 |
+> |---|---|---|
+> | n | 30 | 30 |
+> | median | **1000.5** | 1000.5 |
+> | pooled sd | **2.1348** | 2.135 |
+> | sd about trend | **2.1268** | 2.127 |
+> | within-rung sd | **1.6125** | 1.612 |
+> | ceil(3.5·sd_trend) | **8** | 8 |
+> | trend | **+2.75 ‰/1000 tenths** | +2.75 |
+>
+> Values: `[1000,997,999, 999,1001,1001, 1001,1000,1001, 1002,1003,999, 1001,1002,1000, 1001,1002,1001, 996,999,997, 999,998,997, 1003,1005,1001, 1000,997,1003]`. Min 996, max 1005.
+>
+> - The median **is** a .5 tie. `round(1000.5)=1000` (banker's). It **does not matter for these 30** — both 992..1008 and 993..1009 contain every value, as does the old 990..1010. It matters only for a future run at exactly 992 or 1009.
+> - **Unstated problem:** `ceil(3.5 × 2.1348) = 8` and `ceil(3.5 × 2.1268) = 8`. The pooled and trend-removed rules give the **identical band**. E294's "the real justification" paragraph and E290's whole trend argument therefore decide nothing at all about this band's width. The only rule that would have differed is the within-rung one (±6).
+> - E290's "+25.6 ‰ per 1000 tenths over the first four rungs": I get **+19.66** over rungs 150/200/250/275 (n=12). E293 already retired it; the number itself does not reproduce either.
+>
+> ## 3. The coast-buffer claim — **CONFOUNDED (fatally), and the 2.0× agreement is not reproduced when the confound is removed**
+>
+> Split of the whole corpus (`captures/**/*.txt`, 1113 parseable captures with `COASTTIMING`) by `len(iv_us)`: **1072 at 8 slots, 41 at 32 slots**. Pooled within-(session-prefix, rung) sd of `rate_vs_coast_permille`:
+>
+> | filter | 8-slot | 32-slot | ratio |
+> |---|---|---|---|
+> | none | sd 156.94 (n=1001) | 1.654 (n=41) | 94.9 |
+> | primary estimator only | 4.713 (n=296) | 1.669 | 2.85 |
+> | primary + reason 2 | **3.350** (n=280) | 1.663 | 2.01 |
+> | primary + reason 2 + hold≥30 s | **3.332** (n=266) | 1.663 | 2.00 |
+> | primary + full `run_gates` clean | **3.102** (n=259) | 1.679 | 1.85 |
+> | primary, groups of ≥3 | **3.315** (n=268) | 1.669 | 1.99 |
+> | **32-slot, e286 only** | — | **1.6125 (n=30)** | — |
+>
+> - The 32-slot/e286-only figure **1.612 at n=30 reproduces exactly**.
+> - The 8-slot figure **3.202 at n=193 does not reproduce** under any filter I tried (I get 3.10–3.35 at n=259–280, or 4.71 at n=296). **UNRESOLVED** which filter E294 used; the qualitative result (≈3.1–3.4 vs 1.61) is robust, but the ratio moves 1.85–2.01 with the filter, so "1.99× against a predicted 2.0" is precision the data do not carry.
+> - **The confound is total.** Every 32-slot capture in the corpus is from `e282`(3), `e284`(1), `e286`(30), `e296`(7) — all 2026-09-24, and at E294's time the cohort was e286 alone: **one session, one evening, one image**. The 8-slot cohort spans ~130 session prefixes over five days and dozens of ELFs. Buffer length is perfectly collinear with session, image, bench state and fixture version. **This split cannot distinguish buffer size from "one recent session vs everything older."** E294 states the scope ("within-session band on one image") but then uses the same split as *the* justification for re-deriving the band — those two sentences are incompatible.
+> - **The confound is removable, and I removed it.** An 8-slot image records exactly `iv_us[:8]`. Recomputing `rate_vs_coast_permille` for the **same 30 e286 captures** with `iv[:8]` versus the full 32:
+>
+> | slots used | n | within-rung sd | pooled sd | mean |
+> |---|---|---|---|---|
+> | 8 (truncated) | 30 | **2.253** | 2.906 | 999.53 |
+> | 32 (as reported) | 30 | **1.594** | 2.151 | 1000.11 |
+>
+> Ratio **1.41**, against `sqrt(32/8) = 2.0`. If the ~1.0 ‰ common `powered`-term scatter (cohort.py's own figure) is removed in quadrature, the coast-only ratio is **1.63**. **The buffer effect is real but roughly 1.4×, not 2×; E281's quantitative prediction is NOT confirmed, and E294's "first quantitative confirmation of E281" is REFUTED.** Commands: `speed.coast_fit(offset_us, first_us, iv[:n])` per capture, `n ∈ {8,32}`.
+>
+> ## 4. The bridge-off control, arithmetic — **CONFIRMED**
+>
+> `e292-idlescan.txt`, 5 lines, 1247 bytes. Both phases: `scans=445475`, `ms=45000` (9899.4 scans/s). Phase A `raw0_n=243 raw1_n=20`, phase B `raw0_n=269 raw1_n=19`; `raw2_n=raw3_n=0` both.
+> - 20/445475 × 1e6 = **44.894**; 19/445475 × 1e6 = **42.651**; pooled 39/890950 × 1e6 = **43.774 → 43.8**. All three **CONFIRMED**. raw0: 545.5 / 603.8 **CONFIRMED**. Depth `filt_bus − bus_min` = 1211−1139 = **72**, 1210−1143 = **67** **CONFIRMED**.
+> - Bridge genuinely off: `sag_tripped=0` both phases; exit line `moe=0 gates_low=1 en=0 nfault=1 ccr1=ccr2=ccr3=0 preflight_passed=1`. `bin/idle-scan.rs` calls `safe_off` first and never takes the gate capability. **CONFIRMED.**
+> - "~18% of the lowest driving rung": 43.8/238.9 (rung 150) = 18.3%, but the **lowest** driving rung rate is rung 200 at 206.6 → 21.2%. Minor mislabel.
+> - The two phases' `scans` are *bit-identical* (445475). Expected from a fixed TIM6 trigger, but it means `scans` is a clock, not an independent sample-count measurement.
+>
+> ## 5. The tearing hypothesis and the two gap fields — **CONFIRMED (the control cannot test it), with corrected numbers**
+>
+> `e292-idlescan` reports `gap_max_us=40` and `gap_over_88us=0` in **both** phases. Driving captures carry **two different gap fields on `BEMFGUARD`**, and they are not the same quantity:
+>
+> | field | e286+e296 (n=39) |
+> |---|---|
+> | `loop_gap_max_us` | min **140**, max **178** |
+> | `gap_max_us` | min **104**, max **111** |
+>
+> E295 quotes "145–192 µs" for the driving loop gap; over this cohort it is **140–178** (corpus-wide n=1157: median 156, max 34894). The comparison that matters — idle 40 µs vs driving 140–178 µs against an 88 µs window — holds, so **E295's self-criticism is correct and if anything understated**: the control's own `gap_max_us=40` never approaches the window, and `gap_over_88us=0` is therefore uninformative about tearing. Note also that if one compared the *same-named* field (`gap_max_us` 104–111) the reader would reach a different conclusion; the entries do not warn that the name collides.
+>
+> ## 6. Does idle-scan judge `raw_depth` against the same reference as the driving image? — **NO. REFUTED.**
+>
+> - `bin/idle-scan.rs`: `let (fb, fv) = sag.filtered(); … p.raw.observe(s.bus, s.vref, fb, fv);` — the **guard's filtered** reference.
+> - The driving image `480263F1` used **`base.bus_ref`** (the pre-run baseline). Proof in §7.
+>
+> So the "measured bridge-off floor" (43.8) and the driving rungs it is compared against are **measured against two different lines**, and the idle image's own `ref_bus − filt_bus` is 1 code while the driving runs' reaches 15.
+>
+> ## 7. IMAGE IDENTITY — **the e296 climb runs on an image WITHOUT the raw_depth fix. Proven by disassembly.**
+>
+> - All 30 e286 and all e296 captures self-report `# elf_crc32 480263F1` / `# elf_sha256 366E781F…A544`. `sha256sum captures/elf/480263F1.e286-rawdepth.elf` = `366E781FDC345A1F9C8CAB61792FDA8CB64C8B88830EAA9DED2A39C5A329A544`, matching `captures/MANIFEST-hashes.txt:1253`. **CONFIRMED.**
+> - `e292-idlescan.txt` → `62094AAB41FE…CA64` = `captures/elf/62094AAB.e292-idlescan.elf`, `MANIFEST-hashes.txt:1265`. **CONFIRMED.**
+> - Timestamps: 480263F1 built **22:10:08**; e286 ran 22:27–23:20; the fix commit `6825e4d` is dated **23:02:41**; idle-scan ELF built **23:25:58**; e296 ran 23:30–23:48. `git status` shows **no modification** to `firmware50/src` or `firmware50/bin` — the tree equals HEAD, i.e. post-fix.
+> - **Decisive, not inferred from mtimes.** `arm-none-eabi-objdump -d` on `firmware50::protection::BusDepth::observe`:
+>   - `480263F1` @ 0x08000604: `movs r1,#125; lsls r1,r1,#3` → **SCALE = 1000**, no `/5`, no `__aeabi_uidiv`. That is the **pre-E291** arithmetic.
+>   - `62094AAB` @ 0x080005f0: `movs r6,#200` + `movs r1,#5; bl __aeabi_uidiv` → **SCALE = 200** and `fracs[i]/5`. **Post-fix.**
+>   - Call sites in `480263F1` (`run::states::Ctx::scan_pass`, 0x8006d3c and 0x8006d52): **both** load `ref_bus`/`ref_vref` from the same base `r4` (`ldrh r3,[r4,#0]` / `ldrh r0,[r4,#2]`), while the second passes `scan.bus`/`scan.vref` as the sample. So `raw_depth` in the e286/e296 image observed the **raw scan against `base.bus_ref`**. Confirmed at the instruction level.
+>
+> **Consequence, quantified.** The 950 line actually used (`0.95·ref_bus`) versus the guard's (`0.95·filt_bus·ref_vref/filt_vref`), per rung:
+>
+> | rung | 150 | 200 | 250 | 300 | 350 | 375 | 400 | 425 | 450 | 475 |
+> |---|---|---|---|---|---|---|---|---|---|---|
+> | gap (ADC codes, mean) | 1.0 | 0.3 | 3.6 | 5.1 | 4.8 | 8.9 | 8.3 | **11.7** | **12.1** | **13.7** |
+>
+> The threshold used is **shallower than the guard's, by an amount that grows monotonically with duty** (because `filt_bus` droops with load while `ref_bus` does not). Every cross-rung comparison of `raw*_n` in E295/E296/E297 compares counts taken at **different depths**. This is not a small correction — see §8.
+>
+> ## 8. The rate line and the "STEP" — **arithmetic CONFIRMED; the inference is REFUTED by the §7 defect**
+>
+> `python scripts/raw_rate.py` reproduced: fit from e286 (n=30) `rate = 91.4521 + 0.790974·duty_tenths`, `corr = +0.7057` (entry: 91.5 + 0.7910, +0.706). **CONFIRMED.**
+>
+> | rung | n | measured /1e6 | predicted | dev |
+> |---|---|---|---|---|
+> | 400 | 3 | 405.2 | 407.8 | **−0.6 %** |
+> | 425 | **3** | 613.3 | 427.6 | **+43.4 %** |
+> | 450 | 3 | 582.1 | 447.4 | **+30.1 %** |
+> | 475 | 2 | 643.4 | 467.2 | **+37.7 %** |
+>
+> - Rung 400: **CONFIRMED** at −0.6 %.
+> - Rung 425 "+53.6 %" was an **n=2 figure** (runs 01+02: (726.93+586.96)/2 = 656.95 → +53.6 %). With all three it is **+43.4 %**. E297 already records this.
+> - Per-run rung-425 rates: **726.9 / 587.0 / 526.0** (dev +70.0 / +37.3 / +23.0 %). All three are above the line, so not one outlier — but the spread is 1.38× within one rung.
+> - **The "step" is not a step.** 450 (+30.1 %) and 475 (+37.7 %) are also outside ±25 %. Everything from 425 up is above the line; nothing steps and returns. The line simply under-predicts the top of its own extrapolation.
+> - **The fit cohort's own scatter swallows the test.** Per-run deviation from the line inside the fitting set: **−24.3 % to +41.0 %, sd 17.2 %**; rung-mean (n=3) deviations range **−17.3 % to +17.8 %, sd 11.4 %**. A single fitting rung (275) sits at +17.8 % and one of its runs at +41.0 %. Poisson alone predicts only 5.8 % per run / 3.3 % per 3-run mean, so the scatter is ~3–5× Poisson: the quantity is over-dispersed and ±25 % on an n=3 mean is a ≈2.6 σ screen at best. E297 says this.
+> - **Current normalisation (the decisive check).** `rate/hold_ma`: 150 = 5.556 (the `hold_ma=6` run makes rung 150 unusable), 200 = 0.814, falling to 350 = 0.424, 375 = **0.494**, 400 = 0.397, 425 = **0.498**, 450 = 0.405, 475 = 0.353. **Rung 425 normalised is indistinguishable from 375 and sits inside the 350–475 spread.** The step does **not** survive normalisation. Note the denominators are inconsistent — `raw1_n` and `drive_scans` cover the **whole 90 s run** while `hold_ma` covers only the hold (`hold_blocks` 6759 of `blocks` 8859 at rung 425). Redoing it with the whole-run `mean_ma`: 375 = 0.567, 400 = 0.465, 425 = 0.591, 450 = 0.484, 475 = 0.427 — same verdict, so the mismatch does not change the conclusion, but it should be stated.
+> - **And the whole load-proportional rise is an artefact.** Using each run's own measured 970/950 decay constant (0.078–0.088 per code, from `ln(raw0_n/raw1_n)` over the 24-code bin spacing), the §7 threshold gap inflates `raw1_n` by **1.03–1.08× at rungs 150–200 and 2.6–3.3× at 425–475**. The observed rise from rung 150 to 475 is only **2.45×** — *less* than what the drifting threshold alone predicts. Correcting each run's count back to the guard's line and refitting 150–375:
+>
+> ```
+> as reported : rate = 91.5 + 0.7910*duty   corr = +0.706
+> corrected   : rate = 212.3 + 0.0202*duty  corr = +0.051
+> ```
+>
+> Corrected per-rung deviations from the corrected line: 150 +2.3 %, 200 −7.0 %, 250 −3.2 %, 275 +8.5 %, 288 +2.2 %, 300 −2.1 %, 325 +2.3 %, 338 +4.4 %, 350 −2.2 %, 375 −5.1 %, 400 −10.2 %, **425 +5.6 %**, 450 −6.7 %, 475 −12.8 %. **Flat. No trend, no step, nothing outside ±13 %.**
+>
+> **Therefore: E295's headline positive finding — "`raw*_n` as a rate tracks load, corr = +0.706, this discriminates" — is REFUTED.** The correlation is the observer's reference drifting with duty, not the rail. E296's predicted line and E297's fired discriminator both inherit the same artefact, and E297's confound diagnosis ("it fired on current") identifies the wrong confound: the dominant one is the reference defect, which is duty-correlated because `filt_bus` droops with load. The corrected flat level (~210/1e6) is still **4.8× the 43.8 floor**, so E295's refutation of its own "150–350, purely instrumental" prediction does survive.
+>
+> *Caveat, stated:* the correction assumes a log-linear tail between the 970 and 950 bins. The direction and order of magnitude are robust to that (any monotone tail gives ≥2× at a 12-code shift), but the exact corrected slope is model-dependent. **What would settle it: re-run rungs 375 / 400 / 425 on a post-fix image and compare `raw1_n` directly.** That experiment costs three runs.
+>
+> ## 9. The deeper bins — **ratios CONFIRMED at n=2; the interpretation REFUTED by rungs 450/475**
+>
+> Per-run `raw0_n / raw1_n / raw2_n / raw3_n`:
+>
+> | capture | raw0 | raw1 | raw2 | raw3 |
+> |---|---|---|---|---|
+> | e286-375_01/02/03 | 2379 / 3262 / 2721 | 356 / 440 / 352 | **2 / 5 / 6** | 0 / 0 / 0 |
+> | e296-400_01/02/03 | 2582 / 3531 / 2379 | 340 / 437 / 300 | **4 / 3 / 8** | 0 / 1 / 0 |
+> | e296-425_01/02/03 | 4666 / 4165 / 3142 | 644 / 520 / 466 | **33 / 34 / 27** | 5 / 4 / 4 |
+> | e296-450_01/02/03 | 3300 / 3678 / 5118 | 433 / 482 / 632 | **4 / 6 / 57** | 0 / 0 / 0 |
+> | e296-475_01/02 | 4331 / … | 519 / … | **33 / …** | 0 / … |
+>
+> - 400→425 means: raw2 5.0 → **33.5 at n=2 (6.7×, CONFIRMED as quoted)**, **31.3 at n=3 (6.27×)**. raw1 359.0 → 582.0 (n=2, **1.62×**) / 543.3 (n=3, 1.51×). raw0 2830.7 → 4415.5 (n=2, **1.56×**) / 3991.0 (n=3, 1.41×). So E297's 6.7× / 1.6× / 1.6× are all n=2 figures; at n=3 they are 6.3× / 1.5× / 1.4×.
+> - **Not monotonic, and not sustained.** Rung means of `raw2_n` across the whole walk: 7.0, 7.7, 8.3, 9.7, 8.3, 6.0, 11.7, 17.0, 17.0, **4.3** (375), **5.0** (400), **31.3** (425), **22.3** (450), 33.0 (475). Rung 150 (7.0) exceeds rungs 375–400 (4.3–5.0); the deep bins are not load-ordered at all. Within rung 450 the three runs read **4, 6, 57** — a 14× spread inside one rung at one duty on one image. `raw2_n/raw1_n` over the walk: 0.033, 0.042, 0.033, 0.030, 0.031, 0.021, 0.039, 0.052, 0.060, 0.011, 0.014, 0.058, 0.043, 0.064 — no trend.
+> - E297's own guard ("will not read it below `raw2_n` ≈ 25 per run") is exactly right and, applied to rung 450, disqualifies two of its three runs. The deep-bin quantity is dominated by single-run excursions at Poisson-scale counts and is additionally subject to the §7 reference drift (which bites the deeper bins harder, since the same 12-code shift is a larger fraction of the distance to the 930 line).
+>
+> ## 10. Advance level — source **CONFIRMED**; corpus claim **REFUTED as written**
+>
+> - `src/run/policy.rs:294-296`: `fn level(duty_tenths: u16) -> u32 { if duty_tenths >= 350 { 22 } else { 20 } }`, with tests at 349→20 / 350→22. **CONFIRMED.**
+> - Census over every `BEMFRUN` line in `captures/**` (1246 lines, 24 distinct (duty, advance) pairs): **duty 150 has been run at advance 20 (288 captures) AND advance 26 (31 captures)** — `captures/2026-09-20/{qual,qual2,armwin,edgearm,isr*,s1floor,s2handoff,s3advance,ungated,floor}_0*.txt`, all with `handoff_ehz=60` and no ELF header (pre-manifest fixture). So **"no duty in the entire corpus has ever been run at both levels" is false.**
+> - The claim is true in the narrower and intended form: **no duty has ever been run at both 20 and 22**, and every capture is consistent with the `>=350` rule (zero exceptions). The 20-vs-22 confound at rung 350 stands exactly as E294 states it. But there *is* a 150 @ 20 vs 150 @ 26 pair in the corpus — a real, if old and differently-configured, advance A/B at one duty, which the entry asserts does not exist. Whether those captures are usable is a separate question; asserting they do not exist is wrong.
+>
+> ## 11. Units, windows and denominators — several statements are loose
+>
+> - `raw*_n` / `dep*_n`: **counts of ADC scans** below the fraction, incremented once per `observe` call (`protection.rs:334`). Not ms. At ~9843 scans/s one scan ≈ 101.6 µs.
+> - `raw*_run` / `dep*_run`: **longest consecutive run in scans**, dimensionless. So `raw1_run = 1` ≈ 0.1 ms and E284's withdrawn "≥ 10" arm was ≈1.0 ms. Neither the entries nor `raw_rate.py` state the time scale; "the longest consecutive run of raw scans" in `raw_rate.py:5` is correct.
+> - `drive_scans` (`run/states.rs:318`) counts **every successful `hal.scan()` for the whole run**, incremented *before* the observers, which only run once `rail.ready()` (8 scans). Denominator over-counts by ~8 in ~886k — 1e-5, negligible. But `drive_scans` covers the **whole run** (acquire + ramp + hold ≈ 90 s), whereas `hold_ma`, `hold_blocks` and `hold_ms` cover the **hold only** (e.g. rung 425: `hold_blocks=6759` of `blocks=8859`, `hold_ms=68276` of 90000). **Any `raw*_n / hold_ma` normalisation therefore divides a whole-run numerator by a hold-window denominator** — a real window mismatch in E297's replacement discriminator. Recomputing against `mean_ma` (whole-run) does not change the verdict (§8) but the discriminator's definition should name its window.
+> - "rate per 1e6 scans" is **not** a consistent denominator across cohorts in the way implied: driving uses `drive_scans` (9843 scans/s, 90 s, includes startup); `IDLESCAN` uses its own `scans` (9899 scans/s, 45 s, excludes the 2048-scan baseline, and `p.scans` is incremented before the `rail.ready()` gate too). The per-scan rates are comparable to ~0.6 %; the window contents are not identical. The far larger inconsistency is the *threshold*, §6/§7.
+> - E295's comparison table mixes units of aggregation: its "driving 150 | 287.8" and "driving 250 | 294.6" are **single runs** (`e286-150_01`, `e286-250_01`), while the table three paragraphs later gives rung **means** (238.9, 282.6). Worse, `e286-150_01` is the anomalous run with `hold_ma=6` / `mean_residual=100` (the ~450-unit first-run shunt deficit E293 describes), i.e. the least representative capture in the walk was used to headline the floor comparison.
+> - `BEMFGUARD gap_max_us` (104–111) vs `loop_gap_max_us` (140–178) are different quantities with near-identical names; the idle-scan's `gap_max_us` corresponds to the *latter*. §5.
+> - `cohort.AMBIGUOUS_KEYS` correctly censuses 8 colliding key names; `raw_rate.py` uses flat `re.search` for `target_duty_tenths`, `drive_scans` and `raw{i}_n` — all three are unique per capture, so it is safe today, but it is the reader class `cohort.ambiguous_keys` exists to catch, and it is not checked.
+>
+> ## 12. e296 rung verdicts (independent gate replay) — **CONFIRMED**
+>
+> `cohort.run_gates` on every complete e296 capture at cutoff: **400 ×3, 425 ×3, 450 ×3, 475 ×2 — all PASS**, all `reason=2`, `ceiling_tenths == duty`, all via the primary estimator, `worst_ma` 1555–2210 (max 2210 at rung 450, under the 3800 ceiling). `rate_vs_coast_permille` = 400: 1000/999/1001; 425: 996/998/998; 450: 997/1002/997; 475: 1003 (+1 pending). All inside 992..1008. e296 within-rung sd = **1.886**, inside E296's predeclared 1.4–2.2. `e296-475_03.txt` is a 293-byte partial and is correctly skipped by both `cohort.parse` and `raw_rate.rates`.
+>
+> ## 13. Not verified
+>
+> - **UNRESOLVED:** E294's corpus advance-20/22 table (n=204 vs 129, sd 3.164 vs 3.400) and its "corpus within-session within-rung sd = 3.031 vs within-rung 3.066" — not recomputed. My own corpus within-(session,rung) figures (3.10–3.35 depending on filter) are consistent in magnitude.
+> - **UNRESOLVED:** the exact cohort behind "8-slot: 66 groups, n=193, sd 3.202". What would settle it: the filter expression, in code, in `derive_band.py` or a sibling script. As it stands the most-cited number in E294 is not reproducible from the repository.
+>
+> ---
+>
+> ## The three findings that should change what happens next
+>
+> 1. **`480263F1` is pre-E291 — proven by disassembly (SCALE=1000, both `observe` call sites on `base.bus_ref`). The e296 climb's `raw*_n` are measured against a line that drifts 1 code shallow at rung 150 and 12–14 codes shallow at 425–475.** E296 says the image "cannot be the campaign's final ELF" and that the observer's line "does not drift 24 codes between low and high duty" on the fixed image — correct, but it then predeclares and runs a quantitative test *on the drifting quantity anyway*.
+> 2. **Correcting for that drift removes the entire effect the instrument was credited with:** `corr(raw1 rate, duty)` falls +0.706 → +0.051 and every rung 150–475 lands within ±13 % of a flat line. E295's "alive: `raw*_n` as a rate" and E297's "step" are both artefacts of the same defect. Three runs on the post-fix image settle it.
+> 3. **The coast-buffer justification for the band is confounded beyond repair as constructed (32-slot cohort = one session), and the confound-free version of the same test gives 1.41×, not 1.99×.** The band 992..1008 is arithmetically correct and passes all 30 runs either way, so nothing downstream moves — but it now rests on no stated justification at all, since pooled and trend-removed sd give the identical ±8.
+
+**Disposition:** accepted in full, and it is the more surgical of the two
+reviews. Its §7 disassembly is the proof the whole disposition rests on; its §3
+truncation test is the confound-free experiment I should have designed myself
+and it refutes my own claim; its §2 observation that the two band rules give the
+identical ±8 invalidates three entries' worth of my argument at a stroke. Its
+§10 correction of my advance-level claim, §11 catalogue of loose units, and the
+note that I headlined a comparison with the one capture I had already documented
+as anomalous, are all accepted without reservation. The two UNRESOLVED items in
+§13 are mine to answer: my 8-slot cohort is not reproducible, and I no longer
+defend the number.
+
+#### Review 2 of 2 — ADVERSARIAL (verbatim, unedited)
+
+Brief: construct competing explanations; challenge discrimination, observer
+effects, concurrency and safety. Instructed to read raw captures before source
+and source before the notebook. Given no interpretation and not shown the
+evidence review.
+
+> # ADVERSARIAL REVIEW — E290…E297, raw-depth observer and the 400+ climb
+>
+> Method note: challenges 1–2 were computed from `captures/2026-09-24/e286-*.txt`, `e296-*.txt` and `e292-idlescan.txt` and from `src/`, `bin/idle-scan.rs`, `git log` timestamps and `captures/MANIFEST-hashes.txt` **before** E290…E297 were read. Rungs 450 (3/3) and 475 (1 run) landed on disk during the review and are included. Every number below is recomputed, not quoted.
+>
+> ## CHALLENGE 1 — The E295 reversal is wrong, and its own mechanism is already documented in E291. VERDICT: SUSTAINED (the reversal fails).
+>
+> **Competing explanation.** The `raw*_n` rate does not rise with load. It rises because the driving image feeds `raw_depth.observe` the **stale pre-run baseline** `base.bus_ref` while the rail it is compared against droops under load. The observer's own threshold therefore climbs relative to the rail, monotonically with duty, and a threshold-crossing count on a fixed noise distribution rises accordingly. This is an instrument artifact, and it is **the exact defect E291 found and fixed**.
+>
+> **Provenance, from timestamps, not argument.**
+>
+> | | |
+> |---|---|
+> | `480263F1.e286-rawdepth.elf` built | **Sep 24 22:10** |
+> | commit `6825e4d` "the raw-depth observer measures the ADC, not the rail" (the `filt_bus/filt_vref` fix at `src/run/states.rs:370-371`) | **23:02:41** |
+> | `62094AAB.e292-idlescan.elf` built (uses `sag.filtered()`, `bin/idle-scan.rs:218`) | **23:25** |
+>
+> So **every** e286 and e296 capture — the ten-rung walk, the `corr = +0.706`, rung 400's "−0.6%", rung 425's "STEP", rungs 450 and 475 — was produced by the pre-fix observer. E296 states this ("the observer's line does not drift 24 codes between low and high duty" is given as a reason the image cannot qualify) and then uses that instrument's cross-rung trend as the foundation of E295's reversal and E296's predeclared line. The known defect was disclosed and then treated as harmless because "at the low rungs the two differ by ~2 codes". That dismissal looks at the wrong end of the range.
+>
+> **The bias grows across exactly the range the finding lives in.** `ref_bus/ref_vref` vs `filt_bus/filt_vref`, from the `BEMFSAG` line of each run:
+>
+> | rung | 150 | 250 | 300 | 375 | 400 | 425 | 450 | 475 |
+> |---|---|---|---|---|---|---|---|---|
+> | ref bias % | 0.088 | 0.313 | 0.441 | 0.773 | 0.724 | 1.024 | 1.059 | **1.167** |
+> | raw1 rate /10⁶ | 238.9 | 282.6 | 319.1 | 431.9 | 405.2 | 613.3 | 582.1 | 585.8 |
+>
+> **Correlations, per run (n=40):** `corr(bias, raw1 rate) = +0.937`. `corr(duty, raw1 rate) = +0.785`. The bias is the better predictor by a wide margin.
+>
+> **Removing it flattens everything.** Each run carries its own local tail slope, measurable from its own adjacent bin pair (`ln(raw0/raw1)` over the 2.105 % between the 970 and 950 lines): 0.90–0.98 per % of threshold, mean 0.93, stable across all 40 runs. Correcting each run's rate for its own bias (an interpolation over ≤1.17 %, inside the 2.1 % the slope was measured over — the safe direction):
+>
+> | rung | 150 | 200 | 250 | 275 | 288 | 300 | 325 | 338 | 350 | 375 | 400 | 425 | 450 | 475 |
+> |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+> | corrected rate /10⁶ | 238.7 | 219.2 | 227.2 | 250.5 | 240.6 | 228.1 | 240.8 | 243.6 | 232.7 | 226.2 | 220.6 | 253.2 | 231.4 | 213.2 |
+>
+> **`corr(duty, corrected rate) = −0.005` over all 13 rungs. `corr(hold_ma, corrected rate) = −0.047`.** The rate is flat at ~230 per 10⁶ from rung 150 to 475. Within-rung CV also *falls* under the correction at the high rungs (19.6 %→4.2 % at 400, 16.8 %→7.7 % at 425), which a fudge factor does not do.
+>
+> **And the non-modelled version, which is the one that should settle it.** Within a rung — duty fixed, so the confound is removed by construction — across 39 runs in 13 rungs:
+>
+> - `corr(reference bias, raw1 rate) = **+0.798**`
+> - `corr(hold_ma, raw1 rate) = **−0.598**`
+>
+> At fixed duty the count follows the **instrument's own reference drift**, strongly and positively, and follows **current negatively**. No physical rail-sag mechanism produces that sign pair. E291's "it measures the ADC, not the rail" was right, its `corr = −0.204` on depth was the same artifact seen from the other side, and the completed walk does not refute it — the walk is the artifact's dose-response curve.
+>
+> **Against my explanation:** the bridge-off floor is real (44.9 / 42.7 per 10⁶) and E295's refutation of its own "pure artifact" prediction stands — the ~230 per 10⁶ baseline is ~5× the floor and is *something*. But it is **load-independent** something, and it is not a discriminator for anything above 425.
+>
+> **On the other confounds asked about:** `corr(order, rate) = +0.666`, `corr(mtime, rate) = +0.665` over the ascending walk — statistically indistinguishable from duty's +0.706 at n=30 with 10 groups, so the walk order cannot be ruled out *by the cross-rung data at all*. It can be ruled out within rungs: `corr(order, rate | rung) = −0.145`. There is no session-time drift. Session time is not the confound; **the observer's own reference is.**
+>
+> **Settling check.** Rebuild with the E291 fix (`raw_depth` against `filtered()`) and run 3× at rung 150 and 3× at rung 450. Prediction from the above: the rates agree to within the within-rung CV (~15 %), and the +81 % / 2.4× rise is gone. If instead the rise survives on the fixed image, my explanation is dead and E295 is right. This is ~25 minutes of bench and it decides E291, E295, E296 and E297 at once.
+>
+> ## CHALLENGE 2 — There was never a step at 425. VERDICT: SUSTAINED (three independent kills; E297 found one of them).
+>
+> E297 already retired the test as current-confounded, correctly and before the reviews landed. Credit where due. Three further things it does not say:
+>
+> **(a) The reported number was computed at n=2 and the notebook does not say so in the headline.** `+53.6 %` is reproducible only from `e296-425_01` and `_02`. The third run took it to `+43.4 %`. E297 does disclose this in a parenthesis; the earlier framing and `raw_rate.py`'s docstring do not.
+>
+> **(b) Rung 450 and 475 refute a latch by non-monotonicity.** Raw deviations against E296's line: 400 `−0.6 %`, 425 `+43.4 %`, **450 `+30.1 %`, 475 `+25.6 %`** — and the deep bin, which was the loudest part of the claim, collapsed: `raw2_n` mean 5 (400) → 33.5 (425) → **8.7 (450)** → 33 (475). A mechanism that engages at 425 does not disengage at 450. The 6.7× deep-bin "jump" was measured against rungs 375/400, which `raw_rate.py`'s own new comment now concedes were "the anomalously LOW ones".
+>
+> **(c) Bias correction dissolves it completely, and more cleanly than the current normalisation does.** Corrected deviations against a corrected line: 400 `−6.7 %`, 425 `**+6.9 %**`, 450 `−2.4 %`, 475 `−10.2 %`. All inside ±25 %, all inside within-rung scatter.
+>
+> **(d) On the tolerance itself.** Measured within-rung CV of the rate: mean 15.3 %, median 16.2 %, max 19.6 %, and sd about the 150–375 line is 16.9 % of the mean. SEM of a 3-run mean ≈ 8.8 %, so ±25 % ≈ 2.8 σ. E297's own 2.6 σ figure is right. That is a screen, not a test — **but +43 % is genuinely outside run-to-run spread**, so the answer to "is the step noise?" is *no, it is bias, which is worse than noise*: it is reproducible, it is directional, and it will fire again at 500 and 525.
+>
+> **(e) The fit does straddle a control-parameter change** (advance 20 for 150–338, 22 for 350–375, 22 above). `corr(adv, rate) = +0.390`. On the bias account this is incidental — advance 22 starts where the bias is already large. It remains a defect in the fit's construction and `derive_band.py` discloses exactly this heterogeneity for the band while `raw_rate.py` does not for the line.
+>
+> **(f) One more thing about "rate".** `drive_scans` is 885 913–885 926 on **every one of the 40 runs** — a spread of 1.5 × 10⁻⁵. Dividing by it changes nothing; the "rate, not count" distinction that E295 says is "the whole resolution" has no numerical content. Meanwhile `hold_ms` falls 82 276 → 68 276 across the walk, so the fixed scan window contains a systematically *larger fraction of ramp* at high duty. That is a second duty-collinear structural confound in the denominator, unexamined.
+>
+> **Settling check.** Same as Challenge 1. Additionally: report `raw*_n` split into ramp and hold windows, so the rate stops being averaged over a transient whose share of the window is a function of the rung.
+>
+> ## CHALLENGE 3 — The 1.99× coast-buffer agreement is precision theatre. VERDICT: SUSTAINED as a statistical claim; PARTIALLY NOT SUSTAINED as a confound.
+>
+> **On the confound, I was wrong to expect it to hold.** `iv_us` slot census over the whole corpus: 8-slot n=1079 across ~130 sessions; 32-slot n=42 across **four** — `e282` (3), `e284` (1), `e286` (30), `e296` (9, now 13). So the n=30 arm *is* exactly `e286`, one session. But 32-slot data from the other sessions exists and agrees: restricting to primary-estimator rows, within-session-and-rung sd is **2.135 for e286 alone** and **1.915 excluding e286** (n=12, 2 groups). The buffer size is not obviously standing in for e286.
+>
+> **Recency is also not the confound.** The most recent 5 / 10 / 20 8-slot sessions give within-session-and-rung sd of 10.76 / 11.00 / 8.17 — *worse* than the 8-slot corpus figure. If "the newer session is tighter for other reasons" were the story, recent 8-slot sessions would be tight. They are not.
+>
+> **What does not survive is the arithmetic.** An sd ratio of 1.986 estimated on roughly 133 and 20 degrees of freedom has a **95 % CI of about [1.35, 2.67]**. √4 = 2.00 is inside it; so is 1.4, and so is 2.6. "1.99× against a predicted 2.00" agreeing to 0.5 % is an accident of the point estimate, and the test has essentially no power to distinguish a √N averaging effect from any other factor-of-1.5-to-2.5 improvement. Calling it "the first quantitative confirmation" overstates what a 14-group / 1-group sd comparison can confirm.
+>
+> **And the regimes do not overlap.** With the primary estimator enforced (`cohort.parse`'s `rate_source == "matched window vs time-anchored coast"`), there are **no replicated 8-slot groups at duty 150–450 at all** — the 8-slot primary-estimator pool is a high-duty pool. A regime-matched comparison is not merely unmade, it is **not constructible from this corpus**. The 8-slot sd is strongly duty-dependent, so the comparison as run is partly a duty comparison.
+>
+> **Settling check.** Build one image that differs only in the coast buffer length (32 vs 8) and run 5× at one rung in one session, alternating ABAB. That is the only comparison that isolates the buffer, and per [[feedback-microsecond-ab-needs-three-runs]] it is the shape this bench already requires. Until then the correct claim is "consistent with √N, underpowered", not "confirmed".
+>
+> ## CHALLENGE 4 — The bridge-off floor is built the same way but is not comparable to the driving numbers. VERDICT: SUSTAINED, for the opposite reason to the one proposed.
+>
+> **(a) The references are NOT mismatched in source.** `bin/idle-scan.rs:214-218` reads `sag.filtered()` and passes it to `raw.observe`, exactly as `src/run/states.rs:347/370-371` does at HEAD. The module doc's claim is accurate. **But the driving ELF predates that fix** (Challenge 1): `480263F1` was built 22:10, the fix committed 23:02. So the floor **is** measured against a different reference from the driving numbers — not because the two sources disagree, but because the idle-scan binary is post-fix and the driving binary is pre-fix. Every "× floor" ratio in E295, E296 and `raw_rate.py` compares a `filtered()`-referenced numerator-free baseline against `bus_ref`-referenced driving counts whose bias grows from 0.09 % to 1.17 % with duty. The "5.5–8.9× above floor" and the predeclared "10:1 … 13:1" signal-to-floor table are therefore not ratios of like quantities, and the inflation is duty-dependent.
+>
+> Mitigating: at idle, `ref_bus ≈ filt_bus` (1212 vs 1211, 1211 vs 1210), so the floor itself is nearly reference-independent. The error is entirely on the driving side. A bias-corrected driving rate of ~230 per 10⁶ against 43.8 gives **~5.3× at every rung**, flat — not a climbing 10:1 → 13:1.
+>
+> **(b) The loop differs in more than gap.** E295 already concedes `gap_max_us = 40` vs a driving 145–192 and calls the tearing test a design flaw in its own control. Add: no PWM switching at all, no commutation ISR, no COMP activity, no `blank_arms`, and a scan rate of 9 899/s (445 475 / 45 s) against the driving 9 844/s — close, which is the one thing that *is* comparable.
+>
+> **(c) The deeper objection is the right one.** A floor measured with no PWM switching cannot bound a phenomenon whose candidate causes include PWM switching noise coupling into the divider and ADC sampling landing near a switching edge. The bridge-off control excludes *static* instrument noise and *driver bias coupling* (EN low vs high, 44.9 vs 42.7 — a genuinely clean result). It cannot exclude switching-correlated noise, which is precisely the artifact class that would make a count rise with duty while depth does not. E295 does not say this; it should.
+>
+> **Settling check.** Run the idle-scan phases a third time with TIM1 switching at the rung's carrier and duty into a dummy load or with MOE on and CCRs set but the motor uncoupled — a **switching-on, torque-off** control. If the floor rises with duty there, the remaining structure after bias correction is switching noise and the observer is dead for good.
+>
+> ## CHALLENGE 5 — Timing headroom. The bus observer is not the risk; the arm path is, and it is degrading superlinearly and unremarked. VERDICT: partly NOT SUSTAINED (no bus-side pressure), and a SUSTAINED finding the notebook is not looking at.
+>
+> **Nothing bus-side or ISR-side is under pressure, and nothing grows with duty.** Worst value across each rung's runs, 150 → 475:
+>
+> | | 150 | 375 | 425 | 450 | 475 |
+> |---|---|---|---|---|---|
+> | `spent_max_us` | 11 | 11 | 11 | 11 | 11 |
+> | `late_arms` | 0 | 0 | 0 | 0 | 0 |
+> | `com_preempts` / `com_arm_preempts` | 0 | 0 | 0 | 0 | 0 |
+> | `overrun` / `storm` / `blank_latched` / `track_fault` | 0 | 0 | 0 | 0 | 0 |
+> | `gap_max_us` | 107 | 109 | 110 | 109 | 109 |
+> | `loop_gap_max_us` | 156 | 162 | 164 | 174 | 172 |
+> | `comp_call_max_us` | 16 | 16 | 16 | 16 | 16 |
+> | `com_late_max_us` | 10 | 10 | 12 | 11 | 11 |
+> | `BEMFDRIVEN late_max_us` | 111 | 76 | 67 | 66 | — |
+>
+> `gap_max_us` and `loop_gap_max_us` are **flat to within a few µs across a 3.2× duty range**. `track_max_us` falls 660 → 240 (that is the commutation interval scaling, not headroom). The prior review's −3.3 % foreground cost is **not attributable** from this data — there is no image differing only by the observer, and E295 lists that A/B as owed. `BusDepth::observe` is ~10 multiplies × 2 instances at ~9.85 kHz, order 2–3 % of the foreground, consistent with −3.3 % and with nothing else. It is **downstream** of the absolute bus floor and phase-code stops (the `early` return at `states.rs:328-335` precedes both observers) and **upstream** of `sag.observe` and `current.accumulate`, delaying those two hard stops by order 1–1.5 µs on a guard whose own input is a 207 ms EWMA. Immaterial for safety. E295's owed item to move it after `current.accumulate` should still be paid, on principle.
+>
+> **What *is* degrading, monotonically and superlinearly, is the one thing project memory already names as the blocker:**
+>
+> | rung | 350 | 375 | 400 | 425 | 450 | 475 |
+> |---|---|---|---|---|---|---|
+> | mean `ci_us` | 108 | 101 | 93 | 87 | 83 | 79 |
+> | min `ci_min_us` | 75 | 65 | 62 | 57 | **54** | 58 |
+> | `thin_count` (per run) | 0,0,0 | 1,0,0 | 0,0,2 | 8,7,13 | 19,9,8 | **110** |
+>
+> `thin` is `wait − spent ≤ 2 µs` (`src/oneshot.rs:613`), and `spent_max_us` is pinned at 11 at every rung. Per [[project-firmware50-state]], `wait_time(ci, 22)` covers the 11 µs arm only above `ci ≈ 66 µs`. Rung 450 runs a **mean** `ci` of 83 and a min of 54; rung 475 runs 79/58 and its `thin_count` is **5–12× the 450 runs**. Linear extrapolation of mean `ci` puts rung 600 at **~62 µs — below the 66 µs arm-fit line for the mean, not just the minimum**. The 60 % target is not blocked by anything the bus observer can see; it is blocked by the arm path, exactly as the campaign's own memory says, and the evidence is in the same captures being mined for excursion counts. `late_arms` is still 0, so nothing has broken yet — but `thin_count` is the leading indicator and it has gone 0 → 110 in four rungs while the notebook's attention was on `raw1_n`.
+>
+> **Settling check.** Score `thin_count / accepted` and `ci_min` per rung as a predeclared quantity with a bar, now, before 500/525 run. And test advance level 20 at 475–525 head-to-head against 22: memory says E179's rule forbids 22 at 50 % and level 20 buys +3 µs, which is the direction `thin_count` is asking for.
+>
+> ## CHALLENGE 6 — The derived band is not wired in, so the scope question is moot — and that is itself the problem. VERDICT: SUSTAINED.
+>
+> `scripts/cohort.py:384` hard-codes `990 <= rate_vs_coast_permille <= 1010`. `SELF_REF_LO/HI` at `:513-514` are `980/1020`, used by a different check at `:541`. **992..1008 appears nowhere in the gate.** It exists only as printed output from `derive_band.py`. E294 and E296 both state "band from E294: 992..1008" as though it governs; it does not. Nothing is being applied out of scope because nothing is being applied.
+>
+> Two consequences. First, the E286 stop-condition logic ("every rung's verdict is identical under the old and the derived band") is doing real work — it is what makes the unwired band harmless. Second, the live gate is **wider** (±10) than the derived one (±8), so the derived band has never actually gated a run, and the question of whether a band from one image / one session / rungs 150–375 may judge rungs 400–600 on a different image has not yet arisen. It will the moment someone wires it in. All rungs 400–475 read 993–995 permille and pass both bands, so no verdict changes today.
+>
+> **Settling check.** Either wire 992..1008 in with an explicit scope assertion (image sha + duty range) that refuses rows outside it, or delete the claim that the band is "the band" and say the gate is still ±1 %. Carrying a number in the notebook that the tool does not use is the `ceiling_tenths` trap again ([[project-firmware50-state]]: "ceiling_tenths was not a gate").
+>
+> ## CHALLENGE 7 — Process. The out-of-order climb cost nothing; the image mismatch costs more than the notebook admits. VERDICT: breach real but harmless; the image question is SUSTAINED and larger.
+>
+> **The out-of-order launch is the least of it.** E297 self-reports it. Concretely it cost: eighteen runs of bench time spent scoring a predeclared discriminator that a review would have flagged as reference-biased before it ran, and a notebook entry (E296) whose predeclared line and 10:1…13:1 floor ratios are now void. No safety exposure — all rungs passed 3/3, `ceiling == duty`, `reason=2`, every guard reported quiet. The rule earned its keep here; the breach is a token cost, not a near-miss.
+>
+> **The image mismatch is the real breach, and E296 half-discloses it.** E296 says plainly that `480263F1` carries none of four source fixes and cannot be the final ELF, and invokes the standing rule correctly. What it then does is use that image's output to *establish a measurement* (E295's load-tracking reversal) and to *predeclare a numeric line* (E296) and to *fire a discriminator* (E297) — all on the instrument the fix repairs. The rule "diagnostic results never qualify another image" is being honoured for **verdicts** and violated for **findings**. E295's reversal of E291 is the clearest case: a conclusion about what an observer measures, drawn entirely from the version of the observer that was already known to be measuring the wrong reference.
+>
+> The working tree is **clean** (`git status --porcelain src/ bin/ scripts/` is empty at HEAD `fea303c`), so this is not an uncommitted-edit problem. It is a build-provenance problem, and the manifest already records enough to catch it — `MANIFEST-hashes.txt` has the ELF, the captures carry `elf_sha256`, and `git log` has the fix time. Nothing in the tooling cross-checks them.
+>
+> **Settling check.** Add to the capture header, or to `cohort.py`, a refusal when an image's build time precedes the commit of any fix to a quantity that capture reports. Cheap version: record the source commit in the ELF and have `raw_rate.py` refuse to fit `raw*` bins from an image built before `6825e4d`. That single gate would have blocked E295, E296 and E297 at the source.
+>
+> ---
+>
+> ## What would change if these hold
+>
+> - **E295's reversal should be withdrawn, and E291's conclusion reinstated with a mechanism.** Neither "depth does not track load" nor "count does track load" is the finding. The finding is: `raw*_n` tracks **the observer's own stale reference**, at +0.798 within rungs and +0.937 per run, and once that is removed the excursion rate is **flat at ~230 per 10⁶ from rung 150 to 475**. The load-tracking job is already done, 100× more sensitively, by `dep0`/`dep1` — `dep1_n` runs 273 → 244 154 over the same rungs.
+> - **E297's replacement discriminator inherits the defect.** `raw1_n / hold_ma` against 0.317–0.589 is normalised against a variable that is *negatively* related to the count within rungs (−0.598). It currently reads 0.375 / 0.439 / 0.353 / 0.443 / 0.360 at rungs 350–450 — all inside — which means it will most likely pass everything and teach nothing, for the same reason the old one fired: it is normalising the wrong confound. Score against `bias` instead, or fix the image.
+> - **The `raw2_n / raw1_n` deep-bin arm already reversed** before it could be read: 5 → 33.5 → 8.7 → 33 at rungs 400/425/450/475. The `DEEP_BIN_FLOOR = 25` rule is what saves it from being over-read; hold to it.
+> - **Redirect the attention.** `thin_count` 0 → 110 and mean `ci_us` heading for ~62 at rung 600 is a monotone, mechanism-linked, superlinear degradation of the exact path memory already identifies as the 50 %→60 % blocker. It is in every capture already collected, it has no predeclared bar, and it is not mentioned in E290–E297.
+
+**Disposition:** accepted, and its Challenge 5 redirect is the single most
+valuable output of either review — E298 predeclared its bar and rung 500 then
+read `thin_count` 737 against a predeclared ≥150. Challenges 1, 2, 4, 6 and 7
+are sustained and change conclusions. Two corrections to it, both minor and
+neither affecting a verdict: it reports rung 475 at +25.6% where the completed
+n=3 gives +37.7%, and its rung-450 `raw2_n` of 8.7 is the n=3 mean where the
+three runs are 4/6/57 — a 14× within-rung spread that makes the quantity even
+less readable than it says. Its Challenge 3 is *more* generous to me than the
+evidence review, which removed the confound by truncating the same captures and
+got 1.41× — so I take the harsher of the two. Its Challenge 5 assessment that
+the observer is immaterial for safety agrees with my own audit and with the
+evidence review.
