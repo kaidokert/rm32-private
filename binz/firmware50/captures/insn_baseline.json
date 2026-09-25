@@ -39,6 +39,14 @@
   "irq": 0,
   "mul": 4
  },
+ "run::Controller": {
+  "div": 7,
+  "excl": 0,
+  "helper": 7,
+  "insns": 593,
+  "irq": 0,
+  "mul": 6
+ },
  "run::states::Ctx::scan_pass": {
   "div": 2,
   "excl": 0,

@@ -82,6 +82,15 @@ WATCHED = (
     "run::states::Ctx::scan_pass",
     "run::states::Ctx::record_sag_row",
     "sagtrace::Trace::push",
+    # **E315.** A per-symbol objdump sweep found ten 64-bit division call sites
+    # in the image, seven of them inside `Controller::run` -- and every one was
+    # invisible to the old `DIV` pattern. They are not on the per-scan path
+    # (`zero_from_blocks` has a single caller, the one-shot `averaged_zero`, and
+    # `phase_rate` is a `const fn` folded at the rung table), so nothing is
+    # wrong today. But "I reasoned it is not hot" is exactly the standard that
+    # let E303 ship, so the orchestrator goes under the ratchet instead: it is
+    # the symbol a future division would most plausibly land in.
+    "run::Controller",
 )
 
 # A thin match is a silent pass: the first version of this script found 1 of 8
@@ -103,17 +112,75 @@ OPTIONAL = frozenset({
 
 CLASSES = ("insns", "div", "mul", "irq", "excl", "helper")
 
-# **This toolchain does not emit `__aeabi_uidiv`.** It calls
-# `compiler_builtins::int::specialized_div_rem::u32_div_rem` (and the u64
-# variant). The first version of this regex matched only the `__aeabi_*` names
-# and would therefore have missed the exact defect the script exists to catch --
-# a check that cannot see its own motivating bug.
-DIV = re.compile(r"__aeabi_u?idiv(mod)?|u(32|64)_div_rem|__udivsi3|__divsi3")
-MUL = re.compile(r"\bmuls?\b|__aeabi_lmul")
+# **This toolchain emits several names for the same hazard**, and an enumeration
+# of the ones I happened to have seen has now failed TWICE:
+#
+#  1. the first version matched only `__aeabi_*idiv*`, while this toolchain
+#     calls `compiler_builtins::int::specialized_div_rem::u32_div_rem` -- so the
+#     check could not see the very defect it was written for (E303);
+#  2. the second version still matched only the 32-bit forms, so every 64-bit
+#     division (`__aeabi_ldivmod`, `__aeabi_uldivmod`, `__divmoddi4`,
+#     `__udivmoddi4`) was invisible -- and this image holds ten such call sites
+#     (E315). A 64-bit divide is the most expensive arithmetic on this part, so
+#     the detector was blind in precisely its worst case.
+#
+# So an allowlist of known-bad names cannot be the mechanism. `BUILTIN` matches
+# ANY call into the compiler support library and `classify_builtin` must place
+# each one in a named class or the run FAILS. A new helper name is then a loud
+# refusal, not a silent zero ([[feedback-instrument-must-fail-loudly]]).
+DIV = re.compile(
+    r"__aeabi_u?l?idiv(mod)?"          # __aeabi_idiv/uidiv/idivmod/uidivmod
+    r"|__aeabi_u?ldivmod"              # 64-bit __aeabi_ldivmod/__aeabi_uldivmod
+    r"|u(32|64|128)_div_rem"           # compiler_builtins specialized_div_rem
+    r"|__u?divmod(si|di|ti)4"          # __divmoddi4/__udivmoddi4
+    r"|__u?div(si|di|ti)3"             # __udivsi3/__divsi3/__udivdi3
+    r"|__u?mod(si|di|ti)3"             # the modulus siblings
+    r"|__aeabi_[fd]div"                # soft float/double divide
+)
+MUL = re.compile(r"\bmuls?\b|__aeabi_lmul|__mul(di|ti)3|__aeabi_[fd]mul")
 IRQ = re.compile(r"\bcps(id|ie)\b")
 EXCL = re.compile(r"\b(ldrex|strex)\b")
-HELPER = re.compile(r"\bbl\b.*(__aeabi_|memcpy|memset|memmove)")
+HELPER = re.compile(
+    r"\bbl\b.*(__aeabi_|memcpy|memset|memmove|memclr|compiler_builtins)")
 BODY = re.compile(r"^\s+[0-9a-f]+:\s")
+
+# Any branch-with-link into the compiler support library, whatever its name.
+# **The `0x` is optional and that is not cosmetic.** `arm-none-eabi-objdump`
+# prints `bl\t800874a <__aeabi_uidiv>` while `llvm-objdump` prints
+# `bl\t0x800874a <__aeabi_uidiv>`; the first version of this pattern required
+# the prefix, so against the objdump this script actually invokes it matched
+# NOTHING and both absolute invariants silently passed on every image. Caught by
+# running the falsification tests rather than by reading the output, which is
+# the whole point of [[feedback-instrument-must-fail-loudly]].
+BUILTIN = re.compile(
+    r"\bbl\b\s+(?:0x)?[0-9a-f]+\s+<([^>]*(?:__aeabi_|__udiv|__div|__mod|__mul"
+    r"|__ashl|__lshr|__ashr|_div_rem|compiler_builtins|memcpy|memset|memmove"
+    r"|memclr)[^>]*)>")
+
+# Classes a support-library call may legitimately fall into. Anything not placed
+# here is an UNCLASSIFIED builtin and refuses the image.
+MEM = re.compile(r"memcpy|memset|memmove|memclr|compiler_builtins::mem::")
+SHIFT = re.compile(r"__aeabi_(llsl|llsr|lasr)|__ashldi3|__lshrdi3|__ashrdi3")
+PANIC = re.compile(r"panic")
+
+
+def classify_builtin(name: str) -> "str | None":
+    """Name the hazard class of a support-library call, or None if unknown."""
+    for cls, pat in (("div", DIV), ("mul", MUL), ("mem", MEM),
+                     ("shift", SHIFT), ("panic", PANIC)):
+        if pat.search(name):
+            return cls
+    return None
+
+
+# **The strongest invariant in this file, and the only binary one.** The four
+# motor ISR roots must call NO support-library routine at all: not a division,
+# not a 64-bit multiply, not a memcpy. Measured true for every image in this
+# campaign, and far harder to drift past than a class count, because there is no
+# threshold to argue about. `advance_of`'s doc comment in `src/commutation.rs`
+# records that `__aeabi_lmul` was refused at link time once already (E058); this
+# makes that refusal general and automatic.
+ISR_ROOTS = ("ADC_COMP", "TIM16", "TIM6_DAC_LPTIM1", "DMA1_CHANNEL1")
 
 
 def text_symbols(elf: pathlib.Path) -> list[tuple[int, str]]:
@@ -147,6 +214,7 @@ def count(elf: pathlib.Path) -> dict[str, dict[str, int]]:
              str(elf)],
             capture_output=True, text=True, check=False).stdout
         body = [l for l in out.splitlines() if BODY.match(l)]
+        calls = [m.group(1) for l in body for m in [BUILTIN.search(l)] if m]
         result[want] = {
             "insns": len(body),
             "div": sum(1 for l in body if DIV.search(l)),
@@ -155,6 +223,12 @@ def count(elf: pathlib.Path) -> dict[str, dict[str, int]]:
             "excl": sum(1 for l in body if EXCL.search(l)),
             "helper": sum(1 for l in body if HELPER.search(l)),
         }
+        # Absolute invariants, deliberately NOT baselined: a baseline would let
+        # an unclassified builtin or an ISR-root helper call be blessed once and
+        # then never noticed again, which is the failure this file exists for.
+        result[want]["_unknown"] = sorted(
+            {c for c in calls if classify_builtin(c) is None})
+        result[want]["_builtins"] = sorted(set(calls))
     return result
 
 
@@ -183,13 +257,35 @@ def main() -> int:
         print("  Found: " + ", ".join(sorted(now)))
         return 2
 
+    # The two absolute invariants, checked BEFORE the baseline comparison and
+    # before --bless, so neither can be blessed away.
+    absolute: list[str] = []
+    for k, v in sorted(now.items()):
+        for name in v["_unknown"]:
+            absolute.append(
+                f"{k}: UNCLASSIFIED support-library call `{name}` -- add it to "
+                f"a class in classify_builtin() and say what it costs")
+        if any(k == r or k.startswith(r) for r in ISR_ROOTS) and v["_builtins"]:
+            absolute.append(
+                f"{k}: ISR root calls the support library: "
+                f"{', '.join(v['_builtins'])}")
+    if absolute:
+        print(f"REFUSED ({len(absolute)}) -- absolute invariant, not ratcheted:")
+        for a in absolute:
+            print(f"  {a}")
+        return 2
+
+    # Only the ratcheted counts are persisted; `_unknown`/`_builtins` are
+    # re-derived from every image so they cannot go stale in a baseline.
+    ratcheted = {k: {c: v[c] for c in CLASSES} for k, v in now.items()}
+
     if args.bless or not BASELINE.exists():
         BASELINE.parent.mkdir(parents=True, exist_ok=True)
-        BASELINE.write_text(json.dumps(now, indent=1, sort_keys=True) + "\n",
-                            encoding="utf-8")
+        BASELINE.write_text(json.dumps(ratcheted, indent=1, sort_keys=True)
+                            + "\n", encoding="utf-8")
         verb = "blessed" if args.bless else "created"
-        print(f"{verb} baseline from {elf.name}: {len(now)} symbols")
-        for k, v in sorted(now.items()):
+        print(f"{verb} baseline from {elf.name}: {len(ratcheted)} symbols")
+        for k, v in sorted(ratcheted.items()):
             print(f"  {k:<44} {v}")
         return 0
 
@@ -197,8 +293,8 @@ def main() -> int:
     fails: list[str] = []
     print(f"{'symbol':<44}{'insns':>12}{'div':>7}{'mul':>7}"
           f"{'irq':>7}{'excl':>7}{'helper':>8}")
-    for k in sorted(set(base) | set(now)):
-        b, n = base.get(k), now.get(k)
+    for k in sorted(set(base) | set(ratcheted)):
+        b, n = base.get(k), ratcheted.get(k)
         if n is None:
             if k in OPTIONAL:
                 print(f"{k:<44}{'(absent, optional)':>12}")
