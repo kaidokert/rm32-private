@@ -116,6 +116,21 @@ struct Phase {
     ref_vref: u16,
     filt_bus: u16,
     filt_vref: u16,
+    /// The three shunt channels summed, as `AverageCurrent` sums them, at the
+    /// **first** and **last** observed scan of the phase, plus the extremes.
+    ///
+    /// This tests a second hypothesis for free (E293). The session's *first*
+    /// powered run under-reads current by a fixed ~450 raw units -- devastating
+    /// at rung 150, where the true residual is ~548 and run 1 read 100, and
+    /// invisible above it. `residual = zero_block - sum`, and the zero block is
+    /// captured once before the run, so a shunt offset that is still settling
+    /// when the zero is taken makes every later block read low. `EN` going high
+    /// is what biases those amplifiers, and phase B's transition is exactly
+    /// that event -- so the drift here measures the settling directly.
+    shunt_first: u32,
+    shunt_last: u32,
+    shunt_min: u32,
+    shunt_max: u32,
 }
 
 /// Average `BASELINE_SCANS` fresh scans into a reference, the way a run does.
@@ -154,6 +169,10 @@ fn measure(board: &mut board::Board) -> Phase {
         gap_over: 0,
         gap_max_us: 0,
         tripped: false,
+        shunt_first: 0,
+        shunt_last: 0,
+        shunt_min: u32::MAX,
+        shunt_max: 0,
         ref_bus: reference.bus,
         ref_vref: reference.vref,
         filt_bus: reference.bus,
@@ -179,6 +198,13 @@ fn measure(board: &mut board::Board) -> Phase {
         p.scans = p.scans.saturating_add(1);
         p.bus_min = p.bus_min.min(s.bus);
         p.bus_max = p.bus_max.max(s.bus);
+        let shunt = u32::from(s.phase_a) + u32::from(s.phase_b) + u32::from(s.phase_c);
+        if p.scans == 1 {
+            p.shunt_first = shunt;
+        }
+        p.shunt_last = shunt;
+        p.shunt_min = p.shunt_min.min(shunt);
+        p.shunt_max = p.shunt_max.max(shunt);
         rail.feed(s.bus, s.vref);
         if !rail.ready() {
             continue;
@@ -214,6 +240,11 @@ fn emit(board: &mut board::Board, tag: &str, p: &Phase) {
     board.kv(" sag_tripped", u32::from(p.tripped));
     board.kv(" gap_max_us", p.gap_max_us);
     board.kv(" gap_over_88us", p.gap_over);
+    board.kv(" shunt_first", p.shunt_first);
+    board.kv(" shunt_last", p.shunt_last);
+    board.kv(" shunt_min", p.shunt_min);
+    board.kv(" shunt_max", p.shunt_max);
+    board.kvi(" shunt_drift", p.shunt_last as i32 - p.shunt_first as i32);
     board.flush();
     // Same field names and order as `BEMFCURRENT`, so the comparison against a
     // driving run is a diff and not a translation.
