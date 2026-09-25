@@ -20002,3 +20002,829 @@ qualified image (the E230 lesson).
 
 This entry is conclusions plus a build plan, so **both reviews come before the
 build**, and the E259 dispositions land first.
+
+### E261 — disposition of both E259/E260 reviews: the instrument I was about to run is the one that has never caught this event, and the fastest current protection on the bench is the PSU
+
+Both reviews are appended verbatim below this disposition. They were run
+concurrently, context-free, each pointed at raw evidence before the
+interpretation, and neither saw the other. **They converge independently on the
+same operational conclusion — do not run `sag-capture` at 550 as it stands — by
+completely different routes**, and between them they find four errors in E259
+that change what happens next. Everything below is recomputed here before being
+accepted.
+
+---
+
+## Part 1 — the four findings that change the plan
+
+#### 1.1 Prediction 2 could not have failed, because the ring records the filter's output
+
+Verified at `src/run/states.rs:373` — the row stores `bus_mean: self.rail.bus_mean()`,
+the **8-tap sliding mean**. The raw `scan.bus` is **never recorded anywhere**.
+Convolving a raw depression of width `m` with an 8-tap boxcar yields a recorded
+depression of width `m + 7`:
+
+| raw notch | recorded |
+|---|---|
+| 1 scan (101.7 µs) | 8 scans = **813.6 µs** |
+| 2 scans | 9 scans = 915.3 µs |
+| 5 scans (508.5 µs) | 12 scans = 1220.4 µs |
+
+**Every physically possible event records as ≥814 µs, which is ≥505 µs.** The
+stated failure mode — *"a narrower captured event would mean I have the guard's
+dynamics wrong"* — is unreachable. Prediction 2 is **withdrawn**.
+
+The adversarial review also independently re-derived E257's ≥5-scan floor and
+confirmed the arithmetic (K = ⌈477/d⌉, `m ≥ max(K, 2K−6)`, d = 119 → 5 scans), so
+the *number* was right and the *premise* was withdrawn property. Both reviewers
+converge on this: the evidence review flags that the bound's only input is
+`bus_min`, which E259 §2 withdrew "in every remaining use". **Both are correct
+and the two objections compound**: the bar rested on a withdrawn quantity *and*
+the instrument cannot measure the thing the bar is about.
+
+This is a repeat. `LAB_NOTEBOOK.md:11179` and `:12068` record an independent
+review catching exactly this failure mode on exactly this instrument —
+*"unfalsifiable in the strong sense"*. I reproduced it. That goes in memory, not
+just here.
+
+#### 1.2 Prediction 3 asked the instrument for quantities it does not contain
+
+`sagtrace::Block` is nine fields (`sagtrace.rs:78-97`): `at`, `bus_mean`,
+`vref_mean`, `filt_bus`, `filt_vref`, `streak`, `step`, `duty_tenths`,
+`since_zc_us`. There is **no `ci_us`, no commutation stamp, and no phase
+current**. `since_zc_us` is aliased at 101.7 µs against a **71 µs** sector at
+550 — worse than the 84 µs the module documents for 47.5%. E257 said of this
+instrument *"it cannot answer phase-locking and will not be asked to"*, and
+E259 then asked it the harder version of the same question. **Withdrawn.**
+
+#### 1.3 Prediction 1 was unfalsifiable, and its rate wrongly counted the control
+
+Both branches were pre-declared as findings, so no outcome could fail it.
+**Withdrawn.** And the rate is wrong: the control is a **host-aborted 14.5 s
+diagnostic** (`reason=9`, `# host abort byte sent at +42.0 s`), and the campaign's
+own rule is that diagnostic and aborted runs qualify nothing. Putting it in a
+Bernoulli denominator moved the predicted trip probability from **70.4% (1/3) to
+57.8% (1/4)** — 13 points, in the direction that made the no-trip branch easier
+to reach and reinterpret. The evidence review makes the same catch from the
+exposure side (1 trip per 134.0 s of hold, and a 3.6× exposure difference).
+**The rate is 1 in 3 unaborted runs, and E256's "the 95% interval spans
+essentially the whole range" was never withdrawn and still governs.**
+
+#### 1.4 The decisive one: this instrument has never caught this event
+
+Verified in the archive, and neither review's strongest point was in my entry:
+
+| rung 500 | image | trips | runs |
+|---|---|---|---|
+| production | 14CE44E7 | **3** (`c7-500_01`, `_03`, `c7-500c_02`, all `reason=26`) | 6 |
+| **`sag-capture`** | 63C0061D | **0** | **7** |
+
+Fisher exact one-sided **p = 0.070**. And the observer cost is measured, not
+estimated — `loop_iters_closed` at rung 500, same `hold_ms`, alternated in the
+same two sessions:
+
+| | n | mean | range |
+|---|---|---|---|
+| `sag-capture` | 7 | 2 359 124 | 2 357 516 – 2 363 679 |
+| production | 4 | 2 835 519 | 2 832 622 – 2 840 303 |
+
+**16.8% fewer foreground iterations, ranges perfectly disjoint.** The mechanism
+is named in source: `SagRing::block` is
+`interrupt::free(|cs| …)` (`sagtrace.rs:243-245`), so it sets **PRIMASK 9 840
+times a second**, masking COMP and TIM16 — the exact path `late_arms` measures,
+in the thinnest arm margin of the campaign.
+
+So E259's plan was to run, at 550, the one image that at 500 recorded **zero
+trips in seven runs where production tripped half the time**, in order to
+capture a trip. My prediction 1 hypothesised observer suppression as the
+*alternative* outcome; the archive already measured it as the *likely* one.
+**The run is cancelled.**
+
+---
+
+## Part 2 — the safety reframe, which outranks the chronology question
+
+The adversarial review raises a hypothesis E259 does not list, and it verifies
+completely:
+
+* `RAW_LIMIT = 31_857` is documented as **the 4 A nominal limit**
+  (`protection.rs:514-516`).
+* The bench clamp is **3 A**; the operator metered **2.152 A** at 550.
+* The only current stop is `AverageCurrent`, and the first over-block **folds
+  back** while only the second **stops** (`protection.rs:1360`,
+  `first_over_block_folds_back_and_second_stops`), so the earliest possible
+  stop is **two complete blocks = 20.3 ms**, up to ~31 ms if the excursion
+  starts mid-block. E260's "10.1 ms" was the block length, not the stop latency.
+* `Reason::PhasePeak = 27` is documented **"NOT IMPLEMENTED AND NEVER RAISED …
+  This firmware has no instantaneous or peak current protection of any kind …
+  do not cite it as coverage."** (Two prior reviews cited it; I did not, and the
+  doc records why not to.)
+* No thermal channel is sampled at all (E260 §2).
+
+**Therefore the firmware's current guard cannot fire before the supply clamps**,
+and the 3 A clamp is the fastest current protection in the loop. Which makes
+this the strongest unlisted alternative for the 550 trips:
+
+> `FastBusSag` may be neither a spurious threshold nor a loop-side surge
+> detector, but **the only instrument in the system that observes the supply
+> reaching its limit** — at the rate that limit is reached.
+
+I am recording this as a **hypothesis with a test**, not a conclusion. It
+predicts the trip rate moves with the clamp setting and with source impedance,
+and is otherwise indistinguishable from the loop-side story on every quantity
+the firmware records. That test needs the operator to change the PSU, so it is
+named here and not assumed.
+
+**Consequence for sequencing, which both reviews rank first:** no further rung
+attempt until the supply side is characterised. E259 put a diagnostic run ahead
+of that. It goes behind it.
+
+---
+
+## Part 3 — errors in E259 corrected
+
+**3.1 Two different ratios treated as one.** This is the evidence review's
+sharpest catch and it is right. The **gate** quantity is
+`rate_vs_coast_permille` (tail window ÷ time-anchored `speed.coast_fit`); the
+number I quoted throughout §3 and §5 is `BEMFSELFREF`'s
+`zc_permille_of_6x_coast` (hold `zc_per_s` ÷ 6× `cohort.coast_ehz`) — **different
+numerator and different denominator**. Recomputed:
+
+| | gate `rate_vs_coast` | `zc_permille` (what E259 quoted) |
+|---|---|---|
+| 550_01 | **1000** | 1001 |
+| 550_02 | **998** | 1000 |
+| **550_03** | **1028** | 1020 |
+| control | **1005** | 1001 |
+
+The control's gate value **1005** is not in the state file and appears nowhere in
+E259 — I had to compute it. And the corrected reading is *better* than mine: the
+control puts the exposure-plus-session contribution at **≈+6 permille**, leaving
+**≈+22** unaccounted against a clean pair at 998–1000.
+
+**3.2 The sigma was inflated ~3.5×.** Over all 169 matched-source records:
+mean **1001.20**, sd **3.87**. So 1028 is **6.9σ**, 1020 is 4.9σ, 1011 is 2.5σ.
+E257's "~24σ" used sd 0.8 from five cherry-picked long holds, and E259 withdrew
+the *conclusion* while leaving 24σ standing. **Corrected to 6.9σ.**
+
+**3.3 The false-failure rate I leaned on is circular.** 2 of 169 records fall
+outside 990–1010 = **1.2%**, and **both exceedances are the two disputed runs**
+(1011 and 1028). Estimating a nuisance rate from a sample in which every
+exceedance is one of the events being explained away is circular, exactly as
+stated. What survives is a normal-tail argument (±1% ≈ ±2.6σ on sd 3.87), which
+says the band is tight but demonstrates nothing about 1011 in particular.
+
+**3.4 The strongest surviving loop-side quantity was declared not to exist.**
+E259 §5: *"No timing information whatsoever about the trip itself."* But `ci_us`
+at the stop is **time-localised by construction** — the last accepted
+commutation interval before the stop — and it is neither a minimum nor an
+untimed extremum, so **none of the goal's three corrections touches it**:
+
+| | `ci_us` at stop | `ehz_from_ci_last` | `ehz_from_sector` |
+|---|---|---|---|
+| 550_01 | 71 | 2347 | 2347 |
+| 550_02 | 70 | 2380 | 2347 |
+| **550_03** | **60** | **2777** | 2347 |
+| control | 68 | **2450** | 2347 |
+
+The trip's 2777 is **+13.3% over the matched control's 2450**. Against its own
+coast fit (2257.6) the loop was commutating **~23% faster than the rotor was
+turning at the stop instant**. It still does not establish *order* — it is one
+side of the pair — but §5's blanket claim is false and is **withdrawn**. This is
+the single largest gap in E259 and both my previous entries walked past it.
+
+**3.5 `zc_per_s` is hold-scoped, not whole-run.** `report.rs:550` computes
+`hold_acc × 1000 / hold_ms` (verified: 209 259 / 15.008 = 13 943). E259 §2 wrote
+"a **whole-run** accepted-crossing rate — 15 s for the failing run", which is
+self-contradictory: the run is 37.5 s closed / 42.2 s driven. **Corrected.**
+
+**3.6 `loop_ehz` is in neither ratio, so my reason was wrong even though the
+conclusion holds.** Both reviewers catch this. `loop_ehz = 2347` everywhere
+because `mean_sector_us` is an **integer 71 µs**, and `report.rs:440-442` warns
+by name that the printed loop frequency is the one rounded quantity — **1 µs of
+quantisation is ±1.4%, larger than the 1.9% under discussion.** The defensible
+form is a variance argument on the right quantities: the numerator (tail rate
+2317.7–2329.2, spread 0.5%; unrounded hold rate 2319.2–2325.4, spread **0.27%**)
+against the denominator (2257.6–2327.6, spread **3.0%**). **~85–90% of the
+variance is denominator-side** — which supports the conclusion better than
+"carries no loop-side information at all" did, and is what §2 should have said.
+
+**3.7 A sign error.** §3's table shows coast_ehz "−1.9%" under the same
+convention that made `drive_scans` −1.3% and `hold_ms` −3.5%. Control-relative-
+to-trip it is **+1.9%**; the prose two paragraphs later is right and the table
+contradicts it. **Corrected.**
+
+**3.8 §5 restated §3 in a form §2 forbids.** §3's supported claim is
+*between-run*: the rotor at the tripped stop was slow **relative to the clean
+run's**. §5 wrote *"relative to its own run average"* — which is the ratio §2
+had just declared unable to carry that weight. And `zc_rate_permille_of_expected`
+is 988/989/**989**/990 across the four, so there is no run-average slip to be
+1.9% from. **§5's bullet is replaced by §3's wording.**
+
+**3.9 "Six candidate mechanisms" was never enumerated.** Uncheckable as written,
+and the earlier three-mechanism list at `LAB_NOTEBOOK.md:11467` was itself found
+non-exhaustive and non-disjoint by an independent review. **Withdrawn**; any
+future mechanism count gets enumerated in the entry that claims it.
+
+**3.10 `thin_count` kills a metric E257 leaned on, and E259 did not report it.**
+
+| | `thin_count` | `hold_ms` | per ms |
+|---|---|---|---|
+| 550_03 (tripped) | **742** | 15 008 | 0.0494 |
+| control (clean) | **742** | 14 477 | **0.0513** |
+
+**Bit-identical counts**, and normalised the *clean* control is **higher**. E257
+finding 3 used `thin_count`/ms as discriminating evidence; the control removes
+it. **Withdrawn.** The bit-identical 742 across two runs of different duration is
+itself an open instrument question, flagged not resolved.
+
+---
+
+## Part 4 — the ladder audit was incomplete, and the rule deadlocks
+
+**4.1 A second chain violation, invisible to the re-audit.** Both reviews find
+it. `captures/2026-09-24/e250-450_{01,02,03}.txt` are named 450 and all three
+drove **`target_duty_tenths=475`**, clean (`reason=2`, `hold_ms=55776`, every gate
+passing), started **14:27:09–14:30:34**. The real 450 cohort (`e251-450_*`)
+started **14:34:20**. So **the bench drove 47.5% before 45% was qualified**, and
+`bemf_run.py:306-307`'s `expect_duty` guard rejected all three *before* the
+record was appended — so they exist as files and not in the ledger.
+
+Two consequences I accept:
+
+* **E259's "the chain is unbroken from 150 to 375 and from 425 to 525, with a
+  hole at 400" is wrong.** There is a second hole, at 450→475, in execution
+  order. E252 recorded the fixture refusal; E259's chain claim ignored it.
+* **My new rule is enforced over a ledger that structurally cannot hold attempts
+  rejected before recording** — the same "enforced in the file, not in the
+  verdict" defect the rule was written to fix, one layer up. Verdicts do not
+  change (all three passed), but the claim "every record counted" does not mean
+  "every attempt counted", and I wrote the stronger sentence.
+* **Rungs get re-audited by `target_duty_tenths`, never by filename.**
+
+**4.2 The rule deadlocks on host-gate failures, and I did not notice.** Rung
+400's `e247-400_03` has **`reason = 2` — a clean run.** Its failure is a
+host-side verdict from `cohort.py:240` (1011 against 990–1010). So the rule
+treats two unlike classes identically:
+
+* **(a)** a latching firmware protection on a real physical event (`550_03`,
+  `reason=26`) — evidence about the machine;
+* **(b)** a post-hoc host statistic exceeding a band its own author measured as
+  tighter than the quantity's scatter and off-centre by 2 permille — evidence
+  about `cohort.py`.
+
+The rule's stated remedy is *"fix the cause and build a new image."* **For class
+(b) the cause is not in the image**, so no new image can clear it and only a new
+image can clear the record. **Unrecoverable by any action the rule permits.**
+And the exposure is not small — at E249's 1.1% per run:
+
+| ladder | runs | P(≥1 nuisance failure) |
+|---|---|---|
+| 16 rungs × 3 | 48 | **41.2%** |
+| 19 rungs × 3 | 57 | **46.8%** |
+
+A full walk is close to a coin flip on being permanently holed by an instrument
+artefact it can never clear.
+
+**4.3 I accept the reviewer's third option, with its anti-fitting test.** The
+adversarial reviewer explicitly took the call E249 handed to reviewers, and the
+proposal is sound:
+
+1. A **firmware protection latch** permanently fails the rung on that image. No
+   re-rolls. (My rule, correctly scoped.)
+2. A **host-gate verdict** does not permanently fail a rung, because the gate is
+   not part of the image. Instead the band is re-centred **on the distribution**
+   (E249: centre 1002, sd 3.29; my recomputation over the 169 matched-source
+   records: 1001.20, sd 3.87), **pre-registered before it is applied**, and the
+   **whole corpus is re-scored** with every rung's verdict recomputed.
+3. **The good-faith test:** a correctly re-centred band must also **invalidate
+   some runs that previously passed** — the current band is off-centre on the
+   high side, so its low edge is too loose. **If re-scoring flips only failures
+   into passes, the correction was fitted to the outcome and must be rejected.**
+
+That is neither retry-until-pass nor a rung permanently dead on an artefact, and
+the anti-fitting clause is what makes it honest. It is adopted, and the band
+correction is predeclared in the next entry **before** it is computed.
+
+**4.4 The table contradicted the prose.** E259 printed "qualified on their own
+records" for 425–525 while the prose said their admission traces through 400.
+Corrected to read the same way in both places: **rung-local pass, admission
+void.** Including the campaign's 50% headline target.
+
+**4.5 Also owed:** `bemf_run.py:205`'s docstring still says *"A rung's report is
+its last three runs on that ELF"* — now false. And `0D8E3799` is the ELF's
+**CRC32**, not a sha256 prefix (`01A674BA.e173.elf` happens to match its sha, so
+the directory mixes two conventions) — a naming trap worth recording.
+
+---
+
+## Part 5 — what survives, and what happens next
+
+**Survives both reviews:**
+
+* **Fifteen rungs pass, not sixteen**; 400 and 550 unqualified. The audit against
+  the state file reproduces record-for-record.
+* **The coast ratio cannot establish ordering.** Both reviewers agree, and the
+  adversarial one actively tried to break §3's between-run claim and could not:
+  it tested three alternative explanations — a reason-dependent stop path
+  (closed: `stop()` at `states.rs:1053-1068` does not branch on `reason`, and
+  `offset_us` is 46/49/46/48), the coast-fit's form (closed: 550_03 is lowest
+  under four different estimators), and demag contamination (closed: the drop-2
+  refit does not move it).
+* The sag verdict returning before `current.accumulate` (and E260's correction
+  that the *bus* deciding scan is recorded while the current one is not).
+* `BEMFSECTOR`/`BEMFPHASE` saturation — and worse than I said: five of six sector
+  counters pinned in 550_03, and the control's histogram saturates too, so no
+  cross-run sector comparison is possible anywhere in this cohort.
+* E260's protection inventory, the thermal gap, and the `RetainRails` reason.
+
+**Two new facts that weaken the 550 effect's generality, both owed and now
+reported:**
+
+* **The correlation does not replicate at 500.** The c7-500 archive has three
+  trips and three cleans; tripped coast mean 2111.0 vs clean 2121.7 = **−0.50%**,
+  a quarter of the 550 effect, Mann-Whitney one-sided **p = 0.200**. I had a
+  three-trip cohort in my own archive and did not look at it.
+* **A cross-session offset of the same size exists at fixed rung.** Rung 500:
+  09-23 mean 2116.3 vs 09-24 mean 2152.8 = **1.73%**. Rung 375 across images is
+  2.3% apart. So the honest claim is *"within this day and image, 1.8% is outside
+  the observed spread"*, not *"1.8% is separated"* — and the physical size is
+  **4.9 ms of extra free coast** at the measured 0.31–0.37%/ms decay, which
+  anything perturbing the rotor by a few ms reproduces in either causal
+  direction.
+
+**The plan, reordered by both reviews' ranking:**
+
+1. **Characterise the supply side first, with no rung attempt and no new image.**
+   Re-derive source resistance from the existing ladder corpus (bus vs
+   `hold_ma` across 15 rungs) rather than from `bus_min`, which is withdrawn.
+   The clamp's *transient* behaviour needs the operator and is named as such.
+2. **Build the instrument that actually discriminates**, which is where the
+   goal's TIM2 bullet lands. Both reviews independently specify nearly the same
+   thing: raw `scan.bus` **and** the three raw phase codes in `Block`
+   (`FAST_LEN` halved to 256 = 26 ms, still 50× the event, to stay inside the
+   same RAM), the in-flight partial current block recorded on the trip scan, and
+   a **commutation-instant ring on the shared 8 MHz / 125 ns TIM2 anchor** — the
+   only addition that answers ordering. One build.
+3. Predeclare the band re-centring (4.3) with its anti-fitting test, *before*
+   computing it.
+4. Only then a rung attempt.
+
+**No bench time on 550 until step 2 exists**, because step 2 is the difference
+between measuring the guard's already-filtered input and measuring the event.
+E259's own §5 argued the mechanism hunt was the cheapest next move; both reviews
+show the instrument it named cannot make the measurement, and one of them shows
+it suppresses the event. Agreement is not proof — but here the agreement is
+between two reviewers who reached it from disjoint evidence, and I verified every
+load-bearing number myself before accepting any of it.
+
+The reviews follow verbatim.
+
+### E261a — evidence review of E259/E260, verbatim
+
+Fresh, context-free agent. Pointed at `captures/ladder_state.json`, the four 550
+captures, `scripts/bemf_run.py`, `scripts/cohort.py`, `src/report.rs`,
+`src/run/states.rs` and `src/protection.rs`, with instructions to recompute
+before reading the interpretation. It did not see the adversarial review.
+
+---
+
+## STEP 1 — What the raw data says (computed before reading E259)
+
+### (a) Ladder state on the image under test
+
+`captures/elf/0D8E3799.e246-final-candidate.elf` → **sha256 `D9D77F3CFAD2FD009550AB777CB47D0F4A95C2BC81B048C4913A5F6DF7C40897`**. `0D8E3799` is the ELF's **CRC32** (`# elf_crc32` header), not a sha prefix. That directory mixes two naming conventions — `captures/elf/01A674BA.e173.elf` *does* hash to `01a674ba…`, while `14CE44E7.e187.elf` hashes to `7125601f…` and `D56FC16B.e244-final-candidate.elf` to `0128ab9a…`. Identity trap, not an E259 error (captures carry both lines).
+
+17 rung keys, 54 records, exactly as E259's table:
+
+| rung | records | non-empty `fails` | file |
+|---|---|---|---|
+| 150,200,250,275,288,300,325,338,350,375 | 3 each | 0 | — |
+| **400** | **6** | **1** | `e247-400_03` (`rate vs coast 1011 permille outside 1%`) |
+| 425,450,475,500,525 | 3 each | 0 | — |
+| **550** | **3** | **1** | `e253-550_03` (4 fails: `reason 26 != 2`; `hold 15008 ms < 30000`; `rate vs coast 1028 permille outside 1%`; `rate/coast 1028 outside 980..1020`) |
+
+Other sha keys: 29 others; only one carries campaign-11-era files — `0128AB9A…` (the `D56FC16B.e244-final-candidate.elf` image) with `e246-150_01/_02`. Attribution is by the capture's own `# elf_sha256`, so no cross-image misattribution.
+
+**But the state is not a complete attempt log, and E259's "every record counted" is false in a way that matters:**
+
+- 59 files under `captures/` carry this sha; 54 are in the state, 1 is the control (correctly excluded), and **`e250-450_01/_02/_03` are on this image and absent from the state.**
+- Those three ran at **`target_duty_tenths=475`**, not 450 (`captures/2026-09-24/e250-450_01.txt:4`). `bemf_run.py:306-307` (`expect_duty` guard) returned *"capture ran 475 tenths, not the 450 asked for"* and the record was never appended.
+- All three pass every gate (`cohort.run_gates` → `[]`; `reason=2`, `hold=55776`, ratios 1000/1003/999, `ceiling==duty`).
+- Timeline: `e250-450_*` (duty 475) started **14:27:09–14:30:34**; the real 450 cohort (`e251-450_*`) started **14:34:20**. **The bench drove three 80-s runs at 47.5% before 45% was qualified** — the ladder-chain violation is not only at 400, and it is invisible to the re-audit because the state file never received the attempts.
+
+### (b) The 550 cohort + control
+
+| | 550_01 | 550_02 | **550_03** | ctrl550_01 |
+|---|---|---|---|---|
+| reason | 2 | 2 | **26 (FastBusSag)** | 9 (HostAbort, `# host abort byte sent at +42.0 s`) |
+| hold_ms | 52276 | 52276 | 15008 | 14477 |
+| drive_scans | 786919 | 786922 | 418008 | 412733 |
+| coast_ehz (index fit) | 2315 | 2322 | **2278** | 2321 |
+| loop_ehz (`ehz_from_sector`) | 2347 | 2347 | 2347 | 2347 |
+| `zc_permille_of_6x_coast` | 1001 | 1000 | **1020** | 1001 |
+| `loop_per_coast` | 1013 | 1010 | **1030** | 1011 |
+| **gate ratio** (`rate_vs_coast_permille`) | 1001 | 1000 | **1028** | **1005** (not in state) |
+| offset_us | 46 | 49 | 46 | 48 |
+| comp_edges / comp_polls | 2036 / 537207 | 2015 / 537243 | 2026 / 537243 | 2032 / 537235 |
+| coast `trans` | 1480 | 1465 | 1454 | 1500 |
+| hold_ma / worst_hold_ma | 2255 / 2678 | 2295 / 2740 | 2300 / **2697** | 2286 / 2672 |
+| ci_min_us | 51 | 50 | 42 | 54 |
+| thin_count | 1842 | 2013 | 742 | 742 |
+| late_arms | 0 | 0 | 0 | 0 |
+| `ci_us` at stop / `ehz_from_ci_last` | 71 / 2347 | 70 / 2380 | **60 / 2777** | 68 / 2450 |
+| BEMFSAG | streak=0 tripped=0, 1218/1193 | streak=0, 1217/1193 | **streak=3 tripped=1**, 1218/1193 | streak=0, 1220/1194 |
+
+**Recomputed match percentages (control relative to 550_03):**
+- drive_scans −5275/418008 = **−1.262% → −1.3% ✓**
+- hold_ms −531/15008 = **−3.538% → −3.5% ✓**
+- coast_ehz +43/2278 = **+1.888%** — **the sign in E259's table is wrong.** Under the same convention as the two rows above it is **+1.9%**, not −1.9%. (Tripped-relative-to-control is −1.85%.)
+
+### (c) How the ratio is actually built
+
+- **Numerator of the gate quantity** (`cohort.py:179-201` `_rate_vs_coast`): `BEMFTAIL.accepts × 1e6 / (6 × BEMFTAIL.span_us)` — the **end of the hold**, spanning `start_before_stop_us` back from the stop: **2.275 s / 2.275 s / 3.008 s / 2.477 s**. Not 2.0 s (`window_us=2000000` is the request, not the span), and not the whole run. Values: **2317.7 / 2322.5 / 2321.6 / 2329.2 eHz** (0.5% spread).
+- **Denominator**: `speed.coast_fit(offset_us, first_us, iv)` — a least-squares fit over **full electrical cycles** from the 8 reported half-periods, placed in time at `offset_us + first_us` and **evaluated at x=0, i.e. back-extrapolated to the bridge-off instant.** It is measured **after** the drive stops (coast), then extrapolated backwards. Values: **2316.9 / 2327.6 / 2257.6 / 2317.6**. Ratios: **1000.3 / 997.8 / 1028.4 / 1005.0**.
+- `cohort.coast_ehz` (`cohort.py:65-105`) is a **different** estimator: it **drops `iv[0]`**, fits pair-sums against pair index, and reads back "the instant before the first retained pair". It **never sees `offset_us` or `first_us`** — they are not parameters. So it is *not* anchored across the measured offset.
+- `loop_ehz` is **2347 in all four** — but it is **not an input to either ratio**. It is `1e6/(6×mean_sector_us)` with `mean_sector_us` an **integer µs** = 71 everywhere (`report.rs:552,560`); `report.rs:440-442` explicitly warns *"nothing here is rounded to whole µs, as the printed loop frequency is (`mean_sector_us` below)"*. One µs of quantization = **±1.4%**, larger than the 1.9% effect under discussion.
+- Unrounded loop rate (`hold_accepted/hold_ms/6`): **2319.2 / 2322.9 / 2323.9 / 2325.4** — 0.27% spread. *This* is the evidence that the loop side is matched.
+
+**Verdict on the claim:** substantively correct — ~85–90% of the ratio's variance is in the denominator (numerator spread 0.27–0.5% vs denominator spread 1.9–3.0%) — but **not for the reason E259 gives.** `loop_ehz` is constant because it is quantized, and it is not in the ratio anyway.
+
+`src/report.rs:100-128` (`CoastStats`): the window is *"What the bridge-off coast window saw"*; `offset_us` is *"µs from the stop stamp to the coast window's own origin … **Measured, not assumed** — any back-extrapolation of the coast to the bridge-off instant crosses it"*; `trans_iv` is *"the first eight spacings… Two transitions per electrical cycle on one phase."* And `cohort.py:258-264` states it outright: *"the window is the end of the hold, not its whole length… evaluated at the stop"*, with *"shifts by ~5 permille between sessions (E164)."*
+
+### (d) The rung rule change
+`scripts/bemf_run.py:242-268`. Correct: `all_runs` covers every record; `len < 3` still short-circuits; `fails` is built over all records; `cohort.rung_oracle(all_runs[-RUNG_RUNS:])` still gets a 3-element cohort. **No off-by-one, and a rung with >3 records and zero failures cannot now fail** (verified: 400 with 6 records fails only on the retained failure; force-clearing it passes). Remaining last-three use at **`bemf_run.py:695`** is `rung_current_note`, which is report-only since E124 — not a verdict. **Stale docstring at `bemf_run.py:205`** still says *"A rung's report is its last three runs on that ELF"* — now false.
+
+### (e) Sag verdict vs current accumulation
+Confirmed at **`src/run/states.rs:340-349`**: `let verdict = self.sag.observe(...)` → `if let Some(r) = verdict { return Err(r); }` at line 346, and `self.current.accumulate(scan.phase_a, …)` is line 349. The deciding scan's phase currents are never accumulated. `BLOCK_SCANS = 100` (`protection.rs:512`) at 101 µs/scan → up to **10.1 ms** of samples in the unfinished block are also discarded (550_03: `blocks=4180` × 100 = 418000 vs `drive_scans=418008` → 8 scans lost). `record_sag_row` (line 342) *does* fire first, so the guard's **bus** inputs at the deciding scan survive — in a `sag-capture` build only. **Claim verified.**
+
+### (f) BEMFSECTOR saturation
+`src/report.rs:444` `acc_by_step: [u16; 6]`, `src/run/states.rs:941` `saturating_add(1)`. In `e253-550_03`: **a1,a2,a3,a4,a6 = 65535 (pinned), a5 = 63589** — five of six saturated against `accepted=401357`. Also saturated in 550_01/02 (all six) and partly in the control (a2,a4,a6). `BEMFPHASE to100`/`to125` = 65535 in **all four**. **Claim verified**, and stronger than stated: the control's histogram is saturated too, so no cross-run sector comparison is possible anywhere in this cohort.
+
+Scan period sanity: `drive_scans × 101 µs` = 79.48 / 79.48 / 42.22 / **41.69 s** — the last matches the control's abort at +42.0 s to 0.7%. So 101 µs and the 10.1 ms block are right, and `drive_scans` is a proxy for **total elapsed drive time**, not hold exposure.
+
+---
+
+## STEP 3 — Report
+
+### Numbers I could not reproduce
+
+1. **`coast_ehz` "−1.9%" (§3 table) — sign is wrong.** Control is **+1.9% higher** than the tripped run under the same convention as the `drive_scans` and `hold_ms` rows above it. The prose two paragraphs later ("1.9% lower in the tripped run") is right; the table contradicts it.
+2. **"1 in 4 observed → 58%"** — the arithmetic is right: 1−0.75³ = **0.578**. The *input* is not. The control is a **host-aborted 14.5 s-hold diagnostic**, not a rung attempt; pooling it into a trip-rate denominator alongside two 52.3 s holds ignores a 3.6× exposure difference. Exposure-weighted the corpus is 1 trip per **134.0 s** of hold at 550. And E256 established *"the 95% interval on the trip rate at 550 spans essentially the whole range"* — never withdrawn, yet §Predictions now computes a point probability from n=4 (binomial 95% CI on 1/4 ≈ 0.6%–81%). The 58% is arithmetic on a number that carries no information.
+3. **"1.9% slow relative to its own run average" (§5)** is a *different computation* from §3's 1.9%. Within-run it is **2.0%** (own hold rate 2323.9 vs its coast 2278) on the legacy pair, or **2.8%** on the gate's own pair (2321.6 vs 2257.6 → 1028). The two figures coincide only because the control's coast happened to equal 550_03's own hold rate. §5 states the between-run number with the within-run referent.
+4. **The gate quantity is 1028, not 1020 — and E259 never once prints 1028 outside §1.** §3's table and §5 both quote 1020 (`BEMFSELFREF`, whole-hold `zc_per_s` ÷ 6×index-fit coast). §1's failure list quotes 1028 (`ladder_state.rate_vs_coast_permille`, 3.008 s tail ÷ time-anchored fit, `rate_source = "matched window vs time-anchored coast"`). **These are two different ratios with different numerators and different denominators**, and E259 treats them as one. The control's gate value — **1005**, which I had to compute because it is not in the state and not in the notebook — is the number that actually answers §3's question.
+5. **"~24σ outlier" is never corrected.** §2 withdraws the slip *conclusion* but says the reason is "structural rather than statistical", leaving 24σ standing. Over all 169 matched-source records in the state the identity has **mean 1001.20, sd 3.88**; 1028 is **6.9σ**, 1020 is 4.8σ. The 24σ came from an sd of 0.8 taken over n=5 cherry-picked long holds.
+6. **"a band whose measured false-failure rate is 1.1% (E249)"** — I get **1.2% (2/169)**, and both exceedances are the two disputed runs. The "false-failure rate" is estimated from a sample in which every exceedance is one of the events being explained away. Circular as stated; it is really a normal-tail argument (±1% = ±2.6σ on sd 3.88), which is self-consistent but demonstrates nothing about 1011 specifically.
+
+### Unit / window / definition errors
+
+7. **"Numerator `zc_per_s` is a **whole-run** accepted-crossing rate — 15 s for the failing run" (§2).** `zc_per_s` is **hold-scoped** (`report.rs:550`: `hold_acc × 1000 / hold_ms`; verified 209259/15.008 = 13943 ✓). The whole run is 37.5 s closed / 42.2 s driven. The sentence contradicts itself: "whole-run" and "15 s" cannot both be true. `cohort.py:260-261` says it explicitly: *"the window is the end of the hold, not its whole length."*
+8. **§2 cites `scripts/cohort.py:65` but describes `speed.coast_fit`.** `cohort.coast_ehz(iv)` takes **only** `iv` — it cannot "cross a measured `offset_us` of 46–49 µs" because it never receives it, and it discards `iv[0]` and anchors before the first *retained* pair. The offset handling belongs to `speed.coast_fit`, which is the function behind 1028, not 1020. §3's "coast `offset_us` 46 vs 48 — matched" is therefore irrelevant to the 1020 it is presented beside.
+9. **"rotor speed measured 1.7 ms *after* the stop" (§2) contradicts §2's own previous sentence** ("a back-extrapolation … to the bridge-off instant"). Both estimators evaluate **at the stop**; the *data* span ~0.05–1.8 ms after it. A point-vs-window conflation in the one paragraph whose job is to define the window.
+10. **"`loop_ehz` reads 2347 … its entire variation across the cohort is `coast_ehz`."** `loop_ehz` is in **neither** ratio. `zc_permille`'s numerator is `zc_per_s` (13915/13937/13943/13953 — it *does* vary); the gate's numerator is the tail rate (2317.7–2329.2). And "identical 2347" is an artifact of 1 µs quantization on `mean_sector_us=71` — **±1.4% resolution, worse than the 1.9% under discussion** — which `report.rs:440-442` warns about by name. The right quantity (unrounded `hold_acc/hold_ms`: 2319.2/2322.9/2323.9/2325.4, 0.27% spread) supports the conclusion better and is not used.
+11. **"one latched `FastBusSag` at 15.0 s" (§5)** is hold-relative; the trip was at ~37.5 s closed / ~42.2 s driven. Consistent with the rest of the entry but ambiguous unqualified.
+
+### Is the rung re-audit table correct?
+
+**Yes, exactly — as an audit of `ladder_state.json`.** 10 + 5 = 15 pass, 400 (6 records, `e247-400_03`) and 550 (3 records, `e253-550_03`) fail. Reproduced record-for-record.
+
+**But "every record counted" is not true of the image.** Three attempts on this sha — `e250-450_01/_02/_03` — never reached the file: they ran at **475** tenths while the shell asked for 450, so `bemf_run.py:306-307` rejected them pre-record. They pass every gate. Two consequences E259 misses:
+- The new rule ("no failed attempt at all on that image") is enforced over a ledger that **structurally cannot hold attempts rejected before recording** — the same "enforced in the file, not in the verdict" defect E259 is fixing, one layer up.
+- **The bench drove 47.5% at 14:27–14:31 with only 42.5% qualified** (45% was not qualified until 14:34). The withdrawal of E252's chain sentence is therefore *narrower than the facts*: the chain is broken at 400 **and** the 475 rung was physically exercised two rungs early. §1's "The chain is unbroken from 150 to 375 and from 425 to 525, with a hole at 400" is wrong — there is a second hole at 450→475 in execution order.
+- Also stale: `bemf_run.py:205` still documents the old last-three rule.
+
+### Are the withdrawals complete?
+
+**No. Prediction 2 is built on a quantity §4 withdrew.** Its threshold traces to E257: *"at **the observed depth**, ≥5 consecutive scans ≈ ≥505 µs."* The "observed depth" is the 119-code / 1.158 V dip taken from **`bus_min`** — which §4 withdraws by name (*"I used an untimed extremum (`bus_min`…) as the trip depth"*) and §2 withdraws in **"every remaining use."** The falsification bar of the entry's only genuinely falsifiable prediction is derived from the withdrawn quantity. (The 5×101 µs arithmetic itself checks out — `drive_scans × 101 µs` reproduces the control's 42.0 s abort to 0.7% — so it is the *depth* premise, not the period, that is unsupported.)
+
+Otherwise the withdrawals are honest and go further than required (§4 in particular).
+
+### Are the three predictions falsifiable?
+
+1. **No — by its own text.** *"If none trips, the instrument's own observer cost has moved the event and that is the finding, not a failure to reproduce."* Both outcomes confirm something; the prediction cannot fail. The 58% is arithmetically correct (1−0.75³ = 0.578) and epistemically empty (see #2).
+2. **Yes, conditionally** — a captured trip either shows a ≥505 µs depression or it does not. Weakened by the withdrawn-depth dependency above, and the condition (a trip occurs) is itself governed by prediction 1.
+3. **No.** "`ci_us` and the bus dip are separable in time" is a claim about the *instrument*, and the second clause ("I predict nothing about which comes first") removes the content. It is a hypothesis about resolution, not a prediction about the system.
+
+### Claimed as known, not supported by the raw data
+
+12. **"the comparator witness [is] matched" (§3) is padding, and the one place it could have been evidence it is not used.** `comp_polls` is **537207/537243/537243/537235** — a fixed-length coast poll window — so `comp_edges` over it *is* an independent rotor-speed integral: **2036 / 2015 / 2026 / 2032**. 550_03 sits **mid-pack, 0.3% below the control**, where `coast_ehz` says 1.9%. The debounced `trans` (2036's sibling) is **1480/1465/1454/1500** → 550_03 is 3.1% below the control, which *does* corroborate directionally. E259 cites the proxy that fails to reproduce the effect as "matched geometry" and never cites the one that supports it.
+13. **The §3 match is substantially a dialed-in setting, not a finding.** `hold_ms` and `drive_scans` are both determined by *when the operator sent the abort byte* (`e258-ctrl550_01.txt:6`, "+42.0 s"), and `drive_scans × 101 µs = 41.69 s` confirms it. "The match is better than predicted" claims credit on three of six rows for a parameter that was set. Only `coast_ehz`, `comp_edges` and `trans` were free.
+14. **Session boundary ignored.** The cohort ran **14:56–15:01**; the control **18:34** — 3.6 h later. `cohort.py:263-264` documents the estimator *"shifts by ~5 permille between sessions (E164)."* The effect (19–23 permille) survives that, but the entry compares across a session boundary the source explicitly flags, without mentioning it.
+15. **§5's "No timing information whatsoever about the trip itself" is too strong.** `ci_us` at the stop is **time-localized by construction** — it is the last accepted commutation interval before the stop — and it reads **60 µs / `ehz_from_ci_last` 2777** against 71/70/68 and 2347/2380/2450. E256 called that ratio (1.183) *"by far the largest outlier in the corpus"*; §2 withdraws `ci_min_us` (correctly, an estimator **minimum**) and `fast_min_us` (correctly, untimed) but **says nothing about `ci_us` at the stop, which is neither a minimum nor untimed**. So the corpus does contain one stop-localized loop-side quantity, it is an 18% outlier only in the tripped run, and combined with the coast (2257.6) it says the loop was commutating ~23% faster than the rotor was turning at the stop instant. E259 neither uses it nor withdraws it. That omission is the single largest gap in the entry — it is the strongest surviving evidence for the very mechanism §2 declares uncarryable, and it is sitting in the capture on line 8.
+16. **"The operator's meter reading of 2.152 A at 550 stands"** — not present in any capture on this image; unverifiable from the primary sources. Fine as an operator datum, but it is not instrument evidence.
+17. **`thin_count = 742` in both 550_03 and the control** — bit-identical across two independent runs of different duration. Either a coincidence worth noting or a counter that is not doing what is assumed. E257 normalized `thin_count` per ms of hold (0.049 for 550_03) as discriminating evidence; the control gives **742/14477 = 0.051**, i.e. *higher than the tripped run*, which quietly kills that normalized metric. E259 does not report it, though it was E257 finding 3's lead row.
+
+### Things that are right
+
+- The rung re-audit against the state file: exact.
+- (e) sag-verdict-before-accumulate: verified at `states.rs:344-349`, and stronger than claimed (≤10.1 ms of block samples lost too).
+- (f) `BEMFSECTOR` u16 saturation: verified, and worse than claimed (the control saturates too).
+- `since_zc_us` aliasing at 101 µs vs a ~71 µs sector: correct.
+- `bin/sag-capture.rs` exists at that path and `captures/sag/` tops out at duty **500** — "never been run above 500" is correct.
+- reason 26 = `FastBusSag` (`protection.rs:78`), 9 = `HostAbort`, 2 = `SegmentDeadline`: all correct.
+- §4's withdrawal of the 8.9 A / 0.503 Ω arithmetic is the most honest paragraph in the entry.
+- The new `rung_report` is correctly implemented.
+
+### Bottom line
+
+The entry's two headline conclusions survive: **15 rungs, not 16**, and **the coast ratio cannot establish ordering**. But the paragraph that defines the ratio describes the wrong window, the wrong function, and a quantity that is not in it; the headline table carries a sign error and quotes the non-gating value of the number that failed the gate; prediction 1 is unfalsifiable by construction and its probability is computed from a rate E256 already declared unmeasured; prediction 2's threshold rests on the depth §4 withdrew; the re-audit's "every record counted" is false and conceals a second ladder-chain violation at 450→475; and the one stop-localized loop-side quantity in the corpus — `ci_us = 60` / `ehz_from_ci_last = 2777` — is neither used nor withdrawn while §5 declares no such quantity exists.
+
+### E261b — adversarial review of E259/E260, verbatim
+
+Fresh, context-free agent, launched concurrently with the evidence review and
+without access to it. Given the bench facts as facts (not conclusions), pointed
+at the four 550 captures, `src/protection.rs`, `src/run/states.rs` and
+`bin/sag-capture.rs`, and told to look at raw evidence before the
+interpretation.
+
+---
+
+I have the raw picture, the source, and the arithmetic. Here is my review.
+
+---
+
+# Adversarial review of E259
+
+**Bottom line:** E259 is a large net improvement over E255–257 — the two withdrawals are correct and the reasoning behind them is better than the reasoning it replaces. But it contains one claim that is weaker than stated, one prediction that **cannot fail**, one prediction the instrument **cannot address at all**, a rule change that creates a deadlock the entry does not notice, and one place where it counts an aborted run as evidence after saying aborted runs prove nothing. Details, with the arithmetic.
+
+---
+
+## 1. Causality and alternatives — the 1.9% survives more than I expected, but §5 overstates §3
+
+I tried four alternative explanations for a low post-stop `coast_ehz`. **Three of them die on the source, and I am reporting that rather than leaving them as insinuations.**
+
+**(a) Different stop path — CLOSED.** Both stops return the same way. `FastBusSag` comes out of `Ctx::scan_pass` (`src/run/states.rs:342`, `return Err(r)`); `HostAbort` comes out of `Ctx::pass_inner` (`src/run/states.rs:273`). Both propagate through `Locked::poll` → `Locked::stop` (`states.rs:866`) into the single free function `stop()` at `src/run/states.rs:1053-1068`, which is **not branched on `reason`**: `det_release()` → `stopped_at = hal.now()` → `take_back()` → `safe_off(gates)` → `comp_mask()` → `set_period()`. `coast_capture` then calls `hal.float_all()` itself (`src/run/measure.rs:199`). There is no brake path, no reason-dependent delay, and the captures confirm it empirically: `offset_us` = 46 / 49 / **46** / 48. Dead end.
+
+**(b) Coast-fit estimator choice — CLOSED.** `cohort.py:65` drops `iv[0]`, fits pair sums, back-extrapolates to −0.5. I re-ran the alternatives:
+
+| | drop 1 (production) | drop 2 | drop 3 | median-pair |
+|---|---|---|---|---|
+| `550_01` | 2315.1 | 2310.0 | 2298.9 | 2298.9 |
+| `550_02` | 2322.2 | 2324.8 | 2315.9 | 2314.8 |
+| **`550_03`** | **2277.8** | **2277.1** | **2255.8** | **2257.3** |
+| `ctrl550` | 2321.1 | 2326.7 | 2331.3 | 2314.8 |
+
+`550_03` is the low one under every estimator. Not an artefact of the fit's form.
+
+**(c) Demag contamination of the early pairs at an abnormal stop.** Plausible a priori — `550_03` has the largest fit residuals in the cohort (rms 2.1 µs vs 0.8/1.1/1.2) and its `iv[1]=225` is the largest retained half-period anywhere in the four runs, which is the signature of a longer freewheel tail. But the drop-2 refit (above) does not move it. **Tested, rejected.**
+
+**(d) Measurement uncertainty.** The fit's own standard error on the intercept is ±4.3 / ±6.1 / **±10.9** / ±6.3 eHz. The gap is 41.7 eHz — 3.8σ of `550_03`'s own residual scatter, and the 52.5% cohort (`e252-525_01..03`) reads **2232, 2232, 2234** — a 0.09% spread. The instrument really is that repeatable within a session. **So §3's claim is defensible and I could not break it.** Say so.
+
+**What I can attack is different, and it is the thing E259 should have done before spending a run:**
+
+### (e) The archive already contains an independent test of "tripped runs coast slower", and it does not replicate
+
+`captures/2026-09-23/c7-500*.txt` — six runs at rung 500, **three of which latched `FastBusSag`**:
+
+| tripped (r=26) | 2102, 2108, 2123 | mean 2111.0 |
+|---|---|---|
+| clean (r=2) | 2119, 2122, 2124 | mean 2121.7 |
+
+Direction: right. Magnitude: **−0.50%**, a quarter of the 550 effect. Significance: Mann–Whitney U = 2, exact one-sided **p = 4/20 = 0.200**. The tripped runs occupy ranks 1, 2 and **5** of 6. E259 has a three-trip cohort sitting in its own archive and did not look at it; it is the only other place this correlation can be tested, and at 500 it is indistinguishable from noise.
+
+### (f) A cross-session offset of the same size exists at a fixed rung
+
+Same rung 500, ignoring reason:
+- 09-23 (`c7-500*`): 2102–2124, mean 2116.3
+- 09-24 (`e189/e190/e195/e196/e238/e251`): 2142–2161, mean 2152.8
+- **Difference: 36.5 eHz = 1.73%** — the same magnitude as the effect E259 is treating as signal.
+
+Rung 375 across images on the same day: `e192-climb-375` gives 1597–1614, `e247-375` gives 1636–1646 — **2.3% apart**. Rung 475 has 2055–2079 plus `e196-pv-sag_01` at 2157 and `c7f-p475-v_01` at 2160 — **5% high**.
+
+So `coast_ehz` is ~0.1–0.3% repeatable *within one session on one image*, and carries ~1.7–2.3% offsets *between* them. `550_03` and its control were 3h38m apart (14:59:45 vs 18:34:13) and the control matched the earlier pair, which does argue the drift was small **that day** — I concede that. But the correct claim is "within this day and image, 1.8% is outside the observed spread", not "1.8% is separated", and a single-session n=3 baseline is not a variance estimate for a quantity with documented session structure.
+
+### (g) The physical size of the claim is worth stating, because 1.9% sounds larger than it is
+
+From the fits, free-coast deceleration is **0.31–0.37% of speed per ms**. A 1.8% deficit is therefore equivalent to **4.9 ms of extra free coast** before the fit's origin. That is the whole magnitude of the finding. Anything that shifts the effective bridge-off instant by ~5 ms — including a real few-millisecond rotor perturbation caused by the sag, in either causal direction — reproduces it exactly. Which is E259's own point in §3, and is why §5's restatement is wrong:
+
+> §3: *"the rotor's speed **at the stop instant** was 1.9% lower in the tripped run **than in the clean one**"* — a between-run comparison of the denominator alone. **Supported.**
+>
+> §5 bullet: *"The rotor at the tripped stop was 1.9% slow **relative to its own run average**"* — that is `loop_ehz / coast_ehz`, i.e. the ratio §2 just declared carries "no loop-side information at all" and "cannot support slip". **Not supported by §2's own rule.**
+
+Note also that `mean_ci_us = 71` and `ehz_from_sector = 2347` are **identical in all four runs**, and `zc_rate_permille_of_expected` is 988/989/**989**/990. The loop's average rate over the hold was the same in the tripped run as in the clean ones. There is no run-average slip to be 1.9% from.
+
+---
+
+## 2. Observer effects — the instrument's cost is measured in the archive, and E259 quotes none of it
+
+E259 promises: *"Observer cost and timing resolution get stated from the image before any run, not after."* It then states neither number. Both are recoverable.
+
+**Timing resolution and coverage.** `FAST_LEN = 512` (`src/sagtrace.rs:67`), one row per judged scan. Real scan period from the captures: `drive_scans = 786,919` over an ~80 s armed window = **9.84 kHz, 101.7 µs/scan**. So the fast ring spans **52.1 ms** — comfortably more than the predicted ≥505 µs notch, and the deciding row *is* recorded (`states.rs:337-346`: `record_sag_row` runs after `sag.observe` and before the `return Err`), with `Ctx::pass` freezing afterwards (`states.rs:215-217`). Coverage is fine. `at` is a 1 MHz `u16` (`src/hw/timers.rs:100-113`), wrapping at 65.536 ms > 52.1 ms, so timestamps unwrap cleanly. **The ring geometry is adequate.** Good.
+
+**Measured observer cost — 16.8% of the foreground loop.** `captures/sag/e189-500-s{1,2,3}.txt`, `e190-500-s{4..7}.txt` versus `captures/2026-09-24/e189-500-p{1,2}_01.txt`, `e190-500-p{3,4}_01.txt`, same rung, same `hold_ms = 54,776`, alternated in the same two sessions:
+
+| | n | `loop_iters_closed` mean | range |
+|---|---|---|---|
+| `sag-capture` (63C0061D) | 7 | 2,359,124 | 2,357,516 – 2,363,679 |
+| production (14CE44E7) | 4 | 2,835,519 | 2,832,622 – 2,840,303 |
+
+**16.8% fewer foreground iterations, ranges perfectly disjoint.** In time: +5.33 µs per loop pass, **12.56 s of foreground time lost out of 74.78 s**. Spread over the ~735,500 recorded rows that is ~17 µs per row, which is far too large for a 16-byte struct copy, so either the two builds differ in more than the `SagLog` slot (they are different-era ELFs; a same-ELF A/B is impossible by construction since the recorder is a compile-time policy) or something else in the image is costing. **Either way the number to state before the run is 16.8%, and the campaign has never bracketed `SagRing::block` with TIM17 the way its own methods require.** That is an owed measurement, not a caveat.
+
+**The mechanism by which it can move the event.** `SagRing::block` is `interrupt::free(|cs| TRACE.borrow(cs).borrow_mut().push(b))` (`src/sagtrace.rs:243-245`) — **PRIMASK set 9,840 times a second**, masking COMP (zero-cross) and TIM16 (the commutation one-shot). That is precisely the path `late_arms` measures, and the arm margin at 550 is the campaign's thinnest: at `mean_ci_us = 71` with `advance_level = 22`, the firmware50 memory record says `wait_time(ci,22)` only covers the 11 µs arm above `ci = 66 µs`. Adding even ~1 µs of worst-case masking to that is a change in the same units as the entire remaining margin. The image's own header concedes the consequence: *"this image's runs are evidence about the guard's inputs, not about production's loop quality."*
+
+**And the suppression E259's prediction 1 hypothesises has already been observed.** `sag-capture` at rung 500: **0 trips in 7 runs.** Production at rung 500 on 09-23: **3 trips in 6 runs.** Fisher one-sided p = 0.070. Cross-image and therefore confounded — state that — but it is the direct precedent for prediction 1 and the entry does not mention it.
+
+**What the instrument does not record.** `sagtrace::Block` (`src/sagtrace.rs:78-97`) is exactly: `at`, `bus_mean`, `vref_mean`, `filt_bus`, `filt_vref`, `streak`, `step`, `duty_tenths`, `since_zc_us`. Therefore:
+
+- **No phase currents.** `scan.phase_a/b/c` are never recorded, and `scan_pass` still returns before `self.current.accumulate(...)` (`states.rs:342` vs `:348`). The exact hole E257 §2 identified is **not** closed by this image. If the goal asks for currents at the trip, this instrument does not deliver them.
+- **No raw bus sample.** Only the 8-tap sliding mean. See §3 — this is fatal for prediction 2.
+- **No commutation timing.** `since_zc_us` is aliased at 101.7 µs against a **71 µs** sector at 550 (worse than the 84 µs at 47.5% the module documents), and `step` advances by 1 or 2 between consecutive rows unpredictably, so the commutation interval cannot be reconstructed at all at this rung.
+
+**Verdict on axis 2:** the ring answers a real and valuable question — *did the guard's own input have a notch, or did `vref` move, or was the reference chronically marginal, or is it a fail-closed latch* — and E257 step 2's framing of it was honest. E259 escalates it to "one existing instrument separates them [the six mechanisms]" and to prediction 3. It cannot do that. The bench time is not wasted; the claimed yield is oversold.
+
+---
+
+## 3. The predictions — one cannot fail, one cannot be answered, one is not a prediction
+
+**Prediction 2 is unfalsifiable.** This is the central finding of this review.
+
+First, credit: I re-derived the ≥5-scan floor and **E257 got it right.** With `filt_bus = 1193` and `SAG_NUM/SAG_DEN = 95/100` (`protection.rs:366-367`), the latch needs three consecutive 8-scan means below 1133.3, i.e. a summed deficit ≥477 codes in each of three overlapping windows. With a contiguous low run of `m` samples at depth `d`, the number of windows containing ≥K of them is `m + 9 − 2K`, so latching needs `m ≥ max(K, 2K−6)` with `K = ceil(477/d)`:
+
+| depth d | bus code | K | m_min | width |
+|---|---|---|---|---|
+| 320 (the floor, `Reason::Bus` fires below) | 873 | 2 | 2 | 203 µs |
+| 150 | 1043 | 4 | 4 | 407 µs |
+| **119 (`bus_min` 1074)** | **1074** | **5** | **5** | **508 µs** |
+| 80 | 1113 | 6 | 6 | 610 µs |
+| 60 | 1133 | 8 | 10 | 1017 µs |
+
+So ≥505 µs is right *at the observed depth*. Two problems follow.
+
+**(i) The bound's only input is a quantity §2 withdrew.** The depth comes from `bus_min = 1074` — a whole-run single-scan minimum that §2 withdraws "in every remaining use". Withdraw it and the width bound becomes the locus above, not a number. The entry cannot pin 505 µs and withdraw `bus_min` in the same document.
+
+**(ii) The recorded quantity is the boxcar output, so the recorded width is ≥814 µs for ANY notch.** `record_sag_row` stores `self.rail.bus_mean()` (`states.rs:383-385`), the `RAIL_MEAN_LEN = 8` sliding mean. Convolving any raw depression of width `m` with an 8-tap boxcar gives a recorded depression of width `m + 7`:
+
+| raw notch | recorded depression |
+|---|---|
+| 1 scan (102 µs) | 8 scans = **814 µs** |
+| 2 scans | 9 scans = 915 µs |
+| 5 scans (508 µs) | 12 scans = 1221 µs |
+
+**Every physically possible event is recorded as ≥814 µs ≥ 505 µs.** Prediction 2's stated failure mode — *"A narrower captured event would mean I have the guard's own dynamics wrong"* — is unreachable. The prediction confirms on a single-scan raw spike exactly as it confirms on a five-scan notch.
+
+This is **the same failure mode an independent review already caught on this same instrument**: `LAB_NOTEBOOK.md:12068` — *"branch 1 always fires… The structure is unfalsifiable in the strong sense, i.e. it will always be satisfied"* — and `:11179`, *"Prediction 2 is not falsifiable as written."* E259 has reproduced it.
+
+*If you want a falsifiable width test*, it needs the raw `scan.bus` in the row (one extra `u16`, 1 KB of the 8 KB fast ring), or the row count with `streak ∈ {1,2}` before the latch, which is already recorded and *is* a genuine discriminator: the streak history tells you how many means were low, and the recorded depression's shape relative to an 8-tap step response tells you whether the raw event was narrower than the filter. State the prediction in those terms and it can fail.
+
+**Prediction 3 is not addressable.** *"`ci_us` and the bus dip are separable in time."* The ring contains no `ci_us`, no commutation timestamp, and an aliased `since_zc_us` (101.7 µs sampling vs 71 µs sector). There is no quantity in the dump from which commutation instants can be recovered at this rung. The entry even says of the previous plan *"it cannot answer phase-locking and will not be asked to"* (E257 step 2) — and then asks it to do the harder version of the same thing.
+
+**Prediction 1 is not a prediction.** Both branches are declared findings: a trip is the expected outcome; no trip is *"the instrument's own observer cost has moved the event and that is the finding."* And the no-trip inference is statistically unsound on the entry's own numbers: at 1/4 per run, **P(0 trips in 3) = 42.2%**; at 1/3, 29.6%. For zero trips to be significant at p<0.05 you need **11 consecutive non-trips at 1/4**, or 8 at 1/3. Three runs cannot support the observer-effect conclusion it pre-registers.
+
+### Does any outcome distinguish "loop surge caused the sag" from "supply sag caused the loop excursion"?
+
+**No.** Every quantity in the dump is a bus/VREF quantity sampled at 9.84 kHz and low-passed over 8 samples. There is no current, no commutation edge, and the one timing field is aliased. You cannot order two events when you only measure one of them, through a filter whose group delay (≈3.5 scans ≈ 356 µs) is comparable to the event.
+
+**What would discriminate, cheapest first:**
+
+1. **Put `scan.bus` and the three raw phase codes in `Block`.** +8 bytes/row; halve `FAST_LEN` to 256 (26 ms, still 50× the event) to stay inside the same 16 KB. This single change gives the raw notch width *and* co-located phase current at 102 µs resolution, and it directly closes E257 §2's structural hole. It is the whole experiment.
+2. **Move the current accumulation before the sag return** in `scan_pass`, or record the in-flight partial block and scan count on the trip. Currently a trip discards 0–99 scans of the block containing the event by construction.
+3. **Stamp the commutation.** `roots::com_root` already runs; latching `hal.raw()` at each commutation into a small ring, dumped alongside, gives the ordering directly at 1 µs. This is the only thing that answers the actual question, and it is the only ISR-side change required.
+4. **A passive control for the supply hypothesis**, which costs no firmware: run 550 with a second cell / lower source impedance, or with the clamp raised, and see whether the 1-in-4 rate moves. That is the one experiment that tests *the whole power-path branch* without instrumenting anything.
+
+Prefer (1)+(3) as one build. Running the existing image at 550 buys a shape for the guard's already-filtered input and nothing about order.
+
+---
+
+## 4. Protection coverage — the firmware's current limit sits **above** the supply's, so the supply is the protection
+
+E257 already conceded the honest framing (*"a guard with an unknown, non-zero false-positive rate is not demonstrated coverage; it is an untuned threshold that happens to sit inside the operating envelope"*). That concession is correct and E259 should not be allowed to quietly recover from it. Firing once in four runs at a rung it must pass is **not coverage**; it is an unresolved threshold inside the envelope. Coverage was demonstrated by the gate-4 provocations (`e196-p*`, `e253`-era) where the stop is *provoked*; a spontaneous latch at a qualification rung is the opposite of that evidence.
+
+**What is absent, verified in source, and worse than stated:**
+
+- **No thermal stop, and no temperature sample at all.** `src/protection.rs` contains no NTC/temperature reference; `src/hw/adc.rs:34-41` scans exactly five channels — IN0/IN1/IN4 (shunts), IN6 (bus), IN13 (VREFINT). There is no thermal channel to build a stop on. A junction or winding thermal event is not merely unguarded, it is **uninstrumented**.
+- **No peak-current stop of any kind.** `Reason::PhasePeak = 27` is documented at `protection.rs:81-93` as *"NOT IMPLEMENTED AND NEVER RAISED… This firmware has no instantaneous or peak current protection of any kind."* Do not let it be cited as coverage — the source explicitly forbids that.
+- **The only current stop is 20.3 ms slow, not 10.1 ms.** `BLOCK_SCANS = 100` (`protection.rs:512`) = 10.17 ms per block, and the first over-block **folds back** while only the second **stops** (`protection.rs:1360-1371`, `first_over_block_folds_back_and_second_stops`). So the earliest possible current stop is at the end of the second complete block — **≥20.3 ms**, up to ~30 ms if the excursion starts mid-block.
+- **And its allowance is above the supply's clamp.** `RAW_LIMIT = 31_857` is documented as *"the 4 A nominal limit"* (`protection.rs:514-516`). The bench supply clamps at **3 A**, and the operator metered **2.152 A at 550**. The firmware's current guard therefore **cannot fire before the supply folds**: the 3 A clamp is the de facto fast current protection, and the bus collapse that `FastBusSag` latches on *is the clamp acting*.
+
+That reframes the whole question and it is a hypothesis E259 does not list: `FastBusSag` at 550 may be neither a spurious threshold nor a loop-side surge detector, but **the only instrument in the system that observes the supply reaching its limit**, at the rate that limit is reached. On that reading the 1-in-4 rate is a measurement of headroom, not a defect — and E259's own §4 concedes *"The 3 A clamp's behaviour at 550 is unmeasured, not comfortable."* 2.152 A metered against a 3 A clamp is 28% average headroom with no peak instrument on either side of it.
+
+**Is proceeding toward 60% safe?** Not on this evidence. Going up one rung raises average current on a clamp that is already the fastest protection in the loop, with no thermal stop, no peak stop, a 20 ms averaged stop whose threshold is above the clamp, and — per E259 §4's own withdrawal — no measured relationship between average and transient current. **The correct next action on the safety axis is the desk measurement E257 listed third (source resistance and the clamp's transient behaviour), not a rung attempt and not a diagnostic run at 550.**
+
+---
+
+## 5. The rule change — right instinct, wrong instrument, and it deadlocks
+
+**The rule is defensible in principle.** "Last three clean" plus "retain every failure" is a contradiction: `state[sha][duty][-3:]` structurally steps over retained failures, so the retention was decorative. E259 is right that a record the verdict cannot see is an audit trail, not a gate, and right to refuse to widen the band at the moment it bit.
+
+**But the rule conflates two failure classes that are not alike.** I checked every capture in the archive for `reason ∉ {2, 9}`: **there is no firmware protection failure at rung 400 on any image.** `e247-400_03` has `reason = 2` — a clean run. Its "failure" is a **host-side gate verdict** from `cohort.py:240`: `rate_vs_coast_permille = 1011` against a band of 990–1010. E249 measured that band over 793 healthy runs: median 1002, sd 3.29, max 1018, **1.1% false-failure rate, band off-centre by 2 per mille, 8 of 9 exclusions on the high side.**
+
+So the new rule treats:
+- **(a)** a latching firmware protection on a real physical event (`550_03`, `reason=26`), and
+- **(b)** a post-hoc host statistic exceeding a band that its author measured to be *tighter than the quantity's own scatter and off-centre*
+
+as the same kind of permanent disqualification. They are not. (a) is evidence about the machine; (b) is evidence about `cohort.py`.
+
+**Is the new rule too strict? Yes, arithmetically.** At 1.1% per run:
+
+| ladder | runs | P(≥1 nuisance failure) |
+|---|---|---|
+| 16 rungs × 3 | 48 | **41.2%** |
+| 17 rungs × 3 | 51 | **43.1%** |
+| 19 rungs × 3 | 57 | **46.8%** |
+
+A full ladder walk has roughly a coin-flip chance of being permanently holed by an instrument artefact. Expected number of complete 57-run walks needed for a clean sweep: **1.88**; P(needing 3 or more): **21.9%**. At ~75 s per run that is ~71 min of drive per attempt, and the expectation is two attempts.
+
+**And it deadlocks.** The rule's stated remedy is *"fix the cause and build a new image."* The cause of the 400 failure **is not in the image** — it is in `cohort.py`'s band. No new image can clear it, and only a new image can clear the record. A class-(b) failure under this rule is therefore unrecoverable by any action the rule permits. E259 does not notice this.
+
+**Is "425–525 pass on their own terms" self-consistent? No.** The entry withdraws E252's load-bearing sentence — *"Each rung admitted only because the one below it passed on this same ELF"* — and then prints "qualified on their own records" in the verdict column of the same table. If the chain was constitutive of "qualified", those cells are not "qualified"; they are "rung-local pass, admission void." The entry says this correctly in prose (*"its admission traces back through 400"*) and then contradicts it in the table. It should read one way in both places. And note the consequence the entry states but does not weight: **the campaign's 50% headline target is one of the rungs whose admission is void.**
+
+**The third option it did not consider.** Classify by *origin*, and pre-register the fix:
+
+1. A **firmware protection latch** permanently fails the rung on that image. No re-rolls. (E259's rule, correctly scoped.)
+2. A **host-gate verdict** does not permanently fail a rung, because the gate is not part of the image and cannot be fixed by building one. Instead: the gate's centre and width are corrected **on the distribution** (E249's own measurement: centre 1002, sd 3.29 — e.g. median ± 3 sd, or a proper tolerance interval), the correction is **version-stamped and pre-registered before it is applied**, and the **entire 793-run corpus is re-scored under it**, with every rung's verdict recomputed. The test of good faith is that a correctly re-centred band must also **invalidate some runs that previously passed** (the band is off-centre by 2 per mille on the high side, so the low edge is currently too loose). If the re-scoring flips only failures into passes, the correction was fitted to the outcome and must be rejected.
+
+That is neither retry-until-pass (no run is re-rolled, nothing is judged twice under different rules) nor a permanently dead rung on a measurement artefact. E249 explicitly handed this call to the reviewers — *"a correction to its centre and width is defensible on the distribution, and not defensible on this run… that is the reviewers' call rather than mine at the moment of being bitten."* **I am a reviewer and I am making it: correct the gate on the distribution, re-score everything, and scope the permanence rule to firmware latches.**
+
+---
+
+## 6. Self-consistency
+
+Four problems, in decreasing severity.
+
+**(i) A withdrawn quantity is load-bearing for a prediction.** §2 withdraws *"`bus_min` in every remaining use."* Prediction 2's ≥505 µs is derived (via E257's *"at the observed depth"*) from `bus_min = 1074` giving d = 119 codes → K = 5 → 5 scans. Remove `bus_min` and the number has no basis; keep it and the withdrawal is incomplete. As written, §2 and prediction 2 cannot both stand.
+
+**(ii) The aborted control is counted in a failure-rate denominator.** §3's heading is *"it still proves nothing about order"* and §3's own body says the control *"cannot close the question."* Then prediction 1: *"the ladder cohort's rate is 1/3 and **the control adds a fourth non-tripping run**, so 1 in 4 observed."* A run **deliberately aborted at 42 s of an 80 s script** (`# host abort byte sent at +42.0 s`, `reason=9`, `hold_ms=14477` against the 30 s qualification floor) is not an independent Bernoulli trial for "does this rung trip", and the campaign's rule is that diagnostic and aborted runs qualify nothing. The choice is not cosmetic: it moves the entry's own predicted trip probability from **70.4% (at 1/3) to 57.8% (at 1/4)** — 13 points, in the direction that makes the no-trip branch easier to reach and reinterpret as an observer effect. Use 1/3, or state the rate as "1 in 3 unaborted runs" and drop the control from the denominator.
+
+**(iii) §2's structural argument overshoots and §5 then walks into the gap.** §2: *"the ratio carries **no loop-side information at all**."* True — `loop_ehz = 2347` in all four. But §2 uses that to argue the ratio *"cannot support slip"*, and then §5 asserts the rotor was slow *"relative to its own run average"*, which is the ratio. Pick one. The supported statement is §3's between-run form.
+
+**(iv) The "six candidate mechanisms" are never enumerated.** §5: *"five of the six candidate mechanisms are indistinguishable given what the ladder image records, and one existing instrument separates them."* No list appears in E259, and the earlier three-mechanism list at `LAB_NOTEBOOK.md:11467` was itself found non-exhaustive and non-disjoint by an independent review (`:11179`, `:11974`). "Five of six" is therefore uncheckable, and given that the same instrument's mechanism enumeration has already failed review twice on exactly this ground, it should be re-enumerated in the entry, not referenced.
+
+**One bookkeeping error that is not E259's but is in the ladder it audits:** `captures/2026-09-24/e250-450_{01,02,03}.txt` are named for 450 and all three drove **475** (`target_duty_tenths=475`, `ceiling_tenths=475`, `applied_ccr=633`). The real 450 cohort is `e251-450_*`. Any per-rung accounting done by filename — including a re-audit of "records per rung" — is wrong for `e250`, and this is the known `L`-uses-the-shell's-climb-duty trap. Re-audit rungs by `target_duty_tenths`, never by filename.
+
+---
+
+## Summary of required changes before any bench time
+
+1. **Do not run `sag-capture` at 550 as it stands.** It cannot answer the ordering question (prediction 3), its width prediction cannot fail (prediction 2), and its no-trip branch is a 42% coin flip presented as a finding (prediction 1). Its measured image-level observer cost is **16.8% of foreground iterations** and it masks interrupts 9,840×/s in the one margin the campaign knows is thin.
+2. **Build the instrument that discriminates instead:** raw `scan.bus` + the three raw phase codes in `sagtrace::Block` (halve `FAST_LEN` to pay for it), current accumulated or partially recorded on the trip scan, and a commutation-instant ring at 1 µs. One build, and the ordering question becomes answerable.
+3. **Correct §5's bullet** to §3's wording; drop "relative to its own run average".
+4. **Report the 500-rung archive test** (3 trips vs 3 cleans, −0.50%, p = 0.200) and the 1.73% cross-session offset at fixed rung against the 1.9% finding. It survives, but not as an isolated 6σ datum.
+5. **Scope the permanence rule to firmware latches**; correct the rate-vs-coast band on E249's distribution, pre-registered, with the whole 793-run corpus re-scored and some prior passes expected to flip. Otherwise the rule has a 41–47% chance of holing every ladder walk with an artefact it cannot ever clear.
+6. **Before any further rung attempt**, do the desk measurement of source resistance and the 3 A clamp's transient behaviour. The firmware's only current stop has a 4 A allowance, a 10.17 ms average and a ≥20.3 ms latency, sitting above a 3 A clamp, with no thermal channel sampled anywhere. That, not the coast ratio, is the live exposure on the way to 60%.
+
+### E262 — predeclaration: the origin-scoped permanence rule and the band correction, stated before it is computed
+
+This implements the adversarial reviewer's explicit call (E261b §5), which E249
+had already handed to reviewers. **Written and committed before the band is
+computed**, so that the anti-fitting test in step 3 is auditable in git history
+rather than asserted.
+
+#### The rule, by failure origin
+
+1. **A firmware protection latch** (`reason ∉ {2, 9}` — an actual stop raised by
+   `src/protection.rs`) **permanently fails that rung on that image.** No
+   re-rolls, no sliding window. This is E259's rule, correctly scoped, and it
+   keeps 550 unqualified.
+2. **A host-gate verdict** (a clean `reason = 2` run failed by a threshold in
+   `scripts/cohort.py`) **does not permanently fail the rung**, because the gate
+   is not part of the image: the rule's own remedy — *"fix the cause and build a
+   new image"* — cannot reach it, so a class-2 failure was unrecoverable by any
+   action the rule permitted. That deadlock is the defect being fixed.
+3. A class-2 record is **not erased**. It stays in the file, it is reported, and
+   the rung's verdict is recomputed under the corrected gate — not re-rolled.
+
+#### The band correction, predeclared
+
+The diagnosed defect is that the band is **off-centre**, not that it is too
+narrow: E249 measured median 1002 against a band centred on 1000, with 8 of 9
+exclusions on the high side, and my recomputation over the 169 matched-source
+records gives mean 1001.20 / sd 3.87.
+
+So the predeclared correction is the **minimal** one that addresses exactly that
+defect:
+
+> **Re-centre on the measured median; preserve the current width.**
+> `band = round(median) ± 10` over **all** matched-source records in the corpus,
+> with **nothing excluded** — including the two disputed runs, because excluding
+> them is the fitting this test exists to catch.
+
+I am choosing re-centring rather than the reviewer's alternative (median ± 3 sd)
+deliberately and stating why before seeing either result: ±3 sd on sd 3.87 is
+±11.6, which is **wider than the current band on both edges**, so it could only
+ever convert failures into passes and could never satisfy step 3. Preserving the
+width makes the correction symmetric in risk — it tightens one edge by exactly
+as much as it loosens the other — which is the only form in which the good-faith
+test below can actually bite.
+
+#### The anti-fitting test, stated before the computation
+
+> **A correctly re-centred band must invalidate at least one record that
+> previously passed.** If re-scoring the whole corpus flips only failures into
+> passes and no passes into failures, the correction was fitted to the outcome
+> and **must be rejected**, leaving rung 400 unqualified.
+
+#### Predictions
+
+1. The new band is **991..1011** (median 1001). Stated numerically so it can be
+   wrong.
+2. Rung 400's `e247-400_03` (1011) moves to **pass** — it sits exactly on the
+   new high edge, which I note is uncomfortably convenient and is precisely why
+   test 3 exists.
+3. `e253-550_03` (1028) stays **failed** on the gate, and in any case stays
+   failed permanently under rule 1, because `reason = 26` is a firmware latch.
+4. **At least one prior pass flips to a failure** at the tightened low edge
+   (≥991). If none does, I reject my own correction under the test above and
+   400 stays unqualified.
+
+Prediction 4 is the one that decides whether this correction is honest, and I do
+not know its answer at the time of writing.
