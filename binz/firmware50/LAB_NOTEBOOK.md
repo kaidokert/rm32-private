@@ -34385,3 +34385,104 @@ whose bar E307 withdrew for a bad reason and E312 restored, which E319's
 adversarial review ranked second behind the `ceil(ci/2)` rounding — and the
 rounding is now dead. This is the surviving ranked candidate, its A/B is half
 complete, and both arms of that pair are in the tree.
+
+### E322 — advance 20 at rung 600: thin arms down 123×, worst-block current down 13%, and it still latched — one microsecond deeper. The estimator descends until `wait ≤ spent`, wherever that threshold sits.
+
+Predeclared in E321, run once, production-grade image `3433DEE4` (no
+diagnostic features), un-injected, every protection armed, rung 600.
+`captures/2026-09-25/e321-600-adv20_01.txt`:
+
+```
+advance_level=20   reason=15   hold_ms=152   mean_ci_us=68   ehz_from_sector=2450
+ci_at_late=46   spent_at_late=9   ci_min_us=46   thin_count=4   accepted=224007
+hold_ma=2764  worst_ma=3024  (hold_blocks=15)   BEMFSAG streak=0 tripped=0
+BEMFSELFREF zc_permille_of_6x_coast=991  band 980..1020  verdict=ok
+```
+
+Against the advance-22 runs at the same rung on the same source lineage:
+
+| | adv 22 (e318) | adv 22 (e278) | **adv 20** |
+|---|---|---|---|
+| `thin_count` per 10⁶ | 2157 | — | **18** |
+| `thin_count` raw | 492 | — | **4** |
+| `hold_ma` | 2988 (3 blk) | 2869 (130 blk) | **2764** (15 blk) |
+| `worst_ma` | 3115 | **3490** | **3024** |
+| `ehz_from_sector` | 2525 | 2487 | 2450 |
+| `ci` at the stop | 50 | 49 | **46** |
+| `hold_ms` | 31 | 1307 | 152 |
+
+#### What worked, and it worked well
+
+**Thin arms fell 123×** — 2157 per 10⁶ down to 18. The margin intervention did
+exactly what the arithmetic said it would; this is not a subtle effect.
+
+**And the current result is better than predicted.** `worst_ma` went **3490 →
+3024, −13.4 %**, and 3024 is *the same worst block as rung 575*, which held
+**48.3 s with no trip**. So at advance 20, **rung 600's current profile matches
+the rung-575 profile that has already survived a qualifying-length hold.** I
+predicted −7.5 % on the mean and got −3.7 % on a 15-block sample, but the worst
+block — the number that actually threatens the clamp — moved twice as far as
+predicted. Sag was untouched (`streak=0`, filtered −2.1 %).
+
+**So the supply is not what stops rung 600 at advance 20.** That is the fourth
+and, I think, final revision of my supply position, and this time it rests on a
+matched comparison at the same rung rather than on a fit or a three-block
+sample.
+
+#### What did not work, and why it is the answer
+
+**It still latched — at `ci = 46`, four microseconds deeper than advance 22's
+49 and 50.** `wait20(46) = 9`, `spent_at_late = 9`, `left = 0`. And
+`ci_min_us = 46 = ci_at_late`: the estimator descended to the run's minimum and
+latched exactly there.
+
+That is the whole finding. **Raising `wait` by 1–2 µs did not prevent the
+latch; it moved the interval at which the latch occurs down by 4 µs.** The
+descent simply continued until it met the new threshold. Five recorded latches
+now read `ci` 59, 57, 51, 46 — and `spent = 9` in **every one**.
+
+```
+ ci   L22  L20  L18  L16
+ 59     9   11   13   15
+ 57     9   11   12   14
+ 51     8   10   11   13
+ 46     8    9   11   12
+ 40     7    8    9   10     <- SECTOR_FLOOR_US, the deepest clamp
+```
+
+`spent` caps at 9–10 across 20 478 measured arms, so **at the sector floor only
+level 16 keeps `left ≥ 1`** — and only barely, since `spent = 10` occurs. Which
+means: **no advance level within the sanctioned 16..22 range can prevent this
+latch if the estimator is allowed to descend to its floor.** Advance is a
+threshold, and the descent chases the threshold.
+
+Taken with E321's structural result — `spent` is distributed, irreducible work,
+so `left = wait − spent` cannot be bought on the `spent` side — **the
+arm-margin framing is now exhausted, not unlucky.** That was E321's predeclared
+refutation clause and it has fired, with one qualification: it fired at `ci`
+46 rather than the 49–51 I predicted, and with a hold 5× longer than the
+adv-22 run rather than comparable. So the prediction was directionally right
+and quantitatively wrong in my favour, which is not a reason to soften it.
+
+#### What remains, and neither is mine to take unilaterally
+
+1. **Stop the descent.** The estimator falls from a mean of 68 µs to 46 — a
+   −32 % excursion — and then latches. Candidates: the self-referential
+   blanking gate (`count > average_interval >> 1`), and the interval clamp
+   itself. **Raising `SECTOR_FLOOR_US`** is the bluntest version: at rung 600
+   the true interval is 67–68 µs, so a floor at 60 would never bind in normal
+   operation and would make `wait22(60) = 10 > 9` unreachable-from-below. It is
+   a control parameter rather than a protection threshold, but it is load-
+   bearing for acceleration through the ramp and for any future higher-speed
+   work, so it is a real design change.
+2. **The latch is arguably mis-specified**, per both E315 reviews: the arm is
+   still placed (`arm_marked(left.max(1))`), the realised error is ~1 µs on one
+   commutation, and `protection.rs:52` records the event inside a *qualifying*
+   45 % run while 9–10 µs of *realised* COM lateness is tolerated every run.
+   **The goal fences timing stops, so this stays the operator's call** — but it
+   is now the cheapest remaining option by a wide margin, and every other
+   avenue on the margin side is closed.
+
+Advance 20 is kept as the standing candidate regardless: 123× fewer thin arms
+and a 13 % lower worst block, for 1.5 % of speed, with rung 600's electrical
+profile brought down to rung 575's. Two fresh reviews before anything further.

@@ -1460,3 +1460,12 @@ E3BB2544.e315-marginhist.elf
          which was built from the pre-fmt source and is NOT this binary --
          cargo fmt changed codegen, so the earlier hash does not describe
          what the committed tree builds. Flash this one.
+
+3433DEE4.e321-adv20.elf
+  crc32  3433DEE4
+  sha256 46685F08A9E96EC1FFCC5237E2AD743A0E54A4A8468086E8A71168D19DC61A39
+  build  cargo build --release --features advance-low   (commit de29371)
+  E321   PRODUCTION-grade: no diagnostic features. Advance level 22 -> 20
+         (the E300 intervention), plus the accept_wait dead-store removal
+         (ADC_COMP 758). Predeclared at rung 600: wait20 = 9/10 at the two
+         observed 600 stop intervals (ci 49/50) where wait22 = 8.
