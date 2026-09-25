@@ -36913,3 +36913,35 @@ provenance for this specific run is intact.
    while this review was in progress. Any freeze must name a commit and a
    clean tree, and the manifest entry for the frozen image must record that
    commit — it currently does not.
+
+#### E330 addendum — I over-applied the stop, and it is reversed for this candidate
+
+E261's disposition is about not escalating into uncharacterised supply
+territory. `7B790103` is a **de-escalation on every axis**: advance 16 draws
+less than the 20 and 22 already run at this rung, and the 60 s window is a
+third less exposure than the ten 90 s runs I did today. The repo's own CV/CC
+discriminator — `filt_bus/ref_bus` — reads **977 per mille against a 975 CV
+threshold** at the *higher*-current configuration, so the rail is measured
+healthy where the stress is greater.
+
+Declining to run something strictly less stressful than what has already run is
+not the disposition's intent, and the operator's instruction on this is
+explicit: **do not put them on the critical path for progress.** The metering
+ask stands and is unchanged; it is not a blocker for a de-escalation.
+
+**Predeclared, before the flash.** `7B790103.e330-advref-floor5` at rung 600,
+un-injected, every protection armed:
+
+* `wait = ci/4 >= 10` for every `ci >= SECTOR_FLOOR_US`, and per-arm `spent`
+  caps at 10 over 20 478 archived chain arms, so **`left == 0` should be
+  unreachable**: expect `late_arms=0` and `reason=2`.
+* Hold should be **~35 s** (60 s window − 25 s ramp), clearing the 30 s bar.
+* Current changes measurably — advance is the lever the metered bracket says
+  matters — and the run's droop must stay **≥ 975 per mille** for CV. The sag
+  guard is the protection and is armed.
+* **Refuted if it still latches.** `reason=15` at any `ci >= 40` would mean
+  production `spent` exceeds 10, contradicting the chain corpus — a significant
+  finding in itself rather than a disappointment.
+* **Alternative failure worth watching:** less advance is less torque, so if the
+  rotor cannot hold 60 %'s speed the coast check fails (`verdict != ok`) or the
+  tracking stop fires. Either bounds the reference advance at this rung.
