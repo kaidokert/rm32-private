@@ -27205,3 +27205,96 @@ I had queued on `5D4BF25C` would have qualified an image with a 48% foreground
 regression, and every rung would have passed — `reason=2` throughout, because
 the regression does not stop a run at low duty. **A full ladder would not have
 caught this. One changed-path check did.**
+
+### E304 — predeclaration: record the 55% trip sequence, which no capture has
+
+**The unresolved question.** Rung 550 has been driven four times, un-injected.
+Three completed; **`e253-550_03` latched `reason=26` = `FastBusSag`** fifteen
+seconds into the hold. That is the **only un-injected hard stop above rung 525
+in the entire corpus**, and all four captures carry **`sagrows=0`** — they ran on
+production, whose `NoSagLog` folds the recorder away. **So the campaign's one
+real high-rung failure has no recorded sequence at all**, which is exactly the
+gap the goal names as first priority.
+
+#### Why the existing diagnostic image cannot close it
+
+`bin/sag-capture.rs` has caught the event **0 of 7** times where production
+caught it **3 of 6** ([[feedback-check-the-instrument-transfer-function]]). A
+diagnostic image that never sees the event is not an instrument. And it differs
+from production by **more than the recorder** — it runs its own serve loop
+instead of `Production::serve`, and inits the fine clock — so even a catch could
+not say which difference mattered.
+
+So: a `sag-ring` cargo feature swaps `SagRing` for `NoSagLog` **in the
+production controller**, changing exactly one type parameter. Same serve loop,
+same policies, same guards, same thresholds as the image that does trip.
+
+**Image `C2DA171A.e304-ring-adv22.elf`**, sha256 `B972B0618BE49474…`,
+manifested.
+
+**And the zero-column trap, avoided by construction.** TIM2 is diagnostic-only:
+production never initialises it and `Hal::fine()` then returns **0**. Enabling
+the ring without the clock would timestamp every recorded row zero — the defect
+that once made a "one 125 ns timeline" headline a column of zeroes. `fine::init()`
+is now gated on the **same** feature as the ring, so the two cannot be enabled
+apart.
+
+#### Changed-path check, done before the run (goal rule 2)
+
+`insn_ratchet.py` against the E303 baseline:
+
+```
+ADC_COMP        728  div 0  mul 4  irq 9  excl 0  helper 0
+DMA1_CHANNEL1    37  div 0  mul 0  irq 2  excl 0  helper 0
+TIM16           332  div 0  mul 2  irq 6  excl 0  helper 0
+TIM6_DAC_LPTIM1 155  div 0  mul 0  irq 1  excl 0  helper 0
+BusDepth::observe 50 div 0  mul 4  irq 0  excl 0  helper 0
+ratchet OK: no hazard-class drift in any watched symbol
+```
+
+**The recorder costs nothing in any ISR root.** It is thread-mode only, so its
+whole cost is foreground, which `loop_iters_closed` measures directly — and
+that is the quantity that just caught E303's 48% regression.
+
+#### Predictions, falsifiable, before any run
+
+1. **Observer cost.** One rung-150 run: `loop_iters_closed` within **10%** of
+   E303's **4 023 548**. If it falls below ~3.6 M the ring is not the cheap
+   foreground observer I am claiming, and the 550 attempt is measuring a
+   different machine from the one that tripped — which is the most likely
+   explanation for sag-capture's 0/7 and the thing I most want to exclude.
+2. **The trip reproduces.** At rung 550 on advance 22, **at least one latch in
+   six runs** (historical rate 1 of 4). If six clean runs, the trip is not
+   reproducible on this image and the 0/7 history is about the *bench state*,
+   not the recorder — a different and important answer.
+3. **The recorded reason is `26` (`FastBusSag`).** If it latches on something
+   else, the arm-path/bus dispute is resolved against both my hypotheses and the
+   sequence tells me what actually happens.
+4. **`at_fine` is non-zero and monotone** across recorded rows, with row spacing
+   near the 101 µs scan period. This is the instrument's own self-check; a zero
+   or constant column voids the capture rather than being interpreted.
+
+#### Which decision each outcome changes
+
+| outcome | decision |
+|---|---|
+| latch recorded, `reason=26`, with sequence | the 55% failure is a **bus** event; the advance A/B is deprioritised and the next work is the rail, not the arm |
+| latch recorded, `reason=15`/timing | the arm path is confirmed as the mechanism; run the advance A/B at 525 next |
+| six clean runs | 550 is not reproducibly failing on a fixed image — re-examine whether E255's trip was a bench-state event, and the ladder to 60% may simply proceed |
+| observer cost fails prediction 1 | stop, fix the recorder's cost, and do not read the 550 result at all |
+
+#### Safety, and the supply question I am *not* asking about
+
+The goal forbids qualifying under sustained CC, suppressed bus or foldback. At
+rung 550 the measured `hold_ma` is **2284** with `worst_hold_ma` **2697** against
+a 3 A clamp — so 550 itself has headroom. The projection to 600 (2.83–2.87 A
+hold, ~3.5 A worst block) would breach it, but that is a **fit whose only
+measured point is an injected run**, and the goal says pause for a demonstrated
+constraint, not an inferred wall. **So it gets measured rather than asked.**
+This run reports `ceiling_tenths`, `filt_bus/ref_bus` and `worst_ma`, and the
+frozen ring will show whether the rail is being suppressed or dipping — which is
+the evidence that decides whether 600 is reachable on this supply, instead of an
+extrapolation.
+
+Every protection stays armed and unchanged. `PREFLIGHT` runs before each run.
+Six runs at 550 is ~9 minutes of drive.

@@ -70,6 +70,10 @@ com-top = []
 # predeclared against the arm path. Default OFF, so the default build's
 # `AdvancePolicy` is unchanged. See `run::policy::ADVANCE_HIGH`.
 advance-low = []
+# Swaps the real sag ring into the PRODUCTION controller, changing nothing else
+# -- same serve loop, same policies, same guards. For capturing the rung-550
+# trip sequence, which no existing capture has. See run::ProductionSagLog.
+sag-ring = []
 
 [dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }

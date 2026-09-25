@@ -133,6 +133,15 @@ fn main() -> ! {
             cortex_m::asm::nop();
         }
     };
+    // **The 125 ns timeline, only when something records it.** TIM2 is a
+    // diagnostic peripheral: production never initialises it, and `Hal::fine()`
+    // then returns 0. Without this the `sag-ring` build would timestamp every
+    // recorded row with **zero** -- the exact defect that once made a
+    // "one 125 ns timeline" headline a column of zeroes, because the recorder
+    // was enabled and the clock was not. Gated on the same feature as the ring
+    // so the two cannot be enabled apart.
+    #[cfg(feature = "sag-ring")]
+    firmware50::hw::fine::init();
     // Belt and braces: whatever the reset state was, the bridge is off now.
     safe_off(&mut Drv8304);
     board::banner(&mut board, adc_ok);

@@ -89,7 +89,33 @@ pub type Production = Controller<
     policy::BusSagProtection,
     policy::Restart,
     policy::Telemetry,
+    ProductionSagLog,
 >;
+
+/// The recorder `Production` carries. `NoSagLog` by default, so production
+/// records nothing and every call folds away.
+///
+/// The `sag-ring` feature swaps in the real ring **without changing anything
+/// else** (E304). That matters because the campaign's evidence gap is a
+/// recorded 55% trip: all four rung-550 captures ran on production with
+/// `NoSagLog` and carry `sagrows=0`, so `e253-550_03` -- the only un-injected
+/// hard stop above rung 525, a `FastBusSag` latch -- has **no recorded
+/// sequence at all**.
+///
+/// The existing `bin/sag-capture.rs` cannot close that gap: it has caught the
+/// event **0 of 7** times where production caught it 3 of 6
+/// ([[feedback-check-the-instrument-transfer-function]]), and it differs from
+/// production by more than the recorder -- it runs its own serve loop instead
+/// of `Production::serve`, and inits the fine clock. A diagnostic image that
+/// never sees the event is not an instrument, and one that differs in two ways
+/// cannot say which difference is responsible.
+///
+/// So this feature changes exactly one type parameter, leaving the loop,
+/// policies, guards and thresholds identical to the image that does trip.
+#[cfg(not(feature = "sag-ring"))]
+pub type ProductionSagLog = crate::sagtrace::NoSagLog;
+#[cfg(feature = "sag-ring")]
+pub type ProductionSagLog = crate::sagtrace::SagRing;
 
 /// True if this byte is one of the unconditional stop keys.
 #[must_use]

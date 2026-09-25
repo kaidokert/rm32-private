@@ -12644,6 +12644,28 @@
     "worst_ma": 917,
     "droop_permille": 997.5288303130149,
     "fails": []
+   },
+   {
+    "file": "e303-150_03.txt",
+    "duty": 150,
+    "reason": 2,
+    "accepted": 357775,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 357776,
+    "unstable": 2360587,
+    "hold_ms": 82276,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1001,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 706,
+    "coast_crossings": 552,
+    "hold_ma": 69,
+    "ceiling_tenths": 150,
+    "worst_ma": 884,
+    "droop_permille": 996.7078189300412,
+    "fails": []
    }
   ]
  }
