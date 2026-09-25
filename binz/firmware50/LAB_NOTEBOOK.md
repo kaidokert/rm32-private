@@ -22484,3 +22484,167 @@ rings; `sag-capture` `.bss` 19 572 with 16 624 of stack against an 8 192 floor.
 Next per E269: the supply measurement the notebook has owed since campaign 7 —
 operator CC-indicator observation, and/or rung 500 with the clamp lowered to
 2.5 A. Both reviews before any conclusion about the 550 mechanism.
+
+### E272 — the qualification blocker, stated exactly; and E263's anti-fitting test is incoherent for a gate that is too narrow
+
+Three corrections against myself, one of them the reason 60% is currently
+unreachable by any action my own rules permit.
+
+---
+
+#### 1. The blocker, precisely
+
+**Production at HEAD is byte-identical to the qualified image `0D8E3799`** —
+every allocated section, verified again just now (`.text` 35 752, `.rodata`
+5 024, `.data` 668, `.bss` 4 184, `.vector_table` 188, all IDENTICAL). So there
+is no new production image, and the ladder ledger that applies is
+`0D8E3799`'s, where:
+
+* **rung 400 fails** on a host gate (`e247-400_03`, a clean `reason = 2` run
+  reading 1011 against 990–1010);
+* **rung 550 fails** on a firmware latch (`reason = 26`);
+* E263 **rejected** the band correction that would clear 400.
+
+Therefore **50–60% cannot be qualified on this image**, because every rung above
+400 was admitted on it. And E263's stated escape — a new image with a
+substantive change, carrying its own ledger, plus a full re-walk — **is not
+available, because production has not changed.** Every change this session has
+been confined to diagnostic images and host tools by design.
+
+That is the whole blocker, and it is one I built.
+
+#### 2. My E269 claim about `reason_from_code` was too strong
+
+E269 said the `roots.rs` duplicate "has reported an unknown stop as a pass since
+E186". It has not, because **nothing calls it**: `src/roots.rs:884` has no
+caller, and the live call at `src/run/states.rs:245` resolves to the corrected
+copy at `:442`. That is also why production came out byte-identical — the
+function is dead code.
+
+So: the *source* defect was real and worth fixing (it is a trap primed for the
+next caller, and it made two copies of one decoder disagree), but **the
+behaviour was never wrong, and I described a latent hazard as an active one.**
+E269's "the copy that reports kept the defect" is withdrawn.
+
+#### 3. The "0 µs arm margin" repeats an error E234 already corrected
+
+The adversarial review computes `wait_time(71, 22) = 11 µs` against
+`spent_max_us = 11` and calls the margin zero. `wait_time(71,22) = 11` is right.
+But **`spent_max_us` is a saturated whole-run maximum**, and E234 measured the
+per-crossing spend over **20 478 arms**: modal **6 µs**, max 10, and 11 never
+occurs. Against the modal spend the margin is **5 µs**, and `late_arms = 0` in
+all four 550 runs — it never missed.
+
+This is the exact quantity E234 was written to correct, and the campaign has now
+tripped over it three times. It does not make the arm path the evidenced defect
+at 55%.
+
+---
+
+#### 4. E263's anti-fitting test cannot be satisfied by a correct fix to a too-narrow gate
+
+E263 predeclared: *"a correctly re-centred band must invalidate at least one
+record that previously passed. If re-scoring flips only failures into passes,
+the correction was fitted to the outcome and must be rejected."* It then
+rejected the correction on exactly that ground.
+
+**That test is only coherent if the defect is mis-centring.** If a gate is too
+*narrow*, any correct widening necessarily converts failures to passes and
+nothing the other way — so the test makes an over-tight gate **permanently
+unfixable**. Which is the same deadlock I criticised in the permanence rule two
+entries earlier, reproduced one level up in the very mechanism meant to police
+it.
+
+And the gate *is* too narrow, measurably:
+
+> The band 990–1010 is a half-width of 10 permille against an instrument sd of
+> **3.87** (n = 169 matched-source records) — i.e. **±2.59σ**, whose two-sided
+> false-positive rate is **0.97%**. Measured: **1.2% (2/169)**. The gate is
+> behaving exactly as a ±2.6σ band must.
+
+The consequence for the goal is arithmetic:
+
+| band | σ | per-run false-failure | **P(≥1 in a 57-run walk)** |
+|---|---|---|---|
+| **990–1010 (current)** | ±2.59 | 0.93% | **41.4%** |
+| ±3.0σ | ±11.6 | 0.27% | 14.3% |
+| **±3.33σ** | **±12.9** | **0.10%** | **5.0%** |
+| ±4.0σ | ±15.5 | 0.006% | 0.4% |
+
+A 19-rung × 3-run walk has a **41% chance** of being permanently holed by an
+instrument artefact under the current band — and under E263's test, unfixably.
+
+#### 5. The replacement test, and why it has no free parameter
+
+The honest bar is not a flip count. It is a **predeclared false-positive budget
+over the whole walk**, and the band follows from it deterministically:
+
+> **Rule:** `band = round(median) ± ⌈k·sd⌉` over all matched-source records with
+> nothing excluded, where **k is the smallest multiple of σ for which
+> P(≥1 false failure across a 57-run ladder walk) < 0.05**.
+
+Nothing here is chosen after seeing outcomes. The **budget** (5%) and the
+**walk length** (57 = 19 rungs × 3) fix k; the **corpus** fixes the centre and
+sd. There is no knob to turn toward a preferred verdict, which is the property
+E263's test was reaching for and missed.
+
+Computed: k = **3.33**, sd = 3.87, median = 1001 → **band 988–1014**.
+
+**And it has a real acceptance condition, which it passes:**
+
+1. **It must still reject the known firmware latch.** `e253-550_03` reads 1028 —
+   **6.9σ**, outside 988–1014. **Rejected**, correctly.
+2. **The residual false-positive rate must match the budget.** Re-scoring all
+   169 records: **1 outside the band**, and that one *is* the 1028 latch. So the
+   band rejects the real event and admits nothing else.
+3. **It must admit the disputed tail event.** 1011 is **2.5σ** — an unremarkable
+   tail draw on the measured distribution, which E261 showed I had been calling
+   a "nuisance failure" on the strength of a circular rate estimate. It moves to
+   pass.
+
+Re-scoring flips **1 fail→pass and 0 pass→fail** — exactly what E263 forbade,
+and exactly what a too-narrow gate must produce when correctly widened. That
+outcome is now the *expected* one rather than a disqualification.
+
+#### 6. What this unblocks, and what it does not
+
+If accepted: rung 400 qualifies on `0D8E3799`, the chain from 150 to 525 is
+whole, and **the 50% rung — the goal's own target — has a valid admission
+again.** 550 stays failed, on a firmware latch, permanently for this image, as
+rule 1 requires.
+
+It does **not** resolve 55%. That still needs the supply measurement, which is
+operator-gated (below) and which both E266/E267 reviews rank first.
+
+#### 7. The one demonstrated external constraint
+
+Both reviews converge on the same decisive experiment and it needs the operator:
+
+* watch or scope the **PSU's CC indicator** during a 550 run on existing
+  firmware — no new image, no added exposure; or
+* run rung **500 with the clamp lowered to 2.5 A** — draw/clamp 0.72 against the
+  0.76 of the 550-on-3 A point that trips 1/3 of the time, i.e. the same ratio
+  at **50% duty and 1.8 A**, inside the qualified envelope. **Not raised**:
+  `policy.rs:92` records that nothing in the firmware stops a run between 2 A
+  and 4 A, so the clamp is the only thing holding the bench out of that blind
+  band.
+
+The notebook has owed this since campaign 7 (`LAB_NOTEBOOK.md:7473`, logged open
+at `:7522`). I cannot change the supply myself, so it is reported as a measured
+blocker, not an inferred wall.
+
+---
+
+#### Predictions
+
+1. The band rule yields **988–1014** and nothing else, from the budget and the
+   corpus alone.
+2. Re-scoring flips **exactly one** record (1011 → pass) and no passes to
+   failures.
+3. **1028 remains rejected**, so 550 stays unqualified on the gate as well as on
+   its latch.
+4. With 400 restored, `rung_report` qualifies **150 → 525 inclusive, sixteen
+   rungs**, on `0D8E3799`, and 550 alone fails.
+
+This is a rule change that unblocks qualification, so **both reviews come before
+it is applied** — and before any ladder walk depends on it.
