@@ -25983,3 +25983,102 @@ mandated reviews of E290–E296 are running and were launched **after** the clim
 started, which is itself out of order — the goal requires them before a
 hypothesis test. Recorded as a breach; their verdicts land before I act on
 anything above 425.
+
+### E298 — predeclaration written mid-rung: the arm path is the blocker, and thin_count went 0 → 118 while I counted bus excursions
+
+Written with rung 500 **on the bench right now** and rungs 400–475 complete
+(all 3/3, `reason=2`, `ceiling == duty`). The adversarial review of E290–E297
+redirected attention to a quantity sitting in every capture I have already
+collected, and I verified it before writing this.
+
+#### The measurement
+
+| rung | mean `ci_us` | `ci_min_us` | `thin_count` per run | `spent_max_us` | `late_arms` |
+|---|---|---|---|---|---|
+| 350 | 108 | 75 | 0, 0, 0 | 11 | 0 |
+| 375 | 101 | 65 | 1, 0, 0 | 11 | 0 |
+| 400 | 93 | 62 | 0, 0, 2 | 11 | 0 |
+| 425 | 87 | 57 | 8, 7, 13 | 11 | 0 |
+| 450 | 83 | 54 | 19, 9, 8 | 11 | 0 |
+| **475** | **80** | 57 | **110, 126** | 11 | 0 |
+
+`thin` is `wait − spent ≤ 2 µs` (`src/oneshot.rs`). It is **0 through rung 350**
+and **~118 per run at 475** — a monotone, superlinear degradation over four
+rungs, while `spent_max_us` sits pinned at **11 at every rung from 150 to 475**
+and `late_arms` is still **0**.
+
+#### The arithmetic, from the real integer function and not a float model
+
+`wait_time` is integer and **non-monotonic** in `ci`, so I used
+`scripts/chain.py`, which mirrors `src/commutation.rs`:
+
+| advance | `wait > 11` first at | always above |
+|---|---|---|
+| **22** (production ≥ 35% duty) | ci = **72** | ci = **74** |
+| **20** | ci = **60** | ci = **62** |
+
+So **advance 20 buys ~12 µs of interval headroom**, which is ~3 rungs.
+
+At rung 475 the **mean** `ci` is 80 (`wait` 13, margin +2) but the **minimum**
+is 57 (`wait` 9, margin **−2**). The minimum interval already has negative
+margin — which is exactly what a `thin_count` of 110–126 is.
+
+Extrapolating mean `ci` on the ≥350 rungs (slope ≈ **−0.224 µs per duty-tenth**,
+80 at rung 475):
+
+| rung | projected mean `ci` | `wait` at adv 22 | margin |
+|---|---|---|---|
+| 500 | ~76 | 12 | +1 |
+| 525 | ~70 | 11 | **0** |
+| 550 | ~65 | 10 | **−1** |
+| 600 | ~58 | 9 | **−2** |
+
+**The mean interval crosses the advance-22 arm-fit line at about rung 500–525,
+and by 550 the mean has no margin at all.** That is where this campaign's
+failure lives, and it is a different mechanism from anything the bus-depth
+observer can see.
+
+This agrees with [[project-firmware50-state]], which already names the arm path
+as the blocker — with one correction: memory records "wait_time(ci,22) covers
+the 11 µs arm only above ci=66", and the mirrored integer function says **72**
+(always 74). I am flagging the discrepancy rather than resolving it; it may be a
+`>` vs `>=` or a different `spent`, and it does not change the direction.
+
+#### Predeclared, before rungs 500 and 525 land
+
+1. **`thin_count` keeps rising**: ≥ 150 per run at 500 and ≥ 250 at 525. If it
+   plateaus or falls, the degradation is not the interval shrinking and this
+   model is wrong.
+2. **`late_arms` stays 0 through 525** and first becomes non-zero **at or before
+   rung 550** on advance 22. `late_arms` is the *event*; `thin_count` is the
+   leading indicator, and the gap between them is the margin being consumed.
+3. **`spent_max_us` stays 11.** If it moves, the arm cost is duty-dependent and
+   every margin figure above needs recomputing.
+4. **Mean `ci` at 500 is 74–78 µs** and at 525 is **68–73 µs**.
+
+**And the discriminating test, predeclared with its cohort:** an **advance-20 vs
+advance-22 A/B at rung 500, three runs a side, ABAB, one session, fixture-flashed**
+— per [[feedback-microsecond-ab-needs-three-runs]]. Advance 20 should cut
+`thin_count` by roughly the ratio of the margins (12 µs vs 1 µs of headroom at
+ci ≈ 76), i.e. **to near zero**, with no `late_arms` on either side. If advance
+20 does *not* cut `thin_count`, the thin condition is not about `wait` and the
+whole model is refuted.
+
+That A/B needs a second image (`AdvancePolicy` is a firmware step at
+`duty_tenths >= 350`, `run/policy.rs:295`), so it belongs on the fixed image
+alongside everything else owed — not on `480263F1`.
+
+#### What I got wrong to have missed this
+
+`thin_count` is in **every capture in the walk**, including all thirty low-rung
+runs. It is emitted on `BEMFRCOMP` beside `spent_max_us` and `late_arms`, which
+I read repeatedly for other reasons. I spent this batch building, defending and
+then dismantling a bus-excursion observer while the leading indicator of the
+actual blocker went from 0 to 118 in the same captures.
+
+That is the same failure as
+[[feedback-instrument-decisions-not-outcomes]] in a new form: I instrumented a
+*hypothesis I had chosen* and never scored the quantity the machine was already
+reporting. The lesson is not "look harder" — it is that **a per-rung scoreboard
+of every emitted counter would have surfaced this without anyone looking for
+it**, and this campaign does not have one.
