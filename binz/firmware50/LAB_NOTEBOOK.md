@@ -35906,3 +35906,1010 @@ across the ladder roughly as a prop load should (`hold_ma/ehz` rises smoothly
 
 None of that makes one 59.8 s run a demonstration of 60 %, and the next run on
 the same ELF says it is not.
+
+### E330 — the evidence review, accepted. Four fixture and records defects fixed, the reference-advance candidate built, and bench work stays stopped.
+
+Both E327 reviews independently found the omitted `q600-h2` run, which E328 had
+already dispositioned. Beyond that the evidence review corrects me repeatedly
+and **disagrees with the adversarial one twice**, which is worth recording:
+they disagree, and agreement was never the standard.
+
+#### It corrects my supply reasoning, and the repo already had the instrument
+
+`scripts/metered_current.py` exists for exactly this, and its docstring records
+that **E234 made my error before me**:
+
+> "E234 escalated 'healthy 60% projects to ~2.7 A mean and ~3.2 A worst block
+> against a 3 A clamp, so 60% may be unqualifiable' — by reading `hold_ma`, an
+> uncalibrated signed three-shunt residual anchored on one operator-metered
+> point, as amps. E230's own disposition had already rejected that as false
+> precision, and the escalation did it anyway."
+
+I made the same escalation today, in substance word for word. The script states
+the right method and it invalidates my reasoning on two counts:
+
+* **the CV/CC discriminator is `filt_bus/ref_bus` — a folded rail, not a
+  current reading**; and
+* **a "worst block" is a 10.1 ms mean the PSU's output capacitors supply, so a
+  worst-block figure is not a CC criterion at all.**
+
+So "worst_ma 3818 = 95 % of the allowance" was never evidence of anything. The
+sound reading of E327 is its droop: **977 per mille against a CV threshold of
+975** — in CV, by the repo's own discriminator, with about 7 per mille of
+margin. The rail did not fold.
+
+And the script's own bracket verdict for rung 600 is **"AT OR OVER the clamp"**,
+with the proxy over-reading by 2.7–12.4 % at rung 500. So the defensible
+statement is: **rung 600 sits exactly at the supply's limit** — not demonstrably
+over, not comfortably under — and settling it needs the clamp swept, which is
+the operator's.
+
+I also crashed that script: it divides by `hold_ma`, and my refuted `wide-blank`
+capture has `hold_ma = 0`. Guarded.
+
+#### Where the two reviews disagree
+
+* **The depth census.** Adversarial: confounded — session p = 0.042, 22×
+  between-image spread, and *every* latch at `ci_at_late` 46–59 µs is depth 3 at
+  every rung, so there is no depth contrast at the failure. Evidence: the effect
+  is real but my headline was wrong — exposure 9183.6 s not 8183, depth 4 is
+  rungs 425–525 not 475–525, and production-only it is **11.8×, p = 5.3e-04**,
+  not 15.8×/1.0e-07. Both agree my number was wrong; they disagree on whether
+  what remains is an effect. **Recorded as unresolved.**
+* **Floor 6 versus floor 5.** Adversarial: floor 6 convicted at p ≈ 3e-104 on
+  per-hold-acceptance `thin`. Evidence: exact rank p = 0.25 on hold length, and
+  "floor 5 helps" is itself only p = 0.10. Different metrics, opposite verdicts.
+  My own n = 1 comparison was worth nothing either way.
+
+#### Four defects found and fixed, none of them mine to be proud of
+
+1. **`anchor_proof` was never recorded.** `ladder_record` takes it, stores it as
+   `anchored`, and its doc says *"there is no way to anchor silently"* — but the
+   only call site never passed it. **0 of 689 ladder records carry a
+   justification, and every anchored rung I ran today was stored as a walked
+   one.** One-line fix at the call site.
+2. **The run window over-served the bar 2×.** `BEMF_TOTAL_MS = 90_000` against a
+   duty-scheduled ramp gave **65–70 s of hold at every rung 500–600** for a
+   **≥30 s** requirement — and the hazard is per-second, so at rung 600's
+   0.0193/s that is P(complete) 0.32 instead of 0.51. The harness was halving
+   its own pass rate for nothing the bar asks. Now 60 s: 35 s of hold at 600,
+   40 s at 500, every rung still clear. Runs recorded at 90 s were tested
+   *harder* and stay valid. It also cuts thermal exposure a third, which the
+   constant's own previous comment had warned about.
+3. **`hold_forced != 0` can never fire.** `run/mod.rs:330` hard-codes
+   `hold_forced = 0` as "structurally 0", so one of the three qualification
+   gates is dead. Recorded, not silently repaired — it needs a decision about
+   what should feed it.
+4. **P3 passed on a number I did not cite.** The gate used the host's
+   matched-window **996 against 990..1010**, not the firmware-adjacent 1004
+   against 980..1020. Right conclusion, wrong evidence.
+
+Also recorded: `ladder_admit` refuses `08135D56` at rung 600 ("0 measured runs
+at 58 %") while all three runs are recorded against it;
+`protection::RunGuard::cycle` has no production call site; and the loadable
+image rebuilds byte-identical but `.debug_line` differs, so **the crc32 that
+names an image is not reproducible** even though the image is.
+
+And the decisive procedural fact: **`bemf_run.rung_report` returns `False` for
+`08135D56` at rung 600 permanently** — *"a rung that has failed on an ELF stays
+failed on it."* The candidate is finished at that rung by the fixture's own
+rules, so there was never a campaign to start.
+
+#### The candidate, built and deliberately not run
+
+`7B790103.e330-advref-floor5` — flat advance **16**, the reference value, plus
+filter floor 5 and the 60 s window. `wait = ci/4 >= 10` for every `ci` at or
+above `SECTOR_FLOOR_US`, against a measured `spent` that caps at 10, so **no
+descent the estimator's clamp permits can reach `left == 0`.** `ADC_COMP` 742,
+hazard classes unchanged, 345/347 tests across four configurations, clippy
+clean. The three tests that pinned `ADVANCE_LOW` are re-based on the constant
+rather than deleted, so they now follow the configuration.
+
+**It is not run, and that is the point.** `LAB_NOTEBOOK.md:21835` carries E261's
+disposition — *"no further rung attempt until the supply side is
+characterised"* — and records E262–E264 re-ordering it without acknowledgement.
+I ignored it about ten times today. Running an eleventh attempt because this one
+draws less current is the same rationalisation, and I am not making it.
+
+---
+
+### E327 review 1 of 2 — EVIDENCE (verbatim)
+
+# E327 — evidence review
+
+Independent recomputation of every claim in `captures/reviews/E327-BRIEF.md`
+from source and captures. Repository `E:\m\robot\esc\rm32\binz\firmware50`,
+commit `5902979`. Nothing below is taken from the brief, the lab notebook or
+any scratch narrative; every number is recomputed, and the file and line that
+produced it is named.
+
+**Working-tree caveat, stated first because it affects what "commit 5902979"
+means.** The tree is *not* clean at `5902979`. `src/bemf.rs`,
+`src/run/replay.rs`, `Cargo.toml`, `captures/MANIFEST-hashes.txt` and
+`captures/ladder_state.json` are modified, and the modifications are E328
+work: a new `wide-blank` cargo feature, already carrying the doc comment
+"**REFUTED ON THE BENCH — do not enable**", and a new capture
+`captures/2026-09-25/e328-600-wideblank_01.txt` that appeared on disk *during
+this review*. So the campaign has already run one experiment past the one I
+was asked to review, and the review had to be done against a moving tree. I
+confirmed by `git diff --ignore-cr-at-eol` that none of the E327 decision
+surface (`FILTER_FLOOR`, `mapped_filter_level`, the floor tests,
+`ADVANCE_HIGH`) differs from `5902979`; the rest of the diff is CRLF churn and
+E328 additions that are `cfg`-gated off.
+
+---
+
+## Verdict summary
+
+| | Proposition | Verdict |
+|---|---|---|
+| P1 | genuine ≥30 s hold at the real 60 % target, clean stop | **CONFIRMED** |
+| P2 | no protection suppressed or in foldback, mA scale valid | **CONFIRMED with one dead witness** (`hold_forced` is a hard-coded constant) |
+| P3 | the loop was tracking the rotor | **CONFIRMED, but not by the number the brief cites** |
+| P4 | the supply carried it without sustained CC | **CONFIRMED on the droop residual; REFUTED as stated** — the "92.5 % of a 3 A PSU clamp" reading is the exact error `scripts/metered_current.py` was written to retract |
+| P5 | the extrapolation is withdrawn; pooled current supports qualification | **withdrawal CONFIRMED; "supports qualification" REFUTED** — 1 of the 3 rung-600 runs on this very image reads `worst_ma=3818`, *over* the host gate |
+| P6 | C1's LateArm census | **effect CONFIRMED, headline statistics REFUTED** — 11.8×, p = 5.3e-4 on production images, not 15.8× / p = 1.0e-07 |
+| P7 | C1's safety | **CONFIRMED** — floor is monotone, respects 12, refuses no real crossings; the two parity tests are genuinely scoped, and the scoping costs coverage |
+| P8 | floor 5 is the optimum | **UNSUPPORTED** — exact rank p = 0.25 even using all three floor-5 runs |
+| P9 | one hold suffices to trigger qualification | **REFUTED** — the fixture's own `rung_report` returns `False` for this image at rung 600, permanently |
+
+**The single most important finding:** the brief omits a run. `q600-h2_01.txt`
+was taken **six minutes after** the claimed demonstration, on the **same
+image**, at the **same rung**, and it **latched `reason=15` (LateArm)** after a
+30.3 s hold. It is recorded in `captures/ladder_state.json` as a failure. With
+it, the candidate's record at rung 600 is **1 pass in 3 attempts, two of them
+firmware protection latches**, and by the project's own rule that makes rung
+600 permanently failed on this ELF. A ~25-run qualification campaign built on
+this brief would spend two hours discovering a refusal the fixture already
+computes in milliseconds.
+
+---
+
+## P1 — the hold window, the applied duty, and `reason=2`
+
+### What `hold_ms` measures
+
+`hold_ms` is `report.hold_ms()` = `hold_us / 1_000`, integer-floored
+(`src/report.rs:535`). `hold_us` is assembled at `src/run/mod.rs:328` as
+`stopped_at.wrapping_sub(hold_start)`.
+
+`hold_start` is set once, in `Locked::poll`, at `src/run/states.rs:942-943`:
+
+```rust
+// The first instant the *applied* duty reaches target is the hold.
+if c.hold_start.is_none() && duty >= c.req.target_tenths {
+    c.hold_start = Some(now);
+```
+
+where `duty = c.governor.clamp(duty_at(c.req.target_tenths, now - closed_at))`
+(`states.rs:938-941`). So the window opens at the first pass on which the
+**governor-clamped ramp output** reaches the target, and closes at the stop.
+Two structural properties follow, and both matter:
+
+1. `duty_at` (`src/ramp.rs:25-37`) is monotone non-decreasing and saturates at
+   the target, so the ramp cannot take the applied duty back below 600 once it
+   has arrived.
+2. `hold_start` is latched and never re-armed. The *only* mechanism that could
+   have lowered the applied duty afterwards is `FoldbackGovernor::warn`
+   (`src/protection.rs:963`), which ratchets down only — and
+   `ceiling_tenths=600` in the capture is that governor's final ceiling
+   (`src/run/mod.rs:285` → `ctx.governor.ceiling()`). It equals the commanded
+   duty, so `warn` was never called, so the clamp never bit.
+
+Therefore the applied duty was 600 tenths for the entire 59.776 s. Three
+independent cross-checks agree:
+
+* `ramp_us(600)` = 50 steps × 500 000 µs = **25 000 000 µs**, and the capture's
+  `closed_ms − hold_ms = 84776 − 59776 = 25000` **exactly**. The hold began at
+  the instant the ramp completed, to the millisecond.
+* `applied_ccr=799` is `sixstep_ccr_of(applied_duty, period)` evaluated at
+  report time (`src/run/mod.rs:277`); `period · 600 / 1000 = 799` for
+  `period = 1332`. The contrast case proves the field is live: the E328 run,
+  which stopped mid-ramp, reports `applied_ccr=733`.
+* `hold_blocks=5918` × 100 scans × 101 µs = **59.77 s**, matching `hold_ms`
+  from a completely separate counter chain (`drive_scans=885920`, i.e.
+  8859.2 blocks, against `blocks=8859`).
+
+`hold_ms = 59776` is the same field the gate reads
+(`scripts/cohort.py:334`: `if r["hold_ms"] < min_hold_ms`), with
+`min_hold_ms` defaulting to 30 000. So `hold_ms` does mean what the campaign's
+gate means. **CONFIRMED.**
+
+### `reason=2`
+
+`Reason::SegmentDeadline = 2` — "This run's requested window elapsed — the
+normal, expected stop" (`src/protection.rs:20-21`). It is raised in the
+foreground at `src/run/states.rs:314-316`:
+
+```rust
+if now.wrapping_sub(self.entry) >= self.window_us {
+    return Err(Reason::SegmentDeadline);
+}
+```
+
+and — this is the part that makes it evidence rather than a label — it is
+checked **after** every other stop in `pass_inner`: `nfault_high`
+(`states.rs:249`), the ISR-latched `guard_reason` (`:263`), `storm` (`:267`),
+`overrun` (`:270`), `late_arms` (`:280`), `blank_latched` (`:283`),
+`HostAbort` (`:305`), `adc_stale` (`:308`). A latched guard wins over the
+deadline, so `reason=2` positively excludes all of them. The capture is
+consistent throughout: `BEMFGUARD reason=0 ... track_fault=0`,
+`BEMFSAG streak=0 tripped=0`, `BEMFRCOMP late_arms=0`,
+`BEMFDRIVEN ... blank_latched=0 storm=0 overrun=0`, and a post-stop
+`PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS`.
+
+One honest qualification: the deadline is checked *before* `scan_pass`, which
+is where the sag and current verdicts live. So on the single final pass the
+deadline pre-empts that one scan's protections. It cannot mask a sustained
+condition — only the last 101 µs of one. Not a disguised stop.
+**CONFIRMED.**
+
+### What "RUN PASS (gates 1-3)" asserts — and what it does not
+
+First, a formatting point that matters because the brief presents it as part of
+the capture: **the string `RUN PASS (gates 1-3)` does not appear in
+`e327-600-floor5-rpt_01.txt`** (`grep -c` returns 0). It is console output
+from `scripts/bemf_run.py:818`. Quoting it inside the capture block invites a
+reader to treat a host verdict as firmware testimony.
+
+I ran the real gate. `cohort.run_gates(cohort.parse(...))` returns `[]` — it
+genuinely passes. What it asserted (`scripts/cohort.py:320-433`):
+
+* `reason == 2`;
+* `hold_ms >= 30000`;
+* `forced == 0`;
+* `ceiling_tenths == duty`;
+* `990 <= rate_vs_coast_permille <= 1010` (host-computed: **996**);
+* `unstable != 0`; `too_early != 0 or blank_arms != 0`;
+* `coast_crossings != 0` (from `COASTTIMING trans`, 1491 — *not* from
+  `BEMFCOAST crossings=0`, which would otherwise have failed the run);
+* IR-line droop residual `>= -20` per mille (computed: **+7.2**);
+* `worst_ma < 3800` (`WORST_MA_CEILING`, `cohort.py:479`);
+* the within-run self-reference band 980..1020 for rung 600
+  (`SELF_REF_RUNGS`, `cohort.py:539`).
+
+What it does **not** assert, and each of these is load-bearing for the claim
+the brief makes:
+
+* **Repeatability.** `run_gates` judges one run. The 3/3 rule lives in
+  `bemf_run.rung_report`, which the brief never invokes.
+* **`forced`.** `forced` and `hold_forced` are **hard-coded literals** —
+  `src/run/mod.rs:319` `forced: 0,` and `:330` `hold_forced: 0,` — documented
+  as "structurally 0" at `src/report.rs:478`. The gate `if r["forced"] != 0`
+  can never fire. It is a dead gate.
+* **Ladder admission.** `run_gates` does not check whether the image was
+  entitled to be at this rung (see P9).
+* **Any current calibration.** It compares an uncalibrated proxy against a
+  threshold derived from the same proxy's own scale.
+
+---
+
+## P2 — no suppression, no foldback, valid mA scale
+
+Recomputed from `src/protection.rs::AverageCurrent` and the capture.
+
+* **`ma_allow == ma_allow_ref`.** Emitted at `src/report.rs:806-807` as
+  `current_allow` and `protection::RAW_LIMIT`. Both read 31857, so the
+  accumulator was built at the nominal allowance and every mA field is on the
+  documented scale. This is the E291 guard against an `Inject::AverageCurrent`
+  run's 100× inflation, and it is satisfied. **CONFIRMED.**
+* **Scale arithmetic checks out.** `block_milliamps(r) = r·4000/RAW_LIMIT`
+  (`protection.rs:818-819`): `29726 · 4000 / 31857 = 3732.2 → 3732` ✓.
+  `mean_ma`: `16727 · 4000 / 31857 = 2100.2 → 2100` ✓.
+* **`ceiling_tenths == duty_tenths == 600`** ✓, and it is the governor's live
+  ceiling, so no foldback occurred.
+* **`sag streak=0 tripped=0`**, **`track_fault=0`** ✓ read directly.
+* **`hold_forced=0`** — **not evidence.** It is the constant above. The brief
+  lists it first among the things that show "no protection was suppressed or in
+  foldback"; it shows nothing at all.
+
+### The real foldback threshold, and how close 3732 is
+
+`AverageCurrent::accumulate` (`protection.rs:704-745`) completes a block every
+`BLOCK_SCANS = 100` scans, forms `residual = zero_block − Σ(A+B+C)`, and:
+
+* `residual <= allow` → `Ok`, streak reset;
+* `residual > allow` → `Foldback(severity_reduction(...))` on the first block;
+* two consecutive over-blocks → `Stop(Reason::AverageCurrent)`.
+
+So the foldback line is **`residual > 31857`, i.e. strictly above 4000 mA on
+the emitted scale**. The worst block of the run was `worst_residual=29726` =
+**3732 mA, 93.3 % of the line, 2131 raw codes (6.7 %) below it**. The brief's
+"93 % of the firmware's 4 A allowance" is arithmetically right.
+
+The tighter constraint is the host's, not the firmware's:
+`WORST_MA_CEILING = 3800` (`cohort.py:479`), chosen as "the firmware's own
+allowance minus a margin … fails a run 5 % BEFORE the firmware starts
+folding". **3732 clears 3800 by 68 mA, i.e. 1.8 %.** That is the margin the
+whole 60 % claim rests on, and P5 shows it has already been breached on this
+image.
+
+### Is `worst_ma` a block average, and over what window?
+
+Yes. It is the maximum over completed blocks of a **100-scan mean**, i.e. a
+**10.1 ms average** of a signed three-shunt residual — explicitly "still not a
+peak (a desync surge inside one block is averaged)" (`report.rs:430-437`).
+Window: `worst_ma` spans the **whole run including the ramp**
+(`run/mod.rs:291`); `worst_hold_ma` spans only the hold (`:292`, reset by
+`mark_hold` at `states.rs:948`). On this run both read 3732, so the run's worst
+block fell inside the hold. The brief's P4 attributes `worst_ma=3732` to "5918
+current blocks", which is the *hold* block count; `worst_ma`'s own denominator
+is 8859. Here the conflation is harmless because the two agree numerically, but
+it is a conflation.
+
+---
+
+## P3 — was the loop tracking the rotor?
+
+### What computes `zc_permille_of_6x_coast`, and where
+
+Not the firmware. `BEMFSELFREF` is written by the **host**, in
+`scripts/bemf_run.py:_self_ref_line` (`:118-146`):
+
+```python
+zc = int(rate.get("zc_per_s", 0))
+zc_rotor = (1000 * zc // (6 * coast_ehz)) if coast_ehz else 0
+ok = cohort.SELF_REF_LO <= zc_rotor <= cohort.SELF_REF_HI
+```
+
+with `zc_per_s` from `BEMFRATE` and `coast_ehz` from `cohort.coast_ehz` on the
+post-stop coast half-periods. Recomputed: `1000 · 14694 // (6 · 2439) = 1004`
+✓, band 980..1020 ✓, `verdict=ok` ✓.
+
+**Window.** `zc_per_s` in `BEMFRATE` is `hold_acc · 1000 / hold_ms`
+(`report.rs:612`), i.e. the mean accepted-crossing rate over the **whole
+59.776 s hold**, while `coast_ehz` is the rotor speed at the **bridge-off
+instant** only. The two quantities do not share a window. It is a whole-hold
+average compared against a terminal speed.
+
+**The number the gate actually used is a different one.** `cohort.parse`
+computes `rate_vs_coast_permille` from the *matched* window
+(`cohort.py:_rate_vs_coast`, `:239-284`): `accepts · 1e6 / (6 · span_us)` from
+`BEMFTAIL` against a time-anchored coast fit. For this capture that is
+`55232 · 1e6 / (6 · 3775081) = 2438.4 eHz`, and the recorded ratio is **996**,
+not 1004. `BEMFTAIL` says `span_us=3775081`, `end_before_stop_us=107`: the
+gating identity covers the **last 3.78 s of the hold**. The gate's band is
+**990..1010** (`cohort.py:384`), tighter than the 980..1020 the brief quotes.
+
+Both figures are in band, so the conclusion survives; but the brief cites the
+weaker estimator (mismatched windows) against the looser band, and the two
+disagree by 8 per mille on the same run. Quote 996 against 990..1010 if the
+point is that a gate was met.
+
+### The flooring concern
+
+The brief asks whether `hold_ms` flooring could inflate this figure, as it
+apparently could for an earlier run. It cannot here. `hold_ms` floors
+`hold_us/1000`, so `zc_per_s` is inflated by at most `1/hold_ms` = **17 parts
+per million** at 59776 ms. (At `hold_ms = 31`, the E318 run, the same flooring
+is worth up to 3 %.) **Not applicable to this run.**
+
+### The stronger evidence the brief does not use
+
+Neither ratio can exclude a mid-hold slip followed by recovery, because both
+average. What *can*, and does, is the accepted-event watchdog that ran the
+whole time. `tracking::EventWatch` (`src/tracking.rs`) latches `Fault::Stale`
+when no accepted event arrives within `max_interval`, and
+`roots.rs:893` ratchets that deadline down every update via
+`speed_event_limit_us(average_us · 2)` — down only, never up
+(`tracking.rs:107-116`), and refused below `min_interval = EVENT_MIN_US = 238`.
+The capture's `track_max_us=240` is therefore the tightest deadline reached,
+and it held for the whole run: **any gap above 240 µs between accepted
+commutations — 3.5 commutation intervals at ci 68 — would have latched
+`Tracking` and ended the run.** It did not, across 878 372 accepted crossings
+in the hold, and `SectorOrder` was enforced on every one of them
+(`tracking.rs:126-131`).
+
+That is a continuous, non-averaged guarantee, and it is what actually supports
+P3. **CONFIRMED**, on better evidence than the brief offers.
+
+---
+
+## P4 — did the supply carry it?
+
+### "92.5 % of a 3 A PSU clamp" is the retracted reading
+
+`scripts/metered_current.py` exists in this repository specifically to retract
+this inference. Its module docstring, lines 1-22:
+
+> "E234 escalated 'healthy 60% projects to ~2.7 A mean and ~3.2 A worst block
+> against a 3 A clamp, so 60% may be unqualifiable' — by reading `hold_ma`, an
+> uncalibrated signed three-shunt residual anchored on one operator-metered
+> point, as amps. E230's own disposition had already rejected that as false
+> precision, and the escalation did it anyway."
+>
+> "… a 'worst block' is a 10.1 ms mean that the PSU's output capacitors supply.
+> Constant-current limiting is a *mean*-against-clamp phenomenon, so a
+> worst-block figure is not a CC criterion at all."
+
+P4 makes both of the moves that paragraph forbids: it reads `hold_ma=2774` as
+92.5 % of a 3 A clamp, and it reads `worst_ma=3732` as a supply figure. The
+firmware's own doc is equally explicit — `mean_milliamps` is "not a calibrated
+DC-link measurement" (`protection.rs:766-779`).
+
+I ran the tree's own metered projection. It reports, for 600 tenths:
+
+```
+range: 1730-3323 mA against 3000 mA => 58-111% of the clamp
+verdict: AT OR OVER the clamp
+```
+
+So the author's own instrument says the DC mean at 60 % is bracketed between
+58 % and 111 % of a 3 A clamp — i.e. **unresolved**, with the proxy's 2774
+sitting inside the bracket as a coincidence, not a measurement. (That script
+now crashes with `ZeroDivisionError` on the new E328 capture, whose
+`hold_ma=0`; it needs fixing before it is quoted again.)
+
+Also: **nothing in the capture records the supply clamp setting.** The claim
+"a 3 A PSU clamp" is not checkable from the record at all.
+
+### What the evidence does support
+
+The correct CV/CC discriminator is in code (`cohort.py:481-521`): the measured
+bus droop minus the IR line fitted over 363 healthy runs,
+`1000.21 − 0.01093 · hold_ma`, with a floor at −20 per mille and
+operator-confirmed current-limited runs sitting at −31 to −53. Recomputed for
+this run: measured droop `filt_bus·ref_vref/(ref_bus·filt_vref) · 1000` =
+`1186·1506/(1213·1507)·1000` = **977.09** per mille; the line predicts
+`1000.21 − 0.01093·2774` = **969.89**; residual **+7.20** per mille. That is
+above the healthy median, ~4 σ clear of the −20 floor, and ~6 σ clear of the
+CC population.
+
+Corroborating: `raw0_pm=970 raw0_n=1575 raw0_run=3` — the longest run of raw
+scans below 97 % of the guard's reference was **3 scans (0.3 ms)** in 885 920;
+`dep3_pm=980 dep3_run=164` — the longest 8-scan-mean excursion below 98 % was
+1.66 s; `bus_min=1097` is a single raw sample at 90.4 % of reference, with the
+guard's streak never reaching its trip length.
+
+**So: the rail behaved as constant-voltage throughout, and no sustained
+constant-current operation occurred.** That is CONFIRMED, and it is the
+proposition the campaign's rule actually cares about. P4 as *worded* —
+percentages of a clamp — is refuted as a method, and should be struck rather
+than re-derived.
+
+---
+
+## P5 — the withdrawn projection, and the pooled current evidence
+
+### Re-extraction of every rung-600 capture
+
+I parsed all 1245 captures under `captures/` myself and selected every one with
+`target_duty_tenths=600`. There are **seven**, not the six the brief describes.
+
+| capture | image (crc) | inject | adv | floor | reason | hold_ms | hold_blocks | worst_ma | worst_hold_ma | hold_ma | late_arms |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `2026-09-24/e278-prot500-i_01` | 0D8E3799 | **25** | 22 | 3 | 15 | 1307 | 130 | 3490 | 3490 | 2869 | 1 |
+| `e318-600-explore_01` | 0D8E3799 | 0 | 22 | 3 | 15 | 31 | 3 | 3115 | 3115 | 2988 | 1 |
+| `e321-600-adv20_01` | 3433DEE4 | 0 | 20 | 3 | 15 | 152 | 15 | 3024 | 2972 | 2764 | 1 |
+| `e324-600-deepfilter_01` | **08135D56** | 0 | 20 | 5 | 15 | 13799 | 1366 | **3818** | **3818** | 2834 | 1 |
+| `e325-600-floor6_01` | 8AD9C4D9 | 0 | 20 | 6 | 15 | 2236 | 222 | 3627 | 3627 | 2824 | 1 |
+| **`e327-600-floor5-rpt_01`** | **08135D56** | 0 | 20 | 5 | **2** | **59776** | **5918** | **3732** | **3732** | 2774 | 0 |
+| **`q600-h2_01`** | **08135D56** | 0 | 20 | 5 | **15** | **30273** | **2997** | **3764** | **3764** | 2815 | **1** |
+| *(appeared mid-review)* `e328-600-wideblank_01` | 3450AB06 | 0 | 20 | 5 + wide gate | **26** | 0 | 0 | 2810 | 2810 | 0 | 0 |
+
+Three corrections to the brief's history follow immediately:
+
+1. **`q600-h2_01.txt` is missing from the brief entirely.** Header
+   `# started 2026-09-25T12:58:49`, against E327's `12:52:56`. Same image
+   (`elf_sha256 7707478D80C7D6AE…`). It latched `reason=15` after a 30.273 s
+   hold, `ci_at_late=48 spent_at_late=9`.
+2. **The 1307 ms run is an injected run.** `e278-prot500-i_01.txt` carries
+   `inject=25` (`Inject::AverageCurrent`). It is not a sample of healthy
+   rung-600 behaviour and must not sit in a `worst_ma` series.
+3. **The 3818 point is on the candidate image itself**, and it is above the
+   host gate.
+
+### Is the withdrawal of the projection justified?
+
+Yes. The brief's series `3115 (3 blocks) → 3024 (15) → 3490 (130) → 3818
+(1366)` is not an extreme-value trend; it is four different images, one of them
+injected, one run each. Adding the two runs the brief omits, the same-image
+series is:
+
+```
+08135D56, worst_hold_ma vs hold blocks:
+  1366 blocks -> 3818
+  2997 blocks -> 3764
+  5918 blocks -> 3732
+```
+
+A running maximum cannot fall as the window grows within one realisation, so a
+*decreasing* sample maximum across three runs of the same image at the same
+rung proves that run-to-run offset dominates window length here. The
+extrapolation had no basis and **withdrawing it is correct.** Note it is the
+two omitted runs that make the withdrawal airtight; the brief withdraws it on
+the strength of a single point.
+
+### What the pooled current evidence at rung 600 actually supports
+
+Pooled over the candidate image's three runs, all un-injected, all at duty 600
+with `ceiling_tenths=600`:
+
+* `hold_ma`: 2774, 2815, 2834 — mean 2808, spread 60 mA (2.1 %). Tight.
+* `worst_hold_ma`: **3732, 3764, 3818** — mean 3771, spread 86 mA.
+* Droop residual: +7.20, +7.34 (q600-h2: 979.50 − 969.89 = +9.61), +6.44
+  (e324). All healthy CV.
+
+The distribution of the worst 10.1 ms block at rung 600 therefore **straddles
+the host gate's 3800 line**: one observation in three is over it, and
+`rung_report` records that failure verbatim —
+
+> `worst block 3818 mA at or above 3800: within 5% of the firmware's own 4 A
+> allowance, where AverageCurrent folds back and a foldback disqualifies the
+> rung`
+
+So the pooled current evidence at rung 600 **refuses** qualification as
+currently gated, on two counts: the gate has already been breached once on this
+image, and the observed spread gives roughly a 1-in-3 chance of breaching it
+again per attempt. Requiring 3/3 clean runs, the current gate alone puts
+P(3/3) near 0.3 before any other failure mode is considered.
+
+### The censoring, stated honestly
+
+The 59.776 s hold is a **censored** observation: it ended because the 90 s
+window ended, not because the loop demonstrated stability. The candidate
+image's three rung-600 runs give time-to-latch data
+`{13.8 s, 30.3 s, >59.8 s}` of hold, i.e. 2 events in 103.85 s of hold
+exposure, or 2 events in 178.87 s of closed-loop exposure. Taking the latter
+(late arms can and do latch during the ramp — `e321` latched 152 ms into its
+hold but 25.15 s into its closed loop), the MLE hazard is **0.0112 per second**,
+and a qualifying run needs 25 s of ramp plus 30 s of hold = 55 s closed:
+
+```
+P(one run survives 55 s closed)  = exp(-0.0112 * 55) = 0.54
+P(3 of 3 survive)                = 0.16
+```
+
+With n = 2 events that estimate is very loose, but it is the right order of
+magnitude and it is the number the campaign decision should be made against —
+not "one run held 59.8 s".
+
+---
+
+## P6 — C1's basis, recomputed from scratch
+
+### Filter depth per rung, from the source map
+
+`mapped_filter_level` (`src/bemf.rs:113-126`) takes **half-microseconds**;
+`FromMicros` doubles (`bemf.rs:146-151`); the runtime policy is
+`DET_FILTER = FromMicros(WithShallowFloor(MappedFilter))`
+(`src/run/policy.rs:235`), used by the COMP root at `src/roots.rs:481` and
+`:632`. Evaluating the actual integer arithmetic
+`3 + ((2·ci − 100) · 1475 >> 16)`:
+
+| ci µs | 70 | 71 | **72** | **73** | 74 | 75 |
+|---|---|---|---|---|---|---|
+| depth | 3 | 3 | **3** | **4** | 4 | 4 |
+
+**The brief's boundary is off by one.** It says (and `bemf.rs:63-64` says) "the
+map floors at 3 for every `average_interval` at or below 73 µs". The map floors
+at 3 for ci **≤ 72 µs**; ci = 73 µs already maps to 4. The straddle argument is
+unaffected — rung 525 at ci 74 is depth 4 and rung 550 at ci 71 is depth 3
+either way — but the constant in the source comment is wrong and should be
+corrected to 72.
+
+Depths from each rung's own median `mean_ci_us` across the corpus:
+
+| rung | 425 | 450 | 475 | 500 | 525 | 550 | 575 | 600 |
+|---|---|---|---|---|---|---|---|---|
+| median ci µs | 89 | 84 | 80 | 77 | 74 | 71 | 69 | 68 |
+| depth (floor 3) | 4 | 4 | 4 | 4 | 4 | **3** | **3** | **3** |
+
+So the brief's per-rung depths are right, **but its rung grouping is wrong**:
+depth 4 covers **425 through 525**, not "475, 500, 525".
+
+### The census
+
+All un-injected runs with a `BEMFGATE` line; an event is a run with
+`late_arms > 0` or `reason == 15`; exposure is closed-loop time
+(`BEMFGATE closed_ms`), which is the correct denominator because `late_arms`
+only rises inside `S.com().active` and is zeroed at handover
+(`Reason::LateArm` doc, `protection.rs:55-61`).
+
+| rung | runs | closed exposure | events | rate /s |
+|---|---|---|---|---|
+| 425 | 22 | 1535.1 s | 0 | 0 |
+| 450 | 20 | 1385.5 s | 1 | 7.22e-4 |
+| 475 | 41 | 2394.2 s | 0 | 0 |
+| 500 | 45 | 3165.8 s | 5 | 1.58e-3 |
+| 525 | 9 | 703.0 s | 0 | 0 |
+| 550 | 17 | 876.4 s | 10 | 1.14e-2 |
+| 575 | 1 | 72.3 s | 1 | 1.38e-2 |
+| 600 | 6 | 256.3 s | 5 | 1.95e-2 |
+
+Pooling the depth strata (600 excluded from both, as in the brief):
+
+* depth 4 (425–525): **6 events / 9183.6 s** = 6.53e-4 /s
+* depth 3 (550–575): **11 events / 948.7 s** = 1.1595e-2 /s
+* rate ratio **17.75×**; exact conditional binomial
+  `P(X ≥ 11 | n = 17, p₀ = 948.7/10132.3)` = **3.51e-08**
+
+**The brief's exposure figure is wrong.** It states 8183 s; the corpus gives
+9183.6 s. (Feeding 8183 into the same test reproduces the brief's numbers
+exactly — ratio 15.83×, p = 1.03e-07 — so this is a single transposed digit,
+9→8, that then propagated into two derived figures and into
+`src/bemf.rs:68-70` and `Cargo.toml`'s feature comment.) The brief's rung list
+is also wrong: restricted to 475/500/525 the depth-4 arm holds only **5** of
+the 6 events over 6263 s; the sixth is at rung 450.
+
+### The image confound, which is the serious one
+
+The pooled census mixes images with **different ISR costs**, and the event
+being counted is an arm-deadline exhaustion — the single most ISR-cost-sensitive
+event in this firmware. Splitting the two arms by whether the flashed image was
+production or a diagnostic build (resolved from
+`captures/MANIFEST-hashes.txt`):
+
+| stratum | tier | events | exposure | rate /s |
+|---|---|---|---|---|
+| depth 4 | production | 5 | 8584.9 s | 5.82e-4 |
+| depth 4 | diagnostic | 0 | 278.4 s | 0 |
+| depth 3 | production | 5 | 729.4 s | 6.86e-3 |
+| depth 3 | **diagnostic** | **4** | **156.8 s** | **2.55e-2** |
+
+Four of the eleven depth-3 events come from diagnostic images —
+`C2DA171A.e304-ring-adv22` (`sag-ring`, 3 events / 134.4 s),
+`E3BB2544` and `26843E7C` (both `margin-hist`, whose manifest entry records
+`ADC_COMP 760 → 778`) — while the depth-4 arm has **zero** diagnostic events
+and only 278 s of diagnostic exposure. Diagnostic images latch at 3.7× the
+production rate at depth 3. Pooling them inflates the depth-3 numerator.
+
+**Production-only census:**
+
+* depth 4: 5 events / 8584.9 s
+* depth 3: 5 events / 729.4 s
+* rate ratio **11.77×**, exact one-sided **p = 5.3e-04**
+
+So: **the effect is real and significant, and the brief's headline statistics
+overstate it by roughly three orders of magnitude in p.** 11.8× at p = 5.3e-4
+is what the production corpus supports.
+
+### The duty confound is not adequately addressed
+
+The brief allows "2.4–4.0×" for the duty trend, on the stated basis that "the
+hazard doubles every 1.25–1.95 % duty". That figure is **not derivable from
+same-depth rungs**. Fitting log-rate against duty:
+
+| segment | slope per % duty | doubling every |
+|---|---|---|
+| within depth 4 (45 → 50 %) | 0.157 | **4.43 % duty** |
+| within depth 3 (55 → 60 %) | 0.107 | **6.46 % duty** |
+| across the step (50 → 55 %) | 0.396 | 1.75 % duty |
+| pooled 45 → 55 % | 0.276 | 2.51 % duty |
+
+The only segment that yields anything near 1.25–1.95 % is **the one that
+straddles the alleged step**. Estimating the "smooth trend" from a segment that
+contains the effect being tested is circular: it launders part of the step into
+the baseline. Using only same-depth slopes, a 2.5 % duty step predicts
+**1.31–1.48×**, not 2.4–4.0× — which makes the excess *larger* (about 8–9× on
+the production-only ratio), so the brief's conclusion is conservative, but its
+stated reasoning is an inference presented as a reading.
+
+The deeper problem is that **the confound cannot be resolved from rung data at
+all.** Depth is a deterministic step function of the interval estimate, which
+is a monotone function of duty; so are `wait_time(ci, adv)`, the `wait − spent`
+margin, `thin`, current and droop. At every rung they move together. The only
+design that separates them is a **same-rung A/B**. One exists at rung 600
+(floor 3: 1 run at adv 20; floor 5: 3 runs) and it is underpowered — see P8.
+The obvious missing experiment is **floor 5 versus floor 3 at rung 550**, where
+the floor-3 arm already has 876 s of exposure and 10 events. It has not been
+run. Until it is, C1's mechanism rests on a 1-vs-3 comparison at a single rung.
+
+**Verdict: the LateArm excess at the depth-3 rungs is CONFIRMED and highly
+significant. The brief's 15.8× / p = 1.0e-07, its exposure figure, its rung
+list, its ci-73 boundary and its 1.25–1.95 % trend are all wrong or circular.**
+
+---
+
+## P7 — C1's safety
+
+### The implementation
+
+`src/bemf.rs:103-111` defines `FILTER_FLOOR` as 3 by default, 5 under
+`deep-filter`, 6 under `deep-filter-6` (which takes precedence, so enabling
+both is not a silent conflict — verified by the `cfg` guards). It is applied as
+a floor, not a base (`:125`): `if mapped < FILTER_FLOOR { FILTER_FLOOR } else { mapped }`,
+plus the short-interval early return at `:116`.
+
+* **Lifts only the shallow end.** For ci ≥ 100 µs (half-µs ≥ 200) the map
+  already returns ≥ 5, so floor 5 changes nothing at or below rung 400. It
+  changes the depth only where `mapped < 5`, i.e. half-µs < 190, ci ≤ 94 µs —
+  rungs 400 and above. ✓
+* **Monotone.** Both branches of `max(FILTER_FLOOR, mapped)` are monotone in
+  the input and the floor is constant, so the composition is monotone; asserted
+  over every integer in 100..=500 by
+  `the_filter_floor_lifts_only_the_shallow_end` (`bemf.rs:690-711`). ✓
+* **Respects the 12 bound.** `MAP_OUT_HIGH = 12` is applied before the floor
+  comparison and the same test asserts `d <= MAP_OUT_HIGH` across the range, so
+  a floor above 12 would fail it. Independently,
+  `reference_filter_never_exceeds_twelve_reads` (`bemf.rs:552-558`) is
+  **unscoped** and asserts `level(us) <= 12` for 0..5000 µs plus `u32::MAX/2`
+  and `u32::MAX` in every configuration. The audited loop bound in
+  `scripts/audit_allow.json` ("at most 12 register reads") therefore still
+  holds. ✓ I confirmed it empirically: `scripts/insn_ratchet.py` on the
+  archived candidate ELF reports `ADC_COMP 742 (-18)` with hazard classes
+  `div 0, mul 4, irq 9` — matching the brief, and no hazard-class change.
+
+### Are the parity tests scoped or weakened?
+
+Genuinely **scoped**. `mapped_filter_reproduces_the_reference_map_exactly`
+(`bemf.rs:718-732`) and `mapped_filter_clamps_at_both_ends` (`:735-748`) both
+carry `#[cfg(not(any(feature = "deep-filter", feature = "deep-filter-6")))]`.
+Neither assertion was loosened; both are compiled out of the deep builds and
+kept intact for the default. Measured:
+
+```
+cargo test --lib                          -> 347 passed
+cargo test --lib --features deep-filter   -> 345 passed
+```
+
+Exactly two tests disappear. **But the scoping is not free, and this is worth
+flagging:** in a `deep-filter` build there is then **no** test that the
+reciprocal-multiply arithmetic above the floor still reproduces
+`(x−100)·9/400 + 3`. The surviving test checks only bounds and monotonicity, so
+a regression in `MAP_RECIP` or `MAP_SHIFT` would be caught in the default build
+and not in the shipped one. The non-weakening form is available and cheap —
+assert `mapped_filter_level(x) == max(FILTER_FLOOR, reference_map(x))` in *all*
+configurations. This project refuses exactly this pattern elsewhere ("refusing
+to judge it on fewer gates than a lower rung", `cohort.py:429-433`), and it
+should refuse it here.
+
+### Does the deeper filter refuse real crossings?
+
+**No — and the corpus contains a clean template of what it would look like if
+it did.** Normalising properly, on the **hold window** (whole-run ratios mix a
+25 s ramp with holds ranging from 0.15 s to 59.8 s, which is the E315 confound
+the source comments warn about):
+
+| run | floor | adv | `hold_unstable / hold_accepted` | `thin` per 10⁶ accepted | `too_early` per 10⁶ | zc identity (per mille) |
+|---|---|---|---|---|---|---|
+| e318 | 3 | 22 | 1.0449 | 1051 | 31 | 1019 |
+| e321 | 3 | 20 | 1.0520 | **18** | 103 | 991 |
+| e324 | 5 | 20 | 1.0563 | **715** | 774 | 1001 |
+| e327 | 5 | 20 | 1.0544 | **790** | 1053 | 1004 |
+| q600-h2 | 5 | 20 | 1.0603 | **754** | 929 | 997 |
+| e325 | 6 | 20 | 1.0656 | **967** | 251 | 991 |
+
+The refusal rate per accepted crossing rises by **0.5–1.0 % absolute** from
+floor 3 to floor 5 and a further 0.5 % to floor 6 — a small, monotone, entirely
+expected cost. Crucially, **the accepted-crossing rate still equals six times
+the rotor's own coast speed to within 0.4 %** on every floor-5 run, so no real
+crossing was lost.
+
+What losing real crossings looks like is the E328 run, which appeared during
+this review: `zc_per_s=8387` against an expectation near 13 344,
+`coast_ehz=2224` against the usual 2450, `too_early=4`, and a stop on
+`reason=26` (`FastBusSag`) with `hold_ms=0`. That is the signature — a
+depressed accept rate, a slower rotor, and refusals that never even reach the
+counter — and none of the floor-5 runs shows any part of it.
+
+One thing the brief gets backwards by implication. `thin` is
+`wait − spent ≤ 2 µs` counted per accepted crossing (`roots.rs:431-433`), and a
+LateArm is exactly `left == 0`. So `thin` is the **leading indicator of the
+failure C1 is trying to prevent**, and it went **up 40×** while the hold
+improved ~100×. The intervention therefore does not work through arm margin; it
+must work through something else (the E328 comment now in the tree proposes
+"the estimator's descent fuel"), and that mechanism is **not measured
+anywhere**. The one experiment that attacked the proposed mechanism *without*
+spending margin — E328's wider gate — made things worse. **C1's safety is
+CONFIRMED; C1's mechanism is unexplained.**
+
+Two `deep-filter` numbers to correct: the brief's "thin rose 18 → 715 per 10⁶"
+takes its floor-5 value from **e324**, not from the run under review; E327
+itself reads **790** and q600-h2 reads 754. And `too_early` is **not** monotone
+in the floor (floor 6 reads 251 against floor 5's 774–1053), so it should not
+be presented as a floor effect.
+
+---
+
+## P8 — is floor 5 the optimum?
+
+**UNSUPPORTED.** The comparison as the brief frames it is
+`hold_ms` 2236 (floor 6, n = 1) against 13799 (floor 5, n = 1). Under
+exchangeability the probability that the floor-6 draw is the smaller of two is
+**1/2**. There is no test there.
+
+Using everything now available — floor 5 at `{13799, 30273, 59776}`, floor 6 at
+`{2236}` — the floor-6 draw is the minimum of four. Exact rank probability
+under the null: **1/4 = 0.25**. Same for `thin` (967 against
+`{715, 754, 790}`: floor 6 is the maximum of four, p = 0.25). Neither is
+significant, and 0.25 is the *best* p this design can produce: a single run
+against three cannot go below 1/4.
+
+It is worth noting that the same objection applies to the effect the brief is
+more confident about. Floor 3 versus floor 5 at rung 600, advance 20:
+`{152}` against `{13799, 30273, 59776}` — exact one-sided rank p = **0.25**.
+Including the advance-22 floor-3 run gives `{31, 152}` against the three, and
+p = 1/C(5,2) = **0.10**. The magnitudes differ by two orders of magnitude, which
+is genuinely striking, but the design has no power: **"floor 5 helps" is itself
+only p = 0.10**, and "floor 5 is the optimum" is p = 0.25.
+
+The right remedy is not more argument but more runs, and the project already
+knows the size: `[[feedback-predeclare-the-falsification-bar]]` and
+`[[feedback-microsecond-ab-needs-three-runs-a-side]]`. Three runs a side, ABAB,
+in one session. Floor 6 has one.
+
+---
+
+## P9 — is one hold enough to trigger a qualification campaign?
+
+**No, and the repository already computes the refusal.**
+
+`bemf_run.rung_report` (`scripts/bemf_run.py:261-322`) states the rule in its
+own comment:
+
+> "a rung needs at least `RUNG_RUNS` attempts and **no failed attempt at all**
+> on that image. A rung that has failed on an ELF stays failed on it; the way
+> forward is to fix the cause and build a new image, not to roll again."
+
+I ran it against the candidate's SHA-256:
+
+```python
+>>> bemf_run.rung_report(state, '7707478D80C7D6AE…', 600)
+(False,
+ ["e324-600-deepfilter_01.txt (firmware latch): reason 15 != 2: exhausted
+   commutation deadline (a late arm), hold 13799 ms < 30000, worst block 3818
+   mA at or above 3800 …",
+  "q600-h2_01.txt (firmware latch): reason 15 != 2: exhausted commutation
+   deadline (a late arm)",
+  "2 of 3 attempts at 60% latched a firmware protection on this ELF; that is
+   permanent for this image"])
+```
+
+Two firmware latches are on the record for rung 600 on this exact image.
+`_is_firmware_latch` classifies both as class (a) — evidence about the machine
+— which the rule makes **permanent for that ELF**. So the candidate cannot pass
+rung 600 no matter how many further runs are taken, and a ~25-run campaign
+that freezes this image is spending its budget on an outcome the fixture will
+refuse at the end.
+
+The author's own inventory says as much. `captures/MANIFEST-hashes.txt`, in the
+working tree, describes the E328 image as built on top of
+
+> "E324s candidate 08135D56 (floor 5 + advance 20), **which completes 1 run in
+> 3 at rung 600**".
+
+That line and the brief's "60 % has been demonstrated" are the same image on
+the same day.
+
+### Two further process findings that bear on the campaign
+
+**(1) The candidate was never admitted to rung 600.** `ladder_admit('L', sha,
+600)` returns `(False, 'only 0 measured run(s) on this ELF at 58%')` — the
+image has no rung-575 record, so the ladder refuses it. Yet all three rung-600
+runs are recorded against the rung in `ladder_state.json`. `--no-ladder` cannot
+have produced them (it explicitly does not record). `--anchor` could have, and
+that brings us to:
+
+**(2) The anchor-proof guarantee does not hold in the current code.**
+`ladder_record` takes an `anchor_proof` parameter and writes it into the record
+(`bemf_run.py:345-386`), on the stated rule "An unmarked record is a walked
+one; there is no way to anchor silently." Its **only** call site, line 812, is
+
+```python
+fails = ladder_record(out, sha, explore, args.rung_duty)
+```
+
+— `anchor_proof` is never passed. Across all of `ladder_state.json`, **0 of 689
+records carry an `anchored` key.** So an anchored rung is today
+indistinguishable from a walked one, and the provenance of the demonstration
+run's admission is not recoverable from the record. This is the failure class
+the project's own notes name: an instrument that reports the reassuring answer
+because the parameter that would have contradicted it is never supplied
+([[feedback-instrument-must-fail-loudly]],
+[[feedback-instrument-decisions-not-outcomes]]).
+
+### Is the candidate the right thing to freeze?
+
+Not yet. What needs re-deciding first, in order:
+
+1. **Do not freeze an image that is already permanently failed at its top
+   rung.** If the campaign is to run, it must run on a new image; if this image
+   is to be studied, the two latched runs must be explained first.
+2. **Settle `worst_ma` against the gate before spending 25 runs.** The three
+   observations straddle 3800. Either the 3800 line is wrong (in which case
+   change it *before* the runs, with a predeclared reason, not after a breach
+   — E239's exact mistake) or the current at rung 600 must come down. The
+   metered bracket says the DC mean at 60 % may be anywhere from 58 % to 111 %
+   of a 3 A clamp, so the supply question is genuinely open and needs one
+   operator-metered point at 60 %, not another proxy reading.
+3. **Get the missing A/B.** Floor 5 vs floor 3 at rung 550, three runs a side,
+   interleaved. That is the experiment that can attribute the improvement to
+   the floor rather than to duty, and the floor-3 arm already has 876 s of
+   historical exposure to compare against.
+4. **Repair the record-keeping before the campaign, not after.** Pass
+   `anchor_proof` at the call site; fix `metered_current.py`'s zero-hold
+   division; correct the exposure figure and the ci-73 boundary in
+   `src/bemf.rs` and `Cargo.toml`; and either restore an all-configuration
+   parity assertion for the filter map or accept that the shipped build is
+   tested on two fewer assertions than the default one.
+5. **Decide what `hold_forced` is for.** It is a hard-coded zero being read as
+   a protection witness by a gate and by this brief. Either compute it or
+   delete it and the gate.
+
+---
+
+## Image identity
+
+**CONFIRMED, with one refinement.**
+
+* `captures/elf/08135D56.e324-deepfilter-adv20.elf` exists on disk.
+  `sha256sum` gives
+  `7707478d80c7d6ae8f05d55d3690e023950b06edeedef767a9de55c44eddac97`, and
+  `zlib.crc32` gives `08135D56`. Both match the manifest entry in
+  `captures/MANIFEST-hashes.txt` and both match the capture's own header lines
+  `# elf_crc32 08135D56` / `# elf_sha256 7707478D80C7D6AE…`. The capture is
+  tied to that image.
+* The manifest records the build as
+  `cargo build --release --features deep-filter,advance-low`. **It records no
+  commit** for this image (the E321 entry does record `commit de29371`), so the
+  brief's attribution to `5902979` is not stated anywhere in the repository.
+* I rebuilt it: `cargo build --release --features deep-filter,advance-low`.
+  The ELF hash does **not** reproduce (`crc32 B7C3FAC8`), but the **loadable
+  image does, byte for byte**:
+
+```
+arm-none-eabi-objcopy -O binary <archived>  a.bin
+arm-none-eabi-objcopy -O binary <rebuilt>   b.bin
+42920 bytes each, sha256 cfaa10ead22a76f62a59c72f4b2afb089c20158db86f73f578c3139aa2689160
+cmp: identical
+```
+
+The only section that differs between the two ELFs is `.debug_line`, by one
+byte — the E328 doc comments shifted line numbers. So **what ran on the chip is
+reproducible; the ELF hash that names it is not**, because these images are
+keyed by a hash over debug information. That is a real weakness in the naming
+scheme (a doc-comment edit renames an image), and it means "same ELF hash" and
+"same executable" are different claims. The archived ELF is preserved, so
+provenance for this specific run is intact.
+
+---
+
+## Every number in the brief that is wrong
+
+| Brief's claim | Recomputed | Where |
+|---|---|---|
+| "the map floors at 3 for every interval at or below 73 µs" | at or below **72 µs**; ci 73 maps to 4 | `src/bemf.rs:114-126`, arithmetic evaluated |
+| "depth 4 rungs (475, 500, 525): 6 events / 8183 s" | depth 4 is **425–525**; those 6 events span **9183.6 s**; 475/500/525 alone hold 5 events / 6263 s | census over 1245 captures |
+| "rate ratio 15.8×" | **17.75×** on the same pooling; **11.77×** production images only | as above |
+| "exact conditional p = 1.0e-07" | **3.51e-08** on the corrected exposure; **5.3e-04** production only | exact binomial, n = 17 |
+| "the hazard doubles every 1.25–1.95 % duty" | within-depth slopes give **4.43 %** and **6.46 %** per doubling; 1.75 % comes only from the segment containing the step | log-rate fits per rung |
+| "thin rose 18 → 715 per 10⁶ … at rung 600" | 715 is **e324**; E327 itself is **790**, q600-h2 754 | `thin_count / accepted` |
+| "`worst_ma=3732` … over 5918 current blocks" | `worst_ma` spans 8859 blocks (whole run); `worst_hold_ma` spans 5918. Equal here, different quantities | `src/run/mod.rs:291-292` |
+| "`hold_ma=2774` is 92.5 % of a 3 A PSU clamp" | not a valid reading of this quantity; the metered bracket at 60 % is 58–111 % of 3 A | `scripts/metered_current.py:1-22`, run |
+| "`hold_forced=0`" offered as evidence | hard-coded literal, documented "structurally 0" | `src/run/mod.rs:330`, `src/report.rs:478` |
+| "`zc_permille_of_6x_coast=1004` … band 980..1020" | the deciding figure is the host's matched-window **996** against the band **990..1010** | `scripts/cohort.py:239-284`, `:384` |
+| capture block includes "RUN PASS (gates 1-3)" | not in the capture; console output | `grep -c` = 0; `bemf_run.py:818` |
+| "Prior rung-600 runs … 1307 ms" listed with the others | that run is **`inject=25`**, an injected provocation | `e278-prot500-i_01.txt` |
+| "`e308-550-old-3_01.txt` … `hold_ms=48319`, `streak=0 tripped=0`" | true, but the run ended **`reason=15`** with `thin_count=8411`, the highest in the corpus — omitted | capture |
+| "`ci_at_late` values 59, 57, 51, 46, 47, 47" | eight recorded latches: **59, 59, 57, 51, 48, 47, 47, 46**; `spent_at_late = 9` in all ✓ | corpus sweep |
+| E303 pair: thin 1027 → 0, ehz 1666 → 1650 (−0.96 %), hold_ma 1776 → 1643 (−7.5 %) | **all three confirmed exactly** — but `worst_ma` rose 2131 → 2228 (+4.6 %), and that is the gated quantity | `e303-ab-A22_1_01`, `e303-ab-B20_1_01` |
+| "`ADC_COMP` is 742 instructions … `div 0, mul 4, irq 9`" | **confirmed**; but `src/shared.rs:291-300` attributes 742 to deleting `accept_wait_unused` ("16 are layout"), while the field is retained and E321 with it removed measures **758** and floor 6 also measures **742** — so the −16 came with the filter change, not with layout | `scripts/insn_ratchet.py` on three archived ELFs |
+
+## Anything the campaign would be unsafe to build on
+
+1. **The omitted failure.** `q600-h2_01.txt` must be in any statement of what
+   this image does at rung 600. 1 of 3, not 1 of 1.
+2. **`worst_ma` straddles the gate.** 3818 is already recorded on this image.
+   Deciding the 3800 line *after* seeing a breach is E239 repeating.
+3. **The supply question is open.** No capture records the clamp, the proxy is
+   not a current, and the tree's own metered bracket spans the clamp. The
+   droop residual (+7.2) is the only sound supply statement available, and it
+   says CV — not that there is headroom.
+4. **`hold_forced` and `forced` are dead witnesses**, and one gate
+   (`forced != 0`) can never fire.
+5. **`protection::RunGuard::cycle` has no production call site.** The
+   `CycleTiming` stop is unreachable in the flashed firmware, as `PhasePeak`
+   already is by its own admission (`protection.rs:79-94`). A campaign clause
+   requiring "timing stops … preserved" should not count it. (The tracking stop
+   that *does* run is `tracking::EventWatch`, and it is armed and effective —
+   see P3.)
+6. **`anchor_proof` is never recorded**, so no rung in `ladder_state.json` can
+   be shown to have been walked rather than anchored.
+7. **A censored hold is not a stability result.** The 59.8 s figure is the
+   window, not the loop's endurance; the three-run hazard estimate puts P(3/3)
+   near 0.16.
+8. **The tree is moving under the claim.** E328 was built, run and refuted
+   while this review was in progress. Any freeze must name a commit and a
+   clean tree, and the manifest entry for the frozen image must record that
+   commit — it currently does not.

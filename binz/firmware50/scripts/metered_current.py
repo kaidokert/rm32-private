@@ -135,7 +135,10 @@ def main():
 
     print('\n=== worst/hold ratio, healthy CV, per rung (E235 assumed 1.19 flat)')
     for d in sorted(per):
-        g = [x for x in cv if x['duty'] == d and x['worst']]
+        # `hold` of 0 is a run that never reached its hold window (E329: a
+        # refuted `wide-blank` image stopped on FastBusSag during the ramp), and
+        # dividing by it crashed this script rather than skipping the row.
+        g = [x for x in cv if x['duty'] == d and x['worst'] and x['hold']]
         if g:
             rr = [x['worst'] / x['hold'] for x in g]
             print(f'  duty {d:4d}  n={len(rr):3d}  ratio {min(rr):.3f}-{max(rr):.3f}'

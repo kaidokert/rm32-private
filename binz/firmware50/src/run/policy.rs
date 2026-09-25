@@ -42,7 +42,26 @@ pub const TAIL_WINDOW_US: u32 = 2_000_000;
 /// this firmware. `l` (explore) uses `BEMF_EXPLORE_MS` instead -- 45 s total,
 /// ~20 s of hold, which `cohort.py`'s 30 s minimum hold then fails, so an
 /// exploratory key cannot produce a qualifying run by construction.
-pub const BEMF_TOTAL_MS: u32 = 90_000;
+/// **60 s since E330, down from 90.** The campaign's bar is a **>= 30 s**
+/// actual-target hold, but a fixed 90 s window against `ramp.rs`'s
+/// duty-scheduled ramp delivered 65-70 s of hold at every rung from 500 to 600
+/// — so each attempt was more than **2x stricter than the requirement at more
+/// than 2x the exposure**, and the LateArm hazard is per-second. At rung 600's
+/// measured 0.0193/s that is P(complete) 0.32 against 0.51, i.e. the harness
+/// was halving its own pass rate for nothing the bar asks for. Both E327
+/// reviews flagged it independently as a defect nobody had decided.
+///
+/// 60 s leaves 35 s of hold at rung 600 (25 s ramp) and 40 s at rung 500, so
+/// every rung still clears the 30 s bar with margin. It is not a weakening:
+/// runs recorded at 90 s were tested *harder* and stay valid as evidence at
+/// their own exposure.
+///
+/// It also cuts the thermal exposure this constant's previous comment warned
+/// about by a third — five attempts is ~300 s at 60 s rather than ~450 s —
+/// which matters because there is still **no thermal channel in `CHANNELS`**
+/// (`src/hw/adc.rs:33-41`) and no thermal protection anywhere in this
+/// firmware.
+pub const BEMF_TOTAL_MS: u32 = 60_000;
 
 /// The exploratory window: the same startup and ramp, about 10 s at target
 /// (E137). One of these precedes every rung's 3/3 cohort, and it is not
@@ -291,7 +310,39 @@ impl Bemf for BemfPolicy {
 pub const ADVANCE_STEP_TENTHS: u16 = 350;
 
 /// The advance level below [`ADVANCE_STEP_TENTHS`].
+#[cfg(not(feature = "advance-ref"))]
 pub const ADVANCE_LOW: u32 = 20;
+/// **`advance-ref` flattens the schedule to the REFERENCE value, 16** (E330).
+///
+/// E326 tried advance 16 at the high end only, `ADVANCE_HIGH >= ADVANCE_LOW`
+/// refused it, and I reverted — framing 20 as the baseline and 16 as an exotic
+/// reduction. That was backwards. `src/commutation.rs:238` is
+/// `pub type DefaultAdvance = FixedAdvance<16>` and AM32's `Src/main.c:656` is
+/// `temp_advance = 16`: **16 is the reference, and this campaign's 20/22 is a
+/// divergence upward.** The rising schedule itself is firmware50's, not the
+/// reference's, which uses one fixed advance.
+///
+/// Why it is the arithmetically complete fix. At a flat 16,
+/// `wait = ci/2 - ci*16/64 = ci/4`, so `wait >= 10` for **every `ci` at or
+/// above `SECTOR_FLOOR_US = 40`** — and every recorded latch had
+/// `spent_at_late = 9` with the chain corpus capping per-arm `spent` at 10. So
+/// **no descent the estimator's own clamp permits can reach `left == 0`.**
+/// Advance 20 covers only `ci >= 50` and 18 only `ci >= 42`, and E322 measured
+/// the descent chasing exactly that boundary downward (22 -> 20 moved the latch
+/// from ci 49/50 to 46, and floor 5 then latched at 46-48).
+///
+/// And lower advance *cuts* current, which the metered bracket says is the
+/// other binding constraint at rung 600.
+///
+/// **What it owns.** It changes the ramp's advance too, which is why E326
+/// backed away: three tests pin `ADVANCE_LOW` and the A/B comment says
+/// "changing both at once would make the result unattributable". That
+/// discipline is right for isolating a *level*, but this is not that
+/// experiment — it is a return to the reference schedule, and it must be
+/// judged as one change with both ends stated rather than smuggled through
+/// the high end.
+#[cfg(feature = "advance-ref")]
+pub const ADVANCE_LOW: u32 = 16;
 
 /// The advance level at and above [`ADVANCE_STEP_TENTHS`]. **Production is 22.**
 ///
@@ -322,10 +373,14 @@ pub const ADVANCE_LOW: u32 = 20;
 /// **This is a control schedule, not a protection threshold**, and it is the
 /// "bounded control improvement" the campaign goal asks for. Nothing about the
 /// guards, their fractions, their streaks or their latches is touched.
-#[cfg(not(feature = "advance-low"))]
+#[cfg(not(any(feature = "advance-low", feature = "advance-ref")))]
 pub const ADVANCE_HIGH: u32 = 22;
-#[cfg(feature = "advance-low")]
+#[cfg(all(feature = "advance-low", not(feature = "advance-ref")))]
 pub const ADVANCE_HIGH: u32 = 20;
+/// The reference value at both ends; see [`ADVANCE_LOW`]. Takes precedence
+/// over `advance-low` so enabling both is not a silent conflict.
+#[cfg(feature = "advance-ref")]
+pub const ADVANCE_HIGH: u32 = 16;
 
 /// The qualified image's schedule: 20 below 35% duty, 22 at/above
 /// (`binz/AGENTS.md:133`).
@@ -425,11 +480,19 @@ mod tests {
         // 20/22 while the A/B build is not a test failure.
         assert_eq!(AdvancePolicy::level(349), ADVANCE_LOW);
         assert_eq!(AdvancePolicy::level(350), ADVANCE_HIGH);
-        assert_eq!(AdvancePolicy::level(349), 20, "below the step never varies");
-        #[cfg(not(feature = "advance-low"))]
+        // "Below the step never varies" held while the only variant moved the
+        // high end. `advance-ref` returns BOTH ends to the reference 16 (E330),
+        // so the claim is now configuration-scoped rather than absolute.
+        #[cfg(not(feature = "advance-ref"))]
+        assert_eq!(AdvancePolicy::level(349), 20, "below the step, default");
+        #[cfg(feature = "advance-ref")]
+        assert_eq!(AdvancePolicy::level(349), 16, "below the step, reference");
+        #[cfg(not(any(feature = "advance-low", feature = "advance-ref")))]
         assert_eq!(AdvancePolicy::level(350), 22, "production high level");
-        #[cfg(feature = "advance-low")]
+        #[cfg(all(feature = "advance-low", not(feature = "advance-ref")))]
         assert_eq!(AdvancePolicy::level(350), 20, "advance-low variant");
+        #[cfg(feature = "advance-ref")]
+        assert_eq!(AdvancePolicy::level(350), 16, "advance-ref: the reference value");
         // The step itself is fixed, so an A/B varies one thing.
         assert_eq!(AdvancePolicy::level(ADVANCE_STEP_TENTHS - 1), ADVANCE_LOW);
         assert_eq!(AdvancePolicy::level(ADVANCE_STEP_TENTHS), ADVANCE_HIGH);

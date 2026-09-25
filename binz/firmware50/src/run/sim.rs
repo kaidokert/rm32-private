@@ -460,11 +460,15 @@ mod tests {
         // The first commutation lands `wait` after the seed edge, at 10% duty.
         let (duty, _) = log.handover.unwrap();
         assert_eq!(duty, 100, "transfer at the reference's bemfdu100");
-        // The ramp publishes each 1% step up to 25%, advance 20 throughout.
+        // The ramp publishes each 1% step up to 25%, at the below-the-step
+        // advance throughout. Asserted against `ADVANCE_LOW` rather than the
+        // literal 20 (E330): the ramp runs below `ADVANCE_STEP_TENTHS`, so the
+        // quantity under test is that constant, and `advance-ref` moves it to
+        // the reference 16 at both ends.
         let duties: Vec<u16> = log.plans.iter().map(|&(_, d)| d).collect();
         assert!(duties.windows(2).all(|w| w[1] > w[0]), "ramp only rises: {duties:?}");
         assert_eq!(duties.last(), Some(&250));
-        assert!(log.advances.iter().all(|&a| a == 20));
+        assert!(log.advances.iter().all(|&a| a == crate::run::policy::ADVANCE_LOW));
         // Every crossing the script delivered was counted as an acceptance.
         assert_eq!(field(&log.text, "BEMFDONE", "accepted"), log.crossings_delivered);
         assert_eq!(field(&log.text, "BEMFDONE", "reason"), 2);
@@ -558,8 +562,14 @@ mod tests {
         let (_, commit_us) = sim.log.handover.unwrap();
         let (seed_us, _, edge) = sim.log.seed.unwrap();
         // The seed edge is this sector's crossing: its commutation is due
-        // `wait` after it, at the transfer duty's advance (20).
-        assert_eq!(commit_us, edge + wait_time(seed_us, 20).max(1));
+        // `wait` after it, at the transfer duty's advance -- which is
+        // `ADVANCE_LOW`, since the handover duty is below the schedule's step.
+        // Named rather than written as 20 (E330), so the assertion follows the
+        // configuration instead of pinning one build's value.
+        assert_eq!(
+            commit_us,
+            edge + wait_time(seed_us, crate::run::policy::ADVANCE_LOW).max(1)
+        );
         // Thirteen driven acceptances (epoch 0 never anchors), 833 µs apart.
         let begun = sim.log.driven_begun_at.unwrap();
         assert!(edge > begun + 12 * 833);

@@ -70,6 +70,13 @@ com-top = []
 # predeclared against the arm path. Default OFF, so the default build's
 # `AdvancePolicy` is unchanged. See `run::policy::ADVANCE_HIGH`.
 advance-low = []
+# Flattens the advance schedule to the REFERENCE value 16 at both ends (E330):
+# commutation.rs's DefaultAdvance is FixedAdvance<16> and AM32 main.c:656 sets
+# temp_advance = 16, so 20/22 is this campaign's divergence upward. At a flat
+# 16, wait = ci/4 >= 10 for every ci at or above SECTOR_FLOOR_US, so no descent
+# the estimator's clamp permits can reach left == 0. Takes precedence over
+# `advance-low`.
+advance-ref = []
 # Swaps the real sag ring into the PRODUCTION controller, changing nothing else
 # -- same serve loop, same policies, same guards. For capturing the rung-550
 # trip sequence, which no existing capture has. See run::ProductionSagLog.

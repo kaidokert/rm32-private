@@ -1500,3 +1500,18 @@ E3BB2544.e315-marginhist.elf
          refused 6 of 279 hardware-accepted crossings (2.15%), all in the
          0.53..0.70 count/ci band whose median is 1.007 -- asserted by
          the_wide_gate_would_refuse_only_the_anomalous_band.
+
+7B790103.e330-advref-floor5.elf
+  crc32  7B790103
+  sha256 97A0F5C5FEEA00E187E5901ACD98886B809686C86EF04B9A13082098F4EFCC15
+  build  cargo build --release --features advance-ref,deep-filter
+  E330   BUILT, NOT RUN -- bench work is stopped pending the supply
+         characterisation E261 committed to (LAB_NOTEBOOK.md:21835).
+         Flat advance 16, the REFERENCE value (commutation.rs:238
+         DefaultAdvance = FixedAdvance<16>; AM32 main.c:656
+         temp_advance = 16), so wait = ci/4 >= 10 for every ci at or above
+         SECTOR_FLOOR_US: no descent the clamp permits reaches left == 0.
+         Plus filter floor 5 and BEMF_TOTAL_MS 90 -> 60 s, which matches
+         the 30 s bar instead of over-serving it 2x and cuts thermal
+         exposure a third. ADC_COMP 742, hazard classes unchanged, 345/347
+         tests across four configurations, clippy clean.

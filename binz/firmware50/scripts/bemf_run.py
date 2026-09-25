@@ -809,7 +809,15 @@ def main() -> int:
                     # A host-abort provocation is not a rung run (E124). An
                     # exploratory run (E137) is judged but never recorded.
                     explore = args.command in EXPLORE or args.command == "l"
-                    fails = ladder_record(out, sha, explore, args.rung_duty)
+                    # **`anchor_proof` was never passed here** (E330). The
+                    # parameter, the `anchored` field and the doc comment
+                    # "there is no way to anchor silently" all existed; the
+                    # call site did not use them, so 0 of 689 ladder records
+                    # carried a justification and every anchored rung -- every
+                    # one of this session's -- was stored as a walked one.
+                    fails = ladder_record(
+                        out, sha, explore, args.rung_duty, args.anchor_proof
+                    )
                     label = "EXPLORE" if explore else "RUN"
                     if fails:
                         failed_runs += 1
