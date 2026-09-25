@@ -22868,3 +22868,272 @@ dies instantly.
    rungs, 550 alone failing. That is the claim this run settles.
 4. It changes nothing about 550: its latch is permanent for this image under
    rule 1, so **no run at any rung can qualify 60% on `0D8E3799`.**
+
+### E275 — the chain is whole from 150 to 525: sixteen rungs, and 50% / 52.5% have their three holds
+
+`e274-450m_01`, image `0D8E3799`. All four predeclared criteria pass and all
+three predictions hold.
+
+| criterion | required | measured |
+|---|---|---|
+| 1 | `reason = 2`, hold ≥ 30 000 ms | **2**, **57 276 ms** |
+| 2 | `ceiling_tenths == 450`, no foldback | **450 == 450** |
+| 3 | measured identity: slope < 0, ratio 990–1010 | **slope −1495 eHz/s**, **ratio 1005** |
+| 4 | IR-line droop residual > 0 | **+1.93** |
+
+`run_gates` returns empty. The absolute press sequence landed exactly:
+`CLIMBAT duty_tenths=450` then `target_duty_tenths=450`, so the E148/E185
+persistent-`climb_tenths` trap did not recur.
+
+**Prediction 2 mattered more than it looks.** I predicted the coast slope would
+be negative, on the grounds that only 3.1% of the corpus is unphysical so a
+second unphysical fit at this rung would be a 1-in-32 coincidence pointing at
+something rung-specific. It came out **−1495 eHz/s** — firmly physical. So
+`e251-450_02`'s slope of +0 was an isolated estimator failure, not a property of
+rung 450.
+
+#### The ladder, re-scored
+
+| rung | records | measured | failing |
+|---|---|---|---|
+| 150 … 375 (ten rungs) | 3 each | 3 | 0 |
+| 400 | 6 | 5 | 0 *(1 unmeasured)* |
+| 425 | 3 | 3 | 0 |
+| **450** | **4** | **3** | **0** *(1 unmeasured)* |
+| 475, 500, 525 | 3 each | 3 | 0 |
+| **550** | 3 | 2 | **1** |
+
+> **Sixteen rungs qualified: 150 → 525 inclusive. 550 alone fails.**
+
+That is E274's prediction 3, confirmed. Two rungs carry an unmeasured run each
+(400 and 450), both from unphysical coast fits, and both have three measured
+passes besides — which is exactly the accounting E273's third verdict was built
+to make possible.
+
+#### Against the goal's success criteria
+
+**"Three predeclared ≥30-second actual-target holds per 50–60% rung":**
+
+| rung | holds (ms) | ≥30 s | foldback |
+|---|---|---|---|
+| **50.0%** | 54 776 / 54 776 / 54 776 | **3 of 3** | none |
+| **52.5%** | 53 276 / 53 276 / 53 276 | **3 of 3** | none |
+| 55.0% | 52 276 / 52 276 / **15 008** | 2 of 3 | none |
+| 57.5%, 60% | — | not attempted | — |
+
+**Two of the five 50–60% rungs now meet the criterion**, on actual target duty
+with no foldback, no suppressed bus and no sustained CC — the three
+disqualifiers the goal names. The 50% rung is the goal's own first target and it
+is met with 54.8 s holds, 1.8× the requirement.
+
+#### What remains, and which parts are reachable on this image
+
+* **3/3 restart at 50%** — reachable now. `ladder_admit('Z', …, 500)` returns
+  admissible, because 500 has three measured passes of its own. Next.
+* **Demonstrated protection coverage** — reachable at 475/500 with the gate-4
+  provocations.
+* **55%, 57.5%, 60% holds and the 60% restart** — **not reachable on this
+  image.** 550's `reason = 26` is a firmware latch, permanent for this ELF under
+  E262 rule 1, and every higher rung chains through it. Reaching them requires a
+  new image, and the change worth making is the one both E272 reviews identify:
+  **extend the coast buffer from 8 half-periods to 24–32**, which cuts the
+  intercept standard error 2–3× and stabilises the slope sign that produced
+  every disputed reading in this campaign. That is a new ELF, a fresh ledger and
+  a full re-walk, and it is the honest price of 60%.
+
+So the position is: **the 50% target is qualified with its holds, 52.5% too, the
+chain beneath them is whole, and 55% upward is blocked by one latch whose
+mechanism still needs the operator-gated supply measurement.** That measurement
+stays ahead of any further rung attempt.
+
+### E273b — adversarial review of E272, verbatim
+
+Fresh, context-free agent, run concurrently with the evidence review and without
+access to it. This is the review that found the band widening to be the wrong
+fix; its central claims are verified in E273 Parts 1–2.
+
+---
+
+I ran the code and the corpus before reading E272, then attacked it. Every number below I computed from the tree.
+
+---
+
+# Verdict up front
+
+**Do not apply E272's rule.** Its arithmetic reproduces exactly, its predictions are all four correct, and it is still the wrong fix — because the quantity it widens a band around is, measurably, ~93% coast-estimator error, and because the gate's verdicts on the rung-400 family are *inverted* with respect to statistical significance. Widening from ±10 to ±14 permille does not improve a bad detector; it changes which artefacts it admits while leaving the one genuinely significant divergence in that family passing, as it already does.
+
+There is also a cheaper, non-measurement remedy for the actual blocker that E272 never considers (§7).
+
+---
+
+## 0. What the identity actually is (evidence first)
+
+`scripts/cohort.py:266` is the gate: `if not 990 <= r["rate_vs_coast_permille"] <= 1010`. The quantity is built at `scripts/cohort.py:179-209`:
+
+- **numerator** — `powered = accepts * 1e6 / (6 * span_us)` from `BEMFTAIL`, a window of 1–2 `TAIL_WINDOW_US` at the *end* of the hold (`cohort.py:197`);
+- **denominator** — `speed.coast_fit(offset_us, first_us, iv)[0]` (`cohort.py:195`), i.e. `scripts/speed.py:76-97`: pair the 8 reported coast half-periods into **4 full-cycle points**, least-squares a line through them, and **extrapolate the intercept back to t = 0**.
+
+So the denominator is a 4-point linear extrapolation over a lever arm of 150–450 µs. Note there is a *second*, disagreeing coast estimator in the same repo — `cohort.coast_ehz` (`cohort.py:65-105`, index-fitted, drops `iv[0]`) — used for the oracle comparison at `cohort.py:304`.
+
+Corpus: `captures/ladder_state.json` holds **603 records across 30 ELF images**; **169** carry `rate_source = "matched window vs time-anchored coast"` and are the ones E272 pools. Reproduced exactly: **n = 169, mean 1001.195, median 1001, sample sd 3.8780, min 994, max 1028.** E272's figures are correct.
+
+---
+
+## 1. Is widening the right move? No — and the gate is not the detector E272 thinks it is
+
+**The gate's ordering is inverted relative to the evidence.** I computed the per-run standard error of `coast_fit`'s intercept (ordinary OLS intercept SE, n=4, 2 df) and studentized each residual, for the six rung-400 records and the three 550 records:
+
+| run | resid (permille) | coast-intercept SE | **t** | coast slope (eHz/s) | current gate |
+|---|---|---|---|---|---|
+| e247-400_01 | −0.3 | 1.54 | −0.21 | −10338 | pass |
+| e247-400_02 | +4.4 | 2.28 | +1.95 | −4691 | pass |
+| **e247-400_03** | **+10.6** | **7.30** | **+1.46** | **+2558** | **FAIL (1011)** |
+| e250-400_01 | +3.7 | 5.05 | +0.73 | −5696 | pass |
+| **e250-400_02** | **+7.2** | **0.80** | **+9.01** | −1556 | **pass (1007)** |
+| e250-400_03 | +2.5 | 1.27 | +1.93 | −5747 | pass |
+| e253-550_01 | +0.3 | 3.15 | +0.10 | −11030 | pass |
+| e253-550_02 | −2.2 | 4.97 | −0.44 | −13602 | pass |
+| **e253-550_03** | **+28.4** | **13.65** | **+2.08** | **+2149** | **FAIL (1028)** |
+
+- The run that blocks the whole ladder, `e247-400_03`, is **t = +1.46**. It fails only because its coast estimate is 3× noisier than its siblings'.
+- The **most significant loop-vs-rotor divergence in the entire rung-400 family, t = +9.01, passes** under the current band and under the proposed one. If loop-vs-rotor divergence is the failure mode this gate exists to catch, the gate is not catching it now and will not after widening.
+- The 1028 that E272 leans on as proof "the band still rejects the real event" is **t = +2.08** — and has a **physically impossible positive coast slope** (+2149 eHz/s: the rotor accelerating with the bridge off). The gate did not detect the 550 event. `reason = 26` did.
+
+**Corpus-wide confirmation of the mechanism.** Over all 318 captures carrying both `BEMFTAIL` and `COASTTIMING`:
+
+- **7 runs (2.2%) have a positive coast slope** — unphysical. Their mean residual is **+11.91 permille** against **+0.10** for the other 311. A positive coast slope is a near-deterministic predictor of a high-side gate failure, and `e247-400_03` and `e253-550_03` are both in that class.
+- `corr(residual, slope) = +0.245` overall.
+
+**What the widened gate can no longer see.** At rung 500 (coast ≈ 2096 eHz, ≈12 576 accepted crossings/s), a 1.0–1.4% inflation of accepted crossings — ~126 to ~176 spurious accepts/s, ~4 400 over a 30 s hold — moves from fail to pass. **Nothing else in the gate set detects false accepts.** `BEMFRCOMP` gives `late_arms`, `ci_min_us`, `thin_count`, `hold_unstable`, `rebase`, `com_preempts`; `BEMFDONE` gives `unstable`, `too_early`, `blank_arms`. Every one of those counts a *refusal* or a *late arm*. `zc_rate_permille_of_expected` is the circular metric retired at `cohort.py:244-252`. `run_gates` gates only `unstable != 0`, `too_early|blank_arms != 0`, `coast_crossings > 0`, `worst_ma`, the droop residual and the oracle coast — none of which is sensitive to over-acceptance. So **the rate identity is the only continuous detector of loop-vs-rotor divergence**, and E272 proposes to reduce its power by 40% to admit one record, with the run's own data showing that record is an estimator artefact rather than a tail draw. That is precisely the conflict of interest E263's test existed to police, and saying "the test is incoherent" does not dissolve the conflict — it only removes the tripwire.
+
+---
+
+## 2. "No free parameter" — the claim is false, and one defensible alternative does not clear 1011
+
+`band = round(median) ± ⌈k·sd⌉`, k from `P(≥1 false failure in 57) < 0.05`. Enumerating the embedded choices, with the band each produces (centre = 1001 under median, mean-rounded, and trimmed mean alike — that one is genuinely robust):
+
+| choice varied | value | band | clears 1011? |
+|---|---|---|---|
+| E272 as written (sample sd 3.878, k=3.320, ceil) | — | **988..1014** | yes |
+| budget 10% instead of 5% (k=3.114) | — | 988..1014 | yes |
+| budget 1% (k=3.751) | — | 986..1016 | yes |
+| N = 54 (runs actually on this image) | k=3.305 | 988..1014 | yes |
+| N = 70 (19 rungs at this image's observed 55 runs/15 rungs) | k=3.377 | 987..1015 | yes |
+| **N = 169 (the runs actually scored, since no walk is proposed)** | k=3.612 | **986..1016** | yes |
+| population sd (3.867) | — | 988..1014 | yes |
+| pooled **within-image** sd (3.914) | — | 988..1014 | yes |
+| **sd excluding the 1028 latch (3.287)** | — | **990..1012** | yes, by 1 |
+| **robust sd, MAD×1.4826 = 2.965** | k=3.320 | **991..1011** | **only on the edge** |
+| IQR/1.349 (3.706) | — | 988..1014 | yes |
+| **rung-400-only corpus (n=12, sd 3.57)** | k=3.320 | 992..1016 | yes |
+
+Two findings, one for E272 and one against:
+
+**For it:** the *budget* and the *walk length* do almost no work. Every budget from 10% to 1%, and every N from 54 to 500, unblocks 400. The verdict is insensitive to the two parameters E272 makes its argument about. Good.
+
+**Against it, decisively:** the verdict is *entirely* controlled by the two things the rule fixes by fiat — the **scale estimator** and the **"nothing excluded"** clause. Under the **robust scale** the band is **991..1011** and 1011 survives only by landing *exactly* on the inclusive edge — the identical "uncomfortably convenient" edge landing that E262 flagged about its own 991..1011 prediction and E263 then rejected. Under **latch-excluded sd** the band is 990..1012 and 1011 clears by **1 permille**.
+
+And the robust estimator is not a contrivance; it is the *mandated* choice here, because:
+
+1. The corpus contains a point at **6.9σ** under the fitted normal. Expected count of such a point in 169 normal draws: **≈1.8 × 10⁻⁹**. The corpus **refutes normality**, which is the very assumption the k-derivation uses to extrapolate a 0.1% per-run rate three decades beyond the data.
+2. The same non-normal point **inflates the sd that sets the band**. Forbidding its exclusion means *the event the gate must catch is used to compute the width of the gate that must catch it*. That is circular, and it is circular in the widening direction.
+
+**The empirical budget is not demonstrated.** At 988..1014 the empirical exceedance among the 169 is **1** (the 1028) → 0.59%; treating that as a genuine event, **0/169**. The rule-of-three 95% upper bound on 0/169 is **1.78% per run**, which gives **P(≥1 in 57) ≤ 64%** — worse than the 41% E272 attributes to the current band. The claimed 0.10% rests wholly on the refuted normal tail. **"Nothing here is chosen after seeing outcomes" is true; "there is no knob" is false** — the knob is the scale estimator, and it is the only input that matters.
+
+Prediction 1 ("the rule yields 988–1014 **and nothing else**, from the budget and the corpus alone") is therefore wrong as stated: on the runs actually scored (N=169, the only N the corpus supplies, since E272 proposes no walk) the same rule yields **986..1016**.
+
+---
+
+## 3. Pooling across images — my brief's hypothesis, falsified
+
+I have to report this against the brief. Per-image, matched-source:
+
+| image | n | mean | sd | min | max |
+|---|---|---|---|---|---|
+| 7125601F | 55 | 1000.84 | 3.49 | 995 | 1008 |
+| D9D77F3C (= `0D8E3799`) | 54 | 1001.63 | 4.86 | 994 | **1028** |
+| 1B27A4C8 | 45 | 1001.29 | 3.24 | 996 | 1009 |
+| 01A674BA | 10 | 1000.30 | 2.26 | 997 | 1004 |
+| 4F0F5131 | 3 | 1000.67 | 3.06 | 998 | 1004 |
+| 0128AB9A | 2 | 1002.50 | 7.78 | 997 | 1008 |
+
+**Pooled within-image sd = 3.914 (df 163)**, *larger* than the pooled-across figure 3.878. Image means span only **1.33 permille**. There is **no between-image inflation**; the band is not being widened on variance a single-image walk won't see. That attack line is dead.
+
+**But there is a real pooling defect one axis over: rungs.** Per-duty means run from **998.67** (475, 525) to **1003.50** (450) — a **4.83 permille** spread, 3.6× the between-image spread. The identity has a rung-dependent bias. On its own rung, 1011 sits at mean 1003.25, sd 3.57 → **+2.2σ**, and a rung-400 band is 992..1016; at rung 475 the pooled band 988..1014 is off-centre by +2.3 permille. So the rule's corpus is pooled over a variable whose mean demonstrably moves, and the **pooling level is the largest undeclared choice in it** — it alone moves the 400 band across 990..1012 / 991..1011 / 992..1016.
+
+---
+
+## 4. Is 1011 innocent? Electrically yes; as a *reading*, no
+
+Every recorded field of `e247-400_03` sits inside its family (six rung-400 records on this image, `e247-400_0{1,2,3}` + `e250-400_0{1,2,3}`):
+
+| field | e247_01 | e247_02 | **e247_03** | e250_01 | e250_02 | e250_03 |
+|---|---|---|---|---|---|---|
+| accepted | 726482 | 726544 | **726819** | 726548 | 726900 | 726811 |
+| hold_ms | 59776 | 59776 | **59776** | 59776 | 59776 | 59776 |
+| coast_ehz | 1736 | 1736 | **1739** | 1743 | 1733 | 1742 |
+| hold_ma | 1049 | 1035 | **1034** | 975 | 1034 | 1022 |
+| worst_ma | 1673 | 1658 | **1644** | 1613 | 1605 | 1621 |
+| coast_crossings | 1207 | 1235 | **1229** | 1234 | 1218 | 1254 |
+| unstable | 1.388M | 1.393M | **1.392M** | 1.393M | 1.393M | 1.393M |
+| droop | 988.66 | 987.68 | **989.32** | 990.28 | 988.66 | 988.66 |
+| rate_vs_coast | 1000 | 1004 | **1011** | 1004 | 1007 | 1002 |
+| `late_arms` / `thin_count` | 0 / 0 | 0 / 0 | **0 / 0** | 0 / 0 | 0 / 0 | 0 / 0 |
+
+E272 is right that nothing else is anomalous. **But the run is not a healthy draw of a healthy instrument.** Two independent tells the entry never looked at:
+
+1. **`powered` is repeatable to <1 permille across all six runs** (1743.3 / 1747.7 / 1745.6 / 1745.0 / 1745.6 / 1748.1 eHz; sd 1.7 eHz = 0.97 permille), while **`coast_at_stop` scatters 5× as much** (1743.8 / 1740.0 / **1727.2** / 1738.6 / 1733.0 / 1743.8; sd 6.4 eHz = 3.7 permille). Variance decomposition: **coast ≈ 93%, powered ≈ 7%.** The loop rate did not move; the denominator did.
+2. `e247-400_03`'s coast fit returns **slope +2558 eHz/s — the rotor accelerating while unpowered.** Its pair sums are 581, 574, 578, 578: the largest first. That sign is impossible, and it drags the t=0 intercept down ~16 eHz, manufacturing the entire +10.6 permille.
+
+And the repo's own other estimator disagrees: `BEMFREF` on that capture prints `zc_permille_of_6x_coast=1004` (`cohort.coast_ehz` path) against the gated 1011 — **the two coast estimators in this repo differ by 7 permille on the disputed run, which is most of the half-width being argued about.**
+
+So: the gate caught something real — a broken coast estimate — and E272 proposes to widen the band so broken coast estimates pass. That is worse than either predeclared position.
+
+---
+
+## 5. The gate's construction, not its width
+
+`coast_fit` (`speed.py:76-97`) estimates an intercept from **4 points with 2 residual degrees of freedom** and extrapolates outside its own data. Measured over the 318 tail+coast captures, the per-run intercept SE in per mille of the intercept:
+
+`min 0.00 · p25 1.90 · **median 3.11** · p75 4.40 · p90 5.81 · p99 8.42 · max 13.65`, **p90/p10 = 5.8×**
+
+The median per-run coast SE (**3.11**) is essentially the entire corpus sd (**3.88**). **The "instrument sd" that E272 multiplies by k is the coast estimator's own standard error.** The identity's scatter is not loop-vs-rotor variation, so `k·sd` bands — the current one and the proposed one alike — are bands around an estimator's noise.
+
+Worse, that noise is **heteroscedastic by 5.8×**, which is what makes a *fixed* half-width incoherent at any width: it over-tests the 0.8-permille-SE runs (letting t=+9.01 through) and under-tests the 7–14-permille-SE runs (failing t=+1.46 and t=+2.08). No choice of k repairs that.
+
+And the honest per-run alternative does not rescue it either: with 2 df, the critical value at E272's own predeclared per-run α = 9.0×10⁻⁴ is **t ≈ 33.3**, i.e. a detectable divergence of ~33 × 3 permille ≈ **10%**. **With four coast cycles this identity cannot support any per-run gate at the 1% level** — the current band's apparent power is borrowed from a pooled sd that the per-run heteroscedasticity forbids.
+
+**What the fix should be, in priority order:**
+
+1. **Reject the estimate, not the run.** A coast fit with `slope > 0` is unphysical (7/318 = 2.2% of runs). Make it a *stated non-result* — a new `rate_source` value that says "coast fit unphysical; identity unavailable" — and require a re-measurement rather than a pass or a fail. This is a host-only change, costs zero motor time, and it is the one reading of the evidence that neither manufactures a pass nor leaves the deadlock.
+2. **Fix the denominator.** The firmware reports 8 coast half-periods = 4 fit points. Extending that buffer to 24–32 half-periods (12–16 cycles) is a small, cheap firmware change and would cut the intercept SE by roughly 2–3× *and* stabilise the slope sign, which is the actual root cause of every disputed reading in this campaign. Only after that does *any* per-run band at 1% become a defensible instrument.
+3. **Gate studentized, not fixed-width**, once (2) gives enough df: `|powered/coast − 1| > k·SE_run`. That is the version with no free width at all — the band comes from each run's own residuals.
+4. Note also that `cohort.py:395-396` leaves `SELF_REF_LO/HI = 980..1020` for rungs 525+. After E272, 500 would be gated at ±14 and 525 at ±20 with no stated reason for the difference — and 1028 fails the ±20 band too, so the ±20 band is already doing the work E272 credits to its own.
+
+---
+
+## 6–7. Safety, cost, and the remedy E272 misses
+
+**A re-walk is not required by E272 at all** — the entry restores the admission by *re-scoring existing records*. I verified that: patching the band and re-running `bemf_run.rung_report` over `D9D77F3C` gives
+
+- 990..1010 (current): passes 150–375, 425–525; **fails 400** (host gate) and **550** (firmware latch)
+- 988..1014: passes **150–525, sixteen rungs**; 550 alone fails — **E272's prediction 4 confirmed**
+- 991..1011 and 990..1012: identical sixteen-rung outcome
+
+So the 57-run walk that sets k is a *hypothetical* walk E272 does not propose. If a walk *is* run: 57 runs × ~80 s ≈ **76 minutes of powered drive**, `hold_ma` up to 2300 mA and `worst_ma` up to **2761 mA** at 525 — on a bench with no thermal sensor, into the 2–4 A band that `policy.rs:92` records as unprotected by anything but the clamp, on a power path this project has already melted a connector on. And **550 has already failed a firmware latch on this image, permanently under E262 rule 1** — so a full re-walk of `0D8E3799` provably cannot reach the goal's 60% and tops out at 525. That is 76 minutes of motor at ≥2 A bought for zero progress toward the stated target.
+
+**The remedy E272 never considers, and which I would apply instead.** Look at what is actually broken:
+
+- Rung **500 has 3/3 clean records** on this image (`rvc = 1006, 1005, 999`, zero fails); **525 is 3/3**; 425–475 are 3/3. Every rung above 400 already *passes* its own gates.
+- The only defect is **admission order**: `ladder_admit` (`bemf_run.py:315-332`) requires the rung below to have a passing `rung_report` *at launch time*, and those rungs were launched when `rung_report` scored the **last three** runs — the window that E259 replaced with "every attempt" (`bemf_run.py:265-280`). The admissions were legal under the rule in force; they are void only because **E259's rule was applied retroactively.**
+- Rung 400 also has **six** attempts where the rule allows three — a re-roll that predates and is independent of the band question.
+
+So the blocker is a governance question, not a measurement one: **does E259's every-attempt rule apply retroactively to admissions already granted?** Settling that explicitly — either way — costs no motor time, touches no detector, and is not a rule tuned by a parameter whose value decides the outcome. Widening a physical-plausibility gate to resolve a bookkeeping dispute is the category error here.
+
+### Plain verdict
+
+1. **Do not apply the 988..1014 rule.** It is not parameter-free (the scale estimator decides the verdict; a robust scale puts 1011 exactly on the edge, a latch-excluded scale clears it by 1), its k-derivation uses a normal tail the corpus itself refutes at 6.9σ, and its acceptance condition #1 is satisfied by a second artefact of the same class as the record it wants to admit.
+2. **Do first, and in this order, all host-side and free:** (a) add the unphysical-coast-slope non-result and re-report the six rung-400 and three 550 records under it; (b) publish the studentized table above — it is the finding that matters, because it shows the gate's current verdicts are anti-correlated with significance and that t=+9.01 passes today; (c) rule explicitly on the retroactivity of E259, which is the actual blocker.
+3. **Then the firmware change worth making** is the coast buffer (8 → 24+ half-periods), not a band. It is the only change that makes any version of this gate an instrument.
+4. **The operator-gated supply measurement E272 names in §7 stays first** among anything that uses the motor — and it is the cheaper of the two options offered there (CC indicator on existing firmware, no new image, no added exposure). Nothing should be re-walked before it.
+5. If, after (2) and (3), the campaign still wants a band change: predeclare it **against a corpus extended on the low side**, as E263 required, with the scale estimator and the pooling level named *before* computation. E263's test was not incoherent — it was a test the corpus could not yet run. The answer to a test you cannot run is to get the data, not to replace the test.
