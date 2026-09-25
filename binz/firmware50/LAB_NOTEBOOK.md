@@ -22374,3 +22374,113 @@ are read at different points in `record_sag_row` and the coarse one is a
 foreground read, so a systematic offset would not surprise me; if it exceeds
 2 µs the tool will return `None` for every pair and report zero usable deltas,
 which is the loud failure I built for.
+
+### E271 — the v3 format is validated on hardware, and it immediately measured something new
+
+Image `7E20F95D.e270-v3.elf`, sha256 `ac7c41e9ef0001f9…`. One provoked run,
+`captures/sag/e270-v3val250.txt`. **The first v3 capture in the campaign.**
+
+The run cost less than predicted: `V` took the shell's duty of **150** tenths,
+not 250, so the hold drew **113 mA** (`worst_ma = 1030` on the ramp) — against
+the 240 s at 2.2 A the withdrawn cohort would have cost. The injection stepped
+duty to the fixed 500 as designed and the guard latched:
+`reason=26 fired=1 provoked=1 frozen=1 stop_after_inject_us=1559`.
+
+`VERDICT: run gates FAIL: reason 26 != 2` is correct and expected — a provoked
+diagnostic run is not a qualification run, and per the campaign's rule it
+qualifies nothing.
+
+#### The seven predeclared criteria
+
+| # | criterion | result |
+|---|---|---|
+| 1 | latch, `frozen = 1` | **pass** — `reason=26`, 3 low blocks, streak max 3 |
+| 2 | `row_v=3`, `fine_hz=8000000`, `span16_us=8192` | **pass** |
+| 3 | `at_fine` varies, no refusal | **pass** — deltas span 43–177 µs |
+| 4 | fine and coarse agree within 2 µs | **partial — 245 of 255.** See below |
+| 5 | `pwm_ctr` takes >1 value | **pass — 238 distinct phases** in 256 rows |
+| 6 | phase codes near a ~2060 zero, moving downward | **refuted as I stated it** |
+| 7 | `bus_raw` deeper than `bus_mean` | **pass** — floor **1100** vs **1133** |
+
+I predicted all seven would pass and named 4 as the one I was least sure of.
+**4 is indeed the partial, so the uncertainty was correctly placed — and 6
+failed, which I did not anticipate at all.**
+
+**Criterion 6, and why my expectation was naive.** Phase codes span
+**493..3635**, roughly symmetric about the per-channel zero of
+`zero_start/300 ≈ 2062`. I predicted a downward-only excursion because
+`residual = zero − sum` and motoring pulls the *sum* down. But a single phase
+sampled at an arbitrary carrier phase is sourcing, sinking or floating
+depending on sector and switching window, so it swings both ways — exactly what
+the adversarial review said the three-shunt topology would do. The review was
+right and my criterion was wrong.
+
+**Criterion 7 is the one that matters, and it is now measured rather than
+argued.** The raw floor is **1100** where the 8-tap mean's floor is **1133** —
+the boxcar attenuates the event by **33 codes**, on real data. That is the whole
+reason the column was added, and the two columns are not redundant.
+
+**And the raw data refutes a deep-spike reading of this event.** At the depth
+where five scans suffice (raw ≤ 1118, derived from the guard's own arithmetic at
+`filt_bus = 1215`), the longest run of consecutive raw scans is **2**, with 3
+rows total; at the depth where one scan suffices (≤ 734) there are **none**. So
+the provoked latch came from a **sustained shallow** depression, not a deep
+transient. Host-versus-firmware agreement on which blocks were low: **0
+disagreements in 255 rows**, so the host reproduces the guard exactly.
+
+#### The new measurement: ~4% of judgements are preempted between two adjacent register reads
+
+Criterion 4's ten rejects are **not aliasing** — every gap is 82–134 µs, far
+inside the 8192 µs fine span. They are genuine disagreements of 2.1–14.2 µs
+between two clocks timing the same interval. And they come in **compensating
+pairs**:
+
+| coarse | fine | disagreement |
+|---|---|---|
+| 118 µs | 132.000 µs | **+14.0** |
+| 89 µs | 74.750 µs | **−14.2** |
+
+One interval reads long on the fine clock and the next reads short by almost
+exactly the same amount. That is the signature of a delay landing *between* the
+two stamp reads, not of either clock being wrong: `record_sag_row` reads
+`hal.raw()` and then `hal.fine()` on adjacent lines, so an ISR arriving between
+them inflates one delta and deflates the next.
+
+The 245 agreeing pairs bound the noise floor: **max disagreement 1.000 µs, mean
+0.367 µs** — i.e. exactly the coarse clock's own 1 µs quantisation. So:
+
+> **10 of 255 judgement intervals (3.9%) had something preempt the foreground
+> between two adjacent register reads, with excursions to 14 µs.**
+
+That is not a defect in the recorder — it is a direct measurement of foreground
+preemption at 102 µs judgement spacing, and it is the first number this campaign
+has that bears on observer cost without a cross-image comparison. It is also a
+caution for any future pairing: **two stamps taken on adjacent lines are not
+simultaneous 4% of the time.**
+
+**What it does not license.** This is a 15%-duty provoked run, so 3.9% is not
+the rate at 55%, where the ISR load is higher. And it says nothing about whether
+a mask *causes* a late arm — `late_arms = 0` and `thin_count = 0` here, as
+expected at `ci_min_us = 200`.
+
+#### Coverage and cost, as the brief requires
+
+Fast ring **256 rows spanning 25.7 ms**, one judgement every **102.00 µs
+measured** (against the 101.7 µs assumed) — 0.335% of the run, and the tail.
+Decimated ring 1024 rows ≈ **3342 ms**. `filt_bus` moved only 1214→1216 across
+that history, so the reference was not drifting into the event. RAM 15 360 B of
+rings; `sag-capture` `.bss` 19 572 with 16 624 of stack against an 8 192 floor.
+
+#### What is now true that was not
+
+* The v3 columns exist on hardware and the host reads them. Every prior entry's
+  claims about them rested on fixtures I wrote myself.
+* `bus_raw` is worth its bytes: 33 codes of attenuation, measured.
+* `pwm_ctr` is populated and spreads across 238 phases, confirming the
+  de-cohering is real and that per-phase binning is possible.
+* The clock cross-check earns its place: it rejected 10 pairs for a reason that
+  turned out to be a finding rather than noise.
+
+Next per E269: the supply measurement the notebook has owed since campaign 7 —
+operator CC-indicator observation, and/or rung 500 with the clamp lowered to
+2.5 A. Both reviews before any conclusion about the 550 mechanism.
