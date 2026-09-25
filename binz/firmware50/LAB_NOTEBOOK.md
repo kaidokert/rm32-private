@@ -23317,3 +23317,103 @@ Prediction 4 of E272 is correct as written.
 5. **The independence assumption behind `1-(1-p)^57` is unargued.** It happens to be defensible on this corpus (ANOVA p = 0.58 across images), but `cohort.py:256-257` asserts a ~5 permille between-session shift that would make the 57 runs correlated and the figure meaningless. One of those two statements is wrong and the entry should say which — my numbers say `cohort.py`'s note is the wrong one.
 
 Everything else in E272 stands, including the part that matters most: the blocker is real, self-inflicted, and correctly diagnosed, and the rung list is exactly right.
+
+### E277 — 3/3 restart at 50%, and a predeclared bar that was unreachable before I wrote it
+
+Image `0D8E3799`. Cohort `e276-rst500_01..03`, three runs, `--pre=xxx` putting
+`provoke_tenths` on 500 exactly (`PROVOKEAT duty_tenths=500` in every capture).
+
+#### The result
+
+| run | `admitted` | `second_reason` | post-restart hold | `ceiling/duty` | `late_arms` (both segments) | slope | ratio |
+|---|---|---|---|---|---|---|---|
+| 01 | **1** | **2** | 24 290 ms | 500/500 | **0 / 0** | −10 850 | 999 |
+| 02 | **1** | **2** | 24 288 ms | 500/500 | **0 / 0** | −26 572 | 1001 |
+| 03 | **1** | **2** | 24 289 ms | 500/500 | **0 / 0** | −24 629 | 1005 |
+
+`BEMFRESTART` on run 01, in full:
+
+> `first_reason=8 first_hold_ms=2000 first_stop_ms=27224 first_report_end_ms=29477`
+> `admitted=1 refusal=0 remaining_ms=49522 aborted=0 second_reason=2`
+> `second_hold_ms=24290 drive_end_ms=80000 campaign_ms=82247 recovered=1`
+
+So each run stopped a closed loop at 50%, was **admitted** for restart,
+re-acquired from rest, and held 24.3 s to the end of the window with
+`recovered=1`, `aborted=0`, `refusal=0`, and **zero late arms in either
+segment**. That is the atomic stop/arm behaviour the goal asks to be
+demonstrated rather than assumed, three times out of three.
+
+**Prediction 3 was the one worth making and it held.** I predeclared that if the
+restart were not *visible* in the capture I would refuse to claim the criterion
+from a clean `reason = 2`. It is visible — `BEMFRESTART` carries the admission,
+the refusal count, the remaining window and the second segment's own reason and
+hold — so the claim rests on evidence of the restart, not on the absence of a
+failure.
+
+#### The criterion I got wrong, stated plainly
+
+My predeclared criterion 1 required `reason = 2` **and hold ≥ 30 000 ms**. The
+holds are **24 290 / 24 288 / 24 289 ms**. So on my own predeclaration the
+cohort does not pass — and the reason is arithmetic I should have done first:
+
+| | ms |
+|---|---|
+| campaign window (`BEMF_TOTAL_MS`, `run/policy.rs:45`) | 80 000 |
+| first segment, to end of its report | 29 477 |
+| off + startup + ramp to 500 | 26 233 |
+| **maximum possible post-restart hold** | **24 290** |
+
+**The 30 s bar needed an 85 710 ms window. It was unreachable before I wrote
+it**, because the restart campaign shares a *single* window with its first
+segment (`restart_campaign`: `window_us = BEMF_TOTAL_MS * 1_000`, and
+`restart_second` runs to the end of it). The measured hold is not 5.7 s short of
+a reachable target — it is **exactly** the maximum the design permits, to the
+millisecond, in all three runs.
+
+This is the same error I have now made five or more times in this campaign:
+predeclaring a bar without checking the experiment can produce it. It is
+**withdrawn as my error, not redefined to fit** — and I am not re-running
+anything, because nothing about the machine fell short.
+
+#### So is the goal's criterion met?
+
+The goal lists, separately: *"three predeclared ≥30-second actual-target holds
+per 50–60% rung"* **and** *"3/3 restart at 50% and 60%"*. The ≥30 s attaches to
+the per-rung holds, which 50% and 52.5% now satisfy at 54.8 s and 53.3 s
+(E275). The restart clause asks for 3/3 restart, with no dwell attached.
+
+> **On the goal's own wording, 3/3 restart at 50% is met.** On my over-strict
+> predeclaration it is not. Both readings are recorded here rather than one
+> chosen, and the distinction is a 5.7 s dwell that the firmware's window
+> constant makes impossible without a new ELF.
+
+A 30 s post-restart hold would need `BEMF_TOTAL_MS ≥ 85_710`. That is a firmware
+const, so it is a new image and a fresh ledger — worth bundling with the
+coast-buffer change E275 names, not worth an ELF of its own.
+
+#### Correction to my own evaluation script
+
+I first reported `late_arms=None` for these runs and treated criterion 4 as
+unverifiable. That was **my script, not the data**: `cohort.parse` does not
+surface `late_arms`, while the captures carry `late_arms=0` in *both*
+`BEMFRCOMP` lines of every run. `thin_count` is 19–26 in the first segment and
+231–278 in the second. Criterion 4 is met.
+
+#### Where the goal's criteria now stand
+
+| criterion | status |
+|---|---|
+| one reproducible final ELF | `0D8E3799` — loadable bytes reproduced from source at HEAD |
+| lower-rung regressions | **16 rungs, 150 → 525, chain whole** |
+| three ≥30 s holds at **50%** | **3/3**, 54.8 s each, no foldback |
+| three ≥30 s holds at **52.5%** | **3/3**, 53.3 s each, no foldback |
+| three ≥30 s holds at 55 / 57.5 / 60% | **blocked** — one `reason = 26` latch at 550, permanent for this image |
+| **3/3 restart at 50%** | **met** (goal wording); 24.3 s dwell, window-limited |
+| 3/3 restart at 60% | **blocked** — `ladder_admit` correctly refuses, 0 runs at 60% |
+| demonstrated protection coverage | next |
+| both reviews on every conclusion | six reviews appended verbatim with dispositions |
+
+The remaining gap is unchanged and is one thing: **55% upward needs a new ELF.**
+Both E272 reviews independently named the change worth making — the coast buffer
+from 8 half-periods to 24–32 — and this entry adds a second item for the same
+image: a campaign window long enough for a 30 s post-restart dwell.
