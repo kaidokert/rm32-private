@@ -27826,3 +27826,101 @@ The batch is alive and finishing on its own. I am not touching the bench until
 it does. The rung-550 tally so far — `old` 1 latch + 1 clean, `new` 1 latch +
 1 latch-fragment — already points away from the image-regression hypothesis,
 which is what E307 predeclared as the "image hypothesis dies" branch.
+
+### E309 — my reset drove rung 575 by accident, and my own guard for this class did not cover it
+
+The second consequence of E308's reset, worse than the deleted file.
+
+#### What happened
+
+`e308-550-old-3_01` is labelled 550 and **ran at `target_duty_tenths = 575`**.
+
+Timeline, from each capture's own `# started` header:
+
+| run | started | duty | reason |
+|---|---|---|---|
+| old-1 | 09:22:43 | 550 | 15 |
+| new-1 | 09:23:31 | 550 | 15 |
+| old-2 | 09:25:17 | 550 | 2 (clean) |
+| new-2 | 09:26 | 550 | 15 — **the capture I deleted** |
+| **old-3** | **09:28:05** | **575** | 15 |
+| new-3 | 09:29:41 | 550 | — |
+
+My `probe-rs reset` landed at `old-3`'s start. The rung is driven by an
+**absolute** key sequence — `--pre=-----------+++++++`, eleven `-` to floor the
+climb duty at 375 then seven `+` to step to 550 — and a reset mid-sequence
+restarts the firmware with its default climb duty, so the surviving keys landed
+one rung higher. **Only `old-3` is affected; `new-3` is back at 550.**
+
+#### Two consequences
+
+**1. `old-3` is not a 550 run and must not be scored as one.** The old side is
+therefore **2 usable runs at 550**, not 3 — one latch, one clean — against a
+predeclared 3. Combined with E308's deleted capture on the new side, **this
+batch has lost one run from each arm and does not meet its own predeclared n.**
+
+**2. I drove rung 575, which no image has ever driven, with no ladder
+admission.** It completed — `reason=15`, `ci_us=51`, `hold_ms=48319`,
+`rate_vs_coast_permille=1000`, `ceiling==duty` — so nothing was endangered, and
+the firmware's protections and window did their job on a rung nobody asked for.
+
+**It is the first rung-575 data point in the campaign and I am not going to
+pretend otherwise, or cite it as anything.** It is accidental, unadmitted, n=1,
+and produced by a run whose pre-sequence was corrupted mid-flight. It is
+recorded as an accident. If 575 is wanted it gets driven deliberately, with
+admission and a predeclaration.
+
+#### Why my own guard missed it
+
+E279/E282 exist for exactly this failure class — *"a bench key that moves device
+state relatively must be REFUSED without a reset, not merely remembered"*
+([[feedback-guard-relative-shell-state]], which already records **three**
+instances in this campaign, the last one driving 60% on an unqualified rung).
+The guard I built checks that a relative `+`/`-` sequence is **self-resetting**:
+eleven leading `-` floors the duty absolutely, so the sequence is safe
+regardless of prior shell state.
+
+**That is true only if the whole sequence is delivered to one firmware
+instance.** My guard reasons about the *sequence*; it has no notion of the
+*device* being restarted underneath it. A reset between the eleventh `-` and the
+seventh `+` leaves an absolute sequence that is no longer absolute, and the
+guard cannot see it because it inspects the command line, not the board.
+
+So this is the **fourth** instance of the class, and the first that my own
+countermeasure was structurally unable to catch.
+
+**The fix that would actually cover it is in the capture, not the command
+line**: the fixture already emits `target_duty_tenths`, and
+`ladder_record` already refuses a mismatch when `--rung-duty` is passed
+(`expect_duty`, added after E148 for precisely this reason — *"the ladder can
+admit a rung on the strength of the one below a different rung"*). **`--anchor`
+bypassed `ladder_admit` but the `expect_duty` check still ran** — and it is what
+would have caught this if the run had been recorded. It did catch it in the
+sense that matters: the capture states 575 in plain text and the mismatch was
+visible the moment I looked.
+
+What I am adding is the check at the *right* time: **verify the emitted
+`target_duty_tenths` against the intended rung immediately after each run in a
+multi-run script**, rather than discovering it during analysis. A batch that
+silently changes rung mid-way is worse than one that stops.
+
+#### And the honest accounting of this batch
+
+Predeclared: three runs a side at 550. Delivered: **two usable per side**, one
+arm short on each, for two different reasons both caused by one careless action
+of mine. The tally that survives:
+
+| image | 550 runs usable | latches |
+|---|---|---|
+| `0D8E3799` (old) | 2 | 1 (old-1); old-2 clean |
+| `7D3B70F0` (new) | 2 full + 1 verdict-only | 2 (new-1, new-2-fragment) |
+
+**The direction is unchanged and is the point**: the old image, which had
+`late_arms = 0` across four prior 550 runs, has now latched. E307 predeclared
+that as the *"image hypothesis dies"* branch. But **at 1-of-2 versus 2-of-2 this
+does not meet the n I said it needed** — ~2 M arms a side to resolve a 3× rate
+difference — so the verdict is *directionally supported and formally
+underpowered*, and I will say that rather than claim the hypothesis is settled.
+
+The batch needs one more run per side. That is the cost of the reset: two runs,
+plus the 575 accident, plus a lost capture.
