@@ -37013,3 +37013,84 @@ marking my own homework.
   slope, the configured clamp, source impedance — which also anchors the mA
   scale), and **a decision on thermal**, since there is no thermal channel in
   `CHANNELS` and no thermal protection anywhere in this firmware.
+
+### E333 — **rung 600 is 3/3 and the fixture passes it.** The reference advance closed the latch, and the operator's meter closed the supply question.
+
+Power restored, and the operator supplied both things I had asked for: the
+**clamp is 3.00 A**, and the **metered consumption during a rung-600 hold is
+2.15 A**.
+
+#### Rung 600, three predeclared holds, all clean
+
+Image `439BF1CD.e331-advref-floor5-65s` — flat advance **16** (the reference
+value) + filter floor 5, 65 s window — un-injected, every protection armed:
+
+| hold | reason | `hold_ms` | `late_arms` | `thin` | `ci_min` | `hold_ma` | `worst_ma` |
+|---|---|---|---|---|---|---|---|
+| h1 | 2 | 34776 | **0** | **0** | 47 | 2322 | 3605 |
+| h2b | 2 | 34776 | **0** | **0** | 48 | 2280 | 3246 |
+| h3 | 2 | 34776 | **0** | **0** | 48 | 2331 | 3327 |
+
+**`bemf_run.rung_report` returns PASS for rung 600 on this ELF** — the repo's
+own gate, on three clean runs, at the hardest rung in the campaign.
+
+`hold_ms` is `65000 − 5224 − ramp_us(rung)` to the millisecond in every run, so
+the window arithmetic is now exact rather than lucky.
+
+And the mechanism is closed rather than merely improved: `late_arms=0` and
+`thin_count=0` in all three, while `ci_min` still fell to **47–48**. The
+estimator descends exactly as before — the descent was never the thing worth
+fighting. At advance 16, `wait = ci/4 >= 10` for every `ci` at or above
+`SECTOR_FLOOR_US`, against a `spent` that caps at 10 over 20 478 archived
+arms, so **`left == 0` is arithmetically unreachable.** That is why three runs
+were enough where the previous candidate needed luck: there is no hazard left
+to sample.
+
+#### The operator's meter, and what it retires
+
+`hold_ma` **2280** against a metered **2.15 A** ⇒ the proxy **over-reads 6.0 %**
+(8.0 % against h1's 2322). `scripts/metered_current.py` derives a 2.7–12.4 %
+over-read at rung 500 from the corpus bracket; **a direct meter now confirms
+it.** So:
+
+```
+true draw at rung 600 = 2.15 A = 71.7 % of the 3.00 A clamp
+```
+
+against the **92–95 %** I asserted repeatedly from the raw proxy, and inside
+the 69–75 % I projected once I had applied the bracket. Droop is **982 per
+mille** (CV needs ≥ 975), better than advance 20's 977.
+
+**So the supply was never the constraint at 60 %, and the reference advance
+relieved it further** — `hold_ma` 2774 → 2280 is −18 %, and `worst_ma`
+3732 → 3246. Advance 20 sat at 82–90 % of the clamp; advance 16 sits at 72 %.
+Recorded in project memory as the anchor this tree has needed, since the
+DC-link residual is uncalibrated and pulsed and no absolute mA figure means
+anything without one.
+
+#### What actually carried this, and what did not
+
+| lever | verdict |
+|---|---|
+| reduce `spent` | irreducible distributed work (E321) |
+| rate-limit the descent | runaway step *is* normal jitter (E323) |
+| widen the blanking gate | refuted — slower rotor, missed crossings, sag trip (E328) |
+| filter floor 3 → 5 | real but not sufficient: 1 clean run in 3 (E324, E328) |
+| **flat advance 16, the reference value** | **closes `left == 0` arithmetically; 3/3 at rung 600, and −18 % current** |
+
+The fix was the reference value all along. I rejected it in E326 because
+`ADVANCE_HIGH >= ADVANCE_LOW` refused it and three unit tests pinned
+`ADVANCE_LOW` — a test-shape reason, when `commutation.rs:238` says
+`DefaultAdvance = FixedAdvance<16>` and AM32's `main.c:656` says
+`temp_advance = 16`. The campaign's 20/22 was the divergence, not the 16.
+
+#### In flight
+
+Three holds at 575 (two PASS, `hold_ms=35776`, `late_arms=0`, `thin_count=0`,
+`hold_ma` 2120/2168), then 550, 525, 500 — each three holds. Then the `Z`
+restart cohorts at 500 and 600, whose prerequisite the fixture keys to
+`--rung-duty` (E248). Section 9.4's warning about the 600 restart — that a
+LateArm can pre-empt the injected `Tracking` fault, leaving
+`first_reason = 15` and no restart attempted — is largely defused by a
+candidate that records `late_arms=0`, but its two-startup budget inside the
+65 s window still needs checking before the cohort is spent.
