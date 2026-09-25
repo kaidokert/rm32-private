@@ -1526,3 +1526,13 @@ E3BB2544.e315-marginhist.elf
          hold_ms=29776 vs a 30000 gate -- my window arithmetic omitted the
          5224 ms pre-closure phase. hold = total - 5224 - ramp_us(rung),
          so 65 s gives 34.8 s at rung 600.
+
+EADDF979.e336-advref-floor5-78s.elf
+  crc32  EADDF979
+  sha256 9136040656EA3306504D9A50C4B0002B1994423EFD271A8553F23AA99A7DE54F
+  build  cargo build --release --features advance-ref,deep-filter
+  E336   Identical to 439BF1CD except BEMF_TOTAL_MS 65 -> 78 s. The 65 s
+         window could NOT fit a rung-600 restart: segment 1 takes ~34 s of
+         it and segment 2 needs 33000 ms. Sized by the hardest criterion
+         now, with ~10.8 s of slack at 600; holds become 47.8 s at 600,
+         i.e. MORE exposure than 65 s, not less.

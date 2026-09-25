@@ -1,4 +1,53 @@
-# Qualified image `439BF1CD` — measured envelope and constraints toward 100%
+# WITHDRAWN — image `439BF1CD` is NOT qualified
+
+> **This document is withdrawn.** The adversarial review
+> (`captures/reviews/QUAL-ADVERSARIAL.md`) found four claims below that the
+> repo's own captures contradict, and **I verified every one of them myself**:
+>
+> 1. **Both restart rows are false.** All six "restart at 500/600" runs print
+>    `target_duty_tenths=250` — they ran at **25 %**. `Z` takes its duty from
+>    `provoke_tenths`, which the `x` key cycles 250→375→475→500→600
+>    (`mod.rs:636-648`); my `--rung-duty` set only the *prerequisite* rung and
+>    never the duty, and I never sent `x`. **Restart at 50 % and 60 % has never
+>    been demonstrated.**
+> 2. **"`left == 0` is arithmetically unreachable" is false.**
+>    `wait_time(ci,16)` is not `ci/4`: integer truncation gives
+>    `wait(40)=wait(41)=10` and `wait(45)=11`. And `spent_max_us = 11` in
+>    **18 of 18** live runs that reported it — not the 10 I quoted from a
+>    *chain-capture sample* taken at advance 20/22 without `deep-filter`. At
+>    `spent = 11`, `left == 0` for every `ci <= 45`, **and `ci_min = 45` was
+>    observed**. The real worst-case margin at the excursion floor is **0–1 µs**.
+>    I conflated a sampled per-arm distribution with a live whole-run maximum —
+>    the exact error E314 was written about.
+> 3. **All nine protection injections ran at 15 % duty**, not at a qualified
+>    rung, and `prot-I` moved its own threshold 100× (`ma_allow=318` against
+>    `ma_allow_ref=31857`). Seven live `Reason` paths have no injection at all,
+>    including `LateArm` — the campaign's own hazard.
+> 4. **§5 point 5 was wrong.** `states.rs:341` enforces an absolute bus floor
+>    on every raw scan, unconditionally, in production. I inherited a stale
+>    claim that `BUS_FLOOR_NUM` is Band-policy-only without checking that a
+>    separate floor exists.
+>
+> And a fifth, self-found while checking (1): **the 65 s window I chose to make
+> the holds efficient cannot fit a rung-600 restart.** Segment 1 consumes ~34 s,
+> leaving ~31 s against a segment-2 `need_ms` of 33 000. It fitted at 90 s. So
+> the window must be sized by the *hardest* criterion — the 600 restart — not by
+> the holds' convenience, which is also the honest answer to the review's charge
+> that 65 s grades on an easier curve.
+>
+> **What survives:** the rung-600, 575, 525 and 500 hold cohorts are genuine
+> (`target_duty_tenths` verified at each), the regression anchors passed, the
+> supply anchoring is sound, and `late_arms = 0` / `thin_count = 0` across all
+> 21 powered runs is real — but it bounds the hazard to ≤ 0.0287/s at 95 %,
+> which *contains* the previous image's 0.0193/s, so it does not yet establish
+> reliability.
+>
+> A corrected campaign runs on a re-windowed image. Nothing below should be
+> cited until it is re-issued.
+
+---
+
+# (withdrawn) Qualified image `439BF1CD` — measured envelope and constraints toward 100%
 
 **Deliverable for campaign 11 ("deliver reliable 60% operation efficiently").**
 One reproducible ELF, what it was measured to do, and what the evidence says

@@ -59,17 +59,30 @@ pub const TAIL_WINDOW_US: u32 = 2_000_000;
 /// clean `reason=2` run. The offset is exactly reproducible: every capture
 /// shows `total_ms - closed_ms = 5224`.
 ///
-/// At 65 s: **34.8 s of hold at rung 600**, 37.3 s at 550, 39.8 s at 500 — all
-/// clear of the bar with margin, and still 28 % less exposure than the original
-/// 90 s. It is not a weakening: runs recorded at 90 s were tested *harder* and
-/// stay valid as evidence at their own exposure.
+/// **78 s, and the size is set by the RESTART, not by the holds** (E336). 65 s
+/// gave 34.8 s of hold at rung 600 and cleared the bar comfortably — and could
+/// not fit a rung-600 restart at all. `restart_campaign` reports
+/// `need_ms = OFF + STARTUP + ramp_us(target) + MIN_HOLD` = **33 000** for
+/// segment 2, while segment 1 at that rung consumes ~34 s of the window
+/// (pre-closure, a 25 s ramp, the 2 s hold to the injection, and its report).
+/// 31 s remaining against 33 s needed: infeasible, where 90 s had fitted.
+///
+/// So the window is sized by the hardest criterion the campaign asks for. At
+/// 78 s the 600 restart has ~11 s of slack, and the holds become 47.8 s at rung
+/// 600 and 52.8 s at 500 — *more* exposure than 65 s gave, which is also the
+/// honest answer to the charge that 65 s graded on an easier curve: a
+/// per-second hazard is tested harder here, not softer. Runs recorded at 90 s
+/// remain valid evidence at their own, harder, exposure.
+///
+/// `hold = total - 5224 - ramp_us(rung)`; the 5224 ms pre-closure offset is
+/// exactly reproducible in every capture.
 ///
 /// It also cuts the thermal exposure this constant's previous comment warned
 /// about by a third — five attempts is ~300 s at 60 s rather than ~450 s —
 /// which matters because there is still **no thermal channel in `CHANNELS`**
 /// (`src/hw/adc.rs:33-41`) and no thermal protection anywhere in this
 /// firmware.
-pub const BEMF_TOTAL_MS: u32 = 65_000;
+pub const BEMF_TOTAL_MS: u32 = 78_000;
 
 /// The exploratory window: the same startup and ramp, about 10 s at target
 /// (E137). One of these precedes every rung's 3/3 cohort, and it is not
