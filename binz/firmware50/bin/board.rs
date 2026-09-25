@@ -538,6 +538,8 @@ impl Hal for Board {
                 det.thin.store(0, Ordering::Relaxed);
                 det.spent_max.store(0, Ordering::Relaxed);
                 det.late_arms.store(0, Ordering::Relaxed);
+                det.ci_at_late.store(0, Ordering::Relaxed);
+                det.spent_at_late.store(0, Ordering::Relaxed);
                 det.active.store(true, Ordering::Release);
             }
         });
@@ -730,6 +732,12 @@ impl Hal for Board {
             unstable,
             spent_max_us: S.det().spent_max.load(Ordering::Relaxed),
             late_arms: S.det().late_arms.load(Ordering::Relaxed),
+            // E314: the estimator value and spend AT the first latch, captured
+            // in the ISR rather than read here -- `ci_us` below is sampled at
+            // report-build time, after the stop, so a low reading there is
+            // confounded with "an abrupt stop reads lower".
+            ci_at_late: S.det().ci_at_late.load(Ordering::Relaxed),
+            spent_at_late: S.det().spent_at_late.load(Ordering::Relaxed),
             // E208: the causal side of the late arm. `margin_min_p1` is stored
             // plus one so that 0 means "no acceptance seen".
             ci_min_us: S.det().ci_min_p1.load(Ordering::Relaxed).saturating_sub(1),

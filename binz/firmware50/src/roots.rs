@@ -473,10 +473,16 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                     note_margin(left);
                     beat = beat_row::<C>(raw, fine0, wait, step.get(), left == 0);
                     if left == 0 {
-                        S.det().late_arms.store(
-                            S.det().late_arms.load(Ordering::Relaxed).wrapping_add(1),
-                            Ordering::Relaxed,
-                        );
+                        let n = S.det().late_arms.load(Ordering::Relaxed);
+                        S.det().late_arms.store(n.wrapping_add(1), Ordering::Relaxed);
+                        // **The two numbers the whole mechanism argument turns
+                        // on, captured where they are true** (E314). Only for
+                        // the FIRST late arm, so a second cannot overwrite the
+                        // one the run stopped on.
+                        if n == 0 {
+                            S.det().ci_at_late.store(zc.average_interval(), Ordering::Relaxed);
+                            S.det().spent_at_late.store(spent, Ordering::Relaxed);
+                        }
                     }
                     if spent > S.det().spent_max.load(Ordering::Relaxed) {
                         S.det().spent_max.store(spent, Ordering::Relaxed);
@@ -542,10 +548,16 @@ fn accept<C: ChainLog>(
         let fine_now = if C::ON { hw::fine::raw() as u16 } else { 0 };
         beat = Some((raw, fine0, fine_now, wait, fine_now.wrapping_sub(fine0), left == 0));
         if left == 0 {
-            S.det().late_arms.store(
-                S.det().late_arms.load(Ordering::Relaxed).wrapping_add(1),
-                Ordering::Relaxed,
-            );
+            let n = S.det().late_arms.load(Ordering::Relaxed);
+            S.det().late_arms.store(n.wrapping_add(1), Ordering::Relaxed);
+            // **The twin site (E314).** `late_arms` is incremented in TWO
+            // places -- here and in `det_decide_plain` -- and an instrument
+            // that covers one of them is the "present but inert" failure this
+            // campaign has now hit four times. Both capture, first-latch-only.
+            if n == 0 {
+                S.det().ci_at_late.store(avg, Ordering::Relaxed);
+                S.det().spent_at_late.store(spent, Ordering::Relaxed);
+            }
         }
         note_margin(left);
         if spent > S.det().spent_max.load(Ordering::Relaxed) {

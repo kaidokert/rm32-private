@@ -3,7 +3,7 @@
   "div": 0,
   "excl": 0,
   "helper": 0,
-  "insns": 728,
+  "insns": 760,
   "irq": 9,
   "mul": 4
  },
@@ -39,28 +39,12 @@
   "irq": 0,
   "mul": 4
  },
- "run::states::Ctx::record_sag_row": {
-  "div": 0,
-  "excl": 0,
-  "helper": 0,
-  "insns": 92,
-  "irq": 1,
-  "mul": 0
- },
  "run::states::Ctx::scan_pass": {
   "div": 2,
   "excl": 0,
   "helper": 2,
-  "insns": 558,
+  "insns": 497,
   "irq": 0,
   "mul": 10
- },
- "sagtrace::Trace::push": {
-  "div": 0,
-  "excl": 0,
-  "helper": 2,
-  "insns": 111,
-  "irq": 0,
-  "mul": 1
  }
 }

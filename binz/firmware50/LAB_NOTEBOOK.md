@@ -28361,3 +28361,177 @@ file in the repo directly rather than returning it only through the transcript
 
 Stating a rule I did not fully meet, and why, is better than a summary that
 implies I did.
+
+### E314 — disposition of both reviews of E312: my margin model's anchor is a number that has never been measured. The A/B is withdrawn again, for good reasons this time.
+
+Both reviews land, converge, and refute E312. **I verified every load-bearing
+number myself.** The advance A/B does not run.
+
+#### The anchor does not exist
+
+E312 rested on `wait22(71) = 11 = spent_max_us = 11`, therefore zero margin.
+`scripts/chain_spent.py`, over **20 478 directly measured arms**:
+
+```
+spent =  5 us : 13.8%      spent =  8 us :  3.5%
+spent =  6 us : 77.2%      spent =  9 us :  3.0%
+spent =  7 us :  2.5%      spent = 10 us :  0.015%   spent = 11 us : NEVER
+```
+
+**`spent = 11` has never been observed on a single arm.** Mode 6, max 10. So
+`wait22(71) = 11` has margin **+1 against the measured maximum and +5 against
+the mode** — not zero. `spent_max_us` is a *saturating whole-run maximum*, and
+worse, `WCET_ESTIMATES.md` shows it scales with the **persistence-filter
+depth**, which is scheduled off the interval: depth 12 at ci ≈ 420 µs, depth
+**3** at ci = 71. Rung 550 runs the *shallowest* filter in the firmware.
+**`spent_max = 11` and `wait = 11` are drawn from opposite ends of the speed
+range and cannot co-occur.**
+
+And the corpus said so: every high-duty run reaches spend 11 *and* reaches
+estimates whose `wait` is 6–9 µs, yet **28 of 36 never latch.** Zero margin at
+nominal would make latching universal.
+
+**`src/run/policy.rs:314-318` — the file I edited — already says this**: *"a
+whole-run saturating maximum, not a typical arm cost — the mode is ~6 — so every
+margin derived from it is a worst-case margin."* I wrote that comment in E303
+and re-derived the error against it nine entries later.
+
+#### Three more of my own numbers, wrong
+
+* **The off-by-one that carried both the withdrawal and the un-withdrawal.**
+  `thin ⇔ wait − spent ≤ 2` (`roots.rs:407`). At `wait20(71) = 13`, thin needs
+  `spend ≥ 11` — which `spent_max = 11` **permits exactly**. I claimed it needs
+  ≥ 12 and is forbidden. That sentence is why E307 withdrew the A/B and why
+  E312 un-withdrew it. **Verified: at ci=71 adv 20 the threshold is 11,
+  PERMITTED; only at ci=72 is it 12.** The argument in both directions was wrong
+  by one microsecond, at a nominal I had myself fixed at 71.
+* **The boundary is 72, not 74.** `wait22(72) = 12`, `wait22(73) = 11`,
+  `wait22(74) = 12` — non-monotone. The lowest ci with `wait ≥ 12` is **72**. My
+  "rung 550 sits three microseconds below the 74 advance 22 needs" hid the
+  non-monotonicity behind a *for-all-higher-ci* qualifier that lands exactly in
+  the window under argument. And `mean_ci` reads **71 in nine runs and 72 in
+  five**, so on the image-mean half the runs already have `wait = 12`.
+* **My falsifier could not fail.** I predeclared *"any advance-20 latch must
+  have `ci_min < 62` or the model is refuted."* Observed `ci_min` across all
+  fourteen 550 captures: max **54**; across duty ≥ 500, max 60. **A bar at 62
+  against a variable whose ceiling is 54 is satisfied by every run that has ever
+  been recorded.** That is [[feedback-predeclare-the-falsification-bar]] failing
+  in the most literal way available.
+
+#### And the A/B could not have discriminated anyway
+
+`wait20(ci) > wait22(ci)` for **every** ci. So advance 20 relieves the boundary
+mechanism, the ratchet mechanism, and any mechanism in which `left` reaches 0 —
+identically. **There is no outcome that separates them.** E307's own ratchet
+table (`wait22` 11→10→8→7) reads 13→12→10→9 at advance 20, all above any
+measured spend. I presented a fix attempt as a mechanism experiment.
+
+Power, from the measured rate (5 latches / 8.34 M arms = 6.0e-7 per arm, ~1.0 M
+arms per run, λ ≈ 0.6): **P(control arm reaches ≥2/3) = 0.43**, P(void batch)
+= 0.17, and the best-case joint pattern is **p ≈ 0.07** — above this campaign's
+own working standard. A decisive binary design needs ~8 runs a side.
+
+#### What the corpus actually says, and it points at the other mechanism
+
+**`ci_us` at the stop separates perfectly.** Verified myself over all fourteen
+un-injected 550 captures:
+
+```
+CLEAN   (reason 2) : 70, 71, 71, 71, 72        mean_ci: 71-72
+LATEARM (reason 15): 40, 47, 50, 54, 55, 59, 62   mean_ci: 71-72
+```
+
+**5/5 against 7/7, no overlap, while the hold mean is identical in both
+groups.** The latch happens with the estimate **depressed**, every time — which
+is E307's reading, not E312's. `ci_min` does not separate (rung-matched at 550
+it is 48.71 latching vs 48.57 clean, indistinguishable), and the 48.9-vs-51.9
+gap I presented was a rung-mix artifact.
+
+#### The mechanism I missed, twice over
+
+**1. The filter-depth step is confounded with the wait boundary to within one
+microsecond.** `depth = 3 + ((2·ci − 100)·1475 >> 16)` steps **3 → 4 between
+ci = 72 and ci = 73**, and those reads happen *inside* the measured `spent`
+window. Verified:
+
+| rung | nominal ci | `wait22` | filter depth |
+|---|---|---|---|
+| 475 | 80 | 13 | 4 |
+| 500 | 77 | 12 | 4 |
+| 525 | 74 | 12 | **4** |
+| **550** | **71** | **11** | **3** |
+| 575 | 69 | 11 | 3 |
+
+**The depth boundary (73) and the wait boundary (72/74) are one µs apart, so no
+rung ladder can distinguish them.** I have been reading a confounded cliff for
+five entries.
+
+**2. And it explains the inversion my model got backwards.** `thin` per 10⁶ hold
+arms, verified: 475 → 140, 500 → 848, 525 → **4988**, 550 → **2817**, 575 →
+12110. A clean 5.6×-per-rung series through 525, a **12× drop below trend at
+550**, then the slope resumes. `thin` is `P(left ≤ 2)` and `late_arms` is
+`P(left = 0)` — **the same variable at two thresholds** — so `P(left≤2)`
+improving 12× while `P(left=0)` goes 0 → 6e-7 **cannot be a shift of one
+distribution.** The depth-3 family sits below the depth-4 family's
+extrapolation with the same slope, which fits.
+
+**3. The spend distribution is bimodal, and the satellite is the guard.** A
+5–6 µs body at 91%, then **8–9 µs carrying 6.5%**, then a 200× cliff.
+`WCET_ESTIMATES.md`: the guard (`TIM6_DAC_LPTIM1`, NVIC **0x00**) is the only
+root that can preempt COMP (0x40), and a preemption costs ~5 µs — and ~5 µs at
+~11.7 kHz is ~6% duty. `comp_call_max_us = 16` against `spent_max_us = 11` in
+every 550 capture is a 5 µs gap, i.e. exactly one preemption. **`spent` is
+computed outside `com_arm`'s critical section, so the stamp→arm window is fully
+preemptible.** My own notebook predicted this bimodality at line 15683 and never
+tested it. **It was in the data.**
+
+#### What I did instead of the A/B — two stores, settling it outright
+
+`ci_at_late` and `spent_at_late`, captured **inside the ISR at the latch**, so a
+latching run reports its own cause. `ci_us` in the report is sampled at
+report-build time after `safe_off`, which confounds "depressed estimate" with
+"an abrupt stop reads lower" — and the two abnormal non-LateArm stops (sag 60,
+host abort 68) do read low, so the confound is live at n=2. This removes it.
+
+**Predeclared discriminator:** `ci_at_late ≈ 71–72` ⇒ boundary failure at
+nominal. `ci_at_late` well below ⇒ depressed estimate. **One latch decides it.**
+
+Three things I checked rather than assumed:
+
+* **`spent` is computed at `roots.rs:470`, before the block at 475**, so the
+  capture cannot affect the spend it records.
+* **There are TWO latch sites** — `det_decide_plain` and the `accept` twin at
+  :551. I patched one, the ratchet did not catch it (it counts classes, not
+  coverage), and I found it by reading. **An instrument covering one of two
+  paths is the "present but inert" failure for the fifth time this campaign.**
+  Both patched, first-latch-only so a second cannot overwrite the deciding one.
+* **The ratchet caught a real cost**: `ADC_COMP` 728 → **760 instructions**
+  (+32). Hazard classes unchanged (`div 0`, `mul 4`, `irq 9`). The added code is
+  inside a branch firing once per ~1.7 M arms, but it **shifts code layout** —
+  and both reviews independently flagged layout as a live carrier (two images
+  with instruction-identical `ADC_COMP` differ **3.2×** in `thin`). So the
+  layout term is a stated caveat, not a controlled one, and the run itself will
+  show it.
+
+Images `0F890AF2.e314-whylate-adv22` and `15BD8D56.e314-whylate-adv20`, both
+manifested. 345 tests, clippy 0 (including fixing four `is_multiple_of` findings
+from my own E303 assertions).
+
+#### And the thing that actually blocks 60%
+
+Both reviews converge on it and it is not the arm. At rung 600 the hold current
+is **2.87 A = 96% of a 3 A clamp** and the worst 10.1 ms block is **3.49 A =
+116%**; at 575 the worst block is already **3.02 A**. The firmware's own
+allowance is 4 A, so **nothing in the firmware stops it — the supply goes CC
+first**, which the goal forbids qualifying under. `bus_min` already sits 8–10%
+below reference.
+
+**So 60% is supply-limited, not arm-limited, on the present evidence**, and a
+batch trading 1–3% of rotor speed for arm margin moves away from it. E312's
+line — *"advance 20 clean → the 57.5/60% exploration proceeds on it"* — is not
+supported, and I withdraw it.
+
+#### Next
+
+One run at 550 on `0F890AF2` to read `ci_at_late`. That is one run, and it
+settles a mechanism argument that has consumed E300–E312.

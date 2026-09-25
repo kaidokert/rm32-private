@@ -234,10 +234,12 @@ const _: () = assert!(RAW_DEPTH_FRACTIONS[0] < DEPTH_FRACTIONS[3]);
 // `BusDepth::with_fractions` precomputes `frac / 5` (E303), so every fraction
 // must be an exact multiple of 5 or the scaled comparison silently shifts the
 // line. E291 relied on this and only said so in a comment; it is checked now.
-const _: () = assert!(DEPTH_FRACTIONS[0] % 5 == 0 && DEPTH_FRACTIONS[1] % 5 == 0);
-const _: () = assert!(DEPTH_FRACTIONS[2] % 5 == 0 && DEPTH_FRACTIONS[3] % 5 == 0);
-const _: () = assert!(RAW_DEPTH_FRACTIONS[0] % 5 == 0 && RAW_DEPTH_FRACTIONS[1] % 5 == 0);
-const _: () = assert!(RAW_DEPTH_FRACTIONS[2] % 5 == 0 && RAW_DEPTH_FRACTIONS[3] % 5 == 0);
+const _: () = assert!(DEPTH_FRACTIONS[0].is_multiple_of(5) && DEPTH_FRACTIONS[1].is_multiple_of(5));
+const _: () = assert!(DEPTH_FRACTIONS[2].is_multiple_of(5) && DEPTH_FRACTIONS[3].is_multiple_of(5));
+const _: () =
+    assert!(RAW_DEPTH_FRACTIONS[0].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[1].is_multiple_of(5));
+const _: () =
+    assert!(RAW_DEPTH_FRACTIONS[2].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[3].is_multiple_of(5));
 
 /// How deep, and for how long, the bus actually sits below its pre-run
 /// reference -- the distribution a slow-droop stop would have to be chosen from.

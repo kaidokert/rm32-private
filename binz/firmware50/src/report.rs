@@ -244,6 +244,12 @@ pub struct Roots {
     /// COMP's entry-to-arm time and the arms that reached the wait (E083).
     pub spent_max_us: u32,
     pub late_arms: u32,
+    /// The estimator's value and the measured spend at the FIRST late arm
+    /// (E314), zero if none fired. Together they say which mechanism stopped
+    /// the run: `ci_at_late` near the hold mean is a boundary failure, well
+    /// below it is a depressed estimate.
+    pub ci_at_late: u32,
+    pub spent_at_late: u32,
     /// The smallest accepted average interval, µs: the causal variable, and
     /// invariant under the advance level.
     pub ci_min_us: u32,
@@ -632,6 +638,8 @@ impl RunReport {
         out.say("BEMFRCOMP ");
         out.kv("spent_max_us", self.roots.spent_max_us);
         out.kv("late_arms", self.roots.late_arms);
+        out.kv("ci_at_late", self.roots.ci_at_late);
+        out.kv("spent_at_late", self.roots.spent_at_late);
         // E208: the causal side of the late arm, per run.
         out.kv("ci_min_us", self.roots.ci_min_us);
         out.kv("thin_count", self.roots.thin_count);

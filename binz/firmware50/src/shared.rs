@@ -284,6 +284,27 @@ pub struct Det {
     /// Longest entry-stamp-to-arm time, and arms that reached the wait (E083).
     pub spent_max: AtomicU32,
     pub late_arms: AtomicU32,
+    /// The estimator's value, and the measured spend, **at the instant of the
+    /// first late arm** (E314). Both zero until one fires.
+    ///
+    /// These two stores settle a question two competing mechanisms could not be
+    /// separated on from the summary fields. `ci_us` in the report is read at
+    /// report-build time, after the stop and `safe_off`, so a depressed reading
+    /// there is confounded with "an abrupt stop reads lower" -- and the two
+    /// non-deadline stops in the corpus (sag 60, host abort 68) do read low.
+    /// Captured here, inside the ISR, at the latch, the confound is gone.
+    ///
+    /// The discriminator, predeclared: a **boundary** mechanism (the rung's
+    /// nominal interval leaves `wait <= spent`) gives `ci_at_late` ~= the hold
+    /// mean, 71-72. A **depressed-estimate** mechanism gives `ci_at_late` well
+    /// below it. The corpus already favours the latter 7/7 on the confounded
+    /// field; this makes it unconfounded.
+    ///
+    /// Cost: two relaxed stores on a path that fires once per ~1.7 M arms, so
+    /// no observer effect on the quantity being measured -- unlike every
+    /// recorder this campaign has tried.
+    pub ci_at_late: AtomicU32,
+    pub spent_at_late: AtomicU32,
     /// Refusals by the re-base rule.
     pub rebase: AtomicU32,
     /// **The smallest accepted average interval of the run, plus one.**
@@ -630,6 +651,8 @@ static DET: Det = Det {
     accept_wait: u(),
     spent_max: u(),
     late_arms: u(),
+    ci_at_late: u(),
+    spent_at_late: u(),
     rebase: u(),
     cap_armed: f(),
     zc: Seam::new(None),
