@@ -12,7 +12,7 @@ use crate::driven;
 use crate::duty::{RUN_PERIOD_TICKS, STARTUP_TICKS};
 use crate::protection::{
     AverageCurrent, BlockVerdict, BusDepth, CurrentMark, FastBusSag, FoldbackGovernor, PhaseCodePolicy, RAW_LIMIT,
-    RailMean, Reason, validate_raw_feedback,
+    RailMean, RawScan, Reason, validate_raw_feedback,
 };
 use crate::ramp::duty_at;
 use crate::sagtrace::SagLog;
@@ -322,7 +322,7 @@ impl Ctx {
         if let Some(r) = early {
             if P::G::ON && self.rail.ready() {
                 let (filt_bus, filt_vref) = self.sag.filtered();
-                self.record_sag_row::<P>(hal, sector_start, filt_bus, filt_vref);
+                self.record_sag_row::<P>(hal, &scan, sector_start, filt_bus, filt_vref);
             }
             return Err(r);
         }
@@ -339,7 +339,7 @@ impl Ctx {
             let (filt_bus, filt_vref) = self.sag.filtered();
             let verdict = self.sag.observe(bus_mean, vref_mean);
             if P::G::ON {
-                self.record_sag_row::<P>(hal, sector_start, filt_bus, filt_vref);
+                self.record_sag_row::<P>(hal, &scan, sector_start, filt_bus, filt_vref);
             }
             if let Some(r) = verdict {
                 // The freeze is in `Ctx::pass`, for every stop alike.
@@ -362,6 +362,7 @@ impl Ctx {
     fn record_sag_row<P: Policies>(
         &mut self,
         hal: &mut impl Hal,
+        scan: &RawScan,
         sector_start: Option<u32>,
         filt_bus: u16,
         filt_vref: u16,
@@ -369,6 +370,18 @@ impl Ctx {
         let now = hal.now();
         P::G::block(&crate::sagtrace::Block {
             at: hal.raw(),
+            // The shared 125 ns timeline, so this ring and `chain::Beat` can
+            // be paired. Through the Hal like every other clock read, and only
+            // when the recorder is installed: production runs `NoSagLog` and
+            // never initialises TIM2.
+            at_fine: if P::G::ON { hal.fine() } else { 0 },
+            // The raw sample of *this* scan, alongside the mean the guard
+            // judged, so the host can state a dip's true width instead of the
+            // boxcar's.
+            bus_raw: scan.bus,
+            phase_a: scan.phase_a,
+            phase_b: scan.phase_b,
+            phase_c: scan.phase_c,
             bus_mean: self.rail.bus_mean(),
             vref_mean: self.rail.vref_mean(),
             filt_bus,

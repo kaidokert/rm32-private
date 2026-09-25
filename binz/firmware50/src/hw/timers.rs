@@ -16,12 +16,31 @@ use stm32g0xx_hal::stm32;
 ///
 /// TIM2 is the only 32-bit timer on this part and this firmware does not use
 /// it: TIM1 drives the bridge, TIM16 is the commutation one-shot, TIM6 paces
-/// the ADC and the guard, TIM17 is the µs clock. Free-running with no
-/// prescaler it ticks at 64 MHz -- **15.6 ns**, 67 s to wrap -- so no software
-/// extension is needed at all, which also retires the extended-modulus bug
-/// class this bench has already been bitten by. And because 64 MHz is 2^6 MHz,
-/// converting ticks to µs is a shift by six: division-free by construction,
-/// which the ISR arithmetic audit requires.
+/// the ADC and the guard, TIM17 is the µs clock.
+///
+/// **8 MHz, 125 ns per tick (PSC=7), 536.87 s to wrap** (campaign 11). E180
+/// ran it free at 64 MHz for 15.625 ns, and that was wrong for this campaign
+/// in one specific way: its 32-bit counter wraps at **67.11 s** while runs are
+/// commanded `total_ms = 80000`, so the run anchor wrapped *inside a run* and
+/// was not an anchor. At 8 MHz one unwrapped 32-bit anchor covers the longest
+/// run 6.7 times over, and the **u16** fine stamps in [`crate::chain::Beat`]
+/// span **8.192 ms** instead of 1.024 ms -- which a 71 µs sector at 55% needs.
+///
+/// Still division-free, which the ISR arithmetic audit requires: 8 MHz is
+/// 2^3 MHz, so ticks to µs is a shift by three. And 64/8 = 8 exactly, so the
+/// prescaler is integral and the rate is not approximate.
+///
+/// The resolution given up is 8x, and 125 ns still resolves the chain's 4 µs
+/// term to 3.1% where TIM17's 1 µs is 25%. **The range was bought with the
+/// prescaler and not with wider fields on purpose** (E185): widening `Beat`
+/// for fine stamps took the chain image's `.bss` from 28 792 to 32 888 B, left
+/// under 4 KB of stack on a part whose largest frame reserves 5076 B and which
+/// has no stack guard, and every run of that image died within a millisecond.
+///
+/// **The tick rate is part of the capture format.** Every dump states it
+/// (`FINEHZ`), and the host parsers refuse a capture that does not, because a
+/// silent 15.625 ns -> 125 ns change reinterprets every recorded delta by 8x --
+/// the same trap `scripts/chain.py` already refuses legacy captures for.
 ///
 /// **Diagnostic images only.** Production never initialises TIM2 and never
 /// reads it; the recorders that do are compiled out of production by their
@@ -36,6 +55,11 @@ pub mod fine {
     /// Takes no `Rcc`: the HAL's `Enable` trait needs the frozen `Rcc` value,
     /// which the binary does not keep, and this module is inside `hw/` where
     /// register writes belong. It sets only TIM2's own enable bit.
+    // The units and every piece of wrap-safe arithmetic live in
+    // `crate::fine`, which is host-visible and therefore unit-tested. This
+    // module owns only the counter.
+    pub use crate::fine::{FINE_HZ, FINE_PSC, SPAN16_US, US_SHIFT, since, since16, to_tenths, to_us};
+
     pub fn init() {
         // SAFETY: the RCC block from the PAC's own pointer constant, and the
         // only bit touched is TIM2's peripheral clock enable -- a peripheral
@@ -43,7 +67,7 @@ pub mod fine {
         let rcc = unsafe { &*stm32::RCC::ptr() };
         rcc.apbenr1().modify(|_, w| w.tim2en().set_bit());
         let t = regs();
-        t.psc().write(|w| w.psc().set(0));
+        t.psc().write(|w| w.psc().set(FINE_PSC));
         t.arr().write(|w| w.arr().set(u32::MAX));
         t.egr().write(|w| w.ug().set_bit());
         t.cr1().write(|w| w.cen().set_bit());
@@ -56,26 +80,11 @@ pub mod fine {
         unsafe { &*stm32::TIM2::ptr() }
     }
 
-    /// The raw 32-bit count: 15.6 ns ticks, wrapping every 67 s.
+    /// The raw 32-bit count: 125 ns ticks, wrapping every 536.87 s.
     #[inline(always)]
     #[must_use]
     pub fn raw() -> u32 {
         regs().cnt().read().cnt().bits()
-    }
-
-    /// Ticks to whole µs: a shift by six, never a division (64 MHz = 2^6 MHz).
-    #[inline(always)]
-    #[must_use]
-    pub const fn to_us(ticks: u32) -> u32 {
-        ticks >> 6
-    }
-
-    /// Ticks to tenths of a µs, for the host's own arithmetic: `t * 10 >> 6`
-    /// stays inside `u32` for any delta under 6.7 s.
-    #[inline(always)]
-    #[must_use]
-    pub const fn to_tenths(ticks: u32) -> u32 {
-        (ticks * 10) >> 6
     }
 }
 
@@ -118,7 +127,7 @@ pub mod clock {
 /// **Why not the HAL** (moved from the binary, E070): the HAL's `Timer`
 /// derives PSC/ARR from a period and offers no one-pulse mode.
 pub mod com_timer {
-    use super::{stm32, Enable, Rcc, Reset};
+    use super::{Enable, Rcc, Reset, stm32};
 
     #[inline(always)]
     fn regs() -> &'static stm32::tim16::RegisterBlock {

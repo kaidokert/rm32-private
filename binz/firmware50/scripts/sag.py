@@ -59,10 +59,34 @@ import pathlib
 import statistics
 import sys
 
+# v2 (campaign 11) added `at_fine`, `bus_raw` and the three phase codes.
+# `bus_raw` is the field that matters most: `bus` below is the guard's 8-tap
+# sliding mean, so it widens every event by 7 scans and cannot state a dip's
+# true width. v1 captures are read with those fields as None.
 Row = collections.namedtuple(
-    "Row", "at bus vref filt_bus filt_vref streak step duty since_zc"
+    "Row",
+    "at at_fine bus_raw phase_a phase_b phase_c bus vref filt_bus filt_vref streak step duty since_zc",
 )
 Slow = collections.namedtuple("Slow", "bus vref filt_bus filt_vref")
+
+# Field counts including the leading "SAGROW" token.
+V1_FIELDS = 10
+V2_FIELDS = 15
+
+
+def _row_from(f: list[str]) -> Row:
+    """One row, whichever format version it is. Refuses anything else."""
+    v = [int(x) for x in f[1:]]
+    if len(f) == V2_FIELDS:
+        return Row(*v)
+    if len(f) == V1_FIELDS:
+        at, bus, vref, fb, fv, streak, step, duty, zc = v
+        return Row(at, None, None, None, None, None, bus, vref, fb, fv, streak, step, duty, zc)
+    raise SystemExit(
+        f"REFUSED: a SAGROW with {len(f) - 1} fields is neither v1 ({V1_FIELDS - 1}) "
+        f"nor v2 ({V2_FIELDS - 1}). Silently skipping it would report an empty ring "
+        f"as a clean one.\n  {' '.join(f)}"
+    )
 
 
 def parse(path: pathlib.Path) -> tuple[dict, list[Row], list[Slow]]:
@@ -75,9 +99,7 @@ def parse(path: pathlib.Path) -> tuple[dict, list[Row], list[Slow]]:
                     k, v = kv.split("=", 1)
                     snap[k] = int(v)
         elif line.startswith("SAGROW "):
-            f = line.split()
-            if len(f) == 10:
-                rows.append(Row(*(int(x) for x in f[1:])))
+            rows.append(_row_from(line.split()))
         elif line.startswith("SAGSLOW "):
             f = line.split()
             if len(f) == 5:
@@ -87,6 +109,66 @@ def parse(path: pathlib.Path) -> tuple[dict, list[Row], list[Slow]]:
                 if kv.startswith("reason="):
                     snap["run_reason"] = int(kv.split("=", 1)[1])
     return snap, rows, slow
+
+
+def check_units(snap: dict, rows: list[Row]) -> None:
+    """Refuse a capture whose tick rate is not declared.
+
+    **The fine stamp's rate is part of the format, not commentary.** It changed
+    from 15.625 ns to 125 ns between campaigns, so reading a v2 delta with the
+    v1 rate under-reports every interval by 8x. `scripts/chain.py` already
+    refuses legacy captures for exactly this reason; assuming a rate here would
+    reintroduce the trap one file over.
+    """
+    has_fine = any(r.at_fine is not None for r in rows)
+    if not has_fine:
+        return  # a v1 capture, which carries no fine stamps to misread
+    if "fine_hz" not in snap:
+        raise SystemExit(
+            "REFUSED: rows carry a fine stamp but SAGSNAP does not declare "
+            "`fine_hz`. The tick changed 15.625 ns -> 125 ns between campaigns, "
+            "so a delta read at the wrong rate is wrong by 8x. Re-dump with an "
+            "image that emits the units."
+        )
+    if "span16_us" not in snap:
+        raise SystemExit("REFUSED: SAGSNAP declares `fine_hz` but not `span16_us`.")
+
+
+def fine_delta_us(a: Row, b: Row, snap: dict) -> float | None:
+    """Wrap-safe µs between two rows on the fine clock, or None if it aliases.
+
+    The stamp keeps only 16 bits, so a gap at or beyond `span16_us` is
+    indistinguishable from a short one. Returning None rather than a number is
+    the whole point: an aliased pairing must not be reported as a measurement.
+    """
+    if a.at_fine is None or b.at_fine is None:
+        return None
+    hz = snap.get("fine_hz")
+    if not hz:
+        return None
+    ticks = (b.at_fine - a.at_fine) & 0xFFFF
+    us = ticks * 1_000_000.0 / hz
+    return None if us >= snap.get("span16_us", 0) else us
+
+
+def raw_run_width(rows: list[Row], threshold: int) -> tuple[int, int]:
+    """Longest run of consecutive rows whose **raw** bus is below `threshold`,
+    and the count of such rows.
+
+    This is the quantity a width claim needs and v1 could not supply. The
+    recorded *mean* is an 8-tap boxcar, so it reports `m + 7` scans for any raw
+    notch of `m` -- i.e. >= 814 µs for even a single-scan spike, which is why a
+    width prediction against the mean cannot fail.
+    """
+    best = run = n = 0
+    for r in rows:
+        if r.bus_raw is not None and r.bus_raw < threshold:
+            run += 1
+            n += 1
+            best = max(best, run)
+        else:
+            run = 0
+    return best, n
 
 
 def fail_closed(r: Row, rail: int) -> bool:
@@ -114,6 +196,8 @@ def main() -> int:
     ap.add_argument("--worst", type=int, default=10, help="how many tightest blocks to list")
     a = ap.parse_args()
     snap, rows, slow = parse(pathlib.Path(a.capture))
+    # Before any arithmetic: refuse a capture whose tick rate is undeclared.
+    check_units(snap, rows)
     if not rows:
         print("no SAGROW rows found", file=sys.stderr)
         return 1

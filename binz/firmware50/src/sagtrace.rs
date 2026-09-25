@@ -60,8 +60,20 @@ use core::cell::RefCell;
 
 use cortex_m::interrupt::{self, Mutex};
 
-/// Full-rate judgements kept: ~52 ms at the measured 9.8 kHz.
-pub const FAST_LEN: usize = 512;
+/// Full-rate judgements kept: **26.0 ms** at the measured 9.84 kHz.
+///
+/// **256, halved from 512 to pay for the raw bus and the three phase codes**
+/// (campaign 11). The row went 16 -> 26 B, and the two rings now take
+/// 256 x 26 + 1024 x 8 = **14 848 B**, less than the 16 384 B this image took
+/// before. Paying for new fields by shortening the ring rather than by growing
+/// `.bss` is E185's lesson: widening these rings once left under 4 KB of stack
+/// on a part whose largest frame reserves 5076 B and which has no stack guard,
+/// and every run died inside a millisecond.
+///
+/// 26 ms is still ~50x the widest dip the guard can latch on (its numerator is
+/// an 8-scan sliding mean, so it cannot see anything slower than ~200 ms or
+/// faster than ~0.8 ms), and the analysis uses the last rows before the freeze.
+pub const FAST_LEN: usize = 256;
 /// Decimated judgements kept, and the decimation: 1024 rows every 32nd
 /// judgement is **~3.3 s** at the measured 9.8 kHz (1024 x 32 x 101 µs), i.e.
 /// sixteen of the reference's 207 ms time constants. `scripts/sag.py` prints
@@ -73,8 +85,30 @@ const _: () = assert!(SLOW_EVERY.is_power_of_two());
 /// One judgement: the guard's own inputs and the state it judged them in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Block {
-    /// The raw clock when the block was judged.
+    /// The raw µs clock (TIM17) when the block was judged. Kept for pairing
+    /// in the unit the control path works in, exactly as `chain::Beat` does.
     pub at: u16,
+    /// The **fine** stamp: low 16 bits of TIM2 at 125 ns, which is the shared
+    /// diagnostic timeline this ring and `chain::Beat` now have in common.
+    /// Wraps every **8.192 ms**; the host must not pair across a longer gap
+    /// (`hw::fine::SPAN16_US`).
+    pub at_fine: u16,
+    /// **The raw bus sample of this very scan**, not the mean.
+    ///
+    /// Without it nothing here can state the width of a dip: the mean below is
+    /// an 8-tap boxcar, so it widens every event by 7 scans and a single-scan
+    /// spike is indistinguishable from a five-scan notch. Two independent
+    /// reviews found a width prediction built on the mean to be unfalsifiable.
+    pub bus_raw: u16,
+    /// The three shunt amplifiers of this scan, raw codes.
+    ///
+    /// The sag verdict returns **before** `current.accumulate`, so the block
+    /// containing a trip is discarded and `worst_hold_ma` structurally cannot
+    /// hold a surge co-located with it. These are the same values that would
+    /// have been accumulated, recorded before the verdict is consulted.
+    pub phase_a: u16,
+    pub phase_b: u16,
+    pub phase_c: u16,
     /// What the guard compared: the block means, and the filtered reference
     /// **as used for this test** (before its post-test update).
     pub bus_mean: u16,
@@ -145,6 +179,11 @@ impl Trace {
     pub const fn empty() -> Self {
         const EMPTY: Block = Block {
             at: 0,
+            at_fine: 0,
+            bus_raw: 0,
+            phase_a: 0,
+            phase_b: 0,
+            phase_c: 0,
             bus_mean: 0,
             vref_mean: 0,
             filt_bus: 0,
@@ -177,11 +216,7 @@ impl Trace {
     /// division on this M0+ if the length ever stopped being a power of two
     /// (E154's finding, in the capture ring).
     const fn bump(i: usize, len: usize) -> usize {
-        if i + 1 == len {
-            0
-        } else {
-            i + 1
-        }
+        if i + 1 == len { 0 } else { i + 1 }
     }
 
     pub fn push(&mut self, b: &Block) {
@@ -212,19 +247,11 @@ impl Trace {
 
     /// The oldest kept row's index in each ring.
     pub const fn fast_start(&self) -> usize {
-        if self.fast_len == FAST_LEN {
-            self.fast_next
-        } else {
-            0
-        }
+        if self.fast_len == FAST_LEN { self.fast_next } else { 0 }
     }
 
     pub const fn slow_start(&self) -> usize {
-        if self.slow_len == SLOW_LEN {
-            self.slow_next
-        } else {
-            0
-        }
+        if self.slow_len == SLOW_LEN { self.slow_next } else { 0 }
     }
 }
 
@@ -275,9 +302,16 @@ impl SagRing {
 
 /// The ring as text, oldest block first, parsed by `scripts/sag.py`.
 ///
-/// `SAGROW at bus vref filt_bus filt_vref streak step duty since_com_us` --
-/// **raw quantities only**: the host computes the margin with the guard's own
-/// cross-product, so no division happens here and nothing is rounded twice.
+/// `SAGROW at at_fine bus_raw pa pb pc bus vref filt_bus filt_vref streak step
+/// duty since_com_us` -- **raw quantities only**: the host computes the margin
+/// with the guard's own cross-product, so no division happens here and nothing
+/// is rounded twice.
+///
+/// The header states the fine clock's rate as `fine_hz` and the 16-bit pairing
+/// limit as `span16_us`. **They are part of the format, not commentary**: this
+/// ring's fine stamp changed from 15.625 ns to 125 ns between campaigns, which
+/// reinterprets every recorded delta by 8x, and `scripts/sag.py` refuses a
+/// capture that does not declare the rate rather than assuming either one.
 pub fn emit(t: &Trace, out: &mut impl crate::report::Sink) {
     out.say("SAGSNAP ");
     out.kv("judged", t.total);
@@ -289,6 +323,10 @@ pub fn emit(t: &Trace, out: &mut impl crate::report::Sink) {
     out.kv("den", crate::protection::SAG_DEN);
     out.kv("streak_to_latch", u32::from(crate::protection::SAG_STREAK));
     out.kv("adc_rail", u32::from(crate::protection::ADC_RAIL));
+    // Versioned capture units: the fine clock's rate travels with the rows.
+    out.kv("fine_hz", crate::fine::FINE_HZ);
+    out.kv("span16_us", crate::fine::SPAN16_US);
+    out.kv("row_v", 2);
     out.say(
         "
 ",
@@ -300,6 +338,16 @@ pub fn emit(t: &Trace, out: &mut impl crate::report::Sink) {
         let b = &t.fast[(start + k) % FAST_LEN];
         out.say("SAGROW ");
         out.say_u32(u32::from(b.at));
+        out.say(" ");
+        out.say_u32(u32::from(b.at_fine));
+        out.say(" ");
+        out.say_u32(u32::from(b.bus_raw));
+        out.say(" ");
+        out.say_u32(u32::from(b.phase_a));
+        out.say(" ");
+        out.say_u32(u32::from(b.phase_b));
+        out.say(" ");
+        out.say_u32(u32::from(b.phase_c));
         out.say(" ");
         out.say_u32(u32::from(b.bus_mean));
         out.say(" ");
@@ -452,7 +500,7 @@ mod tests {
     /// zero or at the rail latches at once, whatever the ratio would say.
     #[test]
     fn a_bad_vref_latches_whatever_the_ratio_says() {
-        use crate::protection::{BusReference, FastBusSag, ADC_RAIL};
+        use crate::protection::{ADC_RAIL, BusReference, FastBusSag};
 
         for vref in [0u16, ADC_RAIL, ADC_RAIL + 1] {
             let mut g = FastBusSag::new(BusReference { bus: 1200, vref: 1500 });

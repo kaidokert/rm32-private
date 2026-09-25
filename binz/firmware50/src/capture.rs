@@ -132,11 +132,7 @@ impl EdgeLog for NoLog {
 /// is a helper division on this M0+ (E154).
 #[inline]
 const fn bump(i: usize) -> usize {
-    if i + 1 == CAPTURE_LEN {
-        0
-    } else {
-        i + 1
-    }
+    if i + 1 == CAPTURE_LEN { 0 } else { i + 1 }
 }
 
 /// The capture's storage: the estimator's state at the first recorded

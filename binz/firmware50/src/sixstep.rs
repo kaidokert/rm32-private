@@ -31,7 +31,7 @@
 //! the sector geometry and the float invariant are host-testable without
 //! hardware, which is how the reference validated them too.
 
-use crate::commutation::{sector, Phase, Step};
+use crate::commutation::{Phase, Step, sector};
 
 /// Duty ceiling the reference plan enforces, in tenths of a percent.
 pub const REFERENCE_DUTY_CAP: u16 = 100;

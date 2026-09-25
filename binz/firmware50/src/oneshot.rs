@@ -529,7 +529,8 @@ pub ",
         let body = &rest[..end];
         let atomic = body.contains("cortex_m::interrupt::free");
         assert_eq!(
-            atomic, FIRMWARE_ARM_IS_ATOMIC,
+            atomic,
+            FIRMWARE_ARM_IS_ATOMIC,
             "com_arm's critical section and FIRMWARE_ARM_IS_ATOMIC disagree:              the arm is {} in roots.rs but the constant says {}",
             if atomic { "atomic" } else { "interruptible" },
             FIRMWARE_ARM_IS_ATOMIC

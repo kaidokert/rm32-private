@@ -44,6 +44,7 @@ pub mod command;
 pub mod commutation;
 pub mod driven;
 pub mod duty;
+pub mod fine;
 pub mod fixed;
 /// Every register access, behind safe functions (target-only HAL glue).
 #[cfg(target_os = "none")]

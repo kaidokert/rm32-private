@@ -39,7 +39,7 @@ use core::cell::RefCell;
 use core::marker::PhantomData;
 
 use core::sync::atomic::Ordering::Relaxed;
-use core::sync::atomic::{AtomicU32 as CoreU32, AtomicU8, AtomicUsize};
+use core::sync::atomic::{AtomicU8, AtomicU32 as CoreU32, AtomicUsize};
 use cortex_m::interrupt::{CriticalSection, Mutex};
 
 use portable_atomic::{AtomicBool, AtomicU32, Ordering};

@@ -100,11 +100,7 @@ impl<const MIN: u16, const MAX: u16, const STEP: u16> Envelope<MIN, MAX, STEP> {
         }
         let offset = (index as u32) * (STEP as u32);
         let v = (MIN as u32) + offset;
-        if v > MAX as u32 {
-            MAX
-        } else {
-            v as u16
-        }
+        if v > MAX as u32 { MAX } else { v as u16 }
     }
 
     /// How many rungs the ladder has, including the final `MAX` rung.

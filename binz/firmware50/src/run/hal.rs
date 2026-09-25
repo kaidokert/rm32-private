@@ -220,8 +220,15 @@ pub trait Hal {
     // ---- time and the link ----
     /// The extended µs clock (feeds the watchdog).
     fn now(&mut self) -> u32;
-    /// The raw 16-bit TIM17 count.
+    /// The raw 16-bit TIM17 count, µs.
     fn raw(&self) -> u16;
+    /// The low 16 bits of the **fine** diagnostic clock, 125 ns per tick
+    /// (`crate::fine`). Diagnostic images only: production never initialises
+    /// TIM2, and the simulator returns 0, so a row that was never timed reads
+    /// as zero rather than as a plausible instant.
+    fn fine(&self) -> u16 {
+        0
+    }
     /// A raw count from the recent past on the extended timeline.
     fn stamp_from_raw(&mut self, raw: u16) -> u32;
     /// Push at most one already-queued byte to the UART.

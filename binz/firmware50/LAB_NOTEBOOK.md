@@ -20921,3 +20921,176 @@ and explicitly does not take today.
   `e250-450_*`-drove-475 class of error cannot recur silently.
 
 This is a conclusion, so it goes to both reviews with the recorder design.
+
+### E264 — the discriminating recorder is built: raw bus, phase currents, and one 125 ns timeline. Production is byte-identical.
+
+Both reviews specified nearly the same instrument and both said the existing one
+could not answer the question. This is that build, with every audit the campaign
+requires run before it goes near the bench.
+
+---
+
+#### What changed, and why each piece
+
+**1. TIM2 to 8 MHz / 125 ns** (`src/fine.rs`, `src/hw/timers.rs`). The fine
+clock ran at PSC=0 — 64 MHz, 15.625 ns — whose 32-bit counter wraps at
+**67.11 s** against runs commanded `total_ms = 80000`. A run anchor that wraps
+inside a run is not an anchor. At 8 MHz:
+
+| | 64 MHz (was) | **8 MHz (now)** |
+|---|---|---|
+| tick | 15.625 ns | **125 ns** |
+| 32-bit wrap | **67.11 s** — inside a run | **536.87 s** — 6.7× the run |
+| u16 stamp span | 1.024 ms (14 sectors at 55%) | **8.192 ms** (115 sectors) |
+| ticks→µs | `>>6` | **`>>3`** — still division-free |
+
+**The range was bought with the prescaler and not with wider fields, on
+purpose.** E185: widening `Beat` for fine stamps took the chain image's `.bss`
+from 28 792 to 32 888 B, left under 4 KB of stack on a part whose largest frame
+reserves 5076 B with no stack guard, and every run died inside a millisecond.
+`scripts/structure_report.py` still shows that image as **BELOW THE STACK
+FLOOR**, which is how the trap is meant to be visible.
+
+**2. The scan row records the raw bus and the three phase currents**
+(`src/sagtrace.rs`, `src/run/states.rs`). The two holes both reviews found:
+
+* It stored only `rail.bus_mean()` — an 8-tap boxcar — so any width claim was
+  unfalsifiable: a raw notch of `m` scans records as `m + 7`, i.e. **≥814 µs for
+  even a single-scan spike**. `bus_raw` is now the sample of that very scan.
+* It had no current at all, while `scan.phase_a/b/c` are in hand at the same
+  point and the sag verdict returns **before** `current.accumulate` — so the
+  block containing a trip is discarded and `worst_hold_ma` provably cannot hold
+  a surge co-located with it. All three shunt codes are now recorded, before the
+  verdict is consulted.
+
+Plus `at_fine`, so this ring and `chain::Beat` finally share a timeline.
+
+Row 16 → 26 B, paid for by halving `FAST_LEN` 512 → **256**:
+
+| ring | rows | row | bytes | coverage |
+|---|---|---|---|---|
+| fast | 256 | 26 B | 6 656 | **26.0 ms** |
+| slow | 1024 | 8 B | 8 192 | 3.33 s |
+| **total** | | | **14 848** | **1 536 B *less* than before** |
+
+26 ms is still ~32× the widest dip the guard can latch on. Paying for fields by
+shortening the ring rather than growing `.bss` is the whole lesson of E185.
+
+**3. Versioned capture units, with refusals that fire.** The header now carries
+`fine_hz`, `span16_us` and `row_v`. `scripts/sag.py` **refuses**, loudly:
+
+* a row whose field count is neither v1 (9) nor v2 (14) — the old parser
+  *silently skipped* mismatched rows, which would have reported a v2 capture as
+  an empty ring and printed a clean bill of health about nothing;
+* a capture carrying fine stamps without declaring `fine_hz` — the tick changed
+  by 8×, and `scripts/chain.py` already refuses legacy captures for exactly this
+  reason;
+* pairing two rows across a gap at or beyond `span16_us`, where a 16-bit delta
+  aliases — `fine_delta_us` returns `None` rather than a number.
+
+Both refusal paths were tested against hand-made captures and both fire. v1
+captures still parse: `e190-500-s7` reproduces its old report exactly.
+
+**4. Wrap-safe arithmetic, now host-testable.** The units and every modular
+subtraction moved into `src/fine.rs`, on the host side of the
+`target_os = "none"` gate, because arithmetic that only exists inside a
+target-only module cannot be tested — and the brief asks for it to be. Seven
+new tests: the rate and the shift, the 32-bit anchor outlasting the longest run,
+the 16-bit span against a 71 µs sector, modular subtraction across both wraps,
+**the aliasing stated as a test rather than hidden**, and an accept/commutation
+pairing that must agree with the coarse wait it scheduled.
+
+**One of them caught my own arithmetic.** The assertion recording the old
+rate's 67.1 s span failed: I divided picoseconds by 1e9 and got milliseconds.
+The test is the reason that is a footnote instead of a number in an entry.
+
+---
+
+#### Audits, all run before the bench
+
+**Production is byte-identical, section by section:**
+
+| section | parent | HEAD | content |
+|---|---|---|---|
+| `.text` | 35 752 | 35 752 | **IDENTICAL** |
+| `.rodata` | 5 024 | 5 024 | **IDENTICAL** |
+| `.data` | 668 | 668 | **IDENTICAL** |
+| `.bss` | 4 184 | 4 184 | **IDENTICAL** |
+| `.vector_table` | 188 | 188 | **IDENTICAL** |
+
+And the four roots instruction-for-instruction (`scripts/isr_diff.py`):
+
+> `DMA1_CHANNEL1: identical, 37` · `ADC_COMP: identical, 728` ·
+> `TIM16: identical, 332` · `TIM6_DAC_LPTIM1: identical, 155`
+
+So *"preserve existing control/protection timing"* is not an intention here, it
+is a measurement. The ELF hash does differ — debuginfo moved because
+`src/fine.rs` is a new file — which is the `906960FC` lesson: **compare loadable
+bytes, not the ELF hash.** The parent's production build hashes to
+`d9d77f3cfad2fd00…`, i.e. it reproduces the qualified ladder image `0D8E3799`
+bit-for-bit, so the baseline is reproducible.
+
+| audit | result |
+|---|---|
+| host tests | **344 + 9 doc pass** (was 337 + 9; +7 new) |
+| clippy, target | clean |
+| four-root arithmetic, `sag-capture` | **4 roots certified clean** |
+| four-root arithmetic, `shell-pwm` | **4 roots certified clean** |
+| `structure_report.py` | exit 0; `bin_lines` 1044/1500, `static_mut` 0, `bits_writes_outside_hw` 0, functions >100 lines 0 |
+| `sag-capture` `.bss` / stack left | **19 060 / 17 136** against a 8 192 floor and a 5 076 B largest frame |
+
+`sag-capture`: text 44 628, data 668, bss 19 060, sha256 `733de16150e5912a…`.
+
+**Still owed, and not claimed as done:** the recorder's own foreground cost. The
+16.8% figure in E261b is a **cross-image** comparison between different-era
+ELFs, and its ~17 µs/row is far too large for a 26-byte copy, so something else
+in that image was also costing. The honest measurement is the matched A/B below,
+not an assumption either way.
+
+---
+
+#### The experiment, in the order that makes it discriminating
+
+**The observer control comes first, and it is the one the old image failed.**
+Running the new recorder at 550 to catch a trip repeats E259's mistake unless
+the instrument is first shown to *see* the event at a rung where production's
+rate is known. Production trips **3 of 6 at rung 500**; the old `sag-capture`
+trips **0 of 7** there.
+
+> **Step 1 — five runs of the new image at rung 500.** Predeclared bar: at
+> p = 0.5, P(0 trips in 5) = **3.1%**, so zero trips in five is significant at
+> p < 0.05 and says the observer suppresses the event. One or more trips clears
+> the instrument to be used at 550.
+
+Only if step 1 clears does step 2 happen. This also yields the owed cost figure:
+`loop_iters_closed` at rung 500 against production's 2 835 519 (n=4) at the same
+`hold_ms`, which is a same-rung matched comparison rather than a cross-era one.
+
+#### Predictions, each able to fail
+
+1. **Step 1 trips at least once in five at rung 500.** If it trips zero, the
+   recorder is suppressing and the design is wrong — not the rung.
+2. **The raw notch spans ≥3 consecutive scans (≥305 µs).** This is the
+   depth-free floor from the streak logic alone — three consecutive low *means*
+   need the depression present in three consecutive windows — and it is
+   **derived without `bus_min`**, the quantity E259 withdrew. It can fail: a
+   recorded raw run of 1 or 2 scans would mean the mean was dragged low by
+   something other than a sustained bus depression, which is a real finding
+   about the guard rather than about the supply.
+3. **The discriminator.** If the loop-side story is right, at least one phase
+   code at or within ±5 scans of the notch exceeds the (unused) per-scan band
+   `848..3248`. If the phase codes are unremarkable through the notch while the
+   raw bus dips, the power-path reading — including E261's "the 3 A clamp is the
+   fastest current protection and `FastBusSag` observes it act" — is favoured.
+   **Neither branch is pre-declared as the finding**, which is the specific
+   error E259 made.
+4. **`loop_iters_closed` is within 5% of production's at rung 500.** The rings
+   are foreground-only and 1 536 B smaller than before; a 16.8% gap reappearing
+   would mean the cost is not the ring and E261b's own doubt about that figure
+   was right.
+
+I am making no prediction about **ordering**. That is the open question, the new
+row is the first instrument in this campaign that can address it, and
+pre-committing to an answer is what the goal corrects.
+
+This is a build plus hypotheses, so **both reviews come before it is flashed.**
