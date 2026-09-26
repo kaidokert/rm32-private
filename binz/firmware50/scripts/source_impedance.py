@@ -158,6 +158,21 @@ def main() -> int:
           "this slope low by about the same.")
 
     if args.dip_codes:
+        # **E352: this conversion is only valid for a depth measured against the
+        # ADC's own floor.** The bridge-off control (`bin/idle-scan.rs`, capture
+        # `captures/2026-09-24/e292-idlescan.txt`) shows `filt_bus - bus_min` is
+        # 67-72 codes with NO load and NO switching, so most of a run's `bus_min`
+        # depth is the sampling path, not the rail. Converting a raw `bus_min`
+        # depth to an amperage over-attributes it -- which is exactly the error
+        # E350 made. Require the caller to have subtracted the floor.
+        print("
+*** --dip-codes: pass a depth ALREADY NET of the ~70-code "
+              "bridge-off ADC floor (E352). A raw bus_min depth is mostly "
+              "instrument and converting it over-states the current. ***")
+        if args.dip_codes > 60:
+            print(f"    REFUSED: {args.dip_codes:.0f} codes is at or above the "
+                  f"measured no-load floor, so it cannot be a net rail depth.")
+            return 2
         mv = args.dip_codes * k
         lo, hi = f["mohm"] - f["ci95"], f["mohm"] + f["ci95"]
         print(f"\na dip of {args.dip_codes:.0f} codes = {mv:.0f} mV implies a "

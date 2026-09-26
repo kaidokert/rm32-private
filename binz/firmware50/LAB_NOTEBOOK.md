@@ -40248,3 +40248,95 @@ scan-rate aliasing, the single-commutation event, and the marginal-guard reading
 (E349). Still standing: a ~1 ms, ~13-commutation event on a run that was slower and
 hungrier than its siblings, with no surviving cause in any recorded aggregate. The
 bench is owed two single runs; the operator is owed nothing.
+
+### E352 — the bridge-off control already existed and I had not read it. It withdraws E350's current-excursion figure, *strengthens* E349's duration argument, independently validates the 70 mΩ fit, and reshapes the hypothesis: clustered sampling excursions, not a rail event.
+
+I went to check whether the bench was actually powered (rather than infer it), found
+`bin/idle-scan.rs`, and discovered a fully-formed prior analysis — E291/E292 — plus
+**a control run I had never opened**: `captures/2026-09-24/e292-idlescan.txt`.
+
+E291's premise, from its own header: over 494 corpus runs `filt_bus − bus_min` is
+66–146 codes with a hard floor; `corr(depth, hold_ma) = −0.204`, so current varies
+40× across the corpus and the excursion gets **shallower**, which no load-induced
+rail event can do; and `raw*_run` sits at the independent-Bernoulli prediction
+(0.68 expected, 1 observed at the 950 bin) while `dep0_run` exceeds its own
+prediction tenfold. Conclusion: **the raw-depth observer measures the ADC, not the
+rail.** I built E348–E350 on `raw1_run` and `bus_min` without knowing this.
+
+#### The control, 445 475 scans (45 s) per phase, bridge never energised
+
+| | phase A (`EN` low) | phase B (`EN` high) |
+|---|---|---|
+| `ref_bus` / `filt_bus` | 1212 / 1211 | 1211 / 1210 |
+| `bus_min` | 1139 | 1143 |
+| **`filt_bus − bus_min`** | **72 codes** | **67 codes** |
+| `raw0_n` / **`raw0_run`** | 243 / **1** | 269 / **1** |
+| `raw1_n` / **`raw1_run`** | 20 / **1** | 19 / **1** |
+| `raw2_*` / `raw3_*` | **0 / 0** | **0 / 0** |
+| `gap_max_us` / `gap_over_88us` | 40 / **0** | 40 / **0** |
+
+#### Four consequences, two against me
+
+**1. E350's current-excursion figure is withdrawn.** I read the latch's 78 codes
+below the guard's line as a 751 mV rail dip and converted it to a 7–19 A
+excursion. But **~70 codes of that depth are present with no load and no
+switching at all.** The ADC-intrinsic floor alone reaches `filt_bus − 72 = 1124`,
+just 12 codes above the guard's line of 1136 — which is precisely E284's
+observation that every run takes a raw scan past the line. So `bus_min` is not a
+rail measurement, the 751 mV is mostly instrument, and **"a 10.7 A excursion" does
+not follow.** Withdrawn.
+
+**2. E349's duration argument is strengthened, not weakened.** With the bridge
+off, `raw0_run` and `raw1_run` are **1, in both phases, across 891 000 scans.**
+Depth is an instrument floor; **clustering is not.** The driven runs show
+`raw0_run` 1–9 and `raw1_run` 1–6, and the deepest bins (`raw2`, `raw3`) are
+**identically zero** with the bridge off while the latch reaches 4 and 1. So the
+quantity E349 discriminated on — consecutive-run length — is load- or
+switching-dependent and is the right object after all. Its *mechanism* sentence
+was wrong; its *discriminator* was right.
+
+**3. The 70 mΩ impedance fit is independently validated.** At zero load the
+control gives `ref_bus − filt_bus` = **1 code**. My regression's intercept was
+37 mV ≈ 3.8 codes, and one code is 9.6 mV — agreement within quantisation, from
+data the fit never saw. The slope stands, and with it E350's central result: the
+power path is healthy and is not the cause.
+
+**4. DMA tearing is refuted for the idle case and *untested* for the driven one.**
+The header's mechanism — a straddling DMA snapshot mixing one cycle's bus with the
+next cycle's VREFINT, giving exactly a "bus low, vref normal" scan — predicts
+excursions when the loop gap exceeds the ~88 µs coherence window. Idle:
+`gap_max_us = 40`, `gap_over_88us = 0`, so tearing explains none of the idle
+floor. **But a driven run's `loop_gap_max_us` is 153–167 µs — four times the idle
+gap and nearly double the coherence window** — and `gap_over` is an `idle-scan`
+field that production does not report. So tearing remains live for driven runs,
+uncounted, and the latch had the cohort's *highest* loop gap (167 vs 160/153).
+
+#### The reshaped hypothesis
+
+Depth is instrument; clustering is load-dependent; the supply is clean; excursion
+magnitude does not discriminate. What fits all four is that **the guard trips on
+sampling excursions that cluster under switching**, not on a rail event — and
+clustering would depend on the beat between the PWM carrier and the ADC scan
+rather than monotonically on duty, which is the shape the data has (worse at 550
+than at 575 or 600).
+
+That is a different aliasing question from the one E351 refuted. E351 tested
+commutation-versus-scan (`ci/scan` = 0.772, unremarkable). This is
+**carrier-versus-scan**, and `sagtrace::Block` records **`pwm_ctr` per scan for
+exactly this purpose** — its own doc says the host can "bin by phase, or restrict
+a comparison to samples taken at a like point in the cycle".
+
+**Prediction for the traced 550 run, before it happens.** The scans forming the
+latching low means will be **concentrated in `pwm_ctr` phase** rather than
+uniformly distributed, and the clustered low scans will pair with `loop_gap`
+excursions past 88 µs. Falsifier: low scans uniformly spread across `pwm_ctr` with
+ordinary gaps, which would mean the dip is a genuine rail event after all and
+return the question to the (clean) supply with something else to explain.
+
+#### The process point, which is the sharpest thing here
+
+A binary in `bin/`, a 45 s control capture, and two notebook entries (E291, E292)
+answered a question I spent four entries approaching from the wrong side — and
+one of my four tools converted an instrument artefact into an amperage. I had
+searched the captures directory repeatedly and never listed `bin/`. **Read the
+repo's own prior work on a question before deriving it.**
