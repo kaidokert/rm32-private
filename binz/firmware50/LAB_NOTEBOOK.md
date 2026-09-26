@@ -39176,3 +39176,66 @@ more, for six or more consecutive blocks.
 Recorded as a correction to E334's characterisation, not to its verdict: the
 run still failed, `rung_report` still holds it against that image permanently,
 and nothing here excuses it.
+
+### E340 — my own fix makes the current waveform peakier, which is what a 3-block sag guard responds to. The 55 % sag has a firmware-side mechanism after all.
+
+Offline, from captures. The adversarial review argued that the flat advance
+changes the current waveform's *shape* rather than its mean, and that a
+consecutive-block sag guard is precisely what responds to that. I never tested
+it. Tested now, un-injected runs with ≥100 hold blocks, median peak/mean
+(`worst_ma / hold_ma`) at matched rungs:
+
+| rung | adv 22 | adv 20 | **adv 16** |
+|---|---|---|---|
+| 500 | 1.204 | 1.356 | 1.300 |
+| 550 | **1.162** | — | **1.269** (+9 %) |
+| 575 | **1.212** | — | **1.513** (+25 %) |
+| 600 | — | **1.341** | **1.430** (+7 %) |
+
+**Advance 16 raises peak/mean by 7–25 % at every high rung where a comparison
+exists.** The mean falls — that is the −18 % I reported and it is real — but the
+peak falls much less, so the ratio rises.
+
+And the obvious confound runs the *wrong* way: at rung 575 the advance-22
+comparison (`e308-550-old-3`, 4784 hold blocks) sampled **more** blocks than the
+advance-16 runs (~3500), so it had more opportunities for a high running
+maximum, and still came in lower. More sampling, lower peak. That strengthens
+the finding instead of explaining it away.
+
+(The ratios at rungs 150–200 are 4–18 and meaningless: `hold_ma` there is
+53–202 mA, so the quotient is dominated by its denominator. Only the high rungs
+carry information.)
+
+#### What this does to E334 and E339
+
+E334 said the 550 sag was a bench transient; E339 showed it was a sustained
+deepening excursion, not a transient, and said the cause was open between the
+power path and the drive. **This closes that gap on the drive side: there is now
+a measured mechanism by which my own fix provokes the guard.** A waveform with
+7–25 % more peak for the same mean, against a guard that trips on three
+consecutive low-rail blocks, is a coherent cause — and it explains why the
+tripping run also had the highest `hold_ma` of its cohort.
+
+I am not claiming it *is* the cause. Power-path impedance remains equally live
+and the two are not separable from captures. But "bench transient, not firmware"
+is now doubly unsupported, and the firmware-side hypothesis is the one with a
+measured quantity behind it.
+
+#### Predeclared consequence for the re-run
+
+`EADDF979` carries the same advance 16, so **the 550 sag should be expected to
+recur**, not assumed away. Predeclaration, before the ladder runs:
+
+> If the peakier waveform is the cause, rung 550 on `EADDF979` should trip
+> `FastBusSag` at a rate near the 1-in-3 observed, and the tripping runs should
+> again show the cohort's highest `hold_ma` and elevated `raw1_run`. If the power
+> path is the cause, the trip rate should track the *draw* rather than the rung,
+> and a 78 s window — which holds 50.3 s at 550 against 37.3 s before — should
+> raise it by exposure alone.
+>
+> Either way, **`raw0_run`/`raw1_run` go in the table from the start.** E334
+> omitted them and read a 207 ms EWMA for a 60 ms event.
+
+And it reorders the queue again, behind the restart validation: the sag is no
+longer an unexplained one-off to be noted, it is a candidate consequence of the
+change under test, and the ladder should not be spent until that is priced.
