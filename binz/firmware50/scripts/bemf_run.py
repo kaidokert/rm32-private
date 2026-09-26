@@ -343,7 +343,22 @@ def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
             "firmware protection on this ELF; that is permanent for this image"
         )
     fails += cohort.rung_oracle(judged[-RUNG_RUNS:])
-    return not fails, fails
+    # Surfaced on a PASS as well (E345): an exemption that is invisible when the
+    # rung passes is the case where it matters most.
+    notes = []
+    n_unpowered = sum(1 for r in unmeasured if cohort.never_powered(r))
+    if n_unpowered:
+        notes.append(
+            f"NOTE: {n_unpowered} run(s) at {duty / 10:.0f}% excluded as "
+            "unmeasured (no bus -- supply off, or a failed fuse/connector); "
+            "verify the supply"
+        )
+    if len(unmeasured) - n_unpowered:
+        notes.append(
+            f"NOTE: {len(unmeasured) - n_unpowered} run(s) at {duty / 10:.0f}% "
+            "excluded as unmeasured (coast fit unphysical)"
+        )
+    return not fails, fails + notes
 
 
 def ladder_admit(command: str, sha: str, rung_duty: int = 0) -> tuple[bool, str]:
@@ -407,6 +422,27 @@ def ladder_record(
     # unmarked record is a walked one; there is no way to anchor silently.
     if anchor_proof:
         r["anchored"] = anchor_proof
+    # **An exemption must be loud** (E345). `never_powered` marks a run
+    # unmeasured, and the note announcing that lived only inside
+    # `rung_report`'s "too few runs" branch -- so a rung with three passes plus
+    # an unmeasured run returned PASS with no mention whatsoever. That is how
+    # rung 600 flipped verdict leaving no visible trace, in the very change made
+    # to stop a record being removed silently.
+    #
+    # And the predicate **cannot distinguish the operator switching the supply
+    # off from a blown fuse, a failed connector, or a supply in foldback at
+    # t=0** -- this bench has a recorded history of fuse blows and a melted
+    # connector at ~0.65 ohm. So the exemption is announced with its ambiguity
+    # named, at the moment it is applied, every time.
+    if cohort.never_powered(r):
+        for line in (
+            f"   !! {capture.name}: NO BUS (bus_ref={r.get('bus_ref')}, nothing measured)",
+            "      Recorded as UNMEASURED, not as a failure.",
+            "      The supply was off, OR a fuse/connector/power path has failed,",
+            "      OR the supply was in foldback at t=0. The fixture cannot tell",
+            "      these apart. Confirm the supply before trusting any further run.",
+        ):
+            print(line, flush=True)
     state = _ladder_load()
     state.setdefault(sha, {}).setdefault(str(r["duty"]), []).append(r)
     _ladder_save(state)

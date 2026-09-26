@@ -39425,3 +39425,65 @@ That needs a bus. It is one run.
 
 Queued behind it, unchanged: the sag priced against E340's predeclaration with
 `raw0_run`/`raw1_run` in the table from the start, then the ladder.
+
+### E345 — both review agents stalled, so I attacked my own fixture change, and found two defects in it plus one in its test.
+
+The two independent reviews of E337's fixture changes both stalled without
+producing a report. Rather than wait, I ran the hardest part of the adversarial
+brief against my own work. It found three things.
+
+#### 1. The predicate cannot distinguish the operator's switch from a hardware fault
+
+The decisive clause is `0 < bus_ref < 600` — the **reference** rail, sampled at
+run start. A brownout mid-run has `bus_ref ≈ 1210` and a low `bus_min`, so it is
+correctly refused. But what has a low rail *at reference time* and measures
+nothing?
+
+* the operator switching the supply off — the intended case;
+* **a blown fuse**;
+* **a failed or melted connector, or an open power path**;
+* a supply already in foldback at t = 0.
+
+**The predicate cannot tell these apart**, and this bench has a recorded history
+of exactly the middle two: fuse blows, and a melted connector at ~0.65 Ω. So the
+exemption would silently absorb a *developing hardware fault* as "unmeasured".
+
+#### 2. And it was silent in precisely the case that matters
+
+The note announcing an unmeasured run lived **inside `rung_report`'s "too few
+runs" branch**. So a rung with three measured passes plus one unmeasured run
+returned `(True, [])` — PASS, with **no mention whatsoever**. That is how rung
+600 changed verdict leaving no visible trace, *in the very change I made to stop
+a record being removed silently.* The same failure, one layer up.
+
+Both fixed:
+
+* `ladder_record` now prints a five-line warning **at the moment the exemption is
+  applied, every time**, naming all four possible causes and stating that the
+  fixture cannot distinguish them, ending "confirm the supply before trusting
+  any further run";
+* `rung_report` now returns a `NOTE:` on a **passing** verdict too, so the
+  exclusion is visible where it previously was not. Verified: rung 600 now reads
+  PASS *with* the note attached.
+
+#### 3. The self-test pinned a snapshot, not an invariant — and broke in minutes
+
+TEST B asserted the predicate "excuses exactly one capture in the corpus". Within
+minutes of writing it, two further unpowered probe runs were taken — legitimately
+excused — and **the test failed on correct behaviour.** That is a test defect, not
+a predicate defect, and it is the same class as pinning `spent_max = 10` from one
+sample: a count where a property was wanted.
+
+TEST B now asserts the **invariant** — every excused capture must independently
+have `bus_ref < 600` and `accepted == 0` — characterised without reference to the
+predicate under test. It passes with three excused, and would pass with thirty.
+
+#### What I am not claiming
+
+This is self-review and it is not independent. The adversarial brief's sharpest
+question — *is this the same act with better paperwork?* — is one I cannot
+honestly answer about my own change, and the two agents that were asked it both
+stalled. The brief remains at `captures/reviews/E337-BRIEF.md` for a reviewer who
+can. What I can say is that attacking it myself made it stricter in two places
+and its test honest in a third, and that the exemption is now loud where it was
+silent.

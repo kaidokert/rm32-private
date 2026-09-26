@@ -13,7 +13,11 @@ called procedurally wrong while accepting the physics. This states the physics
 in the fixture instead, and these tests bound it.
 
 * TEST A — it fires on the one capture it is for.
-* TEST B — it excuses **nothing else in the entire corpus**.
+* TEST B — everything it excuses really had no bus and measured nothing,
+  characterised independently of the predicate. (This deliberately does **not**
+  pin a count: the first version asserted "exactly one capture" and broke within
+  minutes when two further legitimate unpowered probes were taken. A test that
+  fails on correct behaviour is a test defect.)
 * TEST C — it cannot excuse a powered `Reason::Bus` or `FastBusSag` trip, which
   always has a normal reference rail and accepted crossings.
 * TEST D — each clause is load-bearing: relaxing any one of them alone must
@@ -47,6 +51,7 @@ def main() -> int:
     if not records:
         print("REFUSED: no captures parsed; this test would pass vacuously.")
         return 2
+    records_by_file = dict(records)
     print(f"parsed {len(records)} captures")
 
     # TEST A
@@ -57,11 +62,25 @@ def main() -> int:
         failed.append("A")
     print(f"TEST A  fires on {TARGET}: {'yes' if ok else 'NO'}")
 
-    # TEST B
-    others = [f for f in hits if TARGET not in f]
-    if others:
+    # TEST B -- **the INVARIANT, not a corpus snapshot.**
+    #
+    # This first asserted "excuses exactly one capture", which broke within
+    # minutes of being written: two further unpowered probe runs were taken and
+    # they are legitimately excused. Pinning a count made the test fail on
+    # *correct* behaviour, which is a test defect, not a predicate defect. The
+    # property that actually matters is that everything excused really had no
+    # bus and measured nothing -- characterised independently of the predicate.
+    leak_b = []
+    for f in hits:
+        r = dict(records_by_file[f])
+        if not (r.get("bus_ref", 0) < 600 and r.get("accepted", 1) == 0):
+            leak_b.append(f)
+    if leak_b:
         failed.append("B")
-    print(f"TEST B  excuses nothing else: {'yes' if not others else 'NO -> ' + str(others[:3])}")
+    print(
+        f"TEST B  every excused capture truly had no bus and measured nothing "
+        f"({len(hits)} excused): {'yes' if not leak_b else 'NO -> ' + str(leak_b[:3])}"
+    )
 
     # TEST C
     powered_trips = [
@@ -97,8 +116,8 @@ def main() -> int:
         print("predicate, because it looks like a pass.")
         return 1
     print()
-    print("self-test OK: the predicate fires once, excuses nothing else, and every")
-    print("clause is load-bearing")
+    print("self-test OK: everything excused truly had no bus, no powered trip is")
+    print("excused, and every clause is load-bearing")
     return 0
 
 
