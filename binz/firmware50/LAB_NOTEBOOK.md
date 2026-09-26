@@ -40440,3 +40440,79 @@ Two process notes, both mine:
   the failure channel**. The instrument failed loudly and I muted it at the call
   site. No repair needed to the script; the lesson is about the wrapper. When
   filtering a tool's output, always pass its refusal lines through.
+
+### E354 — two of the eight uninjected fault paths are *unreachable in the shipped configuration*, so no bench run could ever demonstrate them. The coverage criterion needs a different statement, and four live paths need injections built before qualification.
+
+E341 corrected "protection coverage 9/9" to "8 of 20 `Reason` codes have an
+injection" and listed eight with none. Going to build those injections, I found
+that two of them cannot fire at all.
+
+**`Reason::Current` (5) is unreachable in production.** It is raised at exactly
+one place, `src/protection.rs:175`, and that place is inside
+`if let PhaseCodePolicy::Band { vcal } = policy`. Production's single call site is
+`src/run/states.rs:340`, which passes **`PhaseCodePolicy::RetainRails`** — whose
+own doc comment says "phase codes are **not vetoed at all**" and "this performs
+only the VREF plausibility test". `PhaseCodePolicy::Band` appears nowhere in
+`src/run/`, `src/roots.rs` or `bin/`; it survives only in `protection.rs`'s unit
+tests. So the phase-code band check is test-only, and **there is no current
+protection on the per-scan path at all** — the only current stop in the shipped
+image is `AverageCurrent` (25), which is a 100-scan block mean.
+
+**`Reason::PhasePeak` (27) is raised nowhere whatsoever**, not even under `Band`.
+The only occurrence outside the enum is `assert_eq!(Reason::PhasePeak.code(), 27)`.
+
+(The absolute bus floor *inside* `Band` is dead for the same reason, but `Bus` (6)
+is live through a separate check at `states.rs:341` — the one that fired on the
+unpowered capture, and that E346 moved earlier into the arm path.)
+
+#### The honest coverage statement, all 20 variants accounted for
+
+| class | n | codes |
+|---|---|---|
+| injectable **and** demonstrated | **8** | 3, 4, 7, 8, 13, 14, 25, 26 |
+| not faults (2 normal completions, host abort, catch-all) | 4 | 1, 2, 9, 28 |
+| **dead in the shipped configuration** | **2** | **5 `Current`, 27 `PhasePeak`** |
+| live, **observed** firing, no injection | 2 | 6 `Bus`, 15 `LateArm` |
+| live, **neither injected nor ever observed** | **4** | **10 `InvalidSeed`, 11 `AdcTimeout`, 12 `CycleTiming`, 16 `BlankLatched`** |
+
+8 + 4 + 2 + 2 + 4 = 20. The deliverable may claim coverage of the first row, must
+disclose the third as dead rather than covered, and cannot claim the last row at
+all until injections exist.
+
+#### Batch statement for the work this implies (Rule 1)
+
+**Unresolved question.** Can each of the four live-but-untested paths be provoked
+on demand, and does each stop through the ordinary route (`safe_off`, then the
+report carrying its own code)?
+
+**Falsifiable prediction.** All four are reachable by a one-shot poke in the
+existing `maybe_inject` idiom, and each will report its own `reason` with
+`moe=0` at exit: `LateArm` (15) and `BlankLatched` (16) by forcing the HAL
+counters that `states.rs:278-282` already reads in the closed loop; `AdcTimeout`
+(11) by making one `hal.scan()` return `None` (`states.rs:330`); `CycleTiming`
+(12) by feeding one out-of-range cycle to the guard (`protection.rs:1157`, bounds
+`CYCLE_MIN_US`/`CYCLE_MAX_US`); `InvalidSeed` (10) by perturbing the handover
+seed's step once (`states.rs:764,787`). Falsifier: any path that cannot be
+provoked without changing the protection's own behaviour when *not* injected —
+that one gets recorded as untestable rather than forced.
+
+**Smallest sufficient test.** Host `sim` tests, one per injection, asserting the
+expected `reason`, `safe_offs >= 1` and `moe_on_at`/`plans` consistent with a stop
+— no bench needed to develop, and the sim already models a `late_arm_at` fault.
+Then one powered provocation each at 15 % / 25 % when the bus returns.
+
+**Which decision each outcome changes.** With the four injections in place the
+deliverable can state coverage as "12 of 14 live fault paths demonstrated, two
+dead paths disclosed" instead of a number that overstates by 50 %. Without them,
+the qualification's protection row is unsupportable however many rungs pass.
+
+**And the two dead variants are a decision, not a fix I will make unilaterally**:
+either wire a real per-scan current/peak protection (a *new* protection, which
+the goal's "keep existing protections and thresholds" does not authorise me to
+invent), or delete the unreachable variants. Recorded for the operator; nothing
+in the campaign depends on it, because a dead path protects nothing today either
+way.
+
+**Timing note.** Doing this now costs nothing in re-qualification: `E146E3BC` has
+never run powered, so there is no evidence on it to invalidate. Doing it *after*
+a ladder would invalidate the ladder.
