@@ -40631,3 +40631,80 @@ delegation. The host side had the same untied list and nobody had noticed, becau
 a host-side key list drifting only shows up as a timeout.
 
 Current state: firmware dispatches 54 keys, fixture offers 52, parity OK.
+
+### E357 — "the key space is exhausted" was my own overstatement, and chasing it properly finished the coverage question: a third dead variant, one shadowed path, and one the injection hook structurally cannot reach.
+
+E355 said `inject_for`'s key space had "exactly two free letters", and E356
+repeated it as the reason `AdcTimeout` and `CycleTiming` stayed uninjected. **The
+letter space was full; the key space was not.** Enumerated from the dispatcher:
+`0` and `1` are free, as are `*` `/` `<` `>` `[` `]` `,` `.` `:` `;` `=` `@`. So
+the constraint I recorded — and that conveniently justified stopping at two — was
+false, and I should treat "I hit a limit" claims about my own work with the
+suspicion I give my numbers.
+
+Chasing the two paths properly, neither is blocked on keys at all.
+
+#### `CycleTiming` (12) is a third dead variant
+
+`Guard::cycle()` (`src/protection.rs:1155`) is the only place code 12 is raised,
+and it has **no caller** in `src/run/`, `src/roots.rs` or `bin/` — only its own
+unit tests at `:1889-1895`. So it joins `Current` (5, raised only under the
+`PhaseCodePolicy::Band` production never selects) and `PhasePeak` (27, raised
+nowhere) as unreachable in the shipped image.
+
+#### `AdcTimeout` (11) is *shadowed*, which is different from dead
+
+The check is live — `states.rs:295` calls `hal.adc_stale(now)`, which on the board
+is `now − adc_last_us > ADC_STALE_US` with **`ADC_STALE_US = 2_000`** µs
+(`bin/board.rs:43`), and `adc_last_us` advances in `adc_due()` whenever a new scan
+sequence appears. But the guard root watches **the same signal** —
+`S.scan().sequence()` at `src/roots.rs:940-948` — and trips `FeedbackStale` at
+**`FEEDBACK_MAX_AGE_US = 1_000`** µs (`protection.rs:1039`), from ISR context, at
+a higher rate than the foreground pass.
+
+**So any stall of the scan source trips code 4 a full millisecond before code 11
+can fire.** `AdcTimeout` is reachable only if the guard is disarmed, or if the
+foreground alone stalls past 2 ms while the guard keeps running — which is itself
+a `TickGap` condition and trips code 3. Forcing `adc_last_us` into the past does
+not work either: `adc_due()` refreshes it within ~101 µs.
+
+That also makes `ADC_STALE_US = 2000` effectively dead configuration: a second,
+slower watchdog on a signal a faster one already owns.
+
+#### `InvalidSeed` (10) is blocked by the injection hook's structure
+
+Code 10 is raised at handover (`states.rs:764,787`), when the accepted seed's step
+disagrees with the current sector — **before the loop closes**. `maybe_inject`
+returns early unless `closed` (`states.rs:448`), by design, so the post-closure
+stimulus hook cannot reach a pre-closure fault. Provoking it needs a hook at
+handover, which is a change to the acquisition path rather than a new key.
+
+#### The completed accounting, all 20 variants
+
+| class | n | codes |
+|---|---|---|
+| injectable **and** demonstrated | **10** | 3, 4, 7, 8, 13, 14, **15**, **16**, 25, 26 |
+| not faults | 4 | 1, 2, 9, 28 |
+| **dead in the shipped configuration** | **3** | 5 `Current`, **12 `CycleTiming`**, 27 `PhasePeak` |
+| **shadowed by a faster guard on the same signal** | **1** | **11 `AdcTimeout`** (by 4) |
+| live, observed firing, no injection | 1 | 6 `Bus` |
+| live, unreachable by the post-closure hook | 1 | 10 `InvalidSeed` |
+
+10 + 4 + 3 + 1 + 1 + 1 = 20. **Of 12 live and reachable fault paths, 10 are
+injectable and demonstrated**; `Bus` has fired for real and `InvalidSeed` needs an
+acquisition-path hook.
+
+#### Why I am building no more injections
+
+Three paths cannot fire, one cannot fire before a faster guard, and the last needs
+a structural hook rather than a key. **There is nothing left that a new key would
+buy** — which is the honest end of this thread, and a better answer than the
+"two blocked on key space" I recorded twice.
+
+For the operator, three items that are decisions rather than defects: whether to
+wire a real per-scan current/peak protection or delete `Current`/`PhasePeak`;
+whether `Guard::cycle()` should be called (it looks like a protection someone
+intended and never connected); and whether `ADC_STALE_US` should be shortened
+below `FEEDBACK_MAX_AGE_US` or removed, since as configured it can never fire.
+None of them blocks the campaign — a path that cannot fire protects nothing today
+either way.
