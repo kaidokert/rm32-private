@@ -40420,3 +40420,23 @@ today.** Nothing further can be learned about the 55 % latch offline — the
 remaining discriminator is `pwm_ctr` phase-binning inside a driven trace (E352),
 and the two owed runs are the 550 trace and the rung-600 restart. The candidate
 `E146E3BC` still has no powered run.
+
+#### E353 addendum — re-measured, still off; and I grepped a tool's failure channel into silence
+
+Second bridge-off measurement minutes after the first:
+`captures/2026-09-26/e354-power-recheck.txt`, **`ref_bus = 280`** (first was 275),
+against 1208–1217 on every powered run. The bus is off, measured twice.
+
+Two process notes, both mine:
+
+* `idle_scan_run.py --no-flash` skips the **reset** as well as the download
+  (`:62-68`), so with the previous run already finished the board emitted nothing
+  and the capture held only its two header lines. I had assumed `--no-flash` meant
+  "reset and capture".
+* **The script caught that correctly and said so** — its validation block
+  (`:95-113`) refuses with "REFUSED to declare this a clean control run" and names
+  each missing phase. I did not see it because my own `grep -oE` allowlisted
+  `OK:`, `wrote`, `phase=`, `ref_bus` and `bus_min` and therefore **filtered out
+  the failure channel**. The instrument failed loudly and I muted it at the call
+  site. No repair needed to the script; the lesson is about the wrapper. When
+  filtering a tool's output, always pass its refusal lines through.
