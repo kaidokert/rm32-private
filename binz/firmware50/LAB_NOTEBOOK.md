@@ -39634,3 +39634,28 @@ E340's predeclaration is likewise bench-blocked. This entry is instrument and
 fixture repair done while power is down — and the review is right that such work
 is only defensible because the decisive experiment is unavailable, not because it
 is more comfortable.
+
+#### E346 addendum — the candidate image's identity, and one reproducibility claim I had been taking on trust
+
+The line-ending hook rewrote seven files during the commit, so the ELF changed.
+The candidate is now **`E146E3BC`**, superseding `EADDF979`, which never ran:
+
+| | |
+|---|---|
+| source commit | `74a3ea1` |
+| configuration | `--release --bin shell-pwm --features advance-ref,deep-filter` |
+| ELF sha256 | `E146E3BC5F95C6ACA3FB02BEE78617648C07E678A1DFD12CBFA924C86CA76DB8` |
+| archived | `captures/elf/E146E3BC.e346-advref-floor5-78s.elf` |
+| ratchet | OK in bucket `advref-floor5` (`ADC_COMP` 742, `div 0 / mul 4 / irq 9`) |
+
+**And the "rebuilds byte-identical" check was not testing what I thought.** My
+first three attempts each reported a match while never relinking: `cargo clean -p
+firmware50` leaves the bin in place, and deleting the artifact by hand makes cargo
+*hardlink it back from `deps/`* in 0.04 s. Three successive green results, none of
+them a rebuild. Only `cargo clean --release` (205 files, 120.6 MiB) forces the
+link step, and the image is byte-identical across it — but that is the first time
+this campaign the claim has actually been tested, and E336's identical claim about
+`EADDF979` should be assumed to have been made the cheap way.
+
+The cheap way is the general hazard here: an equality that holds because nothing
+was recomputed looks exactly like reproducibility ([[feedback-check-the-instrument-transfer-function]]).
