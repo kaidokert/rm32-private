@@ -39297,3 +39297,74 @@ is a distinct path from `AverageCurrent` (25) and neither observed nor
 injectable; and the campaign's own failure mode, `LateArm`, cannot be provoked
 on demand, which is why every statement about it in this notebook rests on
 waiting for it to happen.
+
+### E342 — the advance trade has no interior solution, so the remaining decision needs a measurement only the operator can take. Stopping here.
+
+Offline, closing out what can be concluded without the bench.
+
+#### No level in the sanctioned band closes the gap arithmetically
+
+Against the **correct** `spent_max = 11` (so `left >= 1` needs `wait >= 12`),
+and the observed `ci_min` floor of **45–48** on the advance-16 runs:
+
+| level | min ci for `wait >= 12` | `wait` at ci = 45 | covers the observed floor? |
+|---|---|---|---|
+| 16 | 46 | 11 | **no** — by one microsecond |
+| 18 | 52 | 10 | no |
+| 20 | 60 | 8 | no |
+| 22 | 72 | 7 | no |
+
+**Not even the reference value closes it.** So E336's "arithmetically
+unreachable" was wrong not just in its `spent` figure but in its whole form:
+there is no level at which the arithmetic closes. What holds is empirical —
+`thin_count = 0` over ~10⁷ accepted arms, meaning the joint event of a deep
+interval *and* a costly arm never occurred, which is E338's correction stated as
+a table.
+
+#### And the trade is two-sided with nothing in the middle
+
+| level | timing | peak/mean (measured) |
+|---|---|---|
+| 22 | fails — 1 clean run in 3 at rung 600 | **best**, 1.16–1.21 |
+| 20 | fails — 1 clean run in 3 at rung 600 | 1.34 |
+| 18 | *worse* margin than 16 (`wait >= 12` only above ci 52) | untested |
+| **16** | **only level with no LateArm in 21+ runs** | **worst**, 1.43–1.51 |
+
+Level 18 is the only untested point and it is **worse than 16 on the margin
+axis**, so it is not a compromise — it is a third corner. There is no level that
+is acceptable on both axes: 16 is the only one that survives the timing hazard,
+and its price is the peakiness E340 measured at 7–25 %.
+
+#### Which puts the operator's meter on the critical path, demonstrably
+
+The remaining question is not a firmware choice, because there is no better
+firmware choice available in the sanctioned band. It is: **is the 55 % sag the
+power path or the waveform?**
+
+* **If the power path** — the droop tracks the draw with a measurable slope, and
+  run 02's extra ~150 mA accounts for its extra bands. Then advance 16 is
+  correct and the bench needs attention.
+* **If the waveform** — the droop does not track draw, and advance 16's
+  peakiness is provoking a protection that is doing its job. Then the campaign's
+  ceiling is set by a trade the sanctioned band cannot resolve, and the decision
+  is the operator's: accept the sag rate, widen the band below 16, or revisit the
+  guard.
+
+A sag-versus-current slope discriminates these in one desk measurement with no
+motor run. **That is now the gating item for the goal**, not an ancillary ask —
+and it is a demonstrated external dependency rather than an inferred wall,
+because I have shown there is no firmware move left that resolves it.
+
+#### Stopping
+
+Offline work is exhausted. What is ready and waiting: image `EADDF979` built and
+unrun with the window sized by the restart budget; three fixture defects fixed,
+each with a test that rejects the specific bad data that motivated it; the sag
+reframed with a measured firmware mechanism and a predeclared discriminator; and
+coverage stated honestly at 8 of 20 `Reason` codes rather than the "9/9" that
+counted injections.
+
+Queued, deliberately narrow, when power returns: **one** rung-600 restart to
+validate command and budget, then the sag priced against E340's predeclaration,
+then the ladder. Not another twenty-five runs ahead of the one thing that has
+never worked.
