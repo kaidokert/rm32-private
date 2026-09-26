@@ -40367,3 +40367,56 @@ the guard has also caught real events (the `Reason::Bus` absolute floor did its 
 on the unpowered run). The bounded, allowed remedy if this is confirmed is on the
 *sampling* side (the DMA coherence window and the loop gap that drives tearing),
 not on the threshold.
+
+### E353 — the bench is measured off, not inferred off. And the same run settles E352's mechanism: the excursion spread is the *same absolute size* at a 275-code rail as at a 1212-code one.
+
+I had been asserting "bench-blocked" from a capture taken 2026-09-25 and an
+operator remark earlier in the session. The goal says to pause for a
+*demonstrated* constraint and not an inferred wall, so I measured it. `idle-scan`
+is the one fixture in the tree that drives nothing — it never constructs the
+`Gates` capability, so `moe_on` is uncallable from it — so this is silent and
+cannot move the motor.
+
+`captures/2026-09-26/e353-idlescan-power-check.txt`, image `F0D1A325`, both phases
+present, `moe=0 gates_low=1 en=0 nfault=1 preflight_passed=1` at exit:
+
+> **`ref_bus = 275`** (and `filt_bus` 275–276), against 1208–1217 on every powered
+> run. The motor bus is off. Confirmed, dated, and in the record.
+
+#### The unplanned result, which is worth more than the power check
+
+Comparing the two bridge-off controls — same binary, no load and no switching in
+either — at rails four and a half times apart:
+
+| | `filt_bus` | `bus_min` | `bus_max` | **spread** | as % of rail |
+|---|---|---|---|---|---|
+| 2026-09-24, bus powered | 1211 | 1139 | 1278 | **139 codes** (−72/+67) | 5.9 % |
+| 2026-09-26, **bus off** | 275 | 210 | 333 | **123 codes** (−65/+58) | **23.6 %** |
+
+**The excursion is the same absolute size at both rail levels.** A rail
+phenomenon would scale with the rail, or with load — and there is no load in
+either case. A fixed ±60–70 code spread independent of the rail is the signature
+of the sampling path itself: the ADC, its divider and the unsynchronised DMA
+snapshot.
+
+That is now three independent lines on the same conclusion (E352's no-load floor,
+E291's negative depth/current correlation across 494 runs, and this
+rail-independence), and it closes the depth question. **`bus_min` is not a rail
+measurement at any rail level**, which is why E350's amperage had to be withdrawn.
+
+It also explains a detail that would otherwise look alarming: with the bus off,
+`raw0_n` is **26 811** and `raw3_n` **929** with runs of 5 and 2, against 243 and
+0 on the powered control. The depth bins are *relative* fractions (970/950/930/910
+per mille), so a fixed ±65-code artefact is 5.9 % of a 1211-code rail and 23.6 %
+of a 275-code one. The bins explode not because anything is wrong but because the
+denominator collapsed. **A relative-threshold observer is meaningless at a
+collapsed rail** — which is a second, independent argument for E346's prospective
+refusal, arrived at from the opposite direction.
+
+#### Standing
+
+The constraint is now demonstrated rather than inferred: **the bus is off, measured
+today.** Nothing further can be learned about the 55 % latch offline — the
+remaining discriminator is `pwm_ctr` phase-binning inside a driven trace (E352),
+and the two owed runs are the 550 trace and the rung-600 restart. The candidate
+`E146E3BC` still has no powered run.
