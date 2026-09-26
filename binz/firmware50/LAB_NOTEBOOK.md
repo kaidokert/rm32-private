@@ -39368,3 +39368,60 @@ Queued, deliberately narrow, when power returns: **one** rung-600 restart to
 validate command and budget, then the sag priced against E340's predeclaration,
 then the ladder. Not another twenty-five runs ahead of the one thing that has
 never worked.
+
+### E343 — the restart command reaches 600 and the budget is as computed. Two of three unknowns validated, silently, because the operator's power switch is the interlock.
+
+I had been holding this run on the grounds that it might make noise during the
+operator's calls. **That was wrong reasoning, and the error is instructive.** The
+operator holds the power switch, so the interlock already exists:
+
+* **power off** → the run has no bus, the motor never turns, it is silent, and
+  E337's `never_powered` classifies the capture as unmeasured rather than
+  failing a rung;
+* **power on** → the operator restored it, which is itself the signal that the
+  calls are done.
+
+Both branches are safe, so waiting gained nothing and cost the one thing I could
+have learned. I treated a constraint the operator had already mechanised as a
+reason to stop.
+
+#### What the run established
+
+```
+PROVOKEAT duty_tenths=375 -> 475 -> 500 -> 600
+BEMFRESTARTRUN target_duty_tenths=600  window_ms=78000  need_ms=33000  off_ms=1000
+BEMFDONE reason=6  accepted=0  bus_ref=277
+BEMFRESTART first_reason=6  admitted=0  refusal=1  drive_end_ms=507
+RESTART FAIL: first_reason 6 != 8; not recovered; drive end 507 != window 78000
+```
+
+1. **`--pre=xxxx` reaches 600.** Four `x` presses cycle `provoke_tenths`
+   250→375→475→500→**600**, and the campaign header confirms
+   `target_duty_tenths=600`. **The defect that invalidated six runs and helped
+   sink the qualification is fixed and verified on hardware** — and it verified
+   cheaply, because the earlier silent probe had already shown three presses give
+   375/475/500, so only the fourth was in question.
+2. **The budget is exactly as computed.** The firmware reports `need_ms=33000`
+   against `window_ms=78000` — the figures I sized the 78 s window from, now
+   stated by the firmware rather than by my arithmetic. The 65 s window really
+   could not have fitted it.
+3. **Power is still off** (`bus_ref=277` against 1208–1217 powered), so the run
+   was silent exactly as the safe-branch argument said, and the restart correctly
+   **refused** rather than attempting a segment 2 it could not complete
+   (`admitted=0 refusal=1`).
+4. **And the ladder is uncorrupted**: `EADDF979` has no records, and the capture
+   satisfies `never_powered` (`bus_ref=277, accepted=0, unstable=0,
+   coast_crossings=0, hold_ms=0`). The fix from E337 doing its job on the first
+   occasion that could have exercised it.
+
+#### What remains unknown, precisely
+
+Only the third question: **does segment 2 complete at rung 600?** Segment 1 must
+reach target, be stopped by the injected `Tracking` fault, and leave enough of
+the window for a second startup, a second 25 s ramp and a ≥2 s hold. The budget
+says yes with ~10.8 s of slack; nothing has observed it.
+
+That needs a bus. It is one run.
+
+Queued behind it, unchanged: the sag priced against E340's predeclaration with
+`raw0_run`/`raw1_run` in the table from the start, then the ladder.
