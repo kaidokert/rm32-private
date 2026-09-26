@@ -413,14 +413,44 @@ def ladder_record(
     return r["fails"]
 
 
-def restart_verdict(capture: pathlib.Path) -> list[str]:
-    """Goal item 5 for one `R` capture, judged in the script."""
+def restart_verdict(capture: pathlib.Path, expect_duty: int = 0) -> list[str]:
+    """Goal item 5 for one `R`/`Z` capture, judged in the script.
+
+    **`expect_duty` exists because this function was duty-blind** (E337), and
+    that cost six runs and a withdrawn qualification. `Z` takes its duty from
+    the shell's `provoke_tenths`, which the `x` key cycles
+    250 -> 375 -> 475 -> 500 -> 600; `--rung-duty` sets only
+    `restart_prereq`, the rung that must already have passed. Six runs labelled
+    "restart at 500/600" therefore all ran at **250**, every one reported
+    `recovered=1`, and this verdict passed them, because it never looked at the
+    duty.
+
+    `ladder_record` has had exactly this guard for `l`/`L` since E148 -- *"the
+    caller says which rung it believes it is running and the capture has to
+    agree"* -- and the reason given there applies verbatim here. This is the
+    `Z`-shaped instance of the same bug.
+    """
+    text = capture.read_text(encoding="utf-8")
     line = next(
-        (l for l in capture.read_text(encoding="utf-8").splitlines() if l.startswith("BEMFRESTART ")),
+        (l for l in text.splitlines() if l.startswith("BEMFRESTART ")),
         "",
     )
     f = dict(t.split("=", 1) for t in line.split()[1:] if "=" in t)
     fails = []
+    if expect_duty:
+        run = next(
+            (l for l in text.splitlines() if l.startswith("BEMFRESTARTRUN ")),
+            "",
+        )
+        g = dict(t.split("=", 1) for t in run.split()[1:] if "=" in t)
+        ran = int(g.get("target_duty_tenths", 0))
+        if ran != expect_duty:
+            fails.append(
+                f"restart ran at {ran} tenths, not the {expect_duty} asked for: "
+                "`Z` takes its duty from the shell's provoke_tenths, which only "
+                "the `x` key moves -- `--rung-duty` sets the prerequisite, not "
+                "the duty"
+            )
     if f.get("first_reason") != "8":
         fails.append(f"first_reason {f.get('first_reason')} != 8")
     if f.get("recovered") != "1":
@@ -849,7 +879,7 @@ def main() -> int:
                     elif fails is not None:
                         print(f"   {label} PASS (gates 1-3)", flush=True)
                 elif args.command in ("R", "Z"):
-                    fails = restart_verdict(out)
+                    fails = restart_verdict(out, args.rung_duty)
                     if fails:
                         failed_runs += 1
                     print("   RESTART " + ("FAIL: " + "; ".join(fails) if fails else "PASS"), flush=True)

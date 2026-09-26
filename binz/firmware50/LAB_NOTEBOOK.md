@@ -39042,3 +39042,27 @@ has seen this change. So:
 a tautology, is **recorded and not fixed**: it needs a decision about what
 should feed it, and inventing one while repairing gates in my own favour is
 exactly the wrong order.
+
+#### E337 addendum — the guard that would have caught the six wasted runs
+
+`restart_verdict` was **duty-blind**, which is why six runs labelled "restart at
+500/600" all ran at 250, all reported `recovered=1`, and all passed. `Z` takes
+its duty from the shell's `provoke_tenths` (cycled only by `x`:
+250→375→475→500→600); `--rung-duty` sets `restart_prereq`, the rung that must
+already have passed. Nothing compared the two.
+
+`ladder_record` has carried exactly this guard for `l`/`L` since **E148** —
+*"the caller says which rung it believes it is running and the capture has to
+agree"* — and the reason stated there applies verbatim. My error is the
+`Z`-shaped instance of the bug that guard exists for, in a codebase that had
+already found and fixed the `L`-shaped one.
+
+Added, and **replayed against the six captures**: all six are now refused with
+the duty they actually ran at, and the message names the cause so the next
+reader does not have to rediscover `provoke_tenths`. That is the test — not that
+it passes on good runs, but that it rejects the exact six it should have.
+
+Three fixture defects are now fixed (`never_powered`, `armed`, this) and one is
+recorded-not-fixed (`forced=0`, a dead gate needing a decision on what feeds
+it). None of the three should carry a conclusion until reviewed; both reviews
+are dispatched.
