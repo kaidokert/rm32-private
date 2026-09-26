@@ -39659,3 +39659,146 @@ this campaign the claim has actually been tested, and E336's identical claim abo
 
 The cheap way is the general hazard here: an equality that holds because nothing
 was recomputed looks exactly like reproducibility ([[feedback-check-the-instrument-transfer-function]]).
+
+### E347 — goal item 1's aligned sequence needs no new instrument. The one that records all four quantities exists, is timing-neutral, and has never been run above 50 %. Batch stated; two of my own claims corrected on the way.
+
+Offline, bench down. Goal item 1's first priority is the **aligned** acceptance,
+commutation, current and bus sequence at the 55 % failure. I went looking for it,
+twice read the evidence wrong, and ended somewhere better than where I started.
+
+#### 1. Priced against E340's predeclaration, from the captures that exist
+
+E340 predeclared that `raw0_run`/`raw1_run` go in the table from the start.
+`raw1_run` is the longest run of consecutive raw scans below **950 per mille** —
+the fraction `FastBusSag` itself trips at (`RAW_DEPTH_TRIP_IX`, asserted `== 950`).
+All 500–600 captures carrying the raw bins (E284 added them, so two images have
+them):
+
+| image | rung | capture | reason | raw0 | **raw1** | hold_ma |
+|---|---|---|---|---|---|---|
+| FE927FA3 | 500 | q500 ×3 | 2 | 2,1,2 | 1,1,1 | 1589–1634 |
+| FE927FA3 | 525 | q525 ×3 | 2 | 2,2,7 | 1,1,**5** | 1735–1778 |
+| FE927FA3 | 550 | q550_01/_03 | 2 | 3,3 | 1,1 | 1891, 2038 |
+| FE927FA3 | 550 | **q550_02** | **26** | **9** | **6** | **2047** |
+| FE927FA3 | 575 | q575 ×3 | 2 | 2,6,4 | 1,2,1 | 2120–2168 |
+| FE927FA3 | 600 | q600 ×3 | 2 | 4,3,2 | 1,1,1 | 2280–2331 |
+| FCF42A19 | 600 | **e328-600-wide** | **26** | **7** | **3** | 0 (never held) |
+
+The trip sits at the top of the distribution and **is not separated from it**: a
+*passing* run (`q525-advref_03`, `raw1 = 5`) lies between the two trips (6 and 3).
+E340's prediction that the tripping run carries the cohort's highest `hold_ma`
+holds at 550 (2047 vs 1891/2038) — but that is the data E340 was derived from, so
+it is not independent confirmation.
+
+**So a bracketing proxy cannot settle this**, which is the case for wanting the
+guard's own variable, aligned.
+
+#### 2. Two things I read wrong, both corrected before they were written down
+
+**(a) I claimed no aligned record exists. False.** `BEMFDRVROWS` genuinely is
+first-N — `states.rs:780` gates the *write* on `rows_n < rows.len()` — and it
+covers 13 accepts of the handover, against `accepted = 535 741`. From that I
+concluded the project had no aligned pre-trip record. But `sagtrace::Trace::push`
+writes **unconditionally** and advances a wrapping index; its `if fast_len <
+FAST_LEN` increments a *length counter*, not an append gate. It is a ring, it
+keeps the **last 256 blocks at full rate (~26 ms)** plus **1024 decimated (~3.3 s)**,
+and it freezes on the kill. I read a length counter as a write gate.
+
+**(b) I was about to cite "the sag recorder caught the event 0/7 while production
+caught it 3/6" from memory. Not what the notebook says.** The verified figure is
+`reason = 26` in **3 of 7** production runs at 50 % in campaign 7 (`LAB_NOTEBOOK.md:12418`),
+which is a different quantity entirely. Corrected in memory. I also nearly
+reported two defects in `scripts/sag.py` from the same recollection — the
+fail-open `vref` path and the missing streak cross-check. **Both are already
+fixed** (`sag.py:266` and `:348`), as is the hand-maintained arming allowlist that
+once produced no dump (`bin/sag-capture.rs::arms_a_run` now delegates to
+`run::drives_a_run`, the list the shell itself dispatches on).
+[[feedback-dont-inherit-scars-unverified]] — three inherited claims, three wrong.
+
+#### 3. The instrument already records every quantity the goal asks for
+
+`sagtrace::Block`, per 8-scan judgement block:
+
+| goal item 1 asks for | field |
+|---|---|
+| bus | `bus_raw`, `bus_mean`, `filt_bus` (+ `vref_mean`, `filt_vref`) |
+| current | `phase_a`, `phase_b`, `phase_c` |
+| commutation | `step` |
+| acceptance | `since_zc_us` |
+| **the guard's own decision** | **`streak`, per block** |
+| alignment | `at` (µs, TIM17) **and** `at_fine` (125 ns, TIM2), plus `pwm_ctr` |
+
+That last row is what production cannot give: `FastBusSag` holds `lows: u8` with
+no high-water mark, and `report.rs:487` documents `sag_streak` as the streak *at
+the stop* — 3 on a trip, 0 on essentially every pass, because it resets. A
+production run that reached `lows = 2` ten thousand times reports the same number
+as one that never left 0. **In the trace, `streak` is recorded per block**, so the
+question needs no new field.
+
+**I therefore did not build one.** My first draft of this entry designed a
+`lows_max` high-water plus streak counters for the production image. Rule 3 says
+reuse before building, and the trace makes it redundant for the decisive
+measurement; a production high-water remains the only way to price *already
+recorded* passing runs, and it stays **deferred, not built**, until something
+needs it.
+
+#### 4. Why the record does not exist yet: the instrument has never been pointed at the failure
+
+All 43 captures under `captures/sag/`, by duty and outcome:
+
+| duty | runs | `reason = 26` |
+|---|---|---|
+| 150 | 22 | 1 (injected) |
+| 250 | 5 | 1 (injected) |
+| 450 | 1 | 0 |
+| 475 | 2 | 0 |
+| **500** | **13** | **0** |
+| ≥ 525 | **0** | — |
+
+**The highest rung ever recorded with the trace is 500.** Both captured trips are
+low-duty injections. The 55 % event has never been inside an instrument's window —
+not because the instrument is inadequate, but because it was never run there.
+
+#### 5. The batch, per Rule 1
+
+**Unresolved question.** At rung 550, what is the aligned block sequence
+approaching the sag latch — does `streak` walk 0→1→2→3 against a deepening
+`bus_mean/filt_bus`, and what do `phase_*`, `step` and `since_zc_us` do across it?
+
+**Falsifiable prediction, before the run.** E340 measured advance 16 raising
+peak/mean by 7–25 %, and a consecutive-block guard is what responds to peakiness.
+So I predict the trace shows **`streak` reaching 2 repeatedly and recovering**
+during a *passing* 550 run (≥ 5 excursions to `streak ≥ 2` per 30 s hold), with
+the latch being one such excursion that failed to recover — i.e. a marginal guard,
+not a discrete event. If instead `streak` never exceeds 1 on passing runs and the
+latch appears as an abrupt three-block collapse with no approach, my E340
+mechanism is wrong about proximity and the cause is a discrete power-path event —
+which is what the operator's owed sag-versus-current slope would then decide.
+
+**Smallest sufficient test.** Three runs at rung 550 with the existing
+`sag-capture` image — one warm-up (`b`, unjudged by design) then the climb to 550
+and `l`. No new code. Explicitly exploration, not a ladder (Rule 2); the trace's
+evidence diagnoses and **does not qualify** any image (goal, §Engineering).
+
+**Pre-flight done offline, so the run cannot be wasted** — the E183 failure mode
+was a capture that armed nothing:
+* `sag-capture` builds at the candidate's features (`advance-ref,deep-filter`);
+* the climb's run keys `l`/`L` are in `run::drives_a_run`, and `arms_a_run`
+  delegates to it, so 550 arms;
+* **observer-effect control, re-measured today rather than inherited:**
+  `isr_diff.py` gives all four roots *identical* against the production candidate
+  — `ADC_COMP` 742, `TIM16` 332, `TIM6_DAC_LPTIM1` 155, `DMA1_CHANNEL1` 37 (TIM16
+  differs only in an encoded constant). The recorder cannot be moving the timing
+  of the thing it measures.
+
+**Which decision each outcome changes.** A marginal guard (`streak` approaching 2
+routinely) means **a rung passing does not mean it has margin**, and bears directly
+on whether 600 is qualifiable on this advance — the fix would be on the
+current-shape side, bounded. A discrete collapse with no approach retires advance
+16 as the mechanism and moves the open cause to the power path.
+
+#### Status
+
+Bench-blocked, as is the rung-600 restart. Both are single runs and neither is a
+ladder. Nothing further is buildable against this question without spending the
+decisive measurement, so offline work on it stops here.
