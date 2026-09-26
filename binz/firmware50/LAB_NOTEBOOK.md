@@ -40145,3 +40145,106 @@ converts a dip to the excursion it implies.
   it already exists and has never been run above 500.
 * The envelope gains two measured constraints toward 100 %: a 70 mΩ path, and
   sag margin of −4 to −5 scans at 575/600 (E349).
+
+### E351 — aliasing refuted; the event cannot be one commutation; and the latching run was measurably *slower* with a *narrower* interval distribution. Plus two normalisation errors of mine, one of which flipped a sign.
+
+Continuing offline on the question E350 left: what concentrates several amps into
+~1 ms at rung 550 but not at 575 or 600 — a failure that gets *better* with duty.
+
+#### 1. Two mechanisms eliminated by arithmetic
+
+**Aliasing between the commutation rate and the ADC scan: refuted.** The 8-tap
+mean is fed one sample per scan at 101.0 µs, so a commutation interval at a
+rational ratio with it could phase-lock the mean onto one part of the electrical
+cycle. Measured `ci_us / 101.0` across the image: the latch sits at **0.772**,
+which is *identical* to a passing 525 run and inside the passing spread
+(0.644–0.812). No special ratio.
+
+**A single bad commutation: impossible, by the instrument's own span.** The 8-tap
+mean spans 808 µs and the latch needs three consecutive low means, so the dip must
+hold across **~1 ms ≈ 13 commutation intervals** at this rung. Whatever it is, it
+survives thirteen sectors. That rules out one bad commutation or one bad sector
+and rules in something with a ~1 ms time constant.
+
+#### 2. Two normalisation errors, named because one inverted a conclusion
+
+I diffed all 175 shared fields of the latch against its two passing siblings.
+Duration dominated (26.8 s against 37.3 s), so I normalised by `closed_ms` — and
+got a suspicious cluster at **exactly +21.3 %**, which is 59776/49262: the
+duration ratio itself. Those fields are **constants**, not counts —
+`window_us = 2000000`, `ma_allow = 31857`, `to100 = 65535`, `total_ms = 65000`,
+`comp_polls` 572487 vs 572314 — and dividing a constant by run length manufactures
+exactly the run-length ratio. Nine fields of apparent signal, all artefact.
+
+Worse: **`comm_per_s` and `zc_per_s` are already per-second**, so normalising them
+again produced "188.7 → 220.8, +17 %" when the raw values are **11279 → 10875,
+−3.6 %**. Wrong magnitude *and* wrong sign, in the field that turned out to matter
+most. Caught only by printing the raw values
+([[feedback-verify-reported-numbers]]).
+
+#### 3. What genuinely separates the latching run
+
+Per closed second, hand-classified as cumulative counts, plus scalars raw:
+
+| quantity | pass_01 | pass_03 | **latch** | |
+|---|---|---|---|---|
+| accepted / com_count / zc_acc | 11279 | 11256 | **10875** | **−3.4 %** |
+| `fast_events` | 11154 | 11131 | 10714 | −3.7 % |
+| `too_early` | 87.8 | 81.6 | **75.4** | −7.5 % |
+| `lt075` | 508.9 | 510.6 | **476.3** | −6.4 % |
+| `to150` | 347.9 | 337.1 | **318.7** | −5.5 % |
+| `dep2_n` | 3173 | 2520 | 3654 | +15 % |
+| `dep3_n` | 242 | 148 | **408** | **+68 %** |
+| `hold_ma` | 1891 | 2038 | **2047** | highest |
+| `ci_min_us` | 51 | 51 | **45** | |
+| `offset_us` | 74 | 74 | **70** | |
+| `bus_min` | 1113 | 1087 | **1058** | lowest |
+
+So the latching run was **slower** (−3.4 % commutation rate), drew **more**
+current, and dipped **deeper** at every depth bin — while having **fewer**
+interval outliers on both tails (`lt075`, `to150`) and fewer `too_early`
+refusals. My earlier un-normalised read of "a wider interval distribution" was
+backwards: the distribution was *narrower*.
+
+Slower at the same duty, drawing more, with a *cleaner* interval distribution, is
+not a lock-quality failure. It is the signature of **more mechanical load or lower
+conversion efficiency** for the same commanded duty.
+
+#### 4. The code-side lead I was about to publish, withdrawn by reading the source
+
+I had this section written around **`offset_us`: 70 on the latch against 74 on
+both siblings** -- at `ci ~ 78 us` a 4 us difference is ~3 electrical degrees, and
+less advance at speed costs efficiency, which would produce exactly §3's
+signature. It connected neatly to E340/E342's advance trade.
+
+**It is not an advance at all.** `offset_us` is a `COASTTIMING` field:
+`st.offset_us = start.wrapping_sub(stopped_at)` (`src/run/measure.rs:243`) -- the
+latency from the stop to the start of the coast window, measured *after* the run
+ended. It cannot influence anything during the hold. The neat mechanism was an
+artefact of reading a field by its name.
+
+That is the fourth time today a name-versus-source check has overturned something
+I was about to assert (the ring-versus-first-N gate, the recalled 0/7 figure, the
+already-fixed `sag.py` defects, and now this). The discipline is cheap and it
+keeps paying.
+
+**So there is no code-side lead left in the aggregates**, and that is itself the
+result: with the power path, excursion magnitude, scan aliasing, the
+single-commutation event and the marginal-guard reading all eliminated, and the
+whole 175-field diff yielding only *consequences* of a slower, hungrier run rather
+than a cause, **the aggregates are exhausted.** The remaining discriminator needs
+per-scan data -- which is the trace, established now by elimination rather than by
+assertion.
+
+[[feedback-bench-never-drifts]] still binds: I am not recording "the motor was
+more loaded that run" as an explanation. What I can say is that the cause is not
+in any recorded aggregate, and the one instrument that could see it has never run
+above 50 %.
+
+#### 5. Standing
+
+Eliminated offline today: the power path (E350), excursion magnitude (E350),
+scan-rate aliasing, the single-commutation event, and the marginal-guard reading
+(E349). Still standing: a ~1 ms, ~13-commutation event on a run that was slower and
+hungrier than its siblings, with no surviving cause in any recorded aggregate. The
+bench is owed two single runs; the operator is owed nothing.
