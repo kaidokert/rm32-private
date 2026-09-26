@@ -40708,3 +40708,32 @@ intended and never connected); and whether `ADC_STALE_US` should be shortened
 below `FEEDBACK_MAX_AGE_US` or removed, since as configured it can never fire.
 None of them blocks the campaign — a path that cannot fire protects nothing today
 either way.
+
+#### E357 addendum — the campaign's 60 % ceiling is enforced in the CCR arithmetic, twice and independently. Verified, not assumed.
+
+Before any powered work resumes, the one safety property the campaign's own
+ceiling rests on: can a key drive above 60 %? My recorded scar for this class is
+that relative duty keys once drove 60 % on an unqualified rung, so I checked
+rather than trusted.
+
+* `SIXSTEP_DUTY_CAP = 600` (`src/run/policy.rs:170`).
+* The climb key cannot exceed it: `(self.climb_tenths + step).min(SIXSTEP_DUTY_CAP)`
+  on `+`, and `.max(375)` on `-` (`src/run/mod.rs:549-555`).
+* **And the cap is enforced in the compare-value arithmetic itself**, so it binds
+  regardless of what any key requests: `sixstep_ccr_of` clamps
+  (`policy.rs:238-242`) and `sixstep::plan` clamps again independently on the same
+  constant (`src/sixstep.rs:79`). The report's own doc at `report.rs:381` states
+  both clamps explicitly.
+* It is also **observable in the record**: `applied_cap` is "the duty cap in force,
+  not the duty commanded", while `target_duty_tenths` is the pre-clamp request — so
+  a run that asked for more than 600 would show request ≠ cap in its capture rather
+  than pass silently.
+
+So the ceiling is a property of the CCR computation, not of operator discipline,
+and it is doubly redundant. `ceiling_tenths`, which an earlier note flagged as "not
+a gate", is a different quantity entirely — the foldback governor's target, not a
+campaign limit.
+
+Nothing to fix. Recorded because the deliverable's "powered ceiling is 60 %" is
+now a verified property of the image rather than an intention, and because
+verifying it cost one grep chain against a real scar.
