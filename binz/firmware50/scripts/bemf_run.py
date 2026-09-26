@@ -82,7 +82,9 @@ SUMMARY_PREFIXES = (
 # the `k` sine probe -- has been printed. The restart campaign (`R`) prints two
 # segments and ends on its own summary line.
 END_MARKER = "COASTTIMING"
-END_MARKERS = {"R": "BEMFRESTART ", "Z": "BEMFRESTART ", "z": "ZEROSETTLEDONE"}
+# `z`/`ZEROSETTLEDONE` was removed with the command choice (E356): the firmware
+# emits that line nowhere, so the entry could only ever time out.
+END_MARKERS = {"R": "BEMFRESTART ", "Z": "BEMFRESTART "}
 
 
 # The reference's figures per duty (tenths): electrical speed and the
@@ -533,8 +535,17 @@ def main() -> int:
     ap.add_argument(
         "--command",
         default="b",
-        choices=["b", "2", "5", "R", "z", "k", "T", "G", "F", "N", "U", "H", "V", "I", "W",
-                 "t", "g", "f", "n", "u", "h", "v", "i", "w",
+        # E355 added `K`/`Q` (and `k`/`q` at 25%) for `LateArm` and
+        # `BlankLatched`. Without them here the qualification's protection sweep
+        # cannot drive the two injections that were just built, so the coverage
+        # row would still be 8 of 14 in practice.
+        #
+        # `z` is REMOVED: `END_MARKERS` waited for `ZEROSETTLEDONE`, which the
+        # firmware emits nowhere at all (grepped `src/` and `bin/`), so
+        # `--command z` could only ever wait out its timeout. A command choice
+        # the device does not implement is worse than an absent one.
+        choices=["b", "2", "5", "R", "T", "G", "F", "N", "U", "H", "V", "I", "W", "K", "Q",
+                 "t", "g", "f", "n", "u", "h", "v", "i", "w", "k", "q",
                  "8", "3", "4", "6", "7", "9",
                  "a", "c", "d", "e", "j", "y", "m", "x", "Z", "l", "L", "+", "-",
                  "A", "C", "D", "E", "J", "Y", "M"],

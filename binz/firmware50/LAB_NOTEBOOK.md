@@ -40590,3 +40590,44 @@ Live fault paths demonstrable by injection go from 8 to **10 of 14**
 injectable too, `BlankLatched` newly so). Remaining: `AdcTimeout` (11) and
 `CycleTiming` (12), blocked on key space; `Current` (5) and `PhasePeak` (27),
 dead in the shipped configuration and an operator decision (E354).
+
+### E356 — the fixture could send two keys the firmware never implemented, one of which E355 silently gave a meaning to. Both fixed, and the class is now checked.
+
+Wiring E355's new injections into the qualification's protection sweep, I found
+the host and the device had drifted apart in both directions.
+
+**`--command z` was dead.** `bemf_run.py`'s `END_MARKERS` waited for a
+`ZEROSETTLEDONE` line, and the firmware emits that string **nowhere** — grep
+`src/` and `bin/`. So the choice could only ever wait out its timeout. Removed,
+with the end-marker entry.
+
+**`--command k` was worse than dead — it changed meaning under the fixture's
+feet.** `k` was not dispatched by the shell at all, yet the fixture offered it;
+E355 then made `k` the 25 % variant of `LateArm` through the lowercase
+derivation. So the same byte went from no-op to motor provocation with nothing
+checking. It is now intentional and documented, but it got there by accident,
+which is the part worth recording.
+
+**And `K`/`Q` were missing from the fixture**, so the protection sweep could not
+have driven the two injections E355 had just built — the coverage row would have
+stayed 8 of 14 in practice while the notebook claimed 10. Added, with `k`/`q`.
+
+#### The class is now tied, in the direction that matters
+
+`scripts/key_parity_check.py` extracts the bytes `run::Controller::command`
+dispatches (plus the lowercase set `inject_for` implies) and asserts **every key
+the fixture can send is one the firmware dispatches**. The converse is reported,
+not enforced — the firmware may implement keys the host has no reason to drive
+(it currently has two, `?` and `p`).
+
+It refuses rather than passing vacuously if either side parses as empty or the
+`choices` list cannot be found — the failure mode that makes a checker worthless.
+And it is falsified: reinstating `z` in `choices` makes it fail with
+`FAILED: 1 fixture key(s) the firmware does not dispatch: z`.
+
+This is the hazard the notebook named at `bin/sag-capture.rs::arms_a_run` —
+"nothing ties it to `run::Controller::command`'s match" — which was fixed there by
+delegation. The host side had the same untied list and nobody had noticed, because
+a host-side key list drifting only shows up as a timeout.
+
+Current state: firmware dispatches 54 keys, fixture offers 52, parity OK.
