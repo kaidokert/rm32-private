@@ -39126,3 +39126,53 @@ the goal's bar is the goal's bar, and 21 clean runs bounding the hazard to
 the 55 % sag event, which is still the only unexplained failure; then coverage
 scoped honestly to the duties the fixture can actually provoke at. The ladder
 re-run comes after those, not before.
+
+### E339 — the 55 % sag is not a fast transient. I read the filtered rail and missed a sustained, deepening excursion the raw observer recorded.
+
+Offline, from captures already in the tree. E334 characterised
+`q550-advref_02` as *"a fast transient caught by the guard that exists for fast
+transients"*, on the strength of `filt_bus = 983` per mille being healthy. The
+adversarial review pointed at a field I had not looked at, and it discriminates
+perfectly:
+
+| run | reason | `raw0_run` | `raw1_run` | `raw2_n` | `raw3_n` |
+|---|---|---|---|---|---|
+| `q550-advref_01` | 2 | 3 | 1 | 1 | **0** |
+| **`q550-advref_02`** | **26** | **9** | **6** | **4** | **1** |
+| `q550-advref_03` | 2 | 3 | 1 | 2 | **0** |
+
+**Nine consecutive blocks in the shallowest band against three; six against one
+in the next; four samples in band 2 against one or two; and one in band 3, which
+neither passing run entered at all.** That is a sustained excursion that
+*deepened through the bands*, not a blip. `filt_bus` stayed at 983 because a
+207 ms EWMA averages a multi-block droop away — so I read the one field that
+could not see the event and concluded the event had not happened.
+
+Taken with the other within-rung comparisons the review made, which I verified:
+run 02 has the **highest `hold_ma` of its own cohort** (2047 against 1891 and
+2038), the highest `worst_ma`, the deepest `bus_min`, and the largest
+`zero_drift_ma`. So it drew slightly more and the rail responded progressively
+more, for six or more consecutive blocks.
+
+#### What this changes
+
+* **My "bench transient, not firmware" reading is not supported.** A sustained
+  deepening droop under a slightly higher draw is equally consistent with
+  power-path impedance *and* with a real load excursion — and E328's own
+  `wide-blank` failure showed this firmware can produce the latter by changing
+  the current waveform's shape rather than its mean. The review's point that
+  the flat advance and the deeper filter each change that shape stands
+  unrefuted, because I never tested it.
+* **It sharpens the operator ask rather than replacing it.** A sag-versus-current
+  slope now has a specific prediction to check: if the power path is the cause,
+  the droop should track the draw with a measurable slope and run 02's extra
+  ~150 mA should account for the extra bands. If it does not, the cause is in
+  the drive.
+* **`raw*_run` is the field that should have been in the E334 table**, and the
+  lesson is the recurring one: I quoted the filtered, aggregated value where a
+  per-sample run-length existed. `filt_bus` is a 207 ms EWMA and the event was
+  ~60 ms.
+
+Recorded as a correction to E334's characterisation, not to its verdict: the
+run still failed, `rung_report` still holds it against that image permanently,
+and nothing here excuses it.
