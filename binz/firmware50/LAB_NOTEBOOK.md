@@ -40047,3 +40047,101 @@ run, the latch has a no-free-parameter mechanism that reproduces 14 of 15
 outcomes, and one claim of mine from yesterday is withdrawn as unsupported by the
 fields it cited. Review remains outstanding by external constraint, not by choice;
 this entry is self-review and says so.
+
+### E350 — the sag-versus-current slope was never the operator's to take: it is in every capture. 70 ± 32 mΩ, which acquits the power path and thereby withdraws the conclusion E348 and E349 both reached.
+
+I had twice recorded "the sag-versus-current slope / source impedance" as a desk
+measurement owed by the operator. That was wrong. Every capture contains a point
+on that curve:
+
+* `ref_bus` — the bridge-**off** reference taken before the run drives
+  (`measure::capture_baseline`): the **unloaded** rail;
+* `filt_bus` — the guard's 207 ms EWMA at the stop: the **loaded** rail;
+* `hold_ma` — the mean current over the hold.
+
+So `ref_bus − filt_bus` is the sag and `hold_ma` the load, one pair per run, and a
+rung ladder is a load sweep. Fifteen powered runs on `FE927FA3` span 1589–2331 mA
+and 135–221 mV of sag.
+
+#### The measurement
+
+**Source impedance = 70 ± 32 mΩ (95 %), current span 742 mA**, using the
+firmware's own code-to-millivolt relation inverted from `capture_baseline`'s floor
+arithmetic (`bus_mV = code · BUS_DIVIDER_X100 · vdda / (100 · ADC_RAIL)`;
+1 code = 9.62 mV at an assumed vdda of 3300, which enters linearly and matters far
+less than the spread).
+
+This is *total* source impedance — PSU regulation plus leads plus connector —
+which is the right quantity for predicting a dip. Limits, because it looks tidier
+than it is: the rail fields are whole codes at 9.6 mV, so each point is quantised
+to ~0.7 A equivalent and the fit is **quantisation-limited** (residual sd 1.66
+codes), and `hold_ma` over-reads ~6 % against the metered anchor, biasing the
+slope low by about the same.
+
+Against [[reference-bench-power-path-resistance]]'s standing rule — never qualify
+through ≥ 300 mΩ, and the melted connector measured ~650 mΩ — **70 mΩ is a healthy
+path**, and the whole 95 % interval (39–102 mΩ) is.
+
+#### And it decides the question it was owed for
+
+The 550 latch dipped 78 codes = **751 mV** below its line. At the fitted
+impedance that is a current excursion of **10.7 A** above the operating point
+(7.4 A at the CI's high-impedance end, 19.4 A at the low). For an *ordinary*
+excursion of ~2 A to explain the same dip, the path would have to be
+**375 mΩ** — five times the measurement and past the never-qualify line.
+
+**So the power path is acquitted, and with it the conclusion E348 and E349 both
+drew.** Both entries ended "a discrete event ⇒ the open cause moves toward the
+power path, and the operator's sag slope is decisive". The slope was available all
+along, it is healthy, and it points the other way: the dip requires a large,
+**short** current transient, which is a firmware-or-motor event.
+
+#### Then the obvious next inference fails too, on an independent field
+
+`worst_ma` is the worst 100-scan (10.1 ms) block mean, so
+`(worst_ma − hold_ma) × 10.1 ms` is the excess charge in that block. If a ~1 ms
+transient carries it, the peak excess is that charge over the dip's duration:
+
+| rung | reason | excess charge | implied A over 1 ms | over 0.6 ms |
+|---|---|---|---|---|
+| 500 ×3 | 2 | 4606–5666 | 4.6–5.7 | 7.7–9.4 |
+| 525 ×3 | 2 | 4787–5939 | 4.8–5.9 | 8.0–9.9 |
+| 550 ×2 | 2 | 4798–5535 | 4.8–5.5 | 8.0–9.2 |
+| **550** | **26** | **5919** | **5.9** | **9.9** |
+| 575 ×3 | 2 | 10282–11322 | 10.3–11.3 | 17.1–18.9 |
+| 600 ×3 | 2 | 9757–12958 | 9.8–13.0 | 16.3–21.6 |
+
+The magnitudes agree with the impedance-derived 7–19 A, which is a genuine
+independent corroboration of the *scale*. **But the latch is not distinguished:
+5919 sits exactly at the passing median (5939), and the passing 575 and 600 runs
+carry twice as much without latching.**
+
+So excess current *magnitude* does not set the latch. What survives is **time
+concentration** — a 10.1 ms block mean cannot tell 1 ms × 10 A from 10 ms × 1 A,
+and the high rungs may simply spread theirs. That is not decidable from any
+recorded field, and it is the third independent route to the same conclusion: the
+per-scan trace, which records `phase_a/b/c` beside the rail and the commutation
+state.
+
+(Noted in passing: `worst_ma` at 575/600 reaches 3186–3605 mA against the
+`RAW_LIMIT` of 4000, so the high rungs run much closer to the average-current
+allowance than the 550 latch did — the opposite ordering to the sag margin.)
+
+#### Delivered as tools, with their own falsification
+
+`scripts/source_impedance.py` — the derivation, the refusals (an unpowered rail,
+a run with no hold, fewer than four runs, or a current span under 300 mA are
+refused rather than fitted), and a `--self-check` that must recover synthetic
+paths of 50 / 100 / 250 mΩ and report a flat path as exactly zero. `--dip-codes`
+converts a dip to the excursion it implies.
+
+#### What changes
+
+* The operator is **no longer owed** the sag slope; it is measured, and healthy.
+* "The cause points toward the power path", stated in E348 and E349, is
+  **withdrawn**.
+* The open question is now narrow and physical: what concentrates several amps
+  into ~1 ms at rung 550 without doing so at 575 or 600 — and the instrument for
+  it already exists and has never been run above 500.
+* The envelope gains two measured constraints toward 100 %: a 70 mΩ path, and
+  sag margin of −4 to −5 scans at 575/600 (E349).
