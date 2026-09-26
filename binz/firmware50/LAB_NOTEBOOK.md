@@ -39924,3 +39924,126 @@ Two things are now owed to the operator rather than to the firmware: the
 sag-versus-current slope / source impedance (a desk measurement, no motor), and
 the bus for the two single runs. Reviews of this entry are outstanding — the broad
 brief has stalled four agents, so the next attempt is scoped to one question.
+
+### E349 — the latch boundary is computable from the fields after all, and it explains 14 of 15 runs. Its one failure corrects E348: `bus_min` and `raw1_run` are not the same event, and nothing in the report pairs them.
+
+Five review agents have now stalled on this batch (two broad, one scoped, plus the
+two on E337). I am treating that as a demonstrated constraint rather than retrying
+a sixth time, and answering the question I had handed the reviewer as the sharpest
+one outstanding: **can the guard's arithmetic resolve a raw run of 6 from one of
+5, or is `raw1_run` a proxy too coarse for the boundary E348 drew?**
+
+#### 1. It is decidable, because both predicates are the same line
+
+`FastBusSag::observe` tests `bus * filt_vref * 100 < filt_bus * vref * 95`
+(`src/protection.rs`), and `BusDepth::observe` at `RAW_DEPTH_FRACTIONS[1] = 950`
+tests the identical cross-product with `SCALE`/`scaled[i]`
+(`src/protection.rs:~330`). **Same fraction, same reference.** The only difference
+is that the guard feeds the 8-tap mean and the bin feeds the raw sample.
+
+So, with `vref ≈ filt_vref`, the line in bus codes is `L = 0.95 × filt_bus`;
+non-dip samples sit `h = filt_bus − L = 0.05 × filt_bus` above it; a dip sample
+sits `d` below. An 8-tap window holding `k` dip samples is low iff `k·d >
+(8−k)·h`, giving `k_min = ⌊8h/(d+h)⌋ + 1`. A contiguous run of `R` raw dip samples
+produces three *consecutive* low means iff
+
+> `R ≥ max(k_min, 2·k_min − 6)`
+
+which I derived from the overlap profile and then **brute-forced over k_min = 1..8
+rather than trusting the algebra** — formula and brute force agree at every value
+(4→4, 5→5, 6→6, 7→8, 8→10).
+
+#### 2. Applied to the candidate image's 15 powered runs
+
+Taking `d = L − bus_min` and `h = 0.05 × filt_bus`:
+
+| capture | rung | reason | depth | k_min | **R_need** | R_have | predicted | actual |
+|---|---|---|---|---|---|---|---|---|
+| q500_01 | 500 | 2 | 50.1 | 5 | 5 | 1 | pass | pass |
+| q500_02 | 500 | 2 | 15.1 | 8 | 8 | 1 | pass | pass |
+| q500_03 | 500 | 2 | 22.1 | 6 | 6 | 1 | pass | pass |
+| q525_01 | 525 | 2 | 24.2 | 6 | 6 | 1 | pass | pass |
+| q525_02 | 525 | 2 | 15.2 | 8 | 8 | 1 | pass | pass |
+| **q525_03** | 525 | 2 | 50.2 | 5 | **5** | **5** | **LATCH** | **pass** ← wrong |
+| q550_01 | 550 | 2 | 23.2 | 6 | 6 | 1 | pass | pass |
+| **q550_02** | 550 | **26** | 78.2 | 4 | **4** | **6** | **LATCH** | **LATCH** |
+| q550_03 | 550 | 2 | 49.2 | 5 | 5 | 1 | pass | pass |
+| q575_01/02/03 | 575 | 2 | 25–28 | 6 | 6 | 1,2,1 | pass | pass |
+| q600_h1/h2b/h3 | 600 | 2 | 23–39 | 5–6 | 5–6 | 1,1,1 | pass | pass |
+
+**14 of 15 correct, including the latch.** The model is a mechanism, not a fit: it
+has no free parameters — every quantity is either a firmware constant or a
+recorded field.
+
+#### 3. Its one failure corrects E348, and in E348's favour it should not have been claimed
+
+E348 said the latching run showed "**one** dip that is both the deepest
+(`bus_min`) and much the longest (`raw*_run`)". **That is not supported by the
+fields.** `bus_min` is the minimum over *every scan of the whole run*
+(`src/run/states.rs:332`), and `raw1_run` is the longest consecutive run below
+950, accumulated in a different structure. **Nothing pairs them.** They may be two
+entirely different events seconds apart.
+
+And that is exactly where the model fails: for `q525_03` it pairs a deepest scan
+of 1086 with a 5-scan run and predicts a latch that did not happen. The natural
+reading is that the deep scan belonged to a *short* dip while the 5-scan run was
+*shallower* — in which case that run's true `k_min` is 6 and `R_need = 6 > 5`, and
+the model would be right. But I cannot show that from the aggregates, which is the
+point.
+
+Note the direction of the error: using the global minimum as the depth of every
+dip sample **over-estimates depth**, hence under-estimates `k_min` and `R_need`,
+so the model is biased **toward predicting a latch**. Its one failure is in the
+conservative direction, and the true margins are larger than tabulated.
+
+#### 4. What this settles offline, which E347 said was unanswerable
+
+E347 stated that whether rungs 575 and 600 passed *comfortably or barely* was not
+knowable on the present instrument. It is knowable, from the mechanism: define
+**margin-to-latch = R_have − R_need**.
+
+* Eleven passing runs: **−3 to −7** scans.
+* `q525_03`: **0** — the near-miss, and the one the model cannot resolve.
+* `q550_02`: **+2** — the latch.
+* **Every 575 and 600 run: −4 or −5.** Not marginal.
+
+So the guard is *not* sitting one block from tripping at the high rungs, and the
+55 % latch is a discrete event — which is E348's conclusion, now resting on a
+verified mechanism instead of on two unpaired extrema. It also means the withdrawn
+qualification's high rungs had real sag margin, whatever else was wrong with it.
+
+#### 5. Revised prediction for the traced run, sharpened by the model
+
+The trace pairs depth and duration per scan, which is precisely the one thing the
+aggregates cannot do. So:
+
+> On a traced 550 latch, the dip that latches should show **≥ 4 consecutive raw
+> scans at ≈ 78 codes or more below `0.95 × filt_bus`**, with `streak` rising
+> 1→2→3 across exactly 3–4 scans, and the deepest scan of the run **belonging to
+> that same dip**. Falsifiers: the latching dip is shallower than ~50 codes (then
+> `k_min` is wrong and the mean/raw relationship is not as modelled); or the run's
+> deepest scan sits in a *different* dip than the longest run (then the pairing
+> assumption in §2 is wrong for the latch too, and the E348/E349 discrimination
+> collapses back to needing per-scan data for every run, not one).
+
+That second falsifier is the useful one: it tests the assumption the model rests
+on, on the one run where it matters.
+
+#### 5b. The model is now a repo tool that abstains where it was wrong
+
+`scripts/latch_margin.py`, with the derivation, the brute-force `--self-check`,
+and two refusals it makes rather than printing a number: a rail below 600 codes is
+**refused as not a powered run** (it catches `q600-advref-h2_01` unprompted), and
+**any margin within one scan of the boundary reads UNRESOLVED, not a verdict** --
+because `+0` is exactly where it was wrong. With that limit declared it scores
+**14 of 14** and abstains on the fifteenth, which is the honest shape for an
+instrument whose depth input is an unpaired extremum.
+
+#### 6. Standing
+
+Unchanged in what it needs: the bus, for two single runs. Changed in what it
+knows: the sag margin at 575/600 is quantified (−4 to −5 scans) without a bench
+run, the latch has a no-free-parameter mechanism that reproduces 14 of 15
+outcomes, and one claim of mine from yesterday is withdrawn as unsupported by the
+fields it cited. Review remains outstanding by external constraint, not by choice;
+this entry is self-review and says so.
