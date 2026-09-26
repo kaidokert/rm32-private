@@ -39802,3 +39802,125 @@ current-shape side, bounded. A discrete collapse with no approach retires advanc
 Bench-blocked, as is the rung-600 restart. Both are single runs and neither is a
 ladder. Nothing further is buildable against this question without spending the
 decisive measurement, so offline work on it stops here.
+
+### E348 — my E347 prediction is refuted offline, before spending the bench run that would have tested it. The sag latch is one isolated deep dip, not a marginal guard; and `SAG_STREAK` is three **scans**, so "sustained excursion" was a units error of three orders of magnitude.
+
+Both E347 reviewers stalled (the third and fourth stall of that form), so I
+attacked the weakest part of my own batch: the `≥ 5 excursions per 30 s hold`
+bar. It was **invented** — I had no derivation for 5 — which is precisely what
+[[feedback-dont-invent-targets]] and [[feedback-predeclare-the-falsification-bar]]
+forbid. Deriving it instead refuted the prediction it belonged to.
+
+#### 1. First, a units error of my own, three orders of magnitude wide
+
+`FastBusSag::observe` is called **once per ADC scan** (`src/run/states.rs:384`),
+on `Rail::bus_mean()`, which is an **8-tap moving mean** (`RAIL_MEAN_LEN = 8`,
+`RAIL_MEAN_SHIFT = 3`, `src/protection.rs:387-390`) updated every scan. So
+`SAG_STREAK = 3` is **three consecutive scans**, not three blocks:
+
+* latch window = 3 / 9901 Hz = **0.303 ms**;
+* the 8-tap input means the underlying dip must span ~10 scans ≈ **1.0 ms** to
+  pull the mean down for three of them;
+* the *current* meter's `BLOCK_SCANS = 100` (10.1 ms, which is what `worst_ma`
+  averages) is a **different** cadence entirely, and I had been carrying it over.
+
+**E339 called `raw0_run = 9` / `raw1_run = 6` "a sustained deepening excursion"
+and contrasted it with E334's "fast transient".** Those runs are counts of
+consecutive *scans*: 9 scans = **0.9 ms**, 6 scans = **0.6 ms**. Calling 0.6 ms
+sustained, in explicit opposition to "transient", is wrong by any reading. E334
+was closer on timescale than the entry that corrected it.
+
+Consequence for the instrument: the fast ring is 256 scans = **25.9 ms**, which is
+~85 latch-windows wide and covers the dip with ~25 ms of run-up. The decimated
+slow ring (~3.3 s) is the *wrong* place to look — and "deepening over seconds" was
+never a thing the data could have shown.
+
+#### 2. The prediction, derived from data and thereby refuted
+
+`raw1_n` is the **count** of raw scans below 950 per mille — a direct, already
+recorded measure of excursion frequency, which is what my prediction was about.
+Normalised by `closed_ms` over every capture at rungs ≥ 500 carrying the raw bins
+(30 runs, two images):
+
+| | n | min | median | max |
+|---|---|---|---|---|
+| passing (`reason = 2`) | 28 | 1.54 /s | 2.45 /s | 10.88 /s |
+| **latching (`reason = 26`)** | 2 | 1.77 /s | **1.84 /s** | 1.91 /s |
+
+**The two latching runs have among the *lowest* excursion rates in the corpus.**
+My prediction was that the tripping regime is the frequent-excursion regime; it is
+the opposite. Refuted, on data that existed before I wrote the prediction — and
+had I not derived the bar, the 550 run would have been spent testing it.
+
+(One confound found while doing this and worth keeping: the `e296` era runs at
+500–525 show `raw1/s` 7.6–10.9 and `raw0/s` 70–136 against the candidate image's
+1.5–3.0 and 17–21. **Excursion rates are not comparable across images**, so this
+table is only usable within one.)
+
+#### 3. What does discriminate, within the candidate image alone
+
+All 14 powered runs on `FE927FA3` (the 15th, `q600-advref-h2_01`, is the unpowered
+capture at `bus_min = 276` that E346's prospective refusal now prevents from ever
+being recorded):
+
+| quantity | 13 passing runs | **the 550 latch** |
+|---|---|---|
+| `raw1_run` (longest run below 950) | **1** ×11, 2 ×1, **5** ×1 | **6** |
+| `raw0_run` (below 970) | 1–4, one at **7** | **9** |
+| `raw1_n` (count below 950) | 92–177 | **94** (second lowest) |
+| `raw2_run` / `raw3_run` (930 / 910) | ≤ 1 everywhere | **1 / 1** |
+| `bus_min` | 1086–1122 | **1058 — the lowest of all 14** |
+
+So the latching run is distinguished by **one dip that is both the deepest
+(`bus_min`) and much the longest (`raw*_run`)**, while dipping below 950 no more
+often than anyone else, and never staying below 930 for more than a single scan.
+The near-miss is `q525-advref_03` (`raw0_run = 7`, `raw1_run = 5`,
+`bus_min = 1086`) — a passing run one or two scans short of the same shape, which
+is what makes the boundary credible rather than a coincidence.
+
+This is **a discrete event, not a marginal guard.** By E347's own decision table
+that moves the open cause toward the power path, and makes the operator's owed
+sag-versus-current slope the decisive measurement rather than more firmware.
+
+It does not kill E340. E340 measured advance 16 raising *peak*/mean current by
+7–25 %, and one large current peak is a coherent cause of one deep rail dip. What
+is dead is E340's frequency corollary, which I had been carrying implicitly: a
+peakier waveform did **not** produce more frequent rail excursions.
+
+#### 4. Revised batch, with the bar derived rather than invented
+
+**Question, sharpened.** At rung 550, what *coincides* with the single ~0.6–1.0 ms
+dip that latches the guard — a commutation boundary, a particular sector, a phase
+current spike, or nothing in the firmware's own state?
+
+**Prediction.** The trace will show one isolated excursion, ~6–10 scans long,
+reaching `bus_mean` at or below 0.95 × `filt_bus` for 3 consecutive scans, with
+the preceding ~25 ms ordinary (`streak` at 0–1, no trend). Falsifier: a run-up
+visible across the 25 ms window, or `streak` oscillating at 2 repeatedly, would
+restore the marginal-guard reading I have just abandoned.
+
+**The bar, derived.** The discriminating quantity is the longest run, and its
+distribution on one image is: 11 runs at 1, one at 2, one at 5, the latch at 6.
+So a *single* traced 550 run showing an isolated dip of ≥ 6 scans is already
+outside the passing distribution's mode by 5, and a second run showing the same
+shape settles it. No invented threshold, and n = 1–3 is sufficient *because* the
+quantity separates by shape and not by rate — which is also the honest reason the
+earlier frequency framing needed a bar it could not supply.
+
+**What the trace adds that the aggregates cannot.** `step`, `since_zc_us`,
+`phase_a/b/c` and `pwm_ctr` aligned to the dip, at 125 ns resolution. That is the
+coincidence question, and nothing already recorded can answer it.
+
+**Unchanged.** Three runs at 550 with the existing `sag-capture` image, no new
+code, exploration not qualification, and the pre-flight from E347 still holds
+(image builds, `l`/`L` arm via `run::drives_a_run`, all four ISR roots identical
+to the production candidate).
+
+#### 5. Standing
+
+A refuted prediction is a result ([[feedback-test-the-falsifier-that-fires]]), and
+this one cost no bench time, which is the whole point of deriving the bar first.
+Two things are now owed to the operator rather than to the firmware: the
+sag-versus-current slope / source impedance (a desk measurement, no motor), and
+the bus for the two single runs. Reviews of this entry are outstanding — the broad
+brief has stalled four agents, so the next attempt is scoped to one question.
