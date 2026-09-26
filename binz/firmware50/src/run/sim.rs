@@ -36,6 +36,10 @@ pub struct Faults {
     pub preflight_fails: bool,
     pub nfault_low_at: Option<u32>,
     pub bus_sag_at: Option<u32>,
+    /// The supply is absent for the whole run -- the rail reads what this bench
+    /// measured with the PSU switched off (277 codes against 1208-1217 powered).
+    /// Exercises E346's prospective refusal.
+    pub bus_absent: bool,
     pub stop_key_at: Option<u32>,
     /// The simulated guard latches `Tracking` this long after the last
     /// crossing once the loop is closed.
@@ -205,7 +209,13 @@ impl Hal for Sim {
     fn scan(&mut self) -> Option<RawScan> {
         self.last_scan = self.t;
         self.scan_seq += 2;
-        let bus = if self.at(self.faults.bus_sag_at) { 900 } else { 1215 };
+        let bus = if self.faults.bus_absent {
+            277
+        } else if self.at(self.faults.bus_sag_at) {
+            900
+        } else {
+            1215
+        };
         Some(RawScan {
             phase_a: 2048,
             phase_b: 2048,
@@ -670,6 +680,38 @@ mod tests {
         assert_eq!(sim.log.safe_offs, 1, "refused runs still go through safe_off");
         assert!(sim.log.text.contains("verdict=FAIL"));
         assert!(!sim.log.text.contains("BEMFDONE"));
+    }
+
+    #[test]
+    fn an_absent_supply_refuses_the_run_before_the_bridge_drives() {
+        // E346. The failure this replaces: the run completed, latched
+        // `Reason::Bus` from the in-run absolute floor, and permanently
+        // disqualified the image's hardest rung -- and the host-side exemption
+        // written to undo that re-read the trip's own input. Refusing to start
+        // is the repair: no drive, no record, nothing to excuse.
+        let faults = Faults {
+            bus_absent: true,
+            ..Faults::default()
+        };
+        let (sim, out) = run(250, 10_000_000, STEADY, faults, None);
+        // Refused at arm, not stopped mid-run: `AdcTimeout` is the baseline
+        // refusal, and crucially NOT `Reason::Bus`, which is what a run that
+        // drove would have reported.
+        assert_eq!(out.reason, Reason::AdcTimeout);
+        assert_ne!(out.reason, Reason::Bus, "a refused run must not look like a bus trip");
+        // The real witnesses that no winding saw voltage. (`gate_writes` is
+        // NOT one: `gates_to_timer` hands the pins over before the baseline is
+        // taken, with every CCR still zero and MOE off. Asserting on it was my
+        // own error, caught by this test failing.)
+        assert_eq!(sim.log.moe_on_at, None, "MOE must never have been enabled");
+        assert_eq!(sim.log.driven_begun_at, None, "the driven stage must never have begun");
+        assert!(sim.log.plans.is_empty(), "no duty was ever published");
+        assert!(sim.log.safe_offs >= 1, "a refused run still goes through safe_off");
+        assert!(sim.log.text.contains("ABORT bus_absent"), "{}", sim.log.text);
+        // And the preflight itself PASSED -- the pins were idle and the driver
+        // healthy. This is exactly the case the old paperwork could not see.
+        assert!(sim.log.text.contains("verdict=PASS"));
+        assert!(!sim.log.text.contains("BEMFDRIVEN"));
     }
 
     #[test]

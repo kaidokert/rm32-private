@@ -94,13 +94,36 @@ pub fn capture_baseline(hal: &mut (impl Hal + Sink)) -> Option<Baseline> {
     let floor_code = numer
         .checked_div(BUS_DIVIDER_X100 * vdda_mv)
         .unwrap_or(u32::from(ADC_RAIL));
+    // **The rail is checked BEFORE the bridge drives** (E346). A run taken with
+    // the supply off used to complete, latch `Reason::Bus` from the in-run
+    // absolute floor, and permanently disqualify the image's hardest rung; the
+    // repair attempted in E337 was a retrospective host-side exemption that
+    // re-read the trip's own input and agreed with it, so any bus-sense defect
+    // manufactured its own excuse. An adversarial review rejected it, and its
+    // accept condition is this: refuse to START. A run that never happened needs
+    // no exemption.
+    //
+    // No new threshold: this is `BUS_FLOOR_MV` -- the floor the run already
+    // enforces at `states.rs` -- evaluated once, bridge off, before arming. The
+    // failure direction is now safe: a broken bus sense refuses the run loudly
+    // instead of producing a verdict.
+    let bus_avg = div_100(sums[3]) as u16;
+    let floor = floor_code.min(u32::from(ADC_RAIL)) as u16;
+    if bus_avg < floor {
+        hal.say("ABORT bus_absent ");
+        hal.kv("bus", u32::from(bus_avg));
+        hal.kv("floor", u32::from(floor));
+        hal.kv("floor_mv", BUS_FLOOR_MV);
+        hal.say("(supply off, or a fuse/connector/power path has failed) \r\n");
+        return None;
+    }
     Some(Baseline {
         zero_block: sum,
         bus_ref: BusReference {
-            bus: div_100(sums[3]) as u16,
+            bus: bus_avg,
             vref: div_100(sums[4]) as u16,
         },
-        bus_floor_code: floor_code.min(u32::from(ADC_RAIL)) as u16,
+        bus_floor_code: floor,
     })
 }
 

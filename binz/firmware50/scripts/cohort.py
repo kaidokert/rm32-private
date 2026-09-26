@@ -196,9 +196,9 @@ def parse(path: pathlib.Path) -> dict | None:
         "duty": int(rec["BEMFRUN"].get("target_duty_tenths", 0)),
         "reason": int(rec["BEMFDONE"].get("reason", 0)),
         "accepted": int(rec["BEMFDONE"].get("accepted", 0)),
-        # The reference rail, for `never_powered` (E337). Physically decisive:
-        # every powered run on this bench reads 1208-1217, and the capture taken
-        # as the operator cut the supply read 281.
+        # The reference rail, sampled at run start. Every powered run on this
+        # bench reads 1208-1217; a capture taken with the supply off read 281.
+        # `scripts/bemf_run.py` refuses to START a run out of band (E346).
         "bus_ref": int(rec["BEMFDONE"].get("bus_ref", 0)),
         "forced": int(rec["BEMFDONE"].get("forced", 0)),
         "too_early": int(rec["BEMFDONE"].get("too_early", 0)),
@@ -319,55 +319,6 @@ def identity_unavailable(r: dict) -> bool:
     high-side gate failures this used to produce.
     """
     return "unphysical" in r.get("rate_source", "")
-
-
-def never_powered(r: dict) -> bool:
-    """Did this run have a bus at all? (E337)
-
-    A sibling of [`identity_unavailable`], and for the same reason: a run that
-    was never powered is **unmeasured on every axis**, neither a pass nor a
-    failure, and must not count toward the three a rung needs nor be held
-    against it.
-
-    This exists because the operator disabling the supply mid-session produced a
-    capture that `run_gates` judged as a firmware latch, and `rung_report` holds
-    a rung failed on an ELF permanently -- so a power switch permanently
-    disqualified a good image. It happened twice. The first time it was
-    hand-edited out of `ladder_state.json`, which both qualification reviews
-    called procedurally wrong even though they accepted the physics: the fixture
-    should classify it, not the author.
-
-    **The predicate is deliberately strict, because the failure it must not
-    swallow is a genuine `Reason::Bus` trip.** The absolute bus floor
-    (`BUS_FLOOR_MV = 8_400`, `src/run/states.rs:341`) fires *during* a run, so a
-    real trip has a normal reference rail and thousands of accepted crossings.
-    A run that never had a bus has all three of:
-
-      * `hold_ms == 0`          -- it never reached its hold;
-      * `accepted == 0`         -- not one crossing was accepted;
-      * `unstable == 0`         -- and not one was even *refused*, so the
-                                   detector never saw an edge of any kind;
-      * `coast_crossings == 0`  -- the rotor never turned afterwards either;
-      * `bus_ref` far below the operating range -- 281 in the observed case
-        against 1208-1217 in every powered run on this bench.
-
-    Requiring all three means no run that measured anything can be excused. The
-    observed capture (`q600-advref-h2_01.txt`: `reason=6`, `bus_ref=281`,
-    `accepted=0`, `closed_ms=0`) satisfies it; every real `Reason::Bus` trip in
-    the corpus fails it on `accepted` alone.
-    """
-    return (
-        r.get("hold_ms", 1) == 0
-        and r.get("accepted", 1) == 0
-        and r.get("unstable", 1) == 0
-        and r.get("coast_crossings", 1) == 0
-        and 0 < r.get("bus_ref", 0) < BUS_REF_FLOOR_CODE
-    )
-
-
-# Half the lowest reference rail ever recorded on a powered run on this bench
-# (1208). Anything below this is not a sagging supply, it is an absent one.
-BUS_REF_FLOOR_CODE = 600
 
 
 def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:

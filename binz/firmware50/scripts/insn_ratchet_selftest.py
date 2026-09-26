@@ -26,6 +26,10 @@ Only deliberately breaking the image tells the two apart
 * TEST B disables one classifier and requires the unclassified-builtin
   invariant to refuse.
 * TEST C requires every spelling of a division helper to classify as `div`.
+* TEST D requires the configuration-keyed baseline (E346) to REFUSE an unknown
+  configuration rather than fall back to another one's counts -- and, in the
+  same test, to still PASS on a matching bucket, because a check that refuses
+  everything "fires" on every input and gates nothing.
 
 Run it whenever `insn_ratchet.py` changes:
 
@@ -37,6 +41,7 @@ import contextlib
 import glob
 import importlib.util
 import io
+import pathlib
 import re
 import sys
 
@@ -50,8 +55,8 @@ def load():
     return mod
 
 
-def run(mod, elf: str) -> tuple[int, str]:
-    sys.argv = ["insn_ratchet", "--elf", elf]
+def run(mod, elf: str, *extra: str) -> tuple[int, str]:
+    sys.argv = ["insn_ratchet", "--elf", elf, *extra]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = mod.main()
@@ -123,6 +128,38 @@ def main() -> int:
         print(f"TEST C  {short:22s} -> {got}"
               + ("" if got == "div" else "   <-- NOT SEEN AS A DIVISION"))
 
+    # TEST D -- an unknown configuration must be REFUSED, not compared against
+    # another configuration's numbers (E346). The defect this replaces: one flat
+    # baseline blessed from a default build reported every feature build as an
+    # 18-instruction ADC_COMP drift, and that false failure was answered with
+    # `--insn-slack 30` in the withdrawn qualification -- so the gate was
+    # widened to accommodate a bug in the gate.
+    import json
+    import tempfile
+    print()
+    mod = load()
+    real = mod.count(__import__("pathlib").Path(elf))
+    bucket = {k: {c: v[c] for c in mod.CLASSES} for k, v in real.items()}
+    with tempfile.TemporaryDirectory() as d:
+        mod.BASELINE = pathlib.Path(d) / "insn_baseline.json"
+        mod.BASELINE.write_text(
+            json.dumps({"someother": {"symbols": bucket, "elf": elf}}),
+            encoding="utf-8")
+        rc, out = run(mod, elf, "--config", "not-that-one")
+        ok = rc == 2 and "no baseline for configuration" in out
+        if not ok:
+            failed.append("D-refuse")
+        print("TEST D  unknown configuration refused:",
+              "FIRED" if ok else "DID NOT FIRE")
+        # And it must still pass where the bucket DOES match, or the refusal is
+        # unconditional and the ratchet has stopped measuring anything.
+        rc2, out2 = run(mod, elf, "--config", "someother")
+        ok2 = rc2 == 0 and "no hazard-class drift" in out2
+        if not ok2:
+            failed.append("D-pass")
+        print("TEST D  matching configuration still compared:",
+              "yes" if ok2 else "NO -- the check refuses unconditionally")
+
     if failed:
         print()
         print(f"SELF-TEST FAILED ({len(failed)}): " + ", ".join(failed))
@@ -131,7 +168,8 @@ def main() -> int:
         return 1
     print()
     print("self-test OK: both absolute invariants fire, every division "
-          "spelling is seen")
+          "spelling is seen, and the configuration bucket both refuses and "
+          "compares")
     return 0
 
 

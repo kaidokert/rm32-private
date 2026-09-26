@@ -235,6 +235,15 @@ def count(elf: pathlib.Path) -> dict[str, dict[str, int]]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--elf", required=True)
+    ap.add_argument("--config", default="default",
+                    help="the FEATURE CONFIGURATION this ELF was built with, "
+                         "naming its baseline bucket. ADC_COMP is 758 at "
+                         "default features and 742 with advance-ref,"
+                         "deep-filter, so one flat baseline reports every "
+                         "feature build as an 18-instruction hazard drift; a "
+                         "gate that always fires is not a gate. An unknown "
+                         "bucket is REFUSED, never compared against another "
+                         "configuration's numbers.")
     ap.add_argument("--bless", action="store_true",
                     help="write current counts as the baseline; only with a "
                          "stated reason in the notebook")
@@ -279,17 +288,47 @@ def main() -> int:
     # re-derived from every image so they cannot go stale in a baseline.
     ratcheted = {k: {c: v[c] for c in CLASSES} for k, v in now.items()}
 
-    if args.bless or not BASELINE.exists():
+    # **The baseline is keyed by feature configuration** (E346). It used to be a
+    # flat symbol map blessed from one default-features build, so every
+    # feature-built image -- including every image this campaign actually runs --
+    # reported ADC_COMP 760 -> 742 as a hazard-class failure. That is how the
+    # withdrawn qualification came to be recorded with `--insn-slack 30`: the
+    # gate was tripping on the CONFIGURATION, so it got widened instead of fixed,
+    # and a widened gate then covered whatever real drift existed.
+    all_base: dict = {}
+    if BASELINE.exists():
+        all_base = json.loads(BASELINE.read_text(encoding="utf-8"))
+        # Migrate a pre-E346 flat baseline (symbol -> counts) into the default
+        # bucket rather than silently reading it as a bucket map.
+        if all_base and not all(isinstance(v, dict) and "symbols" in v
+                                for v in all_base.values()):
+            all_base = {"default": {"symbols": all_base, "elf": "(pre-E346)"}}
+
+    if args.bless or args.config not in all_base:
+        if not args.bless and all_base:
+            # Deny by default: never fall back to another configuration's
+            # numbers, which is exactly the comparison that was broken.
+            print(f"REFUSED: no baseline for configuration '{args.config}'.")
+            print(f"  Known configurations: {', '.join(sorted(all_base))}")
+            print("  Counts are configuration-specific, so comparing across "
+                  "them is meaningless. Build this configuration, check the "
+                  "counts by eye, and re-run with --bless once the notebook "
+                  "says why.")
+            return 2
+        all_base[args.config] = {"symbols": ratcheted, "elf": elf.name}
         BASELINE.parent.mkdir(parents=True, exist_ok=True)
-        BASELINE.write_text(json.dumps(ratcheted, indent=1, sort_keys=True)
+        BASELINE.write_text(json.dumps(all_base, indent=1, sort_keys=True)
                             + "\n", encoding="utf-8")
         verb = "blessed" if args.bless else "created"
-        print(f"{verb} baseline from {elf.name}: {len(ratcheted)} symbols")
+        print(f"{verb} baseline for '{args.config}' from {elf.name}: "
+              f"{len(ratcheted)} symbols")
         for k, v in sorted(ratcheted.items()):
             print(f"  {k:<44} {v}")
         return 0
 
-    base = json.loads(BASELINE.read_text(encoding="utf-8"))
+    base = all_base[args.config]["symbols"]
+    print(f"configuration '{args.config}' (baseline from "
+          f"{all_base[args.config].get('elf', '?')})")
     fails: list[str] = []
     print(f"{'symbol':<44}{'insns':>12}{'div':>7}{'mul':>7}"
           f"{'irq':>7}{'excl':>7}{'helper':>8}")

@@ -39487,3 +39487,150 @@ stalled. The brief remains at `captures/reviews/E337-BRIEF.md` for a reviewer wh
 can. What I can say is that attacking it myself made it stricter in two places
 and its test honest in a third, and that the exemption is now loud where it was
 silent.
+
+### E346 — the adversarial review rejected my exemption and its accept condition is better than my design. The exemption is deleted, the verdict flip surrendered, and the firmware now refuses to *start* a run without a rail.
+
+The review is at `captures/reviews/E337-ADVERSARIAL.md`, verbatim, 311 lines.
+**Verdict: REJECT as written.** I accept all of it. Its summary of what I did is
+the one I should have written myself: *"a narrower, louder, better-documented
+version of the same act, and the one artefact that would have made it a rule
+rather than a judgement — `cohort_selftest.py` — is empirically incapable of
+failing."*
+
+#### 1. My self-test was a tautology, and I confirmed it independently
+
+The review deleted each of the five clauses of `never_powered` in turn and re-ran
+the suite. Deleting `hold_ms`, `accepted`, `unstable` or `coast_crossings` →
+**suite passes**, printing *"every clause is load-bearing"*. Only deleting
+`0 < bus_ref < 600` fails it.
+
+I reproduced that exactly: four of five clause deletions printed `SUITE STILL
+PASSES <-- cannot detect the loosening` while the suite's own summary line went
+on claiming every clause was load-bearing. The mechanism is that TEST C/D
+mutated **record data** in a cohort selected by `accepted > 0`, where every
+record has `bus_ref ≈ 1210`; two clauses therefore always block, and no
+single-field edit can ever open the gate. So the test could not fail, and
+[[feedback-instrument-must-fail-loudly]] failed *again*, three entries after I
+wrote it down — this time in the very file written to enforce it. E345 §3 even
+congratulated the test for being an invariant rather than a count. It was an
+invariant that quantified over nothing.
+
+And the docstring said **"Requiring all three means no run that measured
+anything can be excused"** while listing five clauses. The count drifted as I
+wrote it, which is the same defect visible in the prose.
+
+#### 2. The finding I had not seen at all: the predicate is circular
+
+`reason = 6` is `Reason::Bus`, raised by the absolute bus floor at
+`src/run/states.rs:341`. **My predicate excused that trip by re-reading the
+trip's own input and agreeing with it.** So any defect in the bus sense or the
+ADC path manufactures its own exemption — the failure mode is silent and
+self-certifying, and it lands precisely on the protection the deliverable had
+already got wrong once (§5.5 denied the floor existed while a record proved it
+worked). Two independent witnesses existed and I used neither: `PREFLIGHT
+nfault`, and chronology.
+
+It is also **not** a sibling of `identity_unavailable`, which I claimed twice.
+That one excuses a single axis on a broken **host** estimator. Mine dropped every
+gate on the **DUT's own testimony**. Not the same discipline.
+
+#### 3. Surrendered
+
+`cohort.never_powered`, `BUS_REF_FLOOR_CODE`, the `rung_report` wiring in both
+places, the `ladder_record` warning and `cohort_selftest.py` are **deleted**.
+`bus_ref` stays in `cohort.parse` (it costs nothing and is now used prospectively).
+`rung_report` is byte-identical to its pre-E337 form, restored from `6b2313b~1`
+rather than retyped.
+
+Consequence, stated plainly: **rung 600 on `FE927FA3` reads FAIL again**, as it
+did before I touched it. I gave up the verdict flip. The withdrawal stood on five
+grounds independent of this one and still does.
+
+The E337 duty-agreement guard in `restart_verdict` is **kept** — the review did
+not contest it, and it is the fix for a real defect (six restart runs recorded at
+the wrong duty).
+
+#### 4. The accept condition, which is a better design than mine
+
+> *"The accept condition I'd press hardest: make it **prospective** — have
+> `PREFLIGHT` refuse to start a run when the reference rail is out of band. A run
+> that never happened needs no exemption, and that alone moots most of the rest."*
+
+Implemented, and it needed no new machinery: `measure::capture_baseline` already
+returns `Option`, already refuses on an implausible CSA bias, already runs bridge
+off, and already computes both `bus_ref` and `bus_floor_code`. One check added
+there, and `arm` turns it into the existing `Refused` path.
+
+**No new threshold.** It is `BUS_FLOOR_MV` — the floor the run already enforces —
+evaluated once before arming instead of only during the drive. The goal says keep
+existing protections and thresholds; this adds a precondition, not a number.
+
+The circularity does not vanish (it still reads the bus sense) but its
+*direction* is now safe: a broken bus sense refuses the run loudly and produces
+**no verdict**, where before it produced a self-excused pass.
+
+```
+ABORT bus_absent bus=277 floor=862 floor_mv=8400 (supply off, or a
+fuse/connector/power path has failed)
+```
+
+`sim::Faults::bus_absent` holds the rail at **277 codes — the value this bench
+actually measured with the PSU off**, against 1208–1217 powered.
+`an_absent_supply_refuses_the_run_before_the_bridge_drives` asserts
+`moe_on_at == None`, `driven_begun_at == None`, `plans` empty, `ABORT
+bus_absent` present, `verdict=PASS` on the preflight itself (the pins *were*
+idle and the driver *was* healthy — exactly the case the old paperwork could not
+see), and no `BEMFDRIVEN`.
+
+**Falsified before being trusted.** With the check neutered the test fails with
+`left: Bus, right: AdcTimeout` — that is, **the sim reproduces the real bench
+capture**, `Reason::Bus`, the event this whole episode is about. The regression
+test and the field failure are now the same object.
+
+My first version of that test asserted `gate_writes == 0` and **failed**:
+`gates_to_timer` hands the pins to TIM1 before the baseline, with every CCR zero
+and MOE off. Wrong witness, caught by the test failing rather than by me. The
+real witnesses are MOE and the driven stage.
+
+#### 5. And the ratchet gate was never a gate (found while re-running it)
+
+The hazard ratchet failed on this image: `ADC_COMP: insns 760 -> 742 (-18)`.
+Hazard classes were **unchanged** (`div 0 / mul 4 / irq 9`); the −18 is the
+**feature configuration**. The baseline was a flat symbol map blessed from one
+default-features build, so *every* image this campaign actually runs trips it.
+
+**That is the origin of the `--insn-slack 30` in the withdrawn qualification.**
+E336 already listed the widened slack as a number I got wrong, but not the cause:
+the gate was firing on the configuration, so I widened the gate instead of fixing
+it — and a widened gate then covered whatever real drift existed. A gate that
+always fires is not a gate; it is a thing you learn to step over.
+
+The baseline is now **keyed by configuration**, an unknown bucket is **REFUSED**
+rather than compared against another configuration's numbers, and a pre-E346 flat
+baseline migrates into the `default` bucket rather than being silently read as
+one. Blessed for `advref-floor5`: `ADC_COMP` 742, `div 0 / mul 4 / irq 9` —
+matching E336's independently recorded values, so the `measure.rs` change moved
+**nothing** in any of the four roots, as expected for an arm-path change.
+
+TEST D in `insn_ratchet_selftest.py` covers it **in both directions**, because
+this is where I keep failing: remove the deny → `D-refuse DID NOT FIRE`; make the
+refusal unconditional → `D-pass NO -- the check refuses unconditionally`. A check
+that refuses everything "fires" on every input and gates nothing; that is the
+same class of defect as one that fires on nothing, and the last test I wrote
+would have missed both.
+
+#### Gates
+
+348/348 default, 348/348 `advance-ref`, 346/346 `deep-filter`, 346/346
+`advance-ref,deep-filter`; clippy clean on both targets; ratchet OK in both
+buckets; ratchet self-test OK with TEST D falsified two ways.
+
+#### What this does not do
+
+It does not answer the one question that matters, which remains **unrun**: does
+segment 2 of the rung-600 restart complete on `EADDF979`? That needs the bus, and
+the bus is off (`bus_ref = 277`, measured twice). The 55% sag pricing against
+E340's predeclaration is likewise bench-blocked. This entry is instrument and
+fixture repair done while power is down — and the review is right that such work
+is only defensible because the decisive experiment is unavailable, not because it
+is more comfortable.

@@ -281,84 +281,26 @@ def rung_report(state: dict, sha: str, duty: int) -> tuple[bool, list[str]]:
     # less evidence than its siblings and must not count toward the three --
     # while equally not being held against the rung, because the defect is the
     # estimator's and not the machine's.
-    # **And a run that was never powered is unmeasured on EVERY axis** (E337),
-    # for the same reason and by the fixture rather than by hand. The operator
-    # cutting the supply mid-session produced a capture that `run_gates` judged
-    # a firmware latch, which permanently disqualified a good image at its
-    # hardest rung -- twice. The first time it was edited out of
-    # `ladder_state.json`, which both qualification reviews called procedurally
-    # wrong while accepting the physics. `cohort.never_powered` states the
-    # physics as a strict predicate instead: it excuses exactly one capture in
-    # the whole corpus and cannot swallow a real `Reason::Bus` trip, which always
-    # has a normal rail and thousands of accepted crossings.
-    def _unmeasured(r: dict) -> bool:
-        return bool(r.get("identity_unavailable")) or cohort.never_powered(r)
-
-    unmeasured = [r for r in all_runs if _unmeasured(r)]
-    measured = [r for r in all_runs if not _unmeasured(r)]
+    unmeasured = [r for r in all_runs if r.get("identity_unavailable")]
+    measured = [r for r in all_runs if not r.get("identity_unavailable")]
     if len(measured) < RUNG_RUNS:
-        n_unpowered = sum(1 for r in unmeasured if cohort.never_powered(r))
-        why = []
-        if len(unmeasured) - n_unpowered:
-            why.append(f"{len(unmeasured) - n_unpowered} unmeasured: coast fit unphysical")
-        if n_unpowered:
-            why.append(f"{n_unpowered} unmeasured: no bus")
         return False, [
             f"only {len(measured)} measured run(s) on this ELF at {duty / 10:.0f}%"
-            + (f" ({'; '.join(why)})" if why else "")
+            + (f" ({len(unmeasured)} unmeasured: coast fit unphysical)" if unmeasured else "")
         ]
     # **Failures are scoped by origin** (E262, adopting E261b's reviewer call).
-    #
-    # Two unlike things were being treated as one permanent disqualification:
-    #
-    #   (a) a firmware protection latch -- a `reason` the firmware itself
-    #       raised -- which is evidence about the machine, and
-    #   (b) a clean `reason = 2` run failed by a threshold in `cohort.py`,
-    #       which is evidence about the gate.
-    #
-    # The rule's remedy for a failure is "fix the cause and build a new image".
-    # For (b) the cause is **not in the image**, so no new image could ever
-    # clear it while only a new image could clear the record -- a deadlock. So
-    # (a) fails the rung permanently on that ELF, and (b) is reported and
-    # recomputed under the current gate rather than erased. Neither is
-    # re-rolled, and both stay in the file.
-    #
-    # E263: the band correction that would have reclassified the one class-(b)
-    # record was **rejected by its own predeclared anti-fitting test** (it flips
-    # only failures into passes, because the corpus has no mass at the low
-    # edge), so a class-(b) record still fails the rung under the current gate.
     # The scoping changes why it fails, not that it does.
-    # The unmeasured runs are excluded here too (E337). Counting them as
-    # measured was only half the defect: an unpowered run also carried a
-    # `reason` that `_is_firmware_latch` classified as a permanent latch, so it
-    # disqualified the rung through this path regardless.
-    judged = [r for r in all_runs if not _unmeasured(r)]
-    latched = [r for r in judged if r["fails"] and _is_firmware_latch(r)]
-    gated = [r for r in judged if r["fails"] and not _is_firmware_latch(r)]
+    latched = [r for r in all_runs if r["fails"] and _is_firmware_latch(r)]
+    gated = [r for r in all_runs if r["fails"] and not _is_firmware_latch(r)]
     fails = [f"{r['file']} (firmware latch): {', '.join(r['fails'])}" for r in latched]
     fails += [f"{r['file']} (host gate): {', '.join(r['fails'])}" for r in gated]
     if latched:
         fails.append(
-            f"{len(latched)} of {len(judged)} attempts at {duty / 10:.0f}% latched a "
+            f"{len(latched)} of {len(all_runs)} attempts at {duty / 10:.0f}% latched a "
             "firmware protection on this ELF; that is permanent for this image"
         )
-    fails += cohort.rung_oracle(judged[-RUNG_RUNS:])
-    # Surfaced on a PASS as well (E345): an exemption that is invisible when the
-    # rung passes is the case where it matters most.
-    notes = []
-    n_unpowered = sum(1 for r in unmeasured if cohort.never_powered(r))
-    if n_unpowered:
-        notes.append(
-            f"NOTE: {n_unpowered} run(s) at {duty / 10:.0f}% excluded as "
-            "unmeasured (no bus -- supply off, or a failed fuse/connector); "
-            "verify the supply"
-        )
-    if len(unmeasured) - n_unpowered:
-        notes.append(
-            f"NOTE: {len(unmeasured) - n_unpowered} run(s) at {duty / 10:.0f}% "
-            "excluded as unmeasured (coast fit unphysical)"
-        )
-    return not fails, fails + notes
+    fails += cohort.rung_oracle(all_runs[-RUNG_RUNS:])
+    return not fails, fails
 
 
 def ladder_admit(command: str, sha: str, rung_duty: int = 0) -> tuple[bool, str]:
@@ -422,27 +364,6 @@ def ladder_record(
     # unmarked record is a walked one; there is no way to anchor silently.
     if anchor_proof:
         r["anchored"] = anchor_proof
-    # **An exemption must be loud** (E345). `never_powered` marks a run
-    # unmeasured, and the note announcing that lived only inside
-    # `rung_report`'s "too few runs" branch -- so a rung with three passes plus
-    # an unmeasured run returned PASS with no mention whatsoever. That is how
-    # rung 600 flipped verdict leaving no visible trace, in the very change made
-    # to stop a record being removed silently.
-    #
-    # And the predicate **cannot distinguish the operator switching the supply
-    # off from a blown fuse, a failed connector, or a supply in foldback at
-    # t=0** -- this bench has a recorded history of fuse blows and a melted
-    # connector at ~0.65 ohm. So the exemption is announced with its ambiguity
-    # named, at the moment it is applied, every time.
-    if cohort.never_powered(r):
-        for line in (
-            f"   !! {capture.name}: NO BUS (bus_ref={r.get('bus_ref')}, nothing measured)",
-            "      Recorded as UNMEASURED, not as a failure.",
-            "      The supply was off, OR a fuse/connector/power path has failed,",
-            "      OR the supply was in foldback at t=0. The fixture cannot tell",
-            "      these apart. Confirm the supply before trusting any further run.",
-        ):
-            print(line, flush=True)
     state = _ladder_load()
     state.setdefault(sha, {}).setdefault(str(r["duty"]), []).append(r)
     _ladder_save(state)
