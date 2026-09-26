@@ -39066,3 +39066,63 @@ Three fixture defects are now fixed (`never_powered`, `armed`, this) and one is
 recorded-not-fixed (`forced=0`, a dead gate needing a decision on what feeds
 it). None of the three should carry a conclusion until reviewed; both reviews
 are dispatched.
+
+### E338 — I over-accepted the reviewers' margin figure, and the plan was about to repeat the mistake it just corrected
+
+A third review, of my handling of the first two, makes two corrections I accept.
+
+#### 1. "0–1 µs of worst-case margin" is not a measurement, and I should have caught that
+
+The reviewers refuted *"`left == 0` is arithmetically unreachable"* and they were
+right: `spent_max_us` is 11, not 10, so the arithmetic does not close. But they
+then offered **"the true worst-case margin at rung 600 is 1 µs"**, and I wrote
+that into E336 as if it were measured.
+
+It is not. It combines `ci_min = 45` with `spent_max = 11` — **two extrema from
+different events**, on different arms, possibly seconds apart. The difference of
+two independent maxima is not a margin any arm experienced. That is precisely the
+error I have now made three times in the other direction (E314's `spent_max`
+anchor, E315's multiplied marginals, E336's `spent <= 10`), and I accepted it
+uncritically the moment it pointed against me rather than for me.
+
+What is actually measured is narrower and stronger: **`thin_count = 0` over
+~10⁷ accepted arms** — a live, ungated, per-arm counter — says **no arm was
+observed with 2 µs or less remaining** in the bracket it monitors. That is a
+joint per-arm statement, which is what the question needs.
+
+And what neither statement gives is a complete **physical-edge-to-bridge**
+timing bound: `spent` is stamped inside the handler, so entry latency is outside
+it, and `thin` measures the same bracket. So the honest position is:
+
+* the arithmetic guarantee I claimed: **withdrawn**;
+* a 0–1 µs worst-case margin: **not established either** — it is two extrema
+  multiplied together, and I should not have repeated it;
+* what holds: **no arm in ~10⁷ came within 2 µs of its deadline, in the bracket
+  the firmware can see.**
+
+#### 2. The plan was about to spend 25 runs before testing the one unknown
+
+My queue was three holds at 600, *then* the 600 restart. But the holds are the
+part already demonstrated twice over, and **the restart at 600 is the criterion
+that has never once run at its own duty** — and whose budget I have only
+computed, not observed (`need_ms` 33 000 against segment 1's ~34 s, in a 78 s
+window I chose from that arithmetic).
+
+Testing the demonstrated thing before the unknown one is the shape of the
+mistake this session has already paid for. **Reordered: one rung-600 restart
+first.** If the budget is wrong, or `provoke_tenths` does not reach 600, or
+segment 2 cannot complete, that is one run to find out instead of twenty-five.
+
+#### 3. And 1500 s of exposure is not the agreed bar
+
+The adversarial review computed that a *reliability* claim needs ~1500 s of
+accumulated exposure. That is a sound statistical statement and **not this
+campaign's criterion**, which is three ≥30 s holds per rung plus restarts and
+protection coverage. Recorded so it does not silently become a new treadmill:
+the goal's bar is the goal's bar, and 21 clean runs bounding the hazard to
+≤ 0.0287/s is context for how much that bar establishes, not a demand for more.
+
+**Next, in order:** one rung-600 restart to validate command and budget; then
+the 55 % sag event, which is still the only unexplained failure; then coverage
+scoped honestly to the duties the fixture can actually provoke at. The ladder
+re-run comes after those, not before.
