@@ -40340,3 +40340,30 @@ answered a question I spent four entries approaching from the wrong side — and
 one of my four tools converted an instrument artefact into an amperage. I had
 searched the captures directory repeatedly and never listed `bin/`. **Read the
 repo's own prior work on a question before deriving it.**
+
+#### E352 addendum — with the floor netted off, the latch needs ~1 A, not 10.7 A
+
+Running the gated tool on a net depth instead of a raw one finishes the argument.
+The latch's `bus_min` sits 78 codes below the guard's line; ~70 of those are the
+bridge-off ADC floor; the residual is ~8 codes = 77 mV, which at the fitted 70 mΩ
+is a current excursion of **1.1 A** (0.8–2.0 A across the CI). For an ordinary
+2 A excursion to account for it the path would need 38 mΩ — *inside* the fit's own
+interval.
+
+So the latching dip requires **no extraordinary current whatsoever**. E350's
+7–19 A was entirely artefact, and the "what concentrates several amps into 1 ms"
+question I have been chasing since E350 **was never a real question**.
+
+What is left is sharper and cheaper to state: `FastBusSag` trips 3 consecutive
+scans of an 8-tap mean below 0.95 × a 207 ms EWMA — i.e. ~12 codes above an
+ADC-intrinsic excursion floor of ~70 codes. **The guard is watching its own
+sampling noise with ~12 codes of headroom**, and what distinguishes a latch from a
+pass is whether that noise happens to cluster for six consecutive scans under
+switching.
+
+Recorded as a finding and an envelope constraint toward 100 %, **not** as a change:
+the goal forbids touching existing protections and thresholds, and it is right to —
+the guard has also caught real events (the `Reason::Bus` absolute floor did its job
+on the unpowered run). The bounded, allowed remedy if this is confirmed is on the
+*sampling* side (the DMA coherence window and the loop gap that drives tearing),
+not on the threshold.

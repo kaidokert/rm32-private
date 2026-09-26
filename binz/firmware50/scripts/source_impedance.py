@@ -165,8 +165,8 @@ def main() -> int:
         # depth is the sampling path, not the rail. Converting a raw `bus_min`
         # depth to an amperage over-attributes it -- which is exactly the error
         # E350 made. Require the caller to have subtracted the floor.
-        print("
-*** --dip-codes: pass a depth ALREADY NET of the ~70-code "
+        print()
+        print("*** --dip-codes: pass a depth ALREADY NET of the ~70-code "
               "bridge-off ADC floor (E352). A raw bus_min depth is mostly "
               "instrument and converting it over-states the current. ***")
         if args.dip_codes > 60:
