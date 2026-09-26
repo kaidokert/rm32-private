@@ -39239,3 +39239,61 @@ recur**, not assumed away. Predeclaration, before the ladder runs:
 And it reorders the queue again, behind the restart validation: the sag is no
 longer an unexplained one-off to be noted, it is a candidate consequence of the
 change under test, and the ladder should not be spent until that is priced.
+
+### E341 — "protection coverage 9/9" was nine of nine *injections*, not nine of the protections. Eight fault paths have no injection at all.
+
+Offline enumeration, since the withdrawn deliverable's coverage row was the
+least examined line in it. `Reason` has **20** variants; `Inject` has **9**; and
+only **8 of the 20 `Reason` codes are reachable by an injection**:
+
+```
+ 3 TickGap          YES      1 CampaignDeadline  no (normal completion)
+ 4 FeedbackStale    YES      2 SegmentDeadline   no (normal completion)
+ 7 Driver           YES      9 HostAbort         no (operator action)
+ 8 Tracking         YES     28 UnknownGuard      no (catch-all)
+13 CompStorm        YES  ---------------------------------------------
+14 HandlerOverrun   YES      5 Current           NO INJECTION
+25 AverageCurrent   YES      6 Bus               NO INJECTION
+26 FastBusSag       YES     10 InvalidSeed       NO INJECTION
+                            11 AdcTimeout        NO INJECTION
+(the 9th injection,         12 CycleTiming       NO INJECTION
+ Watchdog, has no           15 LateArm           NO INJECTION
+ Reason code -- its         16 BlankLatched      NO INJECTION
+ evidence is a reset        27 PhasePeak         NO INJECTION
+ flag)
+```
+
+So the honest statement is not "9/9". It is:
+
+* **8 of 20 `Reason` codes have an injection**, and all eight fired with
+  `reason == expected_reason`;
+* four more are not faults at all (two normal completions, a host abort, a
+  catch-all);
+* and **eight genuine fault paths have no injection**, of which:
+  * **`Bus` (6) has been observed firing** — by the power-down capture I first
+    tried to delete. Demonstrated by accident, not by design;
+  * **`LateArm` (15) has been observed firing** many times, and is *the
+    campaign's own hazard* — the one thing this whole effort is about has no
+    provocation in the fixture;
+  * `FastBusSag` (26) is both injectable *and* observed firing, which is the
+    only path with two independent demonstrations;
+  * `PhasePeak` (27) is documented as never raised;
+  * and **`Current` (5), `InvalidSeed` (10), `AdcTimeout` (11) and
+    `CycleTiming` (12) are unverified by any means** — no injection, and no
+    observed occurrence in the corpus.
+* Separately, all eight injections run at **15 %** (uppercase keys) or **25 %**
+  (lowercase), with `Sag` and `AverageCurrent` scaling their own thresholds to
+  fire. **There is no key to provoke any protection at a qualified rung**, so
+  coverage says "the path fires", never "the path fires under the load it
+  guards".
+
+That is a fixture limitation, not something to engineer around in this campaign:
+adding a high-duty provocation key is a firmware change that would invalidate the
+image under test. It is stated so the re-issued deliverable can say what its
+coverage does and does not establish, rather than a number that flatters it.
+
+Two of the gaps are worth the operator's attention independently: `Current` (5)
+is a distinct path from `AverageCurrent` (25) and neither observed nor
+injectable; and the campaign's own failure mode, `LateArm`, cannot be provoked
+on demand, which is why every statement about it in this notebook rests on
+waiting for it to happen.
