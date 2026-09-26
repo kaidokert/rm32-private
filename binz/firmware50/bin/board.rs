@@ -691,6 +691,12 @@ impl Hal for Board {
         match kind {
             // The COMP root stops deciding; nothing is accepted.
             Inject::Tracking => S.det().active.store(false, Ordering::Relaxed),
+            // E355: force the counters `states.rs:278-282` polls each closed
+            // pass. Deliberately the same atomics the protection reads, so the
+            // protection itself is untouched -- what is demonstrated is the
+            // stop path, not the physics that would normally set them.
+            Inject::LateArm => S.det().late_arms.store(1, Ordering::Relaxed),
+            Inject::BlankLatched => S.com().blank_latched.store(1, Ordering::Relaxed),
             Inject::TickGap => cortex_m::interrupt::free(|_| {
                 let t0 = hw::clock::raw();
                 while hw::clock::raw().wrapping_sub(t0) < firmware50::run::policy::INJECT_STALL_US {}

@@ -389,9 +389,16 @@ impl Hal for Sim {
     }
     fn inject(&mut self, kind: Inject) {
         self.log.injected.push((self.t, kind));
-        if kind == Inject::Tracking {
+        match kind {
             // The detector stops deciding: no more crossings reach the loop.
-            self.crossings.until_us = Some(self.t);
+            Inject::Tracking => self.crossings.until_us = Some(self.t),
+            // E355: force the very counters the closed loop already polls at
+            // `states.rs:278-282`, from this instant on. The scheduled-fault
+            // fields exist because the sim modelled both conditions long before
+            // either had a shell key.
+            Inject::LateArm => self.faults.late_arm_at = Some(self.t),
+            Inject::BlankLatched => self.faults.blank_latched_at = Some(self.t),
+            _ => {}
         }
     }
     fn undo_inject(&mut self, _kind: Inject) {}
@@ -712,6 +719,27 @@ mod tests {
         // healthy. This is exactly the case the old paperwork could not see.
         assert!(sim.log.text.contains("verdict=PASS"));
         assert!(!sim.log.text.contains("BEMFDRIVEN"));
+    }
+
+    #[test]
+    fn the_new_provocations_reach_their_own_stop_codes() {
+        // E355. Both paths are read from HAL counters by the closed loop
+        // (`states.rs:278-282`) and neither had any provocation: `LateArm` is
+        // this campaign's own hazard and `BlankLatched` has never once been
+        // observed firing in 1193 captures. What this asserts is the STOP PATH
+        // -- the loop notices the counter and stops through the ordinary route
+        // -- not the physics that would normally set it.
+        for (kind, want) in [
+            (Inject::LateArm, Reason::LateArm),
+            (Inject::BlankLatched, Reason::BlankLatched),
+        ] {
+            let (sim, out) = run(250, 20_000_000, STEADY, Faults::default(), Some((kind, 2_000_000)));
+            let &(_, fired) = sim.log.injected.first().expect("the stimulus fired");
+            assert_eq!(fired, kind, "{kind:?}");
+            assert_eq!(out.reason, want, "{kind:?}");
+            assert_eq!(u32::from(want.code()), kind.code(), "{kind:?}");
+            assert!(sim.log.safe_offs >= 1, "the stop must route through safe_off");
+        }
     }
 
     #[test]

@@ -657,7 +657,7 @@ impl<
                 self.restart_campaign(io, at);
             }
             b'?' => {
-                io.say("b/2/5=15/20/25% 8/3/4/6/7/9=25/23/21/19/17/15% short acdej/ACDEJ=27.5/30/32.5/35/37.5% explore/qual y/Y=28.8% m/M=33.8% x=provoke-duty 25/37.5% Z=restart at it +/-=climb duty l/L=explore/qual it R=restart T G F N U H V I W=protections at 15%, t g f n u h v i w at 25% p=preflight o=stop\r\n");
+                io.say("b/2/5=15/20/25% 8/3/4/6/7/9=25/23/21/19/17/15% short acdej/ACDEJ=27.5/30/32.5/35/37.5% explore/qual y/Y=28.8% m/M=33.8% x=provoke-duty 25/37.5% Z=restart at it +/-=climb duty l/L=explore/qual it R=restart T G F N U H V I W K Q=protections at 15%, t g f n u h v i w k q at 25% p=preflight o=stop\r\n");
                 io.flush_link();
             }
             other => {
@@ -755,6 +755,11 @@ pub const fn inject_for(b: u8) -> Option<Inject> {
         b'V' => Inject::Sag,
         b'I' => Inject::AverageCurrent,
         b'W' => Inject::Watchdog,
+        // E355: the last two free keys in the shell's space. `LateArm` first
+        // because it is this campaign's own hazard and had no provocation at
+        // all; `BlankLatched` because it is live and never once observed.
+        b'K' => Inject::LateArm,
+        b'Q' => Inject::BlankLatched,
         _ => return None,
     })
 }
@@ -816,6 +821,11 @@ mod key_tests {
                     | b'v'
                     | b'i'
                     | b'w'
+                    // E355: the two new provocations and their 25% variants.
+                    | b'K'
+                    | b'Q'
+                    | b'k'
+                    | b'q'
             );
             assert_eq!(drives, dispatched, "key {:?}", b as char);
         }

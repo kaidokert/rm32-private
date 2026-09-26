@@ -194,6 +194,17 @@ pub enum Inject {
     Overrun,
     /// A 1/100 allowance with the plans held. Expect `AverageCurrent` (25).
     AverageCurrent,
+    /// The detector's late-arm counter forced non-zero. Expect `LateArm` (15).
+    ///
+    /// **This demonstrates the stop path, not the physics** (E355). A real late
+    /// arm happens when `wait - spent` reaches zero inside the COMP handler;
+    /// this forces the counter that `states.rs:278` reads, so what is shown is
+    /// that the closed loop notices and stops through the ordinary route. The
+    /// same caveat applies to every counter-forced injection here, including
+    /// the pre-existing `Tracking`.
+    LateArm,
+    /// The commutation root's blanking latch forced. Expect `BlankLatched` (16).
+    BlankLatched,
 }
 
 impl Inject {
@@ -210,6 +221,8 @@ impl Inject {
             Inject::Overrun => 14,
             Inject::Sag => 26,
             Inject::AverageCurrent => 25,
+            Inject::LateArm => 15,
+            Inject::BlankLatched => 16,
             Inject::Watchdog => 0,
         }
     }

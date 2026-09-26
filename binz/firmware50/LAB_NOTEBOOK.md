@@ -40516,3 +40516,77 @@ way.
 **Timing note.** Doing this now costs nothing in re-qualification: `E146E3BC` has
 never run powered, so there is no evidence on it to invalidate. Doing it *after*
 a ladder would invalidate the ladder.
+
+### E355 — two of the four missing injections built, verified by deletion, and the key space is exhausted at two. New candidate `72581795`; all four ISR roots unmoved.
+
+E354 stated the batch. Built, host-verified, changed-path checked.
+
+#### What was added
+
+`Inject::LateArm` (code 15) on key **`K`**, and `Inject::BlankLatched` (code 16)
+on key **`Q`** — with `k` / `q` as their 25 % variants through the existing
+lowercase derivation. Both force the **same shared counters the closed loop
+already polls** at `src/run/states.rs:278-282`
+(`S.det().late_arms`, `S.com().blank_latched`), so **no protection's behaviour
+changes when the injection is not used** — which was the falsifier E354
+predeclared for whether a path could be provoked honestly.
+
+`LateArm` first because it is this campaign's own hazard and had no provocation
+at all; `BlankLatched` because it is live and has never once been observed firing
+in 1193 captures.
+
+**What this demonstrates is the stop path, not the physics.** A real late arm
+happens when `wait − spent` reaches zero inside the COMP handler; forcing the
+counter shows that the closed loop notices and stops through the ordinary route
+(`safe_off`, then the report carrying code 15 or 16). That caveat is written into
+`Inject`'s own doc comment, and it applies equally to the pre-existing `Tracking`
+injection, which likewise stores a flag rather than reproducing a detector
+failure. Stated so the coverage row cannot be over-read later.
+
+#### The key space is full, which bounds the batch at two
+
+`inject_for`'s space had exactly **two free letters**: `K` and `Q` (each
+consuming its lowercase for the 25 % variant). Enumerated from `mod.rs` —
+everything else in `[A-Za-z]` is claimed by rungs, the climb, restarts,
+provocations or the shell verbs. So **`AdcTimeout` (11) and `CycleTiming` (12)
+remain uninjected**, not by choice but because provoking them needs a key-space
+extension (a two-character command, say), which is a fixture design change rather
+than a protection question. Recorded as the remaining gap with its actual cause.
+
+#### Verification
+
+* **Falsified before trusting**: deleting the `LateArm` arm makes the new test
+  fail; deleting the `BlankLatched` arm makes it fail. Each arm is load-bearing,
+  checked by mutating the *code*, not the test data — the tautology E345/E346
+  taught me to avoid.
+* The pre-existing `key_tests::every_run_key_is_named_and_nothing_else_is`
+  **caught the change immediately** (the new keys drive a run and were not in its
+  list), which is exactly the E183 silent-no-dump class it was written for. List
+  updated; it passes.
+* 349 / 349 default, 349 `advance-ref`, 347 `deep-filter`; clippy clean on both
+  targets.
+* **Four-root audit: unchanged.** `ADC_COMP` 742, `TIM16` 332,
+  `TIM6_DAC_LPTIM1` 155, `DMA1_CHANNEL1` 37, `div 0 / mul 4 / irq 9`, ratchet OK
+  in bucket `advref-floor5`. The injections live in the foreground command path
+  and touch no ISR root, as intended.
+* Shell help text updated so the keys are discoverable from the device.
+
+#### Identity
+
+| | |
+|---|---|
+| candidate | **`72581795`**, superseding `E146E3BC` |
+| sha256 | `72581795EFE2E9865E9132E18A70FEAE8F370BD1C60FE0D81A2083CE9A9F247F` |
+| configuration | `--release --bin shell-pwm --features advance-ref,deep-filter` |
+| ISR roots | 742 / 332 / 155 / 37, hazard classes unchanged |
+
+Nothing is invalidated by the change: `E146E3BC` had never run powered, which is
+why E354 argued for doing this now rather than after a ladder.
+
+#### Coverage statement this earns
+
+Live fault paths demonstrable by injection go from 8 to **10 of 14**
+(`Bus` and `LateArm` were previously live-and-observed-only; `LateArm` is now
+injectable too, `BlankLatched` newly so). Remaining: `AdcTimeout` (11) and
+`CycleTiming` (12), blocked on key space; `Current` (5) and `PhasePeak` (27),
+dead in the shipped configuration and an operator decision (E354).
