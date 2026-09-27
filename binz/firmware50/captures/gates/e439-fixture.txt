@@ -1,0 +1,33 @@
+elf  BA96C4E4690951FF2172A3BCA45ACAAEFB4E73546C695B2E57CAB2CCE74E2E5D
+out  E:\m\robot\esc\rm32\binz\firmware50\captures\2026-09-27
+LADDER BYPASSED: exploratory run at the requested rung, on an image
+  that has not earned it. The run is driven and retained, and is NOT
+  recorded against any rung, so it cannot contribute to a 3/3
+  qualification. (Until E193 this banner was false: the bypass skipped
+  admission only, and five runs were written into the ladder.)
+
+== run 1/1 -> e439-propless150-word-persistence_01.txt
+   BEMFRUN handoff_ehz=200 target_duty_tenths=150 advance_level=16 total_ms=28000 inject=0 run_period_ticks=1333 entry_period_ticks=1333 revisit_at_target=1 startup_ticks=6400
+   PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS
+   POSTSTOP
+   PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS
+   BEMFDONE reason=8 accepted=6 forced=0 zc_acc=6 too_early=0 unstable=113 ci_us=572 bus_ref=1219 bus_min=1140
+   BEMFGATE closed_ms=3 hold_ms=0 target_tenths=150 zc_per_s=2000 comm_per_s=2000 ehz_from_ci_last=291 forced_pct=0
+   BEMFRATE hold_ms=0 hold_accepted=0 hold_forced=0 mean_ci_us=1 mean_sector_us=1 ehz_from_sector=166666 zc_per_s=0 zc_expected_per_s=1000000 zc_rate_permille_of_expected=0 hold_forced_pct=0
+   BEMFRCOMP spent_max_us=9 late_arms=0 ci_at_late=0 spent_at_late=0 ci_min_us=444 thin_count=0 hold_unstable=113 rebase=0 com_preempts=0 com_arm_preempts=0
+   BEMFSECTOR a1=1 f1=0 a2=1 f2=0 a3=1 f3=0 a4=1 f4=0 a5=1 f5=0 a6=1 f6=0
+   BEMFPHASE lt075=5 to100=0 to125=0 to150=0 gt150=1
+   BEMFREVISIT r1=1 v1=1 r2=1 v2=1 r3=0 v3=0 r4=0 v4=0 r5=1 v5=1 r6=0 v6=0
+   BEMFDRIVEN entered=1 epochs=18 accepts=13 early=22 unstable=172 defers=2 retries=0 late_max_us=41 qual_intervals=12 qual_reanchors=0 qual_fault=0 fail=0 seeded=1 seed_step=6 seed_us=770 commanded_us=833 irq_peak_per_ms=41 closed_irq_peak_per_ms=73 storm=0 storm_step=0 cap_armed=0 comp_call_max_us=15 overrun=0 blank_arms=7 blank_latched=0 com_count=7 com_late_max_us=4
+   BEMFGUARD reason=8 ticks=46711 gap_max_us=110 track_fault=1 track_max_us=1000 fast_events=0 fast_min_us=0 loop_iters_closed=225 loop_gap_max_us=142 acquire_us=14372
+   BEMFDRVROWS 6:6:5115:829 7:1:737:702 8:2:656:575 9:3:731:466 10:4:617:243 11:5:697:99 12:6:773:51 13:1:802:14
+   BEMFDRVROWS 14:2:825:22 15:3:848:15 16:4:953:144 17:5:713:18 18:6:890:82
+   BEMFCURRENT blocks=467 mean_residual=1916 mean_ma=240 hold_blocks=0 hold_ma=0 zero_blocks=50 ma_allow=31857 ma_allow_ref=31857 zero_start=618525 zero_end=616105 zero_drift_ma=-303 ref_ma=58 duty_tenths=150 ceiling_tenths=150 worst_residual=7685 worst_ma=964 worst_hold_ma=964 drive_scans=46708 applied_cap=800 applied_ccr=133 applied_period=1333 dep0_pm=995 dep0_n=18084 dep0_run=56 dep1_pm=990 dep1_n=2712 dep1_run=19 dep2_pm=985 dep2_n=9 dep2_run=2 dep3_pm=980 dep3_n=0 dep3_run=0 raw0_pm=970 raw0_n=31 raw0_run=1 raw1_pm=950 raw1_n=4 raw1_run=1 raw2_pm=930 raw2_n=0 raw2_run=0 raw3_pm=910 raw3_n=0 raw3_run=0
+   BEMFWITNESS samples=14 bemf_min=0 bemf_max=0 mid=0 mid_fixed=0 alt=0 hyst_codes=12 driven_rotation=0
+   BEMFCOAST reason=8 pp_first=0 pp_last=0 crossings=0 spun=1 comp_edges=155 comp_hi=544074 comp_polls=568319
+   COASTTIMING trans=65 offset_us=71 first_us=1866 iv_us=2369,1941,2403,1972,2473,2043,2506,2089,2557,2161,2589,2221,2725,2229,2820,2288,2867,2374,2982,2504,3049,2479,3278,2651,3309,2634,3628,2683,3786,2877,3993,3054 ehz_first=211
+   PROPLESS load=none duty=150 hold_ms=0 reason=8 coast_ehz=246 matched_rate_permille=0 current_proxy_ma=0 ceiling=150 bus_rest_permille=996.7186218211649 loaded_oracle=not_applicable
+   RUN (recorded against no rung: --no-ladder) JUDGED FAIL: firmware stop reason 8 != deadline2; nonpositive BEMFTAIL measurement; identity unavailable
+   STOPPING the batch: a bypassed run is still judged, and this one failed its gates.
+
+1/1 runs completed, 1 failed their gates

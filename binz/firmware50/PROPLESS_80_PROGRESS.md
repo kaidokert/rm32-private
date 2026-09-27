@@ -1,16 +1,23 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E438 offline persistence optimization and dual review, 2026-09-27.
+Updated through E440 failed startup screen and dual review, 2026-09-27.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
 
-E437/E438 candidate BA96C4E4 remains UNFLASHED. Masked COMP-word comparison
+E439 flashedBA96C4E4 after disabled preflights. One15% request stopped
+Tracking/Stale after6accepted/3msclosed/zero targetdwell, actual~10%.
+FinaloffPASS; no retry. No at-speed benefit measured, no causal attribution
+from n1. E440 reviewers support retiring the unqualified shorter-aperture
+experiment and auditing post-filter pre-arm bookkeeping instead. Candidate
+remains installedOFF/UARTclosed; no new qualified envelope.
+
+E437/E438 staged BA96C4E4 (subsequently screened in E439). Masked COMP-word comparison
 reduces successful persistence iterations12->8 executed instructions; branches
 and stack allocation change, so no cycle/WCET saving is yet measured. Same
 read depth does not preserve the physical filtering aperture. Four-root audit,
 clippy, structure and382 host tests pass; historical-method differential tests
 replace the circular wrapper comparison caught by two independent reviewers.
-Test-only changes leave loadable SHA80A40E0E...854D676AD unchanged. Installed
-board remains9C748DED, last verifiedOFF afterE436. No envelope increase here.
+Test-only changes leave loadable SHA80A40E0E...854D676AD unchanged. At E438
+board was9C748DED/OFF; E439 installation supersedes it. No envelope increase.
 
 Latest: E430 fixed16 constant-policy diode candidate `1D3D29EC` completed one
 15%/20.278s target hold at 2208eHz, late/thin0, outputs verified off. No new

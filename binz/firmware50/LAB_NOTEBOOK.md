@@ -45436,3 +45436,111 @@ aperture plus register-spill/stack changes, not unproven test provenance.
 Next decision is whether bounded protected15% screening demonstrates useful
 pre-arm savings without new refusal/fault behavior; it cannot qualify80%.
 No bench access, serial, flash or powered run occurred this entry.
+
+### E439 - bounded word-persistence screening plan
+
+Previous turn progressed: independent regression gap closed, optimization and
+reviews committed d9bcbe5. Full goal reread. No new qualified envelope.
+Candidate archive SHA BA96C4E4690951FF2172A3BCA45ACAAEFB4E73546C695B2E57CAB2CCE74E2E5D
+rechecked. MCP list/open/p/read/close succeeded: installed9C748DED PREFLIGHT
+moe0,CCRs0,gates_low1,en0,nfault1 PASS; UART closed. Cached DIODESELFTEST PASS
+is boot history, not a fresh pad observation. No powered action yet.
+Decision: whether masked-word persistence is worth retaining for speed work.
+Prediction: on one15%/28s-total screen its reduced successful-read instruction
+path may reduce spent/COMP maxima without new protection stops. n=1 is a
+feasibility screen, not a causal speedup or filter-safety qualification.
+Same depth/blanking/estimator/advance and every guard remain; shorter physical
+sampling aperture can admit disturbances. No thermal/instantaneous-current
+sensor added; existing bounded28s exposure and>=120sOFF are precautions only.
+Do not escalate after a failed screen. Flash only explicit G071 probe, verify
+archive and boot disabled checks, then command9 with recorded target150,
+28s total/expected20.278s target. No diagnostic ring, no live printing added.
+15% previously reached~2200eHz, not a motor rating. Propless reverse and3A
+operator PSU setting unchanged; average proxy is not calibrated current.
+Fresh dual review requested on exact diff, previous raw run, audits and plan.
+
+E439 fresh reviews, before flashing:
+> Conditional yes: this can answer whether the changed build completes one bounded 15% propless run and reports spent/COMP counters. It cannot establish causal improvement or qualification.
+>
+> Recomputed baseline:
+>
+> - Hold acceptance rate: 265441/20.278 = **13,090.10/s**, equivalent to **2,181.68 eHz** assuming six accepts/cycle. The rounded 76µs interval implies **2,192.98 eHz**.
+> - Tail rate: approximately **2,200.33 eHz**; versus reported coast 2202 gives **999.24‰** agreement. The 32 supplied coast intervals alone imply **2,194.49 eHz**; they cannot independently reproduce the full coast estimate.
+> - Rest bus: **997.535‰**; minimum bus: **889.071‰**.
+> - Applied duty: 199/1333 = **14.929%**; forced commutations: **0%**.
+>
+> Conditions: bind the flashed artifact to the audited build and passing tests; require that build’s ENABLE-low boot checks and all-off/nFAULT confirmation; enforce one 28s run, no escalation or fault retry, and verify post-stop all-off.
+>
+> Zero margin histograms provide no timing-margin evidence. Confirm spend definitions match before comparing builds. Shortened sampling aperture needs this physical screen; instruction reduction proves neither WCET savings nor safety. Uncalibrated current and absent peak/temperature protection limit conclusions.
+
+> Conditionally feasible as a bounded screen; the packet does not establish a new shutdown defect or qualify the shorter aperture.
+>
+> - **New physical risk:** equal read depth with fewer instructions can accept disturbances rejected by the historical loop. Digital regression tests cannot exclude false crossings, premature commutation, or current spikes. Baseline zero forced events and clean coast timing do not validate the modified ELF.
+> - **Shutdown/concurrency:** PRIMASK covers validation through timer start, including immediate LateArm shutdown. That supports serialization against maskable interrupts, but the packet omits timer implementations and other arm/commutation paths. The ISR audit does not prove race freedom, shutdown latency, or gate behavior. These are evidence limits, not demonstrated new defects.
+> - **Exposure:** 15% is an experiment setting, not an enforced ceiling: higher-duty commands remain reachable. Bind the flash to the reviewed artifact, verify post-flash boot checks and all-off, isolate command input to the single 15% run, and stop without retry on fault.
+>
+> Existing disclosed limits remain: uncalibrated average-current protection, no phase-peak/temperature protection, and no rated-speed basis. Proceed only for feasibility/counter observations; successful completion cannot qualify the physical aperture.
+
+Dispositions: conditional bounded screen accepted, no qualification or safety
+equivalence claim. Same spent definition/atomic arm source as installedE433;
+unchanged helpers auditedE434, newfullroot auditE437b. Archive hash rechecked
+BA96C4E4...2E5D; test-only changes rebuild identical loadables. Single host
+command9 only, no other serial owner, flash then boot checks before command.
+Keep all stop thresholds, no repeated attempt after failure, verifyfinaloff.
+Physical aperture and thermal/peak coverage remain limitations, not waived.
+
+E439 flash/reset explicit G071 SN066CFF343433464757233430 completed exit0.
+Post-reset MCPp: moe0/CCR1..3=0/gates_low1/en0/nfault1/PASS and boot-derived
+DIODESELFTEST six_sectors_pwm/latch/deadlinePASS. UARTclosed. More than120s
+since E436 lastpowered. Proceed once with archivedBA96C4E4 command9 as above;
+host fixture records full output and gates actual150/1333 and targetdwell.
+
+E439 raw result: captures/2026-09-27/e439-propless150-word-persistence_01.txt.
+FAIL reason8/guard8 Tracking subtype1Stale, closed3ms/hold0, sixaccepted,
+sevenCOM including seed, actualCCR133/1333 (~9.98%), not15%. Maxtracking1000us;
+late0/thin0/spent9us/COMPmax15us/COMlate4us (mixedpurpose), storm0/overrun0/
+blanklatched0. IRQpeak73 occurred withcap_armed0 during existingstartupwindow,
+not proof of ignored active64/msstop. Bus1219min1140, filtered1215/vref1506,
+streak0/tripped0; no sag/nFAULTstop. Meanproxy240mA,zero drift-303mA:
+not calibratedcurrent or thermal evidence. Coastreported246eHz; no valid
+targetidentity because tailspan0. Both PREFLIGHT/finaloffPASS; UARTclosed.
+Fixture exit1 correctly retained failedrun. No retry or higherduty run.
+This does not measure at-speed cost reduction or qualify physical aperture.
+Prior E432 also stoppedstartupTracking on older predicate; n1 cannot decide
+causality or comparative startup rate. Review raw failures before next change.
+
+### E440 - failed-screen review and next offline scope
+
+> Established: the candidate stopped with `reason=8`, `track_fault=1`, six accepted crossings, 3 ms closed loop, and zero hold. Poststop telemetry reports outputs disabled. This provides no sustained-speed optimization evidence. The earlier image also failed, but different binaries and requested duties prevent attributing—or exonerating—the candidate change.
+>
+> Unknown: the physical cause of lost tracking. The supplied excerpts do not decode `track_fault=1`. The earlier 1,035 µs raw-entry gap is consistent with stale tracking, but guard timestamps differ; it does not prove the precise watchdog timeline, especially for the candidate. Zero-valued witness channels cannot establish absent BEMF. No reported sag trip or interrupt storm isolates the cause.
+>
+> The bounded offline direction is sound: retire the unqualified persistence-aperture change, restore baseline sampling, and audit post-filter/pre-arm bookkeeping. Before changing `accept_seq.fetch_add`, enumerate writers, interrupt/preemption contexts, readers, and ordering requirements; single ownership must be demonstrated. Compare generated instructions and timing paths, then run relevant offline regressions.
+>
+> This avoids another premature powered retry while developing a reviewable change. It neither resolves startup failure nor authorizes powered testing; guard thresholds remain unchanged.
+
+> Both runs stopped with reason=8 and track_fault=1 after only 3–4 ms closed loop; neither reached hold. Poststop telemetry reports outputs disabled. This establishes a tracking stop, not its physical cause or rotor lock.
+>
+> The earlier 1035 µs raw acceptance gap is consistent with staleness, but raw-entry timestamps are not guard timestamps. The supplied evidence does not establish the exact watchdog event sequence or fault subtype. Zero-valued witness data cannot establish absent BEMF; coast transitions do not validate driven synchronization.
+>
+> The candidate provides no at-speed optimization evidence. Different binaries and requested duties prevent a controlled comparison; the shared applied_ccr=133 also cautions against treating requested duty as delivered exposure. Earlier failure does not exonerate the shortened persistence aperture.
+>
+> Retiring that aperture change and investigating post-filter bookkeeping is a sensible bounded offline direction. Audit every accept_seq writer, interrupt/preemption context, reader, and ordering dependency before replacing fetch_add. Then inspect generated code and test sequence publication, wrapping, and acceptance-to-arm behavior. Require demonstrated cycle savings while preserving persistence timing and guard thresholds. This produces reviewable evidence without another uninformative powered retry; it does not resolve startup’s physical cause.
+
+Dispositions: no attribution/exoneration from earlierfailure, and no at-speed
+timingwin. Trackfault1 mapping is explicit in bin/board.rs telemetry at819..821:
+Fault::Stale=>1; missing from narrow packet, not missing from source.
+No claim of reconstructed event timeline. No powered retry or escalation.
+Retire this shortened-aperture candidate from powered exploration without
+claiming it caused startupfailure. Restore historical sampling in next
+candidate; then audit post-filter cost, keeping filter aperture out of the
+next deliberate variable. Current installedBA96C4E4 staysOFF/UARTclosed.
+
+Initial full src/bin grep e440-sequence-owners.txt finds only two runtime
+accept_seq writers: plain COMP acceptance and its mutually exclusive logged
+twin, both fetch_add; staticshared initialization zero. Foreground board
+install reads sequence, does not reset it. Other references read; no writer
+change yet. This is initial ownership evidence, not a completed concurrency
+or compiler-ordering proof. Next bounded offline step checks the callers and
+emitted masked-RMW against same-root wrapping load/store before any edit.
+Every electrical stop and timer-arm critical section remains unchanged.

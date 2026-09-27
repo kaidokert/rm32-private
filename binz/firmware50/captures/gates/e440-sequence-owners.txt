@@ -1,0 +1,8 @@
+bin\board.rs:524:        self.det_seq_seen = det.accept_seq.load(Ordering::Relaxed);
+bin\board.rs:618:            || S.det().accept_seq.load(Ordering::Relaxed),
+src\shared.rs:289:    pub accept_seq: AtomicU32,
+src\shared.rs:706:    accept_seq: u(),
+src\roots.rs:499:                S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
+src\roots.rs:564:                id: S.det().accept_seq.load(Ordering::Relaxed),
+src\roots.rs:590:    S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
+src\roots.rs:1268:        S.det().accept_seq.load(Ordering::Relaxed)
