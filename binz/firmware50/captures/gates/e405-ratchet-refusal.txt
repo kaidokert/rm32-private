@@ -1,0 +1,15 @@
+configuration 'advref-floor5' (baseline from shell-pwm)
+symbol                                             insns    div    mul    irq   excl  helper
+ADC_COMP                                       778 (+36)      0      4      9      0       0
+DMA1_CHANNEL1                                         37      0      0      2      0       0
+TIM16                                                332      0      2      6      0       0
+TIM6_DAC_LPTIM1                                      155      0      0      1      0       0
+protection::BusDepth::observe                         50      0      4      0      0       0
+run::Controller                                      587      7      6      0      0       7
+run::states::Ctx::scan_pass                     500 (+3)      2     10      0      0       2
+
+RATCHET FAILED (1):
+  ADC_COMP: insns 742 -> 778 (+36), beyond +-8
+
+A hazard-class change is a build failure, not a note. If it is intended,
+say why in the notebook and re-run with --bless.

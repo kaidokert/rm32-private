@@ -42944,3 +42944,367 @@ conservatively05:44:00UTC as earliestcommand. Same3A/guards; no75/escalation.
 Prediction: aterminalmeanstreak can nowbereplayed fromactualoperands; shunt
 codespermit rawexcursioncomparison, notcalibratedamps/physicalordering.
 Anyoutcomeendsbatch; dualreviewthennewdecision, not repeat-to-pass.
+
+
+E403 result: 3E1B036E, e403-propless700-staged-sag_01.txt. Reason26,
+actual570/1000, target700, hold0, closed23568ms. Late0/thin2, COMP12/22us,
+COMlate12us, guardgap108, foregap215. AlloffPASS/nFAULT1. Frozen256/1024
+SAGEND complete. Empty-hold frequency166666 is invalid, not rotor speed.
+Terminal mean1134/1123/1112 at VREF1507 versus reference1212/1507 correctly
+forms streak1/2/3 below1151.4. Fast fine-stamp streak spans200.375us; first
+terminal phase rail at coarse937 precedes first terminal raw sub95% at1335
+by398.25us; not physical-onset evidence, sequential ADC has no aperture stamps.
+Whole slow ring (not merely reviewer excerpts): reference1212..1213,
+mean1199..1223 over~3.375s. Reference evolution cannot explain this depression.
+Phase clipping is not calibrated amperes. Current accumulation excludes deciding
+scan. Diagnostic failed earlier than leanE400; n=1 does not prove observer cause.
+
+E403 fresh evidence review, verbatim:
+
+> **The diagnostic confirms a sampled terminal sag, but does not establish its physical cause or a 57% lean limit.**
+>
+> - **Actual exposure:** E400 lean reached70% and held9.025s before reason26. E402 diagnostic completed normally with19.778s at50%. E403 requested70% but stopped at **57%** (`CCR570/period1000`, matching every tail row), with zero target dwell. Its166666eHz hold estimate is an empty-window artifact. None establishes a qualified rung; all supplied poststop checks show outputs off.
+>
+> - **Guard arithmetic:** E403’s final reference is1212/1507; final judged VREF is1507. The threshold is therefore1151.4 bus codes. Means1134,1123,1112 equal **93.564%,92.657%,91.749%** of reference. Their cross-products170893800,169236100,167578400 are each below173515980, correctly producing streak1/2/3. The preceding1152/1507 remains just above threshold. This is consistent guard behavior.
+>
+> - **Sampled chronology:** At timestamp937, phases2119/4094/**0** accompany raw bus1169, still above95% of reference. Subsequent rows contain4095 and repeated zeros. First terminal raw sub95% sample is1097 at1335, approximately398µs after that first rail; latch follows approximately1111µs after it, using fine stamps. Final streak spans200.375µs. Rails precede the sampled threshold crossing, **not necessarily physical sag onset**. They indicate clipping, not calibrated amperes; neither PWMctr nor foreground accept age supplies aperture-synchronous causality.
+>
+> - **Reference versus notch:** Supplied slow endpoints show reference1213→1212 with nearly unchanged VREF; the fast tail reference stays1212/1507. That small evolution cannot explain the terminal depression. Missing middle slow rows preclude a complete reference-history audit. Current averages also cannot exclude a terminal surge.
+>
+> Retiring the recorder for envelope work is justified: its masked copies can perturb timing despite unchanged IRQ roots;48µs is not measured WCET. Lean’s failure means recording is not necessary for failure.
+>
+> The80kHz experiment is a reasonable conditional A/B, with two corrections: **800 ticks requires a selftest acceptance window around12.5µs; retaining14–17µs would reject it.** Also, lean cannot measure predicted raw-low clustering. Keep the proposed bounded60→conditional70 sequence and unchanged guards; completion would support further testing, not establish thermal benefit or80% qualification.
+
+E403 fresh adversarial review, verbatim:
+
+> **The lean 80 kHz trial is informative and reasonably bounded as an exploratory comparison. Removing the diagnostic mask first is not necessary.** Its result would test carrier sensitivity, not establish a mechanism or qualify 80%.
+>
+> - **Observer interference is credible.** The recorder masks interrupts around both copies and bookkeeping on every scan. Unchanged IRQ roots do not imply unchanged interrupt latency. The proposed 48 µs estimate is comparable to running sector intervals; it is neither measured latency nor demonstrated WCET. Diagnostic failure at applied **57%**, versus lean reaching 70% and holding 9.025 s, supports concern but does not prove observer causation from these individual runs. RAM estimates reveal no demonstrated blocker.
+>
+> - **E403 supports the sag verdict, not its physical cause.** The final judged means are 1134/1123/1112 against 1212, with matching VREF: approximately **93.56/92.66/91.75%**, matching streaks 1/2/3. Phase rails appear at timestamp 937, before the first raw sub95% sample at 1335, but bus depression already accompanies those rails. This establishes sampled ordering only. Neither foreground-consumed accept ages nor subsequently read PWM counters establish physical crossing or acquisition timing. Current averages cannot exclude terminal excursions.
+>
+> - **The 50% control is useful but limited:** 19.778 s at target, normal deadline, no sag latch. E403 never reached its requested target; its zero-hold rate fields are meaningless. E400 contains no sag rows here. The supplied slow-ring endpoints cannot establish the entire reference history.
+>
+> - **80 kHz changes several coupled effects:** pulse duration, switching losses, dead-time fraction and sampling relationships. Improvement would support carrier dependence, without separating these effects. Propless operation and a 3 A supply limit do not establish winding temperature or an RPM margin; 120 s off is a precaution, not measured thermal recovery.
+>
+> Proceed with the stated off-state carrier/CCR checks, lean 60% control, conditional single 70% attempt and unchanged guards. Record actual target dwell; 45 s total is not 45 s at target. Drop “less raw-low clustering” as a decisive prediction unless comparable lean counters exist. Retain any failure without retry; defer 75–80% expansion.
+
+Dispositions: accept exposure/guard arithmetic/ordering limits and diagnostic
+retirement. Correction: lean DOES report whole-run raw-low counts/longest runs
+(BEMFCURRENT raw0_n/run etc); no chronology or target-only census. These are
+exploratory exposure-scoped metrics, not decisive mechanism proof. All1024slow
+rows checked locally, unlike excerpt packet: ref1212..1213. No75 admission.
+The suggested80k experiment is WITHDRAWN before implementation for the newly
+found component requirement below, which was absent from both review packets.
+
+### E404 - component constraint and revised offline timing work
+
+TI BOOSTXL guide SLVUB97 p4 identifies U1/U2/U5 as CSD88584Q5DC. Its primary
+SLPS598E datasheet p3 section4.2 specifies recommended switching5..50kHz
+(https://www.ti.com/lit/pdf/slps598). This is recommended operating range, not
+proof of damage or a motor/control ceiling. We overlooked it when running64k.
+No80k code/build/run occurred. Retire64k from prospective powered work and
+qualification; archived results remain historical, not erased. Return to48k
+(1333ticks); no thermal characterization justifies going outside the range.
+DRV8304 SLVSE39B p46 additionally ties capability to gate charge times PWM rate;
+its29nC example transistor is NOT this board. No invented hardware-fault cause.
+
+Next decision, OFFLINE first: current COMP subtracts elapsed before com_arm,
+then com_arm recomputes its schedule from a later clock, and timer register
+setup follows. Inspect a local entry-relative deadline arm that prepares the
+stopped timer first, samples elapsed inside the atomic stop/arm region, then
+loads remaining time immediately before enabling. Keep accepted-sector
+publication, all guards, min2us hardware-delay rule and refusal/late accounting;
+no nominal advance/persistence change. This is software-entry-relative timing,
+NOT physical-edge capture or true hardware absolute compare. Fresh dual review
+must assess implementation and tests before powered use. No hypothesis that it
+uniquely caused sag. Existing lean48 control supplies the historical comparator;
+first candidate run50 then conditional60, not70. Budget45s, >=120sOFF,PSU3A.
+
+
+E404 evidence review, verbatim:
+
+> **The algebra is sound conditionally; the causal hypothesis remains unproven.** Let \(t_0\) be COMP entry, \(t_s\) the final preparation stamp, and \(W\) the requested wait, all in microseconds. For unexpired arms, program \(D=\max(2,W-(t_s-t_0))\), with ARR \(=D-1\). Actual commutation still includes poststamp setup and COM service latency. Verify raw-clock units, subtraction width/wrap behavior, timer clock, and supported delay range; these excerpts do not establish every premise. At 64 MHz, 1000 ticks means 64 kHz and 1333 ticks approximately 48.012 kHz.
+>
+> The existing code subtracts elapsed time **before** entering the arm helper; subsequent preparation therefore adds uncompensated delay. Moving subtraction later addresses that mechanism. However, suppressing expired arms changes behavior: currently they receive a minimum two-microsecond timer delay. “Counted for existing stop” is unsupported here: the shown late-arm branch records statistics, with no stop action. Also clarify whether `sched_raw` records the requested deadline or predicted minimum-clamped expiry.
+>
+> **Raw evidence:** one 60% run completed its deadline with 14.778 seconds reported target hold; one 70% run tripped sag after 9.025 seconds reported hold. Neither is repeated qualification. Both report zero late arms; all-zero margin counters supply no timing distribution. `spent_max_us=12` excludes later preparation. Coast measurements broadly corroborate speed, not commutation phase accuracy. Saturated sector/phase counters cannot support precise distributions. Current remains a proxy. Different ELF hashes require a source/configuration comparison before calling this duty-only evidence.
+>
+> The supplied TI constraint supports choosing 48 kHz within its recommended range; it establishes neither damage at 64 kHz nor the sag cause.
+>
+> **Minimum tests:**
+>
+> - Host checks for wrap, elapsed below/equal/above wait, minimum delay, ARR limits, both callers, and expired-arm shutdown.
+> - Verify pending-IRQ clearing, atomic stop refusal, publication ordering, and unchanged relative arms.
+> - Measure requested deadline versus timer expiry/COM entry with bounded instrumentation.
+> - Compare baseline and candidate at **fixed 48 kHz**, identical guards and conditions, using a predefined cohort. Changing carrier simultaneously confounds attribution; 50% then conditional 60% is screening, not proof.
+
+E404 adversarial review, verbatim:
+
+> Worth bounded implementation and offline validation; the proposed powered sequence cannot isolate the timing change’s effect.
+>
+> The packet establishes one 60% deadline completion with 14.778s at target and one 70% sag stop after 9.025s at target. Both ended with outputs disabled. It establishes neither repeatability nor fault cause. Zero late-arm counts exclude only the measured pre-arm exhaustion; timestamp-to-CEN and interrupt-service delays remain. Saturated sector counters and empty margin histograms cannot establish timing margin.
+>
+> Safety concerns:
+>
+> - `ma_allow=31857`, substantial zero drift, and `applied_cap=800` at 70% need explanation. These fields do not demonstrate effective current protection. A stated 3A PSU setting is not evidence of bounded phase current.
+> - Moving to 48k is consistent with the supplied component recommendation, but does not itself qualify the bridge or operating point.
+> - “Expired → return” cancels commutation while potentially leaving the bridge energized. Incrementing a counter is not a stop. Specify and verify a bounded shutdown or recovery path; preserve any existing stop latch.
+> - Keep stop/active checks, timer cancellation, pending clear, publication and enable ordering coherent. Clearing NVIC pending cannot cancel an already-active handler. Show that resumed/stale COM execution cannot consume the newly published sector or reenergize after shutdown.
+> - Stop the peripheral source before clearing NVIC pending. Verify ARR preload state: writing ARR after UG can leave the wrong active reload if preload is enabled. Verify wrap arithmetic, the 2µs minimum, and schedule stamps against actual programmed delay. Recheck deadline placement after preparation; masked execution still delays safety interrupts.
+>
+> The cheaper useful next step is a cycle/register audit and offline interleaving tests covering expiry, wrap, stale COM, and stop dominance.
+>
+> Then establish an **unchanged-timing 48k baseline**. A patched 50% control followed by one 60% run is a smoke test, not a timing A/B: carrier and scheduling both changed from the supplied captures. For causal evidence, compare baseline and patched timing at fixed 48k, duty, target dwell and protections, with predefined outcomes. One clean 60% attempt supports only that bounded attempt; it neither explains the 70% failure nor authorizes escalation.
+
+Dispositions: adopt only local timing-gap hypothesis, not sag causation. Raw
+current allowance31857 is the existing nominal4A signed-average block target;
+PSU3A is external, phase peaks are NOT bounded by it. Cap800 is authorized
+command ceiling, applied duty remains700. No guard threshold changes.
+Existing late counter DOES stop: states.rs pass checks closed&&late_arms!=0,
+returns Reason::LateArm, then ordinary safe_off. However cancelling an expired
+arm and waiting on foreground is avoidable exposure: new crossing helper will
+call existing guard_trip(LateArm) immediately inside the atomic region on
+exhaustion, in addition to returning spent for counters. MOE/CCRs/ENABLE off,
+com stopped latch, no sector hold pending foreground. This strengthens timing
+of an existing stop, not its threshold. Review final emitted/source paths.
+Min2us remains for positive1us remainder; expired0 is an immediate stop.
+Schedule metadata is requested entry+wait (not delayed/clamped prediction), so
+COM lateness correctly includes clamp residual and write/service costs.
+TIM16 CR1 full named write sets ARPE0; prepare leaves CEN0/DIER0 and clears
+peripheral source BEFORE NVIC pending. COM cannot be active underneath COMP in
+selected COM-top build (COM0x40,COMP0x80); other priorities need separate audit.
+Normal relative startup/blank arms unchanged. Both accepted-sector fields are
+published before arming; no new shared borrow. Wrong/expired waits tested.
+Screening50->60 is not causalA/B against64. Archived159206FD E373/E375 is
+lean48/advance16/deep5/COMtop baseline; E375 failed60 after320ms. Compare actual
+source/roots before using it; no new repeat baseline until a candidate screening
+result warrants a matched finiteA/B. This saves a powered run without declaring
+causality. No75 admission. Respect source-specific changed latency metrics.
+
+### E405 - pre-build entry-relative late-compensated timer arm
+
+Implement only crossing-arm correction plus host arithmetic/interleaving/source
+checks. Build shell-pwm (fixed1333ticks=48.012kHz), advance-ref/deep-filter/com-top,
+cap800/allguards. Prepare stopped TIM16 before final elapsed sample, then ARR
+and CEN. This is not hardware absolute compare; software-entry/quantization and
+poststamp/service residual remain. Prediction: less uncompensated setup delay;
+late counter may increase because its coverage extends through preparation.
+Old timing cannot be silently reported as comparable spent/late. Four-root
+helper audit, instruction diff, exact stop-path source tests, clippy/structure,
+then fresh dual implementation review before any powered run. Any newsoftmath,
+unbounded poll, unsafe stop race, or unexpected hot-path expansion blocks flash.
+
+
+E405 initial build: terminal shutdown inline made COMP829instructions; rejected
+beforeflash. Move only cold stop into audited out-of-line stop_expired_arm:
+COMP778,37/332/155 otherroots. Original production ratchet correctly refuses
+742->778 (+36); no new divides/helpers/multiplies/mask sites. This is an
+intentional changed control path, not a production-ratchet PASS. Named candidate
+baseline may be established ONLY with explicit reviewed timing-cost exception.
+Normal >2us poststamp path shrinks50->30instructions (11->7loads,13->6stores)
+from E373 clockread0x80015b4 through CEN0x800161e to new0x8000a24..a4e,a78..a86.
+This is instruction count, NOT cycle/WCET or measured phase gain. Acceptance
+root overall and mask do NOT claim smaller. Mask is straight bounded except
+terminal54-instruction stop callee; no persistence/polls/divides inside it.
+
+E405 initial evidence review, verbatim:
+
+> ```rust
+> hw::com_timer::prepare_crossing();
+> let spent = hw::clock::raw().wrapping_sub(raw) as u32;
+> let left = crate::oneshot::crossing_left(wait, spent);
+> if left == 0 {
+>     stop_expired_arm();
+> }
+> ```
+>
+> **Verdict: the core change is supported by the supplied source and COMP disassembly; the evidence does not yet clear the pre-flash gates.**
+>
+> - **Implementation:** COMP masks interrupts at `0x080009e4`, checks stopped/active, prepares TIM16, then samples the clock at `0x08000a24`. The positive path writes schedule/purpose, ARR, UIE and CEN before restoring PRIMASK. Exhausted/invalid waits branch to `stop_expired_arm` while still masked. Both supplied acceptance sites use the shared helper. This supports atomic post-preparation subtraction. The terminal callee’s machine code is absent, so its compiled shutdown sequence remains unverified here.
+>
+> - **Arithmetic:** Saturating subtraction and rejecting waits ≥32768 are sensible. Positive remainder 1 deliberately becomes 2µs; poststamp instructions and service latency remain additional delay. However, restricting **wait** does not bound **elapsed**: a delay of 65536µs aliases to zero. Existing tests exercise wrap crossings with short elapsed times, not full-wrap ambiguity. Establish a maximum entry-to-final-stamp latency below one clock revolution, or use an independently sufficient elapsed-time mechanism.
+>
+> - **Boot selftest integration:** `crossing_selftest_off()` masks TIM16 and never restores its NVIC enable state. The supplied entry point does not restore it either. Startup may unmask elsewhere, but that code is absent. **Before flash, demonstrate the normal handover explicitly enables TIM16, or preserve/restore the prior mask state.** Otherwise timer UIF polling can succeed while subsequent COM dispatch remains disabled.
+>
+> - **Coverage:** The host tests provide useful arithmetic and ordering checks, but source-string searches do not prove critical-section scope or executable call coverage. No test-run output substantiates “365 host / 12 fixture / clippy passed.” No hardware selftest result exists yet; the printable PASS string is code, not execution evidence.
+>
+> - **Gate exception:** The supplied ratchet explicitly fails: 742→778 instructions, +36 beyond ±8. The extra checks explain plausible growth, but do not establish acceptable masked latency or root cost. The audit reports success, but its implementation and complete reachable disassembly are absent.
+>
+> **Minimum closure:** resolve TIM16 enable ownership; provide an elapsed-time bound, actual test outputs, and artifact-linked terminal-stop disassembly; document and explicitly accept the +36 ratchet exception with its timing limitation. Run the outputs-off selftest before powered screening.
+>
+> E375 is a different-image 60% sag failure after only 320ms at target. It provides neither E405 qualification nor causal validation.
+
+E405 initial adversarial review, verbatim:
+
+> **Conditionally defensible as screening, but this packet does not yet close the following gaps.**
+>
+> 1. **TIM16 remains NVIC-masked after the boot selftest.** `crossing_selftest_off()` masks TIM16 and never restores its enable state; `start_crossing()` enables only peripheral UIE/CEN. Unless production handover explicitly unmasks TIM16, the timer can expire without commutating. The supplied handover code does not establish that. Verify that path or restore the previous NVIC state after stopping and clearing pending. Add coverage for boot-test → production-arm → dispatch.
+>
+> 2. **The “no deadline may alias the past” claim is false without an elapsed-time bound.** Restricting `wait < 0x8000` does not prevent `spent` aliasing: actual elapsed 65,537µs becomes 1µs, allowing an expired 20µs deadline to arm. Existing tests cover crossing a counter boundary, not elapsed durations spanning a complete modulus. Establish the maximum entry-to-stamp age through enforced timing/stop invariants, or use an epoch-aware timestamp. Add the full-modulus counterexample and narrow the documentation.
+>
+> 3. **Atomicity coverage still checks spelling, not containment.** The substring tests pass if `interrupt::free` contains an empty closure while the decision and writes move outside it. Comments can also satisfy matches. `FIRMWARE_ARM_IS_ATOMIC` remains a literal, despite “derived from source” wording. The supplied COMP disassembly does show masking around this arm, but that does not make the regression test sound or cover the second caller’s emitted path. Require mutations moving validation/enable outside the mask to fail; inspect both compiled paths.
+>
+> 4. **The boot check does not validate the production deadline path.** It tests `prepare_crossing()` followed directly by `start_crossing()`, excluding deadline arithmetic, bookkeeping, expired shutdown, and actual interrupt dispatch. Its 2µs case accepts elapsed 1–5µs, so PASS cannot establish a two-microsecond minimum. Keep its claim limited to a tolerant peripheral smoke check. Add coverage connecting an exhausted production arm to stopped timer, cleared pending, and disabled bridge.
+>
+> 5. **The timing gate remains unresolved.** The +36-instruction ratchet failure is explicit. A new baseline name alone does not justify it. Document the changed accepted-path and PRIMASK costs, including stamp-to-CEN residual and COM/guard service effects. Neither clean arithmetic nor total instruction count establishes those bounds.
+>
+> The shown immediate `guard_trip` path and ARPE-clear preparation are internally consistent. Pending is cleared while masked, but an already-active COM handler is not canceled by unpending; its priority/ownership invariant still needs confirmation. Keep any subsequent bounded run labeled screening, with the proposed conditional escalation and existing stops.
+
+Dispositions and fixes: hardware selftest is only tolerant peripheral smoke
+check, not2us-minimum proof or powered edge/ISR latency. board.rs606..610
+arms tracking, clears pending, UNMASKS TIM16 and arms under the handover lock;
+bootmask is deliberate and cannot persist through that path. com-top fixes
+COM0x40 > COMP0x80, guard0. COM cannot be active underneath COMP; no deferred
+active COM is cancelled by NVICunpend. Foreground revisits requirecom_idle;
+physicalCOMP is masked through COM/blank and unmasked only afterward. Both
+acceptance bodies use arm_marked and same primitive; logged image notbeing
+powered/qualified by this lean experiment.
+
+Elapsed-wrap limitation corrected in source: wait<32768 alone is NOT proof
+against elapsed65536. New test explicitly demonstrates that counterexample.
+Operating bound is existing priority0 tracking<=1000us and200usTickGap while
+COMP cannot recursively feed itself; these latch stopped before a long-delayed
+arm can pass the atomic recheck. Under normal bounded CPU/MMIO execution,
+new straight-line mask (<128instructions even including coldstop; conservative
+12cycles/instruction <24us) cannot hide a65ms interval. This is a conservative
+engineering bound, not formal bus/fetch WCET. Debugger halts, pathological
+peripheral stalls and >65ms full-system blackouts remain OUTSIDE the existing
+sampled-clock guarantee; no debugattach whilepowered. No claimed new immunity.
+
+Added scripts/test_entry_arm.py: balanced-block containment after stripping
+comments, rejects empty free with decision/writes outside and commented-out
+operations; also checks handover unmask and documents fullwrap alias. FivePASS.
+This narrow source recognizer supplements emittedcode; it is not a Rustproof.
+365hosttests/12fixture/releaseclippyPASS outputs now saved, terminal stop
+machinecode saved: phase/latch/TIM16off, MOEclear/CCRs0/PD1low, no calls/loops.
+No runtime change after first review except moving coldstop outofline already
+present in its packet; clarified comment/test causes new whole-ELF hash but
+fourIRQroots byte-identical toF6FAAC7A. Final BF725A29 SHA256
+BF725A29CFF4E312F4368BFD6F6B0BC2052BAC7358FD4297E1D81473EDBBDF8D;
+text43876/data740/bss4188,31936stackheadroom. No sourcefunction>100lines.
+MCP remainsresponsive, E401 p confirmsalloff/nFAULT1, thenclosed; no newpowered
+run. Final narrow dual review before namedratchet/flash/bootcheck/screening.
+
+
+E405 final evidence review, verbatim:
+
+> No remaining E405 gap shown here blocks the proposed bounded powered screening. This closes the narrow review, not hardware qualification or a formal timing proof.
+>
+> - **TIM16 handover:** supplied production source explicitly unpends and unmasks TIM16 after `guard_arm_tracking()`.
+> - **Arm containment:** validation, preparation, timestamp, expiry decision and timer start share one interrupt-masked closure. The five passing checks include mutations rejecting an empty critical section and comment-only operations. They are a narrow source recognizer, not a Rust proof.
+> - **Expired-arm shutdown:** source calls `guard_trip(Reason::LateArm)` synchronously under that mask. The supplied F6FAAC7A callee emits shutdown writes directly, without polling or further calls. Final BF725A29 root identity and clean four-root audit support preservation of the reviewed IRQ paths; the terminal disassembly itself is labeled F6FAAC7A.
+> - **Preemption:** configurable COM priority cannot permit COM execution inside the PRIMASK-protected arm sequence.
+> - **Wrap limitation:** bounded wait does not establish bounded elapsed time. The corrected argument depends on bounded masked execution and priority-zero tracking stopping stale work before arm validation. The 24µs figure is an engineering estimate, not WCET certification; debugger/peripheral stalls exceeding a clock wrap remain outside that contract.
+> - **Regression evidence:** 365 tests pass; Clippy finishes successfully. The incremental-cache access warning concerns reuse on the next build. The reported poststamp path falls from 50 to 30 instructions; this establishes no measured cycle gain.
+>
+> Proceed with the named candidate retaining the old ratchet: flash, native TIM16 off-smoke checks at 2/10/40, then the specified bounded screening sequence, with 60 conditional on clean 50, ≥120s OFF, PSU 3A and unchanged guards. Do not promote historical baseline results into a new A/B or qualification claim.
+
+E405 final adversarial review, verbatim:
+
+> **One concrete closure gap remains: candidate identity.** The terminal-stop disassembly is explicitly from `F6FAAC7A.e405-deadline48.elf`, while the proposed screen names candidate `BF725A29…`. Nothing supplied binds that candidate to the inspected terminal-stop code, poststamp counts, or root-identity results. This is an artifact-verification gap, not a demonstrated firmware defect. Close it by showing those checks belong to the proposed ELF, or by establishing that its relevant emitted code matches the inspected artifact.
+>
+> For the shown implementation, I find **no demonstrated functional blocker**:
+>
+> - Validation, timer preparation, timestamp subtraction, and enabling share one interrupt mask.
+> - An expired arm calls the terminal shutdown before leaving that mask; the disassembly supports immediate hardware shutdown.
+> - Production handover explicitly unmasks TIM16.
+> - The full-wrap alias is acknowledged correctly. The subtraction itself cannot detect it; protection depends on the stated bounded execution and tracking-stop contract.
+> - The 50→30 instruction reduction supports reduced instruction count, without establishing elapsed-time accuracy or WCET.
+>
+> The source recognizer remains syntactic: it could accept required operations inside unreachable branches. That limits its regression assurance but does not expose a defect in the actual straight-line code supplied.
+>
+> Once artifact identity is resolved, these excerpts give me no additional concrete reason to block the narrowly bounded screen. They do not establish its hardware outcome.
+
+Dispositions: remaining artifact identity check closed mechanically: allPT_LOAD
+addresses AND bytes identical F6FAAC7A/BF725A29; saved e405-loadable-identity.txt.
+Also regenerated terminal-callee disassembly directly fromBF725A29. No runtime
+fix needed; no new safety hypothesis. Explicitly accept +36 staticCOMP
+instructions for bounded screening only, with smaller50->30poststamp path,
+unchanged9masksites and cleanmath, immediate late stop. This does NOT establish
+lower rootWCET/CPUoccupancy; those remain measured perattempt. Create separate
+entry-arm-advref-floor5-comtop ratchet; old production buckets unchanged.
+Selftest claim limited to native-update/tolerant clock smokecheck.
+
+### E406 - pre-flash and protected50 screening
+
+Flash exactBF725A29 on explicitG071 SN066CFF343433464757233430, reset. MCPp must
+report bridgeoff/nFAULT1 and DEADLINESELFTEST2/10/40PASS before anydrive.
+One fixed48k50 l45 total,actualtargetmin9000ms (expected19778), allguards,
+advance16/floor5/COMtop,cap800,PSU3A. >=120sOFF fromlastE403 (hoursago).
+Fixtureabsolute19minus+5plus andperiod1333; request/applied/current/bus/timing
+mustremainvisible. Onefailureendsbatch. Onlyclean50 admits conditional60,
+again>=120sOFF. This is a screeningpair, not causalA/B/qualification.
+
+E406 result: BF725A29 flash/reset explicitG071 succeeded. MCPp PASS alloff,
+nFAULT1,DEADLINESELFTEST delays2/10/40PASS (off peripheral smokecheck only).
+e406-propless500-deadline48_01.txt: reason2,CCR666/1333,ceiling500,hold19778ms,
+closed39778; accepted478825,ISR478826,COM478827,holdaccepted299916. Late0,
+thin16,ci_min40,spent13 (new postprepare definition),COMPcall23,COMlate7
+(now requested-deadline metadata),guardgap108,foregap190. No otherguardfault.
+Proxyhold320mA,zero-208,worsthold724; not calibratedcurrent. Busrest1218,
+filteredhealthy; raw95n147/longest5,raw93n28/longest1,terminalstreak0. These
+raw notches are NOT equivalent to the eight-scan mean streak. AlloffPASS.
+speed.py tail2529.0 vs timeanchoredcoast2528.1eHz,+0.4permille,span3777957us;
+no timing-cause inference. Off by06:12:10UTC (capturemtime, conservative).
+Namedcandidate ratchetPASS; all oldbuckets verifiedunchanged againstHEAD.
+
+### E407 - pre-run conditional60 on entry-arm48
+
+Same BF725A29, no build. E406meets declared50screen. One60 l45 after
+06:14:10UTC or later (>=120sOFF),19minus+9plus,period1333,minhold9000ms;
+expected14778msactualtarget. Same3A/guards. Anyresultendsbatch fordualreview;
+no retry or65 fromthispredeclaration. Evaluate actualduty/time/late/sag/current
+and independentcoast; no claimed controllerfix from a singlepass.
+
+E407 result: same BF725A29, requested600, reason26 FastBusSag at closed22801ms,
+hold0. Applied CCR733/1333=54.9887%; no60% arrival or target-speed identity.
+SAG ref1218/1506, filtered1212/1506, streak3/tripped1; no raw operand ring on
+this lean image. Accepted224134/ISR224136/COM224137, forced0. Late0,thin23,
+ci_min40,postprepare spentmax13,COMPcall23,COMlate10(mixed timer purposes),
+guardgap109/foregap190,tracking0/blank0/overrun0. Two phase histogram bins
+saturated65535, so no distribution verdict. Proxymean242mA,zero drift-297mA,
+worstblock1277mA; holdcurrent0 is an empty-window artifact, not a current
+measurement at60. Requested ceiling600 but actual55, no foldback established.
+Coast transitions3629; first32 intervals retained, legacy coast2775eHz.
+AlloffPASS/nFAULT1. Capture e407-propless600-deadline48_01.txt retained.
+Prediction not met: relocating elapsed subtraction after preparation did not
+clear the climb failure in this screening attempt. It neither establishes a
+55% envelope nor identifies the sag cause. No repeat/escalation; fresh dual
+review closes E406/E407 batch before dependent work.
+
+E407 evidence review, verbatim:
+
+> - **Identity:** Both captures report identical SHA256 `BF725A29…BBDF8D` and CRC32 `F9CC7F36`, with entry/run periods of 1333 ticks. At an assumed 64MHz timer clock, that is **48.012kHz**.
+> - **50% attempt:** CCR/period = 666/1333 = **49.9625%**. Reported target hold is **19.778s**, within **39.778s closed-loop**; reason 2 indicates deadline completion. Hold acceptance rate is 299916/19.778 = **15,164.1 events/s**, or **2527.4eHz** assuming six events/cycle. Last interval 65µs gives **2564.1eHz**; reported coast speed is **2530eHz**.
+> - **60% attempt:** Final applied CCR/period = 733/1333 = **54.9887%**, despite requested/ceiling fields of 600. Target hold and hold blocks are zero. Reason 26, `streak=3`, and `tripped=1` establish a sag stop before a recorded 60% hold. Last interval 54µs gives **3086.4eHz**; reported coast speed is **2775eHz**. These measure different windows.
+> - **Coverage:** The nominal 2s tail actually spans **3.777957s**, ending 113µs before stop; its rate implies approximately **2529eHz**. It cannot be presented as a verified final-2s statistic. The 60% zero-hold rate fields—including 166666eHz—are invalid placeholders. All six 50% sector counters saturate at 65535. At 60%, sector counts sum to **221257**, exactly accepted minus **2877 coalesced accepts**; they exclude those accepts.
+> - Both post-stop checks show outputs disabled and nFAULT high.
+>
+> **Supported:** One 50% screen completed a reported 19.778s target hold; one 60% request sag-stopped near 55%. Setup compensation did not eliminate this observed failure.
+>
+> **Unsupported:** Repeated qualification, a 30s target hold, causal attribution, physical-crossing timing margins, or calibrated peak/RMS current. Aggregate timing maxima and thin counts cannot reconstruct the failure sequence.
+
+E407 adversarial review, verbatim:
+
+> - **50%:** reason=2; reported target hold **19.778s**; CCR=666/1333; zero forced commutations; sag not tripped; post-stop outputs disabled, nFAULT high.
+> - **60% request:** reason=26; sag streak=3/tripped=1; **zero target hold**; terminal CCR=733/1333 ≈ **55.0%**. Post-stop outputs disabled, nFAULT high. This is a ramp failure, not a failed 60% hold.
+> - Both captures identify the same ELF. Neither provides physical-crossing timestamps or event-level timing around the trip.
+>
+> The proposed narrow conclusion is defensible. “Setup compensation did not clear failure” should mean **this compensated image still experienced one protected ramp stop**. These runs do not establish whether compensation improved, worsened, or left susceptibility unchanged: there is no matched uncompensated result here, and revised timing definitions prevent naïve comparison of maxima.
+>
+> Three concrete limits matter:
+>
+> 1. **Timing causation remains unresolved.** Zero late arms and spent_max=13µs do not exclude late comparator entry or problematic individual thin waits. Whole-run thin counts cannot associate timing pressure with sag. COM lateness measures software scheduling against the revised reference, not physical commutation accuracy.
+>
+> 2. **Protection worked, but electrical stress is unquantified.** The signed-current proxy has substantial zero drift (−208/−297mA); `hold_ma=0` in the failed run means no target-hold measurement. Neither establishes peak/RMS current or protection headroom. Three overlapping sag judgements are correlated; terminal filtered bus near reference does not negate the trip.
+>
+> 3. **Some summaries cannot support stronger claims.** Zero-hold rate fields are invalid placeholders; 65535 sector/phase bins appear saturated; the reported 2s tail spans 3.778s. Optional recorder zeros are unavailable evidence.
+>
+> These runs support retaining the compensated candidate for investigation, **not selecting a particular next control change**. That decision needs a specific mechanism and discriminating observation near the stop.
+
+Dispositions: adopted narrow outcome only, no sensitivity/cause claim. Tail
+rate uses actual3777957us span, not the nominal2s request; E407has no tail.
+Histograms cover foreground-consumed events and saturate; no sector inference.
+Proxy/late0 do not establish electrical or physical-edge timing margins.
+Next is source-grounded discrepancy audit, not another knob or repeated run.

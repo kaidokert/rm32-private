@@ -1,0 +1,15 @@
+- **50%:** reason=2; reported target hold **19.778s**; CCR=666/1333; zero forced commutations; sag not tripped; post-stop outputs disabled, nFAULT high.
+- **60% request:** reason=26; sag streak=3/tripped=1; **zero target hold**; terminal CCR=733/1333 ≈ **55.0%**. Post-stop outputs disabled, nFAULT high. This is a ramp failure, not a failed 60% hold.
+- Both captures identify the same ELF. Neither provides physical-crossing timestamps or event-level timing around the trip.
+
+The proposed narrow conclusion is defensible. “Setup compensation did not clear failure” should mean **this compensated image still experienced one protected ramp stop**. These runs do not establish whether compensation improved, worsened, or left susceptibility unchanged: there is no matched uncompensated result here, and revised timing definitions prevent naïve comparison of maxima.
+
+Three concrete limits matter:
+
+1. **Timing causation remains unresolved.** Zero late arms and spent_max=13µs do not exclude late comparator entry or problematic individual thin waits. Whole-run thin counts cannot associate timing pressure with sag. COM lateness measures software scheduling against the revised reference, not physical commutation accuracy.
+
+2. **Protection worked, but electrical stress is unquantified.** The signed-current proxy has substantial zero drift (−208/−297mA); `hold_ma=0` in the failed run means no target-hold measurement. Neither establishes peak/RMS current or protection headroom. Three overlapping sag judgements are correlated; terminal filtered bus near reference does not negate the trip.
+
+3. **Some summaries cannot support stronger claims.** Zero-hold rate fields are invalid placeholders; 65535 sector/phase bins appear saturated; the reported 2s tail spans 3.778s. Optional recorder zeros are unavailable evidence.
+
+These runs support retaining the compensated candidate for investigation, **not selecting a particular next control change**. That decision needs a specific mechanism and discriminating observation near the stop.

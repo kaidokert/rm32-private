@@ -166,6 +166,59 @@ pub mod com_timer {
         t.cr1().write(|w| w.opm().set_bit().urs().set_bit().cen().set_bit());
     }
 
+    /// Crossing-arm preparation, inside the caller's atomic stop/arm region.
+    /// Full CR1 write leaves CEN and ARPE clear: the final ARR is immediate.
+    /// Stop the interrupt source before clearing its stale NVIC pending bit.
+    #[inline(always)]
+    pub fn prepare_crossing() {
+        let t = regs();
+        t.dier().reset();
+        t.cr1().write(|w| w.opm().set_bit().urs().set_bit());
+        t.cnt().write(|w| w.cnt().set(0));
+        t.egr().write(|w| w.ug().set_bit());
+        t.sr().reset();
+        crate::hw::nvic::unpend(stm32::Interrupt::TIM16);
+    }
+
+    /// Finish only after prepare_crossing, without leaving the same mask.
+    /// With ARPE=0 no second UG is needed after the deadline calculation.
+    #[inline(always)]
+    pub fn start_crossing(arr: u16) {
+        let t = regs();
+        t.arr().write(|w| w.arr().set(arr));
+        t.dier().write(|w| w.uie().set_bit());
+        t.cr1().write(|w| w.opm().set_bit().urs().set_bit().cen().set_bit());
+    }
+
+    /// Boot-only native-update check with bridge disabled. No COM dispatches.
+    /// Validates ARR-after-UG and the minimum reload on the real peripheral;
+    /// does not measure physical-edge or powered interrupt-service latency.
+    pub fn crossing_selftest_off() -> bool {
+        if crate::hw::pwm::moe_is_set() || crate::hw::pwm::compares() != (0, 0, 0) {
+            return false;
+        }
+        crate::hw::nvic::mask(stm32::Interrupt::TIM16);
+        let mut ok = true;
+        for us in [2u16, 10, 40] {
+            prepare_crossing();
+            let start = super::clock::raw();
+            start_crossing(us - 1);
+            let mut seen = false;
+            for _ in 0..2048 {
+                let elapsed = super::clock::raw().wrapping_sub(start);
+                if regs().sr().read().uif().bit_is_set() {
+                    seen = elapsed >= us.saturating_sub(1) && elapsed <= us + 3;
+                    break;
+                }
+                if elapsed > 80 { break; }
+            }
+            ok &= seen && !regs().cr1().read().cen().bit_is_set();
+            stop();
+            crate::hw::nvic::unpend(stm32::Interrupt::TIM16);
+        }
+        ok && !crate::hw::pwm::moe_is_set() && crate::hw::pwm::compares() == (0, 0, 0)
+    }
+
     /// Stop the one-shot: counter off, interrupt enables and flags clear.
     #[inline(always)]
     pub fn stop() {

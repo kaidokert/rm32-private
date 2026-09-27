@@ -121,6 +121,67 @@
    }
   }
  },
+ "entry-arm-advref-floor5-comtop": {
+  "elf": "BF725A29.e405-deadline48.elf",
+  "symbols": {
+   "ADC_COMP": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 778,
+    "irq": 9,
+    "mul": 4
+   },
+   "DMA1_CHANNEL1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 37,
+    "irq": 2,
+    "mul": 0
+   },
+   "TIM16": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 332,
+    "irq": 6,
+    "mul": 2
+   },
+   "TIM6_DAC_LPTIM1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 155,
+    "irq": 1,
+    "mul": 0
+   },
+   "protection::BusDepth::observe": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 50,
+    "irq": 0,
+    "mul": 4
+   },
+   "run::Controller": {
+    "div": 7,
+    "excl": 0,
+    "helper": 7,
+    "insns": 587,
+    "irq": 0,
+    "mul": 6
+   },
+   "run::states::Ctx::scan_pass": {
+    "div": 2,
+    "excl": 0,
+    "helper": 2,
+    "insns": 500,
+    "irq": 0,
+    "mul": 10
+   }
+  }
+ },
  "order-advref-floor5-comtop": {
   "elf": "BC21E369.e381-order.elf",
   "symbols": {

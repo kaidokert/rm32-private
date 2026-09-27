@@ -1,0 +1,2 @@
+old normal positive>2us clock-read-through-CEN instruction count 50 loads 11 stores 13
+new normal positive>2us clock-read-through-CEN instruction count 30 loads 7 stores 6

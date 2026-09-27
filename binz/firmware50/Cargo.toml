@@ -69,6 +69,12 @@ path = "bin/staged-sag.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "deadline-pwm"
+path = "bin/deadline-pwm.rs"
+test = false
+bench = false
+
 [lib]
 test = true
 bench = false

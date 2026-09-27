@@ -1,0 +1,15 @@
+Worth bounded implementation and offline validation; the proposed powered sequence cannot isolate the timing change’s effect.
+
+The packet establishes one 60% deadline completion with 14.778s at target and one 70% sag stop after 9.025s at target. Both ended with outputs disabled. It establishes neither repeatability nor fault cause. Zero late-arm counts exclude only the measured pre-arm exhaustion; timestamp-to-CEN and interrupt-service delays remain. Saturated sector counters and empty margin histograms cannot establish timing margin.
+
+Safety concerns:
+
+- `ma_allow=31857`, substantial zero drift, and `applied_cap=800` at 70% need explanation. These fields do not demonstrate effective current protection. A stated 3A PSU setting is not evidence of bounded phase current.
+- Moving to 48k is consistent with the supplied component recommendation, but does not itself qualify the bridge or operating point.
+- “Expired → return” cancels commutation while potentially leaving the bridge energized. Incrementing a counter is not a stop. Specify and verify a bounded shutdown or recovery path; preserve any existing stop latch.
+- Keep stop/active checks, timer cancellation, pending clear, publication and enable ordering coherent. Clearing NVIC pending cannot cancel an already-active handler. Show that resumed/stale COM execution cannot consume the newly published sector or reenergize after shutdown.
+- Stop the peripheral source before clearing NVIC pending. Verify ARR preload state: writing ARR after UG can leave the wrong active reload if preload is enabled. Verify wrap arithmetic, the 2µs minimum, and schedule stamps against actual programmed delay. Recheck deadline placement after preparation; masked execution still delays safety interrupts.
+
+The cheaper useful next step is a cycle/register audit and offline interleaving tests covering expiry, wrap, stale COM, and stop dominance.
+
+Then establish an **unchanged-timing 48k baseline**. A patched 50% control followed by one 60% run is a smoke test, not a timing A/B: carrier and scheduling both changed from the supplied captures. For causal evidence, compare baseline and patched timing at fixed 48k, duty, target dwell and protections, with predefined outcomes. One clean 60% attempt supports only that bounded attempt; it neither explains the 70% failure nor authorizes escalation.

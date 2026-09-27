@@ -1,0 +1,17 @@
+python : test_actual_source (test_entry_arm.EntryArmContainment.test_actual_source) ... ok
+At line:11 char:1
++ python -m unittest discover -s scripts -p test_entry_arm.py -v 2>&1 | ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (test_actual_sou..._source) ... ok:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+test_boot_check_cannot_permanently_mask_production_handover (test_entry_arm.EntryArmContainment.test_boot_check_cannot_permanently_mask_production_handover) ... ok
+test_empty_free_with_decision_and_writes_outside_is_rejected (test_entry_arm.EntryArmContainment.test_empty_free_with_decision_and_writes_outside_is_rejected) ... ok
+test_full_wrap_is_an_explicit_clock_precondition_not_arithmetic_proof (test_entry_arm.EntryArmContainment.test_full_wrap_is_an_explicit_clock_precondition_not_arithmetic_proof)
+... ok
+test_writes_or_validation_only_in_comments_do_not_count (test_entry_arm.EntryArmContainment.test_writes_or_validation_only_in_comments_do_not_count) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.003s
+
+OK

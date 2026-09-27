@@ -369,16 +369,17 @@ fn beat_row<C: ChainLog>(
 
 /// Arm the commutation with the hazard's own window marked, so COM can count
 /// a dispatch that lands inside `com_arm`'s write sequence (E170). Folds to a
-/// bare `com_arm` in production, where `C::ON` is false.
+/// bare entry-relative arm in production, where `C::ON` is false.
 #[inline(always)]
-fn arm_marked<C: ChainLog>(left: u32) {
+fn arm_marked<C: ChainLog>(raw: u16, wait: u32) -> Option<u32> {
     if C::ON {
         S.det().in_arm.store(true, Ordering::Relaxed);
     }
-    com_arm(left, 1);
+    let spent = com_arm_crossing(raw, wait);
     if C::ON {
         S.det().in_arm.store(false, Ordering::Relaxed);
     }
+    spent
 }
 
 /// **Record the causal variable and the thin-margin count** (E208/E212).
@@ -493,13 +494,11 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                 S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
                 S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
                 S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
-                // Keep E142/E144's store/arm order. Subtract time since COMP's
-                // entry stamp, not an independently captured physical edge.
-                // COM owns the next unmask; hardware arming adds latency too.
-                if S.com().active.load(Ordering::Relaxed) {
-                    let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
-                    let left = wait.saturating_sub(spent);
-                    arm_marked::<C>(left.max(1));
+                // Keep publication before arming. E405 subtracts elapsed after
+                // timer preparation, inside the atomic region. Entry is still
+                // software-stamped, not an independently captured rotor edge.
+                if let Some(spent) = arm_marked::<C>(raw, wait) {
+                    let left = crate::oneshot::crossing_left(wait, spent);
                     note_margin(wait, left);
                     beat = beat_row::<C>(raw, fine0, wait, step.get(), left == 0);
                     if left == 0 {
@@ -586,10 +585,8 @@ fn accept<C: ChainLog>(
     S.det().accept_avg.store(avg, Ordering::Relaxed);
     S.det().accept_blank.store(blank, Ordering::Relaxed);
     S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
-    if S.com().active.load(Ordering::Relaxed) {
-        let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
-        let left = wait.saturating_sub(spent);
-        com_arm(left.max(1), 1);
+    if let Some(spent) = arm_marked::<C>(raw, wait) {
+        let left = crate::oneshot::crossing_left(wait, spent);
         // Gated like `beat_row`'s read (E269): `edge-capture` reaches this
         // path and never calls `hw::fine::init()`, so this was a live read of
         // an unclocked peripheral inside the prio-0 COMP root of the very
@@ -1083,6 +1080,44 @@ pub fn com_arm(us: u32, phase: u32) {
         S.com().phase.store(phase, Ordering::Relaxed);
         hw::com_timer::arm(arr as u16);
     });
+}
+
+/// Entry-relative crossing arm. Prepare first and sample elapsed under the
+/// same mask as stop/active validation and enabling. Not hardware absolute
+/// compare: poststamp instructions and COM service still add delay. The
+/// returned spend includes preparation; it is not legacy pre-arm spend.
+#[inline(always)]
+pub fn com_arm_crossing(raw: u16, wait: u32) -> Option<u32> {
+    cortex_m::interrupt::free(|_| {
+        if !crate::oneshot::arm_allowed(
+            S.com().stopped.load(Ordering::Relaxed),
+            S.com().active.load(Ordering::Relaxed),
+        ) {
+            return None;
+        }
+        hw::com_timer::prepare_crossing();
+        let spent = hw::clock::raw().wrapping_sub(raw) as u32;
+        let left = crate::oneshot::crossing_left(wait, spent);
+        if left == 0 {
+            // Do not leave an energized sector waiting for foreground to notice.
+            // Existing code15 and threshold; stop timing is strengthened.
+            stop_expired_arm();
+        } else {
+            // Requested entry-relative deadline, not a fresh relative schedule.
+            S.com().sched_raw.store((u32::from(raw) + wait) & 0xFFFF, Ordering::Relaxed);
+            S.com().phase.store(1, Ordering::Relaxed);
+            hw::com_timer::start_crossing(crate::oneshot::crossing_arr(left));
+        }
+        Some(spent)
+    })
+}
+
+// Keep the terminal shutdown out of the common acceptance instruction layout.
+// This is reached under PRIMASK, so shutdown still completes before re-entry.
+#[cold]
+#[inline(never)]
+fn stop_expired_arm() {
+    guard_trip(Reason::LateArm);
 }
 
 /// Stop the one-shot and forget any armed event.

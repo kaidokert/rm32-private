@@ -91,6 +91,23 @@ pub const fn arm_allowed(stopped: bool, active: bool) -> bool {
     active && !stopped
 }
 
+/// Remaining entry-relative wait at the final preparation stamp (microseconds).
+/// Valid control waits are below half the 16-bit clock modulus. Invalid waits
+/// fail closed like an exhausted wait. The caller must establish elapsed time
+/// below one clock modulus; limiting wait alone cannot detect a full blackout.
+/// The caller still accounts for elapsed time and immediately stops on zero.
+#[inline(always)]
+pub const fn crossing_left(wait: u32, spent: u32) -> u32 {
+    if wait >= 0x8000 { 0 } else { wait.saturating_sub(spent) }
+}
+
+/// TIM16 retains the existing two-microsecond minimum for positive remainders.
+/// A zero remainder MUST take the stop path, never this reload.
+#[inline(always)]
+pub const fn crossing_arr(left: u32) -> u16 {
+    if left < 2 { 1 } else { (left - 1) as u16 }
+}
+
 /// One step of the arm sequence. The order is the safety property.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ArmStep {
@@ -315,6 +332,77 @@ impl OneShot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entry_relative_wait_exhaustion_minimum_and_wrap() {
+        for edge in [0u16, 1, 65_520, u16::MAX] {
+            for wait in 0..=2000u32 {
+                for elapsed in [0, 1, wait.saturating_sub(1), wait, wait + 1, 4000] {
+                    let now = edge.wrapping_add(elapsed as u16);
+                    let spent = u32::from(now.wrapping_sub(edge));
+                    let left = crossing_left(wait, spent);
+                    assert_eq!(left, wait.saturating_sub(elapsed));
+                    if left != 0 {
+                        assert_eq!(u32::from(crossing_arr(left)) + 1, left.max(2));
+                        assert!(elapsed + left.max(2) >= wait);
+                    }
+                }
+            }
+        }
+        for wait in [0x8000, 0xffff, u32::MAX] {
+            assert_eq!(crossing_left(wait, 0), 0, "ambiguous waits fail closed");
+        }
+        assert_eq!(crossing_arr(crossing_left(0x7fff, 0)), 0x7ffe);
+    }
+
+    #[test]
+    fn preparation_delay_is_subtracted_not_restarted() {
+        let (wait, decision, preparation) = (20, 6, 3);
+        let old_fire = decision + preparation + crossing_left(wait, decision);
+        let final_stamp = decision + preparation;
+        let new_fire = final_stamp + crossing_left(wait, final_stamp);
+        assert_eq!(old_fire, 23);
+        assert_eq!(new_fire, 20);
+        // If preparation consumes the remaining time, do not enable at all.
+        assert_eq!(crossing_left(9, final_stamp), 0);
+        // Both models deliberately exclude the residual final writes/service.
+    }
+
+    #[test]
+    fn crossing_arm_source_enforces_stop_atomicity_and_both_callers() {
+        let src = include_str!("roots.rs");
+        let body = src.split("pub fn com_arm_crossing(").nth(1).unwrap()
+            .split("pub fn com_stop(").next().unwrap();
+        let marks = ["cortex_m::interrupt::free", "arm_allowed(", "prepare_crossing()",
+            "hw::clock::raw()", "crossing_left(wait, spent)", "if left == 0",
+            "stop_expired_arm()", "} else {", "sched_raw.store(",
+            ".phase.store(1", "start_crossing("];
+        let mut pos = 0;
+        for mark in marks {
+            pos += body[pos..].find(mark).expect(mark) + mark.len();
+        }
+        assert_eq!(src.matches("arm_marked::<C>(raw, wait)").count(), 2);
+        let expired = src.split("fn stop_expired_arm()").nth(1).unwrap()
+            .split("pub fn com_stop(").next().unwrap();
+        assert!(expired.contains("guard_trip(Reason::LateArm)"));
+        // The safety-off primitive called above de-energizes, not just counts.
+        let trip = src.split("pub fn guard_trip(").nth(1).unwrap()
+            .split("pub fn ").next().unwrap();
+        for mark in ["com_stop()", "d.moe_off()", "d.zero_compares()", "d.enable_low()"] {
+            assert!(trip.contains(mark));
+        }
+        let timer = include_str!("hw/timers.rs");
+        let prep = timer.split("pub fn prepare_crossing()").nth(1).unwrap()
+            .split("pub fn start_crossing(").next().unwrap();
+        let marks = ["t.dier().reset()", "t.cr1().write(|w| w.opm().set_bit().urs().set_bit())",
+            "t.cnt().write", "t.egr().write", "t.sr().reset()", "nvic::unpend"];
+        let mut pos = 0;
+        for mark in marks {
+            pos += prep[pos..].find(mark).expect(mark) + mark.len();
+        }
+        assert!(!prep.contains("cen().set_bit"));
+        assert!(!prep.contains("arpe().set_bit"));
+    }
 
     #[test]
     fn a_stop_at_every_point_inside_the_arm_leaves_the_timer_quiet() {
