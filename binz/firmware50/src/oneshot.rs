@@ -71,6 +71,10 @@
 /// and `the_firmware_is_the_safe_variant` fails.
 pub const FIRMWARE_ARM_IS_ATOMIC: bool = true;
 
+#[cfg(test)]
+#[path = "foreground_write_tests.rs"]
+mod foreground_write_tests;
+
 /// Whether an arm can be interleaved by the guard root or by the other caller.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Atomicity {
