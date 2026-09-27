@@ -13,6 +13,7 @@ use stm32g0xx_hal::rcc::Rcc;
 use stm32g0xx_hal::stm32;
 
 use crate::bridge::Bridge;
+use crate::bemf::{DepthSnapshot, FilterPolicy};
 use crate::capture::{Decision, EdgeLog};
 use crate::chain::ChainLog;
 use crate::commutation::{self, Direction, Step};
@@ -493,7 +494,8 @@ pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fin
         };
         // Persistence reads the **live** comparator, microseconds after the edge --
         // exactly what AM32's handler does, and what the foreground could never do.
-        match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &DET_FILTER, hw::comp::level) {
+        let depth = DepthSnapshot(S.det().filter_depth.load(Ordering::Relaxed) as u8);
+        match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &depth, hw::comp::level) {
             crate::bemf::Outcome::Accepted { wait, .. } => {
                 // The accepted crossing's bookkeeping, then the arm. (A stale
                 // comment describing the reverted E142 order stood here until
@@ -556,8 +558,7 @@ pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fin
     match accepted {
         Some((step, average)) => {
             // The accepted-event envelope (E076).
-            guard_event(at, step, average);
-            log_order_accept::<C>(at, raw, count, step, average, order_wait);
+            finish_accept::<C>(at, raw, count, step, average, order_wait);
             true
         }
         None => false,
@@ -655,7 +656,8 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate>(
         };
         let rising = edge_is_rising(step);
         let (mut reads, mut n) = (0u16, 0u16);
-        let outcome = zc.offer_timed::<T, _, _>(count, rising, advance, &DET_FILTER, || {
+        let depth = DepthSnapshot(S.det().filter_depth.load(Ordering::Relaxed) as u8);
+        let outcome = zc.offer_timed::<T, _, _>(count, rising, advance, &depth, || {
             let l = hw::comp::level();
             reads |= u16::from(l) << (n & 15);
             n += 1;
@@ -696,8 +698,7 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate>(
     }
     match accepted {
         Some((step, average)) => {
-            guard_event(at, step, average);
-            log_order_accept::<C>(at, raw, count, step, average, order_wait);
+            finish_accept::<C>(at, raw, count, step, average, order_wait);
             true
         }
         None => false,
@@ -1139,6 +1140,15 @@ pub fn com_arm_crossing(raw: u16, wait: u32) -> Option<u32> {
 #[inline(never)]
 fn stop_expired_arm() {
     guard_trip(Reason::LateArm);
+}
+
+/// COMP is the sole active writer and cannot preempt itself. Refresh even
+/// after a refused/expired arm; a later install seeds independently.
+#[inline(always)]
+fn finish_accept<C: ChainLog>(at: &mut Root<CompPrio>, raw: u16, count: u32, step: u8, average: u32, wait: u32) {
+    guard_event(at, step, average);
+    S.det().filter_depth.store(u32::from(DET_FILTER.level(average)), Ordering::Relaxed);
+    log_order_accept::<C>(at, raw, count, step, average, wait);
 }
 
 /// Stop the one-shot and forget any armed event.

@@ -64,6 +64,15 @@ pub trait FilterPolicy {
 /// A constant persistence depth.
 pub struct FixedFilter<const N: u8>;
 
+/// Exact depth computed for an unchanged pre-offer estimate. The owner must
+/// refresh after every accepted update and initialize before enabling COMP.
+pub struct DepthSnapshot(pub u8);
+
+impl FilterPolicy for DepthSnapshot {
+    #[inline(always)]
+    fn level(&self, _average_interval: u32) -> u8 { self.0 }
+}
+
 impl<const N: u8> FilterPolicy for FixedFilter<N> {
     #[inline]
     fn level(&self, _average_interval: u32) -> u8 {

@@ -395,6 +395,9 @@ pub struct Det {
     /// only the ~10 instructions of the increment and not the layout.
     pub wait_hist: [AtomicU32; 8],
     pub left_hist: [AtomicU32; 8],
+    /// Exact DET_FILTER depth for the installed/current estimator. Foreground
+    /// seeds while inactive; COMP refreshes after acceptance before return.
+    pub filter_depth: AtomicU32,
 }
 
 /// Closed-loop COMP health: the storm and handler-budget stops (E107).
@@ -718,6 +721,7 @@ static DET: Det = Det {
     in_arm: f(),
     wait_hist: hist(),
     left_hist: hist(),
+    filter_depth: u(),
 };
 static COMP: CompHealth = CompHealth {
     storm: f(),

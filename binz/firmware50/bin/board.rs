@@ -18,7 +18,7 @@ use hal::stm32::interrupt;
 use hal::timer::Timer;
 use hal::watchdog::IndependedWatchdog;
 
-use firmware50::bemf::ZeroCross;
+use firmware50::bemf::{FilterPolicy, ZeroCross};
 use firmware50::bridge::safe_off;
 use firmware50::commutation::{SixSlot, Step};
 use firmware50::duty::{ENVELOPE_MAX, ENVELOPE_MIN, ENVELOPE_STEP, STARTUP_TICKS};
@@ -517,6 +517,7 @@ impl Hal for Board {
         // (step 6a).
         det.accept_avg.store(zc.average_interval(), Ordering::Relaxed);
         det.accept_blank.store(zc.blanking(), Ordering::Relaxed);
+        det.filter_depth.store(u32::from(roots::DET_FILTER.level(zc.average_interval())), Ordering::Relaxed);
         let _ = det.zc.lock(|z| *z = Some(zc));
         // All six slots at the seed, as the reference seeds `interval_hist`.
         let _ = S.com().six.lock(|six| *six = SixSlot::seeded(seed_us));

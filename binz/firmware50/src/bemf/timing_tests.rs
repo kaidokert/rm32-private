@@ -1,5 +1,73 @@
 use super::*;
 
+fn depth_cache_history<T: WaitEstimate>() {
+    let policy = crate::run::policy::DET_FILTER;
+    for seed in [1, 24, 25, 40, 49, 50, 51, 248, 249, 250, 833, 65535, u32::MAX / 2, u32::MAX] {
+        let mut direct = ZeroCross::new_bounded(seed, 1, u32::MAX);
+        let mut cached = direct.clone();
+        let mut depth = DepthSnapshot(policy.level(cached.average_interval()));
+        for i in 0..96u32 {
+            let blank = direct.blanking();
+            let count = match i % 4 {
+                0 => blank,
+                1 => blank.saturating_add(1),
+                2 => direct.average_interval().saturating_mul(2),
+                _ => seed,
+            };
+            let rising = i & 1 == 0;
+            let dissent = if i % 3 == 0 { 255 } else { (i % 13) as u8 };
+            let (mut an, mut bn) = (0u8, 0u8);
+            let a = direct.offer_timed::<T, _, _>(count, rising, 16, &policy, || {
+                let v = if an == dissent { !rising } else { rising };
+                an += 1; v
+            });
+            let b = cached.offer_timed::<T, _, _>(count, rising, 16, &depth, || {
+                let v = if bn == dissent { !rising } else { rising };
+                bn += 1; v
+            });
+            assert_eq!((a, an), (b, bn), "seed={seed} offer={i}");
+            assert_eq!(direct.state(), cached.state());
+            assert_eq!(direct.counts(), cached.counts());
+            if matches!(b, Outcome::Accepted { .. }) {
+                // Scheduling may fail, but every accepted update still refreshes.
+                depth = DepthSnapshot(policy.level(cached.average_interval()));
+            }
+            assert_eq!(depth.0, policy.level(cached.average_interval()));
+        }
+    }
+}
+
+#[test]
+fn depth_cache_matches_direct_history_and_reseeds() {
+    depth_cache_history::<FreshEstimate>();
+    depth_cache_history::<PreviousEstimate>();
+    depth_cache_history::<ConstantAdvance<FreshEstimate, 16>>();
+}
+
+#[test]
+fn snapshot_preserves_every_timer_range_depth() {
+    let policy = crate::run::policy::DET_FILTER;
+    for average in 0..=65535 {
+        let depth = DepthSnapshot(policy.level(average));
+        assert_eq!(depth.level(average), policy.level(average));
+    }
+}
+
+#[test]
+fn hardware_cache_seed_and_both_refreshes_are_ordered() {
+    let board = include_str!("../../bin/board.rs");
+    let install = board.split("fn det_install(").nth(1).unwrap()
+        .split("fn ").next().unwrap();
+    assert!(install.contains("DET_FILTER.level(zc.average_interval())"));
+    assert!(install.find("filter_depth.store").unwrap() < install.find("active.store(true").unwrap());
+    let roots = include_str!("../roots.rs");
+    assert_eq!(roots.matches("finish_accept::<C>(at, raw, count, step, average, order_wait);").count(), 2);
+    assert_eq!(roots.matches("DepthSnapshot(S.det().filter_depth.load").count(), 2);
+    let finish = roots.split("fn finish_accept<C:").nth(1).unwrap()
+        .split("/// Stop the one-shot").next().unwrap();
+    assert!(finish.find("guard_event(").unwrap() < finish.find("filter_depth.store").unwrap());
+}
+
 fn accepted_wait(o: Outcome) -> u32 {
     match o {
         Outcome::Accepted { wait, .. } => wait,

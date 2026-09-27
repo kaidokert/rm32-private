@@ -46244,3 +46244,214 @@ comp_exti_mask before timerstop/bridgeoff, satisfying model's premise. Raw
 hw::line_enable remains available; no claim type-system forbids new bypass.
 Archive remains unflashed; installed E435888A OFF/UARTclosed. Next deadline
 work is exact depth-cache prototype with differential tests, not guard edits.
+
+### E451 - exact persistence-depth cache, design prediction
+
+Full objective reread. Prior turn fixed powered resume race with tests/reviews;
+no bench run or envelope gain. Proposed cache only the exact DET_FILTER.level
+for the current pre-offer estimate. Append detector cache field, initialize
+from installed ZeroCross before enabling, use a snapshot FilterPolicy on both
+plain/logged offer paths, refresh from new accepted average after arming and
+guard feed before ISR return. Refusals/rebase do not change estimator average.
+COMP is sole running writer and cannot preempt itself; COM/guard never read
+the cache. No filter mapping/read-depth/threshold or arm semantics change.
+Prediction: remove repeated mapping/units conversion from entry-to-arm, with
+same logical read sequence and outcomes. Absolute first-read timing can move;
+assembly must check loop spacing, totalroot overhead and softmath. Differential
+tests cover bounds, refusals, mixed live-read patterns and reseeding. No motor
+until implementation reviewed; no claim it fixes the physical tracking gap.
+
+E451 design reviews:
+
+> Raw code supports caching: depth uses the pre-acceptance average; only acceptance changes that average. Refusal and rebase preserve it. Refreshing after arm and `guard_event`, before COMP returns, supplies the next decision’s correct depth. COM/guard need no cache access.
+>
+> Concrete gap: `det_install` does not itself enforce detector inactivity; its initialization precedes the guarded activation. Initialize depth before activation, and require installation with COMP excluded or the detector inactive. Default 12 is not a substitute for exact initialization.
+>
+> Required tests:
+>
+> - Cached versus direct decisions, comparator read sequences, state and counters across accepts, both refusals and rebase.
+> - First acceptance after install/reinstall with different seeds.
+> - Accepted averages crossing every depth boundary, including clamp hits, µs saturation, shallow override and both floor features.
+> - Plain/logged parity; refresh despite arm refusal or guard stop.
+> - Refusal-history assertions: the supplied test checks only average.
+>
+> Check emitted persistence-loop spacing and pre-arm cost; logical equivalence alone does not establish timing equivalence.
+>
+> Raw: cache semantics are sound if installation initializes depth before publishing `active`, and every acceptance refreshes it before ISR exit. Refusal/rebase leave the average unchanged; COM/guard neither consume nor invalidate depth. Cache the **published blended average**, even with `PreviousEstimate`.
+>
+> Concrete gaps:
+>
+> - Default 12 is not universally “fail-conservative”: extra reads consume timing margin and can reject genuine crossings. Require initialization before use.
+> - Post-arm refresh still delays equal-priority COM dispatch. Checking persistence-loop spacing alone misses this cost; check arm-to-COM latency and total handler time.
+> - Refresh must cover both plain/logged paths, including accepted decisions whose arm returns `None` or trips LateArm. Keep installation under the existing inactive-detector ownership requirement.
+>
+> Required tests: cached versus direct policy across multiple accepts, both refusals, rebase, clamps, reinstall with a different seed, and Fresh/Previous scheduling; exact depths around mapping/shallow boundaries under all floor-feature combinations. Compare outcomes, estimator state, and comparator read sequences for both paths. Explicitly verify the initial depth uses `zc.average_interval()`, not `seed_us`.
+
+Dispositions: exact initialization required, no default12 safety claim. Cache
+field is zero while inactive, seeded from zc.average_interval (not seed_us)
+before activation. Current only det_install caller is handover with inactive
+detector; this ownership requirement remains explicit. Both accepted paths
+refresh after guard_event regardless arm result. COM-top selected, so COM
+can preempt postarm refresh; peer-mode cost remains real on other binaries.
+Tests compare sequential decisions/state/counts/readcounts with directpolicy
+through mixed refusals/accepts and reseeds, Fresh/Previous/fixed16. Source
+ordering pins install-beforeactive and both unconditional accepted refreshes.
+Build next; no powered action before assembly and implementation reviews.
+
+E451 initial393tests/build/audit PASS but structure caught102-line plain
+decision. Shared finish_accept now centralizes guard/cache-refresh/orderlog
+for both twins, bringing function to100 lines; no bound relaxed. Final staged
+BD07379C23B352F57D1DB10743C8D98C54E91A270129647587F6C1875B5E0BF8,
+393tests/clippy/fourrootaudit/currentstructure PASS. Data752/bss4188.
+COMP819->825 totaldisassemblyentries vsE450; other3roots normalizedsame.
+Mapping multiply is postarm (e451b0x8000bd4), not prefilter. Loop changed:
+baselineE4509ca..9e0 twelve executedinstructions/read, untaken rejectBNE;
+candidate83e..856 twelve executedinstructions/successfulread, but literal
+reload replacesUXTB and successBEQ is taken. Thus NOT identical readspacing
+or physicalaperture; equalreadcounts only. No measuredspeedup/WCET claim.
+Current det_install only called by Handover::lock after drv_end and before
+detectorrelease; no live cache initialization intended. Candidate unflashed.
+
+E451 implementation reviews:
+
+> Raw assembly confirms the cache load at `0x0800081e`, timer start at `0x08000a08`, and depth refresh store at `0x08000bea`. Mapping occurs after arming and guard handling. Stack allocation increases from 52 to 68 bytes; persistence instruction spacing changes.
+>
+> **Concrete blockers:** No demonstrated cache or shutdown defect in the supplied paths. Both accepted paths refresh even when arming fails; refusals preserve the estimate. COMP cannot re-enter itself, and COM does not consume this cache. Refresh after a guard trip does not re-enable anything.
+>
+> Initialization equivalence depends on installation occurring while the detector is inactive: `det_install` writes the cache before replacing `zc`, without masking that entire sequence. The caller establishing this precondition is absent. Verify that ownership condition before powered admission; if installation can overlap active COMP, fix synchronization first.
+>
+> The 393 passing tests support logical equivalence, but the exhaustive snapshot test is an identity check. Histories do not exercise hardware reinstall, refused/expired arms, or interrupt interleavings; source-string assertions cannot establish those behaviors.
+>
+> **Timing not yet measured:** Earlier live sampling and changed loop spacing can change accepted crossings. Post-arm refresh can delay peer-priority COM; diagnostics can further perturb timing. A bounded screen with retained guards is reasonable once installation exclusion and stack headroom are established.
+>
+> No concrete cache or shutdown regression is demonstrated by the supplied raw material.
+>
+> **Concrete blockers / verification gaps:** Cache equivalence requires installation while inactive and every estimator mutation to refresh the cache. Both acceptance paths refresh even after refused/expired arms; COMP cannot re-enter itself, and COM does not consume this cache. However, `det_install` writes cache and estimator separately without enforcing inactivity. Verify its callers establish that prerequisite; otherwise installation can expose mismatched state.
+>
+> The 393 passing tests support logical equivalence, not hardware integration. The exhaustive snapshot test is essentially an identity; “reseeds” creates fresh objects rather than reinstalling over an existing cache. Source-string assertions do not exercise stop/reinstall interleavings or refused-arm refreshes.
+>
+> **Assembly / timing not yet measured:** Mapping is removed from pre-arm execution; refresh completes after guard processing (`0x08000bea`). Some arithmetic is shared before the guard, still after arming. Stack allocation grows 52→68 bytes. Persistence instruction count alone does not preserve sampling times: literal reloads and branch behavior changed. Identical scripted reads cannot establish identical live-comparator acceptance.
+>
+> Post-arm work can delay peer-priority COM and subsequent COMP service; `spent` excludes that delay.
+>
+> A bounded screen with retained guards is reasonable once inactive installation and stack headroom are established; this is not powered qualification.
+
+Dispositions: stackframe52->68 accepted against reported31924bytes available
+and deepeststaticpath7024; not a latency claim. Inactive installation checked:
+only hardwarecaller is Handover::lock states909, reached after driven seed;
+initial DET.active=false, prior stop calls det_release; current transfer
+calls drv_end beforedet_install and installs closed ownership afterward.
+No foreground reinstall whileclosed in current callgraph. Public API alone
+does not enforce future misuse. Identity snapshot test is only wrappercoverage,
+not independent mapping evidence; mixed-history differential is substantive.
+Default/floor6 focusedhistory tests alsoPASS. SelectedCOMtop preempts COMP;
+additionalpostarm work can still delay nextCOMP, so no WCET/netgain claim.
+Proceed one15%/28s lower regression after disabledchecks; anyfault endsbatch.
+No25test until outcome reviewed and cooldown elapsed. Guardsunchanged.
+
+### E452 - depth-cache lower regression, prediction
+
+ExactBD07379C archived candidate combines reviewed stop-resume safetyfix and
+depthcache; no claim one-variable causalbenchcomparison. Goal ofscreen is
+basicoperation and guard/timing regression at previouslyclean15%, command9,
+28s total and expected20.278s target. Require MCPhealthy, explicitG071flash,
+disabledpreflight. No retry, no automaticescalation; retainedfailure decisive
+for next action. Bothsourcechanges hostreviewed; physicalaperture notidentical.
+
+E452 result: exactBD07379C, command9. MCP list/open/p/close healthy;
+explicitG071 reset exit0 and disabled preflight/selftests PASS. One retained
+run e452-propless150-depth-cache_01: reason2, closed22778ms, target20278ms,
+coast2202eHz, matched999, late0/thin0, spentmax12, COMPmax24, mixedCOMlate5.
+Proxy231mA has -256mA zero drift; NOT calibratedcurrent/thermal evidence.
+FinaloffPASS. This is lower regression only, no cache efficacy or WCET claim.
+
+Independent reviews (native spawn unavailable; fresh isolated CLI reviewers):
+
+> The capture supports one propless 15% regression run, not qualification or cache efficacy.
+>
+> - Closed operation: 22.778 s; target hold: 20.278 s. The requested 28 s is not independently verified elapsed time.
+> - Rates recompute to 12,678 accepts/s overall and 13,114/s during hold. A 76 µs sector implies 2,193 electrical Hz; 74 µs implies 2,252 Hz. Rounded timing explains small discrepancies.
+> - Tail: 30,095 accepts / 2.277766 s ≈ 13,213/s. This exceeds the declared 2 s window, so it is not a verified last-two-second rate.
+> - Sector counts sum to 286,955, exactly 1,825 below accepted, matching mailbox coalescing.
+> - Minimum bus code fell 10.35% from reference; filtered recovery to 99.75% does not erase that excursion.
+> - Zero forced commutations, reported fault indicators, and safe-off endpoint checks are encouraging. They do not establish continuous safety. Zero margin counters provide no measured margin; 12 µs execution maximum versus 51 µs minimum interval is insufficient.
+> - Current is a proxy; −256 mA zero drift exceeds the 231 mA hold estimate. Thermal safety is unsupported.
+>
+> A single protected 25%/28 s screen is conditionally reasonable as further characterization. Verify independent protections and cooling first; 120 s OFF alone is unvalidated. Preserve same-binary verification and no retry/escalation after fault.
+
+> The raw capture supports sustained propless operation and disabled outputs at both checkpoints. Coast intervals corroborate roughly 2.2 k electrical Hz, but use the same comparator; they are not an independent speed measurement. Zero-filled witness fields and unarmed margin histograms provide no evidence of waveform quality or timing headroom.
+>
+> Zero forced commutations, late arms, and guard faults do not establish cache efficacy or timing equivalence. The candidate combines two changes, lacks a matched baseline, and changes physical sampling aperture. Saturated phase bins further limit interpretation. The tail spans 2.278 seconds despite a nominal 2-second window; establish its reporting semantics before using it as a precise endpoint statistic.
+>
+> I would defer 25%. With six pole pairs, the inferred speed is approximately 22,000 mechanical RPM already. No published speed limit or motor thermometry supports increased duty; 120 seconds off does not establish adequate cooling. Current zero drift of −256 mA is comparable to the reported 231 mA hold current, weakening thermal inference.
+>
+> The next discriminating test should hold duty and conditions fixed, isolate the cache change, and measure comparator sampling times, full ISR duration, and COM latency. Establish mechanical limits and temperature evidence before increasing duty.
+
+Dispositions: all measurement limits retained. Tail uses actual span2277766us,
+not nominal2s; no precise endpoint claim from nominal label. Coast is different
+operating window on same comparator, not independent sensor. Phase histograms
+saturated; optional margin/preempt counters do not prove absence. Rawbus1091
+vs1217 is an isolated-code statistic, not same as guardedmean; no sagstop.
+The thermal/mechanical caveat remains unresolved, exactly as campaign plan:
+no publishedmaxRPM, no windingtemperature, cooldown precaution notproof.
+Do not declare hardware safe from current or prior survival. Reviewer proposal
+for a new full sampling-time instrumentation campaign is declined: goal limits
+instrumentation to discriminating questions. Next action is already-exercised
+25% regime bounded28s, not an extension beyond previous ~30keRPM screens;
+all existing guards retained and >=120s OFF. This tests candidate operational
+failure mode, not isolatedcache causality. No known ratedspeedlimit is waived.
+Review's requested thermal/rating certainty cannot be manufactured by another
+15%run; record scope limitation rather than claim it resolved.
+
+### E453 - depth-cache 25% bounded screen, prediction
+
+SameBD07379C, command8/28s, expected15278ms target if clean. One attempt only,
+no retry; anyfault ends batch. Decision: does reviewedprearm-cost relocation
+permit this known timing-failure regime, or what retainedstop remains? Not a
+rate A/B or qualification. Retain late/thin/COMP/COM/watch/current/bus fields,
+finaloff mandatory. Previousrun stop >120s beforecommand. No thresholds move.
+
+E453 result: exactBD07379C, e453-propless250-depth-cache_01, reason8
+Tracking/Stale1 atclosed6813ms, zero25hold; applied306/1333=22.956%. Finaloff
+PASS, UARTclosed. late0,thin1,spentmax12,COMPmax25,mixedCOMlate8; sag0,
+blank0,overrun0,nFAULT high. Proxyhold0 is nohold, NOT zerocurrent.
+Watchfirstdecision from_event1:11527950-11527707=243us versus240limit.
+This candidate did notclear the failure regime; no retry/escalation.
+
+E453 independent reviews:
+
+> Raw arithmetic checks:
+>
+> - Stale age: 11,527,950 − 11,527,707 = 243 µs; excess = 3 µs.
+> - Conditional same-epoch mapping: 49,965 − 49,939 = 26 µs; inferred entry = 11,527,941, 234 µs after prior watch feed, 9 µs before decision.
+> - Sector and phase totals both equal 83,440; adding 4,323 coalesced accepts gives 87,763. Coverage reconciles numerically, but those histograms omit coalesced events.
+> - 87,763 / 6.813 ≈ 12,881/s. Applied 306/1333 ≈ 22.96%.
+>
+> No target hold is demonstrated: hold duration, accepts, current blocks, and tail coverage are zero. The 1-µs/166,666-Hz hold fields are unusable; zero margin bins provide no margin evidence. `worst_hold_ma=865` cannot establish hold coverage.
+>
+> The recorded failure supports event-path staleness; sag and late-arm counters report no trips. However, **“service gap” is too causal**: 243 µs measures watch-feed timing, not isolated service latency or physical-edge spacing. The limit is tightened before `event`, potentially affecting the decision.
+>
+> Poststop fields are not fault-time evidence; the mapping requires unproved epoch/event correspondence. Nine microseconds includes intervening acceptance work, not necessarily reducible prearm cost. E446’s comparison is unverifiable here. The proposed offline review is reasonable; its optimization premise remains unproved.
+
+> The raw evidence supports an accepted-event watchdog expiry: `from_event=1`, age 243 µs versus limit 240 µs. Sag did not trip; no late arms were recorded. It does not establish why the accepted-event interval exceeded its limit. Zero hold time also makes the reported hold-rate values unusable.
+>
+> The author’s 234 µs entry / 9 µs subsequent-work reconstruction is conditional. Poststop interrupt masking gives a coherent snapshot at collection; it does not establish fault-time correspondence between the clock pair, acceptance fields, and saved stale decision. Same-epoch mapping needs explicit justification.
+>
+> Protection semantics matter: `guard_event` tightens the limit before calling `event`. Without those implementations, we cannot determine whether the arriving acceptance retroactively tightens the preceding interval, or whether a late acceptance must trip despite already publishing and arming commutation.
+>
+> The watch borrow excludes the guard locally. It does not establish exclusion across acceptance publication, timer arming, and `finish_accept`. Inspect that entire priority/masking path and whether a pending guard can intervene.
+>
+> Another tiny optimization is weakly discriminating: saving several microseconds could suppress this threshold crossing without identifying its cause. First establish fault-time timestamps, the applicable previous/new limit, and intervening preemption. An offline cycle reduction alone cannot distinguish service latency from changed acceptance behavior.
+
+Dispositions: use watch-feed gap, not service-latency or physicaledgegap.
+No holdmeans no rateidentity; impossibledefault166666Hz is invalidzero-data.
+No efficacy/rate comparison against E446/E448 from single differentlybuilt
+attempts. Poststop234us+9us reconstruction remains conditional, not causal
+finding or reason to moveguardfeed. Sourceadditionalcheck: acceptedaverage113
+requests speedlimit339 (113*3), so monotonic tighten cannot replace240 with
+339 at terminalevent. Guard event polls beforeupdatinglast; firstStale is
+latched and guard_trip safes. Rawtimestamps remain poststop fields with their
+explicitlimits; no new fault-timerecorderclaim. Further poweredruns paused
+for offline criticalpath/acceptance analysis, not an externalblocker. Need a
+meaningful lever; shavinganotherinstruction without prediction is notprogress.
+No threshold or protection semantics changed; no newqualifiedenvelope.

@@ -1,6 +1,16 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E448 coherent-revisit screen and dual review, 2026-09-27.
+Updated through E453 depth-cache screen, 2026-09-27.
+CURRENT: BD07379C installed OFF after E453, UART closed. E450 stop-dominant
+comparator resume and E451 cached persistence depth are present. 393 host
+tests, clippy, structure and four-root helper audits pass. Mapping moved
+post-arm, but persistence branch layout changed; no measured net speedup.
+E452 15% held20.278s normally (~2202eHz), late/thin0, finaloffPASS.
+E453 requested25% stopped Tracking/Stale before target: CCR306/1333 (~23%),
+closed6.813s, zero targethold, age243>240us, late0/thin1, finaloffPASS.
+No retry/escalation and no new qualified ceiling. See notebook for reviews.
+
+Historical E448/E450 checkpoint (superseded):
 Offline E450b:7F5E735A staged stop-dominant powered comparator resume.
 Both reviews' deferred-startup bypass finding fixed;390tests/clippy/ISR audit
 PASS. More masking/instructions, not a speed improvement. Not flashed.
