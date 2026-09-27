@@ -46706,3 +46706,112 @@ This sourceargument requires focused review of those actualpaths, notcomments.
 Remaining: complete-masked-path latency evidence, boundedclockorigin lifetime,
 and disabled transaction exercise beforeanypoweredcandidate. No envelopegain;
 installed board remainsBD07379C OFF/UARTclosed fromE453.
+
+## E457 — publication/expiry audit, offline prediction
+
+Decision: whether E456d's timer ownership permits a disabled transaction test,
+not whether the candidate is ready for motor power. Previous goal/status turn
+verified artifacts but made no campaign change; this batch closes one specific
+source-level admission question. No flash, serial or powered command planned.
+
+Prediction to review against actual source: phase4 uses the saved schedule's
+origin/average; partly published accept_raw/accept_avg cannot replace it.
+Before accept_seq publication an old recheck can run, but COMP's subsequent
+atomic prepare_crossing stops TIM16, clears UIF and NVIC pending, then arms
+phase1. After sequence publication an old schedule cancels without timer writes.
+During crossing preparation PRIMASK prevents COM entry. Phase1 creates the next
+schedule only after an accepted arm, with COMP unable to re-enter itself.
+Stop removes authority before any later recheck can pend or arm. This argument
+does not establish masked-path latency or protect against arbitrary blackouts;
+those remain separate disabled-test obligations. Dual reviewers receive the
+actual publication, timer, stop and schedule code before this interpretation.
+
+### e457-evidence
+
+> **Publication/expiry ownership is not established by this source.** The phase‑1 claim has a concrete contrary interleaving if TIM16 can preempt COMP:
+>
+> 1. An earlier acceptance A has armed phase 1. Its timer expires while COMP processes acceptance B.
+> 2. B stores `sector_start_raw`, `accept_raw`, and `accept_avg`, then is interrupted **before** storing `accept_blank` and publishing `accept_seq`.
+> 3. TIM16 acknowledges A’s expiry and reads phase 1. It advances the step and applies the commutation plan.
+> 4. It reads **B’s average, A’s blanking, and B’s raw timestamp**. Its optional ordinal remains A’s sequence.
+> 5. COMP resumes, stores B’s blanking, publishes B’s sequence, and prepares/starts B’s timer.
+>
+> `prepare_crossing()` cannot cancel the already executed commutation or repair its mixed payload. The release compiler fence supplies neither exclusion around those reads nor a snapshot validation protocol.
+>
+> For phase 4, the saved schedule avoids reading partially updated payload; a generation mismatch takes the retirement return before phase/timer writes. The masked arm also excludes interrupt interleaving within its transaction. Neither property protects phase‑1 consumption.
+>
+> This counterexample requires an old phase‑1 expiry to coexist with another acceptance. The supplied executable source does not establish that this is impossible; omitted admission/masking or priority configuration could exclude it. Therefore the unconditional ownership claim fails this review; an actual reachable firmware failure remains conditional on that missing evidence.
+
+### e457-adversarial
+
+> **Not established by this excerpt.** A concrete counterexample exists if COMP can preempt COM and accept while phase 4 is being serviced:
+>
+> 1. The phase-4 timer expires. COM enters, acknowledges the update, and passes its `active` check.
+> 2. Before COM loads `phase`, COMP preempts it and accepts a crossing.
+> 3. COMP publishes the payload and sequence, then `prepare_crossing()` clears pending TIM16 state and `start_crossing()` arms the future commutation with `phase = 1`.
+> 4. COMP returns. The already-active COM invocation resumes, loads `phase == 1`, and immediately executes the commutation intended for the new deadline.
+>
+> Clearing NVIC pending cannot cancel an **active, suspended handler**. The payload can be perfectly coherent while expiry ownership is wrong. Atomic arming does not bind a handler invocation to the expiry that dispatched it.
+>
+> This is a feasible counterexample under that priority/admission configuration, **not proof that the actual binary permits it**. The supplied code omits the priority assignments and COMP acceptance-entry restrictions needed to establish reachability or exclude it. Comments do not resolve those omissions.
+>
+> Conversely, within the shown masked crossing-arm transaction, an ordinary guard IRQ cannot interrupt validation and enabling; after a completed stop, the latch prevents another arm, assuming `arm_allowed` implements the stated predicate.
+>
+> Missing powered latency measurements are separate: they neither prove nor repair expiry ownership.
+
+### e457b-evidence
+
+> The shown publication/expiry ownership is sound, conditional on `arm_marked` reaching the displayed crossing-arm path. Its body is absent, so that connection is not independently established.
+>
+> With `com-top`, COM can interrupt COMP; COMP cannot interrupt COM or re-enter itself.
+>
+> - **Before the sequence store:** phase-4 COM sees the old generation and may observe, pend COMP, or rearm phase 4. Its timing payload comes from the saved `Schedule`. Although `clock_and_origin()` can read newly written `accept_raw`, phase 4 does not use that origin. COM finishes before interrupted COMP resumes. Accepted preparation then disables/stops TIM16, clears its flags and pending interrupt, and installs the crossing timer—or trips the stop.
+> - **After the sequence store, before preparation:** the old schedule fails generation ownership. `after_phase` retires it before its phase store or timer arm. Acknowledging the dispatched interrupt does not overwrite the forthcoming crossing arm.
+> - **During preparation/start:** interrupt exclusion prevents COM or guard interleaving.
+> - **After start:** phase 1 can preempt COMP, but all acceptance payload stores already completed. Suspended COMP cannot publish another acceptance while COM reads them.
+> - **Stop/expiry:** shutdown clears COM activity and latches `stopped`; subsequent arm validation refuses. Recheck’s masked authority check rejects stopped work.
+>
+> The compiler fence alone does not establish ownership; these execution exclusions do. Whole-program sole-writer ownership remains unproved by the excerpts.
+
+### e457b-adversarial
+
+> **No feasible publication/expiry ownership violation is established by the supplied paths.** With `com-top`, COM is actually `0x40`, COMP `0x80`, and guard `0x00`. COM can interrupt COMP; COMP cannot interrupt COM.
+>
+> The strongest attempted counterexample is COM phase 4 interrupting acceptance between payload stores and sequence publication:
+>
+> - COM still sees the old generation, so ownership can pass. However, phase 4 uses its saved schedule; the newly read acceptance origin is unused. COMP has already disabled IMR, so live admission fails. COM may schedule another phase-4 expiry.
+> - COMP resumes, publishes the new sequence, then enters masked crossing preparation, which stops the old timer, clears its flags and clears TIM16 pending before starting phase 1.
+> - If that old expiry interrupts **after publication but before preparation**, generation mismatch retires the schedule without changing phase or arming a timer.
+>
+> Once crossing preparation starts, PRIMASK excludes COM and guard through validation and timer start. A resulting phase-1 dispatch therefore sees completed publication. COMP cannot change that payload during COM’s reads. Guard shutdown removes authority and prevents the suspended acceptance from rearming.
+>
+> The sequence/fence is **not independently a coherent-snapshot protocol**; correctness depends on these scheduling and admission constraints. Foreground readers and handover are not fully supplied, so this verdict does not establish their ownership correctness or prove the sole-writer claim globally.
+
+E457 result/dispositions: first pair correctly exposed omissions in the review
+packet, not proven reachable races: COMP priority/masking was absent. Retain
+their conditional counterexamples. Fresh second pair received COMP root,
+line-disable/enable/resume and priority definitions; no peer verdicts.
+COM=0x40, COMP=0x80 in this image. COMP cannot preempt COM or itself; accepted
+COMP does not resume the line. Therefore an independent acceptance B cannot
+interrupt the outstanding phase1 for A in the proposed way. Phase4 uses saved
+origin/average, and while COMP is executing its IMR is disabled, so a recheck
+cannot pass live admission. It may rearm an old observation; accepted preparation
+clears that timer's source/flags/NVIC pending before starting phase1.
+
+Evidence review's omitted arm_marked link checked locally: roots.rs:377-386
+calls com_arm_crossing directly; NoChain removes only instrumentation. Writer
+search found accept_seq.store only at roots.rs:464; raw/avg/blank additionally
+seeded by board.rs:513 det_install at handover. The scoped verdict concerns
+running COMP/COM publication, not a new proof of all foreground handover code.
+No behavioral edit, build, flash, or powered run in E457.
+
+This closes the running publication/expiry question under the configured
+priorities and entry masks. It does NOT close latency or whole-clock blackout
+coverage. TIM17 raw reconstruction is valid only before a full wrap; existing
+guard clock itself also needs service within a wrap. Tracking <=1000us and
+tick-gap200us are fail-closed checks only when serviced, not proof against an
+arbitrarily masked core. Next admission step is a bridge-disabled transaction
+exercise measuring the actual candidate callback, including its masked path,
+stop refusal and obsolete-timer replacement. Do not add a powered recorder or
+repeat the old25% failure to answer that offline/peripheral question. Candidate
+AC4ADA59 remains staged; installed BD07379C remains OFF/UARTclosed.
