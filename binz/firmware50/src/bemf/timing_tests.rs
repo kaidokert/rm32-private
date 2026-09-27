@@ -1,5 +1,90 @@
 use super::*;
 
+struct TestDepth(u8);
+impl FilterPolicy for TestDepth {
+    fn level(&self, _: u32) -> u8 { self.0 }
+}
+
+fn predicate_sequences<T: WaitEstimate>() {
+    for depth in 0..=12u8 {
+        for bits in 0..(1u32 << depth) {
+            for rising in [false, true] {
+                for count in [0, 40, 41, 160] {
+                    let mut old = ZeroCrossWith::<32>::new_bounded(80, 40, 4000);
+                    let mut new = old.clone();
+                    let (mut oi, mut ni) = (0u32, 0u32);
+                    let a = old.historical_offer_timed::<T, _, _>(count, rising, 16, &TestDepth(depth), || {
+                        let v = bits & (1 << oi) != 0;
+                        oi += 1;
+                        v
+                    });
+                    let expected = u32::from(rising) << 30;
+                    let b = new.offer_timed_matches::<T, _, _>(count, 16, &TestDepth(depth), || {
+                        let word = (((bits >> ni) & 1) << 30) | !(1 << 30);
+                        ni += 1;
+                        word & (1 << 30) == expected
+                    });
+                    let first_bad = (0..u32::from(depth))
+                        .find(|i| (bits & (1 << i) != 0) != rising);
+                    let want_reads = if count <= 40 { 0 }
+                        else { first_bad.map_or(u32::from(depth), |i| i + 1) };
+                    assert_eq!((oi, ni), (want_reads, want_reads));
+                    assert_eq!(a, b);
+                    assert_eq!(old.state(), new.state());
+                    assert_eq!(old.counts(), new.counts());
+                    assert_eq!(matches!(b, Outcome::Accepted { .. }), count > 40 && first_bad.is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn matched_predicate_preserves_every_stream_through_twelve_reads() {
+    predicate_sequences::<FreshEstimate>();
+    predicate_sequences::<PreviousEstimate>();
+}
+
+fn historical_sequences<T: WaitEstimate>() {
+    let mut old = ZeroCross::new_bounded(80, 40, 4000);
+    old.accepted = u32::MAX - 2;
+    old.too_early = u32::MAX - 2;
+    old.unstable = u32::MAX - 2;
+    let mut new = old.clone();
+    let mut rng = 7u32;
+    for i in 0..20_000 {
+        rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+        let count = match i % 5 { 0 => 0, 1 => u32::MAX, _ => rng & 8191 };
+        let depth = [0, 1, 5, 12, 255][i % 5];
+        let rising = i % 2 == 0;
+        let advance = [0, 16, 64, u32::MAX][i % 4];
+        let (mut oi, mut ni) = (0u32, 0u32);
+        let level = |j| i % 3 == 0 || rng.rotate_right(j) & 1 != 0;
+        let a = old.historical_offer_timed::<T, _, _>(
+            count, rising, advance, &TestDepth(depth), || {
+                let v = level(oi); oi += 1; v
+            });
+        let b = new.offer_timed_matches::<T, _, _>(
+            count, advance, &TestDepth(depth), || {
+                let v = level(ni); ni += 1; v == rising
+            });
+        assert_eq!(a, b);
+        assert_eq!(oi, ni);
+        assert_eq!(old.state(), new.state());
+        assert_eq!(old.prev_zc, new.prev_zc);
+        assert_eq!(old.counts(), new.counts());
+    }
+    assert!(old.accepted < 20_000 && old.unstable < 20_000 && old.too_early < 20_000);
+}
+
+#[test]
+fn historical_detector_matches_stateful_sequences_and_counter_wrap() {
+    historical_sequences::<FreshEstimate>();
+    historical_sequences::<PreviousEstimate>();
+    historical_sequences::<ConstantAdvance<FreshEstimate, 16>>();
+    historical_sequences::<ConstantAdvance<PreviousEstimate, 16>>();
+}
+
 fn accepted_wait(o: Outcome) -> u32 {
     match o {
         Outcome::Accepted { wait, .. } => wait,

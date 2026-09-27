@@ -1,7 +1,16 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E436 lean25% late-arm stop and dual review, 2026-09-27.
+Updated through E438 offline persistence optimization and dual review, 2026-09-27.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
+
+E437/E438 candidate BA96C4E4 remains UNFLASHED. Masked COMP-word comparison
+reduces successful persistence iterations12->8 executed instructions; branches
+and stack allocation change, so no cycle/WCET saving is yet measured. Same
+read depth does not preserve the physical filtering aperture. Four-root audit,
+clippy, structure and382 host tests pass; historical-method differential tests
+replace the circular wrapper comparison caught by two independent reviewers.
+Test-only changes leave loadable SHA80A40E0E...854D676AD unchanged. Installed
+board remains9C748DED, last verifiedOFF afterE436. No envelope increase here.
 
 Latest: E430 fixed16 constant-policy diode candidate `1D3D29EC` completed one
 15%/20.278s target hold at 2208eHz, late/thin0, outputs verified off. No new

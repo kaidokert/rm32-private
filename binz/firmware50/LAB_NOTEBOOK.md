@@ -45264,3 +45264,175 @@ finding. Poststamp/CENdelay and physicaledgeentry remain outside spent.
 Nextofflinequestion is generatedprearm criticalpath, including redundant
 peripheralsetup and interruptblocking; do not presume instructionremoval
 solves falseaccepts or highspeed. Board9C748DED remainsOFF/UARTclosed.
+
+### E437 - persistence representation optimization, offline
+
+Previous turn progressed by measured lean25LateArm and source/assemblyaudits,
+not qualification. Objective reread; tree clean. Assembly0x8000912..928 has
+per-readSUBS/SBCS Boolean normalization and NEGS/ADCS expectedpolarity work.
+Propose maskedword comparison with expectedword preparedonce, preserving
+same readcount/order/refusal/estimator/guards. Fasterreads shorten physical
+aperture: NOT physicalequivalence or free safety; needs separatevalidation.
+Beforecodechange independentreviews received assembly/hardwarelevel/rawE436.
+Packet extraction typo First='seventy' omitted genericdetector excerpt (retained
+errors); no evidenceclaim that they inspected it. Main read fullmethod before
+editing. Their narrowlyconditional offline verdicts:
+
+> Raw assembly confirms repeated volatile loads at `0x8000912`, per-read `SUBS/SBCS` normalization and `NEGS/ADCS` polarity conversion, followed by mismatch rejection and the depth-controlled backedge. Removing those conversions plausibly shortens the sampling aperture.
+>
+> Proceed offline. No concrete semantic flaw is evident, provided:
+>
+> - `level_word()` returns only the comparator output mask, from the same register through a volatile read.
+> - `expectedword` is exactly zero or that mask, with polarity matching `edge_is_rising(step)`.
+> - The predicate implementation preserves read count, order, early rejection, state updates, and timing-guard placement. The wrapper must invoke `read_level()` once per tested sample.
+> - The logged root remains unchanged.
+>
+> Exhaustive Boolean-stream tests can establish unchanged digital decisions for identical supplied sequences. They cannot establish identical physical behavior: faster reads sample different instants and can accept shorter noise pulses despite unchanged persistence counts. Assembly verification must cover both paths.
+>
+> The supplied stop log supports only the recorded 25% propless run; it does not validate 80% operation or the modified aperture. Offline approval grants no authority to relax existing protections.
+
+> RAW: 0x8000912..928 reloads the comparator each iteration, masks bit 30, normalizes it with SUBS/SBCS, recomputes expected polarity with NEGS/ADCS, and checks the counter. This supports the proposed optimization; it does not establish equivalent physical filtering.
+>
+> Proceed offline. No concrete semantic flaw is apparent provided:
+>
+> - `level_word()` performs exactly one volatile read of the same register and returns only the comparator mask; expectedword is exactly zero or that mask.
+> - The predicate preserves polarity, read count/order, first-mismatch refusal, and all detector-state updates.
+> - The wrapper preserves existing behavior, including any supported zero-depth case.
+>
+> Exhaustive injected sequences can establish unchanged **digital test behavior**. They cannot establish unchanged **physical aperture**: faster reads compress the persistence window, potentially accepting shorter disturbances and changing acceptance and scheduling times.
+>
+> The supplied run is baseline evidence, not validation of the optimized binary or the 80% target. Its zero margin counters establish no timing margin.
+>
+> Keep protections unchanged. Assembly verification and tests justify further review; they do not authorize flashing, bench escalation, or relaxed thresholds.
+
+Dispositions: implement offlineonly under statedconditions; fullsource/tests
+and actualassembly supplied forpostimplementationreview. Noflashauthorized
+by these reviews, nofiltercount/thresholdchange. Add offer_timed_matches shared
+implementation, existingAPI adapter reads once and comparesrising; plainroot
+compares maskedhardwareword to precomputedexpected. Loggedpath retains API.
+Exhaustive depth0..12 inputpatterns,bothpolarities/readcounts/refusal/accept
+state, pluswideexistingtests. Retire if compiler does not improve emittedloop.
+
+E437 result: staged BA96C4E4690951FF2172A3BCA45ACAAEFB4E73546C695B2E57CAB2CCE74E2E5D,
+release-s/thinLTO/codegen1, text46184/data740/bss4188, 381 host tests,
+clippy and four-root arithmetic audit pass. Current-source structure passes.
+Successful persistence iteration 12->8 executed instructions; branch direction
+changes, so neither four cycles saved nor WCET established. COMP root stack
+reservation also grows52->60 bytes: whole-path benefit needs measurement.
+BD491F1D initial archive and BA96C4E4 comment-only rebuild have identical
+loadable SHA80A40E0E2D9EBF380D412B432E399EB2AFB5ABEBDA6AE93FCC37BDE854D676AD.
+DMA/guard unchanged; COM normalized instructions unchanged with relocations.
+No flash or motor run; board remains9C748DED/OFF.
+
+### E438 - postimplementation reviews and independent baseline regression
+
+Both fresh reviewers received full detector/PAC source and emitted loops.
+Their verbatim findings (e438-*-review.md):
+
+> Raw evidence supplied: PAC extracts bit 30. Both loops contain one register `ldr` per iteration, annotated as volatile. Successful iterations execute 12 versus 8 instructions; the new mismatch path adds an unconditional branch. ADC_COMP totals 763â†’753 instructions. Tests report 381 passes; four ISR roots pass the audit. Candidate/archive ELF hashes match; the two supplied loadable hashes match.
+>
+> Claims supported:
+>
+> - Predicate equivalence holds: `!(level == rising)` equals `level != rising`. Masking with `1 << 30` and comparing against `rising << 30` preserves both polarities and excludes unrelated bits.
+> - Each hardware predicate invokes the same PAC `.read()` once; emitted loads remain inside the loop. The generic predicate API itself cannot enforce sampling.
+> - Zero depth performs no reads and accepts after the blanking gate; `count <= blanking` still rejects without sampling.
+> - Tests exhaust streams through depth 12, but â€œoldâ€ calls the new shared implementation. They independently check read counts and acceptance, not historical state-update equivalence.
+> - Four fewer executed instructions per successful sample are demonstrated, not four cycles or WCET savings. Hash equality does not establish equivalence to the installed firmware.
+> - Changed sampling spacing can admit shorter noise pulses. Host tests and ISR audits do not establish physical-aperture safety or powered-test readiness.
+> Raw evidence: both emitted loops reload COMP each iteration. Successful iterations execute 12â†’8 instructions; the new success branch is taken, so four fewer instructions does not establish four cycles saved or WCET. ADC_COMP shrinks by ten static instructions. Supplied output reports 381 passing tests and clean audits; matching loadable hashes establish equality only between those artifacts.
+>
+> Claims assessment:
+>
+> - Predicate equivalence holds: `!(level == rising)` equals `level != rising`. Masking bit30 and comparing against `0`/`1<<30` preserves both polarities; the supplied PAC confirms bit30. Other CSR bits are excluded.
+> - Each hardware predicate performs one register read, with an emitted load inside the loop. The generic API cannot enforce its â€œsamples onceâ€ contract for arbitrary callers.
+> - Zero depth accepts after blanking with zero reads, preserving existing behavior. The specialized assemblyâ€™s unconditional first read is consistent with its positive production depth.
+> - Tests compare a wrapper against its shared implementation; their independent read-count/acceptance assertions help, but state equality is not an independent baseline regression check. Synthetic words omit unrelated CSR bits.
+> - Physical equivalence is unproven: changed spacing can accept pulses previously rejected and move acceptance/arming earlier.
+>
+> No concrete digital defect shown. Evidence supports disabled boot checks, but alone cannot justify the powered screen without peak/thermal stops.
+
+Dispositions: digital predicate equivalence supported, physical filtering
+equivalence unproven. Accept test-independence finding: wrapper and candidate
+share a body, so their state-equality assertion alone is insufficient. Before
+dependent work, preserve the exact previous offer_timed method from commit
+71f19504c2a5ae403584c04e56689602490cc7fd in a test-only baseline and compare
+it against the candidate. Prediction: outcomes, state, counters, and read
+counts match, including bounded sequences and counter wrap. Unrelated CSR
+bits must be masked. Tests cannot prove unchanged sampling aperture.
+No new peak or thermal stop exists; reviewers are right that tests do not
+establish their coverage. Existing bounded exposure/cooling is a precaution,
+not a new safety guarantee. No powered admission claimed here.
+
+E438 regression result: 382 host tests PASS with
+--target x86_64-pc-windows-msvc --features advance-ref,deep-filter,com-top.
+Current-source structure PASS. Pinned method comparison PASS after explicitly
+reading UTF8 (first comparison incorrectly decoded the em dash and failed).
+Release rebuilt; loadable SHA remains80A40E0E...854D676AD, identical to E437b.
+No target runtime change from test-only baseline. Historical method is copied,
+not imported dynamically, and shared arithmetic dependencies are unchanged.
+
+Fresh follow-up evidence review:
+> Exact historical preservation is **unverified**: `RAW HISTORICAL SOURCE` contains only `System.Object[]`, not the historical method. The commit identifier and “retained verbatim” comment cannot establish exact preservation.
+>
+> The supplied oracle **is independent of the candidate adapter**: it implements the gate, read loop, and state updates directly without calling either current entry point. Its historical provenance remains unproven.
+>
+> Regression assertions provide substantial digital coverage:
+>
+> - Exhaustive streams through depth 12 independently assert acceptance and exact read counts, including both polarities, zero depth, and the default gate boundary.
+> - Stateful sequences compare complete outcomes, estimator state, `prev_zc`, counters, and read counts, exercising depth 255, extreme inputs, wrapping counters, and four timing policies.
+> - State equivalence is differential against the supplied oracle; shared arithmetic helpers leave common helper regressions undetected.
+>
+> The exhaustive test hardcodes a gate of 40 through `ZeroCross`; its expectations require the default blanking configuration and fail under `wide-blank`.
+>
+> The reported 382 passing tests support the executed configuration, whose full feature list is truncated. They do not authenticate the historical body or establish physical timing equivalence.
+
+Fresh follow-up adversarial review:
+> The packet supports conditional digital equivalence, with these gaps:
+>
+> - **Historical provenance is unverified.** The historical source is only `System.Object[]`; the commit annotation cannot establish that the oracle body was retained verbatim.
+> - **Independence is limited.** The oracle avoids the candidate adapter, but shares current blanking, clamping, arithmetic, policies and state construction. Shared regressions remain invisible. This is reasonable for isolating the predicate refactor, insufficient for broader historical parity.
+> - **Coverage labels overstate scope.** Exhaustive streams stop at depth 12. Depth 255 uses repeating 32-bit patterns; explicitly test first disagreement at reads 254/255 and full acceptance. Add inverted bounds, state-dependent policy invocation checks, and constant-advance override tests with conflicting runtime values. Hardcoded gate 40 assumes default blanking; feature combinations need separate evidence.
+> - **Passing tests establish host behavior only.** The 382-pass result neither identifies the complete feature configuration nor establishes target timing.
+> - **Physical aperture remains unqualified, as acknowledged.** Equal read counts cannot establish first-sample latency, spacing, volatile peripheral access, interrupt interference or edge-to-arm timing. Frozen accepted traces omit rejected edges and feedback; estimator clamps do not prove physically valid crossings.
+
+Dispositions: packet's historical-source array serialized as System.Object[];
+the independent local exact comparison passed, but reviewers lacked that source.
+Correct packet to join lines explicitly; no historical-verification credit yet.
+Shared helpers intentionally isolate this method refactor, not full historical
+firmware parity. Exhaustive scope remainsdepth0..12; statefuldepth255 is
+representative, not exhaustive. Inverted bounds and alternate-policy semantics
+were not changed and are not claims here. Fix hardcoded-gate test to instantiate
+ZeroCrossWith<32> explicitly, rather than depending on feature-selected alias.
+No electrical protections or timing thresholds changed. Physical aperture
+remains an explicit separate risk; no powered run or thermal proof claimed.
+
+Corrected-packet dual reviews (e438c, raw method now supplied):
+> The supplied historical method and oracle bodies match verbatim; only name/visibility differ. No concrete defect is apparent in this packet.
+>
+> Predicate coverage is strong: every Boolean stream through depth 12, both polarities, explicit `ZeroCrossWith<32>` gate boundaries, exact read counts, outcomes, state, and counters. Stateful comparisons add depth 255, extreme inputs, counter wrapping, and fresh/previous plus constant-advance variants.
+>
+> The reported run passes all 382 tests for the stated features. The incremental-cache warning concerns build reuse, not a reported test failure.
+>
+> Limits: longer streams are sampled, shared helpers do not independently verify historical arithmetic, and the current predicate implementation is not supplied for direct inspection. These constrain the evidence without constituting defects in the stated digital-regression scope. No unrelated firmware requalification or powered admission is warranted by this review.
+
+> The supplied historical and oracle method bodies match verbatim; only name/visibility differ. No concrete defect is evident in the supplied predicate tests.
+>
+> Coverage is strong within scope: every Boolean stream through depth 12, both polarities, explicit `ZeroCrossWith<32>` gate boundaries, independent acceptance/read-count expectations, and differential outcome/state/counter checks. Stateful sequences additionally exercise depth 255, counter wrapping, extreme counts/advances, and all four estimate configurations.
+>
+> Limitations: longer streams and state combinations are sampled; depth/count choices are correlated, and constant `TestDepth` does not test average-dependent policy behavior. The current predicate implementation is absent, preventing direct implementation inspection. Shared unchanged arithmetic limits oracle independence as explicitly intended.
+>
+> Reported results show 382 passing tests; the incremental-cache warning concerns future cache reuse. Nothing here requires unrelated firmware requalification or establishes physical timing parity.
+
+Dispositions: both verify pinned method-body preservation and support the
+narrow independent digital regression. Current candidate implementation was
+inspected in E438's first full packet; it did not change during this test fix.
+Do not transfer those reviews into physical-aperture or powered safety claims.
+After explicit blank32 test fix, targeted eight timing tests PASS; the prior
+full382 suite predates only that test-type clarification. Build/loadables
+unchanged. PowerShell process status1 on targeted pipeline came with native
+incremental-cache warning; test harness explicitly reports8/8PASS. No
+all-feature test claim. Remaining candidate risk is shorter physical sampling
+aperture plus register-spill/stack changes, not unproven test provenance.
+Next decision is whether bounded protected15% screening demonstrates useful
+pre-arm savings without new refusal/fault behavior; it cannot qualify80%.
+No bench access, serial, flash or powered run occurred this entry.

@@ -1,0 +1,7 @@
+The packet supports conditional digital equivalence, with these gaps:
+
+- **Historical provenance is unverified.** The historical source is only `System.Object[]`; the commit annotation cannot establish that the oracle body was retained verbatim.
+- **Independence is limited.** The oracle avoids the candidate adapter, but shares current blanking, clamping, arithmetic, policies and state construction. Shared regressions remain invisible. This is reasonable for isolating the predicate refactor, insufficient for broader historical parity.
+- **Coverage labels overstate scope.** Exhaustive streams stop at depth 12. Depth 255 uses repeating 32-bit patterns; explicitly test first disagreement at reads 254/255 and full acceptance. Add inverted bounds, state-dependent policy invocation checks, and constant-advance override tests with conflicting runtime values. Hardcoded gate 40 assumes default blanking; feature combinations need separate evidence.
+- **Passing tests establish host behavior only.** The 382-pass result neither identifies the complete feature configuration nor establishes target timing.
+- **Physical aperture remains unqualified, as acknowledged.** Equal read counts cannot establish first-sample latency, spacing, volatile peripheral access, interrupt interference or edge-to-arm timing. Frozen accepted traces omit rejected edges and feedback; estimator clamps do not prove physically valid crossings.

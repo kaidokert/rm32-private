@@ -53,6 +53,8 @@ impl WaitEstimate for PreviousEstimate {
 
 #[cfg(test)]
 mod timing_tests;
+#[cfg(test)]
+mod historical_persistence;
 
 /// How many consecutive comparator reads must agree, as a policy type.
 pub trait FilterPolicy {
@@ -527,6 +529,19 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
         policy: &F,
         mut read_level: R,
     ) -> Outcome {
+        self.offer_timed_matches::<T, F, _>(count, advance_level, policy, || read_level() == rising)
+    }
+
+    /// Each predicate call samples once and reports whether the level matches.
+    /// Same digital persistence contract; a cheaper hardware predicate changes
+    /// sample spacing and must be qualified as a distinct physical aperture.
+    pub fn offer_timed_matches<T: WaitEstimate, F: FilterPolicy, R: FnMut() -> bool>(
+        &mut self,
+        count: u32,
+        advance_level: u32,
+        policy: &F,
+        mut matches: R,
+    ) -> Outcome {
         // 1. half-cycle gate — strictly greater, matching the reference.
         if count <= self.blanking() {
             self.too_early = self.too_early.wrapping_add(1);
@@ -538,7 +553,7 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
         let depth = policy.level(self.average_interval);
         let mut i = 0u8;
         while i < depth {
-            if read_level() != rising {
+            if !matches() {
                 self.unstable = self.unstable.wrapping_add(1);
                 return Outcome::Unstable;
             }

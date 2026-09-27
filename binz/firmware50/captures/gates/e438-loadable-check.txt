@@ -1,0 +1,9 @@
+
+
+Algorithm : SHA256
+Hash      : 80A40E0E2D9EBF380D412B432E399EB2AFB5ABEBDA6AE93FCC37BDE854D676AD
+Path      : E:\m\robot\esc\rm32\binz\firmware50\captures\gates\e437b-loadable.bin
+
+Algorithm : SHA256
+Hash      : 80A40E0E2D9EBF380D412B432E399EB2AFB5ABEBDA6AE93FCC37BDE854D676AD
+Path      : E:\m\robot\esc\rm32\binz\firmware50\captures\gates\e438-loadable.bin

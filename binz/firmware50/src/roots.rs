@@ -481,9 +481,9 @@ pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fin
             Some(level) => level,
             None => S.det().advance.load(Ordering::Relaxed),
         };
-        // Persistence reads the **live** comparator, microseconds after the edge --
-        // exactly what AM32's handler does, and what the foreground could never do.
-        match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &DET_FILTER, hw::comp::level) {
+        // Read live COMP each time, with expected polarity prepared once.
+        let expected = hw::comp::expected_level_word(edge_is_rising(step));
+        match zc.offer_timed_matches::<T, _, _>(count, advance, &DET_FILTER, || hw::comp::level_word() == expected) {
             crate::bemf::Outcome::Accepted { wait, .. } => {
                 // The accepted crossing's bookkeeping, then the arm. (A stale
                 // comment describing the reverted E142 order stood here until
