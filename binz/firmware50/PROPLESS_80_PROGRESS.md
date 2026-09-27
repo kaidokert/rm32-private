@@ -6,6 +6,14 @@ Top-level28 is incomplete reason mapping, not an unexplained new fault.
 Timed recheck active854 requests/34826observations; not accepted-rescue counts.
 Dual reviews retained. No powered envelope gain; candidate not promoted.
 
+E463 staged63F48607, NOT FLASHED: optional phase4 retry parks during masked
+COMP decision; normal refusal wakes it, acceptance replaces, stop suppresses.
+408hosttests, release/clippy/fourrootaudit/structurePASS. Dual reviews caught
+new refusal work outside handler budget; second unchanged50us check now covers
+it and immediately stops on overrun. Fast branch skips scheduler, but fullCOM
+modeled cost increased and completeISR timing is not proved. Next is realIRQ
+disabled park/wake/cancel integration, not a blind repeat of15% failure.
+
 E461b historical: DEA54192 off-only lifecycle probe installed, outputs OFF,
 UART closed. One suite: five autonomous UIF-backed expiries within8..9us of
 slots; replacement expiry1003us; injected post-stop service harmless. All

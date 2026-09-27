@@ -22,7 +22,7 @@ fn TIM16() {
 #[interrupt]
 fn ADC_COMP() {
     // SAFETY: configured ADC_COMP vector at CompPrio::NVIC.
-    unsafe { roots::comp_root_timed::<NoLog, NoChain, ConstantAdvance<FreshEstimate, 16>>() }
+    unsafe { roots::comp_root_scheduled::<NoLog, NoChain, ConstantAdvance<FreshEstimate, 16>, roots::recheck::Timed>() }
 }
 #[entry]
 fn main() -> ! {

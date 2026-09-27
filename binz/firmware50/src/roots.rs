@@ -1297,6 +1297,7 @@ pub unsafe fn com_root_scheduled<C: ChainLog, P: hw::pwm::RoleWrite, R: recheck:
         hw::com_timer::disable_interrupt();
         return;
     }
+    if R::ON && recheck::defer_for_comp() { return; }
     let preempted = count_preempt::<C>();
     let now_raw = hw::clock::raw();
     let late = note_com_lateness(now_raw);
@@ -1502,6 +1503,15 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
 /// Same ADC_COMP vector, priority and single-invocation contract as `comp_root`.
 #[inline(always)]
 pub unsafe fn comp_root_timed<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate>() {
+    // SAFETY: unchanged vector, priority and unique-root contract.
+    unsafe { comp_root_scheduled::<L, C, T, recheck::Foreground>() }
+}
+
+/// COMP half of the typed optional-observation handshake.
+/// # Safety
+/// Same vector, priority and unique-root contract as `comp_root_timed`.
+#[inline(always)]
+pub unsafe fn comp_root_scheduled<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate, R: recheck::Policy>() {
     // Mask and ack first, always. This is the storm guard, and it keeps the
     // documented G071 early-return bug class closed (`rm32/CLAUDE.md`): whatever
     // path is taken below, the pending bit is already clear.
@@ -1574,7 +1584,7 @@ pub unsafe fn comp_root_timed<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstim
             //
             // The pending flags were cleared above, so re-enabling cannot
             // re-fire on the same event. binz Entry 094 order (E103).
-            comp_resume_powered();
+            if comp_resume_powered() && R::ON { recheck::resume_after_refusal(raw); }
         }
         // Accepted: stay masked until the foreground commutates and re-arms for
         // the next sector -- one crossing per sector, as the reference serves.

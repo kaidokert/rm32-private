@@ -30,6 +30,36 @@ static STATE: Seam<State, Motor> = Seam::new(State {
     schedule: None, requests: 0, observations: 0, retired: 0,
 });
 
+/// Only an expired optional observation may park across masked COMP work.
+/// Called before COM accounting: keep optional work outside decision-to-arm.
+/// Refusal wakes the parked timer; acceptance replaces it.
+#[inline(always)]
+pub fn defer_for_comp() -> bool {
+    crate::revisit_delivery::defer(S.com().phase.load(Ordering::Relaxed), hw::comp::line_live())
+}
+
+/// No schedule borrow here: COMP only wakes its higher-priority owner.
+pub fn resume_after_refusal(comp_entry_raw: u16) {
+    cortex_m::interrupt::free(|_| {
+        let a = authority();
+        if crate::revisit_delivery::resume(a.powered, a.phase,
+            hw::comp::line_live(), hw::com_timer::is_running()) {
+            hw::nvic::pend(stm32::Interrupt::TIM16);
+        }
+    });
+    // Include the new refusal-tail work and any wake preemption in the existing
+    // handler budget. The earlier check remains; this can only stop sooner.
+    let elapsed = u32::from(hw::clock::raw().wrapping_sub(comp_entry_raw))
+        .wrapping_add(S.comp().overrun_inject_us.load(Ordering::Relaxed));
+    if elapsed > S.comp().call_max_us.load(Ordering::Relaxed) {
+        S.comp().call_max_us.store(elapsed, Ordering::Relaxed);
+    }
+    if crate::rate::handler_overrun(elapsed) {
+        S.comp().overrun.store(true, Ordering::Relaxed);
+        guard_trip(Reason::HandlerOverrun);
+    }
+}
+
 fn authority() -> Authority {
     Authority {
         powered: S.guard().reason.load(Ordering::Relaxed) == 0

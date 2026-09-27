@@ -47340,3 +47340,138 @@ recheck work inside the pre-arm critical timing window while preserving
 stop/accepted-sector ownership, or retiring the timed strategy if its cost
 cannot be justified. No new diagnostic campaign or reason-only flash planned.
 Installed02F4D1E2 remainsOFF/UARTclosed.80%goal unfinished.
+
+## E463 — defer optional timer observation across active COMP, design review
+
+E462 is progress evidence: candidate fails first15%screen, not a viable
+envelope gain. Fixed16/ci59 wait15us versus spend17us. The cause of that
+specific delay is unresolved; COM0x40 can preempt COMP0x80. Design hypothesis:
+optional phase4 observation must not run its full masked scheduler while
+COMP has already masked its line to qualify/arm. Add a typed Timed-only fast
+return after TIM16ack when phase4 && !COMP.IMRlive; leave phase4 marker and
+saved schedule intact, no rearm. On COMP refusal, after stop-dominant resume,
+under exclusion, if live powered phase4 and timerCEN0, pend TIM16 to resume
+the saved schedule. Acceptance instead replaces old timer atomically; stop,
+storm or handler overrun never resumes. Foreground/default binaries unchanged.
+This is deferral of optional observation, not persistence/guard relaxation or
+synthetic acceptance. Accepted phase1/blanking COM may still preempt COMP.
+Tests must cover refusal, acceptance, stopped work, already-running timer,
+stale pending and repeated calls. Review concurrency before implementation.
+Prediction if pursued: full recheck work cannot overlap pre-arm COMP while
+IMRmasked; resumed scheduler still skips missed slots rather than catchup.
+This does not promise no late arms from DMA/guard or establish E462 cause.
+
+E463 independent design reviews:
+
+> Raw evidence: phase4 performs no commutation; recheck state is COM-owned. Crossing preparation clears TIM16’s peripheral and NVIC pending state before installing phase1. `line_live()` measures IMR only; `CEN=0` alone does not establish whether an IRQ remains pending.
+>
+> The proposal preserves ownership and appears live, provided these conditions hold:
+>
+> - Skipping leaves schedule and phase4 intact. COMP refusal must invoke the typed helper after successful `comp_resume_powered()`, including refusals caused by rebasing.
+> - Under one PRIMASK region, the helper must revalidate guard reason, detector/com authority, stopped latch, phase4, IMR and CEN before pending TIM16.
+> - Acceptance, storm, overrun and shutdown must bypass rescue. Their retained schedule is inert until COM replaces or retires it.
+>
+> Concrete races: COM expires during masked COMP persistence → skip → refusal → rescue. Acceptance instead replaces the expired recheck with phase1. Guard between comparator resume and helper must suppress rescue. COM between resume and helper may already rearm or exhaust the schedule; the helper must observe that updated state.
+>
+> Shortest discriminating test: force phase4 expiry immediately after COMP’s raw stamp; verify no scheduler execution before refusal, then exactly one resumed observation. Repeat with acceptance and guard shutdown: neither may produce stale rescue or premature phase1 dispatch. Include an already-pending TIM16 case.
+> Raw: `after_phase` currently executes the full masked scheduler even when COMP has masked IMR18. Generation invalidation protects publication only after `accept_seq` changes; it does not eliminate scheduler interference earlier in acceptance. Also, `com_arm` does not clear stale TIM16 NVIC pending; crossing preparation does. The one-shot model omits that distinction.
+>
+> The proposed handshake preserves ownership and bounded liveness, provided:
+>
+> - COM checks phase4/IMR immediately after acknowledgment and active validation, before logging, clock accounting, or scheduler work.
+> - Every ordinary closed-loop refusal invokes the typed helper after successful `comp_resume_powered()`. Both operations must remain ordered; the helper revalidates everything under PRIMASK.
+> - Wakeup only pends TIM16; COM retains exclusive schedule mutation.
+>
+> Concrete interleavings: expiry during masked COMP parks phase4; refusal resumes it. Refusal before expiry sees CEN1 and needs no wake. Expiry between resume and helper lets COM progress first; helper must tolerate the resulting phase/timer state. Acceptance clears any parked wake through `prepare_crossing`; stop clears it through `com_stop`.
+>
+> Shortest discriminating test: expire phase4 immediately after COMP masks IMR; assert zero scheduler observations, phase4/CEN0 retained; force refusal and assert eventual COM observation. Repeat with acceptance and stop: neither may dispatch obsolete phase4 work. Include hardware/NVIC pending state, not merely the truth table.
+
+Disposition: implement exactly this ordered handshake. COM alone retains
+schedule mutation; COMP helper only validates and pends underPRIMASK after
+successful normal refusal resume. Acceptance/storm/overrun never invoke it.
+Add host pending-bit/phase/timer model for identified interleavings; models
+are not peripheral proof. Hardware disabled handshake check remains before
+another powered screen. No code15-label-only build and no guard changes.
+
+E463 implementation/check results before any flash:408hosttests PASS, including
+four new delivery tests (predicate truth table; parked expiry/refusal;
+acceptance/stop cancellation; expiry between resume/wake). Model tracks NVIC
+pending/CEN but is not an actual IRQ test. Release/clippy/four-root auditPASS.
+Frozen25E15F15 SHA25E15F155FD5E4F71D08F583559C783B4B8E60475AB1523A99236E4CDA152616.
+COMP root833->839 disassembly entries with a new post-refusal helper; DMA37
+and guard161 identical. COM masked-phase4 branch at08000d7c..08000d84 jumps
+directly to epilogue0800106e BEFORE accounting/scheduler calls. This is the
+desired path change, not a whole-ISR speedup: full COM static modeled worst
+path2239->2385cycles (34.98->37.27us), APB/preemption not modeled. Early-path
+benefit does not justify hiding full-path cost. Structure initially101lines
+in COM due to added comments; moved the two comments to helper docs, now99.
+No claimed executable improvement from that comment move. Build needs final
+reproducibility check after doc move. Hardware parked/refusal handshake still
+untested; no flash/motor yet. Installed02F4D1E2 remainsOFF/UARTclosed.
+
+E463 first implementation reviews:
+
+> Recomputed: average 80 gives slots **41, 121, 161, 201, 241 µs**; average 81 starts **41, 122 µs**. Late observations skip expired slots without catch-up bursts. The reported COM increase is **146 cycles = 2.28125 µs**; 2385/64 = **37.265625 µs**, excluding exception overhead and unmodelled fetch cost.
+>
+> No definite handshake defect found in the supplied source: refusal checks and pending publication share PRIMASK; acceptance stops the source and clears TIM16 pending before replacement; stop removes authority.
+>
+> Two gaps matter:
+>
+> - `call_max_us` and overrun enforcement run **before** comparator resume and the new wake helper. They do not bound the complete refusal handler.
+> - `line_live()` checks IMR only. COM can preempt between NVIC masking and IMR clearing at COMP entry and execute optional work. This precedes the decision, but the Boolean model omits that intermediate state.
+>
+> Required bridge-disabled test: exercise actual TIM16/COMP priorities, CEN/UIF/NVIC pending, and both masking stages. Inject expiry before/during/after refusal resume; verify eventual bounded observation, no duplicate slot request, acceptance cancellation without premature phase-1 dispatch, and stop cancellation. Include hardware expiry while PRIMASK is set.
+>
+> The audit summaries and abstract tests cannot establish those peripheral transitions or bind the reviewed source to the audited ELF.
+> - **Budget enforcement misses the new work.** `comp_root_scheduled` computes `elapsed` and checks `handler_overrun` before `comp_resume_powered()` and `resume_after_refusal()`. The added authority reads, PRIMASK section and TIM16 pend are excluded from `call_max_us` and overrun enforcement. Thus those measurements cannot bound the complete refusal path.
+>
+> - **Stop evidence is decoded incorrectly.** `stop_expired_arm()` trips `Reason::LateArm` (documented code 15), but `reason_from_code()` has no 15 arm: it reports `UnknownGuard`. Shutdown still occurs; the reported cause loses fidelity.
+>
+> - **The handshake model assumes the peripheral behavior requiring validation.** Its single `pending` boolean collapses UIF, NVIC pending and active state. Sequential `wake()` calls do not exercise interrupt assertion during acknowledgment or timer replacement. The existing `crossing_selftest_off()` masks TIM16 and never executes this handshake.
+>
+> Required disabled test: with ENABLE low and MOE clear, exercise actual TIM16/COMP dispatch at the selected priorities. Force expiry during masked COMP, refusal before/after expiry, repeated wakes, acceptance replacement, and stop with a wake pending. Verify one observation, no premature replacement-timer dispatch, and no activity after stop; record UIF/CEN/NVIC/phase transitions.
+>
+> Recomputed slots for average 80 are **41, 121, 161, 201, 241 µs**. The supplied audit cannot establish race correctness.
+
+Dispositions before any flash: correct, the new refusal tail lay outside the
+existing handler bracket. Extended the Timed-only helper with a second check
+from original COMP entry after wake, including any COM preemption. Same50us
+threshold and injection; records max and immediately guard_trips HandlerOverrun
+if exceeded (line may have resumed, so a flag alone is insufficient). Existing
+earlier check remains. This strengthens coverage, not a budget relaxation.
+NVIC-mask-before-IMR window permits recheck work BEFORE COMP timestamp; not
+covered by postentry spend and not claimed removed. Model is explicitly not
+hardware proof. All enumerated real-IRQ handshake cases remain untested.
+Reason15->28 is retained known reporting defect, shutdown unaffected; no
+separate motor run/build solely for label repair. Full COM model included
+fetch-model flag; footer saying unmodelledfetch is stale tool prose, not an
+extra missing cost already charged. APB/preemption still unmodeled.
+Comment relocation rebuilt AD8348AB with identical four root streams; this
+review correction supersedes both25E15F15 andAD8348AB beforeflash.
+
+E463b corrected-budget reviews:
+
+> Raw evidence: `resume_after_refusal` samples the clock after the exclusion block and wake request, subtracts `comp_entry_raw`, adds the existing injection, updates `call_max_us`, and trips through `handler_overrun` when elapsed exceeds 50 µs.
+>
+> Yes: this addresses the omitted refusal-tail budget through that sample, including COM preemption completed before it. It detects an overrun retrospectively; it does not prevent the wake from executing first.
+>
+> The correction adds no explicit rearm or authority restoration. However, “without revival” remains conditional on the unseen `revisit_delivery::resume`, TIM16 authority checks, and callers supplying the original COMP entry timestamp.
+>
+> It still excludes final accounting/exit and entry latency; the 16-bit subtraction also assumes less than one clock wrap. Supplied tests establish threshold semantics, not IRQ integration. The pending real-IRQ handshake test remains necessary evidence.
+> Yes, narrowly: the second check closes the newly added refusal-tail measurement gap through its clock sample, including intervening COM preemption, while preserving injection and the existing >50 µs cutoff.
+>
+> “No revival” remains conditional: `resume` must reject revoked authority, and `guard_trip` must invalidate/disarm any work already resumed or armed. Those implementations aren’t shown. Pending TIM16 before checking the budget allows COM to execute before an overrun is detected; this is retrospective detection, not prevention.
+>
+> Remaining limits: final accounting/exit is excluded, and the 16-bit subtraction aliases durations ≥65,536 µs. The supplied tests verify the threshold, not this integration. The pending real-IRQ test should cover over-budget wake preemption and verify that subsequent TIM16 delivery cannot rearm after the trip.
+
+Disposition: budget enforcement is retrospective through its second sample,
+not prevention of wake execution or wholeISR WCET. Existing16bit timing
+assumption remains; no arbitrary65msblackout guarantee. Handshake predicate
+and stop invalidation already reviewed in E463design; no authority restore
+added by correction. Actual refusal/accepted/stop/overbudget wake interleavings
+still require the disabled integration test before powered work. No envelope
+claim. Finalstaged63F48607 SHA63F48607E16E0C482791E8E431CE61070BE2D30491ADFD455F48895657604543;
+release/clippy/fourrootaudit/structurePASS.408hosttests cover unchanged pure
+model, not target-onlybudgetintegration. COMP839->855entries versusprecheck
+candidate; inspect assembly as increased refusal cost, not reduced fullroot.
+Installed02F4D1E2 remainsOFF/UARTclosed; no powered run thisentry.

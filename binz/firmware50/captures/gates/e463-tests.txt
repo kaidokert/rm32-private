@@ -1,0 +1,19 @@
+cargo : note: did not finalize incremental compilation session directory
+`\\?\E:\m\robot\esc\rm32\binz\firmware50\target\x86_64-pc-windows-msvc\debug\incremental\stm32g0xx_hal-2wxie5w58cr4u\s-hmo6zw5ixf-1yg7du4-working`: Access is denied. (os error 5)
+At line:2 char:829
++ ... r-diff.txt; cargo test --lib --target x86_64-pc-windows-msvc --featur ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (note: did not f...d. (os error 5):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+  |
+  = help: the next build will not be able to reuse work from this compilation
+
+
+running 408 tests
+....................................................................................... 87/408
+....................................................................................... 174/408
+....................................................................................... 261/408
+....................................................................................... 348/408
+............................................................
+test result: ok. 408 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.20s
