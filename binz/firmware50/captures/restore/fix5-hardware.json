@@ -1,0 +1,22 @@
+{
+  "pre": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"9a606737-e62c-4e84-a251-86b92cfe5ad6\",\n  \"bytes_read\": 77,\n  \"data\": \"PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 28,\n  \"elapsed_ms\": 615,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 77,\n      \"waited_ms\": 28,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  },
+  "post": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"fbf7d24a-6f65-4a4e-be2a-58bd0b08a745\",\n  \"bytes_read\": 77,\n  \"data\": \"PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 23,\n  \"elapsed_ms\": 613,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 77,\n      \"waited_ms\": 23,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  },
+  "flash": "probe-rs explicit G071 download/verify/reset exit0; verification successful",
+  "elf_sha256": "236614731EB5E32BA293629A5F14E7D90F61BBA1D69C1B6CE28B80E1DCB2116F"
+}

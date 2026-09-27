@@ -113,3 +113,12 @@ not reconstructed phase truth. Hold/start/stop boundary attribution remains
 approximate as documented. No rate improvement inferred from changed telemetry.
 Preflash fresh MCP alloffPASS. Next flash/verify explicit G071, check disabled
 state then one45s60screen, all protections unchanged.
+
+E495 result:60%14.775s,deadline2,late0/thin0/blank0,guard0,ceiling600,
+forced0,coast2171eHz,proxy2330mA,COMPmax16,COMlate12,guardgap109us.
+BEMFMAILBOX coalesced647;foreground402516 vs ISR402517, one boundary event
+not reconstructed. This demonstrates active accounting, not improved lock.
+Fixture exits1 solely for predeclared <30s dwell; no full qualification claim.
+Fresh MCP alloffPASS,nFAULT1,Uartclosed. Keep backport5; no further runs.
+All five selected backports now retained. Experimental control architecture
+remains parked. Latest source039f046,loadable archive fix5.elf as above.
