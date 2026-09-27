@@ -1,6 +1,6 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E432 failed exploration and E433 offline build, 2026-09-27.
+Updated through E436 lean25% late-arm stop and dual review, 2026-09-27.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
 
 Latest: E430 fixed16 constant-policy diode candidate `1D3D29EC` completed one
@@ -18,7 +18,13 @@ sevenacceptedcrossings,4msclosed,~10%actual,zero25targetdwell. Thus no test
 of the22%latearm regime. Recorded1035us terminalgap vs1000uswatch; sixprior
 COMs served withoutgrossdelay. Causeunresolved, no retry. E433 lean typed
 constant candidate9C748DED removes diagnosticring only;380tests/clippy/audit
-pass,5140bytesRAMsaved. Stagedunflashed, independentreviewpending.
+pass,5140bytesRAMsaved. Installed after reviewed helper/assembly audit.
+E435 lean15% held20.278s at2202eHz,late/thin0,COMPmax17us/spent11.
+E436 lean25% reachedtarget and held3.371s at~3045eHz,thenLateArm:
+ci40/wait10/spent10,guard15,late1,thin193. No sag/tracking/nFAULT stop.
+Removingrecording alone did not clear thisattempt. No newqualifiedrung.
+Installed9C748DED OFF/UARTclosed. Next: offlineprearmcriticalpath work,
+not moreduty or guardrelaxation. Allfailedcaptures retained.
 Current screens are bounded28s powered and>=120sOFF; no measured temperature.
 
 ## Scope

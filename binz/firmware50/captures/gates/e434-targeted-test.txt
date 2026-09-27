@@ -1,0 +1,18 @@
+cargo : note: did not finalize incremental compilation session directory
+`\\?\E:\m\robot\esc\rm32\binz\firmware50\target\x86_64-pc-windows-msvc\debug\incremental\stm32g0xx_hal-2wxie5w58cr4u\s-hmo6zw5ixf-1yg7du4-working`: Access is denied. (os error 5)
+At line:5 char:1
++ cargo test --lib --target x86_64-pc-windows-msvc --features advance-r ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (note: did not f...d. (os error 5):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+  |
+  = help: the next build will not be able to reuse work from this compilation
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\firmware50-661f5fa6452097cc.exe)
+
+running 1 test
+test tracking::tests::e432_stale_boundary_is_not_cleared_by_a_late_accept ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 379 filtered out; finished in 0.00s

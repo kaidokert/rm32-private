@@ -45132,3 +45132,135 @@ ld.lld, cwdfirmware50. Sourcebase6bb1801 plus this committedbinary/test/TOML dif
 Helper bodies and fullold/newroot semantic relocation check still owed before
 flash; no claim allremovedmachineinstructions are strictlylogging (register
 allocation also changes). Next work is that bounded audit, not anotherprobe.
+
+### E434 - exact helper/provenance followup
+
+Previous turn made source/test/failed-run progress. No new build/guardchange.
+Both stop_expired_arm and comp_exti_arm compare encodedbyte-identical including
+pools between1D3D29EC and9C748DED. DMApool changedonly DMA_BUF/SCANaddresses;
+TIM6 pool changedonlySCAN20002738->20001324, matchednm maps. Otherconstants
+including04e33880=82000000usbackstop unchanged. Literalcomparison script first
+regex returnedemptylists; NOT evidence; directobjdump.wordinspection used.
+Targeted watchtest exactfullname PASS1; initialshortname --exact --list found0,
+not a testpass. Full380 suite remains prior gate. Bothreviewers received full
+helpers,defaults,maps,tests,bin diff and auditallowlist:
+
+> Both helper disassemblies match instruction-for-instruction, including literal pools; the byte comparisons agree. Their shared-state addresses remain unchanged in the maps. This closes the presented stop/rearm helper-equivalence gap.
+>
+> `NoChain` inherits `ORDER=false`, sets `ON=false`, and supplies empty callbacks. The bin diff removes recorder selection/control/output; the maps corroborate removal of recorder storage. This supports recording removal, not identical interrupt timing.
+>
+> The targeted stale-boundary test passed despite the incremental-cache warning. It establishes only the stated watch contract. Commit/build/hash linkage and broader checks remain author-reported here; filenames alone do not independently establish provenance.
+>
+> No concrete new defect is demonstrated. I support proceeding to disabled boot checks, then the proposed single screen conditional on those checks passing. Resolve one scope ambiguity: the audit describes a 5.2-second energized ceiling, so “28s” must mean a guarded campaign, not a continuous run bypassing that ceiling. The PSU setting does not establish measured current protection or thermal coverage.
+
+> The supplied disassembly shows both helpers byte-identical, including literal pools; their COM/DET/DRV/GUARD addresses also match the maps. `NoChain` inherits `ORDER=false`, sets `ON=false`, and supplies no-op callbacks. These close the specific helper/default gaps; I see no concrete new defect here.
+>
+> Provenance remains reported: filenames and maps do not independently establish the stated commit/build/archive linkage. The targeted test passes but establishes only the watch’s stale-latching contract. The allowlist documents bounds; it does not itself demonstrate the reported root-audit result.
+>
+> I support advancing to disabled boot checks, then the proposed single screen conditional on those checks passing and existing guards remaining effective. Resolve one scope ambiguity before energizing: the audit states a 5.2-second energized ceiling, so “28s” must not imply bypassing that ceiling.
+>
+> Recorder removal can change timing despite identical helpers. This supports bounded candidate screening, not startup-failure attribution, WCET equivalence, or reliance on the unverified PSU setting as measured current protection.
+
+Dispositions: 5.2s comment belongs to old shell_pwm::drive_loop allowlist entry,
+not diode-lean motor roots or current Controller. Current run/mod.rs626..635
+explicitly selects28000ms for9/8; policyBEMF_TOTAL_MS78000,independentTIM6
+backstop82000000us (literal04e33880), unchanged. No ceiling bypass. Scope
+ambiguity resolved from actualsource/emittedconstant. Archive/source hashes
+and commands recordedE433/bb3ba3f; no broaderWCET/equivalence claim. Both
+support disabledchecks then bounded15screen with existingcoverage caveats.
+
+### E435 - lean15% baseline
+
+Before flash/run: exact9C748DED candidate, explicitG071probe, MCPp alloff plus
+bootcheck prerequisite. Command9 target150/28stotal/min19shold, proplessreverse
+12V/operator3A, allprotections unchanged. >120sOFF since E432. Hypothesis only
+that removingrecording preserves viablegentleoperation; compare actualtimings,
+not instructioncounts. Oneattempt, retainfailure, no automatic25orhigher.
+
+E435 result: exact9C748DED explicitprobe flash/reset; MCPp alloffPASS and
+cachedsix-sector/latch/deadlinechecksPASS. Command9 capture
+e435-propless150-diode-lean_01.txt completedreason2,20.278starget/22.778sclosed,
+ceiling150CCR199/1333,coastchecker2202eHz/matched999permille. FinaloffPASS,
+UARTclosed. Late/thin0,spent11us,COMPmax17us,COMlate5us(mixedpurpose),
+guardgap104us,track0,storm0,overrun0,blanklatched0. Noordercapture expected.
+Currentproxy190mA/drift-254 is not calibratedamps/efficiency; busref1217,
+min1082raw, filteredrest997.53permille, no sagstop. ComparisonE430recorded
+same15target20.278s: spent12/COMP26/COMlate14,coast2208. Observed maxima lower,
+not a WCETbound or causalrateproof. Fresh dualreview before ONE25screen;
+no repeat15/full-ladder solely for a newhash. Existingfailedcapture remains.
+
+E435 reviews, verbatim:
+
+> Raw recomputation: E435 hold = 265441/20.278 = 13090.10 accepts/s, or 2181.68 eHz; E430 = 13129.65/s, 2188.27 eHz. E435 is 0.30% slower. E435 tail = 2200.33 eHz, consistent with coast2202 and matched999; reported2192 comes from rounded76µs. Sector-count deficits exactly equal mailbox coalescing:899/2142.
+>
+> Both15% runs held20.278s with zero forced commutations. Lower E435 timing maxima do not establish causal improvement from one run. Zero margin counters mean unmeasured margins; saturated phase bins prevent complete distribution analysis. Current190mA versus drift−254mA cannot establish calibrated current headroom.
+>
+> E432 concretely failed tracking after4ms, before target exposure: CCR133/1333≈10%, hold0. Thus it does not demonstrate steady25% failure. The reported prior lean failure remains unresolved; its raw evidence is absent here.
+>
+> One25%/28s propless screen after≥120s OFF is a bounded diagnostic, not qualification toward80%. Preserve guards; no retries. Require actual25% exposure, positive target hold, coast agreement, and safe poststop. Peak-current/thermal capability remains unmeasured—not a newly demonstrated blocker. Another startup failure answers startup repeatability only.
+
+> Raw recomputation: E435 hold rate = 265441/20.278/6 = 2181.73 eHz; E430 = 2188.32 eHz. Tail rates = 2200.33/2206.33 eHz. E435 tail/coast = 999.24‰, consistent with “matched999,” but its tail spans 2.278 seconds, not the advertised two. Sector deficits equal mailbox coalescing exactly: 899/2142. They do not independently demonstrate missed commutations.
+>
+> E435 supports one sustained 15% run. Lower timing maxima do not establish causal improvement; loop-gap maximum worsened 155→162 µs. Zero margin bins mean unmeasured margins, and saturated phase bins prevent complete phase-distribution inference.
+>
+> Concrete existing blocker to qualification: 25% startup/tracking failures. E432 stopped at CCR 133/1333 ≈10%, before attaining 25%; calling it a 25% steady-state failure is incorrect. No concrete new blocker emerges here.
+>
+> One bounded 25% attempt is defensible as diagnosis: ≥120 seconds OFF, 28 seconds maximum, existing guards, no retries. Report achieved duty, hold duration, stop reason, and coast agreement. Peak current, temperature, and timing margin remain unmeasured; cooldown alone does not establish safety or readiness for 80%.
+
+Dispositions: no claimmorethan one15pass. Recompute exactholdratios directly;
+reviewers differ slightly in printeddivision, not material to decision.
+Tailactualspan not nominal2s, mailboxnotphysicaleventtruth, binsdisabled/
+saturated, currentdriftlarge, maxforegroundgapworsened: retainallcaveats.
+Both endorsebounded25diagnosis, not higherqualification or startupfix.
+
+### E436 - lean25% single exposure
+
+Pre-run unchanged9C748DED, command8target250/28000ms,minhold15000ms.
+Require>=120sOFF from E435 completion08:31:54.693UTC, existingguards,
+MCPp alloffPASS beforefixture. Success needs actual25targetdwell,notjustACK;
+failure retained/endbatch, no retries. Determine if leanconstant can reach
+previouslatearm/trackingregion. Physicalcausality/rateproof not inferred.
+
+E436 result: >120sOFF verified beforefixture; MCPp offPASS/closed.
+Exact9C748DED capture e436-propless250-diode-lean_01.txt reachesCCR333/1333,
+hold3371ms then reason28 with guardreason15/LateArm. ci_atlate40,spent_atlate10,
+late1,thin193,ci_min40. Fixed16wait at40 is10us; expireddeadline sourcebranch
+explains stop, not why estimator contracted/latency landed there. spentmax11,
+COMPmax23,COMlate11mixedpurpose,guardgap110,track0,storm0,overrun0,
+blanklatched0. No sagstop; rest999.18permille,busref1214/rawmin1125.
+Currentproxy338mA/drift-261 not calibratedheadroom. Coast3045eHz,tailmatched1004;
+tailaccepts61793 span3371070us, actualwindow not assumed2s. FinaloutputsOFF PASS,
+UARTclosed. No ordertrace by design. Recorder removal alone did not suffice
+on thisattempt; no failurerate/physicalcause/80wall claim. Do not raisethrottle
+or repeatuntilpass. Freshdualreview examinesraw terminal evidence and actual
+entry-relative timerprepare/start path before next offlinecost/schedulingwork.
+
+E436 reviews, verbatim:
+
+> CCR 333/1333 = 24.981%. Tail 61,793/(3.371070 s × 6) = **3055.06 eHz**; its span exceeds the advertised 2-second window. Full-hold 61,794/(3.371 s × 6) = 3055.18 eHz. Rounded mean-sector 54 µs yields 3086.42 eHz. Coast 3045 is 99.67% of tail rate; printed `matched_rate_permille=1004` needs its actual formula.
+>
+> Terminal evidence supports deadline exhaustion: fixed-16 wait at CI 40 is (40>>1)−(40>>2)=10 µs, matching spent=10. Assuming the stated helper semantics, remaining time is zero, selecting `stop_expired_arm()` and LateArm. This explains the **guard trigger**, not the physical cause of CI shortening or time consumption. No sag trip, tracking fault, or forced commutations are reported; endpoint nFAULT is high.
+>
+> Arm sequencing looks defensively ordered: validation, timer/source disable, flag/pending cleanup, elapsed sampling, then stop-or-enable under one interrupt mask. However, shutdown implementation and helper definitions are absent; complete safety is unproven. Poststamp instructions and ISR latency still delay commutation. Zero margin counters provide no latency bound.
+>
+> Next bounded step: inspect helpers, shutdown, and generated pre-sample instructions offline before selecting an optimization. Endpoint OFF checks support shutdown state, not transient safety.
+
+> 61793 / 3.371070 s / 6 = **3055.06 eHz** across the recorded tail, versus 3086 from rounded mean-sector timing. Coast 3045 is 99.67% of that tail rate; inverse matching is 1003.31‰, so reported 1004‰ needs its denominator clarified. The tail spans 3.371 s despite `window_us=2000000`; it is not a verified two-second terminal window.
+>
+> At ci=40, `(40>>1)-(40>>2)=10 µs`; spent=10 exhausts that budget. Guard15/LateArm explains the software shutdown, conditional on the omitted helper/reason mappings. It does **not** identify the physical cause of short intervals or processing delay. Zero forced events and similar coast frequency do not establish clean crossing detection.
+>
+> The arm path improves safety: validation, timer preparation, elapsed sampling, and enable share PRIMASK; preparation disables the source before clearing pending state. Expiry invokes shutdown synchronously. However, `guard_trip`, helper arithmetic, and caller handling of `Some(spent)` remain unaudited. Poststamp instructions and ISR latency still delay commutation; zero margin histograms provide no bound.
+>
+> Next bounded lever: inspect generated instructions between elapsed sampling and CEN, plus shutdown/caller control flow. Precompute only deadline-independent work if supported; preserve guards and duty.
+
+Dispositions: softwaretrigger accepted, physicalcause unresolved. Matched1004
+uses timeanchored coastfit3042.224889eHz,slope-0.00181854, not printedindexfit
+3045: round(1000*3055.0635/3042.224889)=1004. No gateerror or slip inferred.
+Actualspan3.371070s retained. Helperbody/stopmapping inspectedE434 andbyteidentical
+betweenrecorded/lean; crossing_left is wait.saturating_sub(spent), zero invokes
+stop_expired_arm->guard_trip15 insidePRIMASK. Current helper tests/scope are
+alreadyreviewed; missingfromthisnarrowpacket does not create a new implementation
+finding. Poststamp/CENdelay and physicaledgeentry remain outside spent.
+Nextofflinequestion is generatedprearm criticalpath, including redundant
+peripheralsetup and interruptblocking; do not presume instructionremoval
+solves falseaccepts or highspeed. Board9C748DED remainsOFF/UARTclosed.
