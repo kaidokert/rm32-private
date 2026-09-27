@@ -77,3 +77,14 @@ Fix3 staged ABB7A0DF8F06B6A8EC31499D5C350097C40106AD8FAF79467B8032B36D812C3A.
 unchanged versus fix2 (relocated TIM16 literal only). Fresh sector/phase read
 is inside existing interrupt mask; no loops added. Retry quota not increased.
 Next one45s60screen after>=120sOFF; no threshold/control-mode change.
+
+Fix3 E494 PASS short regression:60%14.773s,reason2,late0/thin0,guard0,
+ceiling600,forced0,coast2187 vs baseline2168eHz,proxy2326mA. COMPmax16,
+COMlate9us,guardgap104us. Fixture failed only its30s dwell gate, as predeclared;
+this is a short regression screen, not full qualification. Fresh MCP alloffPASS
+(ENABLE/MOE/CCRs0,gates_low1,nFAULT1), UARTclosed. Keep fix3.
+
+Checkpoint: three independent safety backports kept, each host-tested and
+screened at60%; no diode switching, timer-owned rescue or control redesign.
+Telemetry accepted-count coherence and host-only audit tooling remain pending;
+do not describe those as ported. No further powered run at this checkpoint.
