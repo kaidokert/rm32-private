@@ -1,0 +1,46 @@
+{
+  "flash": [
+    {
+      "cmd": "probe-rs download --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430 captures/restore/fix1.elf",
+      "chunk_id": "d65636",
+      "wall_time_seconds": 2.8590115000000003,
+      "exit_code": 0,
+      "original_token_count": 6,
+      "output": "     Finished in 2.36s\n"
+    },
+    {
+      "cmd": "probe-rs verify --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430 captures/restore/fix1.elf",
+      "chunk_id": "b6dcfb",
+      "wall_time_seconds": 0.9115772,
+      "exit_code": 0,
+      "original_token_count": 6,
+      "output": "Verification successful\n"
+    },
+    {
+      "cmd": "probe-rs reset --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430",
+      "chunk_id": "896bc3",
+      "wall_time_seconds": 0.2900183,
+      "exit_code": 0,
+      "original_token_count": 0,
+      "output": ""
+    }
+  ],
+  "pre": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"819a0171-6c0b-4103-9d9b-133b2a134b97\",\n  \"bytes_read\": 77,\n  \"data\": \"PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 23,\n  \"elapsed_ms\": 611,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 77,\n      \"waited_ms\": 23,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  },
+  "post": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"2b66da5a-399e-44f0-b413-1e7f14861f10\",\n  \"bytes_read\": 77,\n  \"data\": \"PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 17,\n  \"elapsed_ms\": 613,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 77,\n      \"waited_ms\": 17,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  }
+}

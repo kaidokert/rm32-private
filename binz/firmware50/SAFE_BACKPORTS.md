@@ -37,3 +37,16 @@ no calls, at most fixed3phase loop. Not hardwareWCET. Target gate remains60%.
 Self-review: mask defers guards/COM during writes; no thresholds altered and
 zero initialization remains legal. No claim that this race caused prior faults.
 One identical45s60% screen next; no retry if it fails.
+
+Fix1 E492 PASS short regression:60%14.775s,reason2,late0/thin0,guard0,
+ceiling600,forced0,coast2167 vs baseline2168eHz,proxy2379 vs2426mA.
+COMPmax16 unchanged; COMlate9 vs12us; guardgap108 unchanged. No causal speed/
+current claim. Fixture exits1 for predeclared shorter-than30s dwell only.
+Fresh MCP alloffPASS,Uartclosed. Keep fix1; one run is not reliability proof.
+
+Before fix2: use stop/blank-dominant comparator resume only on powered paths.
+Baseline has no phase4: permit detector only in phase0 and live COM authority;
+driven-only acquisition remains permitted with guard clear. Preserve unpowered
+comp_exti_arm use by providing a separate powered-arm wrapper for COM callers.
+No timer retry state imported. Tests must cover detector precedence, stops,
+all blank/commute phases and acquisition; then inspect changed ISR cost.
