@@ -1,6 +1,10 @@
 # Propless 80% campaign — progress, not qualification
 
 Updated through E448 coherent-revisit screen and dual review, 2026-09-27.
+Offline E450b:7F5E735A staged stop-dominant powered comparator resume.
+Both reviews' deferred-startup bypass finding fixed;390tests/clippy/ISR audit
+PASS. More masking/instructions, not a speed improvement. Not flashed.
+Board remains E435888A OFF; persistence-depth caching is the next cost lever.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
 
 CURRENT: E435888A installed OFF after E448. Masked foreground revisit now

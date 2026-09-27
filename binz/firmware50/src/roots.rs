@@ -1361,7 +1361,7 @@ pub unsafe fn com_root_with<C: ChainLog, P: hw::pwm::RoleWrite>() {
             if hw::comp::pending() {
                 S.com().blank_latched.fetch_add(1, Ordering::Relaxed);
             }
-            hw::comp::line_enable();
+            comp_resume_powered();
         }
         _ => {}
     }
@@ -1546,7 +1546,7 @@ pub unsafe fn comp_root_timed<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstim
             //
             // The pending flags were cleared above, so re-enabling cannot
             // re-fire on the same event. binz Entry 094 order (E103).
-            hw::comp::line_enable();
+            comp_resume_powered();
         }
         // Accepted: stay masked until the foreground commutates and re-arms for
         // the next sector -- one crossing per sector, as the reference serves.
@@ -1555,7 +1555,7 @@ pub unsafe fn comp_root_timed<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstim
     if S.drv().active.load(Ordering::Relaxed) {
         S.drv().rate.root(&mut at, |r| r.observe(raw));
         if !drv_decide(raw) {
-            hw::comp::line_enable();
+            comp_resume_powered();
         }
         return;
     }
@@ -1593,6 +1593,27 @@ pub fn edge_is_rising(step: Step) -> bool {
     step.rising() != COMP_POLARITY_INVERTED
 }
 
+/// Resume only the current powered owner, atomically against guard shutdown
+/// and COM starting a new blank. Do not clear pending edges here.
+#[inline(always)]
+pub fn comp_resume_powered() -> bool {
+    cortex_m::interrupt::free(|_| {
+        if crate::oneshot::comparator_resume_allowed(
+            S.guard().reason.load(Ordering::Relaxed),
+            S.det().active.load(Ordering::Relaxed),
+            S.drv().active.load(Ordering::Relaxed),
+            S.com().stopped.load(Ordering::Relaxed),
+            S.com().active.load(Ordering::Relaxed),
+            S.com().phase.load(Ordering::Relaxed),
+        ) {
+            hw::comp::line_enable();
+            true
+        } else {
+            false
+        }
+    })
+}
+
 /// Select this sector's edge and re-arm the line.
 ///
 /// Order matters and follows the reference: mask, select the edge, clear both
@@ -1605,7 +1626,7 @@ pub fn comp_exti_arm(step: Step) {
     hw::comp::line_disable();
     hw::comp::select_edge(edge_is_rising(step));
     hw::comp::clear_pending();
-    hw::comp::line_enable();
+    comp_resume_powered();
 }
 
 /// Select this sector's edge and clear both pending flags, leaving the line

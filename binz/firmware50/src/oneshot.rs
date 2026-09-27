@@ -71,6 +71,16 @@
 /// and `the_firmware_is_the_safe_variant` fails.
 pub const FIRMWARE_ARM_IS_ATOMIC: bool = true;
 
+/// Permission to resume a powered comparator line. Closed-loop ownership
+/// takes precedence; acquisition must not bypass its active blanking phase.
+#[inline(always)]
+#[must_use]
+pub const fn comparator_resume_allowed(
+    guard: u32, detector: bool, driven: bool, stopped: bool, active: bool, phase: u32,
+) -> bool {
+    guard == 0 && if detector { arm_allowed(stopped, active) && phase == 0 } else { driven }
+}
+
 /// Whether an arm can be interleaved by the guard root or by the other caller.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Atomicity {
@@ -331,6 +341,66 @@ impl OneShot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn comparator_resume_respects_owner_blank_and_stop() {
+        use super::comparator_resume_allowed as allowed;
+        for guard in [0, 8, 15, 26] {
+            for detector in [false, true] {
+                for driven in [false, true] {
+                    for stopped in [false, true] {
+                        for active in [false, true] {
+                            for phase in 0..=3 {
+                                let expected = guard == 0 && if detector {
+                                    !stopped && active && phase == 0
+                                } else { driven };
+                                assert_eq!(allowed(guard, detector, driven, stopped, active, phase), expected);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn masked_comparator_resume_wins_against_shutdown() {
+        use super::comparator_resume_allowed as allowed;
+        // before check, between check/write, after write: a guard trip also
+        // masks the line. Under PRIMASK its request waits until mask exit.
+        let simulate = |masked: bool, stop_at: u8| {
+            let mut guard = u32::from(stop_at == 0);
+            let permit = allowed(guard, true, false, false, true, 0);
+            let mut enabled = false;
+            if stop_at == 1 && !masked { guard = 1; enabled = false; }
+            if permit { enabled = true; }
+            if stop_at == 2 || (stop_at == 1 && masked) { guard = 1; enabled = false; }
+            (guard, enabled)
+        };
+        for at in 0..=2 { assert_eq!(simulate(true, at), (1, false)); }
+        assert_eq!(simulate(false, 1), (1, true), "model must expose old race");
+    }
+
+    #[test]
+    fn powered_line_enable_has_one_masked_writer() {
+        let src = include_str!("roots.rs");
+        assert_eq!(src.matches("hw::comp::line_enable();").count(), 1);
+        let board = include_str!("../bin/board.rs");
+        assert!(!board.contains("hw::comp::line_enable()"));
+        let deferred = board.split("fn drv_resume_deferred(").nth(1).unwrap()
+            .split("fn drv_end(").next().unwrap();
+        let mask = deferred.find("cortex_m::interrupt::free").unwrap();
+        let check = deferred.find("roots::guard_latched()").unwrap();
+        let resume = deferred.find("roots::comp_resume_powered()").unwrap();
+        let pend = deferred.find("hw::comp::pend()").unwrap();
+        assert!(mask < check && check < resume && resume < pend);
+        assert!(deferred[resume..pend].contains("return false"));
+        let body = src.split("fn comp_resume_powered()").nth(1).unwrap()
+            .split("/// Select this sector").next().unwrap();
+        let mask = body.find("cortex_m::interrupt::free").unwrap();
+        let check = body.find("comparator_resume_allowed(").unwrap();
+        let write = body.find("hw::comp::line_enable();").unwrap();
+        assert!(mask < check && check < write);
+    }
     use super::*;
 
     #[test]

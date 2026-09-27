@@ -1,0 +1,8 @@
+cargo :     Checking firmware50 v0.1.0 (E:\m\robot\esc\rm32\binz\firmware50)
+At line:10 char:1
++ cargo clippy --release --bin diode-lean --features advance-ref,deep-f ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking fi...inz\firmware50):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+    Finished `release` profile [optimized + debuginfo] target(s) in 1.34s

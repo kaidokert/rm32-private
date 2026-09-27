@@ -1,0 +1,5 @@
+- **Stop coverage remains incomplete.** Driven COMP refusal still calls `line_enable()` unconditionally. A guard trip after `drv.active` is read can disable everything, then the resumed handler re-enables COMP. The binary reaches the shared driven branch; `NoLog`/`NoChain` do not eliminate it.
+- **Foreground coverage is unproven.** Retaining unguarded `comp_exti_arm()` leaves its clear/enable sequence vulnerable unless every caller already excludes shutdown. Those callers are absent here.
+- **Ownership checks are insufficient under `com-top`.** COM can preempt a refusing COMP decision and establish a new blanking interval. The resumed COMP passes `stopped/active` checks and unmasks prematurely. Those flags establish run permission, not sector or blanking ownership.
+- **“Stop after” needs qualification.** `com_stop()` itself never masks COMP; only `guard_trip()` supplies that coverage.
+- **Pending semantics need preserving.** Refusal and phase 3 retain newly latched edges; phase 1/2 discard them through priming. One generic clear-and-resume helper would change behavior.

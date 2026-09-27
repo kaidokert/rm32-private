@@ -489,10 +489,15 @@ impl Hal for Board {
             return false;
         }
         cortex_m::interrupt::free(|_| {
+            if roots::guard_latched() || !d.active.load(Ordering::Relaxed) {
+                return false;
+            }
             d.deferred.store(false, Ordering::Relaxed);
             let post = hw::comp::level() == roots::edge_is_rising(step);
             hw::comp::clear_pending();
-            hw::comp::line_enable();
+            if !roots::comp_resume_powered() {
+                return false;
+            }
             if post {
                 hw::comp::pend();
             }

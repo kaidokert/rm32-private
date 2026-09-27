@@ -46137,3 +46137,110 @@ across thresholds/reseeding/refusals and verify emitted read spacing. Savings
 remain unmeasured; no candidate implemented or flashed in this audit turn.
 Timer write deletion is not selected as the main next lever. Board remains
 E435888A OFF after E448. No new motor run; no envelope or WCET claim.
+
+### E450 - stop-dominant closed-loop comparator resume
+
+Before edit/build: add a closed-loop-only resume primitive with PRIMASK around
+arm_allowed(stopped,active) and actual line_enable. Use it in refused closed
+COMP and COM phase1/2/3 unmask paths. Existing public comp_exti_arm stays for
+foreground/acquisition contexts; no startup ownership change. COM phase1/2
+prime edge/pending as before then call guarded resume. Phase3 preserves
+pending as before. Stop before/between/after check/write must leave line
+disabled; model must fail old interruptible shape. Guards/timers/persistence
+unchanged. This fixes poststop IRQ activity, not proven bridge reactivation
+or E448's timing fault. Added masks have cost; audit assembly before powering.
+
+E450 design reviews:
+
+> The proposed fix reaches this binary’s plain COMP refusal and DiodeLatched COM paths, but leaves concrete gaps:
+>
+> - **Ownership:** `arm_allowed` proves run eligibility, not permission to resume this sector. Under `com-top`, COM can preempt COMP’s decision, establish a blank, then the older refused COMP resumes and unmasks during that blank. Check sector/blank ownership atomically too.
+> - **Pending semantics:** Refusal preserves edges latched during the handler; phase 3 preserves blank-window edges. Enabling can dispatch immediately. A stop check neither validates their sector nor timestamps them.
+> - **Coverage:** Public foreground/acquisition `comp_exti_arm` and driven refusal remain unguarded. A guard stop followed by either continuation can re-enable the line; the unconditional “stop before/between/after” guarantee therefore exceeds coverage.
+> - **Stop definition:** `com_stop()` latches and stops TIM16 but does not disable COMP. The guarantee holds only for shutdown paths that also mask COMP.
+>
+> The masked check-and-enable closes the local guard interleaving; it does not establish global resume ownership or complete stop coverage.
+>
+> - **Stop coverage remains incomplete.** Driven COMP refusal still calls `line_enable()` unconditionally. A guard trip after `drv.active` is read can disable everything, then the resumed handler re-enables COMP. The binary reaches the shared driven branch; `NoLog`/`NoChain` do not eliminate it.
+> - **Foreground coverage is unproven.** Retaining unguarded `comp_exti_arm()` leaves its clear/enable sequence vulnerable unless every caller already excludes shutdown. Those callers are absent here.
+> - **Ownership checks are insufficient under `com-top`.** COM can preempt a refusing COMP decision and establish a new blanking interval. The resumed COMP passes `stopped/active` checks and unmasks prematurely. Those flags establish run permission, not sector or blanking ownership.
+> - **“Stop after” needs qualification.** `com_stop()` itself never masks COMP; only `guard_trip()` supplies that coverage.
+> - **Pending semantics need preserving.** Refusal and phase 3 retain newly latched edges; phase 1/2 discard them through priming. One generic clear-and-resume helper would change behavior.
+
+Dispositions: proposal revised before build. One shared powered-resume check
+covers closed refusal, driven refusal, COMphase3 and comp_exti_arm used by
+COMphase1/2 and foreground driven acquisition. It requires guardreason0;
+with detector active it additionally requires active/nonstoppedCOM/phase0;
+otherwise drivenactive. Predicate and enable share PRIMASK. No pending clear
+in helper; comp_exti_arm keeps its prior prime/clear sequence, phase3/refusal
+retain pending. Scope is guard shutdown (which masks), not bare com_stop.
+Model tests must expose old check/write race and reject every blank phase;
+source regression pins one raw line_enable writer. Caller audit: drv_begin
+sets drivenactive before comp_exti_arm; COM phase1/2 setphase0 before arm;
+handover initial COM owns firstunmask. No sampling/threshold changes intended.
+Build/test next; no powered admission before postimplementation review.
+
+E450 firstbuild5FB7B8DB,390tests/clippy/4rootaudit PASS. COMP762->819 entries,
+COM388->422; DMA/guard identical. No timinggain/WCET claim. Review:
+
+> Raw evidence supports atomic check→enable in COMP refusal paths and COM phase 3: `cpsid i` precedes state loads; branches enforce guard-zero and detector precedence; PRIMASK restoration follows writes. Enables set EXTI bit 18, clear NVIC pending bit 12, then enable IRQ12. EXTI pending survives resume; “pending unchanged” must distinguish EXTI from NVIC.
+>
+> **Concrete blocker:** `Board::drv_resume_deferred` still directly calls `line_enable()` without checking guard or ownership. A guard trip after its preliminary checks but before its critical section clears active flags and masks COMP; foreground then clears pending, re-enables COMP and possibly pends it after shutdown. Masking the write sequence does not validate permission. The “one masked writer” test misses this because it scans only `roots.rs`.
+>
+> **Proof limits:** Public `comp_exti_arm` now refuses when both owners are inactive; acquisition callers and handover ordering need validation. Its edge-selection/pending-clear sequence remains outside the new mask. Its emitted body is absent here. Predicate tests mirror the implementation; simulation assumes shutdown behavior and omits owner/blank transitions and peripheral pending semantics. The 390 passing tests and root audit establish neither complete caller coverage nor timing bounds.
+>
+> Concrete blockers:
+>
+> - `Board::drv_resume_deferred` remains an unchecked powered writer. A guard trip after its outer deferred/count checks but before its critical section clears ownership and masks COMP; the resumed foreground then unconditionally enables and potentially pends COMP. PRIMASK prevents interleaving inside that section, but does not validate permission.
+> - `comp_exti_arm` now refuses whenever both detector and driven flags are false, disabling its acquisition use through `Board::comp_arm`. Preserve an explicit acquisition permission or demonstrate that no required caller uses that state.
+>
+> Proof limits:
+>
+> - Shown COMP refusal and COM phase-3 branches correctly check permission and write enables under saved/restored PRIMASK; detector ownership takes precedence. COM’s out-of-line `comp_exti_arm` assembly is absent.
+> - Enable sequences set EXTI IMR bit 18, clear NVIC pending bit 12, then enable IRQ12. EXTI pending survives these resumes; NVIC pending does not. Software-pended events therefore require separate analysis.
+> - Public-arm edge selection/clearing remains outside the mask; current-owner checks do not validate the caller’s cached sector.
+> - Tests duplicate the predicate and assume shutdown behavior. The writer-count test searches only `roots.rs`, missing the concrete board bypass. Passing tests/audit establish neither complete ownership coverage nor timing bounds.
+
+Dispositions: board deferred-resume bypass is real and now corrected before
+flash. Same critical section rechecks guard/drivenactive, then clears EXTI
+pending as before, calls shared boolean resume, and only pends on success.
+Writer regression expanded to board source and deferred-check/pend ordering.
+Public-arm acquisition objection checked: only run/states.rs:840 calls
+Hal::comp_arm during Driven, after drv_begin sets active; board drv_begin
+also sets active before directarm. No required ownerless acquisition caller
+in thisbinary. Header claims scoped to poweredcallers; not raw hardwareAPI.
+Resume preserves EXTI pending but clears NVIC pending as existing HAL does;
+do not claim both unchanged. Modifiedimage remains unflashed pending rebuild
+and fresh review of corrected coverage.
+
+E450b corrected archive7F5E735A45297C038C80E80AB23C912FB91FD13C7A85DAED57257CAE9B9A18A8,
+390tests/clippy/fourrootaudit PASS. Compared with firstE4505FB7B8DB, ISR
+normalized streams unchanged (COMP/COM relocatedconstants); compared with
+installedE447, COMP762->819 andCOM388->422, not zero runtimecost.
+
+E450b correction reviews:
+
+> The revised deferred path closes the shown bypass: guard/driven checks run inside the existing interrupt mask; enabling goes through the shared policy; software pending occurs only after successful resume. Detector ownership takes precedence, preventing driven activity from overriding closed-loop blanking or stop.
+>
+> Ownership/caller evidence supports the shown startup paths: `drv_begin` publishes driven activity before arming, and `driven_boundary` arms during acquisition. These excerpts do not establish an exhaustive caller inventory.
+>
+> Concrete remaining defects: none demonstrated in the supplied evidence.
+>
+> Unproven general properties: repository-wide bypass freedom, hardware timing, and complete ownership-transition safety. The policy test checks the truth table; the race model assumes shutdown masks the line; source-string tests check textual ordering, not execution semantics. The supplied log reports 390 passing tests despite an incremental-cache warning. ISR identity needs its comparison baseline identified before it supports this revision. Candidate remains unflashed.
+>
+> The shown deferred-resume bypass is fixed: guard/driven checks, pending clear, shared permission check, enable, and conditional pend remain inside one critical section. Detector ownership takes precedence, preventing driven activity from overriding closed-loop blanking. `drv_begin` establishes driven ownership before arming; the shown boundary caller supports the intended acquisition path.
+>
+> **Concrete remaining defects:** None demonstrated by the supplied evidence.
+>
+> **Unproven general properties:** The caller excerpt does not establish that *all* `comp_arm` callers are acquisition-only. `comp_exti_arm` still selects edges and clears pending outside the helper’s mask; safety depends on that ownership restriction.
+>
+> The 390 passing tests support the policy and textual routing checks. The race simulation assumes shutdown masks the line; it does not execute production interleavings. Text searches cannot establish global writer exclusivity. ISR equality establishes neither absolute latency nor hardware behavior; the candidate remains unflashed.
+
+Dispositions: supplied concrete bypass fixed. Local rg inventory finds only
+Board::comp_arm and drv_begin plus COMphase1/2 calling comp_exti_arm; Hal
+comp_arm has only Driven::boundary caller at states840. This is current-tree
+source coverage, not future-writer proof. Shutdown guard_trip calls
+comp_exti_mask before timerstop/bridgeoff, satisfying model's premise. Raw
+hw::line_enable remains available; no claim type-system forbids new bypass.
+Archive remains unflashed; installed E435888A OFF/UARTclosed. Next deadline
+work is exact depth-cache prototype with differential tests, not guard edits.
