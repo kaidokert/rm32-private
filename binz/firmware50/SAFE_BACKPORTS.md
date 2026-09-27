@@ -71,3 +71,9 @@ that differs from current detector step or a non-idle COM timer phase. Keep
 the caller's retry quota; do not substitute another sector. No ISR changes.
 Prediction: stale-sector tests fail old admission and pass corrected admission;
 four ISR streams unchanged; one short60screen after cooldown.
+
+Fix3 staged ABB7A0DF8F06B6A8EC31499D5C350097C40106AD8FAF79467B8032B36D812C3A.
+353tests/release/clippy PASS; four-root auditPASS, all normalized ISR streams
+unchanged versus fix2 (relocated TIM16 literal only). Fresh sector/phase read
+is inside existing interrupt mask; no loops added. Retry quota not increased.
+Next one45s60screen after>=120sOFF; no threshold/control-mode change.

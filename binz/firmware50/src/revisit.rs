@@ -57,6 +57,12 @@ pub struct Inputs {
 /// Shortest estimate for which a retry is admitted, µs (reference: 64 half-µs).
 pub const AVERAGE_MIN_US: u32 = 32;
 
+/// Revalidate the caller's sector at the instant the IRQ is pended.
+#[inline(always)]
+pub const fn sector_ready(sampled: u8, current: u32, phase: u32) -> bool {
+    sampled >= 1 && sampled <= 6 && sampled as u32 == current && phase == 0
+}
+
 /// Admit one software retry of a missed crossing.
 #[inline]
 #[must_use]
@@ -72,6 +78,19 @@ pub const fn admit(v: Inputs) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sector_identity_and_timer_idle_are_required() {
+        for sampled in 0..=7 {
+            for current in 0..=7 {
+                for phase in 0..=3 {
+                    assert_eq!(super::sector_ready(sampled, current, phase),
+                        (1..=6).contains(&sampled) && u32::from(sampled) == current && phase == 0);
+                }
+            }
+        }
+        assert!(!super::sector_ready(2, 3, 0), "COM advanced after caller sampled sector");
+        assert!(!super::sector_ready(2, 2, 1), "accepted COM already scheduled");
+    }
     use super::*;
 
     /// The one case that must admit: a falling sector past its gate, whose
