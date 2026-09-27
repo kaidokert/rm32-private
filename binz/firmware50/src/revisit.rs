@@ -57,6 +57,14 @@ pub struct Inputs {
 /// Shortest estimate for which a retry is admitted, µs (reference: 64 half-µs).
 pub const AVERAGE_MIN_US: u32 = 32;
 
+/// Revalidate the caller's cached polarity inside the same mask as admission.
+/// This is not a generation identifier: steps repeat after six commutations.
+#[inline]
+#[must_use]
+pub const fn sector_ready(requested: u8, detector: u32, com_phase: u32) -> bool {
+    requested >= 1 && requested <= 6 && requested as u32 == detector && com_phase == 0
+}
+
 /// Admit one software retry of a missed crossing.
 #[inline]
 #[must_use]
@@ -136,5 +144,34 @@ mod tests {
         v.average_us = 237;
         v.elapsed_us = 200;
         assert!(admit(v));
+    }
+
+    #[test]
+    fn commutation_between_outer_check_and_masked_admission_cannot_pend() {
+        for cached in 1..=6u8 {
+            let next = if cached == 6 { 1 } else { cached + 1 };
+            // Outer idle/step observations were ready. Recheck after COM.
+            let pending = sector_ready(cached, u32::from(next), 0) && admit(ready());
+            assert!(!pending);
+            for phase in 1..=3 {
+                assert!(!sector_ready(cached, u32::from(cached), phase));
+            }
+            assert!(sector_ready(cached, u32::from(cached), 0) && admit(ready()));
+        }
+        assert!(!sector_ready(0, 0, 0));
+        assert!(!sector_ready(7, 7, 0));
+    }
+
+    #[test]
+    fn hardware_recheck_and_pend_share_the_mask() {
+        let source = include_str!("../bin/board.rs");
+        let body = source.split("fn revisit(&mut self, step: Step)").nth(1).unwrap()
+            .split("fn publish_plans").next().unwrap();
+        let masked = body.find("cortex_m::interrupt::free").unwrap();
+        let check = body.find("revisit::sector_ready").unwrap();
+        let sample = body.find("let now_raw").unwrap();
+        let pend = body.find("hw::comp::pend()").unwrap();
+        assert!(masked < check && check < sample && sample < pend);
+        assert!(body[check..sample].contains("return false"));
     }
 }

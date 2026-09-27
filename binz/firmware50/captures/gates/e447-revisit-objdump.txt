@@ -1,0 +1,180 @@
+ 8004150:	d806      	bhi.n	8004160 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1c3c>
+ 8004152:	e080      	b.n	8004256 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d32>
+ 8004154:	4969      	ldr	r1, [pc, #420]	@ (80042fc <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dd8>)
+ 8004156:	684a      	ldr	r2, [r1, #4]
+ 8004158:	2a00      	cmp	r2, #0
+ 800415a:	9c40      	ldr	r4, [sp, #256]	@ 0x100
+ 800415c:	d000      	beq.n	8004160 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1c3c>
+ 800415e:	e07a      	b.n	8004256 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d32>
+ 8004160:	9039      	str	r0, [sp, #228]	@ 0xe4
+    unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8004162:	f3ef 8010 	mrs	r0, PRIMASK
+ 8004166:	9037      	str	r0, [sp, #220]	@ 0xdc
+ 8004168:	b672      	cpsid	i
+ 800416a:	4860      	ldr	r0, [pc, #384]	@ (80042ec <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dc8>)
+ 800416c:	6883      	ldr	r3, [r0, #8]
+ 800416e:	684a      	ldr	r2, [r1, #4]
+/// Revalidate the caller's cached polarity inside the same mask as admission.
+/// This is not a generation identifier: steps repeat after six commutations.
+#[inline]
+#[must_use]
+pub const fn sector_ready(requested: u8, detector: u32, com_phase: u32) -> bool {
+    requested >= 1 && requested <= 6 && requested as u32 == detector && com_phase == 0
+ 8004170:	983f      	ldr	r0, [sp, #252]	@ 0xfc
+ 8004172:	1e40      	subs	r0, r0, #1
+ 8004174:	9034      	str	r0, [sp, #208]	@ 0xd0
+            if !firmware50::revisit::sector_ready(
+ 8004176:	2805      	cmp	r0, #5
+ 8004178:	d86a      	bhi.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+ 800417a:	983f      	ldr	r0, [sp, #252]	@ 0xfc
+ 800417c:	4283      	cmp	r3, r0
+ 800417e:	d167      	bne.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+ 8004180:	2a00      	cmp	r2, #0
+ 8004182:	d165      	bne.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+ 8004184:	4855      	ldr	r0, [pc, #340]	@ (80042dc <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1db8>)
+ 8004186:	6805      	ldr	r5, [r0, #0]
+ 8004188:	4958      	ldr	r1, [pc, #352]	@ (80042ec <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dc8>)
+ 800418a:	6848      	ldr	r0, [r1, #4]
+ 800418c:	902d      	str	r0, [sp, #180]	@ 0xb4
+ 800418e:	7808      	ldrb	r0, [r1, #0]
+ 8004190:	9031      	str	r0, [sp, #196]	@ 0xc4
+ 8004192:	4854      	ldr	r0, [pc, #336]	@ (80042e4 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dc0>)
+ 8004194:	6f42      	ldr	r2, [r0, #116]	@ 0x74
+ 8004196:	6803      	ldr	r3, [r0, #0]
+ 8004198:	9330      	str	r3, [sp, #192]	@ 0xc0
+ 800419a:	6846      	ldr	r6, [r0, #4]
+ 800419c:	4852      	ldr	r0, [pc, #328]	@ (80042e8 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dc4>)
+ 800419e:	6803      	ldr	r3, [r0, #0]
+ 80041a0:	061b      	lsls	r3, r3, #24
+ 80041a2:	952e      	str	r5, [sp, #184]	@ 0xb8
+ 80041a4:	d109      	bne.n	80041ba <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1c96>
+ 80041a6:	f3ef 8310 	mrs	r3, PRIMASK
+ 80041aa:	b672      	cpsid	i
+        unsafe { *self.value.get() }
+ 80041ac:	6c4c      	ldr	r4, [r1, #68]	@ 0x44
+    unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+ 80041ae:	f383 8810 	msr	PRIMASK, r3
+ 80041b2:	2c00      	cmp	r4, #0
+ 80041b4:	9c40      	ldr	r4, [sp, #256]	@ 0x100
+ 80041b6:	d100      	bne.n	80041ba <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1c96>
+ 80041b8:	e088      	b.n	80042cc <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1da8>
+ 80041ba:	2302      	movs	r3, #2
+ 80041bc:	484d      	ldr	r0, [pc, #308]	@ (80042f4 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dd0>)
+ 80041be:	6805      	ldr	r5, [r0, #0]
+
+/// Admit one software retry of a missed crossing.
+#[inline]
+#[must_use]
+pub const fn admit(v: Inputs) -> bool {
+    v.closed_loop
+ 80041c0:	9831      	ldr	r0, [sp, #196]	@ 0xc4
+ 80041c2:	2800      	cmp	r0, #0
+ 80041c4:	494d      	ldr	r1, [pc, #308]	@ (80042fc <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dd8>)
+ 80041c6:	d043      	beq.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+ 80041c8:	982c      	ldr	r0, [sp, #176]	@ 0xb0
+ 80041ca:	4002      	ands	r2, r0
+ 80041cc:	d040      	beq.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+ 80041ce:	9830      	ldr	r0, [sp, #192]	@ 0xc0
+ 80041d0:	4306      	orrs	r6, r0
+ 80041d2:	982c      	ldr	r0, [sp, #176]	@ 0xb0
+ 80041d4:	4006      	ands	r6, r0
+ 80041d6:	d13b      	bne.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+ 80041d8:	2201      	movs	r2, #1
+ 80041da:	4013      	ands	r3, r2
+ 80041dc:	425b      	negs	r3, r3
+ 80041de:	9820      	ldr	r0, [sp, #128]	@ 0x80
+ 80041e0:	4003      	ands	r3, r0
+ 80041e2:	2b20      	cmp	r3, #32
+ 80041e4:	d334      	bcc.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+ 80041e6:	982b      	ldr	r0, [sp, #172]	@ 0xac
+ 80041e8:	4005      	ands	r5, r0
+ 80041ea:	1e6c      	subs	r4, r5, #1
+ 80041ec:	41a5      	sbcs	r5, r4
+            intrinsics::wrapping_sub(self, rhs)
+ 80041ee:	982e      	ldr	r0, [sp, #184]	@ 0xb8
+ 80041f0:	9c2d      	ldr	r4, [sp, #180]	@ 0xb4
+ 80041f2:	1b04      	subs	r4, r0, r4
+ 80041f4:	b2a4      	uxth	r4, r4
+        && v.line_live
+        && !v.pending
+        && v.average_us >= AVERAGE_MIN_US
+        && v.elapsed_us > (v.average_us >> 1)
+ 80041f6:	085b      	lsrs	r3, r3, #1
+ 80041f8:	429c      	cmp	r4, r3
+ 80041fa:	9c40      	ldr	r4, [sp, #256]	@ 0x100
+ 80041fc:	d928      	bls.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+ 80041fe:	983f      	ldr	r0, [sp, #252]	@ 0xfc
+ 8004200:	4045      	eors	r5, r0
+ 8004202:	07eb      	lsls	r3, r5, #31
+ 8004204:	d024      	beq.n	8004250 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d2c>
+        intrinsics::volatile_store(dst, src);
+ 8004206:	9819      	ldr	r0, [sp, #100]	@ 0x64
+ 8004208:	493b      	ldr	r1, [pc, #236]	@ (80042f8 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dd4>)
+ 800420a:	6008      	str	r0, [r1, #0]
+ 800420c:	9837      	ldr	r0, [sp, #220]	@ 0xdc
+ 800420e:	f380 8810 	msr	PRIMASK, r0
+ 8004212:	9926      	ldr	r1, [sp, #152]	@ 0x98
+            self.revisit_inflight = true;
+ 8004214:	750a      	strb	r2, [r1, #20]
+ 8004216:	9a3f      	ldr	r2, [sp, #252]	@ 0xfc
+            self.revisit_step = step.get();
+ 8004218:	754a      	strb	r2, [r1, #21]
+            if overdue {
+ 800421a:	9839      	ldr	r0, [sp, #228]	@ 0xe4
+ 800421c:	4290      	cmp	r0, r2
+ 800421e:	d105      	bne.n	800422c <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d08>
+                self.rescues = self.rescues.saturating_add(1);
+ 8004220:	7d88      	ldrb	r0, [r1, #22]
+            intrinsics::saturating_add(self, rhs)
+ 8004222:	1c40      	adds	r0, r0, #1
+ 8004224:	28ff      	cmp	r0, #255	@ 0xff
+ 8004226:	d300      	bcc.n	800422a <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d06>
+ 8004228:	20ff      	movs	r0, #255	@ 0xff
+ 800422a:	7588      	strb	r0, [r1, #22]
+            self.ctx.stats.revisit_attempts[bin] = self.ctx.stats.revisit_attempts[bin].saturating_add(1);
+ 800422c:	9834      	ldr	r0, [sp, #208]	@ 0xd0
+ 800422e:	0740      	lsls	r0, r0, #29
+ 8004230:	0f00      	lsrs	r0, r0, #28
+ 8004232:	991f      	ldr	r1, [sp, #124]	@ 0x7c
+ 8004234:	5a09      	ldrh	r1, [r1, r0]
+ 8004236:	1c49      	adds	r1, r1, #1
+ 8004238:	4a2d      	ldr	r2, [pc, #180]	@ (80042f0 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dcc>)
+ 800423a:	4291      	cmp	r1, r2
+ 800423c:	d300      	bcc.n	8004240 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d1c>
+ 800423e:	492c      	ldr	r1, [pc, #176]	@ (80042f0 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dcc>)
+ 8004240:	9a1f      	ldr	r2, [sp, #124]	@ 0x7c
+ 8004242:	5211      	strh	r1, [r2, r0]
+ 8004244:	492d      	ldr	r1, [pc, #180]	@ (80042fc <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dd8>)
+        if hal.com_idle() && (fresh || overdue) && hal.revisit(step) {
+ 8004246:	e006      	b.n	8004256 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d32>
+ 8004248:	492c      	ldr	r1, [pc, #176]	@ (80042fc <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1dd8>)
+ 800424a:	6848      	ldr	r0, [r1, #4]
+ 800424c:	9c40      	ldr	r4, [sp, #256]	@ 0x100
+ 800424e:	e002      	b.n	8004256 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d32>
+ 8004250:	9837      	ldr	r0, [sp, #220]	@ 0xdc
+ 8004252:	f380 8810 	msr	PRIMASK, r0
+ 8004256:	68c8      	ldr	r0, [r1, #12]
+        if cc != self.last_com_count {
+ 8004258:	993b      	ldr	r1, [sp, #236]	@ 0xec
+ 800425a:	6809      	ldr	r1, [r1, #0]
+ 800425c:	4288      	cmp	r0, r1
+ 800425e:	9a26      	ldr	r2, [sp, #152]	@ 0x98
+ 8004260:	d002      	beq.n	8004268 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d44>
+ 8004262:	2100      	movs	r1, #0
+            self.revisit_inflight = false;
+ 8004264:	7511      	strb	r1, [r2, #20]
+            self.last_com_count = cc;
+ 8004266:	6110      	str	r0, [r2, #16]
+        if duty != c.applied_duty && !c.hold_plans {
+ 8004268:	8890      	ldrh	r0, [r2, #4]
+ 800426a:	4284      	cmp	r4, r0
+ 800426c:	9e41      	ldr	r6, [sp, #260]	@ 0x104
+ 800426e:	4630      	mov	r0, r6
+ 8004270:	9d3c      	ldr	r5, [sp, #240]	@ 0xf0
+ 8004272:	d000      	beq.n	8004276 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d52>
+ 8004274:	7990      	ldrb	r0, [r2, #6]
+ 8004276:	0600      	lsls	r0, r0, #24
+ 8004278:	d11a      	bne.n	80042b0 <_ZN10firmware503run51Controller$LT$W$C$B$C$A$C$C$C$S$C$R$C$T$C$G$C$H$GT$4rung17hfd592e9ea079dbb7E+0x1d8c>
+        let period = P::H::period(duty, c.period);
+ 800427a:	9816      	ldr	r0, [sp, #88]	@ 0x58
+ 800427c:	69c1      	ldr	r1, [r0, #28]

@@ -45939,3 +45939,201 @@ Installed32AAEE6E/OFF/UARTclosed. Next causal question is the several-sector
 gap before this acceptance (physical absent edge versus rejection/revisit),
 not another isolated pre-arm instruction shave. Existing bounded ORDER
 recorder is available; no new broad instrumentation design is justified.
+
+### E447 - offline revisit coherence audit, hypothesis before change
+
+Previous turn yielded first-fault timing evidence, not envelope gain. Full
+objective reread. Before spending another motor run, source audit found:
+Ctx::pass caches com_step; Locked::revisit checks com_idle outside the Board
+critical section; Board::revisit samples live comparator/mux but selects
+expected polarity from that earlier cached step. COM can preempt between
+these operations. Thus an idle/sector admission can be stale, consuming a
+retry against a different sector or while COM is active. Actual COMP filter
+still checks its current sector, so this is not proof of false acceptance.
+Hypothesis: rechecking current step and COM idle inside the existing mask
+eliminates this inconsistent admission without changing persistence or guards.
+Prediction offline: a stale-step or newly-active-COM interleaving refuses
+the revisit and does not spend its retry; coherent ready case unchanged.
+No claim that this caused E446. Request dual source review before edits;
+if sound, pure predicate/interleaving regressions and unchanged ISR audit
+precede any bounded powered screen. No new instrumentation framework.
+
+E447 independent reviews:
+
+> The race is real. `Ctx::pass_inner` caches `com_step()`; later, `Locked::revisit` checks `com_idle()` outside Board’s critical section. COMP can accept and TIM16 can commutate between those observations and entry into `Board::revisit`. Admission then combines the new sector’s timestamp and live comparator with the cached old step’s polarity. `det.active` does not establish COM idleness.
+>
+> Rechecking **current detector step equals the supplied step** and **COM phase is zero**, inside the same interrupt mask as admission and `pend()`, closes that specific interleaving. A mismatch must return false before pending, leaving retry accounting untouched. Checking only COM idle is insufficient: a completed commutation can already be idle in the new sector.
+>
+> Two limits remain:
+>
+> - Step equality is not sector identity after a full six-step cycle; an epoch/count check is needed if that case must also be excluded.
+> - Interrupt masking does not freeze comparator hardware; physical edges can arrive during sampling.
+>
+> ISR persistence uses the actual detector step, so this source establishes inconsistent retry admission, not necessarily false acceptance or physical causation.
+>
+> The race is real: `Ctx::pass` caches `com_step`, and `Locked::revisit` checks `com_idle` before entering `Board::revisit`. COM can advance between either read and the masked admission, leaving polarity derived from the previous sector.
+>
+> - **The proposed recheck closes that admission race** if actual step, COM phase, detector activity, line state, pending state, and polarity are checked inside the same critical section as `pend`. Reject a mismatched caller step; silently substituting the current step would bypass the caller’s per-sector retry accounting.
+> - **Retry bookkeeping remains vulnerable.** After `Board::revisit` unmasks interrupts, COMP can accept and COM can advance before the caller sets `revisit_step` and `revisit_inflight`. Subsequently, `consume` credits any acceptance while `revisit_inflight` is true—even an unrelated hardware edge. These counters cannot establish that a retry caused acceptance.
+> - **Smallest scoped fix:** perform the proposed masked vetoes, retaining existing limits. Add an interleaving test that advances COM between the outer idle check and admission and verifies no software pend. If exact sector identity is required, compare a COM generation/count too; step alone repeats every six commutations.
+
+Dispositions: implement only the masked step/phase veto. Reject rather than
+substitute current step so caller does not consume a stale-sector retry.
+Step equality is polarity coherence, not unique generation identity after
+six COMs; do not claim otherwise. Revisit acceptance counters remain heuristic
+because physical acceptance can occur after pending and before bookkeeping.
+This does not establish E446 cause. Add host interleaving admission tests and
+source placement check; review emitted foreground and ISR diff before bench.
+
+E447 candidate E435888AA6C7A0FCA22B8C9E1A4C77005184D4D5685698D5DF1C0388549A97C2
+is staged, not flashed.387 host tests, release-s/thinLTO/codegen1 build,
+clippy and four-root audit PASS. ISR diff against installed32AAEE6E: all
+normalized streams identical; COMP/COM encoded constants relocated. New
+foreground mask at0x8004168 precedes detector/phase loads and veto comparisons
+0x8004176..4182. No added ISR path. Existing foreground mask grows; no zero
+latency/WCET claim. Tests exercise all six cached/next-sector pairs and
+COM phases1..3; source placement test is not hardware interleaving proof.
+Proposed screen remains single25%/28s after disabled preflights and120sOFF;
+no escalation on a failure, no causal success claim from one survivor.
+
+E447 implementation reviews:
+
+> No concrete implementation defect is demonstrated by the supplied evidence.
+>
+> - Predicate branches match the source: unsigned `(requested−1)>5`, detector mismatch, or nonzero COM phase veto before sampling and pend.
+> - Veto restores saved PRIMASK at `0x8004252`; success pends at `0x800420a`, then restores at `0x800420e`. The nested section restores its already-masked state. The branch through omitted `0x80042cc` prevents exhaustive verification of all paths.
+> - Six-commutation aliasing remains explicitly acknowledged; this is not generation validation.
+> - Added masked instructions establish execution overhead, but no baseline or timing measurements quantify its delta, interrupt latency, or WCET. Unchanged ISR instructions and the reported audit do not establish unchanged system timing.
+> - All 387 host tests passed; the incremental-cache warning does not negate that result. Predicate tests exercise modeled conditions, not interrupt interleavings. The source-order test cannot prove lexical mask containment or restoration.
+>
+> The evidence supports the targeted stale-step veto, not E446 causation or hardware qualification.
+>
+> No concrete implementation defect established by the supplied material.
+>
+> - Predicate branches match Rust: unsigned `(requested − 1) > 5`, detector mismatch, or nonzero COM phase reject at `0x8004250`, restoring saved PRIMASK.
+> - Success pends at `0x800420a` before restoring PRIMASK. The nested mask restores the already-disabled state. However, `0x80041b8` branches to omitted `0x80042cc`; restoration on that path cannot be verified from this excerpt.
+> - This blocks stale steps after one commutation, assuming COM updates are excluded by PRIMASK. Six-step wraparound remains an acknowledged generation ambiguity.
+> - Added masked loads/comparisons increase foreground work. Unchanged ISR instructions do not establish unchanged interrupt latency, cycle cost, or WCET; relocated constants also prevent byte-identity claims.
+> - The 387 passing host tests support functional regression coverage. Predicate tests simulate observations, not interrupts; source-string ordering does not prove lexical mask scope or restoration. The incremental-cache warning does not negate the reported pass.
+> - Neither E446 causation nor the proposed screen’s safety is established.
+
+Dispositions: no concrete new defect. Missing excerpt branch audited in full
+saved objdump:42cc LDR r3,[r1,#72];42ce LDR r0,[r1,#76];42d0 STR r0,[sp,#128];
+42d2 B41bc, joins original admission then restore. Predicate veto4250 restores
+savedPRIMASK4252; pending420a precedes restore420e. No unbounded new work.
+Snapshot coherence only, not generation tracking or unique retry attribution.
+Existing protected bounded screen conditions retained, not absolute hardware
+safety proof. Next one25%/28s screen tests whether the coherent admission can
+complete where E446 failed; failure retained and ends batch. No ceiling climb.
+
+### E448 - coherent revisit screen, prediction
+
+MCP enumerates COM41, E435888A full SHA rechecked, >6minutes OFF since E446.
+Flash explicitG071/reset, require disabled checks, then command8 once target25
+total28s. Prediction: stale-polarity software pends eliminated by construction;
+whether the previous runtime fault clears is unknown. All guards unchanged.
+No retry, no physical cause or reliability inference from this single screen.
+
+E448 flash/reset exit0; MCPp alloff/en0/nfault1 PASS, sixsector/latch/deadline
+PASS; portclosed. Proceed declared command8 once.
+
+E448 capture e448-propless250-revisit-coherent_01.txt: FAIL after3729ms at
+target250/CCR333, closed11229ms; rootguard15 LateArm, DONE28 fallback.
+ci_at_late41/spent10, fixed16 wait(41>>1)-(41>>2)=10, late1/thin128,
+spentmax11/COMPmax23/COMlate10. Tracking0/max240; finaloffPASS, no retry.
+Accepted/zc/com167559, forced0. Hold67982/3729ms, matchedcoast994, no
+rotor-lock or slip attribution. Holdproxy455mA/zero drift-207; busrest999.336
+permille; no sag/nfault/overrun/blank stop. Revisitattempts markedly fewer
+than E446 but exposure and foreground timing differ. Phase5 credits3324
+exceed attempts3112, direct warning that credits are not unique retry-origin
+accepts. Already documented asynchronous attribution. Race correction does
+not demonstrate removal of Tracking or net reliabilitygain from one trial.
+Dual result reviews next; retain coherent admission, no protection relaxation.
+
+E448 result reviews:
+
+> Both runs stopped on faults; neither demonstrates successful completion.
+>
+> New versus control: target hold 3,729 versus 2,669 ms (+1,060 ms, +39.7%); accepted events 167,559 versus 147,759 (+13.4%); hold acceptance rate approximately 18,230 versus 18,106/s (+0.69%). Coast estimates increased 2,930→3,049 eHz (+4.1%). Current proxies increased 424→455 mA (+7.3%); these are signed block measurements, not calibrated supply current or peaks.
+>
+> Control tracking arithmetic checks: 14,884,609−14,884,357=252 µs, exceeding the reported 240 µs limit by 12 µs. This establishes the recorded stale-reference trip, not its cause.
+>
+> New reports guard 15 (LateArm), one late arm, and 10 µs spent at CI=41 µs. A 10 µs wait gives zero remaining time; however, the supplied code omits the CI/advance-to-wait calculation. DONE 28 denotes UnknownGuard, consistent with a reporting/decode problem, not success.
+>
+> The patch adds masked sector/phase revalidation; it cannot distinguish six-commutation recurrence. One run per image cannot establish causal attribution or reliability improvement. Next, verify the actual wait calculation and address the demonstrated deadline exhaustion while preserving protections.
+>
+> The recheck plausibly closes the immediate stale-sector admission race; it does not establish that this race caused CONTROL’s Tracking stop. Step equality also permits six-commutation aliasing unless caller latency is bounded. The tests check predicates and textual order, not actual critical-section scope or pending-interrupt behavior.
+>
+> NEW stopped on a demonstrated exhausted arm deadline: guard=15, late_arms=1, wait=10 µs and spent=10 µs. DONE=28 obscures that diagnosis and needs a decode regression test. Longer dwell and reduced bus-depth counts in one run per image establish neither causality nor reliability; LateArm also ends observation before any later Tracking failure.
+>
+> Next, inspect the crossing-arm path’s generated instructions and bound decision-to-final-stamp work at ci=41. Identify removable preparation cost, preserving atomicity, stop-latch checks, and zero-remainder shutdown. Verify residual stamp-to-enable latency separately; the supplied timing model explicitly excludes it. Then run matched, interleaved propless comparisons with unchanged protections and narrowly targeted timing evidence.
+>
+> Poststop PASS establishes the observed final off-state, not shutdown latency or transient safety. Coast agreement supports rotation, not correct commutation angle. No instantaneous current protection is demonstrated; these captures do not justify load or duty escalation.
+
+Dispositions: wait follows selected ConstantAdvance<FreshEstimate,16>:
+(41>>1)-(41>>2)=10us; equality withspent10 trips exactzero-remainder stop.
+Root15 is authoritative LateArm, foreground28 is the existing UnknownGuard
+fallback, not evidence that the stop failed. Decode gap is a separate small
+reporting defect worth fixing with regression, not the cause of failure.
+No n1 reliabilityclaim. Coherent recheck retains source correctness but the
+candidate is unqualified. Future timing work must preserve mask/stop/zero
+remainder and account separately for poststamp-to-enable; moving bookkeeping
+without measured cost is not enough. No furtherpowered run thisbatch.
+InstalledE435888A/OFF/UARTclosed. Goal remains60-to80, not a25% endpoint.
+
+### E449 - accepted-path budget audit before another micro-variant
+
+Previous turn progressed through a reviewed admission-race fix and protected
+screen, no envelope gain. Full objective reread. Timer prepare_crossing is
+six peripheral/NVIC stores plus setup; removing a single write cannot be
+assumed to recover useful margin from10us expenditure. No timer changes yet.
+Review entire archived E447 accepted path with source, preserving persistence
+aperture, estimator values, atomic stop/arm, thresholds and raw timestamp
+meaning. Seek a bounded higher-payoff cost change, not another blind shave.
+No powered run or new recorder authorized by this audit. Competing stop
+types remain real: E446 stale-before-entry, E448 deadline exhaustion.
+
+E449 independent full-path audits:
+
+> The strongest bounded candidate is **caching persistence depth when the estimate changes, computing the next depth after arming**. Savings remain unmeasured.
+>
+> Closed-loop acceptance follows entry mask/ack and timestamp (`0x08000610–0626`), rate handling, then `det_decide_plain`: estimator presence/count checks (`07e8–0818`), sector clamp and half-cycle gate (`0822–0846`), depth calculation (`0848–08ce`), persistence (`08de–08f4`), blend/clamp/publication (`08f6–094e`), fixed16 wait (`0950–0958`), atomic eligibility/preparation (`095a–0992`), elapsed sample (`0994`), remainder validation and timer start (`09a0–09c4 → 0a22–0a2e`). Expiry instead calls shutdown at `0a1a`.
+>
+> `bemf::offer_timed` recomputes `policy.level(self.average_interval)` on every gate-passing offer. The emitted conversion, thresholds, reciprocal multiply and floor occupy `0848–08ce`, with mutually exclusive branches. At average 54, execution takes the interior mapping path and selects five reads. Refusals leave the estimate unchanged, making that calculation reusable.
+>
+> Cache depth alongside detector state; initialize on construction/reseeding and refresh from the blended estimate after `arm_marked`, before another COMP invocation. Keep both decision twins coherent. This removes scheduling arithmetic from entry-to-arm while retaining five volatile reads and their existing loop spacing. Absolute first-read timing moves earlier; if “aperture” includes that offset, this proposal requires reconsideration.
+>
+> Proposed equivalence tests: differential depth across thresholds and saturation; decision/state replay with dissent at every read; cache coherence across refusal, acceptance, reseed and refused/expired arms; emitted read-spacing and publication/atomic-arm ordering checks.
+>
+> Guard and margin accounting execute after arming. Their size cannot establish pre-arm savings. Capture `41 → wait 10`, `spent 10` supports expiry arithmetic, not a physical explanation.
+>
+> Prioritize a stop/re-enable race over another instruction shave.
+>
+> The timer arm is protected: `0x08000960–0x08000a32` masks interrupts across validation, preparation, expiry handling and enable. Comparator re-enabling lacks equivalent protection. A guard trip can preempt a refused COMP decision, mask the line and stop COM; resumed COMP then executes `line_enable()` at `0x08000b9e–0x08000baa`. COM’s phase-2/3 paths similarly lack a final atomic stop check. This establishes possible interrupt re-enablement after shutdown, **not bridge re-energization**.
+>
+> Latency evidence is narrower than the optimization objective:
+>
+> - `raw` is sampled at `0x08000624`, after entry, masking and acknowledgement; interrupt dispatch delay is excluded.
+> - `spent` ends at `0x08000994`, before deadline arithmetic and timer enable at `0x08000a2e`.
+> - `call_max_us` excludes the final re-enable/return and bypassed paths. Peer-priority COM can wait behind COMP’s post-arm bookkeeping and guard processing.
+> - At fixed16, `ci=41` gives `wait=(41>>1)-(41>>2)=10`; recorded `spent_at_late=10` explains the software expiry decision. It establishes neither physical causation nor an end-to-end latency bound.
+>
+> The emitted path already uses shifts for fixed advance and blanking. Shortening persistence instructions changes sampling spacing; removing masks changes concurrency. This single capture cannot establish a meaningful safe arithmetic saving.
+>
+> **One bounded next change:** route closed-loop comparator re-enables through a shared critical section that rechecks `com.active && !com.stopped` before enabling. Preserve every existing guard and timer transaction. Verify guard-preemption interleavings immediately before that section cannot reopen the line. This closes a demonstrated race; latency improvement remains unproven.
+
+Dispositions: selected binary is com-top, so the adversarial statement about
+peer COM blocking is inapplicable; COM can preempt COMP. Re-enable-after-stop
+race is distinct and source-supported, but does not re-energize the bridge:
+existing stopped/active flags and atomic arm still refuse drive. A bounded
+re-enable stop check is appropriate before further powered work.
+Depth-cache proposal is a specific deadline-path candidate: policy mapping
+currently repeats although refusals do not change the estimate. Cache must
+use the exact prior-to-offer estimate, initialize at every det_install, refresh
+after every acceptance (including expired/refused arm) before the next COMP,
+and keep logged/plain paths aligned. Do not substitute fixed depth, weaken
+filtering, or claim unchanged sampling offset. Test decision/state equivalence
+across thresholds/reseeding/refusals and verify emitted read spacing. Savings
+remain unmeasured; no candidate implemented or flashed in this audit turn.
+Timer write deletion is not selected as the main next lever. Board remains
+E435888A OFF after E448. No new motor run; no envelope or WCET claim.

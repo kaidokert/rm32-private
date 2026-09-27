@@ -643,6 +643,14 @@ impl Hal for Board {
     /// poll: sample the inputs and pend inside one critical section.
     fn revisit(&mut self, step: Step) -> bool {
         cortex_m::interrupt::free(|_| {
+            // COM may have advanced since the caller cached step/idle.
+            // Veto, never substitute: caller owns the retry allowance.
+            if !firmware50::revisit::sector_ready(
+                step.get(), S.det().step.load(Ordering::Relaxed),
+                S.com().phase.load(Ordering::Relaxed),
+            ) {
+                return false;
+            }
             let now_raw = hw::clock::raw();
             let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
             let v = firmware50::revisit::Inputs {

@@ -1,7 +1,17 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E443 sequence-publication screen and dual review, 2026-09-27.
+Updated through E448 coherent-revisit screen and dual review, 2026-09-27.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
+
+CURRENT: E435888A installed OFF after E448. Masked foreground revisit now
+rechecks detector sector and COM idle before pending;387tests/clippy/four-root
+audit PASS. Source race corrected, not proven to cause E446. One25% screen
+held3.729s then LateArm15 (wait10/spent10 atci41), not successful completion.
+No retry or duty escalation. ISR streams unchanged versus E446 apart from
+constant relocation; foreground mask cost is not free. Dual reviews retained.
+Next unresolved issue is the exhausted arm deadline; all protections retained.
+
+Historical checkpoints below do not supersede the CURRENT state above.
 
 E441 restored original persistence and removed the sole-COMP-writer sequence
 counter's redundant RMW mask; atomic arm mask retained.381tests/clippy/four
