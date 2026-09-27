@@ -47,6 +47,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "acceptance-off"
+path = "bin/acceptance-off.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "diode-fresh"
 path = "bin/diode-fresh.rs"
 test = false

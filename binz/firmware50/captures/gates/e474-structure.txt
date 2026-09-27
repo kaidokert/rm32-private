@@ -1,0 +1,8 @@
+bin_lines=1155 (goal < 1500)
+bin_unsafe=3 (goal <= 10)
+bits_writes_outside_hw: bin=0 src=0 (goal 0)
+static_mut: bin=0 src=0 (goal 0)
+functions_over_100_lines=0 (goal 0)
+bss_headroom: acceptance-off                     data=  752 bss=  4220 stack_left= 31892 (floor 8192, largest frame 5420, deepest path 7024)
+bss_headroom: chain-capture                      data=  740 bss= 18552 stack_left= 17572 (floor 8192, largest frame 5420, deepest path 7024)
+bss_headroom: deadline-pwm                       data=  740 bss=  4188 stack_left= 31936 (floor 8192, largest frame 5420, deepest path 7024)

@@ -1,0 +1,13 @@
+ISR-root audit: target/thumbv6m-none-eabi/release/diode-atomic-arm
+
+  [ADC_COMP] reachable=6  FAIL
+      loop not in reviewed_loops: ['firmware50::bemf::ZeroCrossWith<_>::offer_timed']
+
+  [TIM16] reachable=6  OK
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT FAILED (1 finding(s)):
+  - ADC_COMP: unreviewed loop in: ['firmware50::bemf::ZeroCrossWith<_>::offer_timed']

@@ -1,0 +1,9 @@
+Raw evidence: supplied logs report four audited roots and 408 passing tests. No five-case hardware results are supplied. The reported off readback and ELF hash are assertions here, not independently verified observations.
+
+**Concrete audit blocker:** direct calls into the same symbol’s interior remain unsound. For `bl <ADC_COMP+offset>`, parsing records no CFG destination; pruning follows only fallthrough, potentially discarding the called block. Call extraction then records merely `ADC_COMP`, so reachable arithmetic or loops in that block can escape detection. Either traverse that entry or reject it as unresolved. Also, targetless `blx ip` escapes the `^r\d` indirect-call check. Add regression fixtures before describing this audit as fail-closed.
+
+Removing the demonstrated padding after `pop {r7,pc}` is justified; preserving branch-reachable blocks after an earlier return is necessary.
+
+The oracle meaningfully checks selected outcomes: 22 means active/running/off; 18 means active/stopped-timer/off; 17 means stopped/inactive/off. Cases 1–3 check guard shutdown and first-reason preservation; case 4 checks stale pending removal without dispatch. However, `MASKED` samples only one instant, and neither timing field has an acceptance ceiling. These results cannot establish continuous masking, production timing, or WCET.
+
+The supplied harness contains no drive command or enabling action, and checks off before cleanup. Remaining safety dependencies include omitted initialization and hardware helpers. Exact device identity, flashed-image verification, and complete post-test readback remain execution prerequisites. Resolve the audit holes before relying on its pass. Scope remains driver-disabled only.

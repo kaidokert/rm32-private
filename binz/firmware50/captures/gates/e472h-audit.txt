@@ -1,0 +1,13 @@
+ISR-root audit: captures/elf/CA94ACF6.e472-acceptance-off.elf
+
+  [ADC_COMP] reachable=6  FAIL
+      indirect call (not allowlisted): ['firmware50::roots::acceptance::check::comp_interrupt', 'firmware50::roots::acceptance::check::off', 'firmware50::roots::recheck::resume_after_refusal']
+
+  [TIM16] reachable=1  OK
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT FAILED (1 finding(s)):
+  - ADC_COMP: unresolved indirect call in: ['firmware50::roots::acceptance::check::comp_interrupt', 'firmware50::roots::acceptance::check::off', 'firmware50::roots::recheck::resume_after_refusal']

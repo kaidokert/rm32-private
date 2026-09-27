@@ -1,0 +1,13 @@
+{
+  "_comment": "Only acceptance-off E472 bridge-disabled probe; NEVER motor qualification.",
+  "reviewed_loops": [
+    "firmware50::roots::acceptance::check::comp_interrupt",
+    "firmware50::bemf::ZeroCrossWith<_>::offer_timed"
+  ],
+  "_loop_review": {
+    "firmware50::roots::acceptance::check::comp_interrupt": "ProbeWindow: 0..1000 iterations independently bounded, early exit after20us. Synthetic expired-arm test, bridge disabled. Inlined driven persistence may also appear: literal12 reads. No drive parser; no production allowance.",
+    "firmware50::bemf::ZeroCrossWith<_>::offer_timed": "Persistence while i<depth; probe sets snapshot12, production policy maps at most12. Per-read early rejection. u8 loop also structurally bounded255. This entry only covers the disabled probe artifact."
+  },
+  "indirect_calls": [],
+  "panic_paths": []
+}

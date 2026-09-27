@@ -1,0 +1,8 @@
+Raw evidence: all five cases report `pass=1`, `com_calls=0`, `masked=1`, and pre-cleanup `off_before=1 gates_before=1`. Cases 1–2 change from active to stopped (`after=17`, reason 3); case 3 is already stopped before unmasking (reason 15). Case 4 reports no pending TIM16 in either snapshot. Flash verification succeeded.
+
+- **Pending guard:** Cases 1–2 support guard handling after the masked transaction, but acceptance still occurs in case 1 while the guard is pending. This establishes deferred stopping, not that briefly arming energized hardware is harmless. Case 3 does not independently establish pending-guard delivery: stopping precedes unmasking.
+- **Stale COM:** Case 4 supports removal of the injected pending interrupt before observation. It does not exercise production COM execution: the fixture substitutes a count-and-stop handler. Timer-origin reassertion and production interleavings remain untested.
+- **Cleanup masking:** The pass predicate captures output and gate state before `HostAbort`, so cleanup cannot explain those checks. Printed `off=1` and subsequent idle readbacks are post-cleanup evidence only.
+- **Observer timing:** `window_body125ns` includes injection/probe overhead but excludes the final masked stores/snapshot. `resume125ns` measures through return from unmasking, potentially including ISR execution—not guard-entry latency or worst-case shutdown time.
+
+**Verdict:** No concrete defect preventing one gentle protected screen is demonstrated. Qualification remains unproven; proceeding depends on the stated production arm/stop checks, whose evidence is absent here.

@@ -1,0 +1,26 @@
+[
+  {
+    "action": "download",
+    "chunk_id": "8c044c",
+    "wall_time_seconds": 3.0946669,
+    "exit_code": 0,
+    "original_token_count": 6,
+    "output": "     Finished in 2.59s\n"
+  },
+  {
+    "action": "verify",
+    "chunk_id": "aba4aa",
+    "wall_time_seconds": 0.9580727,
+    "exit_code": 0,
+    "original_token_count": 6,
+    "output": "Verification successful\n"
+  },
+  {
+    "action": "reset",
+    "chunk_id": "1d5824",
+    "wall_time_seconds": 0.2767274,
+    "exit_code": 0,
+    "original_token_count": 0,
+    "output": ""
+  }
+]

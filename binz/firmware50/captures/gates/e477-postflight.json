@@ -1,0 +1,29 @@
+[
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "Data sent successfully\nConnection ID: a5575193-703d-47c0-bdf8-43c3c1a073cc\nBytes written: 1\nData: \"p\""
+      }
+    ],
+    "isError": false
+  },
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"a5575193-703d-47c0-bdf8-43c3c1a073cc\",\n  \"bytes_read\": 211,\n  \"data\": \"PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS\\r\\nTIMEDRECHECK boot_cumulative=1 requests=0 observations=0 retired=0 \\r\\nDIODESELFTEST en0 six_sectors_pwm=PASS latch=PASS deadline=PASS\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 5,\n  \"elapsed_ms\": 615,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 30,\n      \"waited_ms\": 5,\n      \"elapsed_ms\": 0\n    },\n    {\n      \"offset\": 30,\n      \"bytes_read\": 181,\n      \"waited_ms\": 35,\n      \"elapsed_ms\": 29\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  },
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "Serial connection closed\nConnection ID: a5575193-703d-47c0-bdf8-43c3c1a073cc"
+      }
+    ],
+    "isError": false
+  }
+]

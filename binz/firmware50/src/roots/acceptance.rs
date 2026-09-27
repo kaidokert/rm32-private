@@ -1,6 +1,8 @@
 //! Execution policy for the bounded persistence-to-arm transaction.
 //! Default stays interruptible; the separate candidate is not motor-qualified.
 
+pub mod check;
+
 pub trait Window {
     const MASKED: bool;
     fn run<T>(f: impl FnOnce() -> T) -> T;

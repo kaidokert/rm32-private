@@ -1,0 +1,15 @@
+ISR-root audit: captures/elf/CA94ACF6.e472-acceptance-off.elf
+
+  [ADC_COMP] reachable=11  FAIL
+      loop not in reviewed_loops: ['firmware50::bemf::ZeroCrossWith<_>::offer_timed', 'firmware50::roots::acceptance::check::comp_interrupt']
+      unresolved callees: ['__INTERRUPTS']
+
+  [TIM16] reachable=1  OK
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT FAILED (2 finding(s)):
+  - ADC_COMP: unreviewed loop in: ['firmware50::bemf::ZeroCrossWith<_>::offer_timed', 'firmware50::roots::acceptance::check::comp_interrupt']
+  - ADC_COMP: unresolved callee symbols: ['__INTERRUPTS']

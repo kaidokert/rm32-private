@@ -1,0 +1,5 @@
+Raw: `from_event=1`, `age_us=1029`, `limit_us=1000`, and `late_us=29` record an event-path stale decision. The post snapshot places the detector stamp 21 µs before `post_clock_ext`, yielding 4,718,634 µs if both clocks share the implied mapping: already 1,018 µs after the previous **watch** timestamp. That is not a detector-to-detector interval.
+
+Code supports the limited conclusion: `guard_event` samples `guard_now()`, and `event()` checks staleness before updating `last`. Thus an accepted crossing can reach tracking overdue and trigger a valid stale latch without replacing the previous timestamp. The replay test verifies that contract, not hardware timing.
+
+Yes—with “accepted” meaning detector-accepted, not watch-approved. These excerpts support an overdue accepted-event notification under the watch’s timing contract; they establish neither a false watchdog nor a publication race. They also do not independently exclude every integration race or explain physical lateness or interrupt masking. No threshold change follows.

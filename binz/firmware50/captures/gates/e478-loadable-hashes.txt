@@ -1,0 +1,5 @@
+
+Algorithm Hash                                                             Path
+--------- ----                                                             ----
+SHA256    7EB9AA00EE5A270F0F77DCECFF047822BBD9E0DE5CD236860CABF596C6E34C9B E:\m\robot\esc\rm32\binz\firmware50\captures\gates\e478-motor-rebuilt.bin
+SHA256    268089D5F2CAA85234C58BA1FF5563FB7A471973BA1AE9F9082C49F9F15B2D79 E:\m\robot\esc\rm32\binz\firmware50\captures\gates\e478-probe-rebuilt.bin

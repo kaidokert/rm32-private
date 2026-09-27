@@ -1,6 +1,24 @@
 # Propless 80% campaign — progress, not qualification
 
-E470/E471 CURRENT: installed63F48607 untouched OFF/UARTclosed. Offline candidate
+E478 offline: generic disabled-fixture entry restores archived C2 motor
+loadable bytes and four-root audit. Concrete fixture entry had changed motor
+inlining and failed audit; corrected without allowlist relaxation. New probe
+bytes differ/unflashed, so its predecessor's5/5 does not transfer.409host and
+10audit-parser tests PASS. Dual reviews and explicit limits in notebook.
+
+E477 CURRENT: exact63F48607 restored/flash-verified after E476; MCP preflight
+outputsOFF/CCRs0/gateslow1/nFAULT1, UARTclosed. No further motor run.
+E475 disabled D677F753 suite passed5/5: acceptance/refusal, pending-guard stop,
+expired-arm stop and stale-COM cancellation. Synthetic input/stub COM; partial
+window durations do NOT prove production WCET. E476 masked candidate C2F903A0
+then FAILED handoff:7 accepts/4ms closed/0targethold, Tracking8, no late/thin/
+electrical stop. No envelope gain or candidate promotion. Dual reviews retained.
+Watch from_event1/age1029/limit1000 means late accepted-event notification;
+poll-before-update explains retained older timestamp, not a demonstrated race.
+Do not weaken watchdog or retry candidate unchanged. Narrower mask remains an
+untested option, not proven remedy. Production control is the E469 passing image.
+
+E470/E471 historical: installed63F48607 untouched OFF/UARTclosed. Offline candidate
 C2F903A0 uses a typed masked persistence-to-arm window, separate binary, no
 guard/threshold change; Open remains default. NOT FLASHED or motor-qualified.
 408 host tests, release/clippy/four-root arithmetic checks pass. Full assembly

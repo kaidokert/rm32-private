@@ -1,0 +1,11 @@
+python : ....
+At line:2 char:1
++ python scripts/test_isr_audit.py 2>&1 | Tee-Object captures/gates/e47 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (....:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK

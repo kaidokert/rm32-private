@@ -1,0 +1,12 @@
+{
+  "image": "CA94ACF61FEF865B84F4360C2F896A3EC633A42657DCBDD572A6783C099ADD8D",
+  "command": "probe-rs read --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430 b32 0x200001dc 8",
+  "basis": "LLVM disassembly: offer_timed r1=literal0x20000190+0x4c. Callee offsets0 avg,4 last,8 previous,c too_early,10 unstable,14 accepted,18 minimum,1c maximum.",
+  "result": {
+    "chunk_id": "f35b37",
+    "wall_time_seconds": 0.5009243,
+    "exit_code": 0,
+    "original_token_count": 19,
+    "output": "000003e8 000003e8 000003e8 00000000 00000001 00000000 00000001 00000fa0 \n"
+  }
+}

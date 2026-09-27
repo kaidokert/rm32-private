@@ -1,0 +1,22 @@
+python : test_branch_reaches_callee_after_first_return (test_isr_audit.InstructionReachability.test_branch_reaches_callee_after_first_return) ... ok
+At line:2 char:164
++ ... STEXITCODE; python -m unittest discover -s scripts -p test_isr_audit. ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (test_branch_rea..._return) ... ok:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+test_dead_loop_removed_live_loop_retained (test_isr_audit.InstructionReachability.test_dead_loop_removed_live_loop_retained) ... ok
+test_external_interior_entry_is_unresolved_not_silently_pruned (test_isr_audit.InstructionReachability.test_external_interior_entry_is_unresolved_not_silently_pruned) ... ok
+test_hex_spelled_mnemonic_is_not_machine_code (test_isr_audit.InstructionReachability.test_hex_spelled_mnemonic_is_not_machine_code) ... ok
+test_other_pc_writes_and_unknown_instructions_fail_closed (test_isr_audit.InstructionReachability.test_other_pc_writes_and_unknown_instructions_fail_closed) ... ok
+test_padding_after_return_is_not_a_call (test_isr_audit.InstructionReachability.test_padding_after_return_is_not_a_call) ... ok
+test_reachable_indirect_tail_is_not_a_return (test_isr_audit.InstructionReachability.test_reachable_indirect_tail_is_not_a_return) ... ok
+test_same_symbol_interior_call_is_unresolved (test_isr_audit.InstructionReachability.test_same_symbol_interior_call_is_unresolved) ... ok
+test_unannotated_numeric_call_is_not_ignored (test_isr_audit.InstructionReachability.test_unannotated_numeric_call_is_not_ignored) ... ok
+test_unannotated_tail_transfer_fails_but_internal_branch_survives (test_isr_audit.InstructionReachability.test_unannotated_tail_transfer_fails_but_internal_branch_survives) ...
+ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.001s
+
+OK

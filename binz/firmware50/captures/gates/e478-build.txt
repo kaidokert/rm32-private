@@ -1,0 +1,8 @@
+cargo :    Compiling firmware50 v0.1.0 (E:\m\robot\esc\rm32\binz\firmware50)
+At line:2 char:238
++ ... or=ld.lld'; cargo build --release --bin acceptance-off --bin diode-at ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...inz\firmware50):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+    Finished `release` profile [optimized + debuginfo] target(s) in 4.45s

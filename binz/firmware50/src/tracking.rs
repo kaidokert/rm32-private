@@ -248,6 +248,22 @@ mod tests {
     }
 
     #[test]
+    fn e476_late_event_preserves_previous_watch_timestamp() {
+        let mut watch = Report::new(4_717_616, 238, 1_000);
+        assert_eq!(watch.event(4_717_616, 6), None);
+        // The new detector stamp precedes its watch call by 11 us. The watch
+        // must still reject the overdue event, not replace last before polling.
+        let detector_entry = 4_718_634_u32;
+        assert_eq!(detector_entry - 4_717_616, 1_018);
+        assert_eq!(watch.event(4_718_645, 1), Some(Fault::Stale));
+        assert_eq!(watch.stale_decision(), Some(StaleDecision {
+            last: 4_717_616, at: 4_718_645, limit: 1_000, from_event: true,
+        }));
+        // Pure watch replay; it does not reconstruct physical crossings or
+        // the previous detector stamp from a guard-publication timestamp.
+    }
+
+    #[test]
     fn new_run_cannot_inherit_stale_evidence() {
         let mut w = Report::new(0, 238, 240);
         assert_eq!(w.poll(241), Some(Fault::Stale));

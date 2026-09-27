@@ -77,7 +77,7 @@ def target_symbol(rest: str) -> str | None:
 # "0800351c <symbol>:" section/function header.
 HEADER_RE = re.compile(r"^([0-9a-f]+)\s+<(.+)>:\s*$")
 # instruction line: "  8003520:\t4770      \tbx\tlr"
-INSN_RE = re.compile(r"^\s*([0-9a-f]+):\s+(?:[0-9a-f]{2,8}\s+)+\t?\s*(\S+)\s*(.*)$")
+INSN_RE = re.compile(r"^\s*([0-9a-f]+):\s+(?:(?:[0-9a-f]{8}|[0-9a-f]{4}|[0-9a-f]{2})\s+)+\t?\s*(\S+)\s*(.*)$")
 
 DIRECT_CALLS = {"bl", "blx"}          # blx <label> is direct; blx rN is not
 BRANCHES = {"b", "b.n", "b.w", "bx", "beq", "bne", "bcs", "bcc", "bmi", "bpl",
@@ -116,6 +116,23 @@ class Func:
         # (address, base mnemonic, in-function branch destination or None,
         #  operand text) per instruction, for the loop test below.
         self.cfg: list[tuple[int, str, int | None, str]] = []
+
+
+# Supported ordinary Thumb/M0 instructions. Unrecognized instructions are not
+# assumed to fall through safely. This is not a decoder or stack-integrity proof.
+ORDINARY = set("adcs adds add adr ands asrs bics cmn cmp cpsid cpsie dmb dsb eors "
+               "isb ldm ldmia ldr ldrb ldrh ldrsb ldrsh lsls lsrs mov movs mrs msr "
+               "muls mvns neg negs nop orrs pop push rev rev16 revsh rors rsbs sbcs sev "
+               "stm stmia str strb strh sub subs sxtb sxth tst uxtb uxth yield".split())
+
+
+def opaque_transfer(base: str, operands: str) -> bool:
+    if base not in ORDINARY | BRANCHES | DIRECT_CALLS:
+        return True
+    # PC as destination, or a non-return multiple load to PC, needs a target
+    # proof the audit does not have. Literal loads *from* PC remain ordinary.
+    return (re.match(r"^\s*pc\s*(?:,|$)", operands) is not None
+            or (base != "pop" and "{" in operands and re.search(r"\bpc\b", operands) is not None))
 
 
 def has_real_loop(f: Func) -> bool:
@@ -164,6 +181,65 @@ def has_real_loop(f: Func) -> bool:
     return any(reaches(s_, d) for s_, d in back)
 
 
+def prune_unreachable(f: Func) -> None:
+    """Ignore decoded padding, but retain reachable out-of-line blocks.
+
+Do not stop parsing at the first return: LLVM can place live branch targets
+after an epilogue. Walk from the symbol entry before deriving call edges.
+"""
+    if not f.cfg:
+        return
+    positions = {row[0]: i for i, row in enumerate(f.cfg)}
+    seen, pending = set(), [0]
+    while pending:
+        i = pending.pop()
+        if i in seen:
+            continue
+        seen.add(i)
+        _, base, dest, operands = f.cfg[i]
+        if opaque_transfer(base, operands):
+            continue
+        if (base == "pop" and "pc" in operands) or base == "bx":
+            continue
+        if base in BRANCHES and dest in positions:
+            pending.append(positions[dest])
+        if base != "b" and i + 1 < len(f.cfg):
+            pending.append(i + 1)
+    f.cfg = [row for i, row in enumerate(f.cfg) if i in seen]
+    f.insns = len(f.cfg)
+    f.calls.clear()
+    f.indirect = False
+    for _, base, destination, operands in f.cfg:
+        if opaque_transfer(base, operands):
+            f.indirect = True
+            continue
+        target = target_symbol(operands)
+        # Entry-only pruning cannot certify a call into another symbol's
+        # interior. Preserve that full target as unresolved, rather than
+        # silently audit a different entry path.
+        match = TARGET_RE.search(operands)
+        interior = match.group(1) if match and OFFSET_RE.search(match.group(1)) else None
+        if interior and (base in DIRECT_CALLS or (target != f.name and base in BRANCHES)):
+            f.calls.add(interior)
+            continue
+        if base in DIRECT_CALLS:
+            if target:
+                f.calls.add(target)
+            else:
+                # Includes register aliases (ip/r12) and unannotated numeric
+                # calls: no resolvable edge means no clean certificate.
+                f.indirect = True
+        elif base == "bx":
+            f.indirect = operands.strip() != "lr" or f.indirect
+        elif base in BRANCHES:
+            if target and target != f.name:
+                f.calls.add(target)
+            elif destination not in positions:
+                # Unannotated external tail transfers are calls too. A missing
+                # internal destination also cannot be silently discarded.
+                f.indirect = True
+
+
 def parse(disasm: str) -> dict[str, Func]:
     funcs: dict[str, Func] = {}
     cur: Func | None = None
@@ -201,6 +277,7 @@ def parse(disasm: str) -> dict[str, Func]:
                 dest_in_fn = dest
         cur.cfg.append((here, base, dest_in_fn, rest))
     for f in funcs.values():
+        prune_unreachable(f)
         f.has_backward_branch = has_real_loop(f)
     return funcs
 

@@ -1,0 +1,85 @@
+[
+  {
+    "cmd": "p",
+    "write": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Data sent successfully\nConnection ID: 41d57117-ca50-4504-b306-3c52d9586333\nBytes written: 1\nData: \"p\""
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "cmd": "p",
+    "read": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"41d57117-ca50-4504-b306-3c52d9586333\",\n  \"bytes_read\": 78,\n  \"data\": \"ACCEPTANCEOFF idle enable=0 moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 nfault=1 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 20,\n  \"elapsed_ms\": 613,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 78,\n      \"waited_ms\": 20,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "cmd": "t",
+    "write": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Data sent successfully\nConnection ID: 41d57117-ca50-4504-b306-3c52d9586333\nBytes written: 1\nData: \"t\""
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "cmd": "t",
+    "read": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"41d57117-ca50-4504-b306-3c52d9586333\",\n  \"bytes_read\": 1082,\n  \"data\": \"ACCEPTWINDOW case=0 window_body125ns=58 resume125ns=0 reason=0 before=22 after=22 com_calls=0 masked=1 off=1 accepted=1 early=0 unstable=0 off_before=1 gates_before=1 guard_prio=0 com_prio=64 comp_prio=128 pass=1 \\r\\nACCEPTWINDOW case=1 window_body125ns=66 resume125ns=119 reason=3 before=22 after=17 com_calls=0 masked=1 off=1 accepted=1 early=0 unstable=0 off_before=1 gates_before=1 guard_prio=0 com_prio=64 comp_prio=128 pass=1 \\r\\nACCEPTWINDOW case=2 window_body125ns=25 resume125ns=68 reason=3 before=18 after=17 com_calls=0 masked=1 off=1 accepted=0 early=0 unstable=1 off_before=1 gates_before=1 guard_prio=0 com_prio=64 comp_prio=128 pass=1 \\r\\nACCEPTWINDOW case=3 window_body125ns=237 resume125ns=262 reason=15 before=17 after=17 com_calls=0 masked=1 off=1 accepted=1 early=0 unstable=0 off_before=1 gates_before=1 guard_prio=0 com_prio=64 comp_prio=128 pass=1 \\r\\nACCEPTWINDOW case=4 window_body125ns=62 resume125ns=0 reason=0 before=22 after=22 com_calls=0 masked=1 off=1 accepted=1 early=0 unstable=0 off_before=1 gates_before=1 guard_prio=0 com_prio=64 comp_prio=128 pass=1 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 115,\n  \"elapsed_ms\": 614,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 1082,\n      \"waited_ms\": 115,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "cmd": "p",
+    "write": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Data sent successfully\nConnection ID: 41d57117-ca50-4504-b306-3c52d9586333\nBytes written: 1\nData: \"p\""
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "cmd": "p",
+    "read": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"41d57117-ca50-4504-b306-3c52d9586333\",\n  \"bytes_read\": 78,\n  \"data\": \"ACCEPTANCEOFF idle enable=0 moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 nfault=1 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 26,\n  \"elapsed_ms\": 602,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 78,\n      \"waited_ms\": 26,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "close": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Serial connection closed\nConnection ID: 41d57117-ca50-4504-b306-3c52d9586333"
+        }
+      ],
+      "isError": false
+    }
+  }
+]

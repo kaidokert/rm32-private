@@ -1,0 +1,29 @@
+[
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "Data sent successfully\nConnection ID: 441bd053-d99a-48d0-834b-6c810ff7aae4\nBytes written: 1\nData: \"p\""
+      }
+    ],
+    "isError": false
+  },
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"441bd053-d99a-48d0-834b-6c810ff7aae4\",\n  \"bytes_read\": 212,\n  \"data\": \"PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS\\r\\nTIMEDRECHECK boot_cumulative=1 requests=3 observations=10 retired=0 \\r\\nDIODESELFTEST en0 six_sectors_pwm=PASS latch=PASS deadline=PASS\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 600,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 31,\n  \"elapsed_ms\": 601,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 212,\n      \"waited_ms\": 31,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  },
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "Serial connection closed\nConnection ID: 441bd053-d99a-48d0-834b-6c810ff7aae4"
+      }
+    ],
+    "isError": false
+  }
+]

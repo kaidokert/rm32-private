@@ -1,0 +1,47 @@
+{
+  "boot": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"264afcd1-0633-4a0f-9aa3-782a5621611d\",\n  \"bytes_read\": 0,\n  \"data\": \"\",\n  \"encoding\": \"utf8\",\n  \"status\": \"timeout\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 400,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 1012,\n  \"elapsed_ms\": 0,\n  \"completion_reason\": \"initial_timeout\",\n  \"chunks\": []\n}"
+      }
+    ],
+    "isError": false
+  },
+  "pre": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"264afcd1-0633-4a0f-9aa3-782a5621611d\",\n  \"bytes_read\": 36,\n  \"data\": \"ACCEPTANCEOFF idle enable=0 moe=0 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 400,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 5,\n  \"elapsed_ms\": 405,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 36,\n      \"waited_ms\": 5,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  },
+  "suite": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"264afcd1-0633-4a0f-9aa3-782a5621611d\",\n  \"bytes_read\": 113,\n  \"data\": \"ACCEPTWINDOW case=0 window125ns=26 resume125ns=0 reason=0 before=18 after=19 com_calls=1 masked=1 off=1 pass=0 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 700,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 27,\n  \"elapsed_ms\": 715,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 113,\n      \"waited_ms\": 27,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  },
+  "post": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"connection_id\": \"264afcd1-0633-4a0f-9aa3-782a5621611d\",\n  \"bytes_read\": 36,\n  \"data\": \"ACCEPTANCEOFF idle enable=0 moe=0 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 400,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 11,\n  \"elapsed_ms\": 403,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 36,\n      \"waited_ms\": 11,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  },
+  "close": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Serial connection closed\nConnection ID: 264afcd1-0633-4a0f-9aa3-782a5621611d"
+      }
+    ],
+    "isError": false
+  }
+}

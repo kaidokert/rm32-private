@@ -1,0 +1,12 @@
+{
+  "target": "STM32G071RBTx",
+  "probe": "0483:374b:066CFF343433464757233430",
+  "archive": "captures/elf/CA94ACF6.e472-acceptance-off.elf",
+  "result": {
+    "chunk_id": "0c0141",
+    "wall_time_seconds": 2.1339247,
+    "exit_code": 0,
+    "original_token_count": 43,
+    "output": "IMAGE_SHA=CA94ACF61FEF865B84F4360C2F896A3EC633A42657DCBDD572A6783C099ADD8D\r\n     Finished in 0.89s\nDOWNLOAD_EXIT=0\r\nVerification successful\nVERIFY_EXIT=0\r\nRESET_EXIT=0\r\n"
+  }
+}

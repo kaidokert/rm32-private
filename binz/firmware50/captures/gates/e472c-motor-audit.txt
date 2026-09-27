@@ -1,0 +1,19 @@
+ISR-root audit: captures/elf/C2F903A0.e470-diode-atomic-arm.elf
+
+  [ADC_COMP] reachable=1  FAIL
+      indirect call (not allowlisted): ['ADC_COMP']
+
+  [TIM16] reachable=1  FAIL
+      indirect call (not allowlisted): ['TIM16']
+
+  [DMA1_CHANNEL1] reachable=1  FAIL
+      indirect call (not allowlisted): ['DMA1_CHANNEL1']
+
+  [TIM6_DAC_LPTIM1] reachable=1  FAIL
+      indirect call (not allowlisted): ['TIM6_DAC_LPTIM1']
+
+AUDIT FAILED (4 finding(s)):
+  - ADC_COMP: unresolved indirect call in: ['ADC_COMP']
+  - TIM16: unresolved indirect call in: ['TIM16']
+  - DMA1_CHANNEL1: unresolved indirect call in: ['DMA1_CHANNEL1']
+  - TIM6_DAC_LPTIM1: unresolved indirect call in: ['TIM6_DAC_LPTIM1']

@@ -1,0 +1,20 @@
+python : .......F
+At line:2 char:1
++ python scripts/test_isr_audit.py 2>&1 | Tee-Object captures/gates/e47 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (.......F:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+======================================================================
+FAIL: test_unannotated_tail_transfer_fails_but_internal_branch_survives (__main__.InstructionReachability.test_unannotated_tail_transfer_fails_but_internal_branch_survives)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "E:\m\robot\esc\rm32\binz\firmware50\scripts\test_isr_audit.py", line 46, in test_unannotated_tail_transfer_fails_but_internal_branch_survives
+    self.assertEqual(f["ADC_COMP"].indirect, expected)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True != False
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.001s
+
+FAILED (failures=1)

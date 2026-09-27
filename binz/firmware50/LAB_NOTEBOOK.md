@@ -48295,3 +48295,511 @@ probe, together with an explicit safety-response budget, not another low-duty
 motor repeat or another paper race hypothesis. This batch changes the next
 action by closing the snapshot objection and isolating the actual mask span.
 Goal80 remains active/incomplete; no new duty qualification.
+
+## E472 — 2026-09-27 — disabled acceptance-window guard/COM probe
+
+Prediction before implementation/build: exercise the candidate's real COMP
+acceptance body through a typed probe Window, with ENABLE/MOE/CCRs always off.
+Use the existing board TIM6 shim and real guard_root, not a substitute safety
+handler. Pend a deliberately overdue TickGap under the window mask; on restore
+it must stop before COMP bookkeeping can revive a timer. Cases: accept without
+injection, accept+guard, refuse+guard, expired-arm+guard (first LateArm retained),
+and accepted replacement of a stale COM request. COM probe only acknowledges/
+stops timers, never commutates. Measure observer-affected window ticks and
+pending-request-to-COMP-resumption time. Neither is exact lean-image WCET.
+All waits bounded; no motor parser or output-enable operation. Review exact
+source/build before flashing. Installed63F48607 remains OFF; MCP list_ports
+works and finds COM41. This batch is the disabled integration gate, not a
+new duty cohort. Prior turn classified progress (reviewed source/cost checkpoint).
+
+E472 build CA94ACF6 succeeds; initial arithmetic audit FAIL retained. Two
+expected probe-only bounded loops require dedicated review. Third finding is
+tooling: GNU decodes padding at08000102 after ADC_COMP's pop-PC08000100 as
+bmi __INTERRUPTS+0x6e. It is unreachable from vector entry. Fix parser to form
+call/loop evidence only from entry-reachable instructions; retain reachable
+out-of-line blocks after returns. Add regression fixtures for both, including
+reachable forbidden/indirect calls. Do not whitelist __INTERRUPTS. Prediction:
+same ELF loses only the unreachable edge; real loop findings remain until the
+separate bridge-disabled-only allowance supplies their explicit bounds.
+
+E472 preflash reviews (verbatim):
+> Raw evidence: supplied logs report four audited roots and 408 passing tests. No five-case hardware results are supplied. The reported off readback and ELF hash are assertions here, not independently verified observations.
+>
+> **Concrete audit blocker:** direct calls into the same symbol’s interior remain unsound. For `bl <ADC_COMP+offset>`, parsing records no CFG destination; pruning follows only fallthrough, potentially discarding the called block. Call extraction then records merely `ADC_COMP`, so reachable arithmetic or loops in that block can escape detection. Either traverse that entry or reject it as unresolved. Also, targetless `blx ip` escapes the `^r\d` indirect-call check. Add regression fixtures before describing this audit as fail-closed.
+>
+> Removing the demonstrated padding after `pop {r7,pc}` is justified; preserving branch-reachable blocks after an earlier return is necessary.
+>
+> The oracle meaningfully checks selected outcomes: 22 means active/running/off; 18 means active/stopped-timer/off; 17 means stopped/inactive/off. Cases 1–3 check guard shutdown and first-reason preservation; case 4 checks stale pending removal without dispatch. However, `MASKED` samples only one instant, and neither timing field has an acceptance ceiling. These results cannot establish continuous masking, production timing, or WCET.
+>
+> The supplied harness contains no drive command or enabling action, and checks off before cleanup. Remaining safety dependencies include omitted initialization and hardware helpers. Exact device identity, flashed-image verification, and complete post-test readback remain execution prerequisites. Resolve the audit holes before relying on its pass. Scope remains driver-disabled only.
+
+> Raw: the supplied audit reports four clean roots; the host log reports 408 passing tests. Neither contains a five-case probe result. `WINDOW` ends before `MASKED` and `BEFORE` execute, although both still execute under PRIMASK. Printed `off` is sampled after cleanup; the pass expression samples it before cleanup.
+>
+> **Concrete blocker: the audit still has false-clean paths.** In `prune_unreachable`, a reachable `blx ip` has neither a symbolic target nor an operand matching `^r\d`, so it is silently accepted. `ip` is the register alias for r12. Likewise, an unannotated direct call produces no edge and no unresolved-target failure. Reject unresolved call operands and add fixtures before relying on “certified clean.” The padding-pruning and external-interior-entry changes address their stated examples, but do not establish fail-closed decoding.
+>
+> The disabled suite’s expected snapshots are coherent: 22 means active/running/off, 18 active/stopped-timer/off, and 17 stopped/inactive/off. Cases 1/2 exercise guard shutdown across mask restoration; case 3 checks preservation of LateArm; case 4 checks stale-pending cancellation through the instrumented path.
+>
+> **Limited coverage:** `WINDOW > 0` imposes no latency bound, excludes part of the masked interval, and includes probe overhead. Case 3’s 1,000-iteration escape does not independently guarantee 20 µs; an insufficient delay should fail its oracle. No result establishes candidate WCET or powered safety.
+>
+> Resolve the audit blocker before the proposed disabled-only flash. No powered-test authorization follows.
+
+Dispositions: concrete audit holes fixed before relying on a clean result:
+all unresolved call operands now fail (including ip/r12 aliases and numeric
+unannotated calls); any direct interior-entry call remains unresolved, including
+same-symbol calls. Seven machine-code fixture tests pass; same CA94ACF6 probe
+four-root audit passes with probe-only bounded-loop allowance. No __INTERRUPTS
+allowance. Motor C2F903A0 still uses unchanged production allowance.
+WINDOW is explicitly a partial observer-affected masked-body duration: its
+store, snapshot and outer restore follow the final stamp. RESUME includes
+pending real guard service until COMP resumes. Neither field is an asserted
+WCET or production latency bound; suite is disabled integration evidence only.
+Exact flash/readback identity and real pre/post-off MCP checks remain execution
+gates. There are no hardware results yet. Corrected-tool delta goes to dual
+review before flash; this is not a powered approval.
+
+E472 correction reviews (verbatim):
+> One blocker remains in the audit’s fail-closed behavior: an unannotated numeric **tail branch** can still certify clean.
+>
+> For example:
+>
+> ```text
+> 080000f8 <ADC_COMP>:
+>  80000f8: e000 b.n 80000fc
+> 080000fc <__aeabi_uidiv>:
+>  80000fc: 4770 bx lr
+> ```
+>
+> `prune_unreachable()` stops fallthrough at `b`, but records no call because `target_symbol()` returns `None`. Consequently, `reachable()` contains only `ADC_COMP`, with no unresolved edge, indirect flag, or loop. The forbidden helper is missed.
+>
+> Resolve numeric branch destinations across functions, or fail closed when a reachable branch destination cannot be accounted for. Add this as an eighth fixture.
+>
+> The three stated call corrections are present in the supplied source. This remaining hole does **not** establish that the supplied ELF exercises it; the four-root PASS log cannot settle that without raw disassembly.
+
+> [P1] Unannotated direct **tail branches** still bypass the corrected unresolved-call handling. For example:
+>
+> ```text
+> 080000f8 <ADC_COMP>:
+>  80000f8: e002 b.n 8000100
+> 08000100 <__aeabi_uidiv>:
+>  8000100: 4770 bx lr
+> ```
+>
+> `prune_unreachable()` retains the branch but records neither a call nor an unresolved transfer because `target_symbol()` returns `None`. Consequently, `reachable()` contains only `ADC_COMP`, and the audit certifies it despite the reachable forbidden helper.
+>
+> The unannotated `bl` correction therefore leaves an equivalent tail-call hole. Resolve numeric branch destinations against instruction/symbol addresses, or fail closed when a reachable branch destination cannot be established as an internal edge. Add this fixture with an expected audit failure.
+>
+> The seven passing fixtures and same-ELF result do not cover this case.
+
+Disposition: unannotated external tail transfers now fail closed too; new
+fixture distinguishes them from legal numeric internal branches. Initial
+fixture exposed bx-lr being in the generic branch set; handle bx before other
+branches, preserving register-indirect failure and allowing lr returns. Failed
+fixture retained; eight tests and same-ELF four-root probe audit now PASS.
+These corrections are tool-only, not a firmware rebuild. Re-review the actual
+correction before use. No claim this tool proves all arbitrary instruction sets
+or hardware WCET; it audits the emitted M0 roots under its documented decoder.
+
+E472 last audit delta reviews (verbatim):
+> The material corrections hold by inspection: unannotated external tail branches become unresolved, numeric internal targets remain traversable, `bx lr` is a return, and other `bx` operands fail as indirect transfers. The supplied captures report eight passing tests and four passing disabled-probe roots; I have not independently rerun them.
+>
+> Concrete remaining defect: reachable `mov pc, r3` is treated as an ordinary instruction, leaving `indirect=False`. A root containing that transfer can be certified despite an unresolved destination. This is a fail-closed gap, not merely a coverage limitation.
+>
+> The unchanged disabled-probe pass supports that artifact only; it does not establish enabled-path coverage or authorize motors.
+
+> The material corrections hold by inspection: unannotated external branches fail unresolved; internal destinations remain traversable; `bx lr` terminates traversal; other `bx` operands fail indirect; interior calls remain unresolved. The eight fixtures cover these cases. The capture reports four passing disabled-probe roots; I haven’t independently executed them.
+>
+> Remaining concrete false negative: Thumb `mov pc, r3` is an indirect control transfer, but the parser treats it as ordinary fallthrough. A function containing that instruction followed by `bx lr` can certify clean despite an unknown destination. This is a fail-closed defect, not merely limited test coverage.
+>
+> The disabled-suite acceptance remains conditional on closing that gap. No motor authorization is implied.
+
+Disposition: PC-destination/multiple-load-PC transfers now fail unresolved;
+unknown opcodes are no longer assumed to fall through. Ordinary M0/GNU aliases
+are explicitly recognized. This exposed a pre-existing parser bug: hex-spelled
+ADD was consumed as machine bytes by the 2..8-hex-digit regex. Restrict byte
+chunks to2/4/8digits; add regression. GNU neg/negs aliases added after inspection.
+Ten tests pass; same exact probe and motor-candidate four-root audits pass.
+This is limited static reachability under decoded compiler output, not stack
+integrity/exception/bus proof. All failed intermediate audit logs retained.
+
+E472 final preflash correction reviews (verbatim):
+> The supplied captures report ten passing tests and clean audits for both CA94ACF6 and C2F903A0, across all four requested roots.
+>
+> The corrections address the stated defects:
+>
+> - Recognized instructions writing PC, non-return register-list loads containing PC, and unknown mnemonics now flag unresolved control flow.
+> - Pruning stops at those transfers; the retained instruction still triggers failure unless explicitly allowlisted.
+> - Restricting encoding tokens to 2/4/8 hex digits prevents consuming `add` as machine bytes.
+> - Both GNU `neg` and `negs` are accepted.
+>
+> The tests also cover live blocks after returns, indirect tails, unresolved interior calls, and live versus dead loops.
+>
+> **No artifact-specific blocker is demonstrated by this evidence.** The captures establish reported audit outcomes; without the ELF disassemblies, they do not independently establish complete decoding of those artifacts. Within the stated scope, the requested mov-PC closure is implemented. No powered testing is needed for this review.
+
+> The supplied test log reports 10 passing tests; both ELF audit logs report all four roots clean. These are reported results, not independent verification of the binaries.
+>
+> The corrections address the stated holes:
+>
+> - Restricting encoding tokens to 2/4/8 hex digits preserves the three-letter `add` mnemonic.
+> - Reachable PC destinations, non-return multiple loads containing PC, and unknown decoded opcodes set `indirect`, causing failure unless the containing function is allowlisted.
+> - `neg`/`negs` are explicitly recognized.
+> - Entry traversal retains live blocks after returns while excluding unreachable padding.
+>
+> No actual artifact blocker is demonstrated by the supplied material. One evidence limit remains: the logs do not show the invocation, allowlist, or disassembly, so they cannot establish whether certification depended on exemptions.
+>
+> The fixtures support the specific parser and transfer fixes; they do not establish broader control-flow completeness. No powered testing is needed for this review.
+
+Dispositions: no artifact-specific blocker identified. Audit invocations
+are retained in the tool transcript; e472-off-only-audit-allow.json lists only
+the two bounded probe loops, with empty indirect/panic exemptions. Motor audit
+uses scripts/audit_allow.json unchanged. These reviews do not independently
+reproduce binary decoding; primary full disassembly and exact hash retained.
+
+## E473 — 2026-09-27 — one bridge-disabled acceptance suite
+
+Prediction before flash/run: exact CA94ACF6 on explicit G071 probe serial
+066CFF343433464757233430, download then probe-rs verify then reset. No motor
+parser or enabling path. One t suite cases0..4, stops on first failure. Expected
+snapshots/reasons E472; capture every reply and post-off state. UART MCP
+responsive: latestp ENABLE/MOE/CCRs0,gateslow1,nFAULT1; closed before flash.
+No envelope or motor-candidate qualification transfer. Guard/candidate latency
+bound remains unproved; this suite supplies disabled integration observations.
+
+E473 result: CA94ACF6 download/verify/reset all0; MCP p before/after en0/MOE0.
+First case0 FAIL, suite stopped (cases1..4 NOT run). window26ticks=3.25us,
+resume0,reason0,before18(no arm),after19(stopped but active),COMcalls1,
+masked1,off1. No motor operation. Do not call this a masked-arm failure: the
+expected acceptance never occurred. UART closed successfully.
+
+Read-only idle SWD read (no reset) anchored to linked assembly resolves which
+refusal: offer_timed r1 literal20000190+4c=200001dc; callee offsets0/4/8 are
+avg/last/previous, c/10/14 too_early/unstable/accepted,18/1c bounds. Eight words:
+1000,1000,1000,0,1,0,1,4000. Thus one persistence rejection, no acceptance or
+half-gate rejection; estimate unchanged. Source refusal wakes parked phase4,
+explaining one COM probe dispatch/com_stop and after19. Analog reason for the
+level disagreement is not established; off-state phase-vs-neutral is not a
+controlled test signal. Captures e473-off-suite.json and detector-readback.json.
+
+Next proposed discriminating fixture correction, not controller change:
+in disabled prepare only, select COMP negative full VREFINT (INMSEL3 per
+cached HAL comparator.rs RefintInput enum), wait640 core cycles, then choose
+expected polarity from settled live level. Keep same persistence/thresholds
+and real guard paths. Hardware mux differs only in no-drive probe. This tests
+mask/stop interaction with a stable reference input rather than near-equal
+off-state phase/neutral. No unchanged rerun; review evidence and proposal first.
+
+E473 result reviews (verbatim):
+> Raw decoding:
+>
+> - Flash log reports successful download, verification, and reset for SHA `CA94ACF6…ADD8D`.
+> - Case 0: `before=18`, `after=19`, `com_calls=1`, `masked=1`, `off=1`, `pass=0`.
+> - Snapshot 18 means active + off; 19 additionally means stopped. Both show timer-running and TIM16-pending bits clear.
+> - Address calculation matches: `0x20000190 + 0x4c = 0x200001dc`. Readback decodes to avg/last/previous=1000, too_early=0, unstable=1, accepted=0, bounds=1..4000.
+> - Disassembly increments `unstable` on comparator-level mismatch during the persistence loop.
+>
+> Interpretation: assuming the readback belongs to this case without intervening detector changes, it supports persistence-filter refusal before acceptance/arming. It does **not** demonstrate a masking failure or establish an analog cause. `masked=1` samples PRIMASK at one point. The refusal-wake → probe-COM-stop explanation fits the observations; the omitted resume predicate prevents fully proving that chain here.
+>
+> The proposed disabled-only fixture change is reasonable: select negative input 3, delay, then sample the expected level. The supplied HAL identifies 3 as full VREFINT; it does not verify `select_negative` implementation or voltage separation. Keep the change within the off-only preparation path and rerun the suite. Stability and acceptance remain unproven. No motor authorization.
+
+> Raw decoding:
+>
+> - Flash/download/verify/reset report success for image `CA94ACF6…ADD8D`.
+> - Only case 0 is captured: `pass=0`, `reason=0`, `masked=1`, `off=1`, `com_calls=1`.
+> - `before=18`: active, off; stopped/running/pending clear. `after=19`: additionally stopped; active remains set.
+> - RAM address arithmetic is correct: `0x20000190 + 0x4c = 0x200001dc`. Decoded fields are avg/last/previous=1000, too_early=0, unstable=1, accepted=0, bounds=1..4000.
+> - Disassembly increments unstable on comparator-level mismatch during filtering.
+>
+> Interpretation: assuming readback belongs to this run without intervening mutation, the evidence supports persistence-filter refusal before arming. The COM count and snapshots are consistent with refusal waking TIM16 and the probe handler stopping COM. The supplied excerpts do not independently prove that entire causal chain. This is failed acceptance coverage, not demonstrated masking failure; no analog cause is established.
+>
+> The proposed disabled-fixture change is reasonable conditionally: place selection and settling before expected-level sampling, verify `select_negative(3)` actually programs INMSEL, and confirm this fixture remains exclusive to the disabled binary. HAL supports encoding 3 as full VREFINT; it does not establish voltage separation or sufficient settling.
+>
+> Rerun all cases with outputs disabled. No motor authorization.
+
+Dispositions: idle readback followed the single case with no reset or other
+run; matching seed/bounds and unstable1 are retained. select_negative programs
+INMSEL directly in hw/comp.rs. No claim voltage separation/settling proven.
+Self-review also found a distinct harness omission before cases1..3: normal
+board guard NVIC setup lives in guard_arm, which this no-drive binary never
+calls. Explicitly set priority0/unpend/unmask TIM6 in disabled prepare, and
+mask/unpend after cleanup. This enables the real software-pended guard vector;
+it does not alter production guard logic or thresholds. Original suite never
+reached guard cases, so they remain untested, not retroactively failed.
+
+## E474 — 2026-09-27 — corrected disabled fixture, not controller A/B
+
+Before edit/build: add internal VREFINT selection+640cycle settle ahead of
+expected-level sampling; explicitly initialize guard NVIC; include estimator
+accepted/tooearly/unstable counts in post-run output and oracle. Extend p to
+CCR/gates/nFAULT readback. Rename window_body125ns to state partial coverage.
+These are fixture corrections, not motor-path changes. Rebuild one off-only
+image, review before flash, one five-case suite stopping at first failure.
+No motor run or threshold change; preserve CA94ACF6 failure and memory read.
+
+E474 preflash reviews (verbatim):
+> Snapshot bits are stopped=1, active=2, timer-running=4, TIM16-pending=8, off=16. Thus the assertions require:
+>
+> | Case | Counters (accepted, early, unstable) | Reason | Before → after |
+> |---|---|---|---|
+> | 0 | (1,0,0) | 0 | 22 → 22 |
+> | 1 | (1,0,0) | 3 | 22 → 17 |
+> | 2 | (0,0,1) | 3 | 18 → 17 |
+> | 3 | (1,0,0) | 15 | 17 → 17 |
+> | 4 | (1,0,0) | 0 | 22 → 22 |
+>
+> 22 means active/running/off; 18 active/off; 17 stopped/off. These decode correctly, but missing transaction/arming bodies prevent independently deriving those outcomes, including case 4’s pending-bit clearance.
+>
+> INMSEL=3 matches HAL VRefint; selection precedes a 640-cycle delay. Analog settling sufficiency is unproven.
+>
+> `prepare` explicitly sets guard priority, clears pending, and unmasks it. Priority **0** is unverified without the constant definition; ADC_COMP/TIM16 priorities require omitted board initialization. Driver fault precedes TickGap, making nFAULT-high necessary.
+>
+> The old e473 capture fails and uses different output fields. Its detector readback decodes to **(0,0,1)**. The e474 audit does not establish runtime results or image identity. Exact flash verification and a fresh five-case capture remain required.
+
+> - **Shutdown dominance remains unproven.** Cases 1–3 pend the guard inside PRIMASK, forcing shutdown after the transaction. They do not test a guard trip before entry followed by resumed COMP code that could rearm COM. Final snapshots also cannot exclude transient rearming.
+>
+> - **Interrupt ordering needs stronger evidence.** Setting guard priority alone does not establish its relationship to ADC_COMP and TIM16. Case 4’s zero COM calls may demonstrate pending-bit cancellation; it does not exercise the production COM handler or prove guard dominance over simultaneous dispatch.
+>
+> - **Off-only containment is conditional.** `off()` checks enable, MOE, and CCRs, but excludes gate-pin state. The added `p` readback occurs after another `safe_off()`, potentially hiding a containment failure. Initialization and failure paths also need scrutiny.
+>
+> - **The input change is plausible, not demonstrated.** VREFINT selection plus delay does not establish reference readiness or comparator stability. Selecting the expected edge from one sampled level makes acceptance partly self-calibrating. Case 2 tests deliberate polarity disagreement, not noisy-input rejection.
+>
+> - **Evidence does not match the proposal.** E473 failed case 0 and used different telemetry; E474’s structural audit proves neither runtime behavior nor electrical safety. Require exact-image verification and fresh five-case results. Unsafe vector/priority contracts remain assumptions until initialization and effective priorities are checked.
+
+Dispositions before any flash: suite intentionally covers pending-during-
+window, not every possible prior-stop interleaving; no complete shutdown or
+WCET claim. Guard-before-arm refusal remains existing com_arm_crossing's
+atomic stopped/active check, not newly certified here. Add actual NVIC priority
+readback/oracle and pre-cleanup off/gate-pin fields to close observable setup
+and containment omissions. Constants/source: shared.rs Motor=0x40, Guard=0,
+CompLow=0x80 under com-top; tim16_init and comp2_init program those values.
+No analog stability or settling claim before result; case2 is deterministic
+polarity refusal, not a noise test. Exact flash verification remains mandatory.
+New build below changes reporting/validation only after the ISR, not the window.
+
+
+E474b final preflash review dispositions: both independent reviews are retained
+verbatim in captures/gates/e474b-evidence-review.md and
+captures/gates/e474b-adversarial-review.md (appended below). They find no definite
+containment defect in the supplied fixture; actual five-case runtime evidence
+remains missing. That is the next test, not a reason to repeat offline review.
+Point readbacks do not establish continuous containment, COM probe is not the
+production commutator, and partial window timing is not WCET. No motor claim.
+
+evidence:
+> Bitfield oracle is internally coherent: 22 = active + timer running + off; 18 = active + off; 17 = stopped + off. All expect TIM16 pending cleared, including case 4—this depends on the omitted acceptance/arm implementation.
+>
+> Ordering is correct for `off_before` and `gates_before`: both precede cleanup. `BEFORE` is inside PRIMASK; `AFTER` follows window return, allowing pending higher-priority guard service.
+>
+> Priority assertions use actual NVIC readback and require guard 0, COM 64, COMP 128; no measured values were supplied.
+>
+> Concrete blocker: exact flashed-artifact verification and passing runtime records for all five cases, including pre/post readbacks. Build/clippy claims and the supplied audit do not establish those outcomes or Vref stability.
+>
+> Scoped limitation: pending-during-window coverage establishes neither all stop interleavings nor production WCET.
+
+adversarial:
+> No definite containment bug is demonstrated by this excerpt. `off_before`/`gates_before` now prevent cleanup from manufacturing the final disabled readback, but remain point samples: they do not establish continuous gate containment.
+>
+> Case 4 tests whether a COM pending inside PRIMASK is cleared before unmasking; its replacement ISR only counts/stops, so it cannot validate production COM behavior. That is consistent with the stated narrow scope.
+>
+> Case 3’s bounded delay does not guarantee 20 µs elapsed; insufficient delay should fail the expected-reason assertion, not qualify the case.
+>
+> Remaining qualification blocker: verified flashed artifact and actual five-case results, including pre-cleanup gate readbacks and Vref stability. Release/clippy/audit success supplies neither. Priority readback improves evidence, but does not prove interrupt delivery or timing.
+
+## E475 — 2026-09-27 — one corrected bridge-disabled integration suite
+
+Pre-run prediction: D677F753 should accept stable-input cases, refuse opposite
+polarity, execute the real pending guard after unmask, reject expired arm,
+and clear stale COM pending. No motor command exists. Exact hash/flash verify,
+p/t/p once through MCP, stop at first failing case; retain all results.
+Previous status-only goal turn made no progress; this resumes the pending test.
+
+
+E475 result: exact D677F753 flash/verify/reset succeeded. Five cases PASS,
+accepted/early/unstable totals4/0/1; all COM probe calls0 and pre-cleanup
+off/gates1. Actual priorities0/64/128. Partial body times7.25/8.25/3.125/
+29.625/7.75us; requested-guard-to-resume14.875/8.5/32.75us for cases1..3.
+Case3 includes deliberate20us delay. Not full masked span, WCET, nor exact
+shutdown latency. Pre/post ENABLE/MOE/CCRs0,gateslow1,nFAULT1; UARTclosed.
+
+evidence review (verbatim):
+> Raw evidence, recomputed (each tick = 0.125 µs):
+>
+> | Case | Body µs | Resume µs | Reason | Before→after | Accepted/early/unstable |
+> |---|---:|---:|---:|---|---|
+> | 0 | 7.250 | 0 | 0 | 22→22 | 1/0/0 |
+> | 1 | 8.250 | 14.875 | 3 | 22→17 | 1/0/0 |
+> | 2 | 3.125 | 8.500 | 3 | 18→17 | 0/0/1 |
+> | 3 | 29.625 | 32.750 | 15 | 17→17 | 1/0/0 |
+> | 4 | 7.750 | 0 | 0 | 22→22 | 1/0/0 |
+>
+> Snapshot bits 0–4: stopped, active, timer-running, TIM16-pending, off. Thus 22 means active/running/off; 18 active/off; 17 stopped/off. All sampled pending bits are clear.
+>
+> Five distinct cases match the predicates; totals are **4 accepted, 0 early, 1 unstable**, zero COM calls. All report masked/off/gates checks=1 and priorities guard/COM/COMP=0/64/128. Both idle readbacks show enable/MOE/CCRs=0, gates_low/nfault=1. Download/verify/reset report success.
+>
+> **Yes: this completes the five-case disabled integration check within the supplied evidence.** The digest’s source/build linkage is not independently established.
+>
+> It cannot establish energized motor timing, physical zero-cross accuracy, commutation phase/deadline correctness, switching latency, or worst-case interrupt blocking. COM uses a stopping stub; comparator stimulus and guard requests are synthetic. Body measurements include probe overhead; resume measures request-to-post-unmask observation, not isolated guard latency. Zero resume means no request. These observations do not qualify the motor candidate or bound production timing.
+
+adversarial review (verbatim):
+> Raw evidence: all five cases report `pass=1`, `com_calls=0`, `masked=1`, and pre-cleanup `off_before=1 gates_before=1`. Cases 1–2 change from active to stopped (`after=17`, reason 3); case 3 is already stopped before unmasking (reason 15). Case 4 reports no pending TIM16 in either snapshot. Flash verification succeeded.
+>
+> - **Pending guard:** Cases 1–2 support guard handling after the masked transaction, but acceptance still occurs in case 1 while the guard is pending. This establishes deferred stopping, not that briefly arming energized hardware is harmless. Case 3 does not independently establish pending-guard delivery: stopping precedes unmasking.
+> - **Stale COM:** Case 4 supports removal of the injected pending interrupt before observation. It does not exercise production COM execution: the fixture substitutes a count-and-stop handler. Timer-origin reassertion and production interleavings remain untested.
+> - **Cleanup masking:** The pass predicate captures output and gate state before `HostAbort`, so cleanup cannot explain those checks. Printed `off=1` and subsequent idle readbacks are post-cleanup evidence only.
+> - **Observer timing:** `window_body125ns` includes injection/probe overhead but excludes the final masked stores/snapshot. `resume125ns` measures through return from unmasking, potentially including ISR execution—not guard-entry latency or worst-case shutdown time.
+>
+> **Verdict:** No concrete defect preventing one gentle protected screen is demonstrated. Qualification remains unproven; proceeding depends on the stated production arm/stop checks, whose evidence is absent here.
+
+Dispositions: completed only these five disabled cases; no WCET/continuous
+containment claim. Production com_arm_crossing still validates stopped/active
+under PRIMASK, includes timer preparation in spent, and immediately guard-trips
+expired arms. E471 lifecycle review plus phase0/4 resume predicate exclude
+pre-arm phase1 sector change; post-arm COM may preempt bookkeeping. Existing
+50us handler budget,200us tick-gap and all electrical stops stay unchanged.
+The bounded conditional30.156us mask model and pending-guard exercise support
+one gentle screen, not high-duty qualification. No further fixture expansion.
+
+## E476 — 2026-09-27 — first motor screen of masked acceptance
+
+Pre-run: flash exact archived C2F903A0 (E470 release-s/thinLTO/codegen1,
+advance-ref,deep-filter,com-top; four-root audit clean). Disabled preflight
+must PASS. One15% command9,28s total/~20s target, unchanged protections,
+propless reverse, physical3A last confirmed. >120s off since last motor run.
+Prediction: unchanged waveform/persistence cadence with bounded uninterrupted
+acceptance-to-arm should complete without late/thin/guard fault. Any fault ends
+batch; no retry, no claim15% expands envelope. Retain full capture and verifyoff.
+
+
+E476 result: C2F903A0 failed during handoff,4ms closed/0hold,7 accepted,
+7 COM, Tracking8. Watch from_event=1,last4717616,at4718645,limit1000,
+age1029. No late/thin/overrun/sag/current/nFAULT stop. Applied133/1333=9.98%,
+NOT15% achieved. Partial exposure maxima spent9/COMP22us prove no speedup.
+Postflight alloutputsOFF/nFAULT1; MCPclosed. Candidate notpromoted/no retry.
+
+evidence review(verbatim):
+> Raw evidence: E476 achieved only 4 ms closed loop and zero target hold, versus control’s 22,778 ms closed loop and 20,278 ms hold. The requested 28 seconds is not achieved exposure.
+>
+> E476’s sector counts sum to 7 accepted events, matching accepted/zc/com counts, with zero coalescing or forcing. Its 13 driven accepts belong to acquisition. Control’s sector sum 253,883 plus 30,772 coalesced accepts equals 284,655; zc/com counts are separately 284,657.
+>
+> Reason 8 accompanies a tracking-stale trip: 4,718,645 − 4,717,616 = 1,029 µs, exceeding 1,000 µs by 29. However, the post snapshot gives acceptance age 27,298 − 27,277 = 21 µs, implying acceptance at 4,718,634—11 µs before the trip timestamp. This exposes inconsistent freshness snapshots; it does not establish the race’s cause.
+>
+> Current means are 196 versus 199 mA, but exposure differs and zero drift is −307 versus −273 mA. Applied CCR/period is approximately 9.98% versus 14.93%, despite identical 15% targets. No hold-current comparison exists. Lower short-run handler maxima prove no speedup; zero-hold rate fields are invalid evidence.
+>
+> Poststop and separate postflight confirm MOE/CCRs zero, gates low, enable low, nFAULT high.
+>
+> Verdict: early guarded shutdown, not sustained-operation qualification or improvement. Root cause and supplied-source linkage to the captured binary remain unproven.
+
+adversarial review(verbatim):
+> Raw evidence: e476 entered closed loop, accepted seven crossings, then stopped after 4 ms with reason 8: acceptance age 1029 µs exceeded the unchanged 1000 µs limit. It never reached hold. e469 sustained 20,278 ms of hold with coast/rate agreement. Similar driven-start rows make the divergence noteworthy, but do not establish causality.
+>
+> One failure proves this execution failed, not that masking persistence caused it. Zero reported preemptions and late arms do not exclude delayed interrupt service or altered event ordering. Postflight PASS establishes the reported stopped-state checks, not why tracking failed. The supplied files omit the transaction call site and complete binary differences.
+>
+> **Smallest next action:** make one candidate delta that leaves preexisting persistence interruptible and masks only accepted estimator update, publication, and arm; keep all thresholds and run parameters unchanged. Inspect that boundary before running: persistence success must still authorize the same step/generation when exclusion begins. Otherwise, narrowing introduces a stale-acceptance race and is not a clean discrimination.
+>
+> Restoring archived control first is **not a prerequisite** for this bounded experiment. The narrower candidate tests whether removing persistence from exclusion changes the outcome. It cannot alone attribute a recovery to that boundary; startup variability and coupled delivery changes remain alternatives. A contemporaneous archived-control rerun becomes necessary for a stronger regression claim, not for permission to try this next change.
+
+Dispositions: evidence review's inconsistent-freshness suggestion is NOT
+adopted. It omitted from_event=1 semantics: EventWatch::event polls BEFORE
+updating last, so a late arriving acceptance correctly retains the previous
+watch timestamp. Raw detector entry maps4718634, already1018us after previous
+watch publication; watch call is11us later and latches1029us. Previous physical
+edge/entry is not known. This is neither demonstrated stale-publication race
+nor a false guard trip. Keep thresholds unchanged. Adversarial proposed smaller
+mask is an untested option, not an adopted causal conclusion; do not accumulate
+another candidate before resolving current evidence.
+
+A test-only regression was added and run before this note (process omission:
+no pre-edit notebook prediction). e476_late_event_preserves_previous_watch_timestamp
+PASS1/1,408filtered; no target-code change. It pins strict event-time stale
+semantics and retained timestamp, not physical cause. Material interpretation
+correction goes back to two fresh reviewers before dependent work.
+
+## E477 — 2026-09-27 — restore archived passing control, no powered run
+
+Pre-action: restore exact63F48607 from E463b/E469, verify intendedG071,
+reset and MCPp outputs off. No new motor test. Preserve C2 failure; restoration
+does not requalify control or establish cause. This leaves a known passing
+control installed instead of an unpromoted acceptance-mask experiment.
+
+
+E476 corrected interpretation reviews (verbatim; received before any further
+powered work):
+
+evidence:
+> Raw mapping: `27298 − 27277 = 21`; using the supplied post raw/ext pair, the latest accepted entry maps to `4718655 − 21 = 4718634 µs`. That is 11 µs before `at_us=4718645`, and 1018 µs after `last_us=4717616`.
+>
+> Yes, `from_event=1` plus poll-before-update explains the timestamps without inconsistent freshness. `guard_event` samples `guard_now()` independently of the detector entry. `event()` checks staleness before assigning `last`; `1029 > 1000` therefore latches Stale and returns, preserving the previous watch timestamp. Exactly 1000 µs would pass; this decision is 29 µs beyond the limit.
+>
+> The post detector record can consequently contain a newer acceptance while the watch retains its previous successful timestamp.
+>
+> Unsupported inference to remove: 1018 µs is **not a reconstructed detector-to-detector interval**. Its earlier endpoint is a watch timestamp. Neither physical crossing times nor bridge-disable timing are established here.
+
+adversarial:
+> Raw: `from_event=1`, `age_us=1029`, `limit_us=1000`, and `late_us=29` record an event-path stale decision. The post snapshot places the detector stamp 21 µs before `post_clock_ext`, yielding 4,718,634 µs if both clocks share the implied mapping: already 1,018 µs after the previous **watch** timestamp. That is not a detector-to-detector interval.
+>
+> Code supports the limited conclusion: `guard_event` samples `guard_now()`, and `event()` checks staleness before updating `last`. Thus an accepted crossing can reach tracking overdue and trigger a valid stale latch without replacing the previous timestamp. The replay test verifies that contract, not hardware timing.
+>
+> Yes—with “accepted” meaning detector-accepted, not watch-approved. These excerpts support an overdue accepted-event notification under the watch’s timing contract; they establish neither a false watchdog nor a publication race. They also do not independently exclude every integration race or explain physical lateness or interrupt masking. No threshold change follows.
+
+Disposition: adopt only overdue event-notification finding;1018us mixes new
+detector entry and previous watch publication, not detector-to-detector or
+physical timing. No false-watchdog or unique masking-cause claim. No thresholds
+changed. E477 exact63F48607 restore verified, MCPpreflight PASS outputsOFF,
+CCRs0,gateslow1,nFAULT1; UARTclosed. No motor run afterE476.
+
+Before final source checks/commit: run representative full409 host library
+suite,10 audit-parser tests, release/clippy for disabled probe and candidate.
+These check source maintenance, not motorqualification. Update progress/inventory
+and commit only this agent's firmware50 changes; preserve sibling dirty work.
+
+E477 checks:409host+10audit tests PASS,release/clippy PASS. Probe loadable
+bytes match D677F753; motor rebuild B13E6C56 DOES NOT match C2F903A0.
+Four-root motor audit fails on newly outlined offer_timed loop (other3roots
+PASS); probe4PASS. No new binary flashed. This invalidates any assumption
+that adding unused diagnostic library code cannot affect motor machine code.
+
+## E478 — 2026-09-27 — isolate diagnostic monomorphization
+
+Pre-edit/build prediction: the concrete exported check::comp_interrupt
+instantiates the same offer_timed policy in the library, changing LTO's motor
+inlining decisions. Make only that fixture entry generic over its Window;
+instantiate ProbeWindow in the disabled binary, not the library. No cfg gate,
+no control algorithm change, no audit allowlist relaxation. Rebuild both and
+compare loadable bytes/audit against archived C2 and D677. Restoring identical
+motor bytes would isolate this mechanism; otherwise investigate before use.
+
+
+E478 result: release/clippy PASS. Motor loadable hash restored exactly to
+archived C2 (7EB9AA00EE5A270F0F77DCECFF047822BBD9E0DE5CD236860CABF596C6E34C9B),
+all4roots auditPASS without allowlist change. Probe loadable hash changed;
+E475's5/5 applies only archivedD677, not this unflashed rebuild.
+
+evidence review(verbatim):
+> Yes—**motor loadable-byte restoration is supported by the supplied hashes**, conditional on the captures accurately representing the loadable sections.
+>
+> - C2 archived motor and E478 rebuilt motor both hash to `7EB9AA00EE5A270F0F77DCECFF047822BBD9E0DE5CD236860CABF596C6E34C9B`.
+> - E477 rebuilt motor differs: `41E0CD0463A0DCBE9C1143E9C6D204D3FDFEF630D9AE49EAFED9F0F6AC9AA6AE`.
+> - D677 archived/E477 rebuilt probe match at `12892E47ABC9C10AB588C35D8F07287F71B8337E78ABEA425C599BAB7003FD9C`; E478 probe changed to `268089D5F2CAA85234C58BA1FF5563FB7A471973BA1AE9F9082C49F9F15B2D79`.
+>
+> E477 motor audit **failed**: ADC_COMP reached six functions and contained an unreviewed `offer_timed` loop. E478 **passed all four roots**; ADC_COMP reachability fell to three.
+>
+> The generic-entry change supports attributing restoration to moving `ProbeWindow` instantiation into the disabled binary. Hash identity establishes captured loadable-byte identity, not whole-ELF identity or independently demonstrated runtime behavior. The audit establishes its reported static checks, not hardware acceptance.
+>
+> **The changed E478 probe remains untested.** Source assertions describe intended checks; no new flashing or execution evidence establishes their success.
+
+adversarial review(verbatim):
+> Keeping the generic entry is justified for this bounded change: E478 restores the archived motor loadable hash and clears the reported ISR audit finding. Concrete objections apply to broader claims:
+>
+> - **Probe evidence does not transfer automatically.** E478’s probe hash differs from D677’s. Previous probe execution results do not validate the rebuilt probe; no E478 firmware was flashed. Its own ELF and runtime behavior need independent validation before claiming equivalent diagnostic coverage.
+> - **The compiler explanation exceeds the supplied evidence.** The controlled source delta supports attributing the observed build difference to entry genericity, but hashes and reachability summaries do not establish the specific “ahead of LTO” mechanism asserted in the comment.
+> - **Isolation is artifact-scoped.** Restored motor bytes support equivalence to C2 for the compared loadable content, inheriting C2’s validation limits. They neither establish source-level isolation across configurations nor guarantee future compiler/build outputs remain unaffected.
+>
+> These limits do not require reverting the generic entry.
+
+Dispositions: retain generic entry for demonstrated artifact isolation; soften
+comment's unproved compiler-stage explanation. Loadable comparison used GNU
+objcopy -O binary on exact archived/current ELFs, with full hashes retained.
+No runtime/qualification transfer to altered probe; no universal future-build
+isolation claim. Motor restoration is to failed/unpromoted C2, NOT a pass.
+Installedboard remains63F48607/OFF/UARTclosed. No envelope expansion this batch.
+Next campaign decision is motor control/timing, not another full probe ladder:
+C2 did not solve the startup screen; preserve interruptible persistence in any
+narrower acceptance-path experiment and test unchanged watchdog semantics.

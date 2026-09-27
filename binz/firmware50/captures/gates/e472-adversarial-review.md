@@ -1,0 +1,9 @@
+Raw: the supplied audit reports four clean roots; the host log reports 408 passing tests. Neither contains a five-case probe result. `WINDOW` ends before `MASKED` and `BEFORE` execute, although both still execute under PRIMASK. Printed `off` is sampled after cleanup; the pass expression samples it before cleanup.
+
+**Concrete blocker: the audit still has false-clean paths.** In `prune_unreachable`, a reachable `blx ip` has neither a symbolic target nor an operand matching `^r\d`, so it is silently accepted. `ip` is the register alias for r12. Likewise, an unannotated direct call produces no edge and no unresolved-target failure. Reject unresolved call operands and add fixtures before relying on “certified clean.” The padding-pruning and external-interior-entry changes address their stated examples, but do not establish fail-closed decoding.
+
+The disabled suite’s expected snapshots are coherent: 22 means active/running/off, 18 active/stopped-timer/off, and 17 stopped/inactive/off. Cases 1/2 exercise guard shutdown across mask restoration; case 3 checks preservation of LateArm; case 4 checks stale-pending cancellation through the instrumented path.
+
+**Limited coverage:** `WINDOW > 0` imposes no latency bound, excludes part of the masked interval, and includes probe overhead. Case 3’s 1,000-iteration escape does not independently guarantee 20 µs; an insufficient delay should fail its oracle. No result establishes candidate WCET or powered safety.
+
+Resolve the audit blocker before the proposed disabled-only flash. No powered-test authorization follows.
