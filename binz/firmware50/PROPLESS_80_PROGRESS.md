@@ -1,6 +1,12 @@
 # Propless 80% campaign — progress, not qualification
 
 Updated through E453 depth-cache screen, 2026-09-27.
+Offline E454/E455: bounded revisit scheduler design reviewed; new pure
+generation-owned quota model passes 398 host tests and a no-clone doctest.
+It is not connected to a binary: loadable bytes and four ISR streams remain
+identical. Integration must make accepted COM supersede rechecks atomically,
+preserve stop dominance and avoid duplicate foreground/timer retry budgets.
+No motor run or envelope gain in this offline batch.
 CURRENT: BD07379C installed OFF after E453, UART closed. E450 stop-dominant
 comparator resume and E451 cached persistence depth are present. 393 host
 tests, clippy, structure and four-root helper audits pass. Mapping moved

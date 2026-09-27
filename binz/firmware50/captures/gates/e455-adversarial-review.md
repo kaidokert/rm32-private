@@ -1,0 +1,9 @@
+- **Ownership defect:** `Budget` derives `Copy`/`Clone`; copying an active value creates independently spendable quotas, and canceling one leaves the other active. The competing-callers test uses one shared instance, so it cannot detect this. Remove these traits and enforce one authoritative budget per transaction.
+
+- **Clock-model gap:** rejecting `elapsed_us >= 0x8000` cannot detect a full clock wrap if callers first compute a wrapping `u16` difference. Old work can then appear young and eligible again. Integration needs an enforced lifetime or wider elapsed-time tracking. The “wrap” test covers generation rollover and one elapsed cutoff, not timer aliasing.
+
+- **Missing transaction obligations:** live admission, reservation, and successful pending must share exclusion with acceptance/stop. Define failed-pend accounting, invalidate queued callbacks, revalidate generation/mux on dispatch, preserve policy and COM-idle gates, and prevent callbacks from retaining obsolete budget copies.
+
+- **Timing compatibility remains unproved:** rescue thresholds match the shown formula, but the new first-attempt half-interval gate is not established by the supplied existing code.
+
+The reported 397 passing tests support sequential model behavior. Identical loadables support unchanged firmware, not hardware race freedom, interrupt ordering, or scheduler integration. The author’s offline-only scope is accurate.

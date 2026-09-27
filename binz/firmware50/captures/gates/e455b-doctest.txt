@@ -1,0 +1,31 @@
+cargo : note: did not finalize incremental compilation session directory
+`\\?\E:\m\robot\esc\rm32\binz\firmware50\target\x86_64-pc-windows-msvc\debug\incremental\stm32g0xx_hal-2wxie5w58cr4u\s-hmo6zw5ixf-1yg7du4-working`: Access is denied. (os error 5)
+At line:4 char:1
++ cargo test --doc --target x86_64-pc-windows-msvc --features advance-r ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (note: did not f...d. (os error 5):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+  |
+  = help: the next build will not be able to reuse work from this compilation
+
+warning: method `diode` is never used
+  --> src\sixstep.rs:72:19
+   |
+68 | impl Plan {
+   | --------- method in this implementation
+...
+72 |     pub(crate) fn diode(mut self) -> Self {
+   |                   ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+note: did not finalize incremental compilation session directory
+`\\?\E:\m\robot\esc\rm32\binz\firmware50\target\x86_64-pc-windows-msvc\debug\incremental\firmware50-2dgy5f24pisow\s-hmoibouw8f-0pw1og0-working`: Access is denied. (os error 5)
+  |
+  = help: the next build will not be able to reuse work from this compilation
+
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.12s

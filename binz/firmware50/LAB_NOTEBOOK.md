@@ -46455,3 +46455,127 @@ explicitlimits; no new fault-timerecorderclaim. Further poweredruns paused
 for offline criticalpath/acceptance analysis, not an externalblocker. Need a
 meaningful lever; shavinganotherinstruction without prediction is notprogress.
 No threshold or protection semantics changed; no newqualifiedenvelope.
+
+### E454 - bounded revisit scheduling design, offline prediction
+
+No flash or motor command. E453 failed before25target on accepted-event
+staleness, not latearm. Stop repeating cost-only hypotheses without a way to
+distinguish missing/rejected edges from processingdelay. Audit candidate:
+foreground Locked::revisit alone services level recovery, after Ctx::pass
+and accepted mailbox consumption; E453 loop_gap_max221us vs watch240us.
+These whole-run maxima are NOT terminal correlation or causalproof.
+Question for independent review: can a bounded timer-driven recheck remove
+foreground scheduling dependence while retaining gate, live persistence,
+same retry allowance, original tracking/stop deadlines, and no synthesized
+commutation? Prefer existing COM timer ownership over a new polling ISR.
+Need generation-scoped quota shared with foreground or exclusive typedowner,
+no duplicate retrybudget, no sector change races, no rearm after stop, and no
+delay/replacement of a pending real commutation. Existing zero-margin failures
+remain separate; no claim this fixes both. Design only until model + review.
+
+E454 independent design reviews:
+
+> E453 stopped on stale tracking: age 243 µs exceeded 240 µs. The 221 µs maximum foreground gap does not locate that gap at termination or prove a missed retry caused the stop. Hold never began; revisit attribution is further limited by 4,323 coalesced accepts.
+>
+> The code proves recovery depends on foreground service: `pass()` runs before mailbox consumption and revisit, so an error there bypasses recovery. COM phases 2/3 only reopen the comparator path; they do not request a level retry.
+>
+> The claimed per-sector quota is not generation-bound. Foreground permits one initial admission plus four rescues, assuming the supplied maximum. Rescues become eligible strictly after 1.5, 2.0, 2.5 and 3.0 cached intervals. Acceptance consumption resets quota; commutation only clears inflight attribution. Board admission always supplies `already_retried=false`; six-step equality cannot distinguish generations. Existing tests establish predicates and textual ordering, not scheduling or quota integrity.
+>
+> A viable minimal design uses an explicit COM-owned recheck state:
+>
+> - Identify each sector by generation; charge at most five software pends against that generation.
+> - Schedule the first check strictly past the live half-interval gate; retain rescue thresholds and revalidate eligibility at service.
+> - Route pends through ordinary COMP persistence/acceptance.
+> - Atomically cancel rechecks on acceptance, commutation, or stop; accepted COM scheduling must supersede rechecks.
+> - Preserve guard deadlines and count only actual commutations.
+>
+> Test stale-generation rejection, timer/acceptance collisions, failed admission, quota exhaustion, and stop/arm races before coding the integration.
+
+> Same COM timer reuse is defensible conditionally; these excerpts do not establish safe ownership or stop dominance. E453 records a stale-event stop, but loop_gap=221 µs versus watch=240 µs does not establish its cause.
+>
+> - **Ownership:** Add an explicit recheck phase, subordinate to accepted commutation and blanking. Physical COMP acceptance must atomically invalidate the recheck, clear stale timer status/pending IRQ, and install the commutation deadline. Otherwise an old expiry can dispatch the new phase prematurely. Phase alone is insufficient.
+> - **Physical COMP race:** Interrupt masking does not freeze comparator hardware. Recheck expiry should request ordinary COMP qualification, never accept or commutate directly. Coalesce physical/software requests; identify them by sector generation, not repeating step number.
+> - **Stop dominance:** Guard can preempt COM after its initial `active` check. On resumption, COM must not apply gates, unmask COMP, or rearm. Every enabling transaction needs stop revalidation under exclusion covering guard, with stop invalidating generation and pending work.
+> - **Budget:** Preserve one initial attempt plus four rescues, charged once per actual request. Repeated expiry, qualification failure, or coalesced notifications must not replenish quota. Snapshot timing consistently.
+> - **Starvation/coverage:** Bound timer and COMP work; exhaustion leaves recovery to existing guard deadlines. Higher-priority guard still suffers interrupt-masked latency.
+> - **Filtering:** Timer observation is no crossing timestamp. Retain live gate and persistence qualification; prevent software pending from bypassing filter timing.
+>
+> Simplest viable design: one generation-tagged recheck state in the existing timer dispatcher, with accepted COM always superseding it.
+
+Dispositions: timer reuse only conditionally viable, not approved poweredcode.
+Both identify a prerequisite absent from currentforeground implementation:
+generation-scoped attemptownership (one initial plusfour rescues) ratherthan
+stepnumber, with acceptance/stop invalidation and no duplicated budget.
+Implement purebudget + interleaving tests first, no live wiring in thisstep.
+No new periodicISR, no forcedCOM, no guardchange. Fulltimerphaseintegration
+needs separate transactionaudit; five fixed observationtimes alone can miss
+the level becomingeligible, so do not silently equate them to currentpolling.
+Consider existing blank-end service as boundedfirstcheck before addingphase4.
+
+### E455 - generation-owned revisit budget, offline implementation prediction
+
+New puremodule, not selected by any binary. Bound oneinitialattempt after
+strict halfinterval and fourrescues atstrict1.5/2/2.5/3 intervals. Reserve
+only after coherent live admission. Samegeneration competing callers share
+budget; oldgeneration/stop/expired16bit horizon failclosed. Snapshotaverage
+pergeneration. Hosttests pin quota, timing, wrapgeneration and cancellation.
+This is a scheduling prerequisite, not hardware raceproof or envelopegain.
+
+E455 initial397hosttests/build/clippy PASS, fourISRroots byteidentical and
+auditclean. ObjcopyloadableSHA before/after:
+BEF2E46A3617E52D1CD129B55FF02D827278AA835FEB7846E75D562D28D6C41D.
+Module is not linked into motor behavior. Reviews:
+
+> No deadline arithmetic defect found. For used counts 1–4, deadlines are `average + floor(average/2) * used + 1`, matching the supplied rescue predicate’s strict inequality, including odd averages. At `MAX_AVERAGE_US = 10922`, the final deadline is 32767, safely below 0x8000.
+>
+> - **Ownership limitation:** `Budget` derives `Copy`/`Clone`, so callers can duplicate an active budget and obtain five reservations from each copy. The competing-callers test proves sharing one instance works; it does not enforce one budget per generation. Consider removing these traits and enforcing ownership during integration.
+> - **Source equivalence limitation:** The supplied existing code admits a fresh request without an elapsed-time condition. It does not establish the new initial `half + 1` deadline; that requires evidence from omitted admission logic.
+> - **Coverage gaps:** Add rejection checks for elapsed 32769 and `u32::MAX`, plus repeated reservations at one late timestamp. Currently, all five requests can be consumed at that timestamp; quota bounding does not guarantee spacing between actual requests. Tests also hard-code minimum 32 rather than using `AVERAGE_MIN_US`.
+>
+> The reported tests and identical loadable hash support offline behavior and unchanged binary contents, not atomic reservation/pend, timer invalidation, or hardware correctness.
+
+> - **Ownership defect:** `Budget` derives `Copy`/`Clone`; copying an active value creates independently spendable quotas, and canceling one leaves the other active. The competing-callers test uses one shared instance, so it cannot detect this. Remove these traits and enforce one authoritative budget per transaction.
+>
+> - **Clock-model gap:** rejecting `elapsed_us >= 0x8000` cannot detect a full clock wrap if callers first compute a wrapping `u16` difference. Old work can then appear young and eligible again. Integration needs an enforced lifetime or wider elapsed-time tracking. The “wrap” test covers generation rollover and one elapsed cutoff, not timer aliasing.
+>
+> - **Missing transaction obligations:** live admission, reservation, and successful pending must share exclusion with acceptance/stop. Define failed-pend accounting, invalidate queued callbacks, revalidate generation/mux on dispatch, preserve policy and COM-idle gates, and prevent callbacks from retaining obsolete budget copies.
+>
+> - **Timing compatibility remains unproved:** rescue thresholds match the shown formula, but the new first-attempt half-interval gate is not established by the supplied existing code.
+>
+> The reported 397 passing tests support sequential model behavior. Identical loadables support unchanged firmware, not hardware race freedom, interrupt ordering, or scheduler integration. The author’s offline-only scope is accurate.
+
+Dispositions/correction beforedependentwork: removeCopy/Clone; compilefail
+clone test added. Publicnew stillrequires singleauthoritativeowner; API cannot
+prove hardwareownership. Fullwidth elapsed contract nowexplicit, no claim
+detectingwrap aftercaller truncatesu16. Add32769/fullwrap/u32max veto tests,
+lateburst quota test; use actualAVERAGE_MIN_US. Originalfirstgate evidence is
+revisit::admit elapsed>average>>1 (Board callsit beforepend), not excerpted
+Locked::fresh alone. No newspacingguarantee: existingoverdueforeground calls
+can also consumeall eligible rescues rapidly. Integrationmust bound callbacks
+and retain stopauthority, not simply rearmzero-delay untilquotaexhausted.
+
+E455 corrected review, both fresh and independent:
+
+> The correction is sound for the stated offline scope. Removing `Copy`/`Clone` prevents implicit duplication; authoritative ownership remains a caller contract. Strict deadlines, five-request exhaustion, refusal without consumption, cancellation, generation mismatch, and rejection at elapsed ≥32768 are consistent with the code. The maximum estimate keeps every deadline below that cutoff. Same-timestamp overdue spending is explicitly documented and tested.
+>
+> The supplied logs report 398 passing unit tests and one passing doctest; incremental-cache warnings do not negate those results.
+>
+> Two evidence limits remain: the initial gate establishes only the first retry, so it cannot substantiate the claimed “existing four” rescue requests; sequential competing-caller tests establish shared quota, not live synchronization. Neither undermines the narrowed pure-state correction.
+
+> No blocking defect found in the corrected pure-state implementation.
+>
+> Removing `Copy`/`Clone` prevents implicit duplication; single ownership still depends on the documented construction contract. Full-width elapsed input makes the half-range rejection meaningful. Strict deadlines, refusal without consumption, cancellation, generation mismatch, and bounded overdue bursts match the stated behavior. At `MAX_AVERAGE_US = 10922`, the final deadline is 32767, safely below the rejection threshold.
+>
+> The supplied results report 398 passing unit tests and one passing compile-fail doctest; incremental-cache warnings do not invalidate those results.
+>
+> Limits remain accurately scoped: this code cannot enforce caller serialization, unique generation ownership, or retained elapsed time. The supplied initial gate alone does not establish equivalence to the claimed existing four-rescue schedule. No live-binary correctness claim is established.
+
+Disposition: narrowedpurestate accepted, no hardwareadmission. Fourrescue
+constant is run::policy::REVISIT_RESCUE_MAX=4; rescue_due rejects >=4,
+increments on admittedoverdue request. This was in firstimplementationreview
+packet, not repeated in correctionpacket; do not make it a new claim of
+whole-controller equivalence. 398tests + compilefaildoctest PASS, rebuilt
+release/clippy PASS, final loadableSHA stillBEF2E46A...8D6C41D and allfour
+ISRstreams unchanged. Board nottouched; BD07379C remainsinstalledOFF.
+Nextstep is actual schedulerintegration/transactionaudit, notanother motor
+run on unchangedfirmware. E454/455 no duty/eHz/envelopeprogress claimed.
