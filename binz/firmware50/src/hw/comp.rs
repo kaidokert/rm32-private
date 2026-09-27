@@ -73,6 +73,25 @@ pub fn level() -> bool {
     comp().comp2_csr().read().value().bit_is_set()
 }
 
+/// Expected VALUE field, encoded once per offer. No peripheral read here.
+pub struct ExpectedLevel(u32);
+
+impl ExpectedLevel {
+    // COMP2_CSR.VALUE is bit30, as in the PAC's value() accessor.
+    const MASK: u32 = 1 << 30;
+
+    #[inline(always)]
+    pub const fn new(high: bool) -> Self {
+        Self(if high { Self::MASK } else { 0 })
+    }
+
+    /// Exactly one fresh volatile CSR read; unrelated bits cannot match.
+    #[inline(always)]
+    pub fn matches(&self) -> bool {
+        (comp().comp2_csr().read().bits() & Self::MASK) == self.0
+    }
+}
+
 /// Disable line 18 **at the NVIC first**, then in IMR (binz Entry 094,
 /// firmware50 E102/E103: an IMR mask alone does not stop a latched edge from
 /// dispatching on the G071).

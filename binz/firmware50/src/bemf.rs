@@ -53,6 +53,8 @@ impl WaitEstimate for PreviousEstimate {
 
 #[cfg(test)]
 mod timing_tests;
+#[cfg(test)]
+mod matching_tests;
 
 /// How many consecutive comparator reads must agree, as a policy type.
 pub trait FilterPolicy {
@@ -536,6 +538,21 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
         policy: &F,
         mut read_level: R,
     ) -> Outcome {
+        self.offer_matching_timed::<T, F, _>(count, advance_level, policy, || read_level() == rising)
+    }
+
+    /// The same decision with the expected polarity already encoded by the
+    /// caller. Each invocation must perform one fresh observation and return
+    /// whether it matches. This permits masked-register equality without
+    /// normalizing both Boolean operands on every hardware persistence read.
+    /// Read count is preserved, not the physical time between those reads.
+    pub fn offer_matching_timed<T: WaitEstimate, F: FilterPolicy, R: FnMut() -> bool>(
+        &mut self,
+        count: u32,
+        advance_level: u32,
+        policy: &F,
+        mut matches: R,
+    ) -> Outcome {
         // 1. half-cycle gate — strictly greater, matching the reference.
         if count <= self.blanking() {
             self.too_early = self.too_early.wrapping_add(1);
@@ -547,7 +564,7 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
         let depth = policy.level(self.average_interval);
         let mut i = 0u8;
         while i < depth {
-            if read_level() != rising {
+            if !matches() {
                 self.unstable = self.unstable.wrapping_add(1);
                 return Outcome::Unstable;
             }

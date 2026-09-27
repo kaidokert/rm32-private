@@ -1,6 +1,15 @@
 # Propless 80% campaign — progress, not qualification
 
-E466 CURRENT: same63F48607 OFF/UARTclosed.25% reached but held11ms only;
+E467 OFFLINE candidate B4411F24 archived, NOT flashed. Plain persistence now
+compares raw bit30 against a precomputed expected mask:12->7 instructions per
+successful loop iteration; volatile read retained. WholeCOMP855->849 listed
+instructions, stack68->76bytes; model3624->3389cycles is NOT measuredWCET.
+411tests including frozen prechange oracle, release/clippy/four-rootaudit and
+structurePASS. Dual design/result reviews plus oracle-fix re-reviews retained.
+Faster sampling changes physical persistence duration: no qualification transfer.
+Next bounded gentle screen before25. Installed63F48607 stillOFF/UARTclosed.
+
+E466 prior: same63F48607 OFF/UARTclosed.25% reached but held11ms only;
 LateArm guard15 (topreport28),ci45->wait11us/spent11us,late1/thin13.
 No sag/current/nFAULT/trackingstop. Coast2876eHz is not sustained25%proof.
 No repeat/escalation; dualreviews retained. Next decision/arm-path work must

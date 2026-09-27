@@ -497,11 +497,10 @@ pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fin
         // Persistence reads the **live** comparator, microseconds after the edge --
         // exactly what AM32's handler does, and what the foreground could never do.
         let depth = DepthSnapshot(S.det().filter_depth.load(Ordering::Relaxed) as u8);
-        match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &depth, hw::comp::level) {
+        let expected = hw::comp::ExpectedLevel::new(edge_is_rising(step));
+        match zc.offer_matching_timed::<T, _, _>(count, advance, &depth, || expected.matches()) {
             crate::bemf::Outcome::Accepted { wait, .. } => {
-                // The accepted crossing's bookkeeping, then the arm. (A stale
-                // comment describing the reverted E142 order stood here until
-                // E153 found it; the order below is the qualified one.)
+                // Publish this crossing before arming its commutation.
                 S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
                 S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
                 // The estimate this acceptance hands to the commutation, taken

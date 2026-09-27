@@ -47702,3 +47702,134 @@ measurement to manufacture margin. Next work targets actual decision/arm cost
 or a source-grounded scheduling change, with existing experiments consulted;
 no extra timingprobe merely to classify an already-known exhausteddeadline.
 Board63F48607 OFF/UARTclosed, goalactive,25notqualified.
+
+## E467 — 2026-09-27 — offline emitted persistence-path investigation
+
+Prediction/decision before edits or builds: inspect the exact installed
+63F48607 acceptance path, then test an instruction reduction without changing
+guards, depth, wait estimator, publication or interrupt priorities. No motor
+run in this batch. E466's exhausted deadline does not identify preemption.
+
+Raw objdump: ADC_COMP entry08000604; coarse entry read08000624;
+closed-loop persistence0800084c..08000864; accepted blend/publication
+08000866..080008b8; PRIMASK080008c8; timer preparation080008f0..08000904;
+elapsed read08000906. Per successful persistence iteration the output is
+normalized with subs/sbcs and the expected Boolean with rsbs/adcs before
+comparison. This repeats work for an expected level constant within the offer.
+Hypothesis for review: precompute expected register bits and compare the one
+volatile masked read directly, using a shared pure matching-predicate decision
+method. Existing Boolean API remains a wrapper; logged behavior remains on it.
+Prediction: fewer instructions per persistence iteration on the same release
+configuration, exact pure outcomes/read counts/state for all tested sequences.
+Faster reads change physical persistence duration even with identical read
+count: no claim of electrically identical filtering or powered qualification.
+Reject a candidate that introduces helpers, changes protections, duplicates
+decision semantics, or fails equivalence. This is not a proof it fixes E466.
+Do not mask the whole decision merely to suppress an unproven preemptor.
+
+E467 independent evidence and adversarial reviews (verbatim, in that order):
+> Admissible as an offline refactor; equivalence and instruction savings remain to be demonstrated.
+>
+> - Raw loop `0800084c..864` executes **12 instructions per matching attempt**, including the literal-address load, one register read, masking, four Boolean-normalization instructions (`subs/sbcs`, `rsbs/adcs`), comparison, and loop control. A mismatch executes **10 instructions**, including the exit branch at `85e`. Instruction counts are not cycle counts.
+> - Precompute `expected = if rising { VALUE_MASK } else { 0 }`; each attempt must evaluate `(volatile_register_read & VALUE_MASK) == expected`. Comparing a masked register directly with Boolean `0/1` is incorrect. Preserve the existing non-inverted polarity convention.
+> - The matching API must invoke its callback only after passing the strict gate (`count > blanking`), exactly once per attempt, stopping immediately on dissent. Depth zero performs no read. Constructing the closure must not sample hardware.
+> - Required differential coverage: both polarities; gate equality and adjacent counts; depths 0–255; dissent at every attempted position; all-match sequences; repeated accepts/refusals; bounds and extreme intervals; Fresh/Previous estimates and runtime/constant advances. Compare outcomes, callback counts, estimator history, and counters. Verify hardware-mask semantics independently.
+> - Caller coverage must preserve rebase behavior, snapshot validity, publication-before-arm, and stop handling; include logged and plain paths. Inspect resulting disassembly for actual savings and retained volatile reads.
+>
+> Faster sampling changes physical persistence duration. Logical equivalence cannot transfer bench qualification.
+> Admissible for offline implementation and compilation; performance and hardware equivalence remain unproven.
+>
+> - **Raw evidence:** `0x0800084c..864` reloads the register address, reads COMP, normalizes VALUE, reconstructs expected polarity, compares, and loops. This supports targeting redundant work. It does not establish E466 causality or guarantee the proposed Rust produces faster code.
+> - **Filtering cadence:** One volatile read per attempt preserves read count, not persistence duration. Faster iterations shorten the observation window and can accept glitches previously rejected. Earlier first reads also change acceptance. Existing qualification cannot transfer solely from Boolean equivalence.
+> - **Implementation:** Precompute expected bits from the same `edge_is_rising(step)` result. Compare `(register & VALUE_MASK) == expected_bits`; do not compare the full CSR or cache its value. Keep the volatile read inside each closure invocation.
+> - **Behavioral checks:** The shared implementation must preserve zero reads on blanking rejection, zero-depth acceptance, immediate dissent rejection, exact successful depth, counters, estimator history, and wait selection. Differential tests should compare both APIs over scripted reads and state transitions.
+> - **Scope and verification:** Compile the actual target configurations and inspect generated loops, including the logged wrapper and other comparator consumers. Confirm normalization was removed without added calls, spills, or reordered publication/arming. No powered test is prerequisite to this offline work; subsequent bounded bench evidence is needed for physical filtering claims.
+
+Dispositions: proceed OFFLINE only. Expected raw bit30, not Boolean1; one
+volatile read inside each predicate invocation. Add exhaustive polarity/depth/
+dissent tests and transition/boundary tests; original Boolean wrapper shares
+the algorithm, so include independent scripted expectations, not merely two
+wrappers agreeing. Plain and logged paths remain semantically paired; their
+instruction timing is not interchangeable. No powered qualification transfer.
+
+E467 build/result: release-s/thinLTO/codegen1 candidate938DA503; a comment-only
+structure correction produced B4411F242284B09322A8005BFC9B260994DB47E7098CE21D5822B92302B14FD8.
+e467b-isr-diff compares those two candidates: all four streams identical.
+e467-isr-diff compares installed63F48607 to938DA503: COMP855->849 listed
+instructions, stack allocation68->76bytes. Final structure has0 functions>100.
+Both diode-timed-revisit and edge-capture release/clippy pass;411hosttests pass.
+Four-root arithmetic audit passes. No flash or powered command.
+
+New loop0800084e..0800085c: seven successful-iteration instructions versus
+old0800084c..08000864:twelve. Address load hoisted; four Boolean-normalization
+instructions gone; one volatile read remains. For N>0 loop plus addressload
+12N vs7N+1, not including changed setup. Overall decision timing NOT measured.
+Full COMP static model3624->3389cycles(235/64=3.671875us model reduction).
+Its footer wrongly claims fetch omitted: invocation explicitly --fetch-model
+--per-insn1 with2waitstates. loop-hitFalse means NO assumed loop fetch reuse.
+Neither is provenWCET/physicaledge latency. DeployedDET_FILTER depth<=12 is
+host-tested (reference_filter_never_exceeds_twelve_reads); genericAPI permits255.
+
+E467 result evidence and adversarial reviews (verbatim):
+> Raw disassembly supports 12→7 executed instructions per successful persistence iteration: four Boolean-normalization instructions disappear and the literal-address load moves outside the loop. For depth N>0, those regions execute 12N versus 7N+1 instructions, excluding other setup. Full-root 855→849 and stack 68→76 cannot be independently established from these excerpts.
+>
+> The model decreases by 235 cycles, 6.48%, or 3.672 µs at 64 MHz. This is neither measured latency nor WCET: fetch costs are omitted, bounds are supplied, and `loop-hit False` needs explanation.
+>
+> Tests enumerate 197,376 depth/polarity/dissent cases and 3,072 history offers across three estimator types, plus 12 register comparisons. However, both APIs now execute the same implementation: agreement does not independently establish equivalence to the previous implementation. Explicit read-count and acceptance assertions remain useful. The register test duplicates the expression rather than exercising `ExpectedLevel`.
+>
+> Masked equality is algebraically sound given VALUE bit 30 and an expected value of zero or that mask. No concrete logic defect is apparent. Physical equivalence is unproven: faster sampling shortens persistence duration and can change acceptance on identical waveforms.
+>
+> The transcript reports 411 passes despite an incremental-cache warning; release/clippy evidence is absent. “Identical” ISR output needs identified comparison endpoints.
+>
+> Retain as an offline candidate. Next: establish artifact provenance, compare against an independent pre-change oracle, validate loop bounds, then measure cadence and rejection behavior in a bounded lower-rung screen.
+> Raw evidence: the successful loop drops from 12 instructions to 7, retains a CSR load per iteration, and increases reported stack use by 8 bytes. The “ADC_COMP: identical” report needs identified comparison endpoints; it cannot describe the shown before/after pair.
+>
+> - **Correctness:** Boolean-versus-matching tests now exercise the same underlying algorithm. They verify adapter agreement, not independent preservation of the old state machine. Retain a frozen reference or independent expected outcomes. The mask test duplicates the expression rather than exercising `ExpectedLevel`.
+> - **Cadence/safety:** Equal read counts do not preserve persistence duration. Faster sampling can accept a transient previously rejected. Neither host tests nor instruction reduction establishes equivalent noise rejection or safe commutation.
+> - **Timing:** 52.95 µs is not WCET. Fetch costs are omitted, supplied loop bounds are 12 despite representable depths through 255, and `loop-hit False` needs explanation. Prove deployed depth limits and model coverage before using this as deadline evidence.
+> - **Concurrency:** “Never concurrently” is asserted, not demonstrated here. Establish interrupt priorities, foreground exclusion, and sector/mux stability throughout sampling and publication/arming. Check stack headroom under permitted nesting.
+> - **Next evidence:** “Bounded lower-rung screen” lacks actual bounds. Specify the exact binary, operating point, current/energy limits, duration/repetitions, captured signals, and automatic abort criteria before powering. First reconcile artifact provenance and offline gates; then measure cadence, rejection, and deadline margin without transferring prior qualification.
+
+Dispositions: review caught insufficient independence in adapter comparison.
+Replaced comparison side with frozen pre-E467 decision implementation using
+unchanged arithmetic helpers; rerun before promotion. Register-mask test is
+algebra only, not host execution of targetHAL: local stm32g071 PAC value()
+explicitlyreadsbit30, and emitted maskedread/equality proves deployedaccess.
+Endpoint/build/structure/model caveats above resolve packet omissions, not
+new hardware evidence. No preemption or cadence-safety proof claimed. Existing
+ownership proof E457b applies to unchanged publication/stop path; no new mask,
+priority or mux write. A future motor prediction must specify bounds and
+unchanged aborts before power. Current batch remains OFFLINE and unqualified.
+
+E467 independent oracle-fix re-reviews (verbatim):
+> Yes—this resolves the shared-implementation oracle concern for the tested logical equivalence, read counts, and histories.
+>
+> `old_offer` independently reproduces the supplied prechange gate, persistence decision, state updates, and scheduling selection without calling either current API. Sharing unchanged arithmetic helpers is appropriate for this scoped review.
+>
+> The exhaustive cases cover every depth, both polarities, every first-dissent position, and full acceptance for the three instantiated timing policies. History cases compare outcomes, read counts, state, counters, and `prev_zc` across gate boundaries and extreme seeds, including zero reads on gated rejection.
+>
+> Limits: these comparisons exercise the matching API directly, not the compatibility wrapper; `DepthSnapshot` does not test dynamic policy evaluation. The reported 411 passes support the evidence but do not independently establish test inclusion. The host mask test establishes algebra only.
+>
+> Verdict: the requested oracle-independence issue is resolved within this scope.
+> Yes—the frozen `old_offer` resolves the shared-implementation oracle problem for the comparisons shown. It independently preserves the prechange gate, persistence decision, state updates, and estimate selection. Sharing unchanged arithmetic helpers does not undermine independence for this refactor.
+>
+> The exhaustive cases verify acceptance/rejection, exact read counts, outcomes, and compared state across both polarities, every depth, and every first-dissent position. Histories extend this to evolving state, gate boundaries, extreme seeds, and varying advances.
+>
+> Two coverage limits remain:
+>
+> - These comparisons exercise `offer_matching_timed`, not the `offer_timed` polarity adapter.
+> - `DepthSnapshot` does not verify when, how often, or with which interval `policy.level` is called.
+>
+> Neither invalidates the stated oracle repair. The 411-pass result supports the tested scope; histories are sampled, not exhaustive.
+
+Dispositions: oracle issue resolved within stated scope. Existing Boolean API
+tests and depth-cache history tests still exercise wrapper/dynamic policies;
+the new frozen comparisons specifically cover matching implementation. No
+claim all histories exhaustive or targetHAL host-executed. Final411testsPASS,
+both relevant binaries release/clippyPASS, four-rootauditPASS, structurePASS.
+Final rebuild SHA B4411F242284B09322A8005BFC9B260994DB47E7098CE21D5822B92302B14FD8
+matches frozen e467b archive. Source change is sharedalgorithm plus raw-bit
+adapter, not a new scheduling policy. Candidate NOT flashed. Installed63F48607
+remains last verifiedOFF/UARTclosed. Next: bounded gentle candidate screen,
+then25 only if admitted by observed guard/timing/filter behavior; no blind
+repeat of failed installedimage, no threshold relaxation. Goal80 remainsactive.

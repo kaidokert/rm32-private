@@ -1,0 +1,11 @@
+ISR-root audit: captures/elf/B4411F24.e467b-match-bits.elf
+
+  [ADC_COMP] reachable=3  OK
+
+  [TIM16] reachable=6  OK
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT PASSED: 4 root(s) certified clean.

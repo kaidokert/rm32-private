@@ -1,0 +1,473 @@
+
+captures/elf/63F48607.e463b-refusal-budget.elf:	file format elf32-littlearm
+
+Disassembly of section .text:
+
+08000604 <ADC_COMP>:
+ 8000604: b5f0         	push	{r4, r5, r6, r7, lr}
+ 8000606: af03         	add	r7, sp, #0xc
+ 8000608: b091         	sub	sp, #0x44
+ 800060a: 2001         	movs	r0, #0x1
+ 800060c: 0303         	lsls	r3, r0, #0xc
+ 800060e: 49ee         	ldr	r1, [pc, #0x3b8]        @ 0x80009c8 <ADC_COMP+0x3c4>
+ 8000610: 600b         	str	r3, [r1]
+ 8000612: 4aee         	ldr	r2, [pc, #0x3b8]        @ 0x80009cc <ADC_COMP+0x3c8>
+ 8000614: 6f51         	ldr	r1, [r2, #0x74]
+ 8000616: 4cee         	ldr	r4, [pc, #0x3b8]        @ 0x80009d0 <ADC_COMP+0x3cc>
+ 8000618: 4021         	ands	r1, r4
+ 800061a: 6751         	str	r1, [r2, #0x74]
+ 800061c: 0485         	lsls	r5, r0, #0x12
+ 800061e: 6015         	str	r5, [r2]
+ 8000620: 6055         	str	r5, [r2, #0x4]
+ 8000622: 4eec         	ldr	r6, [pc, #0x3b0]        @ 0x80009d4 <ADC_COMP+0x3d0>
+ 8000624: 6831         	ldr	r1, [r6]
+ 8000626: 9110         	str	r1, [sp, #0x40]
+ 8000628: 4ceb         	ldr	r4, [pc, #0x3ac]        @ 0x80009d8 <ADC_COMP+0x3d4>
+ 800062a: 7821         	ldrb	r1, [r4]
+ 800062c: 2900         	cmp	r1, #0x0
+ 800062e: d017         	beq	0x8000660 <ADC_COMP+0x5c> @ imm = #0x2e
+ 8000630: 2140         	movs	r1, #0x40
+ 8000632: 5c61         	ldrb	r1, [r4, r1]
+ 8000634: 2900         	cmp	r1, #0x0
+ 8000636: 930f         	str	r3, [sp, #0x3c]
+ 8000638: d023         	beq	0x8000682 <ADC_COMP+0x7e> @ imm = #0x46
+ 800063a: 217c         	movs	r1, #0x7c
+ 800063c: 5c62         	ldrb	r2, [r4, r1]
+ 800063e: 2a00         	cmp	r2, #0x0
+ 8000640: d000         	beq	0x8000644 <ADC_COMP+0x40> @ imm = #0x0
+ 8000642: e0c2         	b	0x80007ca <ADC_COMP+0x1c6> @ imm = #0x184
+ 8000644: 2270         	movs	r2, #0x70
+ 8000646: 5aa3         	ldrh	r3, [r4, r2]
+ 8000648: 9e10         	ldr	r6, [sp, #0x40]
+ 800064a: 1af3         	subs	r3, r6, r3
+ 800064c: b29b         	uxth	r3, r3
+ 800064e: 08db         	lsrs	r3, r3, #0x3
+ 8000650: 2b7c         	cmp	r3, #0x7c
+ 8000652: d800         	bhi	0x8000656 <ADC_COMP+0x52> @ imm = #0x0
+ 8000654: e09e         	b	0x8000794 <ADC_COMP+0x190> @ imm = #0x13c
+ 8000656: 4633         	mov	r3, r6
+ 8000658: 462e         	mov	r6, r5
+ 800065a: 52a3         	strh	r3, [r4, r2]
+ 800065c: 2201         	movs	r2, #0x1
+ 800065e: e0a1         	b	0x80007a4 <ADC_COMP+0x1a0> @ imm = #0x142
+ 8000660: 48e8         	ldr	r0, [pc, #0x3a0]        @ 0x8000a04 <ADC_COMP+0x400>
+ 8000662: 7802         	ldrb	r2, [r0]
+ 8000664: 49e8         	ldr	r1, [pc, #0x3a0]        @ 0x8000a08 <ADC_COMP+0x404>
+ 8000666: 2a00         	cmp	r2, #0x0
+ 8000668: d016         	beq	0x8000698 <ADC_COMP+0x94> @ imm = #0x2c
+ 800066a: 461e         	mov	r6, r3
+ 800066c: 8f82         	ldrh	r2, [r0, #0x3c]
+ 800066e: 9b10         	ldr	r3, [sp, #0x40]
+ 8000670: 1a9a         	subs	r2, r3, r2
+ 8000672: b292         	uxth	r2, r2
+ 8000674: 08d2         	lsrs	r2, r2, #0x3
+ 8000676: 2a7c         	cmp	r2, #0x7c
+ 8000678: 950e         	str	r5, [sp, #0x38]
+ 800067a: d91e         	bls	0x80006ba <ADC_COMP+0xb6> @ imm = #0x3c
+ 800067c: 8783         	strh	r3, [r0, #0x3c]
+ 800067e: 2201         	movs	r2, #0x1
+ 8000680: e021         	b	0x80006c6 <ADC_COMP+0xc2> @ imm = #0x42
+ 8000682: 2070         	movs	r0, #0x70
+ 8000684: 5a21         	ldrh	r1, [r4, r0]
+ 8000686: 9a10         	ldr	r2, [sp, #0x40]
+ 8000688: 1a51         	subs	r1, r2, r1
+ 800068a: b289         	uxth	r1, r1
+ 800068c: 08c9         	lsrs	r1, r1, #0x3
+ 800068e: 297c         	cmp	r1, #0x7c
+ 8000690: d94a         	bls	0x8000728 <ADC_COMP+0x124> @ imm = #0x94
+ 8000692: 5222         	strh	r2, [r4, r0]
+ 8000694: 2001         	movs	r0, #0x1
+ 8000696: e04e         	b	0x8000736 <ADC_COMP+0x132> @ imm = #0x9c
+ 8000698: 6808         	ldr	r0, [r1]
+ 800069a: 9910         	ldr	r1, [sp, #0x40]
+ 800069c: b289         	uxth	r1, r1
+ 800069e: 4adb         	ldr	r2, [pc, #0x36c]        @ 0x8000a0c <ADC_COMP+0x408>
+ 80006a0: 6011         	str	r1, [r2]
+ 80006a2: 0040         	lsls	r0, r0, #0x1
+ 80006a4: 0fc0         	lsrs	r0, r0, #0x1f
+ 80006a6: 6090         	str	r0, [r2, #0x8]
+ 80006a8: f3ef 8010    	mrs	r0, primask
+ 80006ac: b672         	cpsid i
+ 80006ae: 6851         	ldr	r1, [r2, #0x4]
+ 80006b0: 1c49         	adds	r1, r1, #0x1
+ 80006b2: 6051         	str	r1, [r2, #0x4]
+ 80006b4: f380 8810    	msr	primask, r0
+ 80006b8: e300         	b	0x8000cbc <ADC_COMP+0x6b8> @ imm = #0x600
+ 80006ba: 8fc2         	ldrh	r2, [r0, #0x3e]
+ 80006bc: 1c52         	adds	r2, r2, #0x1
+ 80006be: 4bd4         	ldr	r3, [pc, #0x350]        @ 0x8000a10 <ADC_COMP+0x40c>
+ 80006c0: 429a         	cmp	r2, r3
+ 80006c2: d300         	blo	0x80006c6 <ADC_COMP+0xc2> @ imm = #0x0
+ 80006c4: 461a         	mov	r2, r3
+ 80006c6: 87c2         	strh	r2, [r0, #0x3e]
+ 80006c8: 2340         	movs	r3, #0x40
+ 80006ca: 5ac4         	ldrh	r4, [r0, r3]
+ 80006cc: b295         	uxth	r5, r2
+ 80006ce: 42a5         	cmp	r5, r4
+ 80006d0: d900         	bls	0x80006d4 <ADC_COMP+0xd0> @ imm = #0x0
+ 80006d2: 52c2         	strh	r2, [r0, r3]
+ 80006d4: 6844         	ldr	r4, [r0, #0x4]
+ 80006d6: 6882         	ldr	r2, [r0, #0x8]
+ 80006d8: b2d2         	uxtb	r2, r2
+ 80006da: 2a06         	cmp	r2, #0x6
+ 80006dc: 4613         	mov	r3, r2
+ 80006de: d300         	blo	0x80006e2 <ADC_COMP+0xde> @ imm = #0x0
+ 80006e0: 2306         	movs	r3, #0x6
+ 80006e2: 960f         	str	r6, [sp, #0x3c]
+ 80006e4: 2501         	movs	r5, #0x1
+ 80006e6: 2a00         	cmp	r2, #0x0
+ 80006e8: 462a         	mov	r2, r5
+ 80006ea: d000         	beq	0x80006ee <ADC_COMP+0xea> @ imm = #0x0
+ 80006ec: 461a         	mov	r2, r3
+ 80006ee: 920d         	str	r2, [sp, #0x34]
+ 80006f0: 4613         	mov	r3, r2
+ 80006f2: 402b         	ands	r3, r5
+ 80006f4: 9a10         	ldr	r2, [sp, #0x40]
+ 80006f6: 1b14         	subs	r4, r2, r4
+ 80006f8: b2a2         	uxth	r2, r4
+ 80006fa: 07ad         	lsls	r5, r5, #0x1e
+ 80006fc: 26ff         	movs	r6, #0xff
+ 80006fe: 36a2         	adds	r6, #0xa2
+ 8000700: 42b2         	cmp	r2, r6
+ 8000702: d221         	bhs	0x8000748 <ADC_COMP+0x144> @ imm = #0x42
+ 8000704: 6809         	ldr	r1, [r1]
+ 8000706: 4029         	ands	r1, r5
+ 8000708: 1e4a         	subs	r2, r1, #0x1
+ 800070a: 4191         	sbcs	r1, r2
+ 800070c: 425a         	rsbs	r2, r3, #0
+ 800070e: 415a         	adcs	r2, r3
+ 8000710: 404a         	eors	r2, r1
+ 8000712: d100         	bne	0x8000716 <ADC_COMP+0x112> @ imm = #0x0
+ 8000714: e14d         	b	0x80009b2 <ADC_COMP+0x3ae> @ imm = #0x29a
+ 8000716: f3ef 8110    	mrs	r1, primask
+ 800071a: b672         	cpsid i
+ 800071c: 6ac2         	ldr	r2, [r0, #0x2c]
+ 800071e: 1c52         	adds	r2, r2, #0x1
+ 8000720: 62c2         	str	r2, [r0, #0x2c]
+ 8000722: f381 8810    	msr	primask, r1
+ 8000726: e113         	b	0x8000950 <ADC_COMP+0x34c> @ imm = #0x226
+ 8000728: 2072         	movs	r0, #0x72
+ 800072a: 5a20         	ldrh	r0, [r4, r0]
+ 800072c: 1c40         	adds	r0, r0, #0x1
+ 800072e: 49b8         	ldr	r1, [pc, #0x2e0]        @ 0x8000a10 <ADC_COMP+0x40c>
+ 8000730: 4288         	cmp	r0, r1
+ 8000732: d300         	blo	0x8000736 <ADC_COMP+0x132> @ imm = #0x0
+ 8000734: 4608         	mov	r0, r1
+ 8000736: 2172         	movs	r1, #0x72
+ 8000738: 5260         	strh	r0, [r4, r1]
+ 800073a: 2174         	movs	r1, #0x74
+ 800073c: 5a62         	ldrh	r2, [r4, r1]
+ 800073e: b283         	uxth	r3, r0
+ 8000740: 4293         	cmp	r3, r2
+ 8000742: d948         	bls	0x80007d6 <ADC_COMP+0x1d2> @ imm = #0x90
+ 8000744: 5260         	strh	r0, [r4, r1]
+ 8000746: e046         	b	0x80007d6 <ADC_COMP+0x1d2> @ imm = #0x8c
+ 8000748: 920c         	str	r2, [sp, #0x30]
+ 800074a: 2600         	movs	r6, #0x0
+ 800074c: 680a         	ldr	r2, [r1]
+ 800074e: 402a         	ands	r2, r5
+ 8000750: 1e54         	subs	r4, r2, #0x1
+ 8000752: 41a2         	sbcs	r2, r4
+ 8000754: 425c         	rsbs	r4, r3, #0
+ 8000756: 415c         	adcs	r4, r3
+ 8000758: 4294         	cmp	r4, r2
+ 800075a: d000         	beq	0x800075e <ADC_COMP+0x15a> @ imm = #0x0
+ 800075c: e0f0         	b	0x8000940 <ADC_COMP+0x33c> @ imm = #0x1e0
+ 800075e: 1c72         	adds	r2, r6, #0x1
+ 8000760: 2e0b         	cmp	r6, #0xb
+ 8000762: 4616         	mov	r6, r2
+ 8000764: d3f2         	blo	0x800074c <ADC_COMP+0x148> @ imm = #-0x1c
+ 8000766: 990c         	ldr	r1, [sp, #0x30]
+ 8000768: 6201         	str	r1, [r0, #0x20]
+ 800076a: 6a41         	ldr	r1, [r0, #0x24]
+ 800076c: 9a10         	ldr	r2, [sp, #0x40]
+ 800076e: 1a51         	subs	r1, r2, r1
+ 8000770: b289         	uxth	r1, r1
+ 8000772: 6281         	str	r1, [r0, #0x28]
+ 8000774: b291         	uxth	r1, r2
+ 8000776: 6141         	str	r1, [r0, #0x14]
+ 8000778: 68c2         	ldr	r2, [r0, #0xc]
+ 800077a: 6182         	str	r2, [r0, #0x18]
+ 800077c: 9a0d         	ldr	r2, [sp, #0x34]
+ 800077e: 61c2         	str	r2, [r0, #0x1c]
+ 8000780: 6041         	str	r1, [r0, #0x4]
+ 8000782: f3ef 8110    	mrs	r1, primask
+ 8000786: b672         	cpsid i
+ 8000788: 6902         	ldr	r2, [r0, #0x10]
+ 800078a: 1c52         	adds	r2, r2, #0x1
+ 800078c: 6102         	str	r2, [r0, #0x10]
+ 800078e: f381 8810    	msr	primask, r1
+ 8000792: e293         	b	0x8000cbc <ADC_COMP+0x6b8> @ imm = #0x526
+ 8000794: 2272         	movs	r2, #0x72
+ 8000796: 5aa2         	ldrh	r2, [r4, r2]
+ 8000798: 1c52         	adds	r2, r2, #0x1
+ 800079a: 4b9d         	ldr	r3, [pc, #0x274]        @ 0x8000a10 <ADC_COMP+0x40c>
+ 800079c: 429a         	cmp	r2, r3
+ 800079e: d300         	blo	0x80007a2 <ADC_COMP+0x19e> @ imm = #0x0
+ 80007a0: 461a         	mov	r2, r3
+ 80007a2: 462e         	mov	r6, r5
+ 80007a4: 2372         	movs	r3, #0x72
+ 80007a6: 52e2         	strh	r2, [r4, r3]
+ 80007a8: 4623         	mov	r3, r4
+ 80007aa: 2474         	movs	r4, #0x74
+ 80007ac: 5b1d         	ldrh	r5, [r3, r4]
+ 80007ae: b293         	uxth	r3, r2
+ 80007b0: 42ab         	cmp	r3, r5
+ 80007b2: d901         	bls	0x80007b8 <ADC_COMP+0x1b4> @ imm = #0x2
+ 80007b4: 4d92         	ldr	r5, [pc, #0x248]        @ 0x8000a00 <ADC_COMP+0x3fc>
+ 80007b6: 532a         	strh	r2, [r5, r4]
+ 80007b8: 2200         	movs	r2, #0x0
+ 80007ba: 2b40         	cmp	r3, #0x40
+ 80007bc: 4635         	mov	r5, r6
+ 80007be: d800         	bhi	0x80007c2 <ADC_COMP+0x1be> @ imm = #0x0
+ 80007c0: 4610         	mov	r0, r2
+ 80007c2: 4c8f         	ldr	r4, [pc, #0x23c]        @ 0x8000a00 <ADC_COMP+0x3fc>
+ 80007c4: 5460         	strb	r0, [r4, r1]
+ 80007c6: 4e8d         	ldr	r6, [pc, #0x234]        @ 0x80009fc <ADC_COMP+0x3f8>
+ 80007c8: d905         	bls	0x80007d6 <ADC_COMP+0x1d2> @ imm = #0xa
+ 80007ca: 4892         	ldr	r0, [pc, #0x248]        @ 0x8000a14 <ADC_COMP+0x410>
+ 80007cc: 2101         	movs	r1, #0x1
+ 80007ce: 7001         	strb	r1, [r0]
+ 80007d0: 68a1         	ldr	r1, [r4, #0x8]
+ 80007d2: 6041         	str	r1, [r0, #0x4]
+ 80007d4: e272         	b	0x8000cbc <ADC_COMP+0x6b8> @ imm = #0x4e4
+ 80007d6: 6860         	ldr	r0, [r4, #0x4]
+ 80007d8: 6ca1         	ldr	r1, [r4, #0x48]
+ 80007da: 2200         	movs	r2, #0x0
+ 80007dc: 2901         	cmp	r1, #0x1
+ 80007de: d000         	beq	0x80007e2 <ADC_COMP+0x1de> @ imm = #0x0
+ 80007e0: e222         	b	0x8000c28 <ADC_COMP+0x624> @ imm = #0x444
+ 80007e2: 9910         	ldr	r1, [sp, #0x40]
+ 80007e4: 1a08         	subs	r0, r1, r0
+ 80007e6: b283         	uxth	r3, r0
+ 80007e8: 6ea0         	ldr	r0, [r4, #0x68]
+ 80007ea: 4283         	cmp	r3, r0
+ 80007ec: d90a         	bls	0x8000804 <ADC_COMP+0x200> @ imm = #0x14
+ 80007ee: b288         	uxth	r0, r1
+ 80007f0: 6060         	str	r0, [r4, #0x4]
+ 80007f2: f3ef 8010    	mrs	r0, primask
+ 80007f6: b672         	cpsid i
+ 80007f8: 6b61         	ldr	r1, [r4, #0x34]
+ 80007fa: 1c49         	adds	r1, r1, #0x1
+ 80007fc: 6361         	str	r1, [r4, #0x34]
+ 80007fe: f380 8810    	msr	primask, r0
+ 8000802: e211         	b	0x8000c28 <ADC_COMP+0x624> @ imm = #0x422
+ 8000804: 9009         	str	r0, [sp, #0x24]
+ 8000806: 6e60         	ldr	r0, [r4, #0x64]
+ 8000808: 900a         	str	r0, [sp, #0x28]
+ 800080a: 68a0         	ldr	r0, [r4, #0x8]
+ 800080c: b2c4         	uxtb	r4, r0
+ 800080e: 2c06         	cmp	r4, #0x6
+ 8000810: 4621         	mov	r1, r4
+ 8000812: d300         	blo	0x8000816 <ADC_COMP+0x212> @ imm = #0x0
+ 8000814: 2106         	movs	r1, #0x6
+ 8000816: 2001         	movs	r0, #0x1
+ 8000818: 2c00         	cmp	r4, #0x0
+ 800081a: 4604         	mov	r4, r0
+ 800081c: d000         	beq	0x8000820 <ADC_COMP+0x21c> @ imm = #0x0
+ 800081e: 460c         	mov	r4, r1
+ 8000820: 940c         	str	r4, [sp, #0x30]
+ 8000822: 24c4         	movs	r4, #0xc4
+ 8000824: 4976         	ldr	r1, [pc, #0x1d8]        @ 0x8000a00 <ADC_COMP+0x3fc>
+ 8000826: 940b         	str	r4, [sp, #0x2c]
+ 8000828: 590c         	ldr	r4, [r1, r4]
+ 800082a: 940d         	str	r4, [sp, #0x34]
+ 800082c: 6ccc         	ldr	r4, [r1, #0x4c]
+ 800082e: 9408         	str	r4, [sp, #0x20]
+ 8000830: 0864         	lsrs	r4, r4, #0x1
+ 8000832: 42a3         	cmp	r3, r4
+ 8000834: d800         	bhi	0x8000838 <ADC_COMP+0x234> @ imm = #0x0
+ 8000836: e0d1         	b	0x80009dc <ADC_COMP+0x3d8> @ imm = #0x1a2
+ 8000838: 950e         	str	r5, [sp, #0x38]
+ 800083a: 990d         	ldr	r1, [sp, #0x34]
+ 800083c: b2ca         	uxtb	r2, r1
+ 800083e: 2a00         	cmp	r2, #0x0
+ 8000840: d011         	beq	0x8000866 <ADC_COMP+0x262> @ imm = #0x22
+ 8000842: 990c         	ldr	r1, [sp, #0x30]
+ 8000844: 4008         	ands	r0, r1
+ 8000846: 2101         	movs	r1, #0x1
+ 8000848: 078c         	lsls	r4, r1, #0x1e
+ 800084a: 2500         	movs	r5, #0x0
+ 800084c: 496e         	ldr	r1, [pc, #0x1b8]        @ 0x8000a08 <ADC_COMP+0x404>
+ 800084e: 680e         	ldr	r6, [r1]
+ 8000850: 4026         	ands	r6, r4
+ 8000852: 1e71         	subs	r1, r6, #0x1
+ 8000854: 418e         	sbcs	r6, r1
+ 8000856: 4241         	rsbs	r1, r0, #0
+ 8000858: 4141         	adcs	r1, r0
+ 800085a: 42b1         	cmp	r1, r6
+ 800085c: d000         	beq	0x8000860 <ADC_COMP+0x25c> @ imm = #0x0
+ 800085e: e0c5         	b	0x80009ec <ADC_COMP+0x3e8> @ imm = #0x18a
+ 8000860: 1c6d         	adds	r5, r5, #0x1
+ 8000862: 4295         	cmp	r5, r2
+ 8000864: d3f2         	blo	0x800084c <ADC_COMP+0x248> @ imm = #-0x1c
+ 8000866: 4966         	ldr	r1, [pc, #0x198]        @ 0x8000a00 <ADC_COMP+0x3fc>
+ 8000868: 6d0c         	ldr	r4, [r1, #0x50]
+ 800086a: 650b         	str	r3, [r1, #0x50]
+ 800086c: 654c         	str	r4, [r1, #0x54]
+ 800086e: 6e08         	ldr	r0, [r1, #0x60]
+ 8000870: 1c40         	adds	r0, r0, #0x1
+ 8000872: 6608         	str	r0, [r1, #0x60]
+ 8000874: 18e2         	adds	r2, r4, r3
+ 8000876: 2000         	movs	r0, #0x0
+ 8000878: 43c1         	mvns	r1, r0
+ 800087a: 42a2         	cmp	r2, r4
+ 800087c: d200         	bhs	0x8000880 <ADC_COMP+0x27c> @ imm = #0x0
+ 800087e: 460a         	mov	r2, r1
+ 8000880: 0852         	lsrs	r2, r2, #0x1
+ 8000882: 9b08         	ldr	r3, [sp, #0x20]
+ 8000884: 189a         	adds	r2, r3, r2
+ 8000886: 9d0e         	ldr	r5, [sp, #0x38]
+ 8000888: d300         	blo	0x800088c <ADC_COMP+0x288> @ imm = #0x0
+ 800088a: 460a         	mov	r2, r1
+ 800088c: 0852         	lsrs	r2, r2, #0x1
+ 800088e: 9b09         	ldr	r3, [sp, #0x24]
+ 8000890: 4293         	cmp	r3, r2
+ 8000892: 4611         	mov	r1, r2
+ 8000894: 4c5a         	ldr	r4, [pc, #0x168]        @ 0x8000a00 <ADC_COMP+0x3fc>
+ 8000896: 4e59         	ldr	r6, [pc, #0x164]        @ 0x80009fc <ADC_COMP+0x3f8>
+ 8000898: d800         	bhi	0x800089c <ADC_COMP+0x298> @ imm = #0x0
+ 800089a: 4619         	mov	r1, r3
+ 800089c: 9b0a         	ldr	r3, [sp, #0x28]
+ 800089e: 4293         	cmp	r3, r2
+ 80008a0: d800         	bhi	0x80008a4 <ADC_COMP+0x2a0> @ imm = #0x0
+ 80008a2: 460b         	mov	r3, r1
+ 80008a4: 64e3         	str	r3, [r4, #0x4c]
+ 80008a6: 9910         	ldr	r1, [sp, #0x40]
+ 80008a8: b289         	uxth	r1, r1
+ 80008aa: 6061         	str	r1, [r4, #0x4]
+ 80008ac: 61e1         	str	r1, [r4, #0x1c]
+ 80008ae: 6123         	str	r3, [r4, #0x10]
+ 80008b0: 0859         	lsrs	r1, r3, #0x1
+ 80008b2: 6161         	str	r1, [r4, #0x14]
+ 80008b4: 69a2         	ldr	r2, [r4, #0x18]
+ 80008b6: 1c52         	adds	r2, r2, #0x1
+ 80008b8: 61a2         	str	r2, [r4, #0x18]
+ 80008ba: 089a         	lsrs	r2, r3, #0x2
+ 80008bc: 1a89         	subs	r1, r1, r2
+ 80008be: d200         	bhs	0x80008c2 <ADC_COMP+0x2be> @ imm = #0x0
+ 80008c0: 4601         	mov	r1, r0
+ 80008c2: 910a         	str	r1, [sp, #0x28]
+ 80008c4: f3ef 8310    	mrs	r3, primask
+ 80008c8: b672         	cpsid i
+ 80008ca: 2063         	movs	r0, #0x63
+ 80008cc: 0080         	lsls	r0, r0, #0x2
+ 80008ce: 4a52         	ldr	r2, [pc, #0x148]        @ 0x8000a18 <ADC_COMP+0x414>
+ 80008d0: 9007         	str	r0, [sp, #0x1c]
+ 80008d2: 5c10         	ldrb	r0, [r2, r0]
+ 80008d4: 2101         	movs	r1, #0x1
+ 80008d6: 9108         	str	r1, [sp, #0x20]
+ 80008d8: 0549         	lsls	r1, r1, #0x15
+ 80008da: 9109         	str	r1, [sp, #0x24]
+ 80008dc: 7811         	ldrb	r1, [r2]
+ 80008de: 2900         	cmp	r1, #0x0
+ 80008e0: d100         	bne	0x80008e4 <ADC_COMP+0x2e0> @ imm = #0x0
+ 80008e2: e080         	b	0x80009e6 <ADC_COMP+0x3e2> @ imm = #0x100
+ 80008e4: 2800         	cmp	r0, #0x0
+ 80008e6: d000         	beq	0x80008ea <ADC_COMP+0x2e6> @ imm = #0x0
+ 80008e8: e07d         	b	0x80009e6 <ADC_COMP+0x3e2> @ imm = #0xfa
+ 80008ea: 9306         	str	r3, [sp, #0x18]
+ 80008ec: 2200         	movs	r2, #0x0
+ 80008ee: 494b         	ldr	r1, [pc, #0x12c]        @ 0x8000a1c <ADC_COMP+0x418>
+ 80008f0: 60ca         	str	r2, [r1, #0xc]
+ 80008f2: 200c         	movs	r0, #0xc
+ 80008f4: 6008         	str	r0, [r1]
+ 80008f6: 624a         	str	r2, [r1, #0x24]
+ 80008f8: 2001         	movs	r0, #0x1
+ 80008fa: 6148         	str	r0, [r1, #0x14]
+ 80008fc: 9205         	str	r2, [sp, #0x14]
+ 80008fe: 610a         	str	r2, [r1, #0x10]
+ 8000900: 9909         	ldr	r1, [sp, #0x24]
+ 8000902: 4a47         	ldr	r2, [pc, #0x11c]        @ 0x8000a20 <ADC_COMP+0x41c>
+ 8000904: 6011         	str	r1, [r2]
+ 8000906: 6831         	ldr	r1, [r6]
+ 8000908: 9a10         	ldr	r2, [sp, #0x40]
+ 800090a: 1a89         	subs	r1, r1, r2
+ 800090c: b289         	uxth	r1, r1
+ 800090e: 910d         	str	r1, [sp, #0x34]
+ 8000910: 4944         	ldr	r1, [pc, #0x110]        @ 0x8000a24 <ADC_COMP+0x420>
+ 8000912: 1c49         	adds	r1, r1, #0x1
+ 8000914: 9a0a         	ldr	r2, [sp, #0x28]
+ 8000916: 428a         	cmp	r2, r1
+ 8000918: d300         	blo	0x800091c <ADC_COMP+0x318> @ imm = #0x0
+ 800091a: e085         	b	0x8000a28 <ADC_COMP+0x424> @ imm = #0x10a
+ 800091c: 990d         	ldr	r1, [sp, #0x34]
+ 800091e: 428a         	cmp	r2, r1
+ 8000920: d800         	bhi	0x8000924 <ADC_COMP+0x320> @ imm = #0x0
+ 8000922: e081         	b	0x8000a28 <ADC_COMP+0x424> @ imm = #0x102
+ 8000924: 9910         	ldr	r1, [sp, #0x40]
+ 8000926: 1851         	adds	r1, r2, r1
+ 8000928: b289         	uxth	r1, r1
+ 800092a: 4a3b         	ldr	r2, [pc, #0xec]         @ 0x8000a18 <ADC_COMP+0x414>
+ 800092c: 6111         	str	r1, [r2, #0x10]
+ 800092e: 6050         	str	r0, [r2, #0x4]
+ 8000930: 990a         	ldr	r1, [sp, #0x28]
+ 8000932: 9a0d         	ldr	r2, [sp, #0x34]
+ 8000934: 1a89         	subs	r1, r1, r2
+ 8000936: 2901         	cmp	r1, #0x1
+ 8000938: d900         	bls	0x800093c <ADC_COMP+0x338> @ imm = #0x0
+ 800093a: e078         	b	0x8000a2e <ADC_COMP+0x42a> @ imm = #0xf0
+ 800093c: 4601         	mov	r1, r0
+ 800093e: e078         	b	0x8000a32 <ADC_COMP+0x42e> @ imm = #0xf0
+ 8000940: f3ef 8110    	mrs	r1, primask
+ 8000944: b672         	cpsid i
+ 8000946: 6b02         	ldr	r2, [r0, #0x30]
+ 8000948: 1c52         	adds	r2, r2, #0x1
+ 800094a: 6302         	str	r2, [r0, #0x30]
+ 800094c: f381 8810    	msr	primask, r1
+ 8000950: f3ef 8110    	mrs	r1, primask
+ 8000954: 9110         	str	r1, [sp, #0x40]
+ 8000956: b672         	cpsid i
+ 8000958: 4aeb         	ldr	r2, [pc, #0x3ac]        @ 0x8000d08 <ADC_COMP+0x704>
+ 800095a: 6852         	ldr	r2, [r2, #0x4]
+ 800095c: 49e4         	ldr	r1, [pc, #0x390]        @ 0x8000cf0 <ADC_COMP+0x6ec>
+ 800095e: 780d         	ldrb	r5, [r1]
+ 8000960: 7803         	ldrb	r3, [r0]
+ 8000962: 2063         	movs	r0, #0x63
+ 8000964: 0080         	lsls	r0, r0, #0x2
+ 8000966: 49e4         	ldr	r1, [pc, #0x390]        @ 0x8000cf8 <ADC_COMP+0x6f4>
+ 8000968: 5c0c         	ldrb	r4, [r1, r0]
+ 800096a: 780e         	ldrb	r6, [r1]
+ 800096c: 6848         	ldr	r0, [r1, #0x4]
+ 800096e: 2a00         	cmp	r2, #0x0
+ 8000970: d10a         	bne	0x8000988 <ADC_COMP+0x384> @ imm = #0x14
+ 8000972: 2d00         	cmp	r5, #0x0
+ 8000974: d008         	beq	0x8000988 <ADC_COMP+0x384> @ imm = #0x10
+ 8000976: 2e00         	cmp	r6, #0x0
+ 8000978: d017         	beq	0x80009aa <ADC_COMP+0x3a6> @ imm = #0x2e
+ 800097a: 2c00         	cmp	r4, #0x0
+ 800097c: d115         	bne	0x80009aa <ADC_COMP+0x3a6> @ imm = #0x2a
+ 800097e: 2104         	movs	r1, #0x4
+ 8000980: 43c9         	mvns	r1, r1
+ 8000982: 4208         	tst	r0, r1
+ 8000984: d007         	beq	0x8000996 <ADC_COMP+0x392> @ imm = #0xe
+ 8000986: e010         	b	0x80009aa <ADC_COMP+0x3a6> @ imm = #0x20
+ 8000988: 1e50         	subs	r0, r2, #0x1
+ 800098a: 4182         	sbcs	r2, r0
+ 800098c: b2d8         	uxtb	r0, r3
+ 800098e: 4241         	rsbs	r1, r0, #0
+ 8000990: 4141         	adcs	r1, r0
+ 8000992: 4311         	orrs	r1, r2
+ 8000994: d109         	bne	0x80009aa <ADC_COMP+0x3a6> @ imm = #0x12
+ 8000996: 49d3         	ldr	r1, [pc, #0x34c]        @ 0x8000ce4 <ADC_COMP+0x6e0>
+ 8000998: 6f48         	ldr	r0, [r1, #0x74]
+ 800099a: 9a0e         	ldr	r2, [sp, #0x38]
+ 800099c: 4310         	orrs	r0, r2
+ 800099e: 6748         	str	r0, [r1, #0x74]
+ 80009a0: 48d7         	ldr	r0, [pc, #0x35c]        @ 0x8000d00 <ADC_COMP+0x6fc>
+ 80009a2: 990f         	ldr	r1, [sp, #0x3c]
+ 80009a4: 6001         	str	r1, [r0]
+ 80009a6: 48de         	ldr	r0, [pc, #0x378]        @ 0x8000d20 <ADC_COMP+0x71c>
+ 80009a8: 6001         	str	r1, [r0]
+ 80009aa: 9810         	ldr	r0, [sp, #0x40]
+ 80009ac: f380 8810    	msr	primask, r0
+ 80009b0: e184         	b	0x8000cbc <ADC_COMP+0x6b8> @ imm = #0x308
+ 80009b2: 2101         	movs	r1, #0x1
+ 80009b4: 7041         	strb	r1, [r0, #0x1]
+ 80009b6: f3ef 8110    	mrs	r1, primask
+ 80009ba: b672         	cpsid i
+ 80009bc: 6b42         	ldr	r2, [r0, #0x34]
+ 80009be: 1c52         	adds	r2, r2, #0x1
+ 80009c0: 6342         	str	r2, [r0, #0x34]
+ 80009c2: f381 8810    	msr	primask, r1
+ 80009c6: e179         	b	0x8000cbc <ADC_COMP+0x6b8> @ imm = #0x2f2
