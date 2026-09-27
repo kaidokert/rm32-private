@@ -1,0 +1,8 @@
+node.exe : Reading additional input from stdin...
+At C:\Program Files\nodejs\codex.ps1:14 char:14
++ ...    $input | & "$basedir/node$exe"  "$basedir/node_modules/@openai/cod ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Reading additional input from stdin...:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+2026-09-27T09:09:59.000102Z ERROR codex_models_manager::manager: failed to load models cache: EOF while parsing a value at line 1 column 0

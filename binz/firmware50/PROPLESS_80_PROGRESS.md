@@ -1,7 +1,16 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E440 failed startup screen and dual review, 2026-09-27.
+Updated through E443 sequence-publication screen and dual review, 2026-09-27.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
+
+E441 restored original persistence and removed the sole-COMP-writer sequence
+counter's redundant RMW mask; atomic arm mask retained.381tests/clippy/four
+rootaudit/structurePASS. Candidate986942DA reached25% in E442, held2.368s,
+thenTracking/Stale240us; late0,thin161,spentmax12us,COMP24us. FinaloffPASS.
+No measured netcost or reliabilitygain versus E436; no retry/higherduty.
+Installed986942DA/OFF/UARTclosed. E443 dualreview: aggregatecounters cannot
+reconstructterminalordering, and previousotherimageORDERtailscannot fill it.
+Next work is terminalevent chronology, not another isolatedinstructionshave.
 
 E439 flashedBA96C4E4 after disabled preflights. One15% request stopped
 Tracking/Stale after6accepted/3msclosed/zero targetdwell, actual~10%.

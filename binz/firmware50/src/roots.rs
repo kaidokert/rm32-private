@@ -451,6 +451,16 @@ fn note_margin(wait: u32, left: u32) {
     let _ = wait;
 }
 
+/// Only ADC_COMP writes the sequence; foreground/COM may read old or new.
+/// ADC_COMP cannot re-enter itself. Do not add another writer or a reset.
+#[inline(always)]
+fn publish_accept_sequence() {
+    let next = S.det().accept_seq.load(Ordering::Relaxed).wrapping_add(1);
+    // Payload precedes publication, as with the old masked RMW. Compiler only.
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Release);
+    S.det().accept_seq.store(next, Ordering::Relaxed);
+}
+
 /// Production's decision. Keep in step with [`det_decide_logged`].
 #[inline(always)]
 pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
@@ -481,9 +491,9 @@ pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fin
             Some(level) => level,
             None => S.det().advance.load(Ordering::Relaxed),
         };
-        // Read live COMP each time, with expected polarity prepared once.
-        let expected = hw::comp::expected_level_word(edge_is_rising(step));
-        match zc.offer_timed_matches::<T, _, _>(count, advance, &DET_FILTER, || hw::comp::level_word() == expected) {
+        // Persistence reads the **live** comparator, microseconds after the edge --
+        // exactly what AM32's handler does, and what the foreground could never do.
+        match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &DET_FILTER, hw::comp::level) {
             crate::bemf::Outcome::Accepted { wait, .. } => {
                 // The accepted crossing's bookkeeping, then the arm. (A stale
                 // comment describing the reverted E142 order stood here until
@@ -496,7 +506,7 @@ pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fin
                 // estimator the one value two motor roots touched.
                 S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
                 S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
-                S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
+                publish_accept_sequence();
                 // Keep publication before arming. E405 subtracts elapsed after
                 // timer preparation, inside the atomic region. Entry is still
                 // software-stamped, not an independently captured rotor edge.
@@ -587,7 +597,7 @@ fn accept<C: ChainLog>(
     S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
     S.det().accept_avg.store(avg, Ordering::Relaxed);
     S.det().accept_blank.store(blank, Ordering::Relaxed);
-    S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
+    publish_accept_sequence();
     if let Some(spent) = arm_marked::<C>(raw, wait) {
         let left = crate::oneshot::crossing_left(wait, spent);
         // Gated like `beat_row`'s read (E269): `edge-capture` reaches this

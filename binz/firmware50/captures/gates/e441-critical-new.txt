@@ -1,0 +1,29 @@
+
+>  80008e4:	680c      	ldr	r4, [r1, #0]
+   80008e6:	4034      	ands	r4, r6
+   80008e8:	1e65      	subs	r5, r4, #1
+   80008ea:	41ac      	sbcs	r4, r5
+   80008ec:	4245      	negs	r5, r0
+   80008ee:	4145      	adcs	r5, r0
+   80008f0:	42a5      	cmp	r5, r4
+   80008f2:	d000      	beq.n	80008f6 <ADC_COMP+0x2f2>
+   80008f4:	e080      	b.n	80009f8 <ADC_COMP+0x3f4>
+   80008f6:	1c5b      	adds	r3, r3, #1
+   80008f8:	b2dc      	uxtb	r4, r3
+   80008fa:	4294      	cmp	r4, r2
+   80008fc:	d3f2      	bcc.n	80008e4 <ADC_COMP+0x2e0>
+   80008fe:	49c6      	ldr	r1, [pc, #792]	@ (8000c18 <ADC_COMP+0x614>)
+>  8000952:	69b2      	ldr	r2, [r6, #24]
+   8000954:	1c52      	adds	r2, r2, #1
+   8000956:	61b2      	str	r2, [r6, #24]
+   8000958:	0882      	lsrs	r2, r0, #2
+   800095a:	1a88      	subs	r0, r1, r2
+   800095c:	d200      	bcs.n	8000960 <ADC_COMP+0x35c>
+   800095e:	9807      	ldr	r0, [sp, #28]
+   8000960:	9007      	str	r0, [sp, #28]
+   8000962:	f3ef 8010 	mrs	r0, PRIMASK
+   8000966:	9005      	str	r0, [sp, #20]
+   8000968:	b672      	cpsid	i
+   800096a:	2063      	movs	r0, #99	@ 0x63
+   800096c:	0080      	lsls	r0, r0, #2
+   800096e:	4eaf      	ldr	r6, [pc, #700]	@ (8000c2c <ADC_COMP+0x628>)

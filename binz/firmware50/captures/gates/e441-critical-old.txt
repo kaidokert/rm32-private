@@ -1,0 +1,29 @@
+
+>  8000912:	680c      	ldr	r4, [r1, #0]
+   8000914:	4034      	ands	r4, r6
+   8000916:	1e65      	subs	r5, r4, #1
+   8000918:	41ac      	sbcs	r4, r5
+   800091a:	4245      	negs	r5, r0
+   800091c:	4145      	adcs	r5, r0
+   800091e:	42a5      	cmp	r5, r4
+   8000920:	d171      	bne.n	8000a06 <ADC_COMP+0x402>
+   8000922:	1c5b      	adds	r3, r3, #1
+   8000924:	b2dc      	uxtb	r4, r3
+   8000926:	4294      	cmp	r4, r2
+   8000928:	d3f3      	bcc.n	8000912 <ADC_COMP+0x30e>
+   800092a:	49be      	ldr	r1, [pc, #760]	@ (8000c24 <ADC_COMP+0x620>)
+   800092c:	6d0b      	ldr	r3, [r1, #80]	@ 0x50
+>  800097c:	f3ef 8210 	mrs	r2, PRIMASK
+   8000980:	b672      	cpsid	i
+   8000982:	461e      	mov	r6, r3
+   8000984:	699b      	ldr	r3, [r3, #24]
+   8000986:	1c5b      	adds	r3, r3, #1
+   8000988:	61b3      	str	r3, [r6, #24]
+   800098a:	f382 8810 	msr	PRIMASK, r2
+   800098e:	0882      	lsrs	r2, r0, #2
+   8000990:	1a88      	subs	r0, r1, r2
+   8000992:	d200      	bcs.n	8000996 <ADC_COMP+0x392>
+   8000994:	9807      	ldr	r0, [sp, #28]
+   8000996:	9007      	str	r0, [sp, #28]
+   8000998:	f3ef 8610 	mrs	r6, PRIMASK
+   800099c:	b672      	cpsid	i

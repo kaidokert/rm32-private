@@ -73,17 +73,6 @@ pub fn level() -> bool {
     comp().comp2_csr().read().value().bit_is_set()
 }
 
-/// COMP2_CSR.VALUE is bit30 (the PAC field used by `level`).
-/// Prepare once outside persistence, avoiding repeated Boolean normalization.
-pub const fn expected_level_word(high: bool) -> u32 {
-    (high as u32) << 30
-}
-
-#[inline(always)]
-pub fn level_word() -> u32 {
-    comp().comp2_csr().read().bits() & expected_level_word(true)
-}
-
 /// Disable line 18 **at the NVIC first**, then in IMR (binz Entry 094,
 /// firmware50 E102/E103: an IMR mask alone does not stop a latched edge from
 /// dispatching on the G071).

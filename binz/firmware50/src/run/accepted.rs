@@ -83,4 +83,26 @@ mod tests {
         assert_eq!(observe(&mut seen, || 1, || 2), accept(2, 3));
         assert_eq!(seen, 1);
     }
+
+    #[test]
+    fn sequence_publication_has_one_store_and_two_comp_callers() {
+        // Source regression, not a proof against arbitrary aliases/new writers.
+        let src = include_str!("../roots.rs");
+        assert_eq!(src.matches("publish_accept_sequence();").count(), 2);
+        assert_eq!(src.matches("accept_seq.store(").count(), 1);
+        assert!(!src.contains("accept_seq.fetch_add"));
+        let body = src.split("fn publish_accept_sequence()").nth(1).unwrap()
+            .split("/// Production's decision").next().unwrap();
+        let mut pos = 0;
+        for mark in ["accept_seq.load(Ordering::Relaxed)", "wrapping_add(1)",
+            "compiler_fence", "Ordering::Release", "accept_seq.store(next, Ordering::Relaxed)"] {
+            pos += body[pos..].find(mark).expect(mark) + mark.len();
+        }
+        for path in ["pub fn det_decide_plain", "fn accept<C:"] {
+            let body = src.split(path).nth(1).unwrap();
+            let publish = body.find("publish_accept_sequence();").unwrap();
+            assert!(body.find("accept_raw.store").unwrap() < publish);
+            assert!(body.find("arm_marked::<C>(raw, wait)").unwrap() > publish);
+        }
+    }
 }

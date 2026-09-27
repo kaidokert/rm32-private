@@ -45544,3 +45544,190 @@ change yet. This is initial ownership evidence, not a completed concurrency
 or compiler-ordering proof. Next bounded offline step checks the callers and
 emitted masked-RMW against same-root wrapping load/store before any edit.
 Every electrical stop and timer-arm critical section remains unchanged.
+
+### E441 - post-filter sequence publication audit, offline
+
+Previous turn produced failedscreenE439 and independentreviews, not envelope
+progress. Full80%goal reread. No newbenchaccess; BA96C4E4 lastverifiedOFF.
+Plan: restore the four production/test files changed byE437 to exactE436
+commit71f19504 (retired experiment remains in git and archivedELFs), remove
+its test-only historicalcopy, then change only acceptance-sequence increment
+in the original persistence code. Prediction: removing its redundant portable-
+atomic RMW mask can reduce pre-arm instructions without changing read cadence.
+This is not an expected startupfix or asserted at-speed survival guarantee.
+Existing atomic timer-arm/stop mask and all thresholds remain untouched.
+Two runtimewriters are mutuallyexclusive plain/logged acceptance within the
+single ADC_COMP vector; no resetwriter, foreground install onlyreads. Proposed
+private helper load/wrapping_add/store usingAtomicU32 Relaxed; readers may see
+old/new sequence as already possible before original RMW. Need review of
+compiler ordering, COM readers and tokenownership before implementing.
+
+E441 dual pre-edit reviews:
+> Conditionally correct; the supplied source supports the replacement locally, but does not establish repository-wide single-writer ownership or validate the proposed rollback.
+>
+> - `det_decide` selects mutually exclusive plain/logged paths. Both increments execute within ADC_COMP; shown foreground and COM accesses only read `accept_seq`. With a nonrecursive ISR and no concurrent reset/other writer, relaxed load → wrapping increment → relaxed store preserves the counter, including wraparound.
+> - Both paths write `accept_raw/avg/blank` before incrementing the sequence, then arm. The existing masked RMW does **not** atomically publish those preceding fields. Its replacement does not create that deficiency.
+> - Under `com-top`, COM can interrupt between payload stores or before rearming and observe mixed acceptance data or a sequence unrelated to its existing schedule. The later arm mask does not cover this window. Foreground snapshot correctness also depends on the omitted `accepted::observe` implementation.
+> - A private helper centralizes updates but cannot enforce ownership while the atomic remains publicly writable. Source-string tests can miss alternate writers, resets, and configurations.
+>
+> Inspect the restored diff and generated instructions before approval; passing tests cannot establish these invariants.
+
+> Conditionally sound; the supplied source supports the replacement, but does not establish the restored tree’s complete writer set.
+>
+> - Both increments execute in mutually exclusive COMP decision paths. With nonrecursive ADC_COMP and no concurrent reset/store elsewhere, relaxed load/wrapping-add/store preserves the counter’s behavior, including wrap. Removing masked RMW permits higher-priority interrupts between load and store; the shown COM/guard paths do not modify `accept_seq`.
+> - Publication remains unresolved: `accept_raw`, `accept_avg`, `accept_blank`, then sequence are separate writes before the arm’s critical section. Under `com-top`, an already-pending COM can preempt that publication and consume a mixed snapshot or associate new acceptance metadata with an older arm. Neither the existing RMW nor its replacement prevents this.
+> - Foreground can be interrupted between sequence and raw reads. Correct pairing depends on the omitted `accepted::observe` implementation.
+> - A private helper restricts increment calls, not writes to the exposed atomic. Source-pattern tests cannot establish exclusive ownership across resets, aliases, features, or restored files.
+>
+> Review the actual restored diff and generated instructions before approval; unchanged sample spacing is unproven.
+
+Dispositions: conditional singlewriter reasoning accepted for offlinecandidate,
+not whole-system racefree claim. Fullsrc/bin references supplied but not a
+proof against future writers; document contract and test callsites. Foreground
+accepted::observe has sequence/stamp/sequence with compilerfences, defers if
+sequencechanged, and runs only after ISRcompletes. Existing COMpublication
+window is not widened into a new multiwriter race by removing RMWmask; mixed
+metadata window already exists before old RMW and remains a separate limitation.
+Retain all arm masks. Add Release compilerfence before sequence-store to retain
+payload-before-counter compilerordering without hardwareDMB. Check assembly;
+no new hardwarebarrier/call or altered persistence loop accepted on assertion.
+Retired experimental source/test-only helper removed from active tree only;
+recoverable in d9bcbe5. Final baseline-relative diff must only be publication
+helper, both callsites, tests and contract documentation.
+
+E441 offline result: baseline-relative productiondiff is only private sequence
+publisher and twoCOMPcalls. Original bemf/hw-comp/timing-tests restoredexactly;
+retired testoracle removed (recoverablegit).381hosttests/clippy/fourrootaudit
+PASS, including mailboxwrapping/coalescing and newsourceorderregression.
+ADC_COMP763->760entries (includespool), DMA37/guard155 byteidentical,
+COM388 normalizedidentical with relocatedhelperaddress. text46192,data740,
+bss4188. Counter now LDR/ADDS/STR at0x8000952..956; old MRS/CPSID/MSR
+at0x800097c..98a removed there. Atomic arm's separate mask remains.
+IMPORTANT compiler-side effect: persistence success branch changed from
+untakenBNE to takenBEQ over a far unconditionalB, same12executedinstructions
+per successfulread but different branchcost. Do NOT claim unchanged physical
+sample spacing or established net cyclegain. This longer-path risk is unlike
+E437's deliberate12->8shortening; actual netprearm saving remains unmeasured.
+No poweredrun yet. Next proposed representative screen is25%/28s once against
+E436same duty/exposureplan, not an automatic15%repeat: original15% baseline
+already passed, prior25% reached~3045eHz thenlatearmed. Screen coversstartup
+and knownspeedband, cannot qualify nor establish n1 causal improvement.
+
+### E442 - emitted-code review before representative screen
+
+Final archive986942DA2B4A923C4E339651E7A15D77C80185EF2D72715276A5E2B44BA6A4C6;
+finalfourrootauditPASS. Originalreviewpacket incorrectly embedded old/new
+assembly as an array, producingSystem.Object[]. Reviews caught it:
+
+> Raw baseline: 25% propless reached 3.371 s target hold, zero forced commutations, and one late arm at CI=40 µs, spent=10 µs. Disabled outputs were observed before/after. This establishes prior exposure, not candidate safety or timing improvement.
+>
+> Publication is conditionally correct: one non-reentrant ADC_COMP writer permits atomic relaxed load/wrapping-add/store without lost increments; the release compiler fence orders payload before publication. Foreground’s bracketed reads work because the ISR completes before foreground resumes. A COM reader preempting publication may see an old sequence with newer payload; correctness depends on its actual use, which the reference list does not establish.
+>
+> Concrete evidence blocker: `System.Object[]` provides no assembly comparison. Before screening, show both changed publication sites, payload→sequence→arm ordering, preserved arm/stop masks, and the persistence-loop branch/context. Tie that evidence to the exact frozen candidate ELF. Audit/test passes do not establish those properties.
+>
+> With that gap closed and COM use justified, one proposed 25%, 28 s propless screen after fresh flash/disabled boot and ≥120 s OFF, with no retry, is proportionate. It demonstrates feasibility only; no unrelated ladder is required.
+
+> Raw baseline shows zero forced commutations but one late arm at the reported 10 µs equality boundary; it provides no demonstrated timing margin. Zeroed margin histograms add no evidence.
+>
+> Publication is conditionally correct: with ADC_COMP the sole, non-reentrant writer, load/wrapping-add/store preserves increments without an RMW. The release compiler fence orders preceding payload writes before publication. Foreground’s bracketed reads work because the ISR completes before foreground resumes. This does not establish coherent payload reads by a higher-priority COM interrupt that can preempt publication; any such reader needs its own justification.
+>
+> **Blocker: assembly coverage is missing.** `System.Object[]` is not disassembly. Supply old/new excerpts for both publication paths through arming, including interrupt masking and the changed qualification-loop branch. Verify atomic-width accesses, payload-before-sequence-before-arm ordering, unchanged arm/stop masking, and timing effects. Root-audit/test passes cannot substitute.
+>
+> After that check, the proposed single 25%/28-second propless screen, fresh flash/disabled boot, ≥120 seconds OFF, unchanged protections, and no retry is a reasonable bounded feasibility experiment. It cannot establish causal improvement, thermal safety, or an RPM rating.
+
+Dispositions: closepacketgap beforebench. Supplied fullold/new ADC_COMP
+as separate scalarstrings to twofreshreviews, plus exactCOMordinaluse and
+selectedNoLog/NoChainbinary. Loggedtwin sourceuses samehelper but isnotlinked
+and emitteddiagnostictwin isnotclaimedqualified. COM sequenceonlytags optional
+orderrecord; noNoChaincontroluse. Existingpayload-before-arm windowisnotnewly
+madecoherent byoldRMW ornewhelper; no globalracefreeclaim. Foregroundreader
+uses sequence/stamp/sequence compilerfences and ISRcompletesbeforeresume.
+No poweredrun yet; correctedpacketreview pending.
+
+Corrected packet verdicts:
+
+> Conditional go for the specified bounded screen; no concrete new blocker appears in the selected lean path.
+>
+> The persistence calculation survives: new `0x080008c2–0x080008d4` retains the multiply/add/shift/clamp sequence and constants; comparator sampling remains bounded. Its changed branch layout prevents inferring cycle savings.
+>
+> Payload stores at `0x08000942–0x08000950` precede sequence load/increment/store at `0x08000952–0x08000956`, which precedes arming. The old sequence-only PRIMASK wrapper is removed; arm protection remains at `0x08000962–0x08000968`, with restoration on bypass and completion. Separate stack scalars preserve the saved mask through those paths.
+>
+> Correctness remains conditional on ADC_COMP being the sole sequence writer, without concurrent reset or re-entry. This is not coherent multi-field snapshot publication; the earlier payload exposure already existed. COM’s recorder-only ordinal supplies no lean-path blocker. The unlinked diagnostic twin receives no hardware qualification.
+>
+> Proceed only with the exact identified image, 120-second off period, fresh flash, passing boot checks, and one 25%/28-second screen with unchanged stops and no retry. Missing peak/temperature sensing and RPM rating limit conclusions to that screen.
+
+> No concrete new blocker appears in the supplied selected lean path; conditional feasibility for the bounded screen is supported.
+>
+> New `0x08000942–0x08000956` stores acceptance payload before the sequence increment; arming follows under retained PRIMASK protection (`0x08000968–0x08000a2c`). The persistence continuation restores the timer pointer at `0x08000b9e` before returning to elapsed-time accounting. Saved-mask stack slots remain consistent across arm, bypass, and persistence branches.
+>
+> The unmasked load/add/store requires the stated sole-writer/no-reset invariant, including preempting handlers. The compiler fence does not establish a coherent multi-field snapshot. COM’s recorder-only ordinal is absent with NoChain; payload overlap was already possible before the old masked increment.
+>
+> Code layout and the filter-loop branch changed, so instruction removal alone proves no timing improvement. The audit/tests support screening, not hardware qualification or the unlinked diagnostic twin.
+>
+> Proceed only with the specified single 25%, 28-second screen after 120 seconds off, fresh flash and passing boot checks; unchanged stops, no retry. Missing peak-current/temperature sensing and RPM rating remain explicit limits.
+
+Dispositions: conditionalrepresentativescreenadmitted; no causalspeedupclaim,
+no hardwarequalification. SourceonlyADC_COMPwrites verifiedcurrenttree,
+noreset, ordering shownactualinstructions; futurewriteradditioninvalidates.
+Morethan600sOFF sinceE439 (mtime08:59:05UTC,now09:09:58UTC), not measured
+thermalrecovery. Archive986942DA hash rechecked. Flash explicitG071/reset;
+requiredisabledbootchecks, then command8 once,total28s,target250,minhold15s.
+On anyfault retainandstop; no automaticretry/escalation. Existingprotections
+unchanged. No otheragent ownsbench, MCPenumeration succeeded.
+
+E442 explicitprobe flash/reset exit0; postresetMCPp verifiesmoe0/CCRs0/
+gates_low1/en0/nfault1/PASS, DIODESELFTEST sixsectors/latch/deadlinePASS.
+UARTclosed; proceedcommand8 once asreviewed. Expectedfulltarget15.278s if
+deadlinecompletes; stage-specificfaults retained regardlesstargetreached.
+
+E442 result captures/2026-09-27/e442-propless250-sequence-publish_01.txt:
+FAIL reason8/guard8 subtype1Stale, closed9869ms,target2368ms atCCR333/1333.
+accepted142484 vszc/com142485, forced0; foregrounddeliverycanlagoneIRQevent.
+Late0,thin161,ci_min40,spentmax12us,COMPmax24us,COMlatemax11us mixedpurpose.
+Trackingmax240us,guardgap111us,storm0,blanklatched0,overrun0. Rawbusmin1098
+versusref1218; no sagtrip, restfiltered995.234permille. Holdproxy394mA,
+zerodrift-305mA, not calibrated amps. Coastreported2982eHz,matched1017 on
+trippedstop; no slip or physicalcause inferred from unmatchedmeans.
+FinaloffPASS/UARTclosed. No retry. Prediction of observable prearm benefit
+not demonstrated: baselineE436 spent11 andcandidate12 are different single
+attempt maxima, not a controlledcostdistribution. Candidate avoidsLateArm in
+thissample but endsTracking earlier; cannot rankfailure probabilities.
+Installed986942DA remainsOFF; qualificationunchanged. Nextreview must prevent
+another smallinstructionchange being sold as a controlfix. Need measured
+terminal timing/acceptance ordering forTracking before anotherpoweredchange.
+
+### E443 - sequence-candidate result reviews
+
+> Candidate held target for 2368 ms versus 3371 ms: 1003 ms shorter (29.8%). Late arms fell from 1 to 0; maximum recomputation time rose from 11 to 12 µs. These single runs establish neither reliability improvement nor a demonstrated cost benefit.
+>
+> `track_fault=1` maps explicitly to `Stale`. The supplied watchdog latches this when elapsed time since its last observed accepted event exceeds its tightened limit, reported as 240 µs. The guard then requests `Tracking`. This supports a software watchdog stop; it does not identify the physical cause or establish slip.
+>
+> The final captured acceptance was 303 µs before stop, numerically compatible with that deadline, but clock alignment, capture semantics, and terminal execution order remain unproven. Aggregate maxima cannot reconstruct that sequence.
+>
+> Accepted-event rate implies 3034 eHz, versus baseline 3055 eHz; candidate coast reports 2982 eHz, approximately 1.0175× agreement. Neither certifies terminal rotor tracking.
+>
+> Next: audit existing captures and complete event-feed/stop paths offline, reconstructing last watchdog update, deadline tightening, stale latch, and output disable. Avoid perturbing ORDER instrumentation until that evidence is exhausted.
+
+> Candidate held target for 2,368 ms versus 3,371 ms: 1,003 ms shorter (29.8%). Accepted-event rate fell 0.68% (18,331→18,206/s); current proxy rose 16.6% (338→394 mA), with substantial zero drift limiting interpretation.
+>
+> `track_fault=1` maps explicitly to Stale: the watch observed elapsed time strictly greater than its 240 µs ceiling. The last recorded acceptance 303 µs before stop is consistent with that software diagnosis, but does not establish terminal chronology or the physical cause. The supplied snippets omit the `guard_event` body and numeric mapping for reason 8. Baseline DONE=28 versus GUARD=15 also needs reconciliation.
+>
+> Zero recorded late arms versus one, and spent_max=12 versus 11 µs, establish neither benefit nor reliability improvement. Shorter exposure, one run per image, and the compiler branch change preclude attribution to the counter edit.
+>
+> Coast transitions support continued rotation afterward; they do not establish powered rotor lock or slip. Poststop checks establish the sampled disabled state.
+>
+> Next: audit existing capture timestamps, watch updates, interrupt ordering, and stop-record precedence offline. If unavailable, report chronology unresolved; another isolated optimization is unjustified.
+
+Dispositions: no demonstratedtiming/reliabilitygain, no slip/currentcalibration
+claim. 303us is lastforeground-recorded acceptance beforestop, not necessarily
+lastCOMPaccept: zc/com counts areoneahead ofdeliveredaccepted. Do not call it
+an exactlastwatchtimestamp. watch.event usesguard_now afterarm and watch.poll
+canlatch fromTIM6; withoutterminalorderrows neithertriggercontext isknown.
+Reason8=Tracking andtrackfault1=Stale are explicit sourcecodes. Historical
+E436 DONE28 is UnknownGuard foregroundfallback forrootLateArm15, not twophysical
+faults. Those omittedpacketmappings are sourceverified, not openbenchquestions.
+No causalconclusion aboutcounteredit, samplephase, rotor, or supply. Existing
+capturesprovideaggregate/tailend only forleanE442; previousORDERtailsbelongto
+otherimages and cannot reconstructitsmissingterminalevents. Next step should
+recover terminalsequence with existing boundedrecording or narrowly scoped
+instrument, not anotherprearmmicrooptimization. Board986942DA/OFF/UARTclosed.

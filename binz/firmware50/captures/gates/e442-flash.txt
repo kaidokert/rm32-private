@@ -1,0 +1,6 @@
+probe-rs :      Finished in 2.50s
+At line:2 char:1
++ probe-rs download --chip STM32G071RBTx --probe 0483:374b:066CFF343433 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (     Finished in 2.50s:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
