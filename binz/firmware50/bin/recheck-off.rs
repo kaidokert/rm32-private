@@ -13,7 +13,7 @@ fn TIM16() {
     unsafe { roots::recheck::check::interrupt() }
 }
 #[interrupt]
-fn ADC_COMP() { hw::comp::line_disable(); hw::comp::clear_pending(); }
+fn ADC_COMP() { roots::recheck::check::handshake::comp_interrupt(); }
 
 #[entry]
 fn main() -> ! {
@@ -36,6 +36,12 @@ fn main() -> ! {
             if b == b'u' {
                 for case in 6..=8 {
                     if !roots::recheck::check::lifecycle::run(case, &mut board) { break; }
+                    board.now(); board.drain();
+                }
+            }
+            if b == b'v' {
+                for case in 9..=12 {
+                    if !roots::recheck::check::handshake::run(case, &mut board) { break; }
                     board.now(); board.drain();
                 }
             }

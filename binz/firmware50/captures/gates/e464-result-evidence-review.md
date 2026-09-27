@@ -1,0 +1,7 @@
+The four rows satisfy the visible case-specific predicates: calls=2, parked=1, off=1 throughout; case10 elapsed=1004µs meets 1000–1100µs. BEFORE=38 means active, timer running, bridge off; BEFORE=33 means stopped, inactive, timer stopped, bridge off. Both snapshots have NVIC/update pending clear.
+
+Case12’s phase=4/armed=1 records the earlier callback; BEFORE=33 records shutdown after the injected overrun, before cleanup. These are consistent. However, DONE is not separately reported, and omitted helper implementations limit independent verification of pass=1.
+
+Evidence supports four synthetic, bridge-disabled IRQ handshakes. It does not establish powered BEMF persistence, production WCET, or qualification of 63F48607. The fast return plausibly removes optional work from the masked interval; it does not prove the cause of the previous 936ms fault. The refusal-tail check detects excess time after wake/preemption; it cannot prevent that elapsed work.
+
+Outcome: no concrete blocker demonstrated to the proposed single 15%/28s screen after ≥120s cooling. Proceed only with the stated protections verified on frozen 63F48607; a mismatch there is a concrete blocker. Stop on fault without duty escalation. Full qualification remains outside this screen’s scope.

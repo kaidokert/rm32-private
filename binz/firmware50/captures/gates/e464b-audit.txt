@@ -1,0 +1,13 @@
+ISR-root audit: captures/elf/A5A97AE0.e464b-handshake-off.elf
+
+  [ADC_COMP] reachable=8  FAIL
+      loop not in reviewed_loops: ['firmware50::roots::recheck::check::lifecycle::slot_times_ok']
+
+  [TIM16] reachable=7  OK
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT FAILED (1 finding(s)):
+  - ADC_COMP: unreviewed loop in: ['firmware50::roots::recheck::check::lifecycle::slot_times_ok']

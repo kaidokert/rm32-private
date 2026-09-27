@@ -1,0 +1,10 @@
+{
+  "_comment": "Only recheck-off bridge-disabled E464 probe; never use for motor images.",
+  "reviewed_loops": ["firmware50::roots::recheck::check::handshake::comp_interrupt", "firmware50::roots::recheck::check::lifecycle::slot_times_ok"],
+  "_loop_review": {
+    "firmware50::roots::recheck::check::handshake::comp_interrupt": "Driver-disabled test only: for 0..10000 explicitly bounds iterations independently of peripheral clock; early exit on PARKED or elapsed>200us. No motor parser/gate enable/commutation plan in this binary. This bound is not a production ISR timing allowance.",
+    "firmware50::roots::recheck::check::lifecycle::slot_times_ok": "Fixed zip of five timestamps and literal five deadlines, at most five comparisons; no timer polling. Conservative audit marks reachable in probe. Not admitted for a motor build."
+  },
+  "indirect_calls": [],
+  "panic_paths": []
+}

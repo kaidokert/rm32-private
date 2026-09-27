@@ -47475,3 +47475,159 @@ release/clippy/fourrootaudit/structurePASS.408hosttests cover unchanged pure
 model, not target-onlybudgetintegration. COMP839->855entries versusprecheck
 candidate; inspect assembly as increased refusal cost, not reduced fullroot.
 Installed02F4D1E2 remainsOFF/UARTclosed; no powered run thisentry.
+
+## E464 — disabled real-IRQ park/wake handshake, before build
+
+Previous turn changed staged code and bounded its new refusal tail; progress,
+not powered gain. Extend only the no-drive recheck-off binary with cases9..12.
+Actual lower-priority COMP test handler masks its line and arms a10us phase4
+timer; real higher-priority TIM16 must expire/park with zero observations.
+Then:9 normal refusal resumes/wakes one observation;10 accepted-arm helper
+replaces it with1000us phase1;11 stop plus explicit stale dispatch cannot
+observe/rearm;12 overrun injection100us forces existing50us check to stop
+after wake. Record parked/UIF/CEN/phase, callback counts, observations, final
+reason and off state. Bounded iteration+clock waits, stop on first failedcase.
+No controller, gate-enable or commutation-plan execution in probe. These
+exercise real priorities/peripheral pending with synthetic COMP outcomes,
+not actual BEMF persistence or comprehensive hardware race coverage. No new
+measurement framework or instrumentation in the motor binary. Review before
+flash; only after results reviewed reconsider one protected15% candidate run.
+
+E464 first preflash reviews:
+
+> Raw-source recomputation: average 80 gives deadlines 41, 121, 161, 201, 241 µs. At age 60 plus handshake time, one observation should consume a slot and rearm toward 121 µs, provided service remains earlier than that deadline. Cases 10/11 correctly distinguish native expiry (`UIF=1`) from software dispatch after stop (`UIF=0`).
+>
+> Two evidence weaknesses need fixing:
+>
+> - **Case 12’s stop assertion is contaminated by cleanup.** `finish()` calls `guard_trip(HostAbort)`, and foreground repeats it before checking `stopped`. Thus `stopped=true` cannot prove the overrun path stopped anything. Capture stopped/CEN/active immediately after `resume_after_refusal()`, before cleanup; assert overrun latched and timer stopped there.
+> - **Acceptance cancellation coverage is incomplete.** Case 10 parks an already-consumed expiry, then arms directly without publishing a new generation or creating a pending refusal wake. It cannot establish cancellation of an outstanding wake or generation invalidation. Add that adversarial ordering explicitly.
+>
+> No direct bridge-enable path appears in the supplied suite. However, actual priority initialization depends on omitted `board::init`; verify COM=0x40 and COMP=0x80 before flashing. Source assertions are not execution evidence.
+> - **High — case 12 can falsely certify shutdown.** `handshake::run()` calls `finish()` before checking `S.com().stopped`; `finish()` unconditionally invokes `guard_trip(HostAbort)`, which sets that latch. The COMP handler also calls `finish(1)` after recording reason 14. Replacing the overrun shutdown with only `reason.store(14)` could still pass. Capture stopped/active/CEN immediately after `resume_after_refusal()`, before either cleanup.
+>
+> - **Medium — cancellation coverage is weaker than claimed.** Cases 10/11 wait until the original expiry has dispatched and been acknowledged before acceptance/stop. Neither creates an outstanding refusal wake to cancel. Case 11 then deliberately pends a fresh interrupt. Add scenarios with a wake pending before acceptance/stop; verify cancellation without cleanup supplying it.
+>
+> - **Recomputed:** average 80 gives deadlines **41, 121, 161, 201, 241 µs**. Cases 9/12 begin at age 60 plus setup/parking time; one observation is plausible, but case 9’s rearm requires age **≤240 µs**.
+>
+> The shown probe paths do not enable the bridge. Priority configuration remains a prerequisite: without `com-top`, COMP’s parking wait cannot receive TIM16 preemption.
+
+Disposition: correct; added BEFORE snapshot immediately after wake/stop and
+BEFORE cleanup. Bits stopped/active/CEN/NVICpending/UIF/off expected33 on
+overrun/stop,38 on accepted replacement. Cases10/11 now explicitly pend old
+TIM16 underPRIMASK before acceptance/stop, witness pending clear before any
+reinjection;case10 publishes a new accept generation from actualCOMPvector.
+This is still synthetic acceptance, not full persistence. Actual boardinit
+calls tim16_init and comp2_init; com-top selects COM0x40/COMP0x80. Initial
+82BA56A6 neverflashed. Strict motor audit correctly refuses the probe's
+explicit10000-iteration COMPwait. Separate off-onlyallowfile documents that
+bound; never use it for motorcandidate audit. Re-review corrected assertions.
+
+E464b corrected preflash reviews:
+
+> The corrected assertions are internally consistent: `38` means active+CEN+off; `33` means stopped+off, with NVIC pending and UIF clear. Pending injection under PRIMASK, followed by cancellation verification before reinjection, meaningfully tests acceptance/stop cleanup. Case 10 additionally requires a real update and a 1000–1100 µs entry-relative delay; case 11 requires a software-only dispatch.
+>
+> One remaining evidence gap: cases 9/12 do not assert that the second TIM16 dispatch has `expired == false`; an unintended timer expiration could masquerade as the refusal wake. Record/assert that witness.
+>
+> The supplied paths contain no bridge-enable or commutation-plan execution, and waits are bounded independently of the clock. With the stated COM/COMP priorities and dedicated vectors, I see no blocking safety issue for the bridge-disabled suite. This is source review, not hardware validation; omitted delivery/schedule implementations remain unverified.
+> One remaining assertion gap: `handshake::interrupt()` checks the second dispatch’s `expired` witness only for cases 10/11. Cases 9/12 can pass if refusal incorrectly rearms TIM16 and a hardware expiry causes the second callback instead of the intended software wake. Require `!expired` on their second dispatch, ideally also verify the timer is stopped before `after_phase()`.
+>
+> The corrected snapshots are consistent: `33` means stopped/off with active, CEN, NVIC pending and UIF clear; `38` means active/running/off with stopped and pending flags clear. Pending injection and cancellation checks occur under PRIMASK, before case 11 reinjection.
+>
+> No bridge-enabling path is visible in this probe. Its bounded wait and binary-specific audit exception are appropriately scoped. Case 12 verifies the refusal-tail shutdown helper, not the complete production COMP overrun path.
+
+Disposition: added explicit second-dispatch UIF0/CEN0 requirement forcases9/12
+before scheduler call; a timer re-expiry cannot masquerade as softwarewake.
+Both reviews find no blocking safety issue for this off-only suite. Scope
+remains helpers with synthetic outcomes, not full productionCOMP. Audit also
+flags lifecycle::slot_times_ok (fixed five-element zip); reviewed five-compare
+bound added only to probe allowfile. No motorallowlist changed. InitialA5A97AE0
+also neverflashed. Finalbuild then one p/v/p; stop at firstfailedcase.
+
+E464c hardware:38336281 SHA38336281F7FF872328BA7FCD51F2F65B76C513F28624FCB24883412628A3BA47
+flashed/reset exit0 explicitG071. MCP p/v/p retained e464c-off-suite.json.
+All four limited casesPASS, calls2/parked1/off1 throughout.9 observations1,
+elapsed30us,phase4/CEN1,before38,reason0.10 observations0,newexpiry1004us,
+phase1/CEN0,before38,cancelled1.11 observations0,stale dispatch23us,phase0/
+CEN0,before33,cancelled1,reason9.12 observations1,callback31us,reason14,
+BEFORE33 proves stopped/inactive/CEN0/pending0/UIF0/off BEFORE cleanup;
+reportedphase4/CEN1 are earlier callback snapshots, not terminalstate.
+Postp ENABLE0/MOE0,UARTclosed. These times include synthetic waiting/instrument
+work, not productionWCET. Result reviews next; motorcandidate63F48607 unflashed.
+
+E464 independent result reviews:
+
+> The four rows satisfy the visible case-specific predicates: calls=2, parked=1, off=1 throughout; case10 elapsed=1004µs meets 1000–1100µs. BEFORE=38 means active, timer running, bridge off; BEFORE=33 means stopped, inactive, timer stopped, bridge off. Both snapshots have NVIC/update pending clear.
+>
+> Case12’s phase=4/armed=1 records the earlier callback; BEFORE=33 records shutdown after the injected overrun, before cleanup. These are consistent. However, DONE is not separately reported, and omitted helper implementations limit independent verification of pass=1.
+>
+> Evidence supports four synthetic, bridge-disabled IRQ handshakes. It does not establish powered BEMF persistence, production WCET, or qualification of 63F48607. The fast return plausibly removes optional work from the masked interval; it does not prove the cause of the previous 936ms fault. The refusal-tail check detects excess time after wake/preemption; it cannot prevent that elapsed work.
+>
+> Outcome: no concrete blocker demonstrated to the proposed single 15%/28s screen after ≥120s cooling. Proceed only with the stated protections verified on frozen 63F48607; a mismatch there is a concrete blocker. Stop on fault without duty escalation. Full qualification remains outside this screen’s scope.
+> **Outcome: no concrete blocker to the proposed bounded screen is demonstrated by these excerpts.** This is limited support, not production qualification.
+>
+> - Recomputing the visible predicates: all four rows satisfy their case-specific expectations, with two calls, one valid park, and `off=1`. Case 10’s 1004 µs meets 1000–1100 µs. `38 = active + timer-running + off`; `33 = stopped + off`, with active, timer-running, NVIC-pending, and update-pending clear.
+> - Case 12’s phase4/armed1 records the earlier callback. BEFORE33 records shutdown before final cleanup; those snapshots are consistent. The overrun check happens **after** wake preemption, so it demonstrates eventual shutdown, not prevention of work after the budget is exceeded.
+> - Synthetic acceptance/refusal and a substituted TIM16 handler do not establish production commutation behavior, actual BEMF persistence, continuous bridge-off behavior, or WCET.
+> - The fast return plausibly removes optional work from the masked interval; it does not establish the cause or resolution of the previous fault.
+>
+> A concrete blocker would be frozen image `63F48607` lacking the stated priority ordering or protections. Their presence, test/audit results, and image identity remain supplied assertions here.
+
+Disposition: scoped interpretation accepted; none is production qualification.
+Exact motorhash rechecked63F48607E16E0C482791E8E431CE61070BE2D30491ADFD455F48895657604543;
+e463b-build/clippy/audit preserve build and four-root checks. Feature selection
+advance-ref,deep-filter,com-top and typedTimed hooks are source-grounded; all
+existing guardpaths retained, extra tailcheck strengthens coverage. No hidden
+thresholdchange. No physicalCOMP edge-to-entry timing claimed. Proceed only
+to predeclared single protected15%28s screen, no higherdutyafterfault.
+
+## E465 — first motor screen of parked-recheck candidate, prediction
+
+Flash exact63F48607, require disabled p/bootselfchecks. One command9: total28s,
+target15%,expectedhold20.278s, reason2, no latearm/handler/tickgap/tracking/
+bus/current/nFAULT stop. This tests gross liveness/cost after E462 failure,
+not isolated causal attribution or qualification. ≥120sOFF elapsed since last
+motorattempt. Keep thermal exposure bounded, PSU3A, no independenttemperature.
+Capture all data plus poststop recheckcounts/offreadback, closeUART; anyfault
+endsbatch, neverretryunchanged. No duty >15 thisrun.
+
+E465 result: one exploratory PASS, reason2, full20.278s at15%, closed22.778s.
+Capture2026-09-27/e465-propless150-parked_01.txt, exact63F48607. late0,thin1,
+spentmax12us,COMPmax34us (newtailincluded),mixedCOMlate13us,guardgap111us,
+tracking0,nFAULTclear,foldback0. Coast2156eHz,matchedratio1002permille; not
+independent continuousrotortruth. Currentproxy221mA,zero-drift-209mA,not
+calibratedamps. Applied199/1333=14.929% nativePWM, requestedceiling150tenths.
+Rawbusmin1148/ref1212 is isolatedsample -5.28%; no aggregatedsagstreakstop.
+Histogram bins65535 saturated, cannot inferfullphase distribution. Off
+readbacksfixture+MCPPASS,UARTclosed. E462comparison:936msfault/
+17usmax becomes20.278snormal/12usmax on newimage; descriptive n1 each, not
+unique-cause proof or qualification. Review before dependentnextmotoraction.
+
+E465 independent result reviews:
+
+> Raw recomputation: 262,253/20.278 = 12,932.9 accepts/s, implying 2,155.5 electrical Hz at six accepts/cycle; coast 2,156 agrees closely. The reported 2,164 derives from rounded 77µs. Requests/observations = 6.62%, not a rescue rate. Tail coverage is 2.278s despite the nominal 2s window. Sector counts total 252,957, below both total and hold accepts; their accounting needs explanation.
+>
+> The interpretation is mostly defensible if “PASS” means this exploratory run’s observed outcome. Reason codes require definitions; zero late arms does not establish timing margin, since margin instrumentation recorded nothing. The 209mA zero drift nearly equals the 221mA hold proxy, preventing a strong current-safety inference. Pre/post gate checks establish endpoint states only.
+>
+> Different images and unequal exposure prevent attributing improvement to parking. The supplied code also depends on unseen scheduling, delivery, and arming implementations.
+>
+> A concrete reason to defer 25% would be inadequate independently established current/thermal protection—not merely needing more 15% repetitions. These records do not establish that protection or validate 120s cooling. With those independently verified, one bounded 25% exploration is defensible, not qualification.
+> Raw recomputation: 262253/20.278 = 12,932.9 accepts/s, or 2,155.5 electrical Hz assuming six accepts/cycle. Coast 2,156 Hz agrees closely; 2,164 Hz derives from rounded 77 µs. Actual PWM ratio 199/1333 = 14.93%. Sector counts sum to 252,957; the 32,084 deficit versus accepted equals mailbox coalescing, limiting sector-distribution inference. Requests/observations = 6.62%, not a rescue rate. Current-zero drift magnitude is 94.6% of reported hold current.
+>
+> The interpretation is appropriately exploratory. However, reason=2 needs its enum definition before calling this a completion PASS. Zero late arms and disabled margin histograms do not establish timing headroom. COMP maximum 34 µs and minimum fast interval 32 µs warrant investigation, but their extrema need not coincide. One run per image cannot attribute improvement to parking.
+>
+> A concrete reason to defer 25% is unresolved fault containment: the excerpt does not establish shutdown latency or protection effectiveness when tracking fails—the previously observed failure mode. More 15% repeats would not resolve that. First verify the stop path and fault-injection evidence; then consider one bounded 25% exploration. A 120-second OFF interval alone establishes neither cooling nor readiness.
+
+Disposition: rate recomputation agrees; sector252957+coalesced32084=285041
+totalaccepts, not missedcommutations. No histogram/sectorquality inference.
+Reason2=SegmentDeadline src/protection.rs, source-definition omitted from
+narrow packet rather than absent. Rawreason15 directguard shutdown was
+exercisedE462; E464c stop/overrun beforecleanup state witnessed33. Production
+tracking guard calls same guard_trip, but this is not a measured worst-case
+tracking shutdown latency or proof of motor-temperature safety. PSU3A and
+existing4A average-current/sag/nFAULT/tracking/deadline/IWDG protection remain;
+proxy221mA and120sOFF are NOT certificates of instantaneous current/thermal
+safety. Keep limited exposure/cooling and no higher-duty qualification from
+thisscreen. No material factual error requires rerunning15. Before25,
+revalidate exact production guard path and retained fault evidence; do not
+create another full ladder or treat narrow packet omissions as new hardware
+failures. Installed63F48607 OFF/UARTclosed. No new qualified ceiling.

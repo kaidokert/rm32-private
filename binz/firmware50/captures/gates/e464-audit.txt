@@ -1,0 +1,13 @@
+ISR-root audit: captures/elf/82BA56A6.e464-handshake-off.elf
+
+  [ADC_COMP] reachable=7  FAIL
+      loop not in reviewed_loops: ['firmware50::roots::recheck::check::handshake::comp_interrupt']
+
+  [TIM16] reachable=7  OK
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT FAILED (1 finding(s)):
+  - ADC_COMP: unreviewed loop in: ['firmware50::roots::recheck::check::handshake::comp_interrupt']

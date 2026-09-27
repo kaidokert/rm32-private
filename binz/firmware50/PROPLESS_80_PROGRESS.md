@@ -1,6 +1,14 @@
 # Propless 80% campaign — progress, not qualification
 
-E462 CURRENT: 02F4D1E2 motor candidate installed, OFF/UARTclosed. First15%
+E465 CURRENT: 63F48607 installed OFF/UARTclosed. One15% exploratoryscreen
+completed20.278s actualtarget, reason2,late0,thin1,spentmax12us,COMPmax34us.
+Coast2156eHz,matched1002permille. Recheck20734requests/313094observations,
+not acceptedrescues. Currentproxy221mA/zerodrift-209mA,not calibratedamps.
+E464 realIRQ off-only park/refuse/accept/stop/overbudget cases4/4PASS with
+precleanup shutdown evidence. Dual reviews retained. Next bounded25% screen
+requires exact guard-path evidence check, not more15%repeats. No new ceiling.
+
+E462 historical: 02F4D1E2 motor candidate installed, OFF/UARTclosed. First15%
 screen FAILED:936ms targethold, guard15 LateArm, wait15us/spent17us, no retry.
 Top-level28 is incomplete reason mapping, not an unexplained new fault.
 Timed recheck active854 requests/34826observations; not accepted-rescue counts.

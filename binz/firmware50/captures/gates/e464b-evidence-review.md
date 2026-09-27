@@ -1,0 +1,5 @@
+The corrected assertions are internally consistent: `38` means active+CEN+off; `33` means stopped+off, with NVIC pending and UIF clear. Pending injection under PRIMASK, followed by cancellation verification before reinjection, meaningfully tests acceptance/stop cleanup. Case 10 additionally requires a real update and a 1000–1100 µs entry-relative delay; case 11 requires a software-only dispatch.
+
+One remaining evidence gap: cases 9/12 do not assert that the second TIM16 dispatch has `expired == false`; an unintended timer expiration could masquerade as the refusal wake. Record/assert that witness.
+
+The supplied paths contain no bridge-enable or commutation-plan execution, and waits are bounded independently of the clock. With the stated COM/COMP priorities and dedicated vectors, I see no blocking safety issue for the bridge-disabled suite. This is source review, not hardware validation; omitted delivery/schedule implementations remain unverified.

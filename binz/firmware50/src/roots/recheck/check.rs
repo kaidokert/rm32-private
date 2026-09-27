@@ -3,6 +3,7 @@ use super::*;
 use portable_atomic::AtomicU32;
 
 pub mod lifecycle;
+pub mod handshake;
 
 static CASE: AtomicU32 = AtomicU32::new(0);
 static DONE: AtomicU32 = AtomicU32::new(0);
@@ -43,6 +44,11 @@ fn inactive() -> bool {
 /// # Safety
 /// Only TIM16 at Motor::NVIC may call this, in the driver-disabled probe.
 pub unsafe fn interrupt() {
+    if CASE.load(Ordering::Relaxed) >= 9 {
+        // SAFETY: same actual TIM16 priority/unique vector contract.
+        unsafe { handshake::interrupt() };
+        return;
+    }
     if CASE.load(Ordering::Relaxed) >= 6 {
         // SAFETY: this function's vector/priority contract is unchanged.
         unsafe { lifecycle::interrupt() };
@@ -76,8 +82,8 @@ fn prepare(case: u32) -> bool {
         S.guard().raw.store(u32::from(raw), Ordering::Relaxed);
         S.guard().ext.store(0, Ordering::Relaxed);
         let now = 0u32;
-        let age = if case == 0 || case >= 6 { 0 } else if case == 2 { 400 } else { 60 };
-        let avg = if case == 0 || case >= 6 { 1000 } else { 80 };
+        let age = if case == 0 || (6..=8).contains(&case) { 0 } else if case == 2 { 400 } else { 60 };
+        let avg = if case == 0 || (6..=8).contains(&case) { 1000 } else { 80 };
         let step = if hw::comp::level() == edge_is_rising(Step::new_clamped(1)) { 1 } else { 2 };
         let generation = S.det().accept_seq.load(Ordering::Relaxed);
         if STATE.lock(|s| {
@@ -98,7 +104,9 @@ fn prepare(case: u32) -> bool {
         hw::comp::clear_pending();
         INPUT_BITS.store(0, Ordering::Relaxed);
         CASE.store(case, Ordering::Relaxed); DONE.store(0, Ordering::Relaxed);
-        if case >= 6 { lifecycle::arm(case); } else { hw::nvic::pend(stm32::Interrupt::TIM16); }
+        if case >= 9 { handshake::start(); }
+        else if case >= 6 { lifecycle::arm(case); }
+        else { hw::nvic::pend(stm32::Interrupt::TIM16); }
         hw::nvic::unmask(stm32::Interrupt::TIM16);
         true
     })

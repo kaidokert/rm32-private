@@ -1,0 +1,38 @@
+[
+  {
+    "command": "p",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"9335b374-1618-4cd7-8df9-6e846e158fa1\",\n  \"bytes_read\": 33,\n  \"data\": \"RECHECKOFF idle enable=0 moe=0 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 500,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 13,\n  \"elapsed_ms\": 508,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 33,\n      \"waited_ms\": 13,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "command": "v",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"9335b374-1618-4cd7-8df9-6e846e158fa1\",\n  \"bytes_read\": 514,\n  \"data\": \"RECHECKHAND case=9 calls=2 parked=1 observations=1 phase=4 armed=1 reason=0 elapsed_us=30 before=38 cancelled=0 off=1 pass=1 \\r\\nRECHECKHAND case=10 calls=2 parked=1 observations=0 phase=1 armed=0 reason=0 elapsed_us=1004 before=38 cancelled=1 off=1 pass=1 \\r\\nRECHECKHAND case=11 calls=2 parked=1 observations=0 phase=0 armed=0 reason=9 elapsed_us=23 before=33 cancelled=1 off=1 pass=1 \\r\\nRECHECKHAND case=12 calls=2 parked=1 observations=1 phase=4 armed=1 reason=14 elapsed_us=31 before=33 cancelled=0 off=1 pass=1 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 500,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 72,\n  \"elapsed_ms\": 509,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 514,\n      \"waited_ms\": 72,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "command": "p",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"9335b374-1618-4cd7-8df9-6e846e158fa1\",\n  \"bytes_read\": 33,\n  \"data\": \"RECHECKOFF idle enable=0 moe=0 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 500,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 12,\n  \"elapsed_ms\": 506,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 33,\n      \"waited_ms\": 12,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  }
+]
