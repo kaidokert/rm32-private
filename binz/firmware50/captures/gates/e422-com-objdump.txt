@@ -1,0 +1,694 @@
+
+target/thumbv6m-none-eabi/release/diode-order:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+08000cd8 <TIM16>:
+use cortex_m_rt::entry;
+use firmware50::{bemf::PreviousEstimate, bridge::safe_off, capture::NoLog, ordertrace::OrderRing};
+use firmware50::{hw, report::Sink, roots::{self, Drv8304}, run::{Hal, Production}};
+use stm32g0xx_hal::stm32::{self, interrupt};
+
+#[interrupt]
+ 8000cd8:	b5f0      	push	{r4, r5, r6, r7, lr}
+ 8000cda:	af03      	add	r7, sp, #12
+ 8000cdc:	b091      	sub	sp, #68	@ 0x44
+ 8000cde:	49d7      	ldr	r1, [pc, #860]	@ (800103c <TIM16+0x364>)
+ 8000ce0:	2200      	movs	r2, #0
+            (
+                addr: *mut () = dst as *mut (),
+                align: usize = align_of::<T>(),
+            ) => ub_checks::maybe_is_aligned(addr, align)
+        );
+        intrinsics::volatile_store(dst, src);
+ 8000ce2:	610a      	str	r2, [r1, #16]
+#[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
+unsafe fn atomic_load<T: Copy>(dst: *const T, order: Ordering) -> T {
+    // SAFETY: the caller must uphold the safety contract for `atomic_load`.
+    unsafe {
+        match order {
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8000ce4:	4cd6      	ldr	r4, [pc, #856]	@ (8001040 <TIM16+0x368>)
+ 8000ce6:	7820      	ldrb	r0, [r4, #0]
+#[inline(always)]
+pub unsafe fn com_root_with<C: ChainLog, P: hw::pwm::RoleWrite>() {
+    // SAFETY: the caller is the TIM16 handler (this fn's contract).
+    let mut at = unsafe { Root::<Motor>::enter() };
+    hw::com_timer::ack();
+    if !S.com().active.load(Ordering::Relaxed) {
+ 8000ce8:	2800      	cmp	r0, #0
+ 8000cea:	d031      	beq.n	8000d50 <TIM16+0x78>
+ 8000cec:	48d5      	ldr	r0, [pc, #852]	@ (8001044 <TIM16+0x36c>)
+        intrinsics::volatile_load(src)
+ 8000cee:	6803      	ldr	r3, [r0, #0]
+ 8000cf0:	6925      	ldr	r5, [r4, #16]
+        #[rustc_const_stable(feature = "const_wrapping_math", since = "1.32.0")]
+        #[must_use = "this returns the result of the operation, \
+                      without modifying the original"]
+        #[inline(always)]
+        pub const fn wrapping_sub(self, rhs: Self) -> Self {
+            intrinsics::wrapping_sub(self, rhs)
+ 8000cf2:	1b58      	subs	r0, r3, r5
+ 8000cf4:	b201      	sxth	r1, r0
+ 8000cf6:	4ed4      	ldr	r6, [pc, #848]	@ (8001048 <TIM16+0x370>)
+ 8000cf8:	69b6      	ldr	r6, [r6, #24]
+        S.det().accept_seq.load(Ordering::Relaxed)
+    } else {
+        0
+    };
+    let mut order_stamp = None;
+    if late < 0x8000 && late > S.com().late_max.load(Ordering::Relaxed) {
+ 8000cfa:	2900      	cmp	r1, #0
+ 8000cfc:	d404      	bmi.n	8000d08 <TIM16+0x30>
+ 8000cfe:	b280      	uxth	r0, r0
+ 8000d00:	6961      	ldr	r1, [r4, #20]
+ 8000d02:	4281      	cmp	r1, r0
+ 8000d04:	d200      	bcs.n	8000d08 <TIM16+0x30>
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8000d06:	6160      	str	r0, [r4, #20]
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8000d08:	6860      	ldr	r0, [r4, #4]
+        S.com().late_max.store(late, Ordering::Relaxed);
+    }
+    // The chain's service row (E154), pushed at the end; see `crate::chain`.
+    let phase = S.com().phase.load(Ordering::Relaxed);
+    let mut bridge = 0u16;
+    match phase {
+ 8000d0a:	2801      	cmp	r0, #1
+ 8000d0c:	d030      	beq.n	8000d70 <TIM16+0x98>
+ 8000d0e:	2802      	cmp	r0, #2
+ 8000d10:	d021      	beq.n	8000d56 <TIM16+0x7e>
+ 8000d12:	2803      	cmp	r0, #3
+ 8000d14:	d000      	beq.n	8000d18 <TIM16+0x40>
+ 8000d16:	e18f      	b.n	8001038 <TIM16+0x360>
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8000d18:	6062      	str	r2, [r4, #4]
+ 8000d1a:	48cc      	ldr	r0, [pc, #816]	@ (800104c <TIM16+0x374>)
+ 8000d1c:	68c1      	ldr	r1, [r0, #12]
+ 8000d1e:	6900      	ldr	r0, [r0, #16]
+    // Both registers read every time, as the pre-E113 code did (E128): the
+    // short-circuit `||` this replaced changed the level revisit's
+    // critical-section timing.
+    let rising = e.rpr1().read().rpif18().bit_is_set();
+    let falling = e.fpr1().read().fpif18().bit_is_set();
+    rising | falling
+ 8000d20:	4308      	orrs	r0, r1
+        // cleared at the commutation, so anything latched since is real: open
+        // the line and keep it.
+        3 => {
+            S.com().phase.store(0, Ordering::Relaxed);
+            // Count the edges the blank latched (see this fn's docs).
+            if hw::comp::pending() {
+ 8000d22:	0342      	lsls	r2, r0, #13
+ 8000d24:	2001      	movs	r0, #1
+ 8000d26:	0481      	lsls	r1, r0, #18
+ 8000d28:	2a00      	cmp	r2, #0
+ 8000d2a:	d507      	bpl.n	8000d3c <TIM16+0x64>
+pub(crate) fn disable() -> State {
+    let primask: State;
+    // SAFETY: reading the priority mask register and disabling interrupts are safe.
+    // (see module-level comments of interrupt/mod.rs on the safety of using privileged instructions)
+    unsafe {
+        asm!(
+ 8000d2c:	f3ef 8210 	mrs	r2, PRIMASK
+ 8000d30:	b672      	cpsid	i
+        crate::intrinsics::read_via_copy(src)
+ 8000d32:	69e3      	ldr	r3, [r4, #28]
+            intrinsics::wrapping_add(self, rhs)
+ 8000d34:	1c5b      	adds	r3, r3, #1
+        intrinsics::write_via_move(dst, src)
+ 8000d36:	61e3      	str	r3, [r4, #28]
+    // SAFETY: the caller must guarantee that the state was retrieved by the previous `disable`,
+    // and we've checked that interrupts were enabled before disabling interrupts.
+    //
+    // This clobbers the entire PRIMASK register. See msp430.rs for safety on this.
+    unsafe {
+        asm!(
+ 8000d38:	f382 8810 	msr	PRIMASK, r2
+ 8000d3c:	4ac4      	ldr	r2, [pc, #784]	@ (8001050 <TIM16+0x378>)
+        intrinsics::volatile_load(src)
+ 8000d3e:	6813      	ldr	r3, [r2, #0]
+    ($($t:ty)+) => ($(
+        #[stable(feature = "op_assign_traits", since = "1.8.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitOrAssign for $t {
+            #[inline]
+            fn bitor_assign(&mut self, other: $t) { *self |= other }
+ 8000d40:	430b      	orrs	r3, r1
+        intrinsics::volatile_store(dst, src);
+ 8000d42:	6013      	str	r3, [r2, #0]
+ 8000d44:	0300      	lsls	r0, r0, #12
+ 8000d46:	49c3      	ldr	r1, [pc, #780]	@ (8001054 <TIM16+0x37c>)
+ 8000d48:	6008      	str	r0, [r1, #0]
+ 8000d4a:	49c3      	ldr	r1, [pc, #780]	@ (8001058 <TIM16+0x380>)
+ 8000d4c:	6008      	str	r0, [r1, #0]
+ 8000d4e:	e173      	b.n	8001038 <TIM16+0x360>
+ 8000d50:	2000      	movs	r0, #0
+ 8000d52:	60c8      	str	r0, [r1, #12]
+ 8000d54:	e170      	b.n	8001038 <TIM16+0x360>
+ 8000d56:	6062      	str	r2, [r4, #4]
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8000d58:	68a0      	ldr	r0, [r4, #8]
+            comp_exti_arm(Step::new_clamped(S.com().step.load(Ordering::Relaxed) as u8));
+ 8000d5a:	b2c1      	uxtb	r1, r0
+    }
+
+    /// Build a sector, saturating into range. Infallible, panic-free.
+    #[inline]
+    pub const fn new_clamped(raw: u8) -> Step {
+        if raw < 1 {
+ 8000d5c:	2906      	cmp	r1, #6
+ 8000d5e:	4608      	mov	r0, r1
+ 8000d60:	d300      	bcc.n	8000d64 <TIM16+0x8c>
+ 8000d62:	2006      	movs	r0, #6
+ 8000d64:	2900      	cmp	r1, #0
+ 8000d66:	d100      	bne.n	8000d6a <TIM16+0x92>
+ 8000d68:	2001      	movs	r0, #1
+ 8000d6a:	f008 f8af 	bl	8008ecc <_ZN10firmware505roots13comp_exti_arm17h6f06d4524a28c832E>
+        2 => {
+ 8000d6e:	e163      	b.n	8001038 <TIM16+0x360>
+ 8000d70:	9510      	str	r5, [sp, #64]	@ 0x40
+ 8000d72:	68a0      	ldr	r0, [r4, #8]
+            let step = Step::new_clamped(S.com().step.load(Ordering::Relaxed) as u8).next();
+ 8000d74:	b2c5      	uxtb	r5, r0
+ 8000d76:	2d06      	cmp	r5, #6
+ 8000d78:	4629      	mov	r1, r5
+ 8000d7a:	d300      	bcc.n	8000d7e <TIM16+0xa6>
+ 8000d7c:	2106      	movs	r1, #6
+ 8000d7e:	2001      	movs	r0, #1
+ 8000d80:	2d00      	cmp	r5, #0
+ 8000d82:	4605      	mov	r5, r0
+ 8000d84:	d000      	beq.n	8000d88 <TIM16+0xb0>
+ 8000d86:	460d      	mov	r5, r1
+ 8000d88:	960c      	str	r6, [sp, #48]	@ 0x30
+    }
+
+    /// Next sector, wrapping 6 -> 1.
+    #[inline]
+    pub const fn next(self) -> Step {
+        if self.0 >= 6 { Step(1) } else { Step(self.0 + 1) }
+ 8000d8a:	2d05      	cmp	r5, #5
+ 8000d8c:	d800      	bhi.n	8000d90 <TIM16+0xb8>
+ 8000d8e:	1c68      	adds	r0, r5, #1
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8000d90:	60a0      	str	r0, [r4, #8]
+ 8000d92:	49ad      	ldr	r1, [pc, #692]	@ (8001048 <TIM16+0x370>)
+ 8000d94:	6088      	str	r0, [r1, #8]
+            let plan = S.com().plans.root(&mut at, |t| t[((step.get() - 1) & 7) as usize]);
+ 8000d96:	1e41      	subs	r1, r0, #1
+ 8000d98:	2507      	movs	r5, #7
+ 8000d9a:	910e      	str	r1, [sp, #56]	@ 0x38
+ 8000d9c:	400d      	ands	r5, r1
+ 8000d9e:	2128      	movs	r1, #40	@ 0x28
+ 8000da0:	4369      	muls	r1, r5
+ 8000da2:	1861      	adds	r1, r4, r1
+ 8000da4:	6c4e      	ldr	r6, [r1, #68]	@ 0x44
+ 8000da6:	960f      	str	r6, [sp, #60]	@ 0x3c
+            if let Some(pl) = plan {
+ 8000da8:	07f6      	lsls	r6, r6, #31
+ 8000daa:	d058      	beq.n	8000e5e <TIM16+0x186>
+ 8000dac:	6d4e      	ldr	r6, [r1, #84]	@ 0x54
+ 8000dae:	9606      	str	r6, [sp, #24]
+ 8000db0:	6d8e      	ldr	r6, [r1, #88]	@ 0x58
+ 8000db2:	9608      	str	r6, [sp, #32]
+ 8000db4:	6dce      	ldr	r6, [r1, #92]	@ 0x5c
+ 8000db6:	960a      	str	r6, [sp, #40]	@ 0x28
+ 8000db8:	6c8e      	ldr	r6, [r1, #72]	@ 0x48
+ 8000dba:	9609      	str	r6, [sp, #36]	@ 0x24
+ 8000dbc:	3144      	adds	r1, #68	@ 0x44
+ 8000dbe:	8c8e      	ldrh	r6, [r1, #36]	@ 0x24
+ 8000dc0:	9607      	str	r6, [sp, #28]
+ 8000dc2:	8c0e      	ldrh	r6, [r1, #32]
+ 8000dc4:	9605      	str	r6, [sp, #20]
+ 8000dc6:	8b89      	ldrh	r1, [r1, #28]
+/// Note that bits `[31:1]` are reserved and UNK (Unknown)
+#[inline]
+#[asm_cfg(cortex_m)]
+pub fn read_raw() -> u32 {
+    let r: u32;
+    unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8000dc8:	9104      	str	r1, [sp, #16]
+ 8000dca:	f3ef 8110 	mrs	r1, PRIMASK
+
+/// Disables all interrupts
+#[inline]
+#[asm_cfg(cortex_m)]
+pub fn disable() {
+    unsafe { asm!("cpsid i", options(nomem, nostack, preserves_flags)) };
+ 8000dce:	910b      	str	r1, [sp, #44]	@ 0x2c
+ 8000dd0:	b672      	cpsid	i
+ 8000dd2:	2163      	movs	r1, #99	@ 0x63
+ 8000dd4:	0089      	lsls	r1, r1, #2
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8000dd6:	5c61      	ldrb	r1, [r4, r1]
+ 8000dd8:	7826      	ldrb	r6, [r4, #0]
+    if !P::LATCHED {
+        hw::pwm::apply_plan(plan);
+        return true;
+    }
+    cortex_m::interrupt::free(|_| {
+        if !crate::oneshot::arm_allowed(
+ 8000dda:	2e00      	cmp	r6, #0
+ 8000ddc:	d100      	bne.n	8000de0 <TIM16+0x108>
+ 8000dde:	e104      	b.n	8000fea <TIM16+0x312>
+ 8000de0:	2900      	cmp	r1, #0
+ 8000de2:	d000      	beq.n	8000de6 <TIM16+0x10e>
+ 8000de4:	e101      	b.n	8000fea <TIM16+0x312>
+ 8000de6:	930d      	str	r3, [sp, #52]	@ 0x34
+ 8000de8:	4e9c      	ldr	r6, [pc, #624]	@ (800105c <TIM16+0x384>)
+        intrinsics::volatile_load(src)
+ 8000dea:	6833      	ldr	r3, [r6, #0]
+ 8000dec:	9302      	str	r3, [sp, #8]
+ 8000dee:	2102      	movs	r1, #2
+pub fn apply(plan: &Plan) {
+    let t = regs();
+    let cr1 = t.cr1().read().bits();
+    let cr2 = t.cr2().read().bits();
+    // SAFETY: preserve configured bits, only UDIS/CCPC/CCUS change temporarily.
+    t.cr1().write(|w| unsafe { w.bits(cr1 | 2) });
+ 8000df0:	4319      	orrs	r1, r3
+ 8000df2:	6873      	ldr	r3, [r6, #4]
+        intrinsics::volatile_store(dst, src);
+ 8000df4:	9303      	str	r3, [sp, #12]
+ 8000df6:	6031      	str	r1, [r6, #0]
+ 8000df8:	2301      	movs	r3, #1
+    // SAFETY: CCPC/CCUS are the only changed CR2 fields.
+    t.cr2().write(|w| unsafe { w.bits((cr2 | 1) & !4) });
+ 8000dfa:	9903      	ldr	r1, [sp, #12]
+ 8000dfc:	430b      	orrs	r3, r1
+ 8000dfe:	2104      	movs	r1, #4
+ 8000e00:	9101      	str	r1, [sp, #4]
+ 8000e02:	438b      	bics	r3, r1
+ 8000e04:	6073      	str	r3, [r6, #4]
+ 8000e06:	4b96      	ldr	r3, [pc, #600]	@ (8001060 <TIM16+0x388>)
+ 8000e08:	9906      	ldr	r1, [sp, #24]
+    // SAFETY: checked sixstep images, plus compare preload for every channel.
+    t.ccmr1_output().write(|w| unsafe { w.bits(plan.ccmr1 | 0x0808) });
+ 8000e0a:	4319      	orrs	r1, r3
+ 8000e0c:	61b1      	str	r1, [r6, #24]
+ 8000e0e:	2108      	movs	r1, #8
+ 8000e10:	9106      	str	r1, [sp, #24]
+ 8000e12:	9b08      	ldr	r3, [sp, #32]
+    // SAFETY: CH3 checked role image and its preload enable.
+    t.ccmr2_output().write(|w| unsafe { w.bits(plan.ccmr2 | 0x08) });
+ 8000e14:	430b      	orrs	r3, r1
+ 8000e16:	61f3      	str	r3, [r6, #28]
+ 8000e18:	9904      	ldr	r1, [sp, #16]
+ 8000e1a:	6371      	str	r1, [r6, #52]	@ 0x34
+ 8000e1c:	9905      	ldr	r1, [sp, #20]
+ 8000e1e:	63b1      	str	r1, [r6, #56]	@ 0x38
+ 8000e20:	9b07      	ldr	r3, [sp, #28]
+ 8000e22:	63f3      	str	r3, [r6, #60]	@ 0x3c
+impl Plan {
+    /// Source-low-off variant of a validated plan. Source comes from sector().
+    /// Sink, float, mode, polarity and all compares remain unchanged.
+    #[inline(always)]
+    pub(crate) fn diode(mut self) -> Self {
+        self.ccer &= !(4 << (slot(self.source) * 4));
+ 8000e24:	9b09      	ldr	r3, [sp, #36]	@ 0x24
+ 8000e26:	009b      	lsls	r3, r3, #2
+ 8000e28:	9906      	ldr	r1, [sp, #24]
+ 8000e2a:	1ac9      	subs	r1, r1, r3
+ 8000e2c:	231c      	movs	r3, #28
+ 8000e2e:	400b      	ands	r3, r1
+ 8000e30:	9901      	ldr	r1, [sp, #4]
+ 8000e32:	4099      	lsls	r1, r3
+ 8000e34:	9b0a      	ldr	r3, [sp, #40]	@ 0x28
+ 8000e36:	438b      	bics	r3, r1
+ 8000e38:	6233      	str	r3, [r6, #32]
+ 8000e3a:	2120      	movs	r1, #32
+ 8000e3c:	6171      	str	r1, [r6, #20]
+ 8000e3e:	9903      	ldr	r1, [sp, #12]
+ 8000e40:	6071      	str	r1, [r6, #4]
+ 8000e42:	9902      	ldr	r1, [sp, #8]
+ 8000e44:	6031      	str	r1, [r6, #0]
+#[inline]
+#[asm_cfg(cortex_m)]
+pub unsafe fn write_raw(r: u32) {
+    // Ensure no preceeding memory accesses are reordered to after interrupts are possibly enabled.
+    compiler_fence(Ordering::SeqCst);
+    unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8000e46:	990b      	ldr	r1, [sp, #44]	@ 0x2c
+ 8000e48:	f381 8810 	msr	PRIMASK, r1
+ 8000e4c:	4985      	ldr	r1, [pc, #532]	@ (8001064 <TIM16+0x38c>)
+        intrinsics::volatile_load(src)
+ 8000e4e:	680b      	ldr	r3, [r1, #0]
+ 8000e50:	930a      	str	r3, [sp, #40]	@ 0x28
+ 8000e52:	4b7c      	ldr	r3, [pc, #496]	@ (8001044 <TIM16+0x36c>)
+ 8000e54:	681b      	ldr	r3, [r3, #0]
+ 8000e56:	9308      	str	r3, [sp, #32]
+ 8000e58:	6809      	ldr	r1, [r1, #0]
+ 8000e5a:	9109      	str	r1, [sp, #36]	@ 0x24
+ 8000e5c:	e000      	b.n	8000e60 <TIM16+0x188>
+ 8000e5e:	930d      	str	r3, [sp, #52]	@ 0x34
+ 8000e60:	4981      	ldr	r1, [pc, #516]	@ (8001068 <TIM16+0x390>)
+ 8000e62:	680b      	ldr	r3, [r1, #0]
+ 8000e64:	26f0      	movs	r6, #240	@ 0xf0
+            fn bitand_assign(&mut self, other: $t) { *self &= other }
+ 8000e66:	43b3      	bics	r3, r6
+ 8000e68:	2603      	movs	r6, #3
+ 8000e6a:	960b      	str	r6, [sp, #44]	@ 0x2c
+
+/// Look up a sector. Total function — no panic path: the masked index is
+/// provably inside the 8-entry table.
+#[inline]
+pub const fn sector(step: Step) -> Sector {
+    SECTORS[step.idx() & 7]
+ 8000e6c:	4375      	muls	r5, r6
+ 8000e6e:	4e7f      	ldr	r6, [pc, #508]	@ (800106c <TIM16+0x394>)
+ 8000e70:	1975      	adds	r5, r6, r5
+ 8000e72:	78ad      	ldrb	r5, [r5, #2]
+pub struct Reverse;
+
+impl Direction for Reverse {
+    #[inline]
+    fn phase(logical: Phase) -> Phase {
+        match logical {
+ 8000e74:	00ad      	lsls	r5, r5, #2
+ 8000e76:	4e7e      	ldr	r6, [pc, #504]	@ (8001070 <TIM16+0x398>)
+ 8000e78:	5975      	ldr	r5, [r6, r5]
+            fn bitor_assign(&mut self, other: $t) { *self |= other }
+ 8000e7a:	431d      	orrs	r5, r3
+        intrinsics::volatile_store(dst, src);
+ 8000e7c:	600d      	str	r5, [r1, #0]
+        asm!(
+ 8000e7e:	f3ef 8110 	mrs	r1, PRIMASK
+ 8000e82:	b672      	cpsid	i
+        crate::intrinsics::read_via_copy(src)
+ 8000e84:	68e3      	ldr	r3, [r4, #12]
+ 8000e86:	1c5b      	adds	r3, r3, #1
+        intrinsics::write_via_move(dst, src)
+ 8000e88:	60e3      	str	r3, [r4, #12]
+        asm!(
+ 8000e8a:	f381 8810 	msr	PRIMASK, r1
+            interval_us
+        };
+        // No `%`: this runs in the COM ISR root, where a modulo would be a
+        // soft division on the M0. Out-of-range steps use slot 0.
+        let k = match step {
+            1..=6 => (step - 1) as usize,
+ 8000e8e:	b2c1      	uxtb	r1, r0
+ 8000e90:	2907      	cmp	r1, #7
+ 8000e92:	990e      	ldr	r1, [sp, #56]	@ 0x38
+ 8000e94:	d300      	bcc.n	8000e98 <TIM16+0x1c0>
+ 8000e96:	4611      	mov	r1, r2
+ 8000e98:	b2c9      	uxtb	r1, r1
+            _ => 0,
+        };
+        self.sum = self.sum - self.slots[k] + i;
+ 8000e9a:	0089      	lsls	r1, r1, #2
+ 8000e9c:	1861      	adds	r1, r4, r1
+ 8000e9e:	4a6a      	ldr	r2, [pc, #424]	@ (8001048 <TIM16+0x370>)
+ 8000ea0:	6915      	ldr	r5, [r2, #16]
+ 8000ea2:	6952      	ldr	r2, [r2, #20]
+ 8000ea4:	920e      	str	r2, [sp, #56]	@ 0x38
+ 8000ea6:	6a4e      	ldr	r6, [r1, #36]	@ 0x24
+ 8000ea8:	4a72      	ldr	r2, [pc, #456]	@ (8001074 <TIM16+0x39c>)
+        let i = if interval_us > 1_000_000 {
+ 8000eaa:	4295      	cmp	r5, r2
+ 8000eac:	d300      	bcc.n	8000eb0 <TIM16+0x1d8>
+ 8000eae:	4615      	mov	r5, r2
+
+    /// Does the reference's blank condition hold on this ring?
+    #[inline]
+    #[must_use]
+    pub const fn reverse_blank_due(&self) -> bool {
+        self.sum >= REVERSE_BLANK_SUM_US
+ 8000eb0:	6be2      	ldr	r2, [r4, #60]	@ 0x3c
+        self.sum = self.sum - self.slots[k] + i;
+ 8000eb2:	1953      	adds	r3, r2, r5
+ 8000eb4:	1b9b      	subs	r3, r3, r6
+ 8000eb6:	63e3      	str	r3, [r4, #60]	@ 0x3c
+        self.slots[k] = i;
+ 8000eb8:	624d      	str	r5, [r1, #36]	@ 0x24
+ 8000eba:	496f      	ldr	r1, [pc, #444]	@ (8001078 <TIM16+0x3a0>)
+            let hold = if blank {
+ 8000ebc:	428a      	cmp	r2, r1
+ 8000ebe:	d939      	bls.n	8000f34 <TIM16+0x25c>
+ 8000ec0:	2001      	movs	r0, #1
+ 8000ec2:	0301      	lsls	r1, r0, #12
+ 8000ec4:	4a6d      	ldr	r2, [pc, #436]	@ (800107c <TIM16+0x3a4>)
+        intrinsics::volatile_store(dst, src);
+ 8000ec6:	6011      	str	r1, [r2, #0]
+ 8000ec8:	0482      	lsls	r2, r0, #18
+ 8000eca:	4b61      	ldr	r3, [pc, #388]	@ (8001050 <TIM16+0x378>)
+        intrinsics::volatile_load(src)
+ 8000ecc:	681d      	ldr	r5, [r3, #0]
+            fn bitand_assign(&mut self, other: $t) { *self &= other }
+ 8000ece:	4395      	bics	r5, r2
+        intrinsics::volatile_store(dst, src);
+ 8000ed0:	601d      	str	r5, [r3, #0]
+ 8000ed2:	4b5e      	ldr	r3, [pc, #376]	@ (800104c <TIM16+0x374>)
+ 8000ed4:	60da      	str	r2, [r3, #12]
+ 8000ed6:	611a      	str	r2, [r3, #16]
+ 8000ed8:	4a5e      	ldr	r2, [pc, #376]	@ (8001054 <TIM16+0x37c>)
+ 8000eda:	6011      	str	r1, [r2, #0]
+        asm!(
+ 8000edc:	f3ef 8110 	mrs	r1, PRIMASK
+ 8000ee0:	b672      	cpsid	i
+        crate::intrinsics::read_via_copy(src)
+ 8000ee2:	69a2      	ldr	r2, [r4, #24]
+ 8000ee4:	1c52      	adds	r2, r2, #1
+        intrinsics::write_via_move(dst, src)
+ 8000ee6:	61a2      	str	r2, [r4, #24]
+        asm!(
+ 8000ee8:	f381 8810 	msr	PRIMASK, r1
+    unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8000eec:	f3ef 8210 	mrs	r2, PRIMASK
+ 8000ef0:	b672      	cpsid	i
+ 8000ef2:	2163      	movs	r1, #99	@ 0x63
+ 8000ef4:	0089      	lsls	r1, r1, #2
+ 8000ef6:	5c61      	ldrb	r1, [r4, r1]
+ 8000ef8:	7823      	ldrb	r3, [r4, #0]
+        if !crate::oneshot::arm_allowed(
+ 8000efa:	2b00      	cmp	r3, #0
+ 8000efc:	d017      	beq.n	8000f2e <TIM16+0x256>
+ 8000efe:	2900      	cmp	r1, #0
+ 8000f00:	d115      	bne.n	8000f2e <TIM16+0x256>
+ 8000f02:	2100      	movs	r1, #0
+ 8000f04:	4e4d      	ldr	r6, [pc, #308]	@ (800103c <TIM16+0x364>)
+        intrinsics::volatile_store(dst, src);
+ 8000f06:	60f1      	str	r1, [r6, #12]
+ 8000f08:	23ff      	movs	r3, #255	@ 0xff
+ 8000f0a:	3318      	adds	r3, #24
+        intrinsics::volatile_load(src)
+ 8000f0c:	4d4d      	ldr	r5, [pc, #308]	@ (8001044 <TIM16+0x36c>)
+ 8000f0e:	682d      	ldr	r5, [r5, #0]
+ 8000f10:	18ed      	adds	r5, r5, r3
+ 8000f12:	1c6d      	adds	r5, r5, #1
+            .store(now_raw.wrapping_add(us) & 0xFFFF, Ordering::Relaxed);
+ 8000f14:	b2ad      	uxth	r5, r5
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8000f16:	6125      	str	r5, [r4, #16]
+ 8000f18:	2502      	movs	r5, #2
+ 8000f1a:	6065      	str	r5, [r4, #4]
+ 8000f1c:	250c      	movs	r5, #12
+        intrinsics::volatile_store(dst, src);
+ 8000f1e:	6035      	str	r5, [r6, #0]
+ 8000f20:	62f3      	str	r3, [r6, #44]	@ 0x2c
+ 8000f22:	6271      	str	r1, [r6, #36]	@ 0x24
+ 8000f24:	6170      	str	r0, [r6, #20]
+ 8000f26:	6131      	str	r1, [r6, #16]
+ 8000f28:	60f0      	str	r0, [r6, #12]
+ 8000f2a:	200d      	movs	r0, #13
+ 8000f2c:	6030      	str	r0, [r6, #0]
+    unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8000f2e:	f382 8810 	msr	PRIMASK, r2
+ 8000f32:	e059      	b.n	8000fe8 <TIM16+0x310>
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8000f34:	4944      	ldr	r1, [pc, #272]	@ (8001048 <TIM16+0x370>)
+ 8000f36:	69c9      	ldr	r1, [r1, #28]
+ 8000f38:	9a0d      	ldr	r2, [sp, #52]	@ 0x34
+            intrinsics::wrapping_sub(self, rhs)
+ 8000f3a:	1a51      	subs	r1, r2, r1
+                let since = now_raw.wrapping_sub(S.det().accept_raw.load(Ordering::Relaxed) as u16) as u32;
+ 8000f3c:	b289      	uxth	r1, r1
+            intrinsics::saturating_sub(self, rhs)
+ 8000f3e:	9a0e      	ldr	r2, [sp, #56]	@ 0x38
+ 8000f40:	1a55      	subs	r5, r2, r1
+ 8000f42:	d200      	bcs.n	8000f46 <TIM16+0x26e>
+ 8000f44:	2500      	movs	r5, #0
+            } else if hold >= crate::commutation::BLANK_ARM_MIN_US {
+ 8000f46:	2d0f      	cmp	r5, #15
+ 8000f48:	d953      	bls.n	8000ff2 <TIM16+0x31a>
+ 8000f4a:	2201      	movs	r2, #1
+ 8000f4c:	0313      	lsls	r3, r2, #12
+ 8000f4e:	930e      	str	r3, [sp, #56]	@ 0x38
+ 8000f50:	494a      	ldr	r1, [pc, #296]	@ (800107c <TIM16+0x3a4>)
+ 8000f52:	600b      	str	r3, [r1, #0]
+ 8000f54:	493e      	ldr	r1, [pc, #248]	@ (8001050 <TIM16+0x378>)
+        intrinsics::volatile_load(src)
+ 8000f56:	680b      	ldr	r3, [r1, #0]
+ 8000f58:	4e49      	ldr	r6, [pc, #292]	@ (8001080 <TIM16+0x3a8>)
+ 8000f5a:	4033      	ands	r3, r6
+        intrinsics::volatile_store(dst, src);
+ 8000f5c:	600b      	str	r3, [r1, #0]
+ 8000f5e:	493b      	ldr	r1, [pc, #236]	@ (800104c <TIM16+0x374>)
+        intrinsics::volatile_load(src)
+ 8000f60:	680b      	ldr	r3, [r1, #0]
+ 8000f62:	4033      	ands	r3, r6
+        self.0 & 1 == 1
+ 8000f64:	43c6      	mvns	r6, r0
+                self << other
+ 8000f66:	07f6      	lsls	r6, r6, #31
+ 8000f68:	0b76      	lsrs	r6, r6, #13
+            fn bitor_assign(&mut self, other: $t) { *self |= other }
+ 8000f6a:	199b      	adds	r3, r3, r6
+        intrinsics::volatile_store(dst, src);
+ 8000f6c:	600b      	str	r3, [r1, #0]
+        intrinsics::volatile_load(src)
+ 8000f6e:	684b      	ldr	r3, [r1, #4]
+            fn bitand_assign(&mut self, other: $t) { *self &= other }
+ 8000f70:	4e43      	ldr	r6, [pc, #268]	@ (8001080 <TIM16+0x3a8>)
+ 8000f72:	4033      	ands	r3, r6
+                self << other
+ 8000f74:	07c0      	lsls	r0, r0, #31
+ 8000f76:	0b40      	lsrs	r0, r0, #13
+            fn bitor_assign(&mut self, other: $t) { *self |= other }
+ 8000f78:	1818      	adds	r0, r3, r0
+        intrinsics::volatile_store(dst, src);
+ 8000f7a:	6048      	str	r0, [r1, #4]
+ 8000f7c:	9207      	str	r2, [sp, #28]
+ 8000f7e:	0490      	lsls	r0, r2, #18
+ 8000f80:	60c8      	str	r0, [r1, #12]
+ 8000f82:	6108      	str	r0, [r1, #16]
+ 8000f84:	4833      	ldr	r0, [pc, #204]	@ (8001054 <TIM16+0x37c>)
+ 8000f86:	990e      	ldr	r1, [sp, #56]	@ 0x38
+ 8000f88:	6001      	str	r1, [r0, #0]
+        asm!(
+ 8000f8a:	f3ef 8010 	mrs	r0, PRIMASK
+ 8000f8e:	b672      	cpsid	i
+        crate::intrinsics::read_via_copy(src)
+ 8000f90:	69a1      	ldr	r1, [r4, #24]
+            intrinsics::wrapping_add(self, rhs)
+ 8000f92:	1c49      	adds	r1, r1, #1
+        intrinsics::write_via_move(dst, src)
+ 8000f94:	61a1      	str	r1, [r4, #24]
+        asm!(
+ 8000f96:	f380 8810 	msr	PRIMASK, r0
+    unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8000f9a:	f3ef 8010 	mrs	r0, PRIMASK
+ 8000f9e:	b672      	cpsid	i
+ 8000fa0:	2163      	movs	r1, #99	@ 0x63
+ 8000fa2:	0089      	lsls	r1, r1, #2
+ 8000fa4:	5c61      	ldrb	r1, [r4, r1]
+ 8000fa6:	7823      	ldrb	r3, [r4, #0]
+        if !crate::oneshot::arm_allowed(
+ 8000fa8:	2b00      	cmp	r3, #0
+ 8000faa:	d01b      	beq.n	8000fe4 <TIM16+0x30c>
+ 8000fac:	2900      	cmp	r1, #0
+ 8000fae:	d119      	bne.n	8000fe4 <TIM16+0x30c>
+ 8000fb0:	2100      	movs	r1, #0
+ 8000fb2:	4a22      	ldr	r2, [pc, #136]	@ (800103c <TIM16+0x364>)
+        intrinsics::volatile_store(dst, src);
+ 8000fb4:	60d1      	str	r1, [r2, #12]
+        intrinsics::volatile_load(src)
+ 8000fb6:	4b23      	ldr	r3, [pc, #140]	@ (8001044 <TIM16+0x36c>)
+ 8000fb8:	681b      	ldr	r3, [r3, #0]
+ 8000fba:	195b      	adds	r3, r3, r5
+            .store(now_raw.wrapping_add(us) & 0xFFFF, Ordering::Relaxed);
+ 8000fbc:	b29b      	uxth	r3, r3
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8000fbe:	6123      	str	r3, [r4, #16]
+ 8000fc0:	9b0b      	ldr	r3, [sp, #44]	@ 0x2c
+ 8000fc2:	6063      	str	r3, [r4, #4]
+ 8000fc4:	230c      	movs	r3, #12
+        intrinsics::volatile_store(dst, src);
+ 8000fc6:	6013      	str	r3, [r2, #0]
+ 8000fc8:	4a2e      	ldr	r2, [pc, #184]	@ (8001084 <TIM16+0x3ac>)
+    } else if us > 0xFFFF {
+ 8000fca:	4295      	cmp	r5, r2
+ 8000fcc:	d300      	bcc.n	8000fd0 <TIM16+0x2f8>
+ 8000fce:	4615      	mov	r5, r2
+ 8000fd0:	1e6a      	subs	r2, r5, #1
+ 8000fd2:	4b1a      	ldr	r3, [pc, #104]	@ (800103c <TIM16+0x364>)
+ 8000fd4:	62da      	str	r2, [r3, #44]	@ 0x2c
+ 8000fd6:	6259      	str	r1, [r3, #36]	@ 0x24
+ 8000fd8:	9a07      	ldr	r2, [sp, #28]
+ 8000fda:	615a      	str	r2, [r3, #20]
+ 8000fdc:	6119      	str	r1, [r3, #16]
+ 8000fde:	60da      	str	r2, [r3, #12]
+ 8000fe0:	210d      	movs	r1, #13
+ 8000fe2:	6019      	str	r1, [r3, #0]
+    unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8000fe4:	f380 8810 	msr	PRIMASK, r0
+ 8000fe8:	e007      	b.n	8000ffa <TIM16+0x322>
+ 8000fea:	980b      	ldr	r0, [sp, #44]	@ 0x2c
+ 8000fec:	f380 8810 	msr	PRIMASK, r0
+ 8000ff0:	e022      	b.n	8001038 <TIM16+0x360>
+ 8000ff2:	2100      	movs	r1, #0
+ 8000ff4:	6061      	str	r1, [r4, #4]
+                comp_exti_arm(step);
+ 8000ff6:	f007 ff69 	bl	8008ecc <_ZN10firmware505roots13comp_exti_arm17h6f06d4524a28c832E>
+ 8000ffa:	9d10      	ldr	r5, [sp, #64]	@ 0x40
+    stamp: Option<crate::ordertrace::Stamp>,
+    id: u32,
+    service: u16,
+    late: u32,
+) {
+    if let Some(stamp) = stamp {
+ 8000ffc:	980f      	ldr	r0, [sp, #60]	@ 0x3c
+ 8000ffe:	2801      	cmp	r0, #1
+ 8001000:	d11a      	bne.n	8001038 <TIM16+0x360>
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8001002:	68a0      	ldr	r0, [r4, #8]
+ 8001004:	4920      	ldr	r1, [pc, #128]	@ (8001088 <TIM16+0x3b0>)
+ 8001006:	7809      	ldrb	r1, [r1, #0]
+            ACC.root(at, |r| r.push(row));
+        }
+    }
+    #[inline(always)]
+    fn order_bridge(at: &mut Root<Motor>, row: Commutated) {
+        if ON.load(Relaxed) {
+ 8001008:	2900      	cmp	r1, #0
+ 800100a:	d015      	beq.n	8001038 <TIM16+0x360>
+ 800100c:	491f      	ldr	r1, [pc, #124]	@ (800108c <TIM16+0x3b4>)
+        self.rows[(self.total as usize) & (LEN - 1)] = row;
+ 800100e:	4a20      	ldr	r2, [pc, #128]	@ (8001090 <TIM16+0x3b8>)
+ 8001010:	5853      	ldr	r3, [r2, r1]
+ 8001012:	1c5c      	adds	r4, r3, #1
+        self.total = self.total.wrapping_add(1);
+ 8001014:	5054      	str	r4, [r2, r1]
+ 8001016:	217f      	movs	r1, #127	@ 0x7f
+        self.rows[(self.total as usize) & (LEN - 1)] = row;
+ 8001018:	4019      	ands	r1, r3
+ 800101a:	2318      	movs	r3, #24
+ 800101c:	434b      	muls	r3, r1
+ 800101e:	18d1      	adds	r1, r2, r3
+ 8001020:	7608      	strb	r0, [r1, #24]
+ 8001022:	82cd      	strh	r5, [r1, #22]
+ 8001024:	980d      	ldr	r0, [sp, #52]	@ 0x34
+ 8001026:	8288      	strh	r0, [r1, #20]
+ 8001028:	9808      	ldr	r0, [sp, #32]
+ 800102a:	8208      	strh	r0, [r1, #16]
+ 800102c:	980c      	ldr	r0, [sp, #48]	@ 0x30
+ 800102e:	6048      	str	r0, [r1, #4]
+ 8001030:	980a      	ldr	r0, [sp, #40]	@ 0x28
+ 8001032:	6088      	str	r0, [r1, #8]
+ 8001034:	9809      	ldr	r0, [sp, #36]	@ 0x24
+ 8001036:	e68c      	b.n	8000d52 <TIM16+0x7a>
+ 8001038:	b011      	add	sp, #68	@ 0x44
+ 800103a:	bdf0      	pop	{r4, r5, r6, r7, pc}
+ 800103c:	40014400 	.word	0x40014400
+ 8001040:	20000000 	.word	0x20000000
+ 8001044:	40014824 	.word	0x40014824
+ 8001048:	20000190 	.word	0x20000190
+ 800104c:	40021800 	.word	0x40021800
+ 8001050:	40021880 	.word	0x40021880
+ 8001054:	e000e280 	.word	0xe000e280
+ 8001058:	e000e100 	.word	0xe000e100
+ 800105c:	40012c00 	.word	0x40012c00
+ 8001060:	00000808 	.word	0x00000808
+ 8001064:	40000024 	.word	0x40000024
+ 8001068:	40010204 	.word	0x40010204
+ 800106c:	0800a7ac 	.word	0x0800a7ac
+ 8001070:	0800b680 	.word	0x0800b680
+ 8001074:	000f4240 	.word	0x000f4240
+ 8001078:	00001191 	.word	0x00001191
+ 800107c:	e000e180 	.word	0xe000e180
+ 8001080:	fffbffff 	.word	0xfffbffff
+ 8001084:	0000ffff 	.word	0x0000ffff
+ 8001088:	200012f4 	.word	0x200012f4
+ 800108c:	00000c04 	.word	0x00000c04
+ 8001090:	20001b00 	.word	0x20001b00

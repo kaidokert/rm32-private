@@ -1,0 +1,23 @@
+python : ======================================================================
+At line:2 char:1
++ python -m unittest discover -s scripts -p test_propless.py -q 2>&1 |  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (===============...===============:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+FAIL: test_retired_carrier_is_refused_before_hardware (test_propless.UnloadedChecks.test_retired_carrier_is_refused_before_hardware)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "E:\m\robot\esc\rm32\binz\firmware50\scripts\test_propless.py", line 94, in test_retired_carrier_is_refused_before_hardware
+    self.assertIn("admits only period1333", run.stderr)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'admits only period1333' not found in "usage: bemf_run.py [-h] [--port PORT] [--baud BAUD] [--elf ELF] [--flash]\n                   [--runs RUNS] [--propless]
+[--min-hold-ms MIN_HOLD_MS]\n                   [--run-period-ticks {1000,1333}] [--label LABEL]\n                   [--timeout TIMEOUT] [--settle SETTLE] [--pre PRE]\n
+         [--rung-duty RUNG_DUTY]\n                   [--command {b,2,5,R,T,G,F,N,U,H,V,I,W,K,Q,t,g,f,n,u,h,v,i,w,k,q,8,3,4,6,7,9,a,c,d,e,j,y,m,x,Z,l,L,+,-,A,C,D,E,J,Y,M}]\n
+             [--abort-after ABORT_AFTER] [--no-ladder] [--anchor]\n                   [--anchor-proof ANCHOR_PROOF] [--step-check] [--sag-dump]\n
+[--order-dump]\nbemf_run.py: error: argument --run-period-ticks: invalid choice: '800' (choose from 1000, 1333)\n"
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.799s
+
+FAILED (failures=1)

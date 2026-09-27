@@ -82,6 +82,17 @@ class UnloadedChecks(unittest.TestCase):
         self.assertEqual(propless.verdict(RAW, 150, 9000), [])
         self.assertTrue(propless.verdict(RAW, 150, 30_000))
 
+    def test_retired_carrier_is_refused_before_hardware(self):
+        import subprocess
+        import sys
+        for period in (1000, 800, 0):
+            run = subprocess.run([sys.executable, str(FIXTURES.parent / "bemf_run.py"),
+                                  "--propless", "--no-ladder", "--rung-duty", "250",
+                                  "--command", "8", "--run-period-ticks", str(period)],
+                                 capture_output=True, text=True)
+            self.assertEqual(run.returncode, 2)
+            self.assertIn("invalid choice", run.stderr)
+
     def test_old_no_prop50_identity_failure_is_not_removed(self):
         path = FIXTURES / "noprop-open-50pct_01.txt"
         self.assertTrue(any("rate vs coast 986" in f

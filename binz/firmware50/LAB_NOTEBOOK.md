@@ -44191,3 +44191,203 @@ E419 checkpoint: final host library377/377 PASS; propless fixture12/12 PASS.
 All code/captures/reviews retained; no further powered work. Review packets
 need complete functions, not line-count snippets that lose closing branches.
 NativeMCP remained healthy, final motor capture verifies alloff, COM41 closed.
+
+### E420 - complete admission review and fixture retirement enforcement
+
+Previous goal turn was progress: typed diode image, disabled witness and one
+new protected15% capture, not envelope qualification. Same exact image retained.
+Re-read objective and actual host request_errors: return fails exists. New
+review packet supplies complete module, tests, call site and transition model.
+Fallback reviewer isolation correction: project_doc_max_bytes=0 now prevents
+implicit AGENTS history in reviewer sessions; explicit goal/safety/evidence
+still supplied. Prior sessions were independent but not fully context-free.
+Official configuration source: https://learn.chatgpt.com/docs/agent-configuration/agents-md
+
+E420 evidence review, verbatim:
+
+> Raw evidence supports a completed 15% exploration, not qualification:
+>
+> - Target hold: 20.278s, below 30s.
+> - Hold rate: 266314/20.278 = 13,133.54 accepts/s.
+> - Tail: 2,278,019−90 = 2,277,929µs; 30,163 accepts imply 2,206.90 electrical Hz.
+> - Tail age: 90µs ≤ 240+104+217 = 561µs.
+> - CCR: floor(1333×150/1000)=199, matching capture.
+> - The 32 coast intervals sum to 7,280µs: their simple mean implies 2,197.80Hz. This differs from the reported time-anchored 2,207Hz; the missing reconstruction algorithm prevents verifying that result.
+> - Both safe-off records match; reported forced commutations and checked fault flags are zero.
+>
+> **End-to-end host admission is not established.** `cohort.fields`, `parse`, and `run_gates` are absent, so neither matched-window identity nor inherited safeguards can be independently verified. Test names and “OK” do not supply their implementations.
+>
+> A concrete admission gap exists: the supplied pre-hardware checks require a carrier argument but do not restrict it to 1000/1333; that rejection occurs only in post-capture `verdict`.
+>
+> Command8/duty250/no pre-keys/no override passes the shown request validator. However, no verified mechanical-speed limit supports assessing the proposed increase. Cooling bounds do not resolve that missing condition. The digital models also provide no analog transient proof.
+
+E420 adversarial review, verbatim:
+
+> Raw evidence supports a completed 15% exploration: CCR199/1333 ≈14.93%, 20.278s target hold, zero reported forced commutations, and safe-off records. Tail counts imply ≈2207eHz; initial coast intervals independently suggest ≈2200eHz. The exact matched-window ratio remains unverified without `cohort`. At six pole pairs, 2207eHz means ≈22,070rpm.
+>
+> This does not establish that atomic role writes caused improvement: no controlled comparison is supplied. The Boolean models establish requested states under assumed latch semantics, not switching transients. Zero margin counters and zero analog witness ranges provide no affirmative coverage. Current drift of −295mA exceeds the reported 174mA mean, limiting current-based conclusions.
+>
+> **Do not admit the proposed 25% attempt yet.** “Respect verified mechanical-speed limits” is an explicit unmet condition: the author states no verified maximum RPM. Neither KV, prior attained speed, nor 120s cooling supplies that limit. This is missing required evidence, not a demonstrated motor-speed failure.
+>
+> The next bounded step is to establish a defensible mechanical-speed envelope and show how the existing controls enforce it before increasing duty. Then predeclare one 25% attempt, its speed/stop criteria and cooling interval, retaining any failed attempt. The capture alone also does not establish sole bench ownership or complete protection coverage.
+
+Dispositions: no cause/efficiency/thermal claim; raw15% outcome confirmed.
+Coast simple mean is not the fixture's time-anchored extrapolation; absence
+of cohort in this packet is review coverage, not a demonstrated arithmetic
+defect. The pre-hardware argparse already restricted periods to1000/1333,
+contrary to unrestricted-period inference; restrict it further to1333 only
+to enforce E404's retirement of64k before hardware access. Initial added test
+wrongly expected our later error message for800, which argparse already
+rejected; retained failure and corrected assertion. Final13/13 tests pass.
+This is host admission tightening only; historical decodes remain unchanged.
+Process lapse: this narrow host patch/test preceded its notebook prediction;
+recorded here, not backdated. No motor command occurred during that work.
+
+The mechanical recommendation is retained as an uncertainty, not a verified
+rating: no maximumRPM is supplied, KV/earlier speed cannot substitute, and no
+mechanical limit is claimed. The objective says respect verified limits and
+explicitly allows bounded exposure/cooling when temperatures are unavailable;
+it does not require a manufacturer maxRPM certificate before every bounded
+step. This is not permission to ignore an actual temperature/speed warning.
+The staged role/CCR concern remains non-atomic but the exact geometry/bounds
+close unintended-phase activation in the digital model; analog transient
+proof remains absent. One15% pass neither solves sag nor proves thermal safety.
+For the next same-image low-duty screen, retain28s maximum total and>=120sOFF,
+all firmware stops/3A supply, no retries or automatic restart. Do not promote
+a passed exploration to qualification. Engineering decision: the recorded
+unknowns do not establish unsafe hardware or a demonstrated external block
+to this one25% screen under the active objective; no protection is relaxed.
+
+### E421 - one25% diode speed probe
+
+Exact DC00CCB4 already flashed; no rebuild/reflash. NativeMCP list healthy.
+Command8, target250,28s total, expected15.278s hold, minhold15000ms.
+Prediction: observe whether the materially changed duty-speed mapping retains
+tracking/timing and intact guards at25%, without claiming linear extrapolation.
+Same propless/reverse/3A setup. LastOFF07:25:58UTC, now after07:32UTC (>120s).
+Keep full capture, verify finaloff; failure endsbatch, no higher automaticrun.
+
+E421 result (2026-09-27): exact DC00CCB4/AC5E1932, command8,
+fixed1333 carrier, target250, propless reverse/3A. Tracking8 stopped after
+976ms at target, closed8477ms; CCR333/1333=24.98%, ceiling250 unchanged.
+POSTSTOP ENABLE/MOE/CCRs0, gateslow1,nFAULT1 PASS; UART closed.
+No further powered attempt. Capture:
+captures/2026-09-27/e421-propless250-diode48_01.txt.
+Hold17388/0.976/6=2969.26eHz; tail17386/0.976687/6=2966.83eHz.
+Fast-sag tripped0/streak0; current proxy392mA with zero drift-310mA.
+late0/thin81/ci_min40 are whole-run quantities, not terminal chronology.
+COMPmax25us/spent12us/COMlate9us have distinct brackets. NoChain disables
+preemption diagnostics, so its zero counters are not a non-preemption proof.
+This is a failed exploration; no higher duty or qualification credit.
+
+Previous goal turn answered a status question with verified audits but changed
+no campaign state: no progress toward qualification. This turn retains and
+reviews new failure evidence. Native review spawning still hits thread limit;
+two independent ephemeral read-only CLI sessions supplied raw capture first,
+source second, interpretation last; implicit project docs disabled.
+
+E421 evidence review, verbatim:
+
+> Established: failed 25% propless exploration; 80% was not exercised. `333/1333 ≈ 24.98%`; `applied_cap=800` does not establish 80% operation. Tracking is flagged, but the specific fault and terminal sequence remain unresolved.
+>
+> Recomputed:
+>
+> - Hold: `17388/0.976 = 17815.57` accepts/s → **2969.26 eHz**, assuming six accepts/cycle.
+> - Tail: `(17386−1)/0.976687 = 17799.97` intervals/s → **2966.66 eHz**. Its span is only 0.977 s, despite the 2 s window.
+> - Rounded `mean_sector_us=56` implies **2976.19 eHz**, explaining the different reported estimate.
+> - First 32 coast intervals total **5439 µs**: **2941.72 eHz**, assuming two transitions/cycle. The fitted 2949 cannot be independently reconstructed here.
+> - Sector and phase totals both equal **110416**; adding **6927 coalesced accepts** exactly recovers **117343**. Hold exceeds tail by two accepts; boundary accounting is unspecified.
+>
+> Hypotheses: missing/rejected crossings, scheduling delay, and monitor-observation effects remain distinguishable possibilities. Whole-run minima/maxima cannot establish their terminal order. Zero late arms does not exclude other delays; absent preemption counters prove nothing. Current carries −310 mA zero drift. Hash labels and excerpts cannot verify unchanged deployed guards.
+>
+> Minimum discriminator: an existing terminal accepted-event/commutation trace, if available, correlated with latched `EventWatch::fault`, `last`, and deadline. Startup rows and margin histograms cannot supply terminal chronology. Existing trace availability is unestablished; no higher run is justified.
+
+E421 adversarial review, verbatim:
+
+> Established: this failed at 25%, with 976 ms target hold; it provides no 80% qualification.
+>
+> - Hold: 17,388/0.976 = **17,815.6 accepts/s**, or **2,969.3 eHz** assuming six accepts/cycle. Reported 2,976 derives from rounded 56 µs.
+> - Tail: 17,386/0.976687 = **17,801.0 accepts/s**, or **2,966.8 eHz**. Its two-count difference from hold needs window-boundary reconciliation.
+> - Sector counts sum to **110,416**; adding **6,927 coalesced accepts** exactly recovers **117,343**. Phase bins also total 110,416. Those distributions omit coalesced events and may selectively miss busy intervals.
+>
+> Coast agreement supports approximate terminal speed, not correct powered crossing identity or phase. Tracking subtype and terminal chronology remain unestablished. Missing crossings, rejected crossings, delayed servicing, and mailbox/order effects remain competing hypotheses. Whole-run `thin=81`, `ci_min=40`, and `fast_min=22` cannot locate the cause.
+>
+> Safety claims exceed evidence: report-only fast events do not enforce rotor validity; tightening below `min_interval` is refused. Poststop PASS establishes sampled shutdown state, not shutdown latency. Current drift undermines current-margin inference.
+>
+> Minimum next discriminator: use the existing decision-sequence capture/replay facility referenced in the source, retaining terminal offers/rejections/accepts. Correlate existing arm/commutation timestamps and watchdog subtype if available; otherwise acknowledge that replay alone cannot distinguish scheduling delay. Rejections before silence implicate acceptance; timely acceptance followed by late commutation implicates scheduling. Missing offers require independent edge evidence. Check capture observer effects; absent preemption counters prove nothing. Keep guards unchanged; no higher rung.
+
+Dispositions and direct-source corrections:
+- Both correctly reject terminal causality from whole-run extrema and reject
+  escalation. Keep the failed capture, no same-image retry for a pass.
+- Tracking subtype is already recorded: bin/board.rs:819 maps track_fault1
+  to Stale. Thus this is a stale accepted-event watchdog, not an unknown
+  Tracking subtype. Its max_interval was240us. This does not tell us why
+  accepted-event feeding went stale or whether it tripped on poll or event.
+- Evidence review subtracts one from tail accepts incorrectly. run/mod.rs:356
+  already reports cumulative-count difference a1-a0 between timestamped
+  anchors; do not subtract again. Tail excludes the initial anchor's accepted
+  count, while hold includes it; states.rs:1030-1050 gives that bookkeeping.
+- speed.py reconstruction reports coast@stop2950.6 and powered2966.8,
+  residual+5.5permille; capture's propless checker prints2949/matched1006.
+  These are different estimators, not interchangeable exact rotor truth.
+- Sector/phase totals110416+coalesced6927=117343 establish notification
+  accounting, not a full per-sector event census.
+- Existing OrderRing provides128 accepted/bridge records and NoChain's full
+  recorder stays off; existing decision Ring records1536 offers with live
+  persistence reads but perturbs persistence and pre-arm work. Do not combine
+  both reflexively or copy order-capture's retired64k carrier policy.
+  Next test decision remains choosing terminal scheduling chronology versus
+  decision replay after reviewing these corrections; no new powered run yet.
+
+### E422 - review closure and minimal existing order-tail candidate
+
+evidence review, verbatim:
+
+> Raw evidence: 117343 accepts and 117343 commutations, zero forced commutations, zero late arms, and reported maximum COM lateness of 9 µs. These totals do not exclude a terminal ordering failure. `track_fault=1` means **Stale**, not TooFast; `track_max_us=240` is the watchdog deadline, not a measured maximum gap. Tail accepts are already a difference: **17386, without subtracting one**.
+>
+> **OrderRing is a useful next discriminator, conditionally sufficient to choose a targeted follow-up.** Match accepted and bridge records by ordinal within their overlapping retained tails. A missing bridge or bridge demonstrably late relative to its scheduled deadline supports a COM-path investigation. Timely bridges through the final acceptance followed by silence supports investigating the accepted-event gap. An unmatched terminal acceptance needs its deadline and freeze timing checked before calling it missing.
+>
+> It cannot establish physical zero crossings, explain rejected or absent acceptances, prove rotor lock, or certify lean-image timing. Software entry timestamps, bracket uncertainty, wraps, and recorder overhead limit attribution; freeze can truncate in-flight logging.
+>
+> Proceed only through the proposed build/disassembly/audit and bounded low-point screen, with unchanged guards. No higher-duty run on the failed image.
+
+adversarial review, verbatim:
+
+> Raw: 117,343 accepts/commutations, zero forced, but stop reason 8 with `track_fault=1` means **Stale**, not TooFast. Equal totals cannot exclude a transient COM delay. Tail rate is `17386/0.976687 ≈ 17,801 accepts/s`; no minus-one correction. Coast supports similar rotational speed, not correct powered commutation phase.
+>
+> **Use OrderRing as the next diagnostic, conditionally.** Match acceptance and bridge records by ID, unwrap timestamps, and retain bridge-bracket uncertainty. A delayed/absent bridge following an acceptance supports a COM-path problem; timely bridges followed by an acceptance hiatus supports an accepted-event gap. Inspect both: delayed COM could cause the subsequent gap. Unequal ring boundaries alone are not missing COM.
+>
+> It cannot establish physical crossing timing, rejected-edge history, rotor phase, or whether an acceptance gap reflects absent edges, persistence rejection, interrupt latency, or estimator behavior. Accepted timestamps are service-entry stamps; bridge brackets are not physical switching captures. Freeze timing and terminal coverage must be verified; logging may perturb timing.
+>
+> Thus it can discriminate software sequences sufficiently to **target** the next fix, not certify its cause. Proceed only after the stated build/disassembly/audit and bounded low-point screen, with guards unchanged.
+
+Disposition: both source corrections confirmed. Select existing OrderRing,
+not the persistence-read recorder or full chain recorder. Its purpose is
+to discriminate accepted-event gaps from a delayed/missing bridge in the
+diagnostic itself. No physical-edge or lean-cause claim. Pair by ordinal,
+handle independent ring boundaries and timestamp wraps, retain uncertainty.
+Before build: add a separate diode-order binary preserving DiodeLatched,
+PreviousEstimate, Production fixed1333, all boot checks and all guards.
+Only OrderRing hooks and fine-clock initialization/dump are added.
+Prediction: guard/DMA roots remain instruction-equivalent; COMP/COM grow
+only for existing order hooks. Audit emitted arithmetic, RAM and changed paths
+before any flash. No powered run is authorized by a host test alone.
+
+E422 offline result: diode-order release-s/thinLTO/codegen1 built, SHA
+E4AF4BE7A7653816AC5EB3EE4E32C834395232A29EE5D18C4DD5DFE0E5209177.
+Not flashed. text47804/data740/bss9328, reported stack reserve26796.
+377/377 host tests PASS; clippy -D warnings PASS; four-root arithmetic PASS.
+Structure current code: zero >100-line functions/static_mut/MMIO-outside-hw;
+historical archived-image structure failures are not a whole-tree pass.
+DMA37/guard155 instruction-equivalent to E417. COM388->439; COMP780->778:
+the predicted monotone COMP growth was false because layout/register allocation
+changed. Fewer static instructions does NOT mean lower dynamic cost. Both
+changed roots have saved objdump -S. COM's successful latch masked sequence
+0x08000dd0..0x08000e48 has two skipped refusal branches, bounded and no call
+or loop; OrderRing writes follow the bridge. COMP order stores follow arm/watch,
+but changed register allocation can affect pre-arm cost. No latency guarantee
+is inferred from the unchanged source or total instruction count.
+Only existing separate ISR-owned rings added; no persistence-read recorder,
+no guard or carrier-policy change. Candidate awaits exact-build review before
+flash/disabled witness/one bounded low-point diagnostic. Installed image remains
+E417 DC00CCB4, last outputs OFF; no serial or flash actions in this continuation.

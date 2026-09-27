@@ -125,3 +125,12 @@ reference 1212 at equal VREF, forming the terminal streak. Phase channels
 clipped before the sampled threshold crossing; sequential ADC timing and
 masked recorder work prevent physical-cause attribution. The diagnostic's
 earlier failure does not establish a 57% lean limit.
+# E421 checkpoint — 2026-09-27
+
+DC00CCB4 diode-mode image passed one 15% exploration (~2207 eHz), then
+stopped on Tracking at 25% after 0.976s at target (~2950 eHz coast).
+The recorded tracking subtype is Stale, with a 240us accepted-event limit.
+Fast-sag did not trip; outputs-off was verified. No higher run followed.
+Whole-run thin-arm81/ci_min40 do not establish terminal cause. Two independent
+reviews are retained in the notebook, with source-backed corrections to their
+tail-count and tracking-subtype interpretations. No new qualified ceiling.

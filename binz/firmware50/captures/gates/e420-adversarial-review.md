@@ -1,0 +1,7 @@
+Raw evidence supports a completed 15% exploration: CCR199/1333 ≈14.93%, 20.278s target hold, zero reported forced commutations, and safe-off records. Tail counts imply ≈2207eHz; initial coast intervals independently suggest ≈2200eHz. The exact matched-window ratio remains unverified without `cohort`. At six pole pairs, 2207eHz means ≈22,070rpm.
+
+This does not establish that atomic role writes caused improvement: no controlled comparison is supplied. The Boolean models establish requested states under assumed latch semantics, not switching transients. Zero margin counters and zero analog witness ranges provide no affirmative coverage. Current drift of −295mA exceeds the reported 174mA mean, limiting current-based conclusions.
+
+**Do not admit the proposed 25% attempt yet.** “Respect verified mechanical-speed limits” is an explicit unmet condition: the author states no verified maximum RPM. Neither KV, prior attained speed, nor 120s cooling supplies that limit. This is missing required evidence, not a demonstrated motor-speed failure.
+
+The next bounded step is to establish a defensible mechanical-speed envelope and show how the existing controls enforce it before increasing duty. Then predeclare one 25% attempt, its speed/stop criteria and cooling interval, retaining any failed attempt. The capture alone also does not establish sole bench ownership or complete protection coverage.

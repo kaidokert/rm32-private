@@ -517,7 +517,7 @@ def main() -> int:
                     "--runs 1 and --rung-duty; retains independent identity/guards")
     ap.add_argument("--min-hold-ms", type=int, default=30_000,
                     help="propless only: predeclared actual-target dwell; >=9000")
-    ap.add_argument("--run-period-ticks", type=int, choices=(1000, 1333),
+    ap.add_argument("--run-period-ticks", type=int, choices=(1333,),
                     help="required for propless: expected compiled running TIM1 period")
     ap.add_argument("--label", default="run")
     ap.add_argument(
