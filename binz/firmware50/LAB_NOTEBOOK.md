@@ -47631,3 +47631,74 @@ thisscreen. No material factual error requires rerunning15. Before25,
 revalidate exact production guard path and retained fault evidence; do not
 create another full ladder or treat narrow packet omissions as new hardware
 failures. Installed63F48607 OFF/UARTclosed. No new qualified ceiling.
+
+## E466 — same-image25% bounded exploration, before run
+
+Previous batch made measured progress:20.278s15% normalstop afterdeferral,
+not envelope qualification. E465 dualreview conditions checked against actual
+production code: guard tracking poll directly calls guard_trip at priority0;
+guard_trip revokesowners, masksCOMP, stopsCOM, MOEoff/CCRs0/ENABLElow in ISR.
+E462 demonstrates same directstop on LateArm; E464c stop/overbudget before-
+cleanup states witnessed. This establishes available containment, not WCET
+or motor-temperature measurement. Candidate63F48607 hash/audit unchanged,
+source/bin worktreeclean. UTC11:48:12 versus priorcaptureend11:45:47 gives
+>145sOFF, exceeding precautionary120s without claiming thermalmeasurement.
+MCPhealthy. One command8,25% target,28s total, expected15.278s targethold,
+ordinary reason2, no guardfault. No repeats/higherdutyafterfault. Existing
+protections/current3Aphysicalheadroom unchanged. Keep allcaptures, delta
+bootcumulative recheckcounts, poststopoffreadback; fullqualificationnotclaimed.
+
+E466 result FAIL, no retry/escalation. Capture2026-09-27/e466-propless250-parked_01.txt,
+same63F48607. Target25% reached only11ms; closed7512ms. Guard15 LateArm,
+top-level28 knownmapping. ci_at_late45,spent_at_late11; fixed16 wait=(45>>1)
+-floor(45*16/64)=22-11=11us, exhausted exactly. late1,thin13,minimumci40,
+COMPmax43us (newtailincluded), mixedCOMlate13,guardgap109,tracking0,no
+foldback/nFAULT/sagstop. Currentproxy477mA from ONE holdblock, zerodrift-172mA;
+do not call it steadyload. ActualCCR333/1333=24.981%,coast2876eHz,
+matchedratio997permille despite fault; ratio does not certify timing/lock.
+Postp allbridgeoff,nFAULT1,UARTclosed. Recheck bootcounts29381/463949/0 minus
+pre20734/313094/0 =8647requests,150855observations,0retired; activity, not
+acceptedrescues. E46515% pass remains one exploratorypoint,25notqualified.
+Decision changed: parkedretry eliminates neither short estimator intervals nor
+the final11us arm exhaustion. No attribution to unique preemptor/no CPU-wall
+claim. Existing previous-vs-fresh wait experiments E423+ are on file; do not
+repeat that policy switch blindly. Review before choosing a code change.
+
+E466 independent reviews:
+
+> Raw evidence supports an exhausted arm budget, not a proven underlying cause.
+>
+> - At ci=45, level16: wait=(45>>1)−floor(45/4)=22−11=11µs; spent=11 leaves zero. This matches late_arms=1. Guard15/top28 mapping and FreshEstimate selection require omitted caller/enum evidence.
+> - Closed time is 7.512s; target hold only 11ms, not the requested 28s. Hold rate: 202/0.011=18,364 accepts/s.
+> - Sector and phase totals both equal 64,060; adding 33,881 coalesced accepts gives 97,941 exactly. zc_acc and com_count are each two higher; their accounting needs explanation.
+> - Recheck deltas: +8,647 requests, +150,855 observations, zero retirements. These are activity counts, not demonstrated rescues.
+> - Tail: 11,519−126=11,393µs. If spanning first-to-last acceptance, 196 accepts represent 195 intervals: ≈2,853eHz, ≈992‰ of 2,876; using 196 yields the reported ≈997‰.
+>
+> Maxima do not identify the expensive path; zero margin histograms provide no distribution. Prior 15% success is not supplied here.
+>
+> Next: inspect existing experiments and actual arm callers; isolate preparation cost versus estimate contraction before selecting a timing change. No blind repeat, escalation, or threshold relaxation.
+> The late-arm explanation fits the arithmetic, but identifies the immediate trigger, not its underlying cause.
+>
+> - At ci=45, level16: wait=(45>>1)−floor(45×16/64)=22−11=11µs; spent=11 exhausts it. Final writes/service remain outside the modeled budget.
+> - Closed-loop duration was 7.512s; target hold only 11ms. This does not establish sustained 25% operation.
+> - Sector and phase totals each equal 64,060; adding 33,881 coalesced accepts gives 97,941 exactly. zc_acc and com_count are both two higher; their accounting boundary needs explanation.
+> - Recheck deltas are 8,647 requests, 150,855 observations, zero retirements. These measure activity, not rescues.
+> - Tail span agrees: 11,519−126=11,393µs. If 196 timestamps define that span, 195 intervals imply 2,853eHz; using 196 yields 2,867eHz and approximately 997‰ against coast. Endpoint semantics matter.
+> - Reason15→LateArm and reason28→UnknownGuard mappings, plus the prior 15% result, are asserted rather than independently established here.
+>
+> Next: inspect existing experiment evidence and the actual arm path; measure event-specific preparation and residual enable latency before selecting an optimization. Do not relax thresholds or repeat/escalate blindly. Zero margin counters provide no distributional evidence.
+
+Dispositions: immediate-trigger arithmetic accepted; no causal/WCET claim.
+Guard15 and Unknown28 defined in protection.rs (omittedpacket, not unknown).
+Sector/phase64060+coalesced33881=97941 foregroundaccepts. ISRaccepted97943/
+COM97943 differ by2; pendingmailbox/terminalboundary is a candidate explanation,
+not proven here. Do not treat two as missed/extra rotorcrossings. Tail endpoint
+semantics must be checked before anytightcoastgateclaim; both~992 and~997 are
+irrelevant to this run's undisputedLateArm/11ms failure. The actual arm caller
+is NoLog/FreshEstimate/fixed16 and prepare_crossing runs inside the same masked
+stop-validation transaction as elapsed check and timerstart; six register
+operations precede the sample. Do not subtract that preparation from the guard
+measurement to manufacture margin. Next work targets actual decision/arm cost
+or a source-grounded scheduling change, with existing experiments consulted;
+no extra timingprobe merely to classify an already-known exhausteddeadline.
+Board63F48607 OFF/UARTclosed, goalactive,25notqualified.

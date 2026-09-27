@@ -1,6 +1,12 @@
 # Propless 80% campaign — progress, not qualification
 
-E465 CURRENT: 63F48607 installed OFF/UARTclosed. One15% exploratoryscreen
+E466 CURRENT: same63F48607 OFF/UARTclosed.25% reached but held11ms only;
+LateArm guard15 (topreport28),ci45->wait11us/spent11us,late1/thin13.
+No sag/current/nFAULT/trackingstop. Coast2876eHz is not sustained25%proof.
+No repeat/escalation; dualreviews retained. Next decision/arm-path work must
+reduce real cost, not exclude preparation from elapsed or loosen safeguards.
+
+E465 prior: 63F48607 installed OFF/UARTclosed. One15% exploratoryscreen
 completed20.278s actualtarget, reason2,late0,thin1,spentmax12us,COMPmax34us.
 Coast2156eHz,matched1002permille. Recheck20734requests/313094observations,
 not acceptedrescues. Currentproxy221mA/zerodrift-209mA,not calibratedamps.
