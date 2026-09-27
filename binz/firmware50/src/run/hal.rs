@@ -344,8 +344,9 @@ pub trait Hal {
     /// Hand commutation to the COM root at `duty` on `period`, and arm the
     /// first commutation to land at `commit_us` on the extended clock.
     fn com_handover(&mut self, duty: u16, period: u32, step: Step, commit_us: u32);
-    /// A new accepted crossing's raw stamp, if COMP made one.
-    fn det_poll(&mut self) -> Option<u16>;
+    /// Coherent newest accepted crossing and every event since last delivery.
+    /// Intermediate stamps can coalesce; their event count must not disappear.
+    fn det_poll(&mut self) -> Option<super::accepted::Accepted>;
     /// The estimator's interval, µs.
     fn det_average(&self) -> Option<u32>;
     /// The step the COM root last applied.

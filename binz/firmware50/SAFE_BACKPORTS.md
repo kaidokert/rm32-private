@@ -100,3 +100,16 @@ Port only early1836c53 accounting and integration test, not its controller edits
 Prediction: coalesced events counted without inventing intermediate timestamps;
 ISR streams unchanged, existing protection semantics retained. Test/release/audit
 then one same45s60screen (~15s target), not full qualification; stop on failure.
+
+Backport5 staged SHA236614731EB5E32BA293629A5F14E7D90F61BBA1D69C1B6CE28B80E1DCB2116F.
+357host tests/release-s thinLTO/clippy PASS; four-root math audit PASS.
+Normalized ISR streams identical to fix3: DMA37/COMP818/COM368/guard155;
+TIM16 encoded literal relocation reported, not hidden. Publication remains the
+existing ISR raw-before-sequence ordering; foreground compiler fences keep
+sequence/stamp/sequence ordered. Interrupted pairs defer once, without retry
+loop/mask. Tests cover coalescing, interruption, wrap and actual report/tail.
+Counts now include coalesced events; histograms remain sampled notifications,
+not reconstructed phase truth. Hold/start/stop boundary attribution remains
+approximate as documented. No rate improvement inferred from changed telemetry.
+Preflash fresh MCP alloffPASS. Next flash/verify explicit G071, check disabled
+state then one45s60screen, all protections unchanged.

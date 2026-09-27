@@ -351,8 +351,8 @@ impl Hal for Sim {
     fn com_handover(&mut self, duty: u16, _period: u32, _step: Step, commit_us: u32) {
         self.log.handover = Some((duty, commit_us));
     }
-    fn det_poll(&mut self) -> Option<u16> {
-        self.pending_raw.take()
+    fn det_poll(&mut self) -> Option<super::accepted::Accepted> {
+        self.pending_raw.take().map(super::accepted::Accepted::single)
     }
     fn det_average(&self) -> Option<u32> {
         self.zc.as_ref().map(|_| self.crossings.interval_us)

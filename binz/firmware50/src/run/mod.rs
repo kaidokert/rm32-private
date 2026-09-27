@@ -13,6 +13,7 @@ use crate::commutation::Direction;
 use crate::protection::{RAW_LIMIT, Reason, ZERO_BLOCKS};
 use crate::report::{CoastStats, CurrentRecord, InjectOutcome, RunReport, Sink, WitnessRecord};
 
+pub mod accepted;
 pub mod hal;
 pub mod measure;
 pub mod policy;
@@ -316,6 +317,7 @@ impl<
                 stopped_at,
             }),
             accepted: s.accepted,
+            coalesced_accepts: s.coalesced_accepts,
             forced: 0,
             ci_us: io.det_average().unwrap_or(ctx.last_ci),
             bus_ref: u32::from(ctx.base.bus_ref.bus),

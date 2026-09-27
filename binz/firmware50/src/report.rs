@@ -477,6 +477,8 @@ pub struct RunReport {
     pub inject: Option<InjectOutcome>,
     /// Commutations on accepted crossings, and forced ones (structurally 0).
     pub accepted: u32,
+    /// ISR accepts coalesced into an already pending foreground notification.
+    pub coalesced_accepts: u32,
     pub forced: u32,
     /// The estimate at the stop (or the last one the foreground held).
     pub ci_us: u32,
@@ -580,6 +582,8 @@ impl RunReport {
         out.kv("filt_vref", self.sag_filt.1);
         out.kv("streak", self.sag_streak);
         out.kv("tripped", u32::from(self.sag_tripped));
+        out.say("\r\nBEMFMAILBOX ");
+        out.kv("coalesced_accepts", self.coalesced_accepts);
         out.say("\r\n");
     }
 
