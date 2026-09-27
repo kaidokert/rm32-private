@@ -44600,3 +44600,159 @@ src/bemf/timing_tests.rs. Test-only edit; installed E4AF4BE7 unchanged/OFF.
 No further powered attempt in this batch. Both result reviews and limitations
 are retained. Next compare this bounded scheduling lever on evidence, not
 another aggregate-only repeat of the failed25% image.
+
+### E426 - existing fresh-wait policy, otherwise matched diode diagnostic
+
+Previous turn progressed through actual15/25% diagnostic runs and frozen
+sequence replay; full80% goal remains incomplete. Same-image25 failed; no
+retry on it. Both E425 reviews nominated the existing timing-policy comparison.
+Before edit/build: separate diode-fresh binary changes only the type parameter
+PreviousEstimate->FreshEstimate and identifying banner from diode-order.
+All guards,48kHz carrier, DiodeLatched, recorder and boot checks unchanged.
+Prediction: reproduced18-event replay shows terminal recovery benefit but
+earlier shortened waits. Bench screen could therefore fail earlier; no assumed
+improvement. Build/audit/disassembly/review before any flash. One bounded
+exploratoryB only initially; no causal rate claim or cohort qualification.
+
+E426 result: SHA E7D5E6BE4582E6E4246C412FA4BA292D89F8373D3654448B9B20C620E36F7FD1,
+text47876/data740/bss9328. Tests378/378/clippy/four-root auditPASS.
+COMP staticdisassemblyentries778->813; other3roots equivalent. New source
+wait depends on postblendavg, exhausted-wait check remains before timerstart.
+
+evidence review, verbatim:
+
+> No concrete software blocker is established by the supplied evidence; hardware suitability remains unproven.
+>
+> The entrypoints select identical `DiodeLatched`/`OrderRing` configurations and boot checks; the scheduling policy changes from `PreviousEstimate` to `FreshEstimate`. In the supplied fresh assembly, `0x0800096a` publishes the blended, clamped estimate; `0x0800097a–0x080009a6` derives the wait from that value. `0x080009f8–0x08000a02` rejects oversized or exhausted waits before timer start. The called stop routine’s body is absent, so its shutdown behavior is not independently verified here.
+>
+> The frozen replay demonstrates the tradeoff: fresh scheduling shortens some descending waits and changes the final rebound from 10 to 12 µs. It cannot establish improved rotor behavior or survival.
+>
+> Observer cost remains relevant: accepted-row recording occurs after timer start, adding ISR residence beyond the sampled arm expenditure. Its effect on commutation requires interrupt-priority and timing evidence. The reported 778→813 static entries are not WCET; passing tests and the root audit do not establish deadline margin.
+>
+> The bounded 15% regression, followed by evidence review before any 25% run, remains an experiment—not qualification toward 80% duty.
+
+adversarial review, verbatim:
+
+> No candidate-specific software blocker is demonstrated by the supplied source and assembly. The fresh dependency is real: the clamped blend is stored at `0x0800096a`, transferred into the wait calculation, and used for the deadline check and timer reload. This is not merely a renamed policy.
+>
+> One unresolved deadline issue: `spent` is sampled at `0x080009f0`, but TIM16 starts at `0x08000a86`. That intervening time is unaccounted for; a positive one-microsecond remainder also receives a two-microsecond reload. The exhausted-wait check therefore does **not** prove commutation meets the original deadline. This is not established as a fresh-only regression.
+>
+> Fresh scheduling shortens waits during contraction and lengthens them during rebound. The frozen replay establishes arithmetic behavior, not improved physical tracking or survival.
+>
+> Observer cost remains material: OrderRing writes occur after arming, and watchdog processing adds another interrupt-masked interval. Static entry counts and the clean ISR audit establish neither WCET nor timer-service latency.
+>
+> The reported tests support functional consistency. They do not resolve timing margin; treat the proposed 15% run as an experiment, with 25% contingent on reviewing its evidence.
+
+Dispositions: reviewed limited experimental admission, not deadline guarantee.
+Postspent-toCEN work and minimumARR1 remain known entry-relative scheduling
+errors in BOTH images; no physical-edge timestamp or exactdeadlineclaim.
+COM higher priority can preempt post-arm COMP except masked sections; added
+residence remains observercost. Stop_expired_arm existing auditedcallee unchanged.
+Staticentriesinclude literalpool directives in isr_diff, so do not interpret
+its displayed count as exclusively executed opcodes or WCET.
+Before flash: E7D5E6BE exactarchive on explicitG071 SN066CFF343433464757233430,
+then reset and disabled p currentoff +bootchecks. MCP mustwork. No powered
+command untilchecksPASS. Conditional15% command9 total28s,minhold19000,
+no autorestart/higherattempt,>=120sOFF. Benchabout12V/3A, proplessreverse.
+
+E426 flash/resetPASS; MCP p142bytes current MOE/ENABLE/CCRs0,gateslow1,
+nFAULT1 PASS; cached boot diode/latch/timerPASS. Portclosed.
+
+### E427 - fresh-wait15% screen
+
+Exact E7D5E6BE command9,total28s,target150,minhold19000,orderdump.
+Previous powered E425 was several minutes ago (>120sOFF). Prediction:
+intact15% tracking and complete matched tails, no deadline stop. Any failure
+endsbatch; no automatic retry or higher command. All guards unchanged.
+
+E427 result: E7D5E6BE reason2,15%20.278s, outputs-offPASS/UARTclosed.
+Order128matched IDs290149..290276, brackets2ticks, maxpostapplyerror8us.
+Late/thin/tracking/sag0; wholemaxspent13us/COMP28us, not causal comparison.
+Proxy236mA/drift-117mA; no temperature or calibrated-current claim.
+Capturemtime08:00:09UTC conservativeOFF; earliestnext08:02:09UTC.
+
+evidence review, verbatim:
+
+> Raw evidence supports a bounded exploratory run: 20.278s hold, zero forced commutations, late arms, thin events, sag trips, or tracking faults. Coast intervals independently support roughly 2.2keHz rotation, but not individual crossing validity.
+>
+> The tails share ordinals 290149–290276; join those directly. `com_total=acc_total+1` does not justify shifting the join. Paired sectors advance one step. Software entry-to-bridge delay exceeds requested wait; zero late arms does not mean zero deadline error. Two-tick brackets equal 0.25µs, but do not establish physical switching or ADC aperture.
+>
+> No concrete blocker to the proposed single same-image 25% exploratory run is exposed here. Retain ≥120s OFF, 28s maximum, unchanged guards, and no retries/escalation. Challenge: `ma_allow=31857` cannot be treated as a 3A current guard; PSU limiting and current-proxy accuracy remain unverified. Zero witness fields provide no analog corroboration. Neither causal improvement nor loaded qualification follows.
+
+adversarial review, verbatim:
+
+> Raw tail supports orderly software sequencing: 128 ordinal-matched pairs, next-sector progression, and 2-tick (0.25µs) brackets. `com_total=acc_total+1` does not itself establish a missing acceptance; commutation counts and acceptance-keyed identities need not coincide. Firmware semantics must explain that offset.
+>
+> Bridge stamps occur approximately 5–8µs beyond recorded waits despite `late_arms=0`; those measure different timing properties. Narrow brackets establish timestamp precision, not physical switching or valid zero crossings.
+>
+> The 132µs/50µs interval excursion, saturated phase bins, and unavailable analog witness prevent stronger qualification. Coast timing nevertheless supports real rotation near the reported rate.
+>
+> No demonstrated trace-based blocker to one same-image 25% exploratory run under the stated bounds. However, `ma_allow=31857` does not establish protection appropriate to a 3A supply; confirm the existing abort threshold actually bounds this experiment. Preserve ≥120s OFF, no retries/escalation, and diagnostic-only interpretation. This run cannot establish wait-policy causality.
+
+Dispositions: existing nominal signed-average firmware guard remains4A,
+physicalPSU limit3A; ma_allow31857 is not a3A calibration, nor a pulse/thermal
+limit. No threshold adjustment is made. Fast/slowbus/nFAULT/tracking/timing/
+watchdog remain independent; neither PSU nor software current guarantees no
+damage. Bounded28s exposure/noauto-retry/cooldown retained. Reporting no
+current trip is not proof protection at3A; do not claimthat. No supplychange.
+No trace blocker to the one reviewed25% screen; no causalrateclaim.
+
+### E428 - one fresh-wait25% experiment
+
+Exact E7D5E6BE command8,target250,total28s,minhold15000,orderdump.
+Earliest08:02:09UTC verified beforestart. About12V/3A physicalPSU,
+proplessreverse, same guards. Prediction question: does freshwait preserve
+tracking here, or also exhaust/collapse? A failure endsbatch; a pass is
+exploration only, not a ratecomparison/qualification. Retain fulltail and
+unmatchedordinals; finaloff mandatory,>=120sOFF afterward.
+
+E428 result: E7D5E6BE stoppedLateArm28 during ramp, hold0; reported final
+CCR293/1333=21.98%, not25%held. FinaloffPASS/UARTclosed. Guardreason15,
+late1/spent_atlate11/ci_atlate44. No sag/tracking/overrun. Raw capture:
+captures/2026-09-27/e428-propless250-diode-fresh_01.txt.
+127paired rows, terminalacceptedonly371697; leftbridgeonly371569 truncation.
+Last paired371696 interval32/avg51/wait13, postapply24059; terminalentry24084
+interval44/avg44/wait11. One widebracket25ticks=3.125us, flaguncertainty.
+No new envelope. This retires fresh as an unqualified standalone remedy,
+not as proven intrinsically inferior fromn1/unequalexposure.
+
+evidence review, verbatim:
+
+> The raw trace supports an incomplete ramp, not successful target operation: `hold_ms=0`; reported CCR293/1333 is **21.98%**, below the 25% target. This register ratio does not independently measure delivered phase voltage.
+>
+> Ordinal joining yields 127 pairs, one wide bracket (25 ticks = 3.125µs), and maximum entry-to-postapply delay minus wait of 8µs.
+>
+> Terminal chronology:
+> - 371696: entry24040, interval32, average51, wait13; postapply24059—19µs after entry, 6µs beyond wait.
+> - 371697: entry24084, interval44, average44, wait11; no matching commutation. Its entry follows the previous postapply by 25µs.
+>
+> `spent_at_late=11` equals that terminal wait, consistent with exhausted scheduling budget. However, the aggregate late-arm report lacks an ordinal; attribution to 371697 and decoding reason28 require implementation evidence.
+>
+> FreshEstimate’s causal responsibility is unproven. Frozen-input tests establish arithmetic tradeoffs, not hardware survival. E425’s claimed exposure is not independently reviewable here.
+>
+> Repeating both now offers little rate information without matched exposure and sufficient trials. Prioritize bounded offline cost reduction, preserving timing semantics and guards; verify generated-code savings. Keep fresh unqualified, but do not infer intrinsic inferiority or a fix for tracking/edge identity.
+
+adversarial review, verbatim:
+
+> Raw evidence supports an incomplete ramp: `hold_ms=0`, with final applied CCR/period = 293/1333 = **21.98%**, below the 25% target. This establishes the reported final command, not measured effective motor voltage.
+>
+> Ordinal matching gives **127 pairs**, one wide bracket (25 ticks = 3.125µs), and maximum recorded entry-to-postapply excess over wait of 8µs. Last paired acceptance 371696 occurs at 24040µs; postapply is 24059µs: 19µs elapsed against wait13. Terminal acceptance 371697 occurs at 24084µs, interval44/average44/wait11, without a matching commutation. `ci_at_late=44, spent_at_late=11` corroborates exhausted slack, but the aggregate late-arm record lacks an ordinal proving that association. Reason28’s label requires its definition.
+>
+> The author’s bounded conclusion is reasonable: fresh remains unqualified. These observations establish neither valid physical crossings nor timing-policy causality; frozen-input tests cannot predict feedback behavior.
+>
+> **Repeating both is not a prerequisite** for a bounded cost-only optimization. Rate comparison would require matched exposure and repeated trials; these unequal single runs cannot rank policies. First verify the optimization preserves decisions and reduces worst-case pre-arm cost. Hardware qualification remains outstanding.
+
+Dispositions: retain each stated inference limit. Reason28 is foreground
+late-arm report; guardreason15 is the immediate expired-arm stop (existing
+roots::stop_expired_arm/Reason mapping). Terminalordinal association remains
+consistent not directlylatched. No physicalcrossing/voltage/motorlockclaim.
+Do not spend a new rate cohort merely to rank two failing wait policies.
+Next bounded offline work: specialize genuinely fixedadvance16 into the
+existing type-selected timing path, preserving integerrounding, estimator/
+persistence and everyguard. advance-ref currentlysets LOW=HIGH=16 but roots
+stillload atomicadvance and emittedcodeclamps/multiplies it on everyaccept.
+A typedconstant must enforce that binary/controller policy agreement at
+compiletime; no silentlyignoring a liveadvancecontrol. Require exhaustive
+equivalence and actualreleasepre-armassemblysavings beforeflash. This is a
+compute-cost lever, not a claimed fix for falseedges,Tracking,or80%.
+Installed E7D5E6BE remainsOFF afterE428; no further motorcommands.

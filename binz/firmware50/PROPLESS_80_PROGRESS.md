@@ -127,6 +127,14 @@ masked recorder work prevent physical-cause attribution. The diagnostic's
 earlier failure does not establish a 57% lean limit.
 # E421 checkpoint — 2026-09-27
 
+E428 update: fresh-estimate comparison E7D5E6BE passed15%, then LateArm
+stopped its25% ramp at reportedCCR293/1333 (~21.98%), no target dwell.
+The terminal requested11us wait met11us expenditure; paired COMs still
+show no gross preceding service-delay cascade. Both policies remain
+unqualified here; unequal single attempts do not rank their failure rates.
+Next lever is bounded pre-arm cost reduction, not repeated timing-policy
+trials or protection changes. Bench OFF, complete captures/reviews retained.
+
 E425 update: E4AF4BE7 order diagnostic passed15%20.278s, then at25%
 stopped LateArm after1.723s, not the lean Tracking fault. All outputs-off
 checks passed. Its last accepted intervals contracted while paired COM

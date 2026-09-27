@@ -1,0 +1,5 @@
+Raw evidence supports a bounded exploratory run: 20.278s hold, zero forced commutations, late arms, thin events, sag trips, or tracking faults. Coast intervals independently support roughly 2.2keHz rotation, but not individual crossing validity.
+
+The tails share ordinals 290149–290276; join those directly. `com_total=acc_total+1` does not justify shifting the join. Paired sectors advance one step. Software entry-to-bridge delay exceeds requested wait; zero late arms does not mean zero deadline error. Two-tick brackets equal 0.25µs, but do not establish physical switching or ADC aperture.
+
+No concrete blocker to the proposed single same-image 25% exploratory run is exposed here. Retain ≥120s OFF, 28s maximum, unchanged guards, and no retries/escalation. Challenge: `ma_allow=31857` cannot be treated as a 3A current guard; PSU limiting and current-proxy accuracy remain unverified. Zero witness fields provide no analog corroboration. Neither causal improvement nor loaded qualification follows.
