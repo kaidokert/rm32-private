@@ -1,0 +1,5 @@
+mask CFG: 168 reachable instructions; sole cycle is persistence
+span instructions/data rows=257 cost=1090
+11 extra persistence iterations=605; shutdown=235
+reviewed-span over-count=1930 cycles = 30.156 us
+Conditional instruction/fetch model only; NOT guard latency or hardware WCET.

@@ -39,6 +39,27 @@ def check_crossing(text):
         raise ValueError("expired path no longer stops")
 
 
+def check_acceptance_window(text):
+    body = block_after(code(text), "fn det_decide_plain_window<")
+    # This closure starts with a match; extract its lexical match block.
+    inside = block_after(body, "W::run(")
+    required = ["sector_start_raw.store", "accept_raw.store", "accept_avg.store",
+                "accept_blank.store", "publish_accept_sequence()", "arm_marked::<C>(raw, wait)"]
+    at = 0
+    for mark in required:
+        at = inside.index(mark, at) + len(mark)
+        # The pre-offer rebase also writes sector_start_raw, without arming.
+        outside_allowed = 1 if mark == "sector_start_raw.store" else 0
+        if body.count(mark) != inside.count(mark) + outside_allowed:
+            raise ValueError("publication/arm outside window: " + mark)
+    for mark in ["note_margin(", "beat_row::<C>", "late_arms.store", "spent_max.store",
+                 "finish_accept::<C>"]:
+        if mark in inside or mark not in body:
+            raise ValueError("bookkeeping moved into window or lost: " + mark)
+    if body.index("zc.offer_timed") > body.index("arm_marked::<C>"):
+        raise ValueError("arm before qualification")
+
+
 class EntryArmContainment(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -46,6 +67,23 @@ class EntryArmContainment(unittest.TestCase):
 
     def test_actual_source(self):
         check_crossing(self.src)
+
+    def test_acceptance_window_actual_source(self):
+        check_acceptance_window(self.src)
+
+    def test_acceptance_window_rejects_bookkeeping_inside(self):
+        begin = self.src.index("fn det_decide_plain_window<")
+        tail = self.src[begin:].replace("Some((wait, arm_marked::<C>(raw, wait)))",
+            "note_margin(wait, 0); Some((wait, arm_marked::<C>(raw, wait)))", 1)
+        with self.assertRaises(ValueError):
+            check_acceptance_window(self.src[:begin] + tail)
+
+    def test_acceptance_window_rejects_arm_moved_outside(self):
+        begin = self.src.index("fn det_decide_plain_window<")
+        tail = self.src[begin:].replace("arm_marked::<C>(raw, wait)", "None", 1)
+        tail = tail.replace("match accepted_arm {", "arm_marked::<C>(raw, wait); match accepted_arm {", 1)
+        with self.assertRaises(ValueError):
+            check_acceptance_window(self.src[:begin] + tail)
 
     def test_empty_free_with_decision_and_writes_outside_is_rejected(self):
         begin = self.src.index("pub fn com_arm_crossing(")

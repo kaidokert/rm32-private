@@ -41,6 +41,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "diode-atomic-arm"
+path = "bin/diode-atomic-arm.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "diode-fresh"
 path = "bin/diode-fresh.rs"
 test = false

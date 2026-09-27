@@ -1,0 +1,7 @@
+- **Blocking: the supplied gate fails before checking the mask CFG or printing arithmetic.** `mnemonic.startswith("b")` misclassifies `bics` at `0x08009140` and `0x08009166` as branches. Their register operands produce `target=None`, triggering the reported `shutdown cycle/escape`. This is a checker defect, not evidence of a shutdown cycle. The displayed callee’s actual branch, `bne 0x08009120`, stays inside it; its return at `0x08009176` is included.
+
+- **The 12-trip bound remains a separate proof obligation.** The binary loads the snapshot and applies `uxtb`; it does not clamp it to 12. The supplied policy and initialization support the bound, but the excerpts do not establish every writer’s range. The established resume-predicate exclusion addresses interleaving, not this value invariant. Removing the designated back-edge proves acyclicity of the remainder, not a trip limit.
+
+- **1930 cycles is not a successful result of this script.** Its conversion to `30.156 µs` at 64 MHz is arithmetically correct. `charge()` also misclassifies `bics`, adding harmless excess cost; changing branch classification there changes the reported total.
+
+**Next offline action:** fix branch recognition, establish the snapshot writer invariant, then rerun the hash-pinned gate and retain successful CFG and subtotal output. The supplied failure cannot substantiate the claimed total. No hardware authorization.

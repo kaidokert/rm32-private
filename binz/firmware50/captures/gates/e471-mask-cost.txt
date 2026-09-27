@@ -1,0 +1,11 @@
+python : Traceback (most recent call last):
+At line:2 char:1
++ python captures/gates/e471-mask-cost.py 2>&1 | Tee-Object captures/ga ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+  File "E:\m\robot\esc\rm32\binz\firmware50\captures\gates\e471-mask-cost.py", line 38, in <module>
+    assert target in callee_addresses and target > a, "shutdown cycle/escape"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: shutdown cycle/escape

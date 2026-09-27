@@ -1,0 +1,31 @@
+python : test_acceptance_window_actual_source (scripts.test_entry_arm.EntryArmContainment.test_acceptance_window_actual_source) ... ERROR
+At line:2 char:1
++ python -m unittest scripts/test_entry_arm.py -v 2>&1 | Tee-Object cap ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (test_acceptance...urce) ... ERROR:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+test_acceptance_window_rejects_arm_moved_outside (scripts.test_entry_arm.EntryArmContainment.test_acceptance_window_rejects_arm_moved_outside) ... ok
+test_acceptance_window_rejects_bookkeeping_inside (scripts.test_entry_arm.EntryArmContainment.test_acceptance_window_rejects_bookkeeping_inside) ... ok
+test_actual_source (scripts.test_entry_arm.EntryArmContainment.test_actual_source) ... ok
+test_boot_check_cannot_permanently_mask_production_handover (scripts.test_entry_arm.EntryArmContainment.test_boot_check_cannot_permanently_mask_production_handover) ... ok
+test_empty_free_with_decision_and_writes_outside_is_rejected (scripts.test_entry_arm.EntryArmContainment.test_empty_free_with_decision_and_writes_outside_is_rejected) ... ok
+test_full_wrap_is_an_explicit_clock_precondition_not_arithmetic_proof
+(scripts.test_entry_arm.EntryArmContainment.test_full_wrap_is_an_explicit_clock_precondition_not_arithmetic_proof) ... ok
+test_writes_or_validation_only_in_comments_do_not_count (scripts.test_entry_arm.EntryArmContainment.test_writes_or_validation_only_in_comments_do_not_count) ... ok
+
+======================================================================
+ERROR: test_acceptance_window_actual_source (scripts.test_entry_arm.EntryArmContainment.test_acceptance_window_actual_source)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "E:\m\robot\esc\rm32\binz\firmware50\scripts\test_entry_arm.py", line 70, in test_acceptance_window_actual_source
+    check_acceptance_window(self.src)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "E:\m\robot\esc\rm32\binz\firmware50\scripts\test_entry_arm.py", line 52, in check_acceptance_window
+    raise ValueError("publication/arm outside window: " + mark)
+ValueError: publication/arm outside window: sector_start_raw.store
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.006s
+
+FAILED (errors=1)

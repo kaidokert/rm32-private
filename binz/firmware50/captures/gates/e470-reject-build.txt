@@ -1,0 +1,38 @@
+cargo :    Compiling firmware50 v0.1.0 (E:\m\robot\esc\rm32\binz\firmware50)
+At line:2 char:238
++ ... or=ld.lld'; cargo build --release --example e470-reject --features ad ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...inz\firmware50):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+error[E0080]: evaluation panicked: masked acceptance requires lean logs
+    --> C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/panic.rs:62:9
+     |
+  62 |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `firmware50::roots::comp_root_window::<firmware50::capture::Ring,
+firmware50::chain::NoChain, firmware50::bemf::ConstantAdvance<firmware50::bemf::FreshEstimate, 16>, firmware50::roots::recheck::Timed,
+firmware50::roots::acceptance::Masked>::{constant#0}` failed here
+     |
+    ::: src\roots.rs:1526:13
+     |
+1526 |     const { assert!(!W::MASKED || (!L::ON && !C::ON), "masked acceptance requires lean logs"); }
+     |             --------------------------------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+    --> src\roots.rs:1526:5
+     |
+1526 |     const { assert!(!W::MASKED || (!L::ON && !C::ON), "masked acceptance requires lean logs"); }
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn comp_root_window::<Ring, NoChain, ConstantAdvance<..., 16>, ..., ...>`
+  --> examples\e470-reject.rs:25:14
+   |
+25 | ... { roots::comp_root_window::<Ring, NoChain, ConstantAdvance<FreshEstimate, 16>, roots::recheck::Timed, roots::acceptance::Masked>() }
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: the full name for the type has been written to
+'E:\m\robot\esc\rm32\binz\firmware50\target\thumbv6m-none-eabi\release\examples\e470_reject-6b079f5c4dd3b71d.long-type-12857729802534498771.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+For more information about this error, try `rustc --explain E0080`.
+error: could not compile `firmware50` (example "e470-reject") due to 1 previous error

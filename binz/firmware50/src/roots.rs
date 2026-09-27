@@ -23,6 +23,7 @@ use crate::shared::{CompPrio, Guard, Motor, Priority, Root, SHARED as S};
 use crate::sixstep;
 
 pub mod recheck;
+pub mod acceptance;
 
 /// Reverse blank (`bench-reverse-blank`): post-commutation mask length. It
 /// arms while the reference's six-slot average is at least 1500 half-µs
@@ -467,16 +468,18 @@ fn publish_accept_sequence() {
 /// Production's decision. Keep in step with [`det_decide_logged`].
 #[inline(always)]
 pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
+    det_decide_plain_window::<C, T, acceptance::Open>(raw, fine0, at)
+}
+
+#[inline(always)]
+fn det_decide_plain_window<C: ChainLog, T: crate::bemf::WaitEstimate, W: acceptance::Window>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
     let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
     let count = raw.wrapping_sub(start) as u32;
-    // The chain row is filled inside the borrow and pushed after it, because
-    // the root token is borrowed by the estimator's closure (E154).
-    // (crossing µs, crossing fine, arm fine, wait µs, spent fine, sector, late)
+    // Fill the chain row under the estimator borrow; publish it afterward.
     let mut beat: Option<(u16, u16, u16, u32, u16, u8, bool)> = None;
     let mut order_wait = 0;
 
-    // The estimator's borrow returns the accepted crossing's (step, average)
-    // so the watch is fed after it ends: the watch borrow needs the token.
+    // Watch publication needs the token after the estimator borrow ends.
     let accepted = S.det().zc.root(at, |zc| {
         let zc = zc.as_mut()?;
 
@@ -497,23 +500,23 @@ pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fin
         // Persistence reads the **live** comparator, microseconds after the edge --
         // exactly what AM32's handler does, and what the foreground could never do.
         let depth = DepthSnapshot(S.det().filter_depth.load(Ordering::Relaxed) as u8);
-        let expected = hw::comp::ExpectedLevel::new(edge_is_rising(step));
-        match zc.offer_matching_timed::<T, _, _>(count, advance, &depth, || expected.matches()) {
+        let accepted_arm = W::run(|| match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &depth, hw::comp::level) {
             crate::bemf::Outcome::Accepted { wait, .. } => {
-                // Publish this crossing before arming its commutation.
+                // Publication must precede the arm, even with COM preemption.
                 S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
                 S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
-                // The estimate this acceptance hands to the commutation, taken
-                // here and published before the arm (step 6a). COM reads these
-                // instead of borrowing `det.zc`, which is what made the
-                // estimator the one value two motor roots touched.
+                // COM reads this snapshot, never the borrowed estimator.
                 S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
                 S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
                 publish_accept_sequence();
-                // Keep publication before arming. E405 subtracts elapsed after
-                // timer preparation, inside the atomic region. Entry is still
-                // software-stamped, not an independently captured rotor edge.
-                if let Some(spent) = arm_marked::<C>(raw, wait) {
+                Some((wait, arm_marked::<C>(raw, wait)))
+            }
+            _ => None,
+        });
+        // Window::run has restored the incoming mask before all bookkeeping.
+        match accepted_arm {
+            Some((wait, spent)) => {
+                if let Some(spent) = spent {
                     let left = crate::oneshot::crossing_left(wait, spent);
                     note_margin(wait, left);
                     beat = beat_row::<C>(raw, fine0, wait, step.get(), left == 0);
@@ -1511,6 +1514,16 @@ pub unsafe fn comp_root_timed<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstim
 /// Same vector, priority and unique-root contract as `comp_root_timed`.
 #[inline(always)]
 pub unsafe fn comp_root_scheduled<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate, R: recheck::Policy>() {
+    // SAFETY: this wrapper preserves the caller's ADC_COMP-only contract.
+    unsafe { comp_root_window::<L, C, T, R, acceptance::Open>() }
+}
+
+/// COMP root with an explicit acceptance execution window.
+/// # Safety
+/// Call only from ADC_COMP, at CompPrio, exactly once per invocation.
+#[inline(always)]
+pub unsafe fn comp_root_window<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate, R: recheck::Policy, W: acceptance::Window>() {
+    const { assert!(!W::MASKED || (!L::ON && !C::ON), "masked acceptance requires lean logs"); }
     // Mask and ack first, always. This is the storm guard, and it keeps the
     // documented G071 early-return bug class closed (`rm32/CLAUDE.md`): whatever
     // path is taken below, the pending bit is already clear.
@@ -1559,7 +1572,11 @@ pub unsafe fn comp_root_scheduled<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitE
         if C::ON {
             S.det().in_decide.store(true, Ordering::Relaxed);
         }
-        let accepted = det_decide::<L, C, T>(raw, fine0, &mut at);
+        let accepted = if W::MASKED {
+            det_decide_plain_window::<C, T, W>(raw, fine0, &mut at)
+        } else {
+            det_decide::<L, C, T>(raw, fine0, &mut at)
+        };
         if C::ON {
             S.det().in_decide.store(false, Ordering::Relaxed);
         }

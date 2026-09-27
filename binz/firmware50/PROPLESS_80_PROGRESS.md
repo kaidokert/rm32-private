@@ -1,12 +1,23 @@
 # Propless 80% campaign — progress, not qualification
 
-E468/E469 CURRENT: installed63F48607 restored/readbackverified, OFF/UARTclosed.
+E470/E471 CURRENT: installed63F48607 untouched OFF/UARTclosed. Offline candidate
+C2F903A0 uses a typed masked persistence-to-arm window, separate binary, no
+guard/threshold change; Open remains default. NOT FLASHED or motor-qualified.
+408 host tests, release/clippy/four-root arithmetic checks pass. Full assembly
+confirms mask restoration before bookkeeping. Lifecycle review finds no
+reachable pre-mask phase1 sector-change path with the actual phase0/4 resume
+restriction; no extra hot-path snapshot check added. Mask-span conditional
+instruction/fetch over-count1930cycles/30.156us includes expired-arm shutdown,
+NOT hardware WCET or guard-response bound. Bus/pending-service latency and
+drive-disabled integration remain before powered testing. No envelope gain.
+
+E468/E469 historical: installed63F48607 restored/readbackverified, OFF/UARTclosed.
 B4411F24 shorter-loop candidate FAILEDhand-off:6accepts,3msclosed,0targethold,
 Tracking8(age1028>1000us),late0. Onearchived15%control63F48607 thenPASS:
 20.278s target,late0/thin0,COMPmax34us,~2152eHz conditionalholdestimate,
 coast2165. Dualreviews retained; onepair doesNOTprove cadencecausation.
-CandidateUNPROMOTED; no25escalation/retry. Current sourceHEAD7a38c54 still
-containscandidate, NOTinstalledbehavior. Nextoffline timingwork shouldpreserve
+CandidateUNPROMOTED; no25escalation/retry. Source at that entry was7a38c54,
+containingcandidate, NOTinstalledbehavior. Nextoffline timingwork shouldpreserve
 previoussamplingcadence. Noenvelopegain; goal80active.
 
 E467 historical OFFLINE candidate B4411F24 archived. Plain persistence now

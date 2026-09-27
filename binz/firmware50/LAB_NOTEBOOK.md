@@ -48040,3 +48040,258 @@ Predeclaredbounds and reviews above are notebookfacts, omittedpacket not
 missingcampaignwork. Nextofflinecadenceconstraint is experimentaldiscipline,
 not a demonstratedfix. Preservefailedcandidatecapture/archive/sourcecommit;
 no morepoweredtests thisbatch. Goalactive, no envelopegain.
+
+## E470 — 2026-09-27 — preserve filter cadence; isolate acceptance preemption
+
+Offline prediction before edits/builds. E467/468 candidate remains archived
+in7a38c54/B4411F24, notpromoted. Restore its three production source edits and
+experimental test module to pre-E467 form before another candidate; retain
+all captures/reviews. This is retiring our own experiment, not userchanges.
+
+Proposed bounded alternative for independentdesignreview: separate binary and
+typed acceptance-window policy, default remains interruptible. Candidate masks
+only persistence + estimator update + accepted publication + timerprepare/arm;
+restore PRIMASK BEFORE margin/trace/counter/watch/filter-cache bookkeeping.
+Entry stamp and elapsed subtraction remain unchanged (doNOT hidepreparation).
+SameBoolean loop/readcount/filterdepth, samewaitpolicy/priorities/guards.
+No claim preemption causedE466: this changes that possible delay source, and
+must show emitted cadence preserved and bounded guard/DMA blocking before any
+poweredtest. A full-COMP mask is specificallynotproposed. Pending guard runs
+after unmask and muststopalreadyarmedCOM; no stop/arm revival allowed.
+Risk: delaying safety service and pendingCOM; guard200us gapthreshold remains
+unchanged, measured109us baseline is context NOT WCET/slackproof. Build/audit
+and disabledtests required before anymotor; no poweredrun thisofflinebatch.
+
+E470 design reviews (verbatim):
+> Raw evidence: E466 records one late arm (`ci_at_late=45`, `spent_at_late=11`), only 11 ms at target, and guard reason 15. E469 records 20,278 ms at 150 with no late arms. Both identify the same ELF and pass poststop checks. This does not isolate preemption as the cause or establish candidate safety.
+>
+> The proposed window is reasonable for offline investigation, but no candidate implementation or emitted code is supplied, so correctness remains unproven.
+>
+> Required obligations:
+>
+> - Preserve persistence reads, Boolean evaluation, filter depth, estimator updates, publication order, and elapsed subtraction including timer preparation. Identical source logic alone does not establish identical instruction cadence.
+> - Restore the **previous PRIMASK**, including nested critical sections, before margin, trace, counters, watch, and filter-cache work on every return path.
+> - Bound the entire masked path, including worst-case persistence and expired-arm shutdown. Establish guard/DMA latency bounds; 109 µs observed guard gaps do not prove margin against 200 µs.
+> - Audit pending COM dispatch during acceptance publication and immediately after unmask. A pending guard must stop an armed timer; subsequent bookkeeping must neither revive outputs nor overwrite first-fault evidence.
+> - Ensure default wrappers instantiate `Open`, the separate binary selects `Masked`, and unsupported logged combinations fail compilation.
+> - Tie assembly audits and bridge-disabled tests to the exact candidate artifact.
+>
+> Offline work only; these captures justify no envelope increase.
+> Offline-only disposition: reasonable experiment, but correctness remains unproved; no candidate implementation or emitted assembly is supplied.
+>
+> - **Bound the entire masked path.** Include worst-case persistence iterations, estimator/publication, nested timer preparation, and expired-arm shutdown—not merely successful acceptance. Prove guard and DMA blocking bounds against their deadlines; 109 µs observed guard gap supplies no WCET margin.
+> - **Restore the incoming PRIMASK**, not unconditional interrupt enable, on every return/refusal path. Assembly must establish restoration before margin, trace, counters, watch, and filter-cache work. Include compiler movement across the boundary.
+> - **Preserve cadence and semantics.** Same Boolean expression/read count does not prove identical comparator sampling cadence. Compare emitted persistence instructions and spacing, estimator updates, depth selection, wait arithmetic, and entry-relative elapsed accounting. Returning compact statistics can itself change register allocation and spills.
+> - **Exercise pending-event interleavings offline.** Cover guard pending before/during the window, COM expiry during persistence, acceptance replacing a pending observation, and refusal restoring service. Verify stale pending removal cannot discard a required commutation. After shutdown, resumed bookkeeping must neither rearm timers nor reopen the comparator.
+> - **Enforce policy selection structurally.** Default wrappers must instantiate `Open`; unsupported logged/`Masked` combinations must fail compilation in actual builds.
+>
+> E466 demonstrates a late-arm stop after only 11 ms at target; E469 is a different-duty control. Neither establishes preemption causality or validates this candidate.
+
+Dispositions: offline implementation admitted only. Wholemaskpath including
+shutdown must be bounded; no inferredslack from109us. DefaultOpen plus separate
+Maskedbinary, rejectlogged/chainmaskcombinations atcompiletime. Restoreincoming
+mask with cortex_m interrupt::free, not unconditionalenable. E467 production
+source changes restored exactly to e0b9482 (gitdiffempty for thethreefiles);
+its new testmodule removed fromcurrenttree, recoverable in7a38c54. Artifacts
+and notebookretained. No poweredtestauthorized bythese reviews.
+
+E470 offline result: new separatebin diode-atomic-arm chooses Masked Window;
+all previous comp_root_scheduled callers chooseOpen. Masked+logged variant
+actually failedcompile E0080 with specified assertion (temporaryexample source
+retained e470-rejected-fixture.rs.txt, removed from examples afterward so normal
+builds do not contain an intentionallybadexample). Default/loggedbinary builds
+alsoPASS. No feature added; existing com-top/advance-ref/deep-filter closure.
+
+CandidateC2F903A045128B7D760DEF14504C3031B76977BE9678F69872C6E02CC14C48FB
+and rebuiltOpen63C1CA228FBA29F719F4BBB54B97C4663A6A15371F18FC771ABB39D03162BE91
+archived. Bothrelease-s/thinLTO/codegen1/fourrootauditsPASS, threebinaries
+clippyPASS,408hosttestsPASS. Sourcecontainment/mutationtests8PASS after fixing
+test's mistaken assumption sector_start_raw has no pre-offer rebasewrite.
+Initialfailedtest retained. Structure0functions>100, candidatebss4228.
+
+EmittedMaskedCOMP: outerMRS080008ae/CPSID080008b4;12instruction successful
+persistence loop080008d8..080008f0 (EOR vs priorCMP, sameinstructionclass,
+not proof identicalflashfetch/electricalcadence). Nestedarm mask08000958;
+prepare08000976..0800098a, elapsed0800098e includes allpreparation asbefore;
+nestedrestore08000ad6 restores1, outerrestore08000ae4 restoresincomingmask;
+margin/bookkeeping follow at08000af6+. Refusals joinouterrestore. Expiredarm
+callsstop_expired_arm at08000abc whilemasked. Purecode/masksnohardwaretestyet.
+Fullobjdump retained: llvm --disassemble-symbols truncated at literalpool,
+so completeCOMP extractedfromfull-d instead (e470-complete-comp.txt).
+OpenCOMP857 vsinstalled855instructions, masked877; defaultsemanticsunchanged
+doesNOTmean instructionidentity or qualificationtransfer. StaticwholeCOMP
+model3703cycles/57.86us (withfetchmodel) is not measuredWCET or maskedbound;
+oldtoolfooter incorrectlyclaimsno fetchmodel. Guardblocking proof/disabled
+pending-guard and pending-COM tests remainbefore anymotor. Entry preamble/rate
+is stillpreemptible: this candidate doesNOTbound entireentry-to-arm response.
+No sourceclaim preemption causedE466. Installed63F48607 untouchedOFF/UARTclosed.
+
+E470 result reviews (verbatim):
+
+> Raw disassembly supports the intended nesting: outer `CPSID` at `0x080008b4`, persistence inside it, timer enable at `0x08000ad2`, inner restore at `0x08000ad6`, outer restore at `0x08000ae4`; margin bookkeeping follows. The inner restore preserves masking. No demonstrated mask-restoration failure.
+>
+> Two material obligations remain before motor testing:
+>
+> - **Pre-mask snapshot validity:** `start/count/step/depth` are captured before masking. A COM between those reads and `0x080008b4` could leave persistence evaluating the previous sector’s polarity and interval. Show why that interleaving is unreachable, rejected, or harmless; otherwise revalidate the sector/epoch inside the window. Masking persistence through arm alone does not establish this.
+> - **Guard blocking:** a guard becoming pending during persistence cannot execute before timer enable. Establish whether arming while that guard is pending is permissible, and bound the resulting delay through actual shutdown. A pending interrupt is not equivalent to an already-published inhibit flag.
+>
+> The concrete next gate is an offline, path-complete blocking proof from outer masking to restoration, including maximum reachable depth, acceptance/refusal branches, nested arm, and `stop_expired_arm` → `guard_trip`. Include target flash/bus timing and timer-expiry behavior while masked; compare against explicit guard and commutation budgets. Follow with drive-disabled pending-guard/pending-COM tests.
+>
+> Passing tests and ISR audits do not supply these bounds. No flashing or powered test is justified yet.
+
+> Raw disassembly confirms outer masking at `0x080008b4`, timer start at `0x08000ad2`, nested restoration at `0x08000ad6`, and outer restoration at `0x08000ae4`. The nested restore preserves masking; subsequent margin bookkeeping is outside this window.
+>
+> - **Unclosed correctness race:** `sector_start_raw`, `count`, and `step` are captured before masking; the estimator interval is loaded after masking (`0x080008b6`). If TIM16 commutates between those snapshots and `CPSID`, acceptance can combine an old sector/count/polarity with updated state. The shown arm checks test enabled/tripped state, not sector identity. This is a consistency question, independent of any entry-to-arm deadline claim. Prove that COM cannot advance there, or validate a sector generation inside the window before mutating the estimator and publishing acceptance.
+>
+> - **Blocking proof remains incomplete:** bound every path from `0x080008b4` through restoration, including persistence rejection, successful arm, and expired-arm shutdown through `stop_expired_arm → guard_trip`. Establish the maximum reachable depth at window entry; include peripheral access latency, flash fetch costs, and called code. The whole-handler cycle estimate cannot substitute.
+>
+> The next offline gate should inject pending COM immediately before masking and a pending guard across each masked exit. Check sector consistency, shutdown dominance, PRIMASK restoration, and timer state. Compare the proven blocking maximum plus interrupt-service latency against each guard’s actual response budget. Current evidence establishes containment, not that budget.
+
+Dispositions: masking/restoration supported by complete emitted code, not a
+response-time proof. Pre-mask sector snapshot is a reachability question to
+resolve from actual COM phases, line-mask lifecycle and startup, not yet a
+proven race. Guard blocking remains open including expired-arm shutdown and
+pending guard service. Neither review authorizes powered use. E471 will audit
+the lifecycle before adding hot-path validation; independent reviews receive
+raw source first. No hardware access this batch. Previous status-only turn is
+classified no-progress; this turn resumes the available offline investigation.
+
+## E471 — 2026-09-27 — mask-window reachability and conditional cost
+
+Offline only; no flash, serial or motor command. Decision: resolve reviewer
+snapshot objection before adding hot-path work, and isolate the masked span
+rather than substituting whole-handler timing for guard blocking.
+
+e471-evidence review (verbatim):
+> **The snapshot is outside the mask, but the supplied source does not prove that phase‑1 COM can reach that window. Nor does it prove exclusion.** Exact source statements:
+>
+> - In `roots.rs::det_decide_plain_window`, `let step = Step::new_clamped(S.det().step.load(Ordering::Relaxed) as u8);` precedes `let accepted_arm = W::run(|| ...`. Thus `Masked::run` protects persistence through arm, **not the step snapshot**.
+> - In `roots.rs::com_root_scheduled`, phase 1 executes `S.det().step.store(step.get() as u32, Ordering::Relaxed);`. If eligible higher-priority COM dispatches between those statements, persistence uses the old local `step` after COM changes both the sector and comparator mux.
+>
+> Reachability qualifications:
+>
+> - **Priority:** COM must be able to preempt COMP. Actual `Motor`/`CompPrio` definitions and candidate build features are absent. Comments describing `com-top` are not configuration evidence.
+> - **Line masking:** COMP enters with `hw::comp::line_disable();`. Its implementation masks **ADC_COMP**, then EXTI18—not TIM16. This alone cannot exclude phase‑1 COM.
+> - **Phase‑4 park:** COM calls `recheck::defer_for_comp()` before phase dispatch. That delegates to omitted `revisit_delivery::defer(...)`. Its comment promises parking only optional observations; it does not establish phase‑1 exclusion.
+> - **Handover:** A comment says foreground arms while the detector is already live. The handover implementation is absent, so its actual ordering and exclusion cannot be verified.
+> - **Stale pending:** COM calls `hw::com_timer::ack();` then dispatches by software `phase`, without a visible expiry check. Whether stale TIM16 pending can survive or arise depends on omitted timer implementations.
+>
+> **Verdict:** there is a conditional stale-step race; actual candidate reachability remains unknown. The supplied source lacks numeric line labels, so citations above reproduce exact lines rather than inventing numbers.
+
+e471-adversarial review (verbatim):
+> **No concrete stale-snapshot interleaving is established for steady-state operation from the supplied source. Startup remains unproven.** References below identify exact statements because the supplied text has no line numbers.
+>
+> - **Steady state / previous acceptance:** `det_decide_plain_window` reads `start`, computes `count`, and reads `step` before `W::run`. A higher-priority phase-1 COM between that `step` read and the mask would invalidate the snapshot: COM advances the step and changes the mux (`com_root_scheduled`, phase `1`). However, the previous acceptance leaves COMP masked until that commutation. Its subsequent blank phases `2`/`3` do not change the step. Optional phase `4` cannot advance it either. Merely proposing an outstanding previous phase-1 timer plus an enabled COMP line does not establish reachability.
+>
+> - **Startup:** `com_arm`’s commentary explicitly describes foreground handover arming while the detector is live. If handover leaves COMP enabled with an outstanding phase-1 timer, and COM has higher priority, the interleaving above is legal. But handover code and the candidate’s actual priority feature configuration are absent. Therefore this is a concrete **conditional counterexample**, not a demonstrated reachable failure.
+>
+> - **Stale pending:** A pending COMP request alone cannot bypass its NVIC mask (`hw/comp.rs`, `line_disable`). Establishing a counterexample requires showing where that request becomes dispatchable while phase `1` remains outstanding. The supplied startup implementation is insufficient to decide this.
+>
+> - **Stopped context:** Guard preemption can let COMP resume with old inputs, but `guard_trip` clears activity and latches `com_stop`; `com_arm_crossing` checks `arm_allowed` under exclusion and refuses. This does not recreate timer activity.
+>
+> **Guard delay:** Yes. A guard request pending but not yet taken when `acceptance::Masked::run` disables interrupts can remain pending through persistence, publication, and arm. There is no pending-guard check; only already-published stop state prevents arming. Nested arm masking preserves the outer mask.
+
+e471b-evidence review (verbatim):
+> **No phase-1 counterexample follows from these paths, given your stated predicate that comparator resume permits only phases 0/4.** That predicate’s implementation is absent from the packet, so this is a conditional source proof.
+>
+> - **Startup:** `drv_end()` masks and clears COMP before `det_install()` activates detection. Installation does not reopen COMP. `com_handover()` arms phase 1 under PRIMASK while COMP remains masked. Phase-1 COM advances both steps before reopening COMP or scheduling blanking. Because COM outranks COMP, COMP cannot execute until that COM invocation returns.
+> - **Normal entry:** COMP enters through a reopened line in phase 0/4. Entry masks it. A phase-4 COM preemption before masking completes can perform optional observation work, but cannot advance the step. After masking, phase 4 parks. Neither path creates a phase-1 commutation.
+> - **Before the acceptance mask:** There is consequently no outstanding phase-1 event that can change `step` between its load at line 495 and `W::run` at line 503. Acceptance publishes and arms phase 1 inside the masked window. A refusal creates no phase-1 arm.
+>
+> **COM after the arm is reachable and distinct.** Once `W::run` restores PRIMASK, phase-1 COM may preempt the remaining bookkeeping, advance the sector, and reopen or blank COMP. The suspended COMP continues using its old local snapshot for accounting and `finish_accept`; it does not perform another acceptance with that snapshot. COMP cannot preempt itself.
+>
+> This establishes the requested exclusion subject to the resume predicate and supplied paths. It does not resolve pending-guard delay.
+
+e471b-adversarial review (verbatim):
+> **No reachable phase-1 COM change to COMP’s pre-mask sector snapshot is shown**, given your stated `comparator_resume_allowed` restriction to phases 0/4. That predicate’s implementation is absent from the packet, so this part is a premise.
+>
+> The reachability argument is:
+>
+> - **Startup:** `drv_end()` masks and clears COMP before `det_install()` activates the detector. Installation does not reopen the line. `com_handover()` installs the initial phase-1 timer under PRIMASK while COMP remains masked. Its phase-1 service advances the sector before reopening COMP, either immediately or through blanking.
+> - **Normal acceptance:** COMP masks its line at entry. Before this invocation arms phase 1, an optional phase-4 service can preempt, but cannot advance `step`; once it observes the masked line, it parks. Refusal can wake that observation, not create phase-1 commutation.
+> - **Crossing arm:** persistence, acceptance publication, and crossing-arm preparation/start execute inside `Masked::run`. Phase-1 COM cannot intervene there. Acceptance does not itself reopen COMP.
+>
+> **COM can advance the sector after the arm**, when `Masked::run` restores PRIMASK—even before `accepted_arm` bookkeeping begins. It may then reopen COMP while the current COMP handler is still finishing. That handler cannot preempt itself; its saved `step` describes the accepted crossing, not necessarily the now-current sector. This is post-arm overlap, not corruption of the pre-mask snapshot.
+>
+> Thus the proposed pre-mask phase-1 counterexample lacks a reachable timer/line state under these premises. Pending-guard delay remains a separate unresolved question.
+
+e471-cost-evidence review (verbatim):
+> - **The supplied run fails before CFG validation or arithmetic.** `mnemonic.startswith("b")` misclassifies `bics` at `0x08009140` as a branch. Its register operands yield `target=None`, triggering `shutdown cycle/escape`. The same defect affects `0x08009166`. This is a checker defect, not evidence of a shutdown escape.
+>
+> - **Raw callee coverage looks complete:** `0x08009110–0x08009176` contains 52 instructions, one forward `bne`, no calls, and a returning `pop {...,pc}`. It is acyclic, though not literally straight-line.
+>
+> - **The displayed mask CFG appears closed:** refusal paths converge on `0x08000ae4`; the literal pool is bypassed; the persistence back-edge is `0x080008f0 → 0x080008d8`. The nested restore at `0x08000ad6` restores the already-masked state.
+>
+> - **Twelve iterations require the depth invariant.** The loop compares against a loaded byte, without a local twelve-read clamp. Initialization and the displayed refresh support that invariant; `DepthSnapshot(pub u8)` alone does not enforce it. Thirteen listed loop instructions correctly include the refusal branch.
+>
+> - **Arithmetic:** `1930/64 = 30.15625 µs`, but the supplied log establishes no cycle total. `charge()` also adds eight unnecessary cycles across the two `bics` instructions.
+>
+> **Next offline action:** use explicit branch classification, rerun callee/CFG checks, and regenerate component totals. Keep snapshot exclusion conditional on the exact resume predicate. Hardware WCET and pending safety-service latency remain unbounded; no hardware authorization.
+
+e471-cost-adversarial review (verbatim):
+> - **Blocking: the supplied gate fails before checking the mask CFG or printing arithmetic.** `mnemonic.startswith("b")` misclassifies `bics` at `0x08009140` and `0x08009166` as branches. Their register operands produce `target=None`, triggering the reported `shutdown cycle/escape`. This is a checker defect, not evidence of a shutdown cycle. The displayed callee’s actual branch, `bne 0x08009120`, stays inside it; its return at `0x08009176` is included.
+>
+> - **The 12-trip bound remains a separate proof obligation.** The binary loads the snapshot and applies `uxtb`; it does not clamp it to 12. The supplied policy and initialization support the bound, but the excerpts do not establish every writer’s range. The established resume-predicate exclusion addresses interleaving, not this value invariant. Removing the designated back-edge proves acyclicity of the remainder, not a trip limit.
+>
+> - **1930 cycles is not a successful result of this script.** Its conversion to `30.156 µs` at 64 MHz is arithmetically correct. `charge()` also misclassifies `bics`, adding harmless excess cost; changing branch classification there changes the reported total.
+>
+> **Next offline action:** fix branch recognition, establish the snapshot writer invariant, then rerun the hash-pinned gate and retain successful CFG and subtotal output. The supplied failure cannot substantiate the claimed total. No hardware authorization.
+
+Dispositions: first reachability packet omitted handover/timer/priority
+implementation; supplemental packet supplied those paths with line numbers.
+The supplemental review's remaining predicate premise is implemented directly
+in oneshot.rs:79-85 and covered by comparator_resume_respects_owner_blank_and_stop.
+Startup drv_end masks before installation/initial phase1 arm; accepted COMP
+stays masked until COM advances; phases2/3 only unmask, phase4 cannot advance.
+Post-arm COM preemption is real but does not repeat persistence against the
+saved snapshot. No demonstrated pre-mask sector race; no extra ISR check added.
+This conclusion assumes the reviewed entry/line lifecycle, not arbitrary writes
+or register corruption. No change to guard thresholds or production code E471.
+
+Cost analysis is hash-pinned to candidate C2F903A0. CFG reaches168 instructions,
+all exits at outer restore, sole cycle is persistence. Deliberately sums257
+span instruction/data rows, including mutually-exclusive blocks, plus11 extra
+iterations and all52 shutdown-callee instructions. Initial len12 assertion was
+wrong:13 listed rows include the refusal branch; success executes12. Then the
+callee check incorrectly classified bics as a branch; failed log retained in
+e471-mask-cost.txt. Explicit branch classification fixes this and successful
+rerun is e471b-mask-cost.txt:1090+605+235=1930cycles/30.15625us at64MHz.
+Charge still overcounts two bics by8cycles; conservative, not a speed claim.
+Depth writer search finds bootzero plus board seed and finish_accept stores,
+both use DET_FILTER (mapped result bounded12, deep floor5, shallow2). Existing
+cache-history/range tests were among408 passing tests. No claim u8 alone is12.
+
+The figure is a conditional instruction/fetch model, NOT hardware WCET or total
+pending-safety response. Peripheral/bus arbitration, exception response and
+actual guard service still require coverage. Candidate remains UNFLASHED.
+E470 result gate is not cleared for power. Final correction reviews follow.
+
+E471 final correction reviews (verbatim):
+
+> The supplied corrections are consistent.
+>
+> - Explicit branch recognition excludes `bics` from CFG edges. Charging still uses `startswith("b")`, retaining the stated eight-cycle overcharge.
+> - The attached rerun reports 168 reachable instructions and 1,930 modeled cycles (30.156 µs), including redundant blocks, eleven additional loop copies, and shutdown.
+> - The writer search shows initialization plus two policy-derived stores. Installation seeds before activation; both acceptance paths call the refresh helper. The supplied policy remains bounded at twelve reads.
+>
+> Evidence limits: the output is an attached result, not an independently reproduced calculation. Without raw disassembly, I cannot independently confirm span closure, shutdown completeness, or the twelve-iteration execution bound. The source-string tests check structural placement, not runtime ordering.
+>
+> These corrections support the conditional instruction/fetch over-count only; they establish neither hardware WCET nor power authorization.
+
+> The supplied totals reconcile: 1090 + 605 + 235 = 1930 cycles, or 30.15625 µs at 64 MHz.
+>
+> Explicit branch recognition fixes the `bics` CFG misclassification. Its remaining charge inflation is conservative. The topological check supports acyclicity after removing the designated persistence edge; the twelve-iteration bound remains a separate premise.
+>
+> The shown cache stores use bounded `DET_FILTER`, with initialization before activation and refresh in `finish_accept`. History tests support cached/direct equivalence. However, source-string assertions establish placement and occurrence counts, not that every accepted control-flow path reaches the refresh.
+>
+> No blocking defect is demonstrated in these narrow corrections. The pinned ELF’s complete control flow and shutdown body are reported prior evidence, not independently verified here. The result remains a conditional instruction/fetch over-count, not hardware WCET or power authorization.
+
+Dispositions: corrections accepted at their narrow scope. Complete assembly
+was inspected by the preceding cost reviewers; final delta reviewers did not
+independently repeat that audit. No claim independent numerical recomputation
+of all CFG costs. No motor authorization or stronger bound follows. Next useful
+gate is drive-disabled pending-guard/COM testing with window timing on a separate
+probe, together with an explicit safety-response budget, not another low-duty
+motor repeat or another paper race hypothesis. This batch changes the next
+action by closing the snapshot objection and isolating the actual mask span.
+Goal80 remains active/incomplete; no new duty qualification.
