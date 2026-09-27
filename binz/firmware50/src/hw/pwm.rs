@@ -109,6 +109,73 @@ pub fn set_period(period: u32) {
     t.egr().write(|w| w.ug().set_bit());
 }
 
+/// Foreground transaction only, while IRQs are masked. RM0444 TIM1 UDIS
+/// inhibits shadow transfers, not counting. No UG: the next native overflow
+/// loads ARR and the active PWM source's preloaded CCR together. Non-source
+/// channels may take a smaller compare immediately, which only under-drives
+/// against the old longer period if COM changes the source before that update.
+pub fn stage_faster(period: u32, compare: u32) -> bool {
+    let t = regs();
+    let cr = t.cr1().read();
+    let old_period = u32::from(t.arr().read().arr().bits()) + 1;
+    if period == 0
+        || period >= old_period
+        || compare >= period
+        || !cr.cen().bit_is_set()
+        || !cr.arpe().bit_is_set()
+        || cr.udis().bit_is_set()
+    {
+        return false;
+    }
+    t.cr1().modify(|_, w| w.udis().set_bit());
+    set_phase_compares([compare; 3]);
+    t.arr().write(|w| w.arr().set((period - 1) as u16));
+    // Caller must finish plan publication before releasing shadow transfers.
+    true
+}
+
+/// Complete stage_faster after plan publication, still inside the same mask.
+pub fn finish_staged_carrier() {
+    regs().cr1().modify(|_, w| w.udis().clear_bit());
+}
+
+/// Diagnostic boot check with MOE already clear and all compares zero. Observe
+/// two native wraps at the staged period, then restore the startup carrier.
+/// Both elapsed time and iteration count bound the poll, including a bad clock.
+pub fn carrier_selftest_off() -> bool {
+    if moe_is_set() || compares() != (0, 0, 0) {
+        return false;
+    }
+    set_period(crate::duty::RUN_PERIOD_TICKS);
+    if !stage_faster(1000, 0) {
+        set_period(crate::duty::STARTUP_TICKS);
+        return false;
+    }
+    finish_staged_carrier();
+    let start = super::clock::raw();
+    let mut previous = counter();
+    let mut first = None;
+    let mut measured = None;
+    for _ in 0..2048 {
+        let count = counter();
+        let now = super::clock::raw();
+        if count < previous {
+            if let Some(first) = first {
+                measured = Some(now.wrapping_sub(first));
+                break;
+            }
+            first = Some(now);
+        }
+        previous = count;
+        if now.wrapping_sub(start) > 80 {
+            break;
+        }
+    }
+    let clean = !moe_is_set() && compares() == (0, 0, 0) && !regs().cr1().read().udis().bit_is_set();
+    set_period(crate::duty::STARTUP_TICKS);
+    clean && measured.is_some_and(|us| (14..=17).contains(&us))
+}
+
 /// Write one channel's compare (1..=3; anything else is ignored).
 #[inline(always)]
 pub fn set_channel_compare(ch: u8, v: u16) {

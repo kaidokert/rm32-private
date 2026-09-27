@@ -1,0 +1,13 @@
+E391 failed **before 50%**: `hold_ms=0`, terminal SAGROW duty `400`, `applied_ccr=533/1333`, Tracking `reason=8`, `track_max_us=240`. Final ORDERA interval jumps `76→281µs`; coast reports ~2016eHz, so terminal estimator `1302eHz` does not establish rotor slowdown. Final SAGROW bus `1227`, `tripped=0` gives no terminal sampled sag, not proof against unsampled disturbances. E382 completed with only **19.778s target hold**, not 45s.
+
+Suppression is associated with failure, but neither its unique cause nor the necessity of every revisit is proved. `policy.rs:284–286` suppresses foreground requests; the instantiated threshold and binary-to-source correspondence are unseen. `states.rs:974,982–985` checks revisits before publishing duty, allowing transition-boundary requests. Pending IRQs, missed/cleared physical edges, persistence rejection, stale sector state, and scheduling changes remain alternatives. Revisit “accepts” merely follow an inflight flag (`1015–1022`), not demonstrated software origin; coalescing differs `63` versus `57045`, and baseline histograms saturate. Zero margin histograms are uninstrumented (`hal.rs:318–320`), not evidence of margin. Recorder cost and changed code layout remain confounders.
+
+The proposed running-only 64k experiment avoids E387’s observed early regime: it **entered**, then storm-stopped after `closed_ms=172`, at duty `100`, `storm_step=3`. That neither predicts running success nor uniquely implicates carrier physics.
+
+Before powering, prove:
+
+- ARR, active/preloaded CCRs and all sector plans switch consistently at a defined timer boundary. `pwm.rs:97–109` combines sequential CCR writes, immediate CCER and forced UG; interrupt masking alone cannot prevent hardware updates. `roots.rs:1105–1112` publishes only plans.
+- Stop wins every interleaving; no resumed writer restores drive. One-shot protection (`roots.rs:1066–1084`) does not prove PWM transaction safety.
+- Threshold/foldback/restart behavior, duty scaling, dead time, ADC timing, bounded interrupt latency and unchanged guard effectiveness. Review unseen Board, plan-lock, detector and guard implementations; require interleaving tests and disabled readbacks.
+
+Simpler: matched baseline-revisit **40% control**, with identical recording and ramp, before adding carrier switching. If clean, minimally record physical/software pending origins and rejection reasons. Finite runs, ≥120s OFF and fault-ending are sensible limits; one 50% success cannot qualify 60% or establish uniqueness.

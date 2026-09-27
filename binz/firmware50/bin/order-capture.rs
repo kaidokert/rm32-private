@@ -31,12 +31,13 @@ fn ADC_COMP() {
 type Diagnostic = Controller<
     policy::Wiring,
     policy::BemfPolicy,
-    policy::ScheduledAdvance<16, 18>,
+    policy::AdvancePolicy,
     policy::CurrentProtection,
     policy::BusSagProtection,
     policy::Restart,
     policy::Telemetry,
     OrderSag,
+    policy::FasterAbove<350, 1000>,
 >;
 
 #[entry]
@@ -48,9 +49,10 @@ fn main() -> ! {
     };
     firmware50::hw::fine::init();
     safe_off(&mut Drv8304);
+    let carrier_ok = firmware50::hw::pwm::carrier_selftest_off();
     board::banner(&mut board, adc_ok);
-    if !adc_ok {
-        board.say("FATAL adc_init_failed -- refusing to drive\r\n");
+    if !adc_ok || !carrier_ok {
+        board.say("FATAL adc_or_carrier_check_failed -- refusing to drive\r\n");
         loop {
             board.now();
             board.drain();
@@ -69,6 +71,9 @@ fn main() -> ! {
                 SagRing::arm_next_run();
             }
             p.command(&mut board, b);
+            if b == b'p' {
+                board.say("CARRIERSELFTEST boot_off=1 native64k=PASS startup_restore_requested=1\r\n");
+            }
             if record {
                 OrderRing::disarm();
                 SagRing::disarm();

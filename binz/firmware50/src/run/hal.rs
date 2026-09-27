@@ -360,6 +360,9 @@ pub trait Hal {
     /// Rebuild the COM root's plan table at `duty` (ceiling `cap`) and swap
     /// it in whole.
     fn publish_plans(&mut self, duty: u16, period: u32, cap: u16);
+    /// Atomically stage a shorter period and its equal-CCR plans, without UG
+    /// or re-enabling outputs. False on a stopped/inconsistent owner.
+    fn retime_plans<S: Drives>(&mut self, gates: &mut Gates<S>, duty: u16, period: u32, cap: u16) -> bool;
     /// The advance COMP schedules with.
     fn set_advance(&mut self, advance: u32);
     /// Take the estimator back from COMP (first, before the stop is stamped).

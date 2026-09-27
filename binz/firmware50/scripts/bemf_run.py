@@ -767,7 +767,7 @@ def main() -> int:
         #
         # `x` has no floor: it wraps 250 -> 375 -> 475 -> 500 -> 600 -> 250, so
         # no prefix normalises it and `--flash` stays mandatory there.
-        CLIMB_RESET_PRESSES = 11  # (600 - 375)/25 + 2, as ladder_drive computes
+        CLIMB_RESET_PRESSES = 19  # (800 - 375)/25 + 2; valid for older lower caps too
         climb = set(args.pre) & set("+-")
         leading_minus = len(args.pre) - len(args.pre.lstrip("-"))
         self_resetting = leading_minus >= CLIMB_RESET_PRESSES

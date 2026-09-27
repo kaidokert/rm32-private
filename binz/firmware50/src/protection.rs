@@ -95,6 +95,8 @@ pub enum Reason {
     /// **An unrecognised guard code.** The decode's fallback, so that an
     /// unknown stop can never be read as the success code (E186 SS6).
     UnknownGuard = 28,
+    /// Running carrier transaction refused; no partial publication is allowed.
+    CarrierTransition = 29,
 }
 
 impl Reason {

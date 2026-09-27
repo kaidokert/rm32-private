@@ -387,6 +387,8 @@ pub struct CurrentRecord {
     /// The compare value actually programmed for the commanded duty, TIM1
     /// ticks -- the arithmetic downstream of both clamps.
     pub applied_ccr: u32,
+    /// The period paired with applied_ccr, not merely the target carrier.
+    pub applied_period: u32,
     /// Scans below each [`crate::protection::DEPTH_FRACTIONS`] fraction.
     ///
     /// **Observation, not a threshold**: no stop is attached. E218 tried to
@@ -837,6 +839,7 @@ impl RunReport {
         out.kv("drive_scans", c.drive_scans);
         out.kv("applied_cap", u32::from(c.applied_cap));
         out.kv("applied_ccr", c.applied_ccr);
+        out.kv("applied_period", c.applied_period);
         // **The threshold travels with the counts.** These keys were once
         // named after the fractions (`dep970_n` and friends), and when E244
         // moved the fractions to 995/990/985/980 the names kept saying

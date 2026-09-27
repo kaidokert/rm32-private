@@ -26,10 +26,10 @@ use super::Policies;
 use super::hal::{self, Gates, Hal, Inject};
 use super::measure::Baseline;
 use super::policy::{
-    Advance, Bemf, CATCH_DUTY_TENTHS, CATCH_EHZ, CurrentLimit, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG, DRIVEN_RATE,
-    HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, INJECT_SAG_RELATIVE_FROM, INJECT_SAG_STEP_TENTHS, REVISIT_RESCUE_MAX,
-    SIXSTEP_DUTY_CAP, SagLimit, TAIL_WINDOW_US, WITNESS_HYST_CODES, WITNESS_MID_SAMPLES, in_off_window,
-    sector_interval_us, sixstep_ccr_of,
+    Advance, Bemf, CATCH_DUTY_TENTHS, CATCH_EHZ, Carrier, CurrentLimit, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG,
+    DRIVEN_RATE, HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, INJECT_SAG_RELATIVE_FROM, INJECT_SAG_STEP_TENTHS,
+    REVISIT_RESCUE_MAX, SIXSTEP_DUTY_CAP, SagLimit, TAIL_WINDOW_US, WITNESS_HYST_CODES, WITNESS_MID_SAMPLES,
+    in_off_window, sector_interval_us, sixstep_ccr_of,
 };
 
 /// How long a run may last: from its own entry, or to an absolute instant a
@@ -134,6 +134,8 @@ pub(crate) struct Ctx {
     pub applied_duty: u16,
     pub closed_at: Option<u32>,
     pub hold_start: Option<u32>,
+    target_plan_com: Option<u32>,
+    target_seen_at: Option<u32>,
     pub hold_current: Option<CurrentMark>,
     pub last_ci: u32,
     pub stats: Stats,
@@ -164,6 +166,8 @@ impl Ctx {
             applied_duty: HANDOFF_DUTY_TENTHS,
             closed_at: None,
             hold_start: None,
+            target_plan_com: None,
+            target_seen_at: None,
             hold_current: None,
             last_ci: sector_interval_us(CATCH_EHZ),
             stats: Stats {
@@ -909,6 +913,9 @@ impl Handover {
                 ctx.applied_duty = bemf_duty;
             }
             hal.com_handover(bemf_duty, ctx.period, ctx.step, commit_us);
+            if bemf_duty >= ctx.req.target_tenths {
+                ctx.target_plan_com = Some(hal.com_count());
+            }
         }
         Locked {
             ctx,
@@ -930,7 +937,7 @@ impl Locked {
 
     /// One pass of the closed loop, in place; `Some` is why it must stop.
     pub fn poll<P: Policies>(&mut self, hal: &mut impl Hal) -> Option<Reason> {
-        let now = match self.ctx.pass::<P>(hal, true, Some(self.sector_start)) {
+        let mut now = match self.ctx.pass::<P>(hal, true, Some(self.sector_start)) {
             Ok(t) => t,
             Err(r) => return Some(r),
         };
@@ -939,8 +946,26 @@ impl Locked {
             c.req.target_tenths,
             c.closed_at.map_or(0, |t| now.wrapping_sub(t)),
         ));
-        // The first instant the *applied* duty reaches target is the hold.
-        if c.hold_start.is_none() && duty >= c.req.target_tenths {
+        // A table publication is not a bridge update. Observe a subsequent COM,
+        // then wait a full maximum running-carrier period for its CCR preload.
+        if duty < c.req.target_tenths {
+            c.target_plan_com = None;
+            c.target_seen_at = None;
+        }
+        if c.target_plan_com.is_some_and(|count| hal.com_count() != count) && c.target_seen_at.is_none() {
+            // Timestamp AFTER observing COM; an IRQ between pass() and the
+            // count load must not backdate activation. Use this same fresh
+            // stamp below, avoiding wrapping subtraction from the older now.
+            now = hal.now();
+            c.target_seen_at = Some(now);
+        }
+        const PWM_SETTLE_US: u32 = crate::duty::RUN_PERIOD_TICKS.div_ceil(64) + 1;
+        if c.hold_start.is_none()
+            && duty >= c.req.target_tenths
+            && c.applied_duty >= c.req.target_tenths
+            && !c.hold_plans
+            && c.target_seen_at.is_some_and(|at| now.wrapping_sub(at) >= PWM_SETTLE_US)
+        {
             c.hold_start = Some(now);
             c.hold_current = Some(c.current.mark());
             // The worst-block window starts at the same instant as the mean's
@@ -971,7 +996,7 @@ impl Locked {
         if let Some(raw) = hal.det_poll() {
             self.consume(hal, raw);
         }
-        self.revisit(hal);
+        self.revisit::<P>(hal);
         let cc = hal.com_count();
         if cc != self.last_com_count {
             self.last_com_count = cc;
@@ -979,10 +1004,22 @@ impl Locked {
             self.revisit_inflight = false;
         }
         let c = &mut self.ctx;
+        let period = P::H::period(duty, c.period);
         if duty != c.applied_duty && !c.hold_plans {
-            hal.publish_plans(duty, c.period, SIXSTEP_DUTY_CAP);
+            if period != c.period {
+                if !hal.retime_plans(&mut self.gates, duty, period, SIXSTEP_DUTY_CAP) {
+                    return Some(Reason::CarrierTransition);
+                }
+                c.period = period;
+            } else {
+                hal.publish_plans(duty, c.period, SIXSTEP_DUTY_CAP);
+            }
             c.applied_duty = duty;
             hal.set_advance(P::A::level(duty));
+            if duty >= c.req.target_tenths && c.hold_start.is_none() {
+                c.target_plan_com = Some(hal.com_count());
+                c.target_seen_at = None;
+            }
         }
         None
     }
@@ -1049,7 +1086,10 @@ impl Locked {
     /// that most needs another look, the one whose crossing was swallowed,
     /// never gets one. Each rescue needs another half-interval of overdue, so
     /// the count is bounded and the poll cannot hammer.
-    fn revisit(&mut self, hal: &mut impl Hal) {
+    fn revisit<P: Policies>(&mut self, hal: &mut impl Hal) {
+        if !P::B::allow_revisit(self.ctx.applied_duty) {
+            return;
+        }
         let step = self.ctx.step;
         let fresh = self.revisit_step != step.get();
         let overdue = !fresh && self.rescue_due(hal);
@@ -1153,6 +1193,121 @@ mod accepted_tests {
         sim::{Crossings, Faults, Sim},
     };
     use core::num::NonZeroU32;
+
+    #[test]
+    fn target_hold_requires_published_plan_following_com_and_preload_time() {
+        let mut sim = Sim::new(
+            Crossings {
+                interval_us: 100,
+                until_us: None,
+            },
+            Faults::default(),
+        );
+        sim.t = 3_000_000;
+        let mut ctx = Ctx::new::<Production>(
+            Request {
+                target_tenths: 150,
+                inject: None,
+                window: Window::ForUs(5_000_000),
+            },
+            0,
+            Baseline {
+                zero_block: 614_400,
+                bus_ref: crate::protection::BusReference { bus: 1214, vref: 1506 },
+                bus_floor_code: 840,
+            },
+        );
+        ctx.closed_at = Some(0);
+        ctx.applied_duty = 149;
+        let mut locked = Locked {
+            ctx,
+            gates: Gates::idle().pass(),
+            sector_start: sim.t,
+            revisit_step: 0,
+            revisit_inflight: false,
+            rescues: 0,
+            last_com_count: 0,
+        };
+        assert_eq!(locked.poll::<Production>(&mut sim), None);
+        assert_eq!(locked.ctx.applied_duty, 150);
+        for _ in 0..8 {
+            locked.poll::<Production>(&mut sim);
+        }
+        assert_eq!(locked.ctx.hold_start, None, "publication alone is not target dwell");
+        // Sim's COM count remains zero here. Change the stored pre-COM snapshot
+        // to exercise the same unequal-count observation as a real next COM.
+        locked.ctx.target_plan_com = Some(u32::MAX);
+        let before_observation = sim.t;
+        locked.poll::<Production>(&mut sim);
+        assert!(locked.ctx.target_seen_at.unwrap() >= before_observation + 2 * sim.quantum_us);
+        assert_eq!(locked.ctx.hold_start, None, "CCR shadow needs native transfer time");
+        locked.ctx.hold_plans = true;
+        for _ in 0..8 {
+            locked.poll::<Production>(&mut sim);
+        }
+        assert_eq!(locked.ctx.hold_start, None, "suppressed plans cannot establish hold");
+        locked.ctx.hold_plans = false;
+        locked.poll::<Production>(&mut sim);
+        assert!(locked.ctx.hold_start.is_some());
+    }
+
+    #[test]
+    fn typed_veto_covers_fresh_and_overdue_at_applied_duty_boundary() {
+        type Probe = crate::run::Controller<
+            super::super::policy::Wiring,
+            super::super::policy::PhysicalEdgesAbove<super::super::policy::BemfPolicy, 350>,
+            super::super::policy::AdvancePolicy,
+            super::super::policy::CurrentProtection,
+            super::super::policy::BusSagProtection,
+            super::super::policy::Restart,
+            super::super::policy::Telemetry,
+        >;
+        for duty in [349, 350] {
+            for fresh in [true, false] {
+                let mut sim = Sim::new(
+                    Crossings {
+                        interval_us: 100,
+                        until_us: None,
+                    },
+                    Faults::default(),
+                );
+                let mut ctx = Ctx::new::<Probe>(
+                    Request {
+                        target_tenths: 500,
+                        inject: None,
+                        window: Window::ForUs(10_000),
+                    },
+                    0,
+                    Baseline {
+                        zero_block: 614_400,
+                        bus_ref: crate::protection::BusReference { bus: 1214, vref: 1506 },
+                        bus_floor_code: 840,
+                    },
+                );
+                ctx.applied_duty = duty;
+                ctx.last_ci = 100;
+                let same_step = ctx.step.get();
+                let mut locked = Locked {
+                    ctx,
+                    gates: Gates::idle().pass(),
+                    sector_start: 0,
+                    revisit_step: if fresh { 0 } else { same_step },
+                    revisit_inflight: false,
+                    rescues: 0,
+                    last_com_count: 0,
+                };
+                assert!(sim.com_idle());
+                if !fresh {
+                    assert!(locked.rescue_due(&mut sim));
+                }
+                locked.revisit::<Probe>(&mut sim);
+                assert_eq!(sim.revisit_polls, u32::from(duty < 350));
+                // Default production retains exactly the same retry admission.
+                locked.revisit::<Production>(&mut sim);
+                assert_eq!(sim.revisit_polls, u32::from(duty < 350) + 1);
+            }
+        }
+    }
 
     #[test]
     fn coalesced_delivery_reaches_actual_report_and_tail_without_inventing_stamps() {

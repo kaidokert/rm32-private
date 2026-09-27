@@ -1,0 +1,4 @@
+DMA1_CHANNEL1: identical, 37 instructions
+ADC_COMP: identical, 742 instructions
+TIM16: identical, 332 instructions  [INSTRUCTIONS identical, ENCODED BYTES DIFFER: a constant moved]
+TIM6_DAC_LPTIM1: identical, 155 instructions

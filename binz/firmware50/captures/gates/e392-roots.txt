@@ -1,0 +1,11 @@
+ISR-root audit: captures/elf/6076D484.e392-staged64.elf
+
+  [ADC_COMP] reachable=1  OK
+
+  [TIM16] reachable=2  OK
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT PASSED: 4 root(s) certified clean.

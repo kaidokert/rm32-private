@@ -1,0 +1,665 @@
+
+> 08000ad0 <firmware50::hw::pwm::stage_faster>:
+   8000ad0:	b5f0      	push	{r4, r5, r6, r7, lr}
+   8000ad2:	af03      	add	r7, sp, #12
+   8000ad4:	b083      	sub	sp, #12
+   8000ad6:	4602      	mov	r2, r0
+   8000ad8:	4817      	ldr	r0, [pc, #92]	@ (8000b38 <firmware50::hw::pwm::stage_faster+0x68>)
+   8000ada:	6800      	ldr	r0, [r0, #0]
+   8000adc:	2583      	movs	r5, #131	@ 0x83
+   8000ade:	4005      	ands	r5, r0
+   8000ae0:	3d81      	subs	r5, #129	@ 0x81
+   8000ae2:	426c      	negs	r4, r5
+   8000ae4:	416c      	adcs	r4, r5
+   8000ae6:	2501      	movs	r5, #1
+   8000ae8:	2600      	movs	r6, #0
+   8000aea:	4291      	cmp	r1, r2
+   8000aec:	4628      	mov	r0, r5
+   8000aee:	d300      	bcc.n	8000af2 <firmware50::hw::pwm::stage_faster+0x22>
+   8000af0:	4630      	mov	r0, r6
+   8000af2:	1e52      	subs	r2, r2, #1
+   8000af4:	4b10      	ldr	r3, [pc, #64]	@ (8000b38 <firmware50::hw::pwm::stage_faster+0x68>)
+   8000af6:	6adb      	ldr	r3, [r3, #44]	@ 0x2c
+   8000af8:	b29b      	uxth	r3, r3
+   8000afa:	429a      	cmp	r2, r3
+   8000afc:	d300      	bcc.n	8000b00 <firmware50::hw::pwm::stage_faster+0x30>
+   8000afe:	4635      	mov	r5, r6
+   8000b00:	4028      	ands	r0, r5
+   8000b02:	4020      	ands	r0, r4
+   8000b04:	2801      	cmp	r0, #1
+   8000b06:	d114      	bne.n	8000b32 <firmware50::hw::pwm::stage_faster+0x62>
+   8000b08:	4d0b      	ldr	r5, [pc, #44]	@ (8000b38 <firmware50::hw::pwm::stage_faster+0x68>)
+   8000b0a:	682b      	ldr	r3, [r5, #0]
+   8000b0c:	2402      	movs	r4, #2
+   8000b0e:	431c      	orrs	r4, r3
+   8000b10:	602c      	str	r4, [r5, #0]
+   8000b12:	2400      	movs	r4, #0
+   8000b14:	466b      	mov	r3, sp
+   8000b16:	5119      	str	r1, [r3, r4]
+   8000b18:	1d24      	adds	r4, r4, #4
+   8000b1a:	2c0c      	cmp	r4, #12
+   8000b1c:	d1fa      	bne.n	8000b14 <firmware50::hw::pwm::stage_faster+0x44>
+   8000b1e:	4669      	mov	r1, sp
+   8000b20:	880b      	ldrh	r3, [r1, #0]
+   8000b22:	4c05      	ldr	r4, [pc, #20]	@ (8000b38 <firmware50::hw::pwm::stage_faster+0x68>)
+   8000b24:	63e3      	str	r3, [r4, #60]	@ 0x3c
+   8000b26:	888b      	ldrh	r3, [r1, #4]
+   8000b28:	63a3      	str	r3, [r4, #56]	@ 0x38
+   8000b2a:	8909      	ldrh	r1, [r1, #8]
+   8000b2c:	6361      	str	r1, [r4, #52]	@ 0x34
+   8000b2e:	b291      	uxth	r1, r2
+   8000b30:	62e1      	str	r1, [r4, #44]	@ 0x2c
+   8000b32:	b003      	add	sp, #12
+   8000b34:	bdf0      	pop	{r4, r5, r6, r7, pc}
+   8000b36:	46c0      	nop			@ (mov r8, r8)
+   8000b38:	40012c00 	.word	0x40012c00
+
+  08000b3c <firmware50::hw::pwm::carrier_selftest_off>:
+   8000b3c:	b5f0      	push	{r4, r5, r6, r7, lr}
+   8000b3e:	af03      	add	r7, sp, #12
+   8000b40:	b087      	sub	sp, #28
+   8000b42:	4d3c      	ldr	r5, [pc, #240]	@ (8000c34 <firmware50::hw::pwm::carrier_selftest_off+0xf8>)
+   8000b44:	6c68      	ldr	r0, [r5, #68]	@ 0x44
+   8000b46:	2400      	movs	r4, #0
+   8000b48:	0400      	lsls	r0, r0, #16
+   8000b4a:	d470      	bmi.n	8000c2e <firmware50::hw::pwm::carrier_selftest_off+0xf2>
+   8000b4c:	6b68      	ldr	r0, [r5, #52]	@ 0x34
+   8000b4e:	6ba9      	ldr	r1, [r5, #56]	@ 0x38
+   8000b50:	4301      	orrs	r1, r0
+   8000b52:	6be8      	ldr	r0, [r5, #60]	@ 0x3c
+   8000b54:	4308      	orrs	r0, r1
+   8000b56:	0400      	lsls	r0, r0, #16
+   8000b58:	d169      	bne.n	8000c2e <firmware50::hw::pwm::carrier_selftest_off+0xf2>
+   8000b5a:	4837      	ldr	r0, [pc, #220]	@ (8000c38 <firmware50::hw::pwm::carrier_selftest_off+0xfc>)
+   8000b5c:	62e8      	str	r0, [r5, #44]	@ 0x2c
+   8000b5e:	2601      	movs	r6, #1
+   8000b60:	616e      	str	r6, [r5, #20]
+   8000b62:	207d      	movs	r0, #125	@ 0x7d
+   8000b64:	00c0      	lsls	r0, r0, #3
+   8000b66:	2400      	movs	r4, #0
+   8000b68:	4621      	mov	r1, r4
+   8000b6a:	f7ff ffb1 	bl	8000ad0 <firmware50::hw::pwm::stage_faster>
+   8000b6e:	4933      	ldr	r1, [pc, #204]	@ (8000c3c <firmware50::hw::pwm::carrier_selftest_off+0x100>)
+   8000b70:	2800      	cmp	r0, #0
+   8000b72:	d02f      	beq.n	8000bd4 <firmware50::hw::pwm::carrier_selftest_off+0x98>
+   8000b74:	2001      	movs	r0, #1
+   8000b76:	9005      	str	r0, [sp, #20]
+   8000b78:	03c0      	lsls	r0, r0, #15
+   8000b7a:	9003      	str	r0, [sp, #12]
+   8000b7c:	6828      	ldr	r0, [r5, #0]
+   8000b7e:	2102      	movs	r1, #2
+   8000b80:	9101      	str	r1, [sp, #4]
+   8000b82:	4388      	bics	r0, r1
+   8000b84:	6028      	str	r0, [r5, #0]
+   8000b86:	482e      	ldr	r0, [pc, #184]	@ (8000c40 <firmware50::hw::pwm::carrier_selftest_off+0x104>)
+   8000b88:	6800      	ldr	r0, [r0, #0]
+   8000b8a:	9004      	str	r0, [sp, #16]
+   8000b8c:	6a68      	ldr	r0, [r5, #36]	@ 0x24
+   8000b8e:	b284      	uxth	r4, r0
+   8000b90:	2200      	movs	r2, #0
+   8000b92:	4b2c      	ldr	r3, [pc, #176]	@ (8000c44 <firmware50::hw::pwm::carrier_selftest_off+0x108>)
+   8000b94:	9202      	str	r2, [sp, #8]
+   8000b96:	9606      	str	r6, [sp, #24]
+   8000b98:	1e5b      	subs	r3, r3, #1
+   8000b9a:	d01e      	beq.n	8000bda <firmware50::hw::pwm::carrier_selftest_off+0x9e>
+   8000b9c:	6a68      	ldr	r0, [r5, #36]	@ 0x24
+   8000b9e:	b280      	uxth	r0, r0
+   8000ba0:	42a0      	cmp	r0, r4
+   8000ba2:	d300      	bcc.n	8000ba6 <firmware50::hw::pwm::carrier_selftest_off+0x6a>
+   8000ba4:	2600      	movs	r6, #0
+   8000ba6:	4d26      	ldr	r5, [pc, #152]	@ (8000c40 <firmware50::hw::pwm::carrier_selftest_off+0x104>)
+   8000ba8:	682d      	ldr	r5, [r5, #0]
+   8000baa:	4216      	tst	r6, r2
+   8000bac:	d117      	bne.n	8000bde <firmware50::hw::pwm::carrier_selftest_off+0xa2>
+   8000bae:	42a0      	cmp	r0, r4
+   8000bb0:	462c      	mov	r4, r5
+   8000bb2:	d300      	bcc.n	8000bb6 <firmware50::hw::pwm::carrier_selftest_off+0x7a>
+   8000bb4:	460c      	mov	r4, r1
+   8000bb6:	9e05      	ldr	r6, [sp, #20]
+   8000bb8:	d300      	bcc.n	8000bbc <firmware50::hw::pwm::carrier_selftest_off+0x80>
+   8000bba:	4616      	mov	r6, r2
+   8000bbc:	9904      	ldr	r1, [sp, #16]
+   8000bbe:	1a69      	subs	r1, r5, r1
+   8000bc0:	b289      	uxth	r1, r1
+   8000bc2:	2950      	cmp	r1, #80	@ 0x50
+   8000bc4:	4621      	mov	r1, r4
+   8000bc6:	4632      	mov	r2, r6
+   8000bc8:	4604      	mov	r4, r0
+   8000bca:	4d1a      	ldr	r5, [pc, #104]	@ (8000c34 <firmware50::hw::pwm::carrier_selftest_off+0xf8>)
+   8000bcc:	9e06      	ldr	r6, [sp, #24]
+   8000bce:	d9e3      	bls.n	8000b98 <firmware50::hw::pwm::carrier_selftest_off+0x5c>
+   8000bd0:	2300      	movs	r3, #0
+   8000bd2:	e00d      	b.n	8000bf0 <firmware50::hw::pwm::carrier_selftest_off+0xb4>
+   8000bd4:	62e9      	str	r1, [r5, #44]	@ 0x2c
+   8000bd6:	616e      	str	r6, [r5, #20]
+   8000bd8:	e029      	b.n	8000c2e <firmware50::hw::pwm::carrier_selftest_off+0xf2>
+   8000bda:	9b02      	ldr	r3, [sp, #8]
+   8000bdc:	e008      	b.n	8000bf0 <firmware50::hw::pwm::carrier_selftest_off+0xb4>
+   8000bde:	1a68      	subs	r0, r5, r1
+   8000be0:	380e      	subs	r0, #14
+   8000be2:	b280      	uxth	r0, r0
+   8000be4:	2804      	cmp	r0, #4
+   8000be6:	d301      	bcc.n	8000bec <firmware50::hw::pwm::carrier_selftest_off+0xb0>
+   8000be8:	2300      	movs	r3, #0
+   8000bea:	e000      	b.n	8000bee <firmware50::hw::pwm::carrier_selftest_off+0xb2>
+   8000bec:	2301      	movs	r3, #1
+   8000bee:	4d11      	ldr	r5, [pc, #68]	@ (8000c34 <firmware50::hw::pwm::carrier_selftest_off+0xf8>)
+   8000bf0:	9903      	ldr	r1, [sp, #12]
+   8000bf2:	6c68      	ldr	r0, [r5, #68]	@ 0x44
+   8000bf4:	4208      	tst	r0, r1
+   8000bf6:	d115      	bne.n	8000c24 <firmware50::hw::pwm::carrier_selftest_off+0xe8>
+   8000bf8:	6b6a      	ldr	r2, [r5, #52]	@ 0x34
+   8000bfa:	6ba9      	ldr	r1, [r5, #56]	@ 0x38
+   8000bfc:	6be8      	ldr	r0, [r5, #60]	@ 0x3c
+   8000bfe:	0412      	lsls	r2, r2, #16
+   8000c00:	d110      	bne.n	8000c24 <firmware50::hw::pwm::carrier_selftest_off+0xe8>
+   8000c02:	b289      	uxth	r1, r1
+   8000c04:	2900      	cmp	r1, #0
+   8000c06:	d10d      	bne.n	8000c24 <firmware50::hw::pwm::carrier_selftest_off+0xe8>
+   8000c08:	b280      	uxth	r0, r0
+   8000c0a:	2800      	cmp	r0, #0
+   8000c0c:	d10a      	bne.n	8000c24 <firmware50::hw::pwm::carrier_selftest_off+0xe8>
+   8000c0e:	6828      	ldr	r0, [r5, #0]
+   8000c10:	490a      	ldr	r1, [pc, #40]	@ (8000c3c <firmware50::hw::pwm::carrier_selftest_off+0x100>)
+   8000c12:	62e9      	str	r1, [r5, #44]	@ 0x2c
+   8000c14:	2101      	movs	r1, #1
+   8000c16:	6169      	str	r1, [r5, #20]
+   8000c18:	9901      	ldr	r1, [sp, #4]
+> 0800131c <firmware50::roots::com_retime_faster>:
+   800131c:	b5f0      	push	{r4, r5, r6, r7, lr}
+   800131e:	af03      	add	r7, sp, #12
+   8001320:	b0e1      	sub	sp, #388	@ 0x184
+   8001322:	9204      	str	r2, [sp, #16]
+   8001324:	9105      	str	r1, [sp, #20]
+   8001326:	9003      	str	r0, [sp, #12]
+   8001328:	2008      	movs	r0, #8
+   800132a:	a907      	add	r1, sp, #28
+   800132c:	2200      	movs	r2, #0
+   800132e:	600a      	str	r2, [r1, #0]
+   8001330:	3128      	adds	r1, #40	@ 0x28
+   8001332:	1e40      	subs	r0, r0, #1
+   8001334:	d1fb      	bne.n	800132e <firmware50::roots::com_retime_faster+0x12>
+   8001336:	9201      	str	r2, [sp, #4]
+   8001338:	2501      	movs	r5, #1
+   800133a:	9502      	str	r5, [sp, #8]
+   800133c:	b2ec      	uxtb	r4, r5
+   800133e:	2c06      	cmp	r4, #6
+   8001340:	d000      	beq.n	8001344 <firmware50::roots::com_retime_faster+0x28>
+   8001342:	1c6c      	adds	r4, r5, #1
+   8001344:	1e68      	subs	r0, r5, #1
+   8001346:	b2c6      	uxtb	r6, r0
+   8001348:	2e04      	cmp	r6, #4
+   800134a:	d802      	bhi.n	8001352 <firmware50::roots::com_retime_faster+0x36>
+   800134c:	4837      	ldr	r0, [pc, #220]	@ (800142c <firmware50::roots::com_retime_faster+0x110>)
+   800134e:	5d81      	ldrb	r1, [r0, r6]
+   8001350:	e000      	b.n	8001354 <firmware50::roots::com_retime_faster+0x38>
+   8001352:	2105      	movs	r1, #5
+   8001354:	9804      	ldr	r0, [sp, #16]
+   8001356:	9000      	str	r0, [sp, #0]
+   8001358:	a857      	add	r0, sp, #348	@ 0x15c
+   800135a:	9a03      	ldr	r2, [sp, #12]
+   800135c:	9b05      	ldr	r3, [sp, #20]
+   800135e:	f000 f91d 	bl	800159c <firmware50::sixstep::plan>
+   8001362:	9857      	ldr	r0, [sp, #348]	@ 0x15c
+   8001364:	2800      	cmp	r0, #0
+   8001366:	d027      	beq.n	80013b8 <firmware50::roots::com_retime_faster+0x9c>
+   8001368:	9506      	str	r5, [sp, #24]
+   800136a:	2e07      	cmp	r6, #7
+   800136c:	d859      	bhi.n	8001422 <firmware50::roots::com_retime_faster+0x106>
+   800136e:	4625      	mov	r5, r4
+   8001370:	2028      	movs	r0, #40	@ 0x28
+   8001372:	4370      	muls	r0, r6
+   8001374:	a907      	add	r1, sp, #28
+   8001376:	1808      	adds	r0, r1, r0
+   8001378:	a957      	add	r1, sp, #348	@ 0x15c
+   800137a:	c94c      	ldmia	r1!, {r2, r3, r6}
+   800137c:	c04c      	stmia	r0!, {r2, r3, r6}
+   800137e:	c94c      	ldmia	r1!, {r2, r3, r6}
+   8001380:	c04c      	stmia	r0!, {r2, r3, r6}
+   8001382:	c95c      	ldmia	r1!, {r2, r3, r4, r6}
+   8001384:	c05c      	stmia	r0!, {r2, r3, r4, r6}
+   8001386:	b2e8      	uxtb	r0, r5
+   8001388:	2806      	cmp	r0, #6
+   800138a:	d801      	bhi.n	8001390 <firmware50::roots::com_retime_faster+0x74>
+   800138c:	2000      	movs	r0, #0
+   800138e:	e000      	b.n	8001392 <firmware50::roots::com_retime_faster+0x76>
+   8001390:	2001      	movs	r0, #1
+   8001392:	9906      	ldr	r1, [sp, #24]
+   8001394:	b2c9      	uxtb	r1, r1
+   8001396:	2906      	cmp	r1, #6
+   8001398:	9902      	ldr	r1, [sp, #8]
+   800139a:	d000      	beq.n	800139e <firmware50::roots::com_retime_faster+0x82>
+   800139c:	4601      	mov	r1, r0
+   800139e:	2900      	cmp	r1, #0
+   80013a0:	d0cc      	beq.n	800133c <firmware50::roots::com_retime_faster+0x20>
+   80013a2:	2001      	movs	r0, #1
+   80013a4:	9907      	ldr	r1, [sp, #28]
+   80013a6:	4001      	ands	r1, r0
+   80013a8:	d000      	beq.n	80013ac <firmware50::roots::com_retime_faster+0x90>
+   80013aa:	990e      	ldr	r1, [sp, #56]	@ 0x38
+   80013ac:	4821      	ldr	r0, [pc, #132]	@ (8001434 <firmware50::roots::com_retime_faster+0x118>)
+   80013ae:	6800      	ldr	r0, [r0, #0]
+   80013b0:	0600      	lsls	r0, r0, #24
+   80013b2:	d003      	beq.n	80013bc <firmware50::roots::com_retime_faster+0xa0>
+   80013b4:	2000      	movs	r0, #0
+   80013b6:	e032      	b.n	800141e <firmware50::roots::com_retime_faster+0x102>
+   80013b8:	9801      	ldr	r0, [sp, #4]
+   80013ba:	e030      	b.n	800141e <firmware50::roots::com_retime_faster+0x102>
+   80013bc:	f3ef 8510 	mrs	r5, PRIMASK
+   80013c0:	b672      	cpsid	i
+   80013c2:	4c1d      	ldr	r4, [pc, #116]	@ (8001438 <firmware50::roots::com_retime_faster+0x11c>)
+   80013c4:	6c20      	ldr	r0, [r4, #64]	@ 0x40
+   80013c6:	2800      	cmp	r0, #0
+   80013c8:	d001      	beq.n	80013ce <firmware50::roots::com_retime_faster+0xb2>
+   80013ca:	2600      	movs	r6, #0
+   80013cc:	e024      	b.n	8001418 <firmware50::roots::com_retime_faster+0xfc>
+   80013ce:	2000      	movs	r0, #0
+   80013d0:	4606      	mov	r6, r0
+   80013d2:	43c0      	mvns	r0, r0
+   80013d4:	6420      	str	r0, [r4, #64]	@ 0x40
+   80013d6:	2063      	movs	r0, #99	@ 0x63
+   80013d8:	0080      	lsls	r0, r0, #2
+   80013da:	5c20      	ldrb	r0, [r4, r0]
+   80013dc:	7822      	ldrb	r2, [r4, #0]
+   80013de:	2a00      	cmp	r2, #0
+   80013e0:	d017      	beq.n	8001412 <firmware50::roots::com_retime_faster+0xf6>
+   80013e2:	2800      	cmp	r0, #0
+   80013e4:	d115      	bne.n	8001412 <firmware50::roots::com_retime_faster+0xf6>
+   80013e6:	4815      	ldr	r0, [pc, #84]	@ (800143c <firmware50::roots::com_retime_faster+0x120>)
+   80013e8:	6c40      	ldr	r0, [r0, #68]	@ 0x44
+   80013ea:	0400      	lsls	r0, r0, #16
+   80013ec:	d511      	bpl.n	8001412 <firmware50::roots::com_retime_faster+0xf6>
+   80013ee:	9805      	ldr	r0, [sp, #20]
+   80013f0:	f7ff fb6e 	bl	8000ad0 <firmware50::hw::pwm::stage_faster>
+   80013f4:	2800      	cmp	r0, #0
+   80013f6:	d00c      	beq.n	8001412 <firmware50::roots::com_retime_faster+0xf6>
+   80013f8:	4620      	mov	r0, r4
+   80013fa:	3044      	adds	r0, #68	@ 0x44
+   80013fc:	2105      	movs	r1, #5
+   80013fe:	018a      	lsls	r2, r1, #6
+   8001400:	a907      	add	r1, sp, #28
+   8001402:	f009 f8a5 	bl	800a550 <__aeabi_memcpy4>
+   8001406:	4a0d      	ldr	r2, [pc, #52]	@ (800143c <firmware50::roots::com_retime_faster+0x120>)
+   8001408:	6810      	ldr	r0, [r2, #0]
+   800140a:	2102      	movs	r1, #2
+   800140c:	4388      	bics	r0, r1
+   800140e:	6010      	str	r0, [r2, #0]
+   8001410:	9e02      	ldr	r6, [sp, #8]
+   8001412:	6c20      	ldr	r0, [r4, #64]	@ 0x40
+   8001414:	1c40      	adds	r0, r0, #1
+   8001416:	6420      	str	r0, [r4, #64]	@ 0x40
+   8001418:	f385 8810 	msr	PRIMASK, r5
+   800141c:	4630      	mov	r0, r6
+   800141e:	b061      	add	sp, #388	@ 0x184
+   8001420:	bdf0      	pop	{r4, r5, r6, r7, pc}
+   8001422:	2108      	movs	r1, #8
+   8001424:	4a02      	ldr	r2, [pc, #8]	@ (8001430 <firmware50::roots::com_retime_faster+0x114>)
+   8001426:	4630      	mov	r0, r6
+   8001428:	f7ff f818 	bl	800045c <core::panicking::panic_bounds_check>
+   800142c:	0800add6 	.word	0x0800add6
+   8001430:	0800aaf4 	.word	0x0800aaf4
+   8001434:	e000ed04 	.word	0xe000ed04
+   8001438:	20000000 	.word	0x20000000
+   800143c:	40012c00 	.word	0x40012c00
+
+  08001440 <firmware50::roots::guard_arm_tracking>:
+   8001440:	b5f0      	push	{r4, r5, r6, r7, lr}
+   8001442:	af03      	add	r7, sp, #12
+   8001444:	b082      	sub	sp, #8
+   8001446:	f3ef 8010 	mrs	r0, PRIMASK
+   800144a:	b672      	cpsid	i
+   800144c:	4915      	ldr	r1, [pc, #84]	@ (80014a4 <firmware50::roots::guard_arm_tracking+0x64>)
+   800144e:	680b      	ldr	r3, [r1, #0]
+   8001450:	4915      	ldr	r1, [pc, #84]	@ (80014a8 <firmware50::roots::guard_arm_tracking+0x68>)
+   8001452:	68cd      	ldr	r5, [r1, #12]
+   8001454:	688c      	ldr	r4, [r1, #8]
+   8001456:	4a15      	ldr	r2, [pc, #84]	@ (80014ac <firmware50::roots::guard_arm_tracking+0x6c>)
+   8001458:	6812      	ldr	r2, [r2, #0]
+   800145a:	0612      	lsls	r2, r2, #24
+   800145c:	d11b      	bne.n	8001496 <firmware50::roots::guard_arm_tracking+0x56>
+   800145e:	f3ef 8210 	mrs	r2, PRIMASK
+   8001462:	b672      	cpsid	i
+   8001464:	6a8e      	ldr	r6, [r1, #40]	@ 0x28
+   8001466:	2e00      	cmp	r6, #0
+   8001468:	d113      	bne.n	8001492 <firmware50::roots::guard_arm_tracking+0x52>
+   800146a:	1b5b      	subs	r3, r3, r5
+   800146c:	b29b      	uxth	r3, r3
+   800146e:	191b      	adds	r3, r3, r4
+   8001470:	9301      	str	r3, [sp, #4]
+   8001472:	2440      	movs	r4, #64	@ 0x40
+   8001474:	2503      	movs	r5, #3
+   8001476:	530d      	strh	r5, [r1, r4]
+   8001478:	2400      	movs	r4, #0
+   800147a:	25ee      	movs	r5, #238	@ 0xee
+> 08009bd8 <compiler_builtins::mem::memcpy>:
+   8009bd8:	b5f0      	push	{r4, r5, r6, r7, lr}
+   8009bda:	af03      	add	r7, sp, #12
+   8009bdc:	b08f      	sub	sp, #60	@ 0x3c
+   8009bde:	2a10      	cmp	r2, #16
+   8009be0:	d315      	bcc.n	8009c0e <compiler_builtins::mem::memcpy+0x36>
+   8009be2:	920b      	str	r2, [sp, #44]	@ 0x2c
+   8009be4:	4242      	negs	r2, r0
+   8009be6:	2303      	movs	r3, #3
+   8009be8:	9308      	str	r3, [sp, #32]
+   8009bea:	401a      	ands	r2, r3
+   8009bec:	1885      	adds	r5, r0, r2
+   8009bee:	900a      	str	r0, [sp, #40]	@ 0x28
+   8009bf0:	42a8      	cmp	r0, r5
+   8009bf2:	d22a      	bcs.n	8009c4a <compiler_builtins::mem::memcpy+0x72>
+   8009bf4:	1e54      	subs	r4, r2, #1
+   8009bf6:	2a00      	cmp	r2, #0
+   8009bf8:	980a      	ldr	r0, [sp, #40]	@ 0x28
+   8009bfa:	4606      	mov	r6, r0
+   8009bfc:	460b      	mov	r3, r1
+   8009bfe:	d016      	beq.n	8009c2e <compiler_builtins::mem::memcpy+0x56>
+   8009c00:	780b      	ldrb	r3, [r1, #0]
+   8009c02:	7003      	strb	r3, [r0, #0]
+   8009c04:	2a01      	cmp	r2, #1
+   8009c06:	d107      	bne.n	8009c18 <compiler_builtins::mem::memcpy+0x40>
+   8009c08:	1c4b      	adds	r3, r1, #1
+   8009c0a:	1c46      	adds	r6, r0, #1
+   8009c0c:	e00f      	b.n	8009c2e <compiler_builtins::mem::memcpy+0x56>
+   8009c0e:	4603      	mov	r3, r0
+   8009c10:	189c      	adds	r4, r3, r2
+   8009c12:	42a3      	cmp	r3, r4
+   8009c14:	d341      	bcc.n	8009c9a <compiler_builtins::mem::memcpy+0xc2>
+   8009c16:	e062      	b.n	8009cde <compiler_builtins::mem::memcpy+0x106>
+   8009c18:	784b      	ldrb	r3, [r1, #1]
+   8009c1a:	7043      	strb	r3, [r0, #1]
+   8009c1c:	2a02      	cmp	r2, #2
+   8009c1e:	d102      	bne.n	8009c26 <compiler_builtins::mem::memcpy+0x4e>
+   8009c20:	1c8b      	adds	r3, r1, #2
+   8009c22:	1c86      	adds	r6, r0, #2
+   8009c24:	e003      	b.n	8009c2e <compiler_builtins::mem::memcpy+0x56>
+   8009c26:	788b      	ldrb	r3, [r1, #2]
+   8009c28:	7083      	strb	r3, [r0, #2]
+   8009c2a:	1ccb      	adds	r3, r1, #3
+   8009c2c:	1cc6      	adds	r6, r0, #3
+   8009c2e:	2c03      	cmp	r4, #3
+   8009c30:	d30b      	bcc.n	8009c4a <compiler_builtins::mem::memcpy+0x72>
+   8009c32:	781c      	ldrb	r4, [r3, #0]
+   8009c34:	7034      	strb	r4, [r6, #0]
+   8009c36:	785c      	ldrb	r4, [r3, #1]
+   8009c38:	7074      	strb	r4, [r6, #1]
+   8009c3a:	789c      	ldrb	r4, [r3, #2]
+   8009c3c:	70b4      	strb	r4, [r6, #2]
+   8009c3e:	78dc      	ldrb	r4, [r3, #3]
+   8009c40:	70f4      	strb	r4, [r6, #3]
+   8009c42:	1d1b      	adds	r3, r3, #4
+   8009c44:	1d36      	adds	r6, r6, #4
+   8009c46:	42ae      	cmp	r6, r5
+   8009c48:	d1f3      	bne.n	8009c32 <compiler_builtins::mem::memcpy+0x5a>
+   8009c4a:	980b      	ldr	r0, [sp, #44]	@ 0x2c
+   8009c4c:	1a80      	subs	r0, r0, r2
+   8009c4e:	900b      	str	r0, [sp, #44]	@ 0x2c
+   8009c50:	9c08      	ldr	r4, [sp, #32]
+   8009c52:	43a0      	bics	r0, r4
+   8009c54:	182b      	adds	r3, r5, r0
+   8009c56:	188e      	adds	r6, r1, r2
+   8009c58:	9609      	str	r6, [sp, #36]	@ 0x24
+   8009c5a:	4026      	ands	r6, r4
+   8009c5c:	9007      	str	r0, [sp, #28]
+   8009c5e:	d147      	bne.n	8009cf0 <compiler_builtins::mem::memcpy+0x118>
+   8009c60:	429d      	cmp	r5, r3
+   8009c62:	9a0b      	ldr	r2, [sp, #44]	@ 0x2c
+   8009c64:	9e09      	ldr	r6, [sp, #36]	@ 0x24
+   8009c66:	d211      	bcs.n	8009c8c <compiler_builtins::mem::memcpy+0xb4>
+   8009c68:	4631      	mov	r1, r6
+   8009c6a:	6808      	ldr	r0, [r1, #0]
+   8009c6c:	c501      	stmia	r5!, {r0}
+   8009c6e:	429d      	cmp	r5, r3
+   8009c70:	d20c      	bcs.n	8009c8c <compiler_builtins::mem::memcpy+0xb4>
+   8009c72:	6848      	ldr	r0, [r1, #4]
+   8009c74:	c501      	stmia	r5!, {r0}
+   8009c76:	429d      	cmp	r5, r3
+   8009c78:	d208      	bcs.n	8009c8c <compiler_builtins::mem::memcpy+0xb4>
+   8009c7a:	6888      	ldr	r0, [r1, #8]
+   8009c7c:	c501      	stmia	r5!, {r0}
+   8009c7e:	429d      	cmp	r5, r3
+   8009c80:	d204      	bcs.n	8009c8c <compiler_builtins::mem::memcpy+0xb4>
+   8009c82:	68c8      	ldr	r0, [r1, #12]
+   8009c84:	c501      	stmia	r5!, {r0}
+   8009c86:	3110      	adds	r1, #16
+   8009c88:	429d      	cmp	r5, r3
+   8009c8a:	d3ee      	bcc.n	8009c6a <compiler_builtins::mem::memcpy+0x92>
+   8009c8c:	4022      	ands	r2, r4
+   8009c8e:	9807      	ldr	r0, [sp, #28]
+   8009c90:	1831      	adds	r1, r6, r0
+   8009c92:	980a      	ldr	r0, [sp, #40]	@ 0x28
+   8009c94:	189c      	adds	r4, r3, r2
+   8009c96:	42a3      	cmp	r3, r4
+   8009c98:	d221      	bcs.n	8009cde <compiler_builtins::mem::memcpy+0x106>
+   8009c9a:	2503      	movs	r5, #3
+   8009c9c:	4015      	ands	r5, r2
+   8009c9e:	1e52      	subs	r2, r2, #1
+   8009ca0:	2d00      	cmp	r5, #0
+   8009ca2:	d00e      	beq.n	8009cc2 <compiler_builtins::mem::memcpy+0xea>
+   8009ca4:	780e      	ldrb	r6, [r1, #0]
+   8009ca6:	701e      	strb	r6, [r3, #0]
+   8009ca8:	2d01      	cmp	r5, #1
+   8009caa:	d104      	bne.n	8009cb6 <compiler_builtins::mem::memcpy+0xde>
+   8009cac:	1c49      	adds	r1, r1, #1
+   8009cae:	1c5b      	adds	r3, r3, #1
+   8009cb0:	2a03      	cmp	r2, #3
+   8009cb2:	d208      	bcs.n	8009cc6 <compiler_builtins::mem::memcpy+0xee>
+   8009cb4:	e013      	b.n	8009cde <compiler_builtins::mem::memcpy+0x106>
+   8009cb6:	784e      	ldrb	r6, [r1, #1]
+   8009cb8:	705e      	strb	r6, [r3, #1]
+   8009cba:	2d02      	cmp	r5, #2
+   8009cbc:	d111      	bne.n	8009ce2 <compiler_builtins::mem::memcpy+0x10a>
+   8009cbe:	1c89      	adds	r1, r1, #2
+   8009cc0:	1c9b      	adds	r3, r3, #2
+   8009cc2:	2a03      	cmp	r2, #3
+   8009cc4:	d30b      	bcc.n	8009cde <compiler_builtins::mem::memcpy+0x106>
+   8009cc6:	780a      	ldrb	r2, [r1, #0]
+   8009cc8:	701a      	strb	r2, [r3, #0]
+   8009cca:	784a      	ldrb	r2, [r1, #1]
+   8009ccc:	705a      	strb	r2, [r3, #1]
+   8009cce:	788a      	ldrb	r2, [r1, #2]
+   8009cd0:	709a      	strb	r2, [r3, #2]
+   8009cd2:	78ca      	ldrb	r2, [r1, #3]
+   8009cd4:	70da      	strb	r2, [r3, #3]
+   8009cd6:	1d09      	adds	r1, r1, #4
+   8009cd8:	1d1b      	adds	r3, r3, #4
+   8009cda:	42a3      	cmp	r3, r4
+   8009cdc:	d1f3      	bne.n	8009cc6 <compiler_builtins::mem::memcpy+0xee>
+   8009cde:	b00f      	add	sp, #60	@ 0x3c
+   8009ce0:	bdf0      	pop	{r4, r5, r6, r7, pc}
+   8009ce2:	788d      	ldrb	r5, [r1, #2]
+   8009ce4:	709d      	strb	r5, [r3, #2]
+   8009ce6:	1cc9      	adds	r1, r1, #3
+   8009ce8:	1cdb      	adds	r3, r3, #3
+   8009cea:	2a03      	cmp	r2, #3
+   8009cec:	d2eb      	bcs.n	8009cc6 <compiler_builtins::mem::memcpy+0xee>
+   8009cee:	e7f6      	b.n	8009cde <compiler_builtins::mem::memcpy+0x106>
+   8009cf0:	2400      	movs	r4, #0
+   8009cf2:	9406      	str	r4, [sp, #24]
+   8009cf4:	940e      	str	r4, [sp, #56]	@ 0x38
+   8009cf6:	ac0e      	add	r4, sp, #56	@ 0x38
+   8009cf8:	19a4      	adds	r4, r4, r6
+   8009cfa:	9405      	str	r4, [sp, #20]
+   8009cfc:	2404      	movs	r4, #4
+   8009cfe:	1ba4      	subs	r4, r4, r6
+   8009d00:	9404      	str	r4, [sp, #16]
+   8009d02:	07e4      	lsls	r4, r4, #31
+   8009d04:	9600      	str	r6, [sp, #0]
+   8009d06:	d006      	beq.n	8009d16 <compiler_builtins::mem::memcpy+0x13e>
+   8009d08:	9c09      	ldr	r4, [sp, #36]	@ 0x24
+   8009d0a:	7824      	ldrb	r4, [r4, #0]
+   8009d0c:	9e05      	ldr	r6, [sp, #20]
+   8009d0e:	7034      	strb	r4, [r6, #0]
+   8009d10:	9e00      	ldr	r6, [sp, #0]
+   8009d12:	2401      	movs	r4, #1
+   8009d14:	9406      	str	r4, [sp, #24]
+   8009d16:	9c04      	ldr	r4, [sp, #16]
+   8009d18:	07a4      	lsls	r4, r4, #30
+   8009d1a:	d508      	bpl.n	8009d2e <compiler_builtins::mem::memcpy+0x156>
+   8009d1c:	9c09      	ldr	r4, [sp, #36]	@ 0x24
+   8009d1e:	9204      	str	r2, [sp, #16]
+   8009d20:	9a06      	ldr	r2, [sp, #24]
+> 0800a550 <__aeabi_memcpy4>:
+   800a550:	b5f0      	push	{r4, r5, r6, r7, lr}
+   800a552:	af03      	add	r7, sp, #12
+   800a554:	b081      	sub	sp, #4
+   800a556:	2a04      	cmp	r2, #4
+   800a558:	d328      	bcc.n	800a5ac <__aeabi_memcpy4+0x5c>
+   800a55a:	1f13      	subs	r3, r2, #4
+   800a55c:	43dc      	mvns	r4, r3
+   800a55e:	0724      	lsls	r4, r4, #28
+   800a560:	0fa4      	lsrs	r4, r4, #30
+   800a562:	d014      	beq.n	800a58e <__aeabi_memcpy4+0x3e>
+   800a564:	4614      	mov	r4, r2
+   800a566:	460d      	mov	r5, r1
+   800a568:	c904      	ldmia	r1!, {r2}
+   800a56a:	4606      	mov	r6, r0
+   800a56c:	c004      	stmia	r0!, {r2}
+   800a56e:	071a      	lsls	r2, r3, #28
+   800a570:	0f92      	lsrs	r2, r2, #30
+   800a572:	461a      	mov	r2, r3
+   800a574:	d00b      	beq.n	800a58e <__aeabi_memcpy4+0x3e>
+   800a576:	4629      	mov	r1, r5
+   800a578:	686a      	ldr	r2, [r5, #4]
+   800a57a:	4630      	mov	r0, r6
+   800a57c:	6072      	str	r2, [r6, #4]
+   800a57e:	220c      	movs	r2, #12
+   800a580:	401a      	ands	r2, r3
+   800a582:	2a04      	cmp	r2, #4
+   800a584:	d116      	bne.n	800a5b4 <__aeabi_memcpy4+0x64>
+   800a586:	4622      	mov	r2, r4
+   800a588:	3a08      	subs	r2, #8
+   800a58a:	3108      	adds	r1, #8
+   800a58c:	3008      	adds	r0, #8
+   800a58e:	2b0c      	cmp	r3, #12
+   800a590:	d30c      	bcc.n	800a5ac <__aeabi_memcpy4+0x5c>
+   800a592:	680b      	ldr	r3, [r1, #0]
+   800a594:	6003      	str	r3, [r0, #0]
+   800a596:	684b      	ldr	r3, [r1, #4]
+   800a598:	6043      	str	r3, [r0, #4]
+   800a59a:	688b      	ldr	r3, [r1, #8]
+   800a59c:	6083      	str	r3, [r0, #8]
+   800a59e:	68cb      	ldr	r3, [r1, #12]
+   800a5a0:	60c3      	str	r3, [r0, #12]
+   800a5a2:	3110      	adds	r1, #16
+   800a5a4:	3010      	adds	r0, #16
+   800a5a6:	3a10      	subs	r2, #16
+   800a5a8:	2a03      	cmp	r2, #3
+   800a5aa:	d8f2      	bhi.n	800a592 <__aeabi_memcpy4+0x42>
+   800a5ac:	f7ff fb14 	bl	8009bd8 <compiler_builtins::mem::memcpy>
+   800a5b0:	b001      	add	sp, #4
+   800a5b2:	bdf0      	pop	{r4, r5, r6, r7, pc}
+   800a5b4:	688a      	ldr	r2, [r1, #8]
+   800a5b6:	6082      	str	r2, [r0, #8]
+   800a5b8:	4622      	mov	r2, r4
+   800a5ba:	3a0c      	subs	r2, #12
+   800a5bc:	310c      	adds	r1, #12
+   800a5be:	300c      	adds	r0, #12
+   800a5c0:	2b0c      	cmp	r3, #12
+   800a5c2:	d2e6      	bcs.n	800a592 <__aeabi_memcpy4+0x42>
+   800a5c4:	e7f2      	b.n	800a5ac <__aeabi_memcpy4+0x5c>
+
+  0800a5c6 <__aeabi_llsl>:
+   800a5c6:	b5b0      	push	{r4, r5, r7, lr}
+   800a5c8:	af02      	add	r7, sp, #8
+   800a5ca:	0693      	lsls	r3, r2, #26
+   800a5cc:	d40c      	bmi.n	800a5e8 <__aeabi_llsl+0x22>
+   800a5ce:	2a00      	cmp	r2, #0
+   800a5d0:	d009      	beq.n	800a5e6 <__aeabi_llsl+0x20>
+   800a5d2:	231f      	movs	r3, #31
+   800a5d4:	4254      	negs	r4, r2
+   800a5d6:	401a      	ands	r2, r3
+   800a5d8:	460d      	mov	r5, r1
+   800a5da:	4095      	lsls	r5, r2
+   800a5dc:	401c      	ands	r4, r3
+   800a5de:	4601      	mov	r1, r0
+   800a5e0:	40e1      	lsrs	r1, r4
+   800a5e2:	4329      	orrs	r1, r5
+   800a5e4:	4090      	lsls	r0, r2
+   800a5e6:	bdb0      	pop	{r4, r5, r7, pc}
+   800a5e8:	211f      	movs	r1, #31
+   800a5ea:	400a      	ands	r2, r1
+   800a5ec:	4601      	mov	r1, r0
+   800a5ee:	4091      	lsls	r1, r2
+   800a5f0:	2000      	movs	r0, #0
+   800a5f2:	bdb0      	pop	{r4, r5, r7, pc}
+
+  0800a5f4 <__aeabi_uldivmod>:
+   800a5f4:	b510      	push	{r4, lr}
+   800a5f6:	b084      	sub	sp, #16
+   800a5f8:	ac02      	add	r4, sp, #8
+   800a5fa:	9400      	str	r4, [sp, #0]
+   800a5fc:	f000 f804 	bl	800a608 <__udivmoddi4>
+   800a600:	9a02      	ldr	r2, [sp, #8]
+   800a602:	9b03      	ldr	r3, [sp, #12]
+   800a604:	b004      	add	sp, #16
+   800a606:	bd10      	pop	{r4, pc}
+
+  0800a608 <__udivmoddi4>:
+   800a608:	b5d0      	push	{r4, r6, r7, lr}
+   800a60a:	af02      	add	r7, sp, #8
+   800a60c:	b086      	sub	sp, #24
+   800a60e:	4604      	mov	r4, r0
+   800a610:	9200      	str	r2, [sp, #0]
+   800a612:	9301      	str	r3, [sp, #4]
+   800a614:	a802      	add	r0, sp, #8
+   800a616:	4622      	mov	r2, r4
+   800a618:	460b      	mov	r3, r1
+   800a61a:	f7ff fcd2 	bl	8009fc2 <compiler_builtins::int::specialized_div_rem::u64_div_rem>
+   800a61e:	9903      	ldr	r1, [sp, #12]
+   800a620:	9802      	ldr	r0, [sp, #8]
+   800a622:	68ba      	ldr	r2, [r7, #8]
+   800a624:	2a00      	cmp	r2, #0
+   800a626:	d003      	beq.n	800a630 <__udivmoddi4+0x28>
+   800a628:	9b05      	ldr	r3, [sp, #20]
+   800a62a:	9c04      	ldr	r4, [sp, #16]
+   800a62c:	6014      	str	r4, [r2, #0]
+   800a62e:	6053      	str	r3, [r2, #4]
+   800a630:	b006      	add	sp, #24
+   800a632:	bdd0      	pop	{r4, r6, r7, pc}
+
+  0800a634 <__aeabi_ldivmod>:
+   800a634:	b510      	push	{r4, lr}
+   800a636:	b084      	sub	sp, #16
+   800a638:	ac02      	add	r4, sp, #8
+   800a63a:	9400      	str	r4, [sp, #0]
+   800a63c:	f000 f804 	bl	800a648 <__divmoddi4>
+   800a640:	9a02      	ldr	r2, [sp, #8]
+   800a642:	9b03      	ldr	r3, [sp, #12]
+   800a644:	b004      	add	sp, #16
+   800a646:	bd10      	pop	{r4, pc}
+
+  0800a648 <__divmoddi4>:
+   800a648:	b5f0      	push	{r4, r5, r6, r7, lr}
+   800a64a:	af03      	add	r7, sp, #12
+   800a64c:	b089      	sub	sp, #36	@ 0x24
+   800a64e:	461c      	mov	r4, r3
+   800a650:	460d      	mov	r5, r1
+   800a652:	17d9      	asrs	r1, r3, #31
+   800a654:	404b      	eors	r3, r1
+   800a656:	404a      	eors	r2, r1
+   800a658:	1a52      	subs	r2, r2, r1
+   800a65a:	9200      	str	r2, [sp, #0]
+   800a65c:	418b      	sbcs	r3, r1
+   800a65e:	9301      	str	r3, [sp, #4]
+   800a660:	17e9      	asrs	r1, r5, #31
+   800a662:	462b      	mov	r3, r5
+   800a664:	404b      	eors	r3, r1
+   800a666:	4048      	eors	r0, r1
+   800a668:	1a42      	subs	r2, r0, r1
+   800a66a:	418b      	sbcs	r3, r1
+   800a66c:	a804      	add	r0, sp, #16
+   800a66e:	f7ff fca8 	bl	8009fc2 <compiler_builtins::int::specialized_div_rem::u64_div_rem>
+   800a672:	2100      	movs	r1, #0
+   800a674:	9807      	ldr	r0, [sp, #28]
+   800a676:	9b06      	ldr	r3, [sp, #24]
+   800a678:	425a      	negs	r2, r3
+   800a67a:	460e      	mov	r6, r1
+   800a67c:	9002      	str	r0, [sp, #8]
+   800a67e:	4186      	sbcs	r6, r0
+   800a680:	2d00      	cmp	r5, #0
+   800a682:	d400      	bmi.n	800a686 <__divmoddi4+0x3e>
+   800a684:	461a      	mov	r2, r3
+   800a686:	9805      	ldr	r0, [sp, #20]
+   800a688:	9003      	str	r0, [sp, #12]
+   800a68a:	9804      	ldr	r0, [sp, #16]
+   800a68c:	68bb      	ldr	r3, [r7, #8]
+   800a68e:	601a      	str	r2, [r3, #0]

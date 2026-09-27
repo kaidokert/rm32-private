@@ -18,6 +18,8 @@ REQUIRED = {
     "BEMFCURRENT": ("hold_ma", "worst_ma", "ceiling_tenths", "duty_tenths",
                     "applied_cap", "applied_ccr"),
     "BEMFSAG": ("ref_bus", "ref_vref", "filt_bus", "filt_vref", "tripped"),
+    "BEMFGUARD": ("track_max_us", "gap_max_us", "loop_gap_max_us"),
+    "BEMFRCOMP": ("late_arms", "thin_count"),
     "COASTTIMING": ("trans", "offset_us", "first_us", "iv_us"),
 }
 
@@ -38,20 +40,37 @@ def request_errors(command: str, duty: int, pre: str, override: bool) -> list[st
     return fails
 
 
+def absolute_climb_pre(duty: int) -> str:
+    """Reset from any authorized state, then select an exact 2.5% rung."""
+    if not 375 <= duty <= 800 or (duty - 375) % 25:
+        raise ValueError("unsupported absolute climb rung")
+    return "-" * 19 + "+" * ((duty - 375) // 25)
+
+
 def verdict(path: Path, duty: int, min_hold_ms: int, *, period: int = 1333) -> list[str]:
     text = path.read_text(encoding="utf-8")
     records = {}
     preflights = []
-    for line in text.splitlines():
+    positions = {}
+    off_positions = []
+    for pos, line in enumerate(text.splitlines()):
         key = line.split(" ", 1)[0]
         if key.startswith("BEMF") or key in ("PREFLIGHT", "COASTTIMING"):
+            if key not in ("PREFLIGHT", "BEMFDRVROWS") and key in records:
+                return [f"duplicate record {key}; ambiguous run association"]
             records[key] = cohort.fields(line)
+            positions[key] = pos
         if key == "PREFLIGHT":
             preflights.append(cohort.fields(line))
+            off_positions.append(pos)
     missing = [f"missing {key}.{field}" for key, fields in REQUIRED.items()
                for field in fields if field not in records.get(key, {})]
     if missing:
         return missing
+    if (len(off_positions) != 2 or len([s for s in text.splitlines() if s == "POSTSTOP"]) != 1 or
+            not positions["BEMFRUN"] < off_positions[0] < text.splitlines().index("POSTSTOP") <
+            off_positions[1] < positions["BEMFDONE"] < positions["COASTTIMING"]):
+        return ["pre/post safe-off records do not bracket one run"]
     for key, fields in REQUIRED.items():
         for field in fields:
             if field != "iv_us":
@@ -77,6 +96,11 @@ def verdict(path: Path, duty: int, min_hold_ms: int, *, period: int = 1333) -> l
     # quantisation, not a tail extending outside the actual-target window.
     if not (0 <= end < start <= r["hold_ms"] * 1000 + 999 and span == start - end):
         return ["incoherent tail span/origins or tail outside hold"]
+    guard = records["BEMFGUARD"]
+    tail_age_budget = sum(int(guard[k]) for k in
+                         ("track_max_us", "gap_max_us", "loop_gap_max_us"))
+    if end > tail_age_budget:
+        return ["powered tail is stale beyond tracking and observed service gaps"]
     fails = cohort.run_gates(r, min_hold_ms, propless=True)
     if r["rate_source"] != "matched window vs time-anchored coast":
         fails.append("matched-window identity required; legacy fallback forbidden")
@@ -104,6 +128,10 @@ def verdict(path: Path, duty: int, min_hold_ms: int, *, period: int = 1333) -> l
     # Never derive period from CCR: that could hide actual duty foldback.
     if int(cur["applied_ccr"]) != period * duty // 1000:
         fails.append(f"CCR does not equal requested duty on period {period}")
+    if "applied_period" in cur and int(cur["applied_period"]) != period:
+        fails.append("applied carrier does not equal target carrier")
+    if "entry_period_ticks" in records["BEMFRUN"] and "applied_period" not in cur:
+        fails.append("new carrier image omitted actual period metadata")
     if int(records["BEMFRATE"]["hold_forced"]) != 0:
         fails.append("forced commutation during hold")
     zero_fields = {

@@ -666,6 +666,16 @@ impl Hal for Board {
         roots::com_publish_plans_capped(duty, period, cap);
     }
 
+    fn retime_plans<S: firmware50::run::hal::Drives>(
+        &mut self,
+        _gates: &mut Gates<S>,
+        duty: u16,
+        period: u32,
+        cap: u16,
+    ) -> bool {
+        roots::com_retime_faster(duty, period, cap)
+    }
+
     fn set_advance(&mut self, advance: u32) {
         S.det().advance.store(advance, Ordering::Relaxed);
     }

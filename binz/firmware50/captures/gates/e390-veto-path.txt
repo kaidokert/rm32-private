@@ -1,0 +1,26 @@
+
+   8004434:	9939      	ldr	r1, [sp, #228]	@ 0xe4
+   8004436:	6029      	str	r1, [r5, #0]
+>         if !P::B::allow_revisit(self.ctx.applied_duty) {
+   8004438:	982d      	ldr	r0, [sp, #180]	@ 0xb4
+   800443a:	8880      	ldrh	r0, [r0, #4]
+   800443c:	991c      	ldr	r1, [sp, #112]	@ 0x70
+   800443e:	4288      	cmp	r0, r1
+   8004440:	d300      	bcc.n	8004444 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1bbc>
+   8004442:	e09e      	b.n	8004582 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1cfa>
+   8004444:	992d      	ldr	r1, [sp, #180]	@ 0xb4
+          let fresh = self.revisit_step != step.get();
+   8004446:	7d4d      	ldrb	r5, [r1, #21]
+          let step = self.ctx.step;
+   8004448:	79c8      	ldrb	r0, [r1, #7]
+          let overdue = !fresh && self.rescue_due(hal);
+   800444a:	4285      	cmp	r5, r0
+   800444c:	d12b      	bne.n	80044a6 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1c1e>
+          if self.rescues >= REVISIT_RESCUE_MAX {
+   800444e:	7d8a      	ldrb	r2, [r1, #22]
+   8004450:	2a03      	cmp	r2, #3
+   8004452:	d900      	bls.n	8004456 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1bce>
+   8004454:	e08e      	b.n	8004574 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1cec>
+          let ci = self.ctx.last_ci;
+   8004456:	680b      	ldr	r3, [r1, #0]
+          if ci == 0 {

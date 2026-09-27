@@ -11,6 +11,22 @@ RAW = FIXTURES / "e359-propless150_01.txt"
 
 
 class UnloadedChecks(unittest.TestCase):
+    def test_absolute_selection_from_every_authorized_previous_state(self):
+        for target in (600, 650, 700, 750, 800):
+            for start in range(375, 801, 25):
+                duty = start
+                for key in propless.absolute_climb_pre(target):
+                    duty = max(375, duty - 25) if key == "-" else min(800, duty + 25)
+                self.assertEqual(duty, target)
+        with self.assertRaises(ValueError):
+            propless.absolute_climb_pre(825)
+
+    def test_duplicate_or_misplaced_off_records_refused(self):
+        text = RAW.read_text(encoding="utf-8")
+        done = next(s for s in text.splitlines() if s.startswith("BEMFDONE "))
+        self.assertTrue(self.check_text(text + "\n" + done))
+        self.assertTrue(self.check_text(text.replace("POSTSTOP", "INVALIDSTOP")))
+
     def test_request_validation_precedes_hardware(self):
         self.assertEqual(propless.request_errors("9", 150, "", False), [])
         self.assertEqual(propless.request_errors("l", 600, "++++++++", False), [])
@@ -39,6 +55,15 @@ class UnloadedChecks(unittest.TestCase):
                              (f"applied_ccr={ccr}", "applied_ccr=1")):
                 self.assertTrue(self.check_text(text.replace(old, new), period=period))
         self.assertTrue(self.check_text(original, period=1000))
+
+    def test_actual_period_not_hidden_by_target_header(self):
+        text = RAW.read_text(encoding="utf-8")
+        good = text.replace("applied_ccr=199", "applied_ccr=199 applied_period=1333")
+        self.assertEqual(self.check_text(good), [])
+        self.assertTrue(self.check_text(good.replace("applied_period=1333", "applied_period=1000")))
+        new = good.replace("BEMFRUN ", "BEMFRUN entry_period_ticks=1333 ")
+        self.assertEqual(self.check_text(new), [])
+        self.assertTrue(self.check_text(new.replace(" applied_period=1333", "")))
 
     def test_fixture_refuses_undeclared_carrier_before_hardware(self):
         import subprocess

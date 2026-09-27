@@ -42290,3 +42290,657 @@ change from the hooks remains. Keep their original changes untouched. Gate
 reports are mechanically normalized to UTF-8/LF; rustfmt changes here are import
 ordering/formatting only. Retry skips only root-wide Rust hooks for this commit;
 firmware50-specific tests/audits above remain the evidence, not sibling builds.
+
+### E390 - pre-build typed revisit suppression
+
+Checkpoint1836c53 preserves E358-E389 source and notebook. Restore diagnostic
+advance16 at period1333; select PhysicalEdgesAbove<BemfPolicy,350>. Veto both
+fresh and overdue foreground revisit paths using applied_duty, before any
+HAL poll/critical section. Production selection, physical COMP handling,
+estimator, persistence, timers, protections and cap600 stay unchanged. Test
+349/350 on both paths, scripted real-event progress, and tracking stop after
+events cease. Expected IRQ roots equal BC21E369; foreground workload changes
+as part of the intervention. No new recorder. If offline gates pass: one50
+l45 control, conditional60 only after all gates pass, >=120s OFF. A failure
+ends the batch. Predictions/interpretation limits are E389 dual reviews above.
+
+E390 result: archive E700DFF0.e390-physical-high.elf SHA256
+E700DFF08256E783143505D1F527048276153E2885C68F955AAE3C0F2465AC8F;
+text47616/data740/bss24712, stack allowance11412.359 host tests PASS, host
+and release clippy PASS,9 fixture+5 order+50 sag checks PASS. Four IRQ roots
+37/775/383/155 identical instructions toBC21E369, only TIM16 constant-pool
+relocations. No forbidden reachable arithmetic. Structure clean; formatting
+had made the comment-inclusive det_decide_plain count101, so its four-line
+historical comment was shortened to two without executable change. Earlier
+25B78C09 archive was not flashed; final comment/debug-line rebuild is E700DFF0.
+Default production retry selection unchanged; binary header records selected
+target policy. Firmware thresholds unchanged. MCP p confirmed alloff/nFAULT1.
+
+### E391 - pre-run physical-only-above35 diagnostic50
+
+Explicit verified flash E700DFF0, ++++ ACK500, l45s, period1333/advance16,
+existing order+sag rings. >120s OFF since E389. Prediction: low-duty entry
+unchanged; beyond35 physical IRQs alone either sustain50 or expose a tracking
+dependency. Any failure cancels the conditional60 run; no repeated control.
+Apply all existing fixture gates and retain capture regardless of outcome.
+
+E391 result: e391-propless500-physical-high_01.txt, E700DFF0 verified. Reason8
+Tracking at closed15150ms, hold0, actual400/CCR533. Conditional60 CANCELLED.
+accepted113309/ISR113310/COM113310; final ORDERA is not yet paired to a COM.
+late0/thin0, COMP11/19us, COMlate10, guardgap107/trackmax240, foregap202.
+End bus mean1215/filt1214, streak0; alloff PASS. Worst whole current proxy
+1343mA, zero drift-129mA, no nFAULT/current/sag stop. Coast2016eHz is not a
+hold witness because target was never reached.127 matched ORDER pairs; last
+paired interval76/average78/wait20 has normal postwrite-minus-wait5us. Last
+SAGROW since_zc219 with phase1046/2605/2501; these are sequential ADC samples,
+not calibrated instantaneous amps. All tails retained. Removing revisits has
+not established viable high-duty operation in this run; no unique cause claim.
+
+Review tooling: fresh collaboration.spawn_agent twice refused with thread-limit
+while the listed children were completed. An isolated read-only Codex CLI review
+also could not run read commands under its execution policy; that blocked output
+is retained and is NOT counted as review. Two new independent ephemeral sessions
+instead receive raw captures (all rows except SAGSLOW) and relevant numbered
+source directly on stdin, no tools/hardware/history. Their prompt states the
+omission; no author result interpretation or mutual verdict is supplied. This
+keeps fresh dual review rather than relabeling an old reviewer as context-free.
+
+E391 evidence review, verbatim (fresh CLI, supplied raw/source packet):
+
+> E391 regressed against E382 in these individual propless runs; it never reached 50%.
+>
+> - **Duty/dwell/stop:** E391’s CCR533/1333 = **39.985%**, corroborated by terminal SAG duty400; closed-loop duration15.150s, target dwell0, Tracking8 with `track_fault=1`. E382’s CCR666/1333 ≈ **49.962%**, SAG duty500; closed-loop39.778s, target dwell19.778s, deadline reason2. Neither commanded45s nor requested duty500 describes E391’s achieved hold. Exact powered duration and stop timestamp are absent. Both poststop preflights show outputs off/nFAULT high. (Capture files `e391-propless500-physical-high_01.txt`, `e382-propless500-order_01.txt`: `BEMFCURRENT/GATE/DONE/GUARD`, `PREFLIGHT`.)
+>
+> - **Terminal ordering:** E391 acceptance113309 at58652 schedules wait20; COM service58675 versus due58673, bridge stamp58677. SAG stamps58702/58767/58872 follow; the last has phase codes1046/2605/2501, bus1227, filtered1215/VREF1507, streak0. Acceptance113310 at58933 ends a **281µs gap**; no corresponding bridge row exists. Last six-acceptance span grows **494→694µs**. The final SAG software stamp precedes that acceptance by61µs; this does **not** date ADC acquisition or physical crossing. Tracking threshold240µs is consistent with the gap, but exact latch ordering is unrecorded. E382 ends with a395µs six-acceptance span and matching final bridge. Neither capture records a sag latch. (Same files: terminal `ORDERA/B`, `SAGROW`, `BEMFSAG/GUARD`.)
+>
+> - **Veto:** Both fresh and overdue-rescue requests encounter the same typed early return (`states.rs:1052–1067`; `policy.rs:278–287`). It uses previously published duty because publication follows revisit (`states.rs:974–985`). Aggregate revisit counts cannot identify accepted-event origin (`1015–1022`). Binary policy binding/threshold and HAL revisit implementation are missing; no independent lower-level veto is demonstrated.
+>
+> The proposed carrier experiment is useful bounded sensitivity: E387 only reached10% and failed CompStorm13 after172ms closed-loop. Require baseline revisits/advance16, coherent ARR/CCR/plan activation, preserved duty/deadtime/sector, stop dominance, bounded transition latency, unchanged guards/timebases, and transition/restart/foldback coverage. Existing publication does not establish this: plans swap separately (`roots.rs:1105–1113`), while `set_period` immediately issues UG (`pwm.rs:104–110`). Candidate implementation, preload synchronization, policy wiring and tests remain unavailable.
+
+E391 adversarial review, verbatim (separate fresh CLI, same packet):
+
+> E391 failed **before 50%**: `hold_ms=0`, terminal SAGROW duty `400`, `applied_ccr=533/1333`, Tracking `reason=8`, `track_max_us=240`. Final ORDERA interval jumps `76→281µs`; coast reports ~2016eHz, so terminal estimator `1302eHz` does not establish rotor slowdown. Final SAGROW bus `1227`, `tripped=0` gives no terminal sampled sag, not proof against unsampled disturbances. E382 completed with only **19.778s target hold**, not 45s.
+>
+> Suppression is associated with failure, but neither its unique cause nor the necessity of every revisit is proved. `policy.rs:284–286` suppresses foreground requests; the instantiated threshold and binary-to-source correspondence are unseen. `states.rs:974,982–985` checks revisits before publishing duty, allowing transition-boundary requests. Pending IRQs, missed/cleared physical edges, persistence rejection, stale sector state, and scheduling changes remain alternatives. Revisit “accepts” merely follow an inflight flag (`1015–1022`), not demonstrated software origin; coalescing differs `63` versus `57045`, and baseline histograms saturate. Zero margin histograms are uninstrumented (`hal.rs:318–320`), not evidence of margin. Recorder cost and changed code layout remain confounders.
+>
+> The proposed running-only 64k experiment avoids E387’s observed early regime: it **entered**, then storm-stopped after `closed_ms=172`, at duty `100`, `storm_step=3`. That neither predicts running success nor uniquely implicates carrier physics.
+>
+> Before powering, prove:
+>
+> - ARR, active/preloaded CCRs and all sector plans switch consistently at a defined timer boundary. `pwm.rs:97–109` combines sequential CCR writes, immediate CCER and forced UG; interrupt masking alone cannot prevent hardware updates. `roots.rs:1105–1112` publishes only plans.
+> - Stop wins every interleaving; no resumed writer restores drive. One-shot protection (`roots.rs:1066–1084`) does not prove PWM transaction safety.
+> - Threshold/foldback/restart behavior, duty scaling, dead time, ADC timing, bounded interrupt latency and unchanged guard effectiveness. Review unseen Board, plan-lock, detector and guard implementations; require interleaving tests and disabled readbacks.
+>
+> Simpler: matched baseline-revisit **40% control**, with identical recording and ramp, before adding carrier switching. If clean, minimally record physical/software pending origins and rejection reasons. Finite runs, ≥120s OFF and fault-ending are sensible limits; one 50% success cannot qualify 60% or establish uniqueness.
+
+Dispositions: accepted. The evidence reviewer calls bus1215 filtered; it is
+the eight-scan mean, while EWMA is1214. No claim depends on that one-code
+label. Binary selection is order-capture PhysicalEdgesAbove<BemfPolicy,350>;
+E390 archive/source/disassembly and boundary tests supply the missing binding.
+The last281us acceptance is unpaired, beyond the240us tracking allowance; no
+exact hardware-stop ordering is recorded. Existing E382 baseline traversed40
+and held50; another unchanged40 would only measure n1 repeatability, not select
+the next carrier mechanism. Defer that suggestion and new origin recorder.
+Keep the failed veto policy archived, restore baseline revisits for nextprobe.
+Live carrier change needs a separately reviewed transaction, not set_period
+plus publish_plans: UDIS/preloads, stop dominance and no transient over-duty.
+Only a faster, one-way transition per run is planned; foldback keeps the faster
+carrier, ordinary restart re-enters through unchanged startup. No powered
+attempt before implementation review and disabled checks. No protectionmoves.
+
+### E392 - pre-build running-only64k carrier sensitivity
+
+Retain48k handoff and original revisits/advance16. Typed carrier policy selects
+period1000 at applied/ramped350 and latches it until safe_off; production
+remains fixed1333. Precompute new six-sector plans outside masking. Atomic
+publication rechecks stop/active/MOE, inhibits TIM1 update transfer with UDIS,
+writes new lower CCRs and ARR, publishes plans, then restores update transfer;
+no UG, counter reset or MOE/ENABLE write. One native update commits source
+CCR+ARR; before that, a newly selected source may have a shorter pulse on old
+ARR, never a longer pulse. Reject period increases during drive. Test update/
+COM/stop interleavings and ramp/foldback/restart semantics. Report actual
+period separately from requested target carrier. If reviewed/offline+disabled
+checks pass, one50 control then conditional60 l45, >=120sOFF, anyfaultendsbatch.
+
+E392 first implementation reviews, verbatim (evidence then adversarial):
+
+> **No definite transient over-duty bug is demonstrated by the supplied transaction. Approval for powered operation remains unsupported by this excerpt.**
+>
+> - **Thresholds/semantics:** `FasterAbove<350,1000>` switches at **35%**, retaining 1000 ticks through foldback. At a 64MHz timer clock, 1333 ticks means ARR=1332, ≈48.012kHz; 1000 means ARR=999, 64kHz. With the stated compare formula, CCR=350/500/600 gives 35/50/60%; denominator is **ARR+1**. Startup6400 implies10kHz. The clock configuration, actual cap and `sixstep::plan` implementation are unseen.
+>
+> - **COM-before-update:** Assuming plans give every channel the same compare and only the source has OCPE, staging puts350 into the old source’s preload and immediately into other channels. A subsequent COM selecting another source therefore starts with350 already active; its writes also update the former source immediately after disabling its preload. Thus the new source is bounded to350/1333 before the update and350/1000 afterward. Retaining the old source preserves its old compare against the old ARR until both transfer. UDIS does not stop counting. This supports the compare/period bound, **not** a general claim about commutation pulse shape or electrical transients.
+>
+> - **Ordering:** Table construction precedes masking. `Seam::lock` rejects handler/reentrant use; borrowing succeeds before peripheral mutation. Stopped/active/MOE checks, staging, publication and UDIS release share the mask. The borrow ends before IRQ restoration. Shown guard shutdown cannot interleave or be reversed by this transaction. Unchanged IRQ instructions nevertheless do not establish unchanged latency: the new foreground masked window delays servicing.
+>
+> - **Concrete accounting issue:** `states.rs:943–969` marks target hold before successful publication, and even when `hold_plans` suppresses publication. Fix this before relying on claimed target dwell: mark only after successful application, accounting conservatively for deferred hardware activation.
+>
+> - **Limits:** `Gates<S: Drives>` does not itself prove *running-only*; the shown caller is running, but trait implementations and other callers are unseen. Protection implementations, stop dispatch, restart period reset and conditional60 admission are also unseen; “all protections unchanged” cannot be fully verified.
+>
+> The off self-test checks zero compare readbacks, MOE clear, UDIS released and an observed14–17µs wrap interval, then requests startup restoration. It does not verify restored frequency, loaded/nonzero-CCR transfer, COM overlap or protection response. Reported361+10 tests and identical IRQ instructions provide no hardware qualification for bounded50 or conditional60.
+> **Must-fix before bounded 50% control**
+>
+> - **Qualification can accept incomplete carrier evidence.** `applied_period` is optional; the fixture checks a target-derived declaration and CCR arithmetic without requiring actual-period telemetry (`scripts/propless.py:94–108`; `src/run/mod.rs:427–428`). Require actual carrier metadata and establish whether “applied” represents hardware activation or software publication. The controller updates `c.period` immediately after staging, before any confirmed native transfer (`src/run/states.rs:985–992`).
+>
+> - **Hold timing precedes application.** `hold_start` and current/statistics marks are recorded before retiming/publication, including when `hold_plans` suppresses publication or retiming subsequently refuses (`src/run/states.rs:942–969,983–992`). Consequently, “actual-target dwell” is not established by this timestamp. Qualification must account for publication and activation latency.
+>
+> - **The implementation proof is incomplete.** The simulator merely logs a successful transaction; it models neither CNT/UDIS nor active/shadow CCRs or COM interleavings (`src/run/sim.rs:387–393`). Establish the invariant across native updates occurring between COM’s mode and compare writes (`src/hw/pwm.rs:89–101`), including the assumption that `table[0].ccr[0]` supplies the correct common compare (`src/roots.rs:1120–1126`). No supplied `sixstep::plan` implementation proves that assumption. Also bound the masked transaction’s guard-stop delay: pending interrupts cannot execute during staging/publication (`src/shared.rs:170–173`; `src/roots.rs:1129–1142`). A pending stop is not yet a latched stop.
+>
+> **Caveats and findings that are not demonstrated defects**
+>
+> - UDIS does **not** stop counting. With the stated OCPE configuration, staging preserves the current source’s active compare while updating non-source compares immediately. A COM before overflow can therefore under-drive against the old period; this alone does not demonstrate transitional over-duty (`src/hw/pwm.rs:112–139`). Neither does it prove every interleaving safe.
+> - Foreground borrowing masks interrupts and releases its borrow before unmasking; COM copies its plan before register writes. No concrete aliasing defect appears here. Retiming never re-enables MOE/ENABLE (`src/shared.rs:166–173`; `src/roots.rs:1234–1236,1117`).
+> - Boot refusal is fail-closed, but the zero-compare selftest proves only an off-state timing check, not powered CCR coherence. The later PASS message repeats boot status (`bin/order-capture.rs:51–59,74–75`; `src/hw/pwm.rs:145–176`).
+> - Foldback retention is explicit; restart reset is only asserted with an already-reset input, not demonstrated end-to-end (`src/run/policy.rs:312–323`; `src/run/sim.rs:538–542`).
+>
+> The supplied evidence does not yet justify 50% control or conditional 60%. Retain every protection.
+
+Dispositions: fixed actual-period evidence requirement for new-format captures.
+`applied_period` explicitly denotes staged software state, not an active-ARR
+probe. Fixed existing hold mark: successful target publication, subsequent COM,
+then >one maximum running PWM period before starting dwell/current marks.
+Frozen plans cannot mark hold. Applies to handoff targets too. Host test pins
+publication-only refusal and delayed activation. This accounting correction is
+a second foreground difference; it cannot be called a carrier-only A/B.
+Model now enumerates native updates between all staging AND individual COM
+mode/compare writes for every old/new source. It bounds compare/period, not
+all electrical pulse shapes. Existing sixstep tests prove equal CCRs.
+Same-controller second ordinary run explicitly returns startup6400, entry1333,
+then changes once to1000; stop restores6400. Initial test expected only first
+two and failed; corrected the test to include actual stop restoration, no code
+change to restoration. Boot text now calls restoration requested, not measured.
+No new recorder. Full protection code unchanged except own carrier-refusal29.
+
+Final candidate F0449F86.e392-staged64-fixed.elf SHA256
+F0449F8607CB79EFE6D63183B2E71766610B82EF89274A7CB1AFC64BACDCC9B4.
+362 host tests, host/release clippy and10 fixture tests PASS; release-s/thinLTO/
+codegen1. Four IRQ roots identical toBC21E369 (37/775/383/155 instructions),
+zero forbidden helpers. Structure functions<=100, data740/bss24712/stack11412.
+Historic37 low-stack archives remain flagged, not this image. No flash yet.
+Mask audit: fixed320-byte memcpy4 has20 four-word iterations, stage_faster
+has3 stack stores, all other paths bounded/no polling. New window is one
+foreground transaction at35, not added IRQ cost. Its latency is not zero;
+pending stops run after unmask. Conservative instruction-budget estimate uses
+<500 executed instructions plus memory/branch waits; it is NOT a measured WCET.
+Guard200us/timing/current/sag stops unchanged. Off selftest is only zero-CCR
+native-wrap evidence; it cannot qualify powered coherence or thermal safety.
+Second fresh pair will review the corrected implementation before flash.
+
+E392 second independent reviews, verbatim (evidence then adversarial):
+
+> The supplied code supports the staged transition; it does **not** establish interrupt-latency safety or powered qualification.
+>
+> - **Carrier:** At the supplied 64MHz timer clock, PSC=0 gives `64MHz/(ARR+1)`: startup6400 ticks =10kHz; running1333 =48,012.003Hz; staged1000 =64kHz. ARR values are6399/1332/999. `FasterAbove<350,1000>` selects64kHz at ≥35% and retains it during foldback. The transaction executes only when applied duty changes (`pwm.rs:39–41,78`; `policy.rs:315–323`; `states.rs:998–1008`). At500/600, compares are500/600:50%/60%.
+>
+> - **Compare/ARR invariant:** Only the source has preload: mode0x68 versus forced-inactive0x40. Comments claiming all CCRs are preloaded are inaccurate (`sixstep.rs:39–42,91–107`). UDIS blocks updates while all three compares and ARR are staged; the complete replacement table is published before UDIS clears (`pwm.rs:117–139`; `roots.rs:1118–1144`). COM writes CCMR1, CCMR2, CCR1–3, then CCER (`pwm.rs:85–101`). At the modeled349→350 transition, the old source can retain465/1333; other channels immediately receive350. Subsequent COM therefore encounters350/1333 or350/1000, never465/1000 under the modeled transfer semantics. **Continuous equality of active CCRs is not required or maintained during staging.** The model enumerates16,384 update masks ×9 source pairs, including COM write boundaries (`policy.rs:588–637`); this remains a register model, not physical timing proof.
+>
+> - **Stop/restart:** The masked transaction checks stopped/active/MOE, refuses unavailable ownership, and never enables outputs. A pending guard is delayed until mask release; it cannot preempt midway (`roots.rs:1127–1144`; `shared.rs:166–173`). Refusal returns CarrierTransition; handover resets running period and skips installs when already latched (`states.rs:897–915,1001–1004`). Second-run simulation expects startup→running→startup and another retime (`sim.rs:533–548`). Full guard, safe-off, and restart implementations are omitted: complete stop ownership cannot be certified.
+>
+> - **Hold/metadata:** Hold begins after target publication, a subsequent observed COM, and22µs (`ceil(1333/64)+1`), with applied duty meeting target and plans unsuppressed (`states.rs:949–960,1010–1013`). Thus45s-total is not45s target dwell; exact ramp/hold duration cannot be recomputed without omitted timing code. BEMFRUN declares policy intent; host checks actual-period metadata and exact requested CCR, but the actual-period producer is absent (`mod.rs:425–430`; `propless.py:94–110`).
+>
+> - **Masked instruction budget:** Successful `cpsid` through PRIMASK restoration executes **387 instructions**:41 transaction instructions +59 staging +287 memcpy, including calls/returns. Staging loops exactly3 times; memcpy320 executes20×13-instruction iterations, then a12-instruction zero-length generic memcpy. Eight initialization iterations and six plan calls precede masking (`e392-fixed-transaction.txt:175–291,501–549,335–366,466–467`).
+>
+> **Blocker to timing acceptance:**387 instructions is not WCET. Branch, memory/peripheral stalls and pending-interrupt latency remain unbounded here against the200µs guard gap. No concrete transition defect is demonstrated; audit summaries do not close that timing gap.
+> **One concrete hold-accounting defect; no demonstrated carrier-induced re-energization defect in the supplied transaction.** This is packet-only review; omitted COM/guard implementations limit the conclusion.
+>
+> - **Hold timestamp can precede the qualifying COM.** In `states.rs:940–952`, `now` is obtained before reading `com_count()`. A COM interrupt between those operations can make the count change, yet `target_seen_at` receives the earlier timestamp. Consequently, the nominal full-carrier settling interval can expire before a full period has elapsed since COM. This defeats the stated conservative target-dwell guarantee. Sample time **after** observing the qualifying count change. Recording the publication count after publication can instead miss an intervening COM and delay hold recognition; that direction is conservative.
+>
+>   **Classification:** fix before relying on corrected dwell accounting to authorize conditional 600. It does not independently block the initial bounded 500 exploration.
+>
+> - **The hold tests do not establish the hardware-facing guarantee.** The focused test fabricates a count mismatch by replacing the saved count with `u32::MAX`; it never performs a COM or CCR transfer. The integration assertion `hold_us < sim.t - target_at` also permits zero hold. Neither catches the timestamp race. Add a targeted simulated COM between time sampling and count observation, and require positive hold with the correct lower bound. These are evidence defects, not demonstrated electrical failures.
+>
+> - **Masked staging appears coherent under the stated timer semantics.** Interrupt masking does not stop TIM1. An overflow before UDIS sees the old configuration; while UDIS is set, transfers are inhibited; after release, all new compares and ARR have been staged and the plan table is published. An overflow between UDIS release and unmask is therefore not inherently unsafe. No transaction write restores MOE or ENABLE.
+>
+> - **The carrier model proves a narrower property than its name suggests.** It checks compare/period ratios across update boundaries, including separate CCMR writes, but omits CCER/output behavior, counter phase, and stop preemption within COM. Separate CCMR writes can transiently select two PWM channels when source ownership crosses register groups. The packet does not establish harmful conduction, and this sequence already exists in `apply_plan`; it is a coverage caveat, not a demonstrated new carrier blocker.
+>
+> - **Pending stops are delayed, not shown defeated.** The masked region includes a 320-byte copy plus register operations. The boolean `arm_allowed` test proves neither response latency nor stop dominance through interrupted COM writes. The assembly exposes a bounded path, but no worst-case duration against the existing 200µs guard-gap limit is supplied. Identical IRQ bodies do not answer that question. Bound this specific masked path; require a change only if its delay violates the existing timing budget. A stop already serviced is checked; a pending stop waits until unmask. Full post-stop COM behavior remains unverified because its implementation is omitted.
+>
+> Nothing here warrants whole-campaign requalification or new instrumentation.
+
+Dispositions: fixed hold observation race. Timestamp now acquired AFTER the
+COM count change and reused for the settlement comparison; no subtraction
+against an earlier now (which would wrap). Added timestamp ordering and positive
+hold assertions. F0449F86 not flashed; rebuild required. Review counted387
+executed masked instructions including fixed320-byte copy. Working conservative
+budget:12cycles/instruction=4644cycles=72.6us at64MHz, versus200us tick-gap
+stop and prior observed107..109us tick gap. This is an engineering bound under
+normal configured memory/peripheral clocks, not formal bus-arbitration WCET or
+observed latency. Existing guard remains; new critical section occurs ONCE at35.
+Continuous activeCCR equality is not claimed; compare/ARR bound is. Review scope
+omitted full guard/COM stop; include those in targeted final correction review.
+Ratcheting against production advref-floor5 was the wrong configuration: it
+reports already-existing order/sag recorder instructions (+33COMP,+51COM) and
+scan path, not a new IRQ regression. Use separate diagnostic baseline established
+from frozen BC21E369, preserving production baseline, then compare successor.
+
+E392 final correction reviews, verbatim (evidence then adversarial):
+
+> The timestamp correction fixes the shown backdating bug: `hal.now()` is sampled after observing COM, and replaces `now` before settle arithmetic. On that poll, `now.wrapping_sub(at)` is zero, not an unsigned underflow. Subsequent clock rollover works provided elapsed time is less than one full `u32` clock period.
+>
+> **Remaining defects**
+>
+> - **Target evidence survives a downward duty change.** Lines 1014–1017 reset COM/settle evidence only for a new duty at or above target. If duty falls below target before hold starts, stale evidence remains. More directly, hold marking precedes applying this poll’s computed duty: it can mark a hold using the old target duty immediately before publishing a lower duty. Eligibility should include the pending duty; below-target publication should invalidate pending target evidence.
+> - **Stopping the timer does not cancel an executing COM handler.** `com_root` checks `active` only at entry. If a guard can preempt after that check, it can complete shutdown before COM resumes into `apply_plan`, `comp_exti_arm`, or `line_enable`. `com_arm` correctly refuses rearming, but those other operations lack an equivalent transactional check. This permits post-stop writes/unmasking; the excerpts do **not** establish bridge re-energization. Whether that interleaving is reachable depends on actual IRQ priorities.
+>
+> **Caveats**
+>
+> - The retime transaction shown is interrupt-masked through `Seam::lock`, including stop checks, staging, publication, and finish. A maskable guard cannot split that transaction.
+> - The new test exercises fresh timestamp use and immediate settle rejection, but fabricates COM observation by altering the saved count. It does not test actual COM/preload ordering, exact settle boundaries, clock rollover, downward-duty invalidation, or stop preemption.
+> - Reported test totals and instruction estimates do not establish WCET or electrical qualification.
+> The timestamp correction fixes the identified backdating: `now` is refreshed after observing changed COM count and reused for settling, preventing subtraction against the older `pass()` timestamp. Taking the publication snapshot afterward can miss an intervening COM and delay recognition; that is conservative.
+>
+> **Concrete stop-dominance gap:** `com_root` checks `active` only at entry. If the guard preempts after that check, suspended COM work can resume after `guard_trip` returns:
+>
+> - Phase 1 can call `apply_plan` after compares were zeroed.
+> - Phases 1/2 can reach `comp_exti_arm`; phase 3 can unconditionally re-enable the comparator line.
+> - `com_arm` refuses subsequent timer arms, but that does not protect these other writes.
+>
+> Thus “stopped means no further peripheral writes” is false. Actual re-energization is **not established**: it depends on whether those helpers can restore MOE/ENABLE or otherwise defeat their disabled state. Their implementations are absent.
+>
+> **Staging:** `Seam::lock` masks interrupts across the stop checks, staging, publication and finish. Consequently, the guard cannot interleave within that transaction; staging adds guard-service delay rather than introducing the COM-resumption race above. Preparing the table outside the mask limits that delay. Verifying staging’s claimed register restrictions requires `stage_faster` and `finish_staged_carrier`, also absent.
+>
+> **Evidence limits / exploration blockers:** The hold test forces count inequality; it does not demonstrate real target-plan application or CCR transfer. The settling bound requires confirming carrier units, preload/update behavior and successful plan application before count increment.
+>
+> The reported instruction count and 72.6µs estimate neither establish maximum interrupt latency nor prove compliance with the stated 200µs guard gap. Unverified shutdown-preserving helper behavior is a concrete blocker to endorsing powered exploration from these excerpts. Missing WCET proof alone is not evidence of a timing violation; unchanged thresholds and passing host tests do not resolve either question.
+
+Dispositions: added pending-duty eligibility and clear pending target evidence
+on below-target duty. Existing hold/ceiling gate already rejects foldback as
+qualification; this closes first-mark ordering too. Retained stop limitation:
+interrupted COM can rewrite CCR/mux/EXTI after guard, but cannot restore MOE or
+PD1 ENABLE. Source checked directly: pwm::apply_plan onlyCCMR/CCR/CCER;
+comp_exti_arm/prime and hw::comp::line_enable touch edge/EXTI/NVIC only;
+com_arm rejects stopped. Therefore no claim of zero post-stop peripheral writes,
+and no newly introduced re-energization path. This was present in baseline.
+Packet omission is not evidence of absent hardware safing. New staging masks
+guard during publication, never reenables drive; existing200us guardgap remains.
+Proceed only bounded diagnostic, not formal WCET or envelope qualification.
+Prior F0449/662E archives never flashed. Final rebuilt hash recorded below.
+
+### E393 - pre-flash/off-check and bounded staged64 control50
+
+Final E392 archive F971AACE.e392-staged64-ready.elf SHA256
+F971AACEDEF6166952273426CDE42B775CB0C68E170A51545AF8CD161A7011DB.
+362tests/releaseclippy/four-root helper audits PASS, IRQ instructions identical
+toBC21E369. Separate order-advref-floor5-comtop ratchet passes against that
+frozen diagnostic control; production baseline not replaced. Flash explicit
+G071 serial, reset, MCP p must show disabled outputs+nFAULT high and boot
+carrier check PASS before powered command. Then l45, target500, period1000,
+entry1333, advance16, rings retained. >120s OFF sinceE391. Prediction: staged
+carrier avoids the prior64k10% entry storm; clean50 permits one conditional60
+after>=120sOFF. Any stop ends batch, not retry. No success transferred tolean.
+
+E393 disabled check PASS: explicit flash/reset, MCP p alloff/nFAULT1,
+native64k boot check PASS; UART closed before fixture. Absolute375+5*25
+selection ACK500. Capture e393-propless500-staged64_01.txt reason2, actual
+CCR500/period1000, targethold19778ms, closed39778ms, matchedcoast2491eHz/
+1003permille. No late/thin/sag/tracking/storm/blank/current fold. COMPspent12/
+call25us, COMlate11, tickgap109, foregap204. Proxyhold250mA with zero-195mA,
+not a calibrated current reduction. Alloff finalPASS. Candidate crossed35
+and completed50 without the old64k-entry storm; n1exploration only. Conditional
+60 is admitted under predeclared batch; no mechanism/qualification conclusion.
+
+### E394 - pre-run conditional staged64 diagnostic60
+
+Same F971AACE, cap600 unchanged; one l45 target600 via absolute shell selection.
+Atleast120sOFF after E393. Prediction: if lower ripple/carrier phase improves
+running acceptance, run reaches/holds600 instead of prior54..56 sag sequence.
+If fault occurs, stop batch and review exact tail; do not retry. Keep all guards,
+same rings, entry48k/advance16, staged64 at35. This is not a30s qualification.
+
+E394 result: e394-propless600-staged64_01.txt reason26, actual590/CCR590/
+period1000, targethold0, closed24559ms. AlloffPASS. No late arms; thin4,
+COMPspent12/call25us, COMlate10, tickgap109, foregap232. Wholeproxyworst1296mA,
+zero-230mA; hold0 means no holdcurrent witness. Coast2744eHz is poststop only.
+Terminal107us accepted gap at14843, bus still1223/mean1218 at14885; phaseA55
+at14990. Raw1118 at15503; mean streak1143/1135/1116 vs1213 at15802/15891/
+16027. No sustained supply attribution. Batch ends, no same-image retry.
+
+E394 dual raw-evidence reviews, verbatim (evidence then adversarial):
+
+> **Achieved duty and dwell differ from requested duty.**
+>
+> | Capture | Achieved PWM duty | Target dwell | Stop |
+> |---|---:|---:|---|
+> | E393 | 500/1000 = **50.000%** | **19.778 s** | Deadline, reason 2; closed-loop duration 39.778 s |
+> | E394 | 590/1000 = **59.000%** | **0 s at 60%** | Sag, reason 26; closed-loop duration 24.559 s |
+> | E383 | 746/1333 ≈ **55.964%**, nominal 56% | **0 s at 60%** | Sag, reason 26; closed-loop duration 23.153 s |
+>
+> E383’s denominator is inferred from the supplied 48 kHz context. Neither fault completed its requested 45 s. Exact elapsed powered stop timestamps are absent; closed-loop durations must not substitute for them. Zero-hold rate/current fields are placeholders, not measurements.
+>
+> **Ordinal and terminal ordering:** E394’s acceptance offset is `727554−252343=475211`; its COM offset is `727554−252344=475210`. These match E393’s preceding totals. Normalize each stream separately; local acceptance and COM indices differ by one even when matching boot ordinals identify the corresponding transaction.
+>
+> Using local microsecond stamps:
+>
+> - E394: a **107 µs accepted gap ends at 14843 µs**; bus remains normal at 14885 µs. Phase-A code **55** appears at 14990 µs. The terminal raw-bus sub95% sequence begins at 15503 µs; mean-based streak 1/2/3 occurs at 15802/15891/16027 µs.
+> - E383: accepted intervals extend to **76/83/83 µs**, ending at 41164/41247/41330 µs; phase-C code **76** appears at 41442 µs, phase-B **0** at 41547 µs. Terminal raw-bus sub95% starts at 41847 µs; mean streak starts at 42081 µs and trips at 42243 µs.
+>
+> Trip means normalize to approximately **94.29/93.63/92.06%** in E394 and **93.64/92.98/91.82%** in E383, against each row’s reference. Thus this packet’s guard judges **eight-scan means**, not three individual raw samples.
+>
+> Fine timestamps are **0.125 µs/tick**, wrapping every **8192 µs**. Last recorded bridge-write completion precedes trip recording by **8.375 µs** / **182.25 µs**, respectively; these are software stamps, not physical gate/crossing times. Coast estimates near **2744/2736 electrical Hz** undermine interpreting terminal accepted-interval estimates as rotor deceleration.
+>
+> ADC rails indicate clipping; asynchronous samples cannot establish peak/RMS current. Offset drift and exclusion of the trip block further limit current proxies. PWM-counter reads cannot locate acquisition apertures.
+>
+> The lean64 proposal is reasonable exploratory screening, but **n=1**, changing observers and binary layout, cannot establish mechanism. E393/E394 compare targets on one image; E383/E394 are unreplicated carrier comparisons. Cheaper first: exploit this existing ordering analysis. For carrier attribution, matched **lean48 versus lean64** is cleaner. Retain fault termination, **3 A**, cooldown and guards; absent temperature sensing, neither thermal nor loaded qualification follows.
+> The packet supports terminal acceptance-timing deterioration with bus/shunt excursions, but **does not establish increasing COM scheduling lateness as the initiating cause or a carrier fix**.
+>
+> - **COM latency:** There are isolated pre-trip lateness excursions: E383 ordinal228934 has entry-minus-deadline 8µs; E394 ordinal727533 has 7µs. These are not a demonstrated rising trend; successful E393 also contains 8µs. Whole-run `com_late_max_us` is10µs for both failures versus11µs for E393. Acceptance-to-COM time does lengthen terminally, but programmed waits also increase with the accepted-interval estimate: E394’s final row has27µs wait and30µs acceptance-to-entry, only2µs entry-minus-deadline. Distinguish adaptive wait from scheduling delay. Neither excludes unmeasured physical-edge-to-acceptance delay.
+>
+> - **Terminal ordering:** E394’s successive sector1-to-sector1 accepted cycles are334,443,404,576µs. E383’s terminal sector4 cycles are333,476,410µs. E393 remains around400µs without comparable terminal expansion. In E394, the107µs accepted gap ends at14843; conspicuous shunt excursion appears in SAG judgement14990 (`55/2106/2517`, bus1195), then raw bus1118 at15503. In E383, accepted gaps76/83µs end41164/41247; judgement41442 shows `2095/2710/76`, followed by raw bus1067 at41847. Thus recorded acceptance stretch precedes those recorded excursions. These are service/judgement timestamps, not physical crossings or ADC apertures; causal physical ordering remains unresolved.
+>
+> - **Guard/current interpretation:** The guard compares eight-scan means, not individual raw bus samples. Its final three normalized mean ratios are approximately94.3/93.6/92.1% in E394 and93.6/93.0/91.8% in E383. Raw lows occur before streak1. Shunt rails show substantial excursions but do not quantify calibrated pulse current. Small reported current proxies cannot establish safety: zero drift is material, and the trip block is excluded from accumulation. Zero-hold rate/current fields are not measurements of60% operation.
+>
+> - **Carrier:** E383 trips at applied56%; staged64 E394 trips at59%, both before60% hold. E393 completes only19.778s at50%. This suggests sensitivity, not a reproducible boundary improvement or fix; carrier changes switching and observation conditions. Older lean48k E375’s320ms at60% before FastSag further prevents declaring instrumentation necessary.
+>
+> The proposed lean staged64/advance16 test is a reasonable bounded observer-sensitivity experiment. Proceed only with verified policy/protection equivalence and disabled checks; ordinary production’s `FixedCarrier` would not be equivalent. Retain3A PSU,45s deadlines,≥120sOFF, and every guard unchanged. Run50 first; permit60 only after clean completion and verified safe-off. Any fault ends the batch. Record actual target dwell; neither success establishes loaded or thermal qualification, especially without temperature measurement.
+
+Dispositions: agree. Correct guard terminology is three judgements of an
+overlapping eight-scan mean, not three raw low scans. Timing rows are software
+observations, phase codes are sequential asynchronous ADC/clipping, notamps.
+Keep two independent stream offsets when replaying multi-run boot ordinals.
+There is no demonstrated terminal COM-delay increase. Further nominal advance/
+filter changes are deferred until removing observer overhead is tested. A new
+carrier has NOT earned60, nor proved a unique cause. Existing lean48 E375
+already failed at60 after320ms, so recorders are not claimed necessary.
+
+### E395 - pre-build lean staged64 control personality
+
+Separate staged-pwm binary, same typed carrier/FasterAbove350,1000, same startup,
+advance16/deep-filter/com-top and all guards/cap600; NoLog/NoChain/NoSagLog
+replace recorders. Keep TIM2 initialized and same shell service loop to narrow
+differences; no UART underpower. Run50 l45 then conditional60 only on clean
+control, >=120sOFF. Both reviewers approve this bounded sensitivity test, not
+qualification. Expected roots return to known lean E373 shape. Retain exact
+archives; no full ladder. Prediction: if observer burden contributes materially,
+lean staged64 may sustain60 where E394 stopped59. A fail retires that premise
+for this attempt; no retry-until-pass. Selftestoff and finaloff remain mandatory.
+
+E395 result: 44DC8FF0.e395-lean-staged64.elf SHA256
+44DC8FF0796FB76ED0D2E865990EF61344E8A18C5667E84594A1D9C9B6A8BA87.
+text44196/data740/bss4184/stack31940. Releaseclippy and four-root auditPASS.
+ISR instructions identical toleanE373:37/742/332/155, TIM16 constants relocated.
+Production advref-floor5 ratchetPASS; scan_pass +5instructions, nohazardclass
+drift. Model/core tests362 unchanged fromE392. StructurePASS fornewimage.
+
+### E396 - pre-run lean staged64 target50
+
+Flash explicitG071 E395, disablednative64k/alloffcheck; one l45 target500
+period1000, absolute375+5*25. >120sOFF sinceE394. Same45s/current/sag/guard
+limits, no recorder output. Conditional60 onlyaftercleanfixture50 and>=120sOFF.
+Compare actualdwell/coast/currentproxy/guardtiming, not summarydutyalone.
+
+E396 result: e396-propless500-lean-staged64_01.txt reason2, actual500/1000,
+hold19778ms, closed39778ms, coast2497eHz/matched1001permille. No late/thin/
+sag/tracking/storm/blank/currentfold, alloffPASS. COMPspent12/call22us,
+COMlate6, guardgap105, foregap162. VersusE393 diagnostic n1: COMlate11,
+call25, gap109, foregap204. Timing improvement observed but no reliability
+inference. Proxyhold268mA zero-118, not a matched/calibrated amp comparison.
+Structure script's binLOC default covers shell+board only; separately checked
+staged-pwm75 code lines,0long functions,2documentedunsafe wrappers,0staticmut.
+
+### E397 - pre-run lean staged64 conditional60
+
+E396clean admits same44DC8FF0 target600 l45 viaabsolute375+9*25. Wait>=120s
+OFF afterE396. Guards unchanged, actualtarget min9000ms for exploratorygate,
+no rings. Any stop ends this observer-sensitivity batch. Prediction: removing
+observerwork may prevent E394's59% fault, but E375lean48 already failed60 so
+no claim that instrumentation was the original cause. Retain every outcome.
+
+E397 result: e397-propless600-lean-staged64_01.txt reason2, actual600/1000,
+hold14778ms, closed39778ms. Coast2926eHz, matched1000permille, alloffPASS.
+No late/sag/tracking/storm/blank/currentfold. Thin2, COMPspent12/call23us,
+COMlate10, guardgap109, foregap186. Proxyhold421mA with zero-201mA, notmeter.
+This is first sustained propless60 exploratory pass in this campaign, not30s
+cohort/restart qualification. BEMFsector/phase counters saturate; no balanceclaim.
+
+E397 dual reviews, verbatim (evidence then adversarial):
+
+> - **Actual duty/holds:** e393/e396 reached 500/1000 = **50%**, each holding **19.778s**. e397 reached **60% for 14.778s**. e394 stopped fast-sag at **590/1000 = 59%**, with **zero target hold**; its requested600/ceiling600 does not demonstrate60%. Its166666eHz empty-window result is invalid.
+>
+> - **Recomputed speed:** hold accepts/(6×hold seconds) gives approximately **2496, 2499, 2927eHz** for e393/e396/e397, respectively: **24,961/24,994/29,270RPM**. Lean50→60 therefore increases speed about **17.1%**. Tail counts/spans give **2498/2502/2929eHz**. Rounded mean-interval estimates2525/2976 and last-interval2604/2976 are different estimators, not interchangeable measurements.
+>
+> - **Coast identity:** raw coast intervals support approximately2.49/2.49/2.92keHz for those successful runs. Coast measures rotation after drive removal, independently of accepted-event bookkeeping, but shares comparator/timebase—not an external tachometer. Reported matched ratios1003/1001/1000 are plausible; exact time-anchored reconstruction cannot be audited without `cohort.py`. e394 has no matched hold identity; its coast≈2744 versus terminal-CI1253 illustrates the latter’s limitations.
+>
+> - **Instrumentation:** lean source removes COMP capture, COM chain, and sag recorders while retaining fine-clock initialization and staged carrier selection:48k entry,64k from35%, latched until startup. Lean50 has fewer coalesced accepts and more foreground iterations than diagnostic50. Single runs establish neither recorder causation of e394’s failure nor CPU occupancy.
+>
+> - **Margins/current:** zero late arms coexists with thin counts **0/0/2/4** in e393/e396/e397/e394. Zero margin histograms supply no margin distribution. Current holds250/268/421mA are uncalibrated proxies; zero drifts−195/−118/−201mA are substantial relative to them. Neither absolute current, efficiency, nor calibrated headroom follows. Saturated sector/phase counters prevent balance or distribution claims.
+>
+> - **Next step:** reasonable bounded exploration, not qualification: retain3A PSU, protections, ≥120sOFF, finite attempts, and require65 clean before70. Current cap600 cannot execute either. New800-cap image needs the specified checks. Update absolute reset consistently to **19 leading minuses**, then **11/13 pluses** for650/700; verify final `CLIMBAT` before drive. Old11 can select800 accidentally. Observed timing predicts **12.278s at65**, **9.778s at70**, **7.278s at75**—fix the window before75. No thermal or loaded-envelope conclusion is justified.
+> **65%, then conditionally 70%, is a reasonable bounded experiment after fixture fixes—not evidence of safety through 80%.** Retain PSU 3A, every guard, independent coast measurement, verified outputs OFF, and ≥120s OFF between attempts. Cooldown is an exposure constraint, not proof of temperature recovery.
+>
+> Observer causality remains unresolved. Diagnostic 60% stopped with CCR590 and zero target hold; lean 60% completed 14.778s at target. These are single, sequential trials on different images, not replicated causal evidence. At 50%, both images produced nearly identical accepted rates and coast speeds despite different mailbox coalescing. Instrumentation plausibly changes scheduling, but neither causes the fault conclusively nor explains away its safety relevance.
+>
+> Lean coast speeds were 2497/2926eHz, approximately 24,970/29,260RPM. They corroborate rotation independently of powered acceptance accounting, without proving mechanical safety. Current readings remain proxies; zero drift of −118/−201mA is material relative to 268/421mA hold readings. No thermal conclusion or speculative speed wall follows.
+>
+> Concrete cap800 hazards:
+>
+> - **Stale absolute reset:** `bemf_run.py:770` accepts eleven leading minuses. From800 these reach525, not375. Seventeen are necessary; nineteen preserve the existing two-press allowance. Require a fresh final `CLIMBAT` equal to the requested rung before driving.
+> - **Global scope:** `SIXSTEP_DUTY_CAP` feeds selector limits and published plans. Changing it widens authority beyond this propless binary unless isolated. Host acceptance through800 already exceeds current firmware capability; that acceptance is not qualification.
+> - **Timing-margin blind spot:** the verdict checks `late_arms`, but neither requires nor evaluates `thin_count`. Lean60 recorded two thin events despite zero late arms; zero margin histograms provide no distribution. Define thin-count semantics and a prospective progression criterion, preferably with a target/near-deadline window and denominator. Whole-run counts cannot locate deterioration.
+> - **Evidence validation:** duplicate records overwrite earlier ones; two OFF preflights need not bracket the run. Tail checks establish internal consistency but impose no explicit near-stop freshness bound. Strengthen run association and freshness; unseen `cohort` code cannot be credited with those checks.
+>
+> Require the stated build/audit/protection checks before exposure. Run one65 `l45`; advance only after clean review, otherwise stop investigation at that rung. Existing timing suggests approximately **12.3s**, not12.8s, at65 and9.8s at70; judge measured target dwell. Address duration before75. Final qualification remains separate.
+
+Dispositions: agree n1doesnotproveobservercausality. Thin means remaining
+pre-arm allowance<=2us, includingzero; late0 means both events were positive
+1..2us, whole-run rate2/519928=3.85permillion. Stage unknown; do not add a
+made-up thin-rate kill or another histogram campaign. Record count/rate and
+require fresh review after65 before70; existingLateArm stop unchanged.
+Host now rejects duplicate summary records (DRVROWS is valid continuation),
+requires pre/POSTSTOP/post ordering, and requires powered tail age within
+tracking allowance + observed guard/foreground service gaps. This is evidence
+freshness, not a firmware threshold. Old qualificationfiles remain historical.
+Absolute reset becomes19minuses; test every prior375..800 selector state.
+Globalcap800 widens other binaries ifrebuilt; explicitly build/flash ONLY staged-
+pwm for this campaign, leave archived loaded images intact. No assumption any
+image or motor has qualified80. Currentprobe/data/calibration caveats retained.
+
+### E398 - pre-build command ceiling80 and fixture integrity
+
+Only firmware policy change is campaigncap600->800, authorized in activegoal.
+All electrical/timing/thermal-exposure limits unchanged, explorationl45 still.
+One next65 l45 aftergates/offcheck; doNOTauto-run70 beforedualreview. Expected
+targetdwell~12.278s (reviewcorrected12.8). No structuralcontrolrewrite. Test
+selectorallstates, cap800clamp, hostguard/fixturechecks, releaseclippy/arithmetic/
+instructionratchet. Differenthashdoesnottriggerfulloldladder. Off>=120s.
+
+E398 result: 58383038.e398-cap80.elf SHA256
+583830381D491BFD068112C37C1D6D831322521654237FEAF23FFCA51B09866A.
+362hosttests/12fixturetests/releaseclippy/four-rootarithmetic/ratchet PASS.
+AllfourIRQ instructions unchanged from44DC8FF0 (TIM16constantrelocation).
+Structure nofunctions>100. Historical E396/397 retainPASS under stronger
+hostrecord/freshness validation. Allprevious baseline buckets unchanged.
+
+### E399 - pre-run propless65 exploration
+
+Flash onlynewstaged-pwm58383038; disablednative64k/selftest+p outputsPASS.
+Then absolute375+11*25=650, l45, minactualtarget9000ms, PSU3A unchanged,
+>=120sOFF sinceE397. Oneattempt; anyfailureendsbatch. Expectedhold12.278s,
+speedabove2926eHz ifdrivecontinues. Thin-count normalizedbywholeaccepted,
+stageunknown, not a new hardthreshold; existingLateArm stopsretained. Review
+this result before70, as E397review requested. No qualificationtransfer.
+
+E399 raw result: e399-propless650-lean-staged64_01.txt, same58383038,
+reason2, applied650/1000, hold12278ms, closed39778ms. Coast3139eHz;
+hold accepts230284/(6*12.278)=3126.01eHz; tail3126.56 versus time-anchored
+coast3139.04eHz, residual-3.98permille. FixturePASS, outputsalloff/nFAULT1.
+Late0, thin133/535667 accepted=248.29permillion (whole-run, stageunknown),
+versusE3972/519928=3.85permillion. No safety threshold or gate changes.
+COMPspent12/call23us, COMlate12, guardgap111, foregroundgap214. Current
+proxyhold379mA with zero-111mA; not a calibrated current or efficiency result.
+Raw bus<95% singles57, maxstreak1; actualguard eight-scan mean neverlatched.
+ClosedIRQpeak70 with storm0 is compatible with existing40ms observe-only
+handover window (rate::observe retainspeak; aftercap_armed, hit judgescurrent
+bucket not historicalpeak). Counter cannot locate that peak without tracing.
+Fresh dualCLIreview underway; collaboration spawn againfailedthreadlimit.
+No70 yet. Keep >=120sOFF. This is exploratory evidence, not qualification.
+
+E399 dual reviews verbatim (evidence then adversarial):
+
+> These are two successful **exploratory unloaded runs**, not qualification of 65% or evidence for 80%.
+>
+> - **Actual duty/dwell:** CCR/period gives 600/1000 = **60%**, held **14.778s**; 650/1000 = **65%**, held **12.278s**. The requested 45s includes startup and ramp. Different ELF hashes prevent attributing differences solely to duty without the build/source delta.
+> - **Count-derived speed:** Whole-target counts give **2927.2/3125.8eHz**. Terminal tails independently calculate as `48814×10⁶/(6×2777920)` = **2928.7eHz**, and `42734×10⁶/(6×2278011)` = **3126.6eHz**. Raw coast pairs support approximately **2929/3138eHz** at stop, consistent with reported matched ratios **1000/996‰**. These satisfy ±1% terminal identity; they do not prove stability throughout the hold. Six pole pairs imply approximately **29,287/31,266 mechanical RPM** from the powered tails. Rounded `ci_us` frequencies are not the appropriate comparison.
+> - **Timing margin:** `thin_count` means computed `left≤2µs`, including zero—not physical-edge-to-COM slack. Using whole-run accepted counts as approximate denominators gives **2/519926 = 3.85ppm** versus **133/535665 = 248.3ppm**, about **65×** higher. Exact armed denominators and target-only thin counts are missing; disabled histograms supply neither. Events may cluster, so independent-trial confidence intervals would be unjustified. Zero late arms does not establish comfortable timing margin.
+> - **Faults/bus:** Both report deadline reason2, zero forced commutations, late arms, tracking faults, storm, overrun, blank latch and sag trip. Final ceilings equal requested duty. Nevertheless, raw below-95% samples occurred **104/57** times, maximum consecutive run1. “No sag trip” is supported; “no bus dips” is not.
+> - **Current/off:** Hold proxies **421/379mA** accompany zero drift **−201/−111mA**. The 42mA decrease cannot establish reduced physical current or improved efficiency. Both pre/post records verify bridge outputs disabled and nFAULT high.
+>
+> One same-image **70%, l45** attempt would test whether terminal identity and timing remain acceptable at the next rung. Extrapolating unchanged ramp timing predicts **9.778s** at target, but actual ≥9s must be verified. It is bounded operationally, not a demonstrated thermal/mechanical envelope: ≥120s OFF supplies no temperature measurement, and KV supplies no maximum-RPM rating. Guard implementation, unchanged PSU3A setting, and manufacturer speed limit are not independently evidenced here. This review grants no new permission or threshold change.
+
+> **One guarded 70% run would add useful evidence, but first resolve the rate-cap ambiguity with a bounded source check.** These captures support single propless deadline completions, not 60/65% qualification or an 80% envelope.
+>
+> - **Raw outcome:** Actual target holds were 14.778s and 12.278s. Both report deadline2, zero forced commutations, late arms, storm, overrun and sag trip, with pre/post outputs off. CCR/period confirms 60% and 65%. Coast intervals independently support roughly 2.9–3.1keHz rotation. The exact matched-window verdict cannot be independently reconstructed without the omitted `cohort` implementation; the `PROPLESS` summary is derived evidence.
+>
+> - **Rate peak:** `observe()` can raise the lifetime peak above64 without latching. Later `hit()` judges the **current bucket**, not the historical peak. Thus peaks67/70 with `storm=0` are compatible with the handover observation window; they do not establish a cap bypass. However, terminal `cap_armed=1` does not locate those peaks or prove timely enforcement. Check the exact assignments/reset lifecycle of `cap_armed` and `Rate` against the 40ms transition. If that remains ambiguous, a narrowly scoped host replay of that transition is preferable to another recorder image.
+>
+> - **Margin and causality:** Thin events rose2→133 despite a shorter target hold, a concerning signal. They are whole-run counts: their duty, timing and distribution are unknown. `late_arms=0` and `spent_max=12µs` do not establish hardware-edge timing margin. Zero histograms and preemption counters are not affirmative evidence when their instrumentation is absent. Different ELF hashes also prevent treating this as a proven duty-only comparison.
+>
+> - **Electrical/mechanical limits:** The379/421mA proxies cannot establish current headroom; reported zero drift is substantial. Isolated raw bus depressions occurred despite no sag latch. A3A supply limit does not bound phase-current peaks or rotor stress. At six pole pairs,65% coast speed implies approximately31,390 mechanical RPM. Neither120s OFF nor these logs establishes winding temperature or a manufacturer speed margin.
+>
+> Once cap enforcement is resolved, **one same-image70%/45s run**, unchanged guards and3A limit, after≥120s OFF, is a proportionate exploratory step. Require≥9s actual-target evidence; extrapolated timing gives only about9.778s. Retain any refusal/fault without repeat-to-pass. Success would establish that single operating point, not justify proceeding automatically to80%.
+
+Dispositions/source check: bin/board.rs reset_roots clears cap_armed and Rate;
+det_install resets Rate before transfer; Closed::enter sets closed_at once.
+Ctx::pass_inner arms cap at >=40000us after that time, with no later reset
+until a new run. All assignments enumerated. Rate::hit tests currentbucket;
+observe can preserve a historicalpeak70. Existing10 rate tests PASS. This
+resolves the apparent70-vs64 contradiction without moving any threshold or
+requiring a recorder. Peak stage is still not timestamped. Exact-image guards
+will later be provoked for qualification; do not claim new proof of allpaths.
+E398 delta is cap600->800 only in firmware (ISRinstructions unchanged); host
+fixture validation also tightened. No causal reliability claim from single
+runs. Review arithmetic rounding corrections: E397 hold2927.042eHz; E399
+hold3125.971eHz (my3126.01 and review3125.8 were transcription/roundingerrors).
+E399 tail3126.558/coast3139.038 residual-3.976permille verified with speed.py.
+Thin248.29permillion is approximate peraccepted, not perarmed or targetonly.
+No comfortable-margin/thermal/mechanical qualification asserted. Both support
+one bounded70 aftersourcecheck; no automatic75, and no new instrumentation.
+
+### E400 - pre-run propless70 exploration
+
+Same flashed58383038, no build, absolute19minus+13plus selects700. l45,
+minactualtarget9000ms; expected9.778s. >120sOFF sinceE399. Same3A and all
+protections; anyrefusal/fault endsbatch and isretained. Prediction: one clean
+70 would establish the next exploratorypoint; risingthin is monitored, not
+excused by currentproxy. Review before75. No targetqualificationclaim.
+
+E400 result: e400-propless700-lean-staged64_01.txt, same58383038,
+reason26FastBusSag at closed39025ms, actual700/1000 held9025ms. AlloffPASS.
+No late/storm/overrun/blank/tracking/currentfold. Thin926/531624=1741.83ppm,
+stageunknown; COMPspent12/call23, COMlate12, guardgap111/foregroundgap207us.
+Hold178102/(6*9.025)=3289.049eHz; tail3291.777 vs timeanchoredcoast3218.98,
+residual+22.6permille. This is not sustained-slip evidence: tailaverages3.025s
+whereas coastmeasuresnearstop. Coastdenominator mayreflectterminalslowdown.
+Ref1219/1506, finalfiltered1209/1507, streak3; rawbusmin1064, raw<95%113
+with maxconsecutive6. Mean/streak operands absent onleanimage, so no exact
+notch width or current-onset ordering. Proxyhold642mA zero-255, worsthold1671;
+tripscan is excluded from currentaccumulator, so these cannot ruleoutapulse.
+65/70sameELF; nofirmwarechangebetweenthem. Thisfailedexplorationisretained,
+notqualified70; no75attempt. Dualfreshreviews ofraw65/70 and narrow proposal:
+existingSagRing only, identicalmotorISRroots, stagedcarrier unchanged. One
+50control then conditional70 diagnostic,45smax and>=120sOFF, would measure
+actualguardoperands/shuntcodeswithoutrepeatingheavyOrderRing. It cannotprove
+physicalcrossingcausality. No power untilreview/buildgates.
+
+E400 dual reviews verbatim (evidence then adversarial):
+
+> The evidence supports one completed 65% propless run and one 70% sag-stopped run, not a qualified boundary.
+>
+> - **Duty/dwell:** CCR/period confirms 650/1000 and 700/1000. Target dwell was **12.278s** and **9.025s**, respectively; 45s was the requested total window. Both post-stop checks show outputs disabled and nFAULT high.
+> - **Independent speed arithmetic:** Accepted-tail speeds are **3126.6eHz** over 2.278011s and **3291.8eHz** over 3.025114s. Pairing the first eight coast intervals gives four-cycle averages of **3129.9** and **3218.0eHz**: powered/coast differences approximately **−1.1‰** and **+22.9‰**. These are averages, not fitted stop intercepts. `speed.py` actually fits all supplied intervals—16 pairs here—despite documenting four. Neither comparison establishes steady speed throughout the preceding seconds, particularly before the 70% fault. Six pole pairs means mechanical rpm = electrical Hz ×10.
+> - **Counter denominators:** Thin counts per whole-run accepted count are approximately **0.0248% versus 0.1742%**; they are not hold-only rates. Mailbox coalescing/accepted is **9.51% versus 11.48%**, not proof of missed physical crossings. Sector counters saturate; zero margin histograms provide no margin distribution. Late-arm zero does not certify hardware timing.
+> - **Bus/current:** 70% explicitly records reason26, streak3, tripped1. Raw minima 1130/1216 and 1064/1219 are approximately **92.9%/87.3%**, but are neither normalized guard operands nor dip chronology. Hold-current proxies are **379/642mA**, with zero drift **−111/−255mA**. The deciding sag scan bypasses current accumulation, so reported maxima cannot exclude a coincident surge.
+>
+> The proposed staged-SagRing binary is a suitable bounded diagnostic **prospectively**, without granting execution authority. Preserve staged carrier policy; existing sag-capture is not equivalent. Verify root identity, memory/stack, disabled checks, and lifecycle; per-scan interrupt masking still introduces observer effects.
+>
+> Retain the proposed 50%-then-conditional-70% sequence, unchanged guards/3A supply, cooldown and failures. The ring can distinguish sampled terminal notches from reference evolution; it cannot establish physical-crossing causality, calibrated amps, thermal limits, or CPU saturation.
+
+> **One conditional sag-only 70% capture is proportionate as a diagnostic**, provided the checks below pass. This is an assessment, not authorization.
+>
+> The same-image evidence shows one 65% deadline completion with **12.278 s at target**, and one 70% sag stop after **9.025 s at target**. Both report final outputs off and nFAULT high. Neither establishes repeatability or a loaded envelope.
+>
+> Reason26 plus `streak=3/tripped=1` supports attribution to the sag guard. It does **not** identify supply limitation, thermal deterioration, current surge, reference drift, or a switching notch. Run-wide `bus_min` and terminal filtered reference cannot reconstruct the deciding comparisons. Current accumulation follows the sag verdict, so reported current peaks exclude the deciding scan; the proxies and zero drift further limit amperage conclusions.
+>
+> Critical checks before the proposed test:
+>
+> - Verify the new composition preserves **all staged carrier and protection settings**, boot carrier selftest, and run-key arm/disarm/dump lifecycle. Confirm the deciding row is retained before freeze and the dump occurs after safe-off. Existing `sag-capture` is not a matched carrier control.
+> - Check final ELF RAM and **worst nested stack headroom**, including ring initialization and interrupt frames—not merely ring size. Confirm COMP/COM machine code matches the lean image.
+> - Bound the recorder’s **interrupt-masked push cost**, including every-32nd slow-ring write. Identical roots do not eliminate observer effects: foreground recording masks interrupts and delays return to protection processing after a sag verdict.
+> - Make “50 clean” explicit: target attained, normal deadline completion, no protection/latency failure, valid complete trace, final outputs off. Any failure ends escalation; retain it. Preserve the stated OFF interval, PSU limit and guards.
+>
+> The lifetime IRQ peak above64 does not contradict the supplied post40ms enforcement lifecycle. Zero late arms and disabled histograms provide no complete timing-margin proof.
+>
+> `speed.py` also needs interpretive restraint: it fits **all 32 spacings**, despite documenting eight. Its powered averages span 2.278/3.025 s; steadiness near a fault is unverified. Speed residuals cannot establish terminal acceleration or crossing causality.
+>
+> The proposed ring can distinguish sampled operand/reference histories. It cannot establish physical crossing order or characterize a pulse between ADC samples.
+
+Dispositions: agree this is a singlefault, notboundary/causality. speed.py uses
+all16pairs (32spacings), stale prose saysfour; report actualalgorithm, noestimator
+change. E400 exactcoastfit3219.034eHz, residual22.598permille. My3218.98 above
+was a transcriptionerror. No pulseamps, thermal or CPUclaim fromproxies.
+SagRing push is interrupt-masked; require emitted-path bound including32ndslow
+write and stackcheck, not merelyidenticalISRs. Diagnosticcannotqualify58383038.
+50control clean means reason2,target500/1000>=9s,completeCRC/framing-equivalent
+textformat/ring, no guardfault, finaloff; then one70, no retryifanyfault.
+PSUunchanged3A; >120sOFF each. ExistingTIM2125ns instrument only, no newrecorder.
+
+### E401 - pre-build staged sag-only diagnostic
+
+New staged-sag binary mirrors staged-pwm, replacing onlyNoSagLog withSagRing
+and arm/disarm/poststopdump hooks fromexisting sag-capture. Same48->64k at35,
+advance16,deepfilter5,COMtop,cap800,allprotection constantsunchanged. No ORDER,
+COMP,orCOMrecorder. Decision: obtainactualguardoperand andshuntcodehistory at
+70; terminalnotch vsreferenceevolution, notphysical-crossingonset. Auditidentical
+ISRshape, recordercriticalsection bounded, stackincludingnestedinterrupts,
+releaseclippy/tests/decoderchecks and disabledcarrier/alloff. Then50control,
+conditional70onlyif50clean. Diagnosticwrites addforegroundandmaskcost, explicitly
+not observer-free. No full-ladderretest. No75 untilfailureunderstood.
+
+E401 build audit: 3E1B036E SHA256
+3E1B036ED286816A5581A5F475A1D0AA5FBDEE19353C92F07E9CDF7B0B886F6D,
+text47632/data740/bss19572, stackavailable16552. MotorISRinstructions37/
+742/332/155 match58383038; TIM16 literal relocationonly, four-rootmathPASS.
+Productionratchet correctlyREFUSED addedrecord_sag_row/Trace::push and
+scan_pass497->555. This is intentionaldiagnosticcost, NOT productionpass;
+create separate staged-sag-advref-floor5-comtop bucket afterthisaudit; preserve
+alloldbuckets. ReleaseclippyPASS, sagdecoder50/50 (43real+7fixtures), fixture12.
+Recordercriticalpath: at0x8006d5c cpsid to0x8006d7a restore, callsTrace::push,
+includingevery32ndslowrow; two fixedmemcpy lengths14 and6, respectively3 and1
+iterationsof12-instructionbyte-copyloop after2byteprefix. No unboundedpoll.
+Normalvalid-index maskedpath conservatively<256 emittedinstructions including
+bothhelpers andslowrow; at deliberatelypessimistic12cycles/instruction ~48us.
+This is a working estimate, not certifiedWCET or an asserted actualmasktime;
+flash/busarbitration details remain unmodelled. Existing200usTickGap stayskill.
+Panicbranches requireviolatedprivateindices/RefCellinvariant, notnormalpath.
+Stack inspectedinthisELF: main344, restart504 (notusedforthesetests), rung6344
+(literal-6324+20push), pass72, scan112, record56,push56, memcpy88. Conservatively
+sum7576 plus256nestedexception/software/callee allowance=7832, wellbelow16552;
+notformalall-programstackproof. Ringinitmemclr isinplace, no15360stacktemporary.
+Existingstackfloor numbersalonewere NOT usedasproof. Sagrecord isbeforeverdict
+return; itscostcan delaystop andCOMservice, henceinstrument-specificverdicts.
+
+### E402 - pre-run staged-sag50 control
+
+E401 archived3E1B036E, releaseclippy/362hosttests/12fixturetests/50sagcases,
+four-rootaudit and diagnosticratchetPASS. Newbinary92lines, no>100linefunction.
+Flash/resetexplicitG071, thenMCPp carrierboot/alloff/nFAULTcheck. One50 l45,
+absolute19minus+5plus, period1000,minhold9000ms, completeSAGEND+versionedring.
+Expected19.778s actualtarget. >=120sOFF fromE400. Anyfault endsplannedbatch;
+conditional70onlyafterclean50,>=120sOFF again. Same3A/allguards. Ringfreeze
+andpoststopdump mandatory. Nootherinstruments/newthermalsafetyclaim.
+
+E402 control result: e402-propless500-staged-sag_01.txt,3E1B036E,reason2,
+actual500/1000,hold19778ms,coast2495,matched999permille. Late/thin0,
+COMPspent12/call21,COMlate10,guardgap108,foregap210; alloffPASS/nFAULT1.
+Completefrozen256fast+1024slow,SAGEND,version3/8MHz verified. Fasttail25.7ms,
+judgementmean101us, marginminimum1044.8 (1000tripline),streak0;1024slow
+samples~3.31s reference1214constant. No allegedproof about overwrittenhistory.
+Proxy279mA zero-189mA. This meets predeclaredcontroladmission, not causal or
+qualificationverdict. Currentringgeneration and frozenoffdump workonhardware.
+
+### E403 - pre-run conditional staged-sag70
+
+Same3E1B036E; E402clean admits one70 l45,19minus+13plus,actualmin9000ms,
+period1000,completeSAGEND. Startonly>=120s afterE402off (~05:41:49UTC), using
+conservatively05:44:00UTC as earliestcommand. Same3A/guards; no75/escalation.
+Prediction: aterminalmeanstreak can nowbereplayed fromactualoperands; shunt
+codespermit rawexcursioncomparison, notcalibratedamps/physicalordering.
+Anyoutcomeendsbatch; dualreviewthennewdecision, not repeat-to-pass.

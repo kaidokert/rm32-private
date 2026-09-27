@@ -505,10 +505,8 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                     if left == 0 {
                         let n = S.det().late_arms.load(Ordering::Relaxed);
                         S.det().late_arms.store(n.wrapping_add(1), Ordering::Relaxed);
-                        // **The two numbers the whole mechanism argument turns
-                        // on, captured where they are true** (E314). Only for
-                        // the FIRST late arm, so a second cannot overwrite the
-                        // one the run stopped on.
+                        // E314: preserve the FIRST late arm's interval/spend;
+                        // subsequent events must not overwrite the stop evidence.
                         if n == 0 {
                             S.det().ci_at_late.store(zc.average_interval(), Ordering::Relaxed);
                             S.det().spent_at_late.store(spent, Ordering::Relaxed);
@@ -1112,6 +1110,38 @@ pub fn com_publish_plans_capped(duty: u16, period: u32, cap: u16) {
         s += 1;
     }
     let _ = S.com().plans.lock(|t| *t = table);
+}
+
+/// One-way carrier transition. Prepare outside the mask; stop/owner checks,
+/// preload staging and complete plan publication share one foreground lock.
+/// This never writes MOE, ENABLE, CCER, timer UG or the counter.
+pub fn com_retime_faster(duty: u16, period: u32, cap: u16) -> bool {
+    let mut table = [None; 8];
+    for step in 1..=6 {
+        let Some(plan) = sixstep::plan(physical(Step::new_clamped(step)), duty, period, cap) else {
+            return false;
+        };
+        table[usize::from(step - 1)] = Some(plan);
+    }
+    let compare = table[0].map_or(0, |p| p.ccr[0]);
+    S.com()
+        .plans
+        .lock(|plans| {
+            if !crate::oneshot::arm_allowed(
+                S.com().stopped.load(Ordering::Relaxed),
+                S.com().active.load(Ordering::Relaxed),
+            ) || !hw::pwm::moe_is_set()
+            {
+                return false;
+            }
+            if !hw::pwm::stage_faster(period, compare) {
+                return false;
+            }
+            *plans = table;
+            hw::pwm::finish_staged_carrier();
+            true
+        })
+        .unwrap_or(false)
 }
 
 /// Count a commutation that preempted COMP's decision (E167; see

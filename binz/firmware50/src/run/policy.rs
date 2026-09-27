@@ -167,7 +167,10 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 /// a WHOLE-RUN figure including the ramp, not a hold figure
 /// (`run/mod.rs`: a `CurrentMark`-windowed worst is owed since E194), so no
 /// projection is built on it here. E241 did build one and E242 withdrew it.
-pub const SIXSTEP_DUTY_CAP: u16 = 600;
+/// E398: operator-authorized propless campaign ceiling80%. This widens command
+/// authority, not any electrical/timing guard. Only staged-pwm is built/flashed
+/// for the unloaded climb; archived loaded images retain their own old caps.
+pub const SIXSTEP_DUTY_CAP: u16 = 800;
 
 /// Rescue attempts the level revisit may make in one sector after its first
 /// attempt was refused (E140), each armed by another half-interval of overdue.
@@ -265,6 +268,26 @@ pub trait Bemf {
     type Filter: FilterPolicy;
     const FILTER: Self::Filter;
     fn estimator(seed_us: u32) -> ZeroCross;
+    /// Whether foreground may request a fresh or overdue level recheck.
+    /// Physical comparator IRQs and their acceptance policy are unaffected.
+    fn allow_revisit(_applied_duty: u16) -> bool {
+        true
+    }
+}
+
+/// Diagnostic sensitivity policy: retain low-duty entry, then rely on physical
+/// comparator interrupts. This does not identify the origin of any acceptance.
+pub struct PhysicalEdgesAbove<B, const FROM: u16>(core::marker::PhantomData<B>);
+impl<B: Bemf, const FROM: u16> Bemf for PhysicalEdgesAbove<B, FROM> {
+    type Filter = B::Filter;
+    const FILTER: Self::Filter = B::FILTER;
+    fn estimator(seed_us: u32) -> ZeroCross {
+        B::estimator(seed_us)
+    }
+    fn allow_revisit(applied_duty: u16) -> bool {
+        const { assert!(FROM > 0 && FROM <= 1000) };
+        applied_duty < FROM && B::allow_revisit(applied_duty)
+    }
 }
 
 /// Persistence depth for the in-ISR filter: the reference's 12 reads,
@@ -277,6 +300,30 @@ pub const DET_FILTER: ReferenceFilterUs = FromMicros(WithShallowFloor(MappedFilt
 /// Advance, sixty-fourths of a half cycle, for an applied duty.
 pub trait Advance {
     fn level(duty_tenths: u16) -> u32;
+}
+
+/// Running carrier selection. Startup/handover remain on their fixed periods.
+pub trait Carrier {
+    fn period(duty: u16, current: u32) -> u32;
+}
+pub struct FixedCarrier;
+impl Carrier for FixedCarrier {
+    fn period(_duty: u16, current: u32) -> u32 {
+        current
+    }
+}
+/// One-way faster carrier after the threshold. Foldback never switches it back;
+/// only a new ordinary startup restores the original entry carrier.
+pub struct FasterAbove<const FROM: u16, const TICKS: u32>;
+impl<const FROM: u16, const TICKS: u32> Carrier for FasterAbove<FROM, TICKS> {
+    fn period(duty: u16, current: u32) -> u32 {
+        const { assert!(FROM > 0 && FROM <= 1000 && TICKS > 0 && TICKS < crate::duty::RUN_PERIOD_TICKS) };
+        if duty >= FROM || current == TICKS {
+            TICKS
+        } else {
+            current
+        }
+    }
 }
 
 /// A binary-selected timing experiment, without changing production features.
@@ -504,7 +551,8 @@ mod tests {
         assert_eq!(sixstep_ccr_of(500, 1333), 666);
         assert_eq!(sixstep_ccr_of(525, 1333), 699);
         assert_eq!(sixstep_ccr_of(600, 1333), 799);
-        assert_eq!(sixstep_ccr_of(750, 1333), 799, "capped at 60%");
+        assert_eq!(sixstep_ccr_of(750, 1333), 999);
+        assert_eq!(sixstep_ccr_of(850, 1333), 1066, "capped at 80%");
         // Below the step is 20 in **both** builds; at and above it the
         // `advance-low` feature is the only thing that moves. Asserted against
         // the constants rather than literals so the default build still pins
@@ -538,5 +586,66 @@ mod tests {
         assert!(!in_off_window(1330, 333, 1333, 6400));
         // A duty with no OFF window left.
         assert!(!in_off_window(1300, 1320, 1333, 6400));
+    }
+
+    #[test]
+    fn carrier_preload_model_never_overdrives_during_faster_switch() {
+        // Native updates at every staging AND COM register-write boundary.
+        // This models RM0444 shadow semantics, not physical gate timing proof.
+        for update_mask in 0u16..(1 << 14) {
+            for (old_source, next_source) in (0..3).flat_map(|a| (0..3).map(move |b| (a, b))) {
+                let (mut arr, mut arr_shadow) = (1333u32, 1333u32);
+                let (mut ccr, mut shadow) = ([465u32; 3], [465u32; 3]);
+                let mut pwm = [false; 3];
+                pwm[old_source] = true;
+                let mut udis = false;
+                for op in 0..14 {
+                    match op {
+                        0 => udis = true,
+                        1..=3 => {
+                            let ch = op - 1;
+                            shadow[ch] = 350;
+                            if !pwm[ch] {
+                                ccr[ch] = 350;
+                            } // non-PWM channels lack preload
+                        }
+                        4 => arr_shadow = 1000,
+                        5 => {} // plans atomically published; no old plan after release
+                        6 => udis = false,
+                        7 => {
+                            pwm[0] = next_source == 0;
+                            pwm[1] = next_source == 1;
+                        }
+                        8 => pwm[2] = next_source == 2,
+                        9..=11 => {
+                            let ch = op - 9;
+                            shadow[ch] = 350;
+                            if !pwm[ch] {
+                                ccr[ch] = 350;
+                            }
+                        }
+                        _ => {} // CCER write and return, no compare/ARR change
+                    }
+                    if update_mask & (1 << op) != 0 && !udis {
+                        arr = arr_shadow;
+                        ccr = shadow;
+                    }
+                    for source in 0..3 {
+                        if pwm[source] {
+                            assert!(ccr[source] * 1000 <= arr * 350);
+                        }
+                    }
+                }
+                assert_eq!(arr_shadow, 1000);
+                assert_eq!(shadow, [350; 3]);
+            }
+        }
+        // A pending guard can run only before or after the atomic transaction;
+        // before => owner check refuses, after => it removes MOE. No step sets it.
+        for stopped in [false, true] {
+            for active in [false, true] {
+                assert_eq!(crate::oneshot::arm_allowed(stopped, active), !stopped && active);
+            }
+        }
     }
 }

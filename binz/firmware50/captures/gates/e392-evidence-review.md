@@ -1,0 +1,13 @@
+**No definite transient over-duty bug is demonstrated by the supplied transaction. Approval for powered operation remains unsupported by this excerpt.**
+
+- **Thresholds/semantics:** `FasterAbove<350,1000>` switches at **35%**, retaining 1000 ticks through foldback. At a 64MHz timer clock, 1333 ticks means ARR=1332, ≈48.012kHz; 1000 means ARR=999, 64kHz. With the stated compare formula, CCR=350/500/600 gives 35/50/60%; denominator is **ARR+1**. Startup6400 implies10kHz. The clock configuration, actual cap and `sixstep::plan` implementation are unseen.
+
+- **COM-before-update:** Assuming plans give every channel the same compare and only the source has OCPE, staging puts350 into the old source’s preload and immediately into other channels. A subsequent COM selecting another source therefore starts with350 already active; its writes also update the former source immediately after disabling its preload. Thus the new source is bounded to350/1333 before the update and350/1000 afterward. Retaining the old source preserves its old compare against the old ARR until both transfer. UDIS does not stop counting. This supports the compare/period bound, **not** a general claim about commutation pulse shape or electrical transients.
+
+- **Ordering:** Table construction precedes masking. `Seam::lock` rejects handler/reentrant use; borrowing succeeds before peripheral mutation. Stopped/active/MOE checks, staging, publication and UDIS release share the mask. The borrow ends before IRQ restoration. Shown guard shutdown cannot interleave or be reversed by this transaction. Unchanged IRQ instructions nevertheless do not establish unchanged latency: the new foreground masked window delays servicing.
+
+- **Concrete accounting issue:** `states.rs:943–969` marks target hold before successful publication, and even when `hold_plans` suppresses publication. Fix this before relying on claimed target dwell: mark only after successful application, accounting conservatively for deferred hardware activation.
+
+- **Limits:** `Gates<S: Drives>` does not itself prove *running-only*; the shown caller is running, but trait implementations and other callers are unseen. Protection implementations, stop dispatch, restart period reset and conditional60 admission are also unseen; “all protections unchanged” cannot be fully verified.
+
+The off self-test checks zero compare readbacks, MOE clear, UDIS released and an observed14–17µs wrap interval, then requests startup restoration. It does not verify restored frequency, loaded/nonzero-CCR transfer, COM overlap or protection response. Reported361+10 tests and identical IRQ instructions provide no hardware qualification for bounded50 or conditional60.

@@ -1,0 +1,411 @@
+
+captures/elf/3E1B036E.e401-staged-sag.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+08001734 <firmware50::sagtrace::Trace::push>:
+ 8001734:	b5f0      	push	{r4, r5, r6, r7, lr}
+ 8001736:	af03      	add	r7, sp, #12
+ 8001738:	b089      	sub	sp, #36	@ 0x24
+ 800173a:	4602      	mov	r2, r0
+ 800173c:	200f      	movs	r0, #15
+ 800173e:	0280      	lsls	r0, r0, #10
+ 8001740:	1814      	adds	r4, r2, r0
+ 8001742:	7d20      	ldrb	r0, [r4, #20]
+ 8001744:	2801      	cmp	r0, #1
+ 8001746:	d15b      	bne.n	8001800 <firmware50::sagtrace::Trace::push+0xcc>
+ 8001748:	7d60      	ldrb	r0, [r4, #21]
+ 800174a:	2800      	cmp	r0, #0
+ 800174c:	d158      	bne.n	8001800 <firmware50::sagtrace::Trace::push+0xcc>
+ 800174e:	2301      	movs	r3, #1
+ 8001750:	0218      	lsls	r0, r3, #8
+ 8001752:	9005      	str	r0, [sp, #20]
+ 8001754:	68a0      	ldr	r0, [r4, #8]
+ 8001756:	28ff      	cmp	r0, #255	@ 0xff
+ 8001758:	d854      	bhi.n	8001804 <firmware50::sagtrace::Trace::push+0xd0>
+ 800175a:	460e      	mov	r6, r1
+ 800175c:	8a89      	ldrh	r1, [r1, #20]
+ 800175e:	9107      	str	r1, [sp, #28]
+ 8001760:	8a71      	ldrh	r1, [r6, #18]
+ 8001762:	9108      	str	r1, [sp, #32]
+ 8001764:	8a31      	ldrh	r1, [r6, #16]
+ 8001766:	9106      	str	r1, [sp, #24]
+ 8001768:	89f1      	ldrh	r1, [r6, #14]
+ 800176a:	9103      	str	r1, [sp, #12]
+ 800176c:	211c      	movs	r1, #28
+ 800176e:	4341      	muls	r1, r0
+ 8001770:	9201      	str	r2, [sp, #4]
+ 8001772:	1851      	adds	r1, r2, r1
+ 8001774:	9102      	str	r1, [sp, #8]
+ 8001776:	9304      	str	r3, [sp, #16]
+ 8001778:	0358      	lsls	r0, r3, #13
+ 800177a:	180d      	adds	r5, r1, r0
+ 800177c:	220e      	movs	r2, #14
+ 800177e:	4628      	mov	r0, r5
+ 8001780:	4631      	mov	r1, r6
+ 8001782:	f008 fc4a 	bl	800a01a <__aeabi_memcpy>
+ 8001786:	9807      	ldr	r0, [sp, #28]
+ 8001788:	82a8      	strh	r0, [r5, #20]
+ 800178a:	9808      	ldr	r0, [sp, #32]
+ 800178c:	8268      	strh	r0, [r5, #18]
+ 800178e:	9806      	ldr	r0, [sp, #24]
+ 8001790:	8228      	strh	r0, [r5, #16]
+ 8001792:	9803      	ldr	r0, [sp, #12]
+ 8001794:	81e8      	strh	r0, [r5, #14]
+ 8001796:	4605      	mov	r5, r0
+ 8001798:	481f      	ldr	r0, [pc, #124]	@ (8001818 <firmware50::sagtrace::Trace::push+0xe4>)
+ 800179a:	9902      	ldr	r1, [sp, #8]
+ 800179c:	1808      	adds	r0, r1, r0
+ 800179e:	3616      	adds	r6, #22
+ 80017a0:	2206      	movs	r2, #6
+ 80017a2:	4631      	mov	r1, r6
+ 80017a4:	f008 fc39 	bl	800a01a <__aeabi_memcpy>
+ 80017a8:	68a0      	ldr	r0, [r4, #8]
+ 80017aa:	1c40      	adds	r0, r0, #1
+ 80017ac:	9905      	ldr	r1, [sp, #20]
+ 80017ae:	4288      	cmp	r0, r1
+ 80017b0:	d100      	bne.n	80017b4 <firmware50::sagtrace::Trace::push+0x80>
+ 80017b2:	2000      	movs	r0, #0
+ 80017b4:	60a0      	str	r0, [r4, #8]
+ 80017b6:	6860      	ldr	r0, [r4, #4]
+ 80017b8:	4288      	cmp	r0, r1
+ 80017ba:	9904      	ldr	r1, [sp, #16]
+ 80017bc:	d201      	bcs.n	80017c2 <firmware50::sagtrace::Trace::push+0x8e>
+ 80017be:	1c40      	adds	r0, r0, #1
+ 80017c0:	6060      	str	r0, [r4, #4]
+ 80017c2:	7820      	ldrb	r0, [r4, #0]
+ 80017c4:	06c0      	lsls	r0, r0, #27
+ 80017c6:	d118      	bne.n	80017fa <firmware50::sagtrace::Trace::push+0xc6>
+ 80017c8:	0289      	lsls	r1, r1, #10
+ 80017ca:	6920      	ldr	r0, [r4, #16]
+ 80017cc:	0a82      	lsrs	r2, r0, #10
+ 80017ce:	d11d      	bne.n	800180c <firmware50::sagtrace::Trace::push+0xd8>
+ 80017d0:	00c0      	lsls	r0, r0, #3
+ 80017d2:	9a01      	ldr	r2, [sp, #4]
+ 80017d4:	5215      	strh	r5, [r2, r0]
+ 80017d6:	1810      	adds	r0, r2, r0
+ 80017d8:	9a06      	ldr	r2, [sp, #24]
+ 80017da:	8042      	strh	r2, [r0, #2]
+ 80017dc:	9a07      	ldr	r2, [sp, #28]
+ 80017de:	80c2      	strh	r2, [r0, #6]
+ 80017e0:	9a08      	ldr	r2, [sp, #32]
+ 80017e2:	8082      	strh	r2, [r0, #4]
+ 80017e4:	6920      	ldr	r0, [r4, #16]
+ 80017e6:	1c40      	adds	r0, r0, #1
+ 80017e8:	4288      	cmp	r0, r1
+ 80017ea:	d100      	bne.n	80017ee <firmware50::sagtrace::Trace::push+0xba>
+ 80017ec:	2000      	movs	r0, #0
+ 80017ee:	6120      	str	r0, [r4, #16]
+ 80017f0:	68e0      	ldr	r0, [r4, #12]
+ 80017f2:	4288      	cmp	r0, r1
+ 80017f4:	d201      	bcs.n	80017fa <firmware50::sagtrace::Trace::push+0xc6>
+ 80017f6:	1c40      	adds	r0, r0, #1
+ 80017f8:	60e0      	str	r0, [r4, #12]
+ 80017fa:	6820      	ldr	r0, [r4, #0]
+ 80017fc:	1c40      	adds	r0, r0, #1
+ 80017fe:	6020      	str	r0, [r4, #0]
+ 8001800:	b009      	add	sp, #36	@ 0x24
+ 8001802:	bdf0      	pop	{r4, r5, r6, r7, pc}
+ 8001804:	4a03      	ldr	r2, [pc, #12]	@ (8001814 <firmware50::sagtrace::Trace::push+0xe0>)
+ 8001806:	9905      	ldr	r1, [sp, #20]
+ 8001808:	f7fe fe28 	bl	800045c <core::panicking::panic_bounds_check>
+ 800180c:	4a03      	ldr	r2, [pc, #12]	@ (800181c <firmware50::sagtrace::Trace::push+0xe8>)
+ 800180e:	f7fe fe25 	bl	800045c <core::panicking::panic_bounds_check>
+ 8001812:	46c0      	nop			@ (mov r8, r8)
+ 8001814:	0800a898 	.word	0x0800a898
+ 8001818:	00002016 	.word	0x00002016
+ 800181c:	0800a8a8 	.word	0x0800a8a8
+
+08001820 <firmware50::sagtrace::SagRing::arm_next_run>:
+ 8001820:	b5b0      	push	{r4, r5, r7, lr}
+ 8001822:	af02      	add	r7, sp, #8
+ 8001824:	f3ef 8410 	mrs	r4, PRIMASK
+ 8001828:	b672      	cpsid	i
+ 800182a:	4d08      	ldr	r5, [pc, #32]	@ (800184c <firmware50::sagtrace::SagRing::arm_next_run+0x2c>)
+ 800182c:	6828      	ldr	r0, [r5, #0]
+ 800182e:	2800      	cmp	r0, #0
+ 8001830:	d109      	bne.n	8001846 <firmware50::sagtrace::SagRing::arm_next_run+0x26>
+ 8001832:	1d28      	adds	r0, r5, #4
+ 8001834:	4907      	ldr	r1, [pc, #28]	@ (8001854 <firmware50::sagtrace::SagRing::arm_next_run+0x34>)
+ 8001836:	f008 fba1 	bl	8009f7c <__aeabi_memclr4>
+ 800183a:	4807      	ldr	r0, [pc, #28]	@ (8001858 <firmware50::sagtrace::SagRing::arm_next_run+0x38>)
+ 800183c:	2101      	movs	r1, #1
+ 800183e:	5429      	strb	r1, [r5, r0]
+ 8001840:	f384 8810 	msr	PRIMASK, r4
+ 8001844:	bdb0      	pop	{r4, r5, r7, pc}
+ 8001846:	4802      	ldr	r0, [pc, #8]	@ (8001850 <firmware50::sagtrace::SagRing::arm_next_run+0x30>)
+ 8001848:	f7fe fde8 	bl	800041c <core::cell::panic_already_borrowed>
+ 800184c:	2000032c 	.word	0x2000032c
+ 8001850:	0800a8b8 	.word	0x0800a8b8
+ 8001854:	00003c16 	.word	0x00003c16
+ 8001858:	00003c18 	.word	0x00003c18
+
+0800185c <firmware50::sagtrace::SagRing::disarm>:
+ 800185c:	b580      	push	{r7, lr}
+ 800185e:	af00      	add	r7, sp, #0
+ 8001860:	f3ef 8010 	mrs	r0, PRIMASK
+ 8001864:	b672      	cpsid	i
+ 8001866:	4906      	ldr	r1, [pc, #24]	@ (8001880 <firmware50::sagtrace::SagRing::disarm+0x24>)
+ 8001868:	680a      	ldr	r2, [r1, #0]
+ 800186a:	2a00      	cmp	r2, #0
+ 800186c:	d105      	bne.n	800187a <firmware50::sagtrace::SagRing::disarm+0x1e>
+ 800186e:	4a06      	ldr	r2, [pc, #24]	@ (8001888 <firmware50::sagtrace::SagRing::disarm+0x2c>)
+ 8001870:	2300      	movs	r3, #0
+ 8001872:	548b      	strb	r3, [r1, r2]
+ 8001874:	f380 8810 	msr	PRIMASK, r0
+ 8001878:	bd80      	pop	{r7, pc}
+ 800187a:	4802      	ldr	r0, [pc, #8]	@ (8001884 <firmware50::sagtrace::SagRing::disarm+0x28>)
+ 800187c:	f7fe fdce 	bl	800041c <core::cell::panic_already_borrowed>
+ 8001880:	2000032c 	.word	0x2000032c
+ 8001884:	0800a8c8 	.word	0x0800a8c8
+ 8001888:	00003c18 	.word	0x00003c18
+
+0800188c <ADC_COMP>:
+ 800188c:	b5f0      	push	{r4, r5, r6, r7, lr}
+ 800188e:	af03      	add	r7, sp, #12
+
+captures/elf/3E1B036E.e401-staged-sag.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+08006cd8 <firmware50::run::states::Ctx::record_sag_row>:
+ 8006cd8:	b5f0      	push	{r4, r5, r6, r7, lr}
+ 8006cda:	af03      	add	r7, sp, #12
+ 8006cdc:	b089      	sub	sp, #36	@ 0x24
+ 8006cde:	9301      	str	r3, [sp, #4]
+ 8006ce0:	4c29      	ldr	r4, [pc, #164]	@ (8006d88 <firmware50::run::states::Ctx::record_sag_row+0xb0>)
+ 8006ce2:	4d2a      	ldr	r5, [pc, #168]	@ (8006d8c <firmware50::run::states::Ctx::record_sag_row+0xb4>)
+ 8006ce4:	8025      	strh	r5, [r4, #0]
+ 8006ce6:	69cc      	ldr	r4, [r1, #28]
+ 8006ce8:	4b29      	ldr	r3, [pc, #164]	@ (8006d90 <firmware50::run::states::Ctx::record_sag_row+0xb8>)
+ 8006cea:	681d      	ldr	r5, [r3, #0]
+ 8006cec:	b2ae      	uxth	r6, r5
+ 8006cee:	61ce      	str	r6, [r1, #28]
+ 8006cf0:	1b2c      	subs	r4, r5, r4
+ 8006cf2:	b2a4      	uxth	r4, r4
+ 8006cf4:	698d      	ldr	r5, [r1, #24]
+ 8006cf6:	192c      	adds	r4, r5, r4
+ 8006cf8:	618c      	str	r4, [r1, #24]
+ 8006cfa:	a902      	add	r1, sp, #8
+ 8006cfc:	693d      	ldr	r5, [r7, #16]
+ 8006cfe:	828d      	strh	r5, [r1, #20]
+ 8006d00:	68fd      	ldr	r5, [r7, #12]
+ 8006d02:	824d      	strh	r5, [r1, #18]
+ 8006d04:	254d      	movs	r5, #77	@ 0x4d
+ 8006d06:	012d      	lsls	r5, r5, #4
+ 8006d08:	1946      	adds	r6, r0, r5
+ 8006d0a:	78f6      	ldrb	r6, [r6, #3]
+ 8006d0c:	76ce      	strb	r6, [r1, #27]
+ 8006d0e:	264c      	movs	r6, #76	@ 0x4c
+ 8006d10:	5d86      	ldrb	r6, [r0, r6]
+ 8006d12:	768e      	strb	r6, [r1, #26]
+ 8006d14:	8896      	ldrh	r6, [r2, #4]
+ 8006d16:	818e      	strh	r6, [r1, #12]
+ 8006d18:	8856      	ldrh	r6, [r2, #2]
+ 8006d1a:	814e      	strh	r6, [r1, #10]
+ 8006d1c:	8816      	ldrh	r6, [r2, #0]
+ 8006d1e:	810e      	strh	r6, [r1, #8]
+ 8006d20:	88d2      	ldrh	r2, [r2, #6]
+ 8006d22:	80ca      	strh	r2, [r1, #6]
+ 8006d24:	681a      	ldr	r2, [r3, #0]
+ 8006d26:	800a      	strh	r2, [r1, #0]
+ 8006d28:	2227      	movs	r2, #39	@ 0x27
+ 8006d2a:	00d2      	lsls	r2, r2, #3
+ 8006d2c:	1883      	adds	r3, r0, r2
+ 8006d2e:	685b      	ldr	r3, [r3, #4]
+ 8006d30:	08db      	lsrs	r3, r3, #3
+ 8006d32:	820b      	strh	r3, [r1, #16]
+ 8006d34:	5882      	ldr	r2, [r0, r2]
+ 8006d36:	08d2      	lsrs	r2, r2, #3
+ 8006d38:	81ca      	strh	r2, [r1, #14]
+ 8006d3a:	4a16      	ldr	r2, [pc, #88]	@ (8006d94 <firmware50::run::states::Ctx::record_sag_row+0xbc>)
+ 8006d3c:	6812      	ldr	r2, [r2, #0]
+ 8006d3e:	804a      	strh	r2, [r1, #2]
+ 8006d40:	4a15      	ldr	r2, [pc, #84]	@ (8006d98 <firmware50::run::states::Ctx::record_sag_row+0xc0>)
+ 8006d42:	6812      	ldr	r2, [r2, #0]
+ 8006d44:	808a      	strh	r2, [r1, #4]
+ 8006d46:	2201      	movs	r2, #1
+ 8006d48:	9b01      	ldr	r3, [sp, #4]
+ 8006d4a:	401a      	ands	r2, r3
+ 8006d4c:	d001      	beq.n	8006d52 <firmware50::run::states::Ctx::record_sag_row+0x7a>
+ 8006d4e:	68ba      	ldr	r2, [r7, #8]
+ 8006d50:	1aa2      	subs	r2, r4, r2
+ 8006d52:	5b40      	ldrh	r0, [r0, r5]
+ 8006d54:	830a      	strh	r2, [r1, #24]
+ 8006d56:	82c8      	strh	r0, [r1, #22]
+ 8006d58:	f3ef 8410 	mrs	r4, PRIMASK
+ 8006d5c:	b672      	cpsid	i
+ 8006d5e:	4d0f      	ldr	r5, [pc, #60]	@ (8006d9c <firmware50::run::states::Ctx::record_sag_row+0xc4>)
+ 8006d60:	6828      	ldr	r0, [r5, #0]
+ 8006d62:	2800      	cmp	r0, #0
+ 8006d64:	d10d      	bne.n	8006d82 <firmware50::run::states::Ctx::record_sag_row+0xaa>
+ 8006d66:	2000      	movs	r0, #0
+ 8006d68:	43c0      	mvns	r0, r0
+ 8006d6a:	6028      	str	r0, [r5, #0]
+ 8006d6c:	1d28      	adds	r0, r5, #4
+ 8006d6e:	a902      	add	r1, sp, #8
+ 8006d70:	f7fa fce0 	bl	8001734 <firmware50::sagtrace::Trace::push>
+ 8006d74:	6828      	ldr	r0, [r5, #0]
+ 8006d76:	1c40      	adds	r0, r0, #1
+ 8006d78:	6028      	str	r0, [r5, #0]
+ 8006d7a:	f384 8810 	msr	PRIMASK, r4
+ 8006d7e:	b009      	add	sp, #36	@ 0x24
+ 8006d80:	bdf0      	pop	{r4, r5, r6, r7, pc}
+ 8006d82:	4807      	ldr	r0, [pc, #28]	@ (8006da0 <firmware50::run::states::Ctx::record_sag_row+0xc8>)
+ 8006d84:	f7f9 fb4a 	bl	800041c <core::cell::panic_already_borrowed>
+ 8006d88:	40003000 	.word	0x40003000
+ 8006d8c:	0000aaaa 	.word	0x0000aaaa
+ 8006d90:	40014824 	.word	0x40014824
+ 8006d94:	40000024 	.word	0x40000024
+ 8006d98:	40012c24 	.word	0x40012c24
+ 8006d9c:	2000032c 	.word	0x2000032c
+ 8006da0:	0800b878 	.word	0x0800b878
+
+captures/elf/3E1B036E.e401-staged-sag.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+0800976c <compiler_builtins::mem::memcpy>:
+ 800976c:	b5f0      	push	{r4, r5, r6, r7, lr}
+ 800976e:	af03      	add	r7, sp, #12
+ 8009770:	b08f      	sub	sp, #60	@ 0x3c
+ 8009772:	2a10      	cmp	r2, #16
+ 8009774:	d315      	bcc.n	80097a2 <compiler_builtins::mem::memcpy+0x36>
+ 8009776:	920b      	str	r2, [sp, #44]	@ 0x2c
+ 8009778:	4242      	negs	r2, r0
+ 800977a:	2303      	movs	r3, #3
+ 800977c:	9308      	str	r3, [sp, #32]
+ 800977e:	401a      	ands	r2, r3
+ 8009780:	1885      	adds	r5, r0, r2
+ 8009782:	900a      	str	r0, [sp, #40]	@ 0x28
+ 8009784:	42a8      	cmp	r0, r5
+ 8009786:	d22a      	bcs.n	80097de <compiler_builtins::mem::memcpy+0x72>
+ 8009788:	1e54      	subs	r4, r2, #1
+ 800978a:	2a00      	cmp	r2, #0
+ 800978c:	980a      	ldr	r0, [sp, #40]	@ 0x28
+ 800978e:	4606      	mov	r6, r0
+ 8009790:	460b      	mov	r3, r1
+ 8009792:	d016      	beq.n	80097c2 <compiler_builtins::mem::memcpy+0x56>
+ 8009794:	780b      	ldrb	r3, [r1, #0]
+ 8009796:	7003      	strb	r3, [r0, #0]
+ 8009798:	2a01      	cmp	r2, #1
+ 800979a:	d107      	bne.n	80097ac <compiler_builtins::mem::memcpy+0x40>
+ 800979c:	1c4b      	adds	r3, r1, #1
+ 800979e:	1c46      	adds	r6, r0, #1
+ 80097a0:	e00f      	b.n	80097c2 <compiler_builtins::mem::memcpy+0x56>
+ 80097a2:	4603      	mov	r3, r0
+ 80097a4:	189c      	adds	r4, r3, r2
+ 80097a6:	42a3      	cmp	r3, r4
+ 80097a8:	d341      	bcc.n	800982e <compiler_builtins::mem::memcpy+0xc2>
+ 80097aa:	e062      	b.n	8009872 <compiler_builtins::mem::memcpy+0x106>
+ 80097ac:	784b      	ldrb	r3, [r1, #1]
+ 80097ae:	7043      	strb	r3, [r0, #1]
+ 80097b0:	2a02      	cmp	r2, #2
+ 80097b2:	d102      	bne.n	80097ba <compiler_builtins::mem::memcpy+0x4e>
+ 80097b4:	1c8b      	adds	r3, r1, #2
+ 80097b6:	1c86      	adds	r6, r0, #2
+ 80097b8:	e003      	b.n	80097c2 <compiler_builtins::mem::memcpy+0x56>
+ 80097ba:	788b      	ldrb	r3, [r1, #2]
+ 80097bc:	7083      	strb	r3, [r0, #2]
+ 80097be:	1ccb      	adds	r3, r1, #3
+ 80097c0:	1cc6      	adds	r6, r0, #3
+ 80097c2:	2c03      	cmp	r4, #3
+ 80097c4:	d30b      	bcc.n	80097de <compiler_builtins::mem::memcpy+0x72>
+ 80097c6:	781c      	ldrb	r4, [r3, #0]
+ 80097c8:	7034      	strb	r4, [r6, #0]
+ 80097ca:	785c      	ldrb	r4, [r3, #1]
+ 80097cc:	7074      	strb	r4, [r6, #1]
+ 80097ce:	789c      	ldrb	r4, [r3, #2]
+ 80097d0:	70b4      	strb	r4, [r6, #2]
+ 80097d2:	78dc      	ldrb	r4, [r3, #3]
+ 80097d4:	70f4      	strb	r4, [r6, #3]
+ 80097d6:	1d1b      	adds	r3, r3, #4
+ 80097d8:	1d36      	adds	r6, r6, #4
+ 80097da:	42ae      	cmp	r6, r5
+ 80097dc:	d1f3      	bne.n	80097c6 <compiler_builtins::mem::memcpy+0x5a>
+ 80097de:	980b      	ldr	r0, [sp, #44]	@ 0x2c
+ 80097e0:	1a80      	subs	r0, r0, r2
+ 80097e2:	900b      	str	r0, [sp, #44]	@ 0x2c
+ 80097e4:	9c08      	ldr	r4, [sp, #32]
+ 80097e6:	43a0      	bics	r0, r4
+ 80097e8:	182b      	adds	r3, r5, r0
+ 80097ea:	188e      	adds	r6, r1, r2
+ 80097ec:	9609      	str	r6, [sp, #36]	@ 0x24
+ 80097ee:	4026      	ands	r6, r4
+ 80097f0:	9007      	str	r0, [sp, #28]
+ 80097f2:	d147      	bne.n	8009884 <compiler_builtins::mem::memcpy+0x118>
+ 80097f4:	429d      	cmp	r5, r3
+ 80097f6:	9a0b      	ldr	r2, [sp, #44]	@ 0x2c
+ 80097f8:	9e09      	ldr	r6, [sp, #36]	@ 0x24
+ 80097fa:	d211      	bcs.n	8009820 <compiler_builtins::mem::memcpy+0xb4>
+ 80097fc:	4631      	mov	r1, r6
+ 80097fe:	6808      	ldr	r0, [r1, #0]
+ 8009800:	c501      	stmia	r5!, {r0}
+ 8009802:	429d      	cmp	r5, r3
+ 8009804:	d20c      	bcs.n	8009820 <compiler_builtins::mem::memcpy+0xb4>
+ 8009806:	6848      	ldr	r0, [r1, #4]
+ 8009808:	c501      	stmia	r5!, {r0}
+ 800980a:	429d      	cmp	r5, r3
+ 800980c:	d208      	bcs.n	8009820 <compiler_builtins::mem::memcpy+0xb4>
+ 800980e:	6888      	ldr	r0, [r1, #8]
+ 8009810:	c501      	stmia	r5!, {r0}
+ 8009812:	429d      	cmp	r5, r3
+ 8009814:	d204      	bcs.n	8009820 <compiler_builtins::mem::memcpy+0xb4>
+ 8009816:	68c8      	ldr	r0, [r1, #12]
+ 8009818:	c501      	stmia	r5!, {r0}
+ 800981a:	3110      	adds	r1, #16
+ 800981c:	429d      	cmp	r5, r3
+ 800981e:	d3ee      	bcc.n	80097fe <compiler_builtins::mem::memcpy+0x92>
+ 8009820:	4022      	ands	r2, r4
+ 8009822:	9807      	ldr	r0, [sp, #28]
+ 8009824:	1831      	adds	r1, r6, r0
+ 8009826:	980a      	ldr	r0, [sp, #40]	@ 0x28
+ 8009828:	189c      	adds	r4, r3, r2
+ 800982a:	42a3      	cmp	r3, r4
+ 800982c:	d221      	bcs.n	8009872 <compiler_builtins::mem::memcpy+0x106>
+ 800982e:	2503      	movs	r5, #3
+ 8009830:	4015      	ands	r5, r2
+ 8009832:	1e52      	subs	r2, r2, #1
+ 8009834:	2d00      	cmp	r5, #0
+ 8009836:	d00e      	beq.n	8009856 <compiler_builtins::mem::memcpy+0xea>
+ 8009838:	780e      	ldrb	r6, [r1, #0]
+ 800983a:	701e      	strb	r6, [r3, #0]
+ 800983c:	2d01      	cmp	r5, #1
+ 800983e:	d104      	bne.n	800984a <compiler_builtins::mem::memcpy+0xde>
+ 8009840:	1c49      	adds	r1, r1, #1
+ 8009842:	1c5b      	adds	r3, r3, #1
+ 8009844:	2a03      	cmp	r2, #3
+ 8009846:	d208      	bcs.n	800985a <compiler_builtins::mem::memcpy+0xee>
+ 8009848:	e013      	b.n	8009872 <compiler_builtins::mem::memcpy+0x106>
+ 800984a:	784e      	ldrb	r6, [r1, #1]
+ 800984c:	705e      	strb	r6, [r3, #1]
+ 800984e:	2d02      	cmp	r5, #2
+ 8009850:	d111      	bne.n	8009876 <compiler_builtins::mem::memcpy+0x10a>
+ 8009852:	1c89      	adds	r1, r1, #2
+ 8009854:	1c9b      	adds	r3, r3, #2
+ 8009856:	2a03      	cmp	r2, #3
+ 8009858:	d30b      	bcc.n	8009872 <compiler_builtins::mem::memcpy+0x106>
+ 800985a:	780a      	ldrb	r2, [r1, #0]
+ 800985c:	701a      	strb	r2, [r3, #0]
+ 800985e:	784a      	ldrb	r2, [r1, #1]
+ 8009860:	705a      	strb	r2, [r3, #1]
+ 8009862:	788a      	ldrb	r2, [r1, #2]
+ 8009864:	709a      	strb	r2, [r3, #2]
+ 8009866:	78ca      	ldrb	r2, [r1, #3]
+ 8009868:	70da      	strb	r2, [r3, #3]
+ 800986a:	1d09      	adds	r1, r1, #4
+ 800986c:	1d1b      	adds	r3, r3, #4
+ 800986e:	42a3      	cmp	r3, r4
+ 8009870:	d1f3      	bne.n	800985a <compiler_builtins::mem::memcpy+0xee>
+ 8009872:	b00f      	add	sp, #60	@ 0x3c
+ 8009874:	bdf0      	pop	{r4, r5, r6, r7, pc}
+ 8009876:	788d      	ldrb	r5, [r1, #2]
+ 8009878:	709d      	strb	r5, [r3, #2]
+ 800987a:	1cc9      	adds	r1, r1, #3
+ 800987c:	1cdb      	adds	r3, r3, #3
+ 800987e:	2a03      	cmp	r2, #3
+ 8009880:	d2eb      	bcs.n	800985a <compiler_builtins::mem::memcpy+0xee>
+ 8009882:	e7f6      	b.n	8009872 <compiler_builtins::mem::memcpy+0x106>

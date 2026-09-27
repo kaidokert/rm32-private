@@ -17,7 +17,8 @@ before the stop stamp. Nothing is rounded to whole µs: `BEMFRATE`'s
 
 **Coast.** `COASTTIMING offset_us first_us iv_us=...` gives the coast window's
 own origin (`offset_us` after the stop stamp), the delay to the first debounced
-comparator transition, and the first eight spacings. **Consecutive spacings are
+comparator transition, and the recorded spacings (32 slots on current images).
+**Consecutive positive spacings are
 paired** before anything is fitted: one phase's rising and falling half-cycles
 are not equal here, and the asymmetry is rung-dependent -- about 4% peak to
 peak between neighbouring spacings at 25% (409/425) and about 11% at 15%
@@ -28,7 +29,8 @@ caught. A pair is one full electrical cycle:
 
     ehz_k = 1e6 / (iv[2k] + iv[2k+1])   at  t_k = offset + first + Σ(earlier) + (iv[2k] + iv[2k+1]) / 2
 
-measured from the stop stamp. A least-squares line through those four points,
+measured from the stop stamp. A least-squares line through all complete pairs
+(16 points when all 32 spacings are populated; stop at the first zero),
 evaluated at t = 0, is the rotor's speed at the stop. The lever arm
 (`offset_us + first_us`) is short next to the coast's own span but it is not
 bounded by anything: 237-455 µs over five 25% runs, 645 µs in a 15% one, so it

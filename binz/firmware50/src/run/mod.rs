@@ -26,7 +26,7 @@ pub mod states;
 pub use hal::{Gates, Hal, Inject, Preflight};
 pub use states::{Refused, Request, StartupNext, Stopped, Window};
 
-use policy::{Advance, BEMF_DUTY_TENTHS, BEMF_TOTAL_MS, Bemf, CurrentLimit, Reporting, RestartRule, SagLimit};
+use policy::{Advance, BEMF_DUTY_TENTHS, BEMF_TOTAL_MS, Bemf, Carrier, CurrentLimit, Reporting, RestartRule, SagLimit};
 
 /// The seven policy slots, as one bundle the states are generic over.
 pub trait Policies {
@@ -41,10 +41,11 @@ pub trait Policies {
     /// step 3). Production's `NoSagLog` folds every call away; only the
     /// `sag-capture` image installs the ring.
     type G: crate::sagtrace::SagLog;
+    type H: Carrier;
 }
 
 /// The run's controller, one type parameter per policy decision.
-pub struct Controller<W, B, A, C, S, R, T, G = crate::sagtrace::NoSagLog> {
+pub struct Controller<W, B, A, C, S, R, T, G = crate::sagtrace::NoSagLog, H = policy::FixedCarrier> {
     /// Duty the lowercase provocations and `Z` run at, tenths (E141): 250 as
     /// through campaign 5, or 375 for the goal's item 5. Shell state only --
     /// no run reads it except when it starts, and every capture records the
@@ -56,7 +57,7 @@ pub struct Controller<W, B, A, C, S, R, T, G = crate::sagtrace::NoSagLog> {
     // Two markers rather than one eight-tuple: clippy's `type_complexity`
     // counts through aliases, and a warning is not waived in this crate.
     _p: PhantomData<(W, B, A, C)>,
-    _q: PhantomData<(S, R, T, G)>,
+    _q: PhantomData<(S, R, T, G, H)>,
 }
 
 impl<
@@ -68,7 +69,8 @@ impl<
     R: RestartRule,
     T: Reporting,
     G: crate::sagtrace::SagLog,
-> Policies for Controller<W, B, A, C, S, R, T, G>
+    H: Carrier,
+> Policies for Controller<W, B, A, C, S, R, T, G, H>
 {
     type W = W;
     type B = B;
@@ -78,6 +80,7 @@ impl<
     type R = R;
     type T = T;
     type G = G;
+    type H = H;
 }
 
 /// The one composition this firmware runs. The sag recorder slot defaults to
@@ -143,7 +146,8 @@ impl<
     R: RestartRule,
     T: Reporting,
     G: crate::sagtrace::SagLog,
-> Controller<W, B, A, C, S, R, T, G>
+    H: Carrier,
+> Controller<W, B, A, C, S, R, T, G, H>
 {
     #[must_use]
     pub const fn new() -> Self {
@@ -248,6 +252,7 @@ impl<
             drive_scans: ctx.stats.drive_scans,
             applied_cap: crate::run::policy::SIXSTEP_DUTY_CAP,
             applied_ccr: crate::run::policy::sixstep_ccr_of(ctx.applied_duty, ctx.period),
+            applied_period: ctx.period,
             depth_below: [
                 ctx.depth.below(0),
                 ctx.depth.below(1),
@@ -419,7 +424,9 @@ impl<
         io.kv("advance_level", A::level(target));
         io.kv("total_ms", window_ms);
         io.kv("inject", announce);
-        io.kv("run_period_ticks", crate::duty::RUN_PERIOD_TICKS);
+        io.kv("run_period_ticks", H::period(target, crate::duty::RUN_PERIOD_TICKS));
+        io.kv("entry_period_ticks", crate::duty::RUN_PERIOD_TICKS);
+        io.kv("revisit_at_target", u32::from(B::allow_revisit(target)));
         io.kv("startup_ticks", crate::duty::STARTUP_TICKS);
         io.say("\r\n");
         io.flush_link();
@@ -687,7 +694,8 @@ impl<
     R: RestartRule,
     T: Reporting,
     G: crate::sagtrace::SagLog,
-> Default for Controller<W, B, A, C, S, R, T, G>
+    H: Carrier,
+> Default for Controller<W, B, A, C, S, R, T, G, H>
 {
     fn default() -> Self {
         Self::new()

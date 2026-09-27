@@ -57,6 +57,18 @@ path = "bin/order-capture.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "staged-pwm"
+path = "bin/staged-pwm.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "staged-sag"
+path = "bin/staged-sag.rs"
+test = false
+bench = false
+
 [lib]
 test = true
 bench = false

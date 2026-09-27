@@ -33,6 +33,7 @@ pub struct Crossings {
 /// Faults a test can schedule (absolute sim time).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Faults {
+    pub carrier_refuse: bool,
     pub preflight_fails: bool,
     pub nfault_low_at: Option<u32>,
     pub bus_sag_at: Option<u32>,
@@ -53,6 +54,9 @@ pub struct Faults {
 /// Everything the controller decided.
 #[derive(Debug, Default)]
 pub struct Log {
+    pub periods: Vec<u32>,
+    pub carrier_changes: Vec<(u32, u16, u32)>,
+    pub high_duty_revisit_polls: u32,
     pub gate_writes: u32,
     pub safe_offs: u32,
     pub moe_on_at: Option<u32>,
@@ -251,7 +255,9 @@ impl Hal for Sim {
         self.log.moe_on_at = Some(self.t);
         self.driving = true;
     }
-    fn set_period(&mut self, _period: u32) {}
+    fn set_period(&mut self, period: u32) {
+        self.log.periods.push(period);
+    }
     fn float_all(&mut self) {}
     fn safe_off<S>(&mut self, g: Gates<S>) -> Gates<Stopped> {
         self.log.safe_offs += 1;
@@ -373,10 +379,21 @@ impl Hal for Sim {
         // Counted so a test can see the rescue attempts E140 added; the poll
         // itself never finds a held level in the sim.
         self.revisit_polls = self.revisit_polls.wrapping_add(1);
+        if self.log.plans.last().is_some_and(|&(_, duty)| duty >= 350) {
+            self.log.high_duty_revisit_polls += 1;
+        }
         false
     }
     fn publish_plans(&mut self, duty: u16, _period: u32, _cap: u16) {
         self.log.plans.push((self.t, duty));
+    }
+    fn retime_plans<S: Drives>(&mut self, _g: &mut Gates<S>, duty: u16, period: u32, cap: u16) -> bool {
+        if !self.driving || self.guard_reason != 0 || self.faults.carrier_refuse {
+            return false;
+        }
+        self.log.carrier_changes.push((self.t, duty, period));
+        self.publish_plans(duty, period, cap);
+        true
     }
     fn set_advance(&mut self, advance: u32) {
         self.log.advances.push(advance);
@@ -463,6 +480,136 @@ mod tests {
         interval_us: 144,
         until_us: None,
     };
+
+    #[test]
+    fn faster_carrier_only_after_entry_and_refusal_safes() {
+        use crate::run::{Controller, policy};
+        type Probe = Controller<
+            policy::Wiring,
+            policy::BemfPolicy,
+            policy::AdvancePolicy,
+            policy::CurrentProtection,
+            policy::BusSagProtection,
+            policy::Restart,
+            policy::Telemetry,
+            crate::sagtrace::NoSagLog,
+            policy::FasterAbove<350, 1000>,
+        >;
+        for refuse in [false, true] {
+            let mut sim = Sim::new(
+                STEADY,
+                Faults {
+                    carrier_refuse: refuse,
+                    ..Faults::default()
+                },
+            );
+            let mut controller = Probe::new();
+            let request = Request {
+                target_tenths: 500,
+                inject: None,
+                window: Window::ForUs(35_000_000),
+            };
+            let out = controller.run(&mut sim, request);
+            assert_eq!(
+                out.reason,
+                if refuse {
+                    Reason::CarrierTransition
+                } else {
+                    Reason::SegmentDeadline
+                }
+            );
+            assert!(!sim.driving && sim.log.safe_offs > 0);
+            assert_eq!(sim.log.bytes_while_driven, 0);
+            assert_eq!(sim.log.carrier_changes.len(), usize::from(!refuse));
+            if !refuse {
+                let (at, duty, period) = sim.log.carrier_changes[0];
+                assert_eq!((duty, period), (350, 1000));
+                assert!(at > sim.log.closed_at.unwrap() + 12_000_000);
+                assert_eq!(field(&sim.log.text, "BEMFCURRENT", "applied_period"), 1000);
+                assert_eq!(field(&sim.log.text, "BEMFCURRENT", "applied_ccr"), 500);
+                let target_at = sim.log.plans.iter().find(|p| p.1 == 500).unwrap().0;
+                let hold_us = field(&sim.log.text, "BEMFGATE", "hold_ms") * 1000;
+                assert!(hold_us > 0);
+                assert!(hold_us < sim.t - target_at, "hold excludes publication latency");
+                sim.log = Log::default();
+                let second = controller.run(&mut sim, request);
+                assert_eq!(second.reason, Reason::SegmentDeadline);
+                assert_eq!(
+                    sim.log.periods,
+                    [
+                        crate::duty::STARTUP_TICKS,
+                        crate::duty::RUN_PERIOD_TICKS,
+                        crate::duty::STARTUP_TICKS
+                    ]
+                );
+                assert_eq!(
+                    sim.log.carrier_changes.len(),
+                    1,
+                    "ordinary second start retimes once again"
+                );
+            } else {
+                assert_eq!(field(&sim.log.text, "BEMFGATE", "hold_ms"), 0);
+            }
+        }
+        use policy::Carrier;
+        assert_eq!(policy::FasterAbove::<350, 1000>::period(349, 1333), 1333);
+        assert_eq!(policy::FasterAbove::<350, 1000>::period(350, 1333), 1000);
+        assert_eq!(
+            policy::FasterAbove::<350, 1000>::period(300, 1000),
+            1000,
+            "foldback retains carrier"
+        );
+        assert_eq!(
+            policy::FasterAbove::<350, 1000>::period(100, 1333),
+            1333,
+            "restart entry reset"
+        );
+    }
+
+    #[test]
+    fn physical_only_high_duty_keeps_scripted_crossings_and_tracking_stop() {
+        use crate::run::{Controller, policy};
+        type Probe = Controller<
+            policy::Wiring,
+            policy::PhysicalEdgesAbove<policy::BemfPolicy, 350>,
+            policy::AdvancePolicy,
+            policy::CurrentProtection,
+            policy::BusSagProtection,
+            policy::Restart,
+            policy::Telemetry,
+        >;
+        for until_us in [None, Some(28_000_000)] {
+            let mut sim = Sim::new(
+                Crossings { until_us, ..STEADY },
+                Faults {
+                    guard_stale_us: Some(3 * 144),
+                    ..Faults::default()
+                },
+            );
+            let out = Probe::new().run(
+                &mut sim,
+                Request {
+                    target_tenths: 500,
+                    inject: None,
+                    window: Window::ForUs(35_000_000),
+                },
+            );
+            assert_eq!(
+                out.reason,
+                if until_us.is_some() {
+                    Reason::Tracking
+                } else {
+                    Reason::SegmentDeadline
+                }
+            );
+            assert!(sim.revisit_polls > 0, "entry still uses revisits");
+            assert_eq!(sim.log.high_duty_revisit_polls, 0);
+            assert!(sim.log.plans.iter().any(|&(_, duty)| duty == 500));
+            assert!(sim.log.crossings_delivered > 100_000);
+            assert!(sim.log.safe_offs > 0 && !sim.driving);
+            assert_eq!(sim.log.bytes_while_driven, 0);
+        }
+    }
 
     #[test]
     fn scheduled_advance_preserves_ramp_and_existing_late_blank_stops() {

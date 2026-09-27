@@ -1,0 +1,14 @@
+**65%, then conditionally 70%, is a reasonable bounded experiment after fixture fixes—not evidence of safety through 80%.** Retain PSU 3A, every guard, independent coast measurement, verified outputs OFF, and ≥120s OFF between attempts. Cooldown is an exposure constraint, not proof of temperature recovery.
+
+Observer causality remains unresolved. Diagnostic 60% stopped with CCR590 and zero target hold; lean 60% completed 14.778s at target. These are single, sequential trials on different images, not replicated causal evidence. At 50%, both images produced nearly identical accepted rates and coast speeds despite different mailbox coalescing. Instrumentation plausibly changes scheduling, but neither causes the fault conclusively nor explains away its safety relevance.
+
+Lean coast speeds were 2497/2926eHz, approximately 24,970/29,260RPM. They corroborate rotation independently of powered acceptance accounting, without proving mechanical safety. Current readings remain proxies; zero drift of −118/−201mA is material relative to 268/421mA hold readings. No thermal conclusion or speculative speed wall follows.
+
+Concrete cap800 hazards:
+
+- **Stale absolute reset:** `bemf_run.py:770` accepts eleven leading minuses. From800 these reach525, not375. Seventeen are necessary; nineteen preserve the existing two-press allowance. Require a fresh final `CLIMBAT` equal to the requested rung before driving.
+- **Global scope:** `SIXSTEP_DUTY_CAP` feeds selector limits and published plans. Changing it widens authority beyond this propless binary unless isolated. Host acceptance through800 already exceeds current firmware capability; that acceptance is not qualification.
+- **Timing-margin blind spot:** the verdict checks `late_arms`, but neither requires nor evaluates `thin_count`. Lean60 recorded two thin events despite zero late arms; zero margin histograms provide no distribution. Define thin-count semantics and a prospective progression criterion, preferably with a target/near-deadline window and denominator. Whole-run counts cannot locate deterioration.
+- **Evidence validation:** duplicate records overwrite earlier ones; two OFF preflights need not bracket the run. Tail checks establish internal consistency but impose no explicit near-stop freshness bound. Strengthen run association and freshness; unseen `cohort` code cannot be credited with those checks.
+
+Require the stated build/audit/protection checks before exposure. Run one65 `l45`; advance only after clean review, otherwise stop investigation at that rung. Existing timing suggests approximately **12.3s**, not12.8s, at65 and9.8s at70; judge measured target dwell. Address duration before75. Final qualification remains separate.

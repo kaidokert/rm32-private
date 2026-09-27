@@ -1,0 +1,26 @@
+
+      fn allow_revisit(applied_duty: u16) -> bool {
+          const { assert!(FROM > 0 && FROM <= 1000) };
+>         applied_duty < FROM && B::allow_revisit(applied_duty)
+   8002a2e:	0870      	lsrs	r0, r6, #1
+   8002a30:	2600      	movs	r6, #0
+   8002a32:	28af      	cmp	r0, #175	@ 0xaf
+   8002a34:	9a47      	ldr	r2, [sp, #284]	@ 0x11c
+   8002a36:	d300      	bcc.n	8002a3a <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1b2>
+   8002a38:	4632      	mov	r2, r6
+          io.kv("revisit_at_target", u32::from(B::allow_revisit(target)));
+   8002a3a:	484b      	ldr	r0, [pc, #300]	@ (8002b68 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x2e0>)
+   8002a3c:	2111      	movs	r1, #17
+   8002a3e:	f005 f9c3 	bl	8007dc8 <firmware50::report::Sink::kv>
+   8002a42:	484a      	ldr	r0, [pc, #296]	@ (8002b6c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x2e4>)
+          io.kv("startup_ticks", crate::duty::STARTUP_TICKS);
+   8002a44:	1c42      	adds	r2, r0, #1
+   8002a46:	484a      	ldr	r0, [pc, #296]	@ (8002b70 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x2e8>)
+   8002a48:	993c      	ldr	r1, [sp, #240]	@ 0xf0
+   8002a4a:	9222      	str	r2, [sp, #136]	@ 0x88
+   8002a4c:	f005 f9bc 	bl	8007dc8 <firmware50::report::Sink::kv>
+   8002a50:	20af      	movs	r0, #175	@ 0xaf
+   8002a52:	0040      	lsls	r0, r0, #1
+   8002a54:	901c      	str	r0, [sp, #112]	@ 0x70
+   8002a56:	4630      	mov	r0, r6
+   8002a58:	9a46      	ldr	r2, [sp, #280]	@ 0x118

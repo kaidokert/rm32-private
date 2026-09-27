@@ -1,0 +1,408 @@
+
+   8000ac4:	e000e408 	.word	0xe000e408
+   8000ac8:	e000e100 	.word	0xe000e100
+   8000acc:	7fffffe8 	.word	0x7fffffe8
+
+> 08000ad0 <firmware50::hw::pwm::stage_faster>:
+  /// Foreground transaction only, while IRQs are masked. RM0444 TIM1 UDIS
+  /// inhibits shadow transfers, not counting. No UG: the next native overflow
+  /// loads ARR and the active PWM source's preloaded CCR together. Non-source
+  /// channels may take a smaller compare immediately, which only under-drives
+  /// against the old longer period if COM changes the source before that update.
+> pub fn stage_faster(period: u32, compare: u32) -> bool {
+   8000ad0:	b5f0      	push	{r4, r5, r6, r7, lr}
+   8000ad2:	af03      	add	r7, sp, #12
+   8000ad4:	b083      	sub	sp, #12
+   8000ad6:	4602      	mov	r2, r0
+>  8000ad8:	4817      	ldr	r0, [pc, #92]	@ (8000b38 <firmware50::hw::pwm::stage_faster+0x68>)
+          intrinsics::volatile_load(src)
+   8000ada:	6800      	ldr	r0, [r0, #0]
+   8000adc:	2583      	movs	r5, #131	@ 0x83
+      let t = regs();
+      let cr = t.cr1().read();
+      let old_period = u32::from(t.arr().read().arr().bits()) + 1;
+      if period == 0
+   8000ade:	4005      	ands	r5, r0
+   8000ae0:	3d81      	subs	r5, #129	@ 0x81
+   8000ae2:	426c      	negs	r4, r5
+   8000ae4:	416c      	adcs	r4, r5
+   8000ae6:	2501      	movs	r5, #1
+   8000ae8:	2600      	movs	r6, #0
+   8000aea:	4291      	cmp	r1, r2
+   8000aec:	4628      	mov	r0, r5
+>  8000aee:	d300      	bcc.n	8000af2 <firmware50::hw::pwm::stage_faster+0x22>
+   8000af0:	4630      	mov	r0, r6
+   8000af2:	1e52      	subs	r2, r2, #1
+>  8000af4:	4b10      	ldr	r3, [pc, #64]	@ (8000b38 <firmware50::hw::pwm::stage_faster+0x68>)
+   8000af6:	6adb      	ldr	r3, [r3, #44]	@ 0x2c
+   8000af8:	b29b      	uxth	r3, r3
+   8000afa:	429a      	cmp	r2, r3
+>  8000afc:	d300      	bcc.n	8000b00 <firmware50::hw::pwm::stage_faster+0x30>
+   8000afe:	4635      	mov	r5, r6
+   8000b00:	4028      	ands	r0, r5
+   8000b02:	4020      	ands	r0, r4
+   8000b04:	2801      	cmp	r0, #1
+>  8000b06:	d114      	bne.n	8000b32 <firmware50::hw::pwm::stage_faster+0x62>
+>  8000b08:	4d0b      	ldr	r5, [pc, #44]	@ (8000b38 <firmware50::hw::pwm::stage_faster+0x68>)
+   8000b0a:	682b      	ldr	r3, [r5, #0]
+   8000b0c:	2402      	movs	r4, #2
+   8000b0e:	431c      	orrs	r4, r3
+          intrinsics::volatile_store(dst, src);
+   8000b10:	602c      	str	r4, [r5, #0]
+   8000b12:	2400      	movs	r4, #0
+   8000b14:	466b      	mov	r3, sp
+   8000b16:	5119      	str	r1, [r3, r4]
+   8000b18:	1d24      	adds	r4, r4, #4
+   8000b1a:	2c0c      	cmp	r4, #12
+>  8000b1c:	d1fa      	bne.n	8000b14 <firmware50::hw::pwm::stage_faster+0x44>
+   8000b1e:	4669      	mov	r1, sp
+
+  /// Write the three phase compares. Phase A -> CCR3, B -> CCR2, C -> CCR1.
+  #[inline(always)]
+  pub fn set_phase_compares(c: [u32; 3]) {
+      let t = regs();
+      t.ccr3().write(|w| w.ccr().set(c[0] as u16));
+   8000b20:	880b      	ldrh	r3, [r1, #0]
+>  8000b22:	4c05      	ldr	r4, [pc, #20]	@ (8000b38 <firmware50::hw::pwm::stage_faster+0x68>)
+   8000b24:	63e3      	str	r3, [r4, #60]	@ 0x3c
+      t.ccr2().write(|w| w.ccr().set(c[1] as u16));
+   8000b26:	888b      	ldrh	r3, [r1, #4]
+   8000b28:	63a3      	str	r3, [r4, #56]	@ 0x38
+      t.ccr1().write(|w| w.ccr().set(c[2] as u16));
+   8000b2a:	8909      	ldrh	r1, [r1, #8]
+   8000b2c:	6361      	str	r1, [r4, #52]	@ 0x34
+   8000b2e:	b291      	uxth	r1, r2
+   8000b30:	62e1      	str	r1, [r4, #44]	@ 0x2c
+  }
+   8000b32:	b003      	add	sp, #12
+   8000b34:	bdf0      	pop	{r4, r5, r6, r7, pc}
+   8000b36:	46c0      	nop			@ (mov r8, r8)
+   8000b38:	40012c00 	.word	0x40012c00
+
+  08000b3c <firmware50::hw::pwm::carrier_selftest_off>:
+  pub fn carrier_selftest_off() -> bool {
+   8000b3c:	b5f0      	push	{r4, r5, r6, r7, lr}
+   8000b3e:	af03      	add	r7, sp, #12
+   8000b40:	b087      	sub	sp, #28
+   8000b42:	4d3c      	ldr	r5, [pc, #240]	@ (8000c34 <firmware50::hw::pwm::carrier_selftest_off+0xf8>)
+          intrinsics::volatile_load(src)
+   8000b44:	6c68      	ldr	r0, [r5, #68]	@ 0x44
+   8000b46:	2400      	movs	r4, #0
+      if moe_is_set() || compares() != (0, 0, 0) {
+   8000b48:	0400      	lsls	r0, r0, #16
+   8000b4a:	d470      	bmi.n	8000c2e <firmware50::hw::pwm::carrier_selftest_off+0xf2>
+   8000b4c:	6b68      	ldr	r0, [r5, #52]	@ 0x34
+   8000b4e:	6ba9      	ldr	r1, [r5, #56]	@ 0x38
+  /// The three channel compares, CCR1..CCR3.
+  #[must_use]
+  pub fn compares() -> (u32, u32, u32) {
+      let t = regs();
+      (
+          t.ccr1().read().ccr().bits() as u32,
+   8000b60:	616e      	str	r6, [r5, #20]
+   8000b62:	207d      	movs	r0, #125	@ 0x7d
+   8000b64:	00c0      	lsls	r0, r0, #3
+   8000b66:	2400      	movs	r4, #0
+>     if !stage_faster(1000, 0) {
+   8000b68:	4621      	mov	r1, r4
+>  8000b6a:	f7ff ffb1 	bl	8000ad0 <firmware50::hw::pwm::stage_faster>
+   8000b6e:	4933      	ldr	r1, [pc, #204]	@ (8000c3c <firmware50::hw::pwm::carrier_selftest_off+0x100>)
+   8000b70:	2800      	cmp	r0, #0
+   8000b72:	d02f      	beq.n	8000bd4 <firmware50::hw::pwm::carrier_selftest_off+0x98>
+   8000b74:	2001      	movs	r0, #1
+   8000b76:	9005      	str	r0, [sp, #20]
+   8000b78:	03c0      	lsls	r0, r0, #15
+          intrinsics::volatile_load(src)
+   8000b7a:	9003      	str	r0, [sp, #12]
+   8000b7c:	6828      	ldr	r0, [r5, #0]
+   8000b7e:	2102      	movs	r1, #2
+   8000b80:	9101      	str	r1, [sp, #4]
+              fn bitand_assign(&mut self, other: $t) { *self &= other }
+   8000b82:	4388      	bics	r0, r1
+          intrinsics::volatile_store(dst, src);
+   8000b84:	6028      	str	r0, [r5, #0]
+   8000b86:	482e      	ldr	r0, [pc, #184]	@ (8000c40 <firmware50::hw::pwm::carrier_selftest_off+0x104>)
+          intrinsics::volatile_load(src)
+   8000b88:	6800      	ldr	r0, [r0, #0]
+   8000b8a:	9004      	str	r0, [sp, #16]
+   8000b8c:	6a68      	ldr	r0, [r5, #36]	@ 0x24
+
+  /// The PWM counter (the position inside the carrier period).
+  #[inline(always)]
+  #[must_use]
+  pub fn counter() -> u32 {
+      regs().cnt().read().cnt().bits() as u32
+   8000b8e:	b284      	uxth	r4, r0
+   8000b90:	2200      	movs	r2, #0
+   8000b92:	4b2c      	ldr	r3, [pc, #176]	@ (8000c44 <firmware50::hw::pwm::carrier_selftest_off+0x108>)
+   8000b94:	9202      	str	r2, [sp, #8]
+      for _ in 0..2048 {
+   8000b96:	9606      	str	r6, [sp, #24]
+
+      #[rustfmt::skip]
+      macro_rules! partial_ord_methods_primitive_impl {
+   8001310:	0800ad24 	.word	0x0800ad24
+   8001314:	0800ad04 	.word	0x0800ad04
+   8001318:	0800ad34 	.word	0x0800ad34
+
+> 0800131c <firmware50::roots::com_retime_faster>:
+> pub fn com_retime_faster(duty: u16, period: u32, cap: u16) -> bool {
+   800131c:	b5f0      	push	{r4, r5, r6, r7, lr}
+   800131e:	af03      	add	r7, sp, #12
+   8001320:	b0e1      	sub	sp, #388	@ 0x184
+   8001322:	9204      	str	r2, [sp, #16]
+   8001324:	9105      	str	r1, [sp, #20]
+   8001326:	9003      	str	r0, [sp, #12]
+   8001328:	2008      	movs	r0, #8
+   800132a:	a907      	add	r1, sp, #28
+   800132c:	2200      	movs	r2, #0
+   800132e:	600a      	str	r2, [r1, #0]
+   8001330:	3128      	adds	r1, #40	@ 0x28
+   8001332:	1e40      	subs	r0, r0, #1
+>  8001334:	d1fb      	bne.n	800132e <firmware50::roots::com_retime_faster+0x12>
+   8001336:	9201      	str	r2, [sp, #4]
+   8001338:	2501      	movs	r5, #1
+   800133a:	9502      	str	r5, [sp, #8]
+              fn lt(&self, other: &Self) -> bool { *self <  *other }
+   800133c:	b2ec      	uxtb	r4, r5
+      fn spec_next(&mut self) -> Option<T> {
+          if self.is_empty() {
+              return None;
+          }
+          let is_iterating = self.start < self.end;
+          Some(if is_iterating {
+   800133e:	2c06      	cmp	r4, #6
+>  8001340:	d000      	beq.n	8001344 <firmware50::roots::com_retime_faster+0x28>
+   8001342:	1c6c      	adds	r4, r5, #1
+          }
+      }
+      #[inline]
+      fn step(logical: Step) -> Step {
+          // Table-free, branch-only: no indexing, no arithmetic that can panic.
+          match logical.get() {
+   8001344:	1e68      	subs	r0, r5, #1
+   8001346:	b2c6      	uxtb	r6, r0
+   8001348:	2e04      	cmp	r6, #4
+>  800134a:	d802      	bhi.n	8001352 <firmware50::roots::com_retime_faster+0x36>
+>  800134c:	4837      	ldr	r0, [pc, #220]	@ (800142c <firmware50::roots::com_retime_faster+0x110>)
+   800134e:	5d81      	ldrb	r1, [r0, r6]
+>  8001350:	e000      	b.n	8001354 <firmware50::roots::com_retime_faster+0x38>
+   8001352:	2105      	movs	r1, #5
+          let Some(plan) = sixstep::plan(physical(Step::new_clamped(step)), duty, period, cap) else {
+   8001354:	9804      	ldr	r0, [sp, #16]
+   8001356:	9000      	str	r0, [sp, #0]
+   8001358:	a857      	add	r0, sp, #348	@ 0x15c
+   800135a:	9a03      	ldr	r2, [sp, #12]
+   800135c:	9b05      	ldr	r3, [sp, #20]
+   800135e:	f000 f91d 	bl	800159c <firmware50::sixstep::plan>
+   8001362:	9857      	ldr	r0, [sp, #348]	@ 0x15c
+   8001364:	2800      	cmp	r0, #0
+>  8001366:	d027      	beq.n	80013b8 <firmware50::roots::com_retime_faster+0x9c>
+   8001368:	9506      	str	r5, [sp, #24]
+          table[usize::from(step - 1)] = Some(plan);
+   800136a:	2e07      	cmp	r6, #7
+>  800136c:	d859      	bhi.n	8001422 <firmware50::roots::com_retime_faster+0x106>
+   800136e:	4625      	mov	r5, r4
+   8001370:	2028      	movs	r0, #40	@ 0x28
+   8001372:	4370      	muls	r0, r6
+   8001374:	a907      	add	r1, sp, #28
+   8001376:	1808      	adds	r0, r1, r0
+   8001378:	a957      	add	r1, sp, #348	@ 0x15c
+   800137a:	c94c      	ldmia	r1!, {r2, r3, r6}
+   800137c:	c04c      	stmia	r0!, {r2, r3, r6}
+   800137e:	c94c      	ldmia	r1!, {r2, r3, r6}
+   8001380:	c04c      	stmia	r0!, {r2, r3, r6}
+   8001382:	c95c      	ldmia	r1!, {r2, r3, r4, r6}
+   8001384:	c05c      	stmia	r0!, {r2, r3, r4, r6}
+   8001386:	b2e8      	uxtb	r0, r5
+   8001388:	2806      	cmp	r0, #6
+>  800138a:	d801      	bhi.n	8001390 <firmware50::roots::com_retime_faster+0x74>
+   800138c:	2000      	movs	r0, #0
+>  800138e:	e000      	b.n	8001392 <firmware50::roots::com_retime_faster+0x76>
+   8001390:	2001      	movs	r0, #1
+   8001392:	9906      	ldr	r1, [sp, #24]
+   8001394:	b2c9      	uxtb	r1, r1
+          self.exhausted || !(self.start <= self.end)
+   8001396:	2906      	cmp	r1, #6
+   8001398:	9902      	ldr	r1, [sp, #8]
+>  800139a:	d000      	beq.n	800139e <firmware50::roots::com_retime_faster+0x82>
+   800139c:	4601      	mov	r1, r0
+   800139e:	2900      	cmp	r1, #0
+>  80013a0:	d0cc      	beq.n	800133c <firmware50::roots::com_retime_faster+0x20>
+   80013a2:	2001      	movs	r0, #1
+      let compare = table[0].map_or(0, |p| p.ccr[0]);
+   80013a4:	9907      	ldr	r1, [sp, #28]
+      pub const fn map_or<U, F>(self, default: U, f: F) -> U
+      where
+          F: [const] FnOnce(T) -> U + [const] Destruct,
+          U: [const] Destruct,
+      {
+          match self {
+   80013a6:	4001      	ands	r1, r0
+>  80013a8:	d000      	beq.n	80013ac <firmware50::roots::com_retime_faster+0x90>
+   80013aa:	990e      	ldr	r1, [sp, #56]	@ 0x38
+>  80013ac:	4821      	ldr	r0, [pc, #132]	@ (8001434 <firmware50::roots::com_retime_faster+0x118>)
+          intrinsics::volatile_load(src)
+   80013ae:	6800      	ldr	r0, [r0, #0]
+   80013b0:	0600      	lsls	r0, r0, #24
+>  80013b2:	d003      	beq.n	80013bc <firmware50::roots::com_retime_faster+0xa0>
+   80013b4:	2000      	movs	r0, #0
+>  80013b6:	e032      	b.n	800141e <firmware50::roots::com_retime_faster+0x102>
+   80013b8:	9801      	ldr	r0, [sp, #4]
+          let Some(plan) = sixstep::plan(physical(Step::new_clamped(step)), duty, period, cap) else {
+>  80013ba:	e030      	b.n	800141e <firmware50::roots::com_retime_faster+0x102>
+      unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+   80013bc:	f3ef 8510 	mrs	r5, PRIMASK
+   80013c0:	b672      	cpsid	i
+          unsafe { *self.value.get() }
+>  80013c2:	4c1d      	ldr	r4, [pc, #116]	@ (8001438 <firmware50::roots::com_retime_faster+0x11c>)
+   80013c4:	6c20      	ldr	r0, [r4, #64]	@ 0x40
+          match borrow.get() {
+   80013c6:	2800      	cmp	r0, #0
+>  80013c8:	d001      	beq.n	80013ce <firmware50::roots::com_retime_faster+0xb2>
+   80013ca:	2600      	movs	r6, #0
+>  80013cc:	e024      	b.n	8001418 <firmware50::roots::com_retime_faster+0xfc>
+   80013ce:	2000      	movs	r0, #0
+   80013d0:	4606      	mov	r6, r0
+   80013d2:	43c0      	mvns	r0, r0
+          // `ptr` methods introduces two unnecessary UbChecks, so until we can
+          // remove those for pointers that come from references, this uses the
+          // intrinsics instead so this stays very cheap in MIR (and debug).
+
+          let result = crate::intrinsics::read_via_copy(dest);
+          crate::intrinsics::write_via_move(dest, src);
+   80013d4:	6420      	str	r0, [r4, #64]	@ 0x40
+   80013d6:	2063      	movs	r0, #99	@ 0x63
+   80013d8:	0080      	lsls	r0, r0, #2
+  #[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
+  unsafe fn atomic_load<T: Copy>(dst: *const T, order: Ordering) -> T {
+      // SAFETY: the caller must uphold the safety contract for `atomic_load`.
+      unsafe {
+          match order {
+              Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+   80013da:	5c20      	ldrb	r0, [r4, r0]
+   80013dc:	7822      	ldrb	r2, [r4, #0]
+              if !crate::oneshot::arm_allowed(
+   80013de:	2a00      	cmp	r2, #0
+>  80013e0:	d017      	beq.n	8001412 <firmware50::roots::com_retime_faster+0xf6>
+   80013e2:	2800      	cmp	r0, #0
+>  80013e4:	d115      	bne.n	8001412 <firmware50::roots::com_retime_faster+0xf6>
+>  80013e6:	4815      	ldr	r0, [pc, #84]	@ (800143c <firmware50::roots::com_retime_faster+0x120>)
+   80013e8:	6c40      	ldr	r0, [r0, #68]	@ 0x44
+              ) || !hw::pwm::moe_is_set()
+   80013ea:	0400      	lsls	r0, r0, #16
+>  80013ec:	d511      	bpl.n	8001412 <firmware50::roots::com_retime_faster+0xf6>
+>             if !hw::pwm::stage_faster(period, compare) {
+   80013ee:	9805      	ldr	r0, [sp, #20]
+>  80013f0:	f7ff fb6e 	bl	8000ad0 <firmware50::hw::pwm::stage_faster>
+   80013f4:	2800      	cmp	r0, #0
+>  80013f6:	d00c      	beq.n	8001412 <firmware50::roots::com_retime_faster+0xf6>
+              *plans = table;
+   80013f8:	4620      	mov	r0, r4
+   80013fa:	3044      	adds	r0, #68	@ 0x44
+   80013fc:	2105      	movs	r1, #5
+   80013fe:	018a      	lsls	r2, r1, #6
+   8001400:	a907      	add	r1, sp, #28
+   8001402:	f009 f875 	bl	800a4f0 <__aeabi_memcpy4>
+>  8001406:	4a0d      	ldr	r2, [pc, #52]	@ (800143c <firmware50::roots::com_retime_faster+0x120>)
+   8001408:	6810      	ldr	r0, [r2, #0]
+   800140a:	2102      	movs	r1, #2
+              fn bitand_assign(&mut self, other: $t) { *self &= other }
+   800140c:	4388      	bics	r0, r1
+          intrinsics::volatile_store(dst, src);
+   800140e:	6010      	str	r0, [r2, #0]
+   8001410:	9e02      	ldr	r6, [sp, #8]
+          unsafe { *self.value.get() }
+   8001412:	6c20      	ldr	r0, [r4, #64]	@ 0x40
+          self.borrow.replace(borrow + 1);
+   8001414:	1c40      	adds	r0, r0, #1
+   8001416:	6420      	str	r0, [r4, #64]	@ 0x40
+      unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+   8001418:	f385 8810 	msr	PRIMASK, r5
+   800141c:	4630      	mov	r0, r6
+  }
+   800141e:	b061      	add	sp, #388	@ 0x184
+   8001420:	bdf0      	pop	{r4, r5, r6, r7, pc}
+   8001422:	2108      	movs	r1, #8
+          table[usize::from(step - 1)] = Some(plan);
+>  8001424:	4a02      	ldr	r2, [pc, #8]	@ (8001430 <firmware50::roots::com_retime_faster+0x114>)
+   8001426:	4630      	mov	r0, r6
+   8001428:	f7ff f818 	bl	800045c <core::panicking::panic_bounds_check>
+   800142c:	0800ad76 	.word	0x0800ad76
+   8001430:	0800aa94 	.word	0x0800aa94
+   8001434:	e000ed04 	.word	0xe000ed04
+   8001438:	20000000 	.word	0x20000000
+   800143c:	40012c00 	.word	0x40012c00
+
+  08001440 <firmware50::roots::guard_arm_tracking>:
+  pub fn guard_arm_tracking() {
+   8001440:	b5f0      	push	{r4, r5, r6, r7, lr}
+   8001442:	af03      	add	r7, sp, #12
+   8001444:	b082      	sub	sp, #8
+      unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+   8001446:	f3ef 8010 	mrs	r0, PRIMASK
+   800144a:	b672      	cpsid	i
+   800144c:	4915      	ldr	r1, [pc, #84]	@ (80014a4 <firmware50::roots::guard_arm_tracking+0x64>)
+          intrinsics::volatile_load(src)
+   800144e:	680b      	ldr	r3, [r1, #0]
+   8001450:	4915      	ldr	r1, [pc, #84]	@ (80014a8 <firmware50::roots::guard_arm_tracking+0x68>)
+   8001452:	68cd      	ldr	r5, [r1, #12]
+   8001454:	688c      	ldr	r4, [r1, #8]
+   8001456:	4a15      	ldr	r2, [pc, #84]	@ (80014ac <firmware50::roots::guard_arm_tracking+0x6c>)
+   8001458:	6812      	ldr	r2, [r2, #0]
+   800145a:	0612      	lsls	r2, r2, #24
+   800145c:	d11b      	bne.n	8001496 <firmware50::roots::guard_arm_tracking+0x56>
+   800145e:	f3ef 8210 	mrs	r2, PRIMASK
+   8001462:	b672      	cpsid	i
+          unsafe { *self.value.get() }
+   8001464:	6a8e      	ldr	r6, [r1, #40]	@ 0x28
+          match borrow.get() {
+   8001466:	2e00      	cmp	r6, #0
+   8001468:	d113      	bne.n	8001492 <firmware50::roots::guard_arm_tracking+0x52>
+   800146a:	1b5b      	subs	r3, r3, r5
+   800146c:	b29b      	uxth	r3, r3
+          duty: u16,
+          period: u32,
+          cap: u16,
+      ) -> bool {
+>         roots::com_retime_faster(duty, period, cap)
+   80048a4:	9a1f      	ldr	r2, [sp, #124]	@ 0x7c
+   80048a6:	32fb      	adds	r2, #251	@ 0xfb
+   80048a8:	4618      	mov	r0, r3
+   80048aa:	4631      	mov	r1, r6
+>  80048ac:	f7fc fd36 	bl	800131c <firmware50::roots::com_retime_faster>
+                  if !hal.retime_plans(&mut self.gates, duty, period, SIXSTEP_DUTY_CAP) {
+   80048b0:	2800      	cmp	r0, #0
+   80048b2:	d01c      	beq.n	80048ee <firmware50::run::Controller<W,B,A,C,S,R,T,G,H>::rung+0x1dc2>
+                  c.period = period;
+   80048b4:	9820      	ldr	r0, [sp, #128]	@ 0x80
+   80048b6:	61c6      	str	r6, [r0, #28]
+   80048b8:	9848      	ldr	r0, [sp, #288]	@ 0x120
+              c.applied_duty = duty;
+   80048ba:	80a0      	strh	r0, [r4, #4]
+              Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+   80048bc:	981a      	ldr	r0, [sp, #104]	@ 0x68
+   80048be:	4912      	ldr	r1, [pc, #72]	@ (8004908 <firmware50::run::Controller<W,B,A,C,S,R,T,G,H>::rung+0x1ddc>)
+   80048c0:	60c8      	str	r0, [r1, #12]
+          let now = match self.ctx.pass::<P>(hal, true, Some(self.sector_start)) {
+   80048c2:	68e0      	ldr	r0, [r4, #12]
+   80048c4:	2101      	movs	r1, #1
+   80048c6:	9100      	str	r1, [sp, #0]
+   80048c8:	9001      	str	r0, [sp, #4]
+   80048ca:	4c15      	ldr	r4, [pc, #84]	@ (8004920 <firmware50::run::Controller<W,B,A,C,S,R,T,G,H>::rung+0x1df4>)
+   80048cc:	446c      	add	r4, sp
+   80048ce:	4915      	ldr	r1, [pc, #84]	@ (8004924 <firmware50::run::Controller<W,B,A,C,S,R,T,G,H>::rung+0x1df8>)
+   80048d0:	4469      	add	r1, sp
+   80048d2:	4620      	mov	r0, r4
+   80048d4:	462a      	mov	r2, r5
+   80048d6:	9b49      	ldr	r3, [sp, #292]	@ 0x124
+   80048d8:	f002 faea 	bl	8006eb0 <firmware50::run::states::Ctx::pass>
+   80048dc:	7820      	ldrb	r0, [r4, #0]
+   80048de:	2800      	cmp	r0, #0
+   80048e0:	d100      	bne.n	80048e4 <firmware50::run::Controller<W,B,A,C,S,R,T,G,H>::rung+0x1db8>
+   80048e2:	e5cf      	b.n	8004484 <firmware50::run::Controller<W,B,A,C,S,R,T,G,H>::rung+0x1958>
+   80048e4:	e525      	b.n	8004332 <firmware50::run::Controller<W,B,A,C,S,R,T,G,H>::rung+0x1806>
+   80048e6:	6c96      	ldr	r6, [r2, #72]	@ 0x48
+   80048e8:	6cd1      	ldr	r1, [r2, #76]	@ 0x4c
+   80048ea:	912b      	str	r1, [sp, #172]	@ 0xac
+   80048ec:	e772      	b.n	80047d4 <firmware50::run::Controller<W,B,A,C,S,R,T,G,H>::rung+0x1ca8>

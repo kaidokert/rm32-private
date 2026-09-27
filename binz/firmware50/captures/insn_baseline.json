@@ -120,5 +120,159 @@
     "mul": 10
    }
   }
+ },
+ "order-advref-floor5-comtop": {
+  "elf": "BC21E369.e381-order.elf",
+  "symbols": {
+   "ADC_COMP": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 775,
+    "irq": 9,
+    "mul": 4
+   },
+   "DMA1_CHANNEL1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 37,
+    "irq": 2,
+    "mul": 0
+   },
+   "TIM16": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 383,
+    "irq": 6,
+    "mul": 3
+   },
+   "TIM6_DAC_LPTIM1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 155,
+    "irq": 1,
+    "mul": 0
+   },
+   "protection::BusDepth::observe": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 50,
+    "irq": 0,
+    "mul": 4
+   },
+   "run::Controller": {
+    "div": 7,
+    "excl": 0,
+    "helper": 7,
+    "insns": 587,
+    "irq": 0,
+    "mul": 6
+   },
+   "run::states::Ctx::record_sag_row": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 74,
+    "irq": 0,
+    "mul": 0
+   },
+   "run::states::Ctx::scan_pass": {
+    "div": 2,
+    "excl": 0,
+    "helper": 2,
+    "insns": 559,
+    "irq": 0,
+    "mul": 10
+   },
+   "sagtrace::Trace::push": {
+    "div": 0,
+    "excl": 0,
+    "helper": 2,
+    "insns": 111,
+    "irq": 0,
+    "mul": 1
+   }
+  }
+ },
+ "staged-sag-advref-floor5-comtop": {
+  "elf": "3E1B036E.e401-staged-sag.elf",
+  "symbols": {
+   "ADC_COMP": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 742,
+    "irq": 9,
+    "mul": 4
+   },
+   "DMA1_CHANNEL1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 37,
+    "irq": 2,
+    "mul": 0
+   },
+   "TIM16": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 332,
+    "irq": 6,
+    "mul": 2
+   },
+   "TIM6_DAC_LPTIM1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 155,
+    "irq": 1,
+    "mul": 0
+   },
+   "protection::BusDepth::observe": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 50,
+    "irq": 0,
+    "mul": 4
+   },
+   "run::Controller": {
+    "div": 7,
+    "excl": 0,
+    "helper": 7,
+    "insns": 587,
+    "irq": 0,
+    "mul": 6
+   },
+   "run::states::Ctx::record_sag_row": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 91,
+    "irq": 1,
+    "mul": 0
+   },
+   "run::states::Ctx::scan_pass": {
+    "div": 2,
+    "excl": 0,
+    "helper": 2,
+    "insns": 555,
+    "irq": 0,
+    "mul": 10
+   },
+   "sagtrace::Trace::push": {
+    "div": 0,
+    "excl": 0,
+    "helper": 2,
+    "insns": 111,
+    "irq": 0,
+    "mul": 1
+   }
+  }
  }
 }
