@@ -1,0 +1,8 @@
+**E481 shows an early closed-loop tracking timeout, not demonstrated retained-state corruption or failure at 25% duty.**
+
+- **Age:** `4718453 − 4717426 = 1027 µs`, exceeding the 1000 µs limit by 27 µs. The poststop raw gap is `41405 − 40367 = 1038 µs`; mapping that acceptance onto the guard clock gives `4717415`, 11 µs before the watch’s `last_us`. These timestamps measure different points: acceptance stamps precede `guard_event()`’s `guard_now()`. `Board::guard_record()` explicitly labels `post_*` as poststop snapshots.
+- **Sequence:** E480’s detector accepted count is 284843; adding E481’s six gives **284849**, exactly `post_accept_seq`. Use detector counts, not E480’s foreground `accepted=284841`. `publish_accept_sequence()` intentionally never resets; `det_install()` baselines `det_seq_seen`.
+- **Lifecycle:** `stop()`/`take_back()` disable detector, driven observer, COM and guard. `com_stop()` clears phase and pending TIM16; `comp_exti_mask()` clears comparator pending state. Restart replaces the estimator, seeds filter depth and six-slot history (`det_install()`), and recreates the tracking watch (`guard_arm_tracking()`).
+- **Revisit:** timed `STATE.schedule` survives stops, but authority checks reject unpowered or mismatched generation/step; serviced phase 1 replaces it. The captures do not establish which timed policy was instantiated.
+
+**Action-changing finding:** E481 held target for **zero milliseconds**, closed for only 4 ms, and reports CCR 133/1333—approximately 10%. Investigate handover and the first six acceptances/ seven commutations with event timing and live admission evidence before changing target-duty limits or adding speculative resets. Counters alone do not identify the lost-event mechanism.

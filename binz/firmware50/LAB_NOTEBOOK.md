@@ -49023,3 +49023,273 @@ with separate stamps, not corruption proof. Next work is that narrow source
 check before choosing entry-carrier experiment; no more poweredrun thisbatch.
 Installed0F2697A7 remainsOFF/UARTclosed,unpromoted. E480pass andE481failure
 both retained. Goal80remainsactive; neither25norhigherenvelope provedhere.
+
+## E482 — 2026-09-27 — focused restart-state source audit
+
+Pre-analysis: no build, flash, serial or powered run. Source f39bc7c and
+E480/E481 captures. Decision: whether a specific retained-state defect warrants
+a correction before an entry-carrier experiment. Inspect normal stop, subsequent
+startup, estimator/watch initialization, COM pending state and timed-revisit
+ownership. Do not infer corruption from intentionally cumulative counters.
+The preceding user-answer turn was status-only, not envelope progress; this
+audit resumes the outstanding E481 action. Firmware remains 0F2697A7/OFF.
+
+E482 reviews (verbatim; independent fresh CLI sessions because native agent
+spawn returned thread-limit; both processes exited 0):
+
+Evidence:
+**E481 shows an early closed-loop tracking timeout, not demonstrated retained-state corruption or failure at 25% duty.**
+
+- **Age:** `4718453 − 4717426 = 1027 µs`, exceeding the 1000 µs limit by 27 µs. The poststop raw gap is `41405 − 40367 = 1038 µs`; mapping that acceptance onto the guard clock gives `4717415`, 11 µs before the watch’s `last_us`. These timestamps measure different points: acceptance stamps precede `guard_event()`’s `guard_now()`. `Board::guard_record()` explicitly labels `post_*` as poststop snapshots.
+- **Sequence:** E480’s detector accepted count is 284843; adding E481’s six gives **284849**, exactly `post_accept_seq`. Use detector counts, not E480’s foreground `accepted=284841`. `publish_accept_sequence()` intentionally never resets; `det_install()` baselines `det_seq_seen`.
+- **Lifecycle:** `stop()`/`take_back()` disable detector, driven observer, COM and guard. `com_stop()` clears phase and pending TIM16; `comp_exti_mask()` clears comparator pending state. Restart replaces the estimator, seeds filter depth and six-slot history (`det_install()`), and recreates the tracking watch (`guard_arm_tracking()`).
+- **Revisit:** timed `STATE.schedule` survives stops, but authority checks reject unpowered or mismatched generation/step; serviced phase 1 replaces it. The captures do not establish which timed policy was instantiated.
+
+**Action-changing finding:** E481 held target for **zero milliseconds**, closed for only 4 ms, and reports CCR 133/1333—approximately 10%. Investigate handover and the first six acceptances/ seven commutations with event timing and live admission evidence before changing target-duty limits or adding speculative resets. Counters alone do not identify the lost-event mechanism.
+
+Adversarial:
+**Concrete defect: the handover stop check does not protect subsequent writes.** In `Handover::lock`, the guard can trip after `latched` is read. `det_install` and `com_handover` then refuse activation, but `set_period` and `apply_plan` still execute, potentially overwriting the guard’s zeroed compares. MOE/ENABLE remain down on this path; this proves a shutdown-state overwrite window, not re-energization or the cause of E481.
+
+A stronger startup ordering concern exists in `Armed::start`: `guard_arm()` precedes unconditional `moe_on()`. A guard interrupt between them can shut down, then foreground reasserts MOE. ENABLE remains low, but the shutdown invariant is violated.
+
+Remaining concurrency uncertainties:
+
+- `Board::guard_arm` enables TIM6 updates before `roots::guard_arm` initializes state and clears NVIC pending. Peripheral-update clearing and actual delivery ordering need verification.
+- Timed `STATE.schedule` survives stop. `after_phase_observed` replaces it on phase 1 and checks authority, but pending-IRQ cleanup depends on omitted timer helpers and `revisit_delivery`. A clean first dispatch is not established.
+- `publish_accepted_arm` publishes fields/sequence before arming and subsequently calling `guard_event`. Guard preemption can therefore observe an overdue watch despite a newly published acceptance. Atomic fields do not make that transaction atomic.
+
+E481 proves a stale-watch stop after six accepts, **not retained-state corruption**. Sequence continuity is intentional; `applied_ccr=133` indicates approximately 10% duty, not attained 25%.
+
+Changing entry carrier is justified as a bounded experiment with unchanged thresholds and predetermined attempts. It tests carrier-transition sensitivity; improvement cannot distinguish analog effects, first-sector timing, and concurrency timing without corresponding traces.
+
+Dispositions/source verification: bin/diode-commit-arm.rs instantiates Timed
+recheck explicitly. hw/timers.rs::com_timer::stop clears CR1, DIER and SR;
+roots::com_stop also clears phase and NVIC pending. On handover, phase1 is
+armed and first COM phase1 replaces the retained schedule before observations.
+No retained-state cause was found; this is not a proof against all interleavings.
+Estimator, six-slot history, filter and tracking-watch initialization are fresh.
+
+The adversarial foreground-write concern is REAL in source: Board::moe_on
+unconditionally invokes hw::pwm::moe_on (BDTR modify), after guard_arm in
+Armed::start. A guard between these operations can have MOE reasserted on
+return. Board::apply_plan likewise writes role/compare registers without a
+fresh latch check after Handover::lock's earlier check. Guard-driven ENABLE-low
+is not reversed by those calls, so this does NOT establish re-energization or
+E481 causation. It does violate the intended stopped-output invariant.
+
+Next action changes: narrowly guard foreground drive writes against a latched
+stop under interrupt exclusion, with ordering regressions, emitted-cost audit
+and disabled validation before another motor attempt. Do not replace every
+setup/off-time PWM operation indiscriminately: fresh startup must still be able
+to establish safe zero state despite a previous run's retained reason. Do not
+alter thresholds, add new instrumentation or retry E481. Entry-carrier remains
+an unproved candidate, deferred until this safety gap is addressed. Board
+unchanged/OFF; no envelope gain or hardware-limit claim.
+
+## E483 — 2026-09-27 — foreground stop/write exclusion candidate
+
+Pre-build prediction: fresh guard-active/nonlatched admission and drive writes
+inside one interrupt exclusion prevent foreground MOE/plan/nonzero-sine writes
+from undoing a completed guard stop. Preserve safe zero initialization even
+when the previous run's reason remains latched; do not change ISR algorithms,
+thresholds, startup carrier or target. Check a broken-model negative control,
+source binding, release assembly, four roots, tests/clippy and dual reviews.
+This fixes the E482 source defect; it is not claimed to cure E481 tracking.
+No powered test authorized by a host-model pass alone.
+
+E483 staged869B7E4E SHA
+869B7E4EC70F1C81E56ED6F61F0F40C5DD17DD5FAF4E461DEF6C9A25809DFDE5,
+release-s/thinLTO/codegen1 advance-ref/deep-filter/com-top. Initial415host
+testsPASS, release/clippyPASS, all4ISRroots arithmetic auditPASS. Structure
+1173binlines,0functions>100, data752/bss4228. Normalized root instruction
+sequences unchanged vs0F2697A7: COMP926,COM395,DMA37,guard161. COMP/COM literal
+locations move; no total timing identity asserted. Exact archive retained.
+
+Emitted foreground sites inspected by e483-mask-check.py: six masks; MOE
+21fa..2216 (15listed instructions), plans2984..29a6/2bda..2bfe/314a..316c
+(18/19/18), sine20b6..211e and27a6..2812 (53/55 with fixed3-phase loop).
+No calls; branches stay inside each window. Conditional instruction overcounts
+62/77/81cycles forMOE/plans,389/397sine, max6.203us at64MHz. NOT hardware
+WCET or guard response bound. Script's first run matched inline Rust asm text
+instead of an instruction; failed log retained, address-line filter corrected.
+
+E483 independent reviews (verbatim, both fresh CLI processes exit0):
+
+Evidence:
+The supplied source fixes the check/write race for the three reviewed callers, conditional on guard-stop exclusion: `powered_write` reads both admission flags and executes the write inside the same `interrupt::free` closure. A completed stop refuses the write; a guard deferred until after the transaction can clear it afterward. `apply_plan`, `moe_on`, and nonzero `set_compares` all use this wrapper.
+
+It does not inherently block restart. All-zero compares bypass admission, and `Armed::start` calls `guard_arm()` before guarded `moe_on()`. However, `guard_arm` and `sine::compares` implementations are absent: this packet cannot independently establish that rearming clears the latch/sets guard active, or that startup’s compare calculation returns `[0; 3]`.
+
+Coverage gaps:
+
+- The foreground model covers stop-before, stop-after, inactive refusal, and a stale-admission negative control. Recomputing that control gives `moe=true, compares=133` after stop. It lacks a stop→rearm→successful-write case and an explicit successful-write assertion before the subsequent stop.
+- Text checks establish token order and caller presence, not lexical containment, absence of additional bypass writes, or compiled exclusion semantics.
+
+The log reports **415 passed, 0 failed** despite an incremental-cache warning. Audit names archived `869B7E4E.e483-stop-write.elf`; the diff reports unchanged ISR instructions, with relocated constants in two roots. Neither establishes foreground machine-code behavior or source-to-archive identity. No powered-run evidence is supplied.
+
+Adversarial:
+The wrapper closes the check/write race for maskable guard interrupts: a completed stop vetoes the write; a guard pending during the transaction runs afterward. This depends on every closure remaining bounded and restoring the prior interrupt mask.
+
+- **Startup remains viable if** `sine::compares(period - 1, 0, 0)` produces exactly `[0; 3]`. That bypass permits initialization while the previous reason persists; `guard_arm` must then clear the latch and set guard activity before `moe_on`. Neither implementation is supplied, so this prerequisite is unverified. Add a startup-after-trip test using the actual sine mapping.
+- **Shutdown closure remains incomplete.** `Handover::lock` samples the reason once, then calls unguarded `set_period`. Its own comment says this rewrites compares. A trip between that sample and the call therefore remains suspect; inspect the actual register writes. Separately, `drv_begin` unconditionally restores driven activity after a possible trip during `enter_driven`. The wrapper protects its plan write, not that reactivation.
+- **Tests overclaim binding.** Text ordering does not establish lexical enclosure; an empty critical section followed by the decision/write could pass. The model also lacks a successful-write assertion and actual startup sequencing.
+
+**Next-test admission:** allow unpowered target verification first. Before powered testing, establish compiled exclusion and worst-case added guard latency, including the three-element mapping and register writes. Identical ISR roots establish neither unchanged response latency nor peripheral safety.
+
+Dispositions: added explicit successful-write assertion, actual sine-zero
+startup/rearm model, and exact closure-body binding (not token order alone).
+These are host/source regressions, not target-interrupt proof. guard_arm at
+roots.rs900 explicitly clears reason then sets active; source will accompany
+the next review packet. set_period in hw/pwm.rs writes ARR and UG, not CCR,
+MOE or ENABLE: it is not the alleged nonzero-compare overwrite. drv_begin's
+unconditional active=true remains a bookkeeping concern after a trip, but
+comp_resume_powered checks the guard reason; neither drv_begin nor plan write
+can reassert ENABLE. No blanket stopped-state closure claim, and no E481
+causal attribution. Next gate is review closure on strengthened regressions
+and disabled verification of this exact candidate before any motor run.
+Installed image remains0F2697A7 OFF/UARTclosed; candidate869B7E4E NOT FLASHED.
+
+E483b strengthened host suite416/416PASS. Only test code changed after the
+869B7E4E build; no new target behavior or powered evidence. E482/E483 are
+concrete progress (identified and patched a stop/write race), not envelope
+progress. The full80% objective remains incomplete and active.
+
+## E484 — 2026-09-27 — exact candidate disabled verification
+
+Pre-flash: previous turn made concrete progress via foreground race fix and
+416tests; no envelope claim. MCP list/open/p/read/close all responsive; installed
+0F preflight moe/CCRs/ENABLE0,gates_low1,nFAULT1. Rehashed869B7E4E archive:
+869B7E4EC70F1C81E56ED6F61F0F40C5DD17DD5FAF4E461DEF6C9A25809DFDE5.
+Both E484 reviewers permit disabled-only verification. Download/verify/reset
+on explicit G071 probe only, then MCPp boot selftest and all-off. No motor
+command in this batch. Success admits a motor-screen decision, not motor use
+without its bounded-test review. Their latch-definition packet gap is resolved
+by roots.rs::guard_latched returning reason!=0, oneshot::arm_allowed returning
+!stopped&&active; guard_arm resets that reason and activates before MOE call.
+
+E484 evidence review(verbatim):
+Raw evidence:
+
+- Host log reports 416 passing tests, plus an incremental-cache access warning.
+- `powered_write` places admission and the write inside `interrupt::free`; plan, MOE-on, and nonzero compare writes use it. Zero compares bypass it.
+- Tests encode stop-before/after, stale-precheck failure, and synthetic rearm. Actual `guard_arm` clears `reason` and sets `active`; the excerpt shows no separate latch reset.
+- Six reported mask spans have conditional estimates of 0.969–6.203 µs, including two with loops.
+- Audit reports four clean roots. ISR comparison reports identical instruction streams; ADC_COMP/TIM16 encoded bytes differ.
+- Candidate869B7E4E remains unflashed.
+
+Interpretation: **Ready to proceed with disabled-only verification; motor admission remains unsupported.** Source supports the intended CPU exclusion arrangement, but model atomicity is assumed and structural checks are textual. Startup coverage does not establish actual zero-write/rearm ordering or latch semantics: `guard_latched` and `arm_allowed` definitions are absent.
+
+Mask estimates are not measured WCET; ISR summaries do not establish relocated-constant equivalence. Remaining motor-admission limits include artifact identity, compiled exclusion semantics, interrupt latency, peripheral preload/output behavior, and physical stop/restart behavior. NMI coverage is explicitly excluded.
+
+E484 adversarial review(verbatim):
+The foreground fix closes the shown stale-admission race **against maskable guard interrupts**, provided admission reads the authoritative stop state. ISR sameness does not establish unchanged response latency: these critical sections delay guard service.
+
+**Concrete blocker: startup rearm compatibility is not demonstrated.** The test manually sets `latched = false` and `active = true`; it never exercises `guard_arm()`. The supplied implementation clears `reason` and sets `active`, but `guard_latched()` is missing. Therefore neither successful rearm nor a persistent-latch failure is established. Before accepting startup compatibility, trace the actual latch predicate, its reset, and startup ordering through a previous stop. Also establish that guard interrupts cannot observe partially reset state during the unmasked `guard_arm()` sequence.
+
+Remaining limits:
+
+- Zero compares establish register values, not electrically disabled complementary outputs; safety depends on MOE/ENABLE and startup ordering.
+- String matching does not prove executable wrapper coverage.
+- The reported mask durations are conditional estimates, not hardware worst-case bounds.
+
+No demonstrated residual shutdown-overwrite defect appears in the three guarded wrappers. Proceed only with disabled verification; motor readiness remains unproven.
+
+Dispositions: supplied exact latch definition for next packet; no distinct
+hidden guard latch exists. Guard NVIC is masked in take_back/guard_disarm
+between runs; guard_arm initializes before its final NVIC unmask. pace.listen
+enables the peripheral update source, not NVIC. No claim of NMI protection.
+Mask model is conditional, not hardware WCET. Artifact identity established
+by SHA and explicit-target download+verify+reset all exit0. NewMCPp reports
+alloutputsOFF/nFAULT1,boot diode/latch/deadline selfchecksPASS, recheckcounters0.
+Installed869B7E4E OFF/UARTclosed; disabled checks do not exercise motor startup.
+Next bounded15% screen tests startup viability, not E481 causation or higher
+envelope. Last motor exposure was E481, well beyond120sOFF.
+
+## E485 — 2026-09-27 — guarded foreground startup screen
+
+Pre-run reviews(verbatim):
+
+Evidence:
+Not fully as stated. The evidence supports the rationale for a single bounded 15% propless startup screen, but does not establish readiness of exact installed `869B7E4E`.
+
+- The earlier 15% run achieved 20.278 s at target, zero forced commutations, and a passing post-stop preflight.
+- The 25% run stopped on tracking staleness before target hold; it supplies no successful 25% evidence.
+- E484 reports successful verification and boot self-tests, but supplies no artifact identifier linking them to `869B7E4E`. Powered runs identify another ELF.
+- The 416 passing tests and foreground model support limited software claims; structural checks and the 6.203 µs conditional estimate establish neither compiled exclusion semantics nor hardware WCET.
+- The supplied records do not independently confirm reverse command 9, physical 3 A limiting, >120 s OFF, or unchanged protections.
+
+Resolve those provenance and setup gaps before treating this screen as evidence-supported. No qualification or general safety conclusion follows.
+
+Adversarial:
+No concrete blocker to the single 15% propless startup screen is demonstrated by these excerpts. This is not a safety guarantee.
+
+The foreground admission check and write share interrupt exclusion, addressing the modeled maskable-ISR shutdown overwrite. Tests do not establish peripheral timing, NMI behavior, or complete coverage of powered writes.
+
+Evidence limits:
+
+- The successful 15% run used a different identified ELF. Flash verification and boot PASS do not visibly bind installed `869B7E4E` to the reviewed implementation or prior run.
+- The 25% attempt tripped tracking after only 4 ms closed-loop; it provides no target-duty qualification and shows startup can fail.
+- The 6.203 µs estimate is conditional, not measured WCET. Unchanged ISR streams do not establish unchanged response latency after adding masks.
+- Cooling time and short exposure do not establish motor temperature.
+
+Those are qualification gaps, not demonstrated defects preventing this bounded screen. Preserve fault-ends-batch/no-retry; reconfirm the physical current limit before energizing.
+
+Dispositions: e485-identity.json repeats verify and records command/path/probe,
+fullSHA869B7E4E...,exit0,closing omitted-command provenance gap. Actual run
+mod.rs626..636 maps9 to150/28000us*1000; policy.rs383 Wiring=Reverse. Source
+diff changes only foreground admission and host tests, not guards. Physical3A
+is LAST operator-confirmed, not newly metered; software signedaverage4A is
+not proof of PSU setting. No unsafe-change evidence exists requiring a new
+operator question. Timestamp07:00 local versus last E48106:39 gives>20minOFF.
+Cooling is precaution, not thermometry. Scoped admission is one existing low
+rung, not general safety or qualification. Prediction: viable startup and
+>=19sactual15%hold, existing guards untouched. Any fault ends this batch;
+do not rerun to pass. Re-reset after verification, MCPp, then command9 with
+exact archived ELF header,28stotal. Retain fullcapture and postOFF readback.
+
+E485 result: Tracking8 after4msclosed/0hold,7accepts/7COM,CCR133/1333~10%,
+not target15. Terminal event-origin stale(last4717512,at4718548),1036usage
+against1000uslimit; postraw23287-accept23273=14us, mapsaccept4718537,
+11usbeforewatchdecision. Late0/thin0,spentmax9,COMPmax16,COMlate3,guardgap104.
+No current/sag/nFAULTstop. PostMCPalloutputsOFF/nFAULT1; timedrecheck3requests,
+9observations. Fullfailedcapture retained, no rerun. First run afterreset, so
+previous-motor-run retained state is not necessary for this similar signature;
+different build means no controlled causal comparison. Safety fix has not
+solved entry. Currentproxy duringstartup is not calibratedholdcurrent.
+Correction to pre-run wording: command9 uses target150 and duration28_000ms.
+
+E485 result reviews(verbatim):
+
+Evidence:
+**Yes—this bounds a useful control experiment, without establishing carrier causality.**
+
+- Terminal watch: `4718548 − 4717512 = 1036 µs`, exceeding the 1000 µs limit by 36 µs. Post-clock age is `4718551 − 4717512 = 1039 µs`.
+- Raw-clock minus raw-accept is `23287 − 23273 = 14 ticks`. If these are 1 µs ticks on the same clock, the acceptance was only 14 µs old: a 1025 µs discrepancy requiring explanation. Clock units and publication semantics are absent; this does not yet prove a stale-watch bug.
+- Target 150 means 15%; applied `133/1333 ≈ 9.98%`. With 4 ms closed and zero target hold, this is entry-failure evidence, not 15% operation.
+
+Identity verification supports the reported image. Its first motor run after reset failed; prior 0F15-pass/25-entry-fail history cannot isolate same-image causality, reset state, or the stop/write fix.
+
+Tests first, then one typed 24 kHz-entry/48 kHz-at-15% screen with unchanged seed/guards is discriminating. Review entry survival and transition separately; permit 25% only after clean reviewed evidence. Retain failures; no retry. Success supports the combined schedule, not carrier causality alone.
+
+Adversarial:
+E485 establishes failed acquisition retention, not its cause: seven accepted crossings, ~4 ms closed loop, then acceptance age 1036 µs exceeded the 1000 µs limit. It does not establish that 48 kHz caused failure. Prior 0F15 success followed by 25% entry failure leaves reset state, initial rotor state, and repeatability unresolved.
+
+The “15%” label is a target: CCR=133/1333 implies ~10% at the reported snapshot; target hold was zero. Coast transitions support rotation, not correct powered commutation. Zero-valued witness data provide no independent confirmation.
+
+The proposed 24→48 kHz schedule is a useful startup-viability screen, but changes carrier history and transition timing together. Success would support that schedule’s viability, not isolate the original failure mechanism. A discriminating comparison needs matched reset/start conditions and a fixed-24 kHz control; record acceptance age and commutation continuity around the switch.
+
+Host tests and disabled checks cannot establish energized transition safety. Preserve stop authority through the carrier transaction and verify applied ARR/CCR coherence. Advance to 25% only after clean acquisition, observed switching, and meaningful target dwell; one successful screen establishes feasibility, not reliability.
+
+Dispositions: rawaccept/watch difference is already-defined behavior, not an
+unexplained stale-write bug: tracking::EventWatch::event checks elapsed before
+updating last; the late event retains previous last (E476 regression pins it).
+Acceptance was published immediately before that late check, hence new raw
+stamp with old last. No guard relaxation follows. The proposed schedule tests
+viability, not unique carrier causation; fixed24 control only if causal ranking
+becomes needed, not an automatic repeated cohort. Match reset/start, keep a
+fixed attempt budget, inspect actual period/CCR and stop authority around the
+switch. Existing48k target telemetry must remain true; separately report entry
+period. No new instrument beyond that configuration identity. Next: typed
+24kentry/48kat15 candidate, tests/release/assembly and disabled checks before
+one bounded15screen. 25 only on reviewed clean entry+transition+dwell. No
+further motor test this batch. Installed869B7E4E OFF/UARTclosed, unpromoted.

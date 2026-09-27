@@ -1,6 +1,18 @@
 # Propless 80% campaign — progress, not qualification
 
-E481 CURRENT: installed0F2697A7/OFF/UARTclosed, unpromoted. Post-filter
+E485 CURRENT: installed869B7E4E/OFF/UARTclosed, unpromoted. E482 found a real
+foreground stop/write race, E483 wraps nonzero sine compares, plans and MOE
+in guard-active/nonlatched interrupt exclusion.416host tests, release/clippy,
+four-root arithmetic and structure PASS; all ISR instruction streams unchanged.
+Six foreground mask sites model0.97..6.20us, NOT hardwareWCET. Explicit G071
+flash/verify and disabled boot checks PASS. First15%screen after reset stopped
+Tracking8 after4msclosed/7accepts/0hold at~10%actualduty; late0/thin0,COMPmax16,
+guardgap104. No electrical stop. Exact rawcapture and dualreviews retained.
+This does not cure entry or expand envelope. Next reviewed bounded control
+experiment: typed24k closedentry then48kat15%, unchanged seed/guards, verify
+transition coherence first. No unchanged retry or carrier-causation claim.
+
+E481 historical: installed0F2697A7/OFF/UARTclosed, unpromoted. Post-filter
 CommitMasked candidate: interruptible persistence, exclusive single-use token,
 active/phase/sector revalidation before masked update/publication/arm.412host+
 3compilefail tests/release/clippy/fourrootaudit/structurePASS. Assembly shows

@@ -1,0 +1,9 @@
+{
+  "command": "probe-rs verify --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430 captures/elf/869B7E4E.e483-stop-write.elf",
+  "sha256": "869B7E4EC70F1C81E56ED6F61F0F40C5DD17DD5FAF4E461DEF6C9A25809DFDE5",
+  "chunk_id": "9d93c6",
+  "wall_time_seconds": 0.9602317,
+  "exit_code": 0,
+  "original_token_count": 6,
+  "output": "Verification successful\n"
+}

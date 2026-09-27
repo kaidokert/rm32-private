@@ -182,6 +182,19 @@ impl Sink for Board {
     }
 }
 
+/// Foreground drive writes cannot outlive a guard stop. No latch clearing or
+/// driver enable here. A pending guard runs after this finite transaction.
+#[inline(always)]
+fn powered_write(write: impl FnOnce()) {
+    cortex_m::interrupt::free(|_| {
+        if firmware50::oneshot::arm_allowed(
+            roots::guard_latched(), S.guard().active.load(Ordering::Relaxed),
+        ) {
+            write();
+        }
+    });
+}
+
 impl Hal for Board {
     #[inline(always)]
     fn now(&mut self) -> u32 {
@@ -316,16 +329,21 @@ impl Hal for Board {
     }
 
     fn set_compares<G: Drives>(&mut self, _g: &mut Gates<G>, logical: [u32; 3]) {
-        roots::set_compares_wired(logical);
+        if logical == [0; 3] {
+            // Safe initialization before guard_arm clears a previous stop.
+            roots::set_compares_wired(logical);
+        } else {
+            powered_write(|| roots::set_compares_wired(logical));
+        }
     }
 
     #[inline(always)]
     fn apply_plan<G: Drives>(&mut self, _g: &mut Gates<G>, plan: &Plan) {
-        hw::pwm::apply_plan(plan);
+        powered_write(|| hw::pwm::apply_plan(plan));
     }
 
     fn moe_on<G: Drives>(&mut self, _g: &mut Gates<G>) {
-        hw::pwm::moe_on();
+        powered_write(hw::pwm::moe_on);
     }
 
     fn set_period(&mut self, period: u32) {

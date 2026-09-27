@@ -1,5 +1,6 @@
 //! The commutation one-shot's arm/stop discipline, as testable logic
 //! (campaign 9 step 2).
+
 //!
 //! Two hazards were identified by review in campaign 8 and neither was
 //! structural — both rested on an invariant nobody had written down:
@@ -70,6 +71,10 @@
 /// If `roots::com_arm` ever loses its critical section, flip this to `false`
 /// and `the_firmware_is_the_safe_variant` fails.
 pub const FIRMWARE_ARM_IS_ATOMIC: bool = true;
+
+#[cfg(test)]
+#[path = "foreground_write_tests.rs"]
+mod foreground_write_tests;
 
 /// Permission to resume a powered comparator line. Closed-loop ownership
 /// takes precedence; acquisition must not bypass its active blanking phase.

@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"connection_id\": \"e0ed49fd-0f7f-4a08-98a6-c701fd2f1183\",\n  \"bytes_read\": 211,\n  \"data\": \"PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS\\r\\nTIMEDRECHECK boot_cumulative=1 requests=0 observations=0 retired=0 \\r\\nDIODESELFTEST en0 six_sectors_pwm=PASS latch=PASS deadline=PASS\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 700,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 3,\n  \"elapsed_ms\": 703,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 46,\n      \"waited_ms\": 3,\n      \"elapsed_ms\": 0\n    },\n    {\n      \"offset\": 46,\n      \"bytes_read\": 165,\n      \"waited_ms\": 33,\n      \"elapsed_ms\": 29\n    }\n  ]\n}"
+    }
+  ],
+  "isError": false
+}
