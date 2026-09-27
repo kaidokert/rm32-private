@@ -9,7 +9,7 @@
 
 use crate::commutation::{self, Direction, Phase, Step};
 use crate::driven;
-use crate::duty::{RUN_PERIOD_TICKS, STARTUP_TICKS};
+use crate::duty::STARTUP_TICKS;
 use crate::protection::{
     AverageCurrent, BlockVerdict, BusDepth, CurrentMark, FastBusSag, FoldbackGovernor, PhaseCodePolicy, RAW_LIMIT,
     RailMean, RawScan, Reason, validate_raw_feedback,
@@ -136,6 +136,7 @@ pub(crate) struct Ctx {
     pub hold_start: Option<u32>,
     target_plan_com: Option<u32>,
     target_seen_at: Option<u32>,
+    carrier_pending: bool,
     pub hold_current: Option<CurrentMark>,
     pub last_ci: u32,
     pub stats: Stats,
@@ -168,6 +169,7 @@ impl Ctx {
             hold_start: None,
             target_plan_com: None,
             target_seen_at: None,
+            carrier_pending: false,
             hold_current: None,
             last_ci: sector_interval_us(CATCH_EHZ),
             stats: Stats {
@@ -902,7 +904,7 @@ impl Handover {
             .wrapping_add(commutation::wait_time(sd.interval_us, adv).max(1));
         ctx.closed_at = Some(now);
         ctx.drv.seed = Some(sd);
-        ctx.period = RUN_PERIOD_TICKS;
+        ctx.period = P::H::ENTRY_TICKS;
         let mut gates: Gates<hal::Locked> = gates.pass();
         let bemf_duty = ctx.governor.clamp(duty_at(ctx.req.target_tenths, 0));
         if !latched {
@@ -948,6 +950,9 @@ impl Locked {
         ));
         // A table publication is not a bridge update. Observe a subsequent COM,
         // then wait a full maximum running-carrier period for its CCR preload.
+        if c.carrier_pending && hal.carrier_update_seen() {
+            c.carrier_pending = false;
+        }
         if duty < c.req.target_tenths {
             c.target_plan_com = None;
             c.target_seen_at = None;
@@ -957,16 +962,26 @@ impl Locked {
             // count load must not backdate activation. Use this same fresh
             // stamp below, avoiding wrapping subtraction from the older now.
             now = hal.now();
+            hal.carrier_update_clear();
+            c.carrier_pending = true;
             c.target_seen_at = Some(now);
         }
-        const PWM_SETTLE_US: u32 = crate::duty::RUN_PERIOD_TICKS.div_ceil(64) + 1;
+        // After retiming ARR may still be shadowed: the OLD entry period is
+        // the bound until native update. All carrier policies only go faster.
+        let pwm_settle_us = P::H::ENTRY_TICKS.div_ceil(64) + 1;
         if c.hold_start.is_none()
             && duty >= c.req.target_tenths
             && c.applied_duty >= c.req.target_tenths
             && !c.hold_plans
-            && c.target_seen_at.is_some_and(|at| now.wrapping_sub(at) >= PWM_SETTLE_US)
+            && !c.carrier_pending
+            && c.target_seen_at.is_some_and(|at| now.wrapping_sub(at) >= pwm_settle_us)
         {
-            c.hold_start = Some(now);
+            let (at, pending) = hal.hold_boundary();
+            if let Some(raw) = pending {
+                self.consume(hal, raw);
+            }
+            let c = &mut self.ctx;
+            c.hold_start = Some(at);
             c.hold_current = Some(c.current.mark());
             // The worst-block window starts at the same instant as the mean's
             // (E244). A max cannot be recovered by subtraction the way a
@@ -979,16 +994,8 @@ impl Locked {
             // how the one late-arm run's apparent anomaly stayed confounded
             // (E210 SS1).
             c.stats.unstable_at_hold = hal.unstable_count();
-            // **The margin histograms at the hold mark** (E315), for exactly
-            // the reason stated above, which I then walked into anyway. The
-            // first margin-hist pair read 76% hold at rung 500 against 30% at
-            // 550, so the whole-run comparison between them was a ramp-fraction
-            // comparison: the ramp's long intervals put every arm in the top
-            // `wait` bucket, diluting the low buckets by however much ramp the
-            // run happened to contain. Both E315 reviews named this confound
-            // and one of them named this very line as the fix pattern. Eight
-            // loads and eight stores, in the foreground, so no ISR instruction
-            // and no ratchet event.
+            // E315: snapshot at hold, not startup; otherwise ramp duration
+            // confounds the margin histograms. Foreground only, no ISR work.
             c.stats.wait_hist_at_hold = hal.wait_hist();
             c.stats.left_hist_at_hold = hal.left_hist();
             c.stats.held = true;
@@ -1011,6 +1018,7 @@ impl Locked {
                     return Some(Reason::CarrierTransition);
                 }
                 c.period = period;
+                c.carrier_pending = true;
             } else {
                 hal.publish_plans(duty, c.period, SIXSTEP_DUTY_CAP);
             }
@@ -1033,9 +1041,9 @@ impl Locked {
         self.sector_start = edge_us;
         c.stats.accepted = c.stats.accepted.wrapping_add(accepted.count.get());
         c.stats.coalesced_accepts = c.stats.coalesced_accepts.wrapping_add(accepted.count.get() - 1);
-        if c.hold_start.is_some() {
+        if let Some(start) = c.hold_start {
             c.stats.hold_acc = c.stats.hold_acc.wrapping_add(accepted.count.get());
-            c.stats.hold_ci_sum = c.stats.hold_ci_sum.saturating_add(count);
+            c.stats.hold_ci_sum = c.stats.hold_ci_sum.saturating_add(count.min(edge_us.wrapping_sub(start)));
             // Roll the matched window's anchor forward once it is older than
             // `TAIL_WINDOW_US`, so the window always ends at the newest
             // crossing and is one to two windows long (step 3).
@@ -1218,6 +1226,7 @@ mod accepted_tests {
             },
         );
         ctx.closed_at = Some(0);
+        ctx.period = crate::duty::RUN_PERIOD_TICKS; // Construct a real closed state, not startup.
         ctx.applied_duty = 149;
         let mut locked = Locked {
             ctx,
@@ -1240,6 +1249,7 @@ mod accepted_tests {
         let before_observation = sim.t;
         locked.poll::<Production>(&mut sim);
         assert!(locked.ctx.target_seen_at.unwrap() >= before_observation + 2 * sim.quantum_us);
+        assert!(!sim.carrier_update_seen(), "old sticky update cannot witness the new COM");
         assert_eq!(locked.ctx.hold_start, None, "CCR shadow needs native transfer time");
         locked.ctx.hold_plans = true;
         for _ in 0..8 {
@@ -1247,6 +1257,11 @@ mod accepted_tests {
         }
         assert_eq!(locked.ctx.hold_start, None, "suppressed plans cannot establish hold");
         locked.ctx.hold_plans = false;
+        locked.ctx.carrier_pending = true;
+        sim.faults.carrier_no_update = true;
+        for _ in 0..20 { locked.poll::<Production>(&mut sim); }
+        assert_eq!(locked.ctx.hold_start, None, "elapsed time cannot substitute for native update");
+        sim.faults.carrier_no_update = false;
         locked.poll::<Production>(&mut sim);
         assert!(locked.ctx.hold_start.is_some());
     }
@@ -1318,7 +1333,7 @@ mod accepted_tests {
             },
             Faults::default(),
         );
-        let mut ctx = Ctx::new::<Production>(
+        let ctx = Ctx::new::<Production>(
             Request {
                 target_tenths: 150,
                 inject: None,
@@ -1331,16 +1346,20 @@ mod accepted_tests {
                 bus_floor_code: 840,
             },
         );
-        ctx.hold_start = Some(1000);
         let mut locked = Locked {
             ctx,
             gates: Gates::idle().pass(),
-            sector_start: 1000,
+            sector_start: 700,
             revisit_step: 0,
             revisit_inflight: false,
             rescues: 0,
             last_com_count: 0,
         };
+        // Boundary drains a coalesced pre-hold batch into whole-run statistics.
+        sim.t = 1000;
+        locked.consume(&mut sim, Accepted { raw: 950, count: NonZeroU32::new(3).unwrap() });
+        assert_eq!(locked.ctx.stats.hold_acc, 0);
+        locked.ctx.hold_start = Some(1000);
         for (raw, count) in [(1100, 1), (1400, 3), (1700, 3)] {
             sim.t = raw as u32;
             locked.consume(
@@ -1352,17 +1371,18 @@ mod accepted_tests {
             );
         }
         let report = Production::report(&mut sim, &locked.ctx, Reason::SegmentDeadline, 1800, None);
-        assert_eq!(report.accepted, 7);
+        assert_eq!(report.accepted, 10);
         assert_eq!(report.hold_acc, 7);
-        assert_eq!(report.coalesced_accepts, 4);
+        assert_eq!(report.coalesced_accepts, 6);
+        assert_eq!(locked.ctx.stats.hold_ci_sum, 700, "pre-hold part of first interval excluded");
         let tail = report.tail.unwrap();
         assert_eq!(tail.accepts, 6);
         assert_eq!(tail.span_us, 600);
         assert_eq!(tail.start_before_stop_us, 700);
         assert_eq!(tail.end_before_stop_us, 100);
         // Sampled diagnostic bins are NOT fabricated for the four hidden edges.
-        assert_eq!(report.acc_by_step.iter().copied().sum::<u16>(), 3);
+        assert_eq!(report.acc_by_step.iter().copied().sum::<u16>(), 4);
         report.emit(&mut sim);
-        assert!(sim.log.text.contains("BEMFMAILBOX coalesced_accepts=4"));
+        assert!(sim.log.text.contains("BEMFMAILBOX coalesced_accepts=6"));
     }
 }

@@ -1,6 +1,16 @@
 # Propless 80% campaign — progress, not qualification
 
-E485 CURRENT: installed869B7E4E/OFF/UARTclosed, unpromoted. E482 found a real
+E489 CURRENT — OPERATOR PAUSE. Installed0EE71575 (SHA
+0EE715753A7DB386C6D22DEB9514A8BA79B12E14E424B9BD1C285CBB76B5AC4A),
+OFF/UARTclosed, unqualified. Typed24kentry→48kat15 and truthful hold boundary;
+419host tests,release/clippy/four-root audit PASS. ISRstreams unchanged.
+E48815%screen held20.277s,coast2167,late0/thin1,alloffPASS.
+E48925%request stopped atCCR319/1333=23.931%,hold0,guard15LateArm:
+ci44us,requestedwait11us,spent11us. No electrical/trackingstop. No retry.
+This is not new envelope qualification. Resume only on operator instruction.
+All captures/reviews retained; E486 source changes currently uncommitted.
+
+E485 historical: installed869B7E4E/OFF/UARTclosed, unpromoted. E482 found a real
 foreground stop/write race, E483 wraps nonzero sine compares, plans and MOE
 in guard-active/nonlatched interrupt exclusion.416host tests, release/clippy,
 four-root arithmetic and structure PASS; all ISR instruction streams unchanged.

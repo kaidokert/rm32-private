@@ -49293,3 +49293,319 @@ period. No new instrument beyond that configuration identity. Next: typed
 24kentry/48kat15 candidate, tests/release/assembly and disabled checks before
 one bounded15screen. 25 only on reviewed clean entry+transition+dwell. No
 further motor test this batch. Installed869B7E4E OFF/UARTclosed, unpromoted.
+
+## E486 — 2026-09-27 — typed slow-entry carrier candidate
+
+Pre-build: E485 provided new first-run entry failure, not envelope progress.
+Decision: test viability of24k closed entry then48k at15%, without changing
+200eHz driven seed, startup10k, persistence, advance16 or guard thresholds.
+Add Carrier entry constant (default unchanged), explicit SlowEntry policy and
+separate diode-entry binary. Keep coherent faster-only guarded retime; actual
+entry configuration reported. Target hold waits a full selected carrier period.
+Tests cover ordinary restart, refusal safing, threshold/foldback and preload
+geometry for2666->1333. Boot disabled-only native-wrap check uses exact pair.
+One bounded15%attempt after reviews/preflights; no powered run from build alone.
+
+E486 original candidate93AB5812 built,417tests/release/clippy/4rootauditPASS;
+all4ISRinstructionstreams unchanged. Initialtests had two harness-assumption
+failures: synthetic closed state retained startupperiod6400; transition was
+compared to HAL handover stamp6uslater than ramp origin. Corrected fixture
+period and checked threshold transition follows lower-duty140 publication,
+not a fake same-origin time subtraction. Failed logs retained.
+
+First candidate reviews(verbatim):
+
+Evidence:
+Raw evidence: E485 stopped on Tracking (`reason=8`) after 4 ms closed, seven accepts, zero target hold. Staleness was `4718548−4717512=1036 µs`, exceeding 1000 by 36 µs. `applied_ccr=133` at period 1333 indicates approximately 10% applied duty, not the requested 15%. This capture does not test E486.
+
+The supplied implementation supports the candidate configuration:
+
+- `Production` retains default `FixedCarrier`; only the candidate selects `SlowEntry<2666,150>`.
+- Handover installs 2666 ticks; reaching 150 tenths requests 1333, retained through foldback. At 64 MHz these are approximately 24.006/48.012 kHz; target CCR is `floor(1333×150/1000)=199`.
+- Startup remains 6400 ticks; driven command remains 200 eHz, or 833 µs per sector. Compile-time assertions require advance 16.
+- Retiming checks stopped/active ownership and MOE, stages CCR/ARR under UDIS, publishes plans, then releases UDIS. Refusal routes through `CarrierTransition` and safe-off. Atomicity depends on the omitted lock implementation.
+- Boot checks exactly 2666→1333 with MOE clear and zero compares. This verifies disabled timing, not energized switching.
+
+Reported evidence: 417 tests passed; ISR audit passed; instruction sequences unchanged. These do not independently bind the supplied SHA to the source.
+
+**Conditional screen-only acceptance:** exact-image disabled preflight, then one `9`; require observed ≥19 s target hold. Preserve reverse/propless, confirmed 3 A, ≥120 s OFF, and fault-ended batch without retry. No qualification or cause claim.
+
+Adversarial:
+- E485 stopped on Tracking after **4 ms**, seven accepts, **zero target hold**: stale age 1036 µs against 1000 µs. Final CCR 133/1333 indicates ~10% applied duty. This is entry-failure evidence, not a failed 15% hold.
+- The supplied logs report 417 passing tests and unchanged ISR instructions. Neither establishes energized retiming behavior.
+
+**Blockers:**
+
+1. **Hold can start prematurely.** After retiming, `c.period=1333` makes settling 22 µs. A subsequent COM can occur before the pending native update, while the old 2666-tick cycle still governs overflow—up to ~42 µs. Observing COM plus 22 µs therefore does not guarantee target CCR/ARR activation. Bound settling by the old period or observe transfer completion.
+2. **Race exclusion remains unproved.** `plans.lock` must exclude both COM and the stopping guard throughout owner/MOE checks, staging, publication and UDIS release. Its implementation is absent. Instruction identity does not establish that exclusion or bound added guard latency.
+3. **Shadow proof is incomplete.** The model changes PWM roles immediately; the candidate selects `DiodeLatched`. It does not establish actual COM-latched mode/preload interactions. Disabled zero-compare testing cannot prove nonzero energized pulse geometry.
+
+**Experiment limit:** After resolving these blockers, the proposed single `9` screen is bounded: exact-image preflight, reverse/propless, confirmed 3 A limit, ≥120 s OFF, faults terminate without retry. Require ≥19 s actual target hold. Success supports this schedule only; it neither isolates carrier causality nor qualifies operation.
+
+Dispositions: real hold-delay defect fixed before flash: selected entry period
+is the longest running period; wait43us after subsequent COM for2666 entry,
+not22usfromnew1333. Default fixed48 remains22us; existing fast carrier retains
+its original entry bound. Seam::lock (shared.rs166) wraps the entire callback
+in interrupt::free, excluding COM and guard; supply full source nextreview.
+Added exact15%2666->1333 COMG/preload model with all3channels preloaded, atomic
+role transfer and UDIS/nativeupdates at every modeled boundary. Hardware
+equivalence remains an assumption to validate disabled then bounded powered.
+
+Corrected candidate85C87F38 SHA
+85C87F3892F59BCEB014199C8C2D18709A82E3221940A2BAD3D1DBAC74006792,
+release-s/thinLTO/codegen1,418tests/clippy/4rootauditPASS. ISRnormalizedstreams
+remain identical926/395/37/161 to869B7E4E. 93AB neverflashed. Retiming assembly
+reveals320-byte plan copy under PRIMASK plus stage_faster's fixed3iteration
+array fill; no softdivide in the masked section. Treat this foreground delay
+separately from unchangedISRbodies. Candidate awaiting corrected-path reviews;
+installed869B7E4E remainsOFF,UARTclosed.
+
+E486c reviews(verbatim):
+
+Evidence:
+43 µs is correct: `ceil(2666/64)+1 = 43`; using 1333 would incorrectly give 22 µs.
+
+`Seam::lock` masks interrupts across owner/MOE checks, staging, table replacement, and UDIS release. Thus guard/COM cannot interleave there. Table construction occurs outside the mask; copying occurs inside. The supplied source does not establish its claimed 320-byte size or execution time. `stage_faster` shows three explicit CCR writes, not a source-level loop.
+
+The COMG model assumes all OCxPE bits already enabled; COMG changes roles, while native update transfers ARR/CCRs. It checks 399→199 at 15% across nine source pairs and 16,384 update masks. It does not prove physical gate timing, establish that initial preload condition, or test guard interruption. The hold test uses Production, not SlowEntry.
+
+No protection-threshold change is evident. Logs report 418 passes and clean audits; they cannot independently verify the supplied SHA.
+
+Conditionally justified as one bounded screen after exact-image flash verification and disabled preflight PASS, honoring stated limits and retaining failures/stopbatch. ≥19 s actual-target dwell requires measurement; energized safety remains unproved.
+
+Adversarial:
+**Not yet justified as specified:** the ≥19 s actual-target criterion still lacks a valid activation bound.
+
+- **43 µs is the old carrier period plus margin, not a proven preload-completion bound.** `latch::apply` suppresses updates with UDIS at every COM. Observing COM and then waiting 43 µs does not establish that an update transferred the target CCRs: intervening masked transactions can suppress the relevant overflow. Without a duration bound, the hold timestamp can precede actual target activation. Require an actual transfer witness or a justified bound including update suppression.
+- **Retiming exclusion looks correct:** `plans.lock` masks interrupts across ownership checks, staging, the 320-byte publication, and UDIS release. Guard and COM cannot interleave that transaction. The copy and bounded loop nevertheless add unquantified guard latency; instruction identity does not establish its acceptability.
+- **COMG model:** coherent ARR/CCR transfer follows under the stated preload assumptions, but the model does not prove physical gate timing.
+
+Disabled PASS supports further evaluation, not the missing dwell guarantee. Flash verification and stop-on-failure do not close that gap.
+
+Disposition: time alone cannot prove native transfer when later COM can suppress
+updates. Added actual TIM1 UIF witness: clear SR during retime while UDIS is
+set, observe UIF later in foreground; pending carrier cannot start target dwell
+until that native update. No busywait or ISR recorder. Existing subsequent-COM
+and conservative entry-period dwell checks remain. Host regression holds time
+past delay while suppressing witness: hold remainsNone until witness returns.
+Boot exact2666->1333 check now verifies UIF cleared underUDIS then set after
+native wraps, still ENABLE/MOEoff. Motor gate behavior is not certified by it.
+
+E486e418testsPASS. Final target-only boot-witness check candidate51007338 SHA
+510073383BD662DA9E9517244CD15F3B6AB01FEE24AED519AA0C07A452E8CECD,
+release-s/thinLTO/codegen1,release/clippy/4rootauditPASS; ISRinstructions unchanged
+926/395/37/161. 93AB/85C8/0FDA intermediates neverflashed. Source-loop ambiguity
+in review: stage_faster source has3explicitCCR writes but LLVM emitted a3-entry
+array-fill loop;320-byte memcpy size is from emitted r2=5<<6, not conjecture.
+Corrected-path reviews pending; installed869B7E4E stillOFF/UARTclosed.
+
+### E486g — review dispositions and boundary correction, before build
+
+Decision: do not admit 51007338. Both E486f reviews identify hold accounting
+that can include pending pre-hold acceptances; adversarial review also identifies
+a sticky UIF that can precede the qualifying COM. Full reviews follow verbatim.
+Correct by clearing the update witness after observing the qualifying COM,
+requiring a later native update, and taking an atomic timestamp/mailbox boundary.
+Pending events remain in whole-run statistics, not hold statistics. The first
+hold interval contribution is clipped to the hold boundary. Prediction: host
+tests exclude stale witnesses and pending events without changing ISR code.
+Exact release and assembly checks remain required; no powered admission yet.
+MCP connection closed successfully; installed869B7E4E remains last OFF image.
+
+The corrected logic supports a conditional, single-run narrow screen. Clearing UIF under UDIS, requiring a subsequent update, observing a successor COM, and waiting 43 µs address the premature-hold concern.
+
+Evidence limits remain:
+
+- The log reports 418 passing tests for e486e; it does not establish testing of final51007338. The e486f audit passes; ISR instructions match, with some encoded bytes differing.
+- The shown regression uses Production, substitutes a COM snapshot, and injects update availability. It tests hold gating, not the actual SlowEntry transition.
+- Hold accounting still has a boundary leak: `hold_start` is set before `det_poll()`, so `consume()` can credit pre-hold or coalesced acceptances to `hold_acc`. Target elapsed dwell and acceptance counts need separate claims.
+- Disabled boot checks establish timer behavior, not energized transition quality.
+
+Proceed only after the stated exact-flash verification/off PASS and bench conditions. Require measured ≥19 s target dwell; 28 s total alone proves neither completion nor qualification. Any fault ends the batch.
+Two concrete accounting gaps remain:
+
+- **UIF is not a post-successor-COM witness.** It can become sticky before that COM. The subsequent 43 µs proves elapsed time, not CCR transfer: `latch::apply` suppresses updates with UDIS. Without an execution bound, subsequent latch transactions can overlap native wraps. Hold can therefore start without demonstrating that the target compares became active. Require an update witnessed after the qualifying COM.
+- **Hold acceptance accounting crosses the boundary.** `hold_start` is set before `det_poll`; `consume` then credits the entire returned acceptance batch to `hold_acc`, including pending pre-hold crossings. Snapshot or partition that batch at the boundary.
+
+The masked retiming transaction does exclude guard execution throughout staging/publication. Its acceptable protection delay remains unestablished; instruction identity supplies no WCET bound.
+
+Disabled boot checks support timer behavior, not energized transition safety. Exact-flash verification, prop removal, current limiting, and no retry constrain exploration; they do not resolve those timing/accounting gaps.
+
+Disposition: all material boundary findings accepted for correction. Host tests
+will cover final source, not inferred from the previous ELF. Disabled timer
+checks remain disabled evidence only; critical-section latency remains a
+separate measurement obligation, not implied by ISR instruction identity.
+
+### E486h/i — corrected boundary, dual review and optimized code evidence
+
+419 host tests PASS, including mailbox drain, pre-hold coalesced batch retention,
+first partial hold interval and stale native-update witness. E486g initial test
+compile failed on nonexistent Crossings::default; corrected explicit input.
+E486g clippy rejected undocumented raw SR unsafe; replaced with existing PAC SR
+reset semantics. No TIM1 SR interrupt consumers in this image. Both failures
+retained. Final release and clippy PASS; structure zero functions over100 lines.
+Reviews below verbatim, independent raw-first sessions, terminal exit0:
+
+- **Recomputed accounting:** pre-hold delivery contributes 3 accepts, 2 coalesced. Hold deliveries contribute 7 accepts, 4 coalesced. Totals: **10 accepted, 7 hold, 6 coalesced**. Hold interval sum is `min(1100−950,1100−1000)+300+300 = 700 µs`. Tail excludes its first anchor’s acceptance: **6 accepts / 600 µs**.
+- **Boundary:** masking interrupts across mailbox drain and timestamp prevents a publication between them. Consuming the drained batch before setting `hold_start` correctly excludes it from hold accounting. This partitions **ISR publications**, not physical crossings: an interrupt pending at the boundary can publish afterward.
+- **Mailbox:** unchanged sequence delivers nothing; an interrupted pair preserves `seen`, so the next coherent delivery includes deferred counts. Correctness depends on the stated single-core publication ordering and no full sequence wrap between observations. The supplied publisher implementation is absent.
+- **Post-COM witness:** clearing UIF after observing COM, then requiring a subsequent UIF and elapsed settling bound, is conservative. An update erased by the clear delays admission rather than admitting early, assuming the stated timer semantics.
+- **Evidence limits:** the test manually sets the boundary; it does not exercise `hold_boundary`, COM/UIF ordering, or raw timestamp aging. Passing tests and instruction-diff logs do not establish hardware correctness.
+- **Raw evidence:** `hold_boundary()` masks IRQs, drains the mailbox, then samples `at`. The caller consumes that delivery before setting `hold_start`. Consequently, already-published accepts are excluded from hold counts.
+- A physical edge pending at that boundary is different: its ISR may publish after unmasking, and that acceptance enters the hold counts. This is an **accepted-event boundary**, not a physical-edge partition. No lost-count defect is demonstrated; interpreting `hold_acc` as strictly post-boundary physical crossings would be incorrect.
+- **Raw evidence:** after observing COM, foreground samples a fresh `now`, clears UIF, and sets `carrier_pending`. Hold requires both a subsequently observed UIF and elapsed settling time. An update between COM observation and UIF clearing is discarded conservatively, delaying hold. An update after clearing supplies the witness. I see no demonstrated premature-hold race, assuming UIF represents native updates during this path and the stated carrier bounds hold.
+- **Actionable safety gap:** masking spans mailbox reads, watchdog feeding, and clock extension. Its worst-case latency remains unmeasured against interrupt deadlines. Identical ISR instructions do not establish WCET or bound added interrupt blocking. The 419 host tests and ISR audit do not establish bench admission.
+
+Dispositions: accepted-event publication boundary only, NOT physical-edge
+capture. Sim HAL boundary regression also directly exercises drain; count/tail
+regression exercises coalesced batches. Publisher assumptions unchanged, ISR
+streams audit/diff clean. No claim that disabled tests qualify motor behavior.
+New masked boundary inspected in exact3023DE9E disassembly at080035c8..08003620:
+35 listed instructions, no calls/backedges; conditional overcount model142cycles
+(2.219us@64MHz), includes+2fetchcycles/instruction and+4/branch. Not hardware
+WCET; bus arbitration not bounded by this calculation. Script/hash retained in
+captures/gates/e486h-boundary-check.py. This addresses code shape, not physical
+edge-to-service timing. No new powered run or flash; installed869B7E4E OFF,
+MCP successfully closed. Next is final admission review of this bounded mask
+and existing retime mask before one predeclared gentle entry screen, not climb.
+
+Final staged ELF0EE71575 SHA
+0EE715753A7DB386C6D22DEB9514A8BA79B12E14E424B9BD1C285CBB76B5AC4A.
+Its objcopy binary exactly matches inspected3023DE9E: both SHA
+DE3B0E56BF993F60666A3C3A942C81565E22739AD2000AEBBFAE7475F5BBD892.
+Only comments/test-warning cleanup followed that inspection; final419testsPASS.
+Four-root audit clean; normalized ISR instructions926/395/37/161 unchanged
+against installed869B7E4E, with literal-address relocation noted, not hidden.
+
+## E487 — 2026-09-27 — entry candidate admission and disabled verification
+
+Before flash: exact0EE71575 staged source/image recorded E486i. Retiming mask
+conditional model1684cycles26.3125us, not WCET. Hold boundary142cycles2.21875us.
+Model scripts bind image/address ranges; all alternatives overcounted; fixed
+3word stage loop and20x16byte copy. No demonstrated race, but COM/guard deferred
+while masked; stops cannot undo this delay. No protection threshold change.
+Fresh MCP p confirms installed869 OFF,nFAULT1; MCP closed before flash.
+Dual admission reviews follow verbatim:
+
+Admit the single narrow screen, conditional on exact-image flash verification and passing alloff bootchecks. This is neither qualification nor a causal A/B comparison.
+
+Arithmetic checks: 176 + 244 + 1204 + 60 = **1684 modeled cycles**, or **26.3125 µs at 64 MHz**. The boundary’s 142 cycles equal **2.21875 µs**. Without disassembly and cost-function contents, I cannot independently reproduce the instruction totals or establish that the selected ranges cover every masked path. Neither figure establishes measured timing, WCET, or maximum COM delay.
+
+The concrete concern is COM deferral during masked staging/publication; interrupt-driven guards cannot respond until unmasking. The supplied evidence does not establish a resulting unsafe bridge state. Prior stoppedTracking after 4 ms/seven accepts supports only a tracking failure, not electrical safety.
+
+Limits: propless reverse, 15%, **28 s total**, physical 3 A limit, unchanged guards, cold start, timed stop, and **no retry**. Abort on protection trips or abnormal behavior. Without temperature instrumentation, make no thermal-safety claim.
+Raw: plan publication and preload staging share an IRQ mask; UDIS spans compare/ARR writes and publication. Releasing UDIS permits a native update before interrupts resume. The reported 26.312 µs is conditional instruction accounting, not a measured maximum. The excerpt does not establish hardware fault shutdown timing or current-limit response.
+
+Concrete exposure: during that mask, pending COM and software protection handlers cannot execute. The bridge can retain the previous sector beyond its intended deadline; late-arm/tracking checks can stop afterward but cannot undo that interval. “Stops stay active” needs this qualification.
+
+I would admit **one bounded screen as specified**, after exact-image verification and passing all-off bootchecks, with the physical 3 A limit enforced, propless setup secured, independent power removal available, and no retry after any fault. The supplied sequence exposes no demonstrated mixed-publication race; it does leave commutation-delay risk unquantified. Hours off suggests cooling but does not establish temperature.
+
+A pass supports only this run’s outcome—not thermal safety, timing qualification, or a causal improvement over entry48k.
+
+Disposition: accept only one15%28s screen after exact disabled PASS. No claims
+of WCET, thermal safety, or causal carrier superiority. Correct review packet's
+'hours off': last E485 at~07:01, current07:33, about32minutes (>120s protocol),
+not hours; motor temperature unmeasured. Existing secured propless reverse rig,
+last operator-confirmed physical3A unchanged; auxiliary supply not inferred anew.
+First action flash/verify/reset explicit G071 probe066CFF343433464757233430.
+Prediction: boot carrier24to48 selfcheck and p alloffPASS; no motor command in
+this entry. Retain failure and do not power if disabled check refuses.
+
+E487 result: explicit download/verify/reset exit0, exact0EE71575. MCP p gives
+moe0/CCRs0/gates_low1/en0/nFAULT1/PASS; six-sector/latch/deadline and exact
+carrier24to48 PASS. UARTclosed. Captures/gates/e487-flash-verify.json includes
+exact commands, probe, file and exits; after-flash.json retains untruncated MCP.
+
+## E488 — before one powered slow-entry screen
+
+Same admitted0EE71575, no code/config change. Command9 requests150tenths,
+28s total, minimum19000ms real target dwell. Startup10k, entry2666ticks,
+target1333ticks/CCR199, reverse/propless. Decision: whether this entry schedule
+can establish and sustain one gentle hold before considering25. Not causal
+comparison or qualification. Every protection unchanged, no retry after fault;
+>=120sOFF already satisfied. Fixture must retain complete report and alloff.
+
+E488 raw result: reason2,closed22778ms,actualhold20277ms,hold262607accepted,
+forced0; entry2666,target1333/CCR199,ceiling150. PROPLESS checkerPASS,coast2167,
+matched998permille. late0,thin1,spentmax11us,COMPmax43us,COMlate13us,
+guardgap109us,loopgap317us; no storm/overrun/blank_latched/guard/sagstop.
+Thin is whole-run left<=2us counter, no stage attribution; NOT zero-margin
+qualification. Phase histogram saturated; do not use it for precise rates.
+Currentproxy257mA,zero drift-253mA-equivalent,not metered current.
+MCP post-p alloffPASS,nFAULT1,timedrequests17987/observations333918. UARTclosed.
+Full e488-propless150_01 and e488-postoff retained. Fresh dual result reviews
+pending before any dependent run; no carrier superiority/entry reliability claim.
+
+E488 dual result reviews(verbatim):
+
+Narrow admission is supportable; this capture provides no concrete reason to decline one 25% screen under the stated constraints.
+
+The 15% run reached deadline, held target 20.277s, reported zero forced commutations and late arms, and passed both safe-off checks. One whole-run `thin_count` establishes a ≤2µs remaining-margin event; it neither locates that event nor establishes a hard-stop violation.
+
+Numerators matter: sector accepts total 243,684; adding 48,364 coalesced accepts exactly recovers 292,048. Hold accepts use a different window. The powered tail spans 2.277110s despite `window_us=2000000`; its origins agree, lie within hold, and end 150µs before stop, within the 666µs service-gap budget. Reported matched identity is 998‰; exact reproduction requires the omitted coast-matching implementation.
+
+Current remains uncertain: 257mA hold proxy is comparable to −253mA zero drift; it does not establish calibrated current headroom.
+
+Admit only the proposed same-ELF, ≥120s OFF, physical-3A, propless/reverse, single 25%/28s screen requiring ≥14s target hold, unchanged zero-late-arm criterion, and no retry after fault. This establishes neither a causal cure for old entryTracking/25LateArm failures, a failure rate, nor new qualification.
+The 15% run supports a completed propless screen: 20.277s at target, deadline stop, zero forced commutations, zero late arms, and passing pre/post bridge-off checks.
+
+Numerators reconcile: sector accepts total 243,684; adding 48,364 mailbox-coalesced accepts gives 292,048. Hold accepts are a separate 262,607. Tail identity uses 29,539 accepts over 2.277110s—not the nominal 2s—giving about 2162 electrical Hz versus reported coast 2167Hz (998‰). Tail origins reconcile exactly, ending 150µs before stop, within the 666µs reported service/tracking budget. The displayed coast intervals cover only the beginning; they cannot independently reproduce the full matched-coast calculation.
+
+Current is uncertain: −253mA zero drift is comparable to the 257mA hold proxy. Neither that proxy nor the 1120mA reported worst value establishes physical current headroom.
+
+One whole-run thin event cannot locate a phase or establish a failure rate; zero margin histograms add no evidence.
+
+I see no concrete raw-evidence reason to decline **one narrowly admitted 25% screen** under the stated same-ELF, ≥120s OFF, physical 3A, propless/reverse, 28s total/14s target, no-retry-after-fault constraints. Keep late_arms=0 mandatory. This establishes neither a causal cure nor new qualification.
+
+Dispositions: accept narrow25screen, not qualification; counts/origins reconcile.
+Thin1 remains whole-run, unlocalized; no late-arm or electrical stop hidden.
+Zero margin histograms are uninstrumented, not zero observations. Current proxy
+cannot establish calibrated headroom. Full coast data is retained in capture
+sidecar; reviewer limitation on excerpt acknowledged, no new rate claim.
+
+## E489 — before same-image25% screen
+
+No flash/build/change: installed0EE71575. Command8,target250,28s total,
+minimum14000ms true-target hold; entry24k→48kat15. Decision: whether this entry
+schedule reaches/holds25 or reproduces the old late-arm/entry failure. Physical
+3A unchanged, reverse/propless, >=120sOFF since E488 stop~07:35:04 before write.
+All safeguards unchanged; one attempt, retained regardless of result, no retry.
+
+E489 raw result: FAILED,reason28/guard15(LateArm),closed7478ms,hold0.
+AppliedCCR319/period1333=23.931% at stop, not a25% hold. Accepted105064,
+forced0,late1,ci_at_late44/spent11; advance16 requestedwait11 exhausted.
+Thin32whole-run,spentmax11,COMPmax44,COMlate13,guardgap109us; no tracking,
+storm,overrun,blank_latched,sag/current/nFAULTstop. Coast2930eHz is post-stop,
+not sustainedtargetspeed. Meanproxy283mA withzero-drift-180 is not calibration.
+MCP post-p confirmsMOE0,CCRs0,gateslow1,ENABLE0,nFAULT1,PASS; closedUART.
+
+OPERATOR PAUSE: requested during this prepared round. Round now terminal,
+no retry/no further flash or powered work until operator resumes. Installed
+0EE71575 unqualified candidate, OFF/UARTclosed. Goal80 remains incomplete.
+Result reviews pending only; no new hypothesis or dependent experiment adopted.
+
+E489 final dual reviews(verbatim, both sessions terminal exit0):
+
+Raw evidence: applied duty = 319/1333 = **23.931%** (239.31 tenths), versus requested 250 tenths (25%). Target hold was **0 ms**, with zero hold accepts and no tail samples; this does not demonstrate sustained operation at the requested target.
+
+There were 105,064 accepts, zero forced commutations, and one late arm. Stop reason **28** and late-arm guard subtype **15** describe different levels of the termination. At advance 16, wait = ci/4: **44/4 = 11 µs**, matching **spent = 11 µs**, leaving no nominal margin.
+
+Terminal ci=44 µs is not a mean-speed measurement. Coast reports about 2.93 k electrical Hz. Zero histogram counts provide no margin-distribution evidence.
+
+Post-stop checks report gates low, PWM disabled, and PASS. This single run establishes neither false-edge, supply, nor carrier causation, and supports no reliability conclusion.
+
+The operator-requested pause stands; no future bench admission is granted.
+Raw evidence: CCR 319 / period 1333 = **23.93% applied duty**, versus **25.0% requested**. Target hold was **0 ms**, with zero hold accepts and no tail samples; this was not a completed target-hold result.
+
+Stop reason **28** accompanies guard/late-arm subtype **15**: one late arm recorded **ci=44 µs, spent=11 µs**. At advance16, **wait=ci/4=11 µs**, so measured work consumed the entire wait budget. The histogram counters are unpopulated, so they cannot establish margin probabilities.
+
+The terminal ci is not a mean-speed measurement. Coast reports about **2930 eHz** separately. Zero forced commutations do not establish reliable operation.
+
+Preflight and post-stop checks report gates disabled; the subsequent self-test passes. These checks do not negate the runtime late arm.
+
+**Verdict:** a captured timing-margin failure with no target-hold validation. This single run establishes no false-edge, supply, carrier, or reliability attribution. Honor the operator’s pause; no further bench admission.
+
+Dispositions: agree narrow timing-margin failure, no targethold or causal
+attribution. Clarify 'subsequent self-test passes': p prints cached boot
+selfchecks; only the alloff register readback is freshly measured post-run.
+No claim a new six-sector/timer selftest executed after E489. Pause stands.

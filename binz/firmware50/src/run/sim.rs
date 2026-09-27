@@ -34,6 +34,7 @@ pub struct Crossings {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Faults {
     pub carrier_refuse: bool,
+    pub carrier_no_update: bool,
     pub preflight_fails: bool,
     pub nfault_low_at: Option<u32>,
     pub bus_sag_at: Option<u32>,
@@ -96,6 +97,7 @@ pub struct Sim {
     next_crossing: u32,
     last_crossing: u32,
     pending_raw: Option<u16>,
+    update_cleared_at: Option<u32>,
     com_step: Step,
     com_count: u32,
     zc: Option<ZeroCross>,
@@ -124,6 +126,7 @@ impl Sim {
             next_crossing: 0,
             last_crossing: 0,
             pending_raw: None,
+            update_cleared_at: None,
             com_step: Step::new_clamped(1),
             com_count: 0,
             zc: None,
@@ -360,6 +363,9 @@ impl Hal for Sim {
     fn det_poll(&mut self) -> Option<super::accepted::Accepted> {
         self.pending_raw.take().map(super::accepted::Accepted::single)
     }
+    fn hold_boundary(&mut self) -> (u32, Option<super::accepted::Accepted>) {
+        (self.t, self.det_poll())
+    }
     fn det_average(&self) -> Option<u32> {
         self.zc.as_ref().map(|_| self.crossings.interval_us)
     }
@@ -397,6 +403,15 @@ impl Hal for Sim {
     }
     fn set_advance(&mut self, advance: u32) {
         self.log.advances.push(advance);
+    }
+
+    fn carrier_update_seen(&self) -> bool {
+        !self.faults.carrier_no_update
+            && self.update_cleared_at.is_none_or(|at| self.t.wrapping_sub(at) >= 43)
+            && self.log.carrier_changes.last().is_none_or(|&(at, _, _)| self.t.wrapping_sub(at) >= 43)
+    }
+    fn carrier_update_clear(&mut self) {
+        self.update_cleared_at = Some(self.t);
     }
     fn det_release(&mut self) {
         self.closed = false;
@@ -439,6 +454,19 @@ impl Hal for Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hold_boundary_drains_only_pre_boundary_mailbox() {
+        let mut sim = Sim::new(Crossings { interval_us: 200, until_us: None }, Faults::default());
+        sim.t = 1100;
+        sim.pending_raw = Some(1090);
+        let (at, pending) = sim.hold_boundary();
+        assert_eq!(at, 1100);
+        assert_eq!(pending, Some(super::super::accepted::Accepted::single(1090)));
+        assert_eq!(sim.det_poll(), None);
+        sim.pending_raw = Some(1110);
+        assert_eq!(sim.det_poll(), Some(super::super::accepted::Accepted::single(1110)));
+    }
     use crate::commutation::wait_time;
     use crate::protection::Reason;
     use crate::run::{Production, Request, Window};
@@ -480,6 +508,44 @@ mod tests {
         interval_us: 144,
         until_us: None,
     };
+
+    #[test]
+    fn slow_entry_switches_once_restarts_slow_and_refusal_safes() {
+        use crate::run::{Controller, policy};
+        use policy::Carrier;
+        type Schedule = policy::SlowEntry<2666, 150>;
+        type Probe = Controller<policy::Wiring, policy::ExternalRevisit<policy::BemfPolicy>,
+            policy::AdvancePolicy, policy::CurrentProtection, policy::BusSagProtection,
+            policy::Restart, policy::Telemetry, crate::sagtrace::NoSagLog, Schedule>;
+        assert_eq!(Schedule::ENTRY_TICKS, 2666);
+        assert_eq!(Schedule::period(149, 2666), 2666);
+        assert_eq!(Schedule::period(150, 2666), 1333);
+        assert_eq!(Schedule::period(100, 1333), 1333, "foldback cannot undo transition");
+        for refuse in [false, true] {
+            let mut sim = Sim::new(STEADY, Faults { carrier_refuse: refuse, ..Faults::default() });
+            let mut controller = Probe::new();
+            let request = Request { target_tenths: 150, inject: None, window: Window::ForUs(28_000_000) };
+            for _ in 0..2 {
+                sim.log = Log::default();
+                let outcome = controller.run(&mut sim, request);
+                assert_eq!(outcome.reason, if refuse { Reason::CarrierTransition } else { Reason::SegmentDeadline });
+                assert!(!sim.driving && sim.log.safe_offs > 0);
+                assert_eq!(sim.log.periods, [crate::duty::STARTUP_TICKS, 2666, crate::duty::STARTUP_TICKS]);
+                assert_eq!(sim.log.carrier_changes.len(), usize::from(!refuse));
+                assert_eq!(sim.log.bytes_while_driven, 0);
+                if !refuse {
+                    let (at, duty, period) = sim.log.carrier_changes[0];
+                    assert_eq!((duty, period), (150, 1333));
+                    assert!(at > sim.log.closed_at.unwrap());
+                    assert!(sim.log.plans.iter().any(|&(t, d)| t < at && d == 140),
+                        "transition must follow the lower-duty ramp, not handover");
+                    assert!(field(&sim.log.text, "BEMFGATE", "hold_ms") >= 19_000);
+                } else {
+                    assert_eq!(field(&sim.log.text, "BEMFGATE", "hold_ms"), 0);
+                }
+            }
+        }
+    }
 
     #[test]
     fn faster_carrier_only_after_entry_and_refusal_safes() {

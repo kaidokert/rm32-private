@@ -424,8 +424,8 @@ impl<
         io.kv("advance_level", A::level(target));
         io.kv("total_ms", window_ms);
         io.kv("inject", announce);
-        io.kv("run_period_ticks", H::period(target, crate::duty::RUN_PERIOD_TICKS));
-        io.kv("entry_period_ticks", crate::duty::RUN_PERIOD_TICKS);
+        io.kv("run_period_ticks", H::period(target, H::ENTRY_TICKS));
+        io.kv("entry_period_ticks", H::ENTRY_TICKS);
         io.kv("revisit_at_target", u32::from(B::allow_revisit(target)));
         io.kv("startup_ticks", crate::duty::STARTUP_TICKS);
         io.say("\r\n");

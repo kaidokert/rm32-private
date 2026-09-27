@@ -150,7 +150,19 @@ pub fn stage_faster(period: u32, compare: u32) -> bool {
     set_phase_compares([compare; 3]);
     t.arr().write(|w| w.arr().set((period - 1) as u16));
     // Caller must finish plan publication before releasing shadow transfers.
+    // UDIS is still set: no native update can race this witness reset.
+    t.sr().reset();
     true
+}
+
+/// Native update since stage_faster reset SR under UDIS. COMG is not an update.
+pub fn carrier_update_seen() -> bool {
+    regs().sr().read().uif().bit_is_set()
+}
+
+/// Reset the update witness. TIM1 has no status-flag interrupt consumers here.
+pub fn carrier_update_clear() {
+    regs().sr().reset();
 }
 
 /// Complete stage_faster after plan publication, still inside the same mask.
@@ -162,14 +174,21 @@ pub fn finish_staged_carrier() {
 /// two native wraps at the staged period, then restore the startup carrier.
 /// Both elapsed time and iteration count bound the poll, including a bad clock.
 pub fn carrier_selftest_off() -> bool {
+    carrier_transition_selftest_off::<{ crate::duty::RUN_PERIOD_TICKS }, 1000>()
+}
+
+/// Exact selected carrier pair, outputs disabled; not energized validation.
+pub fn carrier_transition_selftest_off<const FROM: u32, const TO: u32>() -> bool {
+    const { assert!(FROM > TO && TO >= 64 && FROM <= 6400) };
     if moe_is_set() || compares() != (0, 0, 0) {
         return false;
     }
-    set_period(crate::duty::RUN_PERIOD_TICKS);
-    if !stage_faster(1000, 0) {
+    set_period(FROM);
+    if !stage_faster(TO, 0) {
         set_period(crate::duty::STARTUP_TICKS);
         return false;
     }
+    let witness_cleared = !carrier_update_seen();
     finish_staged_carrier();
     let start = super::clock::raw();
     let mut previous = counter();
@@ -190,9 +209,10 @@ pub fn carrier_selftest_off() -> bool {
             break;
         }
     }
-    let clean = !moe_is_set() && compares() == (0, 0, 0) && !regs().cr1().read().udis().bit_is_set();
+    let clean = witness_cleared && carrier_update_seen() && !moe_is_set()
+        && compares() == (0, 0, 0) && !regs().cr1().read().udis().bit_is_set();
     set_period(crate::duty::STARTUP_TICKS);
-    clean && measured.is_some_and(|us| (14..=17).contains(&us))
+    clean && measured.is_some_and(|us| ((TO / 64 - 1) as u16..=(TO.div_ceil(64) + 1) as u16).contains(&us))
 }
 
 /// Write one channel's compare (1..=3; anything else is ignored).

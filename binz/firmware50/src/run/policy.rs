@@ -311,14 +311,33 @@ pub trait Advance {
     fn level(duty_tenths: u16) -> u32;
 }
 
-/// Running carrier selection. Startup/handover remain on their fixed periods.
+/// Closed-loop entry and running carrier selection; sine startup is unchanged.
 pub trait Carrier {
+    const ENTRY_TICKS: u32 = crate::duty::RUN_PERIOD_TICKS;
     fn period(duty: u16, current: u32) -> u32;
 }
 pub struct FixedCarrier;
 impl Carrier for FixedCarrier {
     fn period(_duty: u16, current: u32) -> u32 {
         current
+    }
+}
+/// Slower closed-loop entry, then the normal carrier at a duty threshold.
+/// One-way during a run; a fresh handover restores ENTRY_TICKS.
+pub struct SlowEntry<const ENTRY: u32, const FROM: u16>;
+impl<const ENTRY: u32, const FROM: u16> Carrier for SlowEntry<ENTRY, FROM> {
+    const ENTRY_TICKS: u32 = {
+        assert!(ENTRY > crate::duty::RUN_PERIOD_TICKS && ENTRY <= crate::duty::STARTUP_TICKS);
+        assert!(FROM > 100 && FROM <= SIXSTEP_DUTY_CAP);
+        ENTRY
+    };
+    fn period(duty: u16, current: u32) -> u32 {
+        let _ = Self::ENTRY_TICKS;
+        if duty >= FROM || current == crate::duty::RUN_PERIOD_TICKS {
+            crate::duty::RUN_PERIOD_TICKS
+        } else {
+            current
+        }
     }
 }
 /// One-way faster carrier after the threshold. Foldback never switches it back;
@@ -601,52 +620,56 @@ mod tests {
     fn carrier_preload_model_never_overdrives_during_faster_switch() {
         // Native updates at every staging AND COM register-write boundary.
         // This models RM0444 shadow semantics, not physical gate timing proof.
-        for update_mask in 0u16..(1 << 14) {
-            for (old_source, next_source) in (0..3).flat_map(|a| (0..3).map(move |b| (a, b))) {
-                let (mut arr, mut arr_shadow) = (1333u32, 1333u32);
-                let (mut ccr, mut shadow) = ([465u32; 3], [465u32; 3]);
-                let mut pwm = [false; 3];
-                pwm[old_source] = true;
-                let mut udis = false;
-                for op in 0..14 {
-                    match op {
-                        0 => udis = true,
-                        1..=3 => {
-                            let ch = op - 1;
-                            shadow[ch] = 350;
-                            if !pwm[ch] {
-                                ccr[ch] = 350;
-                            } // non-PWM channels lack preload
+        for (old_period, new_period) in [(1333u32, 1000u32), (2666, 1333)] {
+            let old_compare = old_period * 350 / 1000;
+            let new_compare = new_period * 350 / 1000;
+            for update_mask in 0u16..(1 << 14) {
+                for (old_source, next_source) in (0..3).flat_map(|a| (0..3).map(move |b| (a, b))) {
+                    let (mut arr, mut arr_shadow) = (old_period, old_period);
+                    let (mut ccr, mut shadow) = ([old_compare; 3], [old_compare; 3]);
+                    let mut pwm = [false; 3];
+                    pwm[old_source] = true;
+                    let mut udis = false;
+                    for op in 0..14 {
+                        match op {
+                            0 => udis = true,
+                            1..=3 => {
+                                let ch = op - 1;
+                                shadow[ch] = new_compare;
+                                if !pwm[ch] {
+                                    ccr[ch] = new_compare;
+                                } // non-PWM channels lack preload
+                            }
+                            4 => arr_shadow = new_period,
+                            5 => {} // plans atomically published; no old plan after release
+                            6 => udis = false,
+                            7 => {
+                                pwm[0] = next_source == 0;
+                                pwm[1] = next_source == 1;
+                            }
+                            8 => pwm[2] = next_source == 2,
+                            9..=11 => {
+                                let ch = op - 9;
+                                shadow[ch] = new_compare;
+                                if !pwm[ch] {
+                                    ccr[ch] = new_compare;
+                                }
+                            }
+                            _ => {} // CCER write and return, no compare/ARR change
                         }
-                        4 => arr_shadow = 1000,
-                        5 => {} // plans atomically published; no old plan after release
-                        6 => udis = false,
-                        7 => {
-                            pwm[0] = next_source == 0;
-                            pwm[1] = next_source == 1;
+                        if update_mask & (1 << op) != 0 && !udis {
+                            arr = arr_shadow;
+                            ccr = shadow;
                         }
-                        8 => pwm[2] = next_source == 2,
-                        9..=11 => {
-                            let ch = op - 9;
-                            shadow[ch] = 350;
-                            if !pwm[ch] {
-                                ccr[ch] = 350;
+                        for source in 0..3 {
+                            if pwm[source] {
+                                assert!(ccr[source] * 1000 <= arr * 350);
                             }
                         }
-                        _ => {} // CCER write and return, no compare/ARR change
                     }
-                    if update_mask & (1 << op) != 0 && !udis {
-                        arr = arr_shadow;
-                        ccr = shadow;
-                    }
-                    for source in 0..3 {
-                        if pwm[source] {
-                            assert!(ccr[source] * 1000 <= arr * 350);
-                        }
-                    }
+                    assert_eq!(arr_shadow, new_period);
+                    assert_eq!(shadow, [new_compare; 3]);
                 }
-                assert_eq!(arr_shadow, 1000);
-                assert_eq!(shadow, [350; 3]);
             }
         }
         // A pending guard can run only before or after the atomic transaction;
@@ -654,6 +677,43 @@ mod tests {
         for stopped in [false, true] {
             for active in [false, true] {
                 assert_eq!(crate::oneshot::arm_allowed(stopped, active), !stopped && active);
+            }
+        }
+    }
+
+    #[test]
+    fn slow_entry_latched_roles_keep_arr_and_all_ccrs_coherent() {
+        // Exact 15% transition; simplified TIM1 shadow model, not hardware proof.
+        // All channels have OCxPE after the preceding latched commutations.
+        for old_source in 0..3 {
+            for new_source in 0..3 {
+                for updates in 0u16..(1 << 14) {
+                    let (mut arr, mut arr_shadow) = (2666u32, 2666u32);
+                    let (mut ccr, mut shadow) = ([399u32; 3], [399u32; 3]);
+                    let mut source = old_source;
+                    let mut udis = false;
+                    for op in 0..14 {
+                        match op {
+                            0 | 7 => udis = true,
+                            1..=3 => shadow[op - 1] = 199,
+                            4 => arr_shadow = 1333,
+                            5 => {} // publish all new plans while still masked
+                            6 | 13 => udis = false,
+                            8 => {} // OCxPE remains enabled, modes shadowed
+                            9..=11 => shadow[op - 9] = 199,
+                            12 => source = new_source, // COMG: atomic role change
+                            _ => unreachable!(),
+                        }
+                        if updates & (1 << op) != 0 && !udis {
+                            arr = arr_shadow;
+                            ccr = shadow;
+                        }
+                        assert!(ccr[source] * 1000 <= arr * 150);
+                        if arr == 1333 { assert_eq!(ccr, [199; 3]); }
+                    }
+                    assert_eq!(source, new_source);
+                    assert_eq!(shadow, [199; 3]);
+                }
             }
         }
     }

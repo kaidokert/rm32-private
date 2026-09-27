@@ -347,6 +347,9 @@ pub trait Hal {
     /// Coherent newest accepted crossing and every event since last delivery.
     /// Intermediate stamps can coalesce; their event count must not disappear.
     fn det_poll(&mut self) -> Option<super::accepted::Accepted>;
+    /// Atomic foreground hold boundary: timestamp and drain events preceding it.
+    /// Return drained events for whole-run accounting, never hold accounting.
+    fn hold_boundary(&mut self) -> (u32, Option<super::accepted::Accepted>);
     /// The estimator's interval, µs.
     fn det_average(&self) -> Option<u32>;
     /// The step the COM root last applied.
@@ -363,6 +366,10 @@ pub trait Hal {
     /// Atomically stage a shorter period and its equal-CCR plans, without UG
     /// or re-enabling outputs. False on a stopped/inconsistent owner.
     fn retime_plans<S: Drives>(&mut self, gates: &mut Gates<S>, duty: u16, period: u32, cap: u16) -> bool;
+    /// A native PWM update since the most recent carrier staging transaction.
+    fn carrier_update_seen(&self) -> bool;
+    /// Clear the native-update witness after observing the qualifying COM.
+    fn carrier_update_clear(&mut self);
     /// The advance COMP schedules with.
     fn set_advance(&mut self, advance: u32);
     /// Take the estimator back from COMP (first, before the stop is stamped).

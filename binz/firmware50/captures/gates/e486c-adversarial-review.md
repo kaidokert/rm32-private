@@ -1,0 +1,7 @@
+**Not yet justified as specified:** the ≥19 s actual-target criterion still lacks a valid activation bound.
+
+- **43 µs is the old carrier period plus margin, not a proven preload-completion bound.** `latch::apply` suppresses updates with UDIS at every COM. Observing COM and then waiting 43 µs does not establish that an update transferred the target CCRs: intervening masked transactions can suppress the relevant overflow. Without a duration bound, the hold timestamp can precede actual target activation. Require an actual transfer witness or a justified bound including update suppression.
+- **Retiming exclusion looks correct:** `plans.lock` masks interrupts across ownership checks, staging, the 320-byte publication, and UDIS release. Guard and COM cannot interleave that transaction. The copy and bounded loop nevertheless add unquantified guard latency; instruction identity does not establish its acceptability.
+- **COMG model:** coherent ARR/CCR transfer follows under the stated preload assumptions, but the model does not prove physical gate timing.
+
+Disabled PASS supports further evaluation, not the missing dwell guarantee. Flash verification and stop-on-failure do not close that gap.

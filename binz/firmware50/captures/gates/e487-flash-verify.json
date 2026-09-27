@@ -1,0 +1,26 @@
+[
+  {
+    "cmd": "probe-rs download --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430 captures/elf/0EE71575.e486i-slow-entry.elf",
+    "chunk_id": "35ac46",
+    "wall_time_seconds": 3.1584322,
+    "exit_code": 0,
+    "original_token_count": 6,
+    "output": "     Finished in 2.66s\n"
+  },
+  {
+    "cmd": "probe-rs verify --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430 captures/elf/0EE71575.e486i-slow-entry.elf",
+    "chunk_id": "8b1a1f",
+    "wall_time_seconds": 0.9756389,
+    "exit_code": 0,
+    "original_token_count": 6,
+    "output": "Verification successful\n"
+  },
+  {
+    "cmd": "probe-rs reset --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430",
+    "chunk_id": "803cb1",
+    "wall_time_seconds": 0.2812177,
+    "exit_code": 0,
+    "original_token_count": 0,
+    "output": ""
+  }
+]

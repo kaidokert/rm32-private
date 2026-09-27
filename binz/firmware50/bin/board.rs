@@ -648,6 +648,14 @@ impl Hal for Board {
         roots::det_average_interval()
     }
 
+    fn hold_boundary(&mut self) -> (u32, Option<firmware50::run::accepted::Accepted>) {
+        cortex_m::interrupt::free(|_| {
+            let pending = self.det_poll();
+            let at = self.tick_clock();
+            (at, pending)
+        })
+    }
+
     #[inline(always)]
     fn com_step(&self) -> Step {
         Step::new_clamped(S.com().step.load(Ordering::Relaxed) as u8)
@@ -710,6 +718,14 @@ impl Hal for Board {
 
     fn set_advance(&mut self, advance: u32) {
         S.det().advance.store(advance, Ordering::Relaxed);
+    }
+
+    fn carrier_update_seen(&self) -> bool {
+        hw::pwm::carrier_update_seen()
+    }
+
+    fn carrier_update_clear(&mut self) {
+        hw::pwm::carrier_update_clear();
     }
 
     fn det_release(&mut self) {
