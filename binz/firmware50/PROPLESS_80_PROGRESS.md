@@ -127,6 +127,14 @@ masked recorder work prevent physical-cause attribution. The diagnostic's
 earlier failure does not establish a 57% lean limit.
 # E421 checkpoint — 2026-09-27
 
+E425 update: E4AF4BE7 order diagnostic passed15%20.278s, then at25%
+stopped LateArm after1.723s, not the lean Tracking fault. All outputs-off
+checks passed. Its last accepted intervals contracted while paired COM
+service stayed close to schedule. Final prior-estimate wait10us exhausted
+at spent10us even though the updated estimate rebounded40->48us. This is
+diagnostic evidence of a scheduling vulnerability, not proof of physical
+false edges or E421's cause. No duty/envelope qualification advanced.
+
 DC00CCB4 diode-mode image passed one 15% exploration (~2207 eHz), then
 stopped on Tracking at 25% after 0.976s at target (~2950 eHz coast).
 The recorded tracking subtype is Stale, with a 240us accepted-event limit.

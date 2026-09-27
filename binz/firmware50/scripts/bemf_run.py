@@ -438,6 +438,15 @@ def elf_crc32() -> str:
     return f"{zlib.crc32(ELF.read_bytes()) & 0xFFFFFFFF:08X}"
 
 
+def dump_end_marker(command, sag_dump=False, order_dump=False):
+    """Wait for the complete selected post-stop payload, never its prefix."""
+    if sag_dump:
+        return "SAGEND"
+    if order_dump:
+        return "ORDEREND"
+    return END_MARKERS.get(command, END_MARKER)
+
+
 def capture_one(
     port: serial.Serial,
     out: pathlib.Path,
@@ -616,12 +625,10 @@ def main() -> int:
     ap.add_argument("--sag-dump", action="store_true",
                     help="propless diagnostic: capture and validate through SAGEND")
     ap.add_argument("--order-dump", action="store_true",
-                    help="validate compact order tails preceding the sag dump")
+                    help="capture and validate compact order tails (optionally followed by sag dump)")
     args = ap.parse_args()
-    if args.order_dump and not args.sag_dump:
-        ap.error("--order-dump requires --sag-dump")
-    if args.sag_dump and not args.propless:
-        ap.error("--sag-dump currently requires --propless")
+    if (args.order_dump or args.sag_dump) and not args.propless:
+        ap.error("diagnostic dumps currently require --propless")
     if args.propless and (not args.no_ladder or args.runs != 1 or
                           args.rung_duty <= 0 or args.min_hold_ms < 9000):
         ap.error("--propless requires --no-ladder --runs 1 --rung-duty and dwell >=9000")
@@ -816,7 +823,7 @@ def main() -> int:
                 args.timeout,
                 args.command.encode("ascii"),
                 args.abort_after,
-                "SAGEND" if args.sag_dump else END_MARKERS.get(args.command, END_MARKER),
+                dump_end_marker(args.command, args.sag_dump, args.order_dump),
                 load="propless" if args.propless else "unspecified",
                 run_period_ticks=args.run_period_ticks,
             ):

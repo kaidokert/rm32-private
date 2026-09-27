@@ -11,6 +11,13 @@ RAW = FIXTURES / "e359-propless150_01.txt"
 
 
 class UnloadedChecks(unittest.TestCase):
+    def test_order_only_and_combined_dump_end_markers(self):
+        from bemf_run import dump_end_marker, END_MARKER, END_MARKERS
+        self.assertEqual(dump_end_marker("9", order_dump=True), "ORDEREND")
+        self.assertEqual(dump_end_marker("9", sag_dump=True), "SAGEND")
+        self.assertEqual(dump_end_marker("9", True, True), "SAGEND")
+        self.assertEqual(dump_end_marker("9"), END_MARKERS.get("9", END_MARKER))
+
     def test_absolute_selection_from_every_authorized_previous_state(self):
         for target in (600, 650, 700, 750, 800):
             for start in range(375, 801, 25):

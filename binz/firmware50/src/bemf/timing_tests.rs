@@ -77,3 +77,33 @@ fn extreme_widths_clamps_and_refusals_preserve_contract() {
         assert!((40..=4000).contains(&z.average_interval()));
     }
 }
+
+#[test]
+fn e425_contraction_and_rebound_expose_both_wait_policy_tradeoffs() {
+    // Raw ORDERA420322 seeds420323..420340 (E425 diode-order capture).
+    // Tuples: service interval, published average, recorded prior wait (us).
+    let rows = [(84, 74, 19), (64, 74, 19), (61, 68, 19), (75, 68, 17),
+        (60, 67, 17), (58, 63, 17), (55, 59, 16), (60, 58, 15),
+        (60, 59, 15), (47, 56, 15), (52, 52, 14), (46, 50, 13),
+        (49, 48, 13), (49, 48, 12), (35, 45, 12), (28, 40, 11),
+        (49, 40, 10), (63, 48, 10)];
+    let mut prior = ZeroCross::from_state([76, 62, 40, 4000, 32]);
+    let mut fresh = prior.clone();
+    let mut shorter = 0;
+    let mut last = (0, 0);
+    for (interval, average, recorded) in rows {
+        let p = accepted_wait(prior.offer_timed::<PreviousEstimate, _, _>(
+            interval, true, 16, &FixedFilter::<1>, || true));
+        let f = accepted_wait(fresh.offer_timed::<FreshEstimate, _, _>(
+            interval, true, 16, &FixedFilter::<1>, || true));
+        assert_eq!(p, recorded);
+        assert_eq!(prior.average_interval(), average);
+        assert_eq!(prior.state(), fresh.state());
+        shorter += u32::from(f < p);
+        last = (p, f);
+    }
+    assert_eq!(last, (10, 12), "fresh helps the final rebound");
+    assert!(shorter > 0, "fresh also tightens earlier arms on descent");
+    // Frozen accepted inputs omit rejections and physical rotor feedback.
+    // This cannot predict survival or qualify the alternative on hardware.
+}

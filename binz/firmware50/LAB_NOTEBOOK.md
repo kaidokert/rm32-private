@@ -44391,3 +44391,212 @@ Only existing separate ISR-owned rings added; no persistence-read recorder,
 no guard or carrier-policy change. Candidate awaits exact-build review before
 flash/disabled witness/one bounded low-point diagnostic. Installed image remains
 E417 DC00CCB4, last outputs OFF; no serial or flash actions in this continuation.
+
+### E423 - exact-build preflight review / host order-only capture
+
+Previous turn made progress: committed E421 failure and tested staged E422;
+no new envelope claim. Re-read full objective. MCP list healthy, COM41 present.
+evidence review, verbatim:
+
+> The concrete preflight gap is runtime verification: the supplied evidence contains no boot/self-test result from the staged image. The `p` response is a literal PASS string; it does not rerun tests or independently verify ENABLE-low. Reaching it establishes that the startup predicates passed, assuming this exact image is running. Pad/ENABLE verification needs separate evidence.
+>
+> Recorder findings:
+>
+> - ACC and COM have separate root-owned rings; the shown wiring introduces no evident shared mutable row.
+> - `OrderSag::freeze()` exists, but its integration is not shown. This main explicitly disarms after `controller.command()` returns. Therefore, these snippets establish command-return freezing, not freezing at the stop decision.
+> - Disassembly supports diode-mask application followed by two genuine TIM2 reads bracketing TIM17. That bracket timestamps a **post-application read**, not the bridge transition.
+> - Accepted-only tails cannot establish rejected crossings, physical crossing accuracy, or lean timing. Independent tail truncation also requires joining by ordinal, not row position.
+>
+> The reported tests and ISR audit support their respective software checks, not bench preflight or WCET. No demonstrated recorder defect here independently invalidates the proposed conditional bounded screen.
+
+adversarial review, verbatim:
+
+> **Preflight remains unverified:** `p` prints a constant PASS line after `controller.command`; it neither reruns these checks nor directly verifies ENABLE-low or pad state. Reaching the command loop establishes that the four boot predicates passed, but their implementations and actual boot results are absent. If this banner is the planned evidence for disabled pad verification, that is a concrete evidence gap before command `9`.
+>
+> The shown recorder has separate COMP/COM storage. TIM16 disassembly confirms the latch write precedes two TIM2 reads bracketing TIM17. That bracket locates the **post-application timestamp**, not the latch event or physical switching edge; preemption before its first read is outside its reported uncertainty.
+>
+> `OrderSag::freeze()` disables recording, but this excerpt does not establish that `Production` uses `OrderSag`. Main’s disarm proves freezing after command return, not at the stop decision. Any stop-tail interpretation needs that wiring verified.
+>
+> The supplied tests/audit support limited software checks; they do not establish hardware preflight, image identity, or timing margins. I find no demonstrated ring-ownership defect here, but insufficient evidence to clear those preflight and freeze claims.
+
+Dispositions: agree hardware preflight not yet performed, so flash/reset
+and disabled readback precede any motor command. The diode/latch pad tests
+execute at boot with actual ENABLE-low/MOE checks; p reports those cached boot
+results plus Controller's current output-register preflight. Do not describe p
+as a fresh pad test. Exact explicit-probe download/archive hash supplies identity.
+Production does not use OrderSag: freeze is command-return, not stop-decision.
+states::stop det_release/take_back/safe_off/comp_mask ends motor logging before
+coast; a pending in-flight callback may finish. Terminal ordinal and unmatched
+end must be checked; no absence-of-final-row inference without that coverage.
+Post-application stamps exclude latency before their first read, not hardware
+latch edges. No demonstrated added writer-ownership defect.
+Host fixture currently assumes order dump always followed by sag dump; adapt
+end marker to ORDEREND for order-only binary, retaining SAGEND for combined,
+and require propless for either. Test selection offline before hardware.
+
+E423 fixture14/14 PASS. Before flash: exact staged E4AF4BE7 on explicit
+G071 SN066CFF343433464757233430/deviceSTM32G071RBTx. Reset executes disabled
+boot checks; only p is requested afterward, then UART closed. No motor in
+this step. Prediction: all disabled pad/latch/timer checks and p output-off
+pass. Any failure prevents powered work. Archive remains immutable.
+
+E423 result: explicit-probe flash/reset success. MCP p142bytes: current
+PREFLIGHT MOE/CCRs/ENABLE0,gateslow1,nFAULT1 PASS and boot-cached
+DIODESELFTEST six-sector/latch/deadline PASS. UART closed. Raw MCP retained.
+
+### E424 - diagnostic low-point admission screen
+
+Exact installed E4AF4BE7, command9 target150, total28s, minhold19000ms,
+fixed1333/propless/reverse/3A, order-only complete dump. Previous powered run
+E421 was >120s ago. Prediction:15% tracking holds and both order rings emit
+128 valid rows paired by ordinal, no ambiguity hidden. No automatic restart
+or higher attempt; failure endsbatch. Poststop outputs-off mandatory; >=120s
+OFF after. Diagnostic pass is not lean qualification or proof of fault cause.
+
+E424 result: exact E4AF4BE7 reason2,15%20.278s, finaloffPASS/UARTclosed.
+Tail30187/2.277943s/6 about2208.6eHz, coast checker2205/matched1001.
+Order128/128 rows pair IDs289535..289662; no unmatched IDs in retained tails.
+Intervals59..103us, waits18..21, postapply deadline delta5..8(median5),
+service late1..4(median2), all fine brackets2ticks=0.25us. These brackets
+exclude delay before first read and are not latch-edge timestamps.
+No late/thin/blanklatched/overrun/tracking/sag; proxy210, drift-141mA.
+OFF conservative timestamp capturemtime07:50:24UTC; earliestnext07:52:24UTC.
+
+evidence review, verbatim:
+
+> All 128 displayed ordinals pair correctly, with next-sector identity. Recomputed post-apply timestamp minus acceptance minus requested wait is **5–8 µs**; every fine bracket is **2 ticks = 0.25 µs**. These bracket timestamp reads, not physical switching.
+>
+> Concrete accounting anomaly: sector accepts sum to **287,894**, which is **1,767 below accepted=289,661**, exactly matching mailbox coalescing. Sector totals therefore cannot independently establish lossless commutation. Also, BEMFTAIL spans **2.278 s**, despite window_us=2,000,000; treating it as an exact two-second rate window is incorrect.
+>
+> The hold count gives **13,154.7 accepts/s**, or **2,192.4 electrical Hz** under six accepts/cycle. This supports the reported rate, not crossing validity or loaded capability.
+>
+> The bounded same-image 25% screen can provide diagnostic evidence, but **the supplied join alone cannot discriminate missing COM**: it silently discards unmatched ordinals. Retain and report unmatched accepts/commutations, identify shutdown-censored pending events, and examine acceptance gaps separately. Ordinal attribution also needs scrutiny because COM reads the current acceptance sequence rather than a shown arm-bound identifier.
+>
+> Nothing here establishes that 25% will pass or supports extrapolation to 80%.
+
+adversarial review, verbatim:
+
+> Raw checks: ordinal 289561 gives `52485−52458−19 = 8 µs` deadline error. The supplied fine brackets are 2 ticks (0.25 µs), but bracket the post-apply clock read, not the bridge transition. Acceptance endpoints span 9,597 µs over 127 intervals: approximately 2,206 eHz.
+>
+> Concrete anomaly: `BEMFTAIL span_us=2277943` exceeds its declared 2,000,000 µs window by 13.9%. Its endpoints confirm that span; “last two seconds” would be inaccurate. Sector accepts sum to 287,894, falling 1,767 below `accepted=289661`, exactly matching mailbox coalescing. Those sector counters are therefore not a complete acceptance census.
+>
+> The bounded same-image 25% screen can discriminate **recorded acceptance cessation versus an accepted ordinal lacking a commutation record**, provided both tails freeze coherently at failure and stop handling preserves pending-event evidence. This successful tail alone does not establish those conditions. A terminal unmatched acceptance can also mean shutdown cancelled its pending COM; distinguish that using its deadline and stop timestamp.
+>
+> It cannot establish physical crossing validity or physical COM timing. Keep any conclusion specific to this instrumented image; the current proxy and this single run do not support qualification.
+
+Dispositions: no new anomaly in known rolling2..4s tail or coalesced
+histograms; preserve exact spans and counts, do not call them2s/lossless.
+Accept the join coverage criticism: next analysis must explicitly list
+unmatched IDs from BOTH tails, not only pairs, and label shutdown censoring.
+Ring freeze is command-return; guard_trip disables owners and com_stop before
+bridge safe, pending callbacks may finish. No fault-instant physical stamp.
+COM above COMP reads accept_seq while COMP cannot execute, and acceptance
+keeps its line masked untilCOM; this supports ordinary ordinal association,
+not a hardware-edge identity. Initial seededCOM and terminal foreground
+notification censoring explain why lifetime aggregate counters need not agree;
+do not infer lostCOM from that difference.
+Decision: bounded same-image25% diagnostic is supported for recorded software
+chronology, not unique cause. If it fails differently/early from observer
+overhead, retain and retire that inference instead of chasing a pass.
+
+### E425 - single diagnostic at the failed25% point
+
+No rebuild/flash; E4AF4BE7 command8 total28s,target250,minhold15000.
+Propless reverse/3A, all guards active, complete ORDEREND retained.
+Earliest powered07:52:24UTC; verify clock before run. No autorestart.
+Prediction to discriminate: paired COM delays grow before accepted-event
+hiatus, or paired COMs remain timely until accept gap; neither proves
+physical edge timing. Explicit unmatched/censored rows in analysis.
+Failure endsbatch; finaloff and>=120sOFF required.
+
+E425 result: reason28 LateArm, NOT E421's Tracking8. Target25% held1723ms.
+Exact E4AF4BE7, same carrier/guards, outputs-offPASS/UARTclosed. Raw capture:
+captures/2026-09-27/e425-propless250-diode-order_01.txt.
+One late arm, terminalspent10us/ci_atlate48, thin86/ci_min40 whole-run.
+127paired rows420213..420339; accepted-only420340 is terminal, bridge-only
+420212 left boundary. Max paired postapply deadline delta8us; finebrackets
+all2ticks. Terminal accepted intervals35,28,49,63; published averages45,40,
+40,48; waits12,11,10,10. Last pairedCOM at27274, nextaccept27322.
+No growing COM-service delay is shown in this retained diagnostic suffix.
+Missing finalCOM is consistent with expired-arm shutdown, not proof earlier
+commutation was lost. Stopped current proxy380/drift-74mA; no sag/tracking.
+Coastchecker2841, holdaverage about2952eHz: unequal windows cannot prove slip.
+This diagnostic changes the failure mode; do not transfer cause to E421.
+
+evidence review, verbatim:
+
+> The ordinal join yields 127 pairs (420213–420339). COM420212 is outside the acceptance tail; acceptance420340 has no matching COM. Every paired sector advances correctly. TIM2 brackets are 2 ticks = 0.25 µs; these do not establish physical crossing time.
+>
+> Recomputed terminal sequence:
+>
+> | Acceptance | Interval | Published average | Wait |
+> |---|---:|---:|---:|
+> | 420337 | 35 | 45 | 12 |
+> | 420338 | 28 | 40 | 11 |
+> | 420339 | 49 | 40 | 10 |
+> | 420340 | 63 | 48 | 10 |
+>
+> All values are µs. The terminal acceptance occurs **48 µs after the preceding postapply timestamp**, following interval recovery—not at the shortest interval. Its wait remains consistent with the previous estimate, despite the published estimate rebounding to 48.
+>
+> Paired service lateness is 1–4 µs; entry-to-postapply excess over requested wait reaches 8 µs. This excess is distinct from pre-arm spend. Reported terminal spend=10 exhausts wait=10; the missing terminal COM is consistent with stopping, not proof of an earlier lost commutation.
+>
+> Neither valid physical crossings nor the initiating disturbance is established. Aggregate coast agreement cannot resolve individual events; lean-image causality cannot transfer.
+>
+> **Highest-value test:** matched, repeated PreviousEstimate/FreshEstimate runs using existing code, identical remaining configuration and logging. Fresh timing would request 12 µs at the terminal recorded state, but replay cannot predict its altered trajectory. Preserve all guards/thresholds, propless operation, and PSU ≤80 V/3 A.
+
+adversarial review, verbatim:
+
+> Ordinal joining gives **127 pairs**, with unmatched COM420212 at the left boundary and acceptance420340 at the right. All supplied COM brackets span two 8-MHz ticks: **0.25 µs**, not 2 µs.
+>
+> The terminal sequence is:
+>
+> | Acceptance | Interval | Updated average | Wait |
+> |---|---:|---:|---:|
+> | 420336 | 49 | 48 | 12 |
+> | 420337 | 35 | 45 | 12 |
+> | 420338 | 28 | 40 | 11 |
+> | 420339 | 49 | 40 | 10 |
+> | 420340 | 63 | 48 | 10 |
+>
+> All times are microseconds. COM420339 completes at 27274; acceptance420340 enters **48 µs later**, at 27322. Its interval and estimate are recovering, while its wait retains the previous estimate’s 10 µs. That supports a **lagged scheduling vulnerability**, not proof that a false crossing caused the contraction.
+>
+> `spent_at_late=10` is consistent with exhausting that wait. Attribution to acceptance420340 remains inferred: the late-arm record contains no ordinal. Its missing COM alone proves neither a lost commutation nor correct shutdown.
+>
+> **Highest-value next test:** interleave otherwise identical diagnostic builds selecting existing `PreviousEstimate` versus `FreshEstimate`, retaining every guard/threshold, propless, ≤80 V and 3 A PSU limit. At this recorded terminal state, fresh scheduling would request 12 µs; actual trajectories may differ. Compare contraction and stop outcomes across repetitions. This tests wait-policy contribution, without transferring causality to lean E421 or establishing physical crossing validity.
+
+Dispositions:
+- Both reviewers' "80 V" is WRONG. Goal is80% duty, bench remains about12V
+  and3A. No supply-voltage change is authorized, implied or performed. This
+  unit error likely came from the compressed "<=80/3APSU" review context;
+  future packets must spell units explicitly. Agreement did not make it true.
+- Terminal wait10 and spent10 support an exhausted software-entry-relative
+  arm on this image. Ordinal attribution is consistent with final unmatched
+  accept but not directly stamped by the late-arm counter.
+- Existing PreviousEstimate versus FreshEstimate is a one-variable causal
+  comparison available without new instrumentation. At recorded terminal
+  state fresh would request12us versus10us; this is counterfactual arithmetic,
+  not proof a changed trajectory would survive. The previous policy was
+  intended to resist same-event short-interval contraction, so restoring
+  fresh trades recovery responsiveness against that risk. Do not call one
+  universally better from this row.
+- Next safe local work is host replay of BOTH policies on the recorded
+  accepted sequence, then an otherwise matched variant if it discriminates.
+  No threshold change, no extra recorder, no higher-duty attempt, no
+  retry-until-pass or full-ladder repetition. A/B outcome needs a predeclared
+  cohort before causal claims; one exploratory B cannot establish a rate.
+
+E425 offline replay prediction before test edit: freeze ORDERA420322 as
+pre-state and replay420323..420340 through both existing wait policies.
+Both should reproduce the same averages/acceptance under supplied agreeing
+comparator reads; PreviousEstimate should reproduce recorded waits. Fresh
+should recover terminal wait10->12 but may shorten waits on descent. This
+tests arithmetic only, not live comparator readings or changed motor dynamics.
+
+E425 replay result: timing suite5/5 PASS (373 other tests filtered).
+Exact recorded prior waits and published averages reproduced on18 accepts.
+Fresh terminalwait12 vsprior10, but earlier fresh waits also shorten, so
+there is no monotone timing improvement claim. Regression retained in
+src/bemf/timing_tests.rs. Test-only edit; installed E4AF4BE7 unchanged/OFF.
+No further powered attempt in this batch. Both result reviews and limitations
+are retained. Next compare this bounded scheduling lever on evidence, not
+another aggregate-only repeat of the failed25% image.
