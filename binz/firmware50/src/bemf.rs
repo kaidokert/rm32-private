@@ -26,6 +26,19 @@ use crate::commutation::{advance_of, blend_interval, wait_time};
 /// policy, not a protection setting. Both choices publish the same new state.
 pub trait WaitEstimate {
     const PREVIOUS: bool;
+    /// None retains the runtime setting. A binary selecting Some must bind
+    /// its controller's advance schedule to the same constant.
+    const ADVANCE: Option<u32> = None;
+}
+/// Compile-time advance for a genuinely fixed controller schedule.
+/// Keeps the selected estimate dependency and the exact existing rounding.
+pub struct ConstantAdvance<T, const LEVEL: u32>(core::marker::PhantomData<T>);
+impl<T: WaitEstimate, const LEVEL: u32> WaitEstimate for ConstantAdvance<T, LEVEL> {
+    const PREVIOUS: bool = T::PREVIOUS;
+    const ADVANCE: Option<u32> = {
+        assert!(LEVEL <= 64, "constant advance outside supported range");
+        Some(LEVEL)
+    };
 }
 pub struct FreshEstimate;
 impl WaitEstimate for FreshEstimate {
@@ -539,6 +552,7 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
         self.last_zc = count;
         self.average_interval = self.clamp_interval(blend_interval(self.average_interval, self.prev_zc, self.last_zc));
         let scheduled = if T::PREVIOUS { previous } else { self.average_interval };
+        let advance_level = T::ADVANCE.unwrap_or(advance_level);
         let advance = advance_of(scheduled, advance_level);
         let wait = wait_time(scheduled, advance_level);
         self.accepted = self.accepted.wrapping_add(1);

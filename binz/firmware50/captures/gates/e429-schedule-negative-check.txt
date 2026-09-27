@@ -1,0 +1,16 @@
+cargo :    Compiling firmware50 v0.1.0 (E:\m\robot\esc\rm32\binz\firmware50)
+At line:2 char:1
++ cargo check --release --bin diode-const --features deep-filter,com-to ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...inz\firmware50):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+    Checking stm32g0xx-hal v0.2.0 (E:\m\robot\esc\rm32\binz\firmware50\ref\stm32g0xx-hal)
+error[E0080]: evaluation panicked: assertion failed: firmware50::run::policy::ADVANCE_LOW == 16
+  --> bin\diode-const.rs:13:5
+   |
+13 |     assert!(firmware50::run::policy::ADVANCE_LOW == 16);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed here
+
+For more information about this error, try `rustc --explain E0080`.
+error: could not compile `firmware50` (bin "diode-const") due to 1 previous error

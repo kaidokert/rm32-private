@@ -1,0 +1,15 @@
+node.exe : Reading additional input from stdin...
+At C:\Program Files\nodejs\codex.ps1:16 char:5
++     & "$basedir/node$exe"  "$basedir/node_modules/@openai/codex/bin/c ...
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Reading additional input from stdin...:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+2026-09-27T08:13:31.800423Z ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message:
+"Rejected(\"`\\\"C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\WindowsPowerShell\\\\\\\\v1.0\\\\\\\\powershell.exe\\\" -Command \\\"Get-Location; rg --files -g AGENTS.md -g
+'*objdump*' -g '*e429*'; rg -n 'WaitEstimate|ConstantAdvance|offer_timed' src/bemf.rs; Get-Content src/bemf/timing_tests.rs -TotalCount 36; rg -n
+'det_decide_plain|det_decide_logged' src/roots.rs; Get-Content bin/diode-const.rs; rg -n 'Production' src/run/mod.rs; rg -n 'AdvancePolicy' src/run/policy.rs; rg -n
+'det_install|set_advance' bin/board.rs\\\"` rejected: blocked by policy\")" }
+2026-09-27T08:13:38.810889Z ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message:
+"Rejected(\"`\\\"C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\WindowsPowerShell\\\\\\\\v1.0\\\\\\\\powershell.exe\\\" -Command 'Get-Content src/bemf.rs'` rejected: blocked by
+policy\")" }

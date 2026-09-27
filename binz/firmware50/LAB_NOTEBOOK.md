@@ -44756,3 +44756,213 @@ compiletime; no silentlyignoring a liveadvancecontrol. Require exhaustive
 equivalence and actualreleasepre-armassemblysavings beforeflash. This is a
 compute-cost lever, not a claimed fix for falseedges,Tracking,or80%.
 Installed E7D5E6BE remainsOFF afterE428; no further motorcommands.
+
+### E429 - typed constant-advance specialization (offline)
+
+Previous turn produced real failedB evidence and narrowed the next lever;
+no envelope gain claimed. Before edits/build: add ConstantAdvance<T,LEVEL>
+to existing WaitEstimate policy, leaving default dynamic behavior intact.
+Both plain/logged roots select the type's constant before any atomic load;
+offer_timed also uses it so host semantics match emitted specialization.
+Separate diode-const binary requires compile-time LOW=HIGH=16 and selects
+ConstantAdvance<FreshEstimate,16>; same diode-order recorder and guards.
+Predict exact dynamic16 behavior including odd rounding/refusals/estimator
+state, removal of runtime advance load/clamp/multiply from accepted path,
+and no change to otherISRroots. Verify rather than infer compiler folding.
+No flash or powered run in this implementation step.
+
+E429 offline results and first reviews (continuation): previous status-only
+turn added no campaign progress. Revalidated source and archived hashes now.
+Candidate SHA256 1D3D29EC3B2DA56E0C05B0EF8E923128D5146F4CA786C216F98FAFAC77BE3FBC,
+release-s/thinLTO/codegen1; tests379 PASS, clippy PASS, four-root helper audit
+PASS. Negative build without advance-ref fails compile-time schedule assertion.
+Dynamic rebuild SHA084B05E4D56C27031BD405A5298215CA8EEB1EA4339235432E43EBA051664404
+versus E426 SHA E7D5E6BE4582E6E4246C412FA4BA292D89F8373D3654448B9B20C620E36F7FD1:
+all four roots identical by isr_diff. Candidate versus E426 changes COMP only,
+813 to787 disassembly entries INCLUDING literal data, not executed instruction
+count or WCET. COMP stack reservation grows52 to60bytes. Actual fixed16 wait
+emits (ci>>1)-(ci>>2), preserving odd rounding, removing two runtime advance
+multiplies. No measured latency improvement yet.
+
+First independent evidence review, verbatim:
+
+> The supplied source and assembly support fixed-16 fresh-estimate scheduling, but not every claimed equivalence check.
+>
+> - `ConstantAdvance<FreshEstimate, 16>` binds the handler’s level; both compile-time assertions bind the foreground policy endpoints to 16. The failed build demonstrates rejection when `ADVANCE_LOW != 16`. This is sufficient for the shown `AdvancePolicy`, provided `Production` actually selects it.
+> - Assembly stores the newly blended, clamped estimate at `0x08000926`, then computes `(ci >> 1) - (ci >> 2)` at `0x08000932/946/948`, retaining saturation handling. This matches the reference integer fixed-16 formula; substituting `ci >> 2` for the entire wait would differ for some intervals.
+> - The emitted path retains arm eligibility checks and the expired-wait stop branch. No concrete safety regression is apparent in that path.
+> - Coverage remains incomplete: wrapper implementation, root-side advance selection, test contents, and comparison binaries are absent. The reported 379 passes establish suite success, not exhaustive equivalence. The four-root identity summary lacks identified comparison endpoints.
+> - The shifts/subtraction claim is supported. The claimed 813→787 reduction is not independently established here, and instruction counts do not establish WCET.
+>
+> This supports proceeding with exact-image verification and disabled-output boot checks. It does not alone justify the powered single-15 screen.
+
+First independent adversarial review, verbatim:
+
+> The supplied assembly supports constant-folded **fresh-estimate** scheduling: the blended, clamped estimate is stored at `0x08000926`; `0x08000932/946/948` compute `(ci >> 1) - (ci >> 2)`. This matches the integer fixed16 function exactly, including rounding; it is not always `ci >> 2`.
+>
+> No concrete arithmetic regression is evident. Remaining gaps:
+>
+> - The assertions bind both schedule constants to 16 and demonstrably reject an incompatible configuration. They do **not** establish that every runtime advance write uses those constants. Equivalence requires checking all setters and handover paths, since the wrapper ignores runtime advance.
+> - The four “identical” reports lack identified artifact pairs and comparison methodology. They cannot simultaneously establish unchanged candidate COMP code and its claimed reduction. Clarify that these compare ordinary-policy builds, if that is their scope.
+> - The 379 passing tests do not identify coverage comparing `FreshEstimate` against `ConstantAdvance<FreshEstimate, 16>`, including seed acceptance, clamp boundaries, rounding, and rejection paths.
+> - The excerpt supports eliminated runtime advance arithmetic, but does not independently establish 813→787 executable instructions, unchanged other roots, or a timing bound.
+>
+> Exact-artifact provenance and equivalence evidence remain prerequisites for justifying the proposed powered screen. Disabled boot checks alone cannot close those gaps.
+
+Dispositions: both identify real packet incompleteness, not an established
+code fault. No powered test on that evidence. Source audit ties Production
+to AdvancePolicy; handover uses P::A::level at states898, and running setter
+states1018 also uses P::A::level. Board stores are det_install526 and
+set_advance680; compile-time LOW/HIGH16 covers both. Equivalence test enumerates
+all65535 nonzero16-bit seeds, both estimator personalities, then boundary
+counts and comparator true/false. Not an exhaustive arbitrary-state or
+physical-feedback proof. Fresh re-reviews receive filesystem access to exact
+source/tests/ELFs and identified comparison endpoints, rather than excerpts.
+Native spawn hit existing thread limit; two fresh ephemeral read-only CLI
+reviewers launched without inherited project history.
+Installed E426 remains OFF; candidate unflashed.
+
+E429b review transport failed, not a firmware finding. Both isolated CLI
+reviewers' read-only shell requests were rejected by their execution policy;
+no source inspection occurred. Retained verbatim, not counted as reviews:
+
+> **Review blocked; I cannot independently endorse the screen from evidence available here.** The execution policy rejected both the initial source read and a narrowed, read-only `Get-Content src/bemf.rs` request.
+>
+> Consequently, I have not read the raw source, searched advance writes, run either `isr_diff.py` comparison, inspected COMP disassembly or audit/test records, or computed artifact hashes. No bench, serial, flash, build, or edits occurred.
+>
+> The following remain **unverified claims**, not independent findings:
+>
+> - Fixed16 fresh semantics are bound to Production’s advance schedule, including handover and subsequent setters.
+> - Rebuilt ordinary dynamic roots remain unchanged.
+> - Constant COMP removes runtime multiplies and decreases from 813 to 787 disassembly entries. If confirmed, that is 26 entries, approximately **3.20%**, including literal-pool entries—not a WCET measurement.
+> - Tests, negative schedule checks, and artifact provenance establish the intended source-to-binary relationship.
+> - Protections remain unchanged.
+>
+> I therefore cannot establish whether one guarded **15% / 28-second propless screen**, following disabled bootchecks, is warranted under **12 V / 3 A** with **120-second cooling**. The objective is understood as **80%**, not 80 V.
+>
+> The automatic execution-policy check rejected local source-reading commands as “blocked by policy”; it provided no more specific reason. Completing this review requires permitted read-only local access.
+
+> **Review blocked; I cannot independently endorse the screen.** The execution policy rejected even `Get-Content src/bemf.rs` with “blocked by policy.” No alternative local-file reader was available.
+>
+> Consequently, I did not read the source or gate records, execute either ELF comparison, inspect COMP disassembly, or calculate hashes. No bench, serial, flash, build, edits, or peer-review access occurred.
+>
+> The following remain unverified:
+>
+> - Fixed16 fresh semantics and their binding to Production’s schedule, including handover, setters, and other advance writes.
+> - Unchanged ordinary dynamic roots and protection paths.
+> - Removal of runtime multiplies and the claimed 813→787 disassembly-entry reduction.
+> - Source-to-artifact provenance, stop/arm behavior, and logging observer effects.
+>
+> Even if confirmed, that entry-count reduction—including literal-pool entries—would not establish WCET improvement or guaranteed speedup.
+>
+> The proposed 15%/28-second propless screen, 12V/3A supply, and 120-second cooling interval remain stated conditions, not independently validated grounds for proceeding after disabled bootchecks. The goal is understood as **80%**. Closing the requested evidence gaps requires a session permitting local read-only source inspection and analysis commands.
+
+Disposition: provide a complete raw packet over stdin instead, including full
+bemf/tests/binary/COMP disassembly, root diff, Production composition, both
+advance callers, all-write search, exact endpoint hashes and rerun comparisons.
+Two fresh E429c reviewers get independent prompts and no peer conclusions.
+This is review-transport repair, no hardware or safety-state change.
+
+E429c independent completed reviews, verbatim:
+
+> - `ConstantAdvance<FreshEstimate,16>` preserves fresh-estimate selection and fixes advance at 16. Both controller schedule endpoints are asserted equal to 16; the supplied handover/running callers use that schedule. The negative build fails the endpoint assertion.
+> - The emitted arithmetic is `wait = (ci >> 1) − (ci >> 2)`, not universally `ci/4`: at 59, `29−14=15`. The disassembly uses the newly clamped estimate. E383’s first replay update also checks: `(59 + ((38+67)>>1))>>1 = 55`.
+> - The packet reports 379 passing tests and four clean audited roots. Equivalence tests cover both estimate policies, seeds 1–65535, selected subsequent counts and comparator levels; they do not exhaust arbitrary states, live comparator timing, or interrupt interleavings.
+> - Archived candidate SHA256 begins `1D3D29EC`; the disassembly/audit name the mutable `target/.../diode-const` path without a matching hash. Their linkage to that archive is therefore not demonstrated. Root comparison summaries also do not independently establish relocated literal values.
+> - The 813→787 count includes literals and is not a cycle saving. Reported stack allocation increases 52→60 bytes; latency improvement remains unmeasured.
+>
+> The implementation evidence supports the proposed single 15%, 28-second propless screen with disabled boot checks, 12 V/3 A and 120 seconds off, provided the flashed ELF is bound to the audited artifact. It does not establish improved timing, survival at 25%, or broader qualification.
+
+> The packet reports 379 passing tests, four clean ISR-root audits, and compile failure when the controller schedule is not 16. Both supplied advance writers use `P::A::level`; `Production` selects the policy whose two levels are asserted equal to 16. The constant ISR deliberately ignores runtime advance stores.
+>
+> Disassembly shows:
+>
+> - Fixed16 wait retains `(ci >> 1) - (ci >> 2)` rounding.
+> - Exhausted waits branch to `stop_expired_arm`.
+> - `spent` is sampled at `0x0800098e`, before timer enable at `0x08000a1e`.
+> - OrderRing writes occur after arming.
+> - The reported stack frame grows by eight bytes; 813→787 includes literals.
+>
+> These support arithmetic equivalence for the exercised inputs, not identical physical behavior. Earlier live comparator reads can change acceptance; recording after arming can still affect interrupt service and subsequent crossings. The smaller disassembly establishes neither latency improvement nor WCET. `spent` excludes interrupt-entry latency and the remaining timer-start path. The historical “cannot reach zero” argument also fails at `wait = spent = 10`.
+>
+> No concrete blocker to the proposed **single 15%, 28-second propless screen** is established. Support is limited to the identified candidate, successful disabled boot checks, 12 V/3 A, unchanged guards, and 120 seconds off. Verify flashed identity and observe actual stop/current/timing results. Prior 25% LateArm failure remains unresolved; success would justify neither escalation nor an uninstrumented-image claim.
+
+Dispositions: archive and target independently rehashed now, both exact
+1D3D29EC3B2DA56E0C05B0EF8E923128D5146F4CA786C216F98FAFAC77BE3FBC;
+archive-root audit rerun all4PASS and archive-vs-target four roots identical.
+This closes mutable-path provenance concern. Literal-data/count caveat remains;
+no timing/WCET claim made. Earlier comparator reads can alter physical behavior;
+all guard timing limitations remain, not newly solved by constant folding.
+Reviews support bounded screen only, not25survival or80qualification.
+
+### E430 - exact-image disabled checks, then one15% screen
+
+Prediction before flash/run: exact E429 candidate should preserve disabled
+six-role pad/latch/timer checks and complete one15% request (command9,28s
+maximum powered, >=19s target) with all protections active. Measure actual
+spent/COMP/COM lateness and order pairs, not code size. If stopped retain
+failure and end batch. No automatic25% follow-up. Physical12V/3A unchanged,
+propless reverse, no measured winding temperature; >=120s OFF since E428.
+MCP list_ports healthy COM41; require open/read/close preflight after reset.
+Explicit G071 probe only. Candidate remains diagnostic, not qualification.
+
+E430 result: explicit probe download/reset succeeded. MCP opened COM41,
+`p` read PREFLIGHT moe0/CCRs0/gates_low1/en0/nfault1 PASS and cached boot
+DIODESELFTEST six-sector/latch/deadline PASS; closed successfully. Fixture
+command9 then completed reason2, requested150/ceiling150/CCR199 of1333,
+hold20278ms, closed22778ms. Capture
+captures/2026-09-27/e430-propless150-diode-const_01.txt records exact1D3D29EC
+SHA. Final PREFLIGHT all outputsOFF PASS, fixtureUARTclosed.
+Coast checker2208eHz, matched1000permille; late/thin0,spent12us,COMPmax26us,
+COMlate14us(mixedpurpose),guardgap110us,tracking0,storm0,overrun0,blanklatched0.
+Current proxy214mA with zero drift-111mA, not calibrated current/thermalproof.
+Busref1212/rawmin1097; isolated rawnotches do not equal guard's coherent mean.
+Order128pairs IDs289016..289143, no unmatchedaccept/COM rows; intervals
+49..132us median76, waits16..24 median19, postapply deadlineerror5..9median5,
+COMservice lateness1..5median2. Every clockreadbracket2ticks=250ns; this does
+not bound preceding interrupt latency or physical gate delay.
+Earlier E427 same-duration dynamicfresh15 had spent13,COMP28,COMlate5,
+coast2211. Mixed observed maxima: cannot declare netgain or equivalence from
+one run each. The desired15screen passes, not25or80qualification. Two fresh
+raw-first E430 reviews launched before dependent work. Decision requested:
+whether one bounded25screen tests the optimization at priorLateArm regime
+without a rate/cohortclaim. Keep all failures; no automaticfull-ladder rerun.
+
+E430 dual reviews, verbatim:
+
+> Raw evidence supports another bounded propless experiment, not qualification or progress to 80%.
+>
+> - Both tails contain 128 contiguous, ordinal-matched pairs with correct next-sector identities. E430 intervals span 49–132 µs; entry-to-bridge minus requested wait spans 5–9 µs versus E427’s 5–8 µs. Service lateness spans 1–5 versus 1–4 µs. No sampled ordering violation.
+> - All fine brackets span two ticks: **250 ns at 8 MHz**, not the author’s 125 ns. These brackets do not establish physical zero-crossing timing.
+> - Recomputed hold acceptance rates are 13,129.65 versus 13,179.65/s: E430 is 0.379% lower. The reported 997 versus 988 permille uses rounded interval denominators and cannot establish improvement.
+> - Sector sums are 287,001 versus 286,896; deficits against accepted totals exactly equal mailbox coalescing, 2,142 versus 3,379.
+> - Tail spans exceed the nominal two-second window. Margin histograms are empty; phase bins at 65,535 suggest saturation. Neither provides usable margin assurance.
+> - The 22 mA proxy reduction is smaller than either reported zero drift’s magnitude; one run per image cannot establish causality.
+>
+> Support is limited to the proposed single 25%/28-second screen after ≥120 seconds OFF, retaining stops and no retries. Prior failure near 22%, absent thermal evidence, and unvalidated loaded behavior block broader claims.
+
+> The packet supports only a limited 15% observation, not clearance toward 80%.
+>
+> - **Attribution:** One run per different ELF cannot isolate constant scheduling cost. Coast estimates are similar, but 12 versus 13 µs processing maxima do not establish improvement; COM lateness increases from 5 to 14 µs. Firmware audit/test claims are not independently evidenced here.
+> - **Observer effects:** Both captures are instrumented; identical recorder code does not establish identical timing impact. The 128-pair tail covers roughly 10 ms, not the entire hold or the earlier failure region. Zero margin counters provide no demonstrated margin coverage. At 8 MHz, two ticks equal **250 ns**, not 125 ns; the bracket does not bound total instrumentation overhead.
+> - **Safety:** OFF snapshots establish endpoint state only. Uncalibrated current, −111 mA zero drift, absent thermal readings, and unexplained `ma_allow=31857` prevent treating the current telemetry or 120-second rest as validated protection.
+> - **Discrimination:** A bounded 25% screen could establish whether this candidate completes that specific exposure without the prior LateArm failure. A pass cannot attribute improvement to scheduling cost; a failure needs onset evidence, not merely the final tail.
+>
+> Conditional next-test support requires explicit abort thresholds, independent supply-limit verification, and retained failure-onset timing. Those are not established by this packet.
+
+Dispositions: the review prompt said '2ticks125ns' ambiguously; one tick125ns,
+whole two-tick bracket250ns as already recorded above. No total-overheadbound.
+BEMFTAIL span2277841us is a separate matched-speed window, not the128-event
+ORDER tail (~9.6ms); preserve actualtimestamps and never assume nominal2s.
+Saturated phase bins and disabled margin counters provide no margin evidence.
+No causal speed/current/timing gain claimed; no physicaledgevalidity claim.
+Current ma_allow31857 is RAW residual allowance (protection.rs RAW_LIMIT),
+nominal4A, not31857mA; physicalPSU remains operator-set3A. No new meterreading
+or independent PSUtelemetry occurred. No peak-current or thermalstop exists;
+120sOFF is precaution only. These are existing documented coverage gaps, not
+waived by a passing15run. Existing sharp/slowbus,nFAULT,latearm,tracking,
+storm,handlerdeadline,IWDG remain unchanged; cite actualsource/thresholds to
+next reviewer before25, rather than asking them to infer protection coverage
+from a clean capture. E430 batch result accepted as single15exploration only;
+next25screen remains contingent on that narrowed coverage review. Do not
+invent a new hardware fault or silently reduce/increase any threshold.

@@ -1,0 +1,7 @@
+- `ConstantAdvance<FreshEstimate,16>` preserves fresh-estimate selection and fixes advance at 16. Both controller schedule endpoints are asserted equal to 16; the supplied handover/running callers use that schedule. The negative build fails the endpoint assertion.
+- The emitted arithmetic is `wait = (ci >> 1) − (ci >> 2)`, not universally `ci/4`: at 59, `29−14=15`. The disassembly uses the newly clamped estimate. E383’s first replay update also checks: `(59 + ((38+67)>>1))>>1 = 55`.
+- The packet reports 379 passing tests and four clean audited roots. Equivalence tests cover both estimate policies, seeds 1–65535, selected subsequent counts and comparator levels; they do not exhaust arbitrary states, live comparator timing, or interrupt interleavings.
+- Archived candidate SHA256 begins `1D3D29EC`; the disassembly/audit name the mutable `target/.../diode-const` path without a matching hash. Their linkage to that archive is therefore not demonstrated. Root comparison summaries also do not independently establish relocated literal values.
+- The 813→787 count includes literals and is not a cycle saving. Reported stack allocation increases 52→60 bytes; latency improvement remains unmeasured.
+
+The implementation evidence supports the proposed single 15%, 28-second propless screen with disabled boot checks, 12 V/3 A and 120 seconds off, provided the flashed ELF is bound to the audited artifact. It does not establish improved timing, survival at 25%, or broader qualification.

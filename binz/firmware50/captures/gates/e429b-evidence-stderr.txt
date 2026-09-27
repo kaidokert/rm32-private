@@ -1,0 +1,14 @@
+node.exe : Reading additional input from stdin...
+At C:\Program Files\nodejs\codex.ps1:16 char:5
++     & "$basedir/node$exe"  "$basedir/node_modules/@openai/codex/bin/c ...
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Reading additional input from stdin...:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+2026-09-27T08:13:19.942531Z ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message:
+"Rejected(\"`\\\"C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\WindowsPowerShell\\\\\\\\v1.0\\\\\\\\powershell.exe\\\" -Command 'Get-Content src/bemf.rs; Get-Content
+src/bemf/timing_tests.rs -TotalCount 36; Get-Content src/roots.rs; Get-Content bin/diode-const.rs; Get-Content src/run/mod.rs; Get-Content src/run/policy.rs'` rejected: blocked
+by policy\")" }
+2026-09-27T08:13:26.244561Z ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message:
+"Rejected(\"`\\\"C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\WindowsPowerShell\\\\\\\\v1.0\\\\\\\\powershell.exe\\\" -Command 'Get-Content -LiteralPath src/bemf.rs'` rejected:
+blocked by policy\")" }

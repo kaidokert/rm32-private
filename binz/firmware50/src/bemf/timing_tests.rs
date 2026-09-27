@@ -7,6 +7,35 @@ fn accepted_wait(o: Outcome) -> u32 {
     }
 }
 
+fn fixed16_equivalence<T: WaitEstimate>() {
+    for seed in 1..=65535 {
+        let mut dynamic = ZeroCross::new_bounded(seed, 1, u32::MAX);
+        let mut fixed = dynamic.clone();
+        let a = dynamic.offer_timed::<T, _, _>(seed * 2, true, 16, &FixedFilter::<5>, || true);
+        let b = fixed.offer_timed::<ConstantAdvance<T, 16>, _, _>(
+            seed * 2, true, 16, &FixedFilter::<5>, || true);
+        assert_eq!(a, b);
+        assert_eq!(dynamic.state(), fixed.state());
+        assert_eq!(dynamic.counts(), fixed.counts());
+        for count in [0, 1, 40, 65535, u32::MAX] {
+            for level in [false, true] {
+                let a = dynamic.offer_timed::<T, _, _>(count, true, 16, &FixedFilter::<5>, || level);
+                let b = fixed.offer_timed::<ConstantAdvance<T, 16>, _, _>(
+                    count, true, 16, &FixedFilter::<5>, || level);
+                assert_eq!(a, b);
+                assert_eq!(dynamic.state(), fixed.state());
+                assert_eq!(dynamic.counts(), fixed.counts());
+            }
+        }
+    }
+}
+
+#[test]
+fn constant16_preserves_fresh_and_previous_across_full_timer_range() {
+    fixed16_equivalence::<FreshEstimate>();
+    fixed16_equivalence::<PreviousEstimate>();
+}
+
 #[test]
 fn previous_wait_uses_seed_then_preblend_state_and_exact_odd_rounding() {
     for ci in 1..4096 {

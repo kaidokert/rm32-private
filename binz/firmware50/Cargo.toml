@@ -17,6 +17,12 @@ license = "MIT OR Apache-2.0"
 exclude = ["ref"]
 
 [[bin]]
+name = "diode-const"
+path = "bin/diode-const.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "diode-fresh"
 path = "bin/diode-fresh.rs"
 test = false

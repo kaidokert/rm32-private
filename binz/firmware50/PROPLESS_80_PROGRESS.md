@@ -1,7 +1,19 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E411 results/dual review and E413 offline candidate, 2026-09-26 PDT.
+Updated through E430 exploratory result, 2026-09-27; E430 dual review pending.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
+
+Latest: E430 fixed16 constant-policy diode candidate `1D3D29EC` completed one
+15%/20.278s target hold at 2208eHz, late/thin0, outputs verified off. No new
+qualified ceiling. All four ISR roots pass helper audit; fixed advance emits
+shifts/subtraction, but one run does not prove a net timing improvement.
+E427 dynamic-fresh15% passed; E428 requested25% stopped LateArm during ramp
+near22%, never held25%. Prior-estimate diagnostic E425 held25% for1.723s then
+LateArm; lean diode E421 stopped Tracking after0.976s at25%. Different stop
+mechanisms and observer effects remain unresolved. Current source-low-off
+drive has a different speed/duty curve from historical complementary PWM;
+do not equate these percentages. Installed E430 image is OFF/UARTclosed.
+Current screens are bounded28s powered and>=120sOFF; no measured temperature.
 
 ## Scope
 

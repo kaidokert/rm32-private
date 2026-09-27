@@ -477,7 +477,10 @@ pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fin
         }
 
         let step = Step::new_clamped(S.det().step.load(Ordering::Relaxed) as u8);
-        let advance = S.det().advance.load(Ordering::Relaxed);
+        let advance = match T::ADVANCE {
+            Some(level) => level,
+            None => S.det().advance.load(Ordering::Relaxed),
+        };
         // Persistence reads the **live** comparator, microseconds after the edge --
         // exactly what AM32's handler does, and what the foreground could never do.
         match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &DET_FILTER, hw::comp::level) {
@@ -636,7 +639,10 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate>(
             return None;
         }
         let step = Step::new_clamped(S.det().step.load(Ordering::Relaxed) as u8);
-        let advance = S.det().advance.load(Ordering::Relaxed);
+        let advance = match T::ADVANCE {
+            Some(level) => level,
+            None => S.det().advance.load(Ordering::Relaxed),
+        };
         let rising = edge_is_rising(step);
         let (mut reads, mut n) = (0u16, 0u16);
         let outcome = zc.offer_timed::<T, _, _>(count, rising, advance, &DET_FILTER, || {
