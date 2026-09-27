@@ -1,6 +1,15 @@
 # Propless 80% campaign — progress, not qualification
 
-E467 OFFLINE candidate B4411F24 archived, NOT flashed. Plain persistence now
+E468/E469 CURRENT: installed63F48607 restored/readbackverified, OFF/UARTclosed.
+B4411F24 shorter-loop candidate FAILEDhand-off:6accepts,3msclosed,0targethold,
+Tracking8(age1028>1000us),late0. Onearchived15%control63F48607 thenPASS:
+20.278s target,late0/thin0,COMPmax34us,~2152eHz conditionalholdestimate,
+coast2165. Dualreviews retained; onepair doesNOTprove cadencecausation.
+CandidateUNPROMOTED; no25escalation/retry. Current sourceHEAD7a38c54 still
+containscandidate, NOTinstalledbehavior. Nextoffline timingwork shouldpreserve
+previoussamplingcadence. Noenvelopegain; goal80active.
+
+E467 historical OFFLINE candidate B4411F24 archived. Plain persistence now
 compares raw bit30 against a precomputed expected mask:12->7 instructions per
 successful loop iteration; volatile read retained. WholeCOMP855->849 listed
 instructions, stack68->76bytes; model3624->3389cycles is NOT measuredWCET.

@@ -1,0 +1,7 @@
+E468 fails the handoff screen: six sector accepts sum to six, matching accepted/zc_acc; seven commutations; four of six phase observations below 0.75. Closed time is 3 ms, hold zero. Stale age recomputes as 4,718,351−4,717,323=1,028 µs, exceeding the guard by 28 µs. This supports tracking loss, not LateArm. CCR133/1333=9.98%; target 15% was not demonstrated.
+
+E465 sector counts sum to 252,957; adding 32,084 coalesced accepts exactly reconciles accepted=285,041. zc_acc is one higher. Hold rate recomputes to 12,932.88/s. Tail span is 2.277762 s, exceeding its nominal 2 s window; phase bins at 65,535 suggest saturation. These summaries need those qualifications.
+
+Short exposure cannot establish a speed improvement. Changed persistence cadence is plausible, not proven causal. Zero hold-current blocks and −308 mA zero drift preclude a validated hold-current claim. Absolute timestamps alone do not establish 4.7 seconds of powered operation. Postflight supports all-off/nFAULT-high at observation; UART closure and firmware identity are not independently established there.
+
+I admit **one archived 63F48607 control screen**, conditional on identity verification/reset/preflight, ≥120 s off, unchanged guards/setup, command9/28 s, and no retry. Either outcome leaves E468 unpromoted; no 25% escalation.

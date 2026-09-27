@@ -1,0 +1,7 @@
+{
+  "chunk_id": "ddbec1",
+  "wall_time_seconds": 1.3783903,
+  "exit_code": 0,
+  "original_token_count": 94,
+  "output": "\r\n\r\nAlgorithm : SHA256\r\nHash      : B4411F242284B09322A8005BFC9B260994DB47E7098CE21D5822B92302B14FD8\r\nPath      : E:\\m\\robot\\esc\\rm32\\binz\\firmware50\\captures\\elf\\B4411F24.e467b-match-bits.elf\r\n\r\n\r\n\r\nVERIFY intended G071 probe 0483:374b:066CFF343433464757233430, chip STM32G071RBTx, artifact B4411F24.e467b-match-bits.elf\r\nVerification successful\nVERIFY_EXIT=0\r\nRESET_EXIT=0\r\n"
+}

@@ -1,0 +1,7 @@
+{
+  "chunk_id": "46891c",
+  "wall_time_seconds": 4.314594,
+  "exit_code": 0,
+  "original_token_count": 96,
+  "output": "\r\n\r\nAlgorithm : SHA256\r\nHash      : 63F48607E16E0C482791E8E431CE61070BE2D30491ADFD455F48895657604543\r\nPath      : E:\\m\\robot\\esc\\rm32\\binz\\firmware50\\captures\\elf\\63F48607.e463b-refusal-budget.elf\r\n\r\n\r\n\r\nTARGET 0483:374b:066CFF343433464757233430 STM32G071RBTx\r\n     Finished in 2.57s\nDOWNLOAD_EXIT=0\r\nVerification successful\nVERIFY_EXIT=0\r\nRESET_EXIT=0\r\n2026-09-27T12:13:22.4674968Z\r\n"
+}

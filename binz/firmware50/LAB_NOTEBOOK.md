@@ -47833,3 +47833,210 @@ adapter, not a new scheduling policy. Candidate NOT flashed. Installed63F48607
 remains last verifiedOFF/UARTclosed. Next: bounded gentle candidate screen,
 then25 only if admitted by observed guard/timing/filter behavior; no blind
 repeat of failed installedimage, no threshold relaxation. Goal80 remainsactive.
+
+## E468 — 2026-09-27 — B4411F24 bounded 15% persistence-cadence screen
+
+Pre-run prediction/decision: install exact E467b candidate after healthy MCP,
+explicit G071 flash/reset and disabled selfchecks. One command9 only: reverse,
+propless, 48k carrier, 15% target, 28s TOTAL (expected20.278s at target).
+No automatic retry; a fault ends this batch. Existing3A PSU setting unchanged;
+4A nominal average software guard and all raw-validity/bus/nFAULT/tracking/
+LateArm/blank/rate/handler-budget/deadline/IWDG stops unchanged. No live UART
+traffic during hold. Captured duty/hold duration, accepted/COM counts, coast,
+late/thin/spend/COMP/COM lateness, rejection counts, bus/current proxy and
+finaloff decide admission of later25screen. No motor temperature sensor;
+28s exposure and at least120sOFF between runs, not proof of thermal safety.
+E466 ended before11:49UTC;12:07UTC read-only status still showed alloutputsOFF,
+nFAULT1, same cumulative counters. Previous motor therefore rested>18min.
+
+Prediction is bounded normal completion at15 with no late arm; instruction
+reduction is proved offline, but physicalnoise rejection and timing benefit
+are not. Compare descriptive metrics with E465same15%/28s only, not causal
+n=1 statistics or qualification. Review before powered invocation. MCP healthy
+list/open/op/read/close, raw e468-before-flash.json. Native review spawn remains
+thread-limit blocked; fresh isolated read-only CLI reviewers used as E467.
+
+E468 pre-run reviews (verbatim):
+> Raw evidence: E465 records a 20.278s hold at 15%, zero forced commutations, zero late arms, one thin event, 12µs maximum recheck spend, and final outputs OFF. Its 2,164eHz hold estimate corresponds to approximately 21,640 mechanical RPM at six pole pairs. This is a witnessed operating point, not a rated-speed bound.
+>
+> E467b reports 411 passing tests and four clean ISR roots; the compilation-cache warning does not negate those results. Neither establishes physical persistence equivalence or WCET. The diff preserves Boolean decisions and read count while explicitly allowing changed sampling cadence.
+>
+> The pre-flash status proves disabled outputs on the installed image; it does not authenticate B4411F24 or establish post-flash checks.
+>
+> **Conditional admission only:** one 15%/28s propless screen after exact-image verification, reset, and passing disabled selfchecks. E465 supports descriptive comparison only. The supplied record omits the earlier failure’s mechanism, so its relevance remains unresolved. Rest time and unchanged guards do not establish thermal or speed safety. No automatic retry or 25% admission follows from this review.
+> Raw: E465 recorded zero forced commutations/late arms, 367,700 hold rejections, one thin event, and passing final-off checks. Coast agrees with reported speed, but margin instrumentation is inactive and current-zero drift (−209 mA) nearly equals the 221 mA hold proxy. E467b’s 411 tests and ISR audit pass; neither establishes physical persistence duration or worst-case execution time. Pre-flash status identifies neither the candidate nor successful post-reset checks; the selftest PASS string is unconditional on command `p`.
+>
+> Admission: hold pending the previous failed run’s failure signature and an explanation of why this repeat has acceptably bounded risk. Unchanged thresholds cannot establish effective protection when sampling cadence changes. Require exact flashed-image verification and actual post-reset selfcheck evidence before energizing.
+>
+> Even then, authorize only the single proposed 15% screen. Prior survival at roughly 21,600 mechanical RPM establishes neither a speed rating nor thermal safety. One successful repeat cannot attribute improvement to this patch or justify 25% admission; faster persistence reads may admit shorter noise pulses despite identical read counts.
+
+Dispositions before power: initial packet omitted E466capture, causing valid
+request for failure signature. Supply it before dependentwork, not ignore.
+E466 was LateArm ci45/spent11/wait11 at25% after11ms target; E46515 passed.
+No evidence E466 was thermal/electrical incident; immediateguardstop and final
+off retained. This different candidate reduces actual pre-arm instructions,
+not elapsed accounting; first15 is a lower-point screen, not retrying25 to pass.
+COM/guard concurrency unchanged. Postflash exactB4411F24+explicitreset success;
+e468-preflight.json alloutputsOFF/nFAULT1/recheckcounters0. p selftest message
+is cached, not rerun: failed bootchecks enter a fatal loop that never reads or
+dispatches commands, so responsive p is gated by successful actual bootchecks.
+Reviewer called spentmax recheckspend: it is decision-to-arm elapsed, not
+optionalrecheck-only cost. Currentproxy notcalibrated, no thermal/speedrating
+claim. Additional narrow pre-run review receives omittedfault + postflashfacts.
+
+E468 supplemental independent pre-run reviews (verbatim):
+> E466 documents the prior fault: one late arm at ci=45 µs, spent=11 µs, guard reason15/top-level28, after only11 ms at target. POSTSTOP reports gates low, enable off, PWM zero, nFAULT high. This resolves the missing prior-fault evidence, but provides little target-duration evidence.
+>
+> The postflash response reports all-off, zero recheck activity, and passing self-tests. Supplied source supports the claim that failed boot checks cannot reach the `p` response. However, neither that response nor the flash transcript identifies B4411F24; “Finished” alongside a PowerShell error record and an empty reset capture leaves image identity unverified.
+>
+> **Verdict: hold only for running-image linkage.** Establish that the responding device runs the reviewed B4411F24 build. Then the proposed single bounded15% screen is supportable on the stated controls; filter equivalence and broader qualification remain unproven.
+> **Prior-fault gap resolved; postflash identity gap remains.**
+>
+> E466 directly records the late-arm event (`ci_at_late=45`, `spent_at_late=11`), guard reason 15, termination reason 28, and successful poststop all-off check. It supports the stated failure account, though it does not establish the new shutdown path’s behavior.
+>
+> E468’s preflight supports an all-off observation and successful boot checks for the responding firmware. Zero recheck counters do not identify that firmware. The flash transcript’s “Finished” is encouraging; its PowerShell error wrapper is not independently proof of failure. But neither it nor the empty reset capture binds the responding device to B4411F24.
+>
+> **Hold admission pending that specific binding**—a device-reported build identity or verified flash/readback tied to the intended artifact. No broader qualification is needed to close this gap. The proposed single 15% screen remains an experiment, not evidence of physical filter equivalence.
+
+Dispositions: both resolved prior-fault gap; sole remaining admission condition
+is exactrunningimage linkage. Closed with actual probe-rs verify (readback)
+on explicit066CFF343433464757233430/G071 and archivedB4411F24 SHA above:
+Verification successful, VERIFY_EXIT0, RESET_EXIT0, retained toolresult in
+e468-verified-image.json. Earlier reset emittednothing, so Tee-Object created
+noresetfile; packet missingpath is not a resetfailure. Postverify/reset MCP p
+e468-verified-preflight.json again alloutputsOFF/nFAULT1,counters0,bootchecksPASS.
+No additional changed hypothesis or waived reviewcondition. Proceed exactly
+one predeclared command9/28s screen; same aborts, no automaticretry.
+
+E468 result FAIL before target: exactB4411F24 capture
+2026-09-27/e468-propless150-matchbits_01.txt. Tracking8 after3msclosed,
+hold0,accepted/zc6,COM7,seed771us->finalavg548us,ci_min463,4of6acceptslt075.
+Missing-event guard age1028>1000us (late28); no LateArm/thin/blank/storm/
+handleroverrun or sag/current/nFAULT stop. spentmax7us/COMPmax16us refer to
+short startup exposure, cannot compare them as speedgain against E46520s hold.
+Current has0holdblocks,whole-runproxy257mA/zero drift-308mA notphysicalamps.
+ActualappliedCCR133/1333~9.98%,not target15. Rawbusmin1094/ref1219 but
+filtered1215/streak0/fastsagnottripped. Coast203eHz onlypoststopwitness.
+MCPpostflightalloff,nFAULT1,requests3/observations9/retired0. BoardB4411F24OFF,
+UARTclosed. No retry/escalation. Requested28s but run stopped after~4.7spower.
+
+Interpretation for dualreview: handoff Tracking failure, not newLateArm.
+Shorter persistence cadence is a candidate explanation, not provedbyoneattempt;
+nominal estimator/seed mismatch and physicaledgevalidity not inferred from
+summaryalone. Next decision proposed: ONE matched archived63F48607 control
+at15%/command9/28s after>=120sOFF, samePSU/propless/direction/guardpolicy,
+explicitverify/reset/preflight. If control fails, do notrepeatuntilpass; if it
+passes, candidate stillnotpromoted and n1comparison cannot establish causalrate.
+This distinguishes immediatebaselineavailability from assuming regression and
+adding delay blindly. No25screen while candidate failedhandoff unresolved.
+
+E468 independent result reviews (verbatim):
+> E468 fails the handoff screen: six sector accepts sum to six, matching accepted/zc_acc; seven commutations; four of six phase observations below 0.75. Closed time is 3 ms, hold zero. Stale age recomputes as 4,718,351−4,717,323=1,028 µs, exceeding the guard by 28 µs. This supports tracking loss, not LateArm. CCR133/1333=9.98%; target 15% was not demonstrated.
+>
+> E465 sector counts sum to 252,957; adding 32,084 coalesced accepts exactly reconciles accepted=285,041. zc_acc is one higher. Hold rate recomputes to 12,932.88/s. Tail span is 2.277762 s, exceeding its nominal 2 s window; phase bins at 65,535 suggest saturation. These summaries need those qualifications.
+>
+> Short exposure cannot establish a speed improvement. Changed persistence cadence is plausible, not proven causal. Zero hold-current blocks and −308 mA zero drift preclude a validated hold-current claim. Absolute timestamps alone do not establish 4.7 seconds of powered operation. Postflight supports all-off/nFAULT-high at observation; UART closure and firmware identity are not independently established there.
+>
+> I admit **one archived 63F48607 control screen**, conditional on identity verification/reset/preflight, ≥120 s off, unchanged guards/setup, command9/28 s, and no retry. Either outcome leaves E468 unpromoted; no 25% escalation.
+> **Conclusion: observed handoff failure; causal attribution remains unproved.** E468 records six accepts, seven commutations, then stale-event shutdown. That establishes loss of accepted-event continuity, not whether physical crossings disappeared, persistence rejected valid crossings, or earlier accepts were false. Shortened sampling cadence is plausible; Boolean equivalence and 411 offline tests do not establish temporal equivalence. E465’s successful hold provides context, not a matched causal comparison.
+>
+> **Archived-control admission: conditional, not established by this packet.** One exact-SHA baseline run could test present baseline operability. However:
+>
+> - “Same guards” requires verification against the archived binary; the supplied diff is not a complete E465→E468 provenance record.
+> - The printed `DIODESELFTEST ... PASS` is unconditional on each `p` command after startup checks. It does not demonstrate freshly executed postflight self-tests.
+> - Historical coast speed implies approximately 21,560 mechanical RPM at six pole pairs. Previous survival, propless operation, a 3 A PSU setting, and 120 seconds OFF do not establish mechanical or thermal safety.
+> - Verify independent shutdown, physical containment, and enforceable exposure bounds before admission; an exact binary hash alone cannot establish these.
+>
+> If those conditions are already documented, admit **one** archived control with unchanged aborts. Any failure ends testing; no automatic retries. A pass neither proves regression nor qualifies E468.
+
+Dispositions: Tracking/zero targethold accepted; cause unresolved. Absolute
+last_us is not itself powered duration: retract~4.7spower as unproved; actual
+fixture exited8.65s including coast/IO, far below28s bound. Existing tailwindow
+is intentionally1..2nominalwindows, so E4652.277762s is not an error; histogram
+saturation alreadyretained. p is cachedbootchecks plus actualoutputreadback,
+not freshlyrerunselfchecks. E466guard15/E468Tracking immediatelydeenergized;
+E464 disabledstop/overbudget realIRQ test independently retained. Controller/
+protection/guard/recheck/binaryentry source diff e0b9482..7a38c54 unchanged
+apartfrom E467roots plainpredicate adapter; archived63 audit retained. No
+broader unknown thermal/RPM/physicalcontainment certification is claimed or
+inferred from cooling. No hardwarechange/newriskreport since operatorprovided
+solebenchownership/proplesssetup; maintain bounded existing15point. Current
+evidence admits onebaselineavailability control, not speedincrease or safety
+qualification. Require verifiedimage and>=120s measuredOFF beforepower.
+
+## E469 — 2026-09-27 — one archived baseline-availability control
+
+Pre-run: exact63F48607 afterE468B441failedhandoff; no sourcechange/build.
+One15% command9/28s total, identicalbounds/aborts/setup toE468. Prediction:
+archivedbaseline completes normally asE465; failure ends thebatchand rules
+out claiming a simple candidate-only failure from this pair. A pass is still
+n1, not proof cadence is solecause. No25screen. Reviewadmission above;
+verifyflash/readback/reset, MCPpreflight, cool>=120s thenexecuteonce.
+
+E469 preflight: explicitdownload/verify/reset allEXIT0, fullSHA63F48607 matches
+archive; raw e469-flash-verify.json.12:13:22UTC is>135s after12:11:07UTC
+E468poststop interval, meeting120sOFF. MCPp alloutputsOFF/nFAULT1/counters0,
+cachedsuccessfulbootchecks. UARTclosed beforefixture; onecontrolnow.
+
+E469 result: exact63F48607 normaldeadline2,closed22778ms,targethold20278ms,
+CCR199/1333=14.929%,ceiling150. accepted284655/zc284657/COM284657,
+holdaccepted261779; late0/thin0/spentmax12us/COMPmax34us/COMmixedlate13us;
+guardgap109us,tracking0,storm0,overrun0,blanklatched0,foldback0,nFAULTclear.
+Coast2165eHz,matched997permille,holdrate261779/20.278=12909.50accepts/s
+(~2151.58eHz onlyunder6accepts/cycle). Sector253883+coalesced30772=284655;
+two ISRvsforeground counts remain reporting-boundary ambiguity, notrotortruth.
+Two phasehistbins saturated65535; no full distributionclaim. Currentproxy211mA
+withzerodrift-273mA,notcalibratedamps. Busref1211/rawmin1110,filtered1212,
+streak0/nofastsag. Tail29508/span2277688us is1..2nominalwindow bydesign.
+PostMCPalloutputsOFF/nFAULT1,requests19221/observations310148/retired0;
+these are observationactivity, notsuccessfulrescues. UARTclosed.
+
+Conclusion proposedforreview: archivedbaseline presentlyoperable at15;
+E468 candidate notpromoted, no25escalation orcandidate retry. Onefailure/one
+control doesnotprove cadencecausation, norjustifyrateclaims. Faster loop
+changes physicalfilterduration despite hostlogicalequivalence, so nextactual
+timingwork shouldpreserve thiscadence and target arm/preparation cost or
+scheduling, startingfrom archivedpre-E467 behavior. Current source still
+contains frozenE467candidate; doNOT treat rebuiltHEAD as installed/qualified.
+No envelopegain. Completedtwo predeclaredscreens,totalexposure bounded;
+goal80 remainsactive, installed63F48607OFF/UARTclosed.
+
+E469 independent reviews (verbatim):
+> Raw evidence: E468 records six accepts, zero hold, and a stale age of 1028µs against a 1000µs limit. E469 records 20,278ms hold, 261,779 hold accepts, zero forced events, and coast_ehz=2165. Flash verification matches E469’s full SHA256; postflight reports outputs off and nFAULT=1.
+>
+> Arithmetic checks:
+>
+> - 199/1333 = 14.9287% applied duty.
+> - 261779/20.278 = 12,909.507 accepts/s; dividing by six gives 2151.585Hz, conditional on six valid accepts per electrical cycle.
+> - Sector counts sum to 253,883; adding 30,772 coalesced accepts gives 284,655.
+>
+> The evidence supports one successful nominal-15% baseline hold and one candidate tracking failure. Keeping the candidate unpromoted and avoiding escalation is justified; cadence causation and envelope improvement are unproven.
+>
+> “Matched997” is reported, but its calculation is unspecified. “Normal deadline,” “foldback0,” and the tail’s “by design” explanation require definitions beyond these records. UART closure, current-source state, predeclared exposure limits, and cadence-dependent filtering are not independently established here. Preserving old cadence is a reasonable experimental constraint, not a demonstrated causal remedy.
+> Raw evidence: E468 reports reason=8, six accepts, zero hold, stale age=1028µs against limit=1000µs. E469 reports reason=2, hold=20278ms, tracking_fault=0, and postflight outputs OFF/nFAULT=1. Flash verification matches E469’s SHA256.
+>
+> Arithmetic checks pass: 199/1333=14.929%; 261779/20.278=12909.51 accepts/s; dividing by six gives 2151.58eHz. Sector sum=253883; adding 30772 coalesced accepts gives 284655.
+>
+> Your restrained disposition is supported: retain the baseline, leave the candidate unpromoted, and claim no envelope gain or demonstrated causation.
+>
+> Qualifications:
+>
+> - “Presently operable at15” should mean **one successful nominal-15% propless hold**, not repeatability or loaded qualification.
+> - `matched_rate_permille=997` is reported, not independently verified: 2151.58/2165 gives approximately 994‰. Its calculation needs definition.
+> - Zero sag streak/trip supports no recorded sag trip; it does not establish absence of fast sag.
+> - Tail duration is 1.139 nominal windows; “by design” requires implementation evidence.
+> - UART closure, predeclared exposure bounds, frozen HEAD, and cadence/filter causation are not established by these excerpts. Preserving old cadence is a conservative constraint, not an experimentally proven remedy.
+
+Dispositions: one successfulnominal15screen, not repeatability. matched997 is
+fixture-reportedmatchedtail/time-anchoredcoast, NOTwholeholdrate/coast2165;
+scripts/speed.py one() derivespowered from BEMFTAIL accepts/span and fitscoast
+with offset/first_us. Wholehold2151.58 is deliberatelyseparate. No newrateproof.
+Reason2 defined SegmentDeadline in protection.rs. Monotonicfoldbackceiling
+unchanged150 plusactualCCR199 supports no dutyfold; no claim absenceofallbus
+notches fromstreak0. Tail1..2window rule in states.rs1040+ and sim.rs700+
+explicitlytested. UARTclose successfulMCPresponse retainedinconversation;
+sourceHEAD7a38c54 stillcandidate unchanged, installedSHAverified separately.
+Predeclaredbounds and reviews above are notebookfacts, omittedpacket not
+missingcampaignwork. Nextofflinecadenceconstraint is experimentaldiscipline,
+not a demonstratedfix. Preservefailedcandidatecapture/archive/sourcecommit;
+no morepoweredtests thisbatch. Goalactive, no envelopegain.
