@@ -23,6 +23,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "diode-lean"
+path = "bin/diode-lean.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "diode-fresh"
 path = "bin/diode-fresh.rs"
 test = false

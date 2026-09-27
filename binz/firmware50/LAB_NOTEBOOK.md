@@ -44966,3 +44966,169 @@ next reviewer before25, rather than asking them to infer protection coverage
 from a clean capture. E430 batch result accepted as single15exploration only;
 next25screen remains contingent on that narrowed coverage review. Do not
 invent a new hardware fault or silently reduce/increase any threshold.
+
+### E431 - coverage clarification and bounded25% decision
+
+Previous turn was progress: typedconstant source committed6bb1801 and one
+measured15screen, no envelope gain. Re-read objective; firmware50 worktree
+clean at turn start. No protection edit/build. E430's shorthand 'slowbus'
+means the existing absolute8.4V averaged bus floor, NOT an independent10%
+resting-reference stop. DEPTH_FRACTIONS are report-only. FastBusSag evaluates
+8scanmean vs95%207msEWMA with3judgements. RAW_LIMIT31857 is nominal4A
+signed100scanresidual, not31857mA. PSU3A is operator-set historical evidence,
+not independently measured today. No peakcurrent/temperature stop claimed.
+Fresh evidence/adversarial packet includes protection implementation and
+foreground+guard callers, tracking, and rawE430. Scope: close last review's
+coverage gap, decide ONE25%28s screen after>=120sOFF. No automaticclimb/retry.
+
+E431 independent reviews, verbatim:
+
+> The raw code shows VREF plausibility checks, an absolute bus-code floor, filtered sag protection, averaged-current verdict handling, foreground fault exits, and ISR shutdown for driver fault, tick gap, stale feedback, campaign deadline, and tracking faults.
+>
+> Coverage limits matter: phase rails are retained; current protection averages 100 scans and excludes negative residuals. Its final decision logic is truncated here. Sag judges eight-scan means against a moving reference, so it is not raw-dip or slow-droop protection. Fast accepted events can be report-only; tracking does not certify rotor lock. IWDG operation and floor calibration are asserted but not demonstrated by these excerpts.
+>
+> The supplied screen is **15%, not 25%**. It reports zero LateArm, blank-latch, storm, overrun, and guard faults, plus passing post-stop checks. It supplies no thermal, peak-current, or independent PSU-readback evidence.
+>
+> **No concrete new defect is established that bars the proposed single 25%, 28-second capped propless reverse attempt after 120 seconds OFF, without retry.** That supports only a bounded screen—not qualification, guaranteed safety, or progression toward 80%.
+
+> The supplied evidence does not establish a new defect that bars the single bounded 25% attempt; it does not establish safety either.
+>
+> One concrete code mismatch: `tighten_max_interval` rejects requests below `min_interval`, even with report-only fast events. Thus the advertised three-period deadline can stop tightening; the screen reports 240 µs against 76 µs mean sectors. This weakens that timing claim, but does not demonstrate a blocker for this attempt.
+>
+> Coverage includes latched ISR shutdown, feedback/timing/event guards, absolute bus floor, filtered sag, and averaged-current protection. Sag uses eight-scan means; current uses signed 100-scan sums. Neither guarantees peak-current protection; ordered false crossings can satisfy tracking. The current verdict implementation is truncated here.
+>
+> The evidence is a 15% run, not a 25% result. Thermal behavior and actual PSU limiting remain unmeasured; operator-set 3 A is not verified protection.
+>
+> Scope: one 28-second, capped, propless reverse attempt after 120 seconds OFF, no retry or threshold changes. Success would not qualify 80%/12 V operation.
+
+Dispositions: retain limits, including tracking240us observed vs a literal
+3*76=228; no exact3period guarantee. Existing tightened deadline is bounded
+by policy and ordered falsecrossings do not prove lock. No new thresholds,
+no peak/thermal/PSU certification claimed. Current verdict truncation limits
+this review's new audit scope, not a new implementation finding; fourroots
+unchanged exceptCOMP arithmetic, prior protection tests retained. Both support
+one bounded attempt with exposure restrictions, not higher-rung admission.
+
+### E432 - one25% screen on unchanged E430 candidate
+
+Pre-run prediction: constant16 compute path may avoid prior dynamicfresh
+LateArm near22% (E428); one attempt decides observed survival only, not failure
+rate or uniquecause. Same1D3D29EC, command8, target250, total28s/minhold15s,
+48kdiodeproplessreverse, all guards. Require MCPp OFF first; >=120sOFF since
+E430 capture completion08:17:22UTC. Retaincompleteorder tail, stop endsbatch.
+
+E432 result: MCPp alloffPASS/close; start08:22:22UTC (>300sOFF).
+Capture e432-propless250-diode-const_01.txt exact1D3D29EC, reason8,
+TrackingStale1 after4msclosed/sevenaccepts, targethold0, actualCCR133/1333
+(~10%), not25%. No LateArm/thin/overrun/blanklatched/sag; spent10,
+COMPmax16,COMlate2,tracklimit1000us. FinaloutputsOFF PASS/UARTclosed.
+Sixpaired IDs289144..289149, postapplydeadline5..6us,service2us,brackets2ticks.
+Seeded COM289143unmatched and terminalaccept289150uncommutated. Accepted
+intervals500,474,442,339,792,506,1035us; last1035 exceeds1000 watch.
+Tracking::event calls poll BEFORE updatinglast, consistent with stale latch
+on lateacceptededge. Neither order trace nor coast identifies physicalcause.
+E432 did not reach prior22%latearm regime; no optimization survival verdict.
+No retry. Next proposal is OFFLINE lean typedconstant variant: remove OrderRing
+work using existingNoChain, preserve all detector/guard decisions. This is
+diagnostic retirement toward production, not a newinstrument or provenfix.
+Dual reviews receive fullE432/source before dependent implementation.
+
+E432 reviews, verbatim:
+
+> RAW recomputation: acceptance gaps are 474, 442, 339, 792, 506, 1035 µs; sectors advance 1→2→3→4→5→6→1. For IDs 289144–289149, application minus crossing minus requested wait is 5, 6, 6, 5, 6, 5 µs.
+>
+> The terminal acceptance at 21655 follows 20620 by 1035 µs, exceeding the reported 1000-µs ceiling. `event()` polls before updating `last`, so this gap alone suffices to latch Stale **if those timestamps match the watch’s timebase**; `guard_event` is absent here. Detector acceptance publishes and arms before calling the guard. Thus a terminal acceptance record without matching COM is consistent with shutdown following acceptance, not proof of a stalled commutator.
+>
+> Proceed offline with the separate NoChain binary as a falsifiable overhead experiment:
+>
+> - Verify emitted roots actually remove diagnostic work while retaining detector, guard, advance, and bridge behavior.
+> - Check deadline arithmetic and arm-before-guard ordering remain intact.
+> - Quantify instruction/cycle changes; smaller code alone does not establish lower execution cost.
+> - Make no startup-success or 80%-duty claim from this trace.
+>
+> Existing diagnostics do not establish overhead as the cause.
+
+> RAW: terminal accepts are 20620 → 21655 µs: 1035 µs apart. With `last=20620` and a 1000 µs ceiling, 21620 is legal; 21621 is stale. `event()` polls before updating `last`, so feeding 21655 necessarily latches Stale, assuming those are the watch timestamps.
+>
+> Six matched accept→COM pairs give applied-minus-crossing-minus-wait errors of 5, 6, 6, 5, 6, 5 µs. Terminal acceptance requests 169 µs, nominally reaching 21824. Detector code arms **before** `guard_event`; an acceptance recorded after that call does not prove watchdog acceptance. Missing terminal COM is therefore consistent with shutdown canceling an already-armed timer, not evidence of timer failure.
+>
+> Proceed offline with the separate NoChain binary, subject to falsifiable limits:
+>
+> - Verify emitted roots remove logging while preserving detector decisions, publication-before-arm, guard invocation, and shutdown behavior.
+> - Test 1000/1001 µs boundaries and arm-before-stale cancellation.
+> - Demonstrate instruction/cycle reductions; code-size reduction alone is insufficient.
+> - Attribute neither the 35 µs excess nor startup failure to diagnostics without comparative evidence.
+>
+> NoChain removes diagnostic work; it does not establish progress toward 80% operation.
+
+Dispositions: accept inference limits. guard_event timestamps from guard_now,
+not the rawentry field; terminal1035 supports, not independentlyproves, its
+exactwatchgap. No timerfailure/physicaledge/overheadcause claim. Existing
+stopcheckedarming remains; add literal1000/1001 watchboundary replay but do
+not mislabel that as hardware cancellation proof. No poweredrun follows here.
+
+### E433 - lean constant16 fresh binary, offline
+
+Before edit/build: separate diode-lean selectsNoChain for COMP/COM while
+retaining ConstantAdvance<FreshEstimate,16>, DiodeLatched, Production,
+compiletime16 assertions and disabledchecks. Retire orderring only, no new
+feature gates or thresholdchanges. Prediction: remove emitted ring stores
+and RAM, preserve all guard paths and estimatorsemantics. Rootaudits,
+release-s/LTO,clippy/tests/structure and disassembly required; no code-size
+as WCET shortcut. Compare exactE429archive, not a stale mutablebinary.
+
+E433 offline result: archived9C748DED.e433-diode-lean.elf SHA256
+9C748DEDDEFFE629CE0291AB135D3EED77A92433D58E4DFE7366F0C57BABF018,
+release-s/thinLTO/codegen1, text46200/data740/bss4188. Tests380PASS,
+clippyPASS, fourroothelperauditPASS. Current-source structure limitsPASS;
+historical archived violations remain, no wholearchivePASSclaim.
+ComparedE429 constantdiagnostic: COMP787->763,COM439->388 disassemblyentries
+(includesliteraldata); dataRAM unchanged and bss saves5140bytes. DMA/guard
+normalized instructions identical but encodedliteralbytes differ; nm binds
+DMA_BUF20002708->200012f4 and SCAN20002738->20001324, not changedthresholds.
+No ordertrace symbols remain. Fixed16 wait still shifts/subtracts; cold
+stop_expired_arm call remains inCOMP. No WCET/physicaltiming gain established.
+Finecounter initialization retained; onlyNoChain/recording/bannerdifference.
+Two fresh raw-first reviewers inspect actualbinaryassembly and source; candidate
+NOT FLASHED, board remains1D3D29EC/OFF/UARTclosed. No furthermotor thisbatch.
+
+E433 reviews, verbatim:
+
+> The supplied evidence supports E433 as an offline candidate, not qualification.
+>
+> - Source changes select `NoChain` in both motor roots and remove foreground recorder handling; fixed16, `FreshEstimate`, `DiodeLatched`, startup checks, and `Production` remain.
+> - COMP assembly retains live-comparator persistence, estimate publication before timer preparation, elapsed-time subtraction, an expired-arm call, late-arm bookkeeping, and guard processing. Fixed16 wait emits shifts/subtraction: `(average >> 1) - (average >> 2)`, not necessarily `average >> 2` because of rounding.
+> - TIM16 retains guarded bridge writes and comparator-rearm paths. Nothing shown establishes accidental guard removal.
+> - The log reports 380 passing tests despite an incremental-cache warning. Matching hashes connect the release and archived ELF. Reported instruction reductions are not WCET evidence.
+>
+> Actionable gaps:
+>
+> 1. Supply `ChainLog` defaults, particularly `ORDER`, and both reachable helper bodies (`stop_expired_arm`, `comp_exti_arm`) to complete recorder-removal and stop-path review.
+> 2. Supply audit rules and targeted test names/results; aggregate output does not establish the claimed stale-contract coverage.
+> 3. Resolve relocated DMA/guard literals against both symbol maps; normalized instruction equality alone is insufficient.
+> 4. Provide reproducible build provenance and old/new path comparisons before claiming behavioral equivalence.
+>
+> The raw evidence does not establish hardware-check outcomes or readiness for the proposed powered sequence.
+
+> The evidence supports retaining E433 as an offline candidate. It does not establish full behavioral equivalence or stop coverage.
+>
+> - COMP still publishes accepted estimates before timer arming, subtracts elapsed time after timer preparation, branches to `stop_expired_arm`, and retains guard-triggered shutdown writes. TIM16 retains inhibit checks around bridge updates. No obvious guard removal appears in the supplied bodies.
+> - Constant wait emission is `floor(avg/2) − floor(avg/4)` at `0x08000978–0x08000990`, using the freshly updated, clamped average. Preserve this rounding explicitly; it is not always `floor(avg/4)`.
+> - Supply `stop_expired_arm` and `comp_exti_arm` disassembly plus the audit rules. “Reachable=2 / OK” alone cannot establish those helpers’ stop and rearm behavior.
+> - Supply the `ChainLog::ORDER` default and an annotated old/new comparison covering both roots and recorder lifecycle effects. New assembly and instruction totals alone do not demonstrate that every removed operation was recording-only.
+> - The 380-test summary establishes a passing host suite, but does not identify the claimed 1000/1001 cases or connect its configuration to this ELF. Record complete build/test commands, features, revision, and artifact hashes.
+>
+> Matching hashes establish archived-image identity. Instruction reductions are not WCET evidence. These gaps limit offline sign-off; they do not establish a defect.
+
+Dispositions: offline candidate only; no power signoff assumed. ChainLog::ORDER
+is false by default (chain.rs173), NoChain::ONfalse and accept/service noops;
+sourceinspection closes this omission. Tests invocation was cargo test --lib
+--target x86_64-pc-windows-msvc --features advance-ref,deep-filter,com-top -q;
+new test tracking::tests::e432_stale_boundary_is_not_cleared_by_a_late_accept
+checks1000allowed/1001stale and lateracceptcannotclear; not hardware cancellation.
+Build cargo build --release --bin diode-lean --features advance-ref,deep-filter,com-top;
+clippy samebinary/features -- -D warnings. Linker rust-lld and linker-flavor
+ld.lld, cwdfirmware50. Sourcebase6bb1801 plus this committedbinary/test/TOML diff.
+Helper bodies and fullold/newroot semantic relocation check still owed before
+flash; no claim allremovedmachineinstructions are strictlylogging (register
+allocation also changes). Next work is that bounded audit, not anotherprobe.

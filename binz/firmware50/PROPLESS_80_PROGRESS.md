@@ -1,6 +1,6 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E430 exploratory result, 2026-09-27; E430 dual review pending.
+Updated through E432 failed exploration and E433 offline build, 2026-09-27.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
 
 Latest: E430 fixed16 constant-policy diode candidate `1D3D29EC` completed one
@@ -13,6 +13,12 @@ LateArm; lean diode E421 stopped Tracking after0.976s at25%. Different stop
 mechanisms and observer effects remain unresolved. Current source-low-off
 drive has a different speed/duty curve from historical complementary PWM;
 do not equate these percentages. Installed E430 image is OFF/UARTclosed.
+E432 then requested25% on that sameimage but stopped Tracking at startup:
+sevenacceptedcrossings,4msclosed,~10%actual,zero25targetdwell. Thus no test
+of the22%latearm regime. Recorded1035us terminalgap vs1000uswatch; sixprior
+COMs served withoutgrossdelay. Causeunresolved, no retry. E433 lean typed
+constant candidate9C748DED removes diagnosticring only;380tests/clippy/audit
+pass,5140bytesRAMsaved. Stagedunflashed, independentreviewpending.
 Current screens are bounded28s powered and>=120sOFF; no measured temperature.
 
 ## Scope

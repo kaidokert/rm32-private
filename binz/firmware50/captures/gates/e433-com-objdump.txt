@@ -1,0 +1,395 @@
+
+captures/elf/9C748DED.e433-diode-lean.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+08000cb4 <TIM16>:
+ 8000cb4:	b5f0      	push	{r4, r5, r6, r7, lr}
+ 8000cb6:	af03      	add	r7, sp, #12
+ 8000cb8:	b08d      	sub	sp, #52	@ 0x34
+ 8000cba:	49bf      	ldr	r1, [pc, #764]	@ (8000fb8 <TIM16+0x304>)
+ 8000cbc:	2500      	movs	r5, #0
+ 8000cbe:	610d      	str	r5, [r1, #16]
+ 8000cc0:	4abe      	ldr	r2, [pc, #760]	@ (8000fbc <TIM16+0x308>)
+ 8000cc2:	7810      	ldrb	r0, [r2, #0]
+ 8000cc4:	2800      	cmp	r0, #0
+ 8000cc6:	d02f      	beq.n	8000d28 <TIM16+0x74>
+ 8000cc8:	48bd      	ldr	r0, [pc, #756]	@ (8000fc0 <TIM16+0x30c>)
+ 8000cca:	6803      	ldr	r3, [r0, #0]
+ 8000ccc:	6910      	ldr	r0, [r2, #16]
+ 8000cce:	1a18      	subs	r0, r3, r0
+ 8000cd0:	b201      	sxth	r1, r0
+ 8000cd2:	2900      	cmp	r1, #0
+ 8000cd4:	d404      	bmi.n	8000ce0 <TIM16+0x2c>
+ 8000cd6:	b280      	uxth	r0, r0
+ 8000cd8:	6951      	ldr	r1, [r2, #20]
+ 8000cda:	4281      	cmp	r1, r0
+ 8000cdc:	d200      	bcs.n	8000ce0 <TIM16+0x2c>
+ 8000cde:	6150      	str	r0, [r2, #20]
+ 8000ce0:	6850      	ldr	r0, [r2, #4]
+ 8000ce2:	2801      	cmp	r0, #1
+ 8000ce4:	d02f      	beq.n	8000d46 <TIM16+0x92>
+ 8000ce6:	2802      	cmp	r0, #2
+ 8000ce8:	d021      	beq.n	8000d2e <TIM16+0x7a>
+ 8000cea:	2803      	cmp	r0, #3
+ 8000cec:	d000      	beq.n	8000cf0 <TIM16+0x3c>
+ 8000cee:	e160      	b.n	8000fb2 <TIM16+0x2fe>
+ 8000cf0:	6055      	str	r5, [r2, #4]
+ 8000cf2:	48b4      	ldr	r0, [pc, #720]	@ (8000fc4 <TIM16+0x310>)
+ 8000cf4:	68c1      	ldr	r1, [r0, #12]
+ 8000cf6:	6900      	ldr	r0, [r0, #16]
+ 8000cf8:	4308      	orrs	r0, r1
+ 8000cfa:	0343      	lsls	r3, r0, #13
+ 8000cfc:	2001      	movs	r0, #1
+ 8000cfe:	0481      	lsls	r1, r0, #18
+ 8000d00:	2b00      	cmp	r3, #0
+ 8000d02:	d507      	bpl.n	8000d14 <TIM16+0x60>
+ 8000d04:	f3ef 8310 	mrs	r3, PRIMASK
+ 8000d08:	b672      	cpsid	i
+ 8000d0a:	69d4      	ldr	r4, [r2, #28]
+ 8000d0c:	1c64      	adds	r4, r4, #1
+ 8000d0e:	61d4      	str	r4, [r2, #28]
+ 8000d10:	f383 8810 	msr	PRIMASK, r3
+ 8000d14:	4aac      	ldr	r2, [pc, #688]	@ (8000fc8 <TIM16+0x314>)
+ 8000d16:	6813      	ldr	r3, [r2, #0]
+ 8000d18:	430b      	orrs	r3, r1
+ 8000d1a:	6013      	str	r3, [r2, #0]
+ 8000d1c:	0300      	lsls	r0, r0, #12
+ 8000d1e:	49ab      	ldr	r1, [pc, #684]	@ (8000fcc <TIM16+0x318>)
+ 8000d20:	6008      	str	r0, [r1, #0]
+ 8000d22:	49ab      	ldr	r1, [pc, #684]	@ (8000fd0 <TIM16+0x31c>)
+ 8000d24:	6008      	str	r0, [r1, #0]
+ 8000d26:	e144      	b.n	8000fb2 <TIM16+0x2fe>
+ 8000d28:	2000      	movs	r0, #0
+ 8000d2a:	60c8      	str	r0, [r1, #12]
+ 8000d2c:	e141      	b.n	8000fb2 <TIM16+0x2fe>
+ 8000d2e:	6055      	str	r5, [r2, #4]
+ 8000d30:	6890      	ldr	r0, [r2, #8]
+ 8000d32:	b2c1      	uxtb	r1, r0
+ 8000d34:	2906      	cmp	r1, #6
+ 8000d36:	4608      	mov	r0, r1
+ 8000d38:	d300      	bcc.n	8000d3c <TIM16+0x88>
+ 8000d3a:	2006      	movs	r0, #6
+ 8000d3c:	2900      	cmp	r1, #0
+ 8000d3e:	d000      	beq.n	8000d42 <TIM16+0x8e>
+ 8000d40:	e135      	b.n	8000fae <TIM16+0x2fa>
+ 8000d42:	2001      	movs	r0, #1
+ 8000d44:	e133      	b.n	8000fae <TIM16+0x2fa>
+ 8000d46:	930b      	str	r3, [sp, #44]	@ 0x2c
+ 8000d48:	6890      	ldr	r0, [r2, #8]
+ 8000d4a:	b2c3      	uxtb	r3, r0
+ 8000d4c:	2b06      	cmp	r3, #6
+ 8000d4e:	4619      	mov	r1, r3
+ 8000d50:	d300      	bcc.n	8000d54 <TIM16+0xa0>
+ 8000d52:	2106      	movs	r1, #6
+ 8000d54:	2001      	movs	r0, #1
+ 8000d56:	2b00      	cmp	r3, #0
+ 8000d58:	4603      	mov	r3, r0
+ 8000d5a:	d000      	beq.n	8000d5e <TIM16+0xaa>
+ 8000d5c:	460b      	mov	r3, r1
+ 8000d5e:	2b05      	cmp	r3, #5
+ 8000d60:	d800      	bhi.n	8000d64 <TIM16+0xb0>
+ 8000d62:	1c58      	adds	r0, r3, #1
+ 8000d64:	6090      	str	r0, [r2, #8]
+ 8000d66:	499b      	ldr	r1, [pc, #620]	@ (8000fd4 <TIM16+0x320>)
+ 8000d68:	6088      	str	r0, [r1, #8]
+ 8000d6a:	1e41      	subs	r1, r0, #1
+ 8000d6c:	2307      	movs	r3, #7
+ 8000d6e:	910c      	str	r1, [sp, #48]	@ 0x30
+ 8000d70:	400b      	ands	r3, r1
+ 8000d72:	2128      	movs	r1, #40	@ 0x28
+ 8000d74:	4359      	muls	r1, r3
+ 8000d76:	1851      	adds	r1, r2, r1
+ 8000d78:	6c4e      	ldr	r6, [r1, #68]	@ 0x44
+ 8000d7a:	07f6      	lsls	r6, r6, #31
+ 8000d7c:	d04e      	beq.n	8000e1c <TIM16+0x168>
+ 8000d7e:	6d4c      	ldr	r4, [r1, #84]	@ 0x54
+ 8000d80:	9405      	str	r4, [sp, #20]
+ 8000d82:	6d8c      	ldr	r4, [r1, #88]	@ 0x58
+ 8000d84:	9407      	str	r4, [sp, #28]
+ 8000d86:	6dcc      	ldr	r4, [r1, #92]	@ 0x5c
+ 8000d88:	9409      	str	r4, [sp, #36]	@ 0x24
+ 8000d8a:	6c8c      	ldr	r4, [r1, #72]	@ 0x48
+ 8000d8c:	9408      	str	r4, [sp, #32]
+ 8000d8e:	3144      	adds	r1, #68	@ 0x44
+ 8000d90:	8c8c      	ldrh	r4, [r1, #36]	@ 0x24
+ 8000d92:	9406      	str	r4, [sp, #24]
+ 8000d94:	8c0c      	ldrh	r4, [r1, #32]
+ 8000d96:	9404      	str	r4, [sp, #16]
+ 8000d98:	8b89      	ldrh	r1, [r1, #28]
+ 8000d9a:	9103      	str	r1, [sp, #12]
+ 8000d9c:	f3ef 8110 	mrs	r1, PRIMASK
+ 8000da0:	910a      	str	r1, [sp, #40]	@ 0x28
+ 8000da2:	b672      	cpsid	i
+ 8000da4:	2163      	movs	r1, #99	@ 0x63
+ 8000da6:	0089      	lsls	r1, r1, #2
+ 8000da8:	5c51      	ldrb	r1, [r2, r1]
+ 8000daa:	7816      	ldrb	r6, [r2, #0]
+ 8000dac:	2e00      	cmp	r6, #0
+ 8000dae:	d100      	bne.n	8000db2 <TIM16+0xfe>
+ 8000db0:	e0f7      	b.n	8000fa2 <TIM16+0x2ee>
+ 8000db2:	2900      	cmp	r1, #0
+ 8000db4:	d000      	beq.n	8000db8 <TIM16+0x104>
+ 8000db6:	e0f4      	b.n	8000fa2 <TIM16+0x2ee>
+ 8000db8:	4e87      	ldr	r6, [pc, #540]	@ (8000fd8 <TIM16+0x324>)
+ 8000dba:	6834      	ldr	r4, [r6, #0]
+ 8000dbc:	9401      	str	r4, [sp, #4]
+ 8000dbe:	2102      	movs	r1, #2
+ 8000dc0:	4321      	orrs	r1, r4
+ 8000dc2:	6874      	ldr	r4, [r6, #4]
+ 8000dc4:	9402      	str	r4, [sp, #8]
+ 8000dc6:	6031      	str	r1, [r6, #0]
+ 8000dc8:	2401      	movs	r4, #1
+ 8000dca:	9902      	ldr	r1, [sp, #8]
+ 8000dcc:	430c      	orrs	r4, r1
+ 8000dce:	2104      	movs	r1, #4
+ 8000dd0:	9100      	str	r1, [sp, #0]
+ 8000dd2:	438c      	bics	r4, r1
+ 8000dd4:	6074      	str	r4, [r6, #4]
+ 8000dd6:	4c81      	ldr	r4, [pc, #516]	@ (8000fdc <TIM16+0x328>)
+ 8000dd8:	9905      	ldr	r1, [sp, #20]
+ 8000dda:	4321      	orrs	r1, r4
+ 8000ddc:	61b1      	str	r1, [r6, #24]
+ 8000dde:	2108      	movs	r1, #8
+ 8000de0:	9105      	str	r1, [sp, #20]
+ 8000de2:	9c07      	ldr	r4, [sp, #28]
+ 8000de4:	430c      	orrs	r4, r1
+ 8000de6:	61f4      	str	r4, [r6, #28]
+ 8000de8:	9903      	ldr	r1, [sp, #12]
+ 8000dea:	6371      	str	r1, [r6, #52]	@ 0x34
+ 8000dec:	9904      	ldr	r1, [sp, #16]
+ 8000dee:	63b1      	str	r1, [r6, #56]	@ 0x38
+ 8000df0:	9c06      	ldr	r4, [sp, #24]
+ 8000df2:	63f4      	str	r4, [r6, #60]	@ 0x3c
+ 8000df4:	9c08      	ldr	r4, [sp, #32]
+ 8000df6:	00a4      	lsls	r4, r4, #2
+ 8000df8:	9905      	ldr	r1, [sp, #20]
+ 8000dfa:	1b09      	subs	r1, r1, r4
+ 8000dfc:	241c      	movs	r4, #28
+ 8000dfe:	400c      	ands	r4, r1
+ 8000e00:	9900      	ldr	r1, [sp, #0]
+ 8000e02:	40a1      	lsls	r1, r4
+ 8000e04:	9c09      	ldr	r4, [sp, #36]	@ 0x24
+ 8000e06:	438c      	bics	r4, r1
+ 8000e08:	6234      	str	r4, [r6, #32]
+ 8000e0a:	2120      	movs	r1, #32
+ 8000e0c:	6171      	str	r1, [r6, #20]
+ 8000e0e:	9902      	ldr	r1, [sp, #8]
+ 8000e10:	6071      	str	r1, [r6, #4]
+ 8000e12:	9901      	ldr	r1, [sp, #4]
+ 8000e14:	6031      	str	r1, [r6, #0]
+ 8000e16:	990a      	ldr	r1, [sp, #40]	@ 0x28
+ 8000e18:	f381 8810 	msr	PRIMASK, r1
+ 8000e1c:	4970      	ldr	r1, [pc, #448]	@ (8000fe0 <TIM16+0x32c>)
+ 8000e1e:	680c      	ldr	r4, [r1, #0]
+ 8000e20:	26f0      	movs	r6, #240	@ 0xf0
+ 8000e22:	43b4      	bics	r4, r6
+ 8000e24:	2603      	movs	r6, #3
+ 8000e26:	960a      	str	r6, [sp, #40]	@ 0x28
+ 8000e28:	4373      	muls	r3, r6
+ 8000e2a:	4e6e      	ldr	r6, [pc, #440]	@ (8000fe4 <TIM16+0x330>)
+ 8000e2c:	18f3      	adds	r3, r6, r3
+ 8000e2e:	789b      	ldrb	r3, [r3, #2]
+ 8000e30:	009b      	lsls	r3, r3, #2
+ 8000e32:	4e6d      	ldr	r6, [pc, #436]	@ (8000fe8 <TIM16+0x334>)
+ 8000e34:	58f3      	ldr	r3, [r6, r3]
+ 8000e36:	4323      	orrs	r3, r4
+ 8000e38:	600b      	str	r3, [r1, #0]
+ 8000e3a:	f3ef 8110 	mrs	r1, PRIMASK
+ 8000e3e:	b672      	cpsid	i
+ 8000e40:	68d3      	ldr	r3, [r2, #12]
+ 8000e42:	1c5b      	adds	r3, r3, #1
+ 8000e44:	60d3      	str	r3, [r2, #12]
+ 8000e46:	f381 8810 	msr	PRIMASK, r1
+ 8000e4a:	b2c1      	uxtb	r1, r0
+ 8000e4c:	2907      	cmp	r1, #7
+ 8000e4e:	990c      	ldr	r1, [sp, #48]	@ 0x30
+ 8000e50:	d300      	bcc.n	8000e54 <TIM16+0x1a0>
+ 8000e52:	4629      	mov	r1, r5
+ 8000e54:	b2c9      	uxtb	r1, r1
+ 8000e56:	0089      	lsls	r1, r1, #2
+ 8000e58:	1851      	adds	r1, r2, r1
+ 8000e5a:	4b5e      	ldr	r3, [pc, #376]	@ (8000fd4 <TIM16+0x320>)
+ 8000e5c:	691d      	ldr	r5, [r3, #16]
+ 8000e5e:	695b      	ldr	r3, [r3, #20]
+ 8000e60:	930c      	str	r3, [sp, #48]	@ 0x30
+ 8000e62:	6a4e      	ldr	r6, [r1, #36]	@ 0x24
+ 8000e64:	4b61      	ldr	r3, [pc, #388]	@ (8000fec <TIM16+0x338>)
+ 8000e66:	429d      	cmp	r5, r3
+ 8000e68:	d300      	bcc.n	8000e6c <TIM16+0x1b8>
+ 8000e6a:	461d      	mov	r5, r3
+ 8000e6c:	6bd3      	ldr	r3, [r2, #60]	@ 0x3c
+ 8000e6e:	195c      	adds	r4, r3, r5
+ 8000e70:	1ba4      	subs	r4, r4, r6
+ 8000e72:	63d4      	str	r4, [r2, #60]	@ 0x3c
+ 8000e74:	624d      	str	r5, [r1, #36]	@ 0x24
+ 8000e76:	495e      	ldr	r1, [pc, #376]	@ (8000ff0 <TIM16+0x33c>)
+ 8000e78:	428b      	cmp	r3, r1
+ 8000e7a:	d939      	bls.n	8000ef0 <TIM16+0x23c>
+ 8000e7c:	2001      	movs	r0, #1
+ 8000e7e:	0301      	lsls	r1, r0, #12
+ 8000e80:	4b5c      	ldr	r3, [pc, #368]	@ (8000ff4 <TIM16+0x340>)
+ 8000e82:	6019      	str	r1, [r3, #0]
+ 8000e84:	0483      	lsls	r3, r0, #18
+ 8000e86:	4c50      	ldr	r4, [pc, #320]	@ (8000fc8 <TIM16+0x314>)
+ 8000e88:	6825      	ldr	r5, [r4, #0]
+ 8000e8a:	439d      	bics	r5, r3
+ 8000e8c:	6025      	str	r5, [r4, #0]
+ 8000e8e:	4c4d      	ldr	r4, [pc, #308]	@ (8000fc4 <TIM16+0x310>)
+ 8000e90:	60e3      	str	r3, [r4, #12]
+ 8000e92:	6123      	str	r3, [r4, #16]
+ 8000e94:	4b4d      	ldr	r3, [pc, #308]	@ (8000fcc <TIM16+0x318>)
+ 8000e96:	6019      	str	r1, [r3, #0]
+ 8000e98:	f3ef 8110 	mrs	r1, PRIMASK
+ 8000e9c:	b672      	cpsid	i
+ 8000e9e:	6993      	ldr	r3, [r2, #24]
+ 8000ea0:	1c5b      	adds	r3, r3, #1
+ 8000ea2:	6193      	str	r3, [r2, #24]
+ 8000ea4:	f381 8810 	msr	PRIMASK, r1
+ 8000ea8:	f3ef 8310 	mrs	r3, PRIMASK
+ 8000eac:	b672      	cpsid	i
+ 8000eae:	2163      	movs	r1, #99	@ 0x63
+ 8000eb0:	0089      	lsls	r1, r1, #2
+ 8000eb2:	5c51      	ldrb	r1, [r2, r1]
+ 8000eb4:	7814      	ldrb	r4, [r2, #0]
+ 8000eb6:	2c00      	cmp	r4, #0
+ 8000eb8:	d017      	beq.n	8000eea <TIM16+0x236>
+ 8000eba:	2900      	cmp	r1, #0
+ 8000ebc:	d115      	bne.n	8000eea <TIM16+0x236>
+ 8000ebe:	2100      	movs	r1, #0
+ 8000ec0:	4e3d      	ldr	r6, [pc, #244]	@ (8000fb8 <TIM16+0x304>)
+ 8000ec2:	60f1      	str	r1, [r6, #12]
+ 8000ec4:	24ff      	movs	r4, #255	@ 0xff
+ 8000ec6:	3418      	adds	r4, #24
+ 8000ec8:	4d3d      	ldr	r5, [pc, #244]	@ (8000fc0 <TIM16+0x30c>)
+ 8000eca:	682d      	ldr	r5, [r5, #0]
+ 8000ecc:	192d      	adds	r5, r5, r4
+ 8000ece:	1c6d      	adds	r5, r5, #1
+ 8000ed0:	b2ad      	uxth	r5, r5
+ 8000ed2:	6115      	str	r5, [r2, #16]
+ 8000ed4:	2502      	movs	r5, #2
+ 8000ed6:	6055      	str	r5, [r2, #4]
+ 8000ed8:	220c      	movs	r2, #12
+ 8000eda:	6032      	str	r2, [r6, #0]
+ 8000edc:	62f4      	str	r4, [r6, #44]	@ 0x2c
+ 8000ede:	6271      	str	r1, [r6, #36]	@ 0x24
+ 8000ee0:	6170      	str	r0, [r6, #20]
+ 8000ee2:	6131      	str	r1, [r6, #16]
+ 8000ee4:	60f0      	str	r0, [r6, #12]
+ 8000ee6:	200d      	movs	r0, #13
+ 8000ee8:	6030      	str	r0, [r6, #0]
+ 8000eea:	f383 8810 	msr	PRIMASK, r3
+ 8000eee:	e05b      	b.n	8000fa8 <TIM16+0x2f4>
+ 8000ef0:	4938      	ldr	r1, [pc, #224]	@ (8000fd4 <TIM16+0x320>)
+ 8000ef2:	69c9      	ldr	r1, [r1, #28]
+ 8000ef4:	9b0b      	ldr	r3, [sp, #44]	@ 0x2c
+ 8000ef6:	1a59      	subs	r1, r3, r1
+ 8000ef8:	b289      	uxth	r1, r1
+ 8000efa:	9b0c      	ldr	r3, [sp, #48]	@ 0x30
+ 8000efc:	1a5d      	subs	r5, r3, r1
+ 8000efe:	d200      	bcs.n	8000f02 <TIM16+0x24e>
+ 8000f00:	2500      	movs	r5, #0
+ 8000f02:	2d0f      	cmp	r5, #15
+ 8000f04:	d951      	bls.n	8000faa <TIM16+0x2f6>
+ 8000f06:	2301      	movs	r3, #1
+ 8000f08:	031c      	lsls	r4, r3, #12
+ 8000f0a:	940c      	str	r4, [sp, #48]	@ 0x30
+ 8000f0c:	4939      	ldr	r1, [pc, #228]	@ (8000ff4 <TIM16+0x340>)
+ 8000f0e:	600c      	str	r4, [r1, #0]
+ 8000f10:	492d      	ldr	r1, [pc, #180]	@ (8000fc8 <TIM16+0x314>)
+ 8000f12:	680c      	ldr	r4, [r1, #0]
+ 8000f14:	4e38      	ldr	r6, [pc, #224]	@ (8000ff8 <TIM16+0x344>)
+ 8000f16:	4034      	ands	r4, r6
+ 8000f18:	600c      	str	r4, [r1, #0]
+ 8000f1a:	492a      	ldr	r1, [pc, #168]	@ (8000fc4 <TIM16+0x310>)
+ 8000f1c:	680c      	ldr	r4, [r1, #0]
+ 8000f1e:	4034      	ands	r4, r6
+ 8000f20:	43c6      	mvns	r6, r0
+ 8000f22:	07f6      	lsls	r6, r6, #31
+ 8000f24:	0b76      	lsrs	r6, r6, #13
+ 8000f26:	19a4      	adds	r4, r4, r6
+ 8000f28:	461e      	mov	r6, r3
+ 8000f2a:	600c      	str	r4, [r1, #0]
+ 8000f2c:	684c      	ldr	r4, [r1, #4]
+ 8000f2e:	4b32      	ldr	r3, [pc, #200]	@ (8000ff8 <TIM16+0x344>)
+ 8000f30:	401c      	ands	r4, r3
+ 8000f32:	07c0      	lsls	r0, r0, #31
+ 8000f34:	0b40      	lsrs	r0, r0, #13
+ 8000f36:	1820      	adds	r0, r4, r0
+ 8000f38:	6048      	str	r0, [r1, #4]
+ 8000f3a:	04b0      	lsls	r0, r6, #18
+ 8000f3c:	60c8      	str	r0, [r1, #12]
+ 8000f3e:	6108      	str	r0, [r1, #16]
+ 8000f40:	4822      	ldr	r0, [pc, #136]	@ (8000fcc <TIM16+0x318>)
+ 8000f42:	990c      	ldr	r1, [sp, #48]	@ 0x30
+ 8000f44:	6001      	str	r1, [r0, #0]
+ 8000f46:	f3ef 8010 	mrs	r0, PRIMASK
+ 8000f4a:	b672      	cpsid	i
+ 8000f4c:	6991      	ldr	r1, [r2, #24]
+ 8000f4e:	1c49      	adds	r1, r1, #1
+ 8000f50:	6191      	str	r1, [r2, #24]
+ 8000f52:	f380 8810 	msr	PRIMASK, r0
+ 8000f56:	f3ef 8010 	mrs	r0, PRIMASK
+ 8000f5a:	b672      	cpsid	i
+ 8000f5c:	2163      	movs	r1, #99	@ 0x63
+ 8000f5e:	0089      	lsls	r1, r1, #2
+ 8000f60:	5c51      	ldrb	r1, [r2, r1]
+ 8000f62:	7814      	ldrb	r4, [r2, #0]
+ 8000f64:	2c00      	cmp	r4, #0
+ 8000f66:	d019      	beq.n	8000f9c <TIM16+0x2e8>
+ 8000f68:	2900      	cmp	r1, #0
+ 8000f6a:	d117      	bne.n	8000f9c <TIM16+0x2e8>
+ 8000f6c:	2100      	movs	r1, #0
+ 8000f6e:	4b12      	ldr	r3, [pc, #72]	@ (8000fb8 <TIM16+0x304>)
+ 8000f70:	60d9      	str	r1, [r3, #12]
+ 8000f72:	4c13      	ldr	r4, [pc, #76]	@ (8000fc0 <TIM16+0x30c>)
+ 8000f74:	6824      	ldr	r4, [r4, #0]
+ 8000f76:	1964      	adds	r4, r4, r5
+ 8000f78:	b2a4      	uxth	r4, r4
+ 8000f7a:	6114      	str	r4, [r2, #16]
+ 8000f7c:	9c0a      	ldr	r4, [sp, #40]	@ 0x28
+ 8000f7e:	6054      	str	r4, [r2, #4]
+ 8000f80:	220c      	movs	r2, #12
+ 8000f82:	601a      	str	r2, [r3, #0]
+ 8000f84:	4a1d      	ldr	r2, [pc, #116]	@ (8000ffc <TIM16+0x348>)
+ 8000f86:	4295      	cmp	r5, r2
+ 8000f88:	d300      	bcc.n	8000f8c <TIM16+0x2d8>
+ 8000f8a:	4615      	mov	r5, r2
+ 8000f8c:	1e6a      	subs	r2, r5, #1
+ 8000f8e:	62da      	str	r2, [r3, #44]	@ 0x2c
+ 8000f90:	6259      	str	r1, [r3, #36]	@ 0x24
+ 8000f92:	615e      	str	r6, [r3, #20]
+ 8000f94:	6119      	str	r1, [r3, #16]
+ 8000f96:	60de      	str	r6, [r3, #12]
+ 8000f98:	210d      	movs	r1, #13
+ 8000f9a:	6019      	str	r1, [r3, #0]
+ 8000f9c:	f380 8810 	msr	PRIMASK, r0
+ 8000fa0:	e002      	b.n	8000fa8 <TIM16+0x2f4>
+ 8000fa2:	980a      	ldr	r0, [sp, #40]	@ 0x28
+ 8000fa4:	f380 8810 	msr	PRIMASK, r0
+ 8000fa8:	e003      	b.n	8000fb2 <TIM16+0x2fe>
+ 8000faa:	2100      	movs	r1, #0
+ 8000fac:	6051      	str	r1, [r2, #4]
+ 8000fae:	f007 fca1 	bl	80088f4 <_ZN10firmware505roots13comp_exti_arm17h6f06d4524a28c832E>
+ 8000fb2:	b00d      	add	sp, #52	@ 0x34
+ 8000fb4:	bdf0      	pop	{r4, r5, r6, r7, pc}
+ 8000fb6:	46c0      	nop			@ (mov r8, r8)
+ 8000fb8:	40014400 	.word	0x40014400
+ 8000fbc:	20000000 	.word	0x20000000
+ 8000fc0:	40014824 	.word	0x40014824
+ 8000fc4:	40021800 	.word	0x40021800
+ 8000fc8:	40021880 	.word	0x40021880
+ 8000fcc:	e000e280 	.word	0xe000e280
+ 8000fd0:	e000e100 	.word	0xe000e100
+ 8000fd4:	20000190 	.word	0x20000190
+ 8000fd8:	40012c00 	.word	0x40012c00
+ 8000fdc:	00000808 	.word	0x00000808
+ 8000fe0:	40010204 	.word	0x40010204
+ 8000fe4:	0800a401 	.word	0x0800a401
+ 8000fe8:	0800b078 	.word	0x0800b078
+ 8000fec:	000f4240 	.word	0x000f4240
+ 8000ff0:	00001191 	.word	0x00001191
+ 8000ff4:	e000e180 	.word	0xe000e180
+ 8000ff8:	fffbffff 	.word	0xfffbffff
+ 8000ffc:	0000ffff 	.word	0x0000ffff

@@ -156,6 +156,17 @@ mod tests {
     type Report = EventWatch<true>;
 
     #[test]
+    fn e432_stale_boundary_is_not_cleared_by_a_late_accept() {
+        let mut w = Report::new(20_620, 238, 1_000);
+        assert_eq!(w.event(20_620, 6), None);
+        assert_eq!(w.poll(21_620), None);
+        assert_eq!(w.poll(21_621), Some(Fault::Stale));
+        assert_eq!(w.event(21_655, 1), Some(Fault::Stale));
+        // Pure watch contract only: raw-entry times are not guard timestamps,
+        // and this does not simulate COM cancellation or physical crossings.
+    }
+
+    #[test]
     fn a_steady_ordered_stream_is_healthy() {
         let mut w = Watch::new(0, 238, EVENT_MAX_US);
         let mut t = 0;
