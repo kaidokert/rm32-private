@@ -53,6 +53,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "diode-commit-arm"
+path = "bin/diode-commit-arm.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "diode-fresh"
 path = "bin/diode-fresh.rs"
 test = false

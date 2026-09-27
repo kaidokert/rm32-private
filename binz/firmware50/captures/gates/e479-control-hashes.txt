@@ -1,0 +1,5 @@
+
+Algorithm Hash                                                             Path
+--------- ----                                                             ----
+SHA256    78C27B34D855A8B8DF8A6EE2D917C6BB215C391E9CC3D988544F0F20E1D19DE5 E:\m\robot\esc\rm32\binz\firmware50\captures\gates\e479-archived-control.bin
+SHA256    838AF875001377D6D08B47D58F983B458079A61507CDFA5BB7C1B67C2FDDA54F E:\m\robot\esc\rm32\binz\firmware50\captures\gates\e479-control.bin

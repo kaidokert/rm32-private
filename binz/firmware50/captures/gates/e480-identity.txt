@@ -1,0 +1,5 @@
+
+
+Algorithm : SHA256
+Hash      : 0F2697A75AD55E96266A44099F1BD2D56085C93370A58BA5968DAE7335216CC1
+Path      : E:\m\robot\esc\rm32\binz\firmware50\captures\elf\0F2697A7.e479-commit-arm.elf

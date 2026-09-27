@@ -1,0 +1,3 @@
+mask CPSID 0x8000868 -> restore 0x8000aae: 178 reachable instructions, acyclic
+sum of all alternative paths plus full shutdown callee: 1021 model cycles / 15.953 us
+Conditional instruction model only, NOT hardware WCET or pending-guard latency.

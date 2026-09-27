@@ -5,7 +5,18 @@ pub mod check;
 
 pub trait Window {
     const MASKED: bool;
+    const AFTER_FILTER: bool = false;
     fn run<T>(f: impl FnOnce() -> T) -> T;
+}
+
+pub struct CommitMasked;
+impl Window for CommitMasked {
+    const MASKED: bool = true;
+    const AFTER_FILTER: bool = true;
+    #[inline(always)]
+    fn run<T>(f: impl FnOnce() -> T) -> T {
+        cortex_m::interrupt::free(|_| f())
+    }
 }
 
 pub struct Open;

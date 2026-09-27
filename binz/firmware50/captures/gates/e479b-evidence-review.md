@@ -1,0 +1,7 @@
+No concrete formula or mask-placement defect appears in the supplied evidence. It supports one bounded propless screen, not motor qualification.
+
+- **Commit/read equivalence:** `qualify` preserves the strict blanking comparison, policy depth, early exit on dissent, and refusal counters. `commit` preserves history updates, the same blend/clamp calls, fresh/previous estimate selection, advance override, and wrapping acceptance count. The assembly implements the saturating blend and fixed-16 wait as `(average >> 1) - (average >> 2)`, preserving odd-value rounding. Boolean read equivalence does not establish identical sampling cadence.
+- **Mask placement:** the persistence loop at `0x800084a–0x8000860` precedes `CPSID` at `0x8000868`. Ownership checks precede estimator mutation/publication; timer preparation, elapsed sampling, arm or expired-arm shutdown remain inside the outer mask. The nested restore at `0x8000aa0` retains masking; `0x8000aae` restores the incoming mask before bookkeeping.
+- **Evidence scope:** 15.953 µs is a conditional instruction-model result, not hardware WCET or pending-guard latency. Test/audit passes are supplied reports, not independently executed here. The audit excerpts lack a hash binding them uniquely to candidate `0F2697A7`. E476’s different ELF stopped after seven accepts with zero hold; it supplies no candidate qualification.
+
+Readiness is limited to the proposed identified-candidate 15%, command-9, 28-second propless screen: protections active, physical 3 A limit, ≥120 seconds off, any fault ends the batch.

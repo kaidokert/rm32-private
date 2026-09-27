@@ -1,0 +1,29 @@
+cargo : error: no bin target named `diode-recheck` in default-run packages
+At line:2 char:238
++ ... or=ld.lld'; cargo build --release --bin diode-commit-arm --bin diode- ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: no bin t...lt-run packages:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+help: available bin targets:
+    acceptance-off
+    chain-capture
+    deadline-pwm
+    diode-atomic-arm
+    diode-commit-arm
+    diode-const
+    diode-fresh
+    diode-lean
+    diode-order
+    diode-pwm
+    diode-timed-revisit
+    edge-capture
+    idle-scan
+    latch-pwm
+    order-capture
+    prior-pwm
+    recheck-off
+    sag-capture
+    shell-pwm
+    staged-pwm
+    staged-sag

@@ -48803,3 +48803,223 @@ Installedboard remains63F48607/OFF/UARTclosed. No envelope expansion this batch.
 Next campaign decision is motor control/timing, not another full probe ladder:
 C2 did not solve the startup screen; preserve interruptible persistence in any
 narrower acceptance-path experiment and test unchanged watchdog semantics.
+
+## E479 — 2026-09-27 — proposed post-filter acceptance transaction
+
+Previous goal turn made progress: disabled suite, retained failed powered
+screen, corrected watch interpretation and diagnostic-codegen isolation.
+Current63F48607 verifiedOFF; no powered activity planned before code review.
+Decision: can interruptible persistence be preserved while excluding higher
+priority work only from estimator update/publication through timer arm?
+Proposed typed CommitMasked policy plus a consumed qualification token:
+half-cycle gate and every live persistence read happen before exclusion;
+only a successful token permits estimator update/arm in the narrower mask.
+Existing Open/Masked policies remain distinct archived controls. No thresholds,
+sampling-depth changes, fabricated ZCs or timestamp rebasing. Guard before
+commit still prevents arm through existing stopped/active check. Tests must
+prove rejection never enters commit and identical outcomes/state/read counts;
+assembly must expose actual mask boundaries and changed loop cadence.
+This is not an attribution of E476 to persistence masking. Review proposed
+boundary against lifecycle before implementation and one bounded screen.
+
+
+E479 design reviews (verbatim):
+
+evidence:
+> Raw evidence: E476 stopped with `reason=8`, `track_fault=1`: stale age 1029 µs exceeded 1000 by 29. Seven accepts/commutations, zero forced, zero late arms, zero hold; sag did not trip. However, poststop clock/accept raw stamps differ by only 21 ticks, versus the stale event’s 1029 µs. Reconcile that discrepancy before treating this as uninterrupted crossing loss. It does not establish masking causality.
+>
+> The proposal is conditionally sound, not yet demonstrated. Exclusive borrowing freezes estimator state, not comparator polarity, sector ownership, or shutdown state. Qualification-to-mask remains interruptible; arm refusal alone does not prevent stale accepted-state publication.
+>
+> Necessary tests:
+>
+> - Differential old/new replay: both estimate policies, both polarities, gate−1/gate/gate+1; every dissent position at depths 0–255. Assert identical outcomes, full estimator/history/counters, and exact reads: zero gated, j+1 dissent, depth accepted.
+> - Assert independent blend/clamp/advance/wait arithmetic identities, including odd intervals, rounding boundaries, extrema, advances 0–64, fixed/runtime equivalence, and previous-estimate first acceptance.
+> - Verify cached depth initialization/refresh across every mapped/shallow boundary, refusals, expired/refused arms, and reinstall.
+> - Compile-fail token forgery, reuse, and estimator mutation while borrowed.
+> - Inject guard/COM at qualification→mask and every commit boundary; require shutdown dominance, coherent sector/publication, nested PRIMASK restoration, and no poststop rearm/resume. Include a deliberately broken control.
+
+adversarial:
+> Raw evidence: E476 stopped after seven accepts, with `hold_ms=0`, tracking age 1029 µs against 1000 µs, and zero recorded preemptions. It neither establishes a masking cause nor validates commit safety.
+>
+> **Concrete blocker in the proposal: qualification carries no stated sector-generation authorization.** An exclusive estimator borrow protects Rust access; it does not freeze hardware sector, comparator selection, phase, or stop state. COMP admitted in phase 0/4 can qualify, be interrupted by COM, then commit against another sector. Consuming the token once prevents duplication, not stale authorization. Masking only commit cannot repair this.
+>
+> The raw path also snapshots `start` and `step` before `W::run`. Even masking persistence through arm therefore needs entry validation.
+>
+> The estimator borrow must exclude every interrupting estimator accessor throughout qualification and commit. COM reading snapshots helps, but the supplied excerpt cannot establish that for all interrupt paths.
+>
+> Latched-stop dominance survives **if** commit uses the existing atomic arm check and never clears the latch. However, `guard_event` currently executes after arm: if it rejects this acceptance, a short timer could fire first. PRIMASK also defers pending guard service; that is distinct from honoring an already latched stop.
+>
+> Require generation revalidation before estimator mutation and rejection-capable guards before enabling. High-duty qualification is unnecessary for bounded low-duty exploration.
+
+Dispositions before edit: E476 timestamp question already resolved by E476b
+source/replay: from_event1 polls before last update. Do not revive uninterrupted
+crossing-loss or false-watchdog claims. Proposed phase1-preemption counterexample
+was previously excluded conditionally by E471 lifecycle: COMP resumes only
+phase0/4, phase4 cannot advance sector, no phase1 armed until this acceptance.
+Nevertheless new commit will explicitly revalidate active/stopped, phase0/4,
+and captured step under the mask BEFORE estimator mutation/publication; mismatch
+produces no commit. This makes the local authorization requirement executable.
+Tracking guard still executes after arm as existing code; no claim universal
+pre-actuation protection. Low-duty wait is long; high-speed timing remains open.
+Implement consumed token with private fields, differential replay/read-count
+and compile-fail checks; keep original offer_timed as independent oracle. Broader
+all-interleaving hardware certification is not claimed by these host tests.
+
+E479 built candidate0F2697A7 SHA
+0F2697A75AD55E96266A44099F1BD2D56085C93370A58BA5968DAE7335216CC1,
+release-s/thinLTO/codegen1,advance-ref/deep-filter/com-top; text49212/data752/
+bss4228.412host tests+3compile-fail token testsPASS; clippy and4root auditPASS,
+structure0functions>100. Initial build named nonexistentdiode-recheck and failed
+before compilation; correctedbin diode-timed-revisit log retained.
+
+Assembly: originalclosed persistence084c..0864 includes address-load each
+iteration (12successinstructions). Candidate084a..0860 hoists address-load
+(11successinstructions), still Boolean/live/interruptible; temporal cadence
+is NOT identical, so any powered change would not isolate masking alone.
+Candidate outerCPSID0868 follows filter; state validation precedes estimator
+stores09ae; nestedarm restore0aa0 restoresmaskedstate; outerrestore0aae precedes
+bookkeeping. CFG178reachable maskinstructions acyclic; all-alternative-path
+overcount plusshutdown1021cycles/15.953us conditionalmodel,NOT hardwareWCET.
+WholeCOMP855->926listedinstructions,model3723cycles/58.17us,not predictedruntime.
+TIM16instructions395same,guard161same,DMA37same; changedliteralbytes noted.
+RebuiltOpen control loadablebytes differ from archived63; never transfer its
+qualification. Archivedcontrol remains installed. No flash/poweredtest yet.
+Next decision: dual review of exact candidate for one bounded15%screen, not
+another instrument rollout or premature higher-duty run.
+
+
+E479b exact-candidate reviews(verbatim):
+
+evidence:
+> No concrete formula or mask-placement defect appears in the supplied evidence. It supports one bounded propless screen, not motor qualification.
+>
+> - **Commit/read equivalence:** `qualify` preserves the strict blanking comparison, policy depth, early exit on dissent, and refusal counters. `commit` preserves history updates, the same blend/clamp calls, fresh/previous estimate selection, advance override, and wrapping acceptance count. The assembly implements the saturating blend and fixed-16 wait as `(average >> 1) - (average >> 2)`, preserving odd-value rounding. Boolean read equivalence does not establish identical sampling cadence.
+> - **Mask placement:** the persistence loop at `0x800084a–0x8000860` precedes `CPSID` at `0x8000868`. Ownership checks precede estimator mutation/publication; timer preparation, elapsed sampling, arm or expired-arm shutdown remain inside the outer mask. The nested restore at `0x8000aa0` retains masking; `0x8000aae` restores the incoming mask before bookkeeping.
+> - **Evidence scope:** 15.953 µs is a conditional instruction-model result, not hardware WCET or pending-guard latency. Test/audit passes are supplied reports, not independently executed here. The audit excerpts lack a hash binding them uniquely to candidate `0F2697A7`. E476’s different ELF stopped after seven accepts with zero hold; it supplies no candidate qualification.
+>
+> Readiness is limited to the proposed identified-candidate 15%, command-9, 28-second propless screen: protections active, physical 3 A limit, ≥120 seconds off, any fault ends the batch.
+
+adversarial:
+> **No concrete blocker is demonstrated for the proposed single 15% propless screen.** This supports an experiment, not candidate qualification.
+>
+> - **Validation before mutation:** The successful qualification path checks stopped/active/detector, phase and matching sector under PRIMASK before estimator/history/acceptance publication or timer preparation. Assembly places those checks before the first acceptance stores. Refusal counters and the separate oversized-count rebase remain outside this guarantee.
+> - **Persistence-to-mask gap:** An interrupt can occur after the final comparator read. A serviced stop or sector change is rejected by the masked validation; elapsed time is included in the arm calculation, with expiry causing shutdown. There is no fresh polarity check after masking, so qualification can age across a preemption. That is a residual sampling limitation, not a demonstrated blocker here.
+> - **No new reenable:** The shown commit path neither clears the stop latch nor enables bridge outputs. Nested arm masking preserves the outer mask; expired-arm shutdown completes before restoration.
+> - **Priority budget:** PRIMASK newly delays higher-priority protection and commutation service. The 15.953 µs conditional model establishes neither hardware WCET nor pending-guard latency. This is the main screen risk; the supplied evidence does not establish a violated protection deadline.
+> - **Existing limitation:** `guard_event` remains after arming and unmasking; commutation can precede that check. Atomic commit does not fix this.
+>
+> E476’s seven accepts, zero hold and tracking stop provide no candidate endurance evidence. Keep the stated current limit, cooldown and fault-ends-batch scope.
+
+Dispositions: no full timing/causality claim. Qualifier can age before mask;
+stop/sector validation and entry-relative elapsed check stay active. Watch
+afterarm is pre-existing, not solved. Re-audit exact archived ELF/hash before
+flash to remove target-path identity ambiguity. New window delays higher IRQs;
+keep low-duty screen bounded and unchanged tick/handler guards, no retry.
+
+## E480 — 2026-09-27 — first post-filter commit motor screen
+
+Pre-run: exact0F2697A7 archive, explicitG071 download/verify/reset, MCPp
+preflight. One command9 at15%,28s total/~20target,propless reverse,3A last
+operator-confirmed. >120s off sinceE476. Expectedfault-free targetdwell with
+no late/thin/overrun; a fault endsbatch. No baseline/higher-rung qualification
+transfer and no unchanged rerun. Capture fullresult and post-offreadback.
+
+
+E480 result: reason2/guard0,20.278s actualtarget,199/1333=14.93%,
+hold262138/20.278=12927.21accepts/s (~2154.5electricalHz conditionalon6/turn);
+coast2159,matched1001permille. Late0/thin0,spentmax11,COMPmax35,guardgap109,
+COMlate13us. Signedcurrentproxy249mA with -304mA zero drift,not calibrated.
+995permille depression census28.48% vscontrol1.28%,differentrestingrefs;
+no fastsagstreak/currentstop. PostMCPalloutputsOFF/nFAULT1,UARToffclosed.
+Onepass doesnotprove repeatability orcause. No reenabling afterstop observed.
+
+evidence review(verbatim):
+> Both 15% runs achieved **20.278 s at target**, from 22.778 s closed-loop minus 2.500 s ramp. Applied duty was approximately **14.93%** (199/1333).
+>
+> - E480 accepted rate: 262138/20.278 = **12,927.21/s**; control: **12,909.51/s**, only **+0.137%**. Tail rates were approximately 12,977 versus 12,955/s using the actual **2.278 s spans**, not the nominal 2 s window.
+> - The 995‰ depression watch increased substantially: **75,830/266,218 = 28.48%** versus **3,428/268,190 = 1.28%** of drive scans; longest runs 52 versus 20. Different bus references limit interpretation. Current proxies 249/211 mA are uncalibrated.
+> - Both report zero late arms, thin events and forced commutations; preparation maxima 11/12 µs, minimum CI 47/47 µs, commutation lateness 13/13 µs. Both stopped with reason=2, guard=0 and safe POSTSTOP. Zero margin histograms establish no measured margin.
+>
+> **Supported:** comparable sustained propless operation at 15%, without demonstrated superiority or fault-path validation.
+>
+> The prior 25% LateArm occurred after only **11 ms target exposure**; the 15% dwell is approximately **1,843 times longer at a different operating point**. The proposed same-image 25% screen meaningfully probes that failing rung, but cannot isolate the narrower commit’s effect or establish qualification.
+
+adversarial review(verbatim):
+> No concrete blocker to the proposed single 25% exploratory screen is established here; safety at 25% remains unproven.
+>
+> E480 sustained 20.278 s at 15%, with zero forced commutations, no reported LateArm, and coast agreement. That supports this operating point. One run per binary cannot attribute improvement to narrower commit: mailbox coalescing increased, loop-gap maximum rose 282→346 µs, and the earlier binary’s 25% LateArm remains relevant.
+>
+> Interval-contraction protection is **not verified still live by this excerpt**. Guard ticks demonstrate activity, not that specific predicate; `oneshot.rs` shows exhausted-wait handling and source-checking tests, but neither the contraction implementation nor executed test results. This is an evidence limitation, not evidence of removal or a new gate.
+>
+> Current proxy 249 versus 211 mA cannot establish increased physical current or 3 A headroom: calibration is absent, and reported zero drift (−304/−273 mA) exceeds those hold estimates. Zero margin/witness counters do not prove margin.
+>
+> The same-binary, propless, ≥120 s OFF, command-8/28 s screen is supportable only as the stated exploration with existing protections unchanged. A clean outcome would not establish qualification or unique causality.
+
+Dispositions: no superiority/currentcalibration claim. Existing contraction-
+exhausted-wait stop remains actual com_arm_crossing→stop_expired_arm guard15;
+sourceunchanged and412testspassed. SeparateCycleTiming/report metrics are not
+new kills. Prior25raw is e466-propless250-parked_01.txt (packet wrong filename
+omitted it); reopenedactualcapture confirmsguard15,hold11ms,ci45/spent11.
+Neithercomparisonqualifiesnew25. No newinstrumentneededfornextboundedrun.
+
+## E481 — 2026-09-27 — same-image25% discriminator
+
+Pre-run: unchanged0F2697A7,onecommand8/28stotal,25%actualtargetexpected~15s.
+Wait >=120sOFF afterE480 (~06:37:20local stop,admitafter06:39:21). Allguards
+unchanged,3A lastconfirmed,proplessreverse. Prediction no late-arm or tracking/
+electricalstop. Faultendsbatch/no rerun; capturepostoff. This is exploration,
+not25%qualification or80%completion. No new flash orinstrumentation.
+
+E481 FAIL before target: Tracking8 after4msclosed,6accepts/7COM,0hold,
+applied133/1333=9.98%; no late/thin/overrun/sag/current/nFAULTstop. Stale
+from_event0,last4717426,at4718453,age1027>1000,27late. UnlikeE476 this is
+periodic-poll origin. Postraw41405-accept40367=1038us,not a freshaccept.
+Watch/entry clocks differ by11us; neither is physicalcrossingtruth. Bootcumulative
+acceptseq284849 matches prior284843+6, not itself a resetbug. PostMCPoutputsOFF,
+CCRs0,gateslow1,nFAULT1,UARToffclosed; recheckrequestsdelta2/observationsdelta9.
+Target25late-arm discriminator NOT reached. Same-image successful15thenfailed
+entry means entry reliability is unresolved; it doesnotprove request25caused
+failure or any unique mask/carrier cause. No retry/escalation.
+
+Source-only next avenue pendingreview: fixed48k entry at10% gives~2.08usON,
+versus microsecond-scale12-readpersistence. ExistingFasterAbove policy can
+retime running carrier but entry is globallyRUN_PERIOD_TICKS. Slower entry then
+48k at stablelowduty is a bounded control alternative to investigate, not a
+threshold relaxation or proven cure. Startupfrequency change would require
+coherent staircase/catch/driven rates, not editing onlyhandoff banner200.
+
+
+E481 result reviews(verbatim):
+
+evidence:
+> E481 is a startup/early-closure tracking stop: reason=8, `from_event=0`, six accepts, seven commutations, 4 ms closed, zero target hold. CCR=133/1333 is approximately 10%, not 25%; the 25% request never reached its dwell.
+>
+> Recomputed facts:
+>
+> - Extended age: 4,718,453 − 4,717,426 = **1,027 µs**, exceeding 1,000 µs by **27 µs**.
+> - Raw separation: 41,405 − 40,367 = **1,038 ticks**, 11 greater than reported age. Under a common µs mapping, the raw acceptance maps to 4,717,415—11 µs before `last_us`. Timestamp semantics need inspection; this alone proves neither corruption nor a wrap bug.
+> - Sequence: 284,849 − E480’s 284,843 = **6**, consistent with E481’s six accepts and a continuing sequence.
+>
+> This differs from the described E476 event-origin stop and previous25 LateArm: E481 explicitly reports `from_event=0` and `late_arms=0`. Their underlying captures are absent here.
+>
+> **What changed next action:** the same image completed E480’s 20.278-second 15% hold, then failed during low-duty entry. Keep the candidate unpromoted; investigate entry timing without retry. At 64 MHz, 133 ticks gives 2.08 µs ON time. Slower entry followed by 48 kHz merits source investigation, not threshold weakening. Filter interaction remains hypothetical; neither current nor supply fault is established.
+
+adversarial:
+> Verdict: candidate remains unpromoted. E481 demonstrates early closed-loop tracking loss, not failure at 25%: six accepts, ~4 ms closed, CCR 133/1333 (~10%), no target dwell. Neither current nor supply causation is established.
+>
+> Run order is a serious confound. The same image first sustained 15%; E481’s cumulative acceptance sequence and boot-cumulative recheck counters show retained bookkeeping, but do not prove harmful retained control state. Passing preflight establishes bridge-off conditions, not estimator, filter, timer, or pending-recheck reset correctness. Nearly identical driven seeds and qualification counts localize the divergence after handoff without explaining it.
+>
+> Carrier/persistence interaction remains plausible: a ~2.08 µs ON interval could interact with a microsecond-scale persistence check. But neither the actual filter duration nor the relevant comparator-valid window is established here. E480 also accumulated many “unstable” rejects while running successfully; that counter alone is not diagnostic.
+>
+> Smallest next step: a focused source audit tracing ordinary-run teardown/reinitialization and the first closed-loop sectors: retained state, pending events, actual carrier/CCR, filter depth and execution timing, and recheck ownership. The supplied policy/helpers cannot establish those paths.
+>
+> Slower carrier entry followed by 48 kHz merits that audit as a bounded control experiment, not a proven fix. Predeclare transition, startup endpoint, and fixed comparison budget; preserve guards and stop afterward—no pass-fishing.
+
+Dispositions: no run-order or carrier causation adopted. Reopenedsource
+confirmscommands8/9 selecttarget only and both callrung(...28_000); retained
+sequence/counters are intentional but other persistentstate needs focused
+teardown/init audit. Rawaccept precedes watchpublication by11us, consistent
+with separate stamps, not corruption proof. Next work is that narrow source
+check before choosing entry-carrier experiment; no more poweredrun thisbatch.
+Installed0F2697A7 remainsOFF/UARTclosed,unpromoted. E480pass andE481failure
+both retained. Goal80remainsactive; neither25norhigherenvelope provedhere.

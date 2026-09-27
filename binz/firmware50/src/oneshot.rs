@@ -82,6 +82,14 @@ pub const fn comparator_resume_allowed(
     guard == 0 && if detector { arm_allowed(stopped, active) && (phase == 0 || phase == 4) } else { driven }
 }
 
+/// Revalidate a sampled sector before committing its estimator update.
+/// Only listening phases 0/4 can authorize a fresh acceptance.
+#[inline(always)]
+pub const fn commit_allowed(stopped: bool, active: bool, detector: bool, phase: u32, sampled_step: u32, current_step: u32) -> bool {
+    arm_allowed(stopped, active) && detector && (phase == 0 || phase == 4)
+        && sampled_step >= 1 && sampled_step <= 6 && sampled_step == current_step
+}
+
 /// Whether an arm can be interleaved by the guard root or by the other caller.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Atomicity {
@@ -342,6 +350,25 @@ impl OneShot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn accepted_commit_requires_same_live_listening_sector() {
+        for stopped in [false, true] {
+            for active in [false, true] {
+                for detector in [false, true] {
+                    for phase in 0..=5 {
+                        for sampled in 0..=7 {
+                            for current in 0..=7 {
+                                let expected = !stopped && active && detector
+                                    && [0, 4].contains(&phase) && (1..=6).contains(&sampled)
+                                    && sampled == current;
+                                assert_eq!(super::commit_allowed(stopped, active, detector, phase, sampled, current), expected);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn comparator_resume_respects_owner_blank_and_stop() {
         use super::comparator_resume_allowed as allowed;

@@ -465,6 +465,40 @@ fn publish_accept_sequence() {
     S.det().accept_seq.store(next, Ordering::Relaxed);
 }
 
+#[inline(always)]
+fn publish_accepted_arm<C: ChainLog>(raw: u16, zc: &crate::bemf::ZeroCross, outcome: crate::bemf::Outcome) -> Option<(u32, Option<u32>)> {
+    let crate::bemf::Outcome::Accepted { wait, .. } = outcome else { return None; };
+    S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
+    S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
+    S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
+    S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
+    publish_accept_sequence();
+    Some((wait, arm_marked::<C>(raw, wait)))
+}
+
+#[inline(always)]
+fn offer_and_arm<C: ChainLog, T: crate::bemf::WaitEstimate, W: acceptance::Window>(
+    zc: &mut crate::bemf::ZeroCross, raw: u16, count: u32, step: Step, advance: u32, depth: &DepthSnapshot,
+) -> Option<(u32, Option<u32>)> {
+    if W::AFTER_FILTER {
+        let qualified = zc.qualify(count, edge_is_rising(step), depth, hw::comp::level).ok()?;
+        W::run(|| {
+            if !crate::oneshot::commit_allowed(
+                S.com().stopped.load(Ordering::Relaxed), S.com().active.load(Ordering::Relaxed),
+                S.det().active.load(Ordering::Relaxed), S.com().phase.load(Ordering::Relaxed),
+                u32::from(step.get()), S.det().step.load(Ordering::Relaxed),
+            ) { return None; }
+            let (zc, outcome) = qualified.commit::<T>(advance);
+            publish_accepted_arm::<C>(raw, zc, outcome)
+        })
+    } else {
+        W::run(|| {
+            let outcome = zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, depth, hw::comp::level);
+            publish_accepted_arm::<C>(raw, zc, outcome)
+        })
+    }
+}
+
 /// Production's decision. Keep in step with [`det_decide_logged`].
 #[inline(always)]
 pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
@@ -500,19 +534,7 @@ fn det_decide_plain_window<C: ChainLog, T: crate::bemf::WaitEstimate, W: accepta
         // Persistence reads the **live** comparator, microseconds after the edge --
         // exactly what AM32's handler does, and what the foreground could never do.
         let depth = DepthSnapshot(S.det().filter_depth.load(Ordering::Relaxed) as u8);
-        let accepted_arm = W::run(|| match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &depth, hw::comp::level) {
-            crate::bemf::Outcome::Accepted { wait, .. } => {
-                // Publication must precede the arm, even with COM preemption.
-                S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
-                S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
-                // COM reads this snapshot, never the borrowed estimator.
-                S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
-                S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
-                publish_accept_sequence();
-                Some((wait, arm_marked::<C>(raw, wait)))
-            }
-            _ => None,
-        });
+        let accepted_arm = offer_and_arm::<C, T, W>(zc, raw, count, step, advance, &depth);
         // Window::run has restored the incoming mask before all bookkeeping.
         match accepted_arm {
             Some((wait, spent)) => {

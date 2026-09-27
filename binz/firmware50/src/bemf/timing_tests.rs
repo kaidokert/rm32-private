@@ -1,5 +1,63 @@
 use super::*;
 
+fn split_offer_matches<T: WaitEstimate>() {
+    for depth in 0..=255u8 {
+        for dissent in 0..=u16::from(depth) {
+            for rising in [false, true] {
+                for count in [499, 500, 501, 1001] {
+                    let mut original = ZeroCross::new_bounded(1000, 40, 4000);
+                    let mut split = original.clone();
+                    let (mut a_reads, mut b_reads) = (0u16, 0u16);
+                    let a = original.offer_timed::<T, _, _>(count, rising, 16, &DepthSnapshot(depth), || {
+                        let level = if a_reads == dissent { !rising } else { rising };
+                        a_reads += 1; level
+                    });
+                    let b = match split.qualify(count, rising, &DepthSnapshot(depth), || {
+                        let level = if b_reads == dissent { !rising } else { rising };
+                        b_reads += 1; level
+                    }) {
+                        Ok(q) => q.commit::<T>(16).1,
+                        Err(refusal) => refusal,
+                    };
+                    assert_eq!((a, a_reads), (b, b_reads));
+                    assert_eq!(original.state(), split.state());
+                    assert_eq!(original.prev_zc, split.prev_zc);
+                    assert_eq!(original.counts(), split.counts());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn qualified_token_matches_original_all_depths_and_dissent_positions() {
+    split_offer_matches::<FreshEstimate>();
+    split_offer_matches::<PreviousEstimate>();
+    split_offer_matches::<ConstantAdvance<FreshEstimate, 16>>();
+}
+
+#[test]
+fn qualified_commit_rounding_extrema_and_discard() {
+    for seed in [0, 1, 39, 40, 63, 64, 65, 833, 65535, u32::MAX] {
+        for advance in 0..=64 {
+            for count in [0, 1, 40, 833, 65535, u32::MAX] {
+                let mut a = ZeroCross::new_bounded(seed, 40, 4000);
+                let mut b = a.clone();
+                let direct = a.offer(count, true, advance, &FixedFilter::<12>, || true);
+                let split = match b.qualify(count, true, &FixedFilter::<12>, || true) {
+                    Ok(q) => q.commit::<FreshEstimate>(advance).1,
+                    Err(outcome) => outcome,
+                };
+                assert_eq!((direct, a.state(), a.counts()), (split, b.state(), b.counts()));
+            }
+        }
+    }
+    let mut z = ZeroCross::new(1000);
+    let before = (z.state(), z.counts());
+    { let _token = z.qualify(1000, true, &FixedFilter::<12>, || true).ok().unwrap(); }
+    assert_eq!(before, (z.state(), z.counts()), "a stopped owner discards without acceptance");
+}
+
 fn depth_cache_history<T: WaitEstimate>() {
     let policy = crate::run::policy::DET_FILTER;
     for seed in [1, 24, 25, 40, 49, 50, 51, 248, 249, 250, 833, 65535, u32::MAX / 2, u32::MAX] {

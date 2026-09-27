@@ -1,5 +1,19 @@
 # Propless 80% campaign — progress, not qualification
 
+E481 CURRENT: installed0F2697A7/OFF/UARTclosed, unpromoted. Post-filter
+CommitMasked candidate: interruptible persistence, exclusive single-use token,
+active/phase/sector revalidation before masked update/publication/arm.412host+
+3compilefail tests/release/clippy/fourrootaudit/structurePASS. Assembly shows
+11 vs old12 instructions per persistence pass (address-load hoisted), so not
+an exact cadence A/B. Mask CFG acyclic; conditionalmodel15.953us NOT WCET.
+E48015% PASS20.278s target,coast2159,late0/thin0,COMPmax35,guardgap109.
+E48125% request FAILS IN ENTRY,6accepts/4msclosed/0hold at9.98% actualduty,
+Tracking8 fromperiodicpoll,age1027>1000. No late/electricalstop. It did NOT
+reach the previous25%late-arm boundary. Sameimage mixed entry results demand
+teardown/reinitialization audit before another control change; slower entry
+carrier is an untested hypothesis, not a cure. No retry, no envelope gain.
+All rawcaptures, dualreviews anddispositions retained inLAB_NOTEBOOK E479–481.
+
 E478 offline: generic disabled-fixture entry restores archived C2 motor
 loadable bytes and four-root audit. Concrete fixture entry had changed motor
 inlining and failed audit; corrected without allowlist relaxation. New probe

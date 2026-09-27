@@ -312,6 +312,52 @@ pub struct ZeroCrossWith<const BLANK_64: u32> {
 /// The reference's blanking window: half a cycle, i.e. 32 sixty-fourths.
 pub const REFERENCE_BLANK_64: u32 = 32;
 
+/// An exclusive, single-use proof of the normal gate and persistence checks.
+/// Hardware ownership is separate and must be revalidated before committing.
+///
+/// ```compile_fail
+/// use firmware50::bemf::{ZeroCross, Qualified};
+/// let mut z = ZeroCross::new(1000);
+/// let _ = Qualified { zc: &mut z, count: 1000 }; // fields are private
+/// ```
+///
+/// ```compile_fail
+/// use firmware50::bemf::{ZeroCross, FixedFilter, FreshEstimate};
+/// let mut z = ZeroCross::new(1000);
+/// let q = z.qualify(1000, true, &FixedFilter::<12>, || true).ok().unwrap();
+/// q.commit::<FreshEstimate>(16);
+/// q.commit::<FreshEstimate>(16); // consumed, never reusable
+/// ```
+/// ```compile_fail
+/// use firmware50::bemf::{ZeroCross, FixedFilter, FreshEstimate};
+/// let mut z = ZeroCross::new(1000);
+/// let q = z.qualify(1000, true, &FixedFilter::<12>, || true).ok().unwrap();
+/// z.offer(1000, true, 16, &FixedFilter::<12>, || true);
+/// q.commit::<FreshEstimate>(16); // estimator remains exclusively borrowed
+/// ```
+pub struct Qualified<'a, const B: u32> {
+    zc: &'a mut ZeroCrossWith<B>,
+    count: u32,
+}
+
+impl<'a, const B: u32> Qualified<'a, B> {
+    /// Commit once, with the same estimator arithmetic as offer_timed.
+    #[inline(always)]
+    pub fn commit<T: WaitEstimate>(self, advance_level: u32) -> (&'a mut ZeroCrossWith<B>, Outcome) {
+        let zc = self.zc;
+        let previous = zc.average_interval;
+        zc.prev_zc = zc.last_zc;
+        zc.last_zc = self.count;
+        zc.average_interval = zc.clamp_interval(blend_interval(zc.average_interval, zc.prev_zc, zc.last_zc));
+        let scheduled = if T::PREVIOUS { previous } else { zc.average_interval };
+        let level = T::ADVANCE.unwrap_or(advance_level);
+        zc.accepted = zc.accepted.wrapping_add(1);
+        let outcome = Outcome::Accepted { wait: wait_time(scheduled, level),
+            average_interval: zc.average_interval, advance: advance_of(scheduled, level) };
+        (zc, outcome)
+    }
+}
+
 /// The production detector: the reference's half-cycle gate.
 #[cfg(not(feature = "wide-blank"))]
 pub type ZeroCross = ZeroCrossWith<REFERENCE_BLANK_64>;
@@ -357,6 +403,28 @@ pub type ZeroCross = ZeroCrossWith<REFERENCE_BLANK_64>;
 pub type ZeroCross = ZeroCrossWith<40>;
 
 impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
+    /// Same Boolean reads and refusal counters as offer_timed, no acceptance
+    /// mutation yet. Caller may discard the token after a hardware stop.
+    #[inline(always)]
+    pub fn qualify<F: FilterPolicy, R: FnMut() -> bool>(
+        &mut self, count: u32, rising: bool, policy: &F, mut read_level: R,
+    ) -> Result<Qualified<'_, BLANK_64>, Outcome> {
+        if count <= self.blanking() {
+            self.too_early = self.too_early.wrapping_add(1);
+            return Err(Outcome::TooEarly);
+        }
+        let depth = policy.level(self.average_interval);
+        let mut i = 0u8;
+        while i < depth {
+            if read_level() != rising {
+                self.unstable = self.unstable.wrapping_add(1);
+                return Err(Outcome::Unstable);
+            }
+            i += 1;
+        }
+        Ok(Qualified { zc: self, count })
+    }
+
     /// `BLANK_64` must lie in `1..=56`: zero would disable the gate that stops
     /// the estimator running away, and a value at or above one whole interval
     /// would refuse every genuine crossing (56 leaves an eighth of an interval
