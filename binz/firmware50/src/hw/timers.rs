@@ -222,6 +222,9 @@ pub mod com_timer {
     /// Counter state for the bridge-disabled peripheral exercise.
     pub fn is_running() -> bool { regs().cr1().read().cen().bit_is_set() }
 
+    /// Update-event witness, sampled before acknowledgment in disabled tests.
+    pub fn update_pending() -> bool { regs().sr().read().uif().bit_is_set() }
+
     /// Stop the one-shot: counter off, interrupt enables and flags clear.
     #[inline(always)]
     pub fn stop() {

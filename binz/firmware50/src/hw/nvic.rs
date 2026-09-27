@@ -39,3 +39,6 @@ pub fn unpend(irq: Interrupt) {
 pub fn pend(irq: Interrupt) {
     cortex_m::peripheral::NVIC::pend(irq);
 }
+
+/// Pending-state witness for disabled timer ownership tests.
+pub fn is_pending(irq: Interrupt) -> bool { cortex_m::peripheral::NVIC::is_pending(irq) }

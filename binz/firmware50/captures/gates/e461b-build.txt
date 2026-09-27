@@ -1,0 +1,17 @@
+cargo :    Compiling firmware50 v0.1.0 (E:\m\robot\esc\rm32\binz\firmware50)
+At line:6 char:1
++ cargo build --release --bin recheck-off --features advance-ref,deep-f ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...inz\firmware50):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+error: this file contains an unclosed delimiter
+   --> src\roots\recheck\check\lifecycle.rs:105:8
+    |
+101 | fn slot_times_ok() -> bool {
+    |                            - unclosed delimiter
+...
+105 |     })
+    |       ^
+
+error: could not compile `firmware50` (lib) due to 1 previous error

@@ -47111,3 +47111,133 @@ do not replace hardware timer/stop integration. No new concurrency guarantee
 or arbitrary callback-count bound claimed. Proceed only to disabled expiry/
 accepted-arm replacement validation; powered admission remains deferred.
 Installed CC668367 off-only probe, ENABLE/MOE0, UARTclosed.80%goal active.
+
+## E461 — real expiry / replacement / stop lifecycle, before build
+
+Previous turn made progress: compact schedule with differential tests and
+lower modeled COM cost, not a powered gain. Close the remaining disabled
+integration question with three bounded cases in the existing no-drive probe.
+Case6: actual TIM16 expiry drives all five observation slots autonomously;
+record IRQ count and elapsed times, then stop. Case7: explicitly pend obsolete
+TIM16 work, replace via real com_arm_crossing, require pending clear and no
+dispatch until the new1000us deadline. Case8: pend COMP and TIM16 then stop;
+COMP pending must clear, an accepted arm must refuse, and stale TIM16 dispatch
+must not re-create timer/bridge authority. The probe ISR never executes a
+commutation plan. A timeout always safes. Snapshot disabled clock baseline at
+case start to avoid an idle, never-started guard clock becoming the test's
+timebase. This is not a production timing change. Review before flashing;
+no powered candidate until lifecycle evidence is assessed.
+
+
+E461 preflash reviews (initial211A51FE NOT FLASHED):
+
+> **Do not flash this as a passing `u` suite: case 8 contradicts the supplied helpers.**
+>
+> - `guard_trip()` calls `com_stop()`, which stops TIM16, clears UIF, sets phase 0, and **unpends TIM16**. The refused `com_arm_crossing()` returns without changing that. Therefore `cleared` is true: flag bit 2 must be set, making expected `flags == 9` impossible. If COMP pending is also cleared, flags are **13**. `comp_exti_mask()` is omitted, so COMP clearing cannot independently be verified.
+> - No TIM16 event remains to invoke case 8’s handler. Expected behavior is **zero calls and timeout/failure**, not one stale service. To test stale dispatch refusal, explicitly pend TIM16 *after* stopping; test cancellation separately by observing no expiry through the former deadline.
+> - Case 6’s nominal observation ages are **501, 1501, 2001, 2501, 3001 µs**. Five pre-ack UIF samples witness real updates, but timestamps are only reported; spacing is not asserted. Late service can skip slots.
+> - Case 7 meaningfully checks replacement: stale TIM16 pending clears, then one UIF-backed callback arrives at 1000–1100 µs. It does **not** check survival past the obsolete 4000 µs deadline; cleanup stops observation early.
+>
+> No execution evidence was supplied.
+
+> **Do not flash expecting the `u` suite to pass unchanged.**
+>
+> - **Case 8 contradicts its setup.** `guard_trip()` calls `com_stop()`, which explicitly unpends TIM16. The refused `com_arm_crossing()` never repends it. Consequently `cleared == true`, making `flags == 9` impossible: bit 2 must also be set. No intentional TIM16 event remains to produce the required single callback. To test stale dispatch after stop, explicitly inject that dispatch after stopping.
+>
+> - **The timeout is not independently bounded.** Both waits depend entirely on `hw::clock::raw()` advancing. A stopped clock hangs forever, bypassing cleanup. TIM16’s `PSC=63` assumes a 64 MHz timer input; the supplied code does not establish that clock setup. A shared clock-rate error can also pass relative timing checks.
+>
+> - **Case 6 can falsely certify scheduling.** Five UIF-backed callbacks and five observations establish counts, but their recorded times are never asserted. Incorrectly compressed slot spacing can pass.
+>
+> - **Off-only evidence is narrower than “throughout.”** Register snapshots cannot exclude transient activation. `prepare()` checks inactivity before entering exclusion, then installs synthetic authority without rechecking. Safety therefore depends on the binary having no asynchronous owner-start path; the supplied excerpt does not establish that invariant.
+
+Disposition: correct, com_stop clearsphase and TIM16pending. Initialcase8 was
+wrong; neverflashed. Revisedcase8 records cancellation/refusedarm first
+(flags13), then explicitly pends a NEW stale TIM16 dispatch; requiresphase0,
+noUIF,noCEN,no requests. Both wait loops now have an independent iterationcap.
+Case6 checks each recorded IRQ time against [501,1501,2001,2501,3001]+0..100us;
+counts alone insufficient. Inactive/off precondition rechecked insidePRIMASK.
+Boardinit uses HSI16/PLL64MHz; relative timer checks are not independent clock
+calibration. Case7 proves one new deadline and cancellation/replacement, not
+absence of arbitrary later events beyondcleanup. No continuous-off claim from
+snapshots alone: no gate-on/COMplan path exists in probe. Re-review corrections
+before any flash. Bounds are diagnostic expectations, not motor guard changes.
+
+E461b preflash disposition: both corrected reviews are retained verbatim below.
+The omitted comp_exti_mask at roots.rs:1672 disables the line, clears EXTI and
+explicitly unpends ADC_COMP, supporting flags13. No admission claim beyond
+the E459 observed inputs. Case6 tests autonomous observation expiry, NOT five
+successful COMP deliveries. Case7 tests replacement pending clearance and the
+new deadline, NOT execution of obsolete callbacks or post-cleanup silence.
+Case8 tests the complete stop path plus a new stale dispatch, NOT isolated
+stopped=true/active=true enforcement. These are coverage limits, not reasons
+to expand this diagnostic into another controller campaign. No motor authority
+exists in this binary. Proceed with exactly one off-only u suite, stop at any
+failed case, retain p/u/p and close UART. Prediction: five UIF-backed slot
+expiries; one replacement expiry around1000us; then harmless newly injected
+stale service with flags13, zero phase/CEN/requests. No powered admission yet.
+Frozen DEA54192 SHA DEA54192ED377A273719A223E838AC6C58D716907C3536D070982005FA721647;
+release-s/thinLTO/codegen1, clippy, four-root arithmetic, structure passed.
+
+> Static review only; no execution evidence. **Case 7 should produce flags=7**, because `prepare_crossing()` clears TIM16 pending but leaves the software-pended ADC_COMP pending. Its `flags & 7 == 7` assertion correctly permits this.
+>
+> Recomputed expectations:
+>
+> - Cases 0–5: `(requests, phase, armed)` = `(0,4,1)`, `(1,4,1)`, `(1,0,0)`, `(0,4,0)`, `(0,4,0)`, `(0,3,0)`. Request counts for 1–2 depend on live admission; `revisit::admit` is absent.
+> - Case 6: average=1000 yields deadlines **501,1501,2001,2501,3001 µs**. Five pre-ack UIF witnesses plus timestamp windows measure actual peripheral expiry/service, conditional on a passing run.
+> - Case 8: flags=13 requires `comp_exti_mask()` to clear ADC_COMP NVIC pending; its implementation is absent. The explicitly injected stale dispatch should have UIF=0, phase=0, timer stopped, requests=0.
+>
+> Cancellation coverage is immediate pending-bit clearance, replacement expiry, and harmless post-stop stale service. Cleanup prevents observing whether the canceled 4000-µs event later resurfaces. Case 8 also clears `active`, so it does **not independently isolate stopped-latch enforcement**.
+>
+> The corrections improve the probe, but supplied code cannot fully validate flags=13 or admission. Unflashed checks establish no hardware result or WCET bound.
+> Corrections address the stale-dispatch setup and add meaningful expiry witnesses. Remaining findings:
+>
+> - **Case 8 does not isolate the stop latch.** `guard_trip` sets both `active=false` and `stopped=true`. Removing the stopped check from arm admission would still pass. Exercise `stopped=true, active=true` under synthetic, off-only authority, including direct `com_arm` refusal.
+> - **Case 7 bypasses callback cancellation.** `if case != 7` skips `after_phase`. It tests pending-bit replacement and the new crossing expiry, but cannot demonstrate that an obsolete schedule preserves phase 1 or avoids requesting COMP/rearming.
+> - **Cancellation is observed after additional cleanup.** The ISR acknowledges UIF and masks TIM16 before checking state; `finish` stops everything again. Case 8 therefore cannot prove the initial stop cleared UIF/UIE or canceled the original deadline permanently. Capture those immediately after the first stop, before reinjection.
+> - **Case 6 accepts zero requests.** `counts.0 <= 5` allows a completely broken request path to pass. Valid for autonomous observation expiry; insufficient for successful revisit delivery.
+>
+> No direct energizing operation appears in the supplied probe path. Off readbacks establish sampled state, not continuous absence of gate activity. With corrected claims, one `u` suite is useful evidence, but not acceptance of latch isolation or obsolete-callback cancellation.
+## E461b hardware result — one disabled suite, no motor
+
+Exact DEA54192 flash/reset exit0 on explicit G071 probe. MCP COM41 healthy;
+p/u/p retained verbatim in captures/gates/e461b-off-suite.json, UARTclosed.
+Both p readings ENABLE0/MOE0. Case6 actual UIF-backed callbacks at509,1509,
+2009,2510,3009us: offsets8,8,8,9,8us from planned slots, five observations,
+zero requests, finalphase0/CEN0. Callbackmax64ticks=8us, NOT fullISR/WCET or
+successful-request cost. Case7 one new UIF expiry at1003us,flags7,phase1/CEN0.
+Case8 new stale dispatch at6us,UIF0,flags13,phase0/CEN0,requests0. All three
+limited assertions PASS, off1. No retry. Zero requests in case6 cannot prove
+delivery; no attribution to comparator level without recordedinputs. Two
+fresh result reviews pending; no powered admission from this entry alone.
+
+E461b independent result reviews, verbatim:
+
+> Raw evidence: one `u` run reports three passes: seven callbacks, six expiries, five observations, zero requests. Case6 timestamps are 509/1509/2009/2510/3009 µs, respectively 8/8/8/9/8 µs after expected slots; gaps are 1000/500/501/499 µs. Case7 reports 1003 µs from crossing capture; case8 reports 6 µs. Maxima convert to 8/0.125/2 µs. Case7 skips `after_phase`, so its timing measures an empty bracket. Host read durations are milliseconds, not delivery latency.
+>
+> Flags7 means old TIM16 pending observed, crossing arm accepted, TIM16 pending cleared; comparator NVIC clearance was false. Flags13 means old pending observed, arm refused, both pending bits cleared. Both surrounding readbacks show enable=0, moe=0; each case reports off=1.
+>
+> Interpretation: supports bounded autonomous expiry, timer replacement, and rejection of stale dispatch after combined stop. It establishes neither isolated latch sufficiency nor successful request delivery. E459’s claimed 11.5 µs lacks supplied raw evidence.
+>
+> Adversarial assessment: sampled off checks cannot exclude transient outputs. Synthetic authority, masked COMP, and substituted vectors alter execution; measured callbacks exclude full ISR overhead. Missing guard thresholds and live delivery evidence leave the proposed 15%/28s screen unjustified by this packet alone. Next: controlled off-only successful-admission/delivery testing with representative COMP handling and independent timing/output capture.
+> Raw: case6 reports 5 calls, 5 expiries, 5 observations, 0 requests. Times 509/1509/2009/2510/3009µs exceed scheduled 501/1501/2001/2501/3001µs by 8/8/8/9/8µs; gaps are 1000/500/501/499µs. Cases7/8 each report one call: respectively expiry/non-expiry at 1003/6µs. Maxima 64/1/16 ×125ns = 8/0.125/2µs. Case7 skips `after_phase`, so its timing measures no callback. No absolute timestamps appear; host read durations are not firmware latency.
+>
+> Flags7 means old TIM16 pending witnessed, crossing arm accepted, TIM16 pending cleared; comparator-clear bit is unset. Flags13 means pending witnessed, arm refused, both pending checks clear. All report final phase/armed 0/0 except case7 phase1; all report off/pass.
+>
+> Interpretation: limited disabled expiry/replacement/stop evidence is supported. Case6 establishes no successful-request delivery latency. Case8 cannot isolate latch protection from other effects of `guard_trip`. Sampled off checks cannot exclude transient output activity. Synthetic ownership, masked ADC_COMP, and diagnostic ISR bookkeeping limit transfer to live timing and causality.
+>
+> E459’s successful requests/11.5µs and existing guard effectiveness are not demonstrated here.
+>
+> This packet alone does not justify the powered screen. Next: bridge-disabled successful-request delivery through the production COMP path, including stop/replacement interleavings and end-to-end timing.
+
+Disposition: recomputations agree with the raw capture. Case7's1tick is an
+empty bracket, not a fast callback. E459 raw capture exists at
+captures/gates/e459-off-suite.txt but was omitted from this result packet;
+its observed request cost is real, not motor-path timing proof. Reviews are
+correct that no production COMP-delivery latency is established. Do not
+transfer disabled timing to energized qualification. Next decision is whether
+the production request/service path adds a distinct untested hazard, based
+on the actual IRQ/mask/guard paths and E459 evidence, rather than expanding
+tests solely because a deliberately narrow review packet omitted context.
+No powered test authorized by this result. All three lifecycle cases now have
+actual peripheral evidence; installed DEA54192 is OFF,UARTclosed. No envelope
+increase; goal remains active.

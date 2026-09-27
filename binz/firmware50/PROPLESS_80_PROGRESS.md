@@ -1,6 +1,13 @@
 # Propless 80% campaign — progress, not qualification
 
-E459/E460 CURRENT: CC668367 off-only input probe installed, outputs OFF,
+E461b CURRENT: DEA54192 off-only lifecycle probe installed, outputs OFF,
+UART closed. One suite: five autonomous UIF-backed expiries within8..9us of
+slots; replacement expiry1003us; injected post-stop service harmless. All
+three limited cases PASS. No successful-request timing in this suite, no
+powered timing qualification. Dual result reviews retained with limitations.
+Motor candidate remains02F4D1E2 staged, NOT flashed. No envelope increase.
+
+E459/E460 historical: CC668367 off-only input probe installed, outputs OFF,
 UART closed. Changed probe passed six disabled cases; original E458 refusal
 unexplained, not excised. Longest observed callback11.5us is not WCET.
 E460 compact scheduler staged02F4D1E2, NOT flashed:404hosttests including

@@ -1,0 +1,7 @@
+Raw evidence: one `u` run reports three passes: seven callbacks, six expiries, five observations, zero requests. Case6 timestamps are 509/1509/2009/2510/3009 µs, respectively 8/8/8/9/8 µs after expected slots; gaps are 1000/500/501/499 µs. Case7 reports 1003 µs from crossing capture; case8 reports 6 µs. Maxima convert to 8/0.125/2 µs. Case7 skips `after_phase`, so its timing measures an empty bracket. Host read durations are milliseconds, not delivery latency.
+
+Flags7 means old TIM16 pending observed, crossing arm accepted, TIM16 pending cleared; comparator NVIC clearance was false. Flags13 means old pending observed, arm refused, both pending bits cleared. Both surrounding readbacks show enable=0, moe=0; each case reports off=1.
+
+Interpretation: supports bounded autonomous expiry, timer replacement, and rejection of stale dispatch after combined stop. It establishes neither isolated latch sufficiency nor successful request delivery. E459’s claimed 11.5 µs lacks supplied raw evidence.
+
+Adversarial assessment: sampled off checks cannot exclude transient outputs. Synthetic authority, masked COMP, and substituted vectors alter execution; measured callbacks exclude full ISR overhead. Missing guard thresholds and live delivery evidence leave the proposed 15%/28s screen unjustified by this packet alone. Next: controlled off-only successful-admission/delivery testing with representative COMP handling and independent timing/output capture.

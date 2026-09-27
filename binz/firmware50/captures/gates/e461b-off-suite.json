@@ -1,0 +1,38 @@
+[
+  {
+    "command": "p",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"e16310f3-60a4-4589-ad3a-ac07bd3b64f2\",\n  \"bytes_read\": 33,\n  \"data\": \"RECHECKOFF idle enable=0 moe=0 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 500,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 15,\n  \"elapsed_ms\": 509,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 33,\n      \"waited_ms\": 15,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "command": "u",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"e16310f3-60a4-4589-ad3a-ac07bd3b64f2\",\n  \"bytes_read\": 421,\n  \"data\": \"RECHECKLIFE case=6 calls=5 expired=5 flags=0 phase=0 armed=0 requests=0 observations=5 max_ticks125ns=64 off=1 pass=1  times_us=509,1509,2009,2510,3009,\\r\\nRECHECKLIFE case=7 calls=1 expired=1 flags=7 phase=1 armed=0 requests=0 observations=0 max_ticks125ns=1 off=1 pass=1  times_us=1003,\\r\\nRECHECKLIFE case=8 calls=1 expired=0 flags=13 phase=0 armed=0 requests=0 observations=0 max_ticks125ns=16 off=1 pass=1  times_us=6,\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 500,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 54,\n  \"elapsed_ms\": 511,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 421,\n      \"waited_ms\": 54,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "command": "p",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"connection_id\": \"e16310f3-60a4-4589-ad3a-ac07bd3b64f2\",\n  \"bytes_read\": 33,\n  \"data\": \"RECHECKOFF idle enable=0 moe=0 \\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 500,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 6,\n  \"elapsed_ms\": 508,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 33,\n      \"waited_ms\": 6,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+        }
+      ],
+      "isError": false
+    }
+  }
+]

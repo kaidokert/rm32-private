@@ -33,6 +33,12 @@ fn main() -> ! {
                     board.now(); board.drain();
                 }
             }
+            if b == b'u' {
+                for case in 6..=8 {
+                    if !roots::recheck::check::lifecycle::run(case, &mut board) { break; }
+                    board.now(); board.drain();
+                }
+            }
             safe_off(&mut Drv8304);
             if b == b'p' { board.say("RECHECKOFF idle ");
                 board.kv("enable", u32::from(hw::gpio::enable_is_high()));

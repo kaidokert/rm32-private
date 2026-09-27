@@ -2,6 +2,8 @@
 use super::*;
 use portable_atomic::AtomicU32;
 
+pub mod lifecycle;
+
 static CASE: AtomicU32 = AtomicU32::new(0);
 static DONE: AtomicU32 = AtomicU32::new(0);
 static TICKS: AtomicU32 = AtomicU32::new(0);
@@ -31,10 +33,21 @@ fn off() -> bool {
         && hw::pwm::compares() == (0, 0, 0)
 }
 
+fn inactive() -> bool {
+    off() && !S.guard().active.load(Ordering::Relaxed)
+        && !S.det().active.load(Ordering::Relaxed) && !S.com().active.load(Ordering::Relaxed)
+        && !S.drv().active.load(Ordering::Relaxed)
+}
+
 /// Test vector: never calls the commutating COM root or changes a gate role.
 /// # Safety
 /// Only TIM16 at Motor::NVIC may call this, in the driver-disabled probe.
 pub unsafe fn interrupt() {
+    if CASE.load(Ordering::Relaxed) >= 6 {
+        // SAFETY: this function's vector/priority contract is unchanged.
+        unsafe { lifecycle::interrupt() };
+        return;
+    }
     hw::com_timer::ack();
     hw::nvic::mask(stm32::Interrupt::TIM16);
     if !off() { guard_trip(Reason::HostAbort); DONE.store(2, Ordering::Release); return; }
@@ -52,18 +65,19 @@ pub unsafe fn interrupt() {
 
 /// Synthetic authority only with all real drive owners inactive and bridge off.
 fn prepare(case: u32) -> bool {
-    if !off() || S.guard().active.load(Ordering::Relaxed)
-        || S.det().active.load(Ordering::Relaxed) || S.com().active.load(Ordering::Relaxed)
-        || S.drv().active.load(Ordering::Relaxed) { return false; }
+    if !inactive() { return false; }
     cortex_m::interrupt::free(|_| {
+        if !inactive() { return false; }
         comp_exti_mask();
         hw::nvic::mask(stm32::Interrupt::TIM16);
         hw::com_timer::stop();
         hw::nvic::unpend(stm32::Interrupt::TIM16);
         let raw = hw::clock::raw();
-        let now = guard_now();
-        let age = if case == 0 { 0 } else if case == 2 { 400 } else { 60 };
-        let avg = if case == 0 { 1000 } else { 80 };
+        S.guard().raw.store(u32::from(raw), Ordering::Relaxed);
+        S.guard().ext.store(0, Ordering::Relaxed);
+        let now = 0u32;
+        let age = if case == 0 || case >= 6 { 0 } else if case == 2 { 400 } else { 60 };
+        let avg = if case == 0 || case >= 6 { 1000 } else { 80 };
         let step = if hw::comp::level() == edge_is_rising(Step::new_clamped(1)) { 1 } else { 2 };
         let generation = S.det().accept_seq.load(Ordering::Relaxed);
         if STATE.lock(|s| {
@@ -84,7 +98,7 @@ fn prepare(case: u32) -> bool {
         hw::comp::clear_pending();
         INPUT_BITS.store(0, Ordering::Relaxed);
         CASE.store(case, Ordering::Relaxed); DONE.store(0, Ordering::Relaxed);
-        hw::nvic::pend(stm32::Interrupt::TIM16);
+        if case >= 6 { lifecycle::arm(case); } else { hw::nvic::pend(stm32::Interrupt::TIM16); }
         hw::nvic::unmask(stm32::Interrupt::TIM16);
         true
     })
@@ -94,7 +108,8 @@ fn prepare(case: u32) -> bool {
 pub fn run(case: u32, sink: &mut impl crate::report::Sink) -> bool {
     if case > 5 || !prepare(case) { return false; }
     let start = hw::clock::raw();
-    while DONE.load(Ordering::Acquire) == 0 && hw::clock::raw().wrapping_sub(start) < 2000 {
+    for _ in 0..100_000 {
+        if DONE.load(Ordering::Acquire) != 0 || hw::clock::raw().wrapping_sub(start) >= 2000 { break; }
         cortex_m::asm::nop();
     }
     cortex_m::interrupt::free(|_| {
