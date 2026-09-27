@@ -45731,3 +45731,211 @@ capturesprovideaggregate/tailend only forleanE442; previousORDERtailsbelongto
 otherimages and cannot reconstructitsmissingterminalevents. Next step should
 recover terminalsequence with existing boundedrecording or narrowly scoped
 instrument, not anotherprearmmicrooptimization. Board986942DA/OFF/UARTclosed.
+
+### E444 - targeted stale-decision evidence, design only
+
+Previous turn progressed via protected25failure, assembly/counterownership
+audit and dualreviews; noenvelopegain. Fullobjective reread; no benchaction.
+E442 lacks lastwatch timestamp, exactstalelatchinstant and whetherpoll or
+eventfeed latched it. FullORDER adds per-event work; do not repeat it to
+answer only these threefacts. Proposedminimal retainedstale evidence inside
+EventWatch: latch now + origin(poll/event) only on firstStale; existinglast
+alreadyretains the previous acceptedwatchtime. Getter returnsNone for other
+faults. poll/event retainexactconditions and faultprecedence, guardsunchanged.
+Print aftersafe_off in board.guard_record along with latestaccept_raw,
+watchclock raw/ext origin, sector/estimate and counts as POSTSTOP snapshots.
+These are not hardware-edge timestamps or a full causaltrace. No per-event
+ring, no liveUART, no healthy-path timestamp/store added bydesign. Compiler
+must verify cost: addedstate can move layouts and affect emittedcode.
+Prediction: on a Stalefailure exactfaultage will exceed unchangedlimit, origin
+will distinguish eventfeed from timerpoll, and poststopaccept_raw can test
+whether an unconsumed lateaccept accounts for E442's one-count difference.
+It cannot alone explain why a physical crossing was absent or rejected.
+Dualreview beforeimplementation; hostcases strictboundary/wrap/firstlatch/
+bothorigins/nonstale and targetdisassembly required. No poweredadmission yet.
+
+E444 reviews:
+
+> Raw evidence supports a latched software Stale and safe poststop outputs; it does not establish the physical missed-crossing cause or shutdown latency. Coast/hold rates agree approximately; zero witness values and empty margin histograms provide no corroboration.
+>
+> The proposal stays minimal: fault-branch-only timestamp/origin capture, unchanged precedence, poststop reporting, and assembly verification. Capture last, deadline, and first-Stale time coherently; distinguish detection age from lateness beyond the deadline. Label subsequent telemetry explicitly poststop. Replace the report’s default-watch fallback with “unavailable” to avoid fabricated healthy evidence.
+>
+> First-fault preservation holds within EventWatch; guard_trip’s load-then-store needs proven exclusion across all callers or atomic first-writer arbitration. Verify resumed COMP/COM and handover paths cannot rearm after shutdown. Tracking arming also needs a latched-stop check.
+>
+> Shutdown bounds require maximum interrupt masking/preemption, poll delay, and trip-to-MOE-off duration; observed 111 µs guard gaps are not worst-case bounds. Clock extension requires servicing within one raw-counter wrap.
+>
+> Also test rejected tightening: a 238 µs minimum prevents the advertised 200 µs ceiling. No powered admission is justified yet.
+
+> Minimal scope is appropriate, but this establishes software Stale provenance only.
+>
+> - Capture first-Stale `now` and poll/event origin exactly when latching; retained `last` gives observed age. Preserve strict `>` and Stale-before-sector precedence. With `min_interval=238`, tightening to 200 is rejected even in report-only mode; `track_max_us=240` deserves explicit reconciliation.
+> - `EventWatch` preserves its first fault under serialized access. Global `guard_trip` uses load-then-store, so first-reason preservation requires proven exclusion across every caller or compare-exchange. A latch check before handover also needs exclusion through release; otherwise shutdown can be undone.
+> - POSTSTOP PASS proves eventual off, not bounded shutdown latency. Bound watchdog scheduling/masking delay plus trip-to-MOE-off execution, including `com_stop`; show pending/resumed handlers cannot rearm. Observed `gap_max_us=111` is no worst-case bound.
+> - A critical section makes raw/ext coherent, but cannot recover multiple missed 16-bit wraps. Label poststop fields accordingly; replace silent watch-lock fallback with explicit unavailable telemetry.
+> - Keep fault-only capture, assembly/root audits, and host tests. Add concurrency/shutdown evidence before powered admission; avoid expanding into physical-cause instrumentation.
+
+Dispositions: implementoffline, latch actualthreshold withnow/origin (three
+faultonlyfields) so later tightening cannot relabelthe firstdecision. Existing
+last staysunchangedafterfault. Reportage and deadlineexcess distinctly. Explicit
+unavailablewatchtelemetry rather thanhealthyfallback; coherentraw/ext tuple
+captured undercriticalsection, poststopvalues clearlynamed. Sourceaudit:
+allguard_trip callsites are highestGuardroot orinsidePRIMASK (guard_event and
+stop_expired_arm); no proposedCAS/safetyrewrite. board.com_handover already
+checksroots::guard_latched insideinterrupt::free beforeactivation, including
+nestedguard_arm_tracking. Existingatomicarmrefuses stopped/!active. These
+are sourceinvariants, not new measuredshutdownlatency/WCET. No multiwrapclock
+proof. min238 versus clamp200 isexistingpolicy: tightenbelowmin rejected;
+240 is a retainedactualceiling, not a claim ofcurrent3*40. Add explicit test.
+No thresholds, restart, arm or shutdowncode edits authorized by thisinstrument.
+
+E444 implementation: StaleDecision getter plus faultonly now/limit/origin
+stores; poll/event useconstorigin in sharedpoll_from. Threehosttestscover
+strictboundary/wrap/bothorigins/firstlatchevenaftertightening/nonstalefault/
+rejected200usbelow238minimum.384hosttests,clippy,fourrootaudit,currentstructure
+PASS. Reportonlyfromfinish->report->guard_record aftersafe_off/coast/zero;
+unavailablewatch emitsavailable0 andtrack_fault=u32::MAX, nothealthy0.
+Frozen C1346160C6CDDE83E2AD8627EC8C7D2103BABC012A29E3EA3950BB2B8DABB0B9,
+release-s/thinLTO/codegen1,text47060/data748/bss4188. COMP760->762entries,
+guard155->161; DMA37/COM388 normalizedsamewithrelocations. Faultmetadata
+stores observed onlyafterstaleconditional: COMP0x8000b00..b08,guard0x80010b8..c0.
+No newruntimecalls/softmath inroots. Healthycodealso regalloc/layoutchanges,
+so NOTbyteidentical orzeroobservereffect. Fault-only stores precedesafeoff;
+no claim ofzero addedtrip latency or WCET. Notyetflashed.
+Proposedone25%/28sscreen afterdisabledchecks/cooling, retainanyoutcome, no
+retryfordesiredStale. Aim is softwaredecisionorigin/age, not physicalcause
+or envelopequalification. Poststop acceptanceclock fields labelledas such.
+
+### E445 - implementation review, startup attribution correction
+
+> Raw source/assembly supports first-decision correctness: strict `age > limit`, wrapping subtraction, origin tagging, and captured limit survive later tightening. `last` remains frozen because subsequent events return on the latched fault. No concrete defect found there.
+>
+> Both ISR paths bypass the three evidence stores when healthy; those stores precede shutdown when stale. This supports fault-only evidence writes, not zero execution/layout cost or bounded shutdown latency. Baseline instruction-count deltas and clippy results are author assertions; supplied output shows 384 passing tests and the ISR audit passing.
+>
+> Reporting prints outside the mask; `post_*` correctly distinguishes later snapshots from decision evidence. `u32::MAX` avoids reporting an unavailable watch as healthy, provided consumers recognize it; zero fallback metrics must also remain unavailable. The supplied “RAW STOP” is an unrelated test, so actual foreground safe-off ordering is not established here.
+>
+> The single 25%/28s screen is conditionally reasonable only within independently established E442 limits, with >120s off, verified candidate flash, disabled boot/all-off checks, unchanged trips, and no retry/escalation. It can reveal software stale origin/age, not physical cause, shutdown timing, or full qualification.
+> Raw evidence supports first-decision correctness within one watch lifetime: strict `>`, wrapping subtraction, event-before-update ordering, and fault latching preserve `last/at/limit/origin`, including subsequent tightening.
+>
+> - **Reporting attribution gap:** `guard_arm()` does not reset the watch; only `guard_arm_tracking()` does. A later run stopping before tracking could report the previous run’s stale evidence as available. Clear/invalidate evidence per run or attach a run identifier.
+> - **Cost:** Both supplied ISR listings bypass evidence stores on healthy paths. Those stores precede shutdown and add latency. Changed register allocation/layout prevents concluding zero healthy-path cost; no baseline assembly comparison or WCET bound is established here.
+> - **Reporting safety:** Printing occurs outside the mask; poststop labels correctly limit interpretation. However, the supplied “RAW STOP” is a test, not the actual shutdown implementation. Coast-before-report ordering alone does not prove gates were reclaimed before reporting or driver wake.
+> - **Single guarded 25%/28s screen:** Conditional on resolving attribution and verifying actual stop/all-off ordering, retain the proposed cooldown, disabled boot, unchanged thresholds, and no retry/escalation. This can collect software stale evidence only; tests/audit and one screen do not establish full qualification.
+
+Dispositions: attribution finding accepted. Before another build, reset the
+watch in guard_arm while tracking is disabled and before the guard is enabled;
+handover still resets its true time origin. No thresholds or enabled tracking
+semantics change. Add a reset regression. The staged C1346160 is not flashed.
+The missing stop packet was a selection error: actual run/states.rs::stop
+calls det_release, take_back, safe_off, comp_mask before constructing Stopped;
+run/mod.rs::finish consumes Stopped, then coast, bridge-off amplifier zero,
+preflight and report. Supply these actual functions in the follow-up review.
+No shutdown WCET claim, no powered admission until the correction is reviewed.
+
+E445 correction built as 32AAEE6E32064E93D719A60B546D2E83377A1B3356AE763478E2DAEFCED50C04,
+captures/elf/32AAEE6E.e445-stale-reset.elf. 385 host tests PASS, clippy PASS,
+four-root audit PASS. Relative to staged C1346160, DMA/guard identical,
+COMP/COM normalized instruction streams identical with relocated constants.
+The reset adds no recurring ISR work; E444 fault-branch cost remains.
+No board flash or powered run in this turn.
+
+Correction reviews (independent fresh read-only sessions):
+
+> The diff resets the watch after `tracking=false`, before `active=true` and IRQ unmasking. This clears prior-run evidence if the foreground lock succeeds; handover separately establishes the clock origin.
+>
+> Staleness remains strictly `age > limit`: 240 passes; 241 faults with lateness 1. Across wrap, base `u32::MAX−100` plus 241 becomes 140, retaining age 241. Likewise, 481−240=241. `guard_event` tightens the limit before checking the event.
+>
+> Stop ordering is `det_release → timestamp → take_back → safe_off → comp_mask → carrier restoration`. Within `safe_off`, MOE clears first. Finish performs coast capture, post-run baseline, injection cleanup and preflight reporting before constructing/emitting the report. The snapshot’s printing occurs outside its interrupt mask.
+>
+> Concrete blockers: None demonstrated by the supplied evidence.
+>
+> Proof limitations: Reset failure is silently ignored; the unconditional reset claim requires a foreground, nonnested call. The source-order test cannot prove that. The supplied report body does not establish where `guard_record` executes. Its snapshot excludes later `GuardRecord` scalar reads. All 385 host tests passed; audit and instruction comparisons support their stated scopes, not physical timing or hardware behavior. Candidate remains unflashed.
+> Evidence: `guard_arm` resets the watch before activation; `Seam::lock` can refuse, and its result is discarded. Reporting follows `safe_off`, coast capture, baseline measurement, and driver disable. The snapshot masks interrupts; printing occurs afterward. Host tests report 385 passes.
+>
+> **Concrete blockers:** No unconditional blocker demonstrated. However, reset failure is silently accepted: handler-mode invocation or an existing foreground borrow leaves prior-run evidence intact while arming continues. If either is reachable, this correction fails its stated purpose. Require successful reset or establish those call-site invariants.
+>
+> **Proof limitations:**
+>
+> - The source-string test proves textual ordering, not reset execution or exclusion of concurrent rearming. `guard_arm` also depends on the previous guard being inactive/disarmed during initialization.
+> - Snapshot masking provides consistency against maskable ISR writers on this core, not fault-time attribution. `reason`, `ticks`, and `gap_max` are loaded separately afterward.
+> - `from_event` identifies the software decision path, not a physical edge. Tightening immediately before `event` can explain staleness.
+> - Added fault-path stores precede shutdown. Audit success and reported instruction identity do not establish their latency or explain how those stores appear in the audited image.
+
+Dispositions: no new concrete blocker found. Reset lock is foreground-only:
+the sole hardware caller is Board::guard_arm from Armed::start, not an ISR
+or a watch borrow. Tracking is false during reset; previous stop take_back
+disarms the guard. Handover resets again. Source-order regression is limited
+to textual order, not a general concurrency proof. Report guard_record is
+called from run/mod.rs::report after finish has coasted and disabled the
+driver after zero calibration. Poststop fields are not fault-time state.
+The two assembly comparisons are distinct: E444 added fault-only stores;
+E445 reset versus E444 changes no normalized ISR instruction stream.
+Next bounded screen remains diagnostic only; no envelope gain is claimed.
+
+### E446 - one stale-decision screen, prediction
+
+Previous turn made progress: corrected cross-run fault attribution, tested and
+reviewed; full 60-to-80 objective remains unchanged. Candidate32AAEE6E full
+SHA rechecked. MCP enumerates COM41. More than19minutes off since E442,
+not measured thermal recovery. Flash explicit G071, require disabled checks,
+then command8 once (25%,28s total,48kHz1333). No threshold changes, retry or
+escalation. Expected diagnostic if Stale: first age>capturedlimit, caller
+poll/event explicitly identified. Poststop state cannot establish physical
+edge timing. Any other outcome is retained; no required fault recreation.
+
+E446 flash/reset exit0. MCP p: PREFLIGHT moe0/CCR1..3=0/gates_low1/en0/
+nfault1 verdictPASS; DIODESELFTEST en0 six_sectors_pwm/latch/deadline PASS.
+MCP closed cleanly. Proceed one command8 screen as declared.
+
+E446 result: captures/2026-09-27/e446-propless250-stale-decision_01.txt,
+reason8 Tracking/Stale1, target2669ms atCCR333/1333, closed10170ms.
+FinaloffPASS; no retry. BEMFSTALE from_event1, last14884357 at14884609,
+limit240 age252 late12. Postclock raw28457/ext14884566, accept_raw28491,
+seq/com147759, step3 avg122. Under the common raw-clock mapping that last
+entry is14884600, 9us before decision,243us after lastwatchfeed. These are
+software timestamps; poststate attribution needs review before causal use.
+latearms0/thin106, spentmax11/COMPmax24/COMlate5; guardgap106, no storm/
+overrun/blanklatched/sag. Filtered busrest995permille, holdproxy424mA with
+zero drift-198mA, not calibrated. Tail48323/span2669850us, last56us before
+stop. Tripped coast/rate1030 is not proof of slip. This narrows the software
+decision path; physical cause and envelope remain unresolved. Dual review
+next, no dependent powered action until dispositions.
+
+E446 result reviews:
+
+> Raw arithmetic checks: 14,884,609−14,884,357=252 µs, exceeding 240 µs by 12. Mapping the poststop clock pair gives acceptance entry 14,884,566+(28,491−28,457)=14,884,600 µs: 243 µs after the previous watch feed, 9 µs before the decision. This mapping assumes the corresponding clock epoch.
+>
+> Duty 250 means 25.0%; 64 MHz/1333≈48.012 kHz. Hold rate is 48,325/2.669≈18,106 events/s; 55 µs implies 3030 electrical Hz. Sector counts sum to 137,319, exactly 10,440 below 147,759, matching mailbox coalescing. Tail span is 2,669,906−56=2,669,850 µs, exceeding its advertised 2-second window.
+>
+> All 14 emitted stale fields are present. Supplied source traces both acceptance paths through publication/arming → `guard_event` → strict stale check → `guard_trip`; reporting separates latched decision fields from poststop snapshots. File provenance and ELF-to-source binding remain unverified.
+>
+> The latched fields establish an event-origin stale decision. Attribution of the poststop acceptance to that triggering invocation remains conditional: resumed handlers can change published state after shutdown.
+>
+> Next, audit those continuation paths and the existing ELF’s selected instantiations. This failed attempt establishes reported zero-forced operation and poststop safe readback—not completed duration, rotor lock, physical cause, or bridge-disable latency.
+>
+> Raw establishes a Tracking/Stale stop after 10.170 seconds closed loop and 2.669 seconds at target: watch-feed age 252 µs exceeded the latched 240 µs limit. No forced commutations or late arms were reported; poststop outputs read safe.
+>
+> The reconstruction gives **14884600 µs** for the final published COMP entry, assuming the clock mapping is valid within one wrap. Attribution to the faulting acceptance is supported by the supplied ordering: publication precedes `guard_event`; `from_event=1` identifies that path; after its trip, the remaining handler code does not publish another acceptance. Merely resuming after shutdown does not invalidate this attribution. The ELF hash alone does not establish source correspondence.
+>
+> However, **243 µs mixes a current entry timestamp with a previous watch-feed timestamp**. It is neither an edge interval nor evidence of physical slip. The 9 µs is entry-to-watch-decision time, not shutdown latency.
+>
+> Missing/rejected crossings, revisit-generated acceptance, and software timing remain alternatives. Coast-rate agreement supports rotation, not continuous rotor lock. Zero witness values are unmeasured inputs.
+>
+> Next, replay the terminal ordering against the supplied code: acceptance publication and timer arm occur **before** stale checking. Verify cancellation and bridge-disable behavior, including pending COM service. Keep thresholds unchanged; this failed run establishes neither shutdown latency nor loaded safety.
+
+Dispositions: source-selected NoLog/NoChain plain acceptance publishes before
+guard_event. Event-origin fault is in that same COMP invocation; after it the
+accepted path returns without another publication or line-enable. COMP cannot
+preempt itself. guard_trip clears active flags, com_stop latches stopped,
+stops timer/clears phase/unpends, and safes bridge. Thus final accept_raw
+corresponds to this faulting invocation in the selected path, not an arbitrary
+poststop edge. Clock pair mapping yields243us already elapsed at entry from
+the previous watch feed;9us later the stale decision fires. Neither is a
+physical edge interval or shutdown latency. Reducing only those9us cannot
+remove this particular strict240us miss. No thresholds change.
+Sector totals'10440 deficit is arithmetic, but a unique coalescing cause is
+not independently proven here. Tail window_us is configured nominal span;
+actual span is explicitly2669850us, used for rate. No slip claim from coast.
+Installed32AAEE6E/OFF/UARTclosed. Next causal question is the several-sector
+gap before this acceptance (physical absent edge versus rejection/revisit),
+not another isolated pre-arm instruction shave. Existing bounded ORDER
+recorder is available; no new broad instrumentation design is justified.

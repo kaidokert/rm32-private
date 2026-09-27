@@ -802,27 +802,42 @@ impl Hal for Board {
     }
 
     fn guard_record(&mut self, loop_iters_closed: u32, loop_gap_max_us: u32, acquire_us: u32) -> GuardRecord {
-        let watch = S
-            .guard()
-            .watch
-            .lock(|w| *w)
-            .unwrap_or(firmware50::tracking::EventWatch::new(
-                0,
-                firmware50::protection::EVENT_MIN_US,
-                firmware50::tracking::EVENT_MAX_US,
-            ));
-        let (fast_events, fast_min_us) = watch.fast_events();
+        // Poststop snapshot, not fault-time state. Print outside the mask.
+        let (watch, raw, ext, accept_raw, seq, step, avg, coms) = cortex_m::interrupt::free(|_| (
+            S.guard().watch.lock(|w| *w),
+            S.guard().raw.load(Ordering::Relaxed), S.guard().ext.load(Ordering::Relaxed),
+            S.det().accept_raw.load(Ordering::Relaxed), S.det().accept_seq.load(Ordering::Relaxed),
+            S.det().step.load(Ordering::Relaxed), S.det().accept_avg.load(Ordering::Relaxed),
+            S.com().count.load(Ordering::Relaxed),
+        ));
+        if let Some(d) = watch.and_then(|w| w.stale_decision()) {
+            self.say("BEMFSTALE ");
+            for (key, value) in [
+                ("available", 1), ("from_event", u32::from(d.from_event)),
+                ("last_us", d.last), ("at_us", d.at), ("limit_us", d.limit),
+                ("age_us", d.at.wrapping_sub(d.last)),
+                ("late_us", d.at.wrapping_sub(d.last).saturating_sub(d.limit)),
+                ("post_clock_raw", raw), ("post_clock_ext", ext),
+                ("post_accept_raw", accept_raw), ("post_accept_seq", seq),
+                ("post_step", step), ("post_avg", avg), ("post_com_count", coms),
+            ] { self.kv(key, value); }
+            self.say("\r\n");
+        } else if watch.is_none() {
+            self.say("BEMFSTALE available=0\r\n");
+        }
+        let (fast_events, fast_min_us) = watch.map_or((0, 0), |w| w.fast_events());
         GuardRecord {
             reason: S.guard().reason.load(Ordering::Relaxed),
             ticks: S.guard().ticks.load(Ordering::Relaxed),
             gap_max_us: S.guard().gap_max.load(Ordering::Relaxed),
-            track_fault: match watch.fault() {
-                None => 0,
-                Some(firmware50::tracking::Fault::Stale) => 1,
-                Some(firmware50::tracking::Fault::TooFast) => 2,
-                Some(firmware50::tracking::Fault::SectorOrder) => 3,
+            track_fault: match watch.map(|w| w.fault()) {
+                None => u32::MAX, // unavailable is never reported as healthy
+                Some(None) => 0,
+                Some(Some(firmware50::tracking::Fault::Stale)) => 1,
+                Some(Some(firmware50::tracking::Fault::TooFast)) => 2,
+                Some(Some(firmware50::tracking::Fault::SectorOrder)) => 3,
             },
-            track_max_us: watch.max_interval(),
+            track_max_us: watch.map_or(0, |w| w.max_interval()),
             fast_events,
             fast_min_us,
             loop_iters_closed,

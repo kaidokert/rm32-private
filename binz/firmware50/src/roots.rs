@@ -884,6 +884,11 @@ pub fn guard_arm() {
     S.guard().adc_at.store(0, Ordering::Relaxed);
     S.guard().reason.store(0, Ordering::Relaxed);
     S.guard().tracking.store(false, Ordering::Relaxed);
+    // A startup refusal must not report a previous run's tracking fault.
+    // Tracking remains disabled; handover establishes its real time origin.
+    let _ = S.guard().watch.lock(|w| {
+        *w = crate::tracking::EventWatch::new(0, crate::protection::EVENT_MIN_US, crate::tracking::EVENT_MAX_US);
+    });
     hw::nvic::set_priority(stm32::Interrupt::TIM6_DAC_LPTIM1, GUARD_IRQ_PRIORITY);
     hw::nvic::unpend(stm32::Interrupt::TIM6_DAC_LPTIM1);
     S.guard().active.store(true, Ordering::Release);

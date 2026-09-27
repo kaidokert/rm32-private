@@ -134,6 +134,21 @@ dependency (not claiming full reference parity). E410 passed its 50% screen;
 E411 sag-stopped at about56% on the 60% climb. This single screen did not
 remove the failure. It cannot isolate sensitivity against unmatched runs.
 
+E446 checkpoint: installed32AAEE6E OFF after one25% test stopped Tracking
+at2.669s target. First stale decision is event-feed, age252us/limit240.
+Selected-path audit maps final COMP entry to243us after the previous watch
+feed,9us before the decision: pre-arm shaving alone cannot cure this event.
+No physical missed-edge cause established, no retry, no envelope increase.
+Dual reviews retained with dispositions in the notebook.
+
+E445 historical checkpoint: board remained E441 986942DA, OFF after E442's Tracking
+stop at25%/2.368s. New fault-only stale diagnostic32AAEE6E is staged,
+not flashed. Dual reviews caught and corrected previous-run stale evidence
+on startup refusals.385 tests/clippy/four-root audit PASS; reset correction
+leaves normalized ISR instructions unchanged versus E444. No envelope gain.
+Next: one protected25%/28s diagnostic screen after fresh disabled checks,
+no retry or escalation. See notebook E444/E445 and captures/gates/e445*.
+
 E413/E414/E415: `8F977353.e413-latch48.elf` stages TIM1 roles and
 transfers them together using COMG, without UG or counter reset. A finite
 stop-checked critical section prevents resumed compare writes undoing safing;

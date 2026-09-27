@@ -27,6 +27,16 @@ pub enum Fault {
     SectorOrder,
 }
 
+/// First software stale decision, in the watch's wrapping microsecond clock.
+/// Not a physical comparator-edge or bridge-disable timestamp.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct StaleDecision {
+    pub last: u32,
+    pub at: u32,
+    pub limit: u32,
+    pub from_event: bool,
+}
+
 /// The reference's missing-event ceiling, µs.
 pub const EVENT_MAX_US: u32 = 1_000;
 
@@ -63,6 +73,9 @@ pub struct EventWatch<const REPORT_FAST: bool> {
     fault: Option<Fault>,
     fast_count: u32,
     fast_min: u32,
+    stale_at: u32,
+    stale_limit: u32,
+    stale_from_event: bool,
 }
 
 impl<const REPORT_FAST: bool> EventWatch<REPORT_FAST> {
@@ -77,6 +90,9 @@ impl<const REPORT_FAST: bool> EventWatch<REPORT_FAST> {
             fault: None,
             fast_count: 0,
             fast_min: u32::MAX,
+            stale_at: 0,
+            stale_limit: 0,
+            stale_from_event: false,
         }
     }
 
@@ -98,10 +114,30 @@ impl<const REPORT_FAST: bool> EventWatch<REPORT_FAST> {
 
     /// Check for a stale event, with or without a new one.
     pub fn poll(&mut self, now: u32) -> Option<Fault> {
+        self.poll_from::<false>(now)
+    }
+
+    /// Fault-only evidence; normal polls/events perform no additional stores.
+    #[inline(always)]
+    fn poll_from<const EVENT: bool>(&mut self, now: u32) -> Option<Fault> {
         if self.fault.is_none() && now.wrapping_sub(self.last) > self.max_interval {
+            self.stale_at = now;
+            self.stale_limit = self.max_interval;
+            self.stale_from_event = EVENT;
             self.fault = Some(Fault::Stale);
         }
         self.fault
+    }
+
+    /// Read after stop; subsequent calls cannot replace the first decision.
+    #[must_use]
+    pub fn stale_decision(&self) -> Option<StaleDecision> {
+        (self.fault == Some(Fault::Stale)).then_some(StaleDecision {
+            last: self.last,
+            at: self.stale_at,
+            limit: self.stale_limit,
+            from_event: self.stale_from_event,
+        })
     }
 
     /// Tighten the missing-event deadline; refuses to loosen it or to go
@@ -119,7 +155,7 @@ impl<const REPORT_FAST: bool> EventWatch<REPORT_FAST> {
     /// One accepted event in logical sector `sector` (1..=6). The first event
     /// establishes phase only.
     pub fn event(&mut self, now: u32, sector: u8) -> Option<Fault> {
-        if self.poll(now).is_some() {
+        if self.poll_from::<true>(now).is_some() {
             return self.fault;
         }
         let in_order = match self.sector {
@@ -156,6 +192,51 @@ mod tests {
     type Report = EventWatch<true>;
 
     #[test]
+    fn stale_evidence_has_strict_boundary_both_origins_and_wrap() {
+        for base in [0, u32::MAX - 100] {
+            for event in [false, true] {
+                let mut w = Watch::new(base, 20, 240);
+                assert_eq!(w.poll(base.wrapping_add(240)), None);
+                assert_eq!(w.stale_decision(), None);
+                let at = base.wrapping_add(241);
+                let f = if event { w.event(at, 1) } else { w.poll(at) };
+                assert_eq!(f, Some(Fault::Stale));
+                let want = Some(StaleDecision { last: base, at, limit: 240, from_event: event });
+                assert_eq!(w.stale_decision(), want);
+                assert!(w.tighten_max_interval(200));
+                w.poll(at.wrapping_add(7));
+                w.event(at.wrapping_add(8), 2);
+                assert_eq!(w.stale_decision(), want, "first decision stays frozen");
+            }
+        }
+    }
+
+    #[test]
+    fn nonstale_faults_have_no_stale_evidence() {
+        let mut w = Watch::new(0, 20, 240);
+        assert_eq!(w.event(1, 0), Some(Fault::SectorOrder));
+        w.poll(1000);
+        assert_eq!(w.stale_decision(), None);
+        let mut w = Watch::new(0, 20, 240);
+        assert_eq!(w.event(20, 1), None);
+        assert_eq!(w.event(21, 2), Some(Fault::TooFast));
+        w.poll(1000);
+        assert_eq!(w.stale_decision(), None);
+    }
+
+    #[test]
+    fn stale_evidence_records_actual_limit_not_rejected_tightening() {
+        let mut w = Report::new(0, 238, 1000);
+        assert!(w.tighten_max_interval(240));
+        assert!(!w.tighten_max_interval(200));
+        assert_eq!(w.event(240, 1), None);
+        assert_eq!(w.event(481, 2), Some(Fault::Stale));
+        assert_eq!(w.stale_decision(), Some(StaleDecision {
+            last: 240, at: 481, limit: 240, from_event: true,
+        }));
+    }
+
+    #[test]
     fn e432_stale_boundary_is_not_cleared_by_a_late_accept() {
         let mut w = Report::new(20_620, 238, 1_000);
         assert_eq!(w.event(20_620, 6), None);
@@ -164,6 +245,22 @@ mod tests {
         assert_eq!(w.event(21_655, 1), Some(Fault::Stale));
         // Pure watch contract only: raw-entry times are not guard timestamps,
         // and this does not simulate COM cancellation or physical crossings.
+    }
+
+    #[test]
+    fn new_run_cannot_inherit_stale_evidence() {
+        let mut w = Report::new(0, 238, 240);
+        assert_eq!(w.poll(241), Some(Fault::Stale));
+        w = Report::new(0, 238, EVENT_MAX_US);
+        assert_eq!(w.stale_decision(), None);
+        assert_eq!(w.fault(), None);
+        let src = include_str!("roots.rs");
+        let arm = src.split("pub fn guard_arm() {").nth(1).unwrap()
+            .split("/// Arm the tracking watch").next().unwrap();
+        let disabled = arm.find("tracking.store(false").unwrap();
+        let reset = arm.find("EventWatch::new(0,").unwrap();
+        let enabled = arm.find("active.store(true").unwrap();
+        assert!(disabled < reset && reset < enabled);
     }
 
     #[test]
