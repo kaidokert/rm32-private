@@ -49609,3 +49609,23 @@ Dispositions: agree narrow timing-margin failure, no targethold or causal
 attribution. Clarify 'subsequent self-test passes': p prints cached boot
 selfchecks; only the alloff register readback is freshly measured post-run.
 No claim a new six-sector/timer selftest executed after E489. Pause stands.
+
+## E490 — operator-requested return to loaded baseline
+
+Old goal cleared. Operator requests parking experiment and one50% spin with
+prop reinstalled and boxed. Exact source parked7ffaa29; baseline source299ba32
+in separate codex/loaded60-restore worktree. See LOADED_BASELINE_RETURN.md.
+Exact81F85AB5 SHA72581795EFE2E9865E9132E18A70FEAE8F370BD1C60FE0D81A2083CE9A9F247F
+download/verify/reset explicit G071 PASS. Fresh MCP p alloffPASS,nFAULT1,closed.
+Before run: one l command after19minus/5plus normalization to500,45s total,
+about20s targethold. No new code/guard change; all captures retained. Prediction
+deadline2,target/ceiling500,late0,nonzeroBEMF,finaloffPASS. No repeat on fault.
+
+E490 result: completed reason2,hold19773ms,target/ceiling500,CCR666/1333,
+hold228116 accepted,forced0,late0,thin0,guard0,blank_latched0,storm0.
+Coast1914eHz,matched1004permille,currentproxy1598mA,zero drift-131mA.
+No foldback. Fixture exited1: expected exploratory19.8s fails30s qualification
+gate; coast speed8.7% below old2096oracle also fails. Not a protection abort,
+not qualification, no cause attributed to box. Complete capture retained:
+captures/2026-09-27/e490-loaded-box50_01.txt. Fresh MCP p after fixture confirms
+MOE/CCRs/ENABLE0,gateslow1,nFAULT1,PASS; UARTclosed. No further run.

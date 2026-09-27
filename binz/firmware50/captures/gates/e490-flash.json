@@ -1,0 +1,26 @@
+[
+  {
+    "cmd": "probe-rs download --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430 captures/elf/81F85AB5.e358-propless-baseline.elf",
+    "chunk_id": "38b93e",
+    "wall_time_seconds": 3.5653625,
+    "exit_code": 0,
+    "original_token_count": 6,
+    "output": "     Finished in 2.29s\n"
+  },
+  {
+    "cmd": "probe-rs verify --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430 captures/elf/81F85AB5.e358-propless-baseline.elf",
+    "chunk_id": "139d49",
+    "wall_time_seconds": 0.9200799,
+    "exit_code": 0,
+    "original_token_count": 6,
+    "output": "Verification successful\n"
+  },
+  {
+    "cmd": "probe-rs reset --chip STM32G071RBTx --probe 0483:374b:066CFF343433464757233430",
+    "chunk_id": "b954f2",
+    "wall_time_seconds": 0.3294606,
+    "exit_code": 0,
+    "original_token_count": 0,
+    "output": ""
+  }
+]
