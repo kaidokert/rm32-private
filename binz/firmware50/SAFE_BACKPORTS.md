@@ -88,3 +88,15 @@ Checkpoint: three independent safety backports kept, each host-tested and
 screened at60%; no diode switching, timer-owned rescue or control redesign.
 Telemetry accepted-count coherence and host-only audit tooling remain pending;
 do not describe those as ported. No further powered run at this checkpoint.
+
+Backport4: host-only audit parser from parked7ffaa29, with its ten regression
+tests. Prediction: detect unresolved transfers and reachable out-of-line blocks,
+ignore unreachable padding, preserve four-root verdict on fix3. All10 tests and
+fix3 four-root audit PASS. No firmware source/image changed; no motor retest.
+
+Before backport5: preserve accepted sequence deltas in foreground, sample sequence
+around raw timestamp and defer inconsistent pairs. No ISR publication change.
+Port only early1836c53 accounting and integration test, not its controller edits.
+Prediction: coalesced events counted without inventing intermediate timestamps;
+ISR streams unchanged, existing protection semantics retained. Test/release/audit
+then one same45s60screen (~15s target), not full qualification; stop on failure.
