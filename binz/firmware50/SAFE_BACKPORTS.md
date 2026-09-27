@@ -50,3 +50,13 @@ driven-only acquisition remains permitted with guard clear. Preserve unpowered
 comp_exti_arm use by providing a separate powered-arm wrapper for COM callers.
 No timer retry state imported. Tests must cover detector precedence, stops,
 all blank/commute phases and acquisition; then inspect changed ISR cost.
+
+Fix2 source audit found every comp_exti_arm caller is powered (COM or driven
+boundary/begin), so no separate unpowered wrapper was needed. Deferred-driven
+resume now also refuses pending after stop. Truth-table/negative cases pass;
+352tests/release/clippy PASS. SHA B123ADFA45312299A97BC084821C9AC1A03678C86BB053F2A8742D105B499F0D.
+ISR audit4rootsPASS. COMP742->818,COM332->368 listedinstructions, DMA37/guard155
+unchanged. New inline checks are after refusal/on-unmask; compiled mask encloses
+flag reads/EXTI writes, no new helpers/loops. Existing COMP maximum excludes the
+final resume tail, so it is not full WCET. No claim this is a speed optimization.
+Single short60screen next, same stops, >120sOFF since E492. Stop on regression.

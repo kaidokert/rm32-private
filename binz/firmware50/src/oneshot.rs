@@ -75,6 +75,18 @@ pub const FIRMWARE_ARM_IS_ATOMIC: bool = true;
 #[path = "foreground_write_tests.rs"]
 mod foreground_write_tests;
 
+/// Closed-loop blanking takes precedence over the driven acquisition owner.
+#[inline(always)]
+pub const fn comparator_resume_allowed(
+    guard: u32, detector: bool, driven: bool, stopped: bool, active: bool, phase: u32,
+) -> bool {
+    guard == 0 && if detector { arm_allowed(stopped, active) && phase == 0 } else { driven }
+}
+
+#[cfg(test)]
+#[path = "comparator_resume_tests.rs"]
+mod comparator_resume_tests;
+
 /// Whether an arm can be interleaved by the guard root or by the other caller.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Atomicity {
