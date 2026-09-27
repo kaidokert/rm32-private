@@ -29,10 +29,13 @@ class UnloadedChecks(unittest.TestCase):
 
     def test_request_validation_precedes_hardware(self):
         self.assertEqual(propless.request_errors("9", 150, "", False), [])
+        self.assertEqual(propless.request_errors("8", 250, "", False), [])
         self.assertEqual(propless.request_errors("l", 600, "++++++++", False), [])
         for args in (("9", 600, "", False), ("l", 600, "", False),
                      ("l", 600, "f", False), ("l", 850, "+", False),
-                     ("Z", 600, "xxxx", False), ("9", 150, "", True)):
+                     ("Z", 600, "xxxx", False), ("9", 150, "", True),
+                     ("8", 150, "", False), ("8", 250, "+", False),
+                     ("8", 250, "", True), ("5", 250, "", False)):
             self.assertTrue(propless.request_errors(*args))
 
     def check_text(self, text, duty=150, dwell=9000, period=1333):

@@ -65,6 +65,16 @@ pub struct Plan {
     pub ccr: [u32; 3],
 }
 
+impl Plan {
+    /// Source-low-off variant of a validated plan. Source comes from sector().
+    /// Sink, float, mode, polarity and all compares remain unchanged.
+    #[inline(always)]
+    pub(crate) fn diode(mut self) -> Self {
+        self.ccer &= !(4 << (slot(self.source) * 4));
+        self
+    }
+}
+
 /// Register slot for a phase index: A/B/C map to CH3/CH2/CH1.
 #[inline]
 const fn slot(phase_ix: usize) -> usize {

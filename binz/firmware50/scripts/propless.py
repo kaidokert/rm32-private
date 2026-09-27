@@ -29,12 +29,13 @@ def request_errors(command: str, duty: int, pre: str, override: bool) -> list[st
     fails = []
     if override:
         fails.append("no step-check or loaded-ladder anchor in unloaded mode")
-    if command not in ("9", "l", "L"):
-        fails.append("unloaded mode supports only gentle9 or climb l/L")
+    if command not in ("9", "8", "l", "L"):
+        fails.append("unloaded mode supports only gentle9/8 or climb l/L")
     if not 0 < duty <= 800:
         fails.append("unloaded request outside campaign ceiling")
-    if command == "9" and (duty != 150 or pre):
-        fails.append("gentle9 must request150 without pre-keys")
+    gentle = {"9": 150, "8": 250}
+    if command in gentle and (duty != gentle[command] or pre):
+        fails.append(f"gentle{command} must request{gentle[command]} without pre-keys")
     if command in ("l", "L") and (not pre or set(pre) - set("+-")):
         fails.append("climb requires non-driving +/- pre-keys and verified CLIMBAT")
     return fails

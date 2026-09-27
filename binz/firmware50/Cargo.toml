@@ -17,6 +17,12 @@ license = "MIT OR Apache-2.0"
 exclude = ["ref"]
 
 [[bin]]
+name = "diode-pwm"
+path = "bin/diode-pwm.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "latch-pwm"
 path = "bin/latch-pwm.rs"
 test = false

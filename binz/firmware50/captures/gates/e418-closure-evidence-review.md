@@ -1,0 +1,7 @@
+Role/CCR-generation mismatch is resolved to a **documented exploratory risk**, not a concrete remaining blocker to the proposed bounded screen.
+
+The raw tests establish that immediate role writes produce intermediate digital states, including two requested highs; disabling source complement alone does not fix that. The candidate instead stages roles for COMG and blocks partial CCR updates with UDIS. Unequal inherited CCRs persist until native update, but the diode-role model exhausts independent channel compare levels and preserves the selected conducting pair. That addresses the specific mismatch concern without requiring simultaneous role/CCR transfer.
+
+All 18 tests passed. The incremental-cache warning does not invalidate that result. However, the guard model assumes deferred interrupt service, and the pad evidence is a self-test PASS summary—not waveforms proving transient timing or analog safety. Neither establishes full qualification.
+
+**Proceed with the single stated exploratory screen:** 15%, command9, 28s total, all guards active, 3A PSU, propeller removed, no automatic restart or escalation, and >120s cooldown. This decision relies on the stated exact-image identity and fixture conditions; it grants no higher-duty or thermal qualification.

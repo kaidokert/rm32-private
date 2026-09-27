@@ -2,7 +2,7 @@
 use super::{latch, regs};
 use crate::hw::gpio;
 
-fn pads() -> u8 {
+pub(super) fn pads() -> u8 {
     // SAFETY: read-only pad samples on the six configured TIM1 pins.
     let a = unsafe { &*stm32g0xx_hal::stm32::GPIOA::ptr() }.idr().read().bits();
     // SAFETY: same read-only pad access for PB0/PB1.

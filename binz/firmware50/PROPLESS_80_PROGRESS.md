@@ -64,6 +64,21 @@ with a near-stop coast estimate: it does not establish sustained slip.
 
 ## Current timing candidate
 
+E417-E419: diode-mode candidate `DC00CCB4.e417-diode48.elf` retains the
+prior-estimate/latch48 baseline but disables the source complementary output
+in closed-loop sectors. Its actual-PWM driver-disabled pad check passed all
+six sectors. One 15% screen completed 20.278s at target, tail2206.902eHz,
+coast2207, matched ratio1000, no late/thin/sag/storm/tracking stop, finaloff.
+This is exploration only. Duty-to-speed is materially different; old
+synchronous current/speed curves do not transfer. Proxy174mA with -295mA zero
+drift is not efficiency or thermal evidence. No25% or higher diode run yet.
+The next-step review is unresolved: complete packet needed for host admission
+and prior transition analysis; physical temperature/speed-rating gaps remain.
+Current board is this image, last verified OFF by E419, COM41 closed.
+Release audits: COM388 instructions (+6 vs latch baseline); COMP780, DMA37,
+guard155 unchanged instruction streams, four-root soft-arithmetic clean.
+No new qualified propless ceiling.
+
 E409 changed the wait's estimator age through a typed policy: use the prior
 estimate rather than the newly blended one, matching that particular AM32
 dependency (not claiming full reference parity). E410 passed its 50% screen;

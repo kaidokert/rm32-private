@@ -21,13 +21,22 @@ use crate::sixstep::Plan;
 
 pub mod latch;
 pub mod latch_check;
+pub mod diode_check;
 
 /// COM role-transaction personality; selected by the binary, not at runtime.
-pub trait RoleWrite { const LATCHED: bool; }
+pub trait RoleWrite {
+    const LATCHED: bool;
+    const SOURCE_COMPLEMENT: bool = true;
+}
 pub struct Immediate;
 impl RoleWrite for Immediate { const LATCHED: bool = false; }
 pub struct Latched;
 impl RoleWrite for Latched { const LATCHED: bool = true; }
+pub struct DiodeLatched;
+impl RoleWrite for DiodeLatched {
+    const LATCHED: bool = true;
+    const SOURCE_COMPLEMENT: bool = false;
+}
 
 #[inline(always)]
 fn regs() -> &'static stm32::tim1::RegisterBlock {

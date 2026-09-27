@@ -1359,7 +1359,8 @@ fn apply_com_plan<P: hw::pwm::RoleWrite>(plan: &sixstep::Plan) -> bool {
             S.com().stopped.load(Ordering::Relaxed),
             S.com().active.load(Ordering::Relaxed),
         ) { return false; }
-        hw::pwm::latch::apply(plan);
+        let selected = if P::SOURCE_COMPLEMENT { *plan } else { plan.diode() };
+        hw::pwm::latch::apply(&selected);
         true
     })
 }

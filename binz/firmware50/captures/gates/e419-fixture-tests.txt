@@ -1,0 +1,23 @@
+python : test_absolute_selection_from_every_authorized_previous_state (test_propless.UnloadedChecks.test_absolute_selection_from_every_authorized_previous_state) ... ok
+At line:2 char:1
++ python -m unittest discover -s scripts -p test_propless.py -v 2>&1 |  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (test_absolute_s...s_state) ... ok:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+test_actual_gentle_run_is_exploration_not_30s_qualification (test_propless.UnloadedChecks.test_actual_gentle_run_is_exploration_not_30s_qualification) ... ok
+test_actual_period_not_hidden_by_target_header (test_propless.UnloadedChecks.test_actual_period_not_hidden_by_target_header) ... ok
+test_bad_duty_and_safety_evidence_are_load_bearing (test_propless.UnloadedChecks.test_bad_duty_and_safety_evidence_are_load_bearing) ... ok
+test_carrier_is_declared_independently_and_ccr_checked (test_propless.UnloadedChecks.test_carrier_is_declared_independently_and_ccr_checked) ... ok
+test_duplicate_or_misplaced_off_records_refused (test_propless.UnloadedChecks.test_duplicate_or_misplaced_off_records_refused) ... ok
+test_fixture_refuses_undeclared_carrier_before_hardware (test_propless.UnloadedChecks.test_fixture_refuses_undeclared_carrier_before_hardware) ... ok
+test_old_no_prop50_identity_failure_is_not_removed (test_propless.UnloadedChecks.test_old_no_prop50_identity_failure_is_not_removed) ... ok
+test_request_validation_precedes_hardware (test_propless.UnloadedChecks.test_request_validation_precedes_hardware) ... ok
+test_required_fields_do_not_inherit_legacy_defaults (test_propless.UnloadedChecks.test_required_fields_do_not_inherit_legacy_defaults) ... ok
+test_sag_dump_requires_complete_frozen_versioned_evidence (test_propless.UnloadedChecks.test_sag_dump_requires_complete_frozen_versioned_evidence) ... ok
+test_stop_before_hold_reports_fault_as_well_as_missing_identity (test_propless.UnloadedChecks.test_stop_before_hold_reports_fault_as_well_as_missing_identity) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.615s
+
+OK

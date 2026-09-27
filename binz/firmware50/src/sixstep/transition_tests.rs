@@ -71,10 +71,9 @@ fn single_role_latch_has_no_torn_sector_even_if_staging_is_interrupted() {
     }
 }
 
-// E416 feasibility only: no production caller or binary selects this plan.
-fn diode_plan(mut p: Plan) -> Plan {
-    p.ccer &= !(4 << (slot(p.source) * 4));
-    p
+// Tests the exact transform selected by the E417 dedicated binary.
+fn diode_plan(p: Plan) -> Plan {
+    p.diode()
 }
 
 #[test]
@@ -131,4 +130,26 @@ fn diode_mode_does_not_make_immediate_role_writes_atomic() {
     }
     std::println!("diode settled-state observations: unintended_lows={unintended_low_observations}, two_highs={two_high_observations}");
     assert!(two_high_observations > 0, "source-low-off does not fix role ordering");
+}
+
+#[test]
+fn diode_roles_keep_the_same_conducting_pair_for_any_inherited_compare() {
+    // COMG changes modes/enables together. Active CCRs may remain unequal
+    // until UEV; overapproximate their Boolean levels independently here.
+    // This checks requests, not propagation delays or analog commutation.
+    for n in 1..=6 {
+        let p = diode_plan(plan(Step::new_clamped(n), 150, 1333, 800).unwrap());
+        for levels in 0..8 {
+            let pins: [_; 3] = core::array::from_fn(|ch| outputs(&p, levels & (1 << ch) != 0)[ch]);
+            assert_eq!(pins[slot(p.sink)], (false, true));
+            assert_eq!(pins[slot(p.floating)], (false, false));
+            assert!(!pins[slot(p.source)].1);
+            assert!(pins.iter().filter(|p| p.0).count() <= 1);
+        }
+        for next in [if n == 1 { 6 } else { n - 1 }, if n == 6 { 1 } else { n + 1 }] {
+            let q = diode_plan(plan(Step::new_clamped(next), 150, 1333, 800).unwrap());
+            assert_ne!(p.source, q.sink, "adjacent commutation never changes source directly to sink");
+            assert_ne!(p.sink, q.source, "adjacent commutation never changes sink directly to source");
+        }
+    }
 }

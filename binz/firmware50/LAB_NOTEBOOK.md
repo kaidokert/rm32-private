@@ -43957,3 +43957,237 @@ and safing behavior, disabled pad evidence, diode-loss exposure bound and
 compiled COM cost. No powered run was made in this continuation; installed
 image remains E413, last verified OFF by E415. E413 is retired from further
 powered exploration, not erased. Goal remains propless80%, incomplete.
+
+### E417 - typed diode role candidate, baseline fixed explicitly
+
+Build prediction before edits/build: compare against archived E413's exact
+prior-wait/fixed48k/latched-role path, changing only closed-loop source NE.
+E413 is not being revived as a sag remedy or qualification image: retaining
+its reviewed atomic role writer isolates rectification from writer changes.
+No additional powered E413 control is planned merely to fish for a pass.
+The new binary will keep source-low-off selected by type; startup/handoff
+remain unchanged. All guards, 80% command cap and 3A physical supply remain.
+Same-stage diode loss can increase, reverse current need not vanish under
+all BEMF conditions, and timer source-high deadtime semantics also change
+when NE is disabled. Treat these as inherent differences, not hidden parity.
+Require a driver-disabled six-sector actual-PWM pad check (source N low,
+source H observed both levels, sink N high, float both low), plus role latch
+witness. These are sampled pad checks, not glitch or FET-current proof.
+COM cost is audited; no claim it is free. If admitted later, first powered
+screen is bounded low duty, not 60%; exposure/cooling unchanged. No powered
+command is authorized by this build entry alone.
+
+E417 build result: SHA DC00CCB443B2999D00BF1E6CAAA72A49856B94BD6273DAC1EFB119A9FDCA5023,
+release-s/thinLTO/codegen1, text46208/data740/bss4188, stackleft31936.
+All376host tests, clippy, four-root M0 arithmetic audit and four targeted
+Python wiring tests pass. Structure: no >100-line functions, static mut or
+MMIO outside hw; old archived oversized diagnostics remain historical fails.
+Against archived E413: COM382->388 instructions; COMP780/DMA37/guard155
+instruction streams unchanged (some relocated literals). Rebuilt latch
+baseline also matches its four root instruction streams. New source-NE
+transform is ten instructions at08000e14..26 (including loads); total-root
+net growth is six. No helper/divide/poll was added. Successful transaction
+CPSID08000dc2 through MSR08000e38 is58 executed instructions including mask
+endpoints (two branch instructions on refusal paths skipped), versus53 in
+E413. This is not WCET. Guard may defer until mask exit; pending stop then
+zeros outputs and denies later arms. New named audit bucket is justified by
+the explicit diode personality, not a production baseline relaxation.
+The pad witness is not yet exercised on hardware. No motor run yet.
+
+E417 evidence review, verbatim:
+
+> Raw evidence: 376 tests passed; the incremental-cache warning does not negate that result. Clippy completed, and the supplied audit reports four clean ISR roots. No actual pad-test result is supplied.
+>
+> Source and assembly agree: the masked transaction rechecks active/stopped, sets UDIS/CCPC, writes preloaded CCRs, clears the source’s CCxNE, issues COMG, then restores CR2/CR1 and PRIMASK. It does not write TIM1 CNT, UG, or MOE. Roles and compares still transfer at different events; this is not simultaneous role/CCR publication.
+>
+> 396/1333 = 29.707%; 64 MHz/1333 ≈ 48.012 kHz, conditional on the timer configuration. The supplied excerpts do not independently establish the inherited maximum or 80% cap. Executed-instruction count is not WCET.
+>
+> **The driver-disabled boot/pad check is justified; no concrete blocker is demonstrated.** Confirm that `enable_is_high()` reads the actual ENABLE pad and that initialization/interrupts cannot raise ENABLE during the witness; those implementations are omitted.
+>
+> The subsequent `Production` command loop permits operation beyond this test’s scope, so restrict the session to disabled inspection. Its `p` message reports historical boot success, not a fresh waveform check. GPIOA/GPIOB samples are sequential and cannot exclude short glitches. None of these limitations requires powered qualification before this disabled test.
+
+E417 adversarial review, verbatim:
+
+> Raw evidence: 376 tests passed; four ISR arithmetic roots passed; Clippy completed. The incremental-cache warning does not negate those results. None establishes electrical safety or WCET.
+>
+> **Verdict: a DRIVER-DISABLED boot/pad check is justified, conditional on enforcing driver disable throughout. Powered qualification is unnecessary for this check.**
+>
+> Concrete blockers if unresolved:
+>
+> - `board::init` and failure/reset paths are absent: establish ENABLE low before any timer-pad activity, including initialization failure.
+> - Boot witnesses lack transaction masking and stop checks. Establish that no enabled ISR can compete for TIM1/GPIO or raise ENABLE. Otherwise a stop can interrupt the witness, then foreground `moe_on()` can undo its timer shutdown.
+> - Successful boot enters `Production::command`. Restrict the test to read-only commands or independently hold driver ENABLE low; this binary is not intrinsically disabled-only.
+>
+> Runtime COM masking and its active/stopped recheck support transaction exclusion. However, phase 3 unconditionally re-enables EXTI after a possible guard preemption; complete stop dominance is not established. This need not block an isolated disabled witness.
+>
+> Witness limits: GPIOA/GPIOB reads are sequential, short glitches can escape sampling, and COMG role transfer precedes native-UEV compare transfer. PASS establishes sampled pad patterns only—not glitch freedom, stop latency, powered diode behavior, or the proposed 80% envelope.
+
+Dispositions before disabled work: gpio::enable_is_high reads GPIOD.IDR PD1,
+not a software shadow. board::init:857 drives ENABLE low before gate/timer
+configuration; UART-init failure occurs after gates low; earlier failure has
+no configured timer outputs. TIM16 NVIC is masked by tim16_init; COMP EXTI
+masked by comp2_init. Guard active is false and its ISR returns before trips;
+no startup/controller exists during witness. DMA only publishes ADC data and
+the inactive protection path cannot assert ENABLE. No ISR raises ENABLE.
+Only p will be sent, no motor command. Boot is followed by safe_off before
+Production::new. Phase3 re-enabling EXTI after a concurrent stop is an existing
+coverage caveat, not new diode behavior; inactive detector cannot re-arm COM,
+and it cannot re-enable the bridge. Do not label all peripheral activity
+stopped from MOE/ENABLE readback alone. Powered interpretation remains pending.
+
+### E418 - disabled diode pad witness
+
+Prediction: exact DC00CCB4 archive, explicit G071 probe, reset then only MCP p:
+six-sector 48k source-low-off PWM witness, latch witness and deadline witness
+PASS; outputs/MOE/CCRs/ENABLE low, nFAULT high. Failures stop this batch with
+no motor command. Serial MCP list_ports presently healthy, COM41 present.
+
+E418 result: probe download/reset succeeded on explicit066C...G071.
+MCP opened COM41/115200, wrote ONLY p, read142bytes: PREFLIGHT alloff/nFAULT1
+PASS; DIODESELFTEST en0 six_sectors_pwm=PASS latch=PASS deadline=PASS.
+MCP close succeeded. Raw captures/gates/e418-mcp-padcheck.json. Archive SHA
+checked before flash; p is boot-result reporting, not re-running the witness.
+No motor command. Boot tested actual 48k sampled PWM across all six physical
+sectors with DRIVER ENABLE LOW; no physical glitch/current inference.
+
+E418 evidence review, verbatim:
+
+> Raw capture reports disabled preflight values and a `DIODESELFTEST ... PASS` line. It contains no per-sector samples, timing measurements, image identity, or powered-run evidence. The self-test line is a hardcoded response to `p`; conditional on this source matching the installed executable, reaching that loop implies the boot checks passed.
+>
+> The source checks sampled sector states after settling, not transitions. COMG transfers roles before CCRs transfer at the next native update; this witness does not establish safety during that intervening interval. ENABLE is checked at entry and after each sector, not continuously.
+>
+> The archive identity, 376 tests, clippy, instruction counts, mask duration, startup duty, command timing, retained guards, and physical setup are asserted here, not independently demonstrated. The audit reports clean roots but does not establish guard functionality or explain the unusually small reachable counts.
+>
+> **Concrete eligibility blocker:** the supplied evidence does not establish safe role/CCR transitions with source complementary output disabled. Low duty and existing stops do not resolve that switching question. Resolve it on the exact executable before powered screening.
+
+E418 adversarial review, verbatim:
+
+> Raw: PREFLIGHT reports outputs off and nFAULT high; DIODESELFTEST reports PASS. The latter is a cached boot result printed on `p`, not a fresh pad measurement. Neither establishes powered transition safety.
+>
+> One concrete unresolved blocker: COMG transfers roles immediately, but CCRs transfer at the next native update. UDIS prevents partial CCR updates; it does not make roles and compares atomic together. New roles can therefore operate with old sector CCRs for part of a carrier period. The pad test waits before sampling and misses precisely that interval. Establish that every reachable transition, including startup handoff, remains electrically safe during this mismatch.
+>
+> Concurrency: the masked, stop-checked COM transaction is sensible. Verify that pending stop handling cannot be followed by any separate MOE/ENABLE rearm path; this excerpt does not establish the claimed permanent stop latch.
+>
+> Once those narrow points are resolved, the bounded 15% screen is reasonable. Record startup, target ACK, stop reason and final outputs. Success demonstrates this attempt’s operation; absence of faults does not exercise guard-trip behavior.
+
+Dispositions/closure evidence: no powered run made. Added exact-plan test
+enumerates independent active-compare Boolean levels for all six diode
+sectors. Even unequal inherited compares cannot select a second high phase
+or energize the floating phase; only the source high pulse changes. Twelve
+directed adjacent sectors never turn an old sink directly into a new source
+or vice versa. E414 actual startup bound396/1333<30% still holds; no full-on
+CCR during carrier handover. Tests18/18 sixstep suite pass. Analog delay is
+not modeled. First source-complement disabling can remove MCU deadtime;
+DRV8304 datasheet RevB section7.3.1.4 describes VGS-controlled gate handshake
+and deadtime, and section7.3.1.1.1 Table2 makes dual inputs both-off in6x.
+Hardware variant tDEAD120ns is documented, not measured here. MODE ground
+strap is recorded in controlboards/BOOSTXL-DRV8304H/G071_DRV8304_WIRE_MAP.md:62.
+Primary source: https://www.ti.com/lit/ds/symlink/drv8304.pdf (pp16,22).
+Do not extrapolate this to immunity from all physical gate faults.
+Pending stop clears active, stopped latch, MOE, CCR and ENABLE; no COM write
+can restore MOE/ENABLE. Existing later EXTI-unmask is not bridge reactivation.
+No autorestart command is used. Correct the packet's duration estimate:
+command9 is exactly28000ms total, expected~20.278s target15%, not20s total.
+This is below the existing45s exposure bound; retain>=120sOFF afterward.
+
+E418 closure evidence review, verbatim:
+
+> Role/CCR-generation mismatch is resolved to a **documented exploratory risk**, not a concrete remaining blocker to the proposed bounded screen.
+>
+> The raw tests establish that immediate role writes produce intermediate digital states, including two requested highs; disabling source complement alone does not fix that. The candidate instead stages roles for COMG and blocks partial CCR updates with UDIS. Unequal inherited CCRs persist until native update, but the diode-role model exhausts independent channel compare levels and preserves the selected conducting pair. That addresses the specific mismatch concern without requiring simultaneous role/CCR transfer.
+>
+> All 18 tests passed. The incremental-cache warning does not invalidate that result. However, the guard model assumes deferred interrupt service, and the pad evidence is a self-test PASS summary—not waveforms proving transient timing or analog safety. Neither establishes full qualification.
+>
+> **Proceed with the single stated exploratory screen:** 15%, command9, 28s total, all guards active, 3A PSU, propeller removed, no automatic restart or escalation, and >120s cooldown. This decision relies on the stated exact-image identity and fixture conditions; it grants no higher-duty or thermal qualification.
+
+E418 closure adversarial review, verbatim:
+
+> **Role/CCR-generation mismatch is a documented exploratory risk, not a demonstrated remaining blocker to this bounded screen.**
+>
+> The source deliberately latches roles before the complete CCR generation transfers at a native update. Under the stated latch semantics, UDIS prevents partial CCR publication. The diode-role model exhausts independent channel compare levels: inherited unequal CCRs can alter source pulse width, but cannot request a high on the designated sink or floating phase. The masked ownership check also addresses a pending guard interrupt without subsequently resuming this writer.
+>
+> Limits matter: the 396-count test establishes the calculated startup bound, not measured runtime CCR history; that bound permits roughly 29.7% transient duty despite a 15% command. The pad output reports self-test PASS, without exposing transition waveforms. Neither establishes analog commutation safety or temperature margin. The incremental-cache warning does not invalidate the 18 passing tests.
+>
+> I would allow **only the specified single protected screen**, with its 3 A limit, prop removed, guards active, no restart/escalation, and cooldown. This clears the specific mismatch objection; it does not qualify the image or prove the broader switching behavior harmless.
+
+Dispositions: accept the bounded screen, not higher duty. Inherited transient
+compare bound29.7% is a maximum during the unchanged startup carrier handover,
+not proof actual15% pulse at every instant. Keep all listed residual risks.
+Disassembly count independently recomputed58 for successful masked path.
+
+### E419 - one gentle diode-mode screen
+
+Exact installed/archive DC00CCB4, command9, 28s total, target150 tenths,
+propless reverse, physicalPSU3A. NativeMCP healthy and closed. Pre/post output
+checks mandatory; min actual-target19000ms; no loaded oracle comparison.
+Prediction: ordinary startup/handoff and sustained15% operate without a stop;
+record speed/current/timing, not claim causality or thermal qualification.
+Failure endsbatch, no automatic restart/higher run; >=120sOFF afterward.
+
+E419 result: reason2 deadline; actual15% target20.278s of28s total,
+CCR199/1333=14.929%, ceiling150 unchanged, finaloff/nFAULT1 PASS.
+Raw capture captures/2026-09-27/e419-propless150-diode48_01.txt SHA DC00CCB4
+CRC AC5E1932. Poweredtail30163/2.277929s/6=2206.907eHz; coast fit2207,
+matched ratio1000. Wholehold266314/20.278/6=2188.9eHz is a different window.
+Six pole pairs imply about22070RPM from coast, not a mechanical rating.
+late0/thin0, spent12, COMPmax18, mixed-purpose COMlate10, guardgap104,
+storm0/overrun0/blanklatched0/tracking0/sagstreak0. Proxyhold174mA but
+zero-drift-295mA prevents calibrated-current/efficiency claims; worstblock884.
+Raw950 had7 singles, mean985/980 counts0. No thermal sensor, no temperature
+claim. OFF conservatively timestamped capturemtime07:25:58UTC; earliest
+next powered07:27:58UTC. One exploratory pass, not qualified or sag remedy.
+Duty-to-speed changed substantially: do not project old synchronous curve.
+Proposed next screen is existing25% command8 (28s total), not a50% jump.
+Host propless admission currently lists only9/l/L; extend its exact command
+mapping with tests before use, preserving every verdict gate and no ladder
+credit. Motor binary unchanged. Pending fresh dual result/next-step review.
+
+Arithmetic correction: E419 powered tail is2206.9023eHz, not2206.907;
+wholehold2188.8582eHz. This does not change rounded coast comparison.
+Host admission tests12/12 pass; no verdict threshold changed.
+
+E419 evidence review, verbatim:
+
+> **Withhold admission on the exact source shown: `request_errors()` has no `return fails`.** Every request returns `None`, including forbidden overrides and mismatched duties. A caller checking truthiness would silently accept these. If the excerpt is truncated, provide the complete function and admission call site; the reported passing tests do not resolve this discrepancy.
+>
+> From raw evidence:
+>
+> - Target hold: **20.278 s**, below 30 s qualification.
+> - Tail: `30163 × 10⁶ / (2277929 × 6)` = **2206.9023 eHz**.
+> - Whole hold: `266314 / (20.278 × 6)` = **2188.8582 eHz**. Different windows explain the difference.
+> - Sector counts sum to **287757**; adding **1440** coalesced accepts reconciles **289197** accepted events.
+> - Deadline reason 2, zero forced events, no reported sag trip, and pre/post outputs disabled support one completed 15% exploration.
+> - Current remains a proxy; neither efficiency nor negative-current behavior is established.
+>
+> The visible command mapping correctly specifies `8 → 250`, forbidding pre-keys and overrides **if errors are actually returned and enforced**. It does not establish the remaining admission gates or minimum-hold enforcement.
+>
+> Resolve that concrete host defect/evidence gap before admitting 25%. Cooling does not resolve it; these excerpts alone establish no additional firmware blocker.
+
+E419 adversarial review, verbatim:
+
+> Raw evidence supports one deadline-completed 15% run with 20.278s target dwell and outputs subsequently off. Tail/coast agreement supports speed consistency; it does not establish commutation correctness, efficiency, or calibrated current. The −295mA zero drift exceeds the reported 174mA mean proxy, undermining thermal inference.
+>
+> I would **not yet admit 25%** on this evidence. No demonstrated defect explains a failure here, but two unresolved safety arguments matter:
+>
+> - COMG transfers roles before the next native update transfers CCRs. That creates a mixed old-compare/new-role interval. Steady pad sampling after settling and geometry tests do not validate this transition. “Bounded pulsewidth” needs a transition-specific bound including startup/carrier changes and interrupted shutdown.
+> - Approximately 22,070RPM is already substantial. Neither a retired image’s higher speed nor 120s off establishes mechanical margin or winding/magnet temperature recovery. The 45s exposure limit lacks a demonstrated thermal basis here.
+>
+> The next bounded step is disabled-bridge transition waveform verification on this exact image, plus a measured cooled baseline and a defensible mechanical speed ceiling. If those support another run, predeclare a short same-image probe with an enforced speed ceiling and temperature checks; duty and elapsed-time bounds alone do not close these risks.
+
+Dispositions: no25% run yet. Evidence reviewer received first38lines of
+propless.py, cutting off return fails; actual complete function contains the
+return and the fixture tests exercise it. This is a review-packet defect,
+not a host-code defect; supply full function/call site before continuation.
+Adversarial physical uncertainties remain real: no temperature measurement
+or manufacturer maximumRPM, no scope transition waveform. E418's geometric
+and bounded-CCR closure was not supplied fully in this packet, so repeated
+mixed-generation concern is not new evidence of a defect. Do not convert
+either reviewer concern or a passing15% run into a causal/thermal verdict.
+Next review must include actual objective's exposure/cooling allowance and
+complete transition evidence, rather than re-argue omitted excerpts. Keep
+board off meanwhile. 25% remains a proposed screen, not admitted by this entry.
+
+E419 checkpoint: final host library377/377 PASS; propless fixture12/12 PASS.
+All code/captures/reviews retained; no further powered work. Review packets
+need complete functions, not line-count snippets that lose closing branches.
+NativeMCP remained healthy, final motor capture verifies alloff, COM41 closed.
