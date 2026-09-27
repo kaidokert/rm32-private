@@ -477,6 +477,8 @@ pub struct RunReport {
     pub inject: Option<InjectOutcome>,
     /// Commutations on accepted crossings, and forced ones (structurally 0).
     pub accepted: u32,
+    /// ISR accepts coalesced into an already pending foreground notification.
+    pub coalesced_accepts: u32,
     pub forced: u32,
     /// The estimate at the stop (or the last one the foreground held).
     pub ci_us: u32,
@@ -580,6 +582,8 @@ impl RunReport {
         out.kv("filt_vref", self.sag_filt.1);
         out.kv("streak", self.sag_streak);
         out.kv("tripped", u32::from(self.sag_tripped));
+        out.say("\r\nBEMFMAILBOX ");
+        out.kv("coalesced_accepts", self.coalesced_accepts);
         out.say("\r\n");
     }
 
@@ -1047,6 +1051,10 @@ mod tests {
             "BEMFTAIL accepts=14382 span_us=2000181 start_before_stop_us=2400000 end_before_stop_us=399819 window_us=2000000 \r\n"
         ));
         assert!(t.contains(" hold_ma=366 zero_blocks=0 "));
+        assert_margin_and_current_fields(&t);
+    }
+
+    fn assert_margin_and_current_fields(t: &str) {
         // **Both margin lines must be emitted, with every bucket key** (E315).
         // The hold line was added, wired end to end, and then NOT emitted,
         // because the edit that was supposed to add the `out.say` silently did

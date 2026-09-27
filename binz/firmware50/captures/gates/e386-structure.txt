@@ -1,0 +1,423 @@
+bin_lines=1116 (goal < 1500)
+
+bin_unsafe=3 (goal <= 10)
+
+bits_writes_outside_hw: bin=0 src=0 (goal 0)
+
+static_mut: bin=0 src=0 (goal 0)
+
+functions_over_100_lines=0 (goal 0)
+
+bss_headroom: chain-capture                      data=  740 bss= 18552 stack_left= 17572 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: edge-capture                       data=  740 bss= 22660 stack_left= 13464 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: idle-scan                          data=  740 bss=  4152 stack_left= 31972 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: order-capture                      data=  740 bss= 24712 stack_left= 11412 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: sag-capture                        data=  740 bss= 19572 stack_left= 16552 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: shell-pwm                          data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 01A674BA.e173.elf                  data=  660 bss=  4184 stack_left= 32020 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 05C4E58F.e170-B-comtop-475_1.elf   data=  656 bss= 28792 stack_left=  7416 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 05C4E58F.e170-B-comtop-475_2.elf   data=  656 bss= 28792 stack_left=  7416 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 05C4E58F.e170-B-comtop-475_3.elf   data=  656 bss= 28792 stack_left=  7416 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 066EB08A.e132.elf                  data=  632 bss=  4184 stack_left= 32048 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 08135D56.e324-deepfilter-adv20.elf data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 0D8E3799.e246-final-candidate.elf  data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 0EF2425F.e134.elf                  data=  632 bss=  4184 stack_left= 32048 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 0F890AF2.e314-whylate-adv22.elf    data=  676 bss=  4184 stack_left= 32004 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 1438794E.e121-edge-capture.elf     data=  636 bss= 22652 stack_left= 13576 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 14CE44E7.e187.elf                  data=  660 bss=  4184 stack_left= 32020 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 152C7299.e133.elf                  data=  632 bss=  4184 stack_left= 32048 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 159206FD.e373-comtop.elf           data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 15BD8D56.e314-whylate-adv20.elf    data=  676 bss=  4184 stack_left= 32004 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 17E58ECF.e134c.elf                 data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 190882F2.e187.elf                  data=  660 bss= 22660 stack_left= 13544 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 19341051.e315-marginhold.elf       data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 1FBA3992.e155.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 20E6AC43.e165-A-peer375.elf        data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 20E6AC43.e166-A-peer-375_2.elf     data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 20E6AC43.e166-A-peer-375_3.elf     data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 232ABC34.e182.elf                  data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 234DB997.e182.elf                  data=  660 bss=  4184 stack_left= 32020 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 2458489B.e175-sag.elf              data=  660 bss= 12396 stack_left= 23808 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 26843E7C.e315-marginhold.elf       data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 2A7694CD.e131.elf                  data=  632 bss=  4184 stack_left= 32048 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 2B52AA05.e142.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 2BD11F17.e203-deadline.elf         data=  660 bss=  4184 stack_left= 32020 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 2D157417.e175-sag.elf              data=  660 bss= 12396 stack_left= 23808 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 2D157417.e175-sag450.elf           data=  660 bss= 12396 stack_left= 23808 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 2D157417.e176-sag25.elf            data=  660 bss= 12396 stack_left= 23808 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 304D2FA9.e179.elf                  data=  660 bss=  4184 stack_left= 32020 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 32A8E2C9.e139.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 33B695D8.e182.elf                  data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 3433DEE4.e321-adv20.elf            data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 3450AB06.e328-wideblank-floor5-adv20.elf data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 36A5A4BC.e137.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 3816B366.e162-chain25.elf          data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 3816B366.e162-chain375.elf         data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 3830927C.e156.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 39E0500A.e283-backstop.elf         data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 3AC81E3C.e116.elf                  data=  636 bss=  4200 stack_left= 32028 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 3B95FD9A.e146.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 40342439.e154.elf                  data=  636 bss= 16488 stack_left= 19740 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 439BF1CD.e331-advref-floor5-65s.elf data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 47680FD8.e303-nodiv-adv20.elf      data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 480263F1.e286-rawdepth.elf         data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 4F0F5131.e162.elf                  data=  644 bss=  4184 stack_left= 32036 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 4FC7C796.e128.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 5665710E.e235-cap525.elf           data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 57DACCAE.e182.elf                  data=  660 bss= 22660 stack_left= 13544 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 57E8FDE9.e225-report.elf           data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 5A8C0127.e208-margin.elf           data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 5D34C4FC.e185-bisect-arr-zero.elf  data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 5D4BF25C.e301-fixed-adv22.elf      data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 5EB8018E.e315-marginhist-hold.elf  data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 5FE5DCD6.e168-B-comtop-475_1.elf   data=  652 bss= 28792 stack_left=  7420 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 5FE5DCD6.e168-B-comtop-475_2.elf   data=  652 bss= 28792 stack_left=  7420 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 60FCBE31.e118.elf                  data=  636 bss=  4196 stack_left= 32032 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 61BAC906.e185-bisect-clock-psc-arr-cen.elf data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 62094AAB.e292-idlescan.elf         data=  668 bss=  4152 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e187.elf                  data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e189-475-sag.elf          data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e189-500-s1.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e189-500-s2.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e189-500-s3.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e190-500-s4.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e190-500-s5.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e190-500-s6.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e190-500-s7.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e199-175a-s1.elf          data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e200-16a-s1.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e200-16a-s2.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e200-16a-s3.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e200-16a-s4.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63C0061D.e200-16a-s5.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 63EC7EFE.e149.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 646B7A23.e120.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 6619B9F0.e170-A-peer-475_1.elf     data=  656 bss= 28792 stack_left=  7416 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 6619B9F0.e170-A-peer-475_2.elf     data=  656 bss= 28792 stack_left=  7416 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 6619B9F0.e170-A-peer-475_3.elf     data=  656 bss= 28792 stack_left=  7416 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 69E9B54F.e116-bisect-v1.elf        data=  636 bss=  4192 stack_left= 32036 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 6F98D17D.e185-bisect-arr-max.elf   data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 6F98D17D.e185-bisect-clock-psc-arr.elf data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 71058E6B.e121-edge-capture.elf     data=  636 bss= 22652 stack_left= 13576 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7338EFDC.e185-chain25-fine2.elf    data=  660 bss= 18552 stack_left= 17652 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 73E1CBBC.e178-sag.elf              data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 73E1CBBC.e178-sag475.elf           data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 77C10285.e141.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7A6271D1.e154-prod.elf             data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7B790103.e330-advref-floor5.elf    data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7C55B7E0.e182.elf                  data=  660 bss=  4184 stack_left= 32020 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7CCCE8A8.e281-coast32.elf          data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7D3B70F0.e303-nodiv-adv22.elf      data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7E20F95D.e270-v3.elf               data=  668 bss= 19572 stack_left= 16624 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7E20F95D.e270-v3val250.elf         data=  668 bss= 19572 stack_left= 16624 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 7FB3201B.e134b.elf                 data=  632 bss=  4184 stack_left= 32048 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 81F85AB5.e358-propless-baseline.elf data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 83BD4032.e182-posctl-sag.elf       data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 84B8346F.e185-bisect-nofine.elf    data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 89D65B09.e147.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 8AD9C4D9.e325-deepfilter6-adv20.elf data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 8C4B6DCFE5A223C4B155D55350CA45A7425C83CDAA4617CA6CD07BFB6905CCD0.elf data=   28 bss=  5080 stack_left= 31756 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 8FE909B3.e301-fixed-adv20.elf      data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 9034A6D9.e182.elf                  data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 925E14FE.e185-chain25-fine.elf     data=  660 bss= 18552 stack_left= 17652 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 98340ADF.e127.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 99074482.e114.elf                  data=   28 bss=  5076 stack_left= 31760 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 9F77B756123EBC521EB8F1C14E31AA3CD079E48FC0FB20C5891DBDA6E0CEC2F5.control-e113.elf data=   28 bss=  5080 stack_left= 31756 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 9FF15F7D.e185-chain25.elf          data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: 9FF15F7D.e185-chain425.elf         data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: A1906AEC.e182.elf                  data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: A80B4080.e116b.elf                 data=  636 bss=  4196 stack_left= 32032 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: AA5B9BD5.e144.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: AD2546E2.e187.elf                  data=  660 bss= 18552 stack_left= 17652 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: AF09D21E.e376-floor6.elf           data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: B20EE208.e182.elf                  data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: B2E00039.e115.elf                  data=   28 bss=  5076 stack_left= 31760 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: B87C3C7B.e185-bisect-clock-only-again.elf data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: B87C3C7B.e185-bisect-clock-only.elf data=  660 bss= 32888 stack_left=  3316 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: BC21E369.e381-order.elf            data=  740 bss= 24712 stack_left= 11412 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: BE916F91.e157.elf                  data=  636 bss= 16488 stack_left= 19740 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: C1F71104.e182-posctl-sag.elf       data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: C1F71104.e183-ab25-sag_01.elf      data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: C1F71104.e183-ab25-sag_02.elf      data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: C1F71104.e183-ab25-sag_03.elf      data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: C2DA171A.e304-ring-adv22.elf       data=  668 bss= 19572 stack_left= 16624 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: C4BE9DD9.e117.elf                  data=  636 bss=  4196 stack_left= 32032 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: C90D0544.e140.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: CC8B44BF.e362-counts.elf           data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: CDE4EF42.e116c.elf                 data=  636 bss=  4196 stack_left= 32032 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: CFDB39BC.e182.elf                  data=  660 bss= 22660 stack_left= 13544 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: comtop.e165-chain.elf              data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: comtop2.e167-chain.elf             data=  652 bss= 28792 stack_left=  7420 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: comtop3.e168.elf                   data=  652 bss= 28792 stack_left=  7420 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: comtop4.e170.elf                   data=  656 bss= 28792 stack_left=  7416 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: D232F90A.e241-cap600.elf           data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: D4ACF3EA.e177-sag.elf              data=  660 bss= 20588 stack_left= 15616 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: D56FC16B.e244-final-candidate.elf  data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: D6950A21.e179-sag.elf              data=  660 bss= 20596 stack_left= 15608 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: DBA2ED8F.e367-sag.elf              data=  740 bss= 19572 stack_left= 16552 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: DD9E49D9.e165-B-comtop375.elf      data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: DD9E49D9.e166-B-comtop-375_2.elf   data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: DD9E49D9.e166-B-comtop-375_3.elf   data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: E146E3BC.e346-advref-floor5-78s.elf data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: E3BB2544.e315-marginhist.elf       data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: EADDF979.e336-advref-floor5-78s.elf data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: ED4E305C.e212-ciwatch.elf          data=  668 bss=  4184 stack_left= 32012 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: F041A6AC.e168-A-peer-475_1.elf     data=  652 bss= 28792 stack_left=  7420 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: F041A6AC.e168-A-peer-475_2.elf     data=  652 bss= 28792 stack_left=  7420 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: F0820748.e130.elf                  data=  632 bss=  4184 stack_left= 32048 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: F2E84BAD.e120b.elf                 data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: F5FFF36F.final.elf                 data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: F76440D9.e125.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: FDBFBD0C.e135.elf                  data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: peer.e165-chain.elf                data=  644 bss= 28792 stack_left=  7428 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: peer2.e167-chain.elf               data=  652 bss= 28792 stack_left=  7420 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: peer3.e168.elf                     data=  652 bss= 28792 stack_left=  7420 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: peer4.e170.elf                     data=  656 bss= 28792 stack_left=  7416 (floor 8192, largest frame 5420, deepest path 7024)  <-- BELOW THE STACK FLOOR
+
+bss_headroom: probe-floor.elf                    data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: probe-lowrungs.elf                 data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: probe-sweep.elf                    data=  636 bss=  4184 stack_left= 32044 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: prod.e170.elf                      data=  656 bss=  4184 stack_left= 32024 (floor 8192, largest frame 5420, deepest path 7024)
+
+bss_headroom: 37 ARCHIVED image(s) are below the stack floor and MUST NOT BE FLASHED again:
+
+  05C4E58F.e170-B-comtop-475_1.elf
+
+  05C4E58F.e170-B-comtop-475_2.elf
+
+  05C4E58F.e170-B-comtop-475_3.elf
+
+  20E6AC43.e165-A-peer375.elf
+
+  20E6AC43.e166-A-peer-375_2.elf
+
+  20E6AC43.e166-A-peer-375_3.elf
+
+  33B695D8.e182.elf
+
+  3816B366.e162-chain25.elf
+
+  3816B366.e162-chain375.elf
+
+  5D34C4FC.e185-bisect-arr-zero.elf
+
+  5FE5DCD6.e168-B-comtop-475_1.elf
+
+  5FE5DCD6.e168-B-comtop-475_2.elf
+
+  61BAC906.e185-bisect-clock-psc-arr-cen.elf
+
+  6619B9F0.e170-A-peer-475_1.elf
+
+  6619B9F0.e170-A-peer-475_2.elf
+
+  6619B9F0.e170-A-peer-475_3.elf
+
+  6F98D17D.e185-bisect-arr-max.elf
+
+  6F98D17D.e185-bisect-clock-psc-arr.elf
+
+  84B8346F.e185-bisect-nofine.elf
+
+  9FF15F7D.e185-chain25.elf
+
+  9FF15F7D.e185-chain425.elf
+
+  B20EE208.e182.elf
+
+  B87C3C7B.e185-bisect-clock-only-again.elf
+
+  B87C3C7B.e185-bisect-clock-only.elf
+
+  comtop.e165-chain.elf
+
+  comtop2.e167-chain.elf
+
+  comtop3.e168.elf
+
+  comtop4.e170.elf
+
+  DD9E49D9.e165-B-comtop375.elf
+
+  DD9E49D9.e166-B-comtop-375_2.elf
+
+  DD9E49D9.e166-B-comtop-375_3.elf
+
+  F041A6AC.e168-A-peer-475_1.elf
+
+  F041A6AC.e168-A-peer-475_2.elf
+
+  peer.e165-chain.elf
+
+  peer2.e167-chain.elf
+
+  peer3.e168.elf
+
+  peer4.e170.elf

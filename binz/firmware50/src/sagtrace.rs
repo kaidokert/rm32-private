@@ -21,14 +21,13 @@
 //! and was wrong by 23x, which made its coverage claim wrong by the same
 //! factor; the independent pre-run review of E175 caught it.
 //!
-//! **So the guard is a band-pass, and that is the central fact about what it
-//! can detect.** Its numerator is an 8-scan sliding mean (~808 µs, about nine
-//! sectors at 47.5%), so anything faster — a per-PWM-period dip, a switching
-//! transient — is averaged away before the comparison. Its denominator is a
-//! ~207 ms exponential average, so anything slower is followed and becomes
-//! margin rather than fault. Only dips between about 0.8 ms and 200 ms are
-//! visible to it at all. The absolute floor (`BUS_FLOOR_NUM`, `Reason::Bus`)
-//! is what covers the slow side.
+//! **The guard has time-scale-dependent sensitivity, not brick-wall limits.**
+//! Its numerator is an 8-scan sliding mean (~808 µs), which attenuates narrow
+//! dips. A sufficiently deep single sample can nevertheless depress several
+//! overlapping means and satisfy the three-judgment streak. Its denominator
+//! is a ~207 ms exponential average, which follows sufficiently slow changes;
+//! neither time constant is a strict minimum/maximum detectable dip duration.
+//! The absolute floor (`BUS_FLOOR_NUM`, `Reason::Bus`) also covers low voltage.
 //!
 //! **And it is primed from the bridge-off baseline** (`FastBusSag::new`), so
 //! for roughly the first 207 ms of a run its reference is an *unloaded* rail
@@ -71,10 +70,10 @@ use cortex_m::interrupt::{self, Mutex};
 /// on a part whose largest frame reserves 5076 B and which has no stack guard,
 /// and every run died inside a millisecond.
 ///
-/// 26 ms is **~32x the guard's fast edge** (~0.8 ms), the shortest dip it can
-/// latch on; it is *not* longer than the slow edge (~200 ms), so this ring
-/// shows the shape of a fast event while the decimated ring shows the
-/// reference's history. The analysis uses the last rows before the freeze.
+/// 26 ms spans about32 eight-scan mean windows; that window is NOT the shortest
+/// dip the guard can latch on. This ring shows a sampled fast event while the
+/// decimated ring shows the reference's longer history. Analysis uses the last
+/// rows before the freeze.
 pub const FAST_LEN: usize = 256;
 /// Decimated judgements kept, and the decimation: 1024 rows every 32nd
 /// judgement is **~3.3 s** at the measured 9.8 kHz (1024 x 32 x 101 µs), i.e.
@@ -95,18 +94,9 @@ pub struct Block {
     /// Wraps every **8.192 ms**; the host must not pair across a longer gap
     /// (`hw::fine::SPAN16_US`).
     pub at_fine: u16,
-    /// **The PWM counter at this scan**, so the raw samples above are
-    /// interpretable at all.
-    ///
-    /// The ADC trigger is deliberately de-cohered from the carrier -- TIM6 at
-    /// 9901 Hz against a 48.0 kHz carrier -- so the sample point walks ~0.85 of
-    /// a carrier period per scan and every raw sample below lands at a
-    /// different, unknown point of the switching cycle. That is right for
-    /// reconstructing a DC average (which is what the 8-tap mean is for) and
-    /// useless for reading one raw sample as a bus level, because consecutive
-    /// samples differ by carrier ripple aliased at an unknown phase. With this
-    /// field the host can bin by phase, or restrict a comparison to samples
-    /// taken at a like point in the cycle.
+    /// PWM counter read during foreground recording, AFTER the ADC snapshot
+    /// and guard work. Not latched at ADC acquisition: do not use this field
+    /// to assign an exact sampling aperture or compare ADC carrier phases.
     pub pwm_ctr: u16,
     /// **The raw bus sample of this very scan**, not the mean.
     ///
@@ -136,8 +126,8 @@ pub struct Block {
     /// The sector in force, and the applied duty in tenths of a percent.
     pub step: u8,
     pub duty_tenths: u16,
-    /// µs since the last **accepted zero crossing** — not since the
-    /// commutation, which happens `wait_time` later and is not recorded here.
+    /// µs since the last **foreground-consumed accept** — not an independently
+    /// captured physical crossing or commutation. Foreground may skip stamps.
     /// Zero before the loop is closed. At ~101 µs between judgements and an
     /// 84 µs sector at 47.5% this is **aliased**, so it cannot answer whether
     /// a dip is phase-locked to switching; the review of E175 established

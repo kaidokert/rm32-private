@@ -321,12 +321,17 @@ def identity_unavailable(r: dict) -> bool:
     return "unphysical" in r.get("rate_source", "")
 
 
-def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
+def run_gates(r: dict, min_hold_ms: int = 30_000, *, propless: bool = False) -> list[str]:
     """Gates 1-3 for one run; empty list = pass.
 
     `min_hold_ms` is the dwell a qualifying run must reach. An exploratory run
     (campaign 6, E137) is driven on a shorter window and is judged on every
-    other gate with this lowered, never with a gate removed."""
+    other gate with this lowered, never with a gate removed.
+
+    `propless` excludes only the prop-loaded oracle comparison. The independent
+    matched-window identity and all current/bus/stop/duty checks above it remain.
+    Such results belong to a separate unloaded campaign, never the loaded ladder.
+    """
     fails = []
     if r["reason"] != 2:
         # Campaign 8's two hard stops carry their own codes, so a run that hit
@@ -422,6 +427,10 @@ def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
             "within 5% of the firmware's own 4 A allowance, where AverageCurrent "
             "folds back and a foldback disqualifies the rung"
         )
+    if propless:
+        if identity_unavailable(r):
+            fails.append("unloaded identity unavailable: not a qualification pass")
+        return fails
     ref = ORACLE.get(r["duty"])
     if ref and abs(r["coast_ehz"] - ref[0]) * 100 > 5 * ref[0]:
         fails.append(f"coast {r['coast_ehz']} eHz outside 5% of {ref[0]}")

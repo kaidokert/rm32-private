@@ -169,6 +169,12 @@ pub struct Arm {
 /// optimizer removes, leaving production's roots unchanged.
 pub trait ChainLog {
     const ON: bool;
+    /// Independent compact tail; does not enable the full chain instrument.
+    const ORDER: bool = false;
+    #[inline(always)]
+    fn order_accept(_: &mut Root<CompPrio>, _: crate::ordertrace::Accepted) {}
+    #[inline(always)]
+    fn order_bridge(_: &mut Root<Motor>, _: crate::ordertrace::Commutated) {}
 
     fn accept(at: &mut Root<CompPrio>, a: &Arm);
     /// `fire_fine`/`bridge_fine` are fine stamps; `sched_us` is the coarse

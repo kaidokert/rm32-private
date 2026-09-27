@@ -459,6 +459,7 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
     // the root token is borrowed by the estimator's closure (E154).
     // (crossing µs, crossing fine, arm fine, wait µs, spent fine, sector, late)
     let mut beat: Option<(u16, u16, u16, u32, u16, u8, bool)> = None;
+    let mut order_wait = 0;
 
     // The estimator's borrow returns the accepted crossing's (step, average)
     // so the watch is fed after it ends: the watch borrow needs the token.
@@ -492,18 +493,9 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                 S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
                 S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
                 S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
-                // Arm the commutation, as AM32's `interruptRoutine` arms its COM
-                // timer. The line stays masked until the COM root re-arms it.
-                // The wait runs from the edge, not from here: subtract what this
-                // handler has already spent since its entry stamp `raw`, so the
-                // commutation lands at edge + wait whenever the response time is
-                // below the wait (E083, R_COMP < wait_time(ci)).
-                //
-                // **Arming before these stores was tried and rejected** (E142,
-                // E144): it moved the reported response time from 11 µs to 10
-                // and cost about 1% of rotor speed at 37.5%, where the
-                // remaining wait is only 5-6 µs. Below that rung it changed
-                // nothing measurable. The order here is the qualified one.
+                // Keep E142/E144's store/arm order. Subtract time since COMP's
+                // entry stamp, not an independently captured physical edge.
+                // COM owns the next unmask; hardware arming adds latency too.
                 if S.com().active.load(Ordering::Relaxed) {
                     let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
                     let left = wait.saturating_sub(spent);
@@ -525,6 +517,9 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                     if spent > S.det().spent_max.load(Ordering::Relaxed) {
                         S.det().spent_max.store(spent, Ordering::Relaxed);
                     }
+                }
+                if C::ORDER {
+                    order_wait = wait;
                 }
                 Some((step.get(), zc.average_interval()))
             }
@@ -552,9 +547,28 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
         Some((step, average)) => {
             // The accepted-event envelope (E076).
             guard_event(at, step, average);
+            log_order_accept::<C>(at, raw, count, step, average, order_wait);
             true
         }
         None => false,
+    }
+}
+
+/// After arm/watch, not inside persistence. NoChain removes the whole hook.
+#[inline(always)]
+fn log_order_accept<C: ChainLog>(at: &mut Root<CompPrio>, raw: u16, count: u32, step: u8, average: u32, wait: u32) {
+    if C::ORDER {
+        C::order_accept(
+            at,
+            crate::ordertrace::Accepted {
+                id: S.det().accept_seq.load(Ordering::Relaxed),
+                raw,
+                interval: count as u16,
+                average: average as u16,
+                wait: wait as u16,
+                step,
+            },
+        );
     }
 }
 
@@ -616,6 +630,7 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut
     // closure holds the root token (E154).
     let mut beat = None;
     let mut sector = 0u8;
+    let mut order_wait = 0;
     let accepted = S.det().zc.root(at, |zc| {
         let zc = zc.as_mut()?;
         let (_, ci_max) = zc.bounds();
@@ -640,6 +655,9 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut
             crate::bemf::Outcome::Accepted { wait, .. } => {
                 beat = accept::<C>(raw, fine0, wait, zc.average_interval(), zc.blanking());
                 sector = step.get();
+                if C::ORDER {
+                    order_wait = wait;
+                }
                 Some((step.get(), zc.average_interval()))
             }
             _ => None,
@@ -668,6 +686,7 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut
     match accepted {
         Some((step, average)) => {
             guard_event(at, step, average);
+            log_order_accept::<C>(at, raw, count, step, average, order_wait);
             true
         }
         None => false,
@@ -1165,6 +1184,12 @@ pub unsafe fn com_root<C: ChainLog>() {
     let preempted = count_preempt::<C>();
     let now_raw = hw::clock::raw();
     let late = now_raw.wrapping_sub(S.com().sched_raw.load(Ordering::Relaxed) as u16) as u32;
+    let ordinal = if C::ORDER {
+        S.det().accept_seq.load(Ordering::Relaxed)
+    } else {
+        0
+    };
+    let mut order_stamp = None;
     if late < 0x8000 && late > S.com().late_max.load(Ordering::Relaxed) {
         S.com().late_max.store(late, Ordering::Relaxed);
     }
@@ -1179,16 +1204,14 @@ pub unsafe fn com_root<C: ChainLog>() {
             let plan = S.com().plans.root(&mut at, |t| t[((step.get() - 1) & 7) as usize]);
             if let Some(pl) = plan {
                 hw::pwm::apply_plan(&pl);
+                order_stamp = bridge_stamp::<C>();
             }
             if C::ON {
                 bridge = hw::clock::raw();
             }
             comp2_select_floating(step);
             S.com().count.fetch_add(1, Ordering::Relaxed);
-            // The blank decision uses the ring as of the previous commutation,
-            // then this commutation stores its interval -- the reference's
-            // order (`commutate` pushes; `observe_bands` recomputes the
-            // average after the COM, `core_bench.rs:2105-2137`).
+            // Blank uses the prior ring, then pushes (reference order).
             //
             // **Read from the accepted crossing's published pair, not from the
             // estimator** (step 6a). COMP writes `accept_avg`/`accept_blank`
@@ -1248,6 +1271,40 @@ pub unsafe fn com_root<C: ChainLog>() {
         _ => {}
     }
     log_service::<C>(&mut at, now_raw, bridge, late, phase, preempted);
+    log_order_bridge::<C>(&mut at, order_stamp, ordinal, now_raw, late);
+}
+
+#[inline(always)]
+fn bridge_stamp<C: ChainLog>() -> Option<crate::ordertrace::Stamp> {
+    if !C::ORDER {
+        return None;
+    }
+    let before = hw::fine::raw();
+    let coarse = hw::clock::raw();
+    let after = hw::fine::raw();
+    Some(crate::ordertrace::Stamp { before, coarse, after })
+}
+
+#[inline(always)]
+fn log_order_bridge<C: ChainLog>(
+    at: &mut Root<Motor>,
+    stamp: Option<crate::ordertrace::Stamp>,
+    id: u32,
+    service: u16,
+    late: u32,
+) {
+    if let Some(stamp) = stamp {
+        C::order_bridge(
+            at,
+            crate::ordertrace::Commutated {
+                id,
+                stamp,
+                service,
+                scheduled: service.wrapping_sub(late as u16),
+                step: S.com().step.load(Ordering::Relaxed) as u8,
+            },
+        );
+    }
 }
 
 /// The chain's service row (E154), pushed after the dispatch so it carries the

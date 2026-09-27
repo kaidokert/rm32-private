@@ -53,6 +53,7 @@ pub struct Request {
 /// Counters the report is built from.
 pub(crate) struct Stats {
     pub accepted: u32,
+    pub coalesced_accepts: u32,
     pub acc_by_step: [u16; 8],
     pub acc_by_phase: [u16; 8],
     pub revisit_attempts: [u16; 8],
@@ -167,6 +168,7 @@ impl Ctx {
             last_ci: sector_interval_us(CATCH_EHZ),
             stats: Stats {
                 accepted: 0,
+                coalesced_accepts: 0,
                 acc_by_step: [0; 8],
                 acc_by_phase: [0; 8],
                 revisit_attempts: [0; 8],
@@ -422,8 +424,7 @@ impl Ctx {
             // The raw sample of *this* scan, alongside the mean the guard
             // judged, so the host can state a dip's true width instead of the
             // boxcar's.
-            // The carrier phase this scan was taken at; without it a raw
-            // sample cannot be compared with the next one (E266).
+            // Readout-time PWM count, NOT this scan's acquisition phase.
             pwm_ctr: hal.pwm_counter() as u16,
             bus_raw: scan.bus,
             phase_a: scan.phase_a,
@@ -987,15 +988,16 @@ impl Locked {
     }
 
     /// An accepted crossing: statistics, and the estimate as of it.
-    fn consume(&mut self, hal: &mut impl Hal, raw: u16) {
-        let edge_us = hal.stamp_from_raw(raw);
+    fn consume(&mut self, hal: &mut impl Hal, accepted: super::accepted::Accepted) {
+        let edge_us = hal.stamp_from_raw(accepted.raw);
         let count = edge_us.wrapping_sub(self.sector_start);
         let c = &mut self.ctx;
         let ci_before = c.last_ci;
         self.sector_start = edge_us;
-        c.stats.accepted += 1;
+        c.stats.accepted = c.stats.accepted.wrapping_add(accepted.count.get());
+        c.stats.coalesced_accepts = c.stats.coalesced_accepts.wrapping_add(accepted.count.get() - 1);
         if c.hold_start.is_some() {
-            c.stats.hold_acc += 1;
+            c.stats.hold_acc = c.stats.hold_acc.wrapping_add(accepted.count.get());
             c.stats.hold_ci_sum = c.stats.hold_ci_sum.saturating_add(count);
             // Roll the matched window's anchor forward once it is older than
             // `TAIL_WINDOW_US`, so the window always ends at the newest
@@ -1010,6 +1012,8 @@ impl Locked {
             }
             c.stats.tail_last = Some(here);
         }
+        // These histograms describe sampled notifications. Intermediate
+        // sectors/stamps are not recoverable from a latest-value mailbox.
         let bin = (c.step.get() as usize - 1) & 7;
         c.stats.acc_by_step[bin] = c.stats.acc_by_step[bin].saturating_add(1);
         if self.revisit_inflight {
@@ -1137,5 +1141,73 @@ pub(crate) fn stop<S>(hal: &mut impl Hal, ctx: Ctx, gates: Gates<S>, reason: Rea
         stopped_at,
         ctx: Some(ctx),
         _gates: g,
+    }
+}
+
+#[cfg(test)]
+mod accepted_tests {
+    use super::*;
+    use crate::run::{
+        Production,
+        accepted::Accepted,
+        sim::{Crossings, Faults, Sim},
+    };
+    use core::num::NonZeroU32;
+
+    #[test]
+    fn coalesced_delivery_reaches_actual_report_and_tail_without_inventing_stamps() {
+        let mut sim = Sim::new(
+            Crossings {
+                interval_us: 100,
+                until_us: None,
+            },
+            Faults::default(),
+        );
+        let mut ctx = Ctx::new::<Production>(
+            Request {
+                target_tenths: 150,
+                inject: None,
+                window: Window::ForUs(10_000),
+            },
+            0,
+            Baseline {
+                zero_block: 614_400,
+                bus_ref: crate::protection::BusReference { bus: 1214, vref: 1506 },
+                bus_floor_code: 840,
+            },
+        );
+        ctx.hold_start = Some(1000);
+        let mut locked = Locked {
+            ctx,
+            gates: Gates::idle().pass(),
+            sector_start: 1000,
+            revisit_step: 0,
+            revisit_inflight: false,
+            rescues: 0,
+            last_com_count: 0,
+        };
+        for (raw, count) in [(1100, 1), (1400, 3), (1700, 3)] {
+            sim.t = raw as u32;
+            locked.consume(
+                &mut sim,
+                Accepted {
+                    raw,
+                    count: NonZeroU32::new(count).unwrap(),
+                },
+            );
+        }
+        let report = Production::report(&mut sim, &locked.ctx, Reason::SegmentDeadline, 1800, None);
+        assert_eq!(report.accepted, 7);
+        assert_eq!(report.hold_acc, 7);
+        assert_eq!(report.coalesced_accepts, 4);
+        let tail = report.tail.unwrap();
+        assert_eq!(tail.accepts, 6);
+        assert_eq!(tail.span_us, 600);
+        assert_eq!(tail.start_before_stop_us, 700);
+        assert_eq!(tail.end_before_stop_us, 100);
+        // Sampled diagnostic bins are NOT fabricated for the four hidden edges.
+        assert_eq!(report.acc_by_step.iter().copied().sum::<u16>(), 3);
+        report.emit(&mut sim);
+        assert!(sim.log.text.contains("BEMFMAILBOX coalesced_accepts=4"));
     }
 }

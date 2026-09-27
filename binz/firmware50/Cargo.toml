@@ -51,6 +51,12 @@ path = "bin/sag-capture.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "order-capture"
+path = "bin/order-capture.rs"
+test = false
+bench = false
+
 [lib]
 test = true
 bench = false

@@ -1,0 +1,11 @@
+root                 ADC_COMP
+
+loops (back-edges)   2, bounds supplied [12, 12]
+
+longest path         1106 cycles @ 0 wait states
+
+                     17.28 us @ 64 MHz
+
+exception entry+exit ~24 cycles (0.38 us), not included above
+
+flash wait states    2 configured; instruction fetch not modelled, real cost is higher than the figure above

@@ -1,0 +1,75 @@
+judgements=275850 fast_kept=256 slow_kept=1024 frozen=1 fraction=95/100 streak_to_latch=3 run_reason=26
+
+  overwritten (fast): 275594 judgements never kept
+
+  fast window is 256 of 275850 judgements = 0.093% of the run, and it is the tail, one every 103.00 us measured
+
+  fast window spans 25.7 ms (summed from its own stamps) of a run of 28413 ms
+
+margin per mille (1000 = exactly on the line): min=966.5 p01=982.7 p50=1050.7 max=1062.0
+
+low blocks (the guard's own test): 3 of 256
+
+streak held: max=3 (latches at 3); rows with streak>0: 3
+
+fail-closed rows (vref 0 or >= 4095): 0 -- these latch whatever the ratio says
+
+  last row: bus_mean=1111 vref_mean=1505 filt_bus=1210 filt_vref=1505 streak=3 margin=966.5
+
+  reference above the bus by +8.91% (a streak latch needs >= +5.26%); fail_closed=False
+
+host/firmware disagreement on lows: 0 of 255 rows
+
+
+
+tightest 12 judgements:
+
+   margin    bus   vref  filt_bus filt_vref  streak  step   duty
+
+    966.5   1111   1505      1210      1505       3     6    560
+
+    978.7   1125   1505      1210      1505       2     6    560
+
+    985.6   1133   1505      1210      1505       1     5    560
+
+   1007.4   1158   1505      1210      1505       0     4    560
+
+   1022.2   1175   1505      1210      1505       0     3    560
+
+   1037.7   1192   1504      1210      1505       0     6    560
+
+   1038.5   1193   1504      1210      1505       0     5    560
+
+   1042.0   1197   1504      1210      1505       0     2    560
+
+   1042.0   1197   1504      1210      1505       0     2    560
+
+   1042.9   1198   1504      1210      1505       0     6    560
+
+   1042.9   1198   1504      1210      1505       0     3    560
+
+   1043.1   1199   1504      1210      1504       0     3    560
+
+
+
+decimated history: 1024 rows every 32 judgements ~= 3375 ms (fast-ring rate)
+
+  filt_bus 1210..1211 (last 1210), bus_mean 1191..1230 (last 1202)
+
+  margin over that history: min=1036.1 p50=1052.6 max=1070.7
+
+
+
+raw bus (v3): deficit budget for a low window = 484 codes against filt_bus 1210
+
+  raw <= 729 (one scan suffices): longest run 0 scans, 0 rows total
+
+  raw <= 1113 (needs 5 scans): longest run 3 scans, 4 rows total
+
+  raw bus 1003..1248 (mean-of-raw 1205)
+
+  phase codes 0..4068 over 256 rows
+
+  service-time PWM counter 1..1318 (231 distinct values); read AFTER ADC snapshot, not an acquisition-phase measurement
+
+  fine deltas: 244 of 255 usable, min=54.875 p50=103.750 max=171.125 us

@@ -236,10 +236,8 @@ const _: () = assert!(RAW_DEPTH_FRACTIONS[0] < DEPTH_FRACTIONS[3]);
 // line. E291 relied on this and only said so in a comment; it is checked now.
 const _: () = assert!(DEPTH_FRACTIONS[0].is_multiple_of(5) && DEPTH_FRACTIONS[1].is_multiple_of(5));
 const _: () = assert!(DEPTH_FRACTIONS[2].is_multiple_of(5) && DEPTH_FRACTIONS[3].is_multiple_of(5));
-const _: () =
-    assert!(RAW_DEPTH_FRACTIONS[0].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[1].is_multiple_of(5));
-const _: () =
-    assert!(RAW_DEPTH_FRACTIONS[2].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[3].is_multiple_of(5));
+const _: () = assert!(RAW_DEPTH_FRACTIONS[0].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[1].is_multiple_of(5));
+const _: () = assert!(RAW_DEPTH_FRACTIONS[2].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[3].is_multiple_of(5));
 
 /// How deep, and for how long, the bus actually sits below its pre-run
 /// reference -- the distribution a slow-droop stop would have to be chosen from.
@@ -1428,6 +1426,26 @@ mod tests {
         assert!(g.tripped());
         // And the latch is sticky whatever comes next.
         assert_eq!(g.observe(1212, 1506), Some(Reason::FastBusSag));
+    }
+
+    #[test]
+    fn one_deep_raw_sample_can_trip_overlapping_rail_means() {
+        let r = reference();
+        let mut mean = RailMean::new();
+        let mut guard = FastBusSag::new(r);
+        for _ in 0..RAIL_MEAN_LEN {
+            mean.feed(r.bus, r.vref);
+        }
+        assert!(mean.ready());
+        assert_eq!(guard.observe(mean.bus_mean(), mean.vref_mean()), None);
+        // One raw dip persists in eight successive overlapping mean windows.
+        for (i, raw) in [r.bus / 2, r.bus, r.bus].into_iter().enumerate() {
+            mean.feed(raw, r.vref);
+            let expected = if i == 2 { Some(Reason::FastBusSag) } else { None };
+            assert_eq!(guard.observe(mean.bus_mean(), mean.vref_mean()), expected);
+            assert_eq!(guard.streak(), (i + 1) as u8);
+        }
+        assert!(guard.tripped());
     }
 
     #[test]

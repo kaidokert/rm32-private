@@ -13,6 +13,7 @@ use crate::commutation::Direction;
 use crate::protection::{RAW_LIMIT, Reason, ZERO_BLOCKS};
 use crate::report::{CoastStats, CurrentRecord, InjectOutcome, RunReport, Sink, WitnessRecord};
 
+pub mod accepted;
 pub mod hal;
 pub mod measure;
 pub mod policy;
@@ -296,6 +297,21 @@ impl<
         }
     }
 
+    /// Post-stop subtraction of foreground hold marks from IRQ totals.
+    fn report_roots(io: &mut impl Hal, s: &states::Stats) -> crate::report::Roots {
+        let mut r = io.roots_record();
+        r.hold_unstable = r.unstable.saturating_sub(s.unstable_at_hold);
+        for i in 0..8 {
+            r.wait_hist_hold[i] = r.wait_hist[i].saturating_sub(s.wait_hist_at_hold[i]);
+            r.left_hist_hold[i] = r.left_hist[i].saturating_sub(s.left_hist_at_hold[i]);
+        }
+        if !s.held {
+            r.wait_hist_hold = [0; 8];
+            r.left_hist_hold = [0; 8];
+        }
+        r
+    }
+
     fn report(
         io: &mut impl Hal,
         ctx: &states::Ctx,
@@ -316,6 +332,7 @@ impl<
                 stopped_at,
             }),
             accepted: s.accepted,
+            coalesced_accepts: s.coalesced_accepts,
             forced: 0,
             ci_us: io.det_average().unwrap_or(ctx.last_ci),
             bus_ref: u32::from(ctx.base.bus_ref.bus),
@@ -338,30 +355,7 @@ impl<
                 }),
                 _ => None,
             },
-            roots: {
-                // `hold_unstable` is a foreground quantity: the HAL reports the
-                // cumulative count and the hold mark is held here, so the
-                // subtraction belongs here rather than in the board (E212).
-                let mut r = io.roots_record();
-                r.hold_unstable = r.unstable.saturating_sub(s.unstable_at_hold);
-                // E315: the same subtraction for the margin histograms, and for
-                // the same reason. `*_at_hold` stays zero if the run never
-                // reached its hold, in which case the hold window is empty and
-                // these read zero -- which is the correct answer and is
-                // distinguishable from "no instrument" by the whole-run line
-                // being non-zero.
-                let mut i = 0;
-                while i < 8 {
-                    r.wait_hist_hold[i] = r.wait_hist[i].saturating_sub(s.wait_hist_at_hold[i]);
-                    r.left_hist_hold[i] = r.left_hist[i].saturating_sub(s.left_hist_at_hold[i]);
-                    i += 1;
-                }
-                if !s.held {
-                    r.wait_hist_hold = [0; 8];
-                    r.left_hist_hold = [0; 8];
-                }
-                r
-            },
+            roots: Self::report_roots(io, s),
             acc_by_step: core::array::from_fn(|i| s.acc_by_step[i]),
             forced_by_step: [0; 6],
             acc_by_phase: core::array::from_fn(|i| s.acc_by_phase[i]),
@@ -425,6 +419,8 @@ impl<
         io.kv("advance_level", A::level(target));
         io.kv("total_ms", window_ms);
         io.kv("inject", announce);
+        io.kv("run_period_ticks", crate::duty::RUN_PERIOD_TICKS);
+        io.kv("startup_ticks", crate::duty::STARTUP_TICKS);
         io.say("\r\n");
         io.flush_link();
         let window = until.map_or(Window::ForUs(window_ms.saturating_mul(1_000)), Window::Until);

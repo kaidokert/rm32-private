@@ -50,6 +50,7 @@ pub mod fixed;
 #[cfg(target_os = "none")]
 pub mod hw;
 pub mod oneshot;
+pub mod ordertrace;
 pub mod protection;
 pub mod ramp;
 pub mod rate;

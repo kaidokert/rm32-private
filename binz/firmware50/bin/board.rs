@@ -612,13 +612,12 @@ impl Hal for Board {
     }
 
     #[inline(always)]
-    fn det_poll(&mut self) -> Option<u16> {
-        let s = S.det().accept_seq.load(Ordering::Relaxed);
-        if s == self.det_seq_seen {
-            return None;
-        }
-        self.det_seq_seen = s;
-        Some(S.det().accept_raw.load(Ordering::Relaxed) as u16)
+    fn det_poll(&mut self) -> Option<firmware50::run::accepted::Accepted> {
+        firmware50::run::accepted::observe(
+            &mut self.det_seq_seen,
+            || S.det().accept_seq.load(Ordering::Relaxed),
+            || S.det().accept_raw.load(Ordering::Relaxed) as u16,
+        )
     }
 
     fn det_average(&self) -> Option<u32> {

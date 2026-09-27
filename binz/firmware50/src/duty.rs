@@ -34,12 +34,8 @@ pub const ENVELOPE_MAX: u16 = 300;
 /// and so a future 50% personality is a type parameter, not a patch.
 pub const ENVELOPE_MAX_DUTY50: u16 = 500;
 
-/// TIM1 period in timer ticks at the running 48 kHz carrier.
-///
-/// Named `RUN_PERIOD_TICKS`, not `RUN_PERIOD_TICKS`: `startup::RUN_PERIOD_TICKS` is 5000
-/// *control* ticks, and the binary imports both. Two public constants a
-/// thousand apart, both called `RUN_PERIOD_TICKS`, differing only in unit, is a
-/// collision waiting to be miscompiled into a correct-looking expression.
+/// TIM1 period at 64 MHz: the running carrier is approximately 48.012 kHz.
+/// E386's global 64 kHz experiment was retired after its handoff storm (E387).
 pub const RUN_PERIOD_TICKS: u32 = 1333;
 /// TIM1 period in ticks at the 10 kHz startup carrier.
 pub const STARTUP_TICKS: u32 = 6400;
@@ -169,7 +165,7 @@ impl DutyPath {
         self.applied_tenths
     }
 
-    /// Switch carriers (startup 10 kHz -> running 48 kHz). The applied duty is
+    /// Switch carriers (startup -> running). The applied duty is
     /// a percentage, so it survives the change; the compare value does not.
     #[inline]
     pub fn set_ticks(&mut self, ticks: u32) {
@@ -304,7 +300,7 @@ mod tests {
         let ccr = p
             .command::<ENVELOPE_MIN, ENVELOPE_MAX, ENVELOPE_STEP>(100)
             .expect("10% must be admissible");
-        assert_eq!(ccr, 133, "du100 at 1333 ticks -> CCR 133");
+        assert_eq!(ccr, RUN_PERIOD_TICKS / 10);
         assert_eq!(p.applied(), 100);
     }
 
@@ -389,7 +385,7 @@ mod tests {
         p.set_ticks(RUN_PERIOD_TICKS);
         let run_ccr = p.recompute();
         assert_eq!(p.applied(), 100, "duty is a percentage and must survive");
-        assert_eq!(run_ccr, 133);
+        assert_eq!(run_ccr, RUN_PERIOD_TICKS / 10);
         assert!(run_ccr < startup_ccr, "same duty, shorter period, smaller compare");
     }
 

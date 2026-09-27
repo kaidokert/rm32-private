@@ -279,6 +279,16 @@ pub trait Advance {
     fn level(duty_tenths: u16) -> u32;
 }
 
+/// A binary-selected timing experiment, without changing production features.
+/// The existing 35% transition and 16..=22 control-policy bounds are retained.
+pub struct ScheduledAdvance<const LOW: u32, const HIGH: u32>;
+impl<const LOW: u32, const HIGH: u32> Advance for ScheduledAdvance<LOW, HIGH> {
+    fn level(duty_tenths: u16) -> u32 {
+        const { assert!(16 <= LOW && LOW <= HIGH && HIGH <= 22) };
+        if duty_tenths >= ADVANCE_STEP_TENTHS { HIGH } else { LOW }
+    }
+}
+
 /// Average-current protection and the foldback it drives.
 pub trait CurrentLimit {
     fn meter(zero_block: u32) -> AverageCurrent;

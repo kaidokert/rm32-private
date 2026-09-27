@@ -351,8 +351,8 @@ impl Hal for Sim {
     fn com_handover(&mut self, duty: u16, _period: u32, _step: Step, commit_us: u32) {
         self.log.handover = Some((duty, commit_us));
     }
-    fn det_poll(&mut self) -> Option<u16> {
-        self.pending_raw.take()
+    fn det_poll(&mut self) -> Option<super::accepted::Accepted> {
+        self.pending_raw.take().map(super::accepted::Accepted::single)
     }
     fn det_average(&self) -> Option<u32> {
         self.zc.as_ref().map(|_| self.crossings.interval_us)
@@ -463,6 +463,58 @@ mod tests {
         interval_us: 144,
         until_us: None,
     };
+
+    #[test]
+    fn scheduled_advance_preserves_ramp_and_existing_late_blank_stops() {
+        use crate::run::{Controller, policy};
+        type Probe = Controller<
+            policy::Wiring,
+            policy::BemfPolicy,
+            policy::ScheduledAdvance<16, 18>,
+            policy::CurrentProtection,
+            policy::BusSagProtection,
+            policy::Restart,
+            policy::Telemetry,
+        >;
+        for faults in [
+            Faults::default(),
+            Faults {
+                late_arm_at: Some(28_000_000),
+                ..Faults::default()
+            },
+            Faults {
+                blank_latched_at: Some(28_000_000),
+                ..Faults::default()
+            },
+        ] {
+            let mut sim = Sim::new(STEADY, faults);
+            let out = Probe::new().run(
+                &mut sim,
+                Request {
+                    target_tenths: 500,
+                    inject: None,
+                    window: Window::ForUs(35_000_000),
+                },
+            );
+            let expected = if faults.late_arm_at.is_some() {
+                Reason::LateArm
+            } else if faults.blank_latched_at.is_some() {
+                Reason::BlankLatched
+            } else {
+                Reason::SegmentDeadline
+            };
+            assert_eq!(out.reason, expected);
+            assert!(sim.log.safe_offs > 0);
+            assert!(!sim.driving);
+            assert_eq!(sim.log.bytes_while_driven, 0);
+            assert_eq!(sim.log.advances.len(), sim.log.plans.len());
+            for ((_, duty), advance) in sim.log.plans.iter().zip(&sim.log.advances) {
+                assert_eq!(*advance, if *duty >= 350 { 18 } else { 16 });
+            }
+            assert!(sim.log.advances.contains(&16) && sim.log.advances.contains(&18));
+        }
+        assert_eq!(wait_time(40, 18), 9, "no guaranteed margin at the floor");
+    }
 
     #[test]
     fn a_scripted_crossing_train_locks_ramps_and_stops_at_the_window() {

@@ -1,0 +1,779 @@
+
+
+target/thumbv6m-none-eabi/release/order-capture:     file format elf32-littlearm
+
+
+
+
+
+Disassembly of section .text:
+
+
+
+08001d88 <TIM16>:
+
+ 8001d88:	b5f0      	push	{r4, r5, r6, r7, lr}
+
+ 8001d8a:	af03      	add	r7, sp, #12
+
+ 8001d8c:	b08b      	sub	sp, #44	@ 0x2c
+
+ 8001d8e:	49ba      	ldr	r1, [pc, #744]	@ (8002078 <TIM16+0x2f0>)
+
+ 8001d90:	2200      	movs	r2, #0
+
+ 8001d92:	610a      	str	r2, [r1, #16]
+
+ 8001d94:	4cb9      	ldr	r4, [pc, #740]	@ (800207c <TIM16+0x2f4>)
+
+ 8001d96:	7820      	ldrb	r0, [r4, #0]
+
+ 8001d98:	2800      	cmp	r0, #0
+
+ 8001d9a:	d031      	beq.n	8001e00 <TIM16+0x78>
+
+ 8001d9c:	48b8      	ldr	r0, [pc, #736]	@ (8002080 <TIM16+0x2f8>)
+
+ 8001d9e:	6803      	ldr	r3, [r0, #0]
+
+ 8001da0:	6925      	ldr	r5, [r4, #16]
+
+ 8001da2:	1b58      	subs	r0, r3, r5
+
+ 8001da4:	b201      	sxth	r1, r0
+
+ 8001da6:	4eb7      	ldr	r6, [pc, #732]	@ (8002084 <TIM16+0x2fc>)
+
+ 8001da8:	69b6      	ldr	r6, [r6, #24]
+
+ 8001daa:	2900      	cmp	r1, #0
+
+ 8001dac:	d404      	bmi.n	8001db8 <TIM16+0x30>
+
+ 8001dae:	b280      	uxth	r0, r0
+
+ 8001db0:	6961      	ldr	r1, [r4, #20]
+
+ 8001db2:	4281      	cmp	r1, r0
+
+ 8001db4:	d200      	bcs.n	8001db8 <TIM16+0x30>
+
+ 8001db6:	6160      	str	r0, [r4, #20]
+
+ 8001db8:	6860      	ldr	r0, [r4, #4]
+
+ 8001dba:	2801      	cmp	r0, #1
+
+ 8001dbc:	d030      	beq.n	8001e20 <TIM16+0x98>
+
+ 8001dbe:	2802      	cmp	r0, #2
+
+ 8001dc0:	d021      	beq.n	8001e06 <TIM16+0x7e>
+
+ 8001dc2:	2803      	cmp	r0, #3
+
+ 8001dc4:	d000      	beq.n	8001dc8 <TIM16+0x40>
+
+ 8001dc6:	e155      	b.n	8002074 <TIM16+0x2ec>
+
+ 8001dc8:	6062      	str	r2, [r4, #4]
+
+ 8001dca:	48af      	ldr	r0, [pc, #700]	@ (8002088 <TIM16+0x300>)
+
+ 8001dcc:	68c1      	ldr	r1, [r0, #12]
+
+ 8001dce:	6900      	ldr	r0, [r0, #16]
+
+ 8001dd0:	4308      	orrs	r0, r1
+
+ 8001dd2:	0342      	lsls	r2, r0, #13
+
+ 8001dd4:	2001      	movs	r0, #1
+
+ 8001dd6:	0481      	lsls	r1, r0, #18
+
+ 8001dd8:	2a00      	cmp	r2, #0
+
+ 8001dda:	d507      	bpl.n	8001dec <TIM16+0x64>
+
+ 8001ddc:	f3ef 8210 	mrs	r2, PRIMASK
+
+ 8001de0:	b672      	cpsid	i
+
+ 8001de2:	69e3      	ldr	r3, [r4, #28]
+
+ 8001de4:	1c5b      	adds	r3, r3, #1
+
+ 8001de6:	61e3      	str	r3, [r4, #28]
+
+ 8001de8:	f382 8810 	msr	PRIMASK, r2
+
+ 8001dec:	4aa7      	ldr	r2, [pc, #668]	@ (800208c <TIM16+0x304>)
+
+ 8001dee:	6813      	ldr	r3, [r2, #0]
+
+ 8001df0:	430b      	orrs	r3, r1
+
+ 8001df2:	6013      	str	r3, [r2, #0]
+
+ 8001df4:	0300      	lsls	r0, r0, #12
+
+ 8001df6:	49a6      	ldr	r1, [pc, #664]	@ (8002090 <TIM16+0x308>)
+
+ 8001df8:	6008      	str	r0, [r1, #0]
+
+ 8001dfa:	49a6      	ldr	r1, [pc, #664]	@ (8002094 <TIM16+0x30c>)
+
+ 8001dfc:	6008      	str	r0, [r1, #0]
+
+ 8001dfe:	e139      	b.n	8002074 <TIM16+0x2ec>
+
+ 8001e00:	2000      	movs	r0, #0
+
+ 8001e02:	60c8      	str	r0, [r1, #12]
+
+ 8001e04:	e136      	b.n	8002074 <TIM16+0x2ec>
+
+ 8001e06:	6062      	str	r2, [r4, #4]
+
+ 8001e08:	68a0      	ldr	r0, [r4, #8]
+
+ 8001e0a:	b2c1      	uxtb	r1, r0
+
+ 8001e0c:	2906      	cmp	r1, #6
+
+ 8001e0e:	4608      	mov	r0, r1
+
+ 8001e10:	d300      	bcc.n	8001e14 <TIM16+0x8c>
+
+ 8001e12:	2006      	movs	r0, #6
+
+ 8001e14:	2900      	cmp	r1, #0
+
+ 8001e16:	d100      	bne.n	8001e1a <TIM16+0x92>
+
+ 8001e18:	2001      	movs	r0, #1
+
+ 8001e1a:	f7ff f8ef 	bl	8000ffc <_ZN10firmware505roots13comp_exti_arm17h6f06d4524a28c832E>
+
+ 8001e1e:	e129      	b.n	8002074 <TIM16+0x2ec>
+
+ 8001e20:	9509      	str	r5, [sp, #36]	@ 0x24
+
+ 8001e22:	68a0      	ldr	r0, [r4, #8]
+
+ 8001e24:	b2c5      	uxtb	r5, r0
+
+ 8001e26:	2d06      	cmp	r5, #6
+
+ 8001e28:	4629      	mov	r1, r5
+
+ 8001e2a:	d300      	bcc.n	8001e2e <TIM16+0xa6>
+
+ 8001e2c:	2106      	movs	r1, #6
+
+ 8001e2e:	2001      	movs	r0, #1
+
+ 8001e30:	2d00      	cmp	r5, #0
+
+ 8001e32:	4605      	mov	r5, r0
+
+ 8001e34:	d000      	beq.n	8001e38 <TIM16+0xb0>
+
+ 8001e36:	460d      	mov	r5, r1
+
+ 8001e38:	9306      	str	r3, [sp, #24]
+
+ 8001e3a:	2d05      	cmp	r5, #5
+
+ 8001e3c:	d800      	bhi.n	8001e40 <TIM16+0xb8>
+
+ 8001e3e:	1c68      	adds	r0, r5, #1
+
+ 8001e40:	60a0      	str	r0, [r4, #8]
+
+ 8001e42:	4990      	ldr	r1, [pc, #576]	@ (8002084 <TIM16+0x2fc>)
+
+ 8001e44:	6088      	str	r0, [r1, #8]
+
+ 8001e46:	1e41      	subs	r1, r0, #1
+
+ 8001e48:	2507      	movs	r5, #7
+
+ 8001e4a:	9107      	str	r1, [sp, #28]
+
+ 8001e4c:	400d      	ands	r5, r1
+
+ 8001e4e:	2128      	movs	r1, #40	@ 0x28
+
+ 8001e50:	4369      	muls	r1, r5
+
+ 8001e52:	1861      	adds	r1, r4, r1
+
+ 8001e54:	6c4b      	ldr	r3, [r1, #68]	@ 0x44
+
+ 8001e56:	9308      	str	r3, [sp, #32]
+
+ 8001e58:	07db      	lsls	r3, r3, #31
+
+ 8001e5a:	960a      	str	r6, [sp, #40]	@ 0x28
+
+ 8001e5c:	d020      	beq.n	8001ea0 <TIM16+0x118>
+
+ 8001e5e:	3144      	adds	r1, #68	@ 0x44
+
+ 8001e60:	690b      	ldr	r3, [r1, #16]
+
+ 8001e62:	9302      	str	r3, [sp, #8]
+
+ 8001e64:	694b      	ldr	r3, [r1, #20]
+
+ 8001e66:	9303      	str	r3, [sp, #12]
+
+ 8001e68:	698b      	ldr	r3, [r1, #24]
+
+ 8001e6a:	9305      	str	r3, [sp, #20]
+
+ 8001e6c:	8c8b      	ldrh	r3, [r1, #36]	@ 0x24
+
+ 8001e6e:	9304      	str	r3, [sp, #16]
+
+ 8001e70:	8c0b      	ldrh	r3, [r1, #32]
+
+ 8001e72:	9301      	str	r3, [sp, #4]
+
+ 8001e74:	8b89      	ldrh	r1, [r1, #28]
+
+ 8001e76:	4e88      	ldr	r6, [pc, #544]	@ (8002098 <TIM16+0x310>)
+
+ 8001e78:	9b02      	ldr	r3, [sp, #8]
+
+ 8001e7a:	6033      	str	r3, [r6, #0]
+
+ 8001e7c:	9b03      	ldr	r3, [sp, #12]
+
+ 8001e7e:	6073      	str	r3, [r6, #4]
+
+ 8001e80:	61f1      	str	r1, [r6, #28]
+
+ 8001e82:	9901      	ldr	r1, [sp, #4]
+
+ 8001e84:	6231      	str	r1, [r6, #32]
+
+ 8001e86:	9904      	ldr	r1, [sp, #16]
+
+ 8001e88:	6271      	str	r1, [r6, #36]	@ 0x24
+
+ 8001e8a:	9905      	ldr	r1, [sp, #20]
+
+ 8001e8c:	60b1      	str	r1, [r6, #8]
+
+ 8001e8e:	4983      	ldr	r1, [pc, #524]	@ (800209c <TIM16+0x314>)
+
+ 8001e90:	680b      	ldr	r3, [r1, #0]
+
+ 8001e92:	9304      	str	r3, [sp, #16]
+
+ 8001e94:	4b7a      	ldr	r3, [pc, #488]	@ (8002080 <TIM16+0x2f8>)
+
+ 8001e96:	681b      	ldr	r3, [r3, #0]
+
+ 8001e98:	9302      	str	r3, [sp, #8]
+
+ 8001e9a:	6809      	ldr	r1, [r1, #0]
+
+ 8001e9c:	9103      	str	r1, [sp, #12]
+
+ 8001e9e:	e7ff      	b.n	8001ea0 <TIM16+0x118>
+
+ 8001ea0:	497f      	ldr	r1, [pc, #508]	@ (80020a0 <TIM16+0x318>)
+
+ 8001ea2:	680b      	ldr	r3, [r1, #0]
+
+ 8001ea4:	26f0      	movs	r6, #240	@ 0xf0
+
+ 8001ea6:	43b3      	bics	r3, r6
+
+ 8001ea8:	2603      	movs	r6, #3
+
+ 8001eaa:	9605      	str	r6, [sp, #20]
+
+ 8001eac:	4375      	muls	r5, r6
+
+ 8001eae:	4e7d      	ldr	r6, [pc, #500]	@ (80020a4 <TIM16+0x31c>)
+
+ 8001eb0:	1975      	adds	r5, r6, r5
+
+ 8001eb2:	78ad      	ldrb	r5, [r5, #2]
+
+ 8001eb4:	00ad      	lsls	r5, r5, #2
+
+ 8001eb6:	4e7c      	ldr	r6, [pc, #496]	@ (80020a8 <TIM16+0x320>)
+
+ 8001eb8:	5975      	ldr	r5, [r6, r5]
+
+ 8001eba:	431d      	orrs	r5, r3
+
+ 8001ebc:	600d      	str	r5, [r1, #0]
+
+ 8001ebe:	f3ef 8110 	mrs	r1, PRIMASK
+
+ 8001ec2:	b672      	cpsid	i
+
+ 8001ec4:	68e3      	ldr	r3, [r4, #12]
+
+ 8001ec6:	1c5b      	adds	r3, r3, #1
+
+ 8001ec8:	60e3      	str	r3, [r4, #12]
+
+ 8001eca:	f381 8810 	msr	PRIMASK, r1
+
+ 8001ece:	b2c1      	uxtb	r1, r0
+
+ 8001ed0:	2907      	cmp	r1, #7
+
+ 8001ed2:	9907      	ldr	r1, [sp, #28]
+
+ 8001ed4:	d300      	bcc.n	8001ed8 <TIM16+0x150>
+
+ 8001ed6:	4611      	mov	r1, r2
+
+ 8001ed8:	b2c9      	uxtb	r1, r1
+
+ 8001eda:	0089      	lsls	r1, r1, #2
+
+ 8001edc:	1861      	adds	r1, r4, r1
+
+ 8001ede:	4a69      	ldr	r2, [pc, #420]	@ (8002084 <TIM16+0x2fc>)
+
+ 8001ee0:	6915      	ldr	r5, [r2, #16]
+
+ 8001ee2:	6952      	ldr	r2, [r2, #20]
+
+ 8001ee4:	9207      	str	r2, [sp, #28]
+
+ 8001ee6:	6a4e      	ldr	r6, [r1, #36]	@ 0x24
+
+ 8001ee8:	4a70      	ldr	r2, [pc, #448]	@ (80020ac <TIM16+0x324>)
+
+ 8001eea:	4295      	cmp	r5, r2
+
+ 8001eec:	d300      	bcc.n	8001ef0 <TIM16+0x168>
+
+ 8001eee:	4615      	mov	r5, r2
+
+ 8001ef0:	6be2      	ldr	r2, [r4, #60]	@ 0x3c
+
+ 8001ef2:	1953      	adds	r3, r2, r5
+
+ 8001ef4:	1b9b      	subs	r3, r3, r6
+
+ 8001ef6:	63e3      	str	r3, [r4, #60]	@ 0x3c
+
+ 8001ef8:	624d      	str	r5, [r1, #36]	@ 0x24
+
+ 8001efa:	496d      	ldr	r1, [pc, #436]	@ (80020b0 <TIM16+0x328>)
+
+ 8001efc:	428a      	cmp	r2, r1
+
+ 8001efe:	d93b      	bls.n	8001f78 <TIM16+0x1f0>
+
+ 8001f00:	2001      	movs	r0, #1
+
+ 8001f02:	0301      	lsls	r1, r0, #12
+
+ 8001f04:	4a6b      	ldr	r2, [pc, #428]	@ (80020b4 <TIM16+0x32c>)
+
+ 8001f06:	6011      	str	r1, [r2, #0]
+
+ 8001f08:	0482      	lsls	r2, r0, #18
+
+ 8001f0a:	4b60      	ldr	r3, [pc, #384]	@ (800208c <TIM16+0x304>)
+
+ 8001f0c:	681d      	ldr	r5, [r3, #0]
+
+ 8001f0e:	4395      	bics	r5, r2
+
+ 8001f10:	601d      	str	r5, [r3, #0]
+
+ 8001f12:	4b5d      	ldr	r3, [pc, #372]	@ (8002088 <TIM16+0x300>)
+
+ 8001f14:	60da      	str	r2, [r3, #12]
+
+ 8001f16:	611a      	str	r2, [r3, #16]
+
+ 8001f18:	4a5d      	ldr	r2, [pc, #372]	@ (8002090 <TIM16+0x308>)
+
+ 8001f1a:	6011      	str	r1, [r2, #0]
+
+ 8001f1c:	f3ef 8110 	mrs	r1, PRIMASK
+
+ 8001f20:	b672      	cpsid	i
+
+ 8001f22:	69a2      	ldr	r2, [r4, #24]
+
+ 8001f24:	1c52      	adds	r2, r2, #1
+
+ 8001f26:	61a2      	str	r2, [r4, #24]
+
+ 8001f28:	f381 8810 	msr	PRIMASK, r1
+
+ 8001f2c:	f3ef 8210 	mrs	r2, PRIMASK
+
+ 8001f30:	b672      	cpsid	i
+
+ 8001f32:	2163      	movs	r1, #99	@ 0x63
+
+ 8001f34:	0089      	lsls	r1, r1, #2
+
+ 8001f36:	5c61      	ldrb	r1, [r4, r1]
+
+ 8001f38:	7823      	ldrb	r3, [r4, #0]
+
+ 8001f3a:	2b00      	cmp	r3, #0
+
+ 8001f3c:	9e0a      	ldr	r6, [sp, #40]	@ 0x28
+
+ 8001f3e:	d018      	beq.n	8001f72 <TIM16+0x1ea>
+
+ 8001f40:	2900      	cmp	r1, #0
+
+ 8001f42:	d116      	bne.n	8001f72 <TIM16+0x1ea>
+
+ 8001f44:	2300      	movs	r3, #0
+
+ 8001f46:	4e4c      	ldr	r6, [pc, #304]	@ (8002078 <TIM16+0x2f0>)
+
+ 8001f48:	60f3      	str	r3, [r6, #12]
+
+ 8001f4a:	21ff      	movs	r1, #255	@ 0xff
+
+ 8001f4c:	3118      	adds	r1, #24
+
+ 8001f4e:	4d4c      	ldr	r5, [pc, #304]	@ (8002080 <TIM16+0x2f8>)
+
+ 8001f50:	682d      	ldr	r5, [r5, #0]
+
+ 8001f52:	186d      	adds	r5, r5, r1
+
+ 8001f54:	1c6d      	adds	r5, r5, #1
+
+ 8001f56:	b2ad      	uxth	r5, r5
+
+ 8001f58:	6125      	str	r5, [r4, #16]
+
+ 8001f5a:	2502      	movs	r5, #2
+
+ 8001f5c:	6065      	str	r5, [r4, #4]
+
+ 8001f5e:	250c      	movs	r5, #12
+
+ 8001f60:	6035      	str	r5, [r6, #0]
+
+ 8001f62:	62f1      	str	r1, [r6, #44]	@ 0x2c
+
+ 8001f64:	6273      	str	r3, [r6, #36]	@ 0x24
+
+ 8001f66:	6170      	str	r0, [r6, #20]
+
+ 8001f68:	6133      	str	r3, [r6, #16]
+
+ 8001f6a:	60f0      	str	r0, [r6, #12]
+
+ 8001f6c:	200d      	movs	r0, #13
+
+ 8001f6e:	6030      	str	r0, [r6, #0]
+
+ 8001f70:	9e0a      	ldr	r6, [sp, #40]	@ 0x28
+
+ 8001f72:	f382 8810 	msr	PRIMASK, r2
+
+ 8001f76:	e05a      	b.n	800202e <TIM16+0x2a6>
+
+ 8001f78:	4942      	ldr	r1, [pc, #264]	@ (8002084 <TIM16+0x2fc>)
+
+ 8001f7a:	69c9      	ldr	r1, [r1, #28]
+
+ 8001f7c:	9a06      	ldr	r2, [sp, #24]
+
+ 8001f7e:	1a51      	subs	r1, r2, r1
+
+ 8001f80:	b289      	uxth	r1, r1
+
+ 8001f82:	9a07      	ldr	r2, [sp, #28]
+
+ 8001f84:	1a55      	subs	r5, r2, r1
+
+ 8001f86:	9e0a      	ldr	r6, [sp, #40]	@ 0x28
+
+ 8001f88:	d200      	bcs.n	8001f8c <TIM16+0x204>
+
+ 8001f8a:	2500      	movs	r5, #0
+
+ 8001f8c:	2d0f      	cmp	r5, #15
+
+ 8001f8e:	d94f      	bls.n	8002030 <TIM16+0x2a8>
+
+ 8001f90:	2201      	movs	r2, #1
+
+ 8001f92:	0313      	lsls	r3, r2, #12
+
+ 8001f94:	9307      	str	r3, [sp, #28]
+
+ 8001f96:	4947      	ldr	r1, [pc, #284]	@ (80020b4 <TIM16+0x32c>)
+
+ 8001f98:	600b      	str	r3, [r1, #0]
+
+ 8001f9a:	4e3c      	ldr	r6, [pc, #240]	@ (800208c <TIM16+0x304>)
+
+ 8001f9c:	6833      	ldr	r3, [r6, #0]
+
+ 8001f9e:	4946      	ldr	r1, [pc, #280]	@ (80020b8 <TIM16+0x330>)
+
+ 8001fa0:	400b      	ands	r3, r1
+
+ 8001fa2:	6033      	str	r3, [r6, #0]
+
+ 8001fa4:	4e38      	ldr	r6, [pc, #224]	@ (8002088 <TIM16+0x300>)
+
+ 8001fa6:	6833      	ldr	r3, [r6, #0]
+
+ 8001fa8:	400b      	ands	r3, r1
+
+ 8001faa:	43c1      	mvns	r1, r0
+
+ 8001fac:	07c9      	lsls	r1, r1, #31
+
+ 8001fae:	0b49      	lsrs	r1, r1, #13
+
+ 8001fb0:	1859      	adds	r1, r3, r1
+
+ 8001fb2:	6031      	str	r1, [r6, #0]
+
+ 8001fb4:	6871      	ldr	r1, [r6, #4]
+
+ 8001fb6:	4b40      	ldr	r3, [pc, #256]	@ (80020b8 <TIM16+0x330>)
+
+ 8001fb8:	4019      	ands	r1, r3
+
+ 8001fba:	07c0      	lsls	r0, r0, #31
+
+ 8001fbc:	0b40      	lsrs	r0, r0, #13
+
+ 8001fbe:	1808      	adds	r0, r1, r0
+
+ 8001fc0:	6070      	str	r0, [r6, #4]
+
+ 8001fc2:	9201      	str	r2, [sp, #4]
+
+ 8001fc4:	0490      	lsls	r0, r2, #18
+
+ 8001fc6:	60f0      	str	r0, [r6, #12]
+
+ 8001fc8:	6130      	str	r0, [r6, #16]
+
+ 8001fca:	9e0a      	ldr	r6, [sp, #40]	@ 0x28
+
+ 8001fcc:	4830      	ldr	r0, [pc, #192]	@ (8002090 <TIM16+0x308>)
+
+ 8001fce:	9907      	ldr	r1, [sp, #28]
+
+ 8001fd0:	6001      	str	r1, [r0, #0]
+
+ 8001fd2:	f3ef 8010 	mrs	r0, PRIMASK
+
+ 8001fd6:	b672      	cpsid	i
+
+ 8001fd8:	69a1      	ldr	r1, [r4, #24]
+
+ 8001fda:	1c49      	adds	r1, r1, #1
+
+ 8001fdc:	61a1      	str	r1, [r4, #24]
+
+ 8001fde:	f380 8810 	msr	PRIMASK, r0
+
+ 8001fe2:	f3ef 8010 	mrs	r0, PRIMASK
+
+ 8001fe6:	b672      	cpsid	i
+
+ 8001fe8:	2163      	movs	r1, #99	@ 0x63
+
+ 8001fea:	0089      	lsls	r1, r1, #2
+
+ 8001fec:	5c61      	ldrb	r1, [r4, r1]
+
+ 8001fee:	7823      	ldrb	r3, [r4, #0]
+
+ 8001ff0:	2b00      	cmp	r3, #0
+
+ 8001ff2:	d01a      	beq.n	800202a <TIM16+0x2a2>
+
+ 8001ff4:	2900      	cmp	r1, #0
+
+ 8001ff6:	d118      	bne.n	800202a <TIM16+0x2a2>
+
+ 8001ff8:	2200      	movs	r2, #0
+
+ 8001ffa:	4b1f      	ldr	r3, [pc, #124]	@ (8002078 <TIM16+0x2f0>)
+
+ 8001ffc:	60da      	str	r2, [r3, #12]
+
+ 8001ffe:	4920      	ldr	r1, [pc, #128]	@ (8002080 <TIM16+0x2f8>)
+
+ 8002000:	6809      	ldr	r1, [r1, #0]
+
+ 8002002:	1949      	adds	r1, r1, r5
+
+ 8002004:	b289      	uxth	r1, r1
+
+ 8002006:	6121      	str	r1, [r4, #16]
+
+ 8002008:	9905      	ldr	r1, [sp, #20]
+
+ 800200a:	6061      	str	r1, [r4, #4]
+
+ 800200c:	210c      	movs	r1, #12
+
+ 800200e:	6019      	str	r1, [r3, #0]
+
+ 8002010:	492a      	ldr	r1, [pc, #168]	@ (80020bc <TIM16+0x334>)
+
+ 8002012:	428d      	cmp	r5, r1
+
+ 8002014:	d300      	bcc.n	8002018 <TIM16+0x290>
+
+ 8002016:	460d      	mov	r5, r1
+
+ 8002018:	1e69      	subs	r1, r5, #1
+
+ 800201a:	62d9      	str	r1, [r3, #44]	@ 0x2c
+
+ 800201c:	625a      	str	r2, [r3, #36]	@ 0x24
+
+ 800201e:	9901      	ldr	r1, [sp, #4]
+
+ 8002020:	6159      	str	r1, [r3, #20]
+
+ 8002022:	611a      	str	r2, [r3, #16]
+
+ 8002024:	60d9      	str	r1, [r3, #12]
+
+ 8002026:	210d      	movs	r1, #13
+
+ 8002028:	6019      	str	r1, [r3, #0]
+
+ 800202a:	f380 8810 	msr	PRIMASK, r0
+
+ 800202e:	e003      	b.n	8002038 <TIM16+0x2b0>
+
+ 8002030:	2100      	movs	r1, #0
+
+ 8002032:	6061      	str	r1, [r4, #4]
+
+ 8002034:	f7fe ffe2 	bl	8000ffc <_ZN10firmware505roots13comp_exti_arm17h6f06d4524a28c832E>
+
+ 8002038:	9d09      	ldr	r5, [sp, #36]	@ 0x24
+
+ 800203a:	9808      	ldr	r0, [sp, #32]
+
+ 800203c:	2801      	cmp	r0, #1
+
+ 800203e:	d119      	bne.n	8002074 <TIM16+0x2ec>
+
+ 8002040:	68a0      	ldr	r0, [r4, #8]
+
+ 8002042:	491f      	ldr	r1, [pc, #124]	@ (80020c0 <TIM16+0x338>)
+
+ 8002044:	7809      	ldrb	r1, [r1, #0]
+
+ 8002046:	2900      	cmp	r1, #0
+
+ 8002048:	d014      	beq.n	8002074 <TIM16+0x2ec>
+
+ 800204a:	491e      	ldr	r1, [pc, #120]	@ (80020c4 <TIM16+0x33c>)
+
+ 800204c:	4a1e      	ldr	r2, [pc, #120]	@ (80020c8 <TIM16+0x340>)
+
+ 800204e:	5853      	ldr	r3, [r2, r1]
+
+ 8002050:	1c5c      	adds	r4, r3, #1
+
+ 8002052:	5054      	str	r4, [r2, r1]
+
+ 8002054:	217f      	movs	r1, #127	@ 0x7f
+
+ 8002056:	4019      	ands	r1, r3
+
+ 8002058:	2318      	movs	r3, #24
+
+ 800205a:	434b      	muls	r3, r1
+
+ 800205c:	18d1      	adds	r1, r2, r3
+
+ 800205e:	7608      	strb	r0, [r1, #24]
+
+ 8002060:	82cd      	strh	r5, [r1, #22]
+
+ 8002062:	9806      	ldr	r0, [sp, #24]
+
+ 8002064:	8288      	strh	r0, [r1, #20]
+
+ 8002066:	9802      	ldr	r0, [sp, #8]
+
+ 8002068:	8208      	strh	r0, [r1, #16]
+
+ 800206a:	604e      	str	r6, [r1, #4]
+
+ 800206c:	9804      	ldr	r0, [sp, #16]
+
+ 800206e:	6088      	str	r0, [r1, #8]
+
+ 8002070:	9803      	ldr	r0, [sp, #12]
+
+ 8002072:	e6c6      	b.n	8001e02 <TIM16+0x7a>
+
+ 8002074:	b00b      	add	sp, #44	@ 0x2c
+
+ 8002076:	bdf0      	pop	{r4, r5, r6, r7, pc}
+
+ 8002078:	40014400 	.word	0x40014400
+
+ 800207c:	20000000 	.word	0x20000000
+
+ 8002080:	40014824 	.word	0x40014824
+
+ 8002084:	20000190 	.word	0x20000190
+
+ 8002088:	40021800 	.word	0x40021800
+
+ 800208c:	40021880 	.word	0x40021880
+
+ 8002090:	e000e280 	.word	0xe000e280
+
+ 8002094:	e000e100 	.word	0xe000e100
+
+ 8002098:	40012c18 	.word	0x40012c18
+
+ 800209c:	40000024 	.word	0x40000024
+
+ 80020a0:	40010204 	.word	0x40010204
+
+ 80020a4:	0800a9ec 	.word	0x0800a9ec
+
+ 80020a8:	0800b850 	.word	0x0800b850
+
+ 80020ac:	000f4240 	.word	0x000f4240
+
+ 80020b0:	00001191 	.word	0x00001191
+
+ 80020b4:	e000e180 	.word	0xe000e180
+
+ 80020b8:	fffbffff 	.word	0xfffbffff
+
+ 80020bc:	0000ffff 	.word	0x0000ffff
+
+ 80020c0:	200002e5 	.word	0x200002e5
+
+ 80020c4:	00000c04 	.word	0x00000c04
+
+ 80020c8:	20000af0 	.word	0x20000af0

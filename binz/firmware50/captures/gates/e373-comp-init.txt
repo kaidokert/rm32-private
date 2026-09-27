@@ -1,0 +1,117 @@
+
+
+captures/elf/159206FD.e373-comtop.elf:     file format elf32-littlearm
+
+
+
+
+
+Disassembly of section .text:
+
+
+
+08000cb8 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE>:
+
+ 8000cb8:	b580      	push	{r7, lr}
+
+ 8000cba:	af00      	add	r7, sp, #0
+
+ 8000cbc:	4913      	ldr	r1, [pc, #76]	@ (8000d0c <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x54>)
+
+ 8000cbe:	680a      	ldr	r2, [r1, #0]
+
+ 8000cc0:	2001      	movs	r0, #1
+
+ 8000cc2:	4302      	orrs	r2, r0
+
+ 8000cc4:	600a      	str	r2, [r1, #0]
+
+ 8000cc6:	4912      	ldr	r1, [pc, #72]	@ (8000d10 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x58>)
+
+ 8000cc8:	680a      	ldr	r2, [r1, #0]
+
+ 8000cca:	4b12      	ldr	r3, [pc, #72]	@ (8000d14 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x5c>)
+
+ 8000ccc:	4013      	ands	r3, r2
+
+ 8000cce:	4a12      	ldr	r2, [pc, #72]	@ (8000d18 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x60>)
+
+ 8000cd0:	189a      	adds	r2, r3, r2
+
+ 8000cd2:	600a      	str	r2, [r1, #0]
+
+ 8000cd4:	21ff      	movs	r1, #255	@ 0xff
+
+ 8000cd6:	3142      	adds	r1, #66	@ 0x42
+
+ 8000cd8:	3901      	subs	r1, #1
+
+ 8000cda:	d1fd      	bne.n	8000cd8 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x20>
+
+ 8000cdc:	490f      	ldr	r1, [pc, #60]	@ (8000d1c <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x64>)
+
+ 8000cde:	7008      	strb	r0, [r1, #0]
+
+ 8000ce0:	490f      	ldr	r1, [pc, #60]	@ (8000d20 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x68>)
+
+ 8000ce2:	680a      	ldr	r2, [r1, #0]
+
+ 8000ce4:	2380      	movs	r3, #128	@ 0x80
+
+ 8000ce6:	4313      	orrs	r3, r2
+
+ 8000ce8:	227f      	movs	r2, #127	@ 0x7f
+
+ 8000cea:	4393      	bics	r3, r2
+
+ 8000cec:	600b      	str	r3, [r1, #0]
+
+ 8000cee:	0301      	lsls	r1, r0, #12
+
+ 8000cf0:	4a0c      	ldr	r2, [pc, #48]	@ (8000d24 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x6c>)
+
+ 8000cf2:	6011      	str	r1, [r2, #0]
+
+ 8000cf4:	4a0c      	ldr	r2, [pc, #48]	@ (8000d28 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x70>)
+
+ 8000cf6:	6011      	str	r1, [r2, #0]
+
+ 8000cf8:	0480      	lsls	r0, r0, #18
+
+ 8000cfa:	4a0c      	ldr	r2, [pc, #48]	@ (8000d2c <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x74>)
+
+ 8000cfc:	6f53      	ldr	r3, [r2, #116]	@ 0x74
+
+ 8000cfe:	4383      	bics	r3, r0
+
+ 8000d00:	6753      	str	r3, [r2, #116]	@ 0x74
+
+ 8000d02:	6010      	str	r0, [r2, #0]
+
+ 8000d04:	6050      	str	r0, [r2, #4]
+
+ 8000d06:	480a      	ldr	r0, [pc, #40]	@ (8000d30 <_ZN10firmware505roots10comp2_init17hbbc89907d935a05fE+0x78>)
+
+ 8000d08:	6001      	str	r1, [r0, #0]
+
+ 8000d0a:	bd80      	pop	{r7, pc}
+
+ 8000d0c:	40021040 	.word	0x40021040
+
+ 8000d10:	40010204 	.word	0x40010204
+
+ 8000d14:	fffc7c0e 	.word	0xfffc7c0e
+
+ 8000d18:	00000281 	.word	0x00000281
+
+ 8000d1c:	200002e4 	.word	0x200002e4
+
+ 8000d20:	e000e40c 	.word	0xe000e40c
+
+ 8000d24:	e000e100 	.word	0xe000e100
+
+ 8000d28:	e000e180 	.word	0xe000e180
+
+ 8000d2c:	4002180c 	.word	0x4002180c
+
+ 8000d30:	e000e280 	.word	0xe000e280

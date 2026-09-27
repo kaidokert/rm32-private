@@ -1,0 +1,11 @@
+root                 TIM16
+
+loops (back-edges)   0, bounds supplied []
+
+longest path         360 cycles @ 0 wait states
+
+                     5.62 us @ 64 MHz
+
+exception entry+exit ~24 cycles (0.38 us), not included above
+
+flash wait states    2 configured; instruction fetch not modelled, real cost is higher than the figure above

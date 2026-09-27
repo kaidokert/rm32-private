@@ -44,10 +44,11 @@ Coverage, which bounds every conclusion drawn here:
   reason returns before the guard is judged. Read `run_reason` (this script
   lifts it from `BEMFDONE`).
 
-The guard is also a **band-pass**: an 8-scan mean (~808 us) in the numerator
-and a 207 ms average in the denominator, so it cannot see a dip faster than
-about a millisecond or slower than a fifth of a second. That is a property of
-the guard, not of this script.
+Sensitivity depends on duration and depth: the 8-scan mean (~808 us) attenuates
+narrow dips, while the ~207 ms reference follows slow changes. These are NOT
+brick-wall time limits. One sufficiently deep raw sample can depress three
+overlapping means and latch the guard. Inspect the raw samples and replay the
+actual comparisons; the time constants alone cannot establish dip duration.
 
 Usage:
     python scripts/sag.py <capture.txt> [--csv rows.csv] [--worst 20]
@@ -476,8 +477,9 @@ def main() -> int:
         ctrs = [r.pwm_ctr for r in rows if r.pwm_ctr is not None]
         if ctrs:
             print(
-                f"  pwm counter {min(ctrs)}..{max(ctrs)} -- raw samples are taken at "
-                f"{len(set(ctrs))} distinct carrier phases, so compare within a phase bin"
+                f"  service-time PWM counter {min(ctrs)}..{max(ctrs)} "
+                f"({len(set(ctrs))} distinct values); read AFTER ADC snapshot, "
+                "not an acquisition-phase measurement"
             )
         fd = [fine_delta_us(x, y, snap) for x, y in zip(rows, rows[1:])]
         good = [d for d in fd if d is not None]

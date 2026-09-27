@@ -113,6 +113,14 @@ fn main() -> ! {
     firmware50::hw::fine::init();
     safe_off(&mut Drv8304);
     board::banner(&mut board, adc_ok);
+    // Same fail-closed startup as shell-pwm: no feedback, no powered command.
+    if !adc_ok {
+        board.say("FATAL adc_init_failed -- refusing to drive\r\n");
+        loop {
+            board.now();
+            board.drain();
+        }
+    }
     board.say("SAGCAPTURE diagnostic image: every run dumps the sag guard inputs\r\n");
     board.tx_flush();
     let mut p = SagProduction::new();

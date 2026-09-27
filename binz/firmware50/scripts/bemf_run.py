@@ -445,6 +445,8 @@ def capture_one(
     command: bytes,
     abort_after: float = 0.0,
     end_marker: str = END_MARKER,
+    load: str = "unspecified",
+    run_period_ticks: int | None = None,
 ) -> bool:
     """Send the run command, stream until the coast timing line or timeout.
     True if it completed."""
@@ -460,6 +462,9 @@ def capture_one(
         fh.write(f"# elf_crc32 {elf_crc32()}\n")
         fh.write(f"# elf_sha256 {elf_sha256()}\n")
         fh.write(f"# started {datetime.datetime.now().isoformat(timespec='seconds')}\n")
+        fh.write(f"# load {load}\n")
+        if run_period_ticks is not None:
+            fh.write(f"# expected_run_period_ticks {run_period_ticks}\n")
         pending = b""
         while time.monotonic() < deadline:
             if not abort_sent and time.monotonic() - started >= abort_after:
@@ -507,6 +512,13 @@ def main() -> int:
         "recorded hash is necessarily the image that ran",
     )
     ap.add_argument("--runs", type=int, default=1)
+    ap.add_argument("--propless", action="store_true",
+                    help="separate unloaded exploration: requires --no-ladder, "
+                    "--runs 1 and --rung-duty; retains independent identity/guards")
+    ap.add_argument("--min-hold-ms", type=int, default=30_000,
+                    help="propless only: predeclared actual-target dwell; >=9000")
+    ap.add_argument("--run-period-ticks", type=int, choices=(1000, 1333),
+                    help="required for propless: expected compiled running TIM1 period")
     ap.add_argument("--label", default="run")
     ap.add_argument(
         "--timeout",
@@ -601,7 +613,28 @@ def main() -> int:
         "(E092/E093), and a cold first run read 291 mA against the cohort's "
         "331-372 while the same image warm read 338 (E110)",
     )
+    ap.add_argument("--sag-dump", action="store_true",
+                    help="propless diagnostic: capture and validate through SAGEND")
+    ap.add_argument("--order-dump", action="store_true",
+                    help="validate compact order tails preceding the sag dump")
     args = ap.parse_args()
+    if args.order_dump and not args.sag_dump:
+        ap.error("--order-dump requires --sag-dump")
+    if args.sag_dump and not args.propless:
+        ap.error("--sag-dump currently requires --propless")
+    if args.propless and (not args.no_ladder or args.runs != 1 or
+                          args.rung_duty <= 0 or args.min_hold_ms < 9000):
+        ap.error("--propless requires --no-ladder --runs 1 --rung-duty and dwell >=9000")
+    if not args.propless and args.min_hold_ms != 30_000:
+        ap.error("--min-hold-ms is only for the isolated propless campaign")
+    if args.propless != (args.run_period_ticks is not None):
+        ap.error("--propless requires --run-period-ticks; loaded campaigns must omit it")
+    if args.propless:
+        import propless
+        invalid = propless.request_errors(args.command, args.rung_duty, args.pre,
+                                          args.step_check or args.anchor)
+        if invalid:
+            ap.error("; ".join(invalid))
     global ELF  # noqa: PLW0603
     if args.elf:
         ELF = pathlib.Path(args.elf)
@@ -750,6 +783,7 @@ def main() -> int:
                 "state drove 60% duty on an unqualified rung (E279)."
             )
             return 2
+        selected_climb = None
         for key in args.pre:
             print(f"== pre-key {key!r} (not recorded)")
             port.write(key.encode())
@@ -759,7 +793,13 @@ def main() -> int:
                 line = port.readline()
                 if not line:
                     break
-                print("   " + line.decode(errors="replace").strip())
+                reply = line.decode(errors="replace").strip()
+                print("   " + reply)
+                if reply.startswith("CLIMBAT "):
+                    selected_climb = int(_fields(reply).get("duty_tenths", -1))
+        if args.propless and args.command in ("l", "L") and selected_climb != args.rung_duty:
+            print(f"REFUSED before drive: CLIMBAT {selected_climb} != requested {args.rung_duty}")
+            return 2
         for i in range(1, args.runs + 1):
             out = outdir / f"{args.label}_{i:02d}.txt"
             if args.step_check and i == 1:
@@ -776,10 +816,16 @@ def main() -> int:
                 args.timeout,
                 args.command.encode("ascii"),
                 args.abort_after,
-                END_MARKERS.get(args.command, END_MARKER),
+                "SAGEND" if args.sag_dump else END_MARKERS.get(args.command, END_MARKER),
+                load="propless" if args.propless else "unspecified",
+                run_period_ticks=args.run_period_ticks,
             ):
                 ok += 1
-                ref = reference_line(out)
+                if args.propless:
+                    import propless
+                    ref = propless.summary(out)
+                else:
+                    ref = reference_line(out)
                 if ref:
                     with out.open("a", encoding="utf-8", newline="\n") as fh:
                         fh.write(ref + "\n")
@@ -817,7 +863,16 @@ def main() -> int:
                     import cohort  # noqa: PLC0415
 
                     br = cohort.parse(out)
-                    bypass_fails = cohort.run_gates(br) if br else ["capture did not parse"]
+                    if args.propless:
+                        bypass_fails = propless.verdict(out, args.rung_duty, args.min_hold_ms,
+                                                       period=args.run_period_ticks)
+                        if args.sag_dump:
+                            bypass_fails += propless.sag_dump_errors(out)
+                        if args.order_dump:
+                            import order_trace
+                            bypass_fails += order_trace.errors(out)
+                    else:
+                        bypass_fails = cohort.run_gates(br) if br else ["capture did not parse"]
                     if bypass_fails:
                         failed_runs += 1
                     print("   RUN (recorded against no rung: --no-ladder) "

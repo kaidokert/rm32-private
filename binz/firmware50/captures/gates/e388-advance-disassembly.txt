@@ -1,0 +1,1381 @@
+
+
+   80006ba:	1b30      	subs	r0, r6, r4
+
+   80006bc:	9004      	str	r0, [sp, #16]
+
+   80006be:	b282      	uxth	r2, r0
+
+   80006c0:	0892      	lsrs	r2, r2, #2
+
+>  80006c2:	482f      	ldr	r0, [pc, #188]	@ (8000780 <<usize as core::fmt::Display>::fmt+0xe8>)
+
+   80006c4:	4342      	muls	r2, r0
+
+   80006c6:	0c53      	lsrs	r3, r2, #17
+
+   80006c8:	4628      	mov	r0, r5
+
+   80006ca:	005d      	lsls	r5, r3, #1
+
+>  80006cc:	492d      	ldr	r1, [pc, #180]	@ (8000784 <<usize as core::fmt::Display>::fmt+0xec>)
+
+   80006ce:	5d4c      	ldrb	r4, [r1, r5]
+
+   80006d0:	aa06      	add	r2, sp, #24
+
+   80006d2:	1812      	adds	r2, r2, r0
+
+   80006d4:	1f11      	subs	r1, r2, #4
+
+   80006d6:	700c      	strb	r4, [r1, #0]
+
+   80008d0:	6828      	ldr	r0, [r5, #0]
+
+   80008d2:	07c0      	lsls	r0, r0, #31
+
+   80008d4:	d151      	bne.n	800097a <firmware50::hw::adc::init+0xf2>
+
+   80008d6:	6829      	ldr	r1, [r5, #0]
+
+>  80008d8:	482f      	ldr	r0, [pc, #188]	@ (8000998 <firmware50::hw::adc::init+0x110>)
+
+   80008da:	4001      	ands	r1, r0
+
+   80008dc:	1809      	adds	r1, r1, r0
+
+   80008de:	3118      	adds	r1, #24
+
+   80008e0:	6029      	str	r1, [r5, #0]
+
+   80008e2:	2200      	movs	r2, #0
+
+   80008e4:	4613      	mov	r3, r2
+
+>  80008e6:	492d      	ldr	r1, [pc, #180]	@ (800099c <firmware50::hw::adc::init+0x114>)
+
+   80008e8:	428b      	cmp	r3, r1
+
+   80008ea:	d801      	bhi.n	80008f0 <firmware50::hw::adc::init+0x68>
+
+   80008ec:	4611      	mov	r1, r2
+
+   80008ee:	e000      	b.n	80008f2 <firmware50::hw::adc::init+0x6a>
+
+   80008f0:	2101      	movs	r1, #1
+
+   8000f08:	9500      	str	r5, [sp, #0]
+
+   8000f0a:	4e1c      	ldr	r6, [pc, #112]	@ (8000f7c <firmware50::seed::Qualification::accept+0x18c>)
+
+   8000f0c:	9c02      	ldr	r4, [sp, #8]
+
+   8000f0e:	4366      	muls	r6, r4
+
+>  8000f10:	0cb6      	lsrs	r6, r6, #18
+
+   8000f12:	9c03      	ldr	r4, [sp, #12]
+
+   8000f14:	6025      	str	r5, [r4, #0]
+
+   8000f16:	6060      	str	r0, [r4, #4]
+
+   8000f18:	60a6      	str	r6, [r4, #8]
+
+   8000f1a:	4618      	mov	r0, r3
+
+   8000fb8:	4a0c      	ldr	r2, [pc, #48]	@ (8000fec <firmware50::roots::comp2_init+0x6c>)
+
+   8000fba:	6011      	str	r1, [r2, #0]
+
+   8000fbc:	4a0c      	ldr	r2, [pc, #48]	@ (8000ff0 <firmware50::roots::comp2_init+0x70>)
+
+   8000fbe:	6011      	str	r1, [r2, #0]
+
+>  8000fc0:	0480      	lsls	r0, r0, #18
+
+   8000fc2:	4a0c      	ldr	r2, [pc, #48]	@ (8000ff4 <firmware50::roots::comp2_init+0x74>)
+
+   8000fc4:	6f53      	ldr	r3, [r2, #116]	@ 0x74
+
+   8000fc6:	4383      	bics	r3, r0
+
+   8000fc8:	6753      	str	r3, [r2, #116]	@ 0x74
+
+   8000fca:	6010      	str	r0, [r2, #0]
+
+   8001026:	07c0      	lsls	r0, r0, #31
+
+   8001028:	0b40      	lsrs	r0, r0, #13
+
+   800102a:	1810      	adds	r0, r2, r0
+
+   800102c:	6060      	str	r0, [r4, #4]
+
+>  800102e:	0498      	lsls	r0, r3, #18
+
+   8001030:	60e0      	str	r0, [r4, #12]
+
+   8001032:	6120      	str	r0, [r4, #16]
+
+   8001034:	4b05      	ldr	r3, [pc, #20]	@ (800104c <firmware50::roots::comp_exti_arm+0x50>)
+
+   8001036:	681a      	ldr	r2, [r3, #0]
+
+   8001038:	4302      	orrs	r2, r0
+
+   8001514:	d854      	bhi.n	80015c0 <firmware50::sagtrace::Trace::push+0xd0>
+
+   8001516:	460e      	mov	r6, r1
+
+   8001518:	8a89      	ldrh	r1, [r1, #20]
+
+   800151a:	9107      	str	r1, [sp, #28]
+
+>  800151c:	8a71      	ldrh	r1, [r6, #18]
+
+   800151e:	9108      	str	r1, [sp, #32]
+
+   8001520:	8a31      	ldrh	r1, [r6, #16]
+
+   8001522:	9106      	str	r1, [sp, #24]
+
+   8001524:	89f1      	ldrh	r1, [r6, #14]
+
+   8001526:	9103      	str	r1, [sp, #12]
+
+   800153e:	f008 fd9e 	bl	800a07e <__aeabi_memcpy>
+
+   8001542:	9807      	ldr	r0, [sp, #28]
+
+   8001544:	82a8      	strh	r0, [r5, #20]
+
+   8001546:	9808      	ldr	r0, [sp, #32]
+
+>  8001548:	8268      	strh	r0, [r5, #18]
+
+   800154a:	9806      	ldr	r0, [sp, #24]
+
+   800154c:	8228      	strh	r0, [r5, #16]
+
+   800154e:	9803      	ldr	r0, [sp, #12]
+
+   8001550:	81e8      	strh	r0, [r5, #14]
+
+   8001552:	4605      	mov	r5, r0
+
+   80016d0:	6f61      	ldr	r1, [r4, #116]	@ 0x74
+
+   80016d2:	4aa3      	ldr	r2, [pc, #652]	@ (8001960 <ADC_COMP+0x2a0>)
+
+   80016d4:	4011      	ands	r1, r2
+
+   80016d6:	6761      	str	r1, [r4, #116]	@ 0x74
+
+>  80016d8:	0486      	lsls	r6, r0, #18
+
+   80016da:	6026      	str	r6, [r4, #0]
+
+   80016dc:	6066      	str	r6, [r4, #4]
+
+   80016de:	49a1      	ldr	r1, [pc, #644]	@ (8001964 <ADC_COMP+0x2a4>)
+
+   80016e0:	680d      	ldr	r5, [r1, #0]
+
+   80016e2:	4aa1      	ldr	r2, [pc, #644]	@ (8001968 <ADC_COMP+0x2a8>)
+
+   8001c28:	8115      	strh	r5, [r2, #8]
+
+   8001c2a:	6056      	str	r6, [r2, #4]
+
+   8001c2c:	4c2c      	ldr	r4, [pc, #176]	@ (8001ce0 <ADC_COMP+0x620>)
+
+   8001c2e:	9e0a      	ldr	r6, [sp, #40]	@ 0x28
+
+>  8001c30:	492d      	ldr	r1, [pc, #180]	@ (8001ce8 <ADC_COMP+0x628>)
+
+   8001c32:	e003      	b.n	8001c3c <ADC_COMP+0x57c>
+
+   8001c34:	4c2a      	ldr	r4, [pc, #168]	@ (8001ce0 <ADC_COMP+0x620>)
+
+   8001c36:	9e0a      	ldr	r6, [sp, #40]	@ 0x28
+
+   8001c38:	492b      	ldr	r1, [pc, #172]	@ (8001ce8 <ADC_COMP+0x628>)
+
+   8001c3a:	9d0c      	ldr	r5, [sp, #48]	@ 0x30
+
+   8001dce:	6900      	ldr	r0, [r0, #16]
+
+   8001dd0:	4308      	orrs	r0, r1
+
+   8001dd2:	0342      	lsls	r2, r0, #13
+
+   8001dd4:	2001      	movs	r0, #1
+
+>  8001dd6:	0481      	lsls	r1, r0, #18
+
+   8001dd8:	2a00      	cmp	r2, #0
+
+   8001dda:	d507      	bpl.n	8001dec <TIM16+0x64>
+
+   8001ddc:	f3ef 8210 	mrs	r2, PRIMASK
+
+   8001de0:	b672      	cpsid	i
+
+   8001de2:	69e3      	ldr	r3, [r4, #28]
+
+   8001f00:	2001      	movs	r0, #1
+
+   8001f02:	0301      	lsls	r1, r0, #12
+
+   8001f04:	4a6b      	ldr	r2, [pc, #428]	@ (80020b4 <TIM16+0x32c>)
+
+   8001f06:	6011      	str	r1, [r2, #0]
+
+>  8001f08:	0482      	lsls	r2, r0, #18
+
+   8001f0a:	4b60      	ldr	r3, [pc, #384]	@ (800208c <TIM16+0x304>)
+
+   8001f0c:	681d      	ldr	r5, [r3, #0]
+
+   8001f0e:	4395      	bics	r5, r2
+
+   8001f10:	601d      	str	r5, [r3, #0]
+
+   8001f12:	4b5d      	ldr	r3, [pc, #372]	@ (8002088 <TIM16+0x300>)
+
+   8001fbc:	0b40      	lsrs	r0, r0, #13
+
+   8001fbe:	1808      	adds	r0, r1, r0
+
+   8001fc0:	6070      	str	r0, [r6, #4]
+
+   8001fc2:	9201      	str	r2, [sp, #4]
+
+>  8001fc4:	0490      	lsls	r0, r2, #18
+
+   8001fc6:	60f0      	str	r0, [r6, #12]
+
+   8001fc8:	6130      	str	r0, [r6, #16]
+
+   8001fca:	9e0a      	ldr	r6, [sp, #40]	@ 0x28
+
+   8001fcc:	4830      	ldr	r0, [pc, #192]	@ (8002090 <TIM16+0x308>)
+
+   8001fce:	9907      	ldr	r1, [sp, #28]
+
+   80021a2:	2101      	movs	r1, #1
+
+   80021a4:	030b      	lsls	r3, r1, #12
+
+   80021a6:	4c19      	ldr	r4, [pc, #100]	@ (800220c <TIM6_DAC_LPTIM1+0x140>)
+
+   80021a8:	6023      	str	r3, [r4, #0]
+
+>  80021aa:	048c      	lsls	r4, r1, #18
+
+   80021ac:	4d18      	ldr	r5, [pc, #96]	@ (8002210 <TIM6_DAC_LPTIM1+0x144>)
+
+   80021ae:	6f6e      	ldr	r6, [r5, #116]	@ 0x74
+
+   80021b0:	43a6      	bics	r6, r4
+
+   80021b2:	676e      	str	r6, [r5, #116]	@ 0x74
+
+   80021b4:	602c      	str	r4, [r5, #0]
+
+   800226e:	9102      	str	r1, [sp, #8]
+
+   8002270:	9001      	str	r0, [sp, #4]
+
+   8002272:	2000      	movs	r0, #0
+
+   8002274:	4d2c      	ldr	r5, [pc, #176]	@ (8002328 <firmware50::ordertrace::line+0xc4>)
+
+>  8002276:	4c2d      	ldr	r4, [pc, #180]	@ (800232c <firmware50::ordertrace::line+0xc8>)
+
+   8002278:	9902      	ldr	r1, [sp, #8]
+
+   800227a:	5c09      	ldrb	r1, [r1, r0]
+
+   800227c:	9103      	str	r1, [sp, #12]
+
+   800227e:	2201      	movs	r2, #1
+
+   8002280:	9204      	str	r2, [sp, #16]
+
+   80023be:	1c64      	adds	r4, r4, #1
+
+   80023c0:	2c0f      	cmp	r4, #15
+
+   80023c2:	d1e4      	bne.n	800238e <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x36>
+
+   80023c4:	48c4      	ldr	r0, [pc, #784]	@ (80026d8 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x380>)
+
+>  80023c6:	2112      	movs	r1, #18
+
+   80023c8:	9a14      	ldr	r2, [sp, #80]	@ 0x50
+
+   80023ca:	f005 fd13 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   80023ce:	48c3      	ldr	r0, [pc, #780]	@ (80026dc <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x384>)
+
+   80023d0:	2109      	movs	r1, #9
+
+   80023d2:	4ac3      	ldr	r2, [pc, #780]	@ (80026e0 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x388>)
+
+   80024c6:	4631      	mov	r1, r6
+
+   80024c8:	4616      	mov	r6, r2
+
+   80024ca:	f007 faaa 	bl	8009a22 <__aeabi_uidiv>
+
+   80024ce:	900c      	str	r0, [sp, #48]	@ 0x30
+
+>  80024d0:	21b8      	movs	r1, #184	@ 0xb8
+
+   80024d2:	9818      	ldr	r0, [sp, #96]	@ 0x60
+
+   80024d4:	5c40      	ldrb	r0, [r0, r1]
+
+   80024d6:	4dd8      	ldr	r5, [pc, #864]	@ (8002838 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x4e0>)
+
+   80024d8:	9010      	str	r0, [sp, #64]	@ 0x40
+
+   80024da:	2808      	cmp	r0, #8
+
+   8002774:	d03f      	beq.n	80027f6 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x49e>
+
+   8002776:	2873      	cmp	r0, #115	@ 0x73
+
+   8002778:	d03d      	beq.n	80027f6 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x49e>
+
+   800277a:	482c      	ldr	r0, [pc, #176]	@ (800282c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x4d4>)
+
+>  800277c:	492e      	ldr	r1, [pc, #184]	@ (8002838 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x4e0>)
+
+   800277e:	8001      	strh	r1, [r0, #0]
+
+   8002780:	69f1      	ldr	r1, [r6, #28]
+
+   8002782:	482c      	ldr	r0, [pc, #176]	@ (8002834 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x4dc>)
+
+   8002784:	6800      	ldr	r0, [r0, #0]
+
+   8002786:	b282      	uxth	r2, r0
+
+   8002892:	446c      	add	r4, sp
+
+   8002894:	9431      	str	r4, [sp, #196]	@ 0xc4
+
+   8002896:	4c9c      	ldr	r4, [pc, #624]	@ (8002b08 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x280>)
+
+   8002898:	446c      	add	r4, sp
+
+>  800289a:	942f      	str	r4, [sp, #188]	@ 0xbc
+
+   800289c:	4c9b      	ldr	r4, [pc, #620]	@ (8002b0c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x284>)
+
+   800289e:	446c      	add	r4, sp
+
+   80028a0:	9440      	str	r4, [sp, #256]	@ 0x100
+
+   80028a2:	4c9b      	ldr	r4, [pc, #620]	@ (8002b10 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x288>)
+
+   80028a4:	446c      	add	r4, sp
+
+   80028b2:	9142      	str	r1, [sp, #264]	@ 0x108
+
+   80028b4:	4a98      	ldr	r2, [pc, #608]	@ (8002b18 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x290>)
+
+   80028b6:	a948      	add	r1, sp, #288	@ 0x120
+
+   80028b8:	188b      	adds	r3, r1, r2
+
+>  80028ba:	932d      	str	r3, [sp, #180]	@ 0xb4
+
+   80028bc:	4c97      	ldr	r4, [pc, #604]	@ (8002b1c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x294>)
+
+   80028be:	446c      	add	r4, sp
+
+   80028c0:	18a2      	adds	r2, r4, r2
+
+   80028c2:	921e      	str	r2, [sp, #120]	@ 0x78
+
+   80028c4:	4a96      	ldr	r2, [pc, #600]	@ (8002b20 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x298>)
+
+   80029e2:	f005 fa07 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   80029e6:	983e      	ldr	r0, [sp, #248]	@ 0xf8
+
+   80029e8:	b285      	uxth	r5, r0
+
+   80029ea:	4856      	ldr	r0, [pc, #344]	@ (8002b44 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x2bc>)
+
+>  80029ec:	2412      	movs	r4, #18
+
+   80029ee:	4621      	mov	r1, r4
+
+   80029f0:	462a      	mov	r2, r5
+
+   80029f2:	f005 f9ff 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   80029f6:	9530      	str	r5, [sp, #192]	@ 0xc0
+
+   80029f8:	0868      	lsrs	r0, r5, #1
+
+   8002a38:	4629      	mov	r1, r5
+
+   8002a3a:	9223      	str	r2, [sp, #140]	@ 0x8c
+
+   8002a3c:	f005 f9da 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   8002a40:	20ff      	movs	r0, #255	@ 0xff
+
+>  8002a42:	902e      	str	r0, [sp, #184]	@ 0xb8
+
+   8002a44:	305e      	adds	r0, #94	@ 0x5e
+
+   8002a46:	9019      	str	r0, [sp, #100]	@ 0x64
+
+   8002a48:	2000      	movs	r0, #0
+
+   8002a4a:	4601      	mov	r1, r0
+
+   8002a4c:	4c38      	ldr	r4, [pc, #224]	@ (8002b30 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x2a8>)
+
+   8002aaa:	4628      	mov	r0, r5
+
+   8002aac:	f006 fc18 	bl	80092e0 <<order_capture::board::Board as firmware50::run::hal::Hal>::preflight>
+
+   8002ab0:	4628      	mov	r0, r5
+
+   8002ab2:	f004 ff3b 	bl	800792c <firmware50::run::measure::say_preflight>
+
+>  8002ab6:	482f      	ldr	r0, [pc, #188]	@ (8002b74 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x2ec>)
+
+   8002ab8:	993d      	ldr	r1, [sp, #244]	@ 0xf4
+
+   8002aba:	07cb      	lsls	r3, r1, #31
+
+   8002abc:	d103      	bne.n	8002ac6 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x23e>
+
+   8002abe:	30a7      	adds	r0, #167	@ 0xa7
+
+   8002ac0:	9945      	ldr	r1, [sp, #276]	@ 0x114
+
+   8002ed0:	030a      	lsls	r2, r1, #12
+
+   8002ed2:	58a6      	ldr	r6, [r4, r2]
+
+   8002ed4:	1c73      	adds	r3, r6, #1
+
+   8002ed6:	4625      	mov	r5, r4
+
+>  8002ed8:	4c2f      	ldr	r4, [pc, #188]	@ (8002f98 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x710>)
+
+   8002eda:	4023      	ands	r3, r4
+
+>  8002edc:	492d      	ldr	r1, [pc, #180]	@ (8002f94 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x70c>)
+
+   8002ede:	5869      	ldr	r1, [r5, r1]
+
+   8002ee0:	428b      	cmp	r3, r1
+
+   8002ee2:	9246      	str	r2, [sp, #280]	@ 0x118
+
+   8002ee4:	d104      	bne.n	8002ef0 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x668>
+
+   8002ee6:	4a43      	ldr	r2, [pc, #268]	@ (8002ff4 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x76c>)
+
+   8002f36:	4917      	ldr	r1, [pc, #92]	@ (8002f94 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x70c>)
+
+   8002f38:	5869      	ldr	r1, [r5, r1]
+
+   8002f3a:	428b      	cmp	r3, r1
+
+   8002f3c:	d104      	bne.n	8002f48 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x6c0>
+
+>  8002f3e:	4a2d      	ldr	r2, [pc, #180]	@ (8002ff4 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x76c>)
+
+   8002f40:	58a9      	ldr	r1, [r5, r2]
+
+   8002f42:	1c49      	adds	r1, r1, #1
+
+   8002f44:	50a9      	str	r1, [r5, r2]
+
+   8002f46:	e003      	b.n	8002f50 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x6c8>
+
+   8002f48:	4026      	ands	r6, r4
+
+   8003042:	2e80      	cmp	r6, #128	@ 0x80
+
+   8003044:	d18d      	bne.n	8002f62 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x6da>
+
+   8003046:	5961      	ldr	r1, [r4, r5]
+
+   8003048:	1c48      	adds	r0, r1, #1
+
+>  800304a:	4b2d      	ldr	r3, [pc, #180]	@ (8003100 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x878>)
+
+   800304c:	4018      	ands	r0, r3
+
+>  800304e:	4a2d      	ldr	r2, [pc, #180]	@ (8003104 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x87c>)
+
+   8003050:	58a2      	ldr	r2, [r4, r2]
+
+   8003052:	4290      	cmp	r0, r2
+
+   8003054:	d104      	bne.n	8003060 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x7d8>
+
+   8003056:	492c      	ldr	r1, [pc, #176]	@ (8003108 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x880>)
+
+   8003058:	5860      	ldr	r0, [r4, r1]
+
+   800315c:	4e30      	ldr	r6, [pc, #192]	@ (8003220 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x998>)
+
+   800315e:	4030      	ands	r0, r6
+
+   8003160:	6750      	str	r0, [r2, #116]	@ 0x74
+
+   8003162:	9d32      	ldr	r5, [sp, #200]	@ 0xc8
+
+>  8003164:	04ac      	lsls	r4, r5, #18
+
+   8003166:	6014      	str	r4, [r2, #0]
+
+   8003168:	6054      	str	r4, [r2, #4]
+
+>  800316a:	482e      	ldr	r0, [pc, #184]	@ (8003224 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x99c>)
+
+   800316c:	6001      	str	r1, [r0, #0]
+
+>  800316e:	482e      	ldr	r0, [pc, #184]	@ (8003228 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x9a0>)
+
+   8003170:	9b0d      	ldr	r3, [sp, #52]	@ 0x34
+
+   8003172:	7003      	strb	r3, [r0, #0]
+
+   8003174:	4828      	ldr	r0, [pc, #160]	@ (8003218 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x990>)
+
+   8003176:	6001      	str	r1, [r0, #0]
+
+   8003178:	6f50      	ldr	r0, [r2, #116]	@ 0x74
+
+   80031aa:	6073      	str	r3, [r6, #4]
+
+   80031ac:	7073      	strb	r3, [r6, #1]
+
+   80031ae:	4823      	ldr	r0, [pc, #140]	@ (800323c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x9b4>)
+
+   80031b0:	7005      	strb	r5, [r0, #0]
+
+>  80031b2:	982e      	ldr	r0, [sp, #184]	@ 0xb8
+
+   80031b4:	0200      	lsls	r0, r0, #8
+
+   80031b6:	4922      	ldr	r1, [pc, #136]	@ (8003240 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x9b8>)
+
+   80031b8:	680a      	ldr	r2, [r1, #0]
+
+   80031ba:	4382      	bics	r2, r0
+
+   80031bc:	600a      	str	r2, [r1, #0]
+
+   8003312:	c06c      	stmia	r0!, {r2, r3, r5, r6}
+
+   8003314:	c96c      	ldmia	r1!, {r2, r3, r5, r6}
+
+   8003316:	c06c      	stmia	r0!, {r2, r3, r5, r6}
+
+   8003318:	48ac      	ldr	r0, [pc, #688]	@ (80035cc <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0xd44>)
+
+>  800331a:	21b6      	movs	r1, #182	@ 0xb6
+
+>  800331c:	22ba      	movs	r2, #186	@ 0xba
+
+   800331e:	23be      	movs	r3, #190	@ 0xbe
+
+   8003320:	25c2      	movs	r5, #194	@ 0xc2
+
+   8003322:	9e24      	ldr	r6, [sp, #144]	@ 0x90
+
+   8003324:	6035      	str	r5, [r6, #0]
+
+   8003326:	6073      	str	r3, [r6, #4]
+
+   8003534:	80c8      	strh	r0, [r1, #6]
+
+   8003536:	1c60      	adds	r0, r4, #1
+
+   8003538:	9937      	ldr	r1, [sp, #220]	@ 0xdc
+
+   800353a:	6008      	str	r0, [r1, #0]
+
+>  800353c:	482e      	ldr	r0, [pc, #184]	@ (80035f8 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0xd70>)
+
+   800353e:	4468      	add	r0, sp
+
+   8003540:	4a31      	ldr	r2, [pc, #196]	@ (8003608 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0xd80>)
+
+   8003542:	446a      	add	r2, sp
+
+   8003544:	993d      	ldr	r1, [sp, #244]	@ 0xf4
+
+   8003546:	f7fd fc53 	bl	8000df0 <firmware50::seed::Qualification::accept>
+
+   8003966:	9840      	ldr	r0, [sp, #256]	@ 0x100
+
+   8003968:	6f00      	ldr	r0, [r0, #112]	@ 0x70
+
+   800396a:	2800      	cmp	r0, #0
+
+   800396c:	d012      	beq.n	8003994 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x110c>
+
+>  800396e:	9a2f      	ldr	r2, [sp, #188]	@ 0xbc
+
+   8003970:	6810      	ldr	r0, [r2, #0]
+
+   8003972:	4b31      	ldr	r3, [pc, #196]	@ (8003a38 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x11b0>)
+
+   8003974:	6058      	str	r0, [r3, #4]
+
+   8003976:	6850      	ldr	r0, [r2, #4]
+
+   8003978:	6098      	str	r0, [r3, #8]
+
+   800399e:	9d46      	ldr	r5, [sp, #280]	@ 0x118
+
+   80039a0:	604d      	str	r5, [r1, #4]
+
+   80039a2:	608e      	str	r6, [r1, #8]
+
+   80039a4:	60c8      	str	r0, [r1, #12]
+
+>  80039a6:	04a9      	lsls	r1, r5, #18
+
+   80039a8:	6016      	str	r6, [r2, #0]
+
+   80039aa:	6050      	str	r0, [r2, #4]
+
+   80039ac:	6091      	str	r1, [r2, #8]
+
+   80039ae:	b2e1      	uxtb	r1, r4
+
+   80039b0:	4b31      	ldr	r3, [pc, #196]	@ (8003a78 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x11f0>)
+
+   8003ae8:	9840      	ldr	r0, [sp, #256]	@ 0x100
+
+   8003aea:	6f00      	ldr	r0, [r0, #112]	@ 0x70
+
+   8003aec:	2800      	cmp	r0, #0
+
+   8003aee:	d010      	beq.n	8003b12 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x128a>
+
+>  8003af0:	9a2f      	ldr	r2, [sp, #188]	@ 0xbc
+
+   8003af2:	6810      	ldr	r0, [r2, #0]
+
+   8003af4:	4b2b      	ldr	r3, [pc, #172]	@ (8003ba4 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x131c>)
+
+   8003af6:	6058      	str	r0, [r3, #4]
+
+   8003af8:	6850      	ldr	r0, [r2, #4]
+
+   8003afa:	6098      	str	r0, [r3, #8]
+
+   8003ff0:	4628      	mov	r0, r5
+
+   8003ff2:	9945      	ldr	r1, [sp, #276]	@ 0x114
+
+   8003ff4:	4a7f      	ldr	r2, [pc, #508]	@ (80041f4 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x196c>)
+
+   8003ff6:	f005 fbb0 	bl	800975a <__aeabi_memcpy8>
+
+>  8003ffa:	982d      	ldr	r0, [sp, #180]	@ 0xb4
+
+   8003ffc:	6004      	str	r4, [r0, #0]
+
+   8003ffe:	2025      	movs	r0, #37	@ 0x25
+
+   8004000:	0140      	lsls	r0, r0, #5
+
+   8004002:	1828      	adds	r0, r5, r0
+
+   8004004:	9c46      	ldr	r4, [sp, #280]	@ 0x118
+
+   8004162:	4628      	mov	r0, r5
+
+   8004164:	9946      	ldr	r1, [sp, #280]	@ 0x118
+
+   8004166:	4a23      	ldr	r2, [pc, #140]	@ (80041f4 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x196c>)
+
+   8004168:	f005 faf7 	bl	800975a <__aeabi_memcpy8>
+
+>  800416c:	982d      	ldr	r0, [sp, #180]	@ 0xb4
+
+   800416e:	6004      	str	r4, [r0, #0]
+
+   8004170:	9844      	ldr	r0, [sp, #272]	@ 0x110
+
+   8004172:	1828      	adds	r0, r5, r0
+
+   8004174:	ce0e      	ldmia	r6!, {r1, r2, r3}
+
+   8004176:	c00e      	stmia	r0!, {r1, r2, r3}
+
+   80041ce:	8806      	ldrh	r6, [r0, #0]
+
+   80041d0:	2e65      	cmp	r6, #101	@ 0x65
+
+   80041d2:	4631      	mov	r1, r6
+
+   80041d4:	d342      	bcc.n	800425c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x19d4>
+
+>  80041d6:	9c2f      	ldr	r4, [sp, #188]	@ 0xbc
+
+   80041d8:	6960      	ldr	r0, [r4, #20]
+
+   80041da:	1a28      	subs	r0, r5, r0
+
+   80041dc:	4919      	ldr	r1, [pc, #100]	@ (8004244 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x19bc>)
+
+   80041de:	f005 fc20 	bl	8009a22 <__aeabi_uidiv>
+
+   80041e2:	6921      	ldr	r1, [r4, #16]
+
+   8004262:	4281      	cmp	r1, r0
+
+   8004264:	9c1d      	ldr	r4, [sp, #116]	@ 0x74
+
+   8004266:	d300      	bcc.n	800426a <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x19e2>
+
+   8004268:	4601      	mov	r1, r0
+
+>  800426a:	982f      	ldr	r0, [sp, #188]	@ 0xbc
+
+   800426c:	6980      	ldr	r0, [r0, #24]
+
+   800426e:	2800      	cmp	r0, #0
+
+   8004270:	9146      	str	r1, [sp, #280]	@ 0x118
+
+   8004272:	d14e      	bne.n	8004312 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1a8a>
+
+   8004274:	42b1      	cmp	r1, r6
+
+   8004276:	d34c      	bcc.n	8004312 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1a8a>
+
+   8004278:	9918      	ldr	r1, [sp, #96]	@ 0x60
+
+   800427a:	9826      	ldr	r0, [sp, #152]	@ 0x98
+
+   800427c:	61c8      	str	r0, [r1, #28]
+
+>  800427e:	9a2f      	ldr	r2, [sp, #188]	@ 0xbc
+
+   8004280:	9e45      	ldr	r6, [sp, #276]	@ 0x114
+
+   8004282:	6196      	str	r6, [r2, #24]
+
+   8004284:	61d5      	str	r5, [r2, #28]
+
+   8004286:	c903      	ldmia	r1, {r0, r1}
+
+   8004288:	9b40      	ldr	r3, [sp, #256]	@ 0x100
+
+   8004378:	1a08      	subs	r0, r1, r0
+
+   800437a:	9038      	str	r0, [sp, #224]	@ 0xe0
+
+   800437c:	6820      	ldr	r0, [r4, #0]
+
+   800437e:	903f      	str	r0, [sp, #252]	@ 0xfc
+
+>  8004380:	982f      	ldr	r0, [sp, #188]	@ 0xbc
+
+   8004382:	6983      	ldr	r3, [r0, #24]
+
+   8004384:	2b00      	cmp	r3, #0
+
+   8004386:	981c      	ldr	r0, [sp, #112]	@ 0x70
+
+   8004388:	d026      	beq.n	80043d8 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1b50>
+
+   800438a:	9a1a      	ldr	r2, [sp, #104]	@ 0x68
+
+   800456a:	7da1      	ldrb	r1, [r4, #22]
+
+   800456c:	1c49      	adds	r1, r1, #1
+
+   800456e:	29ff      	cmp	r1, #255	@ 0xff
+
+   8004570:	d300      	bcc.n	8004574 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1cec>
+
+>  8004572:	992e      	ldr	r1, [sp, #184]	@ 0xb8
+
+   8004574:	75a1      	strb	r1, [r4, #22]
+
+   8004576:	1e40      	subs	r0, r0, #1
+
+   8004578:	0740      	lsls	r0, r0, #29
+
+   800457a:	0f00      	lsrs	r0, r0, #28
+
+   800457c:	9928      	ldr	r1, [sp, #160]	@ 0xa0
+
+   80045d2:	42b5      	cmp	r5, r6
+
+   80045d4:	d801      	bhi.n	80045da <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1d52>
+
+   80045d6:	2010      	movs	r0, #16
+
+   80045d8:	e000      	b.n	80045dc <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1d54>
+
+>  80045da:	2012      	movs	r0, #18
+
+   80045dc:	4911      	ldr	r1, [pc, #68]	@ (8004624 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x1d9c>)
+
+   80045de:	60c8      	str	r0, [r1, #12]
+
+   80045e0:	4614      	mov	r4, r2
+
+   80045e2:	9b47      	ldr	r3, [sp, #284]	@ 0x11c
+
+   80045e4:	68e0      	ldr	r0, [r4, #12]
+
+   8004694:	4618      	mov	r0, r3
+
+   8004696:	300c      	adds	r0, #12
+
+   8004698:	21ac      	movs	r1, #172	@ 0xac
+
+   800469a:	f005 fca1 	bl	8009fe0 <__aeabi_memclr4>
+
+>  800469e:	20b8      	movs	r0, #184	@ 0xb8
+
+   80046a0:	9975      	ldr	r1, [sp, #468]	@ 0x1d4
+
+   80046a2:	5421      	strb	r1, [r4, r0]
+
+   80046a4:	2000      	movs	r0, #0
+
+   80046a6:	9965      	ldr	r1, [sp, #404]	@ 0x194
+
+   80046a8:	6021      	str	r1, [r4, #0]
+
+   8004738:	23b1      	movs	r3, #177	@ 0xb1
+
+   800473a:	009b      	lsls	r3, r3, #2
+
+   800473c:	18cb      	adds	r3, r1, r3
+
+   800473e:	936c      	str	r3, [sp, #432]	@ 0x1b0
+
+>  8004740:	23b9      	movs	r3, #185	@ 0xb9
+
+   8004742:	009b      	lsls	r3, r3, #2
+
+   8004744:	18cb      	adds	r3, r1, r3
+
+   8004746:	931e      	str	r3, [sp, #120]	@ 0x78
+
+   8004748:	23c1      	movs	r3, #193	@ 0xc1
+
+   800474a:	009b      	lsls	r3, r3, #2
+
+   8004b88:	1c52      	adds	r2, r2, #1
+
+   8004b8a:	50ca      	str	r2, [r1, r3]
+
+   8004b8c:	4d30      	ldr	r5, [pc, #192]	@ (8004c50 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x60c>)
+
+   8004b8e:	e003      	b.n	8004b98 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x554>
+
+>  8004b90:	4d2f      	ldr	r5, [pc, #188]	@ (8004c50 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x60c>)
+
+   8004b92:	402c      	ands	r4, r5
+
+   8004b94:	550a      	strb	r2, [r1, r4]
+
+   8004b96:	518b      	str	r3, [r1, r6]
+
+   8004b98:	460b      	mov	r3, r1
+
+   8004b9a:	1c40      	adds	r0, r0, #1
+
+   800509a:	6800      	ldr	r0, [r0, #0]
+
+   800509c:	0600      	lsls	r0, r0, #24
+
+   800509e:	4b61      	ldr	r3, [pc, #388]	@ (8005224 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0xbe0>)
+
+   80050a0:	9c4c      	ldr	r4, [sp, #304]	@ 0x130
+
+>  80050a2:	962d      	str	r6, [sp, #180]	@ 0xb4
+
+   80050a4:	9504      	str	r5, [sp, #16]
+
+   80050a6:	d111      	bne.n	80050cc <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0xa88>
+
+   80050a8:	f3ef 8110 	mrs	r1, PRIMASK
+
+   80050ac:	b672      	cpsid	i
+
+   80050ae:	4e5e      	ldr	r6, [pc, #376]	@ (8005228 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0xbe4>)
+
+   80050c6:	d001      	beq.n	80050cc <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0xa88>
+
+   80050c8:	f001 fc8a 	bl	80069e0 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x239c>
+
+   80050cc:	4856      	ldr	r0, [pc, #344]	@ (8005228 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0xbe4>)
+
+   80050ce:	6841      	ldr	r1, [r0, #4]
+
+>  80050d0:	912e      	str	r1, [sp, #184]	@ 0xb8
+
+   80050d2:	6981      	ldr	r1, [r0, #24]
+
+>  80050d4:	912f      	str	r1, [sp, #188]	@ 0xbc
+
+   80050d6:	335a      	adds	r3, #90	@ 0x5a
+
+   80050d8:	9332      	str	r3, [sp, #200]	@ 0xc8
+
+   80050da:	69c0      	ldr	r0, [r0, #28]
+
+   80050dc:	9030      	str	r0, [sp, #192]	@ 0xc0
+
+   80050de:	2000      	movs	r0, #0
+
+   80053e4:	982b      	ldr	r0, [sp, #172]	@ 0xac
+
+   80053e6:	6368      	str	r0, [r5, #52]	@ 0x34
+
+   80053e8:	9829      	ldr	r0, [sp, #164]	@ 0xa4
+
+   80053ea:	63a8      	str	r0, [r5, #56]	@ 0x38
+
+>  80053ec:	9e2d      	ldr	r6, [sp, #180]	@ 0xb4
+
+   80053ee:	9883      	ldr	r0, [sp, #524]	@ 0x20c
+
+   80053f0:	4006      	ands	r6, r0
+
+   80053f2:	616e      	str	r6, [r5, #20]
+
+   80053f4:	4610      	mov	r0, r2
+
+   80053f6:	3044      	adds	r0, #68	@ 0x44
+
+   8005406:	9a6b      	ldr	r2, [sp, #428]	@ 0x1ac
+
+   8005408:	7111      	strb	r1, [r2, #4]
+
+   800540a:	9867      	ldr	r0, [sp, #412]	@ 0x19c
+
+   800540c:	6010      	str	r0, [r2, #0]
+
+>  800540e:	982e      	ldr	r0, [sp, #184]	@ 0xb8
+
+   8005410:	9a1a      	ldr	r2, [sp, #104]	@ 0x68
+
+   8005412:	6010      	str	r0, [r2, #0]
+
+>  8005414:	982f      	ldr	r0, [sp, #188]	@ 0xbc
+
+   8005416:	6050      	str	r0, [r2, #4]
+
+   8005418:	9830      	ldr	r0, [sp, #192]	@ 0xc0
+
+   800541a:	6090      	str	r0, [r2, #8]
+
+   800541c:	9831      	ldr	r0, [sp, #196]	@ 0xc4
+
+   800541e:	60d0      	str	r0, [r2, #12]
+
+   80055f2:	9877      	ldr	r0, [sp, #476]	@ 0x1dc
+
+   80055f4:	1b00      	subs	r0, r0, r4
+
+   80055f6:	4242      	negs	r2, r0
+
+   80055f8:	4142      	adcs	r2, r0
+
+>  80055fa:	482e      	ldr	r0, [pc, #184]	@ (80056b4 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1070>)
+
+   80055fc:	2108      	movs	r1, #8
+
+   80055fe:	f002 fbf9 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   8005602:	2000      	movs	r0, #0
+
+   8005604:	4602      	mov	r2, r0
+
+   8005606:	4b22      	ldr	r3, [pc, #136]	@ (8005690 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x104c>)
+
+   8005bfc:	2114      	movs	r1, #20
+
+   8005bfe:	9a82      	ldr	r2, [sp, #520]	@ 0x208
+
+   8005c00:	f002 f8f8 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   8005c04:	48e0      	ldr	r0, [pc, #896]	@ (8005f88 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1944>)
+
+>  8005c06:	2112      	movs	r1, #18
+
+   8005c08:	9a83      	ldr	r2, [sp, #524]	@ 0x20c
+
+   8005c0a:	f002 f8f3 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   8005c0e:	48df      	ldr	r0, [pc, #892]	@ (8005f8c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1948>)
+
+   8005c10:	2109      	movs	r1, #9
+
+   8005c12:	4adf      	ldr	r2, [pc, #892]	@ (8005f90 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x194c>)
+
+   8005ea4:	987b      	ldr	r0, [sp, #492]	@ 0x1ec
+
+   8005ea6:	f003 f98f 	bl	80091c8 <order_capture::board::Board::tx_flush>
+
+   8005eaa:	493a      	ldr	r1, [pc, #232]	@ (8005f94 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1950>)
+
+   8005eac:	2000      	movs	r0, #0
+
+>  8005eae:	4e2f      	ldr	r6, [pc, #188]	@ (8005f6c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1928>)
+
+   8005eb0:	4a4a      	ldr	r2, [pc, #296]	@ (8005fdc <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1998>)
+
+   8005eb2:	5c12      	ldrb	r2, [r2, r0]
+
+   8005eb4:	9283      	str	r2, [sp, #524]	@ 0x20c
+
+   8005eb6:	2301      	movs	r3, #1
+
+   8005eb8:	9385      	str	r3, [sp, #532]	@ 0x214
+
+   80061b4:	489a      	ldr	r0, [pc, #616]	@ (8006420 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1ddc>)
+
+   80061b6:	9982      	ldr	r1, [sp, #520]	@ 0x208
+
+   80061b8:	9a0d      	ldr	r2, [sp, #52]	@ 0x34
+
+   80061ba:	f001 fe1b 	bl	8007df4 <firmware50::report::Sink::kv>
+
+>  80061be:	9a2d      	ldr	r2, [sp, #180]	@ 0xb4
+
+   80061c0:	9885      	ldr	r0, [sp, #532]	@ 0x214
+
+   80061c2:	4002      	ands	r2, r0
+
+   80061c4:	4897      	ldr	r0, [pc, #604]	@ (8006424 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1de0>)
+
+   80061c6:	4468      	add	r0, sp
+
+   80061c8:	2a00      	cmp	r2, #0
+
+   80062d8:	280a      	cmp	r0, #10
+
+   80062da:	d1e2      	bne.n	80062a2 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1c5e>
+
+   80062dc:	4861      	ldr	r0, [pc, #388]	@ (8006464 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1e20>)
+
+   80062de:	2106      	movs	r1, #6
+
+>  80062e0:	9a2e      	ldr	r2, [sp, #184]	@ 0xb8
+
+   80062e2:	f001 fd87 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   80062e6:	4860      	ldr	r0, [pc, #384]	@ (8006468 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1e24>)
+
+   80062e8:	2105      	movs	r1, #5
+
+>  80062ea:	9a2f      	ldr	r2, [sp, #188]	@ 0xbc
+
+   80062ec:	f001 fd82 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   80062f0:	485e      	ldr	r0, [pc, #376]	@ (800646c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1e28>)
+
+   80062f2:	250a      	movs	r5, #10
+
+   80062f4:	4629      	mov	r1, r5
+
+   80062f6:	9a30      	ldr	r2, [sp, #192]	@ 0xc0
+
+   8006982:	4a37      	ldr	r2, [pc, #220]	@ (8006a60 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x241c>)
+
+   8006984:	5c51      	ldrb	r1, [r2, r1]
+
+   8006986:	5973      	ldr	r3, [r6, r5]
+
+   8006988:	1c5a      	adds	r2, r3, #1
+
+>  800698a:	4d2f      	ldr	r5, [pc, #188]	@ (8006a48 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x2404>)
+
+   800698c:	402a      	ands	r2, r5
+
+>  800698e:	4c2f      	ldr	r4, [pc, #188]	@ (8006a4c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x2408>)
+
+   8006990:	5934      	ldr	r4, [r6, r4]
+
+   8006992:	42a2      	cmp	r2, r4
+
+   8006994:	d105      	bne.n	80069a2 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x235e>
+
+>  8006996:	4a2f      	ldr	r2, [pc, #188]	@ (8006a54 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x2410>)
+
+   8006998:	58b1      	ldr	r1, [r6, r2]
+
+   800699a:	1c49      	adds	r1, r1, #1
+
+   800699c:	50b1      	str	r1, [r6, r2]
+
+   800699e:	9d82      	ldr	r5, [sp, #520]	@ 0x208
+
+   80069a0:	e003      	b.n	80069aa <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x2366>
+
+   80069aa:	07c0      	lsls	r0, r0, #31
+
+   80069ac:	9884      	ldr	r0, [sp, #528]	@ 0x210
+
+   80069ae:	9985      	ldr	r1, [sp, #532]	@ 0x214
+
+   80069b0:	d0e7      	beq.n	8006982 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x233e>
+
+>  80069b2:	21b8      	movs	r1, #184	@ 0xb8
+
+   80069b4:	9812      	ldr	r0, [sp, #72]	@ 0x48
+
+   80069b6:	9a75      	ldr	r2, [sp, #468]	@ 0x1d4
+
+   80069b8:	5442      	strb	r2, [r0, r1]
+
+   80069ba:	9965      	ldr	r1, [sp, #404]	@ 0x194
+
+   80069bc:	6001      	str	r1, [r0, #0]
+
+   8006a00:	4a16      	ldr	r2, [pc, #88]	@ (8006a5c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x2418>)
+
+   8006a02:	5851      	ldr	r1, [r2, r1]
+
+   8006a04:	9131      	str	r1, [sp, #196]	@ 0xc4
+
+   8006a06:	6841      	ldr	r1, [r0, #4]
+
+>  8006a08:	912e      	str	r1, [sp, #184]	@ 0xb8
+
+   8006a0a:	6981      	ldr	r1, [r0, #24]
+
+>  8006a0c:	912f      	str	r1, [sp, #188]	@ 0xbc
+
+   8006a0e:	69c0      	ldr	r0, [r0, #28]
+
+   8006a10:	9030      	str	r0, [sp, #192]	@ 0xc0
+
+   8006a12:	f7fe fb6a 	bl	80050ea <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0xaa6>
+
+   8006a16:	2400      	movs	r4, #0
+
+   8006a18:	f7fe ff5f 	bl	80058da <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x1296>
+
+   8006fc6:	a902      	add	r1, sp, #8
+
+   8006fc8:	693d      	ldr	r5, [r7, #16]
+
+   8006fca:	828d      	strh	r5, [r1, #20]
+
+   8006fcc:	68fd      	ldr	r5, [r7, #12]
+
+>  8006fce:	824d      	strh	r5, [r1, #18]
+
+   8006fd0:	2513      	movs	r5, #19
+
+   8006fd2:	01ad      	lsls	r5, r5, #6
+
+   8006fd4:	1946      	adds	r6, r0, r5
+
+   8006fd6:	78f6      	ldrb	r6, [r6, #3]
+
+   8006fd8:	76ce      	strb	r6, [r1, #27]
+
+   8007330:	2a1e      	cmp	r2, #30
+
+   8007332:	d805      	bhi.n	8007340 <firmware50::run::states::Ctx::pass+0x2fc>
+
+   8007334:	2301      	movs	r3, #1
+
+   8007336:	4093      	lsls	r3, r2
+
+>  8007338:	4a2d      	ldr	r2, [pc, #180]	@ (80073f0 <firmware50::run::states::Ctx::pass+0x3ac>)
+
+   800733a:	4213      	tst	r3, r2
+
+   800733c:	d000      	beq.n	8007340 <firmware50::run::states::Ctx::pass+0x2fc>
+
+   800733e:	e708      	b.n	8007152 <firmware50::run::states::Ctx::pass+0x10e>
+
+   8007340:	296f      	cmp	r1, #111	@ 0x6f
+
+   8007342:	d100      	bne.n	8007346 <firmware50::run::states::Ctx::pass+0x302>
+
+   8007998:	9906      	ldr	r1, [sp, #24]
+
+   800799a:	9206      	str	r2, [sp, #24]
+
+   800799c:	f000 fa2a 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   80079a0:	7b72      	ldrb	r2, [r6, #13]
+
+>  80079a2:	482f      	ldr	r0, [pc, #188]	@ (8007a60 <firmware50::run::measure::say_preflight+0x134>)
+
+   80079a4:	2109      	movs	r1, #9
+
+   80079a6:	9201      	str	r2, [sp, #4]
+
+   80079a8:	f000 fa24 	bl	8007df4 <firmware50::report::Sink::kv>
+
+   80079ac:	7bb0      	ldrb	r0, [r6, #14]
+
+   80079ae:	9000      	str	r0, [sp, #0]
+
+   8008150:	4398      	bics	r0, r3
+
+   8008152:	6060      	str	r0, [r4, #4]
+
+   8008154:	6820      	ldr	r0, [r4, #0]
+
+   8008156:	4030      	ands	r0, r6
+
+>  8008158:	0493      	lsls	r3, r2, #18
+
+   800815a:	930a      	str	r3, [sp, #40]	@ 0x28
+
+   800815c:	18c0      	adds	r0, r0, r3
+
+   800815e:	6020      	str	r0, [r4, #0]
+
+   8008160:	68e0      	ldr	r0, [r4, #12]
+
+   8008162:	4e71      	ldr	r6, [pc, #452]	@ (8008328 <order_capture::__cortex_m_rt_main+0x304>)
+
+   8008690:	1c40      	adds	r0, r0, #1
+
+   8008692:	282c      	cmp	r0, #44	@ 0x2c
+
+   8008694:	d1e7      	bne.n	8008666 <order_capture::__cortex_m_rt_main+0x642>
+
+   8008696:	4b4a      	ldr	r3, [pc, #296]	@ (80087c0 <order_capture::__cortex_m_rt_main+0x79c>)
+
+>  8008698:	4e2e      	ldr	r6, [pc, #184]	@ (8008754 <order_capture::__cortex_m_rt_main+0x730>)
+
+   800869a:	4820      	ldr	r0, [pc, #128]	@ (800871c <order_capture::__cortex_m_rt_main+0x6f8>)
+
+   800869c:	4949      	ldr	r1, [pc, #292]	@ (80087c4 <order_capture::__cortex_m_rt_main+0x7a0>)
+
+   800869e:	8001      	strh	r1, [r0, #0]
+
+   80086a0:	4849      	ldr	r0, [pc, #292]	@ (80087c8 <order_capture::__cortex_m_rt_main+0x7a4>)
+
+   80086a2:	6a40      	ldr	r0, [r0, #36]	@ 0x24
+
+   8008920:	9031      	str	r0, [sp, #196]	@ 0xc4
+
+   8008922:	49b5      	ldr	r1, [pc, #724]	@ (8008bf8 <order_capture::__cortex_m_rt_main+0xbd4>)
+
+   8008924:	9130      	str	r1, [sp, #192]	@ 0xc0
+
+   8008926:	9910      	ldr	r1, [sp, #64]	@ 0x40
+
+>  8008928:	912f      	str	r1, [sp, #188]	@ 0xbc
+
+   800892a:	990b      	ldr	r1, [sp, #44]	@ 0x2c
+
+>  800892c:	912e      	str	r1, [sp, #184]	@ 0xb8
+
+   800892e:	4bb3      	ldr	r3, [pc, #716]	@ (8008bfc <order_capture::__cortex_m_rt_main+0xbd8>)
+
+>  8008930:	932d      	str	r3, [sp, #180]	@ 0xb4
+
+   8008932:	9b08      	ldr	r3, [sp, #32]
+
+   8008934:	932c      	str	r3, [sp, #176]	@ 0xb0
+
+   8008936:	902b      	str	r0, [sp, #172]	@ 0xac
+
+   8008938:	48b1      	ldr	r0, [pc, #708]	@ (8008c00 <order_capture::__cortex_m_rt_main+0xbdc>)
+
+   800893a:	902a      	str	r0, [sp, #168]	@ 0xa8
+
+   8008b24:	2307      	movs	r3, #7
+
+   8008b26:	493d      	ldr	r1, [pc, #244]	@ (8008c1c <order_capture::__cortex_m_rt_main+0xbf8>)
+
+   8008b28:	f7f9 fb9c 	bl	8002264 <firmware50::ordertrace::line>
+
+   8008b2c:	9912      	ldr	r1, [sp, #72]	@ 0x48
+
+>  8008b2e:	4b2d      	ldr	r3, [pc, #180]	@ (8008be4 <order_capture::__cortex_m_rt_main+0xbc0>)
+
+   8008b30:	e000      	b.n	8008b34 <order_capture::__cortex_m_rt_main+0xb10>
+
+   8008b32:	4631      	mov	r1, r6
+
+   8008b34:	4a26      	ldr	r2, [pc, #152]	@ (8008bd0 <order_capture::__cortex_m_rt_main+0xbac>)
+
+   8008b36:	4e28      	ldr	r6, [pc, #160]	@ (8008bd8 <order_capture::__cortex_m_rt_main+0xbb4>)
+
+   8008b38:	1c49      	adds	r1, r1, #1
+
+   8008ed6:	9a10      	ldr	r2, [sp, #64]	@ 0x40
+
+   8008ed8:	5462      	strb	r2, [r4, r1]
+
+   8008eda:	5160      	str	r0, [r4, r5]
+
+   8008edc:	9812      	ldr	r0, [sp, #72]	@ 0x48
+
+>  8008ede:	8a40      	ldrh	r0, [r0, #18]
+
+   8008ee0:	f7ff f840 	bl	8007f64 <firmware50::report::Sink::say_u32>
+
+   8008ee4:	5961      	ldr	r1, [r4, r5]
+
+   8008ee6:	1c48      	adds	r0, r1, #1
+
+   8008ee8:	4030      	ands	r0, r6
+
+   8008eea:	4ab0      	ldr	r2, [pc, #704]	@ (80091ac <order_capture::__cortex_m_rt_main+0x1188>)
+
+   8009638:	0858      	lsrs	r0, r3, #1
+
+   800963a:	900d      	str	r0, [sp, #52]	@ 0x34
+
+   800963c:	0898      	lsrs	r0, r3, #2
+
+   800963e:	900c      	str	r0, [sp, #48]	@ 0x30
+
+>  8009640:	482f      	ldr	r0, [pc, #188]	@ (8009700 <stm32g0xx_hal::rcc::Rcc::freeze+0x3c0>)
+
+   8009642:	4281      	cmp	r1, r0
+
+   8009644:	9406      	str	r4, [sp, #24]
+
+   8009646:	d301      	bcc.n	800964c <stm32g0xx_hal::rcc::Rcc::freeze+0x30c>
+
+   8009648:	2002      	movs	r0, #2
+
+   800964a:	e000      	b.n	800964e <stm32g0xx_hal::rcc::Rcc::freeze+0x30e>
+
+   800964c:	2001      	movs	r0, #1
+
+>  800964e:	4c2d      	ldr	r4, [pc, #180]	@ (8009704 <stm32g0xx_hal::rcc::Rcc::freeze+0x3c4>)
+
+   8009650:	42a1      	cmp	r1, r4
+
+   8009652:	9108      	str	r1, [sp, #32]
+
+   8009654:	9307      	str	r3, [sp, #28]
+
+   8009656:	d200      	bcs.n	800965a <stm32g0xx_hal::rcc::Rcc::freeze+0x31a>
+
+   8009658:	2000      	movs	r0, #0

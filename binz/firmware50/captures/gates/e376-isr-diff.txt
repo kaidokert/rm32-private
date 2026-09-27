@@ -1,0 +1,13 @@
+DMA1_CHANNEL1: identical, 37 instructions
+
+ADC_COMP: DIFFERS, 742 -> 742 instructions
+
+  [316] 'movs\tr3, #5' -> 'movs\tr3, #6'
+
+  [340] 'cmp\tr1, #2' -> 'cmp\tr1, #3'
+
+  [342] 'movs\tr1, #2' -> 'movs\tr1, #3'
+
+TIM16: identical, 332 instructions
+
+TIM6_DAC_LPTIM1: identical, 155 instructions

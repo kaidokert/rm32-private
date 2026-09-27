@@ -1,0 +1,273 @@
+
+
+   80006a0:	6806      	ldr	r6, [r0, #0]
+
+   80006a2:	08f0      	lsrs	r0, r6, #3
+
+>  80006a4:	287d      	cmp	r0, #125	@ 0x7d
+
+   80006a6:	9602      	str	r6, [sp, #8]
+
+   80006a8:	d348      	bcc.n	800073c <<usize as core::fmt::Display>::fmt+0xa4>
+
+   80009a4:	b580      	push	{r7, lr}
+
+   80009a6:	af00      	add	r7, sp, #0
+
+>  80009a8:	207d      	movs	r0, #125	@ 0x7d
+
+   80009aa:	0140      	lsls	r0, r0, #5
+
+   80009ac:	bf00      	nop
+
+   8000a32:	2205      	movs	r2, #5
+
+   8000a34:	4313      	orrs	r3, r2
+
+>  8000a36:	24fa      	movs	r4, #250	@ 0xfa
+
+   8000a38:	43a3      	bics	r3, r4
+
+   8000a3a:	600b      	str	r3, [r1, #0]
+
+   80011d8:	43e3      	mvns	r3, r4
+
+   80011da:	9300      	str	r3, [sp, #0]
+
+>  80011dc:	237d      	movs	r3, #125	@ 0x7d
+
+   80011de:	00db      	lsls	r3, r3, #3
+
+   80011e0:	9e01      	ldr	r6, [sp, #4]
+
+   800135a:	4608      	mov	r0, r1
+
+   800135c:	4358      	muls	r0, r3
+
+>  800135e:	217d      	movs	r1, #125	@ 0x7d
+
+   8001360:	00c9      	lsls	r1, r1, #3
+
+   8001362:	f008 fb4a 	bl	80099fa <__aeabi_uidiv>
+
+   8001408:	461e      	mov	r6, r3
+
+   800140a:	08d0      	lsrs	r0, r2, #3
+
+>  800140c:	287d      	cmp	r0, #125	@ 0x7d
+
+   800140e:	d301      	bcc.n	8001414 <firmware50::startup::StaircaseScript::at+0x40>
+
+   8001410:	9601      	str	r6, [sp, #4]
+
+   800141a:	9000      	str	r0, [sp, #0]
+
+   800141c:	1c64      	adds	r4, r4, #1
+
+>  800141e:	207d      	movs	r0, #125	@ 0x7d
+
+   8001420:	00c5      	lsls	r5, r0, #3
+
+   8001422:	2600      	movs	r6, #0
+
+   8001b46:	428b      	cmp	r3, r1
+
+   8001b48:	d902      	bls.n	8001b50 <ADC_COMP+0x490>
+
+>  8001b4a:	217d      	movs	r1, #125	@ 0x7d
+
+   8001b4c:	00cc      	lsls	r4, r1, #3
+
+   8001b4e:	e006      	b.n	8001b5e <ADC_COMP+0x49e>
+
+   8001d84:	20001728 	.word	0x20001728
+
+
+
+> 08001d88 <TIM16>:
+
+   8001d88:	b5f0      	push	{r4, r5, r6, r7, lr}
+
+   8001d8a:	af03      	add	r7, sp, #12
+
+   8002140:	6a4b      	ldr	r3, [r1, #36]	@ 0x24
+
+   8002142:	1ad3      	subs	r3, r2, r3
+
+>  8002144:	247d      	movs	r4, #125	@ 0x7d
+
+   8002146:	00e4      	lsls	r4, r4, #3
+
+   8002148:	42a3      	cmp	r3, r4
+
+   80023da:	990f      	ldr	r1, [sp, #60]	@ 0x3c
+
+   80023dc:	1808      	adds	r0, r1, r0
+
+>  80023de:	217d      	movs	r1, #125	@ 0x7d
+
+   80023e0:	00cc      	lsls	r4, r1, #3
+
+   80023e2:	4621      	mov	r1, r4
+
+   800241e:	1c49      	adds	r1, r1, #1
+
+   8002420:	e004      	b.n	800242c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0xd4>
+
+>  8002422:	4dfa      	ldr	r5, [pc, #1000]	@ (800280c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign+0x4b4>)
+
+   8002424:	402c      	ands	r4, r5
+
+   8002426:	551a      	strb	r2, [r3, r4]
+
+   8002b7e:	e107      	b.n	8002d90 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x508>
+
+   8002b80:	930f      	str	r3, [sp, #60]	@ 0x3c
+
+>  8002b82:	4efa      	ldr	r6, [pc, #1000]	@ (8002f6c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::rung+0x6e4>)
+
+   8002b84:	f7fe f828 	bl	8000bd8 <firmware50::hw::gpio::gates_to_timer>
+
+   8002b88:	f7fd ff14 	bl	80009b4 <firmware50::hw::adc::resync>
+
+   8002bba:	61de      	str	r6, [r3, #28]
+
+   8002bbc:	0912      	lsrs	r2, r2, #4
+
+>  8002bbe:	207d      	movs	r0, #125	@ 0x7d
+
+   8002bc0:	9010      	str	r0, [sp, #64]	@ 0x40
+
+   8002bc2:	2a7c      	cmp	r2, #124	@ 0x7c
+
+   80047bc:	461a      	mov	r2, r3
+
+   80047be:	f004 ffb8 	bl	8009732 <__aeabi_memcpy8>
+
+>  80047c2:	48fa      	ldr	r0, [pc, #1000]	@ (8004bac <firmware50::run::Controller<W,B,A,C,S,R,T,G>::finish+0x590>)
+
+   80047c4:	2400      	movs	r4, #0
+
+   80047c6:	6004      	str	r4, [r0, #0]
+
+   8004a7c:	61e5      	str	r5, [r4, #28]
+
+   8004a7e:	0912      	lsrs	r2, r2, #4
+
+>  8004a80:	207d      	movs	r0, #125	@ 0x7d
+
+   8004a82:	9082      	str	r0, [sp, #520]	@ 0x208
+
+   8004a84:	2a7c      	cmp	r2, #124	@ 0x7c
+
+   8006d3a:	21ed      	movs	r1, #237	@ 0xed
+
+   8006d3c:	0049      	lsls	r1, r1, #1
+
+>  8006d3e:	23fa      	movs	r3, #250	@ 0xfa
+
+   8006d40:	4288      	cmp	r0, r1
+
+   8006d42:	9407      	str	r4, [sp, #28]
+
+   8006d44:	dc6e      	bgt.n	8006e24 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::command+0x318>
+
+>  8006d46:	28fa      	cmp	r0, #250	@ 0xfa
+
+   8006d48:	d100      	bne.n	8006d4c <firmware50::run::Controller<W,B,A,C,S,R,T,G>::command+0x240>
+
+   8006d4a:	e0ac      	b.n	8006ea6 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::command+0x39a>
+
+   8006d9a:	d1e6      	bne.n	8006d6a <firmware50::run::Controller<W,B,A,C,S,R,T,G>::command+0x25e>
+
+   8006d9c:	e0c8      	b.n	8006f30 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::command+0x424>
+
+>  8006d9e:	22fa      	movs	r2, #250	@ 0xfa
+
+   8006da0:	e025      	b.n	8006dee <firmware50::run::Controller<W,B,A,C,S,R,T,G>::command+0x2e2>
+
+   8006da2:	22e6      	movs	r2, #230	@ 0xe6
+
+   8006e12:	9000      	str	r0, [sp, #0]
+
+   8006e14:	a80a      	add	r0, sp, #40	@ 0x28
+
+>  8006e16:	22fa      	movs	r2, #250	@ 0xfa
+
+   8006e18:	e7f0      	b.n	8006dfc <firmware50::run::Controller<W,B,A,C,S,R,T,G>::command+0x2f0>
+
+>  8006e1a:	21fa      	movs	r1, #250	@ 0xfa
+
+   8006e1c:	4620      	mov	r0, r4
+
+   8006e1e:	f7fb fa9b 	bl	8002358 <firmware50::run::Controller<W,B,A,C,S,R,T,G>::restart_campaign>
+
+   8006e2a:	4290      	cmp	r0, r2
+
+   8006e2c:	d03f      	beq.n	8006eae <firmware50::run::Controller<W,B,A,C,S,R,T,G>::command+0x3a2>
+
+>  8006e2e:	217d      	movs	r1, #125	@ 0x7d
+
+   8006e30:	0089      	lsls	r1, r1, #2
+
+   8006e32:	4288      	cmp	r0, r1
+
+   800728a:	b29b      	uxth	r3, r3
+
+   800728c:	08db      	lsrs	r3, r3, #3
+
+>  800728e:	2b7d      	cmp	r3, #125	@ 0x7d
+
+   8007290:	d3f9      	bcc.n	8007286 <firmware50::run::states::Ctx::pass+0x26a>
+
+   8007292:	1c49      	adds	r1, r1, #1
+
+   8007328:	9a06      	ldr	r2, [sp, #24]
+
+   800732a:	1a10      	subs	r0, r2, r0
+
+>  800732c:	217d      	movs	r1, #125	@ 0x7d
+
+   800732e:	0109      	lsls	r1, r1, #4
+
+   8007330:	4288      	cmp	r0, r1
+
+   8007470:	68dc      	ldr	r4, [r3, #12]
+
+   8007472:	4360      	muls	r0, r4
+
+>  8007474:	217d      	movs	r1, #125	@ 0x7d
+
+   8007476:	00c9      	lsls	r1, r1, #3
+
+   8007478:	f002 fabf 	bl	80099fa <__aeabi_uidiv>
+
+   8007bf4:	9a0b      	ldr	r2, [sp, #44]	@ 0x2c
+
+   8007bf6:	f000 f8e9 	bl	8007dcc <firmware50::report::Sink::kv>
+
+>  8007bfa:	207d      	movs	r0, #125	@ 0x7d
+
+   8007bfc:	0082      	lsls	r2, r0, #2
+
+   8007bfe:	4866      	ldr	r0, [pc, #408]	@ (8007d98 <firmware50::run::measure::capture_baseline+0x34c>)
+
+   80080c6:	680b      	ldr	r3, [r1, #0]
+
+   80080c8:	4023      	ands	r3, r4
+
+>  80080ca:	247d      	movs	r4, #125	@ 0x7d
+
+   80080cc:	00e0      	lsls	r0, r4, #3
+
+   80080ce:	9009      	str	r0, [sp, #36]	@ 0x24
+
+   80087c2:	9907      	ldr	r1, [sp, #28]
+
+   80087c4:	8041      	strh	r1, [r0, #2]
+
+>  80087c6:	21fa      	movs	r1, #250	@ 0xfa
+
+   80087c8:	8001      	strh	r1, [r0, #0]
+
+   80087ca:	4ef2      	ldr	r6, [pc, #968]	@ (8008b94 <order_capture::__cortex_m_rt_main+0xb98>)

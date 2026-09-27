@@ -40737,3 +40737,1556 @@ campaign limit.
 Nothing to fix. Recorded because the deliverable's "powered ceiling is 60 %" is
 now a verified property of the image rather than an intention, and because
 verifying it cost one grep chain against a real scar.
+
+### E358 — 2026-09-26 — Codex takeover, propless-80 baseline plan (before actions)
+
+Operator confirms the previous agent is idle and the bench is ours. Active goal:
+propless 60→80%, all existing guards retained, separate unloaded qualification,
+mandatory independent evidence/adversarial reviews. See PROPLESS_80_CAMPAIGN.md.
+No serial writes, flash or powered run have occurred in this takeover yet.
+
+Read-only identity: source `299ba32`, firmware50 clean; current build artifact
+SHA256 `72581795EFE2E9865E9132E18A70FEAE8F370BD1C60FE0D81A2083CE9A9F247F`
+matches the header of `captures/2026-09-26/noprop-open-50pct_01.txt` (CRC32
+`81F85AB5`). This does not itself establish what is presently flashed. Serial MCP
+lists COM41 FTDI. Other projects/legacy binz have unrelated dirty files and are
+out of scope.
+
+First decision: can the unchanged production image establish gentle operation,
+then a bounded propless60 baseline? Prediction for the gentle 15% short command
+`9`: reason2, actual target/ceiling150, nonzero accepted events and comparator
+coast, no protection latch, bridge-off PASS before/after. This is exploration,
+not a >=30s qualification. Preflight `p` is non-driving. Existing full/short
+windows and exact command effects are being audited before powered use.
+
+Two fresh context-free reviewers are independently checking raw baseline
+captures and relevant source. No interpretation is adopted pending their reports.
+Known questions: independent speed witness, actual guard coverage, unmeasured
+motor temperature, and mechanical speed rating (operator asked). Retain existing
+controls and no ceiling change for the first batch. At least60s off between
+initial runs is an exposure precaution, not a measured thermal guarantee.
+
+#### E358 result and independent reviews (before powered testing)
+
+MCP open/write/read/close succeeded. Single byte `p` returned:
+`PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS`.
+Archived existing ELF without overwrite as
+`captures/elf/81F85AB5.e358-propless-baseline.elf`; SHA matches above.
+
+Evidence reviewer, verbatim:
+
+> Current source supports a gentle baseline and bounded 60% exploration without raising firmware limits; it cannot command 80%. Existing no-prop50 evidence is not a clean gate pass.
+>
+> - Independent raw calculation from `captures/2026-09-26/{noprop-open,box-open}-50pct_01.txt`, using `BEMFRATE hold_accepted/hold_ms`:
+>
+>   | Quantity | No prop | Box open |
+>   |---|---:|---:|
+>   | Hold accepted events/s | 14,807.817 | 12,233.414 |
+>   | Matched tail powered eHz | 2,470.740 | 2,039.995 |
+>   | Time-anchored coast@stop eHz | 2,506.073 | 2,035.831 |
+>   | Powered/coast permille | 985.901 | 1002.045 |
+>   | Actual target hold | 19.778 s | 19.776 s |
+>
+>   Both report `reason=2`, `forced=0`, `late_arms=0`, `tripped=0`, unchanged `ceiling_tenths=500`, and final PREFLIGHT PASS. Neither is a 30-second target hold. Tail spans are **3.778221/3.775745 seconds**, despite `window_us=2000000`: policy explicitly allows rolling windows of 1–2 times that constant. Estimators: `scripts/cohort.py:243`, `scripts/speed.py:76`.
+>
+> - No-prop50 fails the existing ±1% matched identity independently of its inapplicable loaded oracle. Replaying `cohort.run_gates(...,9000)` yields identity **986** and loaded-speed failures; box-open passes. Do not explain the entire no-prop failure as load mismatch, widen the identity band, or infer cause from this one record. `BEMFREF` instead uses whole-hold/index-fitted quantities and its STOP also reflects uncalibrated current comparison; it is not the authoritative matched verdict.
+>
+> - `src/run/policy.rs:170,237` and `src/roots.rs:87` enforce 600 tenths; selector clamps there (`src/run/mod.rs:548`). `l` runs 45 seconds total, giving approximately **14.8 seconds at 60%** after startup and the 25-second ramp. `9` is an existing gentle 15%/28-second command (`mod.rs:623`). Default `b` is **78 seconds**, while fixture default timeout remains **75**. `--no-ladder` incorrectly applies the default 30-second gate and bypasses expected-duty validation (`scripts/bemf_run.py:820`).
+>
+> - Minimal adaptation: explicit unloaded-condition metadata and isolated results; remove loaded-oracle comparisons only for that condition; retain identity, current, foldback, bus, stop, and off-state checks. Apply the existing exploratory dwell threshold, validate requested versus captured duty even with admission bypass, and verify final `CLIMBAT=600` after absolute selector normalization. Investigate the retained identity discrepancy before treating higher-duty progression as clean.
+>
+> - Target ELF hashes exactly to **72581795…A9F247F**. Latest fingerprint matches `advance-ref,deep-filter`; E355 corroborates that configuration. No matching frozen ELF/manifest entry found; no rebuild or device verification performed. Capture headers hash the host file, not the chip.
+>
+> Finally, current `FastBusSag` uses an **8-scan mean against ~207 ms moving reference** (`protection.rs:480`, `run/states.rs:384`), unlike inherited September19 notes. Preserve actual current protections; do not claim fixed-start raw-scan protection. E357 also identifies unreachable protection variants. No hardware actions or edits performed.
+
+Adversarial reviewer, verbatim:
+
+> Read-only review: electrical safing supports bounded experimentation, but the missing motor rating/pole-pair count prevents establishing that propless 60–80% respects mechanical speed limits.
+>
+> - **Protection gaps matter at no-load speed.** There is no motor-temperature channel or mechanical overspeed stop. Accepted-event short intervals are report-only (`EventWatch<true>`). Current protection is a signed 100-scan block proxy: first excess folds duty back, second consecutive excess stops; it provides neither peak nor RMS-current protection. Low reported current therefore cannot establish winding temperature or safe rotor speed. Convert electrical frequency using `RPM = 60 × eHz / pole_pairs` after obtaining the motor’s rating. Sources: [shared.rs:464](E:/m/robot/esc/rm32/binz/firmware50/src/shared.rs:464), [protection.rs:705](E:/m/robot/esc/rm32/binz/firmware50/src/protection.rs:705), [policy.rs:82](E:/m/robot/esc/rm32/binz/firmware50/src/run/policy.rs:82).
+>
+> - **Actual guards differ from historical binz descriptions.** Bus sag tests an eight-scan mean against a roughly 207 ms moving reference, requiring three low comparisons. Current/bus decisions run in foreground. IRQ guard retains nFAULT, tick-gap, feedback-age, campaign deadline and tracking stops; foreground additionally stops on storm, handler overrun, late-arm and blank-latched events. Preserve these exact semantics. Sources: [states.rs:247](E:/m/robot/esc/rm32/binz/firmware50/src/run/states.rs:247), [states.rs:340](E:/m/robot/esc/rm32/binz/firmware50/src/run/states.rs:340), [protection.rs:556](E:/m/robot/esc/rm32/binz/firmware50/src/protection.rs:556), [roots.rs:934](E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:934).
+>
+> - **Reviewed stop/re-arm paths preserve de-energization.** IRQ shutdown latches first, disables active roots, stops COM, clears MOE/CCRs and ENABLE. Timer arm and handover release are protected critical sections. An already-running COM can resume after guard preemption and rewrite compares, but `apply_plan` does not restore MOE/ENABLE; foreground completes all-off. Confirm final preflight rather than assuming every register remains zero throughout shutdown. Sources: [roots.rs:806](E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:806), [roots.rs:1049](E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:1049), [board.rs:584](E:/m/robot/esc/rm32/binz/firmware50/bin/board.rs:584), [states.rs:1126](E:/m/robot/esc/rm32/binz/firmware50/src/run/states.rs:1126).
+>
+> - **Host workflow:** single run, explicit timeout, independently scheduled stop, retained capture, final preflight, cooling, then review before another command. Send only `b'o'`; legacy text `off` contains `f`, a powered fault-provocation command. Default timeout 75 s is shorter than the 78 s qualification window; ordinary batches continue after failed gates/timeouts. Use `--runs 1`. Sources: [mod.rs:673](E:/m/robot/esc/rm32/binz/firmware50/src/run/mod.rs:673), [bemf_run.py:512](E:/m/robot/esc/rm32/binz/firmware50/scripts/bemf_run.py:512), [bemf_run.py:844](E:/m/robot/esc/rm32/binz/firmware50/scripts/bemf_run.py:844).
+>
+> - **Evidence limits:** supplied 50% capture completed safely but held target only 19.778 s; coast speed was 2503 eHz. `BEMFREF STOP` is an offline reference verdict, not its electrical stop reason. Aggregate unstable/revisit counts cannot establish causation; zero optional histograms/preemption fields do not prove absence. Present cap is 60%; 70/80 require implementation. Qualification and restart commands share the 78 s window; budget actual exposure explicitly. [Capture](E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/noprop-open-50pct_01.txt), [policy.rs:170](E:/m/robot/esc/rm32/binz/firmware50/src/run/policy.rs:170).
+
+Dispositions: retain the matched identity failure as unresolved; do not transfer
+the old prop oracle or call propless50 qualified. Keep actual moving-reference
+sag/current/other guard semantics, not stale descriptions. Archive completed;
+flash the explicit archived ELF before the gentle run to establish chip identity.
+Use one run only, command9, 40s host timeout, post-off check; offline judge against
+the E358 exploratory prediction (not the fixture's erroneous 30s minimum on this
+short command). Fix host unloaded admission/reporting before the 60% attempt.
+No firmware thresholds or code changed. Thermal gap remains explicit; finite
+exposure/cooling, never infer thermal safety from the current proxy.
+
+Motor identification arrived after review: operator specifies FlyFishRC Flash
+1404 4500KV. Manufacturer
+https://www.flyfish-rc.com/products/flash-1404-4500kv-fpv-motor specifies 9N12P
+(six pole pairs) and 3–4S LiPo. Thus mechanical RPM = 10 * electrical Hz.
+Manufacturer gives no explicit maximum RPM on that page; KV*voltage is not a
+certified rotor limit. Existing roughly12V bench is within its stated voltage
+application. Record actual speed and do not invent a mechanical certification.
+
+### E359 — gentle propless15 baseline, pre-run
+
+One attempt, archived81F85AB5, explicit G071 probe, firmware command9 (28s total),
+host timeout40s. Prediction and pass criteria are E358's; matched speed identity
+is retained as evidence, not inferred from completion. Preserve full capture and
+all-off readback. This tests present operation before changes; it does not clear
+the old propless50 identity discrepancy or qualify any rung. MCP preflight already
+PASS and connection closed so the capture fixture has exclusive COM41 ownership.
+
+#### E359 raw result (pending batch review)
+
+`captures/2026-09-26/e359-propless150_01.txt`, exact archived81F85AB5 explicitly
+flashed. Reason2, hold20278ms, target/ceiling150, CCR199, accepted97936,
+late/thin/storm/overrun/blank_latched/tracking/sag0, independent post-run MCP `p`
+all-off PASS. Proxy25mA with zero-drift−110mA is NOT a calibrated consumption.
+Existing fixture exit1 is its hold20278<30000 gate on the explicitly short
+exploratory command. All output retained; this is no qualification claim.
+
+### E360 — unloaded fixture separation (host-only batch)
+
+Decision: admit unloaded exploration with correct commanded-duty/actual-dwell
+checks, without using the prop oracle or loaded ladder. `cohort.run_gates` gains
+explicit propless selection excluding only its final loaded-oracle/rung lookup;
+matched identity±1%, bus/current/stop/foldback checks stay. New `propless.py` also
+requires all guard flags and pre/post-off records, and checks duty in three
+reports plus applied cap/CCR. Missing identity cannot qualify. `bemf_run` accepts
+the mode only with one run, --no-ladder, explicit duty and >=9000ms declared
+dwell. Non-driving selection keys only; final CLIMBAT must match before drive.
+No injected/restart commands are admitted by this first version. Captures carry
+load metadata; unloaded runs never alter the loaded ladder state.
+
+Host-only edits/tests preceded this entry; no firmware build or powered run was
+performed under these changes. The initial three mutation/replay tests passed:
+gentle15 exploratory accepts but30s rejects, old propless50 still fails at986‰,
+and altered/missing guard/duty/off evidence rejects. Key parity54/52 PASS.
+Next offline checks and dual review cover this small diff and E359 raw capture;
+only then consider the predeclared60 exploratory attempt. No threshold changed.
+
+### E361 — unchanged production rebuild identity, pre-build
+
+No Rust source/configuration edits in this takeover. Rebuild the documented
+`--release --bin shell-pwm --features advance-ref,deep-filter` selection and
+compare to E358's preserved artifact. Prediction: same firmware image; explicitly
+record any byte/loadable discrepancy rather than relabeling it. Four-root audit
+must still pass. This is offline; no second motor run until E360 reviews resolve.
+
+#### E360 independent reviews and dispositions
+
+Evidence review, verbatim:
+
+> Raw captures recompute as follows:
+>
+> - 15%: matched powered/coast speeds 737.527/738.075 eHz, identity 999.257‰, actual target dwell 20.278 s.
+> - 50%: 2470.740/2506.073 eHz, identity 985.901‰, dwell 19.778 s. Its 986‰ failure remains; this is not qualification.
+>
+> Both show deadline reason 2, zero forced commutations, sag trips, late arms, storms and tracking faults; unchanged target ceilings; and passing bridge-off pre/post checks. Current readings remain proxies. Neither capture demonstrates 60–80%.
+>
+> Three findings:
+>
+> 1. The proposed CLI would flash the wrong image. [bemf_run.py](/E:/m/robot/esc/rm32/binz/firmware50/scripts/bemf_run.py:42) defaults to the current build, whose SHA is `9D5F05A0…29E5`. Explicitly add `--elf captures/elf/81F85AB5.e358-propless-baseline.elf`; that preserved file verifies as `72581795…247F`.
+>
+> 2. Missing evidence does not consistently fail closed. In-memory mutations deleting `BEMFTAIL`, `worst_ma`, `BEMFSAG.ref_bus`, `forced`, or `hold_ma` each still pass the 15% [validator](/E:/m/robot/esc/rm32/binz/firmware50/scripts/propless.py:28). Missing tail silently substitutes whole-hold identity; missing safety fields inherit permissive legacy defaults. Require these fields explicitly for new propless captures.
+>
+> 3. `applied_ccr=1` also passes. [The check](/E:/m/robot/esc/rm32/binz/firmware50/scripts/propless.py:51) proves positive output and an adequate cap, not actual requested PWM duty. Either validate CCR against the known timer period or narrow the stated evidence.
+>
+> Source confirms default climb 400 plus eight increments of 25 equals 600, with cap 600 and a 45-second exploratory firmware window. The new pre-drive `CLIMBAT` comparison is useful. Propless mode preserves the ±1% identity threshold and cannot update the loaded ladder. All four existing tests pass, but miss the mutations above.
+>
+> Conclusion: fix missing-evidence validation and pin the preserved ELF before the bounded 60% exploration. Retain 50% as an identity failure; 80% remains future work. No bench operations performed.
+
+Adversarial review, verbatim:
+
+> Two fixes before the proposed run:
+>
+> - The command as written omits `--elf`. The default build hashes `9D5F05A0…`, while archived `81F85AB5.e358-propless-baseline.elf` hashes `72581795…`. Thus `--flash` alone would install a different image. Explicitly select and hash-check the archive.
+> - `propless.verdict()` does not fully fail closed. In-memory mutations of E359 independently deleting `BEMFTAIL`, `BEMFDONE.forced`, `BEMFCURRENT.worst_ma`, or the sag reference/filter fields each still return PASS. The tail omission silently admits the legacy identity; the others exploit zero/None defaults. Require the matched-window inputs and all protective evidence explicitly, with missing-field tests. The four existing tests pass but miss these cases.
+>
+> The requested timing also needs precise description: lowercase `l` selects a 45-second firmware window; the 60% ramp takes 25 seconds after closure, leaving approximately **14.8 seconds at target** given the observed startup. `--timeout 60` is the host timeout; `--min-hold-ms 9000` only changes acceptance, not exposure.
+>
+> One unchanged-image 60% run is useful as a distinct unloaded operating-point measurement after those host fixes. It can measure higher-speed acceptance/coast agreement and electrical margins. It cannot establish causality because speed, duty and current change together. Retain the previous 50% identity result—986‰, outside the unchanged ±1% criterion—as unresolved evidence; a passing 60% result would not erase it.
+>
+> Mechanical risk remains uncharacterized. Given 12 poles, the previous approximately 2503 eHz coast estimate corresponds to approximately 25,030 rpm; this is electrical inference, not independent mechanical certification. Neither the supplied manufacturer specifications nor `KV × voltage` establishes a maximum safe rotor speed. The PSU limit and electrical guards do not certify rotor retention or bearing limits. Likewise, 60 seconds off limits cumulative exposure but does not prove cooling without temperature measurement.
+>
+> Keep this one bounded exploration, stop further escalation on any failed gate, and make no loaded-envelope, endurance, thermal-safety or maximum-RPM claim. No hardware was accessed.
+
+Fixes: pin --elf on every run; require all new-capture fields and positive
+denominators; reject legacy fallback; verify exact CCR on this image's1333-tick
+carrier; test deletions/alterations. Five host tests PASS including fieldwise
+mutations. The two reviewers rechecked these material fixes independently.
+
+Evidence re-review and count-path audit, verbatim:
+
+> Corrected holes are closed: required-field mutations fail, nonpositive tail/bus inputs fail, legacy identity is rejected, and incorrect CCR fails. All five tests pass.
+>
+> The undercount mechanism is real: [det_poll](/E:/m/robot/esc/rm32/binz/firmware50/bin/board.rs:615) notices a changed ISR sequence but discards its delta, returning one latest timestamp. [consume](/E:/m/robot/esc/rm32/binz/firmware50/src/run/states.rs:990) increments `accepted` and `hold_acc` once per notification. [Tail reporting](/E:/m/robot/esc/rm32/binz/firmware50/src/run/mod.rs:332) subtracts those foreground counts, not ISR sequences. Multiple accepts between polls therefore undercount tail events.
+>
+> Raw 50% totals differ by 4,712 events: 476,151 ISR accepts versus 471,439 foreground notifications, approximately 0.99%. The measured tail deficit would require approximately 801 missed events within its 3.778-second window. Whole-run totals cannot establish that distribution.
+>
+> Thus notification coalescing is a concrete measurement hypothesis; 986‰ is not yet fully explained or attributable to rotor/control behavior. Preserve its failure pending bounded offline investigation.
+
+Adversarial re-review and count-path audit, verbatim:
+
+> The original missing-field holes are closed; all five host tests pass. One remaining validation gap: tail timestamps are required but not checked for `0 <= end < start <= hold_duration` and `span == start − end`.
+>
+> The counting defect is confirmed. `board.det_poll()` discards the sequence delta and returns the latest timestamp. `consume()` increments `accepted` and `hold_acc` once, and tail counts derive from `hold_acc`. Multiple ISR accepts between foreground polls therefore undercount powered events while ISR commutation continues.
+>
+> The old 50% deficit is 4,712 events, approximately 0.99% of ISR accepts. This plausibly contributes to its low 986‰ identity. It neither proves a motor problem nor explains the entire discrepancy: whole-run loss cannot correct an unknown tail-specific loss. Separate sequence/timestamp loads can also straddle an IRQ.
+>
+> Preserve the failed identity; resolve count/timestamp coherence before treating another powered/coast ratio as reliable higher-speed characterization.
+
+Disposition: tail-origin consistency now checked (allowing only the reported
+hold_ms's <1ms truncation). More importantly, fix the proven foreground counter
+defect before using another powered/coast comparison. The unmodified60 attempt
+is deferred, not run and not failed. No historical50 value is retrospectively
+corrected; its missing tail-specific ISR count is unrecoverable from totals.
+
+#### E361 offline result
+
+Rebuilt ELF SHA `9D5F05A064AA120E8016FD7D9D5AF4541B6A28CCA0AA8F2B5D68A28312CC29E5`
+differs as a file. Both `objcopy -O binary` images hash
+`430B3E68D3443F8359FAACA20EE1E7EC10E90BCDA965FADEE1BAC6C9D1544FFF`;
+four-root normalized diff identical37/742/332/155 instructions. Four-root helper
+audit PASS,347 host tests PASS, release clippy -Dwarnings PASS. Text42536/data740/
+bss4184; static stack allowance31940bytes. Structure check FAILS on three
+pre-existing >100-line functions: report test113, Controller::report111,
+det_decide_plain105. Do not call whole baseline clean. No new image flashed.
+
+### E362 — coherent accepted-count handoff, before implementation/build
+
+Both independent reviews confirm a source-level loss: ISR sequence advances per
+accepted crossing; foreground consumes only the newest notification and adds1.
+Fix telemetry handoff to return a coherent timestamp plus sequence delta, with
+one bounded validation attempt and no added ISR stores, loops or interrupt mask.
+Use the delta for accepted/hold/tail counts; retain a coalesced-event count for
+auditing. Per-sector diagnostic bins still represent sampled notifications, not
+reconstructed edges. No synthesized ZC or change to control/protection logic.
+
+Prediction: host tests reproduce multiple accepted edges between polls and prove
+correct delta/count/wrap/coherence handling; all four linked ISR roots stay
+identical. A representative gentle run then propless50 can test whether the
+matched identity closes without moving its±1% tolerance. Only then proceed60.
+This repairs a real instrument defect, not a proposed explanation of every50%
+failure. Keep cap600 for this change. Dual code/result review before powered use.
+
+#### E362 implementation / offline result / independent reviews
+
+Candidate SHA256
+`CC8B44BF86DD9CA0AFB4B85BF00CE0E432518B4FE29A7B1E013AA2CC7F74FFE4`,
+archived `captures/elf/CC8B44BF.e362-counts.elf`, release-s/thinLTO/codegen1,
+features advance-ref,deep-filter. Cap600, controller and protection logic retained.
+351 Rust tests (including four count/snapshot/report tests), release clippy
+-Dwarnings, five host fixture tests and key parity PASS. Structure now PASS:
+three pre-existing overlong functions split/comment-trimmed, zero >100 lines.
+Four-root arithmetic/bounded-loop audit PASS. Normalized ISR instructions match
+baseline exactly: DMA37/COMP742/COM332/guard155; TIM16 encoded bytes contain a
+relocated constant address, not identical file bytes. Foreground work changes,
+so a powered regression is still required.
+
+Snapshot emitted instructions include raw load 08003c9e, sequence reread
+08003ca0, compare08003ca2, delta subtract08003caa, seen store08003cb6. Coalesced
+count is adds/sub1/store08003ccc..3cd0. No added mask, hardware fence, retry loop
+or call in this snapshot. These check compiler-fence ordering in this ELF.
+
+Evidence review, verbatim:
+
+> The proposal is reasonable for the bounded diagnostic batch, with these limits:
+>
+> - Raw 15%: `accepted=zc_acc=97,936`; hold count 89,700 over 20.278 s; tail 10,078 over 2,277,432 us. Independent tail/coast identity is 999 per mille.
+> - Raw 50%: foreground 471,439 versus ISR 476,151, a deficit of 4,712 events (0.990%). Hold count is 292,869 over 19.778 s; tail 56,010 over 3,778,221 us. Independent identity is 986 per mille, failing the unchanged +/-1% criterion. The 992 per mille circular rate and 985 per mille older whole-hold comparison are different quantities. Aggregate missing counts cannot reconstruct how many belonged to this tail or hold; attributing the entire identity failure to coalescing remains unsupported.
+>
+> `accepted::observe` correctly detects intervening publications on this single-core ISR/foreground arrangement. It preserves `seen` when interrupted and uses wrapping sequence subtraction. Adding delta counts while retaining elapsed time between delivered stamps is appropriate; intermediate timestamps and sectors are not recoverable.
+>
+> The timestamp is COMP execution time after masking/clearing pending, not a hardware-captured physical crossing. Snapshot coherence covers sequence/timestamp only; `det_average()` remains a later independent read.
+>
+> Two existing boundary limitations remain: hold marking precedes mailbox consumption and actual duty publication, so a pending batch can include pre-hold events; stop does not drain pending accepts, so final foreground/ISR equality is not guaranteed. Neither invalidates an interior tail, but "lossless whole-run accounting" would overstate the implementation.
+>
+> All four new tests passed. They cover coalescing, interrupted publication, sequence wrap, and report/tail propagation. The integration test spans only 600 us: it does not exercise tail-anchor rollover, hold-boundary batches, final pending events, or actual raw-clock extension across wrap.
+>
+> I independently reproduced the four root instruction comparisons and verified SHA `CC8B44BF...`; TIM16 has the reported encoded-byte relocation difference. Source retains cap 600 and the firmware guards.
+>
+> The proposed single 15% run followed conditionally by one 50% run after >=60 s off can test improvement. Retain unchanged identity thresholds, stop on faults, and report actual target-hold durations--not the 28/45 s requested windows--as diagnostic evidence only.
+
+Adversarial review, verbatim:
+
+> No blocking accounting defect found in the diff. The single-core snapshot is sound provided only the ISR publishes during Locked: foreground cannot observe a partially completed ISR, compiler fences order the three loads, and a changed sequence leaves `seen` untouched. Sequence wrap subtraction is correct. These unit tests exercise the algorithm, but do not establish emitted instruction ordering.
+>
+> Material qualifications:
+>
+> - This can affect control timing despite unchanged ISR logic. Rejecting an interrupted snapshot postpones `consume`, leaving `sector_start`, `last_ci`, and rescue bookkeeping unchanged for another pass before `revisit`. Extra foreground work also changes scheduling. Treat the candidate as requiring the proposed powered regression.
+> - `det_install` establishes the sequence baseline, correctly excluding startup/seed history. Hold accounting still assigns any pending pre-hold accepts to hold; the hold marker also precedes duty publication. Stop exits before draining the mailbox, so final `accepted == zc_acc` is not guaranteed. These are boundary limitations, not evidence that delta recovery failed.
+> - Matched-tail subtraction correctly counts every event between its retained endpoint stamps. Sector/phase histograms remain notification samples; a coalesced gap can enter `gt150` without any individual ISR interval being long.
+> - The host tail check now uses the correct fields and enforces `span == start - end`, ordered endpoints, and containment within hold with only the documented millisecond truncation allowance.
+>
+> The raw 50% capture lost 4,712 foreground counts relative to ISR accepts; the 15% capture lost none. Thus 15% mainly checks regression. One same-candidate 50% run can test whether coalesced accounting explains the deficit and improves matched-tail agreement with independent coast timing while protection and timing indicators remain clean. Whole-run equality alone is insufficient, and recovering counts cannot explain away the independently measured coast speed or current differences.
+>
+> A gentle 15% run followed by one bounded prop-free 50% exploration, unchanged cap 600/protections and at least 60 seconds off, is a discriminating next step. Review that exact capture before 60%. The supplied manufacturer information provides no explicit RPM ceiling; the prior approximately 25,000 rpm observation does not establish a 60% operating limit.
+
+Dispositions: retain whole-run/hold-boundary caveats and sampled histogram labels;
+judge the interior matched tail, not equality alone. Emitted ordering checked
+above. Runtime timing remains a regression question. No prior50 corrected, no
+motor/mechanical/thermal certification inferred. The review text above preserves
+wording with ASCII transcription of typographical units/dashes.
+
+### E363 - pre-run, candidate gentle15
+
+Decision: can the coherent-count image retain gentle unloaded operation before
+the named50 counting test? Flash exact CC8B44BF archive using explicit G071
+probe; command9,28s powered window, min9s actual target, single attempt.
+Prediction: deadline2, matching15% duty/CCR, zero electrical/timing stops,
+interior tail/coast identity within unchanged +/-1%, bridge-off before/after.
+This is exploration/regression, not a30s qualification. MCP lists COM41 normally;
+prior E359 OFF for >60s. Following50 is conditional on this result, >=60s off.
+
+#### E363 result
+
+Capture `captures/2026-09-26/e363-propless150_01.txt`, explicit SHA CC8B44BF,
+firmware CRC D5726632. Deadline2 after28s window; actual target20.278s,
+accepted=zc_acc97949, coalesced0. Tail10077/2277220us; independent identity1000
+per mille, fixture PASS. Cap600/ceiling150/CCR199; late/thin/storm/overrun/
+blank_latched/tracking/sag0. Spentmax11us,COMPcallmax16us,COMlatemax5us.
+Proxy hold -32mA with -76mA zero drift is not physical negative consumption.
+Both bridge-off PREFLIGHT PASS. No whole envelope or thermal qualification.
+Proceed only to the predeclared same-image50 count comparison after >=60s off.
+
+### E364 - pre-run, propless50 count comparison
+
+Exact E362 CC8B44BF archive, freshly flashed; four '+' keys must ACK CLIMBAT500
+before lowercase l. One45s powered window, expected~19.8s actual target,
+min9s exploration, timeout60s. Decision: does coherent count recovery restore
+matched-tail/coast identity while retaining clean control/protection indicators?
+Prediction: coalesced count positive, independently measured identity within
+unchanged +/-1%; not whole-run equality alone. Retain any failure; no60 run
+until this batch's two fresh reviews and dispositions. >=60s OFF from E363.
+
+### E365 - offline fixture portability, before edit/test
+
+Move the two raw captures used by host mutation tests into tracked scripts/testdata
+fixtures, unchanged, so a fresh checkout does not depend on ignored captures.
+Retain original paths/provenance in the fixture filenames and this entry.
+Prediction: the same five tests pass with no host gate or firmware behavior change.
+Also narrow accepted.rs's header: delivered deltas are preserved, not every
+whole-run boundary event (E362 reviews). No executable firmware change intended.
+
+#### E364 raw result (pending dual review)
+
+`captures/2026-09-26/e364-propless500_01.txt`, SHA CC8B44BF / CRC D5726632.
+Deadline2,19.778s actual50% target in45s powered window. Cap600/ceiling500/CCR666.
+Accepted476396 versus ISR476397 (one final pending event is within the known
+boundary caveat), coalesced4935. Interior tail56907/3778200us =2510.32eHz.
+Time-anchored independent coast approximately2510.3eHz: fixture identity1000
+per mille PASS versus old986. No new tolerance or retrospective old-run correction.
+late/thin/storm/overrun/blank_latched/tracking/sag0; spentmax11us,COMPcallmax16us,
+COMlatemax11us. Both preflights bridge-OFF PASS. Filtered/reference bus1212/1217
+with VREF1507/1506; normalized loaded/resting995.23per mille. Proxy hold330mA,
+zero drift-143mA, worst block1273mA; uncalibrated, not a thermal statement.
+Sampled phase/sector histograms saturate; do not use them for event populations.
+Two fresh independent raw-first reviews commissioned before60 decision.
+
+#### E365 result
+
+Both selected raw fixtures copied unchanged (newline normalization only) into
+scripts/testdata; the same five mutation/regression tests PASS without ignored
+capture dependencies. No live command or firmware executable change in E365.
+
+#### E364 dual raw-first review and dispositions
+
+Evidence review, verbatim:
+
+> One bounded same-ELF 60% exploration is supported as an experiment; this batch does not qualify 60% or establish thermal/mechanical safety.
+>
+> I read raw captures before any notebook interpretation. Both new captures identify the archived ELF whose SHA256 independently verifies as `CC8B44BF…74FFE4`. Using `speed.coast_fit`’s default least-squares fit over 16 non-overlapping full cycles, with measured coast timing origins and evaluation at stop:
+>
+> | Capture | Powered tail | Coast at stop | Difference |
+> |---|---:|---:|---:|
+> | E363, 15% | 737.522 eHz | 737.228 eHz | +0.0399% |
+> | E364, 50% | 2510.322 eHz | 2510.283 eHz | +0.00158% |
+> | Historical no-prop 50% | 2470.740 eHz | 2506.073 eHz | −1.4099% |
+>
+> Dropping the first half-cycle preserves both new passes and the historical failure. These are tail comparisons, covering 2.277/3.778 seconds, not whole-run rotor-speed validation. [E363](E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e363-propless150_01.txt), [E364](E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e364-propless500_01.txt)
+>
+> E364 reports 476,396 delivered events versus ISR count 476,397, including 4,935 coalesced events. Thus foreground notifications numbered 471,461—close to the historical 471,439, whose ISR count was 476,151. The sequence-delta implementation explains the corrected accounting without reconstructing intermediate timestamps or sectors. It strongly supports mailbox undercounting; it cannot retroactively recover the historical tail.
+>
+> Actual holds were 20.278 seconds at 15% and 19.778 seconds at 50%; CCRs 199/666 and unchanged ceilings corroborate duty. Both stopped on deadline, with zero forced commutations, late arms, tracking faults, storm, overrun, blank latch, or sag trip; pre/post outputs were off and nFAULT high. At 50%, guard/foreground maximum gaps were 106/153 µs, COMP spend maximum 11 µs, COM lateness maximum 11 µs. Margin histograms were disabled and sector histograms saturated, so neither establishes spare timing capacity. Current proxies were 330 mA hold, 741 mA worst hold, 1273 mA worst overall, with −143 mA zero drift. Filtered bus was 99.523% of baseline; 135 raw sub95% observations were isolated.
+>
+> `propless.verdict` passes both new captures at exploratory dwell while preserving the historical failure. Fresh reset selects400; eight `+` selects600, within the existing cap; lowercase `l` gives45 seconds total and approximately14.778 seconds at60%. Keeping ≥60 seconds off and all existing guards makes that bounded next observation defensible. It provides no assurance against an unknown RPM limit or unmeasured temperature; measured50% speed is approximately25,103 mechanical RPM at six pole pairs.
+
+Adversarial review, verbatim:
+
+> The proposed single 60% run is sensible as a bounded test of counting and control at higher speed. It cannot establish the cause of prior loaded failures or qualify a mechanical/thermal envelope.
+>
+> - Raw evidence supports E362’s accounting correction: E364 records 476,396 delivered accepts, 476,397 ISR accepts and 4,935 coalesced notifications. The earlier image lost 4,712 counts between ISR and foreground. Recomputed final-window speed/coast residual improves from −14.1‰ to approximately 0‰; dropping the first coast interval gives −14.2‰ and −0.5‰ respectively. This is strong consistency evidence, although the runs are not a paired counterfactual and whole-run coalescence cannot quantify the earlier tail’s exact deficit.
+>
+> - Snapshot boundaries remain imperfect. `Locked::poll` marks the hold before consuming pending events and before publishing the target plans; `stop` does not drain the mailbox. Thus the one-count terminal difference is consistent with boundary timing, and `hold_ms` is not an exact hardware-application timestamp. These small boundary effects do not threaten a 9-second minimum, but avoid describing the snapshots as exact simultaneous totals.
+>
+> - The “matched” identity compares a 3.778-second powered average with an immediate post-stop coast estimate. It assumes terminal steady speed. The coast is independent of accepted-event counting, but shares the comparator and clock; agreement does not prove absolute RPM accuracy or uniformly correct commutation. Saturated sector/phase bins and coalesced timestamps cannot establish sector balance or absence of brief disturbances.
+>
+> - Preserve the proposed single archived-image run, verified `CLIMBAT=600`, unchanged protections and cap, 45-second window, ≥9-second measured target dwell, retained failures, and final bridge-off checks. The expected ~14.8-second target dwell is consistent with the 25-second ramp. Explicitly enforce ≥60 seconds since the previous safe-off: `--settle` only sleeps **between** runs and does nothing for this one-run invocation.
+>
+> - Approximately 25,100 RPM at 50% and unmeasured temperature leave mechanical/thermal margin unknown. Voltage compatibility, the 3 A supply cap, low uncalibrated current proxy and one-minute rest do not establish that margin. Treat 60% as one exploration; any fault, unavailable identity or incomplete capture ends it without retries or loaded-qualification credit.
+
+Disposition: accept the delivered-count fix as supported by source/tests/raw data,
+not proof of the exact historical tail error or every commutation. Preserve all
+measurement boundary caveats, disabled/saturated diagnostics and uncalibrated
+current label. No additional A/B run needed to proceed to one60 characterization.
+MCP independently returned bridge-off p PASS after E364 and closed normally.
+
+### E366 - pre-run, unchanged-image propless60 exploration
+
+Decision: characterize unloaded60 with corrected counts before raising the duty
+ceiling. Exact archived CC8B44BF, fresh explicit flash, eight '+' ACK CLIMBAT600,
+lowercase l45s total/~14.778s actual target, min9s, timeout60s, one attempt.
+All protections unchanged; >60s OFF already elapsed. Prediction: either deadline2
+with duty/CCR799/tail-coast identity within +/-1%, or a retained named fault that
+determines next local control/timing work. No retry/65 until dual batch review.
+
+#### E366 result - fast sag during ramp, no60 hold
+
+Capture `captures/2026-09-26/e366-propless600_01.txt`, exact CC8B44BF.
+Reason26 FastBusSag,closed22.273s,hold0. CCR719 on1333 implies54% commanded
+ramp step, not60%; ceiling600 is merely the unfurled request. Accepted214503,
+ISR214505,COM214506; no forced/late/thin/storm/overrun/blank-latch/tracking/driver
+stop. Min accepted ci40us is a whole-run minimum, not a causal timestamp.
+COMPspend11us,call16us,COMlate9us; guardgap109us,foregroundgap193us.
+Worst10.1ms current proxy1166mA, zero drift-85mA; this cannot exclude a brief
+current pulse or certify phase peak. Refbus1217/VREF1506,filt1212/VREF1507;
+raw busmin1037, three judged lows tripped (see actual BEMFSAG fields).
+Coasttrans3426, approximately2673eHz; NO valid powered hold tail. Do not call
+this slip, a54% wall, CPU saturation, supply limiting or mechanical loss.
+Pre/post PREFLIGHT bridge-off/nFAULT high PASS. No automatic retry.
+Host verdict correctly fails but reports nonpositive tail before reason26;
+improve failure diagnostics without making a zero-length tail pass.
+
+Next evidence question for dual review: use existing production sag-ring feature
+to retain the evaluated bus/reference/streak/timing rows, unchanged guards. One
+same-image lower control then one diagnostic ramp can discriminate terminal
+reference/input behavior; it does not by itself reveal individual ZC origins.
+No ceiling increase while this electrical event is unexplained.
+
+### E367 - offline diagnostic build, before action
+
+Build the EXISTING sag-ring feature on E362 count-corrected source, plus only
+E365 comments; advance-ref,deep-filter,sag-ring, release-s/thinLTO/codegen1.
+Question: what were the guard's exact input/reference pairs and raw phase/bus
+samples around its decision? No new observer, no threshold/reference/cap change.
+Prediction: linked four motor roots retain baseline instructions, RAM still
+clears8192-byte static stack floor; existing ring tests pass. Foreground recorder
+includes a short critical section and is observer-affected. Capture timestamps
+are service-time readings, not certified ADC-acquisition instants. No flash/run
+until the E366 pair's review resolves material diagnostic coverage concerns.
+
+#### E367 plan correction before any flash
+
+Both reviewers found shell-pwm's sag-ring has no dump path. Initial build
+FD82C38388DF086A1ABD3AB4E035CC4705D2A1F2C602A6C967F7709494384E42 is unflashed,
+retired for this test. Use EXISTING separate sag-capture binary instead, with
+advance-ref,deep-filter, its same typed policies and working per-command
+arm/disarm/dump. No new recorder or production-shell hooks. Extend propless host
+fixture with --sag-dump to wait through SAGEND and require complete nonempty ring
+evidence. Existing observation latency prevents transferring any diagnostic pass
+to production. Review recheck of this exact correction requested.
+
+E367 additional safety correction before final diagnostic build: standalone
+sag-capture omitted shell-pwm's adc_ok startup refusal. Copy that fail-closed
+branch; no motor command is accepted if ADC initialization fails. The first
+standalone06E3D15B build remains unflashed. Host --sag-dump and strict ring
+count/units/freeze checks now implemented; seven fixture tests PASS. One new
+mutation test proves a pre-hold fault retains its reason beside missing identity.
+Prediction: ADC failure branch compiles without changing four motor roots;
+standalone retains >16KB static stack allowance. Build/audit before any run.
+
+#### E366/E367 evidence review, verbatim
+
+> E366 failed during the ramp at scheduled **54%**, not 60%: `719/1333 = 53.94%` PWM duty, consistent with 22.273 seconds closed-loop and the 1%-per-0.5-second ramp. Exposure was approximately 2.273 seconds at ≥50%, including 0.273 seconds at 54%; target-60% dwell was zero. Exact total powered duration is not printed. E364 completed 45 seconds overall with 39.778 seconds closed-loop and 19.778 seconds at 50%.
+>
+> Reason 26, `streak=3`, and `tripped=1` establish that the sag guard latched. Source evaluates each consumed scan’s eight-sample sliding bus/VREF mean against 95% of its evolving filtered reference. Final reference/minimum fields cannot reconstruct those three comparisons. Raw-depth counts lack chronology. Current readings are signed, uncalibrated block proxies; the trip scan returns before current accumulation, so `worst_ma=1166` cannot exclude a coincident transient. Zero late-arm/tracking counters and endpoint speed do not establish what initiated the dip.
+>
+> The next single question should be: **What sequence of evaluated rail means, references, and raw bus/phase samples produced the three-low latch during the higher-duty ramp?** Existing sag-ring records those exact mean/reference comparisons before reference update, the resulting streak, and trip-scan phase codes.
+>
+> Two material wiring blockers prevent proceeding with the proposed shell-pwm build:
+>
+> - `shell-pwm.rs` arms the ring only at boot; the first control stop freezes it. A second run without reset/rearming retains the control’s frozen ring.
+> - `Production::serve/run/finish` never exports the ring. Only `bin/sag-capture.rs` invokes its dump. The feature alone therefore supplies no serial `SAGROW` evidence.
+>
+> Also, `pwm_ctr` is read during foreground recording, not captured at ADC acquisition; it cannot establish exact sample aperture. `since_zc` is aliased and foreground-consumed. Recorder critical sections can perturb scheduling. After fixing export/rearming and completing both reviews, the proposed same-image 50% control followed by one protected 60%-request ramp is appropriately bounded diagnostic work, not qualification.
+
+#### E366/E367 adversarial review, verbatim
+
+> Conditional support for one diagnostic batch; no support for attributing e366 to supply capacity, controller failure, or overflow yet.
+>
+> Raw e366 stopped near **54% applied duty**, not 60%: `closed_ms=22273`, `hold_ms=0`, CCR719/1333 matches the ramp’s 540 tenths. Same-image e364 held 50% for 19.778s. Whole-run longest raw sub95% streak rose from 1 to 5, but neither capture preserves the guard’s terminal inputs. Current averages cannot exclude a terminal surge: the sag verdict returns before current accumulation.
+>
+> Arithmetic in `FastBusSag::observe` is bounded for validated 12-bit inputs; maximum cross-product is 1,676,902,500. The actual decision uses an eight-sample mean against a moving reference, with three consecutive low judgements. Aggregate minima cannot replay it.
+>
+> Concrete next test: unchanged cap600/guards, `advance-ref,deep-filter,sag-ring`; one 50% control, then conditionally one identical 60%-request ramp. Predeclare the question as **whether the trip’s recorded means/reference reproduce the three-low latch**, including whether raw depression persists through the deciding window. Replay disagreement triggers software investigation; agreement establishes sampled sag, without identifying its physical cause. A clean diagnostic run does not clear the original image.
+>
+> Blockers/dispositions:
+>
+> - `shell-pwm` arms the ring once at boot and never emits it. Establish post-off RAM extraction; reset/rearm separately for each run.
+> - Recorder writes mask interrupts. Audit stack margin and added critical-section duration; lower-control success cannot prove observer neutrality near54%.
+> - Timestamps/PWM count are read after the ADC snapshot and guard work. `since_zc` uses the previous foreground-consumed accept. No aperture-level phase or bus-versus-commutation ordering claims. Missing raw VREF and scan ordinals further limit raw-width reconstruction.
+> - ≥60s off is a minimum interval, not verified thermal recovery. Temperature is unmeasured; require an operator thermal check before the conditional second run and stop on abnormal heating. This batch cannot establish thermal safety for the eventual80% objective.
+
+Re-review evidence, verbatim:
+
+> Confirmed: using existing `sag-capture.rs` resolves both export and rearming blockers.
+>
+> Its controller uses the same wiring, BEMF, advance, current, sag, restart, and telemetry policy types as production, with `SagRing` substituted. It initializes the fine clock, arms a fresh ring before each relevant run command—including `l`/`L`—then disarms and emits the ring after the command returns, ending with `SAGEND`.
+>
+> Waiting through `SAGEND` and requiring a nonempty frozen ring therefore supplies the intended extractable evidence. Fresh flashing each attempt also removes stale runtime state. The proposed host change remains to be verified after implementation. Observer effects and service-time timestamp limitations still apply.
+
+Re-review adversarial, verbatim:
+
+> Export/rearm blocker resolved by `sag-capture`:
+>
+> - `arms_a_run` delegates to the shared command list; `l`/`L` qualify, `+`/`-` only select duty.
+> - Each run arms a fresh ring before `p.command`, then disarms and emits `SAGSNAP`/rows/`SAGEND` after the command returns with outputs off.
+> - Fine clock initialization is present. `advance-ref,deep-filter` apply through the same policy types; no `sag-ring` feature is needed.
+> - From fresh boot, `++++` selects500; `++++++++` selects600. Use `l` for the existing45s exploratory window.
+>
+> Waiting through `SAGEND` and requiring a nonempty frozen ring closes the collection path. That host option is not yet present in the inspected script, so its implementation still needs verification.
+>
+> One adjacent concrete difference: `sag-capture` reports `adc_ok` but lacks `shell-pwm`’s explicit `if !adc_ok` refusal loop. Ensure boot `adc_ok=1` is checked before commanding either run.
+>
+> All prior observer/timestamp restrictions remain. This binary also has a different outer serve loop, so record it as a separate diagnostic image. ≥120s off bounds spacing without establishing temperature recovery; no thermal-safety or lean-image clearance claim follows.
+
+Final implemented-path re-review evidence, verbatim:
+
+> Collection blocker resolved for the planned propless runs. `--sag-dump` selects `SAGEND`, so capture continues past `COASTTIMING`; validation checks nonempty rings, reported row counts, frozen state, format/clock units, and 95/100/3 guard configuration. Failed runs remain captured and fail the run verdict.
+>
+> The ADC-init failure branch executes after `safe_off`, then stays outside command dispatch while servicing time/watchdog and transmission. No powered command is reachable there.
+>
+> No additional blocker found in these changed paths. This is source review; instrumented motor behavior remains untested.
+
+Final implemented-path re-review adversarial, verbatim:
+
+> Verified both material fixes. No remaining collection/ADC-refusal blocker for the lower control.
+>
+> `--sag-dump` is restricted to the isolated propless path, captures through `SAGEND`, and adds ring validation to the existing run verdict. It rejects missing completion, empty/count-mismatched rings, unfrozen records, wrong timing units, and changed sag thresholds.
+>
+> `sag-capture` now calls `safe_off` before checking `adc_ok`; failure enters a clock/link-service loop that never dispatches powered commands. Successful initialization retains per-command rearm and post-stop dump.
+>
+> This confirms source wiring only. Observer cost remains unqualified, and diagnostic success cannot clear the lean image’s failure.
+
+Dispositions: export/rearm/ADC-refusal fixed as reviewed. Preserve no causal
+attribution from aggregate minima or service-time stamps. Existing ring writes
+mask interrupts; disassembly of Trace::push08001490 includes fixed14-byte and
+6-byte memcpy calls plus metadata/decimated stores. Cost is nonzero and no
+runtime neutrality/WCET claim is made. Separate outer loop also remains a
+diagnostic divergence. All4 linked root instruction sequences unchanged (TIM16
+literal relocation); full reachable helper audit PASS. Final archive
+`DBA2ED8F.e367-sag.elf` SHA
+DBA2ED8F2618F613D411BD3415BF6BAE3335C2F76B5CF09528D8FE6732725E4E,
+text46300/data740/bss19572,static stack16552; structure,6sagtrace tests,
+7host tests,release clippy -Dwarnings PASS.
+
+Thermal disposition: temperature remains unknown; no claim of cooling or
+thermal qualification. Mandatory external check before each short diagnostic
+not adopted: active goal authorizes autonomous bounded runs, no observed heat
+report. Increase OFF spacing to>=120s between these two attempts, retain short
+exposure and all guards, stop on any reported/observed abnormal heating.
+
+### E368 - pre-run, diagnostic50 control
+
+One explicit DBA2ED8F archive flash, ++++ verified500, l45s, expected19.8s
+target, min9s,timeout90s,--propless --sag-dump. Question: does existing recorder
+produce complete frozen version3 inputs while retaining this lower control?
+Prediction: reason2, guards clean, complete256/1024 ring, host/firmware lows
+agree. If failed, no dependent ramp. Long OFF interval since E366 already met.
+
+#### E368 result
+
+`captures/2026-09-26/e368-propless500-sag_01.txt`, DBA2ED8F, reason2,
+19.778s at50/CCR666. Host propless and complete-ring checks PASS;256 fast rows,
+1024 slow rows,8MHz/v3,frozen. Identity1002per mille, no late/thin/tracking/
+storm/overrun/blank-latch/sag stop, pre/post bridge-off PASS. Proxy342mA,
+zero drift-44mA; no thermal inference. Runtime observer effect is visible:
+foreground iterations958796 versus1289704 in lean E364 for same39.778s closed
+(about26% fewer iterations); COMmax10us versus11 and COMPmax16 unchanged do
+not establish scheduling neutrality. No transfer to lean envelope.
+
+### E369 - pre-run, one diagnostic ramp toward60
+
+The lower control passed the predeclared condition. Same exact DBA2ED8F, fresh
+flash, eight '+' ACK600,l45s, min9s,timeout90s,--sag-dump. Wait>=120s after E368
+safe-off (use02:41:52UTC final capture completion as conservative origin).
+Decision: retain guard's own evaluated means/references/streak and raw samples
+if the54-ish event repeats. Replay must agree; disagreement points to instrument/
+software accounting, agreement establishes sampled depression only, not physical
+cause. A clean diagnostic run cannot erase lean E366. One attempt, no retries;
+dual fresh review of complete batch before any dependent work/escalation.
+
+### E370 - offline timestamp-label correction before edit/test
+
+E366 reviewers correctly identify that PWM/timer counters are sampled in
+record_sag_row AFTER the ADC snapshot. Correct source docs and sag.py's printed
+claim that these are ADC carrier phases. Change labels only; no firmware fields,
+guard logic, raw captures or numerical decoder calculations. Prediction: same
+decoder values and host tests, now without an unsupported aperture claim.
+
+E370 result: sag_selftest50/50 (43retained captures+7fixtures), propless7/7 PASS.
+No numeric calculation or executable firmware path changed; DBA2ED8F remains
+the exact archived diagnostic selected for E369, no rebuild for comment edits.
+E368 guard replay: zero disagreements in255adjacent rows; lowest margin1041.5
+per mille of tripline, no low decisions in25.8ms tail. Do not extend that
+statement to the overwritten440175 judgements.
+
+#### E369 result and dual review (E371 offline assessment)
+
+`captures/2026-09-26/e369-propless600-sag_01.txt`, exact DBA2ED8F diagnostic.
+Reason26, closed22289ms, target hold0, actual CCR719/1333 and retained duty540:
+approximately289ms into54%, NOT a60% hold. All-off pre/post PASS. Accepted214922,
+ISR214923,coalesced6627; COMP spent11/call16us,COMlate11us, no late/thin/storm/
+overrun/blank-latch/tracking stop. Proxy worst100-scan block1262mA, zero drift
+-114mA; neither excludes terminal pulse current. Full v3/8MHz ring retained.
+
+Evidence reviewer, verbatim:
+
+> E369 confirms a real fall in recorded bus codes; its sag decision is arithmetically correct. It does not establish whether the physical bus fell or the acquisition path was disturbed.
+>
+> - Independent integer replay reproduces all 256 recorded streaks and all 249 reconstructable eight-sample means (`sum >> 3`). Terminal normalized means are **94.608%, 93.699%, 92.706%**, producing streaks 1/2/3. Products are 172172000/170516500/168710500 versus 172884800; no overflow, invalid VREF, or stale-reference explanation. The reference remains 1210 with VREF 1505. See [guard](/E:/m/robot/esc/rm32/binz/firmware50/src/protection.rs:554).
+>
+> - E369's entire retained ring is applied **54%**, independently consistent with CCR719/1333. Its 22.289 seconds closed-loop means approximately 289 milliseconds after the 54% step; 60% was never reached. Lean E366 likewise stopped at CCR719 and 22.273 seconds, approximately 273 milliseconds into 54%. Observer instrumentation is therefore unnecessary for this failure, although two runs cannot prove deterministic latency.
+>
+> - Terminal E369 sequence: phase codes **20/3072/2758** at coarse stamp54283 while raw bus=1191; raw bus becomes1153 at54379, then declines through1136/1122/1120/1150/1127/1104/1056. The three low means begin54994 and latch55211. Phase excursions precede the pronounced sampled bus fall, but do not establish causal current or rotor motion. The sag return precedes current accumulation, so average-current telemetry cannot exclude the terminal surge.
+>
+> - Coverage is only **25.771 milliseconds**, 256/267286 judgments; slow history is sparsely sampled and lacks timestamps. Sixteen fine/coarse timestamp pairs disagree beyond2us; terminal pairs are coherent. `since_zc` is foreground-consumption age, and PWM count is readout phase--neither reconstructs physical ZC/acquisition timing. E368's same-image50% run completed19.778 seconds at target and477520 accepts, exceeding either failure's214k count. Its ring has no low judgments.
+>
+> Most discriminating inexpensive firmware test: a fixed, matched propless54% A/B using existing **persistence floor3->5**, keeping advance16, ramp, protections and cap600 unchanged. First verify baseline features. This directly perturbs premature-edge acceptance suggested by E369's terminal estimator3401eHz versus immediate coast~2606eHz; compare stop/exposure and estimator-coast agreement. It tests a control mechanism without requiring another timing recorder. A clean result would support acceptance sensitivity, not uniquely prove its cause.
+
+Adversarial reviewer, verbatim:
+
+> The evidence supports a genuine sampled bus collapse at applied54%, with correct guard execution. It does not establish its initiating cause or qualify60%.
+>
+> - E369's final rows retain duty540 throughout. At service stamp54283, phase codes are20/3072/2758 while raw bus1191 remains near its1210 reference. Raw bus then falls1153->1153->1136->1122->1120. At54994/55139/55211, normalized eight-scan means are94.608/93.699/92.706%, producing streak1/2/3. Independent replay found zero streak disagreements across256 rows and zero raw-bus moving-mean disagreements across249 reconstructible windows. This is not evidence of guard arithmetic overflow.
+> - E368 completed19.778s at50%; its retained tail has no low guard decisions and phase codes1453-2687. E366 already failed lean at approximately54% (`applied_ccr=719`, period1333). Thus instrumentation is unnecessary for this failure class, but E369 cannot establish neutrality: coalesced notifications increased1173->6627, and the diagnostic masks interrupts while recording.
+> - Phase excursions precede the *recorded* threshold crossing, not necessarily the physical initiating event. `at`, `at_fine`, PWM count, sector, and consumed-accept age are service observations. Missing raw VREF, acquisition stamps and scan ordinals prevent exact aperture ordering. Maximum consumed-accept ages158us in clean E368 versus159us in E369 do not discriminate an initiating timing defect.
+> - Terminal `ci_us=49` implies3401eHz, versus approximately2606eHz from immediate coast. That mismatch warrants an acceptance/estimator audit; it does not prove false crossings or physical deceleration.
+> - No current foldback is not pulse-current clearance: protection integrates100 scans, signed phase contributions can cancel, and the sag decision returns before accumulating its deciding scan. Rail codes do not supply calibrated peak current. Temperature and thermal recovery remain unmeasured.
+>
+> Cheapest next step: read-only audit the accepted-edge->interval-estimate->COM-deadline path around60-66us, checking the verified image's advance16/filter5 behavior. The missing discriminator is an accepted-event sequence preceding the phase excursion; this ring cannot supply it. I would not select a priority/advance change from these rows alone or deploy the heavier chain recorder unchanged.
+>
+> One unsupported source claim: the guard cannot see sub-millisecond dips. An eight-scan mean attenuates such dips; a sufficiently deep single sample can still generate three low overlapping means.
+
+Dispositions: no supply/current/rotor-cause attribution adopted. Preserve all
+failure evidence; no run to60 yet. Meaningful sampled collapse, not a proven
+physical-current value. Reference stability only describes this retained tail.
+Do not repeat proposed3->5 filter experiment: exact baseline AND diagnostic
+already have deep-filter/FILTER_FLOOR5 (E358/E362/E367 build identities).
+Request correction from reviewer. Audit timing/acceptance source next; avoid
+heavier recorder without a specific missing discriminator. Overlapping means
+can respond to sufficiently deep sub-ms dips; no blind-to-all-sub-ms claim.
+
+### E372 - offline scheduling audit and bounded next-experiment proposal
+
+No build/run yet. Read acceptance/COM/hardware timer source, not summaries.
+At60..66us estimator interval: FromMicros doubles the value; deep-filter clamps
+mapped reads to5, no depth boundary here. Advance16 waits15..17us. The entry
+stamp is software TIM17 AFTER EXTI mask/ack. `spent` is sampled BEFORE
+`com_arm`; critical-section arbitration/clock/metadata and timer writes follow.
+Timer starts only on final CR1 write. COM service can additionally wait behind
+the rest of peer COMP. Thus zero late_arms does not prove zero phase error.
+No arithmetic wrap is found in this bounded interval range. Existing com-top
+is a bounded scheduling lever, NOT a proven cure or proof of failure cause.
+
+Propose exact lean count-fixed A versus same features plus com-top B; no
+recorder, no advance/filter/protection/ramp changes. First B50 representative
+control, then only if clean B60 request on l45s, >=120s OFF spacing. If B
+changes behavior materially, matched A/B follow-up before causal attribution;
+one success alone is exploration, not qualification. Archive both identities,
+verify typed ownership/stop-arm soundness and linked four-root differences.
+Question: does removing peer COM blocking materially change high-speed
+behavior without unacceptable COMP latency? Predictions: lower COM service
+lateness possible, COMP elapsed may increase; unchanged hard stops govern.
+Fresh dual source/experiment review required before powered use.
+
+E371 evidence-review correction, verbatim:
+
+> Correction verified: E367’s build notes specify `advance-ref,deep-filter`; [the mapping](/E:/m/robot/esc/rm32/binz/firmware50/src/bemf.rs:103) makes the effective persistence depth **5**, not3. At60–66µs, `FromMicros` supplies120–132 ticks; the unbounded mapped result is3, then `max(5, mapped)` produces5. It also remains5 at terminal49µs. There is no filter-depth boundary between these particular50% and54% conditions.
+>
+> Withdraw the proposed3→5 experiment. The corresponding bounded causal test would be **floor5→6**, using existing `deep-filter-6`, holding advance16 and the protected54% ramp/exposure fixed. This tests sensitivity to edge persistence; extra comparator reads also alter acceptance latency, so either outcome cannot uniquely isolate noise rejection. A late-arm/tracking failure remains a failed outcome, not an improvement.
+>
+> Also narrow the reference finding: **the retained tail shows a stable reference and faithfully reproduced decision**. It rules out a rising/stale reference as the immediate explanation within that captured tail, not every sensor fault, reference-design defect, or earlier-history problem.
+>
+> No bench actions or edits performed.
+
+Disposition: correction accepted; floor5->6 is an alternative, not selected.
+E325 already tested that lever loaded; do not transfer its negative result to
+propless, but scheduling has an independently visible unaccounted delay here.
+
+### E373 - pre-build, existing COM-top variant only
+
+Build shell-pwm release-s/thinLTO/codegen1 with advance-ref,deep-filter,com-top.
+No firmware source change beyond existing comment corrections since CC8B44BF.
+Prediction: four-root helper audit clean; priority byte differs, COMP may have
+address/encoding changes but no diagnostic recorder. Test host library with
+same features, structure, clippy, compare linked roots and archive exact ELF.
+Source reviewers E372 running independently; no powered command until resolved.
+
+E373 build result: SHA159206FD9BC9084C32334B436B072D7627940F4621EB579D2EBB1A0216A2FCFA,
+archive `captures/elf/159206FD.e373-comtop.elf`. Release/clippy PASS,351 host
+tests PASS,7 host fixture tests PASS. Four roots encoded instructions identical
+to CC8B44BF (37/742/332/155); helper audit PASS. Gate artifacts retained in
+captures/gates/e373-roots.txt and e373-isr-diff.txt. Structure bounds PASS;
+current candidate data740/bss4184/static stack31940. Historical archived images
+below stack floor are flagged by tool and remain forbidden, not flashed.
+MCP functional; independent p readback all-off/nFAULT1 PASS before closing.
+
+E372 scope correction from both independent in-progress reviews: current DMA
+priority is0x40, NOT historical binz priority0. com-top lowers COMP0x40->0x80
+while COM AND DMA stay0x40. Therefore both newly preempt COMP; startup is also
+affected. One feature/configuration variable, not isolated COM-only mechanism.
+Any benefit may be described as scheduling sensitivity, never solely COM delay
+without a further discriminator. Source hw/adc.rs DMA_IRQ_PRIORITY confirms.
+
+#### E372 final independent reviews
+
+Evidence reviewer, verbatim:
+
+> The existing `com-top` candidate is sound for the bounded scheduling experiment, with the corrected scope: COMP moves from `0x40` to `0x80`, allowing both COM and DMA to preempt it throughout startup and running. It does not isolate COM alone. Guard remains `0x00`. [Priority types](E:/m/robot/esc/rm32/binz/firmware50/src/shared.rs:64), [DMA priority](E:/m/robot/esc/rm32/binz/firmware50/src/hw/adc.rs:86).
+>
+> - Raw evidence supports investigating scheduling, but does not establish it as the cause. Lean E364 completed 19.778s at 50%; lean E366 stopped fast-sag at `closed_ms=22273`, CCR719/1333≈53.94%, with zero 60% dwell. Recorder E369 similarly stopped at 54%, 22.289s closed. Its phase-code excursions precede the pronounced sampled bus decline; these are service-time observations, not physical current or rotor timing measurements. [E364](E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e364-propless500_01.txt:9), [E366](E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e366-propless600_01.txt:9), [E369 terminal rows](E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e369-propless600-sag_01.txt:277).
+>
+> - The post-`spent` delay claim is correct. The entry stamp follows mask/ack; `spent` precedes critical-section entry, metadata and timer writes; timer counting starts on the final CR1 write. Peer COMP can subsequently delay COM dispatch. However, `com-top` changes dispatch competition; it does not remove timer-programming delay or foreground interrupt masking. Zero `late_arms` therefore does not establish correct physical commutation phase. [Acceptance](E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:495), [atomic arm](E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:1040), [timer enable](E:/m/robot/esc/rm32/binz/firmware50/src/hw/timers.rs:154).
+>
+> - Ownership and stop-arm structure support this experiment: COMP owns its estimator, publishes average/blanking before arming, and retains the accepted sector locally. COM reads published values. The entire arm decision/write sequence is masked and refuses stopped/inactive operation. No additional instrumentation is needed as a prerequisite. [Published estimate](E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:486), [COM consumption](E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:1184).
+>
+> - Keep A=`CC8B44BF…`, features `advance-ref,deep-filter`; B=`159206FD9BC9084C32334B436B072D7627940F4621EB579D2EBB1A0216A2FCFA`, adding only `com-top`. I independently verified both archived hashes and read the four-root comparison: all four instruction sequences match. The reported 351 tests, clippy and helper-audit passes address the remaining build checks. Both sides must use `shell-pwm`, no recorder, identical compiler/profile and unchanged ramp, cap600, protections and bench conditions. [Root comparison](E:/m/robot/esc/rm32/binz/firmware50/captures/gates/e373-isr-diff.txt).
+>
+> - B50 followed only by a clean-control-dependent B60 request, each `l`/45s and ≥120s OFF spacing, is reasonable exploration. “Clean” should retain the existing propless verdict: deadline2, actual target CCR/dwell, matched tail/coast identity, no protection/late-arm/overrun/forced-commutation failure, and verified outputs off. Expect approximately 19.8s target dwell at50 and 14.8s at60 if startup is comparable; neither is a 30s hold. [Verdict](E:/m/robot/esc/rm32/binz/firmware50/scripts/propless.py:76), [ramp](E:/m/robot/esc/rm32/binz/firmware50/src/ramp.rs:16).
+>
+> For comparison, retain stop reason, achieved CCR/duty, closed-loop exposure and target dwell, coast speed, matched tail rate where available, late/thin/rebase counters, COMP elapsed/overrun, COM lateness, guard/foreground gaps, coalescence and bus-depth statistics. `com_late_max_us` combines timer setup/service effects across phases and the whole run; `comp_call_max_us` includes new nested preemptions. Both `com_preempts` counters remain uninstrumented zeros in this production image. A better outcome establishes sensitivity to the priority arrangement; one success establishes neither unique cause nor envelope qualification.
+
+Adversarial reviewer, verbatim:
+
+> No concrete concurrency blocker found for the bounded B50, then conditional B60 experiment.
+>
+> - Sector identity is captured before acceptance/arming in both paths (`roots.rs:477,618`). COM consumes `accept_avg/accept_blank` published before arming and never borrows the estimator (`1193`); the typed ceilings preserve exclusive estimator ownership.
+> - `com_arm` masks interrupts across its decision and all writes (`1040`); `com_stop` latches before stopping (`1065`). COM may finish blanking/rearm EXTI before COMP returns, but the accepted COMP tail neither clears nor remasks that new sector. COMP cannot preempt itself, and foreground cannot resume while COMP is suspended, so the mailbox’s completion assumption remains valid.
+> - One caveat: after COM rearms EXTI, an elapsed-budget failure does **not** necessarily leave the line masked despite the comment at `roots.rs:1343`. The overrun flag still requests ordinary stopping; storm and guard paths remain. Any overrun, storm, tracking failure, or late arm should fail B50 and cancel B60.
+> - The intervention also allows DMA to preempt COMP. E373’s corrected scheduling-sensitivity framing is appropriate. Lean `com_preempts=0` is inactive instrumentation, not evidence that preemption never occurred.
+>
+> Raw evidence supports this comparison: both 50% runs completed ~19.778s target holds; both 60% requests stopped at applied 54%, with zero target hold and zero recorded late arms. Compare B against those actual exposures, final output safing, and independent coast/rate agreement. Terminal estimator values and isolated minima cannot establish the initiating cause.
+>
+> The reported identical four-root machine code and candidate checks satisfy the implementation-isolation condition. One 45s B50 followed only if clean by one identical 45s B60 request, cap600 and ≥120s OFF spacing, is bounded exploratory exposure. Temperature remains unmeasured; neither OFF spacing nor one successful run establishes thermal safety or qualification. A material improvement warrants matched A/B follow-up before causal attribution.
+
+Dispositions: all scope/coverage caveats adopted. No claim COM-only isolation,
+preemption count, physical angle or observer-neutral diagnostic. Any lower
+control failure cancels B60. Mask-comment caveat remains documented, no
+concurrent hardening change mixed into this priority-only experiment.
+
+### E374 - pre-run B50 scheduling control
+
+Exact159206FD archive, explicit probe flash, ++++ selects500, l45s, propless
+min9s, timeout90s. E372 dual review complete. Prediction: independent tail/coast
+identity and actual19.8s target hold remain clean; COMlate may fall and COMP
+elapsed may rise. Existing guards/thresholds/cap600 untouched. If any gate or
+protection fails, cancel dependent B60. Previous run ended >10min ago.
+
+#### E374 result
+
+`e374-propless500-comtop_01.txt`,159206FD,reason2/19.778s at500,CCR666,
+pre/postoff PASS. Matched independent rate996per mille, coast2522eHz,
+accepted476113/ISR476114, no late/thin/rebase/storm/overrun/blank/tracking/sag
+stop. COMPmax22us vs lean A16; COMlate9 vs11; neither is matched per-event
+causality. Proxy327mA vs A330, worsthold676/worstwhole1126mA, zero drift-135.
+No thermal inference. Clean control satisfies predeclared B60 prerequisite;
+does not qualify either image or erase E366 failure.
+
+### E375 - pre-run conditional B60 scheduling exploration
+
+Same159206FD archive, fresh flash, eight '+' ACK600, l45s, minhold9s,
+timeout90s. >=120s OFF from conservative E374 capture completion02:58:53UTC
+(do not start before03:00:53UTC). Compare achieved duty/exposure, stop class,
+tail/coast if valid, all timings/counters and finaloff against E366's actual
+54%/22273ms stop. Prediction under scheduling-sensitivity hypothesis: failure
+may move or disappear with improved dispatch; a failure or new timing stop
+refuses this candidate. One attempt, not a pass-rate comparison. Dual fresh
+review of E374/E375 before any subsequent image or upward exploration.
+
+E371 transcription correction: its original review quotations normalized
+typography/spacing, despite the "verbatim" label. Conclusions were unchanged,
+but the record requirement is literal. Canonical original final messages follow.
+
+Evidence original:
+
+> E369 confirms a real fall in recorded bus codes; its sag decision is arithmetically correct. It does not establish whether the physical bus fell or the acquisition path was disturbed.
+>
+> - Independent integer replay reproduces all 256 recorded streaks and all 249 reconstructable eight-sample means (`sum >> 3`). Terminal normalized means are **94.608%, 93.699%, 92.706%**, producing streaks 1/2/3. Products are 172172000/170516500/168710500 versus 172884800; no overflow, invalid VREF, or stale-reference explanation. The reference remains 1210 with VREF 1505. See [guard](/E:/m/robot/esc/rm32/binz/firmware50/src/protection.rs:554).
+>
+> - E369’s entire retained ring is applied **54%**, independently consistent with CCR719/1333. Its 22.289 seconds closed-loop means approximately 289 milliseconds after the 54% step; 60% was never reached. Lean E366 likewise stopped at CCR719 and 22.273 seconds, approximately 273 milliseconds into 54%. Observer instrumentation is therefore unnecessary for this failure, although two runs cannot prove deterministic latency.
+>
+> - Terminal E369 sequence: phase codes **20/3072/2758** at coarse stamp54283 while raw bus=1191; raw bus becomes1153 at54379, then declines through1136/1122/1120/1150/1127/1104/1056. The three low means begin54994 and latch55211. Phase excursions precede the pronounced sampled bus fall, but do not establish causal current or rotor motion. The sag return precedes current accumulation, so average-current telemetry cannot exclude the terminal surge.
+>
+> - Coverage is only **25.771 milliseconds**, 256/267286 judgments; slow history is sparsely sampled and lacks timestamps. Sixteen fine/coarse timestamp pairs disagree beyond2µs; terminal pairs are coherent. `since_zc` is foreground-consumption age, and PWM count is readout phase—neither reconstructs physical ZC/acquisition timing. E368’s same-image50% run completed19.778 seconds at target and477520 accepts, exceeding either failure’s214k count. Its ring has no low judgments.
+>
+> Most discriminating inexpensive firmware test: a fixed, matched propless54% A/B using existing **persistence floor3→5**, keeping advance16, ramp, protections and cap600 unchanged. First verify baseline features. This directly perturbs premature-edge acceptance suggested by E369’s terminal estimator3401eHz versus immediate coast≈2606eHz; compare stop/exposure and estimator–coast agreement. It tests a control mechanism without requiring another timing recorder. A clean result would support acceptance sensitivity, not uniquely prove its cause.
+
+Adversarial original:
+
+> The evidence supports a genuine sampled bus collapse at applied 54%, with correct guard execution. It does not establish its initiating cause or qualify 60%.
+>
+> - E369’s final rows retain duty540 throughout. At service stamp54283, phase codes are20/3072/2758 while raw bus1191 remains near its1210 reference. Raw bus then falls1153→1153→1136→1122→1120. At54994/55139/55211, normalized eight-scan means are94.608/93.699/92.706%, producing streak1/2/3. Independent replay found zero streak disagreements across256 rows and zero raw-bus moving-mean disagreements across249 reconstructible windows. This is not evidence of guard arithmetic overflow.
+> - E368 completed19.778s at50%; its retained tail has no low guard decisions and phase codes1453–2687. E366 already failed lean at approximately54% (`applied_ccr=719`, period1333). Thus instrumentation is unnecessary for this failure class, but E369 cannot establish neutrality: coalesced notifications increased1173→6627, and the diagnostic masks interrupts while recording.
+> - Phase excursions precede the *recorded* threshold crossing, not necessarily the physical initiating event. `at`, `at_fine`, PWM count, sector, and consumed-accept age are service observations. Missing raw VREF, acquisition stamps and scan ordinals prevent exact aperture ordering. Maximum consumed-accept ages158µs in clean E368 versus159µs in E369 do not discriminate an initiating timing defect.
+> - Terminal `ci_us=49` implies3401eHz, versus approximately2606eHz from immediate coast. That mismatch warrants an acceptance/estimator audit; it does not prove false crossings or physical deceleration.
+> - No current foldback is not pulse-current clearance: protection integrates100 scans, signed phase contributions can cancel, and the sag decision returns before accumulating its deciding scan. Rail codes do not supply calibrated peak current. Temperature and thermal recovery remain unmeasured.
+>
+> Cheapest next step: read-only audit the accepted-edge→interval-estimate→COM-deadline path around60–66µs, checking the verified image’s advance16/filter5 behavior. The missing discriminator is an accepted-event sequence preceding the phase excursion; this ring cannot supply it. I would not select a priority/advance change from these rows alone or deploy the heavier chain recorder unchanged.
+>
+> One unsupported source claim: the guard cannot see sub-millisecond dips. An eight-scan mean attenuates such dips; a sufficiently deep single sample can still generate three low overlapping means.
+
+#### E375 raw result (before hypothesis disposition)
+
+Exact159206FD, `e375-propless600-comtop_01.txt`: FastBusSag26 after25320ms
+closed, actual600/CCR799, hold320ms. Not a target hold pass. Accepted267746,
+ISR267747,COM267748,coalesced4198. Tail5925/320585us is only0.32s, not a
+stationary multi-second window; host identity1051per mille cannot establish
+slip or why the transient began. Immediate coast roughly2927eHz; terminal
+estimator41us is not independent rotor speed. Minci40,thin15,late0,rebase0;
+COMPmax22/spent11,COMlate9us. No storm/overrun/blank/tracking/driver stop.
+FastSag ref1218/1506,filter1211/1507,streak3; rawbusmin874. Current proxy
+hold474/worsthold1000/worstwhole1234mA,zero drift-207; averaging/sag-early-return
+coverage gaps remain. Pre/postoff PASS, UARTclosed. Capture completion no
+later than03:01:43UTC; no more motor until batch review and next prediction.
+
+Outcome only: B passed50 and reached60 briefly before the same guard class;
+A failed at54. n=1 per lean higher-rung request, not a causal or reliability
+verdict. Fresh evidence review started; second fresh reviewer spawn currently
+returns "agent thread limit reached" twice. Do not silently substitute an old
+reviewer or treat one review as the required pair. Keep board OFF while
+finishing offline accounting and retry fresh reviewer after first completes.
+
+E375 review tooling resolution: after the first fresh reviewer completed,
+the second fresh context-free spawn succeeded. Both original reviews below.
+
+Evidence reviewer, verbatim:
+
+> Raw captures first: E364/A and E374/B both completed 19.778 s at 50%, reason 2, with zero forced commutations and late arms. Their accepted-window rates were 2510.3 and 2508.7 eHz-equivalent; coast estimates were 2509 and 2522 eHz. This is a closely matched 50% comparison.
+>
+> E366/A stopped reason 26 after 22.273 s closed-loop, before reaching 60%: `hold_ms=0`, CCR719/1333, consistent with the ramp’s 54% step. E375/B reached 60% but held it only 320 ms before reason 26. CCR799 confirms applied 60%. Consequently, the additional 3.047 s closed-loop exposure is not a matched 60% survival comparison. Both poststop checks passed.
+>
+> E375’s three quantities differ materially:
+>
+> - Terminal estimator: `ci_us=41`, implying 4065 eHz.
+> - Accepted window: 5925 events over 320585 µs, or 3080.3 eHz-equivalent, ending 129 µs before stopping.
+> - Coast: approximately 2927 eHz; the fixture’s time-anchored comparison reports 1051 permille.
+>
+> That supports an estimator/accepted-rate discrepancy near the stop, not proven slip, false crossings, or their ordering relative to sag. The rounded `ehz_from_sector=3144` is less useful than the raw count/span. `zc_rate_permille_of_expected=981` is circular arithmetic, not independent tracking evidence. E375 had 15 thin arms but zero late arms; aggregate maxima cannot locate those events in the terminal sequence.
+>
+> The priority intervention lowers COMP to 0x80 while COM **and DMA** remain 0x40 ([shared.rs](/E:/m/robot/esc/rm32/binz/firmware50/src/shared.rs:64)). It therefore does not uniquely isolate COM interference. Zero preemption counters provide no contrary evidence: production compiles their recording out.
+>
+> My choice is a bounded floor-5→6 B/C experiment, retaining `com-top`, advance 16, and every protection setting. Missing accepted-event sequence is essential for a mechanistic ordering claim, but is not a prerequisite for testing this existing control lever.
+>
+> The source supplies a concrete hypothesis: another live polarity read can reject a transient before it updates the interval estimator ([bemf.rs](/E:/m/robot/esc/rm32/binz/firmware50/src/bemf.rs:493)). Both existing images already use floor 5. Floor 6 costs another read before arming ([roots.rs](/E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:483)), potentially increasing delay or rejecting genuine crossings. Its earlier adverse result warrants caution, not automatic transfer to advance 16.
+>
+> Predeclare one bounded B/C pair using identical startup, ramp, and deadline; verify the candidate’s effective feature and ISR cost first. Compare achieved duty, actual target exposure, stop reason, and raw tail/coast evidence. Retain either failure and stop the experiment without repeat-to-pass or qualification claims.
+
+Adversarial reviewer, verbatim:
+
+> I favor one bounded diagnostic tail over floor 5→6 as the next mechanism discriminator.
+>
+> The raw captures support a changed outcome, not a proven priority mechanism. Both 50% runs completed 19.778 seconds at target with nearly identical rates/current proxies. A stopped near actual 54%; B reached actual 60% for only 320 ms before reason 26. B’s terminal estimate, 41 µs/4065 eHz, exceeds its 2927 eHz coast speed by about 39%; its whole-target mean is much closer. That suggests investigating a brief interval-estimate excursion, but cannot establish whether it preceded or followed sag.
+>
+> Source limits matter:
+>
+> - [bemf.rs](/E:/m/robot/esc/rm32/binz/firmware50/src/bemf.rs:480) accepts intervals above half the estimate after five agreeing reads. Short accepted intervals can lower the estimate and therefore both the admission gate and scheduled wait.
+> - [roots.rs](/E:/m/robot/esc/rm32/binz/firmware50/src/roots.rs:1297) timestamps COMP service after masking/acknowledgment, not the physical crossing. Delayed service and spurious crossings therefore remain confounded.
+> - `late_arms=0` only excludes exhausted pre-arm waits. `com_late_max_us=9` mixes commutation and blank-release services and precedes bridge writes. `com_preempts=0` is uninformative because its instrumentation folds away in these production builds.
+> - Lowering COMP also lets DMA preempt it; this is not an isolated COM-priority intervention.
+>
+> The economical trace should answer one question: **does interval-estimate contraction or late bridge application appear first, relative to the sampled sag onset?** Keep a small circular tail of accepted timestamps/intervals, resulting estimate and scheduled wait; pair actual phase-1 bridge timestamps by acceptance ordinal. Add only a timestamp of the first low sag judgment in the terminal streak. Write records after arming/application, preserve ownership, and audit added cost. Existing large decision/chain recorders introduce unnecessary work for this question.
+>
+> After offline replay/wrap/freeze checks and timing review, permit one finite attempt on the B configuration: same advance 16, depth 5, cap 600, unchanged ramp and maximum 45-second powered window, all protections active, ≥120 seconds verified OFF beforehand. Stop the batch after that attempt, regardless of outcome. Instrumentation may shift the failure; any inference applies first to that diagnostic image. Ordering still would not distinguish physical rotor motion from comparator acceptance without a physical timestamp.
+>
+> Floor 5→6 is a legitimate cheaper **persistence-sensitivity experiment**, but changes rejection and acceptance latency together. The older loaded advance-20 result does not settle this propless advance-16 case. Its outcome would leave the present early-accept/COM-lateness alternatives unresolved, so I would not choose it first. No thermal adequacy follows from the OFF interval or current proxies.
+
+Dispositions: retain disagreement on order; choose ONE existing floor5->6
+sensitivity trial before instrument work, not a causal claim or a series of
+knob changes. All ordering/late-arm/observer limitations accepted. B50/B60
+results remain comparators, not repeated to fish for failure. C gets one50
+representative control then only if clean one identically ramped60 request,
+l45s/min9s,>=120s OFF. If it fails, investigate with bounded event-order trace,
+not another filter increment or protection change. If clean, dual review must
+decide next exploration; no n=1 qualification or attributed mechanism.
+
+### E376 - pre-build C, existing filter-floor6 only
+
+Build shell-pwm release-s/thinLTO/codegen1, advance-ref,deep-filter-6,com-top.
+Source unchanged from B except comments already noted; selected floor6 replaces
+floor5, maximum12 unchanged. Higher floor affects rejection AND elapsed time;
+predicted safety tradeoff is more thin/late arms or missed real crossings.
+Require tests, clippy, structure, four-root math audit and changed-loop
+disassembly before C50. No protection settings, cap, ramp or carrier change.
+
+Auxiliary instruction-class audit: initial no-config invocation compared B
+against historical default760-instruction COMP and failed on742 (-18). Correct
+advref-floor5 baseline passes for both A/B, unchanged hazard classes; no bless
+or threshold relaxation performed. Artifact e375-priority-ratchet.txt.
+
+E376 build result: archive AF09D21E.e376-floor6.elf, SHA
+AF09D21ECF4275F8EB459A1A0EB543DC578F07721FA9174E15E5D34084AF0CC3,
+CRC E8FE2524. Release/clippy/351host tests/helper audit PASS. Four-root diff
+only ADC_COMP immediates: instruction316 movs r3,#5 -> #6;
+340 cmp r1,#2 -> #3;342 movs r1,#2 -> #3. Root counts37/742/332/155
+unchanged; this increases a loop iteration at high speed, NOT zero runtime
+cost. All other roots encoded-identical. Instruction-class comparison against
+floor5 reports unchanged classes; no newbaseline blessed. Structure exit0,
+candidate data740/bss4184/stack31940. Gate artifacts e376-* retained.
+
+### E377 - pre-run C50 representative control
+
+Exact AF09D21E fresh flash, ++++ACK500,l45s,min9s,timeout90s. Same carrier,
+ramp, direction, all guards and cap600 as B. OFF>120s already elapsed.
+Question: does one extra persistence read preserve this lower point without
+timing/tracking/identity regressions? Any failure cancels dependent C60 and
+the floor experiment ends. Clean result permits exactly one C60 comparison,
+not promotion or another floor adjustment.
+
+#### E377 result
+
+`e377-propless500-floor6_01.txt`,AF09D21E,reason2/19778ms target500/CCR666,
+pre/postoff PASS. Fixture independent identity996per mille, coast2529eHz,
+accepted477411/ISR477412. Late0,thin4 (B50 thin0), no rebase/storm/overrun/
+blank/tracking/sag stop. COMPmax22/spent11us,COMlate8us. Proxy333mA,zero drift
+-83,worsthold739/worstwhole1313. Thin is existing report-only margin telemetry,
+not an invented hard-stop threshold; it records the predicted latency cost,
+not a clean-zero margin claim. Existing hard guards remain. C50 satisfies the
+declared fixture prerequisite for one C60 attempt; no qualification follows.
+
+### E378 - offline documentation correction
+
+E371 reviewer correctly rejected sagtrace's brick-wall "only0.8..200ms" claim.
+Correct those comments: sliding mean attenuates narrow dips, not excludes them;
+overlapping judgments can latch after one sufficiently deep raw sample. No
+guard arithmetic/settings change. Prediction: executable image unchanged by
+comments (no rebuild of archived C), existing protection tests remain evidence
+for their unchanged code. This is documentary correction, not a new guard.
+
+### E379 - pre-run C60, final filter-sensitivity attempt
+
+ExactAF09D21E fresh flash,++++++++ACK600,l45s,min9s,timeout90s,all guards,
+cap600 unchanged. >=120s OFF from conservative completion03:10:45UTC; not
+before03:12:45UTC. Compare to B's reason26 at60/320ms, preserving exposure
+and matching limitations. Thin4 at C50 is retained, no tolerance change.
+Any fault cancels further filter tuning; next work must resolve event order.
+Clean completion is exploration only; dual fresh review before next step.
+
+E378 supplementary test before edit: exercise RailMean+FastBusSag together,
+not FastBusSag alone. Fill8 healthy scans, introduce one50%-raw dip, restore
+healthy input; prediction is three overlapping low means latch despite only
+one raw dip. This pins the documented coverage limitation without changing
+any protection. Archived C remains selected, no rebuild for host-only test.
+E377 capture file final write03:10:18UTC confirms03:10:45 cooldown origin is
+conservative; next attempt remains no earlier than03:12:45UTC.
+
+E378 result: new combined-path host test PASS, existing sag decoder50/50 PASS.
+No runtime protection changed; single-sample overlap is a coverage limitation,
+not an attribution of E369 (which had multiple declining raw samples). E379
+still uses exact archivedAF09D21E, no rebuild for comments/test. Independent
+MCP p at03:12UTC confirms bridge-off/nFAULT1 PASS; transport operational/closed.
+
+#### E379 result - filter trial refused
+
+`e379-propless600-floor6_01.txt`, exact AF09D21E: reason26 after23377ms
+closed-loop, hold0, target600 but CCR746/1333 consistent with actual56%.
+Pre/post bridge-off PASS. accepted233187/ISR233190/COM233191; no forced,
+late0,thin14,ci_min40,terminalci40,COMP11/22us,COMlate7us. Coast about2754eHz
+does not validate the terminal estimator4166eHz; different windows remain.
+FastSag ref1218/1506,filter1210/1505,streak3,rawbusmin1087. Proxy worst1230mA,
+zero drift-79; no pulse-current/thermal clearance inferred. No storm/overrun/
+blank/tracking/driver fault. Failure retained, not a qualifying60% exposure.
+One floor6 trial failed before target, so no more filter increments. Dual
+fresh raw-evidence review precedes a bounded event-order diagnostic; no
+protection changes or additional motor attempt pending that review.
+
+E379 independent raw-field correction: filtered bus/VREF is1212/1507, not
+1210/1505 copied from an earlier capture above. Reference1218/1506 remains
+correct. E377 thin4 is consistent with additional latency, not causal proof.
+Independent MCP p after E379 again returned alloff/nFAULT1 PASS, UARTclosed.
+
+### E380 - E379 dual review and bounded diagnostic decision
+
+Evidence review, verbatim:
+
+> E379 failed before reaching 60%. Its 23.377-second closed-loop duration implies ramp duty560, consistent with reported CCR746/1333 =55.964%. It stopped approximately377ms into the56% step; `hold_ms=0` and the empty accepted tail provide no60% exposure or target-window identity. Terminal `ci_us=40` implies4166.7eHz, versus approximately2754eHz from coast. This discrepancy merits investigation but cannot establish false acceptance, physical deceleration, or ordering relative to sag.
+>
+> E375 reached commanded60%, CCR799, for approximately320ms before the same FastBusSag26 stop. Its raw tail gives5925×10⁶/(6×320585)=3080.3eHz-equivalent; the time-anchored coast fit is2931.7eHz, yielding1051permille. That short transient window does not establish stationary tracking or slip. E377, on the same AF09D21E image as E379, completed19.778s at50%; its tail gives2520.9eHz against2530.5eHz fitted coast,996permille. Replaying the declared9-second propless gate passes E377 and rejects both higher requests.
+>
+> B→C raises persistence floor5→6 while retaining advance16 and `com-top`. This changes rejection and acceptance latency together. One failure per higher request, at different duties and exposures, cannot establish a reliability ranking or unique mechanism. All three captures retain successful bridge-off checks and zero forced commutations/late arms. Zero preemption counters are uninformative without the chain recorder; `com_late_max_us` mixes timer purposes and precedes bridge application.
+>
+> Two notebook corrections: E379’s raw filtered bus/VREF is1212/1507, not1210/1505. E377’s four thin arms are consistent with the predicted timing cost but do not demonstrate that attribution.
+>
+> The next diagnostic should establish event order: a bounded circular tail with acceptance ordinal, service timestamp/origin, accepted interval, estimate before/after, scheduled deadline, and paired phase-1 bridge-write timestamp. Correlate these with timestamped bus/VREF guard inputs and first-low/trip judgments; distinguish acquisition from processing timestamps. Freeze on stop, dump afterward, and measure added runtime and memory cost. Further filter tuning is unsupported. Even this trace cannot uniquely distinguish physical crossing timing from comparator-service timing without an independent physical timestamp.
+
+Adversarial review, verbatim:
+
+> E379 does not establish that floor6 worsens stability: it failed at approximately56% (`CCR746/1333`), whereas E375 reached60% for320ms. These are single, unmatched exposures. E377 establishes one clean50% exploration. Terminal estimator/coast discrepancies warrant an acceptance audit, but cannot identify false crossings, rotor deceleration, or ordering relative to sag. Reported zero `com_preempts` is uninformative with `NoChain`: those counters are compiled out.
+>
+> Do not reuse the full ChainRing unchanged. In `roots.rs`, COM supplies `hw::clock::raw()` microseconds to fields that `chain.rs` labels fine-clock ticks. `log_service` also reloads `sched_raw` after phase1 may rearm the timer for blanking, so its pairing deadline can belong to the next dispatch.
+>
+> The smallest useful diagnostic is separate128-row COMP-acceptance and phase1-COM tails alongside the existing sag recorder. At a40µs interval,128 accepts cover approximately5.1ms; any initiating event outside retained coverage remains unresolved. Record the original acceptance ordinal, entry timestamp, accepted sector, observed interval, resulting estimate and requested wait; append after arming. COM should snapshot the dispatched deadline/purpose/acceptance identity before mutation, stamp immediately after bridge application, and defer its row storage. Use explicit clock units and wrapping rules. Preserve typed per-root ownership: COM must never borrow the COMP estimator or acceptance ring. A shared mutable recorder or new long interrupt mask would undermine this comparison.
+>
+> Sag timestamps describe foreground observation, not ADC acquisition; sector and PWM count likewise cannot establish acquisition phase. Bound acquisition-to-record latency, retain scan identity where available, and treat overlapping uncertainty intervals as unordered. The tail can distinguish shortened acceptance intervals from excessive accepted-entry-to-bridge delay preceding a sampled dip. It cannot prove physical zero-crossing validity or exclude an earlier unsampled bus disturbance.
+>
+> No foldback is not pulse-current clearance:100-scan signed averaging permits cancellation, and sag returns before accumulating its deciding scan. Temperature and thermal recovery remain unmeasured.
+>
+> Proceed only as an observer experiment: verify RAM/stack margin, bounded ISR cost, ownership and timestamp correctness; retain every guard, a same-image50% control, and one predefined higher-duty attempt. No further tuning ladder or qualification transfer.
+
+Review independence note: adversarial reviewer reported a notebook heading
+search and E375 range exposed prior E369 review quotations AFTER capture/source
+findings; it did not see current evidence review. Do not describe its entire
+notebook read as blind. Both started raw/source first as requested.
+
+Dispositions: accept all numerical/causal limitations; raw-field correction
+already appended. Floor6 retired as unsuccessful sensitivity trial, not proven
+inferior. Build compact separate128-row writer-owned tails on B (floor5,
+advance16,com-top), alongside existing sag ring. Requested wait/interval and
+ordinal retained; previous estimate derived only across contiguous accepts.
+Physical/revisit origin not newly inferred; timestamps are service observations.
+Snapshot COM deadline before blank-arm mutation, bracket bridge coarse stamp
+with real TIM2 fine reads to expose timestamp-read preemption. Dump only OFF.
+Do not reuse flawed existing full ChainRing or make retrospective timing claims.
+Preserve every guard/cap/ramp. One control50 then conditional60 request, l45s,
+>=120s OFF, after source/cost review. Trace may shift failure; no lean transfer.
+Decision changed by this batch: stop parameter trials; discriminate interval
+contraction from bridge delay relative to sampled sag before choosing a fix.
+
+### E381 - pre-implementation/build: compact order-capture
+
+Add typed optional hooks which fold out with NoChain; no new Cargo feature.
+New separate binary combines bounded event tails and SagRing. Predict lean
+four-root instructions unchanged; diagnostic adds only acceptance-tail writes
+after arm/watch and phase1 bridge timestamp + deferred stores. No extra work
+on persistence rejection or blank-release service beyond constant-folded hooks.
+Require host wrap/freeze/pairing tests, all-root helper audit, release/clippy,
+structure/RAM and disassembly before any flash. If instrumentation itself
+violates guard/timing coverage, reject it rather than relaxing a threshold.
+
+E381 implementation checks: archived BC21E369.e381-order.elf, SHA
+BC21E369BC74F313F50BD6C0EEDDECCD61918D0ACC4FC0637F0E83CCEED6018E.
+order-capture,advance-ref/deep-filter/com-top,release-s/thinLTO/codegen1.
+text47540/data740/bss24712,static stack allowance11412>8192 floor; reported
+historical deepest foreground path7024 is not a newly measured WCET/stack
+bound. Ring storage5128bytes, no additional large per-run stack object.
+355host tests,4compact decoder tests,7propless fixture tests,sag50/50 PASS;
+clippy/four-root helper audit PASS. Candidate has no new soft arithmetic.
+
+First implementation leaked a two-instruction compiler-layout change into
+NoChain COMP because a third tuple field kept wait live. Replaced it with a
+const-gated local; four NoChain roots now instructions AND encoded bytes
+identical to159206FD (37/742/332/155). Initial com_root103-line structure
+breach was fixed by condensing an existing comment, not changing code; full
+current structure exits0. cargo fmt incidentally reformatted untouched files;
+those unrelated formatting-only edits were reversed with apply_patch.
+
+Diagnostic root counts37/775/383/155. Zero-wait-state static path model:
+COMP1106->1159cycles,COM360->445cycles; includes bounded12-read driven and
+closed persistence loops. This excludes flash fetch/preemption/entry latency,
+so is neither measured runtime nor full response-time/WCET certification.
+COM bridge bracket is emitted at0x08001e90/96/9a: TIM2/TIM17/TIM2 reads
+after last apply_plan write0x08001e8c; RAM row stores deferred until after
+mux/blank handling. COMP row stores0x08001c1c..2a follow arm/watch. No UART
+in either root. Runtime observer effects must be measured on the control.
+E381 prediction correction: COM ordinal is loaded on every dispatch, including
+blank release, although rows are phase1 only. No zero-overhead claim for that
+path. Legacy ChainRing unit/deadline bugs are flagged, not silently used or
+retrospectively repaired. Tests added after archive are host-only; selected
+archive remains exact and is not claimed whole-ELF-identical to a later rebuild.
+
+E381 evidence reviewer, verbatim:
+
+> No blocking defect found for one bounded 50% propless diagnostic control. Conditional 60% remains contingent on that same-image control passing the declared gates and yielding complete usable traces.
+>
+> Verified target SHA `BC21E369…6018E`. Independently reran the lean comparison against `159206FD.e373-comtop.elf`: all four ISR roots match both instructions and encoded bytes.
+>
+> The trace’s units are correct: TIM17 control/service timestamps are 1µs, modulo65536; bridge brackets use real TIM2 reads at8MHz, modulo2³². Acceptance ordinals increment before arming; separate typed COMP/COM rings preserve ownership during COM preemption. Pairing checks ordinal continuity and next-sector identity. COM computes lateness before dispatch/rearming and reconstructs `scheduled=service−late`, preserving the original deadline.
+>
+> Resource evidence is adequate for this bounded experiment: diagnostic `.data=740`, `.bss=24712`, leaving11412bytes versus the8192-byte floor and reported7024-byte deepest path. Rings have a compile-time6KiB combined bound. Counter overflow is irrelevant over45seconds. Four-root helper audit passes. Diagnostic static instruction counts rise COMP742→775 and COM332→383; these counts do **not** establish runtime overhead.
+>
+> Three existing Python tests passed. Additional read-only synthetic checks confirmed refusal of unfrozen snapshots, missing/duplicate end markers, missing rows and mismatched lengths. Host capture waits through `SAGEND`, then validates both dumps. Firmware freezes through the stop paths and emits after command completion.
+>
+> Limitations: timestamps mark software observations after bridge application, not physical crossings or ADC acquisition. Wide brackets remain uncertainty; only128 events survive. Diagnostic overhead may move the failure boundary. COM also incurs ordinal-capture overhead on non-phase1 dispatches, despite E381’s narrower prediction.
+>
+> Proceed only with unchanged guards/caps/ramp, the predefined45-second command, actual target dwell ≥9seconds, complete trace validation and bridge-off checks; retain ≥120seconds OFF before the single conditional60% attempt. A failed control or unusable trace blocks that higher attempt. No qualification or lean timing transfer.
+
+E381 adversarial reviewer, verbatim:
+
+> No new pre-power safety blocker found in this bounded review. The archived ELF matches SHA `BC21E369BC74F313F50BD6C0EEDDECCD61918D0ACC4FC0637F0E83CCEED6018E`; four-root helper gates pass, and I reran the four decoder tests successfully.
+>
+> Ownership and pairing are sound for the proposed COM-above-COMP image: separate priority-owned rings prevent shared mutable-row aliasing; acceptance publishes its sequence before arming; its sector is captured before COM can advance it. COM captures that sequence before dispatch. The decoder pairs ordinals and checks successor sectors.
+>
+> Three interpretation limitations matter:
+>
+> - `bridge_stamp()` executes **after** `apply_plan()`. Its TIM2/TIM17/TIM2 bracket bounds the timestamp read, not the preceding bridge write. Guard preemption between the write and first TIM2 read can produce a narrow bracket with a delayed timestamp. Consequently, `deadline_error_us` is entry-to-post-write-observation lateness; it cannot alone establish exact electrical commutation timing.
+> - `OrderSag::freeze()` runs in foreground. The guard ISR disables power independently, but an interrupted COMP/COM handler may finish recording before foreground observes that stop. `frozen=1` establishes a stable dump, not that every terminal row preceded the electrical stop. A frontend stop can similarly admit interrupts before its freeze call.
+> - The decoder checks schema, contiguous ordinals, and sector identity, but does not validate relationships among scheduled/service/bridge timestamps or reject ambiguous service lateness. Inspect these fields explicitly before interpreting an unusual terminal pair.
+>
+> Observer impact is material: modeled paths rise COMP `1106→1159` and COM `360→445` cycles; these exclude flash/preemption latency. Static stack allowance is 11,412 bytes, but the historical 7,024-byte deepest path is not a fresh candidate-specific bound.
+>
+> The proposed same-image 50% control, then only if clean one bounded 60%/45-second exploration after ≥120 seconds OFF, is consistent with these limitations and unchanged guards. Retain normal flash verification, disabled checks, and final-off confirmation. Neither control success nor the 60% result qualifies another image or proves physical-edge causality.
+
+Dispositions: all limitations accepted. Host decoder now explicitly refuses
+ambiguous/negative service->bridge and scheduled->service order (new test);
+raw rows always retained. Before/after bracket excludes neither preemption
+before its first read nor physical switching delay. Stop suffix cannot all be
+called pre-power-off, particularly for ISR stops. No exact ADC aperture bound
+is available: feedback guard is a1ms producer-progress bound, not per-frame
+latency; chronology claims must remain software-observation scoped. A bounded
+tail is sufficient to test gross estimator contraction, not physical causality.
+New binary main frame observed216+8 bytes; no large stack allocation in ring
+reset (direct static memclr while OFF). Historical deepest path is not upgraded
+to a current full-path proof. No mutable cross-root trace or long UART mask.
+
+### E382 - pre-run order diagnostic50 control
+
+ExactBC21E369 archive; flash explicit G071,++++ACK500,l45s,min9s,timeout90,
+--propless --no-ladder --sag-dump --order-dump. Motor has been OFF>120s.
+Prediction: control preserves existing50 gates with complete128accept/COM
+tails, matching ordinal/sector identity, no wrap/clock/schema errors and alloff.
+Compare measured COMP/COM/foreground maxima to B without claiming neutral
+observation. Any gate/trace failure cancels the dependent60 request. Only a
+clean control permits one60,l45s attempt after>=120s OFF, before fresh reviews.
+
+E382 result: e382-propless500-order_01.txt, exact BC21E369 image, reason2,
+19778ms actual500 hold, accepted477839/ISR477840, no forced events. Tail/coast
+identity1002permille, coast2514eHz. Both complete dumps and pre/postoff PASS.
+128 exact ordinal/sector pairs; every fine bracket2ticks (0.25us). Interval
+min/median/max41/66/104us, average58/66/78, wait15/17/20. Entry-to-postwrite
+observation19/21/28us; observation-minus-wait4/5/11us; COM service lateness
+1/1/7us. These are software observations, not electrical switching instants.
+COMP spent11/call25us, COMlate11, foreground gap208, guardgap109. Thin1 is
+retained (report-only), late0/blank0/storm0/overrun0/tracking0. Proxyhold323mA,
+zero drift-140mA, bus resting ratio994.4permille; no calibrated pulse/thermal
+claim. Diagnostic overhead is visible against B COMPcall22/foregroundgap169;
+not a paired overhead estimate. Control and trace gates permit the previously
+reviewed single60 diagnostic request. Completion03:37:28UTC; conservative
+cooldown origin03:38:00UTC, no power before03:40:00UTC.
+
+### E383 - pre-run compact-order60 diagnostic
+
+Same archived BC21E369, explicit-probe flash,++++++++ACK600,l45s,min9s,
+timeout90,--propless --no-ladder --sag-dump --order-dump. No source, policy,
+guard, ramp or cap change. Now03:42UTC: cooldown exceeds120s. One attempt only.
+Prediction to test, not adopt: a recurrent sag refusal may retain interval/
+estimate contraction before its sampled low sequence, or a postwrite timing
+excursion; tails distinguish those software sequences without assigning a
+physical cause. A pass remains exploratory, not lean qualification. Preserve
+any refusal and both complete dumps; fresh dual review before dependent work.
+
+E383 raw result, interpretation pending dual review: e383-propless600-order_01,
+BC21E369 exact archive; FastBusSag26 at closed23153ms, hold0; actual duty560
+(SAGROW duty,CCR746), requested600 not reached. Finaloff PASS. Raw report:
+accepted228953/ISR228954/COM228954, late0,thin1,COMPspent11/call25us,
+COMlate10,guardgap109,foregroundgap224, no tracking/blank/storm/overrun.
+Current whole-run proxy worst1226mA, zero drift-80; not instantaneous current.
+Both dumps complete:128 paired ordinal/sector events,256fast/1024slow scans.
+All249 reconstructible8scan means match raw sums; terminal low comparisons
+93.6364/92.9752/91.8182% of filtered reference, streak1/2/3. Every bridge
+fine bracket2..3ticks; successive fine/coarse residuals within+/-7ticks.
+Postwrite-minus-requested-wait min/median/max4/5/11us, service lateness1/1/8;
+control was4/5/11 and1/1/7 respectively. Not an exact electrical delay bound.
+Early tail six-event sum median354us; final region grows through401/428/437/
+454/476us before returning415 at last recorded acceptance. Terminal estimate
+in the report112 is NOT the last order row74; freeze/stop suffix may admit one
+unrecorded acceptance, so do not substitute the report into recorded ordering.
+At relative-to-last-SAGROW times: first near-rail phase sample-801us, exact
+rail-696us, raw bus1067 at-396us, first low mean-162us, latch0. Cycle476 at
+-679us. No physical-edge or ADC-aperture chronology asserted. Generated
+order-pair and sag reports retained in captures/gates/e383-*.
+
+Offline documentation correction only: scripts/sag.py still called808us/207ms
+hard sensitivity cutoffs despite earlier source correction/tests. Removed that
+false band-pass claim; overlapping means can latch from one deep sample.
+No firmware/threshold change. Campaign overview now records120s OFF precaution
+and actual propless progress/refusals. Fresh reviewers evaluate raw captures
+before this interpretation; no next powered experiment adopted yet.
+
+### E384 - pre-test offline production arithmetic replay
+
+Both E383 reviewers completed; verbatim outputs/dispositions follow below.
+Evidence independently reproduced127 transitions per tail. Adversarial review
+requests replay through actual Rust functions rather than relying on host math.
+No firmware/flash/motor change: extract exact ORDERA rows from E382/E383 into
+small tracked test fixtures with source capture hashes. Initialize the state
+from first captured average/interval and the captured seed's production bounds;
+assert every subsequent modular interval/ordinal/sector, blended estimate and
+level16 wait using ZeroCross::offer. Accepted-only replay deliberately assumes
+persistence passes; it cannot validate physical crossings or unrecorded rejects.
+Prediction: both128row tails reproduce all127 transitions, separating numerical
+inconsistency from upstream edge/service-time phenomena. Board remains OFF.
+
+E384 result: both exact128row fixtures replay127 transitions through the actual
+Rust ZeroCross::offer/blend/wait path:254/254 PASS. Seed770 sets actual bounds
+40..1155. Modular timestamps, ordinals and successor sectors asserted. No
+firmware change/flash. This excludes arithmetic disagreement on these accepted
+tails; it does not test rejected edges, physical crossings, or initial seeding.
+First fixture-extraction command failed JSON decoding (PowerShell Get-Content
+extended properties); used ReadAllLines and apply_patch instead. No incomplete
+fixture was written. Host decoder5/5,propless7/7,sag50/50 alsoPASS.
+
+E383 evidence review, verbatim:
+
+> Independent raw/source audit completed; no notebook, other review, edits, or hardware access.
+>
+> - E382 reached 50%, reported 19.778 s target hold, and stopped normally with reason 2. E383 requested 60% but stopped with reason 26 at `closed_ms=23153`, `hold_ms=0`; its entire 25.739 ms sag tail is duty 560 and final CCR 746, consistent with 56%. The final `PROPLESS duty=600` is the requested label. Ramp timing suggests approximately 153 ms at 56%, not an independently stamped dwell. [E382 capture](/E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e382-propless500-order_01.txt:12), [E383 capture](/E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e383-propless600-order_01.txt:25)
+>
+> - Both captures contain 128 valid ordinal pairs. Every consecutive accepted interval matches its TIM17 timestamp difference; all 127 independently replayable estimator transitions and waits match the source arithmetic. Postwrite deadline error was **4–11 µs in both**, median 5 µs; COM service lateness was 1–7 µs clean versus 1–8 µs fault. Fine-clock brackets were 0.250 µs throughout clean and 0.250–0.375 µs fault. This does **not** show growing COM service lateness before the fault.
+>
+> - E383 shows sustained **interval stretch first**. Sector-6-aligned six-event sums were approximately 350–358 µs, then **401 µs ending 41247** and **451 µs ending 41698**. Rolling six-event sum peaks at **476 µs ending 41564**. The estimator rises **60→65→72→77→77→75→78 µs** over accepted stamps 41088–41564, with wait increasing 15→20 µs. At those terminal growing intervals, postwrite deadline error remains only 4–5 µs. The clean tail also has isolated long/short pairs and a 443 µs cycle followed by 356 µs, so one long interval alone is not discriminating. [Fault accepts](/E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e383-propless600-order_01.txt:145), [paired commutations](/E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e383-propless600-order_01.txt:273)
+>
+> - Phase excursions precede sampled low bus: at **41442**, phases are **2095/2710/76**, raw bus 1211; at **41547**, **3710/0/2061**, bus 1182. First retained raw bus below 95% of the guard reference occurs at **41847**, raw **1067/1210 = 88.182%**, 405 µs after the first near-rail phase row. The later estimator **contraction** reaches 59 µs at 41797, after phase excursions have begun but 50 µs before that first raw low. Therefore “estimator contraction preceded the disturbance” would reverse the observed chronology. [Terminal sag rows](/E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e383-propless600-order_01.txt:532)
+>
+> - The actual guard uses eight-scan means. Its three low judgements are **42081/42148/42243**, normalized **93.636/92.975/91.818%**, streak 1/2/3; the exact cross-product agrees. Five consecutive terminal raw lows begin earlier at 41847. Reference remains 1210 with essentially stable VREF.
+>
+> Limits: these are acceptance service stamps and postwrite observations, not physical crossings; sag timestamps follow ADC snapshot/guard work, not acquisition. Coarse/fine discrepancies flag 16/255 adjacent clean sag pairs and 11/255 fault pairs; fault row 42081 has approximately 3 µs extra clock-read separation. All order rows pair here, but the fault sag tail extends **182 µs beyond the last recorded bridge**. Terminal summary CI 112 µs cannot be substituted for the last recorded accepted estimate 74 µs. Recorder overhead and its critical sections remain possible contributors.
+>
+> Decision: evidence supports timing/phase deterioration before sampled bus collapse, without identifying its physical cause or demonstrating a COM-latency increase. A useful bounded next comparison is the same image with a prolonged 55% plateau before the existing 56% step, all guards unchanged and one predefined stopping outcome. This separates elapsed-running-time dependence from entering 56%; it avoids introducing another observer or assuming COM priority is the cause.
+
+E383 adversarial review, verbatim:
+
+> The captures demonstrate a real guard trip and deterioration in accepted-event timing, but do not establish a initiating COM deadline defect.
+>
+> - E382 completed 19.778 s at 50%, reason 2. E383 requested 60% but stopped at recorded applied duty 56%, reason 26, with zero target dwell. Its `applied_ccr=746` agrees with that duty. Calling this a “60% failure” would misstate the operating point. See [E382](/E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e382-propless500-order_01.txt:12) and [E383](/E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e383-propless600-order_01.txt:25).
+> - Both tails contain 128 contiguous, correctly sector-paired acceptance/commutation ordinals. Maximum entry-to-post-plan-stamp excess over requested wait is 11 µs in both; means are 5.047 µs and 4.875 µs respectively. No distinctive increase in this delay explains E383’s collapse. This metric includes arm-path, service and bridge-write latency; it is not solely interrupt lateness.
+> - E383’s rolling six-accept intervals grow from approximately 350 µs to 401/428/437/454/476 µs, ending at modulo-TIM17 times 41247–41564. The first terminal raw-bus sample below the recorded reference’s 95% line is at processing stamp 41847; the first clear terminal phase excursion is at 41442. Thus the recorded timing extension precedes these recorded observations. These are software observations, not established physical onset times. [Tail](/E:/m/robot/esc/rm32/binz/firmware50/captures/2026-09-26/e383-propless600-order_01.txt:147)
+> - The actual sag trigger uses eight-scan sliding means against a moving reference. Final means 1133/1125/1111 versus reference 1210, with VREF 1505 throughout, correctly produce streak 1/2/3. The existing decoder finds zero predicate/streak disagreements. The nominal 4 A block-average policy does not bound the terminal instantaneous phase excursions. [Guard](/E:/m/robot/esc/rm32/binz/firmware50/src/protection.rs:554)
+>
+> Recorder ownership looks coherent: separate IRQ-owned rings, acceptance state published before arming, and COM’s ordinal captured before its dispatch. Post-plan timestamp brackets span only 0.25–0.375 µs. However, SAG coarse/fine reads are unbracketed; 11/255 adjacent pairs fail the decoder’s 2 µs consistency test. Neither SAG stamps nor PWM counts date ADC acquisition. Also, `com_preempts=0` is uninformative here: `OrderRing::ON=false` disables those counters while `ORDER=true` enables compact recording. [Recorder](/E:/m/robot/esc/rm32/binz/firmware50/src/ordertrace.rs:89)
+>
+> No causal software defect is demonstrated. Measurement limitations and inactive telemetry are demonstrated.
+>
+> Single next test: an offline replay of both captured tails through the production detector/commutation functions, initialized from the first captured average and interval, asserting every subsequent average, level-16 wait, ordinal and modular interval. This directly separates estimator/arithmetic or record inconsistency from mechanisms upstream of accepted service timestamps. It requires no firmware change or powered retry; it cannot resolve physical crossing validity. Keep the board OFF. Any subsequent bench experiment should retain all existing stops, the confirmed PSU cap and final OFF verification.
+
+Dispositions: actualRust replay done above; every numerical/coverage caveat
+accepted. No growing COM delay or initiating estimator contraction established.
+Timing extension precedes the retained severe sampled bus depression, but does
+not by itself prove rotor deceleration, spurious-edge causality, or a physical
+current amplitude. No existing guard weakened. Before another power command,
+both reviewers get the bounded replay and exact55plateau plan as supplements
+to this same batch review; no cross-review exposure. The existing shell cannot
+insert a mid-run55pause then56step: proposed test is a standalone55plateau,
+which is a weaker discriminator and must not be claimed otherwise.
+
+E384 adversarial supplement, verbatim:
+
+> Supplemental disposition: the replay passes, and I support the single bounded 55% plateau as the next experiment.
+>
+> I independently verified both fixture SHA256 headers and all 128 rows against their source captures. The feature-matched host test passed. It checks 127 successive transitions per capture using production estimator and wait arithmetic, plus ordinal, modular interval and sector continuity. Its limit is correctly stated: `FixedFilter<1>` with agreeing reads assumes acceptance; it does not validate persistence filtering, rejected events, ISR timing or physical crossings. The observed estimator increase is consistent with the captured interval extension, not demonstrated contraction or arithmetic runaway.
+>
+> The unchanged BC21E369 run at target 550 addresses a useful narrower question: can deterioration occur during a 55% plateau without subsequently commanding 56%? Retain the proposed 45 s deadline, confirmed ACK550, at least 9 s of reported target dwell, at least 120 s OFF beforehand, unchanged protections and PSU limit, and both complete diagnostic dumps. Confirm preflight and final outputs OFF. A failure ends this experiment; no retry or firmware change.
+>
+> A clean result establishes one bounded exploratory 55% completion and motivates further review; it does not qualify 55% or prove the 56% step caused E383. A fault during the plateau establishes that the 56% step is unnecessary for that failure. A startup refusal or insufficient target dwell is inconclusive for the plateau question and must not count as success.
+
+E384 evidence supplement, verbatim:
+
+> Supplement accepted, with no new blocker.
+>
+> Both fixtures exactly reproduce all 128 original `ORDERA` rows in order, and their declared SHA256 hashes match the complete source captures. The test initializes the first recorded estimate/interval correctly, uses production bounds **40–1155 µs** from seed **770**, and replays the remaining **127 + 127 = 254 transitions** through production `ZeroCross::offer`. Its ordinal, timestamp-difference, sector, estimate, and wait assertions cover the intended arithmetic. I inspected fidelity; I did not rerun compilation. [Replay test](/E:/m/robot/esc/rm32/binz/firmware50/src/ordertrace.rs:206)
+>
+> The stated limitation is correct: agreeing-level `FixedFilter<1>` verifies accepted-event arithmetic, not persistence filtering, rejected observations, physical edge validity, or interrupt scheduling. The first row is an initialization anchor, not a replayed transition.
+>
+> The bounded next run is coherent: **one unchanged BC21E369 image run**, ≥120 s OFF beforehand, six `+` commands **with actual `CLIMBAT duty_tenths=550` confirmation**, lowercase `l` for the 45 s total window, retain both dumps, unchanged guards, no retry. Source defaults to 400 and increments by 25; therefore ACK verification is essential if shell state persists. The 55% ramp takes 22.5 s after handoff; require the recorded target hold to reach ≥9 s before calling it a completed comparison. [Selector/window](/E:/m/robot/esc/rm32/binz/firmware50/src/run/mod.rs:542)
+>
+> This replaces my unsupported live-step suggestion. A fault at a sustained 55% plateau would demonstrate that entering 56% is unnecessary. A clean run would supply one clean 55% observation; it would not prove that the 56% step caused E383 or resolve the timing-versus-physical-edge ambiguity.
+
+Dispositions: accepted in full. ActualRust replay and independently verified
+fixture fidelity close the arithmetic subquestion, not upstream causality.
+356host tests PASS. Host --lib clippyPASS; overly broad --lib --tests invocation
+also selected pre-existing embedded idle-scan test and failed on host-only
+imports/panic_impl, not a clean whole-target-suite claim. No unrelated fix.
+Source formatting confined to new ordertrace; powered archive unchanged.
+
+### E385 - pre-run unchanged diagnostic55 plateau
+
+BC21E369 archive,++++++ACK550,l45s,min9s,timeout90, bothdumps. Cooldown>12min,
+PSU remains last operator-confirmed3A. No control/guard/cap change. One attempt.
+Question: does failure occur without commanding56? A plateau fault answers
+yes; a clean >=9s dwell supplies one exploratory55point only. Failed startup
+or early ramp fault is not a completed plateau comparison. Stop/readback and
+retain every outcome; fresh dual review before dependent work. No automatic
+retry or higher command. Thermal precaution remains bounded exposure/cooling,
+not measured winding temperature.
+
+E385 result: retained e385-propless550-order_01.txt, same BC21E369, request550
+but actual530/CCR706, closed21846ms and hold0, FastBusSag26. Pre/post OFF PASS.
+This did NOT reach the planned55plateau; it is an early ramp fault, not a
+55hold measurement. No unchanged retry. Accepted207491/ISR207493/COM207494;
+order tail ends207492 (post-summary/freeze observations are not identical).
+Late arms0, thin1, COMP11/25us, COMlate10us, guardgap109us, foregap208us;
+tracking/storm/blank/overrun0. Current worst proxy1178mA, zero drift-140mA;
+these neither calibrate phase peaks nor establish thermal safety.
+
+128 valid order pairs, fine brackets2ticks; intervals37/63/126us min/median/max,
+estimate54/62/84, wait14/16/21, postwrite-minus-wait4/5/10us and service lateness
+1/1/7us. Sector-aligned cycles372 ->452/414/404/398us;452cycle ends62030 while
+nearby bus raw1222/1247 and normalized means100.00/100.33% remain healthy.
+Subsequent raw1130 at62409 precedes the eventual three low means94.90/94.09/
+93.57%. This is a second accepted-timing stretch before severe sampled bus
+depression, without a distinctive COM service-latency increase. No physical
+crossing/current-onset proof: order and sag timestamps are software observations,
+ADC channels sequential, and clean E382 also had one long/short cycle pair.
+
+Next proposed decision, pending both reviews: carrier sensitivity rather than
+another identical retry or new recorder. Change only running period1333->1000
+(48.012->64kHz), retaining startup6400, filter5, advance16, com-top, diagnostic
+hooks,101us ADC, every guard and cap600. One50 control and conditional60 request,
+l45s each with >=120s OFF. This changes ripple, sense and sampling relationships
+together; no unique-cause attribution. Fixture must explicitly use period1000.
+Local DRV8304 cached datasheet pp8/46 inspected: propagation180typ/250maxns;
+charge-pump sizing Qg*fPWM, example29nC gives1.856mA at64kHz versus example15mA
+capacity at8V. This example is not a board thermal/switching qualification.
+100scan phase geometry:6464mod1000=464,gcd8,125phases;100scan blocks have100
+unique phases and8/16tick circular gaps. Startup handoff at10% has1.5625us raw
+PWM pulse; deadtime26ticks remains unchanged. Gate/thermal margin is not inferred
+from low average supply current. Candidate needs all offline gates before flash.
+
+E385 evidence review, verbatim:
+
+> The proposed 64 kHz test is sufficiently discriminating for bounded exploration: it tests whether carrier frequency changes the accepted-event/sag boundary. It cannot distinguish ripple, comparator sensing, sampling, or other carrier-dependent effects.
+>
+> All three raw captures identify BC21E369:
+>
+> | Capture | Achieved nominal duty | Target dwell | Result |
+> |---|---:|---:|---|
+> | E385, requested55% | 53%, CCR706/1333 | 0 | FastBusSag26, closed21.846s |
+> | E383, requested60% | 56%, CCR746/1333 | 0 | FastBusSag26, closed23.153s |
+> | E382, requested50% | 50%, CCR666/1333 | 19.778s | Deadline2, closed39.778s |
+>
+> The ramp implies approximately346ms at53% and153ms at56%, without an independently recorded duty-write timestamp. All captures have passing pre/post OFF checks, no forced commutations, no late arms, and unchanged target ceilings.
+>
+> E385’s sector-6-to-sector-6 cycles change from372µs to452/414/404/398µs. The452µs cycle ends at TIM17=62030; adjacent sag observations at61996/62100 still report raw1222/1247 and normalized means100.00/100.33%. Raw1130 appears at62409. The terminal guard means are94.90/94.09/93.57%.
+>
+> E383 changes from353µs to401/451µs, ending41247/41698; the major raw dip1067 appears41847. Terminal means are93.64/92.98/91.82%. Thus accepted-cycle stretching precedes the major sampled dip in both faults. However, clean E382 also contains443→356µs compensation, so one long cycle is insufficient evidence of failure.
+>
+> The interval-estimator and advance16 wait equations reproduce all127 transitions in each tail exactly. E385’s estimate reaches84µs; E383’s reaches78µs. Recorded bridge timing remains comparable: entry-to-write minus programmed wait is4–10µs,4–11µs,4–11µs respectively. Fault raw dips occur at varied postwrite observation ages: E3851130/1126/1142 at20.5/20.5/31.25µs; E3831067/1066 at30.625/43.25µs. These are recording-time relationships, not ADC aperture times or physical crossing measurements.
+>
+> At64MHz,101µs advances6464 timer ticks, or464 modulo1000. GCD(464,1000)=8:125 distinct phases repeat every12.625ms. Each100-scan current block visits100 distinct phases with circular spacing8–16ticks; successive blocks rotate400ticks, and five blocks cover every phase four times. Coverage remains distributed, although individual blocks are not perfectly uniform. Preserve acquisition cadence and all current/sag thresholds.
+>
+> Proceed only after host tests and the exact candidate’s all-root machine-code audit pass. Verify running period1000/ARR999, startup6400, unchanged diagnostics/filter5/advance16/com-top/cap600, and retain the physical supply cap.
+>
+> Run one propless50% `l`45s control. Run one60% `l`45s only if the control satisfies the existing capture, OFF, dwell and matched-rate gates; require≥120s OFF between runs and retain every result. Predeclare the achievable60% dwell, approximately14.8s, rather than calling45s a target hold.
+>
+> Fixture correction is necessary: `propless.verdict` accepts `period=1000`, but `bemf_run.py:859` currently omits it and inherits1333. Explicitly carry1000 through the live fixture, backed by build/carrier evidence. A clean60% run would support carrier sensitivity and this diagnostic bench point only.
+
+E385 adversarial review, verbatim:
+
+> The proposed experiment is reasonable as a bounded carrier-sensitivity probe, with these corrections and limits.
+>
+> E385 requested 55% but reached only 53%: all 256 sag rows report duty530; CCR706 equals floor(1333×0.53). It stopped reason26 after 21.846s closed loop, with zero target dwell. E383 likewise requested60% but stopped at56%/CCR746 after23.153s closed loop. Neither is a successful target run. E382 completed deadline2 with19.778s at50%; its existing unloaded, sag-record and order-record checks pass. Both fault captures fail the run gates while their diagnostic records validate.
+>
+> E385’s terminal six-accept spans increased to438µs at61954 and452µs at62030; the first terminal phase rail appears at62203, and terminal raw bus1130 at62409. The guard’s eight-scan normalized means then crossed95% at63106 and latched at63299:94.896%,94.090%,93.574%. However, an isolated raw1135 sample occurred earlier at40394. Describe timing deterioration before the severe terminal depression, **not before every raw dip**.
+>
+> Terminal COM service lateness remained1–7µs, and register-write completion followed scheduled time by3–9µs, comparable with the clean control. This does not support growing COM-service delay as the observed terminal precursor. It also does not distinguish physical rotor slowing from late/incorrect comparator acceptance. ORDERA timestamps service entry; sag timestamps processing; ORDERB follows register writes. With CCR preload enabled, none measures actual gate-transition time. Instrumentation remains capable of shifting the operating boundary.
+>
+> Required implementation and decision conditions:
+>
+> - Explicitly pass period1000 through the fixture, validate independently declared firmware period/startup constants, and check CCR against that declared period. Retain startup6400, cap600, filter5, advance16, priorities and every existing guard.
+> - Complete host tests, carrier-rescaling checks and all-root arithmetic/disassembly audits before flashing. Run one lowercase `l`,45s request at50%; proceed to the single60% request only if all existing control gates pass, including actual dwell, matched coast identity, current/bus checks and final off state. Preserve failed attempts and≥120s OFF spacing.
+> - Report45s as the total window. Expected target dwell is approximately19.8s at50% and14.8s at60%, not45s or qualification dwell.
+>
+> The carrier rises33.3%. Nominal60% ON/OFF widths change12.484/8.344µs→9.375/6.250µs; the initial10% ON pulse shrinks2.078→1.563µs. Fixed dead time and propagation therefore consume larger pulse fractions. Switching/gate-drive losses increase approximately with frequency under otherwise equal conditions; unchanged guards do not establish thermal safety.
+>
+> The datasheet’s typical29nC example gives1.856mA at64kHz for its trapezoidal calculation, but does not establish this board’s worst-case gate charge or temperature margin. There is no thermal sensor, and the10.1ms signed-current average neither bounds pulse current nor captures the unfinished block discarded at sag trip.
+>
+> Finally,101µs ADC pacing remains unchanged, but carrier-phase coverage changes to125 repeating phases versus1333 previously. A100-scan current block covers neither complete pattern. Any improvement establishes sensitivity to the carrier change—including sensing, ripple, losses and preload latency—not a unique cause or a qualified60% envelope.
+
+Dispositions: accepted. No claim about first-ever raw dip or physical switching
+time. The differing excess ranges use distinct anchors: our entry-to-postwrite
+minus wait4..10 versus reviewer scheduled-to-postwrite3..9; neither grows at
+fault. Typical gate-charge sizing is not board thermal evidence. Record all
+carrier-dependent mechanisms and preserve exposure bounds. Both reviewers
+support only this bounded exploration, not qualification or a causal verdict.
+
+### E386 - pre-build carrier sensitivity candidate
+
+One controller knob: RUN_PERIOD_TICKS1333->1000. No new cfg gate. Startup6400,
+all protection policies, cap600 and order+sag recorder unchanged. Add OFF-time
+BEMFRUN carrier constants and explicit host --run-period-ticks to prevent
+misjudging CCRs. Historical1333 captures remain analyzable; new fixture runs
+must declare their period. Tests cover both periods, wrong/missing declarations
+and CCR mismatch; no gate band changes. Release-s/thinLTO/codegen1 order-capture,
+advance-ref/deep-filter/com-top. Prediction: four IRQ roots unchanged; geometry
+and host gates pass. If validated, one50/l45 control then conditional60/l45,
+expected19.8/14.8s actual target;>=120sOFF. No repeated failure or above600.
+
+E386 build result: archived409D33F6.e386-carrier64.elf SHA256
+409D33F6D6E62E2D4048B5F585015A64F2D5B04C6AA08753DBD8ADBDC8CA3804.
+text47600,data740,bss24712,stackallowance11412.356host tests, hostlib+target
+clippy,9propless/5order/50sag testsPASS. Four-root helper auditPASS; roots remain
+37/775/383/155 instructions. TIM16 encoded difference is only two relocated
+flash pointers in literal pool080020a4/080020a8 (A9EC->AA1C,B850->B88C), not
+new instructions or control constants. StructurePASS, no >100line function.
+Artifacts e386-roots/isr-diff/structure/carrier-disassembly retained. UART MCP
+read p confirms moe/CCRs/en0,gateslow1,nfault1; closednormally. No guard change.
+
+### E387 - pre-run64k50control
+
+Explicit verified G071 flash409D33F6,++++ACK500,l45s,expected19.8s target;
+host requires period1000,startup6400,CCR500 and normal guards/dumps/identity.
+One attempt, >=120sOFF sinceE385. Prediction: control completes without fault
+or foldback and supplies comparable order/sag observations atnewcarrier. If any
+gate fails, cancel the conditional60run. No live UART or longer exposure.
+
+E387 result: e387-propless500-carrier64_01.txt,409D33F6 flashverified, period1000/
+startup6400 emitted. Stopped reason13 IrqRate after172ms closed at actual10%
+(CCR100), target50hold0. ClosedIRQpeak72/ms,storm1 against unchanged64/ms cap;
+startupIRQpeak51. Accepted/ISR236,COM237; late0,thin0,COMP11/19us,COMlate8us,
+guardgap107us,foregap202us. Current worst proxy868mA,zero drift-149mA. Sag did
+not trip. Pre/postmoe/CCRs/en0,gateslow1,nfault1. Bothcomplete recorder checks
+pass; run gates correctlyFAIL. The conditional60attempt is CANCELLED. This
+does not test high-speed64k operation: it rejects this global64k configuration
+at low-duty handoff. No guard relaxation or unchanged retry.
+
+Next hypothesis for review only: restore48k, keepadvance16below35%, use18above
+that through a typed policy in the diagnostic binary. Relative to BC21E369,
+this changes only high-duty timing. Existing tail estimates would request
+13..18us atE382,12..18atE383,12..19atE385 versus whole-run maxspent11; these
+are not paired margins. Atfloor40,level18wait9 can legitimately late-arm-stop.
+Keepthatstop. Test one50control thenconditional60,l45s>=120sOFF, compareactual
+timing/current/sag ratherthan nominaladvance. This is not adoption of a causal
+COM-lag story. Await fresh dual review before changes/dependent run.
+
+E387 evidence review, verbatim:
+
+> E387 supports rejecting this global 64 kHz configuration and cancelling its 60% continuation. It stopped at 10% actual duty: CCR100/period1000, confirmed by all 256 fast SAG rows. Closure lasted172 ms, before the first500 ms ramp increment; target hold was0. Requested500 and reported ceiling500 are not achieved50%.
+>
+> Reason13 is `CompStorm`: storm1, step3, cap_armed1, closed IRQ peak72/ms. Source enforces >64 dispatches per1 ms bucket after a40 ms observation window. The72 peak includes that observation window, so it does not identify the trip bucket’s exact count. This is a low-duty post-handoff failure, not a high-duty comparator/carrier diagnosis. No late arms, handler overruns, tracking fault or sag latch were reported.
+>
+> Record completeness checks pass: ORDERA/B each128, acceptance ordinals109–236 contiguous; SAGROW256, SAGSLOW1024, both terminators present. POSTSTOP PREFLIGHT confirms MOE/CCRs/ENABLE0, gates low, nFAULT1. Both off-state preflights pass.
+>
+> Archive SHA256 independently matches `409D33F6D6E62E2D4048B5F585015A64F2D5B04C6AA08753DBD8ADBDC8CA3804`. Capture/source agree period1000/startup6400. E386 artifacts certify all four ISR roots clean; structural metrics pass, order-capture stack headroom11412 bytes exceeds8192. Root instruction sequences match baseline; TIM16 encoded constants differ.
+>
+> E382’s48 kHz baseline completed reason2 with19.778 s at50%, CCR666/1333≈49.962%; it is useful comparison evidence, not a30 s target hold.
+>
+> The refined candidate—restore1333, retain advance16 below35%, use18 above—is a bounded timing-sensitivity probe against BC21E369 with the same recorder/cap600. Exact wait is `floor(ci/2)−floor(ci×level/64)`. Recomputing E382’s128 tail estimates gives16-level15–20 µs versus18-level13–18 µs. Whole-run spent maximum11 µs is unpaired and establishes no guaranteed margin; at ci40 the proposed wait9 µs can exhaust it.
+>
+> Keep the late-arm stop and every guard active. One50% control, conditional60%,45 s windows, ≥120 s OFF; any failure ends the batch. No unchanged64 kHz retry or inference that advance causes/cures sag is supported.
+
+E387 adversarial review, verbatim:
+
+> The bounded advance probe is meaningful against BC21E369, provided the rebuilt image restores period 1333 and changes only the diagnostic’s typed advance schedule; verify the four IRQ roots remain equivalent before powering.
+>
+> Raw evidence supports rejecting global 64 kHz and cancelling its 60% attempt: E387 stopped reason 13 (`CompStorm`), with 72 COMP entries/ms, after 172 ms closed-loop. Applied CCR100/period1000 means 10%, despite the requested/reported target500. Hold time was zero. Post-stop MOE/CCRs/ENABLE were zero, gates low, nFAULT high.
+>
+> E382 reached 50%, held 19.778 s, and deadline-stopped safely. Its 128 paired events have correct sector identities; post-write delay exceeds programmed wait by 4–11 µs. The apparent advance calculated from service-entry/post-write stamps averages 10.23° (4.55–11.74°), not the nominal 15°. These are software timing observations, not physical rotor-angle measurements. Hold-current proxy was 323 mA; sag did not latch.
+>
+> The proposed `<16,18>` policy preserves startup/below35% behavior. Existing pre-arm publication, captured sector identity, separate IRQ-owned rings, and atomic stop-aware timer arming support unchanged concurrency. Duty-plan publication precedes advance publication, so the threshold transition can briefly use the old advance with new duty; test that transition.
+>
+> Critical wording: exhausted margin does **not** refuse the arm immediately. `roots.rs` arms `left.max(1)`, then records lateness; `states.rs` subsequently stops through foreground protection. At ci40, level18 gives wait9 µs versus observed spent maximum11. Preserve this stop unchanged.
+>
+> One 50%/45 s control, then only after every gate passes one 60%/45 s request with ≥120 s OFF, is bounded. Retain all failures; label actual target dwell separately and infer neither cause nor cure from a pass.
+
+Dispositions: accepted, with precise coverage.72 is a whole-closed-window peak,
+not necessarily the tripping bucket. Late-arm detection is foreground-polled
+after a1us minimum arm, NOT immediate prevention; do not claim otherwise.
+The derived angle30-60*(postwrite-entry)/estimatedinterval is only a service/
+postwrite proxy, not rotor truth. Duty/advance publication is sequential;
+transitionaloldadvancewithnewduty remains permitted exactly as existing code.
+
+### E388 - pre-build typed high-advance diagnostic
+
+Restore RUN_PERIOD_TICKS1333; original startup6400. Add ScheduledAdvance<LOW,HIGH>
+implementing existing Advance with existing threshold350, compile bounds
+16<=LOW<=HIGH<=22. Only order-capture selects<16,18>; productionAdvancePolicy
+and all guards/cap600 remain unchanged. No new cfg. Simulate full ramp with
+correct16->18 publication at35 and explicitly exercise existing late/blank
+stops on this policy; actual production wait math remains unchanged. Four-root
+instructions should remain equivalent toBC21E369. IfofflinegatesPASS, one50
+control thenconditional60, eachl45s>=120sOFF, same diagnosticrecorder/fixture.
+Prediction: requested high-speed waitshortens~2us in recordedtail; whether sag
+or current improves is unknown. A latearmstop is a failedexperiment, not grounds
+to relax protection. No repeatedfail or ceilingraise.
+
+E388 result: archive928C30F0.e388-advance18.elf SHA256
+928C30F0B10965943F119C77ABB3B89BDCF8252B9C9CB527A23AF6DE827E7509,
+text47640,data740,bss24712.357hosttestsPASS including schedule+late/blankstop
+simulation; hostlib/targetclippyPASS,9proplesschecksPASS,structurePASS. FourIRQ
+roots remain37/775/383/155 instructions, no new reachable math helper. TIM16
+onlypoolpointerrelocations A9EC->AA44,B850->B8B4;noinstructionchange. Same
+11412stackallowance. Changedforegroundschedule disassembly retained. No source
+or threshold change in protections. Productionalias staysAdvancePolicy; only
+diagnostic choosesScheduledAdvance<16,18>.
+
+### E389 - pre-run48k advance18 diagnostic50control
+
+Oneexplicitflash928C30F0,++++ACK500,l45s,period1333,startup6400,allrecorders.
+Cooldown>120s sinceE387. Prediction: actualtarget50~19.8s; orderwaitfollows18
+above35, no timing/electricalstop. Existingmatch/dwell/current/offgatescontrol
+whether a subsequent60request is permitted. A fail cancelsit. This testslocal
+control timing, not unique causality; no qualifying credit to production.
+
+E389 result: e389-propless500-advance18_01.txt,928C30F0 flashverified. Reached
+actual500/CCR666 thenFastBusSag26 atclosed23007ms, hold3007ms. Requested50
+controlFAIL, conditional60CANCELLED. No latearm,blank,storm,tracking oroverrun
+stop; thin17,minci40,COMP11/26us,COMlate11us,guardgap108,foregap203.
+Holdproxy317mA,worstwhole1200/worsthold1059,zero drift-135mA. Targetcurrent
+cannot bound the retained near-rail phase values. Coast2470eHz, matched1038pm
+is failed-run window identity, NOT proof of slip. AlloffreadbackPASS.
+
+Order128pairscomplete, actual18waitmatchesestimates. Beforeterminalbusdip,
+six-acceptspans395/390/396us expand460/472/468/472/488; estimate64->86/89.
+Postwrite-minus-waitusually4..7us; one13usrow occurs beforethissequence, not
+proof ofinitiatingdelay. Terminalphasevalues40/4007/2390 atTIM1740361 precede
+raw1139at40852. Lastmeanlow1148/1141/1131 vsfilt1213 (vref1506/1507/1507)
+at41563/41671/41780,streak1/2/3. LastORDERA41788 is8us AFTER lastSAGROW;
+unsigneddelta65528 isnot65mslatency. Snapshot/freezeandservice timestamps
+are not simultaneouselectricalobservations. No newinstrument/faulttaxonomy.
+Thisn1failedcontrol doesnot establish statisticalinferiority or physicalcause.
+Freshreviews underway beforedependentwork. Both failedtiming/carriervariants
+are retained; no retryorqualifiedcredit.
+
+E389 evidence review, verbatim:
+
+> E389 failed its 50% control: actual CCR666/1333 ≈49.96%, 23.007s closed-loop, 3.007s at target, reason26 with three consecutive sag judgements. E382/advance16 completed 19.778s at50% on deadline. E383’s60% request reached only56% (CCR746/1333 ≈55.96%; terminal SAGROW duty560), with zero target dwell before reason26. Each is n=1; E389’s conditional60% cancellation was appropriate.
+>
+> The advance change was effective. Production computes `wait=floor(ci/2)-floor(ci*level/64)`, with saturation—not a single rounded product. All128 E389 waits match18; all128 rows in each baseline match16. At ci64µs, wait changes16→14µs. E388 certifies four arithmetic-clean ISR roots and identical root instructions; TIM16 encoded bytes differ because a constant moved. This supports a controlled schedule change, not proof of causation.
+>
+> E389’s terminal117µs accepted gap ends at40276µs; its estimator reaches89µs and six-accept span488µs before the first recorded raw-bus sub95% sample at40852µs. Sag means subsequently reach94.70/94.06/93.24%. The estimator then falls to52µs despite the dip. E383 likewise develops six-accept spans401→476µs before its first raw sub95% sample at41847µs. E382 also contains isolated104µs gaps without terminal sag. These are software service timestamps and processed ADC observations: they establish recorded ordering, not physical crossing validity, rotor slip, ADC aperture timing, or supply causation. Whole-hold/coast comparisons cannot fill that gap.
+>
+> The proposed revisit sensitivity test is useful. Restore48k/advance16; use a typed experimental policy suppressing **both normal and overdue foreground software revisits only at duty≥35%**, retaining real COMP interrupts, acceptance filtering, tracking, and every electrical stop. Existing revisit counters mark foreground “inflight” association; they neither identify event origin conclusively nor exclude revisit influence. Loaded-rig conclusions do not transfer.
+>
+> Predeclare one45s-total50% run, then one45s-total60%-request run only if50 completes cleanly; ≥120s OFF between attempts, stop the sequence on the first fault. Keep existing recorders. Early tracking failure would demonstrate dependence on revisits; recurrence of the timing/sag sequence would refute their necessity under this intervention. Clean completion would justify a later matched cohort, not establish reliability or unique cause.
+
+E389 adversarial review, verbatim:
+
+> The proposed revisit suppression is a useful protected sensitivity test against BC21E369, provided both foreground retry paths are suppressed and the result remains exploratory.
+>
+> Raw recomputation:
+>
+> - E389 reached 50%, then sag-stopped after 3.007 seconds at target. Its six-accept span expanded from approximately 393–396 µs to 460–488 µs. The 117 µs accepted interval ended at timestamp 40276; large phase-code excursions appeared at 40361, the first retained raw sub-95% bus sample at 40852, and the guard latched at 41780.
+> - E383 stopped at applied 56%, before reaching requested 60%. Its six-accept span expanded from approximately 350 µs to 401–476 µs before the first retained raw sub-95% sample.
+> - E382 completed normally with 19.778 seconds at 50%. These are single observations, not evidence that advance 18 necessarily causes failure or advance 16 reliably survives.
+>
+> The ordering supports accepted-timing disturbance preceding sampled bus collapse. Comparator-entry timestamps are not physical zero crossings, and sag timestamps describe processing, not ADC apertures. Consequently, neither software acceptance, rotor deceleration, nor electrical demand is uniquely identified. Mean acceptance-to-bridge excess over programmed wait was similar across captures: 4.90/5.05/4.88 µs for E389/E382/E383; this does not establish a new COM-delay mechanism.
+>
+> Implementation requirements:
+>
+> - Put the typed policy veto before both fresh and overdue admission in `Locked::revisit`, using the published/applied duty convention explicitly; test 349/350 boundaries and both retry paths.
+> - Preserve real-edge admission, persistence, estimator, timer and electrical-stop code. Verify the actual selected binary and ISR comparison against BC21E369.
+> - Existing `revisit_inflight` counts are foreground associations, potentially coalesced and interrupted by physical accepts. They cannot prove event origin. The current sector/COM-idle observations also precede the HAL critical section; suppression removes that software path but does not diagnose its concurrency behavior.
+> - Suppression changes interrupt demand and foreground critical-section workload together, so success establishes sensitivity to the revisit mechanism, not uniquely false-crossing causation.
+>
+> One 45-second 50% control, then conditional 60% after ≥120 seconds OFF, is appropriately bounded. Any tracking/sag stop ends the probe without retry or qualification. Loaded-motor revisit conclusions do not automatically transfer.
+
+Dispositions: all accepted. One qualifyingcounterexample cannot be invented
+from a failed/controln1 comparison; keep hypothesis distinctfromverdict. The
+next probe removes softwarependsANDtheirforegroundcriticalsection workload;
+even a pass cannot isolate which contribution matters. Actualappliedduty gates
+both normal and overdue requests. ExistingLateArm foregroundstop remains
+unchanged; no claim of immediaterefusal. Before furtherediting, checkpoint the
+currentsource/notes/artifactinventory; installed928C30F0 is diagnostic/OFF.
+
+Checkpoint tooling correction: the root pre-commit hooks ran sibling rm32
+tests/builds unexpectedly and rejected UTF-16 generated gate reports. No
+hardware was touched. The saved unstaged patch was restored; every non-
+firmware50 diff section matches that saved patch exactly, so no sibling source
+change from the hooks remains. Keep their original changes untouched. Gate
+reports are mechanically normalized to UTF-8/LF; rustfmt changes here are import
+ordering/formatting only. Retry skips only root-wide Rust hooks for this commit;
+firmware50-specific tests/audits above remain the evidence, not sibling builds.
