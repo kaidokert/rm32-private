@@ -60,3 +60,14 @@ unchanged. New inline checks are after refusal/on-unmask; compiled mask encloses
 flag reads/EXTI writes, no new helpers/loops. Existing COMP maximum excludes the
 final resume tail, so it is not full WCET. No claim this is a speed optimization.
 Single short60screen next, same stops, >120sOFF since E492. Stop on regression.
+
+Fix2 E493 PASS short regression:60%14.775s,reason2,late0/thin0,guard0,
+ceiling600,forced0,coast2178 vs baseline2168eHz,proxy2342mA. COMPmax16,
+COMlate10us,guardgap105us. Those maxima do not cover the resume tail's full
+cost. Fresh MCP alloffPASS,Uartclosed. No observed short-run regression.
+
+Before fix3: inside existing foreground revisit mask, reject a cached sector
+that differs from current detector step or a non-idle COM timer phase. Keep
+the caller's retry quota; do not substitute another sector. No ISR changes.
+Prediction: stale-sector tests fail old admission and pass corrected admission;
+four ISR streams unchanged; one short60screen after cooldown.
