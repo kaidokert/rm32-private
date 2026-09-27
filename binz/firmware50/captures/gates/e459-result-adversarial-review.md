@@ -1,0 +1,8 @@
+**Hold the proposed screen pending a timing condition; E459 alone does not justify powered execution.**
+
+- **Off-to-powered:** E459 demonstrates synthetic authority, admission and selected timer outcomes with COMP masked. It does not exercise powered comparator noise, persistence, acceptance preemption or actual commutation. E458’s failure remains unexplained; E459 establishes a possible mechanism, not its historical cause.
+- **Observer cost:** 92 ticks = 11.5 µs includes Capture inside interrupt exclusion. Removing Capture changes timing and layout; that measurement neither bounds Quiet nor establishes full COM latency. The root audit supports bounded structure, not deadline compliance.
+- **Safe failure:** Late-arm shutdown is a useful terminal path. Unchanged protections still face additional interrupt masking. Demonstrate that stopping clears a pending software COMP request and phase-4 timer, including publication interrupted before arm; the disabled cases do not establish that integrated behavior.
+- **Timebase/scheduling:** The raw-to-origin mapping needs a proven acceptance-age limit below one 16-bit wrap and timely guard-clock extension. `delay_us` uses entry-time `now`, then arms later: callback execution shifts observation deadlines. Five slots bound requests, not total interference or rescue timeliness.
+
+**Condition for one screen:** establish, for the exact AC4ADA59 artifact, a conservative exclusion/full-COM bound against the shortest relevant deadlines and confirm those clock/stop invariants. Then one 15%/28 s screen with the stated fault-stop/no-retry rule is defensible as screening only.

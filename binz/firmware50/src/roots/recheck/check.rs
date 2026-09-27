@@ -8,6 +8,24 @@ static TICKS: AtomicU32 = AtomicU32::new(0);
 static PHASE: AtomicU32 = AtomicU32::new(0);
 static ARMED: AtomicU32 = AtomicU32::new(0);
 
+static INPUT_NOW: AtomicU32 = AtomicU32::new(0);
+static INPUT_AGE: AtomicU32 = AtomicU32::new(0);
+static INPUT_AVG: AtomicU32 = AtomicU32::new(0);
+static INPUT_BITS: AtomicU32 = AtomicU32::new(0);
+
+struct Capture;
+impl Observer for Capture {
+    fn inputs(now: u32, v: crate::revisit::Inputs, admitted: bool) {
+        INPUT_NOW.store(now, Ordering::Relaxed);
+        INPUT_AGE.store(v.elapsed_us, Ordering::Relaxed);
+        INPUT_AVG.store(v.average_us, Ordering::Relaxed);
+        // present/line/pending/post/admitted, low five bits respectively.
+        let bits = 1 | (u32::from(v.line_live) << 1) | (u32::from(v.pending) << 2)
+            | (u32::from(v.post_level) << 3) | (u32::from(admitted) << 4);
+        INPUT_BITS.store(bits, Ordering::Relaxed);
+    }
+}
+
 fn off() -> bool {
     !hw::gpio::enable_is_high() && !hw::pwm::moe_is_set()
         && hw::pwm::compares() == (0, 0, 0)
@@ -23,7 +41,7 @@ pub unsafe fn interrupt() {
     // SAFETY: caller is the unique TIM16 vector at the declared priority.
     let mut at = unsafe { Root::<Motor>::enter() };
     let start = hw::fine::raw();
-    after_phase(&mut at, if CASE.load(Ordering::Relaxed) == 0 { 1 } else { 4 });
+    after_phase_observed::<Capture>(&mut at, if CASE.load(Ordering::Relaxed) == 0 { 1 } else { 4 });
     TICKS.store(hw::fine::raw().wrapping_sub(start), Ordering::Relaxed);
     PHASE.store(S.com().phase.load(Ordering::Relaxed), Ordering::Relaxed);
     ARMED.store(u32::from(hw::com_timer::is_running()), Ordering::Relaxed);
@@ -64,6 +82,7 @@ fn prepare(case: u32) -> bool {
         hw::comp::line_enable();
         hw::nvic::mask(stm32::Interrupt::ADC_COMP);
         hw::comp::clear_pending();
+        INPUT_BITS.store(0, Ordering::Relaxed);
         CASE.store(case, Ordering::Relaxed); DONE.store(0, Ordering::Relaxed);
         hw::nvic::pend(stm32::Interrupt::TIM16);
         hw::nvic::unmask(stm32::Interrupt::TIM16);
@@ -93,5 +112,9 @@ pub fn run(case: u32, sink: &mut impl crate::report::Sink) -> bool {
     sink.kv("requests", counts.0); sink.kv("observations", counts.1); sink.kv("retired", counts.2);
     sink.kv("phase", phase); sink.kv("armed", armed); sink.kv("off", u32::from(off()));
     sink.kv("pass", u32::from(ok)); sink.say("\r\n");
+    sink.say("RECHECKINPUT "); sink.kv("case", case);
+    sink.kv("now", INPUT_NOW.load(Ordering::Relaxed)); sink.kv("age", INPUT_AGE.load(Ordering::Relaxed));
+    sink.kv("avg", INPUT_AVG.load(Ordering::Relaxed)); sink.kv("bits", INPUT_BITS.load(Ordering::Relaxed));
+    sink.say("\r\n");
     ok
 }

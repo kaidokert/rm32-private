@@ -11,6 +11,15 @@ impl Policy for Foreground { const ON: bool = false; }
 pub struct Timed;
 impl Policy for Timed { const ON: bool = true; }
 
+pub trait Observer {
+    fn inputs(now: u32, input: crate::revisit::Inputs, admitted: bool);
+}
+pub struct Quiet;
+impl Observer for Quiet {
+    #[inline(always)]
+    fn inputs(_: u32, _: crate::revisit::Inputs, _: bool) {}
+}
+
 struct State {
     schedule: Option<Schedule>,
     requests: u32,
@@ -45,6 +54,11 @@ fn clock_and_origin() -> (u32, u32) {
 /// Only COM touches the model. Guard never borrows it: the stop latch removes
 /// authority. COMP publication invalidates its generation before atomic arm.
 pub fn after_phase(at: &mut Root<Motor>, serviced: u32) {
+    after_phase_observed::<Quiet>(at, serviced);
+}
+
+/// Typed diagnostic hook: the motor path instantiates the empty observer.
+pub fn after_phase_observed<O: Observer>(at: &mut Root<Motor>, serviced: u32) {
     STATE.root(at, |state| cortex_m::interrupt::free(|_| {
         let a = authority();
         let (now, origin) = clock_and_origin();
@@ -57,12 +71,17 @@ pub fn after_phase(at: &mut Root<Motor>, serviced: u32) {
         if a.phase != 0 && a.phase != 4 { return; }
         let Some(schedule) = state.schedule.as_mut() else { return; };
         let owns = schedule.owns(&a);
-        let live = owns && crate::revisit::admit(crate::revisit::Inputs {
+        let live = owns && {
+            let input = crate::revisit::Inputs {
             closed_loop: true, line_live: hw::comp::line_live(), pending: hw::comp::pending(),
             average_us: schedule.average(), elapsed_us: schedule.elapsed(now),
             post_level: hw::comp::level() == edge_is_rising(Step::new_clamped(a.step as u8)),
             already_retried: false,
-        });
+            };
+            let admitted = crate::revisit::admit(input);
+            O::inputs(now, input, admitted);
+            admitted
+        };
         let decision = schedule.observe(now, &a, live);
         state.observations = state.observations.wrapping_add(1);
         if !owns {

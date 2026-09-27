@@ -46921,3 +46921,193 @@ Current installed A242FE15 is a NO-DRIVE diagnostic, not BD07379C; bench outputs
 OFF, MCP closed. Source host model unchanged; new target-only probe builds,
 clippy and four-root helper audit pass, structure<=100 lines/function.
 The80% goal remains active and no envelope gain is claimed for this batch.
+
+## E459 — exact off-only admission inputs, prediction before build
+
+Previous batch made progress: first real disabled callback measurements and
+a retained failed request, not a motor gain. Decision now: identify the failed
+predicate without changing admission. Add a typed observer selected only by
+recheck-off; the motor binary keeps a no-op observer. Snapshot the actual
+Inputs passed to admit, together with its now/elapsed and verdict, inside the
+same masked decision. No second comparator read used as a substitute. Report
+after cleanup. Cases0/1 only on this changed diagnostic; original expectation
+is retained. A failed post-level or pending predicate implicates live admission;
+elapsed<=half implicates the time/setup path. Neither result establishes a
+motor failure cause. Extra stores perturb timing; do not transfer this probe's
+duration to the unobserved candidate. Same ENABLE/MOE/CCR0 invariant and no
+drive parser. Prior dual review requested precisely this discriminating test.
+
+
+E459 preflash reviews:
+
+> No concrete blocker to one off-only `t` test in the supplied change.
+>
+> - Capture receives the exact `Inputs` passed to `admit` and its returned result; no hardware reread substitutes for predicate inputs. `closed_loop=true` and `already_retried=false` remain explicit constants.
+> - Encoding is correct: bit0 present, bit1 line_live, bit2 pending, bit3 post_level, bit4 admitted.
+> - `bits=0` means no capture; `now/age/avg` may then retain previous-case values and must be ignored.
+> - Admission, ownership checks, scheduling, and case1’s expectation remain unchanged. Production selects `Quiet`; capture adds timing overhead to the probe.
+> - No gate-enable operation or live transmission is introduced in the shown path. Reporting follows cleanup; the standalone binary has no drive command parser.
+>
+> E458 establishes case1 failure, not its predicate inputs: it contains no `RECHECKINPUT` row. E459 runtime evidence remains pending; build/audit claims are not independently verified here.
+
+> Raw E458 establishes case1’s missing request, rearm, and sampled off readbacks. It does not identify the rejection cause; no captured-input row is supplied.
+>
+> - Capture records the values actually passed to `admit`, but hardware reads are sequential. Masking interrupts does not freeze comparator level or pending state. This is an admission-input record, not a simultaneous hardware snapshot.
+> - Stores occur after `admit`, so they cannot change that invocation’s admission result. They extend exclusion before `observe`, pend, and arm; instrumentation can also shift earlier execution. E459 cannot establish E458’s historical cause or unchanged timing.
+> - Entry/exit off checks cannot prove continuous off. The shown path contains no direct gate-enable operation, but that conclusion depends on the omitted helper contracts and other interrupt paths.
+> - `bits=0` means capture absent; other input fields may be stale.
+>
+> No concrete blocker to one off-only `t` emerges from the supplied code under those helper contracts.
+
+Disposition: admitted for one disabled suite only. bits0 absent invalidates other
+fields; readings are actual sequential predicate inputs, not simultaneous analog
+state. E459 can diagnose its own refusal, not retrospectively prove E458 cause.
+CC66836766F68FF8921FC349163ADBF97505B86936FB5D81BED0D49880A9C9B8,
+release/clippy/four-root helper audit/structure pass. Root wrappers unchanged
+instruction streams except relocated literals; callback has added stores and
+is not timing-equivalent. MCP list_ports healthy. Flash/reset explicit G071,
+p then t then p, retain entire output, close UART. No motor command.
+
+
+E459 result: CC668367 six cases passed in one suite, no retries. Actual input
+bits11 case0 = present/live/post, not admitted (age8 vs half500). Cases1/2
+bits27 = admitted, pendingfalse, ages67/407 vs half40. Cases3..5 bits0:
+no valid input row; ignore repeated old fields. Counts (requests,observations,
+retired) match expected (0,1,0),(1,1,0),(1,1,0),(0,1,1),(0,0,0),(0,0,0).
+Callback brackets79/92/84/33/20/20 ticks =9.875/11.5/10.5/4.125/2.5/2.5us.
+Both p readbacks ENABLE/MOE0, every case off1. UART closed; no motor command.
+E458 refusal NOT reproduced or explained. Six passing cases are not a retry
+cohort for E458: this changed probe answered actual-admission-input coverage.
+
+> Raw recomputation: each tick is 0.125 µs.
+>
+> | Run | Case results | Durations, case order |
+> |---|---|---|
+> | E458 | 0 passes; 1 fails | 9.000, 10.125 µs |
+> | E459 | 0–5 pass reported request/phase/armed expectations | 9.875, 11.500, 10.500, 4.125, 2.500, 2.500 µs |
+>
+> E458 case1 requested zero versus one expected; its cause remains unknown.
+>
+> E459 bits11 means present, line live, post level, **not admitted**; bits27 adds admission. Pending is clear in both. Case0 is early: age8 versus first due501. Case1 age67 exceeds due41; the model predicts another check after54 µs. Case2 age407 permits one late request, then exhausts slots—not a catch-up burst. Those delays were not measured. Cases3–5 bits0 mean no captured input; their age/average values are stale. `pass` does not assert observations or retirements.
+>
+> This supports a driver-disabled peripheral experiment, not motor qualification. ADC_COMP is masked, schedules reset between cases, and callback timing includes Capture but excludes full COM service. The static audit establishes neither WCET nor deadlines.
+>
+> **I would defer the proposed motor screen.** Missing admission evidence: original AC4ADA59 artifact correspondence; actual `admit`/budget rules; pending, wrong-level and dead-line rejection; autonomous five-slot progression; real COMP acceptance/publication/arm handoff and stop cancellation. Next test should exercise those paths disabled, recording timer delays and terminal state. A subsequent 15% screen would remain exploratory, without establishing Tracking improvement or qualifying60/80.
+
+> **Hold the proposed screen pending a timing condition; E459 alone does not justify powered execution.**
+>
+> - **Off-to-powered:** E459 demonstrates synthetic authority, admission and selected timer outcomes with COMP masked. It does not exercise powered comparator noise, persistence, acceptance preemption or actual commutation. E458’s failure remains unexplained; E459 establishes a possible mechanism, not its historical cause.
+> - **Observer cost:** 92 ticks = 11.5 µs includes Capture inside interrupt exclusion. Removing Capture changes timing and layout; that measurement neither bounds Quiet nor establishes full COM latency. The root audit supports bounded structure, not deadline compliance.
+> - **Safe failure:** Late-arm shutdown is a useful terminal path. Unchanged protections still face additional interrupt masking. Demonstrate that stopping clears a pending software COMP request and phase-4 timer, including publication interrupted before arm; the disabled cases do not establish that integrated behavior.
+> - **Timebase/scheduling:** The raw-to-origin mapping needs a proven acceptance-age limit below one 16-bit wrap and timely guard-clock extension. `delay_us` uses entry-time `now`, then arms later: callback execution shifts observation deadlines. Five slots bound requests, not total interference or rescue timeliness.
+>
+> **Condition for one screen:** establish, for the exact AC4ADA59 artifact, a conservative exclusion/full-COM bound against the shortest relevant deadlines and confirm those clock/stop invariants. Then one 15%/28 s screen with the stated fault-stop/no-retry rule is defensible as screening only.
+
+Disposition: no motor admission yet. Artifact AC4ADA59 SHA rechecked exact;
+admit/Budget rules and source proof exist in tree but were omitted from the
+narrow result packet, not missing from implementation. Autonomous expiry and
+accepted-arm replacement were not exercised by the six synthetic cases.
+The timing concern stands. Existing cycle model on exact AC4ADA59, every
+instruction charged two fetch wait states: COM2619cycles=40.92us, COMP with
+both persistence bounds12 gives3076=48.06us. This model omits APB stalls and
+interrupt nesting, so NOT a certified bound; its final printed 'fetch not
+modelled' footer is stale when --fetch-model is enabled. No new timing claim
+or powered permission follows. Preserve both model outputs as estimates.
+Current installed CC668367 is off-only, outputsOFF, UARTclosed.
+
+## E460 — reduce redundant schedule work, offline proposal
+
+Decision: can the five-observation scheduler retain exact behavior without
+duplicating its generation/average/quota inside Budget? Existing Schedule
+already validates ownership, average bounds and absolute age, then advances
+strictly to a future slot after every observation (including refused ones).
+Its request count is therefore <= its observation count <=5. At observation
+slot k, Budget.used<=k; the budget's next request deadline cannot exceed that
+slot's deadline. After observe's due check, reserve adds no reachable decision.
+Proposed simplification: replace embedded Budget with constructor validation
+(slot=5 when average out of bounds), cancel by slot=5, and pend=live_admitted
+only after the existing owner/age/due checks. Preserve exact due formulas,
+missed-slot skipping, cancellation and public interface. Differential host
+tests against the current implementation across bounds, mixed admission,
+skipped times, generations and wrapping clocks must pass before adoption.
+This is a measured-cost response, not a guard relaxation or new waveform.
+Dual review of this proof comes before implementing the simplification.
+
+
+E460 design reviews:
+
+> No reachable counterexample **provided `crate::revisit::AVERAGE_MIN_US == 32`**. That constant’s definition is absent, so the hardcoded lower bound cannot be verified from this excerpt.
+>
+> For valid averages, let `D(k)` be the shared deadline formula. It strictly increases, including for odd averages, because both implementations use `average >> 1`.
+>
+> Initially `used = slot = 0`. At any due observation, `used <= slot`, so `D(used) <= D(slot) <= elapsed`. Consequently, with ownership and elapsed checks passed, `reserve` returns exactly `live_admitted`.
+>
+> The advancement formulas select the first slot whose deadline exceeds elapsed, or terminal slot 5. Thus they strictly advance the slot; whether admission succeeds or fails, `used <= slot` remains true. Rejected observations consume a slot without breaking equivalence. Late observations skip identically.
+>
+> Budget exhaustion cannot occur with a remaining slot: `used == 5` implies `slot == 5`. Cancellation and invalid estimates are equivalently terminal.
+>
+> The supplied hardware trace does not establish this equivalence; the invariant does. If the imported minimum differs from 32, constructor behavior can diverge.
+
+> No removal-specific counterexample, provided `AVERAGE_MIN_US == 32` and cancellation sets `slot = 5`.
+>
+> For valid averages, `used <= slot` holds initially. At each due observation, slot advancement strictly increases `slot`; `used` increases by at most one. Request deadlines increase with their index, so `Budget`’s deadline is never later than the observation deadline. Thus reservation equals `live_admitted` after the outer checks. Invalid averages terminate before arithmetic; the largest valid deadline is 32767.
+>
+> Shared limitations remain:
+>
+> - **Callbacks:** arbitrarily many calls at elapsed 0 return the same delay. Five bounds consumed observation slots, not callback invocations.
+> - **Clock wrap:** origin 0, first observation after `2^32 + 41` microseconds, `now = 41`, average 80: both implementations pend stale work.
+> - **Ownership:** an unobserved stop/restart restoring identical authority, or generation reuse after wrap, can make stale work appear owned. Serialization and obsolete-IRQ cancellation remain external requirements.
+> - **Skipped deadlines:** elapsed 300 with average 80 produces one request and terminates in both implementations.
+>
+> The supplied hardware trace does not establish those external guarantees.
+
+Disposition: use the imported AVERAGE_MIN_US, not a duplicated32 constant.
+Both reviews support equivalence under shared lifetime/serialization assumptions;
+do not call five consumed slots a bound on arbitrary early callback invocations.
+No new wrap or ownership guarantee claimed. Implemented compact state with
+terminal slot for invalidation. Frozen old implementation retained only in
+host tests, mixed live masks over all valid averages, skipped/boundary/repeated
+observations and wrapping origins; separate invalid-average/stop/gen/phase and
+age-cutoff tests. Next release build compares the actual emitted helpers before
+any disabled or powered use. No threshold changed.
+
+
+E460 result: 404hosttestsPASS including differential tests; release/clippy/
+structure/four-root auditPASS. Staged motor ELF SHA
+02F4D1E2469275126FAC04E158119D8F6372E07528A9AB93F909EF2C252DB478,
+NOT flashed. COMP833-entry instruction stream unchanged apart from relocated
+bytes; COM438->436 plus reduced reachable helpers6->4. Static COM model
+2619->2239cycles (380=5.9375us at64MHz,14.51%); combined compact-state plus
+Quiet-observer emitted change. No measured runtime/latency/envelope benefit.
+
+> No definite compact-code defect is apparent, but equivalence remains conditional on the omitted `Budget` implementation.
+>
+> - **Independence:** Legacy retains the budget path, which usefully tests its removal, but shares slot arithmetic and ownership logic with the replacement. Common errors survive. Importing the current `Budget` also means the “frozen” oracle is not self-contained.
+> - **Coverage:** Every stated valid average, 32 admission patterns, three lateness patterns, repeated timestamps, wraparound, and cancellation boundaries are exercised. This is substantial, but not exhaustive over observation histories: admission bits follow nominal loop slots, arbitrary jitter is absent, and cancellation after prior consumption is not directly covered.
+> - **Proof gap:** `used <= slot` establishes request-cap safety, not deadline eligibility. Equivalence additionally requires the budget deadline to be no later than the current slot’s due time, and identical validity/cancellation rules. Those cannot be verified from the supplied code.
+> - **Cost:** 380 cycles = 5.9375 µs at 64 MHz, a 14.51% modeled reduction. Including 24 exception cycles gives 41.296875→35.359375 µs. Attribution is combined; runtime/WCET remains unestablished.
+>
+> The supplied evidence supports limited differential equivalence and modeled savings, not complete semantic certification.
+
+> No definite scheduler defect is evident, but the evidence supports conditional equivalence, not a complete proof.
+>
+> - **Missing premise:** `Budget` is absent. Replacing `reserve(...)` with `live_admitted` requires proving its validity limits match, cancellation is permanent, and every reachable slot deadline satisfies the budget deadline. `used <= slot` establishes quota safety; alone it does not establish deadline equivalence.
+> - **No revival is observation-dependent:** an observed authority mismatch permanently exhausts this instance. A stop/acceptance followed by restored matching authority between observations is invisible. Atomic owner invalidation, generation discipline, and obsolete-IRQ clearing remain essential integration obligations.
+> - **Five slots do not bound callbacks:** arbitrarily many early observations return another delay without consuming a slot. The bound applies to due observations and requests. Timer rearming and duplicate interrupts need separate validation.
+> - **Tests:** broad differential coverage helps, but the oracle shares slot-transition arithmetic, allowing common defects. Independent assertions should establish strictly future delays, slot progress, and terminal permanence.
+> - **Cost:** the combined emitted change supports a 380-cycle model reduction only. Missing fetch/peripheral/preemption costs prevent a runtime bound.
+>
+> Proceed with off-only validation; it cannot establish energized commutation timing or protection behavior.
+
+Dispositions: Budget source was included and its deadline premise verified by
+both E460 design reviews; omitted from the narrower result packet, not absent
+from the evidence tree. The proof uses BOTH used<=slot and monotone D(k), plus
+identical imported validity bounds. Differential tests do not establish all
+possible histories or independent controller correctness; old oracle imports
+unchanged Budget, not a permanently frozen dependency. Keep that limitation.
+Existing independent slot tests check exact five due ages, skip-to-end,
+cancellation/no-revival and wrap. Additional tests may strengthen coverage but
+do not replace hardware timer/stop integration. No new concurrency guarantee
+or arbitrary callback-count bound claimed. Proceed only to disabled expiry/
+accepted-arm replacement validation; powered admission remains deferred.
+Installed CC668367 off-only probe, ENABLE/MOE0, UARTclosed.80%goal active.

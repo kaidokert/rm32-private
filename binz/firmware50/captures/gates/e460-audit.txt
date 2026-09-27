@@ -1,0 +1,11 @@
+ISR-root audit: target/thumbv6m-none-eabi/release/diode-timed-revisit
+
+  [ADC_COMP] reachable=2  OK
+
+  [TIM16] reachable=4  OK
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT PASSED: 4 root(s) certified clean.

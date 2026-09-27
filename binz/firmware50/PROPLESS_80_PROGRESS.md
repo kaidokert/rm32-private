@@ -1,5 +1,14 @@
 # Propless 80% campaign — progress, not qualification
 
+E459/E460 CURRENT: CC668367 off-only input probe installed, outputs OFF,
+UART closed. Changed probe passed six disabled cases; original E458 refusal
+unexplained, not excised. Longest observed callback11.5us is not WCET.
+E460 compact scheduler staged02F4D1E2, NOT flashed:404hosttests including
+differential old/new model pass; four-root arithmetic/clippy/structure pass.
+COM static model2619->2239cycles,14.51% lower, not measured motor progress.
+Next: disabled timer-expiry/accepted-arm cancellation validation, then assess
+one lower protected screen. No powered run or envelope increase this batch.
+
 E458 CURRENT: A242FE15 off-only probe installed, ENABLE/MOE0, UART closed.
 No motor command parser. One disabled suite: case0 pass, case1 no expected
 COMP request; stopped, cases2..5 unrun. Callback brackets9/10.125us, not WCET

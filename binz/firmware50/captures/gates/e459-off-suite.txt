@@ -1,0 +1,16 @@
+# E459 CC66836766F68FF8921FC349163ADBF97505B86936FB5D81BED0D49880A9C9B8
+# MCP p,t,p; driver disabled throughout program; no motor parser
+RECHECKOFF idle enable=0 moe=0
+RECHECKOFF case=0 ticks125ns=79 requests=0 observations=1 retired=0 phase=4 armed=1 off=1 pass=1
+RECHECKINPUT case=0 now=49629 age=8 avg=1000 bits=11
+RECHECKOFF case=1 ticks125ns=92 requests=1 observations=1 retired=0 phase=4 armed=1 off=1 pass=1
+RECHECKINPUT case=1 now=49802 age=67 avg=80 bits=27
+RECHECKOFF case=2 ticks125ns=84 requests=1 observations=1 retired=0 phase=0 armed=0 off=1 pass=1
+RECHECKINPUT case=2 now=49980 age=407 avg=80 bits=27
+RECHECKOFF case=3 ticks125ns=33 requests=0 observations=1 retired=1 phase=4 armed=0 off=1 pass=1
+RECHECKINPUT case=3 now=49980 age=407 avg=80 bits=0
+RECHECKOFF case=4 ticks125ns=20 requests=0 observations=0 retired=0 phase=4 armed=0 off=1 pass=1
+RECHECKINPUT case=4 now=49980 age=407 avg=80 bits=0
+RECHECKOFF case=5 ticks125ns=20 requests=0 observations=0 retired=0 phase=3 armed=0 off=1 pass=1
+RECHECKINPUT case=5 now=49980 age=407 avg=80 bits=0
+RECHECKOFF idle enable=0 moe=0

@@ -1,7 +1,11 @@
 //! Five bounded observation slots, not continuous foreground polling.
 //! This model never schedules a commutation. Hardware owners must apply its
 //! decisions atomically with acceptance and stop and clear obsolete IRQs.
-use crate::revisit_budget::{Budget, REQUESTS};
+use crate::revisit_budget::{MAX_AVERAGE_US, REQUESTS};
+
+#[cfg(test)]
+#[path = "revisit_schedule_equivalence.rs"]
+mod equivalence;
 
 pub struct Authority {
     pub powered: bool,
@@ -22,15 +26,14 @@ pub struct Schedule {
     origin_us: u32,
     average_us: u32,
     slot: u8,
-    budget: Budget,
 }
 
 impl Schedule {
     pub const fn elapsed(&self, now: u32) -> u32 { now.wrapping_sub(self.origin_us) }
     pub const fn average(&self) -> u32 { self.average_us }
     pub const fn new(generation: u32, step: u32, origin_us: u32, average_us: u32) -> Self {
-        Self { generation, step, origin_us, average_us, slot: 0,
-            budget: Budget::new(generation, average_us) }
+        let valid = average_us >= crate::revisit::AVERAGE_MIN_US && average_us <= MAX_AVERAGE_US;
+        Self { generation, step, origin_us, average_us, slot: if valid { 0 } else { REQUESTS } }
     }
 
     /// Only idle/listening phases, never accepted COM or blanking.
@@ -41,7 +44,7 @@ impl Schedule {
     }
 
     fn due(&self) -> Option<u32> {
-        if self.slot >= REQUESTS || self.budget.next_due(self.generation).is_none() { return None; }
+        if self.slot >= REQUESTS { return None; }
         let half = self.average_us >> 1;
         Some(if self.slot == 0 { half + 1 } else {
             self.average_us + half * u32::from(self.slot) + 1
@@ -53,12 +56,14 @@ impl Schedule {
     pub fn observe(&mut self, now: u32, a: &Authority, live_admitted: bool) -> Decision {
         let elapsed = now.wrapping_sub(self.origin_us);
         if !self.owns(a) || elapsed >= 0x8000 {
-            self.budget.cancel();
+            self.slot = REQUESTS;
             return Decision { pend: false, delay_us: None };
         }
         let Some(due) = self.due() else { return Decision { pend: false, delay_us: None }; };
         if elapsed < due { return Decision { pend: false, delay_us: Some(due - elapsed) }; }
-        let pend = self.budget.reserve(self.generation, elapsed, live_admitted);
+        // Each due observation consumes at least one slot; requests <= slots.
+        // The old Budget deadline cannot exceed this slot's already-met due.
+        let pend = live_admitted;
         // Select the first future rescue slot directly: no callback catchup
         // and no runtime loop on the M0 path. Successful `due` bounds products.
         let half = self.average_us >> 1;
