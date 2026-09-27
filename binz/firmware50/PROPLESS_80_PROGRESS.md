@@ -1,6 +1,12 @@
 # Propless 80% campaign — progress, not qualification
 
-E461b CURRENT: DEA54192 off-only lifecycle probe installed, outputs OFF,
+E462 CURRENT: 02F4D1E2 motor candidate installed, OFF/UARTclosed. First15%
+screen FAILED:936ms targethold, guard15 LateArm, wait15us/spent17us, no retry.
+Top-level28 is incomplete reason mapping, not an unexplained new fault.
+Timed recheck active854 requests/34826observations; not accepted-rescue counts.
+Dual reviews retained. No powered envelope gain; candidate not promoted.
+
+E461b historical: DEA54192 off-only lifecycle probe installed, outputs OFF,
 UART closed. One suite: five autonomous UIF-backed expiries within8..9us of
 slots; replacement expiry1003us; injected post-stop service harmless. All
 three limited cases PASS. No successful-request timing in this suite, no

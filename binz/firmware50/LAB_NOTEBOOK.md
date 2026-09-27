@@ -47241,3 +47241,102 @@ tests solely because a deliberately narrow review packet omitted context.
 No powered test authorized by this result. All three lifecycle cases now have
 actual peripheral evidence; installed DEA54192 is OFF,UARTclosed. No envelope
 increase; goal remains active.
+
+## E462 — production delivery audit and bounded-screen decision, before run
+
+E461 made progress on actual peripheral lifecycle, not powered envelope.
+Decision: whether one15%/28s screen of frozen02F4D1E2 is justified, not a
+qualification or higher-rung climb. No new code or protection change proposed.
+The software pend is the same hw::comp::pend used by the prior foreground
+revisit; it does not synthesize a comparator level or acceptance. Production
+ADC_COMP masks/acks, tests rate, runs actual persistence/estimator, and either
+arms through stop-dominant crossing transaction or resumes the live input.
+Timed observations add COM/PRIMASK work and may delay physical edge service;
+disabled8us callback is NOT WCET or successful-delivery timing. That is the
+specific residual risk to assess, with actual guard paths and E459 request
+rows supplied this time. E457b publication proof and E461 replacement/stop
+evidence remain scoped, not blanket safety certificates. Proposed single
+screen prediction: ordinary deadline stop at15%, no late-arm/handler/tickgap/
+tracking/current/bus fault; stop batch on first refusal, never retry to pass.
+No run until fresh dual review of full delivery/guard context is dispositioned.
+
+E462 reviews, verbatim:
+
+> **Measured evidence:** E459 reports requests only in cases 1–2, retirement in case 3, and zero observations in cases 4–5; its maximum is 92 ticks = 11.5 µs. E461b reports five expiries/observations without requests in case 6. These establish disabled-path outcomes, not powered delivery, WCET, or continuous physical gate safety. Missing case/flag definitions and `Schedule`/`admit` implementations prevent independent verification of quota and boundary claims. Neither capture establishes identity with frozen02F4D1E2.
+>
+> **Source reasoning:** Recheck admission, reservation and pend share interrupt exclusion; stop/active validation also encloses timer arming. This supports protection against rearming after a latched stop, while delaying guard service during exclusion. `line_live()` checks IMR only, not NVIC enablement. Under `com-top`, COM could interrupt COMP’s payload publication before `accept_seq` changes; generation matching alone does not establish snapshot coherence. Applicability depends on the frozen build’s priorities.
+>
+> Two mappings matter: guard code 15 decodes to `UnknownGuard`, not `LateArm`; proposed tracking limits below 238 µs are rejected, despite the helper’s 200 µs floor.
+>
+> **Residual risk and screen:** No demonstrated hazard here categorically prevents the bounded 15% experiment. It discriminates gross delivery/liveness regressions only if revisit activity and stop outcomes are recorded against a matched baseline. Completion alone cannot distinguish effective rescue from unused revisits or timer-paced false acceptance, nor establish rotor lock or thermal safety.
+> Measured evidence: E459 reports 20–92 ticks (2.5–11.5 µs), requests in cases 1–2, retirement in case 3, and no observations in cases 4–5. E461b reports five expiries/observations through 3009 µs in case 6; cases 7–8 make no observations. These are disabled-path samples, not powered delivery or shutdown measurements. Missing `check`, `Schedule`, and admission implementations prevent verifying case/flag mappings, quota boundaries, and `pass=1`. Neither capture establishes correspondence to frozen02F4D1E2.
+>
+> Source reasoning: the masked recheck transaction excludes guard/COMP software interleaving; comparator hardware remains asynchronous, and COMP rechecks persistence. However, under `com-top`, COM can interrupt COMP **before** sequence publication, while payload stores are partially complete. Generation retirement covers post-publication interruption; it does not alone prove the earlier window harmless. Also, ordinary `com_arm` clears peripheral status but does not unpend TIM16, and COM dispatch does not validate UIF. A stale NVIC request could therefore service a replacement phase prematurely; the omitted scheduler must demonstrate tolerance.
+>
+> Residual risk: these are concrete unresolved delivery concerns, not demonstrated blockers to this bounded screen. Protection code also rejects watchdog tightening below 238 µs despite the helper’s 200 µs floor.
+>
+> The 28-second screen can expose gross regression. To discriminate improvement, predeclare matched-baseline outcomes and verify recheck activity; survival alone cannot distinguish recovered crossings from software-paced acceptance. It cannot establish rotor lock or thermal safety.
+
+Dispositions: neither review finds a demonstrated blocker to this bounded
+screen. Generation alone was never snapshot proof; E457b audits the actual
+phase4 saved-payload/prepublication/masked-COMP case and phase1-after-arm
+ordering. Those prior reviews remain on file. Ordinary recheck rearm follows
+the acknowledged one-pulse expiry in its unique TIM16 handler; accepted-arm
+replacement uses prepare_crossing clearing both peripheral and NVIC pending,
+as witnessed by E461. No claim that arbitrary software-pending interleavings
+are thereby safe. Diagnostic captures name DIFFERENT hashes, never identical
+motor builds. UnknownGuard mapping of15 affects reporting, not removal of
+authority; preserve exact raw reason/late counters and address mapping later
+if exercised. Tracking floor238 is not loosened (existing240 retained).
+Admission for ONE15%/28s screen: stop on any fault; retain startup, targethold,
+accepted/COM rates, late/thin/guard counters, poststop TIMEDRECHECK counters,
+coast if available. Compare descriptively to E45215%20.278s reason2, not
+causally to a different image. Completion is not independent rotor truth or
+proof of a useful rescue. Flash exact02F4D1E2, disabled p/role checks first;
+all protections unchanged, no duty beyond15%, cooling already>120s.
+
+E462 result: FAIL, no retry or higher duty. Exact02F4D1E2 flashed/reset exit0;
+disabled p and cached boot role/latch/deadline PASS. One command9 via fixture
+captured2026-09-27/e462-propless150-timed_01.txt. Closed3437ms, hold936ms at
+150tenths, not promised19s. Guard rawreason15, late_arms1, ci_at_late59us,
+spent_at_late17us, thin1. Top-level reason28 is UnknownGuard mapping noted by
+preflight review, NOT an unidentified physical fault. compmax24us,gapmax109,
+COMlatemax7,mixed-purpose. No tracking/nFAULT/foldback. Coast2142eHz and
+matched ratio980permille are instrument results, not proof of slip. Proxy
+237mA with zero drift-285mA is not calibrated current. All fixture and MCP
+poststop readbacks OFF; UARTclosed. Candidate does not pass its first powered
+screen. Prediction falsified. No causal attribution from a single run;
+source arithmetic for ci59/fixed16 and actual wait versus postentry delay
+must be examined before another motor attempt. Dual result reviews next.
+
+E462 dual result reviews, verbatim:
+
+> Raw recomputation: 11,782/0.936 = 12,587.6 accepts/s; 1,000,000/(6×79) = 2,109.7 eHz. The tail spans 936,750 µs, not two seconds. At ci=59 and level16, wait=29−14=15 µs; spent=17 exhausts it by 2 µs. This assumes the binary selects FreshEstimate and fixed16. Only 936 ms at target was demonstrated.
+>
+> The code supports immediate LateArm shutdown; `reason_from_code(15)` falls through to UnknownGuard. The supplied material lacks the enum establishing its numeric code as 28. Poststop readings support an off state, not complete shutdown-timing proof.
+>
+> TIMEDRECHECK counters are boot-cumulative activity, not successful acceptances or necessarily this run’s counts. Neither maxima nor zero preemption counters identify the delay source; those counters can compile away. COM and COMP are peers by default, so COM cannot interrupt COMP unless the actual build changes priorities. Recheck masking can instead delay COMP entry, outside its software-stamped spend.
+>
+> Smallest discriminating next change: test the actual binary’s priority/policy selection and model a pending recheck across acceptance publication and crossing-arm replacement. Only if COM can preempt is that specific hypothesis viable. Preserve the late-arm stop; no repeat, higher duty, or reason-label-only diagnostic rebuild.
+> Raw arithmetic: `wait=(59>>1)-floor(59×16/64)=29−14=15µs`; spend17 exhausts it by2µs. Hold rate `11782/0.936≈12587.6/s`; tail `11781/0.936750≈12576.4/s`, or2096.1eHz. Against coast2142eHz, that is978.6‰, compatible with reported980‰ but not independently reproducing its calculation. `1e6/(6×79)=2109.7eHz` uses the rounded interval. Hold covers936ms; the tail does not establish a full two-second window.
+>
+> The source supports LateArm shutdown and an unmapped guard15 becoming UnknownGuard; numeric28 still requires the omitted enum mapping. Postflight shows an off state, not shutdown latency. Zero margin histograms provide no distribution evidence; current drift285mA exceeds the237mA hold proxy.
+>
+> The proposed preemptor needs qualification: default COMP and COM are priority peers, so COM cannot interrupt an executing COMP. Recheck can delay COMP entry, but this spend starts after entry. With `com-top`, interruption becomes possible. Maxima and boot-cumulative recheck counts cannot establish causality or successful recheck acceptances.
+>
+> Smallest discriminating change: add a source/configuration test pinning the experimental binary’s actual COMP/COM priorities and timed-recheck selection. Resolve that prerequisite before timing instrumentation. Separately regression-test reason decoding; no diagnostic rebuild solely for labeling. No repeat or duty increase is supported.
+
+Dispositions: fixed16 FreshEstimate selected by the exact motor binary;
+wait59=15us and17us spend exhausts it by2us. UnknownGuard=28 is explicitly
+src/protection.rs:97, omitted from narrow result packet. Frozen E460 was
+built with advance-ref,deep-filter,com-top: COM0x40,COMP0x80,Guard0.
+Thus COM preemption is possible, not proved to be this event's cause.
+Preflight counters0 and one run before postflight854/34826/1 bound these
+boot-cumulative deltas to this attempt; requests still do not equal accepts.
+NoChain removes preemption counters, so zero is not evidence of absence.
+Retain all existing protection thresholds. Do not promote this candidate or
+repeat it unchanged. Next causal lever is reducing/preventing optional
+recheck work inside the pre-arm critical timing window while preserving
+stop/accepted-sector ownership, or retiring the timed strategy if its cost
+cannot be justified. No new diagnostic campaign or reason-only flash planned.
+Installed02F4D1E2 remainsOFF/UARTclosed.80%goal unfinished.

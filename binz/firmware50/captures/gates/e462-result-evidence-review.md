@@ -1,0 +1,7 @@
+Raw recomputation: 11,782/0.936 = 12,587.6 accepts/s; 1,000,000/(6×79) = 2,109.7 eHz. The tail spans 936,750 µs, not two seconds. At ci=59 and level16, wait=29−14=15 µs; spent=17 exhausts it by 2 µs. This assumes the binary selects FreshEstimate and fixed16. Only 936 ms at target was demonstrated.
+
+The code supports immediate LateArm shutdown; `reason_from_code(15)` falls through to UnknownGuard. The supplied material lacks the enum establishing its numeric code as 28. Poststop readings support an off state, not complete shutdown-timing proof.
+
+TIMEDRECHECK counters are boot-cumulative activity, not successful acceptances or necessarily this run’s counts. Neither maxima nor zero preemption counters identify the delay source; those counters can compile away. COM and COMP are peers by default, so COM cannot interrupt COMP unless the actual build changes priorities. Recheck masking can instead delay COMP entry, outside its software-stamped spend.
+
+Smallest discriminating next change: test the actual binary’s priority/policy selection and model a pending recheck across acceptance publication and crossing-arm replacement. Only if COM can preempt is that specific hypothesis viable. Preserve the late-arm stop; no repeat, higher duty, or reason-label-only diagnostic rebuild.
