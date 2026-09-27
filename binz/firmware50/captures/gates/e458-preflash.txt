@@ -1,0 +1,2 @@
+PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS
+DIODESELFTEST en0 six_sectors_pwm=PASS latch=PASS deadline=PASS

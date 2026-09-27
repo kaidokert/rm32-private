@@ -3,6 +3,8 @@ use super::*;
 use crate::revisit_schedule::{Authority, Schedule};
 use crate::shared::Seam;
 
+pub mod check;
+
 pub trait Policy { const ON: bool; }
 pub struct Foreground;
 impl Policy for Foreground { const ON: bool = false; }

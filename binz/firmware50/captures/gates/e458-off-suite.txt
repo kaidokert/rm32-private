@@ -1,0 +1,6 @@
+# E458 A242FE1509456F006F2A85D5312A4822AF28B8CAC25A35D31C389BFF330B18BD
+# MCP COM41 115200; p, one t suite, final p; no drive command
+RECHECKOFF idle enable=0 moe=0
+RECHECKOFF case=0 ticks125ns=72 requests=0 observations=1 retired=0 phase=4 armed=1 off=1 pass=1
+RECHECKOFF case=1 ticks125ns=81 requests=0 observations=1 retired=0 phase=4 armed=1 off=1 pass=0
+RECHECKOFF idle enable=0 moe=0

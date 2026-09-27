@@ -46815,3 +46815,109 @@ exercise measuring the actual candidate callback, including its masked path,
 stop refusal and obsolete-timer replacement. Do not add a powered recorder or
 repeat the old25% failure to answer that offline/peripheral question. Candidate
 AC4ADA59 remains staged; installed BD07379C remains OFF/UARTclosed.
+
+## E458 — disabled recheck exercise, prediction before implementation/build
+
+Decision: measure the actual recheck callback and exercise timer replacement
+without granting bridge power. Separate probe binary, no Controller and no
+motor command parser; ENABLE/MOE/CCRs remain off. Test invokes after_phase from
+the real TIM16 vector with synthetic software authority and COMP NVIC masked.
+Cases: future observation, live due request, exhausted slots, generation
+replacement, stop refusal and blanking retention. Retain before/after fine
+timestamps, request/observation counts and timer-purpose/readback; dump only
+after cleanup. This is peripheral/branch evidence, not motor qualification or
+proof of worst-case execution time. The measured callback includes its full
+masked transaction; surrounding higher-priority interference can only enlarge
+the bracket. No production recorder added. Compare the emitted callback to
+the staged binary, quantify changes rather than transferring a timing blindly.
+Dual review must admit the probe before flashing it. A probe failure leaves
+bridge off and blocks the powered candidate, not permission to skip the test.
+
+
+E458 preflash review and disposition:
+
+> From the supplied source, I find no concrete energization or ownership defect requiring rejection before flash. This is source review, not hardware validation.
+>
+> The exercised path is `run → prepare → software-pended TIM16 → check::interrupt → after_phase`. It reaches the real TIM16 vector and callback with a `Root<Motor>` token; the declared priority still depends on the omitted `tim16_init` implementation.
+>
+> Expected results, assuming successful arm, stable comparator admission, and sufficiently prompt execution:
+>
+> | Case | requests, phase, CEN | observations, retired |
+> |---|---|---|
+> | 0 | 0, 4, 1 | 1, 0 |
+> | 1 | 1, 4, 1 | 1, 0 |
+> | 2 | 1, 0, 0 | 1, 0 |
+> | 3 | 0, 4, 0 | 1, 1 |
+> | 4 | 0, 4, 0 | 0, 0 |
+> | 5 | 0, 3, 0 | 0, 0 |
+>
+> Those tuples are conditional: `Budget`, `revisit::admit`, and `com_arm` implementations are absent. Hardware pending/level changes and execution delay can also change outcomes.
+>
+> COMP masking does **not** defeat admission: `line_live()` reads EXTI IMR, which remains enabled. It prevents COMP servicing.
+>
+> Visible operations preserve bridge-off state; shutdown follows snapshotting. However, endpoint readbacks alone cannot prove continuous off.
+>
+> Coverage limits: no timer-expiry callback, production COM dispatch, COMP acceptance, or repeated-slot execution is demonstrated. Observation/retirement counts are printed but unchecked. These are validation gaps, not demonstrated bugs.
+
+> **No concrete energization or ownership blocker is demonstrated for flashing this standalone off-only probe.** That verdict does not qualify powered operation.
+>
+> - **Off-only safety:** The shown path never enables the bridge, changes gate roles, or invokes the commutating COM root. Both normal completion and timeout call `guard_trip`. This depends on the omitted `com_arm`, `com_stop`, and initialization helpers honoring their contracts.
+> - **Synthetic cleanup:** `guard_trip` revokes synthetic authority by clearing active flags and latching a reason. It does not clear `STATE.schedule`; cases 0, 1, and 5 can leave one behind. That is residual model state, not surviving drive authority: another preparation overwrites it, and an unpowered callback clears it.
+> - **Concurrency:** `line_enable` briefly unmasks COMP inside interrupt exclusion, then COMP is masked before exclusion ends. That is not a dispatch window. Guard can preempt outside the callback’s inner critical section and invalidate a test, but the shown shutdown cannot restore drive authority. The preparation prechecks outside exclusion are not proof of safe handover with real owners; this standalone program supplies no such activation path.
+> - **Timing and coverage:** `ticks125ns` measures the bracketed call, including its internal masking and possible preemption—not full ISR latency or WCET. CEN readback proves neither expiry timing nor repeat dispatch. Observations/retirements are printed, not asserted.
+>
+> Missing validation: helper-contract inspection, timeout cleanup, timer expiry, and comparator-noise sensitivity.
+
+Both reviews find no concrete energization blocker to this separate probe.
+Local helper audit: com_arm only writes TIM16 with stopped/active check under
+exclusion; com_stop stops its registers; tim16_init writes priority Motor=0x40.
+No Controller in probe main, no bridge-on call reachable from test callback.
+No claim of powered admission, expiry/accepted replacement coverage or WCET.
+Printed observation/retirement values will be checked explicitly against the
+review table, not inferred from pass alone. Physical comparator instability
+may fail admission; retain any such failure, do not retry blindly.
+Probe A242FE1509456F006F2A85D5312A4822AF28B8CAC25A35D31C389BFF330B18BD,
+release-s/thinLTO/codegen1, clippy/four-root audit/structure PASS.
+MCP list/open/write/read/close healthy; preflash p on installed image reports
+MOE/CCRs/ENABLE0, gates_low1, nFAULT1, PREFLIGHT PASS. No powered command.
+Next flash explicit G071 probe, reset, p then one t suite; expected six rows
+as reviewed and final off. This changes installed firmware to a NO-DRIVE
+diagnostic, not an operating image. Hardware is never energized by this test.
+
+
+E458 result (one suite, no retries): A242FE15 flashed/reset on explicit G071.
+MCP p -> ENABLE/MOE0. Case0 passed: requests0/observations1/retired0,
+phase4/CEN1/off1, callback72 fine ticks=9.000us. Case1 failed expectation:
+requests0 instead of1, observations1/retired0, phase4/CEN1/off1,
+callback81ticks=10.125us. Suite stopped; cases2..5 NOT RUN. Final p ENABLE/MOE0;
+UART closed. No motor command, no energized test. Do not promote candidate.
+Live admission, time reconstruction or probe assumptions remain unresolved.
+Callback bracket excludes IRQ entry/setup/cleanup and is not WCET. Probe
+after_phase269 instruction entries matches staged count; observe101->100,
+due36/reserve31. Counts include pool entries and are not timing equivalence;
+these measured times do NOT qualify the staged motor image.
+
+> Case 0: 72 × 125 ns = **9 µs**; case 1: 81 × 125 ns = **10.125 µs**, a **1.125 µs** difference. These bracket `after_phase`, not the complete interrupt; neither establishes WCET.
+>
+> Case 0 matches expected `(requests, phase, armed) = (0,4,1)`. Case 1 reports `(0,4,1)` versus expected `(1,4,1)`: one observation, zero requests, zero retirements. Cases 2–5 have no supplied results. Idle endpoints show enable/MOE clear; both rows report `off=1`. No powered validation occurred.
+>
+> For average 80 µs, the first due age is **41 µs**. The prepared age is 60 µs; actual observed elapsed is unreported.
+>
+> Next: repeat only case 1, driver-disabled, recording the **actual values used**: ownership, elapsed, due, line-live, pending, post-level, admission result, and decision. Buffer inside the existing exclusion; report afterward. This distinguishes timing eligibility from live-input refusal without inventing a cause or powering the candidate.
+
+> The failure is real; its cause is unresolved. Case 1 recorded one observation, zero requests, phase 4 and timer running. That does not identify which admission input refused, or exclude a probe/timebase defect. Cases 2–5 provide no evidence because they did not run.
+>
+> 72/81 ticks convert to 9/10.125 µs, assuming the stated tick scale. They measure the bracketed `after_phase` calls, excluding interrupt entry, preceding setup and subsequent cleanup. Neither is WCET; the failed case does not establish successful-pend timing or transfer to powered operation.
+>
+> Next action: instrument the off-only probe with a bounded memory snapshot of the **actual decision inputs**: authority/ownership, raw/base/extended clock and origin, elapsed/due, line-live, pending, comparator polarity match, budget state and decision. Report after shutdown; avoid diagnostic resampling as evidence of earlier conditions. Check the independently constructed schedule origin against clock reconstruction.
+>
+> Retain the failing expectation. Sampled off checks support those checkpoints, not continuous-off proof. **No motor admission.**
+
+Dispositions: agree. Next decision is exactly which sampled predicate refused,
+not whether to retry the motor. Capture actual decision inputs in a separate
+off-only instantiation; post-hoc resampling cannot identify the earlier refusal.
+Preserve failed expectation and capture. No changes to thresholds/protections.
+Current installed A242FE15 is a NO-DRIVE diagnostic, not BD07379C; bench outputs
+OFF, MCP closed. Source host model unchanged; new target-only probe builds,
+clippy and four-root helper audit pass, structure<=100 lines/function.
+The80% goal remains active and no envelope gain is claimed for this batch.

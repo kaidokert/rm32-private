@@ -1,5 +1,12 @@
 # Propless 80% campaign — progress, not qualification
 
+E458 CURRENT: A242FE15 off-only probe installed, ENABLE/MOE0, UART closed.
+No motor command parser. One disabled suite: case0 pass, case1 no expected
+COMP request; stopped, cases2..5 unrun. Callback brackets9/10.125us, not WCET
+or powered-image timing qualification. Dual result reviews require the actual
+refused admission inputs before any powered candidate. No envelope gain.
+Prior motor image BD07379C and staged scheduler AC4ADA59 preserved.
+
 Updated through E453 depth-cache screen, 2026-09-27.
 E456 staged AC4ADA59: separate `diode-timed-revisit` binary implements five
 bounded COM-owned observation slots; foreground retry owner is disabled.

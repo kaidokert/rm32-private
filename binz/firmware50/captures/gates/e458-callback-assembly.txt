@@ -1,0 +1,5 @@
+Instruction-entry counts, NOT cycles; data/pool entries may be included
+firmware50::roots::recheck::after_phase [(269, ['firmware50::revisit_schedule::Schedule::observe']), (269, ['firmware50::revisit_schedule::Schedule::observe'])]
+firmware50::revisit_schedule::Schedule::observe [(101, ['firmware50::revisit_budget::Budget::reserve', 'firmware50::revisit_schedule::Schedule::due']), (100, ['firmware50::revisit_budget::Budget::reserve', 'firmware50::revisit_schedule::Schedule::due'])]
+firmware50::revisit_schedule::Schedule::due [(36, []), (36, [])]
+firmware50::revisit_budget::Budget::reserve [(31, []), (31, [])]
