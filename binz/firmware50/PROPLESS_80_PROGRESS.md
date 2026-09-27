@@ -1,6 +1,13 @@
 # Propless 80% campaign — progress, not qualification
 
 Updated through E453 depth-cache screen, 2026-09-27.
+E456 staged AC4ADA59: separate `diode-timed-revisit` binary implements five
+bounded COM-owned observation slots; foreground retry owner is disabled.
+402 host tests, release/clippy/structure/four-root audit pass. Not flashed.
+Reviews required fixes to live-admission atomicity and offline-only reports;
+both corrected. Remaining pre-admission work: actual masked-path latency,
+publication/expiry interleavings and bounded clock-origin reconstruction.
+No motor test or new envelope claim. Installed board still BD07379C OFF.
 Offline E454/E455: bounded revisit scheduler design reviewed; new pure
 generation-owned quota model passes 398 host tests and a no-clone doctest.
 It is not connected to a binary: loadable bytes and four ISR streams remain

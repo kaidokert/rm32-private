@@ -474,7 +474,8 @@ pub struct Com {
     /// by the foreground.
     pub active: AtomicBool,
     /// What the armed one-shot will do: **0 idle, 1 commutate, 2 end the
-    /// reverse blank, 3 open the line at the blanking floor** (E134).
+    /// reverse blank, 3 open the line at the blanking floor, 4 listening
+    /// recheck (dedicated experimental binary only)**.
     ///
     /// Phase 3 was missing from this list until the independent review of
     /// E153 pointed out that the stale comment sat on the very field that

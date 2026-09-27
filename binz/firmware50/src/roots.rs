@@ -22,6 +22,8 @@ use crate::protection::Reason;
 use crate::shared::{CompPrio, Guard, Motor, Priority, Root, SHARED as S};
 use crate::sixstep;
 
+pub mod recheck;
+
 /// Reverse blank (`bench-reverse-blank`): post-commutation mask length. It
 /// arms while the reference's six-slot average is at least 1500 half-µs
 /// (`commutation::REVERSE_BLANK_SUM_US`, E100).
@@ -1279,6 +1281,15 @@ pub unsafe fn com_root<C: ChainLog>() {
 /// Same vector and Root ownership requirements as [`com_root`].
 #[inline(always)]
 pub unsafe fn com_root_with<C: ChainLog, P: hw::pwm::RoleWrite>() {
+    // SAFETY: same unique TIM16 root contract as this wrapper.
+    unsafe { com_root_scheduled::<C, P, recheck::Foreground>() }
+}
+
+/// Typed recheck ownership; only the dedicated experimental binary selects it.
+/// # Safety
+/// Same TIM16 priority and unique root invocation contract as `com_root_with`.
+#[inline(always)]
+pub unsafe fn com_root_scheduled<C: ChainLog, P: hw::pwm::RoleWrite, R: recheck::Policy>() {
     // SAFETY: the caller is the TIM16 handler (this fn's contract).
     let mut at = unsafe { Root::<Motor>::enter() };
     hw::com_timer::ack();
@@ -1288,16 +1299,13 @@ pub unsafe fn com_root_with<C: ChainLog, P: hw::pwm::RoleWrite>() {
     }
     let preempted = count_preempt::<C>();
     let now_raw = hw::clock::raw();
-    let late = now_raw.wrapping_sub(S.com().sched_raw.load(Ordering::Relaxed) as u16) as u32;
+    let late = note_com_lateness(now_raw);
     let ordinal = if C::ORDER {
         S.det().accept_seq.load(Ordering::Relaxed)
     } else {
         0
     };
     let mut order_stamp = None;
-    if late < 0x8000 && late > S.com().late_max.load(Ordering::Relaxed) {
-        S.com().late_max.store(late, Ordering::Relaxed);
-    }
     // The chain's service row (E154), pushed at the end; see `crate::chain`.
     let phase = S.com().phase.load(Ordering::Relaxed);
     let mut bridge = 0u16;
@@ -1375,8 +1383,18 @@ pub unsafe fn com_root_with<C: ChainLog, P: hw::pwm::RoleWrite>() {
         }
         _ => {}
     }
+    if R::ON { recheck::after_phase(&mut at, phase); }
     log_service::<C>(&mut at, now_raw, bridge, late, phase, preempted);
     log_order_bridge::<C>(&mut at, order_stamp, ordinal, now_raw, late);
+}
+
+#[inline(always)]
+fn note_com_lateness(now_raw: u16) -> u32 {
+    let late = now_raw.wrapping_sub(S.com().sched_raw.load(Ordering::Relaxed) as u16) as u32;
+    if late < 0x8000 && late > S.com().late_max.load(Ordering::Relaxed) {
+        S.com().late_max.store(late, Ordering::Relaxed);
+    }
+    late
 }
 
 #[inline(always)]

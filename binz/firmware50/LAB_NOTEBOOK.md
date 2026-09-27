@@ -46579,3 +46579,130 @@ release/clippy PASS, final loadableSHA stillBEF2E46A...8D6C41D and allfour
 ISRstreams unchanged. Board nottouched; BD07379C remainsinstalledOFF.
 Nextstep is actual schedulerintegration/transactionaudit, notanother motor
 run on unchangedfirmware. E454/455 no duty/eHz/envelopeprogress claimed.
+
+### E456 - bounded timer-recheck integration design, prediction before edits
+
+Candidate separate diode-timed-revisit binary, fixed16/48k/NoChain, foreground
+revisit disabled by typedBemf wrapper. COM owns generation-tagged schedule;
+phase4 means listening/recheck, nevercommutation. Existing phase1 accepted
+commutation and phase2/3blank retain priority. Begin schedule afterphase1,
+origin lastacceptedsoftwarestamp mapped to guard's32bitclock. Five possible
+observations at strict half,1.5,2,2.5,3*average thresholds; initialobservation
+can run in existingblank-endservice. Failedliveadmission advances observation
+cursor without spendingrequest; skip alreadyexpired slots, never a zero-time
+catchupburst. This is NOT equivalent to continuousforegroundpolling: fewer
+observationopportunities, bounded deterministic servicing instead of220usgap.
+Every actualrequest needs fulloldlivegate and Budget reservation, then normal
+COMP filter/estimator; no fakecrossing/COM. At mostfivechecks/pends pergen.
+Atomic accept-arm already stops/clearsoldTIM16 + pending beforephase1starts.
+Acceptance publishesseq beforearm: recheck seeingchangedseq cancels itself,
+never writesoverpendingaccept. All recheckenable/pend/timerwrites maskguard
+and recheck reason/active/stopped/generation. Stoplatch invalidates authority
+even ifoldmodelstate survives. COMphase4 is listening, notblank, so refusal
+resume must allow0/4; old binaries neverarm4. Newstats postrun only. No motor
+until puretransitiontests, source/assembly audits and implementationreviews.
+
+E456 design reviews:
+
+> Yes—bounded experimental integration is defensible under the stated invariants, conditional on the planned tests and audits. Five observation slots differ materially from foreground polling; bounded servicing alone establishes neither recovery nor a cure.
+>
+> Concrete issue: **the existing admission helper rejects phase 4.** `sector_ready()` requires `com_phase == 0`, while the design runs rechecks in phase 4 and requires the “full old live gate.” As written, every phase-4 observation using that helper is refused, so the experiment could produce no retries despite valid comparator levels. Allowing 0/4 only in *refusal resume* does not fix admission.
+>
+> Define an explicit candidate admission rule before coding: phase 4 qualifies only with current generation, listening authority, and active/non-stopped state verified under the same exclusion as reservation and pend. Preserve rejection of phases 1/2/3; avoid temporarily clearing phase merely to pass the old helper.
+>
+> Require transition tests showing a valid phase-4 observation can pend, while acceptance, stop, or generation replacement between scheduling and service prevents both the pend and any obsolete timer rearm.
+
+> Bounded experimental integration is defensible, but the design has a concrete admission mismatch to resolve before coding.
+>
+> `sector_ready()` requires `com_phase == 0`. Timer rechecks execute as phase 4, yet the design requires every request to pass the full old live gate. Consequently, a phase-4 callback using that predicate refuses every request. Allowing refusal resume in phases 0/4 does not fix admission.
+>
+> Specify one consistent transition: either retire phase 4 to phase 0 under exclusion before admission, after validating generation and timer ownership, or introduce a candidate-specific predicate that authorizes phase 4 only with those validations. Preserve phase-1/2/3 exclusion.
+>
+> Require transition tests showing that a valid phase-4 observation can actually pend COMP, while an intervening acceptance or stop prevents both pending COMP and rearming TIM16.
+>
+> Five observation slots explicitly differ from foreground polling. The quota and skipped expired slots bound activity; they do not establish that observations coincide with an admissible comparator level or cure missed crossings.
+
+Disposition implemented: separateSchedule::owns permitsphase0/4 only with
+poweredauthority,currentgeneration,currentstep; phases1/2/3 veto. No temporary
+phaseclear to bypassadmission. Existingrevisit::admit stilljudgesliveinputs.
+ExternalRevisit<BemfPolicy> disablesFGquota only, testedestimator/filterparity.
+402hosttestsPASS. Initialauditcaughtnewloop; replacedslotcatchup withfour
+comparisons, noallowlistchange. Structurecaught101lineCOM; extractedexisting
+latenessaccountinghelper, allcurrentfunctions<=100. Finalrecheckmodelwork
+outsidePRIMASK, freshauthority underPRIMASK beforepend/phase4arm. Firstclock
+snapshot maskandfinalcommitmask remain; boundedextraCOMwork notfree.
+E456b frozenD6A381B3 wasnotflashed; finalE456c belowneedsimplementationreview.
+
+E456c frozen12D13F1CBF4CB392C22788B1C11DEB00DEE65BBA154BE9ED660217C897C0FFFB,
+notflashed. FourrootauditPASS,currentstructurePASS. COMP825->833 entries,
+COM422->438 plus after_phase324/due36/observe101/reserve31 helperentries:
+rootbodycount alone understates the newcost. Modelhelpercalls outsidePRIMASK
+inthiscandidate. Implementationreviews:
+
+> Two concrete blockers in the supplied implementation:
+>
+> - **Live admission is stale at commit.** `line_live()`, `pending()`, and `level()` are sampled before `schedule.observe()` and outside the commit exclusion. The commit rechecks only `Authority`. A comparator transition can change the level or set pending without changing generation, step, or phase; the code then issues `pend()` using obsolete admission. This directly violates `Budget::reserve`’s stated serialization contract. Revalidate admission and perform reservation alongside the actual pend under exclusion. Hardware can still change asynchronously; preserve the comparator handler’s final validation.
+>
+> - **The claimed offline-only report is not enforced.** The binary calls `recheck::report(&mut board)` **before** `controller.command(&mut board, b)`. Thus any stop performed by the `p` command happens after the report has already called the sink. `report()` itself checks neither stopped nor active state. Process the stop/offline transition first and enforce the offline condition before emitting the report.
+>
+> One additional clock limitation needs resolution: `clock_and_origin()` reconstructs acceptance age from a `u16` difference. An acceptance older than one full wrap aliases to a recent origin, defeating the model’s extended-age rejection. Store an extended acceptance timestamp, or establish the enforced bound that makes this reconstruction valid.
+>
+> The supplied host tests and ISR audit do not cover these integration paths.
+
+> **Blocker: admission and reservation occur outside the commit exclusion.** `live` samples comparator line, pending, and level; `schedule.observe()` then reserves a request. The commit rechecks only `schedule.owns(&authority())`.
+>
+> Concrete interleaving: admission sees the expected level and no pending edge; guard preempts without stopping; comparator level changes; execution resumes with unchanged powered/phase/generation/step. Commit still calls `hw::comp::pend()` using obsolete admission. A newly pending hardware edge likewise does not invalidate authority. This violates the budget’s explicit requirement to serialize live admission, reservation, and actual pend.
+>
+> The same gap leaves elapsed time stale. A delayed commit can issue a request after the `0x8000` cutoff or arm `decision.delay_us` relative to a later instant, shifting the intended observation deadline. Fresh authority does not validate either condition.
+>
+> Move fresh clock sampling, comparator admission, `observe`/reservation, and decision application into the same bounded exclusion. If preparation must remain preemptible, revalidate admission and time and recompute the decision before committing.
+>
+> The supplied tests exercise the pure model; they do not cover this interleaving. The ISR-root audit does not establish temporal correctness. I would block the powered screen until this commit gap is closed.
+
+Dispositions: E456c notadmitted. Restore oneboundedmaskedtransaction for
+liveadmission/reservation/pend (no runtime loops), explicitlyown extra guard
+blockingcost. No thresholdchange; requiremeasurebeforepoweredadmission.
+Move report aftercontrollercommand, enforceguard/com/det/drv inactive plus
+ENABLElow/MOEclear beforeanyTX. Constructororiginraw mappingrequiresaccepted
+age<65536: existingtrackingmax1000us/guardtick~101us/guardgap200us enforce
+that duringactivecontrol providedmaskedpathsarebounded. This is NOT a new
+full-wrap watchdog: audit/measure criticalsectioncost, never infer agefromraw
+alone afterunboundedblackout. No motor performed; integrationstillstaged.
+
+E456d finalstagedAC4ADA594B5653E5890968813A21B65A59A0D5193E29AF3601116191535FC983.
+Build/clippy/fourroothelperaudit/currentstructure PASS; hostmodel402tests.
+No flash. Correctionreviews:
+
+> The correction is supported at source level: authority sampling, clock/origin reconstruction, live admission, budget reservation, pend, and timer update share one interrupt-masked transaction. Generation mismatch retires the schedule without overwriting COMP publication; phases outside 0/4 return before timer replacement. Reporting follows command handling and checks inactive owners, ENABLE low, and MOE clear.
+>
+> The supplied run does **not** validate the corrected implementation: nothing binds its ELF hash to this source, and no `TIMEDRECHECK` counters appear. It records reason=8, stale age 243 µs against 240 µs, zero hold time, and zero forced commutations—not a cure or powered-admission result.
+>
+> Remaining obligations are concrete: measure/audit the complete masked path’s latency and establish the tracking assumptions needed to disambiguate the 16-bit acceptance timestamp. The observed 110 µs guard gap cannot establish a general blackout bound.
+>
+> The author’s four-root audit and 402-test claims lack supporting output here. Verdict: source-level correction supported; runtime validation and powered admission remain unestablished.
+
+> The correction closes the visible software interleaving window: authority sampling, observation, quota reservation, pend, and timer arm share interrupt exclusion. Guard no longer borrows the model, and reporting checks inactive owners and disabled outputs.
+>
+> Two obligations remain:
+>
+> - COM can enter after preempting an already-running COMP publication. Masking then prevents further execution; it does not complete the interrupted publication. Safety depends on generation invalidation preceding every relevant field mutation and on timer/IRQ cleanup. Those paths are absent, so the comment alone cannot establish this.
+> - Reconstructing origin from a 16-bit acceptance timestamp aliases ages separated by 65,536 µs. The extended-clock cutoff cannot detect that alias when creating a schedule. The author appropriately makes correctness conditional on existing tracking bounds.
+>
+> The raw run demonstrates a stale trip at 243 µs against 240 µs, zero hold time, and disabled outputs afterward. It contains no `TIMEDRECHECK` row and does not validate this correction’s masked latency.
+>
+> Verdict: plausible scoped correction; publication ordering and measured interrupt latency remain unverified here.
+
+Disposition: sourcecorrection supported, poweredadmission NOT established.
+The suppliedE453 capture was explicitly oldrawfailurecontext, neverevidence
+ofnewcandidateoperation. Tests/audit outputs live e456b-tests/e456d-audit,
+not includedin narrowcorrectionpacket; no runtimevalidation inferred.
+Publication audit needed beforeadmission: COMP writesaccept_raw/avg/blank
+BEFORE sequencepublication and atomicarm. Phase4 must use its saved origin
+and average, never that partlypublishedpair; currentcode only uses freshpair
+to construct Schedule afterphase1 (which cannotexecute until acceptedarm).
+Forphase4 changedgeneration cancels; unchangedgeneration may spendoldquota
+whileCOMPpaused, but acceptedarm mustclearoldTIM16/pending and supersede it.
+This sourceargument requires focused review of those actualpaths, notcomments.
+Remaining: complete-masked-path latency evidence, boundedclockorigin lifetime,
+and disabled transaction exercise beforeanypoweredcandidate. No envelopegain;
+installed board remainsBD07379C OFF/UARTclosed fromE453.

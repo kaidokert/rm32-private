@@ -1,0 +1,13 @@
+ISR-root audit: target/thumbv6m-none-eabi/release/diode-timed-revisit
+
+  [ADC_COMP] reachable=2  OK
+
+  [TIM16] reachable=6  FAIL
+      loop not in reviewed_loops: ['firmware50::revisit_schedule::Schedule::observe']
+
+  [DMA1_CHANNEL1] reachable=1  OK
+
+  [TIM6_DAC_LPTIM1] reachable=1  OK
+
+AUDIT FAILED (1 finding(s)):
+  - TIM16: unreviewed loop in: ['firmware50::revisit_schedule::Schedule::observe']

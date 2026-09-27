@@ -58,6 +58,7 @@ pub mod report;
 pub mod restart;
 pub mod revisit;
 pub mod revisit_budget;
+pub mod revisit_schedule;
 /// The motor ISR roots' logic and wiring (target-only).
 #[cfg(target_os = "none")]
 pub mod roots;

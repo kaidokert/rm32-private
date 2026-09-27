@@ -73,12 +73,13 @@ pub const FIRMWARE_ARM_IS_ATOMIC: bool = true;
 
 /// Permission to resume a powered comparator line. Closed-loop ownership
 /// takes precedence; acquisition must not bypass its active blanking phase.
+/// Phase 4 is a listening recheck, not blanking or an accepted commutation.
 #[inline(always)]
 #[must_use]
 pub const fn comparator_resume_allowed(
     guard: u32, detector: bool, driven: bool, stopped: bool, active: bool, phase: u32,
 ) -> bool {
-    guard == 0 && if detector { arm_allowed(stopped, active) && phase == 0 } else { driven }
+    guard == 0 && if detector { arm_allowed(stopped, active) && (phase == 0 || phase == 4) } else { driven }
 }
 
 /// Whether an arm can be interleaved by the guard root or by the other caller.
@@ -349,9 +350,9 @@ mod tests {
                 for driven in [false, true] {
                     for stopped in [false, true] {
                         for active in [false, true] {
-                            for phase in 0..=3 {
+                            for phase in 0..=5 {
                                 let expected = guard == 0 && if detector {
-                                    !stopped && active && phase == 0
+                                    !stopped && active && (phase == 0 || phase == 4)
                                 } else { driven };
                                 assert_eq!(allowed(guard, detector, driven, stopped, active, phase), expected);
                             }

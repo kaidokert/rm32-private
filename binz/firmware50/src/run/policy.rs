@@ -275,6 +275,15 @@ pub trait Bemf {
     }
 }
 
+/// Another owner services bounded level rechecks; no second foreground quota.
+pub struct ExternalRevisit<B>(core::marker::PhantomData<B>);
+impl<B: Bemf> Bemf for ExternalRevisit<B> {
+    type Filter = B::Filter;
+    const FILTER: Self::Filter = B::FILTER;
+    fn estimator(seed_us: u32) -> ZeroCross { B::estimator(seed_us) }
+    fn allow_revisit(_: u16) -> bool { false }
+}
+
 /// Diagnostic sensitivity policy: retain low-duty entry, then rely on physical
 /// comparator interrupts. This does not identify the origin of any acceptance.
 pub struct PhysicalEdgesAbove<B, const FROM: u16>(core::marker::PhantomData<B>);
