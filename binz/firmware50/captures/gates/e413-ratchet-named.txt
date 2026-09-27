@@ -1,0 +1,8 @@
+blessed baseline for 'latch-prior-advref-floor5-comtop' from 8F977353.e413-latch48.elf: 7 symbols
+  ADC_COMP                                     {'insns': 780, 'div': 0, 'mul': 4, 'irq': 9, 'excl': 0, 'helper': 0}
+  DMA1_CHANNEL1                                {'insns': 37, 'div': 0, 'mul': 0, 'irq': 2, 'excl': 0, 'helper': 0}
+  TIM16                                        {'insns': 382, 'div': 0, 'mul': 2, 'irq': 7, 'excl': 0, 'helper': 0}
+  TIM6_DAC_LPTIM1                              {'insns': 155, 'div': 0, 'mul': 0, 'irq': 1, 'excl': 0, 'helper': 0}
+  protection::BusDepth::observe                {'insns': 50, 'div': 0, 'mul': 4, 'irq': 0, 'excl': 0, 'helper': 0}
+  run::Controller                              {'insns': 587, 'div': 7, 'mul': 6, 'irq': 0, 'excl': 0, 'helper': 7}
+  run::states::Ctx::scan_pass                  {'insns': 500, 'div': 2, 'mul': 10, 'irq': 0, 'excl': 0, 'helper': 2}

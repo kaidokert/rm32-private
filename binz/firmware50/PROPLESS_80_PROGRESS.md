@@ -1,6 +1,6 @@
 # Propless 80% campaign — progress, not qualification
 
-Updated through E407 results and dual review, 2026-09-26 PDT.
+Updated through E411 results/dual review and E413 offline candidate, 2026-09-26 PDT.
 Authoritative details, predictions, reviews and dispositions: LAB_NOTEBOOK.md.
 
 ## Scope
@@ -30,6 +30,8 @@ between attempts. This is a precaution, not measured thermal recovery.
 | E403 / 3E1B036E | 70% | 0 | Fast sag at applied 57%; raw guard operands retained |
 | E406 / BF725A29, lean entry-relative arm, 48 kHz | 50% | 19.778 s | Deadline; matched tail/coast about 2529/2528 eHz |
 | E407 / BF725A29 | 60% | 0 | Fast sag at applied 55%; all outputs verified off |
+| E410 / EFFD1B1C, prior-estimate wait, 48 kHz | 50% | 19.778 s | Deadline; tail/coast 2522/2527 eHz |
+| E411 / EFFD1B1C | 60% | 0 | Fast sag at applied 56%; all outputs verified off |
 
 Every listed attempt has verified final bridge-off readback. None is a
 three-run, 30-second target-dwell qualification. Mechanical RPM = eHz × 10.
@@ -61,6 +63,27 @@ with a near-stop coast estimate: it does not establish sustained slip.
   independent raw samples. No threshold, streak or latch is being relaxed.
 
 ## Current timing candidate
+
+E409 changed the wait's estimator age through a typed policy: use the prior
+estimate rather than the newly blended one, matching that particular AM32
+dependency (not claiming full reference parity). E410 passed its 50% screen;
+E411 sag-stopped at about56% on the 60% climb. This single screen did not
+remove the failure. It cannot isolate sensitivity against unmatched runs.
+
+E413/E414/E415: `8F977353.e413-latch48.elf` stages TIM1 roles and
+transfers them together using COMG, without UG or counter reset. A finite
+stop-checked critical section prevents resumed compare writes undoing safing;
+UDIS and preload prevent partial new compare generations at native updates.
+Host tests pass; COMP/DMA/guard code is unchanged, COM gains50 instructions
+and one mask. This is a reviewed candidate cost, not WCET qualification.
+Its disabled ENABLE-low pad witness passed. The protected 50% screen then
+fast-sag-stopped after 3.662 seconds at target; final outputs-off passed.
+Both result reviews reject escalation. The candidate is retired from powered
+exploration, not proven causal. No physical glitch or sag cause has been
+established from the register model. Next work is offline feasibility of a
+separate source-low-off policy, not another test of this failed candidate.
+
+### Earlier arm change retained in both candidates
 
 E405 `BF725A29.e405-deadline48.elf` uses the lean controller at fixed 48 kHz.
 The crossing arm prepares TIM16 before its final elapsed-time subtraction,

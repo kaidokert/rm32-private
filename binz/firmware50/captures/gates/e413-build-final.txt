@@ -1,0 +1,8 @@
+cargo :    Compiling firmware50 v0.1.0 (E:\m\robot\esc\rm32\binz\firmware50)
+At line:2 char:785
++ ... -fixed.txt; cargo build --release --bin latch-pwm --features advance- ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...inz\firmware50):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+    Finished `release` profile [optimized + debuginfo] target(s) in 3.90s

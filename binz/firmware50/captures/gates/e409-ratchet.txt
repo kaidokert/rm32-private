@@ -1,0 +1,11 @@
+configuration 'entry-arm-advref-floor5-comtop' (baseline from BF725A29.e405-deadline48.elf)
+symbol                                             insns    div    mul    irq   excl  helper
+ADC_COMP                                        780 (+2)      0      4      9      0       0
+DMA1_CHANNEL1                                         37      0      0      2      0       0
+TIM16                                                332      0      2      6      0       0
+TIM6_DAC_LPTIM1                                      155      0      0      1      0       0
+protection::BusDepth::observe                         50      0      4      0      0       0
+run::Controller                                      587      7      6      0      0       7
+run::states::Ctx::scan_pass                          500      2     10      0      0       2
+
+ratchet OK: no hazard-class drift in any watched symbol

@@ -17,6 +17,18 @@ license = "MIT OR Apache-2.0"
 exclude = ["ref"]
 
 [[bin]]
+name = "latch-pwm"
+path = "bin/latch-pwm.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prior-pwm"
+path = "bin/prior-pwm.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "shell-pwm"
 path = "bin/shell-pwm.rs"
 test = false

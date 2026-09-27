@@ -1,0 +1,64 @@
+cargo :    Compiling firmware50 v0.1.0 (E:\m\robot\esc\rm32\binz\firmware50)
+At line:2 char:306
++ ... or=ld.lld'; cargo clippy --release --bin latch-pwm --features advance ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...inz\firmware50):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+error: unsafe block missing a safety comment
+  --> src\hw\pwm\latch.rs:16:23
+   |
+16 |     t.cr2().write(|w| unsafe { w.bits((cr2 | 1) & !4) });
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: consider adding a safety comment on the preceding line
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#undocumented_unsafe_blocks
+   = note: `-D clippy::undocumented-unsafe-blocks` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::undocumented_unsafe_blocks)]`
+
+error: unsafe block missing a safety comment
+  --> src\hw\pwm\latch.rs:19:32
+   |
+19 |     t.ccmr2_output().write(|w| unsafe { w.bits(plan.ccmr2 | 0x08) });
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: consider adding a safety comment on the preceding line
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#undocumented_unsafe_blocks
+
+error: unsafe block missing a safety comment
+  --> src\hw\pwm\latch.rs:28:23
+   |
+28 |     t.cr1().write(|w| unsafe { w.bits(cr1) });
+   |                       ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: consider adding a safety comment on the preceding line
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#undocumented_unsafe_blocks
+
+error: unsafe block missing a safety comment
+ --> src\hw\pwm\latch_check.rs:8:13
+  |
+8 |     let b = unsafe { &*stm32g0xx_hal::stm32::GPIOB::ptr() }.idr().read().bits();
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: consider adding a safety comment on the preceding line
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#undocumented_unsafe_blocks
+
+error: unsafe block missing a safety comment
+  --> src\hw\pwm\latch_check.rs:35:32
+   |
+35 |     t.ccmr2_output().write(|w| unsafe { w.bits(next.ccmr2) });
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: consider adding a safety comment on the preceding line
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#undocumented_unsafe_blocks
+
+error: unsafe block missing a safety comment
+  --> src\hw\pwm\latch_check.rs:36:24
+   |
+36 |     t.ccer().write(|w| unsafe { w.bits(next.ccer) });
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: consider adding a safety comment on the preceding line
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#undocumented_unsafe_blocks
+
+error: could not compile `firmware50` (lib) due to 6 previous errors

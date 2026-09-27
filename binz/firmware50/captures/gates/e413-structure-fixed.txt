@@ -1,0 +1,8 @@
+
+bin_lines=1126 (goal < 1500)
+bin_unsafe=3 (goal <= 10)
+bits_writes_outside_hw: bin=0 src=0 (goal 0)
+static_mut: bin=0 src=0 (goal 0)
+functions_over_100_lines=0 (goal 0)
+bss_headroom: latch-pwm                          data=  740 bss=  4184 stack_left= 31940 (floor 8192, largest frame 5420, deepest path 7024)
+bss_headroom: 37 ARCHIVED image(s) are below the stack floor and MUST NOT BE FLASHED again:

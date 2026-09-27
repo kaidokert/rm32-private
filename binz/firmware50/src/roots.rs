@@ -328,11 +328,11 @@ pub fn det_counts() -> (u32, u32, u32) {
 /// the recording added. Two bodies, not one with dead branches: a closure
 /// that merely *captures* the log changed COMP's machine code (E121).
 #[inline(always)]
-pub fn det_decide<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
+pub fn det_decide<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
     if L::ON {
-        det_decide_logged::<L, C>(raw, fine0, at)
+        det_decide_logged::<L, C, T>(raw, fine0, at)
     } else {
-        det_decide_plain::<C>(raw, fine0, at)
+        det_decide_plain::<C, T>(raw, fine0, at)
     }
 }
 
@@ -453,7 +453,7 @@ fn note_margin(wait: u32, left: u32) {
 
 /// Production's decision. Keep in step with [`det_decide_logged`].
 #[inline(always)]
-pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
+pub fn det_decide_plain<C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
     let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
     let count = raw.wrapping_sub(start) as u32;
     // The chain row is filled inside the borrow and pushed after it, because
@@ -480,7 +480,7 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
         let advance = S.det().advance.load(Ordering::Relaxed);
         // Persistence reads the **live** comparator, microseconds after the edge --
         // exactly what AM32's handler does, and what the foreground could never do.
-        match zc.offer(count, edge_is_rising(step), advance, &DET_FILTER, hw::comp::level) {
+        match zc.offer_timed::<T, _, _>(count, edge_is_rising(step), advance, &DET_FILTER, hw::comp::level) {
             crate::bemf::Outcome::Accepted { wait, .. } => {
                 // The accepted crossing's bookkeeping, then the arm. (A stale
                 // comment describing the reverted E142 order stood here until
@@ -616,7 +616,7 @@ fn accept<C: ChainLog>(
 /// The diagnostic image's decision: [`det_decide_plain`] with every offer's
 /// inputs, live reads and outcome recorded. Keep in step with it.
 #[inline(always)]
-pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
+pub fn det_decide_logged<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
     let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
     let count = raw.wrapping_sub(start) as u32;
     let rec = L::arm(at);
@@ -639,7 +639,7 @@ pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut
         let advance = S.det().advance.load(Ordering::Relaxed);
         let rising = edge_is_rising(step);
         let (mut reads, mut n) = (0u16, 0u16);
-        let outcome = zc.offer(count, rising, advance, &DET_FILTER, || {
+        let outcome = zc.offer_timed::<T, _, _>(count, rising, advance, &DET_FILTER, || {
             let l = hw::comp::level();
             reads |= u16::from(l) << (n & 15);
             n += 1;
@@ -1239,6 +1239,15 @@ fn count_preempt<C: ChainLog>() -> bool {
 /// `COM_IRQ_PRIORITY` (`Motor::NVIC`, set by `tim16_init`), once per invocation: it takes that root's `Root` token.
 #[inline(always)]
 pub unsafe fn com_root<C: ChainLog>() {
+    // SAFETY: same TIM16/Root contract as this wrapper.
+    unsafe { com_root_with::<C, hw::pwm::Immediate>() }
+}
+
+/// COM root with a binary-selected bridge transaction.
+/// # Safety
+/// Same vector and Root ownership requirements as [`com_root`].
+#[inline(always)]
+pub unsafe fn com_root_with<C: ChainLog, P: hw::pwm::RoleWrite>() {
     // SAFETY: the caller is the TIM16 handler (this fn's contract).
     let mut at = unsafe { Root::<Motor>::enter() };
     hw::com_timer::ack();
@@ -1268,7 +1277,7 @@ pub unsafe fn com_root<C: ChainLog>() {
             S.det().step.store(step.get() as u32, Ordering::Relaxed);
             let plan = S.com().plans.root(&mut at, |t| t[((step.get() - 1) & 7) as usize]);
             if let Some(pl) = plan {
-                hw::pwm::apply_plan(&pl);
+                if !apply_com_plan::<P>(&pl) { return; }
                 order_stamp = bridge_stamp::<C>();
             }
             if C::ON {
@@ -1337,6 +1346,22 @@ pub unsafe fn com_root<C: ChainLog>() {
     }
     log_service::<C>(&mut at, now_raw, bridge, late, phase, preempted);
     log_order_bridge::<C>(&mut at, order_stamp, ordinal, now_raw, late);
+}
+
+#[inline(always)]
+fn apply_com_plan<P: hw::pwm::RoleWrite>(plan: &sixstep::Plan) -> bool {
+    if !P::LATCHED {
+        hw::pwm::apply_plan(plan);
+        return true;
+    }
+    cortex_m::interrupt::free(|_| {
+        if !crate::oneshot::arm_allowed(
+            S.com().stopped.load(Ordering::Relaxed),
+            S.com().active.load(Ordering::Relaxed),
+        ) { return false; }
+        hw::pwm::latch::apply(plan);
+        true
+    })
 }
 
 #[inline(always)]
@@ -1418,6 +1443,15 @@ fn log_service<C: ChainLog>(at: &mut Root<Motor>, now_raw: u16, bridge: u16, lat
 /// the contract and the configuration cannot drift apart.
 #[inline(always)]
 pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
+    // SAFETY: same vector/priority/unique-token contract as this wrapper.
+    unsafe { comp_root_timed::<L, C, crate::bemf::FreshEstimate>() }
+}
+
+/// Typed scheduling experiment; all protection and dispatch paths are shared.
+/// # Safety
+/// Same ADC_COMP vector, priority and single-invocation contract as `comp_root`.
+#[inline(always)]
+pub unsafe fn comp_root_timed<L: EdgeLog, C: ChainLog, T: crate::bemf::WaitEstimate>() {
     // Mask and ack first, always. This is the storm guard, and it keeps the
     // documented G071 early-return bug class closed (`rm32/CLAUDE.md`): whatever
     // path is taken below, the pending bit is already clear.
@@ -1466,7 +1500,7 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
         if C::ON {
             S.det().in_decide.store(true, Ordering::Relaxed);
         }
-        let accepted = det_decide::<L, C>(raw, fine0, &mut at);
+        let accepted = det_decide::<L, C, T>(raw, fine0, &mut at);
         if C::ON {
             S.det().in_decide.store(false, Ordering::Relaxed);
         }

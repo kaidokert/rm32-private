@@ -1,0 +1,11 @@
+python : .....
+At line:3 char:1
++ python -m unittest discover -s scripts -p test_entry_arm.py 2>&1 | Te ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (.....:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.003s
+
+OK

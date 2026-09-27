@@ -33,6 +33,11 @@
 
 use crate::commutation::{Phase, Step, sector};
 
+#[cfg(test)]
+mod transition_tests;
+#[cfg(test)]
+mod latch_transaction_tests;
+
 /// Duty ceiling the reference plan enforces, in tenths of a percent.
 pub const REFERENCE_DUTY_CAP: u16 = 100;
 

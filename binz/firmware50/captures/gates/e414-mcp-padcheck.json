@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"connection_id\": \"3e629a81-ef55-4724-b8c6-73831f34d53d\",\n  \"bytes_read\": 137,\n  \"data\": \"PREFLIGHT moe=0 ccr1=0 ccr2=0 ccr3=0 gates_low=1 en=0 nfault=1 verdict=PASS\\r\\nLATCHSELFTEST en0 pads24_24_9_0=PASS DEADLINESELFTEST=PASS\\r\\n\",\n  \"encoding\": \"utf8\",\n  \"status\": \"ok\",\n  \"timeout_ms\": 1000,\n  \"duration_ms\": 500,\n  \"start_trigger\": \"first_byte\",\n  \"waited_ms\": 34,\n  \"elapsed_ms\": 510,\n  \"completion_reason\": \"duration_elapsed\",\n  \"chunks\": [\n    {\n      \"offset\": 0,\n      \"bytes_read\": 137,\n      \"waited_ms\": 34,\n      \"elapsed_ms\": 0\n    }\n  ]\n}"
+    }
+  ],
+  "isError": false
+}

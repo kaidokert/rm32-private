@@ -43308,3 +43308,652 @@ rate uses actual3777957us span, not the nominal2s request; E407has no tail.
 Histograms cover foreground-consumed events and saturate; no sector inference.
 Proxy/late0 do not establish electrical or physical-edge timing margins.
 Next is source-grounded discrepancy audit, not another knob or repeated run.
+
+### E408 - offline scheduling-order discrepancy / proposed bounded test
+
+No powered action. Cached AM32/Src/main.c927..933 blends and computes wait in
+COM AFTER commutate; interruptRoutine973 arms previously storedwait+1. Likewise
+minz/core/src/am32_isr.rs117 arms storedwait,167..172 updates it afterCOM.
+firmware50 bemf.rsoffer currently blends the justaccepted count, THEN computes
+the very commutation that count triggers. Arithmetic formula agrees, chronology
+does not. This is not by itself a demonstrated defect or sag attribution.
+
+Frozen-input check on128ORDERArows/image,127contiguouspairs, level16:
+currentwait-minus-wait(previousavg) histograms:
+E382 clean50 {-3:1,-2:3,-1:27,0:65,1:28,2:2,3:1};
+E383 failed60 {-3:3,-2:5,-1:25,0:54,1:33,2:6,3:1};
+E385 failed55 {-4:1,-3:3,-2:4,-1:24,0:66,1:19,2:6,3:2,4:2}.
+Input frozen, not a rotor simulation or evidence those changes prevent sag.
+At E385accept207469 count107 avg57->70 gives14vs18us;207489 count49
+avg78->64 gives20vs16us. Existing real timestamp/guards unchanged.
+
+Proposal before implementation: typed PreviousEstimate timing in a separate
+prior-pwm binary, default FreshEstimate preserved. Use old average for wait
+while still updating/publishing estimator for nextedge/blank/watch exactlyas
+before. Fixedadvance16 makes this wait dependency matchreference; it is NOT
+fullAM32parity (units,stamporigin,blank,filter,scheduling residual differ).
+No addedfeature/threshold/filterchange. Keep E405 atomicpostpreparearm.
+Tests prove refusal/state/counters/blendidentical, onlyacceptedwaitchanges;
+bothplain/logged paths selecttype, seedsfirstwaitfromseed. Audit/disassembly
+mustpreservebounds/nohelpers. Oneprotected50screen thenconditional60,45smax,
+120sOFF,onefailureendsbatch. A pass is sensitivity, not cause/qualification.
+Freshdualreview must judge the source discrepancy and test before adoption.
+
+E408 evidence review, verbatim:
+
+> The reference chronology supports the proposed one-event delay: acceptance arms COM using the **previously stored waitTime**; the ensuing COM callback commutates, blends the latest ZC intervals, and computes the wait for the next acceptance. Firmware50 currently blends first and schedules from that fresh estimate.
+>
+> At fixed advance16, PreviousEstimate reproduces that dependency **provided** each accepted event has its corresponding COM update before the next acceptance, estimator inputs/units match, and no intervening path changes the estimate or wait. It is not full AM32 equivalence: update timing, blanking, clamping, timer semantics, and startup initialization remain separate differences. Snapshotting before `offer` avoids introducing an uninitialized cached wait, but does not establish reference-equivalent seed initialization.
+>
+> Arithmetic to verify:
+>
+> - Reference wait is `(ci >> 1) - ((ci * 16) >> 6)`, not generally `ci / 4` because of truncation.
+> - Confirm firmware50’s `wait_time` accepts an **advance level**; minz’s shown call instead passes the computed **advance amount**.
+> - Preserve existing floor, timer offset, narrowing, and atomic late-stop checks. Reference arms `waitTime + 1`.
+>
+> Required tests: a multi-event sequence proving previous-versus-fresh selection; identical rejection state/counters; first seeded acceptance; odd estimates and floor boundaries; production width/overflow behavior; both plain/logged paths; unchanged publication/blanking/watch behavior; capture policy identification. Build and helper audits remain necessary before flashing.
+>
+> The screen establishes a protected sag stop with **zero target hold**, not 60% qualification. The proposed sequential 50/conditional60 batch is exploratory; historical BF results do not provide a matched causal A/B.
+
+E408 adversarial review, verbatim:
+
+> The experiment is reasonable, but only if “previous estimate” means a coherent pre-accept estimate. It does not reproduce AM32’s COM-time update ordering.
+>
+> - **Concurrency:** Snapshotting `average_interval` before `offer` introduces a potential stale-read window. Establish exclusive estimator ownership, or capture the preblend value inside the acceptance operation. COM preemption must not mix sector identity, interval history, estimate, or arm state. Verify both plain and logged paths.
+>
+> - **Stop protection:** E405 must atomically recheck stop/epoch validity when arming; a comparator invocation begun before a stop must never re-enable commutation afterward. Preserve late-arm refusal and every electrical stop. “Same protections” needs verification in the separate binary.
+>
+> - **Estimator identity:** Require identical state transitions for identical input sequences, including rejection paths, clamping, blanking, watch updates, and publication. Live trajectories will diverge after changing wait; identical observed estimates or blanking durations are therefore not expected.
+>
+> - **Reference dependency:** AM32 arms using a previously computed wait and updates its estimate at COM. Preblend scheduling approximates that dependency only under established event ordering. During acceleration, the older, larger estimate generally delays COM relative to fresh scheduling; during deceleration, the direction reverses. Check rounding, timer units, `+1`, and helper contracts: the excerpts pass `advance` versus `advance_level` to differently situated `wait_time` functions.
+>
+> - **Discrimination:** Single50 then conditional60 is a protected screening sequence, not a causal A/B. A pass cannot establish improvement; a failure cannot isolate estimate age. The supplied60 capture has zero target hold. Define the50 pass criterion and log actual ACK/dwell.
+
+Dispositions: preblend snapshot belongs INSIDE exclusive offer operation,
+not an unsynchronized foreground read. COMP ownsestimator; COM consumespublished
+pair only, so no newsharedborrow. Timingselection changesonlywait/advance
+returned, notclamping/update/blank/watch. Fixed16,seedfirstwaitfromseed;
+notreferenceinitialization orfullparity. firmware50wait_time takeslevel;
+minz takesamount; use localexactintegerformula incloddvalues. Timer+1/2usfloor
+and E405shutdownunchanged. Single50/60 is screening, notcausalA/B.
+
+### E409 - pre-build previous-estimate candidate
+
+Add type-level WaitEstimate policy, preserve default FreshEstimate entrypoint.
+prior-pwm selects PreviousEstimate in both acceptance variants through root
+generics; no cfgfeature. Captureheader/banner statespolicy. Testidentical
+states/rejections/firstseed/odd/extremes and recordedinputsequences. Build
+release-s/thinLTO/codegen1, auditallroots, comparedefaultmachinecode and new
+COMPpath, structure/clippy. No flashuntil emittedcode and freshnarrowreview.
+Prediction: wait uses previousacceptedestimate, including short/long pairs;
+steadywait unchanged. Doesnotpredict guaranteed motorpass. Screeningadmission
+remains50 deadline/alloff +actualduty/19s+hold,independentcoast within existing
+proplessband,no guard/late/fold; onlythen60. Anyfailureendsbatch.
+
+E409 built EFFD1B1C55096E4C59AF1B4E4E2339E72BB04C8A8D951EC07F7698451C80EFEF,
+captures/elf/EFFD1B1C.e409-prior48.elf. 369hosttestsPASS including frozenE383
+sequence,20k pairedoffers,oddseed/extremes. 5atomicarm+12fixture+2wiringtestsPASS.
+releaseclippyPASS; fourrootsoftmathauditPASS; ratchetPASS COMP778->780(+2),
+otherroots37/332/155 instructionsunchanged(relocatedconstants). Default
+deadline-pwm fourroots identical toBFincludingencodedbytes. text43916/data740/
+bss4184,stack31940; structure0functions>100. No newmasks/helper/multiplyclass.
+COMPdisassembly shows savedpreblendestimate suppliesadvance andhalfinterval,
+freshclampedestimate published separately; atomic E405arm/stop reused.
+ci_min/ci_at_late remain POSTblendtelemetry, not the interval usedforwait on
+thiscandidate. Thin/late tests actualcomputedwait; no inferwaitfromci_min.
+Final fresh implementationreview beforeflash. MCPserialdiscovery responsive.
+
+E409 implementation evidence review, verbatim:
+
+> No concrete correctness defect is demonstrated in the supplied implementation.
+>
+> - `PreviousEstimate` snapshots the estimate inside the exclusive offer, before blending. Both decision paths forward the policy type; the default wrapper retains `FreshEstimate`. Acceptance bookkeeping and new-estimate publication remain shared.
+> - The change also selects the estimate for `Outcome::Accepted.advance`, not just `wait`. The shown plain path ignores that field; downstream consumers should preserve this intended distinction.
+> - Tests exercise seed use, subsequent preblend scheduling, rounding, refusals, saturation/clamping, and frozen-input replay. The reported 369-test pass supports host behavior; replay does not establish changed motor behavior.
+> - The emitted excerpt shows new-estimate publication before arm preparation, then masked stop/active validation, elapsed subtraction, expiry shutdown, and timer enable. However, the earlier stores establishing `[sp,#4]` and `[sp,#8]` are absent, so this excerpt alone cannot fully prove the wait’s preblend operand provenance.
+> - `ci_min` constrains the published estimate, not necessarily the selected seed/preblend wait. The implementation and supplied claim correctly distinguish these.
+> - Audit and ratchet reports support their stated arithmetic/hazard checks; default-root identity supports unchanged default ISR instructions. They do not establish timing equivalence or whole-image identity.
+>
+> Evidence gaps remain for the exact EFFD1B1C archive/build linkage, fixed16/48k configuration, complete guard configuration, and enforcement of 120s OFF/45s maximum and stop-on-failure screening: those supporting artifacts are not supplied. No powered-screen safety or qualification conclusion follows from these excerpts alone.
+
+E409 implementation adversarial review, verbatim:
+
+> - **Positive remainder is not proof of meeting the deadline.** `com_arm_crossing` stops only when `left == 0`. For `left == 1`, it proceeds through publication and timer programming, then applies the minimum reload. COM service adds further delay. During interval growth, `PreviousEstimate` can shorten the wait relative to FreshEstimate and expose this boundary more often. The host tests never exercise `wait` against preparation time. Verify the candidate’s behavior at `spent = wait−1`, `wait`, and `wait+1`; unchanged guards do not establish acceptable commutation timing.
+>
+> - **The exclusive borrow does not establish publication coherence.** The excerpt publishes the new average/watch fields before the arm’s interrupt mask; even the accepted-count increment restores PRIMASK before that mask begins. With COM at higher priority, a pending previous-arm dispatch can intervene there. This is not a demonstrated new race, but the supplied atomic-arm code proves stop/enable serialization only. The missing invariant is whether COM can consume partially published acceptance state, or advance the sector before this acceptance arms its timer. “COM uses the published pair” alone does not resolve that.
+>
+> - **The safety evidence stops at estimator behavior.** State equality under identical inputs establishes the intended local transformation, not unchanged protection behavior after altered commutations. The replay appropriately avoids that claim. However, neither the arithmetic audit nor instruction-count ratchet checks candidate deadline margins or the preemption scenario above. Those remain implementation evidence gaps before the powered screen; a clean bounded run would not itself close them.
+
+Dispositions: actualarchiveandtarget SHA256bothEFFD1B1C...EFEF verified; build
+commandsrecord advance-ref/deep-filter/com-top,prior-pwmProduction alias48k,
+advance16. No guardmodule/config edits. Full disassembly0x8001630 loadsoldavg,
+1632/163a savesoldhalf[sp8],1644savesoldavg[sp4];1748reloadsprior forblend,
+r1 retainedthroughpublicationandused1794/179e foradvance;17a6reloadsoldhalf.
+Outcome.advance changesconsistentlywithwait, rootsignoreit exceptdecisionlogs.
+
+Boundarytests alreadyincludedin369suite: oneshot.rs333..367 tests spent=wait-1,
+wait,wait+1 plusprepareconsumption. left1 stillarms2usminimum, withresidual
+writes/service; this is explicitly NOT guarantee ofphysicaldeadline. No
+protection relaxed to admit it. More frequentthin/late remainspossible.
+Publicationcoherence relies on the lifecycle: COMP masksNVIC+IMRbeforeoffer,
+acceptedpathstaysmasked; onlyCOMcompletionphase0opensit. COMhigherpriority
+cannotbeactiveunderCOMP; one-shotackstopsoldrequest,phase1blankrequiresNVIC
+maskeduntilphase2/3complete. Foregroundrevisitchecksline_liveinsidePRIMASK;
+ifCOMintervenesbetweenearliercom_idleandthischeck, phase1/blank makeslinemasked.
+AtunmaskCOMhascompletedpublication. Thus no earlierpendingCOMcanreadhalfnew
+acceptance beforethisarm undernormal lifecycle. No newepoch/restartcanrun
+underCOMP;foregroundcannotpreemptit. Stoplatchrecheckstillatomic.
+Submit these missing source excerpts and existingtests for narrow closure.
+
+E409 closure evidence review, verbatim:
+
+> No concrete unclosed defect in the supplied evidence blocks bounded exploration.
+>
+> The stated interrupt ownership and revisit critical section close the identified dispatch races. PreviousEstimate preserves publication while selecting the preblend wait. The boundary tests cover exhaustion, wrap crossing, ambiguous waits, and the minimum timer interval; residual write/service latency remains explicitly outside the deadline claim. The matching SHA256 values establish identity between the archived ELF and build artifact.
+>
+> The 369-test pass and implementation invariants are reported evidence; these excerpts alone do not independently verify every assertion. That limitation does not itself establish a defect.
+>
+> Proceed with the proposed 50% screen, conditional 60-second follow-up after 120 seconds OFF, unchanged protections, and batch termination on any failure. Record actual target-duty dwell. Results support bounded exploration only, with no qualification transfer from earlier images.
+
+E409 closure adversarial review, verbatim:
+
+> No concrete unclosed defect in the supplied evidence blocks bounded exploration.
+>
+> The stated masking and priority invariants close the old-COM/blank overlap concern; the revisit critical section closes the foreground check race. Entry-relative subtraction, expiry rejection, and the documented two-tick minimum address the requested boundary cases. Matching hashes establish archive/build identity, although the shown disassembly alone does not establish preblend-value provenance.
+>
+> That remaining evidence limitation is not itself a demonstrated runtime defect. Likewise, unchanged guard code does not establish unchanged closed-loop behavior—that is what this screen investigates.
+>
+> Proceed with the proposed bounded screen, conditional extension after 120 seconds OFF, and batch termination on any failure. Report actual target-duty dwell and exact image identity; do not transfer qualification from another image or describe this screen as qualification.
+
+Disposition: bothclearboundedexploration, notqualification. Evidence review's
+"60-second follow-up" is a wording error: conditional60 PERCENT,45secondstotal,
+not60seconds. Invariantargumentsremain source-based, not measuredraceproof.
+
+### E410 - pre-flash E409 protected50 screen
+
+Explicit G071 SN066CFF343433464757233430, flash/reset EFFD1B1C exactarchive.
+NativeMCPp mustconfirmpriorpolicy/bootselftest/alloff/nFAULT1. LastdriveE407
+ended06:14:58UTC, nowafter06:30UTC; >120sOFF. Single50%,l45total,period1333,
+19minus+5plus,minhold19000ms,PSU3A. Fixtureallguards/verdict/finaloffrequired.
+Anyfailureendsbatch; cleanresultonlyadmits predeclaredconditional60screen.
+
+E410 result: exactEFFD1B1C flashed onexplicitG071; MCPp confirmspriorpolicy,
+bootselftestPASS,alloff/nFAULT1. Single50completedreason2,hold19778ms,CCR666/
+1333,ceiling500. Holdaccepted298813/19.778=2518.0eHz(meanwholehold); exact
+tailspan3778045us gives2521.6,coast@stop2526.9,-2.1permille(speed.py),existing
+fixturePASS. No late/storm/blank/tracking/fold/sag; thin12(postprepare),
+ci_min41postblend,spent13,COMPcall24,COMlate10mixedpurpose. Proxyhold289mA,
+zero-126,worsthold648,worstwhole1198. AlloffPASS,rawcapture
+e410-propless500-prior48_01.txt. Offby06:33:43UTC (capturemtimeconservative).
+No sensitivity claimversusE406:n=1each and proxyzero differs.
+
+### E411 - conditional60 screen, no source/image change
+
+SameEFFD1B1C,60%l45,19minus+9plus,period1333,minhold9000(expected14778),
+allguards/PSU3A. Do not issuepoweredcommandbefore06:35:43UTC (120sOFF).
+Anyresultclosesbatch; do not retry orcontinue65beforefreshdualreview.
+
+E411 result: sameEFFD1B1C,FastBusSag26 atclosed23498ms,hold0,CCR746/1333=
+55.96399%,not60arrival. Actualpoweredcommand06:36:00UTC,after120sOFFlimit.
+Capturee411-propless600-prior48_01.txt alloffPASS,nFAULT1. Accepted236000,
+ISR236001,COM236002,forced0,late0,thin54,ci_min40POSTblend,spent13,COMP24,
+COMlate11mixedpurpose,guardgap108/foregap183,tracking0/blank0/storm0.
+Currentproxymean244mA,zero-236,worstblock1233; noholdcurrent/tailidentity.
+Legacycoast2693eHz,rawbusmin1045(ref1217); sharpstreak3. No operandring.
+The newwaitdependency doesnotclearclimbfailureinthisoneattempt; no causal
+or statisticalcomparison against E40755% stop. Batchclosed; no retry65.
+
+Next offline audit candidate, not yet adopted/run: sixstep::plan finalstates
+are tested, but pwm::apply_plan writesCCMR1/2 beforeCCER. A priorPWMsource
+becomingfloat getsforcedinactive while its oldCCxNE isstillenabled, potentially
+brieflyturningon itslow side untilCCER arrives. CacheAM32g071phaseouts.c296..
+putsphaseFLOAT first, thenLOW thenPWM; originalbinzphase_gpio_plan likewise
+requiresallgatelatchesclearedbeforenewlow. Needmodel/outputtable verification
+before attributing anything or proposingperipheralchange. Existingtestsomit
+CCER/output transitions; E392reviewalreadyflaggedtransientdualPWMpossibility.
+This is a sourceaudit lead, NOT the demonstrated sagcause.
+
+E411 fresh evidence review, verbatim:
+
+> The proposed narrow outcome is supported, with wording tightened:
+>
+> - **50%:** EFFD1B1C completed a reported **19.778 s target hold**, ending on deadline reason 2. Hold rate 15,108 accepts/s implies 2,518 eHz; the rounded 66 µs interval implies 2,525 eHz, consistent with coast 2,524 eHz. This is one successful propless hold, not repeated qualification.
+> - **60% request:** fast-sag reason 26, streak 3, **zero target hold**. Terminal CCR 746/1333 implies **55.964% applied duty**, supporting “stopped near 56% during the ramp,” not “failed at 60%.” Zero-hold rate/current fields are unavailable measurements; 166,666 eHz is a denominator-floor artifact.
+>
+> Counter limitations matter: all six 50% sector counters equal 65,535, strongly indicating saturation; phase bins also hit that ceiling. They cannot establish sector balance or complete distributions. The reported tail spans **3.778 s despite a 2 s window field**, so it cannot be treated as a verified two-second tail. Zero late arms does not prove physical deadline compliance; postblend `ci_min` does not measure the wait estimate.
+>
+> The wait-dependency change **did not eliminate failure in this single screen**. Unmatched predecessor runs cannot isolate causation. Supply/physical effects and controller timing remain alternatives; current proxies certify neither peak current nor thermal safety.
+>
+> Poststop checks report outputs off. Next: **offline audit of bridge intermediate writes only**; no powered retry or threshold change.
+
+E411 fresh adversarial review, verbatim:
+
+> The narrow outcome is defensible, with these corrections:
+>
+> - **50%:** one deadline completion with **19.778 s reported target hold**, not a 30 s qualification. Arithmetic agrees: 298813/19.778 ≈15108 accepted events/s; dividing by six gives ≈2518 eHz. The reported 2525 eHz derives from rounded 66 µs intervals; coast 2524 eHz supports approximate speed agreement.
+> - **60% request:** sag stop with **zero target hold**. Terminal CCR746/1333 ≈**55.964%**, supporting “stopped around 56% during the ramp,” not “60% failed.” Commanded duty/ceiling600 does not establish applied60%. Zero-hold rate166666 eHz and current0 are invalid summary artifacts.
+> - **Counter coverage:** all six 50% sector counters and two phase bins saturate at65535; they cannot establish balance or distribution. Tail span3.778 s exceeds its labeled2 s window and needs explanation. Zero margin counters provide no timing coverage; late_arms=0 cannot prove physical deadlines. POSTblend ci_min does not bound the preblend wait estimate.
+> - **Protection:** the 50% capture records raw950 run3 without a sag trip. Audit whether those statistics and the guard use identical normalization, thresholds, and eligibility before claiming guard consistency. Rest-bus recovery cannot exclude transient supply effects.
+>
+> Suggested conclusion: “This candidate completed one 50% hold and sag-stopped around56%; changing the wait dependency did not eliminate failure in this screen.” No causal isolation or current/thermal/peak certification follows.
+>
+> Proceed only with the offline bridge intermediate-write audit.
+
+Dispositions: accepted the narrow outcome and all coverage limitations. Empty
+hold fields are unavailable, not measurements. Saturated distributions cannot
+localize a sector. Correction: capture header gives actual start06:36:04UTC,
+not06:36:00 above; cooling still exceeds120s. Tail length is not a new defect:
+states.rs tail_prev/tail_mark construction explicitly yields 1..2 nominal
+windows; the retained3778045us span, not the nominal2s label, was used.
+BusDepth::new_raw/observe sees each scan against pre-run reference;
+FastBusSag receives the eight-scan mean against its EWMA. raw950_run3 is
+therefore not three guard-low judgements. No guard-consistency or transient-
+supply exclusion is inferred from those differing statistics. No next spin
+admitted; next action remains the offline intermediate-write audit.
+
+### E412 - offline bridge transaction audit, no flash or motor command
+
+Decision: whether current immediate CCMR1/CCMR2/CCER writes admit unintended
+intermediate gate requests, and whether an atomic timer-role latch is a scoped
+candidate. Prediction: final-plan tests miss old-source low/dual-source states
+in the immediate sequence; a single COM transfer eliminates torn role states.
+Use all six forward and reverse adjacent transitions and both PWM levels.
+Model settled digital requests, explicitly NOT physical gate pulses, driver
+propagation or motor current. Include DTG26 and guard-preemption limitations.
+EFFD1B1C TIM16 stores CCMR1 at08001b86, CCMR2 at1b8a, threeCCRs1b8c/90/94,
+CCER1b98, with no PRIMASK bracket. Guard priority0 may intervene; nominal
+instruction count alone cannot bound the intermediate-state duration.
+RM0444Rev6 p551 suppresses a complementary pulse narrower than dead time;
+CCPC controls role-bit preloading, COMG can transfer without UG/CNT reset.
+Primary source: https://www.st.com/resource/en/reference_manual/rm0444-stm32g0x1-advanced-armbased-32bit-mcus-stmicroelectronics.pdf
+No assertion that a modeled transient occurred on pins or caused any sag.
+
+E412 audit result: two host model tests pass; immediate adjacent forward/reverse
+role writes expose10 intermediate-low and2 dual-high observations across their
+sampled settled states (not pulse counts/probabilities). A single role latch
+has no torn role state by the RM0444 model. First compilation missed std::println,
+corrected; failed log retained. The model intentionally has no clock, dead time,
+analog current or hardware proof. Nominal CCMR1-to-CCER span is ninefollowing
+instructions; safety-tick preemption can lengthen it. Not sag causality.
+Correction to E411 review disposition: states.rs389 passes the filtered reference
+to raw_depth, not the pre-run baseline. Raw and guard references match; inputs
+differ (single scan versus8-scan mean). That difference alone prevents equating
+raw950_run3 with the sharp guard's three low judgements. No change to protection.
+
+E412 evidence review, verbatim:
+
+> Independent arithmetic: the immediate-write test covers 12 directed adjacent transitions × 2 PWM levels × 3 write boundaries = **72 sampled states**, with 216 channel checks. The latch test covers 36 ordered sector pairs × 2 levels = **72 cases**, including self-transitions.
+>
+> The reported **10 intermediate-low observations and 2 double-high observations cannot be independently recomputed without `plan()` or its six register images**. These counters count observations, potentially repeating a condition across write boundaries; they do not count distinct glitches.
+>
+> Coverage limitations:
+>
+> - Same-leg exclusion follows algebraically from `(reference, enabled && !reference)`; its assertion cannot establish hardware shoot-through safety.
+> - A shared, fixed `pwm_high` omits CCR differences, carrier progression, update boundaries, dead time and actual pulse suppression.
+> - The latch test assumes atomicity through `active = preload`. It checks the proposed abstraction, not whether target configuration implements it.
+> - “Interrupted staging” never actually executes a stop or competing register write. The MOE assertion is tautological because `moe` is assigned `false`.
+> - The safe-off recorder verifies call order; sequential repetition does not test reentrancy or physical output behavior.
+>
+> **Offline implementation is reasonable, but stop interleaving is a concrete unresolved requirement.** A guard preempting before the remaining CCR stores can zero compares, then resumed COM can overwrite those zeros. COMG not setting MOE preserves that particular shutdown barrier, but does not preserve the zero-compare postcondition.
+>
+> Audit every preemption boundary, actual `Bridge` implementation, restart ownership, and CCPC cleanup. The supplied evidence supports investigating torn role updates; it does not establish measured pulses, sag causation, or motor admission.
+
+E412 adversarial review, verbatim:
+
+> The raw result is **10 intermediate-low observations and two double-high observations in a settled-state model**. It establishes neither physical pulse widths nor harmful current nor the cause of sag. Short-pulse suppression, dead time and write timing remain unmodeled.
+>
+> **Yes: a scoped offline candidate is justified**, with these unresolved risks:
+>
+> - **Atomicity is assumed by the second test.** `active = preload` implements the desired conclusion. It never exercises CCPC, COMG, partial staging or an actual interrupt. Likewise, same-leg exclusion follows algebraically from `reference` versus `!reference`; it cannot validate hardware shoot-through prevention.
+> - **Role atomicity is not compare atomicity.** CCR transfers follow their own preload/update rules. An overflow between CCR writes, or a role change affecting OCxPE, could expose mixed compare generations. Equal requested compares do not prove equal active compares during a duty change.
+> - **Stop ownership extends beyond MOE.** A guard interrupt can zero CCRs, then resumed COM code can overwrite those zeros. MOE remaining clear prevents immediate drive, but the promised post-stop state and later restart assumptions can fail. Establish abort/invalidation behavior before accepting the transaction.
+> - **CCPC temporarily changes other helpers’ semantics.** Audit every reachable CCER/CCMR writer, including safing and panic paths. A disable intended to be immediate may become staged.
+>
+> Discriminating offline tests: inject guard safing after every register operation; enumerate native updates between writes with differing old/new duties; model active/shadow registers separately; verify final CCRs, CCPC and restart state. Audit generated stores and added COM cost. Hardware behavior and causal attribution remain unproven.
+
+Dispositions: all limitations accepted. Tests are digital abstractions, not
+physical shoot-through/dead-time/atomicity evidence; remove the tautological
+MOE assertion. Exact plan images will accompany the next review packet.
+Guard can indeed zero CCRs before resumed stores overwrite them; no immediate
+re-energization while MOE stays0, but this violates the zero-compare contract.
+Next candidate protects its finite bridge transaction with PRIMASK and checks
+active/stopped inside that mask. Deferred guard runs after mask and wins.
+To prevent mixed compare generations, hold UDIS across staging, preload all
+three CCRs, COMG roles, then release UDIS without UG/CNT. Native overflow
+transfers the complete compare set together. No pending stop may be released.
+
+### E413 - implement and verify atomic role-latch candidate, offline first
+
+One typed COM policy and dedicated binary, preserving E409 prior wait/48k.
+Startup remains existing direct path. COM transaction: under ownership mask,
+require active and !stopped; UDIS on; CCPC on/CCUS0; CCMR roles with all OCxPE;
+three CCR preload writes; CCER preload; COMG; restoreCR2/CR1. No MOE/ENABLE
+on, no UG/CNT, no protection changes. All other timer role writers are
+foreground-only; guard only clears MOE/CCRs/ENABLE and is deferred for this
+finite transaction. Panic safe-off is non-returning; cannot resume staging.
+Model native overflow and pending-stop boundaries; audit disassembly/mask cost.
+Disabled hardware check must establish actual pad role latching while ENABLE
+remains low before any motor screen is considered. No powered action admitted
+by this entry. The candidate changes update coherence, not deadline strategy.
+
+E413 offline results: release-s/thinLTO/codegen1 8F977353514181288289D9FA8B4A1ADCD519D76E3FEFC02E18C7443BE3E62609.
+text44924/data740/bss4184,stack31940. 373tests passed before moving one
+source-order pin into Python to avoid the structure scanner counting string
+literals as MMIO; rerun372Rust+2Python below. Clippy initial six missing safety
+comments corrected; finalreleaseclippyPASS. Currentstructure allpass,37 old
+archivedRAMfailures remain historical/do-not-flash. FourroothelperauditPASS.
+COMP780/DMA37/guard155 identical to E409; COM332->382, mask6->7 intentionally.
+Rebuiltprior-pwm fourroots identical toEFFD1B1C; no default-role change.
+Initialratchet correctlyREFUSED thiscost; do not hide by overwritingitsbucket.
+Candidate mask in finalTIM16: cpsid08001ef8, ownerchecks1efe/1f00, UDIS1f20,
+CCPC1f2e, CCMR1/2 1f38/42, CCR1/2/3 1f48/4c/50, CCER1f54,
+COMG1f58, restoreCR2/CR1 1f5c/60, PRIMASK1f64. Boundedstraightline, no helper
+or loop; nominal~50instructions is NOT certifiedWCET. Existingtickgap200us
+guard stayshard. Disabledpadtest ENlow probes old24/staged24/committed9/off0;
+it refusesdriveifmismatch, cleansMOE/CCPC/compares/gates onitsordinaryexit.
+Reviewnext: whether to admit thisexplicitnewmask/cost and disabledflash only.
+Ifdisabledpadcheckfails, no motor attempt. No physical-pulse/sagcause claim.
+
+E413 evidence review, verbatim:
+
+> **Not yet admitted on the supplied evidence.** The bounded disabled test is reasonable, but its review gates remain incomplete.
+>
+> - **Model arithmetic:** The transaction test covers 4×4×64×8 = **8,192 cases**. It demonstrates coherent CCR generations under its assumed UDIS semantics. `stop_at=1..6` all execute the same deferred-stop branch; they do not independently exercise six interruption locations. The role model similarly assumes atomic COM transfer—it cannot establish hardware behavior.
+> - **Pad witness:** Given the stated sector mapping, `(24,24,9,0)` is internally consistent: CH3 high plus CH2N high, unchanged during staging, then CH1 high plus CH2N high, finally all low. Forced modes and zero compares isolate role transfer, but do not validate PWM compare-update timing or switching transients.
+> - **Stop coverage:** The masked ownership check and deferred guard are consistent with the supplied priority assumptions. However, `apply_com_plan` checks COM stopped/active, not `guard_latched()`. Establish that every applicable shutdown invalidates COM ownership before a subsequent writer can run. The supplied `guard_trip` clears COM active; other shutdown paths are absent.
+> - **Build evidence:** The ratchet explicitly failed. A separately named bucket preserving the baseline is appropriate only after documenting and reviewing the intended change. No disassembly is supplied, so instruction mapping, the additional PRIMASK operation, and masked-path duration cannot be independently verified. The final 372-test result is also pending.
+>
+> Complete those checks against the stated final SHA before admitting disabled flash/boot testing. Any admission should cover only ENABLE-low pad witnessing, with final outputs verified off; it provides no powered-run qualification.
+
+E413 adversarial review, verbatim:
+
+> **Conditionally admit the disabled boot-pad test; do not admit motor operation from this evidence.** The witness deliberately asserts MOE and gate-input pads, so admission depends on DRV ENABLE remaining physically low throughout.
+>
+> - **Stop ownership:** The masked `arm_allowed(stopped, active)` check covers a completed `guard_trip`, because it clears COM active. A guard arriving during the transaction is deferred until after COMG: a new sector can therefore become active before shutdown. This is bounded stop latency, not “the guard always wins before transfer.” The extra ~50 instructions are not a measured worst-case bound.
+>
+> - **CCR coherence has an entry invariant:** Enabling all OCxPE bits before writing CCRs prevents partial *new* generations. It does not establish that existing active CCRs are equal. COMG changes roles before the next native update; a newly selected source uses its previous active compare until then. Verify equality at every entry path, especially startup and recovery. Forced-mode, zero-compare pad testing cannot establish this.
+>
+> - **Witness coverage is narrow:** Three delayed pad samples demonstrate settled staging/transfer behavior for one transition. They cannot exclude short glitches, establish dead-time behavior, or validate UDIS/CCR transfer under overflow. The host models assume the hardware semantics being challenged.
+>
+> - **Configuration ownership:** `latch_check::run` changes CR2 and role state without restoring the original configuration. Explicitly establish its required exit state and that subsequent initialization supplies it. ENABLE’s initial check also needs exclusive ownership throughout the witness.
+>
+> - **Evidence gates remain open:** The supplied ratchet failed and the final 372-test rerun is pending. A separately named bucket preserves history but does not justify the latency increase.
+>
+> Also bound/reject excessive duty caps and the `period=65536`, 100%-duty CCR truncation.
+
+Dispositions: raw final372tests/four-root audit nowPASS; complete disassembly
+provided to closure reviewers. Named latch-prior-advref-floor5-comtop ratchet
+records intendedCOM+50/one mask, oldbucket unchanged. This permits auditing the
+candidate, not latency or envelope qualification. Source stop coverage:
+guard_trip setscom.active=false thencom_stop setsstopped=true beforehardware
+off; ordinary foreground stop callsroots_stop/com_stop before safe_off;
+foreground cannot preempt COM. Panic is nonreturning safe_off. No concurrent
+ENABLE-high writer exists during boot (controller notconstructed, motor roots
+inactive). Padtest exitsCCPC0/UDIS0,MOE0,CCR0,GPIOlow,ENABLE0; ordinary startup
+callsall_phases_pwm beforeMOEon. Forced-mode padtest doesNOT provePWM glitches.
+The stop model is a pending-interrupt abstraction, not instruction-cycle
+injection; pendingguard executes after the boundedmask and may followCOMG.
+CCR entry equality is not assumed asphysicalproof; laternewgeneration is
+coherent underUDIS. Handover's oldactivecompare maylag itsnewshadow one native
+period exactly as oldpath; this needs coverage beforepoweredpromotion.
+Period1333/dutycap800 boundCCR<=1066; arbitrary65536/1000 isnotthiscampaign.
+Nextadmissiononlydisabledpadcheck; no motor command in thatbatch.
+
+E413 fresh closure evidence review, verbatim:
+
+> No concrete blocker identified for the **ENABLE-low flash/pad test only**, under the stated ownership and shutdown assumptions.
+>
+> Independent recomputation:
+>
+> - Pad mask `24 = 0b011000`: PB0/CH2N and PA10/CH3 high. Mask `9 = 0b001001`: PA8/CH1 and PB0/CH2N high. These match the declared forced roles; staged `24` checks retention before COMG.
+> - `0x48` selects forced inactive with preload; `0x58` selects forced active with preload.
+> - The shown stores place all three CCR writes before CCER and COMG (`0x20`), then restore CR2/CR1. No shown UG or CNT write.
+> - The successful masked path contains **53 executed instructions including CPSID and MSR PRIMASK**, or 51 between them—not 50. It includes conditional branches; instruction count is not WCET.
+>
+> The supplied logs report 372 passing tests and four passing audit roots. They do not independently establish the full ELF SHA or an actual hardware pad-test result. Treat `24,24,9,0` as the required observation, not an already demonstrated result.
+
+E413 fresh closure adversarial review, verbatim:
+
+> No remaining concrete blocker is demonstrated for the **ENABLE-low pad test on exact SHA8F977353…E62609**, given the stated boot exclusivity and shutdown guarantees.
+>
+> The disassembly shows masking before the stop checks and through register restoration. Under your stated ownership, a guard cannot interleave that transaction, and an already-latched stop prevents entry. The boot witness has no competing ENABLE-high writer.
+>
+> The witness remains narrow: `24 → 24 → 9 → 0` demonstrates sampled role retention, COM-triggered transfer, and final low pads. It does **not** establish glitch-free transitions, CCR/role coherence during powered operation, or shutdown latency. Forced modes and zero compares specifically avoid exercising the old-active/new-shadow handover.
+>
+> The 372 tests, arithmetic audit, and abstract model do not close those powered-operation questions—but those questions do not block this disabled test. Preserve that scope explicitly; this review provides no motor-run admission.
+
+Dispositions: disabled-only admission accepted. Corrected mask count53 executed
+instructions includingCPSID/MSR (51between), not precise50; still notWCET.
+FinalarchiveSHA independently checked byGet-FileHash matches8F977353...62609.
+No poweredadmission from thisreview. Both padvalues and mechanism remain
+predictions until observed. Foreground take_back clearsactive/com_stop before
+safe_off (board.rs690); no post-stop competingCOM outsideguard route.
+
+### E414 - disabled E413 pad witness
+
+Flash/reset exact8F977353.e413-latch48.elf onG071 SN066CFF343433464757233430.
+MCPresponsive list_ports COM41. Onlyp/read/close afterboot; nevermotorcommand.
+Require LATCHSELFTEST en0 pads24_24_9_0=PASS and alloffreadback.
+Failureendsbatch, preserveimage/readout; no poweredwork before nextreview.
+
+E414 result: explicitprobe flash/reset succeeded; nativeMCP open/writep/read/close
+succeeded. PREFLIGHT MOE/CCRs/ENABLE0,gateslow1,nFAULT1 PASS; exactbanner
+LATCHSELFTEST en0 pads24_24_9_0=PASS DEADLINESELFTEST=PASS. RawMCP response
+retained e414-mcp-padcheck.json. Actualpadcheck supports retention and transfer
+at sampledsteady levels whileENlow, NOT physicalglitchabsence/PWMcoherence/
+motorqualification. Installed8F977353,outputsOFF,COM41closed; no motor command.
+
+Next proposed bounded screen: sameimage50%,45stotal(19.778target), allguards,
+PSU3A/propremoved/reverse. Oneconditional60%screen after>=120sOFF onlyif50
+passes. Failureclosesbatch. Handover oldactiveCCR equality is not a premise:
+existingdirecthandover can leave itsoldPWMsourcecompare untilnativeUEV.
+Candidate staging retains oldactivevalues untilfirstupdate then transfersone
+complete newset; it creates no out-of-range compare. The firsthandover/startup
+areunchanged. Per-duty steadyCOM compares prior/newdutyboundedcap800; the
+newpolicy maydelay a dutyupdate by atmostonenativeperiod, not forceUG orjump.
+Finalinstrumentation remainslean; no observerqualificationtransfer claimed.
+
+E414 evidence review, verbatim:
+
+> Raw recomputation: 24 = bits 3+4 = CH2N+CH3; 9 = bits 0+3 = CH1+CH2N. Thus **24→24→9→0** matches unchanged staged roles, COM-triggered role transfer, then low pads. The text totals 137 bytes including CRLFs. Reported tests: 372 passed, zero failed.
+>
+> **No concrete blocker is demonstrated for the proposed exploratory screen**, subject to the stated protection and ownership assumptions. Evidence limits remain:
+>
+> - Forced-mode, zero-CCR pad checks establish role staging; they do not demonstrate nonzero-PWM compare transfers or exclude switching glitches.
+> - COMG changes roles before the native update transfers CCRs. A new source can therefore use its inherited compare temporarily. UDIS prevents partial new CCR generations; it does not make roles and compares one atomic generation.
+> - The model assumes the relevant hardware semantics and deferred-stop behavior. Its enumerated stop positions do not independently validate interrupt timing.
+> - Neither instruction counts nor the arithmetic audit establish maximum guard delay.
+> - The e414 pad transcript itself does not identify its firmware hash; its association with the stated installed archive remains asserted.
+>
+> Retain the conditional 60% step, ≥120 seconds OFF, and failure-ending batch rule. Passing would support these screens only—not qualification or a sag-causality conclusion.
+
+E414 adversarial review, verbatim:
+
+> Yes: the role/compare mismatch remains a concrete safety gap before the proposed powered screen.
+>
+> - **Safety:** COMG installs new roles before the next native update installs new compares. The new source therefore uses an inherited active compare. Bounding each *plan* to 80% does not bound that inherited value against the current ARR, especially across the direct 10→48 kHz handover. Establish that bound explicitly. Forced-mode pad results `24→24→9→0` verify role staging, but cannot demonstrate PWM pulse widths or transition glitches.
+> - **Concurrency:** The ownership check inside PRIMASK addresses resumed writes after a serviced stop. It does not establish acceptable latency for a guard becoming pending during the transaction. The model assumes deferred servicing and omits role outputs, timer phase, and break behavior. Instruction counts and arithmetic audits do not close those gaps.
+> - **Next discriminating test:** With ENABLE held low, scope all six timer pads through actual PWM handover and latch transactions, including unequal inherited CCRs and updates near COMG. Inject a pending guard and measure request-to-output-disable latency. Check for excessive pulses, conflicting gate commands, and reactivation after stop.
+>
+> After those checks, one protected 50% screen is defensible. A clean 50% run alone does not justify the conditional 60% escalation.
+
+Dispositions: inherited-CCR bound needed; do not assumeplan cap provesit.
+Actualstartuppolicy CATCH62,DRIVEN61,6400ticks: sineamplitude<=396,
+drivencompare390. Periodchangesonce to1333; evenan inheritedstartupcompare
+is<=396/1333=29.7074%, below80. Newhandovercompare133; subsequentclosedloop
+plansfixed1333/cap800 give<=1066. No65536/100%inthiscampaign. Allinitialpaths
+usecompare0 thenboundedstartup, allrestarts same; forcedpadtestcompare0 and
+safe_off beforestartup. Add hostbound test on actualpolicyconstants.
+Maskedtransaction introduces boundedsoftwarestoplatency; noPWMpulse/physical
+WCETclaim from53instructions. No polls/helpers/divides; controlflowandMMIO
+arefinite. Existing200usgapstop remains, earlierknownmax108us, but this is
+screenplanning slack not a provenworstcase. Requested scope narrowed to one
+protected50%screen, notautomatic60; collect actualguardgap beforeadmitting60.
+A six-pinscope/pendingIRQlatencytest remains useful for final qualification;
+deferred fromthislimitedscreen because inheritedduty is bounded and no
+protection bypass is introduced. Physicalglitchabsence remainsunclaimed.
+Exactprobe flashstep and archivedSHA tie the subsequentMCPwitness; textalone
+isnotidentity. No poweredcommand yet.
+
+E414 fresh closure evidence review, verbatim:
+
+> Raw evidence: 3/3 host tests passed; serial reports disabled preflight, latch-pad and deadline self-tests PASS. Inherited startup CCRs peak at396/1333 (29.708%); subsequent plans cap at1066. The incremental-cache warning does not negate the test results.
+>
+> No concrete unresolved defect preventing the proposed bounded 50%/45s protected screen is demonstrated here. The inheritance bound closes the specific startup-over-cap concern.
+>
+> Limits: the model assumes atomic update behavior; `ccpc` has no modeled effect, and stop positions1–6 collapse to the same post-transaction stop. Thus these tests do not independently prove hardware role/compare interaction or pending-IRQ timing. The reported pad PASS lacks transition traces here.
+>
+> Proceeding is supportable as an exploratory screen under the stated protections, not qualification. Review actual guard gaps before higher duty; do not automatically extend to60s.
+
+E414 fresh closure adversarial review, verbatim:
+
+> No demonstrated defect in the supplied code categorically blocks the bounded 50%/45s screen. The inheritance bound closes the excessive inherited-duty objection.
+>
+> Concrete residual risks:
+>
+> - COMG commits new roles before CCR transfer. New roles therefore operate briefly with old, potentially unequal compares. Bounding those compares does not establish safe six-pin transitions; the model omits roles, deadtime and output polarity.
+> - `stop_at=1..6` exercises identical behavior: stop occurs after an unconditional update. This does not validate pending-IRQ latency or hardware safing order.
+> - The EN-low pad PASS and 53-instruction count establish neither powered transition behavior nor worst-case guard delay. The previous 108µs maximum is not evidence for this image.
+>
+> These are unresolved validation gaps, not proven failures. Treat the run strictly as a protected screen; inspect its actual guard gap before escalation.
+
+Dispositions: both support the oneprotected50screen with residualvalidation
+limits retained. Evidence's "60s" means noautomatic60% escalation; neither
+duration nor duty extended. Pendingguardlatency/pulse-width proof remainsopen,
+not claimed bycount. Actualcandidateguardgap mustbeinspected beforehigherduty.
+
+### E415 - protected50 screen, new role latch
+
+Installed8F977353 exactE414padverified; single50 l45seconds, 19minus+5plus,
+period1333,minhold19000ms,allguards/PSU3A/reverse/propless. LastpoweredE411
+06:36:04UTC; coolingnowwellover120s. Prediction: candidate can retain itslower
+screen without TickGap/ownershipfailure. Anyfailureendsbatch; capturewhole
+reply and verifiedfinaloff. No60run admittedbeforefreshreview.
+
+E415 result: FastBusSag26 after 3.662 s at 50% (closed 23.662 s), not a
+successful 50% screen. Capture 2026-09-27/e415-propless500-latch48_01.txt,
+image 8F977353; applied CCR666/1333, ceiling500, final all-off/nFAULT1 PASS.
+Hold accepts54850 /3.662s /6 =2496.36 eHz (whole hold, not coast window).
+Legacy coast2423, matched fixture ratio1029: differing windows, NOT slip.
+No late/thin/storm/blank-latched/tracking stop; spent13us, COMPmax25us,
+COMlate9us mixed purpose. Guardgap104us, foregroundgap190us. The additional
+mask did not produce a recorded TickGap violation in this attempt; no WCET
+claim. Proxy hold399mA, zero drift-186mA, whole-block max1324mA, not phase
+peak/RMS/thermal evidence. Sharp guard remains active and latched; no operand
+ring on this lean image. One failure cannot quantify whether the candidate
+is worse than E410. Batch ended; no60 attempt. Board OFF, serial closed.
+
+Next offline lead, not a causal conclusion: every source is complementary PWM,
+so during its OFF pulse the source and sink low FETs are both commanded on.
+With very light propless load this permits reverse winding current instead of
+letting the freewheel diode stop at zero. Stock cached AM32 phaseouts.c has
+an explicit comp_pwm-off branch holding the source low gate off. Assess a
+typed closed-loop diode-rectification candidate (source CCxNE0, high PWM kept,
+sink unchanged), its loss/dead-time tradeoffs and ISR cost before adoption.
+Do not conflate this with the failed latch experiment or diagnose ripple from
+an average-current proxy. No next motor test admitted by this note.
+
+E415 independent evidence review, verbatim:
+
+> Recomputed from raw:
+>
+> - Target hold: **3.662 s**, versus 23.662 s closed operation.
+> - Tail rate: 54,849 / 3.662169 = **14,977.2 accepts/s**, or **2,496.2 electrical Hz**, assuming six accepts/cycle. Rounded 66 µs gives 2,525.3 Hz; these are different estimators.
+> - The 32 coast intervals average **206.719 µs**, implying **2,418.7 eHz** if each interval represents half an electrical cycle.
+> - Raw bus minimum: 1101/1211 = **90.92%**, a **9.08% drop**. Minimum-time VREF is missing, so this is not a normalized voltage-drop measurement.
+> - Filtered bus/VREF ratio relative to reference is **100.099%**; that does not negate the recorded three-scan sag trip.
+> - Sector accepts sum to **230,873**, exactly **2,374** below total accepts, matching mailbox coalescing.
+> - Applied compare fraction: 666/1333 = **49.962%**.
+>
+> Unsupported conclusions include calibrated current, adequate current headroom, absence of preemption or timing-margin violations from zero counters, trustworthy unsaturated phase distributions, and a demonstrated physical cause of sag. `NoLog`/`NoChain` and zero-valued diagnostics require instrumentation verification.
+>
+> The source transfers roles at COMG but compares at the next native update; it does **not** establish simultaneous role-and-duty transfer or harmless intermediate behavior.
+>
+> `System.Object[]` supplies no substantive author interpretation.
+>
+> **Higher duty is not admitted.** This single 50% screen failed with reason 26 after only 3.662 s at target. Post-stop safing passed; sustained operation did not.
+
+E415 independent adversarial review, verbatim:
+
+> Raw E415 records a fast-sag stop (reason 26) after only 3.662 s at 50%, with pre/post outputs disabled and nFAULT high. It fails the requested hold. Coast speed broadly corroborates rotation; neither speed agreement nor the 399 mA uncalibrated proxy establishes safe phase current. No usable author interpretation follows.
+>
+> The latch’s central weakness is visible in source: COMG transfers roles immediately, while CCRs transfer at the next native update. UDIS prevents a partial compare update but does not make roles and compares atomic together. A new role can therefore use an old compare temporarily. Whether that caused this sag remains unproven without transition evidence and a matched control.
+>
+> Coverage is incomplete:
+>
+> - Zero margin counters and witness values do not establish timing margin or valid sensing. Saturated phase bins and mailbox coalescing limit reconstruction.
+> - “Caller owns a masked, stop-checked transaction” is an assertion; masking scope, stop interleavings, pending interrupts, and safe-off dominance need implementation evidence. Saved-register restoration also needs scrutiny.
+> - The disabled latch self-test does not establish every powered transition’s waveform, deadtime, complementary polarity, or transient current. Aggregate timing counters cannot exclude brief hazardous states.
+>
+> Retiring this candidate from powered qualification is justified by its failed hold, without declaring the latch causal. Separately assessing complementary-PWM-off offline is justified as a hypothesis, not a remedy.
+>
+> No powered next test is approved without implementation and safety evidence.
+
+Dispositions: higher duty is not admitted; retire the latch candidate from
+powered exploration, preserving source/image/capture. Failure is not proof
+of its causal mechanism or statistical worsening. Applied duty is 49.962%;
+raw bus minimum is not VREF-normalized. NoLog/NoChain zero fields and saturated
+phase bins are not evidence of absent events. Stop ownership/masking was
+reviewed in E413/E414, not independently re-established by this raw-result
+packet. The packet accidentally rendered the author-note array as
+System.Object[]; both reviews therefore independently assessed raw capture
+and implementation, not the prose. Their recomputations agree with the
+entry's narrow outcome; no missing causal conclusion is adopted.
+
+### E416 - offline diode-mode feasibility, no flash or powered run
+
+Decision: determine whether source-low-off is a small, separable policy with
+well-defined intermediate roles before considering it as a powered candidate.
+Read cached AM32/Mcu/g071/Src/phaseouts.c:63-72,101-110,139-148;
+comp_pwm=0 holds the source low gate as GPIO-low and leaves source high PWM.
+This establishes a reference option, not that it was exercised on this rig.
+Our source uses CCxE|CCxNE, sink force-inactive/complement enabled and float
+CCxE only. Candidate steady source would use CCxE only while retaining PWM.
+Assess all adjacent reverse/forward transitions, including intermediate
+register writes, before choosing a writer. Disabling synchronous conduction
+changes diode losses, reverse current and BEMF waveform; lower proxy current
+would not establish thermal safety. No claim of negative current measured.
+Prediction for offline work: a pure plan transform can alter only source NE,
+preserve duty/sink/float, and expose whether the old immediate write order
+temporarily violates source-low-off. No new binary or powered admission yet.
+
+E416 result: four transition tests pass; full host library 376/376 pass
+(release personality features advance-ref/deep-filter/com-top, host debug
+test harness). Existing dependency incremental-cache AccessDenied warning
+did not prevent completion. Added tests only; no production plan/writer changed.
+Immediate-write enumeration has 72 settled snapshots: synchronous 10
+unintended-low observations/2 dual-high snapshots; diode 0/2. These are not
+physical glitches or timing evidence. Steady diode transform covers six
+sectors x four duties x two levels; only source NE changes. Raw test output:
+captures/gates/e416-transition-tests.txt. Full suite terminal exit0,376PASS.
+
+E416 independent evidence review, verbatim:
+
+> Raw: 4 tests passed, 372 filtered out. Incremental-cache access warning did not prevent completion. Each immediate-write test covers 12 directed adjacent transitions × 2 PWM levels × 3 writes = 72 snapshots, including final states. Reported counts: baseline 10 unintended-low channel observations and 2 dual-high snapshots; diode variant 0 and 2. These are observations, not distinct transitions or pulses.
+>
+> Latch coverage: 36 ordered sector pairs, including self-transitions, × 2 levels = 72 cases. Diode transform: 6 sectors × 4 duties = 24 plans, checked at 48 level combinations.
+>
+> Proved within the model: source NE alone changes; immediate writes retain dual-high intermediate states. Zero diode unintended lows is printed, not asserted. Same-leg exclusion follows structurally from the model.
+>
+> Atomic latching is assumed by whole-structure assignment; hardware preload semantics, interruption safety, pulse timing, currents, and fault causation remain unproved. Reference code supports selectable source-low disabling, not transition equivalence. Proposed interpretation is appropriately bounded; unchanged production/bench status requires separate evidence.
+
+E416 independent adversarial review, verbatim:
+
+> Raw: four tests passed; 372 were filtered out. Complementary plans produced 10 intermediate-low and two dual-high observations; diode plans produced zero and two. The incremental-cache warning did not prevent execution. No hardware evidence was collected.
+>
+> The interpretation correctly limits causality, but the model assumes away critical questions: PWM level stays fixed across writes; deadtime, driver delay, current direction, and actual preload/COM behavior are absent. The shoot-through assertion follows directly from mutually exclusive Boolean definitions. Likewise, `active = preload` assumes atomic transfer rather than verifying hardware configuration or premature COM events.
+>
+> Two high-side requests are not themselves proof of destructive conduction. Their persistence does not erase diode mode’s elimination of the modeled unintended lows or exclude changed recirculation/BEMF behavior.
+>
+> Withholding powered admission is defensible; rejecting diode A/B is premature. Require verified transition behavior, then a bounded comparison retaining existing guards and the PSU cap, with gate/phase timing and current evidence. Diode losses and reverse recovery remain unassessed.
+
+Dispositions: agree. Model omissions prevent a physical-conduction verdict;
+two high requests alone do not establish shoot-through. The diode alternative
+is NOT rejected: it changes steady recirculation even though it does not fix
+immediate role ordering. Zero modeled extra lows is an observed count, not a
+hardware claim. Do not stack an unreviewed writer/timing change into its A/B.
+Next implementation must name its exact baseline, source-low-off transition
+and safing behavior, disabled pad evidence, diode-loss exposure bound and
+compiled COM cost. No powered run was made in this continuation; installed
+image remains E413, last verified OFF by E415. E413 is retired from further
+powered exploration, not erased. Goal remains propless80%, incomplete.

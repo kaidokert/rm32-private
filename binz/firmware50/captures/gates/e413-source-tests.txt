@@ -1,0 +1,11 @@
+python : ..
+At line:2 char:469
++ ... 13-clippy-fixed.txt; python scripts/test_latch_policy.py 2>&1 | Tee-O ...
++                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (..:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.001s
+
+OK

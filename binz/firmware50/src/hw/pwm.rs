@@ -19,6 +19,16 @@ use stm32g0xx_hal::stm32;
 
 use crate::sixstep::Plan;
 
+pub mod latch;
+pub mod latch_check;
+
+/// COM role-transaction personality; selected by the binary, not at runtime.
+pub trait RoleWrite { const LATCHED: bool; }
+pub struct Immediate;
+impl RoleWrite for Immediate { const LATCHED: bool = false; }
+pub struct Latched;
+impl RoleWrite for Latched { const LATCHED: bool = true; }
+
 #[inline(always)]
 fn regs() -> &'static stm32::tim1::RegisterBlock {
     // SAFETY: TIM1's block from the PAC's pointer constant. Writers are the

@@ -1,0 +1,24 @@
+cargo : note: did not finalize incremental compilation session directory
+`\\?\E:\m\robot\esc\rm32\binz\firmware50\target\x86_64-pc-windows-msvc\debug\incremental\stm32g0xx_hal-2wxie5w58cr4u\s-hmo6zw5ixf-1yg7du4-working`: Access is denied. (os error 5)
+At line:2 char:1
++ cargo test --lib --target x86_64-pc-windows-msvc --features advance-r ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (note: did not f...d. (os error 5):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+  |
+  = help: the next build will not be able to reuse work from this compilation
+
+   Compiling firmware50 v0.1.0 (E:\m\robot\esc\rm32\binz\firmware50)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.72s
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\firmware50-661f5fa6452097cc.exe)
+
+running 4 tests
+settled-state observations: intermediate_lows=10, double_highs=2
+test sixstep::transition_tests::diode_plan_changes_only_source_complement_enable ... ok
+test sixstep::transition_tests::single_role_latch_has_no_torn_sector_even_if_staging_is_interrupted ... ok
+test sixstep::transition_tests::immediate_role_writes_have_states_outside_old_and_new_sectors ... ok
+diode settled-state observations: unintended_lows=0, two_highs=2
+test sixstep::transition_tests::diode_mode_does_not_make_immediate_role_writes_atomic ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 372 filtered out; finished in 0.00s

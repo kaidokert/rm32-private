@@ -22,6 +22,25 @@
 
 use crate::commutation::{advance_of, blend_interval, wait_time};
 
+/// Which estimate schedules this acceptance's commutation. This is a control
+/// policy, not a protection setting. Both choices publish the same new state.
+pub trait WaitEstimate {
+    const PREVIOUS: bool;
+}
+pub struct FreshEstimate;
+impl WaitEstimate for FreshEstimate {
+    const PREVIOUS: bool = false;
+}
+/// Reference-like wait dependency at fixed advance: the estimate formed from
+/// the previous acceptance schedules this one. Not full AM32 update ordering.
+pub struct PreviousEstimate;
+impl WaitEstimate for PreviousEstimate {
+    const PREVIOUS: bool = true;
+}
+
+#[cfg(test)]
+mod timing_tests;
+
 /// How many consecutive comparator reads must agree, as a policy type.
 pub trait FilterPolicy {
     /// `average_interval` is in the same half-microsecond units as the
@@ -480,6 +499,19 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
         rising: bool,
         advance_level: u32,
         policy: &F,
+        read_level: R,
+    ) -> Outcome {
+        self.offer_timed::<FreshEstimate, F, R>(count, rising, advance_level, policy, read_level)
+    }
+
+    /// Same acceptance and state update; only the wait's estimate is selected
+    /// by type. Snapshot under this exclusive borrow, never from foreground.
+    pub fn offer_timed<T: WaitEstimate, F: FilterPolicy, R: FnMut() -> bool>(
+        &mut self,
+        count: u32,
+        rising: bool,
+        advance_level: u32,
+        policy: &F,
         mut read_level: R,
     ) -> Outcome {
         // 1. half-cycle gate — strictly greater, matching the reference.
@@ -500,13 +532,15 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
             i += 1;
         }
 
-        // 3. accept. Blend the new observation into the average, then schedule
-        //    commutation at half a cycle minus the advance.
+        // 3. Identical blend/publication for both policies; wait may use the
+        // preblend estimate, including the seed on the very first acceptance.
+        let previous = self.average_interval;
         self.prev_zc = self.last_zc;
         self.last_zc = count;
         self.average_interval = self.clamp_interval(blend_interval(self.average_interval, self.prev_zc, self.last_zc));
-        let advance = advance_of(self.average_interval, advance_level);
-        let wait = wait_time(self.average_interval, advance_level);
+        let scheduled = if T::PREVIOUS { previous } else { self.average_interval };
+        let advance = advance_of(scheduled, advance_level);
+        let wait = wait_time(scheduled, advance_level);
         self.accepted = self.accepted.wrapping_add(1);
         Outcome::Accepted {
             wait,
