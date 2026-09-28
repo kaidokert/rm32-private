@@ -42651,3 +42651,43 @@ Speed 2310–2330 eHz (+1.5–2 %). Hold proxy 2950–3000 (~2.8 A metered). **W
 * Sag < ~15 codes: next lever is advance 18 at 675.
 * Thin > 0 or late > 0: timing margin is being spent; report it in that currency.
 * No restart and no sweep at 675 until three holds pass. One pass counts as 1/3, not earned.
+
+### ENV-13 — operator-metered: the proxy over-reads ~4 %, 67.5 % HOLDS 3/3, and the 67.5 % restart runs into the 3 A clamp and past the worst-block gate. Not earned.
+
+**Metered anchor (operator, 65 % on `8FFE35E2`):** 2.6 A against a proxy `hold_ma=2694`,
+so the **over-read is ~3.6 %**, not the ~6 % I had carried across sessions. At 67.5 %:
+**2.83 A** metered against 2945 proxy (4.1 %).
+
+**Exploratory probe, 67.5 % on `B0E5CCD4`:** passed every firmware gate. 2362 eHz,
+worst 3670, sag 16.3 codes, 0 thin/late, no foldback. **My ENV-12 prediction of a
+worst-block gate failure was wrong.**
+
+**Qualification, `B0E5CCD4`, anchored at 675** (proof in the ladder record):
+
+| hold | coast | hold mA | worst | sag codes | thin / late |
+|---|---|---|---|---|---|
+| 1 | **2349** | 2929 | 3577 | **18.2** | 0 / 0 |
+| 2 | 2354 | 2974 | **3696** | 24.7 | 0 / 0 |
+| 3 | 2354 | **2984** | 3655 | 23.9 | 0 / 0 |
+
+Rung verdict **PASS**. `max_streak=0`, `adc_ovr=0`, `vref_odd=0`, `ceiling_tenths=675`,
+`ci_min` 48. Worst hold ≈ **2.87 A metered, 96 % of the clamp.**
+
+**Restart 3/3 at 675 by `restart_verdict`**, segment 2 held only 4.2 s. But:
+
+| restart | seg-2 hold proxy | ≈ metered (÷1.04) | seg-2 worst block | seg-2 zero drift |
+|---|---|---|---|---|
+| 1 | 3153 | ~3.03 A | 3659 | −395 |
+| 2 | 3126 | ~3.01 A | 3758 | −256 |
+| 3 | 3183 | ~3.06 A | **3854** | −290 |
+
+* **Supply:** segment 2 projects at or over the 3.00 A clamp in all three.
+* **Worst-block gate:** restart 3 exceeds `WORST_MA_CEILING = 3800`, the gate the holds
+  are judged by. `restart_verdict` does not check it, so it printed PASS. **Judging a
+  restart more loosely than a hold would pass my own run on a weaker criterion; I don't.**
+
+**Verdict: 67.5 % NOT earned.** Holds 3/3; the restart is supply-clamped and fails the
+hold gate once in three. **The earned envelope stays 52.5–65 % on advance 16**, and the
+named blocker is now measured, not projected: **the 3.00 A supply clamp**, which the
+67.5 % restart meets. Next step is the operator's call: raise the clamp, or accept 65 %
+as the qualified top on this supply.

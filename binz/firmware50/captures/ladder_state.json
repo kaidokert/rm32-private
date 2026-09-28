@@ -14978,5 +14978,81 @@
     "fails": []
    }
   ]
+ },
+ "B0E5CCD432C14E161CBB3BAB4CE63F067C4B5DA9140C839F84512DB91AB0394E": {
+  "675": [
+   {
+    "file": "env13-r675-1_01.txt",
+    "duty": 675,
+    "reason": 2,
+    "accepted": 883026,
+    "bus_ref": 1212,
+    "forced": 0,
+    "too_early": 44097,
+    "blank_arms": 311807,
+    "unstable": 1518468,
+    "hold_ms": 43775,
+    "rate_permille": 990,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2349,
+    "coast_crossings": 1332,
+    "hold_ma": 2929,
+    "ceiling_tenths": 675,
+    "worst_ma": 3577,
+    "droop_permille": 980.1980198019802,
+    "fails": [],
+    "anchored": "ENV-13: identical to 8FFE35E2 (advance 16, deep-filter; 65% earned: 600/625/650 walked 3/3, restart 3/3 at 650, sweep, ENV-9/10) except SIXSTEP_DUTY_CAP 650->675 (clamps only above 650), x cycle 650->675 and SELF_REF_RUNGS += 675. isr_diff vs 8FFE35E2: four roots instruction-identical, TIM16 one moved pool constant; isr_audit PASS; suites 361/359. Exploratory 675 hold env13-probe675 passed: 2362 eHz, operator-metered 2.83 A, worst 3670, sag 16.3 codes."
+   },
+   {
+    "file": "env13-r675-2_01.txt",
+    "duty": 675,
+    "reason": 2,
+    "accepted": 883110,
+    "bus_ref": 1215,
+    "forced": 0,
+    "too_early": 43861,
+    "blank_arms": 311355,
+    "unstable": 1515885,
+    "hold_ms": 43775,
+    "rate_permille": 990,
+    "has_tail": true,
+    "rate_vs_coast_permille": 998,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2354,
+    "coast_crossings": 1339,
+    "hold_ma": 2974,
+    "ceiling_tenths": 675,
+    "worst_ma": 3696,
+    "droop_permille": 979.4238683127572,
+    "fails": [],
+    "anchored": "ENV-13: identical to 8FFE35E2 (advance 16, deep-filter; 65% earned: 600/625/650 walked 3/3, restart 3/3 at 650, sweep, ENV-9/10) except SIXSTEP_DUTY_CAP 650->675 (clamps only above 650), x cycle 650->675 and SELF_REF_RUNGS += 675. isr_diff vs 8FFE35E2: four roots instruction-identical, TIM16 one moved pool constant; isr_audit PASS; suites 361/359. Exploratory 675 hold env13-probe675 passed: 2362 eHz, operator-metered 2.83 A, worst 3670, sag 16.3 codes."
+   },
+   {
+    "file": "env13-r675-3_01.txt",
+    "duty": 675,
+    "reason": 2,
+    "accepted": 883279,
+    "bus_ref": 1214,
+    "forced": 0,
+    "too_early": 44001,
+    "blank_arms": 310770,
+    "unstable": 1515085,
+    "hold_ms": 43775,
+    "rate_permille": 990,
+    "has_tail": true,
+    "rate_vs_coast_permille": 999,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2354,
+    "coast_crossings": 1361,
+    "hold_ma": 2984,
+    "ceiling_tenths": 675,
+    "worst_ma": 3655,
+    "droop_permille": 978.9297391962167,
+    "fails": [],
+    "anchored": "ENV-13: identical to 8FFE35E2 (advance 16, deep-filter; 65% earned: 600/625/650 walked 3/3, restart 3/3 at 650, sweep, ENV-9/10) except SIXSTEP_DUTY_CAP 650->675 (clamps only above 650), x cycle 650->675 and SELF_REF_RUNGS += 675. isr_diff vs 8FFE35E2: four roots instruction-identical, TIM16 one moved pool constant; isr_audit PASS; suites 361/359. Exploratory 675 hold env13-probe675 passed: 2362 eHz, operator-metered 2.83 A, worst 3670, sag 16.3 codes."
+   }
+  ]
  }
 }
