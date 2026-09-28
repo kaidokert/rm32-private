@@ -490,12 +490,24 @@ impl Ctx {
                 // still provokes identically. At and above it the fixed target
                 // would be a step DOWN -- an unload -- so the step is relative
                 // and upward (E244).
+                // ENV-6: CLAMPED TO THE CAMPAIGN CEILING, and the real cap passed
+                // as the plan cap. This path used to call
+                // `publish_plans(to, period, to)` -- passing its own target as its
+                // cap -- so at rung 625 the relative step drove 625 + 75 = 700,
+                // i.e. the bridge ran at 70 % with a 4176 mA worst block, above
+                // both the campaign ceiling and WORST_MA_CEILING, while
+                // `applied_ccr` reported the clamped 833. E357 had claimed the cap
+                // "binds whatever any key requests"; it never bound here. A
+                // stimulus that needs to exceed the ceiling must not exist, so at
+                // the cap this step now does nothing, and FastBusSag is simply not
+                // provokable at the top rung -- which is the honest statement.
                 let to = if self.applied_duty >= INJECT_SAG_RELATIVE_FROM {
                     self.applied_duty.saturating_add(INJECT_SAG_STEP_TENTHS)
                 } else {
                     INJECT_SAG_DUTY_TENTHS
-                };
-                hal.publish_plans(to, self.period, to);
+                }
+                .min(SIXSTEP_DUTY_CAP);
+                hal.publish_plans(to, self.period, SIXSTEP_DUTY_CAP);
                 // **The report must not claim the rung while the bridge runs
                 // something else.** Without this, `applied_ccr` described the
                 // pre-injection duty and the capture looked like an

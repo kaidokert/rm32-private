@@ -42125,3 +42125,102 @@ So the two carriers are blocked by different protections, which is useful: it sa
 each lever runs out. The cheapest way past both is the one they share — reducing `spent`
 would widen advance 20's deadline margin, and advance 20's better worst-block figure (3517
 vs 3725 at 62.5 %) would then carry it past advance 16's current ceiling.
+
+### ENV-6 — review disposition: the protection sweep ran at 62.5 %, the sag stimulus drove the bridge to 70 %, and E357's "the cap binds everywhere" was false
+
+One independent adversarial review of ENV-5. **Verdict accepted: "62.5 % is earned on
+advance 16" is withdrawn as stated.** Every finding below verified against the captures
+and source before acceptance.
+
+#### 1. SAFETY: the sag injection bypassed the campaign ceiling — fixed
+
+`states.rs` `Inject::Sag` called `hal.publish_plans(to, self.period, to)`, passing its
+own target **as its cap**. At a provoke duty ≥ 450 the step is relative (+75), so at
+625 it commanded **700 — 70 % on the bridge**, above the campaign ceiling. ENV-5's `v`
+capture records it: **`worst_ma=4176`, 376 mA over `WORST_MA_CEILING = 3800`**. The
+report hid it: `applied_ccr` is computed through `sixstep_ccr_of`, which clamps, so it
+printed 833 (62.5 %) while the timer ran 70 %.
+
+**E357's addendum — "the cap is enforced in the compare-value arithmetic itself, so it
+binds regardless of what any key requests" — was false.** Both clamps it cited key off
+the cap *argument*, and this path supplied its own. I verified two call sites and
+generalised to all of them.
+
+Fix (foreground only): the stimulus is clamped `.min(SIXSTEP_DUTY_CAP)` and passes the
+real cap. At the top rung the sag step is now a no-op, so FastBusSag is *not provokable
+at 62.5 %* — the honest statement, since a stimulus that must exceed the ceiling must
+not exist. With `applied_duty = to ≤ cap`, `applied_ccr` now equals the real compare
+value. New sim test `the_sag_stimulus_never_leaves_the_campaign_ceiling` records every
+plan's cap and asserts none exceeds it, and that the inherited 250 → 500 control is
+unchanged; **it fails on the old code and passes on the fix** (refuting control run).
+Suite 361/361, clippy 0, four ISR roots identical to ENV-5's `DF7B1257`, `isr_audit`
+PASS with the allow file. Image `A09BA143` (loadable `AF3A5788…`).
+
+#### 2. The ENV-5 protection sweep ran at 62.5 %, not 25 % — my fixture error
+
+Every `env5-prot-*` capture shows `target_duty_tenths=625`. The sweep loop had no
+`--flash`, so `provoke_tenths` kept the 625 the preceding restart campaign's `xxxxx`
+left in the shell. **This is exactly [[feedback-guard-relative-shell-state]] — a fourth
+instance.** ENV-5's "At 25 %" heading was false for every key. The 25 % → 50 % step that
+tripped AverageCurrent was also not what ran; ENV-5's "not even deterministic across
+sessions" conclusion rested on a stimulus at the wrong duty and is withdrawn.
+
+#### 3. Protection classification, corrected
+
+* **Physics-demonstrated:** Tracking, TickGap, FeedbackStale, CompStorm — real mechanism.
+* **AverageCurrent:** real overload, but with the first foldback deliberately unacknowledged
+  (plans held) — a demonstration of the stop, not of foldback.
+* **Stop-path only:** HandlerOverrun, LateArm, BlankLatched and the injection-scaled
+  path force the polled condition; they prove the loop stops, not the physics.
+* **Driver:** partial (forced nFLT path, not a real driver fault).
+* **Watchdog:** `RESETCAUSE iwdg=1` cannot distinguish an injected hang from a spontaneous one.
+* **FastBusSag:** undemonstrated on this motor.
+
+#### 4. Named-blocker numbers, corrected
+
+* Advance-16 worst block: **3052 mA (worst at 60 %) → 3582 / 3725 (62.5 %)**, i.e.
+  **+17 to +22 % per 2.5 % step**, not the ~11 % I wrote (that was *hold* current).
+  Two points; the projection past 3800 at 65 % is an extrapolation, not a measurement.
+* Advance-20 thin-arm growth (19–25 → 138–152) is one step; "~6× per step" is one ratio.
+* "Reducing `spent` carries advance 20 past advance 16's current ceiling" was
+  speculation stated as a plan. It stays a hypothesis.
+* The restart captures contain no `PROVOKEAT` lines; the 625 restart duty is shown by
+  `target_duty_tenths=625` in `BEMFRESTARTRUN`, not by the cycle trace I cited.
+
+#### 5. Re-run on the fixed image
+
+Image `A09BA143` (loadable `AF3A5788…`), **fresh `--flash` before every key**, so every
+provocation ran at the shell default. All 11 captures show `target_duty_tenths=250`.
+
+| key | expected | got | class |
+|---|---|---|---|
+| `t` | 8 | 8 | Tracking — physics |
+| `g` | 3 | 3 | TickGap — physics |
+| `f` | 4 | 4 | FeedbackStale — physics |
+| `n` | 7 | 7 | Driver — partial |
+| `u` | 13 | 13 | CompStorm — physics |
+| `h` | 14 | 14 | HandlerOverrun — stop-path |
+| `i` | 25 | 25 | AverageCurrent — real overload, foldback held |
+| `k` | 15 | 15 | LateArm — stop-path |
+| `q` | 16 | 16 | BlankLatched — stop-path |
+| `w` | reset | `RESETCAUSE iwdg=1` | Watchdog — can't tell injected from spontaneous |
+| `v` | 26 | **2**, `provoked=0` | FastBusSag — **undemonstrated** (as in Q60-4) |
+
+**Hardware control for the fix:** `--pre xxxxx` then `v`, i.e. the exact ENV-5 stimulus
+at 625. Now: `reason=2`, 46.3 s hold, **`worst_ma=3361`** (was 4176), `applied_cap=625
+applied_ccr=833` and that is now the true compare value, self-ref `verdict=ok`
+(coast 2226 eHz). The ceiling binds on hardware.
+
+#### Status
+
+62.5 % on advance 16: holds 3/3 + restart 3/3 (ENV-5, `DF7B1257`), plus one clean 46 s
+hold at 625 on the fixed image `A09BA143`, whose four ISR roots are identical to
+`DF7B1257`'s — the change is foreground-only and only on the injection path. On that
+basis the ENV-5 holds and restart carry to `A09BA143`; the protection sweep above is the
+one that counts. **Earned: 52.5–62.5 % on advance 16**, with FastBusSag
+undemonstrated on this motor as a standing, named gap, not a pass.
+
+**Next lever (cheapest first):** advance 18, a constant. Prediction to test at 625, three
+runs a side against advance 16, same session: speed about halfway between the two
+carriers (~2290 eHz vs 2228 / 2355), thin arms nonzero but well under advance 20's ~150,
+worst block between 3517 and 3725. A late arm, or a worst block over advance 16's, rejects it.

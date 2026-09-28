@@ -76,6 +76,8 @@ pub struct Log {
     /// When the loop closed (the estimator was installed).
     pub closed_at: Option<u32>,
     pub plans: Vec<(u32, u16)>,
+    /// The cap every `publish_plans` call passed (ENV-6).
+    pub plan_caps: Vec<u16>,
     pub advances: Vec<u32>,
     pub injected: Vec<(u32, Inject)>,
     pub crossings_delivered: u32,
@@ -411,8 +413,9 @@ impl Hal for Sim {
         self.revisit_polls = self.revisit_polls.wrapping_add(1);
         false
     }
-    fn publish_plans(&mut self, duty: u16, _period: u32, _cap: u16) {
+    fn publish_plans(&mut self, duty: u16, _period: u32, cap: u16) {
         self.log.plans.push((self.t, duty));
+        self.log.plan_caps.push(cap);
     }
     fn set_advance(&mut self, advance: u32) {
         self.log.advances.push(advance);
@@ -849,6 +852,31 @@ mod tests {
             assert_eq!(u32::from(want.code()), kind.code(), "{kind:?}");
             assert!(sim.log.safe_offs >= 1, "the stop must route through safe_off");
         }
+    }
+
+    #[test]
+    fn the_sag_stimulus_never_leaves_the_campaign_ceiling() {
+        // ENV-6: at the top rung the relative sag step used to publish
+        // 625 + 75 with itself as the cap -- 70 % on the bridge (4176 mA worst
+        // block on hardware). Every plan now passes the real cap, and no
+        // requested duty exceeds it.
+        use crate::run::policy::SIXSTEP_DUTY_CAP;
+        let inject = Some((Inject::Sag, 2_000_000));
+        let (sim, _) = run(SIXSTEP_DUTY_CAP, 20_000_000, STEADY, Faults::default(), inject);
+        assert!(!sim.log.plans.is_empty());
+        assert!(
+            sim.log.plan_caps.iter().all(|&c| c == SIXSTEP_DUTY_CAP),
+            "{:?}",
+            sim.log.plan_caps
+        );
+        let max = sim.log.plans.iter().map(|&(_, d)| d).max().unwrap();
+        assert!(max <= SIXSTEP_DUTY_CAP, "published {max} above the cap");
+        // Below the relative threshold the historical fixed step is untouched.
+        let (sim, _) = run(250, 20_000_000, STEADY, Faults::default(), inject);
+        assert!(
+            sim.log.plans.iter().any(|&(_, d)| d == 500),
+            "the inherited 250 -> 500 control changed"
+        );
     }
 
     #[test]
