@@ -82,6 +82,8 @@ advance-ref = []
 # ci 40 (at 16) to ci 46. `advance-ref` takes precedence over it; it takes
 # precedence over `advance-low`.
 advance-18 = []
+# REJECTED in ENV-18 (worst block higher in 3/3 pairs at 700, two firmware foldbacks);
+# kept only so image B363FF11 reproduces.
 # ENV-18 A/B: a flat 14 at both ends, BELOW the reference 16 -- tested as a current-per-
 # speed lever (wait = ci*18/64, longer than the reference's ci/4). `advance-ref` takes
 # precedence over it; it takes precedence over `advance-18` and `advance-low`.

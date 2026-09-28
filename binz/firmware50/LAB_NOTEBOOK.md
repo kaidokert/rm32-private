@@ -42837,3 +42837,75 @@ vs worst is lower by **≥ 3 %**, with coast speed down by less than the worst-b
 (worst vs worst, percent). Otherwise **reject** (a null at this n is a rejection, not a
 "maybe"). **Even if accepted, 70 % counts only after anchored holds 3/3 on `B363FF11`**,
 then restart and sweep.
+
+#### ENV-18 result — advance 14 REJECTED at 70 %; review accepted with corrections
+
+| pair | worst block 16 / 14 | hold 16 / 14 | coast 16 / 14 | `ceiling_tenths` on 14 |
+|---|---|---|---|---|
+| (env18-1A, env18-2B) | 3739 / **3968** | 3160 / 3303 | 2411 / 2447 | 700 |
+| (env18-4A, env18-3B) | 3833 / **4009** | 3203 / 3206 | 2410 / 2411 | **690** |
+| (env18-5A, env18-6B) | 3787 / **4004** | 3121 / 3223 | 2411 / 2419 | **690** |
+
+A = `530432A2` (16), B = `B363FF11` (14). All six: `reason=2`, 0 thin / 0 late, PREFLIGHT
+PASS after the run. Worst block higher on 14 in **3/3 pairs**; worst vs worst **+4.6 %**
+(env18-3B 4009 vs env18-4A 3833). **Two of three advance-14 runs hit the firmware's
+AverageCurrent foldback** (ceiling 700 → 690, `applied_ccr` 933 → 919), the protection
+behaving as designed. No advance-16 run at 700 has ever folded back (9 runs). Rejected
+under both the original and the tightened rule. The foldback trimmed 14's drive, so the
+rejection is conservative. Every advance-14 worst block (≥ 3968) is above every
+advance-16 worst block at 700 (3727–3882, nine runs).
+
+**Corrections from the independent review (all verified):**
+* **The tightened rule was NOT committed before any advance-14 result existed.**
+  `env18-2B` finished ~08:52:10 (file last written 08:52:13), and commit `087c912` is
+  08:52:21. The rule text's "written while only env18-1A exists" was false when
+  committed. It changes nothing: the tightened rule is only stricter about acceptance.
+* Pair 1's +1.5 % speed is the 2B outlier (2447, fastest of all 12 runs at 700), not an
+  effect of advance 14. Hold current is not a clean loser either: pair 2 is 3206 vs 3203, equal.
+* **"16 is the current minimum among 14/16/18/20" is withdrawn.** Those comparisons
+  are on different rungs and sessions, and at 650 advance 18 had the lower *mean* worst
+  block. What holds: at 700, 14 is worse than 16 on worst block. At 625/650, 18 and 20
+  did not beat 16 under their predeclared rules. 20 buys +6 % speed for ~+17 % hold, the
+  worst current per unit speed. 16 is the retained reference, not a demonstrated minimum.
+* env18-4A (advance 16) also read 3833 ≥ 3800: the 16 baseline at 70 % is itself
+  marginal, consistent with ENV-16.
+* The build-bound opening stays cfg-gated to `advance-14`, now marked REJECTED in
+  `Cargo.toml` so it is not read as open.
+
+### ENV-19 — the 67.5 → 70 % step's timing cost, per event; and the edge, delivered
+
+**Per-event arm margin**, margin-hist companion `57C3A63C`, `BEMFMARGINHOLD` (hold window,
+~620 k arms per run; each arm's `left = wait − spent` from its own values, after the arm):
+
+| | 675 (env19-mh675-1/2/3) | 700 (env17-B700mh-2/3/6) |
+|---|---|---|
+| minimum `left` | **5 µs** (all three) | **4 µs** (2 / 2 / 3 arms) |
+| arms at `left` 5–6 | 96 / 91 / 80 | 169 / 154 / 149 |
+| arms at `wait` 12 | 1 / 1 / 0 | 5 / 2 / 4 |
+| thin / late | 0 / 0 | 0 / 0 |
+
+**The step cost 1 µs of worst-case arm margin** and roughly doubled the tail at 5–6 µs;
+> 99.97 % of arms keep ≥ 7 µs. Caveats (ENV-17 review): `spent` starts at the handler's
+software entry stamp, so comparator-edge-to-entry latency is outside `left`; values are
+1 µs-quantized; the two blocks ran sequentially (675 after 700), not interleaved.
+"Timing is not the *binding* limit at 70 %" is supported. Where it becomes one is a
+hypothesis, testable only by a run at higher speed.
+
+#### Deliverable — the envelope and its edge
+
+* **Qualified: 52.5–67.5 % on advance 16.** Top image **`B0E5CCD4`** (loadable
+  `329B4F36…`), re-qualified on the 5 A supply (ENV-17 control, worst run
+  env17-ctl675-2: 2342 eHz, 2985 mA, 19.5 sag codes; worst block env17-ctl675-3 3740).
+* **Edge: 70 %, stopped by the 3800 mA worst-block gate.** Image `530432A2`: env16-r700-2
+  3843 mA, rung NOT PASSED. env18-4A (same image) also 3833. No firmware foldback on
+  advance 16.
+* **What 67.5 → 70 % would have bought:** +2.1 % coast speed (worst 2342 → 2397 eHz) for
+  1 µs of worst-case arm margin (5 → 4 µs, per event).
+* **Levers tried at the edge (constants, cheapest first):** advance 18 (sag margin,
+  held in reserve, ENV-11), advance 20 (+6 % speed for ~+17 % hold, ENV-7), advance 14
+  (**rejected**, worse current, triggers foldback, ENV-18). None moves the current wall.
+* **Next blocker, with evidence:** worst-block current at 70 %, 4 of 9 advance-16 runs
+  ≥ 3800 (3727–3882), 5 % under the firmware's own AverageCurrent allowance. Moving it
+  is the operator's decision (the protection), or a code-level lever that lowers current
+  at the same speed. None is identified yet, so that is a hypothesis without a candidate.
+  Standing gap: FastBusSag has no hardware positive control on this motor.
