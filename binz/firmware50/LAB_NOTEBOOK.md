@@ -42691,3 +42691,32 @@ hold gate once in three. **The earned envelope stays 52.5–65 % on advance 16**
 named blocker is now measured, not projected: **the 3.00 A supply clamp**, which the
 67.5 % restart meets. Next step is the operator's call: raise the clamp, or accept 65 %
 as the qualified top on this supply.
+
+#### ENV-13 correction (operator): the supply never exceeded ~2.8 A during the 67.5 % restarts
+
+The operator watched the meter through all three restarts: **never above ~2.8 A**, so the
+supply was **not** in current limit. My "~3.01–3.06 A, at or over the clamp" divided the
+segment-2 proxy by the hold-phase over-read (1.04). But segment 2 carries the largest
+zero drift in the set (−256 / −290 / −395 mA), which over-reads current, so segment 2
+over-read by ~12 %, not 4 %. **The supply-clamp claim is withdrawn; the supply is not the
+measured blocker at 67.5 %.**
+
+What remains: restart 3's segment-2 worst block **3854 > 3800** (a proxy figure inflated by
+−290 mA of drift). By the **encoded** criteria 67.5 % passes (holds 3/3 rung PASS,
+restart 3/3 `restart_verdict` PASS). It fails only under my stricter reading, which
+applies the hold gate to restart segments. **Whether that gate applies to restarts is a
+criterion decision, so it goes to the operator.** Protection sweep on `B0E5CCD4` running (ENV-14).
+
+### ENV-14 — protection sweep on `B0E5CCD4` (67.5 % image): 10/10 as expected, at 25 %
+
+Fresh flash per key, `v` omitted (ENV-12). All captures `elf_sha256 B0E5CCD4`, provoked
+at `target_duty_tenths=250`: t 8, g 3, f 4, n 7, u 13, h 14, i 25, k 15, q 16, w
+`RESETCAUSE iwdg=1`. Same classification as ENV-6. FastBusSag still has no hardware
+positive control.
+
+**67.5 % status:** holds 3/3 (rung PASS), restart 3/3 by `restart_verdict`, sweep
+10/10. The one open item is the operator's criterion decision from ENV-13: whether
+restart segments must also stay under `WORST_MA_CEILING = 3800` (restart 3 read 3854).
+**The PSU limit was raised 3 A → 5 A by the operator after these runs.** The next wall
+above 67.5 % is the firmware's own ~4 A block allowance (3800 sits 5 % under it), which
+this campaign does not move.
