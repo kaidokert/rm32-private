@@ -40737,3 +40737,101 @@ campaign limit.
 Nothing to fix. Recorded because the deliverable's "powered ceiling is 60 %" is
 now a verified property of the image rather than an intention, and because
 verifying it cost one grep chain against a real scar.
+
+### S1 — the positive control invalidates two of the three pre-registered tests, and calibrates the replacement. Prediction recorded before the run.
+
+Goal: are `FastBusSag` trips dominated by ADC sampling artefact or by rail
+behaviour? Offline first, per the discipline.
+
+#### The positive control, and what a known-cause rail sag looks like
+
+`captures/sag/e270-v3val250.txt` is the only capture in the corpus carrying
+`row_v = 3` rows (the version with `pwm_ctr`, `bus_raw`, `at_fine`). It is an
+**injected** sag — `Inject::Sag` steps the duty 150 → 500 — so its cause is known
+by construction, which makes it the calibration I need before trusting any test.
+
+Recomputing the guard's own arithmetic per row
+(`bus·filt_vref·100 < filt_bus·vref·95`): **3 low-mean scans of 256**, streak
+reaching 3. The twelve rows into the latch:
+
+| ratio (‰) | 996 | 995 | 992 | 988 | 985 | 980 | 973 | 963 | 953 | 946 | 938 | 931 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bus_raw` | 1194 | 1198 | 1196 | 1180 | 1182 | 1160 | 1152 | 1107 | 1100 | 1132 | 1121 | 1112 |
+| `pwm_ctr` | 619 | 342 | 852 | 1232 | 1114 | 1015 | 696 | 376 | 724 | 118 | 1198 | 84 |
+
+So a genuine rail event is a **smooth monotone descent over ~12 scans**, with
+`bus_raw` and the 8-tap mean moving down together, `pwm_ctr` uniformly scattered,
+and `vref` steady at 1507–1508 throughout.
+
+#### Two of my three pre-registered tests are invalid. Recorded, not reworded.
+
+**Test 2 — "inter-scan gap past the ~88 µs DMA no-rewrite window" is vacuous.**
+The nominal scan period is 1/9901 Hz = **101 µs**, already above 88 µs, so every
+scan qualifies: in this control the twelve gaps are 81.9–123.1 µs and ten of the
+twelve exceed 88. Worse, it measures the wrong quantity — the 88 µs is the
+no-rewrite window *after the transfer-complete interrupt*, so the tear risk is
+foreground **read latency**, not the trigger interval. Row-to-row `at` deltas are
+the trigger interval and cannot see it. The ring records no TC-to-read stamp.
+
+**Test 3 — "bus_raw low while vref_mean normal" does not discriminate.** `vref`
+is the 3.3 V reference and is unaffected by the 12 V bus, so a real rail sag has
+exactly that signature — as this control demonstrates (`vref` 1507→1508 while the
+bus falls 82 codes). It cannot separate a tear from a genuine sag.
+
+Test 1 (`pwm_ctr` concentration) survives, and the control now defines its null:
+uniform scatter.
+
+#### Replacement test, derived from the control and needing no new field
+
+**Descent shape.** A rail event is multi-scan and monotone with `bus_raw`
+tracking the mean; a torn snapshot is an isolated single-scan `bus_raw` outlier
+that drags the mean while its neighbours disagree. Measured as: for each low-mean
+scan, `|bus_raw − median(bus_raw of ±4 neighbours)|` against the local median
+absolute deviation. On the control: **0 outliers of 3 low scans** — consistent
+with a real rail event, which is the answer a calibration must give.
+
+#### Offline replay is exhausted
+
+Of 43 sag captures, **exactly one carries v3 rows**, and it is the positive
+control. Every other predates the fields the test needs. The loaded latch has no
+per-scan record — which is why `sag-ring` exists — so the question requires a
+bench run.
+
+#### Prediction, before the run
+
+At rung 550 with the ring in the production controller, **if a latch occurs** I
+predict the low-mean scans will *not* look like the control: fewer than ~6 scans
+of descent, and at least one `bus_raw` outlier against its neighbours, and/or
+`pwm_ctr` concentrated rather than scattered — i.e. instrument-dominated. Basis:
+E352/E353 measured a ±65-code excursion floor with no load and no switching, the
+same absolute size at a 275-code rail as at 1212, with the trip line ~12 codes
+above it.
+
+Falsifier: a smooth monotone descent of ~10+ scans with `bus_raw` tracking the
+mean, no outliers, and scattered `pwm_ctr` — the control's own signature — which
+would mean the loaded latch is a real rail event and this whole line is wrong.
+
+If no latch occurs in three runs I will say so rather than re-roll. Note the
+motor is a **different physical unit** of the same model since the 550 latch was
+observed, so the 1-in-3 rate that motivated this is not established for it.
+
+#### Hygiene done before touching the bench
+
+* The session's checkout was `codex/park-propless-e489`, the **parked detour** —
+  5034 insertions across 60 files from the baseline, including `sagtrace.rs`
+  itself. Building there would have flashed the abandoned controller. Work moved
+  to a worktree at tag `binz-loaded60-backports-complete-20260927` (`c4d4405`),
+  branch `sagcheck/instrument-limited`.
+* `ref/` (vendored crates plus the HAL path dependency) is gitignored, so the
+  worktree could not build until it was junctioned to the original tree's copy.
+* **The documented baseline hash is not reproducible from another path.** Building
+  `shell-pwm --features advance-ref,deep-filter` at the worktree path gives
+  `F7CFABCD…` against the recorded `23661473…`; the release profile carries
+  debuginfo, which embeds absolute paths. Restoring the operator's exact image
+  therefore needs the archived ELF, not a rebuild.
+* That ELF existed **only** under `C:/Users/.../AppData/Local/Temp/`, one cleanup
+  from lost. Copied to `captures/elf/23661473.baseline-loaded60-backports-20260927.elf`
+  and hash-verified against the doc.
+* Instrument for the run: `shell-pwm --features advance-ref,deep-filter,sag-ring`,
+  sha256 `381DCA575B765D2A…`. It must be replaced with the archived baseline when
+  the investigation ends.
