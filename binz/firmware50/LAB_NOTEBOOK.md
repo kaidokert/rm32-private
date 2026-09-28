@@ -41528,3 +41528,83 @@ commutations; `adc_ovr = 0` and `vref_odd = 0`, so no DMA rotation occurred.
 `spent` mode ~6 µs, `thin_count = 0`, boundary ci ≈ 44 µs against 51–58 µs measured);
 the stale oracle blocks judgement below 525; and `FastBusSag` can no longer be
 provoked on this bench, so its coverage rests on argument rather than demonstration.
+
+#### Q60-4 addendum — the foreground cost I promised to measure: −7.89 % of loop throughput, and the worst gap sits 12 µs from a protection trip
+
+Q60-1's batch statement promised `loop_iters_closed` compared before and after, since
+three `observe` calls per scan instead of two is where a foreground cost would show. I
+had not done it. Done now, **three runs a side at rung 600**, the control being the
+archived baseline ELF staged as the flash source so the capture is honestly labelled
+`23661473` rather than mislabelled with the local build:
+
+| image | `loop_iters_closed` | mean | `loop_gap_max_us` |
+|---|---|---|---|
+| `23661473`, no observers | 2 286 151 / 2 277 530 / 2 284 155 | 2 282 612 | 167 / 178 / 168 |
+| `B1E51E59`, observers | 2 108 940 / 2 097 428 / 2 100 939 | 2 102 436 | 188 / 175 / 170 |
+
+**Throughput: −7.89 %, and decisive** — the distributions do not overlap (control
+minimum 2 277 530 against instrumented maximum 2 108 940). The three observers cost
+about an eighth of the foreground loop's iterations.
+
+**Worst-case gap: not decisive, and I will not claim it is.** Control max 178,
+instrumented max 188, against `TICK_GAP_MAX_US = 200`. The ranges **overlap**
+(167–178 vs 170–188), so n = 3 a side does not establish a 10 µs shift
+([[feedback-microsecond-ab-needs-three-runs]] gets me to three, not to significance).
+What is defensible: the instrumented **worst observed gap is 188 µs, 94 % of the trip
+threshold**, leaving 12 µs, and **no `TickGap` occurred in any of the 15 qualification
+holds or 6 restarts**.
+
+Two things this does not change and one it does:
+
+* The control output is unaffected — `zc_per_s` 11 475 against 11 477–11 478, and
+  hold length identical to the millisecond (47.775 s).
+* The qualification stands: nothing tripped, and the gap guard is a *poller* property
+  (its doc: "a property of the poller, not of the motor").
+* But the delivered envelope must carry this: **the foreground has ~8 % less headroom
+  than the baseline, and the worst observed gap is within 12 µs of `TickGap`.** At a
+  higher rung or on a slower foreground that margin is where the next spurious stop
+  would come from, and it is a cost I introduced, not a property of the motor.
+
+Bounded remedy if that margin is ever wanted back: the third `BusDepth::observe` is
+the largest single item (four cross-product comparisons per scan). Two fractions
+instead of four would halve it and still straddle the guard's line, since only the
+950 bin is load-bearing and the 990 bin is the only other one that ever fired.
+
+#### Q60-4 addendum 2 — the qualified ELF's sha256 does not rebuild, and the reason is inert. The LOADABLE image does.
+
+Rebuilding after the qualification gave `A2DD81EC…`, not the `B1E51E59…` every
+qualification capture records. Cause: the pre-commit hook normalised line endings in
+`src/` **after** I built the image the runs were made with, so the committed source
+differs from the built source in whitespace only.
+
+That is a reproducibility claim the deliverable rests on, so it is checked rather than
+assumed:
+
+| section | qualified `B1E51E59` | rebuild `A2DD81EC` | |
+|---|---|---|---|
+| `.text` | `96abf41e83c40878` | `96abf41e83c40878` | **identical** |
+| `.rodata` | `1374a28abb05c78a` | `1374a28abb05c78a` | **identical** |
+| `.data` | `14eb5b739684da69` | `14eb5b739684da69` | **identical** |
+| `.bss` | (empty) | (empty) | **identical** |
+| four ISR roots | 818 / 368 / 155 / 37 | 818 / 368 / 155 / 37 | **identical** |
+
+And decisively, the **loadable binary** — what `probe-rs` actually writes — is
+**byte-identical**: 45 108 bytes, sha256
+`E821D229D5DFB152FDD1E4102F1DFC33BEDEF64247F599C6425B583D9155154C` from both.
+
+So the difference is confined to `.debug_*`, which line-ending changes move because
+debug line tables reference source positions. **The qualified code is reproducible
+from the commit; its ELF sha256 is not.**
+
+This is the second form of the same trap in two days. SAGQ1 recorded that the
+*baseline's* documented sha256 cannot be reproduced from a different **path**, because
+release carries debuginfo with absolute paths. This is the same mechanism via a
+different input — **whitespace**. The lesson for this project's records: an ELF sha256
+is not a code identity. **Quote the loadable-image hash when the claim is "this is the
+code that ran."**
+
+For the deliverable I therefore record both, and the loadable hash is the load-bearing
+one:
+
+* ELF sha256 (as recorded in every qualification capture): `B1E51E595197E1AE…`
+* **Loadable image sha256 (reproducible from commit `68a7814`): `E821D229D5DFB152…`**
