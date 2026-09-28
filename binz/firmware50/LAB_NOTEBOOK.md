@@ -42538,3 +42538,48 @@ worst block (3715/3800), sag (22.3 codes)**. The advance-18 A/B at 650 addresses
 only (ENV-7: +1 % hold, so it will not relieve the supply). It must be **interleaved**,
 16/18 ABABAB, fresh flash per run, with the images from the same source (`8FFE35E2` vs
 `FF036E17`, the latter ISR-instruction-identical and 359/359).
+
+### ENV-11 — advance 18 vs 16 at 65 %, interleaved: 18 buys sag and worst-block margin, costs supply. Measured, NOT adopted: the next step is supply-bound.
+
+**Images, same source:** `8FFE35E2` (advance 16, the earned image) vs `FF036E17`
+(`advance-18,deep-filter`, loadable `DA3B7237…`). ISR roots are instruction-identical
+(TIM16: one moved pool constant). `isr_audit` PASS. Suite 359/359 under
+`advance-18,deep-filter`. **Interleaved ABABAB**, fresh flash per run:
+`scripts/ab_interleaved.sh`, `--no-ladder` (exploratory).
+
+**Predicted before the runs:** speed equal ±0.5 %, hold +1 %, worst sag +~9 codes;
+at `ci_min` ~46 advance 18 leaves wait ≈ 10 µs against `spent` max 11, so thin arms
+likely and a LateArm stop possible.
+
+| pair | coast 16 / 18 | hold 16 / 18 | worst_ma 16 / 18 | sag codes 16 / 18 | ci_min 16 / 18 |
+|---|---|---|---|---|---|
+| 1 | 2291 / 2293 | 2689 / 2757 | 3509 / 3566 | 37.5 / 35.4 | 52 / 53 |
+| 2 | 2285 / 2308 | 2727 / 2767 | 3655 / 3493 | 23.8 / 31.6 | 48 / 52 |
+| 3 | 2282 / 2302 | 2730 / 2763 | 3724 / 3605 | 29.8 / 37.3 | 46 / 55 |
+
+All six: `reason=2`, 45.3 s holds, thin 0, late 0, no foldback (`ceiling_tenths=650`).
+
+**Worst vs worst:** speed **+0.5 %** (2282 → 2293), timing margin **unchanged** (0
+thin both sides; the predicted thin arms did not appear, and `ci_min` ran *higher* on
+18), sag **+7.8 codes** (23.8 → 31.6), worst block **−119 mA** (3724 → 3605), hold
+**+1.4 %** (2730 → 2767).
+
+**Against prediction:** sag and hold landed; speed sits at the band edge (+0.1 / +1.0 /
++0.9 per pair); the timing risk was refuted in the favourable direction. **Noise
+caveat (ENV-8):** worst-block pairs split 1–2 and the sag pairs 1–2. What carries
+across sessions is the *worst-case* sag, better on 18 in both ENV-7 (35.4 vs 25.9)
+and here (31.6 vs 23.8). Hold current is higher on 18 in 6/6 pairs across both sessions.
+
+**A3 is the tightest worst block on the earned configuration: 3724 / 3800 (76 mA).**
+
+#### Decision: not adopted, and why
+
+Three margins are thin at 65 %: worst block, sag, supply. Advance 18 improves the first
+two and spends the third. **The step it would serve, 67.5 %, projects as supply-bound.**
+Hold rises ~9 % per step, so 675 predicts a ~2980 mA hold proxy; the restart segment 2
+(2847–2881 at 650) predicts ~3100–3140, i.e. ~2.9–2.96 A metered against the 3.00 A clamp.
+Adopting 18 moves that the wrong way. So 18 stays a measured, reversible option for
+the sag margin, and 16 (the reference value) stays the carrier.
+
+That supply projection is an extrapolation. My own rule is not to declare a wall from
+one, so the next action is to **measure 67.5 %**, not argue it.
