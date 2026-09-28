@@ -15054,5 +15054,83 @@
     "anchored": "ENV-13: identical to 8FFE35E2 (advance 16, deep-filter; 65% earned: 600/625/650 walked 3/3, restart 3/3 at 650, sweep, ENV-9/10) except SIXSTEP_DUTY_CAP 650->675 (clamps only above 650), x cycle 650->675 and SELF_REF_RUNGS += 675. isr_diff vs 8FFE35E2: four roots instruction-identical, TIM16 one moved pool constant; isr_audit PASS; suites 361/359. Exploratory 675 hold env13-probe675 passed: 2362 eHz, operator-metered 2.83 A, worst 3670, sag 16.3 codes."
    }
   ]
+ },
+ "530432A2DCBC3C15381D9EC270756C6951E64A7E5D7F252EE2F914D42D38CF67": {
+  "700": [
+   {
+    "file": "env16-r700-1_01.txt",
+    "duty": 700,
+    "reason": 2,
+    "accepted": 897612,
+    "bus_ref": 1212,
+    "forced": 0,
+    "too_early": 45206,
+    "blank_arms": 260765,
+    "unstable": 1519822,
+    "hold_ms": 42773,
+    "rate_permille": 1000,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2408,
+    "coast_crossings": 1373,
+    "hold_ma": 3065,
+    "ceiling_tenths": 700,
+    "worst_ma": 3727,
+    "droop_permille": 978.5478547854785,
+    "fails": [],
+    "anchored": "ENV-16: identical to B0E5CCD4 (67.5% qualified ENV-15: holds 3/3, restart 3/3, sweep 10/10) except SIXSTEP_DUTY_CAP 675->700 (clamps only above 675), x cycle 675->700, SELF_REF_RUNGS += 700. isr_diff vs B0E5CCD4: four roots instruction-identical, TIM16 one moved pool constant; isr_audit PASS; suites 361/359."
+   },
+   {
+    "file": "env16-r700-2_01.txt",
+    "duty": 700,
+    "reason": 2,
+    "accepted": 898131,
+    "bus_ref": 1215,
+    "forced": 0,
+    "too_early": 45227,
+    "blank_arms": 260351,
+    "unstable": 1522800,
+    "hold_ms": 42775,
+    "rate_permille": 985,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2397,
+    "coast_crossings": 1380,
+    "hold_ma": 3180,
+    "ceiling_tenths": 700,
+    "worst_ma": 3843,
+    "droop_permille": 977.7777777777778,
+    "fails": [
+     "worst block 3843 mA at or above 3800: within 5% of the firmware's own 4 A allowance, where AverageCurrent folds back and a foldback disqualifies the rung"
+    ],
+    "anchored": "ENV-16: identical to B0E5CCD4 (67.5% qualified ENV-15: holds 3/3, restart 3/3, sweep 10/10) except SIXSTEP_DUTY_CAP 675->700 (clamps only above 675), x cycle 675->700, SELF_REF_RUNGS += 700. isr_diff vs B0E5CCD4: four roots instruction-identical, TIM16 one moved pool constant; isr_audit PASS; suites 361/359."
+   },
+   {
+    "file": "env16-r700-3_01.txt",
+    "duty": 700,
+    "reason": 2,
+    "accepted": 898466,
+    "bus_ref": 1212,
+    "forced": 0,
+    "too_early": 45493,
+    "blank_arms": 259774,
+    "unstable": 1521338,
+    "hold_ms": 42775,
+    "rate_permille": 986,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1003,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2403,
+    "coast_crossings": 1379,
+    "hold_ma": 3133,
+    "ceiling_tenths": 700,
+    "worst_ma": 3779,
+    "droop_permille": 978.5478547854785,
+    "fails": [],
+    "anchored": "ENV-16: identical to B0E5CCD4 (67.5% qualified ENV-15: holds 3/3, restart 3/3, sweep 10/10) except SIXSTEP_DUTY_CAP 675->700 (clamps only above 675), x cycle 675->700, SELF_REF_RUNGS += 700. isr_diff vs B0E5CCD4: four roots instruction-identical, TIM16 one moved pool constant; isr_audit PASS; suites 361/359."
+   }
+  ]
  }
 }

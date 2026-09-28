@@ -42753,3 +42753,19 @@ PSU limit 5 A.
 **Plan:** three anchored holds at 700 on `530432A2`. If the rung passes: restart 3/3,
 then the sweep. If it fails: that is the edge. Map it with the margin-hist companion at
 675 and 700, labelling worst figures per run.
+
+#### ENV-16 result — 70 % is the edge: 2/3 holds pass, one fails the unchanged 3800 gate
+
+| run (`530432A2`) | coast | hold mA | worst block | sag codes | thin / late | `ceiling_tenths` |
+|---|---|---|---|---|---|---|
+| env16-r700-1 | 2408 | 3065 | 3727 | 31.8 | 0 / 0 | 700 |
+| env16-r700-2 | **2397** | **3180** | **3843 — FAIL** | 33.2 | 0 / 0 | 700 |
+| env16-r700-3 | 2403 | 3133 | 3779 | 34.3 | 0 / 0 | 700 |
+
+Rung verdict **NOT PASSED** (`env16-r700-2`, host gate: worst block ≥ 3800). The
+firmware never folded back. Against the hypotheses: speed landed; hold came in *under*
+the band (3065–3180 vs 3200–3260); the worst-block failure landed; **sag margin refuted
+(32–34 vs 10–16)**. The PSU limit changed 3 → 5 A between the 675 runs and these, so the
+sag change is confounded with hardware. Control: 675 re-run on `B0E5CCD4` now (also
+owed, since the hardware changed), interleaved ABBAAB with the margin-hist companion at
+700 for per-event timing at the edge (ENV-17).
