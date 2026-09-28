@@ -126,6 +126,19 @@ pub(crate) struct Ctx {
     /// takes a raw scan past the 5% line. This is the one that measures the
     /// duration that actually discriminates.
     pub raw_depth: BusDepth,
+    /// The guard's **own** decision variable: the 8-tap mean against
+    /// `FastBusSag::filtered()`, straddling its 950 line (Q60-1). Neither
+    /// observer above watches it -- `depth` uses the baseline, `raw_depth`
+    /// uses the raw scan.
+    pub mean_depth: BusDepth,
+    /// **Scans whose VREF slot is implausible** (Q60-1): a circular-DMA
+    /// rotation puts another channel's code there, and production's only
+    /// validation is `0 < vref < ADC_RAIL`, which an in-range phase code
+    /// passes. Anchored to this run's own bridge-off `ref_vref` rather than a
+    /// constant, so it needs no calibration and no magic number -- and to the
+    /// baseline rather than the EWMA, because the EWMA would converge onto a
+    /// rotated value within 207 ms and stop reporting.
+    pub vref_odd: u32,
     pub current: AverageCurrent,
     pub governor: FoldbackGovernor,
     pub rail: RailMean,
@@ -156,6 +169,8 @@ impl Ctx {
             sag: P::S::watch(base.bus_ref),
             depth: BusDepth::new(),
             raw_depth: BusDepth::new_raw(),
+            mean_depth: BusDepth::new_mean_vs_filt(),
+            vref_odd: 0,
             current: P::C::meter(base.zero_block),
             governor: P::C::governor(req.target_tenths),
             rail: RailMean::new(),
@@ -383,6 +398,15 @@ impl Ctx {
             // trustworthy. At the low rungs the two differ by ~2 codes, which
             // is why the walk's numbers survive.
             self.raw_depth.observe(scan.bus, scan.vref, filt_bus, filt_vref);
+            // Q60-1: the same reference the guard uses, on the same quantity
+            // the guard judges, straddling its line.
+            self.mean_depth.observe(bus_mean, vref_mean, filt_bus, filt_vref);
+            // Q60-1: +-10% of the run's own bridge-off reference, multiply-only.
+            let vr = u32::from(self.base.bus_ref.vref);
+            let v = u32::from(scan.vref);
+            if v * 10 < vr * 9 || v * 10 > vr * 11 {
+                self.vref_odd = self.vref_odd.saturating_add(1);
+            }
             let verdict = self.sag.observe(bus_mean, vref_mean);
             if P::G::ON {
                 self.record_sag_row::<P>(hal, &scan, sector_start, filt_bus, filt_vref);

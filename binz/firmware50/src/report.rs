@@ -490,6 +490,18 @@ pub struct RunReport {
     pub sag_ref: (u32, u32),
     pub sag_filt: (u32, u32),
     pub sag_streak: u32,
+    /// Q60-1, the four observers the guard's decision variable never had:
+    /// the whole-run high-water of the streak, the closest approach to the
+    /// line in cross-product units (`u32::MAX` if nothing was judged; the host
+    /// divides by `filt_vref * 100` for codes), the mean-vs-`filt` depth bins
+    /// straddling the 950 line, and the implausible-VREF and ADC-overrun
+    /// counts that discriminate a circular-DMA rotation from a rail event.
+    pub sag_max_streak: u32,
+    pub sag_min_margin: u32,
+    pub mean_depth_below: [u32; 4],
+    pub mean_depth_longest: [u32; 4],
+    pub vref_odd: u32,
+    pub adc_ovr: u32,
     pub sag_tripped: bool,
     /// Closed-loop and hold-at-target durations, from the MCU's own clock.
     pub closed_us: u32,
@@ -581,6 +593,17 @@ impl RunReport {
         out.kv("filt_bus", self.sag_filt.0);
         out.kv("filt_vref", self.sag_filt.1);
         out.kv("streak", self.sag_streak);
+        out.kv("max_streak", self.sag_max_streak);
+        out.kv("min_margin_xp", self.sag_min_margin);
+        out.kv("vref_odd", self.vref_odd);
+        out.kv("adc_ovr", self.adc_ovr);
+        let mut i = 0;
+        while i < 4 {
+            out.kv("mdep_pm", crate::protection::MEAN_DEPTH_FRACTIONS[i]);
+            out.kv("mdep_n", self.mean_depth_below[i]);
+            out.kv("mdep_run", self.mean_depth_longest[i]);
+            i += 1;
+        }
         out.kv("tripped", u32::from(self.sag_tripped));
         out.say("\r\nBEMFMAILBOX ");
         out.kv("coalesced_accepts", self.coalesced_accepts);

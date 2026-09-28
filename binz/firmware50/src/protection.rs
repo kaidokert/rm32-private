@@ -226,6 +226,26 @@ pub const RAW_DEPTH_FRACTIONS: [u32; 4] = [970, 950, 930, 910];
 /// quantity that discriminates a short transient from a sustained droop.
 pub const RAW_DEPTH_TRIP_IX: usize = 1;
 
+/// Fractions for the **mean-against-the-guard's-own-reference** observer
+/// (Q60-1), bracketing the trip line from above.
+///
+/// Neither existing observer watches the quantity `FastBusSag` decides on:
+/// [`DEPTH_FRACTIONS`] judges the mean against the **pre-run baseline**, and
+/// [`RAW_DEPTH_FRACTIONS`] judges the **raw scan** against `filtered()`. The
+/// guard judges the **mean** against `filtered()` at 950, and nothing counted
+/// it -- so "how often, and for how long, did the deciding quantity approach
+/// its line" had no whole-run answer at all. 950 is included as the last bin
+/// so the observer straddles the guard exactly; the three above it show the
+/// approach, including the EWMA-lag excursions that SAGQ4 measured at ~970.
+pub const MEAN_DEPTH_FRACTIONS: [u32; 4] = [990, 970, 960, 950];
+
+const _: () = assert!(
+    MEAN_DEPTH_FRACTIONS[3] == 950,
+    "the last bin must be the guard's own line"
+);
+const _: () = assert!(MEAN_DEPTH_FRACTIONS[0].is_multiple_of(5) && MEAN_DEPTH_FRACTIONS[1].is_multiple_of(5));
+const _: () = assert!(MEAN_DEPTH_FRACTIONS[2].is_multiple_of(5) && MEAN_DEPTH_FRACTIONS[3].is_multiple_of(5));
+
 const _: () = assert!(RAW_DEPTH_FRACTIONS[RAW_DEPTH_TRIP_IX] == 950);
 // The raw bins must be strictly deeper than the mean bins, or the two observers
 // are measuring the same thing twice.
@@ -236,10 +256,8 @@ const _: () = assert!(RAW_DEPTH_FRACTIONS[0] < DEPTH_FRACTIONS[3]);
 // line. E291 relied on this and only said so in a comment; it is checked now.
 const _: () = assert!(DEPTH_FRACTIONS[0].is_multiple_of(5) && DEPTH_FRACTIONS[1].is_multiple_of(5));
 const _: () = assert!(DEPTH_FRACTIONS[2].is_multiple_of(5) && DEPTH_FRACTIONS[3].is_multiple_of(5));
-const _: () =
-    assert!(RAW_DEPTH_FRACTIONS[0].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[1].is_multiple_of(5));
-const _: () =
-    assert!(RAW_DEPTH_FRACTIONS[2].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[3].is_multiple_of(5));
+const _: () = assert!(RAW_DEPTH_FRACTIONS[0].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[1].is_multiple_of(5));
+const _: () = assert!(RAW_DEPTH_FRACTIONS[2].is_multiple_of(5) && RAW_DEPTH_FRACTIONS[3].is_multiple_of(5));
 
 /// How deep, and for how long, the bus actually sits below its pre-run
 /// reference -- the distribution a slow-droop stop would have to be chosen from.
@@ -306,6 +324,12 @@ impl BusDepth {
     /// The observer for the **raw scan** (E284), which is the only one that can
     /// see a dip shorter than the mean's 8-scan window.
     #[must_use]
+    /// The observer for the guard's own decision variable (Q60-1): the 8-tap
+    /// mean against `FastBusSag::filtered()`, straddling the 950 trip line.
+    pub const fn new_mean_vs_filt() -> Self {
+        Self::with_fractions(MEAN_DEPTH_FRACTIONS)
+    }
+
     pub const fn new_raw() -> Self {
         Self::with_fractions(RAW_DEPTH_FRACTIONS)
     }
@@ -487,6 +511,19 @@ pub struct FastBusSag {
     filt_vref_q8: u32,
     lows: u8,
     tripped: bool,
+    /// **High-water mark of `lows`** (Q60-1). `lows` resets to 0 on any block
+    /// above the line, and the report only ever carried its value *at the
+    /// stop*, so a run that reached 2 ten thousand times was indistinguishable
+    /// from one that never left 0. This is the whole-run answer to "how close
+    /// did the deciding quantity get", which no observer had.
+    max_lows: u8,
+    /// **Smallest `lhs - rhs` seen**, i.e. the closest the mean came to the
+    /// line, in cross-product units. Deliberately NOT converted to codes: that
+    /// needs a division, and E291 measured a division on this path costing 48%
+    /// of `loop_iters_closed`. The host divides by `filt_vref * SAG_DEN`.
+    ///
+    /// `u32::MAX` means "no scan judged yet", so zero is unambiguous.
+    min_margin: u32,
 }
 
 /// Shift of the sharp reference's exponential average: 2^11 scans at
@@ -522,6 +559,8 @@ impl FastBusSag {
             filt_vref_q8: (reference.vref as u32) << 8,
             lows: 0,
             tripped: false,
+            max_lows: 0,
+            min_margin: u32::MAX,
         }
     }
 
@@ -573,8 +612,21 @@ impl FastBusSag {
         let (fb, fv) = self.filtered();
         let lhs = (bus as u32) * (fv as u32) * SAG_DEN;
         let rhs = (fb as u32) * (vref as u32) * SAG_NUM;
+        // Q60-1: the two whole-run observers, on the values this scan already
+        // computed. `min_margin` is only meaningful when the scan is NOT low
+        // (`lhs >= rhs`); a low scan has crossed and its margin is negative,
+        // which `lows`/`max_lows` record instead.
+        if lhs >= rhs {
+            let m = lhs - rhs;
+            if m < self.min_margin {
+                self.min_margin = m;
+            }
+        }
         let verdict = if lhs < rhs {
             self.lows = self.lows.saturating_add(1);
+            if self.lows > self.max_lows {
+                self.max_lows = self.lows;
+            }
             if self.lows >= SAG_STREAK {
                 self.tripped = true;
                 Some(Reason::FastBusSag)
@@ -595,6 +647,20 @@ impl FastBusSag {
     #[inline]
     pub const fn streak(&self) -> u8 {
         self.lows
+    }
+    /// The whole-run high-water mark of the streak (Q60-1), as opposed to
+    /// [`Self::streak`], which is its value at the stop.
+    #[inline]
+    #[must_use]
+    pub const fn max_streak(&self) -> u8 {
+        self.max_lows
+    }
+    /// Closest approach to the trip line over the whole run, in cross-product
+    /// units; `u32::MAX` if no scan was judged (Q60-1).
+    #[inline]
+    #[must_use]
+    pub const fn min_margin(&self) -> u32 {
+        self.min_margin
     }
     #[inline]
     pub const fn tripped(&self) -> bool {

@@ -459,6 +459,14 @@ pub struct GuardState {
     /// Feedback freshness: the last scan sequence seen, and when.
     pub adc_seen: AtomicU32,
     pub adc_at: AtomicU32,
+    /// **ADC overrun count** (Q60-1). `OVR` means a conversion was dropped,
+    /// and DMA1 CH1 is CIRCULAR with `NDTR = SCAN_LEN`, so a drop rotates the
+    /// buffer **permanently** against `hw::adc::scan_index` -- every later
+    /// scan then reads the wrong channel in each slot. `resync_adc` runs only
+    /// at arm, and nothing counted this, so a rotation would present as an
+    /// unexplained `FastBusSag` latch or as a timing failure. Incremented in
+    /// the DMA root, which is why it is a bare counter and nothing more.
+    pub adc_ovr: AtomicU32,
     /// The accepted-event envelope. Ceiling: the guard. `ADC_COMP` (below
     /// it) feeds events inside a critical section.
     pub watch: Seam<EventWatch<true>, Guard>,
@@ -755,6 +763,7 @@ static GUARD: GuardState = GuardState {
     ticks: u(),
     gap_max: u(),
     adc_seen: u(),
+    adc_ovr: u(),
     adc_at: u(),
     watch: Seam::new(EventWatch::new(
         0,

@@ -40,6 +40,19 @@ pub struct Faults {
     /// measured with the PSU switched off (277 codes against 1208-1217 powered).
     /// Exercises E346's prospective refusal.
     pub bus_absent: bool,
+    /// Q60-1: report a dropped ADC conversion, so the counter's own wiring is
+    /// testable on the host.
+    pub adc_ovr: bool,
+    /// Q60-1: the *consequence* of a circular-DMA rotation -- another
+    /// channel's code in the VREF slot. In range, so production's only
+    /// validation (`0 < vref < ADC_RAIL`) passes it, which is the whole point.
+    /// Time-gated because that is the only kind production can experience:
+    /// `resync_adc` runs at arm, so a rotation present before the baseline is
+    /// cleared, and only one arising after it persists. The observer is
+    /// anchored to the run's own baseline and is therefore blind to a pre-arm
+    /// rotation BY CONSTRUCTION -- which is sound exactly because resync makes
+    /// that case impossible.
+    pub vref_rotated_at: Option<u32>,
     pub stop_key_at: Option<u32>,
     /// The simulated guard latches `Tracking` this long after the last
     /// crossing once the loop is closed.
@@ -221,7 +234,11 @@ impl Hal for Sim {
             phase_b: 2048,
             phase_c: 2048,
             bus,
-            vref: 1500,
+            vref: if self.at(self.faults.vref_rotated_at) {
+                2048
+            } else {
+                1500
+            },
         })
     }
     fn resync_adc(&mut self) {}
@@ -287,6 +304,9 @@ impl Hal for Sim {
         [0; 8]
     }
 
+    fn adc_ovr(&self) -> u32 {
+        u32::from(self.faults.adc_ovr)
+    }
     fn late_arms(&self) -> u32 {
         u32::from(self.faults.late_arm_at.is_some_and(|t| self.t >= t))
     }
@@ -649,6 +669,79 @@ mod tests {
         let (sim, out) = run(250, 10_000_000, STEADY, faults, None);
         assert_eq!(out.reason, Reason::Driver);
         assert_eq!(sim.log.safe_offs, 1);
+    }
+
+    #[test]
+    fn the_new_observers_report_and_each_one_is_load_bearing() {
+        // Q60-1. Asserted against the EMITTED TEXT, not an in-memory struct:
+        // E337's defect was an instrument that computed correctly and never
+        // reached a capture, so the emit is part of what must be tested. And
+        // each counter must be demonstrable by mutating the CODE, not the data
+        // -- the tautology that made `cohort_selftest` useless in E345/E346.
+        fn field(text: &str, key: &str) -> Option<u64> {
+            let pat = std::format!(" {key}=");
+            let at = text.find(&pat)? + pat.len();
+            let rest = &text[at..];
+            let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+            rest[..end].parse().ok()
+        }
+        let faults = Faults {
+            bus_sag_at: Some(5_500_000),
+            adc_ovr: true,
+            ..Faults::default()
+        };
+        let (sim, _out) = run(250, 10_000_000, STEADY, faults, None);
+        let t = &sim.log.text;
+
+        // Every new key must be present at all.
+        for k in [
+            "max_streak",
+            "min_margin_xp",
+            "vref_odd",
+            "adc_ovr",
+            "mdep_pm",
+            "mdep_n",
+            "mdep_run",
+        ] {
+            assert!(t.contains(&std::format!(" {k}=")), "missing key {k}");
+        }
+
+        let streak = field(t, "streak").expect("streak");
+        let max_streak = field(t, "max_streak").expect("max_streak");
+        assert!(
+            max_streak >= streak,
+            "max_streak {max_streak} must dominate the value at the stop {streak}"
+        );
+        assert_ne!(
+            field(t, "min_margin_xp").expect("min_margin_xp"),
+            u64::from(u32::MAX),
+            "some scan must have been judged, so the margin cannot be the sentinel"
+        );
+        assert_eq!(
+            field(t, "adc_ovr").expect("adc_ovr"),
+            1,
+            "the overrun count must reach the report"
+        );
+        // The observer's last bin IS the guard's line, which is what makes it
+        // the guard's own decision variable rather than another proxy.
+        assert_eq!(crate::protection::MEAN_DEPTH_FRACTIONS[3], 950);
+        assert_eq!(field(t, "mdep_pm").expect("mdep_pm"), 990, "first bin emitted");
+        // A clean run must not accuse the VREF slot.
+        assert_eq!(field(t, "vref_odd").expect("vref_odd"), 0, "no rotation in this run");
+
+        // And the rotation consequence must be detected, with an IN-RANGE code
+        // that the only production validation accepts.
+        let rot = Faults {
+            vref_rotated_at: Some(3_000_000),
+            ..Faults::default()
+        };
+        let (rsim, _) = run(250, 6_000_000, STEADY, rot, None);
+        let rt = &rsim.log.text;
+        assert!(
+            field(rt, "vref_odd").is_none_or(|n| n > 0),
+            "an in-range but wrong VREF slot must be counted: {:?}",
+            field(rt, "vref_odd")
+        );
     }
 
     #[test]

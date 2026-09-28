@@ -310,6 +310,10 @@ pub trait Hal {
     /// the blanking window latched: campaign 8's two hard stops. Both are
     /// read from the roots' counters, which only ever rise.
     fn late_arms(&self) -> u32;
+    /// ADC overrun count for this run (Q60-1). A drop rotates the circular DMA
+    /// buffer permanently, so this is the cause side of a class of failure that
+    /// would otherwise present as an unexplained sag latch.
+    fn adc_ovr(&self) -> u32;
 
     /// The detector's cumulative `unstable` count, for the hold-window mark
     /// (E212): the ratio against accepted crossings is only meaningful on a

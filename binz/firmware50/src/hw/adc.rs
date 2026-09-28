@@ -279,6 +279,27 @@ pub fn resync() {
 /// The DMA root's work: acknowledge every channel-1 flag (a handler that
 /// clears only TCIF re-fires forever on a transfer error, `rm32/CLAUDE.md`),
 /// then read the scan that just landed. Straight-line.
+/// Did the ADC drop a conversion since the last call, clearing the flag?
+///
+/// **Why this is worth an ISR read** (Q60-1): DMA1 CH1 is circular with
+/// `NDTR = SCAN_LEN`, so one dropped conversion rotates the buffer
+/// *permanently* against [`scan_index`], and every later scan reads the wrong
+/// channel in each slot -- a phase code lands in the `vref` slot, which passes
+/// the only validation production performs. `resync_adc` runs only at arm, so
+/// nothing recovers it mid-run, and nothing counted it. Straight-line: one
+/// read, one test, one write-1-to-clear.
+#[inline(always)]
+#[must_use]
+pub fn adc_overran() -> bool {
+    let a = adc();
+    if a.isr().read().ovr().bit_is_set() {
+        a.isr().write(|w| w.ovr().clear_bit_by_one());
+        true
+    } else {
+        false
+    }
+}
+
 #[inline(always)]
 #[must_use]
 pub fn dma_isr() -> RawScan {

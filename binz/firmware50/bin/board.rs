@@ -53,6 +53,13 @@ const DTG: u8 = 26;
 /// every flag (`hw::adc::dma_isr`) and publish it under the seqlock.
 #[interrupt]
 fn DMA1_CHANNEL1() {
+    // Q60-1: count a dropped conversion before publishing. A drop rotates the
+    // circular buffer permanently, so this is the only place the cause is
+    // visible; the *consequence* (a wrong value in the vref slot) is checked in
+    // the foreground, where `filt_vref` exists.
+    if hw::adc::adc_overran() {
+        S.guard().adc_ovr.fetch_add(1, Ordering::Relaxed);
+    }
     S.scan().publish(&hw::adc::dma_isr());
 }
 
@@ -186,9 +193,7 @@ impl Sink for Board {
 #[inline(always)]
 fn powered_write(write: impl FnOnce()) {
     cortex_m::interrupt::free(|_| {
-        if firmware50::oneshot::arm_allowed(
-            roots::guard_latched(), S.guard().active.load(Ordering::Relaxed),
-        ) {
+        if firmware50::oneshot::arm_allowed(roots::guard_latched(), S.guard().active.load(Ordering::Relaxed)) {
             write();
         }
     });
@@ -419,6 +424,10 @@ impl Hal for Board {
     }
 
     #[inline(always)]
+    fn adc_ovr(&self) -> u32 {
+        S.guard().adc_ovr.load(Ordering::Relaxed)
+    }
+
     fn late_arms(&self) -> u32 {
         S.det().late_arms.load(Ordering::Relaxed)
     }
@@ -662,7 +671,8 @@ impl Hal for Board {
     fn revisit(&mut self, step: Step) -> bool {
         cortex_m::interrupt::free(|_| {
             if !firmware50::revisit::sector_ready(
-                step.get(), S.det().step.load(Ordering::Relaxed),
+                step.get(),
+                S.det().step.load(Ordering::Relaxed),
                 S.com().phase.load(Ordering::Relaxed),
             ) {
                 return false;

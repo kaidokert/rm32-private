@@ -60,6 +60,67 @@
    }
   }
  },
+ "baseline-tag": {
+  "elf": "23661473.baseline-loaded60-backports-20260927.elf",
+  "symbols": {
+   "ADC_COMP": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 818,
+    "irq": 11,
+    "mul": 4
+   },
+   "DMA1_CHANNEL1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 37,
+    "irq": 2,
+    "mul": 0
+   },
+   "TIM16": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 368,
+    "irq": 7,
+    "mul": 2
+   },
+   "TIM6_DAC_LPTIM1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 155,
+    "irq": 1,
+    "mul": 0
+   },
+   "protection::BusDepth::observe": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 50,
+    "irq": 0,
+    "mul": 4
+   },
+   "run::Controller": {
+    "div": 7,
+    "excl": 0,
+    "helper": 7,
+    "insns": 587,
+    "irq": 0,
+    "mul": 6
+   },
+   "run::states::Ctx::scan_pass": {
+    "div": 2,
+    "excl": 0,
+    "helper": 2,
+    "insns": 502,
+    "irq": 0,
+    "mul": 10
+   }
+  }
+ },
  "default": {
   "elf": "(pre-E346)",
   "symbols": {
@@ -118,6 +179,67 @@
     "insns": 497,
     "irq": 0,
     "mul": 10
+   }
+  }
+ },
+ "q60-observers": {
+  "elf": "shell-pwm",
+  "symbols": {
+   "ADC_COMP": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 818,
+    "irq": 11,
+    "mul": 4
+   },
+   "DMA1_CHANNEL1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 53,
+    "irq": 3,
+    "mul": 0
+   },
+   "TIM16": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 368,
+    "irq": 7,
+    "mul": 2
+   },
+   "TIM6_DAC_LPTIM1": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 155,
+    "irq": 1,
+    "mul": 0
+   },
+   "protection::BusDepth::observe": {
+    "div": 0,
+    "excl": 0,
+    "helper": 0,
+    "insns": 50,
+    "irq": 0,
+    "mul": 4
+   },
+   "run::Controller": {
+    "div": 7,
+    "excl": 0,
+    "helper": 7,
+    "insns": 587,
+    "irq": 0,
+    "mul": 6
+   },
+   "run::states::Ctx::scan_pass": {
+    "div": 2,
+    "excl": 0,
+    "helper": 2,
+    "insns": 546,
+    "irq": 0,
+    "mul": 13
    }
   }
  }
