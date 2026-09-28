@@ -42769,3 +42769,60 @@ the band (3065–3180 vs 3200–3260); the worst-block failure landed; **sag mar
 sag change is confounded with hardware. Control: 675 re-run on `B0E5CCD4` now (also
 owed, since the hardware changed), interleaved ABBAAB with the margin-hist companion at
 700 for per-event timing at the edge (ENV-17).
+
+### ENV-17 — the 70 % edge mapped: current is the wall, timing has measured per-event margin, and the sag change is NOT the supply
+
+**Edge, six runs at 700 (two images, same ISR deadline path up to the arm):**
+
+| run | image | coast | hold mA | worst block | sag codes |
+|---|---|---|---|---|---|
+| env16-r700-1 | `530432A2` | 2408 | 3065 | 3727 | 31.8 |
+| env16-r700-2 | `530432A2` | 2397 | 3180 | **3843** | 33.2 |
+| env16-r700-3 | `530432A2` | 2403 | 3133 | 3779 | 34.3 |
+| env17-B700mh-2 | `57C3A63C` | 2405 | 3207 | **3824** | 34.7 |
+| env17-B700mh-3 | `57C3A63C` | 2415 | 3227 | **3882** | 33.4 |
+| env17-B700mh-6 | `57C3A63C` | 2415 | **3239** | **3821** | 33.4 |
+
+**4 of 6 worst blocks ≥ 3800**, no foldback in any. The edge is the current gate, between
+67.5 and 70 %. (The margin-hist runs are diagnostic, not qualification; their extra 28
+post-arm instructions are the only difference.)
+
+**Arm margin at the edge, per event** (`57C3A63C`, ~899 k arms per run; each arm's
+`left = wait − spent` from its own values): minimum **left = 4 µs** (2–3 arms per run),
+left 5: 7–16, left 6: 140–158, every other arm ≥ 7 µs; minimum requested wait 12 µs
+(2–5 arms per run). Thin (≤ 2) and late: 0. **Timing is not the limit at 70 %.** Any
+claim about where it becomes one stays a hypothesis, tested only by a run at a
+higher speed.
+
+**Control, 675 on `B0E5CCD4` on the 5 A supply** (re-run of earned; anchored because
+this image's 675 was itself anchored):
+
+| run | coast | hold | worst | sag codes |
+|---|---|---|---|---|
+| env17-ctl675-1 | 2354 | 2972 | 3672 | 28.3 |
+| env17-ctl675-2 | **2342** | **2985** | 3703 | **19.5** |
+| env17-ctl675-3 | 2349 | 2950 | **3740** | 22.6 |
+
+Rung PASS, 0 thin/late. **67.5 % re-qualified on the new supply.** Sag margin at 675
+matches the 3 A session (18.2–24.7), so **the 32–35 codes at 700 are not the PSU
+change.** They are an unexplained, reproducible (6/6) non-monotonicity of sag margin with
+duty. No mechanism claimed.
+
+**Next lever (constant, current at the same speed):** a flat advance 14. The measured
+direction is higher advance → more current per unit speed (20: +16 % current for +6 %
+speed; 18: +1.4 % for +0.5 %). **Hypothesis:** 14 at 700 cuts hold and worst-block
+current by more than it cuts speed, and lengthens every wait (ci·18/64). Test: ABBAAB,
+16 vs 14 at 700, same source.
+
+### ENV-18 — advance 14 vs 16 at 70 %: predictions before running
+
+**Image:** `B363FF11` (`advance-14,deep-filter`, cap 700; loadable `7B994C17…`), four ISR
+roots instruction-identical to `530432A2` (advance is a foreground value). The campaign's
+16..=22 build bound (`policy.rs`, "anything outside it is a new question") opens to 14
+**for the `advance-14` build only**. It is a build-scope guard, not a protection, and 14
+lengthens every wait (ci·18/64 vs ci/4). Suites 361/359 ×3 configs, clippy 0, audit PASS.
+
+**Hypotheses** (weak prior: 16 → 18 was flat in speed): speed −0 to −2 %; hold current
+−0 to −3 %; worst block 0–150 mA lower; per-event thin/late 0 on both sides. **Accept**
+if 14 lowers worst-block current (worst vs worst, and in ≥ 2/3 pairs) by more than it
+lowers speed. **Reject** otherwise. ABBAAB, same session, `scripts/ab_abbaab.sh`.

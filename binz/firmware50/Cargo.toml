@@ -82,6 +82,10 @@ advance-ref = []
 # ci 40 (at 16) to ci 46. `advance-ref` takes precedence over it; it takes
 # precedence over `advance-low`.
 advance-18 = []
+# ENV-18 A/B: a flat 14 at both ends, BELOW the reference 16 -- tested as a current-per-
+# speed lever (wait = ci*18/64, longer than the reference's ci/4). `advance-ref` takes
+# precedence over it; it takes precedence over `advance-18` and `advance-low`.
+advance-14 = []
 # Swaps the real sag ring into the PRODUCTION controller, changing nothing else
 # -- same serve loop, same policies, same guards. For capturing the rung-550
 # trip sequence, which no existing capture has. See run::ProductionSagLog.
