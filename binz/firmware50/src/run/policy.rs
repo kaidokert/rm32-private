@@ -174,8 +174,8 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 // is unchanged by this edit.
 // ENV-9: raised one more increment, 625 -> 650, the same way and for the same
 // reason. Nothing else moves: every gate that judges the run is unchanged.
-// ENV-12 (exploratory until qualified): 650 -> 675, one more increment.
-pub const SIXSTEP_DUTY_CAP: u16 = 675;
+// ENV-12: 650 -> 675 (qualified ENV-15). ENV-16: 675 -> 700, one more increment.
+pub const SIXSTEP_DUTY_CAP: u16 = 700;
 
 /// Rescue attempts the level revisit may make in one sector after its first
 /// attempt was refused (E140), each armed by another half-interval of overdue.
@@ -516,12 +516,13 @@ mod tests {
         // property survives: the cap VALUE is pinned, so the next move trips
         // this again, and anything above the cap clamps to the cap.
         assert_eq!(
-            SIXSTEP_DUTY_CAP, 675,
+            SIXSTEP_DUTY_CAP, 700,
             "a cap move must be deliberate: update this with it"
         );
         assert_eq!(sixstep_ccr_of(625, 1333), 833);
         assert_eq!(sixstep_ccr_of(650, 1333), 866);
         assert_eq!(sixstep_ccr_of(675, 1333), 899);
+        assert_eq!(sixstep_ccr_of(700, 1333), 933);
         assert_eq!(
             sixstep_ccr_of(750, 1333),
             sixstep_ccr_of(SIXSTEP_DUTY_CAP, 1333),

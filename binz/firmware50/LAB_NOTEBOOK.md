@@ -42730,3 +42730,26 @@ qualified** on image `B0E5CCD4` (`advance-ref,deep-filter`, loadable `329B4F36�
 thin/late), restart 3/3 (seg-2 4.2 s dwell), sweep 10/10 (ENV-14), FastBusSag without a
 hardware positive control (standing gap). PSU limit now 5 A. Next wall: the firmware's
 ~4 A block allowance, which is the operator's to move.
+
+### ENV-16 — 70 %: predictions declared before any run (new goal: expand until a protection or gate stops it, then map the edge)
+
+**Lever:** `SIXSTEP_DUTY_CAP` 675 → 700, x cycle 675 → 700, `SELF_REF_RUNGS` += 700.
+Production image **`530432A2`** (`advance-ref,deep-filter`, loadable `E80F7D9B…`): four
+ISR roots instruction-identical to `B0E5CCD4`, `isr_audit` PASS. Diagnostic companion
+**`57C3A63C`** (`+margin-hist`, loadable `6B622F4C…`): ADC_COMP 818 → 846 instructions,
+all added *after* the arm (per-event wait / left histograms). Used only for timing
+claims, never qualified. Suites 361 / 359 / 359 (default, prod, +margin-hist). Clippy 0.
+PSU limit 5 A.
+
+**Hypotheses (each tested by the ENV-16 holds on `530432A2`):**
+* Speed: worst 2400–2430 eHz (675 worst was 2349, `env13-r675-1`).
+* Hold proxy: worst 3200–3260 mA (≈ 3.08–3.13 A at the ENV-13 ~4 % over-read).
+* **Worst block: 3800–3950, so at least one of three holds fails the unchanged 3800
+  gate**, and a firmware foldback (`ceiling_tenths < 700`) is possible.
+* Sag margin: worst 10–16 codes.
+* Arm margin, **per event** (`thin_count`, `late_arms` are computed per arm from that
+  arm's own wait and spend): 0 / 0. On `57C3A63C`, `left_hist` buckets 0–2 empty.
+
+**Plan:** three anchored holds at 700 on `530432A2`. If the rung passes: restart 3/3,
+then the sweep. If it fails: that is the edge. Map it with the margin-hist companion at
+675 and 700, labelling worst figures per run.
