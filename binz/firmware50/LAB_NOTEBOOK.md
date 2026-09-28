@@ -41061,3 +41061,185 @@ This also bounds where my three runs are evidence and where they are not: they
 measure the **steady-state** margin, and all three holds were steady. They do not
 measure a transient, which is exactly why no latch appeared and why the mechanism
 for the two historical latches remains inferred.
+
+### SAGQ4 — review disposition: the conclusion survives on evidence I failed to read, "5 % by construction" is refuted by a verified counterexample, and the remedy was wrong.
+
+One independent adversarial review, requested per the goal. It is the best review
+this campaign has had: it broke two of my claims with data from my own corpus and
+found the whole-run instrument I had been using in E348/E349 and did not think to
+read here. **Every load-bearing finding below I verified myself before accepting.**
+
+#### 1. ACCEPTED, verified — the corpus already contains a 2.75σ approach
+
+I claimed 15–25σ "in every window measured" and, restated in codes, a 3–4× gap.
+Sweeping the older captures (five `inject=0`, duty-500, 80 s holds the three new
+runs never saw), recomputed with the exact cross-product:
+
+| capture | mean sd | closest approach | σ |
+|---|---|---|---|
+| `e200-16a-s3` | 4.79 | 49.7 codes | 10.4 |
+| `e200-16a-s5` | 4.48 | 43.1 codes | 9.6 |
+| `e200-16a-s1` | 6.30 | 41.8 codes | 6.6 |
+| `e200-16a-s4` | 7.29 | 39.3 codes | 5.4 |
+| **`e200-16a-s2`** | **7.87** | **21.6 codes** | **2.75** |
+
+The reviewer's figures to two decimals. **My "worst observed" number was wrong
+because I only looked at the runs I had just taken.**
+
+#### 2. ACCEPTED, verified — and the mechanism refutes addendum 3
+
+`e200-16a-s2` around its closest approach:
+
+```
+   i  bus_mean  filt_bus   lag  margin
+  42      1100      1133    33    23.6
+  47      1100      1133    33    23.6
+  48      1098      1133    35    21.6
+  49      1098      1133    35    21.6
+```
+
+`bus_mean` sits at 1098–1102 for ~13 consecutive scans while `filt_bus` is **stuck
+at 1133**: a **35-code EWMA lag**, 22 of 512 scans past 25 codes, under ordinary
+load drift with no injection and no latch. **35 of the ~57-code budget consumed
+before noise contributes anything.**
+
+Addendum 3 answered the wrong half. I showed the reference is frozen *inside* the
+3-scan window (0.15 %, true) and treated that as disposing of the transient
+objection. The risk is **accumulated lag before** the window. So:
+
+**"The margin is 5 % of the rail by construction, ~18σ independent of duty" is
+REFUTED.** It holds only once the EWMA has converged. Under drift the margin is
+5 % minus the lag, and the lag reaches 35 codes in the corpus.
+
+The reviewer's second point on (C) is also right and I had the evidence for it: my
+own retained finding is that the raw excursion floor is **absolute** (±65 codes at
+a 275-code rail and at 1212), while the margin is 5 % **of the rail** — so σ scales
+with bus voltage and the ~18σ is a property of a 12 V bench, not of the guard. At
+6 V it would be ~9σ.
+
+#### 3. ACCEPTED — the whole-run evidence was in the line above the one I read
+
+`raw_depth.observe(scan.bus, scan.vref, filt_bus, filt_vref)`
+(`src/run/states.rs:384`) feeds the raw scan against **the guard's own reference**,
+and `RAW_DEPTH_FRACTIONS[1] = 950` is **exactly the guard's line**. It records both
+a count and the longest consecutive run. Whole-run, over 767 101 judged scans:
+
+| run | raw < 0.95·filt (n / longest) | < 0.93 | < 0.91 |
+|---|---|---|---|
+| 550-1 | 196 / **1** | 26 / 1 | 0 |
+| 550-2 | 184 / **1** | 30 / 1 | 0 |
+| 600-1 | 153 / **1** | 2 / 1 | 0 |
+
+The raw sample crosses the guard's line ~150–200 times per 77 s and **never twice
+consecutively**, never reaching 0.91. Since the mean needs eight samples averaging
+below the line, this bounds the mean-crossing far harder than my σ argument — and
+it is **whole-run, not 0.05 %**. I used these exact fields in E348/E349, so I knew
+them; I simply did not pull them for these runs. That is carelessness, not a gap in
+the instrument, and it is the second time this campaign I have spent bench time on
+a question an existing field already answered.
+
+#### 4. ACCEPTED — the remedy was wrong, and the coherence work is partly rehabilitated
+
+I said "one torn sample moves the mean by D/8, so the line needs a 474-code tear or
+~4 consecutive gross tears", and concluded the ADC coherence work should not be
+pursued for this. Three defects, all verified:
+
+* **I modelled only the numerator.** `vref_mean` is the denominator of
+  `bus·fv·100 < fb·vref·95` and comes from the same DMA buffer. A *larger* value in
+  the vref slot makes the test fire. Nothing in my arithmetic touched it.
+* **Intra-scan tearing is already prevented** — `shared.rs` is a seqlock whose
+  `snapshot()` returns `None` on a mixed scan. My 474-code model attacked a
+  strawman.
+* **The credible failure is persistent, not independent.** `hw/adc.rs:208-210`:
+  DMA1 CH1 is **circular** with `NDTR = SCAN_LEN = 5`, and `CHANNELS` puts ch 13
+  (VREFINT) in the last slot. One dropped conversion rotates the buffer
+  **permanently** against `scan_index()`. `resync_adc()` is called **only at arm**
+  (`states.rs:544`) — never mid-run — and `OVR` is only *cleared* at init
+  (`adc.rs:264`), never counted. A rotation puts an in-range phase code
+  (1400–2500) in the vref slot, which passes the only validation production
+  performs (`0 < vref < ADC_RAIL`, and E354 established the phase-band check is
+  dead in this configuration), and would fire the guard on **every** scan — a
+  3-streak latch in ~300 µs. `D/8` does not bound correlated corruption at all.
+
+**And this failure mode presents as exactly the thing under investigation: an
+unexplained `FastBusSag` latch.** So the recommendation changes: not "skip the
+coherence work", but "an OVR-and-alignment counter is the one cheap thing that can
+discriminate a rotation-induced latch from a rail latch".
+
+#### 5. ACCEPTED — three smaller corrections
+
+* **My independence argument is backwards.** Lag-1..4 autocorrelation of `bus_raw`
+  is 0.10 / −0.33 / −0.03 / 0.19, so the scatter is not independent; a ratio
+  *above* √8 is possible only because of negative correlation. The conclusion is
+  unaffected (it makes the mean quieter than iid) but the reasoning was wrong, and
+  the ratio is 1.70 in the injected file — the statistic is signal-dependent.
+* **The "11× sd excursion" is a slope, not a noise measure**, computed over a
+  16-sample monotone ramp. The qualitative fact — a real event is a coherent
+  82-code multi-scan descent — is sound and remains the best single fact in the
+  analysis. The "11×" framing is withdrawn.
+* **Internal inconsistency, withdrawn.** SAGQ1 retired the 88 µs gap test as
+  vacuous and as measuring the wrong quantity; SAGQ3's remedy then cited
+  "138–147 µs against an 88 µs window" as grounds that tearing is not excluded.
+  That citation is withdrawn. Nothing in the ring measures TC-to-read latency.
+
+#### The revised answer
+
+**Noise alone does not trip `FastBusSag`** — now resting on the whole-run
+`raw1_run = 1` counters across 767 k scans ×3 and the control's coherent 82-code
+descent, not on the σ arithmetic.
+
+**But the guard is not comfortably far from its line either.** Under load drift the
+EWMA lags up to 35 codes of a ~57-code budget, leaving 21.6 codes ≈ 2.75σ — and
+2.75σ is not a remote event. So the reachable mechanism is **drift plus a modest
+excursion**, not noise alone and not necessarily a discrete transient. That is a
+third category my binary classification did not have, and it is the reviewer's
+strongest point.
+
+**Where that leaves the two historical latches:** still inferred, but the candidate
+set is now three, not one — a genuine fast dip (control-shaped), drift-plus-noise
+against a lagging reference, or a persistent DMA rotation. The third is
+indistinguishable from the first two in any capture that exists.
+
+#### Recommendation, revised
+
+Adopt the reviewer's instrument, which is ~10 instructions and answers my own
+[[feedback-instrument-decisions-not-outcomes]] rule in the guard the campaign cares
+most about — there is currently **no observer for the quantity the guard decides
+on**: `depth` watches the mean against the *baseline*, `raw_depth` the raw against
+*filt*, and nothing watches the mean against `0.95·filt`, nor the `lows` high-water.
+
+1. `max_lows` — the streak high-water mark. One byte, one compare. Answers "did
+   noise ever get one or two scans in" over a whole hold.
+2. A third `BusDepth` fed `(bus_mean, vref_mean, filt_bus, filt_vref)` at
+   990/970/960/950 — reuses existing code verbatim, gives whole-run counts *and*
+   longest runs bracketing the trip line for the deciding quantity.
+3. A whole-run minimum margin in codes.
+4. **An ADC `OVR` counter and a vref-slot plausibility check** (assert the VREFINT
+   slot within ±64 of expectation, count violations). This is the only thing that
+   can discriminate rotation from rail, and it is what the declined coherence work
+   would have covered.
+
+Then run nothing new for it: sweep the existing 24-capture corpus first, and let
+the next qualification hold — which is going to happen anyway — carry the counters
+for free. The reviewer's closing judgment is correct and I accept it: spending
+three dedicated 78 s runs to sample 0.05 % of one hold, when a whole-run counter
+costs ten instructions, was the wrong purchase.
+
+#### On the latch rate, with the bar predeclared
+
+550 has now held 50 s clean twice on this motor and baseline. To reject the old
+1-in-3 rate from all-clean runs at p < 0.05 needs `(2/3)ⁿ < 0.05`, i.e. **n = 8**;
+I have **2**. So "the fault left with the motor swap" is **not** supportable yet,
+and six more clean 550 holds would settle it more cheaply than any firmware change.
+
+#### Verdict accepted
+
+The reviewer accepts the direction and rejects (B), (C) and (E) as argued. I accept
+that in full: the conclusion is most likely right, my argument for it was not, and
+the two things that actually support it are the control's coherent descent and the
+whole-run counters I did not read.
+
+#### The review, verbatim
+
+Stored at `captures/reviews/SAGQ-ADVERSARIAL.md` (gitignored path in this tree; the
+dispositions above quote every load-bearing finding and I verified each myself).
