@@ -41243,3 +41243,57 @@ whole-run counters I did not read.
 
 Stored at `captures/reviews/SAGQ-ADVERSARIAL.md` (gitignored path in this tree; the
 dispositions above quote every load-bearing finding and I verified each myself).
+
+### Q60-1 — batch statement: instrument the four unobserved decisions, then qualify once on that image
+
+Step 2 before step 1 deliberately: the counters must be *in* the image the
+qualification certifies, or the qualified ELF is not the delivered one. Source is
+identical to tag `binz-loaded60-backports-complete-20260927` (verified: empty diff
+over `src/`, `bin/`, `Cargo.toml`).
+
+#### What goes where, and why not all of it in the ISR
+
+| counter | location | cost |
+|---|---|---|
+| `max_lows` — the `lows` high-water | `FastBusSag::observe`, foreground | compare + conditional store |
+| `min_margin` — smallest `lhs − rhs` seen | `FastBusSag::observe`, foreground | subtract + compare + store, **no division** |
+| third `BusDepth` on the **mean** vs `filt` at 990/970/960/950 | `scan_pass`, foreground | 4 multiply-compares |
+| vref-slot plausibility | `scan_pass`, foreground | needs `filt_vref`, which the ISR has no access to |
+| **ADC `OVR` count** | `dma_isr`, **DMA1_CHANNEL1 root** | the only ISR-root addition |
+
+The margin is kept as the raw cross-product difference, not converted to codes:
+`margin_codes` would need a division, and E291 measured a division in this path
+costing **48 % of `loop_iters_closed`**. The host divides instead.
+
+The `OVR` counter is the one thing that must live in the ISR, because `OVR` is
+cleared by the ADC and only the handler sees it. `DMA1_CHANNEL1` is currently **37
+instructions**, so this is the change with real ISR cost and the ratchet will see it.
+
+#### Predictions, before building
+
+1. **`OVR` count = 0** on clean holds. If it is non-zero, the circular-DMA rotation
+   becomes a live cause for both the sag latches and the E489 timing failure, and
+   SAGQ4's third candidate stops being hypothetical.
+2. **`max_lows` ∈ {0, 1}** at 550 and 600. `raw1_run = 1` whole-run says the raw
+   never crosses twice consecutively, so the mean should rarely reach even one low
+   block. If `max_lows` reaches 2 routinely, the guard is closer than SAGQ3 claimed
+   and the drift mechanism dominates.
+3. **mean-vs-filt `BusDepth`: 0 at the 950 bin**, non-zero at 990/970 — the drift
+   excursions (35 codes ≈ 3 % in `e200-16a-s2`) belong in the 970 bin.
+4. **`min_margin` ≈ 45–50 codes** on clean holds, matching the slow-ring measurement
+   of 45.7–48.0.
+5. **`DMA1_CHANNEL1` stays under 60 instructions** (from 37). Above that I will
+   reconsider rather than accept the cost.
+
+#### Verification standard
+
+Each counter must be shown to fire by **mutating the code, not the data** — the
+tautology trap from E345/E346. A counter that cannot be made to fire is not
+evidence.
+
+#### Regression guards
+
+Host tests, clippy, the four-root ratchet in its `advref-floor5` bucket, and
+`loop_iters_closed` compared before and after, since three `observe` calls per scan
+instead of two is the one place a foreground cost could show. No threshold, no
+protection, no control behaviour changes: every counter is an observer.
