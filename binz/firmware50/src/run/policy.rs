@@ -336,8 +336,12 @@ impl Bemf for BemfPolicy {
 pub const ADVANCE_STEP_TENTHS: u16 = 350;
 
 /// The advance level below [`ADVANCE_STEP_TENTHS`].
-#[cfg(not(feature = "advance-ref"))]
+#[cfg(not(any(feature = "advance-ref", feature = "advance-18")))]
 pub const ADVANCE_LOW: u32 = 20;
+/// ENV-7: a flat 18, the cheapest lever between the reference 16 (arm margin)
+/// and the 20 carrier (speed). A constant, not a code change.
+#[cfg(all(feature = "advance-18", not(feature = "advance-ref")))]
+pub const ADVANCE_LOW: u32 = 18;
 /// **`advance-ref` flattens the schedule to the REFERENCE value, 16** (E330).
 ///
 /// E326 tried advance 16 at the high end only, `ADVANCE_HIGH >= ADVANCE_LOW`
@@ -399,10 +403,13 @@ pub const ADVANCE_LOW: u32 = 16;
 /// **This is a control schedule, not a protection threshold**, and it is the
 /// "bounded control improvement" the campaign goal asks for. Nothing about the
 /// guards, their fractions, their streaks or their latches is touched.
-#[cfg(not(any(feature = "advance-low", feature = "advance-ref")))]
+#[cfg(not(any(feature = "advance-low", feature = "advance-ref", feature = "advance-18")))]
 pub const ADVANCE_HIGH: u32 = 22;
-#[cfg(all(feature = "advance-low", not(feature = "advance-ref")))]
+#[cfg(all(feature = "advance-low", not(any(feature = "advance-ref", feature = "advance-18"))))]
 pub const ADVANCE_HIGH: u32 = 20;
+/// ENV-7 flat 18; see [`ADVANCE_LOW`].
+#[cfg(all(feature = "advance-18", not(feature = "advance-ref")))]
+pub const ADVANCE_HIGH: u32 = 18;
 /// The reference value at both ends; see [`ADVANCE_LOW`]. Takes precedence
 /// over `advance-low` so enabling both is not a silent conflict.
 #[cfg(feature = "advance-ref")]
@@ -524,14 +531,18 @@ mod tests {
         // "Below the step never varies" held while the only variant moved the
         // high end. `advance-ref` returns BOTH ends to the reference 16 (E330),
         // so the claim is now configuration-scoped rather than absolute.
-        #[cfg(not(feature = "advance-ref"))]
+        #[cfg(not(any(feature = "advance-ref", feature = "advance-18")))]
         assert_eq!(AdvancePolicy::level(349), 20, "below the step, default");
+        #[cfg(all(feature = "advance-18", not(feature = "advance-ref")))]
+        assert_eq!(AdvancePolicy::level(349), 18, "below the step, flat 18");
         #[cfg(feature = "advance-ref")]
         assert_eq!(AdvancePolicy::level(349), 16, "below the step, reference");
-        #[cfg(not(any(feature = "advance-low", feature = "advance-ref")))]
+        #[cfg(not(any(feature = "advance-low", feature = "advance-ref", feature = "advance-18")))]
         assert_eq!(AdvancePolicy::level(350), 22, "production high level");
-        #[cfg(all(feature = "advance-low", not(feature = "advance-ref")))]
+        #[cfg(all(feature = "advance-low", not(any(feature = "advance-ref", feature = "advance-18"))))]
         assert_eq!(AdvancePolicy::level(350), 20, "advance-low variant");
+        #[cfg(all(feature = "advance-18", not(feature = "advance-ref")))]
+        assert_eq!(AdvancePolicy::level(350), 18, "advance-18 variant");
         #[cfg(feature = "advance-ref")]
         assert_eq!(AdvancePolicy::level(350), 16, "advance-ref: the reference value");
         // The step itself is fixed, so an A/B varies one thing.

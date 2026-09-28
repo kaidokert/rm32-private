@@ -42224,3 +42224,73 @@ undemonstrated on this motor as a standing, named gap, not a pass.
 runs a side against advance 16, same session: speed about halfway between the two
 carriers (~2290 eHz vs 2228 / 2355), thin arms nonzero but well under advance 20's ~150,
 worst block between 3517 and 3725. A late arm, or a worst block over advance 16's, rejects it.
+
+### ENV-7 — advance 18 REJECTED at 62.5 %: it buys nothing. The advance response is a step between 18 and 20, and the same-session control reproduces advance 20's +6 %.
+
+**Lever:** a flat 18 (`advance-18` feature, a constant; `advance-ref` takes precedence
+over it, it over `advance-low`). Image `B004C97F` (loadable `B7D8A95F…`). All four ISR
+roots have identical instructions to advance 16's `A09BA143` (advance is a runtime
+value written from the foreground). The one encoded-byte difference in TIM16 is a
+moved literal-pool constant. So the build difference is one foreground constant.
+Suite 361/361 under default, `advance-ref`, `advance-18`, `advance-18,advance-low`;
+clippy 0; `isr_audit` PASS.
+
+**Predeclared** (before any run): speed ~2290 eHz (halfway), thin arms nonzero but
+well under advance 20's ~150, worst block between 3517 and 3725. **Reject if** a late
+arm, or a worst block over advance 16's.
+
+**Protocol:** `scripts/env7_ab.sh`, ABABAB at rung 625, same session, every run
+freshly flashed so the `+` climb is absolute (400 + 9×25).
+
+| pair | coast 16 / 18 | hold_ma 16 / 18 | worst_ma 16 / 18 | ci_min 16 / 18 | thin / late |
+|---|---|---|---|---|---|
+| 1 | 2228 / 2226 | 2508 / 2538 | 3443 / **3514** | 48 / 51 | 0 / 0 both |
+| 2 | 2237 / 2225 | 2514 / 2536 | 3378 / **3500** | 48 / 53 | 0 / 0 both |
+| 3 | 2233 / 2220 | 2509 / 2522 | 3344 / **3363** | 52 / 53 | 0 / 0 both |
+
+**Verdict: REJECTED by the predeclared rule.** The worst block was above advance 16's
+in 3/3 pairs. The speed prediction was also refuted: 18 was 2–13 eHz *slower* in every
+pair, not +60. Worst run on 18: 2220 eHz, 3514 mA. It bought nothing in speed or
+timing margin (0 thin arms on both sides), for +13–30 mA of hold current.
+
+#### The control that could refute me: advance 20, same session
+
+A flat response from 16 to 18 alongside ENV-1's +5 % at 20 is an odd shape, and my
+weakest claim was that the +5 % was advance at all. So: same script, advance 16 vs
+flat 20, rebuilt from current source (`527FAAE9`, loadable `AF2B6591…`; ISR
+instructions identical to `A09BA143`):
+
+| pair | coast 16 / 20 | hold_ma 16 / 20 | worst_ma 16 / 20 | thin 16 / 20 | late |
+|---|---|---|---|---|---|
+| 1 | 2232 / **2357** | 2506 / 2920 | 3527 / 3497 | 0 / 150 | 0 |
+| 2 | 2226 / **2372** | 2491 / 2922 | 3423 / 3421 | 0 / 147 | 0 |
+| 3 | 2228 / **2375** | 2525 / 2926 | 3485 / 3463 | 0 / 138 | 0 |
+
+**The control reproduces ENV-2/ENV-4** within a few eHz: +5.6 to +6.6 % speed (worst
+20 vs best 16: +5.4 %), +16 % hold current, 138–150 thin arms, no late arm, full holds.
+So the step is real and lies **between 18 and 20**. I do not know its mechanism, and I
+am not claiming one. What is measured: `mean_ci_us` reads 74 on every 16 and 18 run
+and 70 on 20.
+
+**This also corrects ENV-5's blocker.** In all three pairs advance 20's worst block
+was ≤ advance 16's (3497/3527, 3421/3423, 3463/3485). ENV-4's "worst block 3517 vs
+3725" came from different sessions and images. The worst block does not separate the
+two carriers. **Hold current does** (+16 %), and so do the thin arms.
+
+#### What the lever bought, both currencies
+
+* Advance 18: speed **−0.3 %** (worst vs worst 2220/2228), timing margin **unchanged**
+  (0 thin), current **+1 %**. Rejected.
+* Advance 20 (control, not a lever this step): speed **+6 %**, timing margin **spent**
+  (0 → ~150 thin arms per run, `ci_min` 48–53 against the ci ≈ 50 line where
+  `wait − spent` reaches 2 µs), hold current **+16 %**.
+
+#### Named next blocker
+
+Upward on advance 16 (the carried configuration), the next step is 65 %. Its likely
+binding gate is `WORST_MA_CEILING = 3800` against today's worst 16 block of **3527**
+at 62.5 %. Across sessions the slope is +17–22 % per step from 60 % (two points), which
+projects past 3800. But today's worst-block spread on the *same* image and rung is 3344–3527
+(±3 %), so that projection is two noisy points and a hypothesis to test, not a wall.
+The cheapest honest next step is the 65 % cap move itself, with the gate unchanged,
+three runs, worst run reported.
