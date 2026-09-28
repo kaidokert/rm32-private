@@ -669,6 +669,7 @@ impl<
                     600 => 625,
                     // ENV-9: 650, the new top rung, for the same reason.
                     625 => 650,
+                    650 => 675,
                     _ => 250,
                 };
                 io.say("PROVOKEAT ");

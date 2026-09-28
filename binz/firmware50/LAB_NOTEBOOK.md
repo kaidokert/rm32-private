@@ -42583,3 +42583,71 @@ the sag margin, and 16 (the reference value) stays the carrier.
 
 That supply projection is an extrapolation. My own rule is not to declare a wall from
 one, so the next action is to **measure 67.5 %**, not argue it.
+
+### ENV-12 — review disposition of ENV-10/11, and the 67.5 % probe predeclared: it needs the operator on the supply meter
+
+One independent adversarial review. Every finding below verified against captures and source.
+
+#### Accepted corrections
+
+* **"18 buys worst-block margin" is withdrawn.** Pooling ENV-7 and ENV-11, the per-pair
+  difference (18 − 16) is +71, +122, +19, +57, −162, −119 mA: **18 is worse in 4 of 6.**
+  That is noise, and B1's 3566 fell outside the hold window (`worst_hold_ma=3458`).
+  What advance 18 does replicate across both sessions is the **worst-case sag margin**
+  (35.4 vs 25.9; 31.6 vs 23.8).
+* **Non-adoption rationale rewritten.** The +1.4 % hold cost is real (higher in 6/6 pairs
+  across two sessions, sign test p ≈ 0.03; not order-driven, because B1 read higher than
+  the later A runs). But it is ~37 mA, about 1 % of the clamp, against ~250 mA per cap step.
+  So "18 spends supply" is not what decides it. The actual reasons: **16 is the reference
+  value** (the 2-day LateArm saga came from this crate's own advance divergence), and
+  adopting 18 means re-earning 65 % on `FF036E17` (walk, restart, sweep), because
+  another image's numbers do not count. **Advance 18 is the replicated sag lever, held in
+  reserve.**
+* **Supply figures, corrected.** "~90 % of clamp" used 2881 mA from `rst650-1` segment 2,
+  the least trustworthy hold in the set (`zero_drift_ma=-350`, 7.2 s). The ~6 % over-read
+  is a cross-session anchor at 600; this session's 600 suggests nearer 7 %. The steady
+  675 hold projects to **~2.8 A metered (~93 % of clamp)**. Only the restart approaches
+  the clamp. **None of this is measured on this bench today.**
+* **FastBusSag has no hardware positive control at all.** `v` never reaches it on this
+  motor, and it suppresses AverageCurrent's foldback via `hold_plans` (`states.rs:516`)
+  when it runs. The suppression is injection-path only; production AverageCurrent is
+  intact, so no protection is lost in normal runs. **`v` is dropped from the sweep**
+  until a stimulus exists that does not override a protection. The gap is stated as a
+  gap.
+* **Order confound.** A ran first in every pair in ENV-7 and ENV-11, and A's hold and
+  worst block climb across the session (2689 → 2730; 3509 → 3724), consistent with
+  warm-up. Future A/Bs use ABBAAB. The tightest block on the earned configuration (A3,
+  3724) was the second-to-last run, so it is a warm figure.
+* The `ci_min` "higher on 18" is n = 3 noise; withdrawn.
+
+#### Why the firmware alone is not the supply guard at 675
+
+FastBusSag compares against a ~207 ms EWMA, so a *slow* constant-current fold is tracked,
+not tripped. The only live guard for it is the absolute floor, `BUS_FLOOR_MV = 8_400`
+(`policy.rs:222`), ~29 % under the 11.85 V bench supply. The CC/IR residual is judged
+after the run. **So at a rung projected at ~93 % of clamp, the real supply guard is the
+operator watching the PSU's CC indicator.** That makes the next two steps operator-gated:
+
+1. **Metered anchor (cheapest lever first):** one 650 hold on `8FFE35E2`, operator
+   reading the supply current. This replaces the cross-session over-read with this
+   bench's headroom.
+2. **One exploratory 675 hold** on `B0E5CCD4` (`advance-ref,deep-filter`, cap 675,
+   x cycle 650 → 675, `SELF_REF_RUNGS` += 675; loadable `329B4F36…`; ISR roots
+   instruction-identical to `8FFE35E2`; `isr_audit` PASS; suites 361 / 359; clippy 0).
+   Operator on the meter.
+
+#### 675 predictions, declared before any run
+
+Speed 2310–2330 eHz (+1.5–2 %). Hold proxy 2950–3000 (~2.8 A metered). **Worst block
+3850–4050: a likely failure of the unchanged 3800 gate**, possibly with a foldback. Sag
+15–21 codes. Thin 0–few, late 0. IR residual above −20.
+
+#### Stop and read rules, declared before any run
+
+* Operator kills on the PSU entering CC or reading ≥ 2.9 A.
+* `worst_ma ≥ 3800` or `ceiling_tenths < 675`: **the rung fails as designed.** It is a
+  result, the envelope edge; no gate moves.
+* IR residual < −20: supply-limited, and the ladder stops there.
+* Sag < ~15 codes: next lever is advance 18 at 675.
+* Thin > 0 or late > 0: timing margin is being spent; report it in that currency.
+* No restart and no sweep at 675 until three holds pass. One pass counts as 1/3, not earned.
