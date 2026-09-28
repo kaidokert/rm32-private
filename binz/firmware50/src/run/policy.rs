@@ -499,7 +499,22 @@ mod tests {
         assert_eq!(sixstep_ccr_of(500, 1333), 666);
         assert_eq!(sixstep_ccr_of(525, 1333), 699);
         assert_eq!(sixstep_ccr_of(600, 1333), 799);
-        assert_eq!(sixstep_ccr_of(750, 1333), 799, "capped at 60%");
+        // ENV-2 raised the cap 600 -> 625 and this assertion failed, exactly as
+        // its comment above promises -- but I committed without running the
+        // firmware50 suite (the pre-commit hook tests only the rm32 crate), so
+        // the tree went red and the review caught it, not me. Rewritten so the
+        // property survives: the cap VALUE is pinned, so the next move trips
+        // this again, and anything above the cap clamps to the cap.
+        assert_eq!(
+            SIXSTEP_DUTY_CAP, 625,
+            "a cap move must be deliberate: update this with it"
+        );
+        assert_eq!(sixstep_ccr_of(625, 1333), 833);
+        assert_eq!(
+            sixstep_ccr_of(750, 1333),
+            sixstep_ccr_of(SIXSTEP_DUTY_CAP, 1333),
+            "clamped at the cap"
+        );
         // Below the step is 20 in **both** builds; at and above it the
         // `advance-low` feature is the only thing that moves. Asserted against
         // the constants rather than literals so the default build still pins

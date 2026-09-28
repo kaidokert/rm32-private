@@ -343,7 +343,10 @@ def ladder_record(
     # RUN line, and the batch summary read "0 failed their gates", which looks
     # like success. Derived now from the two tables that actually define what a
     # rung is judged by, so the three cannot drift apart again.
-    recordable = set(cohort.ORACLE) | set(cohort.SELF_REF_RUNGS)
+    # ORACLE also holds a 100 entry the old tuple never admitted; the review
+    # caught that the union made it recordable by accident. Excluded, so the
+    # only intended change from the old tuple is the addition of 625.
+    recordable = (set(cohort.ORACLE) | set(cohort.SELF_REF_RUNGS)) - {100}
     if r is None:
         print(f"   NOT RECORDED: {capture.name} did not parse", flush=True)
         return None

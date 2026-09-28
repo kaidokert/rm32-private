@@ -41979,3 +41979,84 @@ thin arms and 13 µs of wait at its `ci_min`.
 Not yet done for this step: restart at 625, which needs 625 added to the `x` provoke
 cycle (it ends at 600) — a firmware change, so it goes into the next image rather than
 forcing a fresh ELF for one criterion.
+
+### ENV-4 — review disposition: I rejected the faster result on a retired rule, committed a red tree, and named the wrong blocker
+
+One independent adversarial review of ENV-1..3. **Verdict: reject "62.5 % is earned on
+advance 16" as written.** Every load-bearing finding verified before acceptance.
+
+#### 1. ENV-2's CC rejection is retracted — I used a rule the project had already retired
+
+I rejected 62.5 % on advance 20 because two runs sat at 975.3 ‰, calling it "the CV/CC
+discriminator this project established". **The project replaced that rule in E243** with
+an IR-line residual — measured droop minus `1000.21 − 0.01093 · hold_ma`, failing below
+−20 — encoded at `cohort.py:411-417` and documented at `:492-512`. Its comment says the
+absolute 975 rule was retired **because it would judge healthy 600 runs as CC**: at a
+600-rung current the line itself predicts 970.4 ‰.
+
+At 3000 mA the line predicts 967.4 ‰; measured 975.3 ‰ gives **+7.9 ‰, squarely
+healthy** (healthy sd 6.4; confirmed-CC runs sat at −31 to −53). So:
+
+* **"The CC rule is not enforced by any gate" was false.** It is enforced, and these runs
+  pass it because they are not CC.
+* The exact-3000 coincidence is real integer arithmetic (a ~1 mA bin; no saturation in
+  `window_milliamps`), but a 1 mA identity sits far below the instrument's own
+  systematic and cannot show the current was pinned. With the proxy's ~6 % over-read the
+  true draw is ~2.83 A, under the clamp.
+* **Nothing in advance 20's 62.5 % runs looks like CC.** Its worst sag margin (38.3) and
+  worst block (3517) are *better* than advance 16's (29.9, 3725). A supply in CC would
+  show the opposite.
+
+The advance-20 runs had been dropped by the fixture's silent-drop bug, not by any gate.
+Recorded now through the **unchanged** gates: **3/3 PASS, rung 625 on `B281F684` PASS.**
+
+#### 2. I committed a red tree
+
+`policy.rs:502` asserted `sixstep_ccr_of(750, 1333) == 799, "capped at 60%"`, and its
+comment says it exists so **a cap raise cannot be silent**. Raising the cap made it 833.
+The gate did its job — **and I never ran the firmware50 suite**, because the pre-commit
+hook tests only the `rm32` crate. The review caught it; I did not. Rewritten to pin the
+cap value (so the next move trips it again) and assert anything above clamps to the cap.
+**360 / 360.**
+
+#### 3. ENV-3 overstatements, corrected
+
+* **"Every prediction held" was false.** The current band was 2600–2700; run 1 read 2508.
+* **Unreported: `worst_ma` 3725 on run 2, 75 mA (2 %) under `WORST_MA_CEILING = 3800`** —
+  the tightest current margin in the dataset, on the image I called the current-safe one.
+* **"+5.0 %" for ENV-1 was the mean.** Worst advance-20 against best advance-16 is +4.4 %.
+* The fixture's recordable set had gained ORACLE's 100 entry by accident; excluded. It now
+  differs from the old tuple by exactly one intended entry, 625.
+* ENV-3's root identity was shown by `isr_diff` (same TIM16 relocation pattern) but the
+  manual pool-data check was only done for ENV-2's image.
+
+#### The corrected picture at 62.5 %
+
+Both advance levels pass every encoded gate. **The trade is not current — it is speed and
+current-block margin against arm-deadline margin:**
+
+| at 62.5 % (worst of three) | advance 20 | advance 16 |
+|---|---|---|
+| speed | **2355** | 2235 |
+| worst 10 ms block | **3517** | 3725 |
+| worst sag margin | **38.3** | 29.9 |
+| CC residual | healthy | healthy |
+| mean hold current | 3000 | **2647** |
+| thin arms | 152 | **0** |
+| late arms | 0 | 0 |
+
+#### Named next blocker — revised, and not the supply
+
+The supply claim rested on the retracted CC reasoning and is **withdrawn**. What the data
+does show: on advance 20 `thin_count` goes **19–25 at 600 → 138–152 at 625**, a ~6×
+rise per 2.5 % step. That is the arm deadline closing: at 625's `ci_min` ~52 advance 20
+leaves 10 µs of wait against `spent` mode 6. **For the faster configuration, the next
+blocker is `spent`**, and the within-handler reorder is the lever that would move it.
+For advance 16, timing headroom remains (0 thin arms); its tighter margin is the worst
+current block.
+
+#### Status of the step
+
+**"62.5 % holds 3/3 on both advance levels with every gate passing"** — not "earned".
+Still owed for earned: a restart at 625 (needs 625 in the `x` provoke cycle, a firmware
+change) and a protection sweep on the carried image.
