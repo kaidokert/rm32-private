@@ -42826,3 +42826,14 @@ lengthens every wait (ci·18/64 vs ci/4). Suites 361/359 ×3 configs, clippy 0, 
 −0 to −3 %; worst block 0–150 mA lower; per-event thin/late 0 on both sides. **Accept**
 if 14 lowers worst-block current (worst vs worst, and in ≥ 2/3 pairs) by more than it
 lowers speed. **Reject** otherwise. ABBAAB, same session, `scripts/ab_abbaab.sh`.
+
+#### ENV-18 rule, tightened BEFORE any advance-14 result (review of ENV-16/17, item 5)
+
+Written while only `env18-1A` (advance 16) exists. **Pairs are the adjacent ABBAAB pairs**
+(1A,2B), (3B,4A), (5A,6B). Effects in **percent**. Within-image worst-block spread at
+700 is ~3 % (3727–3843) plus a ~2 % run-order shift, so at n = 3 only a large, consistent
+effect is resolvable. **Accept 14 only if** worst block is lower in **3/3 pairs** AND worst
+vs worst is lower by **≥ 3 %**, with coast speed down by less than the worst-block drop
+(worst vs worst, percent). Otherwise **reject** (a null at this n is a rejection, not a
+"maybe"). **Even if accepted, 70 % counts only after anchored holds 3/3 on `B363FF11`**,
+then restart and sweep.
