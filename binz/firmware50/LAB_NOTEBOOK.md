@@ -40738,7 +40738,7 @@ Nothing to fix. Recorded because the deliverable's "powered ceiling is 60 %" is
 now a verified property of the image rather than an intention, and because
 verifying it cost one grep chain against a real scar.
 
-### S1 — the positive control invalidates two of the three pre-registered tests, and calibrates the replacement. Prediction recorded before the run.
+### SAGQ1 — the positive control invalidates two of the three pre-registered tests, and calibrates the replacement. Prediction recorded before the run.
 
 Goal: are `FastBusSag` trips dominated by ADC sampling artefact or by rail
 behaviour? Offline first, per the discipline.
@@ -40835,3 +40835,154 @@ observed, so the 1-in-3 rate that motivated this is not established for it.
 * Instrument for the run: `shell-pwm --features advance-ref,deep-filter,sag-ring`,
   sha256 `381DCA575B765D2A…`. It must be replaced with the archived baseline when
   the investigation ends.
+
+### SAGQ2 — the noise hypothesis is refuted at 22 sigma, and the error was mine: I measured the raw extreme against a line the guard applies to the mean.
+
+Run 1 at rung 550 with `sag-capture` (`2E384B41…`, features `advance-ref,deep-filter`),
+78 s window, **50.275 s hold, `reason=2`, no latch**. 256 v3 rows frozen at the
+stop, all at duty 550. `captures/sag/sag550-cap-1.txt`.
+
+#### What the window measures
+
+| | value |
+|---|---|
+| `filt_bus` (median) | 1198 |
+| guard line, 0.95 × filt | 1138.1 |
+| **8-tap mean** | mean 1197.4, **sd 2.70**, min 1189 |
+| raw scan | mean 1197.8, sd 9.06, min 1163 |
+| raw/mean sd ratio | **3.36** (√8 = 2.83 for independent noise) |
+| low-mean scans below 950‰ | **0** |
+| `streak` column max | **0** |
+| inter-scan gap | 58.8–147.1 µs about a 101 µs nominal |
+
+**Margin from the mean to the trip line: 59.3 codes = 22.0σ of the mean.** From the
+closest mean actually observed, 50.9 codes = 18.9σ. Sampling noise cannot reach the
+line; it is not close.
+
+#### The error, stated plainly
+
+E352 claimed "the guard is watching its own sampling noise with ~12 codes of
+headroom". That 12 came from `filt_bus − bus_min` against the line — the **raw
+extreme**, a one-in-445-000 sample from the bridge-off control. **The guard does
+not test the raw sample; it tests the 8-tap mean**, which is 3.36× quieter. The
+correct headroom is ~59 codes of a quantity whose sd is 2.70. I compared the wrong
+distribution to the threshold, and the goal I wrote rests on that comparison.
+
+The bridge-off evidence still holds for what it measured — depth is
+instrument-dominated, and the ±65-code raw spread is rail-level-independent. What
+does not follow is that the **guard** is noise-limited, because averaging eight
+independent samples removes exactly that spread. Both facts are true; my inference
+between them was not.
+
+#### So, against the pre-registered discriminator
+
+Noise-dominated is **refuted**. What remains live is a genuine rail excursion, or a
+gross non-noise corruption: one tear would have to be **474 codes** to move the
+mean to the line, or ~4 consecutive gross tears would. The tear route is not
+excluded — this run's gaps reach 147 µs against an 88 µs coherence window — but it
+is a different mechanism from noise and needs a latch to observe.
+
+#### Prediction for runs 2 and 3, before driving
+
+The remaining question the budget can answer is whether that margin **shrinks
+toward the campaign ceiling**. Run 2 repeats 550 to test whether sd 2.70 and the
+~59-code margin are stable on a single window, n = 1 being no basis for either.
+Run 3 goes to 600 — inside the 60 % ceiling, which binds — to measure the margin
+where current is highest.
+
+I predict the margin stays above ~10σ at 600: the mean's sd is set by ADC noise
+over eight samples, which load should barely change, while `filt_bus` tracks the
+rail so the line moves down with it. Falsifier: sd rising sharply with duty, or
+the margin falling under ~5σ at 600, either of which would restore a
+noise-proximity story I have just abandoned and would mean the 22σ at 550 is not
+representative of the envelope's top.
+
+### SAGQ3 — ANSWER: FastBusSag is not instrument-limited. The margin is 15–25σ of the quantity the guard actually tests, and a real rail event is an 11× excursion of that quantity's own noise.
+
+Three runs, budget spent, none latched. `sag-capture` `2E384B41…`
+(`advance-ref,deep-filter`), 78 s window, `--no-ladder`, baseline worktree at tag
+`binz-loaded60-backports-complete-20260927`.
+
+| run | rung | hold | reason | latch |
+|---|---|---|---|---|
+| `sag550-cap-1` | 550 | 50.275 s | 2 | no |
+| `sag550-cap-2` | 550 | 50.275 s | 2 | no |
+| `sag600-cap-1` | 600 | 47.775 s | 2 | no |
+
+#### The measurement
+
+| window | n | mean sd | margin | σ | raw/mean sd | lows | gap max |
+|---|---|---|---|---|---|---|---|
+| control, pre-injection (150, steady) | 240 | **2.38** | 60.7 | **25.4** | — | — | — |
+| control, post-step (500, **real event**) | 16 | **27.61** | 34.1 | **1.2** | — | — | — |
+| 550 run 1 | 256 | 2.70 | 59.3 | 22.0 | 3.36 | 0 | 147.1 µs |
+| 550 run 2 | 256 | 4.02 | 60.4 | 15.0 | 2.80 | 0 | 138.2 µs |
+| 600 run 1 | 256 | 3.23 | 59.9 | 18.6 | 2.92 | 0 | 145.1 µs |
+
+**Classification: RAIL-DOMINATED.** Noise cannot trip this guard. Three
+independent grounds:
+
+1. **The margin is 15–25σ of the mean**, in every window measured, at both 550 and
+   600. My prediction that it would stay above ~10σ at 600 held; the falsifier
+   (under ~5σ) did not fire.
+2. **It is 5 % of the rail by construction.** The line is `0.95 × filt_bus` and
+   `filt_bus` is a 207 ms EWMA *of the mean*, so in steady state the margin is
+   always ~5 % of the rail while the mean's noise is ~0.25 % of it. The ~18σ ratio
+   is a design property, not an operating point — which is exactly why 550 and 600
+   measure the same margin.
+3. **A real event looks completely different.** In the injected control the mean's
+   sd goes 2.38 → 27.61 codes, an **11× excursion**, and the margin collapses to
+   1.2σ. Nothing in three production runs resembles that; they match the control's
+   *steady* state (2.38) to within run-to-run spread.
+
+The `raw/mean` sd ratio is 2.80–3.36 against √8 = 2.83, confirming the raw scatter
+is near-independent between scans and the 8-tap mean removes it as designed. **That
+is the mechanism of my own error**: the ±65-code raw floor is real and
+rail-level-independent, but averaging eight independent samples is precisely what
+makes it irrelevant to the guard.
+
+#### Mechanism, therefore
+
+A `FastBusSag` trip requires the 8-tap mean to fall 5 % below its own 207 ms
+average — an order of magnitude beyond its noise, and faster than the EWMA can
+follow. That is a genuine transient. **The guard is the messenger, not the cause**,
+which is what [[feedback-supply-is-never-the-wall]] already says: classify the
+event, hunt the loop mechanism. For the two latches that motivated this, the
+prime suspect upstream is loss of lock producing a current surge — and E350's
+measured 70 ± 32 mΩ path turns a surge into exactly this kind of rail dip.
+
+#### Remedy recommendation
+
+**Do not do the ADC ping-pong work for this purpose.** `codex/loaded60-dma-priority`
+found a real coherence defect and that finding stands on its own merits, but it
+cannot move the sag: one torn sample shifts the 8-tap mean by D/8, so reaching the
+line needs a single tear of **474 codes** or ~4 consecutive gross tears. Tearing is
+not excluded as a phenomenon — every run's gap max is 138–147 µs against the 88 µs
+no-rewrite window — it is excluded as an explanation for *this* trip.
+
+The bounded next step for the sag trips is upstream and needs no new instrument:
+the same ring already records `step` and `since_zc_us` beside the rail, so a
+captured latch would show whether commutation was faltering before the rail moved.
+
+#### What remains unexplained
+
+* **No latch was captured.** Three clean runs at 550/600 on this motor produced no
+  trip, so the mechanism above is inferred from the control's shape and the σ
+  arithmetic, not observed at a real latch. The motor is a different physical unit
+  since the 1-in-3 rate was seen, and 550 now holds 50 s cleanly.
+* Each window is 26 ms of a ~50 s hold and all three landed in steady state. A
+  higher sd elsewhere in the hold is not excluded — though the control shows a real
+  event is an 11× sd excursion, which is not what noise produces.
+* Why the propless 70 % run tripped this guard at ~371 mA-class current is not
+  answered here; 70 % is outside the campaign ceiling and was not revisited.
+
+#### Adjacent defect found, worth its own fix
+
+**`bemf_run.py --timeout` defaults to 75 s while `BEMF_TOTAL_MS` is 78 s**, with
+help text still saying "the segment itself is 40 s plus coast". The first run of
+this investigation drove the full window and recorded only `BEMFRUN` + `PREFLIGHT`
+— the fixture gave up 3 s before the report. The earlier `l`/`9` runs and the other
+agent's screens all used 45 s or 28 s windows, so it never showed. **A full-window
+`L` run — the window a qualification hold uses — cannot be captured at the default.**
+`sag_run.py` defaults to 130 s and is unaffected. Not fixed here: it is shared
+tooling and another agent is active in it.
