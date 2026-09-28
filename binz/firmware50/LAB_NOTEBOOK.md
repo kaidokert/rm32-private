@@ -42720,3 +42720,13 @@ restart segments must also stay under `WORST_MA_CEILING = 3800` (restart 3 read 
 **The PSU limit was raised 3 A → 5 A by the operator after these runs.** The next wall
 above 67.5 % is the firmware's own ~4 A block allowance (3800 sits 5 % under it), which
 this campaign does not move.
+
+### ENV-15 — OPERATOR DECISION: restart segments are not judged by WORST_MA_CEILING. 67.5 % QUALIFIED.
+
+The operator ruled that restarts do not have to stay under the 3800 mA hold gate, so
+restart 3/3 at 675 stands as `restart_verdict` judged it. **67.5 % on advance 16 is
+qualified** on image `B0E5CCD4` (`advance-ref,deep-filter`, loadable `329B4F36…`): holds
+3/3 (worst 2349 eHz, 2984 mA proxy ≈ 2.87 A metered, block 3696, sag 18.2 codes, 0
+thin/late), restart 3/3 (seg-2 4.2 s dwell), sweep 10/10 (ENV-14), FastBusSag without a
+hardware positive control (standing gap). PSU limit now 5 A. Next wall: the firmware's
+~4 A block allowance, which is the operator's to move.
