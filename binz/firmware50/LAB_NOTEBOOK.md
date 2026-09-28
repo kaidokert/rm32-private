@@ -41708,3 +41708,274 @@ together — and whether an intermediate level (18 or 20) buys the speed back wi
 the late arm. One run a side is what I have; three a side is what a percent-scale
 claim needs. That is the only remaining place a bounded control improvement could come
 from, and it is what step 3 should have targeted instead of the deadline path.
+
+### ENV-1 — batch: advance 20 versus 16 at rung 600, three runs a side. The cheapest lever, and tested where it can hurt.
+
+Standing campaign opens. Cheapest lever first, and `advance-low` needs **no code
+change at all** — it is an existing feature giving a flat advance of 20, between the
+qualified 16 and the 22 that latched a LateArm at rung 500 (Q60-5).
+
+**Tested at 600, not 500.** The speed deficit shows at the oracle-judged rungs ≤ 500,
+so testing there is tempting. But the lever's purpose is to expand the envelope
+upward, the binding constraint at the top is arm margin, and 600 is where a regression
+would appear. If advance 20 survives 600 it is safe everywhere below; if it does not,
+no speed gain below matters because the top is what we are trying to raise.
+
+#### Predicted, in both currencies, before building
+
+From the arithmetic at the `ci` values rung 600 actually shows (`ci_us` 74–76,
+`ci_min` 51–52):
+
+| `ci` | wait@16 | wait@20 | left@20 at `spent` 6 / 11 |
+|---|---|---|---|
+| 76 | 19 | 15 | +9 / +4 |
+| 74 | 19 | 14 | +8 / +3 |
+| 60 | 15 | 12 | +6 / +1 |
+| 52 | 13 | 10 | **+4 / −1** |
+
+* **Speed**: advance 16 gave coast 1912–1921 at rung 500 and 22 gave 2012, so ~16 eHz
+  per advance unit. At 600 I predict advance 20 lands **1–3 % above** advance 16's
+  coast, i.e. a partial recovery, not the full 22 figure.
+* **Margin**: `thin_count > 0` is expected — `left ≤ 2` must occur at the low end of
+  the `ci` distribution. **`late_arms` is the falsifier: I predict 0**, because the
+  negative column above uses `spent_max = 11`, which is a saturating whole-run
+  maximum whose mode is ~6.
+
+**What each outcome changes.** `late_arms = 0` with a speed gain ⇒ the lever works at
+the top, re-qualify the earned rungs on it and then attempt 62.5 %. `late_arms > 0` ⇒
+advance 20 is unsafe at 600 on this motor, and since 18 sits between, the next lever
+is a constant at 18 — or, if 18 is also marginal, `spent` is the real blocker and the
+within-handler reorder is the first code change worth making. **No speed gain at all**
+⇒ advance is not the speed lever, the deficit is hardware, and the oracle decision
+becomes the only path below 525.
+
+Six runs, alternating A/B/A/B/A/B in one session, `--no-ladder` throughout: this
+measures a **lever**, not a rung claim. Scored on `coast_ehz`, `late_arms`,
+`thin_count`, `min_margin_xp`, `max_streak`, `loop_gap_max_us`.
+
+#### ENV-1 result — advance 20 buys +5.0 % at the top with no late arm; it spends thin-arm margin to do it
+
+Rung 600, six runs alternating in one session, `--no-ladder`, all `reason=2`, all
+47.8 s holds. Advance 20 = `5475646E…`, advance 16 = `A2DD81EC…` (the qualified code,
+loadable `E821D229…`).
+
+| | coast (all three) | `late_arms` | `thin_count` | `ci_min` | worst sag margin | `max_streak` |
+|---|---|---|---|---|---|---|
+| advance 16 | 2164 / 2170 / 2171 | 0 / 0 / 0 | 0 / 0 / 0 | 52 | **34.6** codes | 0 |
+| advance 20 | 2266 / 2276 / 2287 | **0 / 0 / 0** | 19 / 19 / 25 | 53–54 | **30.1** codes | 0 |
+
+**Speed: +108 eHz, +5.0 %, non-overlapping** (worst advance-20 run 2266 against best
+advance-16 run 2171). I predicted 1–3 %; the miss is in the favourable direction and
+is larger than the linear interpolation between 16 and 22 implied.
+
+**Margin, both halves as predicted.** `late_arms` stayed **0** in all three — the
+falsifier did not fire. `thin_count` rose from 0 to **19–25 per run**, as predicted:
+arms within 2 µs of the deadline now occur, about 1 in 35 000. So the lever **did
+spend timing margin to buy speed** — not all of it, but measurably, and the
+worst-case sag margin also fell 34.6 → 30.1 codes. Scored in both currencies, as the
+campaign requires: **+5.0 % speed for 0 → ~21 thin arms per run and no late arm.**
+
+Where that margin goes at a higher rung: `ci` falls as speed rises, and at ci = 52
+advance 20 leaves 10 µs of wait against `spent` mode 6 / max 11. So 62.5 % will push
+`thin_count` up and is where a late arm would first appear.
+
+#### A correction to Q60-4 addendum, found by this run
+
+One advance-20 run reported `loop_gap_max_us = 202` — **above** the 200 µs
+`TICK_GAP_MAX_US` — and nothing tripped. That is impossible if the two are the same
+quantity, and they are not: `TickGap` is raised in `roots.rs:937-939` on the **guard
+root's own tick-to-tick gap**, reported as `gap_max_us` in `BEMFGUARD` (**105–108 µs**
+in these runs). `loop_gap_max_us` is the **foreground** loop's iteration gap and has no
+200 µs trip at all; its meaningful threshold is the 101 µs scan period, past which
+scans are missed (`report.rs:373-375`), and missed scans are counted and benign.
+
+So Q60-4's addendum — *"the worst observed gap is 188 µs, 94 % of the trip threshold,
+leaving 12 µs"* — was a **category error**: I compared the foreground loop gap against
+the guard's tick-gap threshold. The real `TickGap` margin is ~92 µs. **The −7.89 %
+foreground-throughput cost stands; the "12 µs from a protection trip" alarm is
+withdrawn.** It matters because it would have directed effort at trimming observers
+to recover margin that was never at risk.
+
+#### Next, per the batch statement
+
+The lever works at the top, so: re-run the earned rungs on advance 20, and attempt the
+next step. **The next step cannot be taken without moving one constant**:
+`SIXSTEP_DUTY_CAP = 600` is enforced in the compare-value arithmetic (E357 addendum),
+so no key can command above 60 %. That cap is the campaign ceiling, not a protection —
+the protections (current, sag, tracking, timing, bus floor, watchdog) are untouched by
+it. Expanding the envelope upward is this campaign's stated purpose, so it moves, and
+**by exactly one increment, 600 → 625**. Current at 600 ran ~2.3 A against the 3 A
+supply clamp and the 4 A average-current stop, so 62.5 % stays inside both.
+
+### ENV-2 — image, gate and prediction for the first step above 60 %
+
+**Image** `B281F68472E76712…`: `advance-low` (flat 20) + `deep-filter`, and
+`SIXSTEP_DUTY_CAP` raised **by exactly one increment, 600 → 625**. The cap is the
+campaign ceiling enforced in the compare-value arithmetic, not a protection; every
+protection and threshold is untouched, and the cap clamps only *above* its value, so
+behaviour at ≤ 600 is unchanged.
+
+**Root verification, done by hand because the tool cannot.** `isr_diff.py` exits 1 and
+reports TIM16 as "ENCODED BYTES DIFFER: a constant moved" — the **same message** it
+gives for benign relocation, because its `loadable_word` pool check is dead code (Q60-5
+review). So I diffed TIM16 directly: 369 lines each; one `bl` whose encoding
+(`f7ff f85b`) and target (`0x8000d34`) are unchanged but whose mangled symbol hash
+differs; and two literal-pool pointers that moved (`0x08009cd0 → 0x08009e1c`,
+`0x0800aa8c → 0x0800ac14`). Reading 32 bytes at each old address in the baseline and
+each new address in this image: **byte-identical data at both**. So all four roots are
+behaviourally identical; the cap and advance changes live outside them.
+
+**Anchoring minimised.** Only 525 is anchored, because 500 cannot pass its stale oracle
+and the chain needs *something* below 525. 550 → 575 → 600 → 625 are each **walked**,
+admitted only by the rung below passing on this ELF. That is more rigorous than
+Q60-4's anchor-everything, and cheaper to trust.
+
+**Gate for 625.** It had none: `ORACLE` ends at 500 and `SELF_REF_RUNGS` ended at 600,
+so a 625 run fails by default. I added 625 to `SELF_REF_RUNGS`. That **extends** the
+project's existing above-500 rule to a rung with no gate — not the loosening I declined
+at ≤ 500, where switching gates would have passed runs that failed the gate they had.
+Carried caveat: this gate compares the loop against the same rotor's coast, so it
+certifies self-consistency and **cannot detect a speed deficit**. Speed at 625 is
+therefore reported as a measurement, not as a pass.
+
+#### Prediction for 625, before it runs
+
+`ci` falls as speed rises; at 600 advance 20 showed `ci_min` 53–54. At 625 I expect
+`ci_min` ≈ 50–51, where advance 20 leaves **10 µs** of wait: `left` = +4 at the `spent`
+mode of 6 and **−1 at the saturating maximum of 11**.
+
+* **`thin_count` rises** from 600's 19–25 per run — predict 40–100.
+* **`late_arms`: predict 0, with lower confidence than at 600.** This is the falsifier.
+* Speed: coast ≈ 2320–2340 eHz, extrapolating ~50 eHz per 2.5 %.
+* Current ≈ 2.4–2.5 A, inside the 3 A supply clamp and the 4 A average-current stop.
+
+**What each outcome changes.** 3/3 with `late_arms = 0` ⇒ 62.5 % is earned and 65 % is
+next. Any late arm ⇒ advance 20 has reached its limit at 62.5 %, and the next lever is
+either advance 18 (a constant) or reducing `spent` (the first code change worth
+making), since the arithmetic says `spent` is what the late arm is spending.
+
+Restart at 625 needs 625 in the `x` provoke cycle, which ends at 600. Added only if the
+holds pass — a restart criterion for a rung that cannot hold is pointless.
+
+#### ENV-2 result — the earned band holds on advance 20; 62.5 % holds on timing and is NOT earned, because it reaches the supply
+
+**Retained on advance 20, walked:** 525 (anchored), 550, 575, 600 — each **3/3 PASS**.
+So advance 20 is the better image for ≤ 60 %: +5.0 % speed with the whole earned band
+intact.
+
+**62.5 % on advance 20** (`B281F684…`), three walked holds:
+
+| run | reason | hold | coast | `late_arms` | `thin_count` | `hold_ma` | filt/ref |
+|---|---|---|---|---|---|---|---|
+| 1 | 2 | 46.3 s | 2355 | 0 | 150 | 2922 | 979.4 ‰ |
+| 2 | 2 | 46.3 s | 2383 | 0 | 152 | **3000** | **975.3 ‰** |
+| 3 | 2 | 46.3 s | 2369 | 0 | 138 | **3000** | **975.3 ‰** |
+
+**Timing prediction held**: `late_arms = 0` in all three — the falsifier did not fire.
+`thin_count` 138–152 overshot my 40–100 prediction; speed 2355–2383 slightly beat the
+2320–2340 predicted.
+
+**But the worst run is the figure, and two of three sit at the supply's limit.** The two
+runs reading *exactly* 3000 mA are the two sitting *exactly* on the 975 ‰ CV/CC
+boundary — the discriminator this project established earlier. With the proxy's ~6 %
+over-read the metered draw is ~2.8 A, 94 % of the 3.00 A clamp; either way the rail was
+pulled to the boundary. **Sustained CC cannot qualify**, so **62.5 % is not earned on
+this bench** — and not for a firmware reason: nothing stopped, nothing latched.
+
+This is not the supply failing — nothing faulted and the run completed. It is
+steady-state load reaching the supply's rating, which is a different thing from the
+"supply is never the wall" failure class.
+
+#### The currency I failed to score in ENV-1
+
+Matched A/B at 600, three a side: advance 16 → 2332 mA mean, advance 20 → 2626 mA.
+**Advance 20 costs +12.6 % current for its +5.0 % speed.** That is physics, not waste —
+prop power scales roughly with speed³, so +5 % speed predicts ~+16 % load. The goal says
+score speed *and* timing margin; the supply is absolute, so **current is a third
+currency and ENV-1 should have scored it.** It is what reaches the wall here.
+
+#### Three fixture findings
+
+* **The CC rule is not enforced by any gate.** All three 62.5 % captures pass
+  `run_gates` and `self_ref_fails` — including the two at exactly 3000 mA and 975.3 ‰.
+  So a run can "pass" while the supply is at its clamp. Named for the operator; **not
+  encoded by me**, because it changes acceptance, and **not exploited**: those runs
+  are deliberately left unrecorded rather than entered as passes.
+* **A third, silent ceiling.** `ladder_record` held a hardcoded tuple of recordable
+  duties ending at 600, so every 625 run returned `None`, printed nothing, and left the
+  summary reading "0 failed their gates". Now derived from `ORACLE ∪ SELF_REF_RUNGS`,
+  and an unrecordable duty says so loudly.
+* Three independent places encoded the 60 % ceiling — the firmware cap, the self-ref
+  table, and this tuple — and only the firmware one was documented as such.
+
+#### Next lever, predicted before running: advance 16 at 62.5 %
+
+The blocker is current, and advance 16 draws ~12.6 % less. It also has more timing
+margin. Predict at 625 on advance 16:
+
+* **current ≈ 2600–2700 mA**, filt/ref ≥ 977 ‰ — inside CV, clear of the clamp;
+* `late_arms = 0`, `thin_count` 0 to a handful (advance 16 had 0 at 600; `ci_min` ≈ 50
+  leaves 13 µs of wait, `left` +7 / +2);
+* coast ≈ 2220–2240 eHz — above 600-on-16, below 625-on-20.
+
+**Falsifier:** `hold_ma` ≥ 2950 or filt/ref < 977 ‰ ⇒ 62.5 % is supply-bound whatever
+the advance, the envelope on this bench is 60 %, and the next lever is the supply rather
+than the firmware. Clean 3/3 under the clamp ⇒ 62.5 % earned on advance 16, at the cost
+of the 5 % speed advance 20 would have bought.
+
+Image: `advance-ref,deep-filter` with the cap at 625. Rung 600 re-run anchored (it is the
+prerequisite *and* the regression check on the earned band's top), then 625 walked.
+
+### ENV-3 — 62.5 % EARNED on advance 16, inside the supply, with zero thin arms. Every prediction held.
+
+Image `61AACC5B929A09BE…` (`advance-ref,deep-filter`, cap 625). Rung 600 re-run anchored
+as the prerequisite and the regression check on the earned band's top: **3/3 PASS**.
+Then 625, walked:
+
+| run | reason | hold | coast | `late_arms` | `thin_count` | `ci_min` | `hold_ma` | filt/ref | sag margin | `max_streak` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 2 | 46.3 s | 2235 | 0 | 0 | 51 | 2508 | 984.3 ‰ | 34.7 | 0 |
+| 2 | 2 | 46.3 s | 2238 | 0 | 0 | 50 | 2641 | 981.9 ‰ | **29.9** | 0 |
+| 3 | 2 | 46.3 s | 2238 | 0 | 0 | 52 | 2647 | 981.9 ‰ | 40.6 | 0 |
+
+**RUNG 62 %: PASS**, recorded — the first step above 60 % in this campaign.
+
+| predicted | measured | |
+|---|---|---|
+| current 2600–2700 mA | **2508–2647** | held; worst run 2647, ~12 % under the clamp |
+| filt/ref ≥ 977 ‰ | **981.9–984.3 ‰** | held — firmly CV |
+| `late_arms = 0` | 0 / 0 / 0 | held |
+| `thin_count` 0 to a handful | **0 / 0 / 0** | held |
+| coast 2220–2240 | **2235–2238** | held |
+
+#### What the lever bought, in all three currencies
+
+Against advance 20 at the same rung: **−5.6 % speed** (2237 vs ~2369), **−12 % current**
+(clearing the clamp that stopped advance 20), and **~145 → 0 thin arms**. So at 62.5 %
+advance 16 trades speed for exactly the two things that bind — supply headroom and arm
+margin.
+
+**An honest nuance the envelope must carry:** advance 20 at **60 %** (2276 eHz) is
+*faster* than advance 16 at **62.5 %** (2237). This step expands the **duty** envelope
+and the **timing margin**, not the top speed. The fastest image on this bench remains
+advance 20 at 60 %.
+
+#### Retention
+
+525–575 were not re-run on this ELF. They are behaviourally identical to the qualified
+`B1E51E59`, where they passed: this image is that code plus the cap constant, which
+clamps only above 600, and the four ISR roots are identical. 600 — the most sensitive
+rung of the earned band — was re-run and passed. Stated as a reasoning shortcut rather
+than a measurement.
+
+#### Named next blocker
+
+On advance 16 the current rises ~11 % per 2.5 % of duty (2332 at 600 → ~2600 at 625),
+so **65 % projects to ~2850–2900 mA, within ~5 % of the 3 A clamp** — back at the edge
+advance 20 hit. **The binding constraint above 62.5 % is the bench supply, for both
+advance levels.** Firmware timing is not what binds: 62.5 % on advance 16 shows zero
+thin arms and 13 µs of wait at its `ci_min`.
+
+Not yet done for this step: restart at 625, which needs 625 added to the `x` provoke
+cycle (it ends at 600) — a firmware change, so it goes into the next image rather than
+forcing a fresh ELF for one criterion.

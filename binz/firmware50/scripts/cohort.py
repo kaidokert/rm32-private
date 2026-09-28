@@ -459,7 +459,14 @@ def rung_current_note(runs: list[dict]) -> str:
 # Nothing about it is imported from a previous image or a previous campaign,
 # which is what makes it admissible here where an extrapolated oracle would not
 # be.
-SELF_REF_RUNGS = (525, 550, 575, 600)
+# ENV-2: 625 added. This EXTENDS the project's existing above-500 rule to a new
+# rung that otherwise has no gate at all -- without it a 625 run fails by
+# default as having "neither an oracle figure nor" a self-reference. It is not
+# the loosening I declined at <=500, where switching gates would have passed
+# runs that failed the one they had. Caveat carried from the Q60-5 review: this
+# gate compares the loop against the same rotor's coast, so it certifies
+# self-consistency and CANNOT detect a speed deficit.
+SELF_REF_RUNGS = (525, 550, 575, 600, 625)
 
 # The worst 10.1 ms current block a run may show and still be judged a pass.
 #

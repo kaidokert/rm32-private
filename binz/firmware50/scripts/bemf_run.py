@@ -337,10 +337,19 @@ def ladder_record(
     import cohort  # noqa: PLC0415
 
     r = cohort.parse(capture)
-    if r is None or r["duty"] not in (
-        150, 200, 250, 275, 288, 300, 325, 338, 350, 375, 400, 425, 450, 475,
-        500, 525, 550, 575, 600,
-    ):
+    # ENV-2: this was a hardcoded tuple ending at 600 -- a THIRD place encoding
+    # the campaign ceiling, beside SIXSTEP_DUTY_CAP and cohort.SELF_REF_RUNGS,
+    # and the only one that failed SILENTLY: a 625 run returned None, printed no
+    # RUN line, and the batch summary read "0 failed their gates", which looks
+    # like success. Derived now from the two tables that actually define what a
+    # rung is judged by, so the three cannot drift apart again.
+    recordable = set(cohort.ORACLE) | set(cohort.SELF_REF_RUNGS)
+    if r is None:
+        print(f"   NOT RECORDED: {capture.name} did not parse", flush=True)
+        return None
+    if r["duty"] not in recordable:
+        print(f"   NOT RECORDED: duty {r['duty']} has no gate (not in ORACLE or "
+              f"SELF_REF_RUNGS), so it cannot be judged or counted", flush=True)
         return None
     # `l`/`L` take their duty from shell state, so the caller says which rung
     # it believes it is running and the capture has to agree. Without this the

@@ -167,7 +167,12 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 /// a WHOLE-RUN figure including the ramp, not a hold figure
 /// (`run/mod.rs`: a `CurrentMark`-windowed worst is owed since E194), so no
 /// projection is built on it here. E241 did build one and E242 withdrew it.
-pub const SIXSTEP_DUTY_CAP: u16 = 600;
+// ENV-2: raised by exactly one 2.5 % increment. This is the campaign ceiling,
+// enforced in the compare-value arithmetic so no key can exceed it -- not a
+// protection. Current, sag, tracking, timing, bus floor and watchdog are all
+// untouched. It clamps only ABOVE its value, so behaviour at every duty <= 600
+// is unchanged by this edit.
+pub const SIXSTEP_DUTY_CAP: u16 = 625;
 
 /// Rescue attempts the level revisit may make in one sector after its first
 /// attempt was refused (E140), each armed by another half-interval of overdue.
