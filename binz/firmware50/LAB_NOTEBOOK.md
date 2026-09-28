@@ -41034,3 +41034,30 @@ and the threshold, with a real event comfortably exceeding the threshold — not
 Gaussian arithmetic. **Direction unchanged, confidence properly bounded.** The
 strongest single fact remains the control's 11× sd excursion, because that is
 measured rather than extrapolated.
+
+#### SAGQ3 addendum 3 — what "5 % by construction" does and does not claim
+
+The obvious objection to it: the reference is an EWMA, so during a ramp or a load
+step the mean moves and the margin is whatever the transient leaves. That is right,
+and it sharpens rather than weakens the conclusion.
+
+`SAG_FILTER_SHIFT = 11` is 2048 scans = **207 ms**, and the EWMA closes 1/2048 of
+the gap per scan — so across the 3-scan trip window it closes **0.15 %**, i.e. the
+reference is effectively **frozen** while the guard decides. A dip faster than
+~207 ms is therefore seen at nearly its full depth, and a droop slower than that is
+followed and never trips. Which is precisely the documented intent at
+`protection.rs` — "a load that draws the rail down slowly takes the reference with
+it, so a droop is margin and only a dip is a fault".
+
+So the precise operational statement, replacing the loose "5 % by construction":
+
+> `FastBusSag` trips **iff the 8-tap mean falls ≥5 % below the rail's own 207 ms
+> average with a rise time well under 207 ms.** In steady state that is 46–60 codes
+> against a worst observed noise excursion of 15 codes. During a transient it is
+> whatever the transient delivers — and a transient of that speed and depth is a
+> real electrical event, which is the guard functioning as designed.
+
+This also bounds where my three runs are evidence and where they are not: they
+measure the **steady-state** margin, and all three holds were steady. They do not
+measure a transient, which is exactly why no latch appeared and why the mechanism
+for the two historical latches remains inferred.
