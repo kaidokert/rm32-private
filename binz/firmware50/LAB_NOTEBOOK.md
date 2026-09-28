@@ -41608,3 +41608,103 @@ one:
 
 * ELF sha256 (as recorded in every qualification capture): `B1E51E595197E1AE…`
 * **Loadable image sha256 (reproducible from commit `68a7814`): `E821D229D5DFB152…`**
+
+### Q60-5 — review disposition: the control run refutes my load-bearing claim. The blocker is the advance trade, not the fixture's oracle.
+
+One independent adversarial review of the Q60-4 qualification. **Verdict: REJECT "60 %
+is qualified" as stated.** I accept nearly all of it, and its central criticism is
+correct in a way I should have seen myself.
+
+#### The finding that breaks my deliverable, verified by running the control it named
+
+The review observed that **every oracle-matching run in the repo is advance 20/22 and
+every deficit run is advance 16, with no crossover** — so the speed deficit I
+attributed to a different motor is perfectly confounded with my own `advance-ref`
+build feature. Its sharpest line, which I accept: *"Declining to touch the criterion
+was right; declining to run the control was not — the refusal to self-serve was spent
+on the wrong decision."*
+
+I ran it. Same motor, same session, rung 500, advance 22 instead of 16:
+
+| | advance | reason | hold | coast | vs oracle | `late_arms` | `thin_count` |
+|---|---|---|---|---|---|---|---|
+| control ×1 | **22** | **15 LateArm** | 44.373 s | 2012 | **−4.0 %** | **1** | **273** |
+| qualified ×3 | 16 | 2 | 52.775 s | 1912–1921 | −8.3…−8.8 % | 0 | 0 |
+
+**So roughly half the deficit is the firmware feature, not the motor**, and at advance
+22 the deficit is **inside the ±5 % gate** — meaning rung 500 would plausibly *pass*.
+**"No rung ≤ 500 can pass on this hardware regardless of firmware" is refuted by my
+own control.** Withdrawn.
+
+Allowing for thermal: the control held 8.4 s less, and my earlier data puts droop at
+~55 eHz over 33 s, so ~14 of the 100 eHz gap is hold length and ~86 is advance.
+
+#### But the control does not hand the rung back either
+
+Advance 22 **latched a LateArm (reason 15) at rung 500**, with `thin_count = 273` and
+an early stop at 44.4 s. That is precisely the failure the campaign moved to advance
+16 to escape. So:
+
+* **advance 16** — no late arms, no thin arms, full 52.8 s holds, and **fails the
+  speed gate at every oracle-judged rung**;
+* **advance 22** — speed inside the gate, and **a late arm at rung 500 in one run of
+  one**.
+
+`n = 1` on the control, so one late arm is not a rate. The *speed* recovery is clear
+even at n = 1, because the qualified arm's spread is 1912–1921 against 2012.
+
+**This is E342's "the advance trade has no interior solution", now quantified on
+current hardware:** 16 buys arm margin at ~4.5 % of speed; 22 buys speed at the arm
+margin. The real blocker toward 100 % is that trade, not the oracle — the oracle
+merely *exposes* it, having been measured on the advance-22 arm.
+
+#### Other findings accepted
+
+* **"10 of 11 protections" is not honest scoping.** `v` did not provoke, so it proves
+  nothing about `FastBusSag` — and `FastBusSag::observe` is the function this batch
+  edited, so **the one protection whose code changed is the one with no hardware
+  evidence on this image.** Honest count: **8 demonstrated, 2 stop-path-only (`k`/`q`
+  force the polled atomic rather than reproducing the arm-deadline or blanking
+  physics), 1 undemonstrated.** The whole sweep also ran at 250 tenths; nothing was
+  provoked at 600.
+* **The sag margin I delivered was another image's best number.** 38.75 codes is the
+  smoke run (`CECE912B`). The qualified image's own 600 runs read **40.8 / 30.0 /
+  36.0**, so the honest figure is the worst of three, **30.0 codes** — 23 % less than
+  delivered. `max_streak = 0` does hold on all three.
+* **`isr_diff.py` exits 1 on the pair I cited as "all four identical"**, printing
+  `TIM16 … ENCODED BYTES DIFFER: a constant moved` (two literal-pool addresses,
+  benign relocation). And its `loadable_word` pool check — added by E285 precisely so
+  pool contents count — **is dead code, never called.** So my bare claim misreports
+  the tool's own verdict, and E285's hardening is not in effect.
+* **`restart_verdict` has no dwell gate**, so "3/3 restart at 60 %" is 12.2 s of
+  post-restart hold judged by a criterion that would pass 1 s.
+* **`hold_ms` is deterministic** (78 s window minus a fixed ramp, identical to ±2 ms
+  across three runs), so it certifies "nothing stopped it", not "survived varying
+  stress".
+* **My 150-rung row used the wrong quantity.** I quoted `ehz_from_ci_last = 694`
+  (−1.4 %) where the project's own rule is "speed is from the rotor, not the switch
+  count"; `coast_ehz` is 669, i.e. **−5.0 %**. Corrected, the profile is
+  −5.0 / −6.0 / −8.5, materially flatter than the −1.4 / −6.0 / −8.8 my
+  "scales with duty ⇒ different motor" argument leaned on.
+
+#### What the evidence does support
+
+Image `B1E51E59` (loadable `E821D229…`) **held 52.5 / 55 / 57.5 / 60 % for 3 × ≥ 47 s
+each with no firmware stop**, restarted cleanly at 500 and 600 with 12–22 s of
+post-restart hold, tracked the rotor to within 1 % of its own coast throughout, and
+recorded `max_streak = 0`, `adc_ovr = 0`, `vref_odd = 0` across 835 k commutations per
+run.
+
+Withdrawn: that 60 % is *qualified* in the deliverable's sense; that the blocker is a
+fixture defect rather than firmware; the 10-of-11 protection count; the 38.75-code
+margin; and "all four ISR roots identical" as a bare claim.
+
+#### The corrected next step
+
+The advance trade is the blocker, and measuring it touches no criterion: **a matched
+A/B at rung 500, three runs a side, advance 16 versus 22 on this motor**, scoring
+speed (`coast_ehz`) and arm margin (`late_arms`, `thin_count`, `min_margin_xp`)
+together — and whether an intermediate level (18 or 20) buys the speed back without
+the late arm. One run a side is what I have; three a side is what a percent-scale
+claim needs. That is the only remaining place a bounded control improvement could come
+from, and it is what step 3 should have targeted instead of the deadline path.
