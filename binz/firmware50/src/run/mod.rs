@@ -663,6 +663,10 @@ impl<
                     // unreachable and E240 wrongly said it was not (E242).
                     475 => 500,
                     500 => 600,
+                    // ENV-5: 625 added when the cap was raised to it, so the
+                    // restart criterion is commandable at the new top rung --
+                    // the same structural gap E242 found at 500/600.
+                    600 => 625,
                     _ => 250,
                 };
                 io.say("PROVOKEAT ");

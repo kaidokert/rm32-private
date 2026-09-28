@@ -14684,5 +14684,81 @@
     "fails": []
    }
   ]
+ },
+ "DF7B12576EB50CBD7DAD58982CA9215AC0B37225C83A5CE4FD1546EF0E081073": {
+  "625": [
+   {
+    "file": "env5-r625_01.txt",
+    "duty": 625,
+    "reason": 2,
+    "accepted": 850695,
+    "bus_ref": 1214,
+    "forced": 0,
+    "too_early": 15276,
+    "blank_arms": 627438,
+    "unstable": 1478797,
+    "hold_ms": 46273,
+    "rate_permille": 993,
+    "has_tail": true,
+    "rate_vs_coast_permille": 996,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2243,
+    "coast_crossings": 1296,
+    "hold_ma": 2528,
+    "ceiling_tenths": 625,
+    "worst_ma": 3581,
+    "droop_permille": 983.3543366347898,
+    "fails": [],
+    "anchored": "Identical to 61AACC5B (advance 16, cap 625), which walked rung 625 3/3, except the x provoke cycle gains 600->625, a foreground shell constant. isr_diff EXITS 1 vs archived baseline 23661473: instructions identical in all four roots, TIM16 differs by relocation only (the pattern verified by hand in ENV-2)."
+   },
+   {
+    "file": "env5-r625_02.txt",
+    "duty": 625,
+    "reason": 2,
+    "accepted": 851092,
+    "bus_ref": 1213,
+    "forced": 0,
+    "too_early": 15213,
+    "blank_arms": 627306,
+    "unstable": 1478480,
+    "hold_ms": 46275,
+    "rate_permille": 994,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1003,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2229,
+    "coast_crossings": 1318,
+    "hold_ma": 2645,
+    "ceiling_tenths": 625,
+    "worst_ma": 3574,
+    "droop_permille": 983.5119538334708,
+    "fails": [],
+    "anchored": "Identical to 61AACC5B (advance 16, cap 625), which walked rung 625 3/3, except the x provoke cycle gains 600->625, a foreground shell constant. isr_diff EXITS 1 vs archived baseline 23661473: instructions identical in all four roots, TIM16 differs by relocation only (the pattern verified by hand in ENV-2)."
+   },
+   {
+    "file": "env5-r625_03.txt",
+    "duty": 625,
+    "reason": 2,
+    "accepted": 851322,
+    "bus_ref": 1215,
+    "forced": 0,
+    "too_early": 15615,
+    "blank_arms": 626419,
+    "unstable": 1477744,
+    "hold_ms": 46273,
+    "rate_permille": 994,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2228,
+    "coast_crossings": 1295,
+    "hold_ma": 2654,
+    "ceiling_tenths": 625,
+    "worst_ma": 3582,
+    "droop_permille": 981.8930041152263,
+    "fails": [],
+    "anchored": "Identical to 61AACC5B (advance 16, cap 625), which walked rung 625 3/3, except the x provoke cycle gains 600->625, a foreground shell constant. isr_diff EXITS 1 vs archived baseline 23661473: instructions identical in all four roots, TIM16 differs by relocation only (the pattern verified by hand in ENV-2)."
+   }
+  ]
  }
 }

@@ -42060,3 +42060,68 @@ current block.
 **"62.5 % holds 3/3 on both advance levels with every gate passing"** — not "earned".
 Still owed for earned: a restart at 625 (needs 625 in the `x` provoke cycle, a firmware
 change) and a protection sweep on the carried image.
+
+### ENV-5 — 62.5 % EARNED on advance 16, by the full criteria, on an archived image
+
+The two items ENV-4 left owed are now done, on one image carried forward.
+
+**Image** `DF7B12576EB50CBD…`, **loadable `242ABF4FB102D8C6…`** (the code identity),
+archived at `captures/elf/DF7B1257.env5-adv16-cap625-x625.elf`. It is `61AACC5B` plus one
+foreground change: the `x` provoke cycle gains `600 → 625`, so the restart criterion is
+commandable at the new top rung — the same structural gap E242 found at 500/600. Four
+ISR roots identical to the archived baseline (`isr_diff` exits 1, TIM16 relocation only).
+Firmware50 suite **360 / 360, run by me** rather than trusted to the hook; clippy clean on
+both targets.
+
+#### Holds, 3/3 — worst run is the figure
+
+| run | coast | `hold_ma` | `worst_ma` | `thin` | `late` | sag margin |
+|---|---|---|---|---|---|---|
+| 1 | 2243 | 2528 | 3581 | 0 | 0 | **26.6** |
+| 2 | 2229 | 2645 | 3574 | 0 | 0 | 29.6 |
+| 3 | **2228** | **2654** | **3582** | 0 | 0 | 35.6 |
+
+Worst: speed 2228 eHz, current 2654 mA, worst block **3582** (218 mA under the 3800 gate),
+sag margin **26.6 codes** — the lowest recorded at any rung in this campaign.
+
+#### Restart, 3/3
+
+At a genuine `target_duty_tenths=625` (cycle confirmed `375 → 475 → 500 → 600 → 625`),
+`first_reason=8`, `second_reason=2`, `admitted=1 refusal=0 aborted=0`. **Segment 2 held
+9.2 s** — shorter than 600's 12.2 s because 625's longer ramp leaves less of the 78 s
+window, and `restart_verdict` has no dwell gate, so this passes a criterion that would
+pass 1 s. Stated so it is not over-read.
+
+#### Protection sweep on this image, classified as ENV-4 required
+
+At 25 % (the highest duty the fixture can provoke):
+
+* **8 demonstrated by physics** — Tracking 8, TickGap 3, FeedbackStale 4, Driver 7,
+  CompStorm 13, HandlerOverrun 14, AverageCurrent 25, Watchdog (`RESETCAUSE iwdg=1`).
+* **2 stop-path only** — LateArm 15 and BlankLatched 16 force the polled counter; they
+  prove the loop notices and stops, not the arm-deadline or blanking physics.
+* **1 undemonstrated** — FastBusSag. Its injection (step 250 → 500) **tripped
+  AverageCurrent (25) this time**, where in Q60-4 the same stimulus completed normally
+  (reason 2). So the sag stimulus is not even deterministic across sessions on this
+  motor, and a different protection caught the step.
+
+#### The earned envelope
+
+**52.5 / 55 / 57.5 / 60 / 62.5 % on advance 16**, and **52.5–60 % plus a 62.5 % hold
+cohort on advance 20** (faster, 150 thin arms at 62.5 %, not carried).
+
+#### Named next blocker, with its evidence
+
+**On advance 16 it is the worst current block.** `worst_ma` sits at 3574–3582 on this
+image and reached **3725** on `61AACC5B` at the same rung — within 75 mA of
+`WORST_MA_CEILING = 3800`. Hold current rises ~11 % per 2.5 % of duty, so 65 % projects
+the worst block past the gate. Arm timing is not the constraint on advance 16: zero thin
+arms at 62.5 %.
+
+**On advance 20 it is the arm deadline** — thin arms grow ~6× per step (19–25 at 600,
+138–152 at 625).
+
+So the two carriers are blocked by different protections, which is useful: it says where
+each lever runs out. The cheapest way past both is the one they share — reducing `spent`
+would widen advance 20's deadline margin, and advance 20's better worst-block figure (3517
+vs 3725 at 62.5 %) would then carry it past advance 16's current ceiling.
