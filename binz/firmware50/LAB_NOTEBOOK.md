@@ -41011,3 +41011,26 @@ could be missed; and 3.3 s is still only 6.6 % of the hold, and it is the *last*
 3.3 s. This bounds the distribution far better than 26 ms of consecutive scans, but
 it is not whole-run evidence and the conclusion remains "noise cannot trip it in the
 regimes sampled" rather than a proof over the whole hold.
+
+#### SAGQ3 addendum 2 — "14σ" overstates the rigour. Restated in codes, which assumes nothing.
+
+Quoting a margin in sigma implies a tail probability I have not earned. Measured
+over the pooled 3072 slow rows: kurtosis **3.09–3.90** against 3.0 for a normal, so
+mildly heavy-tailed, and the **worst downward excursion actually observed is
+−4.84 sd**, i.e. **15 codes** below the mean (per-run: −4.84, −3.72, −3.85).
+
+The line sits 46–60 codes below the mean, so reaching it is a **2.9× extrapolation
+beyond the worst point in the data**, not a 10⁻⁴⁴ event. Stated without any
+distributional assumption:
+
+| quantity | codes below the mean |
+|---|---|
+| worst sampling excursion observed (3072 samples) | **15** |
+| needed to reach the trip line | **46–60** |
+| delivered by the injected control's real rail event | **82** |
+
+So the conclusion stands on a gap of 3–4× between the worst noise excursion seen
+and the threshold, with a real event comfortably exceeding the threshold — not on
+Gaussian arithmetic. **Direction unchanged, confidence properly bounded.** The
+strongest single fact remains the control's 11× sd excursion, because that is
+measured rather than extrapolated.
