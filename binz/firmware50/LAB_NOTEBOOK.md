@@ -42464,3 +42464,77 @@ ENV-8 measured it buying +9.5 codes of worst sag margin at 625 at no speed or ti
 cost. Its worst-block effect is unresolved (noise at n = 3). Before any 67.5 %
 step: a matched 16-vs-18 A/B **at 650**, three a side, scored on sag margin and
 worst block together.
+
+### ENV-10 — review disposition of ENV-9: 65 % stands; a composite "worst run", a repeated PROVOKEAT misstatement, an unsupported ENV-6 correction, and a foldback I didn't mention
+
+One independent adversarial review. **Verdict: 65 % on advance 16 provisionally earned by
+the gates as written; the narrative needed corrections.** Every finding below verified
+against the captures before acceptance. The reviewer re-ran the suites (361/359)
+and `isr_diff`.
+
+#### Corrections accepted
+
+* **The "worst run" was a composite.** The 22.3-code sag is run **650-2**; 650-3 has
+  the 3715 mA block and 29.3 codes. ENV-9's "both on the same run (650-3)" is false.
+  Per run: 650-1 2277 eHz / 36.5 codes / 3534; 650-2 2290 / **22.3** / 3557;
+  650-3 2287 / 29.3 / **3715**. The thin margins sit on *different* runs.
+* **"Came in under the band" was backwards.** 3715 is *inside* 3700–4000; the other two
+  runs came in under it.
+* **"Cycle confirmed in-capture: PROVOKEAT …" is false again**, for the same reason
+  ENV-6 §4 corrected: `grep -c PROVOKEAT env9-rst650-*` = 0. I read the cycle from
+  console output. What proves the duty *in the capture* is `BEMFRESTARTRUN
+  target_duty_tenths=650`, both segments `duty_tenths=650 ceiling_tenths=650`, and
+  `restart_verdict`'s `expect_duty` check.
+* **The worst hold at 65 % is the restart's segment 2, not 2738:** 2881 / 2865 /
+  2847 mA (worst blocks 3647 / 3436 / 3581, no foldback). Metered via the ~6 %
+  over-read, that is **~2.71 A, ~90 % of the 3.00 A clamp.**
+* **An interleaved design was written and dropped.** `scripts/env9_rungs.sh` (625/650
+  ABABAB) was refused by the ladder (no 600 on the new ELF) before any drive, and I
+  replaced it with the sequential walk. So the 650 block ran last, 8–10 min into
+  running, and warm-up is confounded with the rung (`zero_drift_ma` −138…−262 at 650
+  vs −114…−150 earlier). The deltas stand as measured (+2.2 % speed, +9.3 % hold,
+  worst vs worst; means +2.4 / +9.3). **The control for the cap move is cited now:**
+  625 on `8FFE35E2` (2228–2239 eHz, 2482–2505 mA) reproduces 625 on `A09BA143`
+  (ENV-7 A-sides). The 48 → 46 `ci_min` shift is noise (600 read 47); "no timing
+  margin spent" rests on thin = 0 alone.
+* **The worst-block margin (85 mA) is smaller than that run's zero drift (−209 mA).**
+  Drift in that direction over-reads current (conservative), but "2 %" is below the
+  instrument's own systematic.
+
+#### ENV-9's correction of ENV-6 is REJECTED as stated. Not separable.
+
+`env5-prot-v` stopped on **AverageCurrent (25) 18.8 ms after the step** (`ceiling_tenths=615`),
+so its 4176 mA block came from ~19 ms at 70 %. That step was +75 tenths; the ENV-9
+step was +250 tenths and read the same ~4.2 A. A step 3.3× smaller giving the same
+block argues *against* "the step, not the 70 %". The 250 → 500 stimulus itself read
+3568 (ENV-6) and 4171 (ENV-9, warm): n = 2 with a 600 mA spread. `worst_ma` has no
+timestamp. **Honest statement: the 4176 cannot be attributed to either the level or the
+step.** ENV-6's withdrawn attribution stays withdrawn; ENV-9's replacement is withdrawn too.
+
+#### Missed, and it matters: the sag positive control suppresses a foldback
+
+`env9-prot-v`: `duty_tenths=250 ceiling_tenths=240`. **AverageCurrent issued a
+foldback** after the step, and `Inject::Sag` sets `hold_plans = true`
+(`states.rs:516`, honoured at `:1027`), so the bridge stayed at 50 % for 63 s. The
+positive control exceeds the firmware's own allowance (4171 mA vs `ma_allow` ≈ 4 A)
+**while suppressing that protection's response.** "That gate judges holds, not
+injections" was not an acceptable dismissal. This is by design, inherited from
+E244/E270, where the stimulus had to hold to reach the sag guard. But on this motor it
+never reaches the sag guard, so it is now a stimulus that overrides a protection for
+nothing. **Named, not fixed this step:** a sag positive control that does not suppress
+foldback is owed, and until it exists `v` should not be run as part of the sweep.
+
+#### Kept
+
+Anchoring 600 was legitimate and its proof accurate. Adding 650 to `SELF_REF_RUNGS` adds
+the only gate at that rung on ENV-2's terms. Outputs off at every exit: every capture
+has `PREFLIGHT … verdict=PASS` after `POSTSTOP`. The diff touches the cap, the x cycle
+and `cohort.py` only.
+
+#### Named next blocker, revised
+
+Three thin margins at 650, on different runs: **supply (restart hold ~90 % of clamp),
+worst block (3715/3800), sag (22.3 codes)**. The advance-18 A/B at 650 addresses sag
+only (ENV-7: +1 % hold, so it will not relieve the supply). It must be **interleaved**,
+16/18 ABABAB, fresh flash per run, with the images from the same source (`8FFE35E2` vs
+`FF036E17`, the latter ISR-instruction-identical and 359/359).
