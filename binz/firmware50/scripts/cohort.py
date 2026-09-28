@@ -466,7 +466,8 @@ def rung_current_note(runs: list[dict]) -> str:
 # runs that failed the one they had. Caveat carried from the Q60-5 review: this
 # gate compares the loop against the same rotor's coast, so it certifies
 # self-consistency and CANNOT detect a speed deficit.
-SELF_REF_RUNGS = (525, 550, 575, 600, 625)
+# ENV-9: 650 added on the same terms as 625, with the same caveat.
+SELF_REF_RUNGS = (525, 550, 575, 600, 625, 650)
 
 # The worst 10.1 ms current block a run may show and still be judged a pass.
 #

@@ -172,7 +172,9 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 // protection. Current, sag, tracking, timing, bus floor and watchdog are all
 // untouched. It clamps only ABOVE its value, so behaviour at every duty <= 600
 // is unchanged by this edit.
-pub const SIXSTEP_DUTY_CAP: u16 = 625;
+// ENV-9: raised one more increment, 625 -> 650, the same way and for the same
+// reason. Nothing else moves: every gate that judges the run is unchanged.
+pub const SIXSTEP_DUTY_CAP: u16 = 650;
 
 /// Rescue attempts the level revisit may make in one sector after its first
 /// attempt was refused (E140), each armed by another half-interval of overdue.
@@ -513,10 +515,11 @@ mod tests {
         // property survives: the cap VALUE is pinned, so the next move trips
         // this again, and anything above the cap clamps to the cap.
         assert_eq!(
-            SIXSTEP_DUTY_CAP, 625,
+            SIXSTEP_DUTY_CAP, 650,
             "a cap move must be deliberate: update this with it"
         );
         assert_eq!(sixstep_ccr_of(625, 1333), 833);
+        assert_eq!(sixstep_ccr_of(650, 1333), 866);
         assert_eq!(
             sixstep_ccr_of(750, 1333),
             sixstep_ccr_of(SIXSTEP_DUTY_CAP, 1333),

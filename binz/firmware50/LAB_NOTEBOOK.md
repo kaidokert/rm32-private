@@ -42375,3 +42375,92 @@ that buys it back at no speed cost.
 Speed ~2280 eHz (+55–60/step). Hold ~2700–2800 mA proxy (~2.6 A metered via the
 6 % over-read). Worst block 3700–4000 (straddles the 3800 gate). **Sag margin worst
 ~21–23 codes.** `mean_ci` ~72, `thin_count` 0–few, `late_arms` 0.
+
+### ENV-9 — 65 % on advance 16: holds 3/3, restart 3/3, sweep re-run, on `8FFE35E2`. And the ENV-5 "4176 mA" was the step transient, not the 70 %.
+
+**Lever:** `SIXSTEP_DUTY_CAP` 625 → 650, plus 650 in the `x` provoke cycle and in
+`cohort.SELF_REF_RUNGS` (the same terms as 625, same caveat: self-reference cannot
+detect a speed deficit). No gate, protection or threshold moved. Image **`8FFE35E2`**
+(`advance-ref,deep-filter`; loadable **`7798CC04…`**). All four ISR roots are
+instruction-identical to `A09BA143`; TIM16 differs only in a moved literal-pool
+constant. `isr_audit` PASS. Suites 361/361 default and 359/359
+`advance-ref,deep-filter`, run by me. Clippy 0. Scripts: `scripts/env9_walk.sh`,
+`scripts/env9_restart_sweep.sh`.
+
+**Predicted (ENV-8, before building):** speed ~2280, hold 2700–2800, worst block
+3700–4000, sag worst ~21–23 codes, `mean_ci` ~72, thin 0–few, late 0.
+
+#### The walk, one image, one session (600 anchored with proof, then walked)
+
+| rung | coast eHz | hold mA | worst block mA | sag codes | ci_min | thin / late |
+|---|---|---|---|---|---|---|
+| 600 | 2168 / 2177 / 2169 | 2303 / 2304 / 2312 | 2943 / 2883 / 3078 | 40.6 / 31.7 / 35.7 | 47–52 | 0 / 0 |
+| 625 | 2239 / 2228 / 2230 | 2482 / 2505 / 2503 | 3545 / 3405 / 3500 | 32.5 / 41.3 / 27.6 | 48–53 | 0 / 0 |
+| **650** | **2277** / 2290 / 2287 | 2726 / 2725 / **2738** | 3534 / 3557 / **3715** | 36.5 / **22.3** / 29.3 | 46–53 | 0 / 0 |
+
+All nine: `reason=2`, full holds (650: 45.3 s), `max_streak=0`, `adc_ovr=0`,
+`vref_odd=0`, root tick `gap_max` 106–109 µs, `spent_max` 11, rung verdict **PASS**
+at 60, 62.5 and 65 %.
+
+**Worst run at 65 %: 2277 eHz, 2738 mA hold, 3715 mA worst block (85 mA, 2 %, under
+the 3800 gate), 22.3 sag codes (the new campaign minimum).** Against the
+predictions: speed, hold, `mean_ci` (72), thin and late all landed. The worst block
+came in *under* the band (3715 vs 3700–4000, one run inside it). Sag landed in the
+predicted 21–23.
+
+#### What the step bought, both currencies (same image, same session, 625 → 650)
+
+* **Speed: +2.2 %** worst vs worst (2228 → 2277).
+* **Timing margin: none spent.** Thin arms 0 → 0; `ci_min` floor 48 → 46 (wait =
+  ci/4 ≥ 11.5 µs against `spent` mode ~6, max 11).
+* Cost: hold current **+9.3 %** (2505 → 2738); worst-block margin 255 → 85 mA; sag
+  margin 27.6 → 22.3 codes.
+
+#### Restart at 650, 3/3
+
+Cycle confirmed in-capture: `PROVOKEAT` 375 → 475 → 500 → 600 → 625 → **650**,
+`BEMFRESTARTRUN target_duty_tenths=650`. All three: `first_reason=8`,
+`admitted=1 refusal=0 aborted=0`, `second_reason=2`, `recovered=1`, **segment 2
+held 7.22 s** to the window end. `restart_verdict` has no dwell gate, and 7.2 s is
+what the fixed 78 s window leaves after 650's longer ramp. Stated so it is not
+over-read.
+
+#### Protection sweep on `8FFE35E2`, fresh flash per key, all `target_duty_tenths=250`
+
+Identical outcome to ENV-6: t 8, g 3, f 4, n 7, u 13, h 14, i 25, k 15, q 16,
+w `RESETCAUSE iwdg=1`; **v not provoked** (reason 2). Same classification as ENV-6.
+FastBusSag remains undemonstrated on this motor, now with the lowest sag margin in
+the campaign at the top rung. Those two facts together are the reason to keep saying so.
+
+#### Correction to ENV-6: 4176 mA was the step, not the 70 %
+
+The `v` stimulus here stepped 250 → 500 (`applied_ccr=666`) and recorded **worst
+block 4171 mA** at a hold of 1538 mA. In ENV-6 the identical stimulus read 3568. ENV-5's
+`v` (625 → 700) read 4176 at a hold of 2690. So **a ~4.2 A worst block is produced by
+the abrupt duty step itself, at 50 % as much as at 70 %.** ENV-6 cited 4176 as the
+hardware consequence of the bypass; that attribution is **withdrawn**. The bypass (700
+published above a 625 cap) remains established by the compare arithmetic and the
+sim test that fails at "published 700". What 70 % did to current on hardware is not
+separately measured.
+
+Also noted, not changed: the positive-control stimulus exceeds `WORST_MA_CEILING` as
+a 10 ms transient on this motor. That gate judges holds, not injections, and the
+firmware's AverageCurrent path did not trip in 63 s.
+
+#### Envelope
+
+**Advance 16, image `8FFE35E2`: 60 / 62.5 / 65 % holds 3/3 each (walked this
+session), restart 3/3 at 65 %, protection sweep as classified.** 52.5–57.5 % were
+earned on `B1E51E59` with identical ISR instructions. They are not re-run on this image
+and are labelled that way.
+
+#### Named next blocker, with evidence
+
+Two margins are now thin at the top rung, **both on the same run (650-3)**:
+**worst block 3715 / 3800 (2 %)** and **sag 22.3 codes**. The sag margin fell
+27.6 → 22.3 per step. By SAGQ4, EWMA lag under drift has reached 35 codes, so 22 codes is
+where drift-plus-noise becomes reachable. **The next measured lever is advance 18**:
+ENV-8 measured it buying +9.5 codes of worst sag margin at 625 at no speed or timing
+cost. Its worst-block effect is unresolved (noise at n = 3). Before any 67.5 %
+step: a matched 16-vs-18 A/B **at 650**, three a side, scored on sag margin and
+worst block together.

@@ -667,6 +667,8 @@ impl<
                     // restart criterion is commandable at the new top rung --
                     // the same structural gap E242 found at 500/600.
                     600 => 625,
+                    // ENV-9: 650, the new top rung, for the same reason.
+                    625 => 650,
                     _ => 250,
                 };
                 io.say("PROVOKEAT ");
