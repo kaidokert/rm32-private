@@ -139,6 +139,8 @@ pub(crate) struct Ctx {
     /// baseline rather than the EWMA, because the EWMA would converge onto a
     /// rotated value within 207 ms and stop reporting.
     pub vref_odd: u32,
+    /// Foreground polls that saw the ADC's sticky `OVR` set (Q60-3).
+    pub adc_ovr: u32,
     pub current: AverageCurrent,
     pub governor: FoldbackGovernor,
     pub rail: RailMean,
@@ -171,6 +173,7 @@ impl Ctx {
             raw_depth: BusDepth::new_raw(),
             mean_depth: BusDepth::new_mean_vs_filt(),
             vref_odd: 0,
+            adc_ovr: 0,
             current: P::C::meter(base.zero_block),
             governor: P::C::governor(req.target_tenths),
             rail: RailMean::new(),
@@ -401,6 +404,11 @@ impl Ctx {
             // Q60-1: the same reference the guard uses, on the same quantity
             // the guard judges, straddling its line.
             self.mean_depth.observe(bus_mean, vref_mean, filt_bus, filt_vref);
+            // Q60-3: the sticky OVR flag, polled here rather than in the DMA
+            // root, so the four ISR roots stay identical to the baseline.
+            if hal.poll_adc_ovr() {
+                self.adc_ovr = self.adc_ovr.saturating_add(1);
+            }
             // Q60-1: +-10% of the run's own bridge-off reference, multiply-only.
             let vr = u32::from(self.base.bus_ref.vref);
             let v = u32::from(scan.vref);

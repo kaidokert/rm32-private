@@ -86,6 +86,10 @@ pub struct Log {
 }
 
 pub struct Sim {
+    /// Q60-3: overrun polls that saw the sticky flag set.
+    pub ovr_seen: u32,
+    /// The sticky flag has been read and cleared.
+    ovr_taken: bool,
     /// Level-revisit polls the loop asked for (E140's rescue test).
     pub revisit_polls: u32,
     pub t: u32,
@@ -115,6 +119,8 @@ pub struct Sim {
 impl Sim {
     pub fn new(crossings: Crossings, faults: Faults) -> Self {
         Self {
+            ovr_seen: 0,
+            ovr_taken: false,
             revisit_polls: 0,
             t: 1_000,
             quantum_us: 7,
@@ -304,8 +310,18 @@ impl Hal for Sim {
         [0; 8]
     }
 
-    fn adc_ovr(&self) -> u32 {
-        u32::from(self.faults.adc_ovr)
+    fn poll_adc_ovr(&mut self) -> bool {
+        // Read-and-clear, like the hardware flag: one overrun is seen once,
+        // however often the foreground polls. Returning the fault
+        // unconditionally counted one per scan (47 342 of them), which the
+        // observer test caught.
+        if self.faults.adc_ovr && !self.ovr_taken {
+            self.ovr_taken = true;
+            self.ovr_seen = self.ovr_seen.saturating_add(1);
+            true
+        } else {
+            false
+        }
     }
     fn late_arms(&self) -> u32 {
         u32::from(self.faults.late_arm_at.is_some_and(|t| self.t >= t))

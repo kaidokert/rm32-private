@@ -340,7 +340,7 @@ impl<
                 ctx.mean_depth.longest(3),
             ],
             vref_odd: ctx.vref_odd,
-            adc_ovr: io.adc_ovr(),
+            adc_ovr: ctx.adc_ovr,
             sag_tripped: ctx.sag.tripped(),
             closed_us: ctx.closed_at.map_or(0, |t| stopped_at.wrapping_sub(t)),
             hold_us: ctx.hold_start.map_or(0, |t| stopped_at.wrapping_sub(t)),

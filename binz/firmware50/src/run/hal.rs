@@ -310,10 +310,15 @@ pub trait Hal {
     /// the blanking window latched: campaign 8's two hard stops. Both are
     /// read from the roots' counters, which only ever rise.
     fn late_arms(&self) -> u32;
-    /// ADC overrun count for this run (Q60-1). A drop rotates the circular DMA
-    /// buffer permanently, so this is the cause side of a class of failure that
-    /// would otherwise present as an unexplained sag latch.
-    fn adc_ovr(&self) -> u32;
+    /// Read-and-clear the ADC's sticky `OVR` flag from the FOREGROUND (Q60-3).
+    ///
+    /// `OVR` latches until written, so the foreground loses no event by
+    /// polling it: what it loses is exact multiplicity, since several overruns
+    /// between two polls read as one. For discriminating "did the circular
+    /// buffer rotate at all" that is sufficient, and it keeps the four ISR
+    /// roots instruction-for-instruction identical to the baseline -- which is
+    /// what `--anchor` requires and what putting this in the DMA root forfeited.
+    fn poll_adc_ovr(&mut self) -> bool;
 
     /// The detector's cumulative `unstable` count, for the hold-window mark
     /// (E212): the ratio against accepted crossings is only meaningful on a

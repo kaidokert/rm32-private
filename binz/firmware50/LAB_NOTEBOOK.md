@@ -41297,3 +41297,234 @@ Host tests, clippy, the four-root ratchet in its `advref-floor5` bucket, and
 `loop_iters_closed` compared before and after, since three `observe` calls per scan
 instead of two is the one place a foreground cost could show. No threshold, no
 protection, no control behaviour changes: every counter is an observer.
+
+### Q60-2 — the observers work on hardware, and four of five predictions resolve. `min_margin` misses in the direction that justifies the counter.
+
+Smoke run, image `CECE912B`, rung 600, `--no-ladder`, 47.775 s hold, `reason=2`.
+All five counters reach the capture on the `BEMFSAG` line:
+
+```
+BEMFSAG ref_bus=1215 ref_vref=1506 filt_bus=1195 filt_vref=1506 streak=0
+  max_streak=0 min_margin_xp=5835750 vref_odd=0 adc_ovr=0
+  mdep_pm=990 mdep_n=562 mdep_run=8  mdep_pm=970 mdep_n=0 mdep_run=0
+  mdep_pm=960 mdep_n=0 mdep_run=0    mdep_pm=950 mdep_n=0 mdep_run=0
+```
+
+| prediction | measured | |
+|---|---|---|
+| 1. `adc_ovr = 0` | **0** | confirmed — no rotation on a clean run |
+| 2. `max_lows ∈ {0,1}` | **0** | stronger than predicted |
+| 3. 0 at 950, non-zero at 990 **and 970** | 990 only (n=562, run=8) | **half wrong** |
+| 4. `min_margin ≈ 45–50 codes` | **38.75** | **wrong, informatively** |
+| 5. `DMA1_CHANNEL1 < 60` | 53 | confirmed |
+
+`min_margin_xp / (filt_vref × SAG_DEN)` = 5 835 750 / 150 600 = **38.75 codes**, against
+the 45.7–48.0 the 3.3 s slow ring reported in SAGQ3's addendum. **The sampled window
+overstated the margin by ~20 %**, which is exactly the reason a whole-run counter
+beats a sample and exactly what SAGQ4's reviewer said I should have had instead of
+three dedicated runs.
+
+Two things now measured that no capture in this project could previously state:
+
+* **`max_streak = 0` over 834 133 accepted commutations.** The guard's own decision
+  variable never reached even one low block in 72.8 s of closed loop. That is the
+  whole-run form of SAGQ3's claim, and far stronger than a 26 ms window.
+* **`adc_ovr = 0`.** The circular-DMA rotation that SAGQ4 raised as an
+  indistinguishable third cause is **not occurring** on a clean run. It stays a
+  candidate only for a run that latches, and now it will be counted when one does.
+
+Prediction 3's miss is informative too: the mean stayed inside 1 % of its reference
+except for 562 scans, and never reached 3 %. So the 35-code EWMA-lag excursion
+measured in `e200-16a-s2` does **not** reproduce on this motor and baseline at 600 —
+which narrows where that mechanism lives rather than refuting it.
+
+#### Step 1 begins on this image
+
+`CECE912B3ADA3D66…`, source `5cd27cf`, features `advance-ref,deep-filter`,
+`L` window (78 s ⇒ holds 40–50 s, all ≥30 s), `--timeout 120`, recorded to the
+ladder. Predeclared: three holds at each of 500/525/550/575/600, 3/3 restart at 500
+and 600, regression anchors below, protection sweep at whatever duty the fixture can
+actually provoke — which E354 established is 15 % or 25 % only.
+
+### Q60-3 — rung 500 cannot pass, and the reason is its acceptance criterion, not the firmware. I am not changing the criterion to fix my own qualification.
+
+Three anchored holds at rung 500, image `B1E51E59`, `L` window, `--timeout 120`:
+
+| run | hold | reason | preflight | `run_gates` | self-referential gate |
+|---|---|---|---|---|---|
+| `q60-r500_01` | 52.775 s | 2 | PASS both sides | coast 1912 eHz outside 5 % of 2096 | **PASS** |
+| `q60-r500_02` | 52.773 s | 2 | PASS both sides | coast 1921 eHz outside 5 % of 2096 | **PASS** |
+| `q60-r500_03` | 52.775 s | 2 | PASS both sides | coast 1915 eHz outside 5 % of 2096 | **PASS** |
+
+**The failure is isolated to one criterion.** `cohort.ORACLE` ends at
+`500: (2096 eHz, 1603 mA)`, measured on the **previous physical motor**;
+`SELF_REF_RUNGS = (525, 550, 575, 600)` are judged on their own rotor instead,
+because above 500 the oracle check "used to SILENTLY DISAPPEAR" (E235). So **500 is
+the only rung in the 50–60 % band whose acceptance encodes a different motor**, and
+this unit runs 1912–1921 eHz there against 2096 expected — 8.4–8.8 % low.
+
+Three independent confirmations that this is the motor and not the image:
+
+* all three runs are firmware-clean: `reason=2`, 52.8 s holds, preflight PASS before
+  and after, and they **pass the self-referential gate the higher rungs use**;
+* the other agent recorded the same deficit independently at E490 — "coast speed
+  8.7 % below old 2096 oracle also fails… no cause attributed to box" — and its own
+  conclusion that "historical motor speed/current oracle is not acceptance evidence
+  for this unit";
+* my own 50 % runs on the superseded image `72581795` read 1968–1976 eHz, also
+  outside 5 %. The further drop to 1912–1921 here tracks hold length (19.8 s → 52.8 s),
+  i.e. thermal droop, which is consistent with a real motor and not with a code change.
+
+#### What I am deliberately not doing
+
+Extending `SELF_REF_RUNGS` to include 500 would make all three of these runs pass
+immediately. **That is a change to an acceptance criterion that would qualify my own
+work**, and it is the exact pattern three reviews have already caught me in
+(the `never_powered` exemption, the `--insn-slack 30` widening, the invented "≥5
+excursions" bar). The criterion may well deserve changing — the project already
+decided self-reference is the better test above 500, and the argument for 500 is the
+same argument — but that is the operator's call, not a step I take mid-qualification
+on my own behalf.
+
+So rung 500 is recorded **NOT PASSED**, with its cause named. The ladder keeps the
+three failures permanently, which is correct.
+
+#### Consequence for the deliverable
+
+The goal asks for three ≥30 s holds at **each** 50–60 % rung. By the fixture's own
+standard that is unachievable at 500 on this hardware, whatever the firmware does.
+The qualification continues at 525–600, which are judged on their own rotor and
+therefore *can* pass, and the stale oracle is named as a **deliverable-blocking
+fixture defect** with two possible remedies for the operator:
+
+1. re-measure `ORACLE` for this physical motor (and then it is no longer a
+   historical figure), or
+2. extend `SELF_REF_RUNGS` to 500, which applies the test the project already
+   prefers above 500.
+
+Either is a one-line change; neither is mine to make while my own runs are the
+subject.
+
+### Q60-4 — 60 % IS QUALIFIED on image `B1E51E59`, and the next blocker is the fixture's oracle, not the firmware.
+
+Step 1 executed. Every run recorded to the ladder; failures retained.
+
+#### Holds — three ≥30 s at each rung
+
+| rung | holds | reason | hold length | verdict |
+|---|---|---|---|---|
+| 500 | 3/3 | 2 | 52.775 / 52.773 / 52.775 s | **NOT PASSED** — stale oracle only (Q60-3) |
+| 525 | 3/3 | 2 | 51.275 / 51.274 / 51.275 s | **PASS** |
+| 550 | 3/3 | 2 | 50.275 / 50.275 / 50.274 s | **PASS** |
+| 575 | 3/3 | 2 | 48.775 / 48.773 / 48.773 s | **PASS** |
+| **600** | **3/3** | **2** | **47.773 / 47.775 / 47.775 s** | **PASS** |
+
+Every hold is ≥47 s, comfortably past the 30 s criterion, and every run completed on
+its own deadline with preflight PASS before and after.
+
+**Rung 550 passing 3/3 is the headline for the previous campaign**: that was "the
+outstanding 55 % failure" the whole prior effort was organised around. With the two
+sag-investigation holds it is now **5 consecutive clean holds at 550** on this motor
+and baseline. My predeclared bar for rejecting the old 1-in-3 latch rate was
+`(2/3)ⁿ < 0.05`, i.e. **n = 8**; at 5 it is still not rejectable, so I am not
+claiming the fault is gone — only that it has not reproduced in five attempts.
+
+#### Restarts — 3/3 at both rungs, at the right duty this time
+
+| rung | runs | `target_duty_tenths` | segment 2 | verdict |
+|---|---|---|---|---|
+| 500 | 3/3 | **500** | `second_reason=2`, hold 22.22 s | **PASS** |
+| 600 | 3/3 | **600** | `second_reason=2`, hold 12.22 s | **PASS** |
+
+`need_ms` was 28 000 at 500 and 33 000 at 600 against a 78 000 ms window, with
+`remaining_ms` 47 455 and 42 455 — so the window fits both with wide margin, and
+`admitted=1 refusal=0 aborted=0` throughout.
+
+**This answers the single outstanding unknown from the entire previous campaign**:
+*does segment 2 complete at rung 600?* Yes — 12.22 s of hold after the restart, three
+times. And the duty is genuinely 600 in every `BEMFRESTARTRUN`, where E336 found six
+restart runs silently recorded at 250.
+
+#### Protection coverage — 10 of 11 attempted, honestly scoped
+
+At 25 % (the highest duty the fixture can provoke; E354 established 15 % or 25 % only):
+
+| key | expected | got | path |
+|---|---|---|---|
+| `t` | 8 | 8 | Tracking |
+| `g` | 3 | 3 | TickGap |
+| `f` | 4 | 4 | FeedbackStale |
+| `n` | 7 | 7 | Driver |
+| `u` | 13 | 13 | CompStorm |
+| `h` | 14 | 14 | HandlerOverrun |
+| `i` | 25 | 25 | AverageCurrent |
+| **`k`** | **15** | **15** | **LateArm — first hardware exercise ever** |
+| **`q`** | **16** | **16** | **BlankLatched — first hardware exercise ever** |
+| `w` | — | `RESETCAUSE iwdg=1` | Watchdog |
+| **`v`** | **26** | **2**, `provoked=0` | **FastBusSag — DID NOT PROVOKE** |
+
+`k` and `q` are the two injections built this session for paths that had **no
+provocation at all**, one of them this campaign's own hazard. Both fired with their
+own code on the first hardware attempt.
+
+**The `v` failure is a genuine coverage regression and it is consistent with
+everything else measured.** `Inject::Sag` steps duty 250 → 500; on the previous motor
+that reached the guard (E270's positive control latched at `streak=3`). On this motor
+with a 70 mΩ supply it does not — `provoked=0`, the run completed normally. Which is
+exactly what SAGQ2–SAGQ4 predict: the guard's decision variable sits 38.75 codes from
+its line whole-run, and a 250→500 step no longer moves it that far. **So
+`FastBusSag` is no longer demonstrable by injection on this bench** — the one guard
+the entire prior campaign was about.
+
+#### Regression anchors
+
+| rung | result |
+|---|---|
+| 150 | **PASS** (20.273 s hold, gates clean) |
+| 375 | **FAIL** — coast 1551 eHz outside 5 % of 1650 |
+
+#### THE NAMED NEXT BLOCKER: `cohort.ORACLE` encodes the previous motor
+
+This is the deliverable's "named next blocker with the evidence that identifies it",
+and it is a **fixture** blocker, not a firmware one. `cohort.ORACLE` runs 100 → 500
+and was measured on the **previous physical motor**. On this unit the deficit scales
+with duty:
+
+| rung | oracle eHz | measured | deficit |
+|---|---|---|---|
+| 150 | 704 | 694 | **−1.4 %** (passes) |
+| 375 | 1650 | 1551 | **−6.0 %** (fails) |
+| 500 | 2096 | 1912–1921 | **−8.4 to −8.8 %** (fails) |
+
+Three independent confirmations it is the motor and not the image: all the failing
+runs are firmware-clean (`reason=2`, full holds, preflight PASS) and **pass the
+self-referential gate that rungs 525–600 use**; the other agent recorded the same
+8.7 % deficit at E490 and concluded "historical motor speed/current oracle is not
+acceptance evidence for this unit"; and my own 50 % runs on the superseded image read
+1968–1976 eHz, with the further drop here tracking hold length (19.8 s → 52.8 s),
+i.e. thermal droop.
+
+**Consequence: no rung ≤ 500 can pass on this hardware regardless of firmware**, and
+only the self-referential band 525–600 is judgeable. 60 % is qualified *because* it
+falls in that band.
+
+I am **not** fixing this myself. Extending `SELF_REF_RUNGS` to 500, or re-measuring
+`ORACLE` for this motor, would each make my own failing runs pass — the exact pattern
+three reviews have already caught me in. Both are one-line changes and both are the
+operator's call.
+
+#### Deliverable
+
+**Qualified ELF**: `B1E51E595197E1AE7B223FD5D9C5AB9DF96E50E7E63CD4B574E4C454DDDFE961`,
+source `5cd27cf`+, features `advance-ref,deep-filter`, four ISR roots identical
+instruction-for-instruction to the archived baseline `23661473`.
+
+**Measured envelope**: 60 % sustained ≥47 s ×3; 57.5/55/52.5 % ≥48 s ×3 each; restart
+3/3 at both 50 % and 60 % with segment 2 completing; 10 of 11 protection paths
+demonstrated; whole-run sag margin 38.75 codes with `max_streak = 0` across 834 k
+commutations; `adc_ovr = 0` and `vref_odd = 0`, so no DMA rotation occurred.
+
+**Constraints toward 100 %**: the arm deadline is *not* binding (`wait = ci/4`,
+`spent` mode ~6 µs, `thin_count = 0`, boundary ci ≈ 44 µs against 51–58 µs measured);
+the stale oracle blocks judgement below 525; and `FastBusSag` can no longer be
+provoked on this bench, so its coverage rests on argument rather than demonstration.

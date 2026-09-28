@@ -53,13 +53,6 @@ const DTG: u8 = 26;
 /// every flag (`hw::adc::dma_isr`) and publish it under the seqlock.
 #[interrupt]
 fn DMA1_CHANNEL1() {
-    // Q60-1: count a dropped conversion before publishing. A drop rotates the
-    // circular buffer permanently, so this is the only place the cause is
-    // visible; the *consequence* (a wrong value in the vref slot) is checked in
-    // the foreground, where `filt_vref` exists.
-    if hw::adc::adc_overran() {
-        S.guard().adc_ovr.fetch_add(1, Ordering::Relaxed);
-    }
     S.scan().publish(&hw::adc::dma_isr());
 }
 
@@ -424,8 +417,8 @@ impl Hal for Board {
     }
 
     #[inline(always)]
-    fn adc_ovr(&self) -> u32 {
-        S.guard().adc_ovr.load(Ordering::Relaxed)
+    fn poll_adc_ovr(&mut self) -> bool {
+        hw::adc::adc_overran()
     }
 
     fn late_arms(&self) -> u32 {

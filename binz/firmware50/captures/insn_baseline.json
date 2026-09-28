@@ -197,8 +197,8 @@
     "div": 0,
     "excl": 0,
     "helper": 0,
-    "insns": 53,
-    "irq": 3,
+    "insns": 37,
+    "irq": 2,
     "mul": 0
    },
    "TIM16": {
@@ -237,7 +237,7 @@
     "div": 2,
     "excl": 0,
     "helper": 2,
-    "insns": 546,
+    "insns": 561,
     "irq": 0,
     "mul": 13
    }
