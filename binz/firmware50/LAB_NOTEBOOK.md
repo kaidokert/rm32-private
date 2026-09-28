@@ -40986,3 +40986,28 @@ agent's screens all used 45 s or 28 s windows, so it never showed. **A full-wind
 `L` run — the window a qualification hold uses — cannot be captured at the default.**
 `sag_run.py` defaults to 130 s and is unaffected. Not fixed here: it is shared
 tooling and another agent is active in it.
+
+#### SAGQ3 addendum — the decimated ring widens the evidence 127× and the margin holds
+
+SAGQ3's weakest point is that each fast window is 256 consecutive scans, ~26 ms of
+a ~50 s hold, all in steady state. The **slow ring answers that with data already
+captured**: 1024 rows decimated by 32 = 32 768 scans = **3.31 s per run**, and it
+stores exactly the four fields the margin needs (`bus_mean`, `vref_mean`,
+`filt_bus`, `filt_vref`).
+
+| run | rows | mean | sd | closest approach | in σ | low scans |
+|---|---|---|---|---|---|---|
+| 550 run 1 | 1024 | 1198.0 | 3.09 | 45.7 codes | **14.8** | 0 |
+| 550 run 2 | 1024 | 1195.9 | 2.94 | 48.0 codes | **16.3** | 0 |
+| 600 run 1 | 1024 | 1192.5 | 3.26 | 46.6 codes | **14.3** | 0 |
+
+Widening coverage 127× moves the worst case from ~19σ to **~14σ** and finds **zero**
+low-mean scans in 3072 stored rows. The sd agrees with the fast windows (2.94–3.26
+against 2.70–4.02), so the fast windows were not unrepresentative.
+
+Two limits kept explicit: the slow ring **samples** every 32nd scan rather than
+covering the interval, so an excursion shorter than ~3.2 ms between stored rows
+could be missed; and 3.3 s is still only 6.6 % of the hold, and it is the *last*
+3.3 s. This bounds the distribution far better than 26 ms of consecutive scans, but
+it is not whole-run evidence and the conclusion remains "noise cannot trip it in the
+regimes sampled" rather than a proof over the whole hold.
