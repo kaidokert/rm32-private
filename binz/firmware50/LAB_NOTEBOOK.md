@@ -42294,3 +42294,84 @@ projects past 3800. But today's worst-block spread on the *same* image and rung 
 (±3 %), so that projection is two noisy points and a hypothesis to test, not a wall.
 The cheapest honest next step is the 65 % cap move itself, with the gate unchanged,
 three runs, worst run reported.
+
+### ENV-8 — review disposition of ENV-6/7: the fix is right but its test missed the faulting branch; 18 is rejected on speed, not the worst block, and it buys sag margin
+
+One independent adversarial review. Every finding below was verified before acceptance.
+
+#### Accepted, and fixed: the ENV-6 test never reached the branch that faulted
+
+The injection fired 2 s after the loop closed, i.e. mid-ramp at `applied_duty ≈ 130`.
+So it took the **fixed-500 branch**. It failed on the old code only because the cap
+*argument* was 500, and its `max ≤ cap` assertion passed on the old code (max 500). My
+"fails on the old code" was true but caught the wrong symptom.
+
+Now the injection is at `ramp_us(625) + 2 s`. The test asserts the ramp reached 625
+first, then that nothing above the cap was published. **Refuting control, run:** with
+only the `.min(SIXSTEP_DUTY_CAP)` removed it fails at **"published 700 above the
+cap"**, the exact hardware fault. With it restored it passes. Test-only change; the
+firmware image is unchanged. Suites, **run by me with the features the images use**:
+default 361/361, and 359/359 for each of `advance-ref,deep-filter`,
+`advance-18,deep-filter` and `advance-low,deep-filter`. (ENV-7's counts omitted
+`deep-filter`.)
+
+Also confirmed: this was the **only** cap bypass. Every other plan path passes
+`SIXSTEP_DUTY_CAP` (`states.rs:229`, `:1028`, `roots.rs:87`, `board.rs:586`).
+**Unstated side effect:** the relative step now also shrinks at 575 (+50) and 600
+(+25), not only at the top rung.
+
+#### Accepted: ENV-6's sweep table omitted what `v` drove
+
+The "25 %" `v` run drove the bridge at **50 %** (`applied_ccr=666`) for 63 s, with
+`worst_ma=3568` (94 % of the gate). That is the historical 250 → 500 stimulus, by
+design, but `BEMFCURRENT duty_tenths=250` prints the *target*, not what ran. Stated here
+so no one reads 3568 mA as a 25 % figure.
+
+#### Accepted: the envelope's evidence, re-based on this image
+
+"Hash is code identity" forbids carrying ENV-5's numbers to `A09BA143` by argument when
+this image has its own. **Holds on `A09BA143` at 625: 6/6 full 46.3 s holds** (ENV-7
+A-sides, both sessions). Worst: 2226 eHz, 3527 mA, **25.9 sag codes**. The ENV-6 sag
+control adds a 7th hold. **Restart at 625 has not been run on `A09BA143`**; it rests on
+`DF7B1257` plus identical ISR instructions, and I label it that way.
+
+#### Accepted: advance 18 is rejected on refuted SPEED; the worst-block basis was noise
+
+The worst-block rule was predeclared and applied as written, but at n = 3 a sign test
+gives p = 0.125. Advance 16's own same-session spread (3344–3527) contains 18's
+(3363–3514), and worst vs worst 18 is *below* 16. ENV-7 then argued the worst block
+cannot separate 16 from 20; it cannot both separate 16/18 and fail to separate 16/20.
+My prediction band was also calibrated on cross-session numbers the same-session
+baseline fell below. **The defensible basis is speed:** +60 eHz predicted, and every
+18 run is at or below every 16 run (2220–2226 vs 2226–2237). "No speed gain" is solid;
+"18 is slower" is within noise and withdrawn.
+
+#### Accepted: "18 buys nothing" was false. It buys sag margin.
+
+`min_margin_xp / (filt_vref·100)`, same session:
+
+| advance | runs | sag margin, codes | worst |
+|---|---|---|---|
+| 16 | 6 | 25.9–38.9 | **25.9** |
+| 18 | 3 | 35.4–38.9 | **35.4** |
+| 20 | 3 | 37.9–40.1 | **37.9** |
+
+Better on 18 in 3/3 pairs; worst vs worst **+9.5 codes** for ~+1 % hold current, with
+no speed or thin-arm cost. Advance 16's 25.9 is **a new campaign minimum**, on the
+carried configuration.
+
+#### Accepted: the named blocker changes
+
+Worst-block slope from today's same-session numbers is +10–16 % per step, not
++17–22 %, and the worst block wanders 3344–3725 on identical ISR code across sessions,
+so it is not predictable enough to name. **Named next blocker for 65 % on advance 16:
+the sag margin (worst 25.9 codes and falling ~4 codes per step: 30.0 at 600, 25.9 at
+625) and the supply budget (hold 2491–2525 proxy today, 2643–2687 in other sessions,
+against a 3.00 A clamp).** If the sag margin binds, advance 18 is the measured lever
+that buys it back at no speed cost.
+
+#### Prediction for 65 % on advance 16, before building
+
+Speed ~2280 eHz (+55–60/step). Hold ~2700–2800 mA proxy (~2.6 A metered via the
+6 % over-read). Worst block 3700–4000 (straddles the 3800 gate). **Sag margin worst
+~21–23 codes.** `mean_ci` ~72, `thin_count` 0–few, `late_arms` 0.

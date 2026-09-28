@@ -861,8 +861,22 @@ mod tests {
         // block on hardware). Every plan now passes the real cap, and no
         // requested duty exceeds it.
         use crate::run::policy::SIXSTEP_DUTY_CAP;
-        let inject = Some((Inject::Sag, 2_000_000));
-        let (sim, _) = run(SIXSTEP_DUTY_CAP, 20_000_000, STEADY, Faults::default(), inject);
+        // Fire AFTER the ramp has reached the cap: an injection at 2 s lands
+        // mid-ramp (applied duty ~130) and takes the fixed-500 branch, which is
+        // not the one that faulted (ENV-6 review). Asserted, not assumed.
+        let at = crate::ramp::ramp_us(SIXSTEP_DUTY_CAP) + 2_000_000;
+        let inject = Some((Inject::Sag, at));
+        let (sim, _) = run(SIXSTEP_DUTY_CAP, at + 10_000_000, STEADY, Faults::default(), inject);
+        let before = sim
+            .log
+            .plans
+            .iter()
+            .filter(|&&(t, _)| t + 100_000 < sim.log.closed_at.unwrap() + at);
+        assert_eq!(
+            before.map(|&(_, d)| d).max(),
+            Some(SIXSTEP_DUTY_CAP),
+            "the ramp reached the cap first"
+        );
         assert!(!sim.log.plans.is_empty());
         assert!(
             sim.log.plan_caps.iter().all(|&c| c == SIXSTEP_DUTY_CAP),
@@ -872,6 +886,7 @@ mod tests {
         let max = sim.log.plans.iter().map(|&(_, d)| d).max().unwrap();
         assert!(max <= SIXSTEP_DUTY_CAP, "published {max} above the cap");
         // Below the relative threshold the historical fixed step is untouched.
+        let inject = Some((Inject::Sag, 2_000_000));
         let (sim, _) = run(250, 20_000_000, STEADY, Faults::default(), inject);
         assert!(
             sim.log.plans.iter().any(|&(_, d)| d == 500),
