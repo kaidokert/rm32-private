@@ -45,7 +45,9 @@ use firmware50::capture::NoLog;
 use firmware50::chain::{self, ChainRing};
 use firmware50::report::Sink;
 use firmware50::roots::{self, Drv8304};
-use firmware50::run::{Hal, Production};
+use firmware50::run::policy;
+use firmware50::run::{Controller, Hal};
+use firmware50::sagtrace::{Block, SagLog};
 use stm32g0xx_hal::stm32;
 use stm32g0xx_hal::stm32::interrupt;
 
@@ -63,6 +65,34 @@ fn ADC_COMP() {
     // SAFETY: the PAC's vector `ADC_COMP = 12` ("12 - ADC and COMP interrupts"), at `COMP_IRQ_PRIORITY`.
     unsafe { roots::comp_root::<NoLog, ChainRing>() }
 }
+
+/// ENV-25: the chain rings stop on the controller's `freeze()` -- which fires on the
+/// FIRST AverageCurrent over-block (ENV-22) and on any stop -- so the dump holds the
+/// ~35 ms of commutations that led INTO a current surge instead of the run's tail.
+/// Records nothing itself (`block` is a no-op); only its `freeze` matters.
+struct ChainFreeze;
+
+impl SagLog for ChainFreeze {
+    const ON: bool = true;
+    #[inline(always)]
+    fn block(_: &Block) {}
+    #[inline(always)]
+    fn freeze() {
+        ChainRing::disarm();
+    }
+}
+
+/// Production's composition with the chain freeze installed.
+type ChainProduction = Controller<
+    policy::Wiring,
+    policy::BemfPolicy,
+    policy::AdvancePolicy,
+    policy::CurrentProtection,
+    policy::BusSagProtection,
+    policy::Restart,
+    policy::Telemetry,
+    ChainFreeze,
+>;
 
 /// Keys that arm the ring, and so are dumped when their run ends: the rung
 /// keys the fixture drives plus the climb keys.
@@ -98,7 +128,7 @@ fn main() -> ! {
     board::banner(&mut board, adc_ok);
     board.say("CHAINCAPTURE diagnostic image: every run dumps its timing chain\r\n");
     board.tx_flush();
-    let mut p = Production::new();
+    let mut p = ChainProduction::new();
     loop {
         board.now();
         board.drain();

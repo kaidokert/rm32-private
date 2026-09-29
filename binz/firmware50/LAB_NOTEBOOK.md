@@ -43170,3 +43170,21 @@ only; the ladder does not yet refuse a capture whose `applied_cap` exceeds the q
   excursions, +9 % rejected early crossings, a sector-5/2 revisit asymmetry, and a ms-scale
   surge before the sag trip.
 * **Timing:** eroding (5 → 4 µs, first thin arm at 70 %), not binding through 72.5 %.
+
+### ENV-25 — why do we desync at 72.5 %? The commutation chain frozen at the surge: predeclared
+
+Operator: "in 99.99 % of the cases those are desyncs, so why are we getting desyncs." The
+surges are treated as desyncs until the chain says otherwise.
+
+**Instrument:** `chain-capture` now carries a recorder slot, `ChainFreeze`, whose `freeze()`
+stops both chain rings (512 accepts, 512 COM services, ~35 ms at 72.5 %). The controller calls it
+on the **first AverageCurrent over-block** (ENV-22 observer) and on any stop. Diagnostic binary
+only; production is untouched. Image **`EB409F01`** (`advance-ref,deep-filter,edge-probe`). The
+chain recorder adds +90 / +97 instructions to ADC_COMP / TIM16, which is inherent to this
+recorder and lengthens `spent`. **So a same-image 700 control is part of the design.**
+
+**Prediction (tested by 3 × 725 + 2 × 700 on `EB409F01`, `chain_run.py`):** in ≥ 2 of the
+725 chains frozen at a foldback, an accepted crossing interval deviates **> 25 %** from the
+running average within the ~10 ms before the freeze (an early-accepted or missed crossing,
+i.e. a slip). The 700 controls show none. **Refuted** if the accept stream into the surge
+is regular.
