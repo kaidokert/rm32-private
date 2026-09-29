@@ -109,6 +109,8 @@ chain-origin = []
 carrier-24k = []
 # ENV-30 A/B lever: COMP2 hysteresis 1 during the closed loop only (run::policy::CLOSED_COMP_HYST).
 closed-hyst-1 = []
+# ENV-32 A/B lever: cap a single outlier interval before the estimator blend (bemf.rs).
+outlier-clamp = []
 # Raises the persistence filter's floor from the reference's 3 reads to 5
 # (E324). The map floors at 3 for every interval at or below 73 us, and that
 # boundary sits between rung 525 (depth 4, 0 events in 703 s) and rung 550

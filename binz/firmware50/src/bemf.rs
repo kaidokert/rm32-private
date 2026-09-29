@@ -504,6 +504,17 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
         //    commutation at half a cycle minus the advance.
         self.prev_zc = self.last_zc;
         self.last_zc = count;
+        // ENV-32 A/B lever (`outlier-clamp`): a single late interval (the 72.5 % step-3
+        // trigger, ENV-31) must not inflate the average and widen the next half-cycle gate,
+        // which refuses the next on-time crossing (the cascade). The observation entering
+        // the blend is capped at avg + avg/4; a real deceleration still passes, at up to
+        // +25 % per sector. Production (feature off) is AM32's estimator, unchanged.
+        if cfg!(feature = "outlier-clamp") {
+            let cap = self.average_interval.saturating_add(self.average_interval >> 2);
+            if self.last_zc > cap {
+                self.last_zc = cap;
+            }
+        }
         self.average_interval = self.clamp_interval(blend_interval(self.average_interval, self.prev_zc, self.last_zc));
         let advance = advance_of(self.average_interval, advance_level);
         let wait = wait_time(self.average_interval, advance_level);
@@ -522,6 +533,25 @@ mod tests {
     use core::cell::Cell;
 
     const ADV: u32 = 16;
+
+    /// ENV-32: under `outlier-clamp`, one late interval moves the average by at most the
+    /// cap's share; without the feature the estimator is AM32's, unchanged.
+    #[test]
+    fn a_single_late_interval_is_capped_only_under_the_feature() {
+        let mut z = ZeroCross::new_bounded(68, 40, 200);
+        let pol = MappedFilter;
+        for _ in 0..20 {
+            let _ = z.offer(68, true, ADV, &pol, || true);
+        }
+        let before = z.average_interval;
+        let _ = z.offer(110, true, ADV, &pol, || true); // +62 %
+        let rise = z.average_interval - before;
+        if cfg!(feature = "outlier-clamp") {
+            assert!(rise <= 5, "capped: avg rose {rise} us");
+        } else {
+            assert!(rise >= 9, "AM32 blend: avg rose {rise} us");
+        }
+    }
 
     /// The µs adapter reproduces the reference's half-µs schedule at the rungs
     /// this campaign runs (E083): 12 reads at 10% and at handover, 11 at the

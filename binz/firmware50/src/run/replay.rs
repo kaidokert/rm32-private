@@ -82,7 +82,10 @@ fn parse() -> ([u32; 5], Vec<Decision>) {
 /// [`the_wide_gate_refuses_only_the_anomalous_band`] below replays the same
 /// 1536 decisions and measures exactly what the wider gate changes.
 #[cfg(not(feature = "wide-blank"))]
+// ENV-32: production's decision-for-decision pin; the `outlier-clamp` arm changes waits by
+// design (it diverges at #333 at 25 %, so the lever touches low rungs too), so it is scoped out.
 #[test]
+#[cfg(not(feature = "outlier-clamp"))]
 fn production_policy_reproduces_the_captured_25_percent_sequence() {
     type B = <Production as Policies>::B;
     let (state, decisions) = parse();
@@ -180,7 +183,11 @@ fn a_one_step_different_policy_does_not_reproduce_it() {
 /// sits just above the reference gate, and it is exactly the descent fuel the
 /// wider gate targets. Pinning the count here means a change to the gate, the
 /// blend or the clamp cannot move it silently.
+///
+/// ENV-32: the `outlier-clamp` A/B arm changes the blend *deliberately* (that is the lever),
+/// so this production pin is scoped to builds without it; every production build still runs it.
 #[test]
+#[cfg(not(feature = "outlier-clamp"))]
 fn the_wide_gate_would_refuse_only_the_anomalous_band() {
     type B = <Production as Policies>::B;
     let (state, decisions) = parse();

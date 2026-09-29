@@ -43527,3 +43527,26 @@ floor, or a sector-specific transient timing. Rotation still pending (operator's
   remove the trigger (board or motor, after the rotation), or, as a local code change, stop a single
   outlier interval from widening the gate. The second is a divergence from AM32, to be justified by an
   A/B.
+
+### ENV-32 — lever 4 (a local code change): cap a single outlier interval before the estimator blend
+
+Target: the **amplifier** (ENV-31 addendum), not the trigger. `bemf.rs::offer`, under `outlier-clamp`:
+the accepted interval entering `blend_interval` is capped at `avg + avg/4`. A late step-3 interval
+therefore cannot inflate the average and widen the next half-cycle gate. A real deceleration still
+passes, at up to +25 % per sector. **Divergence from AM32's estimator**; it lives in the deadline path
+(ADC_COMP 818 → 832 instructions, `isr_audit` PASS). Unit test
+`a_single_late_interval_is_capped_only_under_the_feature` (+62 % interval: avg +≤ 5 µs capped, ≥ 9 µs
+AM32). Two replay pins (the 25 % decision-for-decision sequence, and the wide-gate count) are scoped to
+builds without the feature, following the `wide-blank` precedent. **They show the lever changes
+decisions at 25 % too** (first divergence at #333), so keeping it means re-qualifying every earned rung.
+An existing test caught an overflow in my first cap (`+` → `saturating_add`). Suites 364/362/360, clippy
+0, production byte-identical (`D065B28A`).
+
+Arms: production A = `A9F121F8`, **B = `19E912D4`** (loadable `9D17A1AD`); chain A = `BE2213DE`,
+**B = `FFAC9E31`**.
+
+**Predictions (before running):** the late-accept *rate* is unchanged (the trigger is physical). What
+changes is **consecutive-late / cascade events**: late accepts followed within 2 sectors by another late
+or a short, per 35 ms chain, drop ≥ 50 %, and short accepts drop. Production at 725: worst block lower in
+≥ 2/3 pairs and foldbacks ≤ A. Speed ±0.5 %, hold current ±2 %. **Reject** if cascades do not drop, or B
+trips where A does not.
