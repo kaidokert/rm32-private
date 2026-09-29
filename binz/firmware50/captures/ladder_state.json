@@ -15359,5 +15359,81 @@
     ]
    }
   ]
+ },
+ "E1256E387E4450A7EED16485CF1497207EF90FE71B76954CF06D86F5E5A9554D": {
+  "700": [
+   {
+    "file": "env23-r700-1_01.txt",
+    "duty": 700,
+    "reason": 2,
+    "accepted": 900560,
+    "bus_ref": 1214,
+    "forced": 0,
+    "too_early": 45008,
+    "blank_arms": 255806,
+    "unstable": 1522121,
+    "hold_ms": 42775,
+    "rate_permille": 988,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2412,
+    "coast_crossings": 1413,
+    "hold_ma": 3189,
+    "ceiling_tenths": 700,
+    "worst_ma": 3920,
+    "droop_permille": 977.110660957268,
+    "fails": [],
+    "anchored": "ENV-23: identical to B734ACCD (70% qualified ENV-21: holds 3/3, restart 3/3, sweep 10/10, 5 A allowance) except SIXSTEP_DUTY_CAP 800 -> 700 (the qualified top; closes the sag-stimulus over-cap path the ENV-20/21 review found) and an observer-only freeze in the sag ring (production byte-identical). isr_diff vs B734ACCD: four roots instruction-identical; audit PASS; suites 361/359/359/359."
+   },
+   {
+    "file": "env23-r700-2_01.txt",
+    "duty": 700,
+    "reason": 2,
+    "accepted": 900561,
+    "bus_ref": 1215,
+    "forced": 0,
+    "too_early": 44528,
+    "blank_arms": 255270,
+    "unstable": 1521800,
+    "hold_ms": 42775,
+    "rate_permille": 988,
+    "has_tail": true,
+    "rate_vs_coast_permille": 999,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2418,
+    "coast_crossings": 1405,
+    "hold_ma": 3202,
+    "ceiling_tenths": 700,
+    "worst_ma": 3853,
+    "droop_permille": 977.1289537712895,
+    "fails": [],
+    "anchored": "ENV-23: identical to B734ACCD (70% qualified ENV-21: holds 3/3, restart 3/3, sweep 10/10, 5 A allowance) except SIXSTEP_DUTY_CAP 800 -> 700 (the qualified top; closes the sag-stimulus over-cap path the ENV-20/21 review found) and an observer-only freeze in the sag ring (production byte-identical). isr_diff vs B734ACCD: four roots instruction-identical; audit PASS; suites 361/359/359/359."
+   },
+   {
+    "file": "env23-r700-3_01.txt",
+    "duty": 700,
+    "reason": 2,
+    "accepted": 900738,
+    "bus_ref": 1217,
+    "forced": 0,
+    "too_early": 45215,
+    "blank_arms": 254795,
+    "unstable": 1517010,
+    "hold_ms": 42775,
+    "rate_permille": 988,
+    "has_tail": true,
+    "rate_vs_coast_permille": 995,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2432,
+    "coast_crossings": 1472,
+    "hold_ma": 3176,
+    "ceiling_tenths": 700,
+    "worst_ma": 3773,
+    "droop_permille": 975.5231543402767,
+    "fails": [],
+    "anchored": "ENV-23: identical to B734ACCD (70% qualified ENV-21: holds 3/3, restart 3/3, sweep 10/10, 5 A allowance) except SIXSTEP_DUTY_CAP 800 -> 700 (the qualified top; closes the sag-stimulus over-cap path the ENV-20/21 review found) and an observer-only freeze in the sag ring (production byte-identical). isr_diff vs B734ACCD: four roots instruction-identical; audit PASS; suites 361/359/359/359."
+   }
+  ]
  }
 }

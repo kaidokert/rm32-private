@@ -99,6 +99,9 @@ sag-ring = []
 # `P(latch/arm) = P(wait <= 9) x P(spent >= 9)`, whose other factor is already
 # measured at 0.0297 over 20 478 archived chain arms.
 margin-hist = []
+# ENV-23: DIAGNOSTIC ONLY. Raises SIXSTEP_DUTY_CAP from the qualified top (700) to the
+# mapped edge (725) so an image can run the edge. Never in a qualifying image.
+edge-probe = []
 # Raises the persistence filter's floor from the reference's 3 reads to 5
 # (E324). The map floors at 3 for every interval at or below 73 us, and that
 # boundary sits between rung 525 (depth 4, 0 events in 703 s) and rung 550

@@ -43026,3 +43026,86 @@ the host), identical count before and after.
 current, not a uniform 10 ms elevation), and it is **concentrated in particular sectors**
 (`step`), i.e. per-sector over-current. Refuted if the per-scan phase current in the surge
 block is uniform across the block and across sectors.
+
+### ENV-23 — review of ENV-20/21 accepted; the cap safety gap closed; 70 % re-qualified on `E1256E38`; the 72.5 % edge mapped by two protections
+
+**Review corrections, all verified and accepted:**
+* **SAFETY: cap above the qualified top re-opened ENV-6's bug class.** With `SIXSTEP_DUTY_CAP
+  = 800`, `Inject::Sag` at a 700 rung drives 700 + 75 = **775**, an unqualified duty,
+  gated only by the host ladder, which `--no-ladder` bypasses. No capture ran that path.
+  **Fixed:** the cap is the qualified top again (**700**). Only a diagnostic image built
+  with the new `edge-probe` feature reaches 725, and never a qualifying one.
+* **"No decision counter separates 700 from 725" was false.** My comparison used a
+  30 % threshold on one image. The reviewer, across all 700 runs on three images:
+  `too_early`/accepted 5.02–5.09 % vs 5.46–5.65 % (~9 %), `BEMFREVISIT` r5/v5 +12 % with
+  r2/v2 down 7–10 %, and within each image `coalesced_accepts` and `BEMFPHASE.gt150` +20 %.
+  **The loop does make different decisions at the edge**, and these counters are the
+  leads for the surge mechanism.
+* **"Timing unchanged per event 67.5 → 70 %" was false.** It discarded the ENV-17
+  companion runs (same ISR roots): min `left` 4 µs in 3 of 4 runs at 700 vs 0 of 3 at 675.
+  **The step cost 1 µs at the tail (5 → 4)**, and 72.5 % stays at 4 with a fattening tail.
+  New: env23-r700-1 recorded **thin_count = 1**, the first thin arm on production at 70 %.
+* **No 72.5 % run was "stopped".** All six ended `reason=2`. Five folded back to 71.5 % and
+  ran on, and all six fail the 4750 gate.
+* Restart evidence is thin in **both** segments (`first_hold_ms=2000`, `second_hold_ms≈2220`).
+  mh700's worst block 3907 was unreported (above ENV-20's band). The margin-hist companion
+  is **not behaviour-neutral** (coalesced/acc 2.75 vs 2.06 %), so it is diagnostic only.
+  The gate message and report docs still said "4 A"; the gate text is fixed.
+
+**70 % re-qualified on the corrected image `E1256E38`** (cap 700, loadable `8A50451A…`,
+four roots instruction-identical to `B734ACCD`, audit PASS, suites 361/359/359/359):
+
+| run | coast | hold | worst block | sag codes | thin / late |
+|---|---|---|---|---|---|
+| env23-r700-1 | **2412** | 3189 | **3920** | 33.4 | **1** / 0 |
+| env23-r700-2 | 2418 | **3202** | 3853 | 35.4 | 0 / 0 |
+| env23-r700-3 | 2432 | 3176 | 3773 | **31.4** | 0 / 0 |
+
+Rung PASS, restart 3/3 (thin, as above), sweep 10/10 at 250 on `E1256E38`.
+**`E1256E38` is the carried image; the 70 % qualification on `B734ACCD` (cap 800) is superseded.**
+
+### ENV-22 result — what the frozen rings actually show
+
+**`frozen=1` does not mean "froze at an over-block"**: the ring also freezes at every
+stop, including the normal window end. `judged` stops counting once frozen, which
+dates each freeze. So the three 725 rings (`sag-capture` 71BE8573, cap 800) are three
+different events:
+
+| ring | freeze cause | use |
+|---|---|---|
+| env22-surge725-1 | first AverageCurrent over-block (ceiling 715, judged 426 k) | **the surge** |
+| env22-surge725-2 | normal window end (judged 767 k) | a tail, not an event |
+| env22-surge725-3 | **FastBusSag latch, reason 26, at 32.6 s** | **a sag trip** |
+
+The prediction analysis that pooled them is withdrawn. `scripts/surge_locate.py` now
+classifies the freeze cause from the run and refuses a tail as an event.
+
+* **Surge (run 1):** per-scan current is **4.6–5.0 A across the whole 26 ms** before the
+  over-block, against 3.2–3.5 A in three 700 control rings (env23-ctl700-*, same recorder
+  lineage, no event). **"Time-localized, a few ms": refuted.** It is sustained over at least
+  26 ms. **"Sector-concentrated": not supported.** The per-sector spread (2.6–4.9 A) is
+  present in the no-event 700 controls too; it is carrier-phase sampling structure, not a surge
+  signature.
+* **Sag trip (run 3), the first spontaneous FastBusSag latch on this motor.** The
+  reference was converged (`filt_bus` 1181–1182 over the prior 3.2 s, so no EWMA lag).
+  History margin ≥ 1035 ‰, then 992 → 980 → 982 and a latch at streak 3; bus mean 7.3 %
+  under the reference (`scripts/sag.py`, host/firmware agree on all lows). **Two scans
+  just before it (idx 248, 251, both sector 1) have a shunt amplifier at its rail**
+  (4095, then 0): instantaneous phase current past full scale (~±25 A at 7 mΩ × 10). None
+  of the other rings (three 725, three 700) has a single saturated sample. This was on the
+  recorder image, whose recording adds foreground work, so it is evidence about the event
+  and the guard, not about production's loop quality.
+
+### The edge, mapped
+
+**Qualified: 52.5–70 % on advance 16, carried image `E1256E38`.** **Edge: 72.5 %.** On
+the 5 A supply, two of the firmware's own protections act there:
+* **AverageCurrent** folds back in 5 of 6 production-lineage runs (worst blocks 4970–5257 mA
+  against its 5000 mA allowance; the cohort's 4750 gate fails 6/6).
+* **FastBusSag** latched once (1 of 3 recorder runs) on a genuine 7 % bus sag, preceded by a
+  phase current past the amplifier's full scale.
+
+Leads for the mechanism, **not** a mechanism: sustained (≥ 26 ms) current excursions,
+more rejected early zero-crossings (+9 %), and a sector-5/sector-2 revisit asymmetry.
+**Timing is eroding but not binding:** min per-event `left` 5 → 4 µs from 67.5 to 70 %,
+still 4 at 72.5 %, and the first thin arm at 70 %.
