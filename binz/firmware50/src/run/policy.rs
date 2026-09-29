@@ -82,7 +82,12 @@ pub const TAIL_WINDOW_US: u32 = 2_000_000;
 /// which matters because there is still **no thermal channel in `CHANNELS`**
 /// (`src/hw/adc.rs:33-41`) and no thermal protection anywhere in this
 /// firmware.
+#[cfg(not(feature = "window-90"))]
 pub const BEMF_TOTAL_MS: u32 = 78_000;
+/// ENV-41 diagnostic only: a 90 s window so a restart above 70 % fits (at 78 s the ramp,
+/// paid in both segments, leaves `NoRoom` at every rung above 700). Never a production build.
+#[cfg(feature = "window-90")]
+pub const BEMF_TOTAL_MS: u32 = 90_000;
 
 /// The exploratory window: the same startup and ramp, about 10 s at target
 /// (E137). One of these precedes every rung's 3/3 cohort, and it is not

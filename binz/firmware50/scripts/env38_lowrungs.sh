@@ -10,7 +10,7 @@ plus() { n=$(( ($1 - 400) / 25 )); if [ $n -lt 0 ]; then printf -- '-%.0s' $(seq
 for R in 400 425 450 475 500; do
   for i in $( [ $R = 400 ] && echo 3 4 5 || echo 1 2 3 ); do
     echo "=== hold $R run $i"
-    python scripts/bemf_run.py --elf $ELF --flash --pre "$(plus $R)" --command L --rung-duty $R --runs 1 --timeout 120 --label env38b-r$R-$i --anchor --anchor-proof "$PROOF" 2>&1 | grep -E "BEMFSELFREF|RUN FAIL|RUNG|REFUSED|Error|Traceback" | head -4
+    python scripts/bemf_run.py --elf $ELF --flash --pre="$(plus $R)" --command L --rung-duty $R --runs 1 --timeout 120 --label env38b-r$R-$i --anchor --anchor-proof "$PROOF" 2>&1 | grep -E "BEMFSELFREF|RUN FAIL|RUNG|REFUSED|Error|Traceback" | head -4
   done
 done
 for i in 1 2 3; do

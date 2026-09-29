@@ -9,8 +9,9 @@ ORACLE_RE = re.compile(r"^coast \d+ eHz outside 5% of \d+$")
 ok = True
 # Driven at 425 by the zero-step climb bug (plus() printed one "+" for n=0); excluded by name.
 EXCLUDED = {"env38b-r400-1_01.txt", "env38b-r400-2_01.txt"}
-for R in (400, 425, 450, 475, 500):
-    files = sorted(glob.glob(f"captures/2026-09-29/env38b-r{R}-*_01.txt"))
+SETS = [(R, f"env38c-k{R}-") for R in (150, 200, 250, 275, 288, 300, 325, 338, 350)] + [(375, "env38-r375-")] + [(R, f"env38b-r{R}-") for R in (400, 425, 450, 475, 500)]
+for R, pre in SETS:
+    files = sorted(glob.glob(f"captures/2026-09-29/{pre}*_01.txt"))
     rows = []
     for f in files:
         if os.path.basename(f) in EXCLUDED:
@@ -33,5 +34,5 @@ for R in (400, 425, 450, 475, 500):
     if any(o or s for _, _, o, _, s in rows):
         print(f"  {R}: FAIL"); ok = False
     else:
-        print(f"  {R}: PASS (all gates but the previous-motor oracle; self-ref PASS 3/3)")
-print("ENV-38b LOW RUNGS:", "PASS" if ok else "NOT PASSED")
+        print(f"  {R}: PASS on all non-oracle gates + self-ref 3/3; oracle {sum(1 for x in rows if x[3])}/3 fail")
+print("LOW RUNGS, NON-ORACLE GATES + SELF-REF:", "PASS (oracle reported per rung; oracle failures = NOT PASSED by the ladder)" if ok else "NOT PASSED")

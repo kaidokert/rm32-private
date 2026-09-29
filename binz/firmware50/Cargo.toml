@@ -102,6 +102,8 @@ margin-hist = []
 # ENV-23: DIAGNOSTIC ONLY. Raises SIXSTEP_DUTY_CAP from the qualified top (700) to the
 # mapped edge (725) so an image can run the edge. Never in a qualifying image.
 edge-probe = []
+# ENV-41 diagnostic: 90 s campaign window (restart above 70 % fits). Off in production.
+window-90 = []
 # ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
 # chain image can mark revisit-originated accepts (flag bit 6).
 chain-origin = []
