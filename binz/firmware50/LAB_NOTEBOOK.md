@@ -42909,3 +42909,47 @@ hypothesis, testable only by a run at higher speed.
   is the operator's decision (the protection), or a code-level lever that lowers current
   at the same speed. None is identified yet, so that is a hypothesis without a candidate.
   Standing gap: FastBusSag has no hardware positive control on this motor.
+
+### ENV-20 — OPERATOR DECISION: the current allowance is sized to the 5 A supply. Walk resumes above 67.5 %.
+
+**The operator never set a 3800 mA limit.** Both current limits were agents' numbers.
+`protection::RAW_LIMIT` (4 A nominal) came in with the crate's first commit (2f15dfb,
+2026-09-23), sized against the old 3 A PSU clamp; the notebook records it never fired
+on this bench. `WORST_MA_CEILING = 3800` was derived from it (E239). ENV-16..19 treated
+that inherited figure as an operator threshold, which is the goal's "acceptance figure
+inherited from different hardware" error, and it is withdrawn. Operator: "the PSU has
+5 amps, use it."
+
+**Change, and only this change:**
+* `RAW_LIMIT` stays **31 857 = 4000 mA as the calibration** every mA figure is scaled by.
+* New `RAW_ALLOW = RAW_LIMIT·5/4 = 39 821` (**5000 mA**) is the production
+  `AverageCurrent` trip threshold. Foldback-then-stop, the streak, and every other guard
+  are unchanged. The injection still provokes at `RAW_LIMIT/100`.
+* **Latent scale bug fixed:** `mean_milliamps` and `window_milliamps` (hold_ma) divided by
+  the *threshold*, not the calibration. They would have read 20 % low at a 5 A allowance.
+  They now follow E291's rule, as `block_milliamps` already did. Past captures are unchanged
+  (their allowance equalled the calibration). The test now pins "mean current must not
+  follow the threshold".
+* `WORST_MA_CEILING` 3800 → **4750**: same rule, 5 % under the allowance.
+* `SIXSTEP_DUTY_CAP` 700 → 800 as a *ceiling* for a ladder walk. The ladder still admits
+  each 2.5 % rung only after the one below passes 3/3 on this image. The x cycle and
+  `SELF_REF_RUNGS` extend to 800.
+
+**Images:** production **`B734ACCD`** (loadable `67F78B55…`), four ISR roots
+instruction-identical to `530432A2`; margin-hist companion **`9E5BED16`** (loadable
+`B47EE104…`). Suites 361/359/359, clippy 0, audit PASS.
+
+**Hypotheses, each tested by that rung's holds / margin-hist run:**
+
+| rung | coast eHz | hold proxy mA | worst block | min per-event `left` |
+|---|---|---|---|---|
+| 700 | 2397–2415 | 3065–3240 | 3727–3882 (PASS at 4750) | 4 µs |
+| 725 | 2440–2470 | 3280–3420 | 3950–4150 | 3 µs |
+| 750 | 2480–2520 | 3450–3600 | 4150–4400 | 2 (thin arms appear) |
+| 775 | 2520–2570 | 3600–3800 | 4350–4650 | 1 |
+| 800 | 2560–2620 | 3750–4000 | 4550–4850 | **0: LateArm stop possible** |
+
+The hypothesis to test: **the timing deadline, not current, becomes the binding limit
+near 77.5–80 %** (min `left` falling ~1 µs per step: 5 @675 → 4 @700). A LateArm stop
+is a protection result, not a failure to argue with. Sag margin: no prediction (non-
+monotone, ENV-17).

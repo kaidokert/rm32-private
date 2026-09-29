@@ -675,9 +675,21 @@ impl FastBusSag {
 /// Scans accumulated per averaging block.
 pub const BLOCK_SCANS: u32 = 100;
 
-/// Raw-code residual allowance equivalent to the 4 A nominal limit
-/// (three shunts, 7 mOhm, gain 10, VDDA 3600, 100 scans).
+/// Raw-code residual equivalent to 4 A (three shunts, 7 mOhm, gain 10, VDDA
+/// 3600, 100 scans). **This is the mA CALIBRATION** every reported current is
+/// scaled by (E291), and it was also the production trip threshold until ENV-20.
 pub const RAW_LIMIT: u32 = 31_857;
+
+/// The production `AverageCurrent` trip threshold: **5000 mA** in the same raw
+/// units (`RAW_LIMIT * 5 / 4`).
+///
+/// ENV-20, OPERATOR DECISION: the 4 A figure was never set by the operator. It
+/// was sized by an agent against the bench's old 3 A PSU clamp and had never
+/// fired. The operator raised the PSU limit to 5 A and directed that it be used, so
+/// the allowance now matches the supply. The foldback-then-stop structure, the
+/// streak and every other guard are unchanged; only the level moves.
+pub const RAW_ALLOW: u32 = RAW_LIMIT * 5 / 4;
+const _: () = assert!(RAW_ALLOW == 39_821);
 
 /// Ceiling reduction, in tenths of a percent, chosen by how far the block
 /// residual overshot the allowance.
@@ -843,8 +855,11 @@ impl AverageCurrent {
         if self.blocks == 0 || self.allow == 0 {
             return 0;
         }
+        // ENV-20: scaled by the calibration, not the threshold (E291's rule,
+        // which `block_milliamps` already followed). Dividing by `allow` read
+        // 20 % low once the allowance moved to 5 A.
         let mean = self.mean_residual() as i64;
-        ((mean * 4_000) / self.allow as i64) as i32
+        ((mean * 4_000) / RAW_LIMIT as i64) as i32
     }
 
     #[inline]
@@ -964,7 +979,8 @@ impl AverageCurrent {
         }
         let total = self.total.saturating_sub(from.total);
         let mean = total / blocks as i64;
-        ((mean * 4_000) / self.allow as i64) as i32
+        // ENV-20: the calibration, not the threshold (see `mean_milliamps`).
+        ((mean * 4_000) / RAW_LIMIT as i64) as i32
     }
 
     /// Blocks completed since `from`.
@@ -1998,7 +2014,7 @@ mod tests {
     }
 
     /// The mean current figure is the reference's quantity: mean signed block
-    /// residual, scaled by the allowance to 4000 mA full scale.
+    /// residual, scaled by the calibration (`RAW_LIMIT` == 4000 mA).
     #[test]
     fn mean_current_scales_like_the_reference() {
         const ALLOW: u32 = 4_000;
@@ -2013,8 +2029,20 @@ mod tests {
         assert!(c.blocks() >= 4, "blocks={}", c.blocks());
         // Residual is positive (draw) and the scaling is linear.
         assert!(c.mean_residual() > 0);
-        let expect = (c.mean_residual() as i64 * 4_000 / ALLOW as i64) as i32;
+        // ENV-20: scaled by the calibration (`RAW_LIMIT` == 4000 mA), not by the
+        // trip threshold -- E291's rule, now applied to the means as well.
+        let expect = (c.mean_residual() as i64 * 4_000 / RAW_LIMIT as i64) as i32;
         assert_eq!(c.mean_milliamps(), expect);
+        // The same drive under a different threshold reads the same current.
+        let mut d = AverageCurrent::new(ZERO, RAW_ALLOW);
+        for _ in 0..(BLOCK_SCANS * 4) {
+            let _ = d.accumulate(per_scan as u16, per_scan as u16, per_scan as u16);
+        }
+        assert_eq!(
+            d.mean_milliamps(),
+            c.mean_milliamps(),
+            "mean current must not follow the threshold"
+        );
     }
 
     /// Before any block completes there is no mean to report, and it must read

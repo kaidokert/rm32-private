@@ -467,7 +467,7 @@ def rung_current_note(runs: list[dict]) -> str:
 # gate compares the loop against the same rotor's coast, so it certifies
 # self-consistency and CANNOT detect a speed deficit.
 # ENV-9: 650 added on the same terms as 625, with the same caveat.
-SELF_REF_RUNGS = (525, 550, 575, 600, 625, 650, 675, 700)
+SELF_REF_RUNGS = (525, 550, 575, 600, 625, 650, 675, 700, 725, 750, 775, 800)
 
 # The worst 10.1 ms current block a run may show and still be judged a pass.
 #
@@ -488,7 +488,9 @@ SELF_REF_RUNGS = (525, 550, 575, 600, 625, 650, 675, 700)
 # (`e196-pi-avgcurrent_01`, a deliberate provocation), not the 3174 E241
 # claimed; 3174 is the maximum among `reason == 2` runs, which is a different
 # statement and was the one I should have written.
-WORST_MA_CEILING = 3800
+# ENV-20, OPERATOR DECISION: the allowance moved to 5000 mA with the PSU limit (see
+# protection::RAW_ALLOW); this gate keeps its rule, 5 % under the allowance.
+WORST_MA_CEILING = 4750
 
 # The CV/CC discriminator, in code for the first time (E243). Every
 # "droop >= 975 per mille" rule in E236-E241 was notebook-only: `filt_bus` and
