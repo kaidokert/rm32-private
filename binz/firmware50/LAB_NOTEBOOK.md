@@ -43008,3 +43008,21 @@ the test is a timestamped current record around the worst block, which no captur
 that could move it without touching the protection: current at the same speed (none of
 14/16/18/20 did so, ENV-7/11/18), or whatever produces the surges once they are located.
 Timing is not the binding limit up to 72.5 % (per event).
+
+### ENV-22 — locating the 72.5 % current surge: predeclared
+
+**Observer only.** `states.rs` Foldback arm: under a recording image (`P::G::ON`) the
+pre-trip ring also freezes on the **first AverageCurrent over-block**, so its 256-scan
+(~26 ms) fast ring holds the surge block and the ~16 ms before it. Production folds it
+away: the `shell-pwm` loadable is byte-identical before and after (`67F78B55`). The
+diagnostic is `sag-capture` (production controller + `SagRing`, dump written after
+`safe_off`), image **`71BE8573`**. Its four ISR roots are instruction-identical to `B734ACCD`
+(it also enables TIM2 for the fine stamp, foreground only). Pre-existing, not introduced:
+18 host tests fail under `--features sag-ring` (the ring's cortex-m critical section on
+the host), identical count before and after.
+
+**Hypotheses** (tested by three 725 runs, `sag_run.py`): ring `frozen=1` in ≥ 2/3 runs
+(5/6 foldbacks in ENV-21). The surge block is **time-localized** (a few ms of high phase
+current, not a uniform 10 ms elevation), and it is **concentrated in particular sectors**
+(`step`), i.e. per-sector over-current. Refuted if the per-scan phase current in the surge
+block is uniform across the block and across sectors.

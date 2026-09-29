@@ -427,6 +427,14 @@ impl Ctx {
         match self.current.accumulate(scan.phase_a, scan.phase_b, scan.phase_c) {
             Some(BlockVerdict::Stop(r)) => Err(r),
             Some(BlockVerdict::Foldback(red)) => {
+                // ENV-22 observer: under `sag-ring` only, freeze the pre-trip ring
+                // on the FIRST over-block too, so it holds the scans leading into
+                // the current surge the 72.5 % edge is made of (ENV-21). `freeze`
+                // is idempotent and `NoSagLog` folds it away, so production and
+                // the foldback itself are unchanged.
+                if P::G::ON {
+                    P::G::freeze();
+                }
                 let _ = self.governor.warn(red);
                 Ok(())
             }
