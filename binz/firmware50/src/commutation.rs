@@ -277,7 +277,12 @@ pub const fn blank_remaining(blanking: u32, since_zc: u32) -> u32 {
 /// Shortest blank worth arming the one-shot for, µs (E134). Below it the root
 /// arms the line at once: a timer round trip costs more than the few edges
 /// such a sliver could carry.
+#[cfg(not(feature = "blank-min-12"))]
 pub const BLANK_ARM_MIN_US: u32 = 16;
+/// ENV-37 A/B lever: arm the post-commutation blank for holds down to 12 us, so that at
+/// 72.5 % / advance 16 (hold ~14-16 us) the one-shot masks the window as advance 18's does.
+#[cfg(feature = "blank-min-12")]
+pub const BLANK_ARM_MIN_US: u32 = 12;
 
 /// Blend a fresh zero-cross pair into the running interval estimate:
 /// `(ci + ((last + this) >> 1)) >> 1`.

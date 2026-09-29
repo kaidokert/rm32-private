@@ -43736,3 +43736,36 @@ predeclared chain criterion therefore cannot be evaluated. This is stated, not w
 the evidence**, and the lever is **provisionally kept** pending the review and a full re-qualification.
 **Named risk:** advance 18 at 725 leaves only ~3–4 µs between `spent` (≤ 11 on production) and the wait. The timing margin
 is now the thin one.
+
+#### ENV-36 review — RELABELLED "not kept by rule; production positive"; my mechanism was wrong
+
+Independent review, verified:
+* **The rule was not met.** It required both halves. An unevaluable chain half is not a pass, and setting it aside after
+  seeing the data moved the criterion in the lever's favour. **Relabelled: not kept by rule; production half positive.**
+* **The chain LateArm cause was misstated.** Not recorder `spent` (`spent_at_late` = 12, `ci_at_late` 51–57 µs). All
+  three B chains end in **the ENV-25 cascade**: one outlier interval (139 / 147 / 120 µs), then 3–4 short ones that
+  drag the wait to ~12 µs. **Advance 18 did not remove the cascade**; LateArm caught it instead of AverageCurrent.
+* **Omitted counters, all verified:** on B, `BEMFPHASE gt150` per accept rises +35 % (2.7–2.9 → 3.9 %; more late accepts,
+  not fewer); bus samples below 99 % (`mdep_n`) rise ~5×; revisits −11 % overall (r4 −42 %). Speed/current against the
+  unfolded adv-16 725 run (env20-r725-1): +2.7 % and +7.6 %.
+* **The mechanism was wrong. The too-early drop is bookkeeping.** After a commutation the COM root masks the
+  comparator for the rest of the half-cycle only if that hold is ≥ `BLANK_ARM_MIN_US` = 16 (`roots.rs:1256`). At adv 16 /
+  725 the hold falls just under 16, so the line opens and the switching transients are offered and counted as
+  too-early. At adv 18 the hold clears 16, so they are masked. **The one-shot share is 26.8 % (A) vs 69.2 % (B)**
+  (`blank_arms / com_count`, verified). ENV-7/11 already showed the same too-early drop with no outcome change.
+  **The surge cure is unexplained.**
+* **The timing risk is larger than stated:** in a cascade `ci_min` reaches 44–45 µs, where adv-18's wait (~10 µs) is
+  below the production `spent` max (11).
+
+### ENV-37 — lever (a constant): advance 16 with `BLANK_ARM_MIN_US` 16 → 12 (discriminates ENV-36's two readings)
+
+If the post-commutation **masking** is what removed the surges, adv 16 with the blank armed for holds ≥ 12 µs reproduces
+the outcome **and** keeps adv 16's timing margin. If the adv-18 **timing** itself is the cure, it does not.
+Arms (rebuilt from current source, cap 725): **A = `1E5C79B4`** (loadable **`A7FB7F22`, byte-identical to ENV-36's A
+arm**), **B = `B71561C2`** (loadable `BB6D3AF6`). They differ only in the TIM16 constant (368 instructions both). Suites
+362 / 362, clippy 0.
+**Production-only metrics, declared before running:** foldback count (`ceiling < 725`), worst block, `gt150`/accept,
+`late_arms`, `thin_count`, too-early/accept, blank share. **Predictions:** B's too-early/accept → ~0.016 and blank share
+→ ~0.6–0.7 (bookkeeping, near-certain). **Decision:** **keep** if B has 0/3 foldback and worst < 4750 in 3/3
+**and** A reproduces its baseline (≥ 2/3 foldback). **Reject** (masking is not the cure) if B foldbacks ≥ 2/3.
+**Inconclusive** if A does not reproduce its baseline. n = 3 a side, ABBAAB, at 725.

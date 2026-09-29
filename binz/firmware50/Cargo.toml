@@ -113,6 +113,8 @@ closed-hyst-1 = []
 outlier-clamp = []
 # ENV-33 A/B lever: first revisit rescue at 1.125 x ci (then every ci/8) instead of 1.5 x ci.
 early-rescue = []
+# ENV-37 A/B lever: post-commutation blank one-shot armed for holds >= 12 us (was 16).
+blank-min-12 = []
 # Raises the persistence filter's floor from the reference's 3 reads to 5
 # (E324). The map floors at 3 for every interval at or below 73 us, and that
 # boundary sits between rung 525 (depth 4, 0 events in 703 s) and rung 550
