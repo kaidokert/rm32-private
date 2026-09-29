@@ -180,10 +180,12 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 // drove 700 + 75 = 775, an unqualified duty -- ENV-6's bug class again, gated only by the
 // host ladder, which `--no-ladder` bypasses. The firmware cap is the qualified top.
 // Diagnostic images that must run the 72.5 % edge enable `edge-probe` explicitly.
+// ENV-37: 700 -> 725, the step under qualification (advance 18, ENV-36); `edge-probe`
+// moves to 750 for exploration beyond it.
 #[cfg(not(feature = "edge-probe"))]
-pub const SIXSTEP_DUTY_CAP: u16 = 700;
-#[cfg(feature = "edge-probe")]
 pub const SIXSTEP_DUTY_CAP: u16 = 725;
+#[cfg(feature = "edge-probe")]
+pub const SIXSTEP_DUTY_CAP: u16 = 750;
 
 /// Rescue attempts the level revisit may make in one sector after its first
 /// attempt was refused (E140), each armed by another half-interval of overdue.
@@ -560,7 +562,7 @@ mod tests {
         // this again, and anything above the cap clamps to the cap.
         assert_eq!(
             SIXSTEP_DUTY_CAP,
-            if cfg!(feature = "edge-probe") { 725 } else { 700 },
+            if cfg!(feature = "edge-probe") { 750 } else { 725 },
             "a cap move must be deliberate: update this with it"
         );
         assert_eq!(sixstep_ccr_of(625, 1333), 833);

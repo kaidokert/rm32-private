@@ -680,8 +680,9 @@ impl<
                     // With 725..800 listed above a 700 cap, `Z` ran at 700 while the
                     // capture said 750 -- a mislabel, not a new duty, but exactly
                     // the kind of record that misleads. So wrap at the cap.
-                    // Only an `edge-probe` diagnostic image's cap admits this.
                     700 => 725,
+                    // Only an `edge-probe` diagnostic image's cap admits this.
+                    725 => 750,
                     _ => 250,
                 };
                 self.provoke_tenths = if next > policy::SIXSTEP_DUTY_CAP { 250 } else { next };
