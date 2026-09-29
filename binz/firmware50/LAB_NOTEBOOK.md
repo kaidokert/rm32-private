@@ -44950,3 +44950,66 @@ A question for the review, not used to pass: the tag's all-steps own-mean total 
 * per step the pooled counts are 0–19 events.
 
 The all-steps bar may therefore sit at the tag's own session noise.
+
+### ENV-60 — review of A5's stage-1 fail: accept. The fail stands; my "session noise" framing is refuted. A5 is abandoned.
+
+One independent review; verified.
+1. **OK:** all ENV-59 numbers and the A5 path counts reproduce. The chain images do run A5's path, and `det_install`
+   seeds `next_wait`.
+2. **ERROR (mine): "the bar may sit at the tag's own session noise".**
+   * Over all 20 tag chain captures (env46/47/50/56/59), captures within a session are plain Poisson (dispersion
+     0.88), and the session totals 43/47/36/50/37 are also Poisson (χ² 3.5 on 4 df, no extra variance).
+   * The right comparison is the ratio within a session: SD ≈ √(1/A + 1/T) ≈ 0.22. So the 1.3× bar is **loose**,
+     failing an identical image ~11.5 % of the time, **not below noise**.
+   * **A5's excess is beyond noise:** 58 of 95 (binomial p = 0.020; within-session permutation p = 0.043).
+   * But the metric has never separated any variant reliably: all 12 four-capture totals fit one Poisson rate
+     (p = 0.20), and A5 is the most extreme of 7 variant sessions (family-wise p ≈ 0.1).
+
+   **The fail is correctly applied; it is marginal evidence of real harm.**
+3. **OMISSIONS (mine):**
+   * `spent_max` 11 → ~10 predicted ✘ (11 on all runs); `comp_call_max` 16 → 17.
+   * **A5 makes almost no count progress:** arm 2.5× AM32; the total *rose* 425 → 439 (3.85×).
+   * A5 is **AM32's arm semantics, not AM32's shape.** AM32 has nothing after the arm (`main.c:968–975`); its
+     arithmetic is in `PeriodElapsedCallback` (`main.c:927–933`).
+4. **OMISSION: a stale comment hides a latent race.** `roots.rs` (COM phase 1) still says COMP publishes
+   `accept_*` "before the arm", while A5 publishes after it. That is safe only because COMP (0x00) cannot be preempted
+   by COM (0x40); under the E153 `com-top` layout it would be a race.
+5. **The phase-A hypothesis is only partly supported.**
+   * For it: the tag's own late crossings concentrate in steps 6 and 3 (66 %).
+   * Against it: A5's small excess is spread evenly, and A1/A4 lengthen step 2 (not phase A) too.
+   * **A5 supports the ENV-48 read-timing account instead:** tag read timing ⇒ the tag's sector pattern, unstable
+     −1.7 %.
+
+**Disposition: A5 is abandoned; no re-test** (nothing was mis-measured, and it buys no count reduction). Next, per the
+review: **(b), a different cut, grounded in AM32 source.**
+
+### ENV-61 — A6 predeclared: AM32's split with the tag's read timing (commit into COM; COMP ends after the arm)
+
+Branch `am32shape/a6` from A5.
+* **COMP:**
+  * the tag's pre-read code unchanged (estimator borrow, rebase check, step, gate from `zc.blanking()`, depth from
+    `zc.average_interval()`), then the 5 reads;
+  * on accept: stamp, `accept_count`, `accept_seq`, and **arm with the one-step-ahead `next_wait`** (as A5);
+  * after the arm, only the existing bookkeeping, **declared as kept**: margin counters (cheap diagnostics), the
+    tracking watch (a safeguard), and the handler budget (a safeguard).
+  * **No estimator arithmetic after the arm** (AM32's `interruptRoutine` ends at the arm).
+* **COM phase 1:** as A1. After commutating, if `accept_seq` advanced, `commit` (blend, clamp, advance, next wait)
+  under the estimator borrow, then publish `next_wait`, `accept_avg` and `accept_blank` (AM32's
+  `PeriodElapsedCallback`).
+* **Both roots borrow the estimator:** COMP reads, COM commits. The priorities are equal (COMP 0x00-class Motor), so
+  they cannot interleave. Under `com-top`, COM takes the critical-section `lock`. The stale comment is corrected.
+* **A6 inherits A5's arm-first semantics, so it also re-tests A5's core.**
+
+**Predictions:**
+* comparator accepted path ~439 → **~380** (first read ≈ #142, arm ≈ #256–269);
+* COM phase 1 ~207 → **~290** (the commit, as A1);
+* at 37.5 %: coast ±1 %, zero-adjusted hold ±3 %; the late rate and the sector pattern like the tag.
+
+**Rule (stage 1, noise-calibrated per ENV-60):**
+* **(a)** production ABBAAB: coast within ±1 %; hold, zero-adjusted (slope 0.021), within ±3 %.
+* **(b)** chain captures **8 vs 8** (A T T A ×4, same session): the own-mean late count, all steps and step 3.
+  **Pass if A6 is not significantly greater than T** by a one-sided conditional binomial test (A of A + T against 0.5),
+  **α = 0.05**, on each of the two.
+* **(c)** edge probe, relative to T as ENV-50.
+
+**Stage 2 as ENV-50** (walk 525 → 725, restarts incl. the window-90 twin, sweep, low rungs). Kept only if both pass.
