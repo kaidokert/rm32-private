@@ -43464,3 +43464,33 @@ calls for yet. Two locations remain, and firmware cannot separate them:
 C→A; a cyclic rotation preserves the spin direction), then re-run the 725 chain pair. If the late
 accepts **move** to the sectors of the phase that now carries the old A lead, it is the motor. If they
 **stay** on steps 3/6 (PB3), it is the board.
+
+### ENV-31 — review of ENV-29/30b accepted: it is a STEP-3 tail, not "phase A"; the inference narrowed; the rotation pinned
+
+* **ENV-29:** the 24 kHz rejection as a production lever stands (a trip on B that A lacks was predeclared;
+  dead time cannot explain ramp trips below the rung A holds). But **"desync" is not shown per event**
+  for those stops: FastBusSag is the messenger, and half the carrier also doubles the ON-pulse bus draw.
+  **The chain half never ran, so 24 kHz's effect on late crossings is untested.** "Three constants
+  failed" is withdrawn: two did (filter depth, HYST 1).
+* **ENV-30 v1:** env30-prod-3B also stopped on reason 8 (6 accepts, 101 unstable): 2/2, not 1.
+  **Defect in the rejected ENV-30b code, recorded:** `hw::comp::set_hysteresis` is a foreground
+  read-modify-write of COMP2_CSR while the COM root rewrites INMSEL on the same register. It is a race
+  that could leave a sector sensing the wrong phase. It is B-only and unlikely to bias the hold chain
+  (no writes during the hold), but **any future foreground COMP2 write needs the line masked or a
+  critical section.** The feature stays off.
+* **Central inference, corrected.** Over all 22 chain captures (late = > 1.25 × the capture's mean,
+  `scripts/late_by_step.py`): **step 3 is late 5.3–6.5 % at 725 and 1.8 % at 700; every other step,
+  including step 6 (phase A's *falling* crossing), sits at background (≤ 1.6 %).** So it is a
+  **polarity-specific tail on one terminal, rising ~×3 from 700 to 725**. That argues against a PB3 RC
+  delay (both polarities), a static neutral offset (opposite shifts, but per-step means are flat at
+  66.5–68.6 µs), the recorder's cost (same for every step), and an early previous commutation (4 of 33
+  follow a short interval). The production image corroborates it: `BEMFREVISIT` r3 is the highest in
+  every run. **Supported: "not filter depth, not HYST 1; a step-3 tail that grows with current."** An AM32
+  restructure is deferred, not ruled out.
+* **Rotation prediction, pinned before the swap.** With `Reverse`, terminal A floats in steps 3 (rising)
+  and 6, terminal B in 5 (rising) and 2, terminal C in 1 (rising) and 4. A cyclic rotation keeps each
+  winding's edge polarity. **If the cause is the motor winding now on terminal A's old position,**
+  the tail moves to **step 5** (old-A winding on terminal B) or **step 1** (on terminal C). **If it stays on
+  step 3, it is the board** (PB3 sense path, phase-A gate path, or phase-A shunt/layout; a second split,
+  swapping the PB3/PB7 sense in firmware, would follow). Bar: 3 × 725 chain captures after the rotation,
+  on the same image `BE2213DE`.
