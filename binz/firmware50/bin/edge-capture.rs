@@ -76,11 +76,13 @@ fn main() -> ! {
             // keeps the last decisions before a stop (E138, the 30% dropout).
             if b == b'5' {
                 Ring::arm_next_run();
-            } else if b == b'c' {
+            } else if b == b'c' || b == b'L' {
+                // ENV-28: `L` (the climb rung, full window) also keeps the LAST
+                // decisions, so a high-duty run's tail is captured.
                 Ring::arm_next_run_circular();
             }
             p.command(&mut board, b);
-            if b == b'5' || b == b'c' {
+            if b == b'5' || b == b'c' || b == b'L' {
                 let _ = Ring::read(|c| capture::emit(c, &mut Echo(&mut board)));
             }
         }

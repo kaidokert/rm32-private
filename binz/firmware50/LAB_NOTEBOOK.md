@@ -43291,3 +43291,37 @@ production A = `A9F121F8` (floor 5, loadable `A7FB7F22`), B = `EC82DAE6` (floor 
   rung re-qualifies on floor 3. **Reject** if early accepts cause desyncs or trips of their own.
 
 **Protocol:** production ABBAAB at 725 (6 runs), then chain ABBAAB at 725 (6 runs).
+
+### ENV-27 result — filter floor 3 REJECTED as the fix: late accepts unchanged, a desync on the lever arm
+
+Production ABBAAB at 725 (A = `A9F121F8` floor 5, B = `EC82DAE6` floor 3):
+
+| pair | worst block A / B | coast A / B | foldback A |
+|---|---|---|---|
+| (env27-prod-1A, 2B) | 4923 / 4870 | 2470 / 2494 | – |
+| (env27-prod-4A, 3B) | 4960 / 4685 | 2465 / 2479 | – |
+| (env27-prod-5A, 6B) | **5177** / 4802 | 2477 / 2484 | **715** |
+
+B is lower in 3/3 pairs (worst vs worst 5177 → 4870, −6 %), with foldbacks 1/3 → 0/3, speed +0.3–1 %,
+and hold +1–3 %. Too-early gate refusals are +18 % (0.066 vs 0.056 per accept). **2 of 3 B runs still
+exceed the 4750 gate.**
+
+Chain ABBAAB at 725 (A = `BE2213DE`, B = `38CFA5AD`), late / short accepts per 35 ms:
+A 16/25, 9/13, 9/21; B 6/5, 15/11, 12/11. **Late accepts are unchanged** (mean 11.3 vs 11.0).
+**The prediction (≤ 8) is refuted.** Short accepts halve (19.7 → 9.0), which plausibly explains the
+production worst-block gain. Late accepts on B still follow 2.2–2.5 filter rejections, and
+**env27-chain-6B (floor 3) desynced**: two consecutive late crossings (136 µs +97 %, 130 µs +62 %,
+steps 5→6, 6→1), a hunt, then a FastBusSag stop.
+
+**Verdict: rejected as the desync fix.** It does not reduce late crossings, and a desync occurred on
+it. What this establishes: the comparator output **chatters around these crossings for tens
+of µs whatever the read depth**, so there is no clean edge to accept until later. The filter
+depth is not the root. The next question is what the comparator does in a late sector.
+
+### ENV-28 — the comparator's behaviour inside a late sector (edge-capture at 725)
+
+`edge-capture` records every offered edge: µs since the last accept, the filter's live reads
+(bitmask), the outcome, and the polarity. New key `L` arms its ring circularly at the climb rung,
+keeping the last 1536 decisions (~38 ms) before the run ends. Image **`2B8B8338`**
+(`advance-ref,deep-filter,edge-probe`). New runner `scripts/edge_run.py` (from chain_run.py;
+refuses existing labels before flashing). Runs: 725 ×2, 700 ×1 (control).
