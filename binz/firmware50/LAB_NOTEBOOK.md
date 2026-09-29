@@ -43188,3 +43188,37 @@ recorder and lengthens `spent`. **So a same-image 700 control is part of the des
 running average within the ~10 ms before the freeze (an early-accepted or missed crossing,
 i.e. a slip). The 700 controls show none. **Refuted** if the accept stream into the surge
 is regular.
+
+#### ENV-25 result — the 72.5 % surges ARE desyncs: commutation angle outliers precede them. "Timing isn't what stops it" is withdrawn.
+
+Five chains on `EB409F01` (725 ×3, 700 ×2). Only env25-chain725-1 froze at an event (FastBusSag,
+reason 26); 725-2/-3 had no foldback (worst 4826 / 4803), so their rings are tails. **ENV-25's
+freeze prediction (≥ 2 at a foldback) did not get its sample: 0 foldback-frozen chains**; the
+one event chain is a sag trip.
+
+* **Effective angle** (commutation − crossing) / interval, `desync-analysis` inline: the 700
+  control's last 22 commutations are flat at 0.22–0.33 (median 0.27). env25-chain725-1,
+  ~1.3–1.0 ms before the stop: **four consecutive commutations at 0.52–0.80**, with the bridge
+  switched 48–55 µs after the crossing instead of ~17 µs. Then early accepts (intervals down to
+  32 µs, −42 %) as the loop hunts, then the phase-current spike and the sag trip. **The
+  outside reviewer's prediction ("the surge follows an outlier angle, not a random instant")
+  holds on n = 1.**
+* **Background, per 35 ms ring:** late/early interval "slip candidates" (> 25 % off the 6-accept
+  mean) 11 and 16 at 700, 26 and 32 at 725 (tails), and 39 in the event ring (17 in its final
+  5 ms). **Late accepts cluster in steps 2–3** and sit at a near-fixed ~66 µs after
+  commutation (normal ~47 µs), which is consistent with the falling-sector **level revisit**
+  (`revisit.rs`: an edge refused by the half-cycle gate leaves the comparator silent, so only
+  the foreground poll recovers it, late). Per-sector revisit counters at 725 vs 700: r5/v5
+  8.4–9.0 k → 9.9–10.0 k. This is a lead for why the angle departs, **not yet shown to be the
+  trigger of the 0.52–0.80 episode.**
+* **Withdrawn** (ENV-24 deliverable, and my report): "timing is eroding but not binding". Since
+  advance 16, a timing failure cannot present as a LateArm (ci/4 > spent). It presents
+  downstream as current. The per-event *arm* margin was the wrong link of the chain to judge
+  timing by.
+
+**Safety, open to the operator:** the AverageCurrent allowance was raised 4 → 5 A on the
+operator's "the PSU has 5 amps, use it". The outside review warns that the allowance should be
+the **motor's** number, not the supply's: there is no thermal channel and no I²t, and a sustained
+4.9 A would never stop. **No further 72.5 % runs until the operator rules on a motor-based
+allowance and I²t.** If the allowance returns to 4 A (gate 3800), 70 % on `E1256E38`
+(worst block 3920) no longer passes the gate, and the qualified top is 67.5 %.
