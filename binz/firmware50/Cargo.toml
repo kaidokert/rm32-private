@@ -24,11 +24,15 @@ bench = false
 
 # Diagnostic: shell-pwm with the COMP root's decisions recorded, for the
 # replay test (E121). Its COMP handler is slower; never a production image.
-[[bin]]
-name = "edge-capture"
-path = "bin/edge-capture.rs"
-test = false
-bench = false
+# **RETIRED on the A6 split (ENV-65):** its twin `det_decide_logged` still
+# blends in COMP and never publishes `accept_count`, so COM phase 1 would
+# commit a second time with a zero count. Re-enable only after the twin is
+# rebuilt on A6's shape (judge + arm in COMP, commit in COM).
+# [[bin]]
+# name = "edge-capture"
+# path = "bin/edge-capture.rs"
+# test = false
+# bench = false
 
 # Diagnostic: shell-pwm with the commutation timing chain recorded in both
 # motor roots (E154). Both handlers are slower; never a production image.
@@ -64,6 +68,10 @@ bench = false
 # only because step 6a left no value touched by both roots; the compiler
 # enforces that through `shared::CompPrio`. Never a production image: the
 # qualified arrangement is peers at 0x40, which is the default.
+# **RETIRED on the A6 split (ENV-65):** COM commits through `Seam::lock`, which
+# returns None in handler mode, so a com-top build never commits; and COMP
+# publishes accept_count after the arm, a window COM could preempt. See
+# `compile_error!` in shared.rs.
 [features]
 com-top = []
 # Drops the advance level at/above 35% duty from 22 to 20, for the A/B E300

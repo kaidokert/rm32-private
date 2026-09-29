@@ -91,6 +91,10 @@ impl Priority for Guard {
 /// moved the last value COM shared with COMP out of the way, which is what
 /// makes the split possible at all.
 #[cfg(feature = "com-top")]
+compile_error!(
+    "com-top is retired on the A6 split (ENV-65): COM's commit goes through Seam::lock, which is None in      handler mode, and COMP publishes accept_count after the arm -- a window a higher-priority COM would preempt"
+);
+#[cfg(feature = "com-top")]
 pub struct CompLow;
 #[cfg(feature = "com-top")]
 impl Priority for CompLow {

@@ -45105,3 +45105,67 @@ At 75 % on the tag (ENV-40) the **arm deadline** was live: thin 8–9, one LateA
 * "the shorter handlers open the 75 % deadline" = A6 has 0 LateArm and thin ≤ 2 in 3/3 while the tag shows LateArm or
   thin ≥ 5;
 * "75 % is open" additionally needs worst < 4750 in 3/3, which is predicted not to hold.
+
+#### ENV-64 result — 750, same session, ABBAAB (A = tag cap-750 `D12EB4BE`, B = A6 cap-750 `2B9686C5`)
+
+| run | image | reason | hold_s | coast | hold_ma | worst_ma | ceiling | thin | late | spent | too_early/acc |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1A | tag | **26 FastBusSag** | 6.5 | 2616 | 4023 | 4752 | 750 | 2 | 0 | 11 | 1.06 % |
+| 2B | A6 | 2 | 40.3 | 2593 | 4093 | 5007 | **740** | 5 | 0 | 10 | 1.82 % |
+| 3B | A6 | 2 | 40.3 | 2618 | 4062 | 5037 | **740** | 1 | 0 | 10 | 1.89 % |
+| 4A | tag | **26 FastBusSag** | 21.4 | 2585 | 4094 | 4856 | 750 | 8 | 0 | 11 | 1.95 % |
+| 5A | tag | 2 | 40.3 | 2667 | 3999 | 4837 | 750 | 12 | 0 | 11 | 2.48 % |
+| 6B | A6 | 2 | 40.3 | 2643 | 4099 | **5111** | **740** | 2 | 0 | 10 | 1.79 % |
+
+**Against the predeclared rule: "the shorter handlers open the 75 % deadline" is NOT established.**
+* The tag showed 0 LateArm stops in this session (ENV-40 had 1/3), so the arm deadline did not fire on either image.
+* A6 thin counts are 5 / 1 / 2. That fails the predeclared "thin ≤ 2 in 3/3" by one run.
+* What the numbers do show:
+  * thin total 8 vs 22;
+  * `spent_max` 10 vs 11 on every run;
+  * `ci_min` 41–43 vs 40–43.
+
+  So the margin improved, but not by the bar I set.
+
+**"75 % is open": NO, as predicted.**
+* A6's worst blocks were 5007–5111, and AverageCurrent foldback took the ceiling to 740 in 3/3.
+* The tag's worst blocks were 4752–4856 (two of them truncated by the stop).
+
+**Unpredicted, reported as observations (n = 3 a side, not significant):**
+1. The tag stopped on FastBusSag in 2/3; A6 stopped in 0/3 (Fisher one-sided p = 0.2).
+2. **A6's worst block is higher than the tag's in the same session, by about 150–350 mA** (A6 min 5007 vs tag full-length 4837). Hold is +1.3 % raw (not zero-adjusted). This agrees with review item 10: 725 worst 4466 vs 4423 cross-session, and higher `too_early` at 600–700. **A6 carries the 72.5 % bar (worst 4421–4466 < 4750), but with less current headroom than the tag.** A6 trades desync-class stops at 75 % for more current-ripple foldback.
+3. `too_early`/accept at 750 is similar on both images (A6 1.8–1.9 %, tag 1.1–2.5 %). The 4–8× `too_early` excess the review found at 600–675 cross-session is not visible at 750 same-session. Whether it is real at 600–675 has not been tested same-session.
+
+### ENV-65 — review of A6 (kept attempt): corrections and fixes
+
+Independent review verdict: **keep A6, production image only, after fixes.** Findings and what I did about each:
+1. **The diagnostic twin `det_decide_logged` was not updated (ERROR).** It still blends in COMP and never stores `accept_count`, so COM phase 1 would commit a second time with count 0.
+   * Only the `edge-capture` image runs it.
+   * **Fixed by retiring** the `edge-capture` `[[bin]]` in Cargo.toml, with the reason written there. It is to be rebuilt on A6's shape before any reuse.
+   * Chain and production images are unaffected; the ENV-62 isr_diff covers them.
+2. **`com-top` was broken, and ENV-61's claim about it was false (ERROR, my error).**
+   * `Seam::lock` returns `None` in handler mode, so a com-top build never commits.
+   * The host suite's "362/362 with com-top" was false assurance, because on the host `thread_mode()` is always true.
+   * There is also a real preemption window: COMP publishes `accept_count` after the arm.
+   * **Fixed:** `com-top` is now a `compile_error!` naming both reasons.
+3. **Loadable reproduction (OMISSION), done:**
+   * A6 production rebuilt from source: **loadable `31FE2832`, identical**.
+   * The tag, rebuilt in a clean worktree: identical length. It differs only in the order of the vendored-HAL panic-path strings and the literal pointers to them (484 bytes). **`isr_diff` against the archived `7450FE24`: all four ISRs instruction-identical** (ADC_COMP 818, TIM16 368, TIM6 155, DMA 37).
+   * The worktree path is embedded in rodata, which makes byte-for-byte reproduction depend on the build path.
+4. **A protection input moved one step stale (OMISSION): declared here.**
+   * `guard_event` (tracking watch), `note_margin`/`ci_min` and `ci_at_late` now read the pre-commit average, from the previous commutation.
+   * In steady state that is within one blend step. At high rungs the tracking watch's 200 µs floor binds, so its deadline is unchanged there.
+   * Kept, because restoring it would put estimator arithmetic back into COMP.
+   * The sweep's tracking/guard provocations still stop 10/10 (ENV-63).
+5. **Wording correction:**
+   * "Tag pre-read unchanged" is not exact. The first comparator read moved **#133 → #137 (+4 instructions)**.
+   * Arm #263 (tag #304), total 396 (tag 425) and COM phase 1 264 (tag 207) reproduce.
+6. OK: the commit logic is sound for peers at 0x40; handover seeding is correct.
+7. **Shape (accepted as written):**
+   * The blend, clamp, advance and wait moved into COM, matching AM32's `PeriodElapsedCallback`.
+   * Nothing was deleted. After the arm, COMP still runs the storm limiter, spent-subtraction, tracking watch, margin counters and handler budget — all cheap safeguards, kept by the operator's rule.
+   * **COMP stays at 3.5× AM32 (arm 2.5×).** The pre-read depth map and gate were not cut, because every cut that moved the read (A1, A4, A5) changed detection.
+8–9. Stage 1 and stage 2 numbers reproduce; the rules were applied as predeclared.
+10. The high-duty current signature is now reported same-session in ENV-64 item 2: A6 has less current headroom at 750.
+
+**A6 is tagged `fw50-am32-a6`:** production image `0A978A82`, loadable `31FE2832`, features `advance-18,deep-filter`.
