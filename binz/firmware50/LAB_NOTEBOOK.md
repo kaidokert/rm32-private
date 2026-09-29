@@ -43800,3 +43800,32 @@ unchanged ladder gates. Then restart 3/3 at 700 and 725, then the protection swe
 
 Any failure stops the claim at the last passing rung. A LateArm stop at any rung is reported as the timing wall, not
 waived.
+
+#### ENV-37/38 review — corrections, and the ENV-38 rule AMENDED before any 725 result (stricter only)
+
+Verified: every number in both tables matches the captures. `C567066B` = `7450FE24` and `A9F121F8` = `1E5C79B4` as
+flash images.
+* **ENV-37 relabel:** A folded back 1/3 (plus 1 FastBusSag stop), so **the predeclared ≥ 2/3 baseline bar was not met**.
+  Honest label: *rejected on B's own criterion (3/3 foldback); A's baseline not reproduced by the bar.* Calling the stops
+  "baseline events" was a post-hoc relabel. **Blank-12 looked harmful:** every B worst block is above every A (5074–5140
+  vs 4789–5008, one-sided p = 0.05), with lower hold and coast.
+* "The benefit is the timing" → "**the benefit is the advance change**". The commutation instant (~3 µs at operating
+  points), the ramp (`ADVANCE_LOW` 18), and the operating point (+3 % speed, +8 % current, 5× more sub-99 % bus samples)
+  are not separated.
+* **Candidate mechanism (hypothesis):** margin absorption. A late crossing of Δ cuts the effective advance to adv − Δ;
+  adv 18's extra 2–3 µs keeps a typical late event above the angle where the step-3 commutation drives current into
+  falling back-EMF. That fits `gt150` rising while the surges vanish. Tests: a per-event (Δ, following block current)
+  pairing, or a dose response over adv 16/17/18/20.
+* `BEMFPHASE` `to100`/`to125` saturate at 65535 (u16), so histogram-sum shares are wrong; per-accept ratios are fine.
+
+**ENV-38 rule, amended (committed while the walk is at 52.5 %, before any 725 hold exists; stricter only):**
+* **The primary metric at 725 is the worst block** (all 6 adv-16 runs ≥ 4789; all 3 adv-18 ≤ 4419). Required: **< 4750 in
+  3/3 confirmatory walk holds**, reported separately from the pooled 6/6 with ENV-36's B runs (those produced the hypothesis
+  and cannot confirm it).
+* **`thin ≤ 5` is withdrawn** (chosen after seeing 0/1/2). Replaced by **`late_arms = 0` and `spent_max_us ≤ 11` in every run**,
+  with `thin_count` and `ci_min` reported as the canary.
+* **The cap reverts to 700** if the walk stops below 725, and adv-18's status at the passing rungs is then decided
+  explicitly.
+* **Low rungs:** adv 18 changes `ADVANCE_LOW` (the ramp below 35 %), so 375–500 plus low-duty restarts are walked on this
+  image after the main walk. Check that a sag injection at the 725 rung is not silently clipped by the cap.
+* FastBusSag and `mdep_n` are monitored (adv 18 sags ~5× more often).
