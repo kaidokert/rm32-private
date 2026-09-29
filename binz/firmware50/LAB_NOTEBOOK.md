@@ -43109,3 +43109,64 @@ Leads for the mechanism, **not** a mechanism: sustained (≥ 26 ms) current excu
 more rejected early zero-crossings (+9 %), and a sector-5/sector-2 revisit asymmetry.
 **Timing is eroding but not binding:** min per-event `left` 5 → 4 µs from 67.5 to 70 %,
 still 4 at 72.5 %, and the first thin arm at 70 %.
+
+### ENV-24 — review of ENV-22/23 accepted: corrections, one residual fixed in source, and the edge restated honestly
+
+Independent review verdict: **ACCEPT WITH CORRECTIONS.** The reviewer independently confirmed
+the safety fix, the observer's production byte-identity (rebuilt both sides in one directory:
+identical loadables), and the 70 % re-qualification on `E1256E38`.
+
+**Fixed in source:** the `x` provoke cycle still listed 725..800 above a 700 cap, so `Z` would
+run at 700 while its capture said 750 (a mislabel, not a new duty). The cycle now wraps at
+`SIXSTEP_DUTY_CAP` (725 only under `edge-probe`). The new test
+`the_provoke_cycle_never_offers_a_duty_above_the_cap` **fails on the old code and passes on the
+fix.** Suites 362/360/360. This is a foreground change, so it produces a new image. **The
+qualified carried image stays `E1256E38`**, which carries this residual; the qualification never
+used `x` above 700. The next qualification is on the fixed source.
+
+**Residual, named, not fixed:** `edge-probe` is kept out of qualifying images by convention
+only; the ladder does not yet refuse a capture whose `applied_cap` exceeds the qualified top.
+
+**Corrections:**
+* **ENV-22's own prediction was refuted:** an over-block freeze in ≥ 2/3 runs was predicted;
+  the result is **1/3** (run 1). Recorded as a result.
+* Sag trip depth: the reference sat 7.26 % *above* the bus, i.e. the bus was **6.8 % under**
+  it (not 7.3 %). "32.6 s" is into the hold (~64 s into the closed loop).
+* **Scale:** vref ≈ 1505 codes means VDDA ≈ 3.30 V, not the 3600 mV the calibration assumes.
+  Amplifier full scale is **~±23.6 A**, and every firmware mA figure is on the firmware's own
+  scale (~9 % high by this arithmetic; the operator's meter said ~4–6 %). All mA figures in
+  this notebook are firmware-scale.
+* Surge run 1: 16-scan bins span **3.8–5.9 A** (mean 4.8 A); the two 10 ms blocks read 4748
+  and 5008 mA. "Sustained ≥ 26 ms" stands as a lower bound. **"Time-localized: refuted" was
+  too broad:** run 3's last 32 scans show 5.1 then 8.2 A (a 16-scan peak of 23 A, clipped)
+  against 2.4–3.6 A before, **a surge lasting a few ms just before the sag latch.** Scoped,
+  n = 1 each: the foldback excursion was sustained; the sag trip was preceded by a surge
+  lasting a few ms. Run 2's tail at 725 (3.43 A, same duty and image) is the same-duty control,
+  beside the 700 rings (3.23 / 3.33 / 3.37 A).
+* **Edge counts, per image:** "5/6 production-lineage" mixed in the margin-hist image, which
+  is not behaviour-neutral. Production `B734ACCD` folded back 2/3. Across all nine 725 runs:
+  **AverageCurrent foldback 6/9, the 4750 gate fails 8/9** (recorder run 2 read 4600), and
+  FastBusSag latched 1 time. **All 72.5 % evidence is on cap-800 / edge images**; the carried
+  `E1256E38` cannot run 72.5 % by design.
+* Saturation is real: bus and vref slots are continuous with their neighbours, `adc_ovr=0`, and
+  row 248's phase sum sits near the zero (a circulating current, not a torn scan). No other
+  ring has a sample within 50 codes of either rail.
+* "First spontaneous FastBusSag latch on this motor" stands (campaign 7's trips were the
+  previous physical motor). **It is also the first hardware demonstration that FastBusSag
+  fires on this motor**, which closes the standing coverage gap by observation, though not by a
+  positive-control stimulus.
+
+#### Deliverable, this goal
+
+* **Qualified: 52.5–70 % on advance 16**, carried image **`E1256E38`** (loadable `8A50451A…`).
+  Worst at 70 %: 2412 eHz (env23-r700-1), 3202 mA hold (env23-r700-2), 3920 mA block
+  (env23-r700-1), 31.4 sag codes (env23-r700-3). Restart 3/3 (thin evidence: 2.0 / 2.2 s
+  segments). Sweep 10/10. One thin arm (env23-r700-1).
+* **What 67.5 → 70 % bought:** coast +3.0 % worst vs worst (2342 env17-ctl675-2 → 2412
+  env23-r700-1), for 1 µs of per-event arm margin (min `left` 5 → 4 µs) and the first thin arm.
+* **Edge: 72.5 %**, measured on edge images: AverageCurrent foldback 6/9 at its 5000 mA
+  allowance, the 4750 gate 8/9, and one genuine FastBusSag latch after a phase current past
+  full scale. **Next blocker: current at 72.5 %.** Leads, not a mechanism: sustained current
+  excursions, +9 % rejected early crossings, a sector-5/2 revisit asymmetry, and a ms-scale
+  surge before the sag trip.
+* **Timing:** eroding (5 → 4 µs, first thin arm at 70 %), not binding through 72.5 %.

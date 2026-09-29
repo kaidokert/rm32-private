@@ -895,6 +895,32 @@ mod tests {
     }
 
     #[test]
+    fn the_provoke_cycle_never_offers_a_duty_above_the_cap() {
+        // ENV-24: with 725..800 in the cycle above a 700 cap, `Z` ran at 700 while
+        // the capture said 750. Every value `x` can reach must be <= the cap, and
+        // the cycle must return to 250.
+        use crate::run::policy::SIXSTEP_DUTY_CAP;
+        let mut sim = Sim::new(STEADY, Faults::default());
+        let mut p = Production::new();
+        let mut seen = std::vec::Vec::new();
+        for _ in 0..20 {
+            p.command(&mut sim, b'x');
+            let at = sim.log.text.rfind("PROVOKEAT duty_tenths=").expect("x echoes its duty");
+            let tail = &sim.log.text[at + "PROVOKEAT duty_tenths=".len()..];
+            let v: u16 = tail
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(v <= SIXSTEP_DUTY_CAP, "x offered {v} above the cap {SIXSTEP_DUTY_CAP}");
+            seen.push(v);
+        }
+        assert!(seen.contains(&250), "the cycle wraps");
+        assert!(seen.contains(&SIXSTEP_DUTY_CAP), "the cap itself is commandable");
+    }
+
+    #[test]
     fn a_lowercase_key_provokes_from_the_locked_25_percent_loop() {
         let faults = Faults {
             guard_stale_us: Some(3 * 144),

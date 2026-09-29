@@ -654,7 +654,7 @@ impl<
             b'x' => {
                 // 25% (campaign 5), 37.5% (campaign 6), then 47.5% -- campaign
                 // 7's highest qualified rung, where its item 5 runs (E149).
-                self.provoke_tenths = match self.provoke_tenths {
+                let next = match self.provoke_tenths {
                     250 => 375,
                     375 => 475,
                     // 500 and 600 added in E244. The goal requires 3/3 restart
@@ -671,13 +671,15 @@ impl<
                     625 => 650,
                     650 => 675,
                     675 => 700,
-                    // ENV-20: the rest of the walk's rungs.
+                    // ENV-24 (review of ENV-22/23): the cycle stops at the cap.
+                    // With 725..800 listed above a 700 cap, `Z` ran at 700 while the
+                    // capture said 750 -- a mislabel, not a new duty, but exactly
+                    // the kind of record that misleads. So wrap at the cap.
+                    // Only an `edge-probe` diagnostic image's cap admits this.
                     700 => 725,
-                    725 => 750,
-                    750 => 775,
-                    775 => 800,
                     _ => 250,
                 };
+                self.provoke_tenths = if next > policy::SIXSTEP_DUTY_CAP { 250 } else { next };
                 io.say("PROVOKEAT ");
                 io.kv("duty_tenths", u32::from(self.provoke_tenths));
                 io.say("\r\n");
