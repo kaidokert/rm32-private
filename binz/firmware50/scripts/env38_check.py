@@ -29,4 +29,9 @@ for rung in sorted(runs):
         w = [r["worst"] for r in rs]; fb = [r for r in rs if r["ceil"] != 725]
         print(f"  725 confirmatory worst {w} -> {'PASS' if all(x < 4750 for x in w) else 'FAIL'}; foldbacks {len(fb)}")
         ok &= all(x < 4750 for x in w) and not fb
-print("RULE (timing + 725 criteria):", "PASS" if ok else "FAIL")
+need = [525, 550, 575, 600, 625, 650, 675, 700, 725]
+missing = [r for r in need if len(runs.get(r, [])) < 3]
+if missing:
+    print("RULE: INCOMPLETE (rungs lacking 3 completed captures:", missing, ")", "- so far", "no failure" if ok else "FAIL")
+else:
+    print("RULE (timing + 725 criteria):", "PASS" if ok else "FAIL")

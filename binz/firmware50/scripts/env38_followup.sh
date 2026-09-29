@@ -3,7 +3,7 @@
 cd "$(dirname "$0")/.."
 ELF=captures/elf/7450FE24.env37-adv18-cap725-qual.elf
 PROOF="ENV-38 low-rung re-qualification of advance 18 (ADVANCE_LOW 18 changes the ramp below 35%); same image walked 525..725 in ENV-38."
-plus() { n=$(( ($1 - 400) / 25 )); if [ $n -lt 0 ]; then printf -- '-%.0s' $(seq 1 $(( -n ))); else printf '+%.0s' $(seq 1 $n); fi; }
+plus() { n=$(( ($1 - 400) / 25 )); if [ $n -lt 0 ]; then printf -- '-%.0s' $(seq 1 $(( -n ))); elif [ $n -gt 0 ]; then printf '+%.0s' $(seq 1 $n); fi; }
 for R in 375 400 425 450 475 500; do
   for i in 1 2 3; do
     echo "=== hold $R run $i"

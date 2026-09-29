@@ -43829,3 +43829,133 @@ flash images.
 * **Low rungs:** adv 18 changes `ADVANCE_LOW` (the ramp below 35 %), so 375–500 plus low-duty restarts are walked on this
   image after the main walk. Check that a sag injection at the 725 rung is not silently clipped by the cap.
 * FastBusSag and `mdep_n` are monitored (adv 18 sags ~5× more often).
+
+#### ENV-38 result (2026-09-29) — walk 525 → 725 PASS on `7450FE24`; the 725 restart cannot fit the 78 s window; sweep 10/10
+
+**Walk** (`scripts/env37_qual.sh` + `env38_resume.sh`), image `7450FE24`, loadable `CB638C58`, advance 18, cap 725.
+Every rung 3/3 under the unchanged gates. `env38_check.py` (mechanical): **RULE PASS**. Worst figures per rung (worst of
+three runs, run named):
+
+| rung | coast eHz | hold mA | worst block mA (run) | late_arms | spent_max | thin (max) | ci_min (min) |
+|---|---|---|---|---|---|---|---|
+| 525 (anchored) | 1969–1980 | 1685–1697 | 2631 (r525-2) | 0 | 11 | 0 | 58 |
+| 550 | 2038–2051 | 1879–1889 | 2983 (r550-2) | 0 | 11 | 0 | 53 |
+| 575 | 2106–2114 | 2082–2094 | 2831 (r575-2) | 0 | 11 | 0 | 53 |
+| 600 | 2178–2186 | 2283–2297 | 3085 (r600-1) | 0 | 11 | 0 | 53 |
+| 625 | 2226–2249 | 2473–2491 | 3392 (r625-1) | 0 | 11 | 0 | 51 |
+| 650 | 2294–2322 | 2716–2722 | 3486 (r650-2) | 0 | 11 | 0 | 46 |
+| 675 | 2361–2372 | 2953–2958 | 3672 (r675-1) | 0 | 11 | 1 | 47 |
+| 700 | 2455–2478 | 3329–3342 | **4702 (r700-2)** | 0 | 11 | 3 | 46 |
+| **725** | **2542–2557** | **3601–3606** | **4423 (r725-1)**; 4360, 4322 | **0** | **11** | 1 | **42** |
+
+* **725 confirmatory: worst 4423 / 4360 / 4322, all < 4750; 0 foldback (ceiling 725 in 3/3).** Pooled with ENV-36's B
+  runs on the same loadable: 6/6 below 4750, 0/6 foldback — against advance 16's 6/6 ≥ 4789 (ENV-36/37).
+* 550 run 1 was refused by the ladder, not failed: my mid-walk commit raced `ladder_state.json` (scar recorded). Run 4 is
+  the replacement third run.
+* **Cost seen at 700, cross-session only:** advance-18 worst blocks 4477 / 4702 / 4538 vs advance 16 on `E1256E38`
+  (2026-09-28, ENV-23) 3920 / 3853 / 3773, hold 3329–3342 vs 3176–3202. Not a same-session comparison; tested below
+  (ENV-39) before any claim.
+* Canary: `ci_min` 42 at 725 with advance 18 gives wait = 42·14/64 ≈ 9.2 µs against `spent_max` 11 — the arm deadline
+  is where the next rung breaks (`thin` 1, 1, 0 at 725; 1, 1, 3 at 700).
+
+**Restarts** (`Z`, `env38-rst*`): **700: 3/3 PASS** (recovered=1, second segment reason 2). **725: 0/3 — refusal 3
+`NoRoom`, not a drive failure.** The first segment stopped on the injected Tracking fault (reason 8) exactly as at 700,
+and the restart policy refused a second segment: `restart_campaign` needs STARTUP 5 s + `ramp_us(725)` + MIN_HOLD 2 s
++ 200 µs inside the 78 s window, and after a first segment that ends at 41.0 s only ~36 s remain against ~38.7 s
+needed. At 700 the margin was 0.25 s. **70 % is the last rung whose restart fits `BEMF_TOTAL_MS = 78 000`.** Changing
+that constant changes the production image, so the 725 restart is **owed**, not failed: it needs a diagnostic image with
+a longer window (the restart path code otherwise identical) — labelled as such when run.
+
+**Sweep** (default duty, `--no-ladder`, `env38-prot-*`): t→8, g→3, f→4, n→7, u→13, h→14, i→25 (20.3 ms), k→15, q→16,
+w→IWDG reset. **10/10.**
+
+**Sag injection at the top rung:** `Inject::Sag` adds 75 and is clamped `.min(SIXSTEP_DUTY_CAP)`; at the 725 rung it is
+clipped to 725, i.e. **the sag stimulus is inert at the cap rung by design** (the ENV-6 safety fix; pinned by
+`the_sag_stimulus_never_leaves_the_campaign_ceiling`). Not a silent pass — it cannot be provoked there.
+
+**Low rungs:** 375 on this image failed only the host oracle-coast gate (1543 / 1546 / 1551 vs 1650 ±5 %). That gate
+encodes the **previous motor** (Q60-3): advance 16 on `B1E51E59` fails it identically (375 → 1551, 500 → 1912–1921). So
+the low-rung walk as scripted could never pass on any image; 400–500 were refused by the ladder. Redone as ENV-38b:
+400–500 each anchored with that proof, judged on every other gate + the within-run `BEMFSELFREF` identity, plus
+restart 500. Speed at 375: advance 18 = 1543–1551, advance 16 = 1551 — no low-end speed cost.
+
+**Status of the rule's criteria:** walk ✔, 725 worst < 4750 3/3 ✔, 0 foldback ✔, late_arms 0 / spent ≤ 11 ✔,
+restart 700 ✔, **restart 725 owed (window)**, sweep ✔, low rungs pending (ENV-38b).
+
+### ENV-39 — predeclared: same-session advance 16 vs 18 at 70 % (ABBAAB), to test the cross-session worst-block cost
+
+A = `1E5C79B4` (advance 16, cap 725), B = `7450FE24` (advance 18, cap 725), rung 700, `ab_abbaab.sh`, 6 runs.
+**Predictions (before running):** B worst block higher than A by ~300–700 mA (cross-session showed ~+700); B coast +2–4 %;
+B hold +3–6 %; 0 foldback both sides. **Interpretation declared now:** if every B worst block > every A (p = 0.05, the
+maximum for 3 vs 3), advance 18 has a real cost at 70 % — a lost margin, not a lost rung (all < 4750) — and the
+kept-lever claim must carry it. If the sides overlap, the cross-session difference was the session, and is withdrawn.
+
+#### ENV-38b — low rungs 400–500 and restart 500 on `7450FE24`: PASS on every gate but the previous-motor oracle
+
+Each rung anchored (proof: Q60-3 — the host `ORACLE` coast gate encodes the previous motor and fails advance 16 identically).
+Judged mechanically by `scripts/env38_low_check.py`: all `cohort.run_gates` gates except the oracle-coast one, plus
+`cohort.self_ref_fails` (the within-run rate identity the 525+ rungs use). **Result: PASS at every rung, 3/3.**
+
+| rung | coast eHz | hold mA | worst block mA (worst run) | oracle (old motor) | self-ref |
+|---|---|---|---|---|---|
+| 375 (`env38-r375-*`) | 1543–1551 | 764–774 | 1500 (r375-2) | fail (1650) | PASS 3/3 |
+| 400 (runs 3–5) | 1622–1629 | 912–921 | 1525 (r400-3) | fail (1736) | PASS 3/3 |
+| 425 | 1694–1713 | 1050–1055 | 1526 (r425-1) | fail (1815) | PASS 3/3 |
+| 450 | 1768–1773 | 1181–1211 | 1607 (r450-1) | fail (1893) | PASS 3/3 |
+| 475 | 1835–1846 | 1333–1349 | 1770 (r475-3) | fail (1995) | PASS 3/3 |
+| 500 | 1898–1914 | 1504–1519 | 1970 (r500-3) | fail (2096) | PASS 3/3 |
+
+**Restart 500: 3/3 PASS** (recovered=1, second segment reason 2, 22.2 s).
+**Advance 18 vs advance 16 on this motor at the low end:** 375 → 1543–1551 vs 1551 (`q60-anchor375`); 500 → 1898–1914 vs
+1912–1921 with hold 1504–1519 vs 1576–1653 (`q60-r500_*`). No low-end speed cost; slightly lower current.
+
+**My error, caught by the firmware's own guard:** the `plus()` climb helper printed one `+` for a zero-step rung
+(`printf '+%.0s'` with no arguments still prints once), so `env38b-r400-1/2` drove **425**, not 400. `bemf_run.py`'s
+duty-identity check failed both runs loudly ("capture ran 425 tenths, not the 400 asked for"); they are excluded by name in
+the checker and replaced by runs 3–5. Fixed in `env38_followup.sh` and `env38_lowrungs.sh`; every other script's helper
+is only ever called for rungs > 400.
+
+### ENV-40 — predeclared: advance 18 at 75 % on a diagnostic cap-750 image (is there headroom above 72.5 %?)
+
+Image **`D12EB4BE`** (`advance-18,deep-filter,edge-probe`), loadable **`22EDF8AB`**. `isr_diff` against `7450FE24`: all four
+ISR roots instruction-identical (TIM16 only has a relocated constant); the only intended difference is
+`SIXSTEP_DUTY_CAP` 725 → 750 (edge-probe). **Not a qualifying image** — a 750 result here decides whether a production cap
+raise is worth walking. Three `L` holds at 750, anchored (proof: identical ISR roots to the image that walked 525–725),
+unchanged gates, fresh flash each.
+
+**Predictions (from the 700 → 725 deltas on `7450FE24`):** coast 2630–2660 eHz; hold 3850–3950 mA; mean ci ≈ 63 µs;
+`ci_min` 38–41 µs. Advance 18 arms at wait = ci·14/64: **ci 40 → 8.75 µs against `spent_max` 11 µs**, so the arm
+deadline is predicted to be crossed. **Primary prediction: `late_arms` > 0 in ≥ 2/3 runs, with a LateArm stop
+(reason 15) in at least one.** If a run survives: worst block 4600–5000, foldback possible.
+**Interpretation declared now:** any LateArm stop, or `late_arms` > 0 in 2/3, means 75 % is blocked by the **arm deadline**
+(ISR `spent` vs the advance-18 wait), not by the detection mechanism of ENV-24..36. Then 72.5 % is the envelope of this
+architecture at advance 18, and the next lever is on `spent`, or on where the commutation work happens (the AM32
+question). If all three pass with `late_arms` = 0 and worst < 4750, the prediction is refuted and a production cap-750
+walk follows.
+
+#### ENV-39 result — advance 18 costs worst-block margin at 70 % (same session, ABBAAB, p = 0.05); no rung lost
+
+| run | image | reason | ceiling | coast | loop eHz | hold | **worst** | thin | ci_min | mdep_n |
+|---|---|---|---|---|---|---|---|---|---|---|
+| env39-ab700-1A | `1E5C79B4` adv 16 | 2 | 700 | 2416 | 2450 | 3138 | 3769 | 0 | 49 | 2886 |
+| env39-ab700-2B | `7450FE24` adv 18 | 2 | 700 | 2479 | 2487 | 3338 | **4474** | 3 | 50 | 5359 |
+| env39-ab700-3B | adv 18 | 2 | 700 | 2482 | 2487 | 3343 | **4543** | 2 | 50 | 5403 |
+| env39-ab700-4A | adv 16 | 2 | 700 | 2431 | 2450 | 3135 | 3784 | 0 | 48 | 2554 |
+| env39-ab700-5A | adv 16 | 2 | 700 | 2419 | 2450 | 3130 | 3737 | 0 | 49 | 2662 |
+| env39-ab700-6B | adv 18 | 2 | 700 | 2468 | 2487 | 3347 | **4537** | 1 | 47 | 5681 |
+
+**Every B worst block exceeds every A (4474–4543 vs 3737–3784; one-sided p = 0.05, the floor for 3 v 3).** Per the
+predeclared interpretation: **a real cost at 70 %** — margin to the 4750 gate shrinks from ~970 mA to ~210 mA; the rung is
+still passed (6/6 B runs < 4750 counting ENV-38's walk). Predictions: worst +300–700 → **+690…+806 (at/above the top of
+the band)**; coast +2–4 % → loop +1.5 % (**below band**); hold +3–6 % → **+6.6 % (top)**; 0 foldback ✔.
+The cross-session ENV-38 observation is **confirmed, not a session artefact**.
+
+**New observation, not yet explained (a hypothesis only):** advance 18's worst block at 70 % (4474–4702 over 6 runs) is
+*higher* than its worst at 72.5 % (4322–4423). So the 70 % excess is not a smooth duty trend; it is its own event class.
+`mdep_n` (bus samples below the depth threshold) doubles, B vs A. The 72.5 % surges that advance 18 removed (ENV-36) were
+step-3-late cascades; whether the 70 % B blocks are the same sequence at a lower amplitude, or a different mechanism (e.g.
+the extra current simply riding a deeper bus dip), needs a per-event capture (chain recorder at 700 on advance 18). Owed.
+
+**Status of advance 18 (lever: a constant):** it removes the 72.5 % foldback surges (6/6 < 4750 vs 6/6 ≥ 4789) and
+costs 70 % margin (~970 → ~210 mA). Kept by the rule — it reduces desyncs at 72.5 % and costs no *earned rung* — with
+the margin cost carried in the claim.
