@@ -1,7 +1,7 @@
 #!/bin/bash
-# ENV-29: filter floor 5 (A) vs 3 (B) at 725. Production ABBAAB, then chain ABBAAB.
+# ENV-29: carrier 48 kHz (A) vs 24 kHz (B) at 725. Production ABBAAB, then chain ABBAAB.
 cd "$(dirname "$0")/.."
-PA=captures/elf/A9F121F8.env29-prod-f5-edge725.elf
+PA=captures/elf/A9F121F8.env27-prod-f5-edge725.elf
 PB=captures/elf/675F52BA.env29-prod-24k-edge725.elf
 CA=captures/elf/BE2213DE.env26-chain-origin-refusals-edge725.elf
 CB=captures/elf/3CBCD226.env29-chain-24k-edge725.elf
