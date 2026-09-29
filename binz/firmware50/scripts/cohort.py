@@ -419,7 +419,7 @@ def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
     if r["worst_ma"] >= WORST_MA_CEILING:
         fails.append(
             f"worst block {r['worst_ma']} mA at or above {WORST_MA_CEILING}: "
-            "within 5% of the firmware's own 4 A allowance, where AverageCurrent "
+            "within 5% of the firmware's own AverageCurrent allowance (RAW_ALLOW, 5000 mA since ENV-20), where AverageCurrent "
             "folds back and a foldback disqualifies the rung"
         )
     ref = ORACLE.get(r["duty"])

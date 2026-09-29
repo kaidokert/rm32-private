@@ -42953,3 +42953,58 @@ The hypothesis to test: **the timing deadline, not current, becomes the binding 
 near 77.5–80 %** (min `left` falling ~1 µs per step: 5 @675 → 4 @700). A LateArm stop
 is a protection result, not a failure to argue with. Sag margin: no prediction (non-
 monotone, ENV-17).
+
+### ENV-21 — 70 % QUALIFIED on the 5 A allowance; the edge is 72.5 %, stopped by the firmware's own AverageCurrent
+
+**70 %, image `B734ACCD`** (loadable `67F78B55…`), holds 3/3 rung PASS:
+
+| run | coast | hold mA | worst block | sag codes | thin / late |
+|---|---|---|---|---|---|
+| env20-r700-1 | 2408 | 3085 | **3759** | 35.2 | 0 / 0 |
+| env20-r700-2 | 2419 | 3130 | 3723 | 34.6 | 0 / 0 |
+| env20-r700-3 | **2406** | **3157** | 3731 | **31.3** | 0 / 0 |
+
+Restart 3/3 (`second_reason=2`, `recovered=1`). **Segment 2 held only ~2.2 s**, all that the
+fixed 78 s window leaves at this rung, so the restart evidence is thin, and it is stated
+that way. Segment worst blocks 3645–3878, no foldback. Sweep 10/10 at
+`target_duty_tenths=250`, all `B734ACCD` (env21-prot-*; `v` omitted per ENV-12).
+Per-event arm margin (env20-mh700, `9E5BED16`, hold window 621 k arms): min `left`
+5 µs (9 arms), 140 at 6 µs, thin / late 0.
+
+**What 67.5 → 70 % bought:** coast **+2.7 %** (worst 2342 env17-ctl675-2 → 2406
+env20-r700-3). Timing margin is **unchanged per event** at the worst case (min `left` 5
+µs at both, env19-mh675 / env20-mh700). ENV-17's 4 µs at 700 was on the pre-ENV-20 image
+(`57C3A63C`); at 1 µs quantization and n = 1 here, "unchanged" means "not resolvably
+worse".
+
+**Edge: 72.5 %, 6/6 runs stopped by current:**
+
+| run | image | coast | hold | worst block | `ceiling_tenths` |
+|---|---|---|---|---|---|
+| env20-r725-1 | `B734ACCD` | 2469 | 3360 | 4970 | 725 |
+| env20-r725-2 | `B734ACCD` | 2462 | 3279 | **5012** | **715** |
+| env20-r725-3 | `B734ACCD` | 2447 | 3280 | **5106** | **715** |
+| env21-mh725-1 | `9E5BED16` | 2466 | 3384 | **5257** | **715** |
+| env21-mh725-2 | `9E5BED16` | 2451 | 3361 | **5115** | **715** |
+| env21-mh725-3 | `9E5BED16` | 2452 | 3367 | **5050** | **715** |
+
+**5 of 6 hit the firmware's AverageCurrent foldback** at its 5000 mA allowance, and the
+6th read 4970. The protection behaved as designed. **Hypotheses refuted:** worst block
+predicted 3950–4150, measured 4970–5257; min `left` predicted 3 µs, measured 4.
+
+**The edge is non-linear in current, and no decision counter moves.** Hold rose ~5 %
+(3157 → 3279–3384) while the worst block rose ~33 % (worst/hold 1.19 → ~1.5). Comparing
+every counter between env20-r700-* and env20-r725-*, only current-side quantities
+separate: `worst_residual`, the bus depth runs (`dep3_run`, bus below 98 % of baseline,
+63–96 → 136–175 scans), and zero drift (≈ −100 → ≈ −210 mA, which inflates readings
+by ~100 mA, not 1300). No commutation, timing, tracking or sag decision counter
+separates. Per event at 72.5 % (env21-mh725-*, ~612 k arms): min `left` 4 µs (2–6 arms),
+5–6 µs tail 255–362 (vs 149 at 70 %), thin / late 0. **So at the edge the loop makes the
+same decisions and the motor draws short, deep current surges.** Mechanism: unknown.
+**Hypothesis** (no run yet tests it): the surges are brief per-sector over-currents;
+the test is a timestamped current record around the worst block, which no capture has.
+
+**Next blocker: the 5000 mA AverageCurrent allowance at 72.5 %,** 5/6 foldbacks. Levers
+that could move it without touching the protection: current at the same speed (none of
+14/16/18/20 did so, ENV-7/11/18), or whatever produces the surges once they are located.
+Timing is not the binding limit up to 72.5 % (per event).
