@@ -44916,3 +44916,37 @@ guard tick instruction-identical. **Known divergence:** the edge-capture twin `d
 **Prediction scored:** arm ~#230 ✘ (**#269**). The depth map and blanking compare still precede the reads, so only
 the post-read arithmetic moved (−35 to the arm). The read timing is unchanged (+9, slightly later), as intended. Handler
 total 3.9× AM32: the same order of magnitude, not within 2×. The commutation root stays 207/202 (0.8×).
+
+#### ENV-59 result — A5 stage 1: (a) and (c) pass; (b) all-steps FAILS (58 vs bar 48.1); A5 not kept as declared
+
+**(a) Production ABBAAB, rung J.** A = tag `7450FE24`, B = A5 `B364E7B8`. All reason 2, late_arms 0, spent_max 11:
+
+| run | coast | hold mA | zero-adjusted | worst mA | unstable |
+|---|---|---|---|---|---|
+| env59-prod-1A | 1542 | 776 | 782.0 | 1527 | 1 609 277 |
+| env59-prod-2B | 1538 | 765 | 767.8 | 1486 | 1 581 162 |
+| env59-prod-3B | 1545 | 777 | 777.2 | 1463 | 1 580 703 |
+| env59-prod-4A | 1552 | 803 | 798.7 | **1534** | 1 606 990 |
+| env59-prod-5A | 1541 | 798 | 793.9 | 1491 | 1 606 495 |
+| env59-prod-6B | 1546 | 771 | 770.3 | 1507 | 1 579 748 |
+
+* Coast −0.1 % ✔.
+* **Hold, zero-adjusted (ENV-57 covariate, slope 0.021): −2.50 % ✔**.
+* Unstable refusals −1.7 %: A5 does *not* show the A1/A4 +5–6 % rise, which fits its unchanged read timing.
+
+**(b) Chain captures, own-mean late (A T T A A T T A), all reason 2:**
+* step 3 (primary): A5 2/4/5/2 = **13** vs T 1/2/2/4 = **9**, bar ≤ 14 ✔;
+* **all steps: A5 14/14/19/11 = 58 vs T 7/11/6/13 = 37, bar ≤ 1.3 × 37 = 48.1 ✘.**
+
+Capture-mean, reported: A5 step 6 3.2/1.6/3.3/1.6 % vs T 6.6/6.3/4.8/3.2 %, so **no step-6 lengthening** (unlike A1/A4).
+Mean interval A5 108.1–109.0 vs T 108.6–109.5.
+
+**(c) Edge probe:** 255/255 on all 8; p50 3 µs both ✔.
+
+**Verdict by the rule: A5 fails stage 1 (b), so it cannot be kept.**
+
+A question for the review, not used to pass: the tag's all-steps own-mean total varies across sessions:
+* 36 (ENV-50), 50 (ENV-56), 37 (ENV-59), a 1.35× spread, larger than the 1.3× bar;
+* per step the pooled counts are 0–19 events.
+
+The all-steps bar may therefore sit at the tag's own session noise.
