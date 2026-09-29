@@ -45028,3 +45028,28 @@ Host 362/362 (production, `com-top`), clippy 0. `isr_diff` vs `7450FE24`: `ADC_C
 Predictions: comparator ~380 (**396**, +16), commutation ~290 (**264**, −26). The comparator's remaining excess is the
 tag's pre-read path (storm limiter, estimator borrow, depth map) and the kept post-arm safeguards (tracking watch,
 budget, margin counters).
+
+#### ENV-62 result — A6 stage 1: PASS on all three predeclared parts
+
+**(a) Production ABBAAB, rung J.** A = tag `7450FE24`, B = A6 `0A978A82`. All reason 2, late_arms 0:
+
+| run | coast | hold mA | worst mA | spent_max | unstable |
+|---|---|---|---|---|---|
+| env62-prod-1A | 1542 | — | 1514 | 11 | 1 608 435 |
+| env62-prod-2B | 1547 | — | 1505 | 10 | 1 570 608 |
+| env62-prod-3B | 1544 | — | 1506 | 10 | 1 569 766 |
+| env62-prod-4A | 1540 | — | 1550 | 11 | 1 608 018 |
+| env62-prod-5A | 1545 | — | **1559** | 11 | 1 607 353 |
+| env62-prod-6B | 1540 | — | 1511 | 10 | 1 568 871 |
+
+(per-run hold in `hold_covariate.py` output). Coast +0.09 % ✔. **Hold zero-adjusted −0.01 %** ✔ (raw +0.54 %).
+`spent_max` 11 → 10. Unstable refusals −2.4 %.
+
+**(b) Chain captures, 8 vs 8 (A T T A ×4), all reason 2, own-mean late:**
+* all steps **A6 100 vs T 91, one-sided p = 0.281** ✔;
+* step 3 **19 vs 23, p = 0.780** ✔.
+
+**(c) Edge probe:** 16/16 captures 255/255 matched; p50 3 µs both; p99 4.4–6 both ✔.
+
+**Stage 1 PASS.** Stage 2 (ENV-63) now: walk 525 → 725 on `0A978A82`, then the follow-up (restarts incl. 725 on the
+window-90 twin `235A5DC2`, sweep, low rungs). **No commits during the walk.**
