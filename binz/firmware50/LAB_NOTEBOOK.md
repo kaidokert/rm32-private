@@ -43678,3 +43678,20 @@ on late accepts. **What stands:** a step-3 (phase-A rising) crossing that someti
 hovers near the threshold for 20–30 µs. That is physical or analogue in origin, with firmware filtering
 adding up to one carrier period on top. **The discriminator that remains is the operator's lead rotation**
 (board vs motor, ENV-31 prediction: the tail moves to step 5 or 1 if it is the motor).
+
+### ENV-35 — lever "late-anchor" rejected ON ANALYSIS (no bench time): bounded by the LateArm protection
+
+Idea: target the damage, not the detection. For an outlier-late accept, spend the lateness out of the
+commutation wait so the commutation lands near its predicted instant, limiting the late commutation that
+draws the current surge. Implemented and unit-tested, then **checked against how `wait` is consumed:** the arm
+computes `left = wait − spent`, and `left == 0` is a **LateArm** (reason 15, a run-stopping protection). With
+`spent` up to ~11 µs, the wait cannot go below ~12 µs without converting a late crossing into a
+protection stop. The lever can therefore recover only ~5 µs of a 30–60 µs lateness, which predicts an effect
+below run-to-run noise. Going around the bound would mean commutating directly from the ISR on a late accept,
+a change to the arm/LateArm path the goal holds fixed. **Rejected on analysis; code reverted.** (A refusal is a
+result.)
+
+**Hands-free options, exhausted.** Detection-side constants and local changes have been tried (ENV-27/30b/32/33) or
+bounded (ENV-35). The remaining discriminator is physical: the operator's motor-lead rotation (ENV-31
+prediction). An AM32 head-to-head is not available hands-free: the AM32 build for this board does not
+start reliably on this rig (`AM32_DRV8304H_BUILD.md`, E530–E533).
