@@ -43615,3 +43615,26 @@ The rescue deadline was a coincidence of scale, not the cause (ENV-32 review's h
 tested and refuted). **Firmware detection levers exhausted at this level:** filter depth, hysteresis,
 estimator clamp, rescue timing (carrier never measured on late accepts). **The trigger is physical or
 analogue on the phase-A rising crossing.** Next: the operator's lead rotation (board vs motor).
+
+#### ENV-33 review — my conclusion WITHDRAWN; ENV-33 recorded as "not measured"
+
+Independent review, verified:
+* **The 96–101 µs step-3 cluster accepts are hardware edges** (flag bit 6 clear, typically 3 filter refusals
+  before accept), in both arms: untagged A 7 vs B 5. A rescue produces a *revisit-tagged* accept, so the
+  cluster was never rescue-timed. **ENV-32's premise was a category error**, and ENV-33 tested a hypothesis the
+  data had already ruled out. "B 1/4/1" counted a revisit-tagged 96 µs accept (2B), a different class.
+* **The rescue cannot be confirmed to have fired.** No rescue counter exists (an instrument-decisions
+  violation). Step-3 revisit attempts moved only +1.2 %. And the foreground polls every ~35–50 µs (worst
+  gap 188–233 µs), so it cannot resolve 1.125 × ci from 1.5 × ci.
+* **Sample:** 17 vs 14 step-3 lates, Poisson p ≈ 0.7. The ≥ 40 % criterion was undecidable at 3 chain
+  captures a side.
+* `BEMFPHASE` bins saturate at 65535. `revisit_accepts` is binned at the consume-time step (v4 > r4).
+* **Withdrawn:** "the crossing genuinely occurs late", "detection levers exhausted", and "rescue timing"
+  among the exhausted levers. Three readings remain undecided: (1) crossing late; (2) comparator at
+  post-level earlier but chattering, with the filter setting ~98 µs; (3) the foreground never polled in the
+  window. The cluster is tight (98–99 µs, ~80 µs after the prior commutation), which looks deterministic.
+
+**Next (ENV-34), the measurement that decides (1) vs (2):** in the chain image, log every **refused** ISR
+decision in step-3 sectors (elapsed, live filter read bits, refusal kind, origin), plus a rescue counter.
+Post-level reads before ~85 µs mean the crossing is early and the filter or persistence is the lever; pre-
+level throughout means it is genuinely late. The lead rotation remains worth doing in parallel.
