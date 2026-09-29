@@ -43709,3 +43709,30 @@ Suite 362 (advance-18,deep-filter,edge-probe).
 **Keep** if the pooled step-3 late rate over 3 chain captures falls ≥ 40 % **and** the production worst block is lower
 in ≥ 2/3 pairs with foldbacks ≤ A. **Reject** otherwise. Expected side effects (ENV-11): speed +0–1 %, hold
 +1–3 %, better sag margin.
+
+#### ENV-36 result — advance 18 at 72.5 %: the current surges are GONE on production; kept provisionally
+
+Production ABBAAB at 725 (A `A9F121F8` adv 16, B `C567066B` adv 18):
+
+| run | image | reason | ceiling | coast | hold mA | worst block | thin / late | sag codes |
+|---|---|---|---|---|---|---|---|---|
+| env36-prod-1A | A | 2 | **715** | 2457 | 3327 | **5302** | 0 / 0 | 30.0 |
+| env36-prod-2B | B | 2 | 725 | 2533 | 3606 | 4419 | 1 / 0 | 30.0 |
+| env36-prod-3B | B | 2 | 725 | 2539 | 3620 | 4305 | 0 / 0 | 32.2 |
+| env36-prod-4A | A | 2 | **715** | 2468 | 3317 | 5094 | 0 / 0 | 26.1 |
+| env36-prod-5A | A | 2 | **715** | 2451 | (no hold; foldback in ramp) | 5005 | 0 / 0 | 38.1 |
+| env36-prod-6B | B | 2 | 725 | **2535** | **3621** | 4340 | 2 / 0 | 34.1 |
+
+**B: 0/3 foldback, every worst block under the 4750 gate (4305–4419). A: 3/3 foldback, 5005–5302.** Speed +3 %
+(worst 2533 vs 2451), hold +8–9 % (well inside 5 A), thin arms 1–2 per run (timing margin spent), no late arm.
+**Production full-run decision counters (no recorder):** too-early (gate) refusals per accept **0.0560–0.0564 → 0.0164–0.0168
+(−71 %, identical in 3/3)**, filter refusals −6.5 %, step-3 revisits unchanged. So at advance 16 and 72.5 %, many edges
+land just before the half-cycle gate and are refused. Two µs more advance moves the switching instants relative to the
+gate, and the surge outcome disappears. **Observed, not yet explained.** It overturns ENV-7/11's "18 ≈ 16", which was
+measured at 62.5–65 % (the regime moved).
+**The chain half is unusable for B:** all three B chains ended **LateArm (15)**, because the chain recorder raises `spent`
+to 16 µs against adv-18's ~14–15 µs wait at 725, and their step-3 late rate (12 % vs 3.5 %) carries that strain. The
+predeclared chain criterion therefore cannot be evaluated. This is stated, not waived: **the production outcome is
+the evidence**, and the lever is **provisionally kept** pending the review and a full re-qualification.
+**Named risk:** advance 18 at 725 leaves only ~3–4 µs between `spent` (≤ 11 on production) and the wait. The timing margin
+is now the thin one.
