@@ -340,6 +340,9 @@ pub type Wiring = Reverse;
 /// flips at the cost of a small fixed crossing delay, which is minor on the steep high-speed
 /// back-EMF.
 pub const CLOSED_COMP_HYST: u8 = if cfg!(feature = "closed-hyst-1") { 1 } else { 0 };
+/// ENV-30b: the applied duty at and above which [`CLOSED_COMP_HYST`] is engaged
+/// (60 %, ci ~76 us, far above the ~675 us handoff where HYST 1 starved the loop).
+pub const CLOSED_HYST_FROM_TENTHS: u16 = 600;
 
 /// The reference detector: seeded at the driven interval, bounded
 /// `[SECTOR_FLOOR_US, 1.5 x seed]` (E002, E020).

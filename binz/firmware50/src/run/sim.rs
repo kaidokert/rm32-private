@@ -928,34 +928,46 @@ mod tests {
     }
 
     #[test]
-    fn closed_loop_hysteresis_is_set_only_after_the_loop_closes() {
-        // ENV-30. Production writes no run-time hysteresis besides the coast's own;
-        // under `closed-hyst-1` the closed loop gets 1, and never before it closes.
-        use crate::run::policy::CLOSED_COMP_HYST;
-        let (sim, _) = run(250, 12_000_000, STEADY, Faults::default(), None);
-        let closed = sim.log.closed_at.expect("the loop closed");
-        // Only writes during the drive window: the coast witness sets its own
-        // hysteresis after the window ends (`measure.rs`, COAST_COMP_HYST) and restores 0.
-        let set: std::vec::Vec<_> = sim
-            .log
-            .hyst
-            .iter()
-            .filter(|&&(t, h)| h == 1 && t < 12_000_000)
-            .collect();
+    fn closed_loop_hysteresis_engages_only_at_high_duty() {
+        // ENV-30b. Production writes no hysteresis in the drive window (the coast
+        // sets its own after the window ends). Under `closed-hyst-1` it engages only
+        // once the applied duty reaches CLOSED_HYST_FROM_TENTHS -- never at the
+        // ~200 eHz close, where it starved the loop (env30-prod-2B).
+        use crate::run::policy::{CLOSED_COMP_HYST, CLOSED_HYST_FROM_TENTHS};
+        // The ramp to 70 % alone takes `ramp_us(700)` (30 s); hold 10 s past it.
+        let window = crate::ramp::ramp_us(700) + 10_000_000;
+        let during = |sim: &Sim| -> std::vec::Vec<(u32, u8)> {
+            sim.log
+                .hyst
+                .iter()
+                .copied()
+                .filter(|&(t, h)| h == 1 && t < window)
+                .collect()
+        };
+        let (low, _) = run(250, window, STEADY, Faults::default(), None);
+        assert!(during(&low).is_empty(), "never engaged at 25 %: {:?}", low.log.hyst);
+        let (high, _) = run(700, window, STEADY, Faults::default(), None);
+        let set = during(&high);
         if CLOSED_COMP_HYST == 0 {
             assert!(
                 set.is_empty(),
                 "production never raises hysteresis in the loop: {:?}",
-                sim.log.hyst
+                high.log.hyst
             );
         } else {
-            assert!(!set.is_empty(), "closed-hyst-1 must set it");
+            let first = set.first().expect("closed-hyst-1 engages at 70 %").0;
+            let reached = high
+                .log
+                .plans
+                .iter()
+                .find(|&&(_, d)| d >= CLOSED_HYST_FROM_TENTHS)
+                .expect("the ramp reached the threshold")
+                .0;
             assert!(
-                set.iter().all(|&&(t, _)| t + 2_000 >= closed),
-                "set before the loop closed: {:?} vs {closed}",
-                set
+                first >= reached,
+                "engaged at {first} before duty reached the threshold at {reached}"
             );
-            assert_eq!(sim.log.hyst.first().map(|&(_, h)| h), Some(0), "every run starts at 0");
+            assert_eq!(high.log.hyst.first().map(|&(_, h)| h), Some(0), "every run starts at 0");
         }
     }
 

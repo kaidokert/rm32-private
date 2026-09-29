@@ -43416,3 +43416,19 @@ share falling most. The whole-run unstable/accepted ratio (1.63 on A) falls. Sho
 also fall. A fixed crossing delay of a few µs costs **speed ≤ 1 %** and **hold current up to +2 %**
 (later effective angle). Production at 725: worst block lower in ≥ 2/3 pairs, no stop on B that A
 lacks. **Reject** if late accepts do not drop or B trips.
+
+#### ENV-30 correction — my lever design was wrong; redesigned as ENV-30b (hysteresis only at high duty)
+
+v1 set HYST 1 at closed-loop install, i.e. at the ~200 eHz handoff (ci ~675 µs), exactly the slow-
+back-EMF regime E058–E061 warned about. env30-prod-2B (`26DB4CA4`) stopped on **Tracking (8)**
+right after close: 16 accepts, 279 unstable. That is a defect in my lever, not a test of the
+hypothesis. The A/B was stopped after 1A/2B, and both v1 images were deleted.
+
+**ENV-30b:** HYST 1 engages only while the applied duty is ≥ `CLOSED_HYST_FROM_TENTHS = 600`
+(ci ~76 µs), re-evaluated on every duty change in the foreground duty path. Each run still starts at
+0. The sim test is now `closed_loop_hysteresis_engages_only_at_high_duty`: never engaged at 25 %,
+engaged at 70 % only after the plan duty reaches 600, production never engages. Its first version
+failed because the 30 s window ended before the 30 s ramp reached 600; the window was fixed, not the
+assertion. Suites 363/361/361, clippy 0, production byte-identical (`D065B28A`), ISR roots
+instruction-identical. Arms: production A = `A9F121F8`, **B = `052D64A3`** (loadable `87571A6E`);
+chain A = `BE2213DE`, **B = `D61C5C0C`**. Predictions as ENV-30, unchanged.

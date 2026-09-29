@@ -952,9 +952,6 @@ impl Handover {
         ctx.closed_at = Some(now);
         ctx.drv.seed = Some(sd);
         ctx.period = RUN_PERIOD_TICKS;
-        if super::policy::CLOSED_COMP_HYST != 0 {
-            hal.comp_hysteresis(super::policy::CLOSED_COMP_HYST);
-        }
         let mut gates: Gates<hal::Locked> = gates.pass();
         let bemf_duty = ctx.governor.clamp(duty_at(ctx.req.target_tenths, 0));
         if !latched {
@@ -1039,6 +1036,14 @@ impl Locked {
             hal.publish_plans(duty, c.period, SIXSTEP_DUTY_CAP);
             c.applied_duty = duty;
             hal.set_advance(P::A::level(duty));
+            // ENV-30b: closed-loop hysteresis only at high duty, re-evaluated on every
+            // duty change. Engaging it at the ~200 eHz close starved the loop into a
+            // Tracking stop (env30-prod-2B: 16 accepts, 279 unstable). Production
+            // (`CLOSED_COMP_HYST == 0`) compiles this out.
+            if super::policy::CLOSED_COMP_HYST != 0 {
+                let on = duty >= super::policy::CLOSED_HYST_FROM_TENTHS;
+                hal.comp_hysteresis(if on { super::policy::CLOSED_COMP_HYST } else { 0 });
+            }
         }
         None
     }
