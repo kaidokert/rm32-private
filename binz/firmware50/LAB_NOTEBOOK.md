@@ -43325,3 +43325,37 @@ depth is not the root. The next question is what the comparator does in a late s
 keeping the last 1536 decisions (~38 ms) before the run ends. Image **`2B8B8338`**
 (`advance-ref,deep-filter,edge-probe`). New runner `scripts/edge_run.py` (from chain_run.py;
 refuses existing labels before flashing). Runs: 725 ×2, 700 ×1 (control).
+
+#### ENV-28 result — the rejected edges are PWM-rate transients; late sectors are ones whose crossing settles later
+
+Edge-capture `2B8B8338`, env28-edges725-1 / -2 and env28-edges700-1. In every sector, offered edges
+arrive every **18–22 µs** (the 48 kHz carrier, 20.8 µs). Almost every rejection is `unst0`: the
+**first** filter read is already back at the pre-crossing level, i.e. a switching transient, not a
+noisy true crossing. The first post-gate edge comes at the same time in normal and late sectors
+(median 53–54 µs after the previous accept). In late sectors the edge whose reads *stay* at the
+post-crossing level (`ACC11111`) arrives at t ≈ 82–136 µs, against 65–75 in normal ones. **So a late
+sector is one where the back-EMF clears the switching-transient band later. The filter was never
+the root**, consistent with ENV-27. Rising sectors are longer than falling (+5.6 µs at 725, +6.7 µs
+at 700) with a fatter tail.
+
+**Caveat, stated:** on this recorder image the 700 control shows as many late sectors as 725
+(91 vs 87), and **both** runs ended on a LateArm stop (reason 15): the recorder's per-edge cost
+perturbs timing. So this image establishes the *shape* of a late sector, not the duty dependence
+(the lighter chain images do: late accepts 725 ≈ 11–13 vs 700 ≈ 8 per 35 ms).
+
+### ENV-29 — lever 2 (a constant): run carrier 48 → 24 kHz (AM32's `NOMINAL_PWM`) at 72.5 %
+
+`duty::RUN_PERIOD_TICKS` 1333 → 2666 under a `carrier-24k` feature. It is foreground only: **all four
+ISR roots instruction-identical** between arms. Default production is byte-identical (`D065B28A`).
+Two carrier-pinned duty tests now derive their expected compare per carrier. Suites 362/360/360.
+The 48 kHz choice dates from an earlier goal matching binz's `reverse48k` reference (notebook
+~line 342). 24 kHz is far above the low-carrier regime binz found physics-hostile.
+
+Arms: production A = `A9F121F8` (48 kHz, floor 5), B = `675F52BA` (24 kHz, loadable `C39FC51B`);
+chain A = `BE2213DE`, B = `3CBCD226`. All `advance-ref,deep-filter,edge-probe`.
+
+**Predictions (before running):** half the switching transients per crossing window, so **late
+accepts per 35 ms chain drop from ~11 to ≤ 7**. Production at 725: worst block lower in ≥ 2/3 pairs,
+foldbacks not above A. Speed within ±2 %. Hold current within ±5 % (ripple doubles at half the
+carrier). **Reject** if late accepts do not drop, or a desync or trip appears on B that A lacks.
+Protocol: production ABBAAB, then chain ABBAAB, at 725.

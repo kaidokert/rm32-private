@@ -105,6 +105,8 @@ edge-probe = []
 # ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
 # chain image can mark revisit-originated accepts (flag bit 6).
 chain-origin = []
+# ENV-29 A/B lever: run carrier 48 -> 24 kHz (AM32's NOMINAL_PWM), duty::RUN_PERIOD_TICKS.
+carrier-24k = []
 # Raises the persistence filter's floor from the reference's 3 reads to 5
 # (E324). The map floors at 3 for every interval at or below 73 us, and that
 # boundary sits between rung 525 (depth 4, 0 events in 703 s) and rung 550

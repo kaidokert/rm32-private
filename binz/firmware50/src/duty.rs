@@ -40,7 +40,12 @@ pub const ENVELOPE_MAX_DUTY50: u16 = 500;
 /// *control* ticks, and the binary imports both. Two public constants a
 /// thousand apart, both called `RUN_PERIOD_TICKS`, differing only in unit, is a
 /// collision waiting to be miscompiled into a correct-looking expression.
+#[cfg(not(feature = "carrier-24k"))]
 pub const RUN_PERIOD_TICKS: u32 = 1333;
+/// ENV-29 A/B: AM32's 24 kHz carrier (`NOMINAL_PWM 24000`), half as many switching
+/// transients inside each crossing window (ENV-28). 64 MHz / 2666 = 24.0 kHz.
+#[cfg(feature = "carrier-24k")]
+pub const RUN_PERIOD_TICKS: u32 = 2666;
 /// TIM1 period in ticks at the 10 kHz startup carrier.
 pub const STARTUP_TICKS: u32 = 6400;
 
@@ -304,7 +309,12 @@ mod tests {
         let ccr = p
             .command::<ENVELOPE_MIN, ENVELOPE_MAX, ENVELOPE_STEP>(100)
             .expect("10% must be admissible");
+        // 48 kHz: du100 at 1333 ticks -> CCR 133 (pinned literally); the ENV-29
+        // carrier-24k A/B arm doubles the period, so its compare doubles too.
+        #[cfg(not(feature = "carrier-24k"))]
         assert_eq!(ccr, 133, "du100 at 1333 ticks -> CCR 133");
+        #[cfg(feature = "carrier-24k")]
+        assert_eq!(ccr, 266, "du100 at 2666 ticks -> CCR 266");
         assert_eq!(p.applied(), 100);
     }
 
@@ -389,7 +399,10 @@ mod tests {
         p.set_ticks(RUN_PERIOD_TICKS);
         let run_ccr = p.recompute();
         assert_eq!(p.applied(), 100, "duty is a percentage and must survive");
+        #[cfg(not(feature = "carrier-24k"))]
         assert_eq!(run_ccr, 133);
+        #[cfg(feature = "carrier-24k")]
+        assert_eq!(run_ccr, 266);
         assert!(run_ccr < startup_ccr, "same duty, shorter period, smaller compare");
     }
 
