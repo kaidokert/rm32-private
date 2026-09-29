@@ -43769,3 +43769,34 @@ arm**), **B = `B71561C2`** (loadable `BB6D3AF6`). They differ only in the TIM16 
 → ~0.6–0.7 (bookkeeping, near-certain). **Decision:** **keep** if B has 0/3 foldback and worst < 4750 in 3/3
 **and** A reproduces its baseline (≥ 2/3 foldback). **Reject** (masking is not the cure) if B foldbacks ≥ 2/3.
 **Inconclusive** if A does not reproduce its baseline. n = 3 a side, ABBAAB, at 725.
+
+#### ENV-37 result — blank threshold 12 REJECTED: the masking is not the cure; the advance-18 benefit is the timing
+
+| run | image | reason | ceiling | coast | hold | worst | too-early/acc | blank share | gt150/acc |
+|---|---|---|---|---|---|---|---|---|---|
+| env37-prod-1A | `1E5C79B4` (16) | **26 FastBusSag** (hold 14.4 s) | 725 | 2418 | 3357 | 4789 | 0.0406 | 0.46 | 0.022 |
+| env37-prod-2B | `B71561C2` (12) | 2 | **715** | 2445 | 3277 | **5074** | 0.0006 | **0.99** | 0.028 |
+| env37-prod-3B | 12 | 2 | **715** | 2448 | 3290 | **5140** | 0.0007 | 0.99 | 0.028 |
+| env37-prod-4A | 16 | 2 | **715** | 2455 | 3365 | 5008 | 0.0563 | 0.27 | 0.029 |
+| env37-prod-5A | 16 | 2 | 725 | 2475 | 3363 | 4795 | 0.0565 | 0.27 | 0.031 |
+| env37-prod-6B | 12 | 2 | **715** | 2440 | 3314 | **5076** | 0.0006 | 0.99 | 0.029 |
+
+**B masks ~99 % of commutations and removes too-early refusals (0.0006/acc)**, confirming the review's bookkeeping
+reading, **yet folds back 3/3 with worst blocks 5074–5140.** Predeclared rule: B foldbacks ≥ 2/3 → **rejected**.
+(A: 1 foldback + 1 FastBusSag stop, the baseline events.) **Conclusion: advance 18's production benefit (ENV-36) is the
+advance timing itself, not the post-commutation masking.** Advance 18 is again the candidate lever. It needs the
+fair, predeclared production-only test the ENV-36 review asked for (ENV-38).
+
+### ENV-38 — advance 18 at 72.5 %: predeclared production-only qualification test
+
+Image **`7450FE24`**, loadable **`CB638C58`**, byte-identical to ENV-36's B arm (so ENV-36's three B runs are on this
+code). The test is the full re-qualification walk `scripts/env37_qual.sh`: 525 anchored, then 550 … 725, 3 holds each,
+unchanged ladder gates. Then restart 3/3 at 700 and 725, then the protection sweep.
+**Decision rule, declared before running.** **Kept and 72.5 % earned** only if all of these hold:
+* every rung 525–725 passes 3/3 under the unchanged gates;
+* **725: 0 foldback** in the 3 walk holds (6/6 with ENV-36's B runs on this loadable);
+* **`late_arms = 0` in every run of the walk**, and `thin_count` ≤ 5 per run (the timing margin is the named risk);
+* restart 3/3 at 700 and 725, and the sweep 10/10.
+
+Any failure stops the claim at the last passing rung. A LateArm stop at any rung is reported as the timing wall, not
+waived.
