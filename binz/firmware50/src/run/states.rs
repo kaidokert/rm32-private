@@ -952,6 +952,9 @@ impl Handover {
         ctx.closed_at = Some(now);
         ctx.drv.seed = Some(sd);
         ctx.period = RUN_PERIOD_TICKS;
+        if super::policy::CLOSED_COMP_HYST != 0 {
+            hal.comp_hysteresis(super::policy::CLOSED_COMP_HYST);
+        }
         let mut gates: Gates<hal::Locked> = gates.pass();
         let bemf_duty = ctx.governor.clamp(duty_at(ctx.req.target_tenths, 0));
         if !latched {

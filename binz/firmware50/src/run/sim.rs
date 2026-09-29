@@ -78,6 +78,8 @@ pub struct Log {
     pub plans: Vec<(u32, u16)>,
     /// The cap every `publish_plans` call passed (ENV-6).
     pub plan_caps: Vec<u16>,
+    /// Every comparator-hysteresis write, `(t, hyst)` (ENV-30).
+    pub hyst: Vec<(u32, u8)>,
     pub advances: Vec<u32>,
     pub injected: Vec<(u32, Inject)>,
     pub crossings_delivered: u32,
@@ -289,8 +291,13 @@ impl Hal for Sim {
     fn comp_level(&self) -> bool {
         false
     }
-    fn comp_hysteresis(&mut self, _hyst: u8) {}
-    fn comp_run_hysteresis(&mut self) {}
+    fn comp_hysteresis(&mut self, hyst: u8) {
+        self.log.hyst.push((self.t, hyst));
+    }
+    fn comp_run_hysteresis(&mut self) {
+        // The run hysteresis is `roots::COMP2_HYST` = 0 (the reference's value).
+        self.log.hyst.push((self.t, 0));
+    }
     fn edge_rising(&self, step: Step) -> bool {
         step.rising()
     }
@@ -918,6 +925,38 @@ mod tests {
         }
         assert!(seen.contains(&250), "the cycle wraps");
         assert!(seen.contains(&SIXSTEP_DUTY_CAP), "the cap itself is commandable");
+    }
+
+    #[test]
+    fn closed_loop_hysteresis_is_set_only_after_the_loop_closes() {
+        // ENV-30. Production writes no run-time hysteresis besides the coast's own;
+        // under `closed-hyst-1` the closed loop gets 1, and never before it closes.
+        use crate::run::policy::CLOSED_COMP_HYST;
+        let (sim, _) = run(250, 12_000_000, STEADY, Faults::default(), None);
+        let closed = sim.log.closed_at.expect("the loop closed");
+        // Only writes during the drive window: the coast witness sets its own
+        // hysteresis after the window ends (`measure.rs`, COAST_COMP_HYST) and restores 0.
+        let set: std::vec::Vec<_> = sim
+            .log
+            .hyst
+            .iter()
+            .filter(|&&(t, h)| h == 1 && t < 12_000_000)
+            .collect();
+        if CLOSED_COMP_HYST == 0 {
+            assert!(
+                set.is_empty(),
+                "production never raises hysteresis in the loop: {:?}",
+                sim.log.hyst
+            );
+        } else {
+            assert!(!set.is_empty(), "closed-hyst-1 must set it");
+            assert!(
+                set.iter().all(|&&(t, _)| t + 2_000 >= closed),
+                "set before the loop closed: {:?} vs {closed}",
+                set
+            );
+            assert_eq!(sim.log.hyst.first().map(|&(_, h)| h), Some(0), "every run starts at 0");
+        }
     }
 
     #[test]

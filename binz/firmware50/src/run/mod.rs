@@ -157,6 +157,11 @@ impl<
 
     /// Drive one run through the typestate and report it, after `safe_off`.
     pub fn run<IO: Hal + Sink>(&mut self, io: &mut IO, req: Request) -> Outcome {
+        // ENV-30: every run starts at the run hysteresis (0), whatever a previous run's
+        // closed loop left behind; production (`CLOSED_COMP_HYST == 0`) compiles this out.
+        if policy::CLOSED_COMP_HYST != 0 {
+            io.comp_run_hysteresis();
+        }
         let stopped = match states::Idle::new(req).arm::<Self, IO>(io) {
             Ok(armed) => Self::drive(armed.start::<Self>(io), io),
             Err(refused) => refused.into(),

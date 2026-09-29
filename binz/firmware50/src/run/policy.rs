@@ -332,6 +332,15 @@ pub trait Reporting {
 /// permutation (`binz/AGENTS.md:18`, E010). The ISR roots use this same type.
 pub type Wiring = Reverse;
 
+/// ENV-30 A/B lever: COMP2 hardware hysteresis while the CLOSED loop runs (0 =
+/// production, the reference's value). Startup keeps 0: at HYST 1 the driven observer
+/// locked onto post-commutation transients (E058-E061). The late crossings behind the
+/// 72.5 % desyncs are sectors whose comparator is re-flipped by PWM-rate transients near
+/// the crossing (ENV-28), concentrated on phase A (ENV-29 note); hysteresis rejects small
+/// flips at the cost of a small fixed crossing delay, which is minor on the steep high-speed
+/// back-EMF.
+pub const CLOSED_COMP_HYST: u8 = if cfg!(feature = "closed-hyst-1") { 1 } else { 0 };
+
 /// The reference detector: seeded at the driven interval, bounded
 /// `[SECTOR_FLOOR_US, 1.5 x seed]` (E002, E020).
 pub struct BemfPolicy;

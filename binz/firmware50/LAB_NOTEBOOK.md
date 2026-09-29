@@ -43359,3 +43359,60 @@ accepts per 35 ms chain drop from ~11 to ≤ 7**. Production at 725: worst block
 foldbacks not above A. Speed within ±2 %. Hold current within ±5 % (ripple doubles at half the
 carrier). **Reject** if late accepts do not drop, or a desync or trip appears on B that A lacks.
 Protocol: production ABBAAB, then chain ABBAAB, at 725.
+
+### ENV-29 result — carrier 24 kHz REJECTED: 3/3 desyncs in the ramp
+
+| run | image | outcome |
+|---|---|---|
+| env29-prod-1A | `A9F121F8` (48 kHz) | reason 2, foldback 715, 2443 eHz, worst 5150 |
+| env29-prod-2B | `675F52BA` (24 kHz) | **FastBusSag (26) in the ramp**, never reached 725 |
+| env29-prod-3B | 24 kHz | **FastBusSag (26) in the ramp** |
+| env29-prod-4A | 48 kHz | reason 2, foldback 715 during the ramp (hold 0) |
+| env29-prod-5A | 48 kHz | reason 2, foldback 715, 2446 eHz, worst 5159 |
+| env29-prod-6B | 24 kHz | **FastBusSag (26) in the ramp** |
+
+**B: 3/3 desync stops; A: 0 trips** (3/3 foldback on A in this session, vs 1/3 in ENV-27: a
+session effect, noted). Rejected by the predeclared rule. The chain half was stopped (B
+never reaches the hold, so it cannot compare late accepts at 725). The review of ENV-25..28 is
+accepted:
+* **ENV-26's causal reading is withdrawn.** Refusals pile up with time spent past the gate,
+  so a crossing that is late for any reason collects more. `pad` counts dispatches, including
+  refused revisit dispatches.
+* **ENV-27 verdict → "not the late-accept fix".** n = 3 supports neither keep nor reject; B speed was
+  +1.5 %; the predeclared reject condition was not the one met.
+* **The edge-capture image is heavily perturbing** (interval SD 15.6–16.1 vs 6.8–9.0 µs on chain
+  images, and every run LateArm). **The "+6 µs rising skew" is withdrawn as an artifact.** The
+  ~20 µs spacing is ambiguous (carrier vs self-excited, E134/E095). What stands: first-read
+  rejections dominate, and the first post-gate offer is equally early in normal and late sectors.
+* The carrier is not what separates firmware50 from the reference (E095: the reference sees
+  < 1 edge per carrier period at the same 48 kHz and comparator settings).
+
+**New evidence (all 11 lighter chain captures, 725 and 700):** late accepts by logical step:
+s1 0.6 %, s2 1.6 %, **s3 6.0 %**, s4 1.2 %, s5 1.1 %, s6 2.6 %. Production wiring is `Reverse`
+(`policy.rs:333`), so steps 3 and 6 float **physical phase A** (COMP2 INMSEL 6 = PB3,
+`commutation::comparator_inmsel`). **Phase A carries 116 of 177 late accepts (66 %)** from a third of
+the sectors. This matches E041/E042, where phase A was the dirty phase, its cause "in the analogue
+front end", never resolved. Its steps 3 and 6 are opposite polarities, and one is 2.3× worse. (PB3 is
+Arduino D3 / TIM1_CH2 on MB1360; there is no SWO on this board, so that idea is withdrawn.)
+
+### ENV-30 — lever 3 (a constant, closed loop only): COMP2 hysteresis 0 → 1 while the loop runs
+
+`run::policy::CLOSED_COMP_HYST` (feature `closed-hyst-1`) is written at closed-loop install
+(`states.rs`, beside `ctx.period = RUN_PERIOD_TICKS`), and every run starts at 0
+(`Controller::run`). The coast restores 0 as before. Startup keeps 0, because at HYST 1 the driven
+observer locked onto post-commutation transients (E058–E061). Both hysteresis trials (E006, E040)
+were at 10 % duty, a different regime: small, slow back-EMF, where a hysteresis offset is a large
+delay. At 72.5 % the back-EMF slope is steep. **AM32 also runs NONE**; this is a divergence, justified
+only if measured. Sim test `closed_loop_hysteresis_is_set_only_after_the_loop_closes`: production
+writes none in the drive window, and the feature sets 1 only after close with each run starting at 0.
+Suites 363/361/361, clippy 0, **production byte-identical (`D065B28A`)**. All four ISR roots are
+instruction-identical between arms.
+
+Arms: production A = `A9F121F8`, B = `26DB4CA4` (loadable `B39061F3`); chain A = `BE2213DE`,
+B = `C5B4DDE5`.
+
+**Predictions (before running):** late accepts per 35 ms chain at 725: ~11 → **≤ 6**, with step 3's
+share falling most. The whole-run unstable/accepted ratio (1.63 on A) falls. Short accepts
+also fall. A fixed crossing delay of a few µs costs **speed ≤ 1 %** and **hold current up to +2 %**
+(later effective angle). Production at 725: worst block lower in ≥ 2/3 pairs, no stop on B that A
+lacks. **Reject** if late accepts do not drop or B trips.
