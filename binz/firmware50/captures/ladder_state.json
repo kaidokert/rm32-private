@@ -15435,5 +15435,57 @@
     "anchored": "ENV-23: identical to B734ACCD (70% qualified ENV-21: holds 3/3, restart 3/3, sweep 10/10, 5 A allowance) except SIXSTEP_DUTY_CAP 800 -> 700 (the qualified top; closes the sag-stimulus over-cap path the ENV-20/21 review found) and an observer-only freeze in the sag ring (production byte-identical). isr_diff vs B734ACCD: four roots instruction-identical; audit PASS; suites 361/359/359/359."
    }
   ]
+ },
+ "7450FE2404C7F074595681D76A7B18D4A9FB3C3DB3ADB6D93EFA532C2DBC19C1": {
+  "525": [
+   {
+    "file": "env37-r525-1_01.txt",
+    "duty": 525,
+    "reason": 2,
+    "accepted": 775525,
+    "bus_ref": 1211,
+    "forced": 0,
+    "too_early": 39,
+    "blank_arms": 775287,
+    "unstable": 1516490,
+    "hold_ms": 51275,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1003,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 1969,
+    "coast_crossings": 1235,
+    "hold_ma": 1690,
+    "ceiling_tenths": 525,
+    "worst_ma": 2603,
+    "droop_permille": 987.6135425268374,
+    "fails": [],
+    "anchored": "ENV-37: advance 18 (ENV-36 lever) on the qualified lineage E1256E38 (advance 16, cap 700, 70% qualified ENV-23); identical code otherwise, cap 725 as the step under qualification. Loadable CB638C58 is byte-identical to the ENV-36 B arm C567066B, which held 725 3/3 with 0 foldback (worst 4305-4419). ISR roots instruction-identical to E1256E38 (advance is foreground); isr_audit PASS; suites 364/362."
+   },
+   {
+    "file": "env37-r525-2_01.txt",
+    "duty": 525,
+    "reason": 2,
+    "accepted": 775366,
+    "bus_ref": 1209,
+    "forced": 0,
+    "too_early": 28,
+    "blank_arms": 775142,
+    "unstable": 1516216,
+    "hold_ms": 51275,
+    "rate_permille": 999,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1002,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 1980,
+    "coast_crossings": 1245,
+    "hold_ma": 1697,
+    "ceiling_tenths": 525,
+    "worst_ma": 2631,
+    "droop_permille": 986.9364077926192,
+    "fails": [],
+    "anchored": "ENV-37: advance 18 (ENV-36 lever) on the qualified lineage E1256E38 (advance 16, cap 700, 70% qualified ENV-23); identical code otherwise, cap 725 as the step under qualification. Loadable CB638C58 is byte-identical to the ENV-36 B arm C567066B, which held 725 3/3 with 0 foldback (worst 4305-4419). ISR roots instruction-identical to E1256E38 (advance is foreground); isr_audit PASS; suites 364/362."
+   }
+  ]
  }
 }
