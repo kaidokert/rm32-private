@@ -43638,3 +43638,19 @@ Independent review, verified:
 decision in step-3 sectors (elapsed, live filter read bits, refusal kind, origin), plus a rescue counter.
 Post-level reads before ~85 µs mean the crossing is early and the filter or persistence is the lever; pre-
 level throughout means it is genuinely late. The lead rotation remains worth doing in parallel.
+
+### ENV-34 — the deciding measurement: what the comparator reads on each refused step-3 edge (predeclared)
+
+**Instrument (chain images only, production byte-identical `D065B28A`):** `det_decide_plain` captures its
+live filter reads (only under `C::ON`), and a refused decision in step 3 is logged as a kind-3 chain row:
+µs since sector start, the read bits (oldest bit 0, count in bits 12..15), gate vs filter, revisit origin.
+One self-caught bug before any run: `n & 11` (a mask) → `n.min(11)`. Image **`A2C3FF31`**
+(`advance-ref,deep-filter,edge-probe,chain-origin`); its ADC_COMP is 72 instructions longer than
+`BE2213DE`'s, so the same-image 700 control is part of the design. Step 3 expects a **falling** edge
+(`COMP_POLARITY_INVERTED`), so a post-crossing read = 0. Analysis `scripts/step3_refusals.py`.
+
+**Decision rule (declared before running), over 725 ×3 and 700 ×2:** if **≥ 50 %** of late step-3 sectors
+contain a refused edge whose first read was already post-crossing before 85 µs (and normal sectors rarely
+do), **the crossing was early and refused**, and the filter/persistence decision is the lever. If **≤ 20 %**
+do, and late sectors show pre-crossing first reads throughout, **the crossing is genuinely late**, and the
+trigger is analogue/physical.

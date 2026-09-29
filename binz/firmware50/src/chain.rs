@@ -214,6 +214,11 @@ pub trait ChainLog {
     const ON: bool;
 
     fn accept(at: &mut Root<CompPrio>, a: &Arm);
+    /// ENV-34: a REFUSED decision in a watched sector: `count` = us since the sector
+    /// start, `reads` = the filter's live reads (oldest bit 0, count in bits 12..15),
+    /// `too_early` = gate (else filter). Default no-op, so `NoChain` is unchanged.
+    #[inline(always)]
+    fn refusal(_at: &mut Root<CompPrio>, _count: u16, _fine: u16, _reads: u16, _too_early: bool, _step: u8) {}
     /// `fire_fine`/`bridge_fine` are fine stamps; `sched_us` is the coarse
     /// instant the arm asked for (the pairing key) and `late_us` the lateness
     /// the firmware would report.
@@ -260,6 +265,30 @@ fn push_to<P: crate::shared::Priority>(ring: &'static Seam<Chain, P>, at: &mut R
 
 impl ChainLog for ChainRing {
     const ON: bool = true;
+
+    #[inline(always)]
+    fn refusal(at: &mut Root<CompPrio>, count: u16, fine: u16, reads: u16, too_early: bool, step: u8) {
+        let flag = if REVISIT_THIS.load(core::sync::atomic::Ordering::Relaxed) {
+            0x40
+        } else {
+            0
+        };
+        push_to(
+            &CHAIN_ACC,
+            at,
+            Beat {
+                at_us: count,
+                at_fine: fine,
+                x_fine: reads,
+                y_us: u16::from(too_early),
+                z_fine: 0,
+                kind: 3,
+                step,
+                flag,
+                pad: 0,
+            },
+        );
+    }
 
     #[inline(always)]
     fn accept(at: &mut Root<CompPrio>, a: &Arm) {

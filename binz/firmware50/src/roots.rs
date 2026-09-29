@@ -459,6 +459,8 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
     // the root token is borrowed by the estimator's closure (E154).
     // (crossing µs, crossing fine, arm fine, wait µs, spent fine, sector, late)
     let mut beat: Option<(u16, u16, u16, u32, u16, u8, bool)> = None;
+    // ENV-34, chain images only: a refused decision in step 3 (count, reads, too_early).
+    let mut refused: Option<(u16, u16, bool)> = None;
 
     // The estimator's borrow returns the accepted crossing's (step, average)
     // so the watch is fed after it ends: the watch borrow needs the token.
@@ -478,7 +480,16 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
         let advance = S.det().advance.load(Ordering::Relaxed);
         // Persistence reads the **live** comparator, microseconds after the edge --
         // exactly what AM32's handler does, and what the foreground could never do.
-        match zc.offer(count, edge_is_rising(step), advance, &DET_FILTER, hw::comp::level) {
+        let (mut reads, mut n) = (0u16, 0u16);
+        let outcome = zc.offer(count, edge_is_rising(step), advance, &DET_FILTER, || {
+            let l = hw::comp::level();
+            if C::ON {
+                reads |= u16::from(l) << n.min(11);
+                n += 1;
+            }
+            l
+        });
+        match outcome {
             crate::bemf::Outcome::Accepted { wait, .. } => {
                 // The accepted crossing's bookkeeping, then the arm. (A stale
                 // comment describing the reverted E142 order stood here until
@@ -534,16 +545,25 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
             // `C::ON` is false.
             other => {
                 if C::ON {
+                    let early = matches!(other, crate::bemf::Outcome::TooEarly);
                     match other {
                         crate::bemf::Outcome::TooEarly => crate::chain::note_refusal(true),
                         crate::bemf::Outcome::Unstable => crate::chain::note_refusal(false),
                         _ => {}
+                    }
+                    if step.get() == 3 {
+                        refused = Some((count as u16, reads | ((n & 15) << 12), early));
                     }
                 }
                 None
             }
         }
     });
+    if C::ON {
+        if let Some((c, r, e)) = refused {
+            C::refusal(at, c, fine0, r, e, 3);
+        }
+    }
     if C::ON {
         if let Some((crossing_us, crossing_fine, arm_fine, wait_us, spent_fine, sector, late)) = beat {
             C::accept(
