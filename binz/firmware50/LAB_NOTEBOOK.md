@@ -43511,3 +43511,19 @@ begins to land in some fixed window at ci ≈ 67 µs. That weakens a pure curren
 magnitude) reading and favours a timing-window interaction specific to that sector. Leads to test against
 the rotation result: the half-cycle gate (avg/2 ≈ 33 µs after the accept), the post-commutation blanking
 floor, or a sector-specific transient timing. Rotation still pending (operator's hands).
+
+#### ENV-31 addendum — the blanking floor is not the window; the cascade has a trigger and an amplifier
+
+* **Blanking floor ruled out:** of 93 late step-3 accepts in the 725 chain corpus, **2** had a purpose-3
+  blank arm in their sector (normal step-3 accepts: 0 of 721). Blank arms total 82, spread over all steps.
+* **In late step-3 sectors the comparator stays at the pre-crossing level longer** (ENV-28's first-read
+  failures), so phase A's rising back-EMF genuinely crosses the star later. The trigger is physical or
+  analogue, not a firmware window. The rotation decides board vs motor.
+* **The amplifier:** `commutation::blend_interval` is AM32's exact estimator,
+  `avg = (ci + (last + this)/2) / 2`. One +60 % late interval inflates `avg` by ~15 %, which widens the next
+  half-cycle gate (`avg/2`) by the same. The next *on-time* crossing can then be refused as too early and
+  recovered late, which is ENV-25's two-late cascade and ENV-26's too-early refusals on the short accepts
+  that follow a late one. **So a desync = a late step-3 trigger × an AM32-identical amplifier.** Fix paths:
+  remove the trigger (board or motor, after the rotation), or, as a local code change, stop a single
+  outlier interval from widening the gate. The second is a divergence from AM32, to be justified by an
+  A/B.
