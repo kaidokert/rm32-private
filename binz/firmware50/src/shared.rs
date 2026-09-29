@@ -398,6 +398,9 @@ pub struct Det {
     /// **ENV-58 (A5): the wait the next acceptance arms with**, computed by the previous
     /// acceptance's commit *after* its arm -- AM32's one-step-ahead `waitTime`.
     pub next_wait: AtomicU32,
+    /// **ENV-61 (A6): the accepted crossing's interval, for COM to commit** (AM32's
+    /// `thiszctime`, which `interruptRoutine` stores and `PeriodElapsedCallback` blends).
+    pub accept_count: AtomicU32,
 }
 
 /// Closed-loop COMP health: the storm and handler-budget stops (E107).
@@ -513,6 +516,9 @@ pub struct Com {
     /// after the bridge is de-energised. `oneshot::arm_allowed` is the rule
     /// and `com_arm` is the only caller (campaign 9 step 2).
     pub stopped: AtomicBool,
+    /// ENV-61 (A6): the `accept_seq` COM last committed, so a handover or rescue
+    /// commutation never blends the previous interval twice.
+    pub committed_seq: AtomicU32,
 }
 
 /// A scan word: `core`'s `AtomicU32`, whose load and store are a plain
@@ -722,6 +728,7 @@ static DET: Det = Det {
     wait_hist: hist(),
     left_hist: hist(),
     next_wait: u(),
+    accept_count: u(),
 };
 static COMP: CompHealth = CompHealth {
     storm: f(),
@@ -780,6 +787,7 @@ static COM: Com = Com {
     preempts: u(),
     arm_preempts: u(),
     stopped: f(),
+    committed_seq: u(),
 };
 static SCAN: Scan = Scan {
     seq: u(),

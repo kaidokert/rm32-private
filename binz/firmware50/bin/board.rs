@@ -547,6 +547,8 @@ impl Hal for Board {
         // pre-run review of step 6b (E167); it predates the restructure.
         det.accept_raw.store(u32::from(raw), Ordering::Relaxed);
         self.det_seq_seen = det.accept_seq.load(Ordering::Relaxed);
+        // ENV-61 (A6): nothing for COM to commit until the first new acceptance.
+        S.com().committed_seq.store(self.det_seq_seen, Ordering::Relaxed);
         det.step.store(u32::from(step.get()), Ordering::Relaxed);
         det.advance.store(advance, Ordering::Relaxed);
         let _ = det.rate.lock(|r| *r = firmware50::rate::Rate::new());

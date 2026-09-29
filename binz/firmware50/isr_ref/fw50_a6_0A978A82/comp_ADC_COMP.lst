@@ -1,0 +1,1741 @@
+; AM32 G071 reference ISR: ADC_COMP -- COMP2 edge (A6)
+; ELF 0A978A82.a6-split-shell-pwm.elf  sha256 0a978a82cf7d7f8bb4df013eccac1653517f302e954281049c02c219fbbd6ea3
+; objdump -d -S -l, call tree walked to depth 6
+;
+; call tree (function: instructions, size bytes -> callees)
+;   ADC_COMP: 784 insns, 1676 B
+;
+
+; ===================== ADC_COMP =====================
+<ADC_COMP>:
+ADC_COMP():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/bin/shell-pwm.rs:123
+    unsafe { roots::com_root::<NoChain>() }
+}
+
+/// COMP2 zero-crossing edge: `firmware50::roots::comp_root`, recording
+/// nothing (`NoLog`, `NoChain`).
+#[interrupt]
+ 8001284:	push	{r4, r5, r6, r7, lr}
+ 8001286:	add	r7, sp, #12
+ 8001288:	sub	sp, #44	@ 0x2c
+ 800128a:	movs	r3, #1
+ 800128c:	lsls	r0, r3, #12
+ 800128e:	ldr	r1, [pc, #716]	@ (800155c <ADC_COMP+0x2d8>)
+ 8001290:	str	r0, [sp, #40]	@ 0x28
+_ZN4core3ptr14write_volatile17h8e3052fd7bb2629fE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+            (
+                addr: *mut () = dst as *mut (),
+                align: usize = align_of::<T>(),
+            ) => ub_checks::maybe_is_aligned(addr, align)
+        );
+        intrinsics::volatile_store(dst, src);
+ 8001292:	str	r0, [r1, #0]
+ 8001294:	ldr	r1, [pc, #712]	@ (8001560 <ADC_COMP+0x2dc>)
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 8001296:	ldr	r0, [r1, #116]	@ 0x74
+ 8001298:	ldr	r2, [pc, #712]	@ (8001564 <ADC_COMP+0x2e0>)
+_RNvXslz_NtNtCshtjvQpOZWNm_4core3ops3bitmNtB6_12BitAndAssign13bitand_assign():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ops/bit.rs:748
+    ($($t:ty)+) => ($(
+        #[stable(feature = "op_assign_traits", since = "1.8.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitAndAssign for $t {
+            #[inline]
+            fn bitand_assign(&mut self, other: $t) { *self &= other }
+ 800129a:	ands	r0, r2
+_ZN4core3ptr14write_volatile17h8e3052fd7bb2629fE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+        intrinsics::volatile_store(dst, src);
+ 800129c:	str	r0, [r1, #116]	@ 0x74
+ 800129e:	lsls	r4, r3, #18
+ 80012a0:	str	r4, [r1, #0]
+ 80012a2:	str	r4, [r1, #4]
+ 80012a4:	ldr	r0, [pc, #704]	@ (8001568 <ADC_COMP+0x2e4>)
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 80012a6:	ldr	r2, [r0, #0]
+_ZN4core4sync6atomic11atomic_load17h17ab246ece6b300dE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+#[cfg_attr(miri, track_caller)] // even without panics, this helps for Miri backtraces
+unsafe fn atomic_load<T: Copy>(dst: *const T, order: Ordering) -> T {
+    // SAFETY: the caller must uphold the safety contract for `atomic_load`.
+    unsafe {
+        match order {
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 80012a8:	ldr	r6, [pc, #704]	@ (800156c <ADC_COMP+0x2e8>)
+ 80012aa:	ldrb	r0, [r6, #0]
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1382
+        crate::chain::latch_origin();
+    }
+    // SAFETY: the caller is the ADC_COMP handler (this fn's contract).
+    let mut at = unsafe { Root::<CompPrio>::enter() };
+
+    if S.det().active.load(Ordering::Relaxed) {
+ 80012ac:	cmp	r0, #0
+ 80012ae:	beq.n	80012de <ADC_COMP+0x5a>
+ 80012b0:	movs	r0, #64	@ 0x40
+ 80012b2:	str	r0, [sp, #28]
+_ZN4core4sync6atomic11atomic_load17h17ab246ece6b300dE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80012b4:	ldrb	r0, [r6, r0]
+_ZN10firmware505roots9comp_root28_$u7b$$u7b$closure$u7d$$u7d$17hf791f1ca9f8b82b8E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1389
+        // line stays masked -- it was masked at entry -- and the foreground
+        // removes the bridge.
+        // binz's startup policy (E107): during the handover window the count
+        // is telemetry; after it, the unchanged 64/ms cutoff.
+        let within = S.det().rate.root(&mut at, |rate| {
+            if S.det().cap_armed.load(Ordering::Relaxed) {
+ 80012b6:	cmp	r0, #0
+ 80012b8:	beq.n	80012fe <ADC_COMP+0x7a>
+ 80012ba:	movs	r5, #124	@ 0x7c
+_ZN10firmware504rate13Rate$LT$_$GT$3hit17he45187e6028a8877E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:129
+    }
+
+    /// Count one call and judge it. False once the limit has been exceeded,
+    /// and false forever after.
+    pub fn hit(&mut self, now: u16) -> bool {
+        if self.failed {
+ 80012bc:	ldrb	r0, [r6, r5]
+ 80012be:	cmp	r0, #0
+ 80012c0:	beq.n	80012c4 <ADC_COMP+0x40>
+ 80012c2:	b.n	8001444 <ADC_COMP+0x1c0>
+ 80012c4:	movs	r0, #112	@ 0x70
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:107
+        if now.wrapping_sub(self.start) >= BUCKET_US || (LOCATE && self.buckets == 0) {
+ 80012c6:	ldrh	r1, [r6, r0]
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt12wrapping_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2548
+        #[rustc_const_stable(feature = "const_wrapping_math", since = "1.32.0")]
+        #[must_use = "this returns the result of the operation, \
+                      without modifying the original"]
+        #[inline(always)]
+        pub const fn wrapping_sub(self, rhs: Self) -> Self {
+            intrinsics::wrapping_sub(self, rhs)
+ 80012c8:	subs	r1, r2, r1
+ 80012ca:	uxth	r1, r1
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:107
+ 80012cc:	lsrs	r1, r1, #3
+ 80012ce:	cmp	r1, #124	@ 0x7c
+ 80012d0:	str	r4, [sp, #32]
+ 80012d2:	str	r2, [sp, #36]	@ 0x24
+ 80012d4:	bhi.n	80012d8 <ADC_COMP+0x54>
+ 80012d6:	b.n	800140e <ADC_COMP+0x18a>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:108
+            self.start = now;
+ 80012d8:	strh	r2, [r6, r0]
+ 80012da:	movs	r0, #1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:110
+            if LOCATE {
+ 80012dc:	b.n	8001420 <ADC_COMP+0x19c>
+_ZN4core4sync6atomic11atomic_load17h17ab246ece6b300dE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80012de:	ldr	r5, [pc, #656]	@ (8001570 <ADC_COMP+0x2ec>)
+ 80012e0:	ldrb	r0, [r5, #0]
+ 80012e2:	ldr	r3, [pc, #656]	@ (8001574 <ADC_COMP+0x2f0>)
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1444
+        }
+        // Accepted: stay masked until the foreground commutates and re-arms for
+        // the next sector -- one crossing per sector, as the reference serves.
+        return;
+    }
+    if S.drv().active.load(Ordering::Relaxed) {
+ 80012e4:	cmp	r0, #0
+ 80012e6:	beq.n	8001314 <ADC_COMP+0x90>
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:107
+        if now.wrapping_sub(self.start) >= BUCKET_US || (LOCATE && self.buckets == 0) {
+ 80012e8:	ldrh	r0, [r5, #60]	@ 0x3c
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt12wrapping_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2548
+ 80012ea:	subs	r0, r2, r0
+ 80012ec:	uxth	r0, r0
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:107
+ 80012ee:	lsrs	r0, r0, #3
+ 80012f0:	cmp	r0, #124	@ 0x7c
+ 80012f2:	str	r4, [sp, #32]
+ 80012f4:	str	r2, [sp, #36]	@ 0x24
+ 80012f6:	bls.n	8001334 <ADC_COMP+0xb0>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:108
+            self.start = now;
+ 80012f8:	strh	r2, [r5, #60]	@ 0x3c
+ 80012fa:	movs	r0, #1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:110
+            if LOCATE {
+ 80012fc:	b.n	8001340 <ADC_COMP+0xbc>
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+ 80012fe:	movs	r0, #112	@ 0x70
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:107
+        if now.wrapping_sub(self.start) >= BUCKET_US || (LOCATE && self.buckets == 0) {
+ 8001300:	ldrh	r1, [r6, r0]
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt12wrapping_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2548
+ 8001302:	subs	r1, r2, r1
+ 8001304:	uxth	r1, r1
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:107
+ 8001306:	lsrs	r1, r1, #3
+ 8001308:	cmp	r1, #124	@ 0x7c
+ 800130a:	bls.n	800139e <ADC_COMP+0x11a>
+ 800130c:	mov	r5, r2
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:108
+            self.start = now;
+ 800130e:	strh	r2, [r6, r0]
+ 8001310:	movs	r0, #1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:110
+            if LOCATE {
+ 8001312:	b.n	80013ae <ADC_COMP+0x12a>
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+ 8001314:	ldr	r0, [r3, #0]
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1454
+        return;
+    }
+
+    // Open loop / acquisition: record the edge for the foreground, as before.
+    let level = hw::comp::level();
+    S.edge().raw.store(raw as u32, Ordering::Relaxed);
+ 8001316:	uxth	r1, r2
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8001318:	ldr	r2, [pc, #604]	@ (8001578 <ADC_COMP+0x2f4>)
+ 800131a:	str	r1, [r2, #0]
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1455
+    S.edge().level.store(level as u32, Ordering::Relaxed);
+ 800131c:	lsls	r0, r0, #1
+ 800131e:	lsrs	r0, r0, #31
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 8001320:	str	r0, [r2, #8]
+_ZN15portable_atomic3imp9interrupt4arch7disable17h3ec6a546f52c6294E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:34
+pub(crate) fn disable() -> State {
+    let primask: State;
+    // SAFETY: reading the priority mask register and disabling interrupts are safe.
+    // (see module-level comments of interrupt/mod.rs on the safety of using privileged instructions)
+    unsafe {
+        asm!(
+ 8001322:	mrs	r0, PRIMASK
+ 8001326:	cpsid	i
+_ZN4core3ptr4read17hba5936ac89bd43e0E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1721
+        crate::intrinsics::read_via_copy(src)
+ 8001328:	ldr	r1, [r2, #4]
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+            intrinsics::wrapping_add(self, rhs)
+ 800132a:	adds	r1, r1, #1
+_ZN4core3ptr5write17h56903f5125280645E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1921
+        intrinsics::write_via_move(dst, src)
+ 800132c:	str	r1, [r2, #4]
+_ZN15portable_atomic3imp9interrupt4arch7restore17hb2cf2f388bec0c55E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:57
+    // SAFETY: the caller must guarantee that the state was retrieved by the previous `disable`,
+    // and we've checked that interrupts were enabled before disabling interrupts.
+    //
+    // This clobbers the entire PRIMASK register. See msp430.rs for safety on this.
+    unsafe {
+        asm!(
+ 800132e:	msr	PRIMASK, r0
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+ 8001332:	b.n	8001772 <ADC_COMP+0x4ee>
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+        self.count = self.count.saturating_add(1);
+ 8001334:	ldrh	r0, [r5, #62]	@ 0x3e
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt14saturating_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2355
+            intrinsics::saturating_add(self, rhs)
+ 8001336:	adds	r0, r0, #1
+ 8001338:	ldr	r1, [pc, #576]	@ (800157c <ADC_COMP+0x2f8>)
+ 800133a:	cmp	r0, r1
+ 800133c:	bcc.n	8001340 <ADC_COMP+0xbc>
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+ 800133e:	mov	r0, r1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+ 8001340:	strh	r0, [r5, #62]	@ 0x3e
+ 8001342:	movs	r1, #64	@ 0x40
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:115
+        if self.count > self.peak {
+ 8001344:	ldrh	r2, [r5, r1]
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+        self.count = self.count.saturating_add(1);
+ 8001346:	uxth	r4, r0
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:115
+        if self.count > self.peak {
+ 8001348:	cmp	r4, r2
+ 800134a:	bls.n	800134e <ADC_COMP+0xca>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:116
+            self.peak = self.count;
+ 800134c:	strh	r0, [r5, r1]
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 800134e:	ldr	r2, [r5, #4]
+ 8001350:	ldr	r0, [r5, #8]
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:743
+    let step = Step::new_clamped(S.drv().step.load(Ordering::Relaxed) as u8);
+ 8001352:	uxtb	r1, r0
+_ZN10firmware5011commutation4Step11new_clamped17h83820b9c07f2ee92E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/commutation.rs:52
+    }
+
+    /// Build a sector, saturating into range. Infallible, panic-free.
+    #[inline]
+    pub const fn new_clamped(raw: u8) -> Step {
+        if raw < 1 {
+ 8001354:	cmp	r1, #6
+ 8001356:	mov	r0, r1
+ 8001358:	bcc.n	800135c <ADC_COMP+0xd8>
+ 800135a:	movs	r0, #6
+ 800135c:	movs	r6, #1
+ 800135e:	cmp	r1, #0
+ 8001360:	mov	r4, r6
+ 8001362:	beq.n	8001366 <ADC_COMP+0xe2>
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+ 8001364:	mov	r4, r0
+_ZN10firmware5011commutation4Step6rising17h63cd58873185a74dE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/commutation.rs:82
+
+    /// BEMF edge polarity for this sector: odd sectors look for a rising
+    /// crossing, even sectors a falling one (reference `rising = step & 1`).
+    #[inline]
+    pub const fn rising(self) -> bool {
+        self.0 & 1 == 1
+ 8001366:	mov	r0, r4
+ 8001368:	ands	r0, r6
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt12wrapping_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2548
+            intrinsics::wrapping_sub(self, rhs)
+ 800136a:	ldr	r1, [sp, #36]	@ 0x24
+ 800136c:	subs	r2, r1, r2
+ 800136e:	uxth	r1, r2
+ 8001370:	lsls	r2, r6, #30
+ 8001372:	movs	r6, #255	@ 0xff
+ 8001374:	adds	r6, #162	@ 0xa2
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:745
+    if count <= DRV_GATE_US {
+ 8001376:	cmp	r1, r6
+ 8001378:	bcs.n	80013c2 <ADC_COMP+0x13e>
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 800137a:	ldr	r1, [r3, #0]
+_ZN15stm32g0_staging9stm32g0714comp9comp2_csr114_$LT$impl$u20$stm32g0_staging..generic..raw..R$LT$stm32g0_staging..stm32g071..comp..comp2_csr..COMP2_CSRrs$GT$$GT$5value17hbce51fc09ff1f788E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\stm32g0-staging/src\stm32g071\comp\comp2_csr.rs:98
+        BLANKSEL_R::new(((self.bits >> 20) & 0x1f) as u8)
+    }
+    ///Bit 30 - Comparator 2 output status
+    #[inline(always)]
+    pub fn value(&self) -> VALUE_R {
+        VALUE_R::new(((self.bits >> 30) & 1) != 0)
+ 800137c:	ands	r1, r2
+ 800137e:	subs	r2, r1, #1
+ 8001380:	sbcs	r1, r2
+_ZN10firmware5011commutation4Step6rising17h63cd58873185a74dE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/commutation.rs:82
+ 8001382:	negs	r2, r0
+ 8001384:	adcs	r2, r0
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:746
+        if hw::comp::level() == rising {
+ 8001386:	eors	r2, r1
+ 8001388:	bne.n	800138c <ADC_COMP+0x108>
+ 800138a:	b.n	800152e <ADC_COMP+0x2aa>
+_ZN15portable_atomic3imp9interrupt4arch7disable17h3ec6a546f52c6294E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:34
+        asm!(
+ 800138c:	mrs	r0, PRIMASK
+ 8001390:	cpsid	i
+_ZN4core3ptr4read17hba5936ac89bd43e0E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1721
+        crate::intrinsics::read_via_copy(src)
+ 8001392:	ldr	r1, [r5, #44]	@ 0x2c
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+            intrinsics::wrapping_add(self, rhs)
+ 8001394:	adds	r1, r1, #1
+_ZN4core3ptr5write17h56903f5125280645E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1921
+        intrinsics::write_via_move(dst, src)
+ 8001396:	str	r1, [r5, #44]	@ 0x2c
+_ZN15portable_atomic3imp9interrupt4arch7restore17hb2cf2f388bec0c55E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:57
+        asm!(
+ 8001398:	msr	PRIMASK, r0
+ 800139c:	b.n	80014d0 <ADC_COMP+0x24c>
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+ 800139e:	movs	r0, #114	@ 0x72
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+        self.count = self.count.saturating_add(1);
+ 80013a0:	ldrh	r0, [r6, r0]
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt14saturating_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2355
+            intrinsics::saturating_add(self, rhs)
+ 80013a2:	adds	r0, r0, #1
+ 80013a4:	ldr	r1, [pc, #468]	@ (800157c <ADC_COMP+0x2f8>)
+ 80013a6:	cmp	r0, r1
+ 80013a8:	bcc.n	80013ac <ADC_COMP+0x128>
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+ 80013aa:	mov	r0, r1
+ 80013ac:	mov	r5, r2
+ 80013ae:	movs	r1, #114	@ 0x72
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+ 80013b0:	strh	r0, [r6, r1]
+ 80013b2:	movs	r1, #116	@ 0x74
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:115
+        if self.count > self.peak {
+ 80013b4:	ldrh	r2, [r6, r1]
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+        self.count = self.count.saturating_add(1);
+ 80013b6:	uxth	r3, r0
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:115
+        if self.count > self.peak {
+ 80013b8:	cmp	r3, r2
+ 80013ba:	mov	r2, r5
+ 80013bc:	bls.n	8001450 <ADC_COMP+0x1cc>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:116
+            self.peak = self.count;
+ 80013be:	strh	r0, [r6, r1]
+ 80013c0:	b.n	8001450 <ADC_COMP+0x1cc>
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+ 80013c2:	str	r1, [sp, #24]
+ 80013c4:	str	r4, [sp, #28]
+ 80013c6:	movs	r6, #0
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 80013c8:	ldr	r1, [r3, #0]
+_ZN15stm32g0_staging9stm32g0714comp9comp2_csr114_$LT$impl$u20$stm32g0_staging..generic..raw..R$LT$stm32g0_staging..stm32g071..comp..comp2_csr..COMP2_CSRrs$GT$$GT$5value17hbce51fc09ff1f788E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\stm32g0-staging/src\stm32g071\comp\comp2_csr.rs:98
+ 80013ca:	ands	r1, r2
+ 80013cc:	subs	r4, r1, #1
+ 80013ce:	sbcs	r1, r4
+_ZN10firmware5011commutation4Step6rising17h63cd58873185a74dE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/commutation.rs:82
+ 80013d0:	negs	r4, r0
+ 80013d2:	adcs	r4, r0
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:756
+        if hw::comp::level() != rising {
+ 80013d4:	cmp	r4, r1
+ 80013d6:	bne.n	80014c0 <ADC_COMP+0x23c>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:760
+        i += 1;
+ 80013d8:	adds	r1, r6, #1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:755
+    while i < 12 {
+ 80013da:	cmp	r6, #11
+ 80013dc:	mov	r6, r1
+ 80013de:	bcc.n	80013c8 <ADC_COMP+0x144>
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 80013e0:	ldr	r0, [sp, #24]
+ 80013e2:	str	r0, [r5, #32]
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 80013e4:	ldr	r0, [r5, #36]	@ 0x24
+ 80013e6:	ldr	r1, [sp, #36]	@ 0x24
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt12wrapping_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2548
+            intrinsics::wrapping_sub(self, rhs)
+ 80013e8:	subs	r0, r1, r0
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:764
+        raw.wrapping_sub(S.drv().sector_raw.load(Ordering::Relaxed) as u16) as u32,
+ 80013ea:	uxth	r0, r0
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 80013ec:	str	r0, [r5, #40]	@ 0x28
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:767
+    S.drv().acc_raw.store(raw as u32, Ordering::Relaxed);
+ 80013ee:	uxth	r0, r1
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 80013f0:	str	r0, [r5, #20]
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 80013f2:	ldr	r1, [r5, #12]
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 80013f4:	str	r1, [r5, #24]
+ 80013f6:	ldr	r1, [sp, #28]
+ 80013f8:	str	r1, [r5, #28]
+ 80013fa:	str	r0, [r5, #4]
+_ZN15portable_atomic3imp9interrupt4arch7disable17h3ec6a546f52c6294E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:34
+        asm!(
+ 80013fc:	mrs	r0, PRIMASK
+ 8001400:	cpsid	i
+_ZN4core3ptr4read17hba5936ac89bd43e0E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1721
+        crate::intrinsics::read_via_copy(src)
+ 8001402:	ldr	r1, [r5, #16]
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+            intrinsics::wrapping_add(self, rhs)
+ 8001404:	adds	r1, r1, #1
+_ZN4core3ptr5write17h56903f5125280645E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1921
+        intrinsics::write_via_move(dst, src)
+ 8001406:	str	r1, [r5, #16]
+_ZN15portable_atomic3imp9interrupt4arch7restore17hb2cf2f388bec0c55E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:57
+        asm!(
+ 8001408:	msr	PRIMASK, r0
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+ 800140c:	b.n	8001772 <ADC_COMP+0x4ee>
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+ 800140e:	movs	r0, #114	@ 0x72
+ 8001410:	mov	r2, r6
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+        self.count = self.count.saturating_add(1);
+ 8001412:	ldrh	r0, [r6, r0]
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt14saturating_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2355
+            intrinsics::saturating_add(self, rhs)
+ 8001414:	adds	r0, r0, #1
+ 8001416:	ldr	r1, [pc, #356]	@ (800157c <ADC_COMP+0x2f8>)
+ 8001418:	cmp	r0, r1
+ 800141a:	bcc.n	800141e <ADC_COMP+0x19a>
+_ZN10firmware504rate13Rate$LT$_$GT$7observe17h46b40f05fc63e328E():
+ 800141c:	mov	r0, r1
+ 800141e:	mov	r6, r2
+ 8001420:	movs	r1, #114	@ 0x72
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+ 8001422:	strh	r0, [r6, r1]
+ 8001424:	movs	r2, #116	@ 0x74
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:115
+        if self.count > self.peak {
+ 8001426:	ldrh	r4, [r6, r2]
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:114
+        self.count = self.count.saturating_add(1);
+ 8001428:	uxth	r1, r0
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:115
+        if self.count > self.peak {
+ 800142a:	cmp	r1, r4
+ 800142c:	bls.n	8001432 <ADC_COMP+0x1ae>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:116
+            self.peak = self.count;
+ 800142e:	ldr	r4, [pc, #316]	@ (800156c <ADC_COMP+0x2e8>)
+ 8001430:	strh	r0, [r4, r2]
+_ZN10firmware504rate13Rate$LT$_$GT$3hit17he45187e6028a8877E():
+ 8001432:	movs	r0, #0
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/rate.rs:133
+            return false;
+        }
+        self.observe(now);
+        self.failed = self.count > LIMIT;
+ 8001434:	cmp	r1, #64	@ 0x40
+ 8001436:	ldr	r4, [sp, #32]
+ 8001438:	bhi.n	800143c <ADC_COMP+0x1b8>
+ 800143a:	mov	r3, r0
+ 800143c:	ldr	r6, [pc, #300]	@ (800156c <ADC_COMP+0x2e8>)
+ 800143e:	strb	r3, [r6, r5]
+ 8001440:	ldr	r2, [sp, #36]	@ 0x24
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1396
+        if !within {
+ 8001442:	bls.n	8001450 <ADC_COMP+0x1cc>
+_ZN4core4sync6atomic12atomic_store17hb5a3855436143d83E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 8001444:	ldr	r0, [pc, #312]	@ (8001580 <ADC_COMP+0x2fc>)
+ 8001446:	movs	r1, #1
+ 8001448:	strb	r1, [r0, #0]
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 800144a:	ldr	r1, [r6, #8]
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 800144c:	str	r1, [r0, #4]
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+ 800144e:	b.n	8001772 <ADC_COMP+0x4ee>
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8001450:	ldr	r0, [r6, #4]
+_ZN4core6option15Option$LT$T$GT$6as_mut17h0666e60c95fe41e8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/option.rs:767
+    /// ```
+    #[inline]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[rustc_const_stable(feature = "const_option", since = "1.83.0")]
+    pub const fn as_mut(&mut self) -> Option<&mut T> {
+        match *self {
+ 8001452:	ldr	r1, [r6, #72]	@ 0x48
+ 8001454:	cmp	r1, #0
+ 8001456:	bne.n	800145c <ADC_COMP+0x1d8>
+ 8001458:	mov	r5, r1
+ 800145a:	b.n	8001460 <ADC_COMP+0x1dc>
+ 800145c:	mov	r5, r6
+ 800145e:	adds	r5, #76	@ 0x4c
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 8001460:	movs	r3, #0
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:469
+        let zc = zc.as_mut()?;
+ 8001462:	cmp	r1, #1
+ 8001464:	bne.n	8001484 <ADC_COMP+0x200>
+_ZN10firmware505roots16det_decide_plain17h6084d6aa399f453aE():
+ 8001466:	subs	r0, r2, r0
+ 8001468:	uxth	r1, r0
+_ZN10firmware504bemf22ZeroCrossWith$LT$_$GT$6bounds17h7c5607065778c803E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:412
+    }
+
+    /// The interval band the estimate is held within.
+    #[inline]
+    pub const fn bounds(&self) -> (u32, u32) {
+        (self.min_interval, self.max_interval)
+ 800146a:	ldr	r0, [r6, #104]	@ 0x68
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:474
+        if count > ci_max {
+ 800146c:	cmp	r1, r0
+ 800146e:	bls.n	8001488 <ADC_COMP+0x204>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:475
+            S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
+ 8001470:	uxth	r0, r2
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8001472:	str	r0, [r6, #4]
+_ZN15portable_atomic3imp9interrupt4arch7disable17h3ec6a546f52c6294E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:34
+        asm!(
+ 8001474:	mrs	r0, PRIMASK
+ 8001478:	cpsid	i
+_ZN4core3ptr4read17hba5936ac89bd43e0E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1721
+        crate::intrinsics::read_via_copy(src)
+ 800147a:	ldr	r1, [r6, #52]	@ 0x34
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+            intrinsics::wrapping_add(self, rhs)
+ 800147c:	adds	r1, r1, #1
+_ZN4core3ptr5write17h56903f5125280645E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1921
+        intrinsics::write_via_move(dst, src)
+ 800147e:	str	r1, [r6, #52]	@ 0x34
+_ZN15portable_atomic3imp9interrupt4arch7restore17hb2cf2f388bec0c55E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:57
+        asm!(
+ 8001480:	msr	PRIMASK, r0
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 8001484:	ldr	r0, [pc, #224]	@ (8001568 <ADC_COMP+0x2e4>)
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:469
+        let zc = zc.as_mut()?;
+ 8001486:	b.n	80016f2 <ADC_COMP+0x46e>
+ 8001488:	str	r5, [sp, #16]
+ 800148a:	str	r1, [sp, #24]
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 800148c:	ldr	r0, [r6, #8]
+ 800148e:	ldr	r1, [r6, #12]
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:480
+        let step = Step::new_clamped(S.det().step.load(Ordering::Relaxed) as u8);
+ 8001490:	uxtb	r1, r0
+_ZN10firmware5011commutation4Step11new_clamped17h83820b9c07f2ee92E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/commutation.rs:52
+        if raw < 1 {
+ 8001492:	cmp	r1, #6
+ 8001494:	mov	r0, r1
+ 8001496:	bcc.n	800149a <ADC_COMP+0x216>
+ 8001498:	movs	r0, #6
+ 800149a:	movs	r5, #1
+ 800149c:	cmp	r1, #0
+ 800149e:	mov	r3, r5
+ 80014a0:	beq.n	80014a4 <ADC_COMP+0x220>
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 80014a2:	mov	r3, r0
+ 80014a4:	movs	r0, #0
+ 80014a6:	str	r0, [sp, #20]
+ 80014a8:	mvns	r1, r0
+_ZN10firmware504bemf22ZeroCrossWith$LT$_$GT$8blanking17h4554bfff55fa92f5E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:446
+    #[inline]
+    pub const fn blanking(&self) -> u32 {
+        // The reference's half cycle, exactly (`(i >> 6) * 32 + ((i & 63) * 32
+        // >> 6)` is `i >> 1`): one shift on every COMP edge.
+        if BLANK_64 == REFERENCE_BLANK_64 {
+            return self.average_interval >> 1;
+ 80014aa:	ldr	r0, [r6, #76]	@ 0x4c
+_RNvNtCshtjvQpOZWNm_4core10intrinsics8unlikely():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/intrinsics/mod.rs:457
+/// This intrinsic does not have a stable counterpart.
+#[unstable(feature = "core_intrinsics", issue = "none")]
+#[rustc_nounwind]
+#[inline(always)]
+pub const fn unlikely(b: bool) -> bool {
+    if b {
+ 80014ac:	cmp	r0, #0
+ 80014ae:	str	r1, [sp, #12]
+ 80014b0:	blt.n	80014b4 <ADC_COMP+0x230>
+ 80014b2:	lsls	r1, r0, #1
+_ZN10firmware504bemf22ZeroCrossWith$LT$_$GT$8blanking17h4554bfff55fa92f5E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:446
+ 80014b4:	lsrs	r0, r0, #1
+_ZN94_$LT$firmware50..bemf..WithShallowFloor$LT$P$GT$$u20$as$u20$firmware50..bemf..FilterPolicy$GT$5level17hfb4b5e08ee183570E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:168
+        if average_interval < SHALLOW_INTERVAL {
+ 80014b6:	cmp	r1, #50	@ 0x32
+ 80014b8:	str	r4, [sp, #32]
+ 80014ba:	bcs.n	8001544 <ADC_COMP+0x2c0>
+ 80014bc:	movs	r4, #2
+ 80014be:	b.n	80015ac <ADC_COMP+0x328>
+_ZN15portable_atomic3imp9interrupt4arch7disable17h3ec6a546f52c6294E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:34
+        asm!(
+ 80014c0:	mrs	r0, PRIMASK
+ 80014c4:	cpsid	i
+_ZN15portable_atomic3imp9interrupt9AtomicU324read17h38e51c80a110e21fE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1721
+        crate::intrinsics::read_via_copy(src)
+ 80014c6:	ldr	r1, [r5, #48]	@ 0x30
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+ 80014c8:	adds	r1, r1, #1
+_ZN4core3ptr5write17h56903f5125280645E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1921
+        intrinsics::write_via_move(dst, src)
+ 80014ca:	str	r1, [r5, #48]	@ 0x30
+_ZN15portable_atomic3imp9interrupt4arch7restore17hb2cf2f388bec0c55E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:57
+        asm!(
+ 80014cc:	msr	PRIMASK, r0
+_ZN8cortex_m8register7primask8read_raw17h333d3f63d1702481E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\register\primask.rs:48
+/// Note that bits `[31:1]` are reserved and UNK (Unknown)
+#[inline]
+#[asm_cfg(cortex_m)]
+pub fn read_raw() -> u32 {
+    let r: u32;
+    unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+ 80014d0:	mrs	r0, PRIMASK
+_ZN8cortex_m9interrupt7disable17ha7fb2cbc4636a9e4E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\interrupt.rs:44
+
+/// Disables all interrupts
+#[inline]
+#[asm_cfg(cortex_m)]
+pub fn disable() {
+    unsafe { asm!("cpsid i", options(nomem, nostack, preserves_flags)) };
+ 80014d4:	str	r0, [sp, #36]	@ 0x24
+ 80014d6:	cpsid	i
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80014d8:	ldr	r0, [pc, #168]	@ (8001584 <ADC_COMP+0x300>)
+ 80014da:	ldr	r0, [r0, #4]
+_ZN4core4sync6atomic11atomic_load17h17ab246ece6b300dE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80014dc:	ldr	r1, [pc, #140]	@ (800156c <ADC_COMP+0x2e8>)
+ 80014de:	ldrb	r6, [r1, #0]
+ 80014e0:	ldrb	r1, [r5, #0]
+ 80014e2:	movs	r2, #99	@ 0x63
+ 80014e4:	lsls	r2, r2, #2
+ 80014e6:	ldr	r3, [pc, #160]	@ (8001588 <ADC_COMP+0x304>)
+ 80014e8:	ldrb	r4, [r3, r2]
+ 80014ea:	ldrb	r5, [r3, #0]
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80014ec:	ldr	r2, [r3, #4]
+_ZN10firmware507oneshot25comparator_resume_allowed17hd171db000154b599E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/oneshot.rs:83
+/// Closed-loop blanking takes precedence over the driven acquisition owner.
+#[inline(always)]
+pub const fn comparator_resume_allowed(
+    guard: u32, detector: bool, driven: bool, stopped: bool, active: bool, phase: u32,
+) -> bool {
+    guard == 0 && if detector { arm_allowed(stopped, active) && phase == 0 } else { driven }
+ 80014ee:	cmp	r0, #0
+ 80014f0:	bne.n	8001504 <ADC_COMP+0x280>
+ 80014f2:	cmp	r6, #0
+ 80014f4:	beq.n	8001504 <ADC_COMP+0x280>
+_ZN10firmware505roots19comp_resume_powered28_$u7b$$u7b$closure$u7d$$u7d$17hfe375f2648176572E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1504
+
+/// Resume only the powered owner; stop and blanking checks share the write mask.
+#[inline(always)]
+pub fn comp_resume_powered() -> bool {
+    cortex_m::interrupt::free(|_| {
+        if crate::oneshot::comparator_resume_allowed(
+ 80014f6:	cmp	r5, #0
+ 80014f8:	beq.n	8001526 <ADC_COMP+0x2a2>
+ 80014fa:	cmp	r4, #0
+ 80014fc:	bne.n	8001526 <ADC_COMP+0x2a2>
+ 80014fe:	cmp	r2, #0
+ 8001500:	beq.n	8001512 <ADC_COMP+0x28e>
+ 8001502:	b.n	8001526 <ADC_COMP+0x2a2>
+_ZN10firmware507oneshot25comparator_resume_allowed17hd171db000154b599E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/oneshot.rs:83
+ 8001504:	subs	r2, r0, #1
+ 8001506:	sbcs	r0, r2
+_ZN15portable_atomic10AtomicBool4load17hf509f6ab836c1738E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\lib.rs:942
+    #[cfg_attr(
+        any(all(debug_assertions, not(portable_atomic_no_track_caller)), miri),
+        track_caller
+    )]
+    pub fn load(&self, order: Ordering) -> bool {
+        self.as_atomic_u8().load(order) != 0
+ 8001508:	uxtb	r1, r1
+ 800150a:	negs	r2, r1
+ 800150c:	adcs	r2, r1
+_ZN10firmware505roots19comp_resume_powered28_$u7b$$u7b$closure$u7d$$u7d$17hfe375f2648176572E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1504
+ 800150e:	orrs	r2, r0
+ 8001510:	bne.n	8001526 <ADC_COMP+0x2a2>
+ 8001512:	ldr	r1, [pc, #952]	@ (80018cc <ADC_COMP+0x648>)
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 8001514:	ldr	r0, [r1, #116]	@ 0x74
+_RNvXslZ_NtNtCshtjvQpOZWNm_4core3ops3bitmNtB6_11BitOrAssign12bitor_assign():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ops/bit.rs:823
+    ($($t:ty)+) => ($(
+        #[stable(feature = "op_assign_traits", since = "1.8.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitOrAssign for $t {
+            #[inline]
+            fn bitor_assign(&mut self, other: $t) { *self |= other }
+ 8001516:	ldr	r2, [sp, #32]
+ 8001518:	orrs	r0, r2
+_ZN4core3ptr14write_volatile17h8e3052fd7bb2629fE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+        intrinsics::volatile_store(dst, src);
+ 800151a:	str	r0, [r1, #116]	@ 0x74
+ 800151c:	ldr	r0, [pc, #108]	@ (800158c <ADC_COMP+0x308>)
+ 800151e:	ldr	r1, [sp, #40]	@ 0x28
+ 8001520:	str	r1, [r0, #0]
+ 8001522:	ldr	r0, [pc, #108]	@ (8001590 <ADC_COMP+0x30c>)
+ 8001524:	str	r1, [r0, #0]
+_ZN8cortex_m8register7primask9write_raw17h2d20d7724a20944bE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\register\primask.rs:67
+#[inline]
+#[asm_cfg(cortex_m)]
+pub unsafe fn write_raw(r: u32) {
+    // Ensure no preceeding memory accesses are reordered to after interrupts are possibly enabled.
+    compiler_fence(Ordering::SeqCst);
+    unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8001526:	ldr	r0, [sp, #36]	@ 0x24
+ 8001528:	msr	PRIMASK, r0
+ 800152c:	b.n	8001772 <ADC_COMP+0x4ee>
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+ 800152e:	movs	r0, #1
+_ZN4core4sync6atomic12atomic_store17hb5a3855436143d83E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8001530:	strb	r0, [r5, #1]
+_ZN15portable_atomic3imp9interrupt4arch7disable17h3ec6a546f52c6294E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:34
+        asm!(
+ 8001532:	mrs	r0, PRIMASK
+ 8001536:	cpsid	i
+_ZN4core3ptr4read17hba5936ac89bd43e0E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1721
+        crate::intrinsics::read_via_copy(src)
+ 8001538:	ldr	r1, [r5, #52]	@ 0x34
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+ 800153a:	adds	r1, r1, #1
+_ZN4core3ptr5write17h56903f5125280645E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1921
+        intrinsics::write_via_move(dst, src)
+ 800153c:	str	r1, [r5, #52]	@ 0x34
+_ZN15portable_atomic3imp9interrupt4arch7restore17hb2cf2f388bec0c55E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:57
+        asm!(
+ 800153e:	msr	PRIMASK, r0
+_ZN10firmware505roots10drv_decide17h2d40b460b6fd6d60E():
+ 8001542:	b.n	8001772 <ADC_COMP+0x4ee>
+_ZN10firmware504bemf19mapped_filter_level17h4285ea1b4a037614E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:115
+    if average_interval <= MAP_IN_LOW {
+ 8001544:	cmp	r1, #101	@ 0x65
+ 8001546:	bcs.n	800154c <ADC_COMP+0x2c8>
+ 8001548:	movs	r4, #5
+ 800154a:	b.n	80015ac <ADC_COMP+0x328>
+ 800154c:	mov	r6, r3
+ 800154e:	mov	r3, r2
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:118
+    if average_interval >= MAP_IN_HIGH {
+ 8001550:	lsrs	r2, r1, #2
+ 8001552:	cmp	r2, #124	@ 0x7c
+ 8001554:	bls.n	8001594 <ADC_COMP+0x310>
+ 8001556:	movs	r4, #12
+ 8001558:	b.n	80015a8 <ADC_COMP+0x324>
+ 800155a:	nop			@ (mov r8, r8)
+ 800155c:	.word	0xe000e180
+ 8001560:	.word	0x4002180c
+ 8001564:	.word	0xfffbffff
+ 8001568:	.word	0x40014824
+ 800156c:	.word	0x20000194
+ 8001570:	.word	0x20000260
+ 8001574:	.word	0x40010204
+ 8001578:	.word	0x20000314
+ 800157c:	.word	0x0000ffff
+ 8001580:	.word	0x20000300
+ 8001584:	.word	0x200002ac
+ 8001588:	.word	0x20000000
+ 800158c:	.word	0xe000e280
+ 8001590:	.word	0xe000e100
+ 8001594:	ldr	r2, [pc, #840]	@ (80018e0 <ADC_COMP+0x65c>)
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:122
+    let add = (span * MAP_RECIP) >> MAP_SHIFT;
+ 8001596:	muls	r2, r1
+ 8001598:	ldr	r1, [pc, #840]	@ (80018e4 <ADC_COMP+0x660>)
+ 800159a:	adds	r1, r2, r1
+ 800159c:	lsrs	r1, r1, #16
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:124
+    let mapped = MAP_OUT_LOW + add as u8;
+ 800159e:	uxtb	r1, r1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:125
+    if mapped < FILTER_FLOOR { FILTER_FLOOR } else { mapped }
+ 80015a0:	cmp	r1, #2
+ 80015a2:	bhi.n	80015a6 <ADC_COMP+0x322>
+ 80015a4:	movs	r1, #2
+ 80015a6:	adds	r4, r1, #3
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 80015a8:	mov	r2, r3
+ 80015aa:	mov	r3, r6
+_ZN10firmware504bemf5judge17h5ae9167dd838563bE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:570
+/// * `gate` — the published half-cycle window (strictly greater passes, as the
+///   reference).
+/// * `depth` — the published filter depth; at most `depth` live reads.
+#[inline]
+pub fn judge<R: FnMut() -> bool>(count: u32, gate: u32, rising: bool, depth: u8, mut read_level: R) -> Judgement {
+    if count <= gate {
+ 80015ac:	ldr	r1, [sp, #24]
+ 80015ae:	cmp	r1, r0
+ 80015b0:	bhi.n	80015b4 <ADC_COMP+0x330>
+ 80015b2:	b.n	80016da <ADC_COMP+0x456>
+ 80015b4:	str	r2, [sp, #36]	@ 0x24
+ 80015b6:	str	r3, [sp, #4]
+ 80015b8:	ands	r5, r3
+ 80015ba:	movs	r0, #1
+ 80015bc:	str	r0, [sp, #8]
+ 80015be:	lsls	r0, r0, #30
+ 80015c0:	movs	r1, #0
+ 80015c2:	ldr	r2, [pc, #804]	@ (80018e8 <ADC_COMP+0x664>)
+ 80015c4:	uxtb	r4, r4
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 80015c6:	ldr	r6, [r2, #0]
+_ZN15stm32g0_staging9stm32g0714comp9comp2_csr114_$LT$impl$u20$stm32g0_staging..generic..raw..R$LT$stm32g0_staging..stm32g071..comp..comp2_csr..COMP2_CSRrs$GT$$GT$5value17hbce51fc09ff1f788E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\stm32g0-staging/src\stm32g071\comp\comp2_csr.rs:98
+ 80015c8:	ands	r6, r0
+ 80015ca:	subs	r3, r6, #1
+ 80015cc:	sbcs	r6, r3
+_ZN10firmware5011commutation4Step6rising17h63cd58873185a74dE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/commutation.rs:82
+        self.0 & 1 == 1
+ 80015ce:	negs	r3, r5
+ 80015d0:	adcs	r3, r5
+_ZN10firmware504bemf5judge17h5ae9167dd838563bE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:575
+        return Judgement::TooEarly;
+    }
+    let mut i = 0u8;
+    while i < depth {
+        if read_level() != rising {
+ 80015d2:	eors	r3, r6
+ 80015d4:	beq.n	80015d8 <ADC_COMP+0x354>
+ 80015d6:	b.n	80016de <ADC_COMP+0x45a>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:578
+            return Judgement::Unstable;
+        }
+        i += 1;
+ 80015d8:	adds	r1, r1, #1
+ 80015da:	uxtb	r6, r1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:574
+    while i < depth {
+ 80015dc:	cmp	r6, r4
+ 80015de:	bcc.n	80015c6 <ADC_COMP+0x342>
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 80015e0:	ldr	r1, [sp, #36]	@ 0x24
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:517
+                S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
+ 80015e2:	uxth	r0, r1
+ 80015e4:	ldr	r6, [pc, #752]	@ (80018d8 <ADC_COMP+0x654>)
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 80015e6:	str	r0, [r6, #4]
+ 80015e8:	str	r0, [r6, #28]
+_ZN4core4sync6atomic11atomic_load17h17ab246ece6b300dE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 80015ea:	ldr	r0, [pc, #768]	@ (80018ec <ADC_COMP+0x668>)
+ 80015ec:	ldrb	r0, [r0, #0]
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:523
+                if S.com().active.load(Ordering::Relaxed) {
+ 80015ee:	cmp	r0, #0
+ 80015f0:	ldr	r4, [sp, #32]
+ 80015f2:	beq.n	80016ac <ADC_COMP+0x428>
+ 80015f4:	movs	r0, #196	@ 0xc4
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80015f6:	ldr	r3, [r6, r0]
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+ 80015f8:	ldr	r0, [pc, #728]	@ (80018d4 <ADC_COMP+0x650>)
+ 80015fa:	ldr	r0, [r0, #0]
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt12wrapping_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2548
+            intrinsics::wrapping_sub(self, rhs)
+ 80015fc:	subs	r0, r0, r1
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:525
+                    let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
+ 80015fe:	uxth	r2, r0
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm14saturating_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2399
+            intrinsics::saturating_sub(self, rhs)
+ 8001600:	subs	r5, r3, r2
+ 8001602:	bcs.n	8001606 <ADC_COMP+0x382>
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 8001604:	movs	r5, #0
+_ZN8cortex_m8register7primask8read_raw17h333d3f63d1702481E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\register\primask.rs:48
+    unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8001606:	mrs	r0, PRIMASK
+_ZN8cortex_m9interrupt7disable17ha7fb2cbc4636a9e4E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\interrupt.rs:44
+ 800160a:	str	r0, [sp, #20]
+ 800160c:	cpsid	i
+ 800160e:	movs	r0, #99	@ 0x63
+ 8001610:	lsls	r0, r0, #2
+ 8001612:	ldr	r1, [pc, #728]	@ (80018ec <ADC_COMP+0x668>)
+_ZN4core4sync6atomic11atomic_load17h17ab246ece6b300dE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 8001614:	ldrb	r0, [r1, r0]
+ 8001616:	ldrb	r1, [r1, #0]
+_ZN10firmware505roots7com_arm28_$u7b$$u7b$closure$u7d$$u7d$17h5a0213b166f5f9a2E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1093
+        if !crate::oneshot::arm_allowed(
+ 8001618:	cmp	r1, #0
+ 800161a:	beq.n	800166c <ADC_COMP+0x3e8>
+ 800161c:	cmp	r0, #0
+ 800161e:	bne.n	800166c <ADC_COMP+0x3e8>
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 8001620:	str	r2, [sp, #16]
+_ZN4core3cmp3Ord3max17h66d32e578adeb1e6E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/cmp.rs:1038
+    fn max(self, other: Self) -> Self
+    where
+        Self: Sized + [const] Destruct,
+    {
+        if other < self { self } else { other }
+    }
+ 8001622:	cmp	r5, #1
+ 8001624:	mov	r0, r5
+ 8001626:	bhi.n	800162a <ADC_COMP+0x3a6>
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 8001628:	ldr	r0, [sp, #8]
+ 800162a:	ldr	r1, [pc, #708]	@ (80018f0 <ADC_COMP+0x66c>)
+_ZN10firmware505roots7com_arm17h23d5033652b0582cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1055
+    let arr = if us < 2 {
+ 800162c:	adds	r2, r1, #1
+ 800162e:	cmp	r5, r2
+ 8001630:	bhi.n	8001634 <ADC_COMP+0x3b0>
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 8001632:	subs	r1, r0, #1
+ 8001634:	str	r3, [sp, #0]
+_ZN4core3cmp3Ord3max17h66d32e578adeb1e6E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/cmp.rs:1038
+ 8001636:	cmp	r5, #1
+_ZN10firmware505roots7com_arm17h23d5033652b0582cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1055
+ 8001638:	bhi.n	800163c <ADC_COMP+0x3b8>
+ 800163a:	ldr	r1, [sp, #8]
+ 800163c:	ldr	r2, [pc, #692]	@ (80018f4 <ADC_COMP+0x670>)
+ 800163e:	movs	r4, #0
+_ZN4core3ptr14write_volatile17h8e3052fd7bb2629fE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+        intrinsics::volatile_store(dst, src);
+ 8001640:	str	r4, [r2, #12]
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 8001642:	ldr	r6, [pc, #656]	@ (80018d4 <ADC_COMP+0x650>)
+ 8001644:	ldr	r6, [r6, #0]
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+            intrinsics::wrapping_add(self, rhs)
+ 8001646:	adds	r0, r6, r0
+_ZN10firmware505roots7com_arm28_$u7b$$u7b$closure$u7d$$u7d$17h5a0213b166f5f9a2E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1103
+            .store(now_raw.wrapping_add(us) & 0xFFFF, Ordering::Relaxed);
+ 8001648:	uxth	r0, r0
+ 800164a:	ldr	r6, [pc, #672]	@ (80018ec <ADC_COMP+0x668>)
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 800164c:	str	r0, [r6, #16]
+ 800164e:	ldr	r3, [sp, #8]
+ 8001650:	str	r3, [r6, #4]
+ 8001652:	movs	r0, #12
+_ZN4core3ptr14write_volatile17h8e3052fd7bb2629fE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+        intrinsics::volatile_store(dst, src);
+ 8001654:	str	r0, [r2, #0]
+ 8001656:	str	r1, [r2, #44]	@ 0x2c
+ 8001658:	str	r4, [r2, #36]	@ 0x24
+ 800165a:	str	r3, [r2, #20]
+ 800165c:	str	r4, [r2, #16]
+ 800165e:	str	r3, [r2, #12]
+ 8001660:	movs	r0, #13
+ 8001662:	str	r0, [r2, #0]
+ 8001664:	ldr	r4, [sp, #32]
+ 8001666:	ldr	r6, [pc, #624]	@ (80018d8 <ADC_COMP+0x654>)
+ 8001668:	ldr	r2, [sp, #16]
+ 800166a:	ldr	r3, [sp, #0]
+_ZN8cortex_m8register7primask9write_raw17h2d20d7724a20944bE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\register\primask.rs:67
+    unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+ 800166c:	ldr	r0, [sp, #20]
+ 800166e:	msr	PRIMASK, r0
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8001672:	ldr	r0, [r6, #16]
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm14saturating_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2355
+            intrinsics::saturating_add(self, rhs)
+ 8001674:	adds	r0, r0, #1
+ 8001676:	bcc.n	800167c <ADC_COMP+0x3f8>
+_ZN10firmware505roots11note_margin17h61fc7a73a489b6f5E():
+ 8001678:	movs	r0, #0
+ 800167a:	mvns	r0, r0
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 800167c:	ldr	r1, [r6, #56]	@ 0x38
+_ZN10firmware505roots11note_margin17h61fc7a73a489b6f5E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:427
+    if prevc == 0 || ci_p1 < prevc {
+ 800167e:	subs	r1, r1, #1
+ 8001680:	cmp	r1, r0
+ 8001682:	bcc.n	8001686 <ADC_COMP+0x402>
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8001684:	str	r0, [r6, #56]	@ 0x38
+_ZN10firmware505roots11note_margin17h61fc7a73a489b6f5E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:430
+    if left <= 2 {
+ 8001686:	cmp	r5, #2
+ 8001688:	bhi.n	8001690 <ADC_COMP+0x40c>
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 800168a:	ldr	r0, [r6, #60]	@ 0x3c
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+            intrinsics::wrapping_add(self, rhs)
+ 800168c:	adds	r0, r0, #1
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 800168e:	str	r0, [r6, #60]	@ 0x3c
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:530
+                    if left == 0 {
+ 8001690:	cmp	r3, r2
+ 8001692:	bhi.n	80016a4 <ADC_COMP+0x420>
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 8001694:	ldr	r0, [r6, #40]	@ 0x28
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+ 8001696:	adds	r1, r0, #1
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8001698:	str	r1, [r6, #40]	@ 0x28
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:533
+                        if n == 0 {
+ 800169a:	cmp	r0, #0
+ 800169c:	bne.n	80016a4 <ADC_COMP+0x420>
+_ZN10firmware504bemf22ZeroCrossWith$LT$_$GT$16average_interval17ha434e00adf12dacaE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:429
+        self.average_interval
+ 800169e:	ldr	r0, [r6, #76]	@ 0x4c
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 80016a0:	str	r0, [r6, #44]	@ 0x2c
+ 80016a2:	str	r2, [r6, #48]	@ 0x30
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 80016a4:	ldr	r0, [r6, #36]	@ 0x24
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:538
+                    if spent > S.det().spent_max.load(Ordering::Relaxed) {
+ 80016a6:	cmp	r0, r2
+ 80016a8:	bcs.n	80016ac <ADC_COMP+0x428>
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 80016aa:	str	r2, [r6, #36]	@ 0x24
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 80016ac:	movs	r0, #200	@ 0xc8
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 80016ae:	ldr	r1, [sp, #24]
+ 80016b0:	str	r1, [r6, r0]
+_ZN15portable_atomic3imp9interrupt4arch7disable17h3ec6a546f52c6294E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:34
+        asm!(
+ 80016b2:	mrs	r1, PRIMASK
+ 80016b6:	cpsid	i
+_ZN4core3ptr4read17hba5936ac89bd43e0E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1721
+        crate::intrinsics::read_via_copy(src)
+ 80016b8:	ldr	r2, [r6, #24]
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+ 80016ba:	adds	r2, r2, #1
+_ZN4core3ptr5write17h56903f5125280645E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:1921
+        intrinsics::write_via_move(dst, src)
+ 80016bc:	str	r2, [r6, #24]
+_ZN15portable_atomic3imp9interrupt4arch7restore17hb2cf2f388bec0c55E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\imp\interrupt\armv6m.rs:57
+        asm!(
+ 80016be:	msr	PRIMASK, r1
+_ZN10firmware504bemf22ZeroCrossWith$LT$_$GT$16average_interval17ha434e00adf12dacaE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:429
+ 80016c2:	ldr	r1, [r6, #76]	@ 0x4c
+_ZN4core4sync6atomic11atomic_load17h17ab246ece6b300dE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 80016c4:	ldr	r2, [pc, #560]	@ (80018f8 <ADC_COMP+0x674>)
+ 80016c6:	ldrb	r2, [r2, #1]
+ 80016c8:	movs	r3, #1
+_ZN10firmware505roots11guard_event17h9f763c3d64a76cbdE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:926
+    if !S.guard().tracking.load(Ordering::Relaxed) {
+ 80016ca:	cmp	r2, #0
+ 80016cc:	beq.n	8001776 <ADC_COMP+0x4f2>
+_RNvNtCshtjvQpOZWNm_4core10intrinsics8unlikely():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/intrinsics/mod.rs:457
+ 80016ce:	cmp	r1, #0
+ 80016d0:	str	r3, [sp, #20]
+ 80016d2:	bge.n	800177a <ADC_COMP+0x4f6>
+_ZN10firmware505roots16det_decide_plain17h6084d6aa399f453aE():
+ 80016d4:	ldr	r2, [sp, #36]	@ 0x24
+ 80016d6:	ldr	r5, [sp, #12]
+ 80016d8:	b.n	800177e <ADC_COMP+0x4fa>
+ 80016da:	movs	r0, #12
+_ZN10firmware504bemf5judge17h5ae9167dd838563bE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/bemf.rs:570
+    if count <= gate {
+ 80016dc:	b.n	80016e2 <ADC_COMP+0x45e>
+_ZN10firmware505roots16det_decide_plain28_$u7b$$u7b$closure$u7d$$u7d$17hede7cc036fe9e05aE():
+ 80016de:	movs	r0, #16
+ 80016e0:	ldr	r2, [sp, #36]	@ 0x24
+ 80016e2:	ldr	r3, [sp, #16]
+_ZN10firmware504bemf22ZeroCrossWith$LT$_$GT$12note_refusal17hfd6ef9a149a740f6E():
+ 80016e4:	ldr	r1, [r3, r0]
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+ 80016e6:	adds	r1, r1, #1
+_ZN10firmware504bemf22ZeroCrossWith$LT$_$GT$12note_refusal17hfd6ef9a149a740f6E():
+ 80016e8:	str	r1, [r3, r0]
+ 80016ea:	ldr	r4, [sp, #32]
+ 80016ec:	ldr	r6, [pc, #488]	@ (80018d8 <ADC_COMP+0x654>)
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+ 80016ee:	ldr	r0, [pc, #484]	@ (80018d4 <ADC_COMP+0x650>)
+ 80016f0:	ldr	r3, [sp, #20]
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 80016f2:	ldr	r0, [r0, #0]
+_RNvMs5_NtCshtjvQpOZWNm_4core3numt12wrapping_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2548
+            intrinsics::wrapping_sub(self, rhs)
+ 80016f4:	subs	r0, r0, r2
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1420
+        let elapsed = ((hw::clock::raw()).wrapping_sub(raw) as u32)
+ 80016f6:	uxth	r1, r0
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80016f8:	ldr	r0, [pc, #480]	@ (80018dc <ADC_COMP+0x658>)
+ 80016fa:	ldr	r2, [r0, #16]
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2511
+            intrinsics::wrapping_add(self, rhs)
+ 80016fc:	adds	r1, r1, r2
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80016fe:	ldr	r2, [r0, #12]
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1422
+        if elapsed > S.comp().call_max_us.load(Ordering::Relaxed) {
+ 8001700:	cmp	r1, r2
+ 8001702:	bls.n	8001706 <ADC_COMP+0x482>
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 8001704:	str	r1, [r0, #12]
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1425
+        if crate::rate::handler_overrun(elapsed) {
+ 8001706:	cmp	r1, #50	@ 0x32
+ 8001708:	bls.n	8001710 <ADC_COMP+0x48c>
+ 800170a:	movs	r1, #1
+_ZN4core4sync6atomic12atomic_store17hb5a3855436143d83E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 800170c:	strb	r1, [r0, #8]
+_ZN10firmware505roots9comp_root17h994890824db4ee2cE():
+ 800170e:	b.n	8001772 <ADC_COMP+0x4ee>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1429
+        if !accepted {
+ 8001710:	cmp	r3, #0
+ 8001712:	bne.n	8001772 <ADC_COMP+0x4ee>
+ 8001714:	str	r4, [sp, #32]
+_ZN8cortex_m8register7primask8read_raw17h333d3f63d1702481E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\register\primask.rs:48
+    unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8001716:	mrs	r0, PRIMASK
+_ZN8cortex_m9interrupt7disable17ha7fb2cbc4636a9e4E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\interrupt.rs:44
+ 800171a:	str	r0, [sp, #36]	@ 0x24
+ 800171c:	cpsid	i
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+            Relaxed => intrinsics::atomic_load::<T, { AO::Relaxed }>(dst),
+ 800171e:	ldr	r0, [pc, #472]	@ (80018f8 <ADC_COMP+0x674>)
+ 8001720:	ldr	r0, [r0, #4]
+_ZN4core4sync6atomic11atomic_load17h17ab246ece6b300dE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 8001722:	ldrb	r5, [r6, #0]
+ 8001724:	ldr	r1, [pc, #468]	@ (80018fc <ADC_COMP+0x678>)
+ 8001726:	ldrb	r1, [r1, #0]
+ 8001728:	movs	r2, #99	@ 0x63
+ 800172a:	lsls	r2, r2, #2
+ 800172c:	ldr	r3, [pc, #444]	@ (80018ec <ADC_COMP+0x668>)
+ 800172e:	ldrb	r4, [r3, r2]
+ 8001730:	ldrb	r6, [r3, #0]
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 8001732:	ldr	r2, [r3, #4]
+_ZN10firmware507oneshot25comparator_resume_allowed17hd171db000154b599E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/oneshot.rs:83
+ 8001734:	cmp	r0, #0
+ 8001736:	bne.n	800174a <ADC_COMP+0x4c6>
+ 8001738:	cmp	r5, #0
+ 800173a:	beq.n	800174a <ADC_COMP+0x4c6>
+_ZN10firmware505roots19comp_resume_powered28_$u7b$$u7b$closure$u7d$$u7d$17hfe375f2648176572E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1504
+        if crate::oneshot::comparator_resume_allowed(
+ 800173c:	cmp	r6, #0
+ 800173e:	beq.n	800176c <ADC_COMP+0x4e8>
+ 8001740:	cmp	r4, #0
+ 8001742:	bne.n	800176c <ADC_COMP+0x4e8>
+ 8001744:	cmp	r2, #0
+ 8001746:	beq.n	8001758 <ADC_COMP+0x4d4>
+ 8001748:	b.n	800176c <ADC_COMP+0x4e8>
+_ZN10firmware507oneshot25comparator_resume_allowed17hd171db000154b599E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/oneshot.rs:83
+ 800174a:	subs	r2, r0, #1
+ 800174c:	sbcs	r0, r2
+_ZN15portable_atomic10AtomicBool4load17hf509f6ab836c1738E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\portable-atomic/src\lib.rs:942
+ 800174e:	uxtb	r1, r1
+ 8001750:	negs	r2, r1
+ 8001752:	adcs	r2, r1
+_ZN10firmware505roots19comp_resume_powered28_$u7b$$u7b$closure$u7d$$u7d$17hfe375f2648176572E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:1504
+ 8001754:	orrs	r2, r0
+ 8001756:	bne.n	800176c <ADC_COMP+0x4e8>
+ 8001758:	ldr	r1, [pc, #368]	@ (80018cc <ADC_COMP+0x648>)
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+ 800175a:	ldr	r0, [r1, #116]	@ 0x74
+_RNvXslZ_NtNtCshtjvQpOZWNm_4core3ops3bitmNtB6_11BitOrAssign12bitor_assign():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ops/bit.rs:823
+ 800175c:	ldr	r2, [sp, #32]
+ 800175e:	orrs	r0, r2
+_ZN4core3ptr14write_volatile17h8e3052fd7bb2629fE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+        intrinsics::volatile_store(dst, src);
+ 8001760:	str	r0, [r1, #116]	@ 0x74
+ 8001762:	ldr	r0, [pc, #412]	@ (8001900 <ADC_COMP+0x67c>)
+ 8001764:	ldr	r1, [sp, #40]	@ 0x28
+ 8001766:	str	r1, [r0, #0]
+ 8001768:	ldr	r0, [pc, #416]	@ (800190c <ADC_COMP+0x688>)
+ 800176a:	str	r1, [r0, #0]
+_ZN8cortex_m8register7primask9write_raw17h2d20d7724a20944bE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\register\primask.rs:67
+    unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+ 800176c:	ldr	r0, [sp, #36]	@ 0x24
+ 800176e:	msr	PRIMASK, r0
+ADC_COMP():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/bin/shell-pwm.rs:123
+ 8001772:	add	sp, #44	@ 0x2c
+ 8001774:	pop	{r4, r5, r6, r7, pc}
+ 8001776:	ldr	r2, [sp, #36]	@ 0x24
+ 8001778:	b.n	8001484 <ADC_COMP+0x200>
+_RNvNtCshtjvQpOZWNm_4core10intrinsics8unlikely():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/intrinsics/mod.rs:457
+ 800177a:	lsls	r5, r1, #1
+ 800177c:	ldr	r2, [sp, #36]	@ 0x24
+_ZN8cortex_m8register7primask8read_raw17h333d3f63d1702481E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\register\primask.rs:48
+    unsafe { asm!("mrs {}, PRIMASK", out(reg) r, options(nomem, nostack, preserves_flags)) };
+ 800177e:	mrs	r1, PRIMASK
+_ZN8cortex_m9interrupt7disable17ha7fb2cbc4636a9e4E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\interrupt.rs:44
+ 8001782:	str	r1, [sp, #24]
+ 8001784:	cpsid	i
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 8001786:	ldr	r1, [pc, #332]	@ (80018d4 <ADC_COMP+0x650>)
+ 8001788:	ldr	r1, [r1, #0]
+ 800178a:	str	r1, [sp, #16]
+ 800178c:	ldr	r1, [pc, #360]	@ (80018f8 <ADC_COMP+0x674>)
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 800178e:	ldr	r3, [r1, #12]
+ 8001790:	str	r3, [sp, #8]
+ 8001792:	ldr	r1, [r1, #8]
+ 8001794:	str	r1, [sp, #12]
+ 8001796:	movs	r1, #255	@ 0xff
+ 8001798:	adds	r1, #244	@ 0xf4
+_ZN10firmware508tracking20speed_event_limit_us17hbcd6aecb58d81168E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:38
+/// Three controller periods in µs, from a period in half-µs, floored at 200
+/// and capped at 1000 (reference `speed_event_limit_us`, with its own
+/// compile-time table). Split at 667 so the only multiply stays small.
+#[must_use]
+pub const fn speed_event_limit_us(reference_half_us: u32) -> u32 {
+    if reference_half_us >= 667 {
+ 800179a:	adds	r1, #167	@ 0xa7
+ 800179c:	cmp	r5, r1
+ 800179e:	bls.n	80017a6 <ADC_COMP+0x522>
+ 80017a0:	movs	r0, #125	@ 0x7d
+ 80017a2:	lsls	r1, r0, #3
+ 80017a4:	b.n	80017b4 <ADC_COMP+0x530>
+ 80017a6:	movs	r1, #3
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:41
+        1_000
+    } else {
+        let us = (reference_half_us * 3 + 1) >> 1;
+ 80017a8:	muls	r1, r5
+ 80017aa:	adds	r1, r1, #1
+ 80017ac:	lsrs	r1, r1, #1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:42
+        if us < 200 { 200 } else { us }
+ 80017ae:	cmp	r1, #200	@ 0xc8
+ 80017b0:	bhi.n	80017b4 <ADC_COMP+0x530>
+_ZN10firmware505roots11guard_event28_$u7b$$u7b$closure$u7d$$u7d$17h141a77d58969a449E():
+ 80017b2:	mov	r1, r0
+ 80017b4:	ldr	r0, [pc, #320]	@ (80018f8 <ADC_COMP+0x674>)
+_ZN10firmware508tracking19EventWatch$LT$_$GT$20tighten_max_interval17h7891ce38c05930c5E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:110
+    }
+
+    /// Tighten the missing-event deadline; refuses to loosen it or to go
+    /// below the minimum interval.
+    pub fn tighten_max_interval(&mut self, max_interval: u32) -> bool {
+        if max_interval < self.min_interval || max_interval >= 0x8000_0000 {
+ 80017b6:	ldr	r5, [r0, #48]	@ 0x30
+ 80017b8:	ldr	r0, [r0, #52]	@ 0x34
+ 80017ba:	cmp	r1, r5
+ 80017bc:	bcc.n	80017c8 <ADC_COMP+0x544>
+ 80017be:	cmp	r1, r0
+ 80017c0:	bcs.n	80017c8 <ADC_COMP+0x544>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:114
+            return false;
+        }
+        if max_interval < self.max_interval {
+            self.max_interval = max_interval;
+ 80017c2:	ldr	r0, [pc, #308]	@ (80018f8 <ADC_COMP+0x674>)
+ 80017c4:	str	r1, [r0, #52]	@ 0x34
+ 80017c6:	mov	r0, r1
+_ZN4core6option15Option$LT$T$GT$7is_some17h454e05b45019e635E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/option.rs:636
+        matches!(*self, Some(_))
+ 80017c8:	ldr	r1, [sp, #28]
+ 80017ca:	ldr	r3, [pc, #300]	@ (80018f8 <ADC_COMP+0x674>)
+ 80017cc:	ldrb	r1, [r3, r1]
+_ZN10firmware508tracking19EventWatch$LT$_$GT$4poll17he5b8feaf64411bc0E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:101
+        if self.fault.is_none() && now.wrapping_sub(self.last) > self.max_interval {
+ 80017ce:	cmp	r1, #3
+ 80017d0:	bne.n	80017f2 <ADC_COMP+0x56e>
+_ZN10firmware505roots11guard_event28_$u7b$$u7b$closure$u7d$$u7d$17h141a77d58969a449E():
+ 80017d2:	str	r5, [sp, #0]
+ 80017d4:	ldr	r1, [sp, #16]
+ 80017d6:	ldr	r5, [sp, #8]
+ 80017d8:	subs	r1, r1, r5
+ 80017da:	uxth	r1, r1
+ 80017dc:	ldr	r5, [sp, #12]
+ 80017de:	adds	r5, r1, r5
+_ZN10firmware508tracking19EventWatch$LT$_$GT$4poll17he5b8feaf64411bc0E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:101
+ 80017e0:	ldr	r1, [r3, #44]	@ 0x2c
+ 80017e2:	str	r5, [sp, #16]
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm12wrapping_sub():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2548
+            intrinsics::wrapping_sub(self, rhs)
+ 80017e4:	subs	r1, r5, r1
+_ZN10firmware508tracking19EventWatch$LT$_$GT$4poll17he5b8feaf64411bc0E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:101
+ 80017e6:	cmp	r1, r0
+ 80017e8:	bls.n	8001860 <ADC_COMP+0x5dc>
+_ZN10firmware508tracking19EventWatch$LT$_$GT$5event17hf6c973d39f8fb5afE():
+ 80017ea:	movs	r0, #0
+ 80017ec:	ldr	r1, [sp, #28]
+ 80017ee:	ldr	r3, [pc, #264]	@ (80018f8 <ADC_COMP+0x674>)
+ 80017f0:	strb	r0, [r3, r1]
+_ZN4core4sync6atomic11atomic_load17h94eed33ebba291bdE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3904
+ 80017f2:	ldr	r0, [r3, #4]
+_ZN10firmware505roots10guard_trip17h7b85fb3b077d3706E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:845
+    if S.guard().reason.load(Ordering::Relaxed) == 0 {
+ 80017f4:	cmp	r0, #0
+ 80017f6:	bne.n	80017fc <ADC_COMP+0x578>
+ 80017f8:	movs	r0, #8
+_ZN4core4sync6atomic12atomic_store17hcc473a20273a503cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+            Relaxed => intrinsics::atomic_store::<T, { AO::Relaxed }>(dst, val),
+ 80017fa:	str	r0, [r3, #4]
+_ZN10firmware505roots10guard_trip17h7b85fb3b077d3706E():
+ 80017fc:	movs	r0, #0
+_ZN4core4sync6atomic12atomic_store17hb5a3855436143d83E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 80017fe:	strb	r0, [r3, #0]
+ 8001800:	strb	r0, [r3, #1]
+ 8001802:	ldr	r1, [pc, #232]	@ (80018ec <ADC_COMP+0x668>)
+ 8001804:	strb	r0, [r1, #0]
+ 8001806:	strb	r0, [r6, #0]
+ 8001808:	ldr	r1, [pc, #240]	@ (80018fc <ADC_COMP+0x678>)
+ 800180a:	strb	r0, [r1, #0]
+ 800180c:	ldr	r3, [sp, #40]	@ 0x28
+_ZN4core3ptr14write_volatile17ha7224db381d562acE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+        intrinsics::volatile_store(dst, src);
+ 800180e:	ldr	r1, [pc, #184]	@ (80018c8 <ADC_COMP+0x644>)
+ 8001810:	str	r3, [r1, #0]
+ 8001812:	ldr	r2, [pc, #184]	@ (80018cc <ADC_COMP+0x648>)
+_ZN4core3ptr13read_volatile17hd7f800fbfed10bfcE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 8001814:	ldr	r1, [r2, #116]	@ 0x74
+_RNvXslz_NtNtCshtjvQpOZWNm_4core3ops3bitmNtB6_12BitAndAssign13bitand_assign():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ops/bit.rs:748
+            fn bitand_assign(&mut self, other: $t) { *self &= other }
+ 8001816:	ldr	r5, [pc, #184]	@ (80018d0 <ADC_COMP+0x64c>)
+ 8001818:	ands	r1, r5
+_ZN4core3ptr14write_volatile17ha7224db381d562acE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+        intrinsics::volatile_store(dst, src);
+ 800181a:	str	r1, [r2, #116]	@ 0x74
+ 800181c:	str	r4, [r2, #0]
+ 800181e:	str	r4, [r2, #4]
+ 8001820:	ldr	r2, [pc, #220]	@ (8001900 <ADC_COMP+0x67c>)
+ 8001822:	str	r3, [r2, #0]
+ 8001824:	movs	r1, #99	@ 0x63
+ 8001826:	lsls	r3, r1, #2
+ 8001828:	movs	r1, #1
+ 800182a:	ldr	r5, [pc, #192]	@ (80018ec <ADC_COMP+0x668>)
+_ZN4core4sync6atomic12atomic_store17hc6782a93514f6169E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 800182c:	strb	r1, [r5, r3]
+ 800182e:	ldr	r3, [pc, #196]	@ (80018f4 <ADC_COMP+0x670>)
+_ZN4core3ptr14write_volatile17ha7224db381d562acE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+ 8001830:	str	r0, [r3, #0]
+ 8001832:	str	r0, [r3, #12]
+ 8001834:	str	r0, [r3, #16]
+_ZN4core4sync6atomic12atomic_store17h3be59174b42ae24cE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/sync/atomic.rs:3889
+ 8001836:	str	r0, [r5, #4]
+ 8001838:	lsls	r3, r1, #21
+_ZN4core3ptr14write_volatile17ha7224db381d562acE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+ 800183a:	str	r3, [r2, #0]
+ 800183c:	lsls	r2, r1, #15
+ 800183e:	ldr	r3, [pc, #196]	@ (8001904 <ADC_COMP+0x680>)
+ 8001840:	mov	r5, r4
+_ZN4core3ptr13read_volatile17h8e268e68817c80b8E():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2095
+        intrinsics::volatile_load(src)
+ 8001842:	ldr	r4, [r3, #16]
+_RNvXslz_NtNtCshtjvQpOZWNm_4core3ops3bitmNtB6_12BitAndAssign13bitand_assign():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ops/bit.rs:748
+ 8001844:	bics	r4, r2
+_ZN4core3ptr14write_volatile17h8e3052fd7bb2629fE():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/ptr/mod.rs:2182
+        intrinsics::volatile_store(dst, src);
+ 8001846:	str	r4, [r3, #16]
+ 8001848:	mov	r4, r5
+ 800184a:	str	r0, [r3, #8]
+ 800184c:	str	r0, [r3, #4]
+ 800184e:	str	r0, [r3, #0]
+ 8001850:	lsls	r0, r1, #17
+ 8001852:	ldr	r1, [pc, #180]	@ (8001908 <ADC_COMP+0x684>)
+ 8001854:	str	r0, [r1, #0]
+ 8001856:	ldr	r2, [sp, #36]	@ 0x24
+_ZN8cortex_m8register7primask9write_raw17h2d20d7724a20944bE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50\ref\vendor\cortex-m/src\register\primask.rs:67
+    unsafe { asm!("msr PRIMASK, {}", in(reg) r, options(nomem, nostack, preserves_flags)) };
+ 8001858:	ldr	r0, [sp, #24]
+ 800185a:	msr	PRIMASK, r0
+ 800185e:	b.n	80016ee <ADC_COMP+0x46a>
+_ZN8cortex_m9interrupt4free17he24697a48cf51f55E():
+ 8001860:	movs	r5, #65	@ 0x41
+_ZN10firmware508tracking19EventWatch$LT$_$GT$5event17hf6c973d39f8fb5afE():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:125
+    /// establishes phase only.
+    pub fn event(&mut self, now: u32, sector: u8) -> Option<Fault> {
+        if self.poll(now).is_some() {
+            return self.fault;
+        }
+        let in_order = match self.sector {
+ 8001862:	ldrb	r0, [r3, r5]
+ 8001864:	cmp	r0, #1
+ 8001866:	bne.n	8001876 <ADC_COMP+0x5f2>
+ 8001868:	str	r1, [sp, #12]
+ 800186a:	movs	r0, #66	@ 0x42
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:127
+            None => true,
+            Some(prev) => sector == if prev == 6 { 1 } else { prev + 1 },
+ 800186c:	ldrb	r0, [r3, r0]
+ 800186e:	cmp	r0, #6
+ 8001870:	beq.n	8001880 <ADC_COMP+0x5fc>
+ 8001872:	adds	r1, r0, #1
+ 8001874:	b.n	8001882 <ADC_COMP+0x5fe>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:129
+        };
+        if !(1..=6).contains(&sector) || !in_order {
+ 8001876:	ldr	r0, [sp, #4]
+ 8001878:	cmp	r0, #0
+ 800187a:	bne.n	80018b4 <ADC_COMP+0x630>
+ 800187c:	movs	r0, #2
+ 800187e:	b.n	80017ec <ADC_COMP+0x568>
+ 8001880:	movs	r1, #1
+ 8001882:	movs	r0, #2
+ 8001884:	ldr	r3, [sp, #4]
+ 8001886:	cmp	r3, #0
+ 8001888:	beq.n	80017ec <ADC_COMP+0x568>
+ 800188a:	uxtb	r1, r1
+ 800188c:	ldr	r3, [sp, #4]
+ 800188e:	cmp	r3, r1
+ 8001890:	bne.n	80017ec <ADC_COMP+0x568>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:133
+            self.fault = Some(Fault::SectorOrder);
+        } else {
+            let gap = now.wrapping_sub(self.last);
+            if self.sector.is_some() && gap < self.min_interval {
+ 8001892:	ldr	r0, [sp, #12]
+ 8001894:	ldr	r1, [sp, #0]
+ 8001896:	cmp	r0, r1
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:129
+        if !(1..=6).contains(&sector) || !in_order {
+ 8001898:	bcs.n	80018b4 <ADC_COMP+0x630>
+ 800189a:	ldr	r1, [pc, #92]	@ (80018f8 <ADC_COMP+0x674>)
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:135
+                if REPORT_FAST {
+                    self.fast_count = self.fast_count.saturating_add(1);
+ 800189c:	ldr	r0, [r1, #56]	@ 0x38
+_RNvMs6_NtCshtjvQpOZWNm_4core3numm14saturating_add():
+C:\Users\kaido\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library/core/src/num/uint_macros.rs:2355
+            intrinsics::saturating_add(self, rhs)
+ 800189e:	adds	r0, r0, #1
+ 80018a0:	bcc.n	80018a6 <ADC_COMP+0x622>
+_ZN10firmware508tracking19EventWatch$LT$_$GT$5event17hf6c973d39f8fb5afE():
+ 80018a2:	movs	r0, #0
+ 80018a4:	mvns	r0, r0
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:135
+ 80018a6:	str	r0, [r1, #56]	@ 0x38
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:136
+                    if gap < self.fast_min {
+ 80018a8:	ldr	r0, [r1, #60]	@ 0x3c
+ 80018aa:	ldr	r1, [sp, #12]
+ 80018ac:	cmp	r1, r0
+ 80018ae:	bcs.n	80018b4 <ADC_COMP+0x630>
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:137
+                        self.fast_min = gap;
+ 80018b0:	ldr	r0, [pc, #68]	@ (80018f8 <ADC_COMP+0x674>)
+ 80018b2:	str	r1, [r0, #60]	@ 0x3c
+ 80018b4:	movs	r0, #66	@ 0x42
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:145
+                    self.fault = Some(Fault::TooFast);
+                    return self.fault;
+                }
+            }
+            self.last = now;
+            self.sector = Some(sector);
+ 80018b6:	ldr	r1, [sp, #4]
+ 80018b8:	ldr	r3, [pc, #60]	@ (80018f8 <ADC_COMP+0x674>)
+ 80018ba:	strb	r1, [r3, r0]
+ 80018bc:	movs	r0, #1
+ 80018be:	strb	r0, [r3, r5]
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/tracking.rs:144
+            self.last = now;
+ 80018c0:	ldr	r0, [sp, #16]
+ 80018c2:	str	r0, [r3, #44]	@ 0x2c
+_ZN10firmware505roots11guard_event28_$u7b$$u7b$closure$u7d$$u7d$17h141a77d58969a449E():
+E:\m\robot\esc\rm32-sagcheck\binz\firmware50/src/roots.rs:932
+        if w.event(now, step).is_some() {
+ 80018c4:	b.n	8001858 <ADC_COMP+0x5d4>
+ADC_COMP():
+ 80018c6:	nop			@ (mov r8, r8)
+ 80018c8:	.word	0xe000e180
+ 80018cc:	.word	0x4002180c
+ 80018d0:	.word	0xfffbffff
+ 80018d4:	.word	0x40014824
+ 80018d8:	.word	0x20000194
+ 80018dc:	.word	0x20000300
+ 80018e0:	.word	0x000005c3
+ 80018e4:	.word	0x00fdbfd4
+ 80018e8:	.word	0x40010204
+ 80018ec:	.word	0x20000000
+ 80018f0:	.word	0x0000fffe
+ 80018f4:	.word	0x40014400
+ 80018f8:	.word	0x200002ac
+ 80018fc:	.word	0x20000260
+ 8001900:	.word	0xe000e280
+ 8001904:	.word	0x40012c34
+ 8001908:	.word	0x50000c18
+ 800190c:	.word	0xe000e100

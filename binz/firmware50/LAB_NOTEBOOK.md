@@ -45013,3 +45013,18 @@ Branch `am32shape/a6` from A5.
 * **(c)** edge probe, relative to T as ENV-50.
 
 **Stage 2 as ENV-50** (walk 525 → 725, restarts incl. the window-90 twin, sweep, low rungs). Kept only if both pass.
+
+#### ENV-61 — A6 built: image `0A978A82`, loadable `31FE2832`; chain `0440C289`
+
+Host 362/362 (production, `com-top`), clippy 0. `isr_diff` vs `7450FE24`: `ADC_COMP` 818 → 784, `TIM16` 368 → 430 static.
+
+| executed, same operating point | tag | A5 | **A6** | AM32 | A6 ratio |
+|---|---|---|---|---|---|
+| comparator: first read | #133 | #142 | **#137** | ~#30 | (timing kept) |
+| comparator: arm | #304 | #269 | **#263** | ~#106 | 2.5× |
+| comparator: total | 425 | 439 | **396** | 114 | **3.5×** |
+| commutation phase 1 (floor) | 207 | 207 | **264** | 247 | **1.07×** |
+
+Predictions: comparator ~380 (**396**, +16), commutation ~290 (**264**, −26). The comparator's remaining excess is the
+tag's pre-read path (storm limiter, estimator borrow, depth map) and the kept post-arm safeguards (tracking watch,
+budget, margin counters).

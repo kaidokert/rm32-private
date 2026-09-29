@@ -539,13 +539,12 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                         S.det().spent_max.store(spent, Ordering::Relaxed);
                     }
                 }
-                // After the arm: fold this crossing in and compute the next wait.
-                if let crate::bemf::Outcome::Accepted { wait: next, .. } = zc.commit(count, advance) {
-                    S.det().next_wait.store(next, Ordering::Relaxed);
-                }
-                // The estimate this acceptance hands to the commutation (step 6a).
-                S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
-                S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
+                // **ENV-61 (A6): nothing is computed after the arm.** AM32's
+                // `interruptRoutine` ends at the arm; the interval is handed to the
+                // commutation root, which blends it and computes the next wait
+                // (`PeriodElapsedCallback`). `advance` is read there.
+                let _ = advance;
+                S.det().accept_count.store(count, Ordering::Relaxed);
                 S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
                 Some((step.get(), zc.average_interval()))
             }
@@ -1224,14 +1223,40 @@ pub unsafe fn com_root<C: ChainLog>() {
             }
             comp2_select_floating(step);
             S.com().count.fetch_add(1, Ordering::Relaxed);
+            // **ENV-61 (A6), AM32's `PeriodElapsedCallback`:** having commutated, fold
+            // the crossing that scheduled this commutation into the estimate, compute
+            // the next wait, and publish what this root and the next arm read. Only
+            // for a new acceptance (handover and rescue commutations do not blend).
+            let seq = S.det().accept_seq.load(Ordering::Relaxed);
+            if seq != S.com().committed_seq.load(Ordering::Relaxed) {
+                S.com().committed_seq.store(seq, Ordering::Relaxed);
+                let count = S.det().accept_count.load(Ordering::Relaxed);
+                let level = S.det().advance.load(Ordering::Relaxed);
+                let commit = |zc: &mut Option<crate::bemf::ZeroCross>| {
+                    if let Some(zc) = zc.as_mut() {
+                        if let crate::bemf::Outcome::Accepted { wait, .. } = zc.commit(count, level) {
+                            S.det().next_wait.store(wait, Ordering::Relaxed);
+                        }
+                        S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
+                        S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
+                    }
+                };
+                // COMP and COM share one priority by default, so they cannot interleave
+                // and COM borrows at its root. Under `com-top` COM sits above COMP and
+                // takes the critical section instead.
+                #[cfg(not(feature = "com-top"))]
+                S.det().zc.root(&mut at, commit);
+                #[cfg(feature = "com-top")]
+                let _ = S.det().zc.lock(commit);
+            }
             // The blank decision uses the ring as of the previous commutation,
             // then this commutation stores its interval -- the reference's
             // order (`commutate` pushes; `observe_bands` recomputes the
             // average after the COM, `core_bench.rs:2105-2137`).
             //
-            // **Read from the accepted crossing's published pair, not from the
-            // estimator** (step 6a). COMP writes `accept_avg`/`accept_blank`
-            // inside the acceptance and before the arm, so what this reads is
+            // **Read from the published pair, not from the estimator** (step 6a).
+            // ENV-61 (A6): this root now commits the accepted interval just above
+            // and publishes `accept_avg`/`accept_blank` itself, so what this reads is
             // the estimate belonging to the crossing that scheduled this
             // commutation -- the same value the borrow returned, by
             // construction, and now without `det.zc` being touched by two

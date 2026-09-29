@@ -1,0 +1,14 @@
+ELF 0A978A82.a6-split-shell-pwm.elf sha256 0a978a82cf7d7f8bb4df013eccac1653517f302e954281049c02c219fbbd6ea3
+
+[comp] ADC_COMP: COMP2 edge (A6)
+  ADC_COMP: 784 insns, 1676 B
+  -> isr_ref\fw50_a6_0A978A82\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (A6)
+  TIM16: 430 insns, 928 B -> _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E
+    _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E: 84 insns, 192 B
+  -> isr_ref\fw50_a6_0A978A82\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick
+  TIM6_DAC_LPTIM1: 155 insns, 344 B
+  -> isr_ref\fw50_a6_0A978A82\tick_TIM6_DAC_LPTIM1.lst
