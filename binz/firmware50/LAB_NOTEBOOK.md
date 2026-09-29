@@ -43563,3 +43563,37 @@ the amplifier measurably but does not reduce the desync outcome, and it costs cu
 AM32 in the deadline path. **Rejected; the feature stays off.** Conclusion: damping the amplifier is not
 enough. **The trigger (the late step-3 crossing) has to be removed**, which needs the board-vs-motor answer
 from the rotation.
+
+### ENV-32/33 — review accepted; the lateness is largely SET BY the revisit rescue deadline; lever 5 = an earlier rescue
+
+**Review of ENV-31/32, accepted (verified before acceptance):**
+* **The amplifier model is rejected per event.** Across the 70 BE2213DE late step-3 accepts, the next
+  interval is short in 60/70 and late in **0/70**. Late + next sums to 2.0–2.1 × the mean, so the rotor is on
+  time and only the stamp is late. The gate widening is real (0.46 too-early refusals on the next accept vs
+  0.05) but never causes a second late. **ENV-32's "cascade" metric measured late-then-short, i.e. lates.**
+  ENV-32's rejection stands on hold +2–4 % and cascades < 50 %. "Refuted on both counts" is withdrawn: the
+  worst block was lower in 2/3 pairs, at noise level.
+* **The duty curve below 725 has too few events** (1 / 3 / 6 step-3 lates at 650/675/700) to separate a
+  knee from a slope. Step 3 is not the leading step at 650/675 (step 2 is). The 700 row mixed images. The
+  1.25 × mean threshold sits on the normal step-3 tail (two modes 60–61 and 73–77 µs), so its meaning
+  drifts with duty. "A knee weakens demag" was backwards (demag overlapping the crossing gives a threshold).
+* **"Physical, not detection logic" is overstated. The size of the lateness is set by firmware.** Of the
+  70 late step-3 accepts, **33 are revisit-originated** (vs 13/951 normal), and **26 of the other 37 sit at
+  98–99 µs = 1.5 × ci**, the first rescue deadline (`states.rs::rescue_due`). One revisit pend is spent on a
+  transient (the ISR's filter refuses it), after which the sector waits for 1.5 × ci.
+* Switching `Wiring` to `Forward` cannot separate board from motor (PB3 and winding A stay paired, and it
+  reverses the prop). A firmware PB3/PB7 sense swap is impossible (each INMSEL is hard-wired to one
+  terminal). No per-event desync exists among the ENV-32 production runs (all reason 2; the failure is the
+  worst block / foldback).
+
+**ENV-33 lever (a constant in `rescue_due`, feature `early-rescue`):** the first rescue at **1.125 × ci**, then
+every ci/8 (max 4), instead of 1.5 × ci then every ci/2. It is safe by construction: a rescue pends only
+when the comparator already reads the post-crossing level (`revisit::admit`). It is foreground only:
+**all four ISR roots instruction-identical**; production byte-identical (`D065B28A`); suites 364/362/362;
+clippy 0. Arms: production A = `A9F121F8`, **B = `6A04F98C`** (loadable `9A723289`); chain A =
+`BE2213DE`, **B = `7810D9C8`**.
+
+**Predictions (before running):** the 98–99 µs step-3 cluster moves to ~75–85 µs, so step-3 late
+accepts (> 1.25 × mean ≈ 84 µs) fall **≥ 40 %** and their median interval falls ≥ 10 µs. Production at 725:
+worst block lower in ≥ 2/3 pairs, foldbacks ≤ A. Speed ±0.5 %, hold ±2 %. **Reject** if the step-3 late
+count does not fall ≥ 40 %, or B trips where A does not.

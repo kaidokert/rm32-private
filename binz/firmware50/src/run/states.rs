@@ -1135,8 +1135,19 @@ impl Locked {
             return false;
         }
         let elapsed = hal.now().wrapping_sub(self.sector_start);
-        // The first rescue at 1.5 intervals, then one per further half.
-        elapsed > ci + (ci >> 1) + (ci >> 1) * u32::from(self.rescues)
+        // The first rescue at 1.5 intervals, then one per further half. ENV-33 lever
+        // (`early-rescue`): at 1.125 intervals, then one per further eighth. At 72.5 % the
+        // late step-3 accepts cluster at 98-99 us = 1.5 x ci: a crossing that had happened
+        // but whose one revisit was spent on a transient waited for this deadline (ENV-32
+        // review). A rescue still pends only when the comparator already reads the
+        // post-crossing level (`revisit::admit`), so an earlier deadline cannot accept before
+        // the crossing.
+        let step = if cfg!(feature = "early-rescue") {
+            ci >> 3
+        } else {
+            ci >> 1
+        };
+        elapsed > ci + step + step * u32::from(self.rescues)
     }
 }
 
