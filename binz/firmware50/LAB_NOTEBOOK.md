@@ -45053,3 +45053,55 @@ budget, margin counters).
 
 **Stage 1 PASS.** Stage 2 (ENV-63) now: walk 525 → 725 on `0A978A82`, then the follow-up (restarts incl. 725 on the
 window-90 twin `235A5DC2`, sweep, low rungs). **No commits during the walk.**
+
+#### ENV-63 result — A6 stage 2: PASS (walk, restarts, sweep, low rungs)
+
+**Walk** (`env63_walk.sh`, image `0A978A82`), 3/3 at every rung; `env63_check.py`: **RULE PASS**. Worst figures per rung
+against the tag's walk (ENV-38; **cross-session**, the tag walk ran in the early morning):
+
+| rung | tag coast / hold / worst (run) | **A6** coast / hold / worst (run) | A6 thin / ci_min / spent |
+|---|---|---|---|
+| 525 | 1969–1980 / 1685–1697 / 2631 | 1969–1978 / 1707–1729 / 2729 (r525-1) | 0 / 55 / 10 |
+| 550 | 2038–2051 / 1879–1889 / 2983 | 2044–2051 / 1904–1908 / 2584 (r550-1) | 0 / 53 / 10 |
+| 575 | 2106–2114 / 2082–2094 / 2831 | 2124–2137 / 2115–2142 / 2826 (r575-1) | 0 / 47 / 10 |
+| 600 | 2178–2186 / 2283–2297 / 3085 | 2186–2201 / 2314–2353 / 3312 (r600-1) | 0 / 45 / 10 |
+| 625 | 2226–2249 / 2473–2491 / 3392 | 2245–2249 / 2507–2521 / 3394 (r625-2) | 0 / 50 / 10 |
+| 650 | 2294–2322 / 2716–2722 / 3486 | 2315–2321 / 2780–2797 / 3625 (r650-2) | 0 / 47 / 10 |
+| 675 | 2361–2372 / 2953–2958 / 3672 | 2399–2428 / 3084–3110 / 3820 (r675-1) | 0 / 48 / 10 |
+| 700 | 2455–2478 / 3329–3342 / **4702** | 2475–2512 / 3402–3415 / **4465** (r700-3) | 0 / 46 / 10 |
+| **725** | 2542–2557 / 3601–3606 / 4423 | **2552–2566 / 3675–3689 / 4466 (r725-2)**; 4421, 4445; 0 foldback | **0 / 46 / 10** |
+
+* All reason 2, late_arms 0.
+* Thin arms 0 everywhere (tag: 1 / 3 / 1 at 675 / 700 / 725); `spent_max` 10 (tag 11).
+* The cross-session hold is +1–4.5 %. The same-session stage 1 at 37.5 % showed equal current (zero-adjusted −0.01 %).
+
+**Restarts:** **18/18 recovered** (3/3 at 500, 600, 650, 675, 700, and 725 on the window-90 twin `235A5DC2`: second
+segments reason 2, 11.2 s).
+**Sweep:** t→8, g→3, f→4, n→7, u→13, h→14, i→25, k→15, q→16, w→IWDG reset: **10/10**.
+**Low rungs 150–500** (`env63_low_check.py`): all 45 runs reason 2; every non-oracle gate and self-ref pass at every rung.
+The previous-motor oracle is failed as on every image (it passes only at 200 (3/3) and 150 (2/3)).
+
+**A6 meets every predeclared condition of ENV-61 (stage 1) and ENV-50 (stage 2).** It is kept pending one independent
+review, and is then tagged as the new baseline.
+
+### ENV-64 — predeclared: do the shorter handlers open the 75 % deadline? (A6 vs tag, cap-750 twins, same session)
+
+Images:
+* A6 cap-750 twin **`2B9686C5`** (`edge-probe`; ISR roots instruction-identical to `0A978A82` except one moved
+  constant);
+* tag cap-750 **`D12EB4BE`** (ENV-40).
+
+Rung 750, ABBAAB (A = tag, B = A6), `--no-ladder` (diagnostic, not qualifying).
+
+At 75 % on the tag (ENV-40) the **arm deadline** was live: thin 8–9, one LateArm stop in 3, `ci_min` 40–42, `spent_max`
+11. The **current gate** also failed 3/3 (worst 4895–4972 ≥ 4750).
+
+**Prediction:**
+* A6's arm-margin tail improves: **thin ≤ 2 per run, 0 LateArm stops in 3**, `spent_max` 10;
+* **the current gate is not opened**: the worst block stays ≥ 4750 in ≥ 2/3 on both. Hold ≈ 4.07 A leaves ~0.68 A for
+  ripple under the fixed 5 A allowance.
+
+**Answer rule:**
+* "the shorter handlers open the 75 % deadline" = A6 has 0 LateArm and thin ≤ 2 in 3/3 while the tag shows LateArm or
+  thin ≥ 5;
+* "75 % is open" additionally needs worst < 4750 in 3/3, which is predicted not to hold.
