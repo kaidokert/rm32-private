@@ -20,7 +20,14 @@ ceil = int(re.search(r"ceiling_tenths=(\d+)", t).group(1))
 cause = ("foldback (first AverageCurrent over-block)" if ceil < duty
          else f"stop reason {reason}" if reason != 2 else "normal window end (a tail, not an event)")
 print(f"freeze cause: {cause}  [reason={reason} duty={duty} ceiling={ceil}]")
-if control:
+gate = "--gate" in sys.argv   # ENV-42: ring frozen by the diagnostic `freeze-gate` (first hold block >= 4750 mA)
+if gate:
+    judged = int(re.search(r"SAGSNAP [^\n]*judged=(\d+)", t).group(1))
+    ticks = int(re.search(r"BEMFGUARD [^\n]*ticks=(\d+)", t).group(1))
+    early = ticks - judged
+    print(f"gate freeze: judged={judged} ticks={ticks} -> froze ~{early*0.101/1000:.1f} s before the run's last judgement")
+    assert early > 20_000, "the ring was NOT frozen by the gate (froze at the run's end): refusing"
+elif control:
     assert ceil == duty and reason == 2, "--control needs a run with no foldback and a normal end"
 else:
     assert ceil < duty or reason != 2, "no event froze this ring: it is the run's tail (use --control)"

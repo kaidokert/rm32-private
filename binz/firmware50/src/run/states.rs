@@ -32,6 +32,9 @@ use super::policy::{
     sector_interval_us, sixstep_ccr_of,
 };
 
+/// ENV-42: the host's 4750 mA worst-block gate in raw residual codes (4000 mA = RAW_LIMIT).
+const FREEZE_GATE_RAW: i32 = (4_750u64 * RAW_LIMIT as u64 / 4_000) as i32;
+
 /// How long a run may last: from its own entry, or to an absolute instant a
 /// campaign supplies (E090), so a restarted segment ends exactly where the
 /// original window does.
@@ -438,7 +441,17 @@ impl Ctx {
                 let _ = self.governor.warn(red);
                 Ok(())
             }
-            Some(BlockVerdict::Ok) | None => Ok(()),
+            Some(BlockVerdict::Ok) => {
+                // ENV-42 observer (diagnostic `freeze-gate` only): freeze the ring on the
+                // first hold block at or above the host's 4750 mA gate, which is below
+                // the 5000 mA allowance and so never folds back. Recorder only; the
+                // protection's verdict is untouched and production compiles it away.
+                if cfg!(feature = "freeze-gate") && P::G::ON && self.current.hold_worst_residual() >= FREEZE_GATE_RAW {
+                    P::G::freeze();
+                }
+                Ok(())
+            }
+            None => Ok(()),
         }
     }
 
@@ -1020,6 +1033,13 @@ impl Locked {
             c.stats.wait_hist_at_hold = hal.wait_hist();
             c.stats.left_hist_at_hold = hal.left_hist();
             c.stats.held = true;
+        }
+        // ENV-43 observer (diagnostic `late-worst` only): keep re-marking the hold's
+        // worst-block window for its first 5 s, so `worst_hold_ma` reports the worst
+        // block from hold + 5 s to the end, clear of the ramp-top transient. Reporting
+        // only: the protection verdicts and the hold mean are untouched.
+        if cfg!(feature = "late-worst") && c.hold_start.is_some_and(|h| now.wrapping_sub(h) < 5_000_000) {
+            c.current.mark_hold();
         }
         if let Some(raw) = hal.det_poll() {
             self.consume(hal, raw);

@@ -17350,5 +17350,89 @@
     "anchored": "ENV-40 diagnostic: ISR roots instruction-identical to 7450FE24 (walked 525..725, ENV-38); only SIXSTEP_DUTY_CAP 725->750 (edge-probe). Not a qualifying image."
    }
   ]
+ },
+ "46281289B907D0552FA5E8731FB4C07AB51F8A701D97CC8C96F269E4D1E4C458": {
+  "750": [
+   {
+    "file": "env43-r750-1_01.txt",
+    "duty": 750,
+    "reason": 2,
+    "accepted": 961231,
+    "bus_ref": 1211,
+    "forced": 0,
+    "too_early": 22797,
+    "blank_arms": 354108,
+    "unstable": 1508971,
+    "hold_ms": 40275,
+    "rate_permille": 993,
+    "has_tail": true,
+    "rate_vs_coast_permille": 997,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2673,
+    "coast_crossings": 1483,
+    "hold_ma": 4102,
+    "ceiling_tenths": 750,
+    "worst_ma": 4914,
+    "droop_permille": 971.0982658959538,
+    "fails": [
+     "worst block 4914 mA at or above 4750: within 5% of the firmware's own AverageCurrent allowance (RAW_ALLOW, 5000 mA since ENV-20), where AverageCurrent folds back and a foldback disqualifies the rung"
+    ],
+    "anchored": "ENV-43 diagnostic: ISR roots instruction-identical to 7450FE24 (walked 525..725, ENV-38); cap 750 (edge-probe) + late-worst reporting. Not a qualifying image."
+   },
+   {
+    "file": "env43-r750-2_01.txt",
+    "duty": 750,
+    "reason": 2,
+    "accepted": 957744,
+    "bus_ref": 1210,
+    "forced": 0,
+    "too_early": 22746,
+    "blank_arms": 378790,
+    "unstable": 1499514,
+    "hold_ms": 40275,
+    "rate_permille": 987,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1000,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2579,
+    "coast_crossings": 1452,
+    "hold_ma": 4080,
+    "ceiling_tenths": 740,
+    "worst_ma": 5066,
+    "droop_permille": 972.7272727272727,
+    "fails": [
+     "throttled: ceiling 740 != commanded 750 -- the governor cut the duty, so this is not a run at this rung",
+     "worst block 5066 mA at or above 4750: within 5% of the firmware's own AverageCurrent allowance (RAW_ALLOW, 5000 mA since ENV-20), where AverageCurrent folds back and a foldback disqualifies the rung"
+    ],
+    "anchored": "ENV-43 diagnostic: ISR roots instruction-identical to 7450FE24 (walked 525..725, ENV-38); cap 750 (edge-probe) + late-worst reporting. Not a qualifying image."
+   },
+   {
+    "file": "env43-r750-3_01.txt",
+    "duty": 750,
+    "reason": 2,
+    "accepted": 943037,
+    "bus_ref": 1211,
+    "forced": 0,
+    "too_early": 18899,
+    "blank_arms": 494333,
+    "unstable": 1461944,
+    "hold_ms": 40275,
+    "rate_permille": 996,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1003,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2573,
+    "coast_crossings": 1426,
+    "hold_ma": 3836,
+    "ceiling_tenths": 740,
+    "worst_ma": 5058,
+    "droop_permille": 973.5755573905863,
+    "fails": [
+     "throttled: ceiling 740 != commanded 750 -- the governor cut the duty, so this is not a run at this rung",
+     "worst block 5058 mA at or above 4750: within 5% of the firmware's own AverageCurrent allowance (RAW_ALLOW, 5000 mA since ENV-20), where AverageCurrent folds back and a foldback disqualifies the rung"
+    ],
+    "anchored": "ENV-43 diagnostic: ISR roots instruction-identical to 7450FE24 (walked 525..725, ENV-38); cap 750 (edge-probe) + late-worst reporting. Not a qualifying image."
+   }
+  ]
  }
 }

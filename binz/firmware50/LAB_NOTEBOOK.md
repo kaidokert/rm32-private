@@ -44099,3 +44099,112 @@ Previous: 70 % on `E1256E38` (advance 16), 2416–2431 coast.
 **75 %: 0/3 on the diagnostic cap-750 twin `D12EB4BE`** (worst 4895–4972 ≥ 4750, 1 LateArm stop). Next blocker: current
 first (hold 4.07 A leaves ~0.68 A for block ripple under the fixed 5 A allowance), the arm deadline second (thin 8–9,
 one late arm, `ci_min` 40, wait = ci·14/64 ≈ 8.75 µs vs `spent_max` 11 µs).
+
+### ENV-42 — predeclared: what is the 75 % worst block? A per-event capture at the 4750 gate
+
+ENV-40's reading ("ordinary ripple on a 4.07 A average, not the surge class") is a hypothesis from run aggregates. Test:
+the sag-capture image, whose pre-trip ring records every guard judgement (~101 µs) in the foreground, with **a new
+diagnostic trigger `freeze-gate`**: freeze the ring on the first hold block whose residual ≥ the host's 4750 mA gate.
+That is below the 5000 mA allowance, so it never folds back. Recorder only: the protection verdict is untouched
+(`states.rs`, the `BlockVerdict::Ok` arm). Production rebuilt: loadable `CB638C58` **unchanged**. Host suite 362/362
+with and without the feature. Image **`78D92EB2`** (`sag-capture`, `advance-18,deep-filter,edge-probe,freeze-gate`).
+`isr_diff` vs `D12EB4BE`: ISR roots instruction-identical (TIM16 has one moved constant). Analysis:
+`surge_locate.py --gate`, which **refuses** a ring that froze at the run's end (`BEMFGUARD ticks − SAGSNAP judged` must
+be > 20 000, ~2 s).
+**Run:** 3 × `L` at 750, fresh flash.
+**Discriminator (declared now):** in the frozen ~26 ms (256 scans, 16-scan bins ≈ 1.6 ms):
+* **ripple:** the bins leading into the freeze stay within ±15 % of the ring's first-half mean, with no contiguous burst.
+  The block crosses 4750 because the whole block runs uniformly high.
+* **surge:** a contiguous run of ≥ 2 bins at ≥ 1.25 × the first-half mean. That is a localized excursion, the ENV-21/22
+  signature, and the step-3 sector should dominate it.
+
+Either outcome is reported. If the ring never freezes on the gate (no block ≥ 4750 before the end), that run is
+"no event", not evidence.
+
+#### ENV-42 result — one surge (with the first 75 % foldback), one non-surge, one no-event; both gate crossings at hold entry
+
+| run | reason | ceiling | worst | gate freeze | first-half mean | into-freeze bins | declared verdict |
+|---|---|---|---|---|---|---|---|
+| env42-gate750-1 | 2 | **740 (foldback)** | **5013** | 1.1 s into hold | 4007 | **5458, 5883** contiguous (≥ 5009 = 1.25×); last bin 6023 | **surge** — but steps 1/2/5 are highest in the last 100 scans (5936/5931/5350), step 3 is 4632: **not step-3 dominated** |
+| env42-gate750-2 | **15 LateArm** (ramp, hold 0) | 750 | 4546 | none (froze at the stop) | 3677 | last bin **7701**, one scan 23.6 A at the stop | **no event**; the LateArm itself carries a spike |
+| env42-gate750-3 | 2 | 750 | 4971 | 0.5 s into hold | 4382 | max 5339 (< 5478 = 1.25×) | **not a surge**; not clean ripple either (bins +20/−18/−16/+22 % breach my ±15 %) |
+
+**Scored honestly:** my declared ripple band (±15 %) was too tight for 1.6 ms bins of a pulsed single-shunt signal. The
+first-half bins of the ripple-like run 3 already swing ±20 %. So "ripple" could not be confirmed as declared; "surge" is
+met in 1/2 gate events. My ENV-40 hypothesis ("ordinary ripple, not the surge class") is **half refuted**: at 75 % there
+is a genuine localized surge that folds back (run 1), and it is **not** the step-3 signature of ENV-21/22.
+**New observation (a hypothesis):** both gate crossings came **0.5–1.1 s after the hold mark**, i.e. at the top of the
+ramp, where the rotor is still accelerating onto the new duty. If 75 %'s gate failures are that entry transient, a
+steady-state measure would show it. That is ENV-43.
+
+### ENV-43 — predeclared: is the 75 % worst block the ramp-top transient? (`late-worst` diagnostic)
+
+Image **`46281289`** (`advance-18,deep-filter,edge-probe,late-worst`, shell-pwm, **no recorder**). `late-worst` re-marks the
+hold's worst-block window during the first 5 s of hold, so `worst_hold_ma` = worst block from hold + 5 s to the end;
+`worst_ma` stays whole-run. Reporting only; production loadable `CB638C58` unchanged; ISR roots instruction-identical to
+`D12EB4BE` (TIM16: one moved constant); host 362/362 both ways. 3 × `L` at 750, fresh flash, anchored.
+**Predictions:** under the entry-transient hypothesis, `worst_hold_ma` (from + 5 s) < 4750 in 3/3 runs that reach
++ 5 s, while `worst_ma` stays ≥ 4750. **Falsifier:** `worst_hold_ma` ≥ 4750 in any run means gate-level blocks recur in
+steady state, and 75 % is current-bound there too. A LateArm stop in the ramp is a result (as in ENV-40/42) and yields
+no steady-state datum for that run.
+
+#### ENV-43 result — refuted: 75 % surges recur in steady state (2/3), one with a loss-of-sync signature
+
+| run | image | reason | ceiling | worst (whole run) | **worst from hold + 5 s** | thin | ci_min | loop/coast ‰ |
+|---|---|---|---|---|---|---|---|---|
+| env43-r750-1 | `46281289` | 2 | 750 | 4914 | **4914** | 25 | 41 | 1005 |
+| env43-r750-2 | `46281289` | 2 | **740 (foldback)** | 5066 | **5066** | 17 | 42 | **1042 — self-ref STOP** |
+| env43-r750-3 | `46281289` | 2 | **740 (foldback)** | 5058 | 4544 | 9 | 42 | 1012 |
+
+Run 3's figures differ (5058 whole run vs 4544 late), which shows the observer works. **The falsifier fired in 2/3:** gate-level
+blocks recur after the ramp-top transient, and run 2's steady-state foldback came with the loop commutating **4.2 % faster
+than the rotor turns**. That is the loop-vs-rotor divergence the rate identity exists to catch: a desync, not ripple. The
+entry-transient hypothesis is **withdrawn**. What remains: at 75 %, advance 18 shows the same surge-and-foldback class it
+removed at 72.5 % (ENV-36/38), in steady state, together with the arm deadline closing (thin 9–25, LateArm stops in
+ENV-40/42).
+
+## SYNTHESIS — the desync, the fix level, the envelope, the next blocker (2026-09-29)
+
+**Mechanism (ENV-24…36, per-event chain captures with a same-image control at 70 %):** at 72.5 % on advance 16 the desync
+starts at the **step-3 (phase-A rising) crossing being accepted late**. In about half the late sectors the crossing is
+present but chattering (refused reads at ~76 µs); in the rest it is genuinely late. A late accept puts the next
+commutation late against the rotor. The step drives current against the back-EMF, the 10 ms block surges past 5 A, and
+AverageCurrent folds back (5/6 at 72.5 %), the 4750 gate trips, or occasionally FastBusSag latches. The 70 % control on the
+same image shows no such cascade.
+
+**Fix level: a constant: advance 16 → 18.** The cheapest levels were tried first, each in a matched ABBAAB and
+reviewed:
+* rejected: filter floor 3, 24 kHz carrier, hysteresis ≥ 60 %, outlier clamp, blank threshold 12;
+* rejected on analysis: late-anchor.
+
+Advance 18 absorbs the late-crossing error (a late event of Δ leaves effective advance 18 − Δ instead of 16 − Δ):
+* 72.5 %: 6/6 worst blocks < 4750 and 0 foldback, against 6/6 ≥ 4789 on advance 16;
+* speed +3 %, current +7–8 %.
+
+It does not remove the late crossings themselves (the step-3 cascade still appears in chain captures). It removes their
+consequence at 72.5 %.
+
+**Envelope: 72.5 %, image `7450FE24`, loadable `CB638C58` (`advance-18,deep-filter`, cap 725).**
+* Coast 2542–2557 eHz (loop 2564); hold 3601–3606 mA; worst block 4423 mA (`env37-r725-1`).
+* Walk 525–725 3/3; restarts re-earned at 500, 600, 650, 675 and 700, and at 725 on the window-only twin `74346ED6`.
+* Sweep 10/10.
+* 150–500 pass every non-oracle gate, with no regression against advance 16.
+* Carried costs: the 70 % worst-block margin shrinks to 48 mA (`env37-r700-2`, 4702; p = 0.05 vs advance 16); FastBusSag
+  still has no hardware positive control.
+
+**Is AM32-style architecture needed now? For 72.5 %, no: a constant sufficed. For anything above 72.5 %, yes, or at least
+the local timing change that leads toward it: the constant level is boxed in.**
+* Advance cannot go higher. Advance 18 already runs with `ci_min` 40–42 µs, arm wait ci·14/64 ≈ 8.75–9.2 µs, against
+  `spent_max` 11 µs. Result at 75 %: thin arms 9–25 per run and LateArm stops (ENV-40 r3, ENV-42 r2). Advance 20 shortens
+  the wait to ci·12/64 ≈ 7.5 µs, below `spent`.
+* Advance 16 brings the 72.5 % surges back.
+
+That leaves no headroom in constants. The next cheapest level is **a local code change that cuts `spent`**, the
+foreground-to-arm latency in the commutation path. Recovering ~4–5 µs would let advance rise again, the same lever that
+worked at 72.5 %. The architectural move is to arm the commutation timer from the comparator/accept path in a few µs, as
+AM32 does.
+
+**Next blocker, with its evidence:** 75 % (`D12EB4BE`/`46281289`, diagnostics) fails 0/6 on the gate. The surge class
+returns in steady state (ENV-43, 2/3; one run with a 4.2 % loop-vs-rotor slip), and the arm deadline arrives with it
+(LateArm 2/9 runs across ENV-40/42/43). **Arm-deadline latency (`spent` 11 µs against a ~9 µs advance-18 wait) is what
+blocks the only lever that has worked.**

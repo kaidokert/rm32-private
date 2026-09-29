@@ -104,6 +104,10 @@ margin-hist = []
 edge-probe = []
 # ENV-41 diagnostic: 90 s campaign window (restart above 70 % fits). Off in production.
 window-90 = []
+# ENV-42 diagnostic: freeze the sag ring on the first hold block >= 4750 mA (recorder only).
+freeze-gate = []
+# ENV-43 diagnostic: worst_hold_ma measured from hold + 5 s (reporting only).
+late-worst = []
 # ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
 # chain image can mark revisit-originated accepts (flag bit 6).
 chain-origin = []
