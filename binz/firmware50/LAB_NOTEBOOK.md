@@ -43432,3 +43432,35 @@ failed because the 30 s window ended before the 30 s ramp reached 600; the windo
 assertion. Suites 363/361/361, clippy 0, production byte-identical (`D065B28A`), ISR roots
 instruction-identical. Arms: production A = `A9F121F8`, **B = `052D64A3`** (loadable `87571A6E`);
 chain A = `BE2213DE`, **B = `D61C5C0C`**. Predictions as ENV-30, unchanged.
+
+#### ENV-30b result — closed-loop hysteresis REJECTED: late accepts unchanged, surges not improved
+
+Production ABBAAB at 725 (A `A9F121F8` HYST 0, B `052D64A3` HYST 1 at ≥ 60 %):
+
+| pair | worst block A / B | coast A / B | foldback |
+|---|---|---|---|
+| (env30b-prod-1A, 2B) | 4952 / 4942 | 2466 / 2458 | – / – |
+| (4A, 3B) | 4989 / 5018 | 2463 / 2447 | – / B |
+| (5A, 6B) | 5045 / 5094 | 2456 / 2444 | A / B |
+
+B: too-early refusals −19 % (0.056 → 0.045 per accept), filter refusals −4 %, coast −0.3–0.5 %, hold −1–2 %.
+**The worst block is not lower in any pair (equal or higher in 3/3); foldbacks A 1/3, B 2/3.**
+Chain (A `BE2213DE`, B `D61C5C0C`): late accepts A 9/17/9 vs B 17/8/8 (**unchanged**, mean 11.7 vs 11.0);
+phase-A share A 20/35, B 27/33. Predictions (late ≤ 6, worst block lower) **refuted**. Rejected.
+
+#### Where the diagnosis stands (three detection-path constants tried)
+
+Filter depth (ENV-27), carrier (ENV-29), and comparator hysteresis (ENV-30b) all act on how an edge is
+*detected*. **None moved the late-crossing rate**, and the phase-A concentration persists in every arm
+(steps 3 and 6 carry 60–82 % of late accepts). The evidence now says the late crossings are **not a
+detection-logic problem.** Phase A's back-EMF crossing, as seen at PB3 against the star, genuinely
+arrives late in some sectors. So an AM32-style detection restructure is **not** what the evidence
+calls for yet. Two locations remain, and firmware cannot separate them:
+1. **the board:** phase A's sense path (PB3 divider/filter, or coupling onto it; E042's unresolved
+   "analogue front end");
+2. **the motor:** an asymmetry on the winding connected to that lead.
+
+**Discriminator (needs the operator's hands):** rotate the three motor leads cyclically (A→B, B→C,
+C→A; a cyclic rotation preserves the spin direction), then re-run the 725 chain pair. If the late
+accepts **move** to the sectors of the phase that now carries the old A lead, it is the motor. If they
+**stay** on steps 3/6 (PB3), it is the board.
