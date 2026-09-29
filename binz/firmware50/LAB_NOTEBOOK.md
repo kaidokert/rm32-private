@@ -43494,3 +43494,20 @@ accepts **move** to the sectors of the phase that now carries the old A lead, it
   step 3, it is the board** (PB3 sense path, phase-A gate path, or phase-A shunt/layout; a second split,
   swapping the PB3/PB7 sense in firmware, would follow). Bar: 3 × 725 chain captures after the rotation,
   on the same image `BE2213DE`.
+
+#### ENV-31 result — the step-3 tail is a KNEE at 72.5 %, not a current-tracking slope
+
+`BE2213DE`, pooled `scripts/late_by_step.py` (late = > 1.25 × capture mean):
+
+| duty | captures | hold mA | step-3 late | other steps |
+|---|---|---|---|---|
+| 650 | env31-chain650-1/2 | 2670 | 0.6 % | 0–2.9 % |
+| 675 | env31-chain675-1/2 | 2874–2878 | 1.8 % | 0–2.9 % |
+| 700 | env25/26-chain700 | ~3150 | 1.8 % | 0–0.3 % |
+| 725 | 22 captures | ~3350 | **6.1 %** | 0.3–1.2 % |
+
+Flat to 70 %, then ×3.4 at 72.5 % for ~+6 % current. **Threshold behaviour**: the step-3 rising crossing
+begins to land in some fixed window at ci ≈ 67 µs. That weakens a pure current-proportional (demag
+magnitude) reading and favours a timing-window interaction specific to that sector. Leads to test against
+the rotation result: the half-cycle gate (avg/2 ≈ 33 µs after the accept), the post-commutation blanking
+floor, or a sector-specific transient timing. Rotation still pending (operator's hands).
