@@ -43654,3 +43654,27 @@ contain a refused edge whose first read was already post-crossing before 85 µs 
 do), **the crossing was early and refused**, and the filter/persistence decision is the lever. If **≤ 20 %**
 do, and late sectors show pre-crossing first reads throughout, **the crossing is genuinely late**, and the
 trigger is analogue/physical.
+
+#### ENV-34 result — INCONCLUSIVE by the predeclared rule (40 %, between 20 and 50), and the recorder perturbs
+
+`A2C3FF31`, `scripts/step3_refusals.py`:
+
+| duty | captures | late step-3 sectors | refused edge post-crossing (first read) < 85 µs | any post read on a refused edge (first t, median) |
+|---|---|---|---|---|
+| 725 | env34-chain725-1/2/3 | 20 (5 / 5 / 10) | **8/20 = 40 %** (3/5, 1/5, 4/10) | 9/20 (76 µs, range 64–85) |
+| 700 | env34-chain700-1/2 | 20 (12 / 8) | 3/20 = 15 % | 6/20 (81.5 µs, range 70–89) |
+| normal sectors | all | – | 1/201 | – |
+
+Late sectors carry 3.1–3.6 refusals against 1.24–1.34 for normal ones. Refused edges before ~60 µs arrive at the carrier rate, and their first read is already pre-crossing (switching spikes). Near 70–78 µs, some refused edges read post for 1–4 reads and are then pulled back (`Pp`, `PPPp`).
+**Two sub-populations:** in ~half of late step-3 sectors the crossing is partly present by ~76 µs and
+refused while it chatters. In the other half there is no post-crossing evidence at all before the ~95 µs
+accept. **Neither threshold is met, so the rule decides nothing.** **Caveat: all 5 runs ended LateArm (15)**. This image's
+ADC_COMP is 1042 instructions (+72 over `BE2213DE`), and its recorder cost perturbs timing at both duties
+(its 700 control shows as many late sectors as 725), as the edge-capture image did.
+
+**Firmware detection levers tried at 725, with their verdicts:** filter floor 5 → 3 (not the late-accept fix, n = 3), HYST 1 at ≥ 60 %
+(rejected), estimator outlier clamp (rejected), rescue at 1.125 × ci (not measured). The carrier is untested
+on late accepts. **What stands:** a step-3 (phase-A rising) crossing that sometimes approaches slowly and
+hovers near the threshold for 20–30 µs. That is physical or analogue in origin, with firmware filtering
+adding up to one carrier period on top. **The discriminator that remains is the operator's lead rotation**
+(board vs motor, ENV-31 prediction: the tail moves to step 5 or 1 if it is the motor).
