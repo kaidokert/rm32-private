@@ -43597,3 +43597,21 @@ clippy 0. Arms: production A = `A9F121F8`, **B = `6A04F98C`** (loadable `9A72328
 accepts (> 1.25 × mean ≈ 84 µs) fall **≥ 40 %** and their median interval falls ≥ 10 µs. Production at 725:
 worst block lower in ≥ 2/3 pairs, foldbacks ≤ A. Speed ±0.5 %, hold ±2 %. **Reject** if the step-3 late
 count does not fall ≥ 40 %, or B trips where A does not.
+
+#### ENV-33 result — early rescue REJECTED, and it refutes "the rescue deadline sets the lateness"
+
+Production ABBAAB at 725 (A `A9F121F8`, B `6A04F98C`): worst block (1A, 2B) 5019 / **5237**, (4A, 3B)
+5096 / 4883, (5A, 6B) 4934 / 5027 → B lower in only 1/3. **env33-prod-4A (A arm) stopped on
+AverageCurrent (25)** after 9.1 s of hold (5096 mA): the 5 A protection's hard stop, on the unmodified image.
+Coast ±0.5 %, hold ±1 %.
+Chain (A `BE2213DE`, B `7810D9C8`): step-3 late accepts A 8 / 6 / 3 vs B 4 / 7 / 3 (**−18 %**, prediction
+≥ 40 % refuted); median late interval A 95.5 / 96 / 94 vs B 89 / 98 / 89; count in the 96–101 µs cluster A
+4 / 2 / 1 vs B 1 / 4 / 1 (**not moved**).
+
+**What this establishes:** with a rescue available from ~76 µs (1.125 × ci), the step-3 accepts still land
+near 1.3–1.5 × ci. So in those sectors the comparator **does not read the post-crossing level before then:
+the crossing genuinely occurs late**, as ENV-28's edge captures showed (pre-crossing level persisting).
+The rescue deadline was a coincidence of scale, not the cause (ENV-32 review's hypothesis, stated as one,
+tested and refuted). **Firmware detection levers exhausted at this level:** filter depth, hysteresis,
+estimator clamp, rescue timing (carrier never measured on late accepts). **The trigger is physical or
+analogue on the phase-A rising crossing.** Next: the operator's lead rotation (board vs motor).
