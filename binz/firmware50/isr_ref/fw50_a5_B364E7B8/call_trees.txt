@@ -1,0 +1,14 @@
+ELF B364E7B8.a5-armfirst-shell-pwm.elf sha256 b364e7b855ce3efe7c7cd6300d6498c989c55f1de62bfba25f936c6c28bb043e
+
+[comp] ADC_COMP: COMP2 edge (A5)
+  ADC_COMP: 826 insns, 1760 B
+  -> isr_ref\fw50_a5_B364E7B8\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (A5)
+  TIM16: 368 insns, 804 B -> _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E
+    _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E: 84 insns, 192 B
+  -> isr_ref\fw50_a5_B364E7B8\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick
+  TIM6_DAC_LPTIM1: 155 insns, 344 B
+  -> isr_ref\fw50_a5_B364E7B8\tick_TIM6_DAC_LPTIM1.lst

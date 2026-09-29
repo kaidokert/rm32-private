@@ -1,0 +1,13 @@
+<entry> TIM16
+80018fe N
+800190c N
+8001914 T
+800191c N
+8001920 N
+8001924 T   # phase 3
+8001934 T   # nothing latched
+8001964 T
+800196a T
+8001970 T
+8001976 T
+800197c N   # resume

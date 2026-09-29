@@ -1,0 +1,14 @@
+ELF 372F207B.a4-sixgate-shell-pwm.elf sha256 372f207b2138fb3f2d0e15998ff0e0fd9f69737fa0776803b6b4c08c0f38ac1c
+
+[comp] ADC_COMP: COMP2 edge (A4)
+  ADC_COMP: 729 insns, 1556 B
+  -> isr_ref\fw50_a4_372F207B\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (A4)
+  TIM16: 438 insns, 944 B -> _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E
+    _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E: 84 insns, 192 B
+  -> isr_ref\fw50_a4_372F207B\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick
+  TIM6_DAC_LPTIM1: 155 insns, 344 B
+  -> isr_ref\fw50_a4_372F207B\tick_TIM6_DAC_LPTIM1.lst

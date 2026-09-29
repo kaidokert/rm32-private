@@ -12,6 +12,7 @@ use portable_atomic::Ordering;
 use stm32g0xx_hal::rcc::Rcc;
 use stm32g0xx_hal::stm32;
 
+use crate::bemf::FilterPolicy as _;
 use crate::bridge::Bridge;
 use crate::capture::{Decision, EdgeLog};
 use crate::chain::ChainLog;
@@ -480,42 +481,47 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
         let advance = S.det().advance.load(Ordering::Relaxed);
         // Persistence reads the **live** comparator, microseconds after the edge --
         // exactly what AM32's handler does, and what the foreground could never do.
+        // ENV-58 (A5): everything before these reads is the tag's, so the edge-to-read
+        // latency is unchanged; only the order after the reads moves.
         let (mut reads, mut n) = (0u16, 0u16);
-        let outcome = zc.offer(count, edge_is_rising(step), advance, &DET_FILTER, || {
-            let l = hw::comp::level();
-            if C::ON {
-                reads |= u16::from(l) << n.min(11);
-                n += 1;
+        let judged = crate::bemf::judge(
+            count,
+            zc.blanking(),
+            edge_is_rising(step),
+            DET_FILTER.level(zc.average_interval()),
+            || {
+                let l = hw::comp::level();
+                if C::ON {
+                    reads |= u16::from(l) << n.min(11);
+                    n += 1;
+                }
+                l
+            },
+        );
+        let outcome = if judged == crate::bemf::Judgement::Pass {
+            crate::bemf::Outcome::Accepted {
+                wait: 0,
+                average_interval: 0,
+                advance: 0,
             }
-            l
-        });
+        } else {
+            zc.note_refusal(judged);
+            if judged == crate::bemf::Judgement::TooEarly {
+                crate::bemf::Outcome::TooEarly
+            } else {
+                crate::bemf::Outcome::Unstable
+            }
+        };
         match outcome {
-            crate::bemf::Outcome::Accepted { wait, .. } => {
-                // The accepted crossing's bookkeeping, then the arm. (A stale
-                // comment describing the reverted E142 order stood here until
-                // E153 found it; the order below is the qualified one.)
+            crate::bemf::Outcome::Accepted { .. } => {
                 S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
                 S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
-                // The estimate this acceptance hands to the commutation, taken
-                // here and published before the arm (step 6a). COM reads these
-                // instead of borrowing `det.zc`, which is what made the
-                // estimator the one value two motor roots touched.
-                S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
-                S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
-                S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
-                // Arm the commutation, as AM32's `interruptRoutine` arms its COM
-                // timer. The line stays masked until the COM root re-arms it.
-                // The wait runs from the edge, not from here: subtract what this
-                // handler has already spent since its entry stamp `raw`, so the
-                // commutation lands at edge + wait whenever the response time is
-                // below the wait (E083, R_COMP < wait_time(ci)).
-                //
-                // **Arming before these stores was tried and rejected** (E142,
-                // E144): it moved the reported response time from 11 µs to 10
-                // and cost about 1% of rotor speed at 37.5%, where the
-                // remaining wait is only 5-6 µs. Below that rung it changed
-                // nothing measurable. The order here is the qualified one.
+                // **ENV-58 (A5): arm first, with the wait computed at the previous
+                // crossing** (AM32's `SET_AND_ENABLE_COM_INT(waitTime + 1)`), then do
+                // the arithmetic. The wait still runs from the edge: subtract what
+                // this handler has spent since its entry stamp `raw` (E083).
                 if S.com().active.load(Ordering::Relaxed) {
+                    let wait = S.det().next_wait.load(Ordering::Relaxed);
                     let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
                     let left = wait.saturating_sub(spent);
                     arm_marked::<C>(left.max(1));
@@ -524,10 +530,6 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                     if left == 0 {
                         let n = S.det().late_arms.load(Ordering::Relaxed);
                         S.det().late_arms.store(n.wrapping_add(1), Ordering::Relaxed);
-                        // **The two numbers the whole mechanism argument turns
-                        // on, captured where they are true** (E314). Only for
-                        // the FIRST late arm, so a second cannot overwrite the
-                        // one the run stopped on.
                         if n == 0 {
                             S.det().ci_at_late.store(zc.average_interval(), Ordering::Relaxed);
                             S.det().spent_at_late.store(spent, Ordering::Relaxed);
@@ -537,12 +539,16 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                         S.det().spent_max.store(spent, Ordering::Relaxed);
                     }
                 }
+                // After the arm: fold this crossing in and compute the next wait.
+                if let crate::bemf::Outcome::Accepted { wait: next, .. } = zc.commit(count, advance) {
+                    S.det().next_wait.store(next, Ordering::Relaxed);
+                }
+                // The estimate this acceptance hands to the commutation (step 6a).
+                S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
+                S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
+                S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
                 Some((step.get(), zc.average_interval()))
             }
-            // ENV-26 refusal tally, chain images only: what this sector refused
-            // before its accept. Inside the catch-all so production's match is
-            // unchanged (a separate arm moved its codegen); folds away when
-            // `C::ON` is false.
             other => {
                 if C::ON {
                     let early = matches!(other, crate::bemf::Outcome::TooEarly);

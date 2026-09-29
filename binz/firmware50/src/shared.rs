@@ -395,6 +395,9 @@ pub struct Det {
     /// only the ~10 instructions of the increment and not the layout.
     pub wait_hist: [AtomicU32; 8],
     pub left_hist: [AtomicU32; 8],
+    /// **ENV-58 (A5): the wait the next acceptance arms with**, computed by the previous
+    /// acceptance's commit *after* its arm -- AM32's one-step-ahead `waitTime`.
+    pub next_wait: AtomicU32,
 }
 
 /// Closed-loop COMP health: the storm and handler-budget stops (E107).
@@ -718,6 +721,7 @@ static DET: Det = Det {
     in_arm: f(),
     wait_hist: hist(),
     left_hist: hist(),
+    next_wait: u(),
 };
 static COMP: CompHealth = CompHealth {
     storm: f(),

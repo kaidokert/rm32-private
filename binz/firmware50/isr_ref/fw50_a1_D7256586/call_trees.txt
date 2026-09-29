@@ -1,0 +1,14 @@
+ELF D7256586.a1-adv18-cap725.elf sha256 d72565863063a5c81c8f64e03b81e6fd2a0fda875df908c5579c5bc34b858288
+
+[comp] ADC_COMP: COMP2 edge (A1)
+  ADC_COMP: 727 insns, 1552 B
+  -> isr_ref\fw50_a1_D7256586\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (A1)
+  TIM16: 474 insns, 1020 B -> _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E
+    _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E: 84 insns, 192 B
+  -> isr_ref\fw50_a1_D7256586\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick
+  TIM6_DAC_LPTIM1: 155 insns, 344 B
+  -> isr_ref\fw50_a1_D7256586\tick_TIM6_DAC_LPTIM1.lst

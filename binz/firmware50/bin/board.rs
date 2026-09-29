@@ -532,6 +532,11 @@ impl Hal for Board {
         // (step 6a).
         det.accept_avg.store(zc.average_interval(), Ordering::Relaxed);
         det.accept_blank.store(zc.blanking(), Ordering::Relaxed);
+        // ENV-58 (A5): the first acceptance arms with a wait computed from the seed.
+        det.next_wait.store(
+            firmware50::commutation::wait_time(zc.average_interval(), advance),
+            Ordering::Relaxed,
+        );
         let _ = det.zc.lock(|z| *z = Some(zc));
         // All six slots at the seed, as the reference seeds `interval_hist`.
         let _ = S.com().six.lock(|six| *six = SixSlot::seeded(seed_us));

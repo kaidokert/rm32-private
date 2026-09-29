@@ -480,28 +480,46 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
         rising: bool,
         advance_level: u32,
         policy: &F,
-        mut read_level: R,
+        read_level: R,
     ) -> Outcome {
-        // 1. half-cycle gate — strictly greater, matching the reference.
-        if count <= self.blanking() {
-            self.too_early = self.too_early.wrapping_add(1);
-            return Outcome::TooEarly;
-        }
-
-        // 2. persistence filter. Bounded loop: `filter_level` is a u8, so this
-        //    is at most 255 reads and cannot run away.
-        let depth = policy.level(self.average_interval);
-        let mut i = 0u8;
-        while i < depth {
-            if read_level() != rising {
-                self.unstable = self.unstable.wrapping_add(1);
-                return Outcome::Unstable;
+        // The two halves AM32 splits across its roots (ENV-45): the comparator's
+        // gate + filter against the *published* gate and depth, and the
+        // commutation's commit. Composed here they are exactly the one-root
+        // detector the host tests have always tested.
+        match judge(
+            count,
+            self.blanking(),
+            rising,
+            policy.level(self.average_interval),
+            read_level,
+        ) {
+            Judgement::TooEarly => {
+                self.too_early = self.too_early.wrapping_add(1);
+                Outcome::TooEarly
             }
-            i += 1;
+            Judgement::Unstable => {
+                self.unstable = self.unstable.wrapping_add(1);
+                Outcome::Unstable
+            }
+            Judgement::Pass => self.commit(count, advance_level),
         }
+    }
 
-        // 3. accept. Blend the new observation into the average, then schedule
-        //    commutation at half a cycle minus the advance.
+    /// Count a refusal decided by [`judge`] (ENV-58: the caller holds the estimator).
+    #[inline]
+    pub fn note_refusal(&mut self, j: Judgement) {
+        match j {
+            Judgement::TooEarly => self.too_early = self.too_early.wrapping_add(1),
+            Judgement::Unstable => self.unstable = self.unstable.wrapping_add(1),
+            Judgement::Pass => {}
+        }
+    }
+
+    /// **The commutation root's half** (ENV-45, AM32's `PeriodElapsedCallback`):
+    /// fold an accepted crossing's interval into the estimate, then compute the
+    /// wait the *next* arm will use. Blend, clamp, advance, wait: the arithmetic
+    /// AM32 keeps out of its comparator ISR.
+    pub fn commit(&mut self, count: u32, advance_level: u32) -> Outcome {
         self.prev_zc = self.last_zc;
         self.last_zc = count;
         // ENV-32 A/B lever (`outlier-clamp`): a single late interval (the 72.5 % step-3
@@ -525,6 +543,41 @@ impl<const BLANK_64: u32> ZeroCrossWith<BLANK_64> {
             advance,
         }
     }
+}
+
+/// What the comparator's half decides about one edge (ENV-45).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Judgement {
+    /// Inside the half-cycle gate.
+    TooEarly,
+    /// A persistence read dissented.
+    Unstable,
+    /// Past the gate and through the filter: a crossing.
+    Pass,
+}
+
+/// **The comparator's half** (ENV-45, AM32's `ADC1_COMP_IRQHandler` +
+/// `interruptRoutine`): the half-cycle gate and the persistence filter, against
+/// a gate and a depth the commutation root published. No estimate is read or
+/// written, so this needs no borrow of the estimator.
+///
+/// * `count` — elapsed since the sector start.
+/// * `gate` — the published half-cycle window (strictly greater passes, as the
+///   reference).
+/// * `depth` — the published filter depth; at most `depth` live reads.
+#[inline]
+pub fn judge<R: FnMut() -> bool>(count: u32, gate: u32, rising: bool, depth: u8, mut read_level: R) -> Judgement {
+    if count <= gate {
+        return Judgement::TooEarly;
+    }
+    let mut i = 0u8;
+    while i < depth {
+        if read_level() != rising {
+            return Judgement::Unstable;
+        }
+        i += 1;
+    }
+    Judgement::Pass
 }
 
 #[cfg(test)]

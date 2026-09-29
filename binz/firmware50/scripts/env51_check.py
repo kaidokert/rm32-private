@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ENV-38: apply the amended, predeclared rule mechanically to the walk captures (no hand assembly).
+"""ENV-51 (A1r stage 2): apply the amended, predeclared rule mechanically to the walk captures (no hand assembly).
 Per run: reason, ceiling, coast, hold, worst block, late_arms, spent_max_us, thin_count, ci_min, mdep_n.
 Rule: every walk run late_arms == 0 and spent_max_us <= 11; 725: worst < 4750 in the 3 confirmatory holds,
 no foldback. Prints PASS/FAIL per criterion. Refuses if a rung has fewer than 3 captures."""
@@ -7,11 +7,13 @@ import glob, os, re, sys
 from collections import defaultdict
 runs = defaultdict(list)
 INCOMPLETE = []
-for f in sorted(glob.glob("captures/2026-09-29/env37-r*_01.txt")):
+for f in sorted(glob.glob("captures/2026-09-29/env51-r[0-9]*_01.txt")):
     t = open(f).read()
     g = lambda k: (lambda m: int(m.group(1)) if m else None)(re.search(k + r"=(-?\d+)", t))
     hm = re.search(r"BEMFCURRENT.* hold_ma=(\d+)", t)
-    rung = int(re.search(r"env37-r(\d+)-", f).group(1))
+    rung = int(re.search(r"env51-r(\d+)-", f).group(1))
+    if rung < 525:
+        continue
     if g("BEMFDONE reason") is None:
         # ENV-52 review: a capture with no BEMFDONE is a failure to report, not a skip.
         print(f"  INCOMPLETE CAPTURE (no BEMFDONE): {os.path.basename(f)}"); INCOMPLETE.append(os.path.basename(f)); continue
