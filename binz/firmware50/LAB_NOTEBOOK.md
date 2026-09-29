@@ -43550,3 +43550,16 @@ changes is **consecutive-late / cascade events**: late accepts followed within 2
 or a short, per 35 ms chain, drop ≥ 50 %, and short accepts drop. Production at 725: worst block lower in
 ≥ 2/3 pairs and foldbacks ≤ A. Speed ±0.5 %, hold current ±2 %. **Reject** if cascades do not drop, or B
 trips where A does not.
+
+#### ENV-32 result — outlier clamp REJECTED: cascades −35 % (short of the predicted ≥ 50 %), production outcome unchanged
+
+Production ABBAAB at 725 (A `A9F121F8`, B `19E912D4`): worst block pairs (1A, 2B) 5088 / **5206**,
+(4A, 3B) 5087 / 5085, (5A, 6B) 5012 / 4991. Foldback A 3/3, B 2/3. Hold B +2–4 % (3399–3450 vs
+3317–3333). Coast ±0.3 %.
+Chain (A `BE2213DE`, B `FFAC9E31`, `scripts/cascade_count.py`): cascades A 10 / 7 / 14 vs B 9 / 5 / 6
+(**lower in 3/3 pairs, mean −35 %**); shorts 19.7 → 14.7; late accepts A 15/12/15, B 15/9/9.
+The prediction (cascades −≥ 50 %, worst block lower in ≥ 2/3) is **refuted on both counts.** The lever damps
+the amplifier measurably but does not reduce the desync outcome, and it costs current and a divergence from
+AM32 in the deadline path. **Rejected; the feature stays off.** Conclusion: damping the amplifier is not
+enough. **The trigger (the late step-3 crossing) has to be removed**, which needs the board-vs-motor answer
+from the rotation.
