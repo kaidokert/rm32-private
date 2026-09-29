@@ -43695,3 +43695,17 @@ result.)
 bounded (ENV-35). The remaining discriminator is physical: the operator's motor-lead rotation (ENV-31
 prediction). An AM32 head-to-head is not available hands-free: the AM32 build for this board does not
 start reliably on this rig (`AM32_DRV8304H_BUILD.md`, E530–E533).
+
+### ENV-36 — lever (a constant): advance 16 → 18 at 72.5 %, scored on the step-3 late rate (predeclared)
+
+Advance moves the commutation relative to the rotor, and so moves where each sector's sensing window sits on
+the back-EMF waveform. A crossing that "hovers" (ENV-34) is one on a shallow part of it. Advance 18 was
+compared at 625/650 on current and sag (ENV-7/11), **never on the step-3 late rate at 725**. Images: production
+A = `A9F121F8` (adv 16), **B = `C567066B`** (`advance-18,deep-filter,edge-probe`, loadable `CB638C58`); ISR
+roots instruction-identical (advance is a foreground value). Chain A = `BE2213DE`, **B = `C2F405EA`**.
+Suite 362 (advance-18,deep-filter,edge-probe).
+
+**Predictions (before running):** direction unknown a priori, so the rule is two-sided and outcome-based.
+**Keep** if the pooled step-3 late rate over 3 chain captures falls ≥ 40 % **and** the production worst block is lower
+in ≥ 2/3 pairs with foldbacks ≤ A. **Reject** otherwise. Expected side effects (ENV-11): speed +0–1 %, hold
++1–3 %, better sag margin.
