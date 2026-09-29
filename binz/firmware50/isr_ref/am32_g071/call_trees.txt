@@ -1,0 +1,35 @@
+ELF AM32_DRV8304H_G071_2.20.elf sha256 02592720fb8a1dca2bea0f2915bed553fe3399eca2dbe8e541d2d5804d4ab2fc
+
+[comp] ADC1_COMP_IRQHandler: BEMF comparator edge -> interruptRoutine (zero-cross accept + arm COM timer)
+  ADC1_COMP_IRQHandler: 59 insns, 132 B -> getCompOutputLevel, interruptRoutine
+    getCompOutputLevel: 7 insns, 16 B
+    interruptRoutine: 51 insns, 112 B -> getCompOutputLevel, maskPhaseInterrupts
+      maskPhaseInterrupts: 14 insns, 32 B
+  -> am32_g071_isr_ref\comp_ADC1_COMP_IRQHandler.lst
+
+[com] TIM14_IRQHandler: COM_TIMER (TIM14) update -> PeriodElapsedCallback (commutate + ZC bookkeeping)
+  TIM14_IRQHandler: 18 insns, 44 B -> PeriodElapsedCallback
+    PeriodElapsedCallback: 66 insns, 148 B -> commutate, enableCompInterrupts
+      commutate: 83 insns, 176 B -> changeCompInput, comStep
+      enableCompInterrupts: 10 insns, 24 B
+        changeCompInput: 138 insns, 296 B
+        comStep: 359 insns, 732 B
+  -> am32_g071_isr_ref\com_TIM14_IRQHandler.lst
+
+[tenkhz] TIM6_DAC_LPTIM1_IRQHandler: 20 kHz control loop -> tenKhzRoutine
+  TIM6_DAC_LPTIM1_IRQHandler: 12 insns, 28 B -> tenKhzRoutine
+    tenKhzRoutine: 724 insns, 1516 B -> __divsi3, __udivsi3, playInputTune, delayMillis, maskPhaseInterrupts, getCompOutputLevel, zcfoundroutine, comStep
+      __divsi3: 229 insns, 460 B -> __aeabi_idiv0
+      __udivsi3: 132 insns, 266 B -> __aeabi_idiv0
+      playInputTune: 55 insns, 136 B -> __udivsi3, comStep, delayMillis, allOff
+      delayMillis: 19 insns, 40 B
+      maskPhaseInterrupts: 14 insns, 32 B
+      getCompOutputLevel: 7 insns, 16 B
+      zcfoundroutine: 85 insns, 184 B -> commutate, enableCompInterrupts
+      comStep: 359 insns, 732 B
+        __aeabi_idiv0: 1 insns, 2 B
+        allOff: 63 insns, 136 B
+        commutate: 83 insns, 176 B -> changeCompInput, comStep
+        enableCompInterrupts: 10 insns, 24 B
+          changeCompInput: 138 insns, 296 B
+  -> am32_g071_isr_ref\tenkhz_TIM6_DAC_LPTIM1_IRQHandler.lst

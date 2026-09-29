@@ -1,0 +1,3404 @@
+; AM32 G071 reference ISR: TIM6_DAC_LPTIM1_IRQHandler -- 20 kHz control loop -> tenKhzRoutine
+; ELF AM32_DRV8304H_G071_2.20.elf  sha256 02592720fb8a1dca2bea0f2915bed553fe3399eca2dbe8e541d2d5804d4ab2fc
+; objdump -d -S -l, call tree walked to depth 6
+;
+; call tree (function: instructions, size bytes -> callees)
+;   TIM6_DAC_LPTIM1_IRQHandler: 12 insns, 28 B -> tenKhzRoutine
+;     tenKhzRoutine: 724 insns, 1516 B -> __divsi3, __udivsi3, playInputTune, delayMillis, maskPhaseInterrupts, getCompOutputLevel, zcfoundroutine, comStep
+;       __divsi3: 229 insns, 460 B -> __aeabi_idiv0
+;       __udivsi3: 132 insns, 266 B -> __aeabi_idiv0
+;       playInputTune: 55 insns, 136 B -> __udivsi3, comStep, delayMillis, allOff
+;       delayMillis: 19 insns, 40 B
+;       maskPhaseInterrupts: 14 insns, 32 B
+;       getCompOutputLevel: 7 insns, 16 B
+;       zcfoundroutine: 85 insns, 184 B -> commutate, enableCompInterrupts
+;       comStep: 359 insns, 732 B
+;         __aeabi_idiv0: 1 insns, 2 B
+;         allOff: 63 insns, 136 B
+;         commutate: 83 insns, 176 B -> changeCompInput, comStep
+;         enableCompInterrupts: 10 insns, 24 B
+;           changeCompInput: 138 insns, 296 B
+;
+
+; ===================== TIM6_DAC_LPTIM1_IRQHandler =====================
+<TIM6_DAC_LPTIM1_IRQHandler>:
+LL_TIM_IsActiveFlag_UPDATE():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_tim.h:4050
+  * @param  TIMx Timer instance
+  * @retval State of bit (1 or 0).
+  */
+__STATIC_INLINE uint32_t LL_TIM_IsActiveFlag_UPDATE(TIM_TypeDef *TIMx)
+{
+  return ((READ_BIT(TIMx->SR, TIM_SR_UIF) == (TIM_SR_UIF)) ? 1UL : 0UL);
+ 8004fb4:	ldr	r3, [pc, #20]	@ (8004fcc <TIM6_DAC_LPTIM1_IRQHandler+0x18>)
+TIM6_DAC_LPTIM1_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:333
+
+    /* USER CODE END TIM3_IRQn 1 */
+}
+
+void TIM6_DAC_LPTIM1_IRQHandler(void)
+{
+ 8004fb6:	push	{r4, lr}
+LL_TIM_IsActiveFlag_UPDATE():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_tim.h:4050
+ 8004fb8:	ldr	r2, [r3, #16]
+TIM6_DAC_LPTIM1_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:335
+    /* USER CODE BEGIN TIM6_DAC_LPTIM1_IRQn 0 */
+    if (LL_TIM_IsActiveFlag_UPDATE(TIM6) == 1) {
+ 8004fba:	lsls	r2, r2, #31
+ 8004fbc:	bmi.n	8004fc0 <TIM6_DAC_LPTIM1_IRQHandler+0xc>
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:344
+    /* USER CODE END TIM6_DAC_LPTIM1_IRQn 0 */
+
+    /* USER CODE BEGIN TIM6_DAC_LPTIM1_IRQn 1 */
+
+    /* USER CODE END TIM6_DAC_LPTIM1_IRQn 1 */
+}
+ 8004fbe:	pop	{r4, pc}
+LL_TIM_ClearFlag_UPDATE():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_tim.h:4039
+  WRITE_REG(TIMx->SR, ~(TIM_SR_UIF));
+ 8004fc0:	movs	r2, #2
+ 8004fc2:	negs	r2, r2
+ 8004fc4:	str	r2, [r3, #16]
+TIM6_DAC_LPTIM1_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:337
+        tenKhzRoutine();
+ 8004fc6:	bl	8001340 <tenKhzRoutine>
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:344
+}
+ 8004fca:	b.n	8004fbe <TIM6_DAC_LPTIM1_IRQHandler+0xa>
+ 8004fcc:	.word	0x40001000
+
+; ===================== tenKhzRoutine =====================
+<tenKhzRoutine>:
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1759
+}
+#endif
+
+void tenKhzRoutine()
+
+{ // 20khz as of 2.00 to be renamed
+ 8001340:	push	{r4, r5, r6, r7, lr}
+ 8001342:	mov	lr, sl
+ 8001344:	mov	r7, r9
+ 8001346:	mov	r6, r8
+E:\m\robot\esc\AM32/Src/main.c:1761
+#if defined(DRV8304H_BOARD) && defined(UART_DUTY_MODE)
+    if (uart_deadman_ticks <= 3 * LOOP_FREQUENCY_HZ) ++uart_deadman_ticks;
+ 8001348:	ldr	r4, [pc, #608]	@ (80015ac <tenKhzRoutine+0x26c>)
+ 800134a:	ldr	r3, [pc, #612]	@ (80015b0 <tenKhzRoutine+0x270>)
+ 800134c:	ldr	r2, [r4, #100]	@ 0x64
+E:\m\robot\esc\AM32/Src/main.c:1759
+{ // 20khz as of 2.00 to be renamed
+ 800134e:	push	{r6, r7, lr}
+E:\m\robot\esc\AM32/Src/main.c:1761
+    if (uart_deadman_ticks <= 3 * LOOP_FREQUENCY_HZ) ++uart_deadman_ticks;
+ 8001350:	cmp	r2, r3
+ 8001352:	bhi.n	800135a <tenKhzRoutine+0x1a>
+E:\m\robot\esc\AM32/Src/main.c:1761 (discriminator 1)
+ 8001354:	ldr	r3, [r4, #100]	@ 0x64
+ 8001356:	adds	r3, #1
+ 8001358:	str	r3, [r4, #100]	@ 0x64
+E:\m\robot\esc\AM32/Src/main.c:1762
+    if (uart_deadman_ticks > 3 * LOOP_FREQUENCY_HZ && uart_duty_input) bench_stop();
+ 800135a:	ldr	r2, [r4, #100]	@ 0x64
+ 800135c:	ldr	r3, [pc, #592]	@ (80015b0 <tenKhzRoutine+0x270>)
+ 800135e:	cmp	r2, r3
+ 8001360:	bls.n	800136c <tenKhzRoutine+0x2c>
+E:\m\robot\esc\AM32/Src/main.c:1762 (discriminator 1)
+ 8001362:	movs	r3, #104	@ 0x68
+ 8001364:	ldrh	r2, [r4, r3]
+ 8001366:	cmp	r2, #0
+ 8001368:	beq.n	800136c <tenKhzRoutine+0x2c>
+ 800136a:	b.n	8001554 <tenKhzRoutine+0x214>
+E:\m\robot\esc\AM32/Src/main.c:1764
+#endif
+    duty_cycle = duty_cycle_setpoint;
+ 800136c:	movs	r3, #116	@ 0x74
+ 800136e:	ldrh	r2, [r4, #62]	@ 0x3e
+E:\m\robot\esc\AM32/Src/main.c:1773
+#endif
+    ledcounter++;
+    ramp_count++;
+    one_khz_loop_counter++;
+    if (!armed) {
+        if (cell_count == 0) {
+ 8001370:	movs	r7, #126	@ 0x7e
+E:\m\robot\esc\AM32/Src/main.c:1764
+    duty_cycle = duty_cycle_setpoint;
+ 8001372:	strh	r2, [r4, r3]
+E:\m\robot\esc\AM32/Src/main.c:1765
+    tenkhzcounter++;
+ 8001374:	movs	r2, #118	@ 0x76
+ 8001376:	ldrh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:1773
+        if (cell_count == 0) {
+ 8001378:	ldrb	r1, [r4, r7]
+E:\m\robot\esc\AM32/Src/main.c:1765
+    tenkhzcounter++;
+ 800137a:	adds	r3, #1
+ 800137c:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:1769
+    ledcounter++;
+ 800137e:	adds	r2, #2
+ 8001380:	ldrh	r3, [r4, r2]
+ 8001382:	adds	r3, #1
+ 8001384:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:1770
+    ramp_count++;
+ 8001386:	adds	r2, #2
+ 8001388:	ldrh	r3, [r4, r2]
+ 800138a:	adds	r3, #1
+ 800138c:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:1771
+    one_khz_loop_counter++;
+ 800138e:	adds	r2, #2
+ 8001390:	ldrh	r3, [r4, r2]
+ 8001392:	adds	r3, #1
+ 8001394:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:1772
+    if (!armed) {
+ 8001396:	subs	r2, #15
+ 8001398:	ldrb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:1773
+        if (cell_count == 0) {
+ 800139a:	orrs	r3, r1
+ 800139c:	bne.n	80013a8 <tenKhzRoutine+0x68>
+E:\m\robot\esc\AM32/Src/main.c:1774
+            if (inputSet) {
+ 800139e:	movs	r1, #127	@ 0x7f
+ 80013a0:	ldrb	r0, [r4, r1]
+ 80013a2:	cmp	r0, #0
+ 80013a4:	beq.n	80013a8 <tenKhzRoutine+0x68>
+ 80013a6:	b.n	80016f0 <tenKhzRoutine+0x3b0>
+ 80013a8:	ldr	r5, [pc, #520]	@ (80015b4 <tenKhzRoutine+0x274>)
+ 80013aa:	ldr	r6, [pc, #524]	@ (80015b8 <tenKhzRoutine+0x278>)
+E:\m\robot\esc\AM32/Src/main.c:1817
+                }
+            }
+        }
+    }
+
+    if (eepromBuffer.telemetry_on_interval) {
+ 80013ac:	ldrb	r1, [r6, #31]
+ 80013ae:	cmp	r1, #0
+ 80013b0:	beq.n	80013d0 <tenKhzRoutine+0x90>
+E:\m\robot\esc\AM32/Src/main.c:1819
+        telem_ms_count++;
+        if (telem_ms_count > ((telemetry_interval_ms - 1 + eepromBuffer.telemetry_on_interval) * 20)) {
+ 80013b2:	movs	r2, #104	@ 0x68
+ 80013b4:	ldr	r0, [pc, #516]	@ (80015bc <tenKhzRoutine+0x27c>)
+E:\m\robot\esc\AM32/Src/main.c:1818
+        telem_ms_count++;
+ 80013b6:	ldrh	r3, [r5, #6]
+E:\m\robot\esc\AM32/Src/main.c:1819
+        if (telem_ms_count > ((telemetry_interval_ms - 1 + eepromBuffer.telemetry_on_interval) * 20)) {
+ 80013b8:	ldrb	r2, [r0, r2]
+E:\m\robot\esc\AM32/Src/main.c:1818
+        telem_ms_count++;
+ 80013ba:	adds	r3, #1
+E:\m\robot\esc\AM32/Src/main.c:1819
+        if (telem_ms_count > ((telemetry_interval_ms - 1 + eepromBuffer.telemetry_on_interval) * 20)) {
+ 80013bc:	subs	r2, #1
+ 80013be:	adds	r2, r2, r1
+ 80013c0:	lsls	r1, r2, #2
+E:\m\robot\esc\AM32/Src/main.c:1818
+        telem_ms_count++;
+ 80013c2:	uxth	r3, r3
+E:\m\robot\esc\AM32/Src/main.c:1819
+        if (telem_ms_count > ((telemetry_interval_ms - 1 + eepromBuffer.telemetry_on_interval) * 20)) {
+ 80013c4:	adds	r2, r1, r2
+E:\m\robot\esc\AM32/Src/main.c:1818
+        telem_ms_count++;
+ 80013c6:	strh	r3, [r5, #6]
+E:\m\robot\esc\AM32/Src/main.c:1819
+        if (telem_ms_count > ((telemetry_interval_ms - 1 + eepromBuffer.telemetry_on_interval) * 20)) {
+ 80013c8:	lsls	r2, r2, #2
+ 80013ca:	cmp	r3, r2
+ 80013cc:	ble.n	80013d0 <tenKhzRoutine+0x90>
+ 80013ce:	b.n	8001528 <tenKhzRoutine+0x1e8>
+E:\m\robot\esc\AM32/Src/main.c:1830
+        }
+    }
+
+#ifndef BRUSHED_MODE
+
+    if (!stepper_sine) {
+ 80013d0:	movs	r3, #82	@ 0x52
+ 80013d2:	ldrb	r3, [r4, r3]
+ 80013d4:	mov	r8, r3
+ 80013d6:	cmp	r3, #0
+ 80013d8:	bne.n	8001496 <tenKhzRoutine+0x156>
+E:\m\robot\esc\AM32/Src/main.c:1832
+#ifndef CUSTOM_RAMP
+        if (old_routine && running) {
+ 80013da:	ldr	r7, [pc, #480]	@ (80015bc <tenKhzRoutine+0x27c>)
+ 80013dc:	adds	r3, #84	@ 0x54
+ 80013de:	ldrb	r3, [r7, r3]
+ 80013e0:	cmp	r3, #0
+ 80013e2:	beq.n	80013ee <tenKhzRoutine+0xae>
+E:\m\robot\esc\AM32/Src/main.c:1832 (discriminator 1)
+ 80013e4:	movs	r3, #58	@ 0x3a
+ 80013e6:	ldrb	r3, [r4, r3]
+ 80013e8:	cmp	r3, #0
+ 80013ea:	beq.n	80013ee <tenKhzRoutine+0xae>
+ 80013ec:	b.n	800177e <tenKhzRoutine+0x43e>
+E:\m\robot\esc\AM32/Src/main.c:1851
+                    }
+                }
+            }
+        }
+#endif
+        if (one_khz_loop_counter > PID_LOOP_DIVIDER) { // 1khz PID loop
+ 80013ee:	movs	r3, #124	@ 0x7c
+ 80013f0:	ldrh	r2, [r4, r3]
+ 80013f2:	cmp	r2, #20
+ 80013f4:	bhi.n	80014a4 <tenKhzRoutine+0x164>
+ 80013f6:	ldr	r3, [pc, #456]	@ (80015c0 <tenKhzRoutine+0x280>)
+ 80013f8:	mov	r8, r3
+ 80013fa:	ldr	r3, [pc, #456]	@ (80015c4 <tenKhzRoutine+0x284>)
+ 80013fc:	mov	r9, r3
+E:\m\robot\esc\AM32/Src/main.c:1889
+                if (zero_crosses < 100) {
+                    speedPid.integral = 0;
+                }
+            }
+        }
+        if (ramp_count > ramp_divider) {
+ 80013fe:	movs	r3, #40	@ 0x28
+ 8001400:	mov	r2, r8
+ 8001402:	ldrb	r2, [r2, r3]
+ 8001404:	adds	r3, #82	@ 0x52
+ 8001406:	ldrh	r1, [r4, r3]
+ 8001408:	cmp	r1, r2
+ 800140a:	bhi.n	800140e <tenKhzRoutine+0xce>
+ 800140c:	b.n	80014f0 <tenKhzRoutine+0x1b0>
+E:\m\robot\esc\AM32/Src/main.c:1890
+          ramp_count = 0;
+ 800140e:	movs	r2, #0
+ 8001410:	strh	r2, [r4, r3]
+E:\m\robot\esc\AM32/Src/main.c:1899
+                max_duty_cycle_change = voltage_based_max_change;
+            } else {
+                max_duty_cycle_change = voltage_based_max_change * 3;
+            }
+#else
+            if (zero_crosses < 150 || last_duty_cycle < 150) {
+ 8001412:	ldr	r3, [r4, #68]	@ 0x44
+ 8001414:	ldrh	r2, [r4, #60]	@ 0x3c
+ 8001416:	cmp	r3, #149	@ 0x95
+ 8001418:	bls.n	800141c <tenKhzRoutine+0xdc>
+ 800141a:	b.n	800158a <tenKhzRoutine+0x24a>
+E:\m\robot\esc\AM32/Src/main.c:1900
+                max_duty_cycle_change = max_ramp_startup;
+ 800141c:	movs	r1, #64	@ 0x40
+ 800141e:	mov	r0, r9
+ 8001420:	ldrb	r3, [r7, r1]
+ 8001422:	uxtb	r3, r3
+ 8001424:	strb	r3, [r0, r1]
+E:\m\robot\esc\AM32/Src/main.c:1913
+
+#endif
+#ifdef CUSTOM_RAMP
+   //         max_duty_cycle_change = eepromBuffer[30];
+#endif
+            if ((duty_cycle - last_duty_cycle) > max_duty_cycle_change) {
+ 8001426:	movs	r0, #116	@ 0x74
+ 8001428:	ldrh	r1, [r4, r0]
+ 800142a:	subs	r1, r1, r2
+ 800142c:	cmp	r1, r3
+ 800142e:	ble.n	8001436 <tenKhzRoutine+0xf6>
+E:\m\robot\esc\AM32/Src/main.c:1914
+                duty_cycle = last_duty_cycle + max_duty_cycle_change;
+ 8001430:	adds	r1, r2, r3
+ 8001432:	uxth	r1, r1
+ 8001434:	strh	r1, [r4, r0]
+E:\m\robot\esc\AM32/Src/main.c:1917
+
+            }
+            if ((last_duty_cycle - duty_cycle) > max_duty_cycle_change) {
+ 8001436:	movs	r0, #116	@ 0x74
+ 8001438:	ldrh	r1, [r4, r0]
+ 800143a:	subs	r1, r2, r1
+ 800143c:	cmp	r3, r1
+ 800143e:	bge.n	80014f6 <tenKhzRoutine+0x1b6>
+E:\m\robot\esc\AM32/Src/main.c:1918
+                duty_cycle = last_duty_cycle - max_duty_cycle_change;
+ 8001440:	subs	r3, r2, r3
+ 8001442:	uxth	r3, r3
+ 8001444:	strh	r3, [r4, r0]
+E:\m\robot\esc\AM32/Src/main.c:1924
+            }
+            }else{
+             duty_cycle = last_duty_cycle;
+            }
+
+        if ((armed && running) && input > 47) {
+ 8001446:	movs	r3, #109	@ 0x6d
+ 8001448:	ldrb	r3, [r4, r3]
+ 800144a:	cmp	r3, #0
+ 800144c:	bne.n	80014fe <tenKhzRoutine+0x1be>
+E:\m\robot\esc\AM32/Src/main.c:1931
+            }
+            adjusted_duty_cycle = ((duty_cycle * tim1_arr) / 2000) + 1;
+
+        } else {
+
+            if (prop_brake_active) {
+ 800144e:	movs	r3, #35	@ 0x23
+ 8001450:	ldrb	r3, [r4, r3]
+ 8001452:	cmp	r3, #0
+ 8001454:	bne.n	8001458 <tenKhzRoutine+0x118>
+ 8001456:	b.n	8001532 <tenKhzRoutine+0x1f2>
+E:\m\robot\esc\AM32/Src/main.c:1932
+              adjusted_duty_cycle =  tim1_arr - ((prop_brake_duty_cycle * tim1_arr) / 2000);
+ 8001458:	movs	r3, #66	@ 0x42
+ 800145a:	mov	r2, r9
+ 800145c:	ldrh	r7, [r2, r3]
+ 800145e:	adds	r3, #8
+ 8001460:	ldrh	r0, [r4, r3]
+ 8001462:	ldr	r1, [pc, #356]	@ (80015c8 <tenKhzRoutine+0x288>)
+ 8001464:	muls	r0, r7
+ 8001466:	bl	80001d4 <__divsi3>
+ 800146a:	adds	r0, r7, r0
+ 800146c:	uxth	r6, r0
+ 800146e:	strh	r6, [r5, #20]
+E:\m\robot\esc\AM32/Src/main.c:1942
+            }else{
+                adjusted_duty_cycle = ((duty_cycle * tim1_arr) / 2000);
+            }
+            }
+        }
+        last_duty_cycle = duty_cycle;
+ 8001470:	movs	r3, #116	@ 0x74
+ 8001472:	ldrh	r3, [r4, r3]
+bench_pwm_cap():
+E:\m\robot\esc\AM32/Mcu/g071/Inc/peripherals.h:28
+#define SET_INTERVAL_TIMER_COUNT(intertime) (INTERVAL_TIMER->CNT = intertime)
+#define SET_PRESCALER_PWM(presc) (TIM1->PSC = presc)
+#define SET_AUTO_RELOAD_PWM(relval) (TIM1->ARR = relval)
+#ifdef DRV8304H_G071
+static inline uint16_t bench_pwm_cap(uint16_t duty) {
+    uint32_t cap = ((TIM1->ARR + 1u) * 3u) / 10u; // Operator's hard 30% ceiling.
+ 8001474:	movs	r1, #10
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1942
+ 8001476:	strh	r3, [r4, #60]	@ 0x3c
+E:\m\robot\esc\AM32/Src/main.c:1943
+        SET_AUTO_RELOAD_PWM(tim1_arr);
+ 8001478:	ldr	r3, [pc, #336]	@ (80015cc <tenKhzRoutine+0x28c>)
+ 800147a:	str	r7, [r3, #44]	@ 0x2c
+bench_pwm_cap():
+E:\m\robot\esc\AM32/Mcu/g071/Inc/peripherals.h:28
+ 800147c:	ldr	r0, [r3, #44]	@ 0x2c
+ 800147e:	adds	r0, #1
+ 8001480:	lsls	r3, r0, #1
+ 8001482:	adds	r0, r3, r0
+ 8001484:	bl	80000c0 <__udivsi3>
+ 8001488:	cmp	r0, r6
+ 800148a:	bls.n	800148e <tenKhzRoutine+0x14e>
+ 800148c:	movs	r0, r6
+bench_pwm_all():
+E:\m\robot\esc\AM32/Mcu/g071/Inc/peripherals.h:33
+    return duty > cap ? (uint16_t)cap : duty;
+}
+static inline void bench_pwm_all(uint16_t duty) {
+    uint16_t capped = bench_pwm_cap(duty);
+    TIM1->CCR1 = capped; TIM1->CCR2 = capped; TIM1->CCR3 = capped;
+ 800148e:	ldr	r3, [pc, #316]	@ (80015cc <tenKhzRoutine+0x28c>)
+ 8001490:	str	r0, [r3, #52]	@ 0x34
+ 8001492:	str	r0, [r3, #56]	@ 0x38
+ 8001494:	str	r0, [r3, #60]	@ 0x3c
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1948
+        SET_DUTY_CYCLE_ALL(adjusted_duty_cycle);
+    }
+#endif // ndef brushed_mode
+#if defined(UART_DUTY_MODE)
+    signaltimeout = 0; // deadman in uart_duty_get() replaces this
+ 8001496:	movs	r3, #0
+ 8001498:	strh	r3, [r5, #22]
+E:\m\robot\esc\AM32/Src/main.c:1962
+    }
+#else
+    signaltimeout++;
+
+#endif
+}
+ 800149a:	pop	{r5, r6, r7}
+ 800149c:	mov	sl, r7
+ 800149e:	mov	r9, r6
+ 80014a0:	mov	r8, r5
+ 80014a2:	pop	{r4, r5, r6, r7, pc}
+E:\m\robot\esc\AM32/Src/main.c:1852
+            PROCESS_ADC_FLAG = 1; // set flag to do new adc read at lower priority
+ 80014a4:	movs	r2, #1
+ 80014a6:	strb	r2, [r5, #9]
+E:\m\robot\esc\AM32/Src/main.c:1853
+            one_khz_loop_counter = 0;
+ 80014a8:	movs	r2, #0
+ 80014aa:	strh	r2, [r4, r3]
+E:\m\robot\esc\AM32/Src/main.c:1854
+            if (use_current_limit && running) {
+ 80014ac:	ldr	r3, [pc, #272]	@ (80015c0 <tenKhzRoutine+0x280>)
+ 80014ae:	mov	r8, r3
+ 80014b0:	movs	r3, #37	@ 0x25
+ 80014b2:	mov	r2, r8
+ 80014b4:	ldrb	r3, [r2, r3]
+ 80014b6:	cmp	r3, #0
+ 80014b8:	bne.n	80014bc <tenKhzRoutine+0x17c>
+ 80014ba:	b.n	80015d4 <tenKhzRoutine+0x294>
+E:\m\robot\esc\AM32/Src/main.c:1854 (discriminator 1)
+ 80014bc:	movs	r3, #58	@ 0x3a
+ 80014be:	ldrb	r3, [r4, r3]
+ 80014c0:	cmp	r3, #0
+ 80014c2:	beq.n	80014c6 <tenKhzRoutine+0x186>
+ 80014c4:	b.n	8001830 <tenKhzRoutine+0x4f0>
+E:\m\robot\esc\AM32/Src/main.c:1865
+            if (eepromBuffer.stall_protection && running) { // this boosts throttle as the rpm gets lower, for crawlers
+ 80014c6:	ldrb	r3, [r6, #29]
+ 80014c8:	cmp	r3, #0
+ 80014ca:	bne.n	80014dc <tenKhzRoutine+0x19c>
+E:\m\robot\esc\AM32/Src/main.c:1876
+            if (use_speed_control_loop && running) {
+ 80014cc:	ldrb	r3, [r5, #12]
+ 80014ce:	cmp	r3, #0
+ 80014d0:	beq.n	80014dc <tenKhzRoutine+0x19c>
+E:\m\robot\esc\AM32/Src/main.c:1876 (discriminator 1)
+ 80014d2:	movs	r3, #58	@ 0x3a
+ 80014d4:	ldrb	r3, [r4, r3]
+ 80014d6:	cmp	r3, #0
+ 80014d8:	beq.n	80014dc <tenKhzRoutine+0x19c>
+ 80014da:	b.n	8001666 <tenKhzRoutine+0x326>
+ 80014dc:	ldr	r3, [pc, #228]	@ (80015c4 <tenKhzRoutine+0x284>)
+E:\m\robot\esc\AM32/Src/main.c:1889
+        if (ramp_count > ramp_divider) {
+ 80014de:	mov	r2, r8
+ 80014e0:	mov	r9, r3
+ 80014e2:	movs	r3, #40	@ 0x28
+ 80014e4:	ldrb	r2, [r2, r3]
+ 80014e6:	adds	r3, #82	@ 0x52
+ 80014e8:	ldrh	r1, [r4, r3]
+ 80014ea:	cmp	r1, r2
+ 80014ec:	bls.n	80014f0 <tenKhzRoutine+0x1b0>
+ 80014ee:	b.n	800140e <tenKhzRoutine+0xce>
+E:\m\robot\esc\AM32/Src/main.c:1921
+             duty_cycle = last_duty_cycle;
+ 80014f0:	movs	r3, #116	@ 0x74
+ 80014f2:	ldrh	r2, [r4, #60]	@ 0x3c
+ 80014f4:	strh	r2, [r4, r3]
+E:\m\robot\esc\AM32/Src/main.c:1924
+        if ((armed && running) && input > 47) {
+ 80014f6:	movs	r3, #109	@ 0x6d
+ 80014f8:	ldrb	r3, [r4, r3]
+ 80014fa:	cmp	r3, #0
+ 80014fc:	beq.n	800144e <tenKhzRoutine+0x10e>
+E:\m\robot\esc\AM32/Src/main.c:1924 (discriminator 1)
+ 80014fe:	movs	r3, #58	@ 0x3a
+ 8001500:	ldrb	r3, [r4, r3]
+ 8001502:	cmp	r3, #0
+ 8001504:	beq.n	800144e <tenKhzRoutine+0x10e>
+E:\m\robot\esc\AM32/Src/main.c:1924 (discriminator 2)
+ 8001506:	ldrh	r3, [r4, #56]	@ 0x38
+ 8001508:	cmp	r3, #47	@ 0x2f
+ 800150a:	bls.n	800144e <tenKhzRoutine+0x10e>
+E:\m\robot\esc\AM32/Src/main.c:1927
+            adjusted_duty_cycle = ((duty_cycle * tim1_arr) / 2000) + 1;
+ 800150c:	movs	r3, #116	@ 0x74
+ 800150e:	mov	r2, r9
+ 8001510:	movs	r1, #250	@ 0xfa
+ 8001512:	ldrh	r0, [r4, r3]
+ 8001514:	subs	r3, #50	@ 0x32
+ 8001516:	ldrh	r7, [r2, r3]
+ 8001518:	lsls	r1, r1, #3
+ 800151a:	muls	r0, r7
+ 800151c:	bl	80001d4 <__divsi3>
+ 8001520:	adds	r0, #1
+ 8001522:	uxth	r6, r0
+ 8001524:	strh	r6, [r5, #20]
+ 8001526:	b.n	8001470 <tenKhzRoutine+0x130>
+E:\m\robot\esc\AM32/Src/main.c:1823
+            send_telemetry = 1;
+ 8001528:	movs	r3, #1
+ 800152a:	strb	r3, [r5, #8]
+E:\m\robot\esc\AM32/Src/main.c:1824
+            telem_ms_count = 0;
+ 800152c:	movs	r3, #0
+ 800152e:	strh	r3, [r5, #6]
+ 8001530:	b.n	80013d0 <tenKhzRoutine+0x90>
+E:\m\robot\esc\AM32/Src/main.c:1934
+              if((eepromBuffer.brake_on_stop == 2) && armed){  // require arming for active brake
+ 8001532:	ldrb	r3, [r6, #28]
+ 8001534:	cmp	r3, #2
+ 8001536:	bne.n	800153a <tenKhzRoutine+0x1fa>
+ 8001538:	b.n	80017d6 <tenKhzRoutine+0x496>
+E:\m\robot\esc\AM32/Src/main.c:1938
+                adjusted_duty_cycle = ((duty_cycle * tim1_arr) / 2000);
+ 800153a:	movs	r3, #116	@ 0x74
+ 800153c:	mov	r2, r9
+ 800153e:	movs	r1, #250	@ 0xfa
+ 8001540:	ldrh	r0, [r4, r3]
+ 8001542:	subs	r3, #50	@ 0x32
+ 8001544:	ldrh	r7, [r2, r3]
+ 8001546:	lsls	r1, r1, #3
+ 8001548:	muls	r0, r7
+ 800154a:	bl	80001d4 <__divsi3>
+ 800154e:	uxth	r6, r0
+ 8001550:	strh	r6, [r5, #20]
+ 8001552:	b.n	8001470 <tenKhzRoutine+0x130>
+bench_stop():
+E:\m\robot\esc\AM32/Src/main.c:1403
+    bench_stop_values[0] = average_interval;
+ 8001554:	ldr	r0, [pc, #104]	@ (80015c0 <tenKhzRoutine+0x280>)
+E:\m\robot\esc\AM32/Src/main.c:1402
+    GPIOD->BRR = (1u << 1); // Hardware inhibit precedes all other stop work.
+ 8001556:	movs	r1, #2
+E:\m\robot\esc\AM32/Src/main.c:1403
+    bench_stop_values[0] = average_interval;
+ 8001558:	mov	r8, r0
+E:\m\robot\esc\AM32/Src/main.c:1405
+    bench_stop_values[2] = TIM1->ARR;
+ 800155a:	mov	r5, r8
+E:\m\robot\esc\AM32/Src/main.c:1402
+    GPIOD->BRR = (1u << 1); // Hardware inhibit precedes all other stop work.
+ 800155c:	ldr	r2, [pc, #112]	@ (80015d0 <tenKhzRoutine+0x290>)
+ 800155e:	str	r1, [r2, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/main.c:1403
+    bench_stop_values[0] = average_interval;
+ 8001560:	ldr	r1, [r4, #36]	@ 0x24
+ 8001562:	str	r1, [r0, #4]
+E:\m\robot\esc\AM32/Src/main.c:1404
+    bench_stop_values[1] = zero_crosses;
+ 8001564:	ldr	r1, [r4, #68]	@ 0x44
+ 8001566:	str	r1, [r0, #8]
+E:\m\robot\esc\AM32/Src/main.c:1405
+    bench_stop_values[2] = TIM1->ARR;
+ 8001568:	ldr	r1, [pc, #96]	@ (80015cc <tenKhzRoutine+0x28c>)
+ 800156a:	ldr	r0, [r1, #44]	@ 0x2c
+ 800156c:	str	r0, [r5, #12]
+E:\m\robot\esc\AM32/Src/main.c:1406
+    bench_stop_values[3] = TIM1->CCR1;
+ 800156e:	ldr	r1, [r1, #52]	@ 0x34
+ 8001570:	str	r1, [r5, #16]
+E:\m\robot\esc\AM32/Src/main.c:1407
+    bench_stop_values[4] = running;
+ 8001572:	movs	r1, #58	@ 0x3a
+ 8001574:	ldrb	r1, [r4, r1]
+ 8001576:	str	r1, [r5, #20]
+E:\m\robot\esc\AM32/Src/main.c:1408
+    bench_stop_values[5] = GPIOD->ODR;
+ 8001578:	ldr	r2, [r2, #20]
+ 800157a:	str	r2, [r5, #24]
+E:\m\robot\esc\AM32/Src/main.c:1409
+    uart_duty_input = 0; adjusted_input = 0;
+ 800157c:	movs	r2, #0
+ 800157e:	strh	r2, [r4, r3]
+ 8001580:	adds	r3, #2
+ 8001582:	strh	r2, [r4, r3]
+E:\m\robot\esc\AM32/Src/main.c:1410
+    bench_report_pending = 1;
+ 8001584:	subs	r3, #105	@ 0x69
+ 8001586:	strb	r3, [r5, #0]
+E:\m\robot\esc\AM32/Src/main.c:1411
+}
+ 8001588:	b.n	800136c <tenKhzRoutine+0x2c>
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1899 (discriminator 1)
+            if (zero_crosses < 150 || last_duty_cycle < 150) {
+ 800158a:	cmp	r2, #149	@ 0x95
+ 800158c:	bhi.n	8001590 <tenKhzRoutine+0x250>
+ 800158e:	b.n	800141c <tenKhzRoutine+0xdc>
+E:\m\robot\esc\AM32/Src/main.c:1902
+                if (average_interval > 500) {
+ 8001590:	movs	r3, #250	@ 0xfa
+ 8001592:	ldr	r1, [r4, #36]	@ 0x24
+ 8001594:	lsls	r3, r3, #1
+ 8001596:	cmp	r1, r3
+ 8001598:	bls.n	800159c <tenKhzRoutine+0x25c>
+ 800159a:	b.n	800182a <tenKhzRoutine+0x4ea>
+E:\m\robot\esc\AM32/Src/main.c:1905
+                    max_duty_cycle_change = max_ramp_high_rpm;
+ 800159c:	movs	r3, #66	@ 0x42
+ 800159e:	movs	r1, #64	@ 0x40
+ 80015a0:	mov	r0, r9
+ 80015a2:	ldrb	r3, [r7, r3]
+ 80015a4:	uxtb	r3, r3
+ 80015a6:	strb	r3, [r0, r1]
+ 80015a8:	b.n	8001426 <tenKhzRoutine+0xe6>
+ 80015aa:	nop			@ (mov r8, r8)
+ 80015ac:	.word	0x20000460
+ 80015b0:	.word	0x0000ea60
+ 80015b4:	.word	0x200004e0
+ 80015b8:	.word	0x20000630
+ 80015bc:	.word	0x20000000
+ 80015c0:	.word	0x200003e0
+ 80015c4:	.word	0x20000080
+ 80015c8:	.word	0xfffff830
+ 80015cc:	.word	0x40012c00
+ 80015d0:	.word	0x50000c00
+E:\m\robot\esc\AM32/Src/main.c:1865
+            if (eepromBuffer.stall_protection && running) { // this boosts throttle as the rpm gets lower, for crawlers
+ 80015d4:	ldrb	r3, [r6, #29]
+ 80015d6:	cmp	r3, #0
+ 80015d8:	bne.n	80015dc <tenKhzRoutine+0x29c>
+ 80015da:	b.n	80014cc <tenKhzRoutine+0x18c>
+E:\m\robot\esc\AM32/Src/main.c:1865 (discriminator 1)
+ 80015dc:	movs	r3, #58	@ 0x3a
+ 80015de:	ldrb	r3, [r4, r3]
+ 80015e0:	cmp	r3, #0
+ 80015e2:	bne.n	80015e6 <tenKhzRoutine+0x2a6>
+ 80015e4:	b.n	80014dc <tenKhzRoutine+0x19c>
+E:\m\robot\esc\AM32/Src/main.c:1867
+                stall_protection_adjust += (doPidCalculations(&stallPid, commutation_interval,
+ 80015e6:	movs	r3, #108	@ 0x6c
+ 80015e8:	ldr	r0, [r7, #88]	@ 0x58
+ 80015ea:	ldrh	r3, [r7, r3]
+doPidCalculations():
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 80015ec:	ldr	r2, [r7, #120]	@ 0x78
+E:\m\robot\esc\AM32/Src/main.c:597
+    pidnow->error = actual - target;
+ 80015ee:	subs	r0, r0, r3
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 80015f0:	movs	r3, #128	@ 0x80
+ 80015f2:	ldr	r1, [r7, r3]
+ 80015f4:	muls	r2, r0
+ 80015f6:	mov	ip, r1
+E:\m\robot\esc\AM32/Src/main.c:599
+    if (pidnow->integral > pidnow->integral_limit) {
+ 80015f8:	movs	r1, #144	@ 0x90
+ 80015fa:	ldr	r1, [r7, r1]
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 80015fc:	add	r2, ip
+E:\m\robot\esc\AM32/Src/main.c:597
+    pidnow->error = actual - target;
+ 80015fe:	str	r0, [r7, #112]	@ 0x70
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 8001600:	str	r2, [r7, r3]
+E:\m\robot\esc\AM32/Src/main.c:599
+    if (pidnow->integral > pidnow->integral_limit) {
+ 8001602:	cmp	r2, r1
+ 8001604:	ble.n	800160a <tenKhzRoutine+0x2ca>
+E:\m\robot\esc\AM32/Src/main.c:600
+        pidnow->integral = pidnow->integral_limit;
+ 8001606:	movs	r2, r1
+ 8001608:	str	r1, [r7, r3]
+E:\m\robot\esc\AM32/Src/main.c:602
+    if (pidnow->integral < -pidnow->integral_limit) {
+ 800160a:	negs	r1, r1
+ 800160c:	cmp	r1, r2
+ 800160e:	ble.n	8001616 <tenKhzRoutine+0x2d6>
+E:\m\robot\esc\AM32/Src/main.c:603
+        pidnow->integral = -pidnow->integral_limit;
+ 8001610:	movs	r3, #128	@ 0x80
+ 8001612:	movs	r2, r1
+ 8001614:	str	r1, [r7, r3]
+E:\m\robot\esc\AM32/Src/main.c:606
+    pidnow->derivative = pidnow->Kd * (pidnow->error - pidnow->last_error);
+ 8001616:	movs	r3, #136	@ 0x88
+ 8001618:	mov	ip, r3
+ 800161a:	ldr	r3, [r7, r3]
+ 800161c:	subs	r1, r0, r3
+ 800161e:	ldr	r3, [r7, #124]	@ 0x7c
+ 8001620:	muls	r1, r3
+ 8001622:	movs	r3, #132	@ 0x84
+ 8001624:	str	r1, [r7, r3]
+E:\m\robot\esc\AM32/Src/main.c:607
+    pidnow->last_error = pidnow->error;
+ 8001626:	mov	r3, ip
+ 8001628:	str	r0, [r7, r3]
+E:\m\robot\esc\AM32/Src/main.c:609
+    pidnow->pid_output = pidnow->error * pidnow->Kp + pidnow->integral + pidnow->derivative;
+ 800162a:	ldr	r3, [r7, #116]	@ 0x74
+ 800162c:	muls	r3, r0
+ 800162e:	adds	r3, r3, r1
+ 8001630:	adds	r3, r3, r2
+E:\m\robot\esc\AM32/Src/main.c:611
+    if (pidnow->pid_output > pidnow->output_limit) {
+ 8001632:	movs	r2, #148	@ 0x94
+E:\m\robot\esc\AM32/Src/main.c:609
+    pidnow->pid_output = pidnow->error * pidnow->Kp + pidnow->integral + pidnow->derivative;
+ 8001634:	movs	r1, #140	@ 0x8c
+E:\m\robot\esc\AM32/Src/main.c:611
+    if (pidnow->pid_output > pidnow->output_limit) {
+ 8001636:	ldr	r2, [r7, r2]
+E:\m\robot\esc\AM32/Src/main.c:609
+    pidnow->pid_output = pidnow->error * pidnow->Kp + pidnow->integral + pidnow->derivative;
+ 8001638:	str	r3, [r7, r1]
+E:\m\robot\esc\AM32/Src/main.c:611
+    if (pidnow->pid_output > pidnow->output_limit) {
+ 800163a:	cmp	r3, r2
+ 800163c:	ble.n	8001642 <tenKhzRoutine+0x302>
+E:\m\robot\esc\AM32/Src/main.c:612
+        pidnow->pid_output = pidnow->output_limit;
+ 800163e:	movs	r3, r2
+ 8001640:	str	r2, [r7, r1]
+E:\m\robot\esc\AM32/Src/main.c:614
+    if (pidnow->pid_output < -pidnow->output_limit) {
+ 8001642:	negs	r2, r2
+ 8001644:	cmp	r2, r3
+ 8001646:	ble.n	800164e <tenKhzRoutine+0x30e>
+E:\m\robot\esc\AM32/Src/main.c:615
+        pidnow->pid_output = -pidnow->output_limit;
+ 8001648:	movs	r3, #140	@ 0x8c
+ 800164a:	str	r2, [r7, r3]
+ 800164c:	movs	r3, r2
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1867
+                stall_protection_adjust += (doPidCalculations(&stallPid, commutation_interval,
+ 800164e:	ldr	r2, [r4, #84]	@ 0x54
+ 8001650:	mov	ip, r2
+E:\m\robot\esc\AM32/Src/main.c:1869
+                if (stall_protection_adjust > 150 * 10000) {
+ 8001652:	ldr	r2, [pc, #688]	@ (8001904 <tenKhzRoutine+0x5c4>)
+E:\m\robot\esc\AM32/Src/main.c:1867
+                stall_protection_adjust += (doPidCalculations(&stallPid, commutation_interval,
+ 8001654:	add	r3, ip
+E:\m\robot\esc\AM32/Src/main.c:1869
+                if (stall_protection_adjust > 150 * 10000) {
+ 8001656:	cmp	r3, r2
+ 8001658:	bgt.n	800165c <tenKhzRoutine+0x31c>
+ 800165a:	b.n	80018de <tenKhzRoutine+0x59e>
+E:\m\robot\esc\AM32/Src/main.c:1870
+                    stall_protection_adjust = 150 * 10000;
+ 800165c:	str	r2, [r4, #84]	@ 0x54
+E:\m\robot\esc\AM32/Src/main.c:1876
+            if (use_speed_control_loop && running) {
+ 800165e:	ldrb	r3, [r5, #12]
+ 8001660:	cmp	r3, #0
+ 8001662:	bne.n	8001666 <tenKhzRoutine+0x326>
+ 8001664:	b.n	80014dc <tenKhzRoutine+0x19c>
+doPidCalculations():
+E:\m\robot\esc\AM32/Src/main.c:597
+    pidnow->error = actual - target;
+ 8001666:	ldr	r2, [r4, #112]	@ 0x70
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1877
+                input_override += doPidCalculations(&speedPid, e_com_time, target_e_com_time);
+ 8001668:	ldrh	r3, [r5, #14]
+doPidCalculations():
+E:\m\robot\esc\AM32/Src/main.c:597
+    pidnow->error = actual - target;
+ 800166a:	subs	r3, r2, r3
+ 800166c:	ldr	r2, [pc, #664]	@ (8001908 <tenKhzRoutine+0x5c8>)
+ 800166e:	mov	r9, r2
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 8001670:	mov	r1, r9
+ 8001672:	ldr	r1, [r1, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/main.c:597
+    pidnow->error = actual - target;
+ 8001674:	str	r3, [r2, #24]
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 8001676:	mov	ip, r1
+ 8001678:	mov	r1, r9
+ 800167a:	ldr	r2, [r2, #32]
+ 800167c:	muls	r2, r3
+ 800167e:	add	r2, ip
+ 8001680:	str	r2, [r1, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/main.c:599
+    if (pidnow->integral > pidnow->integral_limit) {
+ 8001682:	ldr	r1, [r1, #56]	@ 0x38
+ 8001684:	cmp	r2, r1
+ 8001686:	ble.n	800168e <tenKhzRoutine+0x34e>
+E:\m\robot\esc\AM32/Src/main.c:600
+        pidnow->integral = pidnow->integral_limit;
+ 8001688:	mov	r2, r9
+ 800168a:	str	r1, [r2, #40]	@ 0x28
+ 800168c:	movs	r2, r1
+E:\m\robot\esc\AM32/Src/main.c:602
+    if (pidnow->integral < -pidnow->integral_limit) {
+ 800168e:	negs	r1, r1
+ 8001690:	cmp	r1, r2
+ 8001692:	ble.n	800169a <tenKhzRoutine+0x35a>
+E:\m\robot\esc\AM32/Src/main.c:603
+        pidnow->integral = -pidnow->integral_limit;
+ 8001694:	mov	r2, r9
+ 8001696:	str	r1, [r2, #40]	@ 0x28
+ 8001698:	movs	r2, r1
+E:\m\robot\esc\AM32/Src/main.c:606
+    pidnow->derivative = pidnow->Kd * (pidnow->error - pidnow->last_error);
+ 800169a:	mov	r1, r9
+ 800169c:	mov	r0, r9
+ 800169e:	ldr	r1, [r1, #48]	@ 0x30
+ 80016a0:	ldr	r0, [r0, #36]	@ 0x24
+ 80016a2:	subs	r1, r3, r1
+ 80016a4:	muls	r1, r0
+ 80016a6:	mov	r0, r9
+E:\m\robot\esc\AM32/Src/main.c:607
+    pidnow->last_error = pidnow->error;
+ 80016a8:	str	r3, [r0, #48]	@ 0x30
+E:\m\robot\esc\AM32/Src/main.c:606
+    pidnow->derivative = pidnow->Kd * (pidnow->error - pidnow->last_error);
+ 80016aa:	str	r1, [r0, #44]	@ 0x2c
+E:\m\robot\esc\AM32/Src/main.c:609
+    pidnow->pid_output = pidnow->error * pidnow->Kp + pidnow->integral + pidnow->derivative;
+ 80016ac:	ldr	r0, [r0, #28]
+ 80016ae:	muls	r3, r0
+ 80016b0:	adds	r3, r3, r1
+ 80016b2:	adds	r3, r3, r2
+ 80016b4:	mov	r2, r9
+ 80016b6:	str	r3, [r2, #52]	@ 0x34
+E:\m\robot\esc\AM32/Src/main.c:611
+    if (pidnow->pid_output > pidnow->output_limit) {
+ 80016b8:	ldr	r2, [r2, #60]	@ 0x3c
+ 80016ba:	cmp	r3, r2
+ 80016bc:	ble.n	80016c4 <tenKhzRoutine+0x384>
+E:\m\robot\esc\AM32/Src/main.c:612
+        pidnow->pid_output = pidnow->output_limit;
+ 80016be:	mov	r3, r9
+ 80016c0:	str	r2, [r3, #52]	@ 0x34
+ 80016c2:	movs	r3, r2
+E:\m\robot\esc\AM32/Src/main.c:614
+    if (pidnow->pid_output < -pidnow->output_limit) {
+ 80016c4:	negs	r2, r2
+ 80016c6:	cmp	r2, r3
+ 80016c8:	ble.n	80016d0 <tenKhzRoutine+0x390>
+E:\m\robot\esc\AM32/Src/main.c:615
+        pidnow->pid_output = -pidnow->output_limit;
+ 80016ca:	mov	r3, r9
+ 80016cc:	str	r2, [r3, #52]	@ 0x34
+ 80016ce:	movs	r3, r2
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1877
+                input_override += doPidCalculations(&speedPid, e_com_time, target_e_com_time);
+ 80016d0:	ldr	r2, [r5, #16]
+ 80016d2:	mov	ip, r2
+E:\m\robot\esc\AM32/Src/main.c:1878
+                if (input_override > 2047 * 10000) {
+ 80016d4:	ldr	r2, [pc, #564]	@ (800190c <tenKhzRoutine+0x5cc>)
+E:\m\robot\esc\AM32/Src/main.c:1877
+                input_override += doPidCalculations(&speedPid, e_com_time, target_e_com_time);
+ 80016d6:	add	r3, ip
+E:\m\robot\esc\AM32/Src/main.c:1878
+                if (input_override > 2047 * 10000) {
+ 80016d8:	cmp	r3, r2
+ 80016da:	bgt.n	80016de <tenKhzRoutine+0x39e>
+ 80016dc:	b.n	80018e8 <tenKhzRoutine+0x5a8>
+E:\m\robot\esc\AM32/Src/main.c:1879
+                    input_override = 2047 * 10000;
+ 80016de:	str	r2, [r5, #16]
+E:\m\robot\esc\AM32/Src/main.c:1884
+                if (zero_crosses < 100) {
+ 80016e0:	ldr	r3, [r4, #68]	@ 0x44
+ 80016e2:	cmp	r3, #99	@ 0x63
+ 80016e4:	bls.n	80016e8 <tenKhzRoutine+0x3a8>
+ 80016e6:	b.n	80013fe <tenKhzRoutine+0xbe>
+E:\m\robot\esc\AM32/Src/main.c:1885
+                    speedPid.integral = 0;
+ 80016e8:	movs	r3, #0
+ 80016ea:	mov	r2, r9
+ 80016ec:	str	r3, [r2, #40]	@ 0x28
+ 80016ee:	b.n	80013fe <tenKhzRoutine+0xbe>
+E:\m\robot\esc\AM32/Src/main.c:1775
+                if (adjusted_input == 0) {
+ 80016f0:	movs	r0, #106	@ 0x6a
+ 80016f2:	ldrh	r0, [r4, r0]
+E:\m\robot\esc\AM32/Src/main.c:1776
+                    armed_timeout_count++;
+ 80016f4:	ldr	r5, [pc, #536]	@ (8001910 <tenKhzRoutine+0x5d0>)
+E:\m\robot\esc\AM32/Src/main.c:1775
+                if (adjusted_input == 0) {
+ 80016f6:	cmp	r0, #0
+ 80016f8:	beq.n	80016fc <tenKhzRoutine+0x3bc>
+ 80016fa:	b.n	8001806 <tenKhzRoutine+0x4c6>
+E:\m\robot\esc\AM32/Src/main.c:1776
+                    armed_timeout_count++;
+ 80016fc:	ldrh	r3, [r5, #0]
+E:\m\robot\esc\AM32/Src/main.c:1777
+                    if (armed_timeout_count > LOOP_FREQUENCY_HZ) { // one second
+ 80016fe:	ldr	r6, [pc, #532]	@ (8001914 <tenKhzRoutine+0x5d4>)
+E:\m\robot\esc\AM32/Src/main.c:1776
+                    armed_timeout_count++;
+ 8001700:	adds	r3, #1
+ 8001702:	uxth	r3, r3
+ 8001704:	strh	r3, [r5, #0]
+E:\m\robot\esc\AM32/Src/main.c:1777
+                    if (armed_timeout_count > LOOP_FREQUENCY_HZ) { // one second
+ 8001706:	cmp	r3, r6
+ 8001708:	bhi.n	800170c <tenKhzRoutine+0x3cc>
+ 800170a:	b.n	8001808 <tenKhzRoutine+0x4c8>
+E:\m\robot\esc\AM32/Src/main.c:1778
+                        if (zero_input_count > 30) {
+ 800170c:	ldrh	r3, [r5, #2]
+ 800170e:	cmp	r3, #30
+ 8001710:	bhi.n	8001714 <tenKhzRoutine+0x3d4>
+ 8001712:	b.n	80018f2 <tenKhzRoutine+0x5b2>
+E:\m\robot\esc\AM32/Src/main.c:1779
+                            armed = 1;
+ 8001714:	movs	r3, #1
+E:\m\robot\esc\AM32/Src/main.c:1788
+                            if ((cell_count == 0) && eepromBuffer.low_voltage_cut_off == 1) {
+ 8001716:	ldr	r6, [pc, #512]	@ (8001918 <tenKhzRoutine+0x5d8>)
+E:\m\robot\esc\AM32/Src/main.c:1779
+                            armed = 1;
+ 8001718:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:1788
+                            if ((cell_count == 0) && eepromBuffer.low_voltage_cut_off == 1) {
+ 800171a:	adds	r3, #35	@ 0x23
+ 800171c:	ldrb	r3, [r6, r3]
+ 800171e:	cmp	r3, #1
+ 8001720:	beq.n	8001724 <tenKhzRoutine+0x3e4>
+ 8001722:	b.n	80018fa <tenKhzRoutine+0x5ba>
+E:\m\robot\esc\AM32/Src/main.c:1789
+                                cell_count = battery_voltage / 370;
+ 8001724:	movs	r1, #185	@ 0xb9
+ 8001726:	ldrh	r3, [r5, #4]
+ 8001728:	lsls	r1, r1, #1
+ 800172a:	movs	r0, r3
+ 800172c:	mov	r8, r3
+ 800172e:	bl	80000c0 <__udivsi3>
+E:\m\robot\esc\AM32/Src/main.c:1790
+                                for (int i = 0; i < cell_count; i++) {
+ 8001732:	movs	r3, #185	@ 0xb9
+E:\m\robot\esc\AM32/Src/main.c:1789
+                                cell_count = battery_voltage / 370;
+ 8001734:	strb	r0, [r4, r7]
+E:\m\robot\esc\AM32/Src/main.c:1790
+                                for (int i = 0; i < cell_count; i++) {
+ 8001736:	lsls	r3, r3, #1
+ 8001738:	movs	r7, #0
+ 800173a:	cmp	r8, r3
+ 800173c:	bcc.n	8001764 <tenKhzRoutine+0x424>
+LL_IWDG_ReloadCounter():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_iwdg.h:155
+  * @param  IWDGx IWDG Instance
+  * @retval None
+  */
+__STATIC_INLINE void LL_IWDG_ReloadCounter(IWDG_TypeDef *IWDGx)
+{
+  WRITE_REG(IWDGx->KR, LL_IWDG_KEY_RELOAD);
+ 800173e:	ldr	r3, [pc, #476]	@ (800191c <tenKhzRoutine+0x5dc>)
+ 8001740:	mov	sl, r3
+ 8001742:	ldr	r3, [pc, #476]	@ (8001920 <tenKhzRoutine+0x5e0>)
+ 8001744:	mov	r9, r3
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1790
+ 8001746:	movs	r3, #126	@ 0x7e
+ 8001748:	mov	r8, r3
+E:\m\robot\esc\AM32/Src/main.c:1791 (discriminator 3)
+                                    playInputTune();
+ 800174a:	bl	8002bf4 <playInputTune>
+E:\m\robot\esc\AM32/Src/main.c:1792 (discriminator 3)
+                                    delayMillis(100);
+ 800174e:	movs	r0, #100	@ 0x64
+ 8001750:	bl	8000454 <delayMillis>
+LL_IWDG_ReloadCounter():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_iwdg.h:155 (discriminator 3)
+ 8001754:	mov	r3, sl
+ 8001756:	mov	r2, r9
+ 8001758:	str	r2, [r3, #0]
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1790 (discriminator 3)
+                                for (int i = 0; i < cell_count; i++) {
+ 800175a:	mov	r3, r8
+ 800175c:	ldrb	r3, [r4, r3]
+ 800175e:	adds	r7, #1
+ 8001760:	cmp	r3, r7
+ 8001762:	bgt.n	800174a <tenKhzRoutine+0x40a>
+E:\m\robot\esc\AM32/Src/main.c:1802
+                            if (!servoPwm && !dshot) {
+ 8001764:	ldr	r3, [pc, #444]	@ (8001924 <tenKhzRoutine+0x5e4>)
+ 8001766:	mov	r8, r3
+ 8001768:	movs	r3, #39	@ 0x27
+ 800176a:	mov	r2, r8
+ 800176c:	mov	r1, r8
+ 800176e:	ldrb	r3, [r2, r3]
+ 8001770:	movs	r2, #38	@ 0x26
+ 8001772:	ldrb	r1, [r1, r2]
+ 8001774:	orrs	r3, r1
+ 8001776:	beq.n	800177a <tenKhzRoutine+0x43a>
+ 8001778:	b.n	80013ac <tenKhzRoutine+0x6c>
+E:\m\robot\esc\AM32/Src/main.c:1803
+                                eepromBuffer.rc_car_reverse = 0;
+ 800177a:	strb	r3, [r6, r2]
+ 800177c:	b.n	80013ac <tenKhzRoutine+0x6c>
+E:\m\robot\esc\AM32/Src/main.c:1834
+            maskPhaseInterrupts();
+ 800177e:	bl	80053c4 <maskPhaseInterrupts>
+getBemfState():
+E:\m\robot\esc\AM32/Src/main.c:858
+    current_state = !getCompOutputLevel(); // polarity reversed
+ 8001782:	bl	80053b4 <getCompOutputLevel>
+E:\m\robot\esc\AM32/Src/main.c:860
+    if (rising) {
+ 8001786:	movs	r3, #80	@ 0x50
+ 8001788:	ldrb	r3, [r7, r3]
+ 800178a:	cmp	r3, #0
+ 800178c:	bne.n	800180c <tenKhzRoutine+0x4cc>
+E:\m\robot\esc\AM32/Src/main.c:870
+        if (!current_state) {
+ 800178e:	cmp	r0, #0
+ 8001790:	beq.n	8001794 <tenKhzRoutine+0x454>
+ 8001792:	b.n	80018c2 <tenKhzRoutine+0x582>
+E:\m\robot\esc\AM32/Src/main.c:873
+            bad_count++;
+ 8001794:	movs	r2, #33	@ 0x21
+ 8001796:	ldrb	r3, [r4, r2]
+ 8001798:	adds	r3, #1
+ 800179a:	uxtb	r3, r3
+ 800179c:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:874
+            if (bad_count > bad_count_threshold) {
+ 800179e:	adds	r2, #48	@ 0x30
+ 80017a0:	ldrb	r2, [r7, r2]
+ 80017a2:	cmp	r2, r3
+ 80017a4:	bcs.n	80017aa <tenKhzRoutine+0x46a>
+E:\m\robot\esc\AM32/Src/main.c:875
+                bemfcounter = 0;
+ 80017a6:	movs	r3, #32
+ 80017a8:	strb	r0, [r4, r3]
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1836
+            if (!zcfound) {
+ 80017aa:	movs	r2, #40	@ 0x28
+ 80017ac:	ldrb	r3, [r4, r2]
+ 80017ae:	cmp	r3, #0
+ 80017b0:	beq.n	80017b4 <tenKhzRoutine+0x474>
+ 80017b2:	b.n	80013ee <tenKhzRoutine+0xae>
+E:\m\robot\esc\AM32/Src/main.c:1837
+                if (rising) {
+ 80017b4:	adds	r3, #80	@ 0x50
+ 80017b6:	ldrb	r3, [r7, r3]
+ 80017b8:	cmp	r3, #0
+ 80017ba:	bne.n	80017be <tenKhzRoutine+0x47e>
+ 80017bc:	b.n	80018ce <tenKhzRoutine+0x58e>
+E:\m\robot\esc\AM32/Src/main.c:1838
+                    if (bemfcounter > min_bemf_counts_up) {
+ 80017be:	movs	r3, #32
+ 80017c0:	movs	r1, #105	@ 0x69
+ 80017c2:	ldrb	r3, [r4, r3]
+ 80017c4:	ldrb	r1, [r7, r1]
+ 80017c6:	cmp	r1, r3
+ 80017c8:	bcc.n	80017cc <tenKhzRoutine+0x48c>
+ 80017ca:	b.n	80013ee <tenKhzRoutine+0xae>
+E:\m\robot\esc\AM32/Src/main.c:1844
+                        zcfound = 1;
+ 80017cc:	movs	r3, #1
+ 80017ce:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:1845
+                        zcfoundroutine();
+ 80017d0:	bl	8001288 <zcfoundroutine>
+ 80017d4:	b.n	80013ee <tenKhzRoutine+0xae>
+E:\m\robot\esc\AM32/Src/main.c:1934 (discriminator 1)
+              if((eepromBuffer.brake_on_stop == 2) && armed){  // require arming for active brake
+ 80017d6:	adds	r3, #107	@ 0x6b
+ 80017d8:	ldrb	r3, [r4, r3]
+ 80017da:	cmp	r3, #0
+ 80017dc:	bne.n	80017e0 <tenKhzRoutine+0x4a0>
+ 80017de:	b.n	800153a <tenKhzRoutine+0x1fa>
+E:\m\robot\esc\AM32/Src/main.c:1935
+                comStep(2);
+ 80017e0:	movs	r0, #2
+ 80017e2:	bl	800562c <comStep>
+E:\m\robot\esc\AM32/Src/main.c:1936
+                adjusted_duty_cycle = DEAD_TIME + ((eepromBuffer.active_brake_power * tim1_arr) / 2000)* 10;
+ 80017e6:	movs	r3, #66	@ 0x42
+ 80017e8:	mov	r2, r9
+ 80017ea:	movs	r1, #250	@ 0xfa
+ 80017ec:	ldrh	r7, [r2, r3]
+ 80017ee:	ldrb	r0, [r6, #12]
+ 80017f0:	lsls	r1, r1, #3
+ 80017f2:	muls	r0, r7
+ 80017f4:	bl	80001d4 <__divsi3>
+ 80017f8:	lsls	r3, r0, #2
+ 80017fa:	adds	r3, r3, r0
+ 80017fc:	lsls	r6, r3, #1
+ 80017fe:	adds	r6, #60	@ 0x3c
+ 8001800:	uxth	r6, r6
+ 8001802:	strh	r6, [r5, #20]
+ 8001804:	b.n	8001470 <tenKhzRoutine+0x130>
+E:\m\robot\esc\AM32/Src/main.c:1811
+                    armed_timeout_count = 0;
+ 8001806:	strh	r3, [r5, #0]
+ 8001808:	ldr	r6, [pc, #268]	@ (8001918 <tenKhzRoutine+0x5d8>)
+ 800180a:	b.n	80013ac <tenKhzRoutine+0x6c>
+getBemfState():
+E:\m\robot\esc\AM32/Src/main.c:861
+        if (current_state) {
+ 800180c:	cmp	r0, #0
+ 800180e:	beq.n	80018c2 <tenKhzRoutine+0x582>
+E:\m\robot\esc\AM32/Src/main.c:864
+            bad_count++;
+ 8001810:	movs	r2, #33	@ 0x21
+ 8001812:	ldrb	r3, [r4, r2]
+ 8001814:	adds	r3, #1
+ 8001816:	uxtb	r3, r3
+ 8001818:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:865
+            if (bad_count > bad_count_threshold) {
+ 800181a:	adds	r2, #48	@ 0x30
+ 800181c:	ldrb	r2, [r7, r2]
+ 800181e:	cmp	r2, r3
+ 8001820:	bcs.n	80017aa <tenKhzRoutine+0x46a>
+E:\m\robot\esc\AM32/Src/main.c:866
+                bemfcounter = 0;
+ 8001822:	movs	r3, #32
+ 8001824:	mov	r2, r8
+ 8001826:	strb	r2, [r4, r3]
+ 8001828:	b.n	80017aa <tenKhzRoutine+0x46a>
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1903
+                    max_duty_cycle_change = max_ramp_low_rpm;
+ 800182a:	subs	r3, #180	@ 0xb4
+ 800182c:	subs	r3, #255	@ 0xff
+ 800182e:	b.n	800159e <tenKhzRoutine+0x25e>
+E:\m\robot\esc\AM32/Src/main.c:1855
+                use_current_limit_adjust -= (int16_t)(doPidCalculations(&currentPid, actual_current,
+ 8001830:	movs	r2, #10
+ 8001832:	ldrsh	r3, [r5, r2]
+E:\m\robot\esc\AM32/Src/main.c:1856
+                                                          eepromBuffer.limits.current * 2 * 100)
+ 8001834:	movs	r2, #44	@ 0x2c
+E:\m\robot\esc\AM32/Src/main.c:1855
+                use_current_limit_adjust -= (int16_t)(doPidCalculations(&currentPid, actual_current,
+ 8001836:	movs	r0, #200	@ 0xc8
+E:\m\robot\esc\AM32/Src/main.c:1856
+                                                          eepromBuffer.limits.current * 2 * 100)
+ 8001838:	ldrb	r2, [r6, r2]
+E:\m\robot\esc\AM32/Src/main.c:1855
+                use_current_limit_adjust -= (int16_t)(doPidCalculations(&currentPid, actual_current,
+ 800183a:	muls	r0, r2
+doPidCalculations():
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 800183c:	ldr	r2, [r7, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/main.c:597
+    pidnow->error = actual - target;
+ 800183e:	subs	r0, r3, r0
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 8001840:	mov	ip, r2
+ 8001842:	ldr	r3, [r7, #32]
+E:\m\robot\esc\AM32/Src/main.c:599
+    if (pidnow->integral > pidnow->integral_limit) {
+ 8001844:	ldr	r2, [r7, #56]	@ 0x38
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 8001846:	muls	r3, r0
+ 8001848:	add	r3, ip
+E:\m\robot\esc\AM32/Src/main.c:597
+    pidnow->error = actual - target;
+ 800184a:	str	r0, [r7, #24]
+E:\m\robot\esc\AM32/Src/main.c:598
+    pidnow->integral = pidnow->integral + pidnow->error * pidnow->Ki;
+ 800184c:	str	r3, [r7, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/main.c:599
+    if (pidnow->integral > pidnow->integral_limit) {
+ 800184e:	cmp	r3, r2
+ 8001850:	ble.n	8001856 <tenKhzRoutine+0x516>
+E:\m\robot\esc\AM32/Src/main.c:600
+        pidnow->integral = pidnow->integral_limit;
+ 8001852:	movs	r3, r2
+ 8001854:	str	r2, [r7, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/main.c:602
+    if (pidnow->integral < -pidnow->integral_limit) {
+ 8001856:	negs	r2, r2
+ 8001858:	cmp	r2, r3
+ 800185a:	ble.n	8001860 <tenKhzRoutine+0x520>
+E:\m\robot\esc\AM32/Src/main.c:603
+        pidnow->integral = -pidnow->integral_limit;
+ 800185c:	movs	r3, r2
+ 800185e:	str	r2, [r7, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/main.c:606
+    pidnow->derivative = pidnow->Kd * (pidnow->error - pidnow->last_error);
+ 8001860:	ldr	r2, [r7, #48]	@ 0x30
+ 8001862:	ldr	r1, [r7, #36]	@ 0x24
+ 8001864:	subs	r2, r0, r2
+ 8001866:	muls	r2, r1
+E:\m\robot\esc\AM32/Src/main.c:609
+    pidnow->pid_output = pidnow->error * pidnow->Kp + pidnow->integral + pidnow->derivative;
+ 8001868:	ldr	r1, [r7, #28]
+E:\m\robot\esc\AM32/Src/main.c:607
+    pidnow->last_error = pidnow->error;
+ 800186a:	str	r0, [r7, #48]	@ 0x30
+E:\m\robot\esc\AM32/Src/main.c:609
+    pidnow->pid_output = pidnow->error * pidnow->Kp + pidnow->integral + pidnow->derivative;
+ 800186c:	muls	r0, r1
+ 800186e:	adds	r0, r0, r2
+ 8001870:	adds	r0, r0, r3
+E:\m\robot\esc\AM32/Src/main.c:611
+    if (pidnow->pid_output > pidnow->output_limit) {
+ 8001872:	ldr	r3, [r7, #60]	@ 0x3c
+E:\m\robot\esc\AM32/Src/main.c:606
+    pidnow->derivative = pidnow->Kd * (pidnow->error - pidnow->last_error);
+ 8001874:	str	r2, [r7, #44]	@ 0x2c
+E:\m\robot\esc\AM32/Src/main.c:609
+    pidnow->pid_output = pidnow->error * pidnow->Kp + pidnow->integral + pidnow->derivative;
+ 8001876:	str	r0, [r7, #52]	@ 0x34
+E:\m\robot\esc\AM32/Src/main.c:611
+    if (pidnow->pid_output > pidnow->output_limit) {
+ 8001878:	cmp	r0, r3
+ 800187a:	ble.n	8001880 <tenKhzRoutine+0x540>
+E:\m\robot\esc\AM32/Src/main.c:612
+        pidnow->pid_output = pidnow->output_limit;
+ 800187c:	movs	r0, r3
+ 800187e:	str	r3, [r7, #52]	@ 0x34
+E:\m\robot\esc\AM32/Src/main.c:614
+    if (pidnow->pid_output < -pidnow->output_limit) {
+ 8001880:	negs	r3, r3
+ 8001882:	cmp	r3, r0
+ 8001884:	ble.n	800188a <tenKhzRoutine+0x54a>
+E:\m\robot\esc\AM32/Src/main.c:615
+        pidnow->pid_output = -pidnow->output_limit;
+ 8001886:	movs	r0, r3
+ 8001888:	str	r3, [r7, #52]	@ 0x34
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1855
+                use_current_limit_adjust -= (int16_t)(doPidCalculations(&currentPid, actual_current,
+ 800188a:	movs	r3, #98	@ 0x62
+ 800188c:	mov	r9, r3
+E:\m\robot\esc\AM32/Src/main.c:1857
+                    / 10000);
+ 800188e:	ldr	r1, [pc, #152]	@ (8001928 <tenKhzRoutine+0x5e8>)
+ 8001890:	bl	80001d4 <__divsi3>
+E:\m\robot\esc\AM32/Src/main.c:1855
+                use_current_limit_adjust -= (int16_t)(doPidCalculations(&currentPid, actual_current,
+ 8001894:	mov	r3, r9
+ 8001896:	ldrh	r3, [r7, r3]
+ 8001898:	subs	r0, r3, r0
+ 800189a:	mov	r3, r9
+ 800189c:	sxth	r0, r0
+ 800189e:	strh	r0, [r7, r3]
+E:\m\robot\esc\AM32/Src/main.c:1858
+                if (use_current_limit_adjust < minimum_duty_cycle) {
+ 80018a0:	ldrh	r3, [r7, #2]
+ 80018a2:	cmp	r0, r3
+ 80018a4:	bge.n	80018ac <tenKhzRoutine+0x56c>
+E:\m\robot\esc\AM32/Src/main.c:1859
+                    use_current_limit_adjust = minimum_duty_cycle;
+ 80018a6:	sxth	r0, r3
+ 80018a8:	mov	r3, r9
+ 80018aa:	strh	r0, [r7, r3]
+E:\m\robot\esc\AM32/Src/main.c:1861
+                if (use_current_limit_adjust > 2000) {
+ 80018ac:	movs	r3, #250	@ 0xfa
+ 80018ae:	lsls	r3, r3, #3
+ 80018b0:	cmp	r0, r3
+ 80018b2:	ble.n	80018b8 <tenKhzRoutine+0x578>
+E:\m\robot\esc\AM32/Src/main.c:1862
+                    use_current_limit_adjust = 2000;
+ 80018b4:	movs	r2, #98	@ 0x62
+ 80018b6:	strh	r3, [r7, r2]
+E:\m\robot\esc\AM32/Src/main.c:1865
+            if (eepromBuffer.stall_protection && running) { // this boosts throttle as the rpm gets lower, for crawlers
+ 80018b8:	ldrb	r3, [r6, #29]
+ 80018ba:	cmp	r3, #0
+ 80018bc:	beq.n	80018c0 <tenKhzRoutine+0x580>
+ 80018be:	b.n	80015e6 <tenKhzRoutine+0x2a6>
+ 80018c0:	b.n	800165e <tenKhzRoutine+0x31e>
+getBemfState():
+E:\m\robot\esc\AM32/Src/main.c:871
+            bemfcounter++;
+ 80018c2:	movs	r2, #32
+ 80018c4:	ldrb	r3, [r4, r2]
+ 80018c6:	adds	r3, #1
+ 80018c8:	uxtb	r3, r3
+ 80018ca:	strb	r3, [r4, r2]
+ 80018cc:	b.n	80017aa <tenKhzRoutine+0x46a>
+tenKhzRoutine():
+E:\m\robot\esc\AM32/Src/main.c:1843
+                    if (bemfcounter > min_bemf_counts_down) {
+ 80018ce:	movs	r3, #32
+ 80018d0:	movs	r1, #106	@ 0x6a
+ 80018d2:	ldrb	r3, [r4, r3]
+ 80018d4:	ldrb	r1, [r7, r1]
+ 80018d6:	cmp	r1, r3
+ 80018d8:	bcc.n	80018dc <tenKhzRoutine+0x59c>
+ 80018da:	b.n	80013ee <tenKhzRoutine+0xae>
+ 80018dc:	b.n	80017cc <tenKhzRoutine+0x48c>
+E:\m\robot\esc\AM32/Src/main.c:1872
+                if (stall_protection_adjust <= 0) {
+ 80018de:	cmp	r3, #0
+ 80018e0:	bgt.n	8001900 <tenKhzRoutine+0x5c0>
+E:\m\robot\esc\AM32/Src/main.c:1873
+                    stall_protection_adjust = 0;
+ 80018e2:	movs	r3, #0
+ 80018e4:	str	r3, [r4, #84]	@ 0x54
+ 80018e6:	b.n	800165e <tenKhzRoutine+0x31e>
+E:\m\robot\esc\AM32/Src/main.c:1881
+                if (input_override < 0) {
+ 80018e8:	cmp	r3, #0
+ 80018ea:	bge.n	80018ee <tenKhzRoutine+0x5ae>
+E:\m\robot\esc\AM32/Src/main.c:1882
+                    input_override = 0;
+ 80018ec:	movs	r3, #0
+ 80018ee:	str	r3, [r5, #16]
+ 80018f0:	b.n	80016e0 <tenKhzRoutine+0x3a0>
+E:\m\robot\esc\AM32/Src/main.c:1806
+                            inputSet = 0;
+ 80018f2:	ldr	r6, [pc, #36]	@ (8001918 <tenKhzRoutine+0x5d8>)
+ 80018f4:	strb	r0, [r4, r1]
+E:\m\robot\esc\AM32/Src/main.c:1807
+                            armed_timeout_count = 0;
+ 80018f6:	strh	r0, [r5, #0]
+ 80018f8:	b.n	80013ac <tenKhzRoutine+0x6c>
+E:\m\robot\esc\AM32/Src/main.c:1799
+															playInputTune();
+ 80018fa:	bl	8002bf4 <playInputTune>
+ 80018fe:	b.n	8001764 <tenKhzRoutine+0x424>
+E:\m\robot\esc\AM32/Src/main.c:1867
+                stall_protection_adjust += (doPidCalculations(&stallPid, commutation_interval,
+ 8001900:	str	r3, [r4, #84]	@ 0x54
+E:\m\robot\esc\AM32/Src/main.c:1876
+            if (use_speed_control_loop && running) {
+ 8001902:	b.n	800165e <tenKhzRoutine+0x31e>
+ 8001904:	.word	0x0016e360
+ 8001908:	.word	0x20000080
+ 800190c:	.word	0x013858f0
+ 8001910:	.word	0x200004e0
+ 8001914:	.word	0x00004e20
+ 8001918:	.word	0x20000630
+ 800191c:	.word	0x40003000
+ 8001920:	.word	0x0000aaaa
+ 8001924:	.word	0x200003e0
+ 8001928:	.word	0x00002710
+
+; ===================== __divsi3 =====================
+<__divsi3>:
+__aeabi_idiv():
+ 80001d4:	mov	r3, r0
+__divsi3():
+ 80001d6:	orrs	r3, r1
+ 80001d8:	bmi.n	80002da <__divsi3+0x106>
+ 80001da:	movs	r2, #0
+ 80001dc:	lsrs	r3, r0, #1
+ 80001de:	cmp	r3, r1
+ 80001e0:	bcc.n	80002cc <__divsi3+0xf8>
+ 80001e2:	lsrs	r3, r0, #4
+ 80001e4:	cmp	r3, r1
+ 80001e6:	bcc.n	80002a8 <__divsi3+0xd4>
+ 80001e8:	lsrs	r3, r0, #8
+ 80001ea:	cmp	r3, r1
+ 80001ec:	bcc.n	8000278 <__divsi3+0xa4>
+ 80001ee:	lsrs	r3, r0, #12
+ 80001f0:	cmp	r3, r1
+ 80001f2:	bcc.n	8000246 <__divsi3+0x72>
+ 80001f4:	lsrs	r3, r0, #16
+ 80001f6:	cmp	r3, r1
+ 80001f8:	bcc.n	8000216 <__divsi3+0x42>
+ 80001fa:	movs	r2, #255	@ 0xff
+ 80001fc:	lsls	r1, r1, #8
+ 80001fe:	rev	r2, r2
+ 8000200:	lsrs	r3, r0, #16
+ 8000202:	cmp	r3, r1
+ 8000204:	bcc.n	800020c <__divsi3+0x38>
+ 8000206:	asrs	r2, r2, #8
+ 8000208:	lsls	r1, r1, #8
+ 800020a:	beq.n	80002d8 <__divsi3+0x104>
+ 800020c:	lsrs	r3, r0, #12
+ 800020e:	cmp	r3, r1
+ 8000210:	bcc.n	8000246 <__divsi3+0x72>
+ 8000212:	b.n	8000216 <__divsi3+0x42>
+ 8000214:	lsrs	r1, r1, #8
+ 8000216:	lsrs	r3, r0, #15
+ 8000218:	cmp	r3, r1
+ 800021a:	bcc.n	8000220 <__divsi3+0x4c>
+ 800021c:	lsls	r3, r1, #15
+ 800021e:	subs	r0, r0, r3
+ 8000220:	adcs	r2, r2
+ 8000222:	lsrs	r3, r0, #14
+ 8000224:	cmp	r3, r1
+ 8000226:	bcc.n	800022c <__divsi3+0x58>
+ 8000228:	lsls	r3, r1, #14
+ 800022a:	subs	r0, r0, r3
+ 800022c:	adcs	r2, r2
+ 800022e:	lsrs	r3, r0, #13
+ 8000230:	cmp	r3, r1
+ 8000232:	bcc.n	8000238 <__divsi3+0x64>
+ 8000234:	lsls	r3, r1, #13
+ 8000236:	subs	r0, r0, r3
+ 8000238:	adcs	r2, r2
+ 800023a:	lsrs	r3, r0, #12
+ 800023c:	cmp	r3, r1
+ 800023e:	bcc.n	8000244 <__divsi3+0x70>
+ 8000240:	lsls	r3, r1, #12
+ 8000242:	subs	r0, r0, r3
+ 8000244:	adcs	r2, r2
+ 8000246:	lsrs	r3, r0, #11
+ 8000248:	cmp	r3, r1
+ 800024a:	bcc.n	8000250 <__divsi3+0x7c>
+ 800024c:	lsls	r3, r1, #11
+ 800024e:	subs	r0, r0, r3
+ 8000250:	adcs	r2, r2
+ 8000252:	lsrs	r3, r0, #10
+ 8000254:	cmp	r3, r1
+ 8000256:	bcc.n	800025c <__divsi3+0x88>
+ 8000258:	lsls	r3, r1, #10
+ 800025a:	subs	r0, r0, r3
+ 800025c:	adcs	r2, r2
+ 800025e:	lsrs	r3, r0, #9
+ 8000260:	cmp	r3, r1
+ 8000262:	bcc.n	8000268 <__divsi3+0x94>
+ 8000264:	lsls	r3, r1, #9
+ 8000266:	subs	r0, r0, r3
+ 8000268:	adcs	r2, r2
+ 800026a:	lsrs	r3, r0, #8
+ 800026c:	cmp	r3, r1
+ 800026e:	bcc.n	8000274 <__divsi3+0xa0>
+ 8000270:	lsls	r3, r1, #8
+ 8000272:	subs	r0, r0, r3
+ 8000274:	adcs	r2, r2
+ 8000276:	bcs.n	8000214 <__divsi3+0x40>
+ 8000278:	lsrs	r3, r0, #7
+ 800027a:	cmp	r3, r1
+ 800027c:	bcc.n	8000282 <__divsi3+0xae>
+ 800027e:	lsls	r3, r1, #7
+ 8000280:	subs	r0, r0, r3
+ 8000282:	adcs	r2, r2
+ 8000284:	lsrs	r3, r0, #6
+ 8000286:	cmp	r3, r1
+ 8000288:	bcc.n	800028e <__divsi3+0xba>
+ 800028a:	lsls	r3, r1, #6
+ 800028c:	subs	r0, r0, r3
+ 800028e:	adcs	r2, r2
+ 8000290:	lsrs	r3, r0, #5
+ 8000292:	cmp	r3, r1
+ 8000294:	bcc.n	800029a <__divsi3+0xc6>
+ 8000296:	lsls	r3, r1, #5
+ 8000298:	subs	r0, r0, r3
+ 800029a:	adcs	r2, r2
+ 800029c:	lsrs	r3, r0, #4
+ 800029e:	cmp	r3, r1
+ 80002a0:	bcc.n	80002a6 <__divsi3+0xd2>
+ 80002a2:	lsls	r3, r1, #4
+ 80002a4:	subs	r0, r0, r3
+ 80002a6:	adcs	r2, r2
+ 80002a8:	lsrs	r3, r0, #3
+ 80002aa:	cmp	r3, r1
+ 80002ac:	bcc.n	80002b2 <__divsi3+0xde>
+ 80002ae:	lsls	r3, r1, #3
+ 80002b0:	subs	r0, r0, r3
+ 80002b2:	adcs	r2, r2
+ 80002b4:	lsrs	r3, r0, #2
+ 80002b6:	cmp	r3, r1
+ 80002b8:	bcc.n	80002be <__divsi3+0xea>
+ 80002ba:	lsls	r3, r1, #2
+ 80002bc:	subs	r0, r0, r3
+ 80002be:	adcs	r2, r2
+ 80002c0:	lsrs	r3, r0, #1
+ 80002c2:	cmp	r3, r1
+ 80002c4:	bcc.n	80002ca <__divsi3+0xf6>
+ 80002c6:	lsls	r3, r1, #1
+ 80002c8:	subs	r0, r0, r3
+ 80002ca:	adcs	r2, r2
+ 80002cc:	subs	r1, r0, r1
+ 80002ce:	bcs.n	80002d2 <__divsi3+0xfe>
+ 80002d0:	mov	r1, r0
+ 80002d2:	adcs	r2, r2
+ 80002d4:	mov	r0, r2
+ 80002d6:	bx	lr
+ 80002d8:	b.n	8000396 <__divsi3+0x1c2>
+ 80002da:	lsrs	r2, r1, #31
+ 80002dc:	beq.n	80002e0 <__divsi3+0x10c>
+ 80002de:	negs	r1, r1
+ 80002e0:	asrs	r3, r0, #32
+ 80002e2:	bcc.n	80002e6 <__divsi3+0x112>
+ 80002e4:	negs	r0, r0
+ 80002e6:	eors	r3, r2
+ 80002e8:	movs	r2, #0
+ 80002ea:	mov	ip, r3
+ 80002ec:	lsrs	r3, r0, #4
+ 80002ee:	cmp	r3, r1
+ 80002f0:	bcc.n	800034e <__divsi3+0x17a>
+ 80002f2:	lsrs	r3, r0, #8
+ 80002f4:	cmp	r3, r1
+ 80002f6:	bcc.n	800031e <__divsi3+0x14a>
+ 80002f8:	movs	r2, #252	@ 0xfc
+ 80002fa:	lsls	r1, r1, #6
+ 80002fc:	rev	r2, r2
+ 80002fe:	lsrs	r3, r0, #8
+ 8000300:	cmp	r3, r1
+ 8000302:	bcc.n	800031e <__divsi3+0x14a>
+ 8000304:	lsls	r1, r1, #6
+ 8000306:	asrs	r2, r2, #6
+ 8000308:	cmp	r3, r1
+ 800030a:	bcc.n	800031e <__divsi3+0x14a>
+ 800030c:	lsls	r1, r1, #6
+ 800030e:	asrs	r2, r2, #6
+ 8000310:	cmp	r3, r1
+ 8000312:	bcc.n	800031e <__divsi3+0x14a>
+ 8000314:	lsls	r1, r1, #6
+ 8000316:	beq.n	800038e <__divsi3+0x1ba>
+ 8000318:	asrs	r2, r2, #6
+ 800031a:	b.n	800031e <__divsi3+0x14a>
+ 800031c:	lsrs	r1, r1, #6
+ 800031e:	lsrs	r3, r0, #7
+ 8000320:	cmp	r3, r1
+ 8000322:	bcc.n	8000328 <__divsi3+0x154>
+ 8000324:	lsls	r3, r1, #7
+ 8000326:	subs	r0, r0, r3
+ 8000328:	adcs	r2, r2
+ 800032a:	lsrs	r3, r0, #6
+ 800032c:	cmp	r3, r1
+ 800032e:	bcc.n	8000334 <__divsi3+0x160>
+ 8000330:	lsls	r3, r1, #6
+ 8000332:	subs	r0, r0, r3
+ 8000334:	adcs	r2, r2
+ 8000336:	lsrs	r3, r0, #5
+ 8000338:	cmp	r3, r1
+ 800033a:	bcc.n	8000340 <__divsi3+0x16c>
+ 800033c:	lsls	r3, r1, #5
+ 800033e:	subs	r0, r0, r3
+ 8000340:	adcs	r2, r2
+ 8000342:	lsrs	r3, r0, #4
+ 8000344:	cmp	r3, r1
+ 8000346:	bcc.n	800034c <__divsi3+0x178>
+ 8000348:	lsls	r3, r1, #4
+ 800034a:	subs	r0, r0, r3
+ 800034c:	adcs	r2, r2
+ 800034e:	lsrs	r3, r0, #3
+ 8000350:	cmp	r3, r1
+ 8000352:	bcc.n	8000358 <__divsi3+0x184>
+ 8000354:	lsls	r3, r1, #3
+ 8000356:	subs	r0, r0, r3
+ 8000358:	adcs	r2, r2
+ 800035a:	lsrs	r3, r0, #2
+ 800035c:	cmp	r3, r1
+ 800035e:	bcc.n	8000364 <__divsi3+0x190>
+ 8000360:	lsls	r3, r1, #2
+ 8000362:	subs	r0, r0, r3
+ 8000364:	adcs	r2, r2
+ 8000366:	bcs.n	800031c <__divsi3+0x148>
+ 8000368:	lsrs	r3, r0, #1
+ 800036a:	cmp	r3, r1
+ 800036c:	bcc.n	8000372 <__divsi3+0x19e>
+ 800036e:	lsls	r3, r1, #1
+ 8000370:	subs	r0, r0, r3
+ 8000372:	adcs	r2, r2
+ 8000374:	subs	r1, r0, r1
+ 8000376:	bcs.n	800037a <__divsi3+0x1a6>
+ 8000378:	mov	r1, r0
+ 800037a:	mov	r3, ip
+ 800037c:	adcs	r2, r2
+ 800037e:	asrs	r3, r3, #1
+ 8000380:	mov	r0, r2
+ 8000382:	bcc.n	8000388 <__divsi3+0x1b4>
+ 8000384:	negs	r0, r0
+ 8000386:	cmp	r3, #0
+ 8000388:	bpl.n	800038c <__divsi3+0x1b8>
+ 800038a:	negs	r1, r1
+ 800038c:	bx	lr
+ 800038e:	mov	r3, ip
+ 8000390:	asrs	r3, r3, #1
+ 8000392:	bcc.n	8000396 <__divsi3+0x1c2>
+ 8000394:	negs	r0, r0
+ 8000396:	push	{r0, lr}
+ 8000398:	movs	r0, #0
+ 800039a:	bl	80003a8 <__aeabi_idiv0>
+ 800039e:	pop	{r1, pc}
+
+; ===================== __udivsi3 =====================
+<__udivsi3>:
+__aeabi_uidiv():
+ 80000c0:	movs	r2, #0
+__udivsi3():
+ 80000c2:	lsrs	r3, r0, #1
+ 80000c4:	cmp	r3, r1
+ 80000c6:	bcc.n	80001b2 <__udivsi3+0xf2>
+ 80000c8:	lsrs	r3, r0, #4
+ 80000ca:	cmp	r3, r1
+ 80000cc:	bcc.n	800018e <__udivsi3+0xce>
+ 80000ce:	lsrs	r3, r0, #8
+ 80000d0:	cmp	r3, r1
+ 80000d2:	bcc.n	800015e <__udivsi3+0x9e>
+ 80000d4:	lsrs	r3, r0, #12
+ 80000d6:	cmp	r3, r1
+ 80000d8:	bcc.n	800012c <__udivsi3+0x6c>
+ 80000da:	lsrs	r3, r0, #16
+ 80000dc:	cmp	r3, r1
+ 80000de:	bcc.n	80000fc <__udivsi3+0x3c>
+ 80000e0:	movs	r2, #255	@ 0xff
+ 80000e2:	lsls	r1, r1, #8
+ 80000e4:	rev	r2, r2
+ 80000e6:	lsrs	r3, r0, #16
+ 80000e8:	cmp	r3, r1
+ 80000ea:	bcc.n	80000f2 <__udivsi3+0x32>
+ 80000ec:	asrs	r2, r2, #8
+ 80000ee:	lsls	r1, r1, #8
+ 80000f0:	beq.n	80001be <__udivsi3+0xfe>
+ 80000f2:	lsrs	r3, r0, #12
+ 80000f4:	cmp	r3, r1
+ 80000f6:	bcc.n	800012c <__udivsi3+0x6c>
+ 80000f8:	b.n	80000fc <__udivsi3+0x3c>
+ 80000fa:	lsrs	r1, r1, #8
+ 80000fc:	lsrs	r3, r0, #15
+ 80000fe:	cmp	r3, r1
+ 8000100:	bcc.n	8000106 <__udivsi3+0x46>
+ 8000102:	lsls	r3, r1, #15
+ 8000104:	subs	r0, r0, r3
+ 8000106:	adcs	r2, r2
+ 8000108:	lsrs	r3, r0, #14
+ 800010a:	cmp	r3, r1
+ 800010c:	bcc.n	8000112 <__udivsi3+0x52>
+ 800010e:	lsls	r3, r1, #14
+ 8000110:	subs	r0, r0, r3
+ 8000112:	adcs	r2, r2
+ 8000114:	lsrs	r3, r0, #13
+ 8000116:	cmp	r3, r1
+ 8000118:	bcc.n	800011e <__udivsi3+0x5e>
+ 800011a:	lsls	r3, r1, #13
+ 800011c:	subs	r0, r0, r3
+ 800011e:	adcs	r2, r2
+ 8000120:	lsrs	r3, r0, #12
+ 8000122:	cmp	r3, r1
+ 8000124:	bcc.n	800012a <__udivsi3+0x6a>
+ 8000126:	lsls	r3, r1, #12
+ 8000128:	subs	r0, r0, r3
+ 800012a:	adcs	r2, r2
+ 800012c:	lsrs	r3, r0, #11
+ 800012e:	cmp	r3, r1
+ 8000130:	bcc.n	8000136 <__udivsi3+0x76>
+ 8000132:	lsls	r3, r1, #11
+ 8000134:	subs	r0, r0, r3
+ 8000136:	adcs	r2, r2
+ 8000138:	lsrs	r3, r0, #10
+ 800013a:	cmp	r3, r1
+ 800013c:	bcc.n	8000142 <__udivsi3+0x82>
+ 800013e:	lsls	r3, r1, #10
+ 8000140:	subs	r0, r0, r3
+ 8000142:	adcs	r2, r2
+ 8000144:	lsrs	r3, r0, #9
+ 8000146:	cmp	r3, r1
+ 8000148:	bcc.n	800014e <__udivsi3+0x8e>
+ 800014a:	lsls	r3, r1, #9
+ 800014c:	subs	r0, r0, r3
+ 800014e:	adcs	r2, r2
+ 8000150:	lsrs	r3, r0, #8
+ 8000152:	cmp	r3, r1
+ 8000154:	bcc.n	800015a <__udivsi3+0x9a>
+ 8000156:	lsls	r3, r1, #8
+ 8000158:	subs	r0, r0, r3
+ 800015a:	adcs	r2, r2
+ 800015c:	bcs.n	80000fa <__udivsi3+0x3a>
+ 800015e:	lsrs	r3, r0, #7
+ 8000160:	cmp	r3, r1
+ 8000162:	bcc.n	8000168 <__udivsi3+0xa8>
+ 8000164:	lsls	r3, r1, #7
+ 8000166:	subs	r0, r0, r3
+ 8000168:	adcs	r2, r2
+ 800016a:	lsrs	r3, r0, #6
+ 800016c:	cmp	r3, r1
+ 800016e:	bcc.n	8000174 <__udivsi3+0xb4>
+ 8000170:	lsls	r3, r1, #6
+ 8000172:	subs	r0, r0, r3
+ 8000174:	adcs	r2, r2
+ 8000176:	lsrs	r3, r0, #5
+ 8000178:	cmp	r3, r1
+ 800017a:	bcc.n	8000180 <__udivsi3+0xc0>
+ 800017c:	lsls	r3, r1, #5
+ 800017e:	subs	r0, r0, r3
+ 8000180:	adcs	r2, r2
+ 8000182:	lsrs	r3, r0, #4
+ 8000184:	cmp	r3, r1
+ 8000186:	bcc.n	800018c <__udivsi3+0xcc>
+ 8000188:	lsls	r3, r1, #4
+ 800018a:	subs	r0, r0, r3
+ 800018c:	adcs	r2, r2
+ 800018e:	lsrs	r3, r0, #3
+ 8000190:	cmp	r3, r1
+ 8000192:	bcc.n	8000198 <__udivsi3+0xd8>
+ 8000194:	lsls	r3, r1, #3
+ 8000196:	subs	r0, r0, r3
+ 8000198:	adcs	r2, r2
+ 800019a:	lsrs	r3, r0, #2
+ 800019c:	cmp	r3, r1
+ 800019e:	bcc.n	80001a4 <__udivsi3+0xe4>
+ 80001a0:	lsls	r3, r1, #2
+ 80001a2:	subs	r0, r0, r3
+ 80001a4:	adcs	r2, r2
+ 80001a6:	lsrs	r3, r0, #1
+ 80001a8:	cmp	r3, r1
+ 80001aa:	bcc.n	80001b0 <__udivsi3+0xf0>
+ 80001ac:	lsls	r3, r1, #1
+ 80001ae:	subs	r0, r0, r3
+ 80001b0:	adcs	r2, r2
+ 80001b2:	subs	r1, r0, r1
+ 80001b4:	bcs.n	80001b8 <__udivsi3+0xf8>
+ 80001b6:	mov	r1, r0
+ 80001b8:	adcs	r2, r2
+ 80001ba:	mov	r0, r2
+ 80001bc:	bx	lr
+ 80001be:	b.n	80001c0 <__udivsi3+0x100>
+ 80001c0:	push	{r0, lr}
+ 80001c2:	movs	r0, #0
+ 80001c4:	bl	80003a8 <__aeabi_idiv0>
+ 80001c8:	pop	{r1, pc}
+
+; ===================== playInputTune =====================
+<playInputTune>:
+playInputTune():
+E:\m\robot\esc\AM32/Src/sounds.c:210
+    SET_AUTO_RELOAD_PWM(TIMER1_MAX_ARR);
+    __enable_irq();
+}
+
+void playInputTune()
+{
+ 8002bf4:	push	{r4, lr}
+__disable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:142
+  \details Disables IRQ interrupts by setting the I-bit in the CPSR.
+           Can only be executed in Privileged modes.
+ */
+__STATIC_FORCEINLINE void __disable_irq(void)
+{
+  __ASM volatile ("cpsid i" : : : "memory");
+ 8002bf6:	cpsid	i
+playInputTune():
+E:\m\robot\esc\AM32/Src/sounds.c:212
+    __disable_irq();
+    SET_AUTO_RELOAD_PWM(TIM1_AUTORELOAD);
+ 8002bf8:	ldr	r3, [pc, #100]	@ (8002c60 <playInputTune+0x6c>)
+ 8002bfa:	ldr	r2, [pc, #104]	@ (8002c64 <playInputTune+0x70>)
+LL_IWDG_ReloadCounter():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_iwdg.h:155
+  * @param  IWDGx IWDG Instance
+  * @retval None
+  */
+__STATIC_INLINE void LL_IWDG_ReloadCounter(IWDG_TypeDef *IWDGx)
+{
+  WRITE_REG(IWDGx->KR, LL_IWDG_KEY_RELOAD);
+ 8002bfc:	ldr	r1, [pc, #104]	@ (8002c68 <playInputTune+0x74>)
+playInputTune():
+E:\m\robot\esc\AM32/Src/sounds.c:212
+ 8002bfe:	str	r2, [r3, #44]	@ 0x2c
+LL_IWDG_ReloadCounter():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_iwdg.h:155
+ 8002c00:	ldr	r2, [pc, #104]	@ (8002c6c <playInputTune+0x78>)
+ 8002c02:	str	r1, [r2, #0]
+playInputTune():
+E:\m\robot\esc\AM32/Src/sounds.c:214
+    RELOAD_WATCHDOG_COUNTER();
+    SET_PRESCALER_PWM(80);
+ 8002c04:	movs	r2, #80	@ 0x50
+ 8002c06:	str	r2, [r3, #40]	@ 0x28
+bench_pwm_cap():
+E:\m\robot\esc\AM32/Mcu/g071/Inc/peripherals.h:28
+#define SET_INTERVAL_TIMER_COUNT(intertime) (INTERVAL_TIMER->CNT = intertime)
+#define SET_PRESCALER_PWM(presc) (TIM1->PSC = presc)
+#define SET_AUTO_RELOAD_PWM(relval) (TIM1->ARR = relval)
+#ifdef DRV8304H_G071
+static inline uint16_t bench_pwm_cap(uint16_t duty) {
+    uint32_t cap = ((TIM1->ARR + 1u) * 3u) / 10u; // Operator's hard 30% ceiling.
+ 8002c08:	ldr	r0, [r3, #44]	@ 0x2c
+ 8002c0a:	movs	r1, #10
+ 8002c0c:	adds	r0, #1
+ 8002c0e:	lsls	r3, r0, #1
+ 8002c10:	adds	r0, r3, r0
+ 8002c12:	bl	80000c0 <__udivsi3>
+setCaptureCompare():
+E:\m\robot\esc\AM32/Src/sounds.c:41
+    SET_DUTY_CYCLE_ALL(beep_volume); // volume of the beep, (duty cycle)
+ 8002c16:	ldr	r3, [pc, #88]	@ (8002c70 <playInputTune+0x7c>)
+bench_pwm_cap():
+E:\m\robot\esc\AM32/Mcu/g071/Inc/peripherals.h:29
+    return duty > cap ? (uint16_t)cap : duty;
+ 8002c18:	ldrb	r3, [r3, #0]
+ 8002c1a:	cmp	r0, r3
+ 8002c1c:	bls.n	8002c20 <playInputTune+0x2c>
+ 8002c1e:	movs	r0, r3
+bench_pwm_all():
+E:\m\robot\esc\AM32/Mcu/g071/Inc/peripherals.h:33
+}
+static inline void bench_pwm_all(uint16_t duty) {
+    uint16_t capped = bench_pwm_cap(duty);
+    TIM1->CCR1 = capped; TIM1->CCR2 = capped; TIM1->CCR3 = capped;
+ 8002c20:	ldr	r4, [pc, #60]	@ (8002c60 <playInputTune+0x6c>)
+ 8002c22:	str	r0, [r4, #52]	@ 0x34
+ 8002c24:	str	r0, [r4, #56]	@ 0x38
+ 8002c26:	str	r0, [r4, #60]	@ 0x3c
+playInputTune():
+E:\m\robot\esc\AM32/Src/sounds.c:216
+    setCaptureCompare();
+    comStep(3);
+ 8002c28:	movs	r0, #3
+ 8002c2a:	bl	800562c <comStep>
+E:\m\robot\esc\AM32/Src/sounds.c:217
+    delayMillis(100);
+ 8002c2e:	movs	r0, #100	@ 0x64
+ 8002c30:	bl	8000454 <delayMillis>
+E:\m\robot\esc\AM32/Src/sounds.c:218
+    SET_PRESCALER_PWM(70);
+ 8002c34:	movs	r3, #70	@ 0x46
+E:\m\robot\esc\AM32/Src/sounds.c:219
+    delayMillis(100);
+ 8002c36:	movs	r0, #100	@ 0x64
+E:\m\robot\esc\AM32/Src/sounds.c:218
+    SET_PRESCALER_PWM(70);
+ 8002c38:	str	r3, [r4, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/sounds.c:219
+    delayMillis(100);
+ 8002c3a:	bl	8000454 <delayMillis>
+E:\m\robot\esc\AM32/Src/sounds.c:220
+    SET_PRESCALER_PWM(40);
+ 8002c3e:	movs	r3, #40	@ 0x28
+E:\m\robot\esc\AM32/Src/sounds.c:221
+    delayMillis(100);
+ 8002c40:	movs	r0, #100	@ 0x64
+E:\m\robot\esc\AM32/Src/sounds.c:220
+    SET_PRESCALER_PWM(40);
+ 8002c42:	str	r3, [r4, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/sounds.c:221
+    delayMillis(100);
+ 8002c44:	bl	8000454 <delayMillis>
+E:\m\robot\esc\AM32/Src/sounds.c:222
+    allOff();
+ 8002c48:	bl	80055a4 <allOff>
+E:\m\robot\esc\AM32/Src/sounds.c:223
+    SET_PRESCALER_PWM(0);
+ 8002c4c:	movs	r3, #0
+E:\m\robot\esc\AM32/Src/sounds.c:224
+    signaltimeout = 0;
+ 8002c4e:	ldr	r2, [pc, #36]	@ (8002c74 <playInputTune+0x80>)
+E:\m\robot\esc\AM32/Src/sounds.c:223
+    SET_PRESCALER_PWM(0);
+ 8002c50:	str	r3, [r4, #40]	@ 0x28
+E:\m\robot\esc\AM32/Src/sounds.c:224
+    signaltimeout = 0;
+ 8002c52:	strh	r3, [r2, #0]
+E:\m\robot\esc\AM32/Src/sounds.c:225
+    SET_AUTO_RELOAD_PWM(TIMER1_MAX_ARR);
+ 8002c54:	ldr	r3, [pc, #32]	@ (8002c78 <playInputTune+0x84>)
+ 8002c56:	ldrh	r3, [r3, #0]
+ 8002c58:	str	r3, [r4, #44]	@ 0x2c
+__enable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:131
+  __ASM volatile ("cpsie i" : : : "memory");
+ 8002c5a:	cpsie	i
+playInputTune():
+E:\m\robot\esc\AM32/Src/sounds.c:227
+    __enable_irq();
+}
+ 8002c5c:	pop	{r4, pc}
+ 8002c5e:	nop			@ (mov r8, r8)
+ 8002c60:	.word	0x40012c00
+ 8002c64:	.word	0x00000a69
+ 8002c68:	.word	0x0000aaaa
+ 8002c6c:	.word	0x40003000
+ 8002c70:	.word	0x20000745
+ 8002c74:	.word	0x200004f6
+ 8002c78:	.word	0x20000000
+
+; ===================== delayMillis =====================
+<delayMillis>:
+delayMillis():
+E:\m\robot\esc\AM32/Src/functions.c:82
+
+/*
+  delay in millis, convenience wrapper around delayMicros
+ */
+void delayMillis(uint32_t millis)
+{
+ 8000454:	push	{r4, lr}
+E:\m\robot\esc\AM32/Src/functions.c:83
+    while (millis-- > 0) {
+ 8000456:	subs	r4, r0, #1
+ 8000458:	cmp	r0, #0
+ 800045a:	beq.n	8000474 <delayMillis+0x20>
+delayMicros():
+E:\m\robot\esc\AM32/Src/functions.c:74
+    while ((uint16_t)(get_timer_us16() - cval_start) < (uint16_t)micros) {
+ 800045c:	movs	r0, #250	@ 0xfa
+get_timer_us16():
+E:\m\robot\esc\AM32/Src/functions.c:56
+    return UTILITY_TIMER->CNT;
+ 800045e:	ldr	r1, [pc, #24]	@ (8000478 <delayMillis+0x24>)
+delayMicros():
+E:\m\robot\esc\AM32/Src/functions.c:74
+    while ((uint16_t)(get_timer_us16() - cval_start) < (uint16_t)micros) {
+ 8000460:	lsls	r0, r0, #2
+get_timer_us16():
+E:\m\robot\esc\AM32/Src/functions.c:56
+    return UTILITY_TIMER->CNT;
+ 8000462:	ldr	r2, [r1, #36]	@ 0x24
+ 8000464:	uxth	r2, r2
+ 8000466:	ldr	r3, [r1, #36]	@ 0x24
+delayMicros():
+E:\m\robot\esc\AM32/Src/functions.c:74
+    while ((uint16_t)(get_timer_us16() - cval_start) < (uint16_t)micros) {
+ 8000468:	subs	r3, r3, r2
+ 800046a:	uxth	r3, r3
+ 800046c:	cmp	r3, r0
+ 800046e:	bcc.n	8000466 <delayMillis+0x12>
+delayMillis():
+E:\m\robot\esc\AM32/Src/functions.c:83
+    while (millis-- > 0) {
+ 8000470:	subs	r4, #1
+ 8000472:	bcs.n	8000462 <delayMillis+0xe>
+E:\m\robot\esc\AM32/Src/functions.c:86
+        delayMicros(1000UL);
+    }
+}
+ 8000474:	pop	{r4, pc}
+ 8000476:	nop			@ (mov r8, r8)
+ 8000478:	.word	0x40014800
+
+; ===================== maskPhaseInterrupts =====================
+<maskPhaseInterrupts>:
+maskPhaseInterrupts():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:21
+
+uint8_t getCompOutputLevel() { return (active_COMP->CSR >> 30 & 1); }
+
+void maskPhaseInterrupts()
+{
+    EXTI->IMR1 &= ~(1 << 18);
+ 80053c4:	movs	r1, #128	@ 0x80
+ 80053c6:	ldr	r3, [pc, #20]	@ (80053dc <maskPhaseInterrupts+0x18>)
+ 80053c8:	ldr	r0, [pc, #20]	@ (80053e0 <maskPhaseInterrupts+0x1c>)
+ 80053ca:	ldr	r2, [r3, r1]
+ 80053cc:	ands	r2, r0
+ 80053ce:	str	r2, [r3, r1]
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:22
+    EXTI->RPR1 = EXTI_LINE;
+ 80053d0:	movs	r2, #128	@ 0x80
+ 80053d2:	lsls	r2, r2, #11
+ 80053d4:	str	r2, [r3, #12]
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:23
+    EXTI->FPR1 = EXTI_LINE;
+ 80053d6:	str	r2, [r3, #16]
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:29
+#ifdef N_VARIANT
+    EXTI->IMR1 &= ~(1 << 17);
+    LL_EXTI_ClearRisingFlag_0_31(LL_EXTI_LINE_17);
+    LL_EXTI_ClearFallingFlag_0_31(LL_EXTI_LINE_17);
+#endif
+}
+ 80053d8:	bx	lr
+ 80053da:	nop			@ (mov r8, r8)
+ 80053dc:	.word	0x40021800
+ 80053e0:	.word	0xfffbffff
+
+; ===================== getCompOutputLevel =====================
+<getCompOutputLevel>:
+getCompOutputLevel():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:17
+
+COMP_TypeDef* active_COMP = COMP2;
+uint32_t current_EXTI_LINE = LL_EXTI_LINE_18;
+uint8_t medium_speed_set;
+
+uint8_t getCompOutputLevel() { return (active_COMP->CSR >> 30 & 1); }
+ 80053b4:	ldr	r3, [pc, #8]	@ (80053c0 <getCompOutputLevel+0xc>)
+ 80053b6:	ldr	r3, [r3, #0]
+ 80053b8:	ldr	r0, [r3, #0]
+ 80053ba:	lsls	r0, r0, #1
+ 80053bc:	lsrs	r0, r0, #31
+ 80053be:	bx	lr
+ 80053c0:	.word	0x200003d8
+
+; ===================== zcfoundroutine =====================
+<zcfoundroutine>:
+zcfoundroutine():
+E:\m\robot\esc\AM32/Src/main.c:2023
+#endif
+}
+
+void zcfoundroutine()
+{ // only used in polling mode, blocking routine.
+    thiszctime = INTERVAL_TIMER_COUNT;
+ 8001288:	movs	r1, #128	@ 0x80
+ 800128a:	movs	r2, #90	@ 0x5a
+ 800128c:	lsls	r1, r1, #23
+ 800128e:	ldr	r3, [r1, #36]	@ 0x24
+E:\m\robot\esc\AM32/Src/main.c:2022
+{ // only used in polling mode, blocking routine.
+ 8001290:	push	{r4, r5, r6, lr}
+E:\m\robot\esc\AM32/Src/main.c:2023
+    thiszctime = INTERVAL_TIMER_COUNT;
+ 8001292:	ldr	r4, [pc, #152]	@ (800132c <zcfoundroutine+0xa4>)
+ 8001294:	uxth	r3, r3
+ 8001296:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:2024
+    SET_INTERVAL_TIMER_COUNT(0);
+ 8001298:	movs	r3, #0
+E:\m\robot\esc\AM32/Src/main.c:2025
+    commutation_interval = (thiszctime + (3 * commutation_interval)) / 4;
+ 800129a:	ldr	r5, [pc, #148]	@ (8001330 <zcfoundroutine+0xa8>)
+E:\m\robot\esc\AM32/Src/main.c:2024
+    SET_INTERVAL_TIMER_COUNT(0);
+ 800129c:	str	r3, [r1, #36]	@ 0x24
+E:\m\robot\esc\AM32/Src/main.c:2025
+    commutation_interval = (thiszctime + (3 * commutation_interval)) / 4;
+ 800129e:	ldrh	r0, [r4, r2]
+ 80012a0:	ldr	r2, [r5, #88]	@ 0x58
+E:\m\robot\esc\AM32/Src/main.c:2026
+    advance = (temp_advance * commutation_interval) >> 6; //   7.5 degree increments
+ 80012a2:	ldr	r6, [pc, #144]	@ (8001334 <zcfoundroutine+0xac>)
+E:\m\robot\esc\AM32/Src/main.c:2025
+    commutation_interval = (thiszctime + (3 * commutation_interval)) / 4;
+ 80012a4:	lsls	r3, r2, #1
+ 80012a6:	adds	r3, r3, r2
+E:\m\robot\esc\AM32/Src/main.c:2026
+    advance = (temp_advance * commutation_interval) >> 6; //   7.5 degree increments
+ 80012a8:	movs	r2, #36	@ 0x24
+E:\m\robot\esc\AM32/Src/main.c:2025
+    commutation_interval = (thiszctime + (3 * commutation_interval)) / 4;
+ 80012aa:	adds	r3, r3, r0
+ 80012ac:	lsrs	r3, r3, #2
+ 80012ae:	str	r3, [r5, #88]	@ 0x58
+E:\m\robot\esc\AM32/Src/main.c:2026
+    advance = (temp_advance * commutation_interval) >> 6; //   7.5 degree increments
+ 80012b0:	ldr	r3, [r5, #88]	@ 0x58
+ 80012b2:	ldrb	r2, [r6, r2]
+E:\m\robot\esc\AM32/Src/main.c:2028
+    waitTime = commutation_interval / 2 - advance;
+    while ((INTERVAL_TIMER_COUNT) < (waitTime)) {
+ 80012b4:	movs	r0, #96	@ 0x60
+E:\m\robot\esc\AM32/Src/main.c:2026
+    advance = (temp_advance * commutation_interval) >> 6; //   7.5 degree increments
+ 80012b6:	muls	r3, r2
+ 80012b8:	movs	r2, #94	@ 0x5e
+ 80012ba:	lsrs	r3, r3, #6
+ 80012bc:	uxth	r3, r3
+ 80012be:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:2027
+    waitTime = commutation_interval / 2 - advance;
+ 80012c0:	ldr	r2, [r5, #88]	@ 0x58
+ 80012c2:	lsrs	r2, r2, #1
+ 80012c4:	subs	r3, r2, r3
+ 80012c6:	movs	r2, #96	@ 0x60
+ 80012c8:	uxth	r3, r3
+ 80012ca:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:2028
+    while ((INTERVAL_TIMER_COUNT) < (waitTime)) {
+ 80012cc:	b.n	80012d4 <zcfoundroutine+0x4c>
+E:\m\robot\esc\AM32/Src/main.c:2029
+        if (zero_crosses < 5) {
+ 80012ce:	ldr	r3, [r4, #68]	@ 0x44
+ 80012d0:	cmp	r3, #4
+ 80012d2:	bls.n	80012dc <zcfoundroutine+0x54>
+E:\m\robot\esc\AM32/Src/main.c:2028
+    while ((INTERVAL_TIMER_COUNT) < (waitTime)) {
+ 80012d4:	ldr	r2, [r1, #36]	@ 0x24
+ 80012d6:	ldrh	r3, [r4, r0]
+ 80012d8:	cmp	r2, r3
+ 80012da:	bcc.n	80012ce <zcfoundroutine+0x46>
+E:\m\robot\esc\AM32/Src/main.c:2037
+    }
+#ifdef MCU_GDE23
+    TIMER_CAR(COM_TIMER) = waitTime;
+#endif
+#ifdef STMICRO
+    COM_TIMER->ARR = waitTime;
+ 80012dc:	movs	r3, #96	@ 0x60
+ 80012de:	ldrh	r3, [r4, r3]
+ 80012e0:	ldr	r2, [pc, #84]	@ (8001338 <zcfoundroutine+0xb0>)
+ 80012e2:	uxth	r3, r3
+ 80012e4:	str	r3, [r2, #44]	@ 0x2c
+E:\m\robot\esc\AM32/Src/main.c:2042
+#endif
+#ifdef MCU_AT32
+		COM_TIMER->pr = waitTime;
+#endif
+    commutate();
+ 80012e6:	bl	80009b8 <commutate>
+E:\m\robot\esc\AM32/Src/main.c:2046
+#ifdef ZC_TRACE
+    zct_write();
+#endif
+    bemfcounter = 0;
+ 80012ea:	movs	r3, #0
+ 80012ec:	movs	r2, #32
+E:\m\robot\esc\AM32/Src/main.c:2056
+       if (zero_crosses > 2) {
+            old_routine = 0;
+            enableCompInterrupts(); // enable interrupt
+        }
+#else
+    if (eepromBuffer.stall_protection || eepromBuffer.rc_car_reverse) {
+ 80012ee:	movs	r1, #38	@ 0x26
+E:\m\robot\esc\AM32/Src/main.c:2046
+    bemfcounter = 0;
+ 80012f0:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:2047
+    bad_count = 0;
+ 80012f2:	adds	r2, #1
+ 80012f4:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:2049
+    zero_crosses++;
+ 80012f6:	ldr	r3, [r4, #68]	@ 0x44
+E:\m\robot\esc\AM32/Src/main.c:2056
+    if (eepromBuffer.stall_protection || eepromBuffer.rc_car_reverse) {
+ 80012f8:	ldr	r2, [pc, #64]	@ (800133c <zcfoundroutine+0xb4>)
+E:\m\robot\esc\AM32/Src/main.c:2049
+    zero_crosses++;
+ 80012fa:	adds	r3, #1
+ 80012fc:	str	r3, [r4, #68]	@ 0x44
+E:\m\robot\esc\AM32/Src/main.c:2056
+    if (eepromBuffer.stall_protection || eepromBuffer.rc_car_reverse) {
+ 80012fe:	ldrb	r3, [r2, #29]
+ 8001300:	ldrb	r2, [r2, r1]
+ 8001302:	orrs	r3, r2
+ 8001304:	bne.n	8001310 <zcfoundroutine+0x88>
+E:\m\robot\esc\AM32/Src/main.c:2062
+        if (zero_crosses >= 20 && commutation_interval <= 2000) {
+            old_routine = 0;
+            enableCompInterrupts(); // enable interrupt
+        }
+    } else {
+       if (commutation_interval < polling_mode_changeover) {
+ 8001306:	ldr	r2, [r5, #88]	@ 0x58
+ 8001308:	ldr	r3, [r6, #44]	@ 0x2c
+ 800130a:	cmp	r2, r3
+ 800130c:	bcc.n	8001320 <zcfoundroutine+0x98>
+E:\m\robot\esc\AM32/Src/main.c:2068
+            old_routine = 0;
+            enableCompInterrupts(); // enable interrupt
+        }
+    }
+ #endif
+}
+ 800130e:	pop	{r4, r5, r6, pc}
+E:\m\robot\esc\AM32/Src/main.c:2057
+        if (zero_crosses >= 20 && commutation_interval <= 2000) {
+ 8001310:	ldr	r3, [r4, #68]	@ 0x44
+ 8001312:	cmp	r3, #19
+ 8001314:	bls.n	800130e <zcfoundroutine+0x86>
+E:\m\robot\esc\AM32/Src/main.c:2057 (discriminator 1)
+ 8001316:	movs	r3, #250	@ 0xfa
+ 8001318:	ldr	r2, [r5, #88]	@ 0x58
+ 800131a:	lsls	r3, r3, #3
+ 800131c:	cmp	r2, r3
+ 800131e:	bhi.n	800130e <zcfoundroutine+0x86>
+E:\m\robot\esc\AM32/Src/main.c:2058
+            old_routine = 0;
+ 8001320:	movs	r3, #84	@ 0x54
+ 8001322:	movs	r2, #0
+ 8001324:	strb	r2, [r5, r3]
+E:\m\robot\esc\AM32/Src/main.c:2059
+            enableCompInterrupts(); // enable interrupt
+ 8001326:	bl	80053e4 <enableCompInterrupts>
+ 800132a:	b.n	800130e <zcfoundroutine+0x86>
+ 800132c:	.word	0x20000460
+ 8001330:	.word	0x20000000
+ 8001334:	.word	0x200003e0
+ 8001338:	.word	0x40002000
+ 800133c:	.word	0x20000630
+
+; ===================== comStep =====================
+<comStep>:
+comStep():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:297
+    phaseBFLOAT();
+    phaseCFLOAT();
+}
+
+void comStep(int newStep)
+{
+ 800562c:	push	{r4, lr}
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:298
+    switch (newStep) {
+ 800562e:	cmp	r0, #6
+ 8005630:	bhi.n	80056b4 <comStep+0x88>
+ 8005632:	ldr	r3, [pc, #696]	@ (80058ec <comStep+0x2c0>)
+ 8005634:	lsls	r0, r0, #2
+ 8005636:	ldr	r3, [r3, r0]
+ 8005638:	mov	pc, r3
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  *         @arg @ref LL_GPIO_MODE_ANALOG
+  * @retval None
+  */
+__STATIC_INLINE void LL_GPIO_SetPinMode(GPIO_TypeDef *GPIOx, uint32_t Pin, uint32_t Mode)
+{
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 800563a:	movs	r1, #3
+ 800563c:	ldr	r2, [pc, #688]	@ (80058f0 <comStep+0x2c4>)
+ 800563e:	ldr	r0, [pc, #692]	@ (80058f4 <comStep+0x2c8>)
+ 8005640:	ldr	r3, [r2, #0]
+ 8005642:	bics	r3, r1
+ 8005644:	subs	r1, #2
+ 8005646:	orrs	r3, r1
+ 8005648:	str	r3, [r2, #0]
+ 800564a:	movs	r3, #160	@ 0xa0
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:79
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_B_GPIO_LOW;
+ 800564c:	str	r1, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800564e:	lsls	r3, r3, #23
+ 8005650:	ldr	r1, [r3, #0]
+ 8005652:	ands	r0, r1
+ 8005654:	movs	r1, #128	@ 0x80
+ 8005656:	lsls	r1, r1, #11
+ 8005658:	orrs	r1, r0
+ 800565a:	str	r1, [r3, #0]
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:82
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 800565c:	movs	r1, #128	@ 0x80
+ 800565e:	lsls	r1, r1, #2
+ 8005660:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005662:	ldr	r1, [r3, #0]
+ 8005664:	ldr	r0, [pc, #656]	@ (80058f8 <comStep+0x2cc>)
+ 8005666:	ands	r0, r1
+ 8005668:	movs	r1, #128	@ 0x80
+ 800566a:	lsls	r1, r1, #7
+ 800566c:	orrs	r1, r0
+ 800566e:	str	r1, [r3, #0]
+phaseCLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:128
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_C_GPIO_LOW;
+ 8005670:	movs	r1, #128	@ 0x80
+ 8005672:	str	r1, [r3, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005674:	ldr	r1, [r3, #0]
+ 8005676:	ldr	r0, [pc, #644]	@ (80058fc <comStep+0x2d0>)
+ 8005678:	ands	r0, r1
+ 800567a:	movs	r1, #128	@ 0x80
+ 800567c:	lsls	r1, r1, #9
+ 800567e:	orrs	r1, r0
+ 8005680:	str	r1, [r3, #0]
+phaseCLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:131
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 8005682:	movs	r1, #128	@ 0x80
+ 8005684:	lsls	r1, r1, #1
+ 8005686:	str	r1, [r3, #40]	@ 0x28
+phaseAPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:139
+    if (!eepromBuffer.comp_pwm) {
+ 8005688:	ldr	r3, [pc, #628]	@ (8005900 <comStep+0x2d4>)
+ 800568a:	ldrb	r3, [r3, #20]
+ 800568c:	cmp	r3, #0
+ 800568e:	beq.n	8005692 <comStep+0x66>
+ 8005690:	b.n	80058ce <comStep+0x2a2>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005692:	ldr	r3, [r2, #0]
+ 8005694:	subs	r1, #244	@ 0xf4
+ 8005696:	bics	r3, r1
+ 8005698:	subs	r1, #8
+ 800569a:	orrs	r3, r1
+ 800569c:	str	r3, [r2, #0]
+phaseAPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:142
+        PHASE_A_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_A_GPIO_LOW;
+ 800569e:	movs	r3, #2
+ 80056a0:	str	r3, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056a2:	movs	r1, #160	@ 0xa0
+ 80056a4:	lsls	r1, r1, #23
+ 80056a6:	ldr	r3, [r1, #0]
+ 80056a8:	ldr	r2, [pc, #600]	@ (8005904 <comStep+0x2d8>)
+ 80056aa:	ands	r2, r3
+ 80056ac:	movs	r3, #128	@ 0x80
+ 80056ae:	lsls	r3, r3, #14
+ 80056b0:	orrs	r3, r2
+ 80056b2:	str	r3, [r1, #0]
+comStep():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:335
+        phaseBFLOAT();
+        phaseCLOW();
+        phaseAPWM();
+        break;
+    }
+}
+ 80056b4:	pop	{r4, pc}
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056b6:	movs	r3, #160	@ 0xa0
+ 80056b8:	lsls	r3, r3, #23
+ 80056ba:	ldr	r2, [r3, #0]
+ 80056bc:	ldr	r1, [pc, #568]	@ (80058f8 <comStep+0x2cc>)
+ 80056be:	movs	r0, #3
+ 80056c0:	ands	r1, r2
+ 80056c2:	movs	r2, #128	@ 0x80
+ 80056c4:	lsls	r2, r2, #7
+ 80056c6:	orrs	r2, r1
+ 80056c8:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:118
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_C_GPIO_LOW;
+ 80056ca:	movs	r2, #128	@ 0x80
+ 80056cc:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056ce:	ldr	r2, [r3, #0]
+ 80056d0:	ldr	r1, [pc, #552]	@ (80058fc <comStep+0x2d0>)
+ 80056d2:	ands	r1, r2
+ 80056d4:	movs	r2, #128	@ 0x80
+ 80056d6:	lsls	r2, r2, #9
+ 80056d8:	orrs	r2, r1
+ 80056da:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:121
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 80056dc:	movs	r2, #128	@ 0x80
+ 80056de:	lsls	r2, r2, #1
+ 80056e0:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056e2:	ldr	r2, [pc, #524]	@ (80058f0 <comStep+0x2c4>)
+ 80056e4:	ldr	r1, [r2, #0]
+ 80056e6:	bics	r1, r0
+ 80056e8:	subs	r0, #2
+ 80056ea:	orrs	r1, r0
+ 80056ec:	str	r1, [r2, #0]
+phaseBLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:90
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_B_GPIO_LOW;
+ 80056ee:	str	r0, [r2, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056f0:	ldr	r1, [r3, #0]
+ 80056f2:	ldr	r0, [pc, #512]	@ (80058f4 <comStep+0x2c8>)
+ 80056f4:	ands	r0, r1
+ 80056f6:	movs	r1, #128	@ 0x80
+ 80056f8:	lsls	r1, r1, #11
+ 80056fa:	orrs	r1, r0
+ 80056fc:	str	r1, [r3, #0]
+phaseBLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:93
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 80056fe:	movs	r1, #128	@ 0x80
+ 8005700:	lsls	r1, r1, #2
+ 8005702:	str	r1, [r3, #40]	@ 0x28
+phaseAPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:139
+    if (!eepromBuffer.comp_pwm) {
+ 8005704:	ldr	r3, [pc, #504]	@ (8005900 <comStep+0x2d4>)
+ 8005706:	ldrb	r3, [r3, #20]
+ 8005708:	cmp	r3, #0
+ 800570a:	beq.n	800570e <comStep+0xe2>
+ 800570c:	b.n	80058ce <comStep+0x2a2>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800570e:	subs	r1, #245	@ 0xf5
+ 8005710:	ldr	r3, [r2, #0]
+ 8005712:	subs	r1, #255	@ 0xff
+ 8005714:	b.n	8005696 <comStep+0x6a>
+ 8005716:	movs	r1, #12
+ 8005718:	ldr	r2, [pc, #468]	@ (80058f0 <comStep+0x2c4>)
+ 800571a:	ldr	r0, [pc, #488]	@ (8005904 <comStep+0x2d8>)
+ 800571c:	ldr	r3, [r2, #0]
+ 800571e:	bics	r3, r1
+ 8005720:	subs	r1, #8
+ 8005722:	orrs	r3, r1
+ 8005724:	str	r3, [r2, #0]
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:155
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_A_GPIO_LOW;
+ 8005726:	movs	r3, #2
+ 8005728:	str	r3, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800572a:	movs	r3, #160	@ 0xa0
+ 800572c:	lsls	r3, r3, #23
+ 800572e:	ldr	r1, [r3, #0]
+ 8005730:	ands	r0, r1
+ 8005732:	movs	r1, #128	@ 0x80
+ 8005734:	lsls	r1, r1, #13
+ 8005736:	orrs	r1, r0
+ 8005738:	str	r1, [r3, #0]
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:158
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 800573a:	movs	r1, #128	@ 0x80
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800573c:	movs	r0, #3
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:158
+ 800573e:	lsls	r1, r1, #3
+ 8005740:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005742:	ldr	r1, [r2, #0]
+ 8005744:	bics	r1, r0
+ 8005746:	subs	r0, #2
+ 8005748:	orrs	r1, r0
+ 800574a:	str	r1, [r2, #0]
+phaseBLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:90
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_B_GPIO_LOW;
+ 800574c:	str	r0, [r2, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800574e:	ldr	r2, [r3, #0]
+ 8005750:	ldr	r1, [pc, #416]	@ (80058f4 <comStep+0x2c8>)
+ 8005752:	ands	r1, r2
+ 8005754:	movs	r2, #128	@ 0x80
+ 8005756:	lsls	r2, r2, #11
+ 8005758:	orrs	r2, r1
+ 800575a:	str	r2, [r3, #0]
+phaseBLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:93
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 800575c:	movs	r2, #128	@ 0x80
+ 800575e:	lsls	r2, r2, #2
+ 8005760:	str	r2, [r3, #40]	@ 0x28
+phaseCPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:101
+    if (!eepromBuffer.comp_pwm) {
+ 8005762:	ldr	r2, [pc, #412]	@ (8005900 <comStep+0x2d4>)
+ 8005764:	ldrb	r2, [r2, #20]
+ 8005766:	cmp	r2, #0
+ 8005768:	bne.n	80057e4 <comStep+0x1b8>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800576a:	ldr	r2, [r3, #0]
+ 800576c:	ldr	r1, [pc, #392]	@ (80058f8 <comStep+0x2cc>)
+ 800576e:	ands	r1, r2
+ 8005770:	movs	r2, #128	@ 0x80
+ 8005772:	lsls	r2, r2, #7
+ 8005774:	orrs	r2, r1
+ 8005776:	str	r2, [r3, #0]
+phaseCPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:104
+        PHASE_C_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_C_GPIO_LOW;
+ 8005778:	movs	r2, #128	@ 0x80
+ 800577a:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800577c:	movs	r1, #160	@ 0xa0
+ 800577e:	lsls	r1, r1, #23
+ 8005780:	ldr	r3, [r1, #0]
+ 8005782:	ldr	r2, [pc, #376]	@ (80058fc <comStep+0x2d0>)
+ 8005784:	ands	r2, r3
+ 8005786:	movs	r3, #128	@ 0x80
+ 8005788:	lsls	r3, r3, #10
+ 800578a:	orrs	r3, r2
+ 800578c:	str	r3, [r1, #0]
+phaseCPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:111
+}
+ 800578e:	b.n	80056b4 <comStep+0x88>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005790:	movs	r1, #3
+ 8005792:	ldr	r2, [pc, #348]	@ (80058f0 <comStep+0x2c4>)
+ 8005794:	ldr	r0, [pc, #348]	@ (80058f4 <comStep+0x2c8>)
+ 8005796:	ldr	r3, [r2, #0]
+ 8005798:	bics	r3, r1
+ 800579a:	subs	r1, #2
+ 800579c:	orrs	r3, r1
+ 800579e:	str	r3, [r2, #0]
+ 80057a0:	movs	r3, #160	@ 0xa0
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:79
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_B_GPIO_LOW;
+ 80057a2:	str	r1, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057a4:	lsls	r3, r3, #23
+ 80057a6:	ldr	r1, [r3, #0]
+ 80057a8:	ands	r0, r1
+ 80057aa:	movs	r1, #128	@ 0x80
+ 80057ac:	lsls	r1, r1, #11
+ 80057ae:	orrs	r1, r0
+ 80057b0:	str	r1, [r3, #0]
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:82
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 80057b2:	movs	r1, #128	@ 0x80
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057b4:	movs	r0, #12
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:82
+ 80057b6:	lsls	r1, r1, #2
+ 80057b8:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057ba:	ldr	r1, [r2, #0]
+ 80057bc:	bics	r1, r0
+ 80057be:	subs	r0, #8
+ 80057c0:	orrs	r1, r0
+ 80057c2:	str	r1, [r2, #0]
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:165
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_A_GPIO_LOW;
+ 80057c4:	movs	r1, #2
+ 80057c6:	str	r1, [r2, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057c8:	ldr	r2, [r3, #0]
+ 80057ca:	ldr	r1, [pc, #312]	@ (8005904 <comStep+0x2d8>)
+ 80057cc:	ands	r1, r2
+ 80057ce:	movs	r2, #128	@ 0x80
+ 80057d0:	lsls	r2, r2, #13
+ 80057d2:	orrs	r2, r1
+ 80057d4:	str	r2, [r3, #0]
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:168
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 80057d6:	movs	r2, #128	@ 0x80
+ 80057d8:	lsls	r2, r2, #3
+ 80057da:	str	r2, [r3, #40]	@ 0x28
+phaseCPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:101
+    if (!eepromBuffer.comp_pwm) {
+ 80057dc:	ldr	r2, [pc, #288]	@ (8005900 <comStep+0x2d4>)
+ 80057de:	ldrb	r2, [r2, #20]
+ 80057e0:	cmp	r2, #0
+ 80057e2:	beq.n	800576a <comStep+0x13e>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057e4:	ldr	r2, [r3, #0]
+ 80057e6:	ldr	r1, [pc, #272]	@ (80058f8 <comStep+0x2cc>)
+ 80057e8:	ands	r1, r2
+ 80057ea:	movs	r2, #128	@ 0x80
+ 80057ec:	lsls	r2, r2, #8
+ 80057ee:	orrs	r2, r1
+ 80057f0:	str	r2, [r3, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:282
+}
+ 80057f2:	b.n	800577c <comStep+0x150>
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 80057f4:	movs	r3, #160	@ 0xa0
+ 80057f6:	lsls	r3, r3, #23
+ 80057f8:	ldr	r2, [r3, #0]
+ 80057fa:	ldr	r1, [pc, #252]	@ (80058f8 <comStep+0x2cc>)
+ 80057fc:	movs	r0, #12
+ 80057fe:	ands	r1, r2
+ 8005800:	movs	r2, #128	@ 0x80
+ 8005802:	lsls	r2, r2, #7
+ 8005804:	orrs	r2, r1
+ 8005806:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:118
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_C_GPIO_LOW;
+ 8005808:	movs	r2, #128	@ 0x80
+ 800580a:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800580c:	ldr	r2, [r3, #0]
+ 800580e:	ldr	r1, [pc, #236]	@ (80058fc <comStep+0x2d0>)
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:165
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_A_GPIO_LOW;
+ 8005810:	movs	r4, #2
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005812:	ands	r1, r2
+ 8005814:	movs	r2, #128	@ 0x80
+ 8005816:	lsls	r2, r2, #9
+ 8005818:	orrs	r2, r1
+ 800581a:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:121
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 800581c:	movs	r2, #128	@ 0x80
+ 800581e:	lsls	r2, r2, #1
+ 8005820:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005822:	ldr	r2, [pc, #204]	@ (80058f0 <comStep+0x2c4>)
+ 8005824:	ldr	r1, [r2, #0]
+ 8005826:	bics	r1, r0
+ 8005828:	subs	r0, #8
+ 800582a:	orrs	r1, r0
+ 800582c:	str	r1, [r2, #0]
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:165
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_A_GPIO_LOW;
+ 800582e:	str	r4, [r2, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005830:	ldr	r1, [r3, #0]
+ 8005832:	ldr	r0, [pc, #208]	@ (8005904 <comStep+0x2d8>)
+ 8005834:	ands	r0, r1
+ 8005836:	movs	r1, #128	@ 0x80
+ 8005838:	lsls	r1, r1, #13
+ 800583a:	orrs	r1, r0
+ 800583c:	str	r1, [r3, #0]
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:168
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 800583e:	movs	r1, #128	@ 0x80
+ 8005840:	lsls	r1, r1, #3
+ 8005842:	str	r1, [r3, #40]	@ 0x28
+phaseBPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:63
+    if (!eepromBuffer.comp_pwm) { // for future
+ 8005844:	ldr	r3, [pc, #184]	@ (8005900 <comStep+0x2d4>)
+ 8005846:	ldrb	r3, [r3, #20]
+ 8005848:	cmp	r3, #0
+ 800584a:	beq.n	80058dc <comStep+0x2b0>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800584c:	movs	r1, #3
+ 800584e:	ldr	r3, [r2, #0]
+ 8005850:	bics	r3, r1
+ 8005852:	orrs	r3, r4
+ 8005854:	str	r3, [r2, #0]
+ 8005856:	movs	r1, #160	@ 0xa0
+ 8005858:	lsls	r1, r1, #23
+ 800585a:	ldr	r3, [r1, #0]
+ 800585c:	ldr	r2, [pc, #148]	@ (80058f4 <comStep+0x2c8>)
+ 800585e:	ands	r2, r3
+ 8005860:	movs	r3, #128	@ 0x80
+ 8005862:	lsls	r3, r3, #12
+ 8005864:	orrs	r3, r2
+ 8005866:	str	r3, [r1, #0]
+phaseBPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:73
+}
+ 8005868:	b.n	80056b4 <comStep+0x88>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800586a:	movs	r1, #12
+ 800586c:	ldr	r2, [pc, #128]	@ (80058f0 <comStep+0x2c4>)
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:155
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_A_GPIO_LOW;
+ 800586e:	movs	r4, #2
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005870:	ldr	r3, [r2, #0]
+ 8005872:	ldr	r0, [pc, #144]	@ (8005904 <comStep+0x2d8>)
+ 8005874:	bics	r3, r1
+ 8005876:	subs	r1, #8
+ 8005878:	orrs	r3, r1
+ 800587a:	str	r3, [r2, #0]
+ 800587c:	movs	r3, #160	@ 0xa0
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:155
+ 800587e:	str	r4, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005880:	lsls	r3, r3, #23
+ 8005882:	ldr	r1, [r3, #0]
+ 8005884:	ands	r0, r1
+ 8005886:	movs	r1, #128	@ 0x80
+ 8005888:	lsls	r1, r1, #13
+ 800588a:	orrs	r1, r0
+ 800588c:	str	r1, [r3, #0]
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:158
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 800588e:	movs	r1, #128	@ 0x80
+ 8005890:	lsls	r1, r1, #3
+ 8005892:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005894:	ldr	r1, [r3, #0]
+ 8005896:	ldr	r0, [pc, #96]	@ (80058f8 <comStep+0x2cc>)
+ 8005898:	ands	r0, r1
+ 800589a:	movs	r1, #128	@ 0x80
+ 800589c:	lsls	r1, r1, #7
+ 800589e:	orrs	r1, r0
+ 80058a0:	str	r1, [r3, #0]
+phaseCLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:128
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_C_GPIO_LOW;
+ 80058a2:	movs	r1, #128	@ 0x80
+ 80058a4:	str	r1, [r3, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80058a6:	ldr	r1, [r3, #0]
+ 80058a8:	ldr	r0, [pc, #80]	@ (80058fc <comStep+0x2d0>)
+ 80058aa:	ands	r0, r1
+ 80058ac:	movs	r1, #128	@ 0x80
+ 80058ae:	lsls	r1, r1, #9
+ 80058b0:	orrs	r1, r0
+ 80058b2:	str	r1, [r3, #0]
+phaseCLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:131
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 80058b4:	movs	r1, #128	@ 0x80
+ 80058b6:	lsls	r1, r1, #1
+ 80058b8:	str	r1, [r3, #40]	@ 0x28
+phaseBPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:63
+    if (!eepromBuffer.comp_pwm) { // for future
+ 80058ba:	ldr	r3, [pc, #68]	@ (8005900 <comStep+0x2d4>)
+ 80058bc:	ldrb	r3, [r3, #20]
+ 80058be:	cmp	r3, #0
+ 80058c0:	beq.n	80058dc <comStep+0x2b0>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80058c2:	movs	r1, #3
+ 80058c4:	ldr	r3, [r2, #0]
+ 80058c6:	bics	r3, r1
+ 80058c8:	orrs	r4, r3
+ 80058ca:	str	r4, [r2, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:282
+}
+ 80058cc:	b.n	8005856 <comStep+0x22a>
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 80058ce:	movs	r1, #12
+ 80058d0:	ldr	r3, [r2, #0]
+ 80058d2:	bics	r3, r1
+ 80058d4:	subs	r1, #4
+ 80058d6:	orrs	r3, r1
+ 80058d8:	str	r3, [r2, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:282
+}
+ 80058da:	b.n	80056a2 <comStep+0x76>
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 80058dc:	movs	r1, #3
+ 80058de:	ldr	r3, [r2, #0]
+ 80058e0:	bics	r3, r1
+ 80058e2:	subs	r1, #2
+ 80058e4:	orrs	r3, r1
+ 80058e6:	str	r3, [r2, #0]
+phaseBPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:66
+        PHASE_B_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_B_GPIO_LOW;
+ 80058e8:	str	r1, [r2, #40]	@ 0x28
+ 80058ea:	b.n	8005856 <comStep+0x22a>
+ 80058ec:	.word	0x08005c64
+ 80058f0:	.word	0x50000400
+ 80058f4:	.word	0xfff3ffff
+ 80058f8:	.word	0xffff3fff
+ 80058fc:	.word	0xfffcffff
+ 8005900:	.word	0x20000630
+ 8005904:	.word	0xffcfffff
+
+; ===================== __aeabi_idiv0 =====================
+<__aeabi_idiv0>:
+__aeabi_ldiv0():
+ 80003a8:	bx	lr
+
+; ===================== allOff =====================
+<allOff>:
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  *         @arg @ref LL_GPIO_MODE_ANALOG
+  * @retval None
+  */
+__STATIC_INLINE void LL_GPIO_SetPinMode(GPIO_TypeDef *GPIOx, uint32_t Pin, uint32_t Mode)
+{
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 80055a4:	movs	r1, #12
+ 80055a6:	ldr	r2, [pc, #112]	@ (8005618 <allOff+0x74>)
+ 80055a8:	ldr	r0, [pc, #112]	@ (800561c <allOff+0x78>)
+ 80055aa:	ldr	r3, [r2, #0]
+ 80055ac:	bics	r3, r1
+ 80055ae:	subs	r1, #8
+ 80055b0:	orrs	r3, r1
+ 80055b2:	str	r3, [r2, #0]
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:155
+
+void phaseAFLOAT()
+{
+    LL_GPIO_SetPinMode(PHASE_A_GPIO_PORT_LOW, PHASE_A_GPIO_LOW,
+        LL_GPIO_MODE_OUTPUT);
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_A_GPIO_LOW;
+ 80055b4:	movs	r3, #2
+ 80055b6:	str	r3, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80055b8:	movs	r3, #160	@ 0xa0
+ 80055ba:	lsls	r3, r3, #23
+ 80055bc:	ldr	r1, [r3, #0]
+ 80055be:	ands	r0, r1
+ 80055c0:	movs	r1, #128	@ 0x80
+ 80055c2:	lsls	r1, r1, #13
+ 80055c4:	orrs	r1, r0
+ 80055c6:	str	r1, [r3, #0]
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:158
+    LL_GPIO_SetPinMode(PHASE_A_GPIO_PORT_HIGH, PHASE_A_GPIO_HIGH,
+        LL_GPIO_MODE_OUTPUT);
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 80055c8:	movs	r1, #128	@ 0x80
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80055ca:	movs	r0, #3
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:158
+ 80055cc:	lsls	r1, r1, #3
+ 80055ce:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80055d0:	ldr	r1, [r2, #0]
+ 80055d2:	bics	r1, r0
+ 80055d4:	subs	r0, #2
+ 80055d6:	orrs	r1, r0
+ 80055d8:	str	r1, [r2, #0]
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:79
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_B_GPIO_LOW;
+ 80055da:	str	r0, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80055dc:	ldr	r2, [r3, #0]
+ 80055de:	ldr	r1, [pc, #64]	@ (8005620 <allOff+0x7c>)
+ 80055e0:	ands	r1, r2
+ 80055e2:	movs	r2, #128	@ 0x80
+ 80055e4:	lsls	r2, r2, #11
+ 80055e6:	orrs	r2, r1
+ 80055e8:	str	r2, [r3, #0]
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:82
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 80055ea:	movs	r2, #128	@ 0x80
+ 80055ec:	lsls	r2, r2, #2
+ 80055ee:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80055f0:	ldr	r2, [r3, #0]
+ 80055f2:	ldr	r1, [pc, #48]	@ (8005624 <allOff+0x80>)
+ 80055f4:	ands	r1, r2
+ 80055f6:	movs	r2, #128	@ 0x80
+ 80055f8:	lsls	r2, r2, #7
+ 80055fa:	orrs	r2, r1
+ 80055fc:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:118
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_C_GPIO_LOW;
+ 80055fe:	movs	r2, #128	@ 0x80
+ 8005600:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005602:	ldr	r2, [r3, #0]
+ 8005604:	ldr	r1, [pc, #32]	@ (8005628 <allOff+0x84>)
+ 8005606:	ands	r1, r2
+ 8005608:	movs	r2, #128	@ 0x80
+ 800560a:	lsls	r2, r2, #9
+ 800560c:	orrs	r2, r1
+ 800560e:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:121
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 8005610:	movs	r2, #128	@ 0x80
+ 8005612:	lsls	r2, r2, #1
+ 8005614:	str	r2, [r3, #40]	@ 0x28
+allOff():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:294
+void allOff()
+{
+    phaseAFLOAT();
+    phaseBFLOAT();
+    phaseCFLOAT();
+}
+ 8005616:	bx	lr
+ 8005618:	.word	0x50000400
+ 800561c:	.word	0xffcfffff
+ 8005620:	.word	0xfff3ffff
+ 8005624:	.word	0xffff3fff
+ 8005628:	.word	0xfffcffff
+
+; ===================== commutate =====================
+<commutate>:
+commutate():
+E:\m\robot\esc\AM32/Src/main.c:883
+    }
+}
+
+void commutate()
+{
+    if (forward == 1) {
+ 80009b8:	movs	r3, #82	@ 0x52
+E:\m\robot\esc\AM32/Src/main.c:882
+{
+ 80009ba:	push	{r4, r5, r6, lr}
+E:\m\robot\esc\AM32/Src/main.c:883
+    if (forward == 1) {
+ 80009bc:	ldr	r5, [pc, #156]	@ (8000a5c <commutate+0xa4>)
+E:\m\robot\esc\AM32/Src/main.c:884
+        step++;
+ 80009be:	movs	r1, #83	@ 0x53
+E:\m\robot\esc\AM32/Src/main.c:883
+    if (forward == 1) {
+ 80009c0:	ldrb	r3, [r5, r3]
+ 80009c2:	cmp	r3, #1
+ 80009c4:	beq.n	8000a40 <commutate+0x88>
+E:\m\robot\esc\AM32/Src/main.c:891
+            step = 1;
+            desync_check = 1;
+        }
+        rising = step % 2;
+    } else {
+        step--;
+ 80009c6:	ldrb	r3, [r5, r1]
+ 80009c8:	subs	r2, r3, #1
+ 80009ca:	uxtb	r2, r2
+E:\m\robot\esc\AM32/Src/main.c:892
+        if (step < 1) {
+ 80009cc:	cmp	r2, #0
+ 80009ce:	beq.n	8000a1a <commutate+0x62>
+E:\m\robot\esc\AM32/Src/main.c:891
+        step--;
+ 80009d0:	strb	r2, [r5, r1]
+ 80009d2:	movs	r2, #1
+ 80009d4:	ldr	r4, [pc, #136]	@ (8000a60 <commutate+0xa8>)
+ 80009d6:	ands	r3, r2
+E:\m\robot\esc\AM32/Src/main.c:896
+            step = 6;
+            desync_check = 1;
+        }
+        rising = !(step % 2);
+ 80009d8:	movs	r2, #80	@ 0x50
+ 80009da:	strb	r3, [r5, r2]
+__disable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:142
+  \details Disables IRQ interrupts by setting the I-bit in the CPSR.
+           Can only be executed in Privileged modes.
+ */
+__STATIC_FORCEINLINE void __disable_irq(void)
+{
+  __ASM volatile ("cpsid i" : : : "memory");
+ 80009dc:	cpsid	i
+commutate():
+E:\m\robot\esc\AM32/Src/main.c:902
+    }
+#ifdef INVERTED_EXTI
+    rising = !rising;
+#endif
+    __disable_irq(); // don't let dshot interrupt
+    if (!prop_brake_active) {
+ 80009de:	movs	r3, #35	@ 0x23
+ 80009e0:	ldrb	r3, [r4, r3]
+ 80009e2:	cmp	r3, #0
+ 80009e4:	beq.n	8000a36 <commutate+0x7e>
+__enable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:131
+  __ASM volatile ("cpsie i" : : : "memory");
+ 80009e6:	cpsie	i
+commutate():
+E:\m\robot\esc\AM32/Src/main.c:906
+        comStep(step);
+    }
+    __enable_irq();
+    changeCompInput();
+ 80009e8:	bl	80053fc <changeCompInput>
+E:\m\robot\esc\AM32/Src/main.c:908
+#ifndef NO_POLLING_START
+	if (average_interval > polling_mode_changeover + 500) {
+ 80009ec:	ldr	r3, [pc, #116]	@ (8000a64 <commutate+0xac>)
+ 80009ee:	ldr	r3, [r3, #44]	@ 0x2c
+ 80009f0:	ldr	r2, [r4, #36]	@ 0x24
+ 80009f2:	adds	r3, #245	@ 0xf5
+ 80009f4:	adds	r3, #255	@ 0xff
+ 80009f6:	cmp	r3, r2
+ 80009f8:	bcs.n	8000a00 <commutate+0x48>
+E:\m\robot\esc\AM32/Src/main.c:909
+      old_routine = 1;
+ 80009fa:	movs	r3, #84	@ 0x54
+ 80009fc:	movs	r2, #1
+ 80009fe:	strb	r2, [r5, r3]
+E:\m\robot\esc\AM32/Src/main.c:912
+   }
+#endif
+    bemfcounter = 0;
+ 8000a00:	movs	r3, #0
+ 8000a02:	movs	r2, #32
+ 8000a04:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:913
+    zcfound = 0;
+ 8000a06:	adds	r2, #8
+ 8000a08:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:914
+    commutation_intervals[step - 1] = commutation_interval; // just used to calulate average
+ 8000a0a:	adds	r3, #83	@ 0x53
+ 8000a0c:	ldrb	r3, [r5, r3]
+ 8000a0e:	ldr	r2, [r5, #88]	@ 0x58
+ 8000a10:	subs	r3, #1
+ 8000a12:	lsls	r3, r3, #1
+ 8000a14:	adds	r4, r4, r3
+ 8000a16:	strh	r2, [r4, #44]	@ 0x2c
+E:\m\robot\esc\AM32/Src/main.c:921
+#ifdef USE_PULSE_OUT
+	if(step == 1 || step == 4  ){
+    WRITE_REG(RPM_PULSE_PORT->ODR, READ_REG(RPM_PULSE_PORT->ODR) ^ RPM_PULSE_PIN);
+	}
+#endif
+}
+ 8000a18:	pop	{r4, r5, r6, pc}
+E:\m\robot\esc\AM32/Src/main.c:893
+            step = 6;
+ 8000a1a:	movs	r3, #6
+E:\m\robot\esc\AM32/Src/main.c:894
+            desync_check = 1;
+ 8000a1c:	movs	r2, #1
+ 8000a1e:	ldr	r4, [pc, #64]	@ (8000a60 <commutate+0xa8>)
+E:\m\robot\esc\AM32/Src/main.c:893
+            step = 6;
+ 8000a20:	strb	r3, [r5, r1]
+E:\m\robot\esc\AM32/Src/main.c:894
+            desync_check = 1;
+ 8000a22:	adds	r3, #28
+ 8000a24:	strb	r2, [r4, r3]
+E:\m\robot\esc\AM32/Src/main.c:896
+        rising = !(step % 2);
+ 8000a26:	movs	r2, #80	@ 0x50
+E:\m\robot\esc\AM32/Src/main.c:894
+            desync_check = 1;
+ 8000a28:	subs	r3, #33	@ 0x21
+E:\m\robot\esc\AM32/Src/main.c:896
+        rising = !(step % 2);
+ 8000a2a:	strb	r3, [r5, r2]
+__disable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:142
+  __ASM volatile ("cpsid i" : : : "memory");
+ 8000a2c:	cpsid	i
+commutate():
+E:\m\robot\esc\AM32/Src/main.c:902
+    if (!prop_brake_active) {
+ 8000a2e:	movs	r3, #35	@ 0x23
+ 8000a30:	ldrb	r3, [r4, r3]
+ 8000a32:	cmp	r3, #0
+ 8000a34:	bne.n	80009e6 <commutate+0x2e>
+E:\m\robot\esc\AM32/Src/main.c:903
+        comStep(step);
+ 8000a36:	adds	r3, #83	@ 0x53
+ 8000a38:	ldrb	r0, [r5, r3]
+ 8000a3a:	bl	800562c <comStep>
+ 8000a3e:	b.n	80009e6 <commutate+0x2e>
+E:\m\robot\esc\AM32/Src/main.c:884
+        step++;
+ 8000a40:	ldrb	r2, [r5, r1]
+ 8000a42:	adds	r2, #1
+ 8000a44:	uxtb	r2, r2
+E:\m\robot\esc\AM32/Src/main.c:885
+        if (step > 6) {
+ 8000a46:	cmp	r2, #6
+ 8000a48:	bls.n	8000a54 <commutate+0x9c>
+E:\m\robot\esc\AM32/Src/main.c:887
+            desync_check = 1;
+ 8000a4a:	movs	r2, #34	@ 0x22
+ 8000a4c:	ldr	r4, [pc, #16]	@ (8000a60 <commutate+0xa8>)
+E:\m\robot\esc\AM32/Src/main.c:886
+            step = 1;
+ 8000a4e:	strb	r3, [r5, r1]
+E:\m\robot\esc\AM32/Src/main.c:887
+            desync_check = 1;
+ 8000a50:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:889
+        rising = step % 2;
+ 8000a52:	b.n	80009d8 <commutate+0x20>
+ 8000a54:	ldr	r4, [pc, #8]	@ (8000a60 <commutate+0xa8>)
+E:\m\robot\esc\AM32/Src/main.c:884
+        step++;
+ 8000a56:	strb	r2, [r5, r1]
+E:\m\robot\esc\AM32/Src/main.c:889
+        rising = step % 2;
+ 8000a58:	ands	r3, r2
+ 8000a5a:	b.n	80009d8 <commutate+0x20>
+ 8000a5c:	.word	0x20000000
+ 8000a60:	.word	0x20000460
+ 8000a64:	.word	0x200003e0
+
+; ===================== enableCompInterrupts =====================
+<enableCompInterrupts>:
+enableCompInterrupts():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:31
+    LL_EXTI_ClearRisingFlag_0_31(LL_EXTI_LINE_17);
+    LL_EXTI_ClearFallingFlag_0_31(LL_EXTI_LINE_17);
+#endif
+}
+
+void enableCompInterrupts() { EXTI->IMR1 |= current_EXTI_LINE; }
+ 80053e4:	movs	r2, #128	@ 0x80
+ 80053e6:	ldr	r1, [pc, #12]	@ (80053f4 <enableCompInterrupts+0x10>)
+ 80053e8:	ldr	r0, [pc, #12]	@ (80053f8 <enableCompInterrupts+0x14>)
+ 80053ea:	ldr	r3, [r1, r2]
+ 80053ec:	ldr	r0, [r0, #4]
+ 80053ee:	orrs	r3, r0
+ 80053f0:	str	r3, [r1, r2]
+ 80053f2:	bx	lr
+ 80053f4:	.word	0x40021800
+ 80053f8:	.word	0x200003d8
+
+; ===================== changeCompInput =====================
+<changeCompInput>:
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:35
+
+void enableCompInterrupts() { EXTI->IMR1 |= current_EXTI_LINE; }
+
+void changeCompInput()
+{
+if((average_interval < 400) && medium_speed_set){
+ 80053fc:	movs	r2, #200	@ 0xc8
+ 80053fe:	ldr	r3, [pc, #252]	@ (80054fc <changeCompInput+0x100>)
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:34
+{
+ 8005400:	push	{r4, r5, lr}
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:35
+if((average_interval < 400) && medium_speed_set){
+ 8005402:	ldr	r1, [r3, #0]
+ 8005404:	lsls	r2, r2, #1
+ 8005406:	cmp	r1, r2
+ 8005408:	bcs.n	80054e0 <changeCompInput+0xe4>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:35 (discriminator 1)
+ 800540a:	ldr	r1, [pc, #244]	@ (8005500 <changeCompInput+0x104>)
+ 800540c:	ldrb	r2, [r1, #0]
+ 800540e:	cmp	r2, #0
+ 8005410:	bne.n	8005472 <changeCompInput+0x76>
+ 8005412:	ldr	r2, [pc, #240]	@ (8005504 <changeCompInput+0x108>)
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:39
+LL_COMP_SetPowerMode(active_COMP, LL_COMP_POWERMODE_HIGHSPEED);
+medium_speed_set = 0;
+}
+if((average_interval > 600) && !medium_speed_set){
+ 8005414:	ldr	r0, [r3, #0]
+ 8005416:	movs	r3, #150	@ 0x96
+ 8005418:	lsls	r3, r3, #2
+ 800541a:	cmp	r0, r3
+ 800541c:	bls.n	8005432 <changeCompInput+0x36>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:40
+LL_COMP_SetPowerMode(active_COMP, LL_COMP_POWERMODE_MEDIUMSPEED);
+ 800541e:	ldr	r4, [r2, #0]
+LL_COMP_SetPowerMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:463
+  *         @arg @ref LL_COMP_POWERMODE_MEDIUMSPEED
+  * @retval None
+  */
+__STATIC_INLINE void LL_COMP_SetPowerMode(COMP_TypeDef *COMPx, uint32_t PowerMode)
+{
+  MODIFY_REG(COMPx->CSR, COMP_CSR_PWRMODE, PowerMode);
+ 8005420:	ldr	r0, [pc, #228]	@ (8005508 <changeCompInput+0x10c>)
+ 8005422:	ldr	r3, [r4, #0]
+ 8005424:	ands	r0, r3
+ 8005426:	movs	r3, #128	@ 0x80
+ 8005428:	lsls	r3, r3, #11
+ 800542a:	orrs	r3, r0
+ 800542c:	str	r3, [r4, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:41
+medium_speed_set = 1;
+ 800542e:	movs	r3, #1
+ 8005430:	strb	r3, [r1, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:43
+}
+    if (step == 1 || step == 4) { // c floating
+ 8005432:	ldr	r1, [pc, #216]	@ (800550c <changeCompInput+0x110>)
+ 8005434:	ldrb	r3, [r1, #0]
+ 8005436:	cmp	r3, #1
+ 8005438:	beq.n	80054cc <changeCompInput+0xd0>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:43 (discriminator 1)
+ 800543a:	cmp	r3, #4
+ 800543c:	beq.n	80054cc <changeCompInput+0xd0>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:51
+        active_COMP = PHASE_C_COMP_NUMBER;
+#endif
+        LL_COMP_ConfigInputs(active_COMP, PHASE_C_COMP, LL_COMP_INPUT_PLUS_IO3);
+    }
+
+    if (step == 2 || step == 5) { // a floating
+ 800543e:	cmp	r3, #2
+ 8005440:	beq.n	80054b8 <changeCompInput+0xbc>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:51 (discriminator 1)
+ 8005442:	cmp	r3, #5
+ 8005444:	beq.n	80054b8 <changeCompInput+0xbc>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:59
+        active_COMP = PHASE_A_COMP_NUMBER;
+#endif
+        LL_COMP_ConfigInputs(active_COMP, PHASE_A_COMP, LL_COMP_INPUT_PLUS_IO3);
+    }
+
+    if (step == 3 || step == 6) { // b floating
+ 8005446:	cmp	r3, #3
+ 8005448:	beq.n	8005484 <changeCompInput+0x88>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:59 (discriminator 1)
+ 800544a:	cmp	r3, #6
+ 800544c:	beq.n	8005484 <changeCompInput+0x88>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:66
+        current_EXTI_LINE = PHASE_B_EXTI_LINE;
+        active_COMP = PHASE_B_COMP_NUMBER;
+#endif
+        LL_COMP_ConfigInputs(active_COMP, PHASE_B_COMP, LL_COMP_INPUT_PLUS_IO3);
+    }
+    if (rising) {
+ 800544e:	ldr	r3, [pc, #192]	@ (8005510 <changeCompInput+0x114>)
+ 8005450:	ldrb	r3, [r3, #0]
+ 8005452:	cmp	r3, #0
+ 8005454:	beq.n	800549c <changeCompInput+0xa0>
+LL_EXTI_DisableRisingTrig_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:736
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval None
+  */
+__STATIC_INLINE void LL_EXTI_DisableRisingTrig_0_31(uint32_t ExtiLine)
+{
+  CLEAR_BIT(EXTI->RTSR1, ExtiLine);
+ 8005456:	ldr	r3, [pc, #188]	@ (8005514 <changeCompInput+0x118>)
+ 8005458:	ldr	r0, [pc, #188]	@ (8005518 <changeCompInput+0x11c>)
+ 800545a:	ldr	r1, [r3, #0]
+ 800545c:	ands	r1, r0
+ 800545e:	str	r1, [r3, #0]
+ 8005460:	ldr	r1, [r3, #0]
+ 8005462:	ldr	r0, [pc, #184]	@ (800551c <changeCompInput+0x120>)
+ 8005464:	ands	r1, r0
+ 8005466:	str	r1, [r3, #0]
+LL_EXTI_EnableFallingTrig_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:814
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval None
+  */
+__STATIC_INLINE void LL_EXTI_EnableFallingTrig_0_31(uint32_t ExtiLine)
+{
+  SET_BIT(EXTI->FTSR1, ExtiLine);
+ 8005468:	ldr	r1, [r3, #4]
+ 800546a:	ldr	r2, [r2, #4]
+ 800546c:	orrs	r2, r1
+ 800546e:	str	r2, [r3, #4]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:75
+    } else { // falling bemf
+        LL_EXTI_EnableRisingTrig_0_31(current_EXTI_LINE);
+        LL_EXTI_DisableFallingTrig_0_31(LL_EXTI_LINE_17);
+        LL_EXTI_DisableFallingTrig_0_31(LL_EXTI_LINE_18);
+    }
+}
+ 8005470:	pop	{r4, r5, pc}
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:36
+LL_COMP_SetPowerMode(active_COMP, LL_COMP_POWERMODE_HIGHSPEED);
+ 8005472:	ldr	r2, [pc, #144]	@ (8005504 <changeCompInput+0x108>)
+LL_COMP_SetPowerMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:463
+ 8005474:	ldr	r5, [pc, #144]	@ (8005508 <changeCompInput+0x10c>)
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:36
+ 8005476:	ldr	r4, [r2, #0]
+LL_COMP_SetPowerMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:463
+ 8005478:	ldr	r0, [r4, #0]
+ 800547a:	ands	r0, r5
+ 800547c:	str	r0, [r4, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:37
+medium_speed_set = 0;
+ 800547e:	movs	r0, #0
+ 8005480:	strb	r0, [r1, #0]
+ 8005482:	b.n	8005414 <changeCompInput+0x18>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:64
+        LL_COMP_ConfigInputs(active_COMP, PHASE_B_COMP, LL_COMP_INPUT_PLUS_IO3);
+ 8005484:	ldr	r0, [r2, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:518
+  *         @arg @ref LL_COMP_INPUT_PLUS_IO3
+  * @retval None
+  */
+__STATIC_INLINE void LL_COMP_ConfigInputs(COMP_TypeDef *COMPx, uint32_t InputMinus, uint32_t InputPlus)
+{
+  MODIFY_REG(COMPx->CSR,
+ 8005486:	ldr	r1, [pc, #152]	@ (8005520 <changeCompInput+0x124>)
+ 8005488:	ldr	r3, [r0, #0]
+ 800548a:	ands	r1, r3
+ 800548c:	movs	r3, #156	@ 0x9c
+ 800548e:	lsls	r3, r3, #2
+ 8005490:	orrs	r3, r1
+ 8005492:	str	r3, [r0, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:66
+    if (rising) {
+ 8005494:	ldr	r3, [pc, #120]	@ (8005510 <changeCompInput+0x114>)
+ 8005496:	ldrb	r3, [r3, #0]
+ 8005498:	cmp	r3, #0
+ 800549a:	bne.n	8005456 <changeCompInput+0x5a>
+LL_EXTI_EnableRisingTrig_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:697
+  SET_BIT(EXTI->RTSR1, ExtiLine);
+ 800549c:	ldr	r3, [pc, #116]	@ (8005514 <changeCompInput+0x118>)
+ 800549e:	ldr	r2, [r2, #4]
+ 80054a0:	ldr	r1, [r3, #0]
+ 80054a2:	orrs	r2, r1
+ 80054a4:	str	r2, [r3, #0]
+LL_EXTI_DisableFallingTrig_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:851
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval None
+  */
+__STATIC_INLINE void LL_EXTI_DisableFallingTrig_0_31(uint32_t ExtiLine)
+{
+  CLEAR_BIT(EXTI->FTSR1, ExtiLine);
+ 80054a6:	ldr	r2, [r3, #4]
+ 80054a8:	ldr	r1, [pc, #112]	@ (800551c <changeCompInput+0x120>)
+ 80054aa:	ands	r2, r1
+ 80054ac:	str	r2, [r3, #4]
+ 80054ae:	ldr	r2, [r3, #4]
+ 80054b0:	ldr	r1, [pc, #100]	@ (8005518 <changeCompInput+0x11c>)
+ 80054b2:	ands	r2, r1
+ 80054b4:	str	r2, [r3, #4]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:75
+}
+ 80054b6:	b.n	8005470 <changeCompInput+0x74>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:56
+        LL_COMP_ConfigInputs(active_COMP, PHASE_A_COMP, LL_COMP_INPUT_PLUS_IO3);
+ 80054b8:	ldr	r4, [r2, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:518
+ 80054ba:	ldr	r0, [pc, #100]	@ (8005520 <changeCompInput+0x124>)
+ 80054bc:	ldr	r3, [r4, #0]
+ 80054be:	ands	r0, r3
+ 80054c0:	movs	r3, #152	@ 0x98
+ 80054c2:	lsls	r3, r3, #2
+ 80054c4:	orrs	r3, r0
+ 80054c6:	str	r3, [r4, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:59
+    if (step == 3 || step == 6) { // b floating
+ 80054c8:	ldrb	r3, [r1, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:521
+             COMP_CSR_INMSEL | COMP_CSR_INPSEL,
+             InputMinus | InputPlus);
+}
+ 80054ca:	b.n	8005446 <changeCompInput+0x4a>
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:48
+        LL_COMP_ConfigInputs(active_COMP, PHASE_C_COMP, LL_COMP_INPUT_PLUS_IO3);
+ 80054cc:	ldr	r4, [r2, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:518
+  MODIFY_REG(COMPx->CSR,
+ 80054ce:	ldr	r0, [pc, #80]	@ (8005520 <changeCompInput+0x124>)
+ 80054d0:	ldr	r3, [r4, #0]
+ 80054d2:	ands	r0, r3
+ 80054d4:	movs	r3, #160	@ 0xa0
+ 80054d6:	lsls	r3, r3, #2
+ 80054d8:	orrs	r3, r0
+ 80054da:	str	r3, [r4, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:51
+    if (step == 2 || step == 5) { // a floating
+ 80054dc:	ldrb	r3, [r1, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:521
+}
+ 80054de:	b.n	800543e <changeCompInput+0x42>
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:39
+if((average_interval > 600) && !medium_speed_set){
+ 80054e0:	ldr	r2, [r3, #0]
+ 80054e2:	movs	r3, #150	@ 0x96
+ 80054e4:	lsls	r3, r3, #2
+ 80054e6:	cmp	r2, r3
+ 80054e8:	bhi.n	80054ee <changeCompInput+0xf2>
+ 80054ea:	ldr	r2, [pc, #24]	@ (8005504 <changeCompInput+0x108>)
+ 80054ec:	b.n	8005432 <changeCompInput+0x36>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:39 (discriminator 1)
+ 80054ee:	ldr	r1, [pc, #16]	@ (8005500 <changeCompInput+0x104>)
+ 80054f0:	ldr	r2, [pc, #16]	@ (8005504 <changeCompInput+0x108>)
+ 80054f2:	ldrb	r3, [r1, #0]
+ 80054f4:	cmp	r3, #0
+ 80054f6:	bne.n	8005432 <changeCompInput+0x36>
+ 80054f8:	b.n	800541e <changeCompInput+0x22>
+ 80054fa:	nop			@ (mov r8, r8)
+ 80054fc:	.word	0x20000484
+ 8005500:	.word	0x2000095c
+ 8005504:	.word	0x200003d8
+ 8005508:	.word	0xfff3ffff
+ 800550c:	.word	0x20000053
+ 8005510:	.word	0x20000050
+ 8005514:	.word	0x40021800
+ 8005518:	.word	0xfffbffff
+ 800551c:	.word	0xfffdffff
+ 8005520:	.word	0xfffffc0f

@@ -1,0 +1,1262 @@
+; AM32 G071 reference ISR: TIM14_IRQHandler -- COM_TIMER (TIM14) update -> PeriodElapsedCallback (commutate + ZC bookkeeping)
+; ELF AM32_DRV8304H_G071_2.20.elf  sha256 02592720fb8a1dca2bea0f2915bed553fe3399eca2dbe8e541d2d5804d4ab2fc
+; objdump -d -S -l, call tree walked to depth 6
+;
+; call tree (function: instructions, size bytes -> callees)
+;   TIM14_IRQHandler: 18 insns, 44 B -> PeriodElapsedCallback
+;     PeriodElapsedCallback: 66 insns, 148 B -> commutate, enableCompInterrupts
+;       commutate: 83 insns, 176 B -> changeCompInput, comStep
+;       enableCompInterrupts: 10 insns, 24 B
+;         changeCompInput: 138 insns, 296 B
+;         comStep: 359 insns, 732 B
+;
+
+; ===================== TIM14_IRQHandler =====================
+<TIM14_IRQHandler>:
+TIM14_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:350
+
+/**
+ * @brief This function handles TIM14 global interrupt.
+ */
+void TIM14_IRQHandler(void)
+{
+ 8004fd0:	push	{r4, r5, r6, lr}
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:351
+    interrupt_time = UTILITY_TIMER->CNT;
+ 8004fd2:	ldr	r5, [pc, #28]	@ (8004ff0 <TIM14_IRQHandler+0x20>)
+ 8004fd4:	ldr	r4, [pc, #28]	@ (8004ff4 <TIM14_IRQHandler+0x24>)
+ 8004fd6:	ldr	r3, [r5, #36]	@ 0x24
+ 8004fd8:	strh	r3, [r4, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:352
+    PeriodElapsedCallback();
+ 8004fda:	bl	8000df4 <PeriodElapsedCallback>
+LL_TIM_ClearFlag_UPDATE():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_tim.h:4039
+  * @param  TIMx Timer instance
+  * @retval None
+  */
+__STATIC_INLINE void LL_TIM_ClearFlag_UPDATE(TIM_TypeDef *TIMx)
+{
+  WRITE_REG(TIMx->SR, ~(TIM_SR_UIF));
+ 8004fde:	movs	r2, #2
+ 8004fe0:	ldr	r3, [pc, #20]	@ (8004ff8 <TIM14_IRQHandler+0x28>)
+ 8004fe2:	negs	r2, r2
+ 8004fe4:	str	r2, [r3, #16]
+TIM14_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:354
+    LL_TIM_ClearFlag_UPDATE(TIM14);
+    interrupt_time = ((uint16_t)UTILITY_TIMER->CNT) - interrupt_time;
+ 8004fe6:	ldr	r3, [r5, #36]	@ 0x24
+ 8004fe8:	ldrh	r2, [r4, #0]
+ 8004fea:	subs	r3, r3, r2
+ 8004fec:	strh	r3, [r4, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:355
+}
+ 8004fee:	pop	{r4, r5, r6, pc}
+ 8004ff0:	.word	0x40014800
+ 8004ff4:	.word	0x20000854
+ 8004ff8:	.word	0x40002000
+
+; ===================== PeriodElapsedCallback =====================
+<PeriodElapsedCallback>:
+PeriodElapsedCallback():
+E:\m\robot\esc\AM32/Src/main.c:925
+#endif
+}
+
+void PeriodElapsedCallback()
+{
+    DISABLE_COM_TIMER_INT(); // disable interrupt
+ 8000df4:	movs	r1, #1
+ 8000df6:	ldr	r2, [pc, #120]	@ (8000e70 <PeriodElapsedCallback+0x7c>)
+E:\m\robot\esc\AM32/Src/main.c:924
+{
+ 8000df8:	push	{r4, lr}
+E:\m\robot\esc\AM32/Src/main.c:925
+    DISABLE_COM_TIMER_INT(); // disable interrupt
+ 8000dfa:	ldr	r3, [r2, #12]
+ 8000dfc:	bics	r3, r1
+ 8000dfe:	str	r3, [r2, #12]
+E:\m\robot\esc\AM32/Src/main.c:926
+    commutate();
+ 8000e00:	bl	80009b8 <commutate>
+E:\m\robot\esc\AM32/Src/main.c:927
+    commutation_interval = ((commutation_interval)+((lastzctime + thiszctime) >> 1))>>1;
+ 8000e04:	movs	r3, #88	@ 0x58
+ 8000e06:	movs	r2, #90	@ 0x5a
+ 8000e08:	ldr	r4, [pc, #104]	@ (8000e74 <PeriodElapsedCallback+0x80>)
+ 8000e0a:	ldr	r1, [pc, #108]	@ (8000e78 <PeriodElapsedCallback+0x84>)
+ 8000e0c:	ldrh	r3, [r4, r3]
+ 8000e0e:	ldrh	r2, [r4, r2]
+ 8000e10:	ldr	r0, [r1, #88]	@ 0x58
+ 8000e12:	adds	r3, r3, r2
+ 8000e14:	asrs	r3, r3, #1
+ 8000e16:	adds	r3, r3, r0
+ 8000e18:	lsrs	r3, r3, #1
+ 8000e1a:	str	r3, [r1, #88]	@ 0x58
+E:\m\robot\esc\AM32/Src/main.c:928
+  	if (!eepromBuffer.auto_advance) {
+ 8000e1c:	movs	r3, #47	@ 0x2f
+ 8000e1e:	ldr	r2, [pc, #92]	@ (8000e7c <PeriodElapsedCallback+0x88>)
+ 8000e20:	ldrb	r3, [r2, r3]
+ 8000e22:	cmp	r3, #0
+ 8000e24:	bne.n	8000e5c <PeriodElapsedCallback+0x68>
+E:\m\robot\esc\AM32/Src/main.c:929
+	  advance = (commutation_interval * temp_advance) >> 6; // 60 divde 64 0.9375 degree increments
+ 8000e26:	movs	r2, #36	@ 0x24
+ 8000e28:	ldr	r0, [pc, #84]	@ (8000e80 <PeriodElapsedCallback+0x8c>)
+ 8000e2a:	ldr	r3, [r1, #88]	@ 0x58
+ 8000e2c:	ldrb	r2, [r0, r2]
+ 8000e2e:	muls	r3, r2
+ 8000e30:	lsrs	r3, r3, #6
+ 8000e32:	uxth	r3, r3
+ 8000e34:	movs	r2, #94	@ 0x5e
+ 8000e36:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:933
+	} else {
+	  advance = (commutation_interval * auto_advance_level) >> 6; // 60 divde 64 0.9375 degree increments
+    }
+    waitTime = (commutation_interval >> 1) - advance;
+ 8000e38:	ldr	r2, [r1, #88]	@ 0x58
+ 8000e3a:	lsrs	r2, r2, #1
+ 8000e3c:	subs	r3, r2, r3
+ 8000e3e:	movs	r2, #96	@ 0x60
+ 8000e40:	uxth	r3, r3
+ 8000e42:	strh	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:937
+#ifdef ZC_TRACE
+    zct_write();
+#endif
+    if (!old_routine) {
+ 8000e44:	movs	r3, #84	@ 0x54
+ 8000e46:	ldrb	r3, [r1, r3]
+ 8000e48:	cmp	r3, #0
+ 8000e4a:	beq.n	8000e6a <PeriodElapsedCallback+0x76>
+E:\m\robot\esc\AM32/Src/main.c:940
+        enableCompInterrupts(); // enable comp interrupt
+    }
+    if (zero_crosses < 10000) {
+ 8000e4c:	ldr	r2, [r4, #68]	@ 0x44
+ 8000e4e:	ldr	r3, [pc, #52]	@ (8000e84 <PeriodElapsedCallback+0x90>)
+ 8000e50:	cmp	r2, r3
+ 8000e52:	bhi.n	8000e5a <PeriodElapsedCallback+0x66>
+E:\m\robot\esc\AM32/Src/main.c:941
+        zero_crosses++;
+ 8000e54:	ldr	r3, [r4, #68]	@ 0x44
+ 8000e56:	adds	r3, #1
+ 8000e58:	str	r3, [r4, #68]	@ 0x44
+E:\m\robot\esc\AM32/Src/main.c:943
+    }
+}
+ 8000e5a:	pop	{r4, pc}
+E:\m\robot\esc\AM32/Src/main.c:931
+	  advance = (commutation_interval * auto_advance_level) >> 6; // 60 divde 64 0.9375 degree increments
+ 8000e5c:	movs	r2, #92	@ 0x5c
+ 8000e5e:	ldr	r3, [r1, #88]	@ 0x58
+ 8000e60:	ldrb	r2, [r4, r2]
+ 8000e62:	muls	r3, r2
+ 8000e64:	lsrs	r3, r3, #6
+ 8000e66:	uxth	r3, r3
+ 8000e68:	b.n	8000e34 <PeriodElapsedCallback+0x40>
+E:\m\robot\esc\AM32/Src/main.c:938
+        enableCompInterrupts(); // enable comp interrupt
+ 8000e6a:	bl	80053e4 <enableCompInterrupts>
+ 8000e6e:	b.n	8000e4c <PeriodElapsedCallback+0x58>
+ 8000e70:	.word	0x40002000
+ 8000e74:	.word	0x20000460
+ 8000e78:	.word	0x20000000
+ 8000e7c:	.word	0x20000630
+ 8000e80:	.word	0x200003e0
+ 8000e84:	.word	0x0000270f
+
+; ===================== commutate =====================
+<commutate>:
+commutate():
+E:\m\robot\esc\AM32/Src/main.c:883
+    }
+}
+
+void commutate()
+{
+    if (forward == 1) {
+ 80009b8:	movs	r3, #82	@ 0x52
+E:\m\robot\esc\AM32/Src/main.c:882
+{
+ 80009ba:	push	{r4, r5, r6, lr}
+E:\m\robot\esc\AM32/Src/main.c:883
+    if (forward == 1) {
+ 80009bc:	ldr	r5, [pc, #156]	@ (8000a5c <commutate+0xa4>)
+E:\m\robot\esc\AM32/Src/main.c:884
+        step++;
+ 80009be:	movs	r1, #83	@ 0x53
+E:\m\robot\esc\AM32/Src/main.c:883
+    if (forward == 1) {
+ 80009c0:	ldrb	r3, [r5, r3]
+ 80009c2:	cmp	r3, #1
+ 80009c4:	beq.n	8000a40 <commutate+0x88>
+E:\m\robot\esc\AM32/Src/main.c:891
+            step = 1;
+            desync_check = 1;
+        }
+        rising = step % 2;
+    } else {
+        step--;
+ 80009c6:	ldrb	r3, [r5, r1]
+ 80009c8:	subs	r2, r3, #1
+ 80009ca:	uxtb	r2, r2
+E:\m\robot\esc\AM32/Src/main.c:892
+        if (step < 1) {
+ 80009cc:	cmp	r2, #0
+ 80009ce:	beq.n	8000a1a <commutate+0x62>
+E:\m\robot\esc\AM32/Src/main.c:891
+        step--;
+ 80009d0:	strb	r2, [r5, r1]
+ 80009d2:	movs	r2, #1
+ 80009d4:	ldr	r4, [pc, #136]	@ (8000a60 <commutate+0xa8>)
+ 80009d6:	ands	r3, r2
+E:\m\robot\esc\AM32/Src/main.c:896
+            step = 6;
+            desync_check = 1;
+        }
+        rising = !(step % 2);
+ 80009d8:	movs	r2, #80	@ 0x50
+ 80009da:	strb	r3, [r5, r2]
+__disable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:142
+  \details Disables IRQ interrupts by setting the I-bit in the CPSR.
+           Can only be executed in Privileged modes.
+ */
+__STATIC_FORCEINLINE void __disable_irq(void)
+{
+  __ASM volatile ("cpsid i" : : : "memory");
+ 80009dc:	cpsid	i
+commutate():
+E:\m\robot\esc\AM32/Src/main.c:902
+    }
+#ifdef INVERTED_EXTI
+    rising = !rising;
+#endif
+    __disable_irq(); // don't let dshot interrupt
+    if (!prop_brake_active) {
+ 80009de:	movs	r3, #35	@ 0x23
+ 80009e0:	ldrb	r3, [r4, r3]
+ 80009e2:	cmp	r3, #0
+ 80009e4:	beq.n	8000a36 <commutate+0x7e>
+__enable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:131
+  __ASM volatile ("cpsie i" : : : "memory");
+ 80009e6:	cpsie	i
+commutate():
+E:\m\robot\esc\AM32/Src/main.c:906
+        comStep(step);
+    }
+    __enable_irq();
+    changeCompInput();
+ 80009e8:	bl	80053fc <changeCompInput>
+E:\m\robot\esc\AM32/Src/main.c:908
+#ifndef NO_POLLING_START
+	if (average_interval > polling_mode_changeover + 500) {
+ 80009ec:	ldr	r3, [pc, #116]	@ (8000a64 <commutate+0xac>)
+ 80009ee:	ldr	r3, [r3, #44]	@ 0x2c
+ 80009f0:	ldr	r2, [r4, #36]	@ 0x24
+ 80009f2:	adds	r3, #245	@ 0xf5
+ 80009f4:	adds	r3, #255	@ 0xff
+ 80009f6:	cmp	r3, r2
+ 80009f8:	bcs.n	8000a00 <commutate+0x48>
+E:\m\robot\esc\AM32/Src/main.c:909
+      old_routine = 1;
+ 80009fa:	movs	r3, #84	@ 0x54
+ 80009fc:	movs	r2, #1
+ 80009fe:	strb	r2, [r5, r3]
+E:\m\robot\esc\AM32/Src/main.c:912
+   }
+#endif
+    bemfcounter = 0;
+ 8000a00:	movs	r3, #0
+ 8000a02:	movs	r2, #32
+ 8000a04:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:913
+    zcfound = 0;
+ 8000a06:	adds	r2, #8
+ 8000a08:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:914
+    commutation_intervals[step - 1] = commutation_interval; // just used to calulate average
+ 8000a0a:	adds	r3, #83	@ 0x53
+ 8000a0c:	ldrb	r3, [r5, r3]
+ 8000a0e:	ldr	r2, [r5, #88]	@ 0x58
+ 8000a10:	subs	r3, #1
+ 8000a12:	lsls	r3, r3, #1
+ 8000a14:	adds	r4, r4, r3
+ 8000a16:	strh	r2, [r4, #44]	@ 0x2c
+E:\m\robot\esc\AM32/Src/main.c:921
+#ifdef USE_PULSE_OUT
+	if(step == 1 || step == 4  ){
+    WRITE_REG(RPM_PULSE_PORT->ODR, READ_REG(RPM_PULSE_PORT->ODR) ^ RPM_PULSE_PIN);
+	}
+#endif
+}
+ 8000a18:	pop	{r4, r5, r6, pc}
+E:\m\robot\esc\AM32/Src/main.c:893
+            step = 6;
+ 8000a1a:	movs	r3, #6
+E:\m\robot\esc\AM32/Src/main.c:894
+            desync_check = 1;
+ 8000a1c:	movs	r2, #1
+ 8000a1e:	ldr	r4, [pc, #64]	@ (8000a60 <commutate+0xa8>)
+E:\m\robot\esc\AM32/Src/main.c:893
+            step = 6;
+ 8000a20:	strb	r3, [r5, r1]
+E:\m\robot\esc\AM32/Src/main.c:894
+            desync_check = 1;
+ 8000a22:	adds	r3, #28
+ 8000a24:	strb	r2, [r4, r3]
+E:\m\robot\esc\AM32/Src/main.c:896
+        rising = !(step % 2);
+ 8000a26:	movs	r2, #80	@ 0x50
+E:\m\robot\esc\AM32/Src/main.c:894
+            desync_check = 1;
+ 8000a28:	subs	r3, #33	@ 0x21
+E:\m\robot\esc\AM32/Src/main.c:896
+        rising = !(step % 2);
+ 8000a2a:	strb	r3, [r5, r2]
+__disable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:142
+  __ASM volatile ("cpsid i" : : : "memory");
+ 8000a2c:	cpsid	i
+commutate():
+E:\m\robot\esc\AM32/Src/main.c:902
+    if (!prop_brake_active) {
+ 8000a2e:	movs	r3, #35	@ 0x23
+ 8000a30:	ldrb	r3, [r4, r3]
+ 8000a32:	cmp	r3, #0
+ 8000a34:	bne.n	80009e6 <commutate+0x2e>
+E:\m\robot\esc\AM32/Src/main.c:903
+        comStep(step);
+ 8000a36:	adds	r3, #83	@ 0x53
+ 8000a38:	ldrb	r0, [r5, r3]
+ 8000a3a:	bl	800562c <comStep>
+ 8000a3e:	b.n	80009e6 <commutate+0x2e>
+E:\m\robot\esc\AM32/Src/main.c:884
+        step++;
+ 8000a40:	ldrb	r2, [r5, r1]
+ 8000a42:	adds	r2, #1
+ 8000a44:	uxtb	r2, r2
+E:\m\robot\esc\AM32/Src/main.c:885
+        if (step > 6) {
+ 8000a46:	cmp	r2, #6
+ 8000a48:	bls.n	8000a54 <commutate+0x9c>
+E:\m\robot\esc\AM32/Src/main.c:887
+            desync_check = 1;
+ 8000a4a:	movs	r2, #34	@ 0x22
+ 8000a4c:	ldr	r4, [pc, #16]	@ (8000a60 <commutate+0xa8>)
+E:\m\robot\esc\AM32/Src/main.c:886
+            step = 1;
+ 8000a4e:	strb	r3, [r5, r1]
+E:\m\robot\esc\AM32/Src/main.c:887
+            desync_check = 1;
+ 8000a50:	strb	r3, [r4, r2]
+E:\m\robot\esc\AM32/Src/main.c:889
+        rising = step % 2;
+ 8000a52:	b.n	80009d8 <commutate+0x20>
+ 8000a54:	ldr	r4, [pc, #8]	@ (8000a60 <commutate+0xa8>)
+E:\m\robot\esc\AM32/Src/main.c:884
+        step++;
+ 8000a56:	strb	r2, [r5, r1]
+E:\m\robot\esc\AM32/Src/main.c:889
+        rising = step % 2;
+ 8000a58:	ands	r3, r2
+ 8000a5a:	b.n	80009d8 <commutate+0x20>
+ 8000a5c:	.word	0x20000000
+ 8000a60:	.word	0x20000460
+ 8000a64:	.word	0x200003e0
+
+; ===================== enableCompInterrupts =====================
+<enableCompInterrupts>:
+enableCompInterrupts():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:31
+    LL_EXTI_ClearRisingFlag_0_31(LL_EXTI_LINE_17);
+    LL_EXTI_ClearFallingFlag_0_31(LL_EXTI_LINE_17);
+#endif
+}
+
+void enableCompInterrupts() { EXTI->IMR1 |= current_EXTI_LINE; }
+ 80053e4:	movs	r2, #128	@ 0x80
+ 80053e6:	ldr	r1, [pc, #12]	@ (80053f4 <enableCompInterrupts+0x10>)
+ 80053e8:	ldr	r0, [pc, #12]	@ (80053f8 <enableCompInterrupts+0x14>)
+ 80053ea:	ldr	r3, [r1, r2]
+ 80053ec:	ldr	r0, [r0, #4]
+ 80053ee:	orrs	r3, r0
+ 80053f0:	str	r3, [r1, r2]
+ 80053f2:	bx	lr
+ 80053f4:	.word	0x40021800
+ 80053f8:	.word	0x200003d8
+
+; ===================== changeCompInput =====================
+<changeCompInput>:
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:35
+
+void enableCompInterrupts() { EXTI->IMR1 |= current_EXTI_LINE; }
+
+void changeCompInput()
+{
+if((average_interval < 400) && medium_speed_set){
+ 80053fc:	movs	r2, #200	@ 0xc8
+ 80053fe:	ldr	r3, [pc, #252]	@ (80054fc <changeCompInput+0x100>)
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:34
+{
+ 8005400:	push	{r4, r5, lr}
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:35
+if((average_interval < 400) && medium_speed_set){
+ 8005402:	ldr	r1, [r3, #0]
+ 8005404:	lsls	r2, r2, #1
+ 8005406:	cmp	r1, r2
+ 8005408:	bcs.n	80054e0 <changeCompInput+0xe4>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:35 (discriminator 1)
+ 800540a:	ldr	r1, [pc, #244]	@ (8005500 <changeCompInput+0x104>)
+ 800540c:	ldrb	r2, [r1, #0]
+ 800540e:	cmp	r2, #0
+ 8005410:	bne.n	8005472 <changeCompInput+0x76>
+ 8005412:	ldr	r2, [pc, #240]	@ (8005504 <changeCompInput+0x108>)
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:39
+LL_COMP_SetPowerMode(active_COMP, LL_COMP_POWERMODE_HIGHSPEED);
+medium_speed_set = 0;
+}
+if((average_interval > 600) && !medium_speed_set){
+ 8005414:	ldr	r0, [r3, #0]
+ 8005416:	movs	r3, #150	@ 0x96
+ 8005418:	lsls	r3, r3, #2
+ 800541a:	cmp	r0, r3
+ 800541c:	bls.n	8005432 <changeCompInput+0x36>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:40
+LL_COMP_SetPowerMode(active_COMP, LL_COMP_POWERMODE_MEDIUMSPEED);
+ 800541e:	ldr	r4, [r2, #0]
+LL_COMP_SetPowerMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:463
+  *         @arg @ref LL_COMP_POWERMODE_MEDIUMSPEED
+  * @retval None
+  */
+__STATIC_INLINE void LL_COMP_SetPowerMode(COMP_TypeDef *COMPx, uint32_t PowerMode)
+{
+  MODIFY_REG(COMPx->CSR, COMP_CSR_PWRMODE, PowerMode);
+ 8005420:	ldr	r0, [pc, #228]	@ (8005508 <changeCompInput+0x10c>)
+ 8005422:	ldr	r3, [r4, #0]
+ 8005424:	ands	r0, r3
+ 8005426:	movs	r3, #128	@ 0x80
+ 8005428:	lsls	r3, r3, #11
+ 800542a:	orrs	r3, r0
+ 800542c:	str	r3, [r4, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:41
+medium_speed_set = 1;
+ 800542e:	movs	r3, #1
+ 8005430:	strb	r3, [r1, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:43
+}
+    if (step == 1 || step == 4) { // c floating
+ 8005432:	ldr	r1, [pc, #216]	@ (800550c <changeCompInput+0x110>)
+ 8005434:	ldrb	r3, [r1, #0]
+ 8005436:	cmp	r3, #1
+ 8005438:	beq.n	80054cc <changeCompInput+0xd0>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:43 (discriminator 1)
+ 800543a:	cmp	r3, #4
+ 800543c:	beq.n	80054cc <changeCompInput+0xd0>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:51
+        active_COMP = PHASE_C_COMP_NUMBER;
+#endif
+        LL_COMP_ConfigInputs(active_COMP, PHASE_C_COMP, LL_COMP_INPUT_PLUS_IO3);
+    }
+
+    if (step == 2 || step == 5) { // a floating
+ 800543e:	cmp	r3, #2
+ 8005440:	beq.n	80054b8 <changeCompInput+0xbc>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:51 (discriminator 1)
+ 8005442:	cmp	r3, #5
+ 8005444:	beq.n	80054b8 <changeCompInput+0xbc>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:59
+        active_COMP = PHASE_A_COMP_NUMBER;
+#endif
+        LL_COMP_ConfigInputs(active_COMP, PHASE_A_COMP, LL_COMP_INPUT_PLUS_IO3);
+    }
+
+    if (step == 3 || step == 6) { // b floating
+ 8005446:	cmp	r3, #3
+ 8005448:	beq.n	8005484 <changeCompInput+0x88>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:59 (discriminator 1)
+ 800544a:	cmp	r3, #6
+ 800544c:	beq.n	8005484 <changeCompInput+0x88>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:66
+        current_EXTI_LINE = PHASE_B_EXTI_LINE;
+        active_COMP = PHASE_B_COMP_NUMBER;
+#endif
+        LL_COMP_ConfigInputs(active_COMP, PHASE_B_COMP, LL_COMP_INPUT_PLUS_IO3);
+    }
+    if (rising) {
+ 800544e:	ldr	r3, [pc, #192]	@ (8005510 <changeCompInput+0x114>)
+ 8005450:	ldrb	r3, [r3, #0]
+ 8005452:	cmp	r3, #0
+ 8005454:	beq.n	800549c <changeCompInput+0xa0>
+LL_EXTI_DisableRisingTrig_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:736
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval None
+  */
+__STATIC_INLINE void LL_EXTI_DisableRisingTrig_0_31(uint32_t ExtiLine)
+{
+  CLEAR_BIT(EXTI->RTSR1, ExtiLine);
+ 8005456:	ldr	r3, [pc, #188]	@ (8005514 <changeCompInput+0x118>)
+ 8005458:	ldr	r0, [pc, #188]	@ (8005518 <changeCompInput+0x11c>)
+ 800545a:	ldr	r1, [r3, #0]
+ 800545c:	ands	r1, r0
+ 800545e:	str	r1, [r3, #0]
+ 8005460:	ldr	r1, [r3, #0]
+ 8005462:	ldr	r0, [pc, #184]	@ (800551c <changeCompInput+0x120>)
+ 8005464:	ands	r1, r0
+ 8005466:	str	r1, [r3, #0]
+LL_EXTI_EnableFallingTrig_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:814
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval None
+  */
+__STATIC_INLINE void LL_EXTI_EnableFallingTrig_0_31(uint32_t ExtiLine)
+{
+  SET_BIT(EXTI->FTSR1, ExtiLine);
+ 8005468:	ldr	r1, [r3, #4]
+ 800546a:	ldr	r2, [r2, #4]
+ 800546c:	orrs	r2, r1
+ 800546e:	str	r2, [r3, #4]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:75
+    } else { // falling bemf
+        LL_EXTI_EnableRisingTrig_0_31(current_EXTI_LINE);
+        LL_EXTI_DisableFallingTrig_0_31(LL_EXTI_LINE_17);
+        LL_EXTI_DisableFallingTrig_0_31(LL_EXTI_LINE_18);
+    }
+}
+ 8005470:	pop	{r4, r5, pc}
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:36
+LL_COMP_SetPowerMode(active_COMP, LL_COMP_POWERMODE_HIGHSPEED);
+ 8005472:	ldr	r2, [pc, #144]	@ (8005504 <changeCompInput+0x108>)
+LL_COMP_SetPowerMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:463
+ 8005474:	ldr	r5, [pc, #144]	@ (8005508 <changeCompInput+0x10c>)
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:36
+ 8005476:	ldr	r4, [r2, #0]
+LL_COMP_SetPowerMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:463
+ 8005478:	ldr	r0, [r4, #0]
+ 800547a:	ands	r0, r5
+ 800547c:	str	r0, [r4, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:37
+medium_speed_set = 0;
+ 800547e:	movs	r0, #0
+ 8005480:	strb	r0, [r1, #0]
+ 8005482:	b.n	8005414 <changeCompInput+0x18>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:64
+        LL_COMP_ConfigInputs(active_COMP, PHASE_B_COMP, LL_COMP_INPUT_PLUS_IO3);
+ 8005484:	ldr	r0, [r2, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:518
+  *         @arg @ref LL_COMP_INPUT_PLUS_IO3
+  * @retval None
+  */
+__STATIC_INLINE void LL_COMP_ConfigInputs(COMP_TypeDef *COMPx, uint32_t InputMinus, uint32_t InputPlus)
+{
+  MODIFY_REG(COMPx->CSR,
+ 8005486:	ldr	r1, [pc, #152]	@ (8005520 <changeCompInput+0x124>)
+ 8005488:	ldr	r3, [r0, #0]
+ 800548a:	ands	r1, r3
+ 800548c:	movs	r3, #156	@ 0x9c
+ 800548e:	lsls	r3, r3, #2
+ 8005490:	orrs	r3, r1
+ 8005492:	str	r3, [r0, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:66
+    if (rising) {
+ 8005494:	ldr	r3, [pc, #120]	@ (8005510 <changeCompInput+0x114>)
+ 8005496:	ldrb	r3, [r3, #0]
+ 8005498:	cmp	r3, #0
+ 800549a:	bne.n	8005456 <changeCompInput+0x5a>
+LL_EXTI_EnableRisingTrig_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:697
+  SET_BIT(EXTI->RTSR1, ExtiLine);
+ 800549c:	ldr	r3, [pc, #116]	@ (8005514 <changeCompInput+0x118>)
+ 800549e:	ldr	r2, [r2, #4]
+ 80054a0:	ldr	r1, [r3, #0]
+ 80054a2:	orrs	r2, r1
+ 80054a4:	str	r2, [r3, #0]
+LL_EXTI_DisableFallingTrig_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:851
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval None
+  */
+__STATIC_INLINE void LL_EXTI_DisableFallingTrig_0_31(uint32_t ExtiLine)
+{
+  CLEAR_BIT(EXTI->FTSR1, ExtiLine);
+ 80054a6:	ldr	r2, [r3, #4]
+ 80054a8:	ldr	r1, [pc, #112]	@ (800551c <changeCompInput+0x120>)
+ 80054aa:	ands	r2, r1
+ 80054ac:	str	r2, [r3, #4]
+ 80054ae:	ldr	r2, [r3, #4]
+ 80054b0:	ldr	r1, [pc, #100]	@ (8005518 <changeCompInput+0x11c>)
+ 80054b2:	ands	r2, r1
+ 80054b4:	str	r2, [r3, #4]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:75
+}
+ 80054b6:	b.n	8005470 <changeCompInput+0x74>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:56
+        LL_COMP_ConfigInputs(active_COMP, PHASE_A_COMP, LL_COMP_INPUT_PLUS_IO3);
+ 80054b8:	ldr	r4, [r2, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:518
+ 80054ba:	ldr	r0, [pc, #100]	@ (8005520 <changeCompInput+0x124>)
+ 80054bc:	ldr	r3, [r4, #0]
+ 80054be:	ands	r0, r3
+ 80054c0:	movs	r3, #152	@ 0x98
+ 80054c2:	lsls	r3, r3, #2
+ 80054c4:	orrs	r3, r0
+ 80054c6:	str	r3, [r4, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:59
+    if (step == 3 || step == 6) { // b floating
+ 80054c8:	ldrb	r3, [r1, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:521
+             COMP_CSR_INMSEL | COMP_CSR_INPSEL,
+             InputMinus | InputPlus);
+}
+ 80054ca:	b.n	8005446 <changeCompInput+0x4a>
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:48
+        LL_COMP_ConfigInputs(active_COMP, PHASE_C_COMP, LL_COMP_INPUT_PLUS_IO3);
+ 80054cc:	ldr	r4, [r2, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:518
+  MODIFY_REG(COMPx->CSR,
+ 80054ce:	ldr	r0, [pc, #80]	@ (8005520 <changeCompInput+0x124>)
+ 80054d0:	ldr	r3, [r4, #0]
+ 80054d2:	ands	r0, r3
+ 80054d4:	movs	r3, #160	@ 0xa0
+ 80054d6:	lsls	r3, r3, #2
+ 80054d8:	orrs	r3, r0
+ 80054da:	str	r3, [r4, #0]
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:51
+    if (step == 2 || step == 5) { // a floating
+ 80054dc:	ldrb	r3, [r1, #0]
+LL_COMP_ConfigInputs():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_comp.h:521
+}
+ 80054de:	b.n	800543e <changeCompInput+0x42>
+changeCompInput():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:39
+if((average_interval > 600) && !medium_speed_set){
+ 80054e0:	ldr	r2, [r3, #0]
+ 80054e2:	movs	r3, #150	@ 0x96
+ 80054e4:	lsls	r3, r3, #2
+ 80054e6:	cmp	r2, r3
+ 80054e8:	bhi.n	80054ee <changeCompInput+0xf2>
+ 80054ea:	ldr	r2, [pc, #24]	@ (8005504 <changeCompInput+0x108>)
+ 80054ec:	b.n	8005432 <changeCompInput+0x36>
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:39 (discriminator 1)
+ 80054ee:	ldr	r1, [pc, #16]	@ (8005500 <changeCompInput+0x104>)
+ 80054f0:	ldr	r2, [pc, #16]	@ (8005504 <changeCompInput+0x108>)
+ 80054f2:	ldrb	r3, [r1, #0]
+ 80054f4:	cmp	r3, #0
+ 80054f6:	bne.n	8005432 <changeCompInput+0x36>
+ 80054f8:	b.n	800541e <changeCompInput+0x22>
+ 80054fa:	nop			@ (mov r8, r8)
+ 80054fc:	.word	0x20000484
+ 8005500:	.word	0x2000095c
+ 8005504:	.word	0x200003d8
+ 8005508:	.word	0xfff3ffff
+ 800550c:	.word	0x20000053
+ 8005510:	.word	0x20000050
+ 8005514:	.word	0x40021800
+ 8005518:	.word	0xfffbffff
+ 800551c:	.word	0xfffdffff
+ 8005520:	.word	0xfffffc0f
+
+; ===================== comStep =====================
+<comStep>:
+comStep():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:297
+    phaseBFLOAT();
+    phaseCFLOAT();
+}
+
+void comStep(int newStep)
+{
+ 800562c:	push	{r4, lr}
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:298
+    switch (newStep) {
+ 800562e:	cmp	r0, #6
+ 8005630:	bhi.n	80056b4 <comStep+0x88>
+ 8005632:	ldr	r3, [pc, #696]	@ (80058ec <comStep+0x2c0>)
+ 8005634:	lsls	r0, r0, #2
+ 8005636:	ldr	r3, [r3, r0]
+ 8005638:	mov	pc, r3
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  *         @arg @ref LL_GPIO_MODE_ANALOG
+  * @retval None
+  */
+__STATIC_INLINE void LL_GPIO_SetPinMode(GPIO_TypeDef *GPIOx, uint32_t Pin, uint32_t Mode)
+{
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 800563a:	movs	r1, #3
+ 800563c:	ldr	r2, [pc, #688]	@ (80058f0 <comStep+0x2c4>)
+ 800563e:	ldr	r0, [pc, #692]	@ (80058f4 <comStep+0x2c8>)
+ 8005640:	ldr	r3, [r2, #0]
+ 8005642:	bics	r3, r1
+ 8005644:	subs	r1, #2
+ 8005646:	orrs	r3, r1
+ 8005648:	str	r3, [r2, #0]
+ 800564a:	movs	r3, #160	@ 0xa0
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:79
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_B_GPIO_LOW;
+ 800564c:	str	r1, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800564e:	lsls	r3, r3, #23
+ 8005650:	ldr	r1, [r3, #0]
+ 8005652:	ands	r0, r1
+ 8005654:	movs	r1, #128	@ 0x80
+ 8005656:	lsls	r1, r1, #11
+ 8005658:	orrs	r1, r0
+ 800565a:	str	r1, [r3, #0]
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:82
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 800565c:	movs	r1, #128	@ 0x80
+ 800565e:	lsls	r1, r1, #2
+ 8005660:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005662:	ldr	r1, [r3, #0]
+ 8005664:	ldr	r0, [pc, #656]	@ (80058f8 <comStep+0x2cc>)
+ 8005666:	ands	r0, r1
+ 8005668:	movs	r1, #128	@ 0x80
+ 800566a:	lsls	r1, r1, #7
+ 800566c:	orrs	r1, r0
+ 800566e:	str	r1, [r3, #0]
+phaseCLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:128
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_C_GPIO_LOW;
+ 8005670:	movs	r1, #128	@ 0x80
+ 8005672:	str	r1, [r3, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005674:	ldr	r1, [r3, #0]
+ 8005676:	ldr	r0, [pc, #644]	@ (80058fc <comStep+0x2d0>)
+ 8005678:	ands	r0, r1
+ 800567a:	movs	r1, #128	@ 0x80
+ 800567c:	lsls	r1, r1, #9
+ 800567e:	orrs	r1, r0
+ 8005680:	str	r1, [r3, #0]
+phaseCLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:131
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 8005682:	movs	r1, #128	@ 0x80
+ 8005684:	lsls	r1, r1, #1
+ 8005686:	str	r1, [r3, #40]	@ 0x28
+phaseAPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:139
+    if (!eepromBuffer.comp_pwm) {
+ 8005688:	ldr	r3, [pc, #628]	@ (8005900 <comStep+0x2d4>)
+ 800568a:	ldrb	r3, [r3, #20]
+ 800568c:	cmp	r3, #0
+ 800568e:	beq.n	8005692 <comStep+0x66>
+ 8005690:	b.n	80058ce <comStep+0x2a2>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005692:	ldr	r3, [r2, #0]
+ 8005694:	subs	r1, #244	@ 0xf4
+ 8005696:	bics	r3, r1
+ 8005698:	subs	r1, #8
+ 800569a:	orrs	r3, r1
+ 800569c:	str	r3, [r2, #0]
+phaseAPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:142
+        PHASE_A_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_A_GPIO_LOW;
+ 800569e:	movs	r3, #2
+ 80056a0:	str	r3, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056a2:	movs	r1, #160	@ 0xa0
+ 80056a4:	lsls	r1, r1, #23
+ 80056a6:	ldr	r3, [r1, #0]
+ 80056a8:	ldr	r2, [pc, #600]	@ (8005904 <comStep+0x2d8>)
+ 80056aa:	ands	r2, r3
+ 80056ac:	movs	r3, #128	@ 0x80
+ 80056ae:	lsls	r3, r3, #14
+ 80056b0:	orrs	r3, r2
+ 80056b2:	str	r3, [r1, #0]
+comStep():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:335
+        phaseBFLOAT();
+        phaseCLOW();
+        phaseAPWM();
+        break;
+    }
+}
+ 80056b4:	pop	{r4, pc}
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056b6:	movs	r3, #160	@ 0xa0
+ 80056b8:	lsls	r3, r3, #23
+ 80056ba:	ldr	r2, [r3, #0]
+ 80056bc:	ldr	r1, [pc, #568]	@ (80058f8 <comStep+0x2cc>)
+ 80056be:	movs	r0, #3
+ 80056c0:	ands	r1, r2
+ 80056c2:	movs	r2, #128	@ 0x80
+ 80056c4:	lsls	r2, r2, #7
+ 80056c6:	orrs	r2, r1
+ 80056c8:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:118
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_C_GPIO_LOW;
+ 80056ca:	movs	r2, #128	@ 0x80
+ 80056cc:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056ce:	ldr	r2, [r3, #0]
+ 80056d0:	ldr	r1, [pc, #552]	@ (80058fc <comStep+0x2d0>)
+ 80056d2:	ands	r1, r2
+ 80056d4:	movs	r2, #128	@ 0x80
+ 80056d6:	lsls	r2, r2, #9
+ 80056d8:	orrs	r2, r1
+ 80056da:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:121
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 80056dc:	movs	r2, #128	@ 0x80
+ 80056de:	lsls	r2, r2, #1
+ 80056e0:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056e2:	ldr	r2, [pc, #524]	@ (80058f0 <comStep+0x2c4>)
+ 80056e4:	ldr	r1, [r2, #0]
+ 80056e6:	bics	r1, r0
+ 80056e8:	subs	r0, #2
+ 80056ea:	orrs	r1, r0
+ 80056ec:	str	r1, [r2, #0]
+phaseBLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:90
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_B_GPIO_LOW;
+ 80056ee:	str	r0, [r2, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80056f0:	ldr	r1, [r3, #0]
+ 80056f2:	ldr	r0, [pc, #512]	@ (80058f4 <comStep+0x2c8>)
+ 80056f4:	ands	r0, r1
+ 80056f6:	movs	r1, #128	@ 0x80
+ 80056f8:	lsls	r1, r1, #11
+ 80056fa:	orrs	r1, r0
+ 80056fc:	str	r1, [r3, #0]
+phaseBLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:93
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 80056fe:	movs	r1, #128	@ 0x80
+ 8005700:	lsls	r1, r1, #2
+ 8005702:	str	r1, [r3, #40]	@ 0x28
+phaseAPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:139
+    if (!eepromBuffer.comp_pwm) {
+ 8005704:	ldr	r3, [pc, #504]	@ (8005900 <comStep+0x2d4>)
+ 8005706:	ldrb	r3, [r3, #20]
+ 8005708:	cmp	r3, #0
+ 800570a:	beq.n	800570e <comStep+0xe2>
+ 800570c:	b.n	80058ce <comStep+0x2a2>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800570e:	subs	r1, #245	@ 0xf5
+ 8005710:	ldr	r3, [r2, #0]
+ 8005712:	subs	r1, #255	@ 0xff
+ 8005714:	b.n	8005696 <comStep+0x6a>
+ 8005716:	movs	r1, #12
+ 8005718:	ldr	r2, [pc, #468]	@ (80058f0 <comStep+0x2c4>)
+ 800571a:	ldr	r0, [pc, #488]	@ (8005904 <comStep+0x2d8>)
+ 800571c:	ldr	r3, [r2, #0]
+ 800571e:	bics	r3, r1
+ 8005720:	subs	r1, #8
+ 8005722:	orrs	r3, r1
+ 8005724:	str	r3, [r2, #0]
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:155
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_A_GPIO_LOW;
+ 8005726:	movs	r3, #2
+ 8005728:	str	r3, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800572a:	movs	r3, #160	@ 0xa0
+ 800572c:	lsls	r3, r3, #23
+ 800572e:	ldr	r1, [r3, #0]
+ 8005730:	ands	r0, r1
+ 8005732:	movs	r1, #128	@ 0x80
+ 8005734:	lsls	r1, r1, #13
+ 8005736:	orrs	r1, r0
+ 8005738:	str	r1, [r3, #0]
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:158
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 800573a:	movs	r1, #128	@ 0x80
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800573c:	movs	r0, #3
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:158
+ 800573e:	lsls	r1, r1, #3
+ 8005740:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005742:	ldr	r1, [r2, #0]
+ 8005744:	bics	r1, r0
+ 8005746:	subs	r0, #2
+ 8005748:	orrs	r1, r0
+ 800574a:	str	r1, [r2, #0]
+phaseBLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:90
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_B_GPIO_LOW;
+ 800574c:	str	r0, [r2, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800574e:	ldr	r2, [r3, #0]
+ 8005750:	ldr	r1, [pc, #416]	@ (80058f4 <comStep+0x2c8>)
+ 8005752:	ands	r1, r2
+ 8005754:	movs	r2, #128	@ 0x80
+ 8005756:	lsls	r2, r2, #11
+ 8005758:	orrs	r2, r1
+ 800575a:	str	r2, [r3, #0]
+phaseBLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:93
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 800575c:	movs	r2, #128	@ 0x80
+ 800575e:	lsls	r2, r2, #2
+ 8005760:	str	r2, [r3, #40]	@ 0x28
+phaseCPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:101
+    if (!eepromBuffer.comp_pwm) {
+ 8005762:	ldr	r2, [pc, #412]	@ (8005900 <comStep+0x2d4>)
+ 8005764:	ldrb	r2, [r2, #20]
+ 8005766:	cmp	r2, #0
+ 8005768:	bne.n	80057e4 <comStep+0x1b8>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800576a:	ldr	r2, [r3, #0]
+ 800576c:	ldr	r1, [pc, #392]	@ (80058f8 <comStep+0x2cc>)
+ 800576e:	ands	r1, r2
+ 8005770:	movs	r2, #128	@ 0x80
+ 8005772:	lsls	r2, r2, #7
+ 8005774:	orrs	r2, r1
+ 8005776:	str	r2, [r3, #0]
+phaseCPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:104
+        PHASE_C_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_C_GPIO_LOW;
+ 8005778:	movs	r2, #128	@ 0x80
+ 800577a:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800577c:	movs	r1, #160	@ 0xa0
+ 800577e:	lsls	r1, r1, #23
+ 8005780:	ldr	r3, [r1, #0]
+ 8005782:	ldr	r2, [pc, #376]	@ (80058fc <comStep+0x2d0>)
+ 8005784:	ands	r2, r3
+ 8005786:	movs	r3, #128	@ 0x80
+ 8005788:	lsls	r3, r3, #10
+ 800578a:	orrs	r3, r2
+ 800578c:	str	r3, [r1, #0]
+phaseCPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:111
+}
+ 800578e:	b.n	80056b4 <comStep+0x88>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005790:	movs	r1, #3
+ 8005792:	ldr	r2, [pc, #348]	@ (80058f0 <comStep+0x2c4>)
+ 8005794:	ldr	r0, [pc, #348]	@ (80058f4 <comStep+0x2c8>)
+ 8005796:	ldr	r3, [r2, #0]
+ 8005798:	bics	r3, r1
+ 800579a:	subs	r1, #2
+ 800579c:	orrs	r3, r1
+ 800579e:	str	r3, [r2, #0]
+ 80057a0:	movs	r3, #160	@ 0xa0
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:79
+    PHASE_B_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_B_GPIO_LOW;
+ 80057a2:	str	r1, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057a4:	lsls	r3, r3, #23
+ 80057a6:	ldr	r1, [r3, #0]
+ 80057a8:	ands	r0, r1
+ 80057aa:	movs	r1, #128	@ 0x80
+ 80057ac:	lsls	r1, r1, #11
+ 80057ae:	orrs	r1, r0
+ 80057b0:	str	r1, [r3, #0]
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:82
+    PHASE_B_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_B_GPIO_HIGH;
+ 80057b2:	movs	r1, #128	@ 0x80
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057b4:	movs	r0, #12
+phaseBFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:82
+ 80057b6:	lsls	r1, r1, #2
+ 80057b8:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057ba:	ldr	r1, [r2, #0]
+ 80057bc:	bics	r1, r0
+ 80057be:	subs	r0, #8
+ 80057c0:	orrs	r1, r0
+ 80057c2:	str	r1, [r2, #0]
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:165
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_A_GPIO_LOW;
+ 80057c4:	movs	r1, #2
+ 80057c6:	str	r1, [r2, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057c8:	ldr	r2, [r3, #0]
+ 80057ca:	ldr	r1, [pc, #312]	@ (8005904 <comStep+0x2d8>)
+ 80057cc:	ands	r1, r2
+ 80057ce:	movs	r2, #128	@ 0x80
+ 80057d0:	lsls	r2, r2, #13
+ 80057d2:	orrs	r2, r1
+ 80057d4:	str	r2, [r3, #0]
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:168
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 80057d6:	movs	r2, #128	@ 0x80
+ 80057d8:	lsls	r2, r2, #3
+ 80057da:	str	r2, [r3, #40]	@ 0x28
+phaseCPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:101
+    if (!eepromBuffer.comp_pwm) {
+ 80057dc:	ldr	r2, [pc, #288]	@ (8005900 <comStep+0x2d4>)
+ 80057de:	ldrb	r2, [r2, #20]
+ 80057e0:	cmp	r2, #0
+ 80057e2:	beq.n	800576a <comStep+0x13e>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80057e4:	ldr	r2, [r3, #0]
+ 80057e6:	ldr	r1, [pc, #272]	@ (80058f8 <comStep+0x2cc>)
+ 80057e8:	ands	r1, r2
+ 80057ea:	movs	r2, #128	@ 0x80
+ 80057ec:	lsls	r2, r2, #8
+ 80057ee:	orrs	r2, r1
+ 80057f0:	str	r2, [r3, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:282
+}
+ 80057f2:	b.n	800577c <comStep+0x150>
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 80057f4:	movs	r3, #160	@ 0xa0
+ 80057f6:	lsls	r3, r3, #23
+ 80057f8:	ldr	r2, [r3, #0]
+ 80057fa:	ldr	r1, [pc, #252]	@ (80058f8 <comStep+0x2cc>)
+ 80057fc:	movs	r0, #12
+ 80057fe:	ands	r1, r2
+ 8005800:	movs	r2, #128	@ 0x80
+ 8005802:	lsls	r2, r2, #7
+ 8005804:	orrs	r2, r1
+ 8005806:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:118
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_C_GPIO_LOW;
+ 8005808:	movs	r2, #128	@ 0x80
+ 800580a:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800580c:	ldr	r2, [r3, #0]
+ 800580e:	ldr	r1, [pc, #236]	@ (80058fc <comStep+0x2d0>)
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:165
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_A_GPIO_LOW;
+ 8005810:	movs	r4, #2
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005812:	ands	r1, r2
+ 8005814:	movs	r2, #128	@ 0x80
+ 8005816:	lsls	r2, r2, #9
+ 8005818:	orrs	r2, r1
+ 800581a:	str	r2, [r3, #0]
+phaseCFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:121
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 800581c:	movs	r2, #128	@ 0x80
+ 800581e:	lsls	r2, r2, #1
+ 8005820:	str	r2, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005822:	ldr	r2, [pc, #204]	@ (80058f0 <comStep+0x2c4>)
+ 8005824:	ldr	r1, [r2, #0]
+ 8005826:	bics	r1, r0
+ 8005828:	subs	r0, #8
+ 800582a:	orrs	r1, r0
+ 800582c:	str	r1, [r2, #0]
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:165
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_A_GPIO_LOW;
+ 800582e:	str	r4, [r2, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005830:	ldr	r1, [r3, #0]
+ 8005832:	ldr	r0, [pc, #208]	@ (8005904 <comStep+0x2d8>)
+ 8005834:	ands	r0, r1
+ 8005836:	movs	r1, #128	@ 0x80
+ 8005838:	lsls	r1, r1, #13
+ 800583a:	orrs	r1, r0
+ 800583c:	str	r1, [r3, #0]
+phaseALOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:168
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 800583e:	movs	r1, #128	@ 0x80
+ 8005840:	lsls	r1, r1, #3
+ 8005842:	str	r1, [r3, #40]	@ 0x28
+phaseBPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:63
+    if (!eepromBuffer.comp_pwm) { // for future
+ 8005844:	ldr	r3, [pc, #184]	@ (8005900 <comStep+0x2d4>)
+ 8005846:	ldrb	r3, [r3, #20]
+ 8005848:	cmp	r3, #0
+ 800584a:	beq.n	80058dc <comStep+0x2b0>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800584c:	movs	r1, #3
+ 800584e:	ldr	r3, [r2, #0]
+ 8005850:	bics	r3, r1
+ 8005852:	orrs	r3, r4
+ 8005854:	str	r3, [r2, #0]
+ 8005856:	movs	r1, #160	@ 0xa0
+ 8005858:	lsls	r1, r1, #23
+ 800585a:	ldr	r3, [r1, #0]
+ 800585c:	ldr	r2, [pc, #148]	@ (80058f4 <comStep+0x2c8>)
+ 800585e:	ands	r2, r3
+ 8005860:	movs	r3, #128	@ 0x80
+ 8005862:	lsls	r3, r3, #12
+ 8005864:	orrs	r3, r2
+ 8005866:	str	r3, [r1, #0]
+phaseBPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:73
+}
+ 8005868:	b.n	80056b4 <comStep+0x88>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 800586a:	movs	r1, #12
+ 800586c:	ldr	r2, [pc, #128]	@ (80058f0 <comStep+0x2c4>)
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:155
+    PHASE_A_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_A_GPIO_LOW;
+ 800586e:	movs	r4, #2
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005870:	ldr	r3, [r2, #0]
+ 8005872:	ldr	r0, [pc, #144]	@ (8005904 <comStep+0x2d8>)
+ 8005874:	bics	r3, r1
+ 8005876:	subs	r1, #8
+ 8005878:	orrs	r3, r1
+ 800587a:	str	r3, [r2, #0]
+ 800587c:	movs	r3, #160	@ 0xa0
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:155
+ 800587e:	str	r4, [r2, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005880:	lsls	r3, r3, #23
+ 8005882:	ldr	r1, [r3, #0]
+ 8005884:	ands	r0, r1
+ 8005886:	movs	r1, #128	@ 0x80
+ 8005888:	lsls	r1, r1, #13
+ 800588a:	orrs	r1, r0
+ 800588c:	str	r1, [r3, #0]
+phaseAFLOAT():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:158
+    PHASE_A_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_A_GPIO_HIGH;
+ 800588e:	movs	r1, #128	@ 0x80
+ 8005890:	lsls	r1, r1, #3
+ 8005892:	str	r1, [r3, #40]	@ 0x28
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 8005894:	ldr	r1, [r3, #0]
+ 8005896:	ldr	r0, [pc, #96]	@ (80058f8 <comStep+0x2cc>)
+ 8005898:	ands	r0, r1
+ 800589a:	movs	r1, #128	@ 0x80
+ 800589c:	lsls	r1, r1, #7
+ 800589e:	orrs	r1, r0
+ 80058a0:	str	r1, [r3, #0]
+phaseCLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:128
+    PHASE_C_GPIO_PORT_LOW->LOW_BITREG_ON = PHASE_C_GPIO_LOW;
+ 80058a2:	movs	r1, #128	@ 0x80
+ 80058a4:	str	r1, [r3, #24]
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80058a6:	ldr	r1, [r3, #0]
+ 80058a8:	ldr	r0, [pc, #80]	@ (80058fc <comStep+0x2d0>)
+ 80058aa:	ands	r0, r1
+ 80058ac:	movs	r1, #128	@ 0x80
+ 80058ae:	lsls	r1, r1, #9
+ 80058b0:	orrs	r1, r0
+ 80058b2:	str	r1, [r3, #0]
+phaseCLOW():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:131
+    PHASE_C_GPIO_PORT_HIGH->HIGH_BITREG_OFF = PHASE_C_GPIO_HIGH;
+ 80058b4:	movs	r1, #128	@ 0x80
+ 80058b6:	lsls	r1, r1, #1
+ 80058b8:	str	r1, [r3, #40]	@ 0x28
+phaseBPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:63
+    if (!eepromBuffer.comp_pwm) { // for future
+ 80058ba:	ldr	r3, [pc, #68]	@ (8005900 <comStep+0x2d4>)
+ 80058bc:	ldrb	r3, [r3, #20]
+ 80058be:	cmp	r3, #0
+ 80058c0:	beq.n	80058dc <comStep+0x2b0>
+LL_GPIO_SetPinMode():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+ 80058c2:	movs	r1, #3
+ 80058c4:	ldr	r3, [r2, #0]
+ 80058c6:	bics	r3, r1
+ 80058c8:	orrs	r4, r3
+ 80058ca:	str	r4, [r2, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:282
+}
+ 80058cc:	b.n	8005856 <comStep+0x22a>
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 80058ce:	movs	r1, #12
+ 80058d0:	ldr	r3, [r2, #0]
+ 80058d2:	bics	r3, r1
+ 80058d4:	subs	r1, #4
+ 80058d6:	orrs	r3, r1
+ 80058d8:	str	r3, [r2, #0]
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:282
+}
+ 80058da:	b.n	80056a2 <comStep+0x76>
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_gpio.h:281
+  MODIFY_REG(GPIOx->MODER, ((Pin * Pin) * GPIO_MODER_MODE0), ((Pin * Pin) * Mode));
+ 80058dc:	movs	r1, #3
+ 80058de:	ldr	r3, [r2, #0]
+ 80058e0:	bics	r3, r1
+ 80058e2:	subs	r1, #2
+ 80058e4:	orrs	r3, r1
+ 80058e6:	str	r3, [r2, #0]
+phaseBPWM():
+E:\m\robot\esc\AM32/Mcu/g071/Src/phaseouts.c:66
+        PHASE_B_GPIO_PORT_LOW->LOW_BITREG_OFF = PHASE_B_GPIO_LOW;
+ 80058e8:	str	r1, [r2, #40]	@ 0x28
+ 80058ea:	b.n	8005856 <comStep+0x22a>
+ 80058ec:	.word	0x08005c64
+ 80058f0:	.word	0x50000400
+ 80058f4:	.word	0xfff3ffff
+ 80058f8:	.word	0xffff3fff
+ 80058fc:	.word	0xfffcffff
+ 8005900:	.word	0x20000630
+ 8005904:	.word	0xffcfffff

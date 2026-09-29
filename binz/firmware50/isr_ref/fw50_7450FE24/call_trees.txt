@@ -1,0 +1,14 @@
+ELF 7450FE24.env37-adv18-cap725-qual.elf sha256 7450fe2404c7f074595681d76a7b18d4a9fb3c3db3adb6d93efa532c2dbc19c1
+
+[comp] ADC_COMP: COMP2 edge: decide + arm
+  ADC_COMP: 818 insns, 1744 B
+  -> E:\m\robot\esc\rm32-sagcheck\binz\firmware50\captures\isr_ref\fw50_7450FE24\comp_ADC_COMP.lst
+
+[com] TIM16: commutation one-shot
+  TIM16: 368 insns, 804 B -> _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E
+    _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E: 84 insns, 192 B
+  -> E:\m\robot\esc\rm32-sagcheck\binz\firmware50\captures\isr_ref\fw50_7450FE24\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick
+  TIM6_DAC_LPTIM1: 155 insns, 344 B
+  -> E:\m\robot\esc\rm32-sagcheck\binz\firmware50\captures\isr_ref\fw50_7450FE24\tick_TIM6_DAC_LPTIM1.lst

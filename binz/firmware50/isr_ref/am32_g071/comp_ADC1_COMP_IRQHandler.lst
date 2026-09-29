@@ -1,0 +1,310 @@
+; AM32 G071 reference ISR: ADC1_COMP_IRQHandler -- BEMF comparator edge -> interruptRoutine (zero-cross accept + arm COM timer)
+; ELF AM32_DRV8304H_G071_2.20.elf  sha256 02592720fb8a1dca2bea0f2915bed553fe3399eca2dbe8e541d2d5804d4ab2fc
+; objdump -d -S -l, call tree walked to depth 6
+;
+; call tree (function: instructions, size bytes -> callees)
+;   ADC1_COMP_IRQHandler: 59 insns, 132 B -> getCompOutputLevel, interruptRoutine
+;     getCompOutputLevel: 7 insns, 16 B
+;     interruptRoutine: 51 insns, 112 B -> getCompOutputLevel, maskPhaseInterrupts
+;       maskPhaseInterrupts: 14 insns, 32 B
+;
+
+; ===================== ADC1_COMP_IRQHandler =====================
+<ADC1_COMP_IRQHandler>:
+ADC1_COMP_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:242
+/**
+ * @brief This function handles ADC1, COMP1 and COMP2 interrupts (COMP
+ * interrupts through EXTI lines 17 and 18).
+ */
+void ADC1_COMP_IRQHandler(void)
+{
+ 8004ee8:	push	{r4, r5, r6, lr}
+LL_EXTI_IsActiveFallingFlag_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:967
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval State of bit (1 or 0).
+  */
+__STATIC_INLINE uint32_t LL_EXTI_IsActiveFallingFlag_0_31(uint32_t ExtiLine)
+{
+  return ((READ_BIT(EXTI->FPR1, ExtiLine) == (ExtiLine)) ? 1UL : 0UL);
+ 8004eea:	movs	r5, #128	@ 0x80
+ 8004eec:	ldr	r4, [pc, #112]	@ (8004f60 <ADC1_COMP_IRQHandler+0x78>)
+ 8004eee:	lsls	r5, r5, #11
+ 8004ef0:	ldr	r3, [r4, #16]
+ 8004ef2:	tst	r3, r5
+ 8004ef4:	bne.n	8004f2e <ADC1_COMP_IRQHandler+0x46>
+LL_EXTI_IsActiveRisingFlag_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:1066
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval State of bit (1 or 0).
+  */
+__STATIC_INLINE uint32_t LL_EXTI_IsActiveRisingFlag_0_31(uint32_t ExtiLine)
+{
+  return ((READ_BIT(EXTI->RPR1, ExtiLine) == (ExtiLine)) ? 1UL : 0UL);
+ 8004ef6:	ldr	r3, [r4, #12]
+ 8004ef8:	tst	r3, r5
+ 8004efa:	bne.n	8004f0e <ADC1_COMP_IRQHandler+0x26>
+LL_EXTI_IsActiveFallingFlag_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:967
+  return ((READ_BIT(EXTI->FPR1, ExtiLine) == (ExtiLine)) ? 1UL : 0UL);
+ 8004efc:	movs	r5, #128	@ 0x80
+ 8004efe:	ldr	r3, [r4, #16]
+ 8004f00:	lsls	r5, r5, #10
+ 8004f02:	tst	r3, r5
+ 8004f04:	bne.n	8004f2e <ADC1_COMP_IRQHandler+0x46>
+LL_EXTI_IsActiveRisingFlag_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:1066
+  return ((READ_BIT(EXTI->RPR1, ExtiLine) == (ExtiLine)) ? 1UL : 0UL);
+ 8004f06:	ldr	r3, [r4, #12]
+ 8004f08:	tst	r3, r5
+ 8004f0a:	bne.n	8004f0e <ADC1_COMP_IRQHandler+0x26>
+ADC1_COMP_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:293
+          return;
+      }
+    }
+    return;
+  }
+}
+ 8004f0c:	pop	{r4, r5, r6, pc}
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:282
+    if((INTERVAL_TIMER->CNT) > (average_interval >> 1)){
+ 8004f0e:	movs	r3, #128	@ 0x80
+ 8004f10:	lsls	r3, r3, #23
+ 8004f12:	ldr	r2, [r3, #36]	@ 0x24
+ 8004f14:	ldr	r3, [pc, #76]	@ (8004f64 <ADC1_COMP_IRQHandler+0x7c>)
+ 8004f16:	ldr	r3, [r3, #0]
+ 8004f18:	lsrs	r3, r3, #1
+ 8004f1a:	cmp	r2, r3
+ 8004f1c:	bhi.n	8004f56 <ADC1_COMP_IRQHandler+0x6e>
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:286
+      if(getCompOutputLevel() == rising){
+ 8004f1e:	bl	80053b4 <getCompOutputLevel>
+ 8004f22:	ldr	r3, [pc, #68]	@ (8004f68 <ADC1_COMP_IRQHandler+0x80>)
+ 8004f24:	ldrb	r3, [r3, #0]
+ 8004f26:	cmp	r0, r3
+ 8004f28:	bne.n	8004f0c <ADC1_COMP_IRQHandler+0x24>
+LL_EXTI_ClearRisingFlag_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:1132
+  * @note   Please check each device line mapping for EXTI Line availability
+  * @retval None
+  */
+__STATIC_INLINE void LL_EXTI_ClearRisingFlag_0_31(uint32_t ExtiLine)
+{
+  WRITE_REG(EXTI->RPR1, ExtiLine);
+ 8004f2a:	str	r5, [r4, #12]
+ADC1_COMP_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:288
+          return;
+ 8004f2c:	b.n	8004f0c <ADC1_COMP_IRQHandler+0x24>
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:269
+    if((INTERVAL_TIMER->CNT) > (average_interval >> 1)){
+ 8004f2e:	movs	r3, #128	@ 0x80
+ 8004f30:	lsls	r3, r3, #23
+ 8004f32:	ldr	r2, [r3, #36]	@ 0x24
+ 8004f34:	ldr	r3, [pc, #44]	@ (8004f64 <ADC1_COMP_IRQHandler+0x7c>)
+ 8004f36:	ldr	r3, [r3, #0]
+ 8004f38:	lsrs	r3, r3, #1
+ 8004f3a:	cmp	r2, r3
+ 8004f3c:	bhi.n	8004f4e <ADC1_COMP_IRQHandler+0x66>
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:273
+      if(getCompOutputLevel() == rising){
+ 8004f3e:	bl	80053b4 <getCompOutputLevel>
+ 8004f42:	ldr	r3, [pc, #36]	@ (8004f68 <ADC1_COMP_IRQHandler+0x80>)
+ 8004f44:	ldrb	r3, [r3, #0]
+ 8004f46:	cmp	r0, r3
+ 8004f48:	bne.n	8004f0c <ADC1_COMP_IRQHandler+0x24>
+LL_EXTI_ClearFallingFlag_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:1033
+  WRITE_REG(EXTI->FPR1, ExtiLine);
+ 8004f4a:	str	r5, [r4, #16]
+ADC1_COMP_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:275
+          return;
+ 8004f4c:	b.n	8004f0c <ADC1_COMP_IRQHandler+0x24>
+LL_EXTI_ClearFallingFlag_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:1033
+ 8004f4e:	str	r5, [r4, #16]
+ADC1_COMP_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:271
+      interruptRoutine();
+ 8004f50:	bl	8000e88 <interruptRoutine>
+ 8004f54:	b.n	8004f0c <ADC1_COMP_IRQHandler+0x24>
+LL_EXTI_ClearRisingFlag_0_31():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_ll_exti.h:1132
+  WRITE_REG(EXTI->RPR1, ExtiLine);
+ 8004f56:	str	r5, [r4, #12]
+ADC1_COMP_IRQHandler():
+E:\m\robot\esc\AM32/Mcu/g071/Src/stm32g0xx_it.c:284
+      interruptRoutine();
+ 8004f58:	bl	8000e88 <interruptRoutine>
+ 8004f5c:	b.n	8004f0c <ADC1_COMP_IRQHandler+0x24>
+ 8004f5e:	nop			@ (mov r8, r8)
+ 8004f60:	.word	0x40021800
+ 8004f64:	.word	0x20000484
+ 8004f68:	.word	0x20000050
+
+; ===================== getCompOutputLevel =====================
+<getCompOutputLevel>:
+getCompOutputLevel():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:17
+
+COMP_TypeDef* active_COMP = COMP2;
+uint32_t current_EXTI_LINE = LL_EXTI_LINE_18;
+uint8_t medium_speed_set;
+
+uint8_t getCompOutputLevel() { return (active_COMP->CSR >> 30 & 1); }
+ 80053b4:	ldr	r3, [pc, #8]	@ (80053c0 <getCompOutputLevel+0xc>)
+ 80053b6:	ldr	r3, [r3, #0]
+ 80053b8:	ldr	r0, [r3, #0]
+ 80053ba:	lsls	r0, r0, #1
+ 80053bc:	lsrs	r0, r0, #31
+ 80053be:	bx	lr
+ 80053c0:	.word	0x200003d8
+
+; ===================== interruptRoutine =====================
+<interruptRoutine>:
+interruptRoutine():
+E:\m\robot\esc\AM32/Src/main.c:946
+        zero_crosses++;
+    }
+}
+
+void interruptRoutine()
+{
+ 8000e88:	push	{r3, r4, r5, r6, r7, lr}
+E:\m\robot\esc\AM32/Src/main.c:959
+//            maskPhaseInterrupts();
+//            zero_crosses = 0;
+//            return;
+//        }
+//    }
+        for (int i = 0; i < filter_level; i++) {
+ 8000e8a:	movs	r3, #100	@ 0x64
+ 8000e8c:	ldr	r5, [pc, #92]	@ (8000eec <interruptRoutine+0x64>)
+ 8000e8e:	ldrb	r3, [r5, r3]
+ 8000e90:	cmp	r3, #0
+ 8000e92:	beq.n	8000eb0 <interruptRoutine+0x28>
+ 8000e94:	movs	r4, #0
+E:\m\robot\esc\AM32/Src/main.c:963
+#if defined(MCU_F031) || defined(MCU_G031)
+            if (((current_GPIO_PORT->IDR & current_GPIO_PIN) == !(rising))) {
+#else
+            if (getCompOutputLevel() == rising) {
+ 8000e96:	movs	r6, #80	@ 0x50
+E:\m\robot\esc\AM32/Src/main.c:959
+        for (int i = 0; i < filter_level; i++) {
+ 8000e98:	movs	r7, #100	@ 0x64
+ 8000e9a:	b.n	8000ea4 <interruptRoutine+0x1c>
+E:\m\robot\esc\AM32/Src/main.c:959 (discriminator 2)
+ 8000e9c:	ldrb	r3, [r5, r7]
+ 8000e9e:	adds	r4, #1
+ 8000ea0:	cmp	r3, r4
+ 8000ea2:	ble.n	8000eb0 <interruptRoutine+0x28>
+E:\m\robot\esc\AM32/Src/main.c:963
+            if (getCompOutputLevel() == rising) {
+ 8000ea4:	bl	80053b4 <getCompOutputLevel>
+ 8000ea8:	ldrb	r3, [r5, r6]
+ 8000eaa:	cmp	r0, r3
+ 8000eac:	bne.n	8000e9c <interruptRoutine+0x14>
+E:\m\robot\esc\AM32/Src/main.c:975
+    lastzctime = thiszctime;
+    thiszctime = INTERVAL_TIMER_COUNT;
+    SET_INTERVAL_TIMER_COUNT(0);
+    SET_AND_ENABLE_COM_INT(waitTime+1); // enable COM_TIMER interrupt
+    __enable_irq();
+}
+ 8000eae:	pop	{r3, r4, r5, r6, r7, pc}
+__disable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:142
+  \details Disables IRQ interrupts by setting the I-bit in the CPSR.
+           Can only be executed in Privileged modes.
+ */
+__STATIC_FORCEINLINE void __disable_irq(void)
+{
+  __ASM volatile ("cpsid i" : : : "memory");
+ 8000eb0:	cpsid	i
+interruptRoutine():
+E:\m\robot\esc\AM32/Src/main.c:969
+    maskPhaseInterrupts();
+ 8000eb2:	bl	80053c4 <maskPhaseInterrupts>
+E:\m\robot\esc\AM32/Src/main.c:970
+    lastzctime = thiszctime;
+ 8000eb6:	movs	r1, #90	@ 0x5a
+ 8000eb8:	movs	r0, #88	@ 0x58
+ 8000eba:	ldr	r2, [pc, #52]	@ (8000ef0 <interruptRoutine+0x68>)
+ 8000ebc:	ldrh	r3, [r2, r1]
+ 8000ebe:	uxth	r3, r3
+ 8000ec0:	strh	r3, [r2, r0]
+E:\m\robot\esc\AM32/Src/main.c:971
+    thiszctime = INTERVAL_TIMER_COUNT;
+ 8000ec2:	movs	r0, #128	@ 0x80
+ 8000ec4:	lsls	r0, r0, #23
+ 8000ec6:	ldr	r3, [r0, #36]	@ 0x24
+ 8000ec8:	uxth	r3, r3
+ 8000eca:	strh	r3, [r2, r1]
+E:\m\robot\esc\AM32/Src/main.c:972
+    SET_INTERVAL_TIMER_COUNT(0);
+ 8000ecc:	movs	r1, #0
+ 8000ece:	str	r1, [r0, #36]	@ 0x24
+E:\m\robot\esc\AM32/Src/main.c:973
+    SET_AND_ENABLE_COM_INT(waitTime+1); // enable COM_TIMER interrupt
+ 8000ed0:	movs	r0, #96	@ 0x60
+ 8000ed2:	ldr	r3, [pc, #32]	@ (8000ef4 <interruptRoutine+0x6c>)
+ 8000ed4:	str	r1, [r3, #36]	@ 0x24
+ 8000ed6:	ldrh	r2, [r2, r0]
+ 8000ed8:	adds	r2, #1
+ 8000eda:	str	r2, [r3, #44]	@ 0x2c
+ 8000edc:	str	r1, [r3, #16]
+ 8000ede:	ldr	r2, [r3, #12]
+ 8000ee0:	adds	r1, #1
+ 8000ee2:	orrs	r2, r1
+ 8000ee4:	str	r2, [r3, #12]
+__enable_irq():
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:131
+  __ASM volatile ("cpsie i" : : : "memory");
+ 8000ee6:	cpsie	i
+E:\m\robot\esc\AM32/Mcu/g071/Drivers/CMSIS/Include/cmsis_gcc.h:132
+}
+ 8000ee8:	b.n	8000eae <interruptRoutine+0x26>
+ 8000eea:	nop			@ (mov r8, r8)
+ 8000eec:	.word	0x20000000
+ 8000ef0:	.word	0x20000460
+ 8000ef4:	.word	0x40002000
+
+; ===================== maskPhaseInterrupts =====================
+<maskPhaseInterrupts>:
+maskPhaseInterrupts():
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:21
+
+uint8_t getCompOutputLevel() { return (active_COMP->CSR >> 30 & 1); }
+
+void maskPhaseInterrupts()
+{
+    EXTI->IMR1 &= ~(1 << 18);
+ 80053c4:	movs	r1, #128	@ 0x80
+ 80053c6:	ldr	r3, [pc, #20]	@ (80053dc <maskPhaseInterrupts+0x18>)
+ 80053c8:	ldr	r0, [pc, #20]	@ (80053e0 <maskPhaseInterrupts+0x1c>)
+ 80053ca:	ldr	r2, [r3, r1]
+ 80053cc:	ands	r2, r0
+ 80053ce:	str	r2, [r3, r1]
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:22
+    EXTI->RPR1 = EXTI_LINE;
+ 80053d0:	movs	r2, #128	@ 0x80
+ 80053d2:	lsls	r2, r2, #11
+ 80053d4:	str	r2, [r3, #12]
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:23
+    EXTI->FPR1 = EXTI_LINE;
+ 80053d6:	str	r2, [r3, #16]
+E:\m\robot\esc\AM32/Mcu/g071/Src/comparator.c:29
+#ifdef N_VARIANT
+    EXTI->IMR1 &= ~(1 << 17);
+    LL_EXTI_ClearRisingFlag_0_31(LL_EXTI_LINE_17);
+    LL_EXTI_ClearFallingFlag_0_31(LL_EXTI_LINE_17);
+#endif
+}
+ 80053d8:	bx	lr
+ 80053da:	nop			@ (mov r8, r8)
+ 80053dc:	.word	0x40021800
+ 80053e0:	.word	0xfffbffff

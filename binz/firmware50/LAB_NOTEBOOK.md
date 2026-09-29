@@ -44208,3 +44208,82 @@ AM32 does.
 returns in steady state (ENV-43, 2/3; one run with a 4.2 % loop-vs-rotor slip), and the arm deadline arrives with it
 (LateArm 2/9 runs across ENV-40/42/43). **Arm-deadline latency (`spent` 11 µs against a ~9 µs advance-18 wait) is what
 blocks the only lever that has worked.**
+
+---
+
+# CAMPAIGN: AM32-SHAPED HANDLERS (goal set 2026-09-29)
+
+### ENV-44 — baseline tagged; the method; executed-path counts against AM32
+
+**Baseline tag `fw50-q725-adv18`** = commit `56f1424`, production loadable `CB638C58`, image `7450FE24` (72.5 %, advance 18,
+cap 725). Every attempt branches from it.
+
+**Method (stated up front; the graybeard review's point 3).** Two measures per commit, both labelled:
+1. **Executed-instruction count on the declared common path**, via `scripts/isr_path.py`, which walks a
+   source-interleaved listing (`isr_ref/`, from `scripts/am32_isr_dump.py`). Every conditional branch on the path
+   must be declared in a spec file (`isr_ref/specs/*.spec`) with its source line, or the walk refuses. It counts
+   instructions, not cycles.
+2. **Measured `spent`** (crossing-stamp → arm) and the comparator handler's `call_max`, per commit, from the bench.
+
+A branch that cuts the count but not the time has found a stall or a critical section, and that is reported as a
+finding. The tool was validated on AM32: it reproduces my hand count of the comparator path (97 at filter depth 2).
+
+**Operating point for every count:** 72.5 %: ci ≈ 65 µs, avg 130 half-µs. AM32's filter map there gives 3 reads;
+firmware50's `deep-filter` floor gives 5. Step 2 → 3, steady state (tracking tightened, counters not at new extremes).
+
+| handler (executed, common path) | AM32 G071 (`02592720…`) | firmware50 `7450FE24` | ratio |
+|---|---|---|---|
+| comparator, accepted crossing | **111** (arm written at #106) | **425** (arm written at #304) | **3.8×** (2.9× to the arm) |
+| commutation, one per commutation | **248** (`TIM14`) | **207** phase 1 with floor arm, **202** without | 0.8× |
+| commutation, phase 3 (blank floor ends) | — (AM32 has no such interrupt) | **74** | — |
+
+Static sizes, for comparison only: AM32 comparator path 131, commutation 674. firmware50 `ADC_COMP` 818, `TIM16` 368 + 84.
+**The "6× over" figure was static; executed it is 3.8×, and all of the excess is in the comparator.**
+The commutation root is already at AM32 size.
+
+**firmware50 comparator path, by position:**
+
+| positions | section | AM32 equivalent? | disposition |
+|---|---|---|---|
+| 1–19 | entry, mask + ack, clock stamp | yes | keep |
+| 20–68 | storm rate limiter (`rate.hit`) | no | **safeguard — keep** |
+| 69–132 | estimator borrow, rebase check, step clamp, half-cycle gate, **filter-depth map** (~20) | gate: yes; map: main loop | map → out of the comparator |
+| 133–192 | 5 filter reads (`deep-filter` floor 5) | yes (3 reads) | keep (qualified constant) |
+| 193–258 | **interval blend, clamp, advance, wait**, accept publishes | **no — AM32 does this in `PeriodElapsedCallback`** | **→ commutation root** |
+| 259–304 | `com_arm` critical section, arm-allowed check | arm yes; check no | **safeguard — keep** |
+| 305–425 | margin counters, tracking watch (~75), handler budget, return | no | tracking watch + budget are safeguards; after the arm |
+
+### ENV-45 — attempt A1 predeclared: the estimator moves to the commutation root (AM32's placement)
+
+Branch `am32shape/a1` from `fw50-q725-adv18`. **One functional change: where the estimate is computed.**
+* **Comparator:**
+  * rebase check against a published `ci_max`; half-cycle gate against a published `gate`;
+  * filter reads at a published depth;
+  * on accept: stamp `sector_start`/`accept_raw`, publish `accept_count`, bump `accept_seq`;
+  * arm with the **published `next_wait`**, keeping the existing spent-subtraction (a behaviour AM32 lacks, left alone so
+    that one thing changes);
+  * the tracking watch, margin counters and handler budget stay after the arm.
+* **Commutation phase 1:**
+  * after the step is applied, if `accept_seq` advanced, `zc.commit(accept_count, advance)` blends, clamps and computes
+    the next wait;
+  * it then publishes `next_wait`, `gate`, `ci_max`, `depth`, `accept_avg` and `accept_blank`;
+  * the six-slot push and the blank floor then read the same average they read before.
+* **The seq check** means a forced or rescue commutation never blends a stale interval twice.
+* **`det_install` publishes the first `next_wait`, gate and depth** from the seeded estimator (graybeard caution 1).
+* **The estimator code keeps one owner**, now the commutation root. `offer()` stays, as gate + filter + commit
+  composed, so the estimator's own tests still test identical arithmetic.
+
+**Behavioural change (AM32's):** a crossing's arm uses the wait computed at the previous commutation, which
+includes the previous crossing but not this one. That makes the wait one step ahead.
+
+**Predictions:**
+* **Counts:** comparator accepted path 425 → **~330** (arm at ~**215**, ~2× AM32's 106); commutation phase 1
+  207 → **~260** (≈ AM32's 248).
+* **`spent_max`:** 11 → **~7–8 µs**.
+* **Behaviour at 30–40 %:** speed within ±1 % of the tag; current within ±3 %; step-3 late rate unchanged within noise. The
+  stale wait differs by < 1 % of ci at steady speed, so it should be invisible there.
+* **During the ramp** (accelerating), the one-step-stale wait is slightly long, which is effectively a little less
+  advance. Invisible at hold.
+* **Edge probe:** commutation lands at crossing + published wait (the probe must show `wait` actually applied).
+* **Risk named:** the first accept after handover. If `next_wait` is not seeded, the first arm uses 0 or garbage. That
+  shows as a failed first-commutation edge check or a handover stop, and would be my seeding bug, not the design's.
