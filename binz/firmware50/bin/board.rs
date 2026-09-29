@@ -683,6 +683,8 @@ impl Hal for Board {
             };
             let ok = firmware50::revisit::admit(v);
             if ok {
+                #[cfg(feature = "chain-origin")]
+                firmware50::chain::REVISIT_REQ.store(true, Ordering::Relaxed);
                 hw::comp::pend();
             }
             ok

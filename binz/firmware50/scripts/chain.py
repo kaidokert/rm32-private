@@ -213,6 +213,9 @@ def parse(path):
                         'factor. Use scripts/chain_spent.py.')
                 elif len(f) == 9:
                     rows.append(Row(*(int(x) for x in f[1:])))
+                elif len(f) == 10:
+                    # ENV-26: a tenth token, the accept row's refusal tally.
+                    rows.append(Row(*(int(x) for x in f[1:9])))
             elif line.startswith('BEMFRUN '):
                 for kv in line.split()[1:]:
                     if kv.startswith('advance_level='):

@@ -43222,3 +43222,31 @@ the **motor's** number, not the supply's: there is no thermal channel and no I²
 4.9 A would never stop. **No further 72.5 % runs until the operator rules on a motor-based
 allowance and I²t.** If the allowance returns to 4 A (gate 3800), 70 % on `E1256E38`
 (worst block 3920) no longer passes the gate, and the qualified top is 67.5 %.
+
+### ENV-26 — why are real crossing edges late? Instrumenting origin and refusals (power off; images staged)
+
+**Correction to ENV-25 (mine):** its "four commutations at angle 0.52–0.80" came from
+service rows whose coarse `at_us` is `sched_raw` *as logged after dispatch*, and a commutation
+that also arms the blanking floor (purpose 3) overwrites it with the blank-end time.
+`chain.py`'s scheduled pairing (504 pairs, median disagreement 1 µs) shows **every commutation
+fired within ≤ 6 µs of its schedule**. The commutations were on time. **What was late is the
+detection:** two consecutive crossings accepted 33–60 µs late (intervals 100 and 127 µs vs
+67), so each on-time commutation was late relative to the rotor, and that is the desync.
+
+**Revisit hypothesis refuted** (env26-chain725-1, origin-tagged image `F6EE04FC`,
+`chain-origin`): only 3.2 % of accepts came from the foreground level revisit, and **10 of 11
+late intervals were real comparator edges.** The late edge itself arrives ~17–34 µs late.
+
+**Filter context:** at ci ≈ 67 µs AM32 filters 3 reads (2 below 50 µs); firmware50 uses the
+`deep-filter` floor of **5** (E324: floor 3 → 5 cut the failure rate 15.8× on the previous
+motor; floor 6 was worse, E325). Filter rejections per accept do **not** rise at 72.5 % (1.63–1.65
+vs 1.68–1.69); gate (too-early) rejections do (+9 %).
+
+**Next instrument, staged:** each chain accept row now carries the sector's refusal tally
+since the previous accept (`pad` = too-early << 4 | filter-unstable, 10th token; `chain.py`
+reads the first nine). Chain images only. **Production byte-identical, verified: loadable
+`D065B28A` before and after** (a first attempt with separate match arms moved production codegen,
+caught by the hash check and restructured). Chain image **`BE2213DE`**
+(`advance-ref,deep-filter,edge-probe,chain-origin`). **Question it answers:** do late accepts
+follow a burst of filter rejections (the true edge thrown away, next edge a carrier period
+later) or of gate rejections, or neither (the edge itself late)?

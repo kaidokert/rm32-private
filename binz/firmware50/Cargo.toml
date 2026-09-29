@@ -102,6 +102,9 @@ margin-hist = []
 # ENV-23: DIAGNOSTIC ONLY. Raises SIXSTEP_DUTY_CAP from the qualified top (700) to the
 # mapped edge (725) so an image can run the edge. Never in a qualifying image.
 edge-probe = []
+# ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
+# chain image can mark revisit-originated accepts (flag bit 6).
+chain-origin = []
 # Raises the persistence filter's floor from the reference's 3 reads to 5
 # (E324). The map floors at 3 for every interval at or below 73 us, and that
 # boundary sits between rung 525 (depth 4, 0 events in 703 s) and rung 550

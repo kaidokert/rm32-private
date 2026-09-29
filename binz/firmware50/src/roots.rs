@@ -528,7 +528,20 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                 }
                 Some((step.get(), zc.average_interval()))
             }
-            _ => None,
+            // ENV-26 refusal tally, chain images only: what this sector refused
+            // before its accept. Inside the catch-all so production's match is
+            // unchanged (a separate arm moved its codegen); folds away when
+            // `C::ON` is false.
+            other => {
+                if C::ON {
+                    match other {
+                        crate::bemf::Outcome::TooEarly => crate::chain::note_refusal(true),
+                        crate::bemf::Outcome::Unstable => crate::chain::note_refusal(false),
+                        _ => {}
+                    }
+                }
+                None
+            }
         }
     });
     if C::ON {
@@ -1309,6 +1322,9 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
     // same instant. Production runs `NoChain`, so this folds away and TIM2 is
     // never even enabled there.
     let fine0 = if C::ON { hw::fine::raw() as u16 } else { 0 };
+    if C::ON {
+        crate::chain::latch_origin();
+    }
     // SAFETY: the caller is the ADC_COMP handler (this fn's contract).
     let mut at = unsafe { Root::<CompPrio>::enter() };
 

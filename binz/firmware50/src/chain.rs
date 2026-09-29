@@ -165,6 +165,49 @@ pub struct Arm {
     pub stage: u8,
 }
 
+/// ENV-26 origin tag, diagnostic only. The foreground's level revisit sets
+/// `REVISIT_REQ` just before it pends ADC_COMP (board, under `chain-origin`);
+/// the COMP root moves it into `REVISIT_THIS` at entry (only when `C::ON`), so
+/// the accept row of *that* dispatch is marked as revisit-originated
+/// (flag bit 6). Production never sets or reads either.
+pub static REVISIT_REQ: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub static REVISIT_THIS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// ENV-26 refusal tally since the last accept, chain images only: too-early (gate)
+/// and unstable (filter), each saturating at 15, packed into the accept row's `pad`
+/// (early << 4 | unstable) and reset by the accept.
+pub static SECTOR_EARLY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+pub static SECTOR_UNSTABLE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+#[inline(always)]
+pub fn note_refusal(too_early: bool) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let c = if too_early { &SECTOR_EARLY } else { &SECTOR_UNSTABLE };
+    let v = c.load(Relaxed);
+    if v < 15 {
+        c.store(v + 1, Relaxed);
+    }
+}
+
+#[inline(always)]
+fn take_refusals() -> u8 {
+    use core::sync::atomic::Ordering::Relaxed;
+    let e = SECTOR_EARLY.load(Relaxed);
+    let u = SECTOR_UNSTABLE.load(Relaxed);
+    SECTOR_EARLY.store(0, Relaxed);
+    SECTOR_UNSTABLE.store(0, Relaxed);
+    (e << 4) | u
+}
+
+/// Move the request into this dispatch's tag (COMP root entry, chain images only).
+#[inline(always)]
+pub fn latch_origin() {
+    use core::sync::atomic::Ordering::Relaxed;
+    let r = REVISIT_REQ.load(Relaxed);
+    REVISIT_REQ.store(false, Relaxed);
+    REVISIT_THIS.store(r, Relaxed);
+}
+
 /// What a root may record. `ON` false makes every call a no-op that the
 /// optimizer removes, leaving production's roots unchanged.
 pub trait ChainLog {
@@ -220,7 +263,13 @@ impl ChainLog for ChainRing {
 
     #[inline(always)]
     fn accept(at: &mut Root<CompPrio>, a: &Arm) {
-        let flag = (a.stage & 0x03) | if a.late { 0x80 } else { 0 };
+        let flag = (a.stage & 0x03)
+            | if a.late { 0x80 } else { 0 }
+            | if REVISIT_THIS.load(core::sync::atomic::Ordering::Relaxed) {
+                0x40
+            } else {
+                0
+            };
         push_to(
             &CHAIN_ACC,
             at,
@@ -233,7 +282,7 @@ impl ChainLog for ChainRing {
                 kind: 1,
                 step: a.step,
                 flag,
-                pad: 0,
+                pad: take_refusals(),
             },
         );
     }
@@ -348,6 +397,10 @@ fn emit_one(c: &Chain, out: &mut impl crate::report::Sink) {
         out.say_u32(u32::from(b.step));
         out.say(" ");
         out.say_u32(u32::from(b.flag));
+        // ENV-26: the accept row's refusal tally (early << 4 | unstable); 0 on
+        // service rows. A tenth token; `chain.py` reads the first nine.
+        out.say(" ");
+        out.say_u32(u32::from(b.pad));
         out.say("\r\n");
         out.flush();
         k += 1;
