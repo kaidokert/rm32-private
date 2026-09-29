@@ -15,6 +15,7 @@ for path in sys.argv[1:]:
     rev = [(f & 0x40) != 0 for f in flag]
     assert any(rev), "REFUSED: no revisit-tagged accept (image lacks chain-origin?)"
     tab = {}
+    refusals = {}
     per_step = {s: [0, 0] for s in range(1, 7)}
     longs = []
     for k in range(6, len(iv)):
@@ -27,7 +28,7 @@ for path in sys.argv[1:]:
             longs.append((step[k+1], "REV" if r else "edge", x, round(ref),
                           None if p is None else f"early{p >> 4}/filt{p & 15}"))
         if pad[k+1] is not None:
-            refs = tab.setdefault(("refusals", c), [0, 0, 0])
+            refs = refusals.setdefault(c, [0, 0, 0])
             refs[0] += pad[k+1] >> 4; refs[1] += pad[k+1] & 15; refs[2] += 1
     n = sum(tab.values())
     print(f"{path.split('/')[-1]}: {n} accepts, revisit-originated {sum(v for (c,r),v in tab.items() if r)} ({100*sum(v for (c,r),v in tab.items() if r)/n:.1f}%)")
@@ -35,7 +36,7 @@ for path in sys.argv[1:]:
         e, r = tab.get((c, False), 0), tab.get((c, True), 0)
         print(f"   {c:6s}: edge {e:4d}  revisit {r:4d}  -> revisit share {100*r/max(1,e+r):5.1f}%")
     for c in ("normal", "LONG", "SHORT"):
-        r = tab.get(("refusals", c))
+        r = refusals.get(c)
         if r and r[2]:
             print(f"   {c:6s}: mean refusals before accept -- too-early {r[0]/r[2]:.2f}, filter {r[1]/r[2]:.2f}  (n={r[2]})")
     print("   revisit share by step:", "  ".join(f"s{s}:{100*v[1]/max(1,sum(v)):.0f}%" for s, v in per_step.items()))

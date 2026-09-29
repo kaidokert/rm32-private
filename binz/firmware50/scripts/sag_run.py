@@ -75,6 +75,10 @@ def main() -> int:
     if args.elf:
         globals()["ELF"] = pathlib.Path(args.elf)
     bemf_run.ELF = ELF
+    # ENV-26: refuse an existing label BEFORE flashing or driving.
+    _early = REPO / "captures" / "sag" / f"{args.label}.txt"
+    if _early.exists():
+        sys.exit(f"REFUSED: {_early} exists; choose another --label")
     if args.flash:
         probe = "0483:374b:066CFF343433464757233430"
         for cmd in (["probe-rs", "download", "--chip", "STM32G071RBTx", "--probe", probe, str(ELF)],
@@ -102,6 +106,10 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     warm = out_dir / f"{args.label}-warmup.txt"
     out = out_dir / f"{args.label}.txt"
+    # ENV-26: refuse to overwrite. A re-used label silently destroyed the
+    # origin-only capture env26-chain725-1; captures are evidence.
+    if out.exists():
+        sys.exit(f"REFUSED: {out} exists; choose another --label")
     # **A colliding label is refused here too** (E188 SS5). `bemf_run.py` gained
     # this after a re-run destroyed nine good captures; this runner writes most
     # of the cohort's runs and had no such check, which left the same hole open.

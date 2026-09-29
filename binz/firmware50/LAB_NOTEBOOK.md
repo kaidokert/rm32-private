@@ -43250,3 +43250,44 @@ caught by the hash check and restructured). Chain image **`BE2213DE`**
 (`advance-ref,deep-filter,edge-probe,chain-origin`). **Question it answers:** do late accepts
 follow a burst of filter rejections (the true edge thrown away, next edge a carrier period
 later) or of gate rejections, or neither (the edge itself late)?
+
+#### ENV-26 result — the late crossings are the FILTER discarding a chattery true edge (step 3)
+
+Image `BE2213DE` (origin + refusal tally; production byte-identical, `D065B28A`).
+**Evidence loss, mine:** `chain_run.py` did not refuse a re-used label, so this batch
+overwrote the origin-only `env26-chain725-1` capture behind ENV-26's "10 of 11 late intervals
+were real edges". That figure now survives only as recorded text. Both runners now refuse an
+existing label **before** flashing.
+
+| accept class | env26-chain725-1 (725) | env26-chain700-1 (700 control) |
+|---|---|---|
+| late (> +25 %) | **18**: filter rejections before accept **2.78**, too-early 0.00; **12 of 14 listed in step 3**, mostly 3–4 rejections; 6/18 revisit-originated | 4, all step 6, 2 rejections each |
+| normal | filter 1.24, too-early 0.03 | filter 1.36, too-early 0.04 |
+| short | too-early 0.35 | too-early 1.00 (n = 3) |
+
+Mean filter rejections per accept by step are similar at both duties (step 3 noisiest: 1.86 /
+1.95). **What changes at 725 is the tail:** step 3 sometimes needs 3–4 rejections, each costing
+another edge. At the shorter interval that tail becomes a 30–55 % late accept, and the next
+crossing arrives too early relative to it. **Correction:** the revisit is not uninvolved. It
+recovers a third of the late accepts after the filter keeps rejecting.
+
+**Mechanism (hypothesis, test below):** the 5-read persistence filter (`deep-filter`
+floor) discards a true step-3 crossing whose comparator output chatters. AM32 uses 3 reads at
+this interval (2 below 50 µs).
+
+### ENV-27 — lever 1 (a constant): filter floor 5 → 3 (AM32's value) at 72.5 %
+
+**Arms** (all `advance-ref,edge-probe`, the only difference is `deep-filter`):
+production A = `A9F121F8` (floor 5, loadable `A7FB7F22`), B = `EC82DAE6` (floor 3, loadable
+`3E56CF1C`); ADC_COMP 818 → 814 instructions (the filter constant, the lever itself). Chain A =
+`BE2213DE` (floor 5), chain B = `38CFA5AD` (floor 3).
+
+**Predictions (before running):**
+* Late accepts (> +25 %) per 35 ms chain at 725: floor 5 ~18 → floor 3 **≤ 8**.
+* Short / early accepts rise somewhat (E324's risk: noise accepted as a crossing).
+* Production at 725: **fewer AverageCurrent foldbacks** (floor 5: 2/3 on B734ACCD) and a
+  lower worst block. Speed within ±1 %. Hold current within ±3 %.
+* **Keep** only if the foldback / worst-block outcome improves at 725 AND the earned 70 %
+  rung re-qualifies on floor 3. **Reject** if early accepts cause desyncs or trips of their own.
+
+**Protocol:** production ABBAAB at 725 (6 runs), then chain ABBAAB at 725 (6 runs).
