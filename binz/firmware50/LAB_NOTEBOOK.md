@@ -46528,3 +46528,77 @@ leaks into it).
 
 **`fw50-c3-dual75` = `2171c45` is tagged** as the new top: 75 % on the 5 A PSU. The `hal.rs:187` doc was fixed after
 the tag (it changes panic-location data, so it is not part of the tagged image).
+
+### ENV-89 — predeclared: is the 77.5 % block-noise growth a sampling alias? (scan period 101 → 104 µs)
+
+The per-scan current spread does **not** grow from 750 to 775: dual per-scan sd is 2444–2800 at 750 (ENV-81 B) and
+2538–2807 at 775 (ENV-87 A, ENV-88). **The same samples average worse into blocks at 775**, which is a coverage /
+alias signature. ENV-87 was not a clean test of it: each shunt's oversampling window covered a different third of the
+sector.
+
+**Diagnostic `scan-104`:** TIM6 (the ADC trigger and guard tick) at 104 µs instead of 101 µs. Every scan-counted
+window stretches by 3 % (block 10.4 ms), so it is diagnostic only.
+
+**Images (block ring v3, blk-half, dual, cap 775, freeze-gate):** A = `8F986323` (101 µs), B = **`6370CB8B`** (104 µs).
+
+**Protocol:** 775, same session, ABBAAB, `sag_run.py`.
+
+**Statistic:** the detrended block sd (`half_check2.py`), plus ceiling and worst.
+
+**Prediction (alias):** B's detrended sd ≤ 0.75 × A's, and the ring shows fewer ≥ 4750 blocks.
+**Falsifier:** ratio > 0.9. Then the growth is not a scan-rate alias, and the cause stays open.
+
+#### ENV-89 result — the 77.5 % block noise IS a scan-rate alias: moving the scan period moves it (the wrong way)
+
+775, same session, A = 101 µs `8F986323`, B = 104 µs:
+
+| run | scan | block sd | **detrended sd** | r detrended | ceiling | max |
+|---|---|---|---|---|---|---|
+| 1A | 101 | 283 | **218** | −0.24 | 765 | 5134 |
+| 2B | 104 | 527 | **442** | −0.29 | **745** | 5350 |
+| 3B | 104 | 542 | **441** | −0.28 | **755** | 5193 |
+| 4A | 101 | 316 | **219** | −0.26 | 765 | 4942 |
+| 5A | 101 | 233 | **164** | −0.02 | 765 | 5042 |
+| 6B | 104 | 534 | **434** | −0.29 | **745** | 5394 |
+
+* **The direction of the prediction is refuted:** B's sd did not drop; it **doubled** (ratio ≈ 2.2).
+* **The falsifier ("ratio > 0.9 → not an alias") also did not fire in its intended sense**, because the noise depends
+  strongly on the scan rate. **The 77.5 % block noise is a sampling alias between the fixed scan and the commutation
+  rate.**
+  * At 101 µs the 775 sector/scan ratio is ≈ 1.60 (8/5, ~5 positions). At 104 µs it is ≈ 1.65 (5/3, ~3 positions),
+    which covers worse, and the noise doubles as that predicts.
+  * The per-scan spread is unchanged between 750 and 775. Split-half is sampling everywhere.
+* **Consequence (what binds 77.5 % on this PSU):**
+  * the true 10 ms current at 775 is ≈ 4.1–4.3 A, under the 5 A allowance;
+  * the fixed-rate estimator's aliasing against the ~15.9 kHz sector rate makes blocks read up to ≈ 5.1 A, which trips
+    the firmware's own allowance (foldback 775 → 765).
+* **Not tuned:** a fixed scan period chosen to dodge 775's resonance (e.g. ~99 µs puts 775 at 1.571) would be fragile,
+  since resonances move with speed and supply voltage. It would also shift every scan-counted protection window. **The
+  robust lever is sampling decorrelated from the commutation period** (speed-aware or sector-stratified current
+  sampling). That changes the AverageCurrent input, so it is for the operator to rule on; it is the next rung's
+  obstacle.
+
+## CAMPAIGN C SYNTHESIS (2026-09-30)
+
+* **Top: 75 %, tag `fw50-c3-dual75` = `2171c45`.**
+  * production `FC76E4B6`, loadable `7B4766B6`, features `advance-ref,dual-shunt`;
+  * at 750: coast ≈ 2590 eHz, hold ≈ 3.96 A, worst 4363–4481 mA;
+  * 0 foldback and 0 stops; restarts at 750.
+* **The operator's question (mean < 4 A, blocks near 5 A):** the protection's 10 ms current block is a 100-scan
+  asynchronous estimate of a DC-link current that swings −4…+10 A within each ~64 µs sector.
+  * At 72.5–75 % the near-5 A blocks were that estimator's sampling tail (split-half r ≈ 0, ENV-79). The true 10 ms
+    current is steady.
+  * `dual-shunt` (two shunt samples per scan) cut the block sd ×0.68 and the 750 worst from 4746–4772 to 4531–4537,
+    same session (ENV-81). **That opened 75 %.**
+  * At 77.5 % the blocks alias against the commutation rate (ENV-85/88/89), the tail reaches 5.1 A again, and foldback
+    follows.
+* **Obstacles measured:**
+  * commutation lateness flat (p50 3 / p99 9 µs through 750);
+  * coast band 1001–1012 ‰ through 775;
+  * sector floor 58 % below the 775 interval;
+  * storm report host-side, and a real storm stimulus (stops on Tracking).
+* **Refuted along the way:** PWM-sampling noise (ENV-78), ramp-step transients at 750 (ENV-84), an ovs4 fix at 775
+  (ENV-87), real current variation at 775 (ENV-88).
+* **Open for the operator:**
+  * the dual-shunt protection-input ruling, plus one metered point at 750;
+  * a speed-aware estimator to open 77.5 %.

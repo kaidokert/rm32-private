@@ -132,6 +132,8 @@ dual-shunt = []
 ramp-fine = []
 # ENV-88 DIAGNOSTIC: the block ring's aux column records the half-block sum instead of the duty.
 blk-half = []
+# ENV-89 DIAGNOSTIC: TIM6 (ADC trigger + guard tick) period 104 us instead of 101 us.
+scan-104 = []
 # ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
 # chain image can mark revisit-originated accepts (flag bit 6).
 chain-origin = []
