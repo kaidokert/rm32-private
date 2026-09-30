@@ -236,11 +236,7 @@ impl Trace {
     /// division on this M0+ if the length ever stopped being a power of two
     /// (E154's finding, in the capture ring).
     const fn bump(i: usize, len: usize) -> usize {
-        if i + 1 == len {
-            0
-        } else {
-            i + 1
-        }
+        if i + 1 == len { 0 } else { i + 1 }
     }
 
     pub fn push(&mut self, b: &Block) {
@@ -271,19 +267,11 @@ impl Trace {
 
     /// The oldest kept row's index in each ring.
     pub const fn fast_start(&self) -> usize {
-        if self.fast_len == FAST_LEN {
-            self.fast_next
-        } else {
-            0
-        }
+        if self.fast_len == FAST_LEN { self.fast_next } else { 0 }
     }
 
     pub const fn slow_start(&self) -> usize {
-        if self.slow_len == SLOW_LEN {
-            self.slow_next
-        } else {
-            0
-        }
+        if self.slow_len == SLOW_LEN { self.slow_next } else { 0 }
     }
 }
 
@@ -308,8 +296,8 @@ pub struct BlkRing {
     pub sum: [u32; BLK_LEN],
     pub bus: [u16; BLK_LEN],
     pub n: [u8; BLK_LEN],
-    /// ENV-79: the first half-block's (scans 1..50) shunt sum, >> 3.
-    pub half: [u16; BLK_LEN],
+    /// ENV-85: the applied duty (tenths) of the block's last scan.
+    pub duty: [u16; BLK_LEN],
     next: usize,
     pub len: usize,
     pub total: u32,
@@ -317,6 +305,9 @@ pub struct BlkRing {
     acc_bus: u32,
     acc_n: u32,
     acc_half: u32,
+    acc_duty: u16,
+    /// ENV-85: blocks still to record after a freeze request (None: not frozen).
+    stop_after: Option<u16>,
     on: bool,
 }
 
@@ -326,7 +317,7 @@ impl BlkRing {
             sum: [0; BLK_LEN],
             bus: [0; BLK_LEN],
             n: [0; BLK_LEN],
-            half: [0; BLK_LEN],
+            duty: [0; BLK_LEN],
             next: 0,
             len: 0,
             total: 0,
@@ -334,6 +325,8 @@ impl BlkRing {
             acc_bus: 0,
             acc_n: 0,
             acc_half: 0,
+            acc_duty: 0,
+            stop_after: None,
             on: false,
         }
     }
@@ -346,6 +339,7 @@ impl BlkRing {
             .wrapping_add(u32::from(b.phase_a) + u32::from(b.phase_b) + u32::from(b.phase_c));
         self.acc_bus = self.acc_bus.wrapping_add(u32::from(b.bus_raw));
         self.acc_n += 1;
+        self.acc_duty = b.duty_tenths;
         if self.acc_n == 50 {
             self.acc_half = self.acc_sum;
         }
@@ -359,7 +353,16 @@ impl BlkRing {
             self.sum[i] = self.acc_sum;
             self.bus[i] = self.acc_bus.checked_div(self.acc_n).unwrap_or(0) as u16;
             self.n[i] = self.acc_n.min(255) as u8;
-            self.half[i] = (self.acc_half >> 3).min(0xFFFF) as u16;
+            // ENV-88 `blk-half`: the aux column carries the first half-block's shunt sum
+            // (>> 3) instead of the duty, for split-half reliability at a fixed duty.
+            #[cfg(feature = "blk-half")]
+            {
+                self.duty[i] = (self.acc_half >> 3).min(0xFFFF) as u16;
+            }
+            #[cfg(not(feature = "blk-half"))]
+            {
+                self.duty[i] = self.acc_duty;
+            }
         }
         self.next = if i + 1 >= BLK_LEN { 0 } else { i + 1 };
         if self.len < BLK_LEN {
@@ -370,6 +373,19 @@ impl BlkRing {
         self.acc_bus = 0;
         self.acc_n = 0;
         self.acc_half = 0;
+        if let Some(k) = self.stop_after {
+            if k == 0 {
+                self.on = false;
+            } else {
+                self.stop_after = Some(k - 1);
+            }
+        }
+    }
+    /// ENV-85: keep BLK_LEN / 2 more blocks, then stop, so the event sits mid-ring.
+    fn freeze(&mut self) {
+        if self.stop_after.is_none() {
+            self.stop_after = Some((BLK_LEN / 2) as u16);
+        }
     }
     fn reset(&mut self) {
         self.next = 0;
@@ -378,6 +394,9 @@ impl BlkRing {
         self.acc_sum = 0;
         self.acc_bus = 0;
         self.acc_n = 0;
+        self.acc_half = 0;
+        self.acc_duty = 0;
+        self.stop_after = None;
         self.on = true;
     }
 }
@@ -404,9 +423,13 @@ pub fn emit_blocks(out: &mut impl crate::report::Sink) {
     let mut k = 0;
     while k < len {
         let i = (start + k) % BLK_LEN;
-        let (s, b, n, h) = interrupt::free(|cs| {
+        let (s, b, n, h, d) = interrupt::free(|cs| {
             let r = BLK.borrow(cs).borrow();
-            (r.sum[i], r.bus[i], r.n[i], r.half[i])
+            if cfg!(feature = "blk-half") {
+                (r.sum[i], r.bus[i], r.n[i], r.duty[i], 0u16)
+            } else {
+                (r.sum[i], r.bus[i], r.n[i], 0u16, r.duty[i])
+            }
         });
         out.say("SAGBLK ");
         out.say_u32(s);
@@ -416,6 +439,8 @@ pub fn emit_blocks(out: &mut impl crate::report::Sink) {
         out.say_u32(u32::from(n));
         out.say(" ");
         out.say_u32(u32::from(h));
+        out.say(" ");
+        out.say_u32(u32::from(d));
         out.say(
             "
 ",
@@ -448,7 +473,10 @@ impl SagLog for SagRing {
 
     #[inline]
     fn freeze() {
-        interrupt::free(|cs| TRACE.borrow(cs).borrow_mut().frozen = true);
+        interrupt::free(|cs| {
+            TRACE.borrow(cs).borrow_mut().frozen = true;
+            BLK.borrow(cs).borrow_mut().freeze();
+        });
     }
 }
 
@@ -697,7 +725,7 @@ mod tests {
     /// zero or at the rail latches at once, whatever the ratio would say.
     #[test]
     fn a_bad_vref_latches_whatever_the_ratio_says() {
-        use crate::protection::{BusReference, FastBusSag, ADC_RAIL};
+        use crate::protection::{ADC_RAIL, BusReference, FastBusSag};
 
         for vref in [0u16, ADC_RAIL, ADC_RAIL + 1] {
             let mut g = FastBusSag::new(BusReference { bus: 1200, vref: 1500 });

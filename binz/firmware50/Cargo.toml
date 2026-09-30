@@ -130,6 +130,8 @@ adc-ovs4 = []
 dual-shunt = []
 # ENV-84 A/B lever: post-transfer ramp at 0.1 % per 50 ms instead of 1 % per 0.5 s (same rate).
 ramp-fine = []
+# ENV-88 DIAGNOSTIC: the block ring's aux column records the half-block sum instead of the duty.
+blk-half = []
 # ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
 # chain image can mark revisit-originated accepts (flag bit 6).
 chain-origin = []

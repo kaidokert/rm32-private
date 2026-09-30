@@ -46289,3 +46289,242 @@ A = step **`F36D7A18`**, B = fine **`B92546EB`**.
   stop do.
 
 The low rungs are running.
+
+#### ENV-82 follow-up complete — C2's kit PASSES: low rungs 150–500 on every non-oracle gate + self-ref
+
+All 22 RUN FAIL lines are the oracle coast gate (the previous motor), as on every image below 525. **C2 completed the
+full kit: walk to 750, restarts 21/21, sweep 10/10 (u → 8), low rungs.** C2 is still not kept (review defects #3/#4).
+C3 (`2171c45`, cut from the tag with plumbing so the running bench was undisturbed; production **`FC76E4B6`**, loadable
+**`7B4766B6`**, twins `171BB26F` window-90 and `6EBD14FF` cap-775) is **ISR-instruction-identical to C2 in all four
+roots**. Its two fixes are foreground/init only.
+
+#### ENV-83 result — 77.5 %: folds back to 76.5 % in 4/4; the worst blocks are events, not the noise tail
+
+C2 cap-775 twin `F00002E2`, 775, `--no-ladder`, plus one block-ring run (`47F14CA8`):
+
+| run | reason | ceiling | hold | whole-run worst | coast |
+|---|---|---|---|---|---|
+| 1 | 2 | **765** | 4145 | **5061** | 2625 |
+| 2 | 2 | **765** | 4159 | **5159** | 2630 |
+| 3 | 2 | **765** | 4164 | **5049** | 2613 |
+| blk | 2 | **765** | — | **5039** | — |
+
+Block ring (last 5.2 s): mean 4154, **sd 136**, **max 4597**; split-half r −0.15 (S).
+
+* **Predictions:** "fails the 4750 gate ≥ 2/3, no stops" **held** (3/3, 0 stops); "foldback possible" **happened 4/4**;
+  the hold projection (4.25 A) **over-estimated** (4.15 A).
+* **Mechanism at 775:** the steady-state tail is mean + 3.6 σ ≈ **4.64 A**, and the last 5 s never exceeded 4.6 A. The
+  blocks that exceed 5 A and fold back are **events ≈ +0.9–1.0 A above the hold**, earlier in the run. This is the
+  C2 review's point #2, now measured. What binds 77.5 % is these events, not the estimator. ENV-84 (running) tests
+  whether they are the 1 % ramp step.
+
+#### ENV-84 result — the falsifier fired: the fine ramp does not lower the worst block at 750
+
+750, same session, A = step `F36D7A18`, B = fine `B92546EB` (both `late-worst`):
+
+| run | worst_ma (whole run) | worst from hold + 5 s | hold | coast |
+|---|---|---|---|---|
+| 1A | 4416 | 4380 | 3962 | 2591 |
+| 2B | 4518 | 4518 | 3967 | 2602 |
+| 3B | 4400 | 4400 | 3959 | 2591 |
+| 4A | 4417 | 4417 | 3942 | 2591 |
+| 5A | 4439 | 4439 | 3967 | 2595 |
+| 6B | 4471 | 4471 | 3963 | 2597 |
+
+* **Mean worst A 4424, B 4463.** B is not lower, so the prediction (≥ 100 mA lower) is refuted.
+* On A, **the hold + 5 s worst ≈ the whole-run worst** (4380 vs 4416 once, equal twice). **At 750 the worst block is
+  in steady state**, the estimator's noise tail, and there is no measurable ramp-top transient.
+* Hold and coast are equal, with no stops. **`ramp-fine` is not adopted** (the lever is left in the tree, off).
+* This leaves ENV-83's 775 event unexplained: it is +0.9–1.0 A above the hold, inside the hold but outside its last
+  5 s, and it does not appear at 750.
+
+### ENV-85 — predeclared: capture the 77.5 % event
+
+**Instrument:** block ring v3. Each block also records the **applied duty**, and the ring **freezes 256 blocks after
+the first hold block ≥ 4750 mA** (the existing `freeze-gate` trigger, which also fires on foldback). The dump therefore
+holds ≈ 2.6 s before and after the event, with the sag fast ring (256 scans before the freeze).
+
+**Image:** C3 tree `sag-capture`, `advance-ref,dual-shunt,edge-probe,freeze-gate`. **Runs:** 775 × 3.
+
+**Classification of the triggering block and its neighbourhood:**
+* **(D) duty-driven:** the event follows a duty change (a ramp step or a foldback) within 3 blocks;
+* **(S) spontaneous surge:** there is no duty change within 10 blocks before it, and the current rises over ≥ 2
+  blocks — a loss-of-lock or load event;
+* **(T) tail:** a single isolated block, with neighbours within 2 σ of the hold mean.
+
+**Prediction:** (S). This is the rung where the previous firmware's desync surges lived (ENV-43), and AM32's
+detector may still let the rotor slip there. Low confidence.
+
+#### ENV-85 result — the 77.5 % event is scan/sector ALIASING at that speed (hypothesis (A), now at the right rung)
+
+The first v3 image (`5199265B`) crash-looped at boot (soft resets, then IWDG; .bss 25.3 KB, the stack class again).
+The split-half array was dropped (the column prints 0) → **`7A58666F`** (.bss 24.2 KB) ran:
+`env85b-1`, 775, folded back to 765 at the end. The ring spans the ramp's last steps (730 → 775) and the hold:
+
+| duty | blocks | block mean | **block sd** | max |
+|---|---|---|---|---|
+| 730 / 740 / 750 | 0–191 | 3832 / 3964 / 4125 | **140 / 164 / 150** | 4274 / 4310 / 4461 |
+| 770–775 | 192–255 | 4252 | **244** | 4859 |
+| 775 | 256–498 | 4255–4329 | **270–307** | 4822–**5104** (then foldback → 765) |
+
+* The trigger (the first ≥ 4750 block, 4859) has **no duty change near it** (duty 775 throughout). By the predeclared
+  rule it is **(T) tail**. The prediction (S) is **refuted**. But it is the tail of a distribution whose sd has
+  **doubled**.
+* **Why the sd doubles at 775:** the loop runs at 2645 eHz, so the sector rate is 6 × 2645 = 15.87 kHz = **1.603 × the
+  9901 Hz scan rate, ≈ 8/5**.
+  * At that ratio the scans of a block visit only ~5 distinct sector positions. Stratification collapses, and each
+    block's mean depends on where those positions fall.
+  * The lag-1 autocorrelation at 775 is **−0.25**, against ≈ −0.05 at 725/750: the beat alternates.
+  * At 750 the ratio is 1.573 and the samples spread.
+* **So ENV-76's aliasing hypothesis was right, but at 77.5 %, not 75 %.** At 75 % the tail is ordinary stratified
+  sampling noise (ENV-79). At 77.5 % it is the 8/5 alias. ENV-83's "last 5 s sd 136" was after its foldback to 765,
+  off the resonance.
+* **What binds 77.5 %:** the estimator's alias noise. The mean is ≈ 4.3 A, but the tail reaches 5.1 A and trips the
+  firmware's own allowance (foldback).
+
+### ENV-86 — C3 qualification at the 75 % top (anchored, per E302), predeclared
+
+C3 production `FC76E4B6` (loadable `7B4766B6`) is **instruction-identical in all four ISRs** to C2 `882839DC`, which
+passed the full kit (ENV-82). C3's differences are foreground/init only: the storm budget zeroed at arm, and the
+sequencer ordering with readback.
+
+**Kit:**
+* anchor rungs **525, 650, 750 × 3**;
+* restarts at 750 × 3 on the twin `171BB26F`;
+* **sweep** (u expected 8);
+* low-rung spot checks 150, 300, 500 × 3.
+
+C2's restarts at 500–725 and its full low-rung set carry by root identity (declared).
+
+**Predictions:** all pass; 750 worst < 4750 in 3/3 (≈ 4.4 A); u → 8.
+
+### ENV-87 — predeclared: at the 8/5 alias (775), does a within-scan sector average beat dual-shunt? (diagnostic A/B)
+
+At 725 (good stratification), `adc-ovs4` barely helped (sd × 0.94, ENV-78). At 775 the scans alias to ~5 sector
+positions. There, `adc-ovs4`'s three 21.6 µs shunt conversions span ≈ 65 µs ≈ one ~64 µs sector per scan, which
+should make each scan a near-sector average, independent of the alias.
+
+**Images (block ring v3 with duty, freeze-gate, cap 775):** A = dual `7A58666F`, B = ovs4 **`F99FA8A7`** (single shunt
+set, 4 × oversampling).
+
+**Protocol:** 775, same session, ABBAAB, `sag_run.py`.
+
+**Statistic:** over the blocks at duty 775 in each ring: block sd, mean, max, and the lag-1 acf.
+
+**Predictions:**
+* B's block sd ≤ 0.7 × A's at 775;
+* B's mean ≈ −6 % vs A's (ENV-78's shift);
+* A's lag-1 acf is negative (≈ −0.2), B's ≈ 0.
+
+**Consequence if it holds:** `adc-ovs4` is a candidate estimator for 77.5 %. It is **operator-rulable**: its −6 % mean
+is a larger, non-conservative shift of the AverageCurrent input than dual-shunt's. **Falsifier:** B's sd > 0.85 × A's,
+in which case no PSU-side estimator fix is found, and the 8/5 alias is what binds 77.5 %.
+
+#### ENV-86 result — C3 passes the anchored qualification at the 75 % top
+
+C3 `FC76E4B6`: all four ISRs instruction-identical to C2 `882839DC`.
+
+| check | result |
+|---|---|
+| anchor 525 × 3 | PASS (hold 1837–1844, worst 2083–2122) |
+| anchor 650 × 3 | PASS (hold 2895–2909, worst 3325–3348) |
+| **anchor 750 × 3** | **PASS: worst 4449 / 4369 / 4481, hold 3958–3965, coast 2588–2594, reason 2, 0 foldback** |
+| restarts 750 on `171BB26F` | **3/3 recovered**, second holds 9.2 s, reason 2 |
+| sweep | t→8, g→3, f→4, n→7, **u→8 (predicted 8: held)**, h→14, i→25, k→15, q→16, w→IWDG; outputs off after u |
+| low spot checks 150 / 300 / 500 × 3 | PASS on every non-oracle gate + self-ref (500 fails the oracle, as on every image) |
+
+**Every ENV-86 prediction held.** C2's restarts at 500–725 and its full low-rung set carry to C3 by root identity
+(declared). An independent review of C3 is running before the tag.
+
+#### C3 review (independent): tag C3 after corrections — done here
+
+* **Both fixes are correct.**
+  * #3 is zeroed in `com_handover`'s guarded section before COM goes active; `Handover::lock` is the only path.
+  * #4 orders CHSELRMOD → CCRDY → clear → write → CCRDY → readback. On failure: `FATAL adc_init_failed`, a parked,
+    watchdog-fed loop, and the bridge never driven.
+* **ISR identity to C2 is confirmed.** Production `.bss` is 4196 B, so no diagnostic ring is in production.
+* **Corrections:**
+  * **(9)** "u expects 8, predeclared before any capture": **false by timestamps.** C2's u → 8 capture (11:31)
+    predates the C3 commit (12:40). The 8 was the C2 review's prediction; C3's u → 8 is a replication.
+  * **(10)** ENV-83's heading "the worst blocks are events, not the noise tail" is **superseded by ENV-85**: the
+    trigger classified as (T), the tail of a distribution whose sd doubles at 775.
+  * **(11)** ENV-85's "is ALIASING" is **post hoc and inferred, not shown**:
+    * (A) was not a predeclared class;
+    * the 1.603 ratio comes from whole-µs ci (63 → 2645, 64 → 2604), and that quantisation is the entire 750/775
+      difference;
+    * at 1.603 the five positions drift ≈ 1.5 lattice spacings per block, which is reasonably stratified;
+    * 750's ratio is 1.578, not 1.573.
+    * **ENV-87 then weakened it further:** a within-scan ~one-sector average (ovs4) did **not** shrink the 775 sd
+      (0.96×).
+  * **(13)** ENV-82's "−300 mA … opened 75 %" compares with ENV-73, **cross-session**. The same-session evidence is
+    ENV-81 (worst 4746–4772 → 4531–4537 at 750).
+  * **Dual-shunt as a protection-input change (C2 review #5): the operator ruling is DEFERRED** to the operator, with a
+    request for one metered point at 750. Recorded in the tag.
+  * `hal.rs:187` still says Storm expects 11. It is fixed after the tag, because a doc-line shift moves panic-location
+    data and would change the tagged image.
+* **Reproducibility:** `2171c45` has host 360/360 and clippy 0 (clean worktree, fixtures copied). **Production rebuilt
+  in the main tree reproduces loadable `7B4766B6` exactly** (the ELF differs only in debuginfo). A different-path
+  worktree gives instruction-identical ISRs but a different vendored-string layout, as found for the old tag.
+
+#### ENV-87 result — the falsifier fired: oversampling does not shrink the 775 sd (0.96×); it reads ≈ 4 % lower
+
+| run | image | blocks at 775 | mean | sd | max | ≥ 4750 | acf1 | ceiling / worst |
+|---|---|---|---|---|---|---|---|---|
+| 1A | dual | 245 | 4282 | 261 | 5160 | 11 | −0.13 | 765 / 5159 |
+| 2B | ovs4 | 0 | — | — | — | — | — | 775 / — (refused: no 775 blocks in the frozen ring) |
+| 3B | ovs4 | 305 | 4107 | 256 | 4907 | 5 | −0.14 | 775 / 4958 |
+| 4A | dual | 279 | 4299 | 278 | 4987 | 17 | −0.27 | 765 / 5105 |
+| 5A | dual | 243 | 4295 | 280 | 4988 | 14 | −0.25 | 765 / 5048 |
+| 6B | ovs4 | 409 | 4106 | 268 | 4863 | 3 | −0.22 | 775 / 4873 |
+
+* B's sd is ≈ 0.96 × A's, above the 0.85 falsifier. **The 775 noise is not removed by averaging each scan over ≈ one
+  sector.** This argues against the sector-position alias (ENV-85's inference).
+* B did not fold back **only because its mean reads ≈ 4 % lower**. Its worst blocks still fail the gate (4863–4958).
+  Not adopted.
+* Both show a negative lag-1 acf.
+
+### ENV-88 — predeclared: is the 77.5 % block variation real? (split-half at 775, detrended); plus the #3 bench check
+
+**Image `8F986323`:** block ring v3 with `blk-half` (the aux column holds the half-block sum), `dual-shunt`, cap 775,
+freeze-gate. The ring holds ≈ ±256 blocks around the first ≥ 4750 block, mostly at 770–775.
+
+**Runs:** 775 × 3.
+
+**Statistic:** split-half r after detrending each half-series by a centred 11-block moving mean, which removes the
+ramp. **(S)** r ≤ 0.2; **(R)** r ≥ 0.5; else mixed.
+
+**Prediction:** (R) or mixed (ENV-87 rules out a within-sector sampling cause). Low confidence.
+
+**The #3 bench check (C3 review):** flash C3 `FC76E4B6`, run the sweep's `u` (it stops on Tracking), then **without
+reflashing** run rung 500. **Pass:** the second run completes with reason 2 and no spurious stop (no storm budget
+leaks into it).
+
+#### ENV-88 result — at 77.5 % the block variation is still SAMPLING (3/3); the #3 fix passes on the bench
+
+| run | block sd | detrended block sd | r raw | **r detrended** | ceiling / worst |
+|---|---|---|---|---|---|
+| 1 | 320 | 231 | +0.05 | **−0.24** | 765 / 5011 |
+| 2 | 313 | 224 | −0.00 | **−0.29** | 765 / 5003 |
+| 3 | 320 | 224 | +0.07 | **−0.24** | 765 / 5013 |
+
+* **(S) sampling 3/3.** The prediction "(R) or mixed" is **refuted**. Even at 775 the two halves of each block are
+  independent, so the true 10 ms current does not fluctuate like the blocks do.
+* **The sampling noise is larger at 775** (detrended ≈ 225 mA vs ≈ 145 at 750). ENV-87 showed that a ≈ one-sector
+  average per scan does not reduce it. **Why the estimator's noise grows at 775 is not established**: ENV-85's 8/5
+  inference is weakened (C3 review #11, ENV-87). An alias with the 6-sector electrical period (≈ 15 phases at 775) is
+  untested.
+* **The #3 bench check passes:** `u` on C3 stopped on Tracking 270 µs after the injection. A normal run at 300 % in the
+  **same boot, without reflashing**, completed with reason 2 and a normal re-entry peak (118/ms). No budget leaked.
+
+#### Goal item 2 — the PSU-testable obstacles, measured
+
+* **Storm report:** host-side peak plus entries per sector (no firmware change). **Sweep stimulus:** replaced by a real
+  COMP overload from interrupt context; it stops on Tracking (8) within ~0.2–0.3 ms, outputs off. Done.
+* **Coast band:** loop/coast at 750–775 was **1001–1012 ‰** across 15 runs (ENV-82/83/86), against the 980–1020 band.
+  **It does not bind on this PSU.**
+* **Sector floor:** 40 µs (4167 eHz). At 775 the loop interval is 63 µs (2645 eHz), 58 % above the floor. **It does
+  not bind on this PSU.** It needs re-deriving only for a pack above ~95 %.
+* **Commutation lateness:** flat at p50 3 µs / p99 ≈ 9 µs across 700–750 (ENV-80). **It does not bind.**
+
+**`fw50-c3-dual75` = `2171c45` is tagged** as the new top: 75 % on the 5 A PSU. The `hal.rs:187` doc was fixed after
+the tag (it changes panic-location data, so it is not part of the tagged image).

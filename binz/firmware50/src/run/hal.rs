@@ -184,8 +184,8 @@ pub enum Inject {
     FeedbackStale,
     /// nFAULT pulled low from the MCU side. Expect `Driver` (7).
     Driver,
-    /// A COMP self-re-entry overload (`STORM_INJECT_ENTRIES`). Expect `AdcTimeout` (11):
-    /// the foreground is starved past its feedback-age limit (campaign C).
+    /// A COMP self-re-entry overload (`STORM_INJECT_ENTRIES`). Expect `Tracking` (8): COM
+    /// is starved, so the guard's accepted-event watch trips first (campaign C, C2 review #3).
     Storm,
     /// A step to the 50% rung into the 1 A supply. Expect `FastBusSag` (26).
     Sag,
