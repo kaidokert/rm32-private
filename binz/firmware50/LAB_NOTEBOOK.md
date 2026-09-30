@@ -45365,3 +45365,203 @@ storm limiter), 37.5 %, two runs, `--no-ladder`.
 * **If B2 also stops on Tracking/SectorOrder, the tick feed is defective**, and B4's failure is B2's defect, not the
   detector unit's.
 * If B2 runs clean 2/2, the fault needs B4's detector.
+
+#### ENV-68 result — the discriminator: B2's tick-fed watch is defective
+
+B2 `4468534B` (A6's detector plus B2's watch), 37.5 %, two runs: **both reason 8 Tracking, track_fault 3 (SectorOrder),
+fast_min_us 0** (`env68-b2-1`, `env68-b2-2`). This is the same failure as B4, without B4's detector.
+
+**Root cause (found in the source and binary; my wrong premise).**
+* I wrote the tick feed assuming COMP preempts the guard tick. It is the other way round: **the guard is NVIC 0x00,
+  above the motor roots at 0x40** (`shared.rs`, `impl Priority for Guard`).
+* COMP stored `accept_raw` early (before the arm) and bumped `accept_seq` last. When accept k had not been fed yet and
+  the tick landed inside accept k+1, between those stores, it read sequence k with k+1's stamp (and sometimes k+1's
+  sector). The next tick fed k+1 again. The result is a 0 µs gap and a sector off by one (SectorOrder).
+* The tick's double read of `accept_seq` guards against the wrong preemption direction.
+* This also explains the "detector inactive" final chain row: the tick tripped the guard inside COMP, and COMP then
+  wrote its row after `det.active` had been cleared.
+
+**Consequences:**
+* **B2 is abandoned** (a defect, found on its first bench exposure).
+* **B4u is abandoned**: its stage-1 fail is B2's defect, so no detector verdict can be read from it.
+* **New cut, `am32shape/b4v`, from `fw50-am32-a6`**: B4u's tree, plus two changes:
+  * COMP publishes (`accept_raw`, `accept_step`, `accept_seq`) **in one critical section**. That is the section
+    `accept_seq`'s increment already took on this core, so +2 static instructions; `accept_raw` is no longer written
+    before the arm;
+  * AM32's `zero_crosses` is the handover-reset `com.count`. B4u subtracted a snapshot taken before the reset, so the
+    startup rule could not engage; at handover speed the map gives 12 anyway.
+
+### ENV-69 — B4v stage 1, predeclared (gates as ENV-67)
+
+**Images:**
+* production `D824CD28` (loadable `E9226CB2`);
+* chain `28A60B5D`;
+* window-90 twin `48F9FD6A`;
+* cap-750 twin `6C7041A0`.
+
+The twins are instruction-identical to production in all ISRs; only constants moved.
+
+**Executed counts** (`b4v_comp_accept.spec`; dump `fw50_b4v_D824CD28`):
+* **comparator: total 209 (1.8× AM32's 114), arm #157 (1.5× ~#106), first read #47;**
+* **commutation phase 1: 223 (0.9× AM32's 247)**, instruction-identical to B4u.
+
+**Gate, as ENV-67:** 3/3 reason 2; coast ±1 %; hold zero-adjusted ±3 %; edge probe normal (p50 ≤ 4 µs, next step
+100 %). The late count is reported, not gated.
+
+**Predictions:**
+* no Tracking stop (the defect is removed);
+* coast and hold within the bars;
+* the late count rises against A6 (B1's mechanism, larger);
+* the storm report rises from the pending-retain re-entries.
+
+#### ENV-66 review (independent, abandoned attempt B1): FAIL confirmed, abandonment justified; corrections
+
+The review confirmed:
+* every chain header's image hash matches its label (A = B1 `A3C6B328`, T = A6 `0440C289`);
+* the binomial reproduces (143 v 106, p = 0.011; step 3 47 v 21, p = 0.001);
+* a per-capture Mann-Whitney also fails (p = 0.015, 0.002), so the pooled test's independence assumption does not
+  carry the verdict;
+* nothing compiled out feeds control;
+* abandoning B1 and not running B2 (labelled a prediction) follow the rules.
+
+Corrections:
+1. **An omission that strengthens the FAIL:** the chain refusal rows separate the images completely. B1 has 149–170
+   per capture against A6's 135–139, and B1's CHAINSNAP total is ~913 k against ~877 k.
+2. **The mechanism is inferred, not measured, on the failing images.** The first-read shift #137 → #120 was counted on
+   the production images; the FAIL came from the chain images, which were not dumped. It stays a hypothesis for
+   `A3C6B328`/`0440C289`. Also, "per-source-line counts compared" was weaker than stated: B1 shifts roots.rs line
+   numbers by +10 to +18. Aligned, the pre-read lines differ by at most one instruction, and the difference is in
+   register moves (`mov` 11 → 4, `str` 16 → 12).
+3. **"The only functional change" omitted two small timing moves:**
+   * COM's `late_max` compare left the pre-commutation path (first commutation write #80 → #78);
+   * `com_arm` fires a few instructions earlier on COM's blank paths.
+4. **The in-flight 525 run was stopped, not finished.** `env66-r525-1_01.txt` holds only a header, PREFLIGHT and
+   POSTSTOP. It is excluded, as stated.
+5. Process: the walk was launched before the chain was scored (already disclosed).
+
+### ENV-70 — step 3, predeclared: what causes A6's extra current at 72.5–75 %?
+
+ENV-64 found A6's worst block ~150–350 mA above the tag's at 750 (same session). ENV-63 showed A6's hold and
+`too_early` rising above the tag's at 600–725, but only against a walk from an earlier session.
+**Hypotheses:**
+* **(W) the one-step-ahead wait:** a stale wait shifts the effective angle, so advance is the lever (step 5);
+* **(R) read timing / detection:** A6's first read is +4 instructions and its codegen differs, so step 4 is where it
+  is decided.
+
+**Images** (all `advance-18`; T and S also `deep-filter`, as qualified):
+
+| side | 725 | 750 |
+|---|---|---|
+| T = tag | `7450FE24` | cap-750 `D12EB4BE` |
+| S = tag + `stale-wait` | `820B2FAD` | `FCF3AD62` |
+| A = A6 | `0A978A82` | `2B9686C5` |
+
+S is instruction-identical to the tag except for COMP (818 → 821 static), and its only semantic change is the arm's
+wait from the pre-blend estimate (ENV-47).
+
+**Protocol:** one session, 725 then 750, order T S A A S T T S A at each rung (3 per image per rung), `--no-ladder`
+(diagnostic, `--pre` to the rung).
+
+**Metrics per run:**
+* worst block (`worst_ma`);
+* zero-adjusted hold (`hold_covariate.py` slope 0.021);
+* coast;
+* stop reason; foldback ceiling.
+
+**Rule:**
+* Per rung, E = mean(A) − mean(T) and f = (mean(S) − mean(T)) / E, on the worst block and on the adjusted hold.
+* **If E ≤ 50 mA (worst) the excess is not reproduced this session, and step 3 gives no verdict.**
+* Otherwise:
+  * **f ≥ 0.5 on the worst block at both rungs → (W)**, and step 5 (advance A/B) is justified by step 3;
+  * **f ≤ 0.25 at both → (R)**, and step 3 does not justify step 5;
+  * anything between is **undecided**, reported as such.
+* Stops are reported with their reasons. A stopped run's worst block is truncated; it is listed but excluded from the
+  means, and if a side has fewer than 2 unstopped runs at a rung, that rung gives no verdict.
+
+**Prediction:** (R). ENV-47 found stale-wait alone harmless at 37.5 %, and A6's high-duty signature resembles
+A1/A4's read-timing signature. Low confidence: stale-wait was never measured at high duty.
+
+#### ENV-69 result — B4v stage 1: PASS
+
+Same session, 37.5 %, A = A6 `0A978A82`, B = B4v `D824CD28`.
+
+| check | result | bar | verdict |
+|---|---|---|---|
+| production ABBAAB stops | 6/6 reason 2, late_arms 0, track_fault 0 | 3/3 | pass |
+| coast | A 1547.7, B 1545.7 eHz (**−0.13 %**) | ±1 % | pass |
+| hold, zero-adjusted | **+1.20 %** (raw +2.02 %) | ±3 % | pass |
+| edge probe (8 B4v chains) | 217–228/217–228 matched, next step 100 %, **p50 3 µs**, p99 7.7–9 µs | normal | pass |
+| chain runs | 16/16 reason 2 | | |
+
+**The tick-feed fix works:** no Tracking stop in 14 B4v runs.
+
+**Late count (reported, not gated): B4v 0 vs A6 89, all steps; step 3 0 vs 19.** I checked this before believing it.
+The accept-interval distribution is genuinely tighter:
+
+| | intervals | sd | longest / step mean |
+|---|---|---|---|
+| B4v | n 1773, mean 107.8 µs | **6.8 µs** | **1.12–1.19** |
+| A6 | n 3001, mean 108.8 µs | 14.1 µs | 1.36–1.78 |
+
+**AM32's detector produces no late crossings at 37.5 %.** This refutes the direction I predicted ("up"). A likely
+mechanism, not tested: the pending-retain gate takes a post-crossing edge the moment the gate opens, where A6's refused
+it and waited for the revisit or rescue.
+
+Per-step means are less even: step 3 is 115 µs and step 4 is 101 µs, ±7 % against A6's ±4 %. This is recorded for
+the climb.
+
+Also:
+* the storm report reads **~131/ms** against A6's ~60 (the re-entries), report-only;
+* B4v chain rings hold fewer accept rows (the re-entry refusal rows share the ring).
+
+**Stage 2 starts: the ENV-69 walk (525 anchored → 725), then the follow-up** (restarts 500–700 and 725 on
+`48F9FD6A`, sweep, low rungs 150–500).
+
+Sweep expectations for B4v:
+* `u` (storm) is **not** expected to stop with 13; it reports instead;
+* `q` sets `blank_latched` directly, so the BlankLatched stop code is still exercised although no blanking window
+  exists;
+* every other key stops with its code.
+
+**Walk gates as ENV-63**, via `walk_check.py` with isr_stats = 0: timing is gated by `late_arms` = 0; 725 needs worst
+< 4750 in 3/3 and no foldback.
+
+#### ENV-69 stage 2 — B4v walk stopped at 525 by the host witness gate; code review; B4v abandoned
+
+**Walk:** 525 runs 1–3 ran to the hold normally (coast ~1990–2000 eHz, hold ~1.86 A, worst ~2.34 A). The runner
+refused all three: `cohort.py:400-408` requires the detector to be **seen refusing**, i.e. `unstable > 0` and
+(`too_early > 0` or `blank_arms > 0`).
+* B1 compiled those counters out of production.
+* B4's `det_decide` never calls the estimator's `note_refusal`, so they are dead in **every** build (review #9).
+
+This is a qualification-instrument gate, not a motor stop. The runs were not judged; B4v earns no rung.
+
+**Independent code review of B4v** (source only, before the climb):
+* **No blocking concurrency or safety defect.** The tuple fix is correct, the polarity and order match AM32, seeding
+  is correct at every `det_install`, and HandlerOverrun is equivalent.
+* **ERROR #1: the depth map is not AM32's.** AM32's `map()` (`Src/functions.c:22-40`) is a recursive bisection with
+  floored midpoints, not the straight line I wrote. The two disagree on 171 of 401 inputs, and firmware is always
+  one read deeper. Bands include sectors 72.5–74.5 µs and 94.5–99.5 µs, both on the climb. The host test pinned the
+  wrong value (145 → 4; AM32 gives 3). **My ENV-67 "exactly" was false.**
+* **ERROR #9: the refusal counters are dead in every build** (above), and the report still prints revisit fields,
+  always 0.
+* **RISK #2: nothing recovers a swallowed crossing any more.** The revisit and rescue are gone. AM32 backs the same
+  windows with a 45 ms polling-mode timeout (`main.c:2664`); firmware50's backstop is the Tracking stop plus a restart.
+  **At high rungs a Tracking stop must be read as possibly a lost sector**, not only a detector disagreement.
+* **RISK #3: the six-slot ring is one crossing fresher than AM32's.**
+  * AM32 stores the *previous* blended interval in `commutate()`, before the blend (`main.c:914,927`).
+  * It recomputes `average_interval` in the main loop (`2328,2452`).
+  * Firmware50 pushed the new blend and republished the gate from COM.
+* RISK #4 (`com-top` only; retired), #5–#8 OK, #10 stale comments.
+* The sweep's `u` now runs 400 pends through the real detector, so a Tracking stop or clean completion are both
+  possible. Predeclare what counts as a pass.
+
+**B4v is abandoned** (a fidelity error in the unit, plus the dead witnesses). **New cut `am32shape/b4w` from
+`fw50-am32-a6`**: B4v's tree plus
+1. AM32's recursive `map()`, ported exactly, host-tested against a transcription for every input 0..5000;
+2. COMP counts refusals on its refusal paths (`too_early`, `unstable`, plain stores, single writer; never on the
+   accept path). These are the witnesses the qualification gate requires, **declared as kept**;
+3. COM pushes the **pre-commit** interval into the six-slot ring, as `commutate()` does;
+4. the gate is computed by the **foreground** from the published six-slot sum, as AM32's main loop computes
+   `average_interval`; COM only publishes the sum;
+5. stale comments corrected.

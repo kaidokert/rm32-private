@@ -1,0 +1,13 @@
+ELF D824CD28.b4v-prod.elf sha256 d824cd28566a51cf99998b26f2855a9549537a58c25e4df75d776a3f50fe919d
+
+[comp] ADC_COMP: COMP2 edge (B4v)
+  ADC_COMP: 439 insns, 940 B
+  -> isr_ref\fw50_b4v_D824CD28\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (B4v)
+  TIM16: 260 insns, 564 B
+  -> isr_ref\fw50_b4v_D824CD28\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick (B4v)
+  TIM6_DAC_LPTIM1: 370 insns, 776 B
+  -> isr_ref\fw50_b4v_D824CD28\tick_TIM6_DAC_LPTIM1.lst
