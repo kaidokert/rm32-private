@@ -345,11 +345,7 @@ impl BlkRing {
         let i = self.next;
         if i < BLK_LEN {
             self.sum[i] = self.acc_sum;
-            self.bus[i] = if self.acc_n == 0 {
-                0
-            } else {
-                (self.acc_bus / self.acc_n) as u16
-            };
+            self.bus[i] = self.acc_bus.checked_div(self.acc_n).unwrap_or(0) as u16;
             self.n[i] = self.acc_n.min(255) as u8;
             self.half[i] = (self.acc_half >> 3).min(0xFFFF) as u16;
         }

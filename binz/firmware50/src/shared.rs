@@ -430,6 +430,11 @@ pub struct CompHealth {
     pub call_max_us: AtomicU32,
     /// Gate-4 stimulus: µs added to the measured call (key `H` only).
     pub overrun_inject_us: AtomicU32,
+    /// Campaign C sweep stimulus (`Inject::Storm`): back-to-back COMP re-entries
+    /// still to force. Each closed-loop COMP entry takes one, unmasks the line at
+    /// the NVIC and re-pends itself -- the pending-retain re-entry storm, made
+    /// unbounded by the gate, from the handler itself instead of a foreground spin.
+    pub storm_inject_left: AtomicU32,
 }
 
 /// The driven-stage observer (E058). Handover as for [`Det`].
@@ -759,6 +764,7 @@ static COMP: CompHealth = CompHealth {
     overrun: f(),
     call_max_us: u(),
     overrun_inject_us: u(),
+    storm_inject_left: u(),
 };
 static DRV: Drv = Drv {
     active: f(),

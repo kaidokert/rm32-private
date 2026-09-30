@@ -1193,6 +1193,13 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
         // The storm limiter, report-only (goal B ruling), after the decision:
         // nothing but the stamp precedes the gate.
         S.det().rate.root(&mut at, |rate| rate.observe(raw));
+        // Campaign C sweep stimulus (`Inject::Storm`): re-enter until the count runs out.
+        let storm_left = S.comp().storm_inject_left.load(Ordering::Relaxed);
+        if storm_left != 0 {
+            S.comp().storm_inject_left.store(storm_left - 1, Ordering::Relaxed);
+            hw::nvic::unmask(stm32::Interrupt::ADC_COMP);
+            hw::comp::pend();
+        }
         // binz's per-call handler budget (E107), always enforced: on an overrun
         // the line is masked and the foreground stops the run.
         let elapsed = ((hw::clock::raw()).wrapping_sub(raw) as u32)

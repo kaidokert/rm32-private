@@ -187,10 +187,17 @@ pub const SECTOR_FLOOR_US: u32 = 40;
 // Diagnostic images that must run the 72.5 % edge enable `edge-probe` explicitly.
 // ENV-37: 700 -> 725, the step under qualification (advance 18, ENV-36); `edge-probe`
 // moves to 750 for exploration beyond it.
+// Campaign C (ENV-82): 725 -> 750, the step under qualification with the `dual-shunt`
+// estimator (ENV-81); `edge-probe` moves to 775 for exploration beyond it.
 #[cfg(not(feature = "edge-probe"))]
-pub const SIXSTEP_DUTY_CAP: u16 = 725;
-#[cfg(feature = "edge-probe")]
 pub const SIXSTEP_DUTY_CAP: u16 = 750;
+#[cfg(feature = "edge-probe")]
+pub const SIXSTEP_DUTY_CAP: u16 = 775;
+
+/// Campaign C sweep: COMP re-entries forced by `Inject::Storm` (~3-4 us each, so
+/// ~12-16 ms of back-to-back interrupt time: longer than the foreground's 2 ms
+/// feedback-age limit, shorter than the IWDG).
+pub const STORM_INJECT_ENTRIES: u32 = 4_000;
 
 /// Closed-loop time before a gate-4 injection fires (E080).
 pub const INJECT_AFTER_US: u32 = 3_000_000;
@@ -555,7 +562,7 @@ mod tests {
         // this again, and anything above the cap clamps to the cap.
         assert_eq!(
             SIXSTEP_DUTY_CAP,
-            if cfg!(feature = "edge-probe") { 750 } else { 725 },
+            if cfg!(feature = "edge-probe") { 775 } else { 750 },
             "a cap move must be deliberate: update this with it"
         );
         assert_eq!(sixstep_ccr_of(625, 1333), 833);

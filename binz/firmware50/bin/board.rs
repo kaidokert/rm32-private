@@ -741,21 +741,17 @@ impl Hal for Board {
             // Both ends of the shared nFAULT node are open-drain: benign.
             Inject::Driver => hw::gpio::nfault_inject_assert(),
             Inject::Overrun => S.comp().overrun_inject_us.store(60, Ordering::Relaxed),
-            // Real `ADC_COMP` entries 8 µs apart through the real handler and
-            // rate latch (the reference's `RATESTOP`), until the unchanged
-            // 64/ms cut trips (bounded at 400). Each is unmasked first (E127):
-            // a pend while the root holds its NVIC line masked -- most of a
-            // 25% sector -- collapses into one entry, and 80 plain pends
-            // peaked at 63/ms there.
+            // Campaign C: the COMP handler re-pends itself `STORM_INJECT_ENTRIES`
+            // times back to back (`roots::comp_root`), with the NVIC line forced open
+            // each time -- a genuine COMP overload that starves the foreground from
+            // interrupt context. The foreground is not held in a spin (the old
+            // stimulus, whose 3.2 ms busy-wait tripped AdcTimeout by itself, ENV-73).
             Inject::Storm => {
-                let mut i = 0;
-                while i < 400 && !S.comp().storm.load(Ordering::Relaxed) {
-                    hw::nvic::unmask(stm32::Interrupt::ADC_COMP);
-                    hw::comp::pend();
-                    let t0 = hw::clock::raw();
-                    while hw::clock::raw().wrapping_sub(t0) < 8 {}
-                    i += 1;
-                }
+                S.comp()
+                    .storm_inject_left
+                    .store(firmware50::run::policy::STORM_INJECT_ENTRIES, Ordering::Relaxed);
+                hw::nvic::unmask(stm32::Interrupt::ADC_COMP);
+                hw::comp::pend();
             }
             // Interrupts stay enabled; only the foreground stalls, unfed.
             Inject::Watchdog => {

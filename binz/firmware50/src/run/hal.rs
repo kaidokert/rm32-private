@@ -184,7 +184,8 @@ pub enum Inject {
     FeedbackStale,
     /// nFAULT pulled low from the MCU side. Expect `Driver` (7).
     Driver,
-    /// 80 software-pended COMP entries in one 1 ms bucket. Expect `CompStorm` (13).
+    /// A COMP self-re-entry overload (`STORM_INJECT_ENTRIES`). Expect `AdcTimeout` (11):
+    /// the foreground is starved past its feedback-age limit (campaign C).
     Storm,
     /// A step to the 50% rung into the 1 A supply. Expect `FastBusSag` (26).
     Sag,
@@ -217,7 +218,10 @@ impl Inject {
             Inject::TickGap => 3,
             Inject::FeedbackStale => 4,
             Inject::Driver => 7,
-            Inject::Storm => 13,
+            // Campaign C: the storm limiter is report-only, and the stimulus is a COMP
+            // re-entry overload that starves the foreground; its feedback-age check is
+            // the stop expected (predeclared, ENV-82).
+            Inject::Storm => 11,
             Inject::Overrun => 14,
             Inject::Sag => 26,
             Inject::AverageCurrent => 25,

@@ -46112,3 +46112,23 @@ instruction-identical.
 * no stops.
 
 **Rule for making it a production candidate:** all four hold. **Falsifier:** sd ratio > 0.9.
+
+#### ENV-80 result — commutation lateness is flat across 700–750 and does not bind 75 %
+
+Edge probe (COM entry − (crossing + wait)), kept detector:
+
+| rung | chain | matched | p50 | p99 | max |
+|---|---|---|---|---|---|
+| 700 | `3D764D73` | 341, 342 (all; next step 100 %) | 3 | 9.0 / 9.0 | 9 / 9 |
+| 725 | `3D764D73` | 349, 347 | 3 | 8.5 / 8.5 | 9 / 9 |
+| 750 | `3E4D6A1E` | 347, 350 | 3 | 8.5 / 4.0 | 9 / 8 |
+
+`isr-stats` twins: at 725, `com_late_max` 15 µs, `spent_max` 9, thin 0, `ci_min` 55; at 750, `com_late_max` 10 µs,
+`spent_max` 9, thin 0, `ci_min` 52. `com_late_max` is a whole-run maximum, including startup.
+
+* **The prediction (p99 rising to ≈ 10 µs at 750) is refuted:** p99 is flat at ≈ 8.5–9 µs, and p50 is 3 µs at every
+  rung. The 3 µs includes the coarse 1 µs clock quantisation and ISR entry.
+* Against an advance of ≈ 16 µs at 750 (ci × 16/64), lateness costs a constant ≈ 3 µs of effective angle. It does not
+  grow with speed across 700–750. **It is not what binds 75 %**; the estimator is (ENV-79).
+* The review's warning that lateness would grow to a quarter of the sector by 100 % can't be tested on the PSU beyond
+  750. This result says it has not started growing through 750.

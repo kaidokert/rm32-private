@@ -52,6 +52,22 @@ pub const SCAN_LEN: usize = CHANNELS.len();
 #[cfg(feature = "dual-shunt")]
 pub const SCAN_LEN: usize = 8;
 
+/// The `dual-shunt` sequence, IA IB IC VBUS VREF IA IB IC, packed four bits per rank
+/// (SQ1 in bits 3:0), derived from the channel numbers so it cannot drift from them.
+#[cfg(feature = "dual-shunt")]
+const CHSELR1_DUAL: u32 = {
+    let seq = [0u32, 1, 4, 6, 13, 0, 1, 4];
+    let mut v = 0u32;
+    let mut k = 0;
+    while k < 8 {
+        v |= seq[k] << (4 * k);
+        k += 1;
+    }
+    v
+};
+#[cfg(feature = "dual-shunt")]
+const _: () = assert!(CHSELR1_DUAL == 0x410D_6410);
+
 const fn scan_index(ch: u8) -> usize {
     let mut i = 0;
     while i < CHANNELS.len() {
@@ -206,11 +222,10 @@ pub fn init(rcc: &mut Rcc) -> bool {
     {
         // CHSELRMOD with ADSTART = 0; then the 8-rank sequence (no terminator: all 8 used).
         a.cfgr1().modify(|_, w| w.chselrmod().set_bit());
-        // SAFETY: SQx are 4-bit channel numbers; 0, 1, 4, 6, 13 are this board's channels.
-        a.chselr1().write(|w| unsafe {
-            w.sq1().bits(0).sq2().bits(1).sq3().bits(4).sq4().bits(6);
-            w.sq5().bits(13).sq6().bits(0).sq7().bits(1).sq8().bits(4)
-        });
+        // SQ1..SQ8 = 0, 1, 4, 6, 13, 0, 1, 4 (4-bit fields, SQ1 in bits 3:0; RM0444 ADC_CHSELR
+        // in CHSELRMOD = 1): IA, IB, IC, VBUS, VREF, then the three shunts again.
+        // SAFETY: a documented register layout; every nibble is one of this board's channels.
+        a.chselr1().write(|w| unsafe { w.bits(CHSELR1_DUAL) });
     }
     wait(|| a.isr().read().ccrdy().bit_is_set())
 }
