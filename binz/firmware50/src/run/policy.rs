@@ -192,18 +192,6 @@ pub const SIXSTEP_DUTY_CAP: u16 = 725;
 #[cfg(feature = "edge-probe")]
 pub const SIXSTEP_DUTY_CAP: u16 = 750;
 
-/// Rescue attempts the level revisit may make in one sector after its first
-/// attempt was refused (E140), each armed by another half-interval of overdue.
-///
-/// The revisit is otherwise once per sector: `revisit_step` is set on the
-/// attempt and cleared only by an accepted crossing. E138 showed that dead
-/// end kills the drive -- a sector whose crossing the persistence filter
-/// swallows never gets a second look, the commutation falls behind the rotor,
-/// and the loop desyncs with no recovery. A rescue changes no gate: it only
-/// pends the decision again, and the blanking gate and the filter still judge
-/// the edge.
-pub const REVISIT_RESCUE_MAX: u8 = 4;
-
 /// Closed-loop time before a gate-4 injection fires (E080).
 pub const INJECT_AFTER_US: u32 = 3_000_000;
 /// Interrupt-masked stall for the tick-gap provocation (the guard allows 200).

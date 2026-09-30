@@ -132,6 +132,75 @@ impl FilterPolicy for MappedFilter {
     }
 }
 
+/// **AM32's `map()`, exactly** (`Src/functions.c:22-40`): not a straight line
+/// but a recursive bisection with floored midpoints, which differs from
+/// `(x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min` on 171 of
+/// the 401 inputs `filter_level` uses (goal B review). The recursion is a tail
+/// call, so it is a loop here; each pass halves the input range, so it ends.
+#[must_use]
+pub fn am32_map(x: i32, in_min: i32, in_max: i32, out_min: i32, out_max: i32) -> i32 {
+    let (mut in_min, mut in_max, mut out_min, mut out_max) = (in_min, in_max, out_min, out_max);
+    loop {
+        if x >= in_max {
+            return out_max;
+        }
+        if x <= in_min {
+            return out_min;
+        }
+        if in_min > in_max {
+            core::mem::swap(&mut in_min, &mut in_max);
+            core::mem::swap(&mut out_min, &mut out_max);
+            continue;
+        }
+        if out_min == out_max {
+            return out_min;
+        }
+        let in_mid = (in_min + in_max) >> 1;
+        let out_mid = (out_min + out_max) >> 1;
+        if in_min == in_mid {
+            return out_mid;
+        }
+        if x <= in_mid {
+            in_max = in_mid;
+            out_max = out_mid;
+        } else {
+            in_min = in_mid + 1;
+            out_min = out_mid;
+        }
+    }
+}
+
+/// **AM32's `filter_level`, as its main loop computes it** (goal B step 4,
+/// `main.c:2631-2638`):
+///
+/// ```c
+/// if (zero_crosses < 100 && commutation_interval > 500) {
+///   filter_level = 12;
+/// } else {
+///   filter_level = map(average_interval, 100, 500, 3, 12);
+/// }
+/// if (commutation_interval < 50) {
+///   filter_level = 2;
+/// }
+/// ```
+///
+/// Units are the reference's half-µs: `average_half_us` is `average_interval`
+/// (the six-slot average, `e_com_time / 3`), `ci_half_us` is
+/// `commutation_interval` (the blended interval). The map is [`am32_map`], the
+/// reference's own (no `deep-filter` floor). Foreground only.
+#[must_use]
+pub fn am32_filter_level(average_half_us: u32, ci_half_us: u32, zero_crosses: u32) -> u8 {
+    let mut level = if zero_crosses < 100 && ci_half_us > 500 {
+        12
+    } else {
+        am32_map(average_half_us.min(1 << 20) as i32, 100, 500, 3, 12) as u8
+    };
+    if ci_half_us < 50 {
+        level = 2;
+    }
+    level
+}
+
 /// Adapts a half-microsecond policy to an estimator that works in whole
 /// microseconds (E083).
 ///
@@ -578,6 +647,66 @@ pub fn judge<R: FnMut() -> bool>(count: u32, gate: u32, rising: bool, depth: u8,
         i += 1;
     }
     Judgement::Pass
+}
+
+#[cfg(test)]
+mod am32_filter_tests {
+    use super::{am32_filter_level, am32_map};
+
+    /// `Src/functions.c:22-40`, transcribed literally (recursive, `long`).
+    fn reference_map(x: i64, in_min: i64, in_max: i64, out_min: i64, out_max: i64) -> i64 {
+        if x >= in_max {
+            return out_max;
+        }
+        if x <= in_min {
+            return out_min;
+        }
+        if in_min > in_max {
+            return reference_map(x, in_max, in_min, out_max, out_min);
+        }
+        if out_min == out_max {
+            return out_min;
+        }
+        let in_mid = (in_min + in_max) >> 1;
+        let out_mid = (out_min + out_max) >> 1;
+        if in_min == in_mid {
+            return out_mid;
+        }
+        if x <= in_mid {
+            reference_map(x, in_min, in_mid, out_min, out_mid)
+        } else {
+            reference_map(x, in_mid + 1, in_max, out_mid, out_max)
+        }
+    }
+
+    #[test]
+    fn the_map_is_the_references_for_every_input() {
+        for x in 0..5_000i64 {
+            assert_eq!(
+                i64::from(am32_map(x as i32, 100, 500, 3, 12)),
+                reference_map(x, 100, 500, 3, 12),
+                "x={x}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_map_is_not_the_straight_line() {
+        // The review's counterexample: the line gives 4 at 145, the reference 3.
+        assert_eq!(am32_map(145, 100, 500, 3, 12), 3);
+        let line = |x: i32| 3 + (x - 100) * 9 / 400;
+        let differ = (100..=500).filter(|&x| am32_map(x, 100, 500, 3, 12) != line(x)).count();
+        assert_eq!(differ, 171);
+    }
+
+    #[test]
+    fn startup_is_twelve_and_very_fast_is_two() {
+        assert_eq!(am32_filter_level(600, 600, 10), 12, "zero_crosses < 100 && ci > 500");
+        assert_eq!(am32_filter_level(120, 120, 10), 3, "a fast start takes the map");
+        assert_eq!(am32_filter_level(90, 49, 1000), 2, "commutation_interval < 50 wins");
+        assert_eq!(am32_filter_level(600, 49, 10), 2, "and wins over the startup rule");
+        assert_eq!(am32_filter_level(4000, 4000, 1000), 12);
+    }
 }
 
 #[cfg(test)]

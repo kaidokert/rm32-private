@@ -214,7 +214,8 @@ fn measure(board: &mut board::Board) -> Phase {
         let (fb, fv) = sag.filtered();
         p.filt_bus = fb;
         p.filt_vref = fv;
-        p.mean.observe(rail.bus_mean(), rail.vref_mean(), reference.bus, reference.vref);
+        p.mean
+            .observe(rail.bus_mean(), rail.vref_mean(), reference.bus, reference.vref);
         p.raw.observe(s.bus, s.vref, fb, fv);
         // The verdict is recorded, not discarded and not acted on: with the
         // bridge off a trip would be a measurement about the instrument, and

@@ -1,0 +1,13 @@
+ELF B48733CA.b4-am32det-shell-pwm.elf sha256 b48733ca7dfe324bf6eb684ef7d2c6c8e65f12dcfa3e6854eade8e6830d266cd
+
+[comp] ADC_COMP: COMP2 edge (B4)
+  ADC_COMP: 437 insns, 936 B
+  -> isr_ref\fw50_b4_B48733CA\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (B4)
+  TIM16: 260 insns, 564 B
+  -> isr_ref\fw50_b4_B48733CA\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick (B4)
+  TIM6_DAC_LPTIM1: 370 insns, 776 B
+  -> isr_ref\fw50_b4_B48733CA\tick_TIM6_DAC_LPTIM1.lst

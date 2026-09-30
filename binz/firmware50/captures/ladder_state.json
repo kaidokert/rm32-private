@@ -19268,5 +19268,90 @@
     "anchored": "ENV-63 A6: low rungs / 500 restart on 0A978A82; oracle coast gate marginal-to-failing on every image below 525 (Q60-5, ENV-38c); judged on non-oracle gates + self-ref."
    }
   ]
+ },
+ "D824CD28566A51CF99998B26F2855A9549537A58C25E4DF75D776A3F50FE919D": {
+  "525": [
+   {
+    "file": "env69-r525-1_01.txt",
+    "duty": 525,
+    "reason": 2,
+    "accepted": 782231,
+    "bus_ref": 1218,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 0,
+    "unstable": 0,
+    "hold_ms": 51275,
+    "rate_permille": 996,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1000,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 1996,
+    "coast_crossings": 1240,
+    "hold_ma": 1870,
+    "ceiling_tenths": 525,
+    "worst_ma": 2323,
+    "droop_permille": 985.2216748768473,
+    "fails": [
+     "unstable is zero",
+     "neither too_early nor blank_arms: the blanking gate is not witnessed"
+    ],
+    "anchored": "ENV-69 B4v: AM32 detector unit, image D824CD28 (loadable E9226CB2) re-qualifying from 525; base fw50-am32-a6 (0A978A82, 72.5% ENV-63); B4 replaces the detector (control-path change, full re-walk), stage 1 ENV-69."
+   },
+   {
+    "file": "env69-r525-2_01.txt",
+    "duty": 525,
+    "reason": 2,
+    "accepted": 782153,
+    "bus_ref": 1214,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 0,
+    "unstable": 0,
+    "hold_ms": 51275,
+    "rate_permille": 996,
+    "has_tail": true,
+    "rate_vs_coast_permille": 999,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 2000,
+    "coast_crossings": 1252,
+    "hold_ma": 1861,
+    "ceiling_tenths": 525,
+    "worst_ma": 2337,
+    "droop_permille": 986.8204283360791,
+    "fails": [
+     "unstable is zero",
+     "neither too_early nor blank_arms: the blanking gate is not witnessed"
+    ],
+    "anchored": "ENV-69 B4v: AM32 detector unit, image D824CD28 (loadable E9226CB2) re-qualifying from 525; base fw50-am32-a6 (0A978A82, 72.5% ENV-63); B4 replaces the detector (control-path change, full re-walk), stage 1 ENV-69."
+   },
+   {
+    "file": "env69-r525-3_01.txt",
+    "duty": 525,
+    "reason": 2,
+    "accepted": 782189,
+    "bus_ref": 1213,
+    "forced": 0,
+    "too_early": 0,
+    "blank_arms": 0,
+    "unstable": 0,
+    "hold_ms": 51275,
+    "rate_permille": 996,
+    "has_tail": true,
+    "rate_vs_coast_permille": 1005,
+    "rate_source": "matched window vs time-anchored coast",
+    "coast_ehz": 1988,
+    "coast_crossings": 1254,
+    "hold_ma": 1865,
+    "ceiling_tenths": 525,
+    "worst_ma": 2343,
+    "droop_permille": 989.282769991756,
+    "fails": [
+     "unstable is zero",
+     "neither too_early nor blank_arms: the blanking gate is not witnessed"
+    ],
+    "anchored": "ENV-69 B4v: AM32 detector unit, image D824CD28 (loadable E9226CB2) re-qualifying from 525; base fw50-am32-a6 (0A978A82, 72.5% ENV-63); B4 replaces the detector (control-path change, full re-walk), stage 1 ENV-69."
+   }
+  ]
  }
 }

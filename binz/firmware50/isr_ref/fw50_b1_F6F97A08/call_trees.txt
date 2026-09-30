@@ -1,0 +1,14 @@
+ELF F6F97A08.b1-nostats-shell-pwm.elf sha256 f6f97a08147d1fe236a3f13c51fc2cd93e8fa5bfc25699534be1bf7e970e3c69
+
+[comp] ADC_COMP: COMP2 edge (B1)
+  ADC_COMP: 706 insns, 1508 B
+  -> isr_ref\fw50_b1_F6F97A08\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (B1)
+  TIM16: 410 insns, 880 B -> _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E
+    _ZN10firmware505roots13comp_exti_arm17hd3eb08a40ffd3698E: 84 insns, 192 B
+  -> isr_ref\fw50_b1_F6F97A08\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick (B1)
+  TIM6_DAC_LPTIM1: 155 insns, 344 B
+  -> isr_ref\fw50_b1_F6F97A08\tick_TIM6_DAC_LPTIM1.lst

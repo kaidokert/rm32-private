@@ -363,9 +363,10 @@ pub trait Hal {
     /// No commutation or blank is armed.
     fn com_idle(&self) -> bool;
     fn com_count(&self) -> u32;
-    /// The level revisit: sample the line state and pend one retry inside one
-    /// critical section. `true` if admitted.
-    fn revisit(&mut self, step: Step) -> bool;
+    /// **Goal B step 4: publish AM32's `filter_level`** for COMP to read, from the
+    /// foreground, where the reference computes it (`main.c:2631-2638`). Replaces
+    /// the level revisit, whose job AM32's pending-retain gate now does in COMP.
+    fn publish_filter_depth(&mut self);
     /// Rebuild the COM root's plan table at `duty` (ceiling `cap`) and swap
     /// it in whole.
     fn publish_plans(&mut self, duty: u16, period: u32, cap: u16);

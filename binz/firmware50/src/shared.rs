@@ -292,17 +292,11 @@ pub struct Det {
     /// (`ADC_COMP` 760 → 758).
     pub accept_seq: AtomicU32,
     pub accept_raw: AtomicU32,
-    /// **Dead, and deliberately still here.** Nothing reads it; its two stores
-    /// were deleted from both acceptance paths. The *field* stays because this
-    /// struct is `#[repr(C)]` and the roots address it by offset, so deleting
-    /// it moves every later field and re-codegens the roots: measured
-    /// `ADC_COMP` 760 → **742**, of which only 2 instructions are the dead
-    /// store and 16 are layout. E318 established that codegen is a first-order
-    /// carrier of this firmware's latch hazard (two production images differ
-    /// 2.9× at the same rung), so a 16-instruction layout shuffle bundled into
-    /// a margin change would make the result uninterpretable. Four bytes of
-    /// `.bss` is the price of an isolated measurement.
-    pub accept_wait_unused: AtomicU32,
+    /// **The accepted crossing's sector** (goal B step 2), stored by COMP before
+    /// `accept_seq` so the guard tick can feed the tracking watch. It reuses the
+    /// slot `accept_wait_unused` held open since E321 (a dead field kept so the
+    /// struct's layout, and so the roots' codegen, did not move).
+    pub accept_step: AtomicU32,
     /// Longest entry-stamp-to-arm time, and arms that reached the wait (E083).
     pub spent_max: AtomicU32,
     pub late_arms: AtomicU32,
@@ -405,6 +399,24 @@ pub struct Det {
     /// **ENV-61 (A6): the accepted crossing's interval, for COM to commit** (AM32's
     /// `thiszctime`, which `interruptRoutine` stores and `PeriodElapsedCallback` blends).
     pub accept_count: AtomicU32,
+    /// **Goal B step 4: AM32's gate**, `average_interval >> 1` of the six-slot ring
+    /// (`stm32g0xx_it.c:244`, with `average_interval = e_com_time / 3` from the six
+    /// commutation intervals, `main.c:2328,2452`), in µs. Published by COM after
+    /// each commutation's push; read by COMP before anything else.
+    pub gate_us: AtomicU32,
+    /// **Goal B step 4: AM32's `filter_level`**, computed by the foreground (AM32
+    /// computes it in its main loop, `main.c:2631-2638`); COMP reads it.
+    pub depth: AtomicU32,
+    /// Goal B step 4: the six-slot sum COM last pushed (µs), for the foreground's
+    /// `filter_level` map input.
+    pub six_sum: AtomicU32,
+    /// **Refusal witnesses** (goal B step 4): COMP's gate-early and filter-dissent
+    /// counts, written by COMP alone on its refusal paths (never the accept path).
+    /// Kept in production: the qualification's host gate requires the detector to
+    /// be seen refusing (`cohort.py`), and these are its only witnesses now that
+    /// COMP no longer borrows the estimator.
+    pub too_early_n: AtomicU32,
+    pub unstable_n: AtomicU32,
 }
 
 /// Closed-loop COMP health: the storm and handler-budget stops (E107).
@@ -469,9 +481,11 @@ pub struct GuardState {
     /// Feedback freshness: the last scan sequence seen, and when.
     pub adc_seen: AtomicU32,
     pub adc_at: AtomicU32,
-    /// The accepted-event envelope. Ceiling: the guard. `ADC_COMP` (below
-    /// it) feeds events inside a critical section.
+    /// The accepted-event envelope. Ceiling: the guard, whose tick feeds it
+    /// (goal B step 2).
     pub watch: Seam<EventWatch<true>, Guard>,
+    /// Goal B step 2: the `Det::accept_seq` the guard tick last fed to the watch.
+    pub seq_seen: AtomicU32,
 }
 
 /// The COM root's state (E070).
@@ -718,7 +732,7 @@ static DET: Det = Det {
     accept_blank: u(),
     accept_seq: u(),
     accept_raw: u(),
-    accept_wait_unused: u(),
+    accept_step: u(),
     spent_max: u(),
     late_arms: u(),
     ci_at_late: u(),
@@ -733,6 +747,11 @@ static DET: Det = Det {
     left_hist: hist(),
     next_wait: u(),
     accept_count: u(),
+    gate_us: u(),
+    depth: AtomicU32::new(12),
+    six_sum: u(),
+    too_early_n: u(),
+    unstable_n: u(),
 };
 static COMP: CompHealth = CompHealth {
     storm: f(),
@@ -776,6 +795,7 @@ static GUARD: GuardState = GuardState {
         crate::protection::EVENT_MIN_US,
         crate::tracking::EVENT_MAX_US,
     )),
+    seq_seen: u(),
 };
 static COM: Com = Com {
     active: f(),
