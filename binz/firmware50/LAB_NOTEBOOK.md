@@ -45339,3 +45339,29 @@ loadable-identical to `1EF397BA`):
 **Gate (stage 1):** 3/3 reason 2; coast ±1 %; hold ±3 %; edge probe normal. **Then stage 2 is the real bar:** the full
 kit (walk 525 → 725, restarts incl. 725 on a window-90 twin, sweep, low rungs). If B4 fails at a rung, advance is B5's
 predicted, A/B'd lever, never retuned inside B4.
+
+#### ENV-67 result so far — B4 stage 1: FAIL (2/2 B4 production runs stopped), stopped early
+
+| run | image | reason | details |
+|---|---|---|---|
+| 1A | A6 `0A978A82` | 2 | coast 1543 eHz |
+| **2B** | **B4 `1EF397BA`** | **8 Tracking** | track_fault = 3 (**SectorOrder**), fast_min_us = **0**, 88 476 accepts, zc rate 99.5 % of expected, 274 ms into the hold; storm report `closed_irq_peak_per_ms` = 132 (storm = 1) |
+| **3B** | **B4** | **8 Tracking** | SectorOrder, fast_min_us = 0 |
+| 4A | A6 | 2 | |
+| chain 1A | B4 chain `927BAC89` | 8 Tracking | SectorOrder, fast_min 0. **The last 220 recorded accepts are in strict sector order, with distinct stamps 95–119 µs apart, up to the stop** |
+
+The stage-1 gate (3/3 reason 2) failed, so the run was stopped after chain 2 (the late count cannot change the
+verdict).
+
+**Diagnosis in progress.** A gap of 0 µs plus SectorOrder is the signature of **one accept fed to the watch twice**.
+The chain ring shows no double accept, so the suspect is B2's move of the tracking watch into the guard tick (its
+batch feed has never run on the bench before B4), not the detector.
+* The tick's loads are in source order in the binary (`accept_seq`, then raw, step, avg, then `accept_seq` again last),
+  so a torn read of the tuple is ruled out.
+* One unexplained observation: the final chain accept row carries stage flag 0 (detector inactive at row write).
+
+**Discriminator (ENV-68, predeclared):** B2 image `4468534B` (A6's detector plus B2's tick-fed watch and report-only
+storm limiter), 37.5 %, two runs, `--no-ladder`.
+* **If B2 also stops on Tracking/SectorOrder, the tick feed is defective**, and B4's failure is B2's defect, not the
+  detector unit's.
+* If B2 runs clean 2/2, the fault needs B4's detector.
