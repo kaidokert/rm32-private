@@ -45847,3 +45847,18 @@ judgement of the detector unit passed on the same code at advance 18 (ENV-71). E
 adv-16 image healthy at 37.5 % on every gate but one, which it misses by 0.01 pp in the favourable direction.
 **B4w-adv16 is kept and tagged `fw50-am32-b4w-adv16`, with this exception stated in the tag annotation.**
 Operator-rulable, alongside C3 (steps 1 and 2 not kept separately; step 5 called by step 4 alone).
+
+#### Operator rulings on the goal-B exceptions (2026-09-30)
+
+1. **Steps 1 and 2 folded into the step-4 unit: accepted.** B1 showed they cannot be separated (moving the read moves
+   detection); that is a finding.
+2. **Step 5 called by step 4's failure at advance 18: accepted**, as the goal anticipated.
+3. **ENV-75 coast +1.01 % against the ±1 % bar: accepted, bar unchanged.** The exception stays in the tag.
+4. **Storm, a fixture/report item, not a protection.** With pending-retain, 64/ms measures the mechanism working.
+   * **To do:** report the peak and the re-entries per sector instead of `storm`.
+   * **To do:** give sweep key `u` a stimulus that actually tests overload. Today it ends in an AdcTimeout it causes
+     itself (ENV-73).
+
+**Reading of the 75 % edge (operator):** with no stops and no foldback, 75 % on this bench is the 5 A supply's
+worst-block edge (mean ≈ 3.9 A, 10 ms blocks ≈ 4.8 A against the 4750 bar), not a timing wall. Above it is the planned
+battery, then the motor's no-load thermal behaviour, which is unmeasured.
