@@ -46132,3 +46132,58 @@ Edge probe (COM entry − (crossing + wait)), kept detector:
   grow with speed across 700–750. **It is not what binds 75 %**; the estimator is (ENV-79).
 * The review's warning that lateness would grow to a quarter of the sector by 100 % can't be tested on the PSU beyond
   750. This result says it has not started growing through 750.
+
+#### ENV-81 result — dual-shunt meets all four predeclared conditions; it is made a production candidate
+
+750, same session, A = `8A67E1C4` (single sample), B = `56675342` (`dual-shunt`):
+
+| | block mean | block sd | split-half r | worst (last 5.2 s) | **whole-run worst** | reason / ceiling |
+|---|---|---|---|---|---|---|
+| A 1/4/5 | 4032 / 4029 / 4046 | 224 / 203 / 209 | −0.05 / −0.16 / −0.07 | 4716 / 4568 / 4747 | **4772 / 4755 / 4746** | 2 / 750 |
+| B 2/3/6 | 4008 / 3992 / 4013 | **146 / 147 / 142** | −0.06 / −0.08 / −0.08 | 4402 / 4523 / 4384 | **4537 / 4534 / 4531** | 2 / 750 |
+
+* sd ratio **0.68** (bar ≤ 0.85); mean −0.8 % (bar ±2 %); r ≤ 0.2 on both; no stops. **All four hold.**
+* The whole-run worst block moves from 4746–4772 (2/3 fail the 4750 gate) to **4531–4537 (3/3 pass)**, as projected
+  (mean + 3.6 σ ≈ 4.52 A).
+
+### ENV-82 — C2 built and predeclared: requalify with the dual-shunt estimator, top 750
+
+**Branch `am32shape/c2`, commit `76cb266`. Production features `advance-ref,dual-shunt`. Images:**
+* production **`882839DC`** (loadable **`7C8CF1E3`**);
+* window-90 twin `BD47122B`;
+* cap-775 twin `F00002E2`;
+* chain `5FB3207E`.
+
+Host 360/360, clippy 0, audit clean.
+
+**Changes against `fw50-am32-b4w-adv16`:**
+1. `dual-shunt`: the protections' current input becomes the mean of two shunt samples per scan. Window, allowance,
+   streak and every threshold are unchanged, and the bus and VREF words are unchanged. The sequencer value is derived
+   at compile time and asserted.
+2. Production cap 725 → **750**, the step under qualification (`edge-probe` → 775).
+3. Sweep storm stimulus: the COMP handler re-pends itself `STORM_INJECT_ENTRIES = 4000` times with the NVIC line forced
+   open, a genuine COMP overload from interrupt context. The old foreground spin is gone. **Expected stop: AdcTimeout
+   (11)**, because the foreground is starved past its 2 ms feedback-age limit.
+4. The storm **report** needs no firmware change. The report already carries its peak (`closed_irq_peak_per_ms`), and
+   entries per sector = (accepted + too_early + unstable) / accepted, computed by the host.
+
+The review's report item is met host-side; the fixture-item ruling applies.
+
+**Executed counts:**
+* comparator accept path **224** (216 + the storm-hook check and codegen), arm **#167**, first read **#51**;
+* commutation phase 1 220 (instruction-identical);
+* DMA handler 37 → 55 static (the dual averaging).
+
+**Requalification (ENV-63 kit):**
+* walk 525 (anchored) → 750, 3/3 per rung;
+* restarts at 500, 600, 650, 675 and 700 on production, and 725 and 750 on `BD47122B`;
+* sweep, with `u` expected 11;
+* low rungs 150–500.
+
+**Predictions:**
+* the walk passes to 750;
+* 750 worst < 4750 in 3/3, at ≈ 4.5 A;
+* 725 worst ≈ 4.3 A;
+* restarts 21/21;
+* sweep: every key its code, `u` → 11;
+* low rungs pass.

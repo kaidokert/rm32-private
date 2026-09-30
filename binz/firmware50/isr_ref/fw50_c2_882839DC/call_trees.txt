@@ -1,0 +1,13 @@
+ELF 882839DC.c2-prod.elf sha256 882839dcf59d35cd48fa9754e04ed4d3b9525a93b281a0ae57ce71bb1fff7ce7
+
+[comp] ADC_COMP: COMP2 edge (C2)
+  ADC_COMP: 468 insns, 1000 B
+  -> isr_ref\fw50_c2_882839DC\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (C2)
+  TIM16: 254 insns, 548 B
+  -> isr_ref\fw50_c2_882839DC\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick (C2)
+  TIM6_DAC_LPTIM1: 370 insns, 776 B
+  -> isr_ref\fw50_c2_882839DC\tick_TIM6_DAC_LPTIM1.lst
