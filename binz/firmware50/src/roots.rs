@@ -350,6 +350,12 @@ fn stage_code() -> u8 {
         | (u8::from(S.guard().tracking.load(Ordering::Relaxed)) << 2)
 }
 
+/// **Report-only counters in the motor roots** (goal B, step 1): compiled in only
+/// with the diagnostic `isr-stats` feature, so production's COMP and COM carry no
+/// instrument AM32 lacks. Counters that feed a stop (`late_arms`, `blank_latched`,
+/// `overrun`) are protections and stay unconditional.
+pub const STATS: bool = cfg!(feature = "isr-stats");
+
 /// One acceptance's chain row: coarse µs for pairing, fine ticks for every
 /// measured delta (E180). `None` in production, where `C::ON` is false.
 #[inline(always)]
@@ -420,6 +426,10 @@ fn arm_marked<C: ChainLog>(left: u32) {
 /// quantity E315 needs.
 #[inline(always)]
 fn note_margin(wait: u32, left: u32) {
+    if !STATS {
+        let _ = (wait, left);
+        return;
+    }
     // The accepted average interval, stored by the estimator's borrow just
     // above: the causal variable, and level-invariant (E210 SS1).
     let ci_p1 = S.det().accept_avg.load(Ordering::Relaxed).saturating_add(1);
@@ -473,7 +483,9 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
         let (_, ci_max) = zc.bounds();
         if count > ci_max {
             S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
-            S.det().rebase.fetch_add(1, Ordering::Relaxed);
+            if STATS {
+                S.det().rebase.fetch_add(1, Ordering::Relaxed);
+            }
             return None;
         }
 
@@ -505,7 +517,9 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                 advance: 0,
             }
         } else {
-            zc.note_refusal(judged);
+            if STATS {
+                zc.note_refusal(judged);
+            }
             if judged == crate::bemf::Judgement::TooEarly {
                 crate::bemf::Outcome::TooEarly
             } else {
@@ -530,12 +544,12 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                     if left == 0 {
                         let n = S.det().late_arms.load(Ordering::Relaxed);
                         S.det().late_arms.store(n.wrapping_add(1), Ordering::Relaxed);
-                        if n == 0 {
+                        if STATS && n == 0 {
                             S.det().ci_at_late.store(zc.average_interval(), Ordering::Relaxed);
                             S.det().spent_at_late.store(spent, Ordering::Relaxed);
                         }
                     }
-                    if spent > S.det().spent_max.load(Ordering::Relaxed) {
+                    if STATS && spent > S.det().spent_max.load(Ordering::Relaxed) {
                         S.det().spent_max.store(spent, Ordering::Relaxed);
                     }
                 }
@@ -1203,7 +1217,7 @@ pub unsafe fn com_root<C: ChainLog>() {
     let preempted = count_preempt::<C>();
     let now_raw = hw::clock::raw();
     let late = now_raw.wrapping_sub(S.com().sched_raw.load(Ordering::Relaxed) as u16) as u32;
-    if late < 0x8000 && late > S.com().late_max.load(Ordering::Relaxed) {
+    if STATS && late < 0x8000 && late > S.com().late_max.load(Ordering::Relaxed) {
         S.com().late_max.store(late, Ordering::Relaxed);
     }
     // The chain's service row (E154), pushed at the end; see `crate::chain`.
@@ -1282,12 +1296,16 @@ pub unsafe fn com_root<C: ChainLog>() {
             };
             if blank {
                 comp_exti_mask();
-                S.com().blank_arms.fetch_add(1, Ordering::Relaxed);
+                if STATS {
+                    S.com().blank_arms.fetch_add(1, Ordering::Relaxed);
+                }
                 com_arm(hold, 2);
             } else if hold >= crate::commutation::BLANK_ARM_MIN_US {
                 // Prime the edge while the line is masked (see this fn's docs).
                 comp_exti_prime(step);
-                S.com().blank_arms.fetch_add(1, Ordering::Relaxed);
+                if STATS {
+                    S.com().blank_arms.fetch_add(1, Ordering::Relaxed);
+                }
                 com_arm(hold, 3);
             } else {
                 S.com().phase.store(0, Ordering::Relaxed);
@@ -1419,7 +1437,7 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
         // overrun the line stays masked and the foreground stops the run.
         let elapsed = ((hw::clock::raw()).wrapping_sub(raw) as u32)
             .wrapping_add(S.comp().overrun_inject_us.load(Ordering::Relaxed));
-        if elapsed > S.comp().call_max_us.load(Ordering::Relaxed) {
+        if STATS && elapsed > S.comp().call_max_us.load(Ordering::Relaxed) {
             S.comp().call_max_us.store(elapsed, Ordering::Relaxed);
         }
         if crate::rate::handler_overrun(elapsed) {

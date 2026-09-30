@@ -45169,3 +45169,60 @@ Independent review verdict: **keep A6, production image only, after fixes.** Fin
 10. The high-duty current signature is now reported same-session in ENV-64 item 2: A6 has less current headroom at 750.
 
 **A6 is tagged `fw50-am32-a6`:** production image `0A978A82`, loadable `31FE2832`, features `advance-18,deep-filter`.
+
+# CAMPAIGN B: FINISH THE AM32 SHAPE (goal set 2026-09-29, base `fw50-am32-a6`)
+
+Steps, in order: B1 move the production-only instruments into diagnostic images; B2 move the tracking watch into the
+20 kHz tick, and make the storm limiter report-only (operator ruling in the goal); B3 attribute A6's extra current
+(tag + stale-wait vs A6 at 725/750); B4 AM32's detector as one unit; B5 an advance A/B only if B3 or B4 calls for it;
+B6 retry 75 %. Each step gets its own branch; each kept step gets a tag.
+
+### ENV-66 — B1 built and predeclared: report-only counters out of production
+
+**Change (branch `am32shape/b1`):**
+* New diagnostic feature `isr-stats`; `roots::STATS = cfg!(feature = "isr-stats")`.
+* Compiled out of production:
+  * COMP: `note_margin` (ci_min, thin), `spent_max`, `call_max_us`, the estimator's refusal counts (`too_early`,
+    `unstable`, `hold_unstable`), `rebase`, and the first-late snapshot (`ci_at_late`, `spent_at_late`);
+  * COM: `late_max`, `blank_arms`.
+* **Kept, because a stop reads them:** `late_arms` (LateArm), `blank_latched` (BlankLatched), `overrun` (HandlerOverrun).
+  The budget comparison itself stays, as does the sweep's overrun injection (one load; it is what the sweep's
+  HandlerOverrun provocation uses).
+* The report prints `isr_stats=0|1` on BEMFRCOMP. On a production image the compiled-out fields read 0, and checkers
+  must refuse to gate on them.
+* `margin-hist` now implies `isr-stats`.
+
+Host 364/364 both ways, clippy 0.
+
+**Images:**
+* production `F6F97A08` (loadable `2573BDCF`);
+* chain `A3C6B328`.
+
+`isr_diff` vs A6 `0A978A82` (static): ADC_COMP 784 → 706, TIM16 430 → 410, TIM6 and DMA identical.
+
+**Executed counts** (specs `isr_ref/specs/b1_*.spec`, dump `isr_ref/fw50_b1_F6F97A08/`, same operating point and
+conventions as ENV-61: first read = the first `comp2_csr` instruction, arm = the PRIMASK restore that closes
+`com_arm`):
+
+| | A6 | **B1** | AM32 | B1 ratio |
+|---|---|---|---|---|
+| comparator: first read | #137 | **#120** | ~#30 | |
+| comparator: arm | #263 | **#248** | ~#106 | 2.3× |
+| comparator: total | 396 | **362** | 114 | 3.2× |
+| commutation phase 1 (floor) | 264 | **254** | 247 | 1.03× |
+
+**The first read moved 17 instructions earlier (≈0.3 µs), with no logic change before it.** The pre-read instruction
+mix differs only in register allocation and scheduling (per-source-line counts compared). That is the variable that
+moved detection in A1/A4/A5 (≈0.75 µs), at under half the size.
+
+**Prediction:**
+* at 37.5 % the loop behaves like A6: coast ±1 %, zero-adjusted hold ±3 %, own-mean late count not significantly
+  greater (8 vs 8 chain captures);
+* the edge probe is unchanged (p50 3 µs);
+* the 0.3 µs earlier read is below what moved A1/A4, so no measurable shift is predicted;
+* at 725 the 72.5 % bar holds.
+
+**Rule:** as ENV-61 stage 1 (production ABBAAB, A = A6, B = B1: coast ±1 %, hold zero-adjusted ±3 %; chain A T T A ×4
+own-mean late, one-sided binomial α = 0.05, all steps and step 3; edge probe). Then **725 × 3** on production (reason 2,
+late 0, worst < 4750, no foldback), **725 restarts × 3** on a window-90 twin, and the **sweep** (every provocation stops
+with its code). No `spent`/`thin` gate on production (isr_stats=0); timing is gated by `late_arms` = 0, a stop.

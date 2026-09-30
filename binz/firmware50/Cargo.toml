@@ -106,7 +106,7 @@ sag-ring = []
 # measures is `P(wait <= 9)` -- the one unmeasured term in E315's closed model
 # `P(latch/arm) = P(wait <= 9) x P(spent >= 9)`, whose other factor is already
 # measured at 0.0297 over 20 478 archived chain arms.
-margin-hist = []
+margin-hist = ["isr-stats"]
 # ENV-23: DIAGNOSTIC ONLY. Raises SIXSTEP_DUTY_CAP from the qualified top (700) to the
 # mapped edge (725) so an image can run the edge. Never in a qualifying image.
 edge-probe = []
@@ -116,6 +116,11 @@ window-90 = []
 freeze-gate = []
 # ENV-43 diagnostic: worst_hold_ma measured from hold + 5 s (reporting only).
 late-worst = []
+# Goal B step 1: DIAGNOSTIC ONLY. Compiles the report-only counters back into the
+# COMP and COM roots (margin/thin/ci_min, spent_max, call_max, refusal counts,
+# rebase, late snapshot, COM late_max, blank_arms). Production reports them as
+# absent (`isr_stats=0`), and checkers must refuse to gate on them there.
+isr-stats = []
 # ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
 # chain image can mark revisit-originated accepts (flag bit 6).
 chain-origin = []
