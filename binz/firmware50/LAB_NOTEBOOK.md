@@ -45635,3 +45635,18 @@ Same session. T = tag, S = tag + stale-wait, A = A6. `env70_score.py`, applied m
   3/3). The one-step-ahead wait by itself destabilises 75 %, and A6's placement of the commit (in COM) does not; A6
   converts that instability into current (worst ~5040, foldback).
 * 725 worst blocks are indistinguishable across T, S and A this session (4404–4607).
+
+#### ENV-71 result — B4w stage 1: PASS
+
+Same session, 37.5 %, A = A6 `0A978A82`, B = B4w `CE132584`.
+* **Production:** 6/6 reason 2, late_arms 0, track_fault 0.
+* **Coast:** A 1546.7, B 1548.0 eHz (**+0.08 %**).
+* **Hold, zero-adjusted:** **+1.49 %** (raw +0.53 %).
+* **Witnesses present:** B4w `too_early` ≈ 769 k per run, `unstable` > 0. A6's `too_early` is 0, because its gate is
+  the blanking floor, witnessed by `blank_arms`.
+* **Edge probe:** 8/8 chains, 218–228 matched, next step 100 %, **p50 3 µs**, p99 7–8.8 µs.
+* **Chain runs:** 16/16 reason 2.
+* **Late count** (reported): **B4w 0 vs A6 109**; step 3 0 vs 23. As B4v, and as predicted this time.
+
+**Stage 2 starts:** the ENV-71 walk (525 anchored → 725), then the follow-up (restarts 500–700 and 725 on
+`5EEA97DD`, sweep, low rungs 150–500).
