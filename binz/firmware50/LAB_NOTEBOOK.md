@@ -45565,3 +45565,52 @@ This is a qualification-instrument gate, not a motor stop. The runs were not jud
 4. the gate is computed by the **foreground** from the published six-slot sum, as AM32's main loop computes
    `average_interval`; COM only publishes the sum;
 5. stale comments corrected.
+
+### ENV-71 — B4w built and predeclared (stage 1 as ENV-69; stage 2 the full kit)
+
+**Branch `am32shape/b4w` (from `fw50-am32-a6`), commit `21686e9`. Images:**
+* production **`CE132584`** (loadable **`6A8670D2`**);
+* window-90 twin `5EEA97DD`;
+* cap-750 twin `1CA79BB9`;
+* chain `B81A346D`.
+
+The twins are instruction-identical to production (constants only). Host 360/360, including
+`the_map_is_the_references_for_every_input` (0..5000 against a literal transcription of `functions.c:22-40`) and
+`the_map_is_not_the_straight_line` (171 of 401 differ, the review's figure reproduced). Clippy 0, math audit clean.
+
+**Changes against B4v:**
+1. AM32's recursive `map()`;
+2. production refusal witnesses (`too_early_n`, `unstable_n`, COMP refusal paths only);
+3. COM pushes the pre-commit interval (`main.c:914`);
+4. the gate is computed by the foreground as `(sum + 2) / 12` µs, equal to AM32's `average_interval >> 1` in half-µs
+   because the floors nest;
+5. stale comments; `REVISIT_RESCUE_MAX` deleted.
+
+**Executed counts** (`b4w_comp_accept.spec`, `b4w_com_phase1.spec`; dump `fw50_b4w_CE132584`):
+
+| | tag | A6 | **B4w** | AM32 | B4w ratio |
+|---|---|---|---|---|---|
+| comparator: first read | #133 | #137 | **#48** | ~#30 | |
+| comparator: arm | #304 | #263 | **#166** | ~#106 | **1.6×** |
+| comparator: total | 425 | 396 | **216** | 114 | **1.9×** |
+| commutation phase 1 | 207 | 264 | **220** | 247 | **0.9×** |
+
+The arm moved 9 instructions later than B4v's #157, with no logic added on the accept path (codegen).
+
+**AM32's map against the old line at the walk's rungs:** the same depth at 500–750 (4, 4, 4, 3, 3, 3, 3); at 375 AM32
+gives 5 where the line gave 6.
+
+**Stage-1 gate (as ENV-69):**
+* 3/3 reason 2;
+* coast ±1 % and hold zero-adjusted ±3 % against A6;
+* edge probe normal;
+* **new:** production reports `too_early > 0` and `unstable > 0` (the witnesses).
+
+The late count is reported. **Prediction:** as B4v, with zero or near-zero late crossings.
+
+**Stage 2 = ENV-63's kit.** How Tracking stops are read (review #2): a Tracking stop at a high rung is a stop (a
+result), reported with its `track_fault`. It is **not** relabelled as "possibly a lost sector"; that stays a hypothesis
+until a chain capture shows the lost sector.
+
+**Sweep `u` (Storm) pass criterion:** no CompStorm (13); any other named stop or a clean completion; outputs off at
+exit; no hang.

@@ -1,0 +1,13 @@
+ELF CE132584.b4w-prod.elf sha256 ce132584e5bdb7fcdfde17a0c58e67eacd959b61bc701a2cdff3fa6316b466c6
+
+[comp] ADC_COMP: COMP2 edge (B4w)
+  ADC_COMP: 453 insns, 968 B
+  -> isr_ref\fw50_b4w_CE132584\comp_ADC_COMP.lst
+
+[com] TIM16: commutation (B4w)
+  TIM16: 254 insns, 548 B
+  -> isr_ref\fw50_b4w_CE132584\com_TIM16.lst
+
+[tick] TIM6_DAC_LPTIM1: guard tick (B4w)
+  TIM6_DAC_LPTIM1: 370 insns, 776 B
+  -> isr_ref\fw50_b4w_CE132584\tick_TIM6_DAC_LPTIM1.lst
