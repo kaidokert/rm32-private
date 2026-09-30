@@ -45716,3 +45716,134 @@ less than −1 %.
 
 **B4w-adv16 re-walks the full kit (ENV-73):** walk from 525 (anchored) to 725, then restarts (725 on `3EC57A2A`),
 sweep, and low rungs. Production features become **`advance-ref`**: AM32's detector *and* AM32's default advance.
+
+#### ENV-73 walk — B4w-adv16 `4A4A4369`: PASS 525 → 725, 3/3 at every rung (`walk_check.py env73`: RULE PASS)
+
+| rung | coast | hold | worst |
+|---|---|---|---|
+| 650 | 2342–2352 | 2905–2998 | 3422–3530 |
+| 675 | 2400–2410 | 3150–3256 | 3574–3802 |
+| 700 | 2463–2471 | 3502–3511 | 4509–4656 |
+| **725** | **2530–2549** | **3704–3790** | **4489 / 4504 / 4536**, 0 foldback |
+
+All runs reason 2, late_arms 0. **A6 at 725 (ENV-63, cross-session):** coast 2552–2566, hold 3675–3689, worst
+4421–4466. On that comparison B4w-adv16 is ≈ −0.7 % speed and ≈ +1.5 % hold at 725, with worst blocks ~50 mA higher.
+It holds the 72.5 % bar. The follow-up is running.
+
+### ENV-74 — step 6, predeclared: 75 % on the final candidate vs the previous tag
+
+**Images (cap-750 twins, ISR-identical to their production images):**
+* **B = B4w-adv16 `A83EE981`**;
+* **A = A6 `2B9686C5`**, the previous tag.
+
+**Protocol:** rung 750, same session, ABBAAB, `--no-ladder`.
+
+**Reported:** per-run stop reason, ceiling (foldback), worst block, adjusted hold, coast.
+
+**Answer rule:**
+* "75 % is open" on B needs 3/3 reason 2, no foldback, and worst < 4750 in 3/3.
+* Otherwise, report which limit binds on B against A.
+
+**Prediction:** **not open.** The current limit binds: foldback or worst ≥ 4750. At 725, B4w-adv16's worst blocks are
+already ≥ 4489, and A6 needed foldback at 750 (ENV-64/70). Stop class: 0/3 FastBusSag on B, from the tighter
+detector (0 late crossings at 37.5 %), with low confidence.
+
+#### ENV-73 follow-up so far, and the independent review of the kept candidate
+
+**Restarts 18/18 recovered.**
+* 500, 600, 650, 675 and 700 on `4A4A4369`; 725 on the window-90 twin `3EC57A2A`.
+* In every run the first segment ended with the injected Tracking stop (8) and the second segment ran to reason 2.
+
+**Sweep:** t→8, g→3, f→4, n→7, h→14, i→25, k→15, q→16, w→IWDG reset.
+* **u→11 (AdcTimeout)**, within the predeclared criterion: no CompStorm, a named stop, outputs off. PREFLIGHT after
+  POSTSTOP shows moe 0, ccr 0, gates low, en 0.
+* **But (review #4) u no longer tests storm handling.** The injector's exit test (`!S.comp().storm`, `board.rs:750-758`)
+  is now always true, so it always busy-waits 400 × 8 µs in the foreground, past `ADC_STALE_US = 2000`. The 11 is
+  produced by the test itself.
+* **`storm=1` on every closed-loop run** (re-entry peaks 123–159/ms): the report-only flag no longer separates
+  anything; only the peak number carries information.
+
+**Independent review (keep candidate B4w-adv16).** Verdict: *do not tag yet*. Everything that exists reproduces:
+* rules: B1/B2/B4u/B4v each abandoned and re-cut fresh;
+* ENV-72 was applied as written. Caveat: most of the hold gain is one run (2B); 3B and 6B are ≈ −0.4 %;
+* the walk and 725 worst blocks, restarts, map fix, witnesses, reference order and counts all reproduce.
+
+Required before the tag:
+* **C1:** the low rungs must pass. **Also, the adv-16 image itself has no 30–40 % evidence**, since stage 1 ran on
+  adv 18. That is added as ENV-75 below.
+* **C2:** the tag must name the build (feature `advance-ref`, image `4A4A4369` / loadable `FFD8C96E`, twins `3EC57A2A`,
+  `A83EE981`). Step 5 has no branch of its own: it is a build feature on `am32shape/b4w`. **Declared as an exception**,
+  with a branch pointer `am32shape/b5-adv16` at the same commit.
+* **C3, recorded here:**
+  * **steps 1 and 2 were never kept or tagged on their own.** They ship only inside the step-4 unit (B2's defect fixed
+    in B4v);
+  * **step 5 was called by step 4's failure alone** (step 3 gave no verdict). That is defensible from ENV-67's
+    pre-data rule, but readable as repairing forward. **Operator-rulable.**
+
+Other review notes:
+* The gate formula matches AM32 up to its 0.5 µs quantization ("exactly" overclaims).
+* `BEMFREVISIT` still prints zero fields, and the `report.rs:684` comment is stale (`hold_unstable` is live).
+  Residual; not fixed in the kept image, to keep its identity.
+* Production kept two witnesses and the storm `observe` (report-only).
+* AM32 counts: 114/247 are AM32's rising-edge variants (falling 111/248).
+
+### ENV-75 — the adv-16 image at 37.5 % (review C1), predeclared; gates as ENV-71 stage 1
+
+Same session.
+* **Production ABBAAB**, A = A6 `0A978A82`, B = B4w-adv16 `4A4A4369`: 3/3 reason 2; coast ±1 %; hold zero-adjusted
+  ±3 %; witnesses present.
+* **Chain A T T A ×4**, A = adv-16 chain **`3D764D73`**, T = A6 chain `0440C289`: edge probe normal; late count
+  reported.
+
+**Prediction:** passes. At 37.5 % the advance difference (16 vs 18 of 64) moves the wait by ~3 µs.
+
+#### ENV-73 follow-up complete — low rungs PASS
+
+`low_check.py env73`: all 15 low rungs, 150–500 (45 runs, all reason 2), pass every non-oracle gate plus self-ref. The
+oracle coast gate (the previous motor) fails as on every image below 525; all 15 RUN FAIL lines in the log are that
+gate. **B4w-adv16 has now completed the full ENV-63 kit:**
+* walk 525 → 725, 3/3 per rung;
+* restarts 18/18;
+* sweep 10/10 by the predeclared criteria, with the `u` caveat above;
+* low rungs.
+
+#### ENV-74 result — 75 %: NOT open (the current limit binds), but no stops and no foldback on B4w-adv16
+
+750, same session (2026-09-30), A = A6 cap-750 `2B9686C5`, B = B4w-adv16 cap-750 `A83EE981`:
+
+| run | reason | ceiling | hold | worst |
+|---|---|---|---|---|
+| 1A (A6) | **26 FastBusSag** | 740 | 4281 | 5115 |
+| 2B | 2 | **750** | 4094 | **4798** |
+| 3B | 2 | **750** | 4118 | **4860** |
+| 4A (A6) | **26 FastBusSag** | 750 | 4258 | 4890 |
+| 5A (A6) | 2 | 740 | 4082 | 5038 |
+| 6B | 2 | **750** | 4096 | **4768** |
+
+* **Answer rule: not open.** B's worst block is ≥ 4750 in 3/3, by 18–110 mA. B had 3/3 reason 2 and no foldback.
+* **Predictions:** "not open", "the current binds" and "0/3 FastBusSag on B" all **held**.
+* **Against the previous tag, same session:** A6 stopped 2/3 on FastBusSag and folded back 2/3 (worst 4890–5115).
+  B4w-adv16 ran 3/3 with no foldback, worst 4768–4860, and hold ≈ equal (4094–4118 vs A6's unstopped 4082).
+* **The AM32-shaped detector removes the desync-class stops at 75 % and brings the worst block to within ~2 % of the
+  host gate.** What binds 75 % now is steady-state current ripple against the fixed 5 A allowance, not the arm
+  deadline (no late arms) and not detection.
+
+#### ENV-75 result — the adv-16 image at 37.5 %: all gates pass except coast, which exceeds the ±1 % bar by 0.01 pp (faster)
+
+Same session, A = A6 `0A978A82`, B = B4w-adv16 `4A4A4369`.
+* **Production:** 6/6 reason 2, track_fault 0; witnesses present (too_early ≈ 742 k).
+* **Hold, zero-adjusted: −1.70 %** (raw −1.92 %). Pass.
+* **Coast:** A 1555, 1543, 1546 (mean 1548.0); B 1567, 1561, 1563 (mean 1563.7): **+1.01 %.** **This fails the
+  predeclared symmetric ±1 % bar, by 0.01 pp, in the faster direction.** I do not move the bar.
+* **Edge probe:** 8/8 chains, 221–230 matched, next step 100 %, p50 3 µs, p99 7.7–8.8 µs. Pass.
+* **Chain runs:** 16/16 reason 2.
+* **Late count** (reported): **0 vs 101**; step 3 0 vs 24.
+* **The prediction ("passes") is refuted on coast by 0.01 pp.** The advance change (AM32's 16) makes the loop ~1 %
+  faster at 37.5 % with ~1.7 % less current. The bar was built to detect "behaves like A6", which a deliberate advance
+  change is not expected to satisfy exactly.
+
+**Keep decision.** The goal's keep criterion is holding 72.5 %. B4w-adv16 passed the full kit (ENV-73). The 30–40 %
+judgement of the detector unit passed on the same code at advance 18 (ENV-71). ENV-75 (the review's C1) shows the
+adv-16 image healthy at 37.5 % on every gate but one, which it misses by 0.01 pp in the favourable direction.
+**B4w-adv16 is kept and tagged `fw50-am32-b4w-adv16`, with this exception stated in the tag annotation.**
+Operator-rulable, alongside C3 (steps 1 and 2 not kept separately; step 5 called by step 4 alone).
