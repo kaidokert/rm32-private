@@ -261,29 +261,6 @@ pub const fn wait_time(ci: u32, level: u32) -> u32 {
     (ci >> 1).saturating_sub(advance_of(ci, level))
 }
 
-/// What is left of the blanking window, `blanking` µs after a crossing that
-/// was `since_zc` µs ago (E134). Saturating: a commutation that fired late
-/// shortens the blank instead of pushing the floor out past it.
-///
-/// The COM root keeps the comparator line masked for this long instead of
-/// arming it at the commutation. Nothing inside the window can be accepted --
-/// the blanking gate refuses it -- so those dispatches are pure cost, and at
-/// 25% they were a quarter of them.
-#[inline]
-pub const fn blank_remaining(blanking: u32, since_zc: u32) -> u32 {
-    blanking.saturating_sub(since_zc)
-}
-
-/// Shortest blank worth arming the one-shot for, µs (E134). Below it the root
-/// arms the line at once: a timer round trip costs more than the few edges
-/// such a sliver could carry.
-#[cfg(not(feature = "blank-min-12"))]
-pub const BLANK_ARM_MIN_US: u32 = 16;
-/// ENV-37 A/B lever: arm the post-commutation blank for holds down to 12 us, so that at
-/// 72.5 % / advance 16 (hold ~14-16 us) the one-shot masks the window as advance 18's does.
-#[cfg(feature = "blank-min-12")]
-pub const BLANK_ARM_MIN_US: u32 = 12;
-
 /// Blend a fresh zero-cross pair into the running interval estimate:
 /// `(ci + ((last + this) >> 1)) >> 1`.
 ///
@@ -340,10 +317,6 @@ pub struct SixSlot {
     sum: u32,
 }
 
-/// Six-slot sum (µs) at or above which the reverse blank arms: the
-/// reference's `average_interval >= 1500` half-µs.
-pub const REVERSE_BLANK_SUM_US: u32 = 4_498;
-
 impl SixSlot {
     /// All six slots at the handover seed interval, as the reference seeds.
     #[must_use]
@@ -382,57 +355,11 @@ impl SixSlot {
     pub const fn sum(&self) -> u32 {
         self.sum
     }
-
-    /// Does the reference's blank condition hold on this ring?
-    #[inline]
-    #[must_use]
-    pub const fn reverse_blank_due(&self) -> bool {
-        self.sum >= REVERSE_BLANK_SUM_US
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The reference's own arithmetic, in half-µs, for comparison.
-    fn reference_average_half_us(sum_us: u32) -> u32 {
-        let sum_half = sum_us * 2;
-        ((sum_half + 4) >> 1) / 3
-    }
-
-    #[test]
-    fn blank_condition_equals_the_references_for_every_sum() {
-        for sum in 0..20_000u32 {
-            let mut r = SixSlot::seeded(0);
-            r.sum = sum;
-            assert_eq!(
-                r.reverse_blank_due(),
-                reference_average_half_us(sum) >= 1500,
-                "sum {sum}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_seeded_ring_lags_an_accelerating_rotor_for_several_commutations() {
-        // Handover at a ~770 us seed, then the rotor speeds up toward ~700 us
-        // blended intervals: the reference's ring stays at or above the blank
-        // threshold for several commutations, not one.
-        let mut r = SixSlot::seeded(770);
-        assert!(r.reverse_blank_due());
-        let mut arms = 0;
-        let mut step = 5u8;
-        for ci in [745u32, 730, 718, 708, 700, 695, 690, 688] {
-            if r.reverse_blank_due() {
-                arms += 1;
-            }
-            r.push(step, ci);
-            step = if step == 6 { 1 } else { step + 1 };
-        }
-        assert!(arms >= 3, "arms {arms}");
-        assert!(!r.reverse_blank_due(), "settles below once the ring has turned over");
-    }
 
     #[test]
     fn push_replaces_one_slot_and_keeps_the_sum_exact() {
@@ -598,24 +525,6 @@ mod tests {
             assert_eq!(wait_time(ci, 65), wait_time(ci, 64));
             assert_eq!(wait_time(ci, 1000), 0);
         }
-    }
-
-    /// The floor sits `advance` after the commutation, which is what the COM
-    /// root holds the line masked for (E134), and a late commutation eats into
-    /// it rather than moving it.
-    #[test]
-    fn the_blank_left_after_a_commutation_is_the_advance() {
-        for ci in [141u32, 235, 174, 80, 48] {
-            let wait = wait_time(ci, 20);
-            let left = blank_remaining(ci >> 1, wait);
-            assert_eq!(left, advance_of(ci, 20), "ci={ci}");
-            // 5 µs late: the blank is 5 µs shorter, and the floor does not move.
-            assert_eq!(blank_remaining(ci >> 1, wait + 5), left - 5, "ci={ci}");
-        }
-        // Past the floor already: no blank, never a wrap.
-        assert_eq!(blank_remaining(70, 70), 0);
-        assert_eq!(blank_remaining(70, 5_000), 0);
-        assert_eq!(blank_remaining(0, 0), 0);
     }
 
     #[test]

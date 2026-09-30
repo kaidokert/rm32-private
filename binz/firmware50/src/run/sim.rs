@@ -414,11 +414,10 @@ impl Hal for Sim {
     fn com_count(&self) -> u32 {
         self.com_count
     }
-    fn revisit(&mut self, _step: Step) -> bool {
-        // Counted so a test can see the rescue attempts E140 added; the poll
-        // itself never finds a held level in the sim.
+    fn publish_filter_depth(&mut self) {
+        // The sim has no comparator reads to deepen; counted so a test can see the
+        // foreground keeps publishing while the loop runs.
         self.revisit_polls = self.revisit_polls.wrapping_add(1);
-        false
     }
     fn publish_plans(&mut self, duty: u16, _period: u32, cap: u16) {
         self.log.plans.push((self.t, duty));
@@ -652,38 +651,6 @@ mod tests {
         assert_eq!(out.reason, Reason::Tracking);
         assert_eq!(sim.log.safe_offs, 1);
         assert_eq!(field(&sim.log.text, "BEMFGUARD", "reason"), 8);
-    }
-
-    /// E140: a sector that never accepts still gets looked at again.
-    ///
-    /// The revisit is once per sector, cleared by an accept, so before E140 a
-    /// sector whose crossing was swallowed was never revisited -- the chain
-    /// that desynced the drive at 30% (E138). With the rescue, the loop keeps
-    /// polling that sector while it is overdue, up to `REVISIT_RESCUE_MAX`.
-    #[test]
-    fn a_sector_that_never_accepts_is_revisited_again_while_it_is_overdue() {
-        // Crossings stop mid-run; the guard is given a long fuse so the loop
-        // sits in the dead sector instead of being stopped at once.
-        let crossings = Crossings {
-            interval_us: 144,
-            until_us: Some(6_000_000),
-        };
-        let faults = Faults {
-            guard_stale_us: Some(50_000),
-            ..Faults::default()
-        };
-        let (stalled, _) = run(250, 10_000_000, crossings, faults, None);
-        let (steady, _) = run(250, 6_100_000, STEADY, Faults::default(), None);
-        // Per sector the steady run polls about once; the stalled one adds the
-        // rescues on top, so its polls per delivered crossing are higher.
-        let rate = |s: &Sim| f64::from(s.revisit_polls) / f64::from(s.log.crossings_delivered.max(1));
-        assert!(
-            rate(&stalled) > rate(&steady),
-            "stalled {:.3} polls/crossing vs steady {:.3}",
-            rate(&stalled),
-            rate(&steady)
-        );
-        assert!(stalled.revisit_polls > 0);
     }
 
     #[test]

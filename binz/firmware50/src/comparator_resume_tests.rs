@@ -8,9 +8,12 @@ fn resume_truth_table() {
                 for stopped in [false, true] {
                     for active in [false, true] {
                         for phase in 0..=4 {
-                            let expected = guard == 0 && if detector {
-                                !stopped && active && phase == 0
-                            } else { driven };
+                            let expected = guard == 0
+                                && if detector {
+                                    !stopped && active && phase == 0
+                                } else {
+                                    driven
+                                };
                             assert_eq!(permit(guard, detector, driven, stopped, active, phase), expected);
                         }
                     }

@@ -399,6 +399,17 @@ pub struct Det {
     /// **ENV-61 (A6): the accepted crossing's interval, for COM to commit** (AM32's
     /// `thiszctime`, which `interruptRoutine` stores and `PeriodElapsedCallback` blends).
     pub accept_count: AtomicU32,
+    /// **Goal B step 4: AM32's gate**, `average_interval >> 1` of the six-slot ring
+    /// (`stm32g0xx_it.c:244`, with `average_interval = e_com_time / 3` from the six
+    /// commutation intervals, `main.c:2328,2452`), in µs. Published by COM after
+    /// each commutation's push; read by COMP before anything else.
+    pub gate_us: AtomicU32,
+    /// **Goal B step 4: AM32's `filter_level`**, computed by the foreground (AM32
+    /// computes it in its main loop, `main.c:2631-2638`); COMP reads it.
+    pub depth: AtomicU32,
+    /// Goal B step 4: the six-slot sum COM last pushed (µs), for the foreground's
+    /// `filter_level` map input.
+    pub six_sum: AtomicU32,
 }
 
 /// Closed-loop COMP health: the storm and handler-budget stops (E107).
@@ -729,6 +740,9 @@ static DET: Det = Det {
     left_hist: hist(),
     next_wait: u(),
     accept_count: u(),
+    gate_us: u(),
+    depth: AtomicU32::new(12),
+    six_sum: u(),
 };
 static COMP: CompHealth = CompHealth {
     storm: f(),
