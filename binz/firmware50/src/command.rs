@@ -170,7 +170,11 @@ impl<const MAX_TENTHS: u16> Parser<MAX_TENTHS> {
                 } else if is_eol(b) && self.digits > 0 {
                     let v = self.value;
                     self.clear();
-                    if v == 0 { Action::Stop } else { Action::Duty(v) }
+                    if v == 0 {
+                        Action::Stop
+                    } else {
+                        Action::Duty(v)
+                    }
                 } else {
                     self.clear();
                     Action::Stop

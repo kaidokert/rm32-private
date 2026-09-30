@@ -152,6 +152,10 @@ pub trait SagLog {
     /// Freeze the ring: the trip has happened and the pre-trip window is what
     /// matters.
     fn freeze();
+    /// ENV-76 (campaign C): the current accumulator closed a 100-scan block.
+    /// The recorder sums the same scans' shunts and bus itself, so production's
+    /// accumulator is untouched; production's `ON == false` folds the call away.
+    fn current_block_end() {}
 }
 
 /// Production: nothing is recorded.
@@ -232,7 +236,11 @@ impl Trace {
     /// division on this M0+ if the length ever stopped being a power of two
     /// (E154's finding, in the capture ring).
     const fn bump(i: usize, len: usize) -> usize {
-        if i + 1 == len { 0 } else { i + 1 }
+        if i + 1 == len {
+            0
+        } else {
+            i + 1
+        }
     }
 
     pub fn push(&mut self, b: &Block) {
@@ -263,11 +271,19 @@ impl Trace {
 
     /// The oldest kept row's index in each ring.
     pub const fn fast_start(&self) -> usize {
-        if self.fast_len == FAST_LEN { self.fast_next } else { 0 }
+        if self.fast_len == FAST_LEN {
+            self.fast_next
+        } else {
+            0
+        }
     }
 
     pub const fn slow_start(&self) -> usize {
-        if self.slow_len == SLOW_LEN { self.slow_next } else { 0 }
+        if self.slow_len == SLOW_LEN {
+            self.slow_next
+        } else {
+            0
+        }
     }
 }
 
@@ -281,12 +297,153 @@ pub struct SagRing;
 
 static TRACE: Mutex<RefCell<Trace>> = Mutex::new(RefCell::new(Trace::empty()));
 
+/// **Per-block ring (ENV-76, campaign C).** One entry per 100-scan current
+/// block: the raw shunt sum over those scans (the host subtracts the run's own
+/// `zero_start` to get the firmware's residual), the bus mean over the same
+/// scans, and how many scans the recorder saw (100 when aligned). The last
+/// `BLK_LEN` blocks (~5.2 s) are kept, oldest overwritten; never frozen.
+pub const BLK_LEN: usize = 512;
+
+pub struct BlkRing {
+    pub sum: [u32; BLK_LEN],
+    pub bus: [u16; BLK_LEN],
+    pub n: [u8; BLK_LEN],
+    /// ENV-79: the first half-block's (scans 1..50) shunt sum, >> 3.
+    pub half: [u16; BLK_LEN],
+    next: usize,
+    pub len: usize,
+    pub total: u32,
+    acc_sum: u32,
+    acc_bus: u32,
+    acc_n: u32,
+    acc_half: u32,
+    on: bool,
+}
+
+impl BlkRing {
+    const fn empty() -> Self {
+        Self {
+            sum: [0; BLK_LEN],
+            bus: [0; BLK_LEN],
+            n: [0; BLK_LEN],
+            half: [0; BLK_LEN],
+            next: 0,
+            len: 0,
+            total: 0,
+            acc_sum: 0,
+            acc_bus: 0,
+            acc_n: 0,
+            acc_half: 0,
+            on: false,
+        }
+    }
+    fn scan(&mut self, b: &Block) {
+        if !self.on {
+            return;
+        }
+        self.acc_sum = self
+            .acc_sum
+            .wrapping_add(u32::from(b.phase_a) + u32::from(b.phase_b) + u32::from(b.phase_c));
+        self.acc_bus = self.acc_bus.wrapping_add(u32::from(b.bus_raw));
+        self.acc_n += 1;
+        if self.acc_n == 50 {
+            self.acc_half = self.acc_sum;
+        }
+    }
+    fn close(&mut self) {
+        if !self.on {
+            return;
+        }
+        let i = self.next;
+        if i < BLK_LEN {
+            self.sum[i] = self.acc_sum;
+            self.bus[i] = self.acc_bus.checked_div(self.acc_n).unwrap_or(0) as u16;
+            self.n[i] = self.acc_n.min(255) as u8;
+            self.half[i] = (self.acc_half >> 3).min(0xFFFF) as u16;
+        }
+        self.next = if i + 1 >= BLK_LEN { 0 } else { i + 1 };
+        if self.len < BLK_LEN {
+            self.len += 1;
+        }
+        self.total = self.total.wrapping_add(1);
+        self.acc_sum = 0;
+        self.acc_bus = 0;
+        self.acc_n = 0;
+        self.acc_half = 0;
+    }
+    fn reset(&mut self) {
+        self.next = 0;
+        self.len = 0;
+        self.total = 0;
+        self.acc_sum = 0;
+        self.acc_bus = 0;
+        self.acc_n = 0;
+        self.on = true;
+    }
+}
+
+static BLK: Mutex<RefCell<BlkRing>> = Mutex::new(RefCell::new(BlkRing::empty()));
+
+/// Dump the per-block ring, oldest first: `SAGBLK <shunt_sum> <bus_mean> <scans>`.
+pub fn emit_blocks(out: &mut impl crate::report::Sink) {
+    interrupt::free(|cs| BLK.borrow(cs).borrow_mut().on = false);
+    let (len, next, total) = interrupt::free(|cs| {
+        let b = BLK.borrow(cs).borrow();
+        (b.len, b.next, b.total)
+    });
+    out.say("SAGBLKSNAP ");
+    out.kv("len", len as u32);
+    out.kv("total", total);
+    out.kv("block_scans", crate::protection::BLOCK_SCANS);
+    out.say(
+        "
+",
+    );
+    out.flush();
+    let start = if len < BLK_LEN { 0 } else { next };
+    let mut k = 0;
+    while k < len {
+        let i = (start + k) % BLK_LEN;
+        let (s, b, n, h) = interrupt::free(|cs| {
+            let r = BLK.borrow(cs).borrow();
+            (r.sum[i], r.bus[i], r.n[i], r.half[i])
+        });
+        out.say("SAGBLK ");
+        out.say_u32(s);
+        out.say(" ");
+        out.say_u32(u32::from(b));
+        out.say(" ");
+        out.say_u32(u32::from(n));
+        out.say(" ");
+        out.say_u32(u32::from(h));
+        out.say(
+            "
+",
+        );
+        out.flush();
+        k += 1;
+    }
+    out.say(
+        "SAGBLKEND
+",
+    );
+    out.flush();
+}
+
 impl SagLog for SagRing {
     const ON: bool = true;
 
     #[inline]
     fn block(b: &Block) {
-        interrupt::free(|cs| TRACE.borrow(cs).borrow_mut().push(b));
+        interrupt::free(|cs| {
+            TRACE.borrow(cs).borrow_mut().push(b);
+            BLK.borrow(cs).borrow_mut().scan(b);
+        });
+    }
+
+    #[inline]
+    fn current_block_end() {
+        interrupt::free(|cs| BLK.borrow(cs).borrow_mut().close());
     }
 
     #[inline]
@@ -302,6 +459,7 @@ impl SagRing {
             let mut t = TRACE.borrow(cs).borrow_mut();
             *t = Trace::empty();
             t.on = true;
+            BLK.borrow(cs).borrow_mut().reset();
         });
     }
 
@@ -539,7 +697,7 @@ mod tests {
     /// zero or at the rail latches at once, whatever the ratio would say.
     #[test]
     fn a_bad_vref_latches_whatever_the_ratio_says() {
-        use crate::protection::{ADC_RAIL, BusReference, FastBusSag};
+        use crate::protection::{BusReference, FastBusSag, ADC_RAIL};
 
         for vref in [0u16, ADC_RAIL, ADC_RAIL + 1] {
             let mut g = FastBusSag::new(BusReference { bus: 1200, vref: 1500 });

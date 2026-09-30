@@ -3,7 +3,7 @@
 //! stood at E118, generic over [`Hal`].
 
 use crate::fixed::div_100;
-use crate::protection::{ADC_RAIL, BLOCK_SCANS, BusReference, ZERO_BLOCKS, zero_from_blocks};
+use crate::protection::{zero_from_blocks, BusReference, ADC_RAIL, BLOCK_SCANS, ZERO_BLOCKS};
 use crate::report::{CoastStats, Sink};
 
 use super::hal::{Hal, Preflight};

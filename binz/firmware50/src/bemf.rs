@@ -122,7 +122,11 @@ pub const fn mapped_filter_level(average_interval: u32) -> u8 {
     let add = (span * MAP_RECIP) >> MAP_SHIFT;
     // `add` is bounded by 9 over the clamped range, so this cannot overflow.
     let mapped = MAP_OUT_LOW + add as u8;
-    if mapped < FILTER_FLOOR { FILTER_FLOOR } else { mapped }
+    if mapped < FILTER_FLOOR {
+        FILTER_FLOOR
+    } else {
+        mapped
+    }
 }
 
 impl FilterPolicy for MappedFilter {
@@ -882,7 +886,11 @@ mod tests {
         move || {
             let i = n.get();
             n.set(i + 1);
-            if i == 0 { first } else { rest }
+            if i == 0 {
+                first
+            } else {
+                rest
+            }
         }
     }
 

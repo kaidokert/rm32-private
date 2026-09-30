@@ -10,7 +10,7 @@
 use core::marker::PhantomData;
 
 use crate::commutation::Direction;
-use crate::protection::{RAW_LIMIT, Reason, ZERO_BLOCKS};
+use crate::protection::{Reason, RAW_LIMIT, ZERO_BLOCKS};
 use crate::report::{CoastStats, CurrentRecord, InjectOutcome, RunReport, Sink, WitnessRecord};
 
 pub mod accepted;
@@ -26,7 +26,7 @@ pub mod states;
 pub use hal::{Gates, Hal, Inject, Preflight};
 pub use states::{Refused, Request, StartupNext, Stopped, Window};
 
-use policy::{Advance, BEMF_DUTY_TENTHS, BEMF_TOTAL_MS, Bemf, CurrentLimit, Reporting, RestartRule, SagLimit};
+use policy::{Advance, Bemf, CurrentLimit, Reporting, RestartRule, SagLimit, BEMF_DUTY_TENTHS, BEMF_TOTAL_MS};
 
 /// The seven policy slots, as one bundle the states are generic over.
 pub trait Policies {
@@ -60,15 +60,15 @@ pub struct Controller<W, B, A, C, S, R, T, G = crate::sagtrace::NoSagLog> {
 }
 
 impl<
-    W: Direction,
-    B: Bemf,
-    A: Advance,
-    C: CurrentLimit,
-    S: SagLimit,
-    R: RestartRule,
-    T: Reporting,
-    G: crate::sagtrace::SagLog,
-> Policies for Controller<W, B, A, C, S, R, T, G>
+        W: Direction,
+        B: Bemf,
+        A: Advance,
+        C: CurrentLimit,
+        S: SagLimit,
+        R: RestartRule,
+        T: Reporting,
+        G: crate::sagtrace::SagLog,
+    > Policies for Controller<W, B, A, C, S, R, T, G>
 {
     type W = W;
     type B = B;
@@ -135,15 +135,15 @@ pub struct Outcome {
 }
 
 impl<
-    W: Direction,
-    B: Bemf,
-    A: Advance,
-    C: CurrentLimit,
-    S: SagLimit,
-    R: RestartRule,
-    T: Reporting,
-    G: crate::sagtrace::SagLog,
-> Controller<W, B, A, C, S, R, T, G>
+        W: Direction,
+        B: Bemf,
+        A: Advance,
+        C: CurrentLimit,
+        S: SagLimit,
+        R: RestartRule,
+        T: Reporting,
+        G: crate::sagtrace::SagLog,
+    > Controller<W, B, A, C, S, R, T, G>
 {
     #[must_use]
     pub const fn new() -> Self {
@@ -722,15 +722,15 @@ impl<
 }
 
 impl<
-    W: Direction,
-    B: Bemf,
-    A: Advance,
-    C: CurrentLimit,
-    S: SagLimit,
-    R: RestartRule,
-    T: Reporting,
-    G: crate::sagtrace::SagLog,
-> Default for Controller<W, B, A, C, S, R, T, G>
+        W: Direction,
+        B: Bemf,
+        A: Advance,
+        C: CurrentLimit,
+        S: SagLimit,
+        R: RestartRule,
+        T: Reporting,
+        G: crate::sagtrace::SagLog,
+    > Default for Controller<W, B, A, C, S, R, T, G>
 {
     fn default() -> Self {
         Self::new()

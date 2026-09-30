@@ -94,7 +94,11 @@ impl Boundary {
     /// off rather than driven for a sliver (reference `initial_wait`).
     #[must_use]
     pub const fn initial_wait(self) -> u16 {
-        if self.delay_us < 100 { self.delay_us } else { 0 }
+        if self.delay_us < 100 {
+            self.delay_us
+        } else {
+            0
+        }
     }
 }
 
@@ -144,7 +148,7 @@ pub fn next(theta: u32, rate: u32) -> Option<Boundary> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commutation::{Phase, sector};
+    use crate::commutation::{sector, Phase};
 
     /// Every accumulator position maps to a real sector.
     #[test]

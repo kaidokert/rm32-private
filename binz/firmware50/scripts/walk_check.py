@@ -8,6 +8,7 @@ Rule: every walk run late_arms == 0 and spent_max_us <= 11; 725: worst < 4750 in
 no foldback. Prints PASS/FAIL per criterion. Refuses if a rung has fewer than 3 captures."""
 import glob, os, re, sys
 LABEL = sys.argv[1]
+TOP = int(sys.argv[2]) if len(sys.argv) > 2 else 725  # the confirmatory top rung (worst < 4750, no foldback)
 from collections import defaultdict
 runs = defaultdict(list)
 INCOMPLETE = []
@@ -39,14 +40,14 @@ for rung in sorted(runs):
     if unk: ok = False; print(f"  {rung}: REFUSED, no isr_stats key {unk}")
     bad = [r["f"] for r in rs if r["late"] != 0 or (r["stats"] == 1 and (r["spent"] or 99) > 11)]
     if bad: ok = False; print(f"  {rung}: TIMING FAIL {bad}")
-    if rung == 725:
-        w = [r["worst"] for r in rs]; fb = [r for r in rs if r["ceil"] != 725]
-        print(f"  725 confirmatory worst {w} -> {'PASS' if all(x < 4750 for x in w) else 'FAIL'}; foldbacks {len(fb)}")
+    if rung == TOP:
+        w = [r["worst"] for r in rs]; fb = [r for r in rs if r["ceil"] != TOP]
+        print(f"  {TOP} confirmatory worst {w} -> {'PASS' if all(x < 4750 for x in w) else 'FAIL'}; foldbacks {len(fb)}")
         ok &= all(x < 4750 for x in w) and not fb
 if INCOMPLETE: ok = False
-need = [525, 550, 575, 600, 625, 650, 675, 700, 725]
+need = list(range(525, TOP + 1, 25))
 missing = [r for r in need if len(runs.get(r, [])) < 3]
 if missing:
     print("RULE: INCOMPLETE (rungs lacking 3 completed captures:", missing, ")", "- so far", "no failure" if ok else "FAIL")
 else:
-    print("RULE (timing + 725 criteria):", "PASS" if ok else "FAIL")
+    print(f"RULE (timing + {TOP} criteria):", "PASS" if ok else "FAIL")

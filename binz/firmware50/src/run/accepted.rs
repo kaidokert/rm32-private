@@ -7,7 +7,7 @@
 //! Startup/hold boundaries and pending events at stop are not reconstructed.
 
 use core::num::NonZeroU32;
-use core::sync::atomic::{Ordering, compiler_fence};
+use core::sync::atomic::{compiler_fence, Ordering};
 
 /// One coherent latest timestamp and the number of events since last delivery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

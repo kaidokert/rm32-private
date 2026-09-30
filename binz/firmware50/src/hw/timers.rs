@@ -58,7 +58,7 @@ pub mod fine {
     // The units and every piece of wrap-safe arithmetic live in
     // `crate::fine`, which is host-visible and therefore unit-tested. This
     // module owns only the counter.
-    pub use crate::fine::{FINE_HZ, FINE_PSC, SPAN16_US, US_SHIFT, since, since16, to_tenths, to_us};
+    pub use crate::fine::{since, since16, to_tenths, to_us, FINE_HZ, FINE_PSC, SPAN16_US, US_SHIFT};
 
     pub fn init() {
         // SAFETY: the RCC block from the PAC's own pointer constant, and the
@@ -127,7 +127,7 @@ pub mod clock {
 /// **Why not the HAL** (moved from the binary, E070): the HAL's `Timer`
 /// derives PSC/ARR from a period and offers no one-pulse mode.
 pub mod com_timer {
-    use super::{Enable, Rcc, Reset, stm32};
+    use super::{stm32, Enable, Rcc, Reset};
 
     #[inline(always)]
     fn regs() -> &'static stm32::tim16::RegisterBlock {

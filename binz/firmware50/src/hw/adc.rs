@@ -41,7 +41,32 @@ const CHANNELS: [AdcChannel; 5] = [
 ];
 
 /// Words per scan.
+///
+/// ENV-81 (campaign C) `dual-shunt`: the fully configurable sequencer converts
+/// IA, IB, IC, VBUS, VREF, IA, IB, IC per trigger. The first five ranks are
+/// today's ascending scan (same timing for bus and VREF); the shunts are
+/// converted a second time ~14 us later and each shunt word is the mean of its
+/// two samples, so the 12-bit scale and zero are unchanged.
+#[cfg(not(feature = "dual-shunt"))]
 pub const SCAN_LEN: usize = CHANNELS.len();
+#[cfg(feature = "dual-shunt")]
+pub const SCAN_LEN: usize = 8;
+
+/// The `dual-shunt` sequence, IA IB IC VBUS VREF IA IB IC, packed four bits per rank
+/// (SQ1 in bits 3:0), derived from the channel numbers so it cannot drift from them.
+#[cfg(feature = "dual-shunt")]
+const CHSELR1_DUAL: u32 = {
+    let seq = [0u32, 1, 4, 6, 13, 0, 1, 4];
+    let mut v = 0u32;
+    let mut k = 0;
+    while k < 8 {
+        v |= seq[k] << (4 * k);
+        k += 1;
+    }
+    v
+};
+#[cfg(feature = "dual-shunt")]
+const _: () = assert!(CHSELR1_DUAL == 0x410D_6410);
 
 const fn scan_index(ch: u8) -> usize {
     let mut i = 0;
@@ -61,6 +86,7 @@ const IX_VBUS: usize = scan_index(6);
 const IX_VREF: usize = scan_index(13);
 
 /// The channel mask, derived from the table.
+#[cfg_attr(feature = "dual-shunt", allow(dead_code))]
 const CH_MASK: u32 = {
     let mut m = 0u32;
     let mut i = 0;
@@ -153,22 +179,70 @@ pub fn init(rcc: &mut Rcc) -> bool {
             .clear_bit()
     });
     a.smpr().modify(|_, w| w.smp1().cycles79_5());
+    // ENV-78 (campaign C) DIAGNOSTIC `adc-ovs4`: hardware 4x oversampling (shift 2,
+    // so the 12-bit scale is unchanged), the three shunts at 160.5 cycles (SMP2):
+    // 4 x (160.5 + 12.5) / 32 MHz = 21.6 us each, just over one 20.8 us PWM period,
+    // so a shunt word is a PWM-period average instead of an instantaneous sample.
+    // Bus and VREF stay at 79.5 cycles (4 x 2.875 = 11.5 us). Whole scan ~88 us
+    // inside the 101 us trigger period. Must precede ADEN (CFGR2 is write-locked).
+    #[cfg(feature = "adc-ovs4")]
+    {
+        a.cfgr2()
+            .modify(|_, w| w.ovse().set_bit().ovsr().mul4().ovss().shift2().tovs().clear_bit());
+        a.smpr().modify(|_, w| {
+            w.smp2()
+                .cycles160_5()
+                .smpsel(0)
+                .set_bit()
+                .smpsel(1)
+                .set_bit()
+                .smpsel(4)
+                .set_bit()
+        });
+    }
     a.cr().modify(|_, w| w.aden().set_bit());
     if !wait(|| a.isr().read().adrdy().bit_is_set()) {
         return false;
     }
     // The channel selection must be acknowledged before the first start. One
     // named `chsel(n)` bit per channel in the table.
-    a.chselr0().write(|w| {
-        let mut i = 0;
-        while i < CHANNELS.len() {
-            w.chsel(CHANNELS[i].ch).set_bit();
-            i += 1;
+    #[cfg(not(feature = "dual-shunt"))]
+    {
+        a.chselr0().write(|w| {
+            let mut i = 0;
+            while i < CHANNELS.len() {
+                w.chsel(CHANNELS[i].ch).set_bit();
+                i += 1;
+            }
+            w
+        });
+        debug_assert_eq!(a.chselr0().read().bits(), CH_MASK);
+    }
+    #[cfg(feature = "dual-shunt")]
+    {
+        // CHSELRMOD with ADSTART = 0, then wait for and clear CCRDY *before* writing the
+        // sequence: RM0444 says a CHSELR write issued before CCRDY is ignored, and an ignored
+        // write would leave the reset sequence (channel 0 in every rank) -- the sag guard
+        // would then judge a shunt as the bus (C2 review #4).
+        a.cfgr1().modify(|_, w| w.chselrmod().set_bit());
+        if !wait(|| a.isr().read().ccrdy().bit_is_set()) {
+            return false;
         }
-        w
-    });
-    debug_assert_eq!(a.chselr0().read().bits(), CH_MASK);
-    wait(|| a.isr().read().ccrdy().bit_is_set())
+        a.isr().write(|w| w.ccrdy().clear_bit_by_one());
+        // SQ1..SQ8 = 0, 1, 4, 6, 13, 0, 1, 4 (4-bit fields, SQ1 in bits 3:0; RM0444 ADC_CHSELR
+        // in CHSELRMOD = 1): IA, IB, IC, VBUS, VREF, then the three shunts again.
+        // SAFETY: a documented register layout; every nibble is one of this board's channels.
+        a.chselr1().write(|w| unsafe { w.bits(CHSELR1_DUAL) });
+        if !wait(|| a.isr().read().ccrdy().bit_is_set()) {
+            return false;
+        }
+        // Read back: a sequence that did not take means no feedback, so no run.
+        a.chselr1().read().bits() == CHSELR1_DUAL
+    }
+    #[cfg(not(feature = "dual-shunt"))]
+    {
+        wait(|| a.isr().read().ccrdy().bit_is_set())
+    }
 }
 
 fn wait(done: impl Fn() -> bool) -> bool {
@@ -313,10 +387,18 @@ pub fn dma_isr() -> RawScan {
             .cteif1()
             .set_bit()
     });
+    #[cfg(not(feature = "dual-shunt"))]
+    let (phase_a, phase_b, phase_c) = (dma_word(IX_ISENA), dma_word(IX_ISENB), dma_word(IX_ISENC));
+    #[cfg(feature = "dual-shunt")]
+    let (phase_a, phase_b, phase_c) = (
+        ((u32::from(dma_word(IX_ISENA)) + u32::from(dma_word(5)) + 1) >> 1) as u16,
+        ((u32::from(dma_word(IX_ISENB)) + u32::from(dma_word(6)) + 1) >> 1) as u16,
+        ((u32::from(dma_word(IX_ISENC)) + u32::from(dma_word(7)) + 1) >> 1) as u16,
+    );
     RawScan {
-        phase_a: dma_word(IX_ISENA),
-        phase_b: dma_word(IX_ISENB),
-        phase_c: dma_word(IX_ISENC),
+        phase_a,
+        phase_b,
+        phase_c,
         bus: dma_word(IX_VBUS),
         vref: dma_word(IX_VREF),
     }

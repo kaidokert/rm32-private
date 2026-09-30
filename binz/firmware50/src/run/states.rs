@@ -11,8 +11,8 @@ use crate::commutation::{self, Direction, Phase, Step};
 use crate::driven;
 use crate::duty::{RUN_PERIOD_TICKS, STARTUP_TICKS};
 use crate::protection::{
-    AverageCurrent, BlockVerdict, BusDepth, CurrentMark, FastBusSag, FoldbackGovernor, PhaseCodePolicy, RAW_LIMIT,
-    RailMean, RawScan, Reason, validate_raw_feedback,
+    validate_raw_feedback, AverageCurrent, BlockVerdict, BusDepth, CurrentMark, FastBusSag, FoldbackGovernor,
+    PhaseCodePolicy, RailMean, RawScan, Reason, RAW_LIMIT,
 };
 use crate::ramp::duty_at;
 use crate::sagtrace::SagLog;
@@ -22,15 +22,15 @@ use crate::sixstep;
 use crate::startup::{Script, StaircaseScript};
 use crate::witness::RotationWitness;
 
-use super::Policies;
 use super::hal::{self, Gates, Hal, Inject};
 use super::measure::Baseline;
 use super::policy::{
-    Advance, Bemf, CATCH_DUTY_TENTHS, CATCH_EHZ, CurrentLimit, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG, DRIVEN_RATE,
-    HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, INJECT_SAG_RELATIVE_FROM, INJECT_SAG_STEP_TENTHS, SIXSTEP_DUTY_CAP,
-    SagLimit, TAIL_WINDOW_US, WITNESS_HYST_CODES, WITNESS_MID_SAMPLES, in_off_window, sector_interval_us,
-    sixstep_ccr_of,
+    in_off_window, sector_interval_us, sixstep_ccr_of, Advance, Bemf, CurrentLimit, SagLimit, CATCH_DUTY_TENTHS,
+    CATCH_EHZ, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG, DRIVEN_RATE, HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS,
+    INJECT_SAG_RELATIVE_FROM, INJECT_SAG_STEP_TENTHS, SIXSTEP_DUTY_CAP, TAIL_WINDOW_US, WITNESS_HYST_CODES,
+    WITNESS_MID_SAMPLES,
 };
+use super::Policies;
 
 /// ENV-42: the host's 4750 mA worst-block gate in raw residual codes (4000 mA = RAW_LIMIT).
 const FREEZE_GATE_RAW: i32 = (4_750u64 * RAW_LIMIT as u64 / 4_000) as i32;
@@ -427,7 +427,11 @@ impl Ctx {
                 return Err(r);
             }
         }
-        match self.current.accumulate(scan.phase_a, scan.phase_b, scan.phase_c) {
+        let verdict = self.current.accumulate(scan.phase_a, scan.phase_b, scan.phase_c);
+        if P::G::ON && verdict.is_some() {
+            P::G::current_block_end();
+        }
+        match verdict {
             Some(BlockVerdict::Stop(r)) => Err(r),
             Some(BlockVerdict::Foldback(red)) => {
                 // ENV-22 observer: under `sag-ring` only, freeze the pre-trip ring
@@ -1175,9 +1179,9 @@ pub(crate) fn stop<S>(hal: &mut impl Hal, ctx: Ctx, gates: Gates<S>, reason: Rea
 mod accepted_tests {
     use super::*;
     use crate::run::{
-        Production,
         accepted::Accepted,
         sim::{Crossings, Faults, Sim},
+        Production,
     };
     use core::num::NonZeroU32;
 

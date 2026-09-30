@@ -43,7 +43,11 @@ impl Step {
     /// Build a sector, returning `None` outside 1..=6 (no panic path).
     #[inline]
     pub const fn new(raw: u8) -> Option<Step> {
-        if raw >= 1 && raw <= 6 { Some(Step(raw)) } else { None }
+        if raw >= 1 && raw <= 6 {
+            Some(Step(raw))
+        } else {
+            None
+        }
     }
 
     /// Build a sector, saturating into range. Infallible, panic-free.
@@ -66,7 +70,11 @@ impl Step {
     /// Next sector, wrapping 6 -> 1.
     #[inline]
     pub const fn next(self) -> Step {
-        if self.0 >= 6 { Step(1) } else { Step(self.0 + 1) }
+        if self.0 >= 6 {
+            Step(1)
+        } else {
+            Step(self.0 + 1)
+        }
     }
 
     /// Zero-based table index, always 0..=5.

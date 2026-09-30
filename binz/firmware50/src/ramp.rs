@@ -26,9 +26,15 @@ pub const fn duty_at(target_tenths: u16, since_us: u32) -> u16 {
     if target_tenths <= START_TENTHS {
         return target_tenths;
     }
-    let steps = since_us / STEP_US;
     let span = (target_tenths - START_TENTHS) as u32;
-    let up = steps.saturating_mul(STEP_TENTHS as u32);
+    // ENV-84 (campaign C) `ramp-fine`: the same average rate (1 % per 0.5 s) applied at the
+    // duty's own resolution, 0.1 % every 50 ms, instead of 1 % steps -- AM32 slews its duty
+    // in small per-tick increments (`main.c:1889-1920`). Each 1 % step at 75 % is a ~0.12 V
+    // jump into a low-resistance winding.
+    #[cfg(feature = "ramp-fine")]
+    let up = since_us / (STEP_US / STEP_TENTHS as u32);
+    #[cfg(not(feature = "ramp-fine"))]
+    let up = (since_us / STEP_US).saturating_mul(STEP_TENTHS as u32);
     if up >= span {
         target_tenths
     } else {
@@ -57,6 +63,17 @@ mod tests {
         assert_eq!(START_TENTHS, 100);
     }
 
+    #[cfg(feature = "ramp-fine")]
+    #[test]
+    fn fine_ramp_climbs_a_tenth_per_50_ms_at_the_same_rate() {
+        assert_eq!(duty_at(250, 49_999), 100);
+        assert_eq!(duty_at(250, 50_000), 101);
+        assert_eq!(duty_at(250, 500_000), 110);
+        assert_eq!(duty_at(250, 7_500_000), 250);
+        assert_eq!(ramp_us(250), 7_500_000, "same total ramp time as the step ramp");
+    }
+
+    #[cfg(not(feature = "ramp-fine"))]
     #[test]
     fn climbs_one_percent_per_half_second() {
         assert_eq!(duty_at(250, 499_999), 100);

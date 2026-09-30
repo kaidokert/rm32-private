@@ -121,6 +121,15 @@ late-worst = []
 # rebase, late snapshot, COM late_max, blank_arms). Production reports them as
 # absent (`isr_stats=0`), and checkers must refuse to gate on them there.
 isr-stats = []
+# ENV-78 DIAGNOSTIC: ADC hardware 4x oversampling, shunts at 160.5 cycles (one PWM period per
+# shunt word). Changes the protections' INPUT (current and bus words); never production until
+# an A/B and review say so.
+adc-ovs4 = []
+# ENV-81 candidate: each shunt converted twice per trigger (8-rank sequence), shunt word = mean of the
+# two. Same window, same allowance; the protections' current INPUT gets a lower-variance estimator.
+dual-shunt = []
+# ENV-84 A/B lever: post-transfer ramp at 0.1 % per 50 ms instead of 1 % per 0.5 s (same rate).
+ramp-fine = []
 # ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
 # chain image can mark revisit-originated accepts (flag bit 6).
 chain-origin = []

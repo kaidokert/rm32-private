@@ -1017,7 +1017,11 @@ pub const fn zero_from_blocks(sum: u64, blocks: u32) -> Option<u32> {
         return None;
     }
     let z = sum.div_ceil(blocks as u64);
-    if z > u32::MAX as u64 { None } else { Some(z as u32) }
+    if z > u32::MAX as u64 {
+        None
+    } else {
+        Some(z as u32)
+    }
 }
 
 /// Duty ceiling governor. Foldback **ratchets down only** — there is no

@@ -39,7 +39,11 @@ pub const fn speed_event_limit_us(reference_half_us: u32) -> u32 {
         1_000
     } else {
         let us = (reference_half_us * 3 + 1) >> 1;
-        if us < 200 { 200 } else { us }
+        if us < 200 {
+            200
+        } else {
+            us
+        }
     }
 }
 
