@@ -45650,3 +45650,69 @@ Same session, 37.5 %, A = A6 `0A978A82`, B = B4w `CE132584`.
 
 **Stage 2 starts:** the ENV-71 walk (525 anchored → 725), then the follow-up (restarts 500–700 and 725 on
 `5EEA97DD`, sweep, low rungs 150–500).
+
+#### ENV-71 stage 2 — B4w walk: 525–675 PASS 3/3 each, **stopped at 700**
+
+The walk passed 525, 550, 575, 600, 625, 650 and 675 (all 3/3). At 700, run 1's **worst block was 4889 mA**, at or
+above the 4750 host gate. Everything else in that run was normal:
+* reason 2, no foldback (ceiling 700), no sag trip;
+* zc rate 99.3 %, late_arms 0, track_fault 0.
+
+Runs 2 and 3 had worst blocks of 4496 and 4577. **Stage 2 fails at 700.**
+
+Current against A6's walk (ENV-63, **cross-session**):
+
+| rung | A6 hold (ENV-63) | B4w hold | B4w vs A6 |
+|---|---|---|---|
+| 650 | 2780–2797 | ≈2940 | **+5.5 %** |
+| 675 | 3084–3110 | 3177–3209 | **+3 %** |
+| 700 | 3402–3415 | 3474–3510 | **+2 %** |
+
+Coast at 675 is ≈0.5 % lower (2380–2395 vs 2399–2428). More current at slightly less speed is a
+commutation-timing signature, not a detection failure: there were no late crossings and no tracking faults at any rung.
+
+### ENV-72 — step 5 (called by step 4), predeclared: advance 18 vs AM32's 16 on B4w
+
+**Why step 4 calls for it.** B4w changes which edge is accepted: AM32's depth at 700–725 is 3 where A6's floor was 5,
+so the crossing is accepted about two reads sooner, an effectively earlier commutation. AM32's own advance is 16:
+`temp_advance = 16` as the fallback and as the conversion of old-format level 2 (`main.c:655-660`), applied as
+`advance = (commutation_interval * temp_advance) >> 6` (`main.c:929`). The bench AM32's own EEPROM value is not read
+here, so "AM32's 16" is its default, not a measured setting. **Regime note:** the tag lineage's choice of 18 was made
+with firmware50's own detector, and that verdict does not transfer to AM32's detector.
+
+**Images:**
+* A = B4w adv 18, `CE132584`;
+* **B = B4w adv 16** (`advance-ref`, flat 16), **`4A4A4369`** (loadable `FFD8C96E`), with twins window-90
+  `3EC57A2A` and cap-750 `A83EE981`.
+
+All ISRs are instruction-identical to A; only the advance constant moved.
+
+**Protocol:** rung 700, same session, ABBAAB, `--no-ladder`.
+
+**Rule:**
+* **Adopt 16 if its mean worst block is lower, its mean zero-adjusted hold is lower, and it has 0 stops.** Otherwise
+  keep 18, and B4w is abandoned at 700.
+* If adopted, the adv-16 image re-walks the full kit from 525. It is a control-path parameter change, so no anchor
+  beyond 525.
+
+**Prediction:** 16 lowers the zero-adjusted hold by ≥ 1.5 % and the mean worst block by ≥ 100 mA; coast changes by
+less than −1 %.
+
+#### ENV-72 result — advance 16 adopted on B4w (rule met); two of three predictions held
+
+700, same session (runs 4–6 dated 2026-09-30), A = adv 18 `CE132584`, B = adv 16 `4A4A4369`:
+
+| | A (adv 18) | B (adv 16) | Δ |
+|---|---|---|---|
+| worst block per run | 4750, 4666, 4692 | 4449, 4572, 4607 | mean **4703 → 4543 (−160 mA)** |
+| hold, zero-adjusted | 3500.8 | 3467.2 | **−0.96 %** (raw −1.18 %) |
+| coast | 2473, 2461, 2451 | 2488, 2463, 2481 | **+0.6 %** |
+| stops | 0 | 0 | |
+
+* Rule met (lower worst, lower adjusted hold, 0 stops): **adopt 16.**
+* Predictions: the worst block drops by ≥ 100 mA, which **held** (−160). The adjusted hold drops by ≥ 1.5 %, which is
+  **refuted** (−0.96 %). Coast moves by less than −1 %: it held, and speed actually rose 0.6 %.
+* A's run 1 hit exactly 4750 again, confirming that 700 at advance 18 is marginal on B4w.
+
+**B4w-adv16 re-walks the full kit (ENV-73):** walk from 525 (anchored) to 725, then restarts (725 on `3EC57A2A`),
+sweep, and low rungs. Production features become **`advance-ref`**: AM32's detector *and* AM32's default advance.
