@@ -45248,3 +45248,35 @@ with its code). No `spent`/`thin` gate on production (isr_stats=0); timing is ga
     instructions (≈0.7 µs) earlier than A6, which is the A1/A4 regime, **so B2 carries A1/A4's detection risk**;
   * commutation phase 1 is instruction-identical to B1 (254);
   * the guard tick grows 155 → 370 static.
+
+#### ENV-66 result — B1 stage 1: FAIL on the late count → B1 abandoned
+
+Same session, 37.5 %, A = A6 `0A978A82`, B = B1 `F6F97A08`.
+
+| check | result | bar | verdict |
+|---|---|---|---|
+| production ABBAAB, coast | A 1548.3, B 1545.3 eHz: **−0.19 %** | ±1 % | pass |
+| hold, zero-adjusted (`hold_covariate.py`) | **+0.36 %** (raw +1.45 %) | ±3 % | pass |
+| chain own-mean late, all steps (`late_binom.py`, 8 v 8) | **B1 143 vs A6 106, one-sided p = 0.011** | not greater at α 0.05 | **FAIL** |
+| chain own-mean late, step 3 | **B1 47 vs A6 21, p = 0.001** | not greater at α 0.05 | **FAIL** |
+| edge probe (B1 chain `A3C6B328`) | 8/8 captures 255/255 matched, next step 255/255, p50 3 µs, p99 4.4–6 µs | as ENV-50 | pass |
+
+All six production runs: reason 2, late_arms 0.
+
+**The prediction ("the 0.3 µs earlier read is below what moved A1/A4, no measurable shift") is refuted.** B1's only
+functional change is deleting report-only counters. What it moved is the COMP prologue's codegen: the first read went
+from #137 to #120 (register allocation and scheduling only, ENV-66), and the late rate rose, concentrated in step 3.
+This is A1/A4/A5's signature again, now from a change with **no** logic before the read. Firmware50's detection is
+tuned to its own read latency: moving the read by ~17 instructions changes which edges it takes, whatever the reason
+for the move. This supports the external review's reading (ENV-65 follow-up): *"the next cut can't be one thing at a
+time; it has to be the reference detector as a unit."*
+
+**Stage 2 was stopped** after the first walk run had started (the walk was launched before I scored the chain; the one
+525 run in flight finished and is not counted). B1 is **abandoned**, and the branch `am32shape/b1` is left as is.
+
+**B2 is not run.** It is stacked on B1 and moves the first read a further 18 instructions earlier (#102), so it carries
+the same failure by the mechanism just shown. That is a prediction; it is not tested.
+
+**The different cut (goal: "abandon ... try a different cut from the tag"):** B4, AM32's detector as one unit, cut
+fresh from `fw50-am32-a6` as branch `am32shape/b4u`. It carries B1's and B2's deletions and moves as part of the unit,
+because the unit is what reads at entry: no prologue before the gate, depth and gate read not computed.
