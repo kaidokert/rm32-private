@@ -45862,3 +45862,253 @@ Operator-rulable, alongside C3 (steps 1 and 2 not kept separately; step 5 called
 **Reading of the 75 % edge (operator):** with no stops and no foldback, 75 % on this bench is the 5 A supply's
 worst-block edge (mean ≈ 3.9 A, 10 ms blocks ≈ 4.8 A against the 4750 bar), not a timing wall. Above it is the planned
 battery, then the motor's no-load thermal behaviour, which is unmeasured.
+
+# CAMPAIGN C: PUSH THE ENVELOPE ON THE 5 A PSU (goal set 2026-09-30, base `fw50-am32-b4w-adv16`)
+
+Operator question: at 75 % the mean current is under 4 A, yet 10 ms blocks reach 4.8 A. Before anything is changed,
+what *is* a near-5 A block?
+
+### ENV-76 — predeclared: are the near-5 A blocks real current, or scan/commutation aliasing?
+
+**What a block is** (`protection.rs::AverageCurrent`): the sum of the three shunt amplifiers over **100 ADC scans**.
+* Scans run at TIM6's **9901 Hz**, so a block is ≈ 10.1 ms. The PWM carrier is **48 kHz**.
+* At 750 the commutation rate is ≈ 6 × 2640 ≈ 15.8 kHz ≈ **1.6 × (8/5) of the scan rate**. At such a small-integer
+  ratio the samples of one block visit only a few positions within the sector. The block mean is then biased by the
+  sector's current shape, and the bias drifts with the beat.
+
+**Hypotheses:**
+* **(A) aliasing:** the high blocks are the same sector waveform sampled unevenly;
+* **(R) real:** the current is higher at every position within the sector.
+
+**Instrument:** diagnostic image **`0E443BDB`** (`sag-capture` bin, features `advance-ref,freeze-gate,edge-probe`).
+All four ISRs are instruction-identical to the production cap-750 twin `A83EE981`. The ring freezes on the first hold
+block ≥ 4750; its fast ring holds the last 256 scans, each with the three shunt codes, the raw bus, the PWM counter,
+the step and µs since the accepted crossing. Runs: 750 × 3, `--no-ladder`.
+
+**Analysis** (`scripts/alias_check.py`, per frozen capture): per-scan current from the shunt sum, scaled by the run's
+own zero and allowance. The trigger block is the last 100 rows and the reference block the 100 before it. Each scan's
+position is taken as `since_zc` modulo the sector, in 8 bins.
+* **raw Δ** = trigger mean − reference mean;
+* **phase-uniform Δ** = the same difference after averaging per-bin means, which removes the sampling-distribution
+  effect;
+* **verdict:** (A) if |phase-uniform Δ| ≤ 0.5 × raw Δ; (R) if phase-uniform Δ ≥ 0.5 × raw Δ.
+* The bus is reported alongside: mean `bus_raw`, trigger vs reference.
+
+A capture that never froze (no block ≥ 4750) is reported and gives no verdict.
+
+**Prediction:** (A), low confidence.
+
+**ENV-76 amendment (before any usable data).**
+* The three `bemf_run.py` runs froze correctly (worst 4777–4817) but saved only 4 of 256 SAGROW rows: that runner stops
+  reading after the report. The captures are re-run with `scripts/sag_run.py`, which saves through SAGEND
+  (`captures/sag/`).
+* **`since_zc` cannot place a scan in the sector.** It is the foreground's lagged mailbox stamp; the rows show 177 µs
+  in a 64 µs sector. **Position is instead reconstructed from the step sequence:**
+  * fit a steady sector clock `s(t) = (t - t0) / T` to the 256 rows' (`at`, `step`), with `step = floor(s) mod 6 + 1`;
+  * grid search T within ±5 % of `mean_ci_us` and all t0;
+  * phase = frac(s).
+  * **A capture whose best fit explains < 90 % of the steps is refused.**
+* The verdict rule is unchanged.
+
+#### ENV-76 result — no verdict: the fast ring cannot place a scan in its sector
+
+The re-run through `sag_run.py` (`captures/sag/env76s-{1,2,3}`) froze with full rings (worst 4777–4817). The
+step-clock fit explained only **45 %, 88 % and 50 %** of steps, so it was refused by the predeclared bar.
+
+The reason is the recorder. A row's `at` is the **foreground's judging instant**: consecutive rows are 85–120 µs apart
+against the fixed 101 µs scan clock. Its `step` is the foreground's lagged copy. Within-sector phase at ~64 µs sectors
+is not recoverable from this instrument. **The refusal fired instead of a fabricated verdict.**
+
+### ENV-77 — predeclared: the per-block series
+
+**New diagnostic instrument (production untouched: loadable still `FFD8C96E`):** a per-block ring in the sag recorder.
+* For each 100-scan current block it records the raw shunt sum over the same scans, the bus mean over those scans, and
+  the scan count (100 when aligned). It keeps the last 1024 blocks (≈ 10.3 s), never frozen.
+* The block boundary is signalled only under `if P::G::ON` (`states.rs`).
+* Image **`2D2909D2`** (`sag-capture`, `advance-ref,edge-probe`, no freeze-gate). ISRs are instruction-identical to
+  `A83EE981`.
+
+**Runs:** 750 × 3 and 725 × 2, same session, via `sag_run.py`.
+
+**Analysis (`scripts/block_series.py`):**
+* per-block mA = (zero_start − sum) × 5000 / ma_allow, which is the firmware's own block value; blocks with n ≠ 100
+  are dropped;
+* the block series' mean, sd and max; the autocorrelation at lags 1–50 blocks; corr(block current, block bus).
+
+**Verdict:**
+* **(A) aliasing** if corr(current, bus) > −0.2 **and** the autocorrelation has a peak ≥ 0.4 at some lag 2–50 (a
+  periodic beat);
+* **(R) real** if corr(current, bus) ≤ −0.5 (the bus sags with the current through the supply leads);
+* otherwise **undecided**.
+
+**Prediction:** (A), low confidence.
+
+**ENV-77 amendments.**
+* The first block-ring image `2D2909D2` (1024 blocks) **reset on the IWDG while printing its report**
+  (`RESETCAUSE iwdg=1`, likely a stack overrun from +7 KB of .bss). The bridge was already safe: PREFLIGHT after the stop
+  shows moe 0, gates low, en 0.
+* The ring is shrunk to **512 blocks (≈ 5.2 s)**, image **`B425ADF4`** (.bss 23.2 KB), and `sag_run.py` gains
+  `--end-marker SAGBLKEND`.
+* A single test run (`env77b-test`, 725) completed.
+
+**What the test run shows (725, last 5.2 s of the hold):**
+* block mean 3818 mA, **sd 185 mA**, p99 4251, max 4445;
+* **lag-1 autocorrelation −0.07, no periodic peak (≤ 0.07), corr(mA, bus) −0.13.**
+
+By the predeclared rule this is **undecided**: no aliasing beat, and no bus sag. It is neither (A) nor (R).
+
+**A third hypothesis, stated after seeing that data: (N) estimator noise.** The 256-scan fast ring gives a per-scan
+shunt-sum current of mean 3867, **sd 3513 mA**. The DC-link current is roughly "I while the PWM is on, 0 while off", so
+each scan is close to a coin flip. With 100 independent samples the block sd would be 351 mA. The de-cohered trigger
+stratifies the PWM phase, and the observed 185 mA is about half of that. **The largest of ~4000 Gaussian hold blocks
+(sd 185) is ≈ +3.6 σ ≈ mean + 670 mA**, which matches the observed 725 worst blocks (4489–4536 on a ~3.8 A mean).
+**Under (N) the near-5 A blocks are not current; they are the tail of a 100-sample estimate of a chopped current.**
+
+### ENV-78 — predeclared: does 4× hardware ADC oversampling (a PWM-period average per shunt word) shrink the block noise?
+
+**Diagnostic feature `adc-ovs4`:**
+* 4× oversampling, shift 2, so the 12-bit scale is unchanged;
+* shunts at 160.5 cycles, 4 × 5.4 = **21.6 µs per shunt word, just over one 20.8 µs PWM period**;
+* bus and VREF at 79.5 cycles (11.5 µs);
+* whole scan ≈ 88 µs inside the 101 µs trigger period.
+
+It changes the protections' **inputs**: current and bus words become short averages. So it is **diagnostic only**, and a
+production change would need its own A/B plus review.
+
+**Images (block ring, instruction-identical ISRs):** A = `B425ADF4` (no oversampling), B = **`562804EA`** (`adc-ovs4`).
+
+**Protocol:** 725 (qualified rung), same session, ABBAAB, `sag_run.py`, block ring. Then the predeclared ENV-77 series
+on A (750 × 3).
+
+**Predictions:**
+* **(N) holds:** B's block sd ≤ ½ of A's;
+* the block mean is unbiased: B's mean within ±2 % of A's;
+* B's worst hold block drops by at least 150 mA.
+
+**Falsifier:** B's sd > 0.75 × A's. The block noise would then not be PWM-sampling noise, and would be real
+sector-scale variation.
+
+#### ENV-78 result — the falsifier fired: oversampling does not shrink the block noise; (N)-as-PWM-sampling is refuted
+
+725, same session, A = `B425ADF4`, B = `562804EA` (`adc-ovs4`):
+
+| | block mean | block sd | worst (last 5.2 s) | corr(mA, bus) |
+|---|---|---|---|---|
+| A (1A, 4A, 5A) | 3813 / 3824 / 3838 | **191 / 192 / 198** | 4352 / 4398 / 4666 | −0.05 / −0.15 / −0.10 |
+| B (2B, 3B, 6B) | 3592 / 3607 / 3594 | **174 / 183 / 190** | 4267 / 4258 / 4148 | −0.38 / −0.39 / −0.36 |
+
+* **Block sd ratio B/A ≈ 0.94**, above the 0.75 falsifier. The predictions "sd ≤ ½" and "worst −150 mA" failed.
+* **"Mean unbiased ±2 %" is also refuted: B reads ≈ −6 %.**
+* **Per-scan current sd is ≈ 3.6 A on both images**, and the per-scan sum still spans −4…+10 A with oversampling.
+* Oversampling *does* average: each individual shunt's range narrows (max 2997 → 2454 codes).
+
+So the per-scan spread is driven by **the position within the commutation sector** (the DC-link current swings hard
+within a ~64 µs sector at this speed), not by PWM chopping. The block sd is ≈ 0.5 × σ_scan/√100 on both: the trigger
+is de-cohered, so it stratifies the sector phase partly.
+
+**Open question: are the block-to-block differences sampling (which sector positions a block caught) or real (the
+10 ms average current varies)?** The bus correlation cannot decide it: bus and shunts are sampled in the same scan, so
+they co-vary within a sector either way.
+
+**Side observation (not predeclared):** memory has the current proxy over-reading the PSU meter by ≈ 4 % in holds (a
+metered anchor). B's −6 % is consistent with the instantaneous samples over-reading. Not acted on: the allowance and
+its calibration are fixed.
+
+### ENV-79 — predeclared: split-half reliability of the block current
+
+**Diagnostic change (block ring v2):** record also the first half-block's shunt sum (scans 1–50, stored >> 3 as u16),
+so each block has two independent 50-scan estimates. **Image:** block ring v2, no oversampling (production's ADC).
+
+**Runs:** 725 × 3 and 750 × 3, same session, `sag_run.py`.
+
+**Statistic:** across the 512 blocks of a run, the correlation r between the two halves' mA.
+* **(S) sampling:** r ≤ 0.2. The block-to-block spread is which-positions-got-sampled noise, and the true 10 ms current
+  is steadier than the blocks show.
+* **(R) real:** r ≥ 0.5. The 10 ms current genuinely fluctuates, and the blocks report it.
+* Otherwise **mixed**, and r² estimates the real fraction of the block variance.
+
+**Prediction:** (S).
+
+#### ENV-77 result — the 750 block series (A image `B425ADF4`, `env77c-750-{1,2,3}`): undecided by its rule
+
+| run | block mean | sd | p99 | max (last 5.2 s) | acf lag 1 | peak acf (lag) | corr(mA, bus) |
+|---|---|---|---|---|---|---|---|
+| 1 | 4097 | 224 | 4593 | 4676 | −0.02 | +0.08 (22) | −0.18 |
+| 2 | 4106 | 238 | 4604 | 4744 | −0.03 | +0.09 (39) | −0.19 |
+| 3 | 4094 | 225 | 4610 | 4785 | −0.07 | +0.12 (36) | −0.12 |
+
+There is no periodic beat and no strong bus sag, so it is neither (A) nor (R). **The block sd grows with duty:** ≈ 190
+at 725, ≈ 230 at 750. The prediction (A) is refuted as a mechanism (no beat). ENV-79 decides between sampling and
+real.
+
+### ENV-80 — predeclared: commutation lateness vs rung on the kept detector (goal item 2)
+
+**Instruments:**
+* chain images of the kept build: `3D764D73` (advance-ref, cap 725) for 700 and 725; **`3E4D6A1E`** (advance-ref +
+  edge-probe, cap 750) for 750;
+* `isr-stats` twins **`70231AB8`** (cap 725) and **`7F13D3F5`** (cap 750) for `com_late_max`, `spent_max`, `thin` and
+  `ci_min`.
+
+**Runs:** chain 700 × 2, 725 × 2, 750 × 2; stats 725 × 1, 750 × 1. All `--no-ladder`, same session.
+
+**Statistic:** the edge-probe residual (COM entry − (crossing + wait), µs; p50, p99, max) per rung, against the
+advance time `ci × 16 / 64`.
+
+**Prediction:** p50 stays 3 µs; p99 rises from ≈ 8 (37.5 %) to ≈ 10 µs at 750; max ≤ 15 µs. The advance at 750 is
+≈ 16 µs, so p99 lateness would take ≈ 60 % of it. This is a measurement, reported as what binds or does not; there is
+no pass/fail.
+
+#### ENV-79 result — (S) sampling, 6/6: the block-to-block current spread is estimator noise; the 10 ms current is steady
+
+Split-half reliability, image `8A67E1C4` (block ring v2, production ADC), same session:
+
+| run | block mean | block sd | half sd (1st / 2nd) | r(halves) |
+|---|---|---|---|---|
+| 725-1 | 3758 | 181 | 287 / 276 | **−0.17** |
+| 725-2 | 3769 | 180 | 286 / 280 | **−0.19** |
+| 725-3 | 3758 | 172 | 266 / 274 | **−0.19** |
+| 750-1 | 4061 | 207 | 314 / 327 | **−0.17** |
+| 750-2 | 4025 | 215 | 327 / 321 | **−0.12** |
+| 750-3 | 4035 | 215 | 301 / 319 | **−0.03** |
+
+**All six are (S)** (r ≤ 0.2; the real share r² ≈ 0), as predicted.
+* The half-block sd is ≈ √2 × the block sd: pure sampling noise.
+* The slightly negative r is the de-cohered trigger's stratification: a half that over-samples the high part of the
+  sector leaves the other half the rest.
+
+**MECHANISM (answers the operator's question).** At 75 % the true 10 ms current is steady at ≈ 4.05 A. **The
+near-5 A blocks are the tail of the protection's own estimator.**
+* A block is 100 asynchronous scans of a DC-link current that swings between ≈ −4 and +10 A within each ~64 µs
+  commutation sector (per-scan sd ≈ 3.6 A).
+* The block's sampling sd is ≈ 180 mA at 725 and ≈ 215–235 mA at 750.
+* The worst of ~4000 hold blocks lands ≈ +3.6 σ above the mean: 4.5 A at 725 and 4.8 A at 750, which is exactly the
+  worst blocks seen in qualification.
+
+**What it means for the climb.** Qualification's host gate (worst block < 4750) and the firmware's own 5 A allowance
+both act on this noisy estimate. At 750, what fails the gate is **sampling noise, not current**. The lever is a lower-
+variance estimator of the same 10 ms mean, with the same window, allowance and streak rules.
+
+### ENV-81 — predeclared: does converting each shunt twice per trigger cut the block noise? (candidate fix, diagnostic A/B)
+
+**Candidate `dual-shunt`:**
+* the ADC's fully configurable sequencer converts **IA, IB, IC, VBUS, VREF, IA, IB, IC** per TIM6 trigger;
+* ranks 1–5 are today's ascending scan, with the same timing, so the bus and VREF words the sag guard reads are
+  unchanged;
+* each shunt word handed to the protections is the **mean of its two samples, ≈ 14.4 µs apart** (12-bit scale and
+  zero unchanged; DMA handler 37 → 55 static instructions).
+
+Same window, allowance and streak rules. Only the variance of the current estimate should move.
+
+**Images (block ring v2):** A = `8A67E1C4`, B = **`56675342`** (`dual-shunt`). All other ISRs are
+instruction-identical.
+
+**Protocol:** 750 (the rung the gate fails), same session, ABBAAB, `sag_run.py`.
+
+**Predictions:**
+* B's block sd ≤ 0.85 × A's. The two samples are only 14 µs apart in a ~64 µs sector, so they are partly correlated
+  and √2 is not expected;
+* B's mean within ±2 % of A's;
+* the split-half r stays ≤ 0.2 on both;
+* no stops.
+
+**Rule for making it a production candidate:** all four hold. **Falsifier:** sd ratio > 0.9.

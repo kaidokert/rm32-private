@@ -62,6 +62,7 @@ def main() -> int:
         help="the duty (tenths) `l`/`L` are set to; checked against the capture",
     )
     ap.add_argument("--no-warmup", action="store_true")
+    ap.add_argument("--end-marker", default="SAGEND", help="last line to read (SAGBLKEND for the ENV-77 block ring)")
     ap.add_argument("--elf", default="", help="the recording image to run (and to hash)")
     ap.add_argument("--flash", action="store_true", help="program --elf before the run")
     ap.add_argument(
@@ -135,10 +136,10 @@ def main() -> int:
                 print("   " + port.read(400).decode(errors="replace").strip())
             print(f"== key {args.command} with the chain recorded -> {out}")
             ok = bemf_run.capture_one(
-                port, out, args.timeout, args.command.encode(), end_marker="SAGEND"
+                port, out, args.timeout, args.command.encode(), end_marker=args.end_marker
             )
             if not ok:
-                print("capture did not complete (no SAGEND)")
+                print(f"capture did not complete (no {args.end_marker})")
                 return 1
         finally:
             port.write(bemf_run.STOP)

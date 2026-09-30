@@ -129,6 +129,7 @@ fn main() -> ! {
                 // write the ring out.
                 SagRing::disarm();
                 SagRing::read(|t| sagtrace::emit(t, &mut Echo(&mut board)));
+                sagtrace::emit_blocks(&mut Echo(&mut board));
             }
         }
     }

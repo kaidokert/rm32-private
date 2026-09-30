@@ -427,7 +427,11 @@ impl Ctx {
                 return Err(r);
             }
         }
-        match self.current.accumulate(scan.phase_a, scan.phase_b, scan.phase_c) {
+        let verdict = self.current.accumulate(scan.phase_a, scan.phase_b, scan.phase_c);
+        if P::G::ON && verdict.is_some() {
+            P::G::current_block_end();
+        }
+        match verdict {
             Some(BlockVerdict::Stop(r)) => Err(r),
             Some(BlockVerdict::Foldback(red)) => {
                 // ENV-22 observer: under `sag-ring` only, freeze the pre-trip ring
