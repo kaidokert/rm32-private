@@ -783,7 +783,12 @@ impl Hal for Board {
 
     fn roots_record(&mut self) -> Roots {
         let (zc_accepted, too_early, unstable) = roots::det_counts();
-        let (det_peak, storm) = S.det().rate.lock(|r| (r.peak(), r.failed())).unwrap_or((0, false));
+        // Goal B: the storm limiter is report-only; `storm` = the closed-loop peak exceeded 64/ms.
+        let (det_peak, storm) = S
+            .det()
+            .rate
+            .lock(|r| (r.peak(), r.peak() > firmware50::rate::LIMIT))
+            .unwrap_or((0, false));
         Roots {
             zc_accepted,
             too_early,

@@ -559,8 +559,9 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
                 // (`PeriodElapsedCallback`). `advance` is read there.
                 let _ = advance;
                 S.det().accept_count.store(count, Ordering::Relaxed);
+                S.det().accept_step.store(u32::from(step.get()), Ordering::Relaxed);
                 S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
-                Some((step.get(), zc.average_interval()))
+                Some(())
             }
             other => {
                 if C::ON {
@@ -600,14 +601,10 @@ pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPri
             );
         }
     }
-    match accepted {
-        Some((step, average)) => {
-            // The accepted-event envelope (E076).
-            guard_event(at, step, average);
-            true
-        }
-        None => false,
-    }
+    // Goal B step 2: the accepted-event envelope (E076) is fed from the guard
+    // tick now, not here (`guard_root`), from `accept_seq`, `accept_raw`,
+    // `accept_step` and `accept_avg`.
+    accepted.is_some()
 }
 
 /// [`det_decide_plain`]'s acceptance arm, for the diagnostic twin (the
@@ -919,6 +916,9 @@ pub fn guard_arm_tracking() {
         let _ = S.guard().watch.lock(|w| {
             *w = crate::tracking::EventWatch::new(now, crate::protection::EVENT_MIN_US, crate::tracking::EVENT_MAX_US);
         });
+        S.guard()
+            .seq_seen
+            .store(S.det().accept_seq.load(Ordering::Relaxed), Ordering::Relaxed);
         S.guard().tracking.store(true, Ordering::Relaxed);
     });
 }
@@ -1003,8 +1003,45 @@ pub unsafe fn guard_root() {
         guard_trip(Reason::CampaignDeadline);
         return;
     }
-    if S.guard().tracking.load(Ordering::Relaxed) && S.guard().watch.root(&mut at, |w| w.poll(now).is_some()) {
-        guard_trip(Reason::Tracking);
+    if S.guard().tracking.load(Ordering::Relaxed) {
+        // Goal B step 2: the tracking watch runs here, not in COMP. Every
+        // crossing COMP accepted since the last tick is fed as one batch: its
+        // count, the newest one's instant and sector, and the average COM
+        // published for it. COMP preempts this root, so the loads are
+        // bracketed by two reads of `accept_seq`; a torn read skips this tick
+        // and the next one takes the batch.
+        let s1 = S.det().accept_seq.load(Ordering::Relaxed);
+        let n = s1.wrapping_sub(S.guard().seq_seen.load(Ordering::Relaxed));
+        let mut poll_at = now;
+        let mut batch = None;
+        if n != 0 {
+            let raw_a = S.det().accept_raw.load(Ordering::Relaxed) as u16;
+            let sector = S.det().accept_step.load(Ordering::Relaxed) as u8;
+            let average = S.det().accept_avg.load(Ordering::Relaxed);
+            if S.det().accept_seq.load(Ordering::Relaxed) == s1 {
+                S.guard().seq_seen.store(s1, Ordering::Relaxed);
+                // Signed: the newest crossing may postdate this tick's clock
+                // read, and then it must not age the watch backwards
+                // (the cross-ISR timestamp race).
+                let at_event = now.wrapping_add(i32::from(raw_a.wrapping_sub(raw) as i16) as u32);
+                if at_event.wrapping_sub(now) < 0x8000_0000 {
+                    poll_at = at_event;
+                }
+                batch = Some((at_event, sector, average, n));
+            }
+        }
+        let fault = S.guard().watch.root(&mut at, |w| {
+            if let Some((at_event, sector, average, n)) = batch {
+                let _ = w.tighten_max_interval(crate::tracking::speed_event_limit_us(average.saturating_mul(2)));
+                if w.events(at_event, sector, n).is_some() {
+                    return true;
+                }
+            }
+            w.poll(poll_at).is_some()
+        });
+        if fault {
+            guard_trip(Reason::Tracking);
+        }
     }
 }
 
@@ -1403,21 +1440,10 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
         // removes the bridge.
         // binz's startup policy (E107): during the handover window the count
         // is telemetry; after it, the unchanged 64/ms cutoff.
-        let within = S.det().rate.root(&mut at, |rate| {
-            if S.det().cap_armed.load(Ordering::Relaxed) {
-                rate.hit(raw)
-            } else {
-                rate.observe(raw);
-                true
-            }
-        });
-        if !within {
-            S.comp().storm.store(true, Ordering::Relaxed);
-            S.comp()
-                .storm_step
-                .store(S.det().step.load(Ordering::Relaxed), Ordering::Relaxed);
-            return;
-        }
+        // **Goal B: report-only** (operator ruling, as binz's goal rewrite made
+        // it). Every call is counted into the 1 ms buckets; the report says
+        // whether the peak exceeded the unchanged 64/ms (`rate::LIMIT`). No stop.
+        S.det().rate.root(&mut at, |rate| rate.observe(raw));
         // Closed loop: decide here, microseconds after the edge.
         // Mark the decision so COM can count its own preemptions of it.
         // Gated on the **chain recorder**, not on the `com-top` feature: both

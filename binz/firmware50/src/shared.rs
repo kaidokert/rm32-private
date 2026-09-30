@@ -292,17 +292,11 @@ pub struct Det {
     /// (`ADC_COMP` 760 → 758).
     pub accept_seq: AtomicU32,
     pub accept_raw: AtomicU32,
-    /// **Dead, and deliberately still here.** Nothing reads it; its two stores
-    /// were deleted from both acceptance paths. The *field* stays because this
-    /// struct is `#[repr(C)]` and the roots address it by offset, so deleting
-    /// it moves every later field and re-codegens the roots: measured
-    /// `ADC_COMP` 760 → **742**, of which only 2 instructions are the dead
-    /// store and 16 are layout. E318 established that codegen is a first-order
-    /// carrier of this firmware's latch hazard (two production images differ
-    /// 2.9× at the same rung), so a 16-instruction layout shuffle bundled into
-    /// a margin change would make the result uninterpretable. Four bytes of
-    /// `.bss` is the price of an isolated measurement.
-    pub accept_wait_unused: AtomicU32,
+    /// **The accepted crossing's sector** (goal B step 2), stored by COMP before
+    /// `accept_seq` so the guard tick can feed the tracking watch. It reuses the
+    /// slot `accept_wait_unused` held open since E321 (a dead field kept so the
+    /// struct's layout, and so the roots' codegen, did not move).
+    pub accept_step: AtomicU32,
     /// Longest entry-stamp-to-arm time, and arms that reached the wait (E083).
     pub spent_max: AtomicU32,
     pub late_arms: AtomicU32,
@@ -472,6 +466,8 @@ pub struct GuardState {
     /// The accepted-event envelope. Ceiling: the guard. `ADC_COMP` (below
     /// it) feeds events inside a critical section.
     pub watch: Seam<EventWatch<true>, Guard>,
+    /// Goal B step 2: the `Det::accept_seq` the guard tick last fed to the watch.
+    pub seq_seen: AtomicU32,
 }
 
 /// The COM root's state (E070).
@@ -718,7 +714,7 @@ static DET: Det = Det {
     accept_blank: u(),
     accept_seq: u(),
     accept_raw: u(),
-    accept_wait_unused: u(),
+    accept_step: u(),
     spent_max: u(),
     late_arms: u(),
     ci_at_late: u(),
@@ -776,6 +772,7 @@ static GUARD: GuardState = GuardState {
         crate::protection::EVENT_MIN_US,
         crate::tracking::EVENT_MAX_US,
     )),
+    seq_seen: u(),
 };
 static COM: Com = Com {
     active: f(),

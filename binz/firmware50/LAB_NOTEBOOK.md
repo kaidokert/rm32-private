@@ -45226,3 +45226,25 @@ moved detection in A1/A4/A5 (≈0.75 µs), at under half the size.
 own-mean late, one-sided binomial α = 0.05, all steps and step 3; edge probe). Then **725 × 3** on production (reason 2,
 late 0, worst < 4750, no foldback), **725 restarts × 3** on a window-90 twin, and the **sweep** (every provocation stops
 with its code). No `spent`/`thin` gate on production (isr_stats=0); timing is gated by `late_arms` = 0, a stop.
+
+**ENV-66 amendment (before any stage-2 data):**
+* The predeclared "725 × 3 + restarts + sweep" is replaced by the **full ENV-63 kit**: walk 525 (anchored) → 725,
+  3 holds per rung; restarts at 500–700 and at 725 on a window-90 twin; the sweep; low rungs 150–500 anchored.
+* Why: the repo's own admission rule (E302) allows an anchor only for instruction-identical roots, and B1 changes the
+  roots' codegen, including the first-read index. The walk gates are ENV-63's, except that `spent` is not gated on a
+  production image (isr_stats=0); `late_arms` = 0 is the timing gate.
+* **Sweep expectations for B1 are unchanged** (the storm limiter still stops in B1; the ruling lands in B2).
+
+**B2 built** (branch `am32shape/b2`, stacked on B1; validated only after B1 is kept):
+* Images: production `D73495F2`, chain `8B7A6C6C`.
+* The tracking watch moved into the guard tick. Firmware50's tick is TIM6 at ~10 kHz (gap_max ≈ 106 µs), not AM32's
+  20 kHz. AM32's own missing-crossing check is in the **main loop**: `INTERVAL_TIMER_COUNT > 45000 && running`, then
+  `bemf_timeout_happened++`, at `main.c:2664-2677`. Its filter depth is also main-loop work, at `main.c:2631-2638`.
+  The goal's placement (the tick) is followed.
+* The storm limiter is report-only: COMP always `observe`s; the report's `storm` = peak > 64/ms; the foreground
+  `CompStorm` stop can no longer be raised.
+* Executed counts:
+  * comparator: **total 253** (2.2× AM32), **arm #227** (2.1×), **first read #102**. The read is now 35
+    instructions (≈0.7 µs) earlier than A6, which is the A1/A4 regime, **so B2 carries A1/A4's detection risk**;
+  * commutation phase 1 is instruction-identical to B1 (254);
+  * the guard tick grows 155 → 370 static.
