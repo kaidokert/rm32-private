@@ -45614,3 +45614,24 @@ until a chain capture shows the lost sector.
 
 **Sweep `u` (Storm) pass criterion:** no CompStorm (13); any other named stop or a clean completion; outputs off at
 exit; no hang.
+
+#### ENV-70 result — step 3: NO VERDICT by the predeclared rule
+
+Same session. T = tag, S = tag + stale-wait, A = A6. `env70_score.py`, applied mechanically:
+
+| rung | T worst / adj-hold / coast | S | A | E (worst) | f (worst) | E (adj-hold) | f (adj-hold) |
+|---|---|---|---|---|---|---|---|
+| 725 | 4479 / 3649 / 2527 | 4501 / 3742 / 2554 | 4495 / 3712 / 2563 | **+16 mA** | +1.38 | +63 mA | +1.47 |
+| 750 | 4899 / 4062 / 2655 (n = 2; 1 FastBusSag) | **3/3 FastBusSag (26)** | 5042 / 4081 / 2628, all 3 folded to 740 | — | — | — | — |
+
+* 725 gives no verdict: the worst-block excess is not reproduced this session (+16 ≤ 50 mA).
+* 750 gives no verdict: S has fewer than 2 unstopped runs.
+* **Step 3 therefore does not justify step 5.** The prediction "(R)" is untested, not confirmed.
+
+**Observations, labelled as such (n = 3 per side; no rule was set for them):**
+* At 725 the **zero-adjusted hold** excess of A6 over the tag (+63 mA) is fully present with stale-wait alone
+  (+93 mA). So the **hold** offset follows the one-step-ahead wait at 725.
+* At 750, **stale-wait alone stops 3/3 on FastBusSag**, where the tag stops 1/3 and A6 0/3 (A6 folds back to 740 in
+  3/3). The one-step-ahead wait by itself destabilises 75 %, and A6's placement of the commit (in COM) does not; A6
+  converts that instability into current (worst ~5040, foldback).
+* 725 worst blocks are indistinguishable across T, S and A this session (4404–4607).
